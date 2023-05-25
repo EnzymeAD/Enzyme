@@ -34,12 +34,13 @@ using namespace mlir::enzyme;
 namespace {
 
 Value invertMemref(Value inp, OpBuilder &builder, Location loc) {
-  MemRefType iType = dyn_cast<MemRefType>(inp.getType());
+  MemRefType iType = cast<MemRefType>(inp.getType());
   SmallVector<Value> dims;
   SmallVector<Value> dimSubOnes;
   SmallVector<Value> strides;
   Value negOne = builder.create<arith::ConstantIndexOp>(loc, -1);
-  for (int i = 0; i < iType.getShape().size(); i++) {
+  int shapeDim = iType.getShape().size();
+  for (int i = 0; i < shapeDim; i++) {
     Value dim = builder.create<memref::DimOp>(loc, inp, i);
     dims.push_back(dim);
     auto dimSubOne = builder.create<arith::AddIOp>(loc, dim, negOne);
@@ -88,7 +89,7 @@ struct GenericOpInterfaceReverse
       Value domain = cacheBuilder.create<AffineApplyOp>(op->getLoc(), subMap,
                                                         ValueRange(dims));
       iterationDomains.push_back(domain);
-      shapes.push_back(-1);
+      shapes.push_back(ShapedType::kDynamicSize);
     }
 
     SmallVector<Value> inputs, outputs;
@@ -97,21 +98,23 @@ struct GenericOpInterfaceReverse
                                          getParallelIteratorTypeName()};
 
     for (OpOperand *output : linalgOp.getOutputOperands()) {
-      if (gutils->hasInvertPointer(output->get())) {
-        indexingMaps.push_back(linalgOp.getMatchingIndexingMap(output));
-        Value out = gutils->invertPointerM(output->get(), builder);
-        Value view = invertMemref(out, builder, op->getLoc());
-        outputs.push_back(view);
+      if (!gutils->hasInvertPointer(output->get())) {
+        continue;
       }
+      indexingMaps.push_back(linalgOp.getMatchingIndexingMap(output));
+      Value out = gutils->invertPointerM(output->get(), builder);
+      Value view = invertMemref(out, builder, op->getLoc());
+      outputs.push_back(view);
     }
 
     for (OpOperand *input : linalgOp.getInputOperands()) {
-      if (gutils->hasInvertPointer(input->get())) {
-        indexingMaps.push_back(linalgOp.getMatchingIndexingMap(input));
-        Value inp = gutils->invertPointerM(input->get(), builder);
-        Value view = invertMemref(inp, builder, op->getLoc());
-        inputs.push_back(view);
+      if (!gutils->hasInvertPointer(input->get())) {
+        continue;
       }
+      indexingMaps.push_back(linalgOp.getMatchingIndexingMap(input));
+      Value inp = gutils->invertPointerM(input->get(), builder);
+      Value view = invertMemref(inp, builder, op->getLoc());
+      inputs.push_back(view);
     }
 
     linalg::GenericOp adjoint = builder.create<linalg::GenericOp>(
@@ -182,11 +185,10 @@ struct GenericOpInterfaceReverse
 
       Type ct = cacheArg.getType();
       Type type = MemRefType::get(ArrayRef(shapes), ct);
-      Value alloc = cacheBuilder.create<memref::AllocOp>(
+      auto alloc = cacheBuilder.create<memref::AllocOp>(
           op->getLoc(), type, ValueRange(iterationDomains));
       Value cache = gutils->initAndPushCache(alloc, cacheBuilder);
-      alloc.getDefiningOp()->setAttr("operand_segment_sizes",
-                                     cacheBuilder.getDenseI32ArrayAttr({1, 0}));
+      alloc->setAttr(alloc.getOperandSegmentSizesAttrName(), cacheBuilder.getDenseI32ArrayAttr({1, 0}));
 
       cast<linalg::GenericOp>(newOp).getOutputsMutable().append(
           ValueRange({alloc}));
@@ -210,9 +212,9 @@ struct GenericOpInterfaceReverse
     for (auto map : indexing_maps_adjoint) {
       indexing_maps_attr_adjoint.push_back(AffineMapAttr::get(map));
     }
-    newOp->setAttr("indexing_maps",
+    newOp->setAttr(cast<linalg::GenericOp>(newOp).getIndexingMapsAttrName(),
                    cacheBuilder.getArrayAttr(indexing_maps_attr));
-    adjoint->setAttr("indexing_maps",
+    adjoint->setAttr(adjoint.getIndexingMapsAttrName(),
                      builder.getArrayAttr(indexing_maps_attr_adjoint));
 
     // aMap.dump();
