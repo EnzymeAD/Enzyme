@@ -51,10 +51,11 @@ Value invertMemref(Value inp, OpBuilder &builder, Location loc) {
       loc, inp, ValueRange(dimSubOnes), ValueRange(dims), ValueRange(strides));
   return view;
 }
-// TODO: Try to find a way to register autodiff interface for all LinalgOps
+
+template <typename T_>
 struct GenericOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<
-          GenericOpInterfaceReverse, linalg::GenericOp> {
+          GenericOpInterfaceReverse<T_>, T_> {
   void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
                                 MGradientUtilsReverse *gutils,
                                 SmallVector<Value> caches) const {
@@ -117,8 +118,8 @@ struct GenericOpInterfaceReverse
       inputs.push_back(view);
     }
 
-    linalg::GenericOp adjoint = builder.create<linalg::GenericOp>(
-        op->getLoc(), outputs, inputs, indexingMaps, iteratorTypes);
+    T_ adjoint = builder.create<T_>(op->getLoc(), outputs, inputs, indexingMaps,
+                                    iteratorTypes);
 
     int numInputs = inputs.size();
     std::function<buildReturnFunction> buildFuncReturnOp =
@@ -130,7 +131,7 @@ struct GenericOpInterfaceReverse
         };
 
     Region *newOpRegion = newOp.getBlock()->getParent();
-    int numInputsNewOp = cast<linalg::GenericOp>(newOp).getInputs().size();
+    int numInputsNewOp = cast<T_>(newOp).getInputs().size();
     Region *adjointRegion = &adjoint.getBodyRegion();
     int numInputsAdjoint = adjoint.getInputs().size();
     Location loc = op->getLoc();
@@ -158,7 +159,7 @@ struct GenericOpInterfaceReverse
 
     // TODO add pushCaches to the yield in newOp
     auto newOpYield = cast<linalg::YieldOp>(
-        cast<linalg::GenericOp>(newOp).getBodyRegion().front().getTerminator());
+        cast<T_>(newOp).getBodyRegion().front().getTerminator());
     for (auto pc : pushCaches) {
       newOpYield.getValuesMutable().append(pc);
     }
@@ -188,10 +189,10 @@ struct GenericOpInterfaceReverse
       auto alloc = cacheBuilder.create<memref::AllocOp>(
           op->getLoc(), type, ValueRange(iterationDomains));
       Value cache = gutils->initAndPushCache(alloc, cacheBuilder);
-      alloc->setAttr(alloc.getOperandSegmentSizesAttrName(), cacheBuilder.getDenseI32ArrayAttr({1, 0}));
+      alloc->setAttr(alloc.getOperandSegmentSizesAttrName(),
+                     cacheBuilder.getDenseI32ArrayAttr({1, 0}));
 
-      cast<linalg::GenericOp>(newOp).getOutputsMutable().append(
-          ValueRange({alloc}));
+      cast<T_>(newOp).getOutputsMutable().append(ValueRange({alloc}));
       indexing_maps.push_back(AffineMap::getMultiDimIdentityMap(
           iterationDomains.size(), cacheBuilder.getContext()));
 
@@ -212,7 +213,7 @@ struct GenericOpInterfaceReverse
     for (auto map : indexing_maps_adjoint) {
       indexing_maps_attr_adjoint.push_back(AffineMapAttr::get(map));
     }
-    newOp->setAttr(cast<linalg::GenericOp>(newOp).getIndexingMapsAttrName(),
+    newOp->setAttr(cast<T_>(newOp).getIndexingMapsAttrName(),
                    cacheBuilder.getArrayAttr(indexing_maps_attr));
     adjoint->setAttr(adjoint.getIndexingMapsAttrName(),
                      builder.getArrayAttr(indexing_maps_attr_adjoint));
@@ -231,9 +232,17 @@ struct GenericOpInterfaceReverse
 };
 } // namespace
 
+template <typename... Ts> void attachAllInterfaces(MLIRContext *context) {
+  (Ts::template attachInterface<GenericOpInterfaceReverse<Ts>>(*context), ...);
+}
+
 void mlir::enzyme::registerLinalgDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, linalg::LinalgDialect *) {
-    linalg::GenericOp::attachInterface<GenericOpInterfaceReverse>(*context);
+    attachAllInterfaces<
+#define GET_OP_LIST
+#include "mlir/Dialect/Linalg/IR/LinalgStructuredOps.h.inc"
+        >(context);
+    attachAllInterfaces<linalg::GenericOp>(context);
   });
 }
