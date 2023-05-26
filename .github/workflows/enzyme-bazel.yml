@@ -36,22 +36,15 @@ jobs:
         path: 'llvm'
         submodules: true
 
-    - name: Cache LLVM
-      id: cache-llvm
-      uses: actions/cache@v2
-      with:
-        path: llvm-build
-        key: ${{ matrix.llbuild }}-${{ matrix.os }}-llvm-${{ hashFiles('llvm/.git/HEAD') }}
-    
-    - name: LLVM build
-      if: steps.llvm-mlir.outputs.cache-hit != 'true'
+
+    - name: Install bazelisk
       run: |
-        mkdir llvm-build
-        cd llvm-build
-        cmake ../llvm/llvm -GNinja -DLLVM_ENABLE_PROJECTS="llvm;clang;openmp" -DCMAKE_BUILD_TYPE=${{ matrix.llbuild }} -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_PARALLEL_LINK_JOBS=2
-        ninja -j2
+        curl -LO "https://github.com/bazelbuild/bazelisk/releases/download/v1.1.0/bazelisk-linux-amd64"
+        mkdir -p "${GITHUB_WORKSPACE}/bin/"
+        mv bazelisk-linux-amd64 "${GITHUB_WORKSPACE}/bin/bazel"
+        chmod +x "${GITHUB_WORKSPACE}/bin/bazel"
     
     - name: cmake
       run: |
           cd enzyme
-          bazel build 
+           "${GITHUB_WORKSPACE}/bin/bazel" build 
