@@ -2821,7 +2821,6 @@ AnalysisKey EnzymeNewPM::Key;
 #include "ActivityAnalysisPrinter.h"
 #include "PreserveNVVM.h"
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
-#ifdef ENZYME_RUNPASS
 #include "llvm/Passes/PassBuilder.h"
 #if LLVM_VERSION_MAJOR >= 15
 #include "llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h"
@@ -2847,7 +2846,7 @@ AnalysisKey EnzymeNewPM::Key;
 #include "llvm/Transforms/Scalar/LoopRotation.h"
 #include "llvm/Transforms/Scalar/LoopUnrollPass.h"
 #include "llvm/Transforms/Scalar/SROA.h"
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 12
 // #include "llvm/Transforms/IPO/MemProfContextDisambiguation.h"
 #include "llvm/Transforms/IPO/ArgumentPromotion.h"
 #include "llvm/Transforms/Scalar/ConstraintElimination.h"
@@ -2864,10 +2863,15 @@ AnalysisKey EnzymeNewPM::Key;
 #include "llvm/Transforms/Scalar/LoopFlatten.h"
 #include "llvm/Transforms/Scalar/MergedLoadStoreMotion.h"
 
-static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level) {
+#if LLVM_VERSION_MAJOR < 14
+static InlineParams
+getInlineParamsFromOptLevel(llvm::PassBuilder::OptimizationLevel Level)
+#else
+static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level)
+#endif
+{
   return getInlineParams(Level.getSpeedupLevel(), Level.getSizeLevel());
 }
-#endif
 
 #if LLVM_VERSION_MAJOR >= 12
 #include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"

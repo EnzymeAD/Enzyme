@@ -15,6 +15,8 @@ endif()
 
 function(enzyme_tablegen ofn)
   tablegen(Enzyme ${ARGV})
+  set(TABLEGEN_OUTPUT ${TABLEGEN_OUTPUT} ${CMAKE_CURRENT_BINARY_DIR}/${ofn}
+      PARENT_SCOPE)
 endfunction()
 
 set(LLVM_TARGET_DEFINITIONS InstructionDerivatives.td)
@@ -135,24 +137,6 @@ endif()
 if (${ENZYME_EXTERNAL_SHARED_LIB})
     add_library( Enzyme-${LLVM_VERSION_MAJOR}
         SHARED
-        ${ENZYME_SRC}
-    )
-    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} intrinsics_gen)
-    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} InstructionDerivativesIncGen)
-    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDerivativesIncGen)
-    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDeclarationsIncGen)
-    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasTAIncGen)
-    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDiffUseIncGen)
-    target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} LLVM)
-    install(TARGETS Enzyme-${LLVM_VERSION_MAJOR}
-        EXPORT EnzymeTargets
-        LIBRARY DESTINATION lib COMPONENT shlib
-        PUBLIC_HEADER DESTINATION "${INSTALL_INCLUDE_DIR}/Enzyme"
-        COMPONENT dev)
-endif()
-if (${ENZYME_EXTERNAL_STATIC_LIB})
-    add_library( Enzyme-${LLVM_VERSION_MAJOR}
-        STATIC
         ${ENZYME_SRC}
     )
     add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} intrinsics_gen)
