@@ -25,8 +25,13 @@
 #include "Utils.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 
+#if LLVM_VERSION_MAJOR >= 16
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+#else
 #include "SCEV/ScalarEvolution.h"
 #include "SCEV/ScalarEvolutionExpander.h"
+#endif
 
 #include "TypeAnalysis/TBAA.h"
 #include "llvm/IR/BasicBlock.h"
