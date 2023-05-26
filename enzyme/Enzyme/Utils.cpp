@@ -66,6 +66,9 @@ LLVMValueRef (*EnzymeSanitizeDerivatives)(LLVMValueRef, LLVMValueRef toset,
 
 extern llvm::cl::opt<bool> EnzymeZeroCache;
 llvm::cl::opt<bool>
+    EnzymeBlasCopy("enzyme-blas-copy", cl::init(true), cl::Hidden,
+                   cl::desc("Use blas copy calls to cache vectors"));
+llvm::cl::opt<bool>
     EnzymeFastMath("enzyme-fast-math", cl::init(true), cl::Hidden,
                    cl::desc("Use fast math on derivative compuation"));
 llvm::cl::opt<bool>
@@ -662,6 +665,21 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     B.CreateRetVoid();
   }
   return F;
+}
+
+Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
+                                       BlasInfo blas) {
+  std::string copy_name =
+      (blas.prefix + blas.floatType + "copy" + blas.suffix).str();
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
+                                       {IT, T, IT, T, IT}, false);
+#if LLVM_VERSION_MAJOR >= 9
+  Function *dmemcpy =
+      cast<Function>(M.getOrInsertFunction(copy_name, FT).getCallee());
+#else
+  Function *dmemcpy = cast<Function>(M.getOrInsertFunction(copy_name, FT));
+#endif
+  return dmemcpy;
 }
 
 Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,

@@ -175,7 +175,17 @@ EnzymeTypeAnalysisRef CreateTypeAnalysis(EnzymeLogicRef Log,
 void ClearTypeAnalysis(EnzymeTypeAnalysisRef);
 void FreeTypeAnalysis(EnzymeTypeAnalysisRef);
 
-EnzymeTraceInterfaceRef CreateEnzymeStaticTraceInterface(LLVMModuleRef M);
+EnzymeTraceInterfaceRef FindEnzymeStaticTraceInterface(LLVMModuleRef M);
+EnzymeTraceInterfaceRef CreateEnzymeStaticTraceInterface(
+    LLVMContextRef C, LLVMValueRef sampleFunction,
+    LLVMValueRef getTraceFunction, LLVMValueRef getChoiceFunction,
+    LLVMValueRef insertCallFunction, LLVMValueRef insertChoiceFunction,
+    LLVMValueRef insertArgumentFunction, LLVMValueRef insertReturnFunction,
+    LLVMValueRef insertFunctionFunction,
+    LLVMValueRef insertChoiceGradientFunction,
+    LLVMValueRef insertArgumentGradientFunction, LLVMValueRef newTraceFunction,
+    LLVMValueRef freeTraceFunction, LLVMValueRef hasCallFunction,
+    LLVMValueRef hasChoiceFunction);
 EnzymeTraceInterfaceRef
 CreateEnzymeDynamicTraceInterface(LLVMValueRef interface, LLVMValueRef F);
 EnzymeLogicRef CreateEnzymeLogic(uint8_t PostOpt);

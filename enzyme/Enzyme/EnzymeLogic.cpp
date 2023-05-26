@@ -5102,6 +5102,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEED1Ev",
       "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6__"
       "initEPKcm",
+      "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC1ERKS5_",
       "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_"
       "9allocatorIcEEE6appendEPKcm",
       "_ZNSt12__basic_fileIcED1Ev",
