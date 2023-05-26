@@ -158,7 +158,7 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
 << "      if (EnzymeBlasCopy) {\n"
 << "        auto valueTypes = {ValueType::Both, ValueType::Both, ValueType::Both, ValueType::Both, ValueType::Both};\n"
 << "        dmemcpy = getOrInsertMemcpyStridedBlas(*gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
-<< "            intType, blas);\n"
+<< "            intType, blas, julia_decl);\n"
 << "        Value *args[5] = {len_n, gutils->getNewFromOriginal(arg_" << vecName << "), " << incName << ", arg, ConstantInt::get(intType, 1)};\n"
 << "        if (args[1]->getType()->isIntegerTy())\n"
 << "          args[1] = BuilderZ.CreateIntToPtr(args[1], castvals[" << i << "]);\n"
