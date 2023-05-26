@@ -1,12 +1,11 @@
 name: Fortran
 
 on:
-  push:
-    branches: 
-    - main
-  pull_request:
-    branches: 
-    - main
+  workflow_run:
+    workflows: ["Clang-Format"]
+    types: 
+      - completed
+
 jobs:
   build-and-test-fortran:
     name: Fortran ${{matrix.build}} ${{matrix.os}}
@@ -52,4 +51,3 @@ jobs:
       run: cd enzyme/build && ninja LLVMEnzyme-${{ matrix.llvm }}
     - name: run Fortran tests
       run: cd enzyme/build && ninja check-enzyme-fortran
-        
