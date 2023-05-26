@@ -1059,7 +1059,7 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto typeOfArg = typeMap.lookup(i);
     auto name = nameVec[i];
-    if (typeOfArg == argType::vincInc) {
+    if (typeOfArg == argType::vincInc || typeOfArg == argType::mldLD) {
       os << "      if (cache_" << name << ") {\n"
          << "        true_" << name << " =\n"
          << "            (cacheTypes.size() == 1)\n"
@@ -1104,7 +1104,7 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto typeOfArg = typeMap.lookup(i);
     auto name = nameVec[i];
-    if (typeOfArg == argType::vincInc) {
+    if (typeOfArg == argType::vincInc || typeOfArg == argType::mldLD) {
       os << "      if (cache_" << name << ") {\n"
          << "        true_" << name << " = lookup(true_" << name
          << ", Builder2);\n"
@@ -1236,12 +1236,13 @@ size_t fwd_call_args(TGPattern &pattern, size_t actArg,
   const auto nameVec = pattern.getArgNames();
   const auto nameMap = pattern.getArgNameMap();
   const auto typeMap = pattern.getArgTypeMap();
+  const size_t startArg = pattern.isBLASLevel2or3() ? 1 : 0;
 
   // just replace argOps with rule
   // We start with 1 and conditionally add the cblas only first arg
   // only in the !byRef case
-  for (size_t pos = 1; pos < nameVec.size();) {
-    if (pos > 1) {
+  for (size_t pos = startArg; pos < nameVec.size();) {
+    if (pos > startArg) {
       result.append(", ");
     }
 
@@ -1251,7 +1252,6 @@ size_t fwd_call_args(TGPattern &pattern, size_t actArg,
     // and based on that get the fp/int + scalar/vector type
     const auto typeOfArg = typeMap.lookup(pos);
     if (typeOfArg == argType::len) {
-      const auto out = (Twine("len_") + name).str();
       result.append((Twine("len_") + name).str());
     } else if (typeOfArg == argType::fp) {
       if (pos == actArg) {
@@ -1287,11 +1287,11 @@ size_t fwd_call_args(TGPattern &pattern, size_t actArg,
       } else {
         result.append((Twine("data_") + name + ", " + nextName).str());
       }
-      pos++; // extra ++ due to also handling vincInc
+      pos++; // extra ++ due to also handling mldLD
     } else if (typeOfArg == argType::mldLD) {
         // might come without mldData, e.g. after DiffeRet
-        // coppied from vincInc, but should verify if actually needed 
-        result.append((Twine("arg_") + name).str());
+        // coppied from vincInc, but should verify if actually needed
+      result.append(name);
     } else if (typeOfArg == argType::cblas_layout) {
       // TODO: based on byRef
     } else if (typeOfArg == argType::trans){
@@ -1311,7 +1311,7 @@ size_t fwd_call_args(TGPattern &pattern, size_t actArg,
   }
 
   // return the size - 1 due to only using the cblas_layout in the !byRef case
-  return nameVec.size() - 1;
+  return nameVec.size() - startArg;
 }
 
 void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
@@ -1369,7 +1369,7 @@ void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
     if (lv23) {
       // add extra cblas_arg for the !byRef case
       os << "        Value *args1_cblas[" << numArgs + 1 << "] = "
-         << " {arg_cblas_layout, " << dcallArgs << "};\n";
+         << " {arg_layout, " << dcallArgs << "};\n";
       os << "        auto Defs_cblas = gutils->getInvertedBundles(\n"
          << "          &call, {ValueType::Both, " << valueTypes
          << "}, Builder2, /* lookup */ false);\n";
@@ -1522,10 +1522,11 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
   const auto typeMap = rule.getArgTypeMap();
   const auto ruleDag = rule.getRuleDag();
   const size_t numArgs = ruleDag->getNumArgs();
+  const size_t startArg = rule.isBLASLevel2or3() ? 1 : 0;
 
   // just replace argOps with rule
-  for (size_t pos = 0; pos < ruleDag->getNumArgs();) {
-    if (pos > 0) {
+  for (size_t pos = startArg; pos < numArgs;) {
+    if (pos > startArg) {
       result.append(", ");
     }
 
@@ -1584,6 +1585,23 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
       } else if (typeOfArg == argType::vincInc) {
         // might come without vincData, e.g. after DiffeRet
         result.append(name);
+      } else if (typeOfArg == argType::mldData) {
+        auto nextName = ruleDag->getArgNameStr(pos + 1);
+        // get the position of the argument in the primary blas call
+        auto nextArgPosition = nameMap.lookup(nextName);
+        // and based on that get the fp/int + scalar/vector type
+        auto typeOfNextArg = typeMap.lookup(nextArgPosition);
+        assert(typeOfNextArg == argType::mldLD);
+        if (pos == actArg) {
+          result.append((Twine("d_") + name + ", true_" + nextName).str());
+        } else {
+          result.append((Twine("data_") + name + ", " + nextName).str());
+        }
+        pos++; // extra ++ due to also handling mldLD
+      } else if (typeOfArg == argType::mldLD) {
+        // might come without mldData, e.g. after DiffeRet
+        // coppied from vincInc, but should verify if actually needed
+        result.append(name);
       } else {
         // TODO
         // llvm::errs() << "name: " << name << " typename: " << typeOfArg <<
@@ -1593,7 +1611,7 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
     pos++;
   }
 
-  return numArgs;
+  return numArgs - startArg;
 }
 
 void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,

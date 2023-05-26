@@ -59,6 +59,7 @@ class Rule {
     StringMap<size_t> argNameToPos;
     DenseMap<size_t, argType> argTypes;
     DenseSet<size_t> mutables;
+    bool BLASLevel2or3;
 
   public:
     Rule(DagInit *dag, size_t activeArgIdx, StringMap<size_t> &patternArgs,
@@ -86,6 +87,11 @@ class Rule {
           argTypes.insert(*patternTypes.find(argPos));
         }
       }
+      if (argTypes.lookup(0) == argType::cblas_layout) {
+        BLASLevel2or3 = true;
+      } else {
+        BLASLevel2or3 = false;
+      }
 
       for (auto ruleArgKey : argNameToPos.keys()) {
         //        3) look up and eventually copy mutable
@@ -95,6 +101,7 @@ class Rule {
         }
       }
     }
+    bool isBLASLevel2or3() { return BLASLevel2or3; }
     DagInit *getRuleDag() { return rewriteRule; }
     size_t getHandledArgIdx() { return activeArg; }
     StringMap<size_t> getArgNameMap() { return argNameToPos; }

@@ -132,7 +132,7 @@ void emit_scalar_caching(TGPattern &pattern, raw_ostream &os) {
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto typeOfArg = typeMap.lookup(i);
     if (typeOfArg == argType::len || typeOfArg == argType::fp) {
-      auto scalarType = (typeOfArg == argType::len) ? "intType" : "fpType";
+      auto scalarType = (typeOfArg == argType::fp) ? "fpType": "intType" ;
       auto name = nameVec[i];
       os 
 << "  bool cache_" << name << " = false;\n"
@@ -178,7 +178,7 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
 << "      if (cache_" << name << ")\n"
 << "        cacheValues.push_back(" << lenName << ");\n"
 << "    }\n";
-    } else if (typeOfArg == vincInc) {
+    } else if (typeOfArg == vincInc || typeOfArg == mldLD) {
       auto incName = name;
       os 
 << "    Value *" << incName << " = gutils->getNewFromOriginal(arg_" << incName <<");\n"
@@ -263,6 +263,7 @@ os << "        dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
 << "      cacheValues.push_back(arg);\n"
 << "    }\n";
   }
+  // TODO: same as above, but not for vincData, but for mldData
 
   os
 << "    if (cacheValues.size() == 1) {\n"
@@ -287,6 +288,15 @@ os << "        dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
       os 
 << "  Value *true_" << incName << " = gutils->getNewFromOriginal(arg_" << incName << ");\n"
 << "  Value *" << incName << " = true_" << incName << ";\n"
+<< "  Value *data_" << vecName << " = gutils->getNewFromOriginal(arg_" << vecName << ");\n"
+<< "  Value *data_ptr_" << vecName << " = nullptr;\n";
+    } else if (typeOfArg == argType::mldData) {
+      assert(typeMap.lookup(i+1) == argType::mldLD);
+      auto vecName = nameVec[i];
+      auto ldName = nameVec[i+1];
+      os 
+<< "  Value *true_" << ldName << " = gutils->getNewFromOriginal(arg_" << ldName << ");\n"
+<< "  Value *" << ldName << " = true_" << ldName << ";\n"
 << "  Value *data_" << vecName << " = gutils->getNewFromOriginal(arg_" << vecName << ");\n"
 << "  Value *data_ptr_" << vecName << " = nullptr;\n";
     } else if (typeOfArg == argType::len) {

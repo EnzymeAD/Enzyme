@@ -712,11 +712,10 @@ Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
 
 Function *getOrInsertMemcpyStridedLapack(Module &M, PointerType *T, Type *IT,
                                        BlasInfo blas) {
-	CharacterType CT;
   std::string copy_name =
       (blas.floatType + "lacpy" + blas.suffix).str();
   FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                                       {CT, IT, IT, T, IT, T, IT}, false);
+                                       {IT, IT, IT, T, IT, T, IT}, false);
 #if LLVM_VERSION_MAJOR >= 9
   Function *dmemcpy =
       cast<Function>(M.getOrInsertFunction(copy_name, FT).getCallee());

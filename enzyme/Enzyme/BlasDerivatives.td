@@ -138,7 +138,7 @@ def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $
                   ]
                   >;
 // 
-def ger : CallBlasPattern<(Op $layout, $m, $n, $alpha, $x, $incx, $y, $incy, $A, $ld),
+def ger : CallBlasPattern<(Op $layout, $m, $n, $alpha, $x, $incx, $y, $incy, $A, $lda),
                   ["A"],[cblas_layout, len, len, fp, vinc, vinc, mld],
                   [
                   (noop),
