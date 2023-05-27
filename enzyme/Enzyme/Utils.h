@@ -29,6 +29,7 @@
 
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/Attributes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -1606,5 +1607,51 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
   }
   return false;
 }
+
+// Parameter attributes from the original function/call that
+// we should preserve on the primal of the derivative code.
+static inline llvm::Attribute::AttrKind PrimalParamAttrsToPreserve[] = {
+    llvm::Attribute::AttrKind::ReadOnly,
+    llvm::Attribute::AttrKind::WriteOnly,
+    llvm::Attribute::AttrKind::ZExt,
+    llvm::Attribute::AttrKind::SExt,
+    llvm::Attribute::AttrKind::InReg,
+    llvm::Attribute::AttrKind::ByVal,
+#if LLVM_VERSION_MAJOR >= 12
+    llvm::Attribute::AttrKind::ByRef,
+#endif
+#if LLVM_VERSION_MAJOR >= 11
+    llvm::Attribute::AttrKind::Preallocated,
+#endif
+    llvm::Attribute::AttrKind::InAlloca,
+#if LLVM_VERSION_MAJOR >= 13
+    llvm::Attribute::AttrKind::ElementType,
+#endif
+#if LLVM_VERSION_MAJOR >= 15
+    llvm::Attribute::AttrKind::AllocAlign,
+#endif
+#if LLVM_VERSION_MAJOR >= 10
+    llvm::Attribute::AttrKind::NoFree,
+#endif
+    llvm::Attribute::AttrKind::Alignment,
+    llvm::Attribute::AttrKind::StackAlignment,
+    llvm::Attribute::AttrKind::NoCapture,
+    llvm::Attribute::AttrKind::ReadNone};
+
+// Parameter attributes from the original function/call that
+// we should preserve on the shadow of the derivative code.
+// Note that this will not occur on vectore > 1.
+static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
+#if LLVM_VERSION_MAJOR >= 13
+    llvm::Attribute::AttrKind::ElementType,
+#endif
+#if LLVM_VERSION_MAJOR >= 10
+    llvm::Attribute::AttrKind::NoFree,
+#endif
+    llvm::Attribute::AttrKind::Alignment,
+    llvm::Attribute::AttrKind::StackAlignment,
+    llvm::Attribute::AttrKind::NoCapture,
+    llvm::Attribute::AttrKind::ReadNone,
+};
 
 #endif

@@ -116,7 +116,7 @@ attributes #1 = { argmemonly }
 !12 = !{i64 2, i64 -1, i64 -1, i1 true}
 
 
-; CHECK: define internal void @augmented_.omp_outlined..1(i32* noalias nocapture readonly %.global_tid., i32* noalias nocapture readnone %.bound_tid., i64 %length, double* nocapture nonnull align 8 dereferenceable(8) %tmp, double* nocapture %"tmp'", double** %tape)
+; CHECK: define internal void @augmented_.omp_outlined..1(i32* noalias nocapture readonly %.global_tid., i32* noalias nocapture readnone %.bound_tid., i64 %length, double* nocapture nonnull align 8 dereferenceable(8) %tmp, double* nocapture align 8 %"tmp'", double** %tape)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = load double*, double** %tape
 ; CHECK-NEXT:   %.omp.lb_smpl = alloca i64
@@ -167,7 +167,7 @@ attributes #1 = { argmemonly }
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffe.omp_outlined.(i32* noalias nocapture readonly %.global_tid., i32* noalias nocapture readnone %.bound_tid., i64 %length, double* nocapture nonnull align 8 dereferenceable(8) %tmp, double* nocapture %"tmp'", double** %tapeArg)
+; CHECK: define internal void @diffe.omp_outlined.(i32* noalias nocapture readonly %.global_tid., i32* noalias nocapture readnone %.bound_tid., i64 %length, double* nocapture nonnull align 8 dereferenceable(8) %tmp, double* nocapture align 8 %"tmp'", double** %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %truetape = load double*, double** %tapeArg
 ; CHECK-NEXT:   %.omp.lb_smpl = alloca i64
