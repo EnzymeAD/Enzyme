@@ -690,7 +690,6 @@ Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
 #else
   Function *dmemcpy = cast<Function>(M.getOrInsertFunction(copy_name, FT));
 #endif
-  llvm::errs() << *dmemcpy << "\n";
   return dmemcpy;
 }
 

@@ -189,13 +189,13 @@ os <<
 << "         if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
     }
     for (auto len_pos : pattern.getRelatedLengthArgs(argIdx) ) {
-os << "         if (byRef) valueTypes[" << len_pos /*TODO: fixme */<< "] = ValueType::Primal;\n";
+os << "         if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
 os << "        dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
 << "            intType, 0, 0);\n"
 << "        Value *args[4] = {arg, gutils->getNewFromOriginal(arg_" << vecName << "), len_n, " << incName << "};\n"
 << "        if (julia_decl)\n"
-<< "          args[3] = BuilderZ.CreateIntToPtr(args[3], castvals[" << i << "]);\n"
+<< "          args[1] = BuilderZ.CreateIntToPtr(args[1], castvals[" << i << "]);\n"
 << "        BuilderZ.CreateCall(dmemcpy, args,\n"
 << "            gutils->getInvertedBundles(&call, valueTypes,\n"
 << "            BuilderZ, /*lookup*/ false));\n"
