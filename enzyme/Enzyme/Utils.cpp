@@ -679,7 +679,7 @@ Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
   FunctionType *FT;
   if (julia_decl) {
     FT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                                       {IT, T, IT, T, IT}, false);
+                           {IT, IT, IT, IT, IT}, false);
   } else {
     FT = FunctionType::get(Type::getVoidTy(M.getContext()),
                                        {IT, T, IT, T, IT}, false);
@@ -690,6 +690,7 @@ Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
 #else
   Function *dmemcpy = cast<Function>(M.getOrInsertFunction(copy_name, FT));
 #endif
+  llvm::errs() << *dmemcpy << "\n";
   return dmemcpy;
 }
 
