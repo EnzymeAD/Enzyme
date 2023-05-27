@@ -681,8 +681,8 @@ Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
     FT = FunctionType::get(Type::getVoidTy(M.getContext()),
                            {IT, IT, IT, IT, IT}, false);
   } else {
-    FT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                                       {IT, T, IT, T, IT}, false);
+    FT = FunctionType::get(Type::getVoidTy(M.getContext()), {IT, T, IT, T, IT},
+                           false);
   }
 #if LLVM_VERSION_MAJOR >= 9
   Function *dmemcpy =
