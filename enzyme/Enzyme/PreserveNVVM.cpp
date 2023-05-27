@@ -304,7 +304,7 @@ bool preserveNVVM(bool Begin, Function &F) {
           "normcdfinv", "normcdf", "lgamma",    "ldexp",  "scalbn", "frexp",
           "modf",       "fmod",    "remainder", "remquo", "powi",   "tgamma",
           "round",      "fdim",    "ilogb",     "logb",   "isinf",  "pow",
-          "sqrt"}) {
+          "sqrt",       "finite"}) {
       std::string nvname = "__nv_" + name;
       std::string llname = "llvm." + name + ".";
       std::string mathname = name;
