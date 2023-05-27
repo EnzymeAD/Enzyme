@@ -1,8 +1,3 @@
-
-
-// TODO: remove or ifndef it
-//#include "datastructures.h"
-
 // clang-format off
 //
 
@@ -98,6 +93,7 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
   auto typeMap = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
   auto argUsers = pattern.getArgUsers();
+  //auto primalName = pattern.getName();
 
   os 
 << "  if ((Mode == DerivativeMode::ReverseModeCombined ||\n"
@@ -156,21 +152,49 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
 << "      Value *arg = BuilderZ.CreateBitCast(malins, castvals[" << i << "]);\n"
 << "      Function *dmemcpy;\n"
 << "      if (EnzymeBlasCopy) {\n"
-<< "        auto valueTypes = {ValueType::Both, ValueType::Both, ValueType::Both, ValueType::Both, ValueType::Both};\n"
-<< "        dmemcpy = getOrInsertMemcpyStridedBlas(*gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
-<< "            intType, blas);\n"
-<< "        Value *args[5] = {len_n, gutils->getNewFromOriginal(arg_" << vecName << "), " << incName << ", arg, ConstantInt::get(intType, 1)};\n"
-<< "        if (args[1]->getType()->isIntegerTy())\n"
-<< "          args[1] = BuilderZ.CreateIntToPtr(args[1], castvals[" << i << "]);\n"
+<< "        ValueType valueTypes[] = {";
+    { bool comma = false;
+    for (auto i : nameVec) {
+      if (comma) os << ", ";
+      os << "ValueType::None";
+      comma = true;
+    }
+    os << "};\n";
+os <<
+   "         valueTypes[" << argIdx << "] = ValueType::Primal;\n"
+<< "         if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
+    }
+    for (auto len_pos : pattern.getRelatedLengthArgs(argIdx) ) {
+os << "         if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
+    }
+os << "        dmemcpy = getOrInsertMemcpyStridedBlas(*gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
+<< "            intType, blas, julia_decl);\n"
+<< "        Value *args[5] = {gutils->getNewFromOriginal(arg_n), gutils->getNewFromOriginal(arg_" << vecName << "), " << incName << ", arg, ConstantInt::get(intType, 1)};\n"
+<< "        if (julia_decl)\n"
+<< "          args[3] = BuilderZ.CreatePtrToInt(args[3], type_" << vecName << ");\n"
 << "        BuilderZ.CreateCall(dmemcpy, args,\n"
 << "            gutils->getInvertedBundles(&call, valueTypes,\n"
 << "            BuilderZ, /*lookup*/ false));\n"
 << "      } else {\n"
-<< "        auto valueTypes = {ValueType::Both, ValueType::Both, ValueType::Both, ValueType::Both};\n"
-<< "        dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
+<< "        ValueType valueTypes[] = {";
+    { bool comma = false;
+    for (auto i : nameVec) {
+      if (comma) os << ", ";
+      os << "ValueType::None";
+      comma = true;
+    }
+    os << "};\n";
+os <<
+   "         valueTypes[" << argIdx << "] = ValueType::Primal;\n"
+<< "         if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
+    }
+    for (auto len_pos : pattern.getRelatedLengthArgs(argIdx) ) {
+os << "         if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
+    }
+os << "        dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
 << "            intType, 0, 0);\n"
 << "        Value *args[4] = {arg, gutils->getNewFromOriginal(arg_" << vecName << "), len_n, " << incName << "};\n"
-<< "        if (args[1]->getType()->isIntegerTy())\n"
+<< "        if (julia_decl)\n"
 << "          args[1] = BuilderZ.CreateIntToPtr(args[1], castvals[" << i << "]);\n"
 << "        BuilderZ.CreateCall(dmemcpy, args,\n"
 << "            gutils->getInvertedBundles(&call, valueTypes,\n"
