@@ -29,6 +29,7 @@
 
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/Attributes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -1606,5 +1607,9 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
   }
   return false;
 }
+
+static llvm::Attribute::AttrKind ParamAttrsToPreserve[] = {
+    llvm::Attribute::Alignment, llvm::Attribute::StackAlignment,
+    llvm::Attribute::NoCapture};
 
 #endif

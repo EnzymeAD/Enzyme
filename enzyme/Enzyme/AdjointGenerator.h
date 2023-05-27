@@ -8240,6 +8240,11 @@ public:
           structAttrs[args.size()].push_back(
               call.getParamAttr(i, "enzymejl_returnRoots"));
         }
+        for (auto ty : ParamAttrsToPreserve)
+          if (call.getAttributes().hasParamAttr(i, ty)) {
+            auto attr = call.getAttributes().getParamAttr(i, ty);
+            structAttrs[args.size()].push_back(attr);
+          }
 
         auto argi = gutils->getNewFromOriginal(call.getArgOperand(i));
 
@@ -8282,6 +8287,13 @@ public:
         if (argTy == DIFFE_TYPE::CONSTANT) {
           continue;
         }
+
+        if (gutils->getWidth() == 1)
+          for (auto ty : ParamAttrsToPreserve)
+            if (call.getAttributes().hasParamAttr(i, ty)) {
+              auto attr = call.getAttributes().getParamAttr(i, ty);
+              structAttrs[args.size()].push_back(attr);
+            }
 
         if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
           if (gutils->getWidth() == 1) {
@@ -8547,6 +8559,11 @@ public:
 #endif
         );
       }
+      for (auto ty : ParamAttrsToPreserve)
+        if (call.getAttributes().hasParamAttr(i, ty)) {
+          auto attr = call.getAttributes().getParamAttr(i, ty);
+          structAttrs[pre_args.size()].push_back(attr);
+        }
 
       auto argTy = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
 
@@ -8606,6 +8623,13 @@ public:
       auto argType = argi->getType();
 
       if (argTy == DIFFE_TYPE::DUP_ARG || argTy == DIFFE_TYPE::DUP_NONEED) {
+        if (gutils->getWidth() == 1)
+          for (auto ty : ParamAttrsToPreserve)
+            if (call.getAttributes().hasParamAttr(i, ty)) {
+              auto attr = call.getAttributes().getParamAttr(i, ty);
+              structAttrs[pre_args.size()].push_back(attr);
+            }
+
         if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
           if (gutils->getWidth() == 1) {
             structAttrs[pre_args.size()].push_back(
