@@ -98,6 +98,7 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
   auto typeMap = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
   auto argUsers = pattern.getArgUsers();
+  //auto primalName = pattern.getName();
 
   os 
 << "  if ((Mode == DerivativeMode::ReverseModeCombined ||\n"
@@ -152,16 +153,32 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
     // TODO: remove last hardcoded len_n usages to support blas lv2/3 
     os
 << "    if (cache_" << vecName << ") {\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, len_n);\n"
+<< "      Value *len_integer = len_n;\n"
+<< "      if (byRef) {"
+<< "         len_integer = BuilderZ.CreateLoad(IT, BuilderZ.CreatePointerCast(len_integer, PointerType::get(IT, cast<PointerType>(len_integer->getType()->getAddressSpace()))));\n"// TODO: fixme
+<< "      }\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, len_integer);\n"
 << "      Value *arg = BuilderZ.CreateBitCast(malins, castvals[" << i << "]);\n"
 << "      Function *dmemcpy;\n"
 << "      if (EnzymeBlasCopy) {\n"
-<< "        auto valueTypes = {ValueType::Both, ValueType::Both, ValueType::Both, ValueType::Both, ValueType::Both};\n"
+<< "        ValueType valueTypes[] = {";
+    { bool comma = false;
+    for (auto i : nameVec) {
+      if (comma) os << ", ";
+      os << "ValueType::None";
+      comma = true;
+    }
+    os << "};\n";
+os <<
+   "         valueTypes[" << argIdx << "] = ValueType::Primal;\n"
+<< "         if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n"
+<< "         if (byRef) valueTypes[" << length_argn /*TODO: fixme */<< "] = ValueType::Primal;\n";
+    }
 << "        dmemcpy = getOrInsertMemcpyStridedBlas(*gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
 << "            intType, blas, julia_decl);\n"
 << "        Value *args[5] = {len_n, gutils->getNewFromOriginal(arg_" << vecName << "), " << incName << ", arg, ConstantInt::get(intType, 1)};\n"
-<< "        if (args[1]->getType()->isIntegerTy())\n"
-<< "          args[1] = BuilderZ.CreateIntToPtr(args[1], castvals[" << i << "]);\n"
+<< "        if (julia_decl)\n"
+<< "          args[3] = BuilderZ.CreatePtrToInt(args[3], arg[1]->getType());\n"
 << "        BuilderZ.CreateCall(dmemcpy, args,\n"
 << "            gutils->getInvertedBundles(&call, valueTypes,\n"
 << "            BuilderZ, /*lookup*/ false));\n"
