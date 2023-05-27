@@ -8240,7 +8240,7 @@ public:
           structAttrs[args.size()].push_back(
               call.getParamAttr(i, "enzymejl_returnRoots"));
         }
-        for (auto ty : ParamAttrsToPreserve)
+        for (auto ty : PrimalParamAttrsToPreserve)
           if (call.getAttributes().hasParamAttr(i, ty)) {
             auto attr = call.getAttributes().getParamAttr(i, ty);
             structAttrs[args.size()].push_back(attr);
@@ -8289,7 +8289,7 @@ public:
         }
 
         if (gutils->getWidth() == 1)
-          for (auto ty : ParamAttrsToPreserve)
+          for (auto ty : ShadowParamAttrsToPreserve)
             if (call.getAttributes().hasParamAttr(i, ty)) {
               auto attr = call.getAttributes().getParamAttr(i, ty);
               structAttrs[args.size()].push_back(attr);
@@ -8559,7 +8559,7 @@ public:
 #endif
         );
       }
-      for (auto ty : ParamAttrsToPreserve)
+      for (auto ty : PrimalParamAttrsToPreserve)
         if (call.getAttributes().hasParamAttr(i, ty)) {
           auto attr = call.getAttributes().getParamAttr(i, ty);
           structAttrs[pre_args.size()].push_back(attr);
@@ -8624,7 +8624,7 @@ public:
 
       if (argTy == DIFFE_TYPE::DUP_ARG || argTy == DIFFE_TYPE::DUP_NONEED) {
         if (gutils->getWidth() == 1)
-          for (auto ty : ParamAttrsToPreserve)
+          for (auto ty : ShadowParamAttrsToPreserve)
             if (call.getAttributes().hasParamAttr(i, ty)) {
               auto attr = call.getAttributes().getParamAttr(i, ty);
               structAttrs[pre_args.size()].push_back(attr);

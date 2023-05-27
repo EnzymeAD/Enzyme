@@ -2191,7 +2191,7 @@ F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
       NewF->addParamAttr(
           jj, F->getAttributes().getParamAttr(ii, "enzymejl_returnRoots"));
     }
-    for (auto ty : ParamAttrsToPreserve)
+    for (auto ty : PrimalParamAttrsToPreserve)
       if (F->getAttributes().hasParamAttr(ii, ty)) {
         auto attr = F->getAttributes().getParamAttr(ii, ty);
         NewF->addParamAttr(jj, attr);
@@ -2226,7 +2226,7 @@ F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
       ptrInputs[i] = (j + 1);
       // TODO: find a way to keep the attributes in vector mode.
       if (width == 1)
-        for (auto ty : ParamAttrsToPreserve)
+        for (auto ty : ShadowParamAttrsToPreserve)
           if (F->getAttributes().hasParamAttr(ii, ty)) {
             auto attr = F->getAttributes().getParamAttr(ii, ty);
             NewF->addParamAttr(jj + 1, attr);
