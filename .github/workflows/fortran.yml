@@ -2,7 +2,7 @@ name: Fortran
 
 on:
   workflow_run:
-    workflows: [Clang-Format]
+    workflows: [Format]
     types: 
       - completed
 

@@ -2,7 +2,7 @@ name: Julia Enzyme CI
 
 on:
   workflow_run:
-    workflows: [Clang-Format]
+    workflows: [Format]
     types: 
       - completed
 
