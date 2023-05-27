@@ -348,7 +348,10 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::stackrestore,
     Intrinsic::lifetime_start,
     Intrinsic::lifetime_end,
+#if LLVM_VERSION_MAJOR <= 16
     Intrinsic::dbg_addr,
+#endif
+
     Intrinsic::dbg_declare,
     Intrinsic::dbg_value,
 #if LLVM_VERSION_MAJOR > 6

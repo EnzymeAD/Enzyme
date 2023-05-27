@@ -580,7 +580,9 @@ static inline bool isDebugFunction(llvm::Function *called) {
 #if LLVM_VERSION_MAJOR > 6
   case llvm::Intrinsic::dbg_label:
 #endif
+#if LLVM_VERSION_MAJOR <= 16
   case llvm::Intrinsic::dbg_addr:
+#endif
   case llvm::Intrinsic::lifetime_start:
   case llvm::Intrinsic::lifetime_end:
     return true;

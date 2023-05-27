@@ -55,6 +55,10 @@
 
 #include "llvm-c/Core.h"
 
+#if LLVM_VERSION_MAJOR <= 16
+#include "llvm/ADT/Triple.h"
+#endif
+
 class DiffeGradientUtils final : public GradientUtils {
   DiffeGradientUtils(
       EnzymeLogic &Logic, llvm::Function *newFunc_, llvm::Function *oldFunc_,

@@ -23,10 +23,17 @@
 // the function passed as the first argument.
 //
 //===----------------------------------------------------------------------===//
+#include <llvm/Config/llvm-config.h>
+
+#if LLVM_VERSION_MAJOR >= 16
+#define private public
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+#undef private
+#else
 #include "SCEV/ScalarEvolution.h"
 #include "SCEV/ScalarEvolutionExpander.h"
-
-#include <llvm/Config/llvm-config.h>
+#endif
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
@@ -34,7 +41,6 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/Triple.h"
 
 #include "llvm/Passes/PassBuilder.h"
 
@@ -2815,7 +2821,6 @@ AnalysisKey EnzymeNewPM::Key;
 #include "ActivityAnalysisPrinter.h"
 #include "PreserveNVVM.h"
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
-#ifdef ENZYME_RUNPASS
 #include "llvm/Passes/PassBuilder.h"
 #if LLVM_VERSION_MAJOR >= 15
 #include "llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h"
@@ -2841,7 +2846,7 @@ AnalysisKey EnzymeNewPM::Key;
 #include "llvm/Transforms/Scalar/LoopRotation.h"
 #include "llvm/Transforms/Scalar/LoopUnrollPass.h"
 #include "llvm/Transforms/Scalar/SROA.h"
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 12
 // #include "llvm/Transforms/IPO/MemProfContextDisambiguation.h"
 #include "llvm/Transforms/IPO/ArgumentPromotion.h"
 #include "llvm/Transforms/Scalar/ConstraintElimination.h"
@@ -2858,10 +2863,15 @@ AnalysisKey EnzymeNewPM::Key;
 #include "llvm/Transforms/Scalar/LoopFlatten.h"
 #include "llvm/Transforms/Scalar/MergedLoadStoreMotion.h"
 
-static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level) {
+#if LLVM_VERSION_MAJOR < 14
+static InlineParams
+getInlineParamsFromOptLevel(llvm::PassBuilder::OptimizationLevel Level)
+#else
+static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level)
+#endif
+{
   return getInlineParams(Level.getSpeedupLevel(), Level.getSizeLevel());
 }
-#endif
 
 #if LLVM_VERSION_MAJOR >= 12
 #include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"
@@ -2904,364 +2914,350 @@ extern cl::opt<unsigned> SetLicmMssaOptCap;
 #endif
 #endif
 
-extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
-llvmGetPassPluginInfo() {
-  return {
-      LLVM_PLUGIN_API_VERSION, "EnzymeNewPM", "v0.1",
-      [](llvm::PassBuilder &PB) {
-#ifdef ENZYME_RUNPASS
+void augmentPassBuilder(llvm::PassBuilder &PB) {
 #if LLVM_VERSION_MAJOR < 14
-        using OptimizationLevel = llvm::PassBuilder::OptimizationLevel;
+  using OptimizationLevel = llvm::PassBuilder::OptimizationLevel;
 #endif
 
-        auto PB0 = new llvm::PassBuilder(PB);
+  auto PB0 = new llvm::PassBuilder(PB);
 #if LLVM_VERSION_MAJOR >= 12
-        auto prePass = [PB0](ModulePassManager &MPM, OptimizationLevel Level)
+  auto prePass = [PB0](ModulePassManager &MPM, OptimizationLevel Level)
 #else
-        auto prePass = [PB0](ModulePassManager &MPM)
+  auto prePass = [PB0](ModulePassManager &MPM)
 #endif
-        {
+  {
 
 #if LLVM_VERSION_MAJOR < 12
-          llvm_unreachable(
-              "New Pass manager pipeline unsupported at version <= 11");
+    llvm_unreachable("New Pass manager pipeline unsupported at version <= 11");
 #else
 #if LLVM_VERSION_MAJOR < 15
-    ////// End of Module simplification
-    // Specialize functions with IPSCCP.
+  ////// End of Module simplification
+  // Specialize functions with IPSCCP.
 #if LLVM_VERSION_MAJOR >= 13
-          if (EnableFunctionSpecialization && Level == OptimizationLevel::O3)
-            MPM.addPass(FunctionSpecializationPass());
+    if (EnableFunctionSpecialization && Level == OptimizationLevel::O3)
+      MPM.addPass(FunctionSpecializationPass());
 #endif
 
-          // Interprocedural constant propagation now that basic cleanup has
-          // occurred and prior to optimizing globals.
-          // FIXME: This position in the pipeline hasn't been carefully
-          // considered in years, it should be re-analyzed.
-          MPM.addPass(IPSCCPPass());
+    // Interprocedural constant propagation now that basic cleanup has
+    // occurred and prior to optimizing globals.
+    // FIXME: This position in the pipeline hasn't been carefully
+    // considered in years, it should be re-analyzed.
+    MPM.addPass(IPSCCPPass());
 
-          // Attach metadata to indirect call sites indicating the set of
-          // functions they may target at run-time. This should follow
-          // IPSCCP.
-          MPM.addPass(CalledValuePropagationPass());
+    // Attach metadata to indirect call sites indicating the set of
+    // functions they may target at run-time. This should follow
+    // IPSCCP.
+    MPM.addPass(CalledValuePropagationPass());
 
-          // Optimize globals to try and fold them into constants.
-          MPM.addPass(GlobalOptPass());
+    // Optimize globals to try and fold them into constants.
+    MPM.addPass(GlobalOptPass());
 
-          // Promote any localized globals to SSA registers.
-          // FIXME: Should this instead by a run of SROA?
-          // FIXME: We should probably run instcombine and simplifycfg
-          // afterward to delete control flows that are dead once globals
-          // have been folded to constants.
-          MPM.addPass(createModuleToFunctionPassAdaptor(PromotePass()));
+    // Promote any localized globals to SSA registers.
+    // FIXME: Should this instead by a run of SROA?
+    // FIXME: We should probably run instcombine and simplifycfg
+    // afterward to delete control flows that are dead once globals
+    // have been folded to constants.
+    MPM.addPass(createModuleToFunctionPassAdaptor(PromotePass()));
 
-          // Remove any dead arguments exposed by cleanups and constant
-          // folding globals.
-          MPM.addPass(DeadArgumentEliminationPass());
+    // Remove any dead arguments exposed by cleanups and constant
+    // folding globals.
+    MPM.addPass(DeadArgumentEliminationPass());
 
-          // Create a small function pass pipeline to cleanup after all the
-          // global optimizations.
-          FunctionPassManager GlobalCleanupPM;
-          GlobalCleanupPM.addPass(InstCombinePass());
+    // Create a small function pass pipeline to cleanup after all the
+    // global optimizations.
+    FunctionPassManager GlobalCleanupPM;
+    GlobalCleanupPM.addPass(InstCombinePass());
 
 #if LLVM_VERSION_MAJOR >= 14
-          GlobalCleanupPM.addPass(SimplifyCFGPass(
-              SimplifyCFGOptions().convertSwitchRangeToICmp(true)));
+    GlobalCleanupPM.addPass(
+        SimplifyCFGPass(SimplifyCFGOptions().convertSwitchRangeToICmp(true)));
 #else
-          GlobalCleanupPM.addPass(SimplifyCFGPass(SimplifyCFGOptions()));
+    GlobalCleanupPM.addPass(SimplifyCFGPass(SimplifyCFGOptions()));
 #endif
-          MPM.addPass(
-              createModuleToFunctionPassAdaptor(std::move(GlobalCleanupPM)));
+    MPM.addPass(createModuleToFunctionPassAdaptor(std::move(GlobalCleanupPM)));
 
-          ThinOrFullLTOPhase Phase = ThinOrFullLTOPhase::None;
+    ThinOrFullLTOPhase Phase = ThinOrFullLTOPhase::None;
 #if LLVM_VERSION >= 13
-          bool EnableModuleInliner = false;
-          if (EnableModuleInliner)
-            MPM.addPass(PB0->buildModuleInlinerPipeline(Level, Phase));
-          else
+    bool EnableModuleInliner = false;
+    if (EnableModuleInliner)
+      MPM.addPass(PB0->buildModuleInlinerPipeline(Level, Phase));
+    else
 #endif
-            MPM.addPass(PB0->buildInlinerPipeline(Level, Phase));
+      MPM.addPass(PB0->buildInlinerPipeline(Level, Phase));
 
-          FunctionPassManager CoroCleanupPM;
-          CoroCleanupPM.addPass(CoroCleanupPass());
-          MPM.addPass(
-              createModuleToFunctionPassAdaptor(std::move(CoroCleanupPM)));
+    FunctionPassManager CoroCleanupPM;
+    CoroCleanupPM.addPass(CoroCleanupPass());
+    MPM.addPass(createModuleToFunctionPassAdaptor(std::move(CoroCleanupPM)));
 
-          ////// Finished Module simplification, starting ModuleOptimization
-          //
-          // Optimize globals now that the module is fully simplified.
-          MPM.addPass(GlobalOptPass());
-          MPM.addPass(GlobalDCEPass());
+    ////// Finished Module simplification, starting ModuleOptimization
+    //
+    // Optimize globals now that the module is fully simplified.
+    MPM.addPass(GlobalOptPass());
+    MPM.addPass(GlobalDCEPass());
 
-          // Run partial inlining pass to partially inline functions that
-          // have large bodies.
-          if (RunPartialInlining)
-            MPM.addPass(PartialInlinerPass());
+    // Run partial inlining pass to partially inline functions that
+    // have large bodies.
+    if (RunPartialInlining)
+      MPM.addPass(PartialInlinerPass());
 
-          // Do RPO function attribute inference across the module to
-          // forward-propagate attributes where applicable.
-          // FIXME: Is this really an optimization rather than a
-          // canonicalization?
-          MPM.addPass(ReversePostOrderFunctionAttrsPass());
+    // Do RPO function attribute inference across the module to
+    // forward-propagate attributes where applicable.
+    // FIXME: Is this really an optimization rather than a
+    // canonicalization?
+    MPM.addPass(ReversePostOrderFunctionAttrsPass());
 #endif
-          FunctionPassManager OptimizePM;
-          OptimizePM.addPass(Float2IntPass());
-          OptimizePM.addPass(LowerConstantIntrinsicsPass());
+    FunctionPassManager OptimizePM;
+    OptimizePM.addPass(Float2IntPass());
+    OptimizePM.addPass(LowerConstantIntrinsicsPass());
 
-          if (EnableMatrix) {
-            OptimizePM.addPass(LowerMatrixIntrinsicsPass());
-            OptimizePM.addPass(EarlyCSEPass());
-          }
+    if (EnableMatrix) {
+      OptimizePM.addPass(LowerMatrixIntrinsicsPass());
+      OptimizePM.addPass(EarlyCSEPass());
+    }
 
-          LoopPassManager LPM;
-          bool LTOPreLink = false;
-      // First rotate loops that may have been un-rotated by prior passes.
-      // Disable header duplication at -Oz.
+    LoopPassManager LPM;
+    bool LTOPreLink = false;
+    // First rotate loops that may have been un-rotated by prior passes.
+    // Disable header duplication at -Oz.
 #if LLVM_VERSION_MAJOR >= 11
-          LPM.addPass(
-              LoopRotatePass(Level != OptimizationLevel::Oz, LTOPreLink));
+    LPM.addPass(LoopRotatePass(Level != OptimizationLevel::Oz, LTOPreLink));
 #endif
-          // Some loops may have become dead by now. Try to delete them.
-          // FIXME: see discussion in https://reviews.llvm.org/D112851,
-          //        this may need to be revisited once we run GVN before
-          //        loop deletion in the simplification pipeline.
-          LPM.addPass(LoopDeletionPass());
+    // Some loops may have become dead by now. Try to delete them.
+    // FIXME: see discussion in https://reviews.llvm.org/D112851,
+    //        this may need to be revisited once we run GVN before
+    //        loop deletion in the simplification pipeline.
+    LPM.addPass(LoopDeletionPass());
 
-          LPM.addPass(llvm::LoopFullUnrollPass());
-          OptimizePM.addPass(createFunctionToLoopPassAdaptor(std::move(LPM)));
+    LPM.addPass(llvm::LoopFullUnrollPass());
+    OptimizePM.addPass(createFunctionToLoopPassAdaptor(std::move(LPM)));
 
-          MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizePM)));
+    MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizePM)));
 #endif
-        };
-
-#if LLVM_VERSION_MAJOR >= 12
-        auto loadPass =
-            [prePass](ModulePassManager &MPM, OptimizationLevel Level)
-#else
-        auto loadPass = [prePass](ModulePassManager &MPM)
-#endif
-        {
-          MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+  };
 
 #if LLVM_VERSION_MAJOR >= 12
-          if (Level != OptimizationLevel::O0)
-            prePass(MPM, Level);
+  auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level)
 #else
-          prePass(MPM);
+  auto loadPass = [prePass](ModulePassManager &MPM)
 #endif
-          FunctionPassManager OptimizerPM;
-          FunctionPassManager OptimizerPM2;
-#if LLVM_VERSION_MAJOR >= 16
-          OptimizerPM.addPass(llvm::GVNPass());
-          OptimizerPM.addPass(llvm::SROAPass(llvm::SROAOptions::PreserveCFG));
-#elif LLVM_VERSION_MAJOR >= 14
-          OptimizerPM.addPass(llvm::GVNPass());
-          OptimizerPM.addPass(llvm::SROAPass());
+  {
+    MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+
+#if LLVM_VERSION_MAJOR >= 12
+    if (Level != OptimizationLevel::O0)
+      prePass(MPM, Level);
 #else
-          OptimizerPM.addPass(llvm::GVN());
-          OptimizerPM.addPass(llvm::SROA());
+    prePass(MPM);
 #endif
-          MPM.addPass(
-              createModuleToFunctionPassAdaptor(std::move(OptimizerPM)));
-          MPM.addPass(EnzymeNewPM(/*PostOpt=*/true));
-          MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false));
+    FunctionPassManager OptimizerPM;
+    FunctionPassManager OptimizerPM2;
 #if LLVM_VERSION_MAJOR >= 16
-          OptimizerPM2.addPass(llvm::GVNPass());
-          OptimizerPM2.addPass(llvm::SROAPass(llvm::SROAOptions::PreserveCFG));
+    OptimizerPM.addPass(llvm::GVNPass());
+    OptimizerPM.addPass(llvm::SROAPass(llvm::SROAOptions::PreserveCFG));
 #elif LLVM_VERSION_MAJOR >= 14
-          OptimizerPM2.addPass(llvm::GVNPass());
-          OptimizerPM2.addPass(llvm::SROAPass());
+    OptimizerPM.addPass(llvm::GVNPass());
+    OptimizerPM.addPass(llvm::SROAPass());
 #else
-          OptimizerPM2.addPass(llvm::GVN());
-          OptimizerPM2.addPass(llvm::SROA());
+    OptimizerPM.addPass(llvm::GVN());
+    OptimizerPM.addPass(llvm::SROA());
+#endif
+    MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizerPM)));
+    MPM.addPass(EnzymeNewPM(/*PostOpt=*/true));
+    MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false));
+#if LLVM_VERSION_MAJOR >= 16
+    OptimizerPM2.addPass(llvm::GVNPass());
+    OptimizerPM2.addPass(llvm::SROAPass(llvm::SROAOptions::PreserveCFG));
+#elif LLVM_VERSION_MAJOR >= 14
+    OptimizerPM2.addPass(llvm::GVNPass());
+    OptimizerPM2.addPass(llvm::SROAPass());
+#else
+    OptimizerPM2.addPass(llvm::GVN());
+    OptimizerPM2.addPass(llvm::SROA());
 #endif
 
-          LoopPassManager LPM1;
-          LPM1.addPass(LoopDeletionPass());
-          OptimizerPM2.addPass(
-              createFunctionToLoopPassAdaptor(std::move(LPM1)));
+    LoopPassManager LPM1;
+    LPM1.addPass(LoopDeletionPass());
+    OptimizerPM2.addPass(createFunctionToLoopPassAdaptor(std::move(LPM1)));
 
-          MPM.addPass(
-              createModuleToFunctionPassAdaptor(std::move(OptimizerPM2)));
-          MPM.addPass(GlobalOptPass());
-        };
+    MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizerPM2)));
+    MPM.addPass(GlobalOptPass());
+  };
 // TODO need for perf reasons to move Enzyme pass to the pre vectorization.
 #if LLVM_VERSION_MAJOR >= 15
-        PB.registerOptimizerEarlyEPCallback(loadPass);
+  PB.registerOptimizerEarlyEPCallback(loadPass);
 #elif LLVM_VERSION_MAJOR >= 12
-        PB.registerPipelineEarlySimplificationEPCallback(loadPass);
+  PB.registerPipelineEarlySimplificationEPCallback(loadPass);
 #else
-        PB.registerPipelineStartEPCallback(loadPass);
+  PB.registerPipelineStartEPCallback(loadPass);
 #endif
 
 #if LLVM_VERSION_MAJOR >= 12
-        auto loadNVVM = [](ModulePassManager &MPM, OptimizationLevel)
+  auto loadNVVM = [](ModulePassManager &MPM, OptimizationLevel)
 #else
-        auto loadNVVM = [](ModulePassManager &MPM)
+  auto loadNVVM = [](ModulePassManager &MPM)
 #endif
-        { MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true)); };
+  { MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true)); };
 
-        // We should register at vectorizer start for consistency, however,
-        // that requires a functionpass, and we have a modulepass.
-        // PB.registerVectorizerStartEPCallback(loadPass);
-        PB.registerPipelineStartEPCallback(loadNVVM);
+  // We should register at vectorizer start for consistency, however,
+  // that requires a functionpass, and we have a modulepass.
+  // PB.registerVectorizerStartEPCallback(loadPass);
+  PB.registerPipelineStartEPCallback(loadNVVM);
 #if LLVM_VERSION_MAJOR >= 15
-        PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadNVVM);
+  PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadNVVM);
 
-        auto preLTOPass = [](ModulePassManager &MPM, OptimizationLevel Level) {
-          // Create a function that performs CFI checks for cross-DSO calls with
-          // targets in the current module.
-          MPM.addPass(CrossDSOCFIPass());
+  auto preLTOPass = [](ModulePassManager &MPM, OptimizationLevel Level) {
+    // Create a function that performs CFI checks for cross-DSO calls with
+    // targets in the current module.
+    MPM.addPass(CrossDSOCFIPass());
 
-          if (Level == OptimizationLevel::O0) {
-            return;
-          }
+    if (Level == OptimizationLevel::O0) {
+      return;
+    }
 
-      // Try to run OpenMP optimizations, quick no-op if no OpenMP metadata
-      // present.
+    // Try to run OpenMP optimizations, quick no-op if no OpenMP metadata
+    // present.
 #if LLVM_VERSION_MAJOR >= 16
-          MPM.addPass(OpenMPOptPass(ThinOrFullLTOPhase::FullLTOPostLink));
+    MPM.addPass(OpenMPOptPass(ThinOrFullLTOPhase::FullLTOPostLink));
 #else
-          MPM.addPass(OpenMPOptPass());
+    MPM.addPass(OpenMPOptPass());
 #endif
 
-          // Remove unused virtual tables to improve the quality of code
-          // generated by whole-program devirtualization and bitset lowering.
-          MPM.addPass(GlobalDCEPass());
+    // Remove unused virtual tables to improve the quality of code
+    // generated by whole-program devirtualization and bitset lowering.
+    MPM.addPass(GlobalDCEPass());
 
-          // Do basic inference of function attributes from known properties of
-          // system libraries and other oracles.
-          MPM.addPass(InferFunctionAttrsPass());
+    // Do basic inference of function attributes from known properties of
+    // system libraries and other oracles.
+    MPM.addPass(InferFunctionAttrsPass());
 
-          if (Level.getSpeedupLevel() > 1) {
-            MPM.addPass(createModuleToFunctionPassAdaptor(
-                CallSiteSplittingPass(), EagerlyInvalidateAnalyses));
+    if (Level.getSpeedupLevel() > 1) {
+      MPM.addPass(createModuleToFunctionPassAdaptor(CallSiteSplittingPass(),
+                                                    EagerlyInvalidateAnalyses));
 
-        // Indirect call promotion. This should promote all the targets that
-        // are left by the earlier promotion pass that promotes intra-module
-        // targets. This two-step promotion is to save the compile time. For
-        // LTO, it should produce the same result as if we only do promotion
-        // here.
-        // MPM.addPass(PGOIndirectCallPromotion(
-        //	true /* InLTO */, PGOOpt && PGOOpt->Action ==
-        // PGOOptions::SampleUse));
+      // Indirect call promotion. This should promote all the targets that
+      // are left by the earlier promotion pass that promotes intra-module
+      // targets. This two-step promotion is to save the compile time. For
+      // LTO, it should produce the same result as if we only do promotion
+      // here.
+      // MPM.addPass(PGOIndirectCallPromotion(
+      //	true /* InLTO */, PGOOpt && PGOOpt->Action ==
+      // PGOOptions::SampleUse));
 
-        // Propagate constants at call sites into the functions they call.
-        // This opens opportunities for globalopt (and inlining) by
-        // substituting function pointers passed as arguments to direct uses
-        // of functions.
+      // Propagate constants at call sites into the functions they call.
+      // This opens opportunities for globalopt (and inlining) by
+      // substituting function pointers passed as arguments to direct uses
+      // of functions.
 #if LLVM_VERSION_MAJOR >= 16
-            MPM.addPass(
-                IPSCCPPass(IPSCCPOptions(/*AllowFuncSpec=*/
-                                         Level != OptimizationLevel::Os &&
-                                         Level != OptimizationLevel::Oz)));
+      MPM.addPass(IPSCCPPass(IPSCCPOptions(/*AllowFuncSpec=*/
+                                           Level != OptimizationLevel::Os &&
+                                           Level != OptimizationLevel::Oz)));
 #else
-            MPM.addPass(IPSCCPPass());
+      MPM.addPass(IPSCCPPass());
 #endif
 
-            // Attach metadata to indirect call sites indicating the set of
-            // functions they may target at run-time. This should follow IPSCCP.
-            MPM.addPass(CalledValuePropagationPass());
-          }
+      // Attach metadata to indirect call sites indicating the set of
+      // functions they may target at run-time. This should follow IPSCCP.
+      MPM.addPass(CalledValuePropagationPass());
+    }
 
-          // Now deduce any function attributes based in the current code.
-          MPM.addPass(createModuleToPostOrderCGSCCPassAdaptor(
-              PostOrderFunctionAttrsPass()));
+    // Now deduce any function attributes based in the current code.
+    MPM.addPass(
+        createModuleToPostOrderCGSCCPassAdaptor(PostOrderFunctionAttrsPass()));
 
-          // Do RPO function attribute inference across the module to
-          // forward-propagate attributes where applicable.
-          // FIXME: Is this really an optimization rather than a
-          // canonicalization?
-          MPM.addPass(ReversePostOrderFunctionAttrsPass());
+    // Do RPO function attribute inference across the module to
+    // forward-propagate attributes where applicable.
+    // FIXME: Is this really an optimization rather than a
+    // canonicalization?
+    MPM.addPass(ReversePostOrderFunctionAttrsPass());
 
-          // Use in-range annotations on GEP indices to split globals where
-          // beneficial.
-          MPM.addPass(GlobalSplitPass());
+    // Use in-range annotations on GEP indices to split globals where
+    // beneficial.
+    MPM.addPass(GlobalSplitPass());
 
-          // Run whole program optimization of virtual call when the list of
-          // callees is fixed. MPM.addPass(WholeProgramDevirtPass(ExportSummary,
-          // nullptr));
+    // Run whole program optimization of virtual call when the list of
+    // callees is fixed. MPM.addPass(WholeProgramDevirtPass(ExportSummary,
+    // nullptr));
 
-          // Stop here at -O1.
-          if (Level == OptimizationLevel::O1) {
-            return;
-          }
+    // Stop here at -O1.
+    if (Level == OptimizationLevel::O1) {
+      return;
+    }
 
-          // Optimize globals to try and fold them into constants.
-          MPM.addPass(GlobalOptPass());
+    // Optimize globals to try and fold them into constants.
+    MPM.addPass(GlobalOptPass());
 
-          // Promote any localized globals to SSA registers.
-          MPM.addPass(createModuleToFunctionPassAdaptor(PromotePass()));
+    // Promote any localized globals to SSA registers.
+    MPM.addPass(createModuleToFunctionPassAdaptor(PromotePass()));
 
-          // Linking modules together can lead to duplicate global constant,
-          // only keep one copy of each constant.
-          MPM.addPass(ConstantMergePass());
+    // Linking modules together can lead to duplicate global constant,
+    // only keep one copy of each constant.
+    MPM.addPass(ConstantMergePass());
 
-          // Remove unused arguments from functions.
-          MPM.addPass(DeadArgumentEliminationPass());
+    // Remove unused arguments from functions.
+    MPM.addPass(DeadArgumentEliminationPass());
 
-          // Reduce the code after globalopt and ipsccp.  Both can open up
-          // significant simplification opportunities, and both can propagate
-          // functions through function pointers.  When this happens, we often
-          // have to resolve varargs calls, etc, so let instcombine do this.
-          FunctionPassManager PeepholeFPM;
-          PeepholeFPM.addPass(InstCombinePass());
-          if (Level.getSpeedupLevel() > 1)
-            PeepholeFPM.addPass(AggressiveInstCombinePass());
+    // Reduce the code after globalopt and ipsccp.  Both can open up
+    // significant simplification opportunities, and both can propagate
+    // functions through function pointers.  When this happens, we often
+    // have to resolve varargs calls, etc, so let instcombine do this.
+    FunctionPassManager PeepholeFPM;
+    PeepholeFPM.addPass(InstCombinePass());
+    if (Level.getSpeedupLevel() > 1)
+      PeepholeFPM.addPass(AggressiveInstCombinePass());
 
-          MPM.addPass(createModuleToFunctionPassAdaptor(
-              std::move(PeepholeFPM), EagerlyInvalidateAnalyses));
+    MPM.addPass(createModuleToFunctionPassAdaptor(std::move(PeepholeFPM),
+                                                  EagerlyInvalidateAnalyses));
 
-          // Note: historically, the PruneEH pass was run first to deduce
-          // nounwind and generally clean up exception handling overhead. It
-          // isn't clear this is valuable as the inliner doesn't currently care
-          // whether it is inlining an invoke or a call. Run the inliner now.
-          if (EnableModuleInliner) {
-            MPM.addPass(ModuleInlinerPass(getInlineParamsFromOptLevel(Level),
-                                          UseInlineAdvisor,
-                                          ThinOrFullLTOPhase::FullLTOPostLink));
-          } else {
-            MPM.addPass(ModuleInlinerWrapperPass(
-                getInlineParamsFromOptLevel(Level),
-                /* MandatoryFirst */ true,
-                InlineContext{ThinOrFullLTOPhase::FullLTOPostLink,
-                              InlinePass::CGSCCInliner}));
-          }
+    // Note: historically, the PruneEH pass was run first to deduce
+    // nounwind and generally clean up exception handling overhead. It
+    // isn't clear this is valuable as the inliner doesn't currently care
+    // whether it is inlining an invoke or a call. Run the inliner now.
+    if (EnableModuleInliner) {
+      MPM.addPass(ModuleInlinerPass(getInlineParamsFromOptLevel(Level),
+                                    UseInlineAdvisor,
+                                    ThinOrFullLTOPhase::FullLTOPostLink));
+    } else {
+      MPM.addPass(ModuleInlinerWrapperPass(
+          getInlineParamsFromOptLevel(Level),
+          /* MandatoryFirst */ true,
+          InlineContext{ThinOrFullLTOPhase::FullLTOPostLink,
+                        InlinePass::CGSCCInliner}));
+    }
 
-          // Perform context disambiguation after inlining, since that would
-          // reduce the amount of additional cloning required to distinguish the
-          // allocation contexts. if (EnableMemProfContextDisambiguation)
-          //	MPM.addPass(MemProfContextDisambiguation());
+    // Perform context disambiguation after inlining, since that would
+    // reduce the amount of additional cloning required to distinguish the
+    // allocation contexts. if (EnableMemProfContextDisambiguation)
+    //	MPM.addPass(MemProfContextDisambiguation());
 
-          // Optimize globals again after we ran the inliner.
-          MPM.addPass(GlobalOptPass());
+    // Optimize globals again after we ran the inliner.
+    MPM.addPass(GlobalOptPass());
 
-      // Run the OpenMPOpt pass again after global optimizations.
+    // Run the OpenMPOpt pass again after global optimizations.
 #if LLVM_VERSION_MAJOR >= 16
-          MPM.addPass(OpenMPOptPass(ThinOrFullLTOPhase::FullLTOPostLink));
+    MPM.addPass(OpenMPOptPass(ThinOrFullLTOPhase::FullLTOPostLink));
 #else
-          MPM.addPass(OpenMPOptPass());
+    MPM.addPass(OpenMPOptPass());
 #endif
 
-          // Garbage collect dead functions.
-          MPM.addPass(GlobalDCEPass());
+    // Garbage collect dead functions.
+    MPM.addPass(GlobalDCEPass());
 
-          // If we didn't decide to inline a function, check to see if we can
-          // transform it to pass arguments by value instead of by reference.
-          MPM.addPass(
-              createModuleToPostOrderCGSCCPassAdaptor(ArgumentPromotionPass()));
+    // If we didn't decide to inline a function, check to see if we can
+    // transform it to pass arguments by value instead of by reference.
+    MPM.addPass(
+        createModuleToPostOrderCGSCCPassAdaptor(ArgumentPromotionPass()));
 
-          FunctionPassManager FPM;
-          // The IPO Passes may leave cruft around. Clean up after them.
-          FPM.addPass(InstCombinePass());
+    FunctionPassManager FPM;
+    // The IPO Passes may leave cruft around. Clean up after them.
+    FPM.addPass(InstCombinePass());
 
-          if (EnableConstraintElimination)
-            FPM.addPass(ConstraintEliminationPass());
+    if (EnableConstraintElimination)
+      FPM.addPass(ConstraintEliminationPass());
 
-          FPM.addPass(JumpThreadingPass());
+    FPM.addPass(JumpThreadingPass());
 
-      // Do a post inline PGO instrumentation and use pass. This is a context
-      // sensitive PGO pass.
+    // Do a post inline PGO instrumentation and use pass. This is a context
+    // sensitive PGO pass.
 #if 0
 		  if (PGOOpt) {
 			if (PGOOpt->CSAction == PGOOptions::CSIRInstr)
@@ -3277,102 +3273,110 @@ llvmGetPassPluginInfo() {
 		  }
 #endif
 
-      // Break up allocas
+    // Break up allocas
 #if LLVM_VERSION_MAJOR >= 16
-          FPM.addPass(SROAPass(SROAOptions::ModifyCFG));
+    FPM.addPass(SROAPass(SROAOptions::ModifyCFG));
 #else
-          FPM.addPass(SROAPass());
+    FPM.addPass(SROAPass());
 #endif
 
-          // LTO provides additional opportunities for tailcall elimination due
-          // to link-time inlining, and visibility of nocapture attribute.
-          FPM.addPass(TailCallElimPass());
+    // LTO provides additional opportunities for tailcall elimination due
+    // to link-time inlining, and visibility of nocapture attribute.
+    FPM.addPass(TailCallElimPass());
 
-          // Run a few AA driver optimizations here and now to cleanup the code.
-          MPM.addPass(createModuleToFunctionPassAdaptor(
-              std::move(FPM), EagerlyInvalidateAnalyses));
+    // Run a few AA driver optimizations here and now to cleanup the code.
+    MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM),
+                                                  EagerlyInvalidateAnalyses));
 
-          MPM.addPass(createModuleToPostOrderCGSCCPassAdaptor(
-              PostOrderFunctionAttrsPass()));
+    MPM.addPass(
+        createModuleToPostOrderCGSCCPassAdaptor(PostOrderFunctionAttrsPass()));
 
-          // Require the GlobalsAA analysis for the module so we can query it
-          // within MainFPM.
-          MPM.addPass(RequireAnalysisPass<GlobalsAA, Module>());
-        };
+    // Require the GlobalsAA analysis for the module so we can query it
+    // within MainFPM.
+    MPM.addPass(RequireAnalysisPass<GlobalsAA, Module>());
+  };
 
-        auto loadLTO = [preLTOPass, loadPass](ModulePassManager &MPM,
-                                              OptimizationLevel Level) {
-          preLTOPass(MPM, Level);
-          MPM.addPass(createModuleToPostOrderCGSCCPassAdaptor(
-              PostOrderFunctionAttrsPass()));
+  auto loadLTO = [preLTOPass, loadPass](ModulePassManager &MPM,
+                                        OptimizationLevel Level) {
+    preLTOPass(MPM, Level);
+    MPM.addPass(
+        createModuleToPostOrderCGSCCPassAdaptor(PostOrderFunctionAttrsPass()));
 
-          // Require the GlobalsAA analysis for the module so we can query it
-          // within MainFPM.
-          MPM.addPass(RequireAnalysisPass<GlobalsAA, Module>());
+    // Require the GlobalsAA analysis for the module so we can query it
+    // within MainFPM.
+    MPM.addPass(RequireAnalysisPass<GlobalsAA, Module>());
 
-          // Invalidate AAManager so it can be recreated and pick up the newly
-          // available GlobalsAA.
-          MPM.addPass(createModuleToFunctionPassAdaptor(
-              InvalidateAnalysisPass<AAManager>()));
+    // Invalidate AAManager so it can be recreated and pick up the newly
+    // available GlobalsAA.
+    MPM.addPass(
+        createModuleToFunctionPassAdaptor(InvalidateAnalysisPass<AAManager>()));
 
-          FunctionPassManager MainFPM;
-          MainFPM.addPass(createFunctionToLoopPassAdaptor(
-              LICMPass(SetLicmMssaOptCap, SetLicmMssaNoAccForPromotionCap,
-                       /*AllowSpeculation=*/true),
-              /*USeMemorySSA=*/true, /*UseBlockFrequencyInfo=*/false));
+    FunctionPassManager MainFPM;
+    MainFPM.addPass(createFunctionToLoopPassAdaptor(
+        LICMPass(SetLicmMssaOptCap, SetLicmMssaNoAccForPromotionCap,
+                 /*AllowSpeculation=*/true),
+        /*USeMemorySSA=*/true, /*UseBlockFrequencyInfo=*/false));
 
-          if (RunNewGVN)
-            MainFPM.addPass(NewGVNPass());
-          else
-            MainFPM.addPass(GVNPass());
+    if (RunNewGVN)
+      MainFPM.addPass(NewGVNPass());
+    else
+      MainFPM.addPass(GVNPass());
 
-          // Remove dead memcpy()'s.
-          MainFPM.addPass(MemCpyOptPass());
+    // Remove dead memcpy()'s.
+    MainFPM.addPass(MemCpyOptPass());
 
-          // Nuke dead stores.
-          MainFPM.addPass(DSEPass());
+    // Nuke dead stores.
+    MainFPM.addPass(DSEPass());
 #if LLVM_VERSION_MAJOR >= 17
-          MainFPM.addPass(MoveAutoInitPass());
+    MainFPM.addPass(MoveAutoInitPass());
 #endif
-          MainFPM.addPass(MergedLoadStoreMotionPass());
+    MainFPM.addPass(MergedLoadStoreMotionPass());
 
-          LoopPassManager LPM;
-          if (EnableLoopFlatten && Level.getSpeedupLevel() > 1)
-            LPM.addPass(LoopFlattenPass());
-          LPM.addPass(IndVarSimplifyPass());
-          LPM.addPass(LoopDeletionPass());
-          // FIXME: Add loop interchange.
+    LoopPassManager LPM;
+    if (EnableLoopFlatten && Level.getSpeedupLevel() > 1)
+      LPM.addPass(LoopFlattenPass());
+    LPM.addPass(IndVarSimplifyPass());
+    LPM.addPass(LoopDeletionPass());
+    // FIXME: Add loop interchange.
 
-          loadPass(MPM, Level);
-        };
-        PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadLTO);
+    loadPass(MPM, Level);
+  };
+  PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadLTO);
 #endif
+}
+
+extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
+llvmGetPassPluginInfo() {
+  return {LLVM_PLUGIN_API_VERSION, "EnzymeNewPM", "v0.1",
+          [](llvm::PassBuilder &PB) {
+#ifdef ENZYME_RUNPASS
+            augmentPassBuilder(PB);
 #endif
-        PB.registerPipelineParsingCallback(
-            [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
-               llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
-              if (Name == "enzyme") {
-                MPM.addPass(EnzymeNewPM());
-                return true;
-              }
-              if (Name == "preserve-nvvm") {
-                MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
-                return true;
-              }
-              if (Name == "print-type-analysis") {
-                MPM.addPass(TypeAnalysisPrinterNewPM());
-                return true;
-              }
-              return false;
-            });
-        PB.registerPipelineParsingCallback(
-            [](llvm::StringRef Name, llvm::FunctionPassManager &FPM,
-               llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
-              if (Name == "print-activity-analysis") {
-                FPM.addPass(ActivityAnalysisPrinterNewPM());
-                return true;
-              }
-              return false;
-            });
-      }};
+            PB.registerPipelineParsingCallback(
+                [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
+                   llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+                  if (Name == "enzyme") {
+                    MPM.addPass(EnzymeNewPM());
+                    return true;
+                  }
+                  if (Name == "preserve-nvvm") {
+                    MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+                    return true;
+                  }
+                  if (Name == "print-type-analysis") {
+                    MPM.addPass(TypeAnalysisPrinterNewPM());
+                    return true;
+                  }
+                  return false;
+                });
+            PB.registerPipelineParsingCallback(
+                [](llvm::StringRef Name, llvm::FunctionPassManager &FPM,
+                   llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+                  if (Name == "print-activity-analysis") {
+                    FPM.addPass(ActivityAnalysisPrinterNewPM());
+                    return true;
+                  }
+                  return false;
+                });
+          }};
 }

@@ -2088,7 +2088,9 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
         newOff = i / 8;
       }
     }
-#if LLVM_VERSION_MAJOR >= 12
+#if LLVM_VERSION_MAJOR > 16
+    if (mask[i] == PoisonMaskElem)
+#elif LLVM_VERSION_MAJOR >= 12
     if (mask[i] == UndefMaskElem)
 #else
     if (mask[i] == -1)
