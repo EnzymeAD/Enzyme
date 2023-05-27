@@ -2,7 +2,7 @@ name: C/C++ CI
 
 on: 
   workflow_run:
-    workflows: ["Clang-Format"]
+    workflows: [Clang-Format]
     types: 
       - completed
 
