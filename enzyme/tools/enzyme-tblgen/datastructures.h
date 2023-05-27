@@ -247,6 +247,11 @@ public:
     //   llvm::errs() << "\n";
     // }
   }
+  SmallVector<size_t, 2> getRelatedLengthArgs(size_t arg) {
+    // needs to be adjusted for the gemv branch
+    assert(argTypes.lookup(arg) == argType::vincData);
+    return {0};
+  }
   DenseMap<size_t, DenseSet<size_t>> getArgUsers() { return argUsers; }
   std::string getName() { return blasName; }
   SmallVector<std::string, 6> getArgNames() { return args; }
