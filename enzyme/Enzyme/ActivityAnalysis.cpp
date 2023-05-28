@@ -225,6 +225,11 @@ const std::set<std::string> KnownInactiveFunctionInsts = {
     "jl_ptr_to_array_1d"};
 
 const std::set<std::string> KnownInactiveFunctions = {
+    "cublasCreate_v2",
+    "cublasSetMathMode",
+    "cublasSetStream_v2",
+    "cuMemPoolTrimTo",
+    "cuDeviceGetMemPool",
     "cuStreamCreate",
     "cuStreamSynchronize",
     "cuStreamDestroy",
