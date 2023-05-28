@@ -454,10 +454,11 @@ public:
     ss << "cannot handle unknown instruction\n" << inst;
     if (CustomErrorHandler) {
       CustomErrorHandler(ss.str().c_str(), wrap(&inst), ErrorType::NoDerivative,
-                         nullptr, nullptr);
+                         gutils, nullptr);
+    } else {
+      llvm::errs() << ss.str() << "\n";
+      report_fatal_error("unknown instruction");
     }
-    llvm::errs() << ss.str() << "\n";
-    report_fatal_error("unknown instruction");
   }
 
   // Common function for falling back to the implementation
@@ -1024,10 +1025,18 @@ public:
         return;
       }
     }
-    TR.dump();
-    llvm::errs() << "oldFunc: " << *gutils->newFunc << "\n";
-    llvm::errs() << "I: " << I << "\n";
-    llvm_unreachable("Active atomic inst not yet handled");
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << *I.getParent()->getParent() << "\n" << I << "\n";
+    ss << " Active atomic inst not yet handled";
+    if (CustomErrorHandler) {
+      CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoDerivative,
+                         gutils, nullptr);
+    } else {
+      TR.dump();
+      llvm::errs() << ss.str() << "\n";
+      llvm_unreachable("Active atomic inst not yet handled");
+    }
   }
 
   void visitStoreInst(llvm::StoreInst &SI) {
@@ -1486,11 +1495,13 @@ public:
             ss << "cannot handle above cast " << I << "\n";
             if (CustomErrorHandler) {
               CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                                 ErrorType::NoDerivative, nullptr, nullptr);
+                                 ErrorType::NoDerivative, gutils, nullptr);
+              return (llvm::Value *)UndefValue::get(op0->getType());
+            } else {
+              TR.dump();
+              llvm::errs() << ss.str() << "\n";
+              report_fatal_error("unknown instruction");
             }
-            TR.dump();
-            llvm::errs() << ss.str() << "\n";
-            report_fatal_error("unknown instruction");
           }
         };
 
@@ -2554,10 +2565,11 @@ public:
       ss << "cannot handle unknown binary operator: " << BO << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(&BO), ErrorType::NoDerivative,
-                           nullptr, nullptr);
+                           gutils, nullptr);
+      } else {
+        llvm::errs() << ss.str() << "\n";
+        report_fatal_error("unknown binary operator");
       }
-      llvm::errs() << ss.str() << "\n";
-      report_fatal_error("unknown binary operator");
     }
 
   done:;
@@ -2920,10 +2932,11 @@ public:
       ss << "cannot handle unknown binary operator: " << BO << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(&BO), ErrorType::NoDerivative,
-                           nullptr, nullptr);
+                           gutils, nullptr);
+      } else {
+        llvm::errs() << ss.str() << "\n";
+        report_fatal_error("unknown binary operator");
       }
-      llvm::errs() << ss.str() << "\n";
-      report_fatal_error("unknown binary operator");
       break;
     }
   }
@@ -2970,10 +2983,11 @@ public:
          << MS;
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(&MS), ErrorType::NoDerivative,
-                           nullptr, nullptr);
+                           gutils, nullptr);
+      } else {
+        llvm::errs() << ss.str() << "\n";
+        report_fatal_error("non constant in memset");
       }
-      llvm::errs() << ss.str() << "\n";
-      report_fatal_error("non constant in memset");
     }
 
     if (Mode == DerivativeMode::ForwardMode) {
@@ -3864,10 +3878,11 @@ public:
         ss << "cannot handle (augmented) unknown intrinsic\n" << I;
         if (CustomErrorHandler) {
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, nullptr, nullptr);
+                             ErrorType::NoDerivative, gutils, nullptr);
+        } else {
+          llvm::errs() << ss.str() << "\n";
+          report_fatal_error("(augmented) unknown intrinsic");
         }
-        llvm::errs() << ss.str() << "\n";
-        report_fatal_error("(augmented) unknown intrinsic");
       }
       return;
     }
@@ -4460,10 +4475,11 @@ public:
              << I;
         if (CustomErrorHandler) {
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, nullptr, nullptr);
+                             ErrorType::NoDerivative, gutils, nullptr);
+        } else {
+          llvm::errs() << ss.str() << "\n";
+          report_fatal_error("(reverse) unknown intrinsic");
         }
-        llvm::errs() << ss.str() << "\n";
-        report_fatal_error("(reverse) unknown intrinsic");
       }
       return;
     }
@@ -5035,10 +5051,11 @@ public:
              << I;
         if (CustomErrorHandler) {
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, nullptr, nullptr);
+                             ErrorType::NoDerivative, gutils, nullptr);
+        } else {
+          llvm::errs() << ss.str() << "\n";
+          report_fatal_error("(forward) unknown intrinsic");
         }
-        llvm::errs() << ss.str() << "\n";
-        report_fatal_error("(forward) unknown intrinsic");
       }
       return;
     }
@@ -7069,10 +7086,11 @@ public:
           ss << " unhandled mpi_allreduce op: " << *orig_op << "\n";
           if (CustomErrorHandler) {
             CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                               ErrorType::NoDerivative, nullptr, nullptr);
+                               ErrorType::NoDerivative, gutils, nullptr);
+          } else {
+            llvm::errs() << ss.str() << "\n";
+            report_fatal_error("unhandled mpi_allreduce op");
           }
-          llvm::errs() << ss.str() << "\n";
-          report_fatal_error("unhandled mpi_allreduce op");
         }
 
         Value *shadow_recvbuf = gutils->invertPointerM(orig_recvbuf, Builder2);
@@ -7324,10 +7342,11 @@ public:
           ss << " unhandled mpi_allreduce op: " << *orig_op << "\n";
           if (CustomErrorHandler) {
             CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                               ErrorType::NoDerivative, nullptr, nullptr);
+                               ErrorType::NoDerivative, gutils, nullptr);
+          } else {
+            llvm::errs() << ss.str() << "\n";
+            report_fatal_error("unhandled mpi_allreduce op");
           }
-          llvm::errs() << ss.str() << "\n";
-          report_fatal_error("unhandled mpi_allreduce op");
         }
 
         Value *shadow_recvbuf = gutils->invertPointerM(orig_recvbuf, Builder2);
@@ -8757,12 +8776,12 @@ public:
           ss << "cannot find shadow for " << *callval;
           if (CustomErrorHandler) {
             CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                               ErrorType::NoDerivative, nullptr, nullptr);
+                               ErrorType::NoDerivative, gutils, nullptr);
+          } else {
+            llvm::errs() << *gutils->oldFunc << "\n";
+            llvm::errs() << ss.str() << "\n";
+            report_fatal_error("cannot call active int operand");
           }
-
-          llvm::errs() << *gutils->oldFunc << "\n";
-          llvm::errs() << ss.str() << "\n";
-          report_fatal_error("cannot call active int operand");
         }
         newcalled = gutils->invertPointerM(callval, BuilderZ);
 
