@@ -5427,6 +5427,16 @@ public:
           args.push_back(alloc);
         }
 
+        if (Mode == DerivativeMode::ReverseModeGradient && subdata) {
+          for (size_t i = 0; i < argsInverted.size(); i++) {
+            if (subdata->constant_args[i] == argsInverted[i])
+              continue;
+            assert(subdata->constant_args[i] == DIFFE_TYPE::DUP_ARG);
+            assert(argsInverted[i] == DIFFE_TYPE::DUP_NONEED);
+            argsInverted[i] = DIFFE_TYPE::DUP_ARG;
+          }
+        }
+
         newcalled = gutils->Logic.CreatePrimalAndGradient(
             (ReverseCacheKey){.todiff = cast<Function>(called),
                               .retType = subretType,
@@ -9208,6 +9218,16 @@ public:
                                  ? DerivativeMode::ReverseModeCombined
                                  : DerivativeMode::ReverseModeGradient;
     if (called) {
+      if (Mode == DerivativeMode::ReverseModeGradient && subdata) {
+        for (size_t i = 0; i < argsInverted.size(); i++) {
+          if (subdata->constant_args[i] == argsInverted[i])
+            continue;
+          assert(subdata->constant_args[i] == DIFFE_TYPE::DUP_ARG);
+          assert(argsInverted[i] == DIFFE_TYPE::DUP_NONEED);
+          argsInverted[i] = DIFFE_TYPE::DUP_ARG;
+        }
+      }
+
       newcalled = gutils->Logic.CreatePrimalAndGradient(
           (ReverseCacheKey){.todiff = cast<Function>(called),
                             .retType = subretType,
