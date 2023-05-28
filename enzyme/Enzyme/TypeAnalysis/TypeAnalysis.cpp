@@ -3923,6 +3923,10 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       return;
     }
+    if (funcName == "jl_hrtime" || funcName == "ijl_hrtime") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
 
     /// MPI
     if (funcName.startswith("PMPI_"))

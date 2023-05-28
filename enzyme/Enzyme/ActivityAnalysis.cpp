@@ -225,6 +225,8 @@ const std::set<std::string> KnownInactiveFunctionInsts = {
     "jl_ptr_to_array_1d"};
 
 const std::set<std::string> KnownInactiveFunctions = {
+    "cuStreamCreate",
+    "cuCtxGetCurrent",
     "enzyme_zerotype",
     "abort",
     "time",
@@ -1794,7 +1796,10 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
         if (funcName == "__cxa_guard_acquire" ||
             funcName == "__cxa_guard_release" ||
-            funcName == "__cxa_guard_abort" || funcName == "posix_memalign") {
+            funcName == "__cxa_guard_abort" || funcName == "posix_memalign" ||
+            funcName == "cuMemAllocAsync" || funcName == "cudaMallocAsync" ||
+            funcName == "cudaMallocHost" ||
+            funcName == "cudaMallocFromPoolAsync") {
           return false;
         }
 
