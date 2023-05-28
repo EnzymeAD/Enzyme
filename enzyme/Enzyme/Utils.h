@@ -1617,6 +1617,8 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
   return false;
 }
 
+llvm::Value* transpose(IRBuilder <>&B, llvm::Value *V);
+
 // Parameter attributes from the original function/call that
 // we should preserve on the primal of the derivative code.
 static inline llvm::Attribute::AttrKind PrimalParamAttrsToPreserve[] = {

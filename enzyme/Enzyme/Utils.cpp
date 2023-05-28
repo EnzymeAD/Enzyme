@@ -2167,3 +2167,14 @@ llvm::FastMathFlags getFast() {
     f.set();
   return f;
 }
+
+llvm::Value* transpose(IRBuilder <>&B, llvm::Value *V) {
+  Value *out = B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'T')), ConstantInt::get(V->getType(), 'N'),
+      B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 't')), ConstantInt::get(V->getType(), 'n'),
+          B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'N')), ConstantInt::get(V->getType(), 'T'),
+          B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'n')), ConstantInt::get(V->getType(), 't'),
+            ConstantInt::get(V->getType(), 0)
+            ))));
+  return out;
+}
+

@@ -56,9 +56,14 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
          << (lv23 ? "-1" : "") << ")->isPointerTy();\n";
       break;
     }
+    if (argTypeMap.lookup(i) == argType::mldData) {
+      os << "const bool julia_decl = !F->getFunctionType()->getParamType(" << i
+         << (lv23 ? "-1" : "") << ")->isPointerTy();\n";
+      break;
+    }
     if (i+1 == argTypeMap.size()) {
-      llvm::errs() << "Tablegen bug: BLAS fnc without vector!\n";
-      llvm_unreachable("Tablegen bug: BLAS fnc without vector!");
+      llvm::errs() << "Tablegen bug: BLAS fnc without vector of matrix!\n";
+      llvm_unreachable("Tablegen bug: BLAS fnc without vector of matrix!");
     }
   }
   os << "const bool byRef = blas.prefix == \"\";\n";

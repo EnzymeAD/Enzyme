@@ -67,6 +67,11 @@ class Constant<string _value> {
   string value = _value;
 }
 
+class transpose<string _name> {
+  string name = _name;
+}
+
+
 // General note: If return is scalar, return it. If return is vec, update it.
 
 // Lv 1 \wo rotations
@@ -149,17 +154,17 @@ def ger : CallBlasPattern<(Op $layout, $m, $n, $alpha, $x, $incx, $y, $incy, $A,
                   ]
                   >;
 
-// def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $l, $n, $m, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),
-//                   ["C"],
-//                   [cblas_layout, trans, trans, len, len, len, fp, mld, mld, fp, mld],
-//                   [
-//                   /* alpha */ (noop),
-//                   /* A     */ (noop),
-//                   /* B     */ (noop),
-//                   /* beta  */ (noop),
-//                   /* C     */ (noop)
-//                   ]
-//                   >;
+def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),
+                  ["C"],
+                  [cblas_layout, trans, trans, len, len, len, fp, mld, mld, fp, mld],
+                  [
+                  /* alpha */ (noop),
+                  /* A     */ (b<"gemm"> $layout, $transa, transpose<"transb">, $m, $k, $n, $alpha, adj<"C">, $ldc, $B, $ldb, $beta, adj<"A">, $ldc),
+                  /* B     */ (b<"gemm"> $layout, transpose<"transa">, $transb, $m, $n, $k, $alpha, $A, $lda, adj<"C">, $ldc, $beta, adj<"B">, $ldb),
+                  /* beta  */ (noop),
+                  /* C     */ (noop)
+                  ]
+                  >;
 
 // def spmv : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $v, $ld, $x, $incx, $beta, $y, $incy),
 //                   ["spmv"],
