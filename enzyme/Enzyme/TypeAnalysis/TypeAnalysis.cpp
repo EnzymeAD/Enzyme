@@ -3167,6 +3167,8 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::copysign:
   case Intrinsic::maxnum:
   case Intrinsic::minnum:
+  case Intrinsic::maximum:
+  case Intrinsic::minimum:
   case Intrinsic::nvvm_fmax_f:
   case Intrinsic::nvvm_fmax_d:
   case Intrinsic::nvvm_fmax_ftz_f:

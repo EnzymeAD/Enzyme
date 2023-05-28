@@ -1,9 +1,10 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -early-cse -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,early-cse,%simplifycfg)" -S | FileCheck %s
 
-; Function Attrs: norecurse nounwind readnone uwtable
-define dso_local double @max(double %x, double %y) #0 {
+; Function Attrs: noinline nounwind readnone uwtable
+define double @tester(double %x, double %y) {
 entry:
-  %0 = tail call fast double @llvm.maximum.64(double %y, double %y)
+  %0 = tail call double @llvm.maximum(double %x, double %y)
   ret double %0
 }
 
@@ -14,8 +15,7 @@ entry:
 }
 
 ; Function Attrs: nounwind readnone speculatable
-declare double @llvm.maximum.f64(double, double)
-
+declare double @llvm.maximum(double, double)
 
 ; Function Attrs: nounwind
 declare double @__enzyme_autodiff(double (double, double)*, ...)
@@ -29,4 +29,3 @@ declare double @__enzyme_autodiff(double (double, double)*, ...)
 ; CHECK-NEXT:   %[[iv1:.+]] = insertvalue { double, double } %[[iv0]], double %[[diffey]], 1
 ; CHECK-NEXT:   ret { double, double } %[[iv1]]
 ; CHECK-NEXT: }
-
