@@ -1,10 +1,12 @@
 name: Julia Enzyme CI
 
 on:
-  workflow_run:
-    workflows: [Format]
-    types: 
-      - completed
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
 
 jobs:
   build:
