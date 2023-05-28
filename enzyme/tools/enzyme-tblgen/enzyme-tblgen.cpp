@@ -962,6 +962,18 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
          << name << ");\n";
     }
     os << "\n";
+    if (argTypeMap.lookup(i) == argType::trans) {
+       << "  auto arg_transposed_" << name << " = call.getArgOperand(pos_" << name
+       << ");\n"
+    // const auto arg_transposed_transa = llvm::getIntegerType(fpType->getContext(), 8 /* 1 char */);
+    // if (arg_transa == 'N' || arg_transa == 'n') {
+    //         arg_transposed_transa = 'T';
+    // } else if (arg_transa == 'T' || arg_transa == 't') {
+    //         arg_transposed_transa = 'N';
+    // } else if (arg_transa == 'C' || arg_transa == 'c') {
+    //     llvm::errs() << " Complex not supported!\n";
+    // }
+    }
   }
 
   bool anyActive = false;
@@ -990,9 +1002,13 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
       os << "  const bool julia_decl = !type_" << name.value()
          << "->isPointerTy();\n";
       return;
+    } else if (type == argType::mldData) {
+      os << "  const bool julia_decl = !type_" << name.value()
+         << "->isPointerTy();\n";
+      return;
     }
   }
-  PrintFatalError("Blas function without vector?");
+  PrintFatalError("Blas function without vector and matrix?");
 }
 
 void emit_castvals(TGPattern &pattern, raw_ostream &os) {
@@ -1467,12 +1483,10 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
     // insert arg types based on .td file
     std::string typeString = "";
     bool first = true;
-    std::vector<StringRef> usedArgStrs{};
     for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
       Init *subArg = ruleDag->getArg(i);
       if (DefInit *def = dyn_cast<DefInit>(subArg)) {
         const auto Def = def->getDef();
-        usedArgStrs.push_back(""); // no need to process later
         std::string typeToAdd = "";
         if (Def->isSubClassOf("DiffeRet")) {
           typeToAdd = "byRef ? PointerType::getUnqual(call.getType()) : "
@@ -1481,24 +1495,27 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
           auto argStr = Def->getValueAsString("name");
           //  primary and adj have the same type
           typeToAdd = (Twine("type_") + argStr).str();
-          usedArgStrs.push_back((Twine("input_") + argStr).str());
         } else if (Def->isSubClassOf("adj")) {
           auto argStr = Def->getValueAsString("name");
           // primary and adj have the same type
           typeToAdd = (Twine("type_") + argStr).str();
-          usedArgStrs.push_back((Twine("adj_") + argStr).str());
         } else if (Def->isSubClassOf("Constant")) {
           typeToAdd = "fpType";
+        } else if (Def->isSubClassOf("transpose")) {
+          auto argStr = Def->getValueAsString("name");
+          // transpose the given trans arg, but type stays
+          typeToAdd = (Twine("type_") + argStr).str();
         } else {
           PrintFatalError(Def->getLoc(), "PANIC! Unsupported Definit");
         }
         typeString += ((first) ? "" : ", ") + typeToAdd;
       } else {
         const auto argStr = ruleDag->getArgNameStr(i);
+        // skip layout because it is cblas only, 
+        // so not relevant for the byRef Fortran abi.
+        // Optionally add it later as first arg for byRef.
         if (argStr == "layout")
           continue;
-        // os << ((first) ? "" : ", ") << "type_" << argStr;
-        usedArgStrs.push_back(argStr);
         if (first) {
           typeString += (Twine("type_") + argStr).str();
         } else {
@@ -1590,13 +1607,21 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
       } else if (Def->isSubClassOf("Constant")) {
         auto val = Def->getValueAsString("value");
         result.append((Twine("ConstantFP::get(fpType, ") + val + ")").str());
+      } else if (Def->isSubClassOf("transpose")) {
+        auto name = Def->getValueAsString("name");
+        result.append((Twine("arg_transposed_") + name).str());
       } else {
         llvm::errs() << Def->getName() << "\n";
         PrintFatalError("Def that isn't a DiffeRet!");
       }
     } else {
       auto name = ruleDag->getArgNameStr(pos);
+      assert(name != "");
       // get the position of the argument in the primary blas call
+      if (nameMap.count(name) != 1) {
+        llvm::errs() << "couldn't find name: " << name << "\n";
+        PrintFatalError("arg not in nameMap!");
+      }
       assert(nameMap.count(name) == 1);
       auto argPosition = nameMap.lookup(name);
       // and based on that get the fp/int + scalar/vector type
@@ -1644,6 +1669,8 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
         // might come without mldData, e.g. after DiffeRet
         // coppied from vincInc, but should verify if actually needed
         result.append(name);
+      } else if (typeOfArg == argType::trans) {
+        result.append((Twine("arg_") + name).str());
       } else {
         // TODO
         // llvm::errs() << "name: " << name << " typename: " << typeOfArg <<
