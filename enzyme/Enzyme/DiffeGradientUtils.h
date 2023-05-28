@@ -67,8 +67,8 @@ class DiffeGradientUtils final : public GradientUtils {
       const llvm::SmallPtrSetImpl<llvm::Value *> &constantvalues_,
       const llvm::SmallPtrSetImpl<llvm::Value *> &returnvals_,
       DIFFE_TYPE ActiveReturn, llvm::ArrayRef<DIFFE_TYPE> constant_values,
-      llvm::ValueToValueMapTy &origToNew_, DerivativeMode mode, unsigned width,
-      bool omp);
+      llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &origToNew_,
+      DerivativeMode mode, unsigned width, bool omp);
 
 public:
   /// Whether to free memory in reverse pass or split forward.
