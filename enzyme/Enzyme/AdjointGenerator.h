@@ -12090,6 +12090,24 @@ public:
         eraseIfUnused(call, /*erase*/ true, /*check*/ false);
       return;
     }
+    if (funcName == "cuStreamSynchronize") {
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> Builder2(call.getParent());
+        getReverseBuilder(Builder2);
+        Value *nargs[] = {gutils->lookupM(
+            gutils->getNewFromOriginal(call.getOperand(0)), Builder2)};
+#if LLVM_VERSION_MAJOR >= 11
+        auto callval = call.getCalledOperand();
+#else
+        auto callval = call.getCalledValue();
+#endif
+        Builder2.CreateCall(call.getFunctionType(), callval, nargs);
+      }
+      if (Mode == DerivativeMode::ReverseModeGradient)
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      return;
+    }
     if (funcName == "posix_memalign" || funcName == "cuMemAllocAsync" ||
         funcName == "cuMemAlloc" || funcName == "cuMemAlloc_v2" ||
         funcName == "cudaMalloc" || funcName == "cudaMallocAsync" ||
