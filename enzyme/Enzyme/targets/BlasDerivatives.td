@@ -20,6 +20,7 @@ class blas_modes<list<string> _modes> : BLASType<1, 0> {
   list<string> modes = _modes;
 }
 
+// cblas_layout must(!) allways be called layout, or the world will burn
 def cblas_layout  : blas_modes<["CblasRowMajor","CblasColMajor"]>;
 def uplo          : blas_modes<["U","L"]> ;
 def cblas_uplo    : blas_modes<["CblasUpper","CblasLower"]> ;
