@@ -1632,16 +1632,22 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       Bundles.emplace_back(CI->getOperandBundleAt(I));
     auto NC = B.CreateCall(NewF, vals, Bundles);
     NC->setAttributes(NewAttrs);
-    NC->copyMetadata(*CI);
-    NC->eraseMetadata(LLVMContext::MD_range);
+
+    SmallVector<std::pair<unsigned, MDNode *>, 4> TheMDs;
+    CI->getAllMetadataOtherThanDebugLoc(TheMDs);
+    SmallVector<unsigned, 1> toCopy;
+    for (auto pair : TheMDs)
+      if (pair.first != LLVMContext::MD_range)
+        toCopy.push_back(pair.first);
+    NC->copyMetadata(*CI, toCopy);
+    NC->setDebugLoc(CI->getDebugLoc());
 
     sretCount = 0;
     if (!RT->isVoidTy()) {
       auto gep = ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, 0) : sret;
       auto ld = B.CreateLoad(RT, gep);
-      if (CI->hasMetadata(LLVMContext::MD_range))
-        ld->addMetadata(LLVMContext::MD_range,
-                        CI->getMetadata(LLVMContext::MD_range));
+      if (auto MD = CI->getMetadata(LLVMContext::MD_range))
+        ld->setMetadata(LLVMContext::MD_range, MD);
       ld->takeName(CI);
       CI->replaceAllUsesWith(ld);
       sretCount++;
