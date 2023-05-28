@@ -1633,11 +1633,15 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     auto NC = B.CreateCall(NewF, vals, Bundles);
     NC->setAttributes(NewAttrs);
     NC->copyMetadata(*CI);
+    NC->eraseMetadata(LLVMContext::MD_range);
 
     sretCount = 0;
     if (!RT->isVoidTy()) {
       auto gep = ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, 0) : sret;
       auto ld = B.CreateLoad(RT, gep);
+      if (CI->hasMetadata(LLVMContext::MD_range))
+        ld->addMetadata(LLVMContext::MD_range,
+                        CI->getMetadata(LLVMContext::MD_range));
       ld->takeName(CI);
       CI->replaceAllUsesWith(ld);
       sretCount++;
