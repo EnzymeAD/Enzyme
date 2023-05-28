@@ -1,7 +1,7 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -enzyme-zero-cache=0 | FileCheck -check-prefixes CHECK,UNDEF %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-zero-cache=0 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck -check-prefixes CHECK,UNDEF %s
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -enzyme-zero-cache=1 | FileCheck -check-prefixes CHECK,ZERO %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-zero-cache=1 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck -check-prefixes CHECK,ZERO %s
+; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 11 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -enzyme-zero-cache=0 | FileCheck -check-prefixes CHECK,UNDEF %s; fi
+; RUN: if [ %llvmver -ge 11 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-zero-cache=0 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck -check-prefixes CHECK,UNDEF %s; fi
+; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 11 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -enzyme-zero-cache=1 | FileCheck -check-prefixes CHECK,ZERO %s; fi
+; RUN: if [ %llvmver -ge 11 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-zero-cache=1 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck -check-prefixes CHECK,ZERO %s; fi
 
 declare dso_local double @__enzyme_reverse(...)
 
@@ -28,7 +28,8 @@ entry:
 
 ; CHECK: define internal { double } @diffemid(double** %rp, double** %"rp'", double %x, double %differeturn, i8* %tapeArg) 
 ; THIS MUST NOT CONTAIN NOUNDEF OR NONNULL
-; CHECK:  call void @diffesubsq(double** undef, double** undef, double* %r, double* %"r'ipc")
+; UNDEF:  call void @diffesubsq(double** undef, double** undef, double* %r, double* %"r'ipc")
+; ZERO:  call void @diffesubsq(double** null, double** null, double* %r, double* %"r'ipc")
 
 ; THIS MUST NOT CONTAIN NOUNDEF OR NONNULL
 ; CHECK: define internal void @diffesubsq(double** nocapture writeonly %out, double** nocapture %"out'", double* %r, double* %"r'") 

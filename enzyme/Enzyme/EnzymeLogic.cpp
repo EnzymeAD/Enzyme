@@ -2077,7 +2077,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                  AugmentedCachedFunctions, tup,
                  AugmentedReturn(NewF, aug.tapeType, aug.tapeIndices,
                                  aug.returns, aug.overwritten_args_map,
-                                 aug.can_modref_map))
+                                 aug.can_modref_map, constant_args))
           ->second;
     }
 
@@ -2145,7 +2145,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                  AugmentedCachedFunctions, tup,
                  AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                 {}))
+                                 {}, constant_args))
           ->second;
     }
 
@@ -2207,7 +2207,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                    AugmentedCachedFunctions, tup,
                    AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                   {}))
+                                   {}, constant_args))
             ->second;
       }
       if (ST->getNumElements() == 2 &&
@@ -2218,7 +2218,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                    AugmentedCachedFunctions, tup,
                    AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                   {}))
+                                   {}, constant_args))
             ->second;
       }
       if (ST->getNumElements() == 2) {
@@ -2276,7 +2276,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                    AugmentedCachedFunctions, tup,
                    AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                   {}))
+                                   {}, constant_args))
             ->second;
       }
     }
@@ -2287,7 +2287,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
     return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                AugmentedCachedFunctions, tup,
-               AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {}, {}))
+               AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {}, {},
+                               constant_args))
         ->second; // dyn_cast<StructType>(st->getElementType(0)));
   }
 
@@ -2354,7 +2355,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   insert_or_assign(AugmentedCachedFunctions, tup,
                    AugmentedReturn(gutils->newFunc, nullptr, {}, returnMapping,
-                                   overwritten_args_map, can_modref_map));
+                                   overwritten_args_map, can_modref_map,
+                                   constant_args));
 
   auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
     return gutils->getIndex(
@@ -3533,6 +3535,18 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
   TargetLibraryInfo &TLI =
       PPC.FAM.getResult<TargetLibraryAnalysis>(*key.todiff);
+
+  if (augmenteddata && augmenteddata->constant_args != key.constant_args) {
+    llvm::errs() << " sz: " << augmenteddata->constant_args.size() << "  "
+                 << key.constant_args.size() << "\n";
+    for (size_t i = 0; i < key.constant_args.size(); ++i) {
+      llvm::errs() << " i: " << i << " "
+                   << to_string(augmenteddata->constant_args[i]) << "  "
+                   << to_string(key.constant_args[i]) << "\n";
+    }
+    assert(augmenteddata->constant_args.size() == key.constant_args.size());
+    assert(augmenteddata->constant_args == key.constant_args);
+  }
 
   // TODO change this to go by default function type assumptions
   bool hasconstant = false;
