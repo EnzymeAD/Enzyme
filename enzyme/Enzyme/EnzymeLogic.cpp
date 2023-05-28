@@ -2000,9 +2000,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                   "Massaging provided custom augmented forward pass to handle "
                   "constant argumented");
       SmallVector<Type *, 3> dupargs;
-      SmallVector<DIFFE_TYPE, 4> next_constant_args =
-          SmallVector<DIFFE_TYPE, 4>(constant_args.begin(),
-                                     constant_args.end());
+      std::vector<DIFFE_TYPE> next_constant_args(constant_args.begin(),
+                                                 constant_args.end());
       {
         auto OFT = todiff->getFunctionType();
         for (size_t act_idx = 0; act_idx < constant_args.size(); act_idx++) {
@@ -2077,7 +2076,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                  AugmentedCachedFunctions, tup,
                  AugmentedReturn(NewF, aug.tapeType, aug.tapeIndices,
                                  aug.returns, aug.overwritten_args_map,
-                                 aug.can_modref_map, constant_args))
+                                 aug.can_modref_map, next_constant_args))
           ->second;
     }
 
@@ -3536,18 +3535,6 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   TargetLibraryInfo &TLI =
       PPC.FAM.getResult<TargetLibraryAnalysis>(*key.todiff);
 
-  if (augmenteddata && augmenteddata->constant_args != key.constant_args) {
-    llvm::errs() << " sz: " << augmenteddata->constant_args.size() << "  "
-                 << key.constant_args.size() << "\n";
-    for (size_t i = 0; i < key.constant_args.size(); ++i) {
-      llvm::errs() << " i: " << i << " "
-                   << to_string(augmenteddata->constant_args[i]) << "  "
-                   << to_string(key.constant_args[i]) << "\n";
-    }
-    assert(augmenteddata->constant_args.size() == key.constant_args.size());
-    assert(augmenteddata->constant_args == key.constant_args);
-  }
-
   // TODO change this to go by default function type assumptions
   bool hasconstant = false;
   for (auto v : key.constant_args) {
@@ -3924,6 +3911,18 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     EmitWarning("NoCustom", *key.todiff,
                 "Not using provided custom reverse pass as require either "
                 "return or non-constant");
+  }
+
+  if (augmenteddata && augmenteddata->constant_args != key.constant_args) {
+    llvm::errs() << " sz: " << augmenteddata->constant_args.size() << "  "
+                 << key.constant_args.size() << "\n";
+    for (size_t i = 0; i < key.constant_args.size(); ++i) {
+      llvm::errs() << " i: " << i << " "
+                   << to_string(augmenteddata->constant_args[i]) << "  "
+                   << to_string(key.constant_args[i]) << "\n";
+    }
+    assert(augmenteddata->constant_args.size() == key.constant_args.size());
+    assert(augmenteddata->constant_args == key.constant_args);
   }
 
   if (key.todiff->empty()) {

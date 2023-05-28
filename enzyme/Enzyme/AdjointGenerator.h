@@ -9227,6 +9227,7 @@ public:
           argsInverted[i] = DIFFE_TYPE::DUP_ARG;
         }
       }
+
       newcalled = gutils->Logic.CreatePrimalAndGradient(
           (ReverseCacheKey){.todiff = cast<Function>(called),
                             .retType = subretType,
