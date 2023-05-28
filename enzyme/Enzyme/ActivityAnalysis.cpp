@@ -1797,7 +1797,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         if (funcName == "__cxa_guard_acquire" ||
             funcName == "__cxa_guard_release" ||
             funcName == "__cxa_guard_abort" || funcName == "posix_memalign" ||
-            funcName == "cuMemAllocAsync" || funcName == "cudaMallocAsync" ||
+            funcName == "cuMemAllocAsync" || funcName == "cuMemAlloc" ||
+            funcName == "cuMemAlloc_v2" || funcName == "cudaMallocAsync" ||
             funcName == "cudaMallocHost" ||
             funcName == "cudaMallocFromPoolAsync") {
           return false;
