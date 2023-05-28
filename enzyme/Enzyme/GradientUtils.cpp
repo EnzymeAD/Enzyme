@@ -9008,7 +9008,6 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
 #endif
             "", builder.GetInsertBlock()));
     freecall->setDebugLoc(debuglocation);
-    freecall->setTailCall();
     if (isa<CallInst>(tofree) &&
         cast<CallInst>(tofree)->getAttributes().hasAttribute(
             AttributeList::ReturnIndex, Attribute::NonNull)) {
@@ -9126,7 +9125,6 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
       CallInst::Create(freevalue, {builder.CreatePointerCast(tofree, IntPtrTy)},
 #endif
                        "", builder.GetInsertBlock()));
-  freecall->setTailCall();
   freecall->setDebugLoc(debuglocation);
   if (isa<CallInst>(tofree) &&
       cast<CallInst>(tofree)->getAttributes().hasAttribute(
