@@ -119,61 +119,17 @@ entry:
 
 ; CHECK: define internal { double*, double* } @[[augMod]](i32 %len, double* noalias %m, double* %"m'", i32 %incm, double* noalias %n, double* %"n'", i32 %incn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %mallocsize = mul nuw nsw i32 %len, 8
-; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
-; CHECK-NEXT:   %0 = bitcast i8* %malloccall to double*
-; CHECK-NEXT:   %1 = icmp eq i32 %len, 0
-; CHECK-NEXT:   br i1 %1, label %__enzyme_memcpy_double_32_da0sa0stride.exit, label %init.idx.i
-
-; CHECK: init.idx.i:                                       ; preds = %entry
-; CHECK-NEXT:   %a.i = sub nsw i32 1, %len
-; CHECK-NEXT:   %negidx.i = mul nsw i32 %a.i, %incm
-; CHECK-NEXT:   %is.neg.i = icmp slt i32 %incm, 0
-; CHECK-NEXT:   %startidx.i = select i1 %is.neg.i, i32 %negidx.i, i32 0
-; CHECK-NEXT:   br label %for.body.i
-
-; CHECK: for.body.i:                                       ; preds = %for.body.i, %init.idx.i
-; CHECK-NEXT:   %idx.i = phi i32 [ 0, %init.idx.i ], [ %idx.next.i, %for.body.i ]
-; CHECK-NEXT:   %sidx.i = phi i32 [ %startidx.i, %init.idx.i ], [ %sidx.next.i, %for.body.i ]
-; CHECK-NEXT:   %dst.i.i = getelementptr inbounds double, double* %0, i32 %idx.i
-; CHECK-NEXT:   %src.i.i = getelementptr inbounds double, double* %m, i32 %sidx.i
-; CHECK-NEXT:   %src.i.l.i = load double, double* %src.i.i
-; CHECK-NEXT:   store double %src.i.l.i, double* %dst.i.i
-; CHECK-NEXT:   %idx.next.i = add nsw i32 %idx.i, 1
-; CHECK-NEXT:   %sidx.next.i = add nsw i32 %sidx.i, %incm
-; CHECK-NEXT:   %2 = icmp eq i32 %len, %idx.next.i
-; CHECK-NEXT:   br i1 %2, label %__enzyme_memcpy_double_32_da0sa0stride.exit, label %for.body.i
-
-; CHECK: __enzyme_memcpy_double_32_da0sa0stride.exit:      ; preds = %entry, %for.body.i
-; CHECK-NEXT:   %mallocsize1 = mul nuw nsw i32 %len, 8
-; CHECK-NEXT:   %malloccall2 = tail call noalias nonnull i8* @malloc(i32 %mallocsize1)
-; CHECK-NEXT:   %3 = bitcast i8* %malloccall2 to double*
-; CHECK-NEXT:   %4 = icmp eq i32 %len, 0
-; CHECK-NEXT:   br i1 %4, label %__enzyme_memcpy_double_32_da0sa0stride.exit14, label %init.idx.i5
-
-; CHECK: init.idx.i5:                                      ; preds = %__enzyme_memcpy_double_32_da0sa0stride.exit
-; CHECK-NEXT:   %a.i1 = sub nsw i32 1, %len
-; CHECK-NEXT:   %negidx.i2 = mul nsw i32 %a.i1, %incn
-; CHECK-NEXT:   %is.neg.i3 = icmp slt i32 %incn, 0
-; CHECK-NEXT:   %startidx.i4 = select i1 %is.neg.i3, i32 %negidx.i2, i32 0
-; CHECK-NEXT:   br label %for.body.i13
-
-; CHECK: for.body.i13:                                     ; preds = %for.body.i13, %init.idx.i5
-; CHECK-NEXT:   %idx.i6 = phi i32 [ 0, %init.idx.i5 ], [ %idx.next.i11, %for.body.i13 ]
-; CHECK-NEXT:   %sidx.i7 = phi i32 [ %startidx.i4, %init.idx.i5 ], [ %sidx.next.i12, %for.body.i13 ]
-; CHECK-NEXT:   %dst.i.i8 = getelementptr inbounds double, double* %3, i32 %idx.i6
-; CHECK-NEXT:   %src.i.i9 = getelementptr inbounds double, double* %n, i32 %sidx.i7
-; CHECK-NEXT:   %src.i.l.i10 = load double, double* %src.i.i9
-; CHECK-NEXT:   store double %src.i.l.i10, double* %dst.i.i8
-; CHECK-NEXT:   %idx.next.i11 = add nsw i32 %idx.i6, 1
-; CHECK-NEXT:   %sidx.next.i12 = add nsw i32 %sidx.i7, %incn
-; CHECK-NEXT:   %5 = icmp eq i32 %len, %idx.next.i11
-; CHECK-NEXT:   br i1 %5, label %__enzyme_memcpy_double_32_da0sa0stride.exit14, label %for.body.i13
-
-; CHECK: __enzyme_memcpy_double_32_da0sa0stride.exit14:    ; preds = %__enzyme_memcpy_double_32_da0sa0stride.exit, %for.body.i13
-; CHECK-NEXT:   %6 = insertvalue { double*, double* } undef, double* %0, 0
-; CHECK-NEXT:   %7 = insertvalue { double*, double* } %6, double* %3, 1
-; CHECK-NEXT:   ret { double*, double* } %7
+; CHECK-NEXT:  %mallocsize = mul nuw nsw i32 %len, 8
+; CHECK-NEXT:  %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
+; CHECK-NEXT:  %0 = bitcast i8* %malloccall to double*
+; CHECK-NEXT:  call void @cblas_dcopy(i32 %len, double* %m, i32 %incm, double* %0, i32 1)
+; CHECK-NEXT:  %mallocsize1 = mul nuw nsw i32 %len, 8
+; CHECK-NEXT:  %malloccall2 = tail call noalias nonnull i8* @malloc(i32 %mallocsize1)
+; CHECK-NEXT:  %1 = bitcast i8* %malloccall2 to double*
+; CHECK-NEXT:  call void @cblas_dcopy(i32 %len, double* %n, i32 %incn, double* %1, i32 1)
+; CHECK-NEXT:  %2 = insertvalue { double*, double* } undef, double* %0, 0
+; CHECK-NEXT:  %3 = insertvalue { double*, double* } %2, double* %1, 1
+; CHECK-NEXT:  ret { double*, double* } %3
 ; CHECK-NEXT: }
 
 ; CHECK: define internal void @[[revMod]](i32 %len, double* noalias %m, double* %"m'", i32 %incm, double* noalias %n, double* %"n'", i32 %incn, double %differeturn, { double*, double* }
@@ -198,33 +154,11 @@ entry:
 
 ; CHECK: define internal double* @augmented_f.6(i32 %len, double* noalias %m, i32 %incm, double* noalias %n, double* %"n'", i32 %incn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %mallocsize = mul nuw nsw i32 %len, 8
-; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
-; CHECK-NEXT:   %0 = bitcast i8* %malloccall to double*
-; CHECK-NEXT:   %1 = icmp eq i32 %len, 0
-; CHECK-NEXT:   br i1 %1, label %__enzyme_memcpy_double_32_da0sa0stride.exit, label %init.idx.i
-
-; CHECK: init.idx.i:                                       ; preds = %entry
-; CHECK-NEXT:   %a.i = sub nsw i32 1, %len
-; CHECK-NEXT:   %negidx.i = mul nsw i32 %a.i, %incm
-; CHECK-NEXT:   %is.neg.i = icmp slt i32 %incm, 0
-; CHECK-NEXT:   %startidx.i = select i1 %is.neg.i, i32 %negidx.i, i32 0
-; CHECK-NEXT:   br label %for.body.i
-
-; CHECK: for.body.i:                                       ; preds = %for.body.i, %init.idx.i
-; CHECK-NEXT:   %idx.i = phi i32 [ 0, %init.idx.i ], [ %idx.next.i, %for.body.i ]
-; CHECK-NEXT:   %sidx.i = phi i32 [ %startidx.i, %init.idx.i ], [ %sidx.next.i, %for.body.i ]
-; CHECK-NEXT:   %dst.i.i = getelementptr inbounds double, double* %0, i32 %idx.i
-; CHECK-NEXT:   %src.i.i = getelementptr inbounds double, double* %m, i32 %sidx.i
-; CHECK-NEXT:   %src.i.l.i = load double, double* %src.i.i
-; CHECK-NEXT:   store double %src.i.l.i, double* %dst.i.i
-; CHECK-NEXT:   %idx.next.i = add nsw i32 %idx.i, 1
-; CHECK-NEXT:   %sidx.next.i = add nsw i32 %sidx.i, %incm
-; CHECK-NEXT:   %2 = icmp eq i32 %len, %idx.next.i
-; CHECK-NEXT:   br i1 %2, label %__enzyme_memcpy_double_32_da0sa0stride.exit, label %for.body.i
-
-; CHECK: __enzyme_memcpy_double_32_da0sa0stride.exit:      ; preds = %entry, %for.body.i
-; CHECK-NEXT:   ret double* %0
+; CHECK-NEXT:  %mallocsize = mul nuw nsw i32 %len, 8
+; CHECK-NEXT:  %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
+; CHECK-NEXT:  %0 = bitcast i8* %malloccall to double*
+; CHECK-NEXT:  call void @cblas_dcopy(i32 %len, double* %m, i32 %incm, double* %0, i32 1)
+; CHECK-NEXT:  ret double* %0
 ; CHECK-NEXT: }
 
 ; CHECK: define internal void @[[revModFirst]](i32 %len, double* noalias %m, i32 %incm, double* noalias %n, double* %"n'", i32 %incn, double %differeturn, double*
@@ -244,33 +178,11 @@ entry:
 
 ; CHECK: define internal double* @[[augModSecond]](i32 %len, double* noalias %m, double* %"m'", i32 %incm, double* noalias %n, i32 %incn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %mallocsize = mul nuw nsw i32 %len, 8
-; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
-; CHECK-NEXT:   %0 = bitcast i8* %malloccall to double*
-; CHECK-NEXT:   %1 = icmp eq i32 %len, 0
-; CHECK-NEXT:   br i1 %1, label %__enzyme_memcpy_double_32_da0sa0stride.exit, label %init.idx.i
-
-; CHECK: init.idx.i:                                       ; preds = %entry
-; CHECK-NEXT:   %a.i = sub nsw i32 1, %len
-; CHECK-NEXT:   %negidx.i = mul nsw i32 %a.i, %incn
-; CHECK-NEXT:   %is.neg.i = icmp slt i32 %incn, 0
-; CHECK-NEXT:   %startidx.i = select i1 %is.neg.i, i32 %negidx.i, i32 0
-; CHECK-NEXT:   br label %for.body.i
-
-; CHECK: for.body.i:                                       ; preds = %for.body.i, %init.idx.i
-; CHECK-NEXT:   %idx.i = phi i32 [ 0, %init.idx.i ], [ %idx.next.i, %for.body.i ]
-; CHECK-NEXT:   %sidx.i = phi i32 [ %startidx.i, %init.idx.i ], [ %sidx.next.i, %for.body.i ]
-; CHECK-NEXT:   %dst.i.i = getelementptr inbounds double, double* %0, i32 %idx.i
-; CHECK-NEXT:   %src.i.i = getelementptr inbounds double, double* %n, i32 %sidx.i
-; CHECK-NEXT:   %src.i.l.i = load double, double* %src.i.i
-; CHECK-NEXT:   store double %src.i.l.i, double* %dst.i.i
-; CHECK-NEXT:   %idx.next.i = add nsw i32 %idx.i, 1
-; CHECK-NEXT:   %sidx.next.i = add nsw i32 %sidx.i, %incn
-; CHECK-NEXT:   %2 = icmp eq i32 %len, %idx.next.i
-; CHECK-NEXT:   br i1 %2, label %__enzyme_memcpy_double_32_da0sa0stride.exit, label %for.body.i
-
-; CHECK: __enzyme_memcpy_double_32_da0sa0stride.exit:      ; preds = %entry, %for.body.i
-; CHECK-NEXT:   ret double* %0
+; CHECK-NEXT:  %mallocsize = mul nuw nsw i32 %len, 8
+; CHECK-NEXT:  %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
+; CHECK-NEXT:  %0 = bitcast i8* %malloccall to double*
+; CHECK-NEXT:  call void @cblas_dcopy(i32 %len, double* %n, i32 %incn, double* %0, i32 1)
+; CHECK-NEXT:  ret double* %0
 ; CHECK-NEXT: }
 
 

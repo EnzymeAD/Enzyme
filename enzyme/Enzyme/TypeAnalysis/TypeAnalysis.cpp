@@ -105,8 +105,6 @@ const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"log1p", Intrinsic::not_intrinsic},
     {"log2", Intrinsic::log2},
     {"logb", Intrinsic::not_intrinsic},
-    {"logbf", Intrinsic::not_intrinsic},
-    {"logbl", Intrinsic::not_intrinsic},
     {"pow", Intrinsic::pow},
     {"sqrt", Intrinsic::sqrt},
     {"cbrt", Intrinsic::not_intrinsic},
@@ -146,13 +144,6 @@ const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"y0", Intrinsic::not_intrinsic},
     {"y1", Intrinsic::not_intrinsic},
     {"yn", Intrinsic::not_intrinsic},
-    {"j0f", Intrinsic::not_intrinsic},
-    {"j1f", Intrinsic::not_intrinsic},
-    {"jnf", Intrinsic::not_intrinsic},
-    {"y0f", Intrinsic::not_intrinsic},
-    {"y1f", Intrinsic::not_intrinsic},
-    {"ynf", Intrinsic::not_intrinsic},
-
     {"tgamma", Intrinsic::not_intrinsic},
     {"lgamma", Intrinsic::not_intrinsic},
     {"ceil", Intrinsic::ceil},
@@ -172,15 +163,14 @@ const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"fma", Intrinsic::fma},
     {"ilogb", Intrinsic::not_intrinsic},
     {"scalbn", Intrinsic::not_intrinsic},
-    {"scalbnf", Intrinsic::not_intrinsic},
-    {"scalbnl", Intrinsic::not_intrinsic},
     {"scalbln", Intrinsic::not_intrinsic},
-    {"scalblnf", Intrinsic::not_intrinsic},
-    {"scalblnl", Intrinsic::not_intrinsic},
     {"powi", Intrinsic::powi},
     {"cabs", Intrinsic::not_intrinsic},
     {"ldexp", Intrinsic::not_intrinsic},
     {"fmod", Intrinsic::not_intrinsic},
+    {"finite", Intrinsic::not_intrinsic},
+    {"isinf", Intrinsic::not_intrinsic},
+    {"isnan", Intrinsic::not_intrinsic},
 #if LLVM_VERSION_MAJOR >= 9
     {"lround", Intrinsic::lround},
     {"llround", Intrinsic::llround},
@@ -2088,7 +2078,9 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
         newOff = i / 8;
       }
     }
-#if LLVM_VERSION_MAJOR >= 12
+#if LLVM_VERSION_MAJOR > 16
+    if (mask[i] == PoisonMaskElem)
+#elif LLVM_VERSION_MAJOR >= 12
     if (mask[i] == UndefMaskElem)
 #else
     if (mask[i] == -1)
@@ -3929,6 +3921,32 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(0),
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "cuStreamQuery") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "cuMemAllocAsync" || funcName == "cuMemAlloc" ||
+        funcName == "cuMemAlloc_v2" || funcName == "cudaMalloc" ||
+        funcName == "cudaMallocAsync" || funcName == "cudaMallocHost" ||
+        funcName == "cudaMallocFromPoolAsync") {
+      TypeTree ptrptr;
+      ptrptr.insert({-1}, BaseType::Pointer);
+      ptrptr.insert({-1, 0}, BaseType::Pointer);
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0), ptrptr, &call);
+      updateAnalysis(call.getOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "jl_hrtime" || funcName == "ijl_hrtime") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "jl_get_task_tid" || funcName == "ijl_get_task_tid") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
 

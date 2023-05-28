@@ -19052,8 +19052,7 @@ attributes #28 = { builtin }
 !174 = !{!173, !12, i64 0}
 !175 = !{!173, !12, i64 8}
 
-
-; CHECK: define internal void @diffe_Z19brusselator_2d_loopPdS_PKdS1_S1_d(double* noalias nocapture readnone %arg, double* nocapture %"arg'", double* noalias nocapture %arg1, double* nocapture %"arg1'", double* noalias nocapture readonly %arg2, double* nocapture %"arg2'", double* noalias nocapture readonly %arg3, double* nocapture %"arg3'", double* noalias nocapture readonly %arg4, double* nocapture %"arg4'", double %arg5)
+; CHECK: define internal void @diffe_Z19brusselator_2d_loopPdS_PKdS1_S1_d(double* noalias nocapture readnone %arg, double* nocapture readnone %"arg'", double* noalias nocapture %arg1, double* nocapture %"arg1'", double* noalias nocapture readonly %arg2, double* nocapture %"arg2'", double* noalias nocapture readonly %arg3, double* nocapture %"arg3'", double* noalias nocapture readonly %arg4, double* nocapture %"arg4'", double %arg5)
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %A = load double, double* %arg4, align 8, !tbaa !31
 ; CHECK-NEXT:   %v0 = load double, double* %arg3, align 8, !tbaa !31

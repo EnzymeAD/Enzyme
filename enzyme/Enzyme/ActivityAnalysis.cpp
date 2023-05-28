@@ -225,6 +225,16 @@ const std::set<std::string> KnownInactiveFunctionInsts = {
     "jl_ptr_to_array_1d"};
 
 const std::set<std::string> KnownInactiveFunctions = {
+    "cublasCreate_v2",
+    "cublasSetMathMode",
+    "cublasSetStream_v2",
+    "cuMemPoolTrimTo",
+    "cuDeviceGetMemPool",
+    "cuStreamCreate",
+    "cuStreamSynchronize",
+    "cuStreamDestroy",
+    "cuStreamQuery",
+    "cuCtxGetCurrent",
     "enzyme_zerotype",
     "abort",
     "time",
@@ -348,7 +358,10 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::stackrestore,
     Intrinsic::lifetime_start,
     Intrinsic::lifetime_end,
+#if LLVM_VERSION_MAJOR <= 16
     Intrinsic::dbg_addr,
+#endif
+
     Intrinsic::dbg_declare,
     Intrinsic::dbg_value,
 #if LLVM_VERSION_MAJOR > 6
@@ -1791,7 +1804,11 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
         if (funcName == "__cxa_guard_acquire" ||
             funcName == "__cxa_guard_release" ||
-            funcName == "__cxa_guard_abort" || funcName == "posix_memalign") {
+            funcName == "__cxa_guard_abort" || funcName == "posix_memalign" ||
+            funcName == "cuMemAllocAsync" || funcName == "cuMemAlloc" ||
+            funcName == "cuMemAlloc_v2" || funcName == "cudaMallocAsync" ||
+            funcName == "cudaMallocHost" ||
+            funcName == "cudaMallocFromPoolAsync") {
           return false;
         }
 

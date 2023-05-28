@@ -304,7 +304,7 @@ bool preserveNVVM(bool Begin, Function &F) {
           "normcdfinv", "normcdf", "lgamma",    "ldexp",  "scalbn", "frexp",
           "modf",       "fmod",    "remainder", "remquo", "powi",   "tgamma",
           "round",      "fdim",    "ilogb",     "logb",   "isinf",  "pow",
-          "sqrt"}) {
+          "sqrt",       "finite",  "fabs",      "fmax"}) {
       std::string nvname = "__nv_" + name;
       std::string llname = "llvm." + name + ".";
       std::string mathname = name;
@@ -610,7 +610,11 @@ bool preserveNVVM(bool Begin, Function &F) {
             GlobalVariable *NGV = new GlobalVariable(
                 CA->getType(), V->isConstant(), V->getLinkage(), CA, "",
                 V->getThreadLocalMode());
+#if LLVM_VERSION_MAJOR > 16
+            V->getParent()->insertGlobalVariable(V->getIterator(), NGV);
+#else
             V->getParent()->getGlobalList().insert(V->getIterator(), NGV);
+#endif
             NGV->takeName(V);
 
             // Nuke the old list, replacing any uses with the new one.

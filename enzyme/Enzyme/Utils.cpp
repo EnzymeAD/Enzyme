@@ -25,8 +25,13 @@
 #include "Utils.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 
+#if LLVM_VERSION_MAJOR >= 16
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+#else
 #include "SCEV/ScalarEvolution.h"
 #include "SCEV/ScalarEvolutionExpander.h"
+#endif
 
 #include "TypeAnalysis/TBAA.h"
 #include "llvm/IR/BasicBlock.h"
@@ -65,6 +70,9 @@ LLVMValueRef (*EnzymeSanitizeDerivatives)(LLVMValueRef, LLVMValueRef toset,
                                           LLVMValueRef) = nullptr;
 
 extern llvm::cl::opt<bool> EnzymeZeroCache;
+llvm::cl::opt<bool>
+    EnzymeBlasCopy("enzyme-blas-copy", cl::init(true), cl::Hidden,
+                   cl::desc("Use blas copy calls to cache vectors"));
 llvm::cl::opt<bool>
     EnzymeFastMath("enzyme-fast-math", cl::init(true), cl::Hidden,
                    cl::desc("Use fast math on derivative compuation"));
@@ -662,6 +670,27 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     B.CreateRetVoid();
   }
   return F;
+}
+
+Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
+                                       BlasInfo blas, bool julia_decl) {
+  std::string copy_name =
+      (blas.prefix + blas.floatType + "copy" + blas.suffix).str();
+  FunctionType *FT;
+  if (julia_decl) {
+    FT = FunctionType::get(Type::getVoidTy(M.getContext()),
+                           {IT, IT, IT, IT, IT}, false);
+  } else {
+    FT = FunctionType::get(Type::getVoidTy(M.getContext()), {IT, T, IT, T, IT},
+                           false);
+  }
+#if LLVM_VERSION_MAJOR >= 9
+  Function *dmemcpy =
+      cast<Function>(M.getOrInsertFunction(copy_name, FT).getCallee());
+#else
+  Function *dmemcpy = cast<Function>(M.getOrInsertFunction(copy_name, FT));
+#endif
+  return dmemcpy;
 }
 
 Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,

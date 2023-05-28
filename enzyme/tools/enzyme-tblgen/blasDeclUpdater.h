@@ -60,17 +60,7 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
       llvm_unreachable("Tablegen bug: BLAS fnc without vector!");
     }
   }
-  for (size_t i = 0; i < argTypeMap.size(); i++) {
-    if (argTypeMap.lookup(i) == argType::len) {
-      os << "const bool byRef = !F->getFunctionType()->getParamType(" << i
-         << ")->isIntegerTy() && blas.prefix == \"\";\n";
-      break;
-    }
-    if (i+1 == argTypeMap.size()) {
-      llvm::errs() << "Tablegen bug: BLAS fnc without vector length!\n";
-      llvm_unreachable("Tablegen bug: BLAS fnc without vector length!");
-    }
-  }
+  os << "const bool byRef = blas.prefix == \"\";\n";
 
   os   << "  if (byRef) {\n";
   for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {

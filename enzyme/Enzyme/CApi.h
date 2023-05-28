@@ -26,7 +26,7 @@
 
 #include "llvm-c/Core.h"
 #include "llvm-c/DataTypes.h"
-#include "llvm-c/Initialization.h"
+// #include "llvm-c/Initialization.h"
 #include "llvm-c/Target.h"
 #include <stddef.h>
 
