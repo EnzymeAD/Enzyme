@@ -12021,6 +12021,56 @@ public:
       }
       return;
     }
+    if (funcName == "cuStreamCreate") {
+      Value *val = nullptr;
+      llvm::Type *PT = Type::getInt8PtrTy(call.getContext());
+#if LLVM_VERSION_MAJOR >= 15
+      if (call.getContext().supportsTypedPointers()) {
+#endif
+        if (isa<PointerType>(call.getArgOperand(0)->getType()))
+          PT = call.getArgOperand(0)->getType()->getPointerElementType();
+#if LLVM_VERSION_MAJOR >= 15
+      }
+#endif
+      if (Mode == DerivativeMode::ReverseModePrimal ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        val = gutils->getNewFromOriginal(call.getOperand(0));
+        if (!isa<PointerType>(val->getType()))
+          val = BuilderZ.CreateIntToPtr(val, PointerType::getUnqual(PT));
+#if LLVM_VERSION_MAJOR > 7
+        val = BuilderZ.CreateLoad(PT, val);
+#else
+        val = BuilderZ.CreateLoad(val);
+#endif
+        val = gutils->cacheForReverse(BuilderZ, val,
+                                      getIndex(&call, CacheType::Tape));
+
+      } else if (Mode == DerivativeMode::ReverseModeGradient) {
+        PHINode *toReplace =
+            BuilderZ.CreatePHI(PT, 1, call.getName() + "_psxtmp");
+        val = gutils->cacheForReverse(BuilderZ, toReplace,
+                                      getIndex(&call, CacheType::Tape));
+      }
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> Builder2(call.getParent());
+        getReverseBuilder(Builder2);
+        val = gutils->lookupM(val, Builder2);
+        auto FreeFunc = gutils->newFunc->getParent()->getOrInsertFunction(
+            "cuStreamDestroy", call.getType(), PT);
+        Value *nargs[] = {val};
+        Builder2.CreateCall(FreeFunc, nargs);
+      }
+      if (Mode == DerivativeMode::ReverseModeGradient)
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      return;
+    }
+    if (funcName == "cuStreamDestroy") {
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined)
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      return;
+    }
     if (funcName == "posix_memalign" || funcName == "cuMemAllocAsync" ||
         funcName == "cuMemAlloc" || funcName == "cuMemAlloc_v2" ||
         funcName == "cudaMalloc" || funcName == "cudaMallocAsync" ||
@@ -12077,8 +12127,8 @@ public:
 
                 BuilderZ.CreateCall(called, args, Defs);
                 if (!isa<PointerType>(ptrshadow->getType()))
-                  ptrshadow = BuilderZ.CreateIntToPtr(ptrshadow,
-                      PointerType::getUnqual(PT));
+                  ptrshadow = BuilderZ.CreateIntToPtr(
+                      ptrshadow, PointerType::getUnqual(PT));
 #if LLVM_VERSION_MAJOR > 7
                 Value *val = BuilderZ.CreateLoad(PT, ptrshadow);
 #else
@@ -12112,7 +12162,8 @@ public:
                 } else if (funcName == "cudaMalloc") {
                   Type *tys[] = {PT, val_arg->getType(), len_arg->getType()};
                   auto F = M->getOrInsertFunction(
-                      "cudaMemset", FunctionType::get(call.getType(), tys, false));
+                      "cudaMemset",
+                      FunctionType::get(call.getType(), tys, false));
                   Value *nargs[] = {dst_arg, val_arg, len_arg};
                   auto memset = cast<CallInst>(BuilderZ.CreateCall(F, nargs));
                   memset->addParamAttr(0, Attribute::NonNull);
@@ -12139,7 +12190,8 @@ public:
                            funcName == "cuMemAlloc_v2") {
                   Type *tys[] = {PT, val_arg->getType(), len_arg->getType()};
                   auto F = M->getOrInsertFunction(
-                      "cuMemsetD8", FunctionType::get(call.getType(), tys, false));
+                      "cuMemsetD8",
+                      FunctionType::get(call.getType(), tys, false));
                   Value *nargs[] = {dst_arg, val_arg, len_arg};
                   auto memset = cast<CallInst>(BuilderZ.CreateCall(F, nargs));
                   memset->addParamAttr(0, Attribute::NonNull);
@@ -12152,12 +12204,12 @@ public:
 
           if (Mode != DerivativeMode::ForwardMode)
             val = gutils->cacheForReverse(BuilderZ, val,
-                                          getIndex(&call, CacheType::Shadow));
+                                          getIndex(&call, CacheType::Tape));
         } else if (Mode == DerivativeMode::ReverseModeGradient) {
           PHINode *toReplace = BuilderZ.CreatePHI(gutils->getShadowType(PT), 1,
                                                   call.getName() + "_psxtmp");
           val = gutils->cacheForReverse(BuilderZ, toReplace,
-                                        getIndex(&call, CacheType::Shadow));
+                                        getIndex(&call, CacheType::Tape));
         }
 
         if (Mode == DerivativeMode::ReverseModeCombined ||

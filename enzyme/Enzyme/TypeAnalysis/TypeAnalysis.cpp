@@ -3923,10 +3923,15 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       return;
     }
-    if (funcName == "cuMemAllocAsync" ||
-        funcName == "cuMemAlloc" || funcName == "cuMemAlloc_v2" ||
-        funcName == "cudaMalloc" || funcName == "cudaMallocAsync" ||
-        funcName == "cudaMallocHost" || funcName == "cudaMallocFromPoolAsync") {
+    if (funcName == "cuStreamQuery") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "cuMemAllocAsync" || funcName == "cuMemAlloc" ||
+        funcName == "cuMemAlloc_v2" || funcName == "cudaMalloc" ||
+        funcName == "cudaMallocAsync" || funcName == "cudaMallocHost" ||
+        funcName == "cudaMallocFromPoolAsync") {
       TypeTree ptrptr;
       ptrptr.insert({-1}, BaseType::Pointer);
       ptrptr.insert({-1, 0}, BaseType::Pointer);
@@ -3937,6 +3942,10 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       return;
     }
     if (funcName == "jl_hrtime" || funcName == "ijl_hrtime") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "jl_get_task_tid" || funcName == "ijl_get_task_tid") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }

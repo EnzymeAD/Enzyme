@@ -226,6 +226,8 @@ const std::set<std::string> KnownInactiveFunctionInsts = {
 
 const std::set<std::string> KnownInactiveFunctions = {
     "cuStreamCreate",
+    "cuStreamDestroy",
+    "cuStreamQuery",
     "cuCtxGetCurrent",
     "enzyme_zerotype",
     "abort",
