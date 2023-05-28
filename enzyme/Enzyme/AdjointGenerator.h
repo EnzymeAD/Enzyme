@@ -2418,7 +2418,7 @@ public:
                 Constant::getNullValue(gutils->getShadowType(BO.getType())),
                 Builder2);
             auto isZero = Builder2.CreateICmpEQ(
-                gutils->getNewFromOriginal(BO.getOperand(i)),
+                lookup(gutils->getNewFromOriginal(BO.getOperand(i)), Builder2),
                 Constant::getNullValue(BO.getType()));
             auto rule = [&](Value *idiff) {
               auto ext = Builder2.CreateBitCast(idiff, FT);
