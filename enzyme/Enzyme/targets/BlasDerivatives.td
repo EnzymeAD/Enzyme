@@ -148,6 +148,18 @@ def ger : CallBlasPattern<(Op $layout, $m, $n, $alpha, $x, $incx, $y, $incy, $A,
                   ]
                   >;
 
+// def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $l, $n, $m, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),
+//                   ["C"],
+//                   [cblas_layout, trans, trans, len, len, len, fp, mld, mld, fp, mld],
+//                   [
+//                   /* alpha */ (noop),
+//                   /* A     */ (noop),
+//                   /* B     */ (noop),
+//                   /* beta  */ (noop),
+//                   /* C     */ (noop)
+//                   ]
+//                   >;
+
 // def spmv : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $v, $ld, $x, $incx, $beta, $y, $incy),
 //                   ["spmv"],
 //                   [cblas_layout, uplo, len, fp, vld, vinc, fp, vinc],
