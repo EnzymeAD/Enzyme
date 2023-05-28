@@ -673,11 +673,17 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
 }
 
 Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
-                                       BlasInfo blas) {
+                                       BlasInfo blas, bool julia_decl) {
   std::string copy_name =
       (blas.prefix + blas.floatType + "copy" + blas.suffix).str();
-  FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                                       {IT, T, IT, T, IT}, false);
+  FunctionType *FT;
+  if (julia_decl) {
+    FT = FunctionType::get(Type::getVoidTy(M.getContext()),
+                           {IT, IT, IT, IT, IT}, false);
+  } else {
+    FT = FunctionType::get(Type::getVoidTy(M.getContext()), {IT, T, IT, T, IT},
+                           false);
+  }
 #if LLVM_VERSION_MAJOR >= 9
   Function *dmemcpy =
       cast<Function>(M.getOrInsertFunction(copy_name, FT).getCallee());
