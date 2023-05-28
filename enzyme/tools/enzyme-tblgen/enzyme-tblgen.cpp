@@ -933,13 +933,24 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
 
   os << "  const bool byRef = blas.prefix == \"\";\n";
   // lv 2 or 3 functions have an extra arg under the cblas_ abi
-  if (lv23)
+  if (lv23) {
     os << "  const int offset = (byRef ? 0 : 1);\n";
+    auto name = nameVec[0];
+    os << "// Next ones shall only be called in the !byRef (thus cblas) case,\n"
+       << "// they have incorrect meaning otherwise\n"
+       << "  const int pos_" << name << " = 0;\n"
+       << "  const auto arg_" << name << " = call.getArgOperand(pos_" << name
+       << ");\n"
+       << "  const auto type_" << name << " = arg_" << name << "->getType();\n"
+       << "  const bool uncacheable_" << name
+       << " = (cacheMode ? overwritten_args[pos_" << name << "] : false);\n\n";
+  }
 
   auto actArgs = pattern.getActiveArgs();
-  for (size_t i = 0; i < nameVec.size(); i++) {
+  for (size_t i = (lv23 ? 1 : 0); i < nameVec.size(); i++) {
     auto name = nameVec[i];
-    os << "  const int pos_" << name << " = " << i << (lv23 ? " + offset" : "")
+    size_t j = (lv23 ? i - 1 : i);
+    os << "  const int pos_" << name << " = " << j << (lv23 ? " + offset" : "")
        << ";\n";
     os << "  const auto arg_" << name << " = call.getArgOperand(pos_" << name
        << ");\n"
@@ -1440,6 +1451,7 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
       PrintFatalError("calling unknown Blas function");
     }
     TGPattern calledPattern = patternMap.find(dfnc_name.str())->getValue();
+    bool derivlv23 = calledPattern.isBLASLevel2or3();
     DenseSet<size_t> mutableArgs = calledPattern.getMutableArgs();
 
     if (handled.find(dfnc_name) != handled.end())
@@ -1452,11 +1464,8 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
     if (dfnc_name == "dot" || dfnc_name == "asum") {
       retTy = "fpType";
     }
-    os << "    auto derivcall_" << dfnc_name
-       << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-       << "      (blas.prefix + blas.floatType + \"" << dfnc_name
-       << "\" + blas.suffix).str(), " << retTy << ",\n";
     // insert arg types based on .td file
+    std::string typeString = "";
     bool first = true;
     std::vector<StringRef> usedArgStrs{};
     for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
@@ -1483,15 +1492,48 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
         } else {
           PrintFatalError(Def->getLoc(), "PANIC! Unsupported Definit");
         }
-        os << ((first) ? "" : ", ") << typeToAdd;
+        typeString += ((first) ? "" : ", ") + typeToAdd;
       } else {
         const auto argStr = ruleDag->getArgNameStr(i);
-        os << ((first) ? "" : ", ") << "type_" << argStr;
+        if (argStr == "layout")
+          continue;
+        // os << ((first) ? "" : ", ") << "type_" << argStr;
         usedArgStrs.push_back(argStr);
+        if (first) {
+          typeString += (Twine("type_") + argStr).str();
+        } else {
+          typeString += (Twine(", type_") + argStr).str();
+        }
       }
       first = false;
     }
-    os << ");\n";
+
+    os << "    llvm::FunctionType *FT" << dfnc_name << " = nullptr;\n";
+    if (derivlv23) {
+      os << "    if(byRef) {\n"
+         << "      Type* tys" << dfnc_name << "[] = {" << typeString << "};\n"
+         << "      FT" << dfnc_name
+         << " = FunctionType::get(Builder2.getVoidTy(), tys" << dfnc_name
+         << ", false);\n"
+         << "    } else {\n"
+         << "      Type* tys" << dfnc_name << "[] = {type_layout, "
+         << typeString << "};\n"
+         << "      FT" << dfnc_name
+         << " = FunctionType::get(Builder2.getVoidTy(), tys" << dfnc_name
+         << ", false);\n"
+         << "    }\n";
+    } else {
+      os << "    Type* tys" << dfnc_name << "[] = {" << typeString << "};\n"
+         << "    FT" << dfnc_name
+         << " = FunctionType::get(Builder2.getVoidTy(), tys" << dfnc_name
+         << ", false);\n";
+    }
+
+    os << "auto derivcall_" << dfnc_name
+       << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
+       << "  (blas.prefix + blas.floatType + \"" << dfnc_name
+       << "\" + blas.suffix).str(), FT" << dfnc_name << ");\n";
+
     os << "#if LLVM_VERSION_MAJOR >= 9\n"
        << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
        << ".getCallee()))\n"

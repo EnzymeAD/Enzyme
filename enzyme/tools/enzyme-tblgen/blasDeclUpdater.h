@@ -14,6 +14,7 @@ void emit_attributeBLASCaller(const std::vector<TGPattern> &blasPatterns,
 
 void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
+  bool lv23 = pattern.isBLASLevel2or3();
   os << "void attribute_" << name << "(BlasInfo blas, llvm::Function *F) {\n"
      << "#if LLVM_VERSION_MAJOR >= 16\n"
      << "  F->setOnlyAccessesArgMemory();\n"
@@ -52,7 +53,7 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   for (size_t i = 0; i < argTypeMap.size(); i++) {
     if (argTypeMap.lookup(i) == argType::vincData) {
       os << "const bool julia_decl = !F->getFunctionType()->getParamType(" << i
-         << ")->isPointerTy();\n";
+         << (lv23 ? "-1" : "") << ")->isPointerTy();\n";
       break;
     }
     if (i+1 == argTypeMap.size()) {
@@ -61,17 +62,23 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
     }
   }
   os << "const bool byRef = blas.prefix == \"\";\n";
+  // it is horrible, sorry.
+  // substract -1 in the lv23 case, because we do have the cblas layout thingy
+  // for the
+  if (lv23)
+    os << "const int offset = (byRef ? (0-1) : (1-1));\n";
 
   os   << "  if (byRef) {\n";
   for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {
     const auto typeOfArg = argTypeMap.lookup(argPos);
     if (typeOfArg == argType::len || typeOfArg == argType::vincInc) {
-      os << "      F->addParamAttr(" << argPos
+      os << "      F->addParamAttr(" << argPos << (lv23 ? " + offset" : "")
          << ", llvm::Attribute::ReadOnly);\n"
-         << "      F->addParamAttr(" << argPos
+         << "      F->addParamAttr(" << argPos << (lv23 ? " + offset" : "")
          << ", llvm::Attribute::NoCapture);\n";
     }
   }
+
   os << "  }\n"
      << "  // Julia declares double* pointers as Int64,\n"
      << "  //  so LLVM won't let us add these Attributes.\n"
@@ -79,10 +86,12 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {
     auto typeOfArg = argTypeMap.lookup(argPos);
     if (typeOfArg == argType::vincData) {
-      os << "    F->addParamAttr(" << argPos << ", llvm::Attribute::NoCapture);\n";
+      os << "    F->addParamAttr(" << argPos << (lv23 ? " + offset" : "")
+         << ", llvm::Attribute::NoCapture);\n";
       if (mutableArgs.count(argPos) == 0) {
         // Only emit ReadOnly if the arg isn't mutable
-        os << "    F->addParamAttr(" << argPos << ", llvm::Attribute::ReadOnly);\n";
+        os << "    F->addParamAttr(" << argPos << (lv23 ? " + offset" : "")
+           << ", llvm::Attribute::ReadOnly);\n";
       }
     }
   }
