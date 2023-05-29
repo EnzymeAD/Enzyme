@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -early-cse -simplifycfg -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,early-cse,%simplifycfg)" -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 15]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -early-cse -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 15]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,early-cse,%simplifycfg)" -S | FileCheck %s; fi
 
 ; Function Attrs: noinline nounwind readnone uwtable
 define double @tester(double %x, double %y) {
@@ -29,3 +29,4 @@ declare double @__enzyme_autodiff(double (double, double)*, ...)
 ; CHECK-NEXT:   %[[iv1:.+]] = insertvalue { double, double } %[[iv0]], double %[[diffey]], 1
 ; CHECK-NEXT:   ret { double, double } %[[iv1]]
 ; CHECK-NEXT: }
+

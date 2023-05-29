@@ -25,7 +25,7 @@ declare double @llvm.maxnum.f64(double, double)
 
 ; CHECK: define internal [2 x double] @fwddiffe2tester(double %x, [2 x double] %"x'", double %y)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fcmp fast olt double %x, %y
+; CHECK-NEXT:   %0 = fcmp fast ogt double %x, %y
 ; CHECK-NEXT:   %1 = extractvalue [2 x double] %"x'", 0
 ; CHECK-NEXT:   %2 = select {{(fast )?}}i1 %0, double %1, double 0.000000e+00
 ; CHECK-NEXT:   %3 = insertvalue [2 x double] undef, double %2, 0

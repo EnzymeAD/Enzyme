@@ -4617,7 +4617,7 @@ public:
           return;
         Value *op0 = gutils->getNewFromOriginal(orig_ops[0]);
         Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
-        Value *cmp = Builder2.CreateFCmpOLT(op0, op1);
+        Value *cmp = Builder2.CreateFCmpOGT(op0, op1);
 
         Type *opType0 = gutils->getShadowType(orig_ops[0]->getType());
         Type *opType1 = gutils->getShadowType(orig_ops[1]->getType());
