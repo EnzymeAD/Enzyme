@@ -1588,11 +1588,14 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     LoadBegin = SE.getSCEV(LI->getPointerOperand());
     if (LoadBegin != SE.getCouldNotCompute()) {
       auto &DL = maybeWriter->getModule()->getDataLayout();
+      auto width = cast<IntegerType>(DL.getIndexType(LoadBegin->getType()))
+                       ->getBitWidth();
 #if LLVM_VERSION_MAJOR >= 10
       auto TS = SE.getConstant(
-          APInt(64, DL.getTypeStoreSize(LI->getType()).getFixedSize()));
+          APInt(width, DL.getTypeStoreSize(LI->getType()).getFixedSize()));
 #else
-      auto TS = SE.getConstant(APInt(64, DL.getTypeStoreSize(LI->getType())));
+      auto TS =
+          SE.getConstant(APInt(width, DL.getTypeStoreSize(LI->getType())));
 #endif
       LoadEnd = SE.getAddExpr(LoadBegin, TS);
     }
@@ -1601,13 +1604,15 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     StoreBegin = SE.getSCEV(SI->getPointerOperand());
     if (StoreBegin != SE.getCouldNotCompute()) {
       auto &DL = maybeWriter->getModule()->getDataLayout();
+      auto width = cast<IntegerType>(DL.getIndexType(StoreBegin->getType()))
+                       ->getBitWidth();
 #if LLVM_VERSION_MAJOR >= 10
       auto TS = SE.getConstant(
-          APInt(64, DL.getTypeStoreSize(SI->getValueOperand()->getType())
-                        .getFixedSize()));
+          APInt(width, DL.getTypeStoreSize(SI->getValueOperand()->getType())
+                           .getFixedSize()));
 #else
       auto TS = SE.getConstant(
-          APInt(64, DL.getTypeStoreSize(SI->getValueOperand()->getType())));
+          APInt(width, DL.getTypeStoreSize(SI->getValueOperand()->getType())));
 #endif
       StoreEnd = SE.getAddExpr(StoreBegin, TS);
     }
@@ -1616,7 +1621,11 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     StoreBegin = SE.getSCEV(MS->getArgOperand(0));
     if (StoreBegin != SE.getCouldNotCompute()) {
       if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
-        auto TS = SE.getConstant(APInt(64, Len->getValue().getLimitedValue()));
+        auto &DL = MS->getModule()->getDataLayout();
+        auto width = cast<IntegerType>(DL.getIndexType(StoreBegin->getType()))
+                         ->getBitWidth();
+        auto TS =
+            SE.getConstant(APInt(width, Len->getValue().getLimitedValue()));
         StoreEnd = SE.getAddExpr(StoreBegin, TS);
       }
     }
@@ -1625,7 +1634,11 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     StoreBegin = SE.getSCEV(MS->getArgOperand(0));
     if (StoreBegin != SE.getCouldNotCompute()) {
       if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
-        auto TS = SE.getConstant(APInt(64, Len->getValue().getLimitedValue()));
+        auto &DL = MS->getModule()->getDataLayout();
+        auto width = cast<IntegerType>(DL.getIndexType(StoreBegin->getType()))
+                         ->getBitWidth();
+        auto TS =
+            SE.getConstant(APInt(width, Len->getValue().getLimitedValue()));
         StoreEnd = SE.getAddExpr(StoreBegin, TS);
       }
     }
@@ -1634,7 +1647,11 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     LoadBegin = SE.getSCEV(MS->getArgOperand(1));
     if (LoadBegin != SE.getCouldNotCompute()) {
       if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
-        auto TS = SE.getConstant(APInt(64, Len->getValue().getLimitedValue()));
+        auto &DL = MS->getModule()->getDataLayout();
+        auto width = cast<IntegerType>(DL.getIndexType(LoadBegin->getType()))
+                         ->getBitWidth();
+        auto TS =
+            SE.getConstant(APInt(width, Len->getValue().getLimitedValue()));
         LoadEnd = SE.getAddExpr(LoadBegin, TS);
       }
     }
