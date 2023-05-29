@@ -1676,7 +1676,7 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
         // coppied from vincInc, but should verify if actually needed
         result.append(name);
       } else if (typeOfArg == argType::trans) {
-        result.append((Twine("arg_") + name).str());
+        result.append((Twine("gutils->getNewFromOriginal(arg_") + name+")").str());
       } else {
         // TODO
         // llvm::errs() << "name: " << name << " typename: " << typeOfArg <<
