@@ -47,6 +47,7 @@ def zero : MagicInst; // zeros of given length
 def todo : MagicInst; // TODO
 def tp   : MagicInst; // transpose the trans param.
 def noop : MagicInst; // gradient is zero 
+def inactive : MagicInst; // like noop, but assert it's inactive
 
 // placeholder name
 class b<string _s> {
@@ -138,9 +139,9 @@ def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $
                   [
                   /* alpha  */  (noop), //(b<"dot"> $y, (b<"gemv"> $A, $x)),
                   /* A      */  (b<"ger">  $layout, $m, $n, $alpha, adj<"y">, $incy, $x, $incx, $A, $lda),
-                  /* x      */  (noop), //(b<"gemv"> $layout, $m, $n, $alpha, $A, $lda, $y, $incy, $x),
-                  /* beta   */  (noop),//(b<"dot"> $y, DiffeRet<"">),
-                  /* y      */  (noop)//(b<"scal"> $beta, DiffeRet<"">),
+                  /* x      */  (noop), //(b<"gemv"> $layout, $m, $n, $alpha, $A, $lda, $y, $incy, $x), // setting x to inactive fails current gemv test! :)
+                  /* beta   */  (noop), //(b<"dot"> $y, DiffeRet<"">),
+                  /* y      */  (noop)  //(b<"scal"> $beta, DiffeRet<"">),
                   ]
                   >;
 // 
@@ -158,10 +159,10 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   ["C"],
                   [cblas_layout, trans, trans, len, len, len, fp, mld, mld, fp, mld],
                   [
-                  /* alpha */ (noop),
+                  /* alpha */ (inactive),
                   /* A     */ (b<"gemm"> $layout, $transa, transpose<"transb">, $m, $k, $n, $alpha, adj<"C">, $ldc, $B, $ldb, $beta, adj<"A">, $lda),
                   /* B     */ (b<"gemm"> $layout, transpose<"transa">, $transb, $m, $n, $k, $alpha, $A, $lda, adj<"C">, $ldc, $beta, adj<"B">, $ldb),
-                  /* beta  */ (noop),
+                  /* beta  */ (inactive),
                   /* C     */ (noop) // check that beta always zero! Then set adj<"C"> = 0 (if beta = 1, do nothing). If beta anything else, use scal on dc
                   ]
                   >;

@@ -1835,6 +1835,8 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
       }
     } else if (Def->isSubClassOf("adj")) {
     } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "noop") {
+    } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "inactive") {
+      os << "      assert(!active_" << name << ");\n";
     } else if (Def->isSubClassOf("Constant")) {
     } else {
       llvm::errs() << Def->getName() << "\n";
