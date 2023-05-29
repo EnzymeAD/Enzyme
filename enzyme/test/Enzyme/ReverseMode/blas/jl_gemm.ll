@@ -1111,8 +1111,6 @@ fail40:                                           ; preds = %L163
 
 declare i8* @malloc(i8 %0)
 
-declare void @dlacpy_64_(i64 %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6)
-
 attributes #0 = { nofree readnone "enzyme_inactive" "enzyme_shouldrecompute" "enzymejl_world"="33474" }
 attributes #1 = { nofree nosync nounwind readnone speculatable willreturn "enzymejl_world"="33474" }
 attributes #2 = { inaccessiblememonly allocsize(1) "enzymejl_world"="33474" }

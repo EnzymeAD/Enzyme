@@ -34,19 +34,19 @@ target triple = "x86_64-unknown-linux-gnu"
 
 define dso_local void @g(double* %alpha, double* %A, double* %x, double* %beta, double* %y) {
 entry:
-  %trans = alloca i32, align 4
-  store i32 112, i32* %trans
+  %trans = alloca i8, align 4
+  store i8 112, i8* %trans
   %M = alloca i32, align 4
   %N = alloca i32, align 4
   %lda = alloca i32, align 4
   %incx = alloca i32, align 4
   %incy = alloca i32, align 4
 
-  call void @dgemv(i32* %trans, i32* %M, i32* %N, double* %alpha, double* %A, i32* %lda, double* %x, i32* %incx, double* %beta, double* %y, i32* %incy)
+  call void @dgemv(i8* %trans, i32* %M, i32* %N, double* %alpha, double* %A, i32* %lda, double* %x, i32* %incx, double* %beta, double* %y, i32* %incy)
   ret void
 }
 
-declare dso_local void @dgemv(i32*, i32*, i32*, double*, double*, i32*, double*, i32*, double*, double*, i32*)
+declare dso_local void @dgemv(i8*, i32*, i32*, double*, double*, i32*, double*, i32*, double*, double*, i32*)
 
 ; declare dso_local void @dgemm(i32, i32, i32, i32, i32, double, double*, i32, double*, i32, double, double*, i32)
 
