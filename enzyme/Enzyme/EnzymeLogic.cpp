@@ -2943,7 +2943,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         ei->replaceAllUsesWith(rep);
         ei->eraseFromParent();
       }
-      user->eraseFromParent();
+      if (user->getParent()->getParent() == gutils->newFunc)
+        gutils->erase(user);
+      else
+        user->eraseFromParent();
     } else {
       user->setCalledFunction(NewF);
     }
@@ -4172,7 +4175,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                                 DerivativeMode::ReverseModeCombined);
       }
       if (newBB->getTerminator())
-        newBB->getTerminator()->eraseFromParent();
+        gutils->erase(newBB->getTerminator());
       IRBuilder<> builder(newBB);
       builder.CreateUnreachable();
       continue;
