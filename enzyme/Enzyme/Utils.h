@@ -1619,6 +1619,11 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
   return false;
 }
 
+// julia_decl null means not julia decl, otherwise it is the integer type needed
+// to cast to
+llvm::Value *to_blas_callconv(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
+                              llvm::IntegerType *julia_decl,
+                              llvm::IRBuilder<> &entryBuilder);
 // first one assume V is an Integer
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V);
 // secon one assume V is an Integer or a ptr to an int (depends on byRef)
