@@ -1054,8 +1054,8 @@ void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
     auto name = nameVec[i];
     if (argTypeMap.lookup(i) == argType::trans) {
       os << "  llvm::Value* arg_transposed_" << name
-         << " = transpose(BuilderZ, arg_" << name
-         << ", byRef, intType, allocationBuilder);\n";
+         << " = transpose(BuilderZ, gutils->getNewFromOriginal(arg_" << name
+         << "), byRef, intType, allocationBuilder);\n";
     }
   }
 }
