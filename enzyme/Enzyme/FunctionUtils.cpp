@@ -2105,7 +2105,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     ValueToValueMapTy &ptrInputs, ArrayRef<DIFFE_TYPE> constant_args,
     SmallPtrSetImpl<Value *> &constants, SmallPtrSetImpl<Value *> &nonconstant,
     SmallPtrSetImpl<Value *> &returnvals, ReturnType returnValue,
-    DIFFE_TYPE returnType, Twine name, ValueToValueMapTy *VMapO,
+    DIFFE_TYPE returnType, Twine name,
+    llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> *VMapO,
     bool diffeReturnArg, llvm::Type *additionalArg) {
   assert(!F->empty());
   F = preprocessForClone(F, mode);
@@ -2169,7 +2170,9 @@ Function *PreProcessCache::CloneFunctionWithReturns(
 #endif
   CloneOrigin[NewF] = F;
   if (VMapO) {
-    VMapO->insert(VMap.begin(), VMap.end());
+    for (const auto &data : VMap)
+      VMapO->insert(std::pair<const llvm::Value *, AssertingReplacingVH>(
+          data.first, (llvm::Value *)data.second));
     VMapO->getMDMap() = VMap.getMDMap();
   }
 

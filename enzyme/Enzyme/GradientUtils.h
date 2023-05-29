@@ -169,8 +169,8 @@ public:
   llvm::SmallPtrSet<llvm::Instruction *, 4> TapesToPreventRecomputation;
 
   llvm::ValueMap<llvm::PHINode *, llvm::WeakTrackingVH> fictiousPHIs;
-  llvm::ValueToValueMapTy originalToNewFn;
-  llvm::ValueToValueMapTy newToOriginalFn;
+  llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> originalToNewFn;
+  llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> newToOriginalFn;
   llvm::SmallVector<llvm::CallInst *, 4> originalCalls;
 
   llvm::SmallPtrSet<llvm::Instruction *, 4> unnecessaryIntermediates;
@@ -372,8 +372,9 @@ public:
                 const llvm::SmallPtrSetImpl<llvm::Value *> &activevals_,
                 DIFFE_TYPE ReturnActivity,
                 llvm::ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
-                llvm::ValueToValueMapTy &originalToNewFn_, DerivativeMode mode,
-                unsigned width, bool omp);
+                llvm::ValueMap<const llvm::Value *, AssertingReplacingVH>
+                    &originalToNewFn_,
+                DerivativeMode mode, unsigned width, bool omp);
 
 public:
   DIFFE_TYPE getDiffeType(llvm::Value *v, bool foreignFunction) const;
