@@ -8749,6 +8749,22 @@ BasicBlock *GradientUtils::addReverseBlock(BasicBlock *currentBlock,
   return rev;
 }
 
+void GradientUtils::replaceOriginalToNewFn(llvm::Value *A, llvm::Value *B) {
+  if (A == B)
+    return;
+
+  auto found = newToOriginalFn.find(A);
+  assert(found != newToOriginalFn.end());
+  auto foundB = newToOriginalFn.find(B);
+  assert(foundB == newToOriginalFn.end());
+  newToOriginalFn[B] = found->second;
+
+  auto found2 = originalToNewFn.find(found->second);
+  assert(found2 != originalToNewFn.end());
+  assert(found2->second == A);
+  originaToNewFn[found->second] = B;
+}
+
 void GradientUtils::replaceAWithB(Value *A, Value *B, bool storeInCache) {
   if (A == B)
     return;

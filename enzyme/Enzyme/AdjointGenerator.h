@@ -8986,9 +8986,7 @@ public:
           dcall = (rval < 0) ? augmentcall
                              : BuilderZ.CreateExtractValue(augmentcall,
                                                            {(unsigned)rval});
-          gutils->originalToNewFn[&call] = dcall;
-          gutils->newToOriginalFn.erase(newCall);
-          gutils->newToOriginalFn[dcall] = &call;
+          gutils->replaceOriginalToNewFn(newCall, dcall);
 
           assert(dcall->getType() == call.getType());
           assert(dcall);
@@ -9041,9 +9039,8 @@ public:
           gutils->erase(newCall);
         } else {
           BuilderZ.SetInsertPoint(BuilderZ.GetInsertPoint()->getNextNode());
+          gutils->replaceOriginalToNewFn(gutils->getNewFromOriginal(&call), augmentcall);
           eraseIfUnused(call, /*erase*/ true, /*check*/ false);
-          gutils->originalToNewFn[&call] = augmentcall;
-          gutils->newToOriginalFn[augmentcall] = &call;
         }
 
       } else {
@@ -9442,9 +9439,7 @@ public:
         a->moveBefore(*Builder2.GetInsertBlock(), Builder2.GetInsertPoint());
       }
 
-      gutils->originalToNewFn[&call] = retval ? retval : diffes;
-      gutils->newToOriginalFn.erase(newCall);
-      gutils->newToOriginalFn[retval ? retval : diffes] = &call;
+      gutils->replaceOriginalToNewFn(newCall, retval ? retval : diffes);
 
       erased.insert(&call);
       gutils->erase(newCall);
@@ -9461,9 +9456,7 @@ public:
         assert(dcall);
 
         if (!gutils->isConstantValue(&call)) {
-          gutils->originalToNewFn[&call] = dcall;
-          gutils->newToOriginalFn.erase(newCall);
-          gutils->newToOriginalFn[dcall] = &call;
+          gutils->replaceOriginalToNewFn(newCall, dcall);
           if (!call.getType()->isFPOrFPVectorTy() &&
               TR.query(&call).Inner0().isPossiblePointer()) {
           } else {
@@ -9481,9 +9474,7 @@ public:
       } else {
         eraseIfUnused(call, /*erase*/ true, /*check*/ false);
         if (augmentcall) {
-          gutils->originalToNewFn[&call] = augmentcall;
-          gutils->newToOriginalFn.erase(newCall);
-          gutils->newToOriginalFn[augmentcall] = &call;
+          gutils->replaceOriginalToNewFn(newCall, augmentcall);
         }
       }
     }

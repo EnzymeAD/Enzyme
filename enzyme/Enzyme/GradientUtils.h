@@ -326,6 +326,8 @@ public:
   void replaceAWithB(llvm::Value *A, llvm::Value *B,
                      bool storeInCache = false) override;
 
+  void replaceOriginalToNewFn(llvm::Value *A, llvm::Value *B);
+
   void erase(llvm::Instruction *I) override;
 
   // TODO consider invariant group and/or valueInvariant group
