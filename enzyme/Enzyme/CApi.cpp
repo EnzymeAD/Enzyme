@@ -304,6 +304,15 @@ void *EnzymeGradientUtilsTypeAnalyzer(GradientUtils *G) {
   return (void *)&G->TR.analyzer;
 }
 
+void EnzymeGradientUtilsErase(GradientUtils *G, LLVMValueRef I) {
+  return G->erase(cast<Instruction>(unwrap(I)));
+}
+
+void EnzymeGradientUtilsReplaceAWithB(GradientUtils *G, LLVMValueRef A,
+                                      LLVMValueRef B) {
+  return G->replaceAWithB(unwrap(A), unwrap(B));
+}
+
 void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
                                      CustomShadowFree FHandle) {
   shadowHandlers[std::string(Name)] =
