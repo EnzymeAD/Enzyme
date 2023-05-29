@@ -49,7 +49,7 @@ entry:
 ; CHECK-NEXT:   %4 = load double, double* %"m'ipl", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"m'ipl", align 8
 ; CHECK-NEXT:   call void @diffeset(double** undef, double** undef, { i8*, i8* } %tapeArg1)
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"malloccall'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %"malloccall'mi")
 ; CHECK-NEXT:   %5 = insertvalue { double } undef, double %4, 0
 ; CHECK-NEXT:   ret { double } %5
 ; CHECK-NEXT: }

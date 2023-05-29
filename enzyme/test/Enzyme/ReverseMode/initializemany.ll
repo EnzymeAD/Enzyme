@@ -180,9 +180,9 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %[[lcssa:.+]] = phi double [ %[[added:.+]], %invertfor.body ]
 ; CHECK-NEXT:   %[[toreturn:.+]] = insertvalue { double } undef, double %[[lcssa]], 0
 ; CHECK-NEXT:   %[[tofree:.+]] = bitcast i8** %0 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %[[tofree]])
+; CHECK-NEXT:   call void @free(i8* nonnull %[[tofree]])
 ; CHECK-NEXT:   %[[tofree2:.+]] = bitcast i8** %1 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %[[tofree2]])
+; CHECK-NEXT:   call void @free(i8* nonnull %[[tofree2]])
 ; CHECK-NEXT:   ret { double } %[[toreturn]]
 
 ; CHECK: invertfor.body: 
@@ -194,10 +194,10 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %[[load:.+]] = load double, double* %[[bc]], align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %[[bc]], align 8
 ; CHECK-NEXT:   %[[added]] = fadd fast double %"x'de.0", %[[load]]
-; CHECK-NEXT:   tail call void @free(i8* nonnull %[[metaload]])
+; CHECK-NEXT:   call void @free(i8* nonnull %[[metaload]])
 ; CHECK-NEXT:   %[[_unwrap8:.+]] = getelementptr inbounds i8*, i8** %1, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %call_unwrap = load i8*, i8** %[[_unwrap8]], align 8, !alias.scope !{{[0-9]+}}, !noalias !{{[0-9]+}}, !invariant.group !
-; CHECK-NEXT:   tail call void @free(i8* %call_unwrap)
+; CHECK-NEXT:   call void @free(i8* %call_unwrap)
 ; CHECK-NEXT:   %[[lcmp:.+]] = icmp eq i64 %[[antivar]], 0
 ; CHECK-NEXT:   br i1 %[[lcmp]], label %invertentry, label %incinvertfor.body
 

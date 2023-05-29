@@ -45,8 +45,8 @@ bb:
 
 ; CHECK: invertbb_amerge:                                  ; preds = %invertbb_active, %bb
 ; CHECK-NEXT:   %4 = bitcast double* %"i17'mi" to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %4)
+; CHECK-NEXT:   call void @free(i8* nonnull %4)
 ; CHECK-NEXT:   %5 = bitcast double* %i17 to i8*
-; CHECK-NEXT:   tail call void @free(i8* %5)
+; CHECK-NEXT:   call void @free(i8* %5)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

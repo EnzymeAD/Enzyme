@@ -2209,7 +2209,10 @@ F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
                      << " nonconstant arg " << *j << "\n";
     }
 
-    if (constant_args[ii] == DIFFE_TYPE::DUP_NONEED) {
+    // Always remove nonnull/noundef since the caller may choose to pass undef
+    // as an arg if provably it will not be used in the reverse pass
+    if (constant_args[ii] == DIFFE_TYPE::DUP_NONEED ||
+        mode == DerivativeMode::ReverseModeGradient) {
       if (F->hasParamAttribute(ii, Attribute::NonNull)) {
         NewF->removeParamAttr(jj, Attribute::NonNull);
       }

@@ -119,6 +119,6 @@ attributes #1 = { argmemonly }
 ; CHECK-NOT: call{{.*}}@malloc
 ; CHECK: }
 
-; CHECK-LABEL: define internal void @diffe.omp_outlined.(i32* noalias nocapture readonly %.global_tid., i32* noalias nocapture readnone %.bound_tid., i64 %length, double* nocapture nonnull readnone align 8 {{(dereferenceable\(8\) )?}}%tmp, double* nocapture align 8 %"tmp'", double** nocapture readonly %tapeArg)
+; CHECK-LABEL: define internal void @diffe.omp_outlined.(i32* noalias nocapture readonly %.global_tid., i32* noalias nocapture readnone %.bound_tid., i64 %length, double* nocapture readnone align 8 {{(dereferenceable\(8\) )?}}%tmp, double* nocapture align 8 %"tmp'", double** nocapture readonly %tapeArg)
 ; CHECK-NOT: call{{.*}}@free
 ; CHECK: }

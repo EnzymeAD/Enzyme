@@ -102,8 +102,8 @@ attributes #6 = { nounwind }
 ; CHECK-NEXT:   %0 = bitcast i8* %"call'mi" to i64*
 ; CHECK-NEXT:   %1 = load i64, i64* %0, align 8
 ; CHECK-NEXT:   store i64 0, i64* %[[ipc]], align 8
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call'mi")
-; CHECK-NEXT:   tail call void @free(i8* %call)
+; CHECK-NEXT:   call void @free(i8* nonnull %"call'mi")
+; CHECK-NEXT:   call void @free(i8* %call)
 ; CHECK-NEXT:   %2 = insertvalue { i64 } undef, i64 %1, 0
 ; CHECK-NEXT:   ret { i64 } %2
 ; CHECK-NEXT: }

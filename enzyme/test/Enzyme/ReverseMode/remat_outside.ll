@@ -79,7 +79,7 @@ declare dso_local double @_Z17__enzyme_autodiffPFddiEz(double (double, i32)*, ..
 ; CHECK-NEXT:   br i1 %i22, label %bb8, label %[[remat_bb8_bb8:.+]]
 
 ; CHECK: [[remat_bb8_bb8]]:                                    ; preds = %bb12
-; CHECK:   %remat_i10 = tail call noalias nonnull i8* @malloc(i64 %i4)
+; CHECK:   %remat_i10 = call noalias nonnull i8* @malloc(i64 %i4)
 ; CHECK-NEXT:   br label %remat_bb8_bb14
 
 ; CHECK: remat_bb8_bb14: 
@@ -92,5 +92,5 @@ declare dso_local double @_Z17__enzyme_autodiffPFddiEz(double (double, i32)*, ..
 ; CHECK-NEXT:   br i1 %i18_unwrap, label %remat_bb8_bb12_phimerge, label %remat_bb8_bb14
 
 ; CHECK: remat_bb8_bb12_phimerge:                          ; preds = %remat_bb8_bb14
-; CHECK:   tail call void @free(i8* nonnull %remat_i10)
+; CHECK:   call void @free(i8* nonnull %remat_i10)
 

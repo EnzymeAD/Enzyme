@@ -66,7 +66,7 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   br label %invertfor.body
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.body
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"m'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %"m'mi")
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.body:                                   ; preds = %incinvertfor.body, %entry

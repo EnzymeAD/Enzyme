@@ -3329,7 +3329,6 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
 #endif
                     cal->setAttributes(CI->getAttributes());
                     cal->setCallingConv(CI->getCallingConv());
-                    cal->setTailCallKind(CI->getTailCallKind());
                     cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                   } else {
                     assert(isDeallocationFunction(funcName, TLI));
@@ -3395,7 +3394,6 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   cal->setName("remat_" + CI->getName());
                   cal->setAttributes(CI->getAttributes());
                   cal->setCallingConv(CI->getCallingConv());
-                  cal->setTailCallKind(CI->getTailCallKind());
                   cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                   storeInstructionInCache(lctx, NB, cal, cache);
                 } else {
@@ -3518,7 +3516,6 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     cal->copyMetadata(*MS, ToCopy2);
                     cal->setAttributes(MS->getAttributes());
                     cal->setCallingConv(MS->getCallingConv());
-                    cal->setTailCallKind(MS->getTailCallKind());
                     cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                   }
                 } else if (auto CI = dyn_cast<CallInst>(&I)) {
@@ -3553,7 +3550,6 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
 #endif
                       cal->setAttributes(CI->getAttributes());
                       cal->setCallingConv(CI->getCallingConv());
-                      cal->setTailCallKind(CI->getTailCallKind());
                       cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                     }
                   } else {
@@ -3621,8 +3617,6 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                           orig->getAttributes());
                       cast<CallInst>(anti)->setCallingConv(
                           orig->getCallingConv());
-                      cast<CallInst>(anti)->setTailCallKind(
-                          orig->getTailCallKind());
                       cast<CallInst>(anti)->setDebugLoc(
                           getNewFromOriginal(I.getDebugLoc()));
 
@@ -9008,7 +9002,6 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
 #endif
             "", builder.GetInsertBlock()));
     freecall->setDebugLoc(debuglocation);
-    freecall->setTailCall();
     if (isa<CallInst>(tofree) &&
         cast<CallInst>(tofree)->getAttributes().hasAttribute(
             AttributeList::ReturnIndex, Attribute::NonNull)) {
@@ -9126,7 +9119,6 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
       CallInst::Create(freevalue, {builder.CreatePointerCast(tofree, IntPtrTy)},
 #endif
                        "", builder.GetInsertBlock()));
-  freecall->setTailCall();
   freecall->setDebugLoc(debuglocation);
   if (isa<CallInst>(tofree) &&
       cast<CallInst>(tofree)->getAttributes().hasAttribute(

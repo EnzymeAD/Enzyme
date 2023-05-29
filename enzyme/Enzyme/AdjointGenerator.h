@@ -2418,7 +2418,7 @@ public:
                 Constant::getNullValue(gutils->getShadowType(BO.getType())),
                 Builder2);
             auto isZero = Builder2.CreateICmpEQ(
-                gutils->getNewFromOriginal(BO.getOperand(i)),
+                lookup(gutils->getNewFromOriginal(BO.getOperand(i)), Builder2),
                 Constant::getNullValue(BO.getType()));
             auto rule = [&](Value *idiff) {
               auto ext = Builder2.CreateBitCast(idiff, FT);
@@ -3315,7 +3315,6 @@ public:
             cal->setMetadata("enzyme_zerostack", m);
           cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
-          cal->setTailCallKind(MS.getTailCallKind());
           cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
         };
 
@@ -5441,6 +5440,16 @@ public:
                            .CreateAlloca(tape->getType());
           Builder2.CreateStore(tape, alloc);
           args.push_back(alloc);
+        }
+
+        if (Mode == DerivativeMode::ReverseModeGradient && subdata) {
+          for (size_t i = 0; i < argsInverted.size(); i++) {
+            if (subdata->constant_args[i] == argsInverted[i])
+              continue;
+            assert(subdata->constant_args[i] == DIFFE_TYPE::DUP_ARG);
+            assert(argsInverted[i] == DIFFE_TYPE::DUP_NONEED);
+            argsInverted[i] = DIFFE_TYPE::DUP_ARG;
+          }
         }
 
         newcalled = gutils->Logic.CreatePrimalAndGradient(
@@ -9224,6 +9233,16 @@ public:
                                  ? DerivativeMode::ReverseModeCombined
                                  : DerivativeMode::ReverseModeGradient;
     if (called) {
+      if (Mode == DerivativeMode::ReverseModeGradient && subdata) {
+        for (size_t i = 0; i < argsInverted.size(); i++) {
+          if (subdata->constant_args[i] == argsInverted[i])
+            continue;
+          assert(subdata->constant_args[i] == DIFFE_TYPE::DUP_ARG);
+          assert(argsInverted[i] == DIFFE_TYPE::DUP_NONEED);
+          argsInverted[i] = DIFFE_TYPE::DUP_ARG;
+        }
+      }
+
       newcalled = gutils->Logic.CreatePrimalAndGradient(
           (ReverseCacheKey){.todiff = cast<Function>(called),
                             .retType = subretType,

@@ -266,7 +266,7 @@ attributes #11 = { noreturn nounwind }
 ; CHECK-NEXT:   %19 = load double, double* %17, align 8, !tbaa !2
 ; CHECK-NEXT:   %20 = fadd fast double %19, %18
 ; CHECK-NEXT:   store double %20, double* %17, align 8, !tbaa !2
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call5.i.i.i.i.i'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %call5.i.i.i.i.i)
+; CHECK-NEXT:   call void @free(i8* nonnull %"call5.i.i.i.i.i'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %call5.i.i.i.i.i)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

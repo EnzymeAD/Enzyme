@@ -117,8 +117,8 @@ attributes #3 = { nounwind }
 
 ; CHECK: invertfor.body:                                   ; preds = %invertfor.body3
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"i4'ipc_unwrap8", align 8
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %remat_call)
+; CHECK-NEXT:   call void @free(i8* nonnull %"call'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %remat_call)
 ; CHECK-NEXT:   %[[a1:.+]] = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   %[[i3:.+]] = fadd fast double %[[i8:.+]], %differeturn
 ; CHECK-NEXT:   %[[i4]] = select {{(fast )?}}i1 %[[a1]], double %[[i3]], double %[[i8]]
