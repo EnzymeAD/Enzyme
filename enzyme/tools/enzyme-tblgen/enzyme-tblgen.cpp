@@ -1046,7 +1046,12 @@ void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
      << "      intType = IntegerType::get(PT->getContext(), 64);\n"
      << "    else\n"
      << "      intType = IntegerType::get(PT->getContext(), 32);\n"
-     << "  }\n\n";
+     << "  }\n\n"
+     << "  IntegerType *charType = IntegerType::get(intType->getContext(), "
+        "8);\n\n";
+  os << "  IntegerType *julia_decl_type = nullptr;\n"
+     << "  if (julia_decl)\n"
+     << "    julia_decl_type = intType;\n";
   // now we can use it to transpose our trans arguments if they exist.
   if (!lv23)
     return;
@@ -1055,7 +1060,7 @@ void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
     if (argTypeMap.lookup(i) == argType::trans) {
       os << "  llvm::Value* arg_transposed_" << name
          << " = transpose(BuilderZ, gutils->getNewFromOriginal(arg_" << name
-         << "), byRef, intType, allocationBuilder);\n";
+         << "), byRef, charType, allocationBuilder);\n";
     }
   }
 }

@@ -282,7 +282,17 @@ os << "        dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
     // TODO: remove last hardcoded len_n usages to support blas lv2/3 
     os
 << "    if (cache_" << matName << ") {\n"
-<< "      auto matSize = BuilderZ.CreateFMul(" << dim1 << ", " << dim2 << ");\n"
+<< "      Value *matSize;\n"
+<< "      auto charType = IntegerType::get(intType->getContext(), 8);\n"
+<< "      auto *M = gutils->getNewFromOriginal(" << dim1 << ");\n"
+<< "      auto *N = gutils->getNewFromOriginal(" << dim2 << ");\n"
+<< "      if (byRef) {\n"
+<< "        auto len1 = BuilderZ.CreateLoad(charType, M, false);\n"
+<< "        auto len2 = BuilderZ.CreateLoad(charType, N, false);\n"
+<< "        matSize = BuilderZ.CreateMul(len1, len2);\n"
+<< "      } else {\n"
+<< "        matSize = BuilderZ.CreateMul(M,N);\n"
+<< "      }\n"
 << "      auto malins = CreateAllocation(BuilderZ, fpType, matSize);\n"
 << "      Value *arg = BuilderZ.CreateBitCast(malins, castvals[" << i << "]);\n"
 << "      Function *dmemcpy;\n"
@@ -305,15 +315,9 @@ os << "         if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n"
     }
 os << "        dmemcpy = getOrInsertMemcpyStridedLapack(*gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
 << "            intType, blas, julia_decl);\n"
-//Function *getOrInsertMemcpyStridedLapack(Module &M, PointerType *T, Type *IT,
-//                                       BlasInfo blas) {
-
-<< "        auto *M = gutils->getNewFromOriginal(" << dim1 << ");\n"
-<< "        auto *N = gutils->getNewFromOriginal(" << dim2 << ");\n"
-<< "        auto *uplo = llvm::ConstantInt::get(M->getType(), 0);\n" // garbage data, just should not match U or L
+<< "        Value *uplo = llvm::ConstantInt::get(charType, 0);\n" // garbage data, just should not match U or L
+<< "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, julia_decl_type, allocationBuilder);\n"
 << "        Value *args[7] = {uplo, M, N, gutils->getNewFromOriginal(arg_" << matName << "), " << ldName << ", arg, M};\n"
-
-//<< "        Value *args[5] = {gutils->getNewFromOriginal(arg_n), gutils->getNewFromOriginal(arg_" << vecName << "), " << incName << ", arg, ConstantInt::get(intType, 1)};\n"
 << "        if (julia_decl)\n"
 << "          args[3] = BuilderZ.CreatePtrToInt(args[3], type_" << matName << ");\n"
 << "        BuilderZ.CreateCall(dmemcpy, args,\n"

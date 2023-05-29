@@ -720,8 +720,9 @@ Function *getOrInsertMemcpyStridedLapack(Module &M, PointerType *T, Type *IT,
 
   FunctionType *FT;
   if (julia_decl) {
+    auto i8ptr = Type::getInt8PtrTy(M.getContext());
     FT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                           {IT, IT, IT, IT, IT, IT, IT}, false);
+                           {i8ptr/*char*/, i8ptr/*int*/, i8ptr/*int*/, IT/*double*/, i8ptr/*int*/, IT/*double*/, i8ptr/*int*/}, false);
   } else {
     FT = FunctionType::get(Type::getVoidTy(M.getContext()),
                            {IT, IT, IT, T, IT, T, IT}, false);
@@ -2178,6 +2179,18 @@ llvm::FastMathFlags getFast() {
   return f;
 }
 
+// julia_decl null means not julia decl, otherwise it is the integer type needed to cast to
+llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef, IntegerType* julia_decl, IRBuilder <>&entryBuilder) {
+  if (byRef) {
+    Value *allocV = entryBuilder.CreateAlloca(V->getType());
+    B.CreateStore(V, allocV);
+    if (julia_decl)
+      allocV = B.CreatePointerCast(allocV, Type::getInt8PtrTy(V->getContext()));
+    return allocV;
+  } else
+    return V;
+}
+
 llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
   Value *out = B.CreateSelect(
       B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'T')),
@@ -2196,16 +2209,14 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
 }
 
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
-                       llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder) {
+                       llvm::IntegerType *julia_decl,
+                       llvm::IRBuilder<> &entryBuilder) {
 
-  if (byRef)
-    V = B.CreateLoad(IT, V, false);
+  if (byRef) {
+    auto charType = IntegerType::get(V->getContext(), 8);
+    V = B.CreateLoad(charType, V, false);
+  }
 
   V = transpose(B, V);
-  if (byRef) {
-    auto alloc = entryBuilder.CreateAlloca(IT);
-    B.CreateStore(V, alloc);
-    return alloc;
-  } else
-    return V;
+  return to_blas_callconv(B, V, byRef, julia_decl, entryBuilder);
 }
