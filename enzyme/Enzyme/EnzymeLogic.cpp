@@ -1499,9 +1499,11 @@ bool legalCombinedForwardReverse(
       return;
     }
     // Do not try moving an instruction that modifies memory, if we already
-    // moved it
+    // moved it. We need the originalToNew check because we may have deleted
+    // the instruction, which wont require the failed to move.
     if (!isa<StoreInst>(I) || unnecessaryInstructions.count(I) == 0)
       if (I->mayReadOrWriteMemory() &&
+          gutils->originalToNewFn.find(I) != gutils->originalToNewFn.end() &&
           gutils->getNewFromOriginal(I)->getParent() !=
               gutils->getNewFromOriginal(I->getParent())) {
         legal = false;
