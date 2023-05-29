@@ -134,13 +134,14 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 // Lv 2
 
 // y = alpha Ax + beta y
+// currently assumes for vector dimensions that transa = 'N' and gets dimensions wrong otherwise
 def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $incx, $beta, $y, $incy),
                   ["y"], [cblas_layout, trans,  len, len,  fp,   mld,      vinc,      fp,    vinc],
                   [
-                  /* alpha  */  (noop), //(b<"dot"> $y, (b<"gemv"> $A, $x)),
-                  /* A      */  (b<"ger">  $layout, $m, $n, $alpha, adj<"y">, $incy, $x, $incx, $A, $lda),
-                  /* x      */  (noop), //(b<"gemv"> $layout, $m, $n, $alpha, $A, $lda, $y, $incy, $x), // setting x to inactive fails current gemv test! :)
-                  /* beta   */  (noop), //(b<"dot"> $y, DiffeRet<"">),
+                  /* alpha  */  (inactive), //(b<"dot"> $y, (b<"gemv"> $A, $x)),
+                  /* A      */  (b<"ger">  $layout, $m, $n, $alpha, adj<"y">, $incy, $x, $incx, adj<"A">, $lda),
+                  /* x      */  (b<"gemv"> $layout, transpose<"transa">, $n, $m, $alpha, $A, $lda, adj<"y">, $incy, $beta, adj<"x">, $incx),
+                  /* beta   */  (inactive), //(b<"dot"> $y, DiffeRet<"">),
                   /* y      */  (noop)  //(b<"scal"> $beta, DiffeRet<"">),
                   ]
                   >;
