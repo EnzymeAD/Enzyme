@@ -181,7 +181,7 @@ declare dso_local noalias i8* @malloc(i64)
 ; CHECK-NEXT:   br label %invertfor.body
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.body.i.i.i.i.i.i.i
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %"call'mi")
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.body.i.i.i.i.i.i.i:                     ; preds = %invertfor.body, %incinvertfor.body.i.i.i.i.i.i.i

@@ -127,10 +127,10 @@ declare dso_local void @_Z17__enzyme_autodiffPFddiEz(...)
 ; CHECK-NEXT:   %3 = load double, double* %"tmp4'", align 8
 ; CHECK-NEXT:   %4 = fadd fast double %3, %6
 ; CHECK-NEXT:   store double %4, double* %"tmp4'", align 8
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"omem'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %omem)
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"tcall'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %tcall)
+; CHECK-NEXT:   call void @free(i8* nonnull %"omem'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %omem)
+; CHECK-NEXT:   call void @free(i8* nonnull %"tcall'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %tcall)
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.body.i.i.i:                             ; preds = %invertfor.body.i, %incinvertfor.body.i.i.i

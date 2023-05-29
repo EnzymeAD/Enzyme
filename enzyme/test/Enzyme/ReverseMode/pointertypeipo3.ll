@@ -150,8 +150,8 @@ attributes #22 = { readnone }
 ; CHECK-NEXT:   call void @diffecast(i64* %arr, i64* %"arr'ipc")
 ; CHECK-NEXT:   %[[a7:.+]] = load i64, i64* %"arr'ipc"
 ; CHECK-NEXT:   store i64 0, i64* %"arr'ipc"
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"malloccall'mi")
-; CHECK-NEXT:   tail call void @free(i8* %malloccall)
+; CHECK-NEXT:   call void @free(i8* nonnull %"malloccall'mi")
+; CHECK-NEXT:   call void @free(i8* %malloccall)
 ; CHECK-NEXT:   %[[a8:.+]] = insertvalue { i64 } undef, i64 %[[a7]], 0
 ; CHECK-NEXT:   ret { i64 } %[[a8]]
 ; CHECK-NEXT: }

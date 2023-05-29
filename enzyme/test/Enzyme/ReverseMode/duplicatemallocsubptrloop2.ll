@@ -142,12 +142,12 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   br i1 %a15, label %remat_enter, label %loop
 
 ; CHECK: invertentry:  
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"p2'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %p2)
+; CHECK-NEXT:   call void @free(i8* nonnull %"p2'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %p2)
 ; CHECK-NEXT:   %3 = bitcast double** %0 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %3)
+; CHECK-NEXT:   call void @free(i8* nonnull %3)
 ; CHECK-NEXT:   %4 = bitcast double* %1 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %4)
+; CHECK-NEXT:   call void @free(i8* nonnull %4)
 ; CHECK-NEXT:   ret void
 
 ; CHECK: incinvertloop: 

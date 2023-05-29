@@ -93,8 +93,8 @@ declare dso_local double @_Z17__enzyme_autodiffPFddiEz(...)
 ; CHECK-NEXT:   br label %remat_enter
 
 ; CHECK: invertbb14.preheader:  
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"i10'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %remat_i10)
+; CHECK-NEXT:   call void @free(i8* nonnull %"i10'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %remat_i10)
 ; CHECK-NEXT:   %2 = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   br i1 %2, label %invertbb, label %incinvertbb8
 
@@ -117,8 +117,8 @@ declare dso_local double @_Z17__enzyme_autodiffPFddiEz(...)
 ; CHECK-NEXT:   %"arg'de.1" = phi double [ %4, %incinvertbb8 ], [ 0.000000e+00, %bb12 ]
 ; CHECK-NEXT:   %"i13'de.0" = phi double [ 0.000000e+00, %incinvertbb8 ], [ %differeturn, %bb12 ]
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %1, %incinvertbb8 ], [ %iv, %bb12 ]
-; CHECK-NEXT:   %remat_i10 = tail call noalias nonnull i8* @malloc(i64 80)
-; CHECK-NEXT:   %"i10'mi" = tail call noalias nonnull i8* @malloc(i64 80)
+; CHECK-NEXT:   %remat_i10 = call noalias nonnull i8* @malloc(i64 80)
+; CHECK-NEXT:   %"i10'mi" = call noalias nonnull i8* @malloc(i64 80)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(80) dereferenceable_or_null(80) %"i10'mi", i8 0, i64 80, i1 false)
 ; CHECK-NEXT:   br label %remat_bb8_bb14
 

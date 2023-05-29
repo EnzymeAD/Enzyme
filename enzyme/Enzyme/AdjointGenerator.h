@@ -3315,7 +3315,6 @@ public:
             cal->setMetadata("enzyme_zerostack", m);
           cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
-          cal->setTailCallKind(MS.getTailCallKind());
           cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
         };
 

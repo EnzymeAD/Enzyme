@@ -97,11 +97,11 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   br i1 %a15, label %invertloop, label %loop
 
 ; CHECK: invertentry:                                      ; preds = %invertloop
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"p2'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %p2)
-; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
-; CHECK-NEXT:   tail call void @free(i8* nonnull %[[malloccall4]])
-; CHECK-NEXT:   tail call void @free(i8* nonnull %[[malloccall8]])
+; CHECK-NEXT:   call void @free(i8* nonnull %"p2'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %p2)
+; CHECK-NEXT:   call void @free(i8* nonnull %malloccall)
+; CHECK-NEXT:   call void @free(i8* nonnull %[[malloccall4]])
+; CHECK-NEXT:   call void @free(i8* nonnull %[[malloccall8]])
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertloop:                                       ; preds = %loop, %incinvertloop

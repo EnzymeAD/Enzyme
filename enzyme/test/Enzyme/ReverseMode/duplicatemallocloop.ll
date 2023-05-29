@@ -78,8 +78,8 @@ attributes #6 = { nounwind }
 ; CHECK-NEXT:   br i1 %a15, label %remat_enter, label %loop
 
 ; CHECK: invertentry:     
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"a5'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %a5)
+; CHECK-NEXT:   call void @free(i8* nonnull %"a5'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %a5)
 ; CHECK-NEXT:   ret void
 
 ; CHECK: incinvertloop: 
