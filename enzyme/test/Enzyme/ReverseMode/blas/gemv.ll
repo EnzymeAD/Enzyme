@@ -35,6 +35,7 @@ target triple = "x86_64-unknown-linux-gnu"
 define dso_local void @g(double* %alpha, double* %A, double* %x, double* %beta, double* %y) {
 entry:
   %trans = alloca i32, align 4
+  store i32 112, i32* %trans
   %M = alloca i32, align 4
   %N = alloca i32, align 4
   %lda = alloca i32, align 4
