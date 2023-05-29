@@ -71,6 +71,9 @@ LLVMValueRef (*EnzymeSanitizeDerivatives)(LLVMValueRef, LLVMValueRef toset,
 
 extern llvm::cl::opt<bool> EnzymeZeroCache;
 llvm::cl::opt<bool>
+    EnzymeLapackCopy("enzyme-lapack-copy", cl::init(true), cl::Hidden,
+                     cl::desc("Use blas copy calls to cache matrices"));
+llvm::cl::opt<bool>
     EnzymeBlasCopy("enzyme-blas-copy", cl::init(true), cl::Hidden,
                    cl::desc("Use blas copy calls to cache vectors"));
 llvm::cl::opt<bool>
@@ -711,11 +714,18 @@ Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
 }
 
 Function *getOrInsertMemcpyStridedLapack(Module &M, PointerType *T, Type *IT,
-                                       BlasInfo blas) {
+                                         BlasInfo blas, bool julia_decl) {
   std::string copy_name =
       (blas.floatType + "lacpy" + blas.suffix).str();
-  FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                                       {IT, IT, IT, T, IT, T, IT}, false);
+
+  FunctionType *FT;
+  if (julia_decl) {
+    FT = FunctionType::get(Type::getVoidTy(M.getContext()),
+                           {IT, IT, IT, IT, IT, IT, IT}, false);
+  } else {
+    FT = FunctionType::get(Type::getVoidTy(M.getContext()),
+                           {IT, IT, IT, T, IT, T, IT}, false);
+  }
 #if LLVM_VERSION_MAJOR >= 9
   Function *dmemcpy =
       cast<Function>(M.getOrInsertFunction(copy_name, FT).getCallee());

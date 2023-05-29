@@ -88,6 +88,7 @@ extern "C" {
 extern llvm::cl::opt<bool> EnzymePrintPerf;
 extern llvm::cl::opt<bool> EnzymeStrongZero;
 extern llvm::cl::opt<bool> EnzymeBlasCopy;
+extern llvm::cl::opt<bool> EnzymeLapackCopy;
 extern void (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
                                   const void *, LLVMValueRef);
 }
@@ -628,8 +629,9 @@ llvm::Function *getOrInsertDifferentialFloatMemcpy(
 
 /// Create function for type that performs memcpy with a stride using blas copy
 llvm::Function *getOrInsertMemcpyStridedLapack(llvm::Module &M,
-                                             llvm::PointerType *T,
-                                             llvm::Type *IT, BlasInfo blas);
+                                               llvm::PointerType *T,
+                                               llvm::Type *IT, BlasInfo blas,
+                                               bool julia_decl);
 /// Create function for type that performs memcpy with a stride using blas copy
 llvm::Function *getOrInsertMemcpyStridedBlas(llvm::Module &M,
                                              llvm::PointerType *T,
