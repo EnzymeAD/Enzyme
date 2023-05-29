@@ -264,6 +264,65 @@ os << "        dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
 << "    }\n";
   }
   // TODO: same as above, but not for vincData, but for mldData
+  for (size_t i = 0; i < actArgs.size(); i++) {
+    size_t argIdx = actArgs[i];
+    auto typeOfArg = typeMap.lookup(argIdx);
+    if (typeOfArg != argType::mldData)
+      continue;
+    assert(typeMap.lookup(argIdx+1) == argType::mldLD);
+    auto matName = nameVec[argIdx];
+    auto ldName = nameVec[argIdx+1];
+    auto dimensions = pattern.getRelatedLengthArgs(argIdx);
+    assert(dimensions.size() == 2);
+    assert(typeMap.lookup(dimensions[0]) == argType::len);
+    assert(typeMap.lookup(dimensions[1]) == argType::len);
+    std::string dim1 = "arg_" + nameVec[dimensions[0]];
+    std::string dim2 = "arg_" + nameVec[dimensions[1]];
+    // 
+    // TODO: remove last hardcoded len_n usages to support blas lv2/3 
+    os
+<< "    if (cache_" << matName << ") {\n"
+<< "      auto matSize = BuilderZ.CreateFMul(" << dim1 << ", " << dim2 << ");\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, matSize);\n"
+<< "      Value *arg = BuilderZ.CreateBitCast(malins, castvals[" << i << "]);\n"
+<< "      Function *dmemcpy;\n"
+<< "      assert(EnzymeLapackCopy);\n"
+<< "      {\n"
+<< "        ValueType valueTypes[] = {";
+    { bool comma = false;
+    for (auto i : nameVec) {
+      if (comma) os << ", ";
+      os << "ValueType::None";
+      comma = true;
+    }
+    os << "};\n";
+os <<
+   "         valueTypes[" << argIdx << "] = ValueType::Primal;\n"
+<< "         if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
+    }
+    for (auto len_pos : dimensions ) {
+os << "         if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
+    }
+os << "        dmemcpy = getOrInsertMemcpyStridedLapack(*gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
+<< "            intType, blas, julia_decl);\n"
+//Function *getOrInsertMemcpyStridedLapack(Module &M, PointerType *T, Type *IT,
+//                                       BlasInfo blas) {
+
+<< "        auto *M = gutils->getNewFromOriginal(" << dim1 << ");\n"
+<< "        auto *N = gutils->getNewFromOriginal(" << dim2 << ");\n"
+<< "        auto *uplo = llvm::ConstantInt::get(M->getType(), 0);\n" // garbage data, just should not match U or L
+<< "        Value *args[7] = {uplo, M, N, gutils->getNewFromOriginal(arg_" << matName << "), " << ldName << ", arg, M};\n"
+
+//<< "        Value *args[5] = {gutils->getNewFromOriginal(arg_n), gutils->getNewFromOriginal(arg_" << vecName << "), " << incName << ", arg, ConstantInt::get(intType, 1)};\n"
+<< "        if (julia_decl)\n"
+<< "          args[3] = BuilderZ.CreatePtrToInt(args[3], type_" << matName << ");\n"
+<< "        BuilderZ.CreateCall(dmemcpy, args,\n"
+<< "            gutils->getInvertedBundles(&call, valueTypes,\n"
+<< "            BuilderZ, /*lookup*/ false));\n"
+<< "      }\n"
+<< "      cacheValues.push_back(arg);\n"
+<< "    }\n";
+  }
 
   os
 << "    if (cacheValues.size() == 1) {\n"

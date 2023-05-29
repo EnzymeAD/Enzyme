@@ -294,9 +294,44 @@ public:
     // }
   }
   SmallVector<size_t, 2> getRelatedLengthArgs(size_t arg) {
-    // needs to be adjusted for the gemv branch
-    assert(argTypes.lookup(arg) == argType::vincData);
-    return {0};
+    if (!BLASLevel2or3) {
+      assert(argTypes.lookup(arg) == argType::vincData);
+      assert(argTypes.lookup(0) == argType::len);
+      return {0};
+    }
+    assert(argTypes.lookup(arg) == argType::vincData ||
+           argTypes.lookup(arg) == argType::mldData);
+    // This is terribly wrong because it will burn
+    // once someone sets TRANS to T
+    if (blasName == "gemm") {
+      if (arg == 7)
+        return {3, 5};
+      if (arg == 9)
+        return {5, 4};
+      if (arg == 12)
+        return {3, 4};
+      assert(false);
+    }
+    if (blasName == "gemv") {
+      if (arg == 5)
+        return {2, 3};
+      if (arg == 7)
+        return {3};
+      if (arg == 10)
+        return {2};
+      assert(false);
+    }
+    if (blasName == "ger") {
+      if (arg == 4)
+        return {1};
+      if (arg == 6)
+        return {2};
+      if (arg == 8)
+        return {1, 2};
+      assert(false);
+    }
+    llvm::errs() << "failed for: " << blasName << "\n";
+    assert(false);
   }
   bool isBLASLevel2or3() { return BLASLevel2or3; }
   DenseMap<size_t, DenseSet<size_t>> getArgUsers() { return argUsers; }
