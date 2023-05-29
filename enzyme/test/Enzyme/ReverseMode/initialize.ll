@@ -181,8 +181,8 @@ attributes #5 = { nounwind }
 ; CHECK-NEXT:   %[[ipc:.+]] = bitcast i8* %[[arrayidx]] to double*
 ; CHECK-NEXT:   %[[result:.+]] = load double, double* %[[ipc]], align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"'ipc", align 8
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call'mi")
-; CHECK-NEXT:   tail call void @free(i8* %call)
+; CHECK-NEXT:   call void @free(i8* nonnull %"call'mi")
+; CHECK-NEXT:   call void @free(i8* %call)
 ; CHECK-NEXT:   %[[wrap:.+]] = insertvalue { double } undef, double %[[result]], 0
 ; CHECK-NEXT:   ret { double } %[[wrap]]
 ; CHECK-NEXT: }

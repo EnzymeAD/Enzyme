@@ -65,8 +65,8 @@ declare dso_local noalias nonnull i8* @_Znwm(i64)
 ; CHECK-NEXT:   %0 = load double, double* %"tmp'ipc", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"tmp'ipc", align 8
 ; CHECK-NEXT:   %1 = fadd fast double %differeturn, %0
-; CHECK-NEXT:   tail call void @_ZdlPv(i8* nonnull %"call5.i.i.i.i39'mi")
-; CHECK-NEXT:   tail call void @_ZdlPv(i8* nonnull %call5.i.i.i.i39)
+; CHECK-NEXT:   call void @_ZdlPv(i8* nonnull %"call5.i.i.i.i39'mi")
+; CHECK-NEXT:   call void @_ZdlPv(i8* nonnull %call5.i.i.i.i39)
 ; CHECK-NEXT:   %2 = insertvalue { double } undef, double %1, 0
 ; CHECK-NEXT:   ret { double } %2
 ; CHECK-NEXT: }

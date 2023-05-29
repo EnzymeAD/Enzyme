@@ -134,11 +134,11 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   br i1 %a15, label %remat_enter, label %loop
 
 ; CHECK: invertentry:                                      ; preds = %remat_enter
-; CHECK-NEXT:   tail call void @free(i8* nonnull %[[malloccall8]])
+; CHECK-NEXT:   call void @free(i8* nonnull %[[malloccall8]])
 ; CHECK-NEXT:   %4 = bitcast double** %0 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %4)
+; CHECK-NEXT:   call void @free(i8* nonnull %4)
 ; CHECK-NEXT:   %5 = bitcast double* %1 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %5)
+; CHECK-NEXT:   call void @free(i8* nonnull %5)
 ; CHECK-NEXT:   ret void
 
 ; CHECK: incinvertloop:                                    ; preds = %remat_enter
@@ -173,8 +173,8 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %18 = load i8*, i8** %17, align 8
 ; CHECK-NEXT:   %"p3'ipc_unwrap" = bitcast i8* %18 to double**
 ; CHECK-NEXT:   call void @diffef(double** %p3_unwrap, double** %"p3'ipc_unwrap")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %18)
-; CHECK-NEXT:   tail call void @free(i8* %remat_p2)
+; CHECK-NEXT:   call void @free(i8* nonnull %18)
+; CHECK-NEXT:   call void @free(i8* %remat_p2)
 ; CHECK-NEXT:   %19 = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   br i1 %19, label %invertentry, label %incinvertloop
 ; CHECK-NEXT: }

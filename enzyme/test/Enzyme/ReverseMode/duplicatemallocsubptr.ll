@@ -85,7 +85,7 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %1 = fadd fast double %0, %differeturn
 ; CHECK-NEXT:   store double %1, double* %"a4'ip_phi"
 ; CHECK-NEXT:   call void @diffef(double** %p3, double** %"p3'ipc")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"p2'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %p2)
+; CHECK-NEXT:   call void @free(i8* nonnull %"p2'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %p2)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

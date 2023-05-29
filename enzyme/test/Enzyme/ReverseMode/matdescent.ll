@@ -301,8 +301,8 @@ attributes #19 = { builtin nounwind }
 ; CHECK-NEXT:   br i1 %exitcond61, label %invertfor.body20, label %for.body
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.body
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %call)
+; CHECK-NEXT:   call void @free(i8* nonnull %"call'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %call)
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.body:                                   ; preds = %invertfor.body4

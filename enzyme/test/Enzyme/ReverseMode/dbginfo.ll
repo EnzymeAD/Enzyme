@@ -210,6 +210,6 @@ attributes #9 = { noreturn nounwind }
 ; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[i1]], %differeturn
 ; CHECK-NEXT:   store double %[[i2]], double* %"'ipc", align 8
 ; CHECK-NEXT:   %[[i3:.+]] = call { double } @diffefoo(double %x, %struct.Data* undef, %struct.Data* %"'ipc2")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call'mi"), !dbg !{{.*}}[[DBG]]
+; CHECK-NEXT:   call void @free(i8* nonnull %"call'mi"), !dbg !{{.*}}[[DBG]]
 ; CHECK-NEXT:   ret { double } %[[i3]]
 ; CHECK-NEXT: }

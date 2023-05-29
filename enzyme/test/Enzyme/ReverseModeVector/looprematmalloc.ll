@@ -131,10 +131,10 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   ret { [3 x double] } %0
 
 ; CHECK: invertloop:                                       ; preds = %invertsetLoop
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"i1'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"i1'mi1")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"i1'mi2")
-; CHECK-NEXT:   tail call void @free(i8* %remat_i1)
+; CHECK-NEXT:   call void @free(i8* nonnull %"i1'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %"i1'mi1")
+; CHECK-NEXT:   call void @free(i8* nonnull %"i1'mi2")
+; CHECK-NEXT:   call void @free(i8* %remat_i1)
 ; CHECK-NEXT:   %1 = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   %[[i4:.+]] = select {{(fast )?}}i1 %1, double 0.000000e+00, double %"i10'de.sroa.0.0"
 ; CHECK-NEXT:   %[[i5:.+]] = select {{(fast )?}}i1 %1, double 0.000000e+00, double %"i10'de.sroa.7.0"

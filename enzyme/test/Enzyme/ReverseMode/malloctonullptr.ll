@@ -1212,7 +1212,7 @@ attributes #10 = { noreturn nounwind }
 ; CHECK-NEXT:   %1 = load float, float* %"K'", align 4
 ; CHECK-NEXT:   %2 = fadd fast float %1, %0
 ; CHECK-NEXT:   store float %2, float* %"K'", align 4
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call'mi")
-; CHECK-NEXT:   tail call void @free(i8* %call)
+; CHECK-NEXT:   call void @free(i8* nonnull %"call'mi")
+; CHECK-NEXT:   call void @free(i8* %call)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

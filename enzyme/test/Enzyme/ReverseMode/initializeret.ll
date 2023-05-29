@@ -184,8 +184,8 @@ attributes #5 = { nounwind }
 ; TODO DSE SHOULD ELIM
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"'ipc"
 ; CHECK-NEXT:   %[[result:.+]] = fadd fast double %differeturn, %[[loaded]]
-; CHECK-NEXT:   tail call void @free(i8* nonnull %[[callp]])
-; CHECK-NEXT:   tail call void @free(i8* %call)
+; CHECK-NEXT:   call void @free(i8* nonnull %[[callp]])
+; CHECK-NEXT:   call void @free(i8* %call)
 ; CHECK-NEXT:   %[[ins:.+]] = insertvalue { double } undef, double %[[result]], 0
 ; CHECK-NEXT:   ret { double } %[[ins]]
 ; CHECK-NEXT: }

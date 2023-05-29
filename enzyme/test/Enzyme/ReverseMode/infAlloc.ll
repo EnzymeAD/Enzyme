@@ -147,6 +147,6 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   br i1 %cmp2_unwrap, label %remat_for.body_for.body3, label %remat_for.body_for.end
 
 ; CHECK: remat_for.body_for.end:                           ; preds = %remat_for.body_for.body3
-; CHECK-NEXT:   tail call void @free(i8* %remat_call)
+; CHECK-NEXT:   call void @free(i8* %remat_call)
 ; CHECK-NEXT:   %[[i3:.+]] = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[i3]], label %invertentry, label %incinvertfor.body

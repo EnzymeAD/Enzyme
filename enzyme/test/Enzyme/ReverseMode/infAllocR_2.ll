@@ -141,8 +141,8 @@ attributes #3 = { nounwind }
 
 ; CHECK: invertfor.body:                                   ; preds = %invertfor.cond1
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"i4'ipc_unwrap8", align 8
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call'mi")
-; CHECK-NEXT:   tail call void @free(i8* %remat_call)
+; CHECK-NEXT:   call void @free(i8* nonnull %"call'mi")
+; CHECK-NEXT:   call void @free(i8* %remat_call)
 ; CHECK-NEXT:   br label %invertfor.cond
 
 ; CHECK: invertfor.cond1:  

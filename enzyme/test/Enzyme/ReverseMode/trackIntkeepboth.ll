@@ -104,8 +104,8 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   call void @diffesubfn(i64* %lhs, i64* %[[lhsipc]], double* %res, double*{{( nonnull)?}} %[[resipc]], i1 true)
 ; CHECK-NEXT:   store i64 0, i64* %[[z3ipc]], align 8
 ; CHECK-NEXT:   store <2 x double> zeroinitializer, <2 x double>* %[[z2ipc]], align 16
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call.i.i4.i.i.i.i'mi")
-; CHECK-NEXT:   tail call void @free(i8* %call.i.i4.i.i.i.i)
+; CHECK-NEXT:   call void @free(i8* nonnull %"call.i.i4.i.i.i.i'mi")
+; CHECK-NEXT:   call void @free(i8* %call.i.i4.i.i.i.i)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 

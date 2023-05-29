@@ -106,7 +106,7 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   br i1 %i20, label %bb7, label %bb12
 
 ; CHECK: invertbb:                                         ; preds = %invertbb2
-; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
+; CHECK-NEXT:   call void @free(i8* nonnull %malloccall)
 ; CHECK-NEXT:   ret { double } zeroinitializer
 
 ; CHECK: invertbb2:   
@@ -148,7 +148,7 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %"i14'de.2" = phi double [ %"i14'de.1", %invertbb7.loopexit ], [ 0.000000e+00, %incinvertbb12 ]
 ; CHECK-NEXT:   %"i17'de.2" = phi double [ %"i17'de.1", %invertbb7.loopexit ], [ 0.000000e+00, %incinvertbb12 ]
 ; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ %[[_unwrap2]], %invertbb7.loopexit ], [ %[[i18]], %incinvertbb12 ]
-; CHECK-NEXT:   %"i15'mi" = tail call noalias nonnull dereferenceable_or_null(8) i8* @malloc(i64 8)
+; CHECK-NEXT:   %"i15'mi" = call noalias nonnull dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"i15'mi", i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   %[[i19]] = fadd fast double %"i14'de.2", %"i18'de.2"
 ; CHECK-NEXT:   %[[i20:.+]] = fadd fast double %"i17'de.2", %"i18'de.2"
@@ -157,7 +157,7 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %[[i22:.+]] = fadd fast double %[[i21]], %[[i20]]
 ; CHECK-NEXT:   store double %[[i22]], double* %"i16'ipc_unwrap", align 8
 ; CHECK-NEXT:   call fastcc void @diffeevaluate_integrand(double* {{(undef|poison)?}}, double* nonnull %"i16'ipc_unwrap")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"i15'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %"i15'mi")
 ; CHECK-NEXT:   %[[i27:.+]] = icmp eq i64 %"iv1'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[i27]], label %invertbb2, label %incinvertbb12
 ; CHECK-NEXT: }

@@ -141,8 +141,8 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %5 = fadd fast double %4, %3
 ; CHECK-NEXT:   store double %5, double* %"a10'ipg_unwrap", align 8, !alias.scope ![[scope21]], !noalias ![[scope24]]
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* %"a5'mi", i8 0, i64 8, i1 false)
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"a5'mi")
-; CHECK-NEXT:   tail call void @free(i8* %remat_a5)
+; CHECK-NEXT:   call void @free(i8* nonnull %"a5'mi")
+; CHECK-NEXT:   call void @free(i8* %remat_a5)
 ; CHECK-NEXT:   %6 = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   br i1 %6, label %invertentry, label %incinvertloop
 ; CHECK-NEXT: }

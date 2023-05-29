@@ -87,7 +87,7 @@ declare i8* @malloc(i64)
 ; CHECK-NEXT:   %1 = load float, float* %"tmp1'", align 4
 ; CHECK-NEXT:   %2 = fadd fast float %1, %0
 ; CHECK-NEXT:   store float %2, float* %"tmp1'", align 4
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"tmp11'mi")
-; CHECK-NEXT:   tail call void @free(i8* %tmp11)
+; CHECK-NEXT:   call void @free(i8* nonnull %"tmp11'mi")
+; CHECK-NEXT:   call void @free(i8* %tmp11)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
