@@ -52,13 +52,13 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
 
   for (size_t i = 0; i < argTypeMap.size(); i++) {
     if (argTypeMap.lookup(i) == argType::vincData) {
-      os << "const bool julia_decl = !F->getFunctionType()->getParamType(" << i
-         << (lv23 ? "-1" : "") << ")->isPointerTy();\n";
+      os << "const bool julia_decl = !F->getFunctionType()->getParamType("
+         << (lv23 ? i : (i - 1)) << ")->isPointerTy();\n";
       break;
     }
     if (argTypeMap.lookup(i) == argType::mldData) {
-      os << "const bool julia_decl = !F->getFunctionType()->getParamType(" << i
-         << (lv23 ? "-1" : "") << ")->isPointerTy();\n";
+      os << "const bool julia_decl = !F->getFunctionType()->getParamType("
+         << (lv23 ? i : (i - 1)) << ")->isPointerTy();\n";
       break;
     }
     if (i+1 == argTypeMap.size()) {
@@ -67,19 +67,18 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
     }
   }
   os << "const bool byRef = blas.prefix == \"\";\n";
-  // it is horrible, sorry.
-  // substract -1 in the lv23 case, because we do have the cblas layout thingy
-  // for the
   if (lv23)
-    os << "const int offset = (byRef ? (0-1) : (1-1));\n";
+    os << "const int offset = (byRef ? 0 : 1);\n";
 
   os   << "  if (byRef) {\n";
   for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {
     const auto typeOfArg = argTypeMap.lookup(argPos);
-    if (typeOfArg == argType::len || typeOfArg == argType::vincInc) {
-      os << "      F->addParamAttr(" << argPos << (lv23 ? " + offset" : "")
+    size_t i = (lv23 ? argPos - 1 : argPos);
+    if (typeOfArg == argType::len || typeOfArg == argType::vincInc ||
+        typeOfArg == argType::fp) {
+      os << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
          << ", llvm::Attribute::ReadOnly);\n"
-         << "      F->addParamAttr(" << argPos << (lv23 ? " + offset" : "")
+         << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
          << ", llvm::Attribute::NoCapture);\n";
     }
   }
@@ -90,12 +89,13 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
      << "  if (!julia_decl) {\n";
   for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {
     auto typeOfArg = argTypeMap.lookup(argPos);
+    size_t i = (lv23 ? argPos - 1 : argPos);
     if (typeOfArg == argType::vincData) {
-      os << "    F->addParamAttr(" << argPos << (lv23 ? " + offset" : "")
+      os << "    F->addParamAttr(" << i << (lv23 ? " + offset" : "")
          << ", llvm::Attribute::NoCapture);\n";
       if (mutableArgs.count(argPos) == 0) {
         // Only emit ReadOnly if the arg isn't mutable
-        os << "    F->addParamAttr(" << argPos << (lv23 ? " + offset" : "")
+        os << "    F->addParamAttr(" << i << (lv23 ? " + offset" : "")
            << ", llvm::Attribute::ReadOnly);\n";
       }
     }

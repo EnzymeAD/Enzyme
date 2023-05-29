@@ -2168,13 +2168,34 @@ llvm::FastMathFlags getFast() {
   return f;
 }
 
-llvm::Value* transpose(IRBuilder <>&B, llvm::Value *V) {
-  Value *out = B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'T')), ConstantInt::get(V->getType(), 'N'),
-      B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 't')), ConstantInt::get(V->getType(), 'n'),
-          B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'N')), ConstantInt::get(V->getType(), 'T'),
-          B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'n')), ConstantInt::get(V->getType(), 't'),
-            ConstantInt::get(V->getType(), 0)
-            ))));
+llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
+  Value *out = B.CreateSelect(
+      B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'T')),
+      ConstantInt::get(V->getType(), 'N'),
+      B.CreateSelect(
+          B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 't')),
+          ConstantInt::get(V->getType(), 'n'),
+          B.CreateSelect(
+              B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'N')),
+              ConstantInt::get(V->getType(), 'T'),
+              B.CreateSelect(
+                  B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'n')),
+                  ConstantInt::get(V->getType(), 't'),
+                  ConstantInt::get(V->getType(), 0)))));
   return out;
 }
 
+llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
+                       llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder) {
+
+  if (byRef)
+    V = B.CreateLoad(IT, V, false);
+
+  V = transpose(B, V);
+  if (byRef) {
+    auto alloc = entryBuilder.CreateAlloca(IT);
+    B.CreateStore(V, alloc);
+    return alloc;
+  } else
+    return V;
+}

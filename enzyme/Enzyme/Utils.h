@@ -1617,7 +1617,12 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
   return false;
 }
 
-llvm::Value* transpose(IRBuilder <>&B, llvm::Value *V);
+// first one assume V is an Integer
+llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V);
+// secon one assume V is an Integer or a ptr to an int (depends on byRef)
+llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
+                       llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder);
+// GradientUtils *gutils) {
 
 // Parameter attributes from the original function/call that
 // we should preserve on the primal of the derivative code.
