@@ -962,18 +962,6 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
          << name << ");\n";
     }
     os << "\n";
-    if (argTypeMap.lookup(i) == argType::trans) {
-       << "  auto arg_transposed_" << name << " = call.getArgOperand(pos_" << name
-       << ");\n"
-    // const auto arg_transposed_transa = llvm::getIntegerType(fpType->getContext(), 8 /* 1 char */);
-    // if (arg_transa == 'N' || arg_transa == 'n') {
-    //         arg_transposed_transa = 'T';
-    // } else if (arg_transa == 'T' || arg_transa == 't') {
-    //         arg_transposed_transa = 'N';
-    // } else if (arg_transa == 'C' || arg_transa == 'c') {
-    //     llvm::errs() << " Complex not supported!\n";
-    // }
-    }
   }
 
   bool anyActive = false;
@@ -1037,6 +1025,8 @@ void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
 
   auto inputTypes = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
+  auto argTypeMap = pattern.getArgTypeMap();
+  bool lv23 = pattern.isBLASLevel2or3();
 
   for (auto val : inputTypes) {
     if (val.second == argType::len) {
@@ -1057,6 +1047,17 @@ void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
      << "    else\n"
      << "      intType = IntegerType::get(PT->getContext(), 32);\n"
      << "  }\n\n";
+  // now we can use it to transpose our trans arguments if they exist.
+  if (!lv23)
+    return;
+  for (size_t i = (lv23 ? 1 : 0); i < nameVec.size(); i++) {
+    auto name = nameVec[i];
+    if (argTypeMap.lookup(i) == argType::trans) {
+      os << "  llvm::Value* arg_transposed_" << name
+         << " = transpose(BuilderZ, arg_" << name
+         << ", byRef, intType, allocationBuilder);\n";
+    }
+  }
 }
 
 #include "caching.h"
