@@ -75,7 +75,9 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
     const auto typeOfArg = argTypeMap.lookup(argPos);
     size_t i = (lv23 ? argPos - 1 : argPos);
     if (typeOfArg == argType::len || typeOfArg == argType::vincInc ||
-        typeOfArg == argType::fp) {
+        typeOfArg == argType::fp || typeOfArg == argType::trans ||
+        typeOfArg == argType::mldLD || typeOfArg == argType::uplo ||
+        typeOfArg == argType::diag || typeOfArg == argType::side) {
       os << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
          << ", llvm::Attribute::ReadOnly);\n"
          << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
@@ -90,7 +92,7 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {
     auto typeOfArg = argTypeMap.lookup(argPos);
     size_t i = (lv23 ? argPos - 1 : argPos);
-    if (typeOfArg == argType::vincData) {
+    if (typeOfArg == argType::vincData || typeOfArg == argType::mldData) {
       os << "    F->addParamAttr(" << i << (lv23 ? " + offset" : "")
          << ", llvm::Attribute::NoCapture);\n";
       if (mutableArgs.count(argPos) == 0) {
