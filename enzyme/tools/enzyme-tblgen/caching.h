@@ -19,6 +19,9 @@ void emit_mat_caching(TGPattern &pattern, raw_ostream &os) {
     const auto ldName = nameVec[i + 1];
     const auto ldPosition = i + 1;
     const auto ldUsers = argUsers.lookup(ldPosition);
+    if (matUsers.size() == 0) {
+os << "  bool cache_" << matName << " = false;\n";
+    } else {
       os 
 << "  bool cache_" << matName
 << "  = (cacheMode &&\n"
@@ -31,7 +34,9 @@ void emit_mat_caching(TGPattern &pattern, raw_ostream &os) {
 << " && active_" << name;
       }
       os 
-<< ");\n"
+<< ");\n";
+    }
+    os
 << "  bool cache_" << ldName << " = false;\n";
       // xinc is needed to be preserved if
       // 1) it is potentially overwritten AND EITHER
