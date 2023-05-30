@@ -27,6 +27,9 @@
 #include <functional>
 
 #include "mlir/Dialect/Shape/IR/ShapeOpsTypes.h.inc"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/Transforms/DialectConversion.h"
+#include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -63,8 +66,19 @@ struct GenericOpInterfaceReverse
     auto linalgOp = cast<linalg::LinalgOp>(op);
     assert(linalgOp.hasBufferSemantics() &&
            "Linalg op with tensor semantics not yet supported");
+    
     linalg::LinalgOp newOp =
         cast<linalg::LinalgOp>(gutils->getNewFromOriginal(linalgOp));
+    
+    ConversionPatternRewriter rewriter(builder.getContext());
+    auto failiureOrLinalgOp = generalizeNamedOp(rewriter, newOp);
+    if (!failed(failiureOrLinalgOp)) {
+      linalg::GenericOp replacement = failiureOrLinalgOp.getValue();
+      OpBuilder replacementBuilder(newOp);
+      replacementBuilder.insert(replacement);
+      newOp.erase();
+      newOp = replacement;
+    }
 
     auto cacheBuilder = OpBuilder(newOp);
 
@@ -118,7 +132,7 @@ struct GenericOpInterfaceReverse
       inputs.push_back(view);
     }
 
-    T_ adjoint = builder.create<T_>(op->getLoc(), outputs, inputs, indexingMaps,
+    linalg::GenericOp adjoint = builder.create<linalg::GenericOp>(op->getLoc(), outputs, inputs, indexingMaps,
                                     iteratorTypes);
 
     int numInputs = inputs.size();
@@ -131,7 +145,7 @@ struct GenericOpInterfaceReverse
         };
 
     Region *newOpRegion = newOp.getBlock()->getParent();
-    int numInputsNewOp = cast<T_>(newOp).getInputs().size();
+    int numInputsNewOp = cast<linalg::GenericOp>(newOp).getInputs().size();
     Region *adjointRegion = &adjoint.getBodyRegion();
     int numInputsAdjoint = adjoint.getInputs().size();
     Location loc = op->getLoc();
@@ -159,7 +173,7 @@ struct GenericOpInterfaceReverse
 
     // TODO add pushCaches to the yield in newOp
     auto newOpYield = cast<linalg::YieldOp>(
-        cast<T_>(newOp).getBodyRegion().front().getTerminator());
+        cast<linalg::GenericOp>(newOp).getBodyRegion().front().getTerminator());
     for (auto pc : pushCaches) {
       newOpYield.getValuesMutable().append(pc);
     }
@@ -192,7 +206,7 @@ struct GenericOpInterfaceReverse
       alloc->setAttr(alloc.getOperandSegmentSizesAttrName(),
                      cacheBuilder.getDenseI32ArrayAttr({1, 0}));
 
-      cast<T_>(newOp).getOutputsMutable().append(ValueRange({alloc}));
+      cast<linalg::GenericOp>(newOp).getOutputsMutable().append(ValueRange({alloc}));
       indexing_maps.push_back(AffineMap::getMultiDimIdentityMap(
           iterationDomains.size(), cacheBuilder.getContext()));
 
@@ -213,7 +227,7 @@ struct GenericOpInterfaceReverse
     for (auto map : indexing_maps_adjoint) {
       indexing_maps_attr_adjoint.push_back(AffineMapAttr::get(map));
     }
-    newOp->setAttr(cast<T_>(newOp).getIndexingMapsAttrName(),
+    newOp->setAttr(cast<linalg::GenericOp>(newOp).getIndexingMapsAttrName(),
                    cacheBuilder.getArrayAttr(indexing_maps_attr));
     adjoint->setAttr(adjoint.getIndexingMapsAttrName(),
                      builder.getArrayAttr(indexing_maps_attr_adjoint));
@@ -241,8 +255,7 @@ void mlir::enzyme::registerLinalgDialectAutoDiffInterface(
   registry.addExtension(+[](MLIRContext *context, linalg::LinalgDialect *) {
     attachAllInterfaces<
 #define GET_OP_LIST
-#include "mlir/Dialect/Linalg/IR/LinalgStructuredOps.h.inc"
-        >(context);
-    attachAllInterfaces<linalg::GenericOp>(context);
+#include "mlir/Dialect/Linalg/IR/LinalgStructuredOps.cpp.inc"
+    >(context);
   });
 }
