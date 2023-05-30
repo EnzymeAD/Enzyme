@@ -69,10 +69,9 @@ attributes #0 = { nounwind }
 ; CHECK: define internal float @fwddiffesquare(float* noalias nocapture readonly dereferenceable(4) %X, float* nocapture %"X'") #0 {
 ; CHECK-NEXT: alloca_1:
 ; CHECK-NEXT:   %"X_PTR$_4'ipa" = alloca float*, align 8
-; CHECK-NEXT:   store float* null, float** %"X_PTR$_4'ipa", align 8
 ; CHECK-NEXT:   %"X_PTR$_4" = alloca float*, align 8
-; CHECK-NEXT:   store float* null, float** %"X_PTR$_4", align 8, !tbaa !0, !alias.scope !13, !noalias !16
-; CHECK-NEXT:   store float* null, float** %"X_PTR$_4'ipa", align 8, !tbaa !0, !alias.scope !16, !noalias !13
+; CHECK-NEXT:   store float* null, float** %"X_PTR$_4'ipa", align 8, !tbaa !0, !alias.scope !13, !noalias !16
+; CHECK-NEXT:   store float* null, float** %"X_PTR$_4", align 8, !tbaa !0, !alias.scope !16, !noalias !13
 ; CHECK-NEXT:   %"(i8**)X_PTR$_4$'ipc" = bitcast float** %"X_PTR$_4'ipa" to i8**
 ; CHECK-NEXT:   %"(i8**)X_PTR$_4$" = bitcast float** %"X_PTR$_4" to i8**
 ; CHECK-NEXT:   %0 = call i32 @for_alloc_allocatable(i64 4, i8** nonnull %"(i8**)X_PTR$_4$'ipc", i32 262144)
@@ -82,7 +81,7 @@ attributes #0 = { nounwind }
 ; CHECK-NEXT:   %func_result = call i32 @for_alloc_allocatable(i64 4, i8** nonnull %"(i8**)X_PTR$_4$", i32 262144) #4
 ; CHECK-NEXT:   %"X_fetch.1'ipl" = load float, float* %"X'", align 1, !tbaa !5, !alias.scope !18, !noalias !21
 ; CHECK-NEXT:   %X_fetch.1 = load float, float* %X, align 1, !tbaa !5, !alias.scope !21, !noalias !18
-; CHECK-NEXT:   %"X_PTR$_4_fetch.2" = load float*, float** %"X_PTR$_4", align 8, !tbaa !0, !alias.scope !13, !noalias !16
+; CHECK-NEXT:   %"X_PTR$_4_fetch.2" = load float*, float** %"X_PTR$_4", align 8, !tbaa !0, !alias.scope !16, !noalias !13
 ; CHECK-NEXT:   %rel.not = icmp eq float* %"X_PTR$_4_fetch.2", null
 ; CHECK-NEXT:   br i1 %rel.not, label %LHS_not_allocated_lab29, label %LHS_allocated_lab28
 
@@ -92,16 +91,16 @@ attributes #0 = { nounwind }
 ; CHECK-NEXT:   %5 = load i32*, i32** %4, align 8
 ; CHECK-NEXT:   store i32 0, i32* %5, align 1
 ; CHECK-NEXT:   %func_result4 = call i32 @for_alloc_allocatable_handle(i64 4, i8** nonnull %"(i8**)X_PTR$_4$", i32 262144, i8* null) #4
-; CHECK-NEXT:   %"X_PTR$_4_fetch.3.pre" = load float*, float** %"X_PTR$_4", align 8, !tbaa !0, !alias.scope !13, !noalias !16
+; CHECK-NEXT:   %"X_PTR$_4_fetch.3.pre" = load float*, float** %"X_PTR$_4", align 8, !tbaa !0, !alias.scope !16, !noalias !13
 ; CHECK-NEXT:   br label %LHS_allocated_lab28
 
 ; CHECK: LHS_allocated_lab28:                              ; preds = %LHS_not_allocated_lab29, %alloca_1
 ; CHECK-NEXT:   %.in = phi i32* [ %5, %LHS_not_allocated_lab29 ], [ %2, %alloca_1 ]
 ; CHECK-NEXT:   %"X_PTR$_4_fetch.3" = phi float* [ %"X_PTR$_4_fetch.3.pre", %LHS_not_allocated_lab29 ], [ %"X_PTR$_4_fetch.2", %alloca_1 ]
 ; CHECK-NEXT:   %6 = bitcast i32* %.in to float*
-; CHECK-NEXT:   store float %X_fetch.1, float* %"X_PTR$_4_fetch.3", align 8, !tbaa !7, !alias.scope !23, !noalias !26
-; CHECK-NEXT:   store float %"X_fetch.1'ipl", float* %6, align 8, !tbaa !7, !alias.scope !26, !noalias !23
-; CHECK-NEXT:   %"X_PTR$_4_fetch.4" = load float, float* %"X_PTR$_4_fetch.3", align 1, !tbaa !5, !alias.scope !23, !noalias !26
+; CHECK-NEXT:   store float %"X_fetch.1'ipl", float* %6, align 8, !tbaa !7, !alias.scope !23, !noalias !26
+; CHECK-NEXT:   store float %X_fetch.1, float* %"X_PTR$_4_fetch.3", align 8, !tbaa !7, !alias.scope !26, !noalias !23
+; CHECK-NEXT:   %"X_PTR$_4_fetch.4'ipl" = load float, float* %6, align 1, !tbaa !5, !alias.scope !23, !noalias !26
 ; CHECK-NEXT:   %"(i8*)X_PTR$_4_fetch.8$'ipc" = bitcast i32* %.in to i8*
 ; CHECK-NEXT:   %"(i8*)X_PTR$_4_fetch.8$" = bitcast float* %"X_PTR$_4_fetch.3" to i8*
 ; CHECK-NEXT:   %func_result6 = tail call i32 @for_dealloc_allocatable(i8* nonnull %"(i8*)X_PTR$_4_fetch.8$", i32 262144) #4
@@ -126,8 +125,8 @@ attributes #0 = { nounwind }
 ; CHECK-NEXT:   br label %dealloc.list.end37
 
 ; CHECK: dealloc.list.end37:                               ; preds = %free0.i1, %dealloc.list.then36, %__enzyme_checked_free_1.exit
-; CHECK-NEXT:   %9 = fadd fast float %"X_fetch.1'ipl", %"X_fetch.1'ipl"
-; CHECK-NEXT:   %10 = fmul fast float %9, %"X_PTR$_4_fetch.4"
+; CHECK-NEXT:   %9 = fadd fast float %"X_PTR$_4_fetch.4'ipl", %"X_PTR$_4_fetch.4'ipl"
+; CHECK-NEXT:   %10 = fmul fast float %9, %X_fetch.1
 ; CHECK-NEXT:   ret float %10
 ; CHECK-NEXT: }
 

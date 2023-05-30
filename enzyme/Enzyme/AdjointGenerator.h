@@ -12182,68 +12182,26 @@ public:
       }
 #endif
 
-      auto freeAllocation = [](llvm::IRBuilder<> &builder, llvm::Value *tofree,
-                               const llvm::StringRef allocationfn,
-                               const llvm::DebugLoc &debuglocation,
-                               GradientUtils *gutils) {
-        Type *Int32Ty = Type::getInt32Ty(tofree->getContext());
-        Type *Int8PtrTy = Type::getInt8PtrTy(tofree->getContext());
+      auto CreateDeallocationCall = [](StringRef allocFuncName, Value *toFree,
+                                       IRBuilder<> &B, Module *M) {
+        auto &context = toFree->getContext();
+        Type *Int32Ty = Type::getInt32Ty(context);
+        Type *Int8PtrTy = Type::getInt8PtrTy(context);
 
-        std::string deallocFnName = "for_dealloc_allocatable";
+        std::string deallocFnName = allocFuncName.endswith("handle")
+                                        ? "for_dealloc_allocatable_handle"
+                                        : "for_dealloc_allocatable";
         SmallVector<Type *, 3> params{Int8PtrTy, Int32Ty};
-        SmallVector<Value *, 3> args{
-            builder.CreatePointerCast(tofree, Int8PtrTy),
-            ConstantInt::get(Int32Ty, 262146)};
-        if (allocationfn.endswith("handle")) {
-          deallocFnName = "for_dealloc_allocatable_handle";
+        SmallVector<Value *, 3> args{toFree, ConstantInt::get(Int32Ty, 262146)};
+        if (allocFuncName.endswith("handle")) {
           params.push_back(Int8PtrTy);
           args.push_back(
               ConstantPointerNull::get(cast<PointerType>(Int8PtrTy)));
         }
-        auto FT = FunctionType::get(Int32Ty, params, false);
-#if LLVM_VERSION_MAJOR >= 9
-        Value *freevalue = builder.GetInsertBlock()
-                               ->getParent()
-                               ->getParent()
-                               ->getOrInsertFunction(deallocFnName, FT)
-                               .getCallee();
-#else
-        Value *freevalue = builder.GetInsertBlock()
-                               ->getParent()
-                               ->getParent()
-                               ->getOrInsertFunction(deallocFnName, FT);
-#endif
-        CallInst *freecall = cast<CallInst>(
-#if LLVM_VERSION_MAJOR >= 8
-            CallInst::Create(FT, freevalue, args,
-#else
-            CallInst::Create(freevalue, args,
-#endif
-                             "", builder.GetInsertBlock()));
-        freecall->setDebugLoc(debuglocation);
-        freecall->setTailCall();
-        if (isa<CallInst>(tofree) &&
-#if LLVM_VERSION_MAJOR >= 14
-            cast<CallInst>(tofree)->getAttributes().hasAttributeAtIndex(
-                AttributeList::ReturnIndex, Attribute::NonNull)
-#else
-            cast<CallInst>(tofree)->getAttributes().hasAttribute(
-                AttributeList::ReturnIndex, Attribute::NonNull)
-#endif
-        ) {
-#if LLVM_VERSION_MAJOR >= 14
-          freecall->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                        Attribute::NonNull);
-#else
-          freecall->addAttribute(AttributeList::FirstArgIndex,
-                                 Attribute::NonNull);
-#endif
-        }
-        if (Function *F = dyn_cast<Function>(freevalue))
-          freecall->setCallingConv(F->getCallingConv());
-        if (freecall->getParent() == nullptr)
-          builder.Insert(freecall);
-        return freecall;
+
+        auto deallocFn = M->getOrInsertFunction(
+            deallocFnName, FunctionType::get(Int32Ty, params, false));
+        B.CreateCall(deallocFn, args);
       };
 
       if (!constval) {
@@ -12255,64 +12213,86 @@ public:
           SmallVector<Value *, 4> args{
               gutils->getNewFromOriginal(call.getArgOperand(0)), ptrshadow,
               gutils->getNewFromOriginal(call.getArgOperand(2))};
-          if (funcName == "for_allocate_handle" ||
-              funcName == "for_alloc_allocatable_handle") {
+          SmallVector<ValueType, 1> valtys{ValueType::Primal, ValueType::Shadow,
+                                           ValueType::Primal};
+          if (funcName.endswith("handle")) {
             // for_allocate_handle, and for_alloc_allocatable_handle both have
             // one additional argument compared to for_allocate. This additional
             // argument is reserved for coarray support, which as of version IFX
             // 2023.0.0 is not supported.
-            args.push_back(ConstantPointerNull::get(cast<PointerType>(PT)));
+            args.push_back(gutils->getNewFromOriginal(call.getArgOperand(3)));
+            valtys.push_back(ValueType::Primal);
           }
-          BuilderZ.CreateCall(called, args);
+          auto Defs = gutils->getInvertedBundles(&call, valtys, BuilderZ,
+                                                 /*lookup*/ false);
+          val = applyChainRule(
+              PT, BuilderZ,
+              [&](Value *ptrshadow) {
+                args[1] = ptrshadow;
+
+                BuilderZ.CreateCall(called, args, Defs);
+                if (!isa<PointerType>(ptrshadow->getType()))
+                  ptrshadow = BuilderZ.CreateIntToPtr(
+                      ptrshadow, PointerType::getUnqual(PT));
 #if LLVM_VERSION_MAJOR > 7
-          val = BuilderZ.CreateLoad(PT, ptrshadow);
+                Value *val = BuilderZ.CreateLoad(PT, ptrshadow);
 #else
-          val = BuilderZ.CreateLoad(ptrshadow);
-#endif
-          // TODO: figure out way getIndex isn't populated work in Forward Mode
-          // val = gutils->cacheForReverse(BuilderZ, val,
-          //                              getIndex(&call, CacheType::Shadow));
-
-          auto dst_arg = BuilderZ.CreateBitCast(
-              val, Type::getInt8PtrTy(call.getContext()));
-          auto val_arg =
-              ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
-          auto len_arg = BuilderZ.CreateZExtOrTrunc(
-              gutils->getNewFromOriginal(call.getArgOperand(0)),
-              Type::getInt64Ty(call.getContext()));
-          auto volatile_arg = ConstantInt::getFalse(call.getContext());
-
-#if LLVM_VERSION_MAJOR == 6
-          auto align_arg =
-              ConstantInt::get(Type::getInt32Ty(call.getContext()), 1);
-          Value *nargs[] = {dst_arg, val_arg, len_arg, align_arg, volatile_arg};
-#else
-          Value *nargs[] = {dst_arg, val_arg, len_arg, volatile_arg};
+                Value *val = BuilderZ.CreateLoad(ptrshadow);
 #endif
 
-          Type *tys[] = {dst_arg->getType(), len_arg->getType()};
+                auto dst_arg = BuilderZ.CreateBitCast(
+                    val, Type::getInt8PtrTy(call.getContext()));
 
-          auto memset = cast<CallInst>(BuilderZ.CreateCall(
-              Intrinsic::getDeclaration(gutils->newFunc->getParent(),
-                                        Intrinsic::memset, tys),
-              nargs));
-          memset->addParamAttr(0, Attribute::NonNull);
+                auto val_arg =
+                    ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
+                auto len_arg =
+                    gutils->getNewFromOriginal(call.getArgOperand(0));
+
+                auto volatile_arg = ConstantInt::getFalse(call.getContext());
+
+                Value *nargs[] = {dst_arg, val_arg, len_arg, volatile_arg};
+
+                Type *tys[] = {dst_arg->getType(), len_arg->getType()};
+
+                auto memset = cast<CallInst>(BuilderZ.CreateCall(
+                    Intrinsic::getDeclaration(gutils->newFunc->getParent(),
+                                              Intrinsic::memset, tys),
+                    nargs));
+                // memset->addParamAttr(0,
+                // Attribute::getWithAlignment(Context,
+                // inst->getAlignment()));
+                memset->addParamAttr(0, Attribute::NonNull);
+
+                return val;
+              },
+              ptrshadow);
+
+          if (Mode != DerivativeMode::ForwardMode)
+            val = gutils->cacheForReverse(BuilderZ, val,
+                                          getIndex(&call, CacheType::Tape));
         } else if (Mode == DerivativeMode::ReverseModeGradient) {
           PHINode *toReplace =
               BuilderZ.CreatePHI(PT, 1, call.getName() + "_ifxtmp");
           val = gutils->cacheForReverse(BuilderZ, toReplace,
-                                        getIndex(&call, CacheType::Shadow));
+                                        getIndex(&call, CacheType::Tape));
         }
 
         if (Mode == DerivativeMode::ReverseModeCombined ||
             Mode == DerivativeMode::ReverseModeGradient) {
           if (shouldFree()) {
+            auto M = gutils->newFunc->getParent();
+
             IRBuilder<> Builder2(call.getParent());
             getReverseBuilder(Builder2);
             Value *tofree = gutils->lookupM(val, Builder2, ValueToValueMapTy(),
                                             /*tryLegalRecompute*/ false);
-            auto dbgLoc = gutils->getNewFromOriginal(&call)->getDebugLoc();
-            freeAllocation(Builder2, tofree, funcName, dbgLoc, gutils);
+
+            applyChainRule(
+                BuilderZ,
+                [&](Value *tofree) {
+                  CreateDeallocationCall(funcName, tofree, Builder2, M);
+                },
+                tofree);
           }
         }
       }
@@ -12337,23 +12317,22 @@ public:
         //}
       } else if (Mode == DerivativeMode::ReverseModeCombined && shouldFree()) {
         IRBuilder<> Builder2(newCall->getNextNode());
+        auto ptrv = gutils->getNewFromOriginal(call.getOperand(1));
+        if (!isa<PointerType>(ptrv->getType()))
+          ptrv = BuilderZ.CreateIntToPtr(ptrv, PointerType::getUnqual(PT));
 #if LLVM_VERSION_MAJOR > 7
-        auto load = Builder2.CreateLoad(
-            PT, gutils->getNewFromOriginal(call.getOperand(1)), "ifx_preread");
+        auto load = Builder2.CreateLoad(PT, ptrv, "ifx_preread");
 #else
-        auto load = Builder2.CreateLoad(
-            gutils->getNewFromOriginal(call.getOperand(0)), "posix_preread");
+        auto load = Builder2.CreateLoad(ptrv, "posix_preread");
 #endif
         Builder2.SetInsertPoint(&call);
         getReverseBuilder(Builder2);
-        auto dbgLoc = gutils->getNewFromOriginal(&call)->getDebugLoc();
-        auto CI =
-            freeAllocation(Builder2,
-                           gutils->lookupM(load, Builder2, ValueToValueMapTy(),
-                                           /*tryLegal*/ false),
-                           funcName, dbgLoc, gutils);
-      }
+        auto tofree = gutils->lookupM(load, Builder2, ValueToValueMapTy(),
+                                      /*tryLegal*/ false);
 
+        auto M = gutils->newFunc->getParent();
+        CreateDeallocationCall(funcName, tofree, Builder2, M);
+      }
       return;
     }
 
