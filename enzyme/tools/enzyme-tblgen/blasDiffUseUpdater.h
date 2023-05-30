@@ -1,7 +1,5 @@
 void emit_BLASDiffUse(TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
-  if (name != "dot")
-    return;
 
   os << "if (blas.function == \"" << name << "\") {\n";
 
