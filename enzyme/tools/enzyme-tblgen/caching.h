@@ -234,7 +234,7 @@ os << "         if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n"
     }
 os << "        dmemcpy = getOrInsertMemcpyStridedBlas(*gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
 << "            intType, blas, julia_decl);\n"
-<< "        Value *args[5] = {gutils->getNewFromOriginal(arg_n), gutils->getNewFromOriginal(arg_" << vecName << "), " << incName << ", arg, ConstantInt::get(intType, 1)};\n"
+<< "        Value *args[5] = {gutils->getNewFromOriginal(arg_n), gutils->getNewFromOriginal(arg_" << vecName << "), gutils->getNewFromOriginal(arg_" << incName << "), arg, to_blas_callconv(BuilderZ, ConstantInt::get(intType, 1), byRef, julia_decl_type, allocationBuilder)};\n"
 << "        if (julia_decl)\n"
 << "          args[3] = BuilderZ.CreatePtrToInt(args[3], type_" << vecName << ");\n"
 << "        BuilderZ.CreateCall(dmemcpy, args,\n"

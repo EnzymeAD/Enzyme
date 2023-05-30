@@ -102,6 +102,20 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
       }
     }
   }
+  os << "  } else {\n";
+  for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {
+    auto typeOfArg = argTypeMap.lookup(argPos);
+    size_t i = (lv23 ? argPos - 1 : argPos);
+    if (typeOfArg == argType::vincData || typeOfArg == argType::mldData) {
+      os << "    F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+         << ", llvm::Attribute::get(F->getContext(), \"enzyme_NoCapture\"));\n";
+      if (mutableArgs.count(argPos) == 0) {
+        // Only emit ReadOnly if the arg isn't mutable
+        os << "    F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+           << ", llvm::Attribute::get(F->getContext(), \"enzyme_ReadOnly\"));\n";
+      }
+    }
+  }
   os << "  }\n"
      << "}\n";
 }
