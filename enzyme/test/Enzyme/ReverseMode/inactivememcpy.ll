@@ -42,14 +42,14 @@ entry:
   ret float %f
 }
 
-; CHECK: define internal i64 @augmented_metamove(i8* %dst, i8* %"dst'", i8* %src, i64* %lenp, i64* %"lenp'")
+; CHECK: define internal i64 @augmented_metamove(i8* %dst, i8* %"dst'", i8* %src, i64* %lenp)
 ; CHECK-NEXT: top:
 ; CHECK-NEXT:   %len = load i64, i64* %lenp, align 8
 ; CHECK-NEXT:   call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %dst, i8* align 1 %src, i64 %len, i1 false)
 ; CHECK-NEXT:   ret i64 %len
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffemetamove(i8* %dst, i8* %"dst'", i8* %src, i64* %lenp, i64* %"lenp'", i64 %len)
+; CHECK: define internal void @diffemetamove(i8* %dst, i8* %"dst'", i8* %src, i64* %lenp, i64 %len)
 ; CHECK-NEXT: top:
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* align 1 %"dst'", i8 0, i64 %len, i1 false)
 ; CHECK-NEXT:   ret void
