@@ -1332,6 +1332,15 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   }
 
   if (containsPointer) {
+    // This value is certainly an integer (and only and integer, not a pointer
+    // or float). Therefore its value is constant
+    if (TR.query(Val)[{-1, -1}] == BaseType::Integer) {
+      if (EnzymePrintActivity)
+        llvm::errs() << " Value const as pointer to integer " << (int)directions
+                     << " " << *Val << " " << TR.query(Val).str() << "\n";
+      InsertConstantValue(TR, Val);
+      return true;
+    }
 
     auto TmpOrig = getBaseObject(Val);
 
