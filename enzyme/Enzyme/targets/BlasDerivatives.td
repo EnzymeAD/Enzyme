@@ -162,7 +162,7 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   [
                   /* alpha */ (inactive),
                   /* A     */ (b<"gemm"> $layout, $transa, transpose<"transb">, $m, $k, $n, $alpha, adj<"C">, $ldc, $B, $ldb, $beta, adj<"A">, $lda),
-                  /* B     */ (b<"gemm"> $layout, transpose<"transa">, $transb, $m, $n, $k, $alpha, $A, $lda, adj<"C">, $ldc, $beta, adj<"B">, $ldb),
+                  /* B     */ (b<"gemm"> $layout, transpose<"transa">, $transb, $k, $n, $m, $alpha, $A, $lda, adj<"C">, $ldc, $beta, adj<"B">, $ldb),
                   /* beta  */ (inactive),
                   /* C     */ (noop) // check that beta always zero! Then set adj<"C"> = 0 (if beta = 1, do nothing). If beta anything else, use scal on dc
                   ]
