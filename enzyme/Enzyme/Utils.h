@@ -1406,6 +1406,9 @@ static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
     if (F->hasParamAttribute(arg, llvm::Attribute::ReadOnly) ||
         F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
       return true;
+    // if (F->getAttributes().hasParamAttribute(arg, "enzyme_ReadOnly") ||
+    //     F->getAttributes().hasParamAttribute(arg, "enzyme_ReadNone"))
+    //   return true;
   }
   return false;
 }
@@ -1496,6 +1499,8 @@ static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
   if (F) {
     if (F->hasParamAttribute(idx, llvm::Attribute::NoCapture))
       return true;
+    // if (F->getAttributes().hasParamAttribute(idx, "enzyme_NoCapture"))
+    //   return true;
   }
   return false;
 }

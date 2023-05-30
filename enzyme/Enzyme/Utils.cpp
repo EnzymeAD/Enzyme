@@ -698,8 +698,11 @@ Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
       (blas.prefix + blas.floatType + "copy" + blas.suffix).str();
   FunctionType *FT;
   if (julia_decl) {
-    FT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                           {IT, IT, IT, IT, IT}, false);
+    auto i8ptr = Type::getInt8PtrTy(M.getContext());
+    FT = FunctionType::get(
+        Type::getVoidTy(M.getContext()),
+        {i8ptr /*int*/, IT /*data*/, i8ptr /*int*/, IT /*data*/, i8ptr /*int*/},
+        false);
   } else {
     FT = FunctionType::get(Type::getVoidTy(M.getContext()), {IT, T, IT, T, IT},
                            false);
@@ -715,14 +718,16 @@ Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
 
 Function *getOrInsertMemcpyStridedLapack(Module &M, PointerType *T, Type *IT,
                                          BlasInfo blas, bool julia_decl) {
-  std::string copy_name =
-      (blas.floatType + "lacpy" + blas.suffix).str();
+  std::string copy_name = (blas.floatType + "lacpy" + blas.suffix).str();
 
   FunctionType *FT;
   if (julia_decl) {
     auto i8ptr = Type::getInt8PtrTy(M.getContext());
     FT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                           {i8ptr/*char*/, i8ptr/*int*/, i8ptr/*int*/, IT/*double*/, i8ptr/*int*/, IT/*double*/, i8ptr/*int*/}, false);
+                           {i8ptr /*char*/, i8ptr /*int*/, i8ptr /*int*/,
+                            IT /*double*/, i8ptr /*int*/, IT /*double*/,
+                            i8ptr /*int*/},
+                           false);
   } else {
     FT = FunctionType::get(Type::getVoidTy(M.getContext()),
                            {IT, IT, IT, T, IT, T, IT}, false);
@@ -855,12 +860,12 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
 //   // std::to_string(srcalign) + "stride";
 //   FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
 //                                        {T, T, IT, IT, IT}, false);
-// 
+//
 //   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
-// 
+//
 //   if (!F->empty())
 //     return F;
-// 
+//
 //   F->setLinkage(Function::LinkageTypes::InternalLinkage);
 //   F->addFnAttr(Attribute::ArgMemOnly);
 //   F->addFnAttr(Attribute::NoUnwind);
@@ -869,12 +874,12 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
 //   F->addParamAttr(1, Attribute::NoCapture);
 //   F->addParamAttr(0, Attribute::WriteOnly);
 //   F->addParamAttr(1, Attribute::ReadOnly);
-// 
+//
 //   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
 //   BasicBlock *init = BasicBlock::Create(M.getContext(), "init.idx", F);
 //   BasicBlock *body = BasicBlock::Create(M.getContext(), "for.body", F);
 //   BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
-// 
+//
 //   auto dst = F->arg_begin();
 //   dst->setName("dst");
 //   auto src = dst + 1;
@@ -885,29 +890,31 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
 //   num->setName("n");
 //   auto LDA = N + 1;
 //   num->setName("lda");
-// 
+//
 //   {
 //     IRBuilder<> B(entry);
 //     Value *l = B2.CreateNUWAdd(M, N, "l");
 //     // Don't copy a 0*0 matrix
-//     B.CreateCondBr(B.CreateICmpEQ(l, ConstantInt::get(num->getType(), 0)), end,
+//     B.CreateCondBr(B.CreateICmpEQ(l, ConstantInt::get(num->getType(), 0)),
+//     end,
 //                    init);
 //   }
-// 
+//
 //   {
 //     IRBuilder<> B2(init);
 //     B2.setFastMathFlags(getFast());
-//     Value *a = B2.CreateNSWSub(ConstantInt::get(num->getType(), 1), num, "a");
-//     Value *negidx = B2.CreateNSWMul(a, stride, "negidx");
+//     Value *a = B2.CreateNSWSub(ConstantInt::get(num->getType(), 1), num,
+//     "a"); Value *negidx = B2.CreateNSWMul(a, stride, "negidx");
 //     // Value *negidx =
 //     //     B2.CreateNSWAdd(b, ConstantInt::get(num->getType(), 1), "negidx");
 //     Value *isneg =
-//         B2.CreateICmpSLT(stride, ConstantInt::get(num->getType(), 0), "is.neg");
+//         B2.CreateICmpSLT(stride, ConstantInt::get(num->getType(), 0),
+//         "is.neg");
 //     Value *startidx = B2.CreateSelect(
 //         isneg, negidx, ConstantInt::get(num->getType(), 0), "startidx");
 //     B2.CreateBr(body);
 //     //}
-// 
+//
 //     //{
 //     IRBuilder<> B(body);
 //     B.setFastMathFlags(getFast());
@@ -915,13 +922,13 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
 //     PHINode *sidx = B.CreatePHI(num->getType(), 2, "sidx");
 //     idx->addIncoming(ConstantInt::get(num->getType(), 0), init);
 //     sidx->addIncoming(ConstantInt::get(num->getType(), 0), init);
-// 
+//
 //     Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
 //     Value *srci = B.CreateInBoundsGEP(elementType, src, sidx, "src.i");
 //     LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
-// 
+//
 //     StoreInst *dsts = B.CreateStore(srcl, dsti);
-// 
+//
 //     if (dstalign) {
 // #if LLVM_VERSION_MAJOR >= 10
 //       dsts->setAlignment(Align(dstalign));
@@ -936,7 +943,7 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
 //       srcl->setAlignment(srcalign);
 // #endif
 //     }
-// 
+//
 //     Value *next =
 //         B.CreateNSWAdd(idx, ConstantInt::get(num->getType(), 1), "idx.next");
 //     Value *snext = B.CreateNSWAdd(sidx, stride, "sidx.next");
@@ -944,12 +951,12 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
 //     sidx->addIncoming(snext, body);
 //     B.CreateCondBr(B.CreateICmpEQ(num, next), end, body);
 //   }
-// 
+//
 //   {
 //     IRBuilder<> B(end);
 //     B.CreateRetVoid();
 //   }
-// 
+//
 //   return F;
 // }
 
@@ -2179,8 +2186,11 @@ llvm::FastMathFlags getFast() {
   return f;
 }
 
-// julia_decl null means not julia decl, otherwise it is the integer type needed to cast to
-llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef, IntegerType* julia_decl, IRBuilder <>&entryBuilder) {
+// julia_decl null means not julia decl, otherwise it is the integer type needed
+// to cast to
+llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
+                              IntegerType *julia_decl,
+                              IRBuilder<> &entryBuilder) {
   if (byRef) {
     Value *allocV = entryBuilder.CreateAlloca(V->getType());
     B.CreateStore(V, allocV);
