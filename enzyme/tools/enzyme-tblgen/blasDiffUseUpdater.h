@@ -9,23 +9,18 @@ void emit_BLASDiffUse(TGPattern &pattern, raw_ostream &os) {
   for (size_t i = 0; i < argTypeMap.size(); i++) {
     os << "  if (val == CI->getArgOperand(" << i << ")) {\n";
     auto users = argUsers.lookup(i);
-    if (users.size() == 0) {
-      os << "    return false;\n"
-         << "  }\n";
-      continue;
-    } else {
-      for (auto a : users) {
-        // The following shows that I probably should change the tblgen
-        // logic and the Blas.td declaration
-        if (a == i)
-          continue;
-        os << "    if (!gutils->isConstantValue(CI->getOperand(" << a
-           << "))) return true;\n";
-      }
-      os << "  }\n";
+    for (auto a : users) {
+      // The following shows that I probably should change the tblgen
+      // logic and the Blas.td declaration
+      if (a == i)
+        continue;
+      os << "    if (!gutils->isConstantValue(CI->getOperand(" << a
+         << "))) return true;\n";
     }
+    os << "  }\n";
   }
 
+  os << "  return false;\n";
   os << "}\n";
 }
 
