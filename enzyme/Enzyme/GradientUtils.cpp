@@ -158,16 +158,15 @@ static bool isPotentialLastLoopValue(llvm::Value *val,
   return false;
 }
 
-GradientUtils::GradientUtils(EnzymeLogic &Logic, Function *newFunc_,
-                             Function *oldFunc_, TargetLibraryInfo &TLI_,
-                             TypeAnalysis &TA_, TypeResults TR_,
-                             ValueToValueMapTy &invertedPointers_,
-                             const SmallPtrSetImpl<Value *> &constantvalues_,
-                             const SmallPtrSetImpl<Value *> &activevals_,
-                             DIFFE_TYPE ReturnActivity,
-                             ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
-                             ValueToValueMapTy &originalToNewFn_,
-                             DerivativeMode mode, unsigned width, bool omp)
+GradientUtils::GradientUtils(
+    EnzymeLogic &Logic, Function *newFunc_, Function *oldFunc_,
+    TargetLibraryInfo &TLI_, TypeAnalysis &TA_, TypeResults TR_,
+    ValueToValueMapTy &invertedPointers_,
+    const SmallPtrSetImpl<Value *> &constantvalues_,
+    const SmallPtrSetImpl<Value *> &activevals_, DIFFE_TYPE ReturnActivity,
+    ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
+    llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &originalToNewFn_,
+    DerivativeMode mode, unsigned width, bool omp)
     : CacheUtility(TLI_, newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_),
       invertedPointers(),
       OrigDT(Logic.PPC.FAM.getResult<llvm::DominatorTreeAnalysis>(*oldFunc_)),
@@ -592,7 +591,8 @@ BasicBlock *GradientUtils::getOriginalFromNew(const BasicBlock *newinst) const {
   assert(newinst->getParent() == newFunc);
   auto found = newToOriginalFn.find(newinst);
   assert(found != newToOriginalFn.end());
-  return cast<BasicBlock>(found->second);
+  Value *res = found->second;
+  return cast<BasicBlock>(res);
 }
 
 Value *GradientUtils::isOriginal(const Value *newinst) const {
@@ -4327,7 +4327,7 @@ GradientUtils *GradientUtils::CreateFromClone(
   SmallPtrSet<Instruction *, 4> constants;
   SmallPtrSet<Instruction *, 20> nonconstant;
   SmallPtrSet<Value *, 2> returnvals;
-  ValueToValueMapTy originalToNew;
+  llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> originalToNew;
 
   SmallPtrSet<Value *, 4> constant_values;
   SmallPtrSet<Value *, 4> nonconstant_values;

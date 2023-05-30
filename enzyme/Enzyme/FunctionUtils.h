@@ -84,7 +84,8 @@ public:
       llvm::SmallPtrSetImpl<llvm::Value *> &constants,
       llvm::SmallPtrSetImpl<llvm::Value *> &nonconstant,
       llvm::SmallPtrSetImpl<llvm::Value *> &returnvals, ReturnType returnValue,
-      DIFFE_TYPE returnType, llvm::Twine name, llvm::ValueToValueMapTy *VMapO,
+      DIFFE_TYPE returnType, llvm::Twine name,
+      llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> *VMapO,
       bool diffeReturnArg, llvm::Type *additionalArg = nullptr);
 
   void ReplaceReallocs(llvm::Function *NewF, bool mem2reg = false);

@@ -5394,7 +5394,7 @@ public:
             gutils->getNewFromOriginal(call.getDebugLoc()));
         BuilderZ.SetInsertPoint(
             gutils->getNewFromOriginal(&call)->getNextNode());
-        gutils->getNewFromOriginal(&call)->eraseFromParent();
+        gutils->erase(gutils->getNewFromOriginal(&call));
       } else {
         assert(0 && "unhandled unknown outline");
       }
