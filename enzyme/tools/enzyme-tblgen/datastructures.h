@@ -40,10 +40,27 @@ bool isArgUsed(const StringRef toFind, const DagInit *toSearch) {
       if (isArgUsed(toFind, arg))
         return true;
     } else {
-      // TODO: handle input<"x">, adj<"x"> and similar
       auto name = toSearch->getArgNameStr(i);
-      if (name == toFind)
-        return true;
+      if (name == "") {
+        // handle input<"x">, adj<"x">, transpose<"transa"> and similar
+        // we look up the trans arg inside of transpose<"transX">,
+        // because it's based on the same trans arg.
+        // we ignore adj<"x"> because the shadow of x is not based on x
+        auto opName = toSearch->getArg(i)->getAsString();
+        auto Def = cast<DefInit>(toSearch->getArg(i))->getDef();
+        if (opName == "transpose" || Def->isSubClassOf("transpose")) {
+          auto transName = Def->getValueAsString("name");
+          if (toFind == transName) {
+            return true;
+          }
+        } else if (opName == "adj" || Def->isSubClassOf("adj")) {
+          // shadow is unrelated, ignore it
+        }
+      } else {
+        if (name == toFind) {
+          return true;
+        }
+      }
     }
   }
   return false;
@@ -100,6 +117,7 @@ class Rule {
           mutables.insert(*patternMutables.find(val));
         }
       }
+      assert(argTypes.size() == argNameToPos.size());
     }
     bool isBLASLevel2or3() { return BLASLevel2or3; }
     DagInit *getRuleDag() { return rewriteRule; }
@@ -245,11 +263,6 @@ private:
 public:
   TGPattern(Record &r) {
     blasName = r.getNameInitAsString();
-    // if (blasName != "scal") {
-    //   llvm::errs() << blasName << " skipped!\n";
-    //   return;
-    // }
-    // llvm::errs() << blasName << "\n";
 
     args = llvm::SmallVector<std::string, 6>();
     argNameToPos = StringMap<size_t>{};
@@ -274,7 +287,6 @@ public:
       rules = llvm::SmallVector<Rule, 3>{};
       ListInit *derivOps = r.getValueAsListInit("ArgDerivatives");
       for (auto derivOp : llvm::enumerate(*derivOps)) {
-        // llvm::errs() << derivOp.index() << ": \n";
         DagInit *derivRule = cast<DagInit>(derivOp.value());
         size_t actIdx = posActArgs[derivOp.index()];
         rules.push_back(
