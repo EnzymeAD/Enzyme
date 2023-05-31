@@ -1026,7 +1026,6 @@ void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
   auto inputTypes = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
   auto argTypeMap = pattern.getArgTypeMap();
-  bool lv23 = pattern.isBLASLevel2or3();
 
   for (auto val : inputTypes) {
     if (val.second == argType::len) {
@@ -1052,26 +1051,16 @@ void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
   os << "  IntegerType *julia_decl_type = nullptr;\n"
      << "  if (julia_decl)\n"
      << "    julia_decl_type = intType;\n";
-  // now we can use it to transpose our trans arguments if they exist.
-  if (!lv23)
-    return;
-  for (size_t i = (lv23 ? 1 : 0); i < nameVec.size(); i++) {
-    auto name = nameVec[i];
-    if (argTypeMap.lookup(i) == argType::trans) {
-      os << "  llvm::Value* arg_transposed_" << name
-         << " = transpose(BuilderZ, gutils->getNewFromOriginal(arg_" << name
-         << "), byRef, charType, allocationBuilder);\n";
-    }
-  }
 }
 
 #include "caching.h"
 
 void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
-  auto actArgs = pattern.getActiveArgs();
-  auto typeMap = pattern.getArgTypeMap();
-  auto nameVec = pattern.getArgNames();
-  auto argUsers = pattern.getArgUsers();
+  const auto actArgs = pattern.getActiveArgs();
+  const auto typeMap = pattern.getArgTypeMap();
+  const auto nameVec = pattern.getArgNames();
+  const auto argUsers = pattern.getArgUsers();
+  const bool lv23 = pattern.isBLASLevel2or3();
 
   os << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
      << "      Mode == DerivativeMode::ReverseModeGradient ||\n"
@@ -1128,6 +1117,30 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
          << "        if (Mode != DerivativeMode::ForwardModeSplit)\n"
          << "          len_" << name << " = lookup(len_" << name
          << ", Builder2);\n"
+         << "      }\n"
+         << "\n";
+    } else if (typeOfArg == argType::trans) {
+      // we are in the byRef branch and trans only exist in lv23.
+      // So just unconditionally asume that no layout exist and use i-1
+      os << "      if (cache_" << name << ") {\n"
+         << "        true_" << name << " = (cacheTypes.size() == 1)\n"
+         << "                    ? cacheval\n"
+         << "                    : Builder2.CreateExtractValue(cacheval, "
+            "{cacheidx});\n"
+         << "        auto alloc = allocationBuilder.CreateAlloca(charType);\n"
+         << "        Builder2.CreateStore(true_" << name << ", alloc);\n"
+         << "        true_" << name << " = Builder2.CreatePointerCast(\n"
+         << "            alloc, call.getArgOperand(" << i - 1
+         << ")->getType());\n"
+         //<< "            alloc, Type::getInt8PtrTy(->getContext()) );\n"
+         << "        " << name << " = true_" << name << ";\n"
+         << "        cacheidx++;\n"
+         << "      } else {\n"
+         << "        if (Mode != DerivativeMode::ForwardModeSplit) {\n"
+         << "           true_" << name << " = lookup(true_" << name
+         << ", Builder2);\n"
+         << "          " << name << " = true_" << name << ";\n"
+         << "        }\n"
          << "      }\n"
          << "\n";
     }
@@ -1676,7 +1689,9 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
         // coppied from vincInc, but should verify if actually needed
         result.append(name);
       } else if (typeOfArg == argType::trans) {
-        result.append((Twine("gutils->getNewFromOriginal(arg_") + name+")").str());
+        result.append(name);
+        // result.append((Twine("gutils->getNewFromOriginal(arg_") +
+        // name+")").str());
       } else {
         // TODO
         // llvm::errs() << "name: " << name << " typename: " << typeOfArg <<
@@ -1696,6 +1711,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
   const auto typeMap = pattern.getArgTypeMap();
   const auto rules = pattern.getRules();
   const auto activeArgs = pattern.getActiveArgs();
+  const bool lv23 = pattern.isBLASLevel2or3();
 
   // If any of the rule uses DiffeRet, the primary function has a ret val
   // and we should emit the code for handling it.
@@ -1749,6 +1765,17 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
          << "     : nullptr;\n";
     } else if (typeOfArg == argType::fp) {
       os << "    Value *d_" << name << " = UndefValue::get(fpType);\n";
+    }
+  }
+
+  // now we can use it to transpose our trans arguments if they exist
+  for (size_t i = (lv23 ? 1 : 0); i < nameVec.size(); i++) {
+    auto name = nameVec[i];
+    if (typeMap.lookup(i) == argType::trans) {
+      os << "  llvm::Value* arg_transposed_" << name
+         << " = transpose(BuilderZ, "
+         << name
+         << ", byRef, charType, allocationBuilder);\n";
     }
   }
 
@@ -1808,6 +1835,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
         }
         pos++;
       }
+
       const auto dfnc_name = Def->getValueAsString("s");
       os << "      if (" << actCondition << ") {\n"
          << "        Value *args1[" << numArgs << "] = {" << args << "};\n"
