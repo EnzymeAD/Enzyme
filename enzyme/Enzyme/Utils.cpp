@@ -2187,6 +2187,48 @@ llvm::FastMathFlags getFast() {
   return f;
 }
 
+void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
+                     llvm::SmallVector<llvm::Value *, 2> &cacheValues,
+                     llvm::IRBuilder<> &BuilderZ) {
+  arg = BuilderZ.CreatePointerCast(arg, PointerType::getUnqual(ty));
+#if LLVM_VERSION_MAJOR > 7
+  arg = BuilderZ.CreateLoad(ty, arg);
+#else
+  arg = BuilderZ.CreateLoad(arg);
+#endif
+  if (cache_arg)
+    cacheValues.push_back(arg);
+}
+
+void extractValueFromCache(llvm::Value *arg, bool cache_arg,
+                           llvm::Value *true_arg, llvm::Type *ty,
+                           llvm::Value *cacheval, unsigned cachidx,
+                           DerivativeMode Mode,
+                           llvm::IRBuilder<> &allocationBuilder,
+                           llvm::IRBuilder<> &Builder2) {
+  //  if (!cache_arg) {
+  //    if (Mode != DerivativeMode::ForwardModeSplit) {
+  //      true_arg = lookup(true_arg, Builder2);
+  //      arg = true_arg;
+  //    }
+  //    return;
+  //  }
+  //
+  //  true_transa = (cacheval.getType().isStructTy())
+  //                    ? Builder2.CreateExtractValue(cacheval, {cacheidx})
+  //                    : cacheval;
+  //
+  //  // true_transa = (cacheTypes.size() == 1)
+  //  //                   ? cacheval
+  //  //                   : Builder2.CreateExtractValue(cacheval, {cacheidx});
+  //  auto alloc = allocationBuilder.CreateAlloca(ty);
+  //  Builder2.CreateStore(true_arg, alloc);
+  //  true_arg = Builder2.CreatePointerCast(alloc, PointerType::getUnqual(ty));
+  //  // Builder2.CreatePointerCast(alloc, call.getArgOperand(0)->getType());
+  //  arg = true_arg;
+  //  cacheidx++;
+}
+
 // julia_decl null means not julia decl, otherwise it is the integer type needed
 // to cast to
 llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,

@@ -26,6 +26,7 @@
 #define ENZYME_UTILS_H
 
 #include "llvm/ADT/SmallPtrSet.h"
+//#include "llvm/ADT/SmallVector.h"
 
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/ValueTracking.h"
@@ -1623,6 +1624,16 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
   }
   return false;
 }
+
+void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
+                     llvm::SmallVector<llvm::Value *, 2> &cacheValues,
+                     llvm::IRBuilder<> &BuilderZ);
+void extractValueFromCache(llvm::Value *arg, bool cache_arg,
+                           llvm::Value *true_arg, llvm::Type *ty,
+                           llvm::Value *cacheval, unsigned cachidx,
+                           DerivativeMode Mode,
+                           llvm::IRBuilder<> &allocationBuilder,
+                           llvm::IRBuilder<> &Builder2);
 
 // julia_decl null means not julia decl, otherwise it is the integer type needed
 // to cast to
