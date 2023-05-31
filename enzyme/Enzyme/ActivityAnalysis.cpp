@@ -1392,7 +1392,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           insertConstantsFrom(TR, *UpHypothesis);
           return true;
         }
-        if (funcName == "for_dealloc_allocatable" ||
+        if (funcName == "for_deallocate" ||
+            funcName == "for_dealloc_allocatable" ||
             funcName == "for_dealloc_allocatable_handle") {
           return true;
         }
@@ -2380,7 +2381,7 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
         funcName == "munmap") {
       return true;
     }
-    if (funcName == "for_dealloc_allocatable" ||
+    if (funcName == "for_deallocate" || funcName == "for_dealloc_allocatable" ||
         funcName == "for_dealloc_allocatable_handle") {
       return true;
     }

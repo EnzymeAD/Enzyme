@@ -12461,7 +12461,7 @@ public:
       return;
     }
 
-    if (funcName == "for_dealloc_allocatable" ||
+    if (funcName == "for_deallocate" || funcName == "for_dealloc_allocatable" ||
         funcName == "for_dealloc_allocatable_handle") {
       assert(gutils->invertedPointers.find(&call) ==
              gutils->invertedPointers.end());

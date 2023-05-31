@@ -4391,14 +4391,14 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       return;
     }
-    if (funcName == "for_dealloc_allocatable" ||
+    if (funcName == "for_deallocate" || funcName == "for_dealloc_allocatable" ||
         funcName == "for_dealloc_allocatable_handle") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(0),
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(1),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
-      if (funcName == "for_dealloc_allocatable_handle") {
+      if (funcName.endswith("handle")) {
         updateAnalysis(call.getOperand(2),
                        TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       }
