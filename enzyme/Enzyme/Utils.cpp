@@ -721,6 +721,7 @@ Function *getOrInsertMemcpyStridedLapack(Module &M, PointerType *T, Type *IT,
   std::string copy_name = (blas.floatType + "lacpy" + blas.suffix).str();
 
   FunctionType *FT;
+  assert(julia_decl);
   if (julia_decl) {
     auto i8ptr = Type::getInt8PtrTy(M.getContext());
     FT = FunctionType::get(Type::getVoidTy(M.getContext()),
@@ -2191,14 +2192,16 @@ llvm::FastMathFlags getFast() {
 llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
                               IntegerType *julia_decl,
                               IRBuilder<> &entryBuilder) {
-  if (byRef) {
-    Value *allocV = entryBuilder.CreateAlloca(V->getType());
-    B.CreateStore(V, allocV);
-    if (julia_decl)
-      allocV = B.CreatePointerCast(allocV, Type::getInt8PtrTy(V->getContext()));
-    return allocV;
-  } else
+  if (!byRef)
     return V;
+
+  Value *allocV = entryBuilder.CreateAlloca(V->getType());
+  B.CreateStore(V, allocV);
+
+  if (julia_decl)
+    allocV = B.CreatePointerCast(allocV, Type::getInt8PtrTy(V->getContext()));
+
+  return allocV;
 }
 
 llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
@@ -2228,5 +2231,6 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
   }
 
   V = transpose(B, V);
+
   return to_blas_callconv(B, V, byRef, julia_decl, entryBuilder);
 }

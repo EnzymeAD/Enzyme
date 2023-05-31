@@ -2,6 +2,21 @@
 //
 
 using namespace llvm;
+void emit_trans_caching(TGPattern &pattern, raw_ostream &os) {
+  const auto argUsers = pattern.getArgUsers();
+  const auto actArgs = pattern.getActiveArgs();
+  const auto typeMap = pattern.getArgTypeMap();
+  const auto nameVec = pattern.getArgNames();
+
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    if (typeMap.lookup(i) != argType::trans) 
+      continue;
+    const auto transName = nameVec[i];
+os << "  bool cache_" << transName << " = true;\n";
+os << "  const bool need_" << transName << " = true;\n";
+os << "  cacheTypes.push_back(charType);\n";
+  }
+}
 void emit_mat_caching(TGPattern &pattern, raw_ostream &os) {
 
   const auto argUsers = pattern.getArgUsers();
@@ -37,14 +52,16 @@ os << "  bool cache_" << matName << " = false;\n";
 << ");\n";
     }
     os
-<< "  bool cache_" << ldName << " = false;\n";
+<< "  bool cache_" << ldName << " = true;\n";
+//<< "  bool cache_" << ldName << " = false;\n";
       // xinc is needed to be preserved if
       // 1) it is potentially overwritten AND EITHER
       //     a) x is active (for performing the shadow increment) or
       //     b) we're not caching x and need xinc to compute the
       //     derivative of a different variable
       os 
-<< "  const bool need_" << ldName << " = (active_" << matName;
+<< "  const bool need_" << ldName << " = (true || active_" << matName;
+//<< "  const bool need_" << ldName << " = (active_" << matName;
       if (ldUsers.size() > 0) {
         os 
 << "  || (!cache_" << matName << " && (";
@@ -60,7 +77,8 @@ os << "  bool cache_" << matName << " = false;\n";
       }
       os 
 << ");\n"
-<< "  if (byRef && uncacheable_" << ldName << " && need_" << ldName << ") {\n"
+<< "  if (true || byRef && uncacheable_" << ldName << " && need_" << ldName << ") {\n"
+//<< "  if (byRef && uncacheable_" << ldName << " && need_" << ldName << ") {\n"
 << "    cacheTypes.push_back(intType);\n"
 << "    cache_" << ldName << " = true;\n "
 << "  }\n\n";
@@ -97,14 +115,16 @@ void emit_vec_caching(TGPattern &pattern, raw_ostream &os) {
       }
       os 
 << ");\n"
-<< "  bool cache_" << incName << " = false;\n";
+<< "  bool cache_" << incName << " = true;\n";
+//<< "  bool cache_" << incName << " = false;\n";
       // xinc is needed to be preserved if
       // 1) it is potentially overwritten AND EITHER
       //     a) x is active (for performing the shadow increment) or
       //     b) we're not caching x and need xinc to compute the
       //     derivative of a different variable
       os 
-<< "  const bool need_" << incName << " = (active_" << vecName;
+<< "  const bool need_" << incName << " = (true || active_" << vecName;
+//<< "  const bool need_" << incName << " = (active_" << vecName;
       if (incUsers.size() > 0) {
         os 
 << "  || (!cache_" << vecName << " && (";
@@ -120,7 +140,8 @@ void emit_vec_caching(TGPattern &pattern, raw_ostream &os) {
       }
       os 
 << ");\n"
-<< "  if (byRef && uncacheable_" << incName << " && need_" << incName << ") {\n"
+<< "  if (true || byRef && uncacheable_" << incName << " && need_" << incName << ") {\n"
+//<< "  if (byRef && uncacheable_" << incName << " && need_" << incName << ") {\n"
 << "    cacheTypes.push_back(intType);\n"
 << "    cache_" << incName << " = true;\n "
 << "  }\n\n";
@@ -140,8 +161,10 @@ void emit_scalar_caching(TGPattern &pattern, raw_ostream &os) {
       auto scalarType = (typeOfArg == argType::fp) ? "fpType": "intType" ;
       auto name = nameVec[i];
       os 
-<< "  bool cache_" << name << " = false;\n"
-<< "  if (byRef && uncacheable_" << name << ") {\n";
+<< "  bool cache_" << name << " = true;\n"
+//<< "  bool cache_" << name << " = false;\n"
+<< "  if (true || byRef && uncacheable_" << name << ") {\n";
+//<< "  if (byRef && uncacheable_" << name << ") {\n";
       if (typeOfArg == argType::len) {
       os
 << "    cacheTypes.push_back(" << scalarType << ");\n"
@@ -197,6 +220,20 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
 << "      if (cache_" << incName << ")\n"
 << "        cacheValues.push_back(" << incName << ");\n"
 << "    }\n";
+    } else if (typeOfArg == trans) {
+      auto incName = name;
+      os 
+<< "    Value *" << incName << " = gutils->getNewFromOriginal(arg_" << incName <<");\n"
+<< "    if (byRef) {\n"
+<< "      " << incName << " = BuilderZ.CreatePointerCast(" << incName << ", PointerType::getUnqual(charType));\n"
+<< "#if LLVM_VERSION_MAJOR > 7\n"
+<< "      " << incName << " = BuilderZ.CreateLoad(charType, " << incName << ");\n"
+<< "#else\n"
+<< "      " << incName << " = BuilderZ.CreateLoad(" << incName << ");\n"
+<< "#endif\n"
+<< "      if (cache_" << incName << ")\n"
+<< "        cacheValues.push_back(" << incName << ");\n"
+<< "    }\n";
     } else if (typeOfArg == argType::fp) {
       // TODO: for following functions
     }
@@ -234,7 +271,8 @@ os << "         if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n"
     }
 os << "        dmemcpy = getOrInsertMemcpyStridedBlas(*gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
 << "            intType, blas, julia_decl);\n"
-<< "        Value *args[5] = {gutils->getNewFromOriginal(arg_n), gutils->getNewFromOriginal(arg_" << vecName << "), gutils->getNewFromOriginal(arg_" << incName << "), arg, to_blas_callconv(BuilderZ, ConstantInt::get(intType, 1), byRef, julia_decl_type, allocationBuilder)};\n"
+<< "        Value *args[5] = {len_n, gutils->getNewFromOriginal(arg_" << vecName << "), " << incName << ", arg, to_blas_callconv(BuilderZ, ConstantInt::get(intType, 1), byRef, julia_decl_type, allocationBuilder)};\n"
+//<< "        Value *args[5] = {gutils->getNewFromOriginal(arg_n), gutils->getNewFromOriginal(arg_" << vecName << "), gutils->getNewFromOriginal(arg_" << incName << "), arg, to_blas_callconv(BuilderZ, ConstantInt::get(intType, 1), byRef, julia_decl_type, allocationBuilder)};\n"
 << "        if (julia_decl)\n"
 << "          args[3] = BuilderZ.CreatePtrToInt(args[3], type_" << vecName << ");\n"
 << "        BuilderZ.CreateCall(dmemcpy, args,\n"
@@ -281,27 +319,28 @@ os << "        dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
     assert(dimensions.size() == 2);
     assert(typeMap.lookup(dimensions[0]) == argType::len);
     assert(typeMap.lookup(dimensions[1]) == argType::len);
-    std::string dim1 = "arg_" + nameVec[dimensions[0]];
-    std::string dim2 = "arg_" + nameVec[dimensions[1]];
+    std::string dim1 = "len_" + nameVec[dimensions[0]];
+    std::string dim2 = "len_" + nameVec[dimensions[1]];
+    //std::string dim1 = "arg_" + nameVec[dimensions[0]];
+    //std::string dim2 = "arg_" + nameVec[dimensions[1]];
     // 
     // TODO: remove last hardcoded len_n usages to support blas lv2/3 
     os
 << "    if (cache_" << matName << ") {\n"
 << "      Value *matSize;\n"
 << "      auto charType = IntegerType::get(intType->getContext(), 8);\n"
-<< "      auto *M = gutils->getNewFromOriginal(" << dim1 << ");\n"
-<< "      auto *N = gutils->getNewFromOriginal(" << dim2 << ");\n"
+<< "      auto *M = " << dim1 << ";\n"
+<< "      auto *N = " << dim2 << ";\n"
+<< "        matSize = BuilderZ.CreateMul(M,N);\n"
+//<< "      auto *M = gutils->getNewFromOriginal(" << dim1 << ");\n"
+//<< "      auto *N = gutils->getNewFromOriginal(" << dim2 << ");\n"
 << "      if (byRef) {\n"
-<< "        auto MP = BuilderZ.CreatePointerCast(M, PointerType::get(intType, cast<PointerType>(M->getType())->getAddressSpace()));\n"
-<< "        auto NP = BuilderZ.CreatePointerCast(N, PointerType::get(intType, cast<PointerType>(N->getType())->getAddressSpace()));\n"
-<< "        #if LLVM_VERSION_MAJOR > 7\n"
-<< "        auto len1 = BuilderZ.CreateLoad(intType, MP);\n"
-<< "        auto len2 = BuilderZ.CreateLoad(intType, NP);\n"
-<< "        #else\n"
-<< "        auto len1 = BuilderZ.CreateLoad(intType, MP);\n"
-<< "        auto len2 = BuilderZ.CreateLoad(intType, NP);\n"
-<< "        #endif\n"
-<< "        matSize = BuilderZ.CreateMul(len1, len2);\n"
+// next two probably are needed?
+//<< "        auto MP = BuilderZ.CreatePointerCast(M, PointerType::get(intType, cast<PointerType>(M->getType())->getAddressSpace()));\n"
+//<< "        auto NP = BuilderZ.CreatePointerCast(N, PointerType::get(intType, cast<PointerType>(N->getType())->getAddressSpace()));\n"
+//<< "        auto len1 = BuilderZ.CreateLoad(intType, MP);\n"
+//<< "        auto len2 = BuilderZ.CreateLoad(intType, NP);\n"
+//<< "        matSize = BuilderZ.CreateMul(len1, len2);\n"
 << "      } else {\n"
 << "        matSize = BuilderZ.CreateMul(M,N);\n"
 << "      }\n"
@@ -329,7 +368,11 @@ os << "        dmemcpy = getOrInsertMemcpyStridedLapack(*gutils->oldFunc->getPar
 << "            intType, blas, julia_decl);\n"
 << "        Value *uplo = llvm::ConstantInt::get(charType, 0);\n" // garbage data, just should not match U or L
 << "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, julia_decl_type, allocationBuilder);\n"
-<< "        Value *args[7] = {uplo, M, N, gutils->getNewFromOriginal(arg_" << matName << "), gutils->getNewFromOriginal(arg_" << ldName << "), arg, M};\n"
+<< "        Value *newLD = to_blas_callconv(BuilderZ, " << ldName << ", byRef, julia_decl_type, allocationBuilder);\n"
+<< "        Value *newM = to_blas_callconv(BuilderZ, N, byRef, julia_decl_type, allocationBuilder);\n"
+<< "        Value *newN = to_blas_callconv(BuilderZ, M, byRef, julia_decl_type, allocationBuilder);\n"
+<< "        Value *args[7] = {uplo, newM, newN, gutils->getNewFromOriginal(arg_" << matName << "), newLD, arg, newM};\n"
+//<< "        Value *args[7] = {uplo, M, N, gutils->getNewFromOriginal(arg_" << matName << "), gutils->getNewFromOriginal(arg_" << ldName << "), arg, M};\n"
 << "        if (julia_decl) {\n"
 << "          args[3] = BuilderZ.CreatePtrToInt(args[3], type_" << matName << ");\n"
 << "          args[5] = BuilderZ.CreatePtrToInt(args[5], type_" << matName << ");\n"
@@ -382,8 +425,13 @@ os << "        dmemcpy = getOrInsertMemcpyStridedLapack(*gutils->oldFunc->getPar
     } else if (typeOfArg == argType::fp) {
       os
 << "  Value *fp_" << name << " = gutils->getNewFromOriginal(arg_" << name << ");\n"; 
+    } else if (typeOfArg == argType::trans) {
+      os
+<< "  Value *true_" << name << " = gutils->getNewFromOriginal(arg_" << name << ");\n"
+<< "  Value *" << name << " = true_" << name << ";\n";
     }
   }
+
 
   os
 << "  IRBuilder<> Builder2(call.getParent());\n"
@@ -418,6 +466,7 @@ void emit_caching(TGPattern &pattern, raw_ostream &os) {
   emit_scalar_caching(pattern, os);
   emit_vec_caching(pattern, os);
   emit_mat_caching(pattern, os);
+  emit_trans_caching(pattern, os);
 
   for (auto actEn : llvm::enumerate(actArgs)) {
     auto name = nameVec[actEn.value()];
