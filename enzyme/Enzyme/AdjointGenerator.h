@@ -12503,14 +12503,16 @@ public:
         eraseIfUnused(call);
       }
 
-      llvm::Value *val = getBaseObject(call.getArgOperand(0));
-      if (isa<ConstantPointerNull>(val)) {
-        llvm::errs() << "removing free of null pointer\n";
-        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
-        return;
+      bool used = call.getNumUses();
+      if (used) {
+        auto deallocInst = gutils->getNewFromOriginal((llvm::Value *)&call);
+        auto successResult =
+            ConstantInt::get(Type::getInt32Ty(call.getContext()), 0);
+        deallocInst->replaceAllUsesWith(successResult);
+        erased.insert(&call);
+        gutils->erase(cast<Instruction>(deallocInst));
       }
 
-      llvm::errs() << "freeing without malloc " << *val << "\n";
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
       return;
     }
