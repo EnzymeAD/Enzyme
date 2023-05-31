@@ -3726,7 +3726,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
               }
             } else if (auto SI = dyn_cast<SwitchInst>(TI)) {
               auto NSI = NB.CreateSwitch(
-                  lookupM(getNewFromOriginal(BI->getCondition()), NB,
+                  lookupM(getNewFromOriginal(SI->getCondition()), NB,
                           available),
                   remap(SI->getDefaultDest()));
               for (auto cas : SI->cases()) {
