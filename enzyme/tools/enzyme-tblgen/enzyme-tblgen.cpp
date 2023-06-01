@@ -1680,8 +1680,7 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
         result.append((Twine("arg_") + name).str());
       } else if (typeOfArg == argType::trans) {
         result.append((Twine("arg_") + name).str());
-        // result.append((Twine("gutils->getNewFromOriginal(arg_") +
-        // name+")").str());
+        //result.append((Twine("arg_") + name).str());
       } else {
         // TODO
         // llvm::errs() << "name: " << name << " typename: " << typeOfArg <<
@@ -1763,7 +1762,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
     auto name = nameVec[i];
     if (typeMap.lookup(i) == argType::trans) {
       os << "  llvm::Value* arg_transposed_" << name
-         << " = transpose(BuilderZ, "
+         << " = transpose(BuilderZ, arg_"
          << name
          << ", byRef, charType, allocationBuilder);\n";
     }
