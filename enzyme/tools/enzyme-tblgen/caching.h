@@ -157,7 +157,7 @@ void emit_scalar_caching(TGPattern &pattern, raw_ostream &os) {
 << "  bool cache_" << name << " = true;\n"
 << "  const bool need_" << name << " = true;\n"
 //<< "  bool cache_" << name << " = false;\n"
-<< "  if (true) {\n"
+<< "  if (byRef && true) {\n"
 //<< "  if (byRef && uncacheable_" << name << ") {\n";
 << "    cacheTypes.push_back(" << scalarType << ");\n"
 << "    cache_" << name << " = true;\n"
