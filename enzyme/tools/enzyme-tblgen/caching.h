@@ -289,14 +289,12 @@ os << "        dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
 << "      auto charType = IntegerType::get(intType->getContext(), 8);\n"
 << "      auto *M = " << dim1 << ";\n"
 << "      auto *N = " << dim2 << ";\n"
-<< "        matSize = BuilderZ.CreateMul(M,N);\n"
 << "      if (byRef) {\n"
-// next two probably are needed?
-//<< "        auto MP = BuilderZ.CreatePointerCast(M, PointerType::get(intType, cast<PointerType>(M->getType())->getAddressSpace()));\n"
-//<< "        auto NP = BuilderZ.CreatePointerCast(N, PointerType::get(intType, cast<PointerType>(N->getType())->getAddressSpace()));\n"
-//<< "        auto len1 = BuilderZ.CreateLoad(intType, MP);\n"
-//<< "        auto len2 = BuilderZ.CreateLoad(intType, NP);\n"
-//<< "        matSize = BuilderZ.CreateMul(len1, len2);\n"
+<< "        auto MP = BuilderZ.CreatePointerCast(M, PointerType::get(intType, cast<PointerType>(M->getType())->getAddressSpace()));\n"
+<< "        auto NP = BuilderZ.CreatePointerCast(N, PointerType::get(intType, cast<PointerType>(N->getType())->getAddressSpace()));\n"
+<< "        auto len1 = BuilderZ.CreateLoad(intType, MP);\n"
+<< "        auto len2 = BuilderZ.CreateLoad(intType, NP);\n"
+<< "        matSize = BuilderZ.CreateMul(len1, len2);\n"
 << "      } else {\n"
 << "        matSize = BuilderZ.CreateMul(M,N);\n"
 << "      }\n"
@@ -409,6 +407,7 @@ void emit_caching(TGPattern &pattern, raw_ostream &os) {
 
   auto actArgs = pattern.getActiveArgs();
   auto nameVec = pattern.getArgNames();
+  const auto typeMap = pattern.getArgTypeMap();
 
   // 1. No caching for fwd-mode
   // 2. Deactivate caching for uncacheable_args
@@ -422,6 +421,7 @@ void emit_caching(TGPattern &pattern, raw_ostream &os) {
   emit_vec_caching(pattern, os);
 
   for (auto actEn : llvm::enumerate(actArgs)) {
+    if (typeMap.lookup(actEn.value()) == argType::fp) continue;
     auto name = nameVec[actEn.value()];
     os 
 << "  if (cache_" << name << ")\n"
