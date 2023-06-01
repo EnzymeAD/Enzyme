@@ -1072,6 +1072,27 @@ void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
 
 #include "caching.h"
 
+void extract_scalar(std::string name, std::string elemTy, raw_ostream &os) {
+  os << "      if (cache_" << name << ") {\n"
+     << "        arg_" << name << " = (cacheTypes.size() == 1)\n"
+     << "                    ? cacheval\n"
+     << "                    : Builder2.CreateExtractValue(cacheval, "
+        "{cacheidx});\n"
+     << "        auto alloc = allocationBuilder.CreateAlloca(" << elemTy
+     << ");\n"
+     << "        Builder2.CreateStore(arg_" << name << ", alloc);\n"
+     << "        arg_" << name
+     << " = Builder2.CreatePointerCast(\n"
+     //                     check for this ty of ArgOperand(0)?
+     << "            alloc, call.getArgOperand(0)->getType());\n"
+     << "        cacheidx++;\n"
+     << "      } else {\n"
+     << "        if (Mode != DerivativeMode::ForwardModeSplit)\n"
+     << "          arg_" << name << " = lookup(arg_" << name << ", Builder2);\n"
+     << "      }\n"
+     << "\n";
+}
+
 void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
   const auto actArgs = pattern.getActiveArgs();
   const auto typeMap = pattern.getArgTypeMap();
@@ -1098,68 +1119,18 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto typeOfArg = typeMap.lookup(i);
     auto name = nameVec[i];
+    // this branch used "true_" << name everywhere instead of "arg_" << name
+    // before. probably randomly, but check to make sure
     if (typeOfArg == argType::vincInc || typeOfArg == argType::mldLD) {
-      os << "      if (cache_" << name << ") {\n"
-         << "        true_" << name << " =\n"
-         << "            (cacheTypes.size() == 1)\n"
-         << "                ? cacheval\n"
-         << "                : Builder2.CreateExtractValue(cacheval, "
-            "{cacheidx});\n"
-         << "        auto alloc = allocationBuilder.CreateAlloca(intType);\n"
-         << "        Builder2.CreateStore(true_" << name << ", alloc);\n"
-         << "        true_" << name << " = Builder2.CreatePointerCast(\n"
-         << "            alloc, call.getArgOperand(0)->getType());\n"
-         << "        " << name << " = true_" << name << ";\n"
-         << "        cacheidx++;\n"
-         << "      } else if (need_" << name << ") {\n"
-         << "        if (Mode != DerivativeMode::ForwardModeSplit) {\n"
-         << "          true_" << name << " = lookup(true_" << name
-         << ", Builder2);\n"
-         << "          " << name << " = true_" << name << ";\n"
-         << "        }\n"
-         << "      }\n"
-         << "\n";
+      extract_scalar(name, "intType", os);
     } else if (typeOfArg == argType::len) {
-      os << "      if (cache_" << name << ") {\n"
-         << "        arg_" << name << " = (cacheTypes.size() == 1)\n"
-         << "                    ? cacheval\n"
-         << "                    : Builder2.CreateExtractValue(cacheval, "
-            "{cacheidx});\n"
-         << "        auto alloc = allocationBuilder.CreateAlloca(intType);\n"
-         << "        Builder2.CreateStore(arg_" << name << ", alloc);\n"
-         << "        arg_" << name << " = Builder2.CreatePointerCast(\n"
-         << "            alloc, call.getArgOperand(0)->getType());\n"
-         << "        cacheidx++;\n"
-         << "      } else {\n"
-         << "        if (Mode != DerivativeMode::ForwardModeSplit)\n"
-         << "          arg_" << name << " = lookup(arg_" << name
-         << ", Builder2);\n"
-         << "      }\n"
-         << "\n";
+      extract_scalar(name, "intType", os);
+    } else if (typeOfArg == argType::fp) {
+      extract_scalar(name, "fpType", os);
     } else if (typeOfArg == argType::trans) {
       // we are in the byRef branch and trans only exist in lv23.
       // So just unconditionally asume that no layout exist and use i-1
-      os << "      if (cache_" << name << ") {\n"
-         << "        true_" << name << " = (cacheTypes.size() == 1)\n"
-         << "                    ? cacheval\n"
-         << "                    : Builder2.CreateExtractValue(cacheval, "
-            "{cacheidx});\n"
-         << "        auto alloc = allocationBuilder.CreateAlloca(charType);\n"
-         << "        Builder2.CreateStore(true_" << name << ", alloc);\n"
-         << "        true_" << name << " = Builder2.CreatePointerCast(\n"
-         << "            alloc, call.getArgOperand(" << i - 1
-         << ")->getType());\n"
-         //<< "            alloc, Type::getInt8PtrTy(->getContext()) );\n"
-         << "        " << name << " = true_" << name << ";\n"
-         << "        cacheidx++;\n"
-         << "      } else {\n"
-         << "        if (Mode != DerivativeMode::ForwardModeSplit) {\n"
-         << "           true_" << name << " = lookup(true_" << name
-         << ", Builder2);\n"
-         << "          " << name << " = true_" << name << ";\n"
-         << "        }\n"
-         << "      }\n"
-         << "\n";
+      extract_scalar(name, "charType", os);
     }
   }
 
@@ -1173,7 +1144,7 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
          << ", Builder2);\n"
          << "        " << name << " = true_" << name << ";\n"
          << "      }\n";
-    } else if (typeOfArg == argType::len) {
+    } else if (typeOfArg == argType::len || typeOfArg == argType::fp) {
       os << "      arg_" << name << " = lookup(arg_" << name << ", Builder2);\n"
          << "\n";
     }
@@ -1183,7 +1154,6 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
   for (size_t i = 0; i < nameVec.size(); i++) {
     if (typeMap.lookup(i) != argType::vincData)
       continue;
-
     const auto vecName = nameVec[i];
     const auto vecPosition = i;
     const auto vecUsers = argUsers.lookup(vecPosition);
@@ -1204,7 +1174,7 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
        << "      if (type_" << vecName << "->isIntegerTy())\n"
        << "        data_" << vecName << " = Builder2.CreatePtrToInt(data_"
        << vecName << ", type_" << vecName << ");\n"
-       << "    }";
+       << "    }\n";
 
     if (vecUsers.size() > 0) {
       os << "   else if (";

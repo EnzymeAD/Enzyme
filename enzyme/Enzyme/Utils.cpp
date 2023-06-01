@@ -2202,31 +2202,31 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
 
 void extractValueFromCache(llvm::Value *arg, bool cache_arg,
                            llvm::Value *true_arg, llvm::Type *ty,
-                           llvm::Value *cacheval, unsigned cachidx,
+                           llvm::Value *cacheval, unsigned cacheidx,
                            DerivativeMode Mode,
                            llvm::IRBuilder<> &allocationBuilder,
                            llvm::IRBuilder<> &Builder2) {
   //  if (!cache_arg) {
   //    if (Mode != DerivativeMode::ForwardModeSplit) {
   //      true_arg = lookup(true_arg, Builder2);
+  //      // llvm::Value *lookup(llvm::Value *val, llvm::IRBuilder<> &Builder) {
+  //      //   return gutils->lookupM(val, Builder);
+  //      // }
   //      arg = true_arg;
   //    }
   //    return;
   //  }
   //
-  //  true_transa = (cacheval.getType().isStructTy())
-  //                    ? Builder2.CreateExtractValue(cacheval, {cacheidx})
-  //                    : cacheval;
+  //  // old: true_transa = (cacheTypes.size() == 1)
+  //  true_arg = (cacheval->getType()->isStructTy())
+  //                 ? Builder2.CreateExtractValue(cacheval, {cacheidx})
+  //                 : cacheval;
   //
-  //  // true_transa = (cacheTypes.size() == 1)
-  //  //                   ? cacheval
-  //  //                   : Builder2.CreateExtractValue(cacheval, {cacheidx});
   //  auto alloc = allocationBuilder.CreateAlloca(ty);
   //  Builder2.CreateStore(true_arg, alloc);
   //  true_arg = Builder2.CreatePointerCast(alloc, PointerType::getUnqual(ty));
-  //  // Builder2.CreatePointerCast(alloc, call.getArgOperand(0)->getType());
-  //  arg = true_arg;
-  //  cacheidx++;
+  //  // old: Builder2.CreatePointerCast(alloc,
+  //  call.getArgOperand(0)->getType()); arg = true_arg; cacheidx++;
 }
 
 // julia_decl null means not julia decl, otherwise it is the integer type needed
