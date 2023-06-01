@@ -281,8 +281,6 @@ os << "        dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
     assert(typeMap.lookup(dimensions[1]) == argType::len);
     std::string dim1 = "arg_" + nameVec[dimensions[0]];
     std::string dim2 = "arg_" + nameVec[dimensions[1]];
-    //std::string dim1 = "arg_" + nameVec[dimensions[0]];
-    //std::string dim2 = "arg_" + nameVec[dimensions[1]];
     // 
     // TODO: remove last hardcoded len_n usages to support blas lv2/3 
     os
