@@ -38,7 +38,7 @@ def RemoveUnusedEnzymeOpsPass : Pass<"remove-unnecessary-enzyme-ops"> {
 }
 
 def SimplifyMemrefCachePass : Pass<"simplify-memref-cache"> {
-  let summary = "If possible lower caches to SSA values";
+  let summary = "Rewrite all cache<memref<cache<...>>> to cache<memref<...>> if possible";
   let constructor = "mlir::enzyme::createSimplifyMemrefCachePass()";
 }
 
