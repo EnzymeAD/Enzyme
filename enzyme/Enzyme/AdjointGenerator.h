@@ -6566,6 +6566,7 @@ public:
 
           // Replace primal MPI_Allreduce comparison op min/max with
           // minloc/maxloc respectively
+          CallInst *newNewCall;
           Value *recvlocbuf;
           {
             recvlocbuf = CreateAllocation(
@@ -6589,7 +6590,7 @@ public:
                              compLocOp,
                              comm};
 
-            auto newNewCall =
+            newNewCall =
                 BuilderZ.CreateCall(mpi_allreduce_comploc_fp->getFunctionType(),
                                     mpi_allreduce_comploc_fp, args);
 
@@ -6598,32 +6599,158 @@ public:
           }
 
           if (forwardMode) {
-            Value *args[] = {
-                /*sendbuf*/ shadow_sendbuf,
-                /*recvbuf*/ shadow_recvbuf,
-                /*count*/ count,
-                /*datatype*/ datatype,
-                /*op*/ op,
-                /*comm*/ comm,
-            };
 
-#if LLVM_VERSION_MAJOR >= 11
-            auto callval = call.getCalledOperand();
-#else
-            auto callval = call.getCalledValue();
-#endif
+            Type *IntTy = call.getCalledFunction()->getArg(2)->getType();
+            auto tysize = MPI_TYPE_SIZE(datatype, Builder2,
+                                        Type::getInt64Ty(call.getContext()));
+            auto M = call.getModule();
 
-#if LLVM_VERSION_MAJOR > 7
-            Builder2.CreateCall(call.getFunctionType(), callval, args,
-                                bufferDefs);
-#else
-            Builder2.CreateCall(callval, args, bufferDefs);
-#endif
+            // Get the length for the allocation of the intermediate buffer
+            auto byteCount = Builder2.CreateZExtOrTrunc(
+                count, Type::getInt64Ty(call.getContext()));
+            byteCount = Builder2.CreateMul(byteCount, tysize);
 
-            return;
-          }
+            // Allocate the intermediate buffer
+            auto shadow_sendbuf_tmp = CreateAllocation(
+                Builder2, Type::getInt8Ty(call.getContext()), byteCount);
+            auto shadow_recvbuf_tmp = CreateAllocation(
+                Builder2, Type::getInt8Ty(call.getContext()), byteCount);
 
-          {
+            // Initialize shadow_sendbuf_tmp zero or differential depending on
+            // primal comparison op results
+            {
+              Type *FPTy;
+              {
+                Value *orig_datatype = call.getOperand(3);
+                if (Constant *C = dyn_cast<Constant>(orig_datatype)) {
+                  while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
+                    C = CE->getOperand(0);
+                  }
+                  // OpenMPI
+                  if (auto GV = dyn_cast<GlobalVariable>(C)) {
+                    std::string datatypeName;
+                    if (GV->getName() == "ompi_mpi_double") {
+                      FPTy = Type::getDoubleTy(GV->getContext());
+                    } else if (GV->getName() == "ompi_mpi_float") {
+                      FPTy = Type::getFloatTy(GV->getContext());
+                    }
+                  }
+                  // MPICH
+                  else if (ConstantInt *CI = dyn_cast<ConstantInt>(C)) {
+                  } else {
+                    assert(false && "Unhandled MPI Datatype");
+                  }
+                } else {
+                  assert(false && "Unhandled MPI Datatype");
+                }
+              }
+              Type *FPPtrTy = PointerType::getUnqual(FPTy);
+
+              BasicBlock *currentBlock = Builder2.GetInsertBlock();
+              auto baseBlockName = currentBlock->getName();
+              BasicBlock *endLoopBlock;
+              if (auto I = dyn_cast<Instruction>(shadow_recvbuf_tmp)) {
+                endLoopBlock = currentBlock->splitBasicBlock(
+                    I->getNextNode(), baseBlockName + "_endloop");
+                currentBlock->getTerminator()->eraseFromParent();
+                currentBlock->getParent()->getBasicBlockList();
+                Builder2.SetInsertPoint(currentBlock);
+              } else {
+                assert(false && "CreateAllocation didn't return an instruction "
+                                "- instruction needed for splitting block");
+              }
+
+              auto &C = newNewCall->getContext();
+              auto F = gutils->newFunc;
+              BasicBlock *loopBlock =
+                  BasicBlock::Create(C, baseBlockName + "_loop", F);
+              loopBlock->moveBefore(endLoopBlock);
+              BasicBlock *thenBlock =
+                  BasicBlock::Create(C, baseBlockName + "_then", F);
+              thenBlock->moveBefore(endLoopBlock);
+              BasicBlock *endThenBlock =
+                  BasicBlock::Create(C, baseBlockName + "_endthen", F);
+              endThenBlock->moveBefore(endLoopBlock);
+
+              auto rank = MPI_COMM_RANK(comm, Builder2, IntTy);
+              auto entryCond =
+                  Builder2.CreateICmpSGT(count, ConstantInt::get(IntTy, 0));
+              Builder2.CreateCondBr(entryCond, loopBlock, endLoopBlock);
+
+              Builder2.SetInsertPoint(loopBlock);
+
+              auto idx = Builder2.CreatePHI(IntTy, 2);
+              idx->addIncoming(ConstantInt::get(IntTy, 0), currentBlock);
+
+              {
+                auto loc = Builder2.CreateLoad(
+                    IntTy,
+                    Builder2.CreateInBoundsGEP(IntTy, recvlocbuf, {idx}));
+                auto ifCond = Builder2.CreateICmpEQ(loc, rank);
+                Builder2.CreateCondBr(ifCond, thenBlock, endThenBlock);
+
+                Builder2.SetInsertPoint(thenBlock);
+
+                auto shadow_sendbuf_FP = Builder2.CreateInBoundsGEP(
+                    FPTy, Builder2.CreateBitCast(shadow_sendbuf, FPPtrTy),
+                    {idx});
+                auto diff = Builder2.CreateLoad(FPTy, shadow_sendbuf_FP);
+
+                Builder2.CreateBr(endThenBlock);
+
+                Builder2.SetInsertPoint(endThenBlock);
+
+                auto zeroOrDiff = Builder2.CreatePHI(FPTy, 2);
+                zeroOrDiff->addIncoming(ConstantFP::get(FPTy, 0.0), loopBlock);
+                zeroOrDiff->addIncoming(diff, thenBlock);
+
+                auto shadow_sendbuf_tmp_FP = Builder2.CreateInBoundsGEP(
+                    FPTy, Builder2.CreateBitCast(shadow_sendbuf_tmp, FPPtrTy),
+                    {idx});
+                Builder2.CreateStore(zeroOrDiff, shadow_sendbuf_tmp_FP);
+              }
+
+              auto inc = Builder2.CreateAdd(idx, ConstantInt::get(IntTy, 1));
+              idx->addIncoming(inc, endThenBlock);
+
+              auto loopCond = Builder2.CreateICmpSLT(idx, count);
+              Builder2.CreateCondBr(loopCond, loopBlock, endLoopBlock);
+
+              Builder2.SetInsertPoint(endLoopBlock);
+            }
+
+            // Allreduce using sum on shadow_sendbuf_tmp into shadow_recvbuf_tmp
+            {
+              auto sumOp = getMPIOpValue(MPI_Op_Kind::SUM, op, M);
+              sumOp = Builder2.CreateBitCast(
+                  sumOp, call.getCalledFunction()->getArg(4)->getType());
+              Value *args[] = {shadow_sendbuf_tmp,
+                               shadow_recvbuf_tmp,
+                               count,
+                               datatype,
+                               sumOp,
+                               comm};
+
+              auto FT = call.getCalledFunction()->getFunctionType();
+              Builder2.CreateCall(
+                  call.getModule()->getOrInsertFunction("MPI_Allreduce", FT),
+                  args, bufferDefs);
+            }
+
+            // Increment shadow_recvbuf from shadow_recv_tmp
+            {
+              DifferentiableMemCopyFloats(call, orig_recvbuf,
+                                          shadow_recvbuf_tmp, shadow_recvbuf,
+                                          byteCount, Builder2, bufferDefs);
+            }
+
+            // Free temporary buffers
+            {
+              CreateDealloc(Builder2, shadow_sendbuf_tmp);
+              CreateDealloc(Builder2, shadow_recvbuf_tmp);
+              CreateDealloc(Builder2, recvlocbuf);
+            }
+          } else {
             Type *IntTy = call.getCalledFunction()->getArg(2)->getType();
             auto tysize = MPI_TYPE_SIZE(datatype, Builder2,
                                         Type::getInt64Ty(call.getContext()));
@@ -6682,9 +6809,7 @@ public:
               }
               Type *FPPtrTy = PointerType::getUnqual(FPTy);
 
-              IRBuilder<> &B = Builder2;
-
-              BasicBlock *currentBlock = B.GetInsertBlock();
+              BasicBlock *currentBlock = Builder2.GetInsertBlock();
               auto baseBlockName = currentBlock->getName();
               BasicBlock *loopBlock = gutils->addReverseBlock(
                   currentBlock, baseBlockName + "_loop", gutils->newFunc);
@@ -6697,43 +6822,46 @@ public:
 
               auto rank = MPI_COMM_RANK(comm, Builder2, IntTy);
               auto entryCond =
-                  B.CreateICmpSGT(count, ConstantInt::get(IntTy, 0));
-              B.CreateCondBr(entryCond, loopBlock, endLoopBlock);
+                  Builder2.CreateICmpSGT(count, ConstantInt::get(IntTy, 0));
+              Builder2.CreateCondBr(entryCond, loopBlock, endLoopBlock);
 
-              B.SetInsertPoint(loopBlock);
+              Builder2.SetInsertPoint(loopBlock);
 
-              auto idx = B.CreatePHI(IntTy, 2);
+              auto idx = Builder2.CreatePHI(IntTy, 2);
               idx->addIncoming(ConstantInt::get(IntTy, 0), currentBlock);
 
               {
-                auto loc = B.CreateLoad(
-                    IntTy, B.CreateInBoundsGEP(IntTy, recvlocbuf, {idx}));
-                auto ifCond = B.CreateICmpEQ(loc, rank);
-                B.CreateCondBr(ifCond, thenBlock, endThenBlock);
+                auto loc = Builder2.CreateLoad(
+                    IntTy,
+                    Builder2.CreateInBoundsGEP(IntTy, recvlocbuf, {idx}));
+                auto ifCond = Builder2.CreateICmpEQ(loc, rank);
+                Builder2.CreateCondBr(ifCond, thenBlock, endThenBlock);
 
-                B.SetInsertPoint(thenBlock);
+                Builder2.SetInsertPoint(thenBlock);
 
-                auto shadow_sendbuf_tmp_FP = B.CreateInBoundsGEP(
-                    FPTy, B.CreateBitCast(shadow_sendbuf_tmp, FPPtrTy), {idx});
-                auto shadow_sendbuf_FP = B.CreateInBoundsGEP(
-                    FPTy, B.CreateBitCast(shadow_sendbuf, FPPtrTy), {idx});
-                auto res =
-                    B.CreateFAdd(B.CreateLoad(FPTy, shadow_sendbuf_tmp_FP),
-                                 B.CreateLoad(FPTy, shadow_sendbuf_FP));
-                B.CreateStore(res, shadow_sendbuf_FP);
+                auto shadow_sendbuf_tmp_FP = Builder2.CreateInBoundsGEP(
+                    FPTy, Builder2.CreateBitCast(shadow_sendbuf_tmp, FPPtrTy),
+                    {idx});
+                auto shadow_sendbuf_FP = Builder2.CreateInBoundsGEP(
+                    FPTy, Builder2.CreateBitCast(shadow_sendbuf, FPPtrTy),
+                    {idx});
+                auto res = Builder2.CreateFAdd(
+                    Builder2.CreateLoad(FPTy, shadow_sendbuf_tmp_FP),
+                    Builder2.CreateLoad(FPTy, shadow_sendbuf_FP));
+                Builder2.CreateStore(res, shadow_sendbuf_FP);
 
-                B.CreateBr(endThenBlock);
+                Builder2.CreateBr(endThenBlock);
 
-                B.SetInsertPoint(endThenBlock);
+                Builder2.SetInsertPoint(endThenBlock);
               }
 
-              auto inc = B.CreateAdd(idx, ConstantInt::get(IntTy, 1));
+              auto inc = Builder2.CreateAdd(idx, ConstantInt::get(IntTy, 1));
               idx->addIncoming(inc, endThenBlock);
 
-              auto loopCond = B.CreateICmpSLT(idx, count);
-              B.CreateCondBr(loopCond, loopBlock, endLoopBlock);
+              auto loopCond = Builder2.CreateICmpSLT(idx, count);
+              Builder2.CreateCondBr(loopCond, loopBlock, endLoopBlock);
 
-              B.SetInsertPoint(endLoopBlock);
+              Builder2.SetInsertPoint(endLoopBlock);
             }
 
             // Zero the shadow_recvbuf
@@ -6751,17 +6879,15 @@ public:
               memset->addParamAttr(0, Attribute::NonNull);
             }
 
+            // Free temporary buffers
             if (shouldFree()) {
               CreateDealloc(Builder2, shadow_sendbuf_tmp);
+              CreateDealloc(Builder2, recvlocbuf);
             }
-          }
-
-          if (shouldFree()) {
-            CreateDealloc(Builder2, recvlocbuf);
+            if (Mode == DerivativeMode::ReverseModeGradient)
+              eraseIfUnused(call, /*erase*/ true, /*check*/ false);
           }
         }
-        if (Mode == DerivativeMode::ReverseModeGradient)
-          eraseIfUnused(call, /*erase*/ true, /*check*/ false);
         return;
       }
     }
