@@ -370,8 +370,7 @@ os << "        dmemcpy = getOrInsertMemcpyStridedLapack(*gutils->oldFunc->getPar
       os 
 << "  Value *true_" << ldName << " = arg_" << ldName << ";\n"
 << "  Value *" << ldName << " = true_" << ldName << ";\n"
-<< "  Value *data_" << vecName << " = arg_" << vecName << ";\n"
-<< "  Value *data_ptr_" << vecName << " = nullptr;\n";
+<< "  Value *free_" << vecName << " = arg_" << vecName << ";\n";
     } else if (typeOfArg == argType::len) {
 os<< "  Value *" << name << " = arg_" << name << ";\n";
     } else if (typeOfArg == argType::fp) {

@@ -911,6 +911,24 @@ void emit_free_and_ending(TGPattern &pattern, raw_ostream &os) {
          << "      }\n";
     }
   }
+  // new: free mat_
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    if (typeMap.lookup(i) == argType::mldData) {
+      auto name = nameVec[i];
+      os << "      if (cache_" << name << ") {\n"
+         << "        if (julia_decl) {\n"
+         << "          auto i8ptr = "
+            "Type::getInt8PtrTy(intType->getContext());\n"
+         //<< "          arg_" << name << " = Builder2.CreatePointerCast(\n"
+         //<< "            arg_" << name << ", i8ptr);\n"
+         //<< "          CreateDealloc(Builder2, arg_" << name << ");\n"
+         << "          CreateDealloc(Builder2, free_" << name << ");\n"
+         << "        } else {\n"
+         << "          CreateDealloc(Builder2, arg_" << name << ");\n"
+         << "        }\n"
+         << "      }\n";
+    }
+  }
   os << "    }\n"
      << "  }\n"
      << "  if (gutils->knownRecomputeHeuristic.find(&call) !=\n"
@@ -1093,6 +1111,24 @@ void extract_scalar(std::string name, std::string elemTy, raw_ostream &os) {
      << "\n";
 }
 
+void extract_mat(std::string name, std::string elemTy, raw_ostream &os) {
+  os << "      if (cache_" << name << ") {\n"
+     << "        arg_" << name << " = (cacheTypes.size() == 1)\n"
+     << "                    ? cacheval\n"
+     << "                    : Builder2.CreateExtractValue(cacheval, "
+        "{cacheidx});\n"
+     << "        free_" << name << " = arg_" << name << ";\n"
+     << "        if (julia_decl) {\n"
+     << "          arg_" << name << " = Builder2.CreatePtrToInt(arg_" << name
+     << ", type_" << name << ");\n"
+     << "        }\n"
+     << "        cacheidx++;\n"
+     << "      } else {\n"
+     << "        if (Mode != DerivativeMode::ForwardModeSplit)\n"
+     << "          arg_" << name << " = lookup(arg_" << name << ", Builder2);\n"
+     << "      }\n";
+}
+
 void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
   const auto actArgs = pattern.getActiveArgs();
   const auto typeMap = pattern.getArgTypeMap();
@@ -1131,6 +1167,14 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
       // we are in the byRef branch and trans only exist in lv23.
       // So just unconditionally asume that no layout exist and use i-1
       extract_scalar(name, "charType", os);
+    }
+  }
+
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    auto typeOfArg = typeMap.lookup(i);
+    auto name = nameVec[i];
+    if (typeOfArg == argType::mldData) {
+      extract_mat(name, "asdf", os);
     }
   }
 
@@ -1195,6 +1239,7 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
          << "    }\n";
     }
   }
+
   os << "  } else {\n"
      << "\n";
 
@@ -1318,7 +1363,7 @@ size_t fwd_call_args(TGPattern &pattern, size_t actArg,
       if (pos == actArg) {
         result.append((Twine("d_") + name + ", true_" + nextName).str());
       } else {
-        result.append((Twine("data_") + name + ", arg_" + nextName).str());
+        result.append((Twine("arg_") + name + ", arg_" + nextName).str());
       }
       pos++; // extra ++ due to also handling mldLD
     } else if (typeOfArg == argType::mldLD) {
@@ -1670,7 +1715,7 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
         if (pos == actArg) {
           result.append((Twine("d_") + name + ", true_" + nextName).str());
         } else {
-          result.append((Twine("data_") + name + ", arg_" + nextName).str());
+          result.append((Twine("arg_") + name + ", arg_" + nextName).str());
         }
         pos++; // extra ++ due to also handling mldLD
       } else if (typeOfArg == argType::mldLD) {
@@ -1762,8 +1807,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
     auto name = nameVec[i];
     if (typeMap.lookup(i) == argType::trans) {
       os << "  llvm::Value* arg_transposed_" << name
-         << " = transpose(BuilderZ, arg_"
-         << name
+         << " = transpose(Builder2, arg_" << name
          << ", byRef, charType, allocationBuilder);\n";
     }
   }
