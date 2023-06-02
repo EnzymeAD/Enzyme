@@ -211,7 +211,11 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
     // TODO: remove last hardcoded len_n usages to support blas lv2/3 
     os
 << "    if (cache_" << vecName << ") {\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, arg_n);\n"
+<< "      auto *vecSize = arg_n;\n"
+<< "      if (byRef) {\n"
+<< "        vecSize = BuilderZ.CreateLoad(intType, vecSize);\n"
+<< "      }\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, vecSize);\n"
 << "      Value *arg = BuilderZ.CreateBitCast(malins, castvals[" << i << "]);\n"
 << "      Function *dmemcpy;\n"
 << "      if (EnzymeBlasCopy) {\n"
