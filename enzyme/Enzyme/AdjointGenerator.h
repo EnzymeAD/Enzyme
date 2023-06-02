@@ -1201,7 +1201,7 @@ public:
                           ordering, syncScope, mask, prevNoAlias, prevScopes);
 
       if (!EnzymeRuntimeActivityCheck && CustomErrorHandler && constantval) {
-        if (dt.isPossiblePointer()) {
+        if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
           if (!isa<UndefValue>(orig_val) &&
               !isa<ConstantPointerNull>(orig_val)) {
             std::string str;
@@ -1392,7 +1392,7 @@ public:
                             isVolatile, ordering, syncScope, mask, prevNoAlias,
                             prevScopes);
         if (!EnzymeRuntimeActivityCheck && CustomErrorHandler && constantval) {
-          if (dt.isPossiblePointer()) {
+          if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
             if (!isa<UndefValue>(orig_val) &&
                 !isa<ConstantPointerNull>(orig_val)) {
               std::string str;
