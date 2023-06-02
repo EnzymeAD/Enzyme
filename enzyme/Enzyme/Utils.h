@@ -629,10 +629,8 @@ llvm::Function *getOrInsertDifferentialFloatMemcpy(
     unsigned dstaddr, unsigned srcaddr, unsigned bitwidth);
 
 /// Create function for type that performs memcpy with a stride using blas copy
-llvm::Function *getOrInsertMemcpyStridedLapack(llvm::Module &M,
-                                               llvm::PointerType *T,
-                                               llvm::Type *IT, BlasInfo blas,
-                                               bool julia_decl);
+void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas, llvm::ArrayRef<llvm::Value*> args, llvm::ArrayRef<llvm::OperandBundleDef> bundles); 
+
 /// Create function for type that performs memcpy with a stride using blas copy
 llvm::Function *getOrInsertMemcpyStridedBlas(llvm::Module &M,
                                              llvm::PointerType *T,
@@ -1639,7 +1637,7 @@ void extractValueFromCache(llvm::Value *arg, bool cache_arg,
 // to cast to
 llvm::Value *to_blas_callconv(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                               llvm::IntegerType *julia_decl,
-                              llvm::IRBuilder<> &entryBuilder);
+                              llvm::IRBuilder<> &entryBuilder, llvm::Twine="");
 // first one assume V is an Integer
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V);
 // secon one assume V is an Integer or a ptr to an int (depends on byRef)

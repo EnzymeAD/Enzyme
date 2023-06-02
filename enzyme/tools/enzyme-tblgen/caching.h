@@ -35,7 +35,6 @@ os << "  bool cache_" << matName << " = false;\n";
       }
       os 
 << ");\n";
-os << "   llvm::errs() << \"" << matName << " - " << "\" << uncacheable_" << matName << " << \" - \" << cache_" << matName << " << \" pos \" << pos_" << matName << " << \"\\n\";\n";
     }
 //    os
 //<< "  bool cache_" << ldName << " = true;\n";
@@ -300,8 +299,6 @@ os << "        dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
 << "        matSize = BuilderZ.CreateMul(M,N);\n"
 << "      }\n"
 << "      auto malins = CreateAllocation(BuilderZ, fpType, matSize);\n"
-<< "      Value *arg = BuilderZ.CreateBitCast(malins, castvals[" << i << "]);\n"
-<< "      Function *dmemcpy;\n"
 << "      assert(EnzymeLapackCopy);\n"
 << "      {\n"
 << "        ValueType valueTypes[] = {";
@@ -319,23 +316,12 @@ os <<
     for (auto len_pos : dimensions ) {
 os << "         if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
-os << "        dmemcpy = getOrInsertMemcpyStridedLapack(*gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
-<< "            intType, blas, julia_decl);\n"
-<< "        Value *uplo = llvm::ConstantInt::get(charType, 0);\n" // garbage data, just should not match U or L
-<< "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, julia_decl_type, allocationBuilder);\n"
-<< "        Value *newLD = to_blas_callconv(BuilderZ, arg_" << ldName << ", byRef, julia_decl_type, allocationBuilder);\n"
-<< "        Value *newM = to_blas_callconv(BuilderZ, N, byRef, julia_decl_type, allocationBuilder);\n"
-<< "        Value *newN = to_blas_callconv(BuilderZ, M, byRef, julia_decl_type, allocationBuilder);\n"
-<< "        Value *args[7] = {uplo, newM, newN, arg_" << matName << ", newLD, arg, newM};\n"
-<< "        if (julia_decl) {\n"
-<< "          args[3] = BuilderZ.CreatePtrToInt(args[3], type_" << matName << ");\n"
-<< "          args[5] = BuilderZ.CreatePtrToInt(args[5], type_" << matName << ");\n"
-<< "        }\n"
-<< "        BuilderZ.CreateCall(dmemcpy, args,\n"
-<< "            gutils->getInvertedBundles(&call, valueTypes,\n"
-<< "            BuilderZ, /*lookup*/ false));\n"
+os << "        Value *uplo = llvm::ConstantInt::get(charType, 0);\n" // garbage data, just should not match U or L
+<< "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, nullptr, allocationBuilder, \"copy.garbage\");\n"
+<< "        Value *args[7] = {uplo, M, N, arg_" << matName << ", arg_" << ldName << ", malins, M};\n"
+<< "        callMemcpyStridedLapack(BuilderZ, *gutils->oldFunc->getParent(), blas, args, gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
 << "      }\n"
-<< "      cacheValues.push_back(arg);\n"
+<< "      cacheValues.push_back(malins);\n"
 << "    }\n";
   }
 
@@ -416,7 +402,6 @@ void emit_caching(TGPattern &pattern, raw_ostream &os) {
   os 
 << "  SmallVector<Type *, 2> cacheTypes;\n\n";
 
-os << "for (size_t i=0; i<overwritten_args.size(); i++) llvm::errs() << \"i=\" << i << \" - \" << overwritten_args[i] << \"\\n\";\n";
   emit_scalar_caching(pattern, os);
   emit_mat_caching(pattern, os);
   emit_vec_caching(pattern, os);
@@ -426,7 +411,7 @@ os << "for (size_t i=0; i<overwritten_args.size(); i++) llvm::errs() << \"i=\" <
     auto name = nameVec[actEn.value()];
     os 
 << "  if (cache_" << name << ")\n"
-<< "    cacheTypes.push_back(castvals[" << actEn.index() << "]);\n";
+<< "    cacheTypes.push_back(PointerType::getUnqual(fpType));\n";
   }
   os
 << "  Type *cachetype = nullptr;\n"

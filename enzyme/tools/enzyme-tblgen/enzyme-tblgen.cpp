@@ -1121,6 +1121,8 @@ void extract_mat(std::string name, std::string elemTy, raw_ostream &os) {
      << "        if (julia_decl) {\n"
      << "          arg_" << name << " = Builder2.CreatePtrToInt(arg_" << name
      << ", type_" << name << ");\n"
+     << "        } else {\n"
+     << "          arg_" << name << " = Builder2.CreatePointerCast(arg_" << name << ", orig_" << name << "->getType());\n"
      << "        }\n"
      << "        cacheidx++;\n"
      << "      } else {\n"
