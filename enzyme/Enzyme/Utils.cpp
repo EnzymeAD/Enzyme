@@ -71,6 +71,9 @@ LLVMValueRef (*EnzymeSanitizeDerivatives)(LLVMValueRef, LLVMValueRef toset,
 
 extern llvm::cl::opt<bool> EnzymeZeroCache;
 llvm::cl::opt<bool>
+    EnzymeLapackCopy("enzyme-lapack-copy", cl::init(true), cl::Hidden,
+                     cl::desc("Use blas copy calls to cache matrices"));
+llvm::cl::opt<bool>
     EnzymeBlasCopy("enzyme-blas-copy", cl::init(true), cl::Hidden,
                    cl::desc("Use blas copy calls to cache vectors"));
 llvm::cl::opt<bool>
@@ -671,6 +674,23 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
   }
   return F;
 }
+// struct BlasInfo {
+//   llvm::StringRef floatType;
+//   llvm::StringRef prefix;
+//   llvm::StringRef suffix;
+//   llvm::StringRef function;
+// };
+Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
+                                   BlasInfo blas) {
+  std::string name =
+      (blas.prefix + blas.floatType + "copy" + blas.suffix).str();
+
+  FunctionType *FT =
+      FunctionType::get(Type::getVoidTy(M.getContext()), {T, T, IT, IT}, false);
+
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+  return F;
+}
 
 Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
                                        BlasInfo blas, bool julia_decl) {
@@ -678,8 +698,11 @@ Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
       (blas.prefix + blas.floatType + "copy" + blas.suffix).str();
   FunctionType *FT;
   if (julia_decl) {
-    FT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                           {IT, IT, IT, IT, IT}, false);
+    auto i8ptr = Type::getInt8PtrTy(M.getContext());
+    FT = FunctionType::get(
+        Type::getVoidTy(M.getContext()),
+        {i8ptr /*int*/, IT /*data*/, i8ptr /*int*/, IT /*data*/, i8ptr /*int*/},
+        false);
   } else {
     FT = FunctionType::get(Type::getVoidTy(M.getContext()), {IT, T, IT, T, IT},
                            false);
@@ -693,6 +716,18 @@ Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
   return dmemcpy;
 }
 
+void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas, llvm::ArrayRef<llvm::Value*> args, llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
+  std::string copy_name = (blas.floatType + "lacpy" + blas.suffix).str();
+
+  SmallVector<Type*, 1> tys;
+  for (auto arg : args) tys.push_back(arg->getType());
+
+  auto FT = FunctionType::get(Type::getVoidTy(M.getContext()), tys, false);
+  auto fn = M.getOrInsertFunction(copy_name, FT);
+
+  B.CreateCall(fn, args, bundles);
+}
+
 Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
                                    unsigned dstalign, unsigned srcalign) {
   Type *elementType = T->getPointerElementType();
@@ -704,11 +739,7 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
   FunctionType *FT =
       FunctionType::get(Type::getVoidTy(M.getContext()), {T, T, IT, IT}, false);
 
-#if LLVM_VERSION_MAJOR >= 9
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
-#else
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
-#endif
 
   if (!F->empty())
     return F;
@@ -752,7 +783,8 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
     Value *a = B2.CreateNSWSub(ConstantInt::get(num->getType(), 1), num, "a");
     Value *negidx = B2.CreateNSWMul(a, stride, "negidx");
     // Value *negidx =
-    //     B2.CreateNSWAdd(b, ConstantInt::get(num->getType(), 1), "negidx");
+    //     B2.CreateNSWAdd(b, ConstantInt::get(num->getType(), 1),
+    //     "negidx");
     Value *isneg =
         B2.CreateICmpSLT(stride, ConstantInt::get(num->getType(), 0), "is.neg");
     Value *startidx = B2.CreateSelect(
@@ -768,15 +800,9 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
     idx->addIncoming(ConstantInt::get(num->getType(), 0), init);
     sidx->addIncoming(startidx, init);
 
-#if LLVM_VERSION_MAJOR > 7
     Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
     Value *srci = B.CreateInBoundsGEP(elementType, src, sidx, "src.i");
     LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
-#else
-    Value *dsti = B.CreateInBoundsGEP(dst, idx, "dst.i");
-    Value *srci = B.CreateInBoundsGEP(src, sidx, "src.i");
-    LoadInst *srcl = B.CreateLoad(srci, "src.i.l");
-#endif
 
     StoreInst *dsts = B.CreateStore(srcl, dsti);
 
@@ -810,6 +836,116 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
 
   return F;
 }
+// Function *getOrInsertMemcpyMat(Module &M, PointerType *T, Type *IT,
+//                                llvm::Type *IT, unsigned M, unsigned N,
+//                                unsigned LDA) {
+//   Type *elementType = T->getPointerElementType();
+//   assert(elementType->isFloatingPointTy());
+//   std::string name = "__enzyme_memcpy_" + tofltstr(elementType) + "_mat_" +
+//                      std::to_string(cast<IntegerType>(IT)->getBitWidth());
+//   //"_da" + std::to_string(dstalign) + "sa" +
+//   // std::to_string(srcalign) + "stride";
+//   FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
+//                                        {T, T, IT, IT, IT}, false);
+//
+//   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+//
+//   if (!F->empty())
+//     return F;
+//
+//   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+//   F->addFnAttr(Attribute::ArgMemOnly);
+//   F->addFnAttr(Attribute::NoUnwind);
+//   F->addFnAttr(Attribute::AlwaysInline);
+//   F->addParamAttr(0, Attribute::NoCapture);
+//   F->addParamAttr(1, Attribute::NoCapture);
+//   F->addParamAttr(0, Attribute::WriteOnly);
+//   F->addParamAttr(1, Attribute::ReadOnly);
+//
+//   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+//   BasicBlock *init = BasicBlock::Create(M.getContext(), "init.idx", F);
+//   BasicBlock *body = BasicBlock::Create(M.getContext(), "for.body", F);
+//   BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
+//
+//   auto dst = F->arg_begin();
+//   dst->setName("dst");
+//   auto src = dst + 1;
+//   src->setName("src");
+//   auto M = src + 1;
+//   num->setName("m");
+//   auto N = M + 1;
+//   num->setName("n");
+//   auto LDA = N + 1;
+//   num->setName("lda");
+//
+//   {
+//     IRBuilder<> B(entry);
+//     Value *l = B2.CreateNUWAdd(M, N, "l");
+//     // Don't copy a 0*0 matrix
+//     B.CreateCondBr(B.CreateICmpEQ(l, ConstantInt::get(num->getType(), 0)),
+//     end,
+//                    init);
+//   }
+//
+//   {
+//     IRBuilder<> B2(init);
+//     B2.setFastMathFlags(getFast());
+//     Value *a = B2.CreateNSWSub(ConstantInt::get(num->getType(), 1), num,
+//     "a"); Value *negidx = B2.CreateNSWMul(a, stride, "negidx");
+//     // Value *negidx =
+//     //     B2.CreateNSWAdd(b, ConstantInt::get(num->getType(), 1), "negidx");
+//     Value *isneg =
+//         B2.CreateICmpSLT(stride, ConstantInt::get(num->getType(), 0),
+//         "is.neg");
+//     Value *startidx = B2.CreateSelect(
+//         isneg, negidx, ConstantInt::get(num->getType(), 0), "startidx");
+//     B2.CreateBr(body);
+//     //}
+//
+//     //{
+//     IRBuilder<> B(body);
+//     B.setFastMathFlags(getFast());
+//     PHINode *idx = B.CreatePHI(num->getType(), 2, "idx");
+//     PHINode *sidx = B.CreatePHI(num->getType(), 2, "sidx");
+//     idx->addIncoming(ConstantInt::get(num->getType(), 0), init);
+//     sidx->addIncoming(ConstantInt::get(num->getType(), 0), init);
+//
+//     Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
+//     Value *srci = B.CreateInBoundsGEP(elementType, src, sidx, "src.i");
+//     LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
+//
+//     StoreInst *dsts = B.CreateStore(srcl, dsti);
+//
+//     if (dstalign) {
+// #if LLVM_VERSION_MAJOR >= 10
+//       dsts->setAlignment(Align(dstalign));
+// #else
+//       dsts->setAlignment(dstalign);
+// #endif
+//     }
+//     if (srcalign) {
+// #if LLVM_VERSION_MAJOR >= 10
+//       srcl->setAlignment(Align(srcalign));
+// #else
+//       srcl->setAlignment(srcalign);
+// #endif
+//     }
+//
+//     Value *next =
+//         B.CreateNSWAdd(idx, ConstantInt::get(num->getType(), 1), "idx.next");
+//     Value *snext = B.CreateNSWAdd(sidx, stride, "sidx.next");
+//     idx->addIncoming(next, body);
+//     sidx->addIncoming(snext, body);
+//     B.CreateCondBr(B.CreateICmpEQ(num, next), end, body);
+//   }
+//
+//   {
+//     IRBuilder<> B(end);
+//     B.CreateRetVoid();
+//   }
+//
+//   return F;
+// }
 
 // TODO implement differential memmove
 Function *
@@ -1989,7 +2125,7 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
   llvm::Twine floatType[] = {"s", "d"}; // c, z
-  llvm::Twine extractable[] = {"dot", "scal"};
+  llvm::Twine extractable[] = {"dot", "scal", "axpy", "gemv", "gemm"};
   llvm::Twine prefixes[] = {"" /*Fortran*/, "cblas_", "cublas_"};
   llvm::Twine suffixes[] = {"", "_", "64_", "_64_"};
   for (auto t : floatType) {
@@ -2035,4 +2171,97 @@ llvm::FastMathFlags getFast() {
   if (EnzymeFastMath)
     f.set();
   return f;
+}
+
+void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
+                     llvm::SmallVector<llvm::Value *, 2> &cacheValues,
+                     llvm::IRBuilder<> &BuilderZ, llvm::Twine name) {
+  auto PT = cast<PointerType>(arg->getType());
+  if (PT->getElementType() != ty)
+    arg = BuilderZ.CreatePointerCast(arg, PointerType::get(ty, PT->getAddressSpace()), "pcld." + name);
+#if LLVM_VERSION_MAJOR > 7
+  arg = BuilderZ.CreateLoad(ty, arg, "avld." + name);
+#else
+  arg = BuilderZ.CreateLoad(arg, "avld." + name);
+#endif
+  if (cache_arg)
+    cacheValues.push_back(arg);
+}
+
+void extractValueFromCache(llvm::Value *arg, bool cache_arg,
+                           llvm::Value *true_arg, llvm::Type *ty,
+                           llvm::Value *cacheval, unsigned cacheidx,
+                           DerivativeMode Mode,
+                           llvm::IRBuilder<> &allocationBuilder,
+                           llvm::IRBuilder<> &Builder2) {
+  //  if (!cache_arg) {
+  //    if (Mode != DerivativeMode::ForwardModeSplit) {
+  //      true_arg = lookup(true_arg, Builder2);
+  //      // llvm::Value *lookup(llvm::Value *val, llvm::IRBuilder<> &Builder) {
+  //      //   return gutils->lookupM(val, Builder);
+  //      // }
+  //      arg = true_arg;
+  //    }
+  //    return;
+  //  }
+  //
+  //  // old: true_transa = (cacheTypes.size() == 1)
+  //  true_arg = (cacheval->getType()->isStructTy())
+  //                 ? Builder2.CreateExtractValue(cacheval, {cacheidx})
+  //                 : cacheval;
+  //
+  //  auto alloc = allocationBuilder.CreateAlloca(ty);
+  //  Builder2.CreateStore(true_arg, alloc);
+  //  true_arg = Builder2.CreatePointerCast(alloc, PointerType::getUnqual(ty));
+  //  // old: Builder2.CreatePointerCast(alloc,
+  //  call.getArgOperand(0)->getType()); arg = true_arg; cacheidx++;
+}
+
+// julia_decl null means not julia decl, otherwise it is the integer type needed
+// to cast to
+llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
+                              IntegerType *julia_decl,
+                              IRBuilder<> &entryBuilder, llvm::Twine name) {
+  if (!byRef)
+    return V;
+
+  Value *allocV = entryBuilder.CreateAlloca(V->getType(), nullptr, "byref." + name);
+  B.CreateStore(V, allocV);
+
+  if (julia_decl)
+    allocV = B.CreatePointerCast(allocV, Type::getInt8PtrTy(V->getContext()), "cast." + name);
+
+  return allocV;
+}
+
+llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
+  Value *out = B.CreateSelect(
+      B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'T')),
+      ConstantInt::get(V->getType(), 'N'),
+      B.CreateSelect(
+          B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 't')),
+          ConstantInt::get(V->getType(), 'n'),
+          B.CreateSelect(
+              B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'N')),
+              ConstantInt::get(V->getType(), 'T'),
+              B.CreateSelect(
+                  B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'n')),
+                  ConstantInt::get(V->getType(), 't'),
+                  ConstantInt::get(V->getType(), 0)))));
+  return out;
+}
+
+llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
+                       llvm::IntegerType *julia_decl,
+                       llvm::IRBuilder<> &entryBuilder,
+					   llvm::Twine name) {
+
+  if (byRef) {
+    auto charType = IntegerType::get(V->getContext(), 8);
+    V = B.CreateLoad(charType, V, "ld." + name);
+  }
+
+  V = transpose(B, V);
+
+  return to_blas_callconv(B, V, byRef, julia_decl, entryBuilder, "transpose." + name);
 }

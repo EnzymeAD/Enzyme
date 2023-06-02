@@ -19,7 +19,7 @@ function(enzyme_tablegen ofn)
       PARENT_SCOPE)
 endfunction()
 
-set(LLVM_TARGET_DEFINITIONS InstructionDerivatives.td)
+set(LLVM_TARGET_DEFINITIONS targets/InstructionDerivatives.td)
 enzyme_tablegen(InstructionDerivatives.inc -gen-derivatives)
 enzyme_tablegen(BlasDerivatives.inc -gen-blas-derivatives)
 enzyme_tablegen(BlasAttributor.inc -update-blas-declarations)

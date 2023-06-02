@@ -14,6 +14,7 @@ void emit_attributeBLASCaller(const std::vector<TGPattern> &blasPatterns,
 
 void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
+  bool lv23 = pattern.isBLASLevel2or3();
   os << "void attribute_" << name << "(BlasInfo blas, llvm::Function *F) {\n"
      << "#if LLVM_VERSION_MAJOR >= 16\n"
      << "  F->setOnlyAccessesArgMemory();\n"
@@ -51,38 +52,67 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
 
   for (size_t i = 0; i < argTypeMap.size(); i++) {
     if (argTypeMap.lookup(i) == argType::vincData) {
-      os << "const bool julia_decl = !F->getFunctionType()->getParamType(" << i
-         << ")->isPointerTy();\n";
+      os << "const bool julia_decl = !F->getFunctionType()->getParamType("
+         << (lv23 ? i : (i - 1)) << ")->isPointerTy();\n";
+      break;
+    }
+    if (argTypeMap.lookup(i) == argType::mldData) {
+      os << "const bool julia_decl = !F->getFunctionType()->getParamType("
+         << (lv23 ? i : (i - 1)) << ")->isPointerTy();\n";
       break;
     }
     if (i+1 == argTypeMap.size()) {
-      llvm::errs() << "Tablegen bug: BLAS fnc without vector!\n";
-      llvm_unreachable("Tablegen bug: BLAS fnc without vector!");
+      llvm::errs() << "Tablegen bug: BLAS fnc without vector of matrix!\n";
+      llvm_unreachable("Tablegen bug: BLAS fnc without vector of matrix!");
     }
   }
   os << "const bool byRef = blas.prefix == \"\";\n";
+  if (lv23)
+    os << "const int offset = (byRef ? 0 : 1);\n";
 
   os   << "  if (byRef) {\n";
   for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {
     const auto typeOfArg = argTypeMap.lookup(argPos);
-    if (typeOfArg == argType::len || typeOfArg == argType::vincInc) {
-      os << "      F->addParamAttr(" << argPos
+    size_t i = (lv23 ? argPos - 1 : argPos);
+    if (typeOfArg == argType::len || typeOfArg == argType::vincInc ||
+        typeOfArg == argType::fp || typeOfArg == argType::trans ||
+        typeOfArg == argType::mldLD || typeOfArg == argType::uplo ||
+        typeOfArg == argType::diag || typeOfArg == argType::side) {
+      os << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
          << ", llvm::Attribute::ReadOnly);\n"
-         << "      F->addParamAttr(" << argPos
+         << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
          << ", llvm::Attribute::NoCapture);\n";
     }
   }
+
   os << "  }\n"
      << "  // Julia declares double* pointers as Int64,\n"
      << "  //  so LLVM won't let us add these Attributes.\n"
      << "  if (!julia_decl) {\n";
   for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {
     auto typeOfArg = argTypeMap.lookup(argPos);
-    if (typeOfArg == argType::vincData) {
-      os << "    F->addParamAttr(" << argPos << ", llvm::Attribute::NoCapture);\n";
+    size_t i = (lv23 ? argPos - 1 : argPos);
+    if (typeOfArg == argType::vincData || typeOfArg == argType::mldData) {
+      os << "    F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+         << ", llvm::Attribute::NoCapture);\n";
       if (mutableArgs.count(argPos) == 0) {
         // Only emit ReadOnly if the arg isn't mutable
-        os << "    F->addParamAttr(" << argPos << ", llvm::Attribute::ReadOnly);\n";
+        os << "    F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+           << ", llvm::Attribute::ReadOnly);\n";
+      }
+    }
+  }
+  os << "  } else {\n";
+  for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {
+    auto typeOfArg = argTypeMap.lookup(argPos);
+    size_t i = (lv23 ? argPos - 1 : argPos);
+    if (typeOfArg == argType::vincData || typeOfArg == argType::mldData) {
+      os << "    F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+         << ", llvm::Attribute::get(F->getContext(), \"enzyme_NoCapture\"));\n";
+      if (mutableArgs.count(argPos) == 0) {
+        // Only emit ReadOnly if the arg isn't mutable
+        os << "    F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+           << ", llvm::Attribute::get(F->getContext(), \"enzyme_ReadOnly\"));\n";
       }
     }
   }

@@ -12,7 +12,20 @@
 
 using namespace llvm;
 
-enum argType { fp, len, vincData, vincInc };
+enum argType {
+  fp,
+  len,
+  vincData,
+  vincInc,
+  cblas_layout, // is special (no non-blas equivalent)
+  // following for lv2 only
+  mldData,
+  mldLD,
+  uplo,
+  trans,
+  diag,
+  side
+};
 
 class Arg {
   public:
@@ -27,10 +40,27 @@ bool isArgUsed(const StringRef toFind, const DagInit *toSearch) {
       if (isArgUsed(toFind, arg))
         return true;
     } else {
-      // TODO: handle input<"x">, adj<"x"> and similar
       auto name = toSearch->getArgNameStr(i);
-      if (name == toFind)
-        return true;
+      if (name == "") {
+        // handle input<"x">, adj<"x">, transpose<"transa"> and similar
+        // we look up the trans arg inside of transpose<"transX">,
+        // because it's based on the same trans arg.
+        // we ignore adj<"x"> because the shadow of x is not based on x
+        auto opName = toSearch->getArg(i)->getAsString();
+        auto Def = cast<DefInit>(toSearch->getArg(i))->getDef();
+        if (opName == "transpose" || Def->isSubClassOf("transpose")) {
+          auto transName = Def->getValueAsString("name");
+          if (toFind == transName) {
+            return true;
+          }
+        } else if (opName == "adj" || Def->isSubClassOf("adj")) {
+          // shadow is unrelated, ignore it
+        }
+      } else {
+        if (name == toFind) {
+          return true;
+        }
+      }
     }
   }
   return false;
@@ -46,6 +76,7 @@ class Rule {
     StringMap<size_t> argNameToPos;
     DenseMap<size_t, argType> argTypes;
     DenseSet<size_t> mutables;
+    bool BLASLevel2or3;
 
   public:
     Rule(DagInit *dag, size_t activeArgIdx, StringMap<size_t> &patternArgs,
@@ -73,6 +104,11 @@ class Rule {
           argTypes.insert(*patternTypes.find(argPos));
         }
       }
+      if (argTypes.lookup(0) == argType::cblas_layout) {
+        BLASLevel2or3 = true;
+      } else {
+        BLASLevel2or3 = false;
+      }
 
       for (auto ruleArgKey : argNameToPos.keys()) {
         //        3) look up and eventually copy mutable
@@ -81,7 +117,9 @@ class Rule {
           mutables.insert(*patternMutables.find(val));
         }
       }
+      assert(argTypes.size() == argNameToPos.size());
     }
+    bool isBLASLevel2or3() { return BLASLevel2or3; }
     DagInit *getRuleDag() { return rewriteRule; }
     size_t getHandledArgIdx() { return activeArg; }
     StringMap<size_t> getArgNameMap() { return argNameToPos; }
@@ -142,7 +180,20 @@ void fillArgTypes(const Record *pattern, DenseMap<size_t, argType> &argTypes) {
     } else if (val->getName() == "vinc") {
       argTypes.insert(std::make_pair(pos, argType::vincData));
       argTypes.insert(std::make_pair(pos + 1, argType::vincInc));
+    } else if (val->getName() == "cblas_layout") {
+      assert(pos == 0);
+      argTypes.insert(std::make_pair(pos, argType::cblas_layout));
+    } else if (val->getName() == "trans") {
+      argTypes.insert(std::make_pair(pos, argType::trans));
+    } else if (val->getName() == "diag") {
+      argTypes.insert(std::make_pair(pos, argType::diag));
+    } else if (val->getName() == "side") {
+      argTypes.insert(std::make_pair(pos, argType::side));
+    } else if (val->getName() == "mld") {
+      argTypes.insert(std::make_pair(pos, argType::mldData));
+      argTypes.insert(std::make_pair(pos + 1, argType::mldLD));
     } else {
+      llvm::errs() << "val->getName: " << val->getName() << "\n";
       PrintFatalError("Unknown type!");
     }
     pos += val->getValueAsInt("nelem");
@@ -186,29 +237,32 @@ void fillArgUserMap(SmallVector<Rule, 3> &rules,
 class TGPattern {
 private:
   std::string blasName;
+  bool BLASLevel2or3;
+
   // All args from the primary blas function
   SmallVector<std::string, 6> args;
+
   // Map arg name to their position (in primary fnc)
   StringMap<size_t> argNameToPos;
+
   // Type of these args, e.g. FP-scalar, int, FP-vec, ..
   DenseMap<size_t, argType> argTypes;
+
   // Args that could be set to active (thus fp based)
   SmallVector<size_t, 4> posActArgs;
+
   // Args that will be modified by primary function (e.g. x in scal)
   DenseSet<size_t> mutables;
+
   // One rule for each possibly active arg
   SmallVector<Rule, 3> rules;
+
   // Based on an argument name, which rules use this argument?
   DenseMap<size_t, DenseSet<size_t>> argUsers;
 
 public:
   TGPattern(Record &r) {
     blasName = r.getNameInitAsString();
-    // if (blasName != "scal") {
-    //   llvm::errs() << blasName << " skipped!\n";
-    //   return;
-    // }
-    // llvm::errs() << blasName << "\n";
 
     args = llvm::SmallVector<std::string, 6>();
     argNameToPos = StringMap<size_t>{};
@@ -216,6 +270,11 @@ public:
 
     argTypes = DenseMap<size_t, argType>();
     fillArgTypes(&r, argTypes);
+    if (argTypes.lookup(0) == argType::cblas_layout) {
+      BLASLevel2or3 = true;
+    } else {
+      BLASLevel2or3 = false;
+    }
 
     posActArgs = SmallVector<size_t, 4>();
     fillActiveArgSet(&r, posActArgs);
@@ -228,7 +287,6 @@ public:
       rules = llvm::SmallVector<Rule, 3>{};
       ListInit *derivOps = r.getValueAsListInit("ArgDerivatives");
       for (auto derivOp : llvm::enumerate(*derivOps)) {
-        // llvm::errs() << derivOp.index() << ": \n";
         DagInit *derivRule = cast<DagInit>(derivOp.value());
         size_t actIdx = posActArgs[derivOp.index()];
         rules.push_back(
@@ -248,10 +306,46 @@ public:
     // }
   }
   SmallVector<size_t, 2> getRelatedLengthArgs(size_t arg) {
-    // needs to be adjusted for the gemv branch
-    assert(argTypes.lookup(arg) == argType::vincData);
-    return {0};
+    if (!BLASLevel2or3) {
+      assert(argTypes.lookup(arg) == argType::vincData);
+      assert(argTypes.lookup(0) == argType::len);
+      return {0};
+    }
+    assert(argTypes.lookup(arg) == argType::vincData ||
+           argTypes.lookup(arg) == argType::mldData);
+    // This is terribly wrong because it will burn
+    // once someone sets TRANS to T
+    if (blasName == "gemm") {
+      if (arg == 7)
+        return {3, 5};
+      if (arg == 9)
+        return {5, 4};
+      if (arg == 12)
+        return {3, 4};
+      assert(false);
+    }
+    if (blasName == "gemv") {
+      if (arg == 5)
+        return {2, 3};
+      if (arg == 7)
+        return {3};
+      if (arg == 10)
+        return {2};
+      assert(false);
+    }
+    if (blasName == "ger") {
+      if (arg == 4)
+        return {1};
+      if (arg == 6)
+        return {2};
+      if (arg == 8)
+        return {1, 2};
+      assert(false);
+    }
+    llvm::errs() << "failed for: " << blasName << "\n";
+    assert(false);
   }
+  bool isBLASLevel2or3() { return BLASLevel2or3; }
   DenseMap<size_t, DenseSet<size_t>> getArgUsers() { return argUsers; }
   std::string getName() { return blasName; }
   SmallVector<std::string, 6> getArgNames() { return args; }

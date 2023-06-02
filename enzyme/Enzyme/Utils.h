@@ -26,6 +26,7 @@
 #define ENZYME_UTILS_H
 
 #include "llvm/ADT/SmallPtrSet.h"
+//#include "llvm/ADT/SmallVector.h"
 
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/ValueTracking.h"
@@ -88,6 +89,7 @@ extern "C" {
 extern llvm::cl::opt<bool> EnzymePrintPerf;
 extern llvm::cl::opt<bool> EnzymeStrongZero;
 extern llvm::cl::opt<bool> EnzymeBlasCopy;
+extern llvm::cl::opt<bool> EnzymeLapackCopy;
 extern void (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
                                   const void *, LLVMValueRef);
 }
@@ -627,6 +629,9 @@ llvm::Function *getOrInsertDifferentialFloatMemcpy(
     unsigned dstaddr, unsigned srcaddr, unsigned bitwidth);
 
 /// Create function for type that performs memcpy with a stride using blas copy
+void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas, llvm::ArrayRef<llvm::Value*> args, llvm::ArrayRef<llvm::OperandBundleDef> bundles); 
+
+/// Create function for type that performs memcpy with a stride using blas copy
 llvm::Function *getOrInsertMemcpyStridedBlas(llvm::Module &M,
                                              llvm::PointerType *T,
                                              llvm::Type *IT, BlasInfo blas,
@@ -635,6 +640,10 @@ llvm::Function *getOrInsertMemcpyStridedBlas(llvm::Module &M,
 llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M, llvm::PointerType *T,
                                          llvm::Type *IT, unsigned dstalign,
                                          unsigned srcalign);
+///// Create function for type that performs memcpy with a stride
+//llvm::Function *getOrInsertMemcpyMat(llvm::Module &M, llvm::PointerType *T,
+//                                     llvm::Type *IT, unsigned M, unsigned N,
+//                                     unsigned LDA);
 
 /// Create function for type that performs the derivative memmove on floating
 /// point memory
@@ -1396,6 +1405,9 @@ static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
     if (F->hasParamAttribute(arg, llvm::Attribute::ReadOnly) ||
         F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
       return true;
+    // if (F->getAttributes().hasParamAttribute(arg, "enzyme_ReadOnly") ||
+    //     F->getAttributes().hasParamAttribute(arg, "enzyme_ReadNone"))
+    //   return true;
   }
   return false;
 }
@@ -1486,6 +1498,8 @@ static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
   if (F) {
     if (F->hasParamAttribute(idx, llvm::Attribute::NoCapture))
       return true;
+    // if (F->getAttributes().hasParamAttribute(idx, "enzyme_NoCapture"))
+    //   return true;
   }
   return false;
 }
@@ -1608,6 +1622,29 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
   }
   return false;
 }
+
+void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
+                     llvm::SmallVector<llvm::Value *, 2> &cacheValues,
+                     llvm::IRBuilder<> &BuilderZ, llvm::Twine = "");
+void extractValueFromCache(llvm::Value *arg, bool cache_arg,
+                           llvm::Value *true_arg, llvm::Type *ty,
+                           llvm::Value *cacheval, unsigned cachidx,
+                           DerivativeMode Mode,
+                           llvm::IRBuilder<> &allocationBuilder,
+                           llvm::IRBuilder<> &Builder2);
+
+// julia_decl null means not julia decl, otherwise it is the integer type needed
+// to cast to
+llvm::Value *to_blas_callconv(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
+                              llvm::IntegerType *julia_decl,
+                              llvm::IRBuilder<> &entryBuilder, llvm::Twine="");
+// first one assume V is an Integer
+llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V);
+// secon one assume V is an Integer or a ptr to an int (depends on byRef)
+llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
+                       llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder,
+                       llvm::Twine name);
+// GradientUtils *gutils) {
 
 // Parameter attributes from the original function/call that
 // we should preserve on the primal of the derivative code.
