@@ -544,7 +544,7 @@ struct CacheAnalysis {
         // Any use of an arg from a rematerializable allocation
         // is definitionally reloadable in sub.
         if (rematerializableAllocations.count(objs[i]))
-          return false;
+          continue;
 
         auto CD = TR.query(args[i])[{-1}];
         if (CD == BaseType::Integer || CD.isFloat())
