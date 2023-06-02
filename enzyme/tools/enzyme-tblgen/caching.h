@@ -213,7 +213,7 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
 << "    if (cache_" << vecName << ") {\n"
 << "      auto *vecSize = arg_n;\n"
 << "      if (byRef) {\n"
-<< "        vecSize = BuilderZ.CreateLoad(intType, vecSize);\n"
+<< "        vecSize = BuilderZ.CreateLoad(intType, BuilderZ.CreatePointerCast(vecSize, PointerType::get(intType, cast<PointerType>(vecSize->getType())->getAddressSpace())));\n"
 << "      }\n"
 << "      auto malins = CreateAllocation(BuilderZ, fpType, vecSize);\n"
 << "      Value *arg = BuilderZ.CreateBitCast(malins, castvals[" << i << "]);\n"
