@@ -2267,11 +2267,6 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                        llvm::IntegerType *julia_decl,
                        llvm::IRBuilder<> &entryBuilder) {
 
-  if (byRef) {
-    auto charType = IntegerType::get(V->getContext(), 8);
-    V = B.CreateLoad(charType, V, false);
-  }
-
   V = transpose(B, V);
 
   return to_blas_callconv(B, V, byRef, julia_decl, entryBuilder);
