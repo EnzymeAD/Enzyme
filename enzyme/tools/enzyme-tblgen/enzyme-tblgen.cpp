@@ -1095,14 +1095,14 @@ void extract_scalar(std::string name, std::string elemTy, raw_ostream &os) {
      << "        arg_" << name << " = (cacheTypes.size() == 1)\n"
      << "                    ? cacheval\n"
      << "                    : Builder2.CreateExtractValue(cacheval, "
-        "{cacheidx});\n"
+        "{cacheidx}, \"tape.ext." << name << "\");\n"
      << "        auto alloc = allocationBuilder.CreateAlloca(" << elemTy
-     << ");\n"
+     << ", nullptr, \"byref." << name << "\");\n"
      << "        Builder2.CreateStore(arg_" << name << ", alloc);\n"
      << "        arg_" << name
      << " = Builder2.CreatePointerCast(\n"
      //                     check for this ty of ArgOperand(0)?
-     << "            alloc, call.getArgOperand(0)->getType());\n"
+     << "            alloc, call.getArgOperand(0)->getType(), \"cast." << name << "\");\n"
      << "        cacheidx++;\n"
      << "      } else {\n"
      << "        if (Mode != DerivativeMode::ForwardModeSplit)\n"
@@ -1116,7 +1116,7 @@ void extract_mat(std::string name, std::string elemTy, raw_ostream &os) {
      << "        arg_" << name << " = (cacheTypes.size() == 1)\n"
      << "                    ? cacheval\n"
      << "                    : Builder2.CreateExtractValue(cacheval, "
-        "{cacheidx});\n"
+        "{cacheidx}, \"tape.ext." << name << "\");\n"
      << "        free_" << name << " = arg_" << name << ";\n"
      << "        if (julia_decl) {\n"
      << "          arg_" << name << " = Builder2.CreatePtrToInt(arg_" << name
@@ -1206,14 +1206,14 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
        << "      data_ptr_" << vecName << " = data_" << vecName << " =\n"
        << "          (cacheTypes.size() == 1)\n"
        << "              ? cacheval\n"
-       << "              : Builder2.CreateExtractValue(cacheval, {cacheidx});\n"
+       << "              : Builder2.CreateExtractValue(cacheval, {cacheidx}, \"tape.ext." << vecName << "\");\n"
        << "      cacheidx++;\n"
        << "      " << incName << " = ConstantInt::get(intType, 1);\n"
        << "      if (byRef) {\n"
-       << "        auto alloc = allocationBuilder.CreateAlloca(intType);\n"
+       << "        auto alloc = allocationBuilder.CreateAlloca(intType, nullptr, \"byref." << vecName << "\");\n"
        << "        Builder2.CreateStore(" << incName << ", alloc);\n"
        << "        " << incName << " = Builder2.CreatePointerCast(\n"
-       << "            alloc, call.getArgOperand(0)->getType());\n"
+       << "            alloc, call.getArgOperand(0)->getType(), \"cast." << vecName << "\");\n"
        << "      }\n"
        << "      if (type_" << vecName << "->isIntegerTy())\n"
        << "        data_" << vecName << " = Builder2.CreatePtrToInt(data_"
@@ -1776,7 +1776,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
      << "      Mode == DerivativeMode::ReverseModeGradient) {\n"
      << "    Value *alloc = nullptr;\n"
      << "    if (byRef) {\n"
-     << "      alloc = allocationBuilder.CreateAlloca(fpType);\n"
+     << "      alloc = allocationBuilder.CreateAlloca(fpType, nullptr, \"ret\");\n"
      << "    }\n\n";
   if (hasDiffeRetVal) {
     os << "    Value *dif = diffe(&call, Builder2);\n";
@@ -1808,7 +1808,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
     if (typeMap.lookup(i) == argType::trans) {
       os << "  llvm::Value* arg_transposed_" << name
          << " = transpose(Builder2, arg_" << name
-         << ", byRef, charType, allocationBuilder);\n";
+         << ", byRef, charType, allocationBuilder, \"" << name << "\");\n";
     }
   }
 

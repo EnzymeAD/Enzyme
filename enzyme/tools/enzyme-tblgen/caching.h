@@ -35,6 +35,7 @@ os << "  bool cache_" << matName << " = false;\n";
       }
       os 
 << ");\n";
+os << "   llvm::errs() << \"" << matName << " - " << "\" << uncacheable_" << matName << " << \" - \" << cache_" << matName << " << \" pos \" << pos_" << matName << " << \"\\n\";\n";
     }
 //    os
 //<< "  bool cache_" << ldName << " = true;\n";
@@ -168,7 +169,7 @@ void emit_scalar_caching(TGPattern &pattern, raw_ostream &os) {
 
 void emit_scal_cacheValues(std::string argName, std::string scalType, raw_ostream &os) {
   os
-<< "        addValueToCache(arg_" << argName <<", cache_" << argName <<", " << scalType << ", cacheValues, BuilderZ);\n";
+<< "        addValueToCache(arg_" << argName <<", cache_" << argName <<", " << scalType << ", cacheValues, BuilderZ, \"" << argName << "\");\n";
 }
 
 void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
@@ -415,6 +416,7 @@ void emit_caching(TGPattern &pattern, raw_ostream &os) {
   os 
 << "  SmallVector<Type *, 2> cacheTypes;\n\n";
 
+os << "for (size_t i=0; i<overwritten_args.size(); i++) llvm::errs() << \"i=\" << i << \" - \" << overwritten_args[i] << \"\\n\";\n";
   emit_scalar_caching(pattern, os);
   emit_mat_caching(pattern, os);
   emit_vec_caching(pattern, os);
