@@ -716,30 +716,16 @@ Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
   return dmemcpy;
 }
 
-Function *getOrInsertMemcpyStridedLapack(Module &M, PointerType *T, Type *IT,
-                                         BlasInfo blas, bool julia_decl) {
+void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas, llvm::ArrayRef<llvm::Value*> args, llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
   std::string copy_name = (blas.floatType + "lacpy" + blas.suffix).str();
 
-  FunctionType *FT;
-  assert(julia_decl);
-  if (julia_decl) {
-    auto i8ptr = Type::getInt8PtrTy(M.getContext());
-    FT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                           {i8ptr /*char*/, i8ptr /*int*/, i8ptr /*int*/,
-                            IT /*double*/, i8ptr /*int*/, IT /*double*/,
-                            i8ptr /*int*/},
-                           false);
-  } else {
-    FT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                           {IT, IT, IT, T, IT, T, IT}, false);
-  }
-#if LLVM_VERSION_MAJOR >= 9
-  Function *dmemcpy =
-      cast<Function>(M.getOrInsertFunction(copy_name, FT).getCallee());
-#else
-  Function *dmemcpy = cast<Function>(M.getOrInsertFunction(copy_name, FT));
-#endif
-  return dmemcpy;
+  SmallVector<Type*, 1> tys;
+  for (auto arg : args) tys.push_back(arg->getType());
+
+  auto FT = FunctionType::get(Type::getVoidTy(M.getContext()), tys, false);
+  auto fn = M.getOrInsertFunction(copy_name, FT);
+
+  B.CreateCall(fn, args, bundles);
 }
 
 Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
