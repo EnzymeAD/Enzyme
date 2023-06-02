@@ -12,7 +12,6 @@ namespace enzyme {
 
 typedef void(buildReturnFunction)(OpBuilder &, Location,
                                   SmallVector<mlir::Value>);
-using brf = std::function<buildReturnFunction>;
 
 class MGradientUtilsReverse;
 
@@ -127,7 +126,8 @@ public:
   initializeShadowValues(SmallVector<mlir::Block *> &dominatorToposortBlocks,
                          MGradientUtilsReverse *gutils);
   void handlePredecessors(Block *oBB, Block *newBB, Block *reverseBB,
-                          MGradientUtilsReverse *gutils, brf buildReturnOp,
+                          MGradientUtilsReverse *gutils,
+                          llvm::function_ref<buildReturnFunction> buildReturnOp,
                           bool parentRegion);
   void visitChildren(Block *oBB, Block *reverseBB,
                      MGradientUtilsReverse *gutils);
@@ -143,7 +143,7 @@ public:
                                                   Region &region);
   void differentiate(MGradientUtilsReverse *gutils, Region &oldRegion,
                      Region &newRegion, bool parentRegion,
-                     brf buildFuncRetrunOp,
+                     llvm::function_ref<buildReturnFunction> buildFuncRetrunOp,
                      std::function<std::pair<Value, Value>(Type)> cacheCreator);
 };
 

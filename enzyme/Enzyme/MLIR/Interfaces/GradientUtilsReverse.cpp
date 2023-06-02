@@ -97,9 +97,9 @@ std::pair<Value, Value> MGradientUtilsReverse::getNewCache(Type t) {
 // We assume that caches will only be written to at one location. The returned
 // cache is (might be) "pop only"
 Value MGradientUtilsReverse::initAndPushCache(Value v, OpBuilder &builder) {
-  std::pair<Value, Value> cache = getNewCache(getCacheType(v.getType()));
-  auto pushOp = builder.create<enzyme::PushOp>(v.getLoc(), cache.first, v);
-  return cache.second;
+  auto [pushCache, popCache] = getNewCache(getCacheType(v.getType()));
+  auto pushOp = builder.create<enzyme::PushOp>(v.getLoc(), pushCache, v);
+  return popCache;
 }
 
 Value MGradientUtilsReverse::popCache(Value cache, OpBuilder &builder) {
@@ -299,15 +299,16 @@ void MGradientUtilsReverse::initInitializationBlock(
 
   for (const auto &[val, diffe_type] : llvm::zip(
            this->oldFunc.getFunctionBody().getArguments(), argDiffeTypes)) {
-    if (diffe_type == DIFFE_TYPE::OUT_DIFF) {
-      if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType())) {
-        Value zero = iface.createNullValue(initializationBuilder, val.getLoc());
-        mapInvertPointer(val, zero, initializationBuilder);
-      } else {
-        llvm_unreachable(
-            "Type does not have an associated AutoDiffTypeInterface");
-      }
+    if (diffe_type != DIFFE_TYPE::OUT_DIFF) {
+      continue;
     }
+    auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
+    if (!iface) {
+      llvm_unreachable(
+          "Type does not have an associated AutoDiffTypeInterface");
+    }
+    Value zero = iface.createNullValue(initializationBuilder, val.getLoc());
+    mapInvertPointer(val, zero, initializationBuilder);
   }
   for (auto const &x : invertedPointers_.getValueMap()) {
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(x.first.getType())) {

@@ -192,10 +192,9 @@ void MEnzymeLogic::visitChildren(Block *oBB, Block *reverseBB,
   }
 }
 
-void MEnzymeLogic::handlePredecessors(Block *oBB, Block *newBB,
-                                      Block *reverseBB,
-                                      MGradientUtilsReverse *gutils,
-                                      brf buildReturnOp, bool parentRegion) {
+void MEnzymeLogic::handlePredecessors(
+    Block *oBB, Block *newBB, Block *reverseBB, MGradientUtilsReverse *gutils,
+    llvm::function_ref<buildReturnFunction> buildReturnOp, bool parentRegion) {
   OpBuilder revBuilder(reverseBB, reverseBB->end());
   if (oBB->hasNoPredecessors()) {
     SmallVector<mlir::Value> retargs;
@@ -301,7 +300,7 @@ void MEnzymeLogic::handlePredecessors(Block *oBB, Block *newBB,
 
         Operation *terminator = newPredecessor->getTerminator();
         if (auto binst = dyn_cast<BranchOpInterface>(terminator)) {
-          for (int i = 0; i < terminator->getNumSuccessors(); i++) {
+          for (unsigned i = 0; i < terminator->getNumSuccessors(); i++) {
             if (terminator->getSuccessor(i) == newBB) {
               SuccessorOperands sOps = binst.getSuccessorOperands(i);
               sOps.append(indicator);
@@ -338,7 +337,8 @@ void MEnzymeLogic::initializeShadowValues(
 
 void MEnzymeLogic::differentiate(
     MGradientUtilsReverse *gutils, Region &oldRegion, Region &newRegion,
-    bool parentRegion, brf buildFuncReturnOp,
+    bool parentRegion,
+    llvm::function_ref<buildReturnFunction> buildFuncReturnOp,
     std::function<std::pair<Value, Value>(Type)> cacheCreator) {
   gutils->registerCacheCreatorHook(cacheCreator);
   gutils->createReverseModeBlocks(oldRegion, newRegion, parentRegion);
@@ -382,8 +382,8 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
   Region &oldRegion = gutils->oldFunc.getFunctionBody();
   Region &newRegion = gutils->newFunc.getFunctionBody();
 
-  brf buildFuncReturnOp = [](OpBuilder &builder, Location loc,
-                             SmallVector<Value> retargs) {
+  auto buildFuncReturnOp = [](OpBuilder &builder, Location loc,
+                              SmallVector<Value> retargs) {
     builder.create<func::ReturnOp>(loc, retargs);
     return;
   };

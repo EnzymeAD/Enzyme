@@ -38,7 +38,7 @@ struct SimplifyMemrefCachePass
 
     for (auto user : allocOp->getUsers()) {
       auto linalgOp = dyn_cast<linalg::GenericOp>(user);
-      if (auto pushOp = dyn_cast<enzyme::PushOp>(user)) {
+      if (isa<enzyme::PushOp>(user)) {
         continue;
       } else if (!linalgOp) {
         llvm_unreachable("Unknown user of memref<CacheType>");
@@ -61,7 +61,7 @@ struct SimplifyMemrefCachePass
         Value cache = linalgOp.getRegion().front().getTerminator()->getOperand(
             (unsigned)output.index());
         for (auto user : cache.getUsers()) {
-          if (auto popOp = dyn_cast<enzyme::PopOp>(user)) {
+          if (isa<enzyme::PopOp>(user)) {
             llvm_unreachable("PopOp should not be used in forward pass");
           }
           auto pushOp = dyn_cast<enzyme::PushOp>(user);

@@ -124,11 +124,11 @@ struct ForOpInterfaceReverse
         gutils->popCache(caches[2], builder), nArgs); // TODO
     repFor.getRegion().begin()->erase();
 
-    std::function<buildReturnFunction> buildFuncReturnOp =
-        [](OpBuilder &builder, Location loc, SmallVector<Value> retargs) {
-          builder.create<scf::YieldOp>(loc, retargs);
-          return;
-        };
+    auto buildFuncReturnOp = [](OpBuilder &builder, Location loc,
+                                SmallVector<Value> retargs) {
+      builder.create<scf::YieldOp>(loc, retargs);
+      return;
+    };
 
     gutils->Logic.differentiate(gutils, forOp.getRegion(), repFor.getRegion(),
                                 /*parentRegion=*/false, buildFuncReturnOp,
