@@ -1627,7 +1627,7 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
 
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVector<llvm::Value *, 2> &cacheValues,
-                     llvm::IRBuilder<> &BuilderZ);
+                     llvm::IRBuilder<> &BuilderZ, llvm::Twine = "");
 void extractValueFromCache(llvm::Value *arg, bool cache_arg,
                            llvm::Value *true_arg, llvm::Type *ty,
                            llvm::Value *cacheval, unsigned cachidx,
@@ -1644,7 +1644,8 @@ llvm::Value *to_blas_callconv(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V);
 // secon one assume V is an Integer or a ptr to an int (depends on byRef)
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
-                       llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder);
+                       llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder,
+                       llvm::Twine name);
 // GradientUtils *gutils) {
 
 // Parameter attributes from the original function/call that

@@ -2189,12 +2189,14 @@ llvm::FastMathFlags getFast() {
 
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVector<llvm::Value *, 2> &cacheValues,
-                     llvm::IRBuilder<> &BuilderZ) {
-  arg = BuilderZ.CreatePointerCast(arg, PointerType::getUnqual(ty));
+                     llvm::IRBuilder<> &BuilderZ, llvm::Twine name) {
+  auto PT = cast<PointerType>(arg->getType());
+  if (PT->getElementType() != ty)
+    arg = BuilderZ.CreatePointerCast(arg, PointerType::get(ty, PT->getAddressSpace()), "pcld." + name);
 #if LLVM_VERSION_MAJOR > 7
-  arg = BuilderZ.CreateLoad(ty, arg);
+  arg = BuilderZ.CreateLoad(ty, arg, "avld." + name);
 #else
-  arg = BuilderZ.CreateLoad(arg);
+  arg = BuilderZ.CreateLoad(arg, "avld." + name);
 #endif
   if (cache_arg)
     cacheValues.push_back(arg);
@@ -2233,15 +2235,15 @@ void extractValueFromCache(llvm::Value *arg, bool cache_arg,
 // to cast to
 llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
                               IntegerType *julia_decl,
-                              IRBuilder<> &entryBuilder) {
+                              IRBuilder<> &entryBuilder, llvm::Twine name) {
   if (!byRef)
     return V;
 
-  Value *allocV = entryBuilder.CreateAlloca(V->getType());
+  Value *allocV = entryBuilder.CreateAlloca(V->getType(), nullptr, "byref." + name);
   B.CreateStore(V, allocV);
 
   if (julia_decl)
-    allocV = B.CreatePointerCast(allocV, Type::getInt8PtrTy(V->getContext()));
+    allocV = B.CreatePointerCast(allocV, Type::getInt8PtrTy(V->getContext()), "cast." + name);
 
   return allocV;
 }
@@ -2265,9 +2267,15 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
 
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                        llvm::IntegerType *julia_decl,
-                       llvm::IRBuilder<> &entryBuilder) {
+                       llvm::IRBuilder<> &entryBuilder,
+					   llvm::Twine name) {
+
+  if (byRef) {
+    auto charType = IntegerType::get(V->getContext(), 8);
+    V = B.CreateLoad(charType, V, "ld." + name);
+  }
 
   V = transpose(B, V);
 
-  return to_blas_callconv(B, V, byRef, julia_decl, entryBuilder);
+  return to_blas_callconv(B, V, byRef, julia_decl, entryBuilder, "transpose." + name);
 }
