@@ -4812,7 +4812,7 @@ public:
         {"ompi_mpi_op_minloc", MPI_Op_Kind::MINLOC},
         {"ompi_mpi_op_maxloc", MPI_Op_Kind::MAXLOC}};
 
-    const std::map<long, MPI_Op_Kind> MPICHOp_ValueToKind{
+    const std::map<int, MPI_Op_Kind> MPICHOp_ValueToKind{
         {1476395011, MPI_Op_Kind::SUM},
         {1476395010, MPI_Op_Kind::MIN},
         {1476395009, MPI_Op_Kind::MAX},
@@ -4878,7 +4878,7 @@ public:
         if (ConstantInt *CI = dyn_cast<ConstantInt>(C)) {
           if (MPICHOp_ValueToKind.find(CI->getLimitedValue()) !=
               MPICHOp_ValueToKind.end()) {
-            const std::map<MPI_Op_Kind, long> MPICHOp_KindToNumber{
+            const std::map<MPI_Op_Kind, int> MPICHOp_KindToNumber{
                 {MPI_Op_Kind::SUM, 1476395011},
                 {MPI_Op_Kind::MIN, 1476395010},
                 {MPI_Op_Kind::MAX, 1476395009},
@@ -6274,6 +6274,35 @@ public:
             getReverseBuilder(Builder2);
           }
 
+          auto getMPIType = [](Value *datatype) {
+            Type *Ty = nullptr;
+            if (Constant *C = dyn_cast<Constant>(datatype)) {
+              while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
+                C = CE->getOperand(0);
+              }
+              // OpenMPI
+              if (auto GV = dyn_cast<GlobalVariable>(C)) {
+                auto name = GV->getName();
+                if (name == "ompi_mpi_double") {
+                  Ty = Type::getDoubleTy(GV->getContext());
+                } else if (name == "ompi_mpi_float") {
+                  Ty = Type::getFloatTy(GV->getContext());
+                }
+              }
+              // MPICH
+              if (ConstantInt *CI = dyn_cast<ConstantInt>(C)) {
+                auto number = CI->getLimitedValue();
+                if (number == 1275070475) { // MPI_DOUBLE
+                  Ty = Type::getDoubleTy(CI->getContext());
+                } else if (number == 1275069450) { // MPI_FLOAT
+                  Ty = Type::getFloatTy(CI->getContext());
+                }
+              }
+            }
+            assert((Ty != nullptr) && "Unhandled MPI dataype");
+            return Ty;
+          };
+
           // Need to preserve the shadow send/recv buffers.
           auto bufferDefs = gutils->getInvertedBundles(
               &call,
@@ -6282,7 +6311,7 @@ public:
               Builder2, /*lookup*/ !forwardMode);
 
           Function *mpi_allreduce_comploc_fp =
-              [this](
+              [this, &getMPIType](
                   CallInst &call,
                   SmallVector<OperandBundleDef, 2> &bufferDefs) -> Function * {
             auto &M = *call.getModule();
@@ -6294,43 +6323,47 @@ public:
             Type *MPICommPtrTy = call.getCalledFunction()->getArg(5)->getType();
             Value *MPI_FP_INT = nullptr;
             StructType *FPIntTy = nullptr;
-            // Get the MPI_FP_INT datatype
             {
               Value *orig_datatype = call.getOperand(3);
+              Type *FPTy = getMPIType(orig_datatype);
+              FPIntTy = StructType::get(call.getContext(), {FPTy, IntTy});
+
+              // Get the MPI_FP_INT datatype
               if (Constant *C = dyn_cast<Constant>(orig_datatype)) {
                 while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
                   C = CE->getOperand(0);
                 }
+                // OpenMPI
                 if (auto GV = dyn_cast<GlobalVariable>(C)) {
                   std::string datatypeName;
                   if (GV->getName() == "ompi_mpi_double") {
                     datatypeName = "ompi_mpi_double_int";
-                    FPIntTy = StructType::get(
-                        GV->getContext(),
-                        {Type::getDoubleTy(GV->getContext()), IntTy});
                   } else if (GV->getName() == "ompi_mpi_float") {
                     datatypeName = "ompi_mpi_float_int";
-                    FPIntTy = StructType::get(
-                        GV->getContext(),
-                        {Type::getFloatTy(GV->getContext()), IntTy});
-                  } else {
-                    assert(false && "Unhandle MPI Datatype");
                   }
-                  MPI_FP_INT = M.getNamedGlobal(datatypeName);
-                  if (!MPI_FP_INT) {
-                    MPI_FP_INT =
-                        M.getOrInsertGlobal(datatypeName, GV->getValueType());
-                    cast<GlobalVariable>(MPI_FP_INT)
-                        ->setAttributes(GV->getAttributes());
-                    cast<GlobalVariable>(MPI_FP_INT)
-                        ->setAlignment(GV->getAlign());
+                  if (!datatypeName.empty()) {
+                    MPI_FP_INT = M.getNamedGlobal(datatypeName);
+                    if (!MPI_FP_INT) {
+                      MPI_FP_INT =
+                          M.getOrInsertGlobal(datatypeName, GV->getValueType());
+                      cast<GlobalVariable>(MPI_FP_INT)
+                          ->setAttributes(GV->getAttributes());
+                      cast<GlobalVariable>(MPI_FP_INT)
+                          ->setAlignment(GV->getAlign());
+                    }
                   }
                 }
                 // MPICH
                 if (ConstantInt *CI = dyn_cast<ConstantInt>(C)) {
-                  assert(false && "Unhandled MPI Datatype");
+                  auto number = CI->getLimitedValue();
+                  if (number == 1275070475) { // MPI_DOUBLE
+                    MPI_FP_INT = ConstantInt::get(IntTy, -1946157055, true);
+                  } else if (number == 1275069450) { // MPI_FLOAT
+                    MPI_FP_INT = ConstantInt::get(IntTy, -1946157056, true);
+                  }
                 }
               }
+              assert((MPI_FP_INT != nullptr) && "Unhandle MPI Datatype");
             }
             auto FPIntPtrTy = PointerType::getUnqual(FPIntTy);
             auto FPTy = FPIntTy->getElementType(0);
@@ -6340,9 +6373,8 @@ public:
               name = "__enzyme_mpi_allreduce_comploc_float";
             } else if (FPTy->isDoubleTy()) {
               name = "__enzyme_mpi_allreduce_comploc_double";
-            } else {
-              assert(false && "Unhandled MPI Datatype");
             }
+            assert(!name.empty() && "Unhandled MPI Datatype");
 
             auto &context = FPTy->getContext();
             FunctionType *FuncTy = FunctionType::get(
@@ -6619,31 +6651,7 @@ public:
             // Initialize shadow_sendbuf_tmp zero or differential depending on
             // primal comparison op results
             {
-              Type *FPTy;
-              {
-                Value *orig_datatype = call.getOperand(3);
-                if (Constant *C = dyn_cast<Constant>(orig_datatype)) {
-                  while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
-                    C = CE->getOperand(0);
-                  }
-                  // OpenMPI
-                  if (auto GV = dyn_cast<GlobalVariable>(C)) {
-                    std::string datatypeName;
-                    if (GV->getName() == "ompi_mpi_double") {
-                      FPTy = Type::getDoubleTy(GV->getContext());
-                    } else if (GV->getName() == "ompi_mpi_float") {
-                      FPTy = Type::getFloatTy(GV->getContext());
-                    }
-                  }
-                  // MPICH
-                  else if (ConstantInt *CI = dyn_cast<ConstantInt>(C)) {
-                  } else {
-                    assert(false && "Unhandled MPI Datatype");
-                  }
-                } else {
-                  assert(false && "Unhandled MPI Datatype");
-                }
-              }
+              Type *FPTy = getMPIType(datatype);
               Type *FPPtrTy = PointerType::getUnqual(FPTy);
 
               BasicBlock *currentBlock = Builder2.GetInsertBlock();
@@ -6782,31 +6790,7 @@ public:
 
             // Increment shadow_sendbuf from shaow_sendbuf_tmp
             {
-              Type *FPTy;
-              {
-                Value *orig_datatype = call.getOperand(3);
-                if (Constant *C = dyn_cast<Constant>(orig_datatype)) {
-                  while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
-                    C = CE->getOperand(0);
-                  }
-                  // OpenMPI
-                  if (auto GV = dyn_cast<GlobalVariable>(C)) {
-                    std::string datatypeName;
-                    if (GV->getName() == "ompi_mpi_double") {
-                      FPTy = Type::getDoubleTy(GV->getContext());
-                    } else if (GV->getName() == "ompi_mpi_float") {
-                      FPTy = Type::getFloatTy(GV->getContext());
-                    }
-                  }
-                  // MPICH
-                  else if (ConstantInt *CI = dyn_cast<ConstantInt>(C)) {
-                  } else {
-                    assert(false && "Unhandled MPI Datatype");
-                  }
-                } else {
-                  assert(false && "Unhandled MPI Datatype");
-                }
-              }
+              Type *FPTy = getMPIType(datatype);
               Type *FPPtrTy = PointerType::getUnqual(FPTy);
 
               BasicBlock *currentBlock = Builder2.GetInsertBlock();
