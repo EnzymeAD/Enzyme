@@ -97,7 +97,7 @@ entry:
 
 ; CHECK: condition.call.with.trace.i:                      ; preds = %entry
 ; CHECK-NEXT:   %4 = bitcast double* %call.ptr.i to i8*
-; CHECK-NEXT:   %call.size.i = call i64 @__enzyme_get_choice(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0), i8* %4, i64 8)
+; CHECK-NEXT:   %call.size.i = call i64 @__enzyme_get_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0), i8* %4, i64 8)
 ; CHECK-NEXT:   %from.trace.call.i = load double, double* %call.ptr.i
 ; CHECK-NEXT:   br label %condition_call.exit
 
@@ -123,7 +123,7 @@ entry:
 
 ; CHECK: condition.call1.with.trace.i:                     ; preds = %condition_call.exit
 ; CHECK-NEXT:   %11 = bitcast double* %call1.ptr.i to i8*
-; CHECK-NEXT:   %call1.size.i = call i64 @__enzyme_get_choice(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.2, i64 0, i64 0), i8* %11, i64 8)
+; CHECK-NEXT:   %call1.size.i = call i64 @__enzyme_get_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.2, i64 0, i64 0), i8* %11, i64 8)
 ; CHECK-NEXT:   %from.trace.call1.i = load double, double* %call1.ptr.i
 ; CHECK-NEXT:   br label %condition_call1.exit
 
@@ -187,16 +187,16 @@ entry:
 ; CHECK-NEXT:   %wide.trip.count = zext i32 %n to i64
 ; CHECK-NEXT:   br label %for.body
 
-; CHECK: for.cond.cleanup:                                 ; preds = %condition_call.1.exit, %entry
-; CHECK-NEXT:   %loss.0.lcssa = phi double [ 0.000000e+00, %entry ], [ %19, %condition_call.1.exit ]
+; CHECK: for.cond.cleanup:                                 ; preds = %condition_call.3.exit, %entry
+; CHECK-NEXT:   %loss.0.lcssa = phi double [ 0.000000e+00, %entry ], [ %19, %condition_call.3.exit ]
 ; CHECK-NEXT:   %7 = bitcast double %loss.0.lcssa to i64
 ; CHECK-NEXT:   %8 = inttoptr i64 %7 to i8*
 ; CHECK-NEXT:   call void @__enzyme_insert_return(i8* %trace, i8* %8, i64 8)
 ; CHECK-NEXT:   ret double %loss.0.lcssa
 
-; CHECK: for.body:                                         ; preds = %condition_call.1.exit, %for.body.preheader
-; CHECK-NEXT:   %indvars.iv = phi i64 [ 0, %for.body.preheader ], [ %indvars.iv.next, %condition_call.1.exit ]
-; CHECK-NEXT:   %loss.021 = phi double [ 0.000000e+00, %for.body.preheader ], [ %19, %condition_call.1.exit ]
+; CHECK: for.body:                                         ; preds = %condition_call.3.exit, %for.body.preheader
+; CHECK-NEXT:   %indvars.iv = phi i64 [ 0, %for.body.preheader ], [ %indvars.iv.next, %condition_call.3.exit ]
+; CHECK-NEXT:   %loss.021 = phi double [ 0.000000e+00, %for.body.preheader ], [ %19, %condition_call.3.exit ]
 ; CHECK-NEXT:   %9 = trunc i64 %indvars.iv to i32
 ; CHECK-NEXT:   %conv2 = sitofp i32 %9 to double
 ; CHECK-NEXT:   %mul1 = fmul double %conv2, %m
@@ -208,15 +208,15 @@ entry:
 
 ; CHECK: condition.call.with.trace.i:                      ; preds = %for.body
 ; CHECK-NEXT:   %12 = bitcast double* %call.ptr.i to i8*
-; CHECK-NEXT:   %call.size.i = call i64 @__enzyme_get_choice(i8* %trace, i8* nocapture readonly getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i64 0, i64 0), i8* %12, i64 8)
+; CHECK-NEXT:   %call.size.i = call i64 @__enzyme_get_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i64 0, i64 0), i8* %12, i64 8)
 ; CHECK-NEXT:   %from.trace.call.i = load double, double* %call.ptr.i
-; CHECK-NEXT:   br label %condition_call.1.exit
+; CHECK-NEXT:   br label %condition_call.3.exit
 
 ; CHECK: condition.call.without.trace.i:                   ; preds = %for.body
 ; CHECK-NEXT:   %sample.call.i = call double @normal(double %10, double 1.000000e+00)
-; CHECK-NEXT:   br label %condition_call.1.exit
+; CHECK-NEXT:   br label %condition_call.3.exit
 
-; CHECK: condition_call.1.exit:                            ; preds = %condition.call.with.trace.i, %condition.call.without.trace.i
+; CHECK: condition_call.3.exit:                            ; preds = %condition.call.with.trace.i, %condition.call.without.trace.i
 ; CHECK-NEXT:   %13 = phi double [ %from.trace.call.i, %condition.call.with.trace.i ], [ %sample.call.i, %condition.call.without.trace.i ]
 ; CHECK-NEXT:   %14 = bitcast double* %call.ptr.i to i8*
 ; CHECK-NEXT:   call void @llvm.lifetime.end.p0i8(i64 8, i8* %14)

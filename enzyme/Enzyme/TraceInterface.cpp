@@ -385,89 +385,91 @@ DynamicTraceInterface::DynamicTraceInterface(Value *dynamicInterface,
   assert(sampleFunction);
 }
 
-GlobalVariable *DynamicTraceInterface::MaterializeInterfaceFunction(
-    IRBuilder<> &Builder, Value *dynamicInterface, Type *ty, unsigned index,
-    Module &M, const Twine &Name) {
+Function *DynamicTraceInterface::MaterializeInterfaceFunction(
+    IRBuilder<> &Builder, Value *dynamicInterface, FunctionType *FTy,
+    unsigned index, Module &M, const Twine &Name) {
   auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface,
                                        Builder.getInt32(index));
   auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-  auto pty = PointerType::get(ty, load->getPointerAddressSpace());
-  auto cast = Builder.CreatePointerCast(load, pty, Name);
+  auto pty = PointerType::get(FTy, load->getPointerAddressSpace());
+  auto cast = Builder.CreatePointerCast(load, pty);
 
   auto global =
       new GlobalVariable(M, pty, false, GlobalVariable::PrivateLinkage,
-                         ConstantPointerNull::get(pty), Name);
+                         ConstantPointerNull::get(pty), Name + "_ptr");
   Builder.CreateStore(cast, global);
 
-  return global;
+  Function *F = Function::Create(FTy, Function::PrivateLinkage, Name, M);
+  F->addFnAttr(Attribute::AlwaysInline);
+  BasicBlock *Entry = BasicBlock::Create(M.getContext());
+  Entry->insertInto(F);
+
+  IRBuilder<> WrapperBuilder(Entry);
+
+  auto ToWrap = WrapperBuilder.CreateLoad(pty, global, Name);
+  auto Args = SmallVector<Value *, 4>(make_pointer_range(F->args()));
+  auto Call = WrapperBuilder.CreateCall(FTy, ToWrap, Args);
+
+  if (!FTy->getReturnType()->isVoidTy()) {
+    WrapperBuilder.CreateRet(Call);
+  } else {
+    WrapperBuilder.CreateRetVoid();
+  }
+
+  return F;
 }
 
 Function *DynamicTraceInterface::getSampleFunction() { return sampleFunction; }
 
 // user implemented
 Value *DynamicTraceInterface::getTrace(IRBuilder<> &Builder) {
-  return Builder.CreateLoad(getTraceFunction->getValueType(), getTraceFunction,
-                            "get_trace");
+  return getTraceFunction;
 }
 
 Value *DynamicTraceInterface::getChoice(IRBuilder<> &Builder) {
-  return Builder.CreateLoad(getChoiceFunction->getValueType(),
-                            getChoiceFunction, "get_choice");
+  return getChoiceFunction;
 }
 
 Value *DynamicTraceInterface::insertCall(IRBuilder<> &Builder) {
-  return Builder.CreateLoad(insertCallFunction->getValueType(),
-                            insertCallFunction, "insert_call");
+  return insertCallFunction;
 }
 
 Value *DynamicTraceInterface::insertChoice(IRBuilder<> &Builder) {
-  return Builder.CreateLoad(insertChoiceFunction->getValueType(),
-                            insertChoiceFunction, "insert_choice");
+  return insertChoiceFunction;
 }
 
 Value *DynamicTraceInterface::insertArgument(IRBuilder<> &Builder) {
-  return Builder.CreateLoad(insertArgumentFunction->getValueType(),
-                            insertArgumentFunction, "insert_argument");
+  return insertArgumentFunction;
 }
 
 Value *DynamicTraceInterface::insertReturn(IRBuilder<> &Builder) {
-  return Builder.CreateLoad(insertReturnFunction->getValueType(),
-                            insertReturnFunction, "insert_return");
+  return insertReturnFunction;
 }
 
 Value *DynamicTraceInterface::insertFunction(IRBuilder<> &Builder) {
-  return Builder.CreateLoad(insertFunctionFunction->getValueType(),
-                            insertFunctionFunction, "insert_function");
+  return insertFunctionFunction;
 }
 
 Value *DynamicTraceInterface::insertChoiceGradient(IRBuilder<> &Builder) {
-  return Builder.CreateLoad(insertChoiceGradientFunction->getValueType(),
-                            insertChoiceGradientFunction,
-                            "insert_choice_gradient");
+  return insertChoiceGradientFunction;
 }
 
 Value *DynamicTraceInterface::insertArgumentGradient(IRBuilder<> &Builder) {
-  return Builder.CreateLoad(insertArgumentGradientFunction->getValueType(),
-                            insertArgumentGradientFunction,
-                            "insert_argument_gradient");
+  return insertArgumentGradientFunction;
 }
 
 Value *DynamicTraceInterface::newTrace(IRBuilder<> &Builder) {
-  return Builder.CreateLoad(newTraceFunction->getValueType(), newTraceFunction,
-                            "new_trace");
+  return newTraceFunction;
 }
 
 Value *DynamicTraceInterface::freeTrace(IRBuilder<> &Builder) {
-  return Builder.CreateLoad(freeTraceFunction->getValueType(),
-                            freeTraceFunction, "free_trace");
+  return freeTraceFunction;
 }
 
 Value *DynamicTraceInterface::hasCall(IRBuilder<> &Builder) {
-  return Builder.CreateLoad(hasCallFunction->getValueType(), hasCallFunction,
-                            "has_call");
+  return hasCallFunction;
 }
 
 Value *DynamicTraceInterface::hasChoice(IRBuilder<> &Builder) {
-  return Builder.CreateLoad(hasChoiceFunction->getValueType(),
-                            hasChoiceFunction, "has_choice");
+  return hasChoiceFunction;
 }

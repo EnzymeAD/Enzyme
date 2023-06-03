@@ -81,7 +81,7 @@ entry:
 
 ; CHECK: condition.mu.with.trace.i:                        ; preds = %entry
 ; CHECK-NEXT:   %1 = bitcast double* %mu.ptr.i to i8*
-; CHECK-NEXT:   %mu.size.i = call i64 @__enzyme_get_choice(i8* %trace, i8* nocapture readonly getelementptr inbounds ([3 x i8], [3 x i8]* @.str, i64 0, i64 0), i8* %1, i64 8)
+; CHECK-NEXT:   %mu.size.i = call i64 @__enzyme_get_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([3 x i8], [3 x i8]* @.str, i64 0, i64 0), i8* %1, i64 8)
 ; CHECK-NEXT:   %from.trace.mu.i = load double, double* %mu.ptr.i
 ; CHECK-NEXT:   br label %condition_mu.exit
 
@@ -107,7 +107,7 @@ entry:
 
 ; CHECK: condition.x.with.trace.i:                         ; preds = %condition_mu.exit
 ; CHECK-NEXT:   %8 = bitcast double* %x.ptr.i to i8*
-; CHECK-NEXT:   %x.size.i = call i64 @__enzyme_get_choice(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0), i8* %8, i64 8)
+; CHECK-NEXT:   %x.size.i = call i64 @__enzyme_get_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0), i8* %8, i64 8)
 ; CHECK-NEXT:   %from.trace.x.i = load double, double* %x.ptr.i
 ; CHECK-NEXT:   br label %condition_x.exit
 
@@ -133,7 +133,7 @@ entry:
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"likelihood'"
 ; CHECK-NEXT:   %15 = load double, double* %"likelihood'"
 ; CHECK-NEXT:   %16 = fadd fast double %15, %14
-; CHECK-NEXT:   store double %16, double* %"likelihood'
+; CHECK-NEXT:   store double %16, double* %"likelihood'"
 ; CHECK-NEXT:   %17 = call { double, double } @diffenormal_logpdf(double %2, double 1.000000e+00, double %9, double %14)
 ; CHECK-NEXT:   %18 = extractvalue { double, double } %17, 0
 ; CHECK-NEXT:   %19 = extractvalue { double, double } %17, 1
