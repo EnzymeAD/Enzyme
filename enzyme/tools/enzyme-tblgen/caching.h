@@ -5,7 +5,6 @@ using namespace llvm;
 void emit_mat_caching(TGPattern &pattern, raw_ostream &os) {
 
   const auto argUsers = pattern.getArgUsers();
-  const auto actArgs = pattern.getActiveArgs();
   const auto typeMap = pattern.getArgTypeMap();
   const auto nameVec = pattern.getArgNames();
 
@@ -16,9 +15,6 @@ void emit_mat_caching(TGPattern &pattern, raw_ostream &os) {
     const auto matName = nameVec[i];
     const auto matPosition = i;
     const auto matUsers = argUsers.lookup(matPosition);
-    const auto ldName = nameVec[i + 1];
-    const auto ldPosition = i + 1;
-    const auto ldUsers = argUsers.lookup(ldPosition);
     if (matUsers.size() == 0) {
 os << "  bool cache_" << matName << " = false;\n";
     } else {
@@ -36,44 +32,12 @@ os << "  bool cache_" << matName << " = false;\n";
       os 
 << ");\n";
     }
-//    os
-//<< "  bool cache_" << ldName << " = true;\n";
-//<< "  bool cache_" << ldName << " = false;\n";
-      // xinc is needed to be preserved if
-      // 1) it is potentially overwritten AND EITHER
-      //     a) x is active (for performing the shadow increment) or
-      //     b) we're not caching x and need xinc to compute the
-      //     derivative of a different variable
-//      os 
-//<< "  const bool need_" << ldName << " = (true || active_" << matName;
-//<< "  const bool need_" << ldName << " = (active_" << matName;
-//      if (ldUsers.size() > 0) {
-//        os 
-//<< "  || (!cache_" << matName << " && (";
-//        bool first = true;
-//        for (size_t user: ldUsers) {
-//          auto name = nameVec[user];
-//          os 
-//<< ((first) ? "" : " || ") << "active_" << name;
-//          first = false;
-//        }
-//        os 
-//<< "))";
-//      }
-//      os 
-//<< ");\n"
-//<< "  if (true) {\n"
-////<< "  if (byRef && uncacheable_" << ldName << " && need_" << ldName << ") {\n"
-//<< "    cacheTypes.push_back(intType);\n"
-//<< "    cache_" << ldName << " = true;\n "
-//<< "  }\n\n";
   }
 }
 
 void emit_vec_caching(TGPattern &pattern, raw_ostream &os) {
 
   const auto argUsers = pattern.getArgUsers();
-  const auto actArgs = pattern.getActiveArgs();
   const auto typeMap = pattern.getArgTypeMap();
   const auto nameVec = pattern.getArgNames();
 
@@ -84,9 +48,9 @@ void emit_vec_caching(TGPattern &pattern, raw_ostream &os) {
     const auto vecName = nameVec[i];
     const auto vecPosition = i;
     const auto vecUsers = argUsers.lookup(vecPosition);
-    const auto incName = nameVec[i + 1];
-    const auto incPosition = i + 1;
-    const auto incUsers = argUsers.lookup(incPosition);
+    if (vecUsers.size() == 0) {
+os << "  bool cache_" << vecName << " = false;\n";
+    } else {
       os 
 << "  bool cache_" << vecName
 << "  = (cacheMode &&\n"
@@ -100,46 +64,22 @@ void emit_vec_caching(TGPattern &pattern, raw_ostream &os) {
       }
       os 
 << ");\n";
-//<< "  bool cache_" << incName << " = true;\n";
-//<< "  bool cache_" << incName << " = false;\n";
-      // xinc is needed to be preserved if
-      // 1) it is potentially overwritten AND EITHER
-      //     a) x is active (for performing the shadow increment) or
-      //     b) we're not caching x and need xinc to compute the
-      //     derivative of a different variable
-//      os 
-//<< "  const bool need_" << incName << " = (true || active_" << vecName;
-//<< "  const bool need_" << incName << " = (active_" << vecName;
-//      if (incUsers.size() > 0) {
-//        os 
-//<< "  || (!cache_" << vecName << " && (";
-//        bool first = true;
-//        for (size_t user: incUsers) {
-//          auto name = nameVec[user];
-//          os 
-//<< ((first) ? "" : " || ") << "active_" << name;
-//          first = false;
-//        }
-//        os 
-//<< "))";
-//      }
-//      os 
-//<< ");\n"
-//<< "  if (true) {\n"
-////<< "  if (byRef && uncacheable_" << incName << " && need_" << incName << ") {\n"
-//<< "    cacheTypes.push_back(intType);\n"
-//<< "    cache_" << incName << " = true;\n "
-//<< "  }\n\n";
-
+    }
   }
 }
 
+
+// scalar (e.g xinc) is needed to be preserved if
+// 1) it is potentially overwritten AND EITHER
+//     a) x is active (for performing the shadow increment) or
+//     b) we're not caching x and need xinc to compute the
+//     derivative of a different variable
 void emit_scalar_caching(TGPattern &pattern, raw_ostream &os) {
   auto actArgs = pattern.getActiveArgs();
   auto typeMap = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
   os 
-<< "  // len, fp must be preserved if overwritten\n";
+<< "  // len, fp, etc. must be preserved if overwritten\n";
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto typeOfArg = typeMap.lookup(i);
     if (typeOfArg == argType::len || typeOfArg == argType::fp || typeOfArg == argType::trans 
@@ -200,6 +140,63 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
   }
   os << "    }\n";
 
+  // TODO: same as below, but not for vincData, but for mldData
+  for (size_t i = 0; i < actArgs.size(); i++) {
+    size_t argIdx = actArgs[i];
+    auto typeOfArg = typeMap.lookup(argIdx);
+    if (typeOfArg != argType::mldData)
+      continue;
+    assert(typeMap.lookup(argIdx+1) == argType::mldLD);
+    auto matName = nameVec[argIdx];
+    auto ldName = nameVec[argIdx+1];
+    auto dimensions = pattern.getRelatedLengthArgs(argIdx);
+    assert(dimensions.size() == 2);
+    assert(typeMap.lookup(dimensions[0]) == argType::len);
+    assert(typeMap.lookup(dimensions[1]) == argType::len);
+    std::string dim1 = "arg_" + nameVec[dimensions[0]];
+    std::string dim2 = "arg_" + nameVec[dimensions[1]];
+    os
+<< "    if (cache_" << matName << ") {\n"
+<< "      Value *matSize;\n"
+<< "      auto charType = IntegerType::get(intType->getContext(), 8);\n"
+<< "      auto *M = " << dim1 << ";\n"
+<< "      auto *N = " << dim2 << ";\n"
+<< "      if (byRef) {\n"
+<< "        auto MP = BuilderZ.CreatePointerCast(M, PointerType::get(intType, cast<PointerType>(M->getType())->getAddressSpace()));\n"
+<< "        auto NP = BuilderZ.CreatePointerCast(N, PointerType::get(intType, cast<PointerType>(N->getType())->getAddressSpace()));\n"
+<< "        auto len1 = BuilderZ.CreateLoad(intType, MP);\n"
+<< "        auto len2 = BuilderZ.CreateLoad(intType, NP);\n"
+<< "        matSize = BuilderZ.CreateMul(len1, len2);\n"
+<< "      } else {\n"
+<< "        matSize = BuilderZ.CreateMul(M,N);\n"
+<< "      }\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, matSize);\n"
+<< "      assert(EnzymeLapackCopy);\n"
+<< "      {\n"
+<< "        ValueType valueTypes[] = {";
+    { bool comma = false;
+    for (auto i : nameVec) {
+      if (comma) os << ", ";
+      os << "ValueType::None";
+      comma = true;
+    }
+    os << "};\n";
+os <<
+   "         valueTypes[" << argIdx << "] = ValueType::Primal;\n"
+<< "         if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
+    }
+    for (auto len_pos : dimensions ) {
+os << "         if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
+    }
+os << "        Value *uplo = llvm::ConstantInt::get(charType, 0);\n" // garbage data, just should not match U or L
+<< "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, nullptr, allocationBuilder, \"copy.garbage\");\n"
+<< "        Value *args[7] = {uplo, M, N, arg_" << matName << ", arg_" << ldName << ", malins, M};\n"
+<< "        callMemcpyStridedLapack(BuilderZ, *gutils->oldFunc->getParent(), blas, args, gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
+<< "      }\n"
+<< "      cacheValues.push_back(malins);\n"
+<< "    }\n";
+  }
+  
   for (size_t i = 0; i < actArgs.size(); i++) {
     size_t argIdx = actArgs[i];
     auto typeOfArg = typeMap.lookup(argIdx);
@@ -268,64 +265,6 @@ os << "        dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
 << "            BuilderZ, /*lookup*/ false));\n"
 << "      }\n"
 << "      cacheValues.push_back(arg);\n"
-<< "    }\n";
-  }
-  // TODO: same as above, but not for vincData, but for mldData
-  for (size_t i = 0; i < actArgs.size(); i++) {
-    size_t argIdx = actArgs[i];
-    auto typeOfArg = typeMap.lookup(argIdx);
-    if (typeOfArg != argType::mldData)
-      continue;
-    assert(typeMap.lookup(argIdx+1) == argType::mldLD);
-    auto matName = nameVec[argIdx];
-    auto ldName = nameVec[argIdx+1];
-    auto dimensions = pattern.getRelatedLengthArgs(argIdx);
-    assert(dimensions.size() == 2);
-    assert(typeMap.lookup(dimensions[0]) == argType::len);
-    assert(typeMap.lookup(dimensions[1]) == argType::len);
-    std::string dim1 = "arg_" + nameVec[dimensions[0]];
-    std::string dim2 = "arg_" + nameVec[dimensions[1]];
-    // 
-    // TODO: remove last hardcoded len_n usages to support blas lv2/3 
-    os
-<< "    if (cache_" << matName << ") {\n"
-<< "      Value *matSize;\n"
-<< "      auto charType = IntegerType::get(intType->getContext(), 8);\n"
-<< "      auto *M = " << dim1 << ";\n"
-<< "      auto *N = " << dim2 << ";\n"
-<< "      if (byRef) {\n"
-<< "        auto MP = BuilderZ.CreatePointerCast(M, PointerType::get(intType, cast<PointerType>(M->getType())->getAddressSpace()));\n"
-<< "        auto NP = BuilderZ.CreatePointerCast(N, PointerType::get(intType, cast<PointerType>(N->getType())->getAddressSpace()));\n"
-<< "        auto len1 = BuilderZ.CreateLoad(intType, MP);\n"
-<< "        auto len2 = BuilderZ.CreateLoad(intType, NP);\n"
-<< "        matSize = BuilderZ.CreateMul(len1, len2);\n"
-<< "      } else {\n"
-<< "        matSize = BuilderZ.CreateMul(M,N);\n"
-<< "      }\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, matSize);\n"
-<< "      assert(EnzymeLapackCopy);\n"
-<< "      {\n"
-<< "        ValueType valueTypes[] = {";
-    { bool comma = false;
-    for (auto i : nameVec) {
-      if (comma) os << ", ";
-      os << "ValueType::None";
-      comma = true;
-    }
-    os << "};\n";
-os <<
-   "         valueTypes[" << argIdx << "] = ValueType::Primal;\n"
-<< "         if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
-    }
-    for (auto len_pos : dimensions ) {
-os << "         if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
-    }
-os << "        Value *uplo = llvm::ConstantInt::get(charType, 0);\n" // garbage data, just should not match U or L
-<< "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, nullptr, allocationBuilder, \"copy.garbage\");\n"
-<< "        Value *args[7] = {uplo, M, N, arg_" << matName << ", arg_" << ldName << ", malins, M};\n"
-<< "        callMemcpyStridedLapack(BuilderZ, *gutils->oldFunc->getParent(), blas, args, gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
-<< "      }\n"
-<< "      cacheValues.push_back(malins);\n"
 << "    }\n";
   }
 

@@ -891,8 +891,6 @@ void emit_beginning(TGPattern &pattern, raw_ostream &os) {
      << "  allocationBuilder.setFastMathFlags(getFast());\n"
      << "  // never cache in Fwd Mode\n"
      << "  const bool cacheMode = (Mode != DerivativeMode::ForwardMode);\n";
-  // not yet needed for lv-1
-  //<< "  auto &DL = gutils->oldFunc->getParent()->getDataLayout();\n";
 }
 
 void emit_free_and_ending(TGPattern &pattern, raw_ostream &os) {
@@ -911,17 +909,11 @@ void emit_free_and_ending(TGPattern &pattern, raw_ostream &os) {
          << "      }\n";
     }
   }
-  // new: free mat_
   for (size_t i = 0; i < nameVec.size(); i++) {
     if (typeMap.lookup(i) == argType::mldData) {
       auto name = nameVec[i];
       os << "      if (cache_" << name << ") {\n"
          << "        if (julia_decl) {\n"
-         << "          auto i8ptr = "
-            "Type::getInt8PtrTy(intType->getContext());\n"
-         //<< "          arg_" << name << " = Builder2.CreatePointerCast(\n"
-         //<< "            arg_" << name << ", i8ptr);\n"
-         //<< "          CreateDealloc(Builder2, arg_" << name << ");\n"
          << "          CreateDealloc(Builder2, free_" << name << ");\n"
          << "        } else {\n"
          << "          CreateDealloc(Builder2, arg_" << name << ");\n"
@@ -1111,7 +1103,7 @@ void extract_scalar(std::string name, std::string elemTy, raw_ostream &os) {
      << "\n";
 }
 
-void extract_mat(std::string name, std::string elemTy, raw_ostream &os) {
+void extract_mat(std::string name, raw_ostream &os) {
   os << "      if (cache_" << name << ") {\n"
      << "        arg_" << name << " = (cacheTypes.size() == 1)\n"
      << "                    ? cacheval\n"
@@ -1172,14 +1164,6 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
     }
   }
 
-  for (size_t i = 0; i < nameVec.size(); i++) {
-    auto typeOfArg = typeMap.lookup(i);
-    auto name = nameVec[i];
-    if (typeOfArg == argType::mldData) {
-      extract_mat(name, "asdf", os);
-    }
-  }
-
   os << "    } else if (Mode != DerivativeMode::ForwardModeSplit) {\n";
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto typeOfArg = typeMap.lookup(i);
@@ -1196,6 +1180,14 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
     }
   }
   os << "    }\n";
+
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    auto typeOfArg = typeMap.lookup(i);
+    auto name = nameVec[i];
+    if (typeOfArg == argType::mldData) {
+      extract_mat(name, os);
+    }
+  }
 
   for (size_t i = 0; i < nameVec.size(); i++) {
     if (typeMap.lookup(i) != argType::vincData)
