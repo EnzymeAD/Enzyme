@@ -806,6 +806,7 @@ static void checkBlasCallsInDag(const RecordKeeper &RK,
     auto numArgs = toSearch->getNumArgs();
     auto opName = Def->getValueAsString("s");
     auto CalledBlas = RK.getDef(opName);
+    if (!CalledBlas) llvm::errs() << " opName: " << opName << "\n";
     assert(CalledBlas);
     auto expectedNumArgs =
         CalledBlas->getValueAsDag("PatternToMatch")->getNumArgs();
@@ -851,6 +852,16 @@ void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns,
      << "    }                                                              \n";
   bool first = true;
   for (auto pattern : blasPatterns) {
+    bool hasNonInactive = false;
+    for (Rule rule : pattern.getRules()) {
+        const auto ruleDag = rule.getRuleDag();
+        const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
+        if (Def->isSubClassOf("MagicInst") && Def->getName() == "inactive")
+            continue;
+        hasNonInactive = true;
+        break;
+    }
+    if (!hasNonInactive) continue;
     auto name = pattern.getName();
     os << "    " << ((first) ? "" : "} else ") << " if (blas.function == \""
        << name << "\") {                           \n"
@@ -1544,7 +1555,11 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
           // primary and adj have the same type
           typeToAdd = (Twine("type_") + argStr).str();
         } else if (Def->isSubClassOf("Constant")) {
-          typeToAdd = "fpType";
+          typeToAdd = "byRef ? (Type*)PointerType::getUnqual(fpType) : (Type*)fpType";
+        } else if (Def->isSubClassOf("Char")) {
+          typeToAdd = "byRef ? (Type*)PointerType::getUnqual(charType) : (Type*)charType";
+        } else if (Def->isSubClassOf("ConstantInt")) {
+          typeToAdd = "byRef ? (Type*)PointerType::getUnqual(intType) : (Type*)intType";
         } else if (Def->isSubClassOf("transpose")) {
           auto argStr = Def->getValueAsString("name");
           // transpose the given trans arg, but type stays
@@ -1553,7 +1568,16 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
           PrintFatalError(Def->getLoc(), "PANIC! Unsupported Definit");
         }
         typeString += ((first) ? "" : ", ") + typeToAdd;
-      } else {
+      } else { 
+        if (auto Dag = dyn_cast<DagInit>(subArg)) {
+          auto Def = cast<DefInit>(Dag->getOperator())->getDef();
+          if (Def->isSubClassOf("MagicInst") && Def->getName() == "Rows") {
+            if (!first) typeString += ", ";
+            typeString += (Twine("type_") + Dag->getArgNameStr(1)).str();
+            first = false;
+            continue;
+            }
+        }
         const auto argStr = ruleDag->getArgNameStr(i);
         // skip layout because it is cblas only, 
         // so not relevant for the byRef Fortran abi.
@@ -1634,7 +1658,19 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
     }
 
     auto arg = ruleDag->getArg(pos);
-    if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
+    if (auto Dag = dyn_cast<DagInit>(arg)) {
+      auto Def = cast<DefInit>(Dag->getOperator())->getDef();
+
+      if (Def->isSubClassOf("MagicInst") && Def->getName() == "Rows") {
+        auto tname = Dag->getArgNameStr(0);
+        auto rname = Dag->getArgNameStr(1);
+        auto cname = Dag->getArgNameStr(2);
+        result.append((Twine("get_blas_row(Builder2, arg_transposed_") + tname + ", arg_" + rname + ", arg_" + cname + ", byRef)").str());
+      } else {
+        llvm::errs() << Def->getName() << "\n";
+        PrintFatalError("Dag/Def that isn't a DiffeRet!");
+      }
+    } else if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
       auto Def = DefArg->getDef();
       if (Def->isSubClassOf("DiffeRet")) {
         result.append("dif");
@@ -1649,7 +1685,13 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
         llvm::errs() << "MagicInst\n";
       } else if (Def->isSubClassOf("Constant")) {
         auto val = Def->getValueAsString("value");
-        result.append((Twine("ConstantFP::get(fpType, ") + val + ")").str());
+        result.append((Twine("to_blas_callconv(Builder2, ConstantFP::get(fpType, ") + val + "), byRef, nullptr, allocationBuilder, \"constant.fp." + val + "\")").str());
+      } else if (Def->isSubClassOf("Char")) {
+        auto val = Def->getValueAsString("value");
+        result.append((Twine("to_blas_callconv(Builder2, ConstantInt::get(charType, '") + val + "'), byRef, nullptr, allocationBuilder, \"constant.char." + val + "\")").str());
+      } else if (Def->isSubClassOf("ConstantInt")) {
+        auto val = Def->getValueAsString("value");
+        result.append((Twine("to_blas_callconv(Builder2, ConstantInt::get(intType, ") + val + "), byRef, nullptr, allocationBuilder, \"constant.int." + val + "\")").str());
       } else if (Def->isSubClassOf("transpose")) {
         auto name = Def->getValueAsString("name");
         result.append((Twine("arg_transposed_") + name).str());
@@ -1956,6 +1998,16 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   // // emitEnumMatcher(blas_modes, os);
 
   for (auto newPattern : newBlasPatterns) {
+    bool hasNonInactive = false;
+    for (Rule rule : newPattern.getRules()) {
+        const auto ruleDag = rule.getRuleDag();
+        const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
+        if (Def->isSubClassOf("MagicInst") && Def->getName() == "inactive")
+            continue;
+        hasNonInactive = true;
+        break;
+    }
+    if (!hasNonInactive) continue;
 
     emit_beginning(newPattern, os);
     emit_helper(newPattern, os);

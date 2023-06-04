@@ -22,7 +22,7 @@ class blas_modes<list<string> _modes> : BLASType<1, 0> {
 
 // cblas_layout must(!) allways be called layout, or the world will burn
 def cblas_layout  : blas_modes<["CblasRowMajor","CblasColMajor"]>;
-def uplo          : blas_modes<["U","L"]> ;
+def uplo          : blas_modes<["U","L","G"]> ;
 def cblas_uplo    : blas_modes<["CblasUpper","CblasLower"]> ;
 def trans         : blas_modes<["N","T","C"]> ;
 def cblas_trans   : blas_modes<["CblasNoTrans","CblasTrans","CblasConjTrans"]> ;
@@ -48,6 +48,7 @@ def todo : MagicInst; // TODO
 def tp   : MagicInst; // transpose the trans param.
 def noop : MagicInst; // gradient is zero 
 def inactive : MagicInst; // like noop, but assert it's inactive
+def Rows : MagicInst; // given a transpose, normal rows, normal cols get the true rows, aka normal rows if N else normal cols
 
 // placeholder name
 class b<string _s> {
@@ -67,6 +68,12 @@ class adj<string _name> {
 class Constant<string _value> {
   string value = _value;
 }
+class ConstantInt<string _value> {
+  string value = _value;
+}
+class Char<string _value> {
+  string value = _value;
+}
 
 class transpose<string _name> {
   string name = _name;
@@ -82,6 +89,15 @@ def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
                   // dot must proceed scal, because scal modifies adj<"x">
                   (b<"dot"> $n, $x, $incx, adj<"x">, $incx),
                   (b<"scal"> $n, $alpha, adj<"x">, $incx)
+                  ]
+                  >;
+
+def lascl : CallBlasPattern<(Op $layout, $type, $kl, $ku, $cfrom, $cto, $m, $n, $A, $info),
+                  ["A"],[cblas_layout, uplo, len, len, fp, fp, len, len, mld, len],
+                  [
+                  (inactive), // cfrom
+                  (inactive), // cto
+                  (inactive)  // A
                   ]
                   >;
 
@@ -140,9 +156,9 @@ def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $
                   [
                   /* alpha  */  (inactive), //(b<"dot"> $y, (b<"gemv"> $A, $x)),
                   /* A      */  (b<"ger">  $layout, $m, $n, $alpha, adj<"y">, $incy, $x, $incx, adj<"A">, $lda),
-                  /* x      */  (b<"gemv"> $layout, transpose<"transa">, $n, $m, $alpha, $A, $lda, adj<"y">, $incy, $beta, adj<"x">, $incx),
+                  /* x      */  (b<"gemv"> $layout, transpose<"transa">, $m, $n, $alpha, $A, $lda, adj<"y">, $incy, Constant<"1.0">, adj<"x">, $incx),
                   /* beta   */  (inactive), //(b<"dot"> $y, DiffeRet<"">),
-                  /* y      */  (noop)  //(b<"scal"> $beta, DiffeRet<"">),
+                  /* y      */  (b<"scal"> (Rows $transa, $m, $n), $beta, adj<"y">, $incy)
                   ]
                   >;
 // 
@@ -164,7 +180,7 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   /* A     */ (b<"gemm"> $layout, $transa, transpose<"transb">, $m, $k, $n, $alpha, adj<"C">, $ldc, $B, $ldb, $beta, adj<"A">, $lda),
                   /* B     */ (b<"gemm"> $layout, transpose<"transa">, $transb, $k, $n, $m, $alpha, $A, $lda, adj<"C">, $ldc, $beta, adj<"B">, $ldb),
                   /* beta  */ (inactive),
-                  /* C     */ (noop) // check that beta always zero! Then set adj<"C"> = 0 (if beta = 1, do nothing). If beta anything else, use scal on dc
+                  /* C     */ (b<"lascl"> Char<"G">, ConstantInt<"0">, ConstantInt<"0">, Constant<"1.0">, $beta, $m, $n, adj<"C">, $ldc, ConstantInt<"0">)
                   ]
                   >;
 

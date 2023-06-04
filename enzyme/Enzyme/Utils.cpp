@@ -2265,3 +2265,17 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
 
   return to_blas_callconv(B, V, byRef, julia_decl, entryBuilder, "transpose." + name);
 }
+
+llvm::Value *get_blas_row(llvm::IRBuilder<> &B, llvm::Value *trans, llvm::Value *row, llvm::Value *col, bool byRef) {
+  
+  if (byRef) {
+    auto charType = IntegerType::get(trans->getContext(), 8);
+    trans = B.CreateLoad(charType, trans, "ld.row.trans");
+  }
+  
+  return B.CreateSelect(
+      B.CreateOr(
+          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N')),
+          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'))
+        ), row, col);
+}

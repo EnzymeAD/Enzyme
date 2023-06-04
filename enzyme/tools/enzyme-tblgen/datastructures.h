@@ -187,6 +187,8 @@ void fillArgTypes(const Record *pattern, DenseMap<size_t, argType> &argTypes) {
       argTypes.insert(std::make_pair(pos, argType::trans));
     } else if (val->getName() == "diag") {
       argTypes.insert(std::make_pair(pos, argType::diag));
+    } else if (val->getName() == "uplo") {
+      argTypes.insert(std::make_pair(pos, argType::uplo));
     } else if (val->getName() == "side") {
       argTypes.insert(std::make_pair(pos, argType::side));
     } else if (val->getName() == "mld") {
