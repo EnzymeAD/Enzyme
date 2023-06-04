@@ -958,7 +958,7 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
        << "  auto arg_" << name << " = gutils->getNewFromOriginal(orig_" << name
        << ");\n"
        << "  const auto type_" << name << " = arg_" << name << "->getType();\n"
-       << "  const bool uncacheable_" << name
+       << "  const bool overwritten_" << name
        << " = (cacheMode ? overwritten_args[pos_" << name << "] : false);\n\n";
   }
 
@@ -973,7 +973,7 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
        << "  auto arg_" << name << " = gutils->getNewFromOriginal(orig_" << name
        << ");\n"
        << "  const auto type_" << name << " = arg_" << name << "->getType();\n"
-       << "  const bool uncacheable_" << name
+       << "  const bool overwritten_" << name
        << " = (cacheMode ? overwritten_args[pos_" << name << "] : false);\n";
     if (std::count(actArgs.begin(), actArgs.end(), i)) {
       os << "  const bool active_" << name

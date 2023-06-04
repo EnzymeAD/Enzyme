@@ -21,7 +21,7 @@ os << "  bool cache_" << matName << " = false;\n";
       os 
 << "  bool cache_" << matName
 << "  = (cacheMode &&\n"
-<< "          uncacheable_" << matName;
+<< "          overwritten_" << matName;
       for (size_t user: matUsers) {
         auto name = nameVec[user];
         if (name == matName)
@@ -54,7 +54,7 @@ os << "  bool cache_" << vecName << " = false;\n";
       os 
 << "  bool cache_" << vecName
 << "  = (cacheMode &&\n"
-<< "          uncacheable_" << vecName;
+<< "          overwritten_" << vecName;
       for (size_t user: vecUsers) {
         auto name = nameVec[user];
         if (name == vecName)
@@ -88,17 +88,8 @@ void emit_scalar_caching(TGPattern &pattern, raw_ostream &os) {
         && typeOfArg != vincInc && typeOfArg != mldLD) {
       continue;
     }
-    auto scalarType = "";
-    if (typeOfArg == len || typeOfArg == vincInc || typeOfArg == mldLD) {
-      scalarType = "intType";
-    } else if (typeOfArg == trans) {
-      scalarType = "charType";
-    } else if (typeOfArg == fp) {
-      scalarType = "fpType";
-    }
     auto name = nameVec[i];
     const auto scalarUsers = argUsers.lookup(i);
-
 
     bool first = true;
     if (scalarUsers.size() == 0) {
@@ -107,7 +98,7 @@ os << "  bool cache_" << name << " = false;\n";
       os 
 << "  bool cache_" << name
 << "  = (cacheMode && byRef &&\n"
-<< "          uncacheable_" << name << " && (";
+<< "          overwritten_" << name << " && (";
       for (size_t user: scalarUsers) {
         auto userName = nameVec[user];
         //if (name == userName)
@@ -117,11 +108,33 @@ os << "  bool cache_" << name << " = false;\n";
         first = false;
       }
       os 
-<< "));\n"
+<< "));\n";
+    }
+  }
+}
+void emit_scalar_cacheTypes(TGPattern &pattern, raw_ostream &os) {
+  auto actArgs = pattern.getActiveArgs();
+  auto typeMap = pattern.getArgTypeMap();
+  auto nameVec = pattern.getArgNames();
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    auto typeOfArg = typeMap.lookup(i);
+    if (typeOfArg != len && typeOfArg != fp && typeOfArg != trans 
+        && typeOfArg != vincInc && typeOfArg != mldLD) {
+      continue;
+    }
+    auto name = nameVec[i];
+    auto scalarType = "";
+    if (typeOfArg == len || typeOfArg == vincInc || typeOfArg == mldLD) {
+      scalarType = "intType";
+    } else if (typeOfArg == trans) {
+      scalarType = "charType";
+    } else if (typeOfArg == fp) {
+      scalarType = "fpType";
+    }
+  os
 << "  if (cache_" << name << ") {\n"
 << "    cacheTypes.push_back(" << scalarType << ");\n"
 << "  }\n";
-    }
   }
 }
 
@@ -366,6 +379,7 @@ void emit_caching(TGPattern &pattern, raw_ostream &os) {
 << "  SmallVector<Type *, 2> cacheTypes;\n\n";
 
   emit_scalar_caching(pattern, os);
+  emit_scalar_cacheTypes(pattern, os);
   emit_mat_caching(pattern, os);
   emit_vec_caching(pattern, os);
 

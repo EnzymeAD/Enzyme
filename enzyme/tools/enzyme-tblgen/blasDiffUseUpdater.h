@@ -6,42 +6,53 @@ void emit_BLASDiffUse(TGPattern &pattern, raw_ostream &os) {
   auto actArgs = pattern.getActiveArgs();
 
   auto name = pattern.getName();
+  if (name == "lascl")
+    return;
 
   os << "if (blas.function == \"" << name << "\") {\n";
-  os << "const bool byRef = blas.prefix == \"\";\n";
+  os << "  const bool byRef = blas.prefix == \"\";\n";
 
   if (lv23) {
-    os << "const int offset = (byRef ? 0 : 1);\n";
+    os << "  const int offset = (byRef ? 0 : 1);\n";
 
     auto layout_users = argUsers.lookup(0);
-    os << "if (!byRef && val == CI->getArgOperand(0)) {\n";
+    os << "  if (!byRef && val == CI->getArgOperand(0)) {\n";
     for (auto user : layout_users) {
-      os << "  if (!gutils->isConstantValue(CI->getOperand(" << user
+      os << "    if (!gutils->isConstantValue(CI->getOperand(" << user
          << "))) return true;\n";
     }
-    os << "}\n";
+    os << "  }\n";
   }
 
-  assert(argTypeMap.size() == nameVec.size());
+  // initialize arg_ arguments
   for (size_t argPos = (lv23 ? 1 : 0); argPos < argTypeMap.size(); argPos++) {
     assert(argPos < nameVec.size());
     auto name = nameVec[argPos];
     size_t i = (lv23 ? argPos - 1 : argPos);
-    os << "  auto arg_" << name << " = CI->getArgOperand(" << i
-       << (lv23 ? " + offset " : "") << ");\n";
+    os << "  auto pos_" << name << " = " << i << (lv23 ? " + offset " : "")
+       << ";\n";
+    os << "  auto arg_" << name << " = CI->getArgOperand(pos_" << name
+       << ");\n";
+    os << "  const bool overwritten_" << name
+       << " = (cacheMode ? overwritten_args[pos_" << name << "] : false);\n\n";
   }
 
+  // initialize active_ arguments
   for (auto arg : actArgs) {
     auto name = nameVec[arg];
     os << "  bool active_" << name << " = !gutils->isConstantValue(arg_" << name
        << ");\n";
   }
 
+  emit_scalar_caching(pattern, os);
+  emit_mat_caching(pattern, os);
+  emit_vec_caching(pattern, os);
+
   for (size_t argPos = (lv23 ? 1 : 0); argPos < argTypeMap.size(); argPos++) {
     auto users = argUsers.lookup(argPos);
     auto name = nameVec[argPos];
     size_t i = (lv23 ? argPos - 1 : argPos);
-    os << "  if (val == arg_" << name << ") {\n";
+    os << "  if (val == arg_" << name << " && !cache_" << name << ") {\n";
     for (auto a : users) {
       auto name = nameVec[a];
       // The following shows that I probably should change the tblgen
@@ -49,8 +60,6 @@ void emit_BLASDiffUse(TGPattern &pattern, raw_ostream &os) {
       if (a == i) // a == i? argpos ?
         continue;
       os << "    if (active_" << name << ") return true;\n";
-      // os << "    if (!gutils->isConstantValue(CI->getOperand(" << a
-      //    << (lv23 ? " + offset" : "") << "))) return true;\n";
     }
     os << "  }\n";
   }

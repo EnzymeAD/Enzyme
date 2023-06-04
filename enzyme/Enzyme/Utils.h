@@ -1645,7 +1645,6 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                        llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder,
                        llvm::Twine name);
 llvm::Value *get_blas_row(llvm::IRBuilder<> &B, llvm::Value *trans, llvm::Value *row, llvm::Value *col, bool byRef);
-// GradientUtils *gutils) {
 
 // Parameter attributes from the original function/call that
 // we should preserve on the primal of the derivative code.
