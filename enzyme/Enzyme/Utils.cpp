@@ -70,8 +70,10 @@ LLVMValueRef (*EnzymeSanitizeDerivatives)(LLVMValueRef, LLVMValueRef toset,
                                           LLVMValueRef) = nullptr;
 
 extern llvm::cl::opt<bool> EnzymeZeroCache;
+
+// default to false because lacpy is slow
 llvm::cl::opt<bool>
-    EnzymeLapackCopy("enzyme-lapack-copy", cl::init(true), cl::Hidden,
+    EnzymeLapackCopy("enzyme-lapack-copy", cl::init(false), cl::Hidden,
                      cl::desc("Use blas copy calls to cache matrices"));
 llvm::cl::opt<bool>
     EnzymeBlasCopy("enzyme-blas-copy", cl::init(true), cl::Hidden,
@@ -728,9 +730,8 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo bla
   B.CreateCall(fn, args, bundles);
 }
 
-Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
+Function *getOrInsertMemcpyStrided(Module &M, Type* elementType, PointerType *T, Type *IT,
                                    unsigned dstalign, unsigned srcalign) {
-  Type *elementType = T->getPointerElementType();
   assert(elementType->isFloatingPointTy());
   std::string name = "__enzyme_memcpy_" + tofltstr(elementType) + "_" +
                      std::to_string(cast<IntegerType>(IT)->getBitWidth()) +
@@ -841,6 +842,13 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
 
 Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType* PT, IntegerType *IT, unsigned dstalign, unsigned srcalign) {
   assert(elementType->isFloatingPointTy());
+#if LLVM_VERSION_MAJOR >= 15
+        if (M.getContext().supportsTypedPointers()) {
+#endif
+           assert(PT->getPointerElementType() == elementType);
+#if LLVM_VERSION_MAJOR >= 15
+	}
+#endif
   std::string name = "__enzyme_memcpy_" + tofltstr(elementType) + "_mat_" +
                      std::to_string(cast<IntegerType>(IT)->getBitWidth());
   //"_da" + std::to_string(dstalign) + "sa" +
@@ -936,7 +944,7 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType* PT, 
     IRBuilder<> B(initend);
     Value *nextj =
         B.CreateAdd(j, ConstantInt::get(IT, 1), "j.next", true, true);
-    j->addIncoming(nextj, body);
+    j->addIncoming(nextj, initend);
     B.CreateCondBr(B.CreateICmpEQ(nextj, N), end, init);
   }
 

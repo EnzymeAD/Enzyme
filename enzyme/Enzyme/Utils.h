@@ -637,7 +637,7 @@ llvm::Function *getOrInsertMemcpyStridedBlas(llvm::Module &M,
                                              llvm::Type *IT, BlasInfo blas,
                                              bool julia_decl);
 /// Create function for type that performs memcpy with a stride
-llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M, llvm::PointerType *T,
+llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M, llvm::Type* elementType, llvm::PointerType *T,
                                          llvm::Type *IT, unsigned dstalign,
                                          unsigned srcalign);
 
