@@ -60,7 +60,7 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
       floatPtrPos += " + offset";
 
     auto ty = argTypeMap.lookup(i);
-    if (ty == argType::vincData || ty = argType::mldData) {
+    if (ty == argType::vincData || ty == argType::mldData) {
       os << "const bool julia_decl = !F->getFunctionType()->getParamType("
          << floatPtrPos << ")->isPointerTy();\n";
       break;
