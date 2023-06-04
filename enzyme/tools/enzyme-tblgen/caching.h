@@ -307,9 +307,10 @@ os<< "  Value *" << name << " = arg_" << name << ";\n";
       os
 << "  Value *fp_" << name << " = arg_" << name << ";\n"; 
     } else if (typeOfArg == argType::trans) {
-      os
-<< "  Value *true_" << name << " = arg_" << name << ";\n"
-<< "  Value *" << name << " = true_" << name << ";\n";
+      // back and forth not needed, cleaning up
+//      os
+//<< "  Value *true_" << name << " = arg_" << name << ";\n"
+//<< "  Value *" << name << " = true_" << name << ";\n";
     }
   }
 
