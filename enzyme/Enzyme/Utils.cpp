@@ -1807,6 +1807,8 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
   assert(maybeReader->getParent()->getParent() ==
          maybeWriter->getParent()->getParent());
   using namespace llvm;
+  if (isa<StoreInst>(maybeReader))
+    return false;
   if (auto call = dyn_cast<CallInst>(maybeWriter)) {
     StringRef funcName = getFuncNameFromCall(call);
 

@@ -1681,6 +1681,8 @@ static inline llvm::Attribute::AttrKind PrimalParamAttrsToPreserve[] = {
 // we should preserve on the shadow of the derivative code.
 // Note that this will not occur on vectore > 1.
 static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
+    llvm::Attribute::AttrKind::ZExt,
+    llvm::Attribute::AttrKind::SExt,
 #if LLVM_VERSION_MAJOR >= 13
     llvm::Attribute::AttrKind::ElementType,
 #endif
