@@ -50,15 +50,19 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
     os << "#endif\n";
   }
 
+  os << "const bool byRef = blas.prefix == \"\";\n";
+  if (lv23)
+    os << "const int offset = (byRef ? 0 : 1);\n";
+
   for (size_t i = 0; i < argTypeMap.size(); i++) {
-    if (argTypeMap.lookup(i) == argType::vincData) {
+    std::string floatPtrPos = std::to_string(lv23 ? (i - 1) : i);
+    if (lv23)
+      floatPtrPos += " + offset";
+
+    auto ty = argTypeMap.lookup(i);
+    if (ty == argType::vincData || ty = argType::mldData) {
       os << "const bool julia_decl = !F->getFunctionType()->getParamType("
-         << (lv23 ? i : (i - 1)) << ")->isPointerTy();\n";
-      break;
-    }
-    if (argTypeMap.lookup(i) == argType::mldData) {
-      os << "const bool julia_decl = !F->getFunctionType()->getParamType("
-         << (lv23 ? i : (i - 1)) << ")->isPointerTy();\n";
+         << floatPtrPos << ")->isPointerTy();\n";
       break;
     }
     if (i+1 == argTypeMap.size()) {
@@ -66,9 +70,6 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
       llvm_unreachable("Tablegen bug: BLAS fnc without vector of matrix!");
     }
   }
-  os << "const bool byRef = blas.prefix == \"\";\n";
-  if (lv23)
-    os << "const int offset = (byRef ? 0 : 1);\n";
 
   os   << "  if (byRef) {\n";
   for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {
