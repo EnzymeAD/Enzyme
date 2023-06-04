@@ -92,7 +92,7 @@ def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
                   ]
                   >;
 
-def lascl : CallBlasPattern<(Op $layout, $type, $kl, $ku, $cfrom, $cto, $m, $n, $A, $info),
+def lascl : CallBlasPattern<(Op $layout, $type, $kl, $ku, $cfrom, $cto, $m, $n, $A, $lda, $info),
                   ["A"],[cblas_layout, uplo, len, len, fp, fp, len, len, mld, len],
                   [
                   (inactive), // cfrom
@@ -180,7 +180,7 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   /* A     */ (b<"gemm"> $layout, $transa, transpose<"transb">, $m, $k, $n, $alpha, adj<"C">, $ldc, $B, $ldb, $beta, adj<"A">, $lda),
                   /* B     */ (b<"gemm"> $layout, transpose<"transa">, $transb, $k, $n, $m, $alpha, $A, $lda, adj<"C">, $ldc, $beta, adj<"B">, $ldb),
                   /* beta  */ (inactive),
-                  /* C     */ (b<"lascl"> Char<"G">, ConstantInt<"0">, ConstantInt<"0">, Constant<"1.0">, $beta, $m, $n, adj<"C">, $ldc, ConstantInt<"0">)
+                  /* C     */ (b<"lascl"> $layout, Char<"G">, ConstantInt<"0">, ConstantInt<"0">, Constant<"1.0">, $beta, $m, $n, adj<"C">, $ldc, ConstantInt<"0">)
                   ]
                   >;
 

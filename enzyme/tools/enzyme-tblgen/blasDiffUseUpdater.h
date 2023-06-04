@@ -2,11 +2,14 @@ void emit_BLASDiffUse(TGPattern &pattern, raw_ostream &os) {
   auto argTypeMap = pattern.getArgTypeMap();
   auto argUsers = pattern.getArgUsers();
   bool lv23 = pattern.isBLASLevel2or3();
+  auto nameVec = pattern.getArgNames();
+  auto actArgs = pattern.getActiveArgs();
 
   auto name = pattern.getName();
 
   os << "if (blas.function == \"" << name << "\") {\n";
   os << "const bool byRef = blas.prefix == \"\";\n";
+
   if (lv23) {
     os << "const int offset = (byRef ? 0 : 1);\n";
 
@@ -19,18 +22,35 @@ void emit_BLASDiffUse(TGPattern &pattern, raw_ostream &os) {
     os << "}\n";
   }
 
+  assert(argTypeMap.size() == nameVec.size());
+  for (size_t argPos = (lv23 ? 1 : 0); argPos < argTypeMap.size(); argPos++) {
+    assert(argPos < nameVec.size());
+    auto name = nameVec[argPos];
+    size_t i = (lv23 ? argPos - 1 : argPos);
+    os << "  auto arg_" << name << " = CI->getArgOperand(" << i
+       << (lv23 ? " + offset " : "") << ");\n";
+  }
+
+  for (auto arg : actArgs) {
+    auto name = nameVec[arg];
+    os << "  bool active_" << name << " = !gutils->isConstantValue(arg_" << name
+       << ");\n";
+  }
+
   for (size_t argPos = (lv23 ? 1 : 0); argPos < argTypeMap.size(); argPos++) {
     auto users = argUsers.lookup(argPos);
+    auto name = nameVec[argPos];
     size_t i = (lv23 ? argPos - 1 : argPos);
-    os << "  if (val == CI->getArgOperand(" << i << (lv23 ? " + offset" : "")
-       << ")) {\n";
+    os << "  if (val == arg_" << name << ") {\n";
     for (auto a : users) {
+      auto name = nameVec[a];
       // The following shows that I probably should change the tblgen
       // logic and the Blas.td declaration
       if (a == i) // a == i? argpos ?
         continue;
-      os << "    if (!gutils->isConstantValue(CI->getOperand(" << a
-         << (lv23 ? " + offset" : "") << "))) return true;\n";
+      os << "    if (active_" << name << ") return true;\n";
+      // os << "    if (!gutils->isConstantValue(CI->getOperand(" << a
+      //    << (lv23 ? " + offset" : "") << "))) return true;\n";
     }
     os << "  }\n";
   }
