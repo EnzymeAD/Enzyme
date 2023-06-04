@@ -78,29 +78,48 @@ void emit_scalar_caching(TGPattern &pattern, raw_ostream &os) {
   auto actArgs = pattern.getActiveArgs();
   auto typeMap = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
+  const auto argUsers = pattern.getArgUsers();
+  
   os 
 << "  // len, fp, etc. must be preserved if overwritten\n";
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto typeOfArg = typeMap.lookup(i);
-    if (typeOfArg == argType::len || typeOfArg == argType::fp || typeOfArg == argType::trans 
-        || typeOfArg == argType::vincInc || typeOfArg == argType::mldLD) {
-      auto scalarType = "";
-      if (typeOfArg == len || typeOfArg == vincInc || typeOfArg == mldLD) {
-        scalarType = "intType";
-      } else if (typeOfArg == trans) {
-        scalarType = "charType";
-      } else if (typeOfArg == fp) {
-        scalarType = "fpType";
-      }
-      auto name = nameVec[i];
+    if (typeOfArg != len && typeOfArg != fp && typeOfArg != trans 
+        && typeOfArg != vincInc && typeOfArg != mldLD) {
+      continue;
+    }
+    auto scalarType = "";
+    if (typeOfArg == len || typeOfArg == vincInc || typeOfArg == mldLD) {
+      scalarType = "intType";
+    } else if (typeOfArg == trans) {
+      scalarType = "charType";
+    } else if (typeOfArg == fp) {
+      scalarType = "fpType";
+    }
+    auto name = nameVec[i];
+    const auto scalarUsers = argUsers.lookup(i);
+
+
+    bool first = true;
+    if (scalarUsers.size() == 0) {
+os << "  bool cache_" << name << " = false;\n";
+    } else {
       os 
-//<< "  bool cache_" << name << " = true;\n"
-<< "  const bool need_" << name << " = true;\n"
-<< "  bool cache_" << name << " = false;\n"
-// << "  if (byRef && true) {\n"
-<< "  if (byRef && uncacheable_" << name << ") {\n"
+<< "  bool cache_" << name
+<< "  = (cacheMode && byRef &&\n"
+<< "          uncacheable_" << name << " && (";
+      for (size_t user: scalarUsers) {
+        auto userName = nameVec[user];
+        //if (name == userName)
+        //  continue; // adjoint of x won't need x
+        os << (first ? "" : " || ")
+<< " active_" << userName;
+        first = false;
+      }
+      os 
+<< "));\n"
+<< "  if (cache_" << name << ") {\n"
 << "    cacheTypes.push_back(" << scalarType << ");\n"
-<< "    cache_" << name << " = true;\n"
 << "  }\n";
     }
   }
