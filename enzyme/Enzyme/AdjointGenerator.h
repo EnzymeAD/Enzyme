@@ -6394,14 +6394,14 @@ public:
               return F;
 
             F->setLinkage(Function::LinkageTypes::InternalLinkage);
-            F->addFnAttr(Attribute::ArgMemOnly);
             F->addFnAttr(Attribute::NoUnwind);
-            //            F->addFnAttr(Attribute::AlwaysInline);
-            //            F->addParamAttr(0, Attribute::NoCapture);
-            //            F->addParamAttr(1, Attribute::NoCapture);
-            //            F->addParamAttr(2, Attribute::NoCapture);
-            //            F->addParamAttr(3, Attribute::NoCapture);
-            //            F->addParamAttr(4, Attribute::NoCapture);
+            F->addParamAttr(0, Attribute::NoCapture);
+            F->addParamAttr(1, Attribute::NoCapture);
+            F->addParamAttr(2, Attribute::NoCapture);
+            if (MPIOpPtrTy->isPointerTy())
+              F->addParamAttr(4, Attribute::NoCapture);
+            if (MPICommPtrTy->isPointerTy())
+              F->addParamAttr(5, Attribute::NoCapture);
 
             auto IntZero = ConstantInt::get(IntTy, 0);
             auto IntOne = ConstantInt::get(IntTy, 1);
