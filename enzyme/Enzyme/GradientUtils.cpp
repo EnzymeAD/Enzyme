@@ -2392,7 +2392,6 @@ endCheck:
         }
         if (isPotentialLastLoopValue(opinst, forwardBlock, LI)) {
           nval = fixLCSSA(opinst, forwardBlock);
-          nS2 = nullptr;
         }
       }
     auto toreturn = lookupM(nval, BuilderM, available,
