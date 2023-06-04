@@ -2176,6 +2176,7 @@ llvm::FastMathFlags getFast() {
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVector<llvm::Value *, 2> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, llvm::Twine name) {
+   if (!cache_arg) return;
   auto PT = cast<PointerType>(arg->getType());
   if (PT->getElementType() != ty)
     arg = BuilderZ.CreatePointerCast(arg, PointerType::get(ty, PT->getAddressSpace()), "pcld." + name);
@@ -2184,8 +2185,7 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
 #else
   arg = BuilderZ.CreateLoad(arg, "avld." + name);
 #endif
-  if (cache_arg)
-    cacheValues.push_back(arg);
+  cacheValues.push_back(arg);
 }
 
 void extractValueFromCache(llvm::Value *arg, bool cache_arg,
