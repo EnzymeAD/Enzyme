@@ -640,6 +640,9 @@ llvm::Function *getOrInsertMemcpyStridedBlas(llvm::Module &M,
 llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M, llvm::PointerType *T,
                                          llvm::Type *IT, unsigned dstalign,
                                          unsigned srcalign);
+
+llvm::Function *getOrInsertMemcpyMat(llvm::Module &M, llvm::Type *elementType, llvm::PointerType* PT, llvm::IntegerType *IT, unsigned dstalign, unsigned srcalign);
+
 ///// Create function for type that performs memcpy with a stride
 //llvm::Function *getOrInsertMemcpyMat(llvm::Module &M, llvm::PointerType *T,
 //                                     llvm::Type *IT, unsigned M, unsigned N,
