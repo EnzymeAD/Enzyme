@@ -902,15 +902,8 @@ void emit_free_and_ending(TGPattern &pattern, raw_ostream &os) {
   auto nameVec = pattern.getArgNames();
   auto typeMap = pattern.getArgTypeMap();
   for (size_t i = 0; i < nameVec.size(); i++) {
-    if (typeMap.lookup(i) == argType::vincData) {
-      auto name = nameVec[i];
-      os << "      if (cache_" << name << ") {\n"
-         << "        CreateDealloc(Builder2, data_ptr_" << name << ");\n"
-         << "      }\n";
-    }
-  }
-  for (size_t i = 0; i < nameVec.size(); i++) {
-    if (typeMap.lookup(i) == argType::mldData) {
+    auto ty = typeMap.lookup(i);
+    if (ty == argType::mldData || ty == argType::vincData) {
       auto name = nameVec[i];
       os << "      if (cache_" << name << ") {\n"
          << "        if (julia_decl) {\n"
@@ -1197,17 +1190,23 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
     const auto vecUsers = argUsers.lookup(vecPosition);
     const auto incName = nameVec[i + 1];
     os << "    if (cache_" << vecName << ") {\n"
-       << "      data_ptr_" << vecName << " = data_" << vecName << " =\n"
+       << "      data_" << vecName << " =\n"
        << "          (cacheTypes.size() == 1)\n"
        << "              ? cacheval\n"
-       << "              : Builder2.CreateExtractValue(cacheval, {cacheidx}, \"tape.ext." << vecName << "\");\n"
+       << "              : Builder2.CreateExtractValue(cacheval, {cacheidx}, "
+          "\"tape.ext."
+       << vecName << "\");\n"
+       << "        free_" << vecName << " = data_" << vecName << ";\n"
        << "      cacheidx++;\n"
        << "      " << incName << " = ConstantInt::get(intType, 1);\n"
        << "      if (byRef) {\n"
-       << "        auto alloc = allocationBuilder.CreateAlloca(intType, nullptr, \"byref." << vecName << "\");\n"
+       << "        auto alloc = allocationBuilder.CreateAlloca(intType, "
+          "nullptr, \"byref."
+       << vecName << "\");\n"
        << "        Builder2.CreateStore(" << incName << ", alloc);\n"
        << "        " << incName << " = Builder2.CreatePointerCast(\n"
-       << "            alloc, call.getArgOperand(0)->getType(), \"cast." << vecName << "\");\n"
+       << "            alloc, orig_" << vecName << "->getType(), \"cast."
+       << vecName << "\");\n"
        << "      }\n"
        << "      if (type_" << vecName << "->isIntegerTy())\n"
        << "        data_" << vecName << " = Builder2.CreatePtrToInt(data_"
@@ -1644,7 +1643,6 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
         result.append((Twine("d_") + name).str());
       } else if (Def->isSubClassOf("input")) {
         auto name = Def->getValueAsString("name");
-        // maybe it should be data_ptr_ ??
         result.append((Twine("data_") + name).str());
         // result.append((Twine("input_") + name).str());
       } else if (Def->isSubClassOf("MagicInst")) {

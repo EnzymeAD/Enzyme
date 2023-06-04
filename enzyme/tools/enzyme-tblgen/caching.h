@@ -292,7 +292,7 @@ os << "        dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
 << "  Value *true_" << incName << " = arg_" << incName << ";\n"
 << "  Value *" << incName << " = true_" << incName << ";\n"
 << "  Value *data_" << vecName << " = arg_" << vecName << ";\n"
-<< "  Value *data_ptr_" << vecName << " = nullptr;\n";
+<< "  Value *free_" << vecName << " = arg_" << vecName << ";\n";
     } else if (typeOfArg == argType::mldData) {
       assert(typeMap.lookup(i+1) == argType::mldLD);
       auto vecName = nameVec[i];
