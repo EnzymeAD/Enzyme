@@ -241,6 +241,10 @@ private:
   std::string blasName;
   bool BLASLevel2or3;
 
+  // To handle Fortran ABI shenanigans we need to know
+  // the number of character types.
+  uint numCharArgs;
+
   // All args from the primary blas function
   SmallVector<std::string, 6> args;
 
@@ -296,6 +300,14 @@ public:
       }
     }
 
+    // count number of char args for Fortran.
+    numCharArgs = 0;
+    for (auto ty : argTypes) {
+      if (ty == argType::diag || ty == argType::side || ty == argType::uplo ||
+          ty == argType::trans)
+        numCharArgs++;
+    }
+
     argUsers = DenseMap<size_t, DenseSet<size_t>>();
     fillArgUserMap(rules, args, posActArgs, argUsers);
     // for (auto key : argUsers) {
@@ -347,6 +359,7 @@ public:
     llvm::errs() << "failed for: " << blasName << "\n";
     assert(false);
   }
+  uint getNumCharArgs() { return numCharArgs; }
   bool isBLASLevel2or3() { return BLASLevel2or3; }
   DenseMap<size_t, DenseSet<size_t>> getArgUsers() { return argUsers; }
   std::string getName() { return blasName; }

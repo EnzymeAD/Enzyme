@@ -1001,6 +1001,25 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
     }
   }
 
+  // handle Fortran ABI, which based on the compiler might represent each of
+  // the characters (e.g. trans) as a string + stringLenInteger combination.
+  // The length might be either int or size_t, so if we find more args for
+  // lv2 or lv3 under the byRef (Fortran) ABI than we expect based on our
+  // declaraiton, assume that this is the case. In theory the len might also
+  // follow the char/string directly, but we didn't  encounter that yet, so
+  // leave it for later.
+  if (lv23) {
+    os << "  Value *extraOnes = nullptr;\n"
+       << "  Type *extraOnesTy = nullptr;\n"
+       << "  bool hasExtraOnes = false;\n"
+       << "  if (call.arg_size() > " << nameVec.size() << ") {\n"
+       << "    Value *origOne = call.getArgOperand(call.arg_size() - 1);\n"
+       << "    extraOnes = gutils->getNewFromOriginal(origOne);\n"
+       << "    extraOnesTy = extraOnes->getType();\n"
+       << "    hasExtraOnes = true;\n"
+       << "  }\n\n";
+  }
+
   for (auto name : llvm::enumerate(nameVec)) {
     assert(argTypeMap.count(name.index()) == 1);
     auto type = argTypeMap.lookup(name.index());
@@ -1522,6 +1541,7 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
       PrintFatalError("calling unknown Blas function");
     }
     TGPattern calledPattern = patternMap.find(dfnc_name.str())->getValue();
+    const uint numCharArgs = calledPattern.getNumCharArgs();
     bool derivlv23 = calledPattern.isBLASLevel2or3();
     DenseSet<size_t> mutableArgs = calledPattern.getMutableArgs();
 
@@ -1593,10 +1613,19 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
       first = false;
     }
 
+    std::string extraOneTyStr = "";
+    for (auto i : numCharArgs) {
+      extraOneTyStr += ", extraOnesTy";
+    }
+
     os << "    llvm::FunctionType *FT" << dfnc_name << " = nullptr;\n";
     if (derivlv23) {
       os << "    if(byRef) {\n"
          << "      Type* tys" << dfnc_name << "[] = {" << typeString << "};\n"
+
+         << "      if (hasExtraOnes) {\n"
+         << "        tys" << dfnc_name << " = {" << typeString << extraOneTyStr
+         << "      };\n"
          << "      FT" << dfnc_name
          << " = FunctionType::get(Builder2.getVoidTy(), tys" << dfnc_name
          << ", false);\n"
