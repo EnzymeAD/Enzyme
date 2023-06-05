@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/FunctionInterfaces.h"
+#include "mlir/IR/IRMapping.h"
 
 #include "CloneFunction.h"
 #include "EnzymeLogic.h"
@@ -20,12 +20,12 @@ class MGradientUtilsReverse {
 public:
   MGradientUtilsReverse(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                         FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
-                        BlockAndValueMapping invertedPointers_,
+                        IRMapping invertedPointers_,
                         const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                         const SmallPtrSetImpl<mlir::Value> &activevals_,
                         DIFFE_TYPE ReturnActivity,
                         ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
-                        BlockAndValueMapping &originalToNewFn_,
+                        IRMapping &originalToNewFn_,
                         std::map<Operation *, Operation *> &originalToNewFnOps_,
                         DerivativeMode mode_, unsigned width,
                         SymbolTableCollection &symbolTable_);
@@ -37,15 +37,15 @@ public:
   MEnzymeLogic &Logic;
   bool AtomicAdd;
   DerivativeMode mode;
-  BlockAndValueMapping invertedPointersGlobal;
-  BlockAndValueMapping invertedPointersShadow;
-  BlockAndValueMapping shadowValues;
+  IRMapping invertedPointersGlobal;
+  IRMapping invertedPointersShadow;
+  IRMapping shadowValues;
   Block *initializationBlock;
 
-  BlockAndValueMapping mapReverseModeBlocks;
+  IRMapping mapReverseModeBlocks;
   DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments;
 
-  BlockAndValueMapping originalToNewFn;
+  IRMapping originalToNewFn;
   std::map<Operation *, Operation *> originalToNewFnOps;
 
   MTypeAnalysis &TA;
@@ -94,7 +94,7 @@ public:
 
   bool requiresShadow(Type t);
 
-  void initInitializationBlock(BlockAndValueMapping invertedPointers_,
+  void initInitializationBlock(IRMapping invertedPointers_,
                                const SmallPtrSetImpl<mlir::Value> &activevals_);
 
   bool onlyUsedInParentBlock(Value v);
