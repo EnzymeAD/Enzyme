@@ -9138,16 +9138,18 @@ bool GradientUtils::needsCacheWholeAllocation(
     return false;
   if (!found->second)
     return true;
-  SmallVector<const Instruction *, 1> todo;
-  for (auto user : origInst->users())
-    todo.push_back(cast<Instruction>(user));
-  SmallPtrSet<const Instruction *, 1> seen;
+  SmallVector<std::pair<const Instruction *, size_t>, 1> todo;
+  for (auto &use : origInst->uses())
+    todo.push_back(
+        std::make_pair(cast<Instruction>(use.getUser()), use.getOperandNo()));
+  SmallSet<std::pair<const Instruction *, size_t>, 1> seen;
   while (todo.size()) {
-    auto cur = todo.back();
+    auto pair = todo.back();
+    auto [cur, idx] = pair;
     todo.pop_back();
-    if (seen.count(cur))
+    if (seen.count(pair))
       continue;
-    seen.insert(cur);
+    seen.insert(pair);
     // Loads are always fine
     if (isa<LoadInst>(cur))
       continue;
@@ -9162,20 +9164,34 @@ bool GradientUtils::needsCacheWholeAllocation(
           II->getIntrinsicID() == Intrinsic::masked_load)
         continue;
 
+    if (auto CI = dyn_cast<CallInst>(cur)) {
+#if LLVM_VERSION_MAJOR >= 14
+      if (idx < CI->arg_size())
+#else
+      if (idx < CI->getNumArgOperands())
+#endif
+      {
+        if (isNoCapture(CI, idx))
+          continue;
+      }
+    }
+
     found = knownRecomputeHeuristic.find(cur);
     if (found == knownRecomputeHeuristic.end())
       continue;
 
     // If caching this user, it cannot be a gep/cast of original
     if (!found->second) {
+      assert(false);
       assert(isPointerArithmeticInst(cur, /*includephi*/ true,
                                      /*includebin*/ true));
       // if return may alias the input, then force it to be saved
       return true;
     } else {
       // if not caching this user, it is legal to recompute, consider its users
-      for (auto user : cur->users()) {
-        todo.push_back(cast<Instruction>(user));
+      for (auto &use : cur->uses()) {
+        todo.push_back(std::make_pair(cast<Instruction>(use.getUser()),
+                                      use.getOperandNo()));
       }
     }
   }
