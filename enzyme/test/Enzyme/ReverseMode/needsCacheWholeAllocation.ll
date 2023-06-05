@@ -47,32 +47,32 @@ bb:
 
 ; CHECK: define internal { i8*, double*, double* } @augmented_z0(double* %a5, double* %"a5'")
 ; CHECK-NEXT: bb:
-; CHECK-NEXT:   %0 = alloca { i8*, double*, double* }, align 8
+; CHECK-NEXT:   %0 = alloca { i8*, double*, double* }
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(12) dereferenceable_or_null(12) i8* @malloc(i64 12)
 ; CHECK-NEXT:   %tapemem = bitcast i8* %malloccall to { i1, i64 }*
 ; CHECK-NEXT:   %1 = getelementptr inbounds { i8*, double*, double* }, { i8*, double*, double* }* %0, i32 0, i32 0
-; CHECK-NEXT:   store i8* %malloccall, i8** %1, align 8
-; CHECK-NEXT:   %i1 = alloca i64, i64 1, align 8
+; CHECK-NEXT:   store i8* %malloccall, i8** %1
+; CHECK-NEXT:   %i1 = alloca i64, i64 1
 ; CHECK-NEXT:   %2 = bitcast i64* %i1 to i8*
-; CHECK-NEXT:   %i = alloca i64, i64 1, align 8
+; CHECK-NEXT:   %i = alloca i64, i64 1
 ; CHECK-NEXT:   %3 = bitcast i64* %i to i8*
-; CHECK-NEXT:   %4 = bitcast i8* %3 to i64*, !enzyme_caststack !0
-; CHECK-NEXT:   %5 = bitcast i8* %2 to i64*, !enzyme_caststack !0
+; CHECK-NEXT:   %4 = bitcast i8* %3 to i64*, !enzyme_caststack !
+; CHECK-NEXT:   %5 = bitcast i8* %2 to i64*, !enzyme_caststack !
 ; CHECK-NEXT:   %i2 = call i64 @augmented_a32(double* %a5, double* %"a5'")
 ; CHECK-NEXT:   %6 = getelementptr inbounds { i1, i64 }, { i1, i64 }* %tapemem, i32 0, i32 1
-; CHECK-NEXT:   store i64 %i2, i64* %6, align 4
-; CHECK-NEXT:   store i64 %i2, i64* %4, align 8
+; CHECK-NEXT:   store i64 %i2, i64* %6
+; CHECK-NEXT:   store i64 %i2, i64* %4
 ; CHECK-NEXT:   %i6 = call i1 @augmented_a14(double* %a5, double* %"a5'", i64* nocapture readonly %4)
 ; CHECK-NEXT:   %7 = getelementptr inbounds { i1, i64 }, { i1, i64 }* %tapemem, i32 0, i32 0
-; CHECK-NEXT:   store i1 %i6, i1* %7, align 1
-; CHECK-NEXT:   store i64 %i2, i64* %5, align 8
+; CHECK-NEXT:   store i1 %i6, i1* %7
+; CHECK-NEXT:   store i64 %i2, i64* %5
 ; CHECK-NEXT:   call void @augmented_a25(double* %a5, double* %"a5'", i64* nocapture readonly %5, i1 %i6)
 ; CHECK-NEXT:   %8 = insertvalue { i8*, double*, double* } undef, double* %a5, 1
 ; CHECK-NEXT:   %9 = getelementptr inbounds { i8*, double*, double* }, { i8*, double*, double* }* %0, i32 0, i32 1
-; CHECK-NEXT:   store double* %a5, double** %9, align 8
+; CHECK-NEXT:   store double* %a5, double** %9
 ; CHECK-NEXT:   %10 = getelementptr inbounds { i8*, double*, double* }, { i8*, double*, double* }* %0, i32 0, i32 2
-; CHECK-NEXT:   store double* %"a5'", double** %10, align 8
-; CHECK-NEXT:   %11 = load { i8*, double*, double* }, { i8*, double*, double* }* %0, align 8
+; CHECK-NEXT:   store double* %"a5'", double** %10
+; CHECK-NEXT:   %11 = load { i8*, double*, double* }, { i8*, double*, double* }* %0
 ; CHECK-NEXT:   ret { i8*, double*, double* } %11
 ; CHECK-NEXT: }
 
