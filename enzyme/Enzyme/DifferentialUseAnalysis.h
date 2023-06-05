@@ -633,7 +633,8 @@ void minCut(const llvm::DataLayout &DL, llvm::LoopInfo &OrigLI,
             llvm::SmallPtrSetImpl<llvm::Value *> &Required,
             llvm::SmallPtrSetImpl<llvm::Value *> &MinReq,
             const llvm::ValueMap<llvm::Value *, GradientUtils::Rematerializer>
-                &rematerializableAllocations);
+                &rematerializableAllocations,
+            llvm::TargetLibraryInfo &TLI);
 
 }; // namespace DifferentialUseAnalysis
 

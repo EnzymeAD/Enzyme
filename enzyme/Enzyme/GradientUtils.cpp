@@ -7950,7 +7950,7 @@ void GradientUtils::computeMinCache() {
     SmallPtrSet<Value *, 5> MinReq;
     DifferentialUseAnalysis::minCut(oldFunc->getParent()->getDataLayout(),
                                     OrigLI, Recomputes, Intermediates, Required,
-                                    MinReq, rematerializableAllocations);
+                                    MinReq, rematerializableAllocations, TLI);
     SmallPtrSet<Value *, 5> NeedGraph;
     for (Value *V : MinReq)
       NeedGraph.insert(V);
@@ -9182,11 +9182,7 @@ bool GradientUtils::needsCacheWholeAllocation(
 
     // If caching this user, it cannot be a gep/cast of original
     if (!found->second) {
-      assert(false);
-      assert(isPointerArithmeticInst(cur, /*includephi*/ true,
-                                     /*includebin*/ true));
-      // if return may alias the input, then force it to be saved
-      return true;
+      assert(false && "caching potentially capturing/offset of allocation");
     } else {
       // if not caching this user, it is legal to recompute, consider its users
       for (auto &use : cur->uses()) {
