@@ -88,8 +88,9 @@ extern "C" {
 extern llvm::cl::opt<bool> EnzymePrintPerf;
 extern llvm::cl::opt<bool> EnzymeStrongZero;
 extern llvm::cl::opt<bool> EnzymeBlasCopy;
-extern void (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
-                                  const void *, LLVMValueRef);
+extern LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
+                                          const void *, LLVMValueRef,
+                                          LLVMBuilderRef);
 }
 
 llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,

@@ -5512,36 +5512,49 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto arg = dyn_cast<SelectInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
     bb.setFastMathFlags(getFast());
-    if (!EnzymeRuntimeActivityCheck && CustomErrorHandler) {
-      if (TR.query(arg)[{-1}].isPossiblePointer()) {
-        auto tval = arg->getTrueValue();
-        if (!isa<UndefValue>(tval) && !isa<ConstantPointerNull>(tval) &&
-            !isConstantValue(tval)) {
-          std::string str;
-          raw_string_ostream ss(str);
-          ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
-          CustomErrorHandler(str.c_str(), wrap(arg),
-                             ErrorType::MixedActivityError, this, wrap(tval));
-        }
-        auto fval = arg->getFalseValue();
-        if (!isa<UndefValue>(fval) && !isa<ConstantPointerNull>(fval) &&
-            !isConstantValue(fval)) {
-          std::string str;
-          raw_string_ostream ss(str);
-          ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
-          CustomErrorHandler(str.c_str(), wrap(arg),
-                             ErrorType::MixedActivityError, this, wrap(fval));
-        }
+
+    Value *itval = nullptr;
+    {
+      auto tval = arg->getTrueValue();
+      if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+          TR.query(arg)[{-1}].isPossiblePointer() && !isa<UndefValue>(tval) &&
+          !isa<ConstantPointerNull>(tval) && !isConstantValue(tval)) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
+        itval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
+                                          ErrorType::MixedActivityError, this,
+                                          wrap(tval), wrap(&bb)));
+
+      } else {
+        itval = invertPointerM(tval, bb, nullShadow);
       }
     }
+    Value *ifval = nullptr;
+    {
+      auto fval = arg->getFalseValue();
+      if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+          TR.query(arg)[{-1}].isPossiblePointer() && !isa<UndefValue>(fval) &&
+          !isa<ConstantPointerNull>(fval) && !isConstantValue(fval)) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
+        ifval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
+                                          ErrorType::MixedActivityError, this,
+                                          wrap(fval), wrap(&bb)));
+
+      } else {
+        ifval = invertPointerM(fval, bb, nullShadow);
+      }
+    }
+
     Value *shadow = applyChainRule(
         arg->getType(), bb,
         [&](Value *tv, Value *fv) {
           return bb.CreateSelect(getNewFromOriginal(arg->getCondition()), tv,
                                  fv, arg->getName() + "'ipse");
         },
-        invertPointerM(arg->getTrueValue(), bb, nullShadow),
-        invertPointerM(arg->getFalseValue(), bb, nullShadow));
+        itval, ifval);
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
     return shadow;
@@ -5875,25 +5888,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         bb.SetInsertPoint(bb.GetInsertBlock(), bb.GetInsertBlock()->begin());
       }
 
-      if (!EnzymeRuntimeActivityCheck && CustomErrorHandler) {
-        if (TR.query(phi)[{-1}].isPossiblePointer()) {
-          for (unsigned int j = 0; j < phi->getNumIncomingValues(); ++j) {
-            auto val = phi->getIncomingValue(j);
-            if (isa<UndefValue>(val))
-              continue;
-            if (isa<ConstantPointerNull>(val))
-              continue;
-            if (!isConstantValue(val))
-              continue;
-            std::string str;
-            raw_string_ostream ss(str);
-            ss << "Mismatched activity for: " << *phi << " const val: " << *val;
-            CustomErrorHandler(str.c_str(), wrap(phi),
-                               ErrorType::MixedActivityError, this, wrap(val));
-          }
-        }
-      }
-
       if (EnzymeVectorSplitPhi && width > 1) {
         IRBuilder<> postPhi(NewV->getParent()->getFirstNonPHI());
         Type *shadowTy = getShadowType(phi->getType());
@@ -5905,6 +5899,32 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         Type *wrappedType = ArrayType::get(phi->getType(), width);
         Value *res = UndefValue::get(wrappedType);
 
+        SmallVector<Value *, 1> invertedVals;
+        for (unsigned int j = 0; j < phi->getNumIncomingValues(); ++j) {
+          IRBuilder<> pre(
+              cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(j)))
+                  ->getTerminator());
+          Value *preval = phi->getIncomingValue(j);
+
+          Value *val = nullptr;
+          if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+              TR.query(phi)[{-1}].isPossiblePointer() &&
+              !isa<UndefValue>(preval) && !isa<ConstantPointerNull>(preval) &&
+              !isConstantValue(preval)) {
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Mismatched activity for: " << *phi
+               << " const val: " << *preval;
+            val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
+                                            ErrorType::MixedActivityError, this,
+                                            wrap(preval), wrap(&pre)));
+
+          } else {
+            val = invertPointerM(preval, pre, nullShadow);
+          }
+          invertedVals.push_back(val);
+        }
+
         for (unsigned int i = 0; i < getWidth(); ++i) {
           PHINode *which =
               bb.CreatePHI(phi->getType(), phi->getNumIncomingValues());
@@ -5914,8 +5934,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             IRBuilder<> pre(
                 cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(j)))
                     ->getTerminator());
-            Value *val =
-                invertPointerM(phi->getIncomingValue(j), pre, nullShadow);
+            Value *val = invertedVals[j];
             auto extracted_diff = extractMeta(pre, val, i);
             which->addIncoming(
                 extracted_diff,
@@ -5944,8 +5963,26 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           IRBuilder<> pre(
               cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(i)))
                   ->getTerminator());
-          Value *val =
-              invertPointerM(phi->getIncomingValue(i), pre, nullShadow);
+
+          Value *preval = phi->getIncomingValue(i);
+
+          Value *val = nullptr;
+          if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+              TR.query(phi)[{-1}].isPossiblePointer() &&
+              !isa<UndefValue>(preval) && !isa<ConstantPointerNull>(preval) &&
+              !isConstantValue(preval)) {
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Mismatched activity for: " << *phi
+               << " const val: " << *preval;
+            val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
+                                            ErrorType::MixedActivityError, this,
+                                            wrap(preval), wrap(&pre)));
+
+          } else {
+            val = invertPointerM(preval, pre, nullShadow);
+          }
+
           which->addIncoming(val, cast<BasicBlock>(getNewFromOriginal(
                                       phi->getIncomingBlock(i))));
         }
@@ -5963,8 +6000,14 @@ end:;
     std::string str;
     raw_string_ostream ss(str);
     ss << "cannot find shadow for " << *oval;
-    CustomErrorHandler(str.c_str(), wrap(oval), ErrorType::NoShadow, this,
-                       nullptr);
+    auto iv =
+        unwrap(CustomErrorHandler(str.c_str(), wrap(oval), ErrorType::NoShadow,
+                                  this, nullptr, wrap(&BuilderM)));
+    if (iv) {
+      invertedPointers.insert(
+          std::make_pair((const Value *)oval, InvertedPointerVH(this, iv)));
+      return iv;
+    }
   }
 
   llvm::errs() << *newFunc->getParent() << "\n";

@@ -49,8 +49,9 @@
 using namespace llvm;
 
 extern "C" {
-void (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType, const void *,
-                           LLVMValueRef) = nullptr;
+LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
+                                   const void *, LLVMValueRef,
+                                   LLVMBuilderRef) = nullptr;
 LLVMValueRef (*CustomAllocator)(LLVMBuilderRef, LLVMTypeRef,
                                 /*Count*/ LLVMValueRef,
                                 /*Align*/ LLVMValueRef, uint8_t,

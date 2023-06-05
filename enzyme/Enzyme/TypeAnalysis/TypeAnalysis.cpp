@@ -664,7 +664,7 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
       if (Origin)
         ss << " origin=" << *Origin;
       CustomErrorHandler(str.c_str(), wrap(Val), ErrorType::IllegalTypeAnalysis,
-                         (void *)this, wrap(Origin));
+                         (void *)this, wrap(Origin), nullptr);
     }
     llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
     llvm::errs() << *fntypeinfo.Function << "\n";
@@ -1435,7 +1435,8 @@ void TypeAnalyzer::visitGetElementPtrInst(GetElementPtrInst &gep) {
     if (!legal) {
       if (CustomErrorHandler)
         CustomErrorHandler("Could not keep minus one", wrap(&gep),
-                           ErrorType::IllegalTypeAnalysis, this, nullptr);
+                           ErrorType::IllegalTypeAnalysis, this, nullptr,
+                           nullptr);
       else {
         dump();
         llvm::errs() << " could not perform minus one for gep'd: " << gep
@@ -3484,7 +3485,8 @@ void analyzeIntelSubscriptIntrinsic(IntrinsicInst &II, TypeAnalyzer &TA) {
     if (!legal) {
       if (CustomErrorHandler)
         CustomErrorHandler("Could not keep minus one", wrap(&II),
-                           ErrorType::IllegalTypeAnalysis, &TA, nullptr);
+                           ErrorType::IllegalTypeAnalysis, &TA, nullptr,
+                           nullptr);
       else {
         TA.dump();
         llvm::errs()
@@ -5374,7 +5376,7 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
       ss << " at " << *val << " from " << *I << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(str.c_str(), wrap(I), ErrorType::IllegalFirstPointer,
-                           &analyzer, nullptr);
+                           &analyzer, nullptr, nullptr);
       }
       llvm::errs() << ss.str() << "\n";
       llvm_unreachable("Illegal firstPointer");
