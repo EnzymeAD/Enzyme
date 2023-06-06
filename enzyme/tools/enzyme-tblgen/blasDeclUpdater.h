@@ -32,12 +32,8 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
      << "  F->addAttribute(llvm::AttributeList::FunctionIndex, "
         "llvm::Attribute::MustProgress);\n"
      << "#endif\n"
-     << "#if LLVM_VERSION_MAJOR >= 9\n"
      << "  F->addFnAttr(llvm::Attribute::NoFree);\n"
-     << "  F->addFnAttr(llvm::Attribute::NoSync);\n"
-     << "#else\n"
-     << "    F->addFnAttr(\"nofree\");\n"
-     << "#endif\n";
+     << "  F->addFnAttr(llvm::Attribute::NoSync);\n";
 
   auto argTypeMap = pattern.getArgTypeMap();
   DenseSet<size_t> mutableArgs = pattern.getMutableArgs();

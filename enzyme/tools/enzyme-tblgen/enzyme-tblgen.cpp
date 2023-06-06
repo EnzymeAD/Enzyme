@@ -1619,13 +1619,8 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
        << "  (blas.prefix + blas.floatType + \"" << dfnc_name
        << "\" + blas.suffix).str(), FT" << dfnc_name << ");\n";
 
-    os << "#if LLVM_VERSION_MAJOR >= 9\n"
-       << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
+    os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
        << ".getCallee()))\n"
-       << "#else\n"
-       << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
-       << "))\n"
-       << "#endif\n"
        << "    {\n"
        << "      attribute_" << dfnc_name << "(blas, F);\n"
        << "    }\n\n";
