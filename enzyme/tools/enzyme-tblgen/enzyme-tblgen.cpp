@@ -914,7 +914,17 @@ void emit_free_and_ending(TGPattern &pattern, raw_ostream &os) {
   auto typeMap = pattern.getArgTypeMap();
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
-    if (ty == argType::mldData || ty == argType::vincData) {
+    if (ty == argType::vincData) {
+      auto name = nameVec[i];
+      os << "      if (cache_" << name << ") {\n"
+         << "        if (julia_decl) {\n"
+         << "          CreateDealloc(Builder2, data_" << name << ");\n"
+         << "        } else {\n"
+         << "          CreateDealloc(Builder2, data_" << name << ");\n"
+         << "        }\n"
+         << "      }\n";
+    }
+    if (ty == argType::mldData) {
       auto name = nameVec[i];
       os << "      if (cache_" << name << ") {\n"
          << "        if (julia_decl) {\n"
@@ -1332,61 +1342,55 @@ size_t fwd_call_args(TGPattern &pattern, size_t actArg,
     // get the position of this argument in the primary blas call
     assert(typeMap.count(pos) == 1);
     // and based on that get the fp/int + scalar/vector type
-    const auto typeOfArg = typeMap.lookup(pos);
-    if (typeOfArg == argType::len) {
+    const auto ty = typeMap.lookup(pos);
+    if (ty == len) {
       result.append((Twine("arg_") + name).str());
-    } else if (typeOfArg == argType::fp) {
+    } else if (ty == fp) {
       if (pos == actArg) {
         result.append((Twine("d_") + name).str());
       } else {
         result.append((Twine("fp_") + name).str());
       }
-    } else if (typeOfArg == argType::vincData) {
+    } else if (ty == vincData) {
       auto nextName = nameVec[pos + 1];
       // get the position of the argument in the primary blas call
       auto nextArgPosition = nameMap.lookup(nextName);
       // and based on that get the fp/int + scalar/vector type
       auto typeOfNextArg = typeMap.lookup(nextArgPosition);
-      assert(typeOfNextArg == argType::vincInc);
+      assert(typeOfNextArg == vincInc);
       if (pos == actArg) {
         result.append((Twine("d_") + name + ", true_" + nextName).str());
       } else {
         result.append((Twine("data_") + name + ", arg_" + nextName).str());
       }
       pos++; // extra ++ due to also handling vincInc
-    } else if (typeOfArg == argType::vincInc) {
+    } else if (ty == vincInc) {
       // might come without vincData, e.g. after DiffeRet
       result.append(name);
-    } else if (typeOfArg == argType::mldData) {
+    } else if (ty == mldData) {
       auto nextName = nameVec[pos + 1];
       // get the position of the argument in the primary blas call
       auto nextArgPosition = nameMap.lookup(nextName);
       // and based on that get the fp/int + scalar/vector type
       auto typeOfNextArg = typeMap.lookup(nextArgPosition);
-      assert(typeOfNextArg == argType::mldLD);
+      assert(typeOfNextArg == mldLD);
       if (pos == actArg) {
         result.append((Twine("d_") + name + ", true_" + nextName).str());
       } else {
         result.append((Twine("arg_") + name + ", arg_" + nextName).str());
       }
       pos++; // extra ++ due to also handling mldLD
-    } else if (typeOfArg == argType::mldLD) {
+    } else if (ty == mldLD) {
         // might come without mldData, e.g. after DiffeRet
         // coppied from vincInc, but should verify if actually needed
         result.append((Twine("arg_") + name).str());
-    } else if (typeOfArg == argType::cblas_layout) {
+    } else if (ty == cblas_layout) {
       // TODO: based on byRef
-    } else if (typeOfArg == argType::trans){
-        result.append((Twine("arg_") + name).str());
-    } else if (typeOfArg == argType::diag){
-        result.append((Twine("arg_") + name).str());
-    } else if (typeOfArg == argType::uplo){
-        result.append((Twine("arg_") + name).str());
-    } else if (typeOfArg == argType::side){
+    } else if (ty == trans || ty == diag || ty == uplo || ty == side){
         result.append((Twine("arg_") + name).str());
     } else {
       // TODO: impl
-      // llvm::errs() << "name: " << name << " typename: " << typeOfArg << "\n";
+      // llvm::errs() << "name: " << name << " typename: " << ty << "\n";
       // llvm_unreachable("unimplemented input type!");
     }
     pos++;
@@ -1413,14 +1417,14 @@ void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
   const auto inputTypes = pattern.getArgTypeMap();
   const auto activeArgs = pattern.getActiveArgs();
   for (auto inputType : inputTypes) {
-    auto newType = inputType.second;
-    if (newType == argType::vincData || newType == argType::mldData) {
+    auto ty = inputType.second;
+    if (ty == argType::vincData || ty == argType::mldData) {
       const auto name = nameVec[inputType.first];
       os << "    Value *d_" << name << " = active_" << name << "\n"
          << "     ? gutils->invertPointerM(orig_" << name << ", Builder2)\n"
          << "     : nullptr;\n";
     }
-    if (newType == argType::fp) {
+    if (ty == argType::fp) {
       const auto name = nameVec[inputType.first];
       os << "    Value *d_" << name
          << " = llvm::ConstantFP::get(fpType, 0.0);\n";
