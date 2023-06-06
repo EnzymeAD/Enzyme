@@ -39,16 +39,16 @@ jobs:
       run: cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
     - name: make
       working-directory: build
-      run: make -j
+      run: make -j `nproc`
     - name: make check-typeanalysis
       working-directory: build
-      run: make -j check-typeanalysis
+      run: make -j `nproc` check-typeanalysis
     - name: make check-activityanalysis
       working-directory: build
-      run: make -j check-activityanalysis
+      run: make -j `nproc` check-activityanalysis
     - name: make check-enzyme
       working-directory: build
-      run: make -j check-enzyme-bench
+      run: make check-enzyme-bench
     - name: graph results
       if: github.event_name != 'pull_request' && matrix.build == 'Release'
       run: python3 enzyme/test/upload-results.py build/test/Enzyme/results.json --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
@@ -80,16 +80,16 @@ jobs:
           cmake .. -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=${llvm_prefix}/lib/cmake/llvm
     - name: make
       working-directory: build
-      run: make -j
+      run: make -j 3
     - name: make check-typeanalysis
       working-directory: build
-      run: make -j check-typeanalysis
+      run: make -j 3 check-typeanalysis
     - name: make check-activityanalysis
       working-directory: build
-      run: make -j check-activityanalysis
+      run: make -j 3 check-activityanalysis
     - name: make check-enzyme
       working-directory: build
-      run: make -j check-enzyme-bench
+      run: make check-enzyme-bench
     - name: graph results
       if: github.event_name != 'pull_request' && matrix.build == 'Release'
       run: python3 enzyme/test/upload-results.py build/test/Enzyme/results.json --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
@@ -117,4 +117,4 @@ jobs:
       working-directory: build
       run: |
           cmake ../enzyme -GXcode -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
-          cmake --build .
+          cmake . --build --parallel 3

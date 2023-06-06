@@ -43,7 +43,7 @@ jobs:
       run: cd build && make -j LLVMEnzyme-${{ matrix.llvm }} ClangEnzyme-${{ matrix.llvm }} LLDEnzyme-${{ matrix.llvm }}  
     - name: make test-cmake
       working-directory: build
-      run: make -j test-cmake
+      run: make -j `nproc` test-cmake
     - name: make check-enzyme-integration
       working-directory: build
-      run: make -j check-enzyme-integration
+      run: make -j `nproc` check-enzyme-integration
