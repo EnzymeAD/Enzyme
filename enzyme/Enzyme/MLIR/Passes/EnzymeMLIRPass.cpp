@@ -15,9 +15,9 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
-#include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/FunctionInterfaces.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"

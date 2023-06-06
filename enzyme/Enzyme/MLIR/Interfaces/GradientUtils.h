@@ -11,8 +11,8 @@
 #include "Interfaces/EnzymeLogic.h"
 
 #include "Analysis/ActivityAnalysis.h"
-#include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/FunctionInterfaces.h"
+#include "mlir/IR/IRMapping.h"
 
 namespace mlir {
 namespace enzyme {
@@ -26,8 +26,8 @@ public:
   bool AtomicAdd;
   DerivativeMode mode;
   FunctionOpInterface oldFunc;
-  BlockAndValueMapping invertedPointers;
-  BlockAndValueMapping originalToNewFn;
+  IRMapping invertedPointers;
+  IRMapping originalToNewFn;
   std::map<Operation *, Operation *> originalToNewFnOps;
 
   SmallPtrSet<Block *, 4> blocksNotForAnalysis;
@@ -46,11 +46,11 @@ public:
 
   MGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                  FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
-                 MTypeResults TR_, BlockAndValueMapping &invertedPointers_,
+                 MTypeResults TR_, IRMapping &invertedPointers_,
                  const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                  const SmallPtrSetImpl<mlir::Value> &activevals_,
                  DIFFE_TYPE ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
-                 BlockAndValueMapping &originalToNewFn_,
+                 IRMapping &originalToNewFn_,
                  std::map<Operation *, Operation *> &originalToNewFnOps_,
                  DerivativeMode mode, unsigned width, bool omp);
   void erase(Operation *op) { op->erase(); }
@@ -71,12 +71,12 @@ class MDiffeGradientUtils : public MGradientUtils {
 public:
   MDiffeGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                       FunctionOpInterface oldFunc_, MTypeAnalysis &TA,
-                      MTypeResults TR, BlockAndValueMapping &invertedPointers_,
+                      MTypeResults TR, IRMapping &invertedPointers_,
                       const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                       const SmallPtrSetImpl<mlir::Value> &returnvals_,
                       DIFFE_TYPE ActiveReturn,
                       ArrayRef<DIFFE_TYPE> constant_values,
-                      BlockAndValueMapping &origToNew_,
+                      IRMapping &origToNew_,
                       std::map<Operation *, Operation *> &origToNewOps_,
                       DerivativeMode mode, unsigned width, bool omp)
       : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
@@ -109,13 +109,13 @@ public:
     if (width > 1)
       prefix += std::to_string(width);
 
-    BlockAndValueMapping originalToNew;
+    IRMapping originalToNew;
     std::map<Operation *, Operation *> originalToNewOps;
 
     SmallPtrSet<mlir::Value, 1> returnvals;
     SmallPtrSet<mlir::Value, 1> constant_values;
     SmallPtrSet<mlir::Value, 1> nonconstant_values;
-    BlockAndValueMapping invertedPointers;
+    IRMapping invertedPointers;
     FunctionOpInterface newFunc = CloneFunctionWithReturns(
         mode, width, todiff, invertedPointers, constant_args, constant_values,
         nonconstant_values, returnvals, returnValue, retType,

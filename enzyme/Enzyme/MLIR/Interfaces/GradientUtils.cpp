@@ -30,10 +30,10 @@ using namespace mlir::enzyme;
 mlir::enzyme::MGradientUtils::MGradientUtils(
     MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
     FunctionOpInterface oldFunc_, MTypeAnalysis &TA_, MTypeResults TR_,
-    BlockAndValueMapping &invertedPointers_,
+    IRMapping &invertedPointers_,
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
     const SmallPtrSetImpl<mlir::Value> &activevals_, DIFFE_TYPE ReturnActivity,
-    ArrayRef<DIFFE_TYPE> ArgDiffeTypes_, BlockAndValueMapping &originalToNewFn_,
+    ArrayRef<DIFFE_TYPE> ArgDiffeTypes_, IRMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode, unsigned width, bool omp)
     : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_), TA(TA_),
@@ -134,7 +134,7 @@ mlir::enzyme::MGradientUtils::getNewFromOriginal(Operation *originst) const {
 
 Operation *mlir::enzyme::MGradientUtils::cloneWithNewOperands(OpBuilder &B,
                                                               Operation *op) {
-  BlockAndValueMapping map;
+  IRMapping map;
   for (auto operand : op->getOperands())
     map.map(operand, getNewFromOriginal(operand));
   return B.clone(*op, map);
