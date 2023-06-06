@@ -134,14 +134,14 @@ entry:
 
 ; CHECK: define internal void @[[revMod]](i32 %len, double* noalias %m, double* %"m'", i32 %incm, double* noalias %n, double* %"n'", i32 %incn, double %differeturn, { double*, double* }
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %1 = extractvalue { double*, double* } %0, 0
-; CHECK-NEXT:   %2 = extractvalue { double*, double* } %0, 1
-; CHECK-NEXT:   call void @cblas_daxpy(i32 %len, double %differeturn, double* %2, i32 1, double* %"m'", i32 %incm)
-; CHECK-NEXT:   call void @cblas_daxpy(i32 %len, double %differeturn, double* %1, i32 1, double* %"n'", i32 %incn)
-; CHECK-NEXT:   %3 = bitcast double* %1 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %3)
-; CHECK-NEXT:   %4 = bitcast double* %2 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %4)
+; CHECK-NEXT:   %tape.ext.x = extractvalue { double*, double* } %0, 0
+; CHECK-NEXT:   %tape.ext.y = extractvalue { double*, double* } %0, 1
+; CHECK-NEXT:   call void @cblas_daxpy(i32 %len, double %differeturn, double* %tape.ext.y, i32 1, double* %"m'", i32 %incm)
+; CHECK-NEXT:   call void @cblas_daxpy(i32 %len, double %differeturn, double* %tape.ext.x, i32 1, double* %"n'", i32 %incn)
+; CHECK-NEXT:   %1 = bitcast double* %tape.ext.x to i8*
+; CHECK-NEXT:   tail call void @free(i8* nonnull %1)
+; CHECK-NEXT:   %2 = bitcast double* %tape.ext.y to i8*
+; CHECK-NEXT:   tail call void @free(i8* nonnull %2)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 

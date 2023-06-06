@@ -1729,9 +1729,13 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
         auto typeOfNextArg = typeMap.lookup(nextArgPosition);
         assert(typeOfNextArg == argType::vincInc);
         if (argPosition == actArg) {
+          // TODO: why do we have true_<X> ? isn't arg_<X> enough?
           result.append((Twine("d_") + name + ", true_" + nextName).str());
         } else {
-          result.append((Twine("data_") + name + ", arg_" + nextName).str());
+          result.append((Twine("data_") + name).str());
+          // if we cached arg_<X> then don't use inc_<X> but rather 1,
+          // since we malloc'd the cache
+          result.append((Twine(", cache_" + name + " ? ConstantInt::get(intType, 1) : arg_") + nextName).str());
         }
         pos++; // extra ++ due to also handling vincInc
       } else if (typeOfArg == argType::vincInc) {
@@ -1748,6 +1752,9 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
         if (pos == actArg) {
           result.append((Twine("d_") + name + ", true_" + nextName).str());
         } else {
+          // TODO: fix ld, which is width of the matrix in the cached case.
+          // Similar to the vincData case.
+          // However, how to access width, especially under transposition?
           result.append((Twine("arg_") + name + ", arg_" + nextName).str());
         }
         pos++; // extra ++ due to also handling mldLD
