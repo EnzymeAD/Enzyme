@@ -1126,8 +1126,8 @@ public:
     bool constantval = gutils->isConstantValue(orig_val) ||
                        parseTBAA(I, DL).Inner0().isIntegral();
 
-    IRBuilder<> BuilderZ(&I);
-    getForwardBuilder(BuilderZ);
+    IRBuilder<> BuilderZ(NewI);
+    BuilderZ.setFastMathFlags(getFast());
 
     // TODO allow recognition of other types that could contain pointers [e.g.
     // {void*, void*} or <2 x i64> ]
@@ -1181,6 +1181,7 @@ public:
 
     if (Mode == DerivativeMode::ForwardMode) {
 
+      Value *diff = nullptr;
       if (!EnzymeRuntimeActivityCheck && CustomErrorHandler && constantval) {
         if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
           if (!isa<UndefValue>(orig_val) &&
@@ -1189,23 +1190,26 @@ public:
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << I
                << " const val: " << *orig_val;
-            CustomErrorHandler(str.c_str(), wrap(&I),
-                               ErrorType::MixedActivityError, gutils,
-                               wrap(orig_val), wrap(&BuilderZ));
-            return;
+            diff = unwrap(CustomErrorHandler(
+                str.c_str(), wrap(&I), ErrorType::MixedActivityError, gutils,
+                wrap(orig_val), wrap(&BuilderZ)));
           }
         }
       }
 
-      Value *diff;
       // TODO type analyze
-      if (!constantval)
-        diff = gutils->invertPointerM(orig_val, BuilderZ, /*nullShadow*/ true);
-      else if (orig_val->getType()->isPointerTy() || dt == BaseType::Pointer ||
-               dt == BaseType::Integer)
-        diff = gutils->invertPointerM(orig_val, BuilderZ, /*nullShadow*/ false);
-      else
-        diff = gutils->invertPointerM(orig_val, BuilderZ, /*nullShadow*/ true);
+      if (!diff) {
+        if (!constantval)
+          diff =
+              gutils->invertPointerM(orig_val, BuilderZ, /*nullShadow*/ true);
+        else if (orig_val->getType()->isPointerTy() ||
+                 dt == BaseType::Pointer || dt == BaseType::Integer)
+          diff =
+              gutils->invertPointerM(orig_val, BuilderZ, /*nullShadow*/ false);
+        else
+          diff =
+              gutils->invertPointerM(orig_val, BuilderZ, /*nullShadow*/ true);
+      }
 
       gutils->setPtrDiffe(&I, orig_ptr, diff, BuilderZ, align, isVolatile,
                           ordering, syncScope, mask, prevNoAlias, prevScopes);
@@ -1363,32 +1367,33 @@ public:
            (forwardsShadow || backwardsShadow)) ||
           Mode == DerivativeMode::ForwardMode) {
 
-        if (!EnzymeRuntimeActivityCheck && CustomErrorHandler && constantval) {
-          if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
-            if (!isa<UndefValue>(orig_val) &&
-                !isa<ConstantPointerNull>(orig_val)) {
-              std::string str;
-              raw_string_ostream ss(str);
-              ss << "Mismatched activity for: " << I
-                 << " const val: " << *orig_val;
-              CustomErrorHandler(str.c_str(), wrap(&I),
-                                 ErrorType::MixedActivityError, gutils,
-                                 wrap(orig_val), wrap(&BuilderZ));
-              return;
-            }
-          }
-        }
         Value *valueop = nullptr;
 
         if (constantval) {
-          valueop = val;
-          if (gutils->getWidth() > 1) {
-            Value *array =
-                UndefValue::get(gutils->getShadowType(val->getType()));
-            for (unsigned i = 0; i < gutils->getWidth(); ++i) {
-              array = BuilderZ.CreateInsertValue(array, val, {i});
+          if (!EnzymeRuntimeActivityCheck && CustomErrorHandler) {
+            if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
+              if (!isa<UndefValue>(orig_val) &&
+                  !isa<ConstantPointerNull>(orig_val)) {
+                std::string str;
+                raw_string_ostream ss(str);
+                ss << "Mismatched activity for: " << I
+                   << " const val: " << *orig_val;
+                valueop = unwrap(CustomErrorHandler(
+                    str.c_str(), wrap(&I), ErrorType::MixedActivityError,
+                    gutils, wrap(orig_val), wrap(&BuilderZ)));
+              }
             }
-            valueop = array;
+          }
+          if (!valueop) {
+            valueop = val;
+            if (gutils->getWidth() > 1) {
+              Value *array =
+                  UndefValue::get(gutils->getShadowType(val->getType()));
+              for (unsigned i = 0; i < gutils->getWidth(); ++i) {
+                array = BuilderZ.CreateInsertValue(array, val, {i});
+              }
+              valueop = array;
+            }
           }
         } else {
           valueop = gutils->invertPointerM(orig_val, BuilderZ);

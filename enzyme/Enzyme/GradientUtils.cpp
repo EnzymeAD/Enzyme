@@ -5525,8 +5525,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         itval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
                                           ErrorType::MixedActivityError, this,
                                           wrap(tval), wrap(&bb)));
-
-      } else {
+      }
+      if (!itval) {
         itval = invertPointerM(tval, bb, nullShadow);
       }
     }
@@ -5542,8 +5542,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         ifval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
                                           ErrorType::MixedActivityError, this,
                                           wrap(fval), wrap(&bb)));
-
-      } else {
+      }
+      if (!ifval) {
         ifval = invertPointerM(fval, bb, nullShadow);
       }
     }
@@ -5918,8 +5918,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
                                             ErrorType::MixedActivityError, this,
                                             wrap(preval), wrap(&pre)));
-
-          } else {
+          }
+          if (!val) {
             val = invertPointerM(preval, pre, nullShadow);
           }
           invertedVals.push_back(val);
@@ -5978,8 +5978,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
                                             ErrorType::MixedActivityError, this,
                                             wrap(preval), wrap(&pre)));
-
-          } else {
+          }
+          if (!val) {
             val = invertPointerM(preval, pre, nullShadow);
           }
 
