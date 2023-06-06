@@ -1594,19 +1594,13 @@ bool legalCombinedForwardReverse(
       return false;
     if (auto CI = dyn_cast<CallInst>(post)) {
       bool noFree = false;
-#if LLVM_VERSION_MAJOR >= 9
       noFree |= CI->hasFnAttr(Attribute::NoFree);
-#endif
-      noFree |= CI->hasFnAttr("nofree");
       auto called = getFunctionFromCall(CI);
       StringRef funcName = getFuncNameFromCall(CI);
       if (funcName == "llvm.trap")
         noFree = true;
       if (!noFree && called) {
-#if LLVM_VERSION_MAJOR >= 9
         noFree |= called->hasFnAttribute(Attribute::NoFree);
-#endif
-        noFree |= called->hasFnAttribute("nofree");
       }
       if (!noFree) {
         if (EnzymePrintPerf) {
@@ -2126,11 +2120,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       auto cal = bb.CreateCall(foundcalled, argVs);
       cal->setCallingConv(foundcalled->getCallingConv());
 
-#if LLVM_VERSION_MAJOR > 7
       Value *res = bb.CreateLoad(sretTy, AI);
-#else
-      Value *res = bb.CreateLoad(AI);
-#endif
       bb.CreateRet(res);
 
       todiff->setMetadata(
@@ -2190,11 +2180,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                 bb.CreateExtractValue(cal, {i}),
                 bb.CreatePointerCast(
                     AI, PointerType::getUnqual(ST->getTypeAtIndex(i))));
-#if LLVM_VERSION_MAJOR > 7
             Value *vres = bb.CreateLoad(todiff->getReturnType(), AI);
-#else
-            Value *vres = bb.CreateLoad(AI);
-#endif
             res = bb.CreateInsertValue(res, vres, {i});
           }
           bb.CreateRet(res);
@@ -2259,11 +2245,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                 bb.CreateExtractValue(cal, {i}),
                 bb.CreatePointerCast(
                     AI, PointerType::getUnqual(ST->getTypeAtIndex(i))));
-#if LLVM_VERSION_MAJOR > 7
             Value *vres = bb.CreateLoad(todiff->getReturnType(), AI);
-#else
-            Value *vres = bb.CreateLoad(AI);
-#endif
             res = bb.CreateInsertValue(res, vres, {i});
           }
           bb.CreateRet(res);
@@ -2744,11 +2726,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       assert(ret);
       Value *gep = ret;
       if (!removeStruct) {
-#if LLVM_VERSION_MAJOR > 7
         gep = ib.CreateGEP(RetType, ret, Idxs, "");
-#else
-        gep = ib.CreateGEP(ret, Idxs, "");
-#endif
         cast<GetElementPtrInst>(gep)->setIsInBounds(true);
       }
       auto storeinst = ib.CreateStore(memory, gep);
@@ -2767,11 +2745,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       };
       tapeMemory = ret;
       if (!removeStruct) {
-#if LLVM_VERSION_MAJOR > 7
         tapeMemory = ib.CreateGEP(RetType, ret, Idxs, "");
-#else
-        tapeMemory = ib.CreateGEP(ret, Idxs, "");
-#endif
         cast<GetElementPtrInst>(tapeMemory)->setIsInBounds(true);
       }
       if (EnzymeZeroCache) {
@@ -2790,11 +2764,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         Value *Idxs[] = {ib.getInt32(0), ib.getInt32(i)};
         Value *gep = tapeMemory;
         if (!removeTapeStruct) {
-#if LLVM_VERSION_MAJOR > 7
           gep = ib.CreateGEP(tapeType, tapeMemory, Idxs, "");
-#else
-          gep = ib.CreateGEP(tapeMemory, Idxs, "");
-#endif
           cast<GetElementPtrInst>(gep)->setIsInBounds(true);
         }
         auto storeinst = ib.CreateStore(VMap[v], gep);
@@ -2868,11 +2838,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     if (noReturn)
       ib.CreateRetVoid();
     else {
-#if LLVM_VERSION_MAJOR > 7
       ib.CreateRet(ib.CreateLoad(RetType, ret));
-#else
-      ib.CreateRet(ib.CreateLoad(ret));
-#endif
     }
     cast<Instruction>(VMap[ri])->eraseFromParent();
   }
@@ -3126,12 +3092,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     SmallVector<Value *, 4> retargs;
 
     if (retAlloca) {
-#if LLVM_VERSION_MAJOR > 7
       auto result = Builder.CreateLoad(retAlloca->getAllocatedType(), retAlloca,
                                        "retreload");
-#else
-      auto result = Builder.CreateLoad(retAlloca, "retreload");
-#endif
       // TODO reintroduce invariant load/group
       // result->setMetadata(LLVMContext::MD_invariant_load,
       // MDNode::get(retAlloca->getContext(), {}));
@@ -3139,12 +3101,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     }
 
     if (dretAlloca) {
-#if LLVM_VERSION_MAJOR > 7
       auto result = Builder.CreateLoad(dretAlloca->getAllocatedType(),
                                        dretAlloca, "dretreload");
-#else
-      auto result = Builder.CreateLoad(dretAlloca, "dretreload");
-#endif
       // TODO reintroduce invariant load/group
       // result->setMetadata(LLVMContext::MD_invariant_load,
       // MDNode::get(dretAlloca->getContext(), {}));
@@ -3428,12 +3386,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     assert(targetToPreds.size() &&
            "only loops with one backedge are presently supported");
 
-#if LLVM_VERSION_MAJOR > 7
     Value *av = phibuilder.CreateLoad(loopContext.var->getType(),
                                       loopContext.antivaralloc);
-#else
-    Value *av = phibuilder.CreateLoad(loopContext.antivaralloc);
-#endif
     Value *phi =
         phibuilder.CreateICmpEQ(av, Constant::getNullValue(av->getType()));
     Value *nphi = phibuilder.CreateNot(phi);
@@ -3613,11 +3567,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
             tape, PointerType::get(
                       aug.tapeType,
                       cast<PointerType>(tape->getType())->getAddressSpace()));
-#if LLVM_VERSION_MAJOR > 7
         auto truetape = bb.CreateLoad(aug.tapeType, tapep, "tapeld");
-#else
-        auto truetape = bb.CreateLoad(tapep, "tapeld");
-#endif
         truetape->setMetadata("enzyme_mustcache",
                               MDNode::get(truetape->getContext(), {}));
 
@@ -3876,11 +3826,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           bb.CreateStore(args[idx],
                          bb.CreatePointerCast(
                              AI, PointerType::getUnqual(args[idx]->getType())));
-#if LLVM_VERSION_MAJOR > 7
           Value *vres = bb.CreateLoad(T, AI);
-#else
-          Value *vres = bb.CreateLoad(AI);
-#endif
           args[idx] = vres;
         }
         // if (!hasTape) {
@@ -4041,12 +3987,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
             PointerType::get(augmenteddata->tapeType,
                              cast<PointerType>(additionalValue->getType())
                                  ->getAddressSpace()));
-#if LLVM_VERSION_MAJOR > 7
         LoadInst *truetape =
             BuilderZ.CreateLoad(augmenteddata->tapeType, tapep, "truetape");
-#else
-        LoadInst *truetape = BuilderZ.CreateLoad(tapep, "truetape");
-#endif
         truetape->setMetadata("enzyme_mustcache",
                               MDNode::get(truetape->getContext(), {}));
 
@@ -4647,12 +4589,8 @@ Function *EnzymeLogic::CreateForwardDiff(
         if (!augmenteddata->tapeType->isEmptyTy()) {
           auto tapep = BuilderZ.CreatePointerCast(
               additionalValue, PointerType::getUnqual(augmenteddata->tapeType));
-#if LLVM_VERSION_MAJOR > 7
           LoadInst *truetape =
               BuilderZ.CreateLoad(augmenteddata->tapeType, tapep, "truetape");
-#else
-          LoadInst *truetape = BuilderZ.CreateLoad(tapep, "truetape");
-#endif
           truetape->setMetadata("enzyme_mustcache",
                                 MDNode::get(truetape->getContext(), {}));
 
@@ -5083,10 +5021,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
     return NoFreeCachedFunctions.find(F)->second;
   }
   bool hasNoFree = false;
-#if LLVM_VERSION_MAJOR >= 9
   hasNoFree |= F->hasFnAttribute(Attribute::NoFree);
-#endif
-  hasNoFree |= F->hasFnAttribute("nofree");
   if (hasNoFree)
     return F;
 
@@ -5188,13 +5123,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
   Function *NewF = Function::Create(F->getFunctionType(), F->getLinkage(),
                                     "nofree_" + F->getName(), F->getParent());
   NewF->setAttributes(F->getAttributes());
-#if LLVM_VERSION_MAJOR >= 9
   NewF->addAttribute(AttributeList::FunctionIndex,
                      Attribute::get(NewF->getContext(), Attribute::NoFree));
-#else
-  NewF->addAttribute(AttributeList::FunctionIndex,
-                     Attribute::get(NewF->getContext(), "nofree"));
-#endif
 
   NoFreeCachedFunctions[F] = NewF;
 
@@ -5228,20 +5158,12 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
     for (Instruction &I : BB) {
       StringRef funcName = "";
       if (auto CI = dyn_cast<CallInst>(&I)) {
-#if LLVM_VERSION_MAJOR >= 9
         if (CI->hasFnAttr(Attribute::NoFree))
-          continue;
-#endif
-        if (CI->hasFnAttr("nofree"))
           continue;
         funcName = getFuncNameFromCall(CI);
       }
       if (auto CI = dyn_cast<InvokeInst>(&I)) {
-#if LLVM_VERSION_MAJOR >= 9
         if (CI->hasFnAttr(Attribute::NoFree))
-          continue;
-#endif
-        if (CI->hasFnAttr("nofree"))
           continue;
         funcName = getFuncNameFromCall(CI);
       }
@@ -5254,11 +5176,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
 #else
           auto callval = CI->getCalledValue();
 #endif
-#if LLVM_VERSION_MAJOR >= 9
           CI->setCalledOperand(CreateNoFree(callval));
-#else
-          CI->setCalledFunction(CreateNoFree(callval));
-#endif
         }
         if (auto CI = dyn_cast<InvokeInst>(&I)) {
 #if LLVM_VERSION_MAJOR >= 11
@@ -5266,11 +5184,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
 #else
           auto callval = CI->getCalledValue();
 #endif
-#if LLVM_VERSION_MAJOR >= 9
           CI->setCalledOperand(CreateNoFree(callval));
-#else
-          CI->setCalledFunction(CreateNoFree(callval));
-#endif
         }
       }
     }

@@ -171,18 +171,10 @@ const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"finite", Intrinsic::not_intrinsic},
     {"isinf", Intrinsic::not_intrinsic},
     {"isnan", Intrinsic::not_intrinsic},
-#if LLVM_VERSION_MAJOR >= 9
     {"lround", Intrinsic::lround},
     {"llround", Intrinsic::llround},
     {"lrint", Intrinsic::lrint},
-    {"llrint", Intrinsic::llrint}
-#else
-    {"lround", Intrinsic::not_intrinsic},
-    {"llround", Intrinsic::not_intrinsic},
-    {"lrint", Intrinsic::not_intrinsic},
-    {"llrint", Intrinsic::not_intrinsic}
-#endif
-};
+    {"llrint", Intrinsic::llrint}};
 
 TypeAnalyzer::TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
                            uint8_t direction)
@@ -317,11 +309,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       auto g2 = GetElementPtrInst::Create(
           Val->getType(),
           UndefValue::get(PointerType::getUnqual(Val->getType())), vec);
-#if LLVM_VERSION_MAJOR > 6
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-      APInt ai(DL.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
       //   as g2 has no parent
@@ -371,11 +359,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       auto g2 = GetElementPtrInst::Create(
           Val->getType(),
           UndefValue::get(PointerType::getUnqual(Val->getType())), vec);
-#if LLVM_VERSION_MAJOR > 6
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-      APInt ai(DL.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
       //   as g2 has no parent
@@ -421,11 +405,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
         llvm::all_of(CE->operand_values(),
                      [](Value *v) { return isa<ConstantInt>(v); })) {
       auto g2 = cast<GetElementPtrInst>(CE->getAsInstruction());
-#if LLVM_VERSION_MAJOR > 6
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-      APInt ai(DL.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
       //   as g2 has no parent
@@ -1198,11 +1178,7 @@ void TypeAnalyzer::visitConstantExpr(ConstantExpr &CE) {
 
     auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
     auto g2 = cast<GetElementPtrInst>(CE.getAsInstruction());
-#if LLVM_VERSION_MAJOR > 6
     APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-    APInt ai(DL.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
     g2->accumulateConstantOffset(DL, ai);
     // Using destructor rather than eraseFromParent
     //   as g2 has no parent
@@ -1506,11 +1482,7 @@ void TypeAnalyzer::visitGetElementPtrInst(GetElementPtrInst &gep) {
   for (auto vec : getSet<Value *>(idnext, idnext.size() - 1)) {
     auto g2 = GetElementPtrInst::Create(gep.getSourceElementType(),
                                         gep.getOperand(0), vec);
-#if LLVM_VERSION_MAJOR > 6
     APInt ai(DL.getIndexSizeInBits(gep.getPointerAddressSpace()), 0);
-#else
-    APInt ai(DL.getPointerSize(gep.getPointerAddressSpace()) * 8, 0);
-#endif
     bool valid = g2->accumulateConstantOffset(DL, ai);
     assert(valid);
     // Using destructor rather than eraseFromParent
@@ -2061,11 +2033,7 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
       auto ud =
           UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
       auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-#if LLVM_VERSION_MAJOR > 6
       APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-      APInt ai(dl.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
       g2->accumulateConstantOffset(dl, ai);
       // Using destructor rather than eraseFromParent
       //   as g2 has no parent
@@ -2100,11 +2068,7 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
             UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
         auto g2 =
             GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-#if LLVM_VERSION_MAJOR > 6
         APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-        APInt ai(dl.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
         g2->accumulateConstantOffset(dl, ai);
         // Using destructor rather than eraseFromParent
         //   as g2 has no parent
@@ -2133,11 +2097,7 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
             UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
         auto g2 =
             GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-#if LLVM_VERSION_MAJOR > 6
         APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-        APInt ai(dl.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
         g2->accumulateConstantOffset(dl, ai);
         // Using destructor rather than eraseFromParent
         //   as g2 has no parent
@@ -2176,11 +2136,7 @@ void TypeAnalyzer::visitExtractValueInst(ExtractValueInst &I) {
   }
   auto ud = UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
   auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-#if LLVM_VERSION_MAJOR > 6
   APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-  APInt ai(dl.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
   g2->accumulateConstantOffset(dl, ai);
   // Using destructor rather than eraseFromParent
   //   as g2 has no parent
@@ -2209,11 +2165,7 @@ void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
   }
   auto ud = UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
   auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-#if LLVM_VERSION_MAJOR > 6
   APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-  APInt ai(dl.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
   g2->accumulateConstantOffset(dl, ai);
   // Using destructor rather than eraseFromParent
   //   as g2 has no parent
@@ -2739,7 +2691,6 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
                    &I);
     return;
 
-#if LLVM_VERSION_MAJOR >= 9
   case Intrinsic::nvvm_wmma_m16n16k16_store_d_f32_col:
   case Intrinsic::nvvm_wmma_m16n16k16_store_d_f32_col_stride:
   case Intrinsic::nvvm_wmma_m16n16k16_store_d_f32_row:
@@ -3057,7 +3008,6 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
         &I);
     return;
   }
-#endif
 
   case Intrinsic::nvvm_ldu_global_i:
   case Intrinsic::nvvm_ldu_global_p:
@@ -3160,7 +3110,7 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
 #if LLVM_VERSION_MAJOR >= 12
   case Intrinsic::vector_reduce_fadd:
   case Intrinsic::vector_reduce_fmul:
-#elif LLVM_VERSION_MAJOR >= 9
+#else
   case Intrinsic::experimental_vector_reduce_v2_fadd:
   case Intrinsic::experimental_vector_reduce_v2_fmul:
 #endif
@@ -5532,11 +5482,7 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
       };
       auto g2 = GetElementPtrInst::Create(
           ST, UndefValue::get(PointerType::getUnqual(ST)), vec);
-#if LLVM_VERSION_MAJOR > 6
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-      APInt ai(DL.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
       //   as g2 has no parent
@@ -5560,11 +5506,7 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
       };
       auto g2 = GetElementPtrInst::Create(
           AT, UndefValue::get(PointerType::getUnqual(AT)), vec);
-#if LLVM_VERSION_MAJOR > 6
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-      APInt ai(DL.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
       //   as g2 has no parent

@@ -199,7 +199,7 @@ public:
                                 Attribute::AttrKind::NoSync);
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
                                 Attribute::AttrKind::WillReturn);
-#elif LLVM_VERSION_MAJOR >= 9
+#else
     AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
                          Attribute::AttrKind::NoFree);
     AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
@@ -227,11 +227,7 @@ public:
     CI->addAttribute(AttributeList::FunctionIndex, Attribute::ArgMemOnly);
 #endif
 #endif
-#if LLVM_VERSION_MAJOR > 7
     return B.CreateLoad(intType, alloc);
-#else
-    return B.CreateLoad(alloc);
-#endif
   }
 
   // To be double-checked against the functionality needed and the respective
@@ -267,7 +263,7 @@ public:
                                 Attribute::AttrKind::NoSync);
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::WillReturn);
-#elif LLVM_VERSION_MAJOR >= 9
+#else
     AL = AL.addAttribute(context, AttributeList::FunctionIndex,
                          Attribute::AttrKind::NoFree);
     AL = AL.addAttribute(context, AttributeList::FunctionIndex,
@@ -280,11 +276,7 @@ public:
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
             "MPI_Comm_rank", FT, AL),
         args);
-#if LLVM_VERSION_MAJOR > 7
     return B.CreateLoad(rankTy, alloc);
-#else
-    return B.CreateLoad(alloc);
-#endif
   }
 
   llvm::Value *MPI_COMM_SIZE(llvm::Value *comm, llvm::IRBuilder<> &B,
@@ -318,7 +310,7 @@ public:
                                 Attribute::AttrKind::NoSync);
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::WillReturn);
-#elif LLVM_VERSION_MAJOR >= 9
+#else
     AL = AL.addAttribute(context, AttributeList::FunctionIndex,
                          Attribute::AttrKind::NoFree);
     AL = AL.addAttribute(context, AttributeList::FunctionIndex,
@@ -331,11 +323,7 @@ public:
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
             "MPI_Comm_size", FT, AL),
         args);
-#if LLVM_VERSION_MAJOR > 7
     return B.CreateLoad(rankTy, alloc);
-#else
-    return B.CreateLoad(alloc);
-#endif
   }
 
 #if LLVM_VERSION_MAJOR >= 10
@@ -970,12 +958,8 @@ public:
             order = AtomicOrdering::Acquire;
 
           auto rule = [&](Value *ip) -> Value * {
-#if LLVM_VERSION_MAJOR > 7
             LoadInst *dif1 =
                 Builder2.CreateLoad(I.getType(), ip, I.isVolatile());
-#else
-            LoadInst *dif1 = Builder2.CreateLoad(ip, I.isVolatile());
-#endif
 
 #if LLVM_VERSION_MAJOR >= 11
             dif1->setAlignment(I.getAlign());
@@ -1243,12 +1227,8 @@ public:
 
             size_t idx = 0;
             auto rule = [&](Value *dif1Ptr) {
-#if LLVM_VERSION_MAJOR > 7
               LoadInst *dif1 =
                   Builder2.CreateLoad(valType, dif1Ptr, isVolatile);
-#else
-              LoadInst *dif1 = Builder2.CreateLoad(dif1Ptr, isVolatile);
-#endif
               if (align)
 #if LLVM_VERSION_MAJOR >= 11
                 dif1->setAlignment(*align);
@@ -3256,12 +3236,8 @@ public:
           if (start != 0) {
             Value *idxs[] = {
                 ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
-#if LLVM_VERSION_MAJOR > 7
             op0 = BuilderZ.CreateInBoundsGEP(
                 op0->getType()->getPointerElementType(), op0, idxs);
-#else
-            op0 = BuilderZ.CreateInBoundsGEP(op0, idxs);
-#endif
           }
           SmallVector<Value *, 4> args = {op0, op1, length};
           if (op3)
@@ -3297,12 +3273,8 @@ public:
           if (start != 0) {
             Value *idxs[] = {
                 ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
-#if LLVM_VERSION_MAJOR > 7
             op0 = Builder2.CreateInBoundsGEP(
                 op0->getType()->getPointerElementType(), op0, idxs);
-#else
-            op0 = Builder2.CreateInBoundsGEP(op0, idxs);
-#endif
           }
           SmallVector<Value *, 4> args = {op0, op1l, length};
           if (op3l)
@@ -3329,12 +3301,7 @@ public:
 
   void visitMemTransferInst(llvm::MemTransferInst &MTI) {
     using namespace llvm;
-
-#if LLVM_VERSION_MAJOR >= 7
     Value *isVolatile = gutils->getNewFromOriginal(MTI.getOperand(3));
-#else
-    Value *isVolatile = gutils->getNewFromOriginal(MTI.getOperand(4));
-#endif
 #if LLVM_VERSION_MAJOR >= 10
     auto srcAlign = MTI.getSourceAlign();
     auto dstAlign = MTI.getDestAlign();
@@ -3607,12 +3574,8 @@ public:
           ddst = BuilderZ.CreateIntToPtr(
               ddst, Type::getInt8PtrTy(ddst->getContext()));
         if (start != 0) {
-#if LLVM_VERSION_MAJOR > 7
           ddst = BuilderZ.CreateConstInBoundsGEP1_64(
               Type::getInt8Ty(ddst->getContext()), ddst, start);
-#else
-          ddst = BuilderZ.CreateConstInBoundsGEP1_64(ddst, start);
-#endif
         }
         CallInst *call;
         // TODO add EnzymeRuntimeActivity (correctness)
@@ -3625,12 +3588,8 @@ public:
             dsrc = BuilderZ.CreateIntToPtr(
                 dsrc, Type::getInt8PtrTy(dsrc->getContext()));
           if (start != 0) {
-#if LLVM_VERSION_MAJOR > 7
             dsrc = BuilderZ.CreateConstInBoundsGEP1_64(
                 Type::getInt8Ty(ddst->getContext()), dsrc, start);
-#else
-            dsrc = BuilderZ.CreateConstInBoundsGEP1_64(dsrc, start);
-#endif
           }
           if (ID == Intrinsic::memmove) {
             call = BuilderZ.CreateMemMove(ddst, dalign, dsrc, salign, length);
@@ -3810,9 +3769,7 @@ public:
       case Intrinsic::prefetch:
       case Intrinsic::dbg_declare:
       case Intrinsic::dbg_value:
-#if LLVM_VERSION_MAJOR > 6
       case Intrinsic::dbg_label:
-#endif
 #if LLVM_VERSION_MAJOR <= 16
       case llvm::Intrinsic::dbg_addr:
 #endif
@@ -3850,7 +3807,7 @@ public:
 #if LLVM_VERSION_MAJOR >= 12
       case Intrinsic::vector_reduce_fadd:
       case Intrinsic::vector_reduce_fmul:
-#elif LLVM_VERSION_MAJOR >= 9
+#else
       case Intrinsic::experimental_vector_reduce_v2_fadd:
       case Intrinsic::experimental_vector_reduce_v2_fmul:
 #endif
@@ -3931,9 +3888,7 @@ public:
       case Intrinsic::prefetch:
       case Intrinsic::dbg_declare:
       case Intrinsic::dbg_value:
-#if LLVM_VERSION_MAJOR > 6
       case Intrinsic::dbg_label:
-#endif
 #if LLVM_VERSION_MAJOR <= 16
       case llvm::Intrinsic::dbg_addr:
 #endif
@@ -3946,7 +3901,6 @@ public:
         // Derivative of these is zero and requires no modification
         return;
 
-#if LLVM_VERSION_MAJOR >= 9
 #if LLVM_VERSION_MAJOR >= 12
       case Intrinsic::vector_reduce_fadd:
 #else
@@ -3979,7 +3933,6 @@ public:
         }
         return;
       }
-#endif
 
       case Intrinsic::lifetime_start: {
         if (gutils->isConstantInstruction(&I))
@@ -4489,7 +4442,6 @@ public:
       getForwardBuilder(Builder2);
 
       switch (ID) {
-#if LLVM_VERSION_MAJOR >= 9
 #if LLVM_VERSION_MAJOR >= 12
       case Intrinsic::vector_reduce_fadd:
 #else
@@ -4529,7 +4481,6 @@ public:
         setDiffe(&I, dif, Builder2);
         return;
       }
-#endif
       case Intrinsic::nvvm_sqrt_rn_d:
       case Intrinsic::sqrt: {
         if (gutils->isConstantInstruction(&I))
@@ -5320,17 +5271,11 @@ public:
                                        0),
                       ConstantInt::get(Type::getInt32Ty(tapeArg->getContext()),
                                        pair.first)};
-#if LLVM_VERSION_MAJOR > 7
                   op->replaceAllUsesWith(ph.CreateLoad(
                       op->getType(),
                       pair.first == -1
                           ? tapeArg
                           : ph.CreateInBoundsGEP(tapeElemType, tapeArg, Idxs)));
-#else
-                  op->replaceAllUsesWith(ph.CreateLoad(
-                      pair.first == -1 ? tapeArg
-                                       : ph.CreateInBoundsGEP(tapeArg, Idxs)));
-#endif
                   cast<Instruction>(op)->eraseFromParent();
                   if (op != alloc)
                     ci->eraseFromParent();
@@ -5342,17 +5287,11 @@ public:
                 ConstantInt::get(Type::getInt64Ty(tapeArg->getContext()), 0),
                 ConstantInt::get(Type::getInt32Ty(tapeArg->getContext()),
                                  pair.first)};
-#if LLVM_VERSION_MAJOR > 7
             op->replaceAllUsesWith(ph.CreateLoad(
                 op->getType(),
                 pair.first == -1
                     ? tapeArg
                     : ph.CreateInBoundsGEP(tapeElemType, tapeArg, Idxs)));
-#else
-            op->replaceAllUsesWith(ph.CreateLoad(
-                pair.first == -1 ? tapeArg
-                                 : ph.CreateInBoundsGEP(tapeArg, Idxs)));
-#endif
             cast<Instruction>(op)->eraseFromParent();
           }
           assert(tape);
@@ -5566,11 +5505,7 @@ public:
             Value *Idxs[] = {
                 ConstantInt::get(Type::getInt64Ty(ST->getContext()), 0),
                 ConstantInt::get(Type::getInt32Ty(ST->getContext()), ee)};
-#if LLVM_VERSION_MAJOR > 7
             Value *ptr = B.CreateInBoundsGEP(ST, cacheArg, Idxs);
-#else
-            Value *ptr = B.CreateInBoundsGEP(cacheArg, Idxs);
-#endif
 
             if (dif->getType()->isIntOrIntVectorTy()) {
 
@@ -5584,11 +5519,10 @@ public:
 
 #if LLVM_VERSION_MAJOR >= 10
             MaybeAlign align;
-#elif LLVM_VERSION_MAJOR >= 9
+#else
             unsigned align = 0;
 #endif
 
-#if LLVM_VERSION_MAJOR >= 9
             AtomicRMWInst::BinOp op = AtomicRMWInst::FAdd;
             if (auto vt = dyn_cast<VectorType>(dif->getType())) {
 #if LLVM_VERSION_MAJOR >= 12
@@ -5602,12 +5536,8 @@ public:
                 Value *Idxs[] = {
                     ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
                     ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
-#if LLVM_VERSION_MAJOR > 7
                 auto vptr = B.CreateInBoundsGEP(
                     ptr->getType()->getPointerElementType(), ptr, Idxs);
-#else
-                auto vptr = B.CreateInBoundsGEP(ptr, Idxs);
-#endif
 #if LLVM_VERSION_MAJOR >= 13
                 B.CreateAtomicRMW(op, vptr, vdif, align,
                                   AtomicOrdering::Monotonic, SyncScope::System);
@@ -5636,11 +5566,6 @@ public:
                               SyncScope::System);
 #endif
             }
-#else
-            llvm::errs() << "unhandled atomic fadd on llvm version " << *ptr
-                         << " " << *dif << "\n";
-            llvm_unreachable("unhandled atomic fadd");
-#endif
           }
           B.CreateRetVoid();
           newcalled = F;
@@ -5673,14 +5598,9 @@ public:
               ConstantInt::get(Type::getInt32Ty(call.getContext()), i)};
           ((DiffeGradientUtils *)gutils)
               ->addToDiffe(OutTypes[i],
-#if LLVM_VERSION_MAJOR > 7
                            Builder2.CreateLoad(
                                OutFPTypes[i],
                                Builder2.CreateInBoundsGEP(ST, OutAlloc, Idxs)),
-#else
-                           Builder2.CreateLoad(
-                               Builder2.CreateInBoundsGEP(OutAlloc, Idxs)),
-#endif
                            Builder2, TR.addingType(size, OutTypes[i]));
         }
 
@@ -5770,12 +5690,8 @@ public:
             cast<PointerType>(dsto->getType())->getAddressSpace();
         auto secretpt = PointerType::get(secretty, dstaddr);
         if (offset != 0) {
-#if LLVM_VERSION_MAJOR > 7
           dsto = Builder2.CreateConstInBoundsGEP1_64(
               Type::getInt8Ty(dsto->getContext()), dsto, offset);
-#else
-          dsto = Builder2.CreateConstInBoundsGEP1_64(dsto, offset);
-#endif
         }
         if (srco->getType()->isIntegerTy())
           srco = Builder2.CreateIntToPtr(
@@ -5785,12 +5701,8 @@ public:
         secretpt = PointerType::get(secretty, srcaddr);
 
         if (offset != 0) {
-#if LLVM_VERSION_MAJOR > 7
           srco = Builder2.CreateConstInBoundsGEP1_64(
               Type::getInt8Ty(srco->getContext()), srco, offset);
-#else
-          srco = Builder2.CreateConstInBoundsGEP1_64(srco, offset);
-#endif
         }
         Value *args[3] = {
             Builder2.CreatePointerCast(dsto, secretpt),
@@ -5854,11 +5766,7 @@ public:
 
           d_req = BuilderZ.CreateBitCast(
               d_req, PointerType::getUnqual(impialloc->getType()));
-#if LLVM_VERSION_MAJOR > 7
           Value *d_req_prev = BuilderZ.CreateLoad(impialloc->getType(), d_req);
-#else
-          Value *d_req_prev = BuilderZ.CreateLoad(d_req);
-#endif
           BuilderZ.CreateStore(
               BuilderZ.CreatePointerCast(d_req_prev,
                                          Type::getInt8PtrTy(call.getContext())),
@@ -5974,60 +5882,37 @@ public:
               llvm::PointerType::getUnqual(getMPIHelper(call.getContext()));
           Value *helper = Builder2.CreatePointerCast(
               d_req, PointerType::getUnqual(helperTy));
-#if LLVM_VERSION_MAJOR > 7
           helper = Builder2.CreateLoad(helperTy, helper);
-#else
-          helper = Builder2.CreateLoad(helper);
-#endif
 
           auto i64 = Type::getInt64Ty(call.getContext());
 
           Value *firstallocation;
-#if LLVM_VERSION_MAJOR > 7
           firstallocation = Builder2.CreateLoad(
               Type::getInt8PtrTy(call.getContext()),
               getMPIMemberPtr<MPI_Elem::Buf>(Builder2, helper));
-#else
-          firstallocation = Builder2.CreateLoad(
-              getMPIMemberPtr<MPI_Elem::Buf>(Builder2, helper));
-#endif
           Value *len_arg = nullptr;
           if (auto C = dyn_cast<Constant>(
                   gutils->getNewFromOriginal(call.getOperand(1)))) {
             len_arg = Builder2.CreateZExtOrTrunc(C, i64);
           } else {
-#if LLVM_VERSION_MAJOR > 7
             len_arg = Builder2.CreateLoad(
                 i64, getMPIMemberPtr<MPI_Elem::Count>(Builder2, helper));
-#else
-            len_arg = Builder2.CreateLoad(
-                getMPIMemberPtr<MPI_Elem::Count>(Builder2, helper));
-#endif
           }
           Value *tysize = nullptr;
           if (auto C = dyn_cast<Constant>(
                   gutils->getNewFromOriginal(call.getOperand(2)))) {
             tysize = C;
           } else {
-#if LLVM_VERSION_MAJOR > 7
             tysize = Builder2.CreateLoad(
                 Type::getInt8PtrTy(call.getContext()),
                 getMPIMemberPtr<MPI_Elem::DataType>(Builder2, helper));
-#else
-            tysize = Builder2.CreateLoad(
-                getMPIMemberPtr<MPI_Elem::DataType>(Builder2, helper));
-#endif
           }
 
           Value *prev;
-#if LLVM_VERSION_MAJOR > 7
           prev = Builder2.CreateLoad(
               Type::getInt8PtrTy(call.getContext()),
               getMPIMemberPtr<MPI_Elem::Old>(Builder2, helper));
-#else
-          prev = Builder2.CreateLoad(
-              getMPIMemberPtr<MPI_Elem::Old>(Builder2, helper));
-#endif
+
           Builder2.CreateStore(
               prev, Builder2.CreatePointerCast(
                         d_req, PointerType::getUnqual(prev->getType())));
@@ -6040,11 +5925,7 @@ public:
           Value *args[] = {/*req*/ req,
                            /*status*/ IRBuilder<>(gutils->inversionAllocs)
                                .CreateAlloca(statusType)};
-#if LLVM_VERSION_MAJOR >= 9
           FunctionCallee waitFunc = nullptr;
-#else
-          Constant *waitFunc = nullptr;
-#endif
           for (auto name : {"PMPI_Wait", "MPI_Wait"})
             if (Function *recvfn = called->getParent()->getFunction(name)) {
               auto statusArg = recvfn->arg_end();
@@ -6084,13 +5965,8 @@ public:
 
           auto fcall = Builder2.CreateCall(waitFunc, args, ReqDefs);
           fcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
-#if LLVM_VERSION_MAJOR >= 9
           if (auto F = dyn_cast<Function>(waitFunc.getCallee()))
             fcall->setCallingConv(F->getCallingConv());
-#else
-          if (auto F = dyn_cast<Function>(waitFunc))
-            fcall->setCallingConv(F->getCallingConv());
-#endif
           len_arg = Builder2.CreateMul(
               len_arg,
               Builder2.CreateZExtOrTrunc(
@@ -6102,14 +5978,7 @@ public:
             auto volatile_arg = ConstantInt::getFalse(Builder2.getContext());
             assert(!gutils->isConstantValue(call.getOperand(0)));
             auto dbuf = firstallocation;
-#if LLVM_VERSION_MAJOR == 6
-            auto align_arg =
-                ConstantInt::get(Type::getInt32Ty(B.getContext()), 1);
-            Value *nargs[] = {dbuf, val_arg, len_arg, align_arg, volatile_arg};
-#else
             Value *nargs[] = {dbuf, val_arg, len_arg, volatile_arg};
-#endif
-
             Type *tys[] = {dbuf->getType(), len_arg->getType()};
 
             auto memset = cast<CallInst>(Builder2.CreateCall(
@@ -6173,11 +6042,7 @@ public:
           auto callval = call.getCalledValue();
 #endif
 
-#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
-#else
-          Builder2.CreateCall(callval, args, Defs);
-#endif
           return;
         }
       }
@@ -6205,11 +6070,7 @@ public:
                 "ompi_request_null")) {
           Value *reql = BuilderZ.CreatePointerCast(
               req, PointerType::getUnqual(GV->getType()));
-#if LLVM_VERSION_MAJOR > 7
           reql = BuilderZ.CreateLoad(GV->getType(), reql);
-#else
-          reql = BuilderZ.CreateLoad(reql);
-#endif
           isNull = BuilderZ.CreateICmpEQ(reql, GV);
         }
 
@@ -6219,15 +6080,10 @@ public:
               PointerType::getUnqual(Type::getInt8PtrTy(call.getContext())));
         }
 
-#if LLVM_VERSION_MAJOR > 7
         d_reqp = BuilderZ.CreateLoad(
             PointerType::getUnqual(impi),
             BuilderZ.CreatePointerCast(
                 d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
-#else
-        d_reqp = BuilderZ.CreateLoad(BuilderZ.CreatePointerCast(
-            d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
-#endif
         if (isNull)
           d_reqp =
               CreateSelect(BuilderZ, isNull,
@@ -6267,12 +6123,8 @@ public:
         Builder2.CreateCondBr(isNull, endBlock, nonnullBlock);
         Builder2.SetInsertPoint(nonnullBlock);
 
-#if LLVM_VERSION_MAJOR > 7
         Value *cache = Builder2.CreateLoad(
             d_reqp->getType()->getPointerElementType(), d_reqp);
-#else
-        Value *cache = Builder2.CreateLoad(d_reqp);
-#endif
 
         Value *args[] = {
             getMPIMemberPtr<MPI_Elem::Buf, false>(Builder2, cache),
@@ -6344,11 +6196,7 @@ public:
         auto callval = call.getCalledValue();
 #endif
 
-#if LLVM_VERSION_MAJOR > 7
         Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
-#else
-        Builder2.CreateCall(callval, args, Defs);
-#endif
         return;
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -6434,25 +6282,15 @@ public:
         idx->addIncoming(inc, eloopBlock);
 
         Value *idxs[] = {idx};
-#if LLVM_VERSION_MAJOR > 7
         Value *req = Builder2.CreateInBoundsGEP(
             req_orig->getType()->getPointerElementType(), req_orig, idxs);
         Value *d_req = Builder2.CreateInBoundsGEP(
             d_reqp->getType()->getPointerElementType(), d_reqp, idxs);
-#else
-        Value *req = Builder2.CreateInBoundsGEP(req_orig, idxs);
-        Value *d_req = Builder2.CreateInBoundsGEP(d_reqp, idxs);
-#endif
 
-#if LLVM_VERSION_MAJOR > 7
         d_req = Builder2.CreateLoad(
             PointerType::getUnqual(impi),
             Builder2.CreatePointerCast(
                 d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
-#else
-        d_req = Builder2.CreateLoad(Builder2.CreatePointerCast(
-            d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
-#endif
 
         Value *isNull = Builder2.CreateICmpEQ(
             d_req, Constant::getNullValue(d_req->getType()));
@@ -6460,12 +6298,8 @@ public:
         Builder2.CreateCondBr(isNull, eloopBlock, nonnullBlock);
         Builder2.SetInsertPoint(nonnullBlock);
 
-#if LLVM_VERSION_MAJOR > 7
         Value *cache = Builder2.CreateLoad(
             d_req->getType()->getPointerElementType(), d_req);
-#else
-        Value *cache = Builder2.CreateLoad(d_req);
-#endif
 
         Value *args[] = {
             getMPIMemberPtr<MPI_Elem::Buf, false>(Builder2, cache),
@@ -6549,11 +6383,7 @@ public:
         auto callval = call.getCalledValue();
 #endif
 
-#if LLVM_VERSION_MAJOR > 7
         Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
-#else
-        Builder2.CreateCall(callval, args, Defs);
-#endif
         return;
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -6649,12 +6479,7 @@ public:
 #else
           auto callval = call.getCalledValue();
 #endif
-
-#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
-#else
-          Builder2.CreateCall(callval, args, Defs);
-#endif
           return;
         }
 
@@ -6771,11 +6596,7 @@ public:
           auto callval = call.getCalledValue();
 #endif
 
-#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
-#else
-          Builder2.CreateCall(callval, args, Defs);
-#endif
           return;
         }
 
@@ -6802,14 +6623,7 @@ public:
                                "", true, true);
         auto volatile_arg = ConstantInt::getFalse(call.getContext());
 
-#if LLVM_VERSION_MAJOR == 6
-        auto align_arg =
-            ConstantInt::get(Type::getInt32Ty(call.getContext()), 1);
-        Value *nargs[] = {dst_arg, val_arg, len_arg, align_arg, volatile_arg};
-#else
         Value *nargs[] = {dst_arg, val_arg, len_arg, volatile_arg};
-#endif
-
         Type *tys[] = {dst_arg->getType(), len_arg->getType()};
 
         auto MemsetDefs = gutils->getInvertedBundles(
@@ -6894,12 +6708,7 @@ public:
 #else
           auto callval = call.getCalledValue();
 #endif
-
-#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
-#else
-          Builder2.CreateCall(callval, args, Defs);
-#endif
           return;
         }
 
@@ -7169,12 +6978,7 @@ public:
 #else
           auto callval = call.getCalledValue();
 #endif
-
-#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
-#else
-          Builder2.CreateCall(callval, args, Defs);
-#endif
           return;
         }
 
@@ -7410,13 +7214,8 @@ public:
 #else
           auto callval = call.getCalledValue();
 #endif
-
-#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args,
                               BufferDefs);
-#else
-          Builder2.CreateCall(callval, args, BufferDefs);
-#endif
 
           return;
         }
@@ -7583,13 +7382,7 @@ public:
 #else
           auto callval = call.getCalledValue();
 #endif
-
-#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
-#else
-          Builder2.CreateCall(callval, args, Defs);
-#endif
-
           return;
         }
 
@@ -7796,13 +7589,7 @@ public:
 #else
           auto callval = call.getCalledValue();
 #endif
-
-#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
-#else
-          Builder2.CreateCall(callval, args, Defs);
-#endif
-
           return;
         }
         // Get the length for the allocation of the intermediate buffer
@@ -8039,13 +7826,7 @@ public:
 #else
           auto callval = call.getCalledValue();
 #endif
-
-#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
-#else
-          Builder2.CreateCall(callval, args, Defs);
-#endif
-
           return;
         }
         // Get the length for the allocation of the intermediate buffer
@@ -8276,11 +8057,10 @@ public:
 
         auto argi = gutils->getNewFromOriginal(call.getArgOperand(i));
 
-#if LLVM_VERSION_MAJOR >= 9
         if (call.isByValArgument(i)) {
           gradByVal[args.size()] = call.getParamByValType(i);
         }
-#endif
+
         bool writeOnlyNoCapture = true;
         bool readOnly = true;
         if (!isNoCapture(&call, i)) {
@@ -8445,11 +8225,7 @@ public:
         PointerType *fptype = PointerType::getUnqual(FT);
         newcalled = BuilderZ.CreatePointerCast(newcalled,
                                                PointerType::getUnqual(fptype));
-#if LLVM_VERSION_MAJOR > 7
         newcalled = BuilderZ.CreateLoad(fptype, newcalled);
-#else
-        newcalled = BuilderZ.CreateLoad(newcalled);
-#endif
       }
 
       assert(newcalled);
@@ -8465,20 +8241,16 @@ public:
       auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
                                              /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR > 7
       CallInst *diffes = Builder2.CreateCall(FT, newcalled, args, Defs);
-#else
-      CallInst *diffes = Builder2.CreateCall(newcalled, args, Defs);
-#endif
       diffes->setCallingConv(call.getCallingConv());
       diffes->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
-#if LLVM_VERSION_MAJOR >= 9
+
       for (auto pair : gradByVal) {
         diffes->addParamAttr(
             pair.first,
             Attribute::getWithByValType(diffes->getContext(), pair.second));
       }
-#endif
+
       for (auto &pair : structAttrs) {
         for (auto val : pair.second)
           diffes->addParamAttr(pair.first, val);
@@ -8564,11 +8336,9 @@ public:
 
       auto argi = gutils->getNewFromOriginal(call.getArgOperand(i));
 
-#if LLVM_VERSION_MAJOR >= 9
       if (call.isByValArgument(i)) {
         preByVal[pre_args.size()] = call.getParamByValType(i);
       }
-#endif
       if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
         structAttrs[pre_args.size()].push_back(
             call.getParamAttr(i, "enzymejl_returnRoots"));
@@ -8626,11 +8396,10 @@ public:
       if (Mode != DerivativeMode::ReverseModePrimal) {
         IRBuilder<> Builder2(call.getParent());
         getReverseBuilder(Builder2);
-#if LLVM_VERSION_MAJOR >= 9
+
         if (call.isByValArgument(i)) {
           gradByVal[args.size()] = call.getParamByValType(i);
         }
-#endif
 
         if ((writeOnlyNoCapture && !replaceFunction) ||
             (readNoneNoCapture ||
@@ -8814,11 +8583,7 @@ public:
         auto fptype = PointerType::getUnqual(FT);
         newcalled = BuilderZ.CreatePointerCast(newcalled,
                                                PointerType::getUnqual(fptype));
-#if LLVM_VERSION_MAJOR > 7
         newcalled = BuilderZ.CreateLoad(fptype, newcalled);
-#else
-        newcalled = BuilderZ.CreateLoad(newcalled);
-#endif
         tapeIdx = 0;
 
         if (!call.getType()->isVoidTy()) {
@@ -8920,27 +8685,20 @@ public:
             goto badaugmentedfn;
         }
 
-#if LLVM_VERSION_MAJOR > 7
         augmentcall = BuilderZ.CreateCall(
             FT, newcalled, pre_args,
             gutils->getInvertedBundles(&call, BundleTypes, BuilderZ,
                                        /*lookup*/ false));
-#else
-        augmentcall = BuilderZ.CreateCall(
-            newcalled, pre_args,
-            gutils->getInvertedBundles(&call, BundleTypes, BuilderZ,
-                                       /*lookup*/ false));
-#endif
         augmentcall->setCallingConv(call.getCallingConv());
         augmentcall->setDebugLoc(
             gutils->getNewFromOriginal(call.getDebugLoc()));
-#if LLVM_VERSION_MAJOR >= 9
+
         for (auto pair : preByVal) {
           augmentcall->addParamAttr(
               pair.first, Attribute::getWithByValType(augmentcall->getContext(),
                                                       pair.second));
         }
-#endif
+
         for (auto &pair : structAttrs) {
           for (auto val : pair.second)
             augmentcall->addParamAttr(pair.first, val);
@@ -9161,12 +8919,8 @@ public:
             tape, PointerType::get(
                       fnandtapetype->tapeType,
                       cast<PointerType>(tape->getType())->getAddressSpace()));
-#if LLVM_VERSION_MAJOR > 7
         auto truetape =
             BuilderZ.CreateLoad(fnandtapetype->tapeType, tapep, "tapeld");
-#else
-        auto truetape = BuilderZ.CreateLoad(tapep, "tapeld");
-#endif
         truetape->setMetadata("enzyme_mustcache",
                               MDNode::get(truetape->getContext(), {}));
 
@@ -9275,13 +9029,8 @@ public:
       auto fptype = PointerType::getUnqual(FT);
       newcalled =
           Builder2.CreatePointerCast(newcalled, PointerType::getUnqual(fptype));
-#if LLVM_VERSION_MAJOR > 7
       newcalled = Builder2.CreateLoad(
           fptype, Builder2.CreateConstGEP1_64(fptype, newcalled, 1));
-#else
-      newcalled =
-          Builder2.CreateLoad(Builder2.CreateConstGEP1_64(newcalled, 1));
-#endif
     }
 
     if (subretType == DIFFE_TYPE::OUT_DIFF) {
@@ -9331,25 +9080,18 @@ public:
         goto badfn;
     }
 
-#if LLVM_VERSION_MAJOR > 7
     CallInst *diffes =
         Builder2.CreateCall(FT, newcalled, args,
                             gutils->getInvertedBundles(
                                 &call, BundleTypes, Builder2, /*lookup*/ true));
-#else
-    CallInst *diffes =
-        Builder2.CreateCall(newcalled, args,
-                            gutils->getInvertedBundles(
-                                &call, BundleTypes, Builder2, /*lookup*/ true));
-#endif
     diffes->setCallingConv(call.getCallingConv());
     diffes->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
-#if LLVM_VERSION_MAJOR >= 9
+
     for (auto pair : gradByVal) {
       diffes->addParamAttr(pair.first, Attribute::getWithByValType(
                                            diffes->getContext(), pair.second));
     }
-#endif
+
     for (auto &pair : structAttrs) {
       for (auto val : pair.second)
         diffes->addParamAttr(pair.first, val);
@@ -11232,13 +10974,8 @@ public:
             auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
                                                    /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR > 7
             CallInst *CI = Builder2.CreateCall(
                 call.getFunctionType(), call.getCalledFunction(), args, Defs);
-#else
-            CallInst *CI =
-                Builder2.CreateCall(call.getCalledFunction(), args, Defs);
-#endif
             CI->setAttributes(call.getAttributes());
             CI->setCallingConv(call.getCallingConv());
             CI->setTailCallKind(call.getTailCallKind());
@@ -11604,13 +11341,8 @@ public:
             auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
                                                    /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR > 7
             CallInst *CI = Builder2.CreateCall(
                 call.getFunctionType(), call.getCalledFunction(), args, Defs);
-#else
-            CallInst *CI =
-                Builder2.CreateCall(call.getCalledFunction(), args, Defs);
-#endif
             CI->setAttributes(call.getAttributes());
             CI->setCallingConv(call.getCallingConv());
             CI->setTailCallKind(call.getTailCallKind());
@@ -12075,11 +11807,7 @@ public:
         val = gutils->getNewFromOriginal(call.getOperand(0));
         if (!isa<PointerType>(val->getType()))
           val = BuilderZ.CreateIntToPtr(val, PointerType::getUnqual(PT));
-#if LLVM_VERSION_MAJOR > 7
         val = BuilderZ.CreateLoad(PT, val);
-#else
-        val = BuilderZ.CreateLoad(val);
-#endif
         val = gutils->cacheForReverse(BuilderZ, val,
                                       getIndex(&call, CacheType::Tape));
 
@@ -12185,11 +11913,7 @@ public:
                 if (!isa<PointerType>(ptrshadow->getType()))
                   ptrshadow = BuilderZ.CreateIntToPtr(
                       ptrshadow, PointerType::getUnqual(PT));
-#if LLVM_VERSION_MAJOR > 7
                 Value *val = BuilderZ.CreateLoad(PT, ptrshadow);
-#else
-                Value *val = BuilderZ.CreateLoad(ptrshadow);
-#endif
 
                 auto dst_arg = BuilderZ.CreateBitCast(
                     val, Type::getInt8PtrTy(call.getContext()));
@@ -12348,11 +12072,7 @@ public:
         auto ptrv = gutils->getNewFromOriginal(call.getOperand(0));
         if (!isa<PointerType>(ptrv->getType()))
           ptrv = BuilderZ.CreateIntToPtr(ptrv, PointerType::getUnqual(PT));
-#if LLVM_VERSION_MAJOR > 7
         auto load = Builder2.CreateLoad(PT, ptrv, "posix_preread");
-#else
-        auto load = Builder2.CreateLoad(ptrv, "posix_preread");
-#endif
         Builder2.SetInsertPoint(&call);
         getReverseBuilder(Builder2);
         auto tofree = gutils->lookupM(load, Builder2, ValueToValueMapTy(),
@@ -12594,14 +12314,10 @@ public:
     if (gutils->isConstantInstruction(&call) &&
         gutils->isConstantValue(&call)) {
       bool noFree = Mode == DerivativeMode::ForwardMode;
-#if LLVM_VERSION_MAJOR >= 9
       noFree |= call.hasFnAttr(Attribute::NoFree);
-#endif
       noFree |= call.hasFnAttr("nofree");
       if (!noFree && called) {
-#if LLVM_VERSION_MAJOR >= 9
         noFree |= called->hasFnAttribute(Attribute::NoFree);
-#endif
         noFree |= called->hasFnAttribute("nofree");
       }
       if (!noFree && !EnzymeGlobalActivity) {
@@ -12629,11 +12345,7 @@ public:
 #else
         auto callval = call.getCalledValue();
 #endif
-#if LLVM_VERSION_MAJOR >= 9
         newCall->setCalledOperand(gutils->Logic.CreateNoFree(callval));
-#else
-        newCall->setCalledFunction(gutils->Logic.CreateNoFree(callval));
-#endif
       }
       if (gutils->knownRecomputeHeuristic.find(&call) !=
           gutils->knownRecomputeHeuristic.end()) {

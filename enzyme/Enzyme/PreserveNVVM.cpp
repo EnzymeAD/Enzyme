@@ -212,11 +212,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
               cal->setCallingConv(F->getCallingConv());
 
               if (sretTy) {
-#if LLVM_VERSION_MAJOR > 7
                 Value *res = bb.CreateLoad(sretTy, AI);
-#else
-                Value *res = bb.CreateLoad(AI);
-#endif
                 bb.CreateRet(res);
               } else if (!RT->isVoidTy()) {
                 bb.CreateRet(cal);
