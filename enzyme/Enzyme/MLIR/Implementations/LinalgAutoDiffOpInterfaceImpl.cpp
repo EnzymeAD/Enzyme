@@ -62,7 +62,6 @@ struct GenericOpInterfaceReverse
   void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
                                 MGradientUtilsReverse *gutils,
                                 SmallVector<Value> caches) const {
-    // TODO: currently in progress, this doesn't work
     auto linalgOp = cast<linalg::LinalgOp>(op);
     assert(linalgOp.hasBufferSemantics() &&
            "Linalg op with tensor semantics not yet supported");
@@ -70,24 +69,26 @@ struct GenericOpInterfaceReverse
     linalg::LinalgOp newOp =
         cast<linalg::LinalgOp>(gutils->getNewFromOriginal(linalgOp));
 
+    // IRRewriter rewriter(builder.getContext()/*, builder.getListener()*/);
     ConversionPatternRewriter rewriter(builder.getContext());
     auto failiureOrLinalgOp = generalizeNamedOp(rewriter, newOp);
     if (!failed(failiureOrLinalgOp)) {
       linalg::GenericOp replacement = failiureOrLinalgOp.value();
-      OpBuilder replacementBuilder(newOp);
-      replacementBuilder.insert(replacement);
+      auto scope = OpBuilder::InsertionGuard(builder);
+      builder.setInsertionPointAfter(newOp);
+      builder.insert(replacement);
       newOp.erase();
       newOp = replacement;
     }
 
-    auto cacheBuilder = OpBuilder(newOp);
+    auto cacheBuilder = OpBuilder(newOp, builder.getListener());
 
     // get iteration domain
     AffineMap aMap = newOp.getShapesToLoopsMap();
     SmallVector<Value> dims;
     for (OpOperand *input : newOp.getInputOperands()) {
       auto shape = cast<MemRefType>(input->get().getType()).getShape();
-      for (int i = 0; i < (int)shape.size(); i++) {
+      for (unsigned i = 0; i < shape.size(); i++) {
         auto dimI =
             cacheBuilder.create<arith::ConstantIndexOp>(op->getLoc(), i);
         auto dim = cacheBuilder.create<memref::DimOp>(op->getLoc(),
@@ -168,7 +169,6 @@ struct GenericOpInterfaceReverse
         gutils, *linalgOp.getBlock()->getParent(), adjoint.getBodyRegion(),
         /*parentRegion=*/false, buildFuncReturnOp, hook);
 
-    // TODO add pushCaches to the yield in newOp
     auto newOpYield = cast<linalg::YieldOp>(
         cast<linalg::GenericOp>(newOp).getBodyRegion().front().getTerminator());
     for (Value pc : pushCaches) {
@@ -200,8 +200,10 @@ struct GenericOpInterfaceReverse
       auto alloc = cacheBuilder.create<memref::AllocOp>(
           op->getLoc(), type, ValueRange(iterationDomains));
       Value cache = gutils->initAndPushCache(alloc, cacheBuilder);
-      alloc->setAttr(alloc.getOperandSegmentSizesAttrName(),
-                     cacheBuilder.getDenseI32ArrayAttr({1, 0}));
+      // TODO use higher level API
+      alloc->setAttr(
+          alloc.getOperandSegmentSizesAttrName(),
+          cacheBuilder.getDenseI32ArrayAttr({iterationDomains.size(), 0}));
 
       cast<linalg::GenericOp>(newOp).getOutputsMutable().append(
           ValueRange({alloc}));
@@ -225,8 +227,8 @@ struct GenericOpInterfaceReverse
     for (auto &map : indexingMapsAdjoint) {
       indexingMapsAttrAdjoint.push_back(AffineMapAttr::get(map));
     }
-    newOp->setAttr(cast<linalg::GenericOp>(newOp).getIndexingMapsAttrName(),
-                   cacheBuilder.getArrayAttr(indexingMapsAttr));
+    cast<linalg::GenericOp>(newOp).setIndexingMapsAttr(
+        cacheBuilder.getArrayAttr(indexingMapsAttr));
     adjoint->setAttr(adjoint.getIndexingMapsAttrName(),
                      builder.getArrayAttr(indexingMapsAttrAdjoint));
   }

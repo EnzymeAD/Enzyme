@@ -17,6 +17,7 @@
 #include "EnzymeLogic.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "llvm/ADT/ScopeExit.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -341,6 +342,9 @@ void MEnzymeLogic::differentiate(
     llvm::function_ref<buildReturnFunction> buildFuncReturnOp,
     std::function<std::pair<Value, Value>(Type)> cacheCreator) {
   gutils->registerCacheCreatorHook(cacheCreator);
+  auto scope = llvm::make_scope_exit(
+      [&]() { gutils->deregisterCacheCreatorHook(cacheCreator); });
+
   gutils->createReverseModeBlocks(oldRegion, newRegion, parentRegion);
 
   SmallVector<mlir::Block *> dominatorToposortBlocks =
@@ -359,7 +363,6 @@ void MEnzymeLogic::differentiate(
     handlePredecessors(oBB, newBB, reverseBB, gutils, buildFuncReturnOp,
                        parentRegion);
   }
-  gutils->deregisterCacheCreatorHook(cacheCreator);
 }
 
 FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
