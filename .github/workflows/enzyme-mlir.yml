@@ -59,7 +59,6 @@ jobs:
         -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_TARGETS_TO_BUILD=X86 \
         -DLLVM_USE_LINKER=gold -DLLVM_PARALLEL_LINK_JOBS=2 \
         -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_ARCMT=OFF \
-        -DLLVM_BUILD_TOOLS=OFF -DLLVM_BUILD_UTILS=OFF \
         -DLLVM_OPTIMIZED_TABLEGEN=ON
         ninja
 
@@ -67,10 +66,10 @@ jobs:
       working-directory: 'Enzyme'
       run: |
           mkdir enzyme-build && cd enzyme-build 
-          cmake .. -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=${{ github.workspace }}/llvm-project/mlir-build -DENZYME_MLIR=ON
+          cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=${{ github.workspace }}/llvm-project/mlir-build -DENZYME_MLIR=ON
           ninja
     
     - name: Check enzyme-mlir
-      working-directory: 'enzyme-build'
+      working-directory: 'Enzyme/enzyme-build'
       run: ninja check-enzymemlir
   
