@@ -17,7 +17,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/ModRef.h"
+#include "llvm/Support/ModRef.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;

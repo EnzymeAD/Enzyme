@@ -30,10 +30,10 @@ using namespace mlir::enzyme;
 mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
     FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
-    BlockAndValueMapping invertedPointers_,
+    IRMapping invertedPointers_,
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
     const SmallPtrSetImpl<mlir::Value> &activevals_, DIFFE_TYPE ReturnActivity,
-    ArrayRef<DIFFE_TYPE> ArgDiffeTypes_, BlockAndValueMapping &originalToNewFn_,
+    ArrayRef<DIFFE_TYPE> ArgDiffeTypes_, IRMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode_, unsigned width, SymbolTableCollection &symbolTable_)
     : newFunc(newFunc_), Logic(Logic), mode(mode_), oldFunc(oldFunc_), TA(TA_),
@@ -152,7 +152,7 @@ Operation *mlir::enzyme::MGradientUtilsReverse::getNewFromOriginal(
 Operation *
 mlir::enzyme::MGradientUtilsReverse::cloneWithNewOperands(OpBuilder &B,
                                                           Operation *op) {
-  BlockAndValueMapping map;
+  IRMapping map;
   for (auto operand : op->getOperands())
     map.map(operand, getNewFromOriginal(operand));
   return B.clone(*op, map);
@@ -266,8 +266,7 @@ bool mlir::enzyme::MGradientUtilsReverse::hasInvertPointer(mlir::Value v) {
 }
 
 void MGradientUtilsReverse::initInitializationBlock(
-    BlockAndValueMapping invertedPointers_,
-    const SmallPtrSetImpl<Value> &activevals_) {
+    IRMapping invertedPointers_, const SmallPtrSetImpl<Value> &activevals_) {
   initializationBlock = &*(this->newFunc.getFunctionBody().begin());
 
   OpBuilder initializationBuilder(
@@ -377,13 +376,13 @@ MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
   if (width > 1)
     prefix += std::to_string(width);
 
-  BlockAndValueMapping originalToNew;
+  IRMapping originalToNew;
   std::map<Operation *, Operation *> originalToNewOps;
 
   SmallPtrSet<mlir::Value, 1> returnvals;
   SmallPtrSet<mlir::Value, 1> constant_values;
   SmallPtrSet<mlir::Value, 1> nonconstant_values;
-  BlockAndValueMapping invertedPointers;
+  IRMapping invertedPointers;
   FunctionOpInterface newFunc = CloneFunctionWithReturns(
       mode_, width, todiff, invertedPointers, constant_args, constant_values,
       nonconstant_values, returnvals, returnValue, retType,

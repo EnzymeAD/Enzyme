@@ -49,6 +49,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include "llvm/Support/AMDGPUMetadata.h"
@@ -7950,7 +7951,7 @@ void GradientUtils::computeMinCache() {
     SmallPtrSet<Value *, 5> MinReq;
     DifferentialUseAnalysis::minCut(oldFunc->getParent()->getDataLayout(),
                                     OrigLI, Recomputes, Intermediates, Required,
-                                    MinReq, rematerializableAllocations);
+                                    MinReq, rematerializableAllocations, TLI);
     SmallPtrSet<Value *, 5> NeedGraph;
     for (Value *V : MinReq)
       NeedGraph.insert(V);
@@ -9138,16 +9139,18 @@ bool GradientUtils::needsCacheWholeAllocation(
     return false;
   if (!found->second)
     return true;
-  SmallVector<const Instruction *, 1> todo;
-  for (auto user : origInst->users())
-    todo.push_back(cast<Instruction>(user));
-  SmallPtrSet<const Instruction *, 1> seen;
+  SmallVector<std::pair<const Instruction *, size_t>, 1> todo;
+  for (auto &use : origInst->uses())
+    todo.push_back(
+        std::make_pair(cast<Instruction>(use.getUser()), use.getOperandNo()));
+  SmallSet<std::pair<const Instruction *, size_t>, 1> seen;
   while (todo.size()) {
-    auto cur = todo.back();
+    auto pair = todo.back();
+    auto [cur, idx] = pair;
     todo.pop_back();
-    if (seen.count(cur))
+    if (seen.count(pair))
       continue;
-    seen.insert(cur);
+    seen.insert(pair);
     // Loads are always fine
     if (isa<LoadInst>(cur))
       continue;
@@ -9162,20 +9165,30 @@ bool GradientUtils::needsCacheWholeAllocation(
           II->getIntrinsicID() == Intrinsic::masked_load)
         continue;
 
+    if (auto CI = dyn_cast<CallInst>(cur)) {
+#if LLVM_VERSION_MAJOR >= 14
+      if (idx < CI->arg_size())
+#else
+      if (idx < CI->getNumArgOperands())
+#endif
+      {
+        if (isNoCapture(CI, idx))
+          continue;
+      }
+    }
+
     found = knownRecomputeHeuristic.find(cur);
     if (found == knownRecomputeHeuristic.end())
       continue;
 
     // If caching this user, it cannot be a gep/cast of original
     if (!found->second) {
-      assert(isPointerArithmeticInst(cur, /*includephi*/ true,
-                                     /*includebin*/ true));
-      // if return may alias the input, then force it to be saved
-      return true;
+      assert(false && "caching potentially capturing/offset of allocation");
     } else {
       // if not caching this user, it is legal to recompute, consider its users
-      for (auto user : cur->users()) {
-        todo.push_back(cast<Instruction>(user));
+      for (auto &use : cur->uses()) {
+        todo.push_back(std::make_pair(cast<Instruction>(use.getUser()),
+                                      use.getOperandNo()));
       }
     }
   }
