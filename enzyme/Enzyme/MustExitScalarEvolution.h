@@ -51,7 +51,6 @@ public:
                                               llvm::BasicBlock *ExitingBlock,
                                               bool AllowPredicates);
 
-#if LLVM_VERSION_MAJOR >= 7
   ScalarEvolution::ExitLimit computeExitLimitFromCond(const llvm::Loop *L,
                                                       llvm::Value *ExitCond,
                                                       bool ExitIfTrue,
@@ -71,29 +70,6 @@ public:
   computeExitLimitFromICmp(const llvm::Loop *L, llvm::ICmpInst *ExitCond,
                            bool ExitIfTrue, bool ControlsExit,
                            bool AllowPredicates = false);
-#else
-  ScalarEvolution::ExitLimit
-  computeExitLimitFromCond(const llvm::Loop *L, llvm::Value *ExitCond,
-                           llvm::BasicBlock *TBB, llvm::BasicBlock *FBB,
-                           bool ControlsExit, bool AllowPredicates);
-
-  ScalarEvolution::ExitLimit
-  computeExitLimitFromCondCached(ExitLimitCacheTy &Cache, const llvm::Loop *L,
-                                 llvm::Value *ExitCond, llvm::BasicBlock *TBB,
-                                 llvm::BasicBlock *FBB, bool ControlsExit,
-                                 bool AllowPredicates);
-
-  ScalarEvolution::ExitLimit
-  computeExitLimitFromCondImpl(ExitLimitCacheTy &Cache, const llvm::Loop *L,
-                               llvm::Value *ExitCond, llvm::BasicBlock *TBB,
-                               llvm::BasicBlock *FBB, bool ControlsExit,
-                               bool AllowPredicates);
-
-  ScalarEvolution::ExitLimit
-  computeExitLimitFromICmp(const llvm::Loop *L, llvm::ICmpInst *ExitCond,
-                           llvm::BasicBlock *TBB, llvm::BasicBlock *FBB,
-                           bool ControlsExit, bool AllowPredicates = false);
-#endif
 
   bool loopIsFiniteByAssumption(const llvm::Loop *L);
 

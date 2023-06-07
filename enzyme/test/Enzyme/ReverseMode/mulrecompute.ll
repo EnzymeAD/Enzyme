@@ -25,7 +25,7 @@ L22:                                              ; preds = %L17
   unreachable
 
 L24:                                              ; preds = %L17
-  %sq = call double @llvm.sqrt.f64(double %y) "nofree"
+  %sq = call double @llvm.sqrt.f64(double %y) nofree
   %res = fmul double %sq, %c
   ret double %res
 }

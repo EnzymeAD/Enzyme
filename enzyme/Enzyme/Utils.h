@@ -578,9 +578,7 @@ static inline bool isDebugFunction(llvm::Function *called) {
   switch (called->getIntrinsicID()) {
   case llvm::Intrinsic::dbg_declare:
   case llvm::Intrinsic::dbg_value:
-#if LLVM_VERSION_MAJOR > 6
   case llvm::Intrinsic::dbg_label:
-#endif
 #if LLVM_VERSION_MAJOR <= 16
   case llvm::Intrinsic::dbg_addr:
 #endif
@@ -991,12 +989,8 @@ static inline llvm::Value *getMPIMemberPtr(llvm::IRBuilder<> &B,
   auto c0_64 = ConstantInt::get(i64, 0);
 
   if (Pointer) {
-#if LLVM_VERSION_MAJOR > 7
     return B.CreateInBoundsGEP(V->getType()->getPointerElementType(), V,
                                {c0_64, ConstantInt::get(i32, (uint64_t)E)});
-#else
-    return B.CreateInBoundsGEP(V, {c0_64, ConstantInt::get(i32, (uint64_t)E)});
-#endif
   } else {
     return B.CreateExtractValue(V, {(unsigned)E});
   }
@@ -1351,12 +1345,7 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
 #endif
     }
 #if LLVM_VERSION_MAJOR < 10
-#if LLVM_VERSION_MAJOR <= 7
-    if (auto CS = llvm::CallSite(V))
-#else
-    if (auto CS = llvm::dyn_cast<llvm::CallBase>(V))
-#endif
-    {
+    if (auto CS = llvm::dyn_cast<llvm::CallBase>(V)) {
       if (auto *RP = llvm::getArgumentAliasingToReturnedPointer(CS)) {
         V = RP;
         continue;
@@ -1385,10 +1374,9 @@ static inline const llvm::Value *getBaseObject(const llvm::Value *V) {
 }
 
 static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
-#if LLVM_VERSION_MAJOR >= 8
   if (F->onlyReadsMemory())
     return true;
-#endif
+
   if (F->hasFnAttribute(llvm::Attribute::ReadOnly) ||
       F->hasFnAttribute(llvm::Attribute::ReadNone))
     return true;
@@ -1401,21 +1389,10 @@ static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
 }
 
 static inline bool isReadOnly(const llvm::CallInst *call, ssize_t arg = -1) {
-#if LLVM_VERSION_MAJOR >= 8
   if (call->onlyReadsMemory())
     return true;
   if (arg != -1 && call->onlyReadsMemory(arg))
     return true;
-#else
-  if (call->hasFnAttr(llvm::Attribute::ReadOnly) ||
-      call->hasFnAttr(llvm::Attribute::ReadNone))
-    return true;
-  if (arg != -1) {
-    if (call->dataOperandHasImpliedAttr(arg + 1, llvm::Attribute::ReadOnly) ||
-        call->dataOperandHasImpliedAttr(arg + 1, llvm::Attribute::ReadNone))
-      return true;
-  }
-#endif
 
   if (auto F = getFunctionFromCall(call)) {
     if (isReadOnly(F, arg))
@@ -1472,15 +1449,8 @@ static inline bool isReadNone(const llvm::Function *F, ssize_t arg = -1) {
 }
 
 static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
-
-#if LLVM_VERSION_MAJOR >= 8
   if (call->doesNotCapture(idx))
     return true;
-#else
-  if (call->dataOperandHasImpliedAttr(idx + 1, llvm::Attribute::NoCapture))
-    return true;
-
-#endif
 
   auto F = getFunctionFromCall(call);
   if (F) {

@@ -89,9 +89,7 @@ void getFunction(raw_ostream &os, std::string callval, std::string FT,
          << " = gutils->oldFunc->getParent()->getOrInsertFunction(";
       os << Def->getValueInit("name")->getAsString();
       os << ", " << FT << ", called->getAttributes())\n";
-      os << "#if LLVM_VERSION_MAJOR >= 9\n";
       os << "  .getCallee()\n";
-      os << "#endif\n";
       os << ";\n";
       os << "  auto " << cconv << " = call.getCallingConv();\n";
       return;
@@ -1328,20 +1326,9 @@ void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
        << "          &call, {" << valueTypes
        << "}, Builder2, /* lookup */ false);\n";
     if (i == 0) {
-      os << "#if LLVM_VERSION_MAJOR > 7\n"
-         << "          dres = Builder2.CreateCall(call.getFunctionType(), "
-            "callval, args1, Defs);\n"
-         << "#else\n"
-         << "          dres = Builder2.CreateCall(callval, args1, Defs);\n"
-         << "#endif\n";
+      os << "dres = Builder2.CreateCall(call.getFunctionType(), callval, args1, Defs);\n";
     } else {
-      os << "#if LLVM_VERSION_MAJOR > 7\n"
-         << "        Value *nextCall = Builder2.CreateCall(\n"
-         << "          call.getFunctionType(), callval, args1, Defs);\n"
-         << "#else\n"
-         << "        Value *nextCall = Builder2.CreateCall(callval, args1, "
-            "Defs);\n"
-         << "#endif\n"
+      os << "Value *nextCall = Builder2.CreateCall(call.getFunctionType(), callval, args1, Defs);\n"
          << "        if (dres)\n"
          << "          dres = Builder2.CreateFAdd(dres, nextCall);\n"
          << "        else\n"
@@ -1428,13 +1415,8 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
       first = false;
     }
     os << ");\n";
-    os << "#if LLVM_VERSION_MAJOR >= 9\n"
-       << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
+    os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
        << ".getCallee()))\n"
-       << "#else\n"
-       << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
-       << "))\n"
-       << "#endif\n"
        << "    {\n"
        << "      attribute_" << dfnc_name << "(blas, F);\n"
        << "      if (byRef) {\n";

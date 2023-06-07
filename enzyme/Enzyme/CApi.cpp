@@ -50,10 +50,8 @@
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
-#if LLVM_VERSION_MAJOR >= 9
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Transforms/IPO/Attributor.h"
-#endif
 
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
@@ -787,13 +785,9 @@ LLVMValueRef EnzymeGradientUtilsCallWithInvertedBundles(
 
   auto callval = unwrap(func);
 
-#if LLVM_VERSION_MAJOR > 7
   auto res = BR.CreateCall(
       cast<FunctionType>(callval->getType()->getPointerElementType()), callval,
       args, Defs);
-#else
-  auto res = BR.CreateCall(callval, args, Defs);
-#endif
   return wrap(res);
 }
 
@@ -827,7 +821,6 @@ uint8_t EnzymeHasFromStack(LLVMValueRef inst1) {
   return hasMetadata(I1, "enzyme_fromstack") != 0;
 }
 
-#if LLVM_VERSION_MAJOR >= 8
 void EnzymeCloneFunctionDISubprogramInto(LLVMValueRef NF, LLVMValueRef F) {
   auto &OldFunc = *cast<Function>(unwrap(F));
   auto &NewFunc = *cast<Function>(unwrap(NF));
@@ -847,7 +840,6 @@ void EnzymeCloneFunctionDISubprogramInto(LLVMValueRef NF, LLVMValueRef F) {
   DIB.finalizeSubprogram(NewSP);
   return;
 }
-#endif
 
 void EnzymeReplaceFunctionImplementation(LLVMModuleRef M) {
   ReplaceFunctionImplementation(*unwrap(M));
@@ -912,7 +904,7 @@ extern "C++" char MyAttributorLegacyPass::ID = 0;
 void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(new MyAttributorLegacyPass());
 }
-#elif LLVM_VERSION_MAJOR >= 9
+#else
 void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createAttributorLegacyPass());
 }
@@ -1056,13 +1048,8 @@ LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
       FT->isVarArg());
 
   // Create the new function
-#if LLVM_VERSION_MAJOR >= 8
   Function *NewF = Function::Create(FTy, F->getLinkage(), F->getAddressSpace(),
                                     F->getName(), F->getParent());
-#else
-  Function *NewF =
-      Function::Create(FTy, F->getLinkage(), F->getName(), F->getParent());
-#endif
 
   ValueToValueMapTy VMap;
   // Loop over the arguments, copying the names of the mapped arguments over...
@@ -1356,13 +1343,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
                                         FT->isVarArg());
 
   // Create the new function
-#if LLVM_VERSION_MAJOR >= 8
   Function *NewF = Function::Create(FTy, F->getLinkage(), F->getAddressSpace(),
                                     F->getName(), F->getParent());
-#else
-  Function *NewF =
-      Function::Create(FTy, F->getLinkage(), F->getName(), F->getParent());
-#endif
 
   ValueToValueMapTy VMap;
   // Loop over the arguments, copying the names of the mapped arguments over...

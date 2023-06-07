@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -ge 9 ] && [ %llvmver -le 11 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
-; RUN: if [ %llvmver -ge 9 ] && [ %llvmver -le 11 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s; fi
+; RUN: if [ %llvmver -le 11 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
+; RUN: if [ %llvmver -le 11 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s; fi
 
 define float @tester(float %start_value, <4 x float> %input) {
 entry:

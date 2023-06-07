@@ -110,11 +110,7 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
 << "    Value *" << lenName << " = gutils->getNewFromOriginal(arg_" << name <<");\n"
 << "    if (byRef) {\n"
 << "      " << lenName << " = BuilderZ.CreatePointerCast(" << lenName <<", PointerType::getUnqual(intType));\n"
-<< "#if LLVM_VERSION_MAJOR > 7\n"
 << "      " << lenName << " = BuilderZ.CreateLoad(intType, " << lenName << ");\n"
-<< "#else\n"
-<< "      " << lenName << " = BuilderZ.CreateLoad(" << lenName << ");\n"
-<< "#endif\n"
 << "      if (cache_" << name << ")\n"
 << "        cacheValues.push_back(" << lenName << ");\n"
 << "    }\n";
@@ -124,11 +120,7 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
 << "    Value *" << incName << " = gutils->getNewFromOriginal(arg_" << incName <<");\n"
 << "    if (byRef) {\n"
 << "      " << incName << " = BuilderZ.CreatePointerCast(" << incName << ", PointerType::getUnqual(intType));\n"
-<< "#if LLVM_VERSION_MAJOR > 7\n"
 << "      " << incName << " = BuilderZ.CreateLoad(intType, " << incName << ");\n"
-<< "#else\n"
-<< "      " << incName << " = BuilderZ.CreateLoad(" << incName << ");\n"
-<< "#endif\n"
 << "      if (cache_" << incName << ")\n"
 << "        cacheValues.push_back(" << incName << ");\n"
 << "    }\n";

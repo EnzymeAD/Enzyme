@@ -143,13 +143,9 @@ void attributeKnownFunctions(llvm::Function &F) {
 #endif
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
-#if LLVM_VERSION_MAJOR >= 9
     F.addFnAttr(Attribute::WillReturn);
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
-#else
-    F.addFnAttr("nofree");
-#endif
     for (int i = 0; i < 2; i++)
       if (F.getFunctionType()->getParamType(i)->isPointerTy()) {
         F.addParamAttr(i, Attribute::NoCapture);
@@ -168,11 +164,7 @@ void attributeKnownFunctions(llvm::Function &F) {
 
   if (F.getName() ==
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_createERmm") {
-#if LLVM_VERSION_MAJOR >= 9
     F.addFnAttr(Attribute::NoFree);
-#else
-    F.addFnAttr("nofree");
-#endif
   }
   if (F.getName() == "MPI_Irecv" || F.getName() == "PMPI_Irecv") {
 #if LLVM_VERSION_MAJOR >= 16
@@ -182,11 +174,9 @@ void attributeKnownFunctions(llvm::Function &F) {
 #endif
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
-#if LLVM_VERSION_MAJOR >= 9
     F.addFnAttr(Attribute::WillReturn);
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
-#endif
     F.addParamAttr(0, Attribute::WriteOnly);
     if (F.getFunctionType()->getParamType(2)->isPointerTy()) {
       F.addParamAttr(2, Attribute::NoCapture);
@@ -202,11 +192,9 @@ void attributeKnownFunctions(llvm::Function &F) {
 #endif
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
-#if LLVM_VERSION_MAJOR >= 9
     F.addFnAttr(Attribute::WillReturn);
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
-#endif
     F.addParamAttr(0, Attribute::ReadOnly);
     if (F.getFunctionType()->getParamType(2)->isPointerTy()) {
       F.addParamAttr(2, Attribute::NoCapture);
@@ -223,11 +211,10 @@ void attributeKnownFunctions(llvm::Function &F) {
 #endif
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
-#if LLVM_VERSION_MAJOR >= 9
     F.addFnAttr(Attribute::WillReturn);
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
-#endif
+
     if (F.getFunctionType()->getParamType(0)->isPointerTy()) {
       F.addParamAttr(0, Attribute::NoCapture);
       F.addParamAttr(0, Attribute::ReadOnly);
@@ -240,11 +227,9 @@ void attributeKnownFunctions(llvm::Function &F) {
   if (F.getName() == "MPI_Wait" || F.getName() == "PMPI_Wait") {
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
-#if LLVM_VERSION_MAJOR >= 9
     F.addFnAttr(Attribute::WillReturn);
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
-#endif
     F.addParamAttr(0, Attribute::NoCapture);
     F.addParamAttr(1, Attribute::WriteOnly);
     F.addParamAttr(1, Attribute::NoCapture);
@@ -252,11 +237,9 @@ void attributeKnownFunctions(llvm::Function &F) {
   if (F.getName() == "MPI_Waitall" || F.getName() == "PMPI_Waitall") {
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
-#if LLVM_VERSION_MAJOR >= 9
     F.addFnAttr(Attribute::WillReturn);
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
-#endif
     F.addParamAttr(1, Attribute::NoCapture);
     F.addParamAttr(2, Attribute::WriteOnly);
     F.addParamAttr(2, Attribute::NoCapture);
@@ -470,11 +453,7 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
         diffsretType = dyn_cast<StructType>(diffretType);
         sretType && diffsretType && sretType->isLayoutIdentical(diffsretType)) {
       for (unsigned int i = 0; i < sretType->getStructNumElements(); i++) {
-#if LLVM_VERSION_MAJOR > 7
         Value *sgep = Builder.CreateStructGEP(retType, ret, i);
-#else
-        Value *sgep = Builder.CreateStructGEP(ret, i);
-#endif
         Builder.CreateStore(Builder.CreateExtractValue(diffret, {i}), sgep);
       }
       CI->eraseFromParent();
@@ -496,11 +475,7 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
     auto AL = EB.CreateAlloca(retType);
     Builder.CreateStore(diffret, Builder.CreatePointerCast(
                                      AL, PointerType::getUnqual(diffretType)));
-#if LLVM_VERSION_MAJOR > 7
     Value *cload = Builder.CreateLoad(retType, AL);
-#else
-    Value *cload = Builder.CreateLoad(AL);
-#endif
     CI->replaceAllUsesWith(cload);
     CI->eraseFromParent();
     return true;
@@ -710,12 +685,8 @@ public:
                                                 pty->getAddressSpace()),
                                width));
             for (size_t i = 0; i < width; ++i) {
-#if LLVM_VERSION_MAJOR > 7
               Value *elem = Builder.CreateStructGEP(
                   sretPt->getType()->getPointerElementType(), sretPt, i);
-#else
-              Value *elem = Builder.CreateStructGEP(sretPt, i);
-#endif
               acc = Builder.CreateInsertValue(acc, elem, i);
             }
             shadow = acc;
@@ -878,11 +849,7 @@ public:
                       byRefSize, " (bytes) actual size ", BitSize,
                       " (bits) in ", *CI);
         }
-#if LLVM_VERSION_MAJOR > 7
         res = Builder.CreateLoad(subTy, res);
-#else
-        res = Builder.CreateLoad(res);
-#endif
         byRefSize = 0;
       }
 
@@ -893,12 +860,8 @@ public:
           if (differentialReturn && differet == nullptr) {
             differet = res;
             if (CI->paramHasAttr(i, Attribute::ByVal)) {
-#if LLVM_VERSION_MAJOR > 7
               differet = Builder.CreateLoad(
                   differet->getType()->getPointerElementType(), differet);
-#else
-              differet = Builder.CreateLoad(differet);
-#endif
             }
             if (differet->getType() != fn->getReturnType())
               if (auto ST0 = dyn_cast<StructType>(differet->getType()))
@@ -912,11 +875,7 @@ public:
                     Builder.CreateStore(differet,
                                         Builder.CreatePointerCast(
                                             AI, PointerType::getUnqual(ST0)));
-#if LLVM_VERSION_MAJOR > 7
                     differet = Builder.CreateLoad(ST1, AI);
-#else
-                    differet = Builder.CreateLoad(AI);
-#endif
                   }
 
             if (differet->getType() != fn->getReturnType()) {
@@ -929,12 +888,8 @@ public:
           } else if (tape == nullptr) {
             tape = res;
             if (CI->paramHasAttr(i, Attribute::ByVal)) {
-#if LLVM_VERSION_MAJOR > 7
               tape = Builder.CreateLoad(
                   tape->getType()->getPointerElementType(), tape);
-#else
-              tape = Builder.CreateLoad(tape);
-#endif
             }
             continue;
           }
@@ -989,11 +944,10 @@ public:
           return {};
         }
       }
-#if LLVM_VERSION_MAJOR >= 9
       if (CI->isByValArgument(i)) {
         byVal[args.size()] = CI->getParamByValType(i);
       }
-#endif
+
       args.push_back(res);
       if (ty == DIFFE_TYPE::DUP_ARG || ty == DIFFE_TYPE::DUP_NONEED) {
         ++i;
@@ -1027,22 +981,11 @@ public:
               element = Builder.CreateBitCast(
                   element, PointerType::get(Type::getInt8Ty(CI->getContext()),
                                             elementPtrTy->getAddressSpace()));
-#if LLVM_VERSION_MAJOR >= 7
               element = Builder.CreateGEP(
                   Type::getInt8Ty(CI->getContext()), element,
                   Builder.CreateMul(
                       *batchOffset,
                       ConstantInt::get((*batchOffset)->getType(), v)));
-#else
-              element = Builder.CreateGEP(
-#if LLVM_VERSION_MAJOR >= 14
-                  elementPtrTy,
-#endif
-                  element,
-                  Builder.CreateMul(
-                      *batchOffset,
-                      ConstantInt::get((*batchOffset)->getType(), v)));
-#endif
               element = Builder.CreateBitCast(element, elementPtrTy);
             } else {
               EmitFailure(
@@ -1254,19 +1197,11 @@ public:
               element = Builder.CreateBitCast(
                   element, PointerType::get(Type::getInt8Ty(CI->getContext()),
                                             elementPtrTy->getAddressSpace()));
-#if LLVM_VERSION_MAJOR >= 7
               element = Builder.CreateGEP(
                   Type::getInt8Ty(CI->getContext()), element,
                   Builder.CreateMul(
                       batchOffset[i - 1],
                       ConstantInt::get(batchOffset[i - 1]->getType(), v)));
-#else
-              element = Builder.CreateGEP(
-                  element,
-                  Builder.CreateMul(
-                      batchOffset[i - 1],
-                      ConstantInt::get(batchOffset[i - 1]->getType(), v)));
-#endif
               element = Builder.CreateBitCast(element, elementPtrTy);
             } else {
               return false;
@@ -1536,25 +1471,16 @@ public:
             tape, PointerType::get(
                       tapeType,
                       cast<PointerType>(tape->getType())->getAddressSpace()));
-#if LLVM_VERSION_MAJOR > 7
         tape = Builder.CreateLoad(tapeType, tape);
-#else
-        tape = Builder.CreateLoad(tape);
-#endif
       } else if (tapeType != tape->getType() &&
                  DL.getTypeSizeInBits(tapeType) <=
                      DL.getTypeSizeInBits(tape->getType())) {
         IRBuilder<> EB(&CI->getParent()->getParent()->getEntryBlock().front());
         auto AL = EB.CreateAlloca(tape->getType());
         Builder.CreateStore(tape, AL);
-#if LLVM_VERSION_MAJOR > 7
         tape = Builder.CreateLoad(
             tapeType,
             Builder.CreatePointerCast(AL, PointerType::getUnqual(tapeType)));
-#else
-        tape = Builder.CreateLoad(
-            Builder.CreatePointerCast(AL, PointerType::getUnqual(tapeType)));
-#endif
       }
       assert(tape->getType() == tapeType);
       args.push_back(tape);
@@ -1582,12 +1508,12 @@ public:
     CallInst *diffretc = cast<CallInst>(Builder.CreateCall(newFunc, args));
     diffretc->setCallingConv(CallingConv);
     diffretc->setDebugLoc(CI->getDebugLoc());
-#if LLVM_VERSION_MAJOR >= 9
+
     for (auto &&[attr, ty] : byVal) {
       diffretc->addParamAttr(
           attr, Attribute::getWithByValType(diffretc->getContext(), ty));
     }
-#endif
+
     Value *diffret = diffretc;
     if (mode == DerivativeMode::ReverseModePrimal && tape) {
       if (aug->returns.find(AugmentedStruct::Tape) != aug->returns.end()) {
@@ -1936,16 +1862,10 @@ public:
         SmallVector<Value *, 16> CallArgs(II->arg_begin(), II->arg_end());
         SmallVector<OperandBundleDef, 1> OpBundles;
         II->getOperandBundlesAsDefs(OpBundles);
-// Insert a normal call instruction...
-#if LLVM_VERSION_MAJOR >= 8
+        // Insert a normal call instruction...
         CallInst *NewCall =
             CallInst::Create(II->getFunctionType(), II->getCalledOperand(),
                              CallArgs, OpBundles, "", II);
-#else
-        CallInst *NewCall =
-            CallInst::Create(II->getFunctionType(), II->getCalledValue(),
-                             CallArgs, OpBundles, "", II);
-#endif
         NewCall->takeName(II);
         NewCall->setCallingConv(II->getCallingConv());
         NewCall->setAttributes(II->getAttributes());
@@ -2548,10 +2468,6 @@ public:
               args.push_back(B.CreateMul(
                   CI->getArgOperand(1),
                   ConstantInt::get(CI->getArgOperand(1)->getType(), 8)));
-#if LLVM_VERSION_MAJOR <= 6
-              args.push_back(
-                  ConstantInt::get(Type::getInt32Ty(M.getContext()), 1U));
-#endif
               args.push_back(ConstantInt::getFalse(M.getContext()));
 
               Type *tys[] = {args[0]->getType(), args[2]->getType()};
