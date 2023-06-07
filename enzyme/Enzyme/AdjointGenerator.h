@@ -12315,10 +12315,8 @@ public:
         gutils->isConstantValue(&call)) {
       bool noFree = Mode == DerivativeMode::ForwardMode;
       noFree |= call.hasFnAttr(Attribute::NoFree);
-      noFree |= call.hasFnAttr("nofree");
       if (!noFree && called) {
         noFree |= called->hasFnAttribute(Attribute::NoFree);
-        noFree |= called->hasFnAttribute("nofree");
       }
       if (!noFree && !EnzymeGlobalActivity) {
         bool mayActiveFree = false;
