@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -gvn -dse -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(gvn,dse)" -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline norecurse nounwind uwtable
 define dso_local double @f(double* noalias nocapture %out, double %x) #0 {
@@ -24,7 +24,10 @@ attributes #1 = { noinline nounwind uwtable }
 
 ; CHECK: define internal double @fwddiffef(double* noalias nocapture %out, double* nocapture %"out'", double %x, double %"x'")
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   store double %"x'", double* %"out'", align 8
+; CHECK-NEXT:   store double %x, double* %out, align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"out'", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %out, align 8
-; CHECK-NEXT:   ret double 0.000000e+00
+; CHECK-NEXT:   %"res'ipl" = load double, double* %"out'"
+; CHECK-NEXT:   ret double %"res'ipl"
 ; CHECK-NEXT: }
