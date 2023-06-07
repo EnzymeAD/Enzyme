@@ -1,5 +1,5 @@
 void emit_BLASDiffUse(TGPattern &pattern, raw_ostream &os) {
-  auto argTypeMap = pattern.getArgTypeMap();
+  auto typeMap = pattern.getArgTypeMap();
   auto argUsers = pattern.getArgUsers();
   bool lv23 = pattern.isBLASLevel2or3();
   auto nameVec = pattern.getArgNames();
@@ -25,7 +25,7 @@ void emit_BLASDiffUse(TGPattern &pattern, raw_ostream &os) {
   }
 
   // initialize arg_ arguments
-  for (size_t argPos = (lv23 ? 1 : 0); argPos < argTypeMap.size(); argPos++) {
+  for (size_t argPos = (lv23 ? 1 : 0); argPos < typeMap.size(); argPos++) {
     assert(argPos < nameVec.size());
     auto name = nameVec[argPos];
     size_t i = (lv23 ? argPos - 1 : argPos);
@@ -45,10 +45,24 @@ void emit_BLASDiffUse(TGPattern &pattern, raw_ostream &os) {
   }
 
   emit_scalar_caching(pattern, os);
-  emit_mat_caching(pattern, os);
-  emit_vec_caching(pattern, os);
+  // we currently cache all vecs before we cache all matrices
+  // once fixed we can merge this calls
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    auto ty = typeMap.lookup(i);
+    if (ty != vincData)
+      continue;
+    assert(typeMap.lookup(i + 1) == vincInc);
+    emit_mat_vec_caching(pattern, i, os);
+  }
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    auto ty = typeMap.lookup(i);
+    if (ty != mldData)
+      continue;
+    assert(typeMap.lookup(i + 1) == mldLD);
+    emit_mat_vec_caching(pattern, i, os);
+  }
 
-  for (size_t argPos = (lv23 ? 1 : 0); argPos < argTypeMap.size(); argPos++) {
+  for (size_t argPos = (lv23 ? 1 : 0); argPos < typeMap.size(); argPos++) {
     auto users = argUsers.lookup(argPos);
     auto name = nameVec[argPos];
     size_t i = (lv23 ? argPos - 1 : argPos);

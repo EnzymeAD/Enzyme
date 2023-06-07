@@ -2,72 +2,30 @@
 //
 
 using namespace llvm;
-void emit_mat_caching(TGPattern &pattern, raw_ostream &os) {
-
+void emit_mat_vec_caching(TGPattern &pattern, size_t i, raw_ostream &os) {
   const auto argUsers = pattern.getArgUsers();
-  const auto typeMap = pattern.getArgTypeMap();
   const auto nameVec = pattern.getArgNames();
-
-  for (size_t i = 0; i < nameVec.size(); i++) {
-    if (typeMap.lookup(i) != argType::mldData) 
-      continue;
-    assert(typeMap.lookup(i+1) == argType::mldLD);
-    const auto matName = nameVec[i];
-    const auto matPosition = i;
-    const auto matUsers = argUsers.lookup(matPosition);
-    if (matUsers.size() == 0) {
-os << "  bool cache_" << matName << " = false;\n";
-    } else {
-      os 
-<< "  bool cache_" << matName
-<< "  = (cacheMode &&\n"
-<< "          overwritten_" << matName;
-      for (size_t user: matUsers) {
-        auto name = nameVec[user];
-        if (name == matName)
-          continue; // adjoint of x won't need x
-        os 
-<< " && active_" << name;
-      }
-      os 
-<< ");\n";
-    }
-  }
-}
-
-void emit_vec_caching(TGPattern &pattern, raw_ostream &os) {
-
-  const auto argUsers = pattern.getArgUsers();
-  const auto typeMap = pattern.getArgTypeMap();
-  const auto nameVec = pattern.getArgNames();
-
-  for (size_t i = 0; i < nameVec.size(); i++) {
-    if (typeMap.lookup(i) != argType::vincData) 
-      continue;
-    assert(typeMap.lookup(i+1) == argType::vincInc);
-    const auto vecName = nameVec[i];
-    const auto vecPosition = i;
-    const auto vecUsers = argUsers.lookup(vecPosition);
-    if (vecUsers.size() == 0) {
+  const auto vecName = nameVec[i];
+  const auto vecPosition = i;
+  const auto vecUsers = argUsers.lookup(vecPosition);
+  if (vecUsers.size() == 0) {
 os << "  bool cache_" << vecName << " = false;\n";
-    } else {
-      os 
+  } else {
+    os 
 << "  bool cache_" << vecName
 << "  = (cacheMode &&\n"
 << "          overwritten_" << vecName;
-      for (size_t user: vecUsers) {
-        auto name = nameVec[user];
-        if (name == vecName)
-          continue; // adjoint of x won't need x
-        os 
-<< " && active_" << name;
-      }
+    for (size_t user: vecUsers) {
+      auto name = nameVec[user];
+      if (name == vecName)
+        continue; // adjoint of x won't need x
       os 
+<< " && active_" << name;
+    }
+    os 
 << ");\n";
     }
-  }
 }
-
 
 // scalar (e.g xinc) is needed to be preserved if
 // 1) it is potentially overwritten AND EITHER
@@ -83,9 +41,9 @@ void emit_scalar_caching(TGPattern &pattern, raw_ostream &os) {
   os 
 << "  // len, fp, etc. must be preserved if overwritten\n";
   for (size_t i = 0; i < nameVec.size(); i++) {
-    auto typeOfArg = typeMap.lookup(i);
-    if (typeOfArg != len && typeOfArg != fp && typeOfArg != trans 
-        && typeOfArg != vincInc && typeOfArg != mldLD) {
+    auto ty = typeMap.lookup(i);
+    if (ty != len && ty != fp && ty != trans 
+        && ty != vincInc && ty != mldLD) {
       continue;
     }
     auto name = nameVec[i];
@@ -117,22 +75,19 @@ void emit_scalar_cacheTypes(TGPattern &pattern, raw_ostream &os) {
   auto typeMap = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
   for (size_t i = 0; i < nameVec.size(); i++) {
-    auto typeOfArg = typeMap.lookup(i);
-    if (typeOfArg != len && typeOfArg != fp && typeOfArg != trans 
-        && typeOfArg != vincInc && typeOfArg != mldLD) {
+    auto ty = typeMap.lookup(i);
+    auto scalarType = "";
+    if (ty == len || ty == vincInc || ty == mldLD) {
+      scalarType = "intType";
+    } else if (ty == trans) {
+      scalarType = "charType";
+    } else if (ty == fp) {
+      scalarType = "fpType";
+    } else {
       continue;
     }
-    auto name = nameVec[i];
-    auto scalarType = "";
-    if (typeOfArg == len || typeOfArg == vincInc || typeOfArg == mldLD) {
-      scalarType = "intType";
-    } else if (typeOfArg == trans) {
-      scalarType = "charType";
-    } else if (typeOfArg == fp) {
-      scalarType = "fpType";
-    }
   os
-<< "  if (cache_" << name << ") {\n"
+<< "  if (cache_" << nameVec[i] << ") {\n"
 << "    cacheTypes.push_back(" << scalarType << ");\n"
 << "  }\n";
   }
@@ -155,13 +110,12 @@ void emit_vec_copy(TGPattern &pattern, raw_ostream &os) {
 
   for (size_t i = 0; i < actArgs.size(); i++) {
     size_t argIdx = actArgs[i];
-    auto typeOfArg = typeMap.lookup(argIdx);
-    if (typeOfArg != argType::vincData)
+    auto ty = typeMap.lookup(argIdx);
+    if (ty != vincData)
       continue;
-    assert(typeMap.lookup(argIdx+1) == argType::vincInc);
+    assert(typeMap.lookup(argIdx+1) == vincInc);
     auto vecName = nameVec[argIdx];
     auto incName = nameVec[argIdx+1];
-    // TODO: remove last hardcoded len_n usages to support blas lv2/3 
     os
 << "    if (cache_" << vecName << ") {\n"
 << "      auto *vecSize = arg_n;\n"
@@ -170,14 +124,14 @@ void emit_vec_copy(TGPattern &pattern, raw_ostream &os) {
 << "      }\n"
 << "      auto malins = CreateAllocation(BuilderZ, fpType, vecSize);\n"
 << "      Value *arg = BuilderZ.CreateBitCast(malins, castvals[" << i << "]);\n"
-<< "      if (EnzymeBlasCopy) {\n"
-<< "        ValueType valueTypes[] = {" << valueTypes << "};\n"
-<< "         valueTypes[" << argIdx << "] = ValueType::Primal;\n"
-<< "         if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
+<< "      ValueType valueTypes[] = {" << valueTypes << "};\n"
+<< "      valueTypes[" << argIdx << "] = ValueType::Primal;\n"
+<< "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
     for (auto len_pos : pattern.getRelatedLengthArgs(argIdx) ) {
-os << "         if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
+os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
-os << "        auto dmemcpy = getOrInsertMemcpyStridedBlas(*gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
+os << "      if (EnzymeBlasCopy) {\n"
+<< "        auto dmemcpy = getOrInsertMemcpyStridedBlas(*gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
 << "            intType, blas, julia_decl);\n"
 << "        Value *args[5] = {arg_n, arg_" << vecName << ", arg_" << incName << ", arg, to_blas_callconv(BuilderZ, ConstantInt::get(intType, 1), byRef, julia_decl_type, allocationBuilder)};\n"
 << "        if (julia_decl)\n"
@@ -186,13 +140,7 @@ os << "        auto dmemcpy = getOrInsertMemcpyStridedBlas(*gutils->oldFunc->get
 << "            gutils->getInvertedBundles(&call, valueTypes,\n"
 << "            BuilderZ, /*lookup*/ false));\n"
 << "      } else {\n"
-<< "        ValueType valueTypes[] = {" << valueTypes << "};\n"
-<< "         valueTypes[" << argIdx << "] = ValueType::Primal;\n"
-<< "         if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
-    for (auto len_pos : pattern.getRelatedLengthArgs(argIdx) ) {
-os << "         if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
-    }
-os << "       auto dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(), fpType, cast<PointerType>(malins->getType()), intType, 0, 0);\n"
+<< "       auto dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(), fpType, cast<PointerType>(malins->getType()), intType, 0, 0);\n"
 << "        Value *args[4] = {malins, arg_" << vecName << ", arg_n, arg_" << incName << "};\n"
 << "        if (args[1]->getType()->isIntegerTy())\n"
 << "          args[1] = BuilderZ.CreateIntToPtr(args[1], malins->getType());\n"
@@ -222,16 +170,16 @@ void emit_mat_copy(TGPattern &pattern, raw_ostream &os) {
   }
   for (size_t i = 0; i < actArgs.size(); i++) {
     size_t argIdx = actArgs[i];
-    auto typeOfArg = typeMap.lookup(argIdx);
-    if (typeOfArg != argType::mldData)
+    auto ty = typeMap.lookup(argIdx);
+    if (ty != mldData)
       continue;
-    assert(typeMap.lookup(argIdx+1) == argType::mldLD);
+    assert(typeMap.lookup(argIdx+1) == mldLD);
     auto matName = nameVec[argIdx];
     auto ldName = nameVec[argIdx+1];
     auto dimensions = pattern.getRelatedLengthArgs(argIdx);
     assert(dimensions.size() == 2);
-    assert(typeMap.lookup(dimensions[0]) == argType::len);
-    assert(typeMap.lookup(dimensions[1]) == argType::len);
+    assert(typeMap.lookup(dimensions[0]) == len);
+    assert(typeMap.lookup(dimensions[1]) == len);
     std::string dim1 = "arg_" + nameVec[dimensions[0]];
     std::string dim2 = "arg_" + nameVec[dimensions[1]];
     os
@@ -252,25 +200,19 @@ void emit_mat_copy(TGPattern &pattern, raw_ostream &os) {
 << "        matSize = BuilderZ.CreateMul(M,N);\n"
 << "      }\n"
 << "      auto malins = CreateAllocation(BuilderZ, fpType, matSize);\n"
-<< "      if (EnzymeLapackCopy) {\n"
-<< "        ValueType valueTypes[] = {" << valueTypes << "};\n"
-<<"         valueTypes[" << argIdx << "] = ValueType::Primal;\n"
-<< "         if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
+<< "      ValueType valueTypes[] = {" << valueTypes << "};\n"
+<<"       valueTypes[" << argIdx << "] = ValueType::Primal;\n"
+<< "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
     for (auto len_pos : dimensions ) {
-os << "         if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
+os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
-os << "        Value *uplo = llvm::ConstantInt::get(charType, 0);\n" // garbage data, just should not match U or L
+os << "      if (EnzymeLapackCopy) {\n"
+<< "        Value *uplo = llvm::ConstantInt::get(charType, 0);\n" // garbage data, just should not match U or L
 << "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, nullptr, allocationBuilder, \"copy.garbage\");\n"
 << "        Value *args[7] = {uplo, M, N, arg_" << matName << ", arg_" << ldName << ", malins, M};\n"
 << "        callMemcpyStridedLapack(BuilderZ, *gutils->oldFunc->getParent(), blas, args, gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
 << "      } else {\n"
-<< "        ValueType valueTypes[] = {" << valueTypes << "};\n"
-<< "         valueTypes[" << argIdx << "] = ValueType::Primal;\n"
-<< "         if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
-    for (auto len_pos : pattern.getRelatedLengthArgs(argIdx) ) {
-os << "         if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
-    }
-os << "        auto dmemcpy = getOrInsertMemcpyMat(*gutils->oldFunc->getParent(), fpType, cast<PointerType>(malins->getType()), intType, 0, 0);\n"
+<< "        auto dmemcpy = getOrInsertMemcpyMat(*gutils->oldFunc->getParent(), fpType, cast<PointerType>(malins->getType()), intType, 0, 0);\n"
 << "        Value *len_lda = arg_" << ldName << ";\n"
 << "        if (byRef) {\n"
 << "          auto LDP = BuilderZ.CreatePointerCast(len_lda, PointerType::get(intType, cast<PointerType>(len_lda->getType())->getAddressSpace()));\n"
@@ -292,17 +234,11 @@ os << "        auto dmemcpy = getOrInsertMemcpyMat(*gutils->oldFunc->getParent()
 }
 
 
-void emit_scal_cacheValues(std::string argName, std::string scalType, raw_ostream &os) {
-  os
-<< "        addValueToCache(arg_" << argName <<", cache_" << argName <<", " << scalType << ", cacheValues, BuilderZ, \"" << argName << "\");\n";
-}
-
 void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
   auto actArgs = pattern.getActiveArgs();
   auto typeMap = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
   auto argUsers = pattern.getArgUsers();
-  //auto primalName = pattern.getName();
 
   os 
 << "  if ((Mode == DerivativeMode::ReverseModeCombined ||\n"
@@ -311,18 +247,22 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
  
   os << "    if (byRef) {\n";
   for (size_t i = 0; i < nameVec.size(); i++) {
-    auto typeOfArg = typeMap.lookup(i);
+    auto ty = typeMap.lookup(i);
     auto name = nameVec[i];
 
-    if (typeOfArg == argType::len) {
-      emit_scal_cacheValues(name, "intType", os);
-    } else if (typeOfArg == vincInc || typeOfArg == mldLD) {
-      emit_scal_cacheValues(name, "intType", os);
-    } else if (typeOfArg == trans) {
-      emit_scal_cacheValues(name, "charType", os);
-    } else if (typeOfArg == argType::fp) {
-      emit_scal_cacheValues(name, "fpType", os);
+    std::string scalType = "";
+    if (ty == len || ty == vincInc || ty == mldLD) {
+      scalType = "intType";
+    } else if (ty == trans) {
+      scalType = "charType";
+    } else if (ty == fp) {
+      scalType = "fpType";
+    } else {
+      continue;
     }
+    os 
+<< "        addValueToCache(arg_" << name <<", cache_" << name <<", "  
+<< scalType << ", cacheValues, BuilderZ, \"" << name << "\");\n";
   }
   os << "    }\n";
 
@@ -346,9 +286,9 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
   // once cleaned up, at most free_ args should be left
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto name = nameVec[i];
-    auto typeOfArg = typeMap.lookup(i);
-    if (typeOfArg == argType::vincData) {
-      assert(typeMap.lookup(i+1) == argType::vincInc);
+    auto ty = typeMap.lookup(i);
+    if (ty == vincData) {
+      assert(typeMap.lookup(i+1) == vincInc);
       auto vecName = nameVec[i];
       auto incName = nameVec[i+1];
       os 
@@ -356,20 +296,17 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
 << "  Value *" << incName << " = true_" << incName << ";\n"
 << "  Value *data_" << vecName << " = arg_" << vecName << ";\n"
 << "  Value *free_" << vecName << " = arg_" << vecName << ";\n";
-    } else if (typeOfArg == argType::mldData) {
-      assert(typeMap.lookup(i+1) == argType::mldLD);
+    } else if (ty == mldData) {
+      assert(typeMap.lookup(i+1) == mldLD);
       auto vecName = nameVec[i];
       auto ldName = nameVec[i+1];
       os 
 << "  Value *true_" << ldName << " = arg_" << ldName << ";\n"
 << "  Value *" << ldName << " = true_" << ldName << ";\n"
 << "  Value *free_" << vecName << " = arg_" << vecName << ";\n";
-    } else if (typeOfArg == argType::len) {
-os<< "  Value *" << name << " = arg_" << name << ";\n";
-    } else if (typeOfArg == argType::fp) {
-      os
-<< "  Value *fp_" << name << " = arg_" << name << ";\n"; 
-    } else if (typeOfArg == argType::trans) {
+    } else if (ty == len) {
+    } else if (ty == fp) {
+    } else if (ty == trans) {
     }
   }
 
@@ -407,11 +344,25 @@ void emit_caching(TGPattern &pattern, raw_ostream &os) {
 
   emit_scalar_caching(pattern, os);
   emit_scalar_cacheTypes(pattern, os);
-  emit_mat_caching(pattern, os);
-  emit_vec_caching(pattern, os);
+  // we currently cache all vecs before we cache all matrices
+  // once fixed we can merge this calls
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    auto ty = typeMap.lookup(i);
+    if (ty != vincData)
+      continue;
+    assert(typeMap.lookup(i+1) == vincInc);
+    emit_mat_vec_caching(pattern, i, os);
+  }
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    auto ty = typeMap.lookup(i);
+    if (ty != mldData)
+      continue;
+    assert(typeMap.lookup(i+1) == mldLD);
+    emit_mat_vec_caching(pattern, i, os);
+  }
 
   for (auto actEn : llvm::enumerate(actArgs)) {
-    if (typeMap.lookup(actEn.value()) == argType::fp) continue;
+    if (typeMap.lookup(actEn.value()) == fp) continue;
     auto name = nameVec[actEn.value()];
     os 
 << "  if (cache_" << name << ")\n"

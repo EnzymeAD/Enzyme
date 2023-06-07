@@ -914,17 +914,20 @@ void emit_free_and_ending(TGPattern &pattern, raw_ostream &os) {
   auto typeMap = pattern.getArgTypeMap();
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
-    if (ty == argType::vincData) {
+    if (ty == vincData) {
       auto name = nameVec[i];
       os << "      if (cache_" << name << ") {\n"
          << "        if (julia_decl) {\n"
-         << "          CreateDealloc(Builder2, data_" << name << ");\n"
+         << "          CreateDealloc(Builder2, free_" << name
+         << ");\n"
+         //<< "          CreateDealloc(Builder2, data_" << name << ");\n"
          << "        } else {\n"
-         << "          CreateDealloc(Builder2, data_" << name << ");\n"
+         << "          CreateDealloc(Builder2, arg_" << name << ");\n"
+         //<< "          CreateDealloc(Builder2, data_" << name << ");\n"
          << "        }\n"
          << "      }\n";
     }
-    if (ty == argType::mldData) {
+    if (ty == mldData) {
       auto name = nameVec[i];
       os << "      if (cache_" << name << ") {\n"
          << "        if (julia_decl) {\n"
@@ -994,8 +997,8 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
 
   bool anyActive = false;
   for (size_t i = 0; i < nameVec.size(); i++) {
-    argType type = argTypeMap.lookup(i);
-    if (type == argType::fp) {
+    argType ty = argTypeMap.lookup(i);
+    if (ty == fp) {
       anyActive = true;
     }
   }
@@ -1003,8 +1006,8 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
   if (anyActive) {
     os << "  int num_active_fp = 0;\n";
     for (size_t i = 0; i < nameVec.size(); i++) {
-      argType type = argTypeMap.lookup(i);
-      if (type == argType::fp) {
+      argType ty = argTypeMap.lookup(i);
+      if (ty == fp) {
         os << "  if (active_" << nameVec[i] << ")\n"
            << "    num_active_fp++;\n";
       }
@@ -1013,8 +1016,8 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
 
   for (auto name : llvm::enumerate(nameVec)) {
     assert(argTypeMap.count(name.index()) == 1);
-    auto type = argTypeMap.lookup(name.index());
-    if (type == argType::vincData || type == argType::mldData) {
+    auto ty = argTypeMap.lookup(name.index());
+    if (ty == vincData || ty == mldData) {
       os << "  const bool julia_decl = !type_" << name.value()
          << "->isPointerTy();\n";
       return;
@@ -1034,15 +1037,15 @@ void emit_castvals(TGPattern &pattern, raw_ostream &os) {
   for (size_t i = 0; i < activeArgs.size(); i++) {
     size_t argIdx = activeArgs[i];
     auto name = nameVec[argIdx];
-    auto thisType = argTypeMap.lookup(argIdx);
+    auto ty = argTypeMap.lookup(argIdx);
     auto scalarType = "";
-    if ( thisType == argType::fp) {
+    if (ty == fp) {
       scalarType = "fpType";
-    } else if ( thisType == argType::len || thisType == argType::mldLD || thisType == argType::vincInc) {
+    } else if (ty == len || ty == mldLD || ty == vincInc) {
       scalarType = "intType";
-    } else if ( thisType == argType::trans) {
+    } else if (ty == trans) {
       scalarType = "charType";
-    } else if ( thisType == argType::vincData || thisType == argType::mldData) {
+    } else if (ty == vincData || ty == mldData) {
       scalarType = "fpType";
     } else {
       llvm::errs() << "unhandled castvals type!\n";
@@ -1066,10 +1069,9 @@ void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
 
   auto inputTypes = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
-  auto argTypeMap = pattern.getArgTypeMap();
 
   for (auto val : inputTypes) {
-    if (val.second == argType::len) {
+    if (val.second == len) {
       foundInt = true;
       name = nameVec[val.first];
       break;
@@ -1101,14 +1103,13 @@ void extract_scalar(std::string name, std::string elemTy, raw_ostream &os) {
      << "        arg_" << name << " = (cacheTypes.size() == 1)\n"
      << "                    ? cacheval\n"
      << "                    : Builder2.CreateExtractValue(cacheval, "
-        "{cacheidx}, \"tape.ext." << name << "\");\n"
+     << "{cacheidx}, \"tape.ext." << name << "\");\n"
      << "        auto alloc = allocationBuilder.CreateAlloca(" << elemTy
      << ", nullptr, \"byref." << name << "\");\n"
      << "        Builder2.CreateStore(arg_" << name << ", alloc);\n"
      << "        arg_" << name
      << " = Builder2.CreatePointerCast(\n"
-     //                     check for this ty of ArgOperand(0)?
-     << "            alloc, call.getArgOperand(0)->getType(), \"cast." << name << "\");\n"
+     << "            alloc, type_" << name << ", \"cast." << name << "\");\n"
      << "        cacheidx++;\n"
      << "      } else {\n"
      << "        if (Mode != DerivativeMode::ForwardModeSplit)\n"
@@ -1117,18 +1118,20 @@ void extract_scalar(std::string name, std::string elemTy, raw_ostream &os) {
      << "\n";
 }
 
-void extract_mat(std::string name, raw_ostream &os) {
+void extract_mat_or_vec(std::string name, raw_ostream &os) {
   os << "      if (cache_" << name << ") {\n"
      << "        arg_" << name << " = (cacheTypes.size() == 1)\n"
      << "                    ? cacheval\n"
      << "                    : Builder2.CreateExtractValue(cacheval, "
-        "{cacheidx}, \"tape.ext." << name << "\");\n"
+        "{cacheidx}, \"tape.ext."
+     << name << "\");\n"
      << "        free_" << name << " = arg_" << name << ";\n"
      << "        if (julia_decl) {\n"
      << "          arg_" << name << " = Builder2.CreatePtrToInt(arg_" << name
      << ", type_" << name << ");\n"
      << "        } else {\n"
-     << "          arg_" << name << " = Builder2.CreatePointerCast(arg_" << name << ", orig_" << name << "->getType());\n"
+     << "          arg_" << name << " = Builder2.CreatePointerCast(arg_" << name
+     << ", type_" << name << ");\n"
      << "        }\n"
      << "        cacheidx++;\n"
      << "      } else {\n"
@@ -1161,17 +1164,15 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
      << "    if (byRef) {\n";
 
   for (size_t i = 0; i < nameVec.size(); i++) {
-    auto typeOfArg = typeMap.lookup(i);
+    auto ty = typeMap.lookup(i);
     auto name = nameVec[i];
     // this branch used "true_" << name everywhere instead of "arg_" << name
     // before. probably randomly, but check to make sure
-    if (typeOfArg == argType::vincInc || typeOfArg == argType::mldLD) {
+    if (ty == len || ty == vincInc || ty == mldLD) {
       extract_scalar(name, "intType", os);
-    } else if (typeOfArg == argType::len) {
-      extract_scalar(name, "intType", os);
-    } else if (typeOfArg == argType::fp) {
+    } else if (ty == fp) {
       extract_scalar(name, "fpType", os);
-    } else if (typeOfArg == argType::trans) {
+    } else if (ty == trans) {
       // we are in the byRef branch and trans only exist in lv23.
       // So just unconditionally asume that no layout exist and use i-1
       extract_scalar(name, "charType", os);
@@ -1180,15 +1181,15 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
 
   os << "    } else if (Mode != DerivativeMode::ForwardModeSplit) {\n";
   for (size_t i = 0; i < nameVec.size(); i++) {
-    auto typeOfArg = typeMap.lookup(i);
+    auto ty = typeMap.lookup(i);
     auto name = nameVec[i];
-    if (typeOfArg == argType::vincInc || typeOfArg == argType::mldLD) {
+    if (ty == vincInc || ty == mldLD) {
       os << "      if (cache_" << name << ") {\n"
          << "        true_" << name << " = lookup(true_" << name
          << ", Builder2);\n"
          << "        " << name << " = true_" << name << ";\n"
          << "      }\n";
-    } else if (typeOfArg == argType::len || typeOfArg == argType::fp) {
+    } else if (ty == len || ty == fp) {
       os << "      arg_" << name << " = lookup(arg_" << name << ", Builder2);\n"
          << "\n";
     }
@@ -1196,43 +1197,34 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
   os << "    }\n";
 
   for (size_t i = 0; i < nameVec.size(); i++) {
-    auto typeOfArg = typeMap.lookup(i);
+    auto ty = typeMap.lookup(i);
+    if (ty != mldData)
+      continue;
     auto name = nameVec[i];
-    if (typeOfArg == argType::mldData) {
-      extract_mat(name, os);
-    }
+    extract_mat_or_vec(name, os);
   }
 
   for (size_t i = 0; i < nameVec.size(); i++) {
-    if (typeMap.lookup(i) != argType::vincData)
+    auto ty = typeMap.lookup(i);
+    if (ty != vincData)
       continue;
-    const auto vecName = nameVec[i];
+    auto name = nameVec[i];
     const auto vecPosition = i;
     const auto vecUsers = argUsers.lookup(vecPosition);
     const auto incName = nameVec[i + 1];
-    os << "    if (cache_" << vecName << ") {\n"
-       << "      data_" << vecName << " =\n"
-       << "          (cacheTypes.size() == 1)\n"
-       << "              ? cacheval\n"
-       << "              : Builder2.CreateExtractValue(cacheval, {cacheidx}, "
-          "\"tape.ext."
-       << vecName << "\");\n"
-       << "        free_" << vecName << " = data_" << vecName << ";\n"
-       << "      cacheidx++;\n"
+    extract_mat_or_vec(name, os);
+    os << "      if (cache_" << name << ") {\n"
        << "      " << incName << " = ConstantInt::get(intType, 1);\n"
-       << "      if (byRef) {\n"
-       << "        auto alloc = allocationBuilder.CreateAlloca(intType, "
+       << "       if (byRef) {\n"
+       << "         auto alloc = allocationBuilder.CreateAlloca(intType, "
           "nullptr, \"byref."
-       << vecName << "\");\n"
-       << "        Builder2.CreateStore(" << incName << ", alloc);\n"
-       << "        " << incName << " = Builder2.CreatePointerCast(\n"
-       << "            alloc, orig_" << vecName << "->getType(), \"cast."
-       << vecName << "\");\n"
+       << incName << "\");\n"
+       << "         Builder2.CreateStore(" << incName << ", alloc);\n"
+       << "         " << incName << " = Builder2.CreatePointerCast(\n"
+       << "             alloc, type_" << incName << ", \"cast." << incName
+       << "\");\n"
        << "      }\n"
-       << "      if (type_" << vecName << "->isIntegerTy())\n"
-       << "        data_" << vecName << " = Builder2.CreatePtrToInt(data_"
-       << vecName << ", type_" << vecName << ");\n"
-       << "    }\n";
+       << " }\n";
 
     if (vecUsers.size() > 0) {
       os << "   else if (";
@@ -1240,16 +1232,15 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
       // TODO: for higher lv: verify x isn't user from data_x (as only adjoint
       // of x will be used)
       for (auto user : vecUsers) {
-        auto name = nameVec[user];
-        if (vecName == name)
+        auto userName = nameVec[user];
+        if (name == userName)
           continue; // see above
-        os << ((first) ? "" : " || ") << "active_" << name;
+        os << ((first) ? "" : " || ") << "active_" << userName;
         first = false;
       }
       os << ") {\n"
-         << "      data_" << vecName
-         << " = lookup(gutils->getNewFromOriginal(orig_" << vecName
-         << "), Builder2);\n"
+         << "      data_" << name << " = lookup(arg_" << name
+         << ", Builder2);\n"
          << "    }\n";
     }
   }
@@ -1284,9 +1275,9 @@ llvm::SmallString<80> ValueType_helper(TGPattern &pattern, size_t actPos) {
       valueTypes.append(", ");
     }
 
-    if (type == argType::len) {
+    if (type == len) {
       valueTypes.append("ValueType::Both");
-    } else if (type == argType::fp) {
+    } else if (type == fp) {
       auto floatName = nameVec[pos];
       if (pos == actPos) {
         valueTypes.append("ValueType::Both");
@@ -1295,10 +1286,10 @@ llvm::SmallString<80> ValueType_helper(TGPattern &pattern, size_t actPos) {
                            " ? ValueType::Both : ValueType::Both")
                               .str());
       }
-    } else if (type == argType::vincData) {
+    } else if (type == vincData) {
       const auto nextName = nameVec[pos + 1];
       const auto nextType = typeMap.lookup(pos + 1);
-      assert(nextType == argType::vincInc);
+      assert(nextType == vincInc);
       const auto vecName = nameVec[pos];
       if (pos == actPos) {
         valueTypes.append("ValueType::Both, ValueType::Both");
@@ -1349,7 +1340,8 @@ size_t fwd_call_args(TGPattern &pattern, size_t actArg,
       if (pos == actArg) {
         result.append((Twine("d_") + name).str());
       } else {
-        result.append((Twine("fp_") + name).str());
+        result.append((Twine("arg_") + name).str());
+        // result.append((Twine("fp_") + name).str());
       }
     } else if (ty == vincData) {
       auto nextName = nameVec[pos + 1];
@@ -1418,13 +1410,13 @@ void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
   const auto activeArgs = pattern.getActiveArgs();
   for (auto inputType : inputTypes) {
     auto ty = inputType.second;
-    if (ty == argType::vincData || ty == argType::mldData) {
+    if (ty == vincData || ty == mldData) {
       const auto name = nameVec[inputType.first];
       os << "    Value *d_" << name << " = active_" << name << "\n"
          << "     ? gutils->invertPointerM(orig_" << name << ", Builder2)\n"
          << "     : nullptr;\n";
     }
-    if (ty == argType::fp) {
+    if (ty == fp) {
       const auto name = nameVec[inputType.first];
       os << "    Value *d_" << name
          << " = llvm::ConstantFP::get(fpType, 0.0);\n";
@@ -1588,11 +1580,8 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
         // Optionally add it later as first arg for byRef.
         if (argStr == "layout")
           continue;
-        if (first) {
-          typeString += (Twine("type_") + argStr).str();
-        } else {
-          typeString += (Twine(", type_") + argStr).str();
-        }
+        typeString += (first ? "" : ", ");
+        typeString += (Twine("type_") + argStr).str();
       }
       first = false;
     }
@@ -1709,46 +1698,49 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
       assert(nameMap.count(name) == 1);
       auto argPosition = nameMap.lookup(name);
       // and based on that get the fp/int + scalar/vector type
-      auto typeOfArg = typeMap.lookup(argPosition);
+      auto ty = typeMap.lookup(argPosition);
 
       // Now we create the adj call args through concating type and primal name
-      if (typeOfArg == argType::len) {
+      if (ty == len) {
         result.append((Twine("arg_") + name).str());
-      } else if (typeOfArg == argType::fp) {
+      } else if (ty == fp) {
         if (argPosition == actArg) {
           result.append((Twine("d_") + name).str());
         } else {
           result.append((Twine("arg_") + name).str());
-          // result.append((Twine("fp_") + name).str());
         }
-      } else if (typeOfArg == argType::vincData) {
+      } else if (ty == vincData) {
         auto nextName = ruleDag->getArgNameStr(pos + 1);
         // get the position of the argument in the primary blas call
         auto nextArgPosition = nameMap.lookup(nextName);
         // and based on that get the fp/int + scalar/vector type
         auto typeOfNextArg = typeMap.lookup(nextArgPosition);
-        assert(typeOfNextArg == argType::vincInc);
+        assert(typeOfNextArg == vincInc);
         if (argPosition == actArg) {
-          // TODO: why do we have true_<X> ? isn't arg_<X> enough?
+          // shadow d_<X> wasn't overwritten or cached, so use true_inc<X>
           result.append((Twine("d_") + name + ", true_" + nextName).str());
         } else {
-          result.append((Twine("data_") + name).str());
+          result.append((Twine("arg_") + name).str());
+          //result.append((Twine("data_") + name).str());
           // if we cached arg_<X> then don't use inc_<X> but rather 1,
           // since we malloc'd the cache
-          result.append((Twine(", cache_" + name + " ? ConstantInt::get(intType, 1) : arg_") + nextName).str());
+          // result.append((Twine(", cache_" + name + " ?
+          // ConstantInt::get(intType, 1) : arg_") + nextName).str());
+          //  orig arg might was cached in which cased we overwrote arg_ to 1
+          result.append((Twine(", arg_") + nextName).str());
         }
         pos++; // extra ++ due to also handling vincInc
-      } else if (typeOfArg == argType::vincInc) {
+      } else if (ty == vincInc) {
         // might come without vincData, e.g. after DiffeRet
         // result.append(name);
         result.append((Twine("arg_") + name).str());
-      } else if (typeOfArg == argType::mldData) {
+      } else if (ty == mldData) {
         auto nextName = ruleDag->getArgNameStr(pos + 1);
         // get the position of the argument in the primary blas call
         auto nextArgPosition = nameMap.lookup(nextName);
         // and based on that get the fp/int + scalar/vector type
         auto typeOfNextArg = typeMap.lookup(nextArgPosition);
-        assert(typeOfNextArg == argType::mldLD);
+        assert(typeOfNextArg == mldLD);
         if (pos == actArg) {
           result.append((Twine("d_") + name + ", true_" + nextName).str());
         } else {
@@ -1758,17 +1750,17 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
           result.append((Twine("arg_") + name + ", arg_" + nextName).str());
         }
         pos++; // extra ++ due to also handling mldLD
-      } else if (typeOfArg == argType::mldLD) {
+      } else if (ty == mldLD) {
         // might come without mldData, e.g. after DiffeRet
         // coppied from vincInc, but should verify if actually needed
         // result.append(name);
         result.append((Twine("arg_") + name).str());
-      } else if (typeOfArg == argType::trans) {
+      } else if (ty == trans) {
         result.append((Twine("arg_") + name).str());
         //result.append((Twine("arg_") + name).str());
       } else {
         // TODO
-        // llvm::errs() << "name: " << name << " typename: " << typeOfArg <<
+        // llvm::errs() << "name: " << name << " typename: " << ty <<
         // "\n"; llvm_unreachable("unimplemented input type!");
       }
     }
@@ -1831,13 +1823,13 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
 
   for (size_t i = 0; i < nameVec.size(); i++) {
     const auto name = nameVec[i];
-    const auto typeOfArg = typeMap.lookup(i);
-    if (typeOfArg == argType::vincData || typeOfArg == argType::mldData) {
+    const auto ty = typeMap.lookup(i);
+    if (ty == vincData || ty == mldData) {
       os << "    Value *d_" << name << " = active_" << name << "\n"
          << "     ? lookup(gutils->invertPointerM(orig_" << name
          << ", Builder2), Builder2)\n"
          << "     : nullptr;\n";
-    } else if (typeOfArg == argType::fp) {
+    } else if (ty == fp) {
       os << "    Value *d_" << name << " = UndefValue::get(fpType);\n";
     }
   }
@@ -1845,7 +1837,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
   // now we can use it to transpose our trans arguments if they exist
   for (size_t i = (lv23 ? 1 : 0); i < nameVec.size(); i++) {
     auto name = nameVec[i];
-    if (typeMap.lookup(i) == argType::trans) {
+    if (typeMap.lookup(i) == trans) {
       os << "  llvm::Value* arg_transposed_" << name
          << " = transpose(Builder2, arg_" << name
          << ", byRef, charType, allocationBuilder, \"" << name << "\");\n";
@@ -1858,10 +1850,10 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
   bool first = true;
   for (auto arg : activeArgs) {
     const auto name = nameVec[arg];
-    const auto typeOfArg = typeMap.lookup(arg);
+    const auto ty = typeMap.lookup(arg);
     // We don't pass in shaddows of fp values,
     // we just create and struct-return the shaddows
-    if (typeOfArg == argType::fp)
+    if (ty == fp)
       continue;
     os << ((first) ? "" : ", ") << "Value *"
        << "d_" + name;
@@ -1883,7 +1875,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
     const auto ruleDag = rule.getRuleDag();
     const auto name = nameVec[actArg];
     const auto nameMap = rule.getArgNameMap();
-    const auto typeOfArg = typeMap.lookup(actArg);
+    const auto ty = typeMap.lookup(actArg);
     auto args = llvm::SmallString<40>();
     const size_t numArgs = rev_call_args(rule, actArg, args);
     const auto valueTypes = ValueType_helper(pattern, actArg);
@@ -1915,7 +1907,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
          << "        const auto Defs = gutils->getInvertedBundles(&call, {"
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
 
-      if (typeOfArg == argType::fp) {
+      if (ty == fp) {
         // extra handling, since we will update only a fp scalar as part of the
         // return struct it's presumably done by setting it to the value
         // returned by this call
@@ -1932,7 +1924,6 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
            << ", cubcall, Builder2, fpType);\n"
            << "        }"
            << "      }\n";
-
 
       } else {
         os << "        Builder2.CreateCall(derivcall_" << dfnc_name
@@ -1955,10 +1946,10 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
   first = true;
   for (auto arg : activeArgs) {
     const auto name = nameVec[arg];
-    const auto typeOfArg = typeMap.lookup(arg);
+    const auto ty = typeMap.lookup(arg);
     // We don't pass in shaddows of fp values,
     // we just create and struct-return the shaddows
-    if (typeOfArg == argType::fp)
+    if (ty == fp)
       continue;
     os << ((first) ? "" : ", ") << "d_" + name;
     first = false;
