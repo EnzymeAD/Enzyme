@@ -33,8 +33,8 @@ declare void @free(i8*)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"arg0'ipev" = extractvalue { i8* } %"tapeArg'", 0
 ; CHECK-NEXT:   %arg0 = extractvalue { i8* } %tapeArg, 0
-; CHECK-NEXT:   store i8 0, i8* %arg0, align 8
 ; CHECK-NEXT:   store i8 0, i8* %"arg0'ipev", align 8
+; CHECK-NEXT:   store i8 0, i8* %arg0, align 8
 ; CHECK-NEXT:   br i1 %cmp, label %invertbaz, label %invertfoo
 
 ; CHECK: invertbaz:                                        ; preds = %invertfoo, %entry

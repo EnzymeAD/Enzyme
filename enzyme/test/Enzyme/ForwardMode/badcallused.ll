@@ -47,8 +47,8 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = call i1 @fwddiffesubf(double* %x, double* %"x'")
 ; CHECK-NEXT:   %sel = select i1 %0, double 2.000000e+00, double 3.000000e+00
-; CHECK-NEXT:   store double %sel, double* %x, align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'", align 8
+; CHECK-NEXT:   store double %sel, double* %x, align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
@@ -58,8 +58,8 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %[[i0:.+]] = load double, double* %x, align 8
 ; CHECK-NEXT:   %mul = fmul fast double %[[i0]], 2.000000e+00
 ; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i1]], 2.000000e+00
-; CHECK-NEXT:   store double %mul, double* %x, align 8
 ; CHECK-NEXT:   store double %[[i2]], double* %"x'", align 8
+; CHECK-NEXT:   store double %mul, double* %x, align 8
 ; CHECK-NEXT:   %[[i3:.+]] = call i1 @fwddiffemetasubf(double* %x, double* %"x'")
 ; CHECK-NEXT:   ret i1 %[[i3:.+]]
 ; CHECK-NEXT: }
@@ -68,8 +68,8 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"x'", i64 1
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %x, i64 1
-; CHECK-NEXT:   store double 3.000000e+00, double* %arrayidx, align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx'ipg", align 8
+; CHECK-NEXT:   store double 3.000000e+00, double* %arrayidx, align 8
 ; CHECK-NEXT:   %0 = load double, double* %x, align 8
 ; CHECK-NEXT:   %cmp = fcmp fast oeq double %0, 2.000000e+00
 ; CHECK-NEXT:   ret i1 %cmp

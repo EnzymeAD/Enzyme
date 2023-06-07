@@ -24,7 +24,7 @@ attributes #1 = { noinline nounwind uwtable }
 
 ; CHECK: define internal double @fwddiffef(double* noalias nocapture %out, double* nocapture %"out'", double %x, double %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   store double 0.000000e+00, double* %out, align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"out'", align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %out, align 8
 ; CHECK-NEXT:   ret double 0.000000e+00
 ; CHECK-NEXT: }

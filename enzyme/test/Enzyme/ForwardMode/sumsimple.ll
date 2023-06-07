@@ -58,8 +58,8 @@ attributes #0 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %[[i4:.+]] = load double, double* %[[i3]]
 ; CHECK-NEXT:   %[[add:.+]] = fadd fast double %[[i4]], %[[i1]]
 ; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %[[i5]], %[[i2]]
-; CHECK-NEXT:   store double %[[add]], double* %[[i3]]
 ; CHECK-NEXT:   store double %[[i6]], double* %[[ipl]]
+; CHECK-NEXT:   store double %[[add]], double* %[[i3]]
 ; CHECK-NEXT:   br label %for.cond
 
 ; CHECK: for.end:                                          ; preds = %for.cond
