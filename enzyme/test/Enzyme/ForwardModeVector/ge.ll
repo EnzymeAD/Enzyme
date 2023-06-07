@@ -75,10 +75,10 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:    br label [[FOR_BODY:%.*]]
 ; CHECK:       for.cond.cleanup:
-; CHECK-NEXT:    store double 0.000000e+00, double* [[X]], align 8, !tbaa !2
 ; CHECK-NEXT:    store double 0.000000e+00, double* [[TMP2:%.*]], align 8
 ; CHECK-NEXT:    store double 0.000000e+00, double* [[TMP3:%.*]], align 8
 ; CHECK-NEXT:    store double 0.000000e+00, double* [[TMP4:%.*]], align 8
+; CHECK-NEXT:    store double 0.000000e+00, double* [[X]], align 8, !tbaa !2
 ; CHECK-NEXT:    ret [3 x double] [[TMP20:%.*]]
 ; CHECK:       for.body:
 ; CHECK-NEXT:    [[TMP0_0:%.*]] = phi {{(fast )?}}double [ 0.000000e+00, [[ENTRY:%.*]] ], [ [[TMP13:%.*]], [[FOR_BODY]] ]

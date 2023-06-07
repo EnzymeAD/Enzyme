@@ -2282,7 +2282,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       ss << "No augmented forward pass found for " + todiff->getName() << "\n";
       ss << *todiff << "\n";
       CustomErrorHandler(ss.str().c_str(), wrap(todiff),
-                         ErrorType::NoDerivative, nullptr, nullptr);
+                         ErrorType::NoDerivative, nullptr, nullptr, nullptr);
     }
     llvm::errs() << "mod: " << *todiff->getParent() << "\n";
     llvm::errs() << *todiff << "\n";
@@ -2467,6 +2467,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         if (Value *orig_oldval = ri->getReturnValue()) {
           auto newri = gutils->getNewFromOriginal(ri);
           IRBuilder<> BuilderZ(newri);
+          Value *invertri = nullptr;
           if (gutils->isConstantValue(orig_oldval)) {
             if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
                 gutils->TR.query(orig_oldval)[{-1}].isPossiblePointer()) {
@@ -2476,14 +2477,16 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                 raw_string_ostream ss(str);
                 ss << "Mismatched activity for: " << *ri
                    << " const val: " << *orig_oldval;
-                CustomErrorHandler(str.c_str(), wrap(ri),
-                                   ErrorType::MixedActivityError, gutils,
-                                   wrap(orig_oldval));
+                invertri = unwrap(CustomErrorHandler(
+                    str.c_str(), wrap(ri), ErrorType::MixedActivityError,
+                    gutils, wrap(orig_oldval), wrap(&BuilderZ)));
               }
             }
           }
-          invertedRetPs[newri] = gutils->invertPointerM(orig_oldval, BuilderZ,
-                                                        /*nullShadow*/ true);
+          if (!invertri)
+            invertri = gutils->invertPointerM(orig_oldval, BuilderZ,
+                                              /*nullShadow*/ true);
+          invertedRetPs[newri] = invertri;
         }
       }
     }
@@ -2968,6 +2971,18 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
   if (inst == nullptr)
     return;
 
+  ReturnInst *newInst = cast<ReturnInst>(gutils->getNewFromOriginal(inst));
+  BasicBlock *nBB = newInst->getParent();
+  assert(nBB);
+  IRBuilder<> nBuilder(nBB);
+  nBuilder.setFastMathFlags(getFast());
+
+  SmallVector<Value *, 2> retargs;
+
+  Value *toret = UndefValue::get(gutils->newFunc->getReturnType());
+
+  Value *invertedPtr = nullptr;
+
   if (retType != DIFFE_TYPE::CONSTANT) {
     auto ret = inst->getOperand(0);
     if (!ret->getType()->isFPOrFPVectorTy() &&
@@ -2980,23 +2995,14 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *inst
                << " const val: " << *ret;
-            CustomErrorHandler(str.c_str(), wrap(inst),
-                               ErrorType::MixedActivityError, gutils,
-                               wrap(ret));
+            invertedPtr = unwrap(CustomErrorHandler(
+                str.c_str(), wrap(inst), ErrorType::MixedActivityError, gutils,
+                wrap(ret), wrap(&nBuilder)));
           }
         }
       }
     }
   }
-  ReturnInst *newInst = cast<ReturnInst>(gutils->getNewFromOriginal(inst));
-  BasicBlock *nBB = newInst->getParent();
-  assert(nBB);
-  IRBuilder<> nBuilder(nBB);
-  nBuilder.setFastMathFlags(getFast());
-
-  SmallVector<Value *, 2> retargs;
-
-  Value *toret = UndefValue::get(gutils->newFunc->getReturnType());
 
   switch (retVal) {
   case ReturnType::Return: {
@@ -3006,11 +3012,14 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
       toret = gutils->getNewFromOriginal(ret);
     } else if (!ret->getType()->isFPOrFPVectorTy() &&
                TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
-      toret = gutils->invertPointerM(ret, nBuilder);
+      toret = invertedPtr ? invertedPtr : gutils->invertPointerM(ret, nBuilder);
     } else if (!gutils->isConstantValue(ret)) {
+      assert(!invertedPtr);
       toret = gutils->diffe(ret, nBuilder);
     } else {
-      toret = gutils->invertPointerM(ret, nBuilder, /*nullInit*/ true);
+      toret = invertedPtr
+                  ? invertedPtr
+                  : gutils->invertPointerM(ret, nBuilder, /*nullInit*/ true);
     }
 
     break;
@@ -3026,13 +3035,19 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
     if (!ret->getType()->isFPOrFPVectorTy() &&
         TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
       toret = nBuilder.CreateInsertValue(
-          toret, gutils->invertPointerM(ret, nBuilder), 1);
+          toret,
+          invertedPtr ? invertedPtr : gutils->invertPointerM(ret, nBuilder), 1);
     } else if (!gutils->isConstantValue(ret)) {
+      assert(!invertedPtr);
       toret =
           nBuilder.CreateInsertValue(toret, gutils->diffe(ret, nBuilder), 1);
     } else {
       toret = nBuilder.CreateInsertValue(
-          toret, gutils->invertPointerM(ret, nBuilder, /*nullInit*/ true), 1);
+          toret,
+          invertedPtr
+              ? invertedPtr
+              : gutils->invertPointerM(ret, nBuilder, /*nullInit*/ true),
+          1);
     }
     break;
   }
@@ -3193,15 +3208,18 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of phi " << *orig;
         CustomErrorHandler(str.c_str(), wrap(orig), ErrorType::NoType,
-                           &gutils->TR.analyzer, nullptr);
+                           &gutils->TR.analyzer, nullptr, wrap(&Builder));
+        continue;
+      } else {
+        llvm::errs() << *gutils->oldFunc->getParent() << "\n";
+        llvm::errs() << *gutils->oldFunc << "\n";
+        llvm::errs()
+            << " for orig " << *orig << " saw "
+            << gutils->TR.intType(size, orig, /*necessary*/ false).str()
+            << " - "
+            << "\n";
+        gutils->TR.intType(size, orig, /*necessary*/ true);
       }
-      llvm::errs() << *gutils->oldFunc->getParent() << "\n";
-      llvm::errs() << *gutils->oldFunc << "\n";
-      llvm::errs() << " for orig " << *orig << " saw "
-                   << gutils->TR.intType(size, orig, /*necessary*/ false).str()
-                   << " - "
-                   << "\n";
-      gutils->TR.intType(size, orig, /*necessary*/ true);
     }
 
     auto prediff = gutils->diffe(orig, Builder);
@@ -3883,7 +3901,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     ss << *key.todiff << "\n";
     if (CustomErrorHandler) {
       CustomErrorHandler(ss.str().c_str(), wrap(key.todiff),
-                         ErrorType::NoDerivative, nullptr, nullptr);
+                         ErrorType::NoDerivative, nullptr, nullptr, nullptr);
+      return nullptr;
     } else {
       llvm_unreachable(ss.str().c_str());
     }
@@ -4490,7 +4509,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     ss << "No forward derivative found for " + todiff->getName() << "\n";
     ss << *todiff << "\n";
     CustomErrorHandler(s.c_str(), wrap(todiff), ErrorType::NoDerivative,
-                       nullptr, nullptr);
+                       nullptr, nullptr, nullptr);
   }
   if (todiff->empty())
     llvm::errs() << *todiff << "\n";
@@ -5010,7 +5029,7 @@ llvm::Value *EnzymeLogic::CreateNoFree(llvm::Value *todiff) {
     ss << "No create nofree of unknown value\n";
     ss << *todiff << "\n";
     CustomErrorHandler(ss.str().c_str(), wrap(todiff), ErrorType::NoDerivative,
-                       nullptr, nullptr);
+                       nullptr, nullptr, nullptr);
   }
   llvm::errs() << " unhandled, create no free of: " << *todiff << "\n";
   llvm_unreachable("unhandled, create no free");
@@ -5113,7 +5132,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       ss << "No create nofree of empty function " << F->getName() << "\n";
       ss << *F << "\n";
       CustomErrorHandler(ss.str().c_str(), wrap(F), ErrorType::NoDerivative,
-                         nullptr, nullptr);
+                         nullptr, nullptr, nullptr);
     }
     llvm::errs() << " unhandled, create no free of empty function: " << *F
                  << "\n";

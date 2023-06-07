@@ -44,8 +44,8 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK: define internal {{(dso_local )?}}void @fwddiffef(double* nocapture %x, double* nocapture %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:	call void @fwddiffesubf(double* %x, double* %"x'")
-; CHECK-NEXT:	store double 2.000000e+00, double* %x
 ; CHECK-NEXT:	store double 0.000000e+00, double* %"x'"
+; CHECK-NEXT:	store double 2.000000e+00, double* %x
 ; CHECK-NEXT:	ret void
 ; CHECK-NEXT: }
 
@@ -55,8 +55,8 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %[[i0:.+]] = load double, double* %x
 ; CHECK-NEXT:   %mul = fmul fast double %[[i0]], 2.000000e+00
 ; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i1]], 2.000000e+00
-; CHECK-NEXT:   store double %mul, double* %x
 ; CHECK-NEXT:   store double %[[i2]], double* %"x'"
+; CHECK-NEXT:   store double %mul, double* %x
 ; CHECK-NEXT:   call void @fwddiffemetasubf(double* %x, double* %"x'")
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
@@ -65,7 +65,7 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"x'", i64 1
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %x, i64 1
-; CHECK-NEXT:   store double 3.000000e+00, double* %arrayidx
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx'ipg"
+; CHECK-NEXT:   store double 3.000000e+00, double* %arrayidx
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

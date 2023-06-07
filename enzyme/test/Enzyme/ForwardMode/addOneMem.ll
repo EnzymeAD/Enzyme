@@ -44,7 +44,7 @@ declare double @__enzyme_fwddiff(void (double*)*, ...)
 ; CHECK-NEXT:   %"'ipl" = load double, double* %"x'", align 8, !tbaa !2
 ; CHECK-NEXT:   %0 = load double, double* %x, align 8, !tbaa !2
 ; CHECK-NEXT:   %add = fadd fast double %0, 1.000000e+00
-; CHECK-NEXT:   store double %add, double* %x, align 8, !tbaa !2
 ; CHECK-NEXT:   store double %"'ipl", double* %"x'", align 8, !tbaa !2
+; CHECK-NEXT:   store double %add, double* %x, align 8, !tbaa !2
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

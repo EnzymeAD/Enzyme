@@ -441,8 +441,11 @@ public:
     ss << "in Mode: " << to_string(Mode) << "\n";
     ss << "cannot handle unknown instruction\n" << inst;
     if (CustomErrorHandler) {
+      IRBuilder<> Builder2(&inst);
+      getForwardBuilder(Builder2);
       CustomErrorHandler(ss.str().c_str(), wrap(&inst), ErrorType::NoDerivative,
-                         gutils, nullptr);
+                         gutils, nullptr, wrap(&Builder2));
+      return;
     } else {
       llvm::errs() << ss.str() << "\n";
       report_fatal_error("unknown instruction");
@@ -548,6 +551,7 @@ public:
 
     auto vd = TR.query(&I);
 
+    IRBuilder<> BuilderZ(newi);
     if (!vd.isKnown()) {
       auto ET = I.getType();
       if (looseTypeAnalysis || true) {
@@ -560,13 +564,15 @@ public:
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of load " << I;
         CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                           &TR.analyzer, nullptr);
-      }
-      EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
-                  "failed to deduce type of load ", I);
+                           &TR.analyzer, nullptr, wrap(&BuilderZ));
+      } else {
+        EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
+                    "failed to deduce type of load ", I);
 
-      TR.intType(LoadSize, &I, /*errifnotfound*/ true, /*pointerIntSame*/ true);
-      llvm_unreachable("bad mti");
+        TR.intType(LoadSize, &I, /*errifnotfound*/ true,
+                   /*pointerIntSame*/ true);
+        llvm_unreachable("bad mti");
+      }
     known:;
     }
 
@@ -579,7 +585,6 @@ public:
         assert(placeholder->getType() == type);
         gutils->invertedPointers.erase(found);
 
-        IRBuilder<> BuilderZ(newi);
         // only make shadow where caching needed
         if (!DifferentialUseAnalysis::is_value_needed_in_reverse<
                 ValueType::Shadow>(gutils, &I, Mode, oldUnreachable)) {
@@ -635,7 +640,6 @@ public:
         gutils->invertedPointers.erase(found);
 
         if (!constantval) {
-          IRBuilder<> BuilderZ(newi);
           Value *newip = nullptr;
 
           // TODO: In the case of fwd mode this should be true if the loaded
@@ -727,7 +731,6 @@ public:
           DifferentialUseAnalysis::is_value_needed_in_reverse<
               ValueType::Primal>(gutils, &I, Mode, Seen, oldUnreachable);
       if (primalNeededInReverse) {
-        IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&I));
         inst = gutils->cacheForReverse(BuilderZ, newi,
                                        getIndex(&I, CacheType::Self));
         assert(inst->getType() == type);
@@ -888,14 +891,15 @@ public:
       return;
     }
 
+    IRBuilder<> BuilderZ(&I);
+    getForwardBuilder(BuilderZ);
+
     switch (I.getOperation()) {
     case AtomicRMWInst::FAdd:
     case AtomicRMWInst::FSub: {
 
       if (Mode == DerivativeMode::ForwardMode ||
           Mode == DerivativeMode::ForwardModeSplit) {
-        IRBuilder<> BuilderZ(&I);
-        getForwardBuilder(BuilderZ);
         auto rule = [&](Value *ptr, Value *dif) -> Value * {
           if (dif == nullptr)
             dif = Constant::getNullValue(I.getType());
@@ -1015,7 +1019,8 @@ public:
     ss << " Active atomic inst not yet handled";
     if (CustomErrorHandler) {
       CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoDerivative,
-                         gutils, nullptr);
+                         gutils, nullptr, wrap(&BuilderZ));
+      return;
     } else {
       TR.dump();
       llvm::errs() << ss.str() << "\n";
@@ -1121,6 +1126,9 @@ public:
     bool constantval = gutils->isConstantValue(orig_val) ||
                        parseTBAA(I, DL).Inner0().isIntegral();
 
+    IRBuilder<> BuilderZ(NewI);
+    BuilderZ.setFastMathFlags(getFast());
+
     // TODO allow recognition of other types that could contain pointers [e.g.
     // {void*, void*} or <2 x i64> ]
     auto storeSize = DL.getTypeSizeInBits(valType) / 8;
@@ -1139,14 +1147,16 @@ public:
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of store " << I;
         CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                           &TR.analyzer, nullptr);
-      }
-      EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
-                  "failed to deduce type of store ", I);
+                           &TR.analyzer, nullptr, wrap(&BuilderZ));
+        return;
+      } else {
+        EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
+                    "failed to deduce type of store ", I);
 
-      TR.intType(storeSize, orig_ptr, /*errifnotfound*/ true,
-                 /*pointerIntSame*/ true);
-      llvm_unreachable("bad mti");
+        TR.intType(storeSize, orig_ptr, /*errifnotfound*/ true,
+                   /*pointerIntSame*/ true);
+        llvm_unreachable("bad mti");
+      }
     known:;
     }
 
@@ -1160,30 +1170,18 @@ public:
           raw_string_ostream ss(str);
           ss << "Cannot deduce single type of store " << I;
           CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                             &TR.analyzer, nullptr);
+                             &TR.analyzer, nullptr, wrap(&BuilderZ));
+          return;
+        } else {
+          EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
+                      "failed to deduce single type of store ", I);
         }
-        EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
-                    "failed to deduce single type of store ", I);
       }
     }
 
     if (Mode == DerivativeMode::ForwardMode) {
-      IRBuilder<> Builder2(&I);
-      getForwardBuilder(Builder2);
 
-      Value *diff;
-      // TODO type analyze
-      if (!constantval)
-        diff = gutils->invertPointerM(orig_val, Builder2, /*nullShadow*/ true);
-      else if (orig_val->getType()->isPointerTy() || dt == BaseType::Pointer ||
-               dt == BaseType::Integer)
-        diff = gutils->invertPointerM(orig_val, Builder2, /*nullShadow*/ false);
-      else
-        diff = gutils->invertPointerM(orig_val, Builder2, /*nullShadow*/ true);
-
-      gutils->setPtrDiffe(&I, orig_ptr, diff, Builder2, align, isVolatile,
-                          ordering, syncScope, mask, prevNoAlias, prevScopes);
-
+      Value *diff = nullptr;
       if (!EnzymeRuntimeActivityCheck && CustomErrorHandler && constantval) {
         if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
           if (!isa<UndefValue>(orig_val) &&
@@ -1192,12 +1190,29 @@ public:
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << I
                << " const val: " << *orig_val;
-            CustomErrorHandler(str.c_str(), wrap(&I),
-                               ErrorType::MixedActivityError, gutils,
-                               wrap(orig_val));
+            diff = unwrap(CustomErrorHandler(
+                str.c_str(), wrap(&I), ErrorType::MixedActivityError, gutils,
+                wrap(orig_val), wrap(&BuilderZ)));
           }
         }
       }
+
+      // TODO type analyze
+      if (!diff) {
+        if (!constantval)
+          diff =
+              gutils->invertPointerM(orig_val, BuilderZ, /*nullShadow*/ true);
+        else if (orig_val->getType()->isPointerTy() ||
+                 dt == BaseType::Pointer || dt == BaseType::Integer)
+          diff =
+              gutils->invertPointerM(orig_val, BuilderZ, /*nullShadow*/ false);
+        else
+          diff =
+              gutils->invertPointerM(orig_val, BuilderZ, /*nullShadow*/ true);
+      }
+
+      gutils->setPtrDiffe(&I, orig_ptr, diff, BuilderZ, align, isVolatile,
+                          ordering, syncScope, mask, prevNoAlias, prevScopes);
 
       return;
     }
@@ -1351,40 +1366,40 @@ public:
           (Mode == DerivativeMode::ReverseModeCombined &&
            (forwardsShadow || backwardsShadow)) ||
           Mode == DerivativeMode::ForwardMode) {
-        IRBuilder<> storeBuilder(gutils->getNewFromOriginal(&I));
 
         Value *valueop = nullptr;
 
         if (constantval) {
-          valueop = val;
-          if (gutils->getWidth() > 1) {
-            Value *array =
-                UndefValue::get(gutils->getShadowType(val->getType()));
-            for (unsigned i = 0; i < gutils->getWidth(); ++i) {
-              array = storeBuilder.CreateInsertValue(array, val, {i});
+          if (!EnzymeRuntimeActivityCheck && CustomErrorHandler) {
+            if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
+              if (!isa<UndefValue>(orig_val) &&
+                  !isa<ConstantPointerNull>(orig_val)) {
+                std::string str;
+                raw_string_ostream ss(str);
+                ss << "Mismatched activity for: " << I
+                   << " const val: " << *orig_val;
+                valueop = unwrap(CustomErrorHandler(
+                    str.c_str(), wrap(&I), ErrorType::MixedActivityError,
+                    gutils, wrap(orig_val), wrap(&BuilderZ)));
+              }
             }
-            valueop = array;
+          }
+          if (!valueop) {
+            valueop = val;
+            if (gutils->getWidth() > 1) {
+              Value *array =
+                  UndefValue::get(gutils->getShadowType(val->getType()));
+              for (unsigned i = 0; i < gutils->getWidth(); ++i) {
+                array = BuilderZ.CreateInsertValue(array, val, {i});
+              }
+              valueop = array;
+            }
           }
         } else {
-          valueop = gutils->invertPointerM(orig_val, storeBuilder);
+          valueop = gutils->invertPointerM(orig_val, BuilderZ);
         }
-        gutils->setPtrDiffe(&I, orig_ptr, valueop, storeBuilder, align,
-                            isVolatile, ordering, syncScope, mask, prevNoAlias,
-                            prevScopes);
-        if (!EnzymeRuntimeActivityCheck && CustomErrorHandler && constantval) {
-          if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
-            if (!isa<UndefValue>(orig_val) &&
-                !isa<ConstantPointerNull>(orig_val)) {
-              std::string str;
-              raw_string_ostream ss(str);
-              ss << "Mismatched activity for: " << I
-                 << " const val: " << *orig_val;
-              CustomErrorHandler(str.c_str(), wrap(&I),
-                                 ErrorType::MixedActivityError, gutils,
-                                 wrap(orig_val));
-            }
-          }
-        }
+        gutils->setPtrDiffe(&I, orig_ptr, valueop, BuilderZ, align, isVolatile,
+                            ordering, syncScope, mask, prevNoAlias, prevScopes);
       }
     }
   }
@@ -1475,7 +1490,8 @@ public:
             ss << "cannot handle above cast " << I << "\n";
             if (CustomErrorHandler) {
               CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                                 ErrorType::NoDerivative, gutils, nullptr);
+                                 ErrorType::NoDerivative, gutils, nullptr,
+                                 wrap(&Builder2));
               return (llvm::Value *)UndefValue::get(op0->getType());
             } else {
               TR.dump();
@@ -1979,10 +1995,11 @@ public:
               raw_string_ostream ss(str);
               ss << "Cannot deduce type of insertvalue " << IVI;
               CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
-                                 &TR.analyzer, nullptr);
+                                 &TR.analyzer, nullptr, wrap(&Builder2));
+            } else {
+              EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
+                          "failed to deduce type of insertvalue ", IVI);
             }
-            EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
-                        "failed to deduce type of insertvalue ", IVI);
           }
         }
         if (flt) {
@@ -2545,7 +2562,7 @@ public:
       ss << "cannot handle unknown binary operator: " << BO << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(&BO), ErrorType::NoDerivative,
-                           gutils, nullptr);
+                           gutils, nullptr, wrap(&Builder2));
       } else {
         llvm::errs() << ss.str() << "\n";
         report_fatal_error("unknown binary operator");
@@ -2912,7 +2929,7 @@ public:
       ss << "cannot handle unknown binary operator: " << BO << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(&BO), ErrorType::NoDerivative,
-                           gutils, nullptr);
+                           gutils, nullptr, wrap(&Builder2));
       } else {
         llvm::errs() << ss.str() << "\n";
         report_fatal_error("unknown binary operator");
@@ -2963,7 +2980,7 @@ public:
          << MS;
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(&MS), ErrorType::NoDerivative,
-                           gutils, nullptr);
+                           gutils, nullptr, wrap(&BuilderZ));
       } else {
         llvm::errs() << ss.str() << "\n";
         report_fatal_error("non constant in memset");
@@ -3139,14 +3156,15 @@ public:
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of memset " << MS;
         CustomErrorHandler(str.c_str(), wrap(&MS), ErrorType::NoType,
-                           &TR.analyzer, nullptr);
-      }
-      EmitFailure("CannotDeduceType", MS.getDebugLoc(), &MS,
-                  "failed to deduce type of memset ", MS);
+                           &TR.analyzer, nullptr, wrap(&BuilderZ));
+      } else {
+        EmitFailure("CannotDeduceType", MS.getDebugLoc(), &MS,
+                    "failed to deduce type of memset ", MS);
 
-      TR.firstPointer(size, MS.getOperand(0), &MS, /*errifnotfound*/ true,
-                      /*pointerIntSame*/ true);
-      llvm_unreachable("bad msi");
+        TR.firstPointer(size, MS.getOperand(0), &MS, /*errifnotfound*/ true,
+                        /*pointerIntSame*/ true);
+        llvm_unreachable("bad msi");
+      }
     }
   known:;
 
@@ -3375,6 +3393,8 @@ public:
       errorIfNoType = false;
     }
 
+    IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&MTI));
+
     if (!vd.isKnownPastPointer()) {
       if (looseTypeAnalysis) {
         for (auto val : {orig_dst, orig_src}) {
@@ -3429,14 +3449,15 @@ public:
           raw_string_ostream ss(str);
           ss << "Cannot deduce type of copy " << MTI;
           CustomErrorHandler(str.c_str(), wrap(&MTI), ErrorType::NoType,
-                             &TR.analyzer, nullptr);
-        }
-        EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI,
-                    "failed to deduce type of copy ", MTI);
+                             &TR.analyzer, nullptr, wrap(&BuilderZ));
+        } else {
+          EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI,
+                      "failed to deduce type of copy ", MTI);
 
-        TR.firstPointer(size, orig_dst, &MTI, /*errifnotfound*/ true,
-                        /*pointerIntSame*/ true);
-        llvm_unreachable("bad mti");
+          TR.firstPointer(size, orig_dst, &MTI, /*errifnotfound*/ true,
+                          /*pointerIntSame*/ true);
+          llvm_unreachable("bad mti");
+        }
       } else {
         vd = TypeTree(BaseType::Pointer).Only(0, &MTI);
       }
@@ -3455,8 +3476,6 @@ public:
 #endif
 
     unsigned start = 0;
-
-    IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&MTI));
 
     bool backwardsShadow = false;
     bool forwardsShadow = true;
@@ -3833,8 +3852,11 @@ public:
         ss << *gutils->newFunc << "\n";
         ss << "cannot handle (augmented) unknown intrinsic\n" << I;
         if (CustomErrorHandler) {
+          IRBuilder<> BuilderZ(I.getParent());
+          getForwardBuilder(BuilderZ);
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, gutils, nullptr);
+                             ErrorType::NoDerivative, gutils, nullptr,
+                             wrap(&BuilderZ));
         } else {
           llvm::errs() << ss.str() << "\n";
           report_fatal_error("(augmented) unknown intrinsic");
@@ -4427,7 +4449,8 @@ public:
              << I;
         if (CustomErrorHandler) {
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, gutils, nullptr);
+                             ErrorType::NoDerivative, gutils, nullptr,
+                             wrap(&Builder2));
         } else {
           llvm::errs() << ss.str() << "\n";
           report_fatal_error("(reverse) unknown intrinsic");
@@ -5001,7 +5024,8 @@ public:
              << I;
         if (CustomErrorHandler) {
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, gutils, nullptr);
+                             ErrorType::NoDerivative, gutils, nullptr,
+                             wrap(&Builder2));
         } else {
           llvm::errs() << ss.str() << "\n";
           report_fatal_error("(forward) unknown intrinsic");
@@ -6904,7 +6928,8 @@ public:
           ss << " unhandled mpi_allreduce op: " << *orig_op << "\n";
           if (CustomErrorHandler) {
             CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                               ErrorType::NoDerivative, gutils, nullptr);
+                               ErrorType::NoDerivative, gutils, nullptr,
+                               wrap(&BuilderZ));
           } else {
             llvm::errs() << ss.str() << "\n";
             report_fatal_error("unhandled mpi_allreduce op");
@@ -7155,7 +7180,8 @@ public:
           ss << " unhandled mpi_allreduce op: " << *orig_op << "\n";
           if (CustomErrorHandler) {
             CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                               ErrorType::NoDerivative, gutils, nullptr);
+                               ErrorType::NoDerivative, gutils, nullptr,
+                               wrap(&BuilderZ));
           } else {
             llvm::errs() << ss.str() << "\n";
             report_fatal_error("unhandled mpi_allreduce op");
@@ -8554,7 +8580,8 @@ public:
           ss << "cannot find shadow for " << *callval;
           if (CustomErrorHandler) {
             CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                               ErrorType::NoDerivative, gutils, nullptr);
+                               ErrorType::NoDerivative, gutils, nullptr,
+                               wrap(&BuilderZ));
           } else {
             llvm::errs() << *gutils->oldFunc << "\n";
             llvm::errs() << ss.str() << "\n";

@@ -32,13 +32,13 @@ entry:
 ; CHECK-NEXT:    %"val'ipl2" = load double, double* [[TMP4]]
 ; CHECK-NEXT:    [[TMP5:%.*]] = insertvalue [3 x double] [[TMP3]], double %"val'ipl2", 2
 ; CHECK-NEXT:    [[VAL:%.*]] = load double, double* [[X]]
-; CHECK-NEXT:    store double [[VAL]], double* [[Y]]
 ; CHECK-NEXT:    [[TMP6:%.*]] = extractvalue [3 x double*] %"y'", 0
 ; CHECK-NEXT:    store double %"val'ipl", double* [[TMP6]]
 ; CHECK-NEXT:    [[TMP8:%.*]] = extractvalue [3 x double*] %"y'", 1
 ; CHECK-NEXT:    store double %"val'ipl1", double* [[TMP8]]
 ; CHECK-NEXT:    [[TMP10:%.*]] = extractvalue [3 x double*] %"y'", 2
 ; CHECK-NEXT:    store double %"val'ipl2", double* [[TMP10]]
+; CHECK-NEXT:    store double [[VAL]], double* [[Y]]
 ; CHECK-NEXT:    [[TMP12:%.*]] = extractvalue [3 x double*] %"x'", 0
 ; CHECK-NEXT:    %"ptr'ipc" = bitcast double* [[TMP12]] to i8*
 ; CHECK-NEXT:    [[TMP13:%.*]] = insertvalue [3 x i8*] undef, i8* %"ptr'ipc", 0

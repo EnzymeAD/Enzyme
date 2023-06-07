@@ -39,10 +39,10 @@ entry:
 ; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i0]], %y1
 ; CHECK-NEXT:   %[[i3:.+]] = fmul fast double %[[i1]], %x1
 ; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %[[i2]], %[[i3]]
-; CHECK-NEXT:   store double %x2, double* %x
 ; CHECK-NEXT:   store double %[[i4]], double* %"x'"
-; CHECK-NEXT:   store double %x2, double* %y
+; CHECK-NEXT:   store double %x2, double* %x
 ; CHECK-NEXT:   store double %[[i4]], double* %"y'"
+; CHECK-NEXT:   store double %x2, double* %y
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* %yptr, i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* %"yptr'ipc", i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   ret void

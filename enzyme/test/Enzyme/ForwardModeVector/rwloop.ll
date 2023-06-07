@@ -167,10 +167,10 @@ attributes #9 = { noreturn nounwind }
 ; CHECK-NEXT:   %[[i26_0:.+]] = fadd fast double %[[sum134_0]], %[[i13]]
 ; CHECK-NEXT:   %[[i26_1:.+]] = fadd fast double %[[sum134_1]], %[[i15]]
 ; CHECK-NEXT:   %[[i26_2:.+]] = fadd fast double %[[sum134_2]], %[[i17]]
-; CHECK-NEXT:   store double 0.000000e+00, double* %arrayidx, align 8, !tbaa !6
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx'ipg", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx'ipg1", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx'ipg2", align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %arrayidx, align 8, !tbaa !6
 ; CHECK-NEXT:   %cmp2 = icmp slt i64 %iv.next2, %[[i3]]
 ; CHECK-NEXT:   br i1 %cmp2, label %for.body4, label %for.cond.cleanup3
 

@@ -44,13 +44,13 @@ entry:
 ; CHECK-NEXT:   %"'ipc2" = bitcast i8* %2 to double*
 ; CHECK-NEXT:   %5 = insertvalue [3 x double*] %4, double* %"'ipc2", 2
 ; CHECK-NEXT:   %6 = bitcast i8* %call to double*
-; CHECK-NEXT:   store double %x, double* %6, align 8
 ; CHECK-NEXT:   %7 = extractvalue [3 x double] %"x'", 0
 ; CHECK-NEXT:   store double %7, double* %"'ipc", align 8
 ; CHECK-NEXT:   %8 = extractvalue [3 x double] %"x'", 1
 ; CHECK-NEXT:   store double %8, double* %"'ipc1", align 8
 ; CHECK-NEXT:   %9 = extractvalue [3 x double] %"x'", 2
 ; CHECK-NEXT:   store double %9, double* %"'ipc2", align 8
+; CHECK-NEXT:   store double %x, double* %6, align 8
 ; CHECK-NEXT:   %10 = insertvalue { double*, [3 x double*] } undef, double* %6, 0
 ; CHECK-NEXT:   %11 = insertvalue { double*, [3 x double*] } %10, [3 x double*] %5, 1
 ; CHECK-NEXT:   ret { double*, [3 x double*] } %11

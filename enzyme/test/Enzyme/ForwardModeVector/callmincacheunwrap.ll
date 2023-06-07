@@ -114,10 +114,10 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:    [[TMP9:%.*]] = fmul fast double %"ld'ipl6", [[LD]]
 ; CHECK-NEXT:    [[TMP10:%.*]] = fmul fast double %"ld'ipl6", [[LD]]
 ; CHECK-NEXT:    [[TMP11:%.*]] = fadd fast double [[TMP9]], [[TMP10]]
-; CHECK-NEXT:    store double [[FMUL]], double* [[CALL]], align 8, !tbaa !11
 ; CHECK-NEXT:    store double [[TMP5]], double* %"call'ipg", align 8
 ; CHECK-NEXT:    store double [[TMP8]], double* %"call'ipg3", align 8
 ; CHECK-NEXT:    store double [[TMP11]], double* %"call'ipg4", align 8
+; CHECK-NEXT:    store double [[FMUL]], double* [[CALL]], align 8, !tbaa !11
 ; CHECK-NEXT:    [[EXITCOND:%.*]] = icmp eq i64 [[IV_NEXT]], [[COLS]]
 ; CHECK-NEXT:    br i1 [[EXITCOND]], label [[EXIT:%.*]], label [[FOR_BODY]]
 ; CHECK:       exit:
