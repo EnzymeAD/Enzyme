@@ -1517,7 +1517,7 @@ Value *CacheUtility::getCachePointer(llvm::Type *T, bool inForwardPass,
   // Iterate from outermost loop to innermost loop
   for (int i = sublimits.size() - 1; i >= 0; i--) {
     // Lookup the next allocation pointer
-    { next = BuilderM.CreateLoad(types[i + 1], next); }
+    next = BuilderM.CreateLoad(types[i + 1], next);
     if (storeInInstructionsMap && isa<AllocaInst>(cache))
       scopeInstructions[cast<AllocaInst>(cache)].push_back(
           cast<Instruction>(next));
@@ -1571,7 +1571,7 @@ Value *CacheUtility::getCachePointer(llvm::Type *T, bool inForwardPass,
         assert(es);
         idx = BuilderM.CreateMul(idx, es, "", /*NUW*/ true, /*NSW*/ true);
       }
-      { next = BuilderM.CreateGEP(types[i], next, idx); }
+      next = BuilderM.CreateGEP(types[i], next, idx);
       cast<GetElementPtrInst>(next)->setIsInBounds(true);
       if (storeInInstructionsMap && isa<AllocaInst>(cache))
         scopeInstructions[cast<AllocaInst>(cache)].push_back(
