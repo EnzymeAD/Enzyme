@@ -47,9 +47,7 @@
 #include "ActivityAnalysis.h"
 #include "Utils.h"
 
-#if LLVM_VERSION_MAJOR >= 9
 #include "llvm/Demangle/Demangle.h"
-#endif
 
 #include "FunctionUtils.h"
 #include "LibraryFuncs.h"
@@ -91,71 +89,6 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZNSt16allocator_traitsISaIdEE10deallocate",
     "_ZNSaIcED1Ev",
     "_ZNSaIcEC1Ev",
-#if LLVM_VERSION_MAJOR <= 8
-    // TODO this returns allocated memory and thus can be an active value
-    // "_ZNSt16allocator_traits",
-    "_ZN4core3fmt",
-    "_ZN3std2io5stdio6_print",
-    "_ZNSt7__cxx1112basic_string",
-    "_ZNSt7__cxx1118basic_string",
-    "_ZNKSt7__cxx1112basic_string",
-    "_ZNKSt3__112basic_string",
-    "_ZN9__gnu_cxx12__to_xstringINSt7__cxx1112basic_string",
-    "_ZNSt12__basic_file",
-    "_ZNSt15basic_streambufIcSt11char_traits",
-    "_ZNSt13basic_filebufIcSt11char_traits",
-    "_ZNSt14basic_ofstreamIcSt11char_traits",
-    "_ZNSi4readEPcl",
-    "_ZNKSt14basic_ifstreamIcSt11char_traits",
-    "_ZNSt14basic_ifstreamIcSt11char_traits",
-    "_ZNSo5writeEPKcl",
-    "_ZNSt19basic_ostringstreamIcSt11char_traits",
-    "_ZStrsIcSt11char_traitsIcESaIcEERSt13basic_istream",
-    "_ZStlsIcSt11char_traitsIcESaIcEERSt13basic_ostream",
-    "_ZNSt7__cxx1119basic_ostringstreamIcSt11char_traits",
-    "_ZNKSt7__cxx1119basic_ostringstreamIcSt11char_traits",
-    "_ZNSoD1Ev",
-    "_ZNSoC1EPSt15basic_streambufIcSt11char_traits",
-    "_ZStlsISt11char_traitsIcEERSt13basic_ostream",
-    "_ZSt16__ostream_insert",
-    "_ZStlsIwSt11char_traitsIwEERSt13basic_ostream",
-    "_ZNSo9_M_insert",
-    "_ZNSt13basic_ostream",
-    "_ZNSo3put",
-    "_ZNKSt5ctypeIcE13_M_widen_init",
-    "_ZNSi3get",
-    "_ZNSi7getline",
-    "_ZNSirsER",
-    "_ZNSt7__cxx1115basic_stringbuf",
-    "_ZNKSt7__cxx1115basic_stringbuf",
-    "_ZNSi6ignore",
-    "_ZNSt8ios_base",
-    "_ZNKSt9basic_ios",
-    "_ZNSt9basic_ios",
-    "_ZStorSt13_Ios_OpenmodeS_",
-    "_ZNSt6locale",
-    "_ZNKSt6locale4name",
-    "_ZStL8__ioinit"
-    "_ZNSt9basic_ios",
-    "_ZSt4cout",
-    "_ZNSt3__14coutE",
-    "_ZNSt3__113basic_ostreamIcNS_11char_traitsIcEEE6sentryC1ERS3_",
-    "_ZSt3cin",
-    "_ZNSi10_M_extract",
-    "_ZNSolsE",
-    "_ZSt5flush",
-    "_ZNSo5flush",
-    "_ZSt4endl",
-    "_ZNSaIcE",
-    "_ZSt11_Hash_bytes",
-    "_ZNKSt3__14hash",
-    "_ZNSt3__116__do_string_hash",
-    "_ZNKSt8__detail20_Prime_rehash_policy",
-    "_ZNSt8__detail20_Prime_rehash_policy",
-    "_ZNKSt3__122__unordered_map_hasher",
-    "_ZNKSt8__detail15_Hash_code_base",
-    "_ZNSt3__19to_string"
-#endif
 };
 
 const char *KnownInactiveFunctionsContains[] = {
@@ -332,19 +265,15 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::ceil,
     Intrinsic::trunc,
     Intrinsic::rint,
-#if LLVM_VERSION_MAJOR >= 9
     Intrinsic::lrint,
     Intrinsic::llrint,
-#endif
     Intrinsic::nearbyint,
     Intrinsic::round,
 #if LLVM_VERSION_MAJOR >= 11
     Intrinsic::roundeven,
 #endif
-#if LLVM_VERSION_MAJOR >= 9
     Intrinsic::lround,
     Intrinsic::llround,
-#endif
     Intrinsic::nvvm_barrier0,
     Intrinsic::nvvm_barrier0_popc,
     Intrinsic::nvvm_barrier0_and,
@@ -364,9 +293,7 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
 
     Intrinsic::dbg_declare,
     Intrinsic::dbg_value,
-#if LLVM_VERSION_MAJOR > 6
     Intrinsic::dbg_label,
-#endif
     Intrinsic::invariant_start,
     Intrinsic::invariant_end,
     Intrinsic::var_annotation,
@@ -378,9 +305,7 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::donothing,
     Intrinsic::prefetch,
     Intrinsic::trap,
-#if LLVM_VERSION_MAJOR >= 8
     Intrinsic::is_constant,
-#endif
     Intrinsic::memset};
 
 const char *DemangledKnownInactiveFunctionsStartingWith[] = {
@@ -468,7 +393,6 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI))
     return true;
 
-#if LLVM_VERSION_MAJOR >= 9
   std::string demangledName = llvm::demangle(Name.str());
   auto dName = StringRef(demangledName);
   for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
@@ -483,7 +407,7 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
     //  llvm::errs() << "matching failed: " << Name.str() << " "
     //               << demangledName << "\n";
   }
-#endif
+
   for (auto FuncName : KnownInactiveFunctionsStartingWith) {
     if (Name.startswith(FuncName)) {
       return true;
@@ -1468,7 +1392,6 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           return true;
         }
 
-#if LLVM_VERSION_MAJOR >= 9
         auto dName = demangle(funcName.str());
         for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
           if (StringRef(dName).startswith(FuncName)) {
@@ -1477,7 +1400,6 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             return true;
           }
         }
-#endif
 
         for (auto FuncName : KnownInactiveFunctionsStartingWith) {
           if (funcName.startswith(FuncName)) {
@@ -1792,14 +1714,14 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         if (isMemFreeLibMFunction(funcName)) {
           return false;
         }
-#if LLVM_VERSION_MAJOR >= 9
+
         auto dName = demangle(funcName.str());
         for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
           if (StringRef(dName).startswith(FuncName)) {
             return false;
           }
         }
-#endif
+
         for (auto FuncName : KnownInactiveFunctionsStartingWith) {
           if (funcName.startswith(FuncName)) {
             return false;
@@ -1850,12 +1772,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 #if LLVM_VERSION_MAJOR >= 12
       auto AARes = AA.getModRefInfo(
           I, MemoryLocation(memval, LocationSize::beforeOrAfterPointer()));
-#elif LLVM_VERSION_MAJOR >= 9
+#else
       auto AARes =
           AA.getModRefInfo(I, MemoryLocation(memval, LocationSize::unknown()));
-#else
-      auto AARes = AA.getModRefInfo(
-          I, MemoryLocation(memval, MemoryLocation::UnknownSize));
 #endif
 
       // Still having failed to replace the location used by AA, fall back to
@@ -2451,14 +2370,12 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
       return true;
     }
 
-#if LLVM_VERSION_MAJOR >= 9
     auto dName = demangle(funcName.str());
     for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
       if (StringRef(dName).startswith(FuncName)) {
         return true;
       }
     }
-#endif
 
     for (auto FuncName : KnownInactiveFunctionsStartingWith) {
       if (funcName.startswith(FuncName)) {

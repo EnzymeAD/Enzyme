@@ -72,12 +72,12 @@ entry:
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp eq i64 [[IV_NEXT]], 5
 ; CHECK-NEXT:    br i1 [[CMP]], label [[DO_END:%.*]], label [[DO_BODY]]
 ; CHECK:       do.end:
-; CHECK-NEXT:    store float [[ADD]], float* [[RET]], align 4
 ; CHECK-NEXT:    [[TMP13:%.*]] = extractvalue [3 x float*] %"ret'", 0
 ; CHECK-NEXT:    store float [[TMP7]], float* [[TMP13]], align 4
 ; CHECK-NEXT:    [[TMP14:%.*]] = extractvalue [3 x float*] %"ret'", 1
 ; CHECK-NEXT:    store float [[TMP8]], float* [[TMP14]], align 4
 ; CHECK-NEXT:    [[TMP15:%.*]] = extractvalue [3 x float*] %"ret'", 2
 ; CHECK-NEXT:    store float [[TMP9]], float* [[TMP15]], align 4
+; CHECK-NEXT:    store float [[ADD]], float* [[RET]], align 4
 ; CHECK-NEXT:    ret void
 ;

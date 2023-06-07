@@ -27,7 +27,6 @@ attributes #1 = { noinline nounwind uwtable }
 
 ; CHECK: define {{[^@]+}}@fwddiffe3f(double* noalias nocapture %out, [3 x double*] %"out'", double %x, [3 x double] %"x'")
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:   store double %x, double* %out, align 8
 ; CHECK-NEXT:   %0 = extractvalue [3 x double*] %"out'", 0
 ; CHECK-NEXT:   %1 = extractvalue [3 x double] %"x'", 0
 ; CHECK-NEXT:   store double %1, double* %0, align 8
@@ -37,13 +36,14 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %4 = extractvalue [3 x double*] %"out'", 2
 ; CHECK-NEXT:   %5 = extractvalue [3 x double] %"x'", 2
 ; CHECK-NEXT:   store double %5, double* %4, align 8
-; CHECK-NEXT:   store double 0.000000e+00, double* %out, align 8
+; CHECK-NEXT:   store double %x, double* %out, align 8
 ; CHECK-NEXT:   %6 = extractvalue [3 x double*] %"out'", 0
 ; CHECK-NEXT:   store double 0.000000e+00, double* %6, align 8
 ; CHECK-NEXT:   %7 = extractvalue [3 x double*] %"out'", 1
 ; CHECK-NEXT:   store double 0.000000e+00, double* %7, align 8
 ; CHECK-NEXT:   %8 = extractvalue [3 x double*] %"out'", 2
 ; CHECK-NEXT:   store double 0.000000e+00, double* %8, align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %out, align 8
 ; CHECK-NEXT:   %9 = extractvalue [3 x double*] %"out'", 0
 ; CHECK-NEXT:   %"res'ipl" = load double, double* %9
 ; CHECK-NEXT:   %10 = insertvalue [3 x double] undef, double %"res'ipl", 0

@@ -49,13 +49,13 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK: define {{[^@]+}}@fwddiffe3f(double* nocapture [[X:%.*]], [3 x double*] %"x'") 
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:    call void @fwddiffe3subf(double* [[X]], [3 x double*] %"x'")
-; CHECK-NEXT:    store double 2.000000e+00, double* [[X]], align 8
 ; CHECK-NEXT:    [[TMP0:%.*]] = extractvalue [3 x double*] %"x'", 0
 ; CHECK-NEXT:    store double 0.000000e+00, double* [[TMP0]], align 8
 ; CHECK-NEXT:    [[TMP1:%.*]] = extractvalue [3 x double*] %"x'", 1
 ; CHECK-NEXT:    store double 0.000000e+00, double* [[TMP1]], align 8
 ; CHECK-NEXT:    [[TMP2:%.*]] = extractvalue [3 x double*] %"x'", 2
 ; CHECK-NEXT:    store double 0.000000e+00, double* [[TMP2]], align 8
+; CHECK-NEXT:    store double 2.000000e+00, double* [[X]], align 8
 ; CHECK-NEXT:    ret void
 ;
 ;
@@ -72,13 +72,13 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:    [[TMP4:%.*]] = fmul fast double %"'ipl", 2.000000e+00
 ; CHECK-NEXT:    [[TMP5:%.*]] = fmul fast double %"'ipl1", 2.000000e+00
 ; CHECK-NEXT:    [[TMP6:%.*]] = fmul fast double %"'ipl2", 2.000000e+00
-; CHECK-NEXT:    store double [[MUL]], double* [[X]], align 8
 ; CHECK-NEXT:    [[TMP7:%.*]] = extractvalue [3 x double*] %"x'", 0
 ; CHECK-NEXT:    store double [[TMP4]], double* [[TMP7]], align 8
 ; CHECK-NEXT:    [[TMP8:%.*]] = extractvalue [3 x double*] %"x'", 1
 ; CHECK-NEXT:    store double [[TMP5]], double* [[TMP8]], align 8
 ; CHECK-NEXT:    [[TMP9:%.*]] = extractvalue [3 x double*] %"x'", 2
 ; CHECK-NEXT:    store double [[TMP6]], double* [[TMP9]], align 8
+; CHECK-NEXT:    store double [[MUL]], double* [[X]], align 8
 ; CHECK-NEXT:    call void @fwddiffe3metasubf(double* [[X]], [3 x double*] %"x'")
 ; CHECK-NEXT:    ret void
 
@@ -91,9 +91,9 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:    [[TMP2:%.*]] = extractvalue [3 x double*] %"x'", 2
 ; CHECK-NEXT:    %"arrayidx'ipg2" = getelementptr inbounds double, double* [[TMP2]], i64 1
 ; CHECK-NEXT:    [[ARRAYIDX:%.*]] = getelementptr inbounds double, double* [[X]], i64 1
-; CHECK-NEXT:    store double 3.000000e+00, double* [[ARRAYIDX]], align 8
 ; CHECK-NEXT:    store double 0.000000e+00, double* %"arrayidx'ipg", align 8
 ; CHECK-NEXT:    store double 0.000000e+00, double* %"arrayidx'ipg1", align 8
 ; CHECK-NEXT:    store double 0.000000e+00, double* %"arrayidx'ipg2", align 8
+; CHECK-NEXT:    store double 3.000000e+00, double* [[ARRAYIDX]], align 8
 ; CHECK-NEXT:    ret void
 ;

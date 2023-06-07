@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -ge 8 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-phi-restructure -enzyme -mem2reg -early-cse -simplifycfg -instsimplify -adce -simplifycfg -loop-deletion -simplifycfg -S | FileCheck %s; fi
-; RUN: if [ %llvmver -ge 8 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-phi-restructure -passes="enzyme,function(mem2reg,early-cse,%simplifycfg,instsimplify,adce,%simplifycfg,loop(loop-deletion),%simplifycfg)" -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-phi-restructure -enzyme -mem2reg -early-cse -simplifycfg -instsimplify -adce -simplifycfg -loop-deletion -simplifycfg -S | FileCheck %s; fi
+; RUN:  %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-phi-restructure -passes="enzyme,function(mem2reg,early-cse,%simplifycfg,instsimplify,adce,%simplifycfg,loop(loop-deletion),%simplifycfg)" -S | FileCheck %s
 
 ; ModuleID = 'wa.cpp'
 source_filename = "wa.cpp"

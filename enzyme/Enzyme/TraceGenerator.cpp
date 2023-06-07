@@ -29,10 +29,8 @@
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
-#if LLVM_VERSION_MAJOR >= 8
-#include "llvm/IR/InstrTypes.h"
-#endif
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
@@ -323,11 +321,7 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
   case ProbProgMode::Condition: {
     Instruction *hasCall =
         tutils->HasCall(Builder, address, "has.call." + call.getName());
-#if LLVM_VERSION_MAJOR >= 8
     Instruction *ThenTerm, *ElseTerm;
-#else
-    TerminatorInst *ThenTerm, *ElseTerm;
-#endif
     Value *ElseTracecall, *ThenTracecall;
     SplitBlockAndInsertIfThenElse(hasCall, new_call, &ThenTerm, &ElseTerm);
 

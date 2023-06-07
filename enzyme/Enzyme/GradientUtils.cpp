@@ -49,6 +49,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include "llvm/Support/AMDGPUMetadata.h"
@@ -198,9 +199,6 @@ GradientUtils::GradientUtils(
   if (oldFunc_->getSubprogram()) {
     assert(originalToNewFn.hasMD());
   }
-#if LLVM_VERSION_MAJOR <= 6
-  OrigPDT.recalculate(*oldFunc_);
-#endif
   for (auto pair : invertedPointers_) {
     invertedPointers.insert(std::make_pair(
         (const Value *)pair.first, InvertedPointerVH(this, pair.second)));
@@ -1137,7 +1135,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] = toreturn;
     assert(val->getType() == toreturn->getType());
     return toreturn;
-#if LLVM_VERSION_MAJOR >= 9
   } else if (isa<FPMathOperator>(val) &&
              cast<FPMathOperator>(val)->getOpcode() == Instruction::FNeg) {
     auto op = cast<FPMathOperator>(val);
@@ -1156,7 +1153,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] = toreturn;
     assert(val->getType() == toreturn->getType());
     return toreturn;
-#endif
   } else if (auto op = dyn_cast<SelectInst>(val)) {
     auto op0 = getOp(op->getOperand(0));
     if (op0 == nullptr)
@@ -1192,12 +1188,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         goto endCheck;
       ind.push_back(op);
     }
-#if LLVM_VERSION_MAJOR > 7
     auto toreturn = BuilderM.CreateGEP(inst->getSourceElementType(), ptr, ind,
                                        inst->getName() + "_unwrap");
-#else
-    auto toreturn = BuilderM.CreateGEP(ptr, ind, inst->getName() + "_unwrap");
-#endif
     if (isa<GetElementPtrInst>(toreturn))
       cast<GetElementPtrInst>(toreturn)->setIsInBounds(inst->isInBounds());
     if (auto newi = dyn_cast<Instruction>(toreturn)) {
@@ -1256,12 +1248,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     }
     assert(pidx->getType() == load->getOperand(0)->getType());
 
-#if LLVM_VERSION_MAJOR > 7
     auto toreturn =
         BuilderM.CreateLoad(load->getType(), pidx, load->getName() + "_unwrap");
-#else
-    auto toreturn = BuilderM.CreateLoad(pidx, load->getName() + "_unwrap");
-#endif
     llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
     ToCopy2.push_back(LLVMContext::MD_noalias);
     ToCopy2.push_back(LLVMContext::MD_alias_scope);
@@ -1433,13 +1421,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         Value *toreturn = applyChainRule(
             dli->getType(), BuilderM,
             [&](Value *pidx) {
-#if LLVM_VERSION_MAJOR > 7
               auto toreturn = BuilderM.CreateLoad(dli->getType(), pidx,
                                                   phi->getName() + "_unwrap");
-#else
-              auto toreturn =
-                  BuilderM.CreateLoad(pidx, phi->getName() + "_unwrap");
-#endif
               if (auto newi = dyn_cast<Instruction>(toreturn)) {
                 newi->copyIRFlags(dli);
                 unwrappedLoads[toreturn] = dli;
@@ -1962,12 +1945,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             // loop itself the previous index variable (aka the previous inc) is
             // equivalent to the current load of antivaralloc
             if (LI.getLoopFor(ctx.header)->contains(fwd)) {
-#if LLVM_VERSION_MAJOR > 7
               prevIdx =
                   BuilderM.CreateLoad(ctx.var->getType(), ctx.antivaralloc);
-#else
-              prevIdx = BuilderM.CreateLoad(ctx.antivaralloc);
-#endif
             } else {
               // However, if we are using the phi of the reverse pass of a block
               // outside the loop we must be in the reverse pass of a block
@@ -2673,12 +2652,8 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
       ret->setName(malloc->getName() + "_fromtape");
       if (omp) {
         Value *tid = ompThreadId();
-#if LLVM_VERSION_MAJOR > 7
         Value *tPtr = BuilderQ.CreateInBoundsGEP(malloc->getType(), ret,
                                                  ArrayRef<Value *>(tid));
-#else
-        Value *tPtr = BuilderQ.CreateInBoundsGEP(ret, ArrayRef<Value *>(tid));
-#endif
         ret = BuilderQ.CreateLoad(malloc->getType(), tPtr);
       }
     } else {
@@ -2826,14 +2801,9 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
                               : lb.CreateExtractValue(tape, {(unsigned)idx});
                 if (!inLoop && omp) {
                   Value *tid = ompThreadId();
-#if LLVM_VERSION_MAJOR > 7
                   Value *tPtr = lb.CreateInBoundsGEP(
                       replacewith->getType()->getPointerElementType(),
                       replacewith, ArrayRef<Value *>(tid));
-#else
-                  Value *tPtr =
-                      lb.CreateInBoundsGEP(replacewith, ArrayRef<Value *>(tid));
-#endif
                   replacewith = lb.CreateLoad(
                       replacewith->getType()->getPointerElementType(), tPtr);
                 }
@@ -2991,13 +2961,8 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
         auto firstallocation =
             CreateAllocation(entryBuilder, malloc->getType(), numThreads,
                              malloc->getName() + "_malloccache");
-#if LLVM_VERSION_MAJOR > 7
         Value *tPtr = entryBuilder.CreateInBoundsGEP(
             malloc->getType(), firstallocation, ArrayRef<Value *>(tid));
-#else
-        Value *tPtr = entryBuilder.CreateInBoundsGEP(firstallocation,
-                                                     ArrayRef<Value *>(tid));
-#endif
         if (auto inst = dyn_cast<Instruction>(malloc)) {
           entryBuilder.SetInsertPoint(inst->getNextNode());
         }
@@ -3771,11 +3736,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
 
         IRBuilder<> tbuild(incB);
 
-#if LLVM_VERSION_MAJOR > 7
         Value *av = tbuild.CreateLoad(lc.var->getType(), lc.antivaralloc);
-#else
-        Value *av = tbuild.CreateLoad(lc.antivaralloc);
-#endif
         Value *sub =
             tbuild.CreateAdd(av, ConstantInt::get(av->getType(), -1), "",
                              /*NUW*/ false, /*NSW*/ true);
@@ -5105,12 +5066,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(inversionAllocs);
 
     Type *subType = nullptr;
-#if LLVM_VERSION_MAJOR >= 9
     auto attr = cast<Argument>(oval)->getAttribute(Attribute::ByVal);
     subType = attr.getValueAsType();
-#else
-    subType = oval->getType()->getPointerElementType();
-#endif
 
     auto rule1 = [&]() {
       AllocaInst *antialloca = bb.CreateAlloca(
@@ -5125,13 +5082,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           M->getDataLayout().getTypeAllocSizeInBits(subType) / 8);
       auto volatile_arg = ConstantInt::getFalse(oval->getContext());
 
-#if LLVM_VERSION_MAJOR == 6
-      auto align_arg = ConstantInt::get(Type::getInt32Ty(oval->getContext()),
-                                        antialloca->getAlignment());
-      Value *args[] = {dst_arg, val_arg, len_arg, align_arg, volatile_arg};
-#else
       Value *args[] = {dst_arg, val_arg, len_arg, volatile_arg};
-#endif
       Type *tys[] = {dst_arg->getType(), len_arg->getType()};
       cast<CallInst>(bb.CreateCall(
           Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
@@ -5164,10 +5115,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           MemoryLocation
 #if LLVM_VERSION_MAJOR >= 12
               Loc = MemoryLocation(oval, LocationSize::beforeOrAfterPointer());
-#elif LLVM_VERSION_MAJOR >= 9
-              Loc = MemoryLocation(oval, LocationSize::unknown());
 #else
-              Loc = MemoryLocation(oval, MemoryLocation::UnknownSize);
+              Loc = MemoryLocation(oval, LocationSize::unknown());
 #endif
           for (CallInst *CI : originalCalls) {
             if (isa<IntrinsicInst>(CI))
@@ -5221,15 +5170,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                                        8);
               auto volatile_arg = ConstantInt::getFalse(oval->getContext());
 
-#if LLVM_VERSION_MAJOR == 6
-              auto align_arg =
-                  ConstantInt::get(Type::getInt32Ty(oval->getContext()),
-                                   antialloca->getAlignment());
-              Value *args[] = {dst_arg, val_arg, len_arg, align_arg,
-                               volatile_arg};
-#else
               Value *args[] = {dst_arg, val_arg, len_arg, volatile_arg};
-#endif
               Type *tys[] = {dst_arg->getType(), len_arg->getType()};
               auto memset = cast<CallInst>(bb.CreateCall(
                   Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
@@ -5467,13 +5408,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         }
 
         auto rule = [&bb, &arg, &invertargs](Value *ip) {
-// TODO mark this the same inbounds as the original
-#if LLVM_VERSION_MAJOR > 7
+          // TODO mark this the same inbounds as the original
           return bb.CreateGEP(ip->getType()->getPointerElementType(), ip,
                               invertargs, arg->getName() + "'ipg");
-#else
-          return bb.CreateGEP(ip, invertargs, arg->getName() + "'ipg");
-#endif
         };
 
         Value *shadow = applyChainRule(arg->getType(), bb, rule, ip);
@@ -5575,36 +5512,49 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto arg = dyn_cast<SelectInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
     bb.setFastMathFlags(getFast());
-    if (!EnzymeRuntimeActivityCheck && CustomErrorHandler) {
-      if (TR.query(arg)[{-1}].isPossiblePointer()) {
-        auto tval = arg->getTrueValue();
-        if (!isa<UndefValue>(tval) && !isa<ConstantPointerNull>(tval) &&
-            !isConstantValue(tval)) {
-          std::string str;
-          raw_string_ostream ss(str);
-          ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
-          CustomErrorHandler(str.c_str(), wrap(arg),
-                             ErrorType::MixedActivityError, this, wrap(tval));
-        }
-        auto fval = arg->getFalseValue();
-        if (!isa<UndefValue>(fval) && !isa<ConstantPointerNull>(fval) &&
-            !isConstantValue(fval)) {
-          std::string str;
-          raw_string_ostream ss(str);
-          ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
-          CustomErrorHandler(str.c_str(), wrap(arg),
-                             ErrorType::MixedActivityError, this, wrap(fval));
-        }
+
+    Value *itval = nullptr;
+    {
+      auto tval = arg->getTrueValue();
+      if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+          TR.query(arg)[{-1}].isPossiblePointer() && !isa<UndefValue>(tval) &&
+          !isa<ConstantPointerNull>(tval) && !isConstantValue(tval)) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
+        itval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
+                                          ErrorType::MixedActivityError, this,
+                                          wrap(tval), wrap(&bb)));
+      }
+      if (!itval) {
+        itval = invertPointerM(tval, bb, nullShadow);
       }
     }
+    Value *ifval = nullptr;
+    {
+      auto fval = arg->getFalseValue();
+      if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+          TR.query(arg)[{-1}].isPossiblePointer() && !isa<UndefValue>(fval) &&
+          !isa<ConstantPointerNull>(fval) && !isConstantValue(fval)) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
+        ifval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
+                                          ErrorType::MixedActivityError, this,
+                                          wrap(fval), wrap(&bb)));
+      }
+      if (!ifval) {
+        ifval = invertPointerM(fval, bb, nullShadow);
+      }
+    }
+
     Value *shadow = applyChainRule(
         arg->getType(), bb,
         [&](Value *tv, Value *fv) {
           return bb.CreateSelect(getNewFromOriginal(arg->getCondition()), tv,
                                  fv, arg->getName() + "'ipse");
         },
-        invertPointerM(arg->getTrueValue(), bb, nullShadow),
-        invertPointerM(arg->getFalseValue(), bb, nullShadow));
+        itval, ifval);
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
     return shadow;
@@ -5627,11 +5577,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     }
     size_t idx = 0;
     auto rule = [&](Value *ip) {
-#if LLVM_VERSION_MAJOR > 7
       auto li = bb.CreateLoad(arg->getType(), ip, arg->getName() + "'ipl");
-#else
-      auto li = bb.CreateLoad(ip, arg->getName() + "'ipl");
-#endif
       llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
       li->copyMetadata(*arg, ToCopy2);
       li->copyIRFlags(arg);
@@ -5711,12 +5657,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *ip = invertPointerM(arg->getPointerOperand(), bb);
 
     auto rule = [&](Value *ip) {
-#if LLVM_VERSION_MAJOR > 7
       auto shadow = bb.CreateGEP(arg->getSourceElementType(), ip, invertargs,
                                  arg->getName() + "'ipg");
-#else
-      auto shadow = bb.CreateGEP(ip, invertargs, arg->getName() + "'ipg");
-#endif
 
       if (auto gep = dyn_cast<GetElementPtrInst>(shadow))
         gep->setIsInBounds(arg->isInBounds());
@@ -5796,13 +5738,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           "", true, true);
       auto volatile_arg = ConstantInt::getFalse(oval->getContext());
 
-#if LLVM_VERSION_MAJOR == 6
-      auto align_arg = ConstantInt::get(Type::getInt32Ty(oval->getContext()),
-                                        antialloca->getAlignment());
-      Value *args[] = {dst_arg, val_arg, len_arg, align_arg, volatile_arg};
-#else
       Value *args[] = {dst_arg, val_arg, len_arg, volatile_arg};
-#endif
       Type *tys[] = {dst_arg->getType(), len_arg->getType()};
       auto memset = cast<CallInst>(bb.CreateCall(
           Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
@@ -5952,25 +5888,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         bb.SetInsertPoint(bb.GetInsertBlock(), bb.GetInsertBlock()->begin());
       }
 
-      if (!EnzymeRuntimeActivityCheck && CustomErrorHandler) {
-        if (TR.query(phi)[{-1}].isPossiblePointer()) {
-          for (unsigned int j = 0; j < phi->getNumIncomingValues(); ++j) {
-            auto val = phi->getIncomingValue(j);
-            if (isa<UndefValue>(val))
-              continue;
-            if (isa<ConstantPointerNull>(val))
-              continue;
-            if (!isConstantValue(val))
-              continue;
-            std::string str;
-            raw_string_ostream ss(str);
-            ss << "Mismatched activity for: " << *phi << " const val: " << *val;
-            CustomErrorHandler(str.c_str(), wrap(phi),
-                               ErrorType::MixedActivityError, this, wrap(val));
-          }
-        }
-      }
-
       if (EnzymeVectorSplitPhi && width > 1) {
         IRBuilder<> postPhi(NewV->getParent()->getFirstNonPHI());
         Type *shadowTy = getShadowType(phi->getType());
@@ -5982,6 +5899,32 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         Type *wrappedType = ArrayType::get(phi->getType(), width);
         Value *res = UndefValue::get(wrappedType);
 
+        SmallVector<Value *, 1> invertedVals;
+        for (unsigned int j = 0; j < phi->getNumIncomingValues(); ++j) {
+          IRBuilder<> pre(
+              cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(j)))
+                  ->getTerminator());
+          Value *preval = phi->getIncomingValue(j);
+
+          Value *val = nullptr;
+          if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+              TR.query(phi)[{-1}].isPossiblePointer() &&
+              !isa<UndefValue>(preval) && !isa<ConstantPointerNull>(preval) &&
+              !isConstantValue(preval)) {
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Mismatched activity for: " << *phi
+               << " const val: " << *preval;
+            val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
+                                            ErrorType::MixedActivityError, this,
+                                            wrap(preval), wrap(&pre)));
+          }
+          if (!val) {
+            val = invertPointerM(preval, pre, nullShadow);
+          }
+          invertedVals.push_back(val);
+        }
+
         for (unsigned int i = 0; i < getWidth(); ++i) {
           PHINode *which =
               bb.CreatePHI(phi->getType(), phi->getNumIncomingValues());
@@ -5991,8 +5934,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             IRBuilder<> pre(
                 cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(j)))
                     ->getTerminator());
-            Value *val =
-                invertPointerM(phi->getIncomingValue(j), pre, nullShadow);
+            Value *val = invertedVals[j];
             auto extracted_diff = extractMeta(pre, val, i);
             which->addIncoming(
                 extracted_diff,
@@ -6021,8 +5963,26 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           IRBuilder<> pre(
               cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(i)))
                   ->getTerminator());
-          Value *val =
-              invertPointerM(phi->getIncomingValue(i), pre, nullShadow);
+
+          Value *preval = phi->getIncomingValue(i);
+
+          Value *val = nullptr;
+          if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+              TR.query(phi)[{-1}].isPossiblePointer() &&
+              !isa<UndefValue>(preval) && !isa<ConstantPointerNull>(preval) &&
+              !isConstantValue(preval)) {
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Mismatched activity for: " << *phi
+               << " const val: " << *preval;
+            val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
+                                            ErrorType::MixedActivityError, this,
+                                            wrap(preval), wrap(&pre)));
+          }
+          if (!val) {
+            val = invertPointerM(preval, pre, nullShadow);
+          }
+
           which->addIncoming(val, cast<BasicBlock>(getNewFromOriginal(
                                       phi->getIncomingBlock(i))));
         }
@@ -6040,8 +6000,14 @@ end:;
     std::string str;
     raw_string_ostream ss(str);
     ss << "cannot find shadow for " << *oval;
-    CustomErrorHandler(str.c_str(), wrap(oval), ErrorType::NoShadow, this,
-                       nullptr);
+    auto iv =
+        unwrap(CustomErrorHandler(str.c_str(), wrap(oval), ErrorType::NoShadow,
+                                  this, nullptr, wrap(&BuilderM)));
+    if (iv) {
+      invertedPointers.insert(
+          std::make_pair((const Value *)oval, InvertedPointerVH(this, iv)));
+      return iv;
+    }
   }
 
   llvm::errs() << *newFunc->getParent() << "\n";
@@ -6249,12 +6215,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
       for (LoopContext idx = lc;; getContext(idx.parent->getHeader(), idx)) {
         if (available.count(idx.var) == 0) {
           if (!isOriginalBlock(*BuilderM.GetInsertBlock())) {
-#if LLVM_VERSION_MAJOR > 7
             available[idx.var] =
                 BuilderM.CreateLoad(idx.var->getType(), idx.antivaralloc);
-#else
-            available[idx.var] = BuilderM.CreateLoad(idx.antivaralloc);
-#endif
           } else {
             available[idx.var] = idx.var;
           }
@@ -6821,12 +6783,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                                            tryLegalRecomputeCheck));
                   }
 
-#if LLVM_VERSION_MAJOR > 7
                   auto cptr = BuilderM.CreateGEP(GEP->getSourceElementType(),
                                                  outer, idxs);
-#else
-                  auto cptr = BuilderM.CreateGEP(outer, idxs);
-#endif
                   cast<GetElementPtrInst>(cptr)->setIsInBounds(true);
 
                   // Retrieve the actual result
@@ -7950,7 +7908,7 @@ void GradientUtils::computeMinCache() {
     SmallPtrSet<Value *, 5> MinReq;
     DifferentialUseAnalysis::minCut(oldFunc->getParent()->getDataLayout(),
                                     OrigLI, Recomputes, Intermediates, Required,
-                                    MinReq, rematerializableAllocations);
+                                    MinReq, rematerializableAllocations, TLI);
     SmallPtrSet<Value *, 5> NeedGraph;
     for (Value *V : MinReq)
       NeedGraph.insert(V);
@@ -8202,16 +8160,11 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
         if (mode != DerivativeMode::ForwardModeSplit) {
 
           Value *args[] = {
-            shadowsLookedUp ? shadow_dst
-                            : gutils->lookupM(shadow_dst, Builder2),
-            ConstantInt::get(Type::getInt8Ty(MTI->getContext()), 0),
-            gutils->lookupM(length, Builder2),
-#if LLVM_VERSION_MAJOR <= 6
-            ConstantInt::get(Type::getInt32Ty(MTI->getContext()),
-                             max(1U, dstalign)),
-#endif
-            ConstantInt::getFalse(MTI->getContext())
-          };
+              shadowsLookedUp ? shadow_dst
+                              : gutils->lookupM(shadow_dst, Builder2),
+              ConstantInt::get(Type::getInt8Ty(MTI->getContext()), 0),
+              gutils->lookupM(length, Builder2),
+              ConstantInt::getFalse(MTI->getContext())};
 
           if (args[0]->getType()->isIntegerTy())
             args[0] = Builder2.CreateIntToPtr(
@@ -8245,12 +8198,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
         unsigned dstaddr =
             cast<PointerType>(dsto->getType())->getAddressSpace();
         if (offset != 0) {
-#if LLVM_VERSION_MAJOR > 7
           dsto = Builder2.CreateConstInBoundsGEP1_64(
               Type::getInt8Ty(dsto->getContext()), dsto, offset);
-#else
-          dsto = Builder2.CreateConstInBoundsGEP1_64(dsto, offset);
-#endif
         }
         auto srco =
             (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
@@ -8265,12 +8214,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
         unsigned srcaddr =
             cast<PointerType>(srco->getType())->getAddressSpace();
         if (offset != 0) {
-#if LLVM_VERSION_MAJOR > 7
           srco = Builder2.CreateConstInBoundsGEP1_64(
               Type::getInt8Ty(srco->getContext()), srco, offset);
-#else
-          srco = Builder2.CreateConstInBoundsGEP1_64(srco, offset);
-#endif
         }
         if (mode != DerivativeMode::ForwardModeSplit)
           srco = Builder2.CreatePointerCast(
@@ -8352,42 +8297,21 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
         dsto = BuilderZ.CreateIntToPtr(dsto,
                                        Type::getInt8PtrTy(MTI->getContext()));
       if (offset != 0) {
-#if LLVM_VERSION_MAJOR > 7
         dsto = BuilderZ.CreateConstInBoundsGEP1_64(
             Type::getInt8Ty(dsto->getContext()), dsto, offset);
-#else
-        dsto = BuilderZ.CreateConstInBoundsGEP1_64(dsto, offset);
-#endif
       }
       auto srco = shadow_src;
       if (srco->getType()->isIntegerTy())
         srco = BuilderZ.CreateIntToPtr(srco,
                                        Type::getInt8PtrTy(MTI->getContext()));
       if (offset != 0) {
-#if LLVM_VERSION_MAJOR > 7
         srco = BuilderZ.CreateConstInBoundsGEP1_64(
             Type::getInt8Ty(srco->getContext()), srco, offset);
-#else
-        srco = BuilderZ.CreateConstInBoundsGEP1_64(srco, offset);
-#endif
       }
-      Value *args[] = {
-        dsto,
-        srco,
-        length,
-#if LLVM_VERSION_MAJOR <= 6
-        ConstantInt::get(Type::getInt32Ty(MTI->getContext()),
-                         max(1U, min(srcalign, dstalign))),
-#endif
-        isVolatile
-      };
+      Value *args[] = {dsto, srco, length, isVolatile};
 
-      // #if LLVM_VERSION_MAJOR >= 7
       Type *tys[] = {args[0]->getType(), args[1]->getType(),
                      args[2]->getType()};
-      // #else
-      //  Type *tys[] = {args[0]->getType(), args[1]->getType(),
-      //  args[2]->getType(), args[3]->getType()}; #endif
 
       auto memtransIntr = Intrinsic::getDeclaration(
           gutils->newFunc->getParent(), intrinsic, tys);
@@ -8499,9 +8423,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         break;
       case Intrinsic::dbg_declare:
       case Intrinsic::dbg_value:
-#if LLVM_VERSION_MAJOR > 6
       case Intrinsic::dbg_label:
-#endif
 #if LLVM_VERSION_MAJOR <= 16
       case llvm::Intrinsic::dbg_addr:
 #endif
@@ -8978,28 +8900,15 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
     Type *IntPtrTy = Type::getInt8PtrTy(tofree->getContext());
 
     auto FT = FunctionType::get(VoidTy, ArrayRef<Type *>(IntPtrTy), false);
-#if LLVM_VERSION_MAJOR >= 9
     Value *freevalue = builder.GetInsertBlock()
                            ->getParent()
                            ->getParent()
                            ->getOrInsertFunction("swift_release", FT)
                            .getCallee();
-#else
-    Value *freevalue =
-        builder.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
-            "swift_release", FT);
-#endif
-    CallInst *freecall = cast<CallInst>(
-#if LLVM_VERSION_MAJOR >= 8
-        CallInst::Create(
-            FT, freevalue,
-            ArrayRef<Value *>(builder.CreatePointerCast(tofree, IntPtrTy)),
-#else
-        CallInst::Create(
-            freevalue,
-            ArrayRef<Value *>(builder.CreatePointerCast(tofree, IntPtrTy)),
-#endif
-            "", builder.GetInsertBlock()));
+    CallInst *freecall = cast<CallInst>(CallInst::Create(
+        FT, freevalue,
+        ArrayRef<Value *>(builder.CreatePointerCast(tofree, IntPtrTy)), "",
+        builder.GetInsertBlock()));
     freecall->setDebugLoc(debuglocation);
     if (isa<CallInst>(tofree) &&
         cast<CallInst>(tofree)->getAttributes().hasAttribute(
@@ -9037,39 +8946,31 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
     freefunc = LibFunc_free;
     break;
 
-  case LibFunc_Znwj:               // new(unsigned int);
-  case LibFunc_ZnwjRKSt9nothrow_t: // new(unsigned int, nothrow);
-#if LLVM_VERSION_MAJOR > 6
+  case LibFunc_Znwj:                // new(unsigned int);
+  case LibFunc_ZnwjRKSt9nothrow_t:  // new(unsigned int, nothrow);
   case LibFunc_ZnwjSt11align_val_t: // new(unsigned int, align_val_t)
   case LibFunc_ZnwjSt11align_val_tRKSt9nothrow_t: // new(unsigned int,
                                                   // align_val_t, nothrow)
-#endif
 
-  case LibFunc_Znwm:               // new(unsigned long);
-  case LibFunc_ZnwmRKSt9nothrow_t: // new(unsigned long, nothrow);
-#if LLVM_VERSION_MAJOR > 6
+  case LibFunc_Znwm:                // new(unsigned long);
+  case LibFunc_ZnwmRKSt9nothrow_t:  // new(unsigned long, nothrow);
   case LibFunc_ZnwmSt11align_val_t: // new(unsigned long, align_val_t)
   case LibFunc_ZnwmSt11align_val_tRKSt9nothrow_t: // new(unsigned long,
                                                   // align_val_t, nothrow)
-#endif
     freefunc = LibFunc_ZdlPv;
     break;
 
-  case LibFunc_Znaj:               // new[](unsigned int);
-  case LibFunc_ZnajRKSt9nothrow_t: // new[](unsigned int, nothrow);
-#if LLVM_VERSION_MAJOR > 6
+  case LibFunc_Znaj:                // new[](unsigned int);
+  case LibFunc_ZnajRKSt9nothrow_t:  // new[](unsigned int, nothrow);
   case LibFunc_ZnajSt11align_val_t: // new[](unsigned int, align_val_t)
   case LibFunc_ZnajSt11align_val_tRKSt9nothrow_t: // new[](unsigned int,
-                                                  // align_val_t, nothrow)
-#endif
+                                                  // align_val_t, nothrow
 
-  case LibFunc_Znam:               // new[](unsigned long);
-  case LibFunc_ZnamRKSt9nothrow_t: // new[](unsigned long, nothrow);
-#if LLVM_VERSION_MAJOR > 6
+  case LibFunc_Znam:                // new[](unsigned long);
+  case LibFunc_ZnamRKSt9nothrow_t:  // new[](unsigned long, nothrow);
   case LibFunc_ZnamSt11align_val_t: // new[](unsigned long, align_val_t)
   case LibFunc_ZnamSt11align_val_tRKSt9nothrow_t: // new[](unsigned long,
                                                   // align_val_t, nothrow)
-#endif
     freefunc = LibFunc_ZdaPv;
     break;
 
@@ -9099,25 +9000,14 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
   Type *IntPtrTy = Type::getInt8PtrTy(tofree->getContext());
 
   auto FT = FunctionType::get(VoidTy, {IntPtrTy}, false);
-#if LLVM_VERSION_MAJOR >= 9
   Value *freevalue = builder.GetInsertBlock()
                          ->getParent()
                          ->getParent()
                          ->getOrInsertFunction(freename, FT)
                          .getCallee();
-#else
-  Value *freevalue =
-      builder.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
-          freename, FT);
-#endif
-  CallInst *freecall = cast<CallInst>(
-#if LLVM_VERSION_MAJOR >= 8
-      CallInst::Create(FT, freevalue,
-                       {builder.CreatePointerCast(tofree, IntPtrTy)},
-#else
-      CallInst::Create(freevalue, {builder.CreatePointerCast(tofree, IntPtrTy)},
-#endif
-                       "", builder.GetInsertBlock()));
+  CallInst *freecall = cast<CallInst>(CallInst::Create(
+      FT, freevalue, {builder.CreatePointerCast(tofree, IntPtrTy)}, "",
+      builder.GetInsertBlock()));
   freecall->setDebugLoc(debuglocation);
   if (isa<CallInst>(tofree) &&
       cast<CallInst>(tofree)->getAttributes().hasAttribute(
@@ -9138,16 +9028,18 @@ bool GradientUtils::needsCacheWholeAllocation(
     return false;
   if (!found->second)
     return true;
-  SmallVector<const Instruction *, 1> todo;
-  for (auto user : origInst->users())
-    todo.push_back(cast<Instruction>(user));
-  SmallPtrSet<const Instruction *, 1> seen;
+  SmallVector<std::pair<const Instruction *, size_t>, 1> todo;
+  for (auto &use : origInst->uses())
+    todo.push_back(
+        std::make_pair(cast<Instruction>(use.getUser()), use.getOperandNo()));
+  SmallSet<std::pair<const Instruction *, size_t>, 1> seen;
   while (todo.size()) {
-    auto cur = todo.back();
+    auto pair = todo.back();
+    auto [cur, idx] = pair;
     todo.pop_back();
-    if (seen.count(cur))
+    if (seen.count(pair))
       continue;
-    seen.insert(cur);
+    seen.insert(pair);
     // Loads are always fine
     if (isa<LoadInst>(cur))
       continue;
@@ -9162,20 +9054,30 @@ bool GradientUtils::needsCacheWholeAllocation(
           II->getIntrinsicID() == Intrinsic::masked_load)
         continue;
 
+    if (auto CI = dyn_cast<CallInst>(cur)) {
+#if LLVM_VERSION_MAJOR >= 14
+      if (idx < CI->arg_size())
+#else
+      if (idx < CI->getNumArgOperands())
+#endif
+      {
+        if (isNoCapture(CI, idx))
+          continue;
+      }
+    }
+
     found = knownRecomputeHeuristic.find(cur);
     if (found == knownRecomputeHeuristic.end())
       continue;
 
     // If caching this user, it cannot be a gep/cast of original
     if (!found->second) {
-      assert(isPointerArithmeticInst(cur, /*includephi*/ true,
-                                     /*includebin*/ true));
-      // if return may alias the input, then force it to be saved
-      return true;
+      assert(false && "caching potentially capturing/offset of allocation");
     } else {
       // if not caching this user, it is legal to recompute, consider its users
-      for (auto user : cur->users()) {
-        todo.push_back(cast<Instruction>(user));
+      for (auto &use : cur->uses()) {
+        todo.push_back(std::make_pair(cast<Instruction>(use.getUser()),
+                                      use.getOperandNo()));
       }
     }
   }

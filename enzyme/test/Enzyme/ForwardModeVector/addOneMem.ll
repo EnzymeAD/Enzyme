@@ -29,9 +29,9 @@ declare void @__enzyme_fwddiff(void (double*)*, ...)
 ; CHECK-NEXT:   %"'ipl2" = load double, double* %2, align 8
 ; CHECK-NEXT:   %3 = load double, double* %x, align 8
 ; CHECK-NEXT:   %add = fadd double %3, 1.000000e+00
-; CHECK-NEXT:   store double %add, double* %x, align 8
 ; CHECK-NEXT:   store double %"'ipl", double* %0, align 8
 ; CHECK-NEXT:   store double %"'ipl1", double* %1, align 8
 ; CHECK-NEXT:   store double %"'ipl2", double* %2, align 8
+; CHECK-NEXT:   store double %add, double* %x, align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

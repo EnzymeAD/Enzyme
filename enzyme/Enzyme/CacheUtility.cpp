@@ -77,7 +77,7 @@ void CacheUtility::erase(Instruction *I) {
       ss << *newFunc << "\n";
       ss << *I << "\n";
       CustomErrorHandler(str.c_str(), wrap(I), ErrorType::InternalError,
-                         nullptr, nullptr);
+                         nullptr, nullptr, nullptr);
     }
     llvm::errs() << *newFunc->getParent() << "\n";
     llvm::errs() << *newFunc << "\n";
@@ -943,11 +943,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         scopeInstructions[alloc].push_back(zerostore);
 
         IRBuilder<> build(containedloops.back().first.incvar->getNextNode());
-#if LLVM_VERSION_MAJOR > 7
         Value *allocation = build.CreateLoad(allocType, storeInto);
-#else
-        Value *allocation = build.CreateLoad(storeInto);
-#endif
 
         if (allocation->getType() != mallocType) {
           auto I =
@@ -1021,7 +1017,6 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
           /*inForwardPass*/ true, v, containedloops,
           /*available*/ ValueToValueMapTy());
 
-#if LLVM_VERSION_MAJOR > 7
       storeInto = v.CreateLoad(types[i + 1], storeInto);
 #if LLVM_VERSION_MAJOR >= 10
       cast<LoadInst>(storeInto)->setAlignment(Align(alignSize));
@@ -1029,11 +1024,6 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
       cast<LoadInst>(storeInto)->setAlignment(alignSize);
 #endif
       storeInto = v.CreateGEP(types[i], storeInto, idx);
-#else
-      storeInto = v.CreateLoad(storeInto);
-      cast<LoadInst>(storeInto)->setAlignment(alignSize);
-      storeInto = v.CreateGEP(storeInto, idx);
-#endif
       cast<GetElementPtrInst>(storeInto)->setIsInBounds(true);
     }
   }
@@ -1064,11 +1054,7 @@ Value *CacheUtility::computeIndexOfChunk(
     else if (available.count(var)) {
       var = available.find(var)->second;
     } else if (!inForwardPass) {
-#if LLVM_VERSION_MAJOR > 7
       var = v.CreateLoad(idx.var->getType(), idx.antivaralloc);
-#else
-      var = v.CreateLoad(idx.antivaralloc);
-#endif
     } else {
       var = idx.var;
     }
@@ -1252,13 +1238,8 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
         // map
         if (allocationPreheaders[i] != contexts[j].preheader) {
           if (!inForwardPass) {
-#if LLVM_VERSION_MAJOR > 7
             reverseMap[contexts[j].var] = RB->CreateLoad(
                 contexts[j].var->getType(), contexts[j].antivaralloc);
-#else
-            reverseMap[contexts[j].var] =
-                RB->CreateLoad(contexts[j].antivaralloc);
-#endif
           }
         } else {
           break;
@@ -1404,12 +1385,8 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
       auto mask = v.CreateNot(v.CreateShl(
           ConstantInt::get(Type::getInt8Ty(cache->getContext()), 1), subidx));
 
-#if LLVM_VERSION_MAJOR > 7
       Value *loadChunk =
           v.CreateLoad(loc->getType()->getPointerElementType(), loc);
-#else
-      Value *loadChunk = v.CreateLoad(loc);
-#endif
       auto cleared = v.CreateAnd(loadChunk, mask);
 
       auto toset = v.CreateShl(
@@ -1540,13 +1517,7 @@ Value *CacheUtility::getCachePointer(llvm::Type *T, bool inForwardPass,
   // Iterate from outermost loop to innermost loop
   for (int i = sublimits.size() - 1; i >= 0; i--) {
     // Lookup the next allocation pointer
-    {
-#if LLVM_VERSION_MAJOR > 7
-      next = BuilderM.CreateLoad(types[i + 1], next);
-#else
-      next = BuilderM.CreateLoad(next);
-#endif
-    }
+    next = BuilderM.CreateLoad(types[i + 1], next);
     if (storeInInstructionsMap && isa<AllocaInst>(cache))
       scopeInstructions[cast<AllocaInst>(cache)].push_back(
           cast<Instruction>(next));
@@ -1600,13 +1571,7 @@ Value *CacheUtility::getCachePointer(llvm::Type *T, bool inForwardPass,
         assert(es);
         idx = BuilderM.CreateMul(idx, es, "", /*NUW*/ true, /*NSW*/ true);
       }
-      {
-#if LLVM_VERSION_MAJOR > 7
-        next = BuilderM.CreateGEP(types[i], next, idx);
-#else
-        next = BuilderM.CreateGEP(next, idx);
-#endif
-      }
+      next = BuilderM.CreateGEP(types[i], next, idx);
       cast<GetElementPtrInst>(next)->setIsInBounds(true);
       if (storeInInstructionsMap && isa<AllocaInst>(cache))
         scopeInstructions[cast<AllocaInst>(cache)].push_back(
@@ -1624,11 +1589,7 @@ llvm::Value *CacheUtility::loadFromCachePointer(Type *T,
                                                 llvm::Value *cptr,
                                                 llvm::Value *cache) {
   // Retrieve the actual result
-#if LLVM_VERSION_MAJOR > 7
   auto result = BuilderM.CreateLoad(T, cptr);
-#else
-  auto result = BuilderM.CreateLoad(cptr);
-#endif
 
   // Apply requisite invariant, alignment, etc
   if (ValueInvariantGroups.find(cache) == ValueInvariantGroups.end()) {
@@ -1666,11 +1627,7 @@ Value *CacheUtility::lookupValueFromCache(
 
   // Optionally apply the additional offset
   if (extraOffset) {
-#if LLVM_VERSION_MAJOR > 7
     cptr = BuilderM.CreateGEP(T, cptr, extraOffset);
-#else
-    cptr = BuilderM.CreateGEP(cptr, extraOffset);
-#endif
     cast<GetElementPtrInst>(cptr)->setIsInBounds(true);
   }
 

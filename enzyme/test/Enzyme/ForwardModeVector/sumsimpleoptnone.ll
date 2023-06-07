@@ -72,10 +72,10 @@ attributes #0 = { noinline nounwind uwtable optnone }
 ; CHECK-NEXT:    [[TMP10:%.*]] = fadd fast double %"'ipl10", %"'ipl"
 ; CHECK-NEXT:    [[TMP11:%.*]] = fadd fast double %"'ipl11", %"'ipl5"
 ; CHECK-NEXT:    [[TMP12:%.*]] = fadd fast double %"'ipl12", %"'ipl6"
-; CHECK-NEXT:    store double [[ADD]], double* [[TMP8]]
 ; CHECK-NEXT:    store double [[TMP10]], double* %"'ipl7"
 ; CHECK-NEXT:    store double [[TMP11]], double* %"'ipl8"
 ; CHECK-NEXT:    store double [[TMP12]], double* %"'ipl9"
+; CHECK-NEXT:    store double [[ADD]], double* [[TMP8]]
 ; CHECK-NEXT:    br label [[FOR_COND]]
 ; CHECK:       for.end:
 ; CHECK-NEXT:    ret void

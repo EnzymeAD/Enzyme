@@ -81,12 +81,12 @@ declare void @__enzyme_fwddiff(i8*, ...)
 ; CHECK-NEXT:    [[TMP22:%.*]] = fmul fast double %"'ipl2", [[TMP6]]
 ; CHECK-NEXT:    [[TMP23:%.*]] = fadd fast double [[TMP21]], [[TMP22]]
 ; CHECK-NEXT:    [[TMP24:%.*]] = insertvalue [3 x double] [[TMP18]], double [[TMP23]], 2
-; CHECK-NEXT:    store double [[MUL]], double* [[OUT]], align 8
 ; CHECK-NEXT:    [[TMP25:%.*]] = extractvalue [3 x double*] %"out'", 0
 ; CHECK-NEXT:    store double [[TMP11]], double* [[TMP25]], align 8
 ; CHECK-NEXT:    [[TMP27:%.*]] = extractvalue [3 x double*] %"out'", 1
 ; CHECK-NEXT:    store double [[TMP17]], double* [[TMP27]], align 8
 ; CHECK-NEXT:    [[TMP29:%.*]] = extractvalue [3 x double*] %"out'", 2
 ; CHECK-NEXT:    store double [[TMP23]], double* [[TMP29]], align 8
+; CHECK-NEXT:    store double [[MUL]], double* [[OUT]], align 8
 ; CHECK-NEXT:    ret void
 ;

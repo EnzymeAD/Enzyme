@@ -386,7 +386,7 @@ struct EnzymeToMemRefPass
         [](enzyme::CacheType type, SmallVectorImpl<Type> &resultTypes) {
           // Data
           resultTypes.push_back(MemRefType::get(
-              {}, MemRefType::get({ShapedType::kDynamicSize}, type.getType())));
+              {}, MemRefType::get({ShapedType::kDynamic}, type.getType())));
           auto indexMemRefType =
               MemRefType::get({}, IndexType::get(type.getContext()));
           // Size

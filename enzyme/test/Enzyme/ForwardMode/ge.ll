@@ -73,8 +73,8 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   br label %for.body
 
 ; CHECK: for.cond.cleanup:                                 ; preds = %for.body
-; CHECK-NEXT:   store double 0.000000e+00, double* %x, align 8, !tbaa !2
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'", align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %x, align 8, !tbaa !2
 ; CHECK-NEXT:   ret double %[[i5:.+]]
 
 ; CHECK: for.body:                                         ; preds = %for.body, %entry

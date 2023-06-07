@@ -18,8 +18,8 @@
 #include "CloneFunction.h"
 #include "EnzymeLogic.h"
 
-#include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/FunctionInterfaces.h"
+#include "mlir/IR/IRMapping.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -32,22 +32,21 @@ mlir::FunctionType getFunctionTypeForClone(
     bool diffeReturnArg, ReturnType returnValue, DIFFE_TYPE ReturnType);
 
 void cloneInto(Region *src, Region *dest, Region::iterator destPos,
-               BlockAndValueMapping &mapper,
-               std::map<Operation *, Operation *> &opMap);
+               IRMapping &mapper, std::map<Operation *, Operation *> &opMap);
 
-void cloneInto(Region *src, Region *dest, BlockAndValueMapping &mapper,
+void cloneInto(Region *src, Region *dest, IRMapping &mapper,
                std::map<mlir::Operation *, mlir::Operation *> &opMap);
 
-Operation *clone(Operation *src, BlockAndValueMapping &mapper,
+Operation *clone(Operation *src, IRMapping &mapper,
                  Operation::CloneOptions options,
                  std::map<Operation *, Operation *> &opMap);
 
 FunctionOpInterface CloneFunctionWithReturns(
     DerivativeMode mode, unsigned width, FunctionOpInterface F,
-    BlockAndValueMapping &ptrInputs, ArrayRef<DIFFE_TYPE> constant_args,
+    IRMapping &ptrInputs, ArrayRef<DIFFE_TYPE> constant_args,
     SmallPtrSetImpl<mlir::Value> &constants,
     SmallPtrSetImpl<mlir::Value> &nonconstants,
     SmallPtrSetImpl<mlir::Value> &returnvals, ReturnType returnValue,
-    DIFFE_TYPE ReturnType, Twine name, BlockAndValueMapping &VMap,
+    DIFFE_TYPE ReturnType, Twine name, IRMapping &VMap,
     std::map<Operation *, Operation *> &OpMap, bool diffeReturnArg,
     mlir::Type additionalArg);
