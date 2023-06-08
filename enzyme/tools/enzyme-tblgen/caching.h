@@ -5,26 +5,29 @@ using namespace llvm;
 void emit_mat_vec_caching(TGPattern &pattern, size_t i, raw_ostream &os) {
   const auto argUsers = pattern.getArgUsers();
   const auto nameVec = pattern.getArgNames();
-  const auto vecName = nameVec[i];
+  const auto name = nameVec[i];
   const auto vecPosition = i;
   const auto vecUsers = argUsers.lookup(vecPosition);
-  if (vecUsers.size() == 0) {
-os << "  bool cache_" << vecName << " = false;\n";
-  } else {
-    os 
-<< "  bool cache_" << vecName
-<< "  = (cacheMode &&\n"
-<< "          overwritten_" << vecName;
-    for (size_t user: vecUsers) {
-      auto name = nameVec[user];
-      if (name == vecName)
-        continue; // adjoint of x won't need x
+    if (vecUsers.size() == 0) {
+os << "  bool need_" << name << " = false;\n";
+    } else {
       os 
-<< " && active_" << name;
+<< "  bool need_" << name
+<< "    = ";
+      bool first = true;
+      for (size_t user: vecUsers) {
+        auto userName = nameVec[user];
+        if (name == userName)
+          continue; // adjoint of x won't need x
+        os << (first ? "" : " || ")
+<< " active_" << userName;
+        first = false;
+      }
+      os 
+<< ";\n";
     }
     os 
-<< ");\n";
-    }
+<< "  bool cache_" << name << " = cacheMode && overwritten_" << name << " && need_" << name << ";\n";
 }
 
 // scalar (e.g xinc) is needed to be preserved if
@@ -49,14 +52,13 @@ void emit_scalar_caching(TGPattern &pattern, raw_ostream &os) {
     auto name = nameVec[i];
     const auto scalarUsers = argUsers.lookup(i);
 
-    bool first = true;
     if (scalarUsers.size() == 0) {
-os << "  bool cache_" << name << " = false;\n";
+os << "  bool need_" << name << " = false;\n";
     } else {
       os 
-<< "  bool cache_" << name
-<< "  = (cacheMode && byRef &&\n"
-<< "          overwritten_" << name << " && (";
+<< "  bool need_" << name
+<< "    = ";
+      bool first = true;
       for (size_t user: scalarUsers) {
         auto userName = nameVec[user];
         //if (name == userName)
@@ -66,8 +68,11 @@ os << "  bool cache_" << name << " = false;\n";
         first = false;
       }
       os 
-<< "));\n";
+<< ";\n";
     }
+    os 
+<< "  bool cache_" << name << " = cacheMode && byRef && overwritten_" << name << " && need_" << name << ";\n";
+
   }
 }
 void emit_scalar_cacheTypes(TGPattern &pattern, raw_ostream &os) {
@@ -296,7 +301,7 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
       auto incName = nameVec[i+1];
       os 
 << "  Value *true_" << incName << " = arg_" << incName << ";\n"
-<< "  Value *" << incName << " = true_" << incName << ";\n"
+//<< "  Value *" << incName << " = true_" << incName << ";\n"
 //<< "  Value *data_" << vecName << " = arg_" << vecName << ";\n"
 << "  Value *free_" << vecName << " = nullptr;\n";
     } else if (ty == mldData) {

@@ -120,9 +120,9 @@ entry:
 ; CHECK-NEXT:  %malloccall2 = tail call noalias nonnull i8* @malloc(i32 %mallocsize1)
 ; CHECK-NEXT:  %cache.y = bitcast i8* %malloccall2 to float*
 ; CHECK-NEXT:  call void @cblas_scopy(i32 %len, float* %n, i32 %incn, float* %cache.y, i32 1)
-; CHECK-NEXT:  %2 = insertvalue { float*, float* } undef, float* %cache.x, 0
-; CHECK-NEXT:  %3 = insertvalue { float*, float* } %0, float* %cache.y, 1
-; CHECK-NEXT:  ret { float*, float* } %3
+; CHECK-NEXT:  %0 = insertvalue { float*, float* } undef, float* %cache.x, 0
+; CHECK-NEXT:  %1 = insertvalue { float*, float* } %0, float* %cache.y, 1
+; CHECK-NEXT:  ret { float*, float* } %1
 ; CHECK-NEXT:  }
 
 ; CHECK: define internal void @[[revMod]](i32 %len, float* noalias %m, float* %"m'", i32 %incm, float* noalias %n, float* %"n'", i32 %incn, float %differeturn, { float*, float* }

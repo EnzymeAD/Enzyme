@@ -37,7 +37,6 @@ define void @g(i8* noalias %y, i8* noalias %A, i8* noalias %x) {
 entry:
   call void @f(i8* %y, i8* %A, i8* %x)
   %ptr = bitcast i8* %x to double*
-  ;%ptr = bitcast i8* %A to double*
   store double 0.0000000e+00, double* %ptr, align 8
   ret void
 }

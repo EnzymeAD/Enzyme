@@ -1057,13 +1057,9 @@ void extract_scalar(std::string name, std::string elemTy, raw_ostream &os) {
      << "        auto alloc = allocationBuilder.CreateAlloca(" << elemTy
      << ", nullptr, \"byref." << name << "\");\n"
      << "        Builder2.CreateStore(arg_" << name << ", alloc);\n"
-     << "        arg_" << name
-     << " = Builder2.CreatePointerCast(\n"
+     << "        arg_" << name << " = Builder2.CreatePointerCast(\n"
      << "            alloc, type_" << name << ", \"cast." << name << "\");\n"
      << "        cacheidx++;\n"
-     << "      } else {\n"
-     << "        if (Mode != DerivativeMode::ForwardModeSplit)\n"
-     << "          arg_" << name << " = lookup(arg_" << name << ", Builder2);\n"
      << "      }\n"
      << "\n";
 }
@@ -1079,14 +1075,12 @@ void extract_mat_or_vec(std::string name, raw_ostream &os) {
      << "        if (type_" << name << "->isIntegerTy()) {\n"
      << "          arg_" << name << " = Builder2.CreatePtrToInt(arg_" << name
      << ", type_" << name << ");\n"
-     << "        } else if (arg_" << name << "->getType() != type_" << name << "){\n"
+     << "        } else if (arg_" << name << "->getType() != type_" << name
+     << "){\n"
      << "          arg_" << name << " = Builder2.CreatePointerCast(arg_" << name
      << ", type_" << name << ");\n"
      << "        }\n"
      << "        cacheidx++;\n"
-     << "      } else {\n"
-     << "        if (Mode != DerivativeMode::ForwardModeSplit)\n"
-     << "          arg_" << name << " = lookup(arg_" << name << ", Builder2);\n"
      << "      }\n";
 }
 
@@ -1128,22 +1122,6 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
       extract_scalar(name, "charType", os);
     }
   }
-
-  os << "    } else if (Mode != DerivativeMode::ForwardModeSplit) {\n";
-  for (size_t i = 0; i < nameVec.size(); i++) {
-    auto ty = typeMap.lookup(i);
-    auto name = nameVec[i];
-    if (ty == vincInc || ty == mldLD) {
-      os << "      if (cache_" << name << ") {\n"
-         << "        true_" << name << " = lookup(true_" << name
-         << ", Builder2);\n"
-         << "        " << name << " = true_" << name << ";\n"
-         << "      }\n";
-    } else if (ty == len || ty == fp) {
-      os << "      arg_" << name << " = lookup(arg_" << name << ", Builder2);\n"
-         << "\n";
-    }
-  }
   os << "    }\n";
 
   for (size_t i = 0; i < nameVec.size(); i++) {
@@ -1154,6 +1132,8 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
     extract_mat_or_vec(name, os);
   }
 
+  // If we cached matrix or vector X, then we did that in a dense form.
+  // Therefore, we overwrite the related inc_X to be 1 and ld_X to be = m
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
     if (ty != vincData)
@@ -1164,35 +1144,17 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
     const auto incName = nameVec[i + 1];
     extract_mat_or_vec(name, os);
     os << "      if (cache_" << name << ") {\n"
-       << "      " << incName << " = ConstantInt::get(intType, 1);\n"
+       << "        arg_" << incName << " = ConstantInt::get(intType, 1);\n"
        << "       if (byRef) {\n"
        << "         auto alloc = allocationBuilder.CreateAlloca(intType, "
           "nullptr, \"byref."
        << incName << "\");\n"
-       << "         Builder2.CreateStore(" << incName << ", alloc);\n"
-       << "         " << incName << " = Builder2.CreatePointerCast(\n"
+       << "         Builder2.CreateStore(arg_" << incName << ", alloc);\n"
+       << "         arg_" << incName << " = Builder2.CreatePointerCast(\n"
        << "             alloc, type_" << incName << ", \"cast." << incName
        << "\");\n"
        << "      }\n"
        << " }\n";
-
-    if (vecUsers.size() > 0) {
-      os << "   else if (";
-      bool first = true;
-      // TODO: for higher lv: verify x isn't user from data_x (as only adjoint
-      // of x will be used)
-      for (auto user : vecUsers) {
-        auto userName = nameVec[user];
-        if (name == userName)
-          continue; // see above
-        os << ((first) ? "" : " || ") << "active_" << userName;
-        first = false;
-      }
-      os << ") {\n"
-         << "      arg_" << name << " = lookup(arg_" << name
-         << ", Builder2);\n"
-         << "    }\n";
-    }
   }
 
   os << "  } else {\n"
@@ -1668,16 +1630,10 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
         assert(typeOfNextArg == vincInc);
         if (argPosition == actArg) {
           // shadow d_<X> wasn't overwritten or cached, so use true_inc<X>
+          // since arg_inc<X> was set to 1 if arg_<X> was cached
           result.append((Twine("d_") + name + ", true_" + nextName).str());
         } else {
-          result.append((Twine("arg_") + name).str());
-          //result.append((Twine("data_") + name).str());
-          // if we cached arg_<X> then don't use inc_<X> but rather 1,
-          // since we malloc'd the cache
-          // result.append((Twine(", cache_" + name + " ?
-          // ConstantInt::get(intType, 1) : arg_") + nextName).str());
-          //  orig arg might was cached in which cased we overwrote arg_ to 1
-          result.append((Twine(", arg_") + nextName).str());
+          result.append((Twine("arg_") + name + ", arg_" + nextName).str());
         }
         pos++; // extra ++ due to also handling vincInc
       } else if (ty == vincInc) {
@@ -1781,6 +1737,30 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
          << "     : nullptr;\n";
     } else if (ty == fp) {
       os << "    Value *d_" << name << " = UndefValue::get(fpType);\n";
+    }
+  }
+
+  // We need to lookup all args which we haven't cached or overwritten and which
+  // are required.
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    const auto name = nameVec[i];
+    const auto ty = typeMap.lookup(i);
+    if (ty == len || ty == fp || ty == vincData || ty == mldData ||
+        ty == trans || ty == uplo || ty == diag) {
+      os << "    if (!cache_" << name << " && need_" << name << ")\n"
+         << "      arg_" << name << " = lookup(arg_" << name
+         << ", Builder2);\n";
+    } else if (ty == vincInc) {
+      // extra handling, because if we cache a vec we overwrite the inc
+      const auto prevTy = typeMap.lookup(i - 1);
+      assert(prevTy == vincData);
+      const auto vecName = nameVec[i - 1];
+      os << "    if (!(cache_" << name << " || cache_" << vecName
+         << ") && need_" << name << ")\n"
+         << "      arg_" << name << " = lookup(arg_" << name
+         << ", Builder2);\n";
+    } else if (ty == mldLD) {
+      // TODO, we should overwrite ld
     }
   }
 
