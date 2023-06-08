@@ -108,13 +108,13 @@ entry:
 ; CHECK-NEXT:   %21 = mul i64 %19, %20
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %21, 8
 ; CHECK-NEXT:   %malloccall10 = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
-; CHECK-NEXT:   %22 = bitcast i8* %malloccall10 to double*
-; CHECK-NEXT:   store double* %22, double** %0, align 8
+; CHECK-NEXT:   %cache.A = bitcast i8* %malloccall10 to double*
+; CHECK-NEXT:   store double* %cache.A, double** %0, align 8
 ; CHECK-NEXT:   store i8 0, i8* %byref.copy.garbage, align 1
-; CHECK-NEXT:   call void @dlacpy_64_(i8* %byref.copy.garbage, i8* %m_p, i8* %k_p, i8* %A, i8* %lda_p, double* %22, i8* %m_p)
+; CHECK-NEXT:   call void @dlacpy_64_(i8* %byref.copy.garbage, i8* %m_p, i8* %k_p, i8* %A, i8* %lda_p, double* %cache.A, i8* %m_p)
 ; CHECK-NEXT:   call void @dgemm_64_(i8* noundef nonnull %malloccall, i8* noundef nonnull %malloccall1, i8* noundef nonnull %m_p, i8* noundef nonnull %n_p, i8* noundef nonnull %k_p, i8* noundef nonnull %alpha_p, i8* %A, i8* noundef nonnull %lda_p, i8* %B, i8* noundef nonnull %ldb_p, i8* noundef nonnull %beta_p, i8* %C, i8* noundef nonnull %ldc_p) #1
-; CHECK-NEXT:   %23 = load double*, double** %0, align 8
-; CHECK-NEXT:   ret double* %23
+; CHECK-NEXT:   %22 = load double*, double** %0, align 8
+; CHECK-NEXT:   ret double* %22
 ; CHECK-NEXT: }
 
 ; CHECK: define internal void @diffef(i8* noalias %C, i8* %"C'", i8* noalias %A, i8* %"A'", i8* noalias %B, i8* %"B'", double* %0)
@@ -203,6 +203,7 @@ entry:
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0, align 8
 ; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.02, align 4
 ; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i64* %byref.constant.int.0, i64* %byref.constant.int.01, double* %byref.constant.fp.1.0, i8* %beta_p, i8* %m_p, i8* %n_p, i8* %"C'", i8* %ldc_p, i64* %byref.constant.int.02)
-; CHECK-NEXT:   tail call void @free(i8* nonnull %17)
+; CHECK-NEXT:   %34 = bitcast double* %0 to i8*
+; CHECK-NEXT:   tail call void @free(i8* nonnull %34)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
