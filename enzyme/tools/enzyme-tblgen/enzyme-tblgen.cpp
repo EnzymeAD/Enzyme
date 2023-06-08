@@ -914,27 +914,11 @@ void emit_free_and_ending(TGPattern &pattern, raw_ostream &os) {
   auto typeMap = pattern.getArgTypeMap();
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
-    if (ty == vincData) {
+    if (ty == vincData || ty == mldData) {
       auto name = nameVec[i];
       os << "      if (cache_" << name << ") {\n"
-         << "        if (julia_decl) {\n"
-         << "          CreateDealloc(Builder2, free_" << name
+         << "        CreateDealloc(Builder2, free_" << name
          << ");\n"
-         //<< "          CreateDealloc(Builder2, data_" << name << ");\n"
-         << "        } else {\n"
-         << "          CreateDealloc(Builder2, arg_" << name << ");\n"
-         //<< "          CreateDealloc(Builder2, data_" << name << ");\n"
-         << "        }\n"
-         << "      }\n";
-    }
-    if (ty == mldData) {
-      auto name = nameVec[i];
-      os << "      if (cache_" << name << ") {\n"
-         << "        if (julia_decl) {\n"
-         << "          CreateDealloc(Builder2, free_" << name << ");\n"
-         << "        } else {\n"
-         << "          CreateDealloc(Builder2, arg_" << name << ");\n"
-         << "        }\n"
          << "      }\n";
     }
   }
@@ -959,6 +943,7 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
   bool lv23 = pattern.isBLASLevel2or3();
 
   os << "  const bool byRef = blas.prefix == \"\";\n";
+  os << "  Value *cacheval = nullptr;\n\n";
   // lv 2 or 3 functions have an extra arg under the cblas_ abi
   if (lv23) {
     os << "  const int offset = (byRef ? 0 : 1);\n\n";
@@ -1026,41 +1011,6 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
   PrintFatalError("Blas function without vector and matrix?");
 }
 
-void emit_castvals(TGPattern &pattern, raw_ostream &os) {
-  auto activeArgs = pattern.getActiveArgs();
-  auto nameVec = pattern.getArgNames();
-  auto argTypeMap = pattern.getArgTypeMap();
-  
-  os << "  /* beginning castvalls */\n"
-     << "  Type *castvals[" << activeArgs.size() << "];\n";
-
-  for (size_t i = 0; i < activeArgs.size(); i++) {
-    size_t argIdx = activeArgs[i];
-    auto name = nameVec[argIdx];
-    auto ty = argTypeMap.lookup(argIdx);
-    auto scalarType = "";
-    if (ty == fp) {
-      scalarType = "fpType";
-    } else if (ty == len || ty == mldLD || ty == vincInc) {
-      scalarType = "intType";
-    } else if (ty == trans) {
-      scalarType = "charType";
-    } else if (ty == vincData || ty == mldData) {
-      scalarType = "fpType";
-    } else {
-      llvm::errs() << "unhandled castvals type!\n";
-      PrintFatalError("unhandled castvals type!\n");
-    }
-
-    os << "  if (auto PT = dyn_cast<PointerType>(type_" << name << "))\n"
-       << "    castvals[" << i << "] = PT;\n"
-       << "  else\n"
-       << "    castvals[" << i << "] = PointerType::getUnqual(" << scalarType << ");\n";
-  }
-  os << "  Value *cacheval;\n\n"
-     << "  /* ending castvalls */\n";
-}
-
 void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
   // We only look at the type of the first integer showing up.
   // This allows to learn if we use Fortran abi (byRef) or cabi
@@ -1126,10 +1076,10 @@ void extract_mat_or_vec(std::string name, raw_ostream &os) {
         "{cacheidx}, \"tape.ext."
      << name << "\");\n"
      << "        free_" << name << " = arg_" << name << ";\n"
-     << "        if (julia_decl) {\n"
+     << "        if (type_" << name << "->isIntegerTy()) {\n"
      << "          arg_" << name << " = Builder2.CreatePtrToInt(arg_" << name
      << ", type_" << name << ");\n"
-     << "        } else {\n"
+     << "        } else if (arg_" << name << "->getType() != type_" << name << "){\n"
      << "          arg_" << name << " = Builder2.CreatePointerCast(arg_" << name
      << ", type_" << name << ");\n"
      << "        }\n"
@@ -1239,7 +1189,7 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
         first = false;
       }
       os << ") {\n"
-         << "      data_" << name << " = lookup(arg_" << name
+         << "      arg_" << name << " = lookup(arg_" << name
          << ", Builder2);\n"
          << "    }\n";
     }
@@ -1253,7 +1203,7 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
       continue;
     auto vecName = nameVec[i];
     os << "    if (type_" << vecName << "->isIntegerTy())\n"
-       << "      data_" << vecName << " = Builder2.CreatePtrToInt(data_"
+       << "      arg_" << vecName << " = Builder2.CreatePtrToInt(arg_"
        << vecName << ", type_" << vecName << ");\n";
   }
 
@@ -1353,7 +1303,7 @@ size_t fwd_call_args(TGPattern &pattern, size_t actArg,
       if (pos == actArg) {
         result.append((Twine("d_") + name + ", true_" + nextName).str());
       } else {
-        result.append((Twine("data_") + name + ", arg_" + nextName).str());
+        result.append((Twine("arg_") + name + ", arg_" + nextName).str());
       }
       pos++; // extra ++ due to also handling vincInc
     } else if (ty == vincInc) {
@@ -1667,7 +1617,7 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
         result.append((Twine("d_") + name).str());
       } else if (Def->isSubClassOf("input")) {
         auto name = Def->getValueAsString("name");
-        result.append((Twine("data_") + name).str());
+        result.append((Twine("arg_") + name).str());
         // result.append((Twine("input_") + name).str());
       } else if (Def->isSubClassOf("MagicInst")) {
         llvm::errs() << "MagicInst\n";
@@ -2008,7 +1958,6 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
 
     emit_beginning(newPattern, os);
     emit_helper(newPattern, os);
-    emit_castvals(newPattern, os);
     emit_scalar_types(newPattern, os);
 
     emit_caching(newPattern, os);

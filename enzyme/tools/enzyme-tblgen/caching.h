@@ -122,8 +122,8 @@ void emit_vec_copy(TGPattern &pattern, raw_ostream &os) {
 << "      if (byRef) {\n"
 << "        vecSize = BuilderZ.CreateLoad(intType, BuilderZ.CreatePointerCast(vecSize, PointerType::get(intType, cast<PointerType>(vecSize->getType())->getAddressSpace())));\n"
 << "      }\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, vecSize);\n"
-<< "      Value *arg = BuilderZ.CreateBitCast(malins, castvals[" << i << "]);\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, vecSize, \"cache." << vecName << "\");\n"
+<< "      Value *arg = BuilderZ.CreateBitCast(malins, type_" << vecName << ");\n"
 << "      ValueType valueTypes[] = {" << valueTypes << "};\n"
 << "      valueTypes[" << argIdx << "] = ValueType::Primal;\n"
 << "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
@@ -131,7 +131,7 @@ void emit_vec_copy(TGPattern &pattern, raw_ostream &os) {
 os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
 os << "      if (EnzymeBlasCopy) {\n"
-<< "        auto dmemcpy = getOrInsertMemcpyStridedBlas(*gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
+<< "        auto dmemcpy = getOrInsertMemcpyStridedBlas(*gutils->oldFunc->getParent(), cast<PointerType>(type_" << vecName << "),\n"
 << "            intType, blas, julia_decl);\n"
 << "        Value *args[5] = {arg_n, arg_" << vecName << ", arg_" << incName << ", arg, to_blas_callconv(BuilderZ, ConstantInt::get(intType, 1), byRef, julia_decl_type, allocationBuilder)};\n"
 << "        if (julia_decl)\n"
@@ -199,7 +199,7 @@ void emit_mat_copy(TGPattern &pattern, raw_ostream &os) {
 << "      } else {\n"
 << "        matSize = BuilderZ.CreateMul(M,N);\n"
 << "      }\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, matSize);\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, matSize, \"cache." << matName << "\");\n"
 << "      ValueType valueTypes[] = {" << valueTypes << "};\n"
 <<"       valueTypes[" << argIdx << "] = ValueType::Primal;\n"
 << "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
@@ -294,8 +294,8 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
       os 
 << "  Value *true_" << incName << " = arg_" << incName << ";\n"
 << "  Value *" << incName << " = true_" << incName << ";\n"
-<< "  Value *data_" << vecName << " = arg_" << vecName << ";\n"
-<< "  Value *free_" << vecName << " = arg_" << vecName << ";\n";
+//<< "  Value *data_" << vecName << " = arg_" << vecName << ";\n"
+<< "  Value *free_" << vecName << " = nullptr;\n";
     } else if (ty == mldData) {
       assert(typeMap.lookup(i+1) == mldLD);
       auto vecName = nameVec[i];
@@ -303,7 +303,7 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
       os 
 << "  Value *true_" << ldName << " = arg_" << ldName << ";\n"
 << "  Value *" << ldName << " = true_" << ldName << ";\n"
-<< "  Value *free_" << vecName << " = arg_" << vecName << ";\n";
+<< "  Value *free_" << vecName << " = nullptr;\n";
     } else if (ty == len) {
     } else if (ty == fp) {
     } else if (ty == trans) {
