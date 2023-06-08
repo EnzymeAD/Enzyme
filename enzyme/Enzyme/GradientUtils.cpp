@@ -5518,7 +5518,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto tval = arg->getTrueValue();
       if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
           TR.query(arg)[{-1}].isPossiblePointer() && !isa<UndefValue>(tval) &&
-          !isa<ConstantPointerNull>(tval) && !isConstantValue(tval)) {
+          !isa<ConstantPointerNull>(tval) && isConstantValue(tval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
@@ -5535,7 +5535,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto fval = arg->getFalseValue();
       if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
           TR.query(arg)[{-1}].isPossiblePointer() && !isa<UndefValue>(fval) &&
-          !isa<ConstantPointerNull>(fval) && !isConstantValue(fval)) {
+          !isa<ConstantPointerNull>(fval) && isConstantValue(fval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
@@ -5910,7 +5910,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
               TR.query(phi)[{-1}].isPossiblePointer() &&
               !isa<UndefValue>(preval) && !isa<ConstantPointerNull>(preval) &&
-              !isConstantValue(preval)) {
+              isConstantValue(preval)) {
             std::string str;
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *phi
@@ -5970,7 +5970,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
               TR.query(phi)[{-1}].isPossiblePointer() &&
               !isa<UndefValue>(preval) && !isa<ConstantPointerNull>(preval) &&
-              !isConstantValue(preval)) {
+              isConstantValue(preval)) {
             std::string str;
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *phi
