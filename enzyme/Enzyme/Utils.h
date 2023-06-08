@@ -629,6 +629,11 @@ llvm::Function *getOrInsertDifferentialFloatMemcpy(
     unsigned dstaddr, unsigned srcaddr, unsigned bitwidth);
 
 /// Create function for type that performs memcpy with a stride using blas copy
+void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                           llvm::ArrayRef<llvm::Value *> args,
+                           llvm::ArrayRef<llvm::OperandBundleDef> bundles);
+
+/// Create function for type that performs memcpy using lapack copy
 void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas, llvm::ArrayRef<llvm::Value*> args, llvm::ArrayRef<llvm::OperandBundleDef> bundles); 
 
 /// Create function for type that performs memcpy with a stride using blas copy

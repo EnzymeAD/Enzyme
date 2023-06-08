@@ -114,14 +114,14 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:  %mallocsize = mul nuw nsw i32 %len, 4
 ; CHECK-NEXT:  %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
-; CHECK-NEXT:  %0 = bitcast i8* %malloccall to float*
-; CHECK-NEXT:  call void @cblas_scopy(i32 %len, float* %m, i32 %incm, float* %0, i32 1)
+; CHECK-NEXT:  %cache.x = bitcast i8* %malloccall to float*
+; CHECK-NEXT:  call void @cblas_scopy(i32 %len, float* %m, i32 %incm, float* %cache.x, i32 1)
 ; CHECK-NEXT:  %mallocsize1 = mul nuw nsw i32 %len, 4
 ; CHECK-NEXT:  %malloccall2 = tail call noalias nonnull i8* @malloc(i32 %mallocsize1)
-; CHECK-NEXT:  %1 = bitcast i8* %malloccall2 to float*
-; CHECK-NEXT:  call void @cblas_scopy(i32 %len, float* %n, i32 %incn, float* %1, i32 1)
-; CHECK-NEXT:  %2 = insertvalue { float*, float* } undef, float* %0, 0
-; CHECK-NEXT:  %3 = insertvalue { float*, float* } %2, float* %1, 1
+; CHECK-NEXT:  %cache.y = bitcast i8* %malloccall2 to float*
+; CHECK-NEXT:  call void @cblas_scopy(i32 %len, float* %n, i32 %incn, float* %cache.y, i32 1)
+; CHECK-NEXT:  %2 = insertvalue { float*, float* } undef, float* %cache.x, 0
+; CHECK-NEXT:  %3 = insertvalue { float*, float* } %0, float* %cache.y, 1
 ; CHECK-NEXT:  ret { float*, float* } %3
 ; CHECK-NEXT:  }
 
@@ -149,9 +149,9 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i32 %len, 4
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
-; CHECK-NEXT:   %0 = bitcast i8* %malloccall to float*
-; CHECK-NEXT:   call void @cblas_scopy(i32 %len, float* %m, i32 %incm, float* %0, i32 1)
-; CHECK-NEXT:   ret float* %0
+; CHECK-NEXT:   %cache.x = bitcast i8* %malloccall to float*
+; CHECK-NEXT:   call void @cblas_scopy(i32 %len, float* %m, i32 %incm, float* %cache.x, i32 1)
+; CHECK-NEXT:   ret float* %cache.x
 ; CHECK-NEXT: }
 
 ; CHECK: define internal void @[[revModFirst]](i32 %len, float* noalias %m, i32 %incm, float* noalias %n, float* %"n'", i32 %incn, float %differeturn, float*
@@ -173,9 +173,9 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:  %mallocsize = mul nuw nsw i32 %len, 4
 ; CHECK-NEXT:  %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
-; CHECK-NEXT:  %0 = bitcast i8* %malloccall to float*
-; CHECK-NEXT:  call void @cblas_scopy(i32 %len, float* %n, i32 %incn, float* %0, i32 1)
-; CHECK-NEXT:  ret float* %0
+; CHECK-NEXT:  %cache.y = bitcast i8* %malloccall to float*
+; CHECK-NEXT:  call void @cblas_scopy(i32 %len, float* %n, i32 %incn, float* %cache.y, i32 1)
+; CHECK-NEXT:  ret float* %cache.y
 ; CHECK-NEXT: }
 
 

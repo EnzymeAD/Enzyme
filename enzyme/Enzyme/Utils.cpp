@@ -676,12 +676,7 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
   }
   return F;
 }
-// struct BlasInfo {
-//   llvm::StringRef floatType;
-//   llvm::StringRef prefix;
-//   llvm::StringRef suffix;
-//   llvm::StringRef function;
-// };
+
 Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
                                    BlasInfo blas) {
   std::string name =
@@ -716,6 +711,19 @@ Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
   Function *dmemcpy = cast<Function>(M.getOrInsertFunction(copy_name, FT));
 #endif
   return dmemcpy;
+}
+
+void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas, llvm::ArrayRef<llvm::Value*> args, llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
+  std::string copy_name =
+      (blas.prefix + blas.floatType + "copy" + blas.suffix).str();
+
+  SmallVector<Type*, 1> tys;
+  for (auto arg : args) tys.push_back(arg->getType());
+
+  auto FT = FunctionType::get(Type::getVoidTy(M.getContext()), tys, false);
+  auto fn = M.getOrInsertFunction(copy_name, FT);
+
+  B.CreateCall(fn, args, bundles);
 }
 
 void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas, llvm::ArrayRef<llvm::Value*> args, llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
