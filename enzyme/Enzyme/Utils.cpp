@@ -2095,7 +2095,7 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
   if (!cache_arg)
     return;
   auto PT = cast<PointerType>(arg->getType());
-#if LLVM_VERSION_MAJOR < 16
+#if LLVM_VERSION_MAJOR <= 14
   if (PT->getElementType() != ty)
     arg = BuilderZ.CreatePointerCast(
         arg, PointerType::get(ty, PT->getAddressSpace()), "pcld." + name);
