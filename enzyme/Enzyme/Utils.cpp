@@ -805,7 +805,7 @@ Function *getOrInsertMemcpyStrided(Module &M, Type* elementType, PointerType *T,
 Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType* PT, IntegerType *IT, unsigned dstalign, unsigned srcalign) {
   assert(elementType->isFloatingPointTy());
 #if LLVM_VERSION_MAJOR >= 15
-        if (M.getContext().supportsTypedPointers()) {
+        if (Mod.getContext().supportsTypedPointers()) {
 #endif
            assert(PT->getPointerElementType() == elementType);
 #if LLVM_VERSION_MAJOR >= 15
@@ -824,7 +824,11 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType* PT, 
     return F;
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
   F->addFnAttr(Attribute::ArgMemOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   F->addParamAttr(0, Attribute::NoCapture);
@@ -2079,8 +2083,10 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::IRBuilder<> &BuilderZ, llvm::Twine name) {
    if (!cache_arg) return;
   auto PT = cast<PointerType>(arg->getType());
+#if LLVM_VERSION_MAJOR < 16
   if (PT->getElementType() != ty)
     arg = BuilderZ.CreatePointerCast(arg, PointerType::get(ty, PT->getAddressSpace()), "pcld." + name);
+#endif
 #if LLVM_VERSION_MAJOR > 7
   arg = BuilderZ.CreateLoad(ty, arg, "avld." + name);
 #else
