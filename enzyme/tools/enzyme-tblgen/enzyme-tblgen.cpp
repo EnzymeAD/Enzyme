@@ -1548,18 +1548,20 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
 }
 
 // fill the result string and return the number of added args
-size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
+void rev_call_args(StringRef argName, Rule &rule, size_t actArg, raw_ostream &os) {
 
   const auto nameMap = rule.getArgNameMap();
   const auto typeMap = rule.getArgTypeMap();
   const auto ruleDag = rule.getRuleDag();
   const size_t numArgs = ruleDag->getNumArgs();
   const size_t startArg = rule.isBLASLevel2or3() ? 1 : 0;
+  
+  os << "        Value *" << argName << "[" << (numArgs-startArg) << "] = {";
 
   // just replace argOps with rule
   for (size_t pos = startArg; pos < numArgs;) {
     if (pos > startArg) {
-      result.append(", ");
+      os << ", ";
     }
 
     auto arg = ruleDag->getArg(pos);
@@ -1570,18 +1572,16 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
         auto tname = Dag->getArgNameStr(0);
         auto rname = Dag->getArgNameStr(1);
         auto cname = Dag->getArgNameStr(2);
-        result.append((Twine("get_blas_row(Builder2, arg_transposed_") + tname + ", arg_" + rname + ", arg_" + cname + ", byRef)").str());
+        os << "get_blas_row(Builder2, arg_transposed_" << tname << ", arg_" << rname << ", arg_" << cname << ", byRef)";
       } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "ld") {
         assert(Dag->getNumArgs() == 5);
         //(ld $A, $transa, $lda, $m, $k)
-        const auto transName = "arg_" + Dag->getArgNameStr(1);
-        const auto ldName = ", arg_" + Dag->getArgNameStr(2);
-        const auto dim1Name = ", arg_" + Dag->getArgNameStr(3);
-        const auto dim2Name = ", arg_" + Dag->getArgNameStr(4);
-        const auto matName = ", cache_" + Dag->getArgNameStr(0);
-        result.append((Twine("get_cached_mat_width(Builder2, ") + transName +
-                       ldName + dim1Name + dim2Name + matName + ", byRef)")
-                          .str());
+        const auto transName = Dag->getArgNameStr(1);
+        const auto ldName = Dag->getArgNameStr(2);
+        const auto dim1Name = Dag->getArgNameStr(3);
+        const auto dim2Name = Dag->getArgNameStr(4);
+        const auto matName = Dag->getArgNameStr(0);
+        os << "get_cached_mat_width(Builder2, " << "arg_" << transName << ", arg_" << ldName << ", arg_" << dim1Name << ", arg_" << dim2Name << ", cache_" << matName << ", byRef)";
       } else {
         llvm::errs() << Def->getName() << "\n";
         PrintFatalError("Dag/Def that isn't a DiffeRet!");
@@ -1589,28 +1589,27 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
     } else if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
       auto Def = DefArg->getDef();
       if (Def->isSubClassOf("DiffeRet")) {
-        result.append("dif");
+        os << "dif";
       } else if (Def->isSubClassOf("adj")) {
         auto name = Def->getValueAsString("name");
-        result.append((Twine("d_") + name).str());
+        os << "d_" << name;
       } else if (Def->isSubClassOf("input")) {
         auto name = Def->getValueAsString("name");
-        result.append((Twine("arg_") + name).str());
-        // result.append((Twine("input_") + name).str());
+        os << "arg_" << name;
       } else if (Def->isSubClassOf("MagicInst")) {
         llvm::errs() << "MagicInst\n";
       } else if (Def->isSubClassOf("Constant")) {
         auto val = Def->getValueAsString("value");
-        result.append((Twine("to_blas_callconv(Builder2, ConstantFP::get(fpType, ") + val + "), byRef, nullptr, allocationBuilder, \"constant.fp." + val + "\")").str());
+        os << "to_blas_callconv(Builder2, ConstantFP::get(fpType, " << val << "), byRef, nullptr, allocationBuilder, \"constant.fp." << val << "\")";
       } else if (Def->isSubClassOf("Char")) {
         auto val = Def->getValueAsString("value");
-        result.append((Twine("to_blas_callconv(Builder2, ConstantInt::get(charType, '") + val + "'), byRef, nullptr, allocationBuilder, \"constant.char." + val + "\")").str());
+        os << "to_blas_callconv(Builder2, ConstantInt::get(charType, '" << val << "'), byRef, nullptr, allocationBuilder, \"constant.char." << val << "\")";
       } else if (Def->isSubClassOf("ConstantInt")) {
         auto val = Def->getValueAsString("value");
-        result.append((Twine("to_blas_callconv(Builder2, ConstantInt::get(intType, ") + val + "), byRef, nullptr, allocationBuilder, \"constant.int." + val + "\")").str());
+        os << "to_blas_callconv(Builder2, ConstantInt::get(intType, " << val << "), byRef, nullptr, allocationBuilder, \"constant.int." << val << "\")";
       } else if (Def->isSubClassOf("transpose")) {
         auto name = Def->getValueAsString("name");
-        result.append((Twine("arg_transposed_") + name).str());
+        os << "arg_transposed_" << name;
       } else {
         llvm::errs() << Def->getName() << "\n";
         PrintFatalError("Def that isn't a DiffeRet!");
@@ -1630,12 +1629,12 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
 
       // Now we create the adj call args through concating type and primal name
       if (ty == len) {
-        result.append((Twine("arg_") + name).str());
+        os << "arg_" << name;
       } else if (ty == fp) {
         if (argPosition == actArg) {
-          result.append((Twine("d_") + name).str());
+          os << "d_" << name;
         } else {
-          result.append((Twine("arg_") + name).str());
+          os << "arg_" << name;
         }
       } else if (ty == vincData) {
         auto nextName = ruleDag->getArgNameStr(pos + 1);
@@ -1647,15 +1646,14 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
         if (argPosition == actArg) {
           // shadow d_<X> wasn't overwritten or cached, so use true_inc<X>
           // since arg_inc<X> was set to 1 if arg_<X> was cached
-          result.append((Twine("d_") + name + ", true_" + nextName).str());
+          os << "d_" << name << ", true_" << nextName;
         } else {
-          result.append((Twine("arg_") + name + ", arg_" + nextName).str());
+          os << "arg_" << name << ", arg_" << nextName;
         }
         pos++; // extra ++ due to also handling vincInc
       } else if (ty == vincInc) {
         // might come without vincData, e.g. after DiffeRet
-        // result.append(name);
-        result.append((Twine("arg_") + name).str());
+        os << "arg_" << name;
       } else if (ty == mldData) {
         auto nextName = ruleDag->getArgNameStr(pos + 1);
         // get the position of the argument in the primary blas call
@@ -1664,12 +1662,12 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
         auto nextTy = typeMap.lookup(nextArgPosition);
         if (pos == actArg) {
           assert(nextTy == mldLD);
-          result.append((Twine("d_") + name + ", true_" + nextName).str());
+          os << "d_" << name << ", true_" << nextName;
           pos++; // extra ++ due to also handling mldLD
         } else {
           // if this matrix got cached, we need more complex logic
           // to determine the next arg. Thus handle it once we reach it
-          result.append((Twine("arg_") + name).str());
+          os << "arg_" << name;
         }
       } else if (ty == mldLD) {
         auto prevArg = ruleDag->getArg(pos - 1);
@@ -1677,7 +1675,7 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
           if (DefArg->getDef()->isSubClassOf("adj")) {
             // all ok, single LD after shadow of mat
             // use original ld, since shadow is never cached
-            result.append((Twine("arg_") + name).str());
+            os << "arg_" << name;
           } else {
             llvm::errs() << rule.to_string() << "\n";
             PrintFatalError("sholdn't be hit??\n");
@@ -1687,7 +1685,7 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
           PrintFatalError("sholdn't be hit??\n");
         }
       } else if (ty == trans) {
-        result.append((Twine("arg_") + name).str());
+        os << "arg_" << name;
       } else {
         // TODO
         // llvm::errs() << "name: " << name << " typename: " << ty <<
@@ -1696,8 +1694,8 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
     }
     pos++;
   }
+  os << "};\n";
 
-  return numArgs - startArg;
 }
 
 void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
@@ -1830,8 +1828,6 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
     const auto name = nameVec[actArg];
     const auto nameMap = rule.getArgNameMap();
     const auto ty = typeMap.lookup(actArg);
-    auto args = llvm::SmallString<40>();
-    const size_t numArgs = rev_call_args(rule, actArg, args);
     const auto valueTypes = ValueType_helper(pattern, actArg);
     const auto opName = ruleDag->getOperator()->getAsString();
     const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
@@ -1856,9 +1852,9 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
       }
 
       const auto dfnc_name = Def->getValueAsString("s");
-      os << "      if (" << actCondition << ") {\n"
-         << "        Value *args1[" << numArgs << "] = {" << args << "};\n"
-         << "        const auto Defs = gutils->getInvertedBundles(&call, {"
+      os << "      if (" << actCondition << ") {\n";
+      rev_call_args("args1", rule, actArg, os);
+      os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
 
       if (ty == fp) {
