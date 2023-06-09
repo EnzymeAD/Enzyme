@@ -27,6 +27,35 @@ enum argType {
   side
 };
 
+const char *TyToString(argType ty) {
+  switch (ty) {
+  case fp:
+    return "fp";
+  case len:
+    return "len";
+  case vincData:
+    return "vincData";
+  case vincInc:
+    return "vincInc";
+  case cblas_layout:
+    return "layout";
+  case mldData:
+    return "mldData";
+  case mldLD:
+    return "mldLD";
+  case uplo:
+    return "uplo";
+  case trans:
+    return "trans";
+  case diag:
+    return "diag";
+  case side:
+    return "side";
+  default:
+    return "unknown";
+  }
+}
+
 class Arg {
   public:
     size_t pos;
@@ -124,13 +153,18 @@ class Rule {
     size_t getHandledArgIdx() { return activeArg; }
     StringMap<size_t> getArgNameMap() { return argNameToPos; }
     DenseMap<size_t, argType> getArgTypeMap() { return argTypes; }
-    //std::string to_string(Rule const&r) {
-    //  std::string res = "function: " + r.blasName + "\n";
-    //  res += "handling
-
-    //  for (auto rule : r.rules) {
-    //  }
-    //}
+    std::string to_string() {
+      std::string res = "handling rule for argument ";
+      res += std::to_string(activeArg);
+      res += " with " + std::to_string(argTypes.size()) + " types: \n";
+      bool first = true;
+      for (size_t i = 0; i < argTypes.size(); i++) {
+        auto ty = argTypes.lookup(i);
+        res += (i > 0) ? ", " : "";
+        res += std::to_string(i) + " " + TyToString(ty);
+      }
+      return res;
+    }
 };
 
 void fillActiveArgSet(const Record *pattern,

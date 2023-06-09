@@ -1181,15 +1181,15 @@ llvm::SmallString<80> ValueType_helper(TGPattern &pattern, size_t actPos) {
   // start with 1 since layout is only used for cblas (!byRef)
   for (size_t pos = 1; pos < nameVec.size();) {
     auto name = nameVec[pos];
-    auto type = typeMap.lookup(pos);
+    auto ty = typeMap.lookup(pos);
 
     if (pos > 1) {
       valueTypes.append(", ");
     }
 
-    if (type == len) {
+    if (ty == len) {
       valueTypes.append("ValueType::Both");
-    } else if (type == fp) {
+    } else if (ty == fp) {
       auto floatName = nameVec[pos];
       if (pos == actPos) {
         valueTypes.append("ValueType::Both");
@@ -1198,10 +1198,10 @@ llvm::SmallString<80> ValueType_helper(TGPattern &pattern, size_t actPos) {
                            " ? ValueType::Both : ValueType::Both")
                               .str());
       }
-    } else if (type == vincData) {
+    } else if (ty == vincData) {
       const auto nextName = nameVec[pos + 1];
-      const auto nextType = typeMap.lookup(pos + 1);
-      assert(nextType == vincInc);
+      const auto nextTy = typeMap.lookup(pos + 1);
+      assert(nextTy == vincInc);
       const auto vecName = nameVec[pos];
       if (pos == actPos) {
         valueTypes.append("ValueType::Both, ValueType::Both");
@@ -1215,7 +1215,7 @@ llvm::SmallString<80> ValueType_helper(TGPattern &pattern, size_t actPos) {
     } else {
       // TODO
       valueTypes.append("ValueType::Both");
-      // llvm::errs() << "type: " << type << "\n";
+      // llvm::errs() << "type: " << ty << "\n";
       // PrintFatalError("Unhandled type!");
     }
     pos++;
@@ -1276,8 +1276,8 @@ size_t fwd_call_args(TGPattern &pattern, size_t actArg,
       // get the position of the argument in the primary blas call
       auto nextArgPosition = nameMap.lookup(nextName);
       // and based on that get the fp/int + scalar/vector type
-      auto typeOfNextArg = typeMap.lookup(nextArgPosition);
-      assert(typeOfNextArg == mldLD);
+      auto nextTy = typeMap.lookup(nextArgPosition);
+      assert(nextTy == mldLD);
       if (pos == actArg) {
         result.append((Twine("d_") + name + ", true_" + nextName).str());
       } else {
@@ -1484,7 +1484,15 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
             typeString += (Twine("type_") + Dag->getArgNameStr(1)).str();
             first = false;
             continue;
-            }
+          } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "ld") {
+            if (!first)
+              typeString += ", ";
+            //(ld $A, $transa, $lda, $m, $k)
+            // Either of 2,3,4 would work
+            typeString += (Twine("type_") + Dag->getArgNameStr(2)).str();
+            first = false;
+            continue;
+          }
         }
         const auto argStr = ruleDag->getArgNameStr(i);
         // skip layout because it is cblas only, 
@@ -1566,6 +1574,17 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
         auto rname = Dag->getArgNameStr(1);
         auto cname = Dag->getArgNameStr(2);
         result.append((Twine("get_blas_row(Builder2, arg_transposed_") + tname + ", arg_" + rname + ", arg_" + cname + ", byRef)").str());
+      } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "ld") {
+        assert(Dag->getNumArgs() == 5);
+        //(ld $A, $transa, $lda, $m, $k)
+        const auto transName = "arg_" + Dag->getArgNameStr(1);
+        const auto ldName = ", arg_" + Dag->getArgNameStr(2);
+        const auto dim1Name = ", arg_" + Dag->getArgNameStr(3);
+        const auto dim2Name = ", arg_" + Dag->getArgNameStr(4);
+        const auto matName = ", cache_" + Dag->getArgNameStr(0);
+        result.append((Twine("get_cached_mat_width(Builder2, ") + transName +
+                       ldName + dim1Name + dim2Name + matName + ", byRef)")
+                          .str());
       } else {
         llvm::errs() << Def->getName() << "\n";
         PrintFatalError("Dag/Def that isn't a DiffeRet!");
@@ -1645,25 +1664,33 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
         // get the position of the argument in the primary blas call
         auto nextArgPosition = nameMap.lookup(nextName);
         // and based on that get the fp/int + scalar/vector type
-        auto typeOfNextArg = typeMap.lookup(nextArgPosition);
-        assert(typeOfNextArg == mldLD);
+        auto nextTy = typeMap.lookup(nextArgPosition);
         if (pos == actArg) {
+          assert(nextTy == mldLD);
           result.append((Twine("d_") + name + ", true_" + nextName).str());
+          pos++; // extra ++ due to also handling mldLD
         } else {
-          // TODO: fix ld, which is width of the matrix in the cached case.
-          // Similar to the vincData case.
-          // However, how to access width, especially under transposition?
-          result.append((Twine("arg_") + name + ", arg_" + nextName).str());
+          // if this matrix got cached, we need more complex logic
+          // to determine the next arg. Thus handle it once we reach it
+          result.append((Twine("arg_") + name).str());
         }
-        pos++; // extra ++ due to also handling mldLD
       } else if (ty == mldLD) {
-        // might come without mldData, e.g. after DiffeRet
-        // coppied from vincInc, but should verify if actually needed
-        // result.append(name);
-        result.append((Twine("arg_") + name).str());
+        auto prevArg = ruleDag->getArg(pos - 1);
+        if (DefInit *DefArg = dyn_cast<DefInit>(prevArg)) {
+          if (DefArg->getDef()->isSubClassOf("adj")) {
+            // all ok, single LD after shadow of mat
+            // use original ld, since shadow is never cached
+            result.append((Twine("arg_") + name).str());
+          } else {
+            llvm::errs() << rule.to_string() << "\n";
+            PrintFatalError("sholdn't be hit??\n");
+          }
+        } else {
+          llvm::errs() << rule.to_string() << "\n";
+          PrintFatalError("sholdn't be hit??\n");
+        }
       } else if (ty == trans) {
         result.append((Twine("arg_") + name).str());
-        //result.append((Twine("arg_") + name).str());
       } else {
         // TODO
         // llvm::errs() << "name: " << name << " typename: " << ty <<

@@ -2270,6 +2270,30 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
   return out;
 }
 
+// if (cache_A) {
+//   ld_A = (arg_transa == 'N') ? arg_m : arg_k;
+// } else {
+//   ld_A = arg_lda;
+// }
+llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
+                                  llvm::Value *arg_ld, llvm::Value *dim_1,
+                                  llvm::Value *dim_2, bool cacheMat,
+                                  bool byRef) {
+  if (!cacheMat)
+    return arg_ld;
+
+  auto charType = IntegerType::get(trans->getContext(), 8);
+  if (byRef) {
+    trans = B.CreateLoad(charType, trans, "get.cached.ld.trans");
+  }
+  // if arg_transa is Normal, use first dim, else second
+  Value *isNormal = B.CreateSelect(
+      B.CreateICmpEQ(trans, ConstantInt::get(charType, 'n')), dim_1,
+      B.CreateSelect(B.CreateICmpEQ(trans, ConstantInt::get(charType, 'N')),
+                     dim_1, dim_2));
+  return isNormal;
+}
+
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                        llvm::IntegerType *julia_decl,
                        llvm::IRBuilder<> &entryBuilder,

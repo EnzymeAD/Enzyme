@@ -50,6 +50,12 @@ def noop : MagicInst; // gradient is zero
 def inactive : MagicInst; // like noop, but assert it's inactive
 def Rows : MagicInst; // given a transpose, normal rows, normal cols get the true rows, aka normal rows if N else normal cols
 
+// if !cache_A, then just use $lda.
+// if cache_A, then check $transa.
+// if $transa = 'N', then use $m.
+// else use $n
+def ld : MagicInst; // (ld $A, $transa $lda, $m, $n): 
+
 // placeholder name
 class b<string _s> {
   string s = _s;
@@ -156,7 +162,7 @@ def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $
                   [
                   /* alpha  */  (inactive), //(b<"dot"> $y, (b<"gemv"> $A, $x)),
                   /* A      */  (b<"ger">  $layout, $m, $n, $alpha, adj<"y">, $incy, $x, $incx, adj<"A">, $lda),
-                  /* x      */  (b<"gemv"> $layout, transpose<"transa">, $m, $n, $alpha, $A, $lda, adj<"y">, $incy, Constant<"1.0">, adj<"x">, $incx),
+                  /* x      */  (b<"gemv"> $layout, transpose<"transa">, $m, $n, $alpha, $A, (ld $A, $transa, $lda, $m, $n), adj<"y">, $incy, Constant<"1.0">, adj<"x">, $incx),
                   /* beta   */  (inactive), //(b<"dot"> $y, DiffeRet<"">),
                   /* y      */  (b<"scal"> (Rows $transa, $m, $n), $beta, adj<"y">, $incy)
                   ]
@@ -171,14 +177,26 @@ def ger : CallBlasPattern<(Op $layout, $m, $n, $alpha, $x, $incx, $y, $incy, $A,
                   (noop)
                   ]
                   >;
+//(ld $A, $transa, $lda, $m, $k)
+// if (cache_A) {
+//   ld_A = (arg_transa == 'N') ? arg_m : arg_k;
+// } else {
+//   ld_A = arg_lda;
+// }
+
+// TODO: A nicer logic would just wire each matrix as part of mld to the related trans, dim1, dim2 bundle.
+// E.g. ["A<$transa, $m, $k>", "B<"transb, $k, $n>", "C<$m, $n>"],
+// Where we expect one entry for each mld type
+// Then we wouldn't need an extra ld type, but automatically add it every time we use a primal mldData 
+// and don't work on the shadow
 
 def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),
                   ["C"],
                   [cblas_layout, trans, trans, len, len, len, fp, mld, mld, fp, mld],
                   [
                   /* alpha */ (inactive),
-                  /* A     */ (b<"gemm"> $layout, $transa, transpose<"transb">, $m, $k, $n, $alpha, adj<"C">, $ldc, $B, $ldb, $beta, adj<"A">, $lda),
-                  /* B     */ (b<"gemm"> $layout, transpose<"transa">, $transb, $k, $n, $m, $alpha, $A, $lda, adj<"C">, $ldc, $beta, adj<"B">, $ldb),
+                  /* A     */ (b<"gemm"> $layout, $transa, transpose<"transb">, $m, $k, $n, $alpha, adj<"C">, $ldc, $B, (ld $B, $transb, $ldb, $k, $n), $beta, adj<"A">, $lda),
+                  /* B     */ (b<"gemm"> $layout, transpose<"transa">, $transb, $k, $n, $m, $alpha, $A, (ld $A, $transa, $lda, $m, $k), adj<"C">, $ldc, $beta, adj<"B">, $ldb),
                   /* beta  */ (inactive),
                   /* C     */ (b<"lascl"> $layout, Char<"G">, ConstantInt<"0">, ConstantInt<"0">, Constant<"1.0">, $beta, $m, $n, adj<"C">, $ldc, ConstantInt<"0">)
                   ]

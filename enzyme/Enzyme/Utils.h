@@ -1646,13 +1646,18 @@ void extractValueFromCache(llvm::Value *arg, bool cache_arg,
 llvm::Value *to_blas_callconv(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                               llvm::IntegerType *julia_decl,
                               llvm::IRBuilder<> &entryBuilder, llvm::Twine="");
+llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
+                                  llvm::Value *arg_ld, llvm::Value *dim_1,
+                                  llvm::Value *dim_2, bool cacheMat,
+                                  bool byRef);
 // first one assume V is an Integer
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V);
 // secon one assume V is an Integer or a ptr to an int (depends on byRef)
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                        llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder,
                        llvm::Twine name);
-llvm::Value *get_blas_row(llvm::IRBuilder<> &B, llvm::Value *trans, llvm::Value *row, llvm::Value *col, bool byRef);
+llvm::Value *get_blas_row(llvm::IRBuilder<> &B, llvm::Value *trans,
+                          llvm::Value *row, llvm::Value *col, bool byRef);
 
 // Parameter attributes from the original function/call that
 // we should preserve on the primal of the derivative code.
