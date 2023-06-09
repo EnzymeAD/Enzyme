@@ -211,12 +211,8 @@ Value *DiffeGradientUtils::diffe(Value *val, IRBuilder<> &BuilderM) {
   }
   assert(!val->getType()->isPointerTy());
   assert(!val->getType()->isVoidTy());
-#if LLVM_VERSION_MAJOR > 7
   Type *ty = getShadowType(val->getType());
   return BuilderM.CreateLoad(ty, getDifferential(val));
-#else
-  return BuilderM.CreateLoad(getDifferential(val));
-#endif
 }
 
 SmallVector<SelectInst *, 4>
@@ -328,18 +324,10 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
         ConstantInt::get(Type::getInt32Ty(val->getContext()), 0)};
     for (auto i : idxs)
       sv.push_back(i);
-#if LLVM_VERSION_MAJOR > 7
     ptr = BuilderM.CreateGEP(getShadowType(val->getType()), ptr, sv);
-#else
-    ptr = BuilderM.CreateGEP(ptr, sv);
-#endif
     cast<GetElementPtrInst>(ptr)->setIsInBounds(true);
   }
-#if LLVM_VERSION_MAJOR > 7
   Value *old = BuilderM.CreateLoad(dif->getType(), ptr);
-#else
-  Value *old = BuilderM.CreateLoad(ptr);
-#endif
 
   assert(dif->getType() == old->getType());
   Value *res = nullptr;
@@ -543,19 +531,14 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
          riter != rend; ++riter) {
       const auto &idx = riter->first;
       if (idx.var) {
-#if LLVM_VERSION_MAJOR > 7
         antimap[idx.var] =
             tbuild.CreateLoad(idx.var->getType(), idx.antivaralloc);
-#else
-        antimap[idx.var] = tbuild.CreateLoad(idx.antivaralloc);
-#endif
       }
     }
   }
 
   Value *metaforfree =
       unwrapM(storeInto, tbuild, antimap, UnwrapMode::LegalFullUnwrap);
-#if LLVM_VERSION_MAJOR > 7
   Type *T;
 #if LLVM_VERSION_MAJOR >= 15
   if (metaforfree->getContext().supportsTypedPointers()) {
@@ -567,9 +550,6 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
   }
 #endif
   LoadInst *forfree = cast<LoadInst>(tbuild.CreateLoad(T, metaforfree));
-#else
-  LoadInst *forfree = cast<LoadInst>(tbuild.CreateLoad(metaforfree));
-#endif
   forfree->setMetadata(LLVMContext::MD_invariant_group, InvariantMD);
   forfree->setMetadata(LLVMContext::MD_dereferenceable,
                        MDNode::get(forfree->getContext(),
@@ -658,11 +638,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
             ptr, PointerType::get(
                      i8, cast<PointerType>(ptr->getType())->getAddressSpace()));
         auto off = ConstantInt::get(Type::getInt64Ty(ptr->getContext()), start);
-#if LLVM_VERSION_MAJOR > 7
         ptr = BuilderM.CreateInBoundsGEP(i8, ptr, off);
-#else
-        ptr = BuilderM.CreateInBoundsGEP(ptr, off);
-#endif
       }
       if (needsCast) {
         ptr = BuilderM.CreatePointerCast(
@@ -704,13 +680,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
             ConstantInt::get(Type::getInt64Ty(ptr->getContext()), 0),
             ConstantInt::get(Type::getInt32Ty(ptr->getContext()), 1)};
 
-#if LLVM_VERSION_MAJOR > 7
         auto difp = BuilderM.CreateInBoundsGEP(ST, Al, idxs);
         dif = BuilderM.CreateLoad(addingType, difp);
-#else
-        auto difp = BuilderM.CreateInBoundsGEP(Al, idxs);
-        dif = BuilderM.CreateLoad(difp);
-#endif
       }
       if (dif->getType() != addingType) {
         auto difSize = (DL.getTypeSizeInBits(dif->getType()) + 1) / 8;
@@ -729,11 +700,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           BuilderM.CreateStore(dif,
                                BuilderM.CreatePointerCast(
                                    Al, PointerType::getUnqual(dif->getType())));
-#if LLVM_VERSION_MAJOR > 7
           dif = BuilderM.CreateLoad(addingType, Al);
-#else
-          dif = BuilderM.CreateLoad(Al);
-#endif
         }
       }
       return dif;
@@ -790,7 +757,6 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
      ptr = ASC->getOperand(0);
      }
      */
-#if LLVM_VERSION_MAJOR >= 9
     AtomicRMWInst::BinOp op = AtomicRMWInst::FAdd;
     if (auto vt = dyn_cast<VectorType>(addingType)) {
 #if LLVM_VERSION_MAJOR >= 12
@@ -806,11 +772,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           Value *Idxs[] = {
               ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
               ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
-#if LLVM_VERSION_MAJOR > 7
           auto vptr = BuilderM.CreateGEP(addingType, ptr, Idxs);
-#else
-          auto vptr = BuilderM.CreateGEP(ptr, Idxs);
-#endif
 #if LLVM_VERSION_MAJOR >= 13
           MaybeAlign alignv = align;
           if (alignv) {
@@ -894,11 +856,6 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       };
       applyChainRule(BuilderM, rule, dif, ptr);
     }
-#else
-    llvm::errs() << "unhandled atomic fadd on llvm version " << *ptr << " "
-                 << *dif << "\n";
-    llvm_unreachable("unhandled atomic fadd");
-#endif
     return;
   }
 
@@ -906,11 +863,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 
     size_t idx = 0;
     auto rule = [&](Value *ptr, Value *dif) {
-#if LLVM_VERSION_MAJOR > 7
       auto LI = BuilderM.CreateLoad(addingType, ptr);
-#else
-      auto LI = BuilderM.CreateLoad(ptr);
-#endif
 
       Value *res = BuilderM.CreateFAdd(LI, dif);
       res = SanitizeDerivatives(orig, res, BuilderM);
@@ -1074,11 +1027,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
                     cast<PointerType>(tostore->getType())->getAddressSpace()));
             auto off = ConstantInt::get(Type::getInt64Ty(tostore->getContext()),
                                         start);
-#if LLVM_VERSION_MAJOR > 7
             tostore = Builder2.CreateInBoundsGEP(i8, tostore, off);
-#else
-            tostore = Builder2.CreateInBoundsGEP(tostore, off);
-#endif
           }
           auto AT = ArrayType::get(i8, nextStart - start);
           tostore = Builder2.CreatePointerCast(

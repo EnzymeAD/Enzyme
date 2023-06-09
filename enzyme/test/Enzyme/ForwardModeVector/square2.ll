@@ -83,12 +83,12 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:    [[TMP10:%.*]] = fmul fast double %"'ipl2", [[TMP3]]
 ; CHECK-NEXT:    [[TMP11:%.*]] = fmul fast double %"'ipl2", [[TMP3]]
 ; CHECK-NEXT:    [[TMP12:%.*]] = fadd fast double [[TMP10]], [[TMP11]]
-; CHECK-NEXT:    store double [[MUL]], double* [[DEST]], align 8
 ; CHECK-NEXT:    [[TMP13:%.*]] = extractvalue [3 x double*] %"dest'", 0
 ; CHECK-NEXT:    store double [[TMP6]], double* [[TMP13]], align 8
 ; CHECK-NEXT:    [[TMP14:%.*]] = extractvalue [3 x double*] %"dest'", 1
 ; CHECK-NEXT:    store double [[TMP9]], double* [[TMP14]], align 8
 ; CHECK-NEXT:    [[TMP15:%.*]] = extractvalue [3 x double*] %"dest'", 2
 ; CHECK-NEXT:    store double [[TMP12]], double* [[TMP15]], align 8
+; CHECK-NEXT:    store double [[MUL]], double* [[DEST]], align 8
 ; CHECK-NEXT:    ret void
 ;

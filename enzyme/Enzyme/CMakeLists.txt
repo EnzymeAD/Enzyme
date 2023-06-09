@@ -44,32 +44,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 list(APPEND ENZYME_SRC SCEV/ScalarEvolutionExpander.cpp)
 list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
 
-if (${LLVM_VERSION_MAJOR} LESS 8)
-    add_llvm_loadable_module( LLVMEnzyme-${LLVM_VERSION_MAJOR}
-        ${ENZYME_SRC}
-        DEPENDS
-        intrinsics_gen
-        PLUGIN_TOOL
-        opt
-    )
-if (${Clang_FOUND})
-    add_llvm_loadable_module( ClangEnzyme-${LLVM_VERSION_MAJOR}
-        ${ENZYME_SRC} Clang/EnzymeClang.cpp
-        Clang/EnzymePassLoader.cpp
-        DEPENDS
-        intrinsics_gen
-        PLUGIN_TOOL
-        opt
-    )
-endif()
-add_llvm_loadable_module( LLDEnzyme-${LLVM_VERSION_MAJOR}
-        ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
-        DEPENDS
-        intrinsics_gen
-        PLUGIN_TOOL
-        opt
-    )
-else()
 # on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
 if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
     add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
@@ -131,7 +105,6 @@ endif()
         opt
     )
 target_compile_definitions(LLDEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
-endif()
 endif()
 
 if (${ENZYME_EXTERNAL_SHARED_LIB})

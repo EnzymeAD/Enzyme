@@ -241,7 +241,6 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   hasChoiceFunction->addFnAttr("enzyme_inactive");
   sampleFunction->addFnAttr("enzyme_inactive");
 
-#if LLVM_VERSION_MAJOR >= 9
   newTraceFunction->addFnAttr(Attribute::NoFree);
   getTraceFunction->addFnAttr(Attribute::NoFree);
   getChoiceFunction->addFnAttr(Attribute::NoFree);
@@ -255,21 +254,6 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   hasCallFunction->addFnAttr(Attribute::NoFree);
   hasChoiceFunction->addFnAttr(Attribute::NoFree);
   sampleFunction->addFnAttr(Attribute::NoFree);
-#else
-  newTraceFunction->addFnAttr("nofree");
-  getTraceFunction->addFnAttr("nofree");
-  getChoiceFunction->addFnAttr("nofree");
-  insertCallFunction->addFnAttr("nofree");
-  insertChoiceFunction->addFnAttr("nofree");
-  insertArgumentFunction->addFnAttr("nofree");
-  insertReturnFunction->addFnAttr("nofree");
-  insertFunctionFunction->addFnAttr("nofree");
-  insertChoiceGradientFunction->addFnAttr("nofree");
-  insertArgumentGradientFunction->addFnAttr("nofree");
-  hasCallFunction->addFnAttr("nofree");
-  hasChoiceFunction->addFnAttr("nofree");
-  sampleFunction->addFnAttr("nofree");
-#endif
 }
 
 StaticTraceInterface::StaticTraceInterface(

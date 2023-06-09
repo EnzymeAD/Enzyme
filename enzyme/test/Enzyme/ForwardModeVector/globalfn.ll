@@ -89,13 +89,13 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 ; CHECK-NEXT:    store double 0.000000e+00, double* %"alloc'ipa1"
 ; CHECK-NEXT:    store double 0.000000e+00, double* %"alloc'ipa2"
 ; CHECK-NEXT:    [[ALLOC:%.*]] = alloca double
-; CHECK-NEXT:    store double [[X]], double* [[ALLOC]]
 ; CHECK-NEXT:    [[TMP3:%.*]] = extractvalue [3 x double] %"x'", 0
 ; CHECK-NEXT:    store double [[TMP3]], double* %"alloc'ipa"
 ; CHECK-NEXT:    [[TMP4:%.*]] = extractvalue [3 x double] %"x'", 1
 ; CHECK-NEXT:    store double [[TMP4]], double* %"alloc'ipa1"
 ; CHECK-NEXT:    [[TMP5:%.*]] = extractvalue [3 x double] %"x'", 2
 ; CHECK-NEXT:    store double [[TMP5]], double* %"alloc'ipa2"
+; CHECK-NEXT:    store double [[X]], double* [[ALLOC]]
 ; CHECK-NEXT:    %"arrayidx'ipg" = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* @global_shadow, i64 0, i64 [[IDX]]
 ; CHECK-NEXT:    %arrayidx = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* @global, i64 0, i64 %idx
 ; CHECK-NEXT:    %"fp'ipl" = load void (double*)*, void (double*)** %"arrayidx'ipg"
@@ -142,12 +142,12 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 ; CHECK-NEXT:    [[TMP10:%.*]] = fmul fast double %"'ipl2", [[TMP3]]
 ; CHECK-NEXT:    [[TMP11:%.*]] = fmul fast double %"'ipl2", [[TMP3]]
 ; CHECK-NEXT:    [[TMP12:%.*]] = fadd fast double [[TMP10]], [[TMP11]]
-; CHECK-NEXT:    store double [[MUL]], double* [[X]]
 ; CHECK-NEXT:    [[TMP13:%.*]] = extractvalue [3 x double*] %"x'", 0
 ; CHECK-NEXT:    store double [[TMP6]], double* [[TMP13]]
 ; CHECK-NEXT:    [[TMP14:%.*]] = extractvalue [3 x double*] %"x'", 1
 ; CHECK-NEXT:    store double [[TMP9]], double* [[TMP14]]
 ; CHECK-NEXT:    [[TMP15:%.*]] = extractvalue [3 x double*] %"x'", 2
 ; CHECK-NEXT:    store double [[TMP12]], double* [[TMP15]]
+; CHECK-NEXT:    store double [[MUL]], double* [[X]]
 ; CHECK-NEXT:    ret void
 ;

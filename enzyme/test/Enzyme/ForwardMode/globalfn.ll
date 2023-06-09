@@ -81,8 +81,8 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 ; CHECK-NEXT:   %"alloc'ipa" = alloca double
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"alloc'ipa"
 ; CHECK-NEXT:   %alloc = alloca double
-; CHECK-NEXT:   store double %x, double* %alloc
 ; CHECK-NEXT:   store double %"x'", double* %"alloc'ipa"
+; CHECK-NEXT:   store double %x, double* %alloc
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* @global_shadow, i64 0, i64 %idx
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* @global, i64 0, i64 %idx
 ; CHECK-NEXT:   %"fp'ipl" = load void (double*)*, void (double*)** %"arrayidx'ipg", align 8

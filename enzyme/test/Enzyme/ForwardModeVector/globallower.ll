@@ -70,9 +70,9 @@ entry:
 ; CHECK-NEXT:    [[TMP24:%.*]] = fmul fast double [[TMP14]], [[MUL]]
 ; CHECK-NEXT:    [[TMP25:%.*]] = fadd fast double [[TMP23]], [[TMP24]]
 ; CHECK-NEXT:    [[TMP26:%.*]] = insertvalue [3 x double] [[TMP22]], double [[TMP25]], 2
-; CHECK-NEXT:    store double [[MUL2]], double* @global, align 8
 ; CHECK-NEXT:    store double [[TMP17]], double* %"global'ipa", align 8
 ; CHECK-NEXT:    store double [[TMP21]], double* %"global'ipa1", align 8
 ; CHECK-NEXT:    store double [[TMP25]], double* %"global'ipa2", align 8
+; CHECK-NEXT:    store double [[MUL2]], double* @global, align 8
 ; CHECK-NEXT:    ret [3 x double] [[TMP26]]
 ;

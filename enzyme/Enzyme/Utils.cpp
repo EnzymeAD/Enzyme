@@ -49,8 +49,9 @@
 using namespace llvm;
 
 extern "C" {
-void (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType, const void *,
-                           LLVMValueRef) = nullptr;
+LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
+                                   const void *, LLVMValueRef,
+                                   LLVMBuilderRef) = nullptr;
 LLVMValueRef (*CustomAllocator)(LLVMBuilderRef, LLVMTypeRef,
                                 /*Count*/ LLVMValueRef,
                                 /*Align*/ LLVMValueRef, uint8_t,
@@ -144,12 +145,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     name += ".custom@" + std::to_string((size_t)RT);
 
   FunctionType *FT = FunctionType::get(allocType, types, false);
-
-#if LLVM_VERSION_MAJOR >= 9
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
-#else
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
-#endif
 
   if (!F->empty())
     return F;
@@ -230,13 +226,8 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
       Value *tmp = SubZero->getOperand(0);
       Type *tmpT = tmp->getType();
       tmp = BB.CreatePointerCast(tmp, bTy);
-
-#if LLVM_VERSION_MAJOR > 7
       tmp = BB.CreateInBoundsGEP(tmp->getType()->getPointerElementType(), tmp,
                                  prevSize);
-#else
-      tmp = BB.CreateInBoundsGEP(tmp, prevSize);
-#endif
       tmp = BB.CreatePointerCast(tmp, tmpT);
       SubZero->setOperand(0, tmp);
       SubZero->setOperand(2, zeroSize);
@@ -247,16 +238,10 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     Value *zeroSize = B.CreateSub(next, prevSize);
 
     Value *margs[] = {
-#if LLVM_VERSION_MAJOR > 7
-      B.CreateInBoundsGEP(gVal->getType()->getPointerElementType(), gVal,
-                          prevSize),
-#else
-      B.CreateInBoundsGEP(gVal, prevSize),
-#endif
-      ConstantInt::get(Type::getInt8Ty(M.getContext()), 0),
-      zeroSize,
-      ConstantInt::getFalse(M.getContext())
-    };
+        B.CreateInBoundsGEP(gVal->getType()->getPointerElementType(), gVal,
+                            prevSize),
+        ConstantInt::get(Type::getInt8Ty(M.getContext()), 0), zeroSize,
+        ConstantInt::getFalse(M.getContext())};
     Type *tys[] = {margs[0]->getType(), margs[2]->getType()};
     auto memsetF = Intrinsic::getDeclaration(&M, Intrinsic::memset, tys);
     B.CreateCall(memsetF, margs);
@@ -493,11 +478,7 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
                                         Type::getInt8PtrTy(M.getContext())},
                                        false);
 
-#if LLVM_VERSION_MAJOR >= 9
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
-#else
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
-#endif
 
   if (F->empty()) {
     F->setLinkage(Function::LinkageTypes::InternalLinkage);
@@ -528,22 +509,14 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
           FunctionType::get(Type::getInt32Ty(M.getContext()),
                             {Type::getInt8PtrTy(M.getContext())}, false);
 
-#if LLVM_VERSION_MAJOR >= 9
       auto PutsF = M.getOrInsertFunction("puts", FT);
-#else
-      auto PutsF = M.getOrInsertFunction("puts", FT);
-#endif
       EB.CreateCall(PutsF, msg);
 
       FunctionType *FT2 =
           FunctionType::get(Type::getVoidTy(M.getContext()),
                             {Type::getInt32Ty(M.getContext())}, false);
 
-#if LLVM_VERSION_MAJOR >= 9
       auto ExitF = M.getOrInsertFunction("exit", FT2);
-#else
-      auto ExitF = M.getOrInsertFunction("exit", FT2);
-#endif
       EB.CreateCall(ExitF,
                     ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
     }
@@ -585,11 +558,7 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
                          IntegerType::get(M.getContext(), bitwidth)},
                         false);
 
-#if LLVM_VERSION_MAJOR >= 9
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
-#else
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
-#endif
 
   if (!F->empty())
     return F;
@@ -628,13 +597,8 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     PHINode *idx = B.CreatePHI(num->getType(), 2, "idx");
     idx->addIncoming(ConstantInt::get(num->getType(), 0), entry);
 
-#if LLVM_VERSION_MAJOR > 7
     Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
     LoadInst *dstl = B.CreateLoad(elementType, dsti, "dst.i.l");
-#else
-    Value *dsti = B.CreateInBoundsGEP(dst, idx, "dst.i");
-    LoadInst *dstl = B.CreateLoad(dsti, "dst.i.l");
-#endif
     StoreInst *dsts = B.CreateStore(Constant::getNullValue(elementType), dsti);
     if (dstalign) {
 #if LLVM_VERSION_MAJOR >= 10
@@ -646,13 +610,8 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
 #endif
     }
 
-#if LLVM_VERSION_MAJOR > 7
     Value *srci = B.CreateInBoundsGEP(elementType, src, idx, "src.i");
     LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
-#else
-    Value *srci = B.CreateInBoundsGEP(src, idx, "src.i");
-    LoadInst *srcl = B.CreateLoad(srci, "src.i.l");
-#endif
     StoreInst *srcs = B.CreateStore(B.CreateFAdd(srcl, dstl), srci);
     if (srcalign) {
 #if LLVM_VERSION_MAJOR >= 10
@@ -704,12 +663,8 @@ Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
     FT = FunctionType::get(Type::getVoidTy(M.getContext()), {IT, T, IT, T, IT},
                            false);
   }
-#if LLVM_VERSION_MAJOR >= 9
   Function *dmemcpy =
       cast<Function>(M.getOrInsertFunction(copy_name, FT).getCallee());
-#else
-  Function *dmemcpy = cast<Function>(M.getOrInsertFunction(copy_name, FT));
-#endif
   return dmemcpy;
 }
 
@@ -814,7 +769,6 @@ Function *getOrInsertMemcpyStrided(Module &M, Type* elementType, PointerType *T,
     Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
     Value *srci = B.CreateInBoundsGEP(elementType, src, sidx, "src.i");
     LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
-
     StoreInst *dsts = B.CreateStore(srcl, dsti);
 
     if (dstalign) {
@@ -998,11 +952,7 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   FunctionType *FT =
       FunctionType::get(Type::getVoidTy(M.getContext()), types, false);
 
-#if LLVM_VERSION_MAJOR >= 9
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
-#else
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
-#endif
 
   if (!F->empty())
     return F;
@@ -1088,12 +1038,7 @@ llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
   std::string name = "__enzyme_differential_waitall_save";
   FunctionType *FT =
       FunctionType::get(PointerType::getUnqual(reqType), T, false);
-
-#if LLVM_VERSION_MAJOR >= 9
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
-#else
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
-#endif
 
   if (!F->empty())
     return F;
@@ -1130,35 +1075,21 @@ llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
   idx->addIncoming(inc, loopBlock);
 
   Value *idxs[] = {idx};
-#if LLVM_VERSION_MAJOR > 7
   Value *ireq =
       B.CreateInBoundsGEP(req->getType()->getPointerElementType(), req, idxs);
   Value *idreq =
       B.CreateInBoundsGEP(req->getType()->getPointerElementType(), dreq, idxs);
   Value *iout = B.CreateInBoundsGEP(reqType, ret, idxs);
-#else
-  Value *ireq = B.CreateInBoundsGEP(req, idxs);
-  Value *idreq = B.CreateInBoundsGEP(dreq, idxs);
-  Value *iout = B.CreateInBoundsGEP(ret, idxs);
-#endif
   Value *isNull = nullptr;
   if (auto GV = M.getNamedValue("ompi_request_null")) {
     Value *reql =
         B.CreatePointerCast(ireq, PointerType::getUnqual(GV->getType()));
-#if LLVM_VERSION_MAJOR > 7
     reql = B.CreateLoad(GV->getType(), reql);
-#else
-    reql = B.CreateLoad(reql);
-#endif
     isNull = B.CreateICmpEQ(reql, GV);
   }
 
   idreq = B.CreatePointerCast(idreq, PointerType::getUnqual(reqType));
-#if LLVM_VERSION_MAJOR > 7
   Value *d_reqp = B.CreateLoad(reqType, idreq);
-#else
-  Value *d_reqp = B.CreateLoad(idreq);
-#endif
   if (isNull)
     d_reqp = B.CreateSelect(isNull, Constant::getNullValue(d_reqp->getType()),
                             d_reqp);
@@ -1180,12 +1111,7 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
   std::string name = "__enzyme_differential_mpi_wait";
   FunctionType *FT =
       FunctionType::get(Type::getVoidTy(M.getContext()), types, false);
-
-#if LLVM_VERSION_MAJOR >= 9
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
-#else
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
-#endif
 
   if (!F->empty())
     return F;
@@ -1239,12 +1165,7 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
   if (!irecvfn) {
     FunctionType *FuT = isendfn->getFunctionType();
     std::string name = pmpi ? "PMPI_Irecv" : "MPI_Irecv";
-#if LLVM_VERSION_MAJOR >= 9
     irecvfn = cast<Function>(M.getOrInsertFunction(name, FuT).getCallee());
-
-#else
-    irecvfn = cast<Function>(M.getOrInsertFunction(name, FuT));
-#endif
   }
   assert(irecvfn);
 
@@ -1297,11 +1218,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
   auto FlT = CT.isFloat();
 
   if (auto Glob = M.getGlobalVariable(name)) {
-#if LLVM_VERSION_MAJOR > 7
     return B2.CreateLoad(Glob->getValueType(), Glob);
-#else
-    return B2.CreateLoad(Glob);
-#endif
   }
 
   llvm::Type *types[] = {PointerType::getUnqual(FlT),
@@ -1309,13 +1226,8 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
                          PointerType::getUnqual(intType), OpPtr};
   FunctionType *FuT =
       FunctionType::get(Type::getVoidTy(M.getContext()), types, false);
-
-#if LLVM_VERSION_MAJOR >= 9
   Function *F =
       cast<Function>(M.getOrInsertFunction(name + "_run", FuT).getCallee());
-#else
-  Function *F = cast<Function>(M.getOrInsertFunction(name + "_run", FuT));
-#endif
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
 #if LLVM_VERSION_MAJOR >= 16
@@ -1349,11 +1261,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
 
   {
     IRBuilder<> B(entry);
-#if LLVM_VERSION_MAJOR > 7
     len = B.CreateLoad(lenp->getType()->getPointerElementType(), lenp);
-#else
-    len = B.CreateLoad(lenp);
-#endif
     B.CreateCondBr(B.CreateICmpEQ(len, ConstantInt::get(len->getType(), 0)),
                    end, body);
   }
@@ -1364,7 +1272,6 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
     PHINode *idx = B.CreatePHI(len->getType(), 2, "idx");
     idx->addIncoming(ConstantInt::get(len->getType(), 0), entry);
 
-#if LLVM_VERSION_MAJOR > 7
     Value *dsti = B.CreateInBoundsGEP(dst->getType()->getPointerElementType(),
                                       dst, idx, "dst.i");
     LoadInst *dstl =
@@ -1374,14 +1281,6 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
                                       src, idx, "src.i");
     LoadInst *srcl =
         B.CreateLoad(srci->getType()->getPointerElementType(), srci, "src.i.l");
-#else
-    Value *dsti = B.CreateInBoundsGEP(dst, idx, "dst.i");
-    LoadInst *dstl = B.CreateLoad(dsti, "dst.i.l");
-
-    Value *srci = B.CreateInBoundsGEP(src, idx, "src.i");
-    LoadInst *srcl = B.CreateLoad(srci, "src.i.l");
-#endif
-
     B.CreateStore(B.CreateFAdd(srcl, dstl), dsti);
 
     Value *next =
@@ -1400,12 +1299,8 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
 
   Constant *RF = M.getNamedValue("MPI_Op_create");
   if (!RF) {
-#if LLVM_VERSION_MAJOR >= 9
     RF =
         cast<Function>(M.getOrInsertFunction("MPI_Op_create", RFT).getCallee());
-#else
-    RF = cast<Function>(M.getOrInsertFunction("MPI_Op_create", RFT));
-#endif
   } else {
     RF = ConstantExpr::getBitCast(RF, PointerType::getUnqual(RFT));
   }
@@ -1423,14 +1318,8 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
   // https://www.mpich.org/static/docs/v3.2/www3/MPI_Op_create.html
   FunctionType *IFT = FunctionType::get(Type::getVoidTy(M.getContext()),
                                         ArrayRef<Type *>(), false);
-
-#if LLVM_VERSION_MAJOR >= 9
   Function *initializerFunction = cast<Function>(
       M.getOrInsertFunction(name + "initializer", IFT).getCallee());
-#else
-  Function *initializerFunction =
-      cast<Function>(M.getOrInsertFunction(name + "initializer", IFT));
-#endif
 
   initializerFunction->setLinkage(Function::LinkageTypes::InternalLinkage);
   initializerFunction->addFnAttr(Attribute::NoUnwind);
@@ -1443,13 +1332,10 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
     BasicBlock *end =
         BasicBlock::Create(M.getContext(), "end", initializerFunction);
     IRBuilder<> B(entry);
-#if LLVM_VERSION_MAJOR > 7
+
     B.CreateCondBr(
         B.CreateLoad(initD->getType()->getPointerElementType(), initD), end,
         run);
-#else
-    B.CreateCondBr(B.CreateLoad(initD), end, run);
-#endif
 
     B.SetInsertPoint(run);
     Value *args[] = {ConstantExpr::getPointerCast(F, rtypes[0]),
@@ -1463,11 +1349,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
   }
 
   B2.CreateCall(M.getFunction(name + "initializer"));
-#if LLVM_VERSION_MAJOR > 7
   return B2.CreateLoad(GV->getValueType(), GV);
-#else
-  return B2.CreateLoad(GV);
-#endif
 }
 
 void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,

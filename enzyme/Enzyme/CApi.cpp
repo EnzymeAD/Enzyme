@@ -50,10 +50,8 @@
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
-#if LLVM_VERSION_MAJOR >= 9
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Transforms/IPO/Attributor.h"
-#endif
 
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
@@ -787,13 +785,9 @@ LLVMValueRef EnzymeGradientUtilsCallWithInvertedBundles(
 
   auto callval = unwrap(func);
 
-#if LLVM_VERSION_MAJOR > 7
   auto res = BR.CreateCall(
       cast<FunctionType>(callval->getType()->getPointerElementType()), callval,
       args, Defs);
-#else
-  auto res = BR.CreateCall(callval, args, Defs);
-#endif
   return wrap(res);
 }
 
@@ -827,7 +821,6 @@ uint8_t EnzymeHasFromStack(LLVMValueRef inst1) {
   return hasMetadata(I1, "enzyme_fromstack") != 0;
 }
 
-#if LLVM_VERSION_MAJOR >= 8
 void EnzymeCloneFunctionDISubprogramInto(LLVMValueRef NF, LLVMValueRef F) {
   auto &OldFunc = *cast<Function>(unwrap(F));
   auto &NewFunc = *cast<Function>(unwrap(NF));
@@ -847,7 +840,6 @@ void EnzymeCloneFunctionDISubprogramInto(LLVMValueRef NF, LLVMValueRef F) {
   DIB.finalizeSubprogram(NewSP);
   return;
 }
-#endif
 
 void EnzymeReplaceFunctionImplementation(LLVMModuleRef M) {
   ReplaceFunctionImplementation(*unwrap(M));
@@ -912,7 +904,7 @@ extern "C++" char MyAttributorLegacyPass::ID = 0;
 void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(new MyAttributorLegacyPass());
 }
-#elif LLVM_VERSION_MAJOR >= 9
+#else
 void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createAttributorLegacyPass());
 }
@@ -1056,13 +1048,8 @@ LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
       FT->isVarArg());
 
   // Create the new function
-#if LLVM_VERSION_MAJOR >= 8
   Function *NewF = Function::Create(FTy, F->getLinkage(), F->getAddressSpace(),
                                     F->getName(), F->getParent());
-#else
-  Function *NewF =
-      Function::Create(FTy, F->getLinkage(), F->getName(), F->getParent());
-#endif
 
   ValueToValueMapTy VMap;
   // Loop over the arguments, copying the names of the mapped arguments over...
@@ -1356,13 +1343,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
                                         FT->isVarArg());
 
   // Create the new function
-#if LLVM_VERSION_MAJOR >= 8
   Function *NewF = Function::Create(FTy, F->getLinkage(), F->getAddressSpace(),
                                     F->getName(), F->getParent());
-#else
-  Function *NewF =
-      Function::Create(FTy, F->getLinkage(), F->getName(), F->getParent());
-#endif
 
   ValueToValueMapTy VMap;
   // Loop over the arguments, copying the names of the mapped arguments over...
@@ -1377,11 +1359,16 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     roots = &*DestI;
     DestI++;
   }
+  // To handle the deleted args, it needs to be replaced by a non-arg operand.
+  // This map contains the temporary phi nodes corresponding
+  //
+
+  std::map<size_t, PHINode *> delArgMap;
   for (Argument &I : F->args()) {
     auto i = I.getArgNo();
     if (enzyme_srets.count(i) || enzyme_srets_v.count(i) || rroots.count(i) ||
         rroots_v.count(i)) {
-      VMap[&I] = &I;
+      VMap[&I] = delArgMap[i] = PHINode::Create(I.getType(), 0);
       continue;
     }
     assert(DestI != NewF->arg_end());
@@ -1473,13 +1460,12 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   }
 
   for (auto i : enzyme_srets) {
-    auto arg = F->getArg(i);
+    auto arg = delArgMap[i];
+    assert(arg);
     SmallVector<Instruction *, 1> uses;
     SmallVector<unsigned, 1> op;
     for (auto &U : arg->uses()) {
       auto I = cast<Instruction>(U.getUser());
-      if (I->getParent()->getParent() == F)
-        continue;
       uses.push_back(I);
       op.push_back(U.getOperandNo());
     }
@@ -1497,16 +1483,16 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     if (roots_AT)
       curOffset += CountTrackedPointers(Types[sretCount]).count;
     sretCount++;
+    delete arg;
   }
   for (auto i : enzyme_srets_v) {
     auto AT = cast<ArrayType>(FT->getParamType(i));
-    auto arg = F->getArg(i);
+    auto arg = delArgMap[i];
+    assert(arg);
     SmallVector<Instruction *, 1> uses;
     SmallVector<unsigned, 1> op;
     for (auto &U : arg->uses()) {
       auto I = cast<Instruction>(U.getUser());
-      if (I->getParent()->getParent() == F)
-        continue;
       uses.push_back(I);
       op.push_back(U.getOperandNo());
     }
@@ -1532,16 +1518,20 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       curOffset +=
           CountTrackedPointers(Types[sretCount]).count * AT->getNumElements();
     sretCount += AT->getNumElements();
+    delete arg;
   }
 
   for (auto i : rroots) {
-    auto arg = F->getArg(i);
+    auto arg = delArgMap[i];
+    assert(arg);
     auto AT2 = cast<ArrayType>(FT->getParamType(i)->getPointerElementType());
     IRBuilder<> EB(&NewF->getEntryBlock().front());
     arg->replaceAllUsesWith(EB.CreateAlloca(AT2));
+    delete arg;
   }
   for (auto i : rroots_v) {
-    auto arg = F->getArg(i);
+    auto arg = delArgMap[i];
+    assert(arg);
     auto AT = cast<ArrayType>(FT->getParamType(i));
     auto AT2 = cast<ArrayType>(AT->getElementType()->getPointerElementType());
     IRBuilder<> EB(&NewF->getEntryBlock().front());
@@ -1550,6 +1540,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       val = EB.CreateInsertValue(val, EB.CreateAlloca(AT2), j);
     }
     arg->replaceAllUsesWith(val);
+    delete arg;
   }
   assert(curOffset == numRooting);
   assert(sretCount == Types.size());

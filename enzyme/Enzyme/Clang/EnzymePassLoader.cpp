@@ -67,8 +67,6 @@ static RegisterStandardPasses
     clangtoolLoader_OEarly(PassManagerBuilder::EP_EarlyAsPossible,
                            loadNVVMPass);
 
-#if LLVM_VERSION_MAJOR >= 9
-
 static void loadLTOPass(const PassManagerBuilder &Builder,
                         legacy::PassManagerBase &PM) {
   loadPass(Builder, PM);
@@ -89,7 +87,5 @@ static void loadLTOPass(const PassManagerBuilder &Builder,
 static RegisterStandardPasses
     clangtoolLoader_LTO(PassManagerBuilder::EP_FullLinkTimeOptimizationEarly,
                         loadLTOPass);
-
-#endif // LLVM_VERSION_MAJOR >= 9
 
 #endif // LLVM_VERSION_MAJOR < 16

@@ -56,7 +56,7 @@ declare double @__enzyme_fwddiff(void (float*, float*)*, ...) #2
 ; CHECK-NEXT:   br i1 %cmp, label %do.end, label %do.body
 
 ; CHECK: do.end:                                           ; preds = %do.body
-; CHECK-NEXT:   store float %add, float* %ret, align 4
 ; CHECK-NEXT:   store float %[[i2]], float* %"ret'", align 4
+; CHECK-NEXT:   store float %add, float* %ret, align 4
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

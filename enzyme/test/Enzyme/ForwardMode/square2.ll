@@ -69,8 +69,8 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %"y'ipa" = alloca double, align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"y'ipa", align 8
 ; CHECK-NEXT:   %y = alloca double, align 8
-; CHECK-NEXT:   store double %x, double* %x.addr, align 8
 ; CHECK-NEXT:   store double %"x'", double* %"x.addr'ipa", align 8
+; CHECK-NEXT:   store double %x, double* %x.addr, align 8
 ; CHECK-NEXT:   call void @fwddiffesquare_(double* %x.addr, double* %"x.addr'ipa", double* %y, double* %"y'ipa")
 ; CHECK-NEXT:   %[[i0:.+]] = load double, double* %"y'ipa", align 8
 ; CHECK-NEXT:   ret double %[[i0:.+]]
@@ -84,7 +84,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i1]], %0
 ; CHECK-NEXT:   %[[i3:.+]] = fmul fast double %[[i1]], %0
 ; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %[[i2]], %[[i3]]
-; CHECK-NEXT:   store double %mul, double* %dest, align 8
 ; CHECK-NEXT:   store double %[[i4]], double* %"dest'", align 8
+; CHECK-NEXT:   store double %mul, double* %dest, align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
