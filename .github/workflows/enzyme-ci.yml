@@ -48,7 +48,7 @@ jobs:
       run: make -j `nproc` check-activityanalysis
     - name: make check-enzyme
       working-directory: build
-      run: make check-enzyme-bench
+      run: make  -j `nproc` check-enzyme-bench
     - name: graph results
       if: github.event_name != 'pull_request' && matrix.build == 'Release'
       run: python3 enzyme/test/upload-results.py build/test/Enzyme/results.json --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
@@ -89,7 +89,7 @@ jobs:
       run: make -j 3 check-activityanalysis
     - name: make check-enzyme
       working-directory: build
-      run: make check-enzyme-bench
+      run: make -j3 check-enzyme-bench
     - name: graph results
       if: github.event_name != 'pull_request' && matrix.build == 'Release'
       run: python3 enzyme/test/upload-results.py build/test/Enzyme/results.json --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
