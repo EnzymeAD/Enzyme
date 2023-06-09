@@ -668,12 +668,15 @@ Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
   return dmemcpy;
 }
 
-void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas, llvm::ArrayRef<llvm::Value*> args, llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
+void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                           llvm::ArrayRef<llvm::Value *> args,
+                           llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
   std::string copy_name =
       (blas.prefix + blas.floatType + "copy" + blas.suffix).str();
 
   SmallVector<Type*, 1> tys;
-  for (auto arg : args) tys.push_back(arg->getType());
+  for (auto arg : args)
+    tys.push_back(arg->getType());
 
   auto FT = FunctionType::get(Type::getVoidTy(M.getContext()), tys, false);
   auto fn = M.getOrInsertFunction(copy_name, FT);
@@ -681,7 +684,9 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   B.CreateCall(fn, args, bundles);
 }
 
-void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas, llvm::ArrayRef<llvm::Value*> args, llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
+void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
+                             BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
+                             llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
   std::string copy_name = (blas.floatType + "lacpy" + blas.suffix).str();
 
   SmallVector<Type*, 1> tys;
@@ -802,14 +807,16 @@ Function *getOrInsertMemcpyStrided(Module &M, Type* elementType, PointerType *T,
   return F;
 }
 
-Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType* PT, IntegerType *IT, unsigned dstalign, unsigned srcalign) {
+Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
+                               IntegerType *IT, unsigned dstalign,
+                               unsigned srcalign) {
   assert(elementType->isFloatingPointTy());
 #if LLVM_VERSION_MAJOR >= 15
-        if (Mod.getContext().supportsTypedPointers()) {
+  if (Mod.getContext().supportsTypedPointers()) {
 #endif
-           assert(PT->getPointerElementType() == elementType);
+    assert(PT->getPointerElementType() == elementType);
 #if LLVM_VERSION_MAJOR >= 15
-	}
+  }
 #endif
   std::string name = "__enzyme_memcpy_" + tofltstr(elementType) + "_mat_" +
                      std::to_string(cast<IntegerType>(IT)->getBitWidth());
@@ -859,9 +866,7 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType* PT, 
     IRBuilder<> B(entry);
     Value *l = B.CreateAdd(M, N, "mul", true, true);
     // Don't copy a 0*0 matrix
-    B.CreateCondBr(B.CreateICmpEQ(l, ConstantInt::get(IT, 0)),
-    end,
-                   init);
+    B.CreateCondBr(B.CreateICmpEQ(l, ConstantInt::get(IT, 0)), end, init);
   }
 
   PHINode *j;
@@ -877,10 +882,14 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType* PT, 
     PHINode *i = B.CreatePHI(IT, 2, "i");
     i->addIncoming(ConstantInt::get(IT, 0), init);
 
-    Value *dsti = B.CreateInBoundsGEP(elementType, dst, 
-        B.CreateAdd(i, B.CreateMul(j, M, "", true, true), "", true, true), "dst.i");
-    Value *srci = B.CreateInBoundsGEP(elementType, src,
-        B.CreateAdd(i, B.CreateMul(j, LDA, "", true, true), "", true, true), "dst.i");
+    Value *dsti = B.CreateInBoundsGEP(
+        elementType, dst,
+        B.CreateAdd(i, B.CreateMul(j, M, "", true, true), "", true, true),
+        "dst.i");
+    Value *srci = B.CreateInBoundsGEP(
+        elementType, src,
+        B.CreateAdd(i, B.CreateMul(j, LDA, "", true, true), "", true, true),
+        "dst.i");
     LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
 
     StoreInst *dsts = B.CreateStore(srcl, dsti);
@@ -2081,11 +2090,13 @@ llvm::FastMathFlags getFast() {
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVector<llvm::Value *, 2> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, llvm::Twine name) {
-   if (!cache_arg) return;
+  if (!cache_arg)
+    return;
   auto PT = cast<PointerType>(arg->getType());
 #if LLVM_VERSION_MAJOR < 16
   if (PT->getElementType() != ty)
-    arg = BuilderZ.CreatePointerCast(arg, PointerType::get(ty, PT->getAddressSpace()), "pcld." + name);
+    arg = BuilderZ.CreatePointerCast(
+        arg, PointerType::get(ty, PT->getAddressSpace()), "pcld." + name);
 #endif
 #if LLVM_VERSION_MAJOR > 7
   arg = BuilderZ.CreateLoad(ty, arg, "avld." + name);
@@ -2132,11 +2143,13 @@ llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
   if (!byRef)
     return V;
 
-  Value *allocV = entryBuilder.CreateAlloca(V->getType(), nullptr, "byref." + name);
+  Value *allocV =
+      entryBuilder.CreateAlloca(V->getType(), nullptr, "byref." + name);
   B.CreateStore(V, allocV);
 
   if (julia_decl)
-    allocV = B.CreatePointerCast(allocV, Type::getInt8PtrTy(V->getContext()), "cast." + name);
+    allocV = B.CreatePointerCast(allocV, Type::getInt8PtrTy(V->getContext()),
+                                 "cast." + name);
 
   return allocV;
 }

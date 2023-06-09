@@ -389,9 +389,9 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     {
       const std::vector<bool> *overwritten_args_ptr = nullptr;
       if (gutils->overwritten_args_map_ptr) {
-    auto found =
-        gutils->overwritten_args_map_ptr->find(const_cast<CallInst *>(CI));
-    assert(found != gutils->overwritten_args_map_ptr->end());
+        auto found =
+            gutils->overwritten_args_map_ptr->find(const_cast<CallInst *>(CI));
+        assert(found != gutils->overwritten_args_map_ptr->end());
         overwritten_args_ptr = &found->second;
       }
 #if LLVM_VERSION_MAJOR >= 16

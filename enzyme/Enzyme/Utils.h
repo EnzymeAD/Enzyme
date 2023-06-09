@@ -26,7 +26,6 @@
 #define ENZYME_UTILS_H
 
 #include "llvm/ADT/SmallPtrSet.h"
-//#include "llvm/ADT/SmallVector.h"
 
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/ValueTracking.h"
@@ -633,7 +632,9 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                            llvm::ArrayRef<llvm::OperandBundleDef> bundles);
 
 /// Create function for type that performs memcpy using lapack copy
-void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas, llvm::ArrayRef<llvm::Value*> args, llvm::ArrayRef<llvm::OperandBundleDef> bundles); 
+void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
+                             BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
+                             llvm::ArrayRef<llvm::OperandBundleDef> bundles);
 
 /// Create function for type that performs memcpy with a stride using blas copy
 llvm::Function *getOrInsertMemcpyStridedBlas(llvm::Module &M,
@@ -645,7 +646,11 @@ llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M, llvm::Type* elementTyp
                                          llvm::Type *IT, unsigned dstalign,
                                          unsigned srcalign);
 
-llvm::Function *getOrInsertMemcpyMat(llvm::Module &M, llvm::Type *elementType, llvm::PointerType* PT, llvm::IntegerType *IT, unsigned dstalign, unsigned srcalign);
+/// Turned out to be a faster alternatives to lapacks lacpy function
+llvm::Function *getOrInsertMemcpyMat(llvm::Module &M, llvm::Type *elementType,
+                                     llvm::PointerType *PT,
+                                     llvm::IntegerType *IT, unsigned dstalign,
+                                     unsigned srcalign);
 
 ///// Create function for type that performs memcpy with a stride
 //llvm::Function *getOrInsertMemcpyMat(llvm::Module &M, llvm::PointerType *T,
@@ -1605,6 +1610,7 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVector<llvm::Value *, 2> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, llvm::Twine = "");
+
 void extractValueFromCache(llvm::Value *arg, bool cache_arg,
                            llvm::Value *true_arg, llvm::Type *ty,
                            llvm::Value *cacheval, unsigned cachidx,
@@ -1617,10 +1623,12 @@ void extractValueFromCache(llvm::Value *arg, bool cache_arg,
 llvm::Value *to_blas_callconv(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                               llvm::IntegerType *julia_decl,
                               llvm::IRBuilder<> &entryBuilder, llvm::Twine="");
+
 llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
                                   llvm::Value *arg_ld, llvm::Value *dim_1,
                                   llvm::Value *dim_2, bool cacheMat,
                                   bool byRef);
+
 // first one assume V is an Integer
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V);
 // secon one assume V is an Integer or a ptr to an int (depends on byRef)

@@ -181,7 +181,8 @@ GradientUtils::GradientUtils(
           notForAnalysis, TLI_, constantvalues_, activevals_, ReturnActivity)),
       tid(nullptr), numThreads(nullptr),
       OrigAA(Logic.PPC.getAAResultsFromFunction(oldFunc_)), TA(TA_), TR(TR_),
-      omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_), overwritten_args_map_ptr(nullptr) {
+      omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_),
+      overwritten_args_map_ptr(nullptr) {
   if (oldFunc_->getSubprogram()) {
     assert(originalToNewFn_.hasMD());
   }
