@@ -1,4 +1,7 @@
-void emit_BLASDiffUse(TGPattern &pattern, raw_ostream &os) {
+#include "datastructures.h"
+#include "llvm/Support/raw_ostream.h"
+
+void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
   auto typeMap = pattern.getArgTypeMap();
   auto argUsers = pattern.getArgUsers();
   bool lv23 = pattern.isBLASLevel2or3();
@@ -82,7 +85,7 @@ void emit_BLASDiffUse(TGPattern &pattern, raw_ostream &os) {
   os << "}\n";
 }
 
-void emitBlasDiffUse(const RecordKeeper &RK, raw_ostream &os) {
+void emitBlasDiffUse(const RecordKeeper &RK, llvm::raw_ostream &os) {
   emitSourceFileHeader("Rewriters", os);
   const auto &blasPatterns = RK.getAllDerivedDefinitions("CallBlasPattern");
 

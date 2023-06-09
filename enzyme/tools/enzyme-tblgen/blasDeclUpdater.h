@@ -1,3 +1,4 @@
+#include "datastructures.h"
 
 void emit_attributeBLASCaller(const std::vector<TGPattern> &blasPatterns,
                      raw_ostream &os) {

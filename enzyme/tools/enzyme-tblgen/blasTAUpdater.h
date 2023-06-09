@@ -1,3 +1,5 @@
+#include "datastructures.h"
+
 void emit_BLASTypes(raw_ostream &os) {
   os << "const bool byRef = blas.prefix == \"\";\n";
   os << "const int offset = (byRef ? 0 : 1);\n";

@@ -23,6 +23,7 @@
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
 
+#include "caching.h"
 #include "datastructures.h"
 
 using namespace llvm;
@@ -1043,8 +1044,6 @@ void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
      << "  if (julia_decl)\n"
      << "    julia_decl_type = intType;\n";
 }
-
-#include "caching.h"
 
 void extract_scalar(std::string name, std::string elemTy, raw_ostream &os) {
   os << "      if (cache_" << name << ") {\n"
