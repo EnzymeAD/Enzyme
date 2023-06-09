@@ -642,20 +642,16 @@ llvm::Function *getOrInsertMemcpyStridedBlas(llvm::Module &M,
                                              llvm::Type *IT, BlasInfo blas,
                                              bool julia_decl);
 /// Create function for type that performs memcpy with a stride
-llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M, llvm::Type* elementType, llvm::PointerType *T,
-                                         llvm::Type *IT, unsigned dstalign,
-                                         unsigned srcalign);
+llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M,
+                                         llvm::Type *elementType,
+                                         llvm::PointerType *T, llvm::Type *IT,
+                                         unsigned dstalign, unsigned srcalign);
 
 /// Turned out to be a faster alternatives to lapacks lacpy function
 llvm::Function *getOrInsertMemcpyMat(llvm::Module &M, llvm::Type *elementType,
                                      llvm::PointerType *PT,
                                      llvm::IntegerType *IT, unsigned dstalign,
                                      unsigned srcalign);
-
-///// Create function for type that performs memcpy with a stride
-//llvm::Function *getOrInsertMemcpyMat(llvm::Module &M, llvm::PointerType *T,
-//                                     llvm::Type *IT, unsigned M, unsigned N,
-//                                     unsigned LDA);
 
 /// Create function for type that performs the derivative memmove on floating
 /// point memory
@@ -1622,7 +1618,8 @@ void extractValueFromCache(llvm::Value *arg, bool cache_arg,
 // to cast to
 llvm::Value *to_blas_callconv(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                               llvm::IntegerType *julia_decl,
-                              llvm::IRBuilder<> &entryBuilder, llvm::Twine="");
+                              llvm::IRBuilder<> &entryBuilder,
+                              llvm::Twine = "");
 
 llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
                                   llvm::Value *arg_ld, llvm::Value *dim_1,

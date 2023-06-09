@@ -14,7 +14,7 @@ set_property(TARGET LLVMSupport PROPERTY INTERFACE_LINK_LIBRARIES ${TBL_LINKED_L
 endif()
 
 function(enzyme_tablegen ofn)
-  tablegen(Enzyme ${ARGV} --time-phases --no-warn-on-unused-template-args)
+  tablegen(Enzyme ${ARGV})
   set(TABLEGEN_OUTPUT ${TABLEGEN_OUTPUT} ${CMAKE_CURRENT_BINARY_DIR}/${ofn}
       PARENT_SCOPE)
 endfunction()

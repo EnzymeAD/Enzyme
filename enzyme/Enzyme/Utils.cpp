@@ -674,7 +674,7 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   std::string copy_name =
       (blas.prefix + blas.floatType + "copy" + blas.suffix).str();
 
-  SmallVector<Type*, 1> tys;
+  SmallVector<Type *, 1> tys;
   for (auto arg : args)
     tys.push_back(arg->getType());
 
@@ -689,8 +689,9 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
                              llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
   std::string copy_name = (blas.floatType + "lacpy" + blas.suffix).str();
 
-  SmallVector<Type*, 1> tys;
-  for (auto arg : args) tys.push_back(arg->getType());
+  SmallVector<Type *, 1> tys;
+  for (auto arg : args)
+    tys.push_back(arg->getType());
 
   auto FT = FunctionType::get(Type::getVoidTy(M.getContext()), tys, false);
   auto fn = M.getOrInsertFunction(copy_name, FT);
@@ -698,8 +699,9 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
   B.CreateCall(fn, args, bundles);
 }
 
-Function *getOrInsertMemcpyStrided(Module &M, Type* elementType, PointerType *T, Type *IT,
-                                   unsigned dstalign, unsigned srcalign) {
+Function *getOrInsertMemcpyStrided(Module &M, Type *elementType, PointerType *T,
+                                   Type *IT, unsigned dstalign,
+                                   unsigned srcalign) {
   assert(elementType->isFloatingPointTy());
   std::string name = "__enzyme_memcpy_" + tofltstr(elementType) + "_" +
                      std::to_string(cast<IntegerType>(IT)->getBitWidth()) +
@@ -914,7 +916,7 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
     i->addIncoming(nexti, body);
     B.CreateCondBr(B.CreateICmpEQ(nexti, M), initend, body);
   }
-  
+
   {
     IRBuilder<> B(initend);
     Value *nextj =
@@ -2197,8 +2199,7 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
 
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                        llvm::IntegerType *julia_decl,
-                       llvm::IRBuilder<> &entryBuilder,
-					   llvm::Twine name) {
+                       llvm::IRBuilder<> &entryBuilder, llvm::Twine name) {
 
   if (byRef) {
     auto charType = IntegerType::get(V->getContext(), 8);
@@ -2207,19 +2208,21 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
 
   V = transpose(B, V);
 
-  return to_blas_callconv(B, V, byRef, julia_decl, entryBuilder, "transpose." + name);
+  return to_blas_callconv(B, V, byRef, julia_decl, entryBuilder,
+                          "transpose." + name);
 }
 
-llvm::Value *get_blas_row(llvm::IRBuilder<> &B, llvm::Value *trans, llvm::Value *row, llvm::Value *col, bool byRef) {
-  
+llvm::Value *get_blas_row(llvm::IRBuilder<> &B, llvm::Value *trans,
+                          llvm::Value *row, llvm::Value *col, bool byRef) {
+
   if (byRef) {
     auto charType = IntegerType::get(trans->getContext(), 8);
     trans = B.CreateLoad(charType, trans, "ld.row.trans");
   }
-  
+
   return B.CreateSelect(
       B.CreateOr(
           B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N')),
-          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'))
-        ), row, col);
+          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'))),
+      row, col);
 }
