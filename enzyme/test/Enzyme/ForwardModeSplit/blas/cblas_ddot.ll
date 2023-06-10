@@ -49,16 +49,16 @@ entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { double*, double* }*
 ; CHECK-NEXT:   %1 = load { double*, double* }, { double*, double* }* %0
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
-; CHECK-NEXT:   %2 = extractvalue { double*, double* } %1, 0
-; CHECK-NEXT:   %3 = extractvalue { double*, double* } %1, 1
-; CHECK-NEXT:   %4 = call fast double @cblas_ddot(i32 %len, double* nocapture readonly %"m'", i32 %incm, double* nocapture readonly %3, i32 1)
-; CHECK-NEXT:   %5 = call fast double @cblas_ddot(i32 %len, double* nocapture readonly %2, i32 1, double* nocapture readonly %"n'", i32 %incn)
-; CHECK-NEXT:   %6 = fadd fast double %4, %5
-; CHECK-NEXT:   %7 = bitcast double* %2 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %7)
-; CHECK-NEXT:   %8 = bitcast double* %3 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %8)
-; CHECK-NEXT:   ret double %6
+; CHECK-NEXT:   %tape.ext.x = extractvalue { double*, double* } %1, 0
+; CHECK-NEXT:   %tape.ext.y = extractvalue { double*, double* } %1, 1
+; CHECK-NEXT:   %2 = call fast double @cblas_ddot(i32 %len, double* nocapture readonly %"m'", i32 %incm, double* nocapture readonly %tape.ext.y, i32 1)
+; CHECK-NEXT:   %3 = call fast double @cblas_ddot(i32 %len, double* nocapture readonly %tape.ext.x, i32 1, double* nocapture readonly %"n'", i32 %incn)
+; CHECK-NEXT:   %4 = fadd fast double %2, %3
+; CHECK-NEXT:   %5 = bitcast double* %tape.ext.x to i8*
+; CHECK-NEXT:   tail call void @free(i8* nonnull %5)
+; CHECK-NEXT:   %6 = bitcast double* %tape.ext.y to i8*
+; CHECK-NEXT:   tail call void @free(i8* nonnull %6)
+; CHECK-NEXT:   ret double %4
 ; CHECK-NEXT: }
 
 ; CHECK: define internal double @[[inactiveFirst]](i32 %len, double* noalias %m, i32 %incm, double* noalias %n, double* %"n'", i32 %incn, i8* %tapeArg)
