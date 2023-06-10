@@ -2896,9 +2896,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   for (auto user : fnusers) {
     if (removeStruct) {
       IRBuilder<> B(user);
-      user->setName("");
       SmallVector<Value *, 4> args(user->arg_begin(), user->arg_end());
       auto rep = B.CreateCall(NewF, args);
+      rep->takeName(user);
       rep->copyIRFlags(user);
       rep->setAttributes(user->getAttributes());
       rep->setCallingConv(user->getCallingConv());
