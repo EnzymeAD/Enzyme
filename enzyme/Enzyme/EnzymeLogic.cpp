@@ -4887,7 +4887,7 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
           cast<ExtractValueInst>(Builder2.CreateExtractValue(
               arg, {j},
               "unwrap" + (orig_arg->hasName()
-                              ? "." + orig_arg->getName() + Twine(j)
+                              ? "." + orig_arg->getName() + std::to_string(j)
                               : "")));
       if (j == 0) {
         placeholder->replaceAllUsesWith(argVecElem);
@@ -4939,7 +4939,8 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
           PHINode *placeholder = Builder2.CreatePHI(I.getType(), 0);
           vectorizedValues[&I].push_back(placeholder);
           if (I.hasName())
-            placeholder->setName("placeholder." + I.getName() + Twine(i));
+            placeholder->setName("placeholder." + I.getName() +
+                                 std::to_string(i));
         }
       }
     }
