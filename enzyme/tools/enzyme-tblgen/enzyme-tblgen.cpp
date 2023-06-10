@@ -388,24 +388,22 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
         auto attrName = attrDef->getValueInit("name")->getAsUnquotedString();
 #if LLVM_VERSION_MAJOR >= 16
         if (attrName == "ReadNone") {
-            os << " cubcall->setOnlyReadsMemory();\n";
-            os << " cubcall->setOnlyWritesMemory();\n";
-            continue;
+          os << " cubcall->setOnlyReadsMemory();\n";
+          os << " cubcall->setOnlyWritesMemory();\n";
+          continue;
         }
         if (attrName == "ReadOnly") {
-            os << " cubcall->setOnlyReadsMemory();\n";
-            continue;
+          os << " cubcall->setOnlyReadsMemory();\n";
+          continue;
         }
 #endif
 
         os << "#if LLVM_VERSION_MAJOR >= 14\n"
            << " cubcall->addAttributeAtIndex(AttributeList::FunctionIndex, "
-           << "Attribute::"
-           << attrName << ");\n";
+           << "Attribute::" << attrName << ");\n";
         os << "#else\n"
            << " cubcall->addAttribute(AttributeList::FunctionIndex, "
-           << "Attribute::"
-           << attrName << ");\n";
+           << "Attribute::" << attrName << ");\n";
         os << "#endif\n";
       }
       os << " res = cubcall;\n";
@@ -831,7 +829,7 @@ static void checkBlasCalls(const RecordKeeper &RK,
   }
 }
 
-// handleBLAS is called in the AdjointGenerator.h 
+// handleBLAS is called in the AdjointGenerator.h
 void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns,
                      raw_ostream &os) {
   os << "bool handleBLAS(llvm::CallInst &call, llvm::Function *called,"
@@ -1676,14 +1674,13 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
            << "        if (byRef) {\n"
            << "          ((DiffeGradientUtils *)gutils)"
            << "          ->addToInvertedPtrDiffe(&call, nullptr, fpType, 0,"
-           << "(blas.suffix.contains(\"64\") ? 8 : 4), arg_" << name 
+           << "(blas.suffix.contains(\"64\") ? 8 : 4), arg_" << name
            << ", cubcall, Builder2);\n"
            << "        } else {"
            << "        addToDiffe(arg_" << name
            << ", cubcall, Builder2, fpType);\n"
            << "        }"
            << "      }\n";
-
 
       } else {
         os << "        Builder2.CreateCall(derivcall_" << dfnc_name
@@ -1771,8 +1768,8 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
 }
 
 #include "blasDeclUpdater.h"
-#include "blasTAUpdater.h"
 #include "blasDiffUseUpdater.h"
+#include "blasTAUpdater.h"
 
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
   switch (action) {

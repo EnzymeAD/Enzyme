@@ -1,17 +1,22 @@
-name: Clang-Format
+name: Format
 
-on: [push]
+on: 
+  push:
+    branches:
+    - 'main'
+  pull_request:
+    branches:
+    - 'main'
 
 jobs:
   build:
     name: Format
     runs-on: ubuntu-20.04
-    
+
     steps:
     - uses: actions/checkout@v3
     - uses: DoozyX/clang-format-lint-action@v0.16.2
       with:
-        source: 'enzyme/Enzyme'
-        exclude: './CMakeLists.txt enzyme/Enzyme/SCEV'
-        style: 'llvm'
+        source: 'enzyme'
+        exclude: 'enzyme/Enzyme/SCEV enzyme/BCLoad enzyme/benchmarks enzyme/test enzyme/cmake'
         clangFormatVersion: 16
