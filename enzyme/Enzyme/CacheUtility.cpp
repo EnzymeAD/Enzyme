@@ -118,19 +118,19 @@ void CacheUtility::replaceAWithB(Value *A, Value *B, bool storeInCache) {
 
 // Create a new canonical induction variable of Type Ty for Loop L
 // Return the variable and the increment instruction
-std::pair<PHINode *, Instruction *> InsertNewCanonicalIV(Loop *L, Type *Ty,
-                                                         std::string name) {
+std::pair<PHINode *, Instruction *>
+InsertNewCanonicalIV(Loop *L, Type *Ty, const llvm::Twine &Name) {
   assert(L);
   assert(Ty);
 
   BasicBlock *Header = L->getHeader();
   assert(Header);
   IRBuilder<> B(&Header->front());
-  PHINode *CanonicalIV = B.CreatePHI(Ty, 1, name);
+  PHINode *CanonicalIV = B.CreatePHI(Ty, 1, Name);
 
   B.SetInsertPoint(Header->getFirstNonPHIOrDbg());
   Instruction *Inc = cast<Instruction>(
-      B.CreateAdd(CanonicalIV, ConstantInt::get(Ty, 1), name + ".next",
+      B.CreateAdd(CanonicalIV, ConstantInt::get(Ty, 1), Name + ".next",
                   /*NUW*/ true, /*NSW*/ true));
 
   for (BasicBlock *Pred : predecessors(Header)) {

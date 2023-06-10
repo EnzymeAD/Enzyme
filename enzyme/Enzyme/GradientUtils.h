@@ -47,6 +47,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DebugInfoMetadata.h"
@@ -72,24 +73,20 @@
 #include "llvm-c/Core.h"
 
 class GradientUtils;
-extern std::map<std::string,
-                std::function<llvm::Value *(
-                    llvm::IRBuilder<> &, llvm::CallInst *,
-                    llvm::ArrayRef<llvm::Value *>, GradientUtils *)>>
+extern llvm::StringMap<std::function<llvm::Value *(
+    llvm::IRBuilder<> &, llvm::CallInst *, llvm::ArrayRef<llvm::Value *>,
+    GradientUtils *)>>
     shadowHandlers;
 
 class DiffeGradientUtils;
-extern std::map<
-    std::string,
-    std::pair<std::function<bool(llvm::IRBuilder<> &, llvm::CallInst *,
-                                 GradientUtils &, llvm::Value *&,
-                                 llvm::Value *&, llvm::Value *&)>,
-              std::function<void(llvm::IRBuilder<> &, llvm::CallInst *,
-                                 DiffeGradientUtils &, llvm::Value *)>>>
+extern llvm::StringMap<std::pair<
+    std::function<bool(llvm::IRBuilder<> &, llvm::CallInst *, GradientUtils &,
+                       llvm::Value *&, llvm::Value *&, llvm::Value *&)>,
+    std::function<void(llvm::IRBuilder<> &, llvm::CallInst *,
+                       DiffeGradientUtils &, llvm::Value *)>>>
     customCallHandlers;
 
-extern std::map<
-    std::string,
+extern llvm::StringMap<
     std::function<bool(llvm::IRBuilder<> &, llvm::CallInst *, GradientUtils &,
                        llvm::Value *&, llvm::Value *&)>>
     customFwdCallHandlers;

@@ -64,6 +64,8 @@
 
 #include "llvm/Support/AMDGPUMetadata.h"
 
+#include "llvm/ADT/StringSet.h"
+
 #include "DiffeGradientUtils.h"
 #include "FunctionUtils.h"
 #include "GradientUtils.h"
@@ -2894,7 +2896,6 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   for (auto user : fnusers) {
     if (removeStruct) {
       IRBuilder<> B(user);
-      auto n = user->getName().str();
       user->setName("");
       SmallVector<Value *, 4> args(user->arg_begin(), user->arg_end());
       auto rep = B.CreateCall(NewF, args);
@@ -5050,7 +5051,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
   if (isAllocationFunction(F->getName(), TLI))
     return F;
 
-  std::set<std::string> NoFrees = {
+  StringSet<> NoFrees = {
       "memchr",
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEC1EPKcRKS3_",
       "_ZSt16__ostream_insertIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_"
@@ -5110,7 +5111,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZNSt3__19addressofIcEEPT_RS1_",
       "_ZNSt3__19addressofIKcEEPT_RS2_"};
 
-  if (F->getName().startswith("_ZNSolsE") || NoFrees.count(F->getName().str()))
+  if (F->getName().startswith("_ZNSolsE") || NoFrees.count(F->getName()))
     return F;
 
   switch (F->getIntrinsicID()) {

@@ -28,6 +28,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/IR/Constants.h"
@@ -286,7 +287,7 @@ bool preserveLinkage(bool Begin, Function &F) {
 
 bool preserveNVVM(bool Begin, Function &F) {
   bool changed = false;
-  std::map<std::string, std::pair<std::string, std::string>> Implements;
+  StringMap<std::pair<std::string, std::string>> Implements;
   for (std::string T : {"", "f"}) {
     // sincos, sinpi, cospi, sincospi, cyl_bessel_i1
     for (std::string name :
@@ -316,7 +317,7 @@ bool preserveNVVM(bool Begin, Function &F) {
       Implements[nvname] = std::make_pair(mathname, llname);
     }
   }
-  auto found = Implements.find(F.getName().str());
+  auto found = Implements.find(F.getName());
   if (found != Implements.end()) {
     changed = true;
     if (Begin) {
