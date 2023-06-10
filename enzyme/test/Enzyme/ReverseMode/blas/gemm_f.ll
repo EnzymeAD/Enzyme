@@ -33,7 +33,7 @@ entry:
   store i64 8, i64* %ldb, align 16
   store double 0.000000e+00, double* %beta
   store i64 4, i64* %ldc, align 16
-  call void @dgemm_64_(i8* noundef nonnull %transa, i8* noundef nonnull %transb, i8* noundef nonnull %m_p, i8* noundef nonnull %n_p, i8* noundef nonnull %k_p, i8* noundef nonnull %alpha_p, i8* %A, i8* noundef nonnull %lda_p, i8* %B, i8* noundef nonnull %ldb_p, i8* noundef nonnull %beta_p, i8* %C, i8* noundef nonnull %ldc_p) 
+  call void @dgemm_64_(i8* %transa, i8* %transb, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %C, i8* %ldc_p) 
   ret void
 }
 
@@ -47,14 +47,14 @@ entry:
 
 ; CHECK: define internal void @diffef(i8* %C, i8* %"C'", i8* %A, i8* %"A'", i8* %B, i8* %"B'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %ret = alloca double, align 8
-; CHECK-NEXT:   %byref.transpose.transa = alloca i8, align 1
-; CHECK-NEXT:   %byref.transpose.transb = alloca i8, align 1
-; CHECK-NEXT:   %byref.constant.char.G = alloca i8, align 1
-; CHECK-NEXT:   %byref.constant.int.0 = alloca i64, align 8
-; CHECK-NEXT:   %byref.constant.int.01 = alloca i64, align 8
-; CHECK-NEXT:   %byref.constant.fp.1.0 = alloca double, align 8
-; CHECK-NEXT:   %byref.constant.int.02 = alloca i64, align 8
+; CHECK-NEXT:   %ret = alloca double
+; CHECK-NEXT:   %byref.transpose.transa = alloca i8
+; CHECK-NEXT:   %byref.transpose.transb = alloca i8
+; CHECK-NEXT:   %byref.constant.char.G = alloca i8
+; CHECK-NEXT:   %byref.constant.int.0 = alloca i64
+; CHECK-NEXT:   %byref.constant.int.01 = alloca i64
+; CHECK-NEXT:   %byref.constant.fp.1.0 = alloca double
+; CHECK-NEXT:   %byref.constant.int.02 = alloca i64
 ; CHECK-NEXT:   %transa = alloca i8, align 1
 ; CHECK-NEXT:   %transb = alloca i8, align 1
 ; CHECK-NEXT:   %m = alloca i64, align 16
@@ -81,9 +81,9 @@ entry:
 ; CHECK-NEXT:   store double 1.000000e+00, double* %alpha, align 16
 ; CHECK-NEXT:   store i64 4, i64* %lda, align 16
 ; CHECK-NEXT:   store i64 8, i64* %ldb, align 16
-; CHECK-NEXT:   store double 0.000000e+00, double* %beta, align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %beta
 ; CHECK-NEXT:   store i64 4, i64* %ldc, align 16
-; CHECK-NEXT:   call void @dgemm_64_(i8* noundef nonnull %transa, i8* noundef nonnull %transb, i8* noundef nonnull %m_p, i8* noundef nonnull %n_p, i8* noundef nonnull %k_p, i8* noundef nonnull %alpha_p, i8* %A, i8* noundef nonnull %lda_p, i8* %B, i8* noundef nonnull %ldb_p, i8* noundef nonnull %beta_p, i8* %C, i8* noundef nonnull %ldc_p)
+; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %transb, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %C, i8* %ldc_p)
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:                                      ; preds = %entry
@@ -109,11 +109,11 @@ entry:
 ; CHECK-NEXT:   store i8 %[[i25]], i8* %byref.transpose.transb
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %byref.transpose.transb, i8* %m_p, i8* %k_p, i8* %n_p, i8* %alpha_p, i8* %"C'", i8* %ldc_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %"A'", i8* %lda_p)
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %byref.transpose.transa, i8* %transb, i8* %k_p, i8* %n_p, i8* %m_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %"C'", i8* %ldc_p, i8* %beta_p, i8* %"B'", i8* %ldb_p)
-; CHECK-NEXT:   store i8 71, i8* %byref.constant.char.G, align 1
-; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.0, align 4
-; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.01, align 4
-; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0, align 8
-; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.02, align 4
+; CHECK-NEXT:   store i8 71, i8* %byref.constant.char.G
+; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.0
+; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.01
+; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
+; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.02
 ; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i64* %byref.constant.int.0, i64* %byref.constant.int.01, double* %byref.constant.fp.1.0, i8* %beta_p, i8* %m_p, i8* %n_p, i8* %"C'", i8* %ldc_p, i64* %byref.constant.int.02)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
