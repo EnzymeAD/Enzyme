@@ -2090,7 +2090,7 @@ llvm::FastMathFlags getFast() {
 }
 
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
-                     llvm::SmallVector<llvm::Value *, 2> &cacheValues,
+                     llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, llvm::Twine name) {
   if (!cache_arg)
     return;
