@@ -41,6 +41,8 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 
 #include "llvm/IR/InlineAsm.h"
 
@@ -80,7 +82,7 @@ llvm::cl::opt<bool> EnzymeStrictAliasing(
     cl::desc("Assume strict aliasing of types / type stability"));
 }
 
-const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
+const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"sinc", Intrinsic::not_intrinsic},
     {"sincn", Intrinsic::not_intrinsic},
     {"cos", Intrinsic::cos},
@@ -845,11 +847,11 @@ void TypeAnalyzer::considerTBAA() {
           updateAnalysis(call->getOperand(0), TT.Only(-1, call), call);
         }
         if (F) {
-          std::set<std::string> JuliaKnownTypes = {
+          StringSet<> JuliaKnownTypes = {
               "julia.gc_alloc_obj", "jl_alloc_array_1d",  "jl_alloc_array_2d",
               "jl_alloc_array_3d",  "ijl_alloc_array_1d", "ijl_alloc_array_2d",
               "ijl_alloc_array_3d", "jl_gc_alloc_typed",  "ijl_gc_alloc_typed"};
-          if (JuliaKnownTypes.count(F->getName().str())) {
+          if (JuliaKnownTypes.count(F->getName())) {
             visitCallInst(*call);
             continue;
           }
@@ -1071,7 +1073,7 @@ void TypeAnalyzer::run() {
         StringRef funcName = getFuncNameFromCall(call);
         auto ci = getFunctionFromCall(call);
         if (ci && !ci->empty()) {
-          if (interprocedural.CustomRules.find(funcName.str()) ==
+          if (interprocedural.CustomRules.find(funcName) ==
               interprocedural.CustomRules.end()) {
             pendingCalls.push_back(call);
             continue;
@@ -1082,7 +1084,7 @@ void TypeAnalyzer::run() {
         StringRef funcName = getFuncNameFromCall(call);
         auto ci = getFunctionFromCall(call);
         if (ci && !ci->empty()) {
-          if (interprocedural.CustomRules.find(funcName.str()) ==
+          if (interprocedural.CustomRules.find(funcName) ==
               interprocedural.CustomRules.end()) {
             pendingCalls.push_back(call);
             continue;
@@ -3637,7 +3639,7 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
     return;                                                                    \
   }
 
-    auto customrule = interprocedural.CustomRules.find(funcName.str());
+    auto customrule = interprocedural.CustomRules.find(funcName);
     if (customrule != interprocedural.CustomRules.end()) {
       auto returnAnalysis = getAnalysis(&call);
       SmallVector<TypeTree, 4> args;

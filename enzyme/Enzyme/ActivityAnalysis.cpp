@@ -29,7 +29,10 @@
 
 #include <llvm/Config/llvm-config.h>
 
+#include "llvm/ADT/ImmutableSet.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"
@@ -95,7 +98,7 @@ const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_float", "__enzyme_double", "__enzyme_integer",
     "__enzyme_pointer"};
 
-const std::set<std::string> InactiveGlobals = {
+const StringSet<> InactiveGlobals = {
     "ompi_request_null",
     "ompi_mpi_double",
     "ompi_mpi_comm_world",
@@ -130,7 +133,7 @@ const std::set<std::string> InactiveGlobals = {
     "_ZTVN10__cxxabiv121__vmi_class_type_infoE"
 };
 
-const std::map<std::string, size_t> MPIInactiveCommAllocators = {
+const llvm::StringMap<size_t> MPIInactiveCommAllocators = {
     {"MPI_Graph_create", 5},
     {"MPI_Comm_split", 2},
     {"MPI_Intercomm_create", 6},
@@ -148,7 +151,7 @@ const std::map<std::string, size_t> MPIInactiveCommAllocators = {
 
 // Instructions which themselves are inactive
 // the returned value, however, may still be active
-const std::set<std::string> KnownInactiveFunctionInsts = {
+const StringSet<> KnownInactiveFunctionInsts = {
     "__dynamic_cast",
     "_ZSt18_Rb_tree_decrementPKSt18_Rb_tree_node_base",
     "_ZSt18_Rb_tree_incrementPKSt18_Rb_tree_node_base",
@@ -157,7 +160,7 @@ const std::set<std::string> KnownInactiveFunctionInsts = {
     "jl_ptr_to_array",
     "jl_ptr_to_array_1d"};
 
-const std::set<std::string> KnownInactiveFunctions = {
+const StringSet<> KnownInactiveFunctions = {
     "cublasCreate_v2",
     "cublasSetMathMode",
     "cublasSetStream_v2",
@@ -419,12 +422,11 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
       return true;
     }
   }
-  if (KnownInactiveFunctions.count(Name.str())) {
+  if (KnownInactiveFunctions.count(Name)) {
     return true;
   }
 
-  if (MPIInactiveCommAllocators.find(Name.str()) !=
-      MPIInactiveCommAllocators.end()) {
+  if (MPIInactiveCommAllocators.find(Name) != MPIInactiveCommAllocators.end()) {
     return true;
   }
   if (KnownInactiveIntrinsics.count(F->getIntrinsicID())) {
@@ -683,7 +685,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
         InsertConstantInstruction(TR, I);
         return true;
       }
-      if (KnownInactiveFunctionInsts.count(called->getName().str())) {
+      if (KnownInactiveFunctionInsts.count(called->getName())) {
         InsertConstantInstruction(TR, I);
         return true;
       }
@@ -1053,7 +1055,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     }
 
     if (GI->getName().contains("enzyme_const") ||
-        InactiveGlobals.count(GI->getName().str())) {
+        InactiveGlobals.count(GI->getName())) {
       InsertConstantValue(TR, Val);
       return true;
     }
@@ -1417,8 +1419,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           }
         }
 
-        if (KnownInactiveFunctions.count(funcName.str()) ||
-            MPIInactiveCommAllocators.find(funcName.str()) !=
+        if (KnownInactiveFunctions.count(funcName) ||
+            MPIInactiveCommAllocators.find(funcName) !=
                 MPIInactiveCommAllocators.end()) {
           InsertConstantValue(TR, Val);
           insertConstantsFrom(TR, *UpHypothesis);
@@ -1703,12 +1705,12 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             isDeallocationFunction(funcName, TLI)) {
           return false;
         }
-        if (KnownInactiveFunctions.count(funcName.str()) ||
-            MPIInactiveCommAllocators.find(funcName.str()) !=
+        if (KnownInactiveFunctions.count(funcName) ||
+            MPIInactiveCommAllocators.find(funcName) !=
                 MPIInactiveCommAllocators.end()) {
           return false;
         }
-        if (KnownInactiveFunctionInsts.count(funcName.str())) {
+        if (KnownInactiveFunctionInsts.count(funcName)) {
           return false;
         }
         if (isMemFreeLibMFunction(funcName)) {
@@ -2389,8 +2391,8 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
       }
     }
 
-    if (KnownInactiveFunctions.count(funcName.str()) ||
-        MPIInactiveCommAllocators.find(funcName.str()) !=
+    if (KnownInactiveFunctions.count(funcName) ||
+        MPIInactiveCommAllocators.find(funcName) !=
             MPIInactiveCommAllocators.end()) {
       if (EnzymePrintActivity)
         llvm::errs() << "constant(" << (int)directions
@@ -2657,7 +2659,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                 continue;
               }
               if (GV->getName().contains("enzyme_const") ||
-                  InactiveGlobals.count(GV->getName().str())) {
+                  InactiveGlobals.count(GV->getName())) {
                 continue;
               }
             }
