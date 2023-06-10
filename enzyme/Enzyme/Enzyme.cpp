@@ -652,8 +652,6 @@ public:
 
     // handle different argument order for struct return.
     if (fn->hasParamAttribute(0, Attribute::StructRet)) {
-      Type *fnsrety = cast<PointerType>(FT->getParamType(0));
-
       truei = 1;
 
       const DataLayout &DL = CI->getParent()->getModule()->getDataLayout();
@@ -661,6 +659,7 @@ public:
 #if LLVM_VERSION_MAJOR >= 12
       Ty = fn->getParamAttribute(0, Attribute::StructRet).getValueAsType();
 #else
+      Type *fnsrety = cast<PointerType>(FT->getParamType(0));
       Ty = fnsrety->getPointerElementType();
 #endif
 #if LLVM_VERSION_MAJOR >= 11
