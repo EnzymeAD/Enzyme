@@ -11426,7 +11426,7 @@ public:
         primalNeededInReverse = true;
       }
 
-      std::function<void(MDNode *)> restoreFromStack = [&](MDNode *MD) {
+      auto restoreFromStack = [&](MDNode *MD) {
         IRBuilder<> B(newCall);
         Value *Size;
         if (funcName == "malloc")

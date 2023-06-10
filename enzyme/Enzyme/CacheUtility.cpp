@@ -204,10 +204,11 @@ std::pair<PHINode *, Instruction *> FindCanonicalIV(Loop *L, Type *Ty) {
 
 // Attempt to rewrite all phinode's in the loop in terms of the
 // induction variable
-void RemoveRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
-                        Instruction *Increment, MustExitScalarEvolution &SE,
-                        std::function<void(Instruction *, Value *)> replacer,
-                        std::function<void(Instruction *)> eraser) {
+void RemoveRedundantIVs(
+    BasicBlock *Header, PHINode *CanonicalIV, Instruction *Increment,
+    MustExitScalarEvolution &SE,
+    llvm::function_ref<void(Instruction *, Value *)> replacer,
+    llvm::function_ref<void(Instruction *)> eraser) {
   assert(Header);
   assert(CanonicalIV);
   SmallVector<Instruction *, 8> IVsToRemove;

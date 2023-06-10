@@ -51,6 +51,8 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 //;
 
 class PreProcessCache {
@@ -233,9 +235,9 @@ static inline void calculateUnusedValues(
     const llvm::Function &oldFunc,
     llvm::SmallPtrSetImpl<const llvm::Value *> &unnecessaryValues,
     llvm::SmallPtrSetImpl<const llvm::Instruction *> &unnecessaryInstructions,
-    bool returnValue, std::function<bool(const llvm::Value *)> valneeded,
-    std::function<UseReq(const llvm::Instruction *)> instneeded,
-    std::function<bool(const llvm::Instruction *, const llvm::Value *)>
+    bool returnValue, llvm::function_ref<bool(const llvm::Value *)> valneeded,
+    llvm::function_ref<UseReq(const llvm::Instruction *)> instneeded,
+    llvm::function_ref<bool(const llvm::Instruction *, const llvm::Value *)>
         useneeded) {
 
   std::deque<const llvm::Instruction *> todo;
@@ -350,7 +352,7 @@ static inline void calculateUnusedValues(
 static inline void calculateUnusedStores(
     const llvm::Function &oldFunc,
     llvm::SmallPtrSetImpl<const llvm::Instruction *> &unnecessaryStores,
-    std::function<bool(const llvm::Instruction *)> needStore) {
+    llvm::function_ref<bool(const llvm::Instruction *)> needStore) {
 
   std::deque<const llvm::Instruction *> todo;
 
