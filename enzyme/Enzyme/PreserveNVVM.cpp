@@ -195,7 +195,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
               realidx = 0;
               for (size_t i = 0; i < F->arg_size(); i++) {
                 if (!F->hasParamAttribute(i, Attribute::StructRet)) {
-                  arg->setName("arg" + std::to_string(realidx));
+                  arg->setName("arg" + Twine(realidx));
                   if (!byref.count(realidx))
                     argVs.push_back(arg);
                   else {

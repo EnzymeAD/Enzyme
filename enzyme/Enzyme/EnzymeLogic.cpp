@@ -2040,7 +2040,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       SmallVector<Value *, 3> fwdargs;
       int act_idx = 0;
       while (arg != NewF->arg_end()) {
-        arg->setName("arg" + std::to_string(act_idx));
+        arg->setName("arg" + Twine(act_idx));
         fwdargs.push_back(arg);
         switch (constant_args[act_idx]) {
         case DIFFE_TYPE::OUT_DIFF:
@@ -2048,7 +2048,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         case DIFFE_TYPE::DUP_ARG:
         case DIFFE_TYPE::DUP_NONEED:
           arg++;
-          arg->setName("arg" + std::to_string(act_idx) + "'");
+          arg->setName("arg" + Twine(act_idx) + "'");
           fwdargs.push_back(arg);
           break;
         case DIFFE_TYPE::CONSTANT:
@@ -2112,7 +2112,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       size_t realidx = 0;
       for (size_t i = 0; i < foundcalled->arg_size(); i++) {
         if (!foundcalled->hasParamAttribute(i, Attribute::StructRet)) {
-          arg->setName("arg" + std::to_string(realidx));
+          arg->setName("arg" + Twine(realidx));
           realidx++;
           argVs.push_back(arg);
           ++arg;
@@ -2167,7 +2167,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           SmallVector<Value *, 3> argVs;
           size_t realidx = 0;
           for (auto &a : NewF->args()) {
-            a.setName("arg" + std::to_string(realidx));
+            a.setName("arg" + Twine(realidx));
             realidx++;
             argVs.push_back(&a);
           }
@@ -2232,7 +2232,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           SmallVector<Value *, 3> argVs;
           size_t realidx = 0;
           for (auto &a : NewF->args()) {
-            a.setName("arg" + std::to_string(realidx));
+            a.setName("arg" + Twine(realidx));
             realidx++;
             argVs.push_back(&a);
           }
@@ -3551,7 +3551,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
       size_t argnum = 0;
       for (Argument &Arg : NewF->args()) {
-        Arg.setName("arg" + std::to_string(argnum));
+        Arg.setName("arg" + Twine(argnum));
         ++argnum;
       }
 
@@ -3722,7 +3722,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       SmallVector<Value *, 3> revargs;
       size_t act_idx = 0;
       while (act_idx != key.constant_args.size()) {
-        arg->setName("arg" + std::to_string(act_idx));
+        arg->setName("arg" + Twine(act_idx));
         revargs.push_back(arg);
         switch (key.constant_args[act_idx]) {
         case DIFFE_TYPE::OUT_DIFF:
@@ -3730,7 +3730,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         case DIFFE_TYPE::DUP_ARG:
         case DIFFE_TYPE::DUP_NONEED:
           arg++;
-          arg->setName("arg" + std::to_string(act_idx) + "'");
+          arg->setName("arg" + Twine(act_idx) + "'");
           revargs.push_back(arg);
           break;
         case DIFFE_TYPE::CONSTANT:
@@ -3745,7 +3745,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       size_t pa = 0;
       while (arg != NewF->arg_end()) {
         revargs.push_back(arg);
-        arg->setName("postarg" + std::to_string(pa));
+        arg->setName("postarg" + Twine(pa));
         pa++;
         arg++;
       }
@@ -3828,7 +3828,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
             Arg.removeAttr(Attribute::Returned);
           if (Arg.hasAttribute(Attribute::StructRet))
             Arg.removeAttr(Attribute::StructRet);
-          Arg.setName("arg" + std::to_string(argnum));
+          Arg.setName("arg" + Twine(argnum));
           ++argnum;
         }
 
@@ -4888,7 +4888,7 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
           cast<ExtractValueInst>(Builder2.CreateExtractValue(
               arg, {j},
               "unwrap" + (orig_arg->hasName()
-                              ? "." + orig_arg->getName() + std::to_string(j)
+                              ? "." + orig_arg->getName() + Twine(j)
                               : "")));
       if (j == 0) {
         placeholder->replaceAllUsesWith(argVecElem);
@@ -4940,8 +4940,7 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
           PHINode *placeholder = Builder2.CreatePHI(I.getType(), 0);
           vectorizedValues[&I].push_back(placeholder);
           if (I.hasName())
-            placeholder->setName("placeholder." + I.getName() +
-                                 std::to_string(i));
+            placeholder->setName("placeholder." + I.getName() + Twine(i));
         }
       }
     }

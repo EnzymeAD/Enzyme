@@ -7435,8 +7435,7 @@ void GradientUtils::branchToCorrespondingTarget(
               Value *val = cond2;
               if (i == 1)
                 val = BuilderM.CreateNot(val, "bnot1_");
-              val = BuilderM.CreateAnd(val, otherBranch,
-                                       "andVal" + std::to_string(i));
+              val = BuilderM.CreateAnd(val, otherBranch, "andVal" + Twine(i));
               if (&*BuilderM.GetInsertPoint() == found->second) {
                 if (found->second->getNextNode())
                   BuilderM.SetInsertPoint(found->second->getNextNode());
