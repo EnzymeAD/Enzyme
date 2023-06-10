@@ -140,7 +140,7 @@ void InstructionBatcher::visitInstruction(llvm::Instruction &inst) {
     RemapInstruction(new_inst, vmap, RF_NoModuleLevelChanges);
 
     if (!inst.getType()->isVoidTy() && inst.hasName())
-      new_inst->setName(inst.getName() + Twine(i));
+      new_inst->setName(inst.getName() + std::to_string(i));
   }
 }
 
@@ -271,7 +271,8 @@ void InstructionBatcher::visitCallInst(llvm::CallInst &call) {
       Instruction *placeholder = dyn_cast<Instruction>(placeholders[i]);
       ExtractValueInst *ret = ExtractValueInst::Create(
           new_call, {i},
-          "unwrap" + (call.hasName() ? "." + call.getName() + Twine(i) : ""));
+          "unwrap" +
+              (call.hasName() ? "." + call.getName() + std::to_string(i) : ""));
       ReplaceInstWithInst(placeholder, ret);
       vectorizedValues[&call][i] = ret;
     }

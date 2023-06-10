@@ -77,11 +77,12 @@ TraceUtils *TraceUtils::FromClone(ProbProgMode mode, TraceInterface *interface,
   Type *RetTy = oldFunc->getReturnType();
   FunctionType *FTy = FunctionType::get(RetTy, params, oldFunc->isVarArg());
 
-  Twine Name = (mode == ProbProgMode::Condition ? "condition_" : "trace_") +
-               Twine(oldFunc->getName());
+  std::string mode_str =
+      (mode == ProbProgMode::Condition ? "condition" : "trace");
 
   Function *newFunc = Function::Create(
-      FTy, Function::LinkageTypes::InternalLinkage, Name, oldFunc->getParent());
+      FTy, Function::LinkageTypes::InternalLinkage,
+      mode_str + "_" + oldFunc->getName(), oldFunc->getParent());
 
   auto DestArg = newFunc->arg_begin();
   auto SrcArg = oldFunc->arg_begin();

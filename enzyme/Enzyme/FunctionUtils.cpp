@@ -2057,7 +2057,7 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     ValueToValueMapTy &ptrInputs, ArrayRef<DIFFE_TYPE> constant_args,
     SmallPtrSetImpl<Value *> &constants, SmallPtrSetImpl<Value *> &nonconstant,
     SmallPtrSetImpl<Value *> &returnvals, ReturnType returnValue,
-    DIFFE_TYPE returnType, Twine name,
+    DIFFE_TYPE returnType, const Twine &name,
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> *VMapO,
     bool diffeReturnArg, llvm::Type *additionalArg) {
   assert(!F->empty());
