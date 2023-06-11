@@ -98,7 +98,7 @@ entry:
 ; CHECK-NEXT:   store double* %cache.x, double** %0
 ; CHECK-NEXT:   store i64 1, i64* %byref.
 ; CHECK-NEXT:   call void @dcopy_64_(i8* %n_p, i8* %x, i8* %incx_p, double* %cache.x, i64* %byref.)
-; CHECK-NEXT:   call void @dgemv_64_(i8* %malloccall, i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta_p, i8* %y, i8* %incy_p) #1
+; CHECK-NEXT:   call void @dgemv_64_(i8* %malloccall, i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta_p, i8* %y, i8* %incy_p)
 ; CHECK-NEXT:   %17 = load double*, double** %0
 ; CHECK-NEXT:   ret double* %17
 ; CHECK-NEXT: }

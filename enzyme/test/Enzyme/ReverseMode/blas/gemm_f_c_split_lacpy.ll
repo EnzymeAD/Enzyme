@@ -41,7 +41,7 @@ define void @g(i8* noalias %C, i8* noalias %A, i8* noalias %B) {
 entry:
   call void @f(i8* %C, i8* %A, i8* %B)
   %ptr = bitcast i8* %A to double*
-  store double 0.0000000e+00, double* %ptr, align 8
+  store double 0.000000e+00, double* %ptr, align 8
   ret void
 }
 
@@ -112,7 +112,7 @@ entry:
 ; CHECK-NEXT:   store double* %cache.A, double** %0
 ; CHECK-NEXT:   store i8 0, i8* %byref.copy.garbage
 ; CHECK-NEXT:   call void @dlacpy_64_(i8* %byref.copy.garbage, i8* %m_p, i8* %k_p, i8* %A, i8* %lda_p, double* %cache.A, i8* %m_p)
-; CHECK-NEXT:   call void @dgemm_64_(i8* %malloccall, i8* %malloccall1, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %C, i8* %ldc_p) #1
+; CHECK-NEXT:   call void @dgemm_64_(i8* %malloccall, i8* %malloccall1, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %C, i8* %ldc_p)
 ; CHECK-NEXT:   %22 = load double*, double** %0
 ; CHECK-NEXT:   ret double* %22
 ; CHECK-NEXT: }

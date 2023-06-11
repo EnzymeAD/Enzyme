@@ -109,7 +109,7 @@ entry:
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   store i8 78, i8* %transa, align 1
 ; CHECK-NEXT:   store i8 78, i8* %transb, align 1
-; CHECK-NEXT:   %m_p = call i8* @malloc(i64 8) #1
+; CHECK-NEXT:   %m_p = call i8* @malloc(i64 8)
 ; CHECK-NEXT:   %m = bitcast i8* %m_p to i64*
 ; CHECK-NEXT:   store i64 4, i64* %m, align 16
 ; CHECK-NEXT:   store i8* %m_p, i8** %m_p_cache, align 8, !invariant.group !6
@@ -189,8 +189,8 @@ entry:
 ; CHECK-NEXT:   %25 = insertvalue { i8, i8, i64, double, i64, i64, double, i64, double* } %24, double %avld.beta, 6
 ; CHECK-NEXT:   %26 = insertvalue { i8, i8, i64, double, i64, i64, double, i64, double* } %25, i64 %avld.ldc, 7
 ; CHECK-NEXT:   %27 = insertvalue { i8, i8, i64, double, i64, i64, double, i64, double* } %26, double* %cache.A, 8
-; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %transb, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %C, i8* %ldc_p) #1
-; CHECK-NEXT:   call void @free(i8* %m_p) #1
+; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %transb, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %C, i8* %ldc_p)
+; CHECK-NEXT:   call void @free(i8* %m_p)
 ; CHECK-NEXT:   %cmp = icmp eq i64 %iv.next, 10
 ; CHECK-NEXT:   br i1 %cmp, label %exit, label %loop
 
@@ -326,7 +326,7 @@ entry:
 ; CHECK-NEXT:   br label %remat_loop_loop
 
 ; CHECK: remat_loop_loop:                                  ; preds = %remat_enter
-; CHECK-NEXT:   %remat_m_p = call i8* @malloc(i64 8) #1
+; CHECK-NEXT:   %remat_m_p = call i8* @malloc(i64 8)
 ; CHECK-NEXT:   store i8* %remat_m_p, i8** %m_p_cache, align 8, !invariant.group !6
 ; CHECK-NEXT:   %69 = load i64, i64* %"iv'ac"
 ; CHECK-NEXT:   %70 = load i8*, i8** %m_p_cache, align 8, !invariant.group !6

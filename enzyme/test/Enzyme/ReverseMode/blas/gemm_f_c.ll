@@ -165,7 +165,7 @@ entry:
 ; CHECK: __enzyme_memcpy_double_mat_64.exit17:             ; preds = %__enzyme_memcpy_double_mat_64.exit, %[[forend]]
 ; CHECK-NEXT:   %30 = insertvalue { double*, double* } undef, double* %cache.A, 0
 ; CHECK-NEXT:   %31 = insertvalue { double*, double* } %30, double* %cache.B, 1
-; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %transb, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %C, i8* %ldc_p) #1
+; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %transb, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %C, i8* %ldc_p)
 ; CHECK-NEXT:   %"ptr'ipc" = bitcast i8* %"A'" to double*
 ; CHECK-NEXT:   %ptr = bitcast i8* %A to double*
 ; CHECK-NEXT:   store double 0.000000e+00, double* %ptr, align 8, !alias.scope !10, !noalias !13

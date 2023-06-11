@@ -123,7 +123,7 @@ entry:
 ; CHECK-NEXT:   br i1 %23, label %__enzyme_memcpy_double_64_da0sa0stride.exit, label %for.body.i
 
 ; CHECK: __enzyme_memcpy_double_64_da0sa0stride.exit:      ; preds = %entry, %for.body.i
-; CHECK-NEXT:   call void @dgemv_64_(i8* %malloccall, i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta_p, i8* %y, i8* %incy_p) #1
+; CHECK-NEXT:   call void @dgemv_64_(i8* %malloccall, i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta_p, i8* %y, i8* %incy_p)
 ; CHECK-NEXT:   %24 = load double*, double** %0
 ; CHECK-NEXT:   ret double* %24
 ; CHECK-NEXT: }
