@@ -1604,7 +1604,7 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
 }
 
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
-                     llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
+                     llvm::SmallVector<llvm::Value *, 2> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, llvm::Twine = "");
 
 void extractValueFromCache(llvm::Value *arg, bool cache_arg,

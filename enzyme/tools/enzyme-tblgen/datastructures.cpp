@@ -204,7 +204,7 @@ void fillArgTypes(const Record *pattern, DenseMap<size_t, argType> &argTypes) {
   }
 }
 
-void fillArgs(const Record *r, SmallVectorImpl<std::string> &args,
+void fillArgs(const Record *r, SmallVector<std::string, 6> &args,
               StringMap<size_t> &argNameToPos) {
   DagInit *argOps = r->getValueAsDag("PatternToMatch");
   size_t numArgs = argOps->getNumArgs();
@@ -217,15 +217,15 @@ void fillArgs(const Record *r, SmallVectorImpl<std::string> &args,
   assert(argNameToPos.size() == numArgs);
 }
 
-void fillArgUserMap(SmallVectorImpl<Rule> &rules,
-                    ArrayRef<StringRef> nameVec,
-                    ArrayRef<size_t> activeArgs,
+void fillArgUserMap(SmallVector<Rule, 3> &rules,
+                    const SmallVector<std::string, 6> &nameVec,
+                    const SmallVector<size_t, 4> &activeArgs,
                     DenseMap<size_t, DenseSet<size_t>> &argUsers) {
 
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto name = nameVec[i];
     DenseSet<size_t> set{};
-    for (auto&& rule : llvm::enumerate(rules)) {
+    for (auto rule : llvm::enumerate(rules)) {
       auto nameMap = rule.value().getArgNameMap();
       if (nameMap.count(name) == 1) {
         size_t val = activeArgs[rule.index()];
@@ -262,7 +262,7 @@ TGPattern::TGPattern(Record &r) {
   {
     rules = llvm::SmallVector<Rule, 3>{};
     ListInit *derivOps = r.getValueAsListInit("ArgDerivatives");
-    for (auto&& derivOp : llvm::enumerate(*derivOps)) {
+    for (auto derivOp : llvm::enumerate(*derivOps)) {
       DagInit *derivRule = cast<DagInit>(derivOp.value());
       size_t actIdx = posActArgs[derivOp.index()];
       rules.push_back(
