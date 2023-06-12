@@ -637,38 +637,6 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
   return F;
 }
 
-Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
-                                   BlasInfo blas) {
-  std::string name =
-      (blas.prefix + blas.floatType + "copy" + blas.suffix).str();
-
-  FunctionType *FT =
-      FunctionType::get(Type::getVoidTy(M.getContext()), {T, T, IT, IT}, false);
-
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
-  return F;
-}
-
-Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
-                                       BlasInfo blas, bool julia_decl) {
-  std::string copy_name =
-      (blas.prefix + blas.floatType + "copy" + blas.suffix).str();
-  FunctionType *FT;
-  if (julia_decl) {
-    auto i8ptr = Type::getInt8PtrTy(M.getContext());
-    FT = FunctionType::get(
-        Type::getVoidTy(M.getContext()),
-        {i8ptr /*int*/, IT /*data*/, i8ptr /*int*/, IT /*data*/, i8ptr /*int*/},
-        false);
-  } else {
-    FT = FunctionType::get(Type::getVoidTy(M.getContext()), {IT, T, IT, T, IT},
-                           false);
-  }
-  Function *dmemcpy =
-      cast<Function>(M.getOrInsertFunction(copy_name, FT).getCallee());
-  return dmemcpy;
-}
-
 void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                            llvm::ArrayRef<llvm::Value *> args,
                            llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
@@ -2091,7 +2059,7 @@ llvm::FastMathFlags getFast() {
 }
 
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
-                     llvm::SmallVector<llvm::Value *, 2> &cacheValues,
+                     llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, llvm::Twine name) {
   if (!arg->getType()->isPointerTy()) {
     assert(arg->getType() == ty);

@@ -637,11 +637,6 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
                              BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
                              llvm::ArrayRef<llvm::OperandBundleDef> bundles);
 
-/// Create function for type that performs memcpy with a stride using blas copy
-llvm::Function *getOrInsertMemcpyStridedBlas(llvm::Module &M,
-                                             llvm::PointerType *T,
-                                             llvm::Type *IT, BlasInfo blas,
-                                             bool julia_decl);
 /// Create function for type that performs memcpy with a stride
 llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M,
                                          llvm::Type *elementType,
@@ -1605,7 +1600,7 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
 }
 
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
-                     llvm::SmallVector<llvm::Value *, 2> &cacheValues,
+                     llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, llvm::Twine = "");
 
 // julia_decl null means not julia decl, otherwise it is the integer type needed
