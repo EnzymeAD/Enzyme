@@ -3828,7 +3828,7 @@ public:
 #else
       case Intrinsic::experimental_vector_reduce_v2_fadd:
       case Intrinsic::experimental_vector_reduce_v2_fmul:
-#endif 
+#endif
 #if LLVM_VERSION_MAJOR >= 15
       case Intrinsic::minimum:
       case Intrinsic::maximum:
