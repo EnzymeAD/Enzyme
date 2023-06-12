@@ -973,8 +973,8 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
        << "  const bool overwritten_" << name
        << " = (cacheMode ? overwritten_args[pos_" << name << "] : false);\n";
     if (std::count(actArgs.begin(), actArgs.end(), i)) {
-      os << "  const bool active_" << name
-         << " = !gutils->isConstantValue(orig_" << name << ");\n";
+      os << "  bool active_" << name << " = !gutils->isConstantValue(orig_"
+         << name << ") || EnzymeRuntimeActivityCheck;\n";
     }
     os << "\n";
   }
@@ -1303,7 +1303,10 @@ size_t fwd_call_args(TGPattern &pattern, size_t actArg,
 
 void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
   auto rules = pattern.getRules();
-  bool lv23 = pattern.isBLASLevel2or3();
+  const auto nameVec = pattern.getArgNames();
+  const auto inputTypes = pattern.getArgTypeMap();
+  const auto activeArgs = pattern.getActiveArgs();
+  const bool lv23 = pattern.isBLASLevel2or3();
   os << "  /* fwd-rewrite */                                 \n"
      << "  if (Mode == DerivativeMode::ForwardMode ||        \n"
      << "      Mode == DerivativeMode::ForwardModeSplit) {   \n"
@@ -1314,9 +1317,17 @@ void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
      << "    auto callval = call.getCalledValue();           \n"
      << "#endif                                            \n\n";
 
-  const auto nameVec = pattern.getArgNames();
-  const auto inputTypes = pattern.getArgTypeMap();
-  const auto activeArgs = pattern.getActiveArgs();
+  os << "  if(EnzymeRuntimeActivityCheck) {\n";
+  for (auto actArg : activeArgs) {
+    const auto name = nameVec[actArg];
+    os << "    if (active_" << name << ") {\n"
+       << "      auto shadow = gutils->invertPointerM(orig_" << name
+       << ", Builder2);\n"
+       << "      active_" << name << " = shadow != arg_" << name << ";\n"
+       << "    }\n";
+  }
+  os << "  }\n";
+
   for (auto inputType : inputTypes) {
     auto ty = inputType.second;
     if (ty == vincData || ty == mldData) {
