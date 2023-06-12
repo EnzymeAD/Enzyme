@@ -974,7 +974,8 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
        << " = (cacheMode ? overwritten_args[pos_" << name << "] : false);\n";
     if (std::count(actArgs.begin(), actArgs.end(), i)) {
       os << "  bool active_" << name << " = !gutils->isConstantValue(orig_"
-         << name << ") || EnzymeRuntimeActivityCheck;\n";
+         << name << ");\n"
+         << "  Value *rta_" << name << " = nullptr;\n";
     }
     os << "\n";
   }
@@ -1321,9 +1322,11 @@ void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
   for (auto actArg : activeArgs) {
     const auto name = nameVec[actArg];
     os << "    if (active_" << name << ") {\n"
-       << "      auto shadow = gutils->invertPointerM(orig_" << name
-       << ", Builder2);\n"
-       << "      active_" << name << " = shadow != arg_" << name << ";\n"
+       << "      Value *shadow = Builder2.CreateICmpEQ(\n"
+       << "          lookupM(arg_" << name << ", Builder3),\n"
+       << "          lookupM(gutils->invertPointerM(origptr, Builder2), "
+          "Builder2));\n"
+       << "      rta_" << name << " = shadow;\n"
        << "    }\n";
   }
   os << "  }\n";
@@ -1362,7 +1365,10 @@ void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
     auto dcallArgs = llvm::SmallString<40>();
     const size_t numArgs = fwd_call_args(pattern, activeArg, dcallArgs);
     const auto valueTypes = ValueType_helper(pattern, activeArg);
-    os << "      if(active_" << actName << ") {\n";
+    // If we have runtime activity, check if we are actually
+    // active at runtime through rta_<name>
+    os << "      if(active_" << actName
+       << " && (!EnzymeRuntimeActivityCheck || rta_" << actName << ")) {\n";
 
     if (lv23) {
       // add extra cblas_arg for the !byRef case
