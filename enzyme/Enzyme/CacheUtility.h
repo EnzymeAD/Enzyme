@@ -419,7 +419,8 @@ protected:
 // Create a new canonical induction variable of Type Ty for Loop L
 // Return the variable and the increment instruction
 std::pair<llvm::PHINode *, llvm::Instruction *>
-InsertNewCanonicalIV(llvm::Loop *L, llvm::Type *Ty, std::string name = "iv");
+InsertNewCanonicalIV(llvm::Loop *L, llvm::Type *Ty,
+                     const llvm::Twine &Name = "iv");
 
 // Attempt to rewrite all phinode's in the loop in terms of the
 // induction variable

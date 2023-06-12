@@ -313,17 +313,16 @@ void EnzymeGradientUtilsReplaceAWithB(GradientUtils *G, LLVMValueRef A,
 
 void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
                                      CustomShadowFree FHandle) {
-  shadowHandlers[std::string(Name)] =
-      [=](IRBuilder<> &B, CallInst *CI, ArrayRef<Value *> Args,
-          GradientUtils *gutils) -> llvm::Value * {
+  shadowHandlers[Name] = [=](IRBuilder<> &B, CallInst *CI,
+                             ArrayRef<Value *> Args,
+                             GradientUtils *gutils) -> llvm::Value * {
     SmallVector<LLVMValueRef, 3> refs;
     for (auto a : Args)
       refs.push_back(wrap(a));
     return unwrap(
         AHandle(wrap(&B), wrap(CI), Args.size(), refs.data(), gutils));
   };
-  shadowErasers[std::string(Name)] = [=](IRBuilder<> &B,
-                                         Value *ToFree) -> llvm::CallInst * {
+  shadowErasers[Name] = [=](IRBuilder<> &B, Value *ToFree) -> llvm::CallInst * {
     return cast_or_null<CallInst>(unwrap(FHandle(wrap(&B), wrap(ToFree))));
   };
 }
@@ -331,7 +330,7 @@ void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
 void EnzymeRegisterCallHandler(char *Name,
                                CustomAugmentedFunctionForward FwdHandle,
                                CustomFunctionReverse RevHandle) {
-  auto &pair = customCallHandlers[std::string(Name)];
+  auto &pair = customCallHandlers[Name];
   pair.first = [=](IRBuilder<> &B, CallInst *CI, GradientUtils &gutils,
                    Value *&normalReturn, Value *&shadowReturn,
                    Value *&tape) -> bool {
@@ -352,7 +351,7 @@ void EnzymeRegisterCallHandler(char *Name,
 }
 
 void EnzymeRegisterFwdCallHandler(char *Name, CustomFunctionForward FwdHandle) {
-  auto &pair = customFwdCallHandlers[std::string(Name)];
+  auto &pair = customFwdCallHandlers[Name];
   pair = [=](IRBuilder<> &B, CallInst *CI, GradientUtils &gutils,
              Value *&normalReturn, Value *&shadowReturn) -> bool {
     LLVMValueRef normalR = wrap(normalReturn);

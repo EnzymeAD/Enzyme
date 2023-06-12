@@ -133,8 +133,7 @@ public:
     if (!I.getType()->isVoidTy() && !I.getType()->isTokenTy() &&
         isa<Instruction>(iload)) {
       IRBuilder<> BuilderZ(cast<Instruction>(iload));
-      pn = BuilderZ.CreatePHI(I.getType(), 1,
-                              (I.getName() + "_replacementA").str());
+      pn = BuilderZ.CreatePHI(I.getType(), 1, I.getName() + "_replacementA");
       gutils->fictiousPHIs[pn] = &I;
       gutils->replaceAWithB(iload, pn);
     }
@@ -7983,7 +7982,7 @@ public:
     // Adjoint of MPI_Comm_split / MPI_Graph_create (which allocates a comm in a
     // pointer) is to free the created comm at the corresponding place in the
     // reverse pass
-    auto commFound = MPIInactiveCommAllocators.find(funcName.str());
+    auto commFound = MPIInactiveCommAllocators.find(funcName);
     if (commFound != MPIInactiveCommAllocators.end()) {
       if (Mode == DerivativeMode::ReverseModeGradient ||
           Mode == DerivativeMode::ReverseModeCombined) {
@@ -8972,8 +8971,8 @@ public:
           cachereplace = gutils->cacheForReverse(
               BuilderZ, cachereplace, getIndex(&call, CacheType::Self));
         } else {
-          auto pn = BuilderZ.CreatePHI(
-              call.getType(), 1, (call.getName() + "_replacementC").str());
+          auto pn = BuilderZ.CreatePHI(call.getType(), 1,
+                                       call.getName() + "_replacementC");
           gutils->fictiousPHIs[pn] = &call;
           cachereplace = pn;
         }
@@ -9302,7 +9301,7 @@ public:
         gutils->getReturnDiffeType(&call, &subretused, &shadowReturnUsed);
 
     if (Mode == DerivativeMode::ForwardMode) {
-      auto found = customFwdCallHandlers.find(funcName.str());
+      auto found = customFwdCallHandlers.find(funcName);
       if (found != customFwdCallHandlers.end()) {
         Value *invertedReturn = nullptr;
         auto ifound = gutils->invertedPointers.find(&call);
@@ -9359,7 +9358,7 @@ public:
     if (Mode == DerivativeMode::ReverseModePrimal ||
         Mode == DerivativeMode::ReverseModeCombined ||
         Mode == DerivativeMode::ReverseModeGradient) {
-      auto found = customCallHandlers.find(funcName.str());
+      auto found = customCallHandlers.find(funcName);
       if (found != customCallHandlers.end()) {
         IRBuilder<> Builder2(call.getParent());
         if (Mode == DerivativeMode::ReverseModeGradient ||
@@ -9527,7 +9526,7 @@ public:
     if ((funcName.startswith("MPI_") || funcName.startswith("PMPI_")) &&
         (!gutils->isConstantInstruction(&call) || funcName == "MPI_Barrier" ||
          funcName == "MPI_Comm_free" || funcName == "MPI_Comm_disconnect" ||
-         MPIInactiveCommAllocators.find(funcName.str()) !=
+         MPIInactiveCommAllocators.find(funcName) !=
              MPIInactiveCommAllocators.end())) {
       handleMPI(call, called, funcName);
       return;
@@ -11094,7 +11093,7 @@ public:
               }
             }
             placeholder->setName("");
-            if (shadowHandlers.find(funcName.str()) != shadowHandlers.end()) {
+            if (shadowHandlers.find(funcName) != shadowHandlers.end()) {
               bb.SetInsertPoint(placeholder);
 
               if (Mode == DerivativeMode::ReverseModeCombined ||
@@ -11103,8 +11102,7 @@ public:
                   (Mode == DerivativeMode::ReverseModeGradient &&
                    backwardsShadow)) {
                 anti = applyChainRule(call.getType(), bb, [&]() {
-                  return shadowHandlers[funcName.str()](bb, &call, args,
-                                                        gutils);
+                  return shadowHandlers[funcName](bb, &call, args, gutils);
                 });
                 if (anti->getType() != placeholder->getType()) {
                   llvm::errs() << "orig: " << call << "\n";
@@ -11613,8 +11611,8 @@ public:
         if (!primalNeededInReverse) {
           if (Mode == DerivativeMode::ReverseModeGradient ||
               Mode == DerivativeMode::ForwardModeSplit) {
-            auto pn = BuilderZ.CreatePHI(
-                call.getType(), 1, (call.getName() + "_replacementJ").str());
+            auto pn = BuilderZ.CreatePHI(call.getType(), 1,
+                                         call.getName() + "_replacementJ");
             gutils->fictiousPHIs[pn] = &call;
             gutils->replaceAWithB(newCall, pn);
             gutils->erase(newCall);
@@ -11654,7 +11652,7 @@ public:
         // try to find the shadow pointer will use the shadow of null rather
         // than the true shadow of this
         auto pn = BuilderZ.CreatePHI(call.getType(), 1,
-                                     (call.getName() + "_replacementB").str());
+                                     call.getName() + "_replacementB");
         gutils->fictiousPHIs[pn] = &call;
         gutils->replaceAWithB(newCall, pn);
         gutils->erase(newCall);

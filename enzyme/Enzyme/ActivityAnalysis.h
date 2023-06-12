@@ -48,6 +48,7 @@
 
 #include "llvm/Support/CommandLine.h"
 
+#include "llvm/ADT/StringMap.h"
 #include "llvm/IR/InstVisitor.h"
 
 #include "TypeAnalysis/TypeAnalysis.h"
@@ -64,7 +65,7 @@ class PreProcessCache;
 
 // A map of MPI comm allocators (otherwise inactive) to the
 // argument of the Comm* they allocate into.
-extern const std::map<std::string, size_t> MPIInactiveCommAllocators;
+extern const llvm::StringMap<size_t> MPIInactiveCommAllocators;
 
 /// Helper class to analyze the differential activity
 class ActivityAnalyzer {

@@ -36,7 +36,7 @@ using namespace llvm;
 TypeTree parseDIType(DIType &Type, Instruction &I, DataLayout &DL);
 
 TypeTree parseDIType(DIBasicType &Type, Instruction &I, DataLayout &DL) {
-  std::string TypeName = Type.getName().str();
+  auto TypeName = Type.getName();
   TypeTree Result;
   if (TypeName == "f64") {
     Result = TypeTree(Type::getDoubleTy(I.getContext())).Only(0, &I);

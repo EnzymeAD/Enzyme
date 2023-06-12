@@ -47,6 +47,7 @@
 #include "llvm/Support/CommandLine.h"
 
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/StringMap.h"
 
 #include "llvm/IR/Dominators.h"
 
@@ -98,7 +99,7 @@ llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
                                                          llvm::IRBuilder<> &B);
 
 llvm::Value *CreateAllocation(llvm::IRBuilder<> &B, llvm::Type *T,
-                              llvm::Value *Count, llvm::Twine Name = "",
+                              llvm::Value *Count, const llvm::Twine &Name = "",
                               llvm::CallInst **caller = nullptr,
                               llvm::Instruction **ZeroMem = nullptr,
                               bool isDefault = false);
@@ -108,17 +109,17 @@ void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
 
 llvm::Value *CreateReAllocation(llvm::IRBuilder<> &B, llvm::Value *prev,
                                 llvm::Type *T, llvm::Value *OuterCount,
-                                llvm::Value *InnerCount, llvm::Twine Name = "",
+                                llvm::Value *InnerCount,
+                                const llvm::Twine &Name = "",
                                 llvm::CallInst **caller = nullptr,
                                 bool ZeroMem = false);
 
 llvm::PointerType *getDefaultAnonymousTapeType(llvm::LLVMContext &C);
 
 class GradientUtils;
-extern std::map<std::string,
-                std::function<llvm::Value *(
-                    llvm::IRBuilder<> &, llvm::CallInst *,
-                    llvm::ArrayRef<llvm::Value *>, GradientUtils *)>>
+extern llvm::StringMap<std::function<llvm::Value *(
+    llvm::IRBuilder<> &, llvm::CallInst *, llvm::ArrayRef<llvm::Value *>,
+    GradientUtils *)>>
     shadowHandlers;
 
 template <typename... Args>
@@ -163,7 +164,7 @@ void EmitWarning(llvm::StringRef RemarkName, const llvm::Function &F,
 
 class EnzymeFailure final : public llvm::DiagnosticInfoUnsupported {
 public:
-  EnzymeFailure(llvm::Twine Msg, const llvm::DiagnosticLocation &Loc,
+  EnzymeFailure(const llvm::Twine &Msg, const llvm::DiagnosticLocation &Loc,
                 const llvm::Instruction *CodeRegion);
 };
 
@@ -175,7 +176,7 @@ void EmitFailure(llvm::StringRef RemarkName,
   llvm::raw_string_ostream ss(*str);
   (ss << ... << args);
   CodeRegion->getContext().diagnose(
-      (EnzymeFailure(llvm::Twine("Enzyme: ") + ss.str(), Loc, CodeRegion)));
+      (EnzymeFailure("Enzyme: " + ss.str(), Loc, CodeRegion)));
 }
 
 static inline llvm::Function *isCalledFunction(llvm::Value *val) {
@@ -1495,7 +1496,7 @@ llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
 static inline llvm::Value *CreateSelect(llvm::IRBuilder<> &Builder2,
                                         llvm::Value *cmp, llvm::Value *tval,
                                         llvm::Value *fval,
-                                        llvm::Twine Name = "") {
+                                        const llvm::Twine &Name = "") {
   if (auto cmpi = llvm::dyn_cast<llvm::ConstantInt>(cmp)) {
     if (cmpi->isZero())
       return fval;
@@ -1507,7 +1508,7 @@ static inline llvm::Value *CreateSelect(llvm::IRBuilder<> &Builder2,
 
 static inline llvm::Value *checkedMul(llvm::IRBuilder<> &Builder2,
                                       llvm::Value *idiff, llvm::Value *pres,
-                                      llvm::Twine Name = "") {
+                                      const llvm::Twine &Name = "") {
   llvm::Value *res = Builder2.CreateFMul(idiff, pres, Name);
   if (EnzymeStrongZero) {
     llvm::Value *zero = llvm::Constant::getNullValue(idiff->getType());
@@ -1520,7 +1521,7 @@ static inline llvm::Value *checkedMul(llvm::IRBuilder<> &Builder2,
 }
 static inline llvm::Value *checkedDiv(llvm::IRBuilder<> &Builder2,
                                       llvm::Value *idiff, llvm::Value *pres,
-                                      llvm::Twine Name = "") {
+                                      const llvm::Twine &Name = "") {
   llvm::Value *res = Builder2.CreateFDiv(idiff, pres, Name);
   if (EnzymeStrongZero) {
     llvm::Value *zero = llvm::Constant::getNullValue(idiff->getType());

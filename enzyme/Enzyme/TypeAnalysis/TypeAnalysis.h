@@ -31,6 +31,7 @@
 #include <llvm/Config/llvm-config.h>
 
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/StringMap.h"
 
 #include "llvm/Analysis/TargetLibraryInfo.h"
 
@@ -53,7 +54,7 @@
 
 #include "TypeTree.h"
 
-extern const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS;
+extern const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS;
 
 static inline bool isMemFreeLibMFunction(llvm::StringRef str,
                                          llvm::Intrinsic::ID *ID = nullptr) {
@@ -365,11 +366,11 @@ public:
   llvm::FunctionAnalysisManager &FAM;
   TypeAnalysis(llvm::FunctionAnalysisManager &FAM) : FAM(FAM) {}
   /// Map of custom function call handlers
-  std::map<std::string,
-           std::function<bool(int /*direction*/, TypeTree & /*returnTree*/,
-                              llvm::ArrayRef<TypeTree> /*argTrees*/,
-                              llvm::ArrayRef<std::set<int64_t>> /*knownValues*/,
-                              llvm::CallInst * /*call*/, TypeAnalyzer *)>>
+  llvm::StringMap<
+      std::function<bool(int /*direction*/, TypeTree & /*returnTree*/,
+                         llvm::ArrayRef<TypeTree> /*argTrees*/,
+                         llvm::ArrayRef<std::set<int64_t>> /*knownValues*/,
+                         llvm::CallInst * /*call*/, TypeAnalyzer *)>>
       CustomRules;
 
   /// Map of possible query states to TypeAnalyzer intermediate results

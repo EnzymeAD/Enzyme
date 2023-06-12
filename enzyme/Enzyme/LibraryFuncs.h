@@ -23,6 +23,7 @@
 #ifndef LIBRARYFUNCS_H_
 #define LIBRARYFUNCS_H_
 
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/IRBuilder.h"
@@ -30,13 +31,12 @@
 #include "llvm/IR/Instructions.h"
 
 class GradientUtils;
-extern std::map<std::string,
-                std::function<llvm::Value *(
-                    llvm::IRBuilder<> &, llvm::CallInst *,
-                    llvm::ArrayRef<llvm::Value *>, GradientUtils *)>>
+extern llvm::StringMap<std::function<llvm::Value *(
+    llvm::IRBuilder<> &, llvm::CallInst *, llvm::ArrayRef<llvm::Value *>,
+    GradientUtils *)>>
     shadowHandlers;
-extern std::map<std::string, std::function<llvm::CallInst *(llvm::IRBuilder<> &,
-                                                            llvm::Value *)>>
+extern llvm::StringMap<
+    std::function<llvm::CallInst *(llvm::IRBuilder<> &, llvm::Value *)>>
     shadowErasers;
 
 /// Return whether a given function is a known C/C++ memory allocation function
@@ -54,7 +54,7 @@ static inline bool isAllocationFunction(const llvm::StringRef name,
   if (name == "julia.gc_alloc_obj" || name == "jl_gc_alloc_typed" ||
       name == "ijl_gc_alloc_typed")
     return true;
-  if (shadowHandlers.find(name.str()) != shadowHandlers.end())
+  if (shadowHandlers.find(name) != shadowHandlers.end())
     return true;
 
   using namespace llvm;

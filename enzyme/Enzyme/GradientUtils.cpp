@@ -51,6 +51,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 
 #include "llvm/Support/AMDGPUMetadata.h"
 #include "llvm/Support/Casting.h"
@@ -63,23 +64,20 @@
 
 using namespace llvm;
 
-std::map<std::string,
-         std::function<llvm::Value *(IRBuilder<> &, CallInst *,
-                                     ArrayRef<Value *>, GradientUtils *)>>
+StringMap<std::function<Value *(IRBuilder<> &, CallInst *, ArrayRef<Value *>,
+                                GradientUtils *)>>
     shadowHandlers;
-std::map<std::string, std::function<llvm::CallInst *(IRBuilder<> &, Value *)>>
-    shadowErasers;
+StringMap<std::function<CallInst *(IRBuilder<> &, Value *)>> shadowErasers;
 
-std::map<
-    std::string,
+StringMap<
     std::pair<std::function<bool(IRBuilder<> &, CallInst *, GradientUtils &,
                                  Value *&, Value *&, Value *&)>,
               std::function<void(IRBuilder<> &, CallInst *,
                                  DiffeGradientUtils &, Value *)>>>
     customCallHandlers;
 
-std::map<std::string, std::function<bool(IRBuilder<> &, CallInst *,
-                                         GradientUtils &, Value *&, Value *&)>>
+StringMap<std::function<bool(IRBuilder<> &, CallInst *, GradientUtils &,
+                             Value *&, Value *&)>>
     customFwdCallHandlers;
 
 extern "C" {
@@ -3564,10 +3562,9 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   }
 
                   placeholder->setName("");
-                  if (shadowHandlers.find(funcName.str()) !=
-                      shadowHandlers.end()) {
+                  if (shadowHandlers.find(funcName) != shadowHandlers.end()) {
 
-                    anti = shadowHandlers[funcName.str()](NB, orig, args, this);
+                    anti = shadowHandlers[funcName](NB, orig, args, this);
                   } else {
                     auto rule = [&]() {
 #if LLVM_VERSION_MAJOR >= 11
@@ -7439,8 +7436,7 @@ void GradientUtils::branchToCorrespondingTarget(
               Value *val = cond2;
               if (i == 1)
                 val = BuilderM.CreateNot(val, "bnot1_");
-              val = BuilderM.CreateAnd(val, otherBranch,
-                                       "andVal" + std::to_string(i));
+              val = BuilderM.CreateAnd(val, otherBranch, "andVal" + Twine(i));
               if (&*BuilderM.GetInsertPoint() == found->second) {
                 if (found->second->getNextNode())
                   BuilderM.SetInsertPoint(found->second->getNextNode());
@@ -8923,8 +8919,8 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
     return freecall;
   }
 
-  if (shadowErasers.find(allocationfn.str()) != shadowErasers.end()) {
-    return shadowErasers[allocationfn.str()](builder, tofree);
+  if (shadowErasers.find(allocationfn) != shadowErasers.end()) {
+    return shadowErasers[allocationfn](builder, tofree);
   }
 
   if (tofree->getType()->isIntegerTy())

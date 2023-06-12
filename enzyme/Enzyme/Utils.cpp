@@ -259,7 +259,8 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
 
 llvm::Value *CreateReAllocation(llvm::IRBuilder<> &B, llvm::Value *prev,
                                 llvm::Type *T, llvm::Value *OuterCount,
-                                llvm::Value *InnerCount, llvm::Twine Name,
+                                llvm::Value *InnerCount,
+                                const llvm::Twine &Name,
                                 llvm::CallInst **caller, bool ZeroMem) {
   auto newFunc = B.GetInsertBlock()->getParent();
 
@@ -286,8 +287,8 @@ llvm::Value *CreateReAllocation(llvm::IRBuilder<> &B, llvm::Value *prev,
 }
 
 Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
-                        Twine Name, CallInst **caller, Instruction **ZeroMem,
-                        bool isDefault) {
+                        const Twine &Name, CallInst **caller,
+                        Instruction **ZeroMem, bool isDefault) {
   Value *res;
   auto &M = *Builder.GetInsertBlock()->getParent()->getParent();
   auto AlignI = M.getDataLayout().getTypeAllocSizeInBits(T) / 8;
@@ -426,7 +427,7 @@ CallInst *CreateDealloc(llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
   return res;
 }
 
-EnzymeFailure::EnzymeFailure(llvm::Twine RemarkName,
+EnzymeFailure::EnzymeFailure(const llvm::Twine &RemarkName,
                              const llvm::DiagnosticLocation &Loc,
                              const llvm::Instruction *CodeRegion)
     : DiagnosticInfoUnsupported(*CodeRegion->getParent()->getParent(),
