@@ -3120,6 +3120,10 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::copysign:
   case Intrinsic::maxnum:
   case Intrinsic::minnum:
+#if LLVM_VERSION_MAJOR >= 15
+  case Intrinsic::maximum:
+  case Intrinsic::minimum:
+#endif
   case Intrinsic::nvvm_fmax_f:
   case Intrinsic::nvvm_fmax_d:
   case Intrinsic::nvvm_fmax_ftz_f:

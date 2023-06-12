@@ -1,7 +1,7 @@
 *.swp
 *.swo
 *.out
-build
+build*
 .vscode
 enzyme/benchmarks/ReverseMode/*/*.ll
 enzyme/benchmarks/ReverseMode/*/*.bc
