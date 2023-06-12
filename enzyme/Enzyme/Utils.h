@@ -1607,13 +1607,6 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVector<llvm::Value *, 2> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, llvm::Twine = "");
 
-void extractValueFromCache(llvm::Value *arg, bool cache_arg,
-                           llvm::Value *true_arg, llvm::Type *ty,
-                           llvm::Value *cacheval, unsigned cachidx,
-                           DerivativeMode Mode,
-                           llvm::IRBuilder<> &allocationBuilder,
-                           llvm::IRBuilder<> &Builder2);
-
 // julia_decl null means not julia decl, otherwise it is the integer type needed
 // to cast to
 llvm::Value *to_blas_callconv(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,

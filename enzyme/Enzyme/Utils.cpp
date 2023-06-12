@@ -2092,6 +2092,11 @@ llvm::FastMathFlags getFast() {
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVector<llvm::Value *, 2> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, llvm::Twine name) {
+  if (!arg->getType()->isPointerTy()) {
+    assert(arg->getType() == ty);
+    cacheValues.push_back(arg);
+    return;
+  }
   if (!cache_arg)
     return;
   auto PT = cast<PointerType>(arg->getType());
@@ -2099,42 +2104,14 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
   if (PT->getElementType() != ty)
     arg = BuilderZ.CreatePointerCast(
         arg, PointerType::get(ty, PT->getAddressSpace()), "pcld." + name);
-#endif
-#if LLVM_VERSION_MAJOR > 7
-  arg = BuilderZ.CreateLoad(ty, arg, "avld." + name);
 #else
-  arg = BuilderZ.CreateLoad(arg, "avld." + name);
+  auto PT2 = PointerType::get(ty, PT->getAddressSpace());
+  if (!PT->isOpaqueOrPointeeTypeMatches(PT2))
+    arg = BuilderZ.CreatePointerCast(
+        arg, PointerType::get(ty, PT->getAddressSpace()), "pcld." + name);
 #endif
+  arg = BuilderZ.CreateLoad(ty, arg, "avld." + name);
   cacheValues.push_back(arg);
-}
-
-void extractValueFromCache(llvm::Value *arg, bool cache_arg,
-                           llvm::Value *true_arg, llvm::Type *ty,
-                           llvm::Value *cacheval, unsigned cacheidx,
-                           DerivativeMode Mode,
-                           llvm::IRBuilder<> &allocationBuilder,
-                           llvm::IRBuilder<> &Builder2) {
-  //  if (!cache_arg) {
-  //    if (Mode != DerivativeMode::ForwardModeSplit) {
-  //      true_arg = lookup(true_arg, Builder2);
-  //      // llvm::Value *lookup(llvm::Value *val, llvm::IRBuilder<> &Builder) {
-  //      //   return gutils->lookupM(val, Builder);
-  //      // }
-  //      arg = true_arg;
-  //    }
-  //    return;
-  //  }
-  //
-  //  // old: true_transa = (cacheTypes.size() == 1)
-  //  true_arg = (cacheval->getType()->isStructTy())
-  //                 ? Builder2.CreateExtractValue(cacheval, {cacheidx})
-  //                 : cacheval;
-  //
-  //  auto alloc = allocationBuilder.CreateAlloca(ty);
-  //  Builder2.CreateStore(true_arg, alloc);
-  //  true_arg = Builder2.CreatePointerCast(alloc, PointerType::getUnqual(ty));
-  //  // old: Builder2.CreatePointerCast(alloc,
-  //  call.getArgOperand(0)->getType()); arg = true_arg; cacheidx++;
 }
 
 // julia_decl null means not julia decl, otherwise it is the integer type needed
