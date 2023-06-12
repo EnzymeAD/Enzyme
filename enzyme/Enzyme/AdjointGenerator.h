@@ -3828,6 +3828,10 @@ public:
 #else
       case Intrinsic::experimental_vector_reduce_v2_fadd:
       case Intrinsic::experimental_vector_reduce_v2_fmul:
+#endif 
+#if LLVM_VERSION_MAJOR >= 15
+      case Intrinsic::minimum:
+      case Intrinsic::maximum:
 #endif
       case Intrinsic::sin:
       case Intrinsic::cos:
@@ -4041,6 +4045,9 @@ public:
       case Intrinsic::nvvm_fmax_f:
       case Intrinsic::nvvm_fmax_d:
       case Intrinsic::nvvm_fmax_ftz_f:
+#if LLVM_VERSION_MAJOR >= 10
+      case Intrinsic::maximum:
+#endif
       case Intrinsic::maxnum: {
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
           Value *cmp = Builder2.CreateFCmpOLT(
@@ -4113,6 +4120,9 @@ public:
       case Intrinsic::nvvm_fmin_f:
       case Intrinsic::nvvm_fmin_d:
       case Intrinsic::nvvm_fmin_ftz_f:
+#if LLVM_VERSION_MAJOR >= 15
+      case Intrinsic::minimum:
+#endif
       case Intrinsic::minnum: {
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
           Value *cmp = Builder2.CreateFCmpOLT(
@@ -4572,12 +4582,15 @@ public:
       case Intrinsic::nvvm_fmax_f:
       case Intrinsic::nvvm_fmax_d:
       case Intrinsic::nvvm_fmax_ftz_f:
+#if LLVM_VERSION_MAJOR >= 15
+      case Intrinsic::maximum:
+#endif
       case Intrinsic::maxnum: {
         if (gutils->isConstantInstruction(&I))
           return;
         Value *op0 = gutils->getNewFromOriginal(orig_ops[0]);
         Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
-        Value *cmp = Builder2.CreateFCmpOLT(op0, op1);
+        Value *cmp = Builder2.CreateFCmpOGT(op0, op1);
 
         Type *opType0 = gutils->getShadowType(orig_ops[0]->getType());
         Type *opType1 = gutils->getShadowType(orig_ops[1]->getType());
@@ -4644,6 +4657,9 @@ public:
       case Intrinsic::nvvm_fmin_f:
       case Intrinsic::nvvm_fmin_d:
       case Intrinsic::nvvm_fmin_ftz_f:
+#if LLVM_VERSION_MAJOR >= 15
+      case Intrinsic::minimum:
+#endif
       case Intrinsic::minnum: {
         if (gutils->isConstantInstruction(&I))
           return;
