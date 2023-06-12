@@ -111,9 +111,9 @@ def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   ["y"],[len, fp, vinc, vinc],
                   [
                   // dot must proceed scal, because scal modifies adj<"x">
-                  (b<"axpy"> $n, $alpha, adj<"x">, $incx, adj<"y">, $incy),
-                  (b<"scal"> $n, $alpha, adj<"x">, $incy),
-                  (noop) // y = (Ax) + y, so nothing to do here
+                  (inactive),
+                  (inactive),//(b<"scal"> $n, $alpha, adj<"x">, $incy),
+                  (inactive) // y = (Ax) + y, so nothing to do here
                   ]
                   >;
 
@@ -171,10 +171,10 @@ def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $
 def ger : CallBlasPattern<(Op $layout, $m, $n, $alpha, $x, $incx, $y, $incy, $A, $lda),
                   ["A"],[cblas_layout, len, len, fp, vinc, vinc, mld],
                   [
-                  (noop),
-                  (noop),
-                  (noop),
-                  (noop)
+                  (inactive),
+                  (inactive),
+                  (inactive),
+                  (inactive)
                   ]
                   >;
 //(ld $A, $transa, $lda, $m, $k)
