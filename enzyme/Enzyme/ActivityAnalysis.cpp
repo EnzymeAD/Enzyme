@@ -33,6 +33,9 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
+
+#include "llvm/ADT/STLExtras.h"
+
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"
@@ -499,7 +502,7 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
 /// that could impact the activity of the call instruction
 static inline void propagateArgumentInformation(
     TargetLibraryInfo &TLI, CallInst &CI,
-    std::function<bool(Value *)> propagateFromOperand) {
+    llvm::function_ref<bool(Value *)> propagateFromOperand) {
 
   // These functions are known to only have the first argument impact
   // the activity of the call instruction

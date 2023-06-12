@@ -38,6 +38,7 @@
 #include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Instructions.h"
@@ -427,6 +428,6 @@ InsertNewCanonicalIV(llvm::Loop *L, llvm::Type *Ty,
 void RemoveRedundantIVs(
     llvm::BasicBlock *Header, llvm::PHINode *CanonicalIV,
     llvm::Instruction *Increment, MustExitScalarEvolution &SE,
-    std::function<void(llvm::Instruction *, llvm::Value *)> replacer,
-    std::function<void(llvm::Instruction *)> eraser);
+    llvm::function_ref<void(llvm::Instruction *, llvm::Value *)> replacer,
+    llvm::function_ref<void(llvm::Instruction *)> eraser);
 #endif
