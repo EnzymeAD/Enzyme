@@ -1613,7 +1613,7 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
 llvm::Value *to_blas_callconv(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                               llvm::IntegerType *julia_decl,
                               llvm::IRBuilder<> &entryBuilder,
-                              llvm::Twine = "");
+                              llvm::Twine const & = "");
 
 llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
                                   llvm::Value *arg_ld, llvm::Value *dim_1,

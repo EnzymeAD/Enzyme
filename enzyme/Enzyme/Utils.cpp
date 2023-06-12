@@ -2119,7 +2119,8 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
 // to cast to
 llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
                               IntegerType *julia_decl,
-                              IRBuilder<> &entryBuilder, llvm::Twine name) {
+                              IRBuilder<> &entryBuilder,
+                              llvm::Twine const &name) {
   if (!byRef)
     return V;
 
