@@ -1286,13 +1286,15 @@ size_t fwd_call_args(TGPattern &pattern, size_t actArg,
         // coppied from vincInc, but should verify if actually needed
         result.append((Twine("arg_") + name).str());
     } else if (ty == cblas_layout) {
-      // TODO: based on byRef
+      // layout is only allowed as first type (which we skipped)
+      llvm::errs() << "name: " << name << " typename: " << ty
+                   << " only allowed as first arg!\n";
+      llvm_unreachable("layout only allowed as first type!\n");
     } else if (ty == trans || ty == diag || ty == uplo || ty == side){
         result.append((Twine("arg_") + name).str());
     } else {
-      // TODO: impl
-      // llvm::errs() << "name: " << name << " typename: " << ty << "\n";
-      // llvm_unreachable("unimplemented input type!");
+      llvm::errs() << "name: " << name << " typename: " << ty << "\n";
+      llvm_unreachable("unimplemented input type!\n");
     }
     pos++;
   }
@@ -1687,9 +1689,8 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg, raw_ostream &os
       } else if (ty == trans) {
         os << "arg_" << name;
       } else {
-        // TODO
-        // llvm::errs() << "name: " << name << " typename: " << ty <<
-        // "\n"; llvm_unreachable("unimplemented input type!");
+        llvm::errs() << "name: " << name << " typename: " << ty << "\n";
+        llvm_unreachable("unimplemented input type!\n");
       }
     }
     pos++;

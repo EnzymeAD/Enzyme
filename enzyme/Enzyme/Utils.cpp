@@ -791,8 +791,6 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
 #endif
   std::string name = "__enzyme_memcpy_" + tofltstr(elementType) + "_mat_" +
                      std::to_string(cast<IntegerType>(IT)->getBitWidth());
-  //"_da" + std::to_string(dstalign) + "sa" +
-  // std::to_string(srcalign) + "stride";
   FunctionType *FT = FunctionType::get(Type::getVoidTy(Mod.getContext()),
                                        {PT, PT, IT, IT, IT}, false);
 
