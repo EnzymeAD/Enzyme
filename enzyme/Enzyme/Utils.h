@@ -25,6 +25,7 @@
 #ifndef ENZYME_UTILS_H
 #define ENZYME_UTILS_H
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
 #include "llvm/Analysis/AliasAnalysis.h"
@@ -216,7 +217,7 @@ static inline std::string to_string(const std::set<T> &us) {
 template <typename T, typename N>
 static inline void dumpMap(
     const llvm::ValueMap<T, N> &o,
-    std::function<bool(const llvm::Value *)> shouldPrint = [](T) {
+    llvm::function_ref<bool(const llvm::Value *)> shouldPrint = [](T) {
       return true;
     }) {
   llvm::errs() << "<begin dump>\n";
@@ -702,8 +703,9 @@ static inline V *findInMap(std::map<K, V> &map, K key) {
 #include <functional>
 /// Call the function f for all instructions that happen after inst
 /// If the function returns true, the iteration will early exit
-static inline void allFollowersOf(llvm::Instruction *inst,
-                                  std::function<bool(llvm::Instruction *)> f) {
+static inline void
+allFollowersOf(llvm::Instruction *inst,
+               llvm::function_ref<bool(llvm::Instruction *)> f) {
 
   for (auto uinst = inst->getNextNode(); uinst != nullptr;
        uinst = uinst->getNextNode()) {
@@ -738,7 +740,7 @@ static inline void allFollowersOf(llvm::Instruction *inst,
 /// If the function returns true, the iteration will early exit
 static inline void
 allPredecessorsOf(llvm::Instruction *inst,
-                  std::function<bool(llvm::Instruction *)> f) {
+                  llvm::function_ref<bool(llvm::Instruction *)> f) {
 
   for (auto uinst = inst->getPrevNode(); uinst != nullptr;
        uinst = uinst->getPrevNode()) {
@@ -775,7 +777,7 @@ allPredecessorsOf(llvm::Instruction *inst,
 /// If the function returns true, the iteration will early exit
 static inline void
 allDomPredecessorsOf(llvm::Instruction *inst, llvm::DominatorTree &DT,
-                     std::function<bool(llvm::Instruction *)> f) {
+                     llvm::function_ref<bool(llvm::Instruction *)> f) {
 
   for (auto uinst = inst->getPrevNode(); uinst != nullptr;
        uinst = uinst->getPrevNode()) {
@@ -814,8 +816,8 @@ allDomPredecessorsOf(llvm::Instruction *inst, llvm::DominatorTree &DT,
 /// If the function returns true, the iteration will early exit
 static inline void
 allUnsyncdPredecessorsOf(llvm::Instruction *inst,
-                         std::function<bool(llvm::Instruction *)> f,
-                         std::function<void()> preEntry) {
+                         llvm::function_ref<bool(llvm::Instruction *)> f,
+                         llvm::function_ref<void()> preEntry) {
 
   for (auto uinst = inst->getPrevNode(); uinst != nullptr;
        uinst = uinst->getPrevNode()) {
@@ -915,7 +917,7 @@ static inline void
 /// If the function returns true, the iteration will early exit
 allInstructionsBetween(llvm::LoopInfo &LI, llvm::Instruction *inst1,
                        llvm::Instruction *inst2,
-                       std::function<bool(llvm::Instruction *)> f) {
+                       llvm::function_ref<bool(llvm::Instruction *)> f) {
   assert(inst1->getParent()->getParent() == inst2->getParent()->getParent());
   for (auto uinst = inst1->getNextNode(); uinst != nullptr;
        uinst = uinst->getNextNode()) {
