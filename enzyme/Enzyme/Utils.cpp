@@ -2145,7 +2145,8 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
 
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                        llvm::IntegerType *julia_decl,
-                       llvm::IRBuilder<> &entryBuilder, llvm::Twine name) {
+                       llvm::IRBuilder<> &entryBuilder,
+                       const llvm::Twine &name) {
 
   if (byRef) {
     auto charType = IntegerType::get(V->getContext(), 8);

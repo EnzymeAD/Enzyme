@@ -1603,7 +1603,7 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
 
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
-                     llvm::IRBuilder<> &BuilderZ, llvm::Twine = "");
+                     llvm::IRBuilder<> &BuilderZ, const llvm::Twine &name = "");
 
 // julia_decl null means not julia decl, otherwise it is the integer type needed
 // to cast to
