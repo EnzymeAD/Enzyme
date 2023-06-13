@@ -2100,6 +2100,15 @@ llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
 
   return allocV;
 }
+bool is_normal(IRBuilder<> &B, llvm::Value *trans) {
+  IntegerType *charType = IntegerType::get(trans->getContext(), 8);
+  llvm::Value *isNormal = B.CreateSelect(
+      B.CreateICmpEQ(trans, ConstantInt::get(charType, 'n')),
+      ConstantInt::get(charType, 1),
+      B.CreateSelect(B.CreateICmpEQ(trans, ConstantInt::get(charType, 'N')),
+                     ConstantInt::get(charType, 1), nullptr));
+  return isNormal;
+}
 
 llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
   Value *out = B.CreateSelect(
