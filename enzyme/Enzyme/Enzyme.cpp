@@ -636,12 +636,34 @@ public:
     bool returnUsed =
         !fn->getReturnType()->isVoidTy() && !fn->getReturnType()->isEmptyTy();
 
+    bool sret = CI->hasStructRetAttr() ||
+                fn->hasParamAttribute(0, Attribute::StructRet);
+
+#if LLVM_VERSION_MAJOR >= 14
+    for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
+#else
+    for (unsigned i = 1 + sret; i < CI->getNumArgOperands(); ++i)
+#endif
+    {
+      Value *res = CI->getArgOperand(i);
+      auto metaString = getMetadataName(res);
+      // handle metadata
+      if (metaString && metaString->startswith("enzyme_")) {
+        if (*metaString == "enzyme_const_return") {
+          retType = DIFFE_TYPE::CONSTANT;
+          continue;
+        } else if (*metaString == "enzyme_active_return") {
+          retType = DIFFE_TYPE::OUT_DIFF;
+          continue;
+        } else if (*metaString == "enzyme_dup_return") {
+          retType = DIFFE_TYPE::DUP_ARG;
+          continue;
+        }
+      }
+    }
     bool differentialReturn = (mode == DerivativeMode::ReverseModeCombined ||
                                mode == DerivativeMode::ReverseModeGradient) &&
                               (retType == DIFFE_TYPE::OUT_DIFF);
-
-    bool sret = CI->hasStructRetAttr() ||
-                fn->hasParamAttribute(0, Attribute::StructRet);
 
     // find and handle enzyme_width
     if (auto parsedWidth = parseWidthParameter(CI)) {
@@ -800,7 +822,12 @@ public:
           freeMemory = false;
           continue;
         } else if (*metaString == "enzyme_primal_return") {
-          primalReturn = true;
+          continue;
+        } else if (*metaString == "enzyme_const_return") {
+          continue;
+        } else if (*metaString == "enzyme_active_return") {
+          continue;
+        } else if (*metaString == "enzyme_dup_return") {
           continue;
         } else if (*metaString == "enzyme_width") {
           ++i;
