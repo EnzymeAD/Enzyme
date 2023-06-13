@@ -765,6 +765,387 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
   }
 }
 
+uint64_t getIFXMDArrayMaxRank() { return 15; }
+
+Type *getIFXMDArrayRankNType(LLVMContext &C, unsigned int rank) {
+  // IFX Standard currently only supports upto rank 15
+  assert(rank <= getIFXMDArrayMaxRank());
+
+  auto Int8PtrTy = Type::getInt8PtrTy(C);
+  auto Int64Ty = Type::getInt64Ty(C);
+  if (rank == 0) {
+    return StructType::get(
+        C, {Int8PtrTy, Int64Ty, Int64Ty, Int64Ty, Int64Ty, Int64Ty});
+  } else {
+    auto StructTy = StructType::get(C, {Int64Ty, Int64Ty, Int64Ty});
+    auto ArrayTy = ArrayType::get(StructTy, rank);
+    return StructType::get(
+        C, {Int8PtrTy, Int64Ty, Int64Ty, Int64Ty, Int64Ty, Int64Ty, ArrayTy});
+  }
+}
+
+Value *CreateConstInBoundsGEP_64_32(IRBuilder<> &B, Type *ty, Value *ptr,
+                                    uint64_t i, uint32_t j) {
+  return B.CreateInBoundsGEP(
+      ty, ptr,
+      {ConstantInt::get(Type::getInt64Ty(B.getContext()), i),
+       ConstantInt::get(Type::getInt32Ty(B.getContext()), j)});
+}
+
+// Get or insert a function for copying IFX multi-dimensional arrays. When the
+// shapes of the arrays don't match, the function copies only the region common
+// to both arrays. The function has the following prototype:
+// `void @__enzyme_ifx_mdarray_copy(i8* srcArray, i8* dstArray)`
+Function *getOrInsertIFXMDArrayCopy(LLVMContext &C, Module *M) {
+
+  auto MDArrayTy = getIFXMDArrayRankNType(C, 1);
+  assert(isa<StructType>(MDArrayTy));
+  auto Int64Ty = Type::getInt64Ty(C);
+  auto AxisInfoTy =
+      cast<StructType>(MDArrayTy)->getElementType(6)->getArrayElementType();
+
+  std::string name = "__enzyme_ifx_mdarray_copy";
+
+  Type *paramTys[] = {Type::getInt8PtrTy(C), Type::getInt8PtrTy(C)};
+
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(C), paramTys, false);
+
+  Function *F = cast<Function>(M->getOrInsertFunction(name, FT).getCallee());
+
+  if (!F->empty())
+    return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
+  F->addFnAttr(Attribute::ArgMemOnly);
+#endif
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addParamAttr(0, Attribute::NoCapture);
+  F->addParamAttr(0, Attribute::ReadOnly);
+  F->addParamAttr(1, Attribute::NoCapture);
+
+  auto CreateSimpleForLoop =
+      [](IRBuilder<> &B, BasicBlock *endBlock, Type *IntTy, Value *begin,
+         Value *end, Value *stride,
+         std::function<void(IRBuilder<> &, BasicBlock *, Value *)> createBody) {
+        auto currentBlock = B.GetInsertBlock();
+        auto F = currentBlock->getParent();
+
+        auto forBlock =
+            BasicBlock::Create(currentBlock->getContext(), "for", F, endBlock);
+        auto bodyBlock =
+            BasicBlock::Create(currentBlock->getContext(), "body", F, endBlock);
+        auto latchBlock = BasicBlock::Create(currentBlock->getContext(),
+                                             "latch", F, endBlock);
+
+        B.CreateBr(forBlock);
+        B.SetInsertPoint(forBlock);
+
+        auto i = B.CreatePHI(IntTy, 2);
+        i->addIncoming(begin, currentBlock);
+        auto cond = B.CreateICmpSLT(i, end);
+
+        B.CreateCondBr(cond, bodyBlock, endBlock);
+
+        B.SetInsertPoint(bodyBlock);
+
+        createBody(B, latchBlock, i);
+
+        B.SetInsertPoint(latchBlock);
+
+        auto inc = B.CreateAdd(i, stride);
+        i->addIncoming(inc, latchBlock);
+        B.CreateBr(forBlock);
+
+        B.SetInsertPoint(endBlock);
+      };
+
+  BasicBlock *allocaBlock = BasicBlock::Create(M->getContext(), "alloca", F);
+  BasicBlock *entryBlock = BasicBlock::Create(M->getContext(), "entry", F);
+
+  // Create alloca block builder
+  IRBuilder<> BA(allocaBlock);
+  BA.SetInsertPoint(allocaBlock);
+  auto branch = BA.CreateBr(entryBlock);
+  BA.SetInsertPoint(branch);
+
+  IRBuilder<> B(entryBlock);
+  B.SetInsertPoint(entryBlock);
+
+  Value *srcArrayPtr = F->getArg(0);
+  srcArrayPtr = B.CreateBitCast(srcArrayPtr, PointerType::getUnqual(MDArrayTy));
+  Value *dstArrayPtr = F->getArg(1);
+  dstArrayPtr = B.CreateBitCast(dstArrayPtr, PointerType::getUnqual(MDArrayTy));
+
+  auto ArrTy = ArrayType::get(Int64Ty, getIFXMDArrayMaxRank());
+  Value *commonDim;
+  AllocaInst *commonCoordAI;
+  AllocaInst *commonShapeAI;
+  AllocaInst *commonSizeAI;
+  // Set-Up: determine shape and size of the region common to both arrays
+  {
+    auto srcDim = CreateConstInBoundsGEP_64_32(B, MDArrayTy, srcArrayPtr, 0, 4);
+    srcDim = B.CreateLoad(Int64Ty, srcDim);
+
+    auto dstDim = CreateConstInBoundsGEP_64_32(B, MDArrayTy, dstArrayPtr, 0, 4);
+    dstDim = B.CreateLoad(Int64Ty, dstDim);
+
+    Value *ICmp = B.CreateICmpSLT(srcDim, dstDim);
+    commonDim = B.CreateSelect(ICmp, srcDim, dstDim, "smin");
+    commonCoordAI = BA.CreateAlloca(ArrTy);
+    commonShapeAI = BA.CreateAlloca(ArrTy);
+    commonSizeAI = BA.CreateAlloca(Type::getInt64Ty(C));
+    BA.CreateStore(ConstantInt::get(Int64Ty, 1), commonSizeAI);
+
+    auto int64TyNumBytes = M->getDataLayout().getTypeSizeInBits(Int64Ty) / 8;
+    auto numBytes =
+        B.CreateMul(commonDim, ConstantInt::get(Int64Ty, int64TyNumBytes));
+    auto flags = ConstantInt::get(Type::getInt32Ty(C), 262144);
+
+    auto endBlock = BasicBlock::Create(B.getContext(), "end", F);
+    CreateSimpleForLoop(
+        B, endBlock, Int64Ty, ConstantInt::get(Int64Ty, 0), commonDim,
+        ConstantInt::get(Int64Ty, 1),
+        [&](IRBuilder<> &B, BasicBlock *latchBlock, Value *idx) {
+          auto Int32Ty = Type::getInt32Ty(C);
+          auto srcAxisInfoPtr = B.CreateInBoundsGEP(
+              MDArrayTy, srcArrayPtr,
+              {ConstantInt::get(Int64Ty, 0), ConstantInt::get(Int32Ty, 6),
+               ConstantInt::get(Int32Ty, 0)});
+          auto srcAxisSizePtr = B.CreateGEP(
+              AxisInfoTy, srcAxisInfoPtr, {idx, ConstantInt::get(Int32Ty, 0)});
+          auto srcAxisSize = B.CreateLoad(Int64Ty, srcAxisSizePtr);
+
+          auto dstAxisInfoPtr = B.CreateInBoundsGEP(
+              MDArrayTy, dstArrayPtr,
+              {ConstantInt::get(Int64Ty, 0), ConstantInt::get(Int32Ty, 6),
+               ConstantInt::get(Int32Ty, 0)});
+          auto dstAxisSizePtr = B.CreateGEP(
+              AxisInfoTy, dstAxisInfoPtr, {idx, ConstantInt::get(Int32Ty, 0)});
+          auto dstAxisSize = B.CreateLoad(Int64Ty, dstAxisSizePtr);
+
+          Value *ICmp = B.CreateICmpSLT(srcAxisSize, dstAxisSize);
+          auto commonAxisSize =
+              B.CreateSelect(ICmp, srcAxisSize, dstAxisSize, "smin");
+
+          auto commonShapePtr = B.CreateInBoundsGEP(
+              ArrTy, commonShapeAI, {ConstantInt::get(Int64Ty, 0), idx});
+          B.CreateStore(commonAxisSize, commonShapePtr);
+
+          Value *currentSize = B.CreateLoad(Int64Ty, commonSizeAI);
+          currentSize = B.CreateMul(currentSize, commonAxisSize);
+          B.CreateStore(currentSize, commonSizeAI);
+
+          B.CreateBr(latchBlock);
+        });
+    B.SetInsertPoint(endBlock);
+  }
+
+  // copy: copy the common region of the src to the dst array
+  {
+    auto outerEntryBlock = B.GetInsertBlock();
+    auto outerForBlock =
+        BasicBlock::Create(outerEntryBlock->getContext(), "for", F);
+    auto outerBodyBlock =
+        BasicBlock::Create(outerEntryBlock->getContext(), "body", F);
+    auto outerLatchBlock =
+        BasicBlock::Create(outerEntryBlock->getContext(), "latch", F);
+    auto outerEndBlock =
+        BasicBlock::Create(outerEntryBlock->getContext(), "end", F);
+
+    auto commonShapePtr = B.CreateInBoundsGEP(
+        ArrTy, commonShapeAI,
+        {ConstantInt::get(Int64Ty, 0), ConstantInt::get(Int64Ty, 0)});
+    auto commonAxis0Size = B.CreateLoad(Int64Ty, commonShapePtr);
+
+    auto commonSize = B.CreateLoad(Int64Ty, commonSizeAI);
+
+    B.CreateBr(outerForBlock);
+    B.SetInsertPoint(outerForBlock);
+
+    auto i = B.CreatePHI(Int64Ty, 2);
+    i->addIncoming(ConstantInt::get(Int64Ty, 0), outerEntryBlock);
+    auto cond = B.CreateICmpSLT(i, commonSize);
+
+    B.CreateCondBr(cond, outerBodyBlock, outerEndBlock);
+    B.SetInsertPoint(outerBodyBlock);
+
+    // indexToCoord: map an index on the common region to a coordinate
+    {
+      auto tempSizeAI = BA.CreateAlloca(Int64Ty);
+      B.CreateStore(commonSize, tempSizeAI);
+      auto tempIdxAI = BA.CreateAlloca(Int64Ty);
+      B.CreateStore(i, tempIdxAI);
+
+      // body
+      auto endBlock = BasicBlock::Create(outerEntryBlock->getContext(), "end",
+                                         F, outerLatchBlock);
+      CreateSimpleForLoop(
+          B, endBlock, Int64Ty, ConstantInt::get(Int64Ty, 0), commonDim,
+          ConstantInt::get(Int64Ty, 1),
+          [&](IRBuilder<> &B, BasicBlock *latchBlock, Value *idx) {
+            auto elementIdx = B.CreateSub(commonDim, idx);
+            elementIdx = B.CreateSub(elementIdx, ConstantInt::get(Int64Ty, 1));
+            auto commonShapePtr =
+                B.CreateInBoundsGEP(ArrTy, commonShapeAI,
+                                    {ConstantInt::get(Int64Ty, 0), elementIdx});
+            auto tempSize = B.CreateLoad(Int64Ty, tempSizeAI);
+            auto div1 =
+                B.CreateSDiv(tempSize, B.CreateLoad(Int64Ty, commonShapePtr));
+            B.CreateStore(div1, tempSizeAI);
+
+            Value *tempIdx = B.CreateLoad(Int64Ty, tempIdxAI);
+            tempSize = B.CreateLoad(Int64Ty, tempSizeAI);
+            auto coord = B.CreateSDiv(tempIdx, tempSize);
+
+            auto commonCoordPtr =
+                B.CreateInBoundsGEP(ArrTy, commonCoordAI,
+                                    {ConstantInt::get(Int64Ty, 0), elementIdx});
+            B.CreateStore(coord, commonCoordPtr);
+
+            tempIdx = B.CreateSub(tempIdx, B.CreateMul(coord, tempSize));
+            B.CreateStore(tempIdx, tempIdxAI);
+
+            B.CreateBr(latchBlock);
+          });
+
+      B.SetInsertPoint(endBlock);
+    }
+
+    Value *srcIdx;
+    // zetCoordToIndex: map a coordinate on the common region to an index of the
+    // src array
+    {
+      auto srcIdxAI = BA.CreateAlloca(Int64Ty);
+      B.CreateStore(ConstantInt::get(Int64Ty, 0), srcIdxAI);
+      auto tempSizeAI = BA.CreateAlloca(Int64Ty);
+      B.CreateStore(ConstantInt::get(Int64Ty, 1), tempSizeAI);
+
+      auto endBlock = BasicBlock::Create(outerEntryBlock->getContext(), "end",
+                                         F, outerLatchBlock);
+      CreateSimpleForLoop(
+          B, endBlock, Int64Ty, ConstantInt::get(Int64Ty, 0), commonDim,
+          ConstantInt::get(Int64Ty, 1),
+          [&](IRBuilder<> &B, BasicBlock *latchBlock, Value *idx) {
+            auto commonCoordPtr = B.CreateInBoundsGEP(
+                ArrTy, commonCoordAI, {ConstantInt::get(Int64Ty, 0), idx});
+            auto commonCoord = B.CreateLoad(Int64Ty, commonCoordPtr);
+            auto tempSize = B.CreateLoad(Int64Ty, tempSizeAI);
+            srcIdx = B.CreateLoad(Int64Ty, srcIdxAI);
+            srcIdx = B.CreateAdd(srcIdx, B.CreateMul(commonCoord, tempSize));
+            B.CreateStore(srcIdx, srcIdxAI);
+
+            auto Int32Ty = Type::getInt32Ty(C);
+            auto srcAxisInfoPtr = B.CreateInBoundsGEP(
+                MDArrayTy, srcArrayPtr,
+                {ConstantInt::get(Int32Ty, 0), ConstantInt::get(Int32Ty, 6),
+                 ConstantInt::get(Int32Ty, 0)});
+            auto srcAxisSizePtr =
+                B.CreateGEP(AxisInfoTy, srcAxisInfoPtr,
+                            {idx, ConstantInt::get(Int32Ty, 0)});
+
+            auto srcAxisSize = B.CreateLoad(Int64Ty, srcAxisSizePtr);
+
+            B.CreateStore(B.CreateMul(tempSize, srcAxisSize), tempSizeAI);
+
+            B.CreateBr(latchBlock);
+          });
+
+      B.SetInsertPoint(endBlock);
+      srcIdx = B.CreateLoad(Int64Ty, srcIdxAI);
+    }
+
+    Value *dstIdx;
+    // zetCoordToIndex: map a coordinate on the common region to an index of the
+    // dst array
+    {
+      auto dstIdxAI = BA.CreateAlloca(Int64Ty);
+      B.CreateStore(ConstantInt::get(Int64Ty, 0), dstIdxAI);
+      auto tempSizeAI = BA.CreateAlloca(Int64Ty);
+      B.CreateStore(ConstantInt::get(Int64Ty, 1), tempSizeAI);
+
+      auto endBlock = BasicBlock::Create(outerEntryBlock->getContext(), "end",
+                                         F, outerLatchBlock);
+      CreateSimpleForLoop(
+          B, endBlock, Int64Ty, ConstantInt::get(Int64Ty, 0), commonDim,
+          ConstantInt::get(Int64Ty, 1),
+          [&](IRBuilder<> &B, BasicBlock *latchBlock, Value *idx) {
+            auto commonCoordPtr = B.CreateInBoundsGEP(
+                ArrTy, commonCoordAI, {ConstantInt::get(Int64Ty, 0), idx});
+            Value *commonCoord = B.CreateLoad(Int64Ty, commonCoordPtr);
+            Value *tempSize = B.CreateLoad(Int64Ty, tempSizeAI);
+            dstIdx = B.CreateLoad(Int64Ty, dstIdxAI);
+            dstIdx = B.CreateAdd(dstIdx, B.CreateMul(commonCoord, tempSize));
+            B.CreateStore(dstIdx, dstIdxAI);
+
+            auto Int32Ty = Type::getInt32Ty(C);
+            auto dstAxisInfoPtr = B.CreateInBoundsGEP(
+                MDArrayTy, dstArrayPtr,
+                {ConstantInt::get(Int32Ty, 0), ConstantInt::get(Int32Ty, 6),
+                 ConstantInt::get(Int32Ty, 0)});
+            auto dstAxisSizePtr =
+                B.CreateGEP(AxisInfoTy, dstAxisInfoPtr,
+                            {idx, ConstantInt::get(Int32Ty, 0)});
+            auto dstAxisSize = B.CreateLoad(Int64Ty, dstAxisSizePtr);
+
+            B.CreateStore(B.CreateMul(tempSize, dstAxisSize), tempSizeAI);
+
+            B.CreateBr(latchBlock);
+          });
+
+      B.SetInsertPoint(endBlock);
+      dstIdx = B.CreateLoad(Int64Ty, dstIdxAI);
+    }
+
+    // memcpy: copy a contiguous block of memory from the src to the dst array
+    {
+      auto Int32Ty = Type::getInt32Ty(C);
+      auto addrLenPtr =
+          B.CreateConstInBoundsGEP2_32(MDArrayTy, srcArrayPtr, 0, 1);
+      Value *addrLen = B.CreateLoad(Int64Ty, addrLenPtr);
+      auto byteCount = B.CreateMul(commonAxis0Size, addrLen);
+      auto srcByteOffset = B.CreateMul(addrLen, srcIdx);
+      auto dstByteOffset = B.CreateMul(addrLen, dstIdx);
+
+      auto srcDataPtr =
+          B.CreateConstInBoundsGEP2_32(MDArrayTy, srcArrayPtr, 0, 0);
+      srcDataPtr = B.CreateLoad(Type::getInt8PtrTy(C), srcDataPtr);
+      srcDataPtr = B.CreateGEP(Type::getInt8Ty(C), srcDataPtr, {srcByteOffset});
+
+      auto dstDataPtr =
+          B.CreateConstInBoundsGEP2_32(MDArrayTy, dstArrayPtr, 0, 0);
+      dstDataPtr = B.CreateLoad(Type::getInt8PtrTy(C), dstDataPtr);
+      dstDataPtr = B.CreateGEP(Type::getInt8Ty(C), dstDataPtr, {dstByteOffset});
+
+      auto volatile_arg = ConstantInt::getFalse(C);
+      Value *nargs[] = {dstDataPtr, srcDataPtr, byteCount, volatile_arg};
+      Type *tys[] = {Type::getInt8PtrTy(C), Type::getInt8PtrTy(C),
+                     byteCount->getType()};
+
+      auto memcpyF = Intrinsic::getDeclaration(M, Intrinsic::memcpy, tys);
+
+      auto mem = cast<CallInst>(B.CreateCall(memcpyF, nargs));
+      mem->setCallingConv(memcpyF->getCallingConv());
+
+      B.CreateBr(outerLatchBlock);
+    }
+
+    B.SetInsertPoint(outerLatchBlock);
+
+    auto inc = B.CreateAdd(i, commonAxis0Size);
+    i->addIncoming(inc, outerLatchBlock);
+    B.CreateBr(outerForBlock);
+
+    B.SetInsertPoint(outerEndBlock);
+  }
+
+  B.CreateRetVoid();
+
+  return F;
+}
+
 /// Calls to realloc with an appropriate implementation
 void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
   if (mem2reg) {
