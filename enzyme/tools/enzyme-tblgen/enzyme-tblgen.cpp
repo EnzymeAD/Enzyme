@@ -1045,7 +1045,7 @@ void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
      << "    julia_decl_type = intType;\n";
 }
 
-void extract_scalar(std::string name, std::string elemTy, raw_ostream &os) {
+void extract_scalar(StringRef name, StringRef elemTy, raw_ostream &os) {
   os << "      if (cache_" << name << ") {\n"
      << "        arg_" << name << " = (cacheTypes.size() == 1)\n"
      << "                    ? cacheval\n"
@@ -1061,7 +1061,7 @@ void extract_scalar(std::string name, std::string elemTy, raw_ostream &os) {
      << "\n";
 }
 
-void extract_mat_or_vec(std::string name, raw_ostream &os) {
+void extract_mat_or_vec(StringRef name, raw_ostream &os) {
   os << "      if (cache_" << name << ") {\n"
      << "        arg_" << name << " = (cacheTypes.size() == 1)\n"
      << "                    ? cacheval\n"
