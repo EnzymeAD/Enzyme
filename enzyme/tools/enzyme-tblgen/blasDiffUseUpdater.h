@@ -52,16 +52,16 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
   // once fixed we can merge this calls
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
-    if (ty != vincData)
+    if (ty != argType::vincData)
       continue;
-    assert(typeMap.lookup(i + 1) == vincInc);
+    assert(typeMap.lookup(i + 1) == argType::vincInc);
     emit_mat_vec_caching(pattern, i, os);
   }
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
-    if (ty != mldData)
+    if (ty != argType::mldData)
       continue;
-    assert(typeMap.lookup(i + 1) == mldLD);
+    assert(typeMap.lookup(i + 1) == argType::mldLD);
     emit_mat_vec_caching(pattern, i, os);
   }
 

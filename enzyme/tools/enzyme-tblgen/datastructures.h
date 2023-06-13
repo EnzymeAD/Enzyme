@@ -14,7 +14,6 @@
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
 
-using namespace llvm;
 
 enum class argType {
   fp,
@@ -30,33 +29,37 @@ enum class argType {
   diag,
   side
 };
+namespace llvm {
+raw_ostream &operator<<(raw_ostream &os, const argType &arg);
+}
+using namespace llvm;
 
 const char *TyToString(argType ty);
 
 bool isArgUsed(const StringRef toFind, const DagInit *toSearch);
 
-// Subset of the general pattern info, 
+// Subset of the general pattern info,
 // but only the part that affects the specific argument being active.
 class Rule {
-  private: 
-    DagInit *rewriteRule;
-    // which argument from the primary function do we handle here?
-    size_t activeArg;
-    StringMap<size_t> argNameToPos;
-    DenseMap<size_t, argType> argTypes;
-    DenseSet<size_t> mutables;
-    bool BLASLevel2or3;
+private:
+  DagInit *rewriteRule;
+  // which argument from the primary function do we handle here?
+  size_t activeArg;
+  StringMap<size_t> argNameToPos;
+  DenseMap<size_t, argType> argTypes;
+  DenseSet<size_t> mutables;
+  bool BLASLevel2or3;
 
-  public:
-    Rule(DagInit *dag, size_t activeArgIdx, StringMap<size_t> &patternArgs,
-         DenseMap<size_t, argType> &patternTypes,
-         DenseSet<size_t> &patternMutables);
-    bool isBLASLevel2or3();
-    DagInit *getRuleDag();
-    size_t getHandledArgIdx();
-    StringMap<size_t> getArgNameMap();
-    DenseMap<size_t, argType> getArgTypeMap();
-    std::string to_string();
+public:
+  Rule(DagInit *dag, size_t activeArgIdx, StringMap<size_t> &patternArgs,
+       DenseMap<size_t, argType> &patternTypes,
+       DenseSet<size_t> &patternMutables);
+  bool isBLASLevel2or3();
+  DagInit *getRuleDag();
+  size_t getHandledArgIdx();
+  StringMap<size_t> getArgNameMap();
+  DenseMap<size_t, argType> getArgTypeMap();
+  std::string to_string();
 };
 
 void fillActiveArgSet(const Record *pattern,
@@ -66,12 +69,12 @@ void fillMutableArgSet(const Record *pattern, DenseSet<size_t> &mutables);
 
 void fillArgTypes(const Record *pattern, DenseMap<size_t, argType> &argTypes);
 
-void fillArgs(const Record *r, SmallVector<std::string, 6> &args,
+void fillArgs(const Record *r, SmallVectorImpl<std::string> &args,
               StringMap<size_t> &argNameToPos);
 
-void fillArgUserMap(SmallVector<Rule, 3> &rules,
-                    llvm::ArrayRef<StringRef> nameVec,
-                    llvm::ArrayRef<size_t> activeArgs,
+void fillArgUserMap(SmallVectorImpl<Rule> &rules, ArrayRef<std::string> nameVec,
+                    // ArrayRef<StringRef> nameVec,
+                    ArrayRef<size_t> activeArgs,
                     DenseMap<size_t, DenseSet<size_t>> &argUsers);
 
 // A single Blas function, including replacement rules. E.g. scal, axpy, ...

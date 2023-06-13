@@ -12,31 +12,38 @@
 
 #include "datastructures.h"
 
+namespace llvm {
+// llvm::raw_ostream &llvm::operator<<(llvm::raw_ostream &os, const argType
+// &arg) {
+raw_ostream &operator<<(raw_ostream &os, const argType &arg) {
+  return (os << TyToString(arg));
+}
+} // namespace llvm
 using namespace llvm;
 
 const char *TyToString(argType ty) {
   switch (ty) {
-  case fp:
+  case argType::fp:
     return "fp";
-  case len:
+  case argType::len:
     return "len";
-  case vincData:
+  case argType::vincData:
     return "vincData";
-  case vincInc:
+  case argType::vincInc:
     return "vincInc";
-  case cblas_layout:
+  case argType::cblas_layout:
     return "layout";
-  case mldData:
+  case argType::mldData:
     return "mldData";
-  case mldLD:
+  case argType::mldLD:
     return "mldLD";
-  case uplo:
+  case argType::uplo:
     return "uplo";
-  case trans:
+  case argType::trans:
     return "trans";
-  case diag:
+  case argType::diag:
     return "diag";
-  case side:
+  case argType::side:
     return "side";
   default:
     return "unknown";
@@ -125,7 +132,6 @@ std::string Rule::to_string() {
   std::string res = "handling rule for argument ";
   res += std::to_string(activeArg);
   res += " with " + std::to_string(argTypes.size()) + " types: \n";
-  bool first = true;
   for (size_t i = 0; i < argTypes.size(); i++) {
     auto ty = argTypes.lookup(i);
     res += (i > 0) ? ", " : "";
@@ -133,7 +139,6 @@ std::string Rule::to_string() {
   }
   return res;
 }
-//};
 
 void fillActiveArgSet(const Record *pattern,
                       SmallVector<size_t, 4> &activeArgs) {
@@ -217,8 +222,8 @@ void fillArgs(const Record *r, SmallVectorImpl<std::string> &args,
   assert(argNameToPos.size() == numArgs);
 }
 
-void fillArgUserMap(SmallVectorImpl<Rule> &rules,
-                    ArrayRef<StringRef> nameVec,
+void fillArgUserMap(SmallVectorImpl<Rule> &rules, ArrayRef<std::string> nameVec,
+                    // ArrayRef<StringRef> nameVec,
                     ArrayRef<size_t> activeArgs,
                     DenseMap<size_t, DenseSet<size_t>> &argUsers) {
 
@@ -240,7 +245,7 @@ void fillArgUserMap(SmallVectorImpl<Rule> &rules,
 TGPattern::TGPattern(Record &r) {
   blasName = r.getNameInitAsString();
 
-  args = llvm::SmallVector<std::string, 6>();
+  args = llvm::SmallVector<std::string>();
   argNameToPos = StringMap<size_t>{};
   fillArgs(&r, args, argNameToPos);
 
@@ -271,7 +276,10 @@ TGPattern::TGPattern(Record &r) {
   }
 
   argUsers = DenseMap<size_t, DenseSet<size_t>>();
-  fillArgUserMap(rules, args, posActArgs, argUsers);
+  ArrayRef<std::string> nameVec =
+      ArrayRef<std::string>(args.begin(), args.end());
+  fillArgUserMap(rules, nameVec, posActArgs, argUsers);
+  // fillArgUserMap(rules, ArrayRef(args), posActArgs, argUsers);
 }
 SmallVector<size_t, 2> TGPattern::getRelatedLengthArgs(size_t arg) {
   if (!BLASLevel2or3) {
