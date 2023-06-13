@@ -1620,7 +1620,7 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V);
 // secon one assume V is an Integer or a ptr to an int (depends on byRef)
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                        llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder,
-                       llvm::Twine name);
+                       const llvm::Twine &name);
 llvm::Value *get_blas_row(llvm::IRBuilder<> &B, llvm::Value *trans,
                           llvm::Value *row, llvm::Value *col, bool byRef);
 

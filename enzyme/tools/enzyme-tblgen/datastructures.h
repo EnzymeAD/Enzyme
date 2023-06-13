@@ -16,7 +16,7 @@
 
 using namespace llvm;
 
-enum argType {
+enum class argType {
   fp,
   len,
   vincData,
@@ -60,7 +60,7 @@ class Rule {
 };
 
 void fillActiveArgSet(const Record *pattern,
-                      SmallVector<size_t, 4> &activeArgs);
+                      SmallVectorImpl<size_t> &activeArgs);
 
 void fillMutableArgSet(const Record *pattern, DenseSet<size_t> &mutables);
 
@@ -70,8 +70,8 @@ void fillArgs(const Record *r, SmallVector<std::string, 6> &args,
               StringMap<size_t> &argNameToPos);
 
 void fillArgUserMap(SmallVector<Rule, 3> &rules,
-                    const SmallVector<std::string, 6> &nameVec,
-                    const SmallVector<size_t, 4> &activeArgs,
+                    llvm::ArrayRef<StringRef> nameVec,
+                    llvm::ArrayRef<size_t> activeArgs,
                     DenseMap<size_t, DenseSet<size_t>> &argUsers);
 
 // A single Blas function, including replacement rules. E.g. scal, axpy, ...

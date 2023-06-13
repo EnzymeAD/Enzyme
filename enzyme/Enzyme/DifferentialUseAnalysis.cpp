@@ -379,7 +379,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     auto Mode = gutils->mode;
     const bool cacheMode = (Mode != DerivativeMode::ForwardMode);
 
-    auto funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
+    auto funcName = getFuncNameFromCall(CI);
     auto blasMetaData = extractBLAS(funcName);
 #if LLVM_VERSION_MAJOR >= 16
     if (blasMetaData.has_value())

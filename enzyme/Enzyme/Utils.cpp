@@ -2058,7 +2058,7 @@ llvm::FastMathFlags getFast() {
 
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
-                     llvm::IRBuilder<> &BuilderZ, llvm::Twine name) {
+                     llvm::IRBuilder<> &BuilderZ, const Twine &name) {
   if (!arg->getType()->isPointerTy()) {
     assert(arg->getType() == ty);
     cacheValues.push_back(arg);

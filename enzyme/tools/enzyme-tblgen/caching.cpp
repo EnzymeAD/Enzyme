@@ -284,7 +284,7 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
 << "      cacheval = cacheValues[0];\n"
 << "    } else {\n"
 << "      cacheval = UndefValue::get(cachetype);\n"
-<< "      for (auto tup : llvm::enumerate(cacheValues))\n"
+<< "      for (auto&& tup : llvm::enumerate(cacheValues))\n"
 << "        cacheval = BuilderZ.CreateInsertValue(cacheval, tup.value(), tup.index());\n"
 << "    }\n"
 << "    gutils->cacheForReverse(BuilderZ, cacheval,\n"
@@ -371,7 +371,7 @@ void emit_caching(TGPattern &pattern, raw_ostream &os) {
     emit_mat_vec_caching(pattern, i, os);
   }
 
-  for (auto actEn : llvm::enumerate(actArgs)) {
+  for (auto&& actEn : llvm::enumerate(actArgs)) {
     if (typeMap.lookup(actEn.value()) == fp) continue;
     auto name = nameVec[actEn.value()];
     os 
