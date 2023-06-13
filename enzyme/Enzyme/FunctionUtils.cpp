@@ -792,6 +792,88 @@ Value *CreateConstInBoundsGEP_64_32(IRBuilder<> &B, Type *ty, Value *ptr,
        ConstantInt::get(Type::getInt32Ty(B.getContext()), j)});
 }
 
+// Get or insert a function for computing the size of IFX multi-dimensional
+// arrays. Here, we use size to me the total number of elements in the array.
+// The function has the following prototype:
+// `i64 @__enzyme_ifx_mdarray_size(i8* srcArray)`
+Function *getOrInsertIFXMDArraySize(LLVMContext &C, Module *M) {
+
+  auto MDArrayTy = getIFXMDArrayRankNType(C, 1);
+  auto Int64Ty = Type::getInt64Ty(C);
+  auto Int32Ty = Type::getInt32Ty(C);
+  auto AxisInfoTy =
+      cast<StructType>(MDArrayTy)->getElementType(6)->getArrayElementType();
+
+  std::string name = "__enzyme_ifx_mdarray_size";
+
+  Type *paramTys[] = {Type::getInt8PtrTy(C)};
+
+  FunctionType *FT = FunctionType::get(Type::getInt64Ty(C), paramTys, false);
+
+  Function *F = cast<Function>(M->getOrInsertFunction(name, FT).getCallee());
+
+  if (!F->empty())
+    return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
+  F->addFnAttr(Attribute::ArgMemOnly);
+#endif
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addParamAttr(0, Attribute::NoCapture);
+  F->addParamAttr(0, Attribute::ReadOnly);
+
+  auto allocaBlock = BasicBlock::Create(C, "alloca", F);
+  auto entryBlock = BasicBlock::Create(C, "entry", F);
+  auto loopBlock = BasicBlock::Create(C, "loop", F);
+  auto endBlock = BasicBlock::Create(C, "end", F);
+
+  IRBuilder<> B(allocaBlock);
+  AllocaInst *sizeAI = B.CreateAlloca(Int64Ty);
+  B.CreateStore(ConstantInt::get(Int64Ty, 1), sizeAI);
+
+  B.CreateBr(entryBlock);
+  B.SetInsertPoint(entryBlock);
+
+  Value *arrayPtr = F->getArg(0);
+  arrayPtr = B.CreateBitCast(arrayPtr, PointerType::getUnqual(MDArrayTy));
+
+  auto dimPtr = CreateConstInBoundsGEP_64_32(B, MDArrayTy, arrayPtr, 0, 4);
+  auto dim = B.CreateLoad(Int64Ty, dimPtr);
+  auto entryCond = B.CreateICmpSGT(dim, ConstantInt::get(Int64Ty, 0));
+
+  B.CreateCondBr(entryCond, loopBlock, endBlock);
+  B.SetInsertPoint(loopBlock);
+
+  auto idx = B.CreatePHI(Int64Ty, 2);
+  idx->addIncoming(ConstantInt::get(Int64Ty, 0), entryBlock);
+
+  auto axisInfoPtr = B.CreateInBoundsGEP(MDArrayTy, arrayPtr,
+                                         {ConstantInt::get(Int32Ty, 0),
+                                          ConstantInt::get(Int32Ty, 6),
+                                          ConstantInt::get(Int32Ty, 0)});
+  auto axisSizePtr =
+      B.CreateGEP(AxisInfoTy, axisInfoPtr, {idx, ConstantInt::get(Int32Ty, 0)});
+  auto axisSize = B.CreateLoad(Int64Ty, axisSizePtr);
+
+  auto size = B.CreateLoad(Int64Ty, sizeAI);
+  B.CreateStore(B.CreateMul(axisSize, size), sizeAI);
+
+  auto inc = B.CreateAdd(idx, ConstantInt::get(Int64Ty, 1));
+  idx->addIncoming(inc, loopBlock);
+  auto loopCond = B.CreateICmpSLT(inc, dim);
+
+  B.CreateCondBr(loopCond, loopBlock, endBlock);
+  B.SetInsertPoint(endBlock);
+
+  size = B.CreateLoad(Int64Ty, sizeAI);
+  B.CreateRet(size);
+
+  return F;
+}
+
 // Get or insert a function for copying IFX multi-dimensional arrays. When the
 // shapes of the arrays don't match, the function copies only the region common
 // to both arrays. The function has the following prototype:
