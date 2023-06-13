@@ -2118,6 +2118,7 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
   return out;
 }
 
+// Implement the following logic to get the width of a matrix
 // if (cache_A) {
 //   ld_A = (arg_transa == 'N') ? arg_m : arg_k;
 // } else {

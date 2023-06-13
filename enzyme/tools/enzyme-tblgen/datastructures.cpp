@@ -245,7 +245,7 @@ void fillArgUserMap(SmallVectorImpl<Rule> &rules, ArrayRef<std::string> nameVec,
 TGPattern::TGPattern(Record &r) {
   blasName = r.getNameInitAsString();
 
-  args = llvm::SmallVector<std::string>();
+  args = llvm::SmallVector<std::string, 6>();
   argNameToPos = StringMap<size_t>{};
   fillArgs(&r, args, argNameToPos);
 
