@@ -2371,16 +2371,36 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           if (dl.getTypeSizeInBits(FT) != dl.getTypeSizeInBits(CIT->getType()))
             continue;
           auto CI = CIT->getValue();
-          if (CI.isNullValue()) {
+#if LLVM_VERSION_MAJOR > 16
+          if (CI.isZero())
+#else
+          if (CI.isNullValue())
+#endif
+          {
             validXor = true;
           } else if (
-              !CI.isNegative() &&
-              ((FT->isFloatTy() &&
-                (CI & ~0b01111111100000000000000000000000ULL).isNullValue()) ||
-               (FT->isDoubleTy() &&
-                (CI &
-                 ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
-                    .isNullValue()))) {
+              !CI.isNegative()(
+                  (FT->isFloatTy()
+#if LLVM_VERSION_MAJOR > 16
+                   && (CI & ~0b01111111100000000000000000000000ULL).isZero()
+#else
+                   &&
+                   (CI & ~0b01111111100000000000000000000000ULL).isNullValue()
+#endif
+                       ) ||
+                  (FT->isDoubleTy()
+#if LLVM_VERSION_MAJOR > 16
+                   &&
+                   (CI &
+                    ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                       .isZero()
+#else
+                   &&
+                   (CI &
+                    ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                       .isNullValue()
+#endif
+                       ))) {
             validXor = true;
           }
         } else if (auto CV = dyn_cast_or_null<ConstantVector>(Args[i])) {
@@ -2390,16 +2410,36 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
             continue;
           for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
             auto CI = dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
-            if (CI.isNullValue()) {
+
+#if LLVM_VERSION_MAJOR > 16
+            if (CI.isZero())
+#else
+            if (CI.isNullValue())
+#endif
+            {
             } else if (
-                !CI.isNegative() &&
-                ((FT->isFloatTy() &&
-                  (CI & ~0b01111111100000000000000000000000ULL)
-                      .isNullValue()) ||
-                 (FT->isDoubleTy() &&
-                  (CI &
-                   ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
-                      .isNullValue()))) {
+                !CI.isNegative()(
+                    (FT->isFloatTy()
+#if LLVM_VERSION_MAJOR > 16
+                     && (CI & ~0b01111111100000000000000000000000ULL).isZero()
+#else
+                     &&
+                     (CI & ~0b01111111100000000000000000000000ULL).isNullValue()
+#endif
+                         ) ||
+                    (FT->isDoubleTy()
+#if LLVM_VERSION_MAJOR > 16
+                     &&
+                     (CI &
+                      ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                         .isZero()
+#else
+                     &&
+                     (CI &
+                      ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                         .isNullValue()
+#endif
+                         ))) {
             } else
               validXor = false;
           }
@@ -2410,16 +2450,34 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
             continue;
           for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
             auto CI = CV->getElementAsAPInt(i);
-            if (CI.isNullValue()) {
+#if LLVM_VERSION_MAJOR > 16
+            if (CI.isZero())
+#else
+            if (CI.isNullValue())
+#endif
+            {
             } else if (
                 !CI.isNegative() &&
-                ((FT->isFloatTy() &&
-                  (CI & ~0b01111111100000000000000000000000ULL)
-                      .isNullValue()) ||
-                 (FT->isDoubleTy() &&
+                ((FT->isFloatTy()
+#if LLVM_VERSION_MAJOR > 16
+                  && (CI & ~0b01111111100000000000000000000000ULL).isZero()
+#else
+                  && (CI & ~0b01111111100000000000000000000000ULL).isNullValue()
+#endif
+                      ) ||
+                 (FT->isDoubleTy()
+#if LLVM_VERSION_MAJOR > 16
+                  &&
                   (CI &
                    ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
-                      .isNullValue()))) {
+                      .isZero()
+#else
+                  &&
+                  (CI &
+                   ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                      .isNullValue()
+#endif
+                      ))) {
             } else
               validXor = false;
           }
@@ -2512,17 +2570,35 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
                 dl.getTypeSizeInBits(CIT->getType()))
               continue;
             auto CI = CIT->getValue();
-            if (CI.isNullValue()) {
+#if LLVM_VERSION_MAJOR > 16
+            if (CI.isZero())
+#else
+            if (CI.isNullValue())
+#endif
+            {
               validXor = true;
             } else if (
                 !CI.isNegative() &&
-                ((FT->isFloatTy() &&
-                  (CI & ~0b01111111100000000000000000000000ULL)
-                      .isNullValue()) ||
-                 (FT->isDoubleTy() &&
+                ((FT->isFloatTy()
+#if LLVM_VERSION_MAJOR > 16
+                  && (CI & ~0b01111111100000000000000000000000ULL).isZero()
+#else
+                  && (CI & ~0b01111111100000000000000000000000ULL).isNullValue()
+#endif
+                      ) ||
+                 (FT->isDoubleTy()
+#if LLVM_VERSION_MAJOR > 16
+                  &&
                   (CI &
                    ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
-                      .isNullValue()))) {
+                      .isZero()
+#else
+                  &&
+                  (CI &
+                   ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                      .isNullValue()
+#endif
+                      ))) {
               validXor = true;
             }
           } else if (auto CV = dyn_cast_or_null<ConstantVector>(Args[i])) {
@@ -2532,16 +2608,33 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
               continue;
             for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
               auto CI = dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
-              if (CI.isNullValue()) {
+#if LLVM_VERSION_MAJOR > 16
+              if (CI.isZero())
+#else
+              if (CI.isNullValue())
+#endif
+              {
               } else if (
                   !CI.isNegative() &&
                   ((FT->isFloatTy() &&
-                    (CI & ~0b01111111100000000000000000000000ULL)
-                        .isNullValue()) ||
+#if LLVM_VERSION_MAJOR > 16
+                    &&(CI & ~0b01111111100000000000000000000000ULL).isZero()
+#else
+                    &&(CI & ~0b01111111100000000000000000000000ULL)
+                          .isNullValue()
+#endif
+                        ) ||
                    (FT->isDoubleTy() &&
-                    (CI &
-                     ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
-                        .isNullValue()))) {
+#if LLVM_VERSION_MAJOR > 16
+                    &&(CI &
+                       ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                          .isZero()
+#else
+                    &&(CI &
+                       ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                          .isNullValue()
+#endif
+                        ))) {
               } else
                 validXor = false;
             }
@@ -2552,16 +2645,33 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
               continue;
             for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
               auto CI = CV->getElementAsAPInt(i);
-              if (CI.isNullValue()) {
+#if LLVM_VERSION_MAJOR > 16
+              if (CI.isZero())
+#else
+              if (CI.isNullValue())
+#endif
+              {
               } else if (
                   !CI.isNegative() &&
-                  ((FT->isFloatTy() &&
-                    (CI & ~0b01111111100000000000000000000000ULL)
-                        .isNullValue()) ||
+                  ((FT->isFloatTy()
+#if LLVM_VERSION_MAJOR > 16
+                    && (CI & ~0b01111111100000000000000000000000ULL).isZero()
+#else
+                    &&
+                    (CI & ~0b01111111100000000000000000000000ULL).isNullValue()
+#endif
+                        ) ||
                    (FT->isDoubleTy() &&
-                    (CI &
-                     ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
-                        .isNullValue()))) {
+#if LLVM_VERSION_MAJOR > 16
+                    &&(CI &
+                       ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                          .isZero()
+#else
+                    &&(CI &
+                       ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                          .isNullValue()
+#endif
+                        ))) {
               } else
                 validXor = false;
             }
