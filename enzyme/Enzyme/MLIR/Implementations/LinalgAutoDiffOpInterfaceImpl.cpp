@@ -55,6 +55,17 @@ Value invertMemref(Value inp, OpBuilder &builder, Location loc) {
   return view;
 }
 
+SmallVector<Value> applyAffineMap(AffineMap aMap, SmallVector<Value> indices,
+                                  OpBuilder &builder, Location loc) {
+  SmallVector<Value> appliedAffineMap;
+  for (unsigned int i = 0; i < aMap.getNumResults(); i++) {
+    AffineMap subMap = aMap.getSubMap({i});
+    auto mapApplied = builder.create<AffineApplyOp>(loc, subMap, indices[i]);
+    appliedAffineMap.push_back(mapApplied);
+  }
+  return appliedAffineMap;
+}
+
 template <typename T_>
 struct GenericOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<
@@ -136,8 +147,31 @@ struct GenericOpInterfaceReverse
         op->getLoc(), outputs, inputs, indexingMaps, iteratorTypes);
 
     int numInputs = inputs.size();
-    auto buildFuncReturnOp = [numInputs](OpBuilder &builder, Location loc,
+    auto buildFuncReturnOp = [numInputs, indexingMaps, &newOp, &adjoint, &inputs](OpBuilder &builder, Location loc,
                                          SmallVector<Value> retargs) {
+      SmallVector<Value> indices;
+      // Is it a fine assumption that all indexing maps are the same?
+      for (int i = 0; i < indexingMaps[0].getNumDims(); i++) {
+        indices.push_back(builder.create<linalg::IndexOp>(loc, i));
+      }
+
+      auto map = newOp.getIndexingMapsArray();
+      SmallVector<Value> rets;
+      for (int i = 0; i < numInputs; i++) {
+          //auto load = builder.create<AffineLoadOp>(loc, inputs[i], map[i], indices);
+          //auto store = builder.create<AffineStoreOp>(loc, load, inputs[i], map[i], indices);
+          ValueRange mapAppliedIndices = applyAffineMap(map[i], indices, builder, loc);
+          auto load = builder.create<memref::LoadOp>(loc, inputs[i], mapAppliedIndices);
+          auto added = cast<enzyme::AutoDiffTypeInterface>(load.getType()).createAddOp(builder, loc, load, retargs[i]);
+          auto store = builder.create<memref::StoreOp>(loc, added, inputs[i], mapAppliedIndices);
+      }
+
+      for (int i = 0; i < numInputs; i++) {
+          ValueRange mapAppliedIndices = applyAffineMap(map[i], indices, builder, loc);
+          auto load = builder.create<memref::LoadOp>(loc, inputs[i], mapAppliedIndices);
+          retargs[i] = load;
+      }
+
       builder.create<linalg::YieldOp>(
           loc, ValueRange{retargs}.take_front(numInputs));
       return;
@@ -182,13 +216,6 @@ struct GenericOpInterfaceReverse
       body->addArgument(opOperand.getType(), opOperand.getLoc());
     }
     OpBuilder builderAdd(yieldOp);
-    for (auto &&[index, value] : llvm::enumerate(yieldOp.getOperands())) {
-      Value arg = body->getArgument(outputs.size() + numCaches + index);
-      auto diffeType = cast<AutoDiffTypeInterface>(arg.getType());
-      Value grad =
-          diffeType.createAddOp(builderAdd, value.getLoc(), arg, value);
-      yieldOp.setOperand(index, grad);
-    }
 
     auto newIndexingMaps = newOp.getIndexingMapsArray();
     auto indexingMapsAdjoint = adjoint.getIndexingMapsArray();
