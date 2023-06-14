@@ -49,7 +49,7 @@ struct SimplifyMemrefCachePass
           continue;
         }
         unsigned outputIndex =
-            linalgOp.getNumInputs() + (unsigned)output.index();
+            linalgOp.getNumDpsInputs() + (unsigned)output.index();
 
         // We should never actually use the value of the output!
         assert(linalgOp.getRegion().getArgument(outputIndex).use_empty());

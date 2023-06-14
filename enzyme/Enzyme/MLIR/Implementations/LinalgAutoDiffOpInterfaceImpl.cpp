@@ -86,7 +86,7 @@ struct GenericOpInterfaceReverse
     // get iteration domain
     AffineMap aMap = newOp.getShapesToLoopsMap();
     SmallVector<Value> dims;
-    for (OpOperand *input : newOp.getInputOperands()) {
+    for (OpOperand *input : newOp.getDpsInputOperands()) {
       auto shape = cast<MemRefType>(input->get().getType()).getShape();
       for (unsigned i = 0; i < shape.size(); i++) {
         auto dimI =
@@ -104,15 +104,15 @@ struct GenericOpInterfaceReverse
       Value domain = cacheBuilder.create<AffineApplyOp>(op->getLoc(), subMap,
                                                         ValueRange(dims));
       iterationDomains.push_back(domain);
-      shapes.push_back(ShapedType::kDynamicSize);
+      shapes.push_back(ShapedType::kDynamic);
     }
 
     SmallVector<Value> inputs, outputs;
     SmallVector<AffineMap> indexingMaps;
-    SmallVector<StringRef> iteratorTypes{linalgOp.getNumLoops(),
-                                         getParallelIteratorTypeName()};
+    SmallVector<utils::IteratorType> iteratorTypes{linalgOp.getNumLoops(),
+                                        utils::IteratorType::parallel};
 
-    for (OpOperand *output : linalgOp.getOutputOperands()) {
+    for (OpOperand *output : linalgOp.getDpsInitOperands()) {
       if (!gutils->hasInvertPointer(output->get())) {
         continue;
       }
@@ -122,7 +122,7 @@ struct GenericOpInterfaceReverse
       outputs.push_back(view);
     }
 
-    for (OpOperand *input : linalgOp.getInputOperands()) {
+    for (OpOperand *input : linalgOp.getDpsInputOperands()) {
       if (!gutils->hasInvertPointer(input->get())) {
         continue;
       }
