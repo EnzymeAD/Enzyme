@@ -1617,7 +1617,7 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
                                   llvm::Value *dim_2, bool cacheMat,
                                   bool byRef);
 // currently used to verify that input is a normal matrix, and not a transposed
-bool is_normal(llvm::IRBuilder<> &B, llvm::Value *V);
+bool is_normal(llvm::Value *V);
 // first one assume V is an Integer
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V);
 // secon one assume V is an Integer or a ptr to an int (depends on byRef)

@@ -2100,14 +2100,37 @@ llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
 
   return allocV;
 }
-bool is_normal(IRBuilder<> &B, llvm::Value *trans) {
-  IntegerType *charType = IntegerType::get(trans->getContext(), 8);
-  llvm::Value *isNormal = B.CreateSelect(
-      B.CreateICmpEQ(trans, ConstantInt::get(charType, 'n')),
-      ConstantInt::get(charType, 1),
-      B.CreateSelect(B.CreateICmpEQ(trans, ConstantInt::get(charType, 'N')),
-                     ConstantInt::get(charType, 1), nullptr));
-  return isNormal;
+bool is_normal(llvm::Value *trans) {
+  if (auto CI = dyn_cast<ConstantInt>(trans)) {
+    if (CI->getValue() == 'N' || CI->getValue() == 'n')
+      return true;
+    else
+      return false;
+  }
+
+  // if (auto AI = dyn_cast<AllocaInst>(getBaseObject(trans))) {
+  //   std::deque<Value *> todo = {AI};
+  //   Value *stored = nullptr;
+  //   while (todo.size()) {
+  //     auto cur = todo.back();
+  //     todo.pop_back();
+  //     if (isPointerArithmeticInst(cur)) {
+  //       // for (auto U = cur->users())
+  //       for (auto U : cur->users())
+  //         todo.push_back(cast<Instruction>(U));
+  //     }
+  //     if (auto SI = dyn_cast<StoreInst>(cur)) {
+  //       if (stored)
+  //         return false;
+  //       // stored = SI->getStoredValue();
+  //       stored = SI->getValueOperand();
+  //       continue;
+  //     }
+  //     return false;
+  //   }
+  // }
+  // return false;
+  return true;
 }
 
 llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
