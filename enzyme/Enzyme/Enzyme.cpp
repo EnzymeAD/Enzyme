@@ -822,6 +822,7 @@ public:
           freeMemory = false;
           continue;
         } else if (*metaString == "enzyme_primal_return") {
+          primalReturn = true;
           continue;
         } else if (*metaString == "enzyme_const_return") {
           continue;
