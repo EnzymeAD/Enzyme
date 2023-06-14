@@ -792,6 +792,23 @@ Value *CreateConstInBoundsGEP_64_32(IRBuilder<> &B, Type *ty, Value *ptr,
        ConstantInt::get(Type::getInt32Ty(B.getContext()), j)});
 }
 
+// Emits code for checking the bitflag member of an IFX multi-dimensional array
+// to determine if the array is allocated.
+// NOTE: in IFX True == -1, and False == 0
+Value *CreateIFXMDArrayIsAllocated(IRBuilder<> &B, Value *arrayPtr) {
+
+  auto MDArrayTy = getIFXMDArrayRankNType(B.getContext(), 1);
+  auto Int32Ty = Type::getInt32Ty(B.getContext());
+  auto arrayBC = B.CreateBitCast(arrayPtr, PointerType::getUnqual(MDArrayTy));
+  auto flags = CreateConstInBoundsGEP_64_32(B, MDArrayTy, arrayBC, 0, 3);
+  flags = B.CreateLoad(Type::getInt64Ty(B.getContext()), flags);
+  flags = B.CreateTrunc(flags, Int32Ty);
+  auto isAllocated = B.CreateAnd(flags, ConstantInt::get(Int32Ty, 1));
+  isAllocated = B.CreateNSWSub(ConstantInt::get(Int32Ty, 0), isAllocated);
+
+  return isAllocated;
+}
+
 // Get or insert a function for computing the size of IFX multi-dimensional
 // arrays. Here, we use size to me the total number of elements in the array.
 // The function has the following prototype:
@@ -1375,20 +1392,115 @@ void ReplaceForReallocLHS(CallInst *realloc) {
   auto newShape = realloc->getOperand(1);
   auto flags = realloc->getOperand(2);
 
-  // Check if the shapes are the same, and skip realloc if so
+  // Check if the old array is allocated, if not simply replace the realloc with
+  // an alloc. If it is allocated, check is the shapes match, if not replace the
+  // realloc, otherwise do nothing.
   BasicBlock *splitParent = realloc->getParent();
   BasicBlock *nextBlock = splitParent->splitBasicBlock(realloc);
-  BasicBlock *resize = BasicBlock::Create(C, "resize" + realloc->getName(),
-                                          realloc->getParent()->getParent());
-  assert(resize->getParent() == realloc->getParent()->getParent());
+  BasicBlock *checkAllocatedBlock =
+      BasicBlock::Create(C, "checkAllocated" + realloc->getName(),
+                         realloc->getParent()->getParent());
+  BasicBlock *allocateBlock = BasicBlock::Create(
+      C, "allocate" + realloc->getName(), realloc->getParent()->getParent());
+  BasicBlock *checkShapeBlock = BasicBlock::Create(
+      C, "checkShape" + realloc->getName(), realloc->getParent()->getParent());
+  BasicBlock *resizeBlock = BasicBlock::Create(
+      C, "resize" + realloc->getName(), realloc->getParent()->getParent());
+
+  assert(resizeBlock->getParent() == realloc->getParent()->getParent());
 
   splitParent->getTerminator()->eraseFromParent();
   IRBuilder<> B(splitParent);
 
+  B.CreateBr(checkAllocatedBlock);
+  B.SetInsertPoint(checkAllocatedBlock);
+
+  auto isAllocated = CreateIFXMDArrayIsAllocated(B, oldArray);
+  auto notAllocated =
+      B.CreateICmpEQ(isAllocated, ConstantInt::get(Type::getInt32Ty(C), 0));
+
+  B.CreateCondBr(notAllocated, allocateBlock, checkShapeBlock);
+  B.SetInsertPoint(allocateBlock);
+
+  // Allocate the array
+  {
+    auto oldArrayAI =
+        B.CreateBitCast(oldArray, PointerType::getUnqual(MDArrayTy));
+    {
+      auto newShapeAI =
+          B.CreateBitCast(newShape, PointerType::getUnqual(MDArrayTy));
+
+      auto dataPtr =
+          CreateConstInBoundsGEP_64_32(B, MDArrayTy, oldArrayAI, 0, 0);
+      auto data = ConstantPointerNull::get(Type::getInt8PtrTy(C));
+      B.CreateStore(data, dataPtr);
+
+      auto addrLenPtr =
+          CreateConstInBoundsGEP_64_32(B, MDArrayTy, oldArrayAI, 0, 1);
+      auto addrLen = B.CreateLoad(Int64Ty, CreateConstInBoundsGEP_64_32(
+                                               B, MDArrayTy, newShapeAI, 0, 1));
+      B.CreateStore(addrLen, addrLenPtr);
+
+      auto coArr = CreateConstInBoundsGEP_64_32(B, MDArrayTy, oldArrayAI, 0, 2);
+      B.CreateStore(ConstantInt::get(Int64Ty, 0), coArr);
+
+      auto rankPtr =
+          CreateConstInBoundsGEP_64_32(B, MDArrayTy, oldArrayAI, 0, 4);
+      auto rank = B.CreateLoad(Int64Ty, CreateConstInBoundsGEP_64_32(
+                                            B, MDArrayTy, newShapeAI, 0, 4));
+      B.CreateStore(rank, rankPtr);
+
+      auto corankPtr =
+          CreateConstInBoundsGEP_64_32(B, MDArrayTy, oldArrayAI, 0, 5);
+      B.CreateStore(ConstantInt::get(Int64Ty, 0), corankPtr);
+
+      // Copy shape info from `newShape` into `newArray`
+      {
+        auto shapeArrayPtrB =
+            CreateConstInBoundsGEP_64_32(B, MDArrayTy, oldArrayAI, 0, 5);
+        shapeArrayPtrB =
+            B.CreateConstInBoundsGEP1_64(Int64Ty, shapeArrayPtrB, 1);
+        shapeArrayPtrB = B.CreateBitCast(shapeArrayPtrB, Type::getInt8PtrTy(C));
+
+        auto shapeArrayPtrA =
+            CreateConstInBoundsGEP_64_32(B, MDArrayTy, newShapeAI, 0, 5);
+        shapeArrayPtrA =
+            B.CreateConstInBoundsGEP1_64(Int64Ty, shapeArrayPtrA, 1);
+        shapeArrayPtrA = B.CreateBitCast(shapeArrayPtrA, Type::getInt8PtrTy(C));
+
+        auto int64NumBytes = M->getDataLayout().getTypeSizeInBits(Int64Ty) / 8;
+        auto len = B.CreateMul(ConstantInt::get(Int64Ty, 3),
+                               ConstantInt::get(Int64Ty, int64NumBytes));
+        len = B.CreateMul(len, rank);
+        auto volatile_arg = ConstantInt::getFalse(C);
+
+        Value *nargs[] = {shapeArrayPtrB, shapeArrayPtrA, len, volatile_arg};
+        Type *tys[] = {nargs[0]->getType(), nargs[1]->getType(),
+                       nargs[2]->getType()};
+        B.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memcpy, tys),
+                     nargs);
+      }
+    }
+
+    auto size = B.CreateCall(sizeF->getFunctionType(), sizeF, {newShape});
+    auto addrLen = CreateConstInBoundsGEP_64_32(B, MDArrayTy, oldArrayAI, 0, 1);
+    addrLen = B.CreateLoad(Int64Ty, addrLen);
+    auto byteCount = B.CreateMul(size, addrLen);
+    auto newArrayBytePtrPtr = B.CreateBitCast(
+        oldArray, PointerType::getUnqual(Type::getInt8PtrTy(C)));
+    auto allocFlags = ConstantInt::get(Type::getInt32Ty(C), 262144);
+    auto nullCoarray = ConstantPointerNull::get(Type::getInt8PtrTy(C));
+    B.CreateCall(allocF,
+                 {byteCount, newArrayBytePtrPtr, allocFlags, nullCoarray});
+  }
+
+  B.CreateBr(nextBlock);
+  B.SetInsertPoint(checkShapeBlock);
+
   auto shapeCmpEQ = B.CreateCall(shapeCmpEQF->getFunctionType(), shapeCmpEQF,
                                  {oldArray, newShape});
 
-  B.CreateCondBr(shapeCmpEQ, nextBlock, resize);
+  B.CreateCondBr(shapeCmpEQ, nextBlock, resizeBlock);
 
   // Put a new array object on the stack
   auto F = realloc->getParent()->getParent();
@@ -1397,7 +1509,7 @@ void ReplaceForReallocLHS(CallInst *realloc) {
   newArrayAI = B.CreateAlloca(MDArrayTy);
   auto newArray = B.CreateBitCast(newArrayAI, Type::getInt8PtrTy(C));
 
-  B.SetInsertPoint(resize);
+  B.SetInsertPoint(resizeBlock);
 
   // Initialize the new array
   {
