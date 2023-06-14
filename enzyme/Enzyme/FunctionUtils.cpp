@@ -1228,6 +1228,223 @@ Function *getOrInsertIFXMDArrayCopy(LLVMContext &C, Module *M) {
   return F;
 }
 
+// Replace a call to `for_realloc_lhs` with appropriate allocation and
+// deallocation calls. It is asummed that the inputs to `for_realloc_lhs` are
+// IFX multi-dimensional arrays, and that they have the same rank. The first
+// argument is the array to reallocate, the second argument is an array used to
+// specify the new shape, and the third argument is a bit flag.
+// An overview of the approach taken to replace `for_realloc_lhs` is:
+// 1) A new array object is put on the stack, initialized, and then its data
+//    member is allocated.
+// 2) Data from the old array is copied into the new array.
+// 3) The members of new and old arrays obejcts are swapped (including the data
+//    member)
+// 4) The new array is deallocated.
+void ReplaceForReallocLHS(CallInst *realloc) {
+  assert(realloc->getCalledFunction() &&
+         realloc->getCalledFunction()->getName() == "for_realloc_lhs");
+  assert(realloc->arg_size() == 3);
+
+  auto &C = realloc->getContext();
+  auto M = realloc->getModule();
+
+  // Get some useful types
+  auto MDArrayTy = getIFXMDArrayRankNType(C, 15);
+  auto Int64Ty = Type::getInt64Ty(C);
+  auto Int32Ty = Type::getInt32Ty(C);
+
+  // Get or insert required functions
+  auto sizeF = getOrInsertIFXMDArraySize(C, M);
+  auto copyF = getOrInsertIFXMDArrayCopy(C, M);
+  auto allocF = [&]() -> auto {
+    Type *paramTys[] = {Type::getInt64Ty(C),
+                        PointerType::getUnqual(Type::getInt8PtrTy(C)),
+                        Type::getInt32Ty(C), Type::getInt8PtrTy(C)};
+    auto FT = FunctionType::get(Type::getInt32Ty(C), paramTys, false);
+    return M->getOrInsertFunction("for_alloc_allocatable_handle", FT);
+  }();
+  auto deallocF = [&]() -> auto {
+    Type *paramTys[] = {Type::getInt8PtrTy(C), Type::getInt32Ty(C),
+                        Type::getInt8PtrTy(C)};
+    auto FT = FunctionType::get(Type::getInt32Ty(C), paramTys, false);
+    return M->getOrInsertFunction("for_dealloc_allocatable_handle", FT);
+  }();
+
+  auto oldArray = realloc->getOperand(0);
+  auto newShape = realloc->getOperand(1);
+  auto flags = realloc->getOperand(2);
+
+  auto F = realloc->getParent()->getParent();
+  IRBuilder<> B(&*F->getEntryBlock().begin());
+
+  // Put a new array object on the stack
+  AllocaInst *newArrayAI;
+  newArrayAI = B.CreateAlloca(MDArrayTy);
+  auto newArray = B.CreateBitCast(newArrayAI, Type::getInt8PtrTy(C));
+
+  B.SetInsertPoint(realloc);
+
+  // Initialize the new array
+  {
+    auto newShapeAI = B.CreateBitCast(newShape, PointerType::getUnqual(MDArrayTy));
+
+    auto dataPtr = CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, 0);
+    auto data = ConstantPointerNull::get(Type::getInt8PtrTy(C));
+    B.CreateStore(data, dataPtr);
+
+    auto addrLenPtr = CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, 1);
+    auto addrLen = B.CreateLoad(
+        Int64Ty, CreateConstInBoundsGEP_64_32(B, MDArrayTy, newShapeAI, 0, 1));
+    B.CreateStore(addrLen, addrLenPtr);
+
+    auto coArr = CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, 2);
+    B.CreateStore(ConstantInt::get(Int64Ty, 0), coArr);
+
+    auto rankPtr = CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, 4);
+    auto rank = B.CreateLoad(
+        Int64Ty, CreateConstInBoundsGEP_64_32(B, MDArrayTy, newShapeAI, 0, 4));
+    B.CreateStore(rank, rankPtr);
+
+    auto corankPtr = CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, 5);
+    B.CreateStore(ConstantInt::get(Int64Ty, 0), corankPtr);
+
+    // Zero-initialize new array shape info
+    {
+      auto shapeArrayPtr =
+          CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, 5);
+      shapeArrayPtr = B.CreateConstInBoundsGEP1_64(Int64Ty, shapeArrayPtr, 1);
+      shapeArrayPtr = B.CreateBitCast(shapeArrayPtr, Type::getInt8PtrTy(C));
+      auto int64NumBytes = M->getDataLayout().getTypeSizeInBits(Int64Ty) / 8;
+      auto len = B.CreateMul(ConstantInt::get(Int64Ty, 45),
+                             ConstantInt::get(Int64Ty, int64NumBytes));
+      auto val = ConstantInt::get(Type::getInt8Ty(C), 0);
+      auto volatile_arg = ConstantInt::getFalse(C);
+      Value *nargs[] = {shapeArrayPtr, val, len, volatile_arg};
+      Type *tys[] = {nargs[0]->getType(), nargs[2]->getType()};
+      B.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memset, tys), nargs);
+    }
+
+    // Copy shape info from `newShape` into `newArray`
+    {
+      auto shapeArrayPtrB =
+          CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, 5);
+      shapeArrayPtrB = B.CreateConstInBoundsGEP1_64(Int64Ty, shapeArrayPtrB, 1);
+      shapeArrayPtrB = B.CreateBitCast(shapeArrayPtrB, Type::getInt8PtrTy(C));
+
+      auto shapeArrayPtrA =
+          CreateConstInBoundsGEP_64_32(B, MDArrayTy, newShapeAI, 0, 5);
+      shapeArrayPtrA = B.CreateConstInBoundsGEP1_64(Int64Ty, shapeArrayPtrA, 1);
+      shapeArrayPtrA = B.CreateBitCast(shapeArrayPtrA, Type::getInt8PtrTy(C));
+
+      auto int64NumBytes = M->getDataLayout().getTypeSizeInBits(Int64Ty) / 8;
+      auto len = B.CreateMul(ConstantInt::get(Int64Ty, 3),
+                             ConstantInt::get(Int64Ty, int64NumBytes));
+      len = B.CreateMul(len, rank);
+      auto volatile_arg = ConstantInt::getFalse(C);
+
+      Value *nargs[] = {shapeArrayPtrB, shapeArrayPtrA, len, volatile_arg};
+      Type *tys[] = {nargs[0]->getType(), nargs[1]->getType(),
+                     nargs[2]->getType()};
+      B.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memcpy, tys), nargs);
+    }
+  }
+
+  // Alloc the new array data member
+  {
+    auto size = B.CreateCall(sizeF->getFunctionType(), sizeF, {newShape});
+    auto addrLen = CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, 1);
+    addrLen = B.CreateLoad(Int64Ty, addrLen);
+    auto byteCount = B.CreateMul(size, addrLen);
+    auto newArrayBytePtrPtr = B.CreateBitCast(
+        newArrayAI, PointerType::getUnqual(Type::getInt8PtrTy(C)));
+    auto allocFlags = ConstantInt::get(Type::getInt32Ty(C), 262144);
+    auto nullCoarray = ConstantPointerNull::get(Type::getInt8PtrTy(C));
+    B.CreateCall(allocF,
+                 {byteCount, newArrayBytePtrPtr, allocFlags, nullCoarray});
+  }
+
+  // Copy the original array data into the new array
+  {
+    B.CreateCall(copyF->getFunctionType(), copyF, {oldArray, newArray});
+  }
+
+  // Swap the original array with the new array
+  {
+    auto newShapeAI = B.CreateBitCast(newShape, PointerType::getUnqual(MDArrayTy));
+    auto oldArrayAI = B.CreateBitCast(oldArray, PointerType::getUnqual(MDArrayTy));
+
+    for (int i = 1; i < 6; ++i) {
+      auto oldInfoPtr = CreateConstInBoundsGEP_64_32(B, MDArrayTy, oldArrayAI, 0, i);
+      auto newInfoPtr = CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, i);
+      auto oldInfo = B.CreateLoad(Int64Ty, oldInfoPtr);
+      auto newInfo = B.CreateLoad(Int64Ty, newInfoPtr);
+      B.CreateStore(newInfo, oldInfoPtr);
+      B.CreateStore(oldInfo, newInfoPtr);
+    }
+
+    // Copy 'swap' shape info for original and new array's:
+    // newArray.shapeInfo = oldArray.shapeInfo
+    // oldArray.shapeInfo = newShape.shapeInfo
+    auto rank = CreateConstInBoundsGEP_64_32(B, MDArrayTy, newShapeAI, 0, 4);
+    rank = B.CreateLoad(Int64Ty, rank);
+    {
+      auto shapeArrayPtrB =
+          CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, 5);
+      shapeArrayPtrB = B.CreateConstInBoundsGEP1_64(Int64Ty, shapeArrayPtrB, 1);
+      shapeArrayPtrB = B.CreateBitCast(shapeArrayPtrB, Type::getInt8PtrTy(C));
+
+      auto shapeArrayPtrA =
+          CreateConstInBoundsGEP_64_32(B, MDArrayTy, oldArrayAI, 0, 5);
+      shapeArrayPtrA = B.CreateConstInBoundsGEP1_64(Int64Ty, shapeArrayPtrA, 1);
+      shapeArrayPtrA = B.CreateBitCast(shapeArrayPtrA, Type::getInt8PtrTy(C));
+
+      auto int64NumBytes = M->getDataLayout().getTypeSizeInBits(Int64Ty) / 8;
+      auto len = B.CreateMul(ConstantInt::get(Int64Ty, 3),
+                             ConstantInt::get(Int64Ty, int64NumBytes));
+      len = B.CreateMul(len, rank);
+      auto volatile_arg = ConstantInt::getFalse(C);
+
+      Value *nargs[] = {shapeArrayPtrB, shapeArrayPtrA, len, volatile_arg};
+      Type *tys[] = {nargs[0]->getType(), nargs[1]->getType(),
+                     nargs[2]->getType()};
+      B.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memcpy, tys), nargs);
+    }
+    {
+      auto shapeArrayPtrB =
+          CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, 5);
+      shapeArrayPtrB = B.CreateConstInBoundsGEP1_64(Int64Ty, shapeArrayPtrB, 1);
+      shapeArrayPtrB = B.CreateBitCast(shapeArrayPtrB, Type::getInt8PtrTy(C));
+
+      auto shapeArrayPtrA =
+          CreateConstInBoundsGEP_64_32(B, MDArrayTy, newShapeAI, 0, 5);
+      shapeArrayPtrA = B.CreateConstInBoundsGEP1_64(Int64Ty, shapeArrayPtrA, 1);
+      shapeArrayPtrA = B.CreateBitCast(shapeArrayPtrA, Type::getInt8PtrTy(C));
+
+      auto int64NumBytes = M->getDataLayout().getTypeSizeInBits(Int64Ty) / 8;
+      auto len = B.CreateMul(ConstantInt::get(Int64Ty, 3),
+                             ConstantInt::get(Int64Ty, int64NumBytes));
+      len = B.CreateMul(len, rank);
+      auto volatile_arg = ConstantInt::getFalse(C);
+
+      Value *nargs[] = {shapeArrayPtrB, shapeArrayPtrA, len, volatile_arg};
+      Type *tys[] = {nargs[0]->getType(), nargs[1]->getType(),
+                     nargs[2]->getType()};
+      B.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memcpy, tys), nargs);
+    }
+  }
+
+  // Dealloc the new array (which now contains the old array data)
+  {
+    auto newArrayBytePtrPtr = B.CreateBitCast(
+        newArray, PointerType::getUnqual(Type::getInt8PtrTy(C)));
+    auto newArrayBytePtr =
+        B.CreateLoad(Type::getInt8PtrTy(C), newArrayBytePtrPtr);
+    auto deallocFlags = ConstantInt::get(Type::getInt32Ty(C), 262144);
+    auto nullCoarray = ConstantPointerNull::get(Type::getInt8PtrTy(C));
+    B.CreateCall(deallocF, {newArrayBytePtr, deallocFlags, nullCoarray});
+  }
+}
+
 /// Calls to realloc with an appropriate implementation
 void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
   if (mem2reg) {
