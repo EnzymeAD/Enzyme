@@ -1354,6 +1354,7 @@ void ReplaceForReallocLHS(CallInst *realloc) {
   auto Int32Ty = Type::getInt32Ty(C);
 
   // Get or insert required functions
+  auto shapeCmpEQF = getOrInsertIFXMDArrayShapeCmpEQ(C, M);
   auto sizeF = getOrInsertIFXMDArraySize(C, M);
   auto copyF = getOrInsertIFXMDArrayCopy(C, M);
   auto allocF = [&]() -> auto {
@@ -1374,25 +1375,41 @@ void ReplaceForReallocLHS(CallInst *realloc) {
   auto newShape = realloc->getOperand(1);
   auto flags = realloc->getOperand(2);
 
-  auto F = realloc->getParent()->getParent();
-  IRBuilder<> B(&*F->getEntryBlock().begin());
+  // Check if the shapes are the same, and skip realloc if so
+  BasicBlock *splitParent = realloc->getParent();
+  BasicBlock *nextBlock = splitParent->splitBasicBlock(realloc);
+  BasicBlock *resize = BasicBlock::Create(C, "resize" + realloc->getName(),
+                                          realloc->getParent()->getParent());
+  assert(resize->getParent() == realloc->getParent()->getParent());
+
+  splitParent->getTerminator()->eraseFromParent();
+  IRBuilder<> B(splitParent);
+
+  auto shapeCmpEQ = B.CreateCall(shapeCmpEQF->getFunctionType(), shapeCmpEQF,
+                                 {oldArray, newShape});
+
+  B.CreateCondBr(shapeCmpEQ, nextBlock, resize);
 
   // Put a new array object on the stack
+  auto F = realloc->getParent()->getParent();
+  B.SetInsertPoint(&*F->getEntryBlock().begin());
   AllocaInst *newArrayAI;
   newArrayAI = B.CreateAlloca(MDArrayTy);
   auto newArray = B.CreateBitCast(newArrayAI, Type::getInt8PtrTy(C));
 
-  B.SetInsertPoint(realloc);
+  B.SetInsertPoint(resize);
 
   // Initialize the new array
   {
-    auto newShapeAI = B.CreateBitCast(newShape, PointerType::getUnqual(MDArrayTy));
+    auto newShapeAI =
+        B.CreateBitCast(newShape, PointerType::getUnqual(MDArrayTy));
 
     auto dataPtr = CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, 0);
     auto data = ConstantPointerNull::get(Type::getInt8PtrTy(C));
     B.CreateStore(data, dataPtr);
 
-    auto addrLenPtr = CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, 1);
+    auto addrLenPtr =
+        CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, 1);
     auto addrLen = B.CreateLoad(
         Int64Ty, CreateConstInBoundsGEP_64_32(B, MDArrayTy, newShapeAI, 0, 1));
     B.CreateStore(addrLen, addrLenPtr);
@@ -1405,7 +1422,8 @@ void ReplaceForReallocLHS(CallInst *realloc) {
         Int64Ty, CreateConstInBoundsGEP_64_32(B, MDArrayTy, newShapeAI, 0, 4));
     B.CreateStore(rank, rankPtr);
 
-    auto corankPtr = CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, 5);
+    auto corankPtr =
+        CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, 5);
     B.CreateStore(ConstantInt::get(Int64Ty, 0), corankPtr);
 
     // Zero-initialize new array shape info
@@ -1464,18 +1482,20 @@ void ReplaceForReallocLHS(CallInst *realloc) {
   }
 
   // Copy the original array data into the new array
-  {
-    B.CreateCall(copyF->getFunctionType(), copyF, {oldArray, newArray});
-  }
+  { B.CreateCall(copyF->getFunctionType(), copyF, {oldArray, newArray}); }
 
   // Swap the original array with the new array
   {
-    auto newShapeAI = B.CreateBitCast(newShape, PointerType::getUnqual(MDArrayTy));
-    auto oldArrayAI = B.CreateBitCast(oldArray, PointerType::getUnqual(MDArrayTy));
+    auto newShapeAI =
+        B.CreateBitCast(newShape, PointerType::getUnqual(MDArrayTy));
+    auto oldArrayAI =
+        B.CreateBitCast(oldArray, PointerType::getUnqual(MDArrayTy));
 
     for (int i = 1; i < 6; ++i) {
-      auto oldInfoPtr = CreateConstInBoundsGEP_64_32(B, MDArrayTy, oldArrayAI, 0, i);
-      auto newInfoPtr = CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, i);
+      auto oldInfoPtr =
+          CreateConstInBoundsGEP_64_32(B, MDArrayTy, oldArrayAI, 0, i);
+      auto newInfoPtr =
+          CreateConstInBoundsGEP_64_32(B, MDArrayTy, newArrayAI, 0, i);
       auto oldInfo = B.CreateLoad(Int64Ty, oldInfoPtr);
       auto newInfo = B.CreateLoad(Int64Ty, newInfoPtr);
       B.CreateStore(newInfo, oldInfoPtr);
@@ -1543,6 +1563,8 @@ void ReplaceForReallocLHS(CallInst *realloc) {
     auto nullCoarray = ConstantPointerNull::get(Type::getInt8PtrTy(C));
     B.CreateCall(deallocF, {newArrayBytePtr, deallocFlags, nullCoarray});
   }
+
+  B.CreateBr(nextBlock);
 }
 
 /// Calls to realloc with an appropriate implementation
