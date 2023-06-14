@@ -641,7 +641,12 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       for (int i = 0; i < 2; i++)
         if (auto C = dyn_cast<SCEVConstant>(SM->getOperand(i))) {
           // is minus 1
-          if (C->getAPInt().isAllOnesValue()) {
+#if LLVM_VERSION_MAJOR > 16
+          if (C->getAPInt().isAllOnes())
+#else
+          if (C->getAPInt().isAllOnesValue())
+#endif
+          {
             const SCEV *prev = SM->getOperand(1 - i);
             while (true) {
               if (auto ext = dyn_cast<SCEVZeroExtendExpr>(prev)) {

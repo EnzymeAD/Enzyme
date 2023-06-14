@@ -1550,8 +1550,13 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
     bool legal = true;
     for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
       auto CI = CV->getElementAsAPInt(i);
+#if LLVM_VERSION_MAJOR > 16
+      if (CI.isZero())
+        continue;
+#else
       if (CI.isNullValue())
         continue;
+#endif
       if (dl.getTypeSizeInBits(FT) !=
           dl.getTypeSizeInBits(CV->getElementType())) {
         legal = false;
