@@ -11781,7 +11781,7 @@ public:
 #endif
       return;
     }
-    if (funcName == "memset") {
+    if (funcName == "memset" || funcName == "memset_pattern16") {
       visitMemSetCommon(call);
       return;
     }
