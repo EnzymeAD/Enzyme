@@ -927,8 +927,8 @@ void calculateUnusedValuesInFunction(
           if (isMemFreeLibMFunction(funcName, &ID) || isReadOnly(obj_op)) {
             mayWriteToMemory = false;
           }
-          if (funcName == "memset" || funcName == "memcpy" ||
-              funcName == "memmove") {
+          if (funcName == "memset" || funcName == "memset_pattern16" ||
+              funcName == "memcpy" || funcName == "memmove") {
             if (isNoNeed(obj_op->getArgOperand(0)))
               return UseReq::Recur;
           }
