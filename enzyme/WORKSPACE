@@ -1,17 +1,17 @@
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
-new_local_repository(
+http_archive(
     name = "llvm-raw",
     build_file_content = "# empty",
-    path = "../../llvm-project",
+    sha256 = "",
+    strip_prefix = "llvm-project-main",
+    urls = ["https://github.com/llvm/llvm-project/archive/main.tar.gz"],
+    patch_args = ["-p1"],
+    patches = ["//:bazel_patches/llvm_build.patch"]
 )
 
-load("@llvm-raw//utils/bazel:configure.bzl", "llvm_configure", "llvm_disable_optional_support_deps")
-
-llvm_disable_optional_support_deps()
+load("@llvm-raw//utils/bazel:configure.bzl", "llvm_configure")
 llvm_configure(name = "llvm-project", targets = ["X86"])
-
-
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 SKYLIB_VERSION = "1.3.0"
 
