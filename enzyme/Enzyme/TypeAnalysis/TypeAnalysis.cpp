@@ -4345,6 +4345,15 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       }
       return;
     }
+    if (funcName == "for_realloc_lhs") {
+      auto ptr = TypeTree(BaseType::Pointer).Only(-1, &call);
+      updateAnalysis(&call, ptr, &call);
+      updateAnalysis(call.getOperand(0), ptr, &call);
+      updateAnalysis(call.getOperand(1), ptr, &call);
+      updateAnalysis(call.getOperand(2),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
     if (funcName == "sigaction") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(0),
