@@ -1228,6 +1228,106 @@ Function *getOrInsertIFXMDArrayCopy(LLVMContext &C, Module *M) {
   return F;
 }
 
+Function *getOrInsertIFXMDArrayShapeCmpEQ(LLVMContext &C, Module *M) {
+
+  auto MDArrayTy = getIFXMDArrayRankNType(C, 1);
+  auto Int64Ty = Type::getInt64Ty(C);
+  auto Int32Ty = Type::getInt32Ty(C);
+  auto AxisInfoTy =
+      cast<StructType>(MDArrayTy)->getElementType(6)->getArrayElementType();
+
+  std::string name = "__enzyme_ifx_mdarray_shape_cmp_eq";
+
+  Type *paramTys[] = {Type::getInt8PtrTy(C), Type::getInt8PtrTy(C)};
+
+  FunctionType *FT = FunctionType::get(Type::getInt1Ty(C), paramTys, false);
+
+  Function *F = cast<Function>(M->getOrInsertFunction(name, FT).getCallee());
+
+  if (!F->empty())
+    return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
+  F->addFnAttr(Attribute::ArgMemOnly);
+#endif
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addParamAttr(0, Attribute::NoCapture);
+  F->addParamAttr(0, Attribute::ReadOnly);
+  F->addParamAttr(1, Attribute::NoCapture);
+  F->addParamAttr(1, Attribute::ReadOnly);
+
+  auto entryBlock = BasicBlock::Create(C, "entry", F);
+  auto loopBlock = BasicBlock::Create(C, "loop", F);
+  auto endBlock = BasicBlock::Create(C, "end", F);
+
+  IRBuilder<> B(entryBlock);
+  B.SetInsertPoint(entryBlock);
+
+  Value *arrayPtrA = F->getArg(0);
+  arrayPtrA = B.CreateBitCast(arrayPtrA, PointerType::getUnqual(MDArrayTy));
+  Value *arrayPtrB = F->getArg(1);
+  arrayPtrB = B.CreateBitCast(arrayPtrB, PointerType::getUnqual(MDArrayTy));
+
+  auto rankA = CreateConstInBoundsGEP_64_32(B, MDArrayTy, arrayPtrA, 0, 4);
+  rankA = B.CreateLoad(Int64Ty, rankA);
+
+  auto rankB = CreateConstInBoundsGEP_64_32(B, MDArrayTy, arrayPtrB, 0, 4);
+  rankB = B.CreateLoad(Int64Ty, rankB);
+
+  auto matchRank = B.CreateICmpEQ(rankA, rankB);
+  Value *matchExtent;
+  {
+    auto entryCond = B.CreateAnd(
+        B.CreateICmpSGT(rankA, ConstantInt::get(Int64Ty, 0)), matchRank);
+
+    B.CreateCondBr(entryCond, loopBlock, endBlock);
+    B.SetInsertPoint(loopBlock);
+
+    auto idx = B.CreatePHI(Int64Ty, 2);
+    idx->addIncoming(ConstantInt::get(Int64Ty, 0), entryBlock);
+
+    auto matchExtentPHI = B.CreatePHI(Type::getInt1Ty(C), 2);
+    matchExtentPHI->addIncoming(matchRank, entryBlock);
+
+    auto axisInfoPtrA = B.CreateInBoundsGEP(MDArrayTy, arrayPtrA,
+                                            {ConstantInt::get(Int32Ty, 0),
+                                             ConstantInt::get(Int32Ty, 6),
+                                             ConstantInt::get(Int32Ty, 0)});
+    auto axisSizePtrA = B.CreateGEP(AxisInfoTy, axisInfoPtrA,
+                                    {idx, ConstantInt::get(Int32Ty, 0)});
+    auto axisSizeA = B.CreateLoad(Int64Ty, axisSizePtrA);
+
+    auto axisInfoPtrB = B.CreateInBoundsGEP(MDArrayTy, arrayPtrB,
+                                            {ConstantInt::get(Int32Ty, 0),
+                                             ConstantInt::get(Int32Ty, 6),
+                                             ConstantInt::get(Int32Ty, 0)});
+    auto axisSizePtrB = B.CreateGEP(AxisInfoTy, axisInfoPtrB,
+                                    {idx, ConstantInt::get(Int32Ty, 0)});
+    auto axisSizeB = B.CreateLoad(Int64Ty, axisSizePtrB);
+
+    matchExtent =
+        B.CreateAnd(matchExtentPHI, B.CreateICmpEQ(axisSizeA, axisSizeB));
+    matchExtentPHI->addIncoming(matchExtent, loopBlock);
+
+    auto inc = B.CreateAdd(idx, ConstantInt::get(Int64Ty, 1));
+    idx->addIncoming(inc, loopBlock);
+
+    auto loopCond = B.CreateICmpSLT(inc, rankA);
+    B.CreateCondBr(loopCond, loopBlock, endBlock);
+  }
+
+  B.SetInsertPoint(endBlock);
+  auto match = B.CreatePHI(Type::getInt1Ty(C), 2);
+  match->addIncoming(matchRank, entryBlock);
+  match->addIncoming(matchExtent, loopBlock);
+  B.CreateRet(match);
+
+  return F;
+}
+
 // Replace a call to `for_realloc_lhs` with appropriate allocation and
 // deallocation calls. It is asummed that the inputs to `for_realloc_lhs` are
 // IFX multi-dimensional arrays, and that they have the same rank. The first
