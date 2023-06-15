@@ -51,7 +51,6 @@ public:
   TraceInterface *interface;
   ProbProgMode mode;
   llvm::Function *newFunc;
-  llvm::StringSet<> inactiveRandomVars = {"x"};
 
   constexpr static const char TraceParameterAttribute[] = "enzyme_trace";
   constexpr static const char ObservationsParameterAttribute[] =
@@ -98,7 +97,7 @@ public:
                              llvm::Value *subtrace);
 
   llvm::CallInst *InsertArgument(llvm::IRBuilder<> &Builder, llvm::Value *name,
-                                 llvm::Argument *argument);
+                                 llvm::Value *argument);
 
   llvm::CallInst *InsertReturn(llvm::IRBuilder<> &Builder, llvm::Value *ret);
 
@@ -138,7 +137,7 @@ public:
   llvm::CallInst *CreateOutlinedFunction(
       llvm::IRBuilder<> &Builder,
       llvm::function_ref<void(llvm::IRBuilder<> &, TraceUtils *,
-                              llvm::ArrayRef<llvm::Argument *>)>
+                              llvm::ArrayRef<llvm::Value *>)>
           Outlined,
       llvm::Type *RetTy, llvm::ArrayRef<llvm::Value *> Arguments,
       bool needsLikelihood = true, const llvm::Twine &Name = "");

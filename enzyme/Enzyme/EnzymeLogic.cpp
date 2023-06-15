@@ -4975,9 +4975,11 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   return BatchCachedFunctions[tup] = NewF;
 };
 
-llvm::Function *EnzymeLogic::CreateTrace(
-    llvm::Function *totrace, SmallPtrSetImpl<Function *> &GenerativeFunctions,
-    ProbProgMode mode, bool autodiff, TraceInterface *interface) {
+Function *
+EnzymeLogic::CreateTrace(Function *totrace,
+                         SmallPtrSetImpl<Function *> &GenerativeFunctions,
+                         StringSet<> &ActiveRandomVariables, ProbProgMode mode,
+                         bool autodiff, TraceInterface *interface) {
   TraceCacheKey tup = std::make_tuple(totrace, mode);
   if (TraceCachedFunctions.find(tup) != TraceCachedFunctions.end()) {
     return TraceCachedFunctions.find(tup)->second;
@@ -4986,14 +4988,15 @@ llvm::Function *EnzymeLogic::CreateTrace(
   ValueToValueMapTy originalToNewFn;
   TraceUtils *tutils =
       TraceUtils::FromClone(mode, interface, totrace, originalToNewFn);
-  TraceGenerator *tracer = new TraceGenerator(
-      *this, tutils, autodiff, originalToNewFn, GenerativeFunctions);
+  TraceGenerator *tracer =
+      new TraceGenerator(*this, tutils, autodiff, originalToNewFn,
+                         GenerativeFunctions, ActiveRandomVariables);
 
   tracer->visit(totrace);
 
-  if (llvm::verifyFunction(*tutils->newFunc, &llvm::errs())) {
-    llvm::errs() << *totrace << "\n";
-    llvm::errs() << *tutils->newFunc << "\n";
+  if (verifyFunction(*tutils->newFunc, &errs())) {
+    errs() << *totrace << "\n";
+    errs() << *tutils->newFunc << "\n";
     report_fatal_error("function failed verification (4)");
   }
 
@@ -5008,7 +5011,7 @@ llvm::Function *EnzymeLogic::CreateTrace(
     if (PostOpt)
       PPC.optimizeIntermediate(NewF);
     if (EnzymePrint) {
-      llvm::errs() << *NewF << "\n";
+      errs() << *NewF << "\n";
     }
   }
 

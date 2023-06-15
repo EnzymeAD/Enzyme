@@ -160,8 +160,11 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
 
 LLVMValueRef CreateTrace(EnzymeLogicRef Logic, LLVMValueRef totrace,
                          LLVMValueRef *generative_functions,
-                         size_t generative_functions_size, CProbProgMode mode,
-                         uint8_t autodiff, EnzymeTraceInterfaceRef interface);
+                         size_t generative_functions_size,
+                         const char *active_random_variables[],
+                         size_t active_random_variables_size,
+                         CProbProgMode mode, uint8_t autodiff,
+                         EnzymeTraceInterfaceRef interface);
 
 typedef uint8_t (*CustomRuleType)(int /*direction*/, CTypeTreeRef /*return*/,
                                   CTypeTreeRef * /*args*/,

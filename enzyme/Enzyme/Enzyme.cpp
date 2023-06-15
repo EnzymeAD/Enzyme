@@ -636,6 +636,7 @@ public:
     bool diffeTrace;
     DIFFE_TYPE retType;
     bool primalReturn;
+    StringSet<> ActiveRandomVariables;
   };
 
 #if LLVM_VERSION_MAJOR > 16
@@ -669,6 +670,7 @@ public:
     unsigned truei = 0;
     unsigned byRefSize = 0;
     bool primalReturn = false;
+    StringSet<> ActiveRandomVariables;
 
     DIFFE_TYPE retType = whatType(fn->getReturnType(), mode);
 
@@ -903,6 +905,18 @@ public:
           observations = CI->getArgOperand(++i);
           opt_ty = DIFFE_TYPE::CONSTANT;
           continue;
+        } else if (*metaString == "enzyme_active_rand_var") {
+          Value *string = CI->getArgOperand(++i);
+          StringRef const_string;
+          if (getConstantStringInfo(string, const_string)) {
+            ActiveRandomVariables.insert(const_string);
+          } else {
+            EmitFailure(
+                "IllegalStringType", CI->getDebugLoc(), CI,
+                "active variable address must be a compile-time constant", *CI,
+                *metaString);
+          }
+          continue;
         } else {
           EmitFailure("IllegalDiffeType", CI->getDebugLoc(), CI,
                       "illegal enzyme metadata classification ", *CI,
@@ -1113,10 +1127,11 @@ public:
       return {};
     }
 
-    return Optional<Options>(
-        {differet, tape, dynamic_interface, trace, observations, likelihood,
-         diffeLikelihood, width, allocatedTapeSize, freeMemory, returnUsed,
-         tapeIsPointer, differentialReturn, diffeTrace, retType, primalReturn});
+    return Optional<Options>({differet, tape, dynamic_interface, trace,
+                              observations, likelihood, diffeLikelihood, width,
+                              allocatedTapeSize, freeMemory, returnUsed,
+                              tapeIsPointer, differentialReturn, diffeTrace,
+                              retType, primalReturn, ActiveRandomVariables});
   }
 
   static FnTypeInfo
@@ -1864,7 +1879,8 @@ public:
     }
 
     auto newFunc =
-        Logic.CreateTrace(F, generativeFunctions, mode, autodiff, interface);
+        Logic.CreateTrace(F, generativeFunctions, opt->ActiveRandomVariables,
+                          mode, autodiff, interface);
 
     if (!autodiff) {
       auto call = CallInst::Create(newFunc->getFunctionType(), newFunc, args);
