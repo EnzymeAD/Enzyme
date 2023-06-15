@@ -121,27 +121,27 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:  %mallocsize = mul nuw nsw i32 %len, 8
 ; CHECK-NEXT:  %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
-; CHECK-NEXT:  %0 = bitcast i8* %malloccall to double*
-; CHECK-NEXT:  call void @cblas_dcopy64_(i32 %len, double* %m, i32 %incm, double* %0, i32 1)
+; CHECK-NEXT:  %cache.x = bitcast i8* %malloccall to double*
+; CHECK-NEXT:  call void @cblas_dcopy64_(i32 %len, double* %m, i32 %incm, double* %cache.x, i32 1)
 ; CHECK-NEXT:  %mallocsize1 = mul nuw nsw i32 %len, 8
 ; CHECK-NEXT:  %malloccall2 = tail call noalias nonnull i8* @malloc(i32 %mallocsize1)
-; CHECK-NEXT:  %1 = bitcast i8* %malloccall2 to double*
-; CHECK-NEXT:  call void @cblas_dcopy64_(i32 %len, double* %n, i32 %incn, double* %1, i32 1)
-; CHECK-NEXT:  %2 = insertvalue { double*, double* } undef, double* %0, 0
-; CHECK-NEXT:  %3 = insertvalue { double*, double* } %2, double* %1, 1
-; CHECK-NEXT:  ret { double*, double* } %3
+; CHECK-NEXT:  %cache.y = bitcast i8* %malloccall2 to double*
+; CHECK-NEXT:  call void @cblas_dcopy64_(i32 %len, double* %n, i32 %incn, double* %cache.y, i32 1)
+; CHECK-NEXT:  %0 = insertvalue { double*, double* } undef, double* %cache.x, 0
+; CHECK-NEXT:  %1 = insertvalue { double*, double* } %0, double* %cache.y, 1
+; CHECK-NEXT:  ret { double*, double* } %1
 ; CHECK-NEXT: }
 
 ; CHECK: define internal void @[[revMod]](i32 %len, double* noalias %m, double* %"m'", i32 %incm, double* noalias %n, double* %"n'", i32 %incn, double %differeturn, { double*, double* }
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %1 = extractvalue { double*, double* } %0, 0
-; CHECK-NEXT:   %2 = extractvalue { double*, double* } %0, 1
-; CHECK-NEXT:   call void @cblas_daxpy64_(i32 %len, double %differeturn, double* %2, i32 1, double* %"m'", i32 %incm)
-; CHECK-NEXT:   call void @cblas_daxpy64_(i32 %len, double %differeturn, double* %1, i32 1, double* %"n'", i32 %incn)
-; CHECK-NEXT:   %3 = bitcast double* %1 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %3)
-; CHECK-NEXT:   %4 = bitcast double* %2 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %4)
+; CHECK-NEXT:   %tape.ext.x = extractvalue { double*, double* } %0, 0
+; CHECK-NEXT:   %tape.ext.y = extractvalue { double*, double* } %0, 1
+; CHECK-NEXT:   call void @cblas_daxpy64_(i32 %len, double %differeturn, double* %tape.ext.y, i32 1, double* %"m'", i32 %incm)
+; CHECK-NEXT:   call void @cblas_daxpy64_(i32 %len, double %differeturn, double* %tape.ext.x, i32 1, double* %"n'", i32 %incn)
+; CHECK-NEXT:   %1 = bitcast double* %tape.ext.x to i8*
+; CHECK-NEXT:   tail call void @free(i8* nonnull %1)
+; CHECK-NEXT:   %2 = bitcast double* %tape.ext.y to i8*
+; CHECK-NEXT:   tail call void @free(i8* nonnull %2)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
@@ -156,9 +156,9 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:  %mallocsize = mul nuw nsw i32 %len, 8
 ; CHECK-NEXT:  %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
-; CHECK-NEXT:  %0 = bitcast i8* %malloccall to double*
-; CHECK-NEXT:  call void @cblas_dcopy64_(i32 %len, double* %m, i32 %incm, double* %0, i32 1)
-; CHECK-NEXT:  ret double* %0
+; CHECK-NEXT:  %cache.x = bitcast i8* %malloccall to double*
+; CHECK-NEXT:  call void @cblas_dcopy64_(i32 %len, double* %m, i32 %incm, double* %cache.x, i32 1)
+; CHECK-NEXT:  ret double* %cache.x
 ; CHECK-NEXT: }
 
 ; CHECK: define internal void @[[revModFirst]](i32 %len, double* noalias %m, i32 %incm, double* noalias %n, double* %"n'", i32 %incn, double %differeturn, double*
@@ -180,9 +180,9 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:  %mallocsize = mul nuw nsw i32 %len, 8
 ; CHECK-NEXT:  %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
-; CHECK-NEXT:  %0 = bitcast i8* %malloccall to double*
-; CHECK-NEXT:  call void @cblas_dcopy64_(i32 %len, double* %n, i32 %incn, double* %0, i32 1)
-; CHECK-NEXT:  ret double* %0
+; CHECK-NEXT:  %cache.y = bitcast i8* %malloccall to double*
+; CHECK-NEXT:  call void @cblas_dcopy64_(i32 %len, double* %n, i32 %incn, double* %cache.y, i32 1)
+; CHECK-NEXT:  ret double* %cache.y
 ; CHECK-NEXT: }
 
 

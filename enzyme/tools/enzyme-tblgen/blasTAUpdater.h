@@ -1,6 +1,8 @@
-void emit_BLASTypes(raw_ostream &os) {
+#include "datastructures.h"
 
+void emit_BLASTypes(raw_ostream &os) {
   os << "const bool byRef = blas.prefix == \"\";\n";
+  os << "const int offset = (byRef ? 0 : 1);\n";
 
   os << "TypeTree ttFloat;\n"
      << "llvm::Type *floatType; \n"
@@ -40,10 +42,10 @@ void emit_BLASTypes(raw_ostream &os) {
      << "ttPtr.insert({-1},BaseType::Pointer);\n"
      << "ttPtr.insert({-1,0},floatType);\n";
 }
-     
+
 void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
-
+  bool lv23 = pattern.isBLASLevel2or3();
 
   os << "if (blas.function == \"" << name << "\") {\n";
 
@@ -51,27 +53,42 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
   DenseSet<size_t> mutableArgs = pattern.getMutableArgs();
 
   // Now we can build TypeTrees
-  for (size_t i = 0; i < argTypeMap.size(); i++) {
-    auto currentType = argTypeMap.lookup(i);
+  for (size_t j = 0; j < argTypeMap.size(); j++) {
+    auto currentType = argTypeMap.lookup(j);
+    // sorry. will fix later. effectively, skip arg 0 for for lv23,
+    // because we have the cblas layout in the .td declaration
+    size_t i = (lv23 ? j - 1 : j);
     if (currentType == argType::len || currentType == argType::vincInc) {
-      os << "  updateAnalysis(call.getArgOperand(" << i << "), ttInt, &call);\n";
+      os << "  updateAnalysis(call.getArgOperand(" << i
+         << (lv23 ? " + offset" : "") << "), ttInt, &call);\n";
     } else if (currentType == argType::vincData) {
-      assert(argTypeMap.lookup(i+1) == argType::vincInc);
-      os << "  if (auto n = dyn_cast<ConstantInt>(call.getArgOperand(0))) {\n"
-         << "    if (auto inc = dyn_cast<ConstantInt>(call.getArgOperand(" << i << "))) {\n"
-         << "      assert(!inc->isNegative());\n"
-         << "      TypeTree ttData = ttPtr;\n"
-         << "      for (size_t i = 1; i < n->getZExtValue(); i++)\n"
-         << "          ttData.insert({-1, int(i * inc->getZExtValue())}, floatType);\n"
-         << "      updateAnalysis(call.getArgOperand(" << i << "), ttData, &call);\n"
-         << "    } else {\n"
-         << "      updateAnalysis(call.getArgOperand(" << i << "), ttPtr, &call);\n"
-         << "    }\n"
-         << "  } else {\n"
-         << "    updateAnalysis(call.getArgOperand(" << i << "), ttPtr, &call);\n"
-         << "  }\n";
+      assert(argTypeMap.lookup(j + 1) == argType::vincInc);
+      if (!lv23)
+        os << "  if (auto n = dyn_cast<ConstantInt>(call.getArgOperand(0"
+           << (lv23 ? " + offset" : "") << "))) {\n"
+           << "    if (auto inc = dyn_cast<ConstantInt>(call.getArgOperand("
+           << i << (lv23 ? " + offset" : "") << "))) {\n"
+           << "      assert(!inc->isNegative());\n"
+           << "      TypeTree ttData = ttPtr;\n"
+           << "      for (size_t i = 1; i < n->getZExtValue(); i++)\n"
+           << "          ttData.insert({-1, int(i * inc->getZExtValue())}, "
+              "floatType);\n"
+           << "      updateAnalysis(call.getArgOperand(" << i
+           << (lv23 ? " + offset" : "") << "), ttData, &call);\n"
+           << "    } else {\n"
+           << "      updateAnalysis(call.getArgOperand(" << i
+           << (lv23 ? " + offset" : "") << "), ttPtr, &call);\n"
+           << "    }\n"
+           << "  } else {\n"
+           << "    updateAnalysis(call.getArgOperand(" << i
+           << (lv23 ? " + offset" : "") << "), ttPtr, &call);\n"
+           << "  }\n";
+      else
+        os << "    updateAnalysis(call.getArgOperand(" << i
+           << (lv23 ? " + offset" : "") << "), ttPtr, &call);\n";
     } else if (currentType == argType::fp) {
-    os << "  updateAnalysis(call.getArgOperand(" << i << "), ttFloat, &call);\n";
+      os << "  updateAnalysis(call.getArgOperand(" << i
+         << (lv23 ? " + offset" : "") << "), ttFloat, &call);\n";
     }
   }
   if (name == "dot" || name == "asum" || name == "nrm2") {

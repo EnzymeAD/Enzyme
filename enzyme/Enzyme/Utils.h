@@ -90,6 +90,7 @@ extern "C" {
 extern llvm::cl::opt<bool> EnzymePrintPerf;
 extern llvm::cl::opt<bool> EnzymeStrongZero;
 extern llvm::cl::opt<bool> EnzymeBlasCopy;
+extern llvm::cl::opt<bool> EnzymeLapackCopy;
 extern LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
                                           const void *, LLVMValueRef,
                                           LLVMBuilderRef);
@@ -628,14 +629,26 @@ llvm::Function *getOrInsertDifferentialFloatMemcpy(
     unsigned dstaddr, unsigned srcaddr, unsigned bitwidth);
 
 /// Create function for type that performs memcpy with a stride using blas copy
-llvm::Function *getOrInsertMemcpyStridedBlas(llvm::Module &M,
-                                             llvm::PointerType *T,
-                                             llvm::Type *IT, BlasInfo blas,
-                                             bool julia_decl);
+void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                           llvm::ArrayRef<llvm::Value *> args,
+                           llvm::ArrayRef<llvm::OperandBundleDef> bundles);
+
+/// Create function for type that performs memcpy using lapack copy
+void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
+                             BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
+                             llvm::ArrayRef<llvm::OperandBundleDef> bundles);
+
 /// Create function for type that performs memcpy with a stride
-llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M, llvm::PointerType *T,
-                                         llvm::Type *IT, unsigned dstalign,
-                                         unsigned srcalign);
+llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M,
+                                         llvm::Type *elementType,
+                                         llvm::PointerType *T, llvm::Type *IT,
+                                         unsigned dstalign, unsigned srcalign);
+
+/// Turned out to be a faster alternatives to lapacks lacpy function
+llvm::Function *getOrInsertMemcpyMat(llvm::Module &M, llvm::Type *elementType,
+                                     llvm::PointerType *PT,
+                                     llvm::IntegerType *IT, unsigned dstalign,
+                                     unsigned srcalign);
 
 /// Create function for type that performs the derivative memmove on floating
 /// point memory
@@ -1388,6 +1401,9 @@ static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
     if (F->hasParamAttribute(arg, llvm::Attribute::ReadOnly) ||
         F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
       return true;
+    // if (F->getAttributes().hasParamAttribute(arg, "enzyme_ReadOnly") ||
+    //     F->getAttributes().hasParamAttribute(arg, "enzyme_ReadNone"))
+    //   return true;
   }
   return false;
 }
@@ -1460,6 +1476,8 @@ static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
   if (F) {
     if (F->hasParamAttribute(idx, llvm::Attribute::NoCapture))
       return true;
+    // if (F->getAttributes().hasParamAttribute(idx, "enzyme_NoCapture"))
+    //   return true;
   }
   return false;
 }
@@ -1587,6 +1605,32 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
   }
   return false;
 }
+
+void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
+                     llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
+                     llvm::IRBuilder<> &BuilderZ, const llvm::Twine &name = "");
+
+// julia_decl null means not julia decl, otherwise it is the integer type needed
+// to cast to
+llvm::Value *to_blas_callconv(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
+                              llvm::IntegerType *julia_decl,
+                              llvm::IRBuilder<> &entryBuilder,
+                              llvm::Twine const & = "");
+
+llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
+                                  llvm::Value *arg_ld, llvm::Value *dim_1,
+                                  llvm::Value *dim_2, bool cacheMat,
+                                  bool byRef);
+// currently used to verify that input is a normal matrix, and not a transposed
+bool is_normal(llvm::IRBuilder<> &B, llvm::Value *trans);
+// first one assume V is an Integer
+llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V);
+// secon one assume V is an Integer or a ptr to an int (depends on byRef)
+llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
+                       llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder,
+                       const llvm::Twine &name);
+llvm::Value *get_blas_row(llvm::IRBuilder<> &B, llvm::Value *trans,
+                          llvm::Value *row, llvm::Value *col, bool byRef);
 
 // Parameter attributes from the original function/call that
 // we should preserve on the primal of the derivative code.
