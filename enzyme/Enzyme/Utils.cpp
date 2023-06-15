@@ -2100,17 +2100,13 @@ llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
 
   return allocV;
 }
-bool is_normal(llvm::IRBuilder<> &B, llvm::Value *trans) {
+bool is_normal(llvm::Value *trans) {
   if (auto CI = dyn_cast<ConstantInt>(trans)) {
     if (CI->getValue() == 'N' || CI->getValue() == 'n')
       return true;
     else
       return false;
   }
-
-  auto charType = IntegerType::get(trans->getContext(), 8);
-  if (trans->getType() != charType)
-    trans = B.CreateLoad(charType, trans, "trans_check");
 
   if (auto AI = dyn_cast<AllocaInst>(trans)) {
     std::deque<Value *> todo = {AI};

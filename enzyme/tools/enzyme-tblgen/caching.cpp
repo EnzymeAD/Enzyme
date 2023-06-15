@@ -131,7 +131,7 @@ void emit_vec_copy(TGPattern &pattern, raw_ostream &os) {
 
     if (dimensions.size() == 3) {
       os 
-<< "      if (is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ")) {\n"
+<< "      if (is_normal(arg_" << nameVec[dimensions[0]] << ")) {\n"
 << "        malloc_size = arg_" << nameVec[dimensions[1]] << ";\n"
 << "      } else {\n"
 << "        malloc_size = arg_" << nameVec[dimensions[2]] << ";\n"
@@ -217,7 +217,7 @@ void emit_mat_copy(TGPattern &pattern, raw_ostream &os) {
 
     if (dimensions.size() == 3) {
       os 
-<< "      if (is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ")) {\n"
+<< "      if (is_normal(arg_" << nameVec[dimensions[0]] << ")) {\n"
 << "        M = " << dim1 << ";\n"
 << "        N = " << dim2 << ";\n"
 << "      } else {\n"
