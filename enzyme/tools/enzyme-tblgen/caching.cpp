@@ -207,12 +207,12 @@ void emit_mat_copy(TGPattern &pattern, raw_ostream &os) {
     os
 << "    if (cache_" << matName << ") {\n"
 << "      Value *matSize;\n"
-<< "      auto charType = IntegerType::get(intType->getContext(), 8);\n"
+<< "      auto charTy = IntegerType::get(intType->getContext(), 8);\n"
 << "      Value *M, *N;\n";
 
     if (dimensions.size() == 3) {
       os 
-<< "      if (/*is_normal*/true) {\n"
+<< "      if (is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef)) {\n"
 << "        M = " << dim1 << ";\n"
 << "        N = " << dim2 << ";\n"
 << "      } else {\n"
@@ -245,7 +245,7 @@ void emit_mat_copy(TGPattern &pattern, raw_ostream &os) {
 os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
 os << "      if (EnzymeLapackCopy) {\n"
-<< "        Value *uplo = llvm::ConstantInt::get(charType, 0);\n" // garbage data, just should not match U or L
+<< "        Value *uplo = llvm::ConstantInt::get(charTy, 0);\n" // garbage data, just should not match U or L
 << "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, nullptr, allocationBuilder, \"copy.garbage\");\n"
 << "        Value *args[7] = {uplo, M, N, arg_" << matName << ", arg_" << ldName << ", malins, M};\n"
 << "        callMemcpyStridedLapack(BuilderZ, *gutils->oldFunc->getParent(), blas, args, gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
@@ -268,7 +268,6 @@ os << "      if (EnzymeLapackCopy) {\n"
 << "      cacheValues.push_back(malins);\n"
 << "    }\n";
   }
-
 }
 
 

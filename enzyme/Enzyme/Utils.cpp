@@ -2103,18 +2103,25 @@ llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
 
 llvm::Value *select_vec_dims(IRBuilder<> &B, llvm::Value *trans,
                              llvm::Value *dim1, llvm::Value *dim2, bool byRef) {
-  auto charTy = IntegerType::get(trans->getContext(), 8);
-  if (byRef) {
-    trans = B.CreateLoad(charTy, trans, "get.cached.ld.trans");
-  }
-  Value *out = B.CreateSelect(
-      B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'N')), dim1,
-      B.CreateSelect(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'n')), dim1,
-                     dim2));
-  return out;
+  Value *width = B.CreateSelect(is_normal(B, trans, byRef), dim1, dim2);
+
+  return width;
 }
-// llvm::Value *select_vec_dims(IRBuilder<> &B, llvm::Value *V) {
-// }
+
+llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef) {
+  auto charTy = IntegerType::get(trans->getContext(), 8);
+  if (byRef)
+    trans = B.CreateLoad(charTy, trans, "loaded.trans");
+
+  Value *trueVal = ConstantInt::getTrue(trans->getContext());
+  Value *falseVal = ConstantInt::getFalse(trans->getContext());
+
+  Value *isNormal = B.CreateSelect(
+      B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'n')), trueVal,
+      B.CreateSelect(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'N')),
+                     trueVal, falseVal));
+  return isNormal;
+}
 
 llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
   Value *out = B.CreateSelect(
@@ -2140,22 +2147,15 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
 //   ld_A = arg_lda;
 // }
 llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
-                                  llvm::Value *arg_ld, llvm::Value *dim_1,
-                                  llvm::Value *dim_2, bool cacheMat,
+                                  llvm::Value *arg_ld, llvm::Value *dim1,
+                                  llvm::Value *dim2, bool cacheMat,
                                   bool byRef) {
   if (!cacheMat)
     return arg_ld;
 
-  auto charTy = IntegerType::get(trans->getContext(), 8);
-  if (byRef) {
-    trans = B.CreateLoad(charTy, trans, "get.cached.ld.trans");
-  }
-  // if arg_transa is Normal, use first dim, else second
-  Value *isNormal = B.CreateSelect(
-      B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'n')), dim_1,
-      B.CreateSelect(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'N')),
-                     dim_1, dim_2));
-  return isNormal;
+  Value *width = B.CreateSelect(is_normal(B, trans, byRef), dim1, dim2);
+
+  return width;
 }
 
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
