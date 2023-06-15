@@ -625,6 +625,8 @@ public:
     Value *dynamic_interface;
     Value *trace;
     Value *observations;
+    Value *likelihood;
+    Value *diffeLikelihood;
     unsigned width;
     int allocatedTapeSize;
     bool freeMemory;
@@ -657,6 +659,8 @@ public:
     Value *dynamic_interface = nullptr;
     Value *trace = nullptr;
     Value *observations = nullptr;
+    Value *likelihood = nullptr;
+    Value *diffeLikelihood = nullptr;
     unsigned width = 1;
     int allocatedTapeSize = -1;
     bool freeMemory = true;
@@ -886,6 +890,15 @@ public:
           diffeTrace = true;
           opt_ty = DIFFE_TYPE::CONSTANT;
           continue;
+        } else if (*metaString == "enzyme_likelihood") {
+          likelihood = CI->getArgOperand(++i);
+          opt_ty = DIFFE_TYPE::CONSTANT;
+          continue;
+        } else if (*metaString == "enzyme_duplikelihood") {
+          likelihood = CI->getArgOperand(++i);
+          diffeLikelihood = CI->getArgOperand(++i);
+          opt_ty = DIFFE_TYPE::DUP_ARG;
+          continue;
         } else if (*metaString == "enzyme_observations") {
           observations = CI->getArgOperand(++i);
           opt_ty = DIFFE_TYPE::CONSTANT;
@@ -1100,10 +1113,10 @@ public:
       return {};
     }
 
-    return Options({differet, tape, dynamic_interface, trace, observations,
-                    width, allocatedTapeSize, freeMemory, returnUsed,
-                    tapeIsPointer, differentialReturn, diffeTrace, retType,
-                    primalReturn});
+    return Optional<Options>(
+        {differet, tape, dynamic_interface, trace, observations, likelihood,
+         diffeLikelihood, width, allocatedTapeSize, freeMemory, returnUsed,
+         tapeIsPointer, differentialReturn, diffeTrace, retType, primalReturn});
   }
 
   static FnTypeInfo
@@ -1770,6 +1783,8 @@ public:
     auto trace = opt->trace;
     auto dtrace = opt->diffeTrace;
     auto observations = opt->observations;
+    auto likelihood = opt->likelihood;
+    auto dlikelihood = opt->diffeLikelihood;
 
     // Interface
     bool has_dynamic_interface = dynamic_interface != nullptr;
@@ -1782,20 +1797,24 @@ public:
     }
 
     bool autodiff = dtrace;
-
     IRBuilder<> AllocaBuilder(CI->getParent()->getFirstNonPHI());
 
-    auto likelihood = AllocaBuilder.CreateAlloca(AllocaBuilder.getDoubleTy(),
-                                                 nullptr, "likelihood");
-    Builder.CreateStore(ConstantFP::getNullValue(Builder.getDoubleTy()),
-                        likelihood);
-    args.push_back(likelihood);
+    if (!likelihood) {
+      likelihood = AllocaBuilder.CreateAlloca(AllocaBuilder.getDoubleTy(),
+                                              nullptr, "likelihood");
+      Builder.CreateStore(ConstantFP::getNullValue(Builder.getDoubleTy()),
+                          likelihood);
+      args.push_back(likelihood);
+    }
 
-    if (autodiff) {
-      auto dlikelihood = AllocaBuilder.CreateAlloca(AllocaBuilder.getDoubleTy(),
-                                                    nullptr, "dlikelihood");
+    if (autodiff && !dlikelihood) {
+      dlikelihood = AllocaBuilder.CreateAlloca(AllocaBuilder.getDoubleTy(),
+                                               nullptr, "dlikelihood");
       Builder.CreateStore(ConstantFP::get(Builder.getDoubleTy(), 1.0),
                           dlikelihood);
+    }
+
+    if (autodiff) {
       dargs.push_back(likelihood);
       dargs.push_back(dlikelihood);
       constants.push_back(DIFFE_TYPE::DUP_ARG);
