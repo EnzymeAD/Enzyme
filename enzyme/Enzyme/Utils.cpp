@@ -2121,6 +2121,7 @@ bool is_normal(llvm::IRBuilder<> &B, llvm::Value *trans) {
       if (isPointerArithmeticInst(cur)) {
         for (auto U : cur->users())
           todo.push_back(cast<Instruction>(U));
+        continue;
       }
       if (auto SI = dyn_cast<StoreInst>(cur)) {
         if (stored)
@@ -2139,7 +2140,7 @@ bool is_normal(llvm::IRBuilder<> &B, llvm::Value *trans) {
       }
     }
   }
-  return true;
+  return false;
 }
 
 llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
