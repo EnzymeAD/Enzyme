@@ -2467,17 +2467,35 @@ public:
                         dl.getTypeSizeInBits(CI->getType())) {
             auto AP = CI->getValue();
             bool validXor = false;
-            if (AP.isNullValue()) {
+#if LLVM_VERSION_MAJOR > 16
+            if (AP.isZero())
+#else
+            if (AP.isNullValue())
+#endif
+            {
               validXor = true;
             } else if (
                 !AP.isNegative() &&
-                ((FT->isFloatTy() &&
-                  (AP & ~0b01111111100000000000000000000000ULL)
-                      .isNullValue()) ||
-                 (FT->isDoubleTy() &&
+                ((FT->isFloatTy()
+#if LLVM_VERSION_MAJOR > 16
+                  && (AP & ~0b01111111100000000000000000000000ULL).isZero()
+#else
+                  && (AP & ~0b01111111100000000000000000000000ULL).isNullValue()
+#endif
+                      ) ||
+                 (FT->isDoubleTy()
+#if LLVM_VERSION_MAJOR > 16
+                  &&
                   (AP &
                    ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
-                      .isNullValue()))) {
+                      .isZero()
+#else
+                  &&
+                  (AP &
+                   ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                      .isNullValue()
+#endif
+                      ))) {
               validXor = true;
             }
             if (validXor) {
@@ -2839,17 +2857,35 @@ public:
                         dl.getTypeSizeInBits(CI->getType())) {
             auto AP = CI->getValue();
             bool validXor = false;
-            if (AP.isNullValue()) {
+#if LLVM_VERSION_MAJOR > 16
+            if (AP.isZero())
+#else
+            if (AP.isNullValue())
+#endif
+            {
               validXor = true;
             } else if (
                 !AP.isNegative() &&
-                ((FT->isFloatTy() &&
-                  (AP & ~0b01111111100000000000000000000000ULL)
-                      .isNullValue()) ||
-                 (FT->isDoubleTy() &&
+                ((FT->isFloatTy()
+#if LLVM_VERSION_MAJOR > 16
+                  && (AP & ~0b01111111100000000000000000000000ULL).isZero()
+#else
+                  && (AP & ~0b01111111100000000000000000000000ULL).isNullValue()
+#endif
+                      ) ||
+                 (FT->isDoubleTy()
+#if LLVM_VERSION_MAJOR > 16
+                  &&
                   (AP &
                    ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
-                      .isNullValue()))) {
+                      .isZero()
+#else
+                  &&
+                  (AP &
+                   ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                      .isNullValue()
+#endif
+                      ))) {
               validXor = true;
             }
             if (validXor) {
@@ -11781,7 +11817,7 @@ public:
 #endif
       return;
     }
-    if (funcName == "memset") {
+    if (funcName == "memset" || funcName == "memset_pattern16") {
       visitMemSetCommon(call);
       return;
     }

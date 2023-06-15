@@ -37,7 +37,11 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
+#if LLVM_VERSION_MAJOR <= 16
 #include "llvm/ADT/Optional.h"
+#else
+#include <optional>
+#endif
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -317,11 +321,24 @@ castToDiffeFunctionArgType(IRBuilder<> &Builder, llvm::CallInst *CI,
   return Builder.CreateBitCast(value, destType);
 }
 
+#if LLVM_VERSION_MAJOR > 16
+static std::optional<StringRef> getMetadataName(llvm::Value *res);
+#else
 static Optional<StringRef> getMetadataName(llvm::Value *res);
+#endif
 
 // if all phi arms are (recursively) based on the same metaString, use that
-static Optional<StringRef> recursePhiReads(PHINode *val) {
+#if LLVM_VERSION_MAJOR > 16
+static std::optional<StringRef> recursePhiReads(PHINode *val)
+#else
+static Optional<StringRef> recursePhiReads(PHINode *val)
+#endif
+{
+#if LLVM_VERSION_MAJOR > 16
+  std::optional<StringRef> finalMetadata;
+#else
   Optional<StringRef> finalMetadata;
+#endif
   SmallVector<PHINode *, 1> todo = {val};
   SmallSet<PHINode *, 1> done;
   while (todo.size()) {
@@ -349,7 +366,12 @@ static Optional<StringRef> recursePhiReads(PHINode *val) {
   return finalMetadata;
 }
 
-static Optional<StringRef> getMetadataName(llvm::Value *res) {
+#if LLVM_VERSION_MAJOR > 16
+std::optional<StringRef> getMetadataName(llvm::Value *res)
+#else
+Optional<StringRef> getMetadataName(llvm::Value *res)
+#endif
+{
   if (auto av = dyn_cast<MetadataAsValue>(res)) {
     return cast<MDString>(av->getMetadata())->getString();
   } else if ((isa<LoadInst>(res) || isa<CastInst>(res)) &&
@@ -536,7 +558,12 @@ public:
     return cast<Function>(fn);
   }
 
-  static Optional<unsigned> parseWidthParameter(CallInst *CI) {
+#if LLVM_VERSION_MAJOR > 16
+  static std::optional<unsigned> parseWidthParameter(CallInst *CI)
+#else
+  static Optional<unsigned> parseWidthParameter(CallInst *CI)
+#endif
+  {
     unsigned width = 1;
 
 #if LLVM_VERSION_MAJOR >= 14
@@ -609,12 +636,20 @@ public:
     bool primalReturn;
   };
 
-  static Optional<Options> handleArguments(IRBuilder<> &Builder, CallInst *CI,
-                                           Function *fn, DerivativeMode mode,
-                                           bool sizeOnly,
-                                           std::vector<DIFFE_TYPE> &constants,
-                                           SmallVectorImpl<Value *> &args,
-                                           std::map<int, Type *> &byVal) {
+#if LLVM_VERSION_MAJOR > 16
+  static std::optional<Options>
+  handleArguments(IRBuilder<> &Builder, CallInst *CI, Function *fn,
+                  DerivativeMode mode, bool sizeOnly,
+                  std::vector<DIFFE_TYPE> &constants,
+                  SmallVectorImpl<Value *> &args, std::map<int, Type *> &byVal)
+#else
+  static Optional<Options>
+  handleArguments(IRBuilder<> &Builder, CallInst *CI, Function *fn,
+                  DerivativeMode mode, bool sizeOnly,
+                  std::vector<DIFFE_TYPE> &constants,
+                  SmallVectorImpl<Value *> &args, std::map<int, Type *> &byVal)
+#endif
+  {
     FunctionType *FT = fn->getFunctionType();
 
     Value *differet = nullptr;
@@ -636,12 +671,34 @@ public:
     bool returnUsed =
         !fn->getReturnType()->isVoidTy() && !fn->getReturnType()->isEmptyTy();
 
+    bool sret = CI->hasStructRetAttr() ||
+                fn->hasParamAttribute(0, Attribute::StructRet);
+
+#if LLVM_VERSION_MAJOR >= 14
+    for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
+#else
+    for (unsigned i = 1 + sret; i < CI->getNumArgOperands(); ++i)
+#endif
+    {
+      Value *res = CI->getArgOperand(i);
+      auto metaString = getMetadataName(res);
+      // handle metadata
+      if (metaString && metaString->startswith("enzyme_")) {
+        if (*metaString == "enzyme_const_return") {
+          retType = DIFFE_TYPE::CONSTANT;
+          continue;
+        } else if (*metaString == "enzyme_active_return") {
+          retType = DIFFE_TYPE::OUT_DIFF;
+          continue;
+        } else if (*metaString == "enzyme_dup_return") {
+          retType = DIFFE_TYPE::DUP_ARG;
+          continue;
+        }
+      }
+    }
     bool differentialReturn = (mode == DerivativeMode::ReverseModeCombined ||
                                mode == DerivativeMode::ReverseModeGradient) &&
                               (retType == DIFFE_TYPE::OUT_DIFF);
-
-    bool sret = CI->hasStructRetAttr() ||
-                fn->hasParamAttribute(0, Attribute::StructRet);
 
     // find and handle enzyme_width
     if (auto parsedWidth = parseWidthParameter(CI)) {
@@ -722,9 +779,14 @@ public:
 #endif
     {
       Value *res = CI->getArgOperand(i);
-      Optional<DIFFE_TYPE> opt_ty;
       auto metaString = getMetadataName(res);
+#if LLVM_VERSION_MAJOR > 16
+      std::optional<Value *> batchOffset;
+      std::optional<DIFFE_TYPE> opt_ty;
+#else
       Optional<Value *> batchOffset;
+      Optional<DIFFE_TYPE> opt_ty;
+#endif
 
       // handle metadata
       if (metaString && metaString->startswith("enzyme_")) {
@@ -801,6 +863,12 @@ public:
           continue;
         } else if (*metaString == "enzyme_primal_return") {
           primalReturn = true;
+          continue;
+        } else if (*metaString == "enzyme_const_return") {
+          continue;
+        } else if (*metaString == "enzyme_active_return") {
+          continue;
+        } else if (*metaString == "enzyme_dup_return") {
           continue;
         } else if (*metaString == "enzyme_width") {
           ++i;
@@ -1032,10 +1100,10 @@ public:
       return {};
     }
 
-    return Optional<Options>(
-        {differet, tape, dynamic_interface, trace, observations, width,
-         allocatedTapeSize, freeMemory, returnUsed, tapeIsPointer,
-         differentialReturn, diffeTrace, retType, primalReturn});
+    return Options({differet, tape, dynamic_interface, trace, observations,
+                    width, allocatedTapeSize, freeMemory, returnUsed,
+                    tapeIsPointer, differentialReturn, diffeTrace, retType,
+                    primalReturn});
   }
 
   static FnTypeInfo
