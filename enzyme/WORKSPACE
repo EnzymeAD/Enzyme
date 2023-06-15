@@ -4,7 +4,7 @@ http_archive(
     name = "llvm-raw",
     build_file_content = "# empty",
     sha256 = "",
-    strip_prefix = "llvm-project",
+    strip_prefix = "llvm-project-main",
     urls = ["https://github.com/llvm/llvm-project/archive/main.tar.gz"],
     patch_args = ["-p1"],
     patches = ["//:bazel_patches/llvm_build.patch"]
