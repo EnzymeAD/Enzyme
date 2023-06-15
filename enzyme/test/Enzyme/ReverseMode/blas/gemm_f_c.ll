@@ -85,8 +85,8 @@ entry:
 ; CHECK-NEXT:   store i64 8, i64* %ldb, align 16
 ; CHECK-NEXT:   store double 0.000000e+00, double* %beta
 ; CHECK-NEXT:   store i64 4, i64* %ldc, align 16
-; CHECK-NEXT:   %trans_check = load i8, i8* %transa, align 1
-; CHECK-NEXT:   %trans_check1 = load i8, i8* %transb, align 1
+; CHECK-NEXT:   %trans_check = load i8, i8* %transa
+; CHECK-NEXT:   %trans_check1 = load i8, i8* %transb
 ; CHECK-NEXT:   %0 = bitcast i8* %m_p to i64*
 ; CHECK-NEXT:   %1 = bitcast i8* %k_p to i64*
 ; CHECK-NEXT:   %2 = load i64, i64* %0

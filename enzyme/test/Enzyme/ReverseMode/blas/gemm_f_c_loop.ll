@@ -121,8 +121,8 @@ entry:
 ; CHECK-NEXT:   store i64 4, i64* %ldc, align 16
 ; CHECK-NEXT:   %A = call i8* @AData(i64 %iv) #
 ; CHECK-NEXT:   %lda_p = call i8* @Aldap(i64 %iv) #
-; CHECK-NEXT:   %trans_check = load i8, i8* %transa, align 1
-; CHECK-NEXT:   %trans_check1 = load i8, i8* %transb, align 1
+; CHECK-NEXT:   %trans_check = load i8, i8* %transa
+; CHECK-NEXT:   %trans_check1 = load i8, i8* %transb
 ; CHECK-NEXT:   %avld.transa = load i8, i8* %transa
 ; CHECK-NEXT:   %avld.transb = load i8, i8* %transb
 ; CHECK-NEXT:   %pcld.k = bitcast i8* %k_p to i64*
