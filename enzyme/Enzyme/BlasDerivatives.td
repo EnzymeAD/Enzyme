@@ -12,9 +12,18 @@ def hbw   : BLASType<1, 0>; // half matrix-bandwith}
 def bw    : BLASType<1, 0>; // matrix-bandwith}
 def fp    : BLASType<1, 1>;  // floating point
 def ap    : BLASType<1, 1>;  // packed array, alternative to vld
-def vinc  : BLASType<2, 1>;  // {vector, increment}
+//def vinc  : BLASType<2, 1>;  // {vector, increment}
 def vld   : BLASType<2, 1>;  // {vector, leading dim}
-def mld   : BLASType<2, 1>;  // {matrix, leading dim}, assumes m, n as existing args
+//def mld   : BLASType<2, 1>;  // {matrix, leading dim}, assumes m, n as existing args
+
+class vinc<list<string> _args> : BLASType<2, 1> {
+  assert !or(!eq(!size(_args), 1), !eq(!size(_args), 3)), "vinc must have 1 or 3 args";
+  list<string> args = _args;
+}
+class mld<list<string> _args> : BLASType<2, 1> {
+  assert !or(!eq(!size(_args), 2), !eq(!size(_args), 3)), "mld must have 2 or 3 args";
+  list<string> args = _args;
+}
 
 class blas_modes<list<string> _modes> : BLASType<1, 0> {
   list<string> modes = _modes;
@@ -37,6 +46,8 @@ class CallBlasPattern<dag patternToMatch, list<string> mutables, list<BLASType> 
   dag PatternToMatch = patternToMatch;
   list<BLASType> inputTypes = paramTypes;
   list<dag> ArgDerivatives = resultOps;
+  // blas functions have at most one mutable argument
+  assert !or(!eq(!size(mutables), 0), !eq(!size(mutables), 1)), "mutables must have length 0 or 1";
   list<string> mutable = mutables;
 }
 
@@ -90,7 +101,7 @@ class transpose<string _name> {
 
 // Lv 1 \wo rotations
 def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
-                  ["x"],[len, fp, vinc],
+                  ["x"],[len, fp, vinc<["n"]>],
                   [
                   // dot must proceed scal, because scal modifies adj<"x">
                   (b<"dot"> $n, $x, $incx, adj<"x">, $incx),
@@ -99,7 +110,7 @@ def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
                   >;
 
 def lascl : CallBlasPattern<(Op $layout, $type, $kl, $ku, $cfrom, $cto, $m, $n, $A, $lda, $info),
-                  ["A"],[cblas_layout, uplo, len, len, fp, fp, len, len, mld, len],
+                  ["A"],[cblas_layout, uplo, len, len, fp, fp, len, len, mld<["m", "n"]>, len],
                   [
                   (inactive), // cfrom
                   (inactive), // cto
@@ -108,7 +119,7 @@ def lascl : CallBlasPattern<(Op $layout, $type, $kl, $ku, $cfrom, $cto, $m, $n, 
                   >;
 
 def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
-                  ["y"],[len, fp, vinc, vinc],
+                  ["y"],[len, fp, vinc<["n"]>, vinc<["n"]>],
                   [
                   // dot must proceed scal, because scal modifies adj<"x">
                   (inactive),
@@ -118,7 +129,7 @@ def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   >;
 
 def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
-                  [],[len, vinc, vinc],
+                  [],[len, vinc<["n"]>, vinc<["n"]>],
                   [
                   (b<"axpy"> $n, DiffeRet<"">, $y, $incy, $x, $incx), 
                   (b<"axpy"> $n, DiffeRet<"">, $x, $incx, $y, $incy)
@@ -158,7 +169,7 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 // y = alpha Ax + beta y
 // currently assumes for vector dimensions that transa = 'N' and gets dimensions wrong otherwise
 def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $incx, $beta, $y, $incy),
-                  ["y"], [cblas_layout, trans,  len, len,  fp,   mld,      vinc,      fp,    vinc],
+                  ["y"], [cblas_layout, trans,  len, len,  fp,   mld<["m", "n"]>,      vinc<["transa", "n", "m"]>,      fp,    vinc<["transa", "m", "n"]>],
                   [
                   /* alpha  */  (inactive), //(b<"dot"> $y, (b<"gemv"> $A, $x)),
                   /* A      */  (b<"ger">  $layout, $m, $n, $alpha, adj<"y">, $incy, $x, $incx, adj<"A">, $lda),
@@ -169,7 +180,7 @@ def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $
                   >;
 // 
 def ger : CallBlasPattern<(Op $layout, $m, $n, $alpha, $x, $incx, $y, $incy, $A, $lda),
-                  ["A"],[cblas_layout, len, len, fp, vinc, vinc, mld],
+                  ["A"],[cblas_layout, len, len, fp, vinc<["m"]>, vinc<["n"]>, mld<["m", "n"]>],
                   [
                   (inactive),
                   (inactive),
@@ -192,7 +203,7 @@ def ger : CallBlasPattern<(Op $layout, $m, $n, $alpha, $x, $incx, $y, $incy, $A,
 
 def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),
                   ["C"],
-                  [cblas_layout, trans, trans, len, len, len, fp, mld, mld, fp, mld],
+                  [cblas_layout, trans, trans, len, len, len, fp, mld<["transa", "m", "k"]>, mld<["transb", "k", "n"]>, fp, mld<["m", "n"]>],
                   [
                   /* alpha */ (inactive),
                   /* A     */ (b<"gemm"> $layout, $transa, transpose<"transb">, $m, $k, $n, $alpha, adj<"C">, $ldc, $B, (ld $B, $transb, $ldb, $k, $n), $beta, adj<"A">, $lda),

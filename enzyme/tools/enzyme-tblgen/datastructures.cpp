@@ -13,9 +13,10 @@
 #include "datastructures.h"
 
 namespace llvm {
-// llvm::raw_ostream &llvm::operator<<(llvm::raw_ostream &os, const argType
-// &arg) {
 raw_ostream &operator<<(raw_ostream &os, const argType &arg) {
+  return (os << TyToString(arg));
+}
+raw_ostream &operator<<(raw_fd_ostream &os, const argType &arg) {
   return (os << TyToString(arg));
 }
 } // namespace llvm
@@ -180,30 +181,35 @@ void fillArgTypes(const Record *pattern, DenseMap<size_t, argType> &argTypes) {
     pattern->getValueAsListOfDefs("inputTypes");
   size_t pos = 0;
   for (auto val : inputTypes) {
-    if (val->getName() == "len") {
-      argTypes.insert(std::make_pair(pos, argType::len));
-    } else if (val->getName() == "fp") {
-      argTypes.insert(std::make_pair(pos, argType::fp));
-    } else if (val->getName() == "vinc") {
+    if (val->isSubClassOf("vinc")) {
       argTypes.insert(std::make_pair(pos, argType::vincData));
       argTypes.insert(std::make_pair(pos + 1, argType::vincInc));
-    } else if (val->getName() == "cblas_layout") {
-      assert(pos == 0);
-      argTypes.insert(std::make_pair(pos, argType::cblas_layout));
-    } else if (val->getName() == "trans") {
-      argTypes.insert(std::make_pair(pos, argType::trans));
-    } else if (val->getName() == "diag") {
-      argTypes.insert(std::make_pair(pos, argType::diag));
-    } else if (val->getName() == "uplo") {
-      argTypes.insert(std::make_pair(pos, argType::uplo));
-    } else if (val->getName() == "side") {
-      argTypes.insert(std::make_pair(pos, argType::side));
-    } else if (val->getName() == "mld") {
+    } else if (val->isSubClassOf("mld")) {
       argTypes.insert(std::make_pair(pos, argType::mldData));
       argTypes.insert(std::make_pair(pos + 1, argType::mldLD));
     } else {
-      llvm::errs() << "val->getName: " << val->getName() << "\n";
-      PrintFatalError("Unknown type!");
+      // TODO: fix assertion
+      // assert(isa<DefInit>(val));
+      auto name = val->getName();
+      if (name == "len") {
+        argTypes.insert(std::make_pair(pos, argType::len));
+      } else if (name == "fp") {
+        argTypes.insert(std::make_pair(pos, argType::fp));
+      } else if (name == "cblas_layout") {
+        assert(pos == 0);
+        argTypes.insert(std::make_pair(pos, argType::cblas_layout));
+      } else if (name == "trans") {
+        argTypes.insert(std::make_pair(pos, argType::trans));
+      } else if (name == "diag") {
+        argTypes.insert(std::make_pair(pos, argType::diag));
+      } else if (name == "uplo") {
+        argTypes.insert(std::make_pair(pos, argType::uplo));
+      } else if (name == "side") {
+        argTypes.insert(std::make_pair(pos, argType::side));
+      } else {
+        llvm::errs() << "val->getName: " << name << "\n";
+        PrintFatalError("Unknown type!");
+      }
     }
     pos += val->getValueAsInt("nelem");
   }
@@ -220,6 +226,55 @@ void fillArgs(const Record *r, SmallVectorImpl<std::string> &args,
   }
   assert(args.size() == numArgs);
   assert(argNameToPos.size() == numArgs);
+}
+void fillRelatedLenghts(const Record *pattern, StringMap<size_t> &argNameToPos,
+                        const DenseMap<size_t, argType> &argTypes,
+                        relatedLengthMap &relatedLengths) {
+  std::vector<Record *> inputTypes =
+      pattern->getValueAsListOfDefs("inputTypes");
+  size_t pos = 0;
+  for (auto val : inputTypes) {
+    if (!val->isSubClassOf("vinc") && !val->isSubClassOf("mld")) {
+      pos += val->getValueAsInt("nelem");
+      continue;
+    }
+
+    auto args = val->getValueAsListOfStrings("args");
+    auto argsSize = args.size();
+    auto lengths = llvm::SmallVector<size_t, 3>{};
+    for (auto arg : args) {
+      lengths.push_back(argNameToPos.lookup(arg));
+      llvm::errs() << arg << " " << argNameToPos.lookup(arg) << "\n";
+    }
+
+    if (val->isSubClassOf("vinc")) {
+      assert(argsSize == 1 || argsSize == 3);
+      assert(argTypes.lookup(pos) == argType::vincData);
+      assert(argTypes.lookup(pos + 1) == argType::vincInc);
+      if (argsSize == 1) {
+        assert(argTypes.lookup(lengths[0]) == argType::len);
+      } else {
+        assert(argTypes.lookup(lengths[0]) == argType::trans);
+        assert(argTypes.lookup(lengths[1]) == argType::len);
+        assert(argTypes.lookup(lengths[2]) == argType::len);
+      }
+      relatedLengths.insert(std::make_pair(pos, lengths));
+    } else if (val->isSubClassOf("mld")) {
+      assert(argsSize == 2 || argsSize == 3);
+      assert(argTypes.lookup(pos) == argType::mldData);
+      assert(argTypes.lookup(pos + 1) == argType::mldLD);
+      if (argsSize == 2) {
+        assert(argTypes.lookup(lengths[0]) == argType::len);
+        assert(argTypes.lookup(lengths[1]) == argType::len);
+      } else {
+        assert(argTypes.lookup(lengths[0]) == argType::trans);
+        assert(argTypes.lookup(lengths[1]) == argType::len);
+        assert(argTypes.lookup(lengths[2]) == argType::len);
+      }
+      relatedLengths.insert(std::make_pair(pos, lengths));
+    }
+    pos += val->getValueAsInt("nelem");
+  }
 }
 
 void fillArgUserMap(SmallVectorImpl<Rule> &rules, ArrayRef<std::string> nameVec,
@@ -244,13 +299,17 @@ void fillArgUserMap(SmallVectorImpl<Rule> &rules, ArrayRef<std::string> nameVec,
 
 TGPattern::TGPattern(Record &r) {
   blasName = r.getNameInitAsString();
+  llvm::errs() << blasName << "\n";
 
   args = llvm::SmallVector<std::string, 6>();
   argNameToPos = StringMap<size_t>{};
   fillArgs(&r, args, argNameToPos);
 
+  relatedLengths = {};
   argTypes = DenseMap<size_t, argType>();
   fillArgTypes(&r, argTypes);
+  fillRelatedLenghts(&r, argNameToPos, argTypes, relatedLengths);
+
   if (argTypes.lookup(0) == argType::cblas_layout) {
     BLASLevel2or3 = true;
   } else {
@@ -281,45 +340,26 @@ TGPattern::TGPattern(Record &r) {
   fillArgUserMap(rules, nameVec, posActArgs, argUsers);
   // fillArgUserMap(rules, ArrayRef(args), posActArgs, argUsers);
 }
-SmallVector<size_t, 2> TGPattern::getRelatedLengthArgs(size_t arg) {
-  if (!BLASLevel2or3) {
-    assert(argTypes.lookup(arg) == argType::vincData);
-    assert(argTypes.lookup(0) == argType::len);
-    return {0};
+SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg) {
+  auto ty = argTypes.lookup(arg);
+  // other args are unrelated to length args
+  assert(ty == argType::vincData || ty == argType::mldData);
+
+  assert(relatedLengths.count(arg) == 1);
+  auto related = relatedLengths.lookup(arg);
+
+  if (related.size() == 3) {
+    assert(argTypes.lookup(related[0]) == argType::trans);
   }
-  assert(argTypes.lookup(arg) == argType::vincData ||
-         argTypes.lookup(arg) == argType::mldData);
-  // This is terribly wrong because it will burn
-  // once someone sets TRANS to T
-  if (blasName == "gemm") {
-    if (arg == 7)
-      return {3, 5};
-    if (arg == 9)
-      return {5, 4};
-    if (arg == 12)
-      return {3, 4};
-    assert(false);
+
+  llvm::errs() << "related length args for " << args[arg] << " are: ";
+  for (auto &&arg : related) {
+    llvm::errs() << args[arg] << " ";
   }
-  if (blasName == "gemv") {
-    if (arg == 5)
-      return {2, 3};
-    if (arg == 7)
-      return {3};
-    if (arg == 10)
-      return {2};
-    assert(false);
-  }
-  if (blasName == "ger") {
-    if (arg == 4)
-      return {1};
-    if (arg == 6)
-      return {2};
-    if (arg == 8)
-      return {1, 2};
-    assert(false);
-  }
-  llvm::errs() << "failed for: " << blasName << "\n";
-  assert(false);
+  return related;
+  // tests:
+  // llvm::errs() << "failed for: " << blasName << "\n";
+  // assert(false);
 }
 bool TGPattern::isBLASLevel2or3() { return BLASLevel2or3; }
 DenseMap<size_t, DenseSet<size_t>> TGPattern::getArgUsers() { return argUsers; }
