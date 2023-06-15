@@ -195,12 +195,6 @@ def ger : CallBlasPattern<(Op $layout, $m, $n, $alpha, $x, $incx, $y, $incy, $A,
 //   ld_A = arg_lda;
 // }
 
-// TODO: A nicer logic would just wire each matrix as part of mld to the related trans, dim1, dim2 bundle.
-// E.g. ["A<$transa, $m, $k>", "B<"transb, $k, $n>", "C<$m, $n>"],
-// Where we expect one entry for each mld type
-// Then we wouldn't need an extra ld type, but automatically add it every time we use a primal mldData 
-// and don't work on the shadow
-
 def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),
                   ["C"],
                   [cblas_layout, trans, trans, len, len, len, fp, mld<["transa", "m", "k"]>, mld<["transb", "k", "n"]>, fp, mld<["m", "n"]>],

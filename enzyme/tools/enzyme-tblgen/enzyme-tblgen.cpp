@@ -974,7 +974,7 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
        << " = (cacheMode ? overwritten_args[pos_" << name << "] : false);\n";
     argType ty = argTypeMap.lookup(i);
     if (ty == argType::trans) {
-      os << "  assert(is_normal(BuilderZ, arg_" << name << "));\n";
+      //      os << "  assert(is_normal(BuilderZ, arg_" << name << "));\n";
     }
     if (std::count(actArgs.begin(), actArgs.end(), i)) {
       os << "  const bool active_" << name

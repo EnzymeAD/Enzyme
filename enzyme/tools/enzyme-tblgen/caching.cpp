@@ -186,18 +186,39 @@ void emit_mat_copy(TGPattern &pattern, raw_ostream &os) {
     auto matName = nameVec[argIdx];
     auto ldName = nameVec[argIdx+1];
     auto dimensions = pattern.getRelatedLengthArgs(argIdx);
-    assert(dimensions.size() == 2);
-    assert(typeMap.lookup(dimensions[0]) == argType::len);
-    assert(typeMap.lookup(dimensions[1]) == argType::len);
-    std::string dim1 = "arg_" + nameVec[dimensions[0]];
-    std::string dim2 = "arg_" + nameVec[dimensions[1]];
+    std::string dim1, dim2;
+    if (dimensions.size() == 2) {
+      // mat is invariant to transpose
+      dim1 = "arg_" + nameVec[dimensions[0]]; 
+      dim2 = "arg_" + nameVec[dimensions[1]];
+    } else {
+      assert(dimensions.size() == 3);
+      dim1 = "arg_" + nameVec[dimensions[1]];
+      dim2 = "arg_" + nameVec[dimensions[2]];
+    }
     os
 << "    if (cache_" << matName << ") {\n"
 << "      Value *matSize;\n"
 << "      auto charType = IntegerType::get(intType->getContext(), 8);\n"
-<< "      auto *M = " << dim1 << ";\n"
+<< "      Value *M, *N;\n";
+
+    if (dimensions.size() == 3) {
+      os 
+<< "      if (is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ")) {\n"
+<< "        M = " << dim1 << ";\n"
+<< "        N = " << dim2 << ";\n"
+<< "      } else {\n"
+<< "        M = " << dim2 << ";\n"
+<< "        N = " << dim1 << ";\n"
+<< "      }\n";
+    } else {
+      os 
+<< "      M = " << dim1 << ";\n"
+<< "      N = " << dim2 << ";\n";
+    }
+
+    os
 << "      auto *len1 = M;\n"
-<< "      auto *N = " << dim2 << ";\n"
 << "      auto *len2 = N;\n"
 << "      if (byRef) {\n"
 << "        auto MP = BuilderZ.CreatePointerCast(M, PointerType::get(intType, cast<PointerType>(M->getType())->getAddressSpace()));\n"
