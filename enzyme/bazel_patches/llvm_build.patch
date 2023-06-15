@@ -1,0 +1,28 @@
+diff --git a/utils/bazel/llvm-project-overlay/lld/BUILD.bazel b/utils/bazel/llvm-project-overlay/lld/BUILD.bazel
+index fb6e2397cc84..db259fffaa63 100644
+--- a/utils/bazel/llvm-project-overlay/lld/BUILD.bazel
++++ b/utils/bazel/llvm-project-overlay/lld/BUILD.bazel
+@@ -108,7 +108,6 @@ cc_library(
+         "//llvm:TargetParser",
+         "//llvm:TransformUtils",
+         "//llvm:config",
+-        "@llvm_zlib//:zlib",
+         "@llvm_zstd//:zstd",
+     ],
+ )
+diff --git a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
+index 0cc28fd856bc..51764826a130 100644
+--- a/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
++++ b/utils/bazel/llvm-project-overlay/llvm/BUILD.bazel
+@@ -277,11 +277,9 @@ cc_library(
+         # We unconditionally depend on the custom LLVM zlib wrapper. This will
+         # be an empty library unless zlib is enabled, in which case it will
+         # both provide the necessary dependencies and configuration defines.
+-        "@llvm_zlib//:zlib",
+         # We unconditionally depend on the custom LLVM zstd wrapper. This will
+         # be an empty library unless zstd is enabled, in which case it will
+         # both provide the necessary dependencies and configuration defines.
+-        "@llvm_zstd//:zstd",
+     ],
+ )
+ 
