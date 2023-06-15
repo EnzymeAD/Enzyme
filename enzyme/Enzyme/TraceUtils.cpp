@@ -387,7 +387,7 @@ Instruction *TraceUtils::SampleOrCondition(IRBuilder<> &Builder,
                                            ArrayRef<Value *> sample_args,
                                            Value *address, const Twine &Name) {
   auto &Context = Builder.getContext();
-  auto parrent_fn = Builder.GetInsertBlock()->getParent();
+  auto parent_fn = Builder.GetInsertBlock()->getParent();
 
   switch (mode) {
   case ProbProgMode::Trace: {
@@ -399,15 +399,11 @@ Instruction *TraceUtils::SampleOrCondition(IRBuilder<> &Builder,
     Instruction *hasChoice = HasChoice(Builder, address, "has.choice." + Name);
 
     Value *ThenChoice, *ElseChoice;
-    BasicBlock *ThenBlock = BasicBlock::Create(Context);
-    BasicBlock *ElseBlock = BasicBlock::Create(Context);
-    BasicBlock *EndBlock = BasicBlock::Create(Context);
-    ThenBlock->insertInto(parrent_fn);
-    ThenBlock->setName("condition." + Name + ".with.trace");
-    ElseBlock->insertInto(parrent_fn);
-    ElseBlock->setName("condition." + Name + ".without.trace");
-    EndBlock->insertInto(parrent_fn);
-    EndBlock->setName("end");
+    BasicBlock *ThenBlock = BasicBlock::Create(
+        Context, "condition." + Name + ".with.trace", parent_fn);
+    BasicBlock *ElseBlock = BasicBlock::Create(
+        Context, "condition." + Name + ".without.trace", parent_fn);
+    BasicBlock *EndBlock = BasicBlock::Create(Context, "end", parent_fn);
 
     Builder.CreateCondBr(hasChoice, ThenBlock, ElseBlock);
     Builder.SetInsertPoint(ThenBlock);
@@ -456,14 +452,12 @@ CallInst *TraceUtils::CreateOutlinedFunction(
 
   Vals.push_back(trace);
   Tys.push_back(trace->getType());
-
   FunctionType *FTy = FunctionType::get(RetTy, Tys, false);
   Function *F =
       Function::Create(FTy, Function::LinkageTypes::InternalLinkage, Name, M);
   F->addFnAttr(Attribute::AlwaysInline);
 
-  auto Entry = BasicBlock::Create(M->getContext());
-  Entry->insertInto(F);
+  auto Entry = BasicBlock::Create(M->getContext(), "entry", F);
 
   auto ArgRange = make_pointer_range(
       make_range(F->arg_begin(), F->arg_begin() + Arguments.size()));

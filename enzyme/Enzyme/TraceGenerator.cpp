@@ -88,7 +88,7 @@ void TraceGenerator::visitFunction(Function &F) {
 
     auto call = tutils->CreateOutlinedFunction(
         Builder, Outlined, Builder.getVoidTy(), {name, arg}, false,
-        "outline_insert_argument_" + arg->getName());
+        "outline_insert_argument");
 
 #if LLVM_VERSION_MAJOR >= 14
     call->addAttributeAtIndex(
@@ -124,15 +124,15 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
 
   IRBuilder<> Builder(new_call);
 
-  auto OutlinedSample = [Name = call.getName(),
-                         samplefn](IRBuilder<> &OutlineBuilder,
+  auto OutlinedSample = [samplefn](IRBuilder<> &OutlineBuilder,
                                    TraceUtils *OutlineTutils,
                                    ArrayRef<Argument *> Arguments) {
     SmallVector<Value *, 2> SampleArgs(
         make_range(Arguments.begin() + 1, Arguments.end()));
 
-    auto choice = OutlineTutils->SampleOrCondition(
-        OutlineBuilder, samplefn, SampleArgs, Arguments[0], Name);
+    auto choice =
+        OutlineTutils->SampleOrCondition(OutlineBuilder, samplefn, SampleArgs,
+                                         Arguments[0], samplefn->getName());
     OutlineBuilder.CreateRet(choice);
   };
 
@@ -142,7 +142,7 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
   auto sample_call = tutils->CreateOutlinedFunction(
       Builder, OutlinedSample,
       tutils->getTraceInterface()->insertChoiceTy()->getParamType(2), Args,
-      false, mode_str + "_" + call.getName());
+      false, mode_str + "_" + samplefn->getName());
 
 #if LLVM_VERSION_MAJOR >= 14
   sample_call->addAttributeAtIndex(
@@ -196,7 +196,7 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
 
   auto trace_call = tutils->CreateOutlinedFunction(
       Builder, OutlinedTrace, Builder.getVoidTy(), trace_args, false,
-      "trace_" + call.getName());
+      "outline_insert_choice");
 
 #if LLVM_VERSION_MAJOR >= 14
   trace_call->addAttributeAtIndex(

@@ -401,8 +401,7 @@ Function *DynamicTraceInterface::MaterializeInterfaceFunction(
 
   Function *F = Function::Create(FTy, Function::PrivateLinkage, Name, M);
   F->addFnAttr(Attribute::AlwaysInline);
-  BasicBlock *Entry = BasicBlock::Create(M.getContext());
-  Entry->insertInto(F);
+  BasicBlock *Entry = BasicBlock::Create(M.getContext(), "entry", F);
 
   IRBuilder<> WrapperBuilder(Entry);
 

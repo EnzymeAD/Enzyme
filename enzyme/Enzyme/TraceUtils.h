@@ -141,5 +141,4 @@ public:
       llvm::Type *RetTy, llvm::ArrayRef<llvm::Value *> Arguments,
       bool needsLikelihood = true, const llvm::Twine &Name = "");
 };
-
 #endif /* TraceUtils_h */
