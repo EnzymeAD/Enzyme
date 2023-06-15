@@ -27,6 +27,7 @@
 
 #include "llvm/ADT/SmallVector.h"
 
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -144,18 +145,25 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
       tutils->getTraceInterface()->insertChoiceTy()->getParamType(2), Args,
       false, mode_str + "_" + samplefn->getName());
 
+  Value *address = Args[0];
+  StringRef const_address;
+  bool is_address_const = getConstantStringInfo(address, const_address);
+  bool is_random_var_active =
+      !is_address_const || !tutils->inactiveRandomVars.count(const_address);
+  Attribute activity_attribute = Attribute::get(
+      call.getContext(),
+      is_random_var_active ? "enzyme_active" : "enzyme_inactive_val");
+
 #if LLVM_VERSION_MAJOR >= 14
   sample_call->addAttributeAtIndex(
       AttributeList::FunctionIndex,
       Attribute::get(call.getContext(), "enzyme_sample"));
-  sample_call->addAttributeAtIndex(
-      AttributeList::FunctionIndex,
-      Attribute::get(call.getContext(), "enzyme_active"));
+  sample_call->addAttributeAtIndex(AttributeList::FunctionIndex,
+                                   activity_attribute);
 #else
   sample_call->addAttribute(AttributeList::FunctionIndex,
                             Attribute::get(call.getContext(), "enzyme_sample"));
-  sample_call->addAttribute(AttributeList::FunctionIndex,
-                            Attribute::get(call.getContext(), "enzyme_active"));
+  sample_call->addAttribute(AttributeList::FunctionIndex, activity_attribute);
 #endif
 
   if (autodiff) {
@@ -176,6 +184,12 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
   auto score =
       Builder.CreateCall(likelihoodfn->getFunctionType(), likelihoodfn,
                          LikelihoodArgs, "likelihood." + call.getName());
+
+#if LLVM_VERSION_MAJOR >= 14
+  score->addAttributeAtIndex(AttributeList::FunctionIndex, activity_attribute);
+#else
+  score->addAttribute(AttributeList::FunctionIndex, activity_attribute);
+#endif
 
   auto log_prob_sum = Builder.CreateLoad(
       Builder.getDoubleTy(), tutils->getLikelihood(), "log_prob_sum");

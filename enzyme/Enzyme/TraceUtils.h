@@ -28,6 +28,7 @@
 #define TraceUtils_h
 
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -50,6 +51,7 @@ public:
   TraceInterface *interface;
   ProbProgMode mode;
   llvm::Function *newFunc;
+  llvm::StringSet<> inactiveRandomVars = {"x"};
 
   constexpr static const char TraceParameterAttribute[] = "enzyme_trace";
   constexpr static const char ObservationsParameterAttribute[] =
