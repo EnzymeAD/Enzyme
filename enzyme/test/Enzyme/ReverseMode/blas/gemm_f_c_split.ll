@@ -101,6 +101,8 @@ entry:
 ; CHECK-NEXT:   store i64 8, i64* %14, align 16
 ; CHECK-NEXT:   store double 0.000000e+00, double* %15
 ; CHECK-NEXT:   store i64 4, i64* %16, align 16
+; CHECK-NEXT:   %trans_check = load i8, i8* %malloccall
+; CHECK-NEXT:   %trans_check1 = load i8, i8* %malloccall1
 ; CHECK-NEXT:   %17 = bitcast i8* %m_p to i64*
 ; CHECK-NEXT:   %18 = bitcast i8* %k_p to i64*
 ; CHECK-NEXT:   %19 = load i64, i64* %17
@@ -153,9 +155,9 @@ entry:
 ; CHECK-NEXT:   %byref.transpose.transb = alloca i8
 ; CHECK-NEXT:   %byref.constant.char.G = alloca i8
 ; CHECK-NEXT:   %byref.constant.int.0 = alloca i64
-; CHECK-NEXT:   %byref.constant.int.01 = alloca i64
+; CHECK-NEXT:   %[[byrefconstantint1:.+]] = alloca i64
 ; CHECK-NEXT:   %byref.constant.fp.1.0 = alloca double
-; CHECK-NEXT:   %byref.constant.int.02 = alloca i64
+; CHECK-NEXT:   %[[byrefconstantint2:.+]] = alloca i64
 ; CHECK-NEXT:   %ldc = alloca i64, i64 1, align 16
 ; CHECK-NEXT:   %1 = bitcast i64* %ldc to i8*
 ; CHECK-NEXT:   %beta = alloca double, i64 1, align 16
@@ -200,6 +202,8 @@ entry:
 ; CHECK-NEXT:   store i64 8, i64* %14, align 16
 ; CHECK-NEXT:   store double 0.000000e+00, double* %15
 ; CHECK-NEXT:   store i64 4, i64* %16, align 16
+; CHECK-NEXT:   %trans_check = load i8, i8* %malloccall
+; CHECK-NEXT:   %trans_check1 = load i8, i8* %malloccall1
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:                                      ; preds = %entry
@@ -233,10 +237,10 @@ entry:
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %byref.transpose.transa, i8* %malloccall1, i8* %k_p, i8* %n_p, i8* %m_p, i8* %alpha_p, i8* %17, i8* %37, i8* %"C'", i8* %ldc_p, i8* %beta_p, i8* %"B'", i8* %ldb_p)
 ; CHECK-NEXT:   store i8 71, i8* %byref.constant.char.G
 ; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.0
-; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.01
+; CHECK-NEXT:   store i64 0, i64* %[[byrefconstantint1]]
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
-; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.02
-; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i64* %byref.constant.int.0, i64* %byref.constant.int.01, double* %byref.constant.fp.1.0, i8* %beta_p, i8* %m_p, i8* %n_p, i8* %"C'", i8* %ldc_p, i64* %byref.constant.int.02)
+; CHECK-NEXT:   store i64 0, i64* %[[byrefconstantint2]]
+; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i64* %byref.constant.int.0, i64* %[[byrefconstantint1]], double* %byref.constant.fp.1.0, i8* %beta_p, i8* %m_p, i8* %n_p, i8* %"C'", i8* %ldc_p, i64* %[[byrefconstantint2]])
 ; CHECK-NEXT:   %[[i34:.+]] = bitcast double* %0 to i8*
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %[[i34]])
 ; CHECK-NEXT:   ret void

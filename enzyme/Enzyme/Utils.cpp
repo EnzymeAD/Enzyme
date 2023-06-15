@@ -2100,7 +2100,7 @@ llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
 
   return allocV;
 }
-bool is_normal(llvm::Value *trans) {
+bool is_normal(llvm::IRBuilder<> &B, llvm::Value *trans) {
   if (auto CI = dyn_cast<ConstantInt>(trans)) {
     if (CI->getValue() == 'N' || CI->getValue() == 'n')
       return true;
@@ -2108,28 +2108,37 @@ bool is_normal(llvm::Value *trans) {
       return false;
   }
 
-  // if (auto AI = dyn_cast<AllocaInst>(getBaseObject(trans))) {
-  //   std::deque<Value *> todo = {AI};
-  //   Value *stored = nullptr;
-  //   while (todo.size()) {
-  //     auto cur = todo.back();
-  //     todo.pop_back();
-  //     if (isPointerArithmeticInst(cur)) {
-  //       // for (auto U = cur->users())
-  //       for (auto U : cur->users())
-  //         todo.push_back(cast<Instruction>(U));
-  //     }
-  //     if (auto SI = dyn_cast<StoreInst>(cur)) {
-  //       if (stored)
-  //         return false;
-  //       // stored = SI->getStoredValue();
-  //       stored = SI->getValueOperand();
-  //       continue;
-  //     }
-  //     return false;
-  //   }
-  // }
-  // return false;
+  auto charType = IntegerType::get(trans->getContext(), 8);
+  if (trans->getType() != charType)
+    trans = B.CreateLoad(charType, trans, "trans_check");
+
+  if (auto AI = dyn_cast<AllocaInst>(trans)) {
+    std::deque<Value *> todo = {AI};
+    Value *stored = nullptr;
+    while (todo.size()) {
+      auto cur = todo.back();
+      todo.pop_back();
+      if (isPointerArithmeticInst(cur)) {
+        for (auto U : cur->users())
+          todo.push_back(cast<Instruction>(U));
+      }
+      if (auto SI = dyn_cast<StoreInst>(cur)) {
+        if (stored)
+          return false;
+        stored = SI->getValueOperand();
+        continue;
+      }
+      return false;
+    }
+    if (stored) {
+      if (auto CI = dyn_cast<ConstantInt>(stored)) {
+        if (CI->getValue() == 'N' || CI->getValue() == 'n')
+          return true;
+        else
+          return false;
+      }
+    }
+  }
   return true;
 }
 

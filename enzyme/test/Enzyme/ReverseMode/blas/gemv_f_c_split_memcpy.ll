@@ -89,6 +89,7 @@ entry:
 ; CHECK-NEXT:   store i64 2, i64* %12, align 16
 ; CHECK-NEXT:   store double 0.000000e+00, double* %13
 ; CHECK-NEXT:   store i64 1, i64* %14, align 16
+; CHECK-NEXT:   %trans_check = load i8, i8* %malloccall
 ; CHECK-NEXT:   %15 = bitcast i8* %n_p to i64*
 ; CHECK-NEXT:   %16 = load i64, i64* %15
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %16, 8
@@ -171,6 +172,7 @@ entry:
 ; CHECK-NEXT:   store i64 2, i64* %12, align 16
 ; CHECK-NEXT:   store double 0.000000e+00, double* %13
 ; CHECK-NEXT:   store i64 1, i64* %14, align 16
+; CHECK-NEXT:   %trans_check = load i8, i8* %malloccall
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:                                      ; preds = %entry
