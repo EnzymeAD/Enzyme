@@ -1,8 +1,8 @@
 ;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-blas-copy=1 -enzyme-lapack-copy=1 -S | FileCheck %s; fi
 ;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-blas-copy=1  -enzyme-lapack-copy=1 -S | FileCheck %s
 
-; Here we don't transpose the matrix a (78 equals 'N' in ASCII) and we therefore also don't transpose x.
-; Therfore the first arg to dcopy is n_p, as opposed to the gemv_transpose test.
+; Here we check that when transposing matrix a (value 84 equals 'T'), the corresponding vector is also transposed.
+; That can be done by checking that the dcopy call uses the length m instead of n.
 ;                       trans,                  M,                       N,                     alpha,                  A,    lda,                    x,  , incx,                  beta,                    y,  incy
 declare void @dgemv_64_(i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* , i8* nocapture readonly, i8*, i8* nocapture readonly, i8* nocapture readonly, i8* , i8* nocapture readonly) 
 
@@ -23,7 +23,7 @@ entry:
   %beta_p = bitcast double* %beta to i8*
   %incy = alloca i64, align 16
   %incy_p = bitcast i64* %incy to i8*
-  store i8 78, i8* %transa, align 1
+  store i8 84, i8* %transa, align 1
   store i64 4, i64* %m, align 16
   store i64 4, i64* %n, align 16
   store double 1.000000e+00, double* %alpha, align 16
@@ -84,7 +84,7 @@ entry:
 ; CHECK-NEXT:   %beta_p = bitcast double* %13 to i8*
 ; CHECK-NEXT:   %14 = bitcast i8* %1 to i64*, !enzyme_caststack !5
 ; CHECK-NEXT:   %incy_p = bitcast i64* %14 to i8*
-; CHECK-NEXT:   store i8 78, i8* %malloccall, align 1
+; CHECK-NEXT:   store i8 84, i8* %malloccall, align 1
 ; CHECK-NEXT:   store i64 4, i64* %8, align 16
 ; CHECK-NEXT:   store i64 4, i64* %9, align 16
 ; CHECK-NEXT:   store double 1.000000e+00, double* %10, align 16
@@ -92,14 +92,14 @@ entry:
 ; CHECK-NEXT:   store i64 2, i64* %12, align 16
 ; CHECK-NEXT:   store double 0.000000e+00, double* %13
 ; CHECK-NEXT:   store i64 1, i64* %14, align 16
-; CHECK-NEXT:   %15 = bitcast i8* %n_p to i64*
+; CHECK-NEXT:   %15 = bitcast i8* %m_p to i64*
 ; CHECK-NEXT:   %16 = load i64, i64* %15
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %16, 8
 ; CHECK-NEXT:   %malloccall8 = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   %cache.x = bitcast i8* %malloccall8 to double*
 ; CHECK-NEXT:   store double* %cache.x, double** %0
 ; CHECK-NEXT:   store i64 1, i64* %byref.
-; CHECK-NEXT:   call void @dcopy_64_(i8* %n_p, i8* %x, i8* %incx_p, double* %cache.x, i64* %byref.)
+; CHECK-NEXT:   call void @dcopy_64_(i8* %m_p, i8* %x, i8* %incx_p, double* %cache.x, i64* %byref.)
 ; CHECK-NEXT:   call void @dgemv_64_(i8* %malloccall, i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta_p, i8* %y, i8* %incy_p)
 ; CHECK-NEXT:   %17 = load double*, double** %0
 ; CHECK-NEXT:   ret double* %17
@@ -140,7 +140,7 @@ entry:
 ; CHECK-NEXT:   %beta_p = bitcast double* %13 to i8*
 ; CHECK-NEXT:   %14 = bitcast i8* %1 to i64*, !enzyme_caststack !5
 ; CHECK-NEXT:   %incy_p = bitcast i64* %14 to i8*
-; CHECK-NEXT:   store i8 78, i8* %malloccall, align 1
+; CHECK-NEXT:   store i8 84, i8* %malloccall, align 1
 ; CHECK-NEXT:   store i64 4, i64* %8, align 16
 ; CHECK-NEXT:   store i64 4, i64* %9, align 16
 ; CHECK-NEXT:   store double 1.000000e+00, double* %10, align 16
