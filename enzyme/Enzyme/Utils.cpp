@@ -2114,12 +2114,10 @@ llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef) {
     trans = B.CreateLoad(charTy, trans, "loaded.trans");
 
   Value *trueVal = ConstantInt::getTrue(trans->getContext());
-  Value *falseVal = ConstantInt::getFalse(trans->getContext());
 
-  Value *isNormal = B.CreateSelect(
-      B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'n')), trueVal,
-      B.CreateSelect(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'N')),
-                     trueVal, falseVal));
+  Value *isNormal =
+      B.CreateOr(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'n')),
+                 B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'N')));
   return isNormal;
 }
 

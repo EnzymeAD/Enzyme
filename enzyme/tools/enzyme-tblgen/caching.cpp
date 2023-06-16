@@ -212,13 +212,9 @@ void emit_mat_copy(TGPattern &pattern, raw_ostream &os) {
 
     if (dimensions.size() == 3) {
       os 
-<< "      if (is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef)) {\n"
-<< "        M = " << dim1 << ";\n"
-<< "        N = " << dim2 << ";\n"
-<< "      } else {\n"
-<< "        M = " << dim2 << ";\n"
-<< "        N = " << dim1 << ";\n"
-<< "      }\n";
+<< "      Value *normal = is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef);\n"
+<< "      M = BuilderZ.CreateSelect(normal, " << dim1 << ", " << dim2 << ");\n"
+<< "      N = BuilderZ.CreateSelect(normal, " << dim2 << ", " << dim1 << ");\n";
     } else {
       os 
 << "      M = " << dim1 << ";\n"
