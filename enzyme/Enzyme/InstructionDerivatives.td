@@ -5,6 +5,12 @@ class CallPattern<dag patternToMatch, list<string> funcNames, list<dag> resultOp
   list<dag> ArgDerivatives = resultOps;
 }
 
+class IntrPattern<dag patternToMatch, list<list<string>> funcNames, list<dag> resultOps> {
+  dag PatternToMatch = patternToMatch;
+  list<list<string>> names = funcNames;
+  list<dag> ArgDerivatives = resultOps;
+}
+
 class Inst<string mnemonic> {
   string name = mnemonic;
 }
@@ -18,6 +24,7 @@ def FMul : Inst<"FMul">;
 def FNeg : Inst<"FNeg">;
 def Select : Inst<"Select">;
 def FCmpOEQ : Inst<"FCmpOEQ">;
+def FCmpOLT : Inst<"FCmpOEQ">;
 
 class ExtractValue<list<int> indices_> : Inst<"ExtractValue"> {
   list<int> indices = indices_;
@@ -65,6 +72,9 @@ class Call<dag mnemonic, list<Attribute> _fnattrs=[]> {
   list<Attribute> fnattrs = _fnattrs;
 }
 
+def InactiveArg {
+  
+}
 def Op {
 }
 def ArrayRet {
@@ -218,6 +228,57 @@ def : CallPattern<(Op $x),
                   (
                    FMul (ConstantFP<"3.1415926535897962684626433"> $x), (FMul (Call<(SameFunc), [ReadNone,NoUnwind]> (FAdd $x, (ConstantFP<"0.5"> $x))), (DiffeRet<"">) )
                   )
+                  ]
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["sin"]],
+                  [(FMul (DiffeRet<"">), (Intrinsic<"cos", [(TypeOf<""> $x)]> $x))]                  
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["cos"]],
+                  [(FMul (DiffeRet<"">), (FNeg (Intrinsic<"sin", [(TypeOf<""> $x)]> $x)))]                  
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["exp"]],
+                  [(FMul (DiffeRet<"">), (Call<(SameFunc), [ReadNone,NoUnwind]> $x))]                  
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["exp2"], ["nvvm_ex2_approx_ftz_f"], ["nvvm_ex2_approx_f"], ["nvvm_ex2_approx_d"]],
+                  [(FMul (DiffeRet<"">), (FMul (ConstantFP<"0.6931471805599453"> $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)))]                  
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["log"]],
+                  [(FDiv (DiffeRet<"">), $x)]
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["log2"]],
+                  [(FDiv (DiffeRet<"">), (FMul (ConstantFP<"0.6931471805599453"> $x), $x))]
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["log10"]],
+                  [(FDiv (DiffeRet<"">), (FMul (ConstantFP<"2.302585092994046"> $x), $x))]
+                  >;
+
+def : IntrPattern<(Op $x, $y),
+                  [["copysign"]],
+                  [
+                    (FMul (DiffeRet<"">), (FMul (Call<(SameFunc), [ReadNone,NoUnwind]> (ConstantFP<"1.0"> $x), $x), (Call<(SameFunc), [ReadNone,NoUnwind]> (ConstantFP<"1.0"> $y), $y))),
+                    (InactiveArg)
+                  ]
+                  >;
+
+def : IntrPattern<(Op $x, $y),
+                  [["minnum"], ["nvvm_fmin_f"], ["nvvm_fmin_d"], ["nvvm_fmin_ftz_f"], ["x86_sse_min_ss", "", "10"], ["x86_sse_min_ps", "", "10"], ["minimum", "15", ""]],
+                  [
+                    (Select (FCmpOLT $x, $y), (DiffeRet<"">), (ConstantFP<"0"> $x)),
+                    (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $x), (DiffeRet<"">))
                   ]
                   >;
 

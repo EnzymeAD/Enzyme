@@ -24,7 +24,7 @@ declare double @__enzyme_autodiff(double (double, double)*, ...)
 ; CHECK-NEXT:   %0 = call fast double @llvm.copysign.f64(double 1.000000e+00, double %x)
 ; CHECK-NEXT:   %1 = call fast double @llvm.copysign.f64(double 1.000000e+00, double %y)
 ; CHECK-NEXT:   %2 = fmul fast double %0, %1
-; CHECK-NEXT:   %3 = fmul fast double %2, %[[differet]]
+; CHECK-NEXT:   %3 = fmul fast double %[[differet]], %2
 ; CHECK-NEXT:   %4 = insertvalue { double, double } undef, double %3, 0
 ; CHECK-NEXT:   %5 = insertvalue { double, double } %4, double 0.000000e+00, 1
 ; CHECK-NEXT:   ret { double, double } %5

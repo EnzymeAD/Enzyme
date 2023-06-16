@@ -20,6 +20,7 @@ function(enzyme_tablegen ofn)
 endfunction()
 
 set(LLVM_TARGET_DEFINITIONS InstructionDerivatives.td)
+enzyme_tablegen(IntrinsicDerivatives.inc -gen-intr-derivatives)
 enzyme_tablegen(InstructionDerivatives.inc -gen-derivatives)
 enzyme_tablegen(BlasDerivatives.inc -gen-blas-derivatives)
 enzyme_tablegen(BlasAttributor.inc -update-blas-declarations)
