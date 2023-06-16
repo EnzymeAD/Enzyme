@@ -3825,29 +3825,6 @@ public:
       case Intrinsic::nvvm_membar_gl:
       case Intrinsic::nvvm_membar_sys:
       case Intrinsic::amdgcn_s_barrier:
-
-      case Intrinsic::prefetch:
-      case Intrinsic::dbg_declare:
-      case Intrinsic::dbg_value:
-      case Intrinsic::dbg_label:
-#if LLVM_VERSION_MAJOR <= 16
-      case llvm::Intrinsic::dbg_addr:
-#endif
-      case Intrinsic::lifetime_start:
-      case Intrinsic::assume:
-#if LLVM_VERSION_MAJOR >= 12
-      case Intrinsic::vector_reduce_fadd:
-      case Intrinsic::vector_reduce_fmul:
-#else
-      case Intrinsic::experimental_vector_reduce_v2_fadd:
-      case Intrinsic::experimental_vector_reduce_v2_fmul:
-#endif
-      case Intrinsic::floor:
-      case Intrinsic::ceil:
-      case Intrinsic::trunc:
-      case Intrinsic::rint:
-      case Intrinsic::nearbyint:
-      case Intrinsic::round:
         return false;
       default:
         if (gutils->isConstantInstruction(&I))
@@ -3912,56 +3889,6 @@ public:
         return false;
       }
 
-      case Intrinsic::assume:
-      case Intrinsic::prefetch:
-      case Intrinsic::dbg_declare:
-      case Intrinsic::dbg_value:
-      case Intrinsic::dbg_label:
-#if LLVM_VERSION_MAJOR <= 16
-      case llvm::Intrinsic::dbg_addr:
-#endif
-      case Intrinsic::floor:
-      case Intrinsic::ceil:
-      case Intrinsic::trunc:
-      case Intrinsic::rint:
-      case Intrinsic::nearbyint:
-      case Intrinsic::round:
-        // Derivative of these is zero and requires no modification
-        return false;
-
-#if LLVM_VERSION_MAJOR >= 12
-      case Intrinsic::vector_reduce_fadd:
-#else
-      case Intrinsic::experimental_vector_reduce_v2_fadd:
-#endif
-      {
-        if (gutils->isConstantInstruction(&I))
-          return false;
-
-        if (!gutils->isConstantValue(orig_ops[0])) {
-          addToDiffe(orig_ops[0], vdiff, Builder2, orig_ops[0]->getType());
-        }
-        if (!gutils->isConstantValue(orig_ops[1])) {
-          auto und = UndefValue::get(orig_ops[1]->getType());
-          auto mask = ConstantAggregateZero::get(VectorType::get(
-              Type::getInt32Ty(und->getContext()),
-#if LLVM_VERSION_MAJOR >= 11
-              cast<VectorType>(und->getType())->getElementCount()));
-#else
-              cast<VectorType>(und->getType())->getNumElements()));
-#endif
-          auto rule = [&](Value *vdiff) {
-            return Builder2.CreateShuffleVector(
-                Builder2.CreateInsertElement(und, vdiff, (uint64_t)0), und,
-                mask);
-          };
-          auto vec =
-              applyChainRule(orig_ops[1]->getType(), Builder2, rule, vdiff);
-          addToDiffe(orig_ops[1], vec, Builder2, orig_ops[0]->getType());
-        }
-        return false;
-      }
-
       case Intrinsic::lifetime_start: {
         if (gutils->isConstantInstruction(&I))
           return false;
@@ -4015,50 +3942,6 @@ public:
         return false;
       }
 #endif
-
-      case Intrinsic::powi: {
-        if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
-          Value *op0 = gutils->getNewFromOriginal(orig_ops[0]);
-          Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
-          Value *nop1 = lookup(op1, Builder2);
-          SmallVector<Value *, 2> args = {
-              lookup(op0, Builder2),
-              Builder2.CreateSub(nop1, ConstantInt::get(op1->getType(), 1))};
-          auto &CI = cast<CallInst>(I);
-#if LLVM_VERSION_MAJOR >= 11
-          auto *PowF = CI.getCalledOperand();
-#else
-          auto *PowF = CI.getCalledValue();
-#endif
-          assert(PowF);
-          auto FT = CI.getFunctionType();
-          auto cal = cast<CallInst>(Builder2.CreateCall(FT, PowF, args));
-          cal->setCallingConv(CI.getCallingConv());
-
-          cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
-          Value *op1Lookup = lookup(op1, Builder2);
-          Value *constV = Builder2.CreateFMul(
-              cal, Builder2.CreateSIToFP(op1Lookup,
-                                         op0->getType()->getScalarType()));
-          Value *const cmp =
-              Builder2.CreateICmpEQ(ConstantInt::get(nop1->getType(), 0), nop1);
-          auto rule = [&](Value *vdiff) {
-            Value *cmp0 = cmp;
-            if (EnzymeStrongZero) {
-              Value *zero = Constant::getNullValue(vdiff->getType());
-              cmp0 =
-                  Builder2.CreateOr(cmp0, Builder2.CreateFCmpOEQ(vdiff, zero));
-            }
-            return CreateSelect(Builder2, cmp0,
-                                Constant::getNullValue(vdiff->getType()),
-                                Builder2.CreateFMul(vdiff, constV));
-          };
-          Value *dif0 =
-              applyChainRule(orig_ops[0]->getType(), Builder2, rule, vdiff);
-          addToDiffe(orig_ops[0], dif0, Builder2, I.getType());
-        }
-        return false;
-      }
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
@@ -4101,45 +3984,6 @@ public:
       getForwardBuilder(Builder2);
 
       switch (ID) {
-#if LLVM_VERSION_MAJOR >= 12
-      case Intrinsic::vector_reduce_fadd:
-#else
-      case Intrinsic::experimental_vector_reduce_v2_fadd:
-#endif
-      {
-        if (gutils->isConstantInstruction(&I))
-          return false;
-
-        Type *acctype = gutils->getShadowType(orig_ops[0]->getType());
-        Type *vectype = gutils->getShadowType(orig_ops[1]->getType());
-
-        auto accdif = gutils->isConstantValue(orig_ops[0])
-                          ? Constant::getNullValue(acctype)
-                          : diffe(orig_ops[0], Builder2);
-
-        auto vecdif = gutils->isConstantValue(orig_ops[1])
-                          ? Constant::getNullValue(vectype)
-                          : diffe(orig_ops[1], Builder2);
-
-#if LLVM_VERSION_MAJOR < 12
-        auto vfra = Intrinsic::getDeclaration(
-            M, ID, {orig_ops[0]->getType(), orig_ops[1]->getType()});
-#else
-        auto vfra = Intrinsic::getDeclaration(M, ID, {orig_ops[1]->getType()});
-#endif
-
-        auto rule = [&](Value *accdif, Value *vecdif) {
-          auto cal = Builder2.CreateCall(vfra, {accdif, vecdif});
-          cal->setCallingConv(vfra->getCallingConv());
-          cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
-          return cal;
-        };
-
-        Value *dif =
-            applyChainRule(I.getType(), Builder2, rule, accdif, vecdif);
-        setDiffe(&I, dif, Builder2);
-        return false;
-      }
 
 #if LLVM_VERSION_MAJOR >= 12
       case Intrinsic::vector_reduce_fmax: {
@@ -4179,50 +4023,6 @@ public:
         return false;
       }
 #endif
-
-      case Intrinsic::powi: {
-        if (gutils->isConstantInstruction(&I))
-          return false;
-        if (!gutils->isConstantValue(orig_ops[0])) {
-          Value *op0 = gutils->getNewFromOriginal(orig_ops[0]);
-          Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
-          SmallVector<Value *, 2> args = {
-              op0,
-              Builder2.CreateSub(op1, ConstantInt::get(op1->getType(), 1))};
-          auto &CI = cast<CallInst>(I);
-#if LLVM_VERSION_MAJOR >= 11
-          auto *PowF = CI.getCalledOperand();
-#else
-          auto *PowF = CI.getCalledValue();
-#endif
-          assert(PowF);
-          auto FT = CI.getFunctionType();
-          auto cal = cast<CallInst>(Builder2.CreateCall(FT, PowF, args));
-          cal->setCallingConv(CI.getCallingConv());
-          cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
-
-          Value *cast =
-              Builder2.CreateSIToFP(op1, op0->getType()->getScalarType());
-          Value *op = diffe(orig_ops[0], Builder2);
-
-          Value *const cmp = Builder2.CreateICmpEQ(
-              ConstantInt::get(args[1]->getType(), 0), op1);
-          auto rule = [&](Value *op) {
-            Value *cmp0 = cmp;
-            if (EnzymeStrongZero) {
-              Value *zero = Constant::getNullValue(op->getType());
-              cmp0 = Builder2.CreateOr(cmp0, Builder2.CreateFCmpOEQ(op, zero));
-            }
-            return CreateSelect(
-                Builder2, cmp0, Constant::getNullValue(op->getType()),
-                Builder2.CreateFMul(Builder2.CreateFMul(op, cal), cast));
-          };
-
-          Value *dif0 = applyChainRule(I.getType(), Builder2, rule, op);
-          setDiffe(&I, dif0, Builder2);
-        }
-        return false;
-      }
       default:
         if (gutils->isConstantInstruction(&I))
           return false;

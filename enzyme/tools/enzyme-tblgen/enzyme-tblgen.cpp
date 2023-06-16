@@ -223,10 +223,63 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
         os << ord->getValue();
       } else
         PrintFatalError(pattern->getLoc(),
-                        Twine("unknown named operand in constantfp") +
+                        Twine("unknown named operand in typeof") +
                             resultTree->getAsString());
       os << "->getType()";
       return false;
+    } else if (opName == "VectorSize" || Def->isSubClassOf("VectorSize")) {
+      if (resultRoot->getNumArgs() != 1)
+        PrintFatalError(pattern->getLoc(), "only single op VectorSize supported");
+
+      os << "cast<VectorType>(";
+
+      if (isa<UnsetInit>(resultRoot->getArg(0)) && resultRoot->getArgName(0)) {
+        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+        auto ord = nameToOrdinal.find(name);
+        if (ord == nameToOrdinal.end())
+          PrintFatalError(pattern->getLoc(), Twine("unknown named operand '") +
+                                                 name + "'" +
+                                                 resultTree->getAsString());
+        os << ord->getValue();
+      } else
+        handle(os, pattern, resultRoot->getArg(0), builder,
+                                    nameToOrdinal, lookup, retidx, origName);
+
+      os << ")";
+#if LLVM_VERSION_MAJOR >= 11
+      os << "->getElementCount()";
+#else
+      os << "->getNumElements()";
+#endif
+      return false;
+    } else if (opName == "ShadowOrZero" || Def->isSubClassOf("ShadowOrZero")) {
+      if (resultRoot->getNumArgs() != 1)
+        PrintFatalError(pattern->getLoc(), "only single op ShadowOrZero supported");
+
+
+      os << "({\n";
+      os << " auto imVal = ";
+
+      if (isa<UnsetInit>(resultRoot->getArg(0)) && resultRoot->getArgName(0)) {
+        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+        auto ord = nameToOrdinal.find(name);
+        if (ord == nameToOrdinal.end())
+          PrintFatalError(pattern->getLoc(), Twine("unknown named operand '") +
+                                                 name + "'" +
+                                                 resultTree->getAsString());
+        os << ord->getValue();
+      } else
+        handle(os, pattern, resultRoot->getArg(0), builder,
+                                    nameToOrdinal, lookup, retidx, origName);
+      os << ";\n";
+      os << " gutils->isConstantValue(imVal) ? Constant::getNullValue(gutils->getShadowType(imVal->getType())) : ";
+      if (lookup)
+        os << "lookup(";
+      os << "gutils->invertPointerM(imVal, " << builder << ")";
+      if (lookup)
+        os << ", " << builder << ")";
+      os << ";\n})";
+      return true;
     } else if (opName == "ConstantFP" || Def->isSubClassOf("ConstantFP")) {
       if (resultRoot->getNumArgs() != 1)
         PrintFatalError(pattern->getLoc(), "only single op constantfp supported");
@@ -271,7 +324,7 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
         os << ord->getValue();
       } else
         PrintFatalError(pattern->getLoc(),
-                        Twine("unknown named operand in constantfp") +
+                        Twine("unknown named operand in constantint") +
                             resultTree->getAsString());
       os << "->getType(), " << value->getValue() << ")";
       return false;
@@ -311,7 +364,7 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
 
       if (lookup)
         os << "lookup(";
-      os << "gutils->invertPointerM(" << builder << ", ";
+      os << "gutils->invertPointerM(";
 
       if (resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
@@ -326,7 +379,7 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
         PrintFatalError(pattern->getLoc(),
                         Twine("unknown named operand in shadow") +
                             resultTree->getAsString());
-      os << ")";
+      os << ", " << builder << ")";
       if (lookup)
         os << ", " << builder << ")";
       return true;
@@ -559,6 +612,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os, b
   for (Record *pattern : patterns) {
     DagInit *tree = pattern->getValueAsDag("PatternToMatch");
 
+    DagInit *duals = pattern->getValueAsDag("ArgDuals");
 
     // Emit RewritePattern for Pattern.
     ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
@@ -662,6 +716,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os, b
     os << "        getForwardBuilder(Builder2);\n";
     // TODO
 
+
+        if (duals->getOperator()->getAsString() == "ForwardFromSummedReverse" ||
+             cast<DefInit>(duals->getOperator())->getDef()->isSubClassOf("ForwardFromSummedReverse")) {
     os << "        Value *res = nullptr;\n";
 
     for (auto argOpEn : llvm::enumerate(*argOps)) {
@@ -779,6 +836,14 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os, b
     os << "        assert(res);\n";
     os << "        setDiffe(&" << origName << ", res, Builder2);\n";
 
+  } else {
+
+    os << "            Value *res = ";
+              bool vectorValued = handle(os, pattern, duals, "Builder2",
+                                         nameToOrdinal, /*lookup*/ false, {}, origName);                
+    os << ";\n        assert(res);\n";
+    os << "        setDiffe(&" << origName << ", res, Builder2);\n";
+  }
     os << "        break;\n";
     os << "      }\n";
 

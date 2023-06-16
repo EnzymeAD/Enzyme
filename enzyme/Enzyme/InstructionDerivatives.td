@@ -1,18 +1,28 @@
 class Type;
-class CallPattern<dag patternToMatch, list<string> funcNames, list<dag> resultOps> {
+class ForwardFromSummedReverse<string x> {
+  
+}
+
+class CallPattern<dag patternToMatch, list<string> funcNames, list<dag> resultOps, dag forwardOps> {
   dag PatternToMatch = patternToMatch;
   list<string> names = funcNames;
   list<dag> ArgDerivatives = resultOps;
+  dag ArgDuals = forwardOps;
 }
 
-class IntrPattern<dag patternToMatch, list<list<string>> funcNames, list<dag> resultOps> {
+class IntrPattern<dag patternToMatch, list<list<string>> funcNames, list<dag> resultOps, dag forwardOps> {
   dag PatternToMatch = patternToMatch;
   list<list<string>> names = funcNames;
   list<dag> ArgDerivatives = resultOps;
+  dag ArgDuals = forwardOps;
 }
 
 class Inst<string mnemonic> {
   string name = mnemonic;
+}
+
+def ShadowOrZero {
+  
 }
 
 // Define ops to rewrite.
@@ -23,6 +33,9 @@ def CheckedMul {
 def CheckedDiv {
   
 }
+def InsertElement : Inst<"InsertElement">;
+def ShuffleVector : Inst<"ShuffleVector">;
+def VectorSplat : Inst<"VectorSplat">;
 def SIToFP : Inst<"SIToFP">;
 def Or : Inst<"Or">;
 def And : Inst<"And">;
@@ -69,6 +82,8 @@ class TypeInfo {
 
 class TypeOf<string val> : TypeInfo {
 }
+class VectorSize<string val> : TypeInfo {
+}
 
 class Intrinsic<string name_, list<dag> types_> {
   string name = name_;
@@ -112,7 +127,8 @@ class Shadow<string val> {
 
 def : CallPattern<(Op $x),
                   ["atan", "atanf", "atanl", "__fd_atan_1"],
-                  [(CheckedDiv (DiffeRet<"">), (FAdd (FMul $x, $x), (ConstantFP<"1.0"> $x)))]
+                  [(CheckedDiv (DiffeRet<"">), (FAdd (FMul $x, $x), (ConstantFP<"1.0"> $x)))],
+                  (ForwardFromSummedReverse<"">)
                   >;
 
 def : CallPattern<(Op $y, $x),
@@ -120,11 +136,13 @@ def : CallPattern<(Op $y, $x),
                   [
                   (FDiv (FMul (DiffeRet<"">), $x), (FAdd (FMul $x, $x), (FMul $y, $y))),
                   (FNeg (FDiv (FMul (DiffeRet<"">), $y), (FAdd (FMul $x, $x), (FMul $y, $y))))
-                  ]
+                  ],
+                  (ForwardFromSummedReverse<"">)
                   >;
 def : CallPattern<(Op $x),
                   ["cbrt", "cbrtf", "cbrtl"],
-                  [(FDiv (FMul (DiffeRet<"">), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (FMul (ConstantFP<"3.0"> $x), $x))]
+                  [(FDiv (FMul (DiffeRet<"">), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (FMul (ConstantFP<"3.0"> $x), $x))],
+                  (ForwardFromSummedReverse<"">)
                   >;
 
 def : CallPattern<(Op $x, $y),
@@ -132,70 +150,93 @@ def : CallPattern<(Op $x, $y),
                   [
                     (FDiv (FMul (DiffeRet<"">), $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y)),
                     (FDiv (FMul (DiffeRet<"">), $y), (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y))
-                  ]
+                  ],
+                  (ForwardFromSummedReverse<"">)
                   >;
 
 def : CallPattern<(Op $x),
                   ["tanh"],
-                  [(FDiv (DiffeRet<"">), (FMul(Call<(SameTypesFunc<"cosh">), [ReadNone,NoUnwind]> $x):$c, $c))]>;
+                  [(FDiv (DiffeRet<"">), (FMul(Call<(SameTypesFunc<"cosh">), [ReadNone,NoUnwind]> $x):$c, $c))],
+                  (ForwardFromSummedReverse<"">)
+                  >;
 
 def : CallPattern<(Op $x),
                   ["tanhf"],
-                  [(FDiv (DiffeRet<"">), (FMul(Call<(SameTypesFunc<"coshf">), [ReadNone,NoUnwind]> $x):$c, $c))]>;
+                  [(FDiv (DiffeRet<"">), (FMul(Call<(SameTypesFunc<"coshf">), [ReadNone,NoUnwind]> $x):$c, $c))],
+                  (ForwardFromSummedReverse<"">)
+                  >;
 
 def : CallPattern<(Op $x),
                   ["cosh"],
-                  [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"sinh">), [ReadNone,NoUnwind]> $x))]>;
+                  [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"sinh">), [ReadNone,NoUnwind]> $x))],
+                  (ForwardFromSummedReverse<"">)
+                  >;
 def : CallPattern<(Op $x),
                   ["coshf"],
-                  [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"sinhf">), [ReadNone,NoUnwind]> $x))]>;
+                  [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"sinhf">), [ReadNone,NoUnwind]> $x))],
+                  (ForwardFromSummedReverse<"">)
+                  >;
 
 def : CallPattern<(Op $x),
                   ["sinh"],
-                  [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"cosh">), [ReadNone,NoUnwind]> $x))]>;
+                  [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"cosh">), [ReadNone,NoUnwind]> $x))],
+                  (ForwardFromSummedReverse<"">)
+                  >;
 def : CallPattern<(Op $x),
                   ["sinhf"],
-                  [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"coshf">), [ReadNone,NoUnwind]> $x))]>;
+                  [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"coshf">), [ReadNone,NoUnwind]> $x))],
+                  (ForwardFromSummedReverse<"">)
+                  >;
 
 def : CallPattern<(Op $x),
                   ["exp10"],
-                  [(FMul (FMul (DiffeRet<"">), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (ConstantFP<"2.30258509299404568401799145468"> $x))]
+                  [(FMul (FMul (DiffeRet<"">), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (ConstantFP<"2.30258509299404568401799145468"> $x))],
+                  (ForwardFromSummedReverse<"">)
                   >;
 def : CallPattern<(Op $x),
                   ["tan", "tanf", "tanl"],
-                  [(FMul (DiffeRet<"">), (FAdd (ConstantFP<"1.0"> $x), (FMul(Call<(SameFunc), [ReadNone,NoUnwind]> $x):$c, $c)))]>;
+                  [(FMul (DiffeRet<"">), (FAdd (ConstantFP<"1.0"> $x), (FMul(Call<(SameFunc), [ReadNone,NoUnwind]> $x):$c, $c)))],
+                  (ForwardFromSummedReverse<"">)
+                  >;
 def : CallPattern<(Op $x, $y),
                   ["remainder"],
                   [
                     (DiffeRet<"">),
                     (FMul (FNeg (DiffeRet<"">)), (Intrinsic<"round", [(TypeOf<""> $x)]> (FDiv $x, $y)))
-                  ]
+                  ],
+                  (ForwardFromSummedReverse<"">)
                   >;
 def : CallPattern<(Op $x),
                   ["asin", "asinf", "asinl"],
-                  [(FDiv (DiffeRet<"">), (Intrinsic<"sqrt", [(TypeOf<""> $x)]> (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x)))  )]                  
+                  [(FDiv (DiffeRet<"">), (Intrinsic<"sqrt", [(TypeOf<""> $x)]> (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x)))  )] ,
+                  (ForwardFromSummedReverse<"">)                 
                   >;
 def : CallPattern<(Op $x),
                   ["acos", "acosf", "acosl"],
-                  [(FNeg (FDiv (DiffeRet<"">), (Intrinsic<"sqrt", [(TypeOf<""> $x)]> (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x)))  ))]                  
+                  [(FNeg (FDiv (DiffeRet<"">), (Intrinsic<"sqrt", [(TypeOf<""> $x)]> (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x)))  ))],
+                  (ForwardFromSummedReverse<"">)
                   >;
 def : CallPattern<(Op $x),
                   ["log1p", "log1pf", "log1pl"],
-                  [(FDiv (DiffeRet<"">), (FAdd $x, (ConstantFP<"1.0"> $x)))]
+                  [(FDiv (DiffeRet<"">), (FAdd $x, (ConstantFP<"1.0"> $x)))],
+                  (ForwardFromSummedReverse<"">)
                   >;
 def : CallPattern<(Op $x),
                   ["expm1"],
-                  [(FMul (Intrinsic<"exp", [(TypeOf<""> $x)]> $x), (DiffeRet<"">))]
+                  [(FMul (Intrinsic<"exp", [(TypeOf<""> $x)]> $x), (DiffeRet<"">))],
+                  (ForwardFromSummedReverse<"">)
                   >;
 
-def : CallPattern<(Op $x), ["jl_rem2pi", "jl_rem2pif", "jl_rem2pil"],[(DiffeRet<"">)]>;
+def : CallPattern<(Op $x), ["jl_rem2pi", "jl_rem2pif", "jl_rem2pil"],[(DiffeRet<"">)],
+                  (ForwardFromSummedReverse<"">)>;
 
 // Unnormalized sinc(x) = sin(x)/x
 def : CallPattern<(Op $x),
                   ["sinc", "sincf", "sincl"],
                   [(Select (FCmpOEQ $x, (ConstantFP<"0"> $x)),
                         (ConstantFP<"0"> $x),
-                  (FMul (DiffeRet<"">), (FDiv (FSub (Intrinsic<"cos", [(TypeOf<""> $x)]> $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), $x)))]>;
+                  (FMul (DiffeRet<"">), (FDiv (FSub (Intrinsic<"cos", [(TypeOf<""> $x)]> $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), $x)))],
+                  (ForwardFromSummedReverse<"">)>;
 
 // Normalized sinc(x) = sin(pi x)/(pi x)
 def : CallPattern<(Op $x),
@@ -203,21 +244,24 @@ def : CallPattern<(Op $x),
                   [
                     (Select (FCmpOEQ $x, (ConstantFP<"0"> $x)),
                         (ConstantFP<"0"> $x),
-                  (FMul (DiffeRet<"">), (FDiv (FSub (Intrinsic<"cos", [(TypeOf<""> $x)]> (FMul (ConstantFP<"3.1415926535897962684626433"> $x), $x)), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), $x)))]>;
+                  (FMul (DiffeRet<"">), (FDiv (FSub (Intrinsic<"cos", [(TypeOf<""> $x)]> (FMul (ConstantFP<"3.1415926535897962684626433"> $x), $x)), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), $x)))],
+                  (ForwardFromSummedReverse<"">)>;
 
 // Normalized Faddeeva_erfcx_re(x) = Exp[z^2] Erfc[z] -> 2 dx ( x f(x) - 1/sqrt(pi))
 def : CallPattern<(Op $x),
                   ["Faddeeva_erfcx_re"],
                   [
                   (FMul (DiffeRet<"">), (FMul (ConstantFP<"2.0"> $x), (FSub (FMul $x, (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), (ConstantFP<"0.56418958354775628694807945156077258584405062932900"> $x) )))
-                  ]>;
+                  ],
+                  (ForwardFromSummedReverse<"">)>;
 
 def : CallPattern<(Op $x, $y),
                   ["fmod", "fmodf", "fmodl"],
                   [
                   (DiffeRet<"">),
                   (FMul (DiffeRet<"">), (FNeg (Intrinsic<"copysign", [(TypeOf<""> $x)]> (Intrinsic<"floor", [(TypeOf<""> $x)]> (Intrinsic<"fabs", [(TypeOf<""> $x)]> (FDiv $x, $y))), (FDiv $x, $y))))
-                  ]
+                  ],
+                  (ForwardFromSummedReverse<"">)
                   >;
 
 def : CallPattern<(Op $x),
@@ -227,7 +271,8 @@ def : CallPattern<(Op $x),
                    ArrayRet (FMul (ExtractValue<[1]> (Call<(SameFunc), [ReadNone,NoUnwind]> $x):$callset), (DiffeRet<"">) ),
                             (FNeg (FMul (ExtractValue<[0]> $callset), (DiffeRet<"">) ) )
                   )
-                  ]
+                  ],
+                  (ForwardFromSummedReverse<"">)
                   >;
 
 def : CallPattern<(Op $x),
@@ -237,7 +282,8 @@ def : CallPattern<(Op $x),
                    ArrayRet (FMul (ConstantFP<"3.1415926535897962684626433"> $x), (FMul (ExtractValue<[1]> (Call<(SameFunc), [ReadNone,NoUnwind]> $x):$callset), (DiffeRet<"">) ) ),
                             (FMul (ConstantFP<"3.1415926535897962684626433"> $x),  (FNeg (FMul (ExtractValue<[0]> $callset), (DiffeRet<"">) ) ) )
                   )
-                  ]
+                  ],
+                  (ForwardFromSummedReverse<"">)
                   >;
 
 def : CallPattern<(Op $x),
@@ -246,50 +292,59 @@ def : CallPattern<(Op $x),
                   (
                    FMul (ConstantFP<"3.1415926535897962684626433"> $x), (FMul (Call<(SameFunc), [ReadNone,NoUnwind]> (FAdd $x, (ConstantFP<"0.5"> $x))), (DiffeRet<"">) )
                   )
-                  ]
+                  ],
+                  (ForwardFromSummedReverse<"">)
                   >;
 
 def : IntrPattern<(Op $x),
                   [["sin"]],
-                  [(FMul (DiffeRet<"">), (Intrinsic<"cos", [(TypeOf<""> $x)]> $x))]                  
+                  [(FMul (DiffeRet<"">), (Intrinsic<"cos", [(TypeOf<""> $x)]> $x))]  ,
+                  (ForwardFromSummedReverse<"">)                
                   >;
 
 def : IntrPattern<(Op $x),
                   [["cos"]],
-                  [(FMul (DiffeRet<"">), (FNeg (Intrinsic<"sin", [(TypeOf<""> $x)]> $x)))]                  
+                  [(FMul (DiffeRet<"">), (FNeg (Intrinsic<"sin", [(TypeOf<""> $x)]> $x)))]       ,
+                  (ForwardFromSummedReverse<"">)           
                   >;
 
 def : IntrPattern<(Op $x),
                   [["exp"]],
-                  [(FMul (DiffeRet<"">), (Call<(SameFunc), [ReadNone,NoUnwind]> $x))]                  
+                  [(FMul (DiffeRet<"">), (Call<(SameFunc)> $x))],
+                  (ForwardFromSummedReverse<"">)                  
                   >;
 
 def : IntrPattern<(Op $x),
                   [["exp2"], ["nvvm_ex2_approx_ftz_f"], ["nvvm_ex2_approx_f"], ["nvvm_ex2_approx_d"]],
-                  [(FMul (DiffeRet<"">), (FMul (ConstantFP<"0.6931471805599453"> $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)))]                  
+                  [(FMul (DiffeRet<"">), (FMul (ConstantFP<"0.6931471805599453"> $x), (Call<(SameFunc)> $x)))]                  ,
+                  (ForwardFromSummedReverse<"">)
                   >;
 
 def : IntrPattern<(Op $x),
                   [["log"]],
-                  [(FDiv (DiffeRet<"">), $x)]
+                  [(FDiv (DiffeRet<"">), $x)],
+                  (ForwardFromSummedReverse<"">)
                   >;
 
 def : IntrPattern<(Op $x),
                   [["log2"]],
-                  [(FDiv (DiffeRet<"">), (FMul (ConstantFP<"0.6931471805599453"> $x), $x))]
+                  [(FDiv (DiffeRet<"">), (FMul (ConstantFP<"0.6931471805599453"> $x), $x))],
+                  (ForwardFromSummedReverse<"">)
                   >;
 
 def : IntrPattern<(Op $x),
                   [["log10"]],
-                  [(FDiv (DiffeRet<"">), (FMul (ConstantFP<"2.302585092994046"> $x), $x))]
+                  [(FDiv (DiffeRet<"">), (FMul (ConstantFP<"2.302585092994046"> $x), $x))],
+                  (ForwardFromSummedReverse<"">)
                   >;
 
 def : IntrPattern<(Op $x, $y),
                   [["copysign"]],
                   [
-                    (FMul (DiffeRet<"">), (FMul (Call<(SameFunc), [ReadNone,NoUnwind]> (ConstantFP<"1.0"> $x), $x), (Call<(SameFunc), [ReadNone,NoUnwind]> (ConstantFP<"1.0"> $y), $y))),
+                    (FMul (DiffeRet<"">), (FMul (Call<(SameFunc)> (ConstantFP<"1.0"> $x), $x), (Call<(SameFunc)> (ConstantFP<"1.0"> $y), $y))),
                     (InactiveArg)
-                  ]
+                  ],
+                  (ForwardFromSummedReverse<"">)
                   >;
 
 def : IntrPattern<(Op $x, $y),
@@ -297,7 +352,8 @@ def : IntrPattern<(Op $x, $y),
                   [
                     (Select (FCmpOLT $x, $y), (DiffeRet<"">), (ConstantFP<"0"> $x)),
                     (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $x), (DiffeRet<"">))
-                  ]
+                  ],
+                  (ForwardFromSummedReverse<"">)
                   >;
 
 def : IntrPattern<(Op $x, $y),
@@ -305,28 +361,32 @@ def : IntrPattern<(Op $x, $y),
                   [
                     (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $x), (DiffeRet<"">)),
                     (Select (FCmpOLT $x, $y), (DiffeRet<"">), (ConstantFP<"0"> $x))
-                  ]
+                  ],
+                  (ForwardFromSummedReverse<"">)
                   >;
 
 def : IntrPattern<(Op $x),
                   [["fabs"]],
                   [
                     (FMul (DiffeRet<"">), (Select (FCmpOLT $x, (ConstantFP<"0"> $x)), (ConstantFP<"-1"> $x), (ConstantFP<"1"> $x)))
-                  ]
+                  ],
+                  (ForwardFromSummedReverse<"">)
                   >;
 
 def : IntrPattern<(Op $x),
                   [["sqrt"]],
-                  [(Select (FCmpUEQ $x, (ConstantFP<"0"> $x)), (ConstantFP<"0"> $x), (FDiv (DiffeRet<"">), (FMul (ConstantFP<"2"> $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x))))]
+                  [(Select (FCmpUEQ $x, (ConstantFP<"0"> $x)), (ConstantFP<"0"> $x), (FDiv (DiffeRet<"">), (FMul (ConstantFP<"2"> $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x))))],
+                  (ForwardFromSummedReverse<"">)
                  >;
 
 def : IntrPattern<(Op $x, $y),
                   [["pow"]],
                   [
-                    (CheckedMul (DiffeRet<"">), (FMul $y, (Call<(SameFunc), [ReadNone,NoUnwind]> $x, (FSub $y, (ConstantFP<"1"> $y))))),
-                    (CheckedMul (DiffeRet<"">), (FMul (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y), (Intrinsic<"log", [(TypeOf<""> $x)]> $x)
+                    (CheckedMul (DiffeRet<"">), (FMul $y, (Call<(SameFunc)> $x, (FSub $y, (ConstantFP<"1"> $y))))),
+                    (CheckedMul (DiffeRet<"">), (FMul (Call<(SameFunc)> $x, $y), (Intrinsic<"log", [(TypeOf<""> $x)]> $x)
                     ))
-                  ]
+                  ],
+                  (ForwardFromSummedReverse<"">)
                  >;
 
 def : IntrPattern<(Op $x, $y),
@@ -336,11 +396,12 @@ def : IntrPattern<(Op $x, $y),
                       (Or (ICmpEQ $y, (ConstantInt<0> $y) ), (And (GlobalExpr<"ConstantInt::get(Type::getInt1Ty(gutils->newFunc->getContext()), EnzymeStrongZero)">), (FCmpOEQ (DiffeRet<"">), (ConstantFP<"0"> $x) ) ) ),
                       (ConstantFP<"0"> $x),
                       (FMul (DiffeRet<"">),
-                        (FMul (SIToFP $y, (TypeOf<""> $x)), (Call<(SameFunc), [ReadNone,NoUnwind]> $x, (ISub $y, (ConstantInt<1> $y))))
+                        (FMul (SIToFP $y, (TypeOf<""> $x)), (Call<(SameFunc)> $x, (ISub $y, (ConstantInt<1> $y))))
                       )
                      ),
                     (InactiveArg)
-                  ]
+                  ],
+                  (ForwardFromSummedReverse<"">)
                  >;
 
 def : IntrPattern<(Op $x, $y, $z),
@@ -349,7 +410,17 @@ def : IntrPattern<(Op $x, $y, $z),
                     (FMul (DiffeRet<"">), $y),
                     (FMul (DiffeRet<"">), $x),
                     (DiffeRet<"">)
-                  ]
+                  ],
+                  (ForwardFromSummedReverse<"">)
+                 >;
+
+def : IntrPattern<(Op $x, $y),
+                  [["experimental_vector_reduce_v2_fadd", "", "11"], ["vector_reduce_fadd", "12", ""]],
+                  [
+                    (DiffeRet<"">),
+                    (VectorSplat (VectorSize<""> (TypeOf<""> $y)), (DiffeRet<"">))
+                  ],
+                  (Call<(SameFunc)> (ShadowOrZero $x), (ShadowOrZero $y))
                  >;
 
 include "BlasDerivatives.td"                  
