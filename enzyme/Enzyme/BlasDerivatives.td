@@ -17,11 +17,9 @@ def vld   : BLASType<2, 1>;  // {vector, leading dim}
 //def mld   : BLASType<2, 1>;  // {matrix, leading dim}, assumes m, n as existing args
 
 class vinc<list<string> _args> : BLASType<2, 1> {
-  assert !or(!eq(!size(_args), 1), !eq(!size(_args), 3)), "vinc must have 1 or 3 args";
   list<string> args = _args;
 }
 class mld<list<string> _args> : BLASType<2, 1> {
-  assert !or(!eq(!size(_args), 2), !eq(!size(_args), 3)), "mld must have 2 or 3 args";
   list<string> args = _args;
 }
 
