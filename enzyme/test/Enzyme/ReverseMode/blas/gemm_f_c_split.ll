@@ -101,7 +101,7 @@ entry:
 ; CHECK-NEXT:   store i64 8, i64* %14, align 16
 ; CHECK-NEXT:   store double 0.000000e+00, double* %15
 ; CHECK-NEXT:   store i64 4, i64* %16, align 16
-; CHECK-NEXT:   %loaded.trans = load i8, i8* %malloccall, align 1
+; CHECK-NEXT:   %loaded.trans = load i8, i8* %malloccall
 ; CHECK-NEXT:   %17 = icmp eq i8 %loaded.trans, 78
 ; CHECK-NEXT:   %18 = icmp eq i8 %loaded.trans, 110
 ; CHECK-NEXT:   %19 = or i1 %18, %17
@@ -109,8 +109,8 @@ entry:
 ; CHECK-NEXT:   %21 = select i1 %19, i8* %k_p, i8* %m_p
 ; CHECK-NEXT:   %22 = bitcast i8* %20 to i64*
 ; CHECK-NEXT:   %23 = bitcast i8* %21 to i64*
-; CHECK-NEXT:   %24 = load i64, i64* %22, align 4
-; CHECK-NEXT:   %25 = load i64, i64* %23, align 4
+; CHECK-NEXT:   %24 = load i64, i64* %22
+; CHECK-NEXT:   %25 = load i64, i64* %23
 ; CHECK-NEXT:   %26 = mul i64 %24, %25
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %26, 8
 ; CHECK-NEXT:   %malloccall10 = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
@@ -231,7 +231,7 @@ entry:
 ; CHECK-NEXT:   %33 = select i1 %32, i8 78, i8 %31
 ; CHECK-NEXT:   store i8 %33, i8* %byref.transpose.transb
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %malloccall, i8* %byref.transpose.transb, i8* %m_p, i8* %k_p, i8* %n_p, i8* %alpha_p, i8* %"C'", i8* %ldc_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %"A'", i8* %lda_p)
-; CHECK-NEXT:   %loaded.trans = load i8, i8* %malloccall, align 1
+; CHECK-NEXT:   %loaded.trans = load i8, i8* %malloccall
 ; CHECK-NEXT:   %34 = icmp eq i8 %loaded.trans, 78
 ; CHECK-NEXT:   %35 = icmp eq i8 %loaded.trans, 110
 ; CHECK-NEXT:   %36 = or i1 %35, %34

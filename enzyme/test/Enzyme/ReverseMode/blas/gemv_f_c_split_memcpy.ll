@@ -89,13 +89,13 @@ entry:
 ; CHECK-NEXT:   store i64 2, i64* %12, align 16
 ; CHECK-NEXT:   store double 0.000000e+00, double* %13
 ; CHECK-NEXT:   store i64 1, i64* %14, align 16
-; CHECK-NEXT:   %loaded.trans = load i8, i8* %malloccall, align 1
+; CHECK-NEXT:   %loaded.trans = load i8, i8* %malloccall
 ; CHECK-NEXT:   %15 = icmp eq i8 %loaded.trans, 78
 ; CHECK-NEXT:   %16 = icmp eq i8 %loaded.trans, 110
 ; CHECK-NEXT:   %17 = or i1 %16, %15
 ; CHECK-NEXT:   %18 = select i1 %17, i8* %n_p, i8* %m_p
 ; CHECK-NEXT:   %19 = bitcast i8* %18 to i64*
-; CHECK-NEXT:   %20 = load i64, i64* %19, align 4
+; CHECK-NEXT:   %20 = load i64, i64* %19
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %20, 8
 ; CHECK-NEXT:   %malloccall8 = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   %cache.x = bitcast i8* %malloccall8 to double*

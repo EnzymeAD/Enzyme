@@ -135,7 +135,7 @@ entry:
 ; CHECK-NEXT:   %avld.beta = load double, double* %pcld.beta
 ; CHECK-NEXT:   %pcld.ldc = bitcast i8* %ldc_p to i64*
 ; CHECK-NEXT:   %avld.ldc = load i64, i64* %pcld.ldc
-; CHECK-NEXT:   %loaded.trans = load i8, i8* %transa, align 1
+; CHECK-NEXT:   %loaded.trans = load i8, i8* %transa
 ; CHECK-NEXT:   %0 = icmp eq i8 %loaded.trans, 78
 ; CHECK-NEXT:   %1 = icmp eq i8 %loaded.trans, 110
 ; CHECK-NEXT:   %2 = or i1 %1, %0
@@ -143,8 +143,8 @@ entry:
 ; CHECK-NEXT:   %4 = select i1 %2, i8* %k_p, i8* %m_p
 ; CHECK-NEXT:   %5 = bitcast i8* %3 to i64*
 ; CHECK-NEXT:   %6 = bitcast i8* %4 to i64*
-; CHECK-NEXT:   %7 = load i64, i64* %5, align 4
-; CHECK-NEXT:   %8 = load i64, i64* %6, align 4
+; CHECK-NEXT:   %7 = load i64, i64* %5
+; CHECK-NEXT:   %8 = load i64, i64* %6
 ; CHECK-NEXT:   %9 = mul i64 %7, %8
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %9, 8
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
@@ -270,11 +270,11 @@ entry:
 ; CHECK-NEXT:   %cast.ldc = bitcast i64* %byref.ldc to i8*
 ; CHECK-NEXT:   %tape.ext.A = extractvalue { i8, i8, i64, double, i64, i64, double, i64, double* } %[[_unwrap29]], 8
 ; CHECK-NEXT:   %44 = bitcast double* %tape.ext.A to i8*
-; CHECK-NEXT:   %45 = load i64, i64* %"iv'ac", align 4
+; CHECK-NEXT:   %45 = load i64, i64* %"iv'ac"
 ; CHECK-NEXT:   %46 = load i8*, i8** %m_p_cache, align 8, !invariant.group !6
-; CHECK-NEXT:   %47 = load i64, i64* %"iv'ac", align 4
+; CHECK-NEXT:   %47 = load i64, i64* %"iv'ac"
 ; CHECK-NEXT:   %n_p_unwrap = bitcast i64* %n to i8*
-; CHECK-NEXT:   %ld.transa = load i8, i8* %byref.transa, align 1
+; CHECK-NEXT:   %ld.transa = load i8, i8* %byref.transa
 ; CHECK-NEXT:   %48 = icmp eq i8 %ld.transa, 110
 ; CHECK-NEXT:   %49 = select i1 %48, i8 116, i8 0
 ; CHECK-NEXT:   %50 = icmp eq i8 %ld.transa, 78
@@ -283,8 +283,8 @@ entry:
 ; CHECK-NEXT:   %53 = select i1 %52, i8 110, i8 %51
 ; CHECK-NEXT:   %54 = icmp eq i8 %ld.transa, 84
 ; CHECK-NEXT:   %55 = select i1 %54, i8 78, i8 %53
-; CHECK-NEXT:   store i8 %55, i8* %byref.transpose.transa, align 1
-; CHECK-NEXT:   %ld.transb = load i8, i8* %byref.transb, align 1
+; CHECK-NEXT:   store i8 %55, i8* %byref.transpose.transa
+; CHECK-NEXT:   %ld.transb = load i8, i8* %byref.transb
 ; CHECK-NEXT:   %56 = icmp eq i8 %ld.transb, 110
 ; CHECK-NEXT:   %57 = select i1 %56, i8 116, i8 0
 ; CHECK-NEXT:   %58 = icmp eq i8 %ld.transb, 78
@@ -293,8 +293,8 @@ entry:
 ; CHECK-NEXT:   %61 = select i1 %60, i8 110, i8 %59
 ; CHECK-NEXT:   %62 = icmp eq i8 %ld.transb, 84
 ; CHECK-NEXT:   %63 = select i1 %62, i8 78, i8 %61
-; CHECK-NEXT:   store i8 %63, i8* %byref.transpose.transb, align 1
-; CHECK-NEXT:   %loaded.trans30 = load i8, i8* %byref.transa, align 1
+; CHECK-NEXT:   store i8 %63, i8* %byref.transpose.transb
+; CHECK-NEXT:   %loaded.trans30 = load i8, i8* %byref.transa
 ; CHECK-NEXT:   %64 = icmp eq i8 %loaded.trans30, 78
 ; CHECK-NEXT:   %65 = icmp eq i8 %loaded.trans30, 110
 ; CHECK-NEXT:   %66 = or i1 %65, %64
