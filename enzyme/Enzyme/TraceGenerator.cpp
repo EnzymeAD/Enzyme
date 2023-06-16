@@ -27,6 +27,7 @@
 
 #include "llvm/ADT/SmallVector.h"
 
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -48,10 +49,12 @@ using namespace llvm;
 TraceGenerator::TraceGenerator(
     EnzymeLogic &Logic, TraceUtils *tutils, bool autodiff,
     ValueMap<const Value *, WeakTrackingVH> &originalToNewFn,
-    SmallPtrSetImpl<Function *> &generativeFunctions)
+    SmallPtrSetImpl<Function *> &generativeFunctions,
+    StringSet<> &activeRandomVariables)
     : Logic(Logic), tutils(tutils), autodiff(autodiff),
       originalToNewFn(originalToNewFn),
-      generativeFunctions(generativeFunctions) {
+      generativeFunctions(generativeFunctions),
+      activeRandomVariables(activeRandomVariables) {
   assert(tutils);
 };
 
@@ -81,7 +84,7 @@ void TraceGenerator::visitFunction(Function &F) {
     auto name = Builder.CreateGlobalStringPtr(arg->getName());
 
     auto Outlined = [](IRBuilder<> &OutlineBuilder, TraceUtils *OutlineTutils,
-                       ArrayRef<Argument *> Arguments) {
+                       ArrayRef<Value *> Arguments) {
       OutlineTutils->InsertArgument(OutlineBuilder, Arguments[0], Arguments[1]);
       OutlineBuilder.CreateRetVoid();
     };
@@ -126,13 +129,10 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
 
   auto OutlinedSample = [samplefn](IRBuilder<> &OutlineBuilder,
                                    TraceUtils *OutlineTutils,
-                                   ArrayRef<Argument *> Arguments) {
-    SmallVector<Value *, 2> SampleArgs(
-        make_range(Arguments.begin() + 1, Arguments.end()));
-
-    auto choice =
-        OutlineTutils->SampleOrCondition(OutlineBuilder, samplefn, SampleArgs,
-                                         Arguments[0], samplefn->getName());
+                                   ArrayRef<Value *> Arguments) {
+    auto choice = OutlineTutils->SampleOrCondition(
+        OutlineBuilder, samplefn, Arguments.slice(1), Arguments[0],
+        samplefn->getName());
     OutlineBuilder.CreateRet(choice);
   };
 
@@ -144,18 +144,26 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
       tutils->getTraceInterface()->insertChoiceTy()->getParamType(2), Args,
       false, mode_str + "_" + samplefn->getName());
 
+  Value *address = Args[0];
+  StringRef const_address;
+  bool is_address_const = getConstantStringInfo(address, const_address);
+  bool is_random_var_active =
+      activeRandomVariables.empty() ||
+      (is_address_const && activeRandomVariables.count(const_address));
+  Attribute activity_attribute = Attribute::get(
+      call.getContext(),
+      is_random_var_active ? "enzyme_active" : "enzyme_inactive_val");
+
 #if LLVM_VERSION_MAJOR >= 14
   sample_call->addAttributeAtIndex(
       AttributeList::FunctionIndex,
       Attribute::get(call.getContext(), "enzyme_sample"));
-  sample_call->addAttributeAtIndex(
-      AttributeList::FunctionIndex,
-      Attribute::get(call.getContext(), "enzyme_active"));
+  sample_call->addAttributeAtIndex(AttributeList::FunctionIndex,
+                                   activity_attribute);
 #else
   sample_call->addAttribute(AttributeList::FunctionIndex,
                             Attribute::get(call.getContext(), "enzyme_sample"));
-  sample_call->addAttribute(AttributeList::FunctionIndex,
-                            Attribute::get(call.getContext(), "enzyme_active"));
+  sample_call->addAttribute(AttributeList::FunctionIndex, activity_attribute);
 #endif
 
   if (autodiff) {
@@ -168,14 +176,17 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
   }
 
   // calculate and accumulate log likelihood
+  Args.push_back(sample_call);
 
-  SmallVector<Value *, 3> LikelihoodArgs(
-      make_range(Args.begin() + 1, Args.end()));
-  LikelihoodArgs.push_back(sample_call);
+  auto score = Builder.CreateCall(likelihoodfn->getFunctionType(), likelihoodfn,
+                                  ArrayRef<Value *>(Args).slice(1),
+                                  "likelihood." + call.getName());
 
-  auto score =
-      Builder.CreateCall(likelihoodfn->getFunctionType(), likelihoodfn,
-                         LikelihoodArgs, "likelihood." + call.getName());
+#if LLVM_VERSION_MAJOR >= 14
+  score->addAttributeAtIndex(AttributeList::FunctionIndex, activity_attribute);
+#else
+  score->addAttribute(AttributeList::FunctionIndex, activity_attribute);
+#endif
 
   auto log_prob_sum = Builder.CreateLoad(
       Builder.getDoubleTy(), tutils->getLikelihood(), "log_prob_sum");
@@ -188,7 +199,7 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
 
   auto OutlinedTrace = [](IRBuilder<> &OutlineBuilder,
                           TraceUtils *OutlineTutils,
-                          ArrayRef<Argument *> Arguments) {
+                          ArrayRef<Value *> Arguments) {
     OutlineTutils->InsertChoice(OutlineBuilder, Arguments[0], Arguments[1],
                                 Arguments[2]);
     OutlineBuilder.CreateRetVoid();
@@ -234,8 +245,9 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
   Function *called = getFunctionFromCall(&call);
   assert(called);
 
-  Function *samplefn = Logic.CreateTrace(called, generativeFunctions, mode,
-                                         autodiff, tutils->interface);
+  Function *samplefn =
+      Logic.CreateTrace(called, generativeFunctions, activeRandomVariables,
+                        mode, autodiff, tutils->interface);
 
   auto trace = tutils->CreateTrace(Builder);
 

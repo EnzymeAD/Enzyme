@@ -28,6 +28,7 @@
 #define TraceUtils_h
 
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -96,7 +97,7 @@ public:
                              llvm::Value *subtrace);
 
   llvm::CallInst *InsertArgument(llvm::IRBuilder<> &Builder, llvm::Value *name,
-                                 llvm::Argument *argument);
+                                 llvm::Value *argument);
 
   llvm::CallInst *InsertReturn(llvm::IRBuilder<> &Builder, llvm::Value *ret);
 
@@ -136,7 +137,7 @@ public:
   llvm::CallInst *CreateOutlinedFunction(
       llvm::IRBuilder<> &Builder,
       llvm::function_ref<void(llvm::IRBuilder<> &, TraceUtils *,
-                              llvm::ArrayRef<llvm::Argument *>)>
+                              llvm::ArrayRef<llvm::Value *>)>
           Outlined,
       llvm::Type *RetTy, llvm::ArrayRef<llvm::Value *> Arguments,
       bool needsLikelihood = true, const llvm::Twine &Name = "");

@@ -471,7 +471,8 @@ public:
   llvm::Function *
   CreateTrace(llvm::Function *totrace,
               llvm::SmallPtrSetImpl<llvm::Function *> &GenerativeFunctions,
-              ProbProgMode mode, bool autodiff, TraceInterface *interface);
+              llvm::StringSet<> &ActiveRandomVariables, ProbProgMode mode,
+              bool autodiff, TraceInterface *interface);
 
   void clear();
 };

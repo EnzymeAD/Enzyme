@@ -243,7 +243,7 @@ CallInst *TraceUtils::InsertCall(IRBuilder<> &Builder, Value *address,
 }
 
 CallInst *TraceUtils::InsertArgument(IRBuilder<> &Builder, Value *name,
-                                     Argument *argument) {
+                                     Value *argument) {
   Type *size_type = interface->insertArgumentTy()->getParamType(3);
   auto &&[retval, sizeval] =
       ValueToVoidPtrAndSize(Builder, argument, size_type);
@@ -427,8 +427,7 @@ Instruction *TraceUtils::SampleOrCondition(IRBuilder<> &Builder,
 
 CallInst *TraceUtils::CreateOutlinedFunction(
     IRBuilder<> &Builder,
-    function_ref<void(IRBuilder<> &, TraceUtils *, ArrayRef<Argument *>)>
-        Outlined,
+    function_ref<void(IRBuilder<> &, TraceUtils *, ArrayRef<Value *>)> Outlined,
     Type *RetTy, ArrayRef<Value *> Arguments, bool needsLikelihood,
     const Twine &Name) {
   SmallVector<Type *, 4> Tys;
@@ -461,7 +460,7 @@ CallInst *TraceUtils::CreateOutlinedFunction(
 
   auto ArgRange = make_pointer_range(
       make_range(F->arg_begin(), F->arg_begin() + Arguments.size()));
-  SmallVector<Argument *, 4> Rets(ArgRange);
+  SmallVector<Value *, 4> Rets(ArgRange);
 
   auto idx = F->arg_begin() + Arguments.size();
 
