@@ -23,8 +23,9 @@ def FSub : Inst<"FSub">;
 def FMul : Inst<"FMul">;
 def FNeg : Inst<"FNeg">;
 def Select : Inst<"Select">;
+def FCmpUEQ : Inst<"FCmpUEQ">;
 def FCmpOEQ : Inst<"FCmpOEQ">;
-def FCmpOLT : Inst<"FCmpOEQ">;
+def FCmpOLT : Inst<"FCmpOLT">;
 
 class ExtractValue<list<int> indices_> : Inst<"ExtractValue"> {
   list<int> indices = indices_;
@@ -281,5 +282,26 @@ def : IntrPattern<(Op $x, $y),
                     (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $x), (DiffeRet<"">))
                   ]
                   >;
+
+def : IntrPattern<(Op $x, $y),
+                  [["maxnum"], ["nvvm_fmax_f"], ["nvvm_fmax_d"], ["nvvm_fmax_ftz_f"], ["x86_sse_max_ss", "", "10"], ["x86_sse_max_ps", "", "10"], ["maximum", "15", ""]],
+                  [
+                    (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $x), (DiffeRet<"">)),
+                    (Select (FCmpOLT $x, $y), (DiffeRet<"">), (ConstantFP<"0"> $x))
+                  ]
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["fabs"]],
+                  [
+                    (FMul (DiffeRet<"">), (Select (FCmpOLT $x, (ConstantFP<"0"> $x)), (ConstantFP<"-1"> $x), (ConstantFP<"1"> $x)))
+                  ]
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["sqrt"]],
+                  [(Select (FCmpUEQ $x, (ConstantFP<"0"> $x)), (ConstantFP<"0"> $x), (FDiv (DiffeRet<"">), (FMul (ConstantFP<"2"> $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x))))]
+                 >;
+
 
 include "BlasDerivatives.td"                  

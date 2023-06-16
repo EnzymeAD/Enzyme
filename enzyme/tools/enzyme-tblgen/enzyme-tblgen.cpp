@@ -533,14 +533,13 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os, b
           continue;
       }
     }
-        os << " case Intrinsic::" << name << ":";
+        os << " case Intrinsic::" << name << ":\n";
         anyVersion = true;
       }
       if (!anyVersion) continue;
       origName = "I";    
       os << " {\n";
       os << "    auto called = cast<CallInst>(&" << origName << ")->getCalledFunction();\n";
-      os << "    assert(called);\n";
       os << "    CallInst *const newCall = cast<CallInst>(gutils->getNewFromOriginal(&" << origName << "));\n";
       os << "    IRBuilder<> BuilderZ(newCall);\n";
       os << "    BuilderZ.setFastMathFlags(getFast());\n";

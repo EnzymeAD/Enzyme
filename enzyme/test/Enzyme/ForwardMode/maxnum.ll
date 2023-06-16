@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -early-cse -instcombine -enzyme-preopt=false -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(early-cse),instcombine" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline nounwind readnone uwtable
 define double @tester(double %x, double %y) {
@@ -22,8 +22,8 @@ declare double @__enzyme_fwddiff(double (double, double)*, ...)
 
 ; CHECK: define internal {{(dso_local )?}}double @fwddiffetester(double %x, double %"x'", double %y, double %"y'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fcmp fast ogt double %x, %y
-; CHECK-NEXT:   %1 = select {{(fast )?}}i1 %0, double %"x'", double %"y'"
+; CHECK-NEXT:   %0 = fcmp fast olt double %x, %y
+; CHECK-NEXT:   %1 = select {{(fast )?}}i1 %0, double %"y'", double %"x'"
 ; CHECK-NEXT:   ret double %1
 ; CHECK-NEXT: }
 

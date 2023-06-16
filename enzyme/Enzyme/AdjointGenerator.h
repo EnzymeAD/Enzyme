@@ -3834,20 +3834,6 @@ public:
 #endif
       case Intrinsic::lifetime_start:
       case Intrinsic::assume:
-      case Intrinsic::fabs:
-      case Intrinsic::nvvm_fabs_f:
-      case Intrinsic::nvvm_fabs_d:
-      case Intrinsic::nvvm_fabs_ftz_f:
-#if LLVM_VERSION_MAJOR < 10
-      case Intrinsic::x86_sse_max_ss:
-      case Intrinsic::x86_sse_max_ps:
-      case Intrinsic::x86_sse_min_ss:
-      case Intrinsic::x86_sse_min_ps:
-#endif
-      case Intrinsic::nvvm_fmax_f:
-      case Intrinsic::nvvm_fmax_d:
-      case Intrinsic::nvvm_fmax_ftz_f:
-      case Intrinsic::maxnum:
       case Intrinsic::pow:
       case Intrinsic::powi:
 #if LLVM_VERSION_MAJOR >= 12
@@ -3856,10 +3842,6 @@ public:
 #else
       case Intrinsic::experimental_vector_reduce_v2_fadd:
       case Intrinsic::experimental_vector_reduce_v2_fmul:
-#endif
-#if LLVM_VERSION_MAJOR >= 15
-      case Intrinsic::minimum:
-      case Intrinsic::maximum:
 #endif
       case Intrinsic::floor:
       case Intrinsic::ceil:
@@ -4041,65 +4023,6 @@ public:
         return;
       }
 
-      case Intrinsic::nvvm_fabs_f:
-      case Intrinsic::nvvm_fabs_d:
-      case Intrinsic::nvvm_fabs_ftz_f:
-      case Intrinsic::fabs: {
-        if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
-          Value *cmp = Builder2.CreateFCmpOLT(
-              lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2),
-              ConstantFP::get(orig_ops[0]->getType(), 0));
-
-          auto rule = [&](Value *vdiff) {
-            return Builder2.CreateFMul(
-                CreateSelect(Builder2, cmp,
-                             ConstantFP::get(orig_ops[0]->getType(), -1),
-                             ConstantFP::get(orig_ops[0]->getType(), 1)),
-                vdiff);
-          };
-          Value *dif0 =
-              applyChainRule(orig_ops[0]->getType(), Builder2, rule, vdiff);
-          addToDiffe(orig_ops[0], dif0, Builder2, I.getType());
-        }
-        return;
-      }
-
-#if LLVM_VERSION_MAJOR < 10
-      case Intrinsic::x86_sse_max_ss:
-      case Intrinsic::x86_sse_max_ps:
-#endif
-      case Intrinsic::nvvm_fmax_f:
-      case Intrinsic::nvvm_fmax_d:
-      case Intrinsic::nvvm_fmax_ftz_f:
-#if LLVM_VERSION_MAJOR >= 10
-      case Intrinsic::maximum:
-#endif
-      case Intrinsic::maxnum: {
-        if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
-          Value *cmp = Builder2.CreateFCmpOLT(
-              lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2),
-              lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2));
-
-          Value *dif0 =
-              CreateSelect(Builder2, cmp,
-                           Constant::getNullValue(
-                               gutils->getShadowType(orig_ops[0]->getType())),
-                           vdiff);
-          addToDiffe(orig_ops[0], dif0, Builder2, I.getType());
-        }
-        if (vdiff && !gutils->isConstantValue(orig_ops[1])) {
-          Value *cmp = Builder2.CreateFCmpOLT(
-              lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2),
-              lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2));
-
-          Value *dif1 =
-              CreateSelect(Builder2, cmp, vdiff,
-                           Constant::getNullValue(
-                               gutils->getShadowType(orig_ops[1]->getType())));
-          addToDiffe(orig_ops[1], dif1, Builder2, I.getType());
-        }
-        return;
-      }
 #if LLVM_VERSION_MAJOR >= 12
       case Intrinsic::vector_reduce_fmax: {
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
@@ -4390,67 +4313,6 @@ public:
         return;
       }
 
-      case Intrinsic::nvvm_fabs_f:
-      case Intrinsic::nvvm_fabs_d:
-      case Intrinsic::nvvm_fabs_ftz_f:
-      case Intrinsic::fabs: {
-        if (gutils->isConstantInstruction(&I))
-          return;
-
-        Value *op = diffe(orig_ops[0], Builder2);
-        Type *ty = orig_ops[0]->getType();
-
-        auto rule = [&](Value *op) {
-          Value *cmp =
-              Builder2.CreateFCmpOLT(gutils->getNewFromOriginal(orig_ops[0]),
-                                     Constant::getNullValue(ty));
-          Value *select = CreateSelect(Builder2, cmp, ConstantFP::get(ty, -1),
-                                       ConstantFP::get(ty, 1));
-          return Builder2.CreateFMul(select, op);
-        };
-
-        auto dif0 = applyChainRule(I.getType(), Builder2, rule, op);
-
-        setDiffe(&I, dif0, Builder2);
-        return;
-      }
-
-#if LLVM_VERSION_MAJOR < 10
-      case Intrinsic::x86_sse_max_ss:
-      case Intrinsic::x86_sse_max_ps:
-#endif
-      case Intrinsic::nvvm_fmax_f:
-      case Intrinsic::nvvm_fmax_d:
-      case Intrinsic::nvvm_fmax_ftz_f:
-#if LLVM_VERSION_MAJOR >= 15
-      case Intrinsic::maximum:
-#endif
-      case Intrinsic::maxnum: {
-        if (gutils->isConstantInstruction(&I))
-          return;
-        Value *op0 = gutils->getNewFromOriginal(orig_ops[0]);
-        Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
-        Value *cmp = Builder2.CreateFCmpOGT(op0, op1);
-
-        Type *opType0 = gutils->getShadowType(orig_ops[0]->getType());
-        Type *opType1 = gutils->getShadowType(orig_ops[1]->getType());
-
-        Value *diffe0 = gutils->isConstantValue(orig_ops[0])
-                            ? Constant::getNullValue(opType0)
-                            : diffe(orig_ops[0], Builder2);
-        Value *diffe1 = gutils->isConstantValue(orig_ops[1])
-                            ? Constant::getNullValue(opType1)
-                            : diffe(orig_ops[1], Builder2);
-
-        auto rule = [&](Value *diffe0, Value *diffe1) {
-          return CreateSelect(Builder2, cmp, diffe0, diffe1);
-        };
-
-        Value *dif =
-            applyChainRule(I.getType(), Builder2, rule, diffe0, diffe1);
-        setDiffe(&I, dif, Builder2);
-        return;
-      }
 #if LLVM_VERSION_MAJOR >= 12
       case Intrinsic::vector_reduce_fmax: {
         if (gutils->isConstantInstruction(&I))
