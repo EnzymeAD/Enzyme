@@ -17,12 +17,23 @@ class Inst<string mnemonic> {
 
 // Define ops to rewrite.
 
+def CheckedMul {
+  
+}
+def CheckedDiv {
+  
+}
+def SIToFP : Inst<"SIToFP">;
+def Or : Inst<"Or">;
+def And : Inst<"And">;
+def ISub : Inst<"Sub">;
 def FDiv : Inst<"FDiv">;
 def FAdd : Inst<"FAdd">;
 def FSub : Inst<"FSub">;
 def FMul : Inst<"FMul">;
 def FNeg : Inst<"FNeg">;
 def Select : Inst<"Select">;
+def ICmpEQ : Inst<"ICmpEQ">;
 def FCmpUEQ : Inst<"FCmpUEQ">;
 def FCmpOEQ : Inst<"FCmpOEQ">;
 def FCmpOLT : Inst<"FCmpOLT">;
@@ -81,8 +92,14 @@ def Op {
 def ArrayRet {
 }
 
+class GlobalExpr<string val> {
+  string value = val;
+}
 class ConstantFP<string val> {
   string value = val;
+}
+class ConstantInt<int val> {
+  int value = val;
 }
 class Undef {
 }
@@ -95,7 +112,7 @@ class Shadow<string val> {
 
 def : CallPattern<(Op $x),
                   ["atan", "atanf", "atanl", "__fd_atan_1"],
-                  [(FDiv (DiffeRet<"">), (FAdd (FMul $x, $x), (ConstantFP<"1.0"> $x)))]
+                  [(CheckedDiv (DiffeRet<"">), (FAdd (FMul $x, $x), (ConstantFP<"1.0"> $x)))]
                   >;
 
 def : CallPattern<(Op $y, $x),
@@ -306,9 +323,32 @@ def : IntrPattern<(Op $x),
 def : IntrPattern<(Op $x, $y),
                   [["pow"]],
                   [
-                    (FMul (DiffeRet<"">), (FMul $y, (Call<(SameFunc), [ReadNone,NoUnwind]> $x, (FSub $y, (ConstantFP<"1"> $y))))),
-                    (FMul (DiffeRet<"">), (FMul (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y), (Intrinsic<"log", [(TypeOf<""> $x)]> $x)
+                    (CheckedMul (DiffeRet<"">), (FMul $y, (Call<(SameFunc), [ReadNone,NoUnwind]> $x, (FSub $y, (ConstantFP<"1"> $y))))),
+                    (CheckedMul (DiffeRet<"">), (FMul (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y), (Intrinsic<"log", [(TypeOf<""> $x)]> $x)
                     ))
+                  ]
+                 >;
+
+def : IntrPattern<(Op $x, $y),
+                  [["powi"]],
+                  [
+                    (Select 
+                      (Or (ICmpEQ $y, (ConstantInt<0> $y) ), (And (GlobalExpr<"ConstantInt::get(Type::getInt1Ty(gutils->newFunc->getContext()), EnzymeStrongZero)">), (FCmpOEQ (DiffeRet<"">), (ConstantFP<"0"> $x) ) ) ),
+                      (ConstantFP<"0"> $x),
+                      (FMul (DiffeRet<"">),
+                        (FMul (SIToFP $y, (TypeOf<""> $x)), (Call<(SameFunc), [ReadNone,NoUnwind]> $x, (ISub $y, (ConstantInt<1> $y))))
+                      )
+                     ),
+                    (InactiveArg)
+                  ]
+                 >;
+
+def : IntrPattern<(Op $x, $y, $z),
+                  [["fma"], ["fmuladd"]],
+                  [
+                    (FMul (DiffeRet<"">), $y),
+                    (FMul (DiffeRet<"">), $x),
+                    (DiffeRet<"">)
                   ]
                  >;
 

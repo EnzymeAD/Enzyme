@@ -162,6 +162,9 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
   if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
     auto opName = resultRoot->getOperator()->getAsString();
     auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
+    if (Def->isSubClassOf("Inst")) {
+      opName = Def->getValueAsString("name");
+    }
     if (opName == "DiffeRet" || Def->isSubClassOf("DiffeRet")) {
       if (retidx.size() == 0) {
         os << "dif";
@@ -205,9 +208,28 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
         os << "            out; })\n";
       }
       return true;
+    } else if (opName == "TypeOf" || Def->isSubClassOf("TypeOf")) {
+      if (resultRoot->getNumArgs() != 1)
+        PrintFatalError(pattern->getLoc(), "only single op TypeOf supported");
+
+      os << "";
+      if (resultRoot->getArgName(0)) {
+        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+        auto ord = nameToOrdinal.find(name);
+        if (ord == nameToOrdinal.end())
+          PrintFatalError(pattern->getLoc(), Twine("unknown named operand '") +
+                                                 name + "'" +
+                                                 resultTree->getAsString());
+        os << ord->getValue();
+      } else
+        PrintFatalError(pattern->getLoc(),
+                        Twine("unknown named operand in constantfp") +
+                            resultTree->getAsString());
+      os << "->getType()";
+      return false;
     } else if (opName == "ConstantFP" || Def->isSubClassOf("ConstantFP")) {
       if (resultRoot->getNumArgs() != 1)
-        PrintFatalError(pattern->getLoc(), "only single op constant supported");
+        PrintFatalError(pattern->getLoc(), "only single op constantfp supported");
 
       auto value = dyn_cast<StringInit>(Def->getValueInit("value"));
       if (!value)
@@ -229,9 +251,44 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
                             resultTree->getAsString());
       os << "->getType(), \"" << value->getValue() << "\")";
       return false;
+    } else if (opName == "ConstantInt" || Def->isSubClassOf("ConstantInt")) {
+      if (resultRoot->getNumArgs() != 1)
+        PrintFatalError(pattern->getLoc(), "only single op constantint supported");
+
+      auto value = dyn_cast<IntInit>(Def->getValueInit("value"));
+      if (!value)
+        PrintFatalError(pattern->getLoc(), Twine("int 'value' not defined in ") +
+                                               resultTree->getAsString());
+
+      os << "ConstantInt::getSigned(";
+      if (resultRoot->getArgName(0)) {
+        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+        auto ord = nameToOrdinal.find(name);
+        if (ord == nameToOrdinal.end())
+          PrintFatalError(pattern->getLoc(), Twine("unknown named operand '") +
+                                                 name + "'" +
+                                                 resultTree->getAsString());
+        os << ord->getValue();
+      } else
+        PrintFatalError(pattern->getLoc(),
+                        Twine("unknown named operand in constantfp") +
+                            resultTree->getAsString());
+      os << "->getType(), " << value->getValue() << ")";
+      return false;
+    } else if (opName == "GlobalExpr" || Def->isSubClassOf("GlobalExpr")) {
+      if (resultRoot->getNumArgs() != 0)
+        PrintFatalError(pattern->getLoc(), "only zero op globalexpr supported");
+
+      auto value = dyn_cast<StringInit>(Def->getValueInit("value"));
+      if (!value)
+        PrintFatalError(pattern->getLoc(), Twine("string 'value' not defined in ") +
+                                               resultTree->getAsString());
+
+      os << value->getValue();
+      return false;
     } else if (opName == "Undef" || Def->isSubClassOf("Undef")) {
       if (resultRoot->getNumArgs() != 1)
-        PrintFatalError(pattern->getLoc(), "only single op constant supported");
+        PrintFatalError(pattern->getLoc(), "only single op undef supported");
 
       os << "UndefValue::get(";
       if (resultRoot->getArgName(0)) {
@@ -250,7 +307,7 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
       return false;
     } else if (opName == "Shadow" || Def->isSubClassOf("Shadow")) {
       if (resultRoot->getNumArgs() != 1)
-        PrintFatalError(pattern->getLoc(), "only single op constant supported");
+        PrintFatalError(pattern->getLoc(), "only single op shadow supported");
 
       if (lookup)
         os << "lookup(";
@@ -276,8 +333,6 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
     }
 
     os << " ({\n";
-    os << "    Value* args[" << resultRoot->getArgs().size() << "];\n";
-
     SmallVector<bool, 1> vectorValued;
     bool anyVector = false;
 
@@ -285,7 +340,7 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
     StringMap<std::string> oldMaps;
     for (auto zp :
          llvm::zip(resultRoot->getArgs(), resultRoot->getArgNames())) {
-      os << " args[" << idx << "] = ";
+      os << " auto arg_" << idx << " = ";
       idx++;
       if (isa<UnsetInit>(std::get<0>(zp)) && std::get<1>(zp)) {
         auto name = std::get<1>(zp)->getAsUnquotedString();
@@ -320,7 +375,7 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
                               name + "'" + std::get<0>(zp)->getAsString());
         oldMaps.try_emplace(name, nameToOrdinal[name]);
         nameToOrdinal[name] = "__tmp_" + name;
-        os << " __tmp_" << name << " = args[" << (idx - 1) << "];\n";
+        os << " __tmp_" << name << " = arg_" << (idx - 1) << ";\n";
       }
 
       anyVector |= vectorValued.back();
@@ -331,11 +386,6 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
       // else
       //  nameToOrdinal.erase(pair.getKey());
     }
-
-    if (Def->isSubClassOf("InsertValue"))
-      opName = "InsertValue";
-    if (Def->isSubClassOf("ExtractValue"))
-      opName = "ExtractValue";
 
     bool isCall = opName == "Call" || Def->isSubClassOf("Call");
     bool isIntr = opName == "Intrinsic" || Def->isSubClassOf("Intrinsic");
@@ -358,13 +408,17 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
     if (isCall || isIntr) {
       os << " CallInst *cubcall = cast<CallInst>(" << builder
          << ".CreateCall(FT, callval, ArrayRef<Value*>({";
+    } else if (opName == "CheckedMul") {
+      os << "   res = checkedMul(" << builder << ", ";
+    } else if (opName == "CheckedDiv") {
+      os << "   res = checkedDiv(" << builder << ", ";
     } else {
       os << "   res = " << builder << ".Create" << opName << "(";
     }
     for (size_t i = 0; i < idx; i++) {
       if (i > 0)
         os << ", ";
-      os << "args[" << i << "]";
+      os << "arg_" << i << "";
     }
     if (opName == "ExtractValue" || opName == "InsertValue") {
       os << ", ArrayRef<unsigned>({";
@@ -426,6 +480,10 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
       if (isCall || isIntr) {
         os << " CallInst *V = cast<CallInst>(" << builder
            << ".CreateCall(FT, callval, ArrayRef<Value*>({";
+      } else if (opName == "CheckedMul") {
+        os << "   Value *V = checkedMul(" << builder << ", ";
+      } else if (opName == "CheckedDiv") {
+        os << "   Value *V = checkedDiv(" << builder << ", ";
       } else {
         os << "   Value *V = " << builder << ".Create" << opName << "(";
       }
@@ -433,10 +491,10 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
         if (i > 0)
           os << ", ";
         if (vectorValued[i])
-          os << "gutils->extractMeta(" << builder << ", args[" << i
-             << "], idx)";
+          os << "gutils->extractMeta(" << builder << ", arg_" << i
+             << ", idx)";
         else
-          os << "args[" << i << "]";
+          os << "arg_" << i << "";
       }
       if (opName == "ExtractValue" || opName == "InsertValue") {
         os << ", ArrayRef<unsigned>({";
@@ -592,6 +650,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os, b
 
     os << "    eraseIfUnused(" << origName << ");\n";
     os << "    if (gutils->isConstantInstruction(&" << origName << "))\n";
+    if (intrinsic)
+    os << "      return true;\n";
+    else
     os << "      return;\n";
 
     os << "    switch (Mode) {\n";
@@ -843,6 +904,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os, b
     os << "      }\n";
     os << "    }\n";
 
+    if (intrinsic)
+    os << "    return true;\n  }\n";
+    else
     os << "    return;\n  }\n";
   }
 }
@@ -1671,7 +1735,7 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg, raw_ostream &os
         auto val = Def->getValueAsString("value");
         os << "to_blas_callconv(Builder2, ConstantInt::get(charType, '" << val << "'), byRef, nullptr, allocationBuilder, \"constant.char." << val << "\")";
       } else if (Def->isSubClassOf("ConstantInt")) {
-        auto val = Def->getValueAsString("value");
+        auto val = Def->getValueAsInt("value");
         os << "to_blas_callconv(Builder2, ConstantInt::get(intType, " << val << "), byRef, nullptr, allocationBuilder, \"constant.int." << val << "\")";
       } else if (Def->isSubClassOf("transpose")) {
         auto name = Def->getValueAsString("name");

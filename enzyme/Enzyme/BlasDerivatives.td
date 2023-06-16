@@ -74,9 +74,6 @@ class adj<string _name> {
 class Constant<string _value> {
   string value = _value;
 }
-class ConstantInt<string _value> {
-  string value = _value;
-}
 class Char<string _value> {
   string value = _value;
 }
@@ -198,7 +195,7 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   /* A     */ (b<"gemm"> $layout, $transa, transpose<"transb">, $m, $k, $n, $alpha, adj<"C">, $ldc, $B, (ld $B, $transb, $ldb, $k, $n), $beta, adj<"A">, $lda),
                   /* B     */ (b<"gemm"> $layout, transpose<"transa">, $transb, $k, $n, $m, $alpha, $A, (ld $A, $transa, $lda, $m, $k), adj<"C">, $ldc, $beta, adj<"B">, $ldb),
                   /* beta  */ (inactive),
-                  /* C     */ (b<"lascl"> $layout, Char<"G">, ConstantInt<"0">, ConstantInt<"0">, Constant<"1.0">, $beta, $m, $n, adj<"C">, $ldc, ConstantInt<"0">)
+                  /* C     */ (b<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, adj<"C">, $ldc, ConstantInt<0>)
                   ]
                   >;
 
