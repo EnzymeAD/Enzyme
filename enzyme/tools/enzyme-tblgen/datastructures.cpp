@@ -244,7 +244,6 @@ void fillRelatedLenghts(const Record *pattern, StringMap<size_t> &argNameToPos,
     auto lengths = llvm::SmallVector<size_t, 3>{};
     for (auto arg : args) {
       lengths.push_back(argNameToPos.lookup(arg));
-      llvm::errs() << arg << " " << argNameToPos.lookup(arg) << "\n";
     }
 
     if (val->isSubClassOf("vinc")) {
@@ -299,7 +298,6 @@ void fillArgUserMap(SmallVectorImpl<Rule> &rules, ArrayRef<std::string> nameVec,
 
 TGPattern::TGPattern(Record &r) {
   blasName = r.getNameInitAsString();
-  llvm::errs() << blasName << "\n";
 
   args = llvm::SmallVector<std::string, 6>();
   argNameToPos = StringMap<size_t>{};
@@ -352,14 +350,7 @@ SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg) {
     assert(argTypes.lookup(related[0]) == argType::trans);
   }
 
-  llvm::errs() << "related length args for " << args[arg] << " are: ";
-  for (auto &&arg : related) {
-    llvm::errs() << args[arg] << " ";
-  }
   return related;
-  // tests:
-  // llvm::errs() << "failed for: " << blasName << "\n";
-  // assert(false);
 }
 bool TGPattern::isBLASLevel2or3() { return BLASLevel2or3; }
 DenseMap<size_t, DenseSet<size_t>> TGPattern::getArgUsers() { return argUsers; }
