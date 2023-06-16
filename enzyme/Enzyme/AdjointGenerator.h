@@ -3849,8 +3849,6 @@ public:
       case Intrinsic::rint:
       case Intrinsic::nearbyint:
       case Intrinsic::round:
-      case Intrinsic::sqrt:
-      case Intrinsic::nvvm_sqrt_rn_d:
       case Intrinsic::fmuladd:
       case Intrinsic::fma:
         return;
@@ -3979,47 +3977,6 @@ public:
         cal->setCallingConv(
             Intrinsic::getDeclaration(M, Intrinsic::lifetime_end, tys)
                 ->getCallingConv());
-        return;
-      }
-
-      case Intrinsic::nvvm_sqrt_rn_d:
-      case Intrinsic::sqrt: {
-        if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
-          SmallVector<Value *, 2> args = {
-              lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2)};
-
-          auto &CI = cast<CallInst>(I);
-#if LLVM_VERSION_MAJOR >= 11
-          auto *SqrtF = CI.getCalledOperand();
-#else
-          auto *SqrtF = CI.getCalledValue();
-#endif
-          assert(SqrtF);
-
-          auto FT = CI.getFunctionType();
-
-          auto cal = cast<CallInst>(Builder2.CreateCall(FT, SqrtF, args));
-          cal->setCallingConv(CI.getCallingConv());
-          cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
-
-          auto rule = [&](Value *vdiff) {
-            return Builder2.CreateFDiv(
-                Builder2.CreateFMul(ConstantFP::get(I.getType(), 0.5), vdiff),
-                cal);
-          };
-
-          Value *dif0 =
-              applyChainRule(orig_ops[0]->getType(), Builder2, rule, vdiff);
-          Value *cmp = Builder2.CreateFCmpUEQ(
-              args[0], Constant::getNullValue(
-                           gutils->getShadowType(orig_ops[0]->getType())));
-          dif0 = CreateSelect(Builder2, cmp,
-                              Constant::getNullValue(gutils->getShadowType(
-                                  orig_ops[0]->getType())),
-                              dif0);
-
-          addToDiffe(orig_ops[0], dif0, Builder2, I.getType());
-        }
         return;
       }
 
@@ -4274,42 +4231,6 @@ public:
         Value *dif =
             applyChainRule(I.getType(), Builder2, rule, accdif, vecdif);
         setDiffe(&I, dif, Builder2);
-        return;
-      }
-      case Intrinsic::nvvm_sqrt_rn_d:
-      case Intrinsic::sqrt: {
-        if (gutils->isConstantInstruction(&I))
-          return;
-
-        Value *op = diffe(orig_ops[0], Builder2);
-        Type *opType = orig_ops[0]->getType();
-        Value *args[1] = {gutils->getNewFromOriginal(orig_ops[0])};
-        Type *tys[] = {orig_ops[0]->getType()};
-
-        auto &CI = cast<CallInst>(I);
-#if LLVM_VERSION_MAJOR >= 11
-        auto *SqrtF = CI.getCalledOperand();
-#else
-        auto *SqrtF = CI.getCalledValue();
-#endif
-        auto FT = CI.getFunctionType();
-
-        auto rule = [&](Value *op) {
-          CallInst *cal = cast<CallInst>(Builder2.CreateCall(FT, SqrtF, args));
-          cal->setCallingConv(CI.getCallingConv());
-          cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
-
-          Value *half = ConstantFP::get(orig_ops[0]->getType(), 0.5);
-          Value *dif0 = Builder2.CreateFDiv(Builder2.CreateFMul(half, op), cal);
-
-          Value *cmp =
-              Builder2.CreateFCmpUEQ(args[0], Constant::getNullValue(tys[0]));
-          return CreateSelect(Builder2, cmp, Constant::getNullValue(opType),
-                              dif0);
-        };
-
-        Value *dif0 = applyChainRule(I.getType(), Builder2, rule, op);
-        setDiffe(&I, dif0, Builder2);
         return;
       }
 

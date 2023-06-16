@@ -303,5 +303,13 @@ def : IntrPattern<(Op $x),
                   [(Select (FCmpUEQ $x, (ConstantFP<"0"> $x)), (ConstantFP<"0"> $x), (FDiv (DiffeRet<"">), (FMul (ConstantFP<"2"> $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x))))]
                  >;
 
+def : IntrPattern<(Op $x, $y),
+                  [["pow"]],
+                  [
+                    (FMul (DiffeRet<"">), (FMul $y, (Call<(SameFunc), [ReadNone,NoUnwind]> $x, (FSub $y, (ConstantFP<"1"> $y))))),
+                    (FMul (DiffeRet<"">), (FMul (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y), (Intrinsic<"log", [(TypeOf<""> $x)]> $x)
+                    ))
+                  ]
+                 >;
 
 include "BlasDerivatives.td"                  
