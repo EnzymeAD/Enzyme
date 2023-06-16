@@ -28,6 +28,7 @@
 #define TraceUtils_h
 
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -92,17 +93,11 @@ public:
   llvm::CallInst *InsertChoice(llvm::IRBuilder<> &Builder, llvm::Value *address,
                                llvm::Value *score, llvm::Value *choice);
 
-  static llvm::CallInst *InsertChoice(llvm::IRBuilder<> &Builder,
-                                      llvm::FunctionType *interface_type,
-                                      llvm::Value *interface_function,
-                                      llvm::Value *address, llvm::Value *score,
-                                      llvm::Value *choice, llvm::Value *trace);
-
   llvm::CallInst *InsertCall(llvm::IRBuilder<> &Builder, llvm::Value *address,
                              llvm::Value *subtrace);
 
-  llvm::CallInst *InsertArgument(llvm::IRBuilder<> &Builder,
-                                 llvm::Argument *argument);
+  llvm::CallInst *InsertArgument(llvm::IRBuilder<> &Builder, llvm::Value *name,
+                                 llvm::Value *argument);
 
   llvm::CallInst *InsertReturn(llvm::IRBuilder<> &Builder, llvm::Value *ret);
 
@@ -128,17 +123,6 @@ public:
                                llvm::Type *choiceType,
                                const llvm::Twine &Name = "");
 
-  static llvm::Instruction *
-  GetChoice(llvm::IRBuilder<> &Builder, llvm::FunctionType *interface_type,
-            llvm::Value *interface_function, llvm::Value *address,
-            llvm::Type *choiceType, llvm::Value *trace,
-            const llvm::Twine &Name = "");
-
-  static llvm::Instruction *
-  HasChoice(llvm::IRBuilder<> &Builder, llvm::FunctionType *interface_type,
-            llvm::Value *interface_function, llvm::Value *address,
-            llvm::Value *observations, const llvm::Twine &Name = "");
-
   llvm::Instruction *HasChoice(llvm::IRBuilder<> &Builder, llvm::Value *address,
                                const llvm::Twine &Name = "");
 
@@ -148,8 +132,14 @@ public:
   llvm::Instruction *
   SampleOrCondition(llvm::IRBuilder<> &Builder, llvm::Function *sample_fn,
                     llvm::ArrayRef<llvm::Value *> sample_args,
-                    llvm::Value *trace, llvm::Value *observations,
                     llvm::Value *address, const llvm::Twine &Name = "");
-};
 
+  llvm::CallInst *CreateOutlinedFunction(
+      llvm::IRBuilder<> &Builder,
+      llvm::function_ref<void(llvm::IRBuilder<> &, TraceUtils *,
+                              llvm::ArrayRef<llvm::Value *>)>
+          Outlined,
+      llvm::Type *RetTy, llvm::ArrayRef<llvm::Value *> Arguments,
+      bool needsLikelihood = true, const llvm::Twine &Name = "");
+};
 #endif /* TraceUtils_h */

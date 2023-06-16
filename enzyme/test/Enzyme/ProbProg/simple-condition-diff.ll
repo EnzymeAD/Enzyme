@@ -71,53 +71,53 @@ entry:
 
 ; CHECK: define internal void @diffecondition_test(double* "enzyme_likelihood" %likelihood, double* %"likelihood'", i8* "enzyme_observations" %observations, i8* "enzyme_trace" %trace)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %x.ptr.i = alloca double
-; CHECK-NEXT:   %mu.ptr.i = alloca double
+; CHECK-NEXT:   %normal.ptr.i2 = alloca double
+; CHECK-NEXT:   %normal.ptr.i = alloca double
 ; CHECK-NEXT:   call void @__enzyme_insert_function(i8* %trace, i8* bitcast (void (double*, i8*, i8*)* @condition_test to i8*))
-; CHECK-NEXT:   %0 = bitcast double* %mu.ptr.i to i8*
+; CHECK-NEXT:   %0 = bitcast double* %normal.ptr.i to i8*
 ; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8* %0)
-; CHECK-NEXT:   %has.choice.mu.i = call i1 @__enzyme_has_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([3 x i8], [3 x i8]* @.str, i64 0, i64 0))
-; CHECK-NEXT:   br i1 %has.choice.mu.i, label %condition.mu.with.trace.i, label %condition.mu.without.trace.i
+; CHECK-NEXT:   %has.choice.normal.i = call i1 @__enzyme_has_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([3 x i8], [3 x i8]* @.str, i64 0, i64 0))
+; CHECK-NEXT:   br i1 %has.choice.normal.i, label %condition.normal.with.trace.i, label %condition.normal.without.trace.i
 
-; CHECK: condition.mu.with.trace.i:                        ; preds = %entry
-; CHECK-NEXT:   %1 = bitcast double* %mu.ptr.i to i8*
-; CHECK-NEXT:   %mu.size.i = call i64 @__enzyme_get_choice(i8* %trace, i8* nocapture readonly getelementptr inbounds ([3 x i8], [3 x i8]* @.str, i64 0, i64 0), i8* %1, i64 8)
-; CHECK-NEXT:   %from.trace.mu.i = load double, double* %mu.ptr.i
-; CHECK-NEXT:   br label %condition_mu.exit
+; CHECK: condition.normal.with.trace.i:                    ; preds = %entry
+; CHECK-NEXT:   %1 = bitcast double* %normal.ptr.i to i8*
+; CHECK-NEXT:   %normal.size.i = call i64 @__enzyme_get_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([3 x i8], [3 x i8]* @.str, i64 0, i64 0), i8* %1, i64 8)
+; CHECK-NEXT:   %from.trace.normal.i = load double, double* %normal.ptr.i
+; CHECK-NEXT:   br label %condition_normal.exit
 
-; CHECK: condition.mu.without.trace.i:                     ; preds = %entry
-; CHECK-NEXT:   %sample.mu.i = call double @normal(double 0.000000e+00, double 1.000000e+00)
-; CHECK-NEXT:   br label %condition_mu.exit
+; CHECK: condition.normal.without.trace.i:                 ; preds = %entry
+; CHECK-NEXT:   %sample.normal.i = call double @normal(double 0.000000e+00, double 1.000000e+00)
+; CHECK-NEXT:   br label %condition_normal.exit
 
-; CHECK: condition_mu.exit:                                ; preds = %condition.mu.with.trace.i, %condition.mu.without.trace.i
-; CHECK-NEXT:   %2 = phi double [ %from.trace.mu.i, %condition.mu.with.trace.i ], [ %sample.mu.i, %condition.mu.without.trace.i ]
-; CHECK-NEXT:   %3 = bitcast double* %mu.ptr.i to i8*
+; CHECK: condition_normal.exit:                            ; preds = %condition.normal.with.trace.i, %condition.normal.without.trace.i
+; CHECK-NEXT:   %2 = phi double [ %from.trace.normal.i, %condition.normal.with.trace.i ], [ %sample.normal.i, %condition.normal.without.trace.i ]
+; CHECK-NEXT:   %3 = bitcast double* %normal.ptr.i to i8*
 ; CHECK-NEXT:   call void @llvm.lifetime.end.p0i8(i64 8, i8* %3)
-; CHECK-NEXT:   %likelihood.mu = call fast double @augmented_normal_logpdf.3(double 0.000000e+00, double 1.000000e+00, double %2)
+; CHECK-NEXT:   %likelihood.mu = call fast double @augmented_normal_logpdf.6(double 0.000000e+00, double 1.000000e+00, double %2)
 ; CHECK-NEXT:   %log_prob_sum = load double, double* %likelihood
 ; CHECK-NEXT:   %4 = fadd double %log_prob_sum, %likelihood.mu
 ; CHECK-NEXT:   store double %4, double* %likelihood
 ; CHECK-NEXT:   %5 = bitcast double %2 to i64
 ; CHECK-NEXT:   %6 = inttoptr i64 %5 to i8*
 ; CHECK-NEXT:   call void @__enzyme_insert_choice(i8* %trace, i8* nocapture readonly getelementptr inbounds ([3 x i8], [3 x i8]* @.str, i64 0, i64 0), double %likelihood.mu, i8* %6, i64 8)
-; CHECK-NEXT:   %7 = bitcast double* %x.ptr.i to i8*
+; CHECK-NEXT:   %7 = bitcast double* %normal.ptr.i2 to i8*
 ; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8* %7)
-; CHECK-NEXT:   %has.choice.x.i = call i1 @__enzyme_has_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0))
-; CHECK-NEXT:   br i1 %has.choice.x.i, label %condition.x.with.trace.i, label %condition.x.without.trace.i
+; CHECK-NEXT:   %has.choice.normal.i3 = call i1 @__enzyme_has_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0))
+; CHECK-NEXT:   br i1 %has.choice.normal.i3, label %condition.normal.with.trace.i6, label %condition.normal.without.trace.i8
 
-; CHECK: condition.x.with.trace.i:                         ; preds = %condition_mu.exit
-; CHECK-NEXT:   %8 = bitcast double* %x.ptr.i to i8*
-; CHECK-NEXT:   %x.size.i = call i64 @__enzyme_get_choice(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0), i8* %8, i64 8)
-; CHECK-NEXT:   %from.trace.x.i = load double, double* %x.ptr.i
-; CHECK-NEXT:   br label %condition_x.exit
+; CHECK: condition.normal.with.trace.i6:                   ; preds = %condition_normal.exit
+; CHECK-NEXT:   %8 = bitcast double* %normal.ptr.i2 to i8*
+; CHECK-NEXT:   %normal.size.i4 = call i64 @__enzyme_get_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0), i8* %8, i64 8)
+; CHECK-NEXT:   %from.trace.normal.i5 = load double, double* %normal.ptr.i2
+; CHECK-NEXT:   br label %condition_normal.4.exit
 
-; CHECK: condition.x.without.trace.i:                      ; preds = %condition_mu.exit
-; CHECK-NEXT:   %sample.x.i = call double @normal(double %2, double 1.000000e+00)
-; CHECK-NEXT:   br label %condition_x.exit
+; CHECK: condition.normal.without.trace.i8:                ; preds = %condition_normal.exit
+; CHECK-NEXT:   %sample.normal.i7 = call double @normal(double %2, double 1.000000e+00)
+; CHECK-NEXT:   br label %condition_normal.4.exit
 
-; CHECK: condition_x.exit:                                 ; preds = %condition.x.with.trace.i, %condition.x.without.trace.i
-; CHECK-NEXT:   %9 = phi double [ %from.trace.x.i, %condition.x.with.trace.i ], [ %sample.x.i, %condition.x.without.trace.i ]
-; CHECK-NEXT:   %10 = bitcast double* %x.ptr.i to i8*
+; CHECK: condition_normal.4.exit:                          ; preds = %condition.normal.with.trace.i6, %condition.normal.without.trace.i8
+; CHECK-NEXT:   %9 = phi double [ %from.trace.normal.i5, %condition.normal.with.trace.i6 ], [ %sample.normal.i7, %condition.normal.without.trace.i8 ]
+; CHECK-NEXT:   %10 = bitcast double* %normal.ptr.i2 to i8*
 ; CHECK-NEXT:   call void @llvm.lifetime.end.p0i8(i64 8, i8* %10)
 ; CHECK-NEXT:   %likelihood.x = call fast double @augmented_normal_logpdf(double %2, double 1.000000e+00, double %9)
 ; CHECK-NEXT:   %log_prob_sum1 = load double, double* %likelihood
@@ -128,12 +128,12 @@ entry:
 ; CHECK-NEXT:   call void @__enzyme_insert_choice(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0), double %likelihood.x, i8* %13, i64 8)
 ; CHECK-NEXT:   br label %invertentry
 
-; CHECK: invertentry:                                      ; preds = %condition_x.exit
+; CHECK: invertentry:                                      ; preds = %condition_normal.4.exit
 ; CHECK-NEXT:   %14 = load double, double* %"likelihood'"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"likelihood'"
 ; CHECK-NEXT:   %15 = load double, double* %"likelihood'"
 ; CHECK-NEXT:   %16 = fadd fast double %15, %14
-; CHECK-NEXT:   store double %16, double* %"likelihood'
+; CHECK-NEXT:   store double %16, double* %"likelihood'"
 ; CHECK-NEXT:   %17 = call { double, double } @diffenormal_logpdf(double %2, double 1.000000e+00, double %9, double %14)
 ; CHECK-NEXT:   %18 = extractvalue { double, double } %17, 0
 ; CHECK-NEXT:   %19 = extractvalue { double, double } %17, 1
@@ -145,7 +145,7 @@ entry:
 ; CHECK-NEXT:   %23 = load double, double* %"likelihood'"
 ; CHECK-NEXT:   %24 = fadd fast double %23, %22
 ; CHECK-NEXT:   store double %24, double* %"likelihood'"
-; CHECK-NEXT:   %25 = call { double } @diffenormal_logpdf.4(double 0.000000e+00, double 1.000000e+00, double %2, double %22)
+; CHECK-NEXT:   %25 = call { double } @diffenormal_logpdf.7(double 0.000000e+00, double 1.000000e+00, double %2, double %22)
 ; CHECK-NEXT:   %26 = extractvalue { double } %25, 0
 ; CHECK-NEXT:   %27 = fadd fast double %18, %26
 ; CHECK-NEXT:   %28 = bitcast double %27 to i64

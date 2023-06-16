@@ -77,7 +77,7 @@ jobs:
       working-directory: build
       run: |
           llvm_prefix=`brew --prefix llvm@${{ matrix.llvm }}`
-          cmake .. -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=${llvm_prefix}/lib/cmake/llvm
+          cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=${llvm_prefix}/lib/cmake/llvm
     - name: make
       working-directory: build
       run: make -j 3

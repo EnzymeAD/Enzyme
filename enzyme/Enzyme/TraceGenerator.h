@@ -41,12 +41,14 @@ private:
   bool autodiff;
   llvm::ValueMap<const llvm::Value *, llvm::WeakTrackingVH> &originalToNewFn;
   llvm::SmallPtrSetImpl<llvm::Function *> &generativeFunctions;
+  llvm::StringSet<> &activeRandomVariables;
 
 public:
   TraceGenerator(EnzymeLogic &Logic, TraceUtils *tutils, bool autodiff,
                  llvm::ValueMap<const llvm::Value *, llvm::WeakTrackingVH>
                      &originalToNewFn,
-                 llvm::SmallPtrSetImpl<llvm::Function *> &generativeFunctions);
+                 llvm::SmallPtrSetImpl<llvm::Function *> &generativeFunctions,
+                 llvm::StringSet<> &activeRandomVariables);
 
   void visitFunction(llvm::Function &F);
 
