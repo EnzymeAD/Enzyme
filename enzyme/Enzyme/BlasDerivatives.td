@@ -44,8 +44,6 @@ class CallBlasPattern<dag patternToMatch, list<string> mutables, list<BLASType> 
   dag PatternToMatch = patternToMatch;
   list<BLASType> inputTypes = paramTypes;
   list<dag> ArgDerivatives = resultOps;
-  // blas functions have at most one mutable argument
-  assert !or(!eq(!size(mutables), 0), !eq(!size(mutables), 1)), "mutables must have length 0 or 1";
   list<string> mutable = mutables;
 }
 
