@@ -62,11 +62,11 @@ entry:
 
 ; CHECK: define internal { double } @diffejulia_f_2794(double %y0, i64 signext %y1, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = sub i64 %y1, 1
-; CHECK-NEXT:   %1 = call fast fastcc double @julia___2797(double %y0, i64 %0)
+; CHECK-NEXT:   %[[a5:.+]] = icmp eq i64 %y1, 0
 ; CHECK-DAG:    %[[a3:.+]]  = sitofp i64 %y1 to double
-; CHECK-DAG:    %[[a2:.+]]  = fmul fast double %1, %[[a3]]
-; CHECK-NEXT:   %[[a5:.+]] = icmp eq i64 0, %y1
+; CHECK-NEXT:   %[[i0:.+]] = sub i64 %y1, 1
+; CHECK-NEXT:   %[[i1:.+]] = call fast fastcc double @julia___2797(double %y0, i64 %[[i0]])
+; CHECK-DAG:    %[[a2:.+]]  = fmul fast double %[[a3]], %[[i1]]
 ; CHECK-NEXT:   %[[a4:.+]] = fmul fast double %differeturn, %[[a2]]
 ; CHECK-NEXT:   %6 = select {{(fast )?}}i1 %[[a5]], double 0.000000e+00, double %[[a4]]
 ; CHECK-NEXT:   %7 = insertvalue { double } undef, double %6, 0

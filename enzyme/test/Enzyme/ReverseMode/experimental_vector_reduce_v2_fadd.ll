@@ -21,9 +21,9 @@ declare float @__enzyme_autodiff(float (float, <4 x float>)*, ...)
 
 ; CHECK: define internal {{(dso_local )?}}{ float, <4 x float> } @diffetester(float %start_value, <4 x float> %input, float %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = insertelement <4 x float> undef, float %differeturn, i64 0
-; CHECK-NEXT:   %1 = shufflevector <4 x float> %0, <4 x float> undef, <4 x i32> zeroinitializer
-; CHECK-NEXT:   %2 = insertvalue { float, <4 x float> } undef, float %differeturn, 0
-; CHECK-NEXT:   %3 = insertvalue { float, <4 x float> } %2, <4 x float> %1, 1
-; CHECK-NEXT:   ret { float, <4 x float> } %3
+; CHECK-NEXT:   %[[i0:.+]] = insertelement <4 x float> {{(undef|poison)}}, float %differeturn, {{(i64|i32)}} 0
+; CHECK-NEXT:   %[[i1:.+]] = shufflevector <4 x float> %[[i0]], <4 x float> {{(undef|poison)}}, <4 x i32> zeroinitializer
+; CHECK-NEXT:   %[[i2:.+]] = insertvalue { float, <4 x float> } undef, float %differeturn, 0
+; CHECK-NEXT:   %[[i3:.+]] = insertvalue { float, <4 x float> } %[[i2]], <4 x float> %[[i1]], 1
+; CHECK-NEXT:   ret { float, <4 x float> } %[[i3]]
 ; CHECK-NEXT: }

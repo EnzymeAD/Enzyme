@@ -62,11 +62,11 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %3 = fmul fast double %2, %x
 ; CHECK-NEXT:   %4 = fmul fast double %0, %"x'"
 ; CHECK-NEXT:   %5 = fadd fast double %3, %4
-; CHECK-NEXT:   %6 = call fast double @llvm.sqrt.f64(double %mul)
-; CHECK-NEXT:   %7 = fmul fast double %5, 5.000000e-01
-; CHECK-NEXT:   %8 = fdiv fast double %7, %6
-; CHECK-NEXT:   %9 = fcmp fast ueq double %mul, 0.000000e+00
-; CHECK-NEXT:   %10 = select {{(fast )?}}i1 %9, double 0.000000e+00, double %8
+; CHECK-NEXT:   %[[i9:.+]] = fcmp fast ueq double %mul, 0.000000e+00
+; CHECK-NEXT:   %[[i6:.+]] = call fast double @llvm.sqrt.f64(double %mul)
+; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %[[i6]], 2.000000e+00
+; CHECK-NEXT:   %[[i8:.+]] = fdiv fast double %5, %[[i7]]
+; CHECK-NEXT:   %10 = select {{(fast )?}}i1 %[[i9]], double 0.000000e+00, double %[[i8]]
 ; CHECK-NEXT:   br label %cond.end
 
 ; CHECK: cond.end:

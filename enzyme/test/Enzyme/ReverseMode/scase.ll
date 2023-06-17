@@ -115,14 +115,14 @@ attributes #8 = { noreturn nounwind }
 
 ; CHECK: invertfor.body:                                   ; preds = %staging, %incinvertfor.body
 ; CHECK-NEXT:   %"x'de.1" = phi double [ %0, %staging ], [ %7, %incinvertfor.body ]
-; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %_unwrap2, %staging ], [ %10, %incinvertfor.body ]
+; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %[[_unwrap2:.+]], %staging ], [ %10, %incinvertfor.body ]
 ; CHECK-NEXT:   %iv.next_unwrap = add nuw nsw i64 %"iv'ac.0", 1
 ; CHECK-NEXT:   %_unwrap = trunc i64 %iv.next_unwrap to i32
 ; CHECK-NEXT:   %conv_unwrap = sitofp i32 %_unwrap to double
 ; CHECK-NEXT:   %d0diffez = fdiv fast double %1, %conv_unwrap
 ; CHECK-NEXT:   %3 = fsub fast double %conv_unwrap, 1.000000e+00
 ; CHECK-NEXT:   %4 = call fast double @llvm.pow.f64(double %x, double %3)
-; CHECK-NEXT:   %5 = fmul fast double %4, %conv_unwrap
+; CHECK-NEXT:   %5 = fmul fast double %conv_unwrap, %4
 ; CHECK-NEXT:   %6 = fmul fast double %d0diffez, %5
 ; CHECK-NEXT:   %7 = fadd fast double %"x'de.1", %6
 ; CHECK-NEXT:   %8 = icmp eq i64 %"iv'ac.0", 0
@@ -134,7 +134,7 @@ attributes #8 = { noreturn nounwind }
 ; CHECK-NEXT:   br label %invertfor.body
 
 ; CHECK: staging:                                          ; preds = %entry
-; CHECK-NEXT:   %_unwrap1 = add i32 %SINCOSN, -2
-; CHECK-NEXT:   %_unwrap2 = zext i32 %_unwrap1 to i64
+; CHECK-NEXT:   %[[_unwrap1:.+]] = add i32 %SINCOSN, -2
+; CHECK-NEXT:   %[[_unwrap2]] = zext i32 %[[_unwrap1]] to i64
 ; CHECK-NEXT:   br label %invertfor.body
 ; CHECK-NEXT: }

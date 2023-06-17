@@ -161,11 +161,11 @@ attributes #4 = { nounwind }
 
 ; CHECK: invertif.true:                                    ; preds = %invertsetExit
 ; CHECK-NEXT:   %i17_unwrap6 = trunc i64 %"iv1'ac.0" to i32
+; CHECK-NEXT:   %[[i22:.+]] = icmp eq i32 %i17_unwrap6, 0
+; CHECK-NEXT:    %[[i13:.+]] = sitofp i32 %i17_unwrap6 to double
 ; CHECK-NEXT:   %[[i10:.+]] = sub i32 %i17_unwrap6, 1
 ; CHECK-NEXT:   %[[i11:.+]] = call fast double @llvm.powi.f64{{(.i32)?}}(double %arg, i32 %[[i10]])
-; CHECK-NEXT:    %[[i13:.+]] = sitofp i32 %i17_unwrap6 to double
-; CHECK-NEXT:    %[[i12:.+]] = fmul fast double %[[i11]], %[[i13]] 
-; CHECK-NEXT:   %[[i22:.+]] = icmp eq i32 0, %i17_unwrap6
+; CHECK-NEXT:    %[[i12:.+]] = fmul fast double %[[i13]], %[[i11]] 
 ; CHECK-NEXT:   %[[i14:.+]] = fmul fast double %[[i35]], %[[i12]]
 ; CHECK-NEXT:   %[[i17:.+]] = fmul fast double %[[i37]], %[[i12]]
 ; CHECK-NEXT:   %[[i20:.+]] = fmul fast double %[[i39]], %[[i12]]

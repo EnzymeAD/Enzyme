@@ -25,13 +25,13 @@ declare double @llvm.fabs.f64(double)
 
 ; CHECK: define internal [2 x double] @fwddiffe2tester(double %x, [2 x double] %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = extractvalue [2 x double] %"x'", 0
-; CHECK-NEXT:   %1 = fcmp fast olt double %x, 0.000000e+00
-; CHECK-NEXT:   %2 = select {{(fast )?}}i1 %1, double -1.000000e+00, double 1.000000e+00
-; CHECK-NEXT:   %3 = fmul fast double %2, %0
-; CHECK-NEXT:   %4 = insertvalue [2 x double] undef, double %3, 0
-; CHECK-NEXT:   %5 = extractvalue [2 x double] %"x'", 1
-; CHECK-NEXT:   %6 = fmul fast double %2, %5
-; CHECK-NEXT:   %7 = insertvalue [2 x double] %4, double %6, 1
-; CHECK-NEXT:   ret [2 x double] %7
+; CHECK-NEXT:   %[[i1:.+]] = fcmp fast olt double %x, 0.000000e+00
+; CHECK-NEXT:   %[[i2:.+]] = select {{(fast )?}}i1 %[[i1]], double -1.000000e+00, double 1.000000e+00
+; CHECK-NEXT:   %[[i0:.+]] = extractvalue [2 x double] %"x'", 0
+; CHECK-NEXT:   %[[i3:.+]] = fmul fast double %[[i0]], %[[i2]]
+; CHECK-NEXT:   %[[i4:.+]] = insertvalue [2 x double] undef, double %[[i3]], 0
+; CHECK-NEXT:   %[[i5:.+]] = extractvalue [2 x double] %"x'", 1
+; CHECK-NEXT:   %[[i6:.+]] = fmul fast double %[[i5]], %[[i2]]
+; CHECK-NEXT:   %[[i7:.+]] = insertvalue [2 x double] %[[i4]], double %[[i6]], 1
+; CHECK-NEXT:   ret [2 x double] %[[i7]]
 ; CHECK-NEXT: }

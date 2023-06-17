@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -simplifycfg -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,early-cse,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -instcombine -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,early-cse,instcombine,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 %struct.Gradients = type { double, double }
 
@@ -23,14 +23,14 @@ declare double @llvm.minnum.f64(double, double)
 
 ; CHECK: define internal [2 x double] @fwddiffe2tester(double %x, [2 x double] %"x'", double %y, [2 x double] %"y'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fcmp fast olt double %x, %y
-; CHECK-NEXT:   %1 = extractvalue [2 x double] %"x'", 0
-; CHECK-NEXT:   %2 = extractvalue [2 x double] %"y'", 0
-; CHECK-NEXT:   %3 = select {{(fast )?}}i1 %0, double %1, double %2
-; CHECK-NEXT:   %4 = insertvalue [2 x double] undef, double %3, 0
-; CHECK-NEXT:   %5 = extractvalue [2 x double] %"x'", 1
-; CHECK-NEXT:   %6 = extractvalue [2 x double] %"y'", 1
-; CHECK-NEXT:   %7 = select {{(fast )?}}i1 %0, double %5, double %6
-; CHECK-NEXT:   %8 = insertvalue [2 x double] %4, double %7, 1
-; CHECK-NEXT:   ret [2 x double] %8
+; CHECK-DAG:   %[[i0:.+]] = fcmp fast olt double %x, %y
+; CHECK-DAG:   %[[i1:.+]] = extractvalue [2 x double] %"x'", 0
+; CHECK-DAG:   %[[i5:.+]] = extractvalue [2 x double] %"x'", 1
+; CHECK-DAG:   %[[i2:.+]] = extractvalue [2 x double] %"y'", 0
+; CHECK-DAG:   %[[i6:.+]] = extractvalue [2 x double] %"y'", 1
+; CHECK-DAG:   %[[i3:.+]] = select {{(fast )?}}i1 %[[i0]], double %[[i1]], double %[[i2]]
+; CHECK-DAG:   %[[i4:.+]] = insertvalue [2 x double] undef, double %[[i3]], 0
+; CHECK-DAG:   %[[i7:.+]] = select {{(fast )?}}i1 %[[i0]], double %[[i5]], double %[[i6]]
+; CHECK-DAG:   %[[i8:.+]] = insertvalue [2 x double] %[[i4]], double %[[i7]], 1
+; CHECK-DAG:   ret [2 x double] %[[i8]]
 ; CHECK-NEXT: }
