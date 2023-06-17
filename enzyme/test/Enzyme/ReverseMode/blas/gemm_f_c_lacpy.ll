@@ -124,37 +124,37 @@ entry:
 ; CHECK-NEXT:   %tape.ext.B = extractvalue { double*, double* } %[[i23]], 1
 ; CHECK-NEXT:   %[[i25:.+]] = bitcast double* %tape.ext.B to i8*
 ; CHECK-NEXT:   %ld.transa = load i8, i8* %transa
-; CHECK-NEXT:   %[[i26:.+]] = icmp eq i8 %ld.transa, 110
-; CHECK-NEXT:   %[[i27:.+]] = select i1 %[[i26]], i8 116, i8 0
-; CHECK-NEXT:   %[[i28:.+]] = icmp eq i8 %ld.transa, 78
-; CHECK-NEXT:   %[[i29:.+]] = select i1 %[[i28]], i8 84, i8 %[[i27]]
-; CHECK-NEXT:   %[[i30:.+]] = icmp eq i8 %ld.transa, 116
-; CHECK-NEXT:   %[[i31:.+]] = select i1 %[[i30]], i8 110, i8 %[[i29]]
-; CHECK-NEXT:   %[[i32:.+]] = icmp eq i8 %ld.transa, 84
-; CHECK-NEXT:   %[[i33:.+]] = select i1 %[[i32]], i8 78, i8 %[[i31]]
+; CHECK-DAG:    %[[i26:.+]] = icmp eq i8 %ld.transa, 110
+; CHECK-DAG:    %[[i27:.+]] = select i1 %[[i26]], i8 116, i8 0
+; CHECK-DAG:    %[[i28:.+]] = icmp eq i8 %ld.transa, 78
+; CHECK-DAG:    %[[i29:.+]] = select i1 %[[i28]], i8 84, i8 %[[i27]]
+; CHECK-DAG:    %[[i30:.+]] = icmp eq i8 %ld.transa, 116
+; CHECK-DAG:    %[[i31:.+]] = select i1 %[[i30]], i8 110, i8 %[[i29]]
+; CHECK-DAG:    %[[i32:.+]] = icmp eq i8 %ld.transa, 84
+; CHECK-DAG:    %[[i33:.+]] = select i1 %[[i32]], i8 78, i8 %[[i31]]
 ; CHECK-NEXT:   store i8 %[[i33]], i8* %byref.transpose.transa
 ; CHECK-NEXT:   %ld.transb = load i8, i8* %transb
-; CHECK-NEXT:   %[[i34:.+]] = icmp eq i8 %ld.transb, 110
-; CHECK-NEXT:   %[[i35:.+]] = select i1 %[[i34]], i8 116, i8 0
-; CHECK-NEXT:   %[[i36:.+]] = icmp eq i8 %ld.transb, 78
-; CHECK-NEXT:   %[[i37:.+]] = select i1 %[[i36]], i8 84, i8 %[[i35]]
-; CHECK-NEXT:   %[[i38:.+]] = icmp eq i8 %ld.transb, 116
-; CHECK-NEXT:   %[[i39:.+]] = select i1 %[[i38]], i8 110, i8 %[[i37]]
-; CHECK-NEXT:   %[[i40:.+]] = icmp eq i8 %ld.transb, 84
-; CHECK-NEXT:   %[[i41:.+]] = select i1 %[[i40]], i8 78, i8 %[[i39]]
+; CHECK-DAG:    %[[i34:.+]] = icmp eq i8 %ld.transb, 110
+; CHECK-DAG:    %[[i35:.+]] = select i1 %[[i34]], i8 116, i8 0
+; CHECK-DAG:    %[[i36:.+]] = icmp eq i8 %ld.transb, 78
+; CHECK-DAG:    %[[i37:.+]] = select i1 %[[i36]], i8 84, i8 %[[i35]]
+; CHECK-DAG:    %[[i38:.+]] = icmp eq i8 %ld.transb, 116
+; CHECK-DAG:    %[[i39:.+]] = select i1 %[[i38]], i8 110, i8 %[[i37]]
+; CHECK-DAG:    %[[i40:.+]] = icmp eq i8 %ld.transb, 84
+; CHECK-DAG:    %[[i41:.+]] = select i1 %[[i40]], i8 78, i8 %[[i39]]
 ; CHECK-NEXT:   store i8 %[[i41]], i8* %byref.transpose.transb
 
 ; CHECK-NEXT:   %get.cached.ld.trans = load i8, i8* %transb
-; CHECK-NEXT:   %30 = icmp eq i8 %get.cached.ld.trans, 78
-; CHECK-NEXT:   %31 = select i1 %30, i8* %k_p, i8* %n_p
-; CHECK-NEXT:   %32 = icmp eq i8 %get.cached.ld.trans, 110
-; CHECK-NEXT:   %33 = select i1 %32, i8* %k_p, i8* %31
-; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %byref.transpose.transb, i8* %m_p, i8* %k_p, i8* %n_p, i8* %alpha_p, i8* %"C'", i8* %ldc_p, i8* %[[i25]], i8* %33, i8* %beta_p, i8* %"A'", i8* %lda_p)
+; CHECK-DAG:    %[[r18:.+]] = icmp eq i8 %get.cached.ld.trans, 78
+; CHECK-DAG:    %[[r19:.+]] = select i1 %[[r18]], i8* %k_p, i8* %n_p
+; CHECK-DAG:    %[[r20:.+]] = icmp eq i8 %get.cached.ld.trans, 110
+; CHECK-DAG:    %[[r21:.+]] = select i1 %[[r20]], i8* %k_p, i8* %[[r19]]
+; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %byref.transpose.transb, i8* %m_p, i8* %k_p, i8* %n_p, i8* %alpha_p, i8* %"C'", i8* %ldc_p, i8* %[[i25]], i8* %[[r21]], i8* %beta_p, i8* %"A'", i8* %lda_p)
 ; CHECK-NEXT:   %[[cachedtrans2:.+]] = load i8, i8* %transa
-; CHECK-NEXT:   %34 = icmp eq i8 %[[cachedtrans2]], 78
-; CHECK-NEXT:   %35 = select i1 %34, i8* %m_p, i8* %k_p
-; CHECK-NEXT:   %36 = icmp eq i8 %[[cachedtrans2]], 110
-; CHECK-NEXT:   %37 = select i1 %36, i8* %m_p, i8* %35
+; CHECK-DAG:    %[[r22:.+]] = icmp eq i8 %[[cachedtrans2]], 78
+; CHECK-DAG:    %[[r23:.+]] = select i1 %[[r22]], i8* %m_p, i8* %k_p
+; CHECK-DAG:    %[[r24:.+]] = icmp eq i8 %[[cachedtrans2]], 110
+; CHECK-DAG:    %[[r25:.+]] = select i1 %[[r24]], i8* %m_p, i8* %[[r23]]
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %byref.transpose.transa, i8* %transb, i8* %k_p, i8* %n_p, i8* %m_p, i8* %alpha_p, i8* %[[i24]], i8* %37, i8* %"C'", i8* %ldc_p, i8* %beta_p, i8* %"B'", i8* %ldb_p)
 ; CHECK-NEXT:   store i8 71, i8* %byref.constant.char.G
 ; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.0

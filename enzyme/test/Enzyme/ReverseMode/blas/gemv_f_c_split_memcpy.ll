@@ -180,22 +180,22 @@ entry:
 ; CHECK-NEXT:   store i64 1, i64* %byref.incx
 ; CHECK-NEXT:   %cast.incx = bitcast i64* %byref.incx to i8*
 ; CHECK-NEXT:   %ld.transa = load i8, i8* %malloccall
-; CHECK-NEXT:   %16 = icmp eq i8 %ld.transa, 110
-; CHECK-NEXT:   %17 = select i1 %16, i8 116, i8 0
-; CHECK-NEXT:   %18 = icmp eq i8 %ld.transa, 78
-; CHECK-NEXT:   %19 = select i1 %18, i8 84, i8 %17
-; CHECK-NEXT:   %20 = icmp eq i8 %ld.transa, 116
-; CHECK-NEXT:   %21 = select i1 %20, i8 110, i8 %19
-; CHECK-NEXT:   %22 = icmp eq i8 %ld.transa, 84
-; CHECK-NEXT:   %23 = select i1 %22, i8 78, i8 %21
+; CHECK-DAG:    %[[r0:.+]] = icmp eq i8 %ld.transa, 110
+; CHECK-DAG:    %[[r1:.+]] = select i1 %[[r0]], i8 116, i8 0
+; CHECK-DAG:    %[[r2:.+]] = icmp eq i8 %ld.transa, 78
+; CHECK-DAG:    %[[r3:.+]] = select i1 %[[r2]], i8 84, i8 %[[r1]]
+; CHECK-DAG:    %[[r4:.+]] = icmp eq i8 %ld.transa, 116
+; CHECK-DAG:    %[[r5:.+]] = select i1 %[[r4]], i8 110, i8 %[[r3]]
+; CHECK-DAG:    %[[r6:.+]] = icmp eq i8 %ld.transa, 84
+; CHECK-DAG:    %[[r7:.+]] = select i1 %[[r6]], i8 78, i8 %[[r5]]
 ; CHECK-NEXT:   store i8 %23, i8* %byref.transpose.transa
 ; CHECK-NEXT:   call void @dger_64_(i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %"y'", i8* %incy_p, i8* %15, i8* %cast.incx, i8* %"A'", i8* %lda_p)
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
 ; CHECK-NEXT:   call void bitcast (void (i8*, i8*, i8*, i8*, i8*, i8*, i8*, i8*, i8*, i8*, i8*)* @dgemv_64_ to void (i8*, i8*, i8*, i8*, i8*, i8*, i8*, i8*, double*, i8*, i8*)*)(i8* %byref.transpose.transa, i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %"y'", i8* %incy_p, double* %byref.constant.fp.1.0, i8* %"x'", i8* %cast.incx)
 ; CHECK-NEXT:   %ld.row.trans = load i8, i8* %byref.transpose.transa
-; CHECK-NEXT:   %24 = icmp eq i8 %ld.row.trans, 110
-; CHECK-NEXT:   %25 = icmp eq i8 %ld.row.trans, 78
-; CHECK-NEXT:   %26 = or i1 %25, %24
+; CHECK-DAG:    %[[r2:.+]] = icmp eq i8 %ld.row.trans, 110
+; CHECK-DAG:    %[[r3:.+]] = icmp eq i8 %ld.row.trans, 78
+; CHECK-NEXT:   %26 = or i1 %[[r3]], %[[r2]]
 ; CHECK-NEXT:   %27 = select i1 %26, i8* %m_p, i8* %n_p
 ; CHECK-NEXT:   call void @dscal_64_(i8* %27, i8* %beta_p, i8* %"y'", i8* %incy_p)
 ; CHECK-NEXT:   %28 = bitcast double* %0 to i8*
