@@ -98,6 +98,25 @@ void getFunction(raw_ostream &os, std::string callval, std::string FT,
       os << "  auto " << cconv << " = cast<CallInst>(&" << origName << ")->getCallingConv();\n";
       return;
     }
+    if (opName == "PrependArgTypesFunc" || Def->isSubClassOf("PrependArgTypesFunc")) {
+      os << " auto " << FT << "_old = cast<CallInst>(&" << origName << ")->getFunctionType();\n";
+      os << " SmallVector<llvm::Type*, 1> " << FT << "_args = {";
+      bool seen = false;
+      for (auto pre : *Def->getValueAsListInit("pretys")) {
+        if (seen) os << ", ";
+        os << " Type::get" << cast<StringInit>(pre)->getValue() << "Ty(gutils->oldFunc->getContext())";
+      }
+      os << "};\n " << FT << "_args.append(" << FT << "_old->params().begin(), " << FT << "_old->params().end());\n";
+      os << " auto " << FT << " = FunctionType::get(" << FT << "_old->getReturnType(), " << FT << "_args, " << FT << "_old->isVarArg());\n";
+      os << " auto " << callval
+         << " = gutils->oldFunc->getParent()->getOrInsertFunction(";
+      os << Def->getValueInit("name")->getAsString();
+      os << ", " << FT << ", called->getAttributes())\n";
+      os << "  .getCallee()\n";
+      os << ";\n";
+      os << "  auto " << cconv << " = cast<CallInst>(&" << origName << ")->getCallingConv();\n";
+      return;
+    }
   }
   assert(0 && "Unhandled function");
 }
@@ -308,28 +327,45 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
       os << "->getType(), \"" << value->getValue() << "\")";
       return false;
     } else if (opName == "ConstantInt" || Def->isSubClassOf("ConstantInt")) {
-      if (resultRoot->getNumArgs() != 1)
-        PrintFatalError(pattern->getLoc(), "only single op constantint supported");
 
-      auto value = dyn_cast<IntInit>(Def->getValueInit("value"));
-      if (!value)
+      auto valueP = dyn_cast<IntInit>(Def->getValueInit("value"));
+      if (!valueP)
         PrintFatalError(pattern->getLoc(), Twine("int 'value' not defined in ") +
                                                resultTree->getAsString());
+      auto value = valueP->getValue();
+
+      auto bitwidthP = dyn_cast<IntInit>(Def->getValueInit("bitwidth"));
+      if (!bitwidthP)
+        PrintFatalError(pattern->getLoc(), Twine("int 'bitwidth' not defined in ") +
+                                               resultTree->getAsString());
+      auto bitwidth = bitwidthP->getValue();
 
       os << "ConstantInt::getSigned(";
-      if (resultRoot->getArgName(0)) {
-        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto ord = nameToOrdinal.find(name);
-        if (ord == nameToOrdinal.end())
-          PrintFatalError(pattern->getLoc(), Twine("unknown named operand '") +
-                                                 name + "'" +
-                                                 resultTree->getAsString());
-        os << ord->getValue();
-      } else
-        PrintFatalError(pattern->getLoc(),
-                        Twine("unknown named operand in constantint") +
-                            resultTree->getAsString());
-      os << "->getType(), " << value->getValue() << ")";
+
+      if (bitwidth == 0) {
+        if (resultRoot->getNumArgs() != 1)
+          PrintFatalError(pattern->getLoc(), "only single op constantint supported with unspecified width"); 
+
+
+        if (resultRoot->getArgName(0)) {
+          auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+          auto ord = nameToOrdinal.find(name);
+          if (ord == nameToOrdinal.end())
+            PrintFatalError(pattern->getLoc(), Twine("unknown named operand '") +
+                                                   name + "'" +
+                                                   resultTree->getAsString());
+          os << ord->getValue();
+        } else
+          PrintFatalError(pattern->getLoc(),
+                          Twine("unknown named operand in constantint") +
+                              resultTree->getAsString());
+        os << "->getType()";
+      } else {
+        if (resultRoot->getNumArgs() != 0)
+          PrintFatalError(pattern->getLoc(), "only zero op constantint supported with specified width"); 
+        os << "Type::getIntNTy(gutils->oldFunc->getContext(), " << bitwidth << ")";
+      }
+      os << ", " << value << ")";
       return false;
     } else if (opName == "GlobalExpr" || Def->isSubClassOf("GlobalExpr")) {
       if (resultRoot->getNumArgs() != 0)
