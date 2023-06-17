@@ -25,14 +25,14 @@ declare double @llvm.maxnum.f64(double, double)
 
 ; CHECK: define internal [2 x double] @fwddiffe2tester(double %x, [2 x double] %"x'", double %y, [2 x double] %"y'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[i0:.+]] = fcmp fast olt double %x, %y
-; CHECK-NEXT:   %[[i1:.+]] = extractvalue [2 x double] %"x'", 0
-; CHECK-NEXT:   %[[i5:.+]] = extractvalue [2 x double] %"x'", 1
-; CHECK-NEXT:   %[[i2:.+]] = extractvalue [2 x double] %"y'", 0
-; CHECK-NEXT:   %[[i6:.+]] = extractvalue [2 x double] %"y'", 1
-; CHECK-NEXT:   %[[i3:.+]] = select {{(fast )?}}i1 %[[i0]], double %[[i2]], double %[[i1]]
-; CHECK-NEXT:   %[[i4:.+]] = insertvalue [2 x double] undef, double %[[i3]], 0
-; CHECK-NEXT:   %[[i7:.+]] = select {{(fast )?}}i1 %[[i0]], double %[[i6]], double %[[i5]]
-; CHECK-NEXT:   %[[i8:.+]] = insertvalue [2 x double] %[[i4]], double %[[i7]], 1
-; CHECK-NEXT:   ret [2 x double] %[[i8]]
+; CHECK-DAG:   %[[i0:.+]] = fcmp fast olt double %x, %y
+; CHECK-DAG:   %[[i1:.+]] = extractvalue [2 x double] %"x'", 0
+; CHECK-DAG:   %[[i5:.+]] = extractvalue [2 x double] %"x'", 1
+; CHECK-DAG:   %[[i2:.+]] = extractvalue [2 x double] %"y'", 0
+; CHECK-DAG:   %[[i6:.+]] = extractvalue [2 x double] %"y'", 1
+; CHECK-DAG:   %[[i3:.+]] = select {{(fast )?}}i1 %[[i0]], double %[[i2]], double %[[i1]]
+; CHECK-DAG:   %[[i4:.+]] = insertvalue [2 x double] undef, double %[[i3]], 0
+; CHECK-DAG:   %[[i7:.+]] = select {{(fast )?}}i1 %[[i0]], double %[[i6]], double %[[i5]]
+; CHECK-DAG:   %[[i8:.+]] = insertvalue [2 x double] %[[i4]], double %[[i7]], 1
+; CHECK-DAG:   ret [2 x double] %[[i8]]
 ; CHECK-NEXT: }

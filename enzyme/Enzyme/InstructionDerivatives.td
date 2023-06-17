@@ -353,7 +353,7 @@ def : IntrPattern<(Op $x, $y),
                     (Select (FCmpOLT $x, $y), (DiffeRet<"">), (ConstantFP<"0"> $x)),
                     (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $x), (DiffeRet<"">))
                   ],
-                  (ForwardFromSummedReverse<"">)
+                  (Select (FCmpOLT $x, $y), (ShadowOrZero $x), (ShadowOrZero $y))
                   >;
 
 def : IntrPattern<(Op $x, $y),
@@ -362,7 +362,7 @@ def : IntrPattern<(Op $x, $y),
                     (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $x), (DiffeRet<"">)),
                     (Select (FCmpOLT $x, $y), (DiffeRet<"">), (ConstantFP<"0"> $x))
                   ],
-                  (ForwardFromSummedReverse<"">)
+                  (Select (FCmpOLT $x, $y), (ShadowOrZero $y), (ShadowOrZero $x))
                   >;
 
 def : IntrPattern<(Op $x),
