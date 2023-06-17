@@ -15,7 +15,7 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = call fast double @j1(double %x)
 ; CHECK-NEXT:   %1 = {{(fsub fast double \-?0.000000e\+00,|fneg fast double)}} %0
-; CHECK-NEXT:   %2 = fmul fast double %1, %differeturn
+; CHECK-NEXT:   %2 = fmul fast double %differeturn, %1
 ; CHECK-NEXT:   %3 = insertvalue { double } undef, double %2, 0
 ; CHECK-NEXT:   ret { double } %3
 ; CHECK-NEXT: }
@@ -39,7 +39,7 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = call fast double @y1(double %x)
 ; CHECK-NEXT:   %1 = {{(fsub fast double \-?0.000000e\+00,|fneg fast double)}} %0
-; CHECK-NEXT:   %2 = fmul fast double %1, %differeturn
+; CHECK-NEXT:   %2 = fmul fast double %differeturn, %1
 ; CHECK-NEXT:   %3 = insertvalue { double } undef, double %2, 0
 ; CHECK-NEXT:   ret { double } %3
 ; CHECK-NEXT: }
@@ -65,8 +65,8 @@ entry:
 ; CHECK-NEXT:    %0 = call fast double @j0(double %x)
 ; CHECK-NEXT:    %1 = call fast double @jn(i32 2, double %x)
 ; CHECK-NEXT:    %2 = fsub fast double %0, %1
-; CHECK-NEXT:    %3 = fmul fast double %2, 5.000000e-01
-; CHECK-NEXT:    %4 = fmul fast double %3, %differeturn
+; CHECK-NEXT:    %3 = fmul fast double 5.000000e-01, %2
+; CHECK-NEXT:    %4 = fmul fast double %differeturn, %3
 ; CHECK-NEXT:    %5 = insertvalue { double } undef, double %4, 0
 ; CHECK-NEXT:    ret { double } %5
 ; CHECK-NEXT: }
@@ -91,8 +91,8 @@ entry:
 ; CHECK-NEXT:    %0 = call fast double @y0(double %x)
 ; CHECK-NEXT:    %1 = call fast double @yn(i32 2, double %x)
 ; CHECK-NEXT:    %2 = fsub fast double %0, %1
-; CHECK-NEXT:    %3 = fmul fast double %2, 5.000000e-01
-; CHECK-NEXT:    %4 = fmul fast double %3, %differeturn
+; CHECK-NEXT:    %3 = fmul fast double 5.000000e-01, %2
+; CHECK-NEXT:    %4 = fmul fast double %differeturn, %3
 ; CHECK-NEXT:    %5 = insertvalue { double } undef, double %4, 0
 ; CHECK-NEXT:    ret { double } %5
 ; CHECK-NEXT: }
@@ -122,8 +122,8 @@ entry:
 ; CHECK-NEXT:    %2 = add i32 %n, 1
 ; CHECK-NEXT:    %3 = call fast double @jn(i32 %2, double %x)
 ; CHECK-NEXT:    %4 = fsub fast double %1, %3
-; CHECK-NEXT:    %5 = fmul fast double %4, 5.000000e-01
-; CHECK-NEXT:    %6 = fmul fast double %5, %differeturn
+; CHECK-NEXT:    %5 = fmul fast double 5.000000e-01, %4
+; CHECK-NEXT:    %6 = fmul fast double %differeturn, %5
 ; CHECK-NEXT:    %7 = insertvalue { double } undef, double %6, 0
 ; CHECK-NEXT:    ret { double } %7
 ; CHECK-NEXT: }
@@ -150,8 +150,8 @@ entry:
 ; CHECK-NEXT:   %2 = add i32 %n, 1
 ; CHECK-NEXT:   %3 = call fast double @yn(i32 %2, double %x)
 ; CHECK-NEXT:   %4 = fsub fast double %1, %3
-; CHECK-NEXT:   %5 = fmul fast double %4, 5.000000e-01
-; CHECK-NEXT:   %6 = fmul fast double %5, %differeturn
+; CHECK-NEXT:   %5 = fmul fast double 5.000000e-01, %4
+; CHECK-NEXT:   %6 = fmul fast double %differeturn, %5
 ; CHECK-NEXT:   %7 = insertvalue { double } undef, double %6, 0
 ; CHECK-NEXT:   ret { double } %7
 ; CHECK-NEXT: }

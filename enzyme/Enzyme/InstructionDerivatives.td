@@ -39,6 +39,7 @@ def VectorSplat : Inst<"VectorSplat">;
 def SIToFP : Inst<"SIToFP">;
 def Or : Inst<"Or">;
 def And : Inst<"And">;
+def IAdd : Inst<"Add">;
 def ISub : Inst<"Sub">;
 def FDiv : Inst<"FDiv">;
 def FAdd : Inst<"FAdd">;
@@ -70,6 +71,15 @@ def SameFunc {
 class SameTypesFunc<string name_> {
   string name = name_;
 }
+
+// Same attributes / callingconv as original
+// Different name, however.
+// Same types, with the new ones added
+class PrependArgTypesFunc<string name_, list<string> pretys_> {
+  string name = name_;
+  list<string> pretys = pretys_;
+}
+
 
 class Attribute<string name_> {
   string name = name_;
@@ -113,8 +123,9 @@ class GlobalExpr<string val> {
 class ConstantFP<string val> {
   string value = val;
 }
-class ConstantInt<int val> {
+class ConstantInt<int val, int size=0> {
   int value = val;
+  int bitwidth=size;
 }
 class Undef {
 }
@@ -292,6 +303,58 @@ def : CallPattern<(Op $x),
                   (
                    FMul (ConstantFP<"3.1415926535897962684626433"> $x), (FMul (Call<(SameFunc), [ReadNone,NoUnwind]> (FAdd $x, (ConstantFP<"0.5"> $x))), (DiffeRet<"">) )
                   )
+                  ],
+                  (ForwardFromSummedReverse<"">)
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["j0"],
+                  [(FMul (DiffeRet<"">), (FNeg (Call<(SameTypesFunc<"j1">), [ReadNone,NoUnwind]> $x) ))],
+                  (ForwardFromSummedReverse<"">)
+                  >;
+def : CallPattern<(Op $x),
+                  ["j0f"],
+                  [(FMul (DiffeRet<"">), (FNeg (Call<(SameTypesFunc<"j1f">), [ReadNone,NoUnwind]> $x) ))],
+                  (ForwardFromSummedReverse<"">)
+                  >;
+def : CallPattern<(Op $x),
+                  ["y0"],
+                  [(FMul (DiffeRet<"">), (FNeg (Call<(SameTypesFunc<"y1">), [ReadNone,NoUnwind]> $x) ))],
+                  (ForwardFromSummedReverse<"">)
+                  >;
+def : CallPattern<(Op $x),
+                  ["y0f"],
+                  [(FMul (DiffeRet<"">), (FNeg (Call<(SameTypesFunc<"y1f">), [ReadNone,NoUnwind]> $x) ))],
+                  (ForwardFromSummedReverse<"">)
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["j1"],
+                  [(FMul (DiffeRet<"">), (FMul (ConstantFP<"0.5"> $x), (FSub (Call<(SameTypesFunc<"j0">), [ReadNone,NoUnwind]> $x), (Call<(PrependArgTypesFunc<"jn", ["Int32"]>), [ReadNone,NoUnwind]> (ConstantInt<2, 32>), $x) )))],
+                  (ForwardFromSummedReverse<"">)
+                  >;
+def : CallPattern<(Op $x),
+                  ["j1f"],
+                  [(FMul (DiffeRet<"">), (FMul (ConstantFP<"0.5"> $x), (FSub (Call<(SameTypesFunc<"j0f">), [ReadNone,NoUnwind]> $x), (Call<(PrependArgTypesFunc<"jnf", ["Int32"]>), [ReadNone,NoUnwind]> (ConstantInt<2, 32>), $x) )))],
+                  (ForwardFromSummedReverse<"">)
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["y1"],
+                  [(FMul (DiffeRet<"">), (FMul (ConstantFP<"0.5"> $x), (FSub (Call<(SameTypesFunc<"y0">), [ReadNone,NoUnwind]> $x), (Call<(PrependArgTypesFunc<"yn", ["Int32"]>), [ReadNone,NoUnwind]> (ConstantInt<2, 32>), $x) )))],
+                  (ForwardFromSummedReverse<"">)
+                  >;
+def : CallPattern<(Op $x),
+                  ["y1f"],
+                  [(FMul (DiffeRet<"">), (FMul (ConstantFP<"0.5"> $x), (FSub (Call<(SameTypesFunc<"y0f">), [ReadNone,NoUnwind]> $x), (Call<(PrependArgTypesFunc<"ynf", ["Int32"]>), [ReadNone,NoUnwind]> (ConstantInt<2, 32>), $x) )))],
+                  (ForwardFromSummedReverse<"">)
+                  >;
+
+def : CallPattern<(Op $n, $x),
+                  ["jn","jnf","yn","ynf"],
+                  [
+                    (InactiveArg),
+                    (FMul (DiffeRet<"">), (FMul (ConstantFP<"0.5"> $x), (FSub (Call<(SameFunc), [ReadNone,NoUnwind]> (ISub $n, (ConstantInt<1> $n)), $x), (Call<(SameFunc), [ReadNone,NoUnwind]> (IAdd $n, (ConstantInt<1> $n)), $x))))
                   ],
                   (ForwardFromSummedReverse<"">)
                   >;
