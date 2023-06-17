@@ -3809,9 +3809,10 @@ public:
       return false;
     }
 
-    switch(ID) {
+    switch (ID) {
 #include "IntrinsicDerivatives.inc"
-    default: break;
+    default:
+      break;
     }
 
     switch (Mode) {
@@ -4596,8 +4597,9 @@ public:
                 if (align)
                   rmw->setAlignment(align.getValue());
 #else
-              B.CreateAtomicRMW(op, vptr, vdif, AtomicOrdering::Monotonic,
-                                SyncScope::System);
+                                   B.CreateAtomicRMW(op, vptr, vdif,
+                                                     AtomicOrdering::Monotonic,
+                                                     SyncScope::System);
 #endif
               }
             } else {
@@ -4610,8 +4612,9 @@ public:
               if (align)
                 rmw->setAlignment(align.getValue());
 #else
-            B.CreateAtomicRMW(op, ptr, dif, AtomicOrdering::Monotonic,
-                              SyncScope::System);
+                                 B.CreateAtomicRMW(op, ptr, dif,
+                                                   AtomicOrdering::Monotonic,
+                                                   SyncScope::System);
 #endif
             }
           }
@@ -9728,13 +9731,13 @@ public:
             }
             bool cached = handleAdjointForIntrinsic(ID, call, orig_ops);
             if (!cached) {
-                if (gutils->knownRecomputeHeuristic.find(&call) !=
-                    gutils->knownRecomputeHeuristic.end()) {
-                  if (!gutils->knownRecomputeHeuristic[&call]) {
-                    gutils->cacheForReverse(BuilderZ, newCall,
-                                            getIndex(&call, CacheType::Self));
-                  }
+              if (gutils->knownRecomputeHeuristic.find(&call) !=
+                  gutils->knownRecomputeHeuristic.end()) {
+                if (!gutils->knownRecomputeHeuristic[&call]) {
+                  gutils->cacheForReverse(BuilderZ, newCall,
+                                          getIndex(&call, CacheType::Self));
                 }
+              }
             }
             eraseIfUnused(call);
             return;
