@@ -248,6 +248,8 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
       os << ")";
 #if LLVM_VERSION_MAJOR >= 11
       os << "->getElementCount()";
+#if LLVM_VERSION_MAJOR == 11
+      os << ".getKnownMinValue()";
 #else
       os << "->getNumElements()";
 #endif
