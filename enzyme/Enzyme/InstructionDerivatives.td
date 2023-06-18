@@ -111,11 +111,15 @@ def CFAdd : SubRoutine<(Op (Op $re1, $im1):$z1, (Op $re2, $im2):$z2),
                     (FAdd $im1, $im2)
                   )>;
 
-def CFMul : SubRoutine<(Op (Op $re1, $im1):$z1, (Op $re2, $im2):$z2),
+def CFMul_splat : SubRoutine<(Op $re1, $im1, $re2, $im2),
                   (ArrayRet
                     (FSub (FMul $re1, $re2), (FMul $im1, $im2)),
                     (FAdd (FMul $re1, $im2), (FMul $re2, $im1))
                   )>;
+
+def CFMul : SubRoutine<(Op (Op $re1, $im1):$z1, (Op $re2, $im2):$z2),
+                  (CFMul_splat $re1, $im1, $re2, $im2)>;
+
 def CFNeg : SubRoutine<(Op (Op $re, $im):$z),
     (ArrayRet
       (FNeg $re),
@@ -472,7 +476,9 @@ def : CallPattern<(Op $xre, $xim, $yre, $yim),
 //                    (Call<(SameFunc)> (DiffeRet<[0]>), (DiffeRet<[1]>), $xre, $xim),
 //                    (Call<(SameFunc)> (DiffeRet<[1]>), (FNeg (DiffeRet<[1]>)), $yre, $xim)
                   ],
-                  (CFAdd (Call<(SameFunc), [ReadNone, NoUnwind]> (ShadowOrZero $xre), (ShadowOrZero $xim), $yre, $yim), (Call<(SameFunc), [ReadNone, NoUnwind]> (ShadowOrZero $yre), (ShadowOrZero $yim), $xre, $xim))
+                  (CFAdd (CFMul_splat (ShadowOrZero $xre), (ShadowOrZero $xim), $yre, $yim), (CFMul_splat (ShadowOrZero $yre), (ShadowOrZero $yim), $xre, $xim))
+// Alternate variant below with the same mul fn
+//                  (CFAdd (Call<(SameFunc), [ReadNone, NoUnwind]> (ShadowOrZero $xre), (ShadowOrZero $xim), $yre, $yim), (Call<(SameFunc), [ReadNone, NoUnwind]> (ShadowOrZero $yre), (ShadowOrZero $yim), $xre, $xim))
                   >;
 
 def : CallPattern<(Op $x, $n),
