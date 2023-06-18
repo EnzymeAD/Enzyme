@@ -6632,15 +6632,16 @@ public:
 
           if (forwardMode) {
 
-            Type *IntTy = call.getCalledFunction()->getArg(2)->getType();
-            auto tysize = MPI_TYPE_SIZE(datatype, Builder2,
-                                        Type::getInt64Ty(call.getContext()));
+            Type *IntTy = call.getType();
+            auto tysize = MPI_TYPE_SIZE(datatype, Builder2, IntTy);
             auto M = call.getModule();
 
             // Get the length for the allocation of the intermediate buffer
             auto byteCount = Builder2.CreateZExtOrTrunc(
                 count, Type::getInt64Ty(call.getContext()));
-            byteCount = Builder2.CreateMul(byteCount, tysize);
+            byteCount = Builder2.CreateMul(
+                byteCount, Builder2.CreateZExtOrTrunc(
+                               tysize, Type::getInt64Ty(call.getContext())));
 
             // Allocate the intermediate buffer
             auto shadow_sendbuf_tmp = CreateAllocation(
@@ -6759,15 +6760,16 @@ public:
               CreateDealloc(Builder2, recvlocbuf);
             }
           } else {
-            Type *IntTy = call.getCalledFunction()->getArg(2)->getType();
-            auto tysize = MPI_TYPE_SIZE(datatype, Builder2,
-                                        Type::getInt64Ty(call.getContext()));
+            Type *IntTy = call.getType();
+            auto tysize = MPI_TYPE_SIZE(datatype, Builder2, IntTy);
             auto M = call.getModule();
 
             // Get the length for the allocation of the intermediate buffer
             auto byteCount = Builder2.CreateZExtOrTrunc(
                 count, Type::getInt64Ty(call.getContext()));
-            byteCount = Builder2.CreateMul(byteCount, tysize);
+            byteCount = Builder2.CreateMul(
+                byteCount, Builder2.CreateZExtOrTrunc(
+                               tysize, Type::getInt64Ty(call.getContext())));
 
             // Allocate the intermediate buffer
             auto shadow_sendbuf_tmp = CreateAllocation(
