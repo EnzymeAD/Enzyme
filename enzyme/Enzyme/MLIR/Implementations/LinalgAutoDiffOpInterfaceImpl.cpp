@@ -55,18 +55,6 @@ Value invertMemref(Value inp, OpBuilder &builder, Location loc) {
   return view;
 }
 
-SmallVector<Value> applyAffineMap(AffineMap aMap, SmallVector<Value> indices,
-                                  OpBuilder &builder, Location loc) {
-  SmallVector<Value> appliedAffineMap;
-  for (unsigned int i = 0; i < aMap.getNumResults(); i++) {
-    AffineMap subMap = aMap.getSubMap({i});
-    auto mapApplied =
-        builder.create<AffineApplyOp>(loc, subMap, ValueRange(indices));
-    appliedAffineMap.push_back(mapApplied);
-  }
-  return appliedAffineMap;
-}
-
 template <typename T_>
 struct GenericOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<
@@ -164,6 +152,8 @@ struct GenericOpInterfaceReverse
     auto buildFuncReturnOp = [numInputs, indexingMaps, &newOp, &adjoint,
                               &inputs](OpBuilder &builder, Location loc,
                                        SmallVector<Value> retargs) {
+      builder.create<enzyme::AddToOp>(
+          loc, ValueRange{retargs}.take_front(numInputs));
       builder.create<linalg::YieldOp>(
           loc, ValueRange{retargs}.take_front(numInputs));
       return;
@@ -250,7 +240,7 @@ struct GenericOpInterfaceReverse
         cacheBuilder.getArrayAttr(indexingMapsAttr));
     adjoint->setAttr(adjoint.getIndexingMapsAttrName(),
                      builder.getArrayAttr(indexingMapsAttrAdjoint));
-
+    /*
     /// TODO
     SmallVector<Value> indices;
     SmallVector<Value> retargs;
@@ -293,6 +283,7 @@ struct GenericOpInterfaceReverse
 
     cacheBuilder.create<linalg::YieldOp>(loc, ValueRange{retargs});
     terminator->erase();
+    */
   }
 
   SmallVector<Value> cacheValues(Operation *op,

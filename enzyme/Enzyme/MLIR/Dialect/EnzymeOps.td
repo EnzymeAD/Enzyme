@@ -10,7 +10,6 @@
 #define ENZYME_OPS
 
 include "Dialect.td"
-include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/IR/EnumAttr.td"
@@ -18,9 +17,12 @@ include "mlir/IR/EnumAttr.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/FunctionInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
-include "mlir/Interfaces/SideEffectInterfaces.td"
 
 include "mlir/IR/AttrTypeBase.td"
+
+include "mlir/Interfaces/ControlFlowInterfaces.td"
+include "mlir/Interfaces/LoopLikeInterface.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
 
 def Activity : I32EnumAttr<"Activity",
     "Possible activity states for variables",
@@ -130,6 +132,17 @@ def ShadowedGradient : Enzyme_Type<"ShadowedGradient"> {
   let parameters = (ins "Type":$basetype);
   let mnemonic = "ShadowedGradient";
   let assemblyFormat = "`<` $basetype `>`";
+}
+
+def AddToOp : Enzyme_Op<"addTo">, //, [Pure, Terminator, ReturnLike]
+    Arguments<(ins Variadic<AnyType>:$values)> {
+  let summary = "Linalg add to operation";
+  let description = [{
+    TODO
+  }];
+  let builders = [OpBuilder<(ins), [{ /* nothing to do */ }]>];
+  let hasCustomAssemblyFormat = 0;
+  let hasVerifier = 0;
 }
 
 #endif // ENZYME_OPS

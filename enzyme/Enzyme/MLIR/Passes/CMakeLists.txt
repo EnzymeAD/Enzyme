@@ -8,6 +8,8 @@ add_mlir_dialect_library(MLIREnzymeTransforms
     EnzymeToMemRef.cpp
     LowerToLLVMEnzyme.cpp
     ShadowedGradientToCache.cpp
+    AddToOpToIndexAndLoad.cpp
+    AddToOpToSplit.cpp
     RemoveUnusedEnzymeOps.cpp
     SimplifyMemrefCache.cpp
   
@@ -33,6 +35,7 @@ add_mlir_dialect_library(MLIREnzymeTransforms
   MLIRNVVMDialect
   MLIRPass
   MLIRSideEffectInterfaces
+  MLIRControlFlowInterfaces
   MLIRSCFToControlFlow
   MLIRTransformUtils
 
