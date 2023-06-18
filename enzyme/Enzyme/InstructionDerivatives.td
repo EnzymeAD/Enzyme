@@ -422,6 +422,14 @@ def : CallPattern<(Op $x),
                   (ForwardFromSummedReverse<>)
                   >;
 
+def : CallPattern<(Op $x),
+                  ["Faddeeva_erfi"],
+                  [
+                    (CFMul (DiffeRet<>), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFMul $x, $x))))
+                  ],
+                  (ForwardFromSummedReverse<>)
+                  >;
+
 def : IntrPattern<(Op $x),
                   [["sin"]],
                   [(FMul (DiffeRet<>), (Intrinsic<"cos"> $x))]  ,

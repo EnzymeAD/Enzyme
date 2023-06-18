@@ -9253,7 +9253,7 @@ public:
       }
 
       if (called) {
-        if (funcName == "Faddeeva_erf" || funcName == "Faddeeva_erfi" ||
+        if (funcName == "Faddeeva_erfi" ||
             funcName == "Faddeeva_erfc") {
           if (gutils->knownRecomputeHeuristic.find(&call) !=
               gutils->knownRecomputeHeuristic.end()) {
