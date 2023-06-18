@@ -21,20 +21,20 @@ declare [2 x [2 x double]] @__enzyme_fwddiff(...)
 
 ; CHECK: define internal [2 x [2 x double]] @fwddiffe2tester(double %x, [2 x double] %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call {{(fast )?}}[2 x double] @__fd_sincos_1(double %x)
-; CHECK-NEXT:   %1 = extractvalue [2 x double] %0, 1
-; CHECK-NEXT:   %2 = extractvalue [2 x double] %"x'", 0
-; CHECK-NEXT:   %3 = fmul fast double %1, %2
-; CHECK-NEXT:   %4 = extractvalue [2 x double] %"x'", 1
-; CHECK-NEXT:   %5 = fmul fast double %1, %4
-; CHECK-NEXT:   %6 = insertvalue [2 x [2 x double]] zeroinitializer, double %3, 0, 0
-; CHECK-NEXT:   %7 = insertvalue [2 x [2 x double]] %6, double %5, 1, 0
-; CHECK-NEXT:   %8 = extractvalue [2 x double] %0, 0
-; CHECK-NEXT:   %9 = fmul fast double %8, %2
-; CHECK-NEXT:   %10 = fmul fast double %8, %4
-; CHECK-NEXT:   %11 = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %9
-; CHECK-NEXT:   %12 = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %10
-; CHECK-NEXT:   %13 = insertvalue [2 x [2 x double]] %7, double %11, 0, 1
-; CHECK-NEXT:   %14 = insertvalue [2 x [2 x double]] %13, double %12, 1, 1
-; CHECK-NEXT:   ret [2 x [2 x double]] %14
+; CHECK-NEXT:   %[[i0:.+]] = call {{(fast )?}}[2 x double] @__fd_sincos_1(double %x)
+; CHECK-NEXT:   %[[i1:.+]] = extractvalue [2 x double] %0, 1
+; CHECK-NEXT:   %[[i2:.+]] = extractvalue [2 x double] %"x'", 0
+; CHECK-NEXT:   %[[i3:.+]] = fmul fast double %[[i1]], %[[i2]]
+; CHECK-NEXT:   %[[i4:.+]] = extractvalue [2 x double] %"x'", 1
+; CHECK-NEXT:   %[[i5:.+]] = fmul fast double %[[i1]], %[[i4]]
+; CHECK-NEXT:   %[[i8:.+]] = extractvalue [2 x double] %[[i0]], 0
+; CHECK-NEXT:   %[[i9:.+]] = fmul fast double %[[i8]], %[[i2]]
+; CHECK-NEXT:   %[[i10:.+]] = fmul fast double %[[i8]], %[[i4]]
+; CHECK-NEXT:   %[[i11:.+]] = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %[[i9]]
+; CHECK-NEXT:   %[[i12:.+]] = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %[[i10]]
+; CHECK-NEXT:   %[[i6:.+]] = insertvalue [2 x [2 x double]] undef, double %[[i3]], 0, 0
+; CHECK-NEXT:   %[[i13:.+]] = insertvalue [2 x [2 x double]] %[[i6]], double %[[i5]], 0, 1
+; CHECK-NEXT:   %[[i7:.+]] = insertvalue [2 x [2 x double]] %[[i13]], double %[[i11]], 1, 0
+; CHECK-NEXT:   %[[i14:.+]] = insertvalue [2 x [2 x double]] %[[i7]], double %[[i12]], 1, 1
+; CHECK-NEXT:   ret [2 x [2 x double]] %[[i14]]
 ; CHECK-NEXT: }

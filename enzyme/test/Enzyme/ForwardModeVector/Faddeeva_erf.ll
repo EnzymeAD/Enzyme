@@ -75,11 +75,11 @@ entry:
 ; CHECK-NEXT:   %[[r00:.+]] = insertvalue [3 x { double, double }] undef, double %[[a23]], 0, 0
 ; CHECK-NEXT:   %[[r01:.+]] = insertvalue [3 x { double, double }] %[[r00]], double %[[a27]], 0, 1
 
-; CHECK-NEXT:   %[[r10:.+]] = insertvalue [3 x { double, double }] %[[r10]], double %[[a35]], 1, 0
-; CHECK-NEXT:   %[[r11:.+]] = insertvalue [3 x { double, double }] %[[r11]], double %[[a39]], 1, 1
+; CHECK-NEXT:   %[[r10:.+]] = insertvalue [3 x { double, double }] %[[r01]], double %[[a35]], 1, 0
+; CHECK-NEXT:   %[[r11:.+]] = insertvalue [3 x { double, double }] %[[r10]], double %[[a39]], 1, 1
 
-; CHECK-NEXT:   %[[r20:.+]] = insertvalue [3 x { double, double }] %[[r20]], double %[[a47]], 2, 0
-; CHECK-NEXT:   %[[r21:.+]] = insertvalue [3 x { double, double }] %[[r21]], double %[[a51]], 2, 1
+; CHECK-NEXT:   %[[r20:.+]] = insertvalue [3 x { double, double }] %[[r11]], double %[[a47]], 2, 0
+; CHECK-NEXT:   %[[r21:.+]] = insertvalue [3 x { double, double }] %[[r20]], double %[[a51]], 2, 1
 
 ; CHECK-NEXT:   ret [3 x { double, double }] %[[r21]]
 ; CHECK-NEXT: }

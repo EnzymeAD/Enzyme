@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -adce -enzyme-preopt=false -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(adce)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: nounwind readnone uwtable
 define [2 x double] @tester(double %x) {
@@ -21,14 +21,13 @@ declare [2 x double] @__enzyme_fwddiff(...)
 
 ; CHECK: define internal [2 x double] @fwddiffetester(double %x, double %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call {{(fast )?}}[2 x double] @__fd_sincos_1(double %x)
-; CHECK-NEXT:   %1 = extractvalue [2 x double] %0, 1
-; CHECK-NEXT:   %2 = fmul fast double %1, %"x'"
-; CHECK-NEXT:   %3 = insertvalue [2 x double] zeroinitializer, double %2, 0
-; CHECK-NEXT:   %4 = extractvalue [2 x double] %0, 0
-; CHECK-NEXT:   %5 = fmul fast double %4, %"x'"
-; CHECK-NEXT:   %6 = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %5
-; CHECK-NEXT:   %7 = fadd fast double 0.000000e+00, %6
-; CHECK-NEXT:   %8 = insertvalue [2 x double] %3, double %7, 1
-; CHECK-NEXT:   ret [2 x double] %8
+; CHECK-NEXT:   %[[i0:.+]] = call {{(fast )?}}[2 x double] @__fd_sincos_1(double %x)
+; CHECK-NEXT:   %[[i1:.+]] = extractvalue [2 x double] %[[i0]], 1
+; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %1, %"x'"
+; CHECK-NEXT:   %[[i4:.+]] = extractvalue [2 x double] %[[i0]], 0
+; CHECK-NEXT:   %[[i5:.+]] = fmul fast double %[[i4]], %"x'"
+; CHECK-NEXT:   %[[i6:.+]] = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %[[i5]]
+; CHECK-NEXT:   %[[i3:.+]] = insertvalue [2 x double] undef, double %[[i2]], 0
+; CHECK-NEXT:   %[[i8:.+]] = insertvalue [2 x double] %[[i3]], double %[[i6]], 1
+; CHECK-NEXT:   ret [2 x double] %[[i8]]
 ; CHECK-NEXT: }
