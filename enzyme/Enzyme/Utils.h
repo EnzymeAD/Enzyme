@@ -1680,4 +1680,21 @@ static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
     llvm::Attribute::AttrKind::ReadNone,
 };
 
+static inline llvm::Type* getSubType(llvm::Type* T) {
+  return T;
+}
+
+template<typename Arg1, typename...Args>
+static inline llvm::Type* getSubType(llvm::Type* T, Arg1 i, Args... args) {
+  if (auto AT = llvm::dyn_cast<llvm::ArrayType>(T))
+    return getSubType(AT->getElementType(), args...);
+  if (auto VT = llvm::dyn_cast<llvm::VectorType>(T))
+    return getSubType(VT->getElementType(), args...);
+  if (auto ST = llvm::dyn_cast<llvm::StructType>(T)) {
+    assert(i != -1);
+    return getSubType(ST->getElementType(i), args...);
+  }
+  llvm_unreachable("unknown subtype");
+}
+
 #endif

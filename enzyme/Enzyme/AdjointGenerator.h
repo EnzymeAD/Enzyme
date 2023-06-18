@@ -9253,8 +9253,7 @@ public:
       }
 
       if (called) {
-        if (funcName == "erf" || funcName == "erfi" || funcName == "erfc" ||
-            funcName == "Faddeeva_erf" || funcName == "Faddeeva_erfi" ||
+        if (funcName == "Faddeeva_erf" || funcName == "Faddeeva_erfi" ||
             funcName == "Faddeeva_erfc") {
           if (gutils->knownRecomputeHeuristic.find(&call) !=
               gutils->knownRecomputeHeuristic.end()) {
@@ -9305,9 +9304,7 @@ public:
               tys[0] = sq->getType();
             }
 
-            if (funcName == "erf" || funcName == "erfc") {
-              sq = Builder2.CreateFNeg(sq);
-            } else if (funcName == "Faddeeva_erf" ||
+            if (funcName == "Faddeeva_erf" ||
                        funcName == "Faddeeva_erfc") {
               Value *re = Builder2.CreateExtractValue(sq, 0);
               Value *im = Builder2.CreateExtractValue(sq, 1);
@@ -9340,8 +9337,6 @@ public:
                   cal,
                   Builder2.CreateFMul(reexp, Builder2.CreateCall(SinF, {im})),
                   1);
-            } else {
-              cal = Builder2.CreateCall(ExpF, {sq});
             }
 
             Value *factor = ConstantFP::get(

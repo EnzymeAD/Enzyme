@@ -507,9 +507,31 @@ public:
   llvm::Type *getShadowType(llvm::Type *ty);
 
   static llvm::Value *extractMeta(llvm::IRBuilder<> &Builder, llvm::Value *Agg,
-                                  unsigned off);
+                                  unsigned off, const llvm::Twine& name = "");
   static llvm::Value *extractMeta(llvm::IRBuilder<> &Builder, llvm::Value *Agg,
-                                  llvm::ArrayRef<unsigned> off);
+                                  llvm::ArrayRef<unsigned> off, const llvm::Twine& name = "");
+
+
+  static inline llvm::Value* recursiveAdd(llvm::IRBuilder<> &B, llvm::Value *lhs, llvm::Value* rhs) {
+    assert(lhs->getType() == rhs->getType());
+    if (lhs->getType()->isFPOrFPVectorTy()) {
+      return B.CreateFAdd(lhs, rhs);
+    }
+    else if (auto AT = llvm::dyn_cast<llvm::ArrayType>(lhs->getType())) {
+      llvm::Value* U = llvm::UndefValue::get(AT);
+      for (size_t i=0; i<AT->getNumElements(); ++i) {
+        U = B.CreateInsertValue(U, recursiveAdd(B, extractMeta(B, lhs, i), extractMeta(B, rhs, i)), i);
+      }
+      return U;
+    } else if (auto ST = llvm::dyn_cast<llvm::StructType>(lhs->getType())) {
+      llvm::Value* U = llvm::UndefValue::get(AT);
+      for (size_t i=0; i<ST->getNumElements(); ++i) {
+        U = B.CreateInsertValue(U, recursiveAdd(B, extractMeta(B, lhs, i), extractMeta(B, rhs, i)), i);
+      }
+      return U;
+    }
+    llvm_unreachable("Unknown type to recursively accumulate");
+  }
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.

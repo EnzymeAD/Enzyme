@@ -4893,12 +4893,12 @@ Type *GradientUtils::getShadowType(Type *ty) {
 }
 
 Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
-                                  unsigned off) {
-  return extractMeta(Builder, Agg, ArrayRef<unsigned>({off}));
+                                  unsigned off, const llvm::Twine& name) {
+  return extractMeta(Builder, Agg, ArrayRef<unsigned>({off}), name);
 }
 
 Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
-                                  ArrayRef<unsigned> off_init) {
+                                  ArrayRef<unsigned> off_init, const llvm::Twine& name) {
   std::vector<unsigned> off(off_init.begin(), off_init.end());
   while (off.size() != 0) {
     if (auto Ins = dyn_cast<InsertValueInst>(Agg)) {
@@ -4938,9 +4938,9 @@ Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
   if (off.size() == 0)
     return Agg;
   if (Agg->getType()->isVectorTy() && off.size() == 1)
-    return Builder.CreateExtractElement(Agg, off[0]);
+    return Builder.CreateExtractElement(Agg, off[0], name);
 
-  return Builder.CreateExtractValue(Agg, off);
+  return Builder.CreateExtractValue(Agg, off, name);
 }
 
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
@@ -5082,8 +5082,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
       Value *args[] = {dst_arg, val_arg, len_arg, volatile_arg};
       Type *tys[] = {dst_arg->getType(), len_arg->getType()};
-      cast<CallInst>(bb.CreateCall(
-          Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
+      bb.CreateCall(
+          Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args);
 
       return antialloca;
     };
