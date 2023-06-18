@@ -547,8 +547,8 @@ public:
       }
       return prev;
     } else if (auto ST = llvm::dyn_cast<llvm::StructType>(lhs->getType())) {
-      if (prev == nullptr) prev = llvm::UndefValue::get(AT);
-      for (size_t i=0; i<AT->getNumElements(); ++i) {
+      if (prev == nullptr) prev = llvm::UndefValue::get(ST);
+      for (size_t i=0; i<ST->getNumElements(); ++i) {
         llvm::SmallVector<unsigned, 1> noff(off.begin(), off.end());
         noff.push_back(i);
         prev = recursiveFAdd(B, lhs, rhs, noff, prev);

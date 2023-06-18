@@ -276,8 +276,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                         Twine("list 'indices' not defined in ") +
                             resultTree->getAsString());
       std::vector<unsigned> retidx_cur;
-      assert(indicesP->getValues().size() != 0);
-      if (cast<IntInit>(indicesP->getValues()[0])->getValue() == -1) {
+      if (indicesP->getValues().size() == 1 && cast<IntInit>(indicesP->getValues()[0])->getValue() == -1) {
         retidx_cur = retidx;
       } else {
         for (auto res : indicesP->getValues()) {
@@ -293,7 +292,11 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << "({\n";
         os << curIndent << INDENT
            << "Value *out = UndefValue::get(gutils->getShadowType(getSubType("
-           << origName << ".getType(), -1)));\n";
+           << origName << ".getType()";
+        for (auto ind : retidx_cur) {
+          os << ", " << ind;
+        }
+        os << ")));\n";
         os << curIndent << INDENT
            << "for(unsigned int idx=0, W=gutils->getWidth(); "
               "idx<W; idx++) {\n";

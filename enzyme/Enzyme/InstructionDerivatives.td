@@ -105,6 +105,12 @@ class InsertValue<list<int> indices_> : Inst<"InsertValue"> {
 def ArrayRet {
 }
 
+def CFAdd : SubRoutine<(Op (Op $re1, $im1):$z1, (Op $re2, $im2):$z2),
+                  (ArrayRet
+                    (FAdd $re1, $re2),
+                    (FAdd $im1, $im2)
+                  )>;
+
 def CFMul : SubRoutine<(Op (Op $re1, $im1):$z1, (Op $re2, $im2):$z2),
                   (ArrayRet
                     (FSub (FMul $re1, $re2), (FMul $im1, $im2)),
@@ -438,6 +444,36 @@ def : CallPattern<(Op $x),
                   (ForwardFromSummedReverse<>)
                   >;
 
+// TODO have forward mode tablegen optimize to never emit the call if both shadoworzero's are zero
+def : CallPattern<(Op $xre, $xim, $yre, $yim),
+                  ["__mulsc3", "__muldc3", "__multc3", "__mulxc3"],
+                  [
+                    (ArrayRet
+                      (ExtractValue<[0]> (CFMul (DiffeRet<[]>), (ArrayRet $yre, $yim)):$r0),
+                      (ExtractValue<[1]> $r0)
+                    ),
+                    (ArrayRet
+                      (ExtractValue<[0]> (CFMul (DiffeRet<[]>), (ArrayRet $yim, (FNeg $yre))):$r1),
+                      (ExtractValue<[1]> $r1)
+                    ),
+                    (ArrayRet
+                      (ExtractValue<[0]> (CFMul (DiffeRet<[]>), (ArrayRet $xre, $xim)):$r2),
+                      (ExtractValue<[1]> $r2)
+                    ),
+                    (ArrayRet
+                      (ExtractValue<[0]> (CFMul (DiffeRet<[]>), (ArrayRet $xim, (FNeg $xre))):$r3),
+                      (ExtractValue<[1]> $r3)
+                    )
+// Alternate variant calling the same func (but likely much slower, per calling each one)
+// This would simply replace the cfmul call, the arrayret/extract code would also need to be
+// applied here
+//                    (Call<(SameFunc)> (DiffeRet<[0]>), (DiffeRet<[1]>), $yre, $yim),
+//                    (Call<(SameFunc)> (DiffeRet<[1]>), (FNeg (DiffeRet<[1]>)), $yre, $yim),
+//                    (Call<(SameFunc)> (DiffeRet<[0]>), (DiffeRet<[1]>), $xre, $xim),
+//                    (Call<(SameFunc)> (DiffeRet<[1]>), (FNeg (DiffeRet<[1]>)), $yre, $xim)
+                  ],
+                  (CFAdd (Call<(SameFunc), [ReadNone, NoUnwind]> (ShadowOrZero $xre), (ShadowOrZero $xim), $yre, $yim), (Call<(SameFunc), [ReadNone, NoUnwind]> (ShadowOrZero $yre), (ShadowOrZero $yim), $xre, $xim))
+                  >;
 
 def : CallPattern<(Op $x, $n),
                   ["scalbn", "scalbnf", "scalbnl", "scalbnln", "scalbnlnf", "scalbnlnl"],
