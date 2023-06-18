@@ -438,6 +438,16 @@ def : CallPattern<(Op $x),
                   (ForwardFromSummedReverse<>)
                   >;
 
+
+def : CallPattern<(Op $x, $n),
+                  ["scalbn", "scalbnf", "scalbnl", "scalbnln", "scalbnlnf", "scalbnlnl"],
+                  [
+                    (Call<(SameFunc)> (DiffeRet<>), $n),
+                    (InactiveArg)
+                  ],
+                  (ForwardFromSummedReverse<>)
+                  >;
+
 def : IntrPattern<(Op $x),
                   [["sin"]],
                   [(FMul (DiffeRet<>), (Intrinsic<"cos"> $x))]  ,
