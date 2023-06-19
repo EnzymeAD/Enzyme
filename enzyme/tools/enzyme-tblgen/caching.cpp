@@ -122,13 +122,26 @@ void emit_vec_copy(TGPattern &pattern, raw_ostream &os) {
     assert(typeMap.lookup(argIdx+1) == argType::vincInc);
     auto vecName = nameVec[argIdx];
     auto incName = nameVec[argIdx+1];
+    auto dimensions = pattern.getRelatedLengthArgs(argIdx);
     os
 << "    if (cache_" << vecName << ") {\n"
-<< "      auto *vecSize = arg_n;\n"
+<< "      Value *malloc_size;\n"
+<< "      // arg_malloc_size will keep the original type\n"
+<< "      Value *arg_malloc_size;\n";
+
+    if (dimensions.size() == 3) {
+      os 
+<< "      malloc_size = select_vec_dims(BuilderZ, arg_" << nameVec[dimensions[0]] << ", arg_" << nameVec[dimensions[1]] << ", arg_" << nameVec[dimensions[2]] << ", byRef);\n";
+    } else {
+      os 
+<< "      malloc_size = arg_" << nameVec[dimensions[0]] << ";\n";
+    }
+    os
+<< "      arg_malloc_size = malloc_size;\n"
 << "      if (byRef) {\n"
-<< "        vecSize = BuilderZ.CreateLoad(intType, BuilderZ.CreatePointerCast(vecSize, PointerType::get(intType, cast<PointerType>(vecSize->getType())->getAddressSpace())));\n"
+<< "        malloc_size = BuilderZ.CreateLoad(intType, BuilderZ.CreatePointerCast(malloc_size, PointerType::get(intType, cast<PointerType>(malloc_size->getType())->getAddressSpace())));\n"
 << "      }\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, vecSize, \"cache." << vecName << "\");\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << vecName << "\");\n"
 << "      ValueType valueTypes[] = {" << valueTypes << "};\n"
 << "      valueTypes[" << argIdx << "] = ValueType::Primal;\n"
 << "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
@@ -136,7 +149,7 @@ void emit_vec_copy(TGPattern &pattern, raw_ostream &os) {
 os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
 os << "      if (EnzymeBlasCopy) {\n"
-<< "        Value *args[5] = {arg_n, arg_" << vecName << ", arg_" << incName << ", malins, to_blas_callconv(BuilderZ, ConstantInt::get(intType, 1), byRef, julia_decl_type, allocationBuilder)};\n"
+<< "        Value *args[5] = {arg_malloc_size, arg_" << vecName << ", arg_" << incName << ", malins, to_blas_callconv(BuilderZ, ConstantInt::get(intType, 1), byRef, julia_decl_type, allocationBuilder)};\n"
 << "        callMemcpyStridedBlas(BuilderZ, *gutils->oldFunc->getParent(), blas, args, gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
 << "      } else {\n"
 << "       auto dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(), fpType, cast<PointerType>(malins->getType()), intType, 0, 0);\n"
@@ -145,12 +158,7 @@ os << "      if (EnzymeBlasCopy) {\n"
 << "          auto tmp = BuilderZ.CreatePointerCast(inc, PointerType::get(intType, cast<PointerType>(inc->getType())->getAddressSpace()));\n"
 << "          inc = BuilderZ.CreateLoad(intType, tmp);\n"
 << "        }\n"
-<< "        Value *len_n = arg_n;\n"
-<< "        if (byRef) {\n"
-<< "          auto tmp = BuilderZ.CreatePointerCast(len_n, PointerType::get(intType, cast<PointerType>(len_n->getType())->getAddressSpace()));\n"
-<< "          len_n = BuilderZ.CreateLoad(intType, tmp);\n"
-<< "        }\n"
-<< "        Value *args[4] = {malins, arg_" << vecName << ", len_n, inc};\n"
+<< "        Value *args[4] = {malins, arg_" << vecName << ", malloc_size, inc};\n"
 << "        if (args[1]->getType()->isIntegerTy())\n"
 << "          args[1] = BuilderZ.CreateIntToPtr(args[1], malins->getType());\n"
 << "        else if (args[1]->getType() != malins->getType())\n"
@@ -186,18 +194,35 @@ void emit_mat_copy(TGPattern &pattern, raw_ostream &os) {
     auto matName = nameVec[argIdx];
     auto ldName = nameVec[argIdx+1];
     auto dimensions = pattern.getRelatedLengthArgs(argIdx);
-    assert(dimensions.size() == 2);
-    assert(typeMap.lookup(dimensions[0]) == argType::len);
-    assert(typeMap.lookup(dimensions[1]) == argType::len);
-    std::string dim1 = "arg_" + nameVec[dimensions[0]];
-    std::string dim2 = "arg_" + nameVec[dimensions[1]];
+    std::string dim1, dim2;
+    if (dimensions.size() == 2) {
+      // mat is invariant to transpose
+      dim1 = "arg_" + nameVec[dimensions[0]]; 
+      dim2 = "arg_" + nameVec[dimensions[1]];
+    } else {
+      assert(dimensions.size() == 3);
+      dim1 = "arg_" + nameVec[dimensions[1]];
+      dim2 = "arg_" + nameVec[dimensions[2]];
+    }
     os
 << "    if (cache_" << matName << ") {\n"
 << "      Value *matSize;\n"
-<< "      auto charType = IntegerType::get(intType->getContext(), 8);\n"
-<< "      auto *M = " << dim1 << ";\n"
+<< "      auto charTy = IntegerType::get(intType->getContext(), 8);\n"
+<< "      Value *M, *N;\n";
+
+    if (dimensions.size() == 3) {
+      os 
+<< "      Value *normal = is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef);\n"
+<< "      M = BuilderZ.CreateSelect(normal, " << dim1 << ", " << dim2 << ");\n"
+<< "      N = BuilderZ.CreateSelect(normal, " << dim2 << ", " << dim1 << ");\n";
+    } else {
+      os 
+<< "      M = " << dim1 << ";\n"
+<< "      N = " << dim2 << ";\n";
+    }
+
+    os
 << "      auto *len1 = M;\n"
-<< "      auto *N = " << dim2 << ";\n"
 << "      auto *len2 = N;\n"
 << "      if (byRef) {\n"
 << "        auto MP = BuilderZ.CreatePointerCast(M, PointerType::get(intType, cast<PointerType>(M->getType())->getAddressSpace()));\n"
@@ -216,7 +241,7 @@ void emit_mat_copy(TGPattern &pattern, raw_ostream &os) {
 os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
 os << "      if (EnzymeLapackCopy) {\n"
-<< "        Value *uplo = llvm::ConstantInt::get(charType, 0);\n" // garbage data, just should not match U or L
+<< "        Value *uplo = llvm::ConstantInt::get(charTy, 0);\n" // garbage data, just should not match U or L
 << "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, nullptr, allocationBuilder, \"copy.garbage\");\n"
 << "        Value *args[7] = {uplo, M, N, arg_" << matName << ", arg_" << ldName << ", malins, M};\n"
 << "        callMemcpyStridedLapack(BuilderZ, *gutils->oldFunc->getParent(), blas, args, gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
@@ -239,7 +264,6 @@ os << "      if (EnzymeLapackCopy) {\n"
 << "      cacheValues.push_back(malins);\n"
 << "    }\n";
   }
-
 }
 
 

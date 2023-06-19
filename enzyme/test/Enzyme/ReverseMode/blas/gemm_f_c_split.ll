@@ -101,23 +101,27 @@ entry:
 ; CHECK-NEXT:   store i64 8, i64* %14, align 16
 ; CHECK-NEXT:   store double 0.000000e+00, double* %15
 ; CHECK-NEXT:   store i64 4, i64* %16, align 16
-; CHECK-NEXT:   %trans_check = load i8, i8* %malloccall
-; CHECK-NEXT:   %trans_check1 = load i8, i8* %malloccall1
-; CHECK-NEXT:   %17 = bitcast i8* %m_p to i64*
-; CHECK-NEXT:   %18 = bitcast i8* %k_p to i64*
-; CHECK-NEXT:   %19 = load i64, i64* %17
-; CHECK-NEXT:   %20 = load i64, i64* %18
-; CHECK-NEXT:   %21 = mul i64 %19, %20
-; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %21, 8
+; CHECK-NEXT:   %loaded.trans = load i8, i8* %malloccall
+; CHECK-NEXT:   %17 = icmp eq i8 %loaded.trans, 78
+; CHECK-NEXT:   %18 = icmp eq i8 %loaded.trans, 110
+; CHECK-NEXT:   %19 = or i1 %18, %17
+; CHECK-NEXT:   %20 = select i1 %19, i8* %m_p, i8* %k_p
+; CHECK-NEXT:   %21 = select i1 %19, i8* %k_p, i8* %m_p
+; CHECK-NEXT:   %22 = bitcast i8* %20 to i64*
+; CHECK-NEXT:   %23 = bitcast i8* %21 to i64*
+; CHECK-NEXT:   %24 = load i64, i64* %22
+; CHECK-NEXT:   %25 = load i64, i64* %23
+; CHECK-NEXT:   %26 = mul i64 %24, %25
+; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %26, 8
 ; CHECK-NEXT:   %malloccall10 = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   %cache.A = bitcast i8* %malloccall10 to double*
 ; CHECK-NEXT:   store double* %cache.A, double** %0
-; CHECK-NEXT:   %22 = bitcast i8* %lda_p to i64*
-; CHECK-NEXT:   %23 = load i64, i64* %22
-; CHECK-NEXT:   %24 = bitcast i8* %A to double*
-; CHECK:   %mul.i = add nuw nsw i64 %19, %20
-; CHECK-NEXT:   %25 = icmp eq i64 %mul.i, 0
-; CHECK-NEXT:   br i1 %25, label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
+; CHECK-NEXT:   %27 = bitcast i8* %lda_p to i64*
+; CHECK-NEXT:   %28 = load i64, i64* %27
+; CHECK-NEXT:   %29 = bitcast i8* %A to double*
+; CHECK:   %mul.i = add nuw nsw i64 %24, %25
+; CHECK-NEXT:   %30 = icmp eq i64 %mul.i, 0
+; CHECK-NEXT:   br i1 %30, label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
 
 ; CHECK: init.idx.i:                                       ; preds = %init.end.i, %entry
 ; CHECK-NEXT:   %j.i = phi i64 [ 0, %entry ], [ %j.next.i, %init.end.i ]
@@ -125,27 +129,27 @@ entry:
 
 ; CHECK: for.body.i:                                       ; preds = %for.body.i, %init.idx.i
 ; CHECK-NEXT:   %i.i = phi i64 [ 0, %init.idx.i ], [ %i.next.i, %for.body.i ]
-; CHECK-NEXT:   %26 = mul nuw nsw i64 %j.i, %19
-; CHECK-NEXT:   %27 = add nuw nsw i64 %i.i, %26
-; CHECK-NEXT:   %dst.i.i = getelementptr inbounds double, double* %cache.A, i64 %27
-; CHECK-NEXT:   %28 = mul nuw nsw i64 %j.i, %23
-; CHECK-NEXT:   %29 = add nuw nsw i64 %i.i, %28
-; CHECK-NEXT:   %dst.i1.i = getelementptr inbounds double, double* %24, i64 %29
+; CHECK-NEXT:   %31 = mul nuw nsw i64 %j.i, %24
+; CHECK-NEXT:   %32 = add nuw nsw i64 %i.i, %31
+; CHECK-NEXT:   %dst.i.i = getelementptr inbounds double, double* %cache.A, i64 %32
+; CHECK-NEXT:   %33 = mul nuw nsw i64 %j.i, %28
+; CHECK-NEXT:   %34 = add nuw nsw i64 %i.i, %33
+; CHECK-NEXT:   %dst.i1.i = getelementptr inbounds double, double* %29, i64 %34
 ; CHECK-NEXT:   %src.i.l.i = load double, double* %dst.i1.i
 ; CHECK-NEXT:   store double %src.i.l.i, double* %dst.i.i
 ; CHECK-NEXT:   %i.next.i = add nuw nsw i64 %i.i, 1
-; CHECK-NEXT:   %30 = icmp eq i64 %i.next.i, %19
-; CHECK-NEXT:   br i1 %30, label %init.end.i, label %for.body.i
+; CHECK-NEXT:   %35 = icmp eq i64 %i.next.i, %24
+; CHECK-NEXT:   br i1 %35, label %init.end.i, label %for.body.i
 
 ; CHECK: init.end.i:                                       ; preds = %for.body.i
 ; CHECK-NEXT:   %j.next.i = add nuw nsw i64 %j.i, 1
-; CHECK-NEXT:   %31 = icmp eq i64 %j.next.i, %20
-; CHECK-NEXT:   br i1 %31, label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
+; CHECK-NEXT:   %36 = icmp eq i64 %j.next.i, %25
+; CHECK-NEXT:   br i1 %36, label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
 
 ; CHECK: __enzyme_memcpy_double_mat_64.exit:               ; preds = %entry, %init.end.i
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %malloccall, i8* %malloccall1, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %C, i8* %ldc_p)
-; CHECK-NEXT:   %32 = load double*, double** %0
-; CHECK-NEXT:   ret double* %32
+; CHECK-NEXT:   %37 = load double*, double** %0
+; CHECK-NEXT:   ret double* %37
 ; CHECK-NEXT:  }
 
 ; CHECK: define internal void @diffef(i8* noalias %C, i8* %"C'", i8* noalias %A, i8* %"A'", i8* noalias %B, i8* %"B'", double* 
@@ -202,8 +206,6 @@ entry:
 ; CHECK-NEXT:   store i64 8, i64* %14, align 16
 ; CHECK-NEXT:   store double 0.000000e+00, double* %15
 ; CHECK-NEXT:   store i64 4, i64* %16, align 16
-; CHECK-NEXT:   %trans_check = load i8, i8* %malloccall
-; CHECK-NEXT:   %trans_check1 = load i8, i8* %malloccall1
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:                                      ; preds = %entry
@@ -229,11 +231,11 @@ entry:
 ; CHECK-DAG:    %[[r15:.+]] = select i1 %[[r14]], i8 78, i8 %[[r13]]
 ; CHECK-NEXT:   store i8 %[[r15]], i8* %byref.transpose.transb
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %malloccall, i8* %byref.transpose.transb, i8* %m_p, i8* %k_p, i8* %n_p, i8* %alpha_p, i8* %"C'", i8* %ldc_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %"A'", i8* %lda_p)
-; CHECK-NEXT:   %get.cached.ld.trans = load i8, i8* %malloccall
-; CHECK-DAG:    %[[r18:.+]] = icmp eq i8 %get.cached.ld.trans, 78
-; CHECK-DAG:    %[[r19:.+]] = select i1 %[[r18]], i8* %m_p, i8* %k_p
-; CHECK-DAG:    %[[r20:.+]] = icmp eq i8 %get.cached.ld.trans, 110
-; CHECK-DAG:    %[[r21:.+]] = select i1 %[[r20]], i8* %m_p, i8* %[[r19]]
+; CHECK-NEXT:   %loaded.trans = load i8, i8* %malloccall
+; CHECK-NEXT:   %[[r18:.+]] = icmp eq i8 %loaded.trans, 78
+; CHECK-NEXT:   %[[r19:.+]] = icmp eq i8 %loaded.trans, 110
+; CHECK-NEXT:   %[[r20:.+]] = or i1 %[[r19]], %[[r18]]
+; CHECK-NEXT:   %[[r21:.+]] = select i1 %[[r20]], i8* %m_p, i8* %k_p
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %byref.transpose.transa, i8* %malloccall1, i8* %k_p, i8* %n_p, i8* %m_p, i8* %alpha_p, i8* %17, i8* %[[r21]], i8* %"C'", i8* %ldc_p, i8* %beta_p, i8* %"B'", i8* %ldb_p)
 ; CHECK-NEXT:   store i8 71, i8* %byref.constant.char.G
 ; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.0

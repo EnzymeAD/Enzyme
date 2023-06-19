@@ -89,25 +89,27 @@ entry:
 ; CHECK-NEXT:   store i64 2, i64* %12, align 16
 ; CHECK-NEXT:   store double 0.000000e+00, double* %13
 ; CHECK-NEXT:   store i64 1, i64* %14, align 16
-; CHECK-NEXT:   %trans_check = load i8, i8* %malloccall
-; CHECK-NEXT:   %15 = bitcast i8* %n_p to i64*
-; CHECK-NEXT:   %16 = load i64, i64* %15
-; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %16, 8
+; CHECK-NEXT:   %loaded.trans = load i8, i8* %malloccall
+; CHECK-NEXT:   %15 = icmp eq i8 %loaded.trans, 78
+; CHECK-NEXT:   %16 = icmp eq i8 %loaded.trans, 110
+; CHECK-NEXT:   %17 = or i1 %16, %15
+; CHECK-NEXT:   %18 = select i1 %17, i8* %n_p, i8* %m_p
+; CHECK-NEXT:   %19 = bitcast i8* %18 to i64*
+; CHECK-NEXT:   %20 = load i64, i64* %19
+; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %20, 8
 ; CHECK-NEXT:   %malloccall8 = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   %cache.x = bitcast i8* %malloccall8 to double*
 ; CHECK-NEXT:   store double* %cache.x, double** %0
-; CHECK-NEXT:   %17 = bitcast i8* %incx_p to i64*
-; CHECK-NEXT:   %18 = load i64, i64* %17
-; CHECK-NEXT:   %19 = bitcast i8* %n_p to i64*
-; CHECK-NEXT:   %20 = load i64, i64* %19
-; CHECK-NEXT:   %21 = bitcast i8* %x to double*
-; CHECK:   %22 = icmp eq i64 %20, 0
-; CHECK-NEXT:   br i1 %22, label %__enzyme_memcpy_double_64_da0sa0stride.exit, label %init.idx.i
+; CHECK-NEXT:   %21 = bitcast i8* %incx_p to i64*
+; CHECK-NEXT:   %22 = load i64, i64* %21
+; CHECK-NEXT:   %23 = bitcast i8* %x to double*
+; CHECK:   %24 = icmp eq i64 %20, 0
+; CHECK-NEXT:   br i1 %24, label %__enzyme_memcpy_double_64_da0sa0stride.exit, label %init.idx.i
 
 ; CHECK: init.idx.i:                                       ; preds = %entry
 ; CHECK-NEXT:   %a.i = sub nsw i64 1, %20
-; CHECK-NEXT:   %negidx.i = mul nsw i64 %a.i, %18
-; CHECK-NEXT:   %is.neg.i = icmp slt i64 %18, 0
+; CHECK-NEXT:   %negidx.i = mul nsw i64 %a.i, %22
+; CHECK-NEXT:   %is.neg.i = icmp slt i64 %22, 0
 ; CHECK-NEXT:   %startidx.i = select i1 %is.neg.i, i64 %negidx.i, i64 0
 ; CHECK-NEXT:   br label %for.body.i
 
@@ -115,18 +117,18 @@ entry:
 ; CHECK-NEXT:   %idx.i = phi i64 [ 0, %init.idx.i ], [ %idx.next.i, %for.body.i ]
 ; CHECK-NEXT:   %sidx.i = phi i64 [ %startidx.i, %init.idx.i ], [ %sidx.next.i, %for.body.i ]
 ; CHECK-NEXT:   %dst.i.i = getelementptr inbounds double, double* %cache.x, i64 %idx.i
-; CHECK-NEXT:   %src.i.i = getelementptr inbounds double, double* %21, i64 %sidx.i
+; CHECK-NEXT:   %src.i.i = getelementptr inbounds double, double* %23, i64 %sidx.i
 ; CHECK-NEXT:   %src.i.l.i = load double, double* %src.i.i
 ; CHECK-NEXT:   store double %src.i.l.i, double* %dst.i.i
 ; CHECK-NEXT:   %idx.next.i = add nsw i64 %idx.i, 1
-; CHECK-NEXT:   %sidx.next.i = add nsw i64 %sidx.i, %18
-; CHECK-NEXT:   %23 = icmp eq i64 %20, %idx.next.i
-; CHECK-NEXT:   br i1 %23, label %__enzyme_memcpy_double_64_da0sa0stride.exit, label %for.body.i
+; CHECK-NEXT:   %sidx.next.i = add nsw i64 %sidx.i, %22
+; CHECK-NEXT:   %25 = icmp eq i64 %20, %idx.next.i
+; CHECK-NEXT:   br i1 %25, label %__enzyme_memcpy_double_64_da0sa0stride.exit, label %for.body.i
 
 ; CHECK: __enzyme_memcpy_double_64_da0sa0stride.exit:      ; preds = %entry, %for.body.i
 ; CHECK-NEXT:   call void @dgemv_64_(i8* %malloccall, i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta_p, i8* %y, i8* %incy_p)
-; CHECK-NEXT:   %24 = load double*, double** %0
-; CHECK-NEXT:   ret double* %24
+; CHECK-NEXT:   %26 = load double*, double** %0
+; CHECK-NEXT:   ret double* %26
 ; CHECK-NEXT: }
 
 ; CHECK: define internal void @diffef(i8* noalias %y, i8* %"y'", i8* noalias %A, i8* %"A'", i8* noalias %x, i8* %"x'", double* 
@@ -172,7 +174,6 @@ entry:
 ; CHECK-NEXT:   store i64 2, i64* %12, align 16
 ; CHECK-NEXT:   store double 0.000000e+00, double* %13
 ; CHECK-NEXT:   store i64 1, i64* %14, align 16
-; CHECK-NEXT:   %trans_check = load i8, i8* %malloccall
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:                                      ; preds = %entry

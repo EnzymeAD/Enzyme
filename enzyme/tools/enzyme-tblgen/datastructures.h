@@ -14,7 +14,6 @@
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
 
-
 enum class argType {
   fp,
   len,
@@ -31,12 +30,15 @@ enum class argType {
 };
 namespace llvm {
 raw_ostream &operator<<(raw_ostream &os, const argType &arg);
+raw_ostream &operator<<(raw_fd_ostream &os, const argType &arg);
 }
 using namespace llvm;
 
 const char *TyToString(argType ty);
 
 bool isArgUsed(const StringRef toFind, const DagInit *toSearch);
+
+typedef DenseMap<size_t, SmallVector<size_t, 3>> relatedLengthMap;
 
 // Subset of the general pattern info,
 // but only the part that affects the specific argument being active.
@@ -104,9 +106,12 @@ private:
   // Based on an argument name, which rules use this argument?
   DenseMap<size_t, DenseSet<size_t>> argUsers;
 
+  // For matrix or vactor types, helps to find the length argument(s)
+  relatedLengthMap relatedLengths;
+
 public:
   TGPattern(Record &r);
-  SmallVector<size_t, 2> getRelatedLengthArgs(size_t arg);
+  SmallVector<size_t, 3> getRelatedLengthArgs(size_t arg);
   bool isBLASLevel2or3();
   DenseMap<size_t, DenseSet<size_t>> getArgUsers();
   std::string getName();

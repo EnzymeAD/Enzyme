@@ -2100,46 +2100,25 @@ llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
 
   return allocV;
 }
-bool is_normal(llvm::IRBuilder<> &B, llvm::Value *trans) {
-  if (auto CI = dyn_cast<ConstantInt>(trans)) {
-    if (CI->getValue() == 'N' || CI->getValue() == 'n')
-      return true;
-    else
-      return false;
-  }
 
-  auto charType = IntegerType::get(trans->getContext(), 8);
-  if (trans->getType() != charType)
-    trans = B.CreateLoad(charType, trans, "trans_check");
+llvm::Value *select_vec_dims(IRBuilder<> &B, llvm::Value *trans,
+                             llvm::Value *dim1, llvm::Value *dim2, bool byRef) {
+  Value *width = B.CreateSelect(is_normal(B, trans, byRef), dim1, dim2);
 
-  if (auto AI = dyn_cast<AllocaInst>(trans)) {
-    std::deque<Value *> todo = {AI};
-    Value *stored = nullptr;
-    while (todo.size()) {
-      auto cur = todo.back();
-      todo.pop_back();
-      if (isPointerArithmeticInst(cur)) {
-        for (auto U : cur->users())
-          todo.push_back(cast<Instruction>(U));
-      }
-      if (auto SI = dyn_cast<StoreInst>(cur)) {
-        if (stored)
-          return false;
-        stored = SI->getValueOperand();
-        continue;
-      }
-      return false;
-    }
-    if (stored) {
-      if (auto CI = dyn_cast<ConstantInt>(stored)) {
-        if (CI->getValue() == 'N' || CI->getValue() == 'n')
-          return true;
-        else
-          return false;
-      }
-    }
-  }
-  return true;
+  return width;
+}
+
+llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef) {
+  auto charTy = IntegerType::get(trans->getContext(), 8);
+  if (byRef)
+    trans = B.CreateLoad(charTy, trans, "loaded.trans");
+
+  Value *trueVal = ConstantInt::getTrue(trans->getContext());
+
+  Value *isNormal =
+      B.CreateOr(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'n')),
+                 B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'N')));
+  return isNormal;
 }
 
 llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
@@ -2166,22 +2145,15 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
 //   ld_A = arg_lda;
 // }
 llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
-                                  llvm::Value *arg_ld, llvm::Value *dim_1,
-                                  llvm::Value *dim_2, bool cacheMat,
+                                  llvm::Value *arg_ld, llvm::Value *dim1,
+                                  llvm::Value *dim2, bool cacheMat,
                                   bool byRef) {
   if (!cacheMat)
     return arg_ld;
 
-  auto charType = IntegerType::get(trans->getContext(), 8);
-  if (byRef) {
-    trans = B.CreateLoad(charType, trans, "get.cached.ld.trans");
-  }
-  // if arg_transa is Normal, use first dim, else second
-  Value *isNormal = B.CreateSelect(
-      B.CreateICmpEQ(trans, ConstantInt::get(charType, 'n')), dim_1,
-      B.CreateSelect(B.CreateICmpEQ(trans, ConstantInt::get(charType, 'N')),
-                     dim_1, dim_2));
-  return isNormal;
+  Value *width = B.CreateSelect(is_normal(B, trans, byRef), dim1, dim2);
+
+  return width;
 }
 
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,

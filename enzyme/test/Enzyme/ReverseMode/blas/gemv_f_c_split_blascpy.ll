@@ -1,6 +1,8 @@
 ;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-blas-copy=1 -enzyme-lapack-copy=1 -S | FileCheck %s; fi
 ;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-blas-copy=1  -enzyme-lapack-copy=1 -S | FileCheck %s
 
+; Here we don't transpose the matrix a (78 equals 'N' in ASCII) and we therefore also don't transpose x.
+; Therfore the first arg to dcopy is n_p, as opposed to the gemv_transpose test.
 ;                       trans,                  M,                       N,                     alpha,                  A,    lda,                    x,  , incx,                  beta,                    y,  incy
 declare void @dgemv_64_(i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* , i8* nocapture readonly, i8*, i8* nocapture readonly, i8* nocapture readonly, i8* , i8* nocapture readonly) 
 
@@ -90,18 +92,22 @@ entry:
 ; CHECK-NEXT:   store i64 2, i64* %12, align 16
 ; CHECK-NEXT:   store double 0.000000e+00, double* %13
 ; CHECK-NEXT:   store i64 1, i64* %14, align 16
-; CHECK-NEXT:   %trans_check = load i8, i8* %malloccall
-; CHECK-NEXT:   %15 = bitcast i8* %n_p to i64*
-; CHECK-NEXT:   %16 = load i64, i64* %15
-; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %16, 8
+; CHECK-NEXT:   %loaded.trans = load i8, i8* %malloccall
+; CHECK-NEXT:   %15 = icmp eq i8 %loaded.trans, 78
+; CHECK-NEXT:   %16 = icmp eq i8 %loaded.trans, 110
+; CHECK-NEXT:   %17 = or i1 %16, %15
+; CHECK-NEXT:   %18 = select i1 %17, i8* %n_p, i8* %m_p
+; CHECK-NEXT:   %19 = bitcast i8* %18 to i64*
+; CHECK-NEXT:   %20 = load i64, i64* %19
+; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %20, 8
 ; CHECK-NEXT:   %malloccall8 = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   %cache.x = bitcast i8* %malloccall8 to double*
 ; CHECK-NEXT:   store double* %cache.x, double** %0
 ; CHECK-NEXT:   store i64 1, i64* %byref.
-; CHECK-NEXT:   call void @dcopy_64_(i8* %n_p, i8* %x, i8* %incx_p, double* %cache.x, i64* %byref.)
+; CHECK-NEXT:   call void @dcopy_64_(i8* %18, i8* %x, i8* %incx_p, double* %cache.x, i64* %byref.)
 ; CHECK-NEXT:   call void @dgemv_64_(i8* %malloccall, i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta_p, i8* %y, i8* %incy_p)
-; CHECK-NEXT:   %17 = load double*, double** %0
-; CHECK-NEXT:   ret double* %17
+; CHECK-NEXT:   %[[ret:.+]] = load double*, double** %0
+; CHECK-NEXT:   ret double* %[[ret]]
 ; CHECK-NEXT: }
 
 ; CHECK: define internal void @diffef(i8* noalias %y, i8* %"y'", i8* noalias %A, i8* %"A'", i8* noalias %x, i8* %"x'", double* 
@@ -147,7 +153,6 @@ entry:
 ; CHECK-NEXT:   store i64 2, i64* %12, align 16
 ; CHECK-NEXT:   store double 0.000000e+00, double* %13
 ; CHECK-NEXT:   store i64 1, i64* %14, align 16
-; CHECK-NEXT:   %trans_check = load i8, i8* %malloccall
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:                                      ; preds = %entry
