@@ -4946,17 +4946,23 @@ Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
 
 llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
                                           llvm::Value *lhs, llvm::Value *rhs,
-                                          llvm::ArrayRef<unsigned> off,
-                                          llvm::Value *prev) {
-  assert(lhs->getType() == rhs->getType());
+                                          llvm::ArrayRef<unsigned> lhs_off,
+                                          llvm::ArrayRef<unsigned> rhs_off,
+                                          llvm::Value *prev, bool vectorLayer) {
   llvm::Type *lhs_ty = lhs->getType();
-  for (auto idx : off)
-    lhs_ty = getSubType(lhs_ty, idx);
+  if (!vectorLayer) {
+    for (auto idx : lhs_off)
+      lhs_ty = getSubType(lhs_ty, idx);
+    llvm::Type *rhs_ty = rhs->getType();
+    for (auto idx : rhs_off)
+      rhs_ty = getSubType(rhs_ty, idx);
+    assert(lhs_ty == rhs_ty);
+  }
   if (lhs_ty->isFPOrFPVectorTy()) {
-    if (off.size())
-      lhs = extractMeta(B, lhs, off);
-    if (off.size())
-      rhs = extractMeta(B, rhs, off);
+    if (lhs_off.size())
+      lhs = extractMeta(B, lhs, lhs_off);
+    if (rhs_off.size())
+      rhs = extractMeta(B, rhs, rhs_off);
     llvm::Value *res = nullptr;
     if (auto fp = llvm::dyn_cast<llvm::ConstantFP>(lhs)) {
       if (fp->isZero())
@@ -4968,27 +4974,33 @@ llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
     }
     if (!res)
       res = B.CreateFAdd(lhs, rhs);
-    if (off.size()) {
+    if (lhs_off.size()) {
       assert(prev);
-      res = B.CreateInsertValue(prev, res, off);
+      res = B.CreateInsertValue(prev, res, lhs_off);
     }
     return res;
-  } else if (auto AT = llvm::dyn_cast<llvm::ArrayType>(lhs->getType())) {
+  } else if (isa<ArrayType>(lhs_ty) || isa<StructType>(lhs_ty)) {
     if (prev == nullptr)
-      prev = llvm::UndefValue::get(AT);
-    for (size_t i = 0; i < AT->getNumElements(); ++i) {
-      llvm::SmallVector<unsigned, 1> noff(off.begin(), off.end());
-      noff.push_back(i);
-      prev = recursiveFAdd(B, lhs, rhs, noff, prev);
-    }
-    return prev;
-  } else if (auto ST = llvm::dyn_cast<llvm::StructType>(lhs->getType())) {
-    if (prev == nullptr)
-      prev = llvm::UndefValue::get(ST);
-    for (size_t i = 0; i < ST->getNumElements(); ++i) {
-      llvm::SmallVector<unsigned, 1> noff(off.begin(), off.end());
-      noff.push_back(i);
-      prev = recursiveFAdd(B, lhs, rhs, noff, prev);
+      prev = llvm::UndefValue::get(lhs_ty);
+
+    size_t size;
+    if (auto AT = dyn_cast<ArrayType>(lhs_ty))
+      size = AT->getNumElements();
+    else
+      size = cast<StructType>(lhs_ty)->getNumElements();
+
+    for (size_t i = 0; i < size; ++i) {
+      llvm::SmallVector<unsigned, 1> nlhs_off(lhs_off.begin(), lhs_off.end());
+      if (vectorLayer)
+        nlhs_off.insert(nlhs_off.begin(), i);
+      else
+        nlhs_off.push_back(i);
+      llvm::SmallVector<unsigned, 1> nrhs_off(rhs_off.begin(), rhs_off.end());
+      if (vectorLayer)
+        nrhs_off.insert(nrhs_off.begin(), i);
+      else
+        nrhs_off.push_back(i);
+      prev = recursiveFAdd(B, lhs, rhs, nlhs_off, nrhs_off, prev);
     }
     return prev;
   }

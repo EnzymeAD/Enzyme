@@ -29,12 +29,12 @@ entry:
 ; CHECK-NEXT:   %[[i3:.+]] = fmul fast double 0x3FF20DD750429B6D, %[[i2]]
 ; CHECK-NEXT:   %[[i4:.+]] = extractvalue [3 x double] %"x'", 0
 ; CHECK-NEXT:   %[[i5:.+]] = fmul fast double %[[i4]], %[[i3]]
-; CHECK-NEXT:   %[[i6:.+]] = insertvalue [3 x double] undef, double %[[i5]], 0
 ; CHECK-NEXT:   %[[i7:.+]] = extractvalue [3 x double] %"x'", 1
 ; CHECK-NEXT:   %[[i8:.+]] = fmul fast double %[[i7]], %[[i3]]
-; CHECK-NEXT:   %[[i9:.+]] = insertvalue [3 x double] %[[i6]], double %[[i8]], 1
 ; CHECK-NEXT:   %[[i10:.+]] = extractvalue [3 x double] %"x'", 2
 ; CHECK-NEXT:   %[[i11:.+]] = fmul fast double %[[i10]], %[[i3]]
+; CHECK-NEXT:   %[[i6:.+]] = insertvalue [3 x double] undef, double %[[i5]], 0
+; CHECK-NEXT:   %[[i9:.+]] = insertvalue [3 x double] %[[i6]], double %[[i8]], 1
 ; CHECK-NEXT:   %[[i12:.+]] = insertvalue [3 x double] %[[i9]], double %[[i11]], 2
 ; CHECK-NEXT:   ret [3 x double] %[[i12]]
 ; CHECK-NEXT: }

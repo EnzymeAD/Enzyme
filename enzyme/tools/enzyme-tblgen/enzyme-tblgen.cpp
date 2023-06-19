@@ -1069,7 +1069,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         cast<DefInit>(duals->getOperator())
             ->getDef()
             ->isSubClassOf("ForwardFromSummedReverseInternal")) {
-      os << "        Value *res = nullptr;\n";
+      os << "        Value *res = Constant::getNullValue(gutils->getShadowType(" << origName << "."
+                      "getType()));\n";
 
       for (auto argOpEn : llvm::enumerate(*argOps)) {
         size_t argIdx = argOpEn.index();
@@ -1090,6 +1091,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
            << ".getOperand(" << argIdx << "))) {\n";
         os << curIndent << INDENT << "Value *dif = diffe(" << origName
            << ".getOperand(" << argIdx << "), Builder2);\n";
+        os << curIndent << INDENT << "Value *arg_diff_tmp = UndefValue::get(res->getType());\n";
 
         initializeNames(curIndent + INDENT, os, argOpEn.value(), "local");
         std::function<void(std::vector<unsigned>, Init *)> fwdres =
@@ -1115,20 +1117,18 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                     origName, /*newFromOriginal*/ true);
                 os << ";\n";
                 assert(vectorValued);
-                if (idx.size() != 0) {
-                  os << curIndent << INDENT << INDENT << "itmp = Builder2.CreateInsertValue(Constant::getNullValue(gutils->getShadowType(" << origName << "."
-                      "getType())), itmp, ArrayRef<unsigned>({";
-                bool first = true;
-                for (auto v : idx) {
-                  if (!first)
-                    os << ", ";
-                  first = true;
-                  os << v;
+                os << curIndent << INDENT << INDENT << "arg_diff_tmp = GradientUtils::recursiveFAdd(Builder2,";
+                os << "res, itmp, {";
+                      {
+                  bool seen = false;
+                  for (auto i : idx) {
+                    if (seen) os << ", ";
+                    os << i;
+                    seen = true;
+                  }
                 }
-                os << "}));\n";
-                }
-                os << curIndent << INDENT << INDENT << "assert(itmp->getType() == gutils->getShadowType(" << origName << ".getType()));\n";
-                os << curIndent << INDENT << INDENT << "res = res == nullptr ? itmp : GradientUtils::recursiveFAdd(Builder2, res, itmp);\n";
+
+                os << "}, {}, arg_diff_tmp, gutils->getWidth() != 1);\n";
                 os << curIndent << INDENT << "}\n";
               } else if (ListInit *lst = dyn_cast<ListInit>(ival)) {
                 unsigned i = 0;
@@ -1143,6 +1143,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                                 Twine("Unknown subinitialization"));
             };
         fwdres({}, argOpEn.value());
+        os << curIndent << INDENT << "res = arg_diff_tmp;\n";
         os << "        }\n";
       }
     } else {

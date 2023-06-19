@@ -37,10 +37,10 @@ declare double @llvm.powi.f64.i32(double, i32)
 ; CHECK-NEXT:   %[[i14:.+]] = extractvalue [3 x double] %"x'", 2
 ; CHECK-NEXT:   %[[i16:.+]] = fmul fast double %[[i14]], %[[i6]]
 ; CHECK-NEXT:   %[[i7:.+]] = select {{(fast )?}}i1 %[[i3]], double 0.000000e+00, double %[[i5]]
-; CHECK-NEXT:   %[[i8:.+]] = insertvalue [3 x double] undef, double %[[i7]], 0
 ; CHECK-NEXT:   %[[i12:.+]] = select {{(fast )?}}i1 %[[i3]], double 0.000000e+00, double %[[i11]]
-; CHECK-NEXT:   %[[i13:.+]] = insertvalue [3 x double] %[[i8]], double %[[i12]], 1
 ; CHECK-NEXT:   %[[i17:.+]] = select {{(fast )?}}i1 %[[i3]], double 0.000000e+00, double %[[i16]]
+; CHECK-NEXT:   %[[i8:.+]] = insertvalue [3 x double] undef, double %[[i7]], 0
+; CHECK-NEXT:   %[[i13:.+]] = insertvalue [3 x double] %[[i8]], double %[[i12]], 1
 ; CHECK-NEXT:   %[[i18:.+]] = insertvalue [3 x double] %[[i13]], double %[[i17]], 2
 ; CHECK-NEXT:   ret [3 x double] %[[i18:.+]]
 ; CHECK-NEXT }

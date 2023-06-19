@@ -68,10 +68,10 @@ declare %struct.Gradients @__enzyme_fwddiff(...)
 ; CHECK-NEXT:   %5 = fmul fast double %4, %x
 ; CHECK-NEXT:   %6 = call fast double @hypot(double %x, double 2.000000e+00)
 ; CHECK-NEXT:   %7 = fdiv fast double %1, %6
-; CHECK-NEXT:   %[[i8:.+]] = insertvalue [3 x double] undef, double %7, 0
 ; CHECK-NEXT:   %[[i9:.+]] = fdiv fast double %3, %6
-; CHECK-NEXT:   %[[i10:.+]] = insertvalue [3 x double] %[[i8]], double %[[i9]], 1
 ; CHECK-NEXT:   %[[i11:.+]] = fdiv fast double %5, %6
+; CHECK-NEXT:   %[[i8:.+]] = insertvalue [3 x double] undef, double %7, 0
+; CHECK-NEXT:   %[[i10:.+]] = insertvalue [3 x double] %[[i8]], double %[[i9]], 1
 ; CHECK-NEXT:   %[[i12:.+]] = insertvalue [3 x double] %[[i10]], double %[[i11]], 2
 ; CHECK-NEXT:   ret [3 x double] %[[i12]]
 ; CHECK-NEXT: }

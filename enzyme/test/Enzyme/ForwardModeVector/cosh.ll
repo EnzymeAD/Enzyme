@@ -28,9 +28,9 @@ declare double @cosh(double)
 ; CHECK-NEXT:   %0 = call fast double @sinh(double %x)
 ; CHECK-NEXT:   %1 = extractvalue [2 x double] %"x'", 0
 ; CHECK-NEXT:   %2 = fmul fast double %1, %0
-; CHECK-NEXT:   %[[i3:.+]] = insertvalue [2 x double] undef, double %2, 0
 ; CHECK-NEXT:   %[[i4:.+]] = extractvalue [2 x double] %"x'", 1
 ; CHECK-NEXT:   %[[i5:.+]] = fmul fast double %[[i4]], %0
+; CHECK-NEXT:   %[[i3:.+]] = insertvalue [2 x double] undef, double %2, 0
 ; CHECK-NEXT:   %[[i6:.+]] = insertvalue [2 x double] %[[i3]], double %[[i5]], 1
 ; CHECK-NEXT:   ret [2 x double] %[[i6]]
 ; CHECK-NEXT: }
