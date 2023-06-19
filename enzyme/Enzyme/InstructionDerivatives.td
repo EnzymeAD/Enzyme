@@ -104,10 +104,10 @@ class MultiReturn {
   bit struct;
 }
 def StructRet : MultiReturn {
-  bit struct = true;
+  bit struct = 1;
 }
 def ArrayRet : MultiReturn {
-  bit struct = false;
+  bit struct = 0;
 }
 
 def CFAdd : SubRoutine<(Op (Op $re1, $im1):$z1, (Op $re2, $im2):$z2),
@@ -175,10 +175,10 @@ class InactiveArgSpec {
   bit asserting;
 }
 def InactiveArg : InactiveArgSpec {
-  bit asserting = false;
+  bit asserting = 0;
 }
 def AssertingInactiveArg : InactiveArgSpec {
-  bit asserting = true;
+  bit asserting = 1;
 }
 
 class GlobalExpr<string val> {
