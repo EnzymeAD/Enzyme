@@ -17,7 +17,7 @@ void emit_BLASTypes(raw_ostream &os) {
      << "} else { \n"
      << "  ttFloat.insert({-1},floatType);\n"
      << "}\n";
-  
+
   os << "TypeTree ttFloatRet;\n"
      << "ttFloatRet.insert({-1},floatType);\n";
 
@@ -58,11 +58,11 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
     // sorry. will fix later. effectively, skip arg 0 for for lv23,
     // because we have the cblas layout in the .td declaration
     size_t i = (lv23 ? j - 1 : j);
-    if (currentType == argType::len || currentType == argType::vincInc) {
+    if (currentType == ArgType::len || currentType == ArgType::vincInc) {
       os << "  updateAnalysis(call.getArgOperand(" << i
          << (lv23 ? " + offset" : "") << "), ttInt, &call);\n";
-    } else if (currentType == argType::vincData) {
-      assert(argTypeMap.lookup(j + 1) == argType::vincInc);
+    } else if (currentType == ArgType::vincData) {
+      assert(argTypeMap.lookup(j + 1) == ArgType::vincInc);
       if (!lv23)
         os << "  if (auto n = dyn_cast<ConstantInt>(call.getArgOperand(0"
            << (lv23 ? " + offset" : "") << "))) {\n"
@@ -86,7 +86,7 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
       else
         os << "    updateAnalysis(call.getArgOperand(" << i
            << (lv23 ? " + offset" : "") << "), ttPtr, &call);\n";
-    } else if (currentType == argType::fp) {
+    } else if (currentType == ArgType::fp) {
       os << "  updateAnalysis(call.getArgOperand(" << i
          << (lv23 ? " + offset" : "") << "), ttFloat, &call);\n";
     }
@@ -103,18 +103,18 @@ void emitBlasTAUpdater(const RecordKeeper &RK, raw_ostream &os) {
   emitSourceFileHeader("Rewriters", os);
   const auto &blasPatterns = RK.getAllDerivedDefinitions("CallBlasPattern");
 
-  std::vector<TGPattern> newBlasPatterns{};
+  SmallVector<TGPattern, 8> newBlasPatterns;
   StringMap<TGPattern> patternMap;
-  for (auto pattern : blasPatterns) {
-    auto parsedPattern = TGPattern(*pattern);
-    newBlasPatterns.push_back(TGPattern(*pattern));
+  for (auto &&pattern : blasPatterns) {
+    auto parsedPattern = TGPattern(pattern);
+    newBlasPatterns.push_back(TGPattern(pattern));
     auto newEntry = std::pair<std::string, TGPattern>(parsedPattern.getName(),
                                                       parsedPattern);
     patternMap.insert(newEntry);
   }
 
   emit_BLASTypes(os);
-  for (auto newPattern : newBlasPatterns) {
+  for (auto &newPattern : newBlasPatterns) {
     emit_BLASTA(newPattern, os);
   }
 }

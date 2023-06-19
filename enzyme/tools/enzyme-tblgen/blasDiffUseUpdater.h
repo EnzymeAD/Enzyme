@@ -37,7 +37,8 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
     os << "  auto arg_" << name << " = CI->getArgOperand(pos_" << name
        << ");\n";
     os << "  const bool overwritten_" << name
-       << " = (cacheMode ? (overwritten_args_ptr ? (*overwritten_args_ptr)[pos_" << name << "] : true ) : false);\n\n";
+       << " = (cacheMode ? (overwritten_args_ptr ? (*overwritten_args_ptr)[pos_"
+       << name << "] : true ) : false);\n\n";
   }
 
   // initialize active_ arguments
@@ -52,16 +53,16 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
   // once fixed we can merge this calls
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
-    if (ty != argType::vincData)
+    if (ty != ArgType::vincData)
       continue;
-    assert(typeMap.lookup(i + 1) == argType::vincInc);
+    assert(typeMap.lookup(i + 1) == ArgType::vincInc);
     emit_mat_vec_caching(pattern, i, os);
   }
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
-    if (ty != argType::mldData)
+    if (ty != ArgType::mldData)
       continue;
-    assert(typeMap.lookup(i + 1) == argType::mldLD);
+    assert(typeMap.lookup(i + 1) == ArgType::mldLD);
     emit_mat_vec_caching(pattern, i, os);
   }
 
@@ -89,17 +90,17 @@ void emitBlasDiffUse(const RecordKeeper &RK, llvm::raw_ostream &os) {
   emitSourceFileHeader("Rewriters", os);
   const auto &blasPatterns = RK.getAllDerivedDefinitions("CallBlasPattern");
 
-  std::vector<TGPattern> newBlasPatterns{};
+  SmallVector<TGPattern, 8> newBlasPatterns;
   StringMap<TGPattern> patternMap;
-  for (auto pattern : blasPatterns) {
-    auto parsedPattern = TGPattern(*pattern);
-    newBlasPatterns.push_back(TGPattern(*pattern));
+  for (auto &&pattern : blasPatterns) {
+    auto parsedPattern = TGPattern(pattern);
+    newBlasPatterns.push_back(TGPattern(pattern));
     auto newEntry = std::pair<std::string, TGPattern>(parsedPattern.getName(),
                                                       parsedPattern);
     patternMap.insert(newEntry);
   }
 
-  for (auto newPattern : newBlasPatterns) {
+  for (auto &&newPattern : newBlasPatterns) {
     emit_BLASDiffUse(newPattern, os);
   }
 }
