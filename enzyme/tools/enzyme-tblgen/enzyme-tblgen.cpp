@@ -589,8 +589,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       if (lookup)
         os << ", " << builder << ")";
       return true;
-    } else if (opName == "ArrayRet" || Def->isSubClassOf("ArrayRet")) {
+    } else if (opName == "MultiReturn" || Def->isSubClassOf("MultiReturn")) {
       os << "({\n";
+
+      bool useStruct =  Def->getValueAsBit("struct");
 
       SmallVector<bool, 1> vectorValued = prepareArgs(
           curIndent + INDENT, os, argPattern, pattern, resultRoot, builder,
@@ -599,12 +601,19 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       for (auto b : vectorValued)
         anyVector |= b;
 
+      if (!useStruct)
+        assert(vectorValued.size());
+
       os << curIndent << INDENT << "Value *res = UndefValue::get(";
       if (anyVector)
         os << "gutils->getShadowType(";
+
+      if (useStruct)
       os << "StructType::get(gutils->newFunc->getContext(), "
             "std::vector<llvm::Type*>({";
-      for (size_t i = 0; i < vectorValued.size(); i++) {
+      else
+      os << "ArrayType::get(";
+      for (size_t i = 0; i < useStruct ? vectorValued.size() : 1; i++) {
         if (i != 0)
           os << ", ";
         if (!vectorValued[i])
@@ -614,7 +623,11 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
              << "->getType() : getSubType(" << argPattern << "_" << i
              << "->getType(), -1)";
       }
-      os << "}))";
+      if (useStruct)
+        os << "}))";
+      else
+        os << ", " << vectorValued.size() << ")";
+
       if (anyVector)
         os << ")";
       os << ");\n";
@@ -1082,7 +1095,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         std::function<void(std::vector<unsigned>, Init *)> fwdres =
             [&](std::vector<unsigned> idx, Init *ival) {
               if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
-                if ("ArrayRet" == resultTree->getOperator()->getAsString()) {
+                if ("MultiReturn" == resultTree->getOperator()->getAsString()) {
                   unsigned i = 0;
                   for (auto r : resultTree->getArgs()) {
                     std::vector<unsigned> next = idx;
@@ -1189,7 +1202,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     std::function<void(size_t, ArrayRef<unsigned>, Init *)> revres =
         [&](size_t argIdx, ArrayRef<unsigned> idx, Init *ival) {
           if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
-            if ("ArrayRet" == resultTree->getOperator()->getAsString()) {
+            if ("MultiReturn" == resultTree->getOperator()->getAsString()) {
               unsigned i = 0;
               for (auto r : resultTree->getArgs()) {
                 SmallVector<unsigned, 1> next(idx.begin(), idx.end());

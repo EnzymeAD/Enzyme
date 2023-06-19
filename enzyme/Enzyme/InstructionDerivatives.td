@@ -100,8 +100,14 @@ class InsertValue<list<int> indices_> : Inst<"InsertValue"> {
   list<int> indices = indices_;
 }
 
-
-def ArrayRet {
+class MultiReturn {
+  bit struct;
+}
+def StructRet : MultiReturn {
+  bit struct = true;
+}
+def ArrayRet : MultiReturn {
+  bit struct = false;
 }
 
 def CFAdd : SubRoutine<(Op (Op $re1, $im1):$z1, (Op $re2, $im2):$z2),
