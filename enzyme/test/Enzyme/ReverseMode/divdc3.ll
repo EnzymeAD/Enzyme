@@ -34,7 +34,7 @@ declare { double, double, double, double } @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %9 = fsub fast double %7, %8
 ; CHECK-NEXT:   %10 = fdiv fast double %9, %5
 ; CHECK-NEXT:   %11 = fadd fast double %6, %10
-; CHECK-NEXT:   %12 = fneg fast double %yre
+; CHECK-NEXT:   %12 = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %yre
 ; CHECK-NEXT:   %13 = fmul fast double %im1, %12
 ; CHECK-NEXT:   %14 = fadd fast double %8, %13
 ; CHECK-NEXT:   %15 = fmul fast double %12, %12
@@ -64,10 +64,10 @@ declare { double, double, double, double } @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %39 = fmul fast double %24, %30
 ; CHECK-NEXT:   %40 = fsub fast double %38, %39
 ; CHECK-NEXT:   %41 = fdiv fast double %40, %36
-; CHECK-NEXT:   %42 = fneg fast double %37
-; CHECK-NEXT:   %43 = fneg fast double %41
+; CHECK-NEXT:   %42 = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %37
+; CHECK-NEXT:   %43 = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %41
 ; CHECK-NEXT:   %44 = fadd fast double %42, %43
-; CHECK-NEXT:   %45 = fneg fast double %xim
+; CHECK-NEXT:   %45 = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %xim
 ; CHECK-NEXT:   %46 = fmul fast double %im1, %45
 ; CHECK-NEXT:   %47 = fsub fast double %25, %46
 ; CHECK-NEXT:   %48 = fmul fast double %re1, %45

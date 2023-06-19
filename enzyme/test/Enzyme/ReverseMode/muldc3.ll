@@ -28,7 +28,7 @@ entry:
 ; CHECK-NEXT:   %4 = fmul fast double %yre, %im1
 ; CHECK-NEXT:   %5 = fadd fast double %3, %4
 ; CHECK-NEXT:   %6 = fadd fast double %2, %5
-; CHECK-NEXT:   %7 = fneg fast double %yre
+; CHECK-NEXT:   %7 = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %yre
 ; CHECK-NEXT:   %8 = fmul fast double %im1, %7
 ; CHECK-NEXT:   %9 = fsub fast double %3, %8
 ; CHECK-NEXT:   %10 = fmul fast double %re1, %7
@@ -41,7 +41,7 @@ entry:
 ; CHECK-NEXT:   %17 = fmul fast double %xre, %im1
 ; CHECK-NEXT:   %18 = fadd fast double %16, %17
 ; CHECK-NEXT:   %19 = fadd fast double %15, %18
-; CHECK-NEXT:   %20 = fneg fast double %xre
+; CHECK-NEXT:   %20 = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %xre
 ; CHECK-NEXT:   %21 = fmul fast double %im1, %20
 ; CHECK-NEXT:   %22 = fsub fast double %16, %21
 ; CHECK-NEXT:   %23 = fmul fast double %re1, %20

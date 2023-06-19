@@ -30,8 +30,8 @@ entry:
 ; CHECK-NEXT:   %8 = fmul fast double %"xre'", %yim
 ; CHECK-NEXT:   %9 = fsub fast double %7, %8
 ; CHECK-NEXT:   %10 = fdiv fast double %9, %5
-; CHECK-NEXT:   %11 = fneg fast double %xre
-; CHECK-NEXT:   %12 = fneg fast double %xim
+; CHECK-NEXT:   %11 = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %xre
+; CHECK-NEXT:   %12 = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %xim
 ; CHECK-NEXT:   %13 = fsub fast double %3, %4
 ; CHECK-NEXT:   %14 = fmul fast double %yre, %yim
 ; CHECK-NEXT:   %15 = fadd fast double %14, %14
