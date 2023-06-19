@@ -589,7 +589,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       if (lookup)
         os << ", " << builder << ")";
       return true;
-    } else if (opName == "MultiReturn" || Def->isSubClassOf("MultiReturn")) {
+    } else if (Def->isSubClassOf("MultiReturn")) {
       os << "({\n";
 
       bool useStruct =  Def->getValueAsBit("struct");
@@ -1095,7 +1095,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         std::function<void(std::vector<unsigned>, Init *)> fwdres =
             [&](std::vector<unsigned> idx, Init *ival) {
               if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
-                if ("MultiReturn" == resultTree->getOperator()->getAsString()) {
+                auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
+                if (Def->isSubClassOf("MultiReturn")) {
                   unsigned i = 0;
                   for (auto r : resultTree->getArgs()) {
                     std::vector<unsigned> next = idx;
@@ -1202,7 +1203,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     std::function<void(size_t, ArrayRef<unsigned>, Init *)> revres =
         [&](size_t argIdx, ArrayRef<unsigned> idx, Init *ival) {
           if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
-            if ("MultiReturn" == resultTree->getOperator()->getAsString()) {
+            auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
+            if (Def->isSubClassOf("MultiReturn")) {
               unsigned i = 0;
               for (auto r : resultTree->getArgs()) {
                 SmallVector<unsigned, 1> next(idx.begin(), idx.end());
