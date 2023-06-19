@@ -141,9 +141,9 @@ declare dso_local void @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %"tmp.034'de.1" = phi double [ %"tmp.034'de.2", %invertif.end.loopexit ], [ 0.000000e+00, %incinvertfor.body8 ]
 ; CHECK-NEXT:   %"sub13'de.1" = phi double [ %[[i21:.+]], %invertif.end.loopexit ], [ %[[i10:.+]], %incinvertfor.body8 ]
 ; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ %[[_unwrap7:.+]], %invertif.end.loopexit ], [ %[[i19:.+]], %incinvertfor.body8 ]
+; CHECK-NEXT:   %[[i10]] = fadd fast double %"tmp.034'de.1", %"sub13'de.1"
 ; :   %[[i9:.+]] = fneg fast double %"sub13'de.1"
-; CHECK-DAG:   %[[i10]] = fadd fast double %"tmp.034'de.1", %"sub13'de.1"
-; CHECK-NEXT:   %[[i11:.+]] = {{(fadd|fsub)}} fast double %"mul12'de.1"
+; CHECK:   %[[i11:.+]] = {{(fadd|fsub)}} fast double %"mul12'de.1"
 ; , %[[i9]]
 ; CHECK-NEXT:   %arrayidx11_unwrap = getelementptr inbounds double, double* %out, i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %_unwrap = load double, double* %arrayidx11_unwrap, align 8, !tbaa !2

@@ -2184,22 +2184,6 @@ public:
       }
       break;
     }
-    case Instruction::FAdd: {
-      if (!constantval0)
-        dif0 = idiff;
-      if (!constantval1)
-        dif1 = idiff;
-      break;
-    }
-    case Instruction::FSub: {
-      if (!constantval0)
-        dif0 = idiff;
-      if (!constantval1) {
-        auto rule = [&](Value *idiff) { return Builder2.CreateFNeg(idiff); };
-        dif1 = applyChainRule(orig_op1->getType(), Builder2, rule, idiff);
-      }
-      break;
-    }
     case Instruction::FDiv: {
       // Required loopy phi = [in, BO, BO, ..., BO]
       //  1) phi is only used in this B0
@@ -2652,38 +2636,6 @@ public:
         };
         Value *idiff1 = applyChainRule(BO.getType(), Builder2, rule, dif[1]);
         setDiffe(&BO, idiff1, Builder2);
-      }
-      break;
-    }
-    case Instruction::FAdd: {
-      if (!constantval0 && !constantval1) {
-        auto rule = [&](Value *dif0, Value *dif1) {
-          return Builder2.CreateFAdd(dif0, dif1);
-        };
-        Value *diff =
-            applyChainRule(BO.getType(), Builder2, rule, dif[0], dif[1]);
-        setDiffe(&BO, diff, Builder2);
-      } else if (!constantval0) {
-        setDiffe(&BO, dif[0], Builder2);
-      } else if (!constantval1) {
-        setDiffe(&BO, dif[1], Builder2);
-      }
-      break;
-    }
-    case Instruction::FSub: {
-      if (!constantval0 && !constantval1) {
-        auto rule = [&](Value *dif0, Value *dif1) {
-          return Builder2.CreateFAdd(dif0, Builder2.CreateFNeg(dif1));
-        };
-        Value *diff =
-            applyChainRule(BO.getType(), Builder2, rule, dif[0], dif[1]);
-        setDiffe(&BO, diff, Builder2);
-      } else if (!constantval0) {
-        setDiffe(&BO, dif[0], Builder2);
-      } else if (!constantval1) {
-        auto rule = [&](Value *dif1) { return Builder2.CreateFNeg(dif1); };
-        Value *diff = applyChainRule(BO.getType(), Builder2, rule, dif[1]);
-        setDiffe(&BO, diff, Builder2);
       }
       break;
     }

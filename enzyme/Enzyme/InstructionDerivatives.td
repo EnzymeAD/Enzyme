@@ -850,5 +850,12 @@ def : BinopPattern<(Op $x, $y), "FAdd", 0, 0,
                     ],
                     (ForwardFromSummedReverse)
                   >;
+def : BinopPattern<(Op $x, $y), "FSub", 0, 0,
+                    [
+                      (DiffeRet),
+                      (FNeg (DiffeRet)),
+                    ],
+                    (ForwardFromSummedReverse)
+                  >;
 
 include "BlasDerivatives.td"                  
