@@ -389,7 +389,6 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << ")) {\n"; 
 
       for (size_t i=1; i<3; i++) {
-        auto newArgPattern = argPattern + "_sia_" + std::to_string(i);
         os << curIndent << INDENT << INDENT << "imVal = ";
         bool vector;
         if (isa<UnsetInit>(resultRoot->getArg(i)) && resultRoot->getArgName(i)) {
@@ -398,7 +397,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
           vector = isVec;
           os << ord;
         } else
-          vector = handle(curIndent + INDENT + INDENT, newArgPattern, os, pattern,
+          vector = handle(curIndent + INDENT + INDENT, argPattern + "_sia_" + std::to_string(i), os, pattern,
                  resultRoot->getArg(i), builder, nameToOrdinal, lookup, retidx,
                  origName, newFromOriginal);
         os << ";\n";
