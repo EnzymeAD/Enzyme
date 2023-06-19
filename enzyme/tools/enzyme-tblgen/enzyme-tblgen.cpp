@@ -368,34 +368,56 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << "->getNumElements()";
 #endif
       return false;
-    } else if (opName == "ShadowOrZero" || Def->isSubClassOf("ShadowOrZero")) {
-      if (resultRoot->getNumArgs() != 1)
+    } else if (opName == "SelectIfActive" || Def->isSubClassOf("SelectIfActive")) {
+      if (resultRoot->getNumArgs() != 3)
         PrintFatalError(pattern->getLoc(),
-                        "only single op ShadowOrZero supported");
+                        "only three op SelectIfActive supported");
 
       os << "({\n";
-      os << curIndent << INDENT << "auto imVal = ";
+      os << curIndent << INDENT << "// Computing SelectIfActive\n";
+      os << curIndent << INDENT << "Value *imVal = nullptr;\n";
+
+      os << curIndent << INDENT << "if (!gutils->isConstantValue(";
 
       if (isa<UnsetInit>(resultRoot->getArg(0)) && resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
         auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultRoot);
         assert(!isVec);
         os << ord;
-      } else
-        handle(curIndent + INDENT, argPattern + "_sz", os, pattern,
-               resultRoot->getArg(0), builder, nameToOrdinal, lookup, retidx,
-               origName, newFromOriginal);
-      os << ";\n";
-      os << curIndent << INDENT
-         << "gutils->isConstantValue(imVal) ? "
-            "Constant::getNullValue(gutils->getShadowType(imVal->getType())) "
-            ": ";
-      if (lookup)
-        os << "lookup(";
-      os << "gutils->invertPointerM(imVal, " << builder << ")";
-      if (lookup)
-        os << ", " << builder << ")";
-      os << ";\n";
+      } else assert("Requires name for arg");
+
+      os << ")) {\n"; 
+
+      for (size_t i=1; i<3; i++) {
+        auto newArgPattern = argPattern + "_sia_" + std::to_string(i);
+        os << curIndent << INDENT << INDENT << "imVal = ";
+        bool vector;
+        if (isa<UnsetInit>(resultRoot->getArg(i)) && resultRoot->getArgName(i)) {
+          auto name = resultRoot->getArgName(i)->getAsUnquotedString();
+          auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultRoot);
+          vector = isVec;
+          os << ord;
+        } else
+          vector = handle(curIndent + INDENT + INDENT, newArgPattern, os, pattern,
+                 resultRoot->getArg(i), builder, nameToOrdinal, lookup, retidx,
+                 origName, newFromOriginal);
+        os << ";\n";
+
+        if (!vector) {
+          os << curIndent << INDENT << INDENT << "llvm::Value* vec_imVal = gutils->getWidth() == 1 ? imVal : UndefValue::get(gutils->getShadowType(imVal"
+             << "->getType()));\n";
+          os << curIndent << INDENT << INDENT << "if (gutils->getWidth() != 1)\n";
+          os << curIndent << INDENT << INDENT << INDENT << "for (size_t i=0; i<gutils->getWidth(); i++)\n";
+          os << curIndent << INDENT << INDENT << INDENT << INDENT << "vec_imVal = " << builder << ".CreateInsertValue(vec_imVal, imVal, std::vector<unsigned>({(unsigned)i}));\n";
+          os << curIndent << INDENT << INDENT << "imVal = vec_imVal;\n";
+        }
+        if (i == 1)
+        os << curIndent << INDENT << "} else {\n";
+        else
+        os <<curIndent << INDENT << "}\n";
+      }
+
+      os << curIndent << INDENT << "imVal;\n";
       os << curIndent << "})";
       return true;
     } else if (opName == "ConstantFP" || Def->isSubClassOf("ConstantFP")) {
@@ -419,6 +441,22 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                         Twine("unknown named operand in constantfp") +
                             resultTree->getAsString());
       os << "->getType(), \"" << value->getValue() << "\")";
+      return false;
+    } else if (opName == "Zero" || Def->isSubClassOf("Zero")) {
+      if (resultRoot->getNumArgs() != 1)
+        PrintFatalError(pattern->getLoc(),
+                        "only single op Zero supported");
+      os << "Constant::getNullValue(";
+      if (resultRoot->getArgName(0)) {
+        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+        auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
+        assert(!isVec);
+        os << ord;
+      } else
+        PrintFatalError(pattern->getLoc(),
+                        Twine("unknown named operand in constantfp") +
+                            resultTree->getAsString());
+      os << "->getType())";
       return false;
     } else if (opName == "ConstantCFP" || Def->isSubClassOf("ConstantCFP")) {
       if (resultRoot->getNumArgs() != 1)
@@ -636,6 +674,13 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       VariableSetting nnameToOrdinal;
 
+      if (npattern->getNumArgs() != resultRoot->getNumArgs()) {
+        PrintFatalError(pattern->getLoc(),
+                        Twine("Attempting to call subroutine '") + opName + " with " + std::to_string(resultRoot->getNumArgs()) + " args when expected " + std::to_string(npattern->getNumArgs()) + " " +
+                            resultTree->getAsString());
+
+      }
+
       std::function<void(DagInit *, std::vector<unsigned>)> insert =
           [&](DagInit *ptree, std::vector<unsigned> prev) {
             unsigned i = 0;
@@ -820,6 +865,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
             if (anyVector)
               os << INDENT;
             os << "V->setOnlyReadsMemory();\n";
+            os << "V->setOnlyWritesMemory();\n";
             os << "#elif LLVM_VERSION_MAJOR >= 14\n";
           } else
             os << "#if LLVM_VERSION_MAJOR >= 14\n";
@@ -880,9 +926,15 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     // Emit RewritePattern for Pattern.
     ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
 
+    if (tree->getNumArgs() != argOps->size()) {
+        PrintFatalError(pattern->getLoc(),
+                        Twine("Defined rule pattern to have ") + std::to_string(tree->getNumArgs()) + " args but reverse rule array is a list of size "
+                        + std::to_string(argOps->size()));
+    }
+
     StringRef origName;
     if (!intrinsic) {
-      os << "  if (";
+      os << "  if ((";
       bool prev = false;
       for (auto *nameI :
            *cast<ListInit>(pattern->getValueAsListInit("names"))) {
@@ -892,7 +944,11 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         prev = true;
       }
       origName = "call";
-      os << " ){\n";
+#if LLVM_VERSION_MAJOR >= 14
+      os << ") && call.arg_size() == " << tree->getNumArgs() << " ){\n";
+#else
+      os << ") && call.getNumArgOperands() == " << tree->getNumArgs() << " ){\n";
+#endif
     } else {
       bool anyVersion = false;
       for (auto *nameI :
@@ -999,15 +1055,18 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       for (auto argOpEn : llvm::enumerate(*argOps)) {
         size_t argIdx = argOpEn.index();
 
+        std::string curIndent = "        ";
+
         if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
           auto opName = resultRoot->getOperator()->getAsString();
           auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-          if (opName == "InactiveArg" || Def->isSubClassOf("InactiveArg")) {
+          if (Def->isSubClassOf("InactiveArg")) {
+            if (Def->getValueAsBit("asserting"))
+              os << " assert(gutils->isConstantValue(" << origName << ".getOperand(" << argIdx << ")));\n";
             continue;
           }
         }
 
-        std::string curIndent = "        ";
         os << curIndent << "if (!gutils->isConstantValue(" << origName
            << ".getOperand(" << argIdx << "))) {\n";
         os << curIndent << INDENT << "Value *dif = diffe(" << origName
