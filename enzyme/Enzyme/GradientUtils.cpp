@@ -4893,12 +4893,12 @@ Type *GradientUtils::getShadowType(Type *ty) {
 }
 
 Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
-                                  unsigned off, const llvm::Twine& name) {
+                                  unsigned off, const Twine& name) {
   return extractMeta(Builder, Agg, ArrayRef<unsigned>({off}), name);
 }
 
 Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
-                                  ArrayRef<unsigned> off_init, const llvm::Twine& name) {
+                                  ArrayRef<unsigned> off_init, const Twine& name) {
   std::vector<unsigned> off(off_init.begin(), off_init.end());
   while (off.size() != 0) {
     if (auto Ins = dyn_cast<InsertValueInst>(Agg)) {

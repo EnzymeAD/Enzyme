@@ -204,16 +204,16 @@ struct VariableSetting {
 
 #define INDENT "  "
 bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
-            Record *pattern, Init *resultTree, std::string builder,
+            Record *pattern, Init *resultTree, StringRef builder,
             VariableSetting &nameToOrdinal, bool lookup,
-            const std::vector<unsigned> &retidx, StringRef origName,
+            ArrayRef<unsigned> &retidx, StringRef origName,
             bool newFromOriginal);
 
 SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
                                  const Twine &argName, Record *pattern,
-                                 DagInit *resultRoot, std::string builder,
+                                 DagInit *resultRoot, StringRef builder,
                                  VariableSetting &nameToOrdinal, bool lookup,
-                                 const std::vector<unsigned> &retidx,
+                                 ArrayRef<unsigned> &retidx,
                                  StringRef origName, bool newFromOriginal) {
   SmallVector<bool, 1> vectorValued;
 
@@ -258,9 +258,9 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
 
 // Returns whether value generated is a vector value or not.
 bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
-            Record *pattern, Init *resultTree, std::string builder,
+            Record *pattern, Init *resultTree, StringRef builder,
             VariableSetting &nameToOrdinal, bool lookup,
-            const std::vector<unsigned> &retidx, StringRef origName,
+            ArrayRef<unsigned> &retidx, StringRef origName,
             bool newFromOriginal) {
   if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
     auto opName = resultRoot->getOperator()->getAsString();
@@ -754,7 +754,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       initializeNames(curIndent + INDENT, os, insts, "local");
 
-      std::vector<unsigned> nretidx;
+      ArrayRef<unsigned> nretidx{};
 
       os << curIndent << INDENT;
       bool anyVector2 =
@@ -866,6 +866,13 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
               os << INDENT;
             os << "V->setOnlyReadsMemory();\n";
             os << "V->setOnlyWritesMemory();\n";
+            os << "#elif LLVM_VERSION_MAJOR >= 14\n";
+          } else if (attrName == "ReadOnly") {
+            os << "#if LLVM_VERSION_MAJOR >= 16\n";
+            os << curIndent << INDENT;
+            if (anyVector)
+              os << INDENT;
+            os << "V->setOnlyReadsMemory();\n";
             os << "#elif LLVM_VERSION_MAJOR >= 14\n";
           } else
             os << "#if LLVM_VERSION_MAJOR >= 14\n";
@@ -1046,10 +1053,10 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     os << "        getForwardBuilder(Builder2);\n";
     // TODO
 
-    if (duals->getOperator()->getAsString() == "ForwardFromSummedReverse" ||
+    if (duals->getOperator()->getAsString() == "ForwardFromSummedReverseInternal" ||
         cast<DefInit>(duals->getOperator())
             ->getDef()
-            ->isSubClassOf("ForwardFromSummedReverse")) {
+            ->isSubClassOf("ForwardFromSummedReverseInternal")) {
       os << "        Value *res = nullptr;\n";
 
       for (auto argOpEn : llvm::enumerate(*argOps)) {
@@ -1060,7 +1067,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
           auto opName = resultRoot->getOperator()->getAsString();
           auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-          if (Def->isSubClassOf("InactiveArg")) {
+          if (Def->isSubClassOf("InactiveArgSpec")) {
             if (Def->getValueAsBit("asserting"))
               os << " assert(gutils->isConstantValue(" << origName << ".getOperand(" << argIdx << ")));\n";
             continue;
@@ -1088,9 +1095,10 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                 }
                 os << curIndent << INDENT << "{\n";
                 os << curIndent << INDENT << INDENT << "Value *itmp = ";
+                ArrayRef<unsigned> retidx{};
                 bool vectorValued = handle(
                     curIndent + INDENT + INDENT, "fwdarg", os, pattern,
-                    resultTree, "Builder2", nameToOrdinal, /*lookup*/ false, {},
+                    resultTree, "Builder2", nameToOrdinal, /*lookup*/ false,retidx,
                     origName, /*newFromOriginal*/ true);
                 os << ";\n";
                 assert(vectorValued);
@@ -1127,9 +1135,10 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     } else {
 
       os << "            Value *res = ";
+      ArrayRef<unsigned> retidx{};
       bool vectorValued = handle("            ", "fwdnsrarg", os, pattern, duals,
                                  "Builder2", nameToOrdinal, /*lookup*/ false,
-                                 {}, origName, /*newFromOriginal*/ true);
+                                 retidx, origName, /*newFromOriginal*/ true);
       assert(vectorValued);
       os << ";\n";
     }
@@ -1151,7 +1160,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
         auto opName = resultRoot->getOperator()->getAsString();
         auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-        if (opName == "InactiveArg" || Def->isSubClassOf("InactiveArg")) {
+        if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
+          if (Def->getValueAsBit("asserting"))
+            os << " assert(gutils->isConstantValue(" << origName << ".getOperand(" << argIdx << ")));\n";
           continue;
         }
       }
@@ -1176,13 +1187,13 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     if (seen)
       os << "        }\n";
 
-    std::function<void(size_t, std::vector<unsigned>, Init *)> revres =
-        [&](size_t argIdx, std::vector<unsigned> idx, Init *ival) {
+    std::function<void(size_t, ArrayRef<unsigned>, Init *)> revres =
+        [&](size_t argIdx, ArrayRef<unsigned> idx, Init *ival) {
           if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
             if ("ArrayRet" == resultTree->getOperator()->getAsString()) {
               unsigned i = 0;
               for (auto r : resultTree->getArgs()) {
-                auto next = idx;
+                SmallVector<unsigned, 1> next(idx.begin(), idx.end());
                 next.push_back(i);
                 revres(argIdx, next, r);
                 i++;
@@ -1230,7 +1241,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
           } else if (ListInit *lst = dyn_cast<ListInit>(ival)) {
             unsigned i = 0;
             for (auto elem : *lst) {
-              auto next = idx;
+              SmallVector<unsigned, 1> next(idx.begin(), idx.end());
               next.push_back(i);
               revres(argIdx, next, elem);
               i++;
@@ -1244,7 +1255,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
         auto opName = resultRoot->getOperator()->getAsString();
         auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-        if (opName == "InactiveArg" || Def->isSubClassOf("InactiveArg")) {
+        if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
           continue;
         }
       }

@@ -169,6 +169,10 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
             os << "    F.setOnlyReadsMemory();\n";
             os << "    F.setOnlyWritesMemory();\n";
             os << "  #elif LLVM_VERSION_MAJOR >= 14\n";
+          } else if (attrName == "ReadOnly") {
+            os << "  #if LLVM_VERSION_MAJOR >= 16\n";
+            os << "    F.setOnlyReadsMemory();\n";
+            os << "  #elif LLVM_VERSION_MAJOR >= 14\n";
           } else
             os << "  #if LLVM_VERSION_MAJOR >= 14\n";
           os << "    F.addAttributeAtIndex(llvm::AttributeList::FunctionIndex, "
