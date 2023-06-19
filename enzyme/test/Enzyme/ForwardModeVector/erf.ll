@@ -23,18 +23,18 @@ entry:
 
 ; CHECK: define internal [3 x double] @fwddiffe3tester(double %x, [3 x double] %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fmul fast double %x, %x
-; CHECK-NEXT:   %1 = {{(fsub fast double \-?0.000000e\+00,|fneg fast double)}} %0
-; CHECK-NEXT:   %2 = call fast double @llvm.exp.f64(double %1)
-; CHECK-NEXT:   %3 = fmul fast double %2, 0x3FF20DD750429B6D
-; CHECK-NEXT:   %4 = extractvalue [3 x double] %"x'", 0
-; CHECK-NEXT:   %5 = fmul fast double %3, %4
-; CHECK-NEXT:   %6 = insertvalue [3 x double] undef, double %5, 0
-; CHECK-NEXT:   %7 = extractvalue [3 x double] %"x'", 1
-; CHECK-NEXT:   %8 = fmul fast double %3, %7
-; CHECK-NEXT:   %9 = insertvalue [3 x double] %6, double %8, 1
-; CHECK-NEXT:   %10 = extractvalue [3 x double] %"x'", 2
-; CHECK-NEXT:   %11 = fmul fast double %3, %10
-; CHECK-NEXT:   %12 = insertvalue [3 x double] %9, double %11, 2
-; CHECK-NEXT:   ret [3 x double] %12
+; CHECK-NEXT:   %[[i0:.+]] = fmul fast double %x, %x
+; CHECK-NEXT:   %[[i1:.+]] = {{(fsub fast double \-?0.000000e\+00,|fneg fast double)}} %[[i0]]
+; CHECK-NEXT:   %[[i2:.+]] = call fast double @llvm.exp.f64(double %[[i1]])
+; CHECK-NEXT:   %[[i3:.+]] = fmul fast double 0x3FF20DD750429B6D, %[[i2]]
+; CHECK-NEXT:   %[[i4:.+]] = extractvalue [3 x double] %"x'", 0
+; CHECK-NEXT:   %[[i5:.+]] = fmul fast double %[[i4]], %[[i3]]
+; CHECK-NEXT:   %[[i7:.+]] = extractvalue [3 x double] %"x'", 1
+; CHECK-NEXT:   %[[i8:.+]] = fmul fast double %[[i7]], %[[i3]]
+; CHECK-NEXT:   %[[i10:.+]] = extractvalue [3 x double] %"x'", 2
+; CHECK-NEXT:   %[[i11:.+]] = fmul fast double %[[i10]], %[[i3]]
+; CHECK-NEXT:   %[[i6:.+]] = insertvalue [3 x double] undef, double %[[i5]], 0
+; CHECK-NEXT:   %[[i9:.+]] = insertvalue [3 x double] %[[i6]], double %[[i8]], 1
+; CHECK-NEXT:   %[[i12:.+]] = insertvalue [3 x double] %[[i9]], double %[[i11]], 2
+; CHECK-NEXT:   ret [3 x double] %[[i12]]
 ; CHECK-NEXT: }

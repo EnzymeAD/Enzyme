@@ -136,4 +136,58 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
     emit_attributeBLAS(newPattern, os);
   }
   emit_attributeBLASCaller(newBlasPatterns, os);
+
+
+  os << "void attributeTablegen(llvm::Function &F) {\n";
+  os << "  auto name = getFuncName(&F);\n";
+  os << "  auto blasMetaData = extractBLAS(name);\n";
+  os << "  #if LLVM_VERSION_MAJOR >= 16\n";
+  os << "    if (blasMetaData.has_value())\n";
+  os << "      attributeBLAS(blasMetaData.value(), &F);\n";
+  os << "  #else\n";
+  os << "    if (blasMetaData.hasValue())\n";
+  os << "      attributeBLAS(blasMetaData.getValue(), &F);\n";
+  os << "  #endif\n";
+  {
+    const auto &patterns = RK.getAllDerivedDefinitions("CallPattern");
+    for (Record *pattern : patterns) {
+      DagInit *tree = pattern->getValueAsDag("PatternToMatch");
+      os << "  if ((";
+      bool prev = false;
+      for (auto *nameI : *pattern->getValueAsListInit("names")) {
+        if (prev)
+          os << " ||\n      ";
+        os << "name == " << cast<StringInit>(nameI)->getAsString() << "";
+        prev = true;
+      }
+      os << ") && F.getFunctionType()->getNumParams() == " << tree->getNumArgs() << " ){\n";
+      for (auto *attr : *pattern->getValueAsListInit("FnAttrs")) {
+          auto attrDef = cast<DefInit>(attr)->getDef();
+          auto attrName = attrDef->getValueAsString("name");
+          if (attrName == "ReadNone") {
+            os << "  #if LLVM_VERSION_MAJOR >= 16\n";
+            os << "    F.setOnlyReadsMemory();\n";
+            os << "    F.setOnlyWritesMemory();\n";
+            os << "  #elif LLVM_VERSION_MAJOR >= 14\n";
+          } else if (attrName == "ReadOnly") {
+            os << "  #if LLVM_VERSION_MAJOR >= 16\n";
+            os << "    F.setOnlyReadsMemory();\n";
+            os << "  #elif LLVM_VERSION_MAJOR >= 14\n";
+          } else
+            os << "  #if LLVM_VERSION_MAJOR >= 14\n";
+          os << "    F.addAttributeAtIndex(llvm::AttributeList::FunctionIndex, "
+                "llvm::Attribute::get(F.getContext(), llvm::Attribute::"
+             << attrName << "));\n";
+          os << "  #else \n";
+          os << "    F.addAttribute(llvm::AttributeList::FunctionIndex, "
+                "llvm::Attribute::get(F.getContext(), llvm::Attribute::"
+             << attrName << "));\n";
+          os << "  #endif \n";
+      }
+      os << "  }\n";
+    }
+  }
+
+
+  os << "}\n";
 }

@@ -64,13 +64,11 @@ attributes #3 = { nounwind }
 ; CHECK: invertcond.true:
 ; CHECK-NEXT:   %[[dsin:.+]] = tail call fast double @llvm.sin.f64(double %x)
 ; CHECK-NEXT:   %[[mul:.+]] = fmul fast double %[[dsin]], %x
+; CHECK-NEXT:   %[[sqrtzero:.+]] = fcmp fast ueq double %[[mul]], 0.000000e+00
 ; CHECK-NEXT:   %[[sqrt:.+]] = call fast double @llvm.sqrt.f64(double %[[mul]])
-; CHECK-NEXT:   %[[tsq:.+]] = fmul fast double 5.000000e-01, %0
-; CHECK-NEXT:   %[[div:.+]] = fdiv fast double %[[tsq]], %[[sqrt]]
-
-; CHECK-NEXT:   %[[sqrtzero:.+]] = fcmp fast ueq double %mul_unwrap, 0.000000e+00
+; CHECK-NEXT:   %[[tsq:.+]] = fmul fast double 2.000000e+00, %[[sqrt]]
+; CHECK-NEXT:   %[[div:.+]] = fdiv fast double %0, %[[tsq]]
 ; CHECK-NEXT:   %[[dsqrt:.+]] = select{{( fast)?}} i1 %[[sqrtzero]], double 0.000000e+00, double %[[div]]
-
 ; CHECK-NEXT:   %[[dmul0:.+]] = fmul fast double %[[dsqrt]], %x
 ; CHECK-NEXT:   %[[dmul1:.+]] = fmul fast double %[[dsqrt]], %[[dsin]]
 ; CHECK-NEXT:   %[[dcos:.+]] = call fast double @llvm.cos.f64(double %x)

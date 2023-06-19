@@ -157,14 +157,7 @@ void attributeKnownFunctions(llvm::Function &F) {
       }
   }
 
-  auto blasMetaData = extractBLAS(F.getName());
-#if LLVM_VERSION_MAJOR >= 16
-  if (blasMetaData.has_value())
-    attributeBLAS(blasMetaData.value(), &F);
-#else
-  if (blasMetaData.hasValue())
-    attributeBLAS(blasMetaData.getValue(), &F);
-#endif
+  attributeTablegen(F);
 
   if (F.getName() ==
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_createERmm") {

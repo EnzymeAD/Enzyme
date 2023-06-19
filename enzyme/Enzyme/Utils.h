@@ -1065,6 +1065,15 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
   return called ? const_cast<llvm::Function *>(called) : nullptr;
 }
 
+static inline llvm::StringRef getFuncName(llvm::Function *called) {
+  if (called->hasFnAttribute("enzyme_math"))
+    return called->getFnAttribute("enzyme_math").getValueAsString();
+  else if (called->hasFnAttribute("enzyme_allocator"))
+    return "enzyme_allocator";
+  else
+    return called->getName();
+}
+
 template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
   auto AttrList =
       op->getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
@@ -1074,12 +1083,7 @@ template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
     return "enzyme_allocator";
 
   if (auto called = getFunctionFromCall(op)) {
-    if (called->hasFnAttribute("enzyme_math"))
-      return called->getFnAttribute("enzyme_math").getValueAsString();
-    else if (called->hasFnAttribute("enzyme_allocator"))
-      return "enzyme_allocator";
-    else
-      return called->getName();
+    return getFuncName(called);
   }
   return "";
 }
@@ -1680,5 +1684,21 @@ static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
     llvm::Attribute::AttrKind::NoCapture,
     llvm::Attribute::AttrKind::ReadNone,
 };
+
+static inline llvm::Type *getSubType(llvm::Type *T) { return T; }
+
+template <typename Arg1, typename... Args>
+static inline llvm::Type *getSubType(llvm::Type *T, Arg1 i, Args... args) {
+  if (auto AT = llvm::dyn_cast<llvm::ArrayType>(T))
+    return getSubType(AT->getElementType(), args...);
+  if (auto VT = llvm::dyn_cast<llvm::VectorType>(T))
+    return getSubType(VT->getElementType(), args...);
+  if (auto ST = llvm::dyn_cast<llvm::StructType>(T)) {
+    assert(i != -1);
+    return getSubType(ST->getElementType(i), args...);
+  }
+  llvm::errs() << *T << "\n";
+  llvm_unreachable("unknown subtype");
+}
 
 #endif

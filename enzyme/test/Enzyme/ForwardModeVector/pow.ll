@@ -37,11 +37,11 @@ declare double @llvm.pow.f64(double, double)
 ; CHECK-NEXT:   %9 = fmul fast double %7, %8
 ; CHECK-NEXT:   %10 = extractvalue [2 x double] %"y'", 0
 ; CHECK-NEXT:   %11 = fmul fast double %10, %9
-; CHECK-NEXT:   %12 = fadd fast double %4, %11
-; CHECK-NEXT:   %13 = insertvalue [2 x double] undef, double %12, 0
-; CHECK-NEXT:   %14 = extractvalue [2 x double] %"y'", 1
-; CHECK-NEXT:   %15 = fmul fast double %14, %9
-; CHECK-NEXT:   %16 = fadd fast double %6, %15
-; CHECK-NEXT:   %17 = insertvalue [2 x double] %13, double %16, 1
-; CHECK-NEXT:   ret [2 x double] %17
+; CHECK-NEXT:   %[[i14:.+]] = extractvalue [2 x double] %"y'", 1
+; CHECK-NEXT:   %[[i15:.+]] = fmul fast double %[[i14]], %9
+; CHECK-NEXT:   %[[i12:.+]] = fadd fast double %4, %11
+; CHECK-NEXT:   %[[i13:.+]] = insertvalue [2 x double] undef, double %[[i12]], 0
+; CHECK-NEXT:   %[[i16:.+]] = fadd fast double %6, %[[i15]]
+; CHECK-NEXT:   %[[i17:.+]] = insertvalue [2 x double] %[[i13]], double %[[i16]], 1
+; CHECK-NEXT:   ret [2 x double] %[[i17]]
 ; CHECK-NEXT: }

@@ -81,9 +81,6 @@ class adj<string _name> {
 class Constant<string _value> {
   string value = _value;
 }
-class ConstantInt<string _value> {
-  string value = _value;
-}
 class Char<string _value> {
   string value = _value;
 }
@@ -127,14 +124,14 @@ def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
 def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   [],[len, vinc<["n"]>, vinc<["n"]>],
                   [
-                  (b<"axpy"> $n, DiffeRet<"">, $y, $incy, $x, $incx), 
-                  (b<"axpy"> $n, DiffeRet<"">, $x, $incx, $y, $incy)
+                  (b<"axpy"> $n, DiffeRet, $y, $incy, $x, $incx), 
+                  (b<"axpy"> $n, DiffeRet, $x, $incx, $y, $incy)
                   ]
                   >;
 
 // def nrm2 : CallBlasPattern<(Op $n, $x, $incx),
 //                   [],[len, vinc],
-//                   [(FDiv (b<"scal"> $n, DiffeRet<"">, $x, $incx), Ret<"">)]
+//                   [(FDiv (b<"scal"> $n, DiffeRet, $x, $incx), Ret<"">)]
 //                   >;
 
 
@@ -156,7 +153,7 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 
 // def asum : CallBlasPattern<(Op $n, $x, $incx),
 //                   [],[len, vinc],
-//                   [(b<"axpy"> DiffeRet<"">, sign(<input<"x">), $y)]
+//                   [(b<"axpy"> DiffeRet, sign(<input<"x">), $y)]
 //                   >;
 // 
 
@@ -170,7 +167,7 @@ def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $
                   /* alpha  */  (inactive), //(b<"dot"> $y, (b<"gemv"> $A, $x)),
                   /* A      */  (b<"ger">  $layout, $m, $n, $alpha, adj<"y">, $incy, $x, $incx, adj<"A">, $lda),
                   /* x      */  (b<"gemv"> $layout, transpose<"transa">, $m, $n, $alpha, $A, (ld $A, $transa, $lda, $m, $n), adj<"y">, $incy, Constant<"1.0">, adj<"x">, $incx),
-                  /* beta   */  (inactive), //(b<"dot"> $y, DiffeRet<"">),
+                  /* beta   */  (inactive), //(b<"dot"> $y, DiffeRet),
                   /* y      */  (b<"scal"> (Rows $transa, $m, $n), $beta, adj<"y">, $incy)
                   ]
                   >;
@@ -199,7 +196,7 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   /* A     */ (b<"gemm"> $layout, $transa, transpose<"transb">, $m, $k, $n, $alpha, adj<"C">, $ldc, $B, (ld $B, $transb, $ldb, $k, $n), $beta, adj<"A">, $lda),
                   /* B     */ (b<"gemm"> $layout, transpose<"transa">, $transb, $k, $n, $m, $alpha, $A, (ld $A, $transa, $lda, $m, $k), adj<"C">, $ldc, $beta, adj<"B">, $ldb),
                   /* beta  */ (inactive),
-                  /* C     */ (b<"lascl"> $layout, Char<"G">, ConstantInt<"0">, ConstantInt<"0">, Constant<"1.0">, $beta, $m, $n, adj<"C">, $ldc, ConstantInt<"0">)
+                  /* C     */ (b<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, adj<"C">, $ldc, ConstantInt<0>)
                   ]
                   >;
 

@@ -26,14 +26,9 @@ declare double @__enzyme_fwddiff(double (double, double)*, ...)
 ; CHECK: define internal double @fwddiffetester(double %x, double %y, double %"y'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %agg0 = insertvalue [2 x double] undef, double %x, 0
-; CHECK-NEXT:   %"agg1'ipiv" = insertvalue [2 x double] zeroinitializer, double %"y'", 1
 ; CHECK-NEXT:   %agg1 = insertvalue [2 x double] %agg0, double %y, 1
-; CHECK-NEXT:   %0 = call fast double @cabs([2 x double] %agg1)
-; CHECK-NEXT:   %1 = extractvalue [2 x double] %"agg1'ipiv", 0
-; CHECK-NEXT:   %2 = fdiv fast double %1, %0
-; CHECK-NEXT:   %3 = fmul fast double %x, %2
-; CHECK-NEXT:   %4 = fdiv fast double %"y'", %0
-; CHECK-NEXT:   %5 = fmul fast double %y, %4
-; CHECK-NEXT:   %6 = fadd fast double %3, %5
-; CHECK-NEXT:   ret double %6
+; CHECK-NEXT:   %0 = fmul fast double %"y'", %y
+; CHECK-NEXT:   %1 = call fast double @cabs([2 x double] %agg1) #0
+; CHECK-NEXT:   %2 = fdiv fast double %0, %1
+; CHECK-NEXT:   ret double %2
 ; CHECK-NEXT: }
