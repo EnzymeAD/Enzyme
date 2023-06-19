@@ -507,56 +507,15 @@ public:
   llvm::Type *getShadowType(llvm::Type *ty);
 
   static llvm::Value *extractMeta(llvm::IRBuilder<> &Builder, llvm::Value *Agg,
-                                  unsigned off, const llvm::Twine& name = "");
+                                  unsigned off, const llvm::Twine &name = "");
   static llvm::Value *extractMeta(llvm::IRBuilder<> &Builder, llvm::Value *Agg,
-                                  llvm::ArrayRef<unsigned> off, const llvm::Twine& name = "");
+                                  llvm::ArrayRef<unsigned> off,
+                                  const llvm::Twine &name = "");
 
-
-  static inline llvm::Value* recursiveFAdd(llvm::IRBuilder<> &B, llvm::Value *lhs, llvm::Value* rhs, llvm::ArrayRef<unsigned> off = {}, llvm::Value* prev=nullptr) {
-    assert(lhs->getType() == rhs->getType());
-    llvm::Type *lhs_ty = lhs->getType();
-    for (auto idx : off)
-      lhs_ty = getSubType(lhs_ty, idx);
-    if (lhs_ty->isFPOrFPVectorTy()) {
-      if (off.size())
-        lhs = extractMeta(B, lhs, off);
-      if (off.size())
-        rhs = extractMeta(B, rhs, off);
-      llvm::Value* res = nullptr;
-      if (auto fp = llvm::dyn_cast<llvm::ConstantFP>(lhs)) {
-        if (fp->isZero())
-          res = rhs;
-      }
-      if (auto fp = llvm::dyn_cast<llvm::ConstantFP>(rhs)) {
-        if (fp->isZero())
-          res = lhs;
-      }
-      if (!res)
-        res = B.CreateFAdd(lhs, rhs);
-      if (off.size()) {
-        assert(prev);
-        res = B.CreateInsertValue(prev, res, off);
-      }
-      return res;
-    } else if (auto AT = llvm::dyn_cast<llvm::ArrayType>(lhs->getType())) {
-      if (prev == nullptr) prev = llvm::UndefValue::get(AT);
-      for (size_t i=0; i<AT->getNumElements(); ++i) {
-        llvm::SmallVector<unsigned, 1> noff(off.begin(), off.end());
-        noff.push_back(i);
-        prev = recursiveFAdd(B, lhs, rhs, noff, prev);
-      }
-      return prev;
-    } else if (auto ST = llvm::dyn_cast<llvm::StructType>(lhs->getType())) {
-      if (prev == nullptr) prev = llvm::UndefValue::get(ST);
-      for (size_t i=0; i<ST->getNumElements(); ++i) {
-        llvm::SmallVector<unsigned, 1> noff(off.begin(), off.end());
-        noff.push_back(i);
-        prev = recursiveFAdd(B, lhs, rhs, noff, prev);
-      }
-      return prev;
-    }
-    llvm_unreachable("Unknown type to recursively accumulate");
-  }
+  static llvm::Value *recursiveFAdd(llvm::IRBuilder<> &B, llvm::Value *lhs,
+                                    llvm::Value *rhs,
+                                    llvm::ArrayRef<unsigned> off = {},
+                                    llvm::Value *prev = nullptr);
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.

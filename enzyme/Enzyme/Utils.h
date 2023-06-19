@@ -1072,7 +1072,6 @@ static inline llvm::StringRef getFuncName(llvm::Function *called) {
     return "enzyme_allocator";
   else
     return called->getName();
-
 }
 
 template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
@@ -1685,12 +1684,10 @@ static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
     llvm::Attribute::AttrKind::ReadNone,
 };
 
-static inline llvm::Type* getSubType(llvm::Type* T) {
-  return T;
-}
+static inline llvm::Type *getSubType(llvm::Type *T) { return T; }
 
-template<typename Arg1, typename...Args>
-static inline llvm::Type* getSubType(llvm::Type* T, Arg1 i, Args... args) {
+template <typename Arg1, typename... Args>
+static inline llvm::Type *getSubType(llvm::Type *T, Arg1 i, Args... args) {
   if (auto AT = llvm::dyn_cast<llvm::ArrayType>(T))
     return getSubType(AT->getElementType(), args...);
   if (auto VT = llvm::dyn_cast<llvm::VectorType>(T))

@@ -617,7 +617,8 @@ def : CallPattern<(Op $xre, $xim, $yre, $yim),
                           (CFMul_splat
                             (SelectIfActive $yre, (Shadow $yre), (Zero $yre)),
                             (SelectIfActive $yim, (Shadow $yim), (Zero $yim)),
-                            (ExtractValue<[0]> (CFDiv (ArrayRet (FNeg $xre), (FNeg $xim)), (CFMul_splat $yre, $yim, $yre, $yim))), (ExtractValue<[1]> (CFMul_splat $yre, $yim, $yre, $yim)) ) )
+                            (ExtractValue<[0]> (CFDiv (ArrayRet (FNeg $xre), (FNeg $xim)), (CFMul_splat $yre, $yim, $yre, $yim))), (ExtractValue<[1]> (CFMul_splat $yre, $yim, $yre, $yim)) ) ),
+                  [ReadNone, NoUnwind]
                   >;
 
 def : CallPattern<(Op $x, $n),
