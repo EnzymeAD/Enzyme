@@ -23,14 +23,14 @@ entry:
 
 ; CHECK: define internal [2 x double] @fwddiffe2tester(double %x, [2 x double] %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fmul fast double %x, %x
-; CHECK-NEXT:   %1 = call fast double @llvm.exp.f64(double %0)
-; CHECK-NEXT:   %2 = fmul fast double %1, 0x3FF20DD750429B6D
-; CHECK-NEXT:   %3 = extractvalue [2 x double] %"x'", 0
-; CHECK-NEXT:   %4 = fmul fast double %2, %3
-; CHECK-NEXT:   %5 = insertvalue [2 x double] undef, double %4, 0
-; CHECK-NEXT:   %6 = extractvalue [2 x double] %"x'", 1
-; CHECK-NEXT:   %7 = fmul fast double %2, %6
-; CHECK-NEXT:   %8 = insertvalue [2 x double] %5, double %7, 1
-; CHECK-NEXT:   ret [2 x double] %8
+; CHECK-NEXT:   %[[a0:.+]] = fmul fast double %x, %x
+; CHECK-NEXT:   %[[a1:.+]] = call fast double @llvm.exp.f64(double %[[a0]])
+; CHECK-NEXT:   %[[a2:.+]] = fmul fast double 0x3FF20DD750429B6D, %[[a1]]
+; CHECK-NEXT:   %[[a3:.+]] = extractvalue [2 x double] %"x'", 0
+; CHECK-NEXT:   %[[a4:.+]] = fmul fast double %[[a3]], %[[a2]]
+; CHECK-NEXT:   %[[a6:.+]] = extractvalue [2 x double] %"x'", 1
+; CHECK-NEXT:   %[[a7:.+]] = fmul fast double %[[a6]], %[[a2]]
+; CHECK-NEXT:   %[[a5:.+]] = insertvalue [2 x double] undef, double %[[a4]], 0
+; CHECK-NEXT:   %[[a8:.+]] = insertvalue [2 x double] %[[a5]], double %[[a7]], 1
+; CHECK-NEXT:   ret [2 x double] %[[a8]]
 ; CHECK-NEXT: }
