@@ -1,7 +1,7 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -early-cse -instsimplify -enzyme-preopt=false -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(early-cse,instsimplify)" -enzyme-preopt=false -S | FileCheck %s
 
-declare { double, double } @__muldc3(double, double, double, double) readonly
+declare { double, double } @__muldc3(double, double, double, double)
 declare { double, double } @__enzyme_fwddiff(i8*, ...)
 
 define { double, double } @square(double %xre, double %xim, double %yre, double %yim) {

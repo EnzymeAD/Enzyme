@@ -523,10 +523,13 @@ def : CallPattern<(Op $x),
                   [ReadNone, NoUnwind]
                   >;
 
+def ToStruct2 : SubRoutine<(Op (Op $re, $im):$z),
+                    (StructRet $re, $im)
+                  >;
 def : CallPattern<(Op $x, $tbd),
                   ["Faddeeva_erf"],
                   [
-                    (CFMul (DiffeRet), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x))))),
+                    (ToStruct2 (CFMul (DiffeRet), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x)))))),
                     (AssertingInactiveArg)
                   ],
                   (ForwardFromSummedReverse),
@@ -536,7 +539,7 @@ def : CallPattern<(Op $x, $tbd),
 def : CallPattern<(Op $x, $tbd),
                   ["Faddeeva_erfi"],
                   [
-                    (CFMul (DiffeRet), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFMul $x, $x)))),
+                    (ToStruct2 (CFMul (DiffeRet), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFMul $x, $x))))),
                     (AssertingInactiveArg)
                   ],
                   (ForwardFromSummedReverse),
@@ -546,7 +549,7 @@ def : CallPattern<(Op $x, $tbd),
 def : CallPattern<(Op $x, $tbd),
                   ["Faddeeva_erfc"],
                   [
-                    (CFMul (DiffeRet), (CFMul (ConstantCFP<"-1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x))))),
+                    (ToStruct2 (CFMul (DiffeRet), (CFMul (ConstantCFP<"-1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x)))))),
                     (AssertingInactiveArg)
                   ],
                   (ForwardFromSummedReverse),
@@ -557,19 +560,19 @@ def : CallPattern<(Op $x, $tbd),
 def : CallPattern<(Op $xre, $xim, $yre, $yim),
                   ["__mulsc3", "__muldc3", "__multc3", "__mulxc3"],
                   [
-                    (ArrayRet
+                    (StructRet
                       (ExtractValue<[0]> (CFMul (DiffeRetIndex<[]>), (ArrayRet $yre, $yim)):$r0),
                       (ExtractValue<[1]> $r0)
                     ),
-                    (ArrayRet
+                    (StructRet
                       (ExtractValue<[0]> (CFMul (DiffeRetIndex<[]>), (ArrayRet $yim, (FNeg $yre))):$r1),
                       (ExtractValue<[1]> $r1)
                     ),
-                    (ArrayRet
+                    (StructRet
                       (ExtractValue<[0]> (CFMul (DiffeRetIndex<[]>), (ArrayRet $xre, $xim)):$r2),
                       (ExtractValue<[1]> $r2)
                     ),
-                    (ArrayRet
+                    (StructRet
                       (ExtractValue<[0]> (CFMul (DiffeRetIndex<[]>), (ArrayRet $xim, (FNeg $xre))):$r3),
                       (ExtractValue<[1]> $r3)
                     )
@@ -581,14 +584,14 @@ def : CallPattern<(Op $xre, $xim, $yre, $yim),
 //                    (Call<(SameFunc)> (DiffeRet<[0]>), (DiffeRet<[1]>), $xre, $xim),
 //                    (Call<(SameFunc)> (DiffeRet<[1]>), (FNeg (DiffeRet<[1]>)), $yre, $xim)
                   ],
-                  (CFAdd (CFMul_splat 
+                  (ToStruct2 (CFAdd (CFMul_splat 
                             (SelectIfActive $xre, (Shadow $xre), (Zero $xre)),
                             (SelectIfActive $xim, (Shadow $xim), (Zero $xim)),
                             $yre, $yim),
                           (CFMul_splat 
                             (SelectIfActive $yre, (Shadow $yre), (Zero $yre)),
                             (SelectIfActive $yim, (Shadow $yim), (Zero $yim)),
-                            $xre, $xim)),
+                            $xre, $xim))),
 // Alternate variant below with the same mul fn
 //                  (CFAdd (Call<(SameFunc), [ReadNone, NoUnwind]> (ShadowOrZero $xre), (ShadowOrZero $xim), $yre, $yim), (Call<(SameFunc), [ReadNone, NoUnwind]> (ShadowOrZero $yre), (ShadowOrZero $yim), $xre, $xim)),
                   [ReadNone, NoUnwind]
@@ -599,31 +602,31 @@ def : CallPattern<(Op $xre, $xim, $yre, $yim),
 def : CallPattern<(Op $xre, $xim, $yre, $yim),
                   ["__divsc3", "__divdc3", "__divtc3", "__divxc3"],
                   [
-                    (ArrayRet
+                    (StructRet
                       (ExtractValue<[0]> (CFDiv (DiffeRetIndex<[]>), (ArrayRet $yre, $yim)):$r0),
                       (ExtractValue<[1]> $r0)
                     ),
-                    (ArrayRet
+                    (StructRet
                       (ExtractValue<[0]> (CFDiv (DiffeRetIndex<[]>), (ArrayRet $yim, (FNeg $yre))):$r1),
                       (ExtractValue<[1]> $r1)
                     ),
-                    (ArrayRet
+                    (StructRet
                       (ExtractValue<[0]> (CFNeg (CFDiv (CFMul (DiffeRetIndex<[]>), (ArrayRet $xre, $xim)), (CFMul_splat $yre, $yim, $yre, $yim))):$r2),
                       (ExtractValue<[1]> $r2)
                     ),
-                    (ArrayRet
+                    (StructRet
                       (ExtractValue<[0]> (CFDiv (CFMul (DiffeRetIndex<[]>), (ArrayRet $xim, (FNeg $xim))), (CFMul_splat $yre, $yim, $yre, $yim)):$r2),
                       (ExtractValue<[1]> $r2)
                     )
                   ],
-                  (CFAdd  (CFDiv_splat 
+                  (ToStruct2 (CFAdd  (CFDiv_splat 
                             (SelectIfActive $xre, (Shadow $xre), (Zero $xre)),
                             (SelectIfActive $xim, (Shadow $xim), (Zero $xim)),
                             $yre, $yim),
                           (CFMul_splat
                             (SelectIfActive $yre, (Shadow $yre), (Zero $yre)),
                             (SelectIfActive $yim, (Shadow $yim), (Zero $yim)),
-                            (ExtractValue<[0]> (CFDiv (ArrayRet (FNeg $xre), (FNeg $xim)), (CFMul_splat $yre, $yim, $yre, $yim))), (ExtractValue<[1]> (CFMul_splat $yre, $yim, $yre, $yim)) ) ),
+                            (ExtractValue<[0]> (CFDiv (ArrayRet (FNeg $xre), (FNeg $xim)), (CFMul_splat $yre, $yim, $yre, $yim))), (ExtractValue<[1]> (CFMul_splat $yre, $yim, $yre, $yim)) ) )),
                   [ReadNone, NoUnwind]
                   >;
 

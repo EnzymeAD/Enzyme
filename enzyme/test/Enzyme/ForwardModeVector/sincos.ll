@@ -33,8 +33,8 @@ declare [2 x [2 x double]] @__enzyme_fwddiff(...)
 ; CHECK-NEXT:   %[[i11:.+]] = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %[[i9]]
 ; CHECK-NEXT:   %[[i12:.+]] = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %[[i10]]
 ; CHECK-NEXT:   %[[i6:.+]] = insertvalue [2 x [2 x double]] undef, double %[[i3]], 0, 0
-; CHECK-NEXT:   %[[i13:.+]] = insertvalue [2 x [2 x double]] %[[i6]], double %[[i5]], 0, 1
-; CHECK-NEXT:   %[[i7:.+]] = insertvalue [2 x [2 x double]] %[[i13]], double %[[i11]], 1, 0
+; CHECK-NEXT:   %[[i13:.+]] = insertvalue [2 x [2 x double]] %[[i6]], double %[[i11]], 0, 1
+; CHECK-NEXT:   %[[i7:.+]] = insertvalue [2 x [2 x double]] %[[i13]], double %[[i5]], 1, 0
 ; CHECK-NEXT:   %[[i14:.+]] = insertvalue [2 x [2 x double]] %[[i7]], double %[[i12]], 1, 1
 ; CHECK-NEXT:   ret [2 x [2 x double]] %[[i14]]
 ; CHECK-NEXT: }

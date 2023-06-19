@@ -613,7 +613,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
             "std::vector<llvm::Type*>({";
       else
       os << "ArrayType::get(";
-      for (size_t i = 0; i < useStruct ? vectorValued.size() : 1; i++) {
+      for (size_t i = 0; i < (useStruct ? vectorValued.size() : 1); i++) {
         if (i != 0)
           os << ", ";
         if (!vectorValued[i])
