@@ -10,7 +10,7 @@ entry:
 
 define [2 x [2 x double]] @test_derivative(double %x) {
 entry:
-  %0 = tail call [2 x [2 x double]] (...) @__enzyme_fwddiff([2 x double] (double)* nonnull @tester, metadata !"enzyme_width", i64 2, double %x, double 1.0, double 2.0)
+  %0 = tail call [2 x [2 x double]] (...) @__enzyme_fwddiff([2 x double] (double)* nonnull @tester, metadata !"enzyme_width", i64 3, double %x, double 1.0, double 2.0, double 3.0)
   ret [2 x [2 x double]] %0
 }
 
