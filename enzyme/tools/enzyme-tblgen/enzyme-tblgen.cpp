@@ -56,7 +56,7 @@ bool hasDiffeRet(Init *resultTree) {
   if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
     auto opName = resultRoot->getOperator()->getAsString();
     auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-    if (opName == "DiffeRet" || Def->isSubClassOf("DiffeRet")) {
+    if (opName == "DiffeRetIndex" || Def->isSubClassOf("DiffeRetIndex")) {
       return true;
     }
     for (auto arg : resultRoot->getArgs()) {
@@ -268,7 +268,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
     if (Def->isSubClassOf("Inst")) {
       opName = Def->getValueAsString("name");
     }
-    if (opName == "DiffeRet" || Def->isSubClassOf("DiffeRet")) {
+    if (opName == "DiffeRetIndex" || Def->isSubClassOf("DiffeRetIndex")) {
 
       auto indicesP = dyn_cast<ListInit>(Def->getValueInit("indices"));
       if (!indicesP)
@@ -1947,7 +1947,7 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
       if (DefInit *def = dyn_cast<DefInit>(subArg)) {
         const auto Def = def->getDef();
         std::string typeToAdd = "";
-        if (Def->isSubClassOf("DiffeRet")) {
+        if (Def->isSubClassOf("DiffeRetIndex")) {
           typeToAdd = "byRef ? PointerType::getUnqual(call.getType()) : "
                       "call.getType()\n";
         } else if (Def->isSubClassOf("input")) {
@@ -2039,7 +2039,7 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
        << "    }\n\n";
   } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "noop") {
     // nothing to prepare
-  } else if (Def->isSubClassOf("DiffeRet")) {
+  } else if (Def->isSubClassOf("DiffeRetIndex")) {
     // nothing to prepare
   } else if (Def->isSubClassOf("Inst")) {
     // TODO:
@@ -2095,7 +2095,7 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
       }
     } else if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
       auto Def = DefArg->getDef();
-      if (Def->isSubClassOf("DiffeRet")) {
+      if (Def->isSubClassOf("DiffeRetIndex")) {
         os << "dif";
       } else if (Def->isSubClassOf("adj")) {
         auto name = Def->getValueAsString("name");
@@ -2227,14 +2227,14 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
       Init *arg = resultRoot->getArg(pos);
       if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
         auto Def = DefArg->getDef();
-        if (Def->isSubClassOf("DiffeRet")) {
+        if (Def->isSubClassOf("DiffeRetIndex")) {
           hasDiffeRetVal = true;
         }
       }
     }
     auto opName = resultRoot->getOperator()->getAsString();
     auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-    if (opName == "DiffeRet" || Def->isSubClassOf("DiffeRet")) {
+    if (opName == "DiffeRetIndex" || Def->isSubClassOf("DiffeRetIndex")) {
       hasDiffeRetVal = true;
     }
     for (auto arg : resultRoot->getArgs()) {
@@ -2351,7 +2351,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
     const auto valueTypes = ValueType_helper(pattern, actArg);
     const auto opName = ruleDag->getOperator()->getAsString();
     const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
-    if (Def->isSubClassOf("DiffeRet")) {
+    if (Def->isSubClassOf("DiffeRetIndex")) {
       os << "      if (active_" << name << ") {\n"
          << "        Value *toadd = dif;\n"
          << "        addToDiffe(arg_" << name << ", toadd, Builder2, type_"
