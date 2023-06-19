@@ -54,6 +54,7 @@ def InsertElement : Inst<"InsertElement">;
 def ShuffleVector : Inst<"ShuffleVector">;
 def VectorSplat : Inst<"VectorSplat">;
 def SIToFP : Inst<"SIToFP">;
+def BitCast : Inst<"BitCast">;
 def Or : Inst<"Or">;
 def And : Inst<"And">;
 def IAdd : Inst<"Add">;
@@ -175,6 +176,35 @@ class InactiveArg<bit asserting_=false> {
 class GlobalExpr<string val> {
   string value = val;
 }
+def MantissaMaskOfReturn : GlobalExpr<"({\n"
+"    auto ty = call.getType();\n"
+"    unsigned low = 0;\n"
+"    unsigned high = 0;\n"
+"    unsigned tsize = 0;\n"
+"    if (ty->isHalfTy()) {\n"
+"      tsize = 16;\n"
+"      high = tsize - 1;\n"
+"      low = high - 5;\n"
+"    } else if (ty->isFloatTy()) {\n"
+"      tsize = 32;\n"
+"      high = tsize - 1;\n"
+"      low = high - 8;\n"
+"    } else if (ty->isDoubleTy()) {\n"
+"      tsize = 64;\n"
+"      high = tsize - 1;\n"
+"      low = high - 11;\n"
+"    } else if (ty->isFP128Ty()) {\n"
+"      tsize = 128;\n"
+"      high = tsize - 1;\n"
+"      low = high - 15;\n"
+"    } else {\n"
+"      llvm_unreachable(\"Unknown type within frexp\");\n"
+"    }\n"
+"    APInt eval = APInt::getBitsSet(tsize, low, high);\n"
+"    auto ity = IntegerType::get(ty->getContext(), tsize);\n"
+"    ConstantInt::get(ity, eval);\n"
+"  })">;
+
 class ConstantFP<string val> {
   string value = val;
 }
@@ -592,6 +622,34 @@ def : CallPattern<(Op $x, $n),
                   [
                     (Call<(SameFunc)> (DiffeRet<>), $n),
                     (InactiveArg<>)
+                  ],
+                  (ForwardFromSummedReverse<>),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $num, $exp),
+                  ["ldexp", "ldexpf", "ldexpl"],
+                  [
+                    (Call<(SameFunc)> (DiffeRet<>), $exp),
+                    (InactiveArg<>)
+                  ],
+                  (ForwardFromSummedReverse<>),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["frexp", "frexpf", "frexpl"],
+                  [
+                    (FDiv
+                      (DiffeRet<>),
+                      (FMul
+                        (BitCast
+                          (And (MantissaMaskOfReturn):$mask, (BitCast $x, (TypeOf<> $mask)) ),
+                          (TypeOf<> $x)
+                        ),
+                        (ConstantFP<"2"> $x)
+                      )
+                    )
                   ],
                   (ForwardFromSummedReverse<>),
                   [ReadNone, NoUnwind]
