@@ -7771,7 +7771,8 @@ public:
         argValueTypes[recvbufIdx] = ValueType::Shadow;
 
         if (forwardMode) {
-
+          // Overview: forward mode
+          // 1. MPI_Alltoall/MPI_Alltoallv of diff(sendbuf) to diff(recvbuf)
           SmallVector<Value *, 9> args;
 
           args.push_back(shadow_sendbuf);
@@ -7805,7 +7806,12 @@ public:
 
           return;
         }
-
+        // Overview: reverse mode
+        // 1. malloc a intermediate buffer, dsendbuf_tmp
+        // 2. MPI_Alltoall/MPI_Alltoallv of diff(recvbuf) to dsendbuf_tmp
+        // 3. diff(sendbuf)[i] += dsendbuf_tmp[i]
+        // 4. free temporary buffer, dsendbuf_tmp
+        // 5. Zero diff(recvbuf) i.e. memset to 0
         auto computeBufferByteCount = [this](StringRef funcName, CallInst &call,
                                              Value *counts, Value *datatypes,
                                              Value *comm, IRBuilder<> &B) {
@@ -7941,7 +7947,7 @@ public:
         DifferentiableMemCopyFloats(call, primal_sendbuf, buf, shadow_sendbuf,
                                     sendbufByteCount, Builder2, BufferDefs);
 
-        // Free up intermediate buffer
+        // 5. Free up intermediate buffer
         if (shouldFree()) {
           CreateDealloc(Builder2, buf);
         }
