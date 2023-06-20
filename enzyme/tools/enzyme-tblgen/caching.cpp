@@ -340,7 +340,7 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
 
 
   os
-<< "  IRBuilder<> Builder2(call.getParent());\n"
+<< "  IRBuilder<> Builder2(&call);\n"
 << "  switch (Mode) {\n"
 << "    case DerivativeMode::ReverseModeCombined:\n"
 << "    case DerivativeMode::ReverseModeGradient:\n"

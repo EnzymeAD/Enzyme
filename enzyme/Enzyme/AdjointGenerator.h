@@ -337,7 +337,7 @@ public:
     switch (Mode) {
     case DerivativeMode::ReverseModeCombined:
     case DerivativeMode::ReverseModeGradient: {
-      IRBuilder<> Builder2(inst.getParent());
+      IRBuilder<> Builder2(&inst);
       getReverseBuilder(Builder2);
 
       auto rule = [&](Value *idiff) { return Builder2.CreateFreeze(idiff); };
@@ -395,7 +395,7 @@ public:
         switch (Mode) {
         case DerivativeMode::ReverseModeCombined:
         case DerivativeMode::ReverseModeGradient: {
-          IRBuilder<> Builder2(inst.getParent());
+          IRBuilder<> Builder2(&inst);
           getReverseBuilder(Builder2);
 
           auto rule = [&](Value *idiff) { return Builder2.CreateFNeg(idiff); };
@@ -776,7 +776,7 @@ public:
       case DerivativeMode::ReverseModeGradient:
       case DerivativeMode::ReverseModeCombined: {
 
-        IRBuilder<> Builder2(parent);
+        IRBuilder<> Builder2(&I);
         getReverseBuilder(Builder2);
 
         Value *prediff = nullptr;
@@ -1224,7 +1224,7 @@ public:
         break;
       case DerivativeMode::ReverseModeGradient:
       case DerivativeMode::ReverseModeCombined: {
-        IRBuilder<> Builder2(I.getParent());
+        IRBuilder<> Builder2(&I);
         getReverseBuilder(Builder2);
 
         if (constantval) {
@@ -1454,7 +1454,7 @@ public:
       Value *orig_op0 = I.getOperand(0);
       Value *op0 = gutils->getNewFromOriginal(orig_op0);
 
-      IRBuilder<> Builder2(I.getParent());
+      IRBuilder<> Builder2(&I);
       getReverseBuilder(Builder2);
 
       if (!gutils->isConstantValue(orig_op0)) {
@@ -1552,7 +1552,7 @@ public:
     Value *op2 = gutils->getNewFromOriginal(orig_op2);
 
     // TODO fix all the reverse builders
-    IRBuilder<> Builder2(SI.getParent());
+    IRBuilder<> Builder2(&SI);
     getReverseBuilder(Builder2);
 
     Value *dif1 = nullptr;
@@ -1667,7 +1667,7 @@ public:
     case DerivativeMode::ReverseModeCombined: {
       if (gutils->isConstantInstruction(&EEI))
         return;
-      IRBuilder<> Builder2(EEI.getParent());
+      IRBuilder<> Builder2(&EEI);
       getReverseBuilder(Builder2);
 
       Value *orig_vec = EEI.getVectorOperand();
@@ -1712,7 +1712,7 @@ public:
     case DerivativeMode::ReverseModeCombined: {
       if (gutils->isConstantInstruction(&IEI))
         return;
-      IRBuilder<> Builder2(IEI.getParent());
+      IRBuilder<> Builder2(&IEI);
       getReverseBuilder(Builder2);
 
       Value *dif1 = diffe(&IEI, Builder2);
@@ -1777,7 +1777,7 @@ public:
     case DerivativeMode::ReverseModeCombined: {
       if (gutils->isConstantInstruction(&SVI))
         return;
-      IRBuilder<> Builder2(SVI.getParent());
+      IRBuilder<> Builder2(&SVI);
       getReverseBuilder(Builder2);
 
       auto loaded = diffe(&SVI, Builder2);
@@ -1842,7 +1842,7 @@ public:
         return;
       if (EVI.getType()->isPointerTy())
         return;
-      IRBuilder<> Builder2(EVI.getParent());
+      IRBuilder<> Builder2(&EVI);
       getReverseBuilder(Builder2);
 
       Value *orig_op0 = EVI.getOperand(0);
@@ -1958,7 +1958,7 @@ public:
       return;
     case DerivativeMode::ReverseModeCombined:
     case DerivativeMode::ReverseModeGradient: {
-      IRBuilder<> Builder2(IVI.getParent());
+      IRBuilder<> Builder2(&IVI);
       getReverseBuilder(Builder2);
 
       Value *orig_inserted = IVI.getInsertedValueOperand();
@@ -2140,7 +2140,7 @@ public:
   void createBinaryOperatorAdjoint(llvm::BinaryOperator &BO) {
     using namespace llvm;
 
-    IRBuilder<> Builder2(BO.getParent());
+    IRBuilder<> Builder2(&BO);
     getReverseBuilder(Builder2);
 
     Value *orig_op0 = BO.getOperand(0);
@@ -3687,7 +3687,7 @@ public:
       break;
     case DerivativeMode::ReverseModeGradient:
     case DerivativeMode::ReverseModeCombined: {
-      IRBuilder<> Builder2(FI.getParent());
+      IRBuilder<> Builder2(&FI);
       getReverseBuilder(Builder2);
       auto order = FI.getOrdering();
       switch (order) {
@@ -3852,7 +3852,7 @@ public:
     case DerivativeMode::ReverseModeCombined:
     case DerivativeMode::ReverseModeGradient: {
 
-      IRBuilder<> Builder2(I.getParent());
+      IRBuilder<> Builder2(&I);
       getReverseBuilder(Builder2);
 
       Value *vdiff = nullptr;
@@ -4129,7 +4129,7 @@ public:
       pre_args.push_back(argi);
 
       if (Mode != DerivativeMode::ReverseModePrimal) {
-        IRBuilder<> Builder2(call.getParent());
+        IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
         args.push_back(lookup(argi, Builder2));
       }
@@ -4145,7 +4145,7 @@ public:
 
       if (argTy == DIFFE_TYPE::DUP_ARG || argTy == DIFFE_TYPE::DUP_NONEED) {
         if (Mode != DerivativeMode::ReverseModePrimal) {
-          IRBuilder<> Builder2(call.getParent());
+          IRBuilder<> Builder2(&call);
           getReverseBuilder(Builder2);
           args.push_back(
               lookup(gutils->invertPointerM(call.getArgOperand(i), Builder2),
@@ -4388,7 +4388,7 @@ public:
 
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined) {
-      IRBuilder<> Builder2(call.getParent());
+      IRBuilder<> Builder2(&call);
       getReverseBuilder(Builder2);
 
       if (Mode == DerivativeMode::ReverseModeGradient) {
@@ -4898,7 +4898,7 @@ public:
         }
         if (Mode == DerivativeMode::ReverseModeGradient ||
             Mode == DerivativeMode::ReverseModeCombined) {
-          IRBuilder<> Builder2(call.getParent());
+          IRBuilder<> Builder2(&call);
           getReverseBuilder(Builder2);
 
           Type *statusType = nullptr;
@@ -5146,7 +5146,7 @@ public:
       }
       if (Mode == DerivativeMode::ReverseModeGradient ||
           Mode == DerivativeMode::ReverseModeCombined) {
-        IRBuilder<> Builder2(call.getParent());
+        IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
 
         assert(!gutils->isConstantValue(call.getOperand(0)));
@@ -5290,7 +5290,7 @@ public:
       }
       if (Mode == DerivativeMode::ReverseModeGradient ||
           Mode == DerivativeMode::ReverseModeCombined) {
-        IRBuilder<> Builder2(call.getParent());
+        IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
 
         assert(!gutils->isConstantValue(call.getOperand(1)));
@@ -6984,7 +6984,7 @@ public:
     if (funcName == "MPI_Barrier") {
       if (Mode == DerivativeMode::ReverseModeGradient ||
           Mode == DerivativeMode::ReverseModeCombined) {
-        IRBuilder<> Builder2(call.getParent());
+        IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
 #if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
@@ -7014,7 +7014,7 @@ public:
     if (commFound != MPIInactiveCommAllocators.end()) {
       if (Mode == DerivativeMode::ReverseModeGradient ||
           Mode == DerivativeMode::ReverseModeCombined) {
-        IRBuilder<> Builder2(call.getParent());
+        IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
 
         Value *args[] = {lookup(call.getOperand(commFound->second), Builder2)};
@@ -7447,7 +7447,7 @@ public:
       pre_args.push_back(prearg);
 
       if (Mode != DerivativeMode::ReverseModePrimal) {
-        IRBuilder<> Builder2(call.getParent());
+        IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
 
         if (call.isByValArgument(i)) {
@@ -7516,7 +7516,7 @@ public:
           }
         }
         if (Mode != DerivativeMode::ReverseModePrimal) {
-          IRBuilder<> Builder2(call.getParent());
+          IRBuilder<> Builder2(&call);
           getReverseBuilder(Builder2);
 
           Value *darg = nullptr;
@@ -8015,7 +8015,7 @@ public:
       return;
     }
 
-    IRBuilder<> Builder2(call.getParent());
+    IRBuilder<> Builder2(&call);
     getReverseBuilder(Builder2);
 
     Value *newcalled = nullptr;
@@ -8388,7 +8388,7 @@ public:
         Mode == DerivativeMode::ReverseModeGradient) {
       auto found = customCallHandlers.find(funcName);
       if (found != customCallHandlers.end()) {
-        IRBuilder<> Builder2(call.getParent());
+        IRBuilder<> Builder2(&call);
         if (Mode == DerivativeMode::ReverseModeGradient ||
             Mode == DerivativeMode::ReverseModeCombined)
           getReverseBuilder(Builder2);
@@ -8537,7 +8537,7 @@ public:
           funcName == "__kmpc_for_static_init_4u" ||
           funcName == "__kmpc_for_static_init_8" ||
           funcName == "__kmpc_for_static_init_8u") {
-        IRBuilder<> Builder2(call.getParent());
+        IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
         auto fini = called->getParent()->getFunction("__kmpc_for_static_fini");
         assert(fini);
@@ -8599,7 +8599,7 @@ public:
           funcName == "__kmpc_for_static_init_8" ||
           funcName == "__kmpc_for_static_init_8u") {
         if (Mode != DerivativeMode::ReverseModePrimal) {
-          IRBuilder<> Builder2(call.getParent());
+          IRBuilder<> Builder2(&call);
           getReverseBuilder(Builder2);
           auto fini =
               called->getParent()->getFunction("__kmpc_for_static_fini");
@@ -8626,7 +8626,7 @@ public:
       if (funcName == "__kmpc_barrier") {
         if (Mode == DerivativeMode::ReverseModeGradient ||
             Mode == DerivativeMode::ReverseModeCombined) {
-          IRBuilder<> Builder2(call.getParent());
+          IRBuilder<> Builder2(&call);
           getReverseBuilder(Builder2);
 #if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
@@ -8642,7 +8642,7 @@ public:
       }
       if (funcName == "__kmpc_critical") {
         if (Mode != DerivativeMode::ReverseModePrimal) {
-          IRBuilder<> Builder2(call.getParent());
+          IRBuilder<> Builder2(&call);
           getReverseBuilder(Builder2);
           auto crit2 = called->getParent()->getFunction("__kmpc_end_critical");
           assert(crit2);
@@ -8661,7 +8661,7 @@ public:
       }
       if (funcName == "__kmpc_end_critical") {
         if (Mode != DerivativeMode::ReverseModePrimal) {
-          IRBuilder<> Builder2(call.getParent());
+          IRBuilder<> Builder2(&call);
           getReverseBuilder(Builder2);
           auto crit2 = called->getParent()->getFunction("__kmpc_critical");
           assert(crit2);
@@ -9338,7 +9338,7 @@ public:
                (Mode == DerivativeMode::ReverseModeGradient && shouldFree()) ||
                (Mode == DerivativeMode::ForwardModeSplit && shouldFree())) &&
               !isAlloca) {
-            IRBuilder<> Builder2(call.getParent());
+            IRBuilder<> Builder2(&call);
             getReverseBuilder(Builder2);
             assert(anti);
             Value *tofree = lookup(anti, Builder2);
@@ -9556,7 +9556,7 @@ public:
             if (Mode == DerivativeMode::ReverseModeGradient ||
                 Mode == DerivativeMode::ReverseModeCombined ||
                 Mode == DerivativeMode::ForwardModeSplit) {
-              IRBuilder<> Builder2(call.getParent());
+              IRBuilder<> Builder2(&call);
               getReverseBuilder(Builder2);
               auto dbgLoc = gutils->getNewFromOriginal(call.getDebugLoc());
               freeKnownAllocation(Builder2, lookup(newCall, Builder2), funcName,
@@ -9653,7 +9653,7 @@ public:
             ((Mode == DerivativeMode::ReverseModeGradient && shouldFree()) ||
              Mode == DerivativeMode::ReverseModeCombined ||
              (Mode == DerivativeMode::ForwardModeSplit && shouldFree()))) {
-          IRBuilder<> Builder2(call.getParent());
+          IRBuilder<> Builder2(&call);
           getReverseBuilder(Builder2);
           auto dbgLoc = gutils->getNewFromOriginal(call.getDebugLoc());
           freeKnownAllocation(Builder2, lookup(nop, Builder2), funcName, dbgLoc,
@@ -9858,7 +9858,7 @@ public:
       }
       if (Mode == DerivativeMode::ReverseModeGradient ||
           Mode == DerivativeMode::ReverseModeCombined) {
-        IRBuilder<> Builder2(call.getParent());
+        IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
         val = gutils->lookupM(val, Builder2);
         auto FreeFunc = gutils->newFunc->getParent()->getOrInsertFunction(
@@ -9879,7 +9879,7 @@ public:
     if (funcName == "cuStreamSynchronize") {
       if (Mode == DerivativeMode::ReverseModeGradient ||
           Mode == DerivativeMode::ReverseModeCombined) {
-        IRBuilder<> Builder2(call.getParent());
+        IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
         Value *nargs[] = {gutils->lookupM(
             gutils->getNewFromOriginal(call.getOperand(0)), Builder2)};
@@ -10034,7 +10034,7 @@ public:
         if (Mode == DerivativeMode::ReverseModeCombined ||
             Mode == DerivativeMode::ReverseModeGradient) {
           if (shouldFree()) {
-            IRBuilder<> Builder2(call.getParent());
+            IRBuilder<> Builder2(&call);
             getReverseBuilder(Builder2);
             Value *tofree = gutils->lookupM(val, Builder2, ValueToValueMapTy(),
                                             /*tryLegalRecompute*/ false);
