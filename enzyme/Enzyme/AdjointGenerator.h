@@ -4868,7 +4868,7 @@ public:
                 op = cast<GlobalVariable>(
                     M->getOrInsertGlobal(name, GV->getValueType()));
                 cast<GlobalVariable>(op)->setAttributes(GV->getAttributes());
-#if LLVM_VERSION_MAJOR >= 10
+#if LLVM_VERSION_MAJOR >= 11
                 cast<GlobalVariable>(op)->setAlignment(GV->getAlign());
 #else
                 cast<GlobalVariable>(op)->setAlignment(GV->getAlignment());
@@ -6415,7 +6415,7 @@ public:
                       cast<GlobalVariable>(MPI_FP_INT)
                           ->setAttributes(GV->getAttributes());
                       cast<GlobalVariable>(MPI_FP_INT)
-#if LLVM_VERSION_MAJOR >= 10
+#if LLVM_VERSION_MAJOR >= 11
                           ->setAlignment(GV->getAlign());
 #else
                           ->setAlignment(GV->getAlignment());
