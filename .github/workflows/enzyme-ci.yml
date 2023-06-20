@@ -115,4 +115,4 @@ jobs:
       working-directory: build
       run: |
           cmake ../enzyme -GXcode -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
-          cmake . --build --parallel 3
+          cmake --build . --parallel 3

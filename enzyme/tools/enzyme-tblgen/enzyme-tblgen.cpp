@@ -63,17 +63,12 @@ bool hasDiffeRet(Init *resultTree) {
       if (hasDiffeRet(arg))
         return true;
     }
-    for (auto zp :
-         llvm::zip(resultRoot->getArgs(), resultRoot->getArgNames())) {
-      if (hasDiffeRet(std::get<0>(zp)))
-        return true;
-    }
   }
   return false;
 }
 
-void getFunction(const Twine &curIndent, raw_ostream &os, std::string callval,
-                 std::string FT, std::string cconv, Init *func,
+void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
+                 StringRef FT, StringRef cconv, Init *func,
                  StringRef origName) {
   if (DagInit *resultRoot = dyn_cast<DagInit>(func)) {
     auto opName = resultRoot->getOperator()->getAsString();
@@ -147,7 +142,7 @@ void getIntrinsic(raw_ostream &os, StringRef intrName, ListInit *typeInit,
   os << "}))";
 }
 
-llvm::raw_ostream &operator<<(raw_ostream &os, StringMap<std::string> &C) {
+raw_ostream &operator<<(raw_ostream &os, StringMap<std::string> &C) {
   os << "{";
   bool first = true;
   for (auto &pair : C) {
@@ -196,7 +191,8 @@ struct VariableSetting {
     assert(iv != isVector.end());
     return std::make_pair(ord->getValue(), iv->getValue());
   }
-  void insert(StringRef name, std::string value, bool vec) {
+
+  void insert(StringRef name, StringRef value, bool vec) {
     nameToOrdinal[name] = value;
     isVector[name] = vec;
   }
@@ -206,24 +202,25 @@ struct VariableSetting {
 bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
             Record *pattern, Init *resultTree, StringRef builder,
             VariableSetting &nameToOrdinal, bool lookup,
-            ArrayRef<unsigned> &retidx, StringRef origName,
+            ArrayRef<unsigned> retidx, StringRef origName,
             bool newFromOriginal);
 
 SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
                                  const Twine &argName, Record *pattern,
                                  DagInit *resultRoot, StringRef builder,
                                  VariableSetting &nameToOrdinal, bool lookup,
-                                 ArrayRef<unsigned> &retidx,
-                                 StringRef origName, bool newFromOriginal) {
+                                 ArrayRef<unsigned> retidx, StringRef origName,
+                                 bool newFromOriginal) {
   SmallVector<bool, 1> vectorValued;
 
   size_t idx = 0;
-  for (auto zp : llvm::zip(resultRoot->getArgs(), resultRoot->getArgNames())) {
+  for (auto &&[args, names] :
+       zip(resultRoot->getArgs(), resultRoot->getArgNames())) {
     os << curIndent << "auto " << argName << "_" << idx << " = ";
     idx++;
-    if (isa<UnsetInit>(std::get<0>(zp)) && std::get<1>(zp)) {
-      auto [ord, vecValue] = nameToOrdinal.lookup(std::get<1>(zp)->getValue(),
-                                                  pattern, resultRoot);
+    if (isa<UnsetInit>(args) && names) {
+      auto [ord, vecValue] =
+          nameToOrdinal.lookup(names->getValue(), pattern, resultRoot);
       if (!vecValue && !StringRef(ord).startswith("local")) {
         if (lookup)
           os << "lookup(";
@@ -241,13 +238,12 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
       vectorValued.push_back(vecValue);
       continue;
     }
-    vectorValued.push_back(
-        handle(curIndent, argName + "_" + std::to_string(idx), os, pattern,
-               std::get<0>(zp), builder, nameToOrdinal, lookup, retidx,
-               origName, newFromOriginal));
+    vectorValued.push_back(handle(curIndent, argName + "_" + Twine(idx), os,
+                                  pattern, args, builder, nameToOrdinal, lookup,
+                                  retidx, origName, newFromOriginal));
     os << ";\n";
-    if (std::get<1>(zp)) {
-      auto name = std::get<1>(zp)->getAsUnquotedString();
+    if (names) {
+      auto name = names->getAsUnquotedString();
       nameToOrdinal.insert(name, "local_" + name, vectorValued.back());
       os << curIndent << "local_" << name << " = " << argName << "_"
          << (idx - 1) << ";\n";
@@ -260,7 +256,7 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
 bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
             Record *pattern, Init *resultTree, StringRef builder,
             VariableSetting &nameToOrdinal, bool lookup,
-            ArrayRef<unsigned> &retidx, StringRef origName,
+            ArrayRef<unsigned> retidx, StringRef origName,
             bool newFromOriginal) {
   if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
     auto opName = resultRoot->getOperator()->getAsString();
@@ -275,9 +271,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         PrintFatalError(pattern->getLoc(),
                         Twine("list 'indices' not defined in ") +
                             resultTree->getAsString());
-      std::vector<unsigned> retidx_cur;
-      if (indicesP->getValues().size() == 1 && cast<IntInit>(indicesP->getValues()[0])->getValue() == -1) {
-        retidx_cur = retidx;
+      SmallVector<unsigned, 2> retidx_cur;
+      if (indicesP->getValues().size() == 1 &&
+          cast<IntInit>(indicesP->getValues()[0])->getValue() == -1) {
+        retidx_cur = SmallVector<unsigned, 2>(retidx.begin(), retidx.end());
       } else {
         for (auto res : indicesP->getValues()) {
           auto val = cast<IntInit>(res)->getValue();
@@ -316,7 +313,6 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         for (auto ind : retidx_cur) {
           os << ", ";
           os << ind;
-          first = false;
         }
         os << "}));\n";
         os << curIndent << INDENT << INDENT
@@ -368,7 +364,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << "->getNumElements()";
 #endif
       return false;
-    } else if (opName == "SelectIfActive" || Def->isSubClassOf("SelectIfActive")) {
+    } else if (opName == "SelectIfActive" ||
+               Def->isSubClassOf("SelectIfActive")) {
       if (resultRoot->getNumArgs() != 3)
         PrintFatalError(pattern->getLoc(),
                         "only three op SelectIfActive supported");
@@ -384,36 +381,46 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultRoot);
         assert(!isVec);
         os << ord;
-      } else assert("Requires name for arg");
+      } else
+        assert("Requires name for arg");
 
-      os << ")) {\n"; 
+      os << ")) {\n";
 
-      for (size_t i=1; i<3; i++) {
+      for (size_t i = 1; i < 3; i++) {
         os << curIndent << INDENT << INDENT << "imVal = ";
         bool vector;
-        if (isa<UnsetInit>(resultRoot->getArg(i)) && resultRoot->getArgName(i)) {
+        if (isa<UnsetInit>(resultRoot->getArg(i)) &&
+            resultRoot->getArgName(i)) {
           auto name = resultRoot->getArgName(i)->getAsUnquotedString();
           auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultRoot);
           vector = isVec;
           os << ord;
         } else
-          vector = handle(curIndent + INDENT + INDENT, argPattern + "_sia_" + std::to_string(i), os, pattern,
-                 resultRoot->getArg(i), builder, nameToOrdinal, lookup, retidx,
-                 origName, newFromOriginal);
+          vector = handle(curIndent + INDENT + INDENT,
+                          argPattern + "_sia_" + Twine(i), os, pattern,
+                          resultRoot->getArg(i), builder, nameToOrdinal, lookup,
+                          retidx, origName, newFromOriginal);
         os << ";\n";
 
         if (!vector) {
-          os << curIndent << INDENT << INDENT << "llvm::Value* vec_imVal = gutils->getWidth() == 1 ? imVal : UndefValue::get(gutils->getShadowType(imVal"
+          os << curIndent << INDENT << INDENT
+             << "llvm::Value* vec_imVal = gutils->getWidth() == 1 ? imVal : "
+                "UndefValue::get(gutils->getShadowType(imVal"
              << "->getType()));\n";
-          os << curIndent << INDENT << INDENT << "if (gutils->getWidth() != 1)\n";
-          os << curIndent << INDENT << INDENT << INDENT << "for (size_t i=0; i<gutils->getWidth(); i++)\n";
-          os << curIndent << INDENT << INDENT << INDENT << INDENT << "vec_imVal = " << builder << ".CreateInsertValue(vec_imVal, imVal, std::vector<unsigned>({(unsigned)i}));\n";
+          os << curIndent << INDENT << INDENT
+             << "if (gutils->getWidth() != 1)\n";
+          os << curIndent << INDENT << INDENT << INDENT
+             << "for (size_t i=0; i<gutils->getWidth(); i++)\n";
+          os << curIndent << INDENT << INDENT << INDENT << INDENT
+             << "vec_imVal = " << builder
+             << ".CreateInsertValue(vec_imVal, imVal, "
+                "std::vector<unsigned>({(unsigned)i}));\n";
           os << curIndent << INDENT << INDENT << "imVal = vec_imVal;\n";
         }
         if (i == 1)
-        os << curIndent << INDENT << "} else {\n";
+          os << curIndent << INDENT << "} else {\n";
         else
-        os <<curIndent << INDENT << "}\n";
+          os << curIndent << INDENT << "}\n";
       }
 
       os << curIndent << INDENT << "imVal;\n";
@@ -443,8 +450,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       return false;
     } else if (opName == "Zero" || Def->isSubClassOf("Zero")) {
       if (resultRoot->getNumArgs() != 1)
-        PrintFatalError(pattern->getLoc(),
-                        "only single op Zero supported");
+        PrintFatalError(pattern->getLoc(), "only single op Zero supported");
       os << "Constant::getNullValue(";
       if (resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
@@ -592,7 +598,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
     } else if (Def->isSubClassOf("MultiReturn")) {
       os << "({\n";
 
-      bool useStruct =  Def->getValueAsBit("struct");
+      bool useStruct = Def->getValueAsBit("struct");
 
       SmallVector<bool, 1> vectorValued = prepareArgs(
           curIndent + INDENT, os, argPattern, pattern, resultRoot, builder,
@@ -609,10 +615,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << "gutils->getShadowType(";
 
       if (useStruct)
-      os << "StructType::get(gutils->newFunc->getContext(), "
-            "std::vector<llvm::Type*>({";
+        os << "StructType::get(gutils->newFunc->getContext(), "
+              "std::vector<llvm::Type*>({";
       else
-      os << "ArrayType::get(";
+        os << "ArrayType::get(";
       for (size_t i = 0; i < (useStruct ? vectorValued.size() : 1); i++) {
         if (i != 0)
           os << ", ";
@@ -688,22 +694,24 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       if (npattern->getNumArgs() != resultRoot->getNumArgs()) {
         PrintFatalError(pattern->getLoc(),
-                        Twine("Attempting to call subroutine '") + opName + " with " + std::to_string(resultRoot->getNumArgs()) + " args when expected " + std::to_string(npattern->getNumArgs()) + " " +
+                        Twine("Attempting to call subroutine '") + opName +
+                            " with " + Twine(resultRoot->getNumArgs()) +
+                            " args when expected " +
+                            Twine(npattern->getNumArgs()) + " " +
                             resultTree->getAsString());
-
       }
 
-      std::function<void(DagInit *, std::vector<unsigned>)> insert =
-          [&](DagInit *ptree, std::vector<unsigned> prev) {
+      std::function<void(DagInit *, ArrayRef<unsigned>)> insert =
+          [&](DagInit *ptree, ArrayRef<unsigned> prev) {
             unsigned i = 0;
             for (auto tree : ptree->getArgs()) {
-              std::vector<unsigned> next = prev;
+              SmallVector<unsigned, 2> next(prev.begin(), prev.end());
               next.push_back(i);
               if (auto dg = dyn_cast<DagInit>(tree))
                 insert(dg, next);
 
               if (ptree->getArgNameStr(i).size()) {
-                auto op = (argPattern + "_" + std::to_string(next[0])).str();
+                auto op = (argPattern + "_" + Twine(next[0])).str();
                 if (prev.size() > 0) {
                   os << curIndent << INDENT << "Value* local_"
                      << ptree->getArgNameStr(i) << " = ";
@@ -750,7 +758,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                       os << ", " << next[i];
                     }
                     os << "}), \"" << ptree->getArgNameStr(i)
-                       << ".\"+std::to_string(i)), "
+                       << ".\"+Twine(i)), "
                           "ArrayRef<unsigned>({(unsigned)i}));\n";
                   }
                   op = ("local_" + ptree->getArgNameStr(i)).str();
@@ -925,9 +933,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << curIndent << "})";
       return anyVector;
     }
-    llvm::errs() << *resultRoot << "\n";
+    errs() << *resultRoot << "\n";
   }
-  llvm::errs() << *resultTree << "\n";
+  errs() << *resultTree << "\n";
   PrintFatalError(pattern->getLoc(), Twine("unknown operation"));
 }
 
@@ -946,12 +954,14 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
 
     if (tree->getNumArgs() != argOps->size()) {
-        PrintFatalError(pattern->getLoc(),
-                        Twine("Defined rule pattern to have ") + std::to_string(tree->getNumArgs()) + " args but reverse rule array is a list of size "
-                        + std::to_string(argOps->size()));
+      PrintFatalError(pattern->getLoc(),
+                      Twine("Defined rule pattern to have ") +
+                          Twine(tree->getNumArgs()) +
+                          " args but reverse rule array is a list of size " +
+                          Twine(argOps->size()));
     }
 
-    StringRef origName;
+    std::string origName;
     if (!intrinsic) {
       os << "  if ((";
       bool prev = false;
@@ -966,7 +976,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 #if LLVM_VERSION_MAJOR >= 14
       os << ") && call.arg_size() == " << tree->getNumArgs() << " ){\n";
 #else
-      os << ") && call.getNumArgOperands() == " << tree->getNumArgs() << " ){\n";
+      os << ") && call.getNumArgOperands() == " << tree->getNumArgs()
+         << " ){\n";
 #endif
     } else {
       bool anyVersion = false;
@@ -977,11 +988,15 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         StringRef name = cast<StringInit>(lst->getValues()[0])->getValue();
         if (lst->size() >= 2) {
           auto min = cast<StringInit>(lst->getValues()[1])->getValue();
-          if (min.size() != 0 && LLVM_VERSION_MAJOR < atoi(min.str().c_str()))
+          int min_int;
+          min.getAsInteger(10, min_int);
+          if (min.size() != 0 && LLVM_VERSION_MAJOR < min_int)
             continue;
           if (lst->size() >= 3) {
             auto max = cast<StringInit>(lst->getValues()[2])->getValue();
-            if (max.size() != 0 && LLVM_VERSION_MAJOR > atoi(max.str().c_str()))
+            int max_int;
+            max.getAsInteger(10, max_int);
+            if (max.size() != 0 && LLVM_VERSION_MAJOR > max_int)
               continue;
           }
         }
@@ -1003,19 +1018,18 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     VariableSetting nameToOrdinal;
 
-    std::function<void(DagInit *, std::vector<unsigned>)> insert =
-        [&](DagInit *ptree, std::vector<unsigned> prev) {
+    std::function<void(DagInit *, ArrayRef<unsigned>)> insert =
+        [&](DagInit *ptree, ArrayRef<unsigned> prev) {
           unsigned i = 0;
           for (auto tree : ptree->getArgs()) {
-            std::vector<unsigned> next = prev;
+            SmallVector<unsigned, 2> next(prev.begin(), prev.end());
             next.push_back(i);
             if (auto dg = dyn_cast<DagInit>(tree))
               insert(dg, next);
 
             if (ptree->getArgNameStr(i).size()) {
               auto op =
-                  (origName + ".getOperand(" + std::to_string(next[0]) + ")")
-                      .str();
+                  (origName + ".getOperand(" + Twine(next[0]) + ")").str();
               if (prev.size() > 0) {
                 op = "gutils->extractMeta(Builder2, " + op +
                      ", ArrayRef<unsigned>({";
@@ -1035,9 +1049,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     insert(tree, {});
 
-    if (tree->getNameStr().str().size())
-      nameToOrdinal.insert(tree->getNameStr().str(),
-                           ("(&" + origName + ")").str(), false);
+    if (tree->getNameStr().size())
+      nameToOrdinal.insert(tree->getNameStr(),
+                           (Twine("(&") + origName + ")").str(), false);
 
     os << "    if (gutils->knownRecomputeHeuristic.find(&" << origName
        << ") !=\n";
@@ -1065,24 +1079,28 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     os << "        getForwardBuilder(Builder2);\n";
     // TODO
 
-    if (duals->getOperator()->getAsString() == "ForwardFromSummedReverseInternal" ||
+    if (duals->getOperator()->getAsString() ==
+            "ForwardFromSummedReverseInternal" ||
         cast<DefInit>(duals->getOperator())
             ->getDef()
             ->isSubClassOf("ForwardFromSummedReverseInternal")) {
-      os << "        Value *res = Constant::getNullValue(gutils->getShadowType(" << origName << "."
-                      "getType()));\n";
+      os << "        Value *res = Constant::getNullValue(gutils->getShadowType("
+         << origName
+         << "."
+            "getType()));\n";
 
-      for (auto argOpEn : llvm::enumerate(*argOps)) {
+      for (auto argOpEn : enumerate(*argOps)) {
         size_t argIdx = argOpEn.index();
 
-        std::string curIndent = "        ";
+        const char *curIndent = "        ";
 
         if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
           auto opName = resultRoot->getOperator()->getAsString();
           auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
           if (Def->isSubClassOf("InactiveArgSpec")) {
             if (Def->getValueAsBit("asserting"))
-              os << " assert(gutils->isConstantValue(" << origName << ".getOperand(" << argIdx << ")));\n";
+              os << " assert(gutils->isConstantValue(" << origName
+                 << ".getOperand(" << argIdx << ")));\n";
             continue;
           }
         }
@@ -1091,17 +1109,19 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
            << ".getOperand(" << argIdx << "))) {\n";
         os << curIndent << INDENT << "Value *dif = diffe(" << origName
            << ".getOperand(" << argIdx << "), Builder2);\n";
-        os << curIndent << INDENT << "Value *arg_diff_tmp = UndefValue::get(res->getType());\n";
+        os << curIndent << INDENT
+           << "Value *arg_diff_tmp = UndefValue::get(res->getType());\n";
 
-        initializeNames(curIndent + INDENT, os, argOpEn.value(), "local");
-        std::function<void(std::vector<unsigned>, Init *)> fwdres =
-            [&](std::vector<unsigned> idx, Init *ival) {
+        initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(),
+                        "local");
+        std::function<void(ArrayRef<unsigned>, Init *)> fwdres =
+            [&](ArrayRef<unsigned> idx, Init *ival) {
               if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
                 auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
                 if (Def->isSubClassOf("MultiReturn")) {
                   unsigned i = 0;
                   for (auto r : resultTree->getArgs()) {
-                    std::vector<unsigned> next = idx;
+                    SmallVector<unsigned, 2> next(idx.begin(), idx.end());
                     next.push_back(i);
                     i++;
                     fwdres(next, r);
@@ -1112,17 +1132,19 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                 os << curIndent << INDENT << INDENT << "Value *itmp = ";
                 ArrayRef<unsigned> retidx{};
                 bool vectorValued = handle(
-                    curIndent + INDENT + INDENT, "fwdarg", os, pattern,
-                    resultTree, "Builder2", nameToOrdinal, /*lookup*/ false,retidx,
-                    origName, /*newFromOriginal*/ true);
+                    Twine(curIndent) + INDENT + INDENT, "fwdarg", os, pattern,
+                    resultTree, "Builder2", nameToOrdinal, /*lookup*/ false,
+                    retidx, origName, /*newFromOriginal*/ true);
                 os << ";\n";
                 assert(vectorValued);
-                os << curIndent << INDENT << INDENT << "arg_diff_tmp = GradientUtils::recursiveFAdd(Builder2,";
+                os << curIndent << INDENT << INDENT
+                   << "arg_diff_tmp = GradientUtils::recursiveFAdd(Builder2,";
                 os << "res, itmp, {";
-                      {
+                {
                   bool seen = false;
                   for (auto i : idx) {
-                    if (seen) os << ", ";
+                    if (seen)
+                      os << ", ";
                     os << i;
                     seen = true;
                   }
@@ -1133,7 +1155,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
               } else if (ListInit *lst = dyn_cast<ListInit>(ival)) {
                 unsigned i = 0;
                 for (auto r : *lst) {
-                  std::vector<unsigned> next = idx;
+                  SmallVector<unsigned, 2> next(idx.begin(), idx.end());
                   next.push_back(i);
                   i++;
                   fwdres(next, r);
@@ -1150,9 +1172,10 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
       os << "            Value *res = ";
       ArrayRef<unsigned> retidx{};
-      bool vectorValued = handle("            ", "fwdnsrarg", os, pattern, duals,
-                                 "Builder2", nameToOrdinal, /*lookup*/ false,
-                                 retidx, origName, /*newFromOriginal*/ true);
+      bool vectorValued =
+          handle("            ", "fwdnsrarg", os, pattern, duals, "Builder2",
+                 nameToOrdinal, /*lookup*/ false, retidx, origName,
+                 /*newFromOriginal*/ true);
       assert(vectorValued);
       os << ";\n";
     }
@@ -1169,14 +1192,16 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     os << "        Value *dif = nullptr;\n";
     bool seen = false;
-    for (auto argOpEn : llvm::enumerate(*argOps)) {
+    for (auto argOpEn : enumerate(*argOps)) {
       size_t argIdx = argOpEn.index();
       if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
         auto opName = resultRoot->getOperator()->getAsString();
         auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-        if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
+        if (opName == "InactiveArgSpec" ||
+            Def->isSubClassOf("InactiveArgSpec")) {
           if (Def->getValueAsBit("asserting"))
-            os << " assert(gutils->isConstantValue(" << origName << ".getOperand(" << argIdx << ")));\n";
+            os << " assert(gutils->isConstantValue(" << origName
+               << ".getOperand(" << argIdx << ")));\n";
           continue;
         }
       }
@@ -1215,13 +1240,13 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
               }
               return;
             }
-            std::string curIndent = "          ";
+            const char *curIndent = "          ";
             os << curIndent << "{\n";
             os << curIndent << INDENT << "Value *tmp = ";
             bool vectorValued =
-                handle(curIndent + INDENT, "revarg", os, pattern, resultTree,
-                       "Builder2", nameToOrdinal, /*lookup*/ true, idx,
-                       origName, /*newFromOriginal*/ true);
+                handle(Twine(curIndent) + INDENT, "revarg", os, pattern,
+                       resultTree, "Builder2", nameToOrdinal, /*lookup*/ true,
+                       idx, origName, /*newFromOriginal*/ true);
             os << ";\n";
 
             os << curIndent << INDENT
@@ -1265,20 +1290,21 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
             assert(0);
         };
 
-    for (auto argOpEn : llvm::enumerate(*argOps)) {
+    for (auto argOpEn : enumerate(*argOps)) {
       size_t argIdx = argOpEn.index();
       if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
         auto opName = resultRoot->getOperator()->getAsString();
         auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-        if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
+        if (opName == "InactiveArgSpec" ||
+            Def->isSubClassOf("InactiveArgSpec")) {
           continue;
         }
       }
 
-      StringRef curIndent = "        ";
+      const char *curIndent = "        ";
       os << curIndent << "if (!gutils->isConstantValue(" << origName
          << ".getOperand(" << argIdx << "))) {\n";
-      initializeNames(curIndent + INDENT, os, argOpEn.value(), "local");
+      initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(), "local");
       os << curIndent << INDENT << "Value *toadd = nullptr;\n";
       revres(argIdx, {}, argOpEn.value());
 
@@ -1306,9 +1332,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 }
 
 static void checkBlasCallsInDag(const RecordKeeper &RK,
-                                const std::vector<Record *> blasPatterns,
-                                const StringRef blasName,
-                                const DagInit *toSearch) {
+                                ArrayRef<Record *> blasPatterns,
+                                StringRef blasName, const DagInit *toSearch) {
 
   // For nested FAdd, ... rules which don't directly call a blass fnc
   for (size_t i = 0; i < toSearch->getNumArgs(); i++) {
@@ -1323,14 +1348,14 @@ static void checkBlasCallsInDag(const RecordKeeper &RK,
     auto opName = Def->getValueAsString("s");
     auto CalledBlas = RK.getDef(opName);
     if (!CalledBlas)
-      llvm::errs() << " opName: " << opName << "\n";
+      errs() << " opName: " << opName << "\n";
     assert(CalledBlas);
     auto expectedNumArgs =
         CalledBlas->getValueAsDag("PatternToMatch")->getNumArgs();
     if (expectedNumArgs != numArgs) {
-      llvm::errs() << "failed calling " << opName << " in the derivative of "
-                   << blasName << " incorrect number of params. Expected "
-                   << expectedNumArgs << " but got " << numArgs << "\n";
+      errs() << "failed calling " << opName << " in the derivative of "
+             << blasName << " incorrect number of params. Expected "
+             << expectedNumArgs << " but got " << numArgs << "\n";
       assert(expectedNumArgs == numArgs);
     }
   }
@@ -1340,8 +1365,8 @@ static void checkBlasCallsInDag(const RecordKeeper &RK,
 /// blas function will use the correct amount of args
 /// Later we might check for "types" too.
 static void checkBlasCalls(const RecordKeeper &RK,
-                           std::vector<Record *> blasPatterns) {
-  for (auto pattern : blasPatterns) {
+                           ArrayRef<Record *> blasPatterns) {
+  for (auto &&pattern : blasPatterns) {
     ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
     // for each possibly active parameter
     for (auto argOp : *argOps) {
@@ -1352,8 +1377,7 @@ static void checkBlasCalls(const RecordKeeper &RK,
 }
 
 // handleBLAS is called in the AdjointGenerator.h
-void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns,
-                     raw_ostream &os) {
+void emit_handleBLAS(ArrayRef<TGPattern> blasPatterns, raw_ostream &os) {
   os << "bool handleBLAS(llvm::CallInst &call, llvm::Function *called,"
         "BlasInfo blas,const std::vector<bool> &overwritten_args) {         \n"
      << "  using llvm::Type;                                                \n"
@@ -1368,7 +1392,7 @@ void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns,
      << "      assert(false && \"Unreachable\");                            \n"
      << "    }                                                              \n";
   bool first = true;
-  for (auto pattern : blasPatterns) {
+  for (auto &&pattern : blasPatterns) {
     bool hasNonInactive = false;
     for (Rule rule : pattern.getRules()) {
       const auto ruleDag = rule.getRuleDag();
@@ -1403,7 +1427,7 @@ void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns,
      << "}                                                                  \n";
 }
 
-void emit_beginning(TGPattern &pattern, raw_ostream &os) {
+void emit_beginning(const TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
   os << "\nbool handle_" << name
      << "(BlasInfo blas, llvm::CallInst &call, llvm::Function *called,\n"
@@ -1422,7 +1446,7 @@ void emit_beginning(TGPattern &pattern, raw_ostream &os) {
      << "  const bool cacheMode = (Mode != DerivativeMode::ForwardMode);\n";
 }
 
-void emit_free_and_ending(TGPattern &pattern, raw_ostream &os) {
+void emit_free_and_ending(const TGPattern &pattern, raw_ostream &os) {
   os << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
      << "      Mode == DerivativeMode::ReverseModeGradient ||\n"
      << "      Mode == DerivativeMode::ForwardModeSplit) {\n"
@@ -1432,7 +1456,7 @@ void emit_free_and_ending(TGPattern &pattern, raw_ostream &os) {
   auto typeMap = pattern.getArgTypeMap();
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
-    if (ty == argType::vincData || ty == argType::mldData) {
+    if (ty == ArgType::vincData || ty == ArgType::mldData) {
       auto name = nameVec[i];
       os << "      if (cache_" << name << ") {\n"
          << "        CreateDealloc(Builder2, free_" << name << ");\n"
@@ -1452,8 +1476,7 @@ void emit_free_and_ending(TGPattern &pattern, raw_ostream &os) {
      << "}\n\n";
 }
 
-void emit_helper(TGPattern &pattern, raw_ostream &os) {
-  std::vector<size_t> fp_pos{};
+void emit_helper(const TGPattern &pattern, raw_ostream &os) {
   auto nameVec = pattern.getArgNames();
   assert(nameVec.size() > 0);
   auto argTypeMap = pattern.getArgTypeMap();
@@ -1490,8 +1513,8 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
        << "  const auto type_" << name << " = arg_" << name << "->getType();\n"
        << "  const bool overwritten_" << name
        << " = (cacheMode ? overwritten_args[pos_" << name << "] : false);\n";
-    argType ty = argTypeMap.lookup(i);
-    if (ty == argType::trans) {
+    ArgType ty = argTypeMap.lookup(i);
+    if (ty == ArgType::trans) {
       //      os << "  assert(is_normal(BuilderZ, arg_" << name << "));\n";
     }
     if (std::count(actArgs.begin(), actArgs.end(), i)) {
@@ -1503,8 +1526,8 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
 
   bool anyActive = false;
   for (size_t i = 0; i < nameVec.size(); i++) {
-    argType ty = argTypeMap.lookup(i);
-    if (ty == argType::fp) {
+    ArgType ty = argTypeMap.lookup(i);
+    if (ty == ArgType::fp) {
       anyActive = true;
     }
   }
@@ -1512,18 +1535,18 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
   if (anyActive) {
     os << "  int num_active_fp = 0;\n";
     for (size_t i = 0; i < nameVec.size(); i++) {
-      argType ty = argTypeMap.lookup(i);
-      if (ty == argType::fp) {
+      ArgType ty = argTypeMap.lookup(i);
+      if (ty == ArgType::fp) {
         os << "  if (active_" << nameVec[i] << ")\n"
            << "    num_active_fp++;\n";
       }
     }
   }
 
-  for (auto name : llvm::enumerate(nameVec)) {
+  for (auto name : enumerate(nameVec)) {
     assert(argTypeMap.count(name.index()) == 1);
     auto ty = argTypeMap.lookup(name.index());
-    if (ty == argType::vincData || ty == argType::mldData) {
+    if (ty == ArgType::vincData || ty == ArgType::mldData) {
       os << "  const bool julia_decl = !type_" << name.value()
          << "->isPointerTy();\n";
       return;
@@ -1532,7 +1555,7 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
   PrintFatalError("Blas function without vector and matrix?");
 }
 
-void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
+void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
   // We only look at the type of the first integer showing up.
   // This allows to learn if we use Fortran abi (byRef) or cabi
   std::string name = "";
@@ -1542,7 +1565,7 @@ void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
   auto nameVec = pattern.getArgNames();
 
   for (auto val : inputTypes) {
-    if (val.second == argType::len) {
+    if (val.second == ArgType::len) {
       foundInt = true;
       name = nameVec[val.first];
       break;
@@ -1603,12 +1626,10 @@ void extract_mat_or_vec(StringRef name, raw_ostream &os) {
      << "      }\n";
 }
 
-void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
-  const auto actArgs = pattern.getActiveArgs();
+void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
   const auto typeMap = pattern.getArgTypeMap();
   const auto nameVec = pattern.getArgNames();
   const auto argUsers = pattern.getArgUsers();
-  const bool lv23 = pattern.isBLASLevel2or3();
 
   os << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
      << "      Mode == DerivativeMode::ReverseModeGradient ||\n"
@@ -1631,11 +1652,11 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
     auto name = nameVec[i];
     // this branch used "true_" << name everywhere instead of "arg_" << name
     // before. probably randomly, but check to make sure
-    if (ty == argType::len || ty == argType::vincInc || ty == argType::mldLD) {
+    if (ty == ArgType::len || ty == ArgType::vincInc || ty == ArgType::mldLD) {
       extract_scalar(name, "intType", os);
-    } else if (ty == argType::fp) {
+    } else if (ty == ArgType::fp) {
       extract_scalar(name, "fpType", os);
-    } else if (ty == argType::trans) {
+    } else if (ty == ArgType::trans) {
       // we are in the byRef branch and trans only exist in lv23.
       // So just unconditionally asume that no layout exist and use i-1
       extract_scalar(name, "charType", os);
@@ -1645,7 +1666,7 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
 
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
-    if (ty != argType::mldData)
+    if (ty != ArgType::mldData)
       continue;
     auto name = nameVec[i];
     extract_mat_or_vec(name, os);
@@ -1655,7 +1676,7 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
   // Therefore, we overwrite the related inc_X to be 1 and ld_X to be = m
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
-    if (ty != argType::vincData)
+    if (ty != ArgType::vincData)
       continue;
     auto name = nameVec[i];
     const auto vecPosition = i;
@@ -1680,7 +1701,7 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
      << "\n";
 
   for (size_t i = 0; i < nameVec.size(); i++) {
-    if (typeMap.lookup(i) != argType::vincData)
+    if (typeMap.lookup(i) != ArgType::vincData)
       continue;
     auto vecName = nameVec[i];
     os << "    if (type_" << vecName << "->isIntegerTy())\n"
@@ -1692,10 +1713,10 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
 }
 
 // Will be used by Julia
-llvm::SmallString<80> ValueType_helper(TGPattern &pattern, size_t actPos) {
+SmallString<80> ValueType_helper(const TGPattern &pattern, size_t actPos) {
   const auto nameVec = pattern.getArgNames();
   const auto typeMap = pattern.getArgTypeMap();
-  llvm::SmallString<80> valueTypes{};
+  SmallString<80> valueTypes{};
 
   // start with 1 since layout is only used for cblas (!byRef)
   for (size_t pos = 1; pos < nameVec.size();) {
@@ -1706,9 +1727,9 @@ llvm::SmallString<80> ValueType_helper(TGPattern &pattern, size_t actPos) {
       valueTypes.append(", ");
     }
 
-    if (ty == argType::len) {
+    if (ty == ArgType::len) {
       valueTypes.append("ValueType::Both");
-    } else if (ty == argType::fp) {
+    } else if (ty == ArgType::fp) {
       auto floatName = nameVec[pos];
       if (pos == actPos) {
         valueTypes.append("ValueType::Both");
@@ -1717,10 +1738,10 @@ llvm::SmallString<80> ValueType_helper(TGPattern &pattern, size_t actPos) {
                            " ? ValueType::Both : ValueType::Both")
                               .str());
       }
-    } else if (ty == argType::vincData) {
+    } else if (ty == ArgType::vincData) {
       const auto nextName = nameVec[pos + 1];
       const auto nextTy = typeMap.lookup(pos + 1);
-      assert(nextTy == argType::vincInc);
+      assert(nextTy == ArgType::vincInc);
       const auto vecName = nameVec[pos];
       if (pos == actPos) {
         valueTypes.append("ValueType::Both, ValueType::Both");
@@ -1745,8 +1766,8 @@ llvm::SmallString<80> ValueType_helper(TGPattern &pattern, size_t actPos) {
 // TODO: think about how to handle nested rules which aren't simple calling
 // another BLAS fnc.
 
-size_t fwd_call_args(TGPattern &pattern, size_t actArg,
-                     llvm::SmallString<40> &result) {
+size_t fwd_call_args(const TGPattern &pattern, size_t actArg,
+                     SmallString<40> &result) {
   const auto nameVec = pattern.getArgNames();
   const auto nameMap = pattern.getArgNameMap();
   const auto typeMap = pattern.getArgTypeMap();
@@ -1764,59 +1785,59 @@ size_t fwd_call_args(TGPattern &pattern, size_t actArg,
     // get the position of this argument in the primary blas call
     assert(typeMap.count(pos) == 1);
     // and based on that get the fp/int + scalar/vector type
-    const auto ty = typeMap.lookup(pos);
-    if (ty == argType::len) {
+    auto ty = typeMap.lookup(pos);
+    if (ty == ArgType::len) {
       result.append((Twine("arg_") + name).str());
-    } else if (ty == argType::fp) {
+    } else if (ty == ArgType::fp) {
       if (pos == actArg) {
         result.append((Twine("d_") + name).str());
       } else {
         result.append((Twine("arg_") + name).str());
         // result.append((Twine("fp_") + name).str());
       }
-    } else if (ty == argType::vincData) {
+    } else if (ty == ArgType::vincData) {
       auto nextName = nameVec[pos + 1];
       // get the position of the argument in the primary blas call
       auto nextArgPosition = nameMap.lookup(nextName);
       // and based on that get the fp/int + scalar/vector type
       auto typeOfNextArg = typeMap.lookup(nextArgPosition);
-      assert(typeOfNextArg == argType::vincInc);
+      assert(typeOfNextArg == ArgType::vincInc);
       if (pos == actArg) {
         result.append((Twine("d_") + name + ", true_" + nextName).str());
       } else {
         result.append((Twine("arg_") + name + ", arg_" + nextName).str());
       }
       pos++; // extra ++ due to also handling vincInc
-    } else if (ty == argType::vincInc) {
+    } else if (ty == ArgType::vincInc) {
       // might come without vincData, e.g. after DiffeRet
       result.append(name);
-    } else if (ty == argType::mldData) {
+    } else if (ty == ArgType::mldData) {
       auto nextName = nameVec[pos + 1];
       // get the position of the argument in the primary blas call
       auto nextArgPosition = nameMap.lookup(nextName);
       // and based on that get the fp/int + scalar/vector type
       auto nextTy = typeMap.lookup(nextArgPosition);
-      assert(nextTy == argType::mldLD);
+      assert(nextTy == ArgType::mldLD);
       if (pos == actArg) {
         result.append((Twine("d_") + name + ", true_" + nextName).str());
       } else {
         result.append((Twine("arg_") + name + ", arg_" + nextName).str());
       }
       pos++; // extra ++ due to also handling mldLD
-    } else if (ty == argType::mldLD) {
+    } else if (ty == ArgType::mldLD) {
       // might come without mldData, e.g. after DiffeRet
       // coppied from vincInc, but should verify if actually needed
       result.append((Twine("arg_") + name).str());
-    } else if (ty == argType::cblas_layout) {
+    } else if (ty == ArgType::cblas_layout) {
       // layout is only allowed as first type (which we skipped)
-      llvm::errs() << "name: " << name << " typename: " << ty
-                   << " only allowed as first arg!\n";
+      errs() << "name: " << name << " typename: " << ty
+             << " only allowed as first arg!\n";
       llvm_unreachable("layout only allowed as first type!\n");
-    } else if (ty == argType::trans || ty == argType::diag ||
-               ty == argType::uplo || ty == argType::side) {
+    } else if (ty == ArgType::trans || ty == ArgType::diag ||
+               ty == ArgType::uplo || ty == ArgType::side) {
       result.append((Twine("arg_") + name).str());
     } else {
-      llvm::errs() << "name: " << name << " typename: " << ty << "\n";
+      errs() << "name: " << name << " typename: " << ty << "\n";
       llvm_unreachable("unimplemented input type!\n");
     }
     pos++;
@@ -1826,7 +1847,7 @@ size_t fwd_call_args(TGPattern &pattern, size_t actArg,
   return nameVec.size() - startArg;
 }
 
-void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
+void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
   auto rules = pattern.getRules();
   bool lv23 = pattern.isBLASLevel2or3();
   os << "  /* fwd-rewrite */                                 \n"
@@ -1844,13 +1865,13 @@ void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
   const auto activeArgs = pattern.getActiveArgs();
   for (auto inputType : inputTypes) {
     auto ty = inputType.second;
-    if (ty == argType::vincData || ty == argType::mldData) {
+    if (ty == ArgType::vincData || ty == ArgType::mldData) {
       const auto name = nameVec[inputType.first];
       os << "    Value *d_" << name << " = active_" << name << "\n"
          << "     ? gutils->invertPointerM(orig_" << name << ", Builder2)\n"
          << "     : nullptr;\n";
     }
-    if (ty == argType::fp) {
+    if (ty == ArgType::fp) {
       const auto name = nameVec[inputType.first];
       os << "    Value *d_" << name
          << " = llvm::ConstantFP::get(fpType, 0.0);\n";
@@ -1873,7 +1894,7 @@ void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
     const auto activeArg = activeArgs[i];
     const auto rule = rules[i];
     const auto actName = nameVec[activeArg];
-    auto dcallArgs = llvm::SmallString<40>();
+    auto dcallArgs = SmallString<40>();
     const size_t numArgs = fwd_call_args(pattern, activeArg, dcallArgs);
     const auto valueTypes = ValueType_helper(pattern, activeArg);
     os << "      if(active_" << actName << ") {\n";
@@ -1939,8 +1960,8 @@ void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
   os << "  }\n";
 }
 
-void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
-                    llvm::StringSet<> &handled, raw_ostream &os) {
+void emit_deriv_fnc(const StringMap<TGPattern> &patternMap, Rule &rule,
+                    StringSet<> &handled, raw_ostream &os) {
   const auto ruleDag = rule.getRuleDag();
   const auto typeMap = rule.getArgTypeMap();
   const auto opName = ruleDag->getOperator()->getAsString();
@@ -1948,10 +1969,10 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
   const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
   if (Def->isSubClassOf("b")) {
     const auto dfnc_name = Def->getValueAsString("s");
-    if (patternMap.find(dfnc_name.str()) == patternMap.end()) {
+    if (patternMap.find(dfnc_name) == patternMap.end()) {
       PrintFatalError("calling unknown Blas function");
     }
-    TGPattern calledPattern = patternMap.find(dfnc_name.str())->getValue();
+    TGPattern calledPattern = patternMap.find(dfnc_name)->getValue();
     bool derivlv23 = calledPattern.isBLASLevel2or3();
     DenseSet<size_t> mutableArgs = calledPattern.getMutableArgs();
 
@@ -1960,11 +1981,6 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
     else
       handled.insert(dfnc_name);
 
-    auto retTy = "Builder2.getVoidTy()";
-    // TODO: add this to .td file and generate it based on that
-    if (dfnc_name == "dot" || dfnc_name == "asum") {
-      retTy = "fpType";
-    }
     // insert arg types based on .td file
     std::string typeString = "";
     bool first = true;
@@ -2026,8 +2042,8 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
         // Optionally add it later as first arg for byRef.
         if (argStr == "layout")
           continue;
-        typeString += (first ? "" : ", ");
-        typeString += (Twine("type_") + argStr).str();
+        typeString +=
+            (Twine(first ? "" : ", ") + Twine("type_") + argStr).str();
       }
       first = false;
     }
@@ -2116,7 +2132,7 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
            << "arg_" << transName << ", arg_" << ldName << ", arg_" << dim1Name
            << ", arg_" << dim2Name << ", cache_" << matName << ", byRef)";
       } else {
-        llvm::errs() << Def->getName() << "\n";
+        errs() << Def->getName() << "\n";
         PrintFatalError("Dag/Def that isn't a DiffeRet!");
       }
     } else if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
@@ -2130,7 +2146,7 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
         auto name = Def->getValueAsString("name");
         os << "arg_" << name;
       } else if (Def->isSubClassOf("MagicInst")) {
-        llvm::errs() << "MagicInst\n";
+        errs() << "MagicInst\n";
       } else if (Def->isSubClassOf("Constant")) {
         auto val = Def->getValueAsString("value");
         os << "to_blas_callconv(Builder2, ConstantFP::get(fpType, " << val
@@ -2150,7 +2166,7 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
         auto name = Def->getValueAsString("name");
         os << "arg_transposed_" << name;
       } else {
-        llvm::errs() << Def->getName() << "\n";
+        errs() << Def->getName() << "\n";
         PrintFatalError("Def that isn't a DiffeRet!");
       }
     } else {
@@ -2158,7 +2174,7 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
       assert(name != "");
       // get the position of the argument in the primary blas call
       if (nameMap.count(name) != 1) {
-        llvm::errs() << "couldn't find name: " << name << "\n";
+        errs() << "couldn't find name: " << name << "\n";
         PrintFatalError("arg not in nameMap!");
       }
       assert(nameMap.count(name) == 1);
@@ -2167,21 +2183,21 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
       auto ty = typeMap.lookup(argPosition);
 
       // Now we create the adj call args through concating type and primal name
-      if (ty == argType::len) {
+      if (ty == ArgType::len) {
         os << "arg_" << name;
-      } else if (ty == argType::fp) {
+      } else if (ty == ArgType::fp) {
         if (argPosition == actArg) {
           os << "d_" << name;
         } else {
           os << "arg_" << name;
         }
-      } else if (ty == argType::vincData) {
+      } else if (ty == ArgType::vincData) {
         auto nextName = ruleDag->getArgNameStr(pos + 1);
         // get the position of the argument in the primary blas call
         auto nextArgPosition = nameMap.lookup(nextName);
         // and based on that get the fp/int + scalar/vector type
         auto typeOfNextArg = typeMap.lookup(nextArgPosition);
-        assert(typeOfNextArg == argType::vincInc);
+        assert(typeOfNextArg == ArgType::vincInc);
         if (argPosition == actArg) {
           // shadow d_<X> wasn't overwritten or cached, so use true_inc<X>
           // since arg_inc<X> was set to 1 if arg_<X> was cached
@@ -2190,17 +2206,17 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
           os << "arg_" << name << ", arg_" << nextName;
         }
         pos++; // extra ++ due to also handling vincInc
-      } else if (ty == argType::vincInc) {
+      } else if (ty == ArgType::vincInc) {
         // might come without vincData, e.g. after DiffeRet
         os << "arg_" << name;
-      } else if (ty == argType::mldData) {
+      } else if (ty == ArgType::mldData) {
         auto nextName = ruleDag->getArgNameStr(pos + 1);
         // get the position of the argument in the primary blas call
         auto nextArgPosition = nameMap.lookup(nextName);
         // and based on that get the fp/int + scalar/vector type
         auto nextTy = typeMap.lookup(nextArgPosition);
         if (pos == actArg) {
-          assert(nextTy == argType::mldLD);
+          assert(nextTy == ArgType::mldLD);
           os << "d_" << name << ", true_" << nextName;
           pos++; // extra ++ due to also handling mldLD
         } else {
@@ -2208,7 +2224,7 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
           // to determine the next arg. Thus handle it once we reach it
           os << "arg_" << name;
         }
-      } else if (ty == argType::mldLD) {
+      } else if (ty == ArgType::mldLD) {
         auto prevArg = ruleDag->getArg(pos - 1);
         if (DefInit *DefArg = dyn_cast<DefInit>(prevArg)) {
           if (DefArg->getDef()->isSubClassOf("adj")) {
@@ -2216,17 +2232,17 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
             // use original ld, since shadow is never cached
             os << "arg_" << name;
           } else {
-            llvm::errs() << rule.to_string() << "\n";
+            errs() << rule.to_string() << "\n";
             PrintFatalError("sholdn't be hit??\n");
           }
         } else {
-          llvm::errs() << rule.to_string() << "\n";
+          errs() << rule.to_string() << "\n";
           PrintFatalError("sholdn't be hit??\n");
         }
-      } else if (ty == argType::trans) {
+      } else if (ty == ArgType::trans) {
         os << "arg_" << name;
       } else {
-        llvm::errs() << "name: " << name << " typename: " << ty << "\n";
+        errs() << "name: " << name << " typename: " << ty << "\n";
         llvm_unreachable("unimplemented input type!\n");
       }
     }
@@ -2235,8 +2251,8 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
   os << "};\n";
 }
 
-void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
-                            raw_ostream &os) {
+void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
+                            TGPattern &pattern, raw_ostream &os) {
 
   const auto nameVec = pattern.getArgNames();
   const auto typeMap = pattern.getArgTypeMap();
@@ -2282,7 +2298,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
 
   // We only emit one derivcall per blass call type.
   // This verifies that we don't end up with multiple declarations.
-  llvm::StringSet handled{};
+  StringSet handled{};
   for (auto rule : rules) {
     emit_deriv_fnc(patternMap, rule, handled, os);
   }
@@ -2290,12 +2306,12 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
   for (size_t i = 0; i < nameVec.size(); i++) {
     const auto name = nameVec[i];
     const auto ty = typeMap.lookup(i);
-    if (ty == argType::vincData || ty == argType::mldData) {
+    if (ty == ArgType::vincData || ty == ArgType::mldData) {
       os << "    Value *d_" << name << " = active_" << name << "\n"
          << "     ? lookup(gutils->invertPointerM(orig_" << name
          << ", Builder2), Builder2)\n"
          << "     : nullptr;\n";
-    } else if (ty == argType::fp) {
+    } else if (ty == ArgType::fp) {
       os << "    Value *d_" << name << " = UndefValue::get(fpType);\n";
     }
   }
@@ -2305,25 +2321,25 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
   for (size_t i = 0; i < nameVec.size(); i++) {
     const auto name = nameVec[i];
     const auto ty = typeMap.lookup(i);
-    if (ty == argType::len || ty == argType::fp || ty == argType::vincData ||
-        ty == argType::mldData || ty == argType::trans || ty == argType::uplo ||
-        ty == argType::diag) {
+    if (ty == ArgType::len || ty == ArgType::fp || ty == ArgType::vincData ||
+        ty == ArgType::mldData || ty == ArgType::trans || ty == ArgType::uplo ||
+        ty == ArgType::diag) {
       os << "    if (!cache_" << name << " && need_" << name << ")\n"
          << "      arg_" << name << " = lookup(arg_" << name
          << ", Builder2);\n";
-    } else if (ty == argType::vincInc) {
+    } else if (ty == ArgType::vincInc) {
       // extra handling, because if we cache a vec we overwrite the inc
       const auto prevTy = typeMap.lookup(i - 1);
-      assert(prevTy == argType::vincData);
+      assert(prevTy == ArgType::vincData);
       const auto vecName = nameVec[i - 1];
       os << "    if (!(cache_" << name << " || cache_" << vecName
          << ") && need_" << name << ")\n"
          << "      arg_" << name << " = lookup(arg_" << name
          << ", Builder2);\n";
-    } else if (ty == argType::mldLD) {
+    } else if (ty == ArgType::mldLD) {
       // extra handling, because if we cache a mat we overwrite the ld
       const auto prevTy = typeMap.lookup(i - 1);
-      assert(prevTy == argType::mldData);
+      assert(prevTy == ArgType::mldData);
       const auto matName = nameVec[i - 1];
       os << "    if (!(cache_" << name << " || cache_" << matName
          << ") && need_" << name << ")\n"
@@ -2335,7 +2351,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
   // now we can use it to transpose our trans arguments if they exist
   for (size_t i = (lv23 ? 1 : 0); i < nameVec.size(); i++) {
     auto name = nameVec[i];
-    if (typeMap.lookup(i) == argType::trans) {
+    if (typeMap.lookup(i) == ArgType::trans) {
       os << "  llvm::Value* arg_transposed_" << name
          << " = transpose(Builder2, arg_" << name
          << ", byRef, charType, allocationBuilder, \"" << name << "\");\n";
@@ -2351,7 +2367,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
     const auto ty = typeMap.lookup(arg);
     // We don't pass in shaddows of fp values,
     // we just create and struct-return the shaddows
-    if (ty == argType::fp)
+    if (ty == ArgType::fp)
       continue;
     os << ((first) ? "" : ", ") << "Value *"
        << "d_" + name;
@@ -2403,7 +2419,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
       os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
 
-      if (ty == argType::fp) {
+      if (ty == ArgType::fp) {
         // extra handling, since we will update only a fp scalar as part of the
         // return struct it's presumably done by setting it to the value
         // returned by this call
@@ -2432,7 +2448,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
       os << "      assert(!active_" << name << ");\n";
     } else if (Def->isSubClassOf("Constant")) {
     } else {
-      llvm::errs() << Def->getName() << "\n";
+      errs() << Def->getName() << "\n";
       PrintFatalError("Unhandled blas-rev case!");
     }
   }
@@ -2445,7 +2461,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
     const auto ty = typeMap.lookup(arg);
     // We don't pass in shaddows of fp values,
     // we just create and struct-return the shaddows
-    if (ty == argType::fp)
+    if (ty == ArgType::fp)
       continue;
     os << ((first) ? "" : ", ") << "d_" + name;
     first = false;
@@ -2472,11 +2488,11 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   emitSourceFileHeader("Rewriters", os);
   const auto &blasPatterns = RK.getAllDerivedDefinitions("CallBlasPattern");
 
-  std::vector<TGPattern> newBlasPatterns{};
+  SmallVector<TGPattern, 8> newBlasPatterns;
   StringMap<TGPattern> patternMap;
-  for (auto pattern : blasPatterns) {
-    auto parsedPattern = TGPattern(*pattern);
-    newBlasPatterns.push_back(TGPattern(*pattern));
+  for (auto &&pattern : blasPatterns) {
+    auto parsedPattern = TGPattern(pattern);
+    newBlasPatterns.push_back(TGPattern(pattern));
     auto newEntry = std::pair<std::string, TGPattern>(parsedPattern.getName(),
                                                       parsedPattern);
     patternMap.insert(newEntry);
@@ -2490,7 +2506,7 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   emit_handleBLAS(newBlasPatterns, os);
   // // emitEnumMatcher(blas_modes, os);
 
-  for (auto newPattern : newBlasPatterns) {
+  for (auto &&newPattern : newBlasPatterns) {
     bool hasNonInactive = false;
     for (Rule rule : newPattern.getRules()) {
       const auto ruleDag = rule.getRuleDag();
@@ -2544,7 +2560,7 @@ static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
     return false;
 
   default:
-    llvm::errs() << "unknown tablegen action!\n";
+    errs() << "unknown tablegen action!\n";
     llvm_unreachable("unknown tablegen action!");
   }
 }
