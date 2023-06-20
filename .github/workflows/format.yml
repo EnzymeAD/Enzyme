@@ -11,6 +11,7 @@ jobs:
     - uses: actions/checkout@v3
     - uses: DoozyX/clang-format-lint-action@v0.16.2
       with:
+        extensions: 'h,cpp,c,td'
         source: 'enzyme/Enzyme enzyme/tools/enzyme-tblgen'
         exclude: './CMakeLists.txt enzyme/Enzyme/SCEV'
         style: 'llvm'

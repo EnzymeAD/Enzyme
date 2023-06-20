@@ -17,55 +17,56 @@
 include "mlir/IR/OpBase.td"
 
 def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
-  let description = [{
-    An MLIR type values of which can be processed by automatic differentiation.
-  }];
+  let description = [{An MLIR type values of which can be processed by automatic
+                          differentiation.}];
   let cppNamespace = "::mlir::enzyme";
 
   let methods = [
     InterfaceMethod<
-      /*desc=*/[{
+        /*desc=*/[{
         Constructs the canonical null (zero) value for the given type. The
         provided builder should be used to construct the const-like operation.
         Null can be emitted by the differentiation pass.
-      }],
-      /*retTy=*/"::mlir::Value",
-      /*methodName=*/"createNullValue",
-      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Location":$loc)
-    >,
+        }],
+        /*retTy=*/"::mlir::Value",
+        /*methodName=*/"createNullValue",
+        /*args=*/
+        (ins "::mlir::OpBuilder &"
+         : $builder, "::mlir::Location"
+         : $loc)>,
     InterfaceMethod<
-      /*desc=*/[{
-        Construct addition operation for the given type.
-      }],
-      /*retTy=*/"::mlir::Value",
-      /*methodName=*/"createAddOp",
-      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Location":$loc, "::mlir::Value":$a, "::mlir::Value":$b)
-    >,
+        /*desc=*/[{ Construct addition operation for the given type. }],
+        /*retTy=*/"::mlir::Value",
+        /*methodName=*/"createAddOp",
+        /*args=*/
+        (ins "::mlir::OpBuilder &"
+         : $builder, "::mlir::Location"
+         : $loc, "::mlir::Value"
+         : $a, "::mlir::Value"
+         : $b)>,
     InterfaceMethod<
-      /*desc=*/[{
+        /*desc=*/[{
         Returns the type that can contain the adjoint value for this type. If
         `width` is provided, returns the type that can store `width` instances
         of the adjoint.
-      }],
-      /*retTy=*/"::mlir::Type",
-      /*methodName=*/"getShadowType",
-      /*args=*/(ins "unsigned":$width)
-    >,
+        }],
+        /*retTy=*/"::mlir::Type",
+        /*methodName=*/"getShadowType",
+        /*args=*/
+        (ins "unsigned"
+         : $width)>,
     InterfaceMethod<
-      /*desc=*/[{
-        Returns if the Type needs to be cleared.
-      }],
-      /*retTy=*/"bool",
-      /*methodName=*/"requiresShadow",
-      /*args=*/(ins )
-    >
+        /*desc=*/[{ Returns if the Type needs to be cleared. }],
+        /*retTy=*/"bool",
+        /*methodName=*/"requiresShadow",
+        /*args=*/(ins)>
   ];
 
   let extraSharedClassDeclaration = [{
     ::mlir::Type getShadowType() const {
       return $_type.getShadowType(/*width=*/1);
-    }
-  }];
+}
+}];
 }
 
 #endif // ENZYME_MLIR_INTERFACES_AUTODIFFTYPEINTERFACE
