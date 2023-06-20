@@ -12,19 +12,19 @@
 @ompi_mpi_float = external global %struct.ompi_predefined_datatype_t, align 1
 @ompi_mpi_op_max = external global %struct.ompi_predefined_op_t, align 1
 
-define dso_local void @mpi_allreduce_max_test(float* noundef %0, float* noundef %1, i32 noundef %2) #6 {
+define void @mpi_allreduce_max_test(float* %0, float* %1, i32 %2) {
   %4 = bitcast float* %0 to i8*
   %5 = bitcast float* %1 to i8*
-  %6 = tail call i32 @MPI_Allreduce(i8* noundef %4, i8* noundef %5, i32 noundef %2, %struct.ompi_datatype_t* noundef bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_float to %struct.ompi_datatype_t*), %struct.ompi_op_t* noundef bitcast (%struct.ompi_predefined_op_t* @ompi_mpi_op_max to %struct.ompi_op_t*), %struct.ompi_communicator_t* noundef bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*))
+  %6 = tail call i32 @MPI_Allreduce(i8* %4, i8* %5, i32 %2, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_float to %struct.ompi_datatype_t*), %struct.ompi_op_t* bitcast (%struct.ompi_predefined_op_t* @ompi_mpi_op_max to %struct.ompi_op_t*), %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*))
   ret void
 }
 
-declare i32 @MPI_Allreduce(i8* noundef, i8* noundef, i32 noundef, %struct.ompi_datatype_t* noundef, %struct.ompi_op_t* noundef, %struct.ompi_communicator_t* noundef) local_unnamed_addr #0
+declare i32 @MPI_Allreduce(i8*, i8*, i32, %struct.ompi_datatype_t*, %struct.ompi_op_t*, %struct.ompi_communicator_t*) local_unnamed_addr
 
 ; Function Attrs: nounwind uwtable
 define void @caller(float* %sendbuf, float* %dsendbuf, float* %recvbuf, float* %drecvbuf, i32 %count) local_unnamed_addr  {
 entry:
-  call void (i8*, ...) @__enzyme_fwddiff(i8* noundef bitcast (void (float*, float*, i32)* @mpi_allreduce_max_test to i8*), float* %sendbuf, float* %dsendbuf, float* %recvbuf, float* %drecvbuf, i32 %count)
+  call void (i8*, ...) @__enzyme_fwddiff(i8* bitcast (void (float*, float*, i32)* @mpi_allreduce_max_test to i8*), float* %sendbuf, float* %dsendbuf, float* %recvbuf, float* %drecvbuf, i32 %count)
 
   ret void
 }
@@ -32,7 +32,7 @@ entry:
 declare void @__enzyme_fwddiff(i8*, ...)
 
 
-; CHECK: define internal void @fwddiffempi_allreduce_max_test(float* noundef %0, float* %"'", float* noundef %1, float* %"'1", i32 noundef %2) #0 {
+; CHECK: define internal void @fwddiffempi_allreduce_max_test(float* %0, float* %"'", float* %1, float* %"'1", i32 %2) #0 {
 ; CHECK-NEXT:   %4 = alloca i32, align 4
 ; CHECK-NEXT:   %"'ipc3" = bitcast float* %"'1" to i8*
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i32 %2, 4
