@@ -6250,11 +6250,11 @@ public:
       return;
     }
 
-    if (funcName == "MPI_Allreduce" &&
-        getMPIOpKind(call.getOperand(4)) != MPI_Op_Kind::SUM) {
+    if (funcName == "MPI_Allreduce") {
       auto opKind = getMPIOpKind(call.getOperand(4));
 
-      if (opKind != MPI_Op_Kind::MIN && opKind != MPI_Op_Kind::MAX) {
+      if (opKind != MPI_Op_Kind::MIN && opKind != MPI_Op_Kind::MAX &&
+          opKind != MPI_Op_Kind::SUM) {
         std::string s;
         llvm::raw_string_ostream ss(s);
         ss << *gutils->oldFunc << "\n";
@@ -6886,188 +6886,99 @@ public:
               CreateDealloc(Builder2, recvlocbuf);
             }
           }
-        }
-      }
-      if (Mode == DerivativeMode::ReverseModeGradient)
-        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
-      return;
-    }
+        } else if (opKind == MPI_Op_Kind::SUM) {
+          if (forwardMode) {
+            // Overview: forward mode for sum op
+            // 1. MPI_Allreduce (sum) of diff(sendbuf) to diff(recvbuf)
 
-    // int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count,
-    //              MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
-
-    if (funcName == "MPI_Allreduce") {
-      if (Mode == DerivativeMode::ReverseModeGradient ||
-          Mode == DerivativeMode::ReverseModeCombined ||
-          Mode == DerivativeMode::ForwardMode) {
-        // TODO insert a check for sum
-
-        bool forwardMode = Mode == DerivativeMode::ForwardMode;
-
-        IRBuilder<> Builder2 =
-            forwardMode ? IRBuilder<>(&call) : IRBuilder<>(call.getParent());
-        if (forwardMode) {
-          getForwardBuilder(Builder2);
-        } else {
-          getReverseBuilder(Builder2);
-        }
-
-        // Get the operations from MPI_Receive
-        Value *orig_sendbuf = call.getOperand(0);
-        Value *orig_recvbuf = call.getOperand(1);
-        Value *orig_count = call.getOperand(2);
-        Value *orig_datatype = call.getOperand(3);
-        Value *orig_op = call.getOperand(4);
-        Value *orig_comm = call.getOperand(5);
-
-        bool isSum = false;
-        if (Constant *C = dyn_cast<Constant>(orig_op)) {
-          while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
-            C = CE->getOperand(0);
-          }
-          if (auto GV = dyn_cast<GlobalVariable>(C)) {
-            if (GV->getName() == "ompi_mpi_op_sum") {
-              isSum = true;
-            }
-          }
-          // MPICH
-          if (ConstantInt *CI = dyn_cast<ConstantInt>(C)) {
-            if (CI->getValue() == 1476395011) {
-              isSum = true;
-            }
-          }
-        }
-        if (!isSum) {
-          std::string s;
-          llvm::raw_string_ostream ss(s);
-          ss << *gutils->oldFunc << "\n";
-          ss << *gutils->newFunc << "\n";
-          ss << " call: " << call << "\n";
-          ss << " unhandled mpi_allreduce op: " << *orig_op << "\n";
-          if (CustomErrorHandler) {
-            CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                               ErrorType::NoDerivative, gutils, nullptr,
-                               wrap(&BuilderZ));
-          } else {
-            llvm::errs() << ss.str() << "\n";
-            report_fatal_error("unhandled mpi_allreduce op");
-          }
-        }
-
-        Value *shadow_recvbuf = gutils->invertPointerM(orig_recvbuf, Builder2);
-        if (!forwardMode)
-          shadow_recvbuf = lookup(shadow_recvbuf, Builder2);
-        if (shadow_recvbuf->getType()->isIntegerTy())
-          shadow_recvbuf = Builder2.CreateIntToPtr(
-              shadow_recvbuf, Type::getInt8PtrTy(call.getContext()));
-
-        Value *shadow_sendbuf = gutils->invertPointerM(orig_sendbuf, Builder2);
-        if (!forwardMode)
-          shadow_sendbuf = lookup(shadow_sendbuf, Builder2);
-        if (shadow_sendbuf->getType()->isIntegerTy())
-          shadow_sendbuf = Builder2.CreateIntToPtr(
-              shadow_sendbuf, Type::getInt8PtrTy(call.getContext()));
-
-        // Need to preserve the shadow send/recv buffers.
-        auto BufferDefs = gutils->getInvertedBundles(
-            &call,
-            {ValueType::Shadow, ValueType::Shadow, ValueType::Primal,
-             ValueType::Primal, ValueType::Primal, ValueType::Primal},
-            Builder2, /*lookup*/ !forwardMode);
-
-        Value *count = gutils->getNewFromOriginal(orig_count);
-        if (!forwardMode)
-          count = lookup(count, Builder2);
-
-        Value *datatype = gutils->getNewFromOriginal(orig_datatype);
-        if (!forwardMode)
-          datatype = lookup(datatype, Builder2);
-
-        Value *comm = gutils->getNewFromOriginal(orig_comm);
-        if (!forwardMode)
-          comm = lookup(comm, Builder2);
-
-        Value *op = gutils->getNewFromOriginal(orig_op);
-        if (!forwardMode)
-          op = lookup(op, Builder2);
-
-        if (forwardMode) {
-          Value *args[] = {
-              /*sendbuf*/ shadow_sendbuf,
-              /*recvbuf*/ shadow_recvbuf,
-              /*count*/ count,
-              /*datatype*/ datatype,
-              /*op*/ op,
-              /*comm*/ comm,
-          };
+            Value *args[] = {
+                /*sendbuf*/ shadow_sendbuf,
+                /*recvbuf*/ shadow_recvbuf,
+                /*count*/ count,
+                /*datatype*/ datatype,
+                /*op*/ op,
+                /*comm*/ comm,
+            };
 
 #if LLVM_VERSION_MAJOR >= 11
-          auto callval = call.getCalledOperand();
+            auto callval = call.getCalledOperand();
 #else
-          auto callval = call.getCalledValue();
+            auto callval = call.getCalledValue();
 #endif
-          Builder2.CreateCall(call.getFunctionType(), callval, args,
-                              BufferDefs);
+            Builder2.CreateCall(call.getFunctionType(), callval, args,
+                                bufferDefs);
 
-          return;
-        }
+            return;
+          } else {
+            // Overview: reverse mode for sum op
+            // 1. malloc intermediate buffer, buf
+            // 2. MPI_Allreduce (sum) of diff(recvbuf) to buf
+            // 3. Zero diff(recvbuf) i.e. memset to 0
+            // 4. free intermediate buffer, buf
 
-        Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType());
+            Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType());
 
-        // Get the length for the allocation of the intermediate buffer
-        auto len_arg = Builder2.CreateZExtOrTrunc(
-            count, Type::getInt64Ty(call.getContext()));
-        len_arg =
-            Builder2.CreateMul(len_arg,
-                               Builder2.CreateZExtOrTrunc(
-                                   tysize, Type::getInt64Ty(call.getContext())),
-                               "", true, true);
+            // Get the length for the allocation of the intermediate buffer
+            auto len_arg = Builder2.CreateZExtOrTrunc(
+                count, Type::getInt64Ty(call.getContext()));
+            len_arg = Builder2.CreateMul(
+                len_arg,
+                Builder2.CreateZExtOrTrunc(tysize,
+                                           Type::getInt64Ty(call.getContext())),
+                "", true, true);
 
-        // 1. Alloc intermediate buffer
-        Value *buf =
-            CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
-                             len_arg, "mpireduce_malloccache");
+            // 1. Alloc intermediate buffer
+            Value *buf =
+                CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
+                                 len_arg, "mpireduce_malloccache");
 
-        // 2. MPI_Allreduce (sum) of diff(recvbuffer) to intermediate
-        {
-          // int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count,
-          //              MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
-          Value *args[] = {
-              /*sendbuf*/ shadow_recvbuf,
-              /*recvbuf*/ buf,
-              /*count*/ count,
-              /*datatype*/ datatype,
-              /*op*/ op,
-              /*comm*/ comm,
-          };
-          Type *types[sizeof(args) / sizeof(*args)];
-          for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
-            types[i] = args[i]->getType();
+            // 2. MPI_Allreduce (sum) of diff(recvbuffer) to intermediate
+            {
+              // int MPI_Allreduce(const void *sendbuf, void *recvbuf, int
+              // count,
+              //              MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
+              Value *args[] = {
+                  /*sendbuf*/ shadow_recvbuf,
+                  /*recvbuf*/ buf,
+                  /*count*/ count,
+                  /*datatype*/ datatype,
+                  /*op*/ op,
+                  /*comm*/ comm,
+              };
+              Type *types[sizeof(args) / sizeof(*args)];
+              for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
+                types[i] = args[i]->getType();
 
-          FunctionType *FT = FunctionType::get(call.getType(), types, false);
-          Builder2.CreateCall(
-              called->getParent()->getOrInsertFunction("MPI_Allreduce", FT),
-              args, BufferDefs);
-        }
+              FunctionType *FT =
+                  FunctionType::get(call.getType(), types, false);
+              Builder2.CreateCall(
+                  called->getParent()->getOrInsertFunction("MPI_Allreduce", FT),
+                  args, bufferDefs);
+            }
 
-        // 3. Zero diff(recvbuffer) [memset to 0]
-        auto val_arg = ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
-        auto volatile_arg = ConstantInt::getFalse(call.getContext());
-        Value *args[] = {shadow_recvbuf, val_arg, len_arg, volatile_arg};
-        Type *tys[] = {args[0]->getType(), args[2]->getType()};
-        auto memset = cast<CallInst>(Builder2.CreateCall(
-            Intrinsic::getDeclaration(gutils->newFunc->getParent(),
-                                      Intrinsic::memset, tys),
-            args, BufferDefs));
-        memset->addParamAttr(0, Attribute::NonNull);
+            // 3. Zero diff(recvbuffer) [memset to 0]
+            auto val_arg =
+                ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
+            auto volatile_arg = ConstantInt::getFalse(call.getContext());
+            Value *args[] = {shadow_recvbuf, val_arg, len_arg, volatile_arg};
+            Type *tys[] = {args[0]->getType(), args[2]->getType()};
+            auto memset = cast<CallInst>(Builder2.CreateCall(
+                Intrinsic::getDeclaration(gutils->newFunc->getParent(),
+                                          Intrinsic::memset, tys),
+                args, bufferDefs));
+            memset->addParamAttr(0, Attribute::NonNull);
 
-        // 4. diff(sendbuffer) += intermediate buffer (diffmemcopy)
-        DifferentiableMemCopyFloats(call, orig_sendbuf, buf, shadow_sendbuf,
-                                    len_arg, Builder2, BufferDefs);
+            // 4. diff(sendbuffer) += intermediate buffer (diffmemcopy)
+            DifferentiableMemCopyFloats(call, orig_sendbuf, buf, shadow_sendbuf,
+                                        len_arg, Builder2, bufferDefs);
 
-        // Free up intermediate buffer
-        if (shouldFree()) {
-          CreateDealloc(Builder2, buf);
+            // Free up intermediate buffer
+            if (shouldFree()) {
+              CreateDealloc(Builder2, buf);
+            }
+          }
+        } else {
+          report_fatal_error("Unhandle MPI_Allreduce op");
         }
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
