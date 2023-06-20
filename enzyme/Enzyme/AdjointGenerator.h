@@ -4868,7 +4868,11 @@ public:
                 op = cast<GlobalVariable>(
                     M->getOrInsertGlobal(name, GV->getValueType()));
                 cast<GlobalVariable>(op)->setAttributes(GV->getAttributes());
+#if LLVM_VERSION_MAJOR >= 10
                 cast<GlobalVariable>(op)->setAlignment(GV->getAlign());
+#else
+                cast<GlobalVariable>(op)->setAlignment(GV->getAlignment());
+#endif
               }
               return op;
             }
@@ -6376,11 +6380,14 @@ public:
                      Type *FPTy) -> Function * {
             auto &M = *call.getModule();
 
-            Type *IntTy = call.getCalledFunction()->getArg(2)->getType();
+            Type *IntTy =
+                (call.getCalledFunction()->arg_begin() + 2)->getType();
             Type *MPIDatatypePtrTy =
-                call.getCalledFunction()->getArg(3)->getType();
-            Type *MPIOpPtrTy = call.getCalledFunction()->getArg(4)->getType();
-            Type *MPICommPtrTy = call.getCalledFunction()->getArg(5)->getType();
+                (call.getCalledFunction()->arg_begin() + 3)->getType();
+            Type *MPIOpPtrTy =
+                (call.getCalledFunction()->arg_begin() + 4)->getType();
+            Type *MPICommPtrTy =
+                (call.getCalledFunction()->arg_begin() + 5)->getType();
             Value *MPI_FP_INT = nullptr;
             StructType *FPIntTy = nullptr;
             {
@@ -6408,7 +6415,11 @@ public:
                       cast<GlobalVariable>(MPI_FP_INT)
                           ->setAttributes(GV->getAttributes());
                       cast<GlobalVariable>(MPI_FP_INT)
+#if LLVM_VERSION_MAJOR >= 10
                           ->setAlignment(GV->getAlign());
+#else
+                          ->setAlignment(GV->getAlignment());
+#endif
                     }
                   }
                 }
@@ -6464,12 +6475,12 @@ public:
             auto IntZero = ConstantInt::get(IntTy, 0);
             auto IntOne = ConstantInt::get(IntTy, 1);
 
-            auto sendbuf = F->getArg(0);
-            auto recvbuf = F->getArg(1);
-            auto recvlocbuf = F->getArg(2);
-            auto count = F->getArg(3);
-            auto op = F->getArg(4);
-            auto comm = F->getArg(5);
+            auto sendbuf = F->arg_begin();
+            auto recvbuf = (F->arg_begin() + 1);
+            auto recvlocbuf = (F->arg_begin() + 2);
+            auto count = (F->arg_begin() + 3);
+            auto op = (F->arg_begin() + 4);
+            auto comm = (F->arg_begin() + 5);
 
             // Create temporary storage
             BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
@@ -6610,7 +6621,8 @@ public:
           }(call, bufferDefs, getLLVMTypeFromMPIDatatype(datatype));
 
           recvlocbuf = CreateAllocation(
-              BuilderZ, call.getCalledFunction()->getArg(2)->getType(), count);
+              BuilderZ, (call.getCalledFunction()->arg_begin() + 2)->getType(),
+              count);
 
           auto FPPtrTy =
               mpi_allreduce_comploc_fp->getFunctionType()->getParamType(0);
@@ -6620,7 +6632,8 @@ public:
                                                          : MPI_Op_Kind::MAXLOC,
                             op, call.getModule());
           compLocOp = Builder2.CreateBitCast(
-              compLocOp, call.getCalledFunction()->getArg(4)->getType());
+              compLocOp,
+              (call.getCalledFunction()->arg_begin() + 4)->getType());
 
           Value *args[] = {BuilderZ.CreateBitCast(sendbuf, FPPtrTy),
                            BuilderZ.CreateBitCast(recvbuf, FPPtrTy),
@@ -6748,7 +6761,8 @@ public:
             {
               auto sumOp = getMPIOpValue(MPI_Op_Kind::SUM, op, M);
               sumOp = Builder2.CreateBitCast(
-                  sumOp, call.getCalledFunction()->getArg(4)->getType());
+                  sumOp,
+                  (call.getCalledFunction()->arg_begin() + 4)->getType());
               Value *args[] = {shadow_sendbuf_tmp, shadow_recvbuf, count,
                                datatype,           sumOp,          comm};
 
@@ -6794,7 +6808,8 @@ public:
             {
               auto sumOp = getMPIOpValue(MPI_Op_Kind::SUM, op, M);
               sumOp = Builder2.CreateBitCast(
-                  sumOp, call.getCalledFunction()->getArg(4)->getType());
+                  sumOp,
+                  (call.getCalledFunction()->arg_begin() + 4)->getType());
               Value *args[] = {shadow_recvbuf, shadow_sendbuf_tmp,
                                count,          datatype,
                                sumOp,          comm};
