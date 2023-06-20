@@ -6250,13 +6250,6 @@ public:
       return;
     }
 
-    // Approximate algo (for sum):  -> if statement yet to be
-    // 1. malloc intermediate buffers
-    // 2. MPI_Allreduce (sum) of diff(recvbuffer) to intermediate
-    // 3. Zero diff(recvbuffer) [memset to 0]
-    // 4. diff(sendbuffer) += intermediate buffer (diffmemcopy)
-    // 5. free intermediate buffer
-
     if (funcName == "MPI_Allreduce" &&
         getMPIOpKind(call.getOperand(4)) != MPI_Op_Kind::SUM) {
       auto opKind = getMPIOpKind(call.getOperand(4));
@@ -6647,6 +6640,15 @@ public:
         // Generate the forward or reverse mode code based on the MPI_Op
         if (opKind == MPI_Op_Kind::MIN || opKind == MPI_Op_Kind::MAX) {
           if (forwardMode) {
+            // Overview: forward mode for comp ops
+            // 0. Assume that a recv location buffer was generated during the
+            //    primal trace, recvlocbuf, which contains the processor id from
+            //    which the min/max reduce value came from. This is done above.
+            // 1. malloc temporary buffer, dsendbuf_tmp
+            // 2. dsendbuf_tmp[i] += (recvlocbuf[i] == proc_id) ?
+            //                                              diff(sendbuf)[i] : 0
+            // 3. MPI_Allreduce (sum) of dsendbuf_tmp to diff(recvbuf)
+            // 4. free temporary buffers, dsendbuf_tmp
 
             Type *IntTy = call.getType();
             auto tysize = MPI_TYPE_SIZE(datatype, Builder2, IntTy);
@@ -6662,8 +6664,6 @@ public:
             // Allocate the intermediate buffer
             auto shadow_sendbuf_tmp = CreateAllocation(
                 Builder2, Type::getInt8Ty(call.getContext()), byteCount);
-            auto shadow_recvbuf_tmp = CreateAllocation(
-                Builder2, Type::getInt8Ty(call.getContext()), byteCount);
 
             // Initialize shadow_sendbuf_tmp zero or differential depending on
             // primal comparison op results
@@ -6674,7 +6674,7 @@ public:
               BasicBlock *currentBlock = Builder2.GetInsertBlock();
               auto baseBlockName = currentBlock->getName();
               BasicBlock *endLoopBlock;
-              if (auto I = dyn_cast<Instruction>(shadow_recvbuf_tmp)) {
+              if (auto I = dyn_cast<Instruction>(shadow_sendbuf_tmp)) {
                 endLoopBlock = currentBlock->splitBasicBlock(
                     I->getNextNode(), baseBlockName + "_endloop");
                 currentBlock->getTerminator()->eraseFromParent();
@@ -6744,17 +6744,13 @@ public:
               Builder2.SetInsertPoint(endLoopBlock);
             }
 
-            // Allreduce using sum on shadow_sendbuf_tmp into shadow_recvbuf_tmp
+            // Allreduce using sum on shadow_sendbuf_tmp into shadow_recvbuf
             {
               auto sumOp = getMPIOpValue(MPI_Op_Kind::SUM, op, M);
               sumOp = Builder2.CreateBitCast(
                   sumOp, call.getCalledFunction()->getArg(4)->getType());
-              Value *args[] = {shadow_sendbuf_tmp,
-                               shadow_recvbuf_tmp,
-                               count,
-                               datatype,
-                               sumOp,
-                               comm};
+              Value *args[] = {shadow_sendbuf_tmp, shadow_recvbuf, count,
+                               datatype,           sumOp,          comm};
 
               auto FT = call.getCalledFunction()->getFunctionType();
               Builder2.CreateCall(
@@ -6762,20 +6758,23 @@ public:
                   args, bufferDefs);
             }
 
-            // Increment shadow_recvbuf from shadow_recv_tmp
-            {
-              DifferentiableMemCopyFloats(call, orig_recvbuf,
-                                          shadow_recvbuf_tmp, shadow_recvbuf,
-                                          byteCount, Builder2, bufferDefs);
-            }
-
             // Free temporary buffers
             {
               CreateDealloc(Builder2, shadow_sendbuf_tmp);
-              CreateDealloc(Builder2, shadow_recvbuf_tmp);
               CreateDealloc(Builder2, recvlocbuf);
             }
           } else {
+            // Overview: reverse mode for comp ops
+            // 0. Assume that a recv location buffer was generated during the
+            //    primal trace, recvlocbuf, which contains the processor id from
+            //    which the min/max reduce value came from. This is done above.
+            // 1. malloc temporary buffer, dsendbuf_tmp
+            // 2. MPI_Allreduce (sum) of diff(recvbuf) to dsendbuf_tmp
+            // 3. diff(sendbuf)[i] += (recvlocbuf[i] == proc_id) ?
+            //                                               dsendbuf_tmp[i] : 0
+            // 4. Zero diff(recvbuffer) i.e. memset to 0
+            // 5. free temporary buffer, dsendbuf_tmp
+
             Type *IntTy = call.getType();
             auto tysize = MPI_TYPE_SIZE(datatype, Builder2, IntTy);
             auto M = call.getModule();
