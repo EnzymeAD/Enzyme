@@ -2076,25 +2076,13 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
   }
 }
 
-// fill the result string and return the number of added args
-void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
+void rev_call_arg(StringRef argName, llvm::Init *arg, Rule &rule, size_t actArg, size_t &pos,
                    raw_ostream &os) {
-
   const auto nameMap = rule.getArgNameMap();
   const auto typeMap = rule.getArgTypeMap();
   const auto ruleDag = rule.getRuleDag();
   const size_t numArgs = ruleDag->getNumArgs();
   const size_t startArg = rule.isBLASLevel2or3() ? 1 : 0;
-
-  os << "        Value *" << argName << "[" << (numArgs - startArg) << "] = {";
-
-  // just replace argOps with rule
-  for (size_t pos = startArg; pos < numArgs;) {
-    if (pos > startArg) {
-      os << ", ";
-    }
-
-    auto arg = ruleDag->getArg(pos);
     if (auto Dag = dyn_cast<DagInit>(arg)) {
       auto Def = cast<DefInit>(Dag->getOperator())->getDef();
 
@@ -2115,6 +2103,9 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
         os << "get_cached_mat_width(Builder2, "
            << "arg_" << transName << ", arg_" << ldName << ", arg_" << dim1Name
            << ", arg_" << dim2Name << ", cache_" << matName << ", byRef)";
+      } else if (Def->isSubClassOf("Inst")) {
+        llvm::errs() << Def->getName() << "\n";
+        PrintFatalError("Def that isn't a DiffeRet, WIP!");
       } else {
         llvm::errs() << Def->getName() << "\n";
         PrintFatalError("Dag/Def that isn't a DiffeRet!");
@@ -2230,9 +2221,81 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
         llvm_unreachable("unimplemented input type!\n");
       }
     }
-    pos++;
+}
+// fill the result string and return the number of added args
+void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
+                   raw_ostream &os) {
+
+  DagInit *ruleDag = rule.getRuleDag();
+  const size_t numArgs = ruleDag->getNumArgs();
+
+  // working is some tmp buffer.
+  // After finishing, todo will hold all of our nested rule nodes.
+  std::vector<llvm::DagInit *> working;
+  working.push_back(ruleDag);
+  std::vector<llvm::DagInit *> todo;
+  while (!working.empty()) {
+    auto dag = working.back();
+    working.pop_back();
+    todo.push_back(dag);
+    
+    for (size_t pos = 0; pos < dag->getNumArgs(); pos++) {
+      llvm::Init *arg = dag->getArg(pos);
+      if (auto innerDag = dyn_cast<DagInit>(arg)) {
+          llvm::errs() << " inner dag!\n";
+          if (auto def = cast<DefInit>(innerDag->getOperator())) {
+            auto Def = def->getDef();
+            if (!Def->isSubClassOf("MagicInst")) {
+              auto name = Def->getValueAsString("name");
+              llvm::errs() << " inner dag Inst!\n";
+	      llvm::errs() << name << "\n";
+              working.push_back(innerDag);
+	    }
+	  }
+      }
+      if (auto innerDef = dyn_cast<DefInit>(arg)) {
+        if (innerDef->getDef()->isSubClassOf("Inst")) {
+          llvm::errs() << " inner def Inst!\n";
+          //working.push_back(innerDef);
+        }
+      }
+    }
   }
-  os << "};\n";
+  llvm::errs() << "size of todo: " << std::to_string(todo.size()) << "\n";
+
+  // We can now process them from the most nested ones to the outer ones
+  // This way we should allways have inner results available when handling
+  // outer calls.
+  size_t count = 0;
+  while (!todo.empty()) {
+    auto Dag = todo.back();
+    todo.pop_back();
+    
+    os << "        Value *" << argName << (count > 0 ? std::to_string(count) : "") 
+	    << "[] = {";
+
+    // just replace argOps with rule
+    if (auto dag = dyn_cast<DagInit>(Dag)) {
+      for (size_t pos = 0; pos < dag->getNumArgs(); pos++) {
+        if (pos > 0)
+          os << ", ";
+
+      llvm::Init *arg = dag->getArg(pos);
+      if (auto Dag = dyn_cast<DagInit>(arg)) {
+        auto Def = cast<DefInit>(Dag->getOperator())->getDef();
+        if (Def->isSubClassOf("Inst")) {
+        }
+      }
+      rev_call_arg(argName, arg, rule, actArg, pos, os);
+    }
+    os << "};\n";
+  } else {
+    llvm::errs() << "ASDF\n";
+    PrintFatalError("Unhandled blas-rev case!");
+	  
+  }
+  count++;
+  }
 }
 
 void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
@@ -2243,6 +2306,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
   const auto rules = pattern.getRules();
   const auto activeArgs = pattern.getActiveArgs();
   const bool lv23 = pattern.isBLASLevel2or3();
+  llvm::errs() << pattern.getName() << "\n";
 
   // If any of the rule uses DiffeRet, the primary function has a ret val
   // and we should emit the code for handling it.

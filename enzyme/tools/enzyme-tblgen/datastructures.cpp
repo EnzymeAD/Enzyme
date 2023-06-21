@@ -336,7 +336,6 @@ TGPattern::TGPattern(Record &r) {
   ArrayRef<std::string> nameVec =
       ArrayRef<std::string>(args.begin(), args.end());
   fillArgUserMap(rules, nameVec, posActArgs, argUsers);
-  // fillArgUserMap(rules, ArrayRef(args), posActArgs, argUsers);
 }
 SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg) {
   auto ty = argTypes.lookup(arg);

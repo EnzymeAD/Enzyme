@@ -2,6 +2,10 @@
 * Design:
 */
 
+def Ret;
+//class Ret {
+//}
+
 class BLASType<int _n, bit _active> { 
   int nelem = _n; 
   bit active = _active;
@@ -130,8 +134,8 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   >;
 
 // def nrm2 : CallBlasPattern<(Op $n, $x, $incx),
-//                   [],[len, vinc],
-//                   [(FDiv (b<"scal"> $n, DiffeRet, $x, $incx), Ret<"">)]
+//                   [],[len, vinc<["n"]>],
+//	           [(b<"scal"> $n, (FDiv (DiffeRet), (Ret)), $x, $incx)]
 //                   >;
 
 
