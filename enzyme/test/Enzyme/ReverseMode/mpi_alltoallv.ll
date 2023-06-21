@@ -41,7 +41,7 @@ declare void @__enzyme_autodiff(i8*, ...)
 ; CHECK: invert:                                           ; preds = %0
 ; CHECK-NEXT:   %3 = call i32 @MPI_Comm_size(%struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), i32* %1)
 ; CHECK-NEXT:   %4 = load i32, i32* %1
-; CHECK-NEXT:   %5 = alloca i64, align 8
+; CHECK-NEXT:   %5 = alloca i64
 ; CHECK-NEXT:   store i64 0, i64* %5
 ; CHECK-NEXT:   br label %invert_loop
 
@@ -66,7 +66,7 @@ declare void @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %18 = call i32 @MPI_Alltoallv(i8* %"recvbuf.bc'ipc", i32* %recvcounts, i32* %recvdispls, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_float to %struct.ompi_datatype_t*), i8* %17, i32* %sendcounts, i32* %senddispls, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_float to %struct.ompi_datatype_t*), %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*))
 ; CHECK-NEXT:   %19 = call i32 @MPI_Comm_size(%struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), i32* %2)
 ; CHECK-NEXT:   %20 = load i32, i32* %2
-; CHECK-NEXT:   %21 = alloca i64, align 8
+; CHECK-NEXT:   %21 = alloca i64
 ; CHECK-NEXT:   store i64 0, i64* %21
 ; CHECK-NEXT:   br label %invert_endloop_loop
 
@@ -97,12 +97,12 @@ declare void @__enzyme_autodiff(i8*, ...)
 ; CHECK: for.body.i:                                       ; preds = %for.body.i, %invert_endloop_endloop
 ; CHECK-NEXT:   %idx.i = phi i64 [ 0, %invert_endloop_endloop ], [ %idx.next.i, %for.body.i ]
 ; CHECK-NEXT:   %dst.i.i = getelementptr inbounds float, float* %33, i64 %idx.i
-; CHECK-NEXT:   %dst.i.l.i = load float, float* %dst.i.i, align 1
-; CHECK-NEXT:   store float 0.000000e+00, float* %dst.i.i, align 1
+; CHECK-NEXT:   %dst.i.l.i = load float, float* %dst.i.i
+; CHECK-NEXT:   store float 0.000000e+00, float* %dst.i.i
 ; CHECK-NEXT:   %src.i.i = getelementptr inbounds float, float* %34, i64 %idx.i
-; CHECK-NEXT:   %src.i.l.i = load float, float* %src.i.i, align 1
+; CHECK-NEXT:   %src.i.l.i = load float, float* %src.i.i
 ; CHECK-NEXT:   %37 = fadd fast float %src.i.l.i, %dst.i.l.i
-; CHECK-NEXT:   store float %37, float* %src.i.i, align 1
+; CHECK-NEXT:   store float %37, float* %src.i.i
 ; CHECK-NEXT:   %idx.next.i = add nuw i64 %idx.i, 1
 ; CHECK-NEXT:   %38 = icmp eq i64 %35, %idx.next.i
 ; CHECK-NEXT:   br i1 %38, label %__enzyme_memcpyadd_floatda1sa1.exit, label %for.body.i
