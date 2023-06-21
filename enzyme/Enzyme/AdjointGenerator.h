@@ -6464,6 +6464,7 @@ public:
 
             F->setLinkage(Function::LinkageTypes::InternalLinkage);
             F->addFnAttr(Attribute::NoUnwind);
+            F->addFnAttr(Attribute::AlwaysInline);
             F->addParamAttr(0, Attribute::NoCapture);
             F->addParamAttr(1, Attribute::NoCapture);
             F->addParamAttr(2, Attribute::NoCapture);
