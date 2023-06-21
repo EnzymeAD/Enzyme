@@ -35,7 +35,7 @@ declare void @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %sendbuf.bc = bitcast float* %sendbuf to i8*
 ; CHECK-NEXT:   %"recvbuf.bc'ipc" = bitcast float* %"recvbuf'" to i8*
 ; CHECK-NEXT:   %recvbuf.bc = bitcast float* %recvbuf to i8*
-; CHECK-NEXT:   %result = call i32 @MPI_Alltoall(i8* %sendbuf.bc, i32 %count, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_float to %struct.ompi_datatype_t*), i8* %recvbuf.bc, i32 %count, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_float to %struct.ompi_datatype_t*), %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*)) #0
+; CHECK-NEXT:   %result = call i32 @MPI_Alltoall(i8* %sendbuf.bc, i32 %count, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_float to %struct.ompi_datatype_t*), i8* %recvbuf.bc, i32 %count, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_float to %struct.ompi_datatype_t*), %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*))
 ; CHECK-NEXT:   br label %invert
 
 ; CHECK: invert:                                           ; preds = %0

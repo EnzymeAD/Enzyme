@@ -86,7 +86,7 @@ declare void @__enzyme_fwddiff(i8*, ...)
 ; CHECK-NEXT: define internal i32 @__enzyme_mpi_allreduce_comploc_float(float* nocapture %0, float* nocapture %1, i32* nocapture %2, i32 %3, %struct.ompi_op_t* nocapture %4, %struct.ompi_communicator_t* nocapture %5) #1 {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %6 = alloca i32
-; CHECK-NEXT:   %7 = call i32 @MPI_Type_size(i8* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_float_int to i8*), i32* %6) #3
+; CHECK-NEXT:   %7 = call i32 @MPI_Type_size(i8* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_float_int to i8*), i32* %6)
 ; CHECK-NEXT:   %8 = zext i32 %3 to i64
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %8, 8
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
