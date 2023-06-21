@@ -29,8 +29,8 @@ entry:
 declare void @__enzyme_autodiff(i8*, ...)
 
 ; CHECK: define internal void @diffempi_alltoall_test(float* %sendbuf, float* %"sendbuf'", i32 %count, float* %recvbuf, float* %"recvbuf'") #0 {
-; CHECK-NEXT:   %1 = alloca i32, align 4
-; CHECK-NEXT:   %2 = alloca i32, align 4
+; CHECK-NEXT:   %1 = alloca i32
+; CHECK-NEXT:   %2 = alloca i32
 ; CHECK-NEXT:   %"sendbuf.bc'ipc" = bitcast float* %"sendbuf'" to i8*
 ; CHECK-NEXT:   %sendbuf.bc = bitcast float* %sendbuf to i8*
 ; CHECK-NEXT:   %"recvbuf.bc'ipc" = bitcast float* %"recvbuf'" to i8*
@@ -40,7 +40,7 @@ declare void @__enzyme_autodiff(i8*, ...)
 
 ; CHECK: invert:                                           ; preds = %0
 ; CHECK-NEXT:   %3 = call i32 @MPI_Comm_size(%struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), i32* %1)
-; CHECK-NEXT:   %4 = load i32, i32* %1, align 4
+; CHECK-NEXT:   %4 = load i32, i32* %1
 ; CHECK-NEXT:   %5 = zext i32 %4 to i64
 ; CHECK-NEXT:   %6 = zext i32 %count to i64
 ; CHECK-NEXT:   %7 = mul nuw nsw i64 %6, %5
@@ -48,7 +48,7 @@ declare void @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %9 = tail call noalias nonnull i8* @malloc(i64 %8)
 ; CHECK-NEXT:   %10 = call i32 @MPI_Alltoall(i8* %"recvbuf.bc'ipc", i32 %count, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_float to %struct.ompi_datatype_t*), i8* %9, i32 %count, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_float to %struct.ompi_datatype_t*), %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*))
 ; CHECK-NEXT:   %11 = call i32 @MPI_Comm_size(%struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), i32* %2)
-; CHECK-NEXT:   %12 = load i32, i32* %2, align 4
+; CHECK-NEXT:   %12 = load i32, i32* %2
 ; CHECK-NEXT:   %13 = zext i32 %12 to i64
 ; CHECK-NEXT:   %14 = zext i32 %count to i64
 ; CHECK-NEXT:   %15 = mul nuw nsw i64 %14, %13
@@ -63,12 +63,12 @@ declare void @__enzyme_autodiff(i8*, ...)
 ; CHECK: for.body.i:                                       ; preds = %for.body.i, %invert
 ; CHECK-NEXT:   %idx.i = phi i64 [ 0, %invert ], [ %idx.next.i, %for.body.i ]
 ; CHECK-NEXT:   %dst.i.i = getelementptr inbounds float, float* %17, i64 %idx.i
-; CHECK-NEXT:   %dst.i.l.i = load float, float* %dst.i.i, align 1
-; CHECK-NEXT:   store float 0.000000e+00, float* %dst.i.i, align 1
+; CHECK-NEXT:   %dst.i.l.i = load float, float* %dst.i.i
+; CHECK-NEXT:   store float 0.000000e+00, float* %dst.i.i
 ; CHECK-NEXT:   %src.i.i = getelementptr inbounds float, float* %18, i64 %idx.i
-; CHECK-NEXT:   %src.i.l.i = load float, float* %src.i.i, align 1
+; CHECK-NEXT:   %src.i.l.i = load float, float* %src.i.i
 ; CHECK-NEXT:   %21 = fadd fast float %src.i.l.i, %dst.i.l.i
-; CHECK-NEXT:   store float %21, float* %src.i.i, align 1
+; CHECK-NEXT:   store float %21, float* %src.i.i
 ; CHECK-NEXT:   %idx.next.i = add nuw i64 %idx.i, 1
 ; CHECK-NEXT:   %22 = icmp eq i64 %19, %idx.next.i
 ; CHECK-NEXT:   br i1 %22, label %__enzyme_memcpyadd_floatda1sa1.exit, label %for.body.i

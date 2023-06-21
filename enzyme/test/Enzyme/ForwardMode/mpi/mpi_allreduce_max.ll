@@ -33,7 +33,7 @@ declare void @__enzyme_fwddiff(i8*, ...)
 
 
 ; CHECK: define internal void @fwddiffempi_allreduce_max_test(float* %sendbuf, float* %"sendbuf'", float* %recvbuf, float* %"recvbuf'", i32 %count) #0 {
-; CHECK-NEXT:   %1 = alloca i32, align 4
+; CHECK-NEXT:   %1 = alloca i32
 ; CHECK-NEXT:   %"sendbuf.bc'ipc" = bitcast float* %"sendbuf'" to i8*
 ; CHECK-NEXT:   %sendbuf.bc = bitcast float* %sendbuf to i8*
 ; CHECK-NEXT:   %"recvbuf.bc'ipc" = bitcast float* %"recvbuf'" to i8*
@@ -48,28 +48,28 @@ declare void @__enzyme_fwddiff(i8*, ...)
 ; CHECK-NEXT:   %7 = mul nuw i64 %6, 4
 ; CHECK-NEXT:   %malloccall1 = tail call noalias nonnull i8* @malloc(i64 %7)
 ; CHECK-NEXT:   %8 = call i32 @MPI_Comm_rank(%struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), i32* %1)
-; CHECK-NEXT:   %9 = load i32, i32* %1, align 4
+; CHECK-NEXT:   %9 = load i32, i32* %1
 ; CHECK-NEXT:   %10 = icmp sgt i32 %count, 0
 ; CHECK-NEXT:   br i1 %10, label %_loop, label %_endloop
 
 ; CHECK: _loop:                                            ; preds = %_endthen, %0
 ; CHECK-NEXT:   %11 = phi i32 [ 0, %0 ], [ %21, %_endthen ]
 ; CHECK-NEXT:   %12 = getelementptr inbounds i32, i32* %2, i32 %11
-; CHECK-NEXT:   %13 = load i32, i32* %12, align 4
+; CHECK-NEXT:   %13 = load i32, i32* %12
 ; CHECK-NEXT:   %14 = icmp eq i32 %13, %9
 ; CHECK-NEXT:   br i1 %14, label %_then, label %_endthen
 
 ; CHECK: _then:                                            ; preds = %_loop
 ; CHECK-NEXT:   %15 = bitcast i8* %"sendbuf.bc'ipc" to float*
 ; CHECK-NEXT:   %16 = getelementptr inbounds float, float* %15, i32 %11
-; CHECK-NEXT:   %17 = load float, float* %16, align 4
+; CHECK-NEXT:   %17 = load float, float* %16
 ; CHECK-NEXT:   br label %_endthen
 
 ; CHECK: _endthen:                                         ; preds = %_then, %_loop
 ; CHECK-NEXT:   %18 = phi fast float [ 0.000000e+00, %_loop ], [ %17, %_then ]
 ; CHECK-NEXT:   %19 = bitcast i8* %malloccall1 to float*
 ; CHECK-NEXT:   %20 = getelementptr inbounds float, float* %19, i32 %11
-; CHECK-NEXT:   store float %18, float* %20, align 4
+; CHECK-NEXT:   store float %18, float* %20
 ; CHECK-NEXT:   %21 = add i32 %11, 1
 ; CHECK-NEXT:   %22 = icmp slt i32 %11, %count
 ; CHECK-NEXT:   br i1 %22, label %_loop, label %_endloop
@@ -85,7 +85,7 @@ declare void @__enzyme_fwddiff(i8*, ...)
 ; CHECK: ; Function Attrs: nounwind
 ; CHECK-NEXT: define internal i32 @__enzyme_mpi_allreduce_comploc_float(float* nocapture %0, float* nocapture %1, i32* nocapture %2, i32 %3, %struct.ompi_op_t* nocapture %4, %struct.ompi_communicator_t* nocapture %5) #1 {
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %6 = alloca i32, align 4
+; CHECK-NEXT:   %6 = alloca i32
 ; CHECK-NEXT:   %7 = call i32 @MPI_Type_size(i8* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_float_int to i8*), i32* %6) #3
 ; CHECK-NEXT:   %8 = zext i32 %3 to i64
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %8, 8
@@ -94,9 +94,9 @@ declare void @__enzyme_fwddiff(i8*, ...)
 ; CHECK-NEXT:   %mallocsize1 = mul nuw nsw i64 %8, 8
 ; CHECK-NEXT:   %malloccall2 = tail call noalias nonnull i8* @malloc(i64 %mallocsize1)
 ; CHECK-NEXT:   %10 = bitcast i8* %malloccall2 to { float, i32 }*
-; CHECK-NEXT:   %11 = alloca i32, align 4
+; CHECK-NEXT:   %11 = alloca i32
 ; CHECK-NEXT:   %12 = call i32 @MPI_Comm_rank(%struct.ompi_communicator_t* %5, i32* %11)
-; CHECK-NEXT:   %13 = load i32, i32* %11, align 4
+; CHECK-NEXT:   %13 = load i32, i32* %11
 ; CHECK-NEXT:   %14 = icmp sgt i32 %3, 0
 ; CHECK-NEXT:   br i1 %14, label %loop, label %end
 
@@ -104,10 +104,10 @@ declare void @__enzyme_fwddiff(i8*, ...)
 ; CHECK-NEXT:   %15 = phi i32 [ 0, %entry ], [ %20, %loop ]
 ; CHECK-NEXT:   %16 = getelementptr inbounds { float, i32 }, { float, i32 }* %9, i32 %15, i32 0
 ; CHECK-NEXT:   %17 = getelementptr inbounds float, float* %0, i32 %15
-; CHECK-NEXT:   %18 = load float, float* %17, align 4
-; CHECK-NEXT:   store float %18, float* %16, align 4
+; CHECK-NEXT:   %18 = load float, float* %17
+; CHECK-NEXT:   store float %18, float* %16
 ; CHECK-NEXT:   %19 = getelementptr inbounds { float, i32 }, { float, i32 }* %9, i32 %15, i32 1
-; CHECK-NEXT:   store i32 %13, i32* %19, align 4
+; CHECK-NEXT:   store i32 %13, i32* %19
 ; CHECK-NEXT:   %20 = add i32 %15, 1
 ; CHECK-NEXT:   %21 = icmp slt i32 %15, %3
 ; CHECK-NEXT:   br i1 %21, label %loop, label %end
@@ -123,12 +123,12 @@ declare void @__enzyme_fwddiff(i8*, ...)
 ; CHECK-NEXT:   %26 = phi i32 [ 0, %end ], [ %33, %loop3 ]
 ; CHECK-NEXT:   %27 = getelementptr inbounds { float, i32 }, { float, i32 }* %10, i32 %26, i32 0
 ; CHECK-NEXT:   %28 = getelementptr inbounds float, float* %1, i32 %26
-; CHECK-NEXT:   %29 = load float, float* %27, align 4
-; CHECK-NEXT:   store float %29, float* %28, align 4
+; CHECK-NEXT:   %29 = load float, float* %27
+; CHECK-NEXT:   store float %29, float* %28
 ; CHECK-NEXT:   %30 = getelementptr inbounds { float, i32 }, { float, i32 }* %10, i32 %26, i32 1
 ; CHECK-NEXT:   %31 = getelementptr inbounds i32, i32* %2, i32 %26
-; CHECK-NEXT:   %32 = load i32, i32* %30, align 4
-; CHECK-NEXT:   store i32 %32, i32* %31, align 4
+; CHECK-NEXT:   %32 = load i32, i32* %30
+; CHECK-NEXT:   store i32 %32, i32* %31
 ; CHECK-NEXT:   %33 = add i32 %26, 1
 ; CHECK-NEXT:   %34 = icmp slt i32 %26, %3
 ; CHECK-NEXT:   br i1 %34, label %loop3, label %end4
