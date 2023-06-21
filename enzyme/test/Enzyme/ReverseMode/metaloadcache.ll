@@ -65,9 +65,9 @@ entry:
 
 ; CHECK: define internal void @diffeloader(double* %a, double* %"a'", double %differeturn, double
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %m0diffe = fmul fast double %differeturn, %0
-; CHECK-NEXT:   %m1diffe = fmul fast double %differeturn, %0
-; CHECK-NEXT:   %[[de:.+]] = fadd fast double %m0diffe, %m1diffe
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %differeturn, %0
+; CHECK-NEXT:   %[[m1diffe:.+]] = fmul fast double %differeturn, %0
+; CHECK-NEXT:   %[[de:.+]] = fadd fast double %[[m0diffe]], %[[m1diffe]]
 ; CHECK-NEXT:   %[[pra:.+]] = load double, double* %"a'"
 ; CHECK-NEXT:   %[[pa:.+]] = fadd fast double %[[pra]], %[[de]]
 ; CHECK-NEXT:   store double %[[pa]], double* %"a'"

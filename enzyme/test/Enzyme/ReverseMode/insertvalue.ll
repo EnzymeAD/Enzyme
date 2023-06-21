@@ -48,9 +48,9 @@ declare double @__enzyme_autodiff(double (double)*, ...)
 ; CHECK-NEXT:   %[[i16:.+]] = fadd fast double %[[i15]], %[[i13]]
 ; CHECK-NEXT:   store double %[[i16]], double* %[[i14]]
 ; CHECK-NEXT:   store [3 x double] zeroinitializer, [3 x double]* %"agg2'de"
-; CHECK-NEXT:   %m0diffex = fmul fast double %4, %x
-; CHECK-NEXT:   %m1diffex = fmul fast double %4, %x
-; CHECK-NEXT:   %[[i17:.+]] = fadd fast double %m0diffex, %m1diffex
+; CHECK-NEXT:   %[[m0diffex:.+]] = fmul fast double %4, %x
+; CHECK-NEXT:   %[[m1diffex:.+]] = fmul fast double %4, %x
+; CHECK-NEXT:   %[[i17:.+]] = fadd fast double %[[m0diffex]], %[[m1diffex]]
 ; CHECK-NEXT:   %[[i18:.+]] = load [3 x double], [3 x double]* %"agg1'de"
 ; CHECK-NEXT:   %[[i19:.+]] = extractvalue [3 x double] %[[i18]], 0
 ; CHECK-NEXT:   %[[i20:.+]] = fadd fast double %[[i17]], %[[i19]]

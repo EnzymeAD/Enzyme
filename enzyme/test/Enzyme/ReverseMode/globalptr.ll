@@ -44,13 +44,13 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"call'ac", i64 2
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %call, i64 2
 ; CHECK-NEXT:   %0 = load double, double* %arrayidx, align 8
-; CHECK-NEXT:   %m0diffe = fmul fast double %differeturn, %x
-; CHECK-NEXT:   %m1diffex = fmul fast double %differeturn, %0
-; CHECK-NEXT:   %1 = load double, double* %"arrayidx'ipg", align 8
-; CHECK-NEXT:   %2 = fadd fast double %1, %m0diffe
-; CHECK-NEXT:   store double %2, double* %"arrayidx'ipg", align 8
-; CHECK:   %3 = insertvalue { double } undef, double %m1diffex, 0
-; CHECK-NEXT:   ret { double } %3
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %differeturn, %x
+; CHECK-NEXT:   %[[m1diffex:.+]] = fmul fast double %differeturn, %0
+; CHECK-NEXT:   %[[i1:.+]] = load double, double* %"arrayidx'ipg", align 8
+; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[i1]], %[[m0diffe]]
+; CHECK-NEXT:   store double %[[i2]], double* %"arrayidx'ipg", align 8
+; CHECK:   %[[i3:.+]] = insertvalue { double } undef, double %[[m1diffex]], 0
+; CHECK-NEXT:   ret { double } %[[i3]]
 ; CHECK-NEXT: }
 
 ; CHECK: define internal { double*, double*, double* } @augmented_myglobal()

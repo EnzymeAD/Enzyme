@@ -101,14 +101,14 @@ entry:
 
 ; CHECK: invertend_phimerge: 
 ; CHECK-NEXT:   %7 = phi {{(fast )?}}double [ %l1_unwrap, %invertend_phirc ], [ %l2_unwrap, %invertend_phirc1 ], [ %l3_unwrap, %invertend_phirc2 ]
-; CHECK-NEXT:   %m0diffep = fmul fast double %0, %7
-; CHECK-NEXT:   %8 = fadd fast double %m0diffep, %m0diffep
+; CHECK-NEXT:   %[[m0diffep:.+]] = fmul fast double %0, %7
+; CHECK-NEXT:   %[[i8:.+]] = fadd fast double %[[m0diffep]], %[[m0diffep]]
 ; CHECK-NEXT:   %anot1_ = xor i1 %c1_unwrap, true
 ; CHECK-NEXT:   %bnot1_ = xor i1 %c2_unwrap, true
 ; CHECK-NEXT:   %andVal1 = and i1 %bnot1_, %anot1_
-; CHECK-NEXT:   %[[a9]] = select {{(fast )?}}i1 %c1_unwrap, double %8, double 0.000000e+00
-; CHECK-NEXT:   %[[a10]] = select {{(fast )?}}i1 %andVal1, double %8, double 0.000000e+00
-; CHECK-NEXT:   %[[a11]] = select {{(fast )?}}i1 %c2_unwrap, double %8, double 0.000000e+00
+; CHECK-NEXT:   %[[a9]] = select {{(fast )?}}i1 %c1_unwrap, double %[[i8]], double 0.000000e+00
+; CHECK-NEXT:   %[[a10]] = select {{(fast )?}}i1 %andVal1, double %[[i8]], double 0.000000e+00
+; CHECK-NEXT:   %[[a11]] = select {{(fast )?}}i1 %c2_unwrap, double %[[i8]], double 0.000000e+00
 ; CHECK-NEXT:   br i1 %c1_unwrap, label %invertbdef, label %staging
 
 ; CHECK: staging:

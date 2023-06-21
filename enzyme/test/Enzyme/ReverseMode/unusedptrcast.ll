@@ -35,11 +35,11 @@ entry:
 ; CHECK-NEXT:   store double %z2, double* %x
 ; CHECK-NEXT:   %0 = load double, double* %"x'"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'"
-; CHECK-NEXT:   %m0diffez = fmul fast double %0, %z
-; CHECK-NEXT:   %m1diffez = fmul fast double %0, %z
-; CHECK-NEXT:   %1 = fadd fast double %m0diffez, %m1diffez
-; CHECK-NEXT:   %2 = load double, double* %"x'"
-; CHECK-NEXT:   %3 = fadd fast double %2, %1
-; CHECK-NEXT:   store double %3, double* %"x'"
+; CHECK-NEXT:   %[[m0diffez:.+]] = fmul fast double %0, %z
+; CHECK-NEXT:   %[[m1diffez:.+]] = fmul fast double %0, %z
+; CHECK-NEXT:   %[[i1:.+]] = fadd fast double %[[m0diffez]], %[[m1diffez]]
+; CHECK-NEXT:   %[[i2:.+]] = load double, double* %"x'"
+; CHECK-NEXT:   %[[i3:.+]] = fadd fast double %[[i2]], %[[i1]]
+; CHECK-NEXT:   store double %[[i3]], double* %"x'"
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
