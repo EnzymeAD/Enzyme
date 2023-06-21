@@ -117,8 +117,8 @@ declare dso_local void @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.body:                                   ; preds = %invertfor.body8, %invertif.end
-; CHECK-NEXT:   %"'de3.0" = phi double [ %"'de3.2", %invertif.end ], [ 0.000000e+00, %invertfor.body8 ]
-; CHECK-NEXT:   %"'de2.0" = phi double [ %"'de2.2", %invertif.end ], [ 0.000000e+00, %invertfor.body8 ]
+; CHECK-NEXT:   %"'de3.0" = phi double [ %[[de32:.+]], %invertif.end ], [ 0.000000e+00, %invertfor.body8 ]
+; CHECK-NEXT:   %[[de20:.+]] = phi double [ %[[de22:.+]], %invertif.end ], [ 0.000000e+00, %invertfor.body8 ]
 ; CHECK-NEXT:   %"mul12'de.0" = phi double [ %"mul12'de.2", %invertif.end ], [ 0.000000e+00, %invertfor.body8 ]
 ; CHECK-NEXT:   %"tmp.034'de.0" = phi double [ %"tmp.034'de.2", %invertif.end ], [ 0.000000e+00, %invertfor.body8 ]
 ; CHECK-NEXT:   %"sub13'de.0" = phi double [ %"sub13'de.2", %invertif.end ], [ 0.000000e+00, %invertfor.body8 ]
@@ -135,8 +135,8 @@ declare dso_local void @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   br label %invertif.end
 
 ; CHECK: invertfor.body8:                                  ; preds = %invertif.end.loopexit, %incinvertfor.body8
-; CHECK-NEXT:   %"'de3.1" = phi double [ %"'de3.2", %invertif.end.loopexit ], [ 0.000000e+00, %incinvertfor.body8 ]
-; CHECK-NEXT:   %"'de2.1" = phi double [ %"'de2.2", %invertif.end.loopexit ], [ 0.000000e+00, %incinvertfor.body8 ]
+; CHECK-NEXT:   %"'de3.1" = phi double [ %[[de32]], %invertif.end.loopexit ], [ 0.000000e+00, %incinvertfor.body8 ]
+; CHECK-NEXT:   %[[de21:.+]] = phi double [ %[[de22]], %invertif.end.loopexit ], [ 0.000000e+00, %incinvertfor.body8 ]
 ; CHECK-NEXT:   %"mul12'de.1" = phi double [ %"mul12'de.2", %invertif.end.loopexit ], [ 0.000000e+00, %incinvertfor.body8 ]
 ; CHECK-NEXT:   %"tmp.034'de.1" = phi double [ %"tmp.034'de.2", %invertif.end.loopexit ], [ 0.000000e+00, %incinvertfor.body8 ]
 ; CHECK-NEXT:   %"sub13'de.1" = phi double [ %[[i21:.+]], %invertif.end.loopexit ], [ %[[i10:.+]], %incinvertfor.body8 ]
@@ -147,14 +147,14 @@ declare dso_local void @__enzyme_autodiff(i8*, ...)
 ; , %[[i9]]
 ; CHECK-NEXT:   %arrayidx11_unwrap = getelementptr inbounds double, double* %out, i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %_unwrap = load double, double* %arrayidx11_unwrap, align 8, !tbaa !2
-; CHECK-NEXT:   %m0diffe = fmul fast double %[[i11]], %_unwrap
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %[[i11]], %_unwrap
+; CHECK-NEXT:   %[[i12:.+]] = fadd fast double %[[de21]], %[[m0diffe]]
 ; CHECK-NEXT:   %mul_unwrap = mul i64 %"iv'ac.0", %N
 ; CHECK-NEXT:   %add_unwrap = add i64 %"iv1'ac.0", %mul_unwrap
 ; CHECK-NEXT:   %arrayidx10_unwrap = getelementptr inbounds double, double* %L, i64 %add_unwrap
 ; CHECK-NEXT:   %[[_unwrap3:.+]] = load double, double* %arrayidx10_unwrap, align 8, !tbaa !2
-; CHECK-NEXT:   %m1diffe = fmul fast double %[[i11]], %[[_unwrap3]]
-; CHECK-NEXT:   %[[i12:.+]] = fadd fast double %"'de2.1", %m0diffe
-; CHECK-NEXT:   %[[i13:.+]] = fadd fast double %"'de3.1", %m1diffe
+; CHECK-NEXT:   %[[m1diffe:.+]] = fmul fast double %[[i11]], %[[_unwrap3]]
+; CHECK-NEXT:   %[[i13:.+]] = fadd fast double %"'de3.1", %[[m1diffe]]
 ; CHECK-NEXT:   %"arrayidx11'ipg_unwrap" = getelementptr inbounds double, double* %"out'", i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %[[i14:.+]] = load double, double* %"arrayidx11'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[i15:.+]] = fadd fast double %[[i14]], %[[i13]]
@@ -175,8 +175,8 @@ declare dso_local void @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   br label %invertfor.body8
 
 ; CHECK: invertif.end:                                     ; preds = %if.end, %incinvertfor.body
-; CHECK-NEXT:   %"'de3.2" = phi double [ %"'de3.0", %incinvertfor.body ], [ 0.000000e+00, %if.end ]
-; CHECK-NEXT:   %"'de2.2" = phi double [ %"'de2.0", %incinvertfor.body ], [ 0.000000e+00, %if.end ]
+; CHECK-NEXT:   %[[de32]] = phi double [ %"'de3.0", %incinvertfor.body ], [ 0.000000e+00, %if.end ]
+; CHECK-NEXT:   %[[de22]] = phi double [ %[[de20]], %incinvertfor.body ], [ 0.000000e+00, %if.end ]
 ; CHECK-NEXT:   %"mul12'de.2" = phi double [ %"mul12'de.0", %incinvertfor.body ], [ 0.000000e+00, %if.end ]
 ; CHECK-NEXT:   %"tmp.034'de.2" = phi double [ %"tmp.034'de.0", %incinvertfor.body ], [ 0.000000e+00, %if.end ]
 ; CHECK-NEXT:   %"sub13'de.2" = phi double [ %"sub13'de.0", %incinvertfor.body ], [ 0.000000e+00, %if.end ]

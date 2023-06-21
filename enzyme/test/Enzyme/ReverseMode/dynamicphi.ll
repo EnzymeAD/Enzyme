@@ -191,9 +191,9 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %[[a16]] = fadd fast double %"innersum'de.1", %"add'de.1"
 ; CHECK-NEXT:   %[[a17:.+]] = getelementptr inbounds double, double* %[[pre6]], i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %[[a18:.+]] = load double, double* %[[a17]], align 8, !invariant.group !1
-; CHECK-NEXT:   %m0diffephi = fmul fast double %"add'de.1", %[[a18]]
-; CHECK-NEXT:   %[[a19:.+]] = fadd fast double %"phiadd'de.1", %m0diffephi
-; CHECK-NEXT:   %[[a20]] = fadd fast double %[[a19]], %m0diffephi
+; CHECK-NEXT:   %[[m0diffephi:.+]] = fmul fast double %"add'de.1", %[[a18]]
+; CHECK-NEXT:   %[[a19:.+]] = fadd fast double %"phiadd'de.1", %[[m0diffephi]]
+; CHECK-NEXT:   %[[a20]] = fadd fast double %[[a19]], %[[m0diffephi]]
 ; CHECK-NEXT:   %[[a21:.+]] = icmp eq i64 %"iv1'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[a21]], label %invertfor.body.ph, label %incinvertfor.body
 

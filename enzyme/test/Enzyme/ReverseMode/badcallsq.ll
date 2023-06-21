@@ -71,9 +71,9 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   call void @diffemetasubf(double* %x, double* %"x'")
 ; CHECK-NEXT:   %[[px:.+]] = load double, double* %"x'"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'"
-; CHECK-NEXT:   %m0diffe = fmul fast double %[[px]], %0
-; CHECK-NEXT:   %m1diffe = fmul fast double %[[px]], %0
-; CHECK-NEXT:   %[[diffe:.+]] = fadd fast double %m0diffe, %m1diffe
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %[[px]], %0
+; CHECK-NEXT:   %[[m1diffe:.+]] = fmul fast double %[[px]], %0
+; CHECK-NEXT:   %[[diffe:.+]] = fadd fast double %[[m0diffe]], %[[m1diffe]]
 ; CHECK-NEXT:   %[[dx:.+]] = load double, double* %"x'"
 ; CHECK-NEXT:   %[[ndx:.+]] = fadd fast double %[[dx]], %[[diffe]]
 ; CHECK-NEXT:   store double %[[ndx]], double* %"x'"

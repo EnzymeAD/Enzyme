@@ -86,11 +86,11 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 ; CHECK: define internal {{(dso_local )?}}{ double } @diffemulglobal(double %x, double %[[differet:.+]])
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = load double, double* @global, align 8, !tbaa !3
-; CHECK-NEXT:   %m0diffe = fmul fast double %differeturn, %x
-; CHECK-NEXT:   %m1diffex = fmul fast double %differeturn, %0
-; CHECK-NEXT:   %1 = load double, double* @dglobal
-; CHECK-NEXT:   %2 = fadd fast double %1, %m0diffe
-; CHECK-NEXT:   store double %2, double* @dglobal
-; CHECK-NEXT:   %3 = insertvalue { double } undef, double %m1diffex, 0
-; CHECK-NEXT:   ret { double } %3
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %differeturn, %x
+; CHECK-NEXT:   %[[m1diffex:.+]] = fmul fast double %differeturn, %0
+; CHECK-NEXT:   %[[i1:.+]] = load double, double* @dglobal
+; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[i1]], %[[m0diffe]]
+; CHECK-NEXT:   store double %[[i2]], double* @dglobal
+; CHECK-NEXT:   %[[i3:.+]] = insertvalue { double } undef, double %[[m1diffex]], 0
+; CHECK-NEXT:   ret { double } %[[i3:.+]]
 ; CHECK-NEXT: }

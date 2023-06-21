@@ -105,8 +105,8 @@ attributes #8 = { noreturn nounwind }
 ; CHECK-NEXT:   call void @diffemetasin(double* nonnull %a.addr, double* nonnull %"a.addr'ipa", double %[[drets2:.+]])
 ; CHECK-NEXT:   %[[pload:.+]] = load double, double* %"a.addr'ipa", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"a.addr'ipa", align 8
-; CHECK-NEXT:   %m0diffea = fmul fast double %[[pload]], %a
-; CHECK-NEXT:   %[[prev2]] = fadd fast double %m0diffea, %m0diffea
+; CHECK-NEXT:   %[[m0diffea:.+]] = fmul fast double %[[pload]], %a
+; CHECK-NEXT:   %[[prev2]] = fadd fast double %[[m0diffea]], %[[m0diffea]]
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertend:                                        ; preds = %if.true, %if.false

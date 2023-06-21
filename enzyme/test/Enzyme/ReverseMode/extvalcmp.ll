@@ -60,12 +60,12 @@ attributes #0 = { readnone }
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertlblock:                                     ; preds = %entry
-; CHECK-NEXT:   %m0diffeld = fmul fast double %0, %ld
-; CHECK-NEXT:   %m1diffeld = fmul fast double %0, %ld
-; CHECK-NEXT:   %1 = fadd fast double %m0diffeld, %m1diffeld
+; CHECK-NEXT:   %[[m0diffeld:.+]] = fmul fast double %0, %ld
+; CHECK-NEXT:   %[[m1diffeld:.+]] = fmul fast double %0, %ld
+; CHECK-NEXT:   %[[i1:.+]] = fadd fast double %[[m0diffeld]], %[[m1diffeld]]
 ; CHECK-NEXT:   %"ptr'ipev_unwrap" = extractvalue { i1, double* } %"agg'", 1
-; CHECK-NEXT:   %2 = load double, double* %"ptr'ipev_unwrap"
-; CHECK-NEXT:   %3 = fadd fast double %2, %1
-; CHECK-NEXT:   store double %3, double* %"ptr'ipev_unwrap"
+; CHECK-NEXT:   %[[i2:.+]] = load double, double* %"ptr'ipev_unwrap"
+; CHECK-NEXT:   %[[i3:.+]] = fadd fast double %[[i2]], %[[i1]]
+; CHECK-NEXT:   store double %[[i3]], double* %"ptr'ipev_unwrap"
 ; CHECK-NEXT:   br label %invertentry
 ; CHECK-NEXT: }

@@ -123,10 +123,10 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %arrayidx9_unwrap = getelementptr inbounds [20 x i32], [20 x i32]* %tmp, i64 0, i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %_unwrap = load i32, i32* %arrayidx9_unwrap, align 4, !tbaa ![[itbaa]]
 ; CHECK-NEXT:   %conv_unwrap = sitofp i32 %_unwrap to double
-; CHECK-NEXT:   %m0diffe = fmul fast double %conv_unwrap, %differeturn
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %conv_unwrap, %differeturn
 ; CHECK-NEXT:   %"arrayidx7'ipg_unwrap" = getelementptr inbounds double, double* %"x'", i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %[[a4:.+]] = load double, double* %"arrayidx7'ipg_unwrap", align 8
-; CHECK-NEXT:   %[[a5:.+]] = fadd fast double %[[a4]], %m0diffe
+; CHECK-NEXT:   %[[a5:.+]] = fadd fast double %[[a4]], %[[m0diffe]]
 ; CHECK-NEXT:   store double %[[a5]], double* %"arrayidx7'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[a6:.+]] = icmp eq i64 %"iv1'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[a6]], label %invertfor.body, label %incinvertfor.body5

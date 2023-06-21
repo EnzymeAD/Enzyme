@@ -210,8 +210,8 @@ attributes #10 = { noreturn nounwind }
 ; CHECK-NEXT:   br label %invertwhile
 
 ; CHECK: invertentry:                                      ; preds = %invertwhile
-; CHECK-NEXT:   %m0diffet = fmul fast double %[[fadd:.+]], -1.200000e+00
-; CHECK-NEXT:   %[[toret:.+]] = insertvalue { double } undef, double %m0diffet, 0
+; CHECK-NEXT:   %[[m0diffet:.+]] = fmul fast double %[[fadd:.+]], -1.200000e+00
+; CHECK-NEXT:   %[[toret:.+]] = insertvalue { double } undef, double %[[m0diffet]], 0
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %[[gphi]])
 ; CHECK-NEXT:   ret { double } %[[toret]]
 
@@ -221,10 +221,10 @@ attributes #10 = { noreturn nounwind }
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %iv, %exit ], [ %[[sub:.+]], %incinvertwhile ]
 ; CHECK-NEXT:   %[[igep:.+]] = getelementptr inbounds double, double* %[[_realloccast]], i64 %"iv'ac.0"
 ; CHECK-NEXT:   %[[il:.+]] = load double, double* %[[igep]], align 8, !invariant.group !8
-; CHECK-NEXT:   %m0diffemul = fmul fast double %"add'de.0", %[[il]]
-; CHECK-NEXT:   %m1diffe = fmul fast double %"add'de.0", %mul
-; CHECK-NEXT:   %[[fadd]] = fadd fast double %"mul'de.0", %m0diffemul
-; CHECK-NEXT:   %[[dad]] = fadd fast double %"add'de.0", %m1diffe
+; CHECK-NEXT:   %[[m0diffemul:.+]] = fmul fast double %"add'de.0", %[[il]]
+; CHECK-NEXT:   %[[fadd]] = fadd fast double %"mul'de.0", %[[m0diffemul]]
+; CHECK-NEXT:   %[[m1diffe:.+]] = fmul fast double %"add'de.0", %mul
+; CHECK-NEXT:   %[[dad]] = fadd fast double %"add'de.0", %[[m1diffe]]
 ; CHECK-NEXT:   %[[ieq:.+]] = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[ieq]], label %invertentry, label %incinvertwhile
 

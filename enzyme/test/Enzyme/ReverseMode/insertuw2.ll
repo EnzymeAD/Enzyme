@@ -75,78 +75,78 @@ declare void @__enzyme_autodiff(...)
 ; CHECK: inverttrueb:                                      ; preds = %invertexit
 ; CHECK-NEXT:   %0 = load double, double* %"in0'"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"in0'"
-; CHECK-NEXT:   %1 = fadd fast double 0.000000e+00, %0
+; CHECK-NEXT:   %[[i1:.+]] = fadd fast double 0.000000e+00, %0
 ; CHECK-NEXT:   %post_x1_unwrap = extractvalue { double, double, double* } %x1_cache.0, 1
-; CHECK-NEXT:   %m0diffepost_x0 = fmul fast double %1, %post_x1_unwrap
+; CHECK-NEXT:   %[[m0diffepost_x0:.+]] = fmul fast double %[[i1]], %post_x1_unwrap
+; CHECK-NEXT:   %[[i2:.+]] = fadd fast double 0.000000e+00, %[[m0diffepost_x0]]
 ; CHECK-NEXT:   %out1_unwrap = insertvalue { double, double, double* } %x1_cache.0, double* %in0, 2
 ; CHECK-NEXT:   %out2_unwrap = insertvalue { double, double, double* } %out1_unwrap, double 0.000000e+00, 1
 ; CHECK-NEXT:   %post_x0_unwrap = extractvalue { double, double, double* } %out2_unwrap, 0
-; CHECK-NEXT:   %m1diffepost_x1 = fmul fast double %1, %post_x0_unwrap
-; CHECK-NEXT:   %2 = fadd fast double 0.000000e+00, %m0diffepost_x0
-; CHECK-NEXT:   %3 = fadd fast double 0.000000e+00, %m1diffepost_x1
-; CHECK-NEXT:   %4 = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x1'de", i32 0, i32 1
-; CHECK-NEXT:   %5 = load double, double* %4
-; CHECK-NEXT:   %6 = fadd fast double %5, %3
-; CHECK-NEXT:   store double %6, double* %4
-; CHECK-NEXT:   %7 = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"out2'de", i32 0, i32 0
-; CHECK-NEXT:   %8 = load double, double* %7
-; CHECK-NEXT:   %9 = fadd fast double %8, %2
-; CHECK-NEXT:   store double %9, double* %7
-; CHECK-NEXT:   %10 = load { double, double, double* }, { double, double, double* }* %"out2'de"
-; CHECK-NEXT:   %11 = insertvalue { double, double, double* } %10, double 0.000000e+00, 1
-; CHECK-NEXT:   %12 = load { double, double, double* }, { double, double, double* }* %"out1'de"
-; CHECK-NEXT:   %13 = extractvalue { double, double, double* } %10, 0
-; CHECK-NEXT:   %14 = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"out1'de", i32 0, i32 0
-; CHECK-NEXT:   %15 = load double, double* %14
-; CHECK-NEXT:   %16 = fadd fast double %15, %13
-; CHECK-NEXT:   store double %16, double* %14
-; CHECK-NEXT:   %17 = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"out1'de", i32 0, i32 1
-; CHECK-NEXT:   %18 = load double, double* %17
-; CHECK-NEXT:   %19 = fadd fast double %18, 0.000000e+00
-; CHECK-NEXT:   store double %19, double* %17
+; CHECK-NEXT:   %[[m1diffepost_x1:.+]] = fmul fast double %[[i1]], %post_x0_unwrap
+; CHECK-NEXT:   %[[i3:.+]] = fadd fast double 0.000000e+00, %[[m1diffepost_x1]]
+; CHECK-NEXT:   %[[i4:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x1'de", i32 0, i32 1
+; CHECK-NEXT:   %[[i5:.+]] = load double, double* %[[i4]]
+; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %[[i5]], %[[i3]]
+; CHECK-NEXT:   store double %[[i6]], double* %[[i4]]
+; CHECK-NEXT:   %[[i7:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"out2'de", i32 0, i32 0
+; CHECK-NEXT:   %[[i8:.+]] = load double, double* %[[i7]]
+; CHECK-NEXT:   %[[i9:.+]] = fadd fast double %[[i8]], %[[i2]]
+; CHECK-NEXT:   store double %[[i9]], double* %[[i7]]
+; CHECK-NEXT:   %[[i10:.+]] = load { double, double, double* }, { double, double, double* }* %"out2'de"
+; CHECK-NEXT:   %[[i11:.+]] = insertvalue { double, double, double* } %[[i10]], double 0.000000e+00, 1
+; CHECK-NEXT:   %[[i12:.+]] = load { double, double, double* }, { double, double, double* }* %"out1'de"
+; CHECK-NEXT:   %[[i13:.+]] = extractvalue { double, double, double* } %[[i10]], 0
+; CHECK-NEXT:   %[[i14:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"out1'de", i32 0, i32 0
+; CHECK-NEXT:   %[[i15:.+]] = load double, double* %[[i14]]
+; CHECK-NEXT:   %[[i16:.+]] = fadd fast double %[[i15]], %[[i13]]
+; CHECK-NEXT:   store double %[[i16]], double* %[[i14]]
+; CHECK-NEXT:   %[[i17:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"out1'de", i32 0, i32 1
+; CHECK-NEXT:   %[[i18:.+]] = load double, double* %[[i17]]
+; CHECK-NEXT:   %[[i19:.+]] = fadd fast double %[[i18]], 0.000000e+00
+; CHECK-NEXT:   store double %[[i19]], double* %[[i17]]
 ; CHECK-NEXT:   store { double, double, double* } zeroinitializer, { double, double, double* }* %"out2'de"
-; CHECK-NEXT:   %20 = load { double, double, double* }, { double, double, double* }* %"out1'de"
-; CHECK-NEXT:   %21 = insertvalue { double, double, double* } %20, double* null, 2
-; CHECK-NEXT:   %22 = load { double, double, double* }, { double, double, double* }* %"x1'de"
-; CHECK-NEXT:   %23 = extractvalue { double, double, double* } %20, 0
-; CHECK-NEXT:   %24 = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x1'de", i32 0, i32 0
-; CHECK-NEXT:   %25 = load double, double* %24
-; CHECK-NEXT:   %26 = fadd fast double %25, %23
-; CHECK-NEXT:   store double %26, double* %24
-; CHECK-NEXT:   %27 = extractvalue { double, double, double* } %20, 1
-; CHECK-NEXT:   %28 = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x1'de", i32 0, i32 1
-; CHECK-NEXT:   %29 = load double, double* %28
-; CHECK-NEXT:   %30 = fadd fast double %29, %27
-; CHECK-NEXT:   store double %30, double* %28
+; CHECK-NEXT:   %[[i20:.+]] = load { double, double, double* }, { double, double, double* }* %"out1'de"
+; CHECK-NEXT:   %[[i21:.+]] = insertvalue { double, double, double* } %[[i20]], double* null, 2
+; CHECK-NEXT:   %[[i22:.+]] = load { double, double, double* }, { double, double, double* }* %"x1'de"
+; CHECK-NEXT:   %[[i23:.+]] = extractvalue { double, double, double* } %[[i20]], 0
+; CHECK-NEXT:   %[[i24:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x1'de", i32 0, i32 0
+; CHECK-NEXT:   %[[i25:.+]] = load double, double* %[[i24]]
+; CHECK-NEXT:   %[[i26:.+]] = fadd fast double %[[i25]], %[[i23]]
+; CHECK-NEXT:   store double %[[i26]], double* %[[i24]]
+; CHECK-NEXT:   %[[i27:.+]] = extractvalue { double, double, double* } %[[i20]], 1
+; CHECK-NEXT:   %[[i28:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x1'de", i32 0, i32 1
+; CHECK-NEXT:   %[[i29:.+]] = load double, double* %[[i28]]
+; CHECK-NEXT:   %[[i30:.+]] = fadd fast double %[[i29]], %[[i27]]
+; CHECK-NEXT:   store double %[[i30]], double* %[[i28]]
 ; CHECK-NEXT:   store { double, double, double* } zeroinitializer, { double, double, double* }* %"out1'de"
-; CHECK-NEXT:   %31 = load { double, double, double* }, { double, double, double* }* %"x1'de"
-; CHECK-NEXT:   %32 = extractvalue { double, double, double* } %31, 1
-; CHECK-NEXT:   %33 = fadd fast double 0.000000e+00, %32
-; CHECK-NEXT:   %34 = load { double, double, double* }, { double, double, double* }* %"x1'de"
-; CHECK-NEXT:   %35 = insertvalue { double, double, double* } %34, double 0.000000e+00, 1
-; CHECK-NEXT:   %36 = load { double, double, double* }, { double, double, double* }* %"x0'de"
-; CHECK-NEXT:   %37 = extractvalue { double, double, double* } %34, 0
-; CHECK-NEXT:   %38 = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x0'de", i32 0, i32 0
-; CHECK-NEXT:   %39 = load double, double* %38
-; CHECK-NEXT:   %40 = fadd fast double %39, %37
-; CHECK-NEXT:   store double %40, double* %38
-; CHECK-NEXT:   %41 = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x0'de", i32 0, i32 1
-; CHECK-NEXT:   %42 = load double, double* %41
-; CHECK-NEXT:   %43 = fadd fast double %42, 0.000000e+00
-; CHECK-NEXT:   store double %43, double* %41
+; CHECK-NEXT:   %[[i31:.+]] = load { double, double, double* }, { double, double, double* }* %"x1'de"
+; CHECK-NEXT:   %[[i32:.+]] = extractvalue { double, double, double* } %[[i31]], 1
+; CHECK-NEXT:   %[[i33:.+]] = fadd fast double 0.000000e+00, %[[i32]]
+; CHECK-NEXT:   %[[i34:.+]] = load { double, double, double* }, { double, double, double* }* %"x1'de"
+; CHECK-NEXT:   %[[i35:.+]] = insertvalue { double, double, double* } %[[i34]], double 0.000000e+00, 1
+; CHECK-NEXT:   %[[i36:.+]] = load { double, double, double* }, { double, double, double* }* %"x0'de"
+; CHECK-NEXT:   %[[i37:.+]] = extractvalue { double, double, double* } %[[i34]], 0
+; CHECK-NEXT:   %[[i38:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x0'de", i32 0, i32 0
+; CHECK-NEXT:   %[[i39:.+]] = load double, double* %[[i38]]
+; CHECK-NEXT:   %[[i40:.+]] = fadd fast double %[[i39]], %[[i37]]
+; CHECK-NEXT:   store double %[[i40]], double* %[[i38]]
+; CHECK-NEXT:   %[[i41:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x0'de", i32 0, i32 1
+; CHECK-NEXT:   %[[i42:.+]] = load double, double* %[[i41]]
+; CHECK-NEXT:   %[[i43:.+]] = fadd fast double %[[i42]], 0.000000e+00
+; CHECK-NEXT:   store double %[[i43]], double* %[[i41]]
 ; CHECK-NEXT:   store { double, double, double* } zeroinitializer, { double, double, double* }* %"x1'de"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"in1'"
-; CHECK-NEXT:   %44 = load double, double* %"in1'"
-; CHECK-NEXT:   %45 = fadd fast double %44, %33
-; CHECK-NEXT:   store double %45, double* %"in1'"
-; CHECK-NEXT:   %46 = load { double, double, double* }, { double, double, double* }* %"x0'de"
-; CHECK-NEXT:   %47 = extractvalue { double, double, double* } %46, 0
-; CHECK-NEXT:   %48 = fadd fast double 0.000000e+00, %47
+; CHECK-NEXT:   %[[i44:.+]] = load double, double* %"in1'"
+; CHECK-NEXT:   %[[i45:.+]] = fadd fast double %[[i44]], %[[i33]]
+; CHECK-NEXT:   store double %[[i45]], double* %"in1'"
+; CHECK-NEXT:   %[[i46:.+]] = load { double, double, double* }, { double, double, double* }* %"x0'de"
+; CHECK-NEXT:   %[[i47:.+]] = extractvalue { double, double, double* } %[[i46]], 0
+; CHECK-NEXT:   %[[i48:.+]] = fadd fast double 0.000000e+00, %[[i47]]
 ; CHECK-NEXT:   store { double, double, double* } zeroinitializer, { double, double, double* }* %"x0'de"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"in0'"
-; CHECK-NEXT:   %49 = load double, double* %"in0'"
-; CHECK-NEXT:   %50 = fadd fast double %49, %48
-; CHECK-NEXT:   store double %50, double* %"in0'"
+; CHECK-NEXT:   %[[i49:.+]] = load double, double* %"in0'"
+; CHECK-NEXT:   %[[i50:.+]] = fadd fast double %[[i49]], %[[i48]]
+; CHECK-NEXT:   store double %[[i50]], double* %"in0'"
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertexit:                                       ; preds = %exit

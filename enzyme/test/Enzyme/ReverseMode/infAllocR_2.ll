@@ -127,7 +127,7 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %"i10'de.0" = phi double [ %"i10'de.1", %invertfor.body ], [ %"i10'de.2", %remat_enter ]
 ; CHECK-NEXT:   %"ld'de.0" = phi double [ 0.000000e+00, %invertfor.body ], [ %"ld'de.1", %remat_enter ]
 ; CHECK-NEXT:   %"rho0'de.0" = phi double [ %"rho0'de.1", %invertfor.body ], [ %"rho0'de.2", %remat_enter ]
-; CHECK-NEXT:   %"val'de.0" = phi double [ %17, %invertfor.body ], [ %"val'de.1", %remat_enter ]
+; CHECK-NEXT:   %"val'de.0" = phi double [ %[[i19:.+]], %invertfor.body ], [ %"val'de.1", %remat_enter ]
 ; CHECK-NEXT:   %[[i1:.+]] = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %"fadd'de.0", %"val'de.0"
 ; CHECK-NEXT:   %3 = select {{(fast )?}}i1 %[[i1]], double %"fadd'de.0", double %[[i2]]
@@ -159,13 +159,13 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %[[i9:.+]] = load double, double* %"arrayidx5'ipg_unwrap", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx5'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[i10:.+]] = fadd fast double %"mul'de.1", %[[i9]]
-; CHECK-NEXT:   %m0diffei10 = fmul fast double %[[i10]], %rho0
+; CHECK-NEXT:   %[[m0diffei10:.+]] = fmul fast double %[[i10]], %rho0
+; CHECK-NEXT:   %[[i11:.+]] = fadd fast double %"i10'de.1", %[[m0diffei10]]
 ; CHECK-NEXT:   %[[sub_unwrap4:.+]] = sub i64 %"iv1'ac.0", 1
 ; CHECK-NEXT:   %[[arrayidx4_unwrap5:.+]] = getelementptr inbounds double, double* %i4_unwrap, i64 %[[sub_unwrap4]]
 ; CHECK-NEXT:   %[[i10_unwrap6:.+]] = load double, double* %[[arrayidx4_unwrap5]], align 8
-; CHECK-NEXT:   %m1differho0 = fmul fast double %[[i10]], %[[i10_unwrap6]]
-; CHECK-NEXT:   %[[i11:.+]] = fadd fast double %"i10'de.1", %m0diffei10
-; CHECK-NEXT:   %[[i12]] = fadd fast double %"rho0'de.1", %m1differho0
+; CHECK-NEXT:   %[[m1differho0:.+]] = fmul fast double %[[i10]], %[[i10_unwrap6]]
+; CHECK-NEXT:   %[[i12]] = fadd fast double %"rho0'de.1", %[[m1differho0]]
 ; CHECK-NEXT:   %"arrayidx4'ipg_unwrap" = getelementptr inbounds double, double* %[[ipc_unwrap8]], i64 %[[sub_unwrap4]]
 ; CHECK-NEXT:   %[[i13:.+]] = load double, double* %"arrayidx4'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[i14:.+]] = fadd fast double %[[i13]], %[[i11]]
@@ -196,6 +196,16 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %[[i15]] = add i64 %fiv, 1
 ; CHECK-NEXT:   %cmp2_unwrap = icmp ne i64 %[[i15]], 1000000
 ; CHECK-NEXT:   br i1 %cmp2_unwrap, label %remat_for.cond_for.body3, label %remat_for.cond_for.end
+
+; CHECK: remat_for.cond_for.end: 
+; CHECK-NEXT:   %[[i18:.+]] = fadd fast double %"ld'de.1", %"fadd'de.1"
+; CHECK-NEXT:   %[[i19]] = fadd fast double %"val'de.1", %"fadd'de.1"
+; CHECK-NEXT:   %"i4'ipc_unwrap8" = bitcast i8* %"call'mi" to double*
+; CHECK-NEXT:   %"lgep'ipg_unwrap" = getelementptr inbounds double, double* %"i4'ipc_unwrap8", i64 999998
+; CHECK-NEXT:   %[[i20:.+]] = load double, double* %"lgep'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i21:.+]] = fadd fast double %[[i20]], %[[i18]]
+; CHECK-NEXT:   store double %[[i21]], double* %"lgep'ipg_unwrap", align 8
+; CHECK-NEXT:   br label %invertfor.cond1
 
 ; CHECK: remat_for.cond_for.body3:                         ; preds = %remat_for.cond_for.cond1
 ; CHECK-DAG:    %arrayidx5_unwrap = getelementptr inbounds double, double* %i4_unwrap, i64 %[[i15]]

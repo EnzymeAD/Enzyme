@@ -56,23 +56,23 @@ exit:
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertloop:                                       ; preds = %entry, %incinvertloop
-; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 9, %entry ], [ %5, %incinvertloop ]
+; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 9, %entry ], [ %[[i5:.+]], %incinvertloop ]
 ; CHECK-NEXT:   %"out'il_phi_unwrap" = load double*, double** %"outp'", align 8
 ; CHECK-NEXT:   %0 = load double, double* %"out'il_phi_unwrap", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"out'il_phi_unwrap", align 8
 ; CHECK-NEXT:   %in_unwrap = load double*, double** %inp, align 8
 ; CHECK-NEXT:   %v_unwrap = load double, double* %in_unwrap, align 8
-; CHECK-NEXT:   %m0diffev = fmul fast double %0, %v_unwrap
-; CHECK-NEXT:   %m1diffev = fmul fast double %0, %v_unwrap
-; CHECK-NEXT:   %1 = fadd fast double %m0diffev, %m1diffev
+; CHECK-NEXT:   %[[m0diffev:.+]] = fmul fast double %0, %v_unwrap
+; CHECK-NEXT:   %[[m1diffev:.+]] = fmul fast double %0, %v_unwrap
+; CHECK-NEXT:   %[[i1:.+]] = fadd fast double %[[m0diffev]], %[[m1diffev]]
 ; CHECK-NEXT:   %"in'il_phi_unwrap" = load double*, double** %"inp'", align 8
-; CHECK-NEXT:   %2 = load double, double* %"in'il_phi_unwrap", align 8
-; CHECK-NEXT:   %3 = fadd fast double %2, %1
-; CHECK-NEXT:   store double %3, double* %"in'il_phi_unwrap", align 8
-; CHECK-NEXT:   %4 = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   br i1 %4, label %invertentry, label %incinvertloop
+; CHECK-NEXT:   %[[i2:.+]] = load double, double* %"in'il_phi_unwrap", align 8
+; CHECK-NEXT:   %[[i3:.+]] = fadd fast double %[[i2]], %[[i1]]
+; CHECK-NEXT:   store double %[[i3]], double* %"in'il_phi_unwrap", align 8
+; CHECK-NEXT:   %[[i4:.+]] = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   br i1 %[[i4]], label %invertentry, label %incinvertloop
 
 ; CHECK: incinvertloop:                                    ; preds = %invertloop
-; CHECK-NEXT:   %5 = add nsw i64 %"iv'ac.0", -1
+; CHECK-NEXT:   %[[i5]] = add nsw i64 %"iv'ac.0", -1
 ; CHECK-NEXT:   br label %invertloop
 ; CHECK-NEXT: }

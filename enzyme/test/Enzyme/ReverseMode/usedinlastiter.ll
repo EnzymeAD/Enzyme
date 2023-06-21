@@ -169,10 +169,10 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; CHECK-NEXT:   %[[r13:.+]] = load float*, float** %[[z12]], align 8
 ; CHECK-NEXT:   %[[i11:.+]] = getelementptr inbounds float, float* %[[r13]], i64 %"iv3'ac.0"
 ; CHECK-NEXT:   %[[i12:.+]] = load float, float* %[[i11]], align 4, !invariant.group ![[g2]]
-; CHECK-NEXT:   %m0diffea17 = fmul fast float %[[i10]], %[[i12]]
-; CHECK-NEXT:   %m1diffea17 = fmul fast float %[[i10]], %[[i12]]
-; CHECK-NEXT:   %[[i13:.+]] = fadd fast float %"a17'de.1", %m0diffea17
-; CHECK-NEXT:   %[[i14:.+]] = fadd fast float %[[i13]], %m1diffea17
+; CHECK-NEXT:   %[[m0diffea17:.+]] = fmul fast float %[[i10]], %[[i12]]
+; CHECK-NEXT:   %[[i13:.+]] = fadd fast float %"a17'de.1", %[[m0diffea17]]
+; CHECK-NEXT:   %[[m1diffea17:.+]] = fmul fast float %[[i10]], %[[i12]]
+; CHECK-NEXT:   %[[i14:.+]] = fadd fast float %[[i13]], %[[m1diffea17]]
 ; CHECK-NEXT:   %[[i15:.+]] = load float, float* %"in'", align 8
 ; CHECK-NEXT:   %[[i16:.+]] = fadd fast float %[[i15]], %[[i14]]
 ; CHECK-NEXT:   store float %[[i16:.+]], float* %"in'", align 8
@@ -327,10 +327,10 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; BEFORE-NEXT:   %[[a13_2:.+]] = load float*, float** %[[a12]], align 8, !dereferenceable !{{[0-9]+}}, !invariant.group ![[g1]]
 ; BEFORE-NEXT:   %[[a14:.+]] = getelementptr inbounds float, float* %[[a13_2]], i64 %"iv3'ac.0"
 ; BEFORE-NEXT:   %[[a15:.+]] = load float, float* %[[a14]], align 4, !invariant.group ![[g2]]
-; BEFORE-NEXT:   %m0diffea17 = fmul fast float %[[a11]], %[[a15]]
-; BEFORE-NEXT:   %m1diffea17 = fmul fast float %[[a11]], %[[a15]]
-; BEFORE-NEXT:   %[[a16:.+]] = fadd fast float %"a17'de.1", %m0diffea17
-; BEFORE-NEXT:   %[[a17:.+]] = fadd fast float %[[a16]], %m1diffea17
+; BEFORE-NEXT:   %[[m0diffea17:.+]] = fmul fast float %[[a11]], %[[a15]]
+; BEFORE-NEXT:   %[[m1diffea17:.+]] = fmul fast float %[[a11]], %[[a15]]
+; BEFORE-NEXT:   %[[a16:.+]] = fadd fast float %"a17'de.1", %[[m0diffea17]]
+; BEFORE-NEXT:   %[[a17:.+]] = fadd fast float %[[a16]], %[[m1diffea17]]
 ; BEFORE-NEXT:   %[[a18:.+]] = load float, float* %"in'", align 8
 ; BEFORE-NEXT:   %[[a19:.+]] = fadd fast float %[[a18]], %[[a17]]
 ; BEFORE-NEXT:   store float %[[a19]], float* %"in'", align 8
