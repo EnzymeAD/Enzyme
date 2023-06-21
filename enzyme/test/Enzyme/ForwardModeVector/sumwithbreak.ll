@@ -77,18 +77,18 @@ attributes #0 = { noinline nounwind uwtable }
 ; CHECK-NEXT:    [[TMP13:%.*]] = extractvalue [3 x double*] %"x'", 0
 ; CHECK-NEXT:    %"arrayidx4'ipg" = getelementptr inbounds double, double* [[TMP13]], i64 [[IV]]
 ; CHECK-NEXT:    [[TMP14:%.*]] = extractvalue [3 x double*] %"x'", 1
-; CHECK-NEXT:    %"arrayidx4'ipg6" = getelementptr inbounds double, double* [[TMP14]], i64 [[IV]]
+; CHECK-NEXT:    %"arrayidx4'ipg7" = getelementptr inbounds double, double* [[TMP14]], i64 [[IV]]
 ; CHECK-NEXT:    [[TMP15:%.*]] = extractvalue [3 x double*] %"x'", 2
-; CHECK-NEXT:    %"arrayidx4'ipg7" = getelementptr inbounds double, double* [[TMP15]], i64 [[IV]]
+; CHECK-NEXT:    %"arrayidx4'ipg8" = getelementptr inbounds double, double* [[TMP15]], i64 [[IV]]
 ; CHECK-NEXT:    [[ARRAYIDX4:%.*]] = getelementptr inbounds double, double* [[X]], i64 [[IV]]
-; CHECK-NEXT:    %"'ipl8" = load double, double* %"arrayidx4'ipg", align 8
-; CHECK-NEXT:    %"'ipl9" = load double, double* %"arrayidx4'ipg6", align 8
+; CHECK-NEXT:    %"'ipl9" = load double, double* %"arrayidx4'ipg", align 8
 ; CHECK-NEXT:    %"'ipl10" = load double, double* %"arrayidx4'ipg7", align 8
+; CHECK-NEXT:    %"'ipl11" = load double, double* %"arrayidx4'ipg8", align 8
 ; CHECK-NEXT:    [[TMP16:%.*]] = load double, double* [[ARRAYIDX4]], align 8
 ; CHECK-NEXT:    [[ADD5]] = fadd fast double [[TMP16]], [[DATA_016]]
-; CHECK-NEXT:    [[TMP18]] = fadd fast double %"'ipl8", [[TMP0_0]]
-; CHECK-NEXT:    [[TMP21]] = fadd fast double %"'ipl9", [[TMP0_1]]
-; CHECK-NEXT:    [[TMP24]] = fadd fast double %"'ipl10", [[TMP0_2]]
+; CHECK-NEXT:    [[TMP18]] = fadd fast double %"'ipl9", [[TMP0_0]]
+; CHECK-NEXT:    [[TMP21]] = fadd fast double %"'ipl10", [[TMP0_1]]
+; CHECK-NEXT:    [[TMP24]] = fadd fast double %"'ipl11", [[TMP0_2]]
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp ult i64 [[IV]], [[N]]
 ; CHECK-NEXT:    br i1 [[CMP]], label [[FOR_BODY]], label [[CLEANUP]]
 ; CHECK:       cleanup:

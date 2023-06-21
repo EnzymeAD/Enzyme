@@ -140,7 +140,7 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   br label %remat_enter
 
 ; CHECK: invertfor.body:                                   ; preds = %invertfor.cond1
-; CHECK-NEXT:   store double 0.000000e+00, double* %"i4'ipc_unwrap8", align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %[[ipc_unwrap8:.+]], align 8
 ; CHECK-NEXT:   call void @free(i8* nonnull %"call'mi")
 ; CHECK-NEXT:   call void @free(i8* %remat_call)
 ; CHECK-NEXT:   br label %invertfor.cond
@@ -155,7 +155,7 @@ attributes #3 = { nounwind }
 
 ; CHECK: incinvertfor.cond1:                               ; preds = %invertfor.cond1
 ; CHECK-NEXT:   %[[i8]] = add nsw i64 %"iv1'ac.0", -1
-; CHECK-NEXT:   %"arrayidx5'ipg_unwrap" = getelementptr inbounds double, double* %"i4'ipc_unwrap8", i64 %"iv1'ac.0"
+; CHECK-NEXT:   %"arrayidx5'ipg_unwrap" = getelementptr inbounds double, double* %[[ipc_unwrap8]], i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %[[i9:.+]] = load double, double* %"arrayidx5'ipg_unwrap", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx5'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[i10:.+]] = fadd fast double %"mul'de.1", %[[i9]]
@@ -166,7 +166,7 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %m1differho0 = fmul fast double %[[i10]], %[[i10_unwrap6]]
 ; CHECK-NEXT:   %[[i11:.+]] = fadd fast double %"i10'de.1", %m0diffei10
 ; CHECK-NEXT:   %[[i12]] = fadd fast double %"rho0'de.1", %m1differho0
-; CHECK-NEXT:   %"arrayidx4'ipg_unwrap" = getelementptr inbounds double, double* %"i4'ipc_unwrap8", i64 %[[sub_unwrap4]]
+; CHECK-NEXT:   %"arrayidx4'ipg_unwrap" = getelementptr inbounds double, double* %[[ipc_unwrap8]], i64 %[[sub_unwrap4]]
 ; CHECK-NEXT:   %[[i13:.+]] = load double, double* %"arrayidx4'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[i14:.+]] = fadd fast double %[[i13]], %[[i11]]
 ; CHECK-NEXT:   store double %[[i14]], double* %"arrayidx4'ipg_unwrap", align 8

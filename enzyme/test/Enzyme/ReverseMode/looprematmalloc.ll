@@ -163,9 +163,9 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %"i18'de.1" = phi double [ %"i18'de.2", %remat_loop_loopExit ], [ %"i18'de.0", %incinvertsetLoop ]
 ; CHECK-NEXT:   %"arg'de.1" = phi double [ %"arg'de.2", %remat_loop_loopExit ], [ %"arg'de.0", %incinvertsetLoop ]
 ; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 29, %remat_loop_loopExit ], [ %5, %incinvertsetLoop ]
-; CHECK-NEXT:   %"i20'ipg_unwrap" = getelementptr inbounds [30 x double], [30 x double]* %"i'ipc_unwrap8", i64 0, i64 %"iv1'ac.0"
-; CHECK-NEXT:   %14 = load double, double* %"i20'ipg_unwrap", align 8
-; CHECK-NEXT:   store double 0.000000e+00, double* %"i20'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i20ipg_unwrap:.+]] = getelementptr inbounds [30 x double], [30 x double]* %[[ipc_unwrap8:.+]], i64 0, i64 %"iv1'ac.0"
+; CHECK-NEXT:   %14 = load double, double* %[[i20ipg_unwrap]], align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %[[i20ipg_unwrap]], align 8
 ; CHECK-NEXT:   %i15_unwrap5 = and i64 %"iv1'ac.0", 1
 ; CHECK-NEXT:   %i16_unwrap6 = icmp eq i64 %i15_unwrap5, 0
 ; CHECK-NEXT:   %15 = fadd fast double %"i18'de.1", %14
@@ -201,8 +201,8 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %i8_unwrap = load double, double* %i7_unwrap, align 8, !tbaa !2
 ; CHECK-NEXT:   %m0diffei8 = fmul fast double %"i10'de.0", %i8_unwrap
 ; CHECK-NEXT:   %20 = fadd fast double %m0diffei8, %m0diffei8
-; CHECK-NEXT:   %"i'ipc_unwrap8" = bitcast i8* %"i1'mi" to [30 x double]*
-; CHECK-NEXT:   %"i7'ipg_unwrap" = getelementptr inbounds [30 x double], [30 x double]* %"i'ipc_unwrap8", i64 0, i64 %"iv'ac.0"
+; CHECK-NEXT:   %[[ipc_unwrap8]] = bitcast i8* %"i1'mi" to [30 x double]*
+; CHECK-NEXT:   %"i7'ipg_unwrap" = getelementptr inbounds [30 x double], [30 x double]* %[[ipc_unwrap8]], i64 0, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %21 = load double, double* %"i7'ipg_unwrap", align 8
 ; CHECK-NEXT:   %22 = fadd fast double %21, %20
 ; CHECK-NEXT:   store double %22, double* %"i7'ipg_unwrap", align 8

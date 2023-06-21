@@ -27,6 +27,17 @@ class IntrPattern<dag patternToMatch, list<list<string>> funcNames, list<dag> re
   dag ArgDuals = forwardOps;
 }
 
+
+class BinopPattern<dag patternToMatch, string funcName, int minVer_, int maxVer_, list<dag> resultOps, dag forwardOps> {
+  dag PatternToMatch = patternToMatch;
+  string name = funcName;
+  int minVer = minVer_;
+  int maxVer = maxVer_;
+  list<dag> ArgDerivatives = resultOps;
+  dag ArgDuals = forwardOps;
+}
+
+
 class Inst<string mnemonic> {
   string name = mnemonic;
 }
@@ -831,5 +842,13 @@ def : IntrPattern<(Op $x, $y),
                   ],
                   (Call<(SameFunc)> (SelectIfActive $x, (Shadow $x), (Zero $x)), (SelectIfActive $y, (Shadow $y), (Zero $y)))
                  >;
+
+def : BinopPattern<(Op $x, $y), "FAdd", 0, 0,
+                    [
+                      (DiffeRet),
+                      (DiffeRet),
+                    ],
+                    (ForwardFromSummedReverse)
+                  >;
 
 include "BlasDerivatives.td"                  

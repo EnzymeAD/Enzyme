@@ -30,6 +30,7 @@ using namespace llvm;
 
 enum ActionType {
   GenDerivatives,
+  BinopDerivatives,
   IntrDerivatives,
   GenBlasDerivatives,
   UpdateBlasDecl,
@@ -49,6 +50,8 @@ static cl::opt<ActionType>
                                  "Update BLAS DiffUseAnalysis")),
            cl::values(clEnumValN(IntrDerivatives, "gen-intr-derivatives",
                                  "Generate intrinsic derivative")),
+           cl::values(clEnumValN(BinopDerivatives, "gen-binop-derivatives",
+                                 "Generate binaryoperator derivative")),
            cl::values(clEnumValN(GenDerivatives, "gen-derivatives",
                                  "Generate instruction derivative")));
 
@@ -940,10 +943,23 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 }
 
 static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
-                            bool intrinsic) {
+                            ActionType intrinsic) {
   emitSourceFileHeader("Rewriters", os);
-  const auto &patterns = recordKeeper.getAllDerivedDefinitions(
-      intrinsic ? "IntrPattern" : "CallPattern");
+  std::string patternNames;
+  switch(intrinsic) {
+  case GenDerivatives:
+    patternNames = "CallPattern";
+    break;
+  case IntrDerivatives:
+    patternNames = "IntrPattern";
+    break;
+  case BinopDerivatives:
+    patternNames = "BinopPattern";
+    break;
+  default:
+    assert(0 && "Illegal pattern type");
+  }
+  const auto &patterns = recordKeeper.getAllDerivedDefinitions(patternNames);
 
   for (Record *pattern : patterns) {
     DagInit *tree = pattern->getValueAsDag("PatternToMatch");
@@ -962,7 +978,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     }
 
     std::string origName;
-    if (!intrinsic) {
+    switch (intrinsic) {
+    case GenDerivatives:
+    {
       os << "  if ((";
       bool prev = false;
       for (auto *nameI :
@@ -979,7 +997,10 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << ") && call.getNumArgOperands() == " << tree->getNumArgs()
          << " ){\n";
 #endif
-    } else {
+      break;
+    }
+    case IntrDerivatives:
+    {
       bool anyVersion = false;
       for (auto *nameI :
            *cast<ListInit>(pattern->getValueAsListInit("names"))) {
@@ -1014,6 +1035,33 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << origName << "));\n";
       os << "    IRBuilder<> BuilderZ(newCall);\n";
       os << "    BuilderZ.setFastMathFlags(getFast());\n";
+      break;
+    }
+    case BinopDerivatives:
+    {
+      auto minVer = pattern->getValueAsInt("minVer");
+      auto maxVer = pattern->getValueAsInt("maxVer");
+      auto name = pattern->getValueAsString("name");
+      if (minVer != 0) {
+        if (LLVM_VERSION_MAJOR < minVer)
+          continue;
+      }
+      if (maxVer != 0) {
+        if (LLVM_VERSION_MAJOR > maxVer)
+          continue;
+      }
+
+      os << " case llvm::Instruction::" << name << ":\n";
+
+      origName = "BO";
+      os << " {\n";
+      os << "    auto *const newCall = "
+            "cast<llvm::Instruction>(gutils->getNewFromOriginal(&"
+         << origName << "));\n";
+      os << "    IRBuilder<> BuilderZ(newCall);\n";
+      os << "    BuilderZ.setFastMathFlags(getFast());\n";
+      break;
+    }
     }
 
     VariableSetting nameToOrdinal;
@@ -1067,7 +1115,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     os << "    eraseIfUnused(" << origName << ");\n";
     os << "    if (gutils->isConstantInstruction(&" << origName << "))\n";
-    if (intrinsic)
+    if (intrinsic == IntrDerivatives)
       os << "      return true;\n";
     else
       os << "      return;\n";
@@ -1324,7 +1372,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     os << "      }\n";
     os << "    }\n";
 
-    if (intrinsic)
+    if (intrinsic == IntrDerivatives)
       os << "    return true;\n  }\n";
     else
       os << "    return;\n  }\n";
@@ -2541,10 +2589,9 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
   switch (action) {
   case GenDerivatives:
-    emitDerivatives(records, os, false);
-    return false;
   case IntrDerivatives:
-    emitDerivatives(records, os, true);
+  case BinopDerivatives:
+    emitDerivatives(records, os, action);
     return false;
   case GenBlasDerivatives:
     emitBlasDerivatives(records, os);

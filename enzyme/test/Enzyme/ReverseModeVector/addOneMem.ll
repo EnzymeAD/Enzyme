@@ -50,16 +50,16 @@ declare void @__enzyme_autodiff(void (double*)*, ...)
 ; CHECK-NEXT:   %[[i15:.+]] = load [3 x double], [3 x double]* %"add'de"
 ; CHECK-NEXT:   store [3 x double] zeroinitializer, [3 x double]* %"add'de"
 ; CHECK-NEXT:   %[[i16:.+]] = extractvalue [3 x double] %[[i15]], 0
+; CHECK-NEXT:   %[[i20:.+]] = extractvalue [3 x double] %[[i15]], 1
+; CHECK-NEXT:   %[[i24:.+]] = extractvalue [3 x double] %[[i15]], 2
 ; CHECK-NEXT:   %[[i17:.+]] = getelementptr inbounds [3 x double], [3 x double]* %"'de", i32 0, i32 0
 ; CHECK-NEXT:   %[[i18:.+]] = load double, double* %[[i17]]
 ; CHECK-NEXT:   %[[i19:.+]] = fadd fast double %[[i18]], %[[i16]]
 ; CHECK-NEXT:   store double %[[i19]], double* %[[i17]]
-; CHECK-NEXT:   %[[i20:.+]] = extractvalue [3 x double] %[[i15]], 1
 ; CHECK-NEXT:   %[[i21:.+]] = getelementptr inbounds [3 x double], [3 x double]* %"'de", i32 0, i32 1
 ; CHECK-NEXT:   %[[i22:.+]] = load double, double* %[[i21]]
 ; CHECK-NEXT:   %[[i23:.+]] = fadd fast double %[[i22]], %[[i20]]
 ; CHECK-NEXT:   store double %[[i23]], double* %[[i21:.+]]
-; CHECK-NEXT:   %[[i24:.+]] = extractvalue [3 x double] %[[i15]], 2
 ; CHECK-NEXT:   %[[i25:.+]] = getelementptr inbounds [3 x double], [3 x double]* %"'de", i32 0, i32 2
 ; CHECK-NEXT:   %[[i26:.+]] = load double, double* %[[i25]]
 ; CHECK-NEXT:   %[[i27:.+]] = fadd fast double %[[i26]], %[[i24]]

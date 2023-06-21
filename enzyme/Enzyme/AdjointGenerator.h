@@ -2121,6 +2121,15 @@ public:
       return;
     }
 
+    {
+    using namespace llvm;
+    switch (BO.getOpcode()) {
+#include "BinopDerivatives.inc"
+    default:
+      break;
+    }
+}
+
     switch (Mode) {
     case DerivativeMode::ReverseModeGradient:
     case DerivativeMode::ReverseModeCombined:
