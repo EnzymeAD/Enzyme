@@ -29,7 +29,10 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DIBuilder.h"
+#include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -3409,6 +3412,61 @@ public:
     }
     }
     eraseIfUnused(FI);
+  }
+
+  void visitDbgValueInst(llvm::DbgValueInst &I) {
+    using namespace llvm;
+
+    auto newI = cast<DbgValueInst>(gutils->getNewFromOriginal(&I));
+    auto val = I.getValue();
+
+    if (gutils->isConstantValue(val))
+      return;
+
+    DIBuilder DebugBuilder(*I.getModule());
+    auto var = newI->getVariable();
+    auto nv = DebugBuilder.createAutoVariable(
+        // var->getScope(), ("\"d_" + var->getName() + "\"").str(), var->getFile(),
+        var->getScope(), ("d_" + var->getName()).str(), var->getFile(),
+        var->getLine(), var->getType());
+    auto expr = DebugBuilder.createExpression();
+    auto loc = newI->getDebugLoc();
+
+    switch (gutils->mode) {
+    case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeGradient: {
+      auto ptr = ((DiffeGradientUtils *)gutils)->getDifferential(val);
+
+      Instruction *insertionPoint = ptr->getNextNode();
+      if (insertionPoint) {
+        DebugBuilder.insertDeclare(ptr, nv, expr, loc, insertionPoint);
+      } else {
+        DebugBuilder.insertDeclare(ptr, nv, expr, loc, gutils->inversionAllocs);
+      }
+
+      break;
+    }
+    case DerivativeMode::ForwardMode: {
+      IRBuilder<> BuilderM(&I);
+      auto dval = gutils->invertPointerM(val, BuilderM);
+      auto dinst = dyn_cast<Instruction>(dval);
+
+      Instruction *insertionPoint =
+          dinst ? dinst->getNextNode() : newI->getNextNode();
+      if (insertionPoint) {
+        DebugBuilder.insertDbgValueIntrinsic(dval, nv, expr, loc,
+                                             insertionPoint);
+      } else {
+        DebugBuilder.insertDbgValueIntrinsic(dval, nv, expr, loc,
+                                             newI->getParent());
+      }
+
+      break;
+    }
+    }
+
+    eraseIfUnused(I);
+    return;
   }
 
   void visitIntrinsicInst(llvm::IntrinsicInst &II) {

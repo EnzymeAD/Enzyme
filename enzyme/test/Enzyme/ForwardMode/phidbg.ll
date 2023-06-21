@@ -258,6 +258,7 @@ declare void @llvm.dbg.value(metadata, metadata, metadata)
 !217 = distinct !DILexicalBlock(scope: !218, file: !125, line: 161, column: 35)
 !218 = distinct !DILexicalBlock(scope: !214, file: !125, line: 161, column: 3)
 
+
 ; CHECK: define internal double @fwddiffecomputeS(double %E2work, double %"E2work'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %cmp.i = fcmp olt double %E2work, 0xBFD2BEC333018866
@@ -272,5 +273,6 @@ declare void @llvm.dbg.value(metadata, metadata, metadata)
 
 ; CHECK: log1p_series_shifted.exit:                        ; preds = %if.else.i, %if.then.i
 ; CHECK-NEXT:   %[[res:.+]] = phi {{(fast )?}}double [ %0, %if.then.i ], [ %"E2work'", %if.else.i ]
+; CHECK-NEXT:   call void @llvm.dbg.value(metadata double %1, metadata !219, metadata !DIExpression())
 ; CHECK-NEXT:   ret double %[[res]]
 ; CHECK-NEXT: }
