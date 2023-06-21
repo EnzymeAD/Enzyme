@@ -316,9 +316,9 @@ attributes #8 = { noreturn nounwind "correctly-rounded-divide-sqrt-fp-math"="fal
 ; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %[[i3]], %[[i2]]
 ; CHECK-NEXT:   store double %[[i4]], double* %"arrayidx.i1.i'ipg", align 8
 ; CHECK-NEXT:   call void @diffesub(i64 ptrtoint (void (%"class.boost::array.1"*)* @indir to i64), i64 ptrtoint ({ i8* (%"class.boost::array.1"*, %"class.boost::array.1"*)*, void (%"class.boost::array.1"*, %"class.boost::array.1"*, i8*)* }* @"_enzyme_reverse_indir'" to i64), %"class.boost::array.1"* nonnull %x, %"class.boost::array.1"* nonnull %"x'ipa", i8* %_augmented)
-; CHECK-NEXT:   %d0diffet = fdiv fast double %[[m1diffediv]], %conv
+; CHECK-NEXT:   %[[d0diffet:.+]] = fdiv fast double %[[m1diffediv]], %conv
 ; CHECK-NEXT:   store i64 0, i64* %"'ipc", align 8
-; CHECK-NEXT:   %[[i5:.+]] = insertvalue { double } undef, double %d0diffet, 0
+; CHECK-NEXT:   %[[i5:.+]] = insertvalue { double } undef, double %[[d0diffet]], 0
 ; CHECK-NEXT:   ret { double } %[[i5]]
 ; CHECK-NEXT: }
 

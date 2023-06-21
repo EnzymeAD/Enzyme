@@ -124,27 +124,27 @@ attributes #8 = { noreturn nounwind }
 ; LLVM13: invertentry:                                      ; preds = %entry, %invertfor.body
 ; LLVM14: invertentry:                                      ; preds = %entry, %invertfor.body, %entry
 ; LLVM13-NEXT:   %"x'de.0" = phi double [ %11, %invertfor.body ], [ %5, %entry ]
-; LLVM14-NEXT:   %"x'de.0" = phi double [ %5, %entry ], [ %11, %invertfor.body ], [ %5, %entry ]
+; LLVM14-NEXT:   %"x'de.0" = phi double [ %5, %entry ], [ %[[i11:.+]], %invertfor.body ], [ %5, %entry ]
 ; SHARED-NEXT:   %6 = insertvalue { double } undef, double %"x'de.0", 0
 ; SHARED-NEXT:   ret { double } %6
 
 ; SHARED: invertfor.body:                                   ; preds = %invertfor.cond.cleanup.loopexit, %incinvertfor.body
-; SHARED-NEXT:   %"x'de.1" = phi double [ %5, %invertfor.cond.cleanup.loopexit ], [ %11, %incinvertfor.body ]
-; SHARED-NEXT:   %"iv'ac.0" = phi i64 [ %_unwrap, %invertfor.cond.cleanup.loopexit ], [ %14, %incinvertfor.body ]
+; SHARED-NEXT:   %"x'de.1" = phi double [ %5, %invertfor.cond.cleanup.loopexit ], [ %[[i11]], %incinvertfor.body ]
+; SHARED-NEXT:   %"iv'ac.0" = phi i64 [ %_unwrap, %invertfor.cond.cleanup.loopexit ], [ %[[i14:.+]], %incinvertfor.body ]
 ; SHARED-NEXT:   %iv.next_unwrap = add nuw nsw i64 %"iv'ac.0", 1
 ; SHARED-NEXT:   %conv_unwrap = sitofp i64 %iv.next_unwrap to double
-; SHARED-NEXT:   %d0diffea2 = fdiv fast double %4, %conv_unwrap
-; SHARED-NEXT:   %7 = fsub fast double %conv_unwrap, 1.000000e+00
-; SHARED-NEXT:   %8 = call fast double @llvm.pow.f64(double %x, double %7)
-; SHARED-NEXT:   %9 = fmul fast double %conv_unwrap, %8
-; SHARED-NEXT:   %10 = fmul fast double %d0diffea2, %9
-; SHARED-NEXT:   %11 = fadd fast double %"x'de.1", %10
-; SHARED-NEXT:   %12 = icmp eq i64 %"iv'ac.0", 0
-; SHARED-NEXT:   %13 = select{{( fast)?}} i1 %12, double 0.000000e+00, double %4
-; SHARED-NEXT:   br i1 %12, label %invertentry, label %incinvertfor.body
+; SHARED-NEXT:   %[[d0diffea2:.+]] = fdiv fast double %4, %conv_unwrap
+; SHARED-NEXT:   %[[i7:.+]] = fsub fast double %conv_unwrap, 1.000000e+00
+; SHARED-NEXT:   %[[i8:.+]] = call fast double @llvm.pow.f64(double %x, double %[[i7]])
+; SHARED-NEXT:   %[[i9:.+]] = fmul fast double %conv_unwrap, %[[i8]]
+; SHARED-NEXT:   %[[i10:.+]] = fmul fast double %[[d0diffea2]], %[[i9]]
+; SHARED-NEXT:   %[[i11]] = fadd fast double %"x'de.1", %[[i10]]
+; SHARED-NEXT:   %[[i12:.+]] = icmp eq i64 %"iv'ac.0", 0
+; SHARED-NEXT:   %[[i13:.+]] = select{{( fast)?}} i1 %[[i12]], double 0.000000e+00, double %4
+; SHARED-NEXT:   br i1 %[[i12]], label %invertentry, label %incinvertfor.body
 
 ; SHARED: incinvertfor.body:                                ; preds = %invertfor.body
-; SHARED-NEXT:   %14 = add nsw i64 %"iv'ac.0", -1
+; SHARED-NEXT:   %[[i14]] = add nsw i64 %"iv'ac.0", -1
 ; SHARED-NEXT:   br label %invertfor.body
 
 ; SHARED: invertfor.cond.cleanup.loopexit:                  ; preds = %entry

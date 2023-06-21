@@ -281,22 +281,22 @@ attributes #8 = { noreturn nounwind }
 ; CHECK: invertentry:                                      ; preds = %invertwhile.body.i.i.i
 ; CHECK-NEXT:   %[[d0diffet:.+]] = fdiv fast double %[[i5:.+]], 3.000000e+00
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull align 8 %"bc'ipc", i8 0, i64 8, i1 false)
-; CHECK-NEXT:   %1 = insertvalue { double } undef, double %[[d0diffet]], 0
+; CHECK-NEXT:   %[[i1:.+]] = insertvalue { double } undef, double %[[d0diffet]], 0
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
-; CHECK-NEXT:   ret { double } %1
+; CHECK-NEXT:   ret { double } %[[i1]]
 
 ; CHECK: invertwhile.body.i.i.i:                           ; preds = %invertexit, %incinvertwhile.body.i.i.i
 ; CHECK-NEXT:   %"div'de.0" = phi double [ 0.000000e+00, %invertexit ], [ %[[i5]], %incinvertwhile.body.i.i.i ]
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 2, %invertexit ], [ %[[i10:.+]], %incinvertwhile.body.i.i.i ]
-; CHECK-NEXT:   %2 = load double, double* %"x'ipa", align 8
+; CHECK-NEXT:   %[[i2:.+]] = load double, double* %"x'ipa", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'ipa", align 8
-; CHECK-NEXT:   %3 = getelementptr inbounds double, double* %mul.i_malloccache, i64 %"iv'ac.0"
-; CHECK-NEXT:   %4 = load double, double* %3, align 8, !invariant.group ![[ig]]
-; CHECK-NEXT:   %[[m0diffediv:.+]] = fmul fast double %2, %4
+; CHECK-NEXT:   %[[i3:.+]] = getelementptr inbounds double, double* %mul.i_malloccache, i64 %"iv'ac.0"
+; CHECK-NEXT:   %[[i4:.+]] = load double, double* %[[i3]], align 8, !invariant.group ![[ig]]
+; CHECK-NEXT:   %[[m0diffediv:.+]] = fmul fast double %[[i2]], %[[i4]]
 ; CHECK-NEXT:   %[[i5]] = fadd fast double %"div'de.0", %[[m0diffediv]]
-; CHECK-NEXT:   %[[m1diffemuli:.+]] = fmul fast double %2, %div
+; CHECK-NEXT:   %[[m1diffemuli:.+]] = fmul fast double %[[i2]], %div
 ; CHECK-NEXT:   %[[m1diffea1:.+]] = fmul fast double %[[m1diffemuli]], -1.200000e+00
-; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %2, %[[m1diffea1]]
+; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %[[i2]], %[[m1diffea1]]
 ; CHECK-NEXT:   %[[i7:.+]] = load double, double* %"x'ipa", align 8
 ; CHECK-NEXT:   %[[i8:.+]] = fadd fast double %[[i7]], %[[i6]]
 ; CHECK-NEXT:   store double %[[i8]], double* %"x'ipa", align 8

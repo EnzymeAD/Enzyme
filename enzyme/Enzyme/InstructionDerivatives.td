@@ -407,7 +407,7 @@ def : CallPattern<(Op $x, $y),
                   ["fmod", "fmodf", "fmodl"],
                   [
                   (DiffeRet),
-                  (FMul (DiffeRet), (FNeg (Intrinsic<"copysign"> (Intrinsic<"floor"> (Intrinsic<"fabs"> (FDiv $x, $y))), (FDiv $x, $y))))
+                  (CheckedMul (DiffeRet), (FNeg (Intrinsic<"copysign"> (Intrinsic<"floor"> (Intrinsic<"fabs"> (FDiv $x, $y):$div)), $div)))
                   ],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
@@ -861,6 +861,21 @@ def : BinopPattern<(Op $x, $y), "FMul", 0, 0,
                     [
                       (CheckedMul (DiffeRet), $y),
                       (CheckedMul (DiffeRet), $x)
+                    ],
+                    (ForwardFromSummedReverse)
+                  >;
+def : BinopPattern<(Op $x, $y), "FDiv", 0, 0,
+                    [
+                      (CheckedDiv (DiffeRet), $y),
+                      (FNeg (FMul (CheckedDiv (DiffeRet), $y), (FDiv $x, $y)))
+                    ],
+                    (CheckedDiv (FSub (SelectIfActive $x, (FMul (Shadow $x), $y), (Zero $x)), (SelectIfActive $y, (FMul (Shadow $y), $x), (Zero $y))), (FMul $y, $y))
+                  >;
+
+def : BinopPattern<(Op $x, $y), "FRem", 0, 0,
+                    [
+                      (DiffeRet),
+                      (CheckedMul (DiffeRet), (FNeg (Intrinsic<"copysign"> (Intrinsic<"floor"> (Intrinsic<"fabs"> (FDiv $x, $y):$div)), $div)))
                     ],
                     (ForwardFromSummedReverse)
                   >;

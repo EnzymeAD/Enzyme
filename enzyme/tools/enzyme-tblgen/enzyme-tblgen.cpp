@@ -131,8 +131,8 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
   assert(0 && "Unhandled function");
 }
 void getIntrinsic(raw_ostream &os, StringRef intrName, ListInit *typeInit,
-                  const Twine &argStr) {
-  os << "Intrinsic::getDeclaration(called->getParent(), Intrinsic::" << intrName
+                  const Twine &argStr, StringRef origName) {
+  os << "Intrinsic::getDeclaration(mod, Intrinsic::" << intrName
      << ", std::vector<Type*>({";
   bool first = true;
   for (auto intrType : *typeInit) {
@@ -830,7 +830,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << builder << ".CreateCall(";
         auto intrName = Def->getValueAsString("name");
         auto intrTypes = Def->getValueAsListInit("types");
-        getIntrinsic(os, intrName, intrTypes, argPattern);
+        getIntrinsic(os, intrName, intrTypes, argPattern, origName);
         os << ", ArrayRef<Value*>({";
       } else if (opName == "CheckedMul") {
         os << "checkedMul(" << builder << ", ";
@@ -946,7 +946,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                             ActionType intrinsic) {
   emitSourceFileHeader("Rewriters", os);
   std::string patternNames;
-  switch(intrinsic) {
+  switch (intrinsic) {
   case GenDerivatives:
     patternNames = "CallPattern";
     break;
@@ -979,8 +979,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     std::string origName;
     switch (intrinsic) {
-    case GenDerivatives:
-    {
+    case GenDerivatives: {
       os << "  if ((";
       bool prev = false;
       for (auto *nameI :
@@ -997,10 +996,10 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << ") && call.getNumArgOperands() == " << tree->getNumArgs()
          << " ){\n";
 #endif
+      os << "    auto mod = call.getParent()->getParent()->getParent();\n";
       break;
     }
-    case IntrDerivatives:
-    {
+    case IntrDerivatives: {
       bool anyVersion = false;
       for (auto *nameI :
            *cast<ListInit>(pattern->getValueAsListInit("names"))) {
@@ -1028,6 +1027,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         continue;
       origName = "I";
       os << " {\n";
+      os << "    auto mod = I.getParent()->getParent()->getParent();\n";
       os << "    auto called = cast<CallInst>(&" << origName
          << ")->getCalledFunction();\n";
       os << "    CallInst *const newCall = "
@@ -1037,8 +1037,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "    BuilderZ.setFastMathFlags(getFast());\n";
       break;
     }
-    case BinopDerivatives:
-    {
+    case BinopDerivatives: {
       auto minVer = pattern->getValueAsInt("minVer");
       auto maxVer = pattern->getValueAsInt("maxVer");
       auto name = pattern->getValueAsString("name");
@@ -1055,6 +1054,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
       origName = "BO";
       os << " {\n";
+      os << "    auto mod = BO.getParent()->getParent()->getParent();\n";
       os << "    auto *const newCall = "
             "cast<llvm::Instruction>(gutils->getNewFromOriginal(&"
          << origName << "));\n";
@@ -1102,19 +1102,19 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                            (Twine("(&") + origName + ")").str(), false);
 
     if (intrinsic != BinopDerivatives) {
-    os << "    if (gutils->knownRecomputeHeuristic.find(&" << origName
-       << ") !=\n";
-    os << "        gutils->knownRecomputeHeuristic.end()) {\n";
-    os << "        if (!gutils->knownRecomputeHeuristic[&" << origName
-       << "]) {\n";
-    os << "          gutils->cacheForReverse(BuilderZ, newCall,\n";
-    os << "                                  getIndex(&" << origName
-       << ", "
-          "CacheType::Self));\n";
-    os << "        }\n";
-    os << "    }\n";
+      os << "    if (gutils->knownRecomputeHeuristic.find(&" << origName
+         << ") !=\n";
+      os << "        gutils->knownRecomputeHeuristic.end()) {\n";
+      os << "        if (!gutils->knownRecomputeHeuristic[&" << origName
+         << "]) {\n";
+      os << "          gutils->cacheForReverse(BuilderZ, newCall,\n";
+      os << "                                  getIndex(&" << origName
+         << ", "
+            "CacheType::Self));\n";
+      os << "        }\n";
+      os << "    }\n";
 
-    os << "    eraseIfUnused(" << origName << ");\n";
+      os << "    eraseIfUnused(" << origName << ");\n";
     }
 
     os << "    if (gutils->isConstantInstruction(&" << origName << "))\n";
