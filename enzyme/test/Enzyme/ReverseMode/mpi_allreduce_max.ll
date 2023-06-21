@@ -67,9 +67,9 @@ declare void @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %18 = getelementptr inbounds float, float* %17, i32 %13
 ; CHECK-NEXT:   %19 = bitcast i8* %"sendbuf.bc'ipc" to float*
 ; CHECK-NEXT:   %20 = getelementptr inbounds float, float* %19, i32 %13
-; CHECK-NEXT:   %21 = load float, float* %18
-; CHECK-NEXT:   %22 = load float, float* %20
-; CHECK-NEXT:   %23 = fadd fast float %21, %22
+; CHECK-DAG:   %[[r0:.+]] = load float, float* %18
+; CHECK-DAG:   %[[r1:.+]] = load float, float* %20
+; CHECK-NEXT:   %23 = fadd fast float %[[r0]], %[[r1]]
 ; CHECK-NEXT:   store float %23, float* %20
 ; CHECK-NEXT:   br label %invert_endthen
 
