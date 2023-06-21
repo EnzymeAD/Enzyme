@@ -136,9 +136,9 @@ entry:
 ; CHECK-NEXT:   %pcld.ldc = bitcast i8* %ldc_p to i64*
 ; CHECK-NEXT:   %avld.ldc = load i64, i64* %pcld.ldc
 ; CHECK-NEXT:   %loaded.trans = load i8, i8* %transa
-; CHECK-NEXT:   %0 = icmp eq i8 %loaded.trans, 78
-; CHECK-NEXT:   %1 = icmp eq i8 %loaded.trans, 110
-; CHECK-NEXT:   %2 = or i1 %1, %0
+; CHECK-DAG:   %[[i0:.+]] = icmp eq i8 %loaded.trans, 78
+; CHECK-DAG:   %[[i1:.+]] = icmp eq i8 %loaded.trans, 110
+; CHECK-NEXT:   %2 = or i1 %[[i1]], %[[i0]]
 ; CHECK-NEXT:   %3 = select i1 %2, i8* %m_p, i8* %k_p
 ; CHECK-NEXT:   %4 = select i1 %2, i8* %k_p, i8* %m_p
 ; CHECK-NEXT:   %5 = bitcast i8* %3 to i64*

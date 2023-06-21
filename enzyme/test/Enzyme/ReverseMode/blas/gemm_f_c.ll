@@ -86,9 +86,9 @@ entry:
 ; CHECK-NEXT:   store double 0.000000e+00, double* %beta
 ; CHECK-NEXT:   store i64 4, i64* %ldc, align 16
 ; CHECK-NEXT:   %loaded.trans = load i8, i8* %transa
-; CHECK-NEXT:   %0 = icmp eq i8 %loaded.trans, 78
-; CHECK-NEXT:   %1 = icmp eq i8 %loaded.trans, 110
-; CHECK-NEXT:   %2 = or i1 %1, %0
+; CHECK-DAG:   %[[i0:.+]] = icmp eq i8 %loaded.trans, 78
+; CHECK-DAG:   %[[i1:.+]] = icmp eq i8 %loaded.trans, 110
+; CHECK-NEXT:   %2 = or i1 %[[i1]], %[[i0]]
 ; CHECK-NEXT:   %3 = select i1 %2, i8* %m_p, i8* %k_p
 ; CHECK-NEXT:   %4 = select i1 %2, i8* %k_p, i8* %m_p
 ; CHECK-NEXT:   %5 = bitcast i8* %3 to i64*
@@ -131,9 +131,9 @@ entry:
 
 ; CHECK: __enzyme_memcpy_double_mat_64.exit:               ; preds = %entry, %init.end.i
 ; CHECK-NEXT:   %loaded.trans1 = load i8, i8* %transb
-; CHECK-NEXT:   %20 = icmp eq i8 %loaded.trans1, 78
-; CHECK-NEXT:   %21 = icmp eq i8 %loaded.trans1, 110
-; CHECK-NEXT:   %22 = or i1 %21, %20
+; CHECK-DAG:   %[[i20:.+]] = icmp eq i8 %loaded.trans1, 78
+; CHECK-DAG:   %[[i21:.+]] = icmp eq i8 %loaded.trans1, 110
+; CHECK-NEXT:   %22 = or i1 %[[i21]], %[[i20]]
 ; CHECK-NEXT:   %23 = select i1 %22, i8* %k_p, i8* %n_p
 ; CHECK-NEXT:   %24 = select i1 %22, i8* %n_p, i8* %k_p
 ; CHECK-NEXT:   %25 = bitcast i8* %23 to i64*

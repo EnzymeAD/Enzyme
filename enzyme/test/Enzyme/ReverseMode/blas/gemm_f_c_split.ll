@@ -102,9 +102,9 @@ entry:
 ; CHECK-NEXT:   store double 0.000000e+00, double* %15
 ; CHECK-NEXT:   store i64 4, i64* %16, align 16
 ; CHECK-NEXT:   %loaded.trans = load i8, i8* %malloccall
-; CHECK-NEXT:   %17 = icmp eq i8 %loaded.trans, 78
-; CHECK-NEXT:   %18 = icmp eq i8 %loaded.trans, 110
-; CHECK-NEXT:   %19 = or i1 %18, %17
+; CHECK-DAG:   %[[i17:.+]] = icmp eq i8 %loaded.trans, 78
+; CHECK-DAG:   %[[i18:.+]] = icmp eq i8 %loaded.trans, 110
+; CHECK-NEXT:   %19 = or i1 %[[i18]], %[[i17]]
 ; CHECK-NEXT:   %20 = select i1 %19, i8* %m_p, i8* %k_p
 ; CHECK-NEXT:   %21 = select i1 %19, i8* %k_p, i8* %m_p
 ; CHECK-NEXT:   %22 = bitcast i8* %20 to i64*
@@ -232,9 +232,9 @@ entry:
 ; CHECK-NEXT:   store i8 %[[r15]], i8* %byref.transpose.transb
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %malloccall, i8* %byref.transpose.transb, i8* %m_p, i8* %k_p, i8* %n_p, i8* %alpha_p, i8* %"C'", i8* %ldc_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %"A'", i8* %lda_p)
 ; CHECK-NEXT:   %loaded.trans = load i8, i8* %malloccall
-; CHECK-NEXT:   %[[r18:.+]] = icmp eq i8 %loaded.trans, 78
-; CHECK-NEXT:   %[[r19:.+]] = icmp eq i8 %loaded.trans, 110
-; CHECK-NEXT:   %[[r20:.+]] = or i1 %[[r19]], %[[r18]]
+; CHECK-DAG:   %[[r18:.+]] = icmp eq i8 %loaded.trans, 78
+; CHECK-DAG:   %[[r19:.+]] = icmp eq i8 %loaded.trans, 110
+; CHECK-DAG:   %[[r20:.+]] = or i1 %[[r19]], %[[r18]]
 ; CHECK-NEXT:   %[[r21:.+]] = select i1 %[[r20]], i8* %m_p, i8* %k_p
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %byref.transpose.transa, i8* %malloccall1, i8* %k_p, i8* %n_p, i8* %m_p, i8* %alpha_p, i8* %17, i8* %[[r21]], i8* %"C'", i8* %ldc_p, i8* %beta_p, i8* %"B'", i8* %ldb_p)
 ; CHECK-NEXT:   store i8 71, i8* %byref.constant.char.G
