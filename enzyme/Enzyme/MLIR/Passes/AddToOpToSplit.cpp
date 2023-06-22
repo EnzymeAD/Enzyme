@@ -29,6 +29,8 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 
+#include "Utils.h"
+
 using namespace mlir;
 using namespace enzyme;
 using llvm::errs;
@@ -82,14 +84,16 @@ void processGenericDuplication(Operation *op, OpBuilder &builder, Location loc,
       builder.getArrayAttr(indexingMaps));
 
   auto clonedAddToOp = getAddToOp(clonedAdjointGenericOp);
-  auto terminator = clonedAdjointGenericOp.getRegion().front().getTerminator();
+  auto scope = OpBuilder::InsertionGuard(builder);
+
+  builder.setInsertionPointAfter(clonedAddToOp);
+  auto terminator = builder.create<linalg::YieldOp>(loc);
 
   auto operand = clonedAddToOp->getOperand(i);
   auto outputOperand =
       clonedAdjointGenericOp.getRegion().front().getArgument(numInputs + i);
   auto operandType = cast<AutoDiffTypeInterface>(operand.getType());
 
-  auto scope = OpBuilder::InsertionGuard(builder);
   builder.setInsertionPoint(terminator);
   auto returnValue =
       operandType.createAddOp(builder, loc, outputOperand, operand);
@@ -105,10 +109,13 @@ struct AddToOpToSplitPass
     ConversionPatternRewriter rewriter(context);
 
     getOperation()->walk([&](Operation *op) {
-      auto adjoint = dyn_cast<linalg::GenericOp>(op);
+      auto enzymeAdjoint = dyn_cast<enzyme::GenericAdjointOp>(op);
       auto loc = op->getLoc();
-      if (!adjoint)
+      if (!enzymeAdjoint)
         return;
+
+      OpBuilder builder(enzymeAdjoint);
+      auto adjoint = Utils::adjointToGeneric(enzymeAdjoint, builder, loc);
 
       Operation *addToOp = getAddToOp(adjoint);
       if (!addToOp)
@@ -124,10 +131,10 @@ struct AddToOpToSplitPass
         }
       }
 
-      OpBuilder builder(op);
+      builder.setInsertionPoint(adjoint);
 
       for (int i = 0; i < addToOp->getNumOperands(); i++) {
-        processGenericDuplication(op, builder, loc, i);
+        processGenericDuplication(adjoint.getOperation(), builder, loc, i);
       }
       adjoint->erase();
     });

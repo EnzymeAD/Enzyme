@@ -92,7 +92,7 @@ struct SimplifyMemrefCachePass
         continue;
       }
       for (auto user : subviewOp->getUsers()) {
-        auto linalgOp = dyn_cast<linalg::GenericOp>(user);
+        auto linalgOp = dyn_cast<enzyme::GenericAdjointOp>(user);
         if (!linalgOp) {
           continue;
         }

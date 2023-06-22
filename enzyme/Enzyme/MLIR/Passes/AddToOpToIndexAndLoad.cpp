@@ -29,6 +29,8 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 
+#include "Utils.h"
+
 using namespace mlir;
 using namespace enzyme;
 using llvm::errs;
@@ -54,9 +56,12 @@ struct AddToOpToIndexAndLoadPass
 
     getOperation()->walk([&](Operation *op) {
       auto loc = op->getLoc();
-      auto adjoint = dyn_cast<linalg::GenericOp>(op);
-      if (!adjoint)
+      auto enzymeAdjoint = dyn_cast<enzyme::GenericAdjointOp>(op);
+      if (!enzymeAdjoint)
         return;
+
+      OpBuilder cacheBuilder(enzymeAdjoint);
+      auto adjoint = Utils::adjointToGeneric(enzymeAdjoint, cacheBuilder, loc);
 
       // check if adjoint contains a enzyme.addToOp
       Operation *addToOp = nullptr;
@@ -77,7 +82,7 @@ struct AddToOpToIndexAndLoadPass
         retargs.push_back(val);
       }
       auto map = adjoint.getIndexingMapsArray();
-      OpBuilder cacheBuilder(terminator);
+      cacheBuilder.setInsertionPoint(terminator);
 
       // Is it a fine assumption that all indexing maps are the same?
       for (int i = 0; i < map[0].getNumDims(); i++) {
@@ -108,7 +113,6 @@ struct AddToOpToIndexAndLoadPass
       }
 
       cacheBuilder.create<linalg::YieldOp>(loc, ValueRange{retargs});
-      terminator->erase();
       addToOp->erase();
     });
   };

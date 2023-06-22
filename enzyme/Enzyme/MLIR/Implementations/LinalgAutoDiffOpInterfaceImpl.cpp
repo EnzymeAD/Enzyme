@@ -26,6 +26,7 @@
 #include "mlir/Support/LogicalResult.h"
 #include <functional>
 
+#include "mlir/Dialect/Linalg/IR/LinalgInterfaces.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/Shape/IR/ShapeOpsTypes.h.inc"
 #include "mlir/IR/PatternMatch.h"
@@ -53,6 +54,15 @@ Value invertMemref(Value inp, OpBuilder &builder, Location loc) {
   Value view = builder.create<memref::SubViewOp>(
       loc, inp, ValueRange(dimSubOnes), ValueRange(dims), ValueRange(strides));
   return view;
+}
+
+SmallVector<AffineMap> getIndexingMapsArray(enzyme::GenericAdjointOp &op) {
+  auto attr = op.getIndexingMapsAttr();
+  SmallVector<AffineMap> indexingMaps;
+  for (auto map : attr.getValue()) {
+    indexingMaps.push_back(map.cast<AffineMapAttr>().getValue());
+  }
+  return indexingMaps;
 }
 
 template <typename T_>
@@ -145,8 +155,27 @@ struct GenericOpInterfaceReverse
       inputs.push_back(view);
     }
 
-    linalg::GenericOp adjoint = builder.create<linalg::GenericOp>(
-        op->getLoc(), outputs, inputs, indexingMaps, iteratorTypes);
+    // linalg::GenericOp adjoint = builder.create<linalg::GenericOp>(
+    //     op->getLoc(), outputs, inputs, indexingMaps, iteratorTypes);
+    // static void build(::mlir::OpBuilder &odsBuilder, ::mlir::OperationState
+    // &odsState, ::mlir::TypeRange result_tensors, ::mlir::ValueRange inputs,
+    // ::mlir::ValueRange outputs, ::mlir::ArrayAttr indexing_maps,
+    // ::mlir::ArrayAttr iterator_types, /*optional*/::mlir::StringAttr doc,
+    // /*optional*/::mlir::StringAttr library_call); static void
+    // build(::mlir::OpBuilder &, ::mlir::OperationState &odsState,
+    // ::mlir::TypeRange resultTypes, ::mlir::ValueRange operands,
+    // ::llvm::ArrayRef<::mlir::NamedAttribute> attributes = {});
+    ArrayAttr indexingMapsArrayAttr =
+        builder.getAffineMapArrayAttr(indexingMaps);
+    ArrayAttr iteratorTypesArrayAttr =
+        builder.getArrayAttr(llvm::to_vector(llvm::map_range(
+            iteratorTypes, [&](utils::IteratorType iter) -> mlir::Attribute {
+              return linalg::IteratorTypeAttr::get(builder.getContext(), iter);
+            })));
+    auto adjoint = builder.create<enzyme::GenericAdjointOp>(
+        op->getLoc(), TypeRange(), ValueRange(outputs), ValueRange(inputs),
+        indexingMapsArrayAttr, iteratorTypesArrayAttr, StringAttr(),
+        StringAttr());
 
     int numInputs = inputs.size();
     auto buildFuncReturnOp = [numInputs, indexingMaps, &newOp, &adjoint,
@@ -154,14 +183,12 @@ struct GenericOpInterfaceReverse
                                        SmallVector<Value> retargs) {
       builder.create<enzyme::AddToOp>(
           loc, ValueRange{retargs}.take_front(numInputs));
-      builder.create<linalg::YieldOp>(
-          loc, ValueRange{retargs}.take_front(numInputs));
       return;
     };
 
     Region *newOpRegion = newOp.getBlock()->getParent();
     int numInputsNewOp = cast<linalg::GenericOp>(newOp).getInputs().size();
-    Region *adjointRegion = &adjoint.getBodyRegion();
+    Region *adjointRegion = &adjoint.getRegion();
     int numInputsAdjoint = adjoint.getInputs().size();
     Location loc = op->getLoc();
     int numCaches = 0;
@@ -182,7 +209,7 @@ struct GenericOpInterfaceReverse
     };
 
     gutils->Logic.differentiate(
-        gutils, *linalgOp.getBlock()->getParent(), adjoint.getBodyRegion(),
+        gutils, *linalgOp.getBlock()->getParent(), adjoint.getRegion(),
         /*parentRegion=*/false, buildFuncReturnOp, hook);
 
     auto newOpYield = cast<linalg::YieldOp>(
@@ -191,16 +218,16 @@ struct GenericOpInterfaceReverse
       newOpYield.getValuesMutable().append(pc);
     }
 
-    Block *body = &(adjoint.getBodyRegion().front());
-    auto yieldOp = cast<linalg::YieldOp>(body->getTerminator());
-
+    Block *body = &(adjoint.getRegion().front());
+    auto yieldOp = cast<enzyme::AddToOp>(body->getTerminator());
     for (auto opOperand : yieldOp.getOperands()) {
       body->addArgument(opOperand.getType(), opOperand.getLoc());
     }
+
     OpBuilder builderAdd(yieldOp);
 
     auto newIndexingMaps = newOp.getIndexingMapsArray();
-    auto indexingMapsAdjoint = adjoint.getIndexingMapsArray();
+    auto indexingMapsAdjoint = getIndexingMapsArray(adjoint);
     for (int i = 0; i < numCaches; i++) {
       Value cacheArg = body->getArgument(outputs.size() + i);
 
@@ -240,50 +267,6 @@ struct GenericOpInterfaceReverse
         cacheBuilder.getArrayAttr(indexingMapsAttr));
     adjoint->setAttr(adjoint.getIndexingMapsAttrName(),
                      builder.getArrayAttr(indexingMapsAttrAdjoint));
-    /*
-    /// TODO
-    SmallVector<Value> indices;
-    SmallVector<Value> retargs;
-    auto outs = adjoint.getOutputs();
-    auto num_ins = adjoint.getInputs().size();
-    Operation *terminator = adjoint.getBodyRegion().front().getTerminator();
-    for (auto val : terminator->getOperands()) {
-      retargs.push_back(val);
-    }
-    auto map = adjoint.getIndexingMapsArray();
-    cacheBuilder.setInsertionPoint(terminator);
-
-    // Is it a fine assumption that all indexing maps are the same?
-    for (int i = 0; i < map[0].getNumDims(); i++) {
-      indices.push_back(cacheBuilder.create<linalg::IndexOp>(loc, i));
-    }
-
-    SmallVector<Value> rets;
-    for (int i = 0; i < retargs.size(); i++) {
-      // auto load = cacheBuilder.create<AffineLoadOp>(loc, inputs[i], map[i],
-      // indices); auto store = cacheBuilder.create<AffineStoreOp>(loc, load,
-      // inputs[i], map[i], indices);
-      ValueRange mapAppliedIndices =
-          applyAffineMap(map[num_ins + i], indices, cacheBuilder, loc);
-      auto load =
-          cacheBuilder.create<memref::LoadOp>(loc, outs[i], mapAppliedIndices);
-      auto added = cast<enzyme::AutoDiffTypeInterface>(load.getType())
-                       .createAddOp(cacheBuilder, loc, load, retargs[i]);
-      auto store = cacheBuilder.create<memref::StoreOp>(loc, added, outs[i],
-                                                        mapAppliedIndices);
-    }
-
-    for (int i = 0; i < retargs.size(); i++) {
-      ValueRange mapAppliedIndices =
-          applyAffineMap(map[num_ins + i], indices, cacheBuilder, loc);
-      auto load =
-          cacheBuilder.create<memref::LoadOp>(loc, outs[i], mapAppliedIndices);
-      retargs[i] = load;
-    }
-
-    cacheBuilder.create<linalg::YieldOp>(loc, ValueRange{retargs});
-    terminator->erase();
-    */
   }
 
   SmallVector<Value> cacheValues(Operation *op,
