@@ -4973,21 +4973,21 @@ llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
         res = lhs;
     }
     if (!res) {
-      #if LLVM_VERSION_MAJOR >= 10
-    if (auto *FPMO = dyn_cast<FPMathOperator>(rhs))
-      if (FPMO->getOpcode() == Instruction::FNeg) {
-        res = B.CreateFSub(lhs, FPMO->getOperand(0));
-      }
-      #endif
+#if LLVM_VERSION_MAJOR >= 10
+      if (auto *FPMO = dyn_cast<FPMathOperator>(rhs))
+        if (FPMO->getOpcode() == Instruction::FNeg) {
+          res = B.CreateFSub(lhs, FPMO->getOperand(0));
+        }
+#endif
     }
     if (!res) {
-    if (auto *S = dyn_cast<BinaryOperator>(rhs)) {
-      if (S->getOpcode() == Instruction::FSub) {
-        if (auto C = dyn_cast<ConstantFP>(S->getOperand(0)))
-          if (C->isZero())
-            res = B.CreateFSub(lhs, S->getOperand(1));
+      if (auto *S = dyn_cast<BinaryOperator>(rhs)) {
+        if (S->getOpcode() == Instruction::FSub) {
+          if (auto C = dyn_cast<ConstantFP>(S->getOperand(0)))
+            if (C->isZero())
+              res = B.CreateFSub(lhs, S->getOperand(1));
+        }
       }
-    }
     }
     if (!res) {
       res = B.CreateFAdd(lhs, rhs);
