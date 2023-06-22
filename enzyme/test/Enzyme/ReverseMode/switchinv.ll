@@ -123,8 +123,8 @@ attributes #8 = { noreturn nounwind }
 
 ; LLVM13: invertentry:                                      ; preds = %entry, %invertfor.body
 ; LLVM14: invertentry:                                      ; preds = %entry, %invertfor.body, %entry
-; LLVM13-NEXT:   %"x'de.0" = phi double [ %11, %invertfor.body ], [ %5, %entry ]
-; LLVM14-NEXT:   %"x'de.0" = phi double [ %5, %entry ], [ %[[i11:.+]], %invertfor.body ], [ %5, %entry ]
+; LLVM13-NEXT:   %"x'de.0" = phi double [ %[[i11:.+]], %invertfor.body ], [ %5, %entry ]
+; LLVM14-NEXT:   %"x'de.0" = phi double [ %5, %entry ], [ %[[i11]], %invertfor.body ], [ %5, %entry ]
 ; SHARED-NEXT:   %6 = insertvalue { double } undef, double %"x'de.0", 0
 ; SHARED-NEXT:   ret { double } %6
 
