@@ -1419,8 +1419,13 @@ static inline bool isReadOnly(const llvm::CallInst *call, ssize_t arg = -1) {
     return true;
 
   if (auto F = getFunctionFromCall(call)) {
-    if (isReadOnly(F, arg))
-      return true;
+    // Do not use function attrs for if different calling conv, such as a julia
+    // call wrapping args into an array. This is because the wrapped array
+    // may be nocapure/readonly, but the actual arg (which will be put in the
+    // array) may not be.
+    if (F->getCallingConv() == call->getCallingConv())
+      if (isReadOnly(F, arg))
+        return true;
   }
   return false;
 }
@@ -1459,7 +1464,12 @@ static inline bool isWriteOnly(const llvm::CallInst *call, ssize_t arg = -1) {
 #endif
 
   if (auto F = getFunctionFromCall(call)) {
-    return isWriteOnly(F, arg);
+    // Do not use function attrs for if different calling conv, such as a julia
+    // call wrapping args into an array. This is because the wrapped array
+    // may be nocapure/readonly, but the actual arg (which will be put in the
+    // array) may not be.
+    if (F->getCallingConv() == call->getCallingConv())
+      return isWriteOnly(F, arg);
   }
   return false;
 }
@@ -1476,10 +1486,14 @@ static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
   if (call->doesNotCapture(idx))
     return true;
 
-  auto F = getFunctionFromCall(call);
-  if (F) {
-    if (F->hasParamAttribute(idx, llvm::Attribute::NoCapture))
-      return true;
+  if (auto F = getFunctionFromCall(call)) {
+    // Do not use function attrs for if different calling conv, such as a julia
+    // call wrapping args into an array. This is because the wrapped array
+    // may be nocapure/readonly, but the actual arg (which will be put in the
+    // array) may not be.
+    if (F->getCallingConv() == call->getCallingConv())
+      if (F->hasParamAttribute(idx, llvm::Attribute::NoCapture))
+        return true;
     // if (F->getAttributes().hasParamAttribute(idx, "enzyme_NoCapture"))
     //   return true;
   }
