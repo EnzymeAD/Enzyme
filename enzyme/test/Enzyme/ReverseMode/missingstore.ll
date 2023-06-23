@@ -36,7 +36,7 @@ declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8*, i64)
 ; CHECK: define internal fastcc void @diffejulia__foldl_impl_3869({ [1 x {} addrspace(10)*] } addrspace(11)* nocapture readonly align 8 dereferenceable(8) %arg, { [1 x {} addrspace(10)*] } addrspace(11)* nocapture align 8 %"arg'", i8* %tapeArg)
 ; CHECK-NEXT: top:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { i64, i64 }*
-; CHECK-NEXT:   %truetape = load { i64, i64 }, { i64, i64 }* %0, align 8
+; CHECK-NEXT:   %truetape = load { i64, i64 }, { i64, i64 }* %0
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %i11 = call noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8* null, i64 8) 
 ; CHECK-NEXT:   %"i11'mi" = call noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8* null, i64 8) 
