@@ -719,95 +719,106 @@ void calculateUnusedValuesInFunction(
     }
   }
 
-  std::function<bool(const llvm::Value *)> isNoNeed =
-      [&](const llvm::Value *v) {
-        auto Obj = getBaseObject(v);
-        if (Obj != v)
-          return isNoNeed(Obj);
-        if (auto C = dyn_cast<LoadInst>(v))
-          return isNoNeed(C->getOperand(0));
-        else if (auto arg = dyn_cast<Argument>(v)) {
-          auto act = constant_args[arg->getArgNo()];
-          if (act == DIFFE_TYPE::DUP_NONEED) {
-            return true;
-          }
-        } else if (isa<AllocaInst>(v) || isAllocationCall(v, TLI)) {
-          if (!gutils->isConstantValue(const_cast<Value *>(v))) {
-            std::set<const Value *> done;
-            std::deque<const Value *> todo = {v};
-            bool legal = true;
-            while (todo.size()) {
-              const Value *cur = todo.back();
-              todo.pop_back();
-              if (done.count(cur))
-                continue;
-              done.insert(cur);
+  std::function<bool(const llvm::Value *)> isNoNeed = [&](const llvm::Value
+                                                              *v) {
+    auto Obj = getBaseObject(v);
+    if (Obj != v)
+      return isNoNeed(Obj);
+    if (auto C = dyn_cast<LoadInst>(v))
+      return isNoNeed(C->getOperand(0));
+    else if (auto arg = dyn_cast<Argument>(v)) {
+      auto act = constant_args[arg->getArgNo()];
+      if (act == DIFFE_TYPE::DUP_NONEED) {
+        return true;
+      }
+    } else if (isa<AllocaInst>(v) || isAllocationCall(v, TLI)) {
+      if (!gutils->isConstantValue(const_cast<Value *>(v))) {
+        std::set<const Value *> done;
+        std::deque<const Value *> todo = {v};
+        bool legal = true;
+        while (todo.size()) {
+          const Value *cur = todo.back();
+          todo.pop_back();
+          if (done.count(cur))
+            continue;
+          done.insert(cur);
 
-              if (unnecessaryValues.count(cur))
-                continue;
+          if (unnecessaryValues.count(cur))
+            continue;
 
-              for (auto u : cur->users()) {
-                if (auto SI = dyn_cast<StoreInst>(u)) {
-                  if (SI->getValueOperand() != cur)
-                    continue;
-                }
-                if (auto I = dyn_cast<Instruction>(u)) {
-                  if (unnecessaryInstructions.count(I))
-                    continue;
-                  if (isDeallocationCall(I, TLI))
-                    continue;
-                }
-                if (auto II = dyn_cast<IntrinsicInst>(u);
-                    II && isIntelSubscriptIntrinsic(*II)) {
-                  todo.push_back(&*u);
-                } else if (auto CI = dyn_cast<CallInst>(u)) {
-                  bool writeOnlyNoCapture = true;
-                  if (shouldDisableNoWrite(CI)) {
-                    writeOnlyNoCapture = false;
-                  }
-#if LLVM_VERSION_MAJOR >= 14
-                  for (size_t i = 0; i < CI->arg_size(); i++)
-#else
-                  for (size_t i = 0; i < CI->getNumArgOperands(); i++)
-#endif
-                  {
-                    if (cur == CI->getArgOperand(i)) {
-                      if (!isNoCapture(CI, i)) {
-                        writeOnlyNoCapture = false;
-                        break;
-                      }
-                      if (!isWriteOnly(CI, i)) {
-                        writeOnlyNoCapture = false;
-                        break;
-                      }
-                    }
-                  }
-                  // Don't need the primal argument if it is write only and
-                  // not captured
-                  if (writeOnlyNoCapture) {
-                    continue;
-                  }
-                }
-                if (isa<CastInst>(u) || isa<GetElementPtrInst>(u) ||
-                    isa<PHINode>(u)) {
-                  todo.push_back(&*u);
-                } else {
-                  legal = false;
-                  break;
-                }
+          for (auto u : cur->users()) {
+            if (auto SI = dyn_cast<StoreInst>(u)) {
+              if (SI->getValueOperand() != cur) {
+                continue;
               }
             }
-            if (legal) {
-              return true;
+            if (auto I = dyn_cast<Instruction>(u)) {
+              if (unnecessaryInstructions.count(I)) {
+                if (!DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
+                        gutils, cur, I, oldUnreachable)) {
+                  continue;
+                }
+              }
+              if (isDeallocationCall(I, TLI)) {
+                continue;
+              }
+            }
+            if (auto II = dyn_cast<IntrinsicInst>(u);
+                II && isIntelSubscriptIntrinsic(*II)) {
+              todo.push_back(&*u);
+              continue;
+            } else if (auto CI = dyn_cast<CallInst>(u)) {
+              if (getFuncNameFromCall(CI) == "julia.write_barrier") {
+                continue;
+              }
+              bool writeOnlyNoCapture = true;
+              if (shouldDisableNoWrite(CI)) {
+                writeOnlyNoCapture = false;
+              }
+#if LLVM_VERSION_MAJOR >= 14
+              for (size_t i = 0; i < CI->arg_size(); i++)
+#else
+              for (size_t i = 0; i < CI->getNumArgOperands(); i++)
+#endif
+              {
+                if (cur == CI->getArgOperand(i)) {
+                  if (!isNoCapture(CI, i)) {
+                    writeOnlyNoCapture = false;
+                    break;
+                  }
+                  if (!isWriteOnly(CI, i)) {
+                    writeOnlyNoCapture = false;
+                    break;
+                  }
+                }
+              }
+              // Don't need the primal argument if it is write only and
+              // not captured
+              if (writeOnlyNoCapture) {
+                continue;
+              }
+            }
+            if (isa<CastInst>(u) || isa<GetElementPtrInst>(u) ||
+                isa<PHINode>(u)) {
+              todo.push_back(&*u);
+              continue;
+            } else {
+              legal = false;
+              break;
             }
           }
-        } else if (auto II = dyn_cast<IntrinsicInst>(v);
-                   II && isIntelSubscriptIntrinsic(*II)) {
-          unsigned int ptrArgIdx = 3;
-          return isNoNeed(II->getOperand(ptrArgIdx));
         }
-        return false;
-      };
+        if (legal) {
+          return true;
+        }
+      }
+    } else if (auto II = dyn_cast<IntrinsicInst>(v);
+               II && isIntelSubscriptIntrinsic(*II)) {
+      unsigned int ptrArgIdx = 3;
+      return isNoNeed(II->getOperand(ptrArgIdx));
+    }
+    return false;
+  };
 
   calculateUnusedValues(
       func, unnecessaryValues, unnecessaryInstructions, returnValue,
@@ -935,9 +946,10 @@ void calculateUnusedValuesInFunction(
         }
 
         if (auto si = dyn_cast<StoreInst>(inst)) {
+          bool nnop = isNoNeed(si->getPointerOperand());
           if (isa<UndefValue>(si->getValueOperand()))
             return UseReq::Recur;
-          if (isNoNeed(si->getPointerOperand()))
+          if (nnop)
             return UseReq::Recur;
         }
 
