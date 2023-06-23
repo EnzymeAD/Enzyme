@@ -2216,8 +2216,12 @@ void rev_call_arg(StringRef argName, llvm::Init *arg, Rule &rule, size_t actArg,
         }
       } else if (ty == argType::trans) {
         os << "arg_" << name;
+      } else if (ty == argType::cblas_layout) {
+        //os << "(byRef ? \"\" : arg_" << name << ", )";
+        // TODO: handle it somewhere else
+        // no-op due to the old byRef logic
       } else {
-        llvm::errs() << "name: " << name << " typename: " << ty << "\n";
+        llvm::errs() << "failed at name: " << name << " typename: " << ty << "\n";
         llvm_unreachable("unimplemented input type!\n");
       }
     }
@@ -2276,8 +2280,18 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
 
     // just replace argOps with rule
     if (auto dag = dyn_cast<DagInit>(Dag)) {
+      size_t skipped = 0;
       for (size_t pos = 0; pos < dag->getNumArgs(); pos++) {
-        if (pos > 0)
+        const auto argStr = dag->getArgNameStr(pos);
+        // skip layout because it is cblas only,
+        // so not relevant for the byRef Fortran abi.
+        // Optionally add it later as first arg for byRef.
+        if (argStr == "layout") {
+          skipped = 1;
+          continue;
+        }
+
+        if (pos > 0 + skipped)
           os << ", ";
 
       llvm::Init *arg = dag->getArg(pos);
