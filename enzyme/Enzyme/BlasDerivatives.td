@@ -133,10 +133,10 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   ]
                   >;
 
-// def nrm2 : CallBlasPattern<(Op $n, $x, $incx),
-//                   [],[len, vinc<["n"]>],
-//	           [(b<"scal"> $n, (FDiv (DiffeRet), (Ret)), $x, $incx)]
-//                   >;
+def nrm2 : CallBlasPattern<(Op $n, $x, $incx),
+                  [],[len, vinc<["n"]>],
+                  [(b<"axpy"> $n, (FDiv DiffeRet, Ret), $x, $incx, adj<"x">, $incx)]
+                  >;
 
 
 // def copy : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),

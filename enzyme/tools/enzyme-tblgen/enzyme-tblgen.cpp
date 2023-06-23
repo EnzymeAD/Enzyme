@@ -2141,8 +2141,9 @@ void rev_call_arg(StringRef argName, llvm::Init *arg, Rule &rule, size_t actArg,
         auto name = Def->getValueAsString("name");
         os << "arg_transposed_" << name;
       } else {
-        llvm::errs() << Def->getName() << "\n";
-        PrintFatalError("Def that isn't a DiffeRet!");
+        os << "primal";
+        // llvm::errs() << Def->getName() << "\n";
+        // PrintFatalError("Def that isn't a DiffeRet!!");
       }
     } else {
       auto name = ruleDag->getArgNameStr(pos);
