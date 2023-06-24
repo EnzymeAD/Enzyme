@@ -48,7 +48,7 @@ jobs:
       run: make -j `nproc` check-activityanalysis
     - name: make check-enzyme
       working-directory: build
-      run: make check-enzyme-bench
+      run: make  -j `nproc` check-enzyme-bench
     - name: graph results
       if: github.event_name != 'pull_request' && matrix.build == 'Release'
       run: python3 enzyme/test/upload-results.py build/test/Enzyme/results.json --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
@@ -60,7 +60,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["9", "11", "12", "13", "14", "15", "16"]
+        llvm: ["9", "11", "12", "13", "14", "15"]
         build: ["Release", "Debug"] # "RelWithDebInfo"
   
     timeout-minutes: 30 
@@ -68,16 +68,14 @@ jobs:
     - name: add llvm 
       run: |
           brew update
-          brew install llvm@${{ matrix.llvm }} make cmake gcc
-          sudo python3 -m pip install --upgrade pip setuptools install lit requests
+          brew install llvm@${{ matrix.llvm }} make cmake
+          sudo python3 -m pip install --upgrade pip setuptools lit requests
     - uses: actions/checkout@v3
     - name: mkdir
       run: rm -rf build && mkdir build
     - name: cmake
       working-directory: build
-      run: |
-          llvm_prefix=`brew --prefix llvm@${{ matrix.llvm }}`
-          cmake .. -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=${llvm_prefix}/lib/cmake/llvm
+      run: cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
     - name: make
       working-directory: build
       run: make -j 3
@@ -89,7 +87,7 @@ jobs:
       run: make -j 3 check-activityanalysis
     - name: make check-enzyme
       working-directory: build
-      run: make check-enzyme-bench
+      run: make -j3 check-enzyme-bench
     - name: graph results
       if: github.event_name != 'pull_request' && matrix.build == 'Release'
       run: python3 enzyme/test/upload-results.py build/test/Enzyme/results.json --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
@@ -117,4 +115,4 @@ jobs:
       working-directory: build
       run: |
           cmake ../enzyme -GXcode -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
-          cmake . --build --parallel 3
+          cmake --build . --parallel 3

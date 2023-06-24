@@ -27,11 +27,10 @@ declare double @__enzyme_fwddiff(double (double, double)*, ...)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %agg0 = insertvalue [2 x double] undef, double %x, 0
 ; CHECK-NEXT:   %agg1 = insertvalue [2 x double] %agg0, double %y, 1
-; CHECK-NEXT:   %0 = call fast double @cabs([2 x double] %agg1)
-; CHECK-NEXT:   %1 = fdiv fast double %"x'", %0
-; CHECK-NEXT:   %2 = fmul fast double %x, %1
-; CHECK-NEXT:   %3 = fdiv fast double %"y'", %0
-; CHECK-NEXT:   %4 = fmul fast double %y, %3
-; CHECK-NEXT:   %5 = fadd fast double %2, %4
-; CHECK-NEXT:   ret double %5
+; CHECK-NEXT:   %0 = fmul fast double %"x'", %x
+; CHECK-NEXT:   %1 = fmul fast double %"y'", %y
+; CHECK-NEXT:   %2 = fadd fast double %0, %1
+; CHECK-NEXT:   %3 = call fast double @cabs([2 x double] %agg1)
+; CHECK-NEXT:   %4 = fdiv fast double %2, %3
+; CHECK-NEXT:   ret double %4
 ; CHECK-NEXT: }

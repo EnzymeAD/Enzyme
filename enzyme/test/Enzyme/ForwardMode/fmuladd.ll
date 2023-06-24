@@ -23,7 +23,7 @@ declare double @__enzyme_fwddiff(double (double, double, double)*, ...)
 ; CHECK-NEXT: entry:
 ; CHECK-DAG:   %[[i0:.+]] = fmul fast double %"x'", %y
 ; CHECK-DAG:   %[[i1:.+]] = fmul fast double %"y'", %x
-; CHECK-NEXT:   %2 = fadd fast double %[[i1]], %[[i0]]
+; CHECK-NEXT:   %2 = fadd fast double %[[i0]], %[[i1]]
 ; CHECK-NEXT:   %3 = fadd fast double %2, %"z'"
 ; CHECK-NEXT:   ret double %3
 ; CHECK-NEXT: }

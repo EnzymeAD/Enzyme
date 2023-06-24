@@ -719,95 +719,106 @@ void calculateUnusedValuesInFunction(
     }
   }
 
-  std::function<bool(const llvm::Value *)> isNoNeed =
-      [&](const llvm::Value *v) {
-        auto Obj = getBaseObject(v);
-        if (Obj != v)
-          return isNoNeed(Obj);
-        if (auto C = dyn_cast<LoadInst>(v))
-          return isNoNeed(C->getOperand(0));
-        else if (auto arg = dyn_cast<Argument>(v)) {
-          auto act = constant_args[arg->getArgNo()];
-          if (act == DIFFE_TYPE::DUP_NONEED) {
-            return true;
-          }
-        } else if (isa<AllocaInst>(v) || isAllocationCall(v, TLI)) {
-          if (!gutils->isConstantValue(const_cast<Value *>(v))) {
-            std::set<const Value *> done;
-            std::deque<const Value *> todo = {v};
-            bool legal = true;
-            while (todo.size()) {
-              const Value *cur = todo.back();
-              todo.pop_back();
-              if (done.count(cur))
-                continue;
-              done.insert(cur);
+  std::function<bool(const llvm::Value *)> isNoNeed = [&](const llvm::Value
+                                                              *v) {
+    auto Obj = getBaseObject(v);
+    if (Obj != v)
+      return isNoNeed(Obj);
+    if (auto C = dyn_cast<LoadInst>(v))
+      return isNoNeed(C->getOperand(0));
+    else if (auto arg = dyn_cast<Argument>(v)) {
+      auto act = constant_args[arg->getArgNo()];
+      if (act == DIFFE_TYPE::DUP_NONEED) {
+        return true;
+      }
+    } else if (isa<AllocaInst>(v) || isAllocationCall(v, TLI)) {
+      if (!gutils->isConstantValue(const_cast<Value *>(v))) {
+        std::set<const Value *> done;
+        std::deque<const Value *> todo = {v};
+        bool legal = true;
+        while (todo.size()) {
+          const Value *cur = todo.back();
+          todo.pop_back();
+          if (done.count(cur))
+            continue;
+          done.insert(cur);
 
-              if (unnecessaryValues.count(cur))
-                continue;
+          if (unnecessaryValues.count(cur))
+            continue;
 
-              for (auto u : cur->users()) {
-                if (auto SI = dyn_cast<StoreInst>(u)) {
-                  if (SI->getValueOperand() != cur)
-                    continue;
-                }
-                if (auto I = dyn_cast<Instruction>(u)) {
-                  if (unnecessaryInstructions.count(I))
-                    continue;
-                  if (isDeallocationCall(I, TLI))
-                    continue;
-                }
-                if (auto II = dyn_cast<IntrinsicInst>(u);
-                    II && isIntelSubscriptIntrinsic(*II)) {
-                  todo.push_back(&*u);
-                } else if (auto CI = dyn_cast<CallInst>(u)) {
-                  bool writeOnlyNoCapture = true;
-                  if (shouldDisableNoWrite(CI)) {
-                    writeOnlyNoCapture = false;
-                  }
-#if LLVM_VERSION_MAJOR >= 14
-                  for (size_t i = 0; i < CI->arg_size(); i++)
-#else
-                  for (size_t i = 0; i < CI->getNumArgOperands(); i++)
-#endif
-                  {
-                    if (cur == CI->getArgOperand(i)) {
-                      if (!isNoCapture(CI, i)) {
-                        writeOnlyNoCapture = false;
-                        break;
-                      }
-                      if (!isWriteOnly(CI, i)) {
-                        writeOnlyNoCapture = false;
-                        break;
-                      }
-                    }
-                  }
-                  // Don't need the primal argument if it is write only and
-                  // not captured
-                  if (writeOnlyNoCapture) {
-                    continue;
-                  }
-                }
-                if (isa<CastInst>(u) || isa<GetElementPtrInst>(u) ||
-                    isa<PHINode>(u)) {
-                  todo.push_back(&*u);
-                } else {
-                  legal = false;
-                  break;
-                }
+          for (auto u : cur->users()) {
+            if (auto SI = dyn_cast<StoreInst>(u)) {
+              if (SI->getValueOperand() != cur) {
+                continue;
               }
             }
-            if (legal) {
-              return true;
+            if (auto I = dyn_cast<Instruction>(u)) {
+              if (unnecessaryInstructions.count(I)) {
+                if (!DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
+                        gutils, cur, I, oldUnreachable)) {
+                  continue;
+                }
+              }
+              if (isDeallocationCall(I, TLI)) {
+                continue;
+              }
+            }
+            if (auto II = dyn_cast<IntrinsicInst>(u);
+                II && isIntelSubscriptIntrinsic(*II)) {
+              todo.push_back(&*u);
+              continue;
+            } else if (auto CI = dyn_cast<CallInst>(u)) {
+              if (getFuncNameFromCall(CI) == "julia.write_barrier") {
+                continue;
+              }
+              bool writeOnlyNoCapture = true;
+              if (shouldDisableNoWrite(CI)) {
+                writeOnlyNoCapture = false;
+              }
+#if LLVM_VERSION_MAJOR >= 14
+              for (size_t i = 0; i < CI->arg_size(); i++)
+#else
+              for (size_t i = 0; i < CI->getNumArgOperands(); i++)
+#endif
+              {
+                if (cur == CI->getArgOperand(i)) {
+                  if (!isNoCapture(CI, i)) {
+                    writeOnlyNoCapture = false;
+                    break;
+                  }
+                  if (!isWriteOnly(CI, i)) {
+                    writeOnlyNoCapture = false;
+                    break;
+                  }
+                }
+              }
+              // Don't need the primal argument if it is write only and
+              // not captured
+              if (writeOnlyNoCapture) {
+                continue;
+              }
+            }
+            if (isa<CastInst>(u) || isa<GetElementPtrInst>(u) ||
+                isa<PHINode>(u)) {
+              todo.push_back(&*u);
+              continue;
+            } else {
+              legal = false;
+              break;
             }
           }
-        } else if (auto II = dyn_cast<IntrinsicInst>(v);
-                   II && isIntelSubscriptIntrinsic(*II)) {
-          unsigned int ptrArgIdx = 3;
-          return isNoNeed(II->getOperand(ptrArgIdx));
         }
-        return false;
-      };
+        if (legal) {
+          return true;
+        }
+      }
+    } else if (auto II = dyn_cast<IntrinsicInst>(v);
+               II && isIntelSubscriptIntrinsic(*II)) {
+      unsigned int ptrArgIdx = 3;
+      return isNoNeed(II->getOperand(ptrArgIdx));
+    }
+    return false;
+  };
 
   calculateUnusedValues(
       func, unnecessaryValues, unnecessaryInstructions, returnValue,
@@ -927,17 +938,18 @@ void calculateUnusedValuesInFunction(
           if (isMemFreeLibMFunction(funcName, &ID) || isReadOnly(obj_op)) {
             mayWriteToMemory = false;
           }
-          if (funcName == "memset" || funcName == "memcpy" ||
-              funcName == "memmove") {
+          if (funcName == "memset" || funcName == "memset_pattern16" ||
+              funcName == "memcpy" || funcName == "memmove") {
             if (isNoNeed(obj_op->getArgOperand(0)))
               return UseReq::Recur;
           }
         }
 
         if (auto si = dyn_cast<StoreInst>(inst)) {
+          bool nnop = isNoNeed(si->getPointerOperand());
           if (isa<UndefValue>(si->getValueOperand()))
             return UseReq::Recur;
-          if (isNoNeed(si->getPointerOperand()))
+          if (nnop)
             return UseReq::Recur;
         }
 
@@ -4975,9 +4987,11 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   return BatchCachedFunctions[tup] = NewF;
 };
 
-llvm::Function *EnzymeLogic::CreateTrace(
-    llvm::Function *totrace, SmallPtrSetImpl<Function *> &GenerativeFunctions,
-    ProbProgMode mode, bool autodiff, TraceInterface *interface) {
+Function *
+EnzymeLogic::CreateTrace(Function *totrace,
+                         SmallPtrSetImpl<Function *> &GenerativeFunctions,
+                         StringSet<> &ActiveRandomVariables, ProbProgMode mode,
+                         bool autodiff, TraceInterface *interface) {
   TraceCacheKey tup = std::make_tuple(totrace, mode);
   if (TraceCachedFunctions.find(tup) != TraceCachedFunctions.end()) {
     return TraceCachedFunctions.find(tup)->second;
@@ -4986,14 +5000,15 @@ llvm::Function *EnzymeLogic::CreateTrace(
   ValueToValueMapTy originalToNewFn;
   TraceUtils *tutils =
       TraceUtils::FromClone(mode, interface, totrace, originalToNewFn);
-  TraceGenerator *tracer = new TraceGenerator(
-      *this, tutils, autodiff, originalToNewFn, GenerativeFunctions);
+  TraceGenerator *tracer =
+      new TraceGenerator(*this, tutils, autodiff, originalToNewFn,
+                         GenerativeFunctions, ActiveRandomVariables);
 
   tracer->visit(totrace);
 
-  if (llvm::verifyFunction(*tutils->newFunc, &llvm::errs())) {
-    llvm::errs() << *totrace << "\n";
-    llvm::errs() << *tutils->newFunc << "\n";
+  if (verifyFunction(*tutils->newFunc, &errs())) {
+    errs() << *totrace << "\n";
+    errs() << *tutils->newFunc << "\n";
     report_fatal_error("function failed verification (4)");
   }
 
@@ -5008,7 +5023,7 @@ llvm::Function *EnzymeLogic::CreateTrace(
     if (PostOpt)
       PPC.optimizeIntermediate(NewF);
     if (EnzymePrint) {
-      llvm::errs() << *NewF << "\n";
+      errs() << *NewF << "\n";
     }
   }
 

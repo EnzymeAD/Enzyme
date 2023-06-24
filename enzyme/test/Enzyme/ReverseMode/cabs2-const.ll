@@ -28,8 +28,8 @@ declare double @__enzyme_autodiff(double (double, double)*, ...)
 ; CHECK-NEXT:   %agg0 = insertvalue [2 x double] undef, double %x, 0
 ; CHECK-NEXT:   %agg1 = insertvalue [2 x double] %agg0, double %y, 1
 ; CHECK-NEXT:   %0 = call fast double @cabs([2 x double] %agg1)
-; CHECK-NEXT:   %1 = fdiv fast double %differeturn, %0
-; CHECK-NEXT:   %2 = fmul fast double %y, %1
+; CHECK-NEXT:   %1 = fdiv fast double %y, %0
+; CHECK-NEXT:   %2 = fmul fast double %differeturn, %1
 ; CHECK-NEXT:   %3 = insertvalue { double } undef, double %2, 0
 ; CHECK-NEXT:   ret { double } %3
 ; CHECK-NEXT: }

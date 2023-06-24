@@ -60,7 +60,7 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   call void @__enzyme_insert_function(i8* %trace, i8* bitcast (void (double*, i8*)* @trace_test to i8*))
 ; CHECK-NEXT:   %0 = call double @normal(double 0.000000e+00, double 1.000000e+00)
-; CHECK-NEXT:   %likelihood.mu = call fast double @augmented_normal_logpdf.1(double 0.000000e+00, double 1.000000e+00, double %0)
+; CHECK-NEXT:   %likelihood.mu = call fast double @augmented_normal_logpdf.3(double 0.000000e+00, double 1.000000e+00, double %0)
 ; CHECK-NEXT:   %log_prob_sum = load double, double* %likelihood
 ; CHECK-NEXT:   %1 = fadd double %log_prob_sum, %likelihood.mu
 ; CHECK-NEXT:   store double %1, double* %likelihood
@@ -94,7 +94,7 @@ entry:
 ; CHECK-NEXT:   %17 = load double, double* %"likelihood'"
 ; CHECK-NEXT:   %18 = fadd fast double %17, %16
 ; CHECK-NEXT:   store double %18, double* %"likelihood'"
-; CHECK-NEXT:   %19 = call { double } @diffenormal_logpdf.2(double 0.000000e+00, double 1.000000e+00, double %0, double %16)
+; CHECK-NEXT:   %19 = call { double } @diffenormal_logpdf.4(double 0.000000e+00, double 1.000000e+00, double %0, double %16)
 ; CHECK-NEXT:   %20 = extractvalue { double } %19, 0
 ; CHECK-NEXT:   %21 = fadd fast double %12, %20
 ; CHECK-NEXT:   %22 = bitcast double %21 to i64

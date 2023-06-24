@@ -161,19 +161,19 @@ private:
   llvm::Function *sampleFunction = nullptr;
 
 private:
-  llvm::GlobalVariable *getTraceFunction = nullptr;
-  llvm::GlobalVariable *getChoiceFunction = nullptr;
-  llvm::GlobalVariable *insertCallFunction = nullptr;
-  llvm::GlobalVariable *insertChoiceFunction = nullptr;
-  llvm::GlobalVariable *insertArgumentFunction = nullptr;
-  llvm::GlobalVariable *insertReturnFunction = nullptr;
-  llvm::GlobalVariable *insertFunctionFunction = nullptr;
-  llvm::GlobalVariable *insertChoiceGradientFunction = nullptr;
-  llvm::GlobalVariable *insertArgumentGradientFunction = nullptr;
-  llvm::GlobalVariable *newTraceFunction = nullptr;
-  llvm::GlobalVariable *freeTraceFunction = nullptr;
-  llvm::GlobalVariable *hasCallFunction = nullptr;
-  llvm::GlobalVariable *hasChoiceFunction = nullptr;
+  llvm::Function *getTraceFunction;
+  llvm::Function *getChoiceFunction;
+  llvm::Function *insertCallFunction;
+  llvm::Function *insertChoiceFunction;
+  llvm::Function *insertArgumentFunction;
+  llvm::Function *insertReturnFunction;
+  llvm::Function *insertFunctionFunction;
+  llvm::Function *insertChoiceGradientFunction;
+  llvm::Function *insertArgumentGradientFunction;
+  llvm::Function *newTraceFunction;
+  llvm::Function *freeTraceFunction;
+  llvm::Function *hasCallFunction;
+  llvm::Function *hasChoiceFunction;
 
 public:
   DynamicTraceInterface(llvm::Value *dynamicInterface, llvm::Function *F);
@@ -181,10 +181,11 @@ public:
   ~DynamicTraceInterface() = default;
 
 private:
-  llvm::GlobalVariable *
-  MaterializeInterfaceFunction(llvm::IRBuilder<> &Builder, llvm::Value *,
-                               llvm::Type *, unsigned index, llvm::Module &M,
-                               const llvm::Twine &Name = "");
+  llvm::Function *MaterializeInterfaceFunction(llvm::IRBuilder<> &Builder,
+                                               llvm::Value *,
+                                               llvm::FunctionType *,
+                                               unsigned index, llvm::Module &M,
+                                               const llvm::Twine &Name = "");
 
 public:
   // implemented by enzyme

@@ -22,10 +22,10 @@ declare double @__enzyme_autodiff(double (double)*, ...)
 
 ; CHECK: define internal { double } @diffetester(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast double @llvm.sqrt.f64(double %x)
-; CHECK-NEXT:   %1 = fmul fast double 5.000000e-01, %differeturn
-; CHECK-NEXT:   %2 = fdiv fast double %1, %0
-; CHECK-NEXT:   %3 = fcmp fast ueq double %x, 0.000000e+00
-; CHECK-NEXT:   %4 = select{{( fast)?}} i1 %3, double 0.000000e+00, double %2
-; CHECK-NEXT:   %5 = insertvalue { double } undef, double %4, 0
-; CHECK-NEXT:   ret { double } %5
+; CHECK-NEXT:   %[[i3:.+]] = fcmp fast ueq double %x, 0.000000e+00
+; CHECK-NEXT:   %[[i0:.+]] = call fast double @llvm.sqrt.f64(double %x)
+; CHECK-NEXT:   %[[i1:.+]] = fmul fast double 2.000000e+00, %[[i0]]
+; CHECK-NEXT:   %[[i2:.+]] = fdiv fast double %differeturn, %[[i1]]
+; CHECK-NEXT:   %[[i4:.+]] = select{{( fast)?}} i1 %[[i3]], double 0.000000e+00, double %[[i2]]
+; CHECK-NEXT:   %[[i5:.+]] = insertvalue { double } undef, double %[[i4]], 0
+; CHECK-NEXT:   ret { double } %[[i5]]

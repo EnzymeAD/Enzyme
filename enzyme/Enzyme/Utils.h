@@ -90,6 +90,7 @@ extern "C" {
 extern llvm::cl::opt<bool> EnzymePrintPerf;
 extern llvm::cl::opt<bool> EnzymeStrongZero;
 extern llvm::cl::opt<bool> EnzymeBlasCopy;
+extern llvm::cl::opt<bool> EnzymeLapackCopy;
 extern LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
                                           const void *, LLVMValueRef,
                                           LLVMBuilderRef);
@@ -628,14 +629,26 @@ llvm::Function *getOrInsertDifferentialFloatMemcpy(
     unsigned dstaddr, unsigned srcaddr, unsigned bitwidth);
 
 /// Create function for type that performs memcpy with a stride using blas copy
-llvm::Function *getOrInsertMemcpyStridedBlas(llvm::Module &M,
-                                             llvm::PointerType *T,
-                                             llvm::Type *IT, BlasInfo blas,
-                                             bool julia_decl);
+void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                           llvm::ArrayRef<llvm::Value *> args,
+                           llvm::ArrayRef<llvm::OperandBundleDef> bundles);
+
+/// Create function for type that performs memcpy using lapack copy
+void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
+                             BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
+                             llvm::ArrayRef<llvm::OperandBundleDef> bundles);
+
 /// Create function for type that performs memcpy with a stride
-llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M, llvm::PointerType *T,
-                                         llvm::Type *IT, unsigned dstalign,
-                                         unsigned srcalign);
+llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M,
+                                         llvm::Type *elementType,
+                                         llvm::PointerType *T, llvm::Type *IT,
+                                         unsigned dstalign, unsigned srcalign);
+
+/// Turned out to be a faster alternatives to lapacks lacpy function
+llvm::Function *getOrInsertMemcpyMat(llvm::Module &M, llvm::Type *elementType,
+                                     llvm::PointerType *PT,
+                                     llvm::IntegerType *IT, unsigned dstalign,
+                                     unsigned srcalign);
 
 /// Create function for type that performs the derivative memmove on floating
 /// point memory
@@ -1052,6 +1065,15 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
   return called ? const_cast<llvm::Function *>(called) : nullptr;
 }
 
+static inline llvm::StringRef getFuncName(llvm::Function *called) {
+  if (called->hasFnAttribute("enzyme_math"))
+    return called->getFnAttribute("enzyme_math").getValueAsString();
+  else if (called->hasFnAttribute("enzyme_allocator"))
+    return "enzyme_allocator";
+  else
+    return called->getName();
+}
+
 template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
   auto AttrList =
       op->getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
@@ -1061,12 +1083,7 @@ template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
     return "enzyme_allocator";
 
   if (auto called = getFunctionFromCall(op)) {
-    if (called->hasFnAttribute("enzyme_math"))
-      return called->getFnAttribute("enzyme_math").getValueAsString();
-    else if (called->hasFnAttribute("enzyme_allocator"))
-      return "enzyme_allocator";
-    else
-      return called->getName();
+    return getFuncName(called);
   }
   return "";
 }
@@ -1388,6 +1405,9 @@ static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
     if (F->hasParamAttribute(arg, llvm::Attribute::ReadOnly) ||
         F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
       return true;
+    // if (F->getAttributes().hasParamAttribute(arg, "enzyme_ReadOnly") ||
+    //     F->getAttributes().hasParamAttribute(arg, "enzyme_ReadNone"))
+    //   return true;
   }
   return false;
 }
@@ -1399,8 +1419,13 @@ static inline bool isReadOnly(const llvm::CallInst *call, ssize_t arg = -1) {
     return true;
 
   if (auto F = getFunctionFromCall(call)) {
-    if (isReadOnly(F, arg))
-      return true;
+    // Do not use function attrs for if different calling conv, such as a julia
+    // call wrapping args into an array. This is because the wrapped array
+    // may be nocapure/readonly, but the actual arg (which will be put in the
+    // array) may not be.
+    if (F->getCallingConv() == call->getCallingConv())
+      if (isReadOnly(F, arg))
+        return true;
   }
   return false;
 }
@@ -1439,7 +1464,12 @@ static inline bool isWriteOnly(const llvm::CallInst *call, ssize_t arg = -1) {
 #endif
 
   if (auto F = getFunctionFromCall(call)) {
-    return isWriteOnly(F, arg);
+    // Do not use function attrs for if different calling conv, such as a julia
+    // call wrapping args into an array. This is because the wrapped array
+    // may be nocapure/readonly, but the actual arg (which will be put in the
+    // array) may not be.
+    if (F->getCallingConv() == call->getCallingConv())
+      return isWriteOnly(F, arg);
   }
   return false;
 }
@@ -1456,10 +1486,16 @@ static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
   if (call->doesNotCapture(idx))
     return true;
 
-  auto F = getFunctionFromCall(call);
-  if (F) {
-    if (F->hasParamAttribute(idx, llvm::Attribute::NoCapture))
-      return true;
+  if (auto F = getFunctionFromCall(call)) {
+    // Do not use function attrs for if different calling conv, such as a julia
+    // call wrapping args into an array. This is because the wrapped array
+    // may be nocapure/readonly, but the actual arg (which will be put in the
+    // array) may not be.
+    if (F->getCallingConv() == call->getCallingConv())
+      if (F->hasParamAttribute(idx, llvm::Attribute::NoCapture))
+        return true;
+    // if (F->getAttributes().hasParamAttribute(idx, "enzyme_NoCapture"))
+    //   return true;
   }
   return false;
 }
@@ -1550,8 +1586,13 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
     bool legal = true;
     for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
       auto CI = CV->getElementAsAPInt(i);
+#if LLVM_VERSION_MAJOR > 16
+      if (CI.isZero())
+        continue;
+#else
       if (CI.isNullValue())
         continue;
+#endif
       if (dl.getTypeSizeInBits(FT) !=
           dl.getTypeSizeInBits(CV->getElementType())) {
         legal = false;
@@ -1582,6 +1623,33 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
   }
   return false;
 }
+
+void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
+                     llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
+                     llvm::IRBuilder<> &BuilderZ, const llvm::Twine &name = "");
+
+// julia_decl null means not julia decl, otherwise it is the integer type needed
+// to cast to
+llvm::Value *to_blas_callconv(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
+                              llvm::IntegerType *julia_decl,
+                              llvm::IRBuilder<> &entryBuilder,
+                              llvm::Twine const & = "");
+
+llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
+                                  llvm::Value *arg_ld, llvm::Value *dim_1,
+                                  llvm::Value *dim_2, bool cacheMat,
+                                  bool byRef);
+llvm::Value *is_normal(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef);
+llvm::Value *select_vec_dims(llvm::IRBuilder<> &B, llvm::Value *trans,
+                             llvm::Value *dim1, llvm::Value *dim2, bool byRef);
+// first one assume V is an Integer
+llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V);
+// secon one assume V is an Integer or a ptr to an int (depends on byRef)
+llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
+                       llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder,
+                       const llvm::Twine &name);
+llvm::Value *get_blas_row(llvm::IRBuilder<> &B, llvm::Value *trans,
+                          llvm::Value *row, llvm::Value *col, bool byRef);
 
 // Parameter attributes from the original function/call that
 // we should preserve on the primal of the derivative code.
@@ -1630,5 +1698,21 @@ static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
     llvm::Attribute::AttrKind::NoCapture,
     llvm::Attribute::AttrKind::ReadNone,
 };
+
+static inline llvm::Type *getSubType(llvm::Type *T) { return T; }
+
+template <typename Arg1, typename... Args>
+static inline llvm::Type *getSubType(llvm::Type *T, Arg1 i, Args... args) {
+  if (auto AT = llvm::dyn_cast<llvm::ArrayType>(T))
+    return getSubType(AT->getElementType(), args...);
+  if (auto VT = llvm::dyn_cast<llvm::VectorType>(T))
+    return getSubType(VT->getElementType(), args...);
+  if (auto ST = llvm::dyn_cast<llvm::StructType>(T)) {
+    assert(i != -1);
+    return getSubType(ST->getElementType(i), args...);
+  }
+  llvm::errs() << *T << "\n";
+  llvm_unreachable("unknown subtype");
+}
 
 #endif

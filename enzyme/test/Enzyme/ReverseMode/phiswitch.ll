@@ -73,7 +73,7 @@ bb13:                                             ; preds = %bb12, %bb9, %bb8, %
 ; CHECK-NEXT:   %ti5_unwrap = uitofp i64 %i5 to double
 ; CHECK-NEXT:   %9 = fsub fast double %ti5_unwrap, 1.000000e+00
 ; CHECK-NEXT:   %10 = call fast double @llvm.pow.f64(double %arg, double %9)
-; CHECK-NEXT:   %11 = fmul fast double %10, %ti5_unwrap
+; CHECK-NEXT:   %11 = fmul fast double %ti5_unwrap, %10
 ; CHECK-NEXT:   %12 = fmul fast double %4, %11
 ; CHECK-NEXT:   %13 = fadd fast double %3, %12
 ; CHECK-NEXT:   br label %invertbb
