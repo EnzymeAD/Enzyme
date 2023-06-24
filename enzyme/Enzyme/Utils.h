@@ -321,8 +321,9 @@ enum class DerivativeMode {
 };
 
 enum class ProbProgMode {
-  Trace = 0,
-  Condition = 1,
+  Likelihood = 0,
+  Trace = 1,
+  Condition = 2,
 };
 
 /// Classification of value as an original program

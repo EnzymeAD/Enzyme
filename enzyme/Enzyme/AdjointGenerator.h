@@ -10117,14 +10117,16 @@ public:
         dchoice = diffe(&call, Builder2);
       }
 
-      auto gradient_setter = cast<Function>(
-          cast<ValueAsMetadata>(
-              call.getMetadata("enzyme_gradient_setter")->getOperand(0).get())
-              ->getValue());
+      if (call.hasMetadata("enzyme_gradient_setter")) {
+        auto gradient_setter = cast<Function>(
+            cast<ValueAsMetadata>(
+                call.getMetadata("enzyme_gradient_setter")->getOperand(0).get())
+                ->getValue());
 
-      TraceUtils::InsertChoiceGradient(
-          Builder2, gradient_setter->getFunctionType(), gradient_setter,
-          daddress, dchoice, dtrace);
+        TraceUtils::InsertChoiceGradient(
+            Builder2, gradient_setter->getFunctionType(), gradient_setter,
+            daddress, dchoice, dtrace);
+      }
 
       return;
     }
