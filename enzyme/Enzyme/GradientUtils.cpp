@@ -4339,7 +4339,7 @@ GradientUtils *GradientUtils::CreateFromClone(
   return res;
 }
 
-DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::CallInst *orig,
+DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
                                              bool *primalReturnUsedP,
                                              bool *shadowReturnUsedP) const {
   bool shadowReturnUsed = false;
