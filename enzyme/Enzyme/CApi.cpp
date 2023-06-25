@@ -1645,9 +1645,11 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     CI->getAllMetadataOtherThanDebugLoc(TheMDs);
     SmallVector<unsigned, 1> toCopy;
     for (auto pair : TheMDs)
-      if (pair.first != LLVMContext::MD_range)
+      if (pair.first != LLVMContext::MD_range) {
         toCopy.push_back(pair.first);
-    NC->copyMetadata(*CI, toCopy);
+      }
+    if (!toCopy.empty())
+      NC->copyMetadata(*CI, toCopy);
     NC->setDebugLoc(CI->getDebugLoc());
 
     sretCount = 0;
