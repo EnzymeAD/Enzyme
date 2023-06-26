@@ -1625,6 +1625,11 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
                                   llvm::Value *arg_ld, llvm::Value *dim_1,
                                   llvm::Value *dim_2, bool cacheMat,
                                   bool byRef);
+
+void set_lens_and_size(llvm::IRBuilder<> &BuilderZ, llvm::IntegerType *intType,
+                       llvm::Value *M, llvm::Value *N, llvm::Value *matSize,
+                       llvm::Value *len1, llvm::Value *len2, bool byRef);
+
 llvm::Value *is_normal(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef);
 llvm::Value *select_vec_dims(llvm::IRBuilder<> &B, llvm::Value *trans,
                              llvm::Value *dim1, llvm::Value *dim2, bool byRef);

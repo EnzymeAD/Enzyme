@@ -1939,140 +1939,193 @@ void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
   os << "  }\n";
 }
 
-void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
-                    llvm::StringSet<> &handled, raw_ostream &os) {
+void emit_deriv_blas_call(DagInit *ruleDag, StringMap<TGPattern> &patternMap,
+                          llvm::StringSet<> &handled, llvm::raw_ostream &os) {
+  const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
+  const auto dfnc_name = Def->getValueAsString("s");
+  if (patternMap.find(dfnc_name.str()) == patternMap.end()) {
+    PrintFatalError("calling unknown Blas function");
+  }
+  TGPattern calledPattern = patternMap.find(dfnc_name.str())->getValue();
+  bool derivlv23 = calledPattern.isBLASLevel2or3();
+  DenseSet<size_t> mutableArgs = calledPattern.getMutableArgs();
+
+  if (handled.find(dfnc_name) != handled.end())
+    return;
+  else
+    handled.insert(dfnc_name);
+
+  auto retTy = "Builder2.getVoidTy()";
+  // TODO: add this to .td file and generate it based on that
+  if (dfnc_name == "dot" || dfnc_name == "asum" || dfnc_name == "nrm2" ||
+      dfnc_name == "iamax" || dfnc_name == "iamin") {
+    retTy = "fpType";
+  }
+  // insert arg types based on .td file
+  std::string typeString = "";
+  bool first = true;
+  for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
+    Init *subArg = ruleDag->getArg(i);
+    if (DefInit *def = dyn_cast<DefInit>(subArg)) {
+      const auto Def = def->getDef();
+      std::string typeToAdd = "";
+      if (Def->isSubClassOf("DiffeRetIndex")) {
+        typeToAdd = "byRef ? PointerType::getUnqual(call.getType()) : "
+                    "call.getType()\n";
+      } else if (Def->isSubClassOf("input")) {
+        auto argStr = Def->getValueAsString("name");
+        //  primary and adj have the same type
+        typeToAdd = (Twine("type_") + argStr).str();
+      } else if (Def->isSubClassOf("adj")) {
+        auto argStr = Def->getValueAsString("name");
+        // primary and adj have the same type
+        typeToAdd = (Twine("type_") + argStr).str();
+      } else if (Def->isSubClassOf("Constant")) {
+        typeToAdd =
+            "byRef ? (Type*)PointerType::getUnqual(fpType) : (Type*)fpType";
+      } else if (Def->isSubClassOf("Char")) {
+        typeToAdd = "byRef ? (Type*)PointerType::getUnqual(charType) : "
+                    "(Type*)charType";
+      } else if (Def->isSubClassOf("ConstantInt")) {
+        typeToAdd =
+            "byRef ? (Type*)PointerType::getUnqual(intType) : (Type*)intType";
+      } else if (Def->isSubClassOf("transpose")) {
+        auto argStr = Def->getValueAsString("name");
+        // transpose the given trans arg, but type stays
+        typeToAdd = (Twine("type_") + argStr).str();
+      } else if (Def->isSubClassOf("use")) {
+        // we only use tmp matrices, so mat type
+        // TODO: use actual mat type, not hardcoded A
+        // auto argStr = Def->getValueAsString("name");
+        typeToAdd = (Twine("type_A")).str();
+      } else {
+        PrintFatalError(Def->getLoc(), "PANIC! Unsupported Definit");
+      }
+      typeString += ((first) ? "" : ", ") + typeToAdd;
+    } else {
+      if (auto Dag = dyn_cast<DagInit>(subArg)) {
+        auto Def = cast<DefInit>(Dag->getOperator())->getDef();
+        if (Def->isSubClassOf("MagicInst") && Def->getName() == "Rows") {
+          if (!first)
+            typeString += ", ";
+          typeString += (Twine("type_") + Dag->getArgNameStr(1)).str();
+          first = false;
+          continue;
+        } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "ld") {
+          if (!first)
+            typeString += ", ";
+          //(ld $A, $transa, $lda, $m, $k)
+          // Either of 2,3,4 would work
+          typeString += (Twine("type_") + Dag->getArgNameStr(2)).str();
+          first = false;
+          continue;
+        }
+      }
+      const auto argStr = ruleDag->getArgNameStr(i);
+      // skip layout because it is cblas only,
+      // so not relevant for the byRef Fortran abi.
+      // Optionally add it later as first arg for byRef.
+      if (argStr == "layout")
+        continue;
+      typeString += (first ? "" : ", ");
+      typeString += (Twine("type_") + argStr).str();
+    }
+    first = false;
+  }
+
+  os << "    llvm::FunctionType *FT" << dfnc_name << " = nullptr;\n";
+  if (derivlv23) {
+    os << "    if(byRef) {\n"
+       << "      Type* tys" << dfnc_name << "[] = {" << typeString << "};\n"
+       << "      FT" << dfnc_name
+       << " = FunctionType::get(Builder2.getVoidTy(), tys" << dfnc_name
+       << ", false);\n"
+       << "    } else {\n"
+       << "      Type* tys" << dfnc_name << "[] = {type_layout, " << typeString
+       << "};\n"
+       << "      FT" << dfnc_name
+       << " = FunctionType::get(Builder2.getVoidTy(), tys" << dfnc_name
+       << ", false);\n"
+       << "    }\n";
+  } else {
+    os << "    Type* tys" << dfnc_name << "[] = {" << typeString << "};\n"
+       << "    FT" << dfnc_name
+       << " = FunctionType::get(Builder2.getVoidTy(), tys" << dfnc_name
+       << ", false);\n";
+  }
+
+  os << "auto derivcall_" << dfnc_name
+     << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
+     << "  (blas.prefix + blas.floatType + \"" << dfnc_name
+     << "\" + blas.suffix).str(), FT" << dfnc_name << ");\n";
+
+  os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
+     << ".getCallee()))\n"
+     << "    {\n"
+     << "      attribute_" << dfnc_name << "(blas, F);\n"
+     << "    }\n\n";
+  return;
+}
+
+void emit_deriv_rule(StringMap<TGPattern> &patternMap, Rule &rule,
+                     llvm::StringSet<> &handled, raw_ostream &os) {
   const auto ruleDag = rule.getRuleDag();
   const auto typeMap = rule.getArgTypeMap();
   const auto opName = ruleDag->getOperator()->getAsString();
-  const auto nameMap = rule.getArgNameMap();
   const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
   if (Def->isSubClassOf("b")) {
-    const auto dfnc_name = Def->getValueAsString("s");
-    if (patternMap.find(dfnc_name.str()) == patternMap.end()) {
-      PrintFatalError("calling unknown Blas function");
-    }
-    TGPattern calledPattern = patternMap.find(dfnc_name.str())->getValue();
-    bool derivlv23 = calledPattern.isBLASLevel2or3();
-    DenseSet<size_t> mutableArgs = calledPattern.getMutableArgs();
-
-    if (handled.find(dfnc_name) != handled.end())
-      return;
-    else
-      handled.insert(dfnc_name);
-
-    auto retTy = "Builder2.getVoidTy()";
-    // TODO: add this to .td file and generate it based on that
-    if (dfnc_name == "dot" || dfnc_name == "asum") {
-      retTy = "fpType";
-    }
-    // insert arg types based on .td file
-    std::string typeString = "";
-    bool first = true;
-    for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
-      Init *subArg = ruleDag->getArg(i);
-      if (DefInit *def = dyn_cast<DefInit>(subArg)) {
-        const auto Def = def->getDef();
-        std::string typeToAdd = "";
-        if (Def->isSubClassOf("DiffeRetIndex")) {
-          typeToAdd = "byRef ? PointerType::getUnqual(call.getType()) : "
-                      "call.getType()\n";
-        } else if (Def->isSubClassOf("input")) {
-          auto argStr = Def->getValueAsString("name");
-          //  primary and adj have the same type
-          typeToAdd = (Twine("type_") + argStr).str();
-        } else if (Def->isSubClassOf("adj")) {
-          auto argStr = Def->getValueAsString("name");
-          // primary and adj have the same type
-          typeToAdd = (Twine("type_") + argStr).str();
-        } else if (Def->isSubClassOf("Constant")) {
-          typeToAdd =
-              "byRef ? (Type*)PointerType::getUnqual(fpType) : (Type*)fpType";
-        } else if (Def->isSubClassOf("Char")) {
-          typeToAdd = "byRef ? (Type*)PointerType::getUnqual(charType) : "
-                      "(Type*)charType";
-        } else if (Def->isSubClassOf("ConstantInt")) {
-          typeToAdd =
-              "byRef ? (Type*)PointerType::getUnqual(intType) : (Type*)intType";
-        } else if (Def->isSubClassOf("transpose")) {
-          auto argStr = Def->getValueAsString("name");
-          // transpose the given trans arg, but type stays
-          typeToAdd = (Twine("type_") + argStr).str();
-        } else {
-          PrintFatalError(Def->getLoc(), "PANIC! Unsupported Definit");
-        }
-        typeString += ((first) ? "" : ", ") + typeToAdd;
-      } else {
-        if (auto Dag = dyn_cast<DagInit>(subArg)) {
-          auto Def = cast<DefInit>(Dag->getOperator())->getDef();
-          if (Def->isSubClassOf("MagicInst") && Def->getName() == "Rows") {
-            if (!first)
-              typeString += ", ";
-            typeString += (Twine("type_") + Dag->getArgNameStr(1)).str();
-            first = false;
-            continue;
-          } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "ld") {
-            if (!first)
-              typeString += ", ";
-            //(ld $A, $transa, $lda, $m, $k)
-            // Either of 2,3,4 would work
-            typeString += (Twine("type_") + Dag->getArgNameStr(2)).str();
-            first = false;
-            continue;
-          }
-        }
-        const auto argStr = ruleDag->getArgNameStr(i);
-        // skip layout because it is cblas only,
-        // so not relevant for the byRef Fortran abi.
-        // Optionally add it later as first arg for byRef.
-        if (argStr == "layout")
-          continue;
-        typeString += (first ? "" : ", ");
-        typeString += (Twine("type_") + argStr).str();
-      }
-      first = false;
-    }
-
-    os << "    llvm::FunctionType *FT" << dfnc_name << " = nullptr;\n";
-    if (derivlv23) {
-      os << "    if(byRef) {\n"
-         << "      Type* tys" << dfnc_name << "[] = {" << typeString << "};\n"
-         << "      FT" << dfnc_name
-         << " = FunctionType::get(Builder2.getVoidTy(), tys" << dfnc_name
-         << ", false);\n"
-         << "    } else {\n"
-         << "      Type* tys" << dfnc_name << "[] = {type_layout, "
-         << typeString << "};\n"
-         << "      FT" << dfnc_name
-         << " = FunctionType::get(Builder2.getVoidTy(), tys" << dfnc_name
-         << ", false);\n"
-         << "    }\n";
-    } else {
-      os << "    Type* tys" << dfnc_name << "[] = {" << typeString << "};\n"
-         << "    FT" << dfnc_name
-         << " = FunctionType::get(Builder2.getVoidTy(), tys" << dfnc_name
-         << ", false);\n";
-    }
-
-    os << "auto derivcall_" << dfnc_name
-       << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-       << "  (blas.prefix + blas.floatType + \"" << dfnc_name
-       << "\" + blas.suffix).str(), FT" << dfnc_name << ");\n";
-
-    os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
-       << ".getCallee()))\n"
-       << "    {\n"
-       << "      attribute_" << dfnc_name << "(blas, F);\n"
-       << "    }\n\n";
+    emit_deriv_blas_call(ruleDag, patternMap, handled, os);
   } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "noop") {
     // nothing to prepare
   } else if (Def->isSubClassOf("DiffeRetIndex")) {
     // nothing to prepare
+  } else if (Def->isSubClassOf("MagicInst")) {
   } else if (Def->isSubClassOf("Inst")) {
     // TODO:
-    return;
     PrintFatalError("Unhandled Inst Rule!");
+  } else if (Def->isSubClassOf("Seq")) {
+    const auto args = Def->getValueAsListOfStrings("args");
+    assert(args.size() == 3);
+    const auto matName = args[0];
+    const auto dim1 = "arg_" + args[1];
+    const auto dim2 = "arg_" + args[2];
+    os << "    Value *len1, *len2, *size_" << matName << ";\n"
+       << "    set_lens_and_size(BuilderZ, intType, " << dim1 << ", " << dim2
+       << ", size_" << matName
+       << ", "
+          "len1, len2, "
+          "byRef);\n"
+       << "    auto mat_" << matName
+       << " = CreateAllocation(BuilderZ, fpType, size_" << matName << ", \""
+       << matName << "\");\n";
+    llvm::errs() << "num subrules: " << ruleDag->getNumArgs() << "\n";
+    // handle seq rules
+    for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
+      Init *subArg = ruleDag->getArg(i);
+      DagInit *sub_Dag = cast<DagInit>(subArg);
+      if (auto sub_def = dyn_cast<DefInit>(sub_Dag->getOperator())) {
+        const auto sub_Def = sub_def->getDef();
+        if (sub_Def->isSubClassOf("b")) {
+          os << "    //handling nested blas: " << std::to_string(i) << "\n";
+          emit_deriv_blas_call(sub_Dag, patternMap, handled, os);
+          os << "    //handled nested blas: " << std::to_string(i) << "\n";
+        } else if (sub_Def->isSubClassOf("FrobInnerProd")) {
+          os << "    //handling nested prod: " << std::to_string(i) << "\n";
+          assert(sub_Dag->getNumArgs() == 5);
+          ///* beta  */ (FrobInnerProd $m, $n, adj<"C">, $ldc, input<"C">),
+          // call_inner_prod();
+          os << "    //handled nested prod: " << std::to_string(i) << "\n";
+        }
+      }
+    }
+
+  } else if (Def->isSubClassOf("FrobInnerProd")) {
+    os << "    //handled prod\n";
+    assert(ruleDag->getNumArgs() == 5);
+    os << "    //handled prod\n";
   } else {
-    PrintFatalError("Unhandled deriv Rule!");
+    llvm::errs() << Def->getName() << "\n";
+    PrintFatalError("Unhandled deriv Rule!!!" + Def->getName());
   }
 }
 
@@ -2141,9 +2194,8 @@ void rev_call_arg(StringRef argName, llvm::Init *arg, Rule &rule, size_t actArg,
         auto name = Def->getValueAsString("name");
         os << "arg_transposed_" << name;
       } else {
-        os << "primal";
-        // llvm::errs() << Def->getName() << "\n";
-        // PrintFatalError("Def that isn't a DiffeRet!!");
+        llvm::errs() << Def->getName() << "\n";
+        PrintFatalError("Def that isn't a DiffeRet!");
       }
     } else {
       auto name = ruleDag->getArgNameStr(pos);
@@ -2305,9 +2357,9 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
     }
     os << "};\n";
   } else {
-    llvm::errs() << "ASDF\n";
-    PrintFatalError("Unhandled blas-rev case!");
-	  
+    // TODO
+    // llvm::errs() << "ASDF\n";
+    // PrintFatalError("Unhandled blas-rev case!");
   }
   count++;
   }
@@ -2363,7 +2415,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
   // This verifies that we don't end up with multiple declarations.
   llvm::StringSet handled{};
   for (auto rule : rules) {
-    emit_deriv_fnc(patternMap, rule, handled, os);
+    emit_deriv_rule(patternMap, rule, handled, os);
   }
 
   for (size_t i = 0; i < nameVec.size(); i++) {
@@ -2511,8 +2563,9 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
       os << "      assert(!active_" << name << ");\n";
     } else if (Def->isSubClassOf("Constant")) {
     } else {
-      llvm::errs() << Def->getName() << "\n";
-      PrintFatalError("Unhandled blas-rev case!");
+      // TODO
+      // llvm::errs() << Def->getName() << "\n";
+      // PrintFatalError("Unhandled blas-rev case!");
     }
   }
   os << "    },\n"
