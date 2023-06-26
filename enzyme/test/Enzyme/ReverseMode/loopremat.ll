@@ -170,10 +170,10 @@ attributes #4 = { nounwind }
 ; CHECK: remat_loop_loopExit:                              ; preds = %remat_loop_setLoop
 ; CHECK-NEXT:   %i7_unwrap = getelementptr inbounds [30 x double], [30 x double]* %i, i64 0, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %i8_unwrap = load double, double* %i7_unwrap, align 8, !tbaa !2
-; CHECK-NEXT:   %m0diffei8 = fmul fast double %"i10'de.0", %i8_unwrap
-; CHECK-NEXT:   %20 = fadd fast double %m0diffei8, %m0diffei8
+; CHECK-NEXT:   %[[m0diffei8:.+]] = fmul fast double %"i10'de.0", %i8_unwrap
+; CHECK-NEXT:   %[[i20:.+]] = fadd fast double %[[m0diffei8]], %[[m0diffei8]]
 ; CHECK-NEXT:   %"i7'ipg_unwrap" = getelementptr inbounds [30 x double], [30 x double]* %"i'ipa", i64 0, i64 %"iv'ac.0"
-; CHECK-NEXT:   %21 = load double, double* %"i7'ipg_unwrap", align 8
-; CHECK-NEXT:   %22 = fadd fast double %21, %20
-; CHECK-NEXT:   store double %22, double* %"i7'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i21:.+]] = load double, double* %"i7'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i22:.+]] = fadd fast double %[[i21]], %[[i20]]
+; CHECK-NEXT:   store double %[[i22]], double* %"i7'ipg_unwrap", align 8
 ; CHECK-NEXT:   br label %invertsetExit

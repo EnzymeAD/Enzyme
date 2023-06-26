@@ -30,7 +30,7 @@ define dso_local double @_Z11matvec_realPdS_(double* nocapture %mat, double* noc
 ; CHECK-NEXT:   %mul = fmul fast double %vload, %mload
 ; CHECK-NEXT:   store double %mul, double* %mat
 ; CHECK-NEXT:   %0 = load double, double* %"mat'"
-; CHECK-NEXT:   %m1diffemload = fmul fast double %0, %vload
-; CHECK-NEXT:   store double %m1diffemload, double* %"mat'"
+; CHECK-NEXT:   %[[m1diffemload:.+]] = fmul fast double %0, %vload
+; CHECK-NEXT:   store double %[[m1diffemload]], double* %"mat'"
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

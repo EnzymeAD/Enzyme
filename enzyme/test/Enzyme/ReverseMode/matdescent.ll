@@ -319,12 +319,12 @@ attributes #19 = { builtin nounwind }
 ; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 1999, %invertfor.cond.cleanup3 ], [ %[[isub:.+]], %incinvertfor.body4 ]
 ; CHECK-NEXT:   %arrayidx8_unwrap = getelementptr inbounds double, double* %vec, i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %a5_unwrap = load double, double* %arrayidx8_unwrap
-; CHECK-NEXT:   %m1diffea4 = fmul fast double %[[add12de:.+]], %a5_unwrap
+; CHECK-NEXT:   %[[m1diffea4:.+]] = fmul fast double %[[add12de:.+]], %a5_unwrap
 ; CHECK-NEXT:   %i2000_unwrap = mul nuw nsw i64 %"iv'ac.0", 2000
 ; CHECK-NEXT:   %a3_unwrap = add nuw nsw i64 %"iv1'ac.0", %i2000_unwrap
 ; CHECK-NEXT:   %[[arrayidx6ipg:.+]] = getelementptr inbounds double, double* %"mat'", i64 %a3_unwrap
 ; CHECK-NEXT:   %[[l8:.+]] = load double, double* %[[arrayidx6ipg]], align 8
-; CHECK-NEXT:   %[[addl8:.+]] = fadd fast double %[[l8]], %m1diffea4
+; CHECK-NEXT:   %[[addl8:.+]] = fadd fast double %[[l8]], %[[m1diffea4]]
 ; CHECK-NEXT:   store double %[[addl8]], double* %[[arrayidx6ipg]], align 8
 ; CHECK-NEXT:   %[[lcmp:.+]] = icmp eq i64 %"iv1'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[lcmp]], label %invertfor.body, label %incinvertfor.body4
@@ -346,9 +346,9 @@ attributes #19 = { builtin nounwind }
 ; CHECK-NEXT:   %"iv3'ac.0" = phi i64 [ %[[iv3sub1:.+]], %incinvertfor.body20 ], [ 1999, %for.cond.cleanup3 ]
 ; CHECK-NEXT:   %arrayidx22_unwrap = getelementptr inbounds double, double* %out, i64 %"iv3'ac.0"
 ; CHECK-NEXT:   %a6_unwrap = load double, double* %arrayidx22_unwrap
-; CHECK-NEXT:   %m0diffea6 = fmul fast double %differeturn, %a6_unwrap
-; CHECK-NEXT:   %m1diffea6 = fmul fast double %differeturn, %a6_unwrap
-; CHECK-NEXT:   %[[da6:.+]] = fadd fast double %m0diffea6, %m1diffea6
+; CHECK-NEXT:   %[[m0diffea6:.+]] = fmul fast double %differeturn, %a6_unwrap
+; CHECK-NEXT:   %[[m1diffea6:.+]] = fmul fast double %differeturn, %a6_unwrap
+; CHECK-NEXT:   %[[da6:.+]] = fadd fast double %[[m0diffea6]], %[[m1diffea6]]
 ; CHECK-NEXT:   %[[arrayidx22ipg:.+]] = getelementptr inbounds double, double* %[[outipc]], i64 %"iv3'ac.0"
 ; CHECK-NEXT:   %[[l22:.+]] = load double, double* %[[arrayidx22ipg]], align 8
 ; CHECK-NEXT:   %[[addl22:.+]] = fadd fast double %[[l22]], %[[da6]]

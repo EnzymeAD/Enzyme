@@ -132,10 +132,10 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[loadcallp:.+]] = load double, double* %[[callp]]
 ; CHECK-NEXT:   store double 0.000000e+00, double* %[[callp]]
-; CHECK-NEXT:   %m0diffez = fmul fast double %[[loadcallp]], %y
-; CHECK-NEXT:   %m1diffey = fmul fast double %[[loadcallp]], %z
-; CHECK-NEXT:   %[[toret0:.+]] = insertvalue { double, double } undef, double %m1diffey, 0
-; CHECK-NEXT:   %[[toret:.+]] = insertvalue { double, double } %[[toret0]], double %m0diffez, 1
+; CHECK-NEXT:   %[[m0diffez:.+]] = fmul fast double %[[loadcallp]], %y
+; CHECK-NEXT:   %[[m1diffey:.+]] = fmul fast double %[[loadcallp]], %z
+; CHECK-NEXT:   %[[toret0:.+]] = insertvalue { double, double } undef, double %[[m1diffey]], 0
+; CHECK-NEXT:   %[[toret:.+]] = insertvalue { double, double } %[[toret0]], double %[[m0diffez]], 1
 ; CHECK-NEXT:   ret { double, double } %[[toret]]
 ; CHECK-NEXT: }
 

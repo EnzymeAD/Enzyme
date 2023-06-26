@@ -90,9 +90,9 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   store double %x, double* %[[bccall]], align 8, !tbaa !2
 ; CHECK-NEXT:   %[[fresult:.+]] = call fast double @augmented_f(double* %[[bccall]], double* %[[ipci]])
 ;; TODO MAKE NON AUGMENTED:   %[[fresult:.+]] = call fast double @f(double* %[[bccall]])
-; CHECK-NEXT:  %m0diffecall1 = fmul fast double %differeturn, %[[fresult]]
-; CHECK-NEXT:  %m1diffecall1 = fmul fast double %differeturn, %[[fresult]]
-; CHECK-NEXT:   %[[factor:.+]] = fadd fast double %m0diffecall1, %m1diffecall1
+; CHECK-NEXT:  %[[m0diffecall1:.+]] = fmul fast double %differeturn, %[[fresult]]
+; CHECK-NEXT:  %[[m1diffecall1:.+]] = fmul fast double %differeturn, %[[fresult]]
+; CHECK-NEXT:   %[[factor:.+]] = fadd fast double %[[m0diffecall1]], %[[m1diffecall1]]
 ; CHECK-NEXT:   call void @diffef(double* %[[bccall]], double* %[[ipci]], double %[[factor]])
 ; CHECK-NEXT:   %[[res:.+]] = load double, double* %"'ipc"
 ; NOTE BETTER 03 / dead store elimination can get rid of the next line which is optional

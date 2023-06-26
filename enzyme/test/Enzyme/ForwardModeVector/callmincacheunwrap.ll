@@ -106,13 +106,13 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:    [[LD:%.*]] = load double, double* [[CALL]], align 8
 ; CHECK-NEXT:    [[FMUL:%.*]] = fmul double [[LD]], [[LD]]
 ; CHECK-NEXT:    [[TMP3:%.*]] = fmul fast double %"ld'ipl", [[LD]]
-; CHECK-NEXT:    [[TMP4:%.*]] = fmul fast double %"ld'ipl", [[LD]]
-; CHECK-NEXT:    [[TMP5:%.*]] = fadd fast double [[TMP3]], [[TMP4]]
 ; CHECK-NEXT:    [[TMP6:%.*]] = fmul fast double %"ld'ipl5", [[LD]]
-; CHECK-NEXT:    [[TMP7:%.*]] = fmul fast double %"ld'ipl5", [[LD]]
-; CHECK-NEXT:    [[TMP8:%.*]] = fadd fast double [[TMP6]], [[TMP7]]
 ; CHECK-NEXT:    [[TMP9:%.*]] = fmul fast double %"ld'ipl6", [[LD]]
+; CHECK-NEXT:    [[TMP4:%.*]] = fmul fast double %"ld'ipl", [[LD]]
+; CHECK-NEXT:    [[TMP7:%.*]] = fmul fast double %"ld'ipl5", [[LD]]
 ; CHECK-NEXT:    [[TMP10:%.*]] = fmul fast double %"ld'ipl6", [[LD]]
+; CHECK-NEXT:    [[TMP5:%.*]] = fadd fast double [[TMP3]], [[TMP4]]
+; CHECK-NEXT:    [[TMP8:%.*]] = fadd fast double [[TMP6]], [[TMP7]]
 ; CHECK-NEXT:    [[TMP11:%.*]] = fadd fast double [[TMP9]], [[TMP10]]
 ; CHECK-NEXT:    store double [[TMP5]], double* %"call'ipg", align 8
 ; CHECK-NEXT:    store double [[TMP8]], double* %"call'ipg3", align 8

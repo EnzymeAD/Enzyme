@@ -63,21 +63,21 @@ exit:                                             ; preds = %L50
 ; CHECK-NEXT:   br label %invertL1e
 
 ; CHECK: invertL50:                                        ; preds = %invertL1e, %incinvertL50
-; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 5, %invertL1e ], [ %[[i7:.+]], %incinvertL50 ]
+; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 5, %invertL1e ], [ %[[aa:.+]], %incinvertL50 ]
 ; CHECK-NEXT:   %[[a4:.+]] = getelementptr inbounds double, double* %ld_malloccache, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %[[a5:.+]] = load double, double* %[[a4]], align 8
-; CHECK-NEXT:   %m0diffeld = fmul fast double %differeturn, %[[a5]]
-; CHECK-NEXT:   %m1diffeld = fmul fast double %differeturn, %[[a5]]
-; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %m0diffeld, %m1diffeld
+; CHECK-NEXT:   %[[m0diffeld:.+]] = fmul fast double %differeturn, %[[a5]]
+; CHECK-NEXT:   %[[m1diffeld:.+]] = fmul fast double %differeturn, %[[a5]]
+; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %[[m0diffeld]], %[[m1diffeld]]
 ; CHECK-NEXT:   %"gep'ipg_unwrap" = getelementptr inbounds double, double addrspace(1)* %"in'", i64 %"iv'ac.0"
-; CHECK-NEXT:   %6 = load double, double addrspace(1)* %"gep'ipg_unwrap"
-; CHECK-NEXT:   %7 = fadd fast double %6, %[[i4]]
-; CHECK-NEXT:   store double %7, double addrspace(1)* %"gep'ipg_unwrap"
+; CHECK-NEXT:   %[[i6:.+]] = load double, double addrspace(1)* %"gep'ipg_unwrap"
+; CHECK-NEXT:   %[[i7:.+]] = fadd fast double %[[i6]], %[[i4]]
+; CHECK-NEXT:   store double %[[i7]], double addrspace(1)* %"gep'ipg_unwrap"
 ; CHECK-NEXT:   %[[i6:.+]] = icmp eq i64 %"iv1'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[i6]], label %invertL1, label %incinvertL50
 
 ; CHECK: incinvertL50:                                     ; preds = %invertL50
-; CHECK-NEXT:   %[[i7]] = add nsw i64 %"iv1'ac.0", -1
+; CHECK-NEXT:   %[[aa]] = add nsw i64 %"iv1'ac.0", -1
 ; CHECK-NEXT:   br label %invertL50
 
 ; CHECK: invertL1e:                                        ; preds = %top, %incinvertL1

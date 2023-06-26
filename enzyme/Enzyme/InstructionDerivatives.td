@@ -27,6 +27,17 @@ class IntrPattern<dag patternToMatch, list<list<string>> funcNames, list<dag> re
   dag ArgDuals = forwardOps;
 }
 
+
+class BinopPattern<dag patternToMatch, string funcName, int minVer_, int maxVer_, list<dag> resultOps, dag forwardOps> {
+  dag PatternToMatch = patternToMatch;
+  string name = funcName;
+  int minVer = minVer_;
+  int maxVer = maxVer_;
+  list<dag> ArgDerivatives = resultOps;
+  dag ArgDuals = forwardOps;
+}
+
+
 class Inst<string mnemonic> {
   string name = mnemonic;
 }
@@ -396,7 +407,7 @@ def : CallPattern<(Op $x, $y),
                   ["fmod", "fmodf", "fmodl"],
                   [
                   (DiffeRet),
-                  (FMul (DiffeRet), (FNeg (Intrinsic<"copysign"> (Intrinsic<"floor"> (Intrinsic<"fabs"> (FDiv $x, $y))), (FDiv $x, $y))))
+                  (CheckedMul (DiffeRet), (FNeg (Intrinsic<"copysign"> (Intrinsic<"floor"> (Intrinsic<"fabs"> (FDiv $x, $y):$div)), $div)))
                   ],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
@@ -831,5 +842,42 @@ def : IntrPattern<(Op $x, $y),
                   ],
                   (Call<(SameFunc)> (SelectIfActive $x, (Shadow $x), (Zero $x)), (SelectIfActive $y, (Shadow $y), (Zero $y)))
                  >;
+
+def : BinopPattern<(Op $x, $y), "FAdd", 0, 0,
+                    [
+                      (DiffeRet),
+                      (DiffeRet),
+                    ],
+                    (ForwardFromSummedReverse)
+                  >;
+def : BinopPattern<(Op $x, $y), "FSub", 0, 0,
+                    [
+                      (DiffeRet),
+                      (FNeg (DiffeRet)),
+                    ],
+                    (ForwardFromSummedReverse)
+                  >;
+def : BinopPattern<(Op $x, $y), "FMul", 0, 0,
+                    [
+                      (CheckedMul (DiffeRet), $y),
+                      (CheckedMul (DiffeRet), $x)
+                    ],
+                    (ForwardFromSummedReverse)
+                  >;
+def : BinopPattern<(Op $x, $y), "FDiv", 0, 0,
+                    [
+                      (CheckedDiv (DiffeRet), $y),
+                      (FNeg (FMul (CheckedDiv (DiffeRet), $y), (FDiv $x, $y)))
+                    ],
+                    (CheckedDiv (FSub (SelectIfActive $x, (FMul (Shadow $x), $y), (Zero $x)), (SelectIfActive $y, (FMul (Shadow $y), $x), (Zero $y))), (FMul $y, $y))
+                  >;
+
+def : BinopPattern<(Op $x, $y), "FRem", 0, 0,
+                    [
+                      (DiffeRet),
+                      (CheckedMul (DiffeRet), (FNeg (Intrinsic<"copysign"> (Intrinsic<"floor"> (Intrinsic<"fabs"> (FDiv $x, $y):$div)), $div)))
+                    ],
+                    (ForwardFromSummedReverse)
+                  >;
 
 include "BlasDerivatives.td"                  

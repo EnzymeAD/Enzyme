@@ -126,7 +126,7 @@ attributes #2 = { "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-
 ; CHECK-NEXT:   br label %invertfor.cond.cleanup4
 
 ; CHECK: invertfor.cond.cleanup4:                          ; preds = %incinvertfor.body5.preheader, %for.cond.cleanup
-; CHECK-NEXT:   %"add'de.0" = phi double [ 0.000000e+00, %for.cond.cleanup ], [ %19, %incinvertfor.body5.preheader ]
+; CHECK-NEXT:   %"add'de.0" = phi double [ 0.000000e+00, %for.cond.cleanup ], [ %[[i19:.+]], %incinvertfor.body5.preheader ]
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 9, %for.cond.cleanup ], [ %8, %incinvertfor.body5.preheader ]
 ; CHECK-NEXT:   %"arrayidx9'ipg_unwrap" = getelementptr inbounds double, double* %"out'", i64 %"iv'ac.0"
 ; CHECK-NEXT:   %9 = load double, double* %"arrayidx9'ipg_unwrap", align 8
@@ -138,24 +138,24 @@ attributes #2 = { "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-
 ; CHECK-NEXT:   br label %invertfor.body5
 
 ; CHECK: invertfor.body5:                                  ; preds = %incinvertfor.body5, %invertfor.cond.cleanup4
-; CHECK-NEXT:   %"add'de.1" = phi double [ %10, %invertfor.cond.cleanup4 ], [ %19, %incinvertfor.body5 ]
-; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ %_unwrap, %invertfor.cond.cleanup4 ], [ %20, %incinvertfor.body5 ]
+; CHECK-NEXT:   %"add'de.1" = phi double [ %10, %invertfor.cond.cleanup4 ], [ %[[i19]], %incinvertfor.body5 ]
+; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ %_unwrap, %invertfor.cond.cleanup4 ], [ %[[i20:.+]], %incinvertfor.body5 ]
 ; CHECK-NEXT:   %11 = getelementptr inbounds double*, double** %ld_malloccache, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %12 = load double*, double** %11, align 8, !dereferenceable !{{[0-9]+}}, !invariant.group ![[g9]]
 ; CHECK-NEXT:   %13 = getelementptr inbounds double, double* %12, i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %14 = load double, double* %13, align 8, !invariant.group !
-; CHECK-NEXT:   %m0diffeld = fmul fast double %"add'de.1", %14
-; CHECK-NEXT:   %m1diffeld = fmul fast double %"add'de.1", %14
-; CHECK-NEXT:   %15 = fadd fast double %m0diffeld, %m1diffeld
+; CHECK-NEXT:   %[[m0diffeld:.+]] = fmul fast double %"add'de.1", %14
+; CHECK-NEXT:   %[[m1diffeld:.+]] = fmul fast double %"add'de.1", %14
+; CHECK-NEXT:   %[[i15:.+]] = fadd fast double %[[m0diffeld]], %[[m1diffeld]]
 ; CHECK-NEXT:   %"arrayidx6'ipg_unwrap" = getelementptr inbounds double, double* %"data'", i64 %"iv1'ac.0"
-; CHECK-NEXT:   %16 = load double, double* %"arrayidx6'ipg_unwrap", align 8
-; CHECK-NEXT:   %17 = fadd fast double %16, %15
-; CHECK-NEXT:   store double %17, double* %"arrayidx6'ipg_unwrap", align 8
-; CHECK-NEXT:   %18 = icmp eq i64 %"iv1'ac.0", 0
-; CHECK-NEXT:   %19 = select{{( fast)?}} i1 %18, double 0.000000e+00, double %"add'de.1"
-; CHECK-NEXT:   br i1 %18, label %invertfor.body5.preheader, label %incinvertfor.body5
+; CHECK-NEXT:   %[[i16:.+]] = load double, double* %"arrayidx6'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i17:.+]] = fadd fast double %[[i16]], %[[i15]]
+; CHECK-NEXT:   store double %[[i17]], double* %"arrayidx6'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i18:.+]] = icmp eq i64 %"iv1'ac.0", 0
+; CHECK-NEXT:   %[[i19]] = select{{( fast)?}} i1 %[[i18]], double 0.000000e+00, double %"add'de.1"
+; CHECK-NEXT:   br i1 %[[i18]], label %invertfor.body5.preheader, label %incinvertfor.body5
 
 ; CHECK: incinvertfor.body5:                               ; preds = %invertfor.body5
-; CHECK-NEXT:   %20 = add nsw i64 %"iv1'ac.0", -1
+; CHECK-NEXT:   %[[i20]] = add nsw i64 %"iv1'ac.0", -1
 ; CHECK-NEXT:   br label %invertfor.body5
 ; CHECK-NEXT: }

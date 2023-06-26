@@ -88,9 +88,9 @@ entry:
 ; CHECK-NEXT:   store double 0.000000e+00, double* %beta
 ; CHECK-NEXT:   store i64 8, i64* %ldc, align 16
 ; CHECK-NEXT:   %loaded.trans = load i8, i8* %transb
-; CHECK-NEXT:   %0 = icmp eq i8 %loaded.trans, 78
-; CHECK-NEXT:   %1 = icmp eq i8 %loaded.trans, 110
-; CHECK-NEXT:   %2 = or i1 %1, %0
+; CHECK-DAG:   %[[i0:.+]] = icmp eq i8 %loaded.trans, 78
+; CHECK-DAG:   %[[i1:.+]] = icmp eq i8 %loaded.trans, 110
+; CHECK-NEXT:   %2 = or i1 %[[i1]], %[[i0]]
 ; CHECK-NEXT:   %3 = select i1 %2, i8* %k_p, i8* %n_p
 ; CHECK-NEXT:   %4 = select i1 %2, i8* %n_p, i8* %k_p
 ; CHECK-NEXT:   %5 = bitcast i8* %3 to i64*
@@ -131,8 +131,8 @@ entry:
 ; CHECK-DAG:    %[[r15:.+]] = select i1 %[[r14]], i8 78, i8 %[[r13]]
 ; CHECK-DAG:    store i8 %[[r15]], i8* %byref.transpose.transb
 ; CHECK-NEXT:   %loaded.trans1 = load i8, i8* %transb
-; CHECK-NEXT:   %[[r16:.+]] = icmp eq i8 %loaded.trans1, 78
-; CHECK-NEXT:   %[[r17:.+]] = icmp eq i8 %loaded.trans1, 110
+; CHECK-DAG:   %[[r16:.+]] = icmp eq i8 %loaded.trans1, 78
+; CHECK-DAG:   %[[r17:.+]] = icmp eq i8 %loaded.trans1, 110
 ; CHECK-NEXT:   %[[r18:.+]] = or i1 %[[r17]], %[[r16]]
 ; CHECK-NEXT:   %[[r19:.+]] = select i1 %[[r18]], i8* %k_p, i8* %n_p
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %byref.transpose.transb, i8* %m_p, i8* %k_p, i8* %n_p, i8* %alpha_p, i8* %"C'", i8* %ldc_p, i8* %10, i8* %[[r19]], i8* %beta_p, i8* %"A'", i8* %lda_p)

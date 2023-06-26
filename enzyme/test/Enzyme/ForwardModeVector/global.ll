@@ -28,19 +28,19 @@ entry:
 ; CHECK-NEXT:    %"'ipl1" = load double, double* getelementptr inbounds ([3 x double], [3 x double]* @dglobal, i32 0, i32 1), align 8
 ; CHECK-NEXT:    %"'ipl2" = load double, double* getelementptr inbounds ([3 x double], [3 x double]* @dglobal, i32 0, i32 2), align 8
 ; CHECK-NEXT:    [[TMP0:%.*]] = load double, double* @global, align 8
-; CHECK-NEXT:    [[TMP1:%.*]] = extractvalue [3 x double] %"x'", 0
 ; CHECK-NEXT:    [[TMP2:%.*]] = fmul fast double %"'ipl", [[X]]
+; CHECK-NEXT:    [[TMP7:%.*]] = fmul fast double %"'ipl1", [[X]]
+; CHECK-NEXT:    [[TMP12:%.*]] = fmul fast double %"'ipl2", [[X]]
+; CHECK-NEXT:    [[TMP1:%.*]] = extractvalue [3 x double] %"x'", 0
 ; CHECK-NEXT:    [[TMP3:%.*]] = fmul fast double [[TMP1]], [[TMP0]]
+; CHECK-NEXT:    [[TMP6:%.*]] = extractvalue [3 x double] %"x'", 1
+; CHECK-NEXT:    [[TMP8:%.*]] = fmul fast double [[TMP6]], [[TMP0]]
+; CHECK-NEXT:    [[TMP11:%.*]] = extractvalue [3 x double] %"x'", 2
+; CHECK-NEXT:    [[TMP13:%.*]] = fmul fast double [[TMP11]], [[TMP0]]
 ; CHECK-NEXT:    [[TMP4:%.*]] = fadd fast double [[TMP2]], [[TMP3]]
 ; CHECK-NEXT:    [[TMP5:%.*]] = insertvalue [3 x double] undef, double [[TMP4]], 0
-; CHECK-NEXT:    [[TMP6:%.*]] = extractvalue [3 x double] %"x'", 1
-; CHECK-NEXT:    [[TMP7:%.*]] = fmul fast double %"'ipl1", [[X]]
-; CHECK-NEXT:    [[TMP8:%.*]] = fmul fast double [[TMP6]], [[TMP0]]
 ; CHECK-NEXT:    [[TMP9:%.*]] = fadd fast double [[TMP7]], [[TMP8]]
 ; CHECK-NEXT:    [[TMP10:%.*]] = insertvalue [3 x double] [[TMP5]], double [[TMP9]], 1
-; CHECK-NEXT:    [[TMP11:%.*]] = extractvalue [3 x double] %"x'", 2
-; CHECK-NEXT:    [[TMP12:%.*]] = fmul fast double %"'ipl2", [[X]]
-; CHECK-NEXT:    [[TMP13:%.*]] = fmul fast double [[TMP11]], [[TMP0]]
 ; CHECK-NEXT:    [[TMP14:%.*]] = fadd fast double [[TMP12]], [[TMP13]]
 ; CHECK-NEXT:    [[TMP15:%.*]] = insertvalue [3 x double] [[TMP10]], double [[TMP14]], 2
 ; CHECK-NEXT:    ret [3 x double] [[TMP15]]

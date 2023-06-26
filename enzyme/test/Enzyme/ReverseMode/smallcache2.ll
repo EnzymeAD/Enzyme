@@ -59,11 +59,11 @@ entry:
 ; CHECK-NEXT: top:
 ; CHECK-NEXT:   %"x'il_phi" = extractvalue { double*, double } %tapeArg, 0
 ; CHECK-NEXT:   %val = extractvalue { double*, double } %tapeArg, 1
-; CHECK-NEXT:   %m0diffeval = fmul fast double %differeturn, %val
-; CHECK-NEXT:   %m1diffeval = fmul fast double %differeturn, %val
-; CHECK-NEXT:   %0 = fadd fast double %m0diffeval, %m1diffeval
-; CHECK-NEXT:   %1 = load double, double* %"x'il_phi"
-; CHECK-NEXT:   %2 = fadd fast double %1, %0
-; CHECK-NEXT:   store double %2, double* %"x'il_phi"
+; CHECK-NEXT:   %[[m0diffeval:.+]] = fmul fast double %differeturn, %val
+; CHECK-NEXT:   %[[m1diffeval:.+]] = fmul fast double %differeturn, %val
+; CHECK-NEXT:   %[[i0:.+]] = fadd fast double %[[m0diffeval]], %[[m1diffeval]]
+; CHECK-NEXT:   %[[i1:.+]] = load double, double* %"x'il_phi"
+; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[i1]], %[[i0]]
+; CHECK-NEXT:   store double %[[i2]], double* %"x'il_phi"
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

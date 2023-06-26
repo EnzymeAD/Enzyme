@@ -51,11 +51,11 @@ attributes #9 = { nounwind }
 ; CHECK: define internal { double } @diffemalloced(double %a0, i32 %a1, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %a3 = call fast double @augmented_submalloced(double %a0)
-; CHECK-NEXT:   %m0diffea3 = fmul fast double %differeturn, %a3
-; CHECK-NEXT:   %m1diffea3 = fmul fast double %differeturn, %a3
-; CHECK-NEXT:   %0 = fadd fast double %m0diffea3, %m1diffea3
-; CHECK-NEXT:   %1 = call { double } @diffesubmalloced(double %a0, double %0)
-; CHECK-NEXT:   ret { double } %1
+; CHECK-NEXT:   %[[m0diffea3:.+]] = fmul fast double %differeturn, %a3
+; CHECK-NEXT:   %[[m1diffea3:.+]] = fmul fast double %differeturn, %a3
+; CHECK-NEXT:   %[[i0:.+]] = fadd fast double %[[m0diffea3]], %[[m1diffea3]]
+; CHECK-NEXT:   %[[i1:.+]] = call { double } @diffesubmalloced(double %a0, double %[[i0]])
+; CHECK-NEXT:   ret { double } %[[i1]]
 ; CHECK-NEXT: }
 
 ; CHECK: define internal double @augmented_f(double* nocapture readonly %a0, double* nocapture %"a0'")
@@ -95,11 +95,11 @@ attributes #9 = { nounwind }
 ; CHECK: define internal void @diffef(double* nocapture readonly %a0, double* nocapture %"a0'", double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %a2 = load double, double* %a0, align 8
-; CHECK-NEXT:   %m0diffea2 = fmul fast double %differeturn, %a2
-; CHECK-NEXT:   %m1diffea2 = fmul fast double %differeturn, %a2
-; CHECK-NEXT:   %0 = fadd fast double %m0diffea2, %m1diffea2
-; CHECK-NEXT:   %1 = load double, double* %"a0'", align 8
-; CHECK-NEXT:   %2 = fadd fast double %1, %0
-; CHECK-NEXT:   store double %2, double* %"a0'", align 8
+; CHECK-NEXT:   %[[m0diffea2:.+]] = fmul fast double %differeturn, %a2
+; CHECK-NEXT:   %[[m1diffea2:.+]] = fmul fast double %differeturn, %a2
+; CHECK-NEXT:   %[[i0:.+]] = fadd fast double %[[m0diffea2]], %[[m1diffea2]]
+; CHECK-NEXT:   %[[i1:.+]] = load double, double* %"a0'", align 8
+; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[i1]], %[[i0]]
+; CHECK-NEXT:   store double %[[i2]], double* %"a0'", align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

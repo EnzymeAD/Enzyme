@@ -66,10 +66,10 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:    %"'ipl4" = load double, double* %"arrayidx'ipg2"
 ; CHECK-NEXT:    [[TMP1:%.*]] = load double, double* [[ARRAYIDX_I]]
 ; CHECK-NEXT:    [[TMP2:%.*]] = fmul fast double %"'ipl", [[TMP1]]
-; CHECK-NEXT:    [[TMP3:%.*]] = fadd fast double [[TMP2]], [[TMP2]]
 ; CHECK-NEXT:    [[TMP4:%.*]] = fmul fast double %"'ipl3", [[TMP1]]
-; CHECK-NEXT:    [[TMP5:%.*]] = fadd fast double [[TMP4]], [[TMP4]]
 ; CHECK-NEXT:    [[TMP6:%.*]] = fmul fast double %"'ipl4", [[TMP1]]
+; CHECK-NEXT:    [[TMP3:%.*]] = fadd fast double [[TMP2]], [[TMP2]]
+; CHECK-NEXT:    [[TMP5:%.*]] = fadd fast double [[TMP4]], [[TMP4]]
 ; CHECK-NEXT:    [[TMP7:%.*]] = fadd fast double [[TMP6]], [[TMP6]]
 
 ; CHECK-NEXT:    [[TMP9]] = fadd fast double [[TMP3]], [[TMP0_0]]
