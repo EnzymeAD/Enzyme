@@ -668,14 +668,11 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
   B.CreateCall(fn, args, bundles);
 }
 
-// Function *getOrInsertMemcpyStrided(Module &M, Type *elementType, PointerType
-// *T,
-//                                    Type *IT, unsigned dstalign,
-//                                    unsigned srcalign) {
-//   assert(elementType->isFloatingPointTy());
 Value *callInnerProdBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                         PointerType *BlasPT, Type *BlasIT, Type *fpTy,
                          llvm::ArrayRef<llvm::Value *> args,
                          llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
+  assert(fpTy->isFloatingPointTy());
   std::string prod_name = (blas.floatType + "innerProd" + blas.suffix).str();
   std::string dot_name =
       (blas.prefix + blas.floatType + "dot" + blas.suffix).str();
@@ -684,9 +681,9 @@ Value *callInnerProdBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   for (auto arg : args)
     tys.push_back(arg->getType());
 
-  auto FT = FunctionType::get(fpType, tys, false);
-  // TODO: fix this to match dot
-  auto FDotT = FunctionType::get(fpType, tys, false);
+  auto FT = FunctionType::get(fpTy, tys, false);
+  auto FDotT =
+      FunctionType::get(fpTy, {BlasIT, BlasPT, BlasIT, BlsaPT, BlasIT}, false);
 
   Function *F =
       cast<Function>(M.getOrInsertFunction(prod_name, FT).getCallee());
@@ -752,8 +749,9 @@ Value *callInnerProdBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
     Aidx->addIncoming(ConstantInt::get(intTy, 0), init);
     Bidx->addIncoming(ConstantInt::get(intTy, 0), init);
 
-    Value *Ai = B3.CreateInBoundsGEP(elementType, matA, Aidx, "A.i");
-    Value *Bi = B3.CreateInBoundsGEP(elementType, matB, Bidx, "B.i");
+    Value *Ai = B3.CreateInBoundsGEP(fpTy, matA, Aidx, "A.i");
+    Value *Bi = B3.CreateInBoundsGEP(fpTy, matB, Bidx, "B.i");
+    // TODO: use to_blas_callconv before calling dot for m, constOne
     Value *newDot =
         B3.CreateCall(FDot, {m, Ai, constOne, Bi, constOne}, bundles);
     res = B3.CreateFAdd(res, newDot);
