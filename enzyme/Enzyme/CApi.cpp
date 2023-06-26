@@ -397,8 +397,8 @@ EnzymeGradientUtilsGetReturnDiffeType(GradientUtils *G, LLVMValueRef oval,
                                       uint8_t *needsShadow) {
   bool needsPrimalB;
   bool needsShadowB;
-  auto res = (CDIFFE_TYPE)(G->getReturnDiffeType(cast<CallInst>(unwrap(oval)),
-                                                 &needsPrimalB, &needsShadowB));
+  auto res = (CDIFFE_TYPE)(G->getReturnDiffeType(unwrap(oval), &needsPrimalB,
+                                                 &needsShadowB));
   if (needsPrimal)
     *needsPrimal = needsPrimalB;
   if (needsShadow)
