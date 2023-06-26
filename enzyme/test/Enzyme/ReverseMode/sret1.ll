@@ -63,12 +63,12 @@ attributes #2 = { "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-
 ; CHECK:  define internal { double, double, double } @diffe_Z4testddd(double %x, double %y, double %z, double %differeturn)
 ; CHECK-NEXT: entry:  
 ; CHECK-NEXT:   %mul = fmul double %x, %y
-; CHECK-NEXT:   %m0diffemul = fmul fast double %differeturn, %z
-; CHECK-NEXT:   %m1diffez = fmul fast double %differeturn, %mul
-; CHECK-NEXT:   %m0diffex = fmul fast double %m0diffemul, %y
-; CHECK-NEXT:   %m1diffey = fmul fast double %m0diffemul, %x
-; CHECK-NEXT:   %0 = insertvalue { double, double, double } undef, double %m0diffex, 0
-; CHECK-NEXT:   %1 = insertvalue { double, double, double } %0, double %m1diffey, 1
-; CHECK-NEXT:   %2 = insertvalue { double, double, double } %1, double %m1diffez, 2
-; CHECK-NEXT:   ret { double, double, double } %2
+; CHECK-NEXT:   %[[m0diffemul:.+]] = fmul fast double %differeturn, %z
+; CHECK-NEXT:   %[[m1diffez:.+]] = fmul fast double %differeturn, %mul
+; CHECK-NEXT:   %[[m0diffex:.+]] = fmul fast double %[[m0diffemul]], %y
+; CHECK-NEXT:   %[[m1diffey:.+]] = fmul fast double %[[m0diffemul]], %x
+; CHECK-NEXT:   %[[i0:.+]] = insertvalue { double, double, double } undef, double %[[m0diffex]], 0
+; CHECK-NEXT:   %[[i1:.+]] = insertvalue { double, double, double } %[[i0]], double %[[m1diffey]], 1
+; CHECK-NEXT:   %[[i2:.+]] = insertvalue { double, double, double } %[[i1]], double %[[m1diffez]], 2
+; CHECK-NEXT:   ret { double, double, double } %[[i2]]
 ; CHECK-NEXT: }
