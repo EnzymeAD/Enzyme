@@ -945,7 +945,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                             ActionType intrinsic) {
   emitSourceFileHeader("Rewriters", os);
-  const char* patternNames;
+  const char *patternNames;
   switch (intrinsic) {
   case GenDerivatives:
     patternNames = "CallPattern";
