@@ -23,8 +23,9 @@ static inline bool approx_fp_equality_double(double f1, double f2, double thresh
 
 #define APPROX_EQ(LHS, RHS, THRES)                                    \
     {                                                                \
-      if (__builtin_fabs(LHS - RHS) > THRES) {                                               \
-        fprintf(stderr, "Assertion Failed: fabs( [%s = %g] - [%s = %g] ) > %g at %s:%d (%s)\n", #LHS, LHS, #RHS, RHS, THRES, \
+      if (__builtin_fabs((LHS) - (RHS)) > THRES) {                                               \
+        fprintf(stderr, "Assertion Failed: fabs( [%s = %g] - [%s = %g] ) > %g at %s:%d (%s)\n", \
+                #LHS, (double)(LHS), #RHS, (double)(RHS), THRES,        \
                 __FILE__, __LINE__, __PRETTY_FUNCTION__);               \
         abort();                                                        \
       }                                                                 \
