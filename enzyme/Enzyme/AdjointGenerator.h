@@ -10117,7 +10117,11 @@ public:
         dchoice = diffe(&call, Builder2);
       }
 
+#if LLVM_VERSION_MAJOR >= 10
       if (call.hasMetadata("enzyme_gradient_setter")) {
+#else
+        if (call.getMetadata("enzyme_gradient_setter")) {
+#endif
         auto gradient_setter = cast<Function>(
             cast<ValueAsMetadata>(
                 call.getMetadata("enzyme_gradient_setter")->getOperand(0).get())
