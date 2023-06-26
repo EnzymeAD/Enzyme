@@ -10120,7 +10120,7 @@ public:
 #if LLVM_VERSION_MAJOR >= 10
       if (call.hasMetadata("enzyme_gradient_setter")) {
 #else
-        if (call.getMetadata("enzyme_gradient_setter")) {
+      if (call.getMetadata("enzyme_gradient_setter")) {
 #endif
         auto gradient_setter = cast<Function>(
             cast<ValueAsMetadata>(
