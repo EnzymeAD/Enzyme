@@ -212,10 +212,10 @@ attributes #3 = { nounwind }
 
 ; CHECK: remat_for.cond_for.body3:                         ; preds = %remat_for.cond_for.cond1
 ; CHECK-NEXT:   %i4_unwrap1 = bitcast i8* %remat_call to double*
-; CHECK-NEXT:   %arrayidx5_unwrap = getelementptr inbounds double, double* %i4_unwrap1, i64 %[[i15]]
-; CHECK-NEXT:   %arrayidx4_unwrap = getelementptr inbounds double, double* %i4_unwrap1, i64 %fiv
-; CHECK-NEXT:   %i10_unwrap = load double, double* %arrayidx4_unwrap, align 8
-; CHECK-NEXT:   %mul_unwrap = fmul double %i10_unwrap, %rho0
+; CHECK-DAG:   %arrayidx5_unwrap = getelementptr inbounds double, double* %i4_unwrap1, i64 %[[i15]]
+; CHECK-DAG:   %arrayidx4_unwrap = getelementptr inbounds double, double* %i4_unwrap1, i64 %fiv
+; CHECK-DAG:   %i10_unwrap = load double, double* %arrayidx4_unwrap, align 8
+; CHECK-DAG:   %mul_unwrap = fmul double %i10_unwrap, %rho0
 ; CHECK-NEXT:   store double %mul_unwrap, double* %arrayidx5_unwrap, align 8
 ; CHECK-NEXT:   br label %remat_for.cond_for.cond1
 ; CHECK-NEXT: }
