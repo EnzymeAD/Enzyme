@@ -49,6 +49,19 @@ gentbl(
     ],
 )
 gentbl(
+    name = "gen-binop-derivatives",
+    tbl_outs = [(
+        "-gen-binop-derivatives",
+        "BinopDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/InstructionDerivatives.td",
+    td_srcs = ["Enzyme/BlasDerivatives.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+gentbl(
     name = "blas-derivatives",
     tbl_outs = [(
         "-gen-blas-derivatives",
@@ -120,6 +133,7 @@ cc_library(
         "@llvm-project//llvm:IRReader",
         ":call-derivatives",
         ":intr-derivatives",
+        ":binop-derivatives",
         ":blas-derivatives",
         ":blas-attributor",
         ":blas-typeanalysis",
