@@ -328,8 +328,8 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; BEFORE-NEXT:   %[[a14:.+]] = getelementptr inbounds float, float* %[[a13_2]], i64 %"iv3'ac.0"
 ; BEFORE-NEXT:   %[[a15:.+]] = load float, float* %[[a14]], align 4, !invariant.group ![[g2]]
 ; BEFORE-NEXT:   %[[m0diffea17:.+]] = fmul fast float %[[a11]], %[[a15]]
-; BEFORE-NEXT:   %[[m1diffea17:.+]] = fmul fast float %[[a11]], %[[a15]]
 ; BEFORE-NEXT:   %[[a16:.+]] = fadd fast float %"a17'de.1", %[[m0diffea17]]
+; BEFORE-NEXT:   %[[m1diffea17:.+]] = fmul fast float %[[a11]], %[[a15]]
 ; BEFORE-NEXT:   %[[a17:.+]] = fadd fast float %[[a16]], %[[m1diffea17]]
 ; BEFORE-NEXT:   %[[a18:.+]] = load float, float* %"in'", align 8
 ; BEFORE-NEXT:   %[[a19:.+]] = fadd fast float %[[a18]], %[[a17]]
