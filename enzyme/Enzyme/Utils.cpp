@@ -671,7 +671,9 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
 Value *callInnerProdBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                          PointerType *BlasPT, Type *BlasIT, Type *fpTy,
                          llvm::ArrayRef<llvm::Value *> args,
-                         llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
+                         llvm::ArrayRef<llvm::OperandBundleDef> bundlesProd,
+                         llvm::ArrayRef<llvm::OperandBundleDef> bundlesDot
+                         ) {
   assert(fpTy->isFloatingPointTy());
   std::string prod_name = (blas.floatType + "innerProd" + blas.suffix).str();
   std::string dot_name =
@@ -682,8 +684,6 @@ Value *callInnerProdBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
     tys.push_back(arg->getType());
 
   auto FT = FunctionType::get(fpTy, tys, false);
-  auto FDotT =
-      FunctionType::get(fpTy, {BlasIT, BlasPT, BlasIT, BlsaPT, BlasIT}, false);
 
   Function *F =
       cast<Function>(M.getOrInsertFunction(prod_name, FT).getCallee());
@@ -691,6 +691,8 @@ Value *callInnerProdBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   if (!F->empty())
     return F;
 
+  auto FDotT =
+      FunctionType::get(fpTy, {BlasIT, BlasPT, BlasIT, BlasPT, BlasIT}, false);
   Function *FDot =
       cast<Function>(M.getOrInsertFunction(dot_name, FDotT).getCallee());
 
@@ -753,7 +755,7 @@ Value *callInnerProdBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
     Value *Bi = B3.CreateInBoundsGEP(fpTy, matB, Bidx, "B.i");
     // TODO: use to_blas_callconv before calling dot for m, constOne
     Value *newDot =
-        B3.CreateCall(FDot, {m, Ai, constOne, Bi, constOne}, bundles);
+        B3.CreateCall(FDot, {m, Ai, constOne, Bi, constOne}, bundlesDot);
     res = B3.CreateFAdd(res, newDot);
 
     Value *Anext = B3.CreateNUWAdd(Aidx, lda, "Aidx.next");
@@ -767,7 +769,7 @@ Value *callInnerProdBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
     B4.CreateRet(res);
   }
 
-  Value *sum = B.CreateCall(F, args, bundles);
+  Value *sum = B.CreateCall(F, args, bundlesProd);
   return sum;
 }
 
@@ -2259,11 +2261,13 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
   return width;
 }
 
-void set_lens_and_size(llvm::IRBuilder<> &BuilderZ, llvm::IntegerType *intType,
-                       llvm::Value *M, llvm::Value *N, llvm::Value *matSize,
-                       llvm::Value *len1, llvm::Value *len2, bool byRef) {
-  len1 = M;
-  len2 = N;
+llvm::Value *set_lens_and_size(llvm::IRBuilder<> &BuilderZ,
+                               llvm::IntegerType *intType, llvm::Value *M,
+                               llvm::Value *N, llvm::Value *len1,
+                               llvm::Value *len2, bool byRef) {
+  //len1 = M;
+  //len2 = N;
+  llvm::Value *matSize = nullptr;
   if (byRef) {
     auto MP = BuilderZ.CreatePointerCast(
         M, PointerType::get(
@@ -2277,6 +2281,10 @@ void set_lens_and_size(llvm::IRBuilder<> &BuilderZ, llvm::IntegerType *intType,
   } else {
     matSize = BuilderZ.CreateMul(M, N);
   }
+  assert(matSize);
+  assert(len1);
+  assert(len2);
+  return matSize;
 }
 
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,

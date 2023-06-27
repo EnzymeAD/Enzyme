@@ -223,11 +223,10 @@ void emit_mat_copy(TGPattern &pattern, raw_ostream &os) {
 
     os
 
-<< "      Value *len1, *len2, *matSize;\n"
-<< "      set_lens_and_size(BuilderZ, intType, M, N, matSize, len1, len2, byRef);\n"
+<< "      Value *len1 = M;\n"
+<< "      Value *len2 = N;\n"
+<< "      Value *matSize = set_lens_and_size(BuilderZ, intType, M, N, len1, len2, byRef);\n"
 
-//<< "      auto *len1 = M;\n"
-//<< "      auto *len2 = N;\n"
 //<< "      if (byRef) {\n"
 //<< "        auto MP = BuilderZ.CreatePointerCast(M, PointerType::get(intType, cast<PointerType>(M->getType())->getAddressSpace()));\n"
 //<< "        auto NP = BuilderZ.CreatePointerCast(N, PointerType::get(intType, cast<PointerType>(N->getType())->getAddressSpace()));\n"

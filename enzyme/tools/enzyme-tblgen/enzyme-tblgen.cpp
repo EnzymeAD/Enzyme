@@ -2089,15 +2089,24 @@ void emit_deriv_rule(StringMap<TGPattern> &patternMap, Rule &rule,
     const auto matName = args[0];
     const auto dim1 = "arg_" + args[1];
     const auto dim2 = "arg_" + args[2];
-    os << "    Value *len1, *len2, *size_" << matName << ";\n"
-       << "    set_lens_and_size(BuilderZ, intType, " << dim1 << ", " << dim2
-       << ", size_" << matName
-       << ", "
-          "len1, len2, "
-          "byRef);\n"
+    // os << "    Value *len1, *len2, *size_" << matName << ";\n"
+    os << "    Value *len1 = " << dim1 << ";\n"
+       << "    Value *len2 = " << dim2
+       << ";\n"
+       //       << "    Value *size_" << matName
+       //       << " = nullptr;\n"
+       // next was BuilderZ
+       << "    Value *size_" << matName
+       << " = set_lens_and_size(Builder2, intType, " << dim1 << ", " << dim2
+       << ", len1, len2, byRef);\n"
        << "    auto mat_" << matName
-       << " = CreateAllocation(BuilderZ, fpType, size_" << matName << ", \""
-       << matName << "\");\n";
+       << " = CreateAllocation(allocationBuilder, fpType, size_" << matName
+       << ", \"" << matName << "\");\n"
+       << "    if (type_A->isIntegerTy()) {\n"
+       << "      mat_AB = Builder2.CreatePtrToInt(mat_AB, type_A);\n"
+       << "    } else if (mat_AB->getType() != type_A){\n"
+       << "      mat_AB = Builder2.CreatePointerCast(mat_AB, type_A);\n"
+       << "    }\n";
     llvm::errs() << "num subrules: " << ruleDag->getNumArgs() << "\n";
     // handle seq rules
     for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
