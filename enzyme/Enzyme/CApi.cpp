@@ -621,10 +621,22 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
 }
 
 LLVMValueRef CreateTrace(
-    EnzymeLogicRef Logic, LLVMValueRef totrace, LLVMValueRef sample_function,
-    LLVMValueRef *generative_functions, size_t generative_functions_size,
-    const char *active_random_variables[], size_t active_random_variables_size,
-    CProbProgMode mode, uint8_t autodiff, EnzymeTraceInterfaceRef interface) {
+    EnzymeLogicRef Logic, LLVMValueRef totrace, LLVMValueRef *sample_functions,
+    size_t sample_functions_size, LLVMValueRef *observe_functions,
+    size_t observe_functions_size, LLVMValueRef *generative_functions,
+    size_t generative_functions_size, const char *active_random_variables[],
+    size_t active_random_variables_size, CProbProgMode mode, uint8_t autodiff,
+    EnzymeTraceInterfaceRef interface) {
+
+  SmallPtrSet<Function *, 4> SampleFunctions;
+  for (size_t i = 0; i < sample_functions_size; i++) {
+    SampleFunctions.insert(cast<Function>(unwrap(sample_functions[i])));
+  }
+
+  SmallPtrSet<Function *, 4> ObserveFunctions;
+  for (size_t i = 0; i < observe_functions_size; i++) {
+    ObserveFunctions.insert(cast<Function>(unwrap(observe_functions[i])));
+  }
 
   SmallPtrSet<Function *, 4> GenerativeFunctions;
   for (size_t i = 0; i < generative_functions_size; i++) {
@@ -637,7 +649,7 @@ LLVMValueRef CreateTrace(
   }
 
   return wrap(eunwrap(Logic).CreateTrace(
-      cast<Function>(unwrap(totrace)), cast<Function>(unwrap(sample_function)),
+      cast<Function>(unwrap(totrace)), SampleFunctions, ObserveFunctions,
       GenerativeFunctions, ActiveRandomVariables, (ProbProgMode)mode,
       (bool)autodiff, eunwrap(interface)));
 }

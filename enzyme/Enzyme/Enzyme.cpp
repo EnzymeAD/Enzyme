@@ -1807,15 +1807,19 @@ public:
     }
 
     // Find sample function
-    Function *sampleFunction = nullptr;
-    for (auto &&interface_func : F->getParent()->functions()) {
-      if (interface_func.getName().contains("__enzyme_sample")) {
-        assert(interface_func.getFunctionType()->getNumParams() >= 3);
-        sampleFunction = &interface_func;
+    SmallPtrSet<Function *, 4> sampleFunctions;
+    SmallPtrSet<Function *, 4> observeFunctions;
+    for (auto &func : F->getParent()->functions()) {
+      if (func.getName().contains("__enzyme_sample")) {
+        assert(func.getFunctionType()->getNumParams() >= 3);
+        sampleFunctions.insert(&func);
+      } else if (func.getName().contains("__enzyme_observe")) {
+        assert(func.getFunctionType()->getNumParams() >= 3);
+        observeFunctions.insert(&func);
       }
     }
 
-    assert(sampleFunction);
+    assert(!sampleFunctions.empty() || !observeFunctions.empty());
 
     bool autodiff = dtrace || dlikelihood;
     IRBuilder<> AllocaBuilder(CI->getParent()->getFirstNonPHI());
@@ -1858,8 +1862,12 @@ public:
     // Determine generative functions
     SmallPtrSet<Function *, 4> generativeFunctions;
     SetVector<Function *, std::deque<Function *>> workList;
-    workList.insert(sampleFunction);
-    generativeFunctions.insert(sampleFunction);
+    workList.insert(sampleFunctions.begin(), sampleFunctions.end());
+    workList.insert(observeFunctions.begin(), observeFunctions.end());
+
+    generativeFunctions.insert(sampleFunctions.begin(), sampleFunctions.end());
+    generativeFunctions.insert(observeFunctions.begin(),
+                               observeFunctions.end());
 
     while (!workList.empty()) {
       auto todo = *workList.begin();
@@ -1886,9 +1894,9 @@ public:
 #endif
     }
 
-    auto newFunc = Logic.CreateTrace(F, sampleFunction, generativeFunctions,
-                                     opt->ActiveRandomVariables, mode, autodiff,
-                                     interface);
+    auto newFunc = Logic.CreateTrace(
+        F, sampleFunctions, observeFunctions, generativeFunctions,
+        opt->ActiveRandomVariables, mode, autodiff, interface);
 
     if (!autodiff) {
       auto call = CallInst::Create(newFunc->getFunctionType(), newFunc, args);

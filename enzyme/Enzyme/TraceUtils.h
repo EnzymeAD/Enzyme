@@ -51,7 +51,8 @@ public:
   TraceInterface *interface;
   ProbProgMode mode;
   llvm::Function *newFunc;
-  llvm::Function *sampleFunction;
+  llvm::SmallPtrSet<llvm::Function *, 4> sampleFunctions;
+  llvm::SmallPtrSet<llvm::Function *, 4> observeFunctions;
 
   constexpr static const char TraceParameterAttribute[] = "enzyme_trace";
   constexpr static const char ObservationsParameterAttribute[] =
@@ -60,13 +61,17 @@ public:
       "enzyme_likelihood";
 
 public:
-  TraceUtils(ProbProgMode mode, llvm::Function *sampleFunction,
+  TraceUtils(ProbProgMode mode,
+             const llvm::SmallPtrSetImpl<llvm::Function *> &sampleFunctions,
+             const llvm::SmallPtrSetImpl<llvm::Function *> &observeFunctions,
              llvm::Function *newFunc, llvm::Argument *trace,
              llvm::Argument *observations, llvm::Argument *likelihood,
              TraceInterface *interface);
 
   static TraceUtils *
-  FromClone(ProbProgMode mode, llvm::Function *sampleFunction,
+  FromClone(ProbProgMode mode,
+            const llvm::SmallPtrSetImpl<llvm::Function *> &sampleFunctions,
+            const llvm::SmallPtrSetImpl<llvm::Function *> &observeFunctions,
             TraceInterface *interface, llvm::Function *oldFunc,
             llvm::ValueMap<const llvm::Value *, llvm::WeakTrackingVH>
                 &originalToNewFn);
@@ -145,5 +150,8 @@ public:
       bool needsLikelihood = true, const llvm::Twine &Name = "");
 
   bool isSampleCall(llvm::CallInst *call);
+
+  bool isObserveCall(llvm::CallInst *call);
 };
+
 #endif /* TraceUtils_h */

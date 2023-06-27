@@ -468,11 +468,13 @@ public:
                               llvm::ArrayRef<BATCH_TYPE> arg_types,
                               BATCH_TYPE ret_type);
 
-  llvm::Function *
-  CreateTrace(llvm::Function *totrace, llvm::Function *sampleFunction,
-              llvm::SmallPtrSetImpl<llvm::Function *> &GenerativeFunctions,
-              llvm::StringSet<> &ActiveRandomVariables, ProbProgMode mode,
-              bool autodiff, TraceInterface *interface);
+  llvm::Function *CreateTrace(
+      llvm::Function *totrace,
+      const llvm::SmallPtrSetImpl<llvm::Function *> &sampleFunctions,
+      const llvm::SmallPtrSetImpl<llvm::Function *> &observeFunctions,
+      const llvm::SmallPtrSetImpl<llvm::Function *> &GenerativeFunctions,
+      const llvm::StringSet<> &ActiveRandomVariables, ProbProgMode mode,
+      bool autodiff, TraceInterface *interface);
 
   void clear();
 };
