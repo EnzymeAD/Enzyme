@@ -204,7 +204,6 @@ void emit_mat_copy(const TGPattern &pattern, raw_ostream &os) {
     }
     os
 << "    if (cache_" << matName << ") {\n"
-<< "      Value *matSize;\n"
 << "      auto charTy = IntegerType::get(intType->getContext(), 8);\n"
 << "      Value *M, *N;\n";
 
@@ -220,17 +219,9 @@ void emit_mat_copy(const TGPattern &pattern, raw_ostream &os) {
     }
 
     os
-<< "      auto *len1 = M;\n"
-<< "      auto *len2 = N;\n"
-<< "      if (byRef) {\n"
-<< "        auto MP = BuilderZ.CreatePointerCast(M, PointerType::get(intType, cast<PointerType>(M->getType())->getAddressSpace()));\n"
-<< "        auto NP = BuilderZ.CreatePointerCast(N, PointerType::get(intType, cast<PointerType>(N->getType())->getAddressSpace()));\n"
-<< "        len1 = BuilderZ.CreateLoad(intType, MP);\n"
-<< "        len2 = BuilderZ.CreateLoad(intType, NP);\n"
-<< "        matSize = BuilderZ.CreateMul(len1, len2);\n"
-<< "      } else {\n"
-<< "        matSize = BuilderZ.CreateMul(M,N);\n"
-<< "      }\n"
+<< "      auto *len1 = load_if_ref(BuilderZ, intType, M, byRef);\n"
+<< "      auto *len2 = load_if_ref(BuilderZ, intType, N, byRef);\n"
+<< "      auto *matSize = BuilderZ.CreateMul(len1, len2);\n"
 << "      auto malins = CreateAllocation(BuilderZ, fpType, matSize, \"cache." << matName << "\");\n"
 << "      ValueType valueTypes[] = {" << valueTypes << "};\n"
 <<"       valueTypes[" << argIdx << "] = ValueType::Primal;\n"

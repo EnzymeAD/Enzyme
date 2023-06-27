@@ -107,11 +107,11 @@ entry:
 ; CHECK-NEXT:   %19 = or i1 %[[i18]], %[[i17]]
 ; CHECK-NEXT:   %20 = select i1 %19, i8* %m_p, i8* %k_p
 ; CHECK-NEXT:   %21 = select i1 %19, i8* %k_p, i8* %m_p
-; CHECK-NEXT:   %22 = bitcast i8* %20 to i64*
-; CHECK-NEXT:   %23 = bitcast i8* %21 to i64*
-; CHECK-NEXT:   %24 = load i64, i64* %22
-; CHECK-NEXT:   %25 = load i64, i64* %23
-; CHECK-NEXT:   %26 = mul i64 %24, %25
+; CHECK-NEXT:   %[[i22:.+]] = bitcast i8* %20 to i64*
+; CHECK-NEXT:   %[[i24:.+]] = load i64, i64* %[[i22]]
+; CHECK-NEXT:   %[[i23:.+]] = bitcast i8* %21 to i64*
+; CHECK-NEXT:   %[[i25:.+]] = load i64, i64* %[[i23]]
+; CHECK-NEXT:   %26 = mul i64 %[[i24]], %[[i25]]
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %26, 8
 ; CHECK-NEXT:   %malloccall10 = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   %cache.A = bitcast i8* %malloccall10 to double*

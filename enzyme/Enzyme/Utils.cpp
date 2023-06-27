@@ -2172,6 +2172,17 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                           "transpose." + name);
 }
 
+llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::IntegerType *intType,
+                         llvm::Value *V, bool byRef) {
+  if (!byRef)
+    return V;
+
+  auto VP = B.CreatePointerCast(
+      V, PointerType::get(intType,
+                          cast<PointerType>(V->getType())->getAddressSpace()));
+  return B.CreateLoad(intType, VP);
+}
+
 llvm::Value *get_blas_row(llvm::IRBuilder<> &B, llvm::Value *trans,
                           llvm::Value *row, llvm::Value *col, bool byRef) {
 
