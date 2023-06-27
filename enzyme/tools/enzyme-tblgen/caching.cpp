@@ -27,9 +27,47 @@ os << "  bool need_" << name << " = false;\n";
       }
       os 
 << ";\n";
-    }
-    os 
+  }
+  os 
 << "  bool cache_" << name << " = cacheMode && overwritten_" << name << " && need_" << name << ";\n";
+}
+  
+
+
+void emit_input_caching(const TGPattern &pattern, raw_ostream &os) {
+  // now we check for primal<X> usages, those must be cached,
+  // if the corresponding rule is active
+  auto rules = pattern.getRules();
+  const auto nameVec = pattern.getArgNames();
+  const auto activeArgs = pattern.getActiveArgs();
+  assert(rules.size() == activeArgs.size());
+  for (size_t i = 0; i < rules.size(); i++) {
+    auto rule = rules[i];
+    const auto activeArg = activeArgs[i];
+    const auto name = nameVec[activeArg];
+    const llvm::DagInit *ruleDag = rule.getRuleDag();
+    // will update it directly in the next PR for nested rules
+    std::string toCache = "";
+    for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
+      Init *subArg = ruleDag->getArg(i);
+      if (DefInit *def = dyn_cast<DefInit>(subArg)) {
+        const auto Def = def->getDef();
+        if (Def->isSubClassOf("input")) {
+          toCache = Def->getValueAsString("name");
+          break;
+        }
+      }
+    }
+    if (toCache != "") {
+      os << "  // we cache the following matrix,\n"
+         << "  // since one rule uses input<" << toCache << ">\n"
+         << "  if (active_" << name << ") {\n"
+         << "    need_" << toCache << " = true;\n"
+         << "    cache_" << toCache << " = true;\n"
+         << "  }\n";
+    }
+
+  }
 }
 
 // scalar (e.g xinc) is needed to be preserved if
@@ -76,6 +114,7 @@ os << "  bool need_" << name << " = false;\n";
 
   }
 }
+
 void emit_scalar_cacheTypes(const TGPattern &pattern, raw_ostream &os) {
   auto typeMap = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
@@ -379,6 +418,8 @@ void emit_caching(const TGPattern &pattern, raw_ostream &os) {
     assert(typeMap.lookup(i+1) == ArgType::mldLD);
     emit_mat_vec_caching(pattern, i, os);
   }
+
+  emit_input_caching(pattern, os);
 
   for (auto&& actEn : enumerate(actArgs)) {
     if (typeMap.lookup(actEn.value()) == ArgType::fp) continue;

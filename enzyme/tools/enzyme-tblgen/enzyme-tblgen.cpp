@@ -1564,34 +1564,11 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
        << "  const auto type_" << name << " = arg_" << name << "->getType();\n"
        << "  const bool overwritten_" << name
        << " = (cacheMode ? overwritten_args[pos_" << name << "] : false);\n";
-    ArgType ty = argTypeMap.lookup(i);
-    if (ty == ArgType::trans) {
-      //      os << "  assert(is_normal(BuilderZ, arg_" << name << "));\n";
-    }
     if (std::count(actArgs.begin(), actArgs.end(), i)) {
       os << "  const bool active_" << name
          << " = !gutils->isConstantValue(orig_" << name << ");\n";
     }
     os << "\n";
-  }
-
-  bool anyActive = false;
-  for (size_t i = 0; i < nameVec.size(); i++) {
-    ArgType ty = argTypeMap.lookup(i);
-    if (ty == ArgType::fp) {
-      anyActive = true;
-    }
-  }
-
-  if (anyActive) {
-    os << "  int num_active_fp = 0;\n";
-    for (size_t i = 0; i < nameVec.size(); i++) {
-      ArgType ty = argTypeMap.lookup(i);
-      if (ty == ArgType::fp) {
-        os << "  if (active_" << nameVec[i] << ")\n"
-           << "    num_active_fp++;\n";
-      }
-    }
   }
 
   for (auto name : enumerate(nameVec)) {
@@ -1658,23 +1635,23 @@ void extract_scalar(StringRef name, StringRef elemTy, raw_ostream &os) {
 }
 
 void extract_mat_or_vec(StringRef name, raw_ostream &os) {
-  os << "      if (cache_" << name << ") {\n"
-     << "        arg_" << name << " = (cacheTypes.size() == 1)\n"
-     << "                    ? cacheval\n"
-     << "                    : Builder2.CreateExtractValue(cacheval, "
+  os << "    if (cache_" << name << ") {\n"
+     << "      arg_" << name << " = (cacheTypes.size() == 1)\n"
+     << "                  ? cacheval\n"
+     << "                  : Builder2.CreateExtractValue(cacheval, "
         "{cacheidx}, \"tape.ext."
      << name << "\");\n"
-     << "        free_" << name << " = arg_" << name << ";\n"
-     << "        if (type_" << name << "->isIntegerTy()) {\n"
-     << "          arg_" << name << " = Builder2.CreatePtrToInt(arg_" << name
+     << "      free_" << name << " = arg_" << name << ";\n"
+     << "      if (type_" << name << "->isIntegerTy()) {\n"
+     << "        arg_" << name << " = Builder2.CreatePtrToInt(arg_" << name
      << ", type_" << name << ");\n"
-     << "        } else if (arg_" << name << "->getType() != type_" << name
+     << "      } else if (arg_" << name << "->getType() != type_" << name
      << "){\n"
-     << "          arg_" << name << " = Builder2.CreatePointerCast(arg_" << name
+     << "        arg_" << name << " = Builder2.CreatePointerCast(arg_" << name
      << ", type_" << name << ");\n"
-     << "        }\n"
-     << "        cacheidx++;\n"
-     << "      }\n";
+     << "      }\n"
+     << "      cacheidx++;\n"
+     << "    }\n";
 }
 
 void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
@@ -1734,18 +1711,18 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
     const auto vecUsers = argUsers.lookup(vecPosition);
     const auto incName = nameVec[i + 1];
     extract_mat_or_vec(name, os);
-    os << "      if (cache_" << name << ") {\n"
-       << "        arg_" << incName << " = ConstantInt::get(intType, 1);\n"
-       << "       if (byRef) {\n"
-       << "         auto alloc = allocationBuilder.CreateAlloca(intType, "
+    os << "    if (cache_" << name << ") {\n"
+       << "      arg_" << incName << " = ConstantInt::get(intType, 1);\n"
+       << "      if (byRef) {\n"
+       << "        auto alloc = allocationBuilder.CreateAlloca(intType, "
           "nullptr, \"byref."
        << incName << "\");\n"
-       << "         Builder2.CreateStore(arg_" << incName << ", alloc);\n"
-       << "         arg_" << incName << " = Builder2.CreatePointerCast(\n"
-       << "             alloc, type_" << incName << ", \"cast." << incName
+       << "        Builder2.CreateStore(arg_" << incName << ", alloc);\n"
+       << "        arg_" << incName << " = Builder2.CreatePointerCast(\n"
+       << "          alloc, type_" << incName << ", \"cast." << incName
        << "\");\n"
        << "      }\n"
-       << " }\n";
+       << "    }\n";
   }
 
   os << "  } else {\n"
