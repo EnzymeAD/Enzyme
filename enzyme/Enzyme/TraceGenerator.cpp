@@ -126,8 +126,8 @@ void TraceGenerator::handleObserveCall(CallInst &call, CallInst *new_call) {
   SmallVector<Value *, 4> Args(
       make_range(new_call->arg_begin() + 2, new_call->arg_end()));
 
-  Function *likelihoodfn = GetFunctionFromValue(new_call->getArgOperand(0));
-  Value *sampleval = new_call->getArgOperand(1);
+  Value *observed = new_call->getArgOperand(0);
+  Function *likelihoodfn = GetFunctionFromValue(new_call->getArgOperand(1));
   Value *address = new_call->getArgOperand(2);
 
   StringRef const_address;
@@ -140,7 +140,7 @@ void TraceGenerator::handleObserveCall(CallInst &call, CallInst *new_call) {
       is_random_var_active ? "enzyme_active" : "enzyme_inactive_val");
 
   // calculate and accumulate log likelihood
-  Args.push_back(sampleval);
+  Args.push_back(observed);
 
   auto score = Builder.CreateCall(likelihoodfn->getFunctionType(), likelihoodfn,
                                   ArrayRef<Value *>(Args).slice(1),
@@ -159,7 +159,7 @@ void TraceGenerator::handleObserveCall(CallInst &call, CallInst *new_call) {
 
   // create outlined trace function
   if (mode == ProbProgMode::Trace || mode == ProbProgMode::Condition) {
-    Value *trace_args[] = {address, score, sampleval};
+    Value *trace_args[] = {address, score, observed};
 
     auto OutlinedTrace = [](IRBuilder<> &OutlineBuilder,
                             TraceUtils *OutlineTutils,
@@ -190,11 +190,11 @@ void TraceGenerator::handleObserveCall(CallInst &call, CallInst *new_call) {
 #endif
   }
 
-  if (!call.getFunctionType()->getReturnType()->isVoidTy()) {
-    sampleval->takeName(new_call);
-    new_call->replaceAllUsesWith(sampleval);
-    new_call->eraseFromParent();
+  if (!call.getType()->isVoidTy()) {
+    observed->takeName(new_call);
+    new_call->replaceAllUsesWith(observed);
   }
+  new_call->eraseFromParent();
 }
 
 void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
@@ -429,7 +429,7 @@ void TraceGenerator::visitCallInst(CallInst &call) {
 
   if (tutils->isSampleCall(&call)) {
     handleSampleCall(call, new_call);
-  } else if (tutils->isSampleCall(&call)) {
+  } else if (tutils->isObserveCall(&call)) {
     handleObserveCall(call, new_call);
   } else {
     handleArbitraryCall(call, new_call);
