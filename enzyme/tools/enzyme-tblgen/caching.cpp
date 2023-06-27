@@ -32,7 +32,20 @@ os << "  bool need_" << name << " = false;\n";
 << "  bool cache_" << name << " = cacheMode && overwritten_" << name << " && need_" << name << ";\n";
 }
   
-
+std::string get_input_mat(const llvm::DagInit *ruleDag) {
+  std::string toCache = "";
+  for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
+    Init *subArg = ruleDag->getArg(i);
+    if (DefInit *def = dyn_cast<DefInit>(subArg)) {
+      const auto Def = def->getDef();
+      if (Def->isSubClassOf("input")) {
+        toCache = Def->getValueAsString("name");
+        break;
+      }
+    }
+  }
+  return toCache;
+}
 
 void emit_input_caching(const TGPattern &pattern, raw_ostream &os) {
   // now we check for primal<X> usages, those must be cached,
@@ -47,17 +60,7 @@ void emit_input_caching(const TGPattern &pattern, raw_ostream &os) {
     const auto name = nameVec[activeArg];
     const llvm::DagInit *ruleDag = rule.getRuleDag();
     // will update it directly in the next PR for nested rules
-    std::string toCache = "";
-    for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
-      Init *subArg = ruleDag->getArg(i);
-      if (DefInit *def = dyn_cast<DefInit>(subArg)) {
-        const auto Def = def->getDef();
-        if (Def->isSubClassOf("input")) {
-          toCache = Def->getValueAsString("name");
-          break;
-        }
-      }
-    }
+    std::string toCache = get_input_mat(ruleDag);
     if (toCache != "") {
       os << "  // we cache the following matrix,\n"
          << "  // since one rule uses input<" << toCache << ">\n"
@@ -299,6 +302,8 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
   auto typeMap = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
   auto argUsers = pattern.getArgUsers();
+  const auto activeArgs = pattern.getActiveArgs();
+  auto rules = pattern.getRules();
 
   os 
 << "  if ((Mode == DerivativeMode::ReverseModeCombined ||\n"
@@ -342,36 +347,41 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
 << "  }\n"
 << "  unsigned cacheidx = 0;\n";
 
-  // following code is just leftovers
-  // once cleaned up, at most free_ args should be left
-  for (size_t i = 0; i < nameVec.size(); i++) {
+  assert(rules.size() == activeArgs.size());
+  for (size_t a = 0; a < rules.size(); a++) {
+    auto rule = rules[a];
+    auto i = activeArgs[a];
     auto name = nameVec[i];
     auto ty = typeMap.lookup(i);
     if (ty == ArgType::vincData) {
       assert(typeMap.lookup(i+1) == ArgType::vincInc);
       auto vecName = nameVec[i];
       auto incName = nameVec[i+1];
-      os 
+      os
 << "  Value *true_" << incName << " = arg_" << incName << ";\n"
 << "  Value *free_" << vecName << " = nullptr;\n";
     } else if (ty == ArgType::mldData) {
       assert(typeMap.lookup(i+1) == ArgType::mldLD);
       auto vecName = nameVec[i];
       auto ldName = nameVec[i+1];
-      os 
+      os
 << "  Value *true_" << ldName << " = arg_" << ldName << ";\n"
 << "  Value *" << ldName << " = true_" << ldName << ";\n"
 << "  Value *free_" << vecName << " = nullptr;\n";
-    } else if (ty == ArgType::len) {
-    } else if (ty == ArgType::fp) {
-    } else if (ty == ArgType::trans) {
+     
+    }
+
+    const DagInit *ruleDag = rule.getRuleDag();
+    std::string toCache = get_input_mat(ruleDag);
+    if (toCache != "") {
+      os << "  Value *input_" << toCache << " = nullptr;\n"
+         << "  Value *free_input_" << toCache << " = nullptr;\n";
     }
   }
 
-
   os
-<< "  IRBuilder<> Builder2(&call);\n"
-<< "  switch (Mode) {\n"
+<< "  IRBuilder<> Builder2(&call);\n"               
+<< "  switch (Mode) {\n"                            
 << "    case DerivativeMode::ReverseModeCombined:\n"
 << "    case DerivativeMode::ReverseModeGradient:\n"
 << "      getReverseBuilder(Builder2);\n"

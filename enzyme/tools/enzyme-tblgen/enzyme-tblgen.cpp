@@ -1514,6 +1514,25 @@ void emit_free_and_ending(const TGPattern &pattern, raw_ostream &os) {
          << "      }\n";
     }
   }
+
+  // next one is to handle input<name> usages.
+  auto activeArgs = pattern.getActiveArgs();
+  auto rules = pattern.getRules();
+  std::string toCache = "";
+  for (size_t a = 0; a < activeArgs.size(); a++) {
+    auto rule = rules[a];
+    auto i = activeArgs[a];
+    auto name = nameVec[i];
+    const DagInit *ruleDag = rule.getRuleDag();
+    std::string toCache = get_input_mat(ruleDag);
+    if (toCache != "") {
+      os << "      if (cache_" << name << ") {\n"
+         << "        CreateDealloc(Builder2, free_input_" << toCache << ");\n"
+         << "      }\n";
+      break;
+    }
+  }
+
   os << "    }\n"
      << "  }\n"
      << "  if (gutils->knownRecomputeHeuristic.find(&call) !=\n"
@@ -1634,6 +1653,25 @@ void extract_scalar(StringRef name, StringRef elemTy, raw_ostream &os) {
      << "\n";
 }
 
+void extract_input_mat(StringRef name, raw_ostream &os) {
+  os << "    if (cache_" << name << ") {\n"
+     << "      input_" << name << " = (cacheTypes.size() == 1)\n"
+     << "                  ? cacheval\n"
+     << "                  : Builder2.CreateExtractValue(cacheval, "
+        "{cacheidx}, \"tape.ext."
+     << name << "\");\n"
+     << "      free_input_" << name << " = input_" << name << ";\n"
+     << "      if (type_" << name << "->isIntegerTy()) {\n"
+     << "        input_" << name << " = Builder2.CreatePtrToInt(input_" << name
+     << ", type_" << name << ");\n"
+     << "      } else if (input_" << name << "->getType() != type_" << name
+     << "){\n"
+     << "        input_" << name << " = Builder2.CreatePointerCast(input_"
+     << name << ", type_" << name << ");\n"
+     << "      }\n"
+     << "    }\n";
+}
+
 void extract_mat_or_vec(StringRef name, raw_ostream &os) {
   os << "    if (cache_" << name << ") {\n"
      << "      arg_" << name << " = (cacheTypes.size() == 1)\n"
@@ -1658,6 +1696,8 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
   const auto typeMap = pattern.getArgTypeMap();
   const auto nameVec = pattern.getArgNames();
   const auto argUsers = pattern.getArgUsers();
+  const auto activeArgs = pattern.getActiveArgs();
+  auto rules = pattern.getRules();
 
   os << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
      << "      Mode == DerivativeMode::ReverseModeGradient ||\n"
@@ -1692,11 +1732,30 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
   }
   os << "    }\n";
 
+  std::string toCache = "";
+  for (size_t a = 0; a < activeArgs.size(); a++) {
+    auto rule = rules[a];
+    const DagInit *ruleDag = rule.getRuleDag();
+    std::string tmp = get_input_mat(ruleDag);
+    if (tmp != "") {
+      toCache = tmp;
+      break;
+    }
+  }
+
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
     if (ty != ArgType::mldData)
       continue;
     auto name = nameVec[i];
+    if (name == toCache) {
+      // this means we use input<name> in one rule,
+      // so we force-load it from cache into input_<name>.
+      // Do it here to get the cacheidx right
+      // This does not modify the cacheidx,
+      // so do it before the extract_mat_or_vec call
+      extract_input_mat(name, os);
+    }
     extract_mat_or_vec(name, os);
   }
 
@@ -2209,7 +2268,7 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
         os << "d_" << name;
       } else if (Def->isSubClassOf("input")) {
         auto name = Def->getValueAsString("name");
-        os << "arg_" << name;
+        os << "input_" << name;
       } else if (Def->isSubClassOf("MagicInst")) {
         errs() << "MagicInst\n";
       } else if (Def->isSubClassOf("Constant")) {
