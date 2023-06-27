@@ -111,7 +111,7 @@ void TraceGenerator::visitFunction(Function &F) {
 #endif
     if (autodiff) {
       auto gradient_setter = ValueAsMetadata::get(
-          tutils->interface->insertChoiceGradient(Builder));
+          tutils->interface->insertArgumentGradient(Builder));
       auto gradient_setter_node =
           MDNode::get(F.getContext(), {gradient_setter});
 

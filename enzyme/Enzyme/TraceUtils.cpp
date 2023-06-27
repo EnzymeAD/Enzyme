@@ -318,9 +318,7 @@ CallInst *TraceUtils::InsertArgumentGradient(IRBuilder<> &Builder,
   auto &&[retval, sizeval] =
       ValueToVoidPtrAndSize(Builder, argument, size_type);
 
-  auto Name = Builder.CreateGlobalStringPtr(argument->getName());
-
-  Value *args[] = {trace, Name, retval, sizeval};
+  Value *args[] = {trace, name, retval, sizeval};
 
   auto call = Builder.CreateCall(interface_type, interface_function, args);
   call->addParamAttr(1, Attribute::ReadOnly);

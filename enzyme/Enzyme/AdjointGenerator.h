@@ -10139,8 +10139,8 @@ public:
       IRBuilder<> Builder2(&call);
       getReverseBuilder(Builder2);
 
-      auto arg = call.getArgOperand(0);
-      auto name = call.getArgOperand(1);
+      auto name = call.getArgOperand(0);
+      auto arg = call.getArgOperand(1);
       auto trace = call.getArgOperand(2);
 
       auto gradient_setter = cast<Function>(
