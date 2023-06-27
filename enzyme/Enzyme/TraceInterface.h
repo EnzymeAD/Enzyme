@@ -42,10 +42,6 @@ public:
   virtual ~TraceInterface() = default;
 
 public:
-  // implemented by enzyme
-  virtual llvm::Function *getSampleFunction() = 0;
-  static constexpr const char sampleFunctionName[] = "__enzyme_sample";
-
   // user implemented
   virtual llvm::Value *getTrace(llvm::IRBuilder<> &Builder) = 0;
   virtual llvm::Value *getChoice(llvm::IRBuilder<> &Builder) = 0;
@@ -103,8 +99,6 @@ public:
 
 class StaticTraceInterface final : public TraceInterface {
 private:
-  llvm::Function *sampleFunction = nullptr;
-  // user implemented
   llvm::Function *getTraceFunction = nullptr;
   llvm::Function *getChoiceFunction = nullptr;
   llvm::Function *insertCallFunction = nullptr;
@@ -122,24 +116,23 @@ private:
 public:
   StaticTraceInterface(llvm::Module *M);
 
-  StaticTraceInterface(
-      llvm::LLVMContext &C, llvm::Function *sampleFunction,
-      llvm::Function *getTraceFunction, llvm::Function *getChoiceFunction,
-      llvm::Function *insertCallFunction, llvm::Function *insertChoiceFunction,
-      llvm::Function *insertArgumentFunction,
-      llvm::Function *insertReturnFunction,
-      llvm::Function *insertFunctionFunction,
-      llvm::Function *insertChoiceGradientFunction,
-      llvm::Function *insertArgumentGradientFunction,
-      llvm::Function *newTraceFunction, llvm::Function *freeTraceFunction,
-      llvm::Function *hasCallFunction, llvm::Function *hasChoiceFunction);
+  StaticTraceInterface(llvm::LLVMContext &C, llvm::Function *getTraceFunction,
+                       llvm::Function *getChoiceFunction,
+                       llvm::Function *insertCallFunction,
+                       llvm::Function *insertChoiceFunction,
+                       llvm::Function *insertArgumentFunction,
+                       llvm::Function *insertReturnFunction,
+                       llvm::Function *insertFunctionFunction,
+                       llvm::Function *insertChoiceGradientFunction,
+                       llvm::Function *insertArgumentGradientFunction,
+                       llvm::Function *newTraceFunction,
+                       llvm::Function *freeTraceFunction,
+                       llvm::Function *hasCallFunction,
+                       llvm::Function *hasChoiceFunction);
 
   ~StaticTraceInterface() = default;
 
 public:
-  // implemented by enzyme
-  llvm::Function *getSampleFunction();
-
   // user implemented
   llvm::Value *getTrace(llvm::IRBuilder<> &Builder);
   llvm::Value *getChoice(llvm::IRBuilder<> &Builder);
@@ -157,9 +150,6 @@ public:
 };
 
 class DynamicTraceInterface final : public TraceInterface {
-private:
-  llvm::Function *sampleFunction = nullptr;
-
 private:
   llvm::Function *getTraceFunction;
   llvm::Function *getChoiceFunction;
@@ -188,9 +178,6 @@ private:
                                                const llvm::Twine &Name = "");
 
 public:
-  // implemented by enzyme
-  llvm::Function *getSampleFunction();
-
   // user implemented
   llvm::Value *getTrace(llvm::IRBuilder<> &Builder);
   llvm::Value *getChoice(llvm::IRBuilder<> &Builder);

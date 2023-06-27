@@ -187,9 +187,6 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
     } else if (F.getName().contains("__enzyme_has_choice")) {
       assert(F.getFunctionType() == hasChoiceTy());
       hasChoiceFunction = &F;
-    } else if (F.getName().contains(sampleFunctionName)) {
-      assert(F.getFunctionType()->getNumParams() >= 3);
-      sampleFunction = &F;
     }
   }
 
@@ -209,7 +206,6 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
 
   assert(hasCallFunction);
   assert(hasChoiceFunction);
-  assert(sampleFunction);
 
   newTraceFunction->addFnAttr("enzyme_notypeanalysis");
   freeTraceFunction->addFnAttr("enzyme_notypeanalysis");
@@ -224,7 +220,6 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   insertArgumentGradientFunction->addFnAttr("enzyme_notypeanalysis");
   hasCallFunction->addFnAttr("enzyme_notypeanalysis");
   hasChoiceFunction->addFnAttr("enzyme_notypeanalysis");
-  sampleFunction->addFnAttr("enzyme_notypeanalysis");
 
   newTraceFunction->addFnAttr("enzyme_inactive");
   freeTraceFunction->addFnAttr("enzyme_inactive");
@@ -239,7 +234,6 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   insertArgumentGradientFunction->addFnAttr("enzyme_inactive");
   hasCallFunction->addFnAttr("enzyme_inactive");
   hasChoiceFunction->addFnAttr("enzyme_inactive");
-  sampleFunction->addFnAttr("enzyme_inactive");
 
   newTraceFunction->addFnAttr(Attribute::NoFree);
   getTraceFunction->addFnAttr(Attribute::NoFree);
@@ -253,20 +247,18 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   insertArgumentGradientFunction->addFnAttr(Attribute::NoFree);
   hasCallFunction->addFnAttr(Attribute::NoFree);
   hasChoiceFunction->addFnAttr(Attribute::NoFree);
-  sampleFunction->addFnAttr(Attribute::NoFree);
 }
 
 StaticTraceInterface::StaticTraceInterface(
-    LLVMContext &C, Function *sampleFunction, Function *getTraceFunction,
-    Function *getChoiceFunction, Function *insertCallFunction,
-    Function *insertChoiceFunction, Function *insertArgumentFunction,
-    Function *insertReturnFunction, Function *insertFunctionFunction,
-    Function *insertChoiceGradientFunction,
+    LLVMContext &C, Function *getTraceFunction, Function *getChoiceFunction,
+    Function *insertCallFunction, Function *insertChoiceFunction,
+    Function *insertArgumentFunction, Function *insertReturnFunction,
+    Function *insertFunctionFunction, Function *insertChoiceGradientFunction,
     Function *insertArgumentGradientFunction, Function *newTraceFunction,
     Function *freeTraceFunction, Function *hasCallFunction,
     Function *hasChoiceFunction)
-    : TraceInterface(C), sampleFunction(sampleFunction),
-      getTraceFunction(getTraceFunction), getChoiceFunction(getChoiceFunction),
+    : TraceInterface(C), getTraceFunction(getTraceFunction),
+      getChoiceFunction(getChoiceFunction),
       insertCallFunction(insertCallFunction),
       insertChoiceFunction(insertChoiceFunction),
       insertArgumentFunction(insertArgumentFunction),
@@ -276,9 +268,6 @@ StaticTraceInterface::StaticTraceInterface(
       insertArgumentGradientFunction(insertArgumentGradientFunction),
       newTraceFunction(newTraceFunction), freeTraceFunction(freeTraceFunction),
       hasCallFunction(hasCallFunction), hasChoiceFunction(hasChoiceFunction){};
-
-// implemented by enzyme
-Function *StaticTraceInterface::getSampleFunction() { return sampleFunction; }
 
 // user implemented
 Value *StaticTraceInterface::getTrace(IRBuilder<> &Builder) {
@@ -324,14 +313,6 @@ Value *StaticTraceInterface::hasChoice(IRBuilder<> &Builder) {
 DynamicTraceInterface::DynamicTraceInterface(Value *dynamicInterface,
                                              Function *F)
     : TraceInterface(F->getContext()) {
-  for (auto &&interface_func : F->getParent()->functions()) {
-    if (interface_func.getName().contains(TraceInterface::sampleFunctionName)) {
-      assert(interface_func.getFunctionType()->getNumParams() >= 3);
-      sampleFunction = &interface_func;
-    }
-  }
-
-  assert(sampleFunction);
   assert(dynamicInterface);
 
   auto &M = *F->getParent();
@@ -382,7 +363,6 @@ DynamicTraceInterface::DynamicTraceInterface(Value *dynamicInterface,
 
   assert(hasCallFunction);
   assert(hasChoiceFunction);
-  assert(sampleFunction);
 }
 
 Function *DynamicTraceInterface::MaterializeInterfaceFunction(
@@ -417,8 +397,6 @@ Function *DynamicTraceInterface::MaterializeInterfaceFunction(
 
   return F;
 }
-
-Function *DynamicTraceInterface::getSampleFunction() { return sampleFunction; }
 
 // user implemented
 Value *DynamicTraceInterface::getTrace(IRBuilder<> &Builder) {

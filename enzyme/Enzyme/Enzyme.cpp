@@ -1796,15 +1796,28 @@ public:
 
     // Interface
     bool has_dynamic_interface = dynamic_interface != nullptr;
-    TraceInterface *interface;
+    bool needs_interface =
+        mode == ProbProgMode::Trace || mode == ProbProgMode::Condition;
+    TraceInterface *interface = nullptr;
     if (has_dynamic_interface) {
       interface =
           new DynamicTraceInterface(dynamic_interface, CI->getFunction());
-    } else {
+    } else if (needs_interface) {
       interface = new StaticTraceInterface(F->getParent());
     }
 
-    bool autodiff = dtrace;
+    // Find sample function
+    Function *sampleFunction = nullptr;
+    for (auto &&interface_func : F->getParent()->functions()) {
+      if (interface_func.getName().contains("__enzyme_sample")) {
+        assert(interface_func.getFunctionType()->getNumParams() >= 3);
+        sampleFunction = &interface_func;
+      }
+    }
+
+    assert(sampleFunction);
+
+    bool autodiff = dtrace || dlikelihood;
     IRBuilder<> AllocaBuilder(CI->getParent()->getFirstNonPHI());
 
     if (!likelihood) {
@@ -1812,8 +1825,8 @@ public:
                                               nullptr, "likelihood");
       Builder.CreateStore(ConstantFP::getNullValue(Builder.getDoubleTy()),
                           likelihood);
-      args.push_back(likelihood);
     }
+    args.push_back(likelihood);
 
     if (autodiff && !dlikelihood) {
       dlikelihood = AllocaBuilder.CreateAlloca(AllocaBuilder.getDoubleTy(),
@@ -1836,15 +1849,17 @@ public:
       constants.push_back(DIFFE_TYPE::CONSTANT);
     }
 
-    args.push_back(trace);
-    dargs.push_back(trace);
-    constants.push_back(DIFFE_TYPE::CONSTANT);
+    if (mode == ProbProgMode::Trace || mode == ProbProgMode::Condition) {
+      args.push_back(trace);
+      dargs.push_back(trace);
+      constants.push_back(DIFFE_TYPE::CONSTANT);
+    }
 
     // Determine generative functions
     SmallPtrSet<Function *, 4> generativeFunctions;
     SetVector<Function *, std::deque<Function *>> workList;
-    workList.insert(interface->getSampleFunction());
-    generativeFunctions.insert(interface->getSampleFunction());
+    workList.insert(sampleFunction);
+    generativeFunctions.insert(sampleFunction);
 
     while (!workList.empty()) {
       auto todo = *workList.begin();
@@ -1871,9 +1886,9 @@ public:
 #endif
     }
 
-    auto newFunc =
-        Logic.CreateTrace(F, generativeFunctions, opt->ActiveRandomVariables,
-                          mode, autodiff, interface);
+    auto newFunc = Logic.CreateTrace(F, sampleFunction, generativeFunctions,
+                                     opt->ActiveRandomVariables, mode, autodiff,
+                                     interface);
 
     if (!autodiff) {
       auto call = CallInst::Create(newFunc->getFunctionType(), newFunc, args);
@@ -2324,6 +2339,10 @@ public:
         } else if (Fn->getName().contains("__enzyme_batch")) {
           enableEnzyme = true;
           batch = true;
+        } else if (Fn->getName().contains("__enzyme_likelihood")) {
+          enableEnzyme = true;
+          probProgMode = ProbProgMode::Likelihood;
+          probProg = true;
         } else if (Fn->getName().contains("__enzyme_trace")) {
           enableEnzyme = true;
           probProgMode = ProbProgMode::Trace;
@@ -2645,8 +2664,8 @@ public:
         for (auto &&Inst : BB) {
           if (auto CI = dyn_cast<CallInst>(&Inst)) {
             Function *enzyme_sample = CI->getCalledFunction();
-            if (enzyme_sample && enzyme_sample->getName().contains(
-                                     TraceInterface::sampleFunctionName)) {
+            if (enzyme_sample &&
+                enzyme_sample->getName().contains("__enzyme_sample")) {
               if (CI->getNumOperands() < 3) {
                 EmitFailure(
                     "IllegalNumberOfArguments", CI->getDebugLoc(), CI,
