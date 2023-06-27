@@ -2046,13 +2046,9 @@ void emit_deriv_blas_call(DagInit *ruleDag,
       if (Def->isSubClassOf("DiffeRetIndex")) {
         typeToAdd = "byRef ? PointerType::getUnqual(call.getType()) : "
                     "call.getType()\n";
-      } else if (Def->isSubClassOf("input")) {
+      } else if (Def->isSubClassOf("input") || Def->isSubClassOf("adj")) {
         auto argStr = Def->getValueAsString("name");
         //  primary and adj have the same type
-        typeToAdd = (Twine("type_") + argStr).str();
-      } else if (Def->isSubClassOf("adj")) {
-        auto argStr = Def->getValueAsString("name");
-        // primary and adj have the same type
         typeToAdd = (Twine("type_") + argStr).str();
       } else if (Def->isSubClassOf("Constant")) {
         typeToAdd =
@@ -2141,8 +2137,8 @@ void emit_deriv_blas_call(DagInit *ruleDag,
   return;
 }
 
-void emit_deriv_fnc(const StringMap<TGPattern> &patternMap, Rule &rule,
-                    StringSet<> &handled, raw_ostream &os) {
+void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
+                     StringSet<> &handled, raw_ostream &os) {
   const auto ruleDag = rule.getRuleDag();
   const auto typeMap = rule.getArgTypeMap();
   const auto opName = ruleDag->getOperator()->getAsString();
@@ -2161,7 +2157,22 @@ void emit_deriv_fnc(const StringMap<TGPattern> &patternMap, Rule &rule,
   } else if (Def->isSubClassOf("FrobInnerProd")) {
     os << "    //handled prod\n";
     assert(ruleDag->getNumArgs() == 5);
-    ///* beta  */ (FrobInnerProd $m, $n, adj<"C">, $ldc, input<"C">),
+    auto m = ruleDag->getArgNameStr(0);
+    auto n = ruleDag->getArgNameStr(1);
+    auto A = ruleDag->getArgNameStr(2);
+    auto ldc = ruleDag->getArgNameStr(3);
+    auto B = ruleDag->getArgNameStr(4);
+    assert(typeMap.lookup(nameMap.lookup(m)) == ArgType::len);
+    assert(typeMap.lookup(nameMap.lookup(n)) == ArgType::len);
+    assert(typeMap.lookup(nameMap.lookup(ldc)) == ArgType::mldLD);
+    os << "    Type* tysInnerProd[] = {type_" << m << ", type_" << n
+       << ", type_" << ldc << ", type_A, type_A};\n"
+       << "    llvm::FunctionType *FTInnerProd"
+       << " = FunctionType::get(fpType, tysInnerProd, false);\n";
+
+    os << "    auto derivcall_inner_prod"
+       << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
+       << "  \"__enzyme_inner_prod\", FTInnerProd);\n";
     // call_inner_prod();
     os << "    //handled prod\n";
   } else {
@@ -2377,7 +2388,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   // This verifies that we don't end up with multiple declarations.
   StringSet handled{};
   for (auto rule : rules) {
-    emit_deriv_fnc(patternMap, rule, handled, os);
+    emit_deriv_rule(patternMap, rule, handled, os);
   }
 
   for (size_t i = 0; i < nameVec.size(); i++) {
@@ -2429,7 +2440,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   for (size_t i = (lv23 ? 1 : 0); i < nameVec.size(); i++) {
     auto name = nameVec[i];
     if (typeMap.lookup(i) == ArgType::trans) {
-      os << "  llvm::Value* arg_transposed_" << name
+      os << "    llvm::Value* arg_transposed_" << name
          << " = transpose(Builder2, arg_" << name
          << ", byRef, charType, allocationBuilder, \"" << name << "\");\n";
     }
@@ -2505,13 +2516,13 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
            << dfnc_name << ", args1, Defs));\n"
            << "        if (byRef) {\n"
            << "          ((DiffeGradientUtils *)gutils)"
-           << "          ->addToInvertedPtrDiffe(&call, nullptr, fpType, 0,"
+           << "->addToInvertedPtrDiffe(&call, nullptr, fpType, 0,"
            << "(blas.suffix.contains(\"64\") ? 8 : 4), arg_" << name
            << ", cubcall, Builder2);\n"
-           << "        } else {"
-           << "        addToDiffe(arg_" << name
+           << "        } else {\n"
+           << "          addToDiffe(arg_" << name
            << ", cubcall, Builder2, fpType);\n"
-           << "        }"
+           << "        }\n"
            << "      }\n";
 
       } else {
@@ -2525,8 +2536,38 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       os << "      assert(!active_" << name << ");\n";
     } else if (Def->isSubClassOf("Constant")) {
     } else if (Def->isSubClassOf("FrobInnerProd")) {
-      errs() << Def->getName() << "\n";
-      // PrintFatalError("Unhandled blas-rev inner Prod case!");
+      os << "      // FrobInnerProd\n";
+      auto actCondition = "active_" + name;
+      for (size_t pos = 0; pos < ruleDag->getNumArgs();) {
+        auto arg = ruleDag->getArg(pos);
+        if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
+          auto Def = DefArg->getDef();
+          if (Def->isSubClassOf("adj")) {
+            auto name = Def->getValueAsString("name");
+            actCondition.append((Twine(" && d_") + name).str());
+          }
+        }
+        pos++;
+      }
+
+      os << "      if (" << actCondition << ") {\n";
+      rev_call_args("args1", rule, actArg, os);
+      os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
+         << valueTypes << "}, Builder2, /* lookup */ true);\n";
+      assert(ty == ArgType::fp);
+      os << "        CallInst *cubcall = "
+            "cast<CallInst>(Builder2.CreateCall(derivcall_inner_prod, args1, "
+            "Defs));\n"
+         << "        if (byRef) {\n"
+         << "          ((DiffeGradientUtils *)gutils)"
+         << "->addToInvertedPtrDiffe(&call, nullptr, fpType, 0,"
+         << "(blas.suffix.contains(\"64\") ? 8 : 4), arg_" << name
+         << ", cubcall, Builder2);\n"
+         << "        } else {\n"
+         << "          addToDiffe(arg_" << name
+         << ", cubcall, Builder2, fpType);\n"
+         << "        }\n"
+         << "      }\n";
     } else {
       errs() << Def->getName() << "\n";
       PrintFatalError("Unhandled blas-rev case!");
