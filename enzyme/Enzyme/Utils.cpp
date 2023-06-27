@@ -668,6 +668,110 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
   B.CreateCall(fn, args, bundles);
 }
 
+Value *callInnerProdBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                         PointerType *BlasPT, Type *BlasIT, Type *fpTy,
+                         llvm::ArrayRef<llvm::Value *> args,
+                         llvm::ArrayRef<llvm::OperandBundleDef> bundlesProd,
+                         llvm::ArrayRef<llvm::OperandBundleDef> bundlesDot) {
+  assert(fpTy->isFloatingPointTy());
+  std::string prod_name = (blas.floatType + "innerProd" + blas.suffix).str();
+  std::string dot_name =
+      (blas.prefix + blas.floatType + "dot" + blas.suffix).str();
+
+  SmallVector<Type *, 1> tys;
+  for (auto arg : args)
+    tys.push_back(arg->getType());
+
+  auto FT = FunctionType::get(fpTy, tys, false);
+
+  Function *F =
+      cast<Function>(M.getOrInsertFunction(prod_name, FT).getCallee());
+
+  if (!F->empty())
+    return F;
+
+  auto FDotT =
+      FunctionType::get(fpTy, {BlasIT, BlasPT, BlasIT, BlasPT, BlasIT}, false);
+  Function *FDot =
+      cast<Function>(M.getOrInsertFunction(dot_name, FDotT).getCallee());
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
+  F->addFnAttr(Attribute::ArgMemOnly);
+#endif
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
+  F->addParamAttr(2, Attribute::NoCapture);
+  F->addParamAttr(4, Attribute::NoCapture);
+  F->addParamAttr(2, Attribute::NoAlias);
+  F->addParamAttr(4, Attribute::NoAlias);
+  F->addParamAttr(2, Attribute::ReadOnly);
+  F->addParamAttr(4, Attribute::ReadOnly);
+
+  BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+  BasicBlock *init = BasicBlock::Create(M.getContext(), "init.idx", F);
+  BasicBlock *body = BasicBlock::Create(M.getContext(), "for.body", F);
+  BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
+
+  //(FrobInnerProd<> $m, $n, adj<"C">, $ldc, use<"AB">)
+
+  auto m = F->arg_begin();
+  m->setName("m");
+  auto n = m + 1;
+  n->setName("n");
+  auto matA = n + 1;
+  matA->setName("A");
+  auto lda = matA + 1;
+  lda->setName("lda");
+  auto matB = lda + 1;
+  matB->setName("B");
+
+  auto intTy = n->getType();
+
+  {
+    IRBuilder<> B1(entry);
+    Value *size = B1.CreateNUWMul(m, n, "matsize");
+    B1.CreateCondBr(B1.CreateICmpEQ(size, ConstantInt::get(intTy, 0)), end,
+                    init);
+
+    IRBuilder<> B2(init);
+    B2.setFastMathFlags(getFast());
+    Value *res = ConstantFP::get(fpTy, 0.0);
+    Value *constOne = ConstantInt::get(intTy, 1);
+    Value *iteration = ConstantInt::get(intTy, 0);
+    B2.CreateBr(body);
+
+    IRBuilder<> B3(body);
+    B3.setFastMathFlags(getFast());
+    PHINode *Aidx = B3.CreatePHI(intTy, 2, "Aidx");
+    PHINode *Bidx = B3.CreatePHI(intTy, 2, "Bidx");
+    Aidx->addIncoming(ConstantInt::get(intTy, 0), init);
+    Bidx->addIncoming(ConstantInt::get(intTy, 0), init);
+
+    Value *Ai = B3.CreateInBoundsGEP(fpTy, matA, Aidx, "A.i");
+    Value *Bi = B3.CreateInBoundsGEP(fpTy, matB, Bidx, "B.i");
+    // TODO: use to_blas_callconv before calling dot for m, constOne
+    Value *newDot =
+        B3.CreateCall(FDot, {m, Ai, constOne, Bi, constOne}, bundlesDot);
+    res = B3.CreateFAdd(res, newDot);
+
+    Value *Anext = B3.CreateNUWAdd(Aidx, lda, "Aidx.next");
+    Value *Bnext = B3.CreateNUWAdd(Aidx, m, "Bidx.next");
+    iteration = B3.CreateAdd(iteration, constOne);
+    Aidx->addIncoming(Anext, body);
+    Bidx->addIncoming(Bnext, body);
+    B3.CreateCondBr(B.CreateICmpEQ(iteration, n), end, body);
+
+    IRBuilder<> B4(end);
+    B4.CreateRet(res);
+  }
+
+  Value *sum = B.CreateCall(F, args, bundlesProd);
+  return sum;
+}
+
 Function *getOrInsertMemcpyStrided(Module &M, Type *elementType, PointerType *T,
                                    Type *IT, unsigned dstalign,
                                    unsigned srcalign) {
