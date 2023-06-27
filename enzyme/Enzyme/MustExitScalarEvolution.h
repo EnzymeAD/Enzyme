@@ -27,8 +27,15 @@
 #ifndef ENZYME_MUST_EXIT_SCALAR_EVOLUTION_H_
 #define ENZYME_MUST_EXIT_SCALAR_EVOLUTION_H_
 
+#if LLVM_VERSION_MAJOR >= 16
+#define private public
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+#undef private
+#else
 #include "SCEV/ScalarEvolution.h"
 #include "SCEV/ScalarEvolutionExpander.h"
+#endif
 
 #include "llvm/IR/Dominators.h"
 
@@ -44,7 +51,6 @@ public:
                                               llvm::BasicBlock *ExitingBlock,
                                               bool AllowPredicates);
 
-#if LLVM_VERSION_MAJOR >= 7
   ScalarEvolution::ExitLimit computeExitLimitFromCond(const llvm::Loop *L,
                                                       llvm::Value *ExitCond,
                                                       bool ExitIfTrue,
@@ -64,29 +70,6 @@ public:
   computeExitLimitFromICmp(const llvm::Loop *L, llvm::ICmpInst *ExitCond,
                            bool ExitIfTrue, bool ControlsExit,
                            bool AllowPredicates = false);
-#else
-  ScalarEvolution::ExitLimit
-  computeExitLimitFromCond(const llvm::Loop *L, llvm::Value *ExitCond,
-                           llvm::BasicBlock *TBB, llvm::BasicBlock *FBB,
-                           bool ControlsExit, bool AllowPredicates);
-
-  ScalarEvolution::ExitLimit
-  computeExitLimitFromCondCached(ExitLimitCacheTy &Cache, const llvm::Loop *L,
-                                 llvm::Value *ExitCond, llvm::BasicBlock *TBB,
-                                 llvm::BasicBlock *FBB, bool ControlsExit,
-                                 bool AllowPredicates);
-
-  ScalarEvolution::ExitLimit
-  computeExitLimitFromCondImpl(ExitLimitCacheTy &Cache, const llvm::Loop *L,
-                               llvm::Value *ExitCond, llvm::BasicBlock *TBB,
-                               llvm::BasicBlock *FBB, bool ControlsExit,
-                               bool AllowPredicates);
-
-  ScalarEvolution::ExitLimit
-  computeExitLimitFromICmp(const llvm::Loop *L, llvm::ICmpInst *ExitCond,
-                           llvm::BasicBlock *TBB, llvm::BasicBlock *FBB,
-                           bool ControlsExit, bool AllowPredicates = false);
-#endif
 
   bool loopIsFiniteByAssumption(const llvm::Loop *L);
 

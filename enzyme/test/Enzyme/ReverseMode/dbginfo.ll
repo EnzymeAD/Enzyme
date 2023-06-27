@@ -1,4 +1,5 @@
-; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ] ; then %opt < %s %loadEnzyme -enzyme-preopt=false  -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 ; ModuleID = '/workspaces/Enzyme/enzyme/test/Integration/ReverseMode/dbginfo2.c'
 source_filename = "/workspaces/Enzyme/enzyme/test/Integration/ReverseMode/dbginfo2.c"
@@ -198,21 +199,17 @@ attributes #9 = { noreturn nounwind }
 !80 = !{!"any pointer", !34, i64 0}
 !81 = !DILocation(line: 39, column: 1, scope: !64)
 
-
 ; CHECK: define internal {{(dso_local )?}}{ double } @diffecall(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call = call noalias nonnull dereferenceable(24) dereferenceable_or_null(24) i8* @malloc(i64 24) #{{.*}}, !dbg ![[DBG:[0-9]+]]
-; CHECK-NEXT:   %"call'mi" = call noalias nonnull dereferenceable(24) dereferenceable_or_null(24) i8* @malloc(i64 24) #{{.*}}, !dbg !{{.*}}[[DBG]]
+; CHECK-NEXT:   %"call'mi" = call noalias nonnull dereferenceable(24) dereferenceable_or_null(24) i8* @malloc(i64 24) #{{.*}}, !dbg !{{.*}}[[DBG:[0-9]+]]
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(24) dereferenceable_or_null(24) %"call'mi", i8 0, i64 24, i1 false)
 ; CHECK-NEXT:   %"'ipc2" = bitcast i8* %"call'mi" to %struct.Data*
-; CHECK-NEXT:   %0 = bitcast i8* %call to %struct.Data*
 ; CHECK-NEXT:   %"res1'ipg" = getelementptr inbounds i8, i8* %"call'mi", i64 16
 ; CHECK-NEXT:   %"'ipc" = bitcast i8* %"res1'ipg" to double*
-; CHECK-NEXT:   %1 = load double, double* %"'ipc", align 8
-; CHECK-NEXT:   %2 = fadd fast double %1, %differeturn
-; CHECK-NEXT:   store double %2, double* %"'ipc", align 8
-; CHECK-NEXT:   %3 = call { double } @diffefoo(double %x, %struct.Data* %0, %struct.Data* %"'ipc2")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call'mi"), !dbg !{{.*}}[[DBG]]
-; CHECK-NEXT:   tail call void @free(i8* nonnull %call), !dbg !{{.*}}[[DBG]]
-; CHECK-NEXT:   ret { double } %3
+; CHECK-NEXT:   %[[i1:.+]] = load double, double* %"'ipc", align 8
+; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[i1]], %differeturn
+; CHECK-NEXT:   store double %[[i2]], double* %"'ipc", align 8
+; CHECK-NEXT:   %[[i3:.+]] = call { double } @diffefoo(double %x, %struct.Data* undef, %struct.Data* %"'ipc2")
+; CHECK-NEXT:   call void @free(i8* nonnull %"call'mi"), !dbg !{{.*}}[[DBG]]
+; CHECK-NEXT:   ret { double } %[[i3]]
 ; CHECK-NEXT: }

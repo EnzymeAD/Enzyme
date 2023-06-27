@@ -44,25 +44,21 @@
 
 using namespace llvm;
 
-TraceUtils::TraceUtils(ProbProgMode mode, bool has_dynamic_interface,
-                       Function *newFunc, Function *oldFunc,
-                       ValueMap<const Value *, WeakTrackingVH> vmap,
-                       SmallPtrSetImpl<Function *> &generativeFunctions)
-    : mode(mode), newFunc(newFunc), oldFunc(oldFunc),
-      generativeFunctions(generativeFunctions) {
-  originalToNewFn.insert(vmap.begin(), vmap.end());
-  originalToNewFn.getMDMap() = vmap.getMDMap();
-}
+TraceUtils::TraceUtils(ProbProgMode mode, Function *newFunc, Argument *trace,
+                       Argument *observations, Argument *likelihood,
+                       TraceInterface *interface)
+    : trace(trace), observations(observations), likelihood(likelihood),
+      interface(interface), mode(mode), newFunc(newFunc){};
 
-TraceUtils::TraceUtils(ProbProgMode mode, bool has_dynamic_interface,
-                       Function *F,
-                       SmallPtrSetImpl<Function *> &generativeFunctions)
-    : mode(mode), oldFunc(F), generativeFunctions(generativeFunctions) {
+TraceUtils *TraceUtils::FromClone(ProbProgMode mode, TraceInterface *interface,
+                                  Function *oldFunc,
+                                  ValueToValueMapTy &originalToNewFn) {
+  assert(interface);
+
   auto &Context = oldFunc->getContext();
 
   FunctionType *orig_FTy = oldFunc->getFunctionType();
-  Type *traceType =
-      TraceInterface::getTraceTy(F->getContext())->getReturnType();
+  Type *traceType = TraceInterface::getTraceTy(Context)->getReturnType();
 
   SmallVector<Type *, 4> params;
 
@@ -70,9 +66,8 @@ TraceUtils::TraceUtils(ProbProgMode mode, bool has_dynamic_interface,
     params.push_back(orig_FTy->getParamType(i));
   }
 
-  if (has_dynamic_interface)
-    params.push_back(
-        PointerType::getUnqual(PointerType::getInt8PtrTy(Context)));
+  Type *likelihood_acc_type = PointerType::getDoublePtrTy(Context);
+  params.push_back(likelihood_acc_type);
 
   if (mode == ProbProgMode::Condition)
     params.push_back(traceType);
@@ -82,11 +77,12 @@ TraceUtils::TraceUtils(ProbProgMode mode, bool has_dynamic_interface,
   Type *RetTy = oldFunc->getReturnType();
   FunctionType *FTy = FunctionType::get(RetTy, params, oldFunc->isVarArg());
 
-  Twine Name = (mode == ProbProgMode::Condition ? "condition_" : "trace_") +
-               Twine(oldFunc->getName());
+  std::string mode_str =
+      (mode == ProbProgMode::Condition ? "condition" : "trace");
 
-  newFunc = Function::Create(FTy, Function::LinkageTypes::InternalLinkage, Name,
-                             oldFunc->getParent());
+  Function *newFunc = Function::Create(
+      FTy, Function::LinkageTypes::InternalLinkage,
+      mode_str + "_" + oldFunc->getName(), oldFunc->getParent());
 
   auto DestArg = newFunc->arg_begin();
   auto SrcArg = oldFunc->arg_begin();
@@ -98,28 +94,6 @@ TraceUtils::TraceUtils(ProbProgMode mode, bool has_dynamic_interface,
     DestArg++;
     SrcArg++;
   }
-
-  if (has_dynamic_interface) {
-    auto arg = newFunc->arg_end() - (2 + (mode == ProbProgMode::Condition));
-    dynamic_interface = arg;
-    arg->setName("interface");
-    arg->addAttr(Attribute::ReadOnly);
-    arg->addAttr(Attribute::NoCapture);
-  }
-
-  if (mode == ProbProgMode::Condition) {
-    auto arg = newFunc->arg_end() - 2;
-    observations = arg;
-    arg->setName("observations");
-    if (oldFunc->getReturnType()->isVoidTy())
-      arg->addAttr(Attribute::Returned);
-  }
-
-  auto arg = newFunc->arg_end() - 1;
-  trace = arg;
-  arg->setName("trace");
-  if (oldFunc->getReturnType()->isVoidTy())
-    arg->addAttr(Attribute::Returned);
 
   SmallVector<ReturnInst *, 4> Returns;
 #if LLVM_VERSION_MAJOR >= 13
@@ -133,64 +107,116 @@ TraceUtils::TraceUtils(ProbProgMode mode, bool has_dynamic_interface,
 
   newFunc->setLinkage(Function::LinkageTypes::InternalLinkage);
 
-  if (has_dynamic_interface) {
-    interface = new DynamicTraceInterface(dynamic_interface, newFunc);
-  } else {
-    interface = new StaticTraceInterface(F->getParent());
+  Argument *trace = nullptr;
+  Argument *observations = nullptr;
+  Argument *likelihood = nullptr;
+
+  auto arg = newFunc->arg_end() - 1;
+
+  trace = arg;
+  arg->setName("trace");
+  arg->addAttr(Attribute::get(Context, TraceParameterAttribute));
+
+  if (mode == ProbProgMode::Condition) {
+    arg -= 1;
+    observations = arg;
+    arg->setName("observations");
+    arg->addAttr(Attribute::get(Context, ObservationsParameterAttribute));
   }
+
+  arg -= 1;
+  likelihood = arg;
+  arg->setName("likelihood");
+  arg->addAttr(Attribute::get(Context, LikelihoodParameterAttribute));
+
+  return new TraceUtils(mode, newFunc, trace, observations, likelihood,
+                        interface);
 };
 
-TraceUtils::~TraceUtils() { delete interface; }
+TraceUtils::~TraceUtils() = default;
 
 TraceInterface *TraceUtils::getTraceInterface() { return interface; }
 
-Value *TraceUtils::getDynamicTraceInterface() { return dynamic_interface; }
-
-bool TraceUtils::hasDynamicTraceInterface() {
-  return dynamic_interface != nullptr;
-}
-
 Value *TraceUtils::getTrace() { return trace; }
 
+Value *TraceUtils::getObservations() { return observations; }
+
+Value *TraceUtils::getLikelihood() { return likelihood; }
+
+std::pair<Value *, Constant *>
+TraceUtils::ValueToVoidPtrAndSize(IRBuilder<> &Builder, Value *val,
+                                  Type *size_type) {
+  auto valsize = val->getType()->getPrimitiveSizeInBits();
+
+  if (val->getType()->isPointerTy()) {
+    Value *retval = Builder.CreatePointerCast(val, Builder.getInt8PtrTy());
+    return {retval, ConstantInt::get(size_type, valsize / 8)};
+  }
+
+  auto M = Builder.GetInsertBlock()->getModule();
+  auto &DL = M->getDataLayout();
+  auto pointersize = DL.getPointerSizeInBits();
+
+  if (valsize <= pointersize) {
+    auto cast =
+        Builder.CreateBitCast(val, IntegerType::get(M->getContext(), valsize));
+    if (valsize != pointersize)
+      cast = Builder.CreateZExt(cast, Builder.getIntPtrTy(DL));
+
+    Value *retval = Builder.CreateIntToPtr(cast, Builder.getInt8PtrTy());
+    return {retval, ConstantInt::get(size_type, valsize / 8)};
+  } else {
+    auto insertPoint = Builder.GetInsertBlock()
+                           ->getParent()
+                           ->getEntryBlock()
+                           .getFirstNonPHIOrDbgOrLifetime();
+    IRBuilder<> AllocaBuilder(insertPoint);
+    auto alloca = AllocaBuilder.CreateAlloca(val->getType(), nullptr,
+                                             val->getName() + ".ptr");
+    Builder.CreateStore(val, alloca);
+    return {alloca, ConstantInt::get(size_type, valsize / 8)};
+  }
+}
+
 CallInst *TraceUtils::CreateTrace(IRBuilder<> &Builder, const Twine &Name) {
-  return Builder.CreateCall(interface->newTraceTy(), interface->newTrace(), {},
-                            Name);
+  auto call = Builder.CreateCall(interface->newTraceTy(),
+                                 interface->newTrace(Builder), {}, Name);
+#if LLVM_VERSION_MAJOR >= 14
+  call->addAttributeAtIndex(
+      AttributeList::FunctionIndex,
+      Attribute::get(call->getContext(), "enzyme_newtrace"));
+#else
+  call->addAttribute(AttributeList::FunctionIndex,
+                     Attribute::get(call->getContext(), "enzyme_newtrace"));
+
+#endif
+  return call;
+}
+
+CallInst *TraceUtils::FreeTrace(IRBuilder<> &Builder) {
+  auto call = Builder.CreateCall(interface->freeTraceTy(),
+                                 interface->freeTrace(Builder), {trace});
+#if LLVM_VERSION_MAJOR >= 14
+  call->addAttributeAtIndex(
+      AttributeList::FunctionIndex,
+      Attribute::get(call->getContext(), "enzyme_freetrace"));
+#else
+  call->addAttribute(AttributeList::FunctionIndex,
+                     Attribute::get(call->getContext(), "enzyme_freetrace"));
+
+#endif
+  return call;
 }
 
 CallInst *TraceUtils::InsertChoice(IRBuilder<> &Builder, Value *address,
                                    Value *score, Value *choice) {
-  Type *size_type = interface->getChoiceTy()->getParamType(3);
-  auto choicesize = choice->getType()->getPrimitiveSizeInBits();
+  Type *size_type = interface->insertChoiceTy()->getParamType(4);
+  auto &&[retval, sizeval] = ValueToVoidPtrAndSize(Builder, choice, size_type);
 
-  Value *retval;
-  if (choice->getType()->isPointerTy()) {
-    retval = Builder.CreatePointerCast(choice, Builder.getInt8PtrTy());
-  } else {
-    auto M = interface->getSampleFunction()->getParent();
-    auto &DL = M->getDataLayout();
-    auto pointersize = DL.getPointerSizeInBits();
-    if (choicesize <= pointersize) {
-      auto cast = Builder.CreateBitCast(
-          choice, IntegerType::get(M->getContext(), choicesize));
-      cast = choicesize == pointersize
-                 ? cast
-                 : Builder.CreateZExt(cast, Builder.getIntPtrTy(DL));
-      retval = Builder.CreateIntToPtr(cast, Builder.getInt8PtrTy());
-    } else {
-      IRBuilder<> AllocaBuilder(
-          newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
-      auto alloca = AllocaBuilder.CreateAlloca(choice->getType(), nullptr,
-                                               choice->getName() + ".ptr");
-      Builder.CreateStore(choice, alloca);
-      retval = alloca;
-    }
-  }
-
-  Value *args[] = {trace, address, score, retval,
-                   ConstantInt::get(size_type, choicesize / 8)};
+  Value *args[] = {trace, address, score, retval, sizeval};
 
   auto call = Builder.CreateCall(interface->insertChoiceTy(),
-                                 interface->insertChoice(), args);
+                                 interface->insertChoice(Builder), args);
   call->addParamAttr(1, Attribute::ReadOnly);
   call->addParamAttr(1, Attribute::NoCapture);
   return call;
@@ -201,7 +227,88 @@ CallInst *TraceUtils::InsertCall(IRBuilder<> &Builder, Value *address,
   Value *args[] = {trace, address, subtrace};
 
   auto call = Builder.CreateCall(interface->insertCallTy(),
-                                 interface->insertCall(), args);
+                                 interface->insertCall(Builder), args);
+  call->addParamAttr(1, Attribute::ReadOnly);
+  call->addParamAttr(1, Attribute::NoCapture);
+#if LLVM_VERSION_MAJOR >= 14
+  call->addAttributeAtIndex(
+      AttributeList::FunctionIndex,
+      Attribute::get(call->getContext(), "enzyme_insert_call"));
+#else
+  call->addAttribute(AttributeList::FunctionIndex,
+                     Attribute::get(call->getContext(), "enzyme_insert_call"));
+
+#endif
+  return call;
+}
+
+CallInst *TraceUtils::InsertArgument(IRBuilder<> &Builder, Value *name,
+                                     Value *argument) {
+  Type *size_type = interface->insertArgumentTy()->getParamType(3);
+  auto &&[retval, sizeval] =
+      ValueToVoidPtrAndSize(Builder, argument, size_type);
+
+  Value *args[] = {trace, name, retval, sizeval};
+
+  auto call = Builder.CreateCall(interface->insertArgumentTy(),
+                                 interface->insertArgument(Builder), args);
+  call->addParamAttr(1, Attribute::ReadOnly);
+  call->addParamAttr(1, Attribute::NoCapture);
+  return call;
+}
+
+CallInst *TraceUtils::InsertReturn(IRBuilder<> &Builder, Value *val) {
+  Type *size_type = interface->insertReturnTy()->getParamType(2);
+  auto &&[retval, sizeval] = ValueToVoidPtrAndSize(Builder, val, size_type);
+
+  Value *args[] = {trace, retval, sizeval};
+
+  auto call = Builder.CreateCall(interface->insertReturnTy(),
+                                 interface->insertReturn(Builder), args);
+  return call;
+}
+
+CallInst *TraceUtils::InsertFunction(IRBuilder<> &Builder, Function *function) {
+  assert(!function->isIntrinsic());
+  auto FunctionPtr = Builder.CreateBitCast(function, Builder.getInt8PtrTy());
+
+  Value *args[] = {trace, FunctionPtr};
+
+  auto call = Builder.CreateCall(interface->insertFunctionTy(),
+                                 interface->insertFunction(Builder), args);
+  return call;
+}
+
+CallInst *TraceUtils::InsertChoiceGradient(IRBuilder<> &Builder,
+                                           FunctionType *interface_type,
+                                           Value *interface_function,
+                                           Value *address, Value *choice,
+                                           Value *trace) {
+  Type *size_type = interface_type->getParamType(3);
+  auto &&[retval, sizeval] = ValueToVoidPtrAndSize(Builder, choice, size_type);
+
+  Value *args[] = {trace, address, retval, sizeval};
+
+  auto call = Builder.CreateCall(interface_type, interface_function, args);
+  call->addParamAttr(1, Attribute::ReadOnly);
+  call->addParamAttr(1, Attribute::NoCapture);
+  return call;
+}
+
+CallInst *TraceUtils::InsertArgumentGradient(IRBuilder<> &Builder,
+                                             FunctionType *interface_type,
+                                             Value *interface_function,
+                                             Value *name, Value *argument,
+                                             Value *trace) {
+  Type *size_type = interface_type->getParamType(3);
+  auto &&[retval, sizeval] =
+      ValueToVoidPtrAndSize(Builder, argument, size_type);
+
+  auto Name = Builder.CreateGlobalStringPtr(argument->getName());
+
+  Value *args[] = {trace, Name, retval, sizeval};
+
+  auto call = Builder.CreateCall(interface_type, interface_function, args);
   call->addParamAttr(1, Attribute::ReadOnly);
   call->addParamAttr(1, Attribute::NoCapture);
   return call;
@@ -213,8 +320,8 @@ CallInst *TraceUtils::GetTrace(IRBuilder<> &Builder, Value *address,
 
   Value *args[] = {observations, address};
 
-  auto call = Builder.CreateCall(interface->getTraceTy(), interface->getTrace(),
-                                 args, Name);
+  auto call = Builder.CreateCall(interface->getTraceTy(),
+                                 interface->getTrace(Builder), args, Name);
   call->addParamAttr(1, Attribute::ReadOnly);
   call->addParamAttr(1, Attribute::NoCapture);
   return call;
@@ -222,8 +329,10 @@ CallInst *TraceUtils::GetTrace(IRBuilder<> &Builder, Value *address,
 
 Instruction *TraceUtils::GetChoice(IRBuilder<> &Builder, Value *address,
                                    Type *choiceType, const Twine &Name) {
-  IRBuilder<> AllocaBuilder(
-      newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+  IRBuilder<> AllocaBuilder(Builder.GetInsertBlock()
+                                ->getParent()
+                                ->getEntryBlock()
+                                .getFirstNonPHIOrDbgOrLifetime());
   AllocaInst *store_dest =
       AllocaBuilder.CreateAlloca(choiceType, nullptr, Name + ".ptr");
   auto preallocated_size = choiceType->getPrimitiveSizeInBits() / 8;
@@ -234,8 +343,18 @@ Instruction *TraceUtils::GetChoice(IRBuilder<> &Builder, Value *address,
       Builder.CreatePointerCast(store_dest, Builder.getInt8PtrTy()),
       ConstantInt::get(size_type, preallocated_size)};
 
-  auto call = Builder.CreateCall(interface->getChoiceTy(),
-                                 interface->getChoice(), args, Name + ".size");
+  auto call =
+      Builder.CreateCall(interface->getChoiceTy(),
+                         interface->getChoice(Builder), args, Name + ".size");
+
+#if LLVM_VERSION_MAJOR >= 14
+  call->addAttributeAtIndex(
+      AttributeList::FunctionIndex,
+      Attribute::get(call->getContext(), "enzyme_inactive"));
+#else
+  call->addAttribute(AttributeList::FunctionIndex,
+                     Attribute::get(call->getContext(), "enzyme_inactive"));
+#endif
   call->addParamAttr(1, Attribute::ReadOnly);
   call->addParamAttr(1, Attribute::NoCapture);
   return Builder.CreateLoad(choiceType, store_dest, "from.trace." + Name);
@@ -246,7 +365,7 @@ Instruction *TraceUtils::HasChoice(IRBuilder<> &Builder, Value *address,
   Value *args[]{observations, address};
 
   auto call = Builder.CreateCall(interface->hasChoiceTy(),
-                                 interface->hasChoice(), args, Name);
+                                 interface->hasChoice(Builder), args, Name);
   call->addParamAttr(1, Attribute::ReadOnly);
   call->addParamAttr(1, Attribute::NoCapture);
   return call;
@@ -256,9 +375,109 @@ Instruction *TraceUtils::HasCall(IRBuilder<> &Builder, Value *address,
                                  const Twine &Name) {
   Value *args[]{observations, address};
 
-  auto call = Builder.CreateCall(interface->hasCallTy(), interface->hasCall(),
-                                 args, Name);
+  auto call = Builder.CreateCall(interface->hasCallTy(),
+                                 interface->hasCall(Builder), args, Name);
   call->addParamAttr(1, Attribute::ReadOnly);
   call->addParamAttr(1, Attribute::NoCapture);
   return call;
+}
+
+Instruction *TraceUtils::SampleOrCondition(IRBuilder<> &Builder,
+                                           Function *sample_fn,
+                                           ArrayRef<Value *> sample_args,
+                                           Value *address, const Twine &Name) {
+  auto &Context = Builder.getContext();
+  auto parent_fn = Builder.GetInsertBlock()->getParent();
+
+  switch (mode) {
+  case ProbProgMode::Trace: {
+    auto sample_call = Builder.CreateCall(sample_fn->getFunctionType(),
+                                          sample_fn, sample_args);
+    return sample_call;
+  }
+  case ProbProgMode::Condition: {
+    Instruction *hasChoice = HasChoice(Builder, address, "has.choice." + Name);
+
+    Value *ThenChoice, *ElseChoice;
+    BasicBlock *ThenBlock = BasicBlock::Create(
+        Context, "condition." + Name + ".with.trace", parent_fn);
+    BasicBlock *ElseBlock = BasicBlock::Create(
+        Context, "condition." + Name + ".without.trace", parent_fn);
+    BasicBlock *EndBlock = BasicBlock::Create(Context, "end", parent_fn);
+
+    Builder.CreateCondBr(hasChoice, ThenBlock, ElseBlock);
+    Builder.SetInsertPoint(ThenBlock);
+    ThenChoice = GetChoice(Builder, address, sample_fn->getReturnType(), Name);
+    Builder.CreateBr(EndBlock);
+
+    Builder.SetInsertPoint(ElseBlock);
+    ElseChoice = Builder.CreateCall(sample_fn->getFunctionType(), sample_fn,
+                                    sample_args, "sample." + Name);
+    Builder.CreateBr(EndBlock);
+
+    Builder.SetInsertPoint(EndBlock);
+    auto phi = Builder.CreatePHI(sample_fn->getReturnType(), 2);
+    phi->addIncoming(ThenChoice, ThenBlock);
+    phi->addIncoming(ElseChoice, ElseBlock);
+
+    return phi;
+  }
+  }
+}
+
+CallInst *TraceUtils::CreateOutlinedFunction(
+    IRBuilder<> &Builder,
+    function_ref<void(IRBuilder<> &, TraceUtils *, ArrayRef<Value *>)> Outlined,
+    Type *RetTy, ArrayRef<Value *> Arguments, bool needsLikelihood,
+    const Twine &Name) {
+  SmallVector<Type *, 4> Tys;
+  SmallVector<Value *, 4> Vals;
+  Module *M = Builder.GetInsertBlock()->getModule();
+
+  for (auto Arg : Arguments) {
+    Vals.push_back(Arg);
+    Tys.push_back(Arg->getType());
+  }
+
+  if (needsLikelihood) {
+    Vals.push_back(likelihood);
+    Tys.push_back(likelihood->getType());
+  }
+
+  if (mode == ProbProgMode::Condition) {
+    Vals.push_back(observations);
+    Tys.push_back(observations->getType());
+  }
+
+  Vals.push_back(trace);
+  Tys.push_back(trace->getType());
+  FunctionType *FTy = FunctionType::get(RetTy, Tys, false);
+  Function *F =
+      Function::Create(FTy, Function::LinkageTypes::InternalLinkage, Name, M);
+  F->addFnAttr(Attribute::AlwaysInline);
+
+  auto Entry = BasicBlock::Create(M->getContext(), "entry", F);
+
+  auto ArgRange = make_pointer_range(
+      make_range(F->arg_begin(), F->arg_begin() + Arguments.size()));
+  SmallVector<Value *, 4> Rets(ArgRange);
+
+  auto idx = F->arg_begin() + Arguments.size();
+
+  Argument *likelihood_arg = nullptr;
+  if (needsLikelihood)
+    likelihood_arg = idx++;
+
+  Argument *observations_arg = nullptr;
+  if (mode == ProbProgMode::Condition)
+    observations_arg = idx++;
+
+  Argument *trace_arg = idx++;
+
+  TraceUtils OutlineTutils = TraceUtils(mode, F, trace_arg, observations_arg,
+                                        likelihood_arg, interface);
+  IRBuilder<> OutlineBuilder(Entry);
+  Outlined(OutlineBuilder, &OutlineTutils, Rets);
+
+  return Builder.CreateCall(FTy, F, Vals);
 }

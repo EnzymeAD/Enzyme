@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -sroa -early-cse -adce -instsimplify -adce -simplifycfg -S -instsimplify | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -early-cse -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,early-cse,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 ; #include <math.h>
 ;
@@ -132,24 +133,17 @@ attributes #5 = { nounwind }
 !7 = !{!"double", !4, i64 0}
 
 
-; CHECK: define dso_local {{(dso_local )?}}double @derivative(double %x, i32 %n)
+; CHECK: define internal { double } @diffefunction(double %x, i32 %n, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %"array'ipa.i" = alloca double*, align 8
-; CHECK-NEXT:   %array.i = alloca double*, align 8
-; CHECK-NEXT:   %[[api8:.+]] = bitcast double** %"array'ipa.i" to i8*
-; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8*{{( nonnull)?}} %[[api8]])
-; CHECK-NEXT:   %[[ai8:.+]] = bitcast double** %array.i to i8*
-; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8*{{( nonnull)?}} %[[ai8]])
-; CHECK-NEXT:   store double* null, double** %"array'ipa.i", align 8
-; CHECK-NEXT:   %[[aug_aas:.+]] = call { i8*, i8* } @augmented_allocateAndSet(double**{{( nonnull)?}} %array.i, double**{{( nonnull)?}} %"array'ipa.i", double %x, i32 %n)
-; CHECK-NEXT:   %"'ipl.i" = load double*, double** %"array'ipa.i", align 8
-; CHECK-NEXT:   %[[primal:.+]] = load double*, double** %array.i, align 8
-; CHECK-NEXT:   call void @diffeget(double* %[[primal]], double* %"'ipl.i", i32 3, double 1.000000e+00)
-; CHECK-NEXT:   %[[result:.+]] = call { double } @diffeallocateAndSet(double**{{( nonnull)?}} %array.i, double**{{( nonnull)?}} %"array'ipa.i", double %x, i32 %n, double 1.000000e+00, { i8*, i8* } %[[aug_aas]])
-; CHECK-NEXT:   call void @llvm.lifetime.end.p0i8(i64 8, i8*{{( nonnull)?}} %[[api8]])
-; CHECK-NEXT:   call void @llvm.lifetime.end.p0i8(i64 8, i8*{{( nonnull)?}} %[[ai8]])
-; CHECK-NEXT:   %[[ext:.+]] = extractvalue { double } %[[result]], 0
-; CHECK-NEXT:   ret double %[[ext]]
+; CHECK-NEXT:   %"array'ipa" = alloca double*, align 8
+; CHECK-NEXT:   store double* null, double** %"array'ipa", align 8
+; CHECK-NEXT:   %array = alloca double*, align 8
+; CHECK-NEXT:   %[[aug_aas:.+]] = call { i8*, i8* } @augmented_allocateAndSet(double**{{( nonnull)?}} %array, double**{{( nonnull)?}} %"array'ipa", double %x, i32 %n)
+; CHECK-NEXT:   %"'ipl" = load double*, double** %"array'ipa", align 8
+; CHECK-NEXT:   %[[primal:.+]] = load double*, double** %array, align 8
+; CHECK-NEXT:   call void @diffeget(double* %[[primal]], double* %"'ipl", i32 3, double %differeturn)
+; CHECK-NEXT:   %[[result:.+]] = call { double } @diffeallocateAndSet(double**{{( nonnull)?}} %array, double**{{( nonnull)?}} %"array'ipa", double %x, i32 %n, double %differeturn, { i8*, i8* } %[[aug_aas]])
+; CHECK-NEXT:   ret { double } %[[result]]
 ; CHECK-NEXT: }
 
 ; CHECK: define internal {{(dso_local )?}}void @diffeget(double* nocapture readonly %x, double* nocapture %"x'", i32 %i, double %differeturn)
@@ -190,8 +184,8 @@ attributes #5 = { nounwind }
 ; TODO DSE SHOULD ELIM
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"'ipc"
 ; CHECK-NEXT:   %[[result:.+]] = fadd fast double %differeturn, %[[loaded]]
-; CHECK-NEXT:   tail call void @free(i8* nonnull %[[callp]])
-; CHECK-NEXT:   tail call void @free(i8* %call)
+; CHECK-NEXT:   call void @free(i8* nonnull %[[callp]])
+; CHECK-NEXT:   call void @free(i8* %call)
 ; CHECK-NEXT:   %[[ins:.+]] = insertvalue { double } undef, double %[[result]], 0
 ; CHECK-NEXT:   ret { double } %[[ins]]
 ; CHECK-NEXT: }

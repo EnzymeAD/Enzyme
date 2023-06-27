@@ -1,6 +1,5 @@
-; RUN: if [ %llvmver -lt 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -jump-threading -instsimplify -early-cse -simplifycfg -S | FileCheck %s -check-prefixes LLVM13,SHARED; fi
-; RUN: if [ %llvmver -ge 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -jump-threading -instsimplify -early-cse -simplifycfg -S | FileCheck %s -check-prefixes LLVM14,SHARED; fi
-
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -correlated-propagation -adce -jump-threading -instsimplify -early-cse -simplifycfg -S | FileCheck %s -check-prefixes LLVM13,SHARED ; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,correlated-propagation,adce,instsimplify,early-cse,%simplifycfg,correlated-propagation,adce,jump-threading,instsimplify,early-cse,%simplifycfg)" -S | FileCheck %s -check-prefixes LLVM13,SHARED
 
 ; ModuleID = 'orig.ll'
 source_filename = "../benchmarks/hand/hand.cpp"
@@ -121,7 +120,6 @@ attributes #4 = { "enzyme_inactive" }
 ; SHARED-NEXT:   %5 = icmp eq i64 %"iv'ac.0", 0
 ; LLVM13-NEXT:   %[[forfree15:.+]] = load double*, double** %9, align 8
 ; LLVM13-NEXT:   %6 = bitcast double* %[[forfree15]] to i8*
-; LLVM14-NEXT:   %6 = bitcast double* %10 to i8*
 ; SHARED-NEXT:   tail call void @free(i8* nonnull %6)
 ; SHARED-NEXT:   br i1 %5, label %invertentry, label %incinvertfor.cond8.preheader
 
@@ -130,7 +128,7 @@ attributes #4 = { "enzyme_inactive" }
 ; SHARED-NEXT:   br label %invertfor.inc30
 
 ; SHARED: invertfor.body15:                                 ; preds = %invertfor.inc30, %incinvertfor.body15
-; SHARED-NEXT:   %"iv1'ac.0" = phi i64 [ %[[unwrap18:.+]], %invertfor.inc30 ], [ %15, %incinvertfor.body15 ]
+; SHARED-NEXT:   %"iv1'ac.0" = phi i64 [ %[[unwrap18:.+]], %invertfor.inc30 ], [ %[[i15:.+]], %incinvertfor.body15 ]
 ; SHARED-NEXT:   %"arrayidx'ipg_unwrap" = getelementptr inbounds double, double* %"tmp10'", i64 %"iv1'ac.0"
 ; SHARED-NEXT:   %8 = load double, double* %"arrayidx'ipg_unwrap", align 8
 ; SHARED-NEXT:   store double 0.000000e+00, double* %"arrayidx'ipg_unwrap", align 8
@@ -138,20 +136,20 @@ attributes #4 = { "enzyme_inactive" }
 ; SHARED-NEXT:   %10 = load double*, double** %9, align 8
 ; SHARED-NEXT:   %11 = getelementptr inbounds double, double* %10, i64 %"iv1'ac.0"
 ; SHARED-NEXT:   %12 = load double, double* %11, align 8
-; SHARED-NEXT:   %m0diffetmp15 = fmul fast double %8, %12
-; SHARED-NEXT:   %13 = fadd fast double %m0diffetmp15, %m0diffetmp15
-; SHARED-NEXT:   store double %13, double* %"arrayidx'ipg_unwrap", align 8
-; SHARED-NEXT:   %14 = icmp eq i64 %"iv1'ac.0", 0
-; SHARED-NEXT:   br i1 %14, label %invertfor.cond8.preheader, label %incinvertfor.body15
+; SHARED-NEXT:   %[[m0diffetmp15:.+]] = fmul fast double %8, %12
+; SHARED-NEXT:   %[[i13:.+]] = fadd fast double %[[m0diffetmp15]], %[[m0diffetmp15]]
+; SHARED-NEXT:   store double %[[i13]], double* %"arrayidx'ipg_unwrap", align 8
+; SHARED-NEXT:   %[[i14:.+]] = icmp eq i64 %"iv1'ac.0", 0
+; SHARED-NEXT:   br i1 %[[i14]], label %invertfor.cond8.preheader, label %incinvertfor.body15
 
 ; SHARED: incinvertfor.body15:                              ; preds = %invertfor.body15
-; SHARED-NEXT:   %15 = add nsw i64 %"iv1'ac.0", -1
+; SHARED-NEXT:   %[[i15]] = add nsw i64 %"iv1'ac.0", -1
 ; SHARED-NEXT:   br label %invertfor.body15
 
 ; SHARED: invertfor.inc30:                                  ; preds = %for.inc30, %incinvertfor.cond8.preheader
 ; SHARED-NEXT:   %"iv'ac.0" = phi i64 [ %7, %incinvertfor.cond8.preheader ], [ 12, %for.inc30 ]
 ; SHARED-NEXT:   %[[unwrap16:.+]] = getelementptr inbounds i64, i64* %[[i0]], i64 %"iv'ac.0"
-; SHARED-NEXT:   %[[unwrap17:.+]] = load i64, i64* %[[unwrap16]], align 8, !tbaa !2, !invariant.group !
+; SHARED-NEXT:   %[[unwrap17:.+]] = load i64, i64* %[[unwrap16]], align 8, !tbaa !2, !alias.scope !{{[0-9]+}}, !noalias !{{[0-9]+}}, !invariant.group !
 ; SHARED-NEXT:   %[[unwrap18]] = add i64 %[[unwrap17]], -1
 ; SHARED-NEXT:   br label %invertfor.body15
 ; SHARED-NEXT: }

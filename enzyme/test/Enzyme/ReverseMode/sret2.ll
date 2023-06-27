@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 12 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse -S | FileCheck %s ; fi
-
+; RUN: if [ %llvmver -lt 12 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -early-cse -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 12 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,early-cse,%simplifycfg)" -S | FileCheck %s; fi
 
 ; #include <array>
 
@@ -89,17 +89,17 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   store double %mul3, double* %arrayinit.element1, align 8
 ; CHECK-NEXT:   %0 = load double, double* %"arrayinit.element1'ipg", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayinit.element1'ipg", align 8
-; CHECK-NEXT:   %m0diffemul = fmul fast double %0, %x
-; CHECK-NEXT:   %m1diffex = fmul fast double %0, %mul
-; CHECK-NEXT:   %1 = load double, double* %"arrayinit.element'ipg", align 8
+; CHECK-NEXT:   %[[m0diffemul:.+]] = fmul fast double %0, %x
+; CHECK-NEXT:   %[[m1diffex:.+]] = fmul fast double %0, %mul
+; CHECK-NEXT:   %[[i1:.+]] = load double, double* %"arrayinit.element'ipg", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayinit.element'ipg", align 8
-; CHECK-NEXT:   %2 = fadd fast double %m0diffemul, %1
-; CHECK-NEXT:   %m0diffex = fmul fast double %2, %x
-; CHECK-NEXT:   %3 = fadd fast double %m1diffex, %m0diffex
-; CHECK-NEXT:   %4 = fadd fast double %3, %m0diffex
-; CHECK-NEXT:   %5 = load double, double* %"arrayinit.begin'ipg", align 8
+; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[m0diffemul]], %[[i1]]
+; CHECK-NEXT:   %[[m0diffex:.+]] = fmul fast double %[[i2]], %x
+; CHECK-NEXT:   %[[i3:.+]] = fadd fast double %[[m1diffex]], %[[m0diffex]]
+; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %[[i3]], %[[m0diffex]]
+; CHECK-NEXT:   %[[i5:.+]] = load double, double* %"arrayinit.begin'ipg", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayinit.begin'ipg", align 8
-; CHECK-NEXT:   %6 = fadd fast double %4, %5
-; CHECK-NEXT:  %7 = insertvalue { double } undef, double %6, 0
-; CHECK-NEXT:   ret { double } %7
+; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %[[i4]], %[[i5]]
+; CHECK-NEXT:   %[[i7:.+]] = insertvalue { double } undef, double %[[i6]], 0
+; CHECK-NEXT:   ret { double } %[[i7]]
 ; CHECK-NEXT: }

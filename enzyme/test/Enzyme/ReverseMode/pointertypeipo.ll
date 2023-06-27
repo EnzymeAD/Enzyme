@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 declare void @__enzyme_autodiff(...)
 
@@ -71,7 +72,7 @@ attributes #4 = { nounwind }
 
 ; CHECK: define internal void @diffesub(i64* %this, i64* %"this'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %agg = load i64, i64* %this, align 4
+; CHECK-NEXT:   %agg = load i64, i64* %this
 ; CHECK-NEXT:   %call = tail call i64 @pop(i64 %agg)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

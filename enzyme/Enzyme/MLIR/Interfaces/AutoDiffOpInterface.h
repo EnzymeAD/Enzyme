@@ -25,9 +25,10 @@ struct LogicalResult;
 namespace enzyme {
 
 class MGradientUtils;
+class MGradientUtilsReverse;
 
-} // namespace enzyme
-} // namespace mlir
+}; // namespace enzyme
+}; // namespace mlir
 
 #include "MLIR/Interfaces/AutoDiffOpInterface.h.inc"
 

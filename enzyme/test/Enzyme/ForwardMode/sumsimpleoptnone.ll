@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -instsimplify -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -instsimplify -adce -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(instsimplify,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline nounwind uwtable
@@ -58,8 +58,8 @@ attributes #0 = { noinline nounwind uwtable optnone }
 ; CHECK-NEXT:   %[[i4:.+]] = load double, double* %[[i3]]
 ; CHECK-NEXT:   %[[add:.+]] = fadd fast double %[[i4]], %[[i1]]
 ; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %[[i5]], %[[i2]]
-; CHECK-NEXT:   store double %[[add]], double* %[[i3]]
 ; CHECK-NEXT:   store double %[[i6]], double* %[[ipl]]
+; CHECK-NEXT:   store double %[[add]], double* %[[i3]]
 ; CHECK-NEXT:   br label %for.cond
 
 ; CHECK: for.end:                                          ; preds = %for.cond

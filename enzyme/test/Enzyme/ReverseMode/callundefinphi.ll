@@ -1,4 +1,6 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -simplifycfg -correlated-propagation -instsimplify -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -mem2reg -early-cse -simplifycfg -correlated-propagation -instsimplify -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,early-cse,%simplifycfg,correlated-propagation,instsimplify,adce)" -S | FileCheck %s
+
 source_filename = "/mnt/Data/git/Enzyme/enzyme/test/Integration/eigensumsqdyn.cpp"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -495,8 +497,8 @@ attributes #22 = { readnone speculatable }
 ; CHECK-NEXT:   br i1 %cmp12.i, label %for.body14.i, label %for.cond.cleanup13.i
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.body.i.i
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call.i.i.i.i.i.i.i'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %call.i.i.i.i.i.i.i)
+; CHECK-NEXT:   call void @free(i8* nonnull %"call.i.i.i.i.i.i.i'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %call.i.i.i.i.i.i.i)
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.body.i.i:                               ; preds = %invert_ZN5Eigen8internal26call_dense_assignment_loopINS_6MatrixIdLin1ELin1ELi0ELin1ELin1EEENS_13CwiseBinaryOpINS0_20scalar_difference_opIddEEKS3_S7_EENS0_9assign_opIddEEEEvRT_RKT0_RKT1_.exit, %incinvertfor.body.i.i
@@ -522,8 +524,8 @@ attributes #22 = { readnone speculatable }
 
 ; CHECK: invert_ZN5Eigen8internal26call_dense_assignment_loopINS_6MatrixIdLin1ELin1ELi0ELin1ELin1EEENS_13CwiseBinaryOpINS0_20scalar_difference_opIddEEKS3_S7_EENS0_9assign_opIddEEEEvRT_RKT0_RKT1_.exit: ; preds = %invertfor.body.i
 ; CHECK-NEXT:   call void @diffesubfn(double* nonnull %[[unwrap]], double* nonnull %[[ipc8]], double* nonnull %0, double* nonnull %"'ipc")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call.i.i.i.i.i.i.i13'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %call.i.i.i.i.i.i.i13)
+; CHECK-NEXT:   call void @free(i8* nonnull %"call.i.i.i.i.i.i.i13'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %call.i.i.i.i.i.i.i13)
 ; CHECK-NEXT:   br label %invertfor.body.i.i
 
 ; CHECK: invertfor.body.i:                                 ; preds = %invertfor.cond10.preheader.i, %incinvertfor.body.i
@@ -708,7 +710,7 @@ attributes #22 = { readnone speculatable }
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.body
 ; CHECK-NEXT:   %[[tofree:.+]] = bitcast double* %tapeArg to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %[[tofree]])
+; CHECK-NEXT:   call void @free(i8* nonnull %[[tofree]])
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.body:                                   ; preds = %for.body, %incinvertfor.body

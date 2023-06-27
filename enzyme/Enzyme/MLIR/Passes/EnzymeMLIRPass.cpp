@@ -10,14 +10,14 @@
 // a generic parallel for representation
 //===----------------------------------------------------------------------===//
 
-#include "../../EnzymeLogic.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/GradientUtils.h"
+#include "Interfaces/GradientUtilsReverse.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
-#include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/FunctionInterfaces.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -90,26 +90,108 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     CI->erase();
   }
 
+  template <typename T>
+  void HandleAutoDiffReverse(SymbolTableCollection &symbolTable, T CI) {
+    std::vector<DIFFE_TYPE> constants;
+    SmallVector<mlir::Value, 2> args;
+
+    size_t truei = 0;
+    auto activityAttr = CI.getActivity();
+
+    for (unsigned i = 0; i < CI.getInputs().size() - 1; ++i) {
+      mlir::Value res = CI.getInputs()[i];
+
+      auto mop = activityAttr[truei];
+      auto iattr = cast<mlir::enzyme::ActivityAttr>(mop);
+      DIFFE_TYPE ty = (DIFFE_TYPE)(iattr.getValue());
+
+      constants.push_back(ty);
+      args.push_back(res);
+      if (ty == DIFFE_TYPE::DUP_ARG || ty == DIFFE_TYPE::DUP_NONEED) {
+        ++i;
+        res = CI.getInputs()[i];
+        args.push_back(res);
+      }
+
+      truei++;
+    }
+
+    // Add the return gradient
+    mlir::Value res = CI.getInputs()[CI.getInputs().size() - 1];
+    args.push_back(res);
+
+    auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
+    auto fn = cast<FunctionOpInterface>(symbolOp);
+
+    DIFFE_TYPE retType =
+        fn.getNumResults() == 0 ? DIFFE_TYPE::CONSTANT : DIFFE_TYPE::DUP_ARG;
+
+    MTypeAnalysis TA;
+    auto type_args = TA.getAnalyzedTypeInfo(fn);
+    auto mode = DerivativeMode::ReverseModeGradient;
+    bool freeMemory = true;
+    size_t width = 1;
+
+    std::vector<bool> volatile_args;
+    for (auto &a : fn.getFunctionBody().getArguments()) {
+      volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
+    }
+
+    FunctionOpInterface newFunc = Logic.CreateReverseDiff(
+        fn, retType, constants, TA,
+        /*should return*/ false, mode, freeMemory, width,
+        /*addedType*/ nullptr, type_args, volatile_args,
+        /*augmented*/ nullptr, symbolTable);
+
+    OpBuilder builder(CI);
+    auto dCI = builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
+                                            newFunc.getResultTypes(), args);
+    CI.replaceAllUsesWith(dCI);
+    CI->erase();
+  }
+
   void lowerEnzymeCalls(SymbolTableCollection &symbolTable,
                         FunctionOpInterface op) {
-    SmallVector<Operation *> toLower;
-    op->walk([&](enzyme::ForwardDiffOp dop) {
-      auto *symbolOp =
-          symbolTable.lookupNearestSymbolFrom(dop, dop.getFnAttr());
-      auto callableOp = cast<FunctionOpInterface>(symbolOp);
+    {
+      SmallVector<Operation *> toLower;
+      op->walk([&](enzyme::ForwardDiffOp dop) {
+        auto *symbolOp =
+            symbolTable.lookupNearestSymbolFrom(dop, dop.getFnAttr());
+        auto callableOp = cast<FunctionOpInterface>(symbolOp);
 
-      lowerEnzymeCalls(symbolTable, callableOp);
-      toLower.push_back(dop);
-    });
+        lowerEnzymeCalls(symbolTable, callableOp);
+        toLower.push_back(dop);
+      });
 
-    for (auto T : toLower) {
-      if (auto F = dyn_cast<enzyme::ForwardDiffOp>(T)) {
-        HandleAutoDiff(symbolTable, F);
-      } else {
-        llvm_unreachable("Illegal type");
+      for (auto T : toLower) {
+        if (auto F = dyn_cast<enzyme::ForwardDiffOp>(T)) {
+          HandleAutoDiff(symbolTable, F);
+        } else {
+          llvm_unreachable("Illegal type");
+        }
+      }
+    };
+
+    {
+      SmallVector<Operation *> toLower;
+      op->walk([&](enzyme::AutoDiffOp dop) {
+        auto *symbolOp =
+            symbolTable.lookupNearestSymbolFrom(dop, dop.getFnAttr());
+        auto callableOp = cast<FunctionOpInterface>(symbolOp);
+
+        lowerEnzymeCalls(symbolTable, callableOp);
+        toLower.push_back(dop);
+      });
+
+      for (auto T : toLower) {
+        if (auto F = dyn_cast<enzyme::AutoDiffOp>(T)) {
+          HandleAutoDiffReverse(symbolTable, F);
+        } else {
+          llvm_unreachable("Illegal type");
+        }
       }
     }
-  }
+  };
 };
 
 } // end anonymous namespace

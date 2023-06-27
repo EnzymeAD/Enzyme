@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 define void @caller(float* %tmp6, float* %tmp7) {
   call void (i8*, ...) @_Z17__enzyme_autodiffPvz(i8* bitcast (float (float*)* @kernel_main_wrapped to i8*), float* %tmp6, float* %tmp7)
@@ -86,7 +87,7 @@ declare i8* @malloc(i64)
 ; CHECK-NEXT:   %1 = load float, float* %"tmp1'", align 4
 ; CHECK-NEXT:   %2 = fadd fast float %1, %0
 ; CHECK-NEXT:   store float %2, float* %"tmp1'", align 4
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"tmp11'mi")
-; CHECK-NEXT:   tail call void @free(i8* %tmp11)
+; CHECK-NEXT:   call void @free(i8* nonnull %"tmp11'mi")
+; CHECK-NEXT:   call void @free(i8* %tmp11)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

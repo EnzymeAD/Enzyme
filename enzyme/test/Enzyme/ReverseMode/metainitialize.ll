@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -early-cse -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -early-cse -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,early-cse,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 ; #include <math.h>
 ;
@@ -205,8 +206,8 @@ attributes #5 = { nounwind }
 ; CHECK-NEXT:   %[[ipc:.+]] = bitcast i8* %[[arrayidx:.+]] to double*
 ; CHECK-NEXT:   %[[toreturn:.+]] = load double, double* %[[ipc]], align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"'ipc", align 8
-; CHECK-NEXT:   tail call void @free(i8* nonnull %[[callp]])
-; CHECK-NEXT:   tail call void @free(i8* %[[call]])
+; CHECK-NEXT:   call void @free(i8* nonnull %[[callp]])
+; CHECK-NEXT:   call void @free(i8* %[[call]])
 ; CHECK-NEXT:   %[[iv:.+]] = insertvalue { double } undef, double %[[toreturn]], 0
 ; CHECK-NEXT:   ret { double } %[[iv]]
 ; CHECK-NEXT: }

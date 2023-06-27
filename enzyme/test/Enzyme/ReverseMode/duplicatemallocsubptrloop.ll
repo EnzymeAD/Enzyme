@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -instsimplify -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -simplifycfg -instsimplify -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,%simplifycfg,instsimplify,adce)" -S | FileCheck %s
 
 @.str = private unnamed_addr constant [28 x i8] c"original =%f derivative=%f\0A\00", align 1
 
@@ -68,8 +69,8 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %"a4'ac_malloccache" = bitcast i8* %malloccall to double**
 ; CHECK-NEXT:   %2 = getelementptr inbounds { double**, double* }, { double**, double* }* %1, i32 0, i32 0
 ; CHECK-NEXT:   store double** %"a4'ac_malloccache", double*** %2
-; CHECK-NEXT:   %malloccall4 = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
-; CHECK-NEXT:   %r_malloccache = bitcast i8* %malloccall4 to double*
+; CHECK-NEXT:   %[[malloccall4:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
+; CHECK-NEXT:   %r_malloccache = bitcast i8* %[[malloccall4]] to double*
 ; CHECK-NEXT:   %3 = getelementptr inbounds { double**, double* }, { double**, double* }* %1, i32 0, i32 1
 ; CHECK-NEXT:   store double* %r_malloccache, double** %3
 ; CHECK-NEXT:   br label %loop
@@ -114,8 +115,8 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = extractvalue { double**, double* } %tapeArg, 0
 ; CHECK-NEXT:   %1 = extractvalue { double**, double* } %tapeArg, 1
-; CHECK-NEXT:   %malloccall8 = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
-; CHECK-NEXT:   %"p2'mi_malloccache" = bitcast i8* %malloccall8 to i8**
+; CHECK-NEXT:   %[[malloccall8:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
+; CHECK-NEXT:   %"p2'mi_malloccache" = bitcast i8* %[[malloccall8]] to i8**
 ; CHECK-NEXT:   br label %loop
 
 ; CHECK: loop:                                             ; preds = %loop, %entry
@@ -133,11 +134,11 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   br i1 %a15, label %remat_enter, label %loop
 
 ; CHECK: invertentry:                                      ; preds = %remat_enter
-; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall8)
+; CHECK-NEXT:   call void @free(i8* nonnull %[[malloccall8]])
 ; CHECK-NEXT:   %4 = bitcast double** %0 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %4)
+; CHECK-NEXT:   call void @free(i8* nonnull %4)
 ; CHECK-NEXT:   %5 = bitcast double* %1 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %5)
+; CHECK-NEXT:   call void @free(i8* nonnull %5)
 ; CHECK-NEXT:   ret void
 
 ; CHECK: incinvertloop:                                    ; preds = %remat_enter
@@ -154,26 +155,26 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %_unwrap = trunc i64 %"iv'ac.0" to i32
 ; CHECK-NEXT:   %"a13'ipg_unwrap" = getelementptr inbounds double, double* %"out'", i32 %_unwrap
 ; CHECK-NEXT:   %7 = load double, double* %"a13'ipg_unwrap", align 8
-; CHECK-NEXT:   store double 0.000000e+00, double* %"a13'ipg_unwrap", align 8, !alias.scope !19, !noalias !22
+; CHECK-NEXT:   store double 0.000000e+00, double* %"a13'ipg_unwrap", align 8, !alias.scope !{{[0-9]+}}, !noalias !{{[0-9]+}}
 ; CHECK-NEXT:   %8 = extractvalue { double**, double* } %tapeArg, 1
 ; CHECK-NEXT:   %9 = getelementptr inbounds double, double* %8, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %10 = load double, double* %9, align 8
-; CHECK-NEXT:   %m0differ = fmul fast double %7, %10
-; CHECK-NEXT:   %m1differ = fmul fast double %7, %10
-; CHECK-NEXT:   %11 = fadd fast double %m0differ, %m1differ
-; CHECK-NEXT:   %12 = extractvalue { double**, double* } %tapeArg, 0
-; CHECK-NEXT:   %13 = getelementptr inbounds double*, double** %12, i64 %"iv'ac.0"
-; CHECK-NEXT:   %14 = load double*, double** %13, align 8
-; CHECK-NEXT:   %15 = load double, double* %14
-; CHECK-NEXT:   %16 = fadd fast double %15, %11
-; CHECK-NEXT:   store double %16, double* %14
+; CHECK-NEXT:   %[[m0differ:.+]] = fmul fast double %7, %10
+; CHECK-NEXT:   %[[m1differ:.+]] = fmul fast double %7, %10
+; CHECK-NEXT:   %[[i11:.+]] = fadd fast double %[[m0differ]], %[[m1differ]]
+; CHECK-NEXT:   %[[i12:.+]] = extractvalue { double**, double* } %tapeArg, 0
+; CHECK-NEXT:   %[[i13:.+]] = getelementptr inbounds double*, double** %[[i12]], i64 %"iv'ac.0"
+; CHECK-NEXT:   %[[i14:.+]] = load double*, double** %[[i13]], align 8
+; CHECK-NEXT:   %[[i15:.+]] = load double, double* %[[i14]]
+; CHECK-NEXT:   %[[i16:.+]] = fadd fast double %[[i15]], %[[i11]]
+; CHECK-NEXT:   store double %[[i16:.+]], double* %[[i14]]
 ; CHECK-NEXT:   %p3_unwrap = bitcast i8* %remat_p2 to double**
-; CHECK-NEXT:   %17 = getelementptr inbounds i8*, i8** %"p2'mi_malloccache", i64 %"iv'ac.0"
-; CHECK-NEXT:   %18 = load i8*, i8** %17, align 8
-; CHECK-NEXT:   %"p3'ipc_unwrap" = bitcast i8* %18 to double**
+; CHECK-NEXT:   %[[i17:.+]] = getelementptr inbounds i8*, i8** %"p2'mi_malloccache", i64 %"iv'ac.0"
+; CHECK-NEXT:   %[[i18:.+]] = load i8*, i8** %[[i17]], align 8
+; CHECK-NEXT:   %"p3'ipc_unwrap" = bitcast i8* %[[i18]] to double**
 ; CHECK-NEXT:   call void @diffef(double** %p3_unwrap, double** %"p3'ipc_unwrap")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %18)
-; CHECK-NEXT:   tail call void @free(i8* %remat_p2)
-; CHECK-NEXT:   %19 = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   br i1 %19, label %invertentry, label %incinvertloop
+; CHECK-NEXT:   call void @free(i8* nonnull %[[i18]])
+; CHECK-NEXT:   call void @free(i8* %remat_p2)
+; CHECK-NEXT:   %[[i19:.+]] = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   br i1 %[[i19]], label %invertentry, label %incinvertloop
 ; CHECK-NEXT: }

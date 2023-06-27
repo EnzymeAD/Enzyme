@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 declare i8* @malloc(i64)
 
@@ -39,17 +40,17 @@ entry:
 ; CHECK-NEXT:   %tapeArg1 = extractvalue { { i8*, i8* }, i8*, double } %truetape, 0
 ; CHECK-NEXT:   %"m'ipl" = load double*, double** %"a'ipc", align 8
 ; CHECK-NEXT:   %ld = extractvalue { { i8*, i8* }, i8*, double } %truetape, 2
-; CHECK-NEXT:   %m0diffeld = fmul fast double %differeturn, %ld
-; CHECK-NEXT:   %m1diffeld = fmul fast double %differeturn, %ld
-; CHECK-NEXT:   %1 = fadd fast double %m0diffeld, %m1diffeld
-; CHECK-NEXT:   %2 = load double, double* %"m'ipl", align 8
-; CHECK-NEXT:   %3 = fadd fast double %2, %1
-; CHECK-NEXT:   store double %3, double* %"m'ipl", align 8
-; CHECK-NEXT:   %4 = load double, double* %"m'ipl", align 8
+; CHECK-NEXT:   %[[m0diffeld:.+]] = fmul fast double %differeturn, %ld
+; CHECK-NEXT:   %[[m1diffeld:.+]] = fmul fast double %differeturn, %ld
+; CHECK-NEXT:   %[[i1:.+]] = fadd fast double %[[m0diffeld]], %[[m1diffeld]]
+; CHECK-NEXT:   %[[i2:.+]] = load double, double* %"m'ipl", align 8
+; CHECK-NEXT:   %[[i3:.+]] = fadd fast double %[[i2:.+]], %[[i1:.+]]
+; CHECK-NEXT:   store double %[[i3:.+]], double* %"m'ipl", align 8
+; CHECK-NEXT:   %[[i4:.+]] = load double, double* %"m'ipl", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"m'ipl", align 8
 ; CHECK-NEXT:   call void @diffeset(double** undef, double** undef, { i8*, i8* } %tapeArg1)
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"malloccall'mi")
-; CHECK-NEXT:   %5 = insertvalue { double } undef, double %4, 0
-; CHECK-NEXT:   ret { double } %5
+; CHECK-NEXT:   call void @free(i8* nonnull %"malloccall'mi")
+; CHECK-NEXT:   %[[i5:.+]] = insertvalue { double } undef, double %[[i4:.+]], 0
+; CHECK-NEXT:   ret { double } %[[i5:.+]]
 ; CHECK-NEXT: }
 

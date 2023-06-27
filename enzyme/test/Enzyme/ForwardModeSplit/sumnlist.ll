@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -early-cse-memssa -instcombine -instsimplify -simplifycfg -adce -licm -correlated-propagation -instcombine -correlated-propagation -adce -instsimplify -correlated-propagation -jump-threading -instsimplify -early-cse -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -early-cse -instcombine -instsimplify -simplifycfg -adce -correlated-propagation -instcombine -correlated-propagation -adce -instsimplify -correlated-propagation -jump-threading -instsimplify -early-cse -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,gvn,early-cse,instcombine,instsimplify,%simplifycfg,adce,correlated-propagation,instcombine,correlated-propagation,adce,instsimplify,correlated-propagation,jump-threading,instsimplify,early-cse,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 ; #include <stdlib.h>
 ; #include <stdio.h>
@@ -106,7 +107,7 @@ attributes #4 = { nounwind }
 ; CHECK-DAG:   %[[sum019:.+]] = phi {{(fast )?}}double [ %[[i5:.+]], %for.cond.cleanup4 ], [ 0.000000e+00, %entry ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %[[i1:.+]] = getelementptr inbounds double*, double** %truetape.unpack, i64 %iv
-; CHECK-NEXT:   %[[ilphi:.+]] = load double*, double** %[[i1]], align 8, !invariant.group !16
+; CHECK-NEXT:   %[[ilphi:.+]] = load double*, double** %[[i1]], align 8, !invariant.group !{{[0-9]+}}
 ; CHECK-NEXT:   br label %for.body5
 
 ; CHECK: for.cond.cleanup:                                 ; preds = %for.cond.cleanup4, %entry
@@ -115,7 +116,7 @@ attributes #4 = { nounwind }
 
 ; CHECK: for.cond.cleanup4:                                ; preds = %for.body5
 ; CHECK-NEXT:   %[[i2:.+]] = getelementptr inbounds %struct.n*, %struct.n** %[[truetapeunpack8]], i64 %iv
-; CHECK-NEXT:   %[[i3:.+]] = load %struct.n*, %struct.n** %[[i2]], align 8, !invariant.group !17
+; CHECK-NEXT:   %[[i3:.+]] = load %struct.n*, %struct.n** %[[i2]], align 8, !invariant.group !{{[0-9]+}}
 ; CHECK-NEXT:   %cmp = icmp eq %struct.n* %[[i3]], null
 ; CHECK-NEXT:   br i1 %cmp, label %for.cond.cleanup, label %for.cond1.preheader
 

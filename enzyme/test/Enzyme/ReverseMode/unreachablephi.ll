@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instsimplify -gvn -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -simplifycfg -instsimplify -gvn -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,%simplifycfg,instsimplify,gvn,adce)" -S | FileCheck %s
 
 source_filename = "text"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
@@ -19,7 +20,7 @@ top:
   %i10 = getelementptr inbounds i8, i8 addrspace(11)* %i3, i64 56
   %i11 = bitcast i8 addrspace(11)* %i10 to i64 addrspace(11)*
   %i12 = load i64, i64 addrspace(11)* %i11, align 8
-  %i13 = call i64 @jl_object_id({} addrspace(10)* nonnull %arg1) "nofree"
+  %i13 = call i64 @jl_object_id({} addrspace(10)* nonnull %arg1) nofree
   %i14 = shl i64 %i13, 21
   %i15 = xor i64 %i14, -1
   %i16 = add i64 %i13, %i15

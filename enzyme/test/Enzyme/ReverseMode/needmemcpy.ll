@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg)" -S | FileCheck %s
 
 source_filename = "/mnt/Data/git/Enzyme/enzyme/test/Integration/integrateconst.cpp"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
@@ -278,37 +279,37 @@ attributes #8 = { noreturn nounwind }
 ; CHECK-NEXT:   br i1 %cmp2, label %while.body.i.i.i, label %invertexit
 
 ; CHECK: invertentry:                                      ; preds = %invertwhile.body.i.i.i
-; CHECK-NEXT:   %d0diffet = fdiv fast double %5, 3.000000e+00
+; CHECK-NEXT:   %[[d0diffet:.+]] = fdiv fast double %[[i5:.+]], 3.000000e+00
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull align 8 %"bc'ipc", i8 0, i64 8, i1 false)
-; CHECK-NEXT:   %1 = insertvalue { double } undef, double %d0diffet, 0
+; CHECK-NEXT:   %[[i1:.+]] = insertvalue { double } undef, double %[[d0diffet]], 0
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
-; CHECK-NEXT:   ret { double } %1
+; CHECK-NEXT:   ret { double } %[[i1]]
 
 ; CHECK: invertwhile.body.i.i.i:                           ; preds = %invertexit, %incinvertwhile.body.i.i.i
-; CHECK-NEXT:   %"div'de.0" = phi double [ 0.000000e+00, %invertexit ], [ %5, %incinvertwhile.body.i.i.i ]
-; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 2, %invertexit ], [ %10, %incinvertwhile.body.i.i.i ]
-; CHECK-NEXT:   %2 = load double, double* %"x'ipa", align 8
+; CHECK-NEXT:   %"div'de.0" = phi double [ 0.000000e+00, %invertexit ], [ %[[i5]], %incinvertwhile.body.i.i.i ]
+; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 2, %invertexit ], [ %[[i10:.+]], %incinvertwhile.body.i.i.i ]
+; CHECK-NEXT:   %[[i2:.+]] = load double, double* %"x'ipa", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'ipa", align 8
-; CHECK-NEXT:   %3 = getelementptr inbounds double, double* %mul.i_malloccache, i64 %"iv'ac.0"
-; CHECK-NEXT:   %4 = load double, double* %3, align 8, !invariant.group ![[ig]]
-; CHECK-NEXT:   %m0diffediv = fmul fast double %2, %4
-; CHECK-NEXT:   %m1diffemul.i = fmul fast double %2, %div
-; CHECK-NEXT:   %5 = fadd fast double %"div'de.0", %m0diffediv
-; CHECK-NEXT:   %m1diffea1 = fmul fast double %m1diffemul.i, -1.200000e+00
-; CHECK-NEXT:   %6 = fadd fast double %2, %m1diffea1
-; CHECK-NEXT:   %7 = load double, double* %"x'ipa", align 8
-; CHECK-NEXT:   %8 = fadd fast double %7, %6
-; CHECK-NEXT:   store double %8, double* %"x'ipa", align 8
-; CHECK-NEXT:   %9 = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   br i1 %9, label %invertentry, label %incinvertwhile.body.i.i.i
+; CHECK-NEXT:   %[[i3:.+]] = getelementptr inbounds double, double* %mul.i_malloccache, i64 %"iv'ac.0"
+; CHECK-NEXT:   %[[i4:.+]] = load double, double* %[[i3]], align 8, !invariant.group ![[ig]]
+; CHECK-NEXT:   %[[m0diffediv:.+]] = fmul fast double %[[i2]], %[[i4]]
+; CHECK-NEXT:   %[[i5]] = fadd fast double %"div'de.0", %[[m0diffediv]]
+; CHECK-NEXT:   %[[m1diffemuli:.+]] = fmul fast double %[[i2]], %div
+; CHECK-NEXT:   %[[m1diffea1:.+]] = fmul fast double %[[m1diffemuli]], -1.200000e+00
+; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %[[i2]], %[[m1diffea1]]
+; CHECK-NEXT:   %[[i7:.+]] = load double, double* %"x'ipa", align 8
+; CHECK-NEXT:   %[[i8:.+]] = fadd fast double %[[i7]], %[[i6]]
+; CHECK-NEXT:   store double %[[i8]], double* %"x'ipa", align 8
+; CHECK-NEXT:   %[[i9:.+]] = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   br i1 %[[i9]], label %invertentry, label %incinvertwhile.body.i.i.i
 
 ; CHECK: incinvertwhile.body.i.i.i:                        ; preds = %invertwhile.body.i.i.i
-; CHECK-NEXT:   %10 = add nsw i64 %"iv'ac.0", -1
+; CHECK-NEXT:   %[[i10]] = add nsw i64 %"iv'ac.0", -1
 ; CHECK-NEXT:   br label %invertwhile.body.i.i.i
 
 ; CHECK: invertexit:                                       ; preds = %while.body.i.i.i
-; CHECK-NEXT:   %11 = load double, double* %"x'ipa", align 8
-; CHECK-NEXT:   %12 = fadd fast double %11, %differeturn
-; CHECK-NEXT:   store double %12, double* %"x'ipa", align 8
+; CHECK-NEXT:   %[[i11:.+]] = load double, double* %"x'ipa", align 8
+; CHECK-NEXT:   %[[i12:.+]] = fadd fast double %[[i11]], %differeturn
+; CHECK-NEXT:   store double %[[i12]], double* %"x'ipa", align 8
 ; CHECK-NEXT:   br label %invertwhile.body.i.i.i
 ; CHECK-NEXT: }

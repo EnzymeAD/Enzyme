@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -correlated-propagation -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,adce,correlated-propagation,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline norecurse nounwind uwtable
 define dso_local zeroext i1 @metasubf(double* nocapture %x) local_unnamed_addr #0 {
@@ -70,9 +71,9 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   call void @diffemetasubf(double* %x, double* %"x'")
 ; CHECK-NEXT:   %[[px:.+]] = load double, double* %"x'"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'"
-; CHECK-NEXT:   %m0diffe = fmul fast double %[[px]], %0
-; CHECK-NEXT:   %m1diffe = fmul fast double %[[px]], %0
-; CHECK-NEXT:   %[[diffe:.+]] = fadd fast double %m0diffe, %m1diffe
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %[[px]], %0
+; CHECK-NEXT:   %[[m1diffe:.+]] = fmul fast double %[[px]], %0
+; CHECK-NEXT:   %[[diffe:.+]] = fadd fast double %[[m0diffe]], %[[m1diffe]]
 ; CHECK-NEXT:   %[[dx:.+]] = load double, double* %"x'"
 ; CHECK-NEXT:   %[[ndx:.+]] = fadd fast double %[[dx]], %[[diffe]]
 ; CHECK-NEXT:   store double %[[ndx]], double* %"x'"

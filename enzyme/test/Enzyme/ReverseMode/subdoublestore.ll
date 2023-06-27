@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -simplifycfg -instcombine -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,%simplifycfg,instcombine)" -S | FileCheck %s
 
 source_filename = "subdoublestore.c"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
@@ -84,17 +85,12 @@ attributes #6 = { nounwind }
 ; CHECK-NEXT:   %"call'mi" = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* {{(noundef )?}}nonnull align 1 dereferenceable(16) dereferenceable_or_null(16) %"call'mi", i8 0, i64 16, i1 false)
 ; CHECK-NEXT:   %[[ipc1:.+]] = bitcast i8* %"call'mi" to i64*
-; CHECK-NEXT:   %0 = bitcast i8* %call to i64*
-; CHECK-NEXT:   store i64 %flt, i64* %0, align 8
 ; CHECK-NEXT:   %"arrayidx1'ipg" = getelementptr inbounds i8, i8* %"call'mi", i64 8
-; CHECK-NEXT:   %arrayidx1 = getelementptr inbounds i8, i8* %call, i64 8
 ; CHECK-NEXT:   %[[ipc2:.+]] = bitcast i8* %"arrayidx1'ipg" to i64*
-; CHECK-NEXT:   %1 = bitcast i8* %arrayidx1 to i64*
 ; CHECK-NEXT:   store i64 %integral, i64* %[[ipc2]], align 8
-; CHECK-NEXT:   store i64 %integral, i64* %1, align 8
 ; CHECK-NEXT:   %.fca.0.0.insert = insertvalue { { i8*, i8* }, i64* } {{(undef|poison)}}, i8* %"call'mi", 0, 0
 ; CHECK-NEXT:   %.fca.0.1.insert = insertvalue { { i8*, i8* }, i64* } %.fca.0.0.insert, i8* %call, 0, 1
-; CHECK-NEXT:   %.fca.1.insert = insertvalue { { i8*, i8* }, i64* } %.fca.0.1.insert, i64* %"'ipc1", 1
+; CHECK-NEXT:   %.fca.1.insert = insertvalue { { i8*, i8* }, i64* } %.fca.0.1.insert, i64* %[[ipc1]], 1
 ; CHECK-NEXT:   ret { { i8*, i8* }, i64* } %.fca.1.insert
 ; CHECK-NEXT: }
 
@@ -106,8 +102,8 @@ attributes #6 = { nounwind }
 ; CHECK-NEXT:   %0 = bitcast i8* %"call'mi" to i64*
 ; CHECK-NEXT:   %1 = load i64, i64* %0, align 8
 ; CHECK-NEXT:   store i64 0, i64* %[[ipc]], align 8
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call'mi")
-; CHECK-NEXT:   tail call void @free(i8* %call)
+; CHECK-NEXT:   call void @free(i8* nonnull %"call'mi")
+; CHECK-NEXT:   call void @free(i8* %call)
 ; CHECK-NEXT:   %2 = insertvalue { i64 } undef, i64 %1, 0
 ; CHECK-NEXT:   ret { i64 } %2
 ; CHECK-NEXT: }

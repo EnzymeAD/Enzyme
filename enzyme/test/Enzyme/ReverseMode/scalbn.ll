@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 declare double @scalbn(double, i32)
 declare double @__enzyme_autodiff(i8*, ...)
@@ -18,10 +19,7 @@ entry:
 
 ; CHECK: define internal { double } @diffetest(double %x, i32 %exp, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast double @scalbn(double %x, i32 %exp)
-; CHECK-NEXT:   %1 = call fast double @scalbn(double %differeturn, i32 %exp)
-; CHECK-NEXT:   %2 = fmul fast double %0, 0x3FD3441350A96098
-; CHECK-NEXT:   %3 = fadd fast double %2, %1
-; CHECK-NEXT:   %4 = insertvalue { double } undef, double %3, 0
-; CHECK-NEXT:   ret { double } %4
+; CHECK-NEXT:   %[[v:.+]] = call fast double @scalbn(double %differeturn, i32 %exp)
+; CHECK-NEXT:   %[[r4:.+]] = insertvalue { double } undef, double %[[v]], 0
+; CHECK-NEXT:   ret { double } %[[r4]]
 ; CHECK-NEXT: }

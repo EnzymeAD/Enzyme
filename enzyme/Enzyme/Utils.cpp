@@ -25,8 +25,13 @@
 #include "Utils.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 
+#if LLVM_VERSION_MAJOR >= 16
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+#else
 #include "SCEV/ScalarEvolution.h"
 #include "SCEV/ScalarEvolutionExpander.h"
+#endif
 
 #include "TypeAnalysis/TBAA.h"
 #include "llvm/IR/BasicBlock.h"
@@ -44,8 +49,9 @@
 using namespace llvm;
 
 extern "C" {
-void (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
-                           const void *) = nullptr;
+LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
+                                   const void *, LLVMValueRef,
+                                   LLVMBuilderRef) = nullptr;
 LLVMValueRef (*CustomAllocator)(LLVMBuilderRef, LLVMTypeRef,
                                 /*Count*/ LLVMValueRef,
                                 /*Align*/ LLVMValueRef, uint8_t,
@@ -58,6 +64,28 @@ void (*CustomRuntimeInactiveError)(LLVMBuilderRef, LLVMValueRef,
 LLVMValueRef *(*EnzymePostCacheStore)(LLVMValueRef, LLVMBuilderRef,
                                       uint64_t *size) = nullptr;
 LLVMTypeRef (*EnzymeDefaultTapeType)(LLVMContextRef) = nullptr;
+LLVMValueRef (*EnzymeUndefinedValueForType)(LLVMTypeRef, uint8_t) = nullptr;
+
+LLVMValueRef (*EnzymeSanitizeDerivatives)(LLVMValueRef, LLVMValueRef toset,
+                                          LLVMBuilderRef,
+                                          LLVMValueRef) = nullptr;
+
+extern llvm::cl::opt<bool> EnzymeZeroCache;
+
+// default to false because lacpy is slow
+llvm::cl::opt<bool>
+    EnzymeLapackCopy("enzyme-lapack-copy", cl::init(false), cl::Hidden,
+                     cl::desc("Use blas copy calls to cache matrices"));
+llvm::cl::opt<bool>
+    EnzymeBlasCopy("enzyme-blas-copy", cl::init(true), cl::Hidden,
+                   cl::desc("Use blas copy calls to cache vectors"));
+llvm::cl::opt<bool>
+    EnzymeFastMath("enzyme-fast-math", cl::init(true), cl::Hidden,
+                   cl::desc("Use fast math on derivative compuation"));
+llvm::cl::opt<bool>
+    EnzymeStrongZero("enzyme-strong-zero", cl::init(false), cl::Hidden,
+                     cl::desc("Use additional checks to ensure correct "
+                              "behavior when handling functions with inf"));
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
@@ -117,12 +145,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     name += ".custom@" + std::to_string((size_t)RT);
 
   FunctionType *FT = FunctionType::get(allocType, types, false);
-
-#if LLVM_VERSION_MAJOR >= 9
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
-#else
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
-#endif
 
   if (!F->empty())
     return F;
@@ -203,13 +226,8 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
       Value *tmp = SubZero->getOperand(0);
       Type *tmpT = tmp->getType();
       tmp = BB.CreatePointerCast(tmp, bTy);
-
-#if LLVM_VERSION_MAJOR > 7
       tmp = BB.CreateInBoundsGEP(tmp->getType()->getPointerElementType(), tmp,
                                  prevSize);
-#else
-      tmp = BB.CreateInBoundsGEP(tmp, prevSize);
-#endif
       tmp = BB.CreatePointerCast(tmp, tmpT);
       SubZero->setOperand(0, tmp);
       SubZero->setOperand(2, zeroSize);
@@ -220,16 +238,10 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     Value *zeroSize = B.CreateSub(next, prevSize);
 
     Value *margs[] = {
-#if LLVM_VERSION_MAJOR > 7
-      B.CreateInBoundsGEP(gVal->getType()->getPointerElementType(), gVal,
-                          prevSize),
-#else
-      B.CreateInBoundsGEP(gVal, prevSize),
-#endif
-      ConstantInt::get(Type::getInt8Ty(M.getContext()), 0),
-      zeroSize,
-      ConstantInt::getFalse(M.getContext())
-    };
+        B.CreateInBoundsGEP(gVal->getType()->getPointerElementType(), gVal,
+                            prevSize),
+        ConstantInt::get(Type::getInt8Ty(M.getContext()), 0), zeroSize,
+        ConstantInt::getFalse(M.getContext())};
     Type *tys[] = {margs[0]->getType(), margs[2]->getType()};
     auto memsetF = Intrinsic::getDeclaration(&M, Intrinsic::memset, tys);
     B.CreateCall(memsetF, margs);
@@ -247,7 +259,8 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
 
 llvm::Value *CreateReAllocation(llvm::IRBuilder<> &B, llvm::Value *prev,
                                 llvm::Type *T, llvm::Value *OuterCount,
-                                llvm::Value *InnerCount, llvm::Twine Name,
+                                llvm::Value *InnerCount,
+                                const llvm::Twine &Name,
                                 llvm::CallInst **caller, bool ZeroMem) {
   auto newFunc = B.GetInsertBlock()->getParent();
 
@@ -274,8 +287,8 @@ llvm::Value *CreateReAllocation(llvm::IRBuilder<> &B, llvm::Value *prev,
 }
 
 Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
-                        Twine Name, CallInst **caller, Instruction **ZeroMem,
-                        bool isDefault) {
+                        const Twine &Name, CallInst **caller,
+                        Instruction **ZeroMem, bool isDefault) {
   Value *res;
   auto &M = *Builder.GetInsertBlock()->getParent()->getParent();
   auto AlignI = M.getDataLayout().getTypeAllocSizeInBits(T) / 8;
@@ -414,7 +427,7 @@ CallInst *CreateDealloc(llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
   return res;
 }
 
-EnzymeFailure::EnzymeFailure(llvm::Twine RemarkName,
+EnzymeFailure::EnzymeFailure(const llvm::Twine &RemarkName,
                              const llvm::DiagnosticLocation &Loc,
                              const llvm::Instruction *CodeRegion)
     : DiagnosticInfoUnsupported(*CodeRegion->getParent()->getParent(),
@@ -466,11 +479,7 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
                                         Type::getInt8PtrTy(M.getContext())},
                                        false);
 
-#if LLVM_VERSION_MAJOR >= 9
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
-#else
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
-#endif
 
   if (F->empty()) {
     F->setLinkage(Function::LinkageTypes::InternalLinkage);
@@ -501,22 +510,14 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
           FunctionType::get(Type::getInt32Ty(M.getContext()),
                             {Type::getInt8PtrTy(M.getContext())}, false);
 
-#if LLVM_VERSION_MAJOR >= 9
       auto PutsF = M.getOrInsertFunction("puts", FT);
-#else
-      auto PutsF = M.getOrInsertFunction("puts", FT);
-#endif
       EB.CreateCall(PutsF, msg);
 
       FunctionType *FT2 =
           FunctionType::get(Type::getVoidTy(M.getContext()),
                             {Type::getInt32Ty(M.getContext())}, false);
 
-#if LLVM_VERSION_MAJOR >= 9
       auto ExitF = M.getOrInsertFunction("exit", FT2);
-#else
-      auto ExitF = M.getOrInsertFunction("exit", FT2);
-#endif
       EB.CreateCall(ExitF,
                     ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
     }
@@ -539,32 +540,36 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
 Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
                                              unsigned dstalign,
                                              unsigned srcalign,
-                                             unsigned dstaddr,
-                                             unsigned srcaddr) {
+                                             unsigned dstaddr, unsigned srcaddr,
+                                             unsigned bitwidth) {
   assert(elementType->isFloatingPointTy());
-  std::string name = "__enzyme_memcpyadd_" + tofltstr(elementType) + "da" +
-                     std::to_string(dstalign) + "sa" + std::to_string(srcalign);
+  std::string name = "__enzyme_memcpy";
+  if (bitwidth != 64)
+    name += std::to_string(bitwidth);
+  name += "add_" + tofltstr(elementType) + "da" + std::to_string(dstalign) +
+          "sa" + std::to_string(srcalign);
   if (dstaddr)
     name += "dadd" + std::to_string(dstaddr);
   if (srcaddr)
     name += "sadd" + std::to_string(srcaddr);
-  FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                                       {PointerType::get(elementType, dstaddr),
-                                        PointerType::get(elementType, srcaddr),
-                                        Type::getInt64Ty(M.getContext())},
-                                       false);
+  FunctionType *FT =
+      FunctionType::get(Type::getVoidTy(M.getContext()),
+                        {PointerType::get(elementType, dstaddr),
+                         PointerType::get(elementType, srcaddr),
+                         IntegerType::get(M.getContext(), bitwidth)},
+                        false);
 
-#if LLVM_VERSION_MAJOR >= 9
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
-#else
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
-#endif
 
   if (!F->empty())
     return F;
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
   F->addFnAttr(Attribute::ArgMemOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   F->addParamAttr(0, Attribute::NoCapture);
@@ -593,13 +598,8 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     PHINode *idx = B.CreatePHI(num->getType(), 2, "idx");
     idx->addIncoming(ConstantInt::get(num->getType(), 0), entry);
 
-#if LLVM_VERSION_MAJOR > 7
     Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
     LoadInst *dstl = B.CreateLoad(elementType, dsti, "dst.i.l");
-#else
-    Value *dsti = B.CreateInBoundsGEP(dst, idx, "dst.i");
-    LoadInst *dstl = B.CreateLoad(dsti, "dst.i.l");
-#endif
     StoreInst *dsts = B.CreateStore(Constant::getNullValue(elementType), dsti);
     if (dstalign) {
 #if LLVM_VERSION_MAJOR >= 10
@@ -611,13 +611,8 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
 #endif
     }
 
-#if LLVM_VERSION_MAJOR > 7
     Value *srci = B.CreateInBoundsGEP(elementType, src, idx, "src.i");
     LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
-#else
-    Value *srci = B.CreateInBoundsGEP(src, idx, "src.i");
-    LoadInst *srcl = B.CreateLoad(srci, "src.i.l");
-#endif
     StoreInst *srcs = B.CreateStore(B.CreateFAdd(srcl, dstl), srci);
     if (srcalign) {
 #if LLVM_VERSION_MAJOR >= 10
@@ -642,9 +637,40 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
   return F;
 }
 
-Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
-                                   unsigned dstalign, unsigned srcalign) {
-  Type *elementType = T->getPointerElementType();
+void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                           llvm::ArrayRef<llvm::Value *> args,
+                           llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
+  std::string copy_name =
+      (blas.prefix + blas.floatType + "copy" + blas.suffix).str();
+
+  SmallVector<Type *, 1> tys;
+  for (auto arg : args)
+    tys.push_back(arg->getType());
+
+  auto FT = FunctionType::get(Type::getVoidTy(M.getContext()), tys, false);
+  auto fn = M.getOrInsertFunction(copy_name, FT);
+
+  B.CreateCall(fn, args, bundles);
+}
+
+void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
+                             BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
+                             llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
+  std::string copy_name = (blas.floatType + "lacpy" + blas.suffix).str();
+
+  SmallVector<Type *, 1> tys;
+  for (auto arg : args)
+    tys.push_back(arg->getType());
+
+  auto FT = FunctionType::get(Type::getVoidTy(M.getContext()), tys, false);
+  auto fn = M.getOrInsertFunction(copy_name, FT);
+
+  B.CreateCall(fn, args, bundles);
+}
+
+Function *getOrInsertMemcpyStrided(Module &M, Type *elementType, PointerType *T,
+                                   Type *IT, unsigned dstalign,
+                                   unsigned srcalign) {
   assert(elementType->isFloatingPointTy());
   std::string name = "__enzyme_memcpy_" + tofltstr(elementType) + "_" +
                      std::to_string(cast<IntegerType>(IT)->getBitWidth()) +
@@ -653,25 +679,28 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
   FunctionType *FT =
       FunctionType::get(Type::getVoidTy(M.getContext()), {T, T, IT, IT}, false);
 
-#if LLVM_VERSION_MAJOR >= 9
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
-#else
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
-#endif
 
   if (!F->empty())
     return F;
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
   F->addFnAttr(Attribute::ArgMemOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   F->addParamAttr(0, Attribute::NoCapture);
+  F->addParamAttr(0, Attribute::NoAlias);
   F->addParamAttr(1, Attribute::NoCapture);
+  F->addParamAttr(1, Attribute::NoAlias);
   F->addParamAttr(0, Attribute::WriteOnly);
   F->addParamAttr(1, Attribute::ReadOnly);
 
   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+  BasicBlock *init = BasicBlock::Create(M.getContext(), "init.idx", F);
   BasicBlock *body = BasicBlock::Create(M.getContext(), "for.body", F);
   BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
 
@@ -687,27 +716,35 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
   {
     IRBuilder<> B(entry);
     B.CreateCondBr(B.CreateICmpEQ(num, ConstantInt::get(num->getType(), 0)),
-                   end, body);
+                   end, init);
   }
 
   {
+    IRBuilder<> B2(init);
+    B2.setFastMathFlags(getFast());
+    Value *a = B2.CreateNSWSub(ConstantInt::get(num->getType(), 1), num, "a");
+    Value *negidx = B2.CreateNSWMul(a, stride, "negidx");
+    // Value *negidx =
+    //     B2.CreateNSWAdd(b, ConstantInt::get(num->getType(), 1),
+    //     "negidx");
+    Value *isneg =
+        B2.CreateICmpSLT(stride, ConstantInt::get(num->getType(), 0), "is.neg");
+    Value *startidx = B2.CreateSelect(
+        isneg, negidx, ConstantInt::get(num->getType(), 0), "startidx");
+    B2.CreateBr(body);
+    //}
+
+    //{
     IRBuilder<> B(body);
     B.setFastMathFlags(getFast());
     PHINode *idx = B.CreatePHI(num->getType(), 2, "idx");
     PHINode *sidx = B.CreatePHI(num->getType(), 2, "sidx");
-    idx->addIncoming(ConstantInt::get(num->getType(), 0), entry);
-    sidx->addIncoming(ConstantInt::get(num->getType(), 0), entry);
+    idx->addIncoming(ConstantInt::get(num->getType(), 0), init);
+    sidx->addIncoming(startidx, init);
 
-#if LLVM_VERSION_MAJOR > 7
     Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
     Value *srci = B.CreateInBoundsGEP(elementType, src, sidx, "src.i");
     LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
-#else
-    Value *dsti = B.CreateInBoundsGEP(dst, idx, "dst.i");
-    Value *srci = B.CreateInBoundsGEP(src, sidx, "src.i");
-    LoadInst *srcl = B.CreateLoad(srci, "src.i.l");
-#endif
-
     StoreInst *dsts = B.CreateStore(srcl, dsti);
 
     if (dstalign) {
@@ -726,8 +763,8 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
     }
 
     Value *next =
-        B.CreateNUWAdd(idx, ConstantInt::get(num->getType(), 1), "idx.next");
-    Value *snext = B.CreateNUWAdd(sidx, stride, "sidx.next");
+        B.CreateNSWAdd(idx, ConstantInt::get(num->getType(), 1), "idx.next");
+    Value *snext = B.CreateNSWAdd(sidx, stride, "sidx.next");
     idx->addIncoming(next, body);
     sidx->addIncoming(snext, body);
     B.CreateCondBr(B.CreateICmpEQ(num, next), end, body);
@@ -741,16 +778,137 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
   return F;
 }
 
+Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
+                               IntegerType *IT, unsigned dstalign,
+                               unsigned srcalign) {
+  assert(elementType->isFloatingPointTy());
+#if LLVM_VERSION_MAJOR >= 15
+  if (Mod.getContext().supportsTypedPointers()) {
+#endif
+    assert(PT->getPointerElementType() == elementType);
+#if LLVM_VERSION_MAJOR >= 15
+  }
+#endif
+  std::string name = "__enzyme_memcpy_" + tofltstr(elementType) + "_mat_" +
+                     std::to_string(cast<IntegerType>(IT)->getBitWidth());
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(Mod.getContext()),
+                                       {PT, PT, IT, IT, IT}, false);
+
+  Function *F = cast<Function>(Mod.getOrInsertFunction(name, FT).getCallee());
+
+  if (!F->empty())
+    return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
+  F->addFnAttr(Attribute::ArgMemOnly);
+#endif
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
+  F->addParamAttr(0, Attribute::NoCapture);
+  F->addParamAttr(0, Attribute::NoAlias);
+  F->addParamAttr(1, Attribute::NoCapture);
+  F->addParamAttr(1, Attribute::NoAlias);
+  F->addParamAttr(0, Attribute::WriteOnly);
+  F->addParamAttr(1, Attribute::ReadOnly);
+
+  BasicBlock *entry = BasicBlock::Create(F->getContext(), "entry", F);
+  BasicBlock *init = BasicBlock::Create(F->getContext(), "init.idx", F);
+  BasicBlock *body = BasicBlock::Create(F->getContext(), "for.body", F);
+  BasicBlock *initend = BasicBlock::Create(F->getContext(), "init.end", F);
+  BasicBlock *end = BasicBlock::Create(F->getContext(), "for.end", F);
+
+  auto dst = F->arg_begin();
+  dst->setName("dst");
+  auto src = dst + 1;
+  src->setName("src");
+  auto M = src + 1;
+  M->setName("M");
+  auto N = M + 1;
+  N->setName("N");
+  auto LDA = N + 1;
+  LDA->setName("LDA");
+
+  {
+    IRBuilder<> B(entry);
+    Value *l = B.CreateAdd(M, N, "mul", true, true);
+    // Don't copy a 0*0 matrix
+    B.CreateCondBr(B.CreateICmpEQ(l, ConstantInt::get(IT, 0)), end, init);
+  }
+
+  PHINode *j;
+  {
+    IRBuilder<> B(init);
+    j = B.CreatePHI(IT, 2, "j");
+    j->addIncoming(ConstantInt::get(IT, 0), entry);
+    B.CreateBr(body);
+  }
+
+  {
+    IRBuilder<> B(body);
+    PHINode *i = B.CreatePHI(IT, 2, "i");
+    i->addIncoming(ConstantInt::get(IT, 0), init);
+
+    Value *dsti = B.CreateInBoundsGEP(
+        elementType, dst,
+        B.CreateAdd(i, B.CreateMul(j, M, "", true, true), "", true, true),
+        "dst.i");
+    Value *srci = B.CreateInBoundsGEP(
+        elementType, src,
+        B.CreateAdd(i, B.CreateMul(j, LDA, "", true, true), "", true, true),
+        "dst.i");
+    LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
+
+    StoreInst *dsts = B.CreateStore(srcl, dsti);
+
+    if (dstalign) {
+#if LLVM_VERSION_MAJOR >= 10
+      dsts->setAlignment(Align(dstalign));
+#else
+      dsts->setAlignment(dstalign);
+#endif
+    }
+    if (srcalign) {
+#if LLVM_VERSION_MAJOR >= 10
+      srcl->setAlignment(Align(srcalign));
+#else
+      srcl->setAlignment(srcalign);
+#endif
+    }
+
+    Value *nexti =
+        B.CreateAdd(i, ConstantInt::get(IT, 1), "i.next", true, true);
+    i->addIncoming(nexti, body);
+    B.CreateCondBr(B.CreateICmpEQ(nexti, M), initend, body);
+  }
+
+  {
+    IRBuilder<> B(initend);
+    Value *nextj =
+        B.CreateAdd(j, ConstantInt::get(IT, 1), "j.next", true, true);
+    j->addIncoming(nextj, initend);
+    B.CreateCondBr(B.CreateICmpEQ(nextj, N), end, init);
+  }
+
+  {
+    IRBuilder<> B(end);
+    B.CreateRetVoid();
+  }
+
+  return F;
+}
+
 // TODO implement differential memmove
-Function *getOrInsertDifferentialFloatMemmove(Module &M, Type *T,
-                                              unsigned dstalign,
-                                              unsigned srcalign,
-                                              unsigned dstaddr,
-                                              unsigned srcaddr) {
+Function *
+getOrInsertDifferentialFloatMemmove(Module &M, Type *T, unsigned dstalign,
+                                    unsigned srcalign, unsigned dstaddr,
+                                    unsigned srcaddr, unsigned bitwidth) {
   llvm::errs() << "warning: didn't implement memmove, using memcpy as fallback "
                   "which can result in errors\n";
   return getOrInsertDifferentialFloatMemcpy(M, T, dstalign, srcalign, dstaddr,
-                                            srcaddr);
+                                            srcaddr, bitwidth);
 }
 
 Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
@@ -776,17 +934,17 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   FunctionType *FT =
       FunctionType::get(Type::getVoidTy(M.getContext()), types, false);
 
-#if LLVM_VERSION_MAJOR >= 9
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
-#else
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
-#endif
 
   if (!F->empty())
     return F;
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
   F->addFnAttr(Attribute::ArgMemOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
 
@@ -862,12 +1020,7 @@ llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
   std::string name = "__enzyme_differential_waitall_save";
   FunctionType *FT =
       FunctionType::get(PointerType::getUnqual(reqType), T, false);
-
-#if LLVM_VERSION_MAJOR >= 9
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
-#else
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
-#endif
 
   if (!F->empty())
     return F;
@@ -904,35 +1057,21 @@ llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
   idx->addIncoming(inc, loopBlock);
 
   Value *idxs[] = {idx};
-#if LLVM_VERSION_MAJOR > 7
   Value *ireq =
       B.CreateInBoundsGEP(req->getType()->getPointerElementType(), req, idxs);
   Value *idreq =
       B.CreateInBoundsGEP(req->getType()->getPointerElementType(), dreq, idxs);
   Value *iout = B.CreateInBoundsGEP(reqType, ret, idxs);
-#else
-  Value *ireq = B.CreateInBoundsGEP(req, idxs);
-  Value *idreq = B.CreateInBoundsGEP(dreq, idxs);
-  Value *iout = B.CreateInBoundsGEP(ret, idxs);
-#endif
   Value *isNull = nullptr;
   if (auto GV = M.getNamedValue("ompi_request_null")) {
     Value *reql =
         B.CreatePointerCast(ireq, PointerType::getUnqual(GV->getType()));
-#if LLVM_VERSION_MAJOR > 7
     reql = B.CreateLoad(GV->getType(), reql);
-#else
-    reql = B.CreateLoad(reql);
-#endif
     isNull = B.CreateICmpEQ(reql, GV);
   }
 
   idreq = B.CreatePointerCast(idreq, PointerType::getUnqual(reqType));
-#if LLVM_VERSION_MAJOR > 7
   Value *d_reqp = B.CreateLoad(reqType, idreq);
-#else
-  Value *d_reqp = B.CreateLoad(idreq);
-#endif
   if (isNull)
     d_reqp = B.CreateSelect(isNull, Constant::getNullValue(d_reqp->getType()),
                             d_reqp);
@@ -954,12 +1093,7 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
   std::string name = "__enzyme_differential_mpi_wait";
   FunctionType *FT =
       FunctionType::get(Type::getVoidTy(M.getContext()), types, false);
-
-#if LLVM_VERSION_MAJOR >= 9
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
-#else
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
-#endif
 
   if (!F->empty())
     return F;
@@ -1013,12 +1147,7 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
   if (!irecvfn) {
     FunctionType *FuT = isendfn->getFunctionType();
     std::string name = pmpi ? "PMPI_Irecv" : "MPI_Irecv";
-#if LLVM_VERSION_MAJOR >= 9
     irecvfn = cast<Function>(M.getOrInsertFunction(name, FuT).getCallee());
-
-#else
-    irecvfn = cast<Function>(M.getOrInsertFunction(name, FuT));
-#endif
   }
   assert(irecvfn);
 
@@ -1071,11 +1200,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
   auto FlT = CT.isFloat();
 
   if (auto Glob = M.getGlobalVariable(name)) {
-#if LLVM_VERSION_MAJOR > 7
     return B2.CreateLoad(Glob->getValueType(), Glob);
-#else
-    return B2.CreateLoad(Glob);
-#endif
   }
 
   llvm::Type *types[] = {PointerType::getUnqual(FlT),
@@ -1083,16 +1208,15 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
                          PointerType::getUnqual(intType), OpPtr};
   FunctionType *FuT =
       FunctionType::get(Type::getVoidTy(M.getContext()), types, false);
-
-#if LLVM_VERSION_MAJOR >= 9
   Function *F =
       cast<Function>(M.getOrInsertFunction(name + "_run", FuT).getCallee());
-#else
-  Function *F = cast<Function>(M.getOrInsertFunction(name + "_run", FuT));
-#endif
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
   F->addFnAttr(Attribute::ArgMemOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   F->addParamAttr(0, Attribute::NoCapture);
@@ -1119,11 +1243,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
 
   {
     IRBuilder<> B(entry);
-#if LLVM_VERSION_MAJOR > 7
     len = B.CreateLoad(lenp->getType()->getPointerElementType(), lenp);
-#else
-    len = B.CreateLoad(lenp);
-#endif
     B.CreateCondBr(B.CreateICmpEQ(len, ConstantInt::get(len->getType(), 0)),
                    end, body);
   }
@@ -1134,7 +1254,6 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
     PHINode *idx = B.CreatePHI(len->getType(), 2, "idx");
     idx->addIncoming(ConstantInt::get(len->getType(), 0), entry);
 
-#if LLVM_VERSION_MAJOR > 7
     Value *dsti = B.CreateInBoundsGEP(dst->getType()->getPointerElementType(),
                                       dst, idx, "dst.i");
     LoadInst *dstl =
@@ -1144,14 +1263,6 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
                                       src, idx, "src.i");
     LoadInst *srcl =
         B.CreateLoad(srci->getType()->getPointerElementType(), srci, "src.i.l");
-#else
-    Value *dsti = B.CreateInBoundsGEP(dst, idx, "dst.i");
-    LoadInst *dstl = B.CreateLoad(dsti, "dst.i.l");
-
-    Value *srci = B.CreateInBoundsGEP(src, idx, "src.i");
-    LoadInst *srcl = B.CreateLoad(srci, "src.i.l");
-#endif
-
     B.CreateStore(B.CreateFAdd(srcl, dstl), dsti);
 
     Value *next =
@@ -1170,12 +1281,8 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
 
   Constant *RF = M.getNamedValue("MPI_Op_create");
   if (!RF) {
-#if LLVM_VERSION_MAJOR >= 9
     RF =
         cast<Function>(M.getOrInsertFunction("MPI_Op_create", RFT).getCallee());
-#else
-    RF = cast<Function>(M.getOrInsertFunction("MPI_Op_create", RFT));
-#endif
   } else {
     RF = ConstantExpr::getBitCast(RF, PointerType::getUnqual(RFT));
   }
@@ -1193,14 +1300,8 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
   // https://www.mpich.org/static/docs/v3.2/www3/MPI_Op_create.html
   FunctionType *IFT = FunctionType::get(Type::getVoidTy(M.getContext()),
                                         ArrayRef<Type *>(), false);
-
-#if LLVM_VERSION_MAJOR >= 9
   Function *initializerFunction = cast<Function>(
       M.getOrInsertFunction(name + "initializer", IFT).getCallee());
-#else
-  Function *initializerFunction =
-      cast<Function>(M.getOrInsertFunction(name + "initializer", IFT));
-#endif
 
   initializerFunction->setLinkage(Function::LinkageTypes::InternalLinkage);
   initializerFunction->addFnAttr(Attribute::NoUnwind);
@@ -1213,13 +1314,10 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
     BasicBlock *end =
         BasicBlock::Create(M.getContext(), "end", initializerFunction);
     IRBuilder<> B(entry);
-#if LLVM_VERSION_MAJOR > 7
+
     B.CreateCondBr(
         B.CreateLoad(initD->getType()->getPointerElementType(), initD), end,
         run);
-#else
-    B.CreateCondBr(B.CreateLoad(initD), end, run);
-#endif
 
     B.SetInsertPoint(run);
     Value *args[] = {ConstantExpr::getPointerCast(F, rtypes[0]),
@@ -1233,11 +1331,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
   }
 
   B2.CreateCall(M.getFunction(name + "initializer"));
-#if LLVM_VERSION_MAJOR > 7
   return B2.CreateLoad(GV->getValueType(), GV);
-#else
-  return B2.CreateLoad(GV);
-#endif
 }
 
 void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
@@ -1511,11 +1605,14 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     LoadBegin = SE.getSCEV(LI->getPointerOperand());
     if (LoadBegin != SE.getCouldNotCompute()) {
       auto &DL = maybeWriter->getModule()->getDataLayout();
+      auto width = cast<IntegerType>(DL.getIndexType(LoadBegin->getType()))
+                       ->getBitWidth();
 #if LLVM_VERSION_MAJOR >= 10
       auto TS = SE.getConstant(
-          APInt(64, DL.getTypeStoreSize(LI->getType()).getFixedSize()));
+          APInt(width, DL.getTypeStoreSize(LI->getType()).getFixedSize()));
 #else
-      auto TS = SE.getConstant(APInt(64, DL.getTypeStoreSize(LI->getType())));
+      auto TS =
+          SE.getConstant(APInt(width, DL.getTypeStoreSize(LI->getType())));
 #endif
       LoadEnd = SE.getAddExpr(LoadBegin, TS);
     }
@@ -1524,13 +1621,15 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     StoreBegin = SE.getSCEV(SI->getPointerOperand());
     if (StoreBegin != SE.getCouldNotCompute()) {
       auto &DL = maybeWriter->getModule()->getDataLayout();
+      auto width = cast<IntegerType>(DL.getIndexType(StoreBegin->getType()))
+                       ->getBitWidth();
 #if LLVM_VERSION_MAJOR >= 10
       auto TS = SE.getConstant(
-          APInt(64, DL.getTypeStoreSize(SI->getValueOperand()->getType())
-                        .getFixedSize()));
+          APInt(width, DL.getTypeStoreSize(SI->getValueOperand()->getType())
+                           .getFixedSize()));
 #else
       auto TS = SE.getConstant(
-          APInt(64, DL.getTypeStoreSize(SI->getValueOperand()->getType())));
+          APInt(width, DL.getTypeStoreSize(SI->getValueOperand()->getType())));
 #endif
       StoreEnd = SE.getAddExpr(StoreBegin, TS);
     }
@@ -1539,7 +1638,11 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     StoreBegin = SE.getSCEV(MS->getArgOperand(0));
     if (StoreBegin != SE.getCouldNotCompute()) {
       if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
-        auto TS = SE.getConstant(APInt(64, Len->getValue().getLimitedValue()));
+        auto &DL = MS->getModule()->getDataLayout();
+        auto width = cast<IntegerType>(DL.getIndexType(StoreBegin->getType()))
+                         ->getBitWidth();
+        auto TS =
+            SE.getConstant(APInt(width, Len->getValue().getLimitedValue()));
         StoreEnd = SE.getAddExpr(StoreBegin, TS);
       }
     }
@@ -1548,7 +1651,11 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     StoreBegin = SE.getSCEV(MS->getArgOperand(0));
     if (StoreBegin != SE.getCouldNotCompute()) {
       if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
-        auto TS = SE.getConstant(APInt(64, Len->getValue().getLimitedValue()));
+        auto &DL = MS->getModule()->getDataLayout();
+        auto width = cast<IntegerType>(DL.getIndexType(StoreBegin->getType()))
+                         ->getBitWidth();
+        auto TS =
+            SE.getConstant(APInt(width, Len->getValue().getLimitedValue()));
         StoreEnd = SE.getAddExpr(StoreBegin, TS);
       }
     }
@@ -1557,7 +1664,11 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     LoadBegin = SE.getSCEV(MS->getArgOperand(1));
     if (LoadBegin != SE.getCouldNotCompute()) {
       if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
-        auto TS = SE.getConstant(APInt(64, Len->getValue().getLimitedValue()));
+        auto &DL = MS->getModule()->getDataLayout();
+        auto width = cast<IntegerType>(DL.getIndexType(LoadBegin->getType()))
+                         ->getBitWidth();
+        auto TS =
+            SE.getConstant(APInt(width, Len->getValue().getLimitedValue()));
         LoadEnd = SE.getAddExpr(LoadBegin, TS);
       }
     }
@@ -1577,6 +1688,8 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
   assert(maybeReader->getParent()->getParent() ==
          maybeWriter->getParent()->getParent());
   using namespace llvm;
+  if (isa<StoreInst>(maybeReader))
+    return false;
   if (auto call = dyn_cast<CallInst>(maybeWriter)) {
     StringRef funcName = getFuncNameFromCall(call);
 
@@ -1821,18 +1934,255 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
 }
 
 Function *GetFunctionFromValue(Value *fn) {
-  while (auto ci = dyn_cast<CastInst>(fn)) {
-    fn = ci->getOperand(0);
-  }
-  while (auto ci = dyn_cast<BlockAddress>(fn)) {
-    fn = ci->getFunction();
-  }
-  while (auto ci = dyn_cast<ConstantExpr>(fn)) {
-    fn = ci->getOperand(0);
-  }
-  if (!isa<Function>(fn)) {
-    return nullptr;
+  while (!isa<Function>(fn)) {
+    if (auto ci = dyn_cast<CastInst>(fn)) {
+      fn = ci->getOperand(0);
+      continue;
+    }
+    if (auto ci = dyn_cast<ConstantExpr>(fn)) {
+      if (ci->isCast()) {
+        fn = ci->getOperand(0);
+        continue;
+      }
+    }
+    if (auto ci = dyn_cast<BlockAddress>(fn)) {
+      fn = ci->getFunction();
+      continue;
+    }
+    if (auto *GA = dyn_cast<GlobalAlias>(fn)) {
+      fn = GA->getAliasee();
+      continue;
+    }
+    if (auto *Call = dyn_cast<CallInst>(fn)) {
+      if (auto F = Call->getCalledFunction()) {
+        SmallPtrSet<Value *, 1> ret;
+        for (auto &BB : *F) {
+          if (auto RI = dyn_cast<ReturnInst>(BB.getTerminator())) {
+            ret.insert(RI->getReturnValue());
+          }
+        }
+        if (ret.size() == 1) {
+          auto val = *ret.begin();
+          if (isa<Constant>(val)) {
+            fn = val;
+            continue;
+          }
+          if (auto arg = dyn_cast<Argument>(val)) {
+            fn = Call->getArgOperand(arg->getArgNo());
+            continue;
+          }
+        }
+      }
+    }
+    if (auto *Call = dyn_cast<InvokeInst>(fn)) {
+      if (auto F = Call->getCalledFunction()) {
+        SmallPtrSet<Value *, 1> ret;
+        for (auto &BB : *F) {
+          if (auto RI = dyn_cast<ReturnInst>(BB.getTerminator())) {
+            ret.insert(RI->getReturnValue());
+          }
+        }
+        if (ret.size() == 1) {
+          auto val = *ret.begin();
+          if (isa<Constant>(val)) {
+            fn = val;
+            continue;
+          }
+          if (auto arg = dyn_cast<Argument>(val)) {
+            fn = Call->getArgOperand(arg->getArgNo());
+            continue;
+          }
+        }
+      }
+    }
+    break;
   }
 
-  return cast<Function>(fn);
+  return dyn_cast<Function>(fn);
+}
+
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
+#else
+llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
+#endif
+{
+  llvm::Twine floatType[] = {"s", "d"}; // c, z
+  llvm::Twine extractable[] = {"dot", "scal", "axpy", "gemv", "gemm"};
+  llvm::Twine prefixes[] = {"" /*Fortran*/, "cblas_", "cublas_"};
+  llvm::Twine suffixes[] = {"", "_", "64_", "_64_"};
+  for (auto t : floatType) {
+    for (auto f : extractable) {
+      for (auto p : prefixes) {
+        for (auto s : suffixes) {
+          if (in == (p + t + f + s).str()) {
+            return BlasInfo{
+                t.getSingleStringRef(),
+                p.getSingleStringRef(),
+                s.getSingleStringRef(),
+                f.getSingleStringRef(),
+            };
+          }
+        }
+      }
+    }
+  }
+  return {};
+}
+
+llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero) {
+  if (EnzymeUndefinedValueForType)
+    return cast<Constant>(
+        unwrap(EnzymeUndefinedValueForType(wrap(T), forceZero)));
+  else if (EnzymeZeroCache || forceZero)
+    return Constant::getNullValue(T);
+  else
+    return UndefValue::get(T);
+}
+
+llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
+                                 llvm::IRBuilder<> &BuilderM,
+                                 llvm::Value *mask) {
+  if (EnzymeSanitizeDerivatives)
+    return unwrap(EnzymeSanitizeDerivatives(wrap(val), wrap(toset),
+                                            wrap(&BuilderM), wrap(mask)));
+  return toset;
+}
+
+llvm::FastMathFlags getFast() {
+  llvm::FastMathFlags f;
+  if (EnzymeFastMath)
+    f.set();
+  return f;
+}
+
+void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
+                     llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
+                     llvm::IRBuilder<> &BuilderZ, const Twine &name) {
+  if (!arg->getType()->isPointerTy()) {
+    assert(arg->getType() == ty);
+    cacheValues.push_back(arg);
+    return;
+  }
+  if (!cache_arg)
+    return;
+  auto PT = cast<PointerType>(arg->getType());
+#if LLVM_VERSION_MAJOR <= 14
+  if (PT->getElementType() != ty)
+    arg = BuilderZ.CreatePointerCast(
+        arg, PointerType::get(ty, PT->getAddressSpace()), "pcld." + name);
+#else
+  auto PT2 = PointerType::get(ty, PT->getAddressSpace());
+  if (!PT->isOpaqueOrPointeeTypeMatches(PT2))
+    arg = BuilderZ.CreatePointerCast(
+        arg, PointerType::get(ty, PT->getAddressSpace()), "pcld." + name);
+#endif
+  arg = BuilderZ.CreateLoad(ty, arg, "avld." + name);
+  cacheValues.push_back(arg);
+}
+
+// julia_decl null means not julia decl, otherwise it is the integer type needed
+// to cast to
+llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
+                              IntegerType *julia_decl,
+                              IRBuilder<> &entryBuilder,
+                              llvm::Twine const &name) {
+  if (!byRef)
+    return V;
+
+  Value *allocV =
+      entryBuilder.CreateAlloca(V->getType(), nullptr, "byref." + name);
+  B.CreateStore(V, allocV);
+
+  if (julia_decl)
+    allocV = B.CreatePointerCast(allocV, Type::getInt8PtrTy(V->getContext()),
+                                 "cast." + name);
+
+  return allocV;
+}
+
+llvm::Value *select_vec_dims(IRBuilder<> &B, llvm::Value *trans,
+                             llvm::Value *dim1, llvm::Value *dim2, bool byRef) {
+  Value *width = B.CreateSelect(is_normal(B, trans, byRef), dim1, dim2);
+
+  return width;
+}
+
+llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef) {
+  auto charTy = IntegerType::get(trans->getContext(), 8);
+  if (byRef)
+    trans = B.CreateLoad(charTy, trans, "loaded.trans");
+
+  Value *trueVal = ConstantInt::getTrue(trans->getContext());
+
+  Value *isNormal =
+      B.CreateOr(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'n')),
+                 B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'N')));
+  return isNormal;
+}
+
+llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
+  Value *out = B.CreateSelect(
+      B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'T')),
+      ConstantInt::get(V->getType(), 'N'),
+      B.CreateSelect(
+          B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 't')),
+          ConstantInt::get(V->getType(), 'n'),
+          B.CreateSelect(
+              B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'N')),
+              ConstantInt::get(V->getType(), 'T'),
+              B.CreateSelect(
+                  B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'n')),
+                  ConstantInt::get(V->getType(), 't'),
+                  ConstantInt::get(V->getType(), 0)))));
+  return out;
+}
+
+// Implement the following logic to get the width of a matrix
+// if (cache_A) {
+//   ld_A = (arg_transa == 'N') ? arg_m : arg_k;
+// } else {
+//   ld_A = arg_lda;
+// }
+llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
+                                  llvm::Value *arg_ld, llvm::Value *dim1,
+                                  llvm::Value *dim2, bool cacheMat,
+                                  bool byRef) {
+  if (!cacheMat)
+    return arg_ld;
+
+  Value *width = B.CreateSelect(is_normal(B, trans, byRef), dim1, dim2);
+
+  return width;
+}
+
+llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
+                       llvm::IntegerType *julia_decl,
+                       llvm::IRBuilder<> &entryBuilder,
+                       const llvm::Twine &name) {
+
+  if (byRef) {
+    auto charType = IntegerType::get(V->getContext(), 8);
+    V = B.CreateLoad(charType, V, "ld." + name);
+  }
+
+  V = transpose(B, V);
+
+  return to_blas_callconv(B, V, byRef, julia_decl, entryBuilder,
+                          "transpose." + name);
+}
+
+llvm::Value *get_blas_row(llvm::IRBuilder<> &B, llvm::Value *trans,
+                          llvm::Value *row, llvm::Value *col, bool byRef) {
+
+  if (byRef) {
+    auto charType = IntegerType::get(trans->getContext(), 8);
+    trans = B.CreateLoad(charType, trans, "ld.row.trans");
+  }
+
+  return B.CreateSelect(
+      B.CreateOr(
+          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N')),
+          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'))),
+      row, col);
 }

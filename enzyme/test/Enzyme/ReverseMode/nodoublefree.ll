@@ -1,5 +1,8 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -adce -S | FileCheck %s
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | %lli - | FileCheck %s --check-prefix=EVAL
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,%simplifycfg,adce)" -S | FileCheck %s
+
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -S | %lli - | FileCheck %s --check-prefix=EVAL ; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme" -S | %lli - | FileCheck %s --check-prefix=EVAL
 
 ; EVAL: reduce_max=1.000000
 ; EVAL: d_reduce_max(0)=1.000000
@@ -62,8 +65,8 @@ declare dso_local noalias nonnull i8* @_Znwm(i64)
 ; CHECK-NEXT:   %0 = load double, double* %"tmp'ipc", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"tmp'ipc", align 8
 ; CHECK-NEXT:   %1 = fadd fast double %differeturn, %0
-; CHECK-NEXT:   tail call void @_ZdlPv(i8* nonnull %"call5.i.i.i.i39'mi")
-; CHECK-NEXT:   tail call void @_ZdlPv(i8* nonnull %call5.i.i.i.i39)
+; CHECK-NEXT:   call void @_ZdlPv(i8* nonnull %"call5.i.i.i.i39'mi")
+; CHECK-NEXT:   call void @_ZdlPv(i8* nonnull %call5.i.i.i.i39)
 ; CHECK-NEXT:   %2 = insertvalue { double } undef, double %1, 0
 ; CHECK-NEXT:   ret { double } %2
 ; CHECK-NEXT: }

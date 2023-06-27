@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -simplifycfg -instsimplify -correlated-propagation -simplifycfg -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=0 -enzyme -mem2reg -early-cse -simplifycfg -instsimplify -correlated-propagation -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=0 -passes="enzyme,function(mem2reg,early-cse,%simplifycfg,instsimplify,correlated-propagation,%simplifycfg,adce)" -S | FileCheck %s
 
 declare double @__enzyme_autodiff(i8*, ...)
 
@@ -53,21 +54,21 @@ entry:
 ; CHECK: invertb1:                                         ; preds = %invertend_phimerge
 ; CHECK-NEXT:   %"g1'ipg_unwrap" = getelementptr inbounds double, double* %"a'", i32 32
 ; CHECK-NEXT:   %1 = load double, double* %"g1'ipg_unwrap", align 8
-; CHECK-NEXT:   %2 = fadd fast double %1, %14
+; CHECK-NEXT:   %2 = fadd fast double %1, %[[i14:.+]]
 ; CHECK-NEXT:   store double %2, double* %"g1'ipg_unwrap", align 8
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertb2:                                         ; preds = %invertend_phimerge
 ; CHECK-NEXT:   %"g2'ipg_unwrap" = getelementptr inbounds double, double* %"a'", i32 64
 ; CHECK-NEXT:   %3 = load double, double* %"g2'ipg_unwrap", align 8
-; CHECK-NEXT:   %4 = fadd fast double %3, %13
+; CHECK-NEXT:   %4 = fadd fast double %3, %[[i13:.+]]
 ; CHECK-NEXT:   store double %4, double* %"g2'ipg_unwrap", align 8
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertbdef:                                       ; preds = %invertend_phimerge
 ; CHECK-NEXT:   %"g3'ipg_unwrap" = getelementptr inbounds double, double* %"a'", i32 128
 ; CHECK-NEXT:   %5 = load double, double* %"g3'ipg_unwrap", align 8
-; CHECK-NEXT:   %6 = fadd fast double %5, %12
+; CHECK-NEXT:   %6 = fadd fast double %5, %[[i12:.+]]
 ; CHECK-NEXT:   store double %6, double* %"g3'ipg_unwrap", align 8
 ; CHECK-NEXT:   br label %invertentry
 
@@ -94,14 +95,14 @@ entry:
 
 ; CHECK: invertend_phimerge: 
 ; CHECK-NEXT:   %7 = phi {{(fast )?}}double [ %l3_unwrap, %invertend_phirc ], [ %l1_unwrap, %invertend_phirc1 ], [ %l2_unwrap, %invertend_phirc2 ]
-; CHECK-NEXT:   %m0diffep = fmul fast double %0, %7
-; CHECK-NEXT:   %8 = fadd fast double %m0diffep, %m0diffep
+; CHECK-NEXT:   %[[m0diffep:.+]] = fmul fast double %0, %7
+; CHECK-NEXT:   %[[i8:.+]] = fadd fast double %[[m0diffep]], %[[m0diffep]]
 ; CHECK-DAG:   %[[i9:.+]] = icmp eq i32 17, %val
 ; CHECK-DAG:   %[[i10:.+]] = icmp eq i32 42, %val
-; CHECK-DAG:   %11 = or i1 %[[i9]], %[[i10]]
-; CHECK-NEXT:   %12 = select {{(fast )?}}i1 %11, double 0.000000e+00, double %8
-; CHECK-NEXT:   %13 = select {{(fast )?}}i1 %[[i10]], double %8, double 0.000000e+00
-; CHECK-NEXT:   %14 = select {{(fast )?}}i1 %[[i9]], double %8, double 0.000000e+00
+; CHECK-DAG:   %[[i11:.+]] = or i1 %[[i9]], %[[i10]]
+; CHECK-NEXT:   %[[i12]] = select {{(fast )?}}i1 %[[i11]], double 0.000000e+00, double %[[i8]]
+; CHECK-NEXT:   %[[i13]] = select {{(fast )?}}i1 %[[i10]], double %[[i8]], double 0.000000e+00
+; CHECK-NEXT:   %[[i14]] = select {{(fast )?}}i1 %[[i9]], double %[[i8]], double 0.000000e+00
 ; CHECK-NEXT:   switch i32 %val, label %invertbdef [
 ; CHECK-NEXT:     i32 17, label %invertb1
 ; CHECK-NEXT:     i32 42, label %invertb2

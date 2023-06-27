@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
 
 declare double @frexp(double, i32*)
@@ -35,9 +35,8 @@ entry:
 ; CHECK: define internal double @fwddiffetest(double %x, double %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %exp = alloca i32, align 4
-; CHECK-NEXT:   %call = call double @frexp(double %x, i32* writeonly %exp)
 ; CHECK-NEXT:   %0 = bitcast double %x to i64
-; CHECK-NEXT:   %1 = and i64 %0, 9218868437227405312
+; CHECK-NEXT:   %1 = and i64 9218868437227405312, %0
 ; CHECK-NEXT:   %2 = bitcast i64 %1 to double
 ; CHECK-NEXT:   %3 = fmul fast double %2, 2.000000e+00
 ; CHECK-NEXT:   %4 = fdiv fast double %"x'", %3
@@ -47,9 +46,8 @@ entry:
 ; CHECK: define internal float @fwddiffetestf(float %x, float %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %exp = alloca i32, align 4
-; CHECK-NEXT:   %call = call float @frexpf(float %x, i32* writeonly %exp)
 ; CHECK-NEXT:   %0 = bitcast float %x to i32
-; CHECK-NEXT:   %1 = and i32 %0, 2139095040
+; CHECK-NEXT:   %1 = and i32 2139095040, %0
 ; CHECK-NEXT:   %2 = bitcast i32 %1 to float
 ; CHECK-NEXT:   %3 = fmul fast float %2, 2.000000e+00
 ; CHECK-NEXT:   %4 = fdiv fast float %"x'", %3

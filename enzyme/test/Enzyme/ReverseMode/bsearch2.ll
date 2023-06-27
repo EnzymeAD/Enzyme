@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -gvn -instsimplify -adce -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -instsimplify -adce -correlated-propagation -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,gvn,instsimplify,adce,correlated-propagation,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline norecurse nounwind uwtable
 define  double @f(double* nocapture %x, i64 %n) #0 {
@@ -71,7 +72,7 @@ attributes #1 = { noinline nounwind uwtable }
 
 ; CHECK: end:                                              ; preds = %body
 ; CHECK-NEXT:   %0 = getelementptr inbounds i64, i64* %"idx!manual_lcssa_malloccache", i64 %iv
-; CHECK-NEXT:   store i64 %idx, i64* %0, align 8, !invariant.group !0
+; CHECK-NEXT:   store i64 %idx, i64* %0, align 8, !invariant.group ![[ig0:[0-9]+]]
 ; CHECK-NEXT:   %cmp2 = icmp ne i64 %iv.next, 10
 ; CHECK-NEXT:   br i1 %cmp2, label %loop, label %invertend
 
@@ -100,7 +101,7 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK: invertend:                                        ; preds = %end, %incinvertloop
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %3, %incinvertloop ], [ 9, %end ]
 ; CHECK-NEXT:   %6 = getelementptr inbounds i64, i64* %"idx!manual_lcssa_malloccache", i64 %"iv'ac.0"
-; CHECK-NEXT:   %7 = load i64, i64* %6, align 8, !invariant.group !0
+; CHECK-NEXT:   %7 = load i64, i64* %6, align 8, !invariant.group ![[ig0]]
 ; CHECK-NEXT:   %"gep2'ipg_unwrap" = getelementptr inbounds double, double* %"x'", i64 %7
 ; CHECK-NEXT:   %8 = load double, double* %"gep2'ipg_unwrap", align 8
 ; CHECK-NEXT:   %9 = fadd fast double %8, %differeturn

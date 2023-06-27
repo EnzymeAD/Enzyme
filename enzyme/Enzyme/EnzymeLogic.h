@@ -114,6 +114,8 @@ public:
 
   std::set<ssize_t> tapeIndiciesToFree;
 
+  const std::vector<DIFFE_TYPE> constant_args;
+
   bool isComplete;
 
   AugmentedReturn(
@@ -121,10 +123,12 @@ public:
       std::map<std::pair<llvm::Instruction *, CacheType>, int> tapeIndices,
       std::map<AugmentedStruct, int> returns,
       std::map<llvm::CallInst *, const std::vector<bool>> overwritten_args_map,
-      std::map<llvm::Instruction *, bool> can_modref_map)
+      std::map<llvm::Instruction *, bool> can_modref_map,
+      const std::vector<DIFFE_TYPE> &constant_args)
       : fn(fn), tapeType(tapeType), tapeIndices(tapeIndices), returns(returns),
         overwritten_args_map(overwritten_args_map),
-        can_modref_map(can_modref_map), isComplete(false) {}
+        can_modref_map(can_modref_map), constant_args(constant_args),
+        isComplete(false) {}
 };
 
 struct ReverseCacheKey {
@@ -139,6 +143,7 @@ struct ReverseCacheKey {
   bool freeMemory;
   bool AtomicAdd;
   llvm::Type *additionalType;
+  bool forceAnonymousTape;
   const FnTypeInfo typeInfo;
 
   /*
@@ -219,6 +224,11 @@ struct ReverseCacheKey {
     if (additionalType < rhs.additionalType)
       return true;
     if (rhs.additionalType < additionalType)
+      return false;
+
+    if (forceAnonymousTape < rhs.forceAnonymousTape)
+      return true;
+    if (rhs.forceAnonymousTape < forceAnonymousTape)
       return false;
 
     if (typeInfo < rhs.typeInfo)
@@ -423,7 +433,7 @@ public:
                                    std::vector<BATCH_TYPE>, BATCH_TYPE>;
   std::map<BatchCacheKey, llvm::Function *> BatchCachedFunctions;
 
-  using TraceCacheKey = std::tuple<llvm::Function *, ProbProgMode, bool>;
+  using TraceCacheKey = std::tuple<llvm::Function *, ProbProgMode>;
   std::map<TraceCacheKey, llvm::Function *> TraceCachedFunctions;
 
   /// Create the derivative function itself.
@@ -461,7 +471,8 @@ public:
   llvm::Function *
   CreateTrace(llvm::Function *totrace,
               llvm::SmallPtrSetImpl<llvm::Function *> &GenerativeFunctions,
-              ProbProgMode mode, bool dynamic_interface);
+              llvm::StringSet<> &ActiveRandomVariables, ProbProgMode mode,
+              bool autodiff, TraceInterface *interface);
 
   void clear();
 };
@@ -479,7 +490,7 @@ bool legalCombinedForwardReverse(
     const std::map<llvm::ReturnInst *, llvm::StoreInst *> &replacedReturns,
     llvm::SmallVectorImpl<llvm::Instruction *> &postCreate,
     llvm::SmallVectorImpl<llvm::Instruction *> &userReplace,
-    GradientUtils *gutils,
+    const GradientUtils *gutils,
     const llvm::SmallPtrSetImpl<const llvm::Instruction *>
         &unnecessaryInstructions,
     const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable,

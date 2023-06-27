@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 declare i8* @malloc(i64)
 declare void @free(i8*)
@@ -50,24 +51,7 @@ attributes #2 = { nounwind }
 
 ; CHECK: define internal void @augmented_subsum(double* nocapture readonly %x, double* nocapture %"x'", i64 %n)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %m = call i8* @malloc(i64 8)
-; CHECK-NEXT:   %v = bitcast i8* %m to double*
-; CHECK-NEXT:   br label %for.body
-
-; CHECK: for.cond.cleanup:                                 ; preds = %for.body
-; CHECK-NEXT:   call void @free(i8* nonnull %m)
 ; CHECK-NEXT:   ret void
-
-; CHECK: for.body:                                         ; preds = %for.body, %entry
-; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.body ], [ 0, %entry ]
-; CHECK-NEXT:   %total.07 = phi double [ 0.000000e+00, %entry ], [ %add, %for.body ]
-; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
-; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %x, i64 %iv
-; CHECK-NEXT:   %0 = load double, double* %arrayidx, align 8
-; CHECK-NEXT:   %add = fadd fast double %0, %total.07
-; CHECK-NEXT:   store double %add, double* %v
-; CHECK-NEXT:   %exitcond = icmp eq i64 %iv, %n
-; CHECK-NEXT:   br i1 %exitcond, label %for.cond.cleanup, label %for.body
 ; CHECK-NEXT: }
 
 
@@ -82,7 +66,7 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   br label %invertfor.body
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.body
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"m'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %"m'mi")
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.body:                                   ; preds = %incinvertfor.body, %entry

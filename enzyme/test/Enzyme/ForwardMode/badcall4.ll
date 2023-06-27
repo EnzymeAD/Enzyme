@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline norecurse nounwind uwtable
@@ -54,8 +54,8 @@ declare dso_local double @__enzyme_fwddiff(i8*, double*, double*) local_unnamed_
 ; CHECK: define internal {{(dso_local )?}}void @fwddiffef(double* nocapture %x, double* nocapture %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   call void @fwddiffesubf(double* %x, double* %"x'")
-; CHECK-NEXT:   store double 2.000000e+00, double* %x, align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'"
+; CHECK-NEXT:   store double 2.000000e+00, double* %x, align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
@@ -65,8 +65,8 @@ declare dso_local double @__enzyme_fwddiff(i8*, double*, double*) local_unnamed_
 ; CHECK-NEXT:   %[[i0:.+]] = load double, double* %x, align 8
 ; CHECK-NEXT:   %mul = fmul fast double %[[i0]], 2.000000e+00
 ; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i1]], 2.000000e+00
-; CHECK-NEXT:   store double %mul, double* %x, align 8
 ; CHECK-NEXT:   store double %[[i2]], double* %"x'", align 8
+; CHECK-NEXT:   store double %mul, double* %x, align 8
 ; CHECK-NEXT:   call void @fwddiffemetasubf(double* %x, double* %"x'")
 ; CHECK-NEXT:   call void @fwddiffeothermetasubf(double* %x, double* %"x'")
 ; CHECK-NEXT:   ret void
@@ -76,8 +76,8 @@ declare dso_local double @__enzyme_fwddiff(i8*, double*, double*) local_unnamed_
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"x'", i64 1
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %x, i64 1
-; CHECK-NEXT:   store double 3.000000e+00, double* %arrayidx, align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx'ipg", align 8
+; CHECK-NEXT:   store double 3.000000e+00, double* %arrayidx, align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
@@ -85,7 +85,7 @@ declare dso_local double @__enzyme_fwddiff(i8*, double*, double*) local_unnamed_
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"x'", i64 1
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %x, i64 1
-; CHECK-NEXT:   store double 4.000000e+00, double* %arrayidx, align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx'ipg", align 8
+; CHECK-NEXT:   store double 4.000000e+00, double* %arrayidx, align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

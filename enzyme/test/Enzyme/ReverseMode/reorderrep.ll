@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg)" -S | FileCheck %s
 
 define void @outer(i8* %tmp71, i8* %tmp72, i8* %tmp73, i8* %tmp74) {
 bb:
@@ -95,7 +96,7 @@ attributes #3 = { nounwind }
 ; CHECK: bb377:                                            ; preds = %bb381, %bexit
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %bb381 ], [ 0, %bexit ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
-; CHECK-NEXT:   %[[a4:.+]] = add i64 %.020, %iv
+; CHECK-NEXT:   %[[a4:.+]] = add i64 {{(%iv, %.020|%.020, %iv)}}
 ; CHECK-NEXT:   %tmp378 = icmp slt i64 %[[a4]], 10
 ; CHECK-NEXT:   br i1 %tmp378, label %bb381, label %bb450
 
@@ -135,18 +136,18 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %[[a12:.+]] = fadd fast double 0.000000e+00, %[[a11]]
 ; CHECK-NEXT:   %[[tmp37_unwrap6:.+]] = extractvalue { double**, i64 } %tapeArg, 1
 ; CHECK-NEXT:   %tmp39_unwrap = icmp ne i64 %[[tmp37_unwrap6]], 0
-; CHECK-NEXT:   br i1 %tmp39_unwrap, label %invertbb381_phirc, label %invertbb381_phirc1
+; CHECK-NEXT:   br i1 %tmp39_unwrap, label %invertbb381_phirc, label %[[invertbb381_phirc3:.+]]
 
 ; CHECK: invertbb381_phirc:                                ; preds = %invertbb381
 ; CHECK-NEXT:   br label %invertbb381_phimerge
 
-; CHECK: invertbb381_phirc1:                               ; preds = %invertbb381
+; CHECK: [[invertbb381_phirc3]]:                               ; preds = %invertbb381
 ; CHECK-NEXT:   %[[tmp37_unwrap5:.+]] = extractvalue { double**, i64 } %tapeArg, 1
 ; CHECK-NEXT:   %tmp44_unwrap = udiv i64 %[[tmp37_unwrap5]], 8
 ; CHECK:   br label %invertbb381_phimerge
 
-; CHECK: invertbb381_phimerge:                             ; preds = %invertbb381_phirc1, %invertbb381_phirc
-; CHECK-NEXT:  %[[a13:.+]] = phi i64 [ -1, %invertbb381_phirc ], [ %tmp44_unwrap, %invertbb381_phirc1 ]
+; CHECK: invertbb381_phimerge:  
+; CHECK-NEXT:  %[[a13:.+]] = phi i64 [ -1, %invertbb381_phirc ], [ %tmp44_unwrap, %[[invertbb381_phirc3]] ]
 ; CHECK:   %[[_unwrap3:.+]] = sub i64 %[[smax_unwrap:.+]], %[[a13]]
 ; CHECK-NEXT:   %[[a13:.+]] = add nuw i64 %[[_unwrap3]], 1
 ; CHECK-NEXT:   %[[a14:.+]] = extractvalue { double**, i64 } %tapeArg, 0

@@ -1,4 +1,6 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -correlated-propagation -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -correlated-propagation -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg,correlated-propagation,adce)" -S | FileCheck %s
+
 source_filename = "text"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-pc-linux-gnu"
@@ -87,16 +89,16 @@ attributes #1 = { noreturn }
 ; CHECK-NEXT:   %11 = bitcast i32* %0 to i8*
 ; CHECK-NEXT:   call void @llvm.lifetime.end.p0i8(i64 4, i8* nonnull %11)
 ; CHECK-NEXT:   %cf_unwrap = uitofp i32 %10 to double
-; CHECK-NEXT:   %m0diffei16 = fmul fast double %differeturn, %cf_unwrap
+; CHECK-NEXT:   %[[m0diffei16:.+]] = fmul fast double %differeturn, %cf_unwrap
 ; CHECK-NEXT:   %i13_unwrap = getelementptr inbounds double, double* %arg, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %i14_unwrap = load double, double* %i13_unwrap, align 8
-; CHECK-NEXT:   %m0diffei14 = fmul fast double %m0diffei16, %i14_unwrap
-; CHECK-NEXT:   %m1diffei14 = fmul fast double %m0diffei16, %i14_unwrap
-; CHECK-NEXT:   %12 = fadd fast double %m0diffei14, %m1diffei14
+; CHECK-NEXT:   %[[m0diffei14:.+]] = fmul fast double %[[m0diffei16]], %i14_unwrap
+; CHECK-NEXT:   %[[m1diffei14:.+]] = fmul fast double %[[m0diffei16]], %i14_unwrap
+; CHECK-NEXT:   %[[i12:.+]] = fadd fast double %[[m0diffei14]], %[[m1diffei14]]
 ; CHECK-NEXT:   %"i13'ipg_unwrap" = getelementptr inbounds double, double* %"arg'", i64 %"iv'ac.0"
-; CHECK-NEXT:   %13 = load double, double* %"i13'ipg_unwrap", align 8
-; CHECK-NEXT:   %14 = fadd fast double %13, %12
-; CHECK-NEXT:   store double %14, double* %"i13'ipg_unwrap", align 8
-; CHECK-NEXT:   %15 = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   br i1 %15, label %invertbb, label %incinvertbb11
+; CHECK-NEXT:   %[[i13:.+]] = load double, double* %"i13'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i14:.+]] = fadd fast double %[[i13]], %[[i12]]
+; CHECK-NEXT:   store double %[[i14]], double* %"i13'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i15:.+]] = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   br i1 %[[i15]], label %invertbb, label %incinvertbb11
 ; CHECK-NEXT: }

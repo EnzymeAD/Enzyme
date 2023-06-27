@@ -1,5 +1,8 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -adce -S | FileCheck %s
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | %lli - | FileCheck %s --check-prefix=EVAL
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,%simplifycfg,adce)" -S | FileCheck %s
+
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | %lli - | FileCheck %s --check-prefix=EVAL ; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | %lli - | FileCheck %s --check-prefix=EVAL
 
 ; EVAL: 1.00
 
@@ -49,10 +52,7 @@ bb18:                                             ; preds = %bb17, %bb5
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %"i2'ipa" = alloca i8, i64 8, align 1
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull align 1 %"i2'ipa", i8 0, i64 8, i1 false)
-; CHECK-NEXT:   %i2 = alloca i8, i64 8, align 1
 ; CHECK-NEXT:   %"i6'ipc" = bitcast i8* %"i2'ipa" to double*
-; CHECK-NEXT:   %i6 = bitcast i8* %i2 to double*
-; CHECK-NEXT:   store double %arg, double* %i6, align 1
 ; CHECK-NEXT:   %0 = load double, double* %"i6'ipc", align 1
 ; CHECK-NEXT:   %1 = fadd fast double %0, %differeturn
 ; CHECK-NEXT:   store double %1, double* %"i6'ipc", align 1

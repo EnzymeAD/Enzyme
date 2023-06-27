@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse-memssa -correlated-propagation -simplifycfg -instcombine -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -early-cse -correlated-propagation -simplifycfg -instcombine -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,early-cse,correlated-propagation,%simplifycfg,instcombine,adce)" -S | FileCheck %s
 
 declare dso_local void @__enzyme_autodiff(i8*, ...) local_unnamed_addr #0
 
@@ -157,17 +158,17 @@ attributes #3 = { argmemonly nounwind }
 ; CHECK-NEXT:   %[[a9:.+]] = fadd fast double %[[a16:.+]], %[[a8]]
 ; CHECK-NEXT:   %lhs_i_unwrap = getelementptr inbounds double, double* %lhs_data, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %L_lhs_i_unwrap = load double, double* %lhs_i_unwrap, align 8, !tbaa !2
-; CHECK-NEXT:   %m0diffeL_rhs_ij = fmul fast double %[[a9]], %L_lhs_i_unwrap
+; CHECK-NEXT:   %[[m0diffeL_rhs_ij:.+]] = fmul fast double %[[a9]], %L_lhs_i_unwrap
 ; CHECK-NEXT:   %rhs_ij_unwrap = getelementptr inbounds double, double* %rhs_data, i64 %[[_unwrap6:.+]]
-; CHECK-NEXT:   %L_rhs_ij_unwrap = load double, double* %rhs_ij_unwrap, align 8, !tbaa !2
-; CHECK-NEXT:   %m1diffeL_lhs_i = fmul fast double %[[a9]], %L_rhs_ij_unwrap
+; CHECK-NEXT:   %[[L_rhs_ij_unwrap:.+]] = load double, double* %rhs_ij_unwrap, align 8, !tbaa !2
+; CHECK-NEXT:   %[[m1diffeL_lhs_i:.+]] = fmul fast double %[[a9]], %[[L_rhs_ij_unwrap]]
 ; CHECK-NEXT:   %"rhs_ij'ipg_unwrap" = getelementptr inbounds double, double* %"rhs_data'", i64 %[[_unwrap6]]
 ; CHECK-NEXT:   %[[a10:.+]] = load double, double* %"rhs_ij'ipg_unwrap", align 8
-; CHECK-NEXT:   %[[a11:.+]] = fadd fast double %[[a10]], %m0diffeL_rhs_ij
+; CHECK-NEXT:   %[[a11:.+]] = fadd fast double %[[a10]], %[[m0diffeL_rhs_ij]]
 ; CHECK-NEXT:   store double %[[a11]], double* %"rhs_ij'ipg_unwrap", align 8
 ; CHECK-NEXT:   %"lhs_i'ipg_unwrap" = getelementptr inbounds double, double* %"lhs_data'", i64 %"iv'ac.0"
 ; CHECK-NEXT:   %[[a12:.+]] = load double, double* %"lhs_i'ipg_unwrap", align 8
-; CHECK-NEXT:   %[[a13:.+]] = fadd fast double %[[a12]], %m1diffeL_lhs_i
+; CHECK-NEXT:   %[[a13:.+]] = fadd fast double %[[a12]], %[[m1diffeL_lhs_i]]
 ; CHECK-NEXT:   store double %[[a13]], double* %"lhs_i'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[a14:.+]] = icmp eq i64 %"iv1'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[a14]], label %invertfor.cond2.preheader, label %incinvertfor.body5
@@ -189,18 +190,18 @@ attributes #3 = { argmemonly nounwind }
 ; CHECK-NEXT:   %[[_unwrap10:.+]] = add nsw i64 %[[_unwrap9]], %"iv'ac.0"
 ; CHECK-NEXT:   %lhs_ki_unwrap = getelementptr inbounds double, double* %lhs_data, i64 %[[_unwrap10]]
 ; CHECK-NEXT:   %L_lhs_ki_unwrap = load double, double* %lhs_ki_unwrap, align 8, !tbaa !2
-; CHECK-NEXT:   %m0diffeL_rhs_kk = fmul fast double %[[a16]], %L_lhs_ki_unwrap
+; CHECK-NEXT:   %[[m0diffeL_rhs_kk:.+]] = fmul fast double %[[a16]], %L_lhs_ki_unwrap
 ; CHECK-NEXT:   %[[_unwrap11:.+]] = add nsw i64 %iv.next4_unwrap, %[[_unwrap6]]
 ; CHECK-NEXT:   %rhs_kk_unwrap = getelementptr inbounds double, double* %rhs_data, i64 %[[_unwrap11]]
 ; CHECK-NEXT:   %L_rhs_kk_unwrap = load double, double* %rhs_kk_unwrap, align 8, !tbaa !2
-; CHECK-NEXT:   %m1diffeL_lhs_ki = fmul fast double %[[a16]], %L_rhs_kk_unwrap
+; CHECK-NEXT:   %[[m1diffeL_lhs_ki:.+]] = fmul fast double %[[a16]], %L_rhs_kk_unwrap
 ; CHECK-NEXT:   %"rhs_kk'ipg_unwrap" = getelementptr inbounds double, double* %"rhs_data'", i64 %[[_unwrap11]]
 ; CHECK-NEXT:   %[[a17:.+]] = load double, double* %"rhs_kk'ipg_unwrap", align 8
-; CHECK-NEXT:   %[[a18:.+]] = fadd fast double %[[a17]], %m0diffeL_rhs_kk
+; CHECK-NEXT:   %[[a18:.+]] = fadd fast double %[[a17]], %[[m0diffeL_rhs_kk]]
 ; CHECK-NEXT:   store double %[[a18]], double* %"rhs_kk'ipg_unwrap", align 8
 ; CHECK-NEXT:   %"lhs_ki'ipg_unwrap" = getelementptr inbounds double, double* %"lhs_data'", i64 %[[_unwrap10]]
 ; CHECK-NEXT:   %[[a19:.+]] = load double, double* %"lhs_ki'ipg_unwrap", align 8
-; CHECK-NEXT:   %[[a20:.+]] = fadd fast double %[[a19]], %m1diffeL_lhs_ki
+; CHECK-NEXT:   %[[a20:.+]] = fadd fast double %[[a19]], %[[m1diffeL_lhs_ki]]
 ; CHECK-NEXT:   store double %[[a20]], double* %"lhs_ki'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[a21:.+]] = icmp eq i64 %"iv3'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[a21]], label %invertfor.body5, label %incinvertfor.body23

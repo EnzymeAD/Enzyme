@@ -23,6 +23,7 @@
 #ifndef LIBRARYFUNCS_H_
 #define LIBRARYFUNCS_H_
 
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/IRBuilder.h"
@@ -30,13 +31,12 @@
 #include "llvm/IR/Instructions.h"
 
 class GradientUtils;
-extern std::map<std::string,
-                std::function<llvm::Value *(
-                    llvm::IRBuilder<> &, llvm::CallInst *,
-                    llvm::ArrayRef<llvm::Value *>, GradientUtils *)>>
+extern llvm::StringMap<std::function<llvm::Value *(
+    llvm::IRBuilder<> &, llvm::CallInst *, llvm::ArrayRef<llvm::Value *>,
+    GradientUtils *)>>
     shadowHandlers;
-extern std::map<std::string, std::function<llvm::CallInst *(llvm::IRBuilder<> &,
-                                                            llvm::Value *)>>
+extern llvm::StringMap<
+    std::function<llvm::CallInst *(llvm::IRBuilder<> &, llvm::Value *)>>
     shadowErasers;
 
 /// Return whether a given function is a known C/C++ memory allocation function
@@ -54,7 +54,7 @@ static inline bool isAllocationFunction(const llvm::StringRef name,
   if (name == "julia.gc_alloc_obj" || name == "jl_gc_alloc_typed" ||
       name == "ijl_gc_alloc_typed")
     return true;
-  if (shadowHandlers.find(name.str()) != shadowHandlers.end())
+  if (shadowHandlers.find(name) != shadowHandlers.end())
     return true;
 
   using namespace llvm;
@@ -66,37 +66,29 @@ static inline bool isAllocationFunction(const llvm::StringRef name,
   case LibFunc_malloc: // malloc(unsigned int);
   case LibFunc_valloc: // valloc(unsigned int);
 
-  case LibFunc_Znwj:               // new(unsigned int);
-  case LibFunc_ZnwjRKSt9nothrow_t: // new(unsigned int, nothrow);
-#if LLVM_VERSION_MAJOR > 6
+  case LibFunc_Znwj:                // new(unsigned int);
+  case LibFunc_ZnwjRKSt9nothrow_t:  // new(unsigned int, nothrow);
   case LibFunc_ZnwjSt11align_val_t: // new(unsigned int, align_val_t)
   case LibFunc_ZnwjSt11align_val_tRKSt9nothrow_t: // new(unsigned int,
                                                   // align_val_t, nothrow)
-#endif
 
-  case LibFunc_Znwm:               // new(unsigned long);
-  case LibFunc_ZnwmRKSt9nothrow_t: // new(unsigned long, nothrow);
-#if LLVM_VERSION_MAJOR > 6
+  case LibFunc_Znwm:                // new(unsigned long);
+  case LibFunc_ZnwmRKSt9nothrow_t:  // new(unsigned long, nothrow);
   case LibFunc_ZnwmSt11align_val_t: // new(unsigned long, align_val_t)
   case LibFunc_ZnwmSt11align_val_tRKSt9nothrow_t: // new(unsigned long,
                                                   // align_val_t, nothrow)
-#endif
 
-  case LibFunc_Znaj:               // new[](unsigned int);
-  case LibFunc_ZnajRKSt9nothrow_t: // new[](unsigned int, nothrow);
-#if LLVM_VERSION_MAJOR > 6
+  case LibFunc_Znaj:                // new[](unsigned int);
+  case LibFunc_ZnajRKSt9nothrow_t:  // new[](unsigned int, nothrow);
   case LibFunc_ZnajSt11align_val_t: // new[](unsigned int, align_val_t)
   case LibFunc_ZnajSt11align_val_tRKSt9nothrow_t: // new[](unsigned int,
                                                   // align_val_t, nothrow)
-#endif
 
-  case LibFunc_Znam:               // new[](unsigned long);
-  case LibFunc_ZnamRKSt9nothrow_t: // new[](unsigned long, nothrow);
-#if LLVM_VERSION_MAJOR > 6
+  case LibFunc_Znam:                // new[](unsigned long);
+  case LibFunc_ZnamRKSt9nothrow_t:  // new[](unsigned long, nothrow);
   case LibFunc_ZnamSt11align_val_t: // new[](unsigned long, align_val_t)
   case LibFunc_ZnamSt11align_val_tRKSt9nothrow_t: // new[](unsigned long,
                                                   // align_val_t, nothrow)
-#endif
 
   case LibFunc_msvc_new_int:               // new(unsigned int);
   case LibFunc_msvc_new_int_nothrow:       // new(unsigned int, nothrow);
@@ -165,12 +157,10 @@ static inline bool isDeallocationFunction(const llvm::StringRef name,
   case LibFunc_ZdlPvj:
   // void operator delete(void*, unsigned long);
   case LibFunc_ZdlPvm:
-#if LLVM_VERSION_MAJOR > 6
   // void operator delete(void*, align_val_t)
   case LibFunc_ZdlPvSt11align_val_t:
   // void operator delete[](void*, align_val_t)
   case LibFunc_ZdaPvSt11align_val_t:
-#endif
   // void operator delete[](void*, unsigned int);
   case LibFunc_msvc_delete_array_ptr32_int:
   // void operator delete[](void*, nothrow);
@@ -187,13 +177,10 @@ static inline bool isDeallocationFunction(const llvm::StringRef name,
   case LibFunc_msvc_delete_ptr64_longlong:
   // void operator delete(void*, nothrow);
   case LibFunc_msvc_delete_ptr64_nothrow:
-
-#if LLVM_VERSION_MAJOR > 6
   // void operator delete(void*, align_val_t, nothrow)
   case LibFunc_ZdlPvSt11align_val_tRKSt9nothrow_t:
   // void operator delete[](void*, align_val_t, nothrow)
   case LibFunc_ZdaPvSt11align_val_tRKSt9nothrow_t:
-#endif
     return true;
   default:
     return false;
@@ -220,7 +207,11 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
   }
   if (funcName == "enzyme_allocator") {
     auto index = getAllocationIndexFromCall(orig);
+#if LLVM_VERSION_MAJOR >= 16
+    allocSize = argValues[index.value()];
+#else
     allocSize = argValues[index.getValue()];
+#endif
   }
   Value *dst_arg = toZero;
 
@@ -238,13 +229,7 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
       bb.CreateZExtOrTrunc(allocSize, Type::getInt64Ty(toZero->getContext()));
   auto volatile_arg = ConstantInt::getFalse(toZero->getContext());
 
-#if LLVM_VERSION_MAJOR == 6
-  auto align_arg = ConstantInt::get(Type::getInt32Ty(toZero->getContext()), 1);
-  Value *nargs[] = {dst_arg, val_arg, len_arg, align_arg, volatile_arg};
-#else
   Value *nargs[] = {dst_arg, val_arg, len_arg, volatile_arg};
-#endif
-
   Type *tys[] = {dst_arg->getType(), len_arg->getType()};
 
   auto memset = cast<CallInst>(bb.CreateCall(
@@ -279,7 +264,7 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
                                     llvm::CallInst *orig,
                                     GradientUtils *gutils);
 
-static inline bool isAllocationCall(llvm::Value *TmpOrig,
+static inline bool isAllocationCall(const llvm::Value *TmpOrig,
                                     llvm::TargetLibraryInfo &TLI) {
   if (auto *CI = llvm::dyn_cast<llvm::CallInst>(TmpOrig)) {
     return isAllocationFunction(getFuncNameFromCall(CI), TLI);
@@ -290,7 +275,7 @@ static inline bool isAllocationCall(llvm::Value *TmpOrig,
   return false;
 }
 
-static inline bool isDeallocationCall(llvm::Value *TmpOrig,
+static inline bool isDeallocationCall(const llvm::Value *TmpOrig,
                                       llvm::TargetLibraryInfo &TLI) {
   if (auto *CI = llvm::dyn_cast<llvm::CallInst>(TmpOrig)) {
     return isDeallocationFunction(getFuncNameFromCall(CI), TLI);

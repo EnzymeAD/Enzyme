@@ -17,7 +17,7 @@ clean:
 	#opt $^ -O2 -o $@ -S
 
 ode.o: ode-opt.ll
-	clang++ -O2 $^ -o $@ -lblas $(BENCHLINK)
+	clang++ -O2 $^ -o $@ $(BENCHLINK)
 
 results.txt: ode.o
 	./$^ 1000 | tee $@

@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -simplifycfg -instsimplify -correlated-propagation -instsimplify -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -early-cse -simplifycfg -instsimplify -correlated-propagation -instsimplify -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,early-cse,%simplifycfg,instsimplify,correlated-propagation,instsimplify,adce)" -S | FileCheck %s
 
 ; ModuleID = '../test/Integration/rwrloop.c'
 source_filename = "../test/Integration/rwrloop.c"
@@ -137,9 +138,9 @@ attributes #9 = { noreturn nounwind }
 ; CHECK-NEXT:   br i1 %cmp233, label %for.body4.lr.ph, label %for.cond.cleanup3
 
 ; CHECK: for.body4.lr.ph:                                  ; preds = %for.cond1.preheader
-; CHECK-NEXT:   %[[a3:.+]] = load i32, i32* %N, align 4, !tbaa !2
+; CHECK-NEXT:   %[[a3:.+]] = load i32, i32* %N, align 4, !tbaa !2, !alias.scope !8, !noalias !11, !invariant.group ![[INVG:[0-9]]]
 ; CHECK-NEXT:   %[[a4:.+]] = getelementptr inbounds i32, i32* %[[malloccache12]], i64 %iv
-; CHECK-NEXT:   store i32 %[[a3]], i32* %[[a4]], align 4, !tbaa !2, !invariant.group ![[INVG:[0-9]+]]
+; CHECK-NEXT:   store i32 %[[a3]], i32* %[[a4]], align 4, !tbaa !2, !invariant.group ![[INVG]]
 ; CHECK-NEXT:   %[[a5:.+]] = sext i32 %[[a3]] to i64
 ; CHECK-NEXT:   br label %for.body4
 
@@ -199,9 +200,9 @@ attributes #9 = { noreturn nounwind }
 ; CHECK-NEXT:   %[[a17:.+]] = add nuw nsw i64 %"iv1'ac.1", %[[a16]]
 ; CHECK-NEXT:   %[[a18:.+]] = getelementptr inbounds double, double* %_malloccache, i64 %[[a17]]
 ; CHECK-NEXT:   %[[a19:.+]] = load double, double* %[[a18]], align 8, !tbaa !6, !invariant.group ![[g9]]
-; CHECK-NEXT:   %m0diffe = fmul fast double %[[a14]], %[[a19]]
-; CHECK-NEXT:   %[[a20:.+]] = fadd fast double %"'de.1", %m0diffe
-; CHECK-NEXT:   %[[a21:.+]] = fadd fast double %[[a20]], %m0diffe
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %[[a14]], %[[a19]]
+; CHECK-NEXT:   %[[a20:.+]] = fadd fast double %"'de.1", %[[m0diffe]]
+; CHECK-NEXT:   %[[a21:.+]] = fadd fast double %[[a20]], %[[m0diffe]]
 ; CHECK-NEXT:   store double %[[a21]], double* %"arrayidx'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[a22:.+]] = icmp eq i64 %"iv1'ac.1", 0
 ; CHECK-NEXT:   br i1 %[[a22]], label %invertfor.cond1.preheader, label %incinvertfor.body4
@@ -212,7 +213,7 @@ attributes #9 = { noreturn nounwind }
 
 ; CHECK: invertfor.cond.cleanup3.loopexit:                 ; preds = %invertfor.cond.cleanup3
 ; CHECK-NEXT:   %[[a25:.+]] = getelementptr inbounds i32, i32* %[[malloccache12]], i64 %"iv'ac.0"
-; CHECK-NEXT:   %[[a26:.+]] = load i32, i32* %[[a25]], align 4, !tbaa !2, !invariant.group ![[INVG]]
+; CHECK-NEXT:   %[[a26:.+]] = load i32, i32* %[[a25]], align 4, !tbaa !2, !alias.scope !8, !noalias !11, !invariant.group ![[INVG]]
 ; CHECK-NEXT:   %[[_unwrap17:.+]] = sext i32 %[[a26]] to i64
 ; TODO-CHECK-NEXT:   %[[_unwrap14:.+]] = icmp sgt i64 %[[_unwrap17]], 1
 ; TODO-CHECK-NEXT:   %[[smax_unwrap19:.+]] = select i1 %[[_unwrap14]], i64 %[[_unwrap17]], i64 1

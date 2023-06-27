@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 %struct.Gradients = type { double, double }
 
@@ -18,13 +19,13 @@ declare %struct.Gradients @__enzyme_fwddiff(double (double, double)*, ...)
 
 ; CHECK: define internal [2 x double] @fwddiffe2tester(double %x, [2 x double] %"x'", double %y, [2 x double] %"y'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = extractvalue [2 x double] %"x'", 0
-; CHECK-NEXT:   %1 = extractvalue [2 x double] %"y'", 0
-; CHECK-NEXT:   %2 = fadd fast double %0, %1
-; CHECK-NEXT:   %3 = insertvalue [2 x double] undef, double %2, 0
-; CHECK-NEXT:   %4 = extractvalue [2 x double] %"x'", 1
-; CHECK-NEXT:   %5 = extractvalue [2 x double] %"y'", 1
-; CHECK-NEXT:   %6 = fadd fast double %4, %5
-; CHECK-NEXT:   %7 = insertvalue [2 x double] %3, double %6, 1
-; CHECK-NEXT:   ret [2 x double] %7
+; CHECK-NEXT:   %[[i0:.+]] = extractvalue [2 x double] %"x'", 0
+; CHECK-NEXT:   %[[i4:.+]] = extractvalue [2 x double] %"x'", 1
+; CHECK-NEXT:   %[[i1:.+]] = extractvalue [2 x double] %"y'", 0
+; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[i0]], %[[i1]]
+; CHECK-NEXT:   %[[i3:.+]] = insertvalue [2 x double] undef, double %[[i2]], 0
+; CHECK-NEXT:   %[[i5:.+]] = extractvalue [2 x double] %"y'", 1
+; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %[[i4]], %[[i5]]
+; CHECK-NEXT:   %[[i7:.+]] = insertvalue [2 x double] %[[i3]], double %[[i6]], 1
+; CHECK-NEXT:   ret [2 x double] %[[i7]]
 ; CHECK-NEXT: }

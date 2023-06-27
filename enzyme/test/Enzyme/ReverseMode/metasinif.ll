@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -early-cse -instsimplify -adce -loop-deletion -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -correlated-propagation -early-cse -instsimplify -adce -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,correlated-propagation,early-cse,instsimplify,adce,%simplifycfg)" -S | FileCheck %s
 
 ; Function Attrs: nounwind readnone speculatable
 declare double @llvm.fabs.f64(double) #1
@@ -104,8 +105,8 @@ attributes #8 = { noreturn nounwind }
 ; CHECK-NEXT:   call void @diffemetasin(double* nonnull %a.addr, double* nonnull %"a.addr'ipa", double %[[drets2:.+]])
 ; CHECK-NEXT:   %[[pload:.+]] = load double, double* %"a.addr'ipa", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"a.addr'ipa", align 8
-; CHECK-NEXT:   %m0diffea = fmul fast double %[[pload]], %a
-; CHECK-NEXT:   %[[prev2]] = fadd fast double %m0diffea, %m0diffea
+; CHECK-NEXT:   %[[m0diffea:.+]] = fmul fast double %[[pload]], %a
+; CHECK-NEXT:   %[[prev2]] = fadd fast double %[[m0diffea]], %[[m0diffea]]
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertend:                                        ; preds = %if.true, %if.false

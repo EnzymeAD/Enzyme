@@ -202,24 +202,24 @@ attributes #8 = { noreturn nounwind }
 ; CHECK-NEXT:   br i1 %cmp119, label %invertfor.cond.cleanup.loopexit, label %invertentry
 
 ; CHECK: invertfor.body:                                   ; preds = %incinvertfor.body, %invertfor.cond.cleanup.loopexit
-; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %_unwrap4.zext, %invertfor.cond.cleanup.loopexit ], [ %19, %incinvertfor.body ]
+; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %_unwrap4.zext, %invertfor.cond.cleanup.loopexit ], [ %[[i19:.+]], %incinvertfor.body ]
 ; CHECK-NEXT:   %_unwrap5 = zext i32 %b to i64
 ; CHECK-NEXT:   %_unwrap6 = mul i64 %_unwrap5, %"iv'ac.0"
 ; CHECK-NEXT:   %"arrayidx'ipg_unwrap" = getelementptr inbounds double, double* %"a'", i64 %_unwrap6
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx'ipg_unwrap", align 8
 ; CHECK-NEXT:   %12 = getelementptr inbounds double, double* %_cache.0, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %13 = load double, double* %12, align 8, !tbaa !2, !invariant.group ![[igroup]]
-; CHECK-NEXT:   %m0diffe = fmul fast double %differeturn, %13
-; CHECK-NEXT:   %m1diffe = fmul fast double %differeturn, %13
-; CHECK-NEXT:   %14 = fadd fast double %m0diffe, %m1diffe
-; CHECK-NEXT:   %15 = load double, double* %"arrayidx'ipg_unwrap", align 8
-; CHECK-NEXT:   %16 = fadd fast double %15, %14
-; CHECK-NEXT:   store double %16, double* %"arrayidx'ipg_unwrap", align 8
-; CHECK-NEXT:   %17 = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   %18 = select{{( fast)?}} i1 %17, double 0.000000e+00, double %differeturn
-; CHECK-NEXT:   br i1 %17, label %invertfor.body.preheader, label %incinvertfor.body
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %differeturn, %13
+; CHECK-NEXT:   %[[m1diffe:.+]] = fmul fast double %differeturn, %13
+; CHECK-NEXT:   %[[i14:.+]] = fadd fast double %[[m0diffe]], %[[m1diffe]]
+; CHECK-NEXT:   %[[i15:.+]] = load double, double* %"arrayidx'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i16:.+]] = fadd fast double %[[i15]], %[[i14]]
+; CHECK-NEXT:   store double %[[i16]], double* %"arrayidx'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i17:.+]] = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   %{{.*}} = select{{( fast)?}} i1 %[[i17]], double 0.000000e+00, double %differeturn
+; CHECK-NEXT:   br i1 %[[i17]], label %invertfor.body.preheader, label %incinvertfor.body
 
 ; CHECK: incinvertfor.body:                                ; preds = %invertfor.body
-; CHECK-NEXT:   %19 = add nsw i64 %"iv'ac.0", -1
+; CHECK-NEXT:   %[[i19]] = add nsw i64 %"iv'ac.0", -1
 ; CHECK-NEXT:   br label %invertfor.body
 ; CHECK-NEXT: }

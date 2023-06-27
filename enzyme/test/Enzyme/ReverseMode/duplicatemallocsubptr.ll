@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -instsimplify -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -simplifycfg -instsimplify -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,%simplifycfg,instsimplify,adce)" -S | FileCheck %s
 
 @.str = private unnamed_addr constant [28 x i8] c"original =%f derivative=%f\0A\00", align 1
 
@@ -56,8 +57,8 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"p2'mi", i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   %"p3'ipc" = bitcast i8* %"p2'mi" to double**
 ; CHECK-NEXT:   %p3 = bitcast i8* %p2 to double**
-; CHECK-NEXT:   store double* %"a0'", double** %"p3'ipc", align 8, !alias.scope !0, !noalias !3
-; CHECK-NEXT:   store double* %a0, double** %p3, align 8, !alias.scope !3, !noalias !0
+; CHECK-NEXT:   store double* %"a0'", double** %"p3'ipc", align 8, !alias.scope ![[NA0:[0-9]+]], !noalias ![[NA1:[0-9]+]]
+; CHECK-NEXT:   store double* %a0, double** %p3, align 8, !alias.scope ![[NA1]], !noalias ![[NA0]]
 ; CHECK-NEXT:   %a4_augmented = call { double*, double* } @augmented_f(double** %p3, double** %"p3'ipc")
 ; CHECK-NEXT:   %a4 = extractvalue { double*, double* } %a4_augmented, 0
 ; CHECK-NEXT:   %"a4'ac" = extractvalue { double*, double* } %a4_augmented, 1
@@ -84,7 +85,7 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %1 = fadd fast double %0, %differeturn
 ; CHECK-NEXT:   store double %1, double* %"a4'ip_phi"
 ; CHECK-NEXT:   call void @diffef(double** %p3, double** %"p3'ipc")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"p2'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %p2)
+; CHECK-NEXT:   call void @free(i8* nonnull %"p2'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %p2)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

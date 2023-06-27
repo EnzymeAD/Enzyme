@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-lower-globals -mem2reg -sroa -simplifycfg -instsimplify -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-lower-globals -enzyme -mem2reg -sroa -simplifycfg -instsimplify -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-lower-globals -passes="enzyme,function(mem2reg,sroa,%simplifycfg,instsimplify)" -S | FileCheck %s
 
 @global = external dso_local local_unnamed_addr global double, align 8
 
@@ -31,10 +32,10 @@ declare double @__enzyme_autodiff(double (double)*, ...)
 ; CHECK-NEXT:   %mul = fmul fast double %[[copyload]], %x
 ; CHECK-NEXT:   %mul2 = fmul fast double %mul, %mul
 ; CHECK-NEXT:   store double %mul2, double* @global, align 8
-; CHECK-NEXT:   %m0diffemul = fmul fast double %differeturn, %mul
-; CHECK-NEXT:   %m1diffemul = fmul fast double %differeturn, %mul
-; CHECK-NEXT:   %[[add:.+]] = fadd fast double %m0diffemul, %m1diffemul
-; CHECK-NEXT:   %m1diffex = fmul fast double %[[add]], %[[copyload]]
-; CHECK-NEXT:   %[[res:.+]] = insertvalue { double } undef, double %m1diffex, 0
+; CHECK-NEXT:   %[[m0diffemul:.+]] = fmul fast double %differeturn, %mul
+; CHECK-NEXT:   %[[m1diffemul:.+]] = fmul fast double %differeturn, %mul
+; CHECK-NEXT:   %[[add:.+]] = fadd fast double %[[m0diffemul]], %[[m1diffemul]]
+; CHECK-NEXT:   %[[m1diffex:.+]] = fmul fast double %[[add]], %[[copyload]]
+; CHECK-NEXT:   %[[res:.+]] = insertvalue { double } undef, double %[[m1diffex]], 0
 ; CHECK-NEXT:   ret { double } %[[res]]
 ; CHECK-NEXT: }

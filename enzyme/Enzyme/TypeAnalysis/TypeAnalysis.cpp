@@ -41,6 +41,8 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 
 #include "llvm/IR/InlineAsm.h"
 
@@ -63,6 +65,10 @@ llvm::cl::opt<int> MaxIntOffset("enzyme-max-int-offset", cl::init(100),
                                 cl::Hidden,
                                 cl::desc("Maximum type tree offset"));
 
+llvm::cl::opt<unsigned> EnzymeMaxTypeDepth("enzyme-max-type-depth", cl::init(6),
+                                           cl::Hidden,
+                                           cl::desc("Maximum type tree depth"));
+
 llvm::cl::opt<bool> EnzymePrintType("enzyme-print-type", cl::init(false),
                                     cl::Hidden,
                                     cl::desc("Print type analysis algorithm"));
@@ -76,7 +82,7 @@ llvm::cl::opt<bool> EnzymeStrictAliasing(
     cl::desc("Assume strict aliasing of types / type stability"));
 }
 
-const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
+const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"sinc", Intrinsic::not_intrinsic},
     {"sincn", Intrinsic::not_intrinsic},
     {"cos", Intrinsic::cos},
@@ -101,8 +107,6 @@ const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"log1p", Intrinsic::not_intrinsic},
     {"log2", Intrinsic::log2},
     {"logb", Intrinsic::not_intrinsic},
-    {"logbf", Intrinsic::not_intrinsic},
-    {"logbl", Intrinsic::not_intrinsic},
     {"pow", Intrinsic::pow},
     {"sqrt", Intrinsic::sqrt},
     {"cbrt", Intrinsic::not_intrinsic},
@@ -132,6 +136,9 @@ const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"erfi", Intrinsic::not_intrinsic},
     {"erfc", Intrinsic::not_intrinsic},
 
+    {"__fd_sincos_1", Intrinsic::not_intrinsic},
+    {"sincospi", Intrinsic::not_intrinsic},
+
     // bessel functions
     {"j0", Intrinsic::not_intrinsic},
     {"j1", Intrinsic::not_intrinsic},
@@ -139,13 +146,6 @@ const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"y0", Intrinsic::not_intrinsic},
     {"y1", Intrinsic::not_intrinsic},
     {"yn", Intrinsic::not_intrinsic},
-    {"j0f", Intrinsic::not_intrinsic},
-    {"j1f", Intrinsic::not_intrinsic},
-    {"jnf", Intrinsic::not_intrinsic},
-    {"y0f", Intrinsic::not_intrinsic},
-    {"y1f", Intrinsic::not_intrinsic},
-    {"ynf", Intrinsic::not_intrinsic},
-
     {"tgamma", Intrinsic::not_intrinsic},
     {"lgamma", Intrinsic::not_intrinsic},
     {"ceil", Intrinsic::ceil},
@@ -165,27 +165,18 @@ const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"fma", Intrinsic::fma},
     {"ilogb", Intrinsic::not_intrinsic},
     {"scalbn", Intrinsic::not_intrinsic},
-    {"scalbnf", Intrinsic::not_intrinsic},
-    {"scalbnl", Intrinsic::not_intrinsic},
     {"scalbln", Intrinsic::not_intrinsic},
-    {"scalblnf", Intrinsic::not_intrinsic},
-    {"scalblnl", Intrinsic::not_intrinsic},
     {"powi", Intrinsic::powi},
     {"cabs", Intrinsic::not_intrinsic},
     {"ldexp", Intrinsic::not_intrinsic},
     {"fmod", Intrinsic::not_intrinsic},
-#if LLVM_VERSION_MAJOR >= 9
+    {"finite", Intrinsic::not_intrinsic},
+    {"isinf", Intrinsic::not_intrinsic},
+    {"isnan", Intrinsic::not_intrinsic},
     {"lround", Intrinsic::lround},
     {"llround", Intrinsic::llround},
     {"lrint", Intrinsic::lrint},
-    {"llrint", Intrinsic::llrint}
-#else
-    {"lround", Intrinsic::not_intrinsic},
-    {"llround", Intrinsic::not_intrinsic},
-    {"lrint", Intrinsic::not_intrinsic},
-    {"llrint", Intrinsic::not_intrinsic}
-#endif
-};
+    {"llrint", Intrinsic::llrint}};
 
 TypeAnalyzer::TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
                            uint8_t direction)
@@ -320,11 +311,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       auto g2 = GetElementPtrInst::Create(
           Val->getType(),
           UndefValue::get(PointerType::getUnqual(Val->getType())), vec);
-#if LLVM_VERSION_MAJOR > 6
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-      APInt ai(DL.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
       //   as g2 has no parent
@@ -374,11 +361,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       auto g2 = GetElementPtrInst::Create(
           Val->getType(),
           UndefValue::get(PointerType::getUnqual(Val->getType())), vec);
-#if LLVM_VERSION_MAJOR > 6
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-      APInt ai(DL.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
       //   as g2 has no parent
@@ -424,11 +407,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
         llvm::all_of(CE->operand_values(),
                      [](Value *v) { return isa<ConstantInt>(v); })) {
       auto g2 = cast<GetElementPtrInst>(CE->getAsInstruction());
-#if LLVM_VERSION_MAJOR > 6
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-      APInt ai(DL.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
       //   as g2 has no parent
@@ -687,7 +666,7 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
       if (Origin)
         ss << " origin=" << *Origin;
       CustomErrorHandler(str.c_str(), wrap(Val), ErrorType::IllegalTypeAnalysis,
-                         (void *)this);
+                         (void *)this, wrap(Origin), nullptr);
     }
     llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
     llvm::errs() << *fntypeinfo.Function << "\n";
@@ -807,13 +786,20 @@ void TypeAnalyzer::considerTBAA() {
           assert(num_args == 1 || num_args == 2);
           assert(call->getArgOperand(0)->getType()->isPointerTy());
           TypeTree TT;
-          size_t num = 1;
+          ssize_t num = 1;
           if (num_args == 2) {
             assert(isa<ConstantInt>(call->getArgOperand(1)));
-            num = cast<ConstantInt>(call->getArgOperand(1))->getLimitedValue();
+            auto CI = cast<ConstantInt>(call->getArgOperand(1));
+            if (CI->isNegative())
+              num = -1;
+            else
+              num = CI->getLimitedValue();
           }
-          for (size_t i = 0; i < num; i += 4)
-            TT.insert({(int)i}, Type::getFloatTy(call->getContext()));
+          if (num == -1)
+            TT.insert({(int)num}, Type::getFloatTy(call->getContext()));
+          else
+            for (size_t i = 0; i < (size_t)num; i += 4)
+              TT.insert({(int)i}, Type::getFloatTy(call->getContext()));
           TT.insert({}, BaseType::Pointer);
           updateAnalysis(call->getOperand(0), TT.Only(-1, call), call);
         }
@@ -861,11 +847,11 @@ void TypeAnalyzer::considerTBAA() {
           updateAnalysis(call->getOperand(0), TT.Only(-1, call), call);
         }
         if (F) {
-          std::set<std::string> JuliaKnownTypes = {
+          StringSet<> JuliaKnownTypes = {
               "julia.gc_alloc_obj", "jl_alloc_array_1d",  "jl_alloc_array_2d",
               "jl_alloc_array_3d",  "ijl_alloc_array_1d", "ijl_alloc_array_2d",
               "ijl_alloc_array_3d", "jl_gc_alloc_typed",  "ijl_gc_alloc_typed"};
-          if (JuliaKnownTypes.count(F->getName().str())) {
+          if (JuliaKnownTypes.count(F->getName())) {
             visitCallInst(*call);
             continue;
           }
@@ -900,7 +886,9 @@ void TypeAnalyzer::considerTBAA() {
           continue;
         } else if (call->getCalledFunction() &&
                    (call->getCalledFunction()->getIntrinsicID() ==
-                    Intrinsic::memset)) {
+                        Intrinsic::memset ||
+                    call->getCalledFunction()->getName() ==
+                        "memset_pattern16")) {
           int64_t copySize = 1;
           for (auto val : fntypeinfo.knownIntegralValues(call->getOperand(2),
                                                          DT, intseen, SE)) {
@@ -1087,7 +1075,7 @@ void TypeAnalyzer::run() {
         StringRef funcName = getFuncNameFromCall(call);
         auto ci = getFunctionFromCall(call);
         if (ci && !ci->empty()) {
-          if (interprocedural.CustomRules.find(funcName.str()) ==
+          if (interprocedural.CustomRules.find(funcName) ==
               interprocedural.CustomRules.end()) {
             pendingCalls.push_back(call);
             continue;
@@ -1098,7 +1086,7 @@ void TypeAnalyzer::run() {
         StringRef funcName = getFuncNameFromCall(call);
         auto ci = getFunctionFromCall(call);
         if (ci && !ci->empty()) {
-          if (interprocedural.CustomRules.find(funcName.str()) ==
+          if (interprocedural.CustomRules.find(funcName) ==
               interprocedural.CustomRules.end()) {
             pendingCalls.push_back(call);
             continue;
@@ -1194,11 +1182,7 @@ void TypeAnalyzer::visitConstantExpr(ConstantExpr &CE) {
 
     auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
     auto g2 = cast<GetElementPtrInst>(CE.getAsInstruction());
-#if LLVM_VERSION_MAJOR > 6
     APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-    APInt ai(DL.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
     g2->accumulateConstantOffset(DL, ai);
     // Using destructor rather than eraseFromParent
     //   as g2 has no parent
@@ -1455,7 +1439,8 @@ void TypeAnalyzer::visitGetElementPtrInst(GetElementPtrInst &gep) {
     if (!legal) {
       if (CustomErrorHandler)
         CustomErrorHandler("Could not keep minus one", wrap(&gep),
-                           ErrorType::IllegalTypeAnalysis, this);
+                           ErrorType::IllegalTypeAnalysis, this, nullptr,
+                           nullptr);
       else {
         dump();
         llvm::errs() << " could not perform minus one for gep'd: " << gep
@@ -1502,11 +1487,7 @@ void TypeAnalyzer::visitGetElementPtrInst(GetElementPtrInst &gep) {
   for (auto vec : getSet<Value *>(idnext, idnext.size() - 1)) {
     auto g2 = GetElementPtrInst::Create(gep.getSourceElementType(),
                                         gep.getOperand(0), vec);
-#if LLVM_VERSION_MAJOR > 6
     APInt ai(DL.getIndexSizeInBits(gep.getPointerAddressSpace()), 0);
-#else
-    APInt ai(DL.getPointerSize(gep.getPointerAddressSpace()) * 8, 0);
-#endif
     bool valid = g2->accumulateConstantOffset(DL, ai);
     assert(valid);
     // Using destructor rather than eraseFromParent
@@ -2057,11 +2038,7 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
       auto ud =
           UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
       auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-#if LLVM_VERSION_MAJOR > 6
       APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-      APInt ai(dl.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
       g2->accumulateConstantOffset(dl, ai);
       // Using destructor rather than eraseFromParent
       //   as g2 has no parent
@@ -2074,7 +2051,9 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
         newOff = i / 8;
       }
     }
-#if LLVM_VERSION_MAJOR >= 12
+#if LLVM_VERSION_MAJOR > 16
+    if (mask[i] == PoisonMaskElem)
+#elif LLVM_VERSION_MAJOR >= 12
     if (mask[i] == UndefMaskElem)
 #else
     if (mask[i] == -1)
@@ -2094,11 +2073,7 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
             UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
         auto g2 =
             GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-#if LLVM_VERSION_MAJOR > 6
         APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-        APInt ai(dl.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
         g2->accumulateConstantOffset(dl, ai);
         // Using destructor rather than eraseFromParent
         //   as g2 has no parent
@@ -2127,11 +2102,7 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
             UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
         auto g2 =
             GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-#if LLVM_VERSION_MAJOR > 6
         APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-        APInt ai(dl.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
         g2->accumulateConstantOffset(dl, ai);
         // Using destructor rather than eraseFromParent
         //   as g2 has no parent
@@ -2170,11 +2141,7 @@ void TypeAnalyzer::visitExtractValueInst(ExtractValueInst &I) {
   }
   auto ud = UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
   auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-#if LLVM_VERSION_MAJOR > 6
   APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-  APInt ai(dl.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
   g2->accumulateConstantOffset(dl, ai);
   // Using destructor rather than eraseFromParent
   //   as g2 has no parent
@@ -2203,11 +2170,7 @@ void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
   }
   auto ud = UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
   auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
-#if LLVM_VERSION_MAJOR > 6
   APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-  APInt ai(dl.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
   g2->accumulateConstantOffset(dl, ai);
   // Using destructor rather than eraseFromParent
   //   as g2 has no parent
@@ -2392,39 +2355,8 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           Type *FT = nullptr;
           if (!(FT = Ret.IsAllFloat(size)))
             continue;
-          // If & against 0b10000000000, the result is a float
-          bool validXor = false;
-          if (auto CI = dyn_cast_or_null<ConstantInt>(Args[i])) {
-            if (dl.getTypeSizeInBits(FT) != dl.getTypeSizeInBits(CI->getType()))
-              continue;
-            if (CI->isZero()) {
-              validXor = true;
-            } else if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
-              validXor = true;
-            }
-          } else if (auto CV = dyn_cast_or_null<ConstantVector>(Args[i])) {
-            validXor = true;
-            if (dl.getTypeSizeInBits(FT) !=
-                dl.getTypeSizeInBits(CV->getOperand(i)->getType()))
-              continue;
-            for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
-              auto CI = dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
-              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
-                validXor = false;
-              }
-            }
-          } else if (auto CV = dyn_cast_or_null<ConstantDataVector>(Args[i])) {
-            validXor = true;
-            if (dl.getTypeSizeInBits(FT) !=
-                dl.getTypeSizeInBits(CV->getElementType()))
-              continue;
-            for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
-              auto CI = CV->getElementAsAPInt(i);
-              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
-                validXor = false;
-              }
-            }
-          }
+          // If ^ against 0b10000000000, the result is a float
+          bool validXor = containsOnlyAtMostTopBit(Args[i], FT, dl);
           if (validXor) {
             ((i == 0) ? RHS : LHS) |= TypeTree(FT).Only(-1, nullptr);
           }
@@ -2441,16 +2373,35 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           if (dl.getTypeSizeInBits(FT) != dl.getTypeSizeInBits(CIT->getType()))
             continue;
           auto CI = CIT->getValue();
-          if (CI.isNullValue()) {
+#if LLVM_VERSION_MAJOR > 16
+          if (CI.isZero())
+#else
+          if (CI.isNullValue())
+#endif
+          {
             validXor = true;
           } else if (
               !CI.isNegative() &&
-              ((FT->isFloatTy() &&
-                (CI & ~0b01111111100000000000000000000000ULL).isNullValue()) ||
-               (FT->isDoubleTy() &&
+              ((FT->isFloatTy()
+#if LLVM_VERSION_MAJOR > 16
+                && (CI & ~0b01111111100000000000000000000000ULL).isZero()
+#else
+                && (CI & ~0b01111111100000000000000000000000ULL).isNullValue()
+#endif
+                    ) ||
+               (FT->isDoubleTy()
+#if LLVM_VERSION_MAJOR > 16
+                &&
                 (CI &
                  ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
-                    .isNullValue()))) {
+                    .isZero()
+#else
+                &&
+                (CI &
+                 ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                    .isNullValue()
+#endif
+                    ))) {
             validXor = true;
           }
         } else if (auto CV = dyn_cast_or_null<ConstantVector>(Args[i])) {
@@ -2460,16 +2411,35 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
             continue;
           for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
             auto CI = dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
-            if (CI.isNullValue()) {
+
+#if LLVM_VERSION_MAJOR > 16
+            if (CI.isZero())
+#else
+            if (CI.isNullValue())
+#endif
+            {
             } else if (
                 !CI.isNegative() &&
-                ((FT->isFloatTy() &&
-                  (CI & ~0b01111111100000000000000000000000ULL)
-                      .isNullValue()) ||
-                 (FT->isDoubleTy() &&
+                ((FT->isFloatTy()
+#if LLVM_VERSION_MAJOR > 16
+                  && (CI & ~0b01111111100000000000000000000000ULL).isZero()
+#else
+                  && (CI & ~0b01111111100000000000000000000000ULL).isNullValue()
+#endif
+                      ) ||
+                 (FT->isDoubleTy()
+#if LLVM_VERSION_MAJOR > 16
+                  &&
                   (CI &
                    ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
-                      .isNullValue()))) {
+                      .isZero()
+#else
+                  &&
+                  (CI &
+                   ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                      .isNullValue()
+#endif
+                      ))) {
             } else
               validXor = false;
           }
@@ -2480,16 +2450,34 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
             continue;
           for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
             auto CI = CV->getElementAsAPInt(i);
-            if (CI.isNullValue()) {
+#if LLVM_VERSION_MAJOR > 16
+            if (CI.isZero())
+#else
+            if (CI.isNullValue())
+#endif
+            {
             } else if (
                 !CI.isNegative() &&
-                ((FT->isFloatTy() &&
-                  (CI & ~0b01111111100000000000000000000000ULL)
-                      .isNullValue()) ||
-                 (FT->isDoubleTy() &&
+                ((FT->isFloatTy()
+#if LLVM_VERSION_MAJOR > 16
+                  && (CI & ~0b01111111100000000000000000000000ULL).isZero()
+#else
+                  && (CI & ~0b01111111100000000000000000000000ULL).isNullValue()
+#endif
+                      ) ||
+                 (FT->isDoubleTy()
+#if LLVM_VERSION_MAJOR > 16
+                  &&
                   (CI &
                    ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
-                      .isNullValue()))) {
+                      .isZero()
+#else
+                  &&
+                  (CI &
+                   ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                      .isNullValue()
+#endif
+                      ))) {
             } else
               validXor = false;
           }
@@ -2564,39 +2552,8 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           Type *FT;
           if (!(FT = (i == 0 ? RHS : LHS).IsAllFloat(size)))
             continue;
-          // If & against 0b10000000000, the result is a float
-          bool validXor = false;
-          if (auto CI = dyn_cast_or_null<ConstantInt>(Args[i])) {
-            if (dl.getTypeSizeInBits(FT) != dl.getTypeSizeInBits(CI->getType()))
-              continue;
-            if (CI->isZero()) {
-              validXor = true;
-            } else if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
-              validXor = true;
-            }
-          } else if (auto CV = dyn_cast_or_null<ConstantVector>(Args[i])) {
-            validXor = true;
-            if (dl.getTypeSizeInBits(FT) !=
-                dl.getTypeSizeInBits(CV->getOperand(i)->getType()))
-              continue;
-            for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
-              auto CI = dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
-              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
-                validXor = false;
-              }
-            }
-          } else if (auto CV = dyn_cast_or_null<ConstantDataVector>(Args[i])) {
-            validXor = true;
-            if (dl.getTypeSizeInBits(FT) !=
-                dl.getTypeSizeInBits(CV->getElementType()))
-              continue;
-            for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
-              auto CI = CV->getElementAsAPInt(i);
-              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
-                validXor = false;
-              }
-            }
-          }
+          // If ^ against 0b10000000000, the result is a float
+          bool validXor = containsOnlyAtMostTopBit(Args[i], FT, dl);
           if (validXor) {
             Result = ConcreteType(FT);
           }
@@ -2613,17 +2570,35 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
                 dl.getTypeSizeInBits(CIT->getType()))
               continue;
             auto CI = CIT->getValue();
-            if (CI.isNullValue()) {
+#if LLVM_VERSION_MAJOR > 16
+            if (CI.isZero())
+#else
+            if (CI.isNullValue())
+#endif
+            {
               validXor = true;
             } else if (
                 !CI.isNegative() &&
-                ((FT->isFloatTy() &&
-                  (CI & ~0b01111111100000000000000000000000ULL)
-                      .isNullValue()) ||
-                 (FT->isDoubleTy() &&
+                ((FT->isFloatTy()
+#if LLVM_VERSION_MAJOR > 16
+                  && (CI & ~0b01111111100000000000000000000000ULL).isZero()
+#else
+                  && (CI & ~0b01111111100000000000000000000000ULL).isNullValue()
+#endif
+                      ) ||
+                 (FT->isDoubleTy()
+#if LLVM_VERSION_MAJOR > 16
+                  &&
                   (CI &
                    ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
-                      .isNullValue()))) {
+                      .isZero()
+#else
+                  &&
+                  (CI &
+                   ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                      .isNullValue()
+#endif
+                      ))) {
               validXor = true;
             }
           } else if (auto CV = dyn_cast_or_null<ConstantVector>(Args[i])) {
@@ -2633,16 +2608,35 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
               continue;
             for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
               auto CI = dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
-              if (CI.isNullValue()) {
+#if LLVM_VERSION_MAJOR > 16
+              if (CI.isZero())
+#else
+              if (CI.isNullValue())
+#endif
+              {
               } else if (
                   !CI.isNegative() &&
-                  ((FT->isFloatTy() &&
-                    (CI & ~0b01111111100000000000000000000000ULL)
-                        .isNullValue()) ||
-                   (FT->isDoubleTy() &&
+                  ((FT->isFloatTy()
+#if LLVM_VERSION_MAJOR > 16
+                    && (CI & ~0b01111111100000000000000000000000ULL).isZero()
+#else
+                    &&
+                    (CI & ~0b01111111100000000000000000000000ULL).isNullValue()
+#endif
+                        ) ||
+                   (FT->isDoubleTy()
+#if LLVM_VERSION_MAJOR > 16
+                    &&
                     (CI &
                      ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
-                        .isNullValue()))) {
+                        .isZero()
+#else
+                    &&
+                    (CI &
+                     ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                        .isNullValue()
+#endif
+                        ))) {
               } else
                 validXor = false;
             }
@@ -2653,16 +2647,35 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
               continue;
             for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
               auto CI = CV->getElementAsAPInt(i);
-              if (CI.isNullValue()) {
+#if LLVM_VERSION_MAJOR > 16
+              if (CI.isZero())
+#else
+              if (CI.isNullValue())
+#endif
+              {
               } else if (
                   !CI.isNegative() &&
-                  ((FT->isFloatTy() &&
-                    (CI & ~0b01111111100000000000000000000000ULL)
-                        .isNullValue()) ||
-                   (FT->isDoubleTy() &&
+                  ((FT->isFloatTy()
+#if LLVM_VERSION_MAJOR > 16
+                    && (CI & ~0b01111111100000000000000000000000ULL).isZero()
+#else
+                    &&
+                    (CI & ~0b01111111100000000000000000000000ULL).isNullValue()
+#endif
+                        ) ||
+                   (FT->isDoubleTy()
+#if LLVM_VERSION_MAJOR > 16
+                    &&
                     (CI &
                      ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
-                        .isNullValue()))) {
+                        .isZero()
+#else
+                    &&
+                    (CI &
+                     ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                        .isNullValue()
+#endif
+                        ))) {
               } else
                 validXor = false;
             }
@@ -2795,7 +2808,6 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
                    &I);
     return;
 
-#if LLVM_VERSION_MAJOR >= 9
   case Intrinsic::nvvm_wmma_m16n16k16_store_d_f32_col:
   case Intrinsic::nvvm_wmma_m16n16k16_store_d_f32_col_stride:
   case Intrinsic::nvvm_wmma_m16n16k16_store_d_f32_row:
@@ -3113,7 +3125,6 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
         &I);
     return;
   }
-#endif
 
   case Intrinsic::nvvm_ldu_global_i:
   case Intrinsic::nvvm_ldu_global_p:
@@ -3216,13 +3227,17 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
 #if LLVM_VERSION_MAJOR >= 12
   case Intrinsic::vector_reduce_fadd:
   case Intrinsic::vector_reduce_fmul:
-#elif LLVM_VERSION_MAJOR >= 9
+#else
   case Intrinsic::experimental_vector_reduce_v2_fadd:
   case Intrinsic::experimental_vector_reduce_v2_fmul:
 #endif
   case Intrinsic::copysign:
   case Intrinsic::maxnum:
   case Intrinsic::minnum:
+#if LLVM_VERSION_MAJOR >= 15
+  case Intrinsic::maximum:
+  case Intrinsic::minimum:
+#endif
   case Intrinsic::nvvm_fmax_f:
   case Intrinsic::nvvm_fmax_d:
   case Intrinsic::nvvm_fmax_ftz_f:
@@ -3297,13 +3312,15 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     TypeTree vd = getAnalysis(I.getOperand(0)).Data0();
     vd.binopIn(getAnalysis(I.getOperand(1)).Data0(), opcode);
 
-    TypeTree overall = vd.Only(0, &I);
-
     auto &dl = I.getParent()->getParent()->getParent()->getDataLayout();
-    overall |=
-        TypeTree(BaseType::Integer)
-            .Only((dl.getTypeSizeInBits(I.getOperand(0)->getType()) + 7) / 8,
-                  &I);
+    int sz = (dl.getTypeSizeInBits(I.getOperand(0)->getType()) + 7) / 8;
+    TypeTree overall = vd.Only(-1, &I).ShiftIndices(dl, 0, sz, 0);
+
+    int sz2 = (dl.getTypeSizeInBits(I.getType()) + 7) / 8;
+    auto btree = TypeTree(BaseType::Integer)
+                     .Only(-1, &I)
+                     .ShiftIndices(dl, 0, sz2 - sz, sz);
+    overall |= btree;
 
     if (direction & DOWN)
       updateAnalysis(&I, overall, &I);
@@ -3557,6 +3574,125 @@ void TypeAnalyzer::visitInvokeInst(InvokeInst &call) {
   tmpCall->eraseFromParent();
 }
 
+void analyzeIntelSubscriptIntrinsic(IntrinsicInst &II, TypeAnalyzer &TA) {
+  assert(isIntelSubscriptIntrinsic(II));
+#if LLVM_VERSION_MAJOR >= 14
+  assert(II.arg_size() == 5);
+#else
+  assert(II.getNumArgOperands() == 5);
+#endif
+
+  constexpr size_t idxArgsIndices[4] = {0, 1, 2, 4};
+  constexpr size_t ptrArgIndex = 3;
+
+  // Update analysis of index parameters
+
+  if (TA.direction & TypeAnalyzer::UP) {
+    for (auto i : idxArgsIndices) {
+      auto idx = II.getOperand(i);
+      TA.updateAnalysis(idx, TypeTree(BaseType::Integer).Only(-1, &II), &II);
+    }
+  }
+
+  // Update analysis of ptr parameter
+
+  auto &DL = TA.fntypeinfo.Function->getParent()->getDataLayout();
+  auto pointerAnalysis = TA.getAnalysis(II.getOperand(ptrArgIndex));
+
+  if (TA.direction & TypeAnalyzer::DOWN) {
+    bool legal = true;
+    auto keepMinus = pointerAnalysis.KeepMinusOne(legal);
+    if (!legal) {
+      if (CustomErrorHandler)
+        CustomErrorHandler("Could not keep minus one", wrap(&II),
+                           ErrorType::IllegalTypeAnalysis, &TA, nullptr,
+                           nullptr);
+      else {
+        TA.dump();
+        llvm::errs()
+            << " could not perform minus one for llvm.intel.subscript'd: " << II
+            << "\n";
+      }
+    }
+    TA.updateAnalysis(&II, keepMinus, &II);
+    TA.updateAnalysis(&II, TypeTree(pointerAnalysis.Inner0()).Only(-1, &II),
+                      &II);
+  }
+
+  if (TA.direction & TypeAnalyzer::UP) {
+    TA.updateAnalysis(II.getOperand(ptrArgIndex),
+                      TypeTree(TA.getAnalysis(&II).Inner0()).Only(-1, &II),
+                      &II);
+  }
+
+  SmallVector<std::set<int64_t>, 4> idnext;
+  // The first operand is used to denote the axis of a multidimensional array,
+  // but it is not used for address calculation, and so we skip it here.
+  constexpr size_t offsetCalculationIndices[3] = {1, 2, 4};
+  for (auto i : offsetCalculationIndices) {
+    auto idx = II.getOperand(i);
+    auto iset = TA.knownIntegralValues(idx);
+    std::set<int64_t> vset;
+    for (auto i : iset) {
+      // Don't consider negative indices of llvm.intel.subscript
+      if (i < 0)
+        continue;
+      vset.insert(i);
+    }
+    idnext.push_back(vset);
+    if (idnext.back().size() == 0)
+      return;
+  }
+  assert(idnext.size() != 0);
+
+  TypeTree upTree;
+  TypeTree downTree;
+
+  TypeTree intrinsicData0;
+  TypeTree pointerData0;
+  if (TA.direction & TypeAnalyzer::UP)
+    intrinsicData0 = TA.getAnalysis(&II).Data0();
+  if (TA.direction & TypeAnalyzer::DOWN)
+    pointerData0 = pointerAnalysis.Data0();
+
+  bool firstLoop = true;
+
+  for (auto vec : getSet<int64_t>(idnext, idnext.size() - 1)) {
+    auto baseIndex = vec[0];
+    auto stride = vec[1];
+    auto index = vec[2];
+
+    int offset = static_cast<int>(stride * (index - baseIndex));
+    if (offset < 0) {
+      continue; // The intrinsic doesn't handle negative offsets
+    }
+
+    if (TA.direction & TypeAnalyzer::DOWN) {
+      auto shft = pointerData0.ShiftIndices(DL, /*init offset*/ offset,
+                                            /*max size*/ -1, /*newoffset*/ 0);
+      if (firstLoop)
+        downTree = shft;
+      else
+        downTree &= shft;
+    }
+
+    if (TA.direction & TypeAnalyzer::UP) {
+      auto shft =
+          intrinsicData0.ShiftIndices(DL, /*init offset*/ 0, /*max size*/ -1,
+                                      /*new offset*/ offset);
+      if (firstLoop)
+        upTree = shft;
+      else
+        upTree |= shft;
+    }
+    firstLoop = false;
+  }
+  if (TA.direction & TypeAnalyzer::DOWN)
+    TA.updateAnalysis(&II, downTree.Only(-1, &II), &II);
+  if (TA.direction & TypeAnalyzer::UP)
+    TA.updateAnalysis(II.getOperand(ptrArgIndex), upTree.Only(-1, &II), &II);
+}
+
 void TypeAnalyzer::visitCallInst(CallInst &call) {
   assert(fntypeinfo.KnownValues.size() ==
          fntypeinfo.Function->getFunctionType()->getNumParams());
@@ -3585,6 +3721,30 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
   if (ci) {
     StringRef funcName = getFuncNameFromCall(&call);
 
+    auto blasMetaData = extractBLAS(funcName);
+#if LLVM_VERSION_MAJOR >= 16
+    if (blasMetaData.has_value()) {
+      BlasInfo blas = blasMetaData.value();
+#include "BlasTA.inc"
+    }
+#else
+    if (blasMetaData.hasValue()) {
+      BlasInfo blas = blasMetaData.getValue();
+#include "BlasTA.inc"
+    }
+#endif
+
+    // When compiling Enzyme against standard LLVM, and not Intel's
+    // modified version of LLVM, the intrinsic `llvm.intel.subscript` is
+    // not fully understood by LLVM. One of the results of this is that the
+    // visitor dispatches to visitCallInst, rather than visitIntrinsicInst, when
+    // presented with the intrinsic - hence why we are handling it here.
+    if (funcName.startswith("llvm.intel.subscript")) {
+      assert(isa<IntrinsicInst>(call));
+      analyzeIntelSubscriptIntrinsic(cast<IntrinsicInst>(call), *this);
+      return;
+    }
+
 #define CONSIDER(fn)                                                           \
   if (funcName == #fn) {                                                       \
     analyzeFuncTypes(::fn, call, *this);                                       \
@@ -3597,7 +3757,7 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
     return;                                                                    \
   }
 
-    auto customrule = interprocedural.CustomRules.find(funcName.str());
+    auto customrule = interprocedural.CustomRules.find(funcName);
     if (customrule != interprocedural.CustomRules.end()) {
       auto returnAnalysis = getAnalysis(&call);
       SmallVector<TypeTree, 4> args;
@@ -3632,6 +3792,7 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       }
       return;
     }
+
     // All these are always valid => no direction check
     // CONSIDER(malloc)
     // TODO consider handling other allocation functions integer inputs
@@ -3757,6 +3918,17 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       updateAnalysis(call.getOperand(0), ptrint, &call);
       return;
     }
+
+    if (funcName.startswith("_ZNKSt3__14hash")) {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+
+    if (funcName.startswith("_ZNKSt3__112basic_stringIcNS_11char_traitsIcEENS_"
+                            "9allocatorIcEEE13__get_pointer")) {
+      return;
+    }
+
     if (funcName == "__dynamic_cast" ||
         funcName == "_ZSt18_Rb_tree_decrementPKSt18_Rb_tree_node_base" ||
         funcName == "_ZSt18_Rb_tree_incrementPKSt18_Rb_tree_node_base" ||
@@ -3773,6 +3945,80 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(2),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+
+    /// CUDA
+    if (funcName == "cuDeviceGet") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "cuDeviceGetName") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "cudaRuntimeGetVersion" ||
+        funcName == "cuDriverGetVersion" || funcName == "cuDeviceGetCount") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      TypeTree ptrint;
+      ptrint.insert({-1}, BaseType::Pointer);
+      ptrint.insert({-1, 0}, BaseType::Integer);
+      updateAnalysis(call.getOperand(0), ptrint, &call);
+      return;
+    }
+    if (funcName == "cuMemGetInfo_v2") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      TypeTree ptrint;
+      ptrint.insert({-1}, BaseType::Pointer);
+      ptrint.insert({-1, 0}, BaseType::Integer);
+      updateAnalysis(call.getOperand(0), ptrint, &call);
+      updateAnalysis(call.getOperand(1), ptrint, &call);
+      return;
+    }
+    if (funcName == "cuDevicePrimaryCtxRetain" ||
+        funcName == "cuCtxGetCurrent") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "cuStreamQuery") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "cuMemAllocAsync" || funcName == "cuMemAlloc" ||
+        funcName == "cuMemAlloc_v2" || funcName == "cudaMalloc" ||
+        funcName == "cudaMallocAsync" || funcName == "cudaMallocHost" ||
+        funcName == "cudaMallocFromPoolAsync") {
+      TypeTree ptrptr;
+      ptrptr.insert({-1}, BaseType::Pointer);
+      ptrptr.insert({-1, 0}, BaseType::Pointer);
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0), ptrptr, &call);
+      updateAnalysis(call.getOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "jl_hrtime" || funcName == "ijl_hrtime") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "jl_get_task_tid" || funcName == "ijl_get_task_tid") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
 
@@ -4061,6 +4307,12 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       return;
     }
     /// END MPI
+
+    // Prob Prog
+    if (ci->hasFnAttribute("enzyme_notypeanalysis")) {
+      return;
+    }
+
     if (funcName == "memcpy" || funcName == "memmove") {
       // TODO have this call common mem transfer to copy data
       visitMemTransferCommon(call);
@@ -4467,7 +4719,18 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
           llvm::errs() << *T << " - " << call << "\n";
           llvm_unreachable("Unknown type for libm");
         }
-
+      } else if (auto AT = dyn_cast<ArrayType>(T)) {
+        assert(AT->getNumElements() >= 1);
+        if (AT->getElementType()->isFloatingPointTy())
+          updateAnalysis(
+              &call,
+              TypeTree(ConcreteType(AT->getElementType()->getScalarType()))
+                  .Only(-1, &call),
+              &call);
+        else {
+          llvm::errs() << *T << " - " << call << "\n";
+          llvm_unreachable("Unknown type for libm");
+        }
       } else {
         llvm::errs() << *T << " - " << call << "\n";
         llvm_unreachable("Unknown type for libm");
@@ -4489,7 +4752,8 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
               .Only(-1, &call),
           &call);
     }
-    if (funcName == "__fd_sincos_1") {
+    if (funcName == "__fd_sincos_1" || funcName == "__fd_sincos_1f" ||
+        funcName == "__fd_sincos_1l") {
       updateAnalysis(call.getArgOperand(0),
                      TypeTree(ConcreteType(call.getArgOperand(0)->getType()))
                          .Only(-1, &call),
@@ -5232,7 +5496,7 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
       ss << " at " << *val << " from " << *I << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(str.c_str(), wrap(I), ErrorType::IllegalFirstPointer,
-                           nullptr);
+                           &analyzer, nullptr, nullptr);
       }
       llvm::errs() << ss.str() << "\n";
       llvm_unreachable("Illegal firstPointer");
@@ -5340,11 +5604,7 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
       };
       auto g2 = GetElementPtrInst::Create(
           ST, UndefValue::get(PointerType::getUnqual(ST)), vec);
-#if LLVM_VERSION_MAJOR > 6
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-      APInt ai(DL.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
       //   as g2 has no parent
@@ -5368,11 +5628,7 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
       };
       auto g2 = GetElementPtrInst::Create(
           AT, UndefValue::get(PointerType::getUnqual(AT)), vec);
-#if LLVM_VERSION_MAJOR > 6
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
-#else
-      APInt ai(DL.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
-#endif
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
       //   as g2 has no parent
@@ -5384,6 +5640,11 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
     }
     return Out;
   }
+  // Unhandled/unknown Type
+  llvm::errs() << "Error Unknown Type: " << *ET << "\n";
+  assert(0 && "Error Unknown Type: ");
+  llvm_unreachable("Error Unknown Type: ");
+  // return TypeTree();
 }
 
 Function *TypeResults::getFunction() const {

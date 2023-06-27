@@ -1,0 +1,52 @@
+name: Fortran
+
+on:
+  push:
+    branches: 
+    - main
+  pull_request:
+    branches: 
+    - main
+jobs:
+  build-and-test-fortran:
+    name: Fortran ${{matrix.build}} ${{matrix.os}}
+    runs-on: ${{matrix.os}}
+    strategy:
+      fail-fast: false
+      matrix:
+        build: ["Release", "Debug"]
+        os: [ubuntu-20.04]
+        llvm: [15]
+        include:
+          - llvm: 15
+            ifx: 2023.0.0
+            mpi: 2021.7.1
+    timeout-minutes: 60 
+    steps:
+    - name: add llvm
+      run: |
+        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
+        sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
+        sudo apt-get update && sudo apt-get install -y cmake gcc g++ gfortran llvm-${{ matrix.llvm }}-dev ninja-build pip
+        sudo python3 -m pip install --upgrade pip setuptools lit
+    - name: add intel tools
+      run: |
+        wget https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
+        sudo apt-key add GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
+        rm GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
+        sudo echo "deb https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/oneAPI.list
+        sudo apt-get update && sudo apt-get install -y intel-oneapi-compiler-fortran-${{ matrix.ifx }} intel-oneapi-mpi-${{ matrix.mpi }} intel-oneapi-mpi-devel-${{ matrix.mpi }}
+        source /opt/intel/oneapi/setvars.sh
+        printenv >> $GITHUB_ENV
+    - uses: actions/checkout@v3
+    - name: generate build system
+      run: |
+        rm -rf build && mkdir build && cd build
+        cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_IFX=ON
+    - name: build enzyme
+      working-directory: 'build'
+      run: ninja LLVMEnzyme-${{ matrix.llvm }}
+    - name: run Fortran tests
+      working-directory: 'build'
+      run: ninja check-enzyme-fortran
+        

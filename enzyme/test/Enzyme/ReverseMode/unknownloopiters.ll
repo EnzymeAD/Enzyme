@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg,adce)" -S | FileCheck %s
 
 ; Function Attrs: nounwind uwtable
 define dso_local double @unknowniters(double* nocapture readonly %x) #0 {
@@ -47,32 +48,30 @@ attributes #2 = { nounwind }
 !5 = !{!"Simple C/C++ TBAA"}
 
 
-; CHECK: define dso_local void @ddynsum(double* %x, double* %xp)
-
+; CHECK: define internal void @diffeunknowniters(double* nocapture readonly %x, double* nocapture %"x'", double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   br label %for.cond.i
+; CHECK-NEXT:   br label %for.cond
 
-; CHECK: for.cond.i:                                       ; preds = %for.cond.i, %entry
-; CHECK-NEXT:   %[[iv:.+]] = phi i64 [ %[[ivnext:.+]], %for.cond.i ], [ 0, %entry ]
+; CHECK: for.cond:
+; CHECK-NEXT:   %[[iv:.+]] = phi i64 [ %[[ivnext:.+]], %for.cond ], [ 0, %entry ]
 ; CHECK-NEXT:   %[[ivnext]] = add nuw nsw i64 %[[iv]], 1
-; CHECK-NEXT:   %call.i = call i32 (...) @done()
-; CHECK-NEXT:   %tobool.i = icmp eq i32 %call.i, 0
-; CHECK-NEXT:   br i1 %tobool.i, label %for.cond.i, label %[[antiloop:.+]]
+; CHECK-NEXT:   %call = tail call i32 (...) @done()
+; CHECK-NEXT:   %tobool = icmp eq i32 %call, 0
+; CHECK-NEXT:   br i1 %tobool, label %for.cond, label %[[antiloop:.+]]
+
+; CHECK: invertentry:
+; CHECK-NEXT:   ret void
 
 ; CHECK: [[antiloop]]:
-; CHECK-NEXT:   %[[antiiv:.+]] = phi i64 [ %[[antiivnext:.+]], %[[incantiloop:.+]] ], [ %[[iv]], %for.cond.i ]
-; CHECK-NEXT:   %[[arrayidxipgi:.+]] = getelementptr inbounds double, double* %xp, i64 %[[antiiv]]
+; CHECK-NEXT:   %[[antiiv:.+]] = phi i64 [ %[[antiivnext:.+]], %[[incantiloop:.+]] ], [ %[[iv]], %for.cond ]
+; CHECK-NEXT:   %[[arrayidxipgi:.+]] = getelementptr inbounds double, double* %"x'", i64 %[[antiiv]]
 ; CHECK-NEXT:   %[[load:.+]] = load double, double* %[[arrayidxipgi]]
-; CHECK-NEXT:   %[[fadd:.+]] = fadd fast double %[[load]], 1.000000e+00
+; CHECK-NEXT:   %[[fadd:.+]] = fadd fast double %[[load]], %differeturn
 ; CHECK-NEXT:   store double %[[fadd]], double* %[[arrayidxipgi]]
 ; CHECK-NEXT:   %[[cmp:.+]] = icmp eq i64 %[[antiiv]], 0
-; CHECK-NEXT:   br i1 %[[cmp]], label %diffeunknowniters.exit, label %[[incantiloop]]
+; CHECK-NEXT:   br i1 %[[cmp]], label %invertentry, label %[[incantiloop]]
 
 ; CHECK: [[incantiloop]]:
 ; TODO the following can have nuw on it because its known non 0
 ; CHECK-NEXT:   %[[antiivnext]] = add nsw i64 %[[antiiv]], -1
 ; CHECK-NEXT:   br label %[[antiloop]]
-
-; CHECK: diffeunknowniters.exit:
-; CHECK-NEXT:   ret void
-; CHECK-NEXT: }

@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -gvn -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -gvn -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,sroa,%simplifycfg,instcombine,gvn,adce)" -enzyme-preopt=false -S | FileCheck %s
 source_filename = "rm.c"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -110,10 +111,10 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx2'ipg_unwrap", align 8
 ; CHECK-NEXT:   %_unwrap = trunc i64 %"iv'ac.0" to i32
 ; CHECK-NEXT:   %conv_unwrap = sitofp i32 %_unwrap to double
-; CHECK-NEXT:   %m0diffe = fmul fast double %[[i0]], %conv_unwrap
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %[[i0]], %conv_unwrap
 ; CHECK-NEXT:   %"arrayidx'ipg_unwrap" = getelementptr inbounds double, double* %"x'", i64 %"iv'ac.0"
 ; CHECK-NEXT:   %[[i1:.+]] = load double, double* %"arrayidx'ipg_unwrap", align 8
-; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[i1]], %m0diffe
+; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[i1]], %[[m0diffe]]
 ; CHECK-NEXT:   store double %[[i2]], double* %"arrayidx'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[i3:.+]] = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[i3:.+]], label %invertentry, label %incinvertfor.body

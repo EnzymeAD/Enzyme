@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,early-cse,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: nounwind readnone uwtable
 define double @tester(double %x) {
@@ -21,8 +22,8 @@ declare double @__enzyme_fwdsplit(double (double)*, ...)
 
 ; CHECK: define internal {{(dso_local )?}}double @fwddiffetester(double %x, double %[[differet:.+]], i8* %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fcmp fast olt double %x, 0.000000e+00
-; CHECK-NEXT:   %1 = select{{( fast)?}} i1 %0, double -1.000000e+00, double 1.000000e+00
-; CHECK-NEXT:   %2 = fmul fast double %1, %[[differet]]
-; CHECK-NEXT:   ret double %2
+; CHECK-NEXT:   %[[i0:.+]] = fcmp fast olt double %x, 0.000000e+00
+; CHECK-NEXT:   %[[i1:.+]] = select{{( fast)?}} i1 %[[i0]], double -1.000000e+00, double 1.000000e+00
+; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[differet]], %[[i1]]
+; CHECK-NEXT:   ret double %[[i2]]
 ; CHECK-NEXT: }

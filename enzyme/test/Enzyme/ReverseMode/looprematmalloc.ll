@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instsimplify -gvn -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -gvn -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg,gvn,adce)" -S | FileCheck %s
 
 source_filename = "/app/example.c"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
@@ -126,8 +127,8 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   ret { double } %0
 
 ; CHECK: invertloop:                                       ; preds = %invertsetLoop
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"i1'mi")
-; CHECK-NEXT:   tail call void @free(i8* %remat_i1)
+; CHECK-NEXT:   call void @free(i8* nonnull %"i1'mi")
+; CHECK-NEXT:   call void @free(i8* %remat_i1)
 ; CHECK-NEXT:   %1 = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   %2 = select {{(fast )?}}i1 %1, double 0.000000e+00, double %"i10'de.0"
 ; CHECK-NEXT:   br i1 %1, label %invertentry, label %incinvertloop
@@ -148,23 +149,23 @@ attributes #4 = { nounwind }
 
 ; CHECK: invertif.true:                                    ; preds = %invertsetExit
 ; CHECK-NEXT:   %i17_unwrap4 = trunc i64 %"iv1'ac.0" to i32
-; CHECK-NEXT:   %6 = sub i32 %i17_unwrap4, 1
-; CHECK-NEXT:   %7 = call fast double @llvm.powi.f64{{(\.i32)?}}(double %arg, i32 %6)
+; CHECK-NEXT:   %[[i11:.+]] = icmp eq i32 %i17_unwrap4, 0
 ; CHECK-DAG:    %[[a8:.+]] = sitofp i32 %i17_unwrap4 to double
-; CHECK-DAG:    %[[a9:.+]] = fmul fast double %16, %7
-; CHECK-NEXT:   %10 = fmul fast double %[[a9]], %[[a8]]
-; CHECK-NEXT:   %11 = icmp eq i32 0, %i17_unwrap4
-; CHECK-NEXT:   %12 = fadd fast double %"arg'de.1", %10
-; CHECK-NEXT:   %13 = select {{(fast )?}}i1 %11, double %"arg'de.1", double %12
+; CHECK-NEXT:   %[[i6:.]] = sub i32 %i17_unwrap4, 1
+; CHECK-NEXT:   %[[i7:.+]] = call fast double @llvm.powi.f64{{(\.i32)?}}(double %arg, i32 %[[i6]])
+; CHECK-DAG:    %[[a9:.+]] = fmul fast double %[[a8]], %[[i7]]
+; CHECK-NEXT:   %[[i10:.+]] = fmul fast double %16, %[[a9]]
+; CHECK-NEXT:   %12 = fadd fast double %"arg'de.1", %[[i10]]
+; CHECK-NEXT:   %13 = select {{(fast )?}}i1 %[[i11]], double %"arg'de.1", double %12
 ; CHECK-NEXT:   br label %invertsetLoop
 
 ; CHECK: invertsetExit:                                    ; preds = %remat_loop_loopExit, %incinvertsetLoop
 ; CHECK-NEXT:   %"i18'de.1" = phi double [ %"i18'de.2", %remat_loop_loopExit ], [ %"i18'de.0", %incinvertsetLoop ]
 ; CHECK-NEXT:   %"arg'de.1" = phi double [ %"arg'de.2", %remat_loop_loopExit ], [ %"arg'de.0", %incinvertsetLoop ]
 ; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 29, %remat_loop_loopExit ], [ %5, %incinvertsetLoop ]
-; CHECK-NEXT:   %"i20'ipg_unwrap" = getelementptr inbounds [30 x double], [30 x double]* %"i'ipc_unwrap8", i64 0, i64 %"iv1'ac.0"
-; CHECK-NEXT:   %14 = load double, double* %"i20'ipg_unwrap", align 8
-; CHECK-NEXT:   store double 0.000000e+00, double* %"i20'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i20ipg_unwrap:.+]] = getelementptr inbounds [30 x double], [30 x double]* %[[ipc_unwrap8:.+]], i64 0, i64 %"iv1'ac.0"
+; CHECK-NEXT:   %14 = load double, double* %[[i20ipg_unwrap]], align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %[[i20ipg_unwrap]], align 8
 ; CHECK-NEXT:   %i15_unwrap5 = and i64 %"iv1'ac.0", 1
 ; CHECK-NEXT:   %i16_unwrap6 = icmp eq i64 %i15_unwrap5, 0
 ; CHECK-NEXT:   %15 = fadd fast double %"i18'de.1", %14
@@ -186,11 +187,11 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %17 = add i64 %fiv, 1
 ; CHECK-DAG:   %i_unwrap = bitcast i8* %remat_i1 to [30 x double]*
 ; CHECK-DAG:   %i20_unwrap = getelementptr inbounds [30 x double], [30 x double]* %i_unwrap, i64 0, i64 %fiv
-; CHECK-DAG:   %i15_unwrap1 = and i64 %fiv, 1
-; CHECK-DAG:   %i16_unwrap2 = icmp eq i64 %i15_unwrap1, 0
+; CHECK-DAG:   %[[i15_unwrap1:.+]] = and i64 %fiv, 1
+; CHECK-DAG:   %[[i16_unwrap2:.+]] = icmp eq i64 %[[i15_unwrap1]], 0
 ; CHECK-DAG:   %i17_unwrap = trunc i64 %fiv to i32
 ; CHECK-DAG:   %18 = call fast double @llvm.powi.f64{{(\.i32)?}}(double %arg, i32 %i17_unwrap) 
-; CHECK-DAG:   %19 = select i1 %i16_unwrap2, double %18, double 0.000000e+00
+; CHECK-DAG:   %19 = select i1 %[[i16_unwrap2]], double %18, double 0.000000e+00
 ; CHECK-NEXT:   store double %19, double* %i20_unwrap, align 8
 ; CHECK-NEXT:   %i22_unwrap = icmp eq i64 %17, 30
 ; CHECK-NEXT:   br i1 %i22_unwrap, label %remat_loop_loopExit, label %remat_loop_setLoop
@@ -198,11 +199,11 @@ attributes #4 = { nounwind }
 ; CHECK: remat_loop_loopExit:                              ; preds = %remat_loop_setLoop
 ; CHECK-NEXT:   %i7_unwrap = getelementptr inbounds [30 x double], [30 x double]* %i_unwrap, i64 0, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %i8_unwrap = load double, double* %i7_unwrap, align 8, !tbaa !2
-; CHECK-NEXT:   %m0diffei8 = fmul fast double %"i10'de.0", %i8_unwrap
-; CHECK-NEXT:   %20 = fadd fast double %m0diffei8, %m0diffei8
-; CHECK-NEXT:   %"i'ipc_unwrap8" = bitcast i8* %"i1'mi" to [30 x double]*
-; CHECK-NEXT:   %"i7'ipg_unwrap" = getelementptr inbounds [30 x double], [30 x double]* %"i'ipc_unwrap8", i64 0, i64 %"iv'ac.0"
-; CHECK-NEXT:   %21 = load double, double* %"i7'ipg_unwrap", align 8
-; CHECK-NEXT:   %22 = fadd fast double %21, %20
-; CHECK-NEXT:   store double %22, double* %"i7'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[m0diffei8:.+]] = fmul fast double %"i10'de.0", %i8_unwrap
+; CHECK-NEXT:   %[[i20:.+]] = fadd fast double %[[m0diffei8]], %[[m0diffei8]]
+; CHECK-NEXT:   %[[ipc_unwrap8]] = bitcast i8* %"i1'mi" to [30 x double]*
+; CHECK-NEXT:   %"i7'ipg_unwrap" = getelementptr inbounds [30 x double], [30 x double]* %[[ipc_unwrap8]], i64 0, i64 %"iv'ac.0"
+; CHECK-NEXT:   %[[i21:.+]] = load double, double* %"i7'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i22:.+]] = fadd fast double %[[i21]], %[[i20]]
+; CHECK-NEXT:   store double %[[i22]], double* %"i7'ipg_unwrap", align 8
 ; CHECK-NEXT:   br label %invertsetExit

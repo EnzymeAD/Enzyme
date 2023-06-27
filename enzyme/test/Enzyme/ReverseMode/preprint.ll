@@ -1,5 +1,8 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -adce -S | FileCheck %s
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | %lli - | FileCheck %s --check-prefix=EVAL
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,%simplifycfg,adce)" -S | FileCheck %s
+
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | %lli - | FileCheck %s --check-prefix=EVAL ; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | %lli - | FileCheck %s --check-prefix=EVAL
 
 ; EVAL: reduce_max=2.000000
 ; EVAL: d_reduce_max(0)=0.000000
@@ -236,34 +239,34 @@ attributes #11 = { noreturn nounwind }
 ; CHECK-NEXT:   %_augmented = call { i8*, i8*, double* } @augmented__ZNSt6vectorIdSaIdEE9push_backERKd2(double** %_M_start.i.i, double** %"_M_start.i.i'ipa", double %rtmp2)
 ; CHECK-NEXT:   %"tmp7'ipl" = load double*, double** %"_M_start.i.i'ipa", align 8, !tbaa !6
 ; CHECK-NEXT:   %"add.ptr.i'ipg" = getelementptr inbounds double, double* %"tmp7'ipl", i64 1
-; CHECK-NEXT:   %m0diffeadd = fmul fast double %differeturn, 5.000000e-01
-; CHECK-NEXT:   %0 = fadd fast double 0.000000e+00, %m0diffeadd
-; CHECK-NEXT:   %1 = fadd fast double 0.000000e+00, %0
-; CHECK-NEXT:   %2 = fadd fast double 0.000000e+00, %0
-; CHECK-NEXT:   %3 = load double, double* %"add.ptr.i'ipg", align 8, !tbaa !2
-; CHECK-NEXT:   %4 = fadd fast double %3, %1
-; CHECK-NEXT:   store double %4, double* %"add.ptr.i'ipg", align 8, !tbaa !2
-; CHECK-NEXT:   %5 = load double, double* %"tmp7'ipl", align 8, !tbaa !2
-; CHECK-NEXT:   %6 = fadd fast double %5, %2
-; CHECK-NEXT:   store double %6, double* %"tmp7'ipl", align 8, !tbaa !2
-; CHECK-NEXT:   %7 = call { double } @diffe_ZNSt6vectorIdSaIdEE9push_backERKd2(double** %_M_start.i.i, double** %"_M_start.i.i'ipa", double %rtmp2, { i8*, i8*, double* } %_augmented)
-; CHECK-NEXT:   %8 = extractvalue { double } %7, 0
-; CHECK-NEXT:   %9 = fadd fast double 0.000000e+00, %8
-; CHECK-NEXT:   %10 = load double, double* %"arrayidx1'ipg", align 8, !tbaa !2
-; CHECK-NEXT:   %11 = fadd fast double %10, %9
-; CHECK-NEXT:   store double %11, double* %"arrayidx1'ipg", align 8, !tbaa !2
-; CHECK-NEXT:   %12 = load i64, i64* %"tmp3'ipc", align 8
+; CHECK-NEXT:   %[[m0diffeadd:.+]] = fmul fast double %differeturn, 5.000000e-01
+; CHECK-NEXT:   %[[i0:.+]] = fadd fast double 0.000000e+00, %[[m0diffeadd]]
+; CHECK-NEXT:   %[[i1:.+]] = fadd fast double 0.000000e+00, %[[i0]]
+; CHECK-NEXT:   %[[i2:.+]] = fadd fast double 0.000000e+00, %[[i0]]
+; CHECK-NEXT:   %[[i3:.+]] = load double, double* %"add.ptr.i'ipg", align 8, !tbaa !2
+; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %[[i3]], %[[i1]]
+; CHECK-NEXT:   store double %[[i4]], double* %"add.ptr.i'ipg", align 8, !tbaa !2
+; CHECK-NEXT:   %[[i5:.+]] = load double, double* %"tmp7'ipl", align 8, !tbaa !2
+; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %[[i5]], %[[i2]]
+; CHECK-NEXT:   store double %[[i6]], double* %"tmp7'ipl", align 8, !tbaa !2
+; CHECK-NEXT:   %[[i7:.+]] = call { double } @diffe_ZNSt6vectorIdSaIdEE9push_backERKd2(double** %_M_start.i.i, double** %"_M_start.i.i'ipa", double %rtmp2, { i8*, i8*, double* } %_augmented)
+; CHECK-NEXT:   %[[i8:.+]] = extractvalue { double } %[[i7]], 0
+; CHECK-NEXT:   %[[i9:.+]] = fadd fast double 0.000000e+00, %[[i8]]
+; CHECK-NEXT:   %[[i10:.+]] = load double, double* %"arrayidx1'ipg", align 8, !tbaa !2
+; CHECK-NEXT:   %[[i11:.+]] = fadd fast double %[[i10]], %[[i9]]
+; CHECK-NEXT:   store double %[[i11]], double* %"arrayidx1'ipg", align 8, !tbaa !2
+; CHECK-NEXT:   %[[i12:.+]] = load i64, i64* %"tmp3'ipc", align 8
 ; CHECK-NEXT:   store i64 0, i64* %"tmp3'ipc", align 8, !tbaa !2
-; CHECK-NEXT:   %13 = bitcast i64 0 to double
-; CHECK-NEXT:   %14 = bitcast i64 %12 to double
-; CHECK-NEXT:   %15 = fadd fast double %13, %14
-; CHECK-NEXT:   %16 = bitcast double %15 to i64
-; CHECK-NEXT:   %17 = bitcast i64* %"tmp1'ipc" to double*
-; CHECK-NEXT:   %18 = bitcast i64 %16 to double
-; CHECK-NEXT:   %19 = load double, double* %17, align 8, !tbaa !2
-; CHECK-NEXT:   %20 = fadd fast double %19, %18
-; CHECK-NEXT:   store double %20, double* %17, align 8, !tbaa !2
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call5.i.i.i.i.i'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %call5.i.i.i.i.i)
+; CHECK-NEXT:   %[[i13:.+]] = bitcast i64 0 to double
+; CHECK-NEXT:   %[[i14:.+]] = bitcast i64 %[[i12]] to double
+; CHECK-NEXT:   %[[i15:.+]] = fadd fast double %[[i13]], %[[i14]]
+; CHECK-NEXT:   %[[i16:.+]] = bitcast double %[[i15]] to i64
+; CHECK-NEXT:   %[[i17:.+]] = bitcast i64* %"tmp1'ipc" to double*
+; CHECK-NEXT:   %[[i18:.+]] = bitcast i64 %[[i16]] to double
+; CHECK-NEXT:   %[[i19:.+]] = load double, double* %[[i17]], align 8, !tbaa !2
+; CHECK-NEXT:   %[[i20:.+]] = fadd fast double %[[i19]], %[[i18]]
+; CHECK-NEXT:   store double %[[i20]], double* %[[i17]], align 8, !tbaa !2
+; CHECK-NEXT:   call void @free(i8* nonnull %"call5.i.i.i.i.i'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %call5.i.i.i.i.i)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

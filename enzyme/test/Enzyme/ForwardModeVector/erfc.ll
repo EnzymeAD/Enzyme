@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -instsimplify -simplifycfg -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -instsimplify -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,sroa,instsimplify,%simplifycfg,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 %struct.Gradients = type { double, double }
 
@@ -22,15 +23,15 @@ entry:
 
 ; CHECK: define internal [2 x double] @fwddiffe2tester(double %x, [2 x double] %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fmul fast double %x, %x
-; CHECK-NEXT:   %1 = {{(fsub fast double \-?0.000000e\+00,|fneg fast double)}} %0
-; CHECK-NEXT:   %2 = call fast double @llvm.exp.f64(double %1)
-; CHECK-NEXT:   %3 = fmul fast double %2, 0xBFF20DD750429B6D
-; CHECK-NEXT:   %4 = extractvalue [2 x double] %"x'", 0
-; CHECK-NEXT:   %5 = fmul fast double %3, %4
-; CHECK-NEXT:   %6 = insertvalue [2 x double] undef, double %5, 0
-; CHECK-NEXT:   %7 = extractvalue [2 x double] %"x'", 1
-; CHECK-NEXT:   %8 = fmul fast double %3, %7
-; CHECK-NEXT:   %9 = insertvalue [2 x double] %6, double %8, 1
-; CHECK-NEXT:   ret [2 x double] %9
+; CHECK-NEXT:   %[[a0:.+]] = fmul fast double %x, %x
+; CHECK-NEXT:   %[[a1:.+]] = {{(fsub fast double \-?0.000000e\+00,|fneg fast double)}} %[[a0]]
+; CHECK-NEXT:   %[[a2:.+]] = call fast double @llvm.exp.f64(double %[[a1]])
+; CHECK-NEXT:   %[[a3:.+]] = fmul fast double 0xBFF20DD750429B6D, %[[a2]]
+; CHECK-NEXT:   %[[a4:.+]] = extractvalue [2 x double] %"x'", 0
+; CHECK-NEXT:   %[[a5:.+]] = fmul fast double %[[a4]], %[[a3]]
+; CHECK-NEXT:   %[[a7:.+]] = extractvalue [2 x double] %"x'", 1
+; CHECK-NEXT:   %[[a8:.+]] = fmul fast double %[[a7]], %[[a3]]
+; CHECK-NEXT:   %[[a6:.+]] = insertvalue [2 x double] undef, double %[[a5]], 0
+; CHECK-NEXT:   %[[a9:.+]] = insertvalue [2 x double] %[[a6]], double %[[a8]], 1
+; CHECK-NEXT:   ret [2 x double] %[[a9]]
 ; CHECK-NEXT: }

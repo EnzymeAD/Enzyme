@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -gvn -dse -dse | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -gvn -dse -dse -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg,gvn,dse,dse)" -S | FileCheck %s
 
 ; __attribute__((noinline))
 ; void function(double y, double z, double *x) {
@@ -107,7 +108,7 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'"
 ; CHECK-NEXT:   %[[m0diffez:.+]] = fmul fast double %0, %y
 ; CHECK-NEXT:   %[[m1diffey:.+]] = fmul fast double %0, %z
-; CHECK-NEXT:   %1 = insertvalue { double, double } undef, double %[[m1diffey]], 0
-; CHECK-NEXT:   %2 = insertvalue { double, double } %1, double %[[m0diffez]], 1
-; CHECK-NEXT:   ret { double, double } %2
+; CHECK-NEXT:   %[[i1:.+]] = insertvalue { double, double } undef, double %[[m1diffey]], 0
+; CHECK-NEXT:   %[[i2:.+]] = insertvalue { double, double } %[[i1]], double %[[m0diffez]], 1
+; CHECK-NEXT:   ret { double, double } %[[i2]]
 ; CHECK-NEXT: }

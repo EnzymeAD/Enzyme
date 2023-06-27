@@ -1,4 +1,5 @@
-; RUN: if [ %llvmver -le 11 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instsimplify -early-cse -adce -S | FileCheck %s; fi
+; RUN: if [ %llvmver -le 11 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -sroa -mem2reg -early-cse -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -le 11 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,early-cse,sroa,instsimplify,%simplifycfg)" -S | FileCheck %s; fi
 
 %Type = type { float, double }
 

@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 %struct.Gradients = type { double, double }
 
@@ -27,9 +28,9 @@ declare double @cosh(double)
 ; CHECK-NEXT:   %0 = call fast double @sinh(double %x)
 ; CHECK-NEXT:   %1 = extractvalue [2 x double] %"x'", 0
 ; CHECK-NEXT:   %2 = fmul fast double %1, %0
-; CHECK-NEXT:   %3 = insertvalue [2 x double] undef, double %2, 0
-; CHECK-NEXT:   %4 = extractvalue [2 x double] %"x'", 1
-; CHECK-NEXT:   %5 = fmul fast double %4, %0
-; CHECK-NEXT:   %6 = insertvalue [2 x double] %3, double %5, 1
-; CHECK-NEXT:   ret [2 x double] %6
+; CHECK-NEXT:   %[[i4:.+]] = extractvalue [2 x double] %"x'", 1
+; CHECK-NEXT:   %[[i5:.+]] = fmul fast double %[[i4]], %0
+; CHECK-NEXT:   %[[i3:.+]] = insertvalue [2 x double] undef, double %2, 0
+; CHECK-NEXT:   %[[i6:.+]] = insertvalue [2 x double] %[[i3]], double %[[i5]], 1
+; CHECK-NEXT:   ret [2 x double] %[[i6]]
 ; CHECK-NEXT: }

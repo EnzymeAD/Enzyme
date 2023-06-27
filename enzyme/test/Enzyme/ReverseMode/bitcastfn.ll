@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -correlated-propagation -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,adce,correlated-propagation,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 ; ModuleID = 'ode-unopt.ll'
 source_filename = "ode.cpp"
@@ -307,18 +308,18 @@ attributes #8 = { noreturn nounwind "correctly-rounded-divide-sqrt-fp-math"="fal
 ; CHECK-NEXT:   %call.i = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([22 x i8], [22 x i8]* @.str, i64 0, i64 0), double 0.000000e+00)
 ; CHECK-NEXT:   %1 = load double, double* %arrayidx.i1.i, align 8, !tbaa !8
 ; CHECK-NEXT:   %mul.i1 = fmul fast double %1, -1.200000e+00
-; CHECK-NEXT:   %m0diffemul.i1 = fmul fast double %differeturn, %div
-; CHECK-NEXT:   %m1diffediv = fmul fast double %differeturn, %mul.i1
-; CHECK-NEXT:   %m0diffe = fmul fast double %m0diffemul.i1, -1.200000e+00
-; CHECK-NEXT:   %2 = fadd fast double %differeturn, %m0diffe
-; CHECK-NEXT:   %3 = load double, double* %"arrayidx.i1.i'ipg", align 8
-; CHECK-NEXT:   %4 = fadd fast double %3, %2
-; CHECK-NEXT:   store double %4, double* %"arrayidx.i1.i'ipg", align 8
+; CHECK-NEXT:   %[[m0diffemuli1:.+]] = fmul fast double %differeturn, %div
+; CHECK-NEXT:   %[[m1diffediv:.+]] = fmul fast double %differeturn, %mul.i1
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %[[m0diffemuli1]], -1.200000e+00
+; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %differeturn, %[[m0diffe]]
+; CHECK-NEXT:   %[[i3:.+]] = load double, double* %"arrayidx.i1.i'ipg", align 8
+; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %[[i3]], %[[i2]]
+; CHECK-NEXT:   store double %[[i4]], double* %"arrayidx.i1.i'ipg", align 8
 ; CHECK-NEXT:   call void @diffesub(i64 ptrtoint (void (%"class.boost::array.1"*)* @indir to i64), i64 ptrtoint ({ i8* (%"class.boost::array.1"*, %"class.boost::array.1"*)*, void (%"class.boost::array.1"*, %"class.boost::array.1"*, i8*)* }* @"_enzyme_reverse_indir'" to i64), %"class.boost::array.1"* nonnull %x, %"class.boost::array.1"* nonnull %"x'ipa", i8* %_augmented)
-; CHECK-NEXT:   %d0diffet = fdiv fast double %m1diffediv, %conv
+; CHECK-NEXT:   %[[d0diffet:.+]] = fdiv fast double %[[m1diffediv]], %conv
 ; CHECK-NEXT:   store i64 0, i64* %"'ipc", align 8
-; CHECK-NEXT:   %5 = insertvalue { double } undef, double %d0diffet, 0
-; CHECK-NEXT:   ret { double } %5
+; CHECK-NEXT:   %[[i5:.+]] = insertvalue { double } undef, double %[[d0diffet]], 0
+; CHECK-NEXT:   ret { double } %[[i5]]
 ; CHECK-NEXT: }
 
 ; TODO no need for malloc/free

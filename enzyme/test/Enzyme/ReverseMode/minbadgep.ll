@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -instsimplify -adce -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -early-cse -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,early-cse,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 @enzyme_const = external dso_local local_unnamed_addr global i32, align 4
 
@@ -27,11 +28,11 @@ define dso_local double @_Z11matvec_realPdS_(double* nocapture readonly %mat, do
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %vec, i64 1
 ; CHECK-NEXT:   %vload = load double, double* %arrayidx
 ; CHECK-NEXT:   %[[mul:.+]] = fmul fast double %vload, %mload
-; CHECK-NEXT:   %m0diffemul = fmul fast double %differeturn, %[[mul]]
-; CHECK-NEXT:   %[[dtot:.+]] = fadd fast double %m0diffemul, %m0diffemul
-; CHECK-NEXT:   %m1diffemload = fmul fast double %[[dtot]], %vload
+; CHECK-NEXT:   %[[m0diffemul:.+]] = fmul fast double %differeturn, %[[mul]]
+; CHECK-NEXT:   %[[dtot:.+]] = fadd fast double %[[m0diffemul]], %[[m0diffemul]]
+; CHECK-NEXT:   %[[m1diffemload:.+]] = fmul fast double %[[dtot]], %vload
 ; CHECK-NEXT:   %[[pmat:.+]] = load double, double* %"mat'"
-; CHECK-NEXT:   %[[nmat:.+]] = fadd fast double %[[pmat]], %m1diffemload
+; CHECK-NEXT:   %[[nmat:.+]] = fadd fast double %[[pmat]], %[[m1diffemload]]
 ; CHECK-NEXT:   store double %[[nmat]], double* %"mat'"
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

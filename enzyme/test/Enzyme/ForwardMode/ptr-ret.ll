@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
 
 define dso_local noalias nonnull double* @_Z6toHeapd(double %x) {
@@ -54,8 +54,8 @@ declare dso_local double @_Z16__enzyme_fwddiffz(...)
 ; CHECK-NEXT:   %0 = call noalias nonnull dereferenceable(8) i8* @_Znwm(i64 8)
 ; CHECK-NEXT:   %"'ipc" = bitcast i8* %0 to double*
 ; CHECK-NEXT:   %1 = bitcast i8* %call to double*
-; CHECK-NEXT:   store double %x, double* %1, align 8
 ; CHECK-NEXT:   store double %"x'", double* %"'ipc", align 8
+; CHECK-NEXT:   store double %x, double* %1, align 8
 ; CHECK-NEXT:   %2 = insertvalue { double*, double* } undef, double* %1, 0
 ; CHECK-NEXT:   %3 = insertvalue { double*, double* } %2, double* %"'ipc", 1
 ; CHECK-NEXT:   ret { double*, double* } %3

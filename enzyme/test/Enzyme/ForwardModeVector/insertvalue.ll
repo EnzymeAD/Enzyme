@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 %struct.Gradients = type { double, double, double }
 
@@ -26,23 +27,23 @@ entry:
 
 ; CHECK: define internal [3 x double] @fwddiffe3tester(double %x, [3 x double] %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = extractvalue [3 x double] %"x'", 0
-; CHECK-NEXT:   %1 = extractvalue [3 x double] %"x'", 0
-; CHECK-NEXT:   %2 = fmul fast double %0, %x
-; CHECK-NEXT:   %3 = fmul fast double %1, %x
-; CHECK-NEXT:   %4 = fadd fast double %2, %3
-; CHECK-NEXT:   %5 = extractvalue [3 x double] %"x'", 1
-; CHECK-NEXT:   %6 = extractvalue [3 x double] %"x'", 1
-; CHECK-NEXT:   %7 = fmul fast double %5, %x
-; CHECK-NEXT:   %8 = fmul fast double %6, %x
-; CHECK-NEXT:   %9 = fadd fast double %7, %8
-; CHECK-NEXT:   %10 = extractvalue [3 x double] %"x'", 2
-; CHECK-NEXT:   %11 = extractvalue [3 x double] %"x'", 2
-; CHECK-NEXT:   %12 = fmul fast double %10, %x
-; CHECK-NEXT:   %13 = fmul fast double %11, %x
-; CHECK-NEXT:   %14 = fadd fast double %12, %13
-; CHECK-NEXT:   %15 = insertvalue [3 x double] undef, double %4, 0
-; CHECK-NEXT:   %16 = insertvalue [3 x double] %15, double %9, 1
-; CHECK-NEXT:   %17 = insertvalue [3 x double] %16, double %14, 2
-; CHECK-NEXT:   ret [3 x double] %17
+; CHECK-NEXT:   %[[i0:.+]] = extractvalue [3 x double] %"x'", 0
+; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i0]], %x
+; CHECK-NEXT:   %[[i5:.+]] = extractvalue [3 x double] %"x'", 1
+; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %[[i5]], %x
+; CHECK-NEXT:   %[[i10:.+]] = extractvalue [3 x double] %"x'", 2
+; CHECK-NEXT:   %[[i12:.+]] = fmul fast double %[[i10]], %x
+; CHECK-NEXT:   %[[i1:.+]] = extractvalue [3 x double] %"x'", 0
+; CHECK-NEXT:   %[[i3:.+]] = fmul fast double %[[i1]], %x
+; CHECK-NEXT:   %[[i6:.+]] = extractvalue [3 x double] %"x'", 1
+; CHECK-NEXT:   %[[i8:.+]] = fmul fast double %[[i6]], %x
+; CHECK-NEXT:   %[[i11:.+]] = extractvalue [3 x double] %"x'", 2
+; CHECK-NEXT:   %[[i13:.+]] = fmul fast double %[[i11]], %x
+; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %[[i2]], %[[i3]]
+; CHECK-NEXT:   %[[i9:.+]] = fadd fast double %[[i7]], %[[i8]]
+; CHECK-NEXT:   %[[i14:.+]] = fadd fast double %[[i12]], %[[i13]]
+; CHECK-NEXT:   %[[i15:.+]] = insertvalue [3 x double] undef, double %[[i4]], 0
+; CHECK-NEXT:   %[[i16:.+]] = insertvalue [3 x double] %[[i15]], double %[[i9]], 1
+; CHECK-NEXT:   %[[i17:.+]] = insertvalue [3 x double] %[[i16]], double %[[i14]], 2
+; CHECK-NEXT:   ret [3 x double] %[[i17]]
 ; CHECK-NEXT: }

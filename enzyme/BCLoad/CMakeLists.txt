@@ -4,6 +4,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(BC_LOAD_FLAGS "" CACHE STRING "")
 set(BC_LOAD_HEADER "" CACHE STRING "")
 
+if (${LLVM_VERSION_MAJOR} LESS 15)
+    set(BC_LOAD_FLAGS2 "${BC_LOAD_FLAGS}")
+else()
+    set(BC_LOAD_FLAGS2 "${BC_LOAD_FLAGS} -Xclang -no-opaque-pointers")
+endif()
+
 if (NOT ("${BC_LOAD_HEADER}" STREQUAL ""))
     add_custom_target(blasheaders mkdir -p "${CMAKE_CURRENT_BINARY_DIR}/gsl" && cp ${BC_LOAD_HEADER} "${CMAKE_CURRENT_BINARY_DIR}/gsl/blas_headers.h")
 set_target_properties(blasheaders PROPERTIES EXCLUDE_FROM_ALL TRUE)
@@ -16,7 +22,7 @@ ExternalProject_Add(gsl
     BUILD_IN_SOURCE 1
     INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/gsl/install
     CONFIGURE_COMMAND sh -c "cp sys/gsl_sys.h . && cp cblas/gsl_cblas.h . && rm cblas/test*.c && echo > config.h"
-    BUILD_COMMAND  sh -c "$<TARGET_FILE:clang> cblas/*.c ${BC_LOAD_FLAGS} -I . -I .. -S -emit-llvm -O1"
+    BUILD_COMMAND  sh -c "$<TARGET_FILE:clang> cblas/*.c ${BC_LOAD_FLAGS2} -I . -I .. -S -emit-llvm -O1"
     INSTALL_COMMAND ""
     UPDATE_COMMAND ""
     TEST_COMMAND      ""
@@ -30,7 +36,7 @@ ExternalProject_Add(gsl64
     BUILD_IN_SOURCE 1
     INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/gsl64/install
     CONFIGURE_COMMAND sh -c ${CMAKE_CURRENT_SOURCE_DIR}/fixgsl64.sh
-    BUILD_COMMAND  sh -c "$<TARGET_FILE:clang> cblas/*.c ${BC_LOAD_FLAGS} -I . -I .. -S -emit-llvm -O1"
+    BUILD_COMMAND  sh -c "$<TARGET_FILE:clang> cblas/*.c ${BC_LOAD_FLAGS2} -I . -I .. -S -emit-llvm -O1"
     INSTALL_COMMAND ""
     UPDATE_COMMAND ""
     TEST_COMMAND      ""
@@ -54,12 +60,12 @@ set_target_properties(openblas PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
 ExternalProject_Add(fblas
     GIT_REPOSITORY https://github.com/EnzymeAD/clapack
-    GIT_TAG 42603bf49ac2b27a7c00c53f92fa648748476510
+    GIT_TAG 94f7c3118b7ce8267469457b17ede31ae88957a1
     PREFIX fblas
     BUILD_IN_SOURCE 1
     INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/openblas/install
     CONFIGURE_COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/fixwrapblas.sh
-    BUILD_COMMAND sh -c "$<TARGET_FILE:clang> ${BC_LOAD_FLAGS} -S -emit-llvm -O1 BLAS/WRAP/bclib32.c BLAS/WRAP/bclib64.c -I ../../INCLUDE"
+    BUILD_COMMAND sh -c "$<TARGET_FILE:clang> ${BC_LOAD_FLAGS2} -S -emit-llvm -O1 BLAS/WRAP/bclib32.c BLAS/WRAP/bclib64.c -I ../../INCLUDE"
     INSTALL_COMMAND ""
     UPDATE_COMMAND ""
     TEST_COMMAND      ""

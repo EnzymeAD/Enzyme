@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 declare double @__enzyme_autodiff(i8*, ...)
 
@@ -64,9 +65,9 @@ entry:
 
 ; CHECK: define internal void @diffeloader(double* %a, double* %"a'", double %differeturn, double
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %m0diffe = fmul fast double %differeturn, %0
-; CHECK-NEXT:   %m1diffe = fmul fast double %differeturn, %0
-; CHECK-NEXT:   %[[de:.+]] = fadd fast double %m0diffe, %m1diffe
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %differeturn, %0
+; CHECK-NEXT:   %[[m1diffe:.+]] = fmul fast double %differeturn, %0
+; CHECK-NEXT:   %[[de:.+]] = fadd fast double %[[m0diffe]], %[[m1diffe]]
 ; CHECK-NEXT:   %[[pra:.+]] = load double, double* %"a'"
 ; CHECK-NEXT:   %[[pa:.+]] = fadd fast double %[[pra]], %[[de]]
 ; CHECK-NEXT:   store double %[[pa]], double* %"a'"

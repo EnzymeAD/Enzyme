@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -enzyme-zero-cache=1 | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -enzyme-zero-cache=1 | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-zero-cache=1 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 declare dso_local double @__enzyme_autodiff(i8*, double)
 
@@ -35,7 +36,6 @@ entry:
 
 ; CHECK: define internal { double } @diffesquare(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %r = alloca double, i64 1, align 8
 ; CHECK-NEXT:   %pg = call {}*** @julia.get_pgcstack()
 ; CHECK-NEXT:   %"r'ai" = alloca double, i64 1, align 8
 ; CHECK-NEXT:   %0 = bitcast double* %"r'ai" to {}*
@@ -44,8 +44,7 @@ entry:
 ; CHECK-NEXT:   %2 = load double, double* %"r'ai", align 8
 ; CHECK-NEXT:   %3 = fadd fast double %2, %differeturn
 ; CHECK-NEXT:   store double %3, double* %"r'ai", align 8,
-; CHECK-NEXT:   %4 = addrspacecast double* %r to double addrspace(10)*
-; CHECK-NEXT:   %5 = addrspacecast double* %"r'ai" to double addrspace(10)*
-; CHECK-NEXT:   %6 = call { double } @diffesubsq(double addrspace(10)* %4, double addrspace(10)* %5, double %x)
-; CHECK-NEXT:   ret { double } %6
+; CHECK-NEXT:   %[[i4:.+]] = addrspacecast double* %"r'ai" to double addrspace(10)*
+; CHECK-NEXT:   %[[i5:.+]] = call { double } @diffesubsq(double addrspace(10)* null, double addrspace(10)* %[[i4]], double %x)
+; CHECK-NEXT:   ret { double } %[[i5]]
 ; CHECK-NEXT: }

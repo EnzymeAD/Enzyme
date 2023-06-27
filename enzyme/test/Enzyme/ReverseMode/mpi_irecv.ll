@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 ; ModuleID = 'test/mpi2.c'
 source_filename = "test/mpi2.c"
@@ -119,8 +120,8 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %30 = zext i32 %28 to i64
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull %23, i8 0, i64 %30, i1 false)
 ; CHECK-NEXT:   %31 = bitcast { i8*, i64, i8*, i64, i64, i8*, i8, i8* }* %21 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %31)
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"malloccall'mi")
-; CHECK-NEXT:   tail call void @free(i8* %malloccall)
+; CHECK-NEXT:   call void @free(i8* nonnull %31)
+; CHECK-NEXT:   call void @free(i8* nonnull %"malloccall'mi")
+; CHECK-NEXT:   call void @free(i8* %malloccall)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

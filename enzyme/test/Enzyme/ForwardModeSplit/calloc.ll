@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 
 @enzyme_dupnoneed = dso_local global i32 0, align 4
@@ -30,15 +31,12 @@ declare dso_local double @__enzyme_fwdsplit(i8*, ...)
 
 ; CHECK: define internal i8* @augmented_f(double %x, double %"x'", i64 %arg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call = call noalias i8* @calloc(i64 8, i64 %arg)
-; CHECK-NEXT:   %0 = bitcast i8* %call to double*
-; CHECK-NEXT:   store double %x, double* %0, align 8
 ; CHECK-NEXT:   ret i8* null
 ; CHECK-NEXT: }
 
 ; CHECK: define internal double @fwddiffef(double %x, double %"x'", i64 %arg, i8* %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK:   %"call'mi" = call noalias nonnull i8* @calloc(i64 8, i64 %arg)
+; CHECK-NEXT:   %"call'mi" = call noalias nonnull i8* @calloc(i64 8, i64 %arg)
 ; CHECK-NEXT:   %"'ipc" = bitcast i8* %"call'mi" to double*
 ; CHECK-NEXT:   store double %"x'", double* %"'ipc", align 8
 ; CHECK-NEXT:   %[[i0:.+]] = load double, double* %"'ipc", align 8

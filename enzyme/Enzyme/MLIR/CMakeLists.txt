@@ -1,5 +1,6 @@
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+add_subdirectory(Analysis)
 add_subdirectory(Dialect)
 add_subdirectory(Interfaces)
 add_subdirectory(Implementations)

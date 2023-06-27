@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse-memssa -instsimplify -correlated-propagation -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse -instsimplify -correlated-propagation -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,%simplifycfg,early-cse,instsimplify,correlated-propagation,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: norecurse nounwind readonly uwtable
 define double @alldiv(double* nocapture readonly %A, i64 %N, double %start) {
@@ -72,14 +73,14 @@ declare double @__enzyme_fwdsplit2(...)
 ; CHECK-DAG:   %iv = phi i64 [ %iv.next, %loop ], [ 0, %entry ]
 ; CHECK-DAG:   %[[dreduce:.+]] = phi {{(fast )?}}double [ %"start'", %entry ], [ %[[i10:.+]], %loop ]
 ; CHECK-NEXT:   %[[i3:.+]] = getelementptr inbounds double, double* %[[i1]], i64 %iv
-; CHECK-NEXT:   %reduce = load double, double* %[[i3]], align 8, !invariant.group !9
+; CHECK-NEXT:   %reduce = load double, double* %[[i3]], align 8, !invariant.group !{{[0-9]+}}
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %"gep'ipg" = getelementptr inbounds double, double* %"A'", i64 %iv
 ; CHECK-NEXT:   %[[i5:.+]] = load double, double* %"gep'ipg", align 8
 ; CHECK-NEXT:   %[[i4:.+]] = getelementptr inbounds double, double* %[[i2]], i64 %iv
-; CHECK-NEXT:   %ld = load double, double* %[[i4]], align 8, !invariant.group !10
+; CHECK-NEXT:   %ld = load double, double* %[[i4]], align 8, !invariant.group !{{[0-9]+}}
 ; CHECK-NEXT:   %[[i6:.+]] = fmul fast double %[[dreduce]], %ld
-; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %reduce, %[[i5]]
+; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %[[i5]], %reduce 
 ; CHECK-NEXT:   %[[i8:.+]] = fsub fast double %[[i6]], %[[i7]]
 ; CHECK-NEXT:   %[[i9:.+]] = fmul fast double %ld, %ld
 ; CHECK-NEXT:   %[[i10]] = fdiv fast double %[[i8]], %[[i9]]
@@ -103,14 +104,14 @@ declare double @__enzyme_fwdsplit2(...)
 ; CHECK-DAg:   %iv = phi i64 [ %iv.next, %loop ], [ 0, %entry ]
 ; CHECK-DAG:   %[[dreduce:.+]] = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %[[i10:.+]], %loop ]
 ; CHECK-NEXT:   %[[i3:.+]] = getelementptr inbounds double, double* %[[i1]], i64 %iv
-; CHECK-NEXT:   %reduce = load double, double* %[[i3]], align 8, !invariant.group !13
+; CHECK-NEXT:   %reduce = load double, double* %[[i3]], align 8, !invariant.group !{{[0-9]+}}
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %"gep'ipg" = getelementptr inbounds double, double* %"A'", i64 %iv
 ; CHECK-NEXT:   %[[i5:.+]] = load double, double* %"gep'ipg", align 8
 ; CHECK-NEXT:   %[[i4:.+]] = getelementptr inbounds double, double* %[[i2]], i64 %iv
-; CHECK-NEXT:   %ld = load double, double* %[[i4]], align 8, !invariant.group !14
+; CHECK-NEXT:   %ld = load double, double* %[[i4]], align 8, !invariant.group !{{[0-9]+}}
 ; CHECK-NEXT:   %[[i6:.+]] = fmul fast double %[[dreduce]], %ld
-; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %reduce, %[[i5]]
+; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %[[i5]], %reduce 
 ; CHECK-NEXT:   %[[i8:.+]] = fsub fast double %[[i6]], %[[i7]]
 ; CHECK-NEXT:   %[[i9:.+]] = fmul fast double %ld, %ld
 ; CHECK-NEXT:   %[[i10]] = fdiv fast double %[[i8]], %[[i9]]

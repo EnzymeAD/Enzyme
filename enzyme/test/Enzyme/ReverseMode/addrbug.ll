@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -loop-deletion -simplifycfg -correlated-propagation -gvn -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -loop-deletion -simplifycfg -correlated-propagation -adce -instsimplify -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,loop(loop-deletion),%simplifycfg,correlated-propagation,adce,instsimplify)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: nounwind
 declare void @__enzyme_autodiff(i8*, ...)
@@ -62,24 +63,24 @@ exit:                                             ; preds = %L50
 ; CHECK-NEXT:   br label %invertL1e
 
 ; CHECK: invertL50:                                        ; preds = %invertL1e, %incinvertL50
-; CHECK-NEXT:   %3 = phi double [ %[[pre5:.+]], %invertL1e ], [ %5, %incinvertL50 ]
-; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 5, %invertL1e ], [ %7, %incinvertL50 ]
-; CHECK-NEXT:   %m0diffeld = fmul fast double %differeturn, %.pre
-; CHECK-NEXT:   %4 = fadd fast double %m0diffeld, %m0diffeld
-; CHECK-NEXT:   %5 = fadd fast double %3, %4
-; CHECK-NEXT:   store double %5, double addrspace(1)* %"gep'ipg_unwrap.phi.trans.insert", align 8
-; CHECK-NEXT:   %6 = icmp eq i64 %"iv1'ac.0", 0
-; CHECK-NEXT:   br i1 %6, label %invertL1, label %incinvertL50
+; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 5, %invertL1e ], [ %[[aa:.+]], %incinvertL50 ]
+; CHECK-NEXT:   %[[a4:.+]] = getelementptr inbounds double, double* %ld_malloccache, i64 %"iv'ac.0"
+; CHECK-NEXT:   %[[a5:.+]] = load double, double* %[[a4]], align 8
+; CHECK-NEXT:   %[[m0diffeld:.+]] = fmul fast double %differeturn, %[[a5]]
+; CHECK-NEXT:   %[[m1diffeld:.+]] = fmul fast double %differeturn, %[[a5]]
+; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %[[m0diffeld]], %[[m1diffeld]]
+; CHECK-NEXT:   %"gep'ipg_unwrap" = getelementptr inbounds double, double addrspace(1)* %"in'", i64 %"iv'ac.0"
+; CHECK-NEXT:   %[[i6:.+]] = load double, double addrspace(1)* %"gep'ipg_unwrap"
+; CHECK-NEXT:   %[[i7:.+]] = fadd fast double %[[i6]], %[[i4]]
+; CHECK-NEXT:   store double %[[i7]], double addrspace(1)* %"gep'ipg_unwrap"
+; CHECK-NEXT:   %[[i6:.+]] = icmp eq i64 %"iv1'ac.0", 0
+; CHECK-NEXT:   br i1 %[[i6]], label %invertL1, label %incinvertL50
 
 ; CHECK: incinvertL50:                                     ; preds = %invertL50
-; CHECK-NEXT:   %7 = add nsw i64 %"iv1'ac.0", -1
+; CHECK-NEXT:   %[[aa]] = add nsw i64 %"iv1'ac.0", -1
 ; CHECK-NEXT:   br label %invertL50
 
 ; CHECK: invertL1e:                                        ; preds = %top, %incinvertL1
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 9, %top ], [ %2, %incinvertL1 ]
-; CHECK-NEXT:   %.phi.trans.insert = getelementptr inbounds double, double* %ld_malloccache, i64 %"iv'ac.0"
-; CHECK-NEXT:   %.pre = load double, double* %.phi.trans.insert, align 8, !invariant.group !
-; CHECK-NEXT:   %"gep'ipg_unwrap.phi.trans.insert" = getelementptr inbounds double, double addrspace(1)* %"in'", i64 %"iv'ac.0"
-; CHECK-NEXT:   %[[pre5]] = load double, double addrspace(1)* %"gep'ipg_unwrap.phi.trans.insert", align 8
 ; CHECK-NEXT:   br label %invertL50
 ; CHECK-NEXT: }

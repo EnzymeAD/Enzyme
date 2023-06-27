@@ -1,5 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -S | FileCheck %s
-; ModuleID = 'inp.ll'
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,%simplifycfg)" -S | FileCheck %s
 
 declare dso_local void @_Z17__enzyme_autodiffPvPdS0_i(i8*, double*, double*, i64*) local_unnamed_addr #4
 define dso_local void @outer(double* %m, double* %m2, i64* %n) local_unnamed_addr #2 {
@@ -103,23 +103,23 @@ attributes #0 = { readnone speculatable }
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.body:                                   ; preds = %for.body, %incinvertfor.body
-; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %11, %incinvertfor.body ], [ 3, %for.body ]
+; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %[[i11:.+]], %incinvertfor.body ], [ 3, %for.body ]
 ; CHECK-NEXT:   %"dg'ipg_unwrap" = getelementptr inbounds double, double* %"__x'", i64 %"iv'ac.0"
 ; CHECK-NEXT:   %2 = load double, double* %"dg'ipg_unwrap"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"dg'ipg_unwrap"
-; CHECK-NEXT:   %3 = fadd fast double 0.000000e+00, %2
-; CHECK-NEXT:   %4 = getelementptr inbounds double, double* %tapeArg, i64 %"iv'ac.0"
-; CHECK-NEXT:   %5 = load double, double* %4, align 8, !invariant.group !
-; CHECK-NEXT:   %m0diffedload = fmul fast double %3, %5
-; CHECK-NEXT:   %6 = fadd fast double 0.000000e+00, %m0diffedload
-; CHECK-NEXT:   %7 = load double, double* %"dg'ipg_unwrap"
-; CHECK-NEXT:   %8 = fadd fast double %7, %6
-; CHECK-NEXT:   store double %8, double* %"dg'ipg_unwrap"
-; CHECK-NEXT:   %9 = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   %10 = xor i1 %9, true
-; CHECK-NEXT:   br i1 %9, label %invertentry, label %incinvertfor.body
+; CHECK-NEXT:   %[[i3:.+]] = fadd fast double 0.000000e+00, %2
+; CHECK-NEXT:   %[[i4:.+]] = getelementptr inbounds double, double* %tapeArg, i64 %"iv'ac.0"
+; CHECK-NEXT:   %[[i5:.+]] = load double, double* %[[i4]], align 8, !invariant.group !
+; CHECK-NEXT:   %[[m0diffedload:.+]] = fmul fast double %[[i3]], %[[i5]]
+; CHECK-NEXT:   %[[i6:.+]] = fadd fast double 0.000000e+00, %[[m0diffedload]]
+; CHECK-NEXT:   %[[i7:.+]] = load double, double* %"dg'ipg_unwrap"
+; CHECK-NEXT:   %[[i8:.+]] = fadd fast double %[[i7]], %[[i6]]
+; CHECK-NEXT:   store double %[[i8]], double* %"dg'ipg_unwrap"
+; CHECK-NEXT:   %[[i9:.+]] = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   %{{.+}} = xor i1 %[[i9]], true
+; CHECK-NEXT:   br i1 %[[i9]], label %invertentry, label %incinvertfor.body
 
 ; CHECK: incinvertfor.body:                                ; preds = %invertfor.body
-; CHECK-NEXT:   %11 = add nsw i64 %"iv'ac.0", -1
+; CHECK-NEXT:   %[[i11]] = add nsw i64 %"iv'ac.0", -1
 ; CHECK-NEXT:   br label %invertfor.body
 ; CHECK-NEXT: }

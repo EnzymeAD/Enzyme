@@ -16,45 +16,34 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["7", "8", "9", "10", "11", "12", "13"] #, "14"]
+        llvm: ["9", "10", "11", "12", "13", "14", "15", "16"]
         build: ["Release"] # "RelWithDebInfo"
-        os: [ubuntu-22.04, ubuntu-20.04, ubuntu-18.04]
-        exclude:
-          - os: ubuntu-20.04
-            llvm: 7
-          - os: ubuntu-20.04
-            llvm: 8
-          - os: ubuntu-22.04
-            llvm: 7
-          - os: ubuntu-22.04
-            llvm: 8
-          - os: ubuntu-22.04
-            llvm: 9
-          - os: ubuntu-22.04
-            llvm: 10
+        os: [ubuntu-20.04, ubuntu-22.04]
     
-    timeout-minutes: 45 
+    timeout-minutes: 45
+    
     steps:
     - name: add llvm 
       run: |
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
           sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
-          sudo apt-get install -y autoconf cmake gcc g++ libtool gfortran llvm-${{ matrix.llvm }}-dev libomp-${{ matrix.llvm }}-dev clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev libeigen3-dev libboost-dev
-          sudo python3 -m pip install --upgrade pip setuptools
-          sudo python3 -m pip install lit
-          sudo touch /usr/lib/llvm-${{ matrix.llvm }}/bin/yaml-bench
+          sudo apt-get install -y cmake gcc g++ gfortran llvm-${{ matrix.llvm }}-dev libomp-${{ matrix.llvm }}-dev lld-${{ matrix.llvm }} clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev libeigen3-dev libboost-dev
+          sudo python3 -m pip install --upgrade pip setuptools lit
           if [[ '${{ matrix.llvm }}' == '13' ]]; then
             sudo sed -i 's/add_executable(llvm-omp-device-info IMPORTED)//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
             sudo sed -i 's/llvm-omp-device-info//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
           fi
     - uses: actions/checkout@v3
     - name: mkdir
-      run: cd enzyme && rm -rf build && mkdir build
+      run: rm -rf build && mkdir build
     - name: cmake
-      run: |
-          cd enzyme/build 
-          cmake .. -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
+      working-directory: build
+      run: cmake ../enzyme -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
     - name: make
-      run: cd enzyme/build && make -j`nproc` LLVMEnzyme-${{ matrix.llvm }}
+      run: cd build && make -j `nproc` LLVMEnzyme-${{ matrix.llvm }} ClangEnzyme-${{ matrix.llvm }} LLDEnzyme-${{ matrix.llvm }}  
+    - name: make test-cmake
+      working-directory: build
+      run: make -j `nproc` test-cmake
     - name: make check-enzyme-integration
-      run: cd enzyme/build && make check-enzyme-integration -j`nproc`
+      working-directory: build
+      run: make -j `nproc` check-enzyme-integration

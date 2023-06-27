@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -simplifycfg -instsimplify -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,%simplifycfg,instsimplify,adce)" -S | FileCheck %s
 
 ; Function Attrs: nounwind readnone uwtable
 define double @tester(double %x) {
@@ -23,7 +24,7 @@ declare double @__enzyme_autodiff(double (double)*, ...)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = fcmp fast olt double %x, 0.000000e+00
 ; CHECK-NEXT:   %1 = select{{( fast)?}} i1 %0, double -1.000000e+00, double 1.000000e+00
-; CHECK-NEXT:   %2 = fmul fast double %1, %[[differet]]
+; CHECK-NEXT:   %2 = fmul fast double %[[differet]], %1
 ; CHECK-NEXT:   %3 = insertvalue { double } undef, double %2, 0
 ; CHECK-NEXT:   ret { double } %3
 ; CHECK-NEXT: }

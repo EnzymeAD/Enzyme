@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg)" -S | FileCheck %s
 
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -78,7 +79,7 @@ declare dso_local double @_Z17__enzyme_autodiffPFddiEz(double (double, i32)*, ..
 ; CHECK-NEXT:   br i1 %i22, label %bb8, label %[[remat_bb8_bb8:.+]]
 
 ; CHECK: [[remat_bb8_bb8]]:                                    ; preds = %bb12
-; CHECK:   %remat_i10 = tail call noalias nonnull i8* @malloc(i64 %i4)
+; CHECK:   %remat_i10 = call noalias nonnull i8* @malloc(i64 %i4)
 ; CHECK-NEXT:   br label %remat_bb8_bb14
 
 ; CHECK: remat_bb8_bb14: 
@@ -91,5 +92,5 @@ declare dso_local double @_Z17__enzyme_autodiffPFddiEz(double (double, i32)*, ..
 ; CHECK-NEXT:   br i1 %i18_unwrap, label %remat_bb8_bb12_phimerge, label %remat_bb8_bb14
 
 ; CHECK: remat_bb8_bb12_phimerge:                          ; preds = %remat_bb8_bb14
-; CHECK:   tail call void @free(i8* nonnull %remat_i10)
+; CHECK:   call void @free(i8* nonnull %remat_i10)
 

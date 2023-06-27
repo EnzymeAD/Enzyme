@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -instsimplify -simplifycfg -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -early-cse -mem2reg -sroa -instsimplify -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,early-cse,sroa,instsimplify,%simplifycfg,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 declare { double, double } @Faddeeva_erfi({ double, double }, double)
 
@@ -20,31 +21,29 @@ declare { double, double } @__enzyme_fwdsplit({ double, double } ({ double, doub
 
 ; CHECK: define internal { double, double } @fwddiffetester({ double, double } %in, { double, double } %"in'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = extractvalue { double, double } %in, 0
-; CHECK-NEXT:   %1 = extractvalue { double, double } %in, 1
-; CHECK-DAG:    %[[a2:.+]] = fmul fast double %0, %0
-; CHECK-DAG:    %[[a3:.+]] = fmul fast double %1, %1
-; CHECK-NEXT:   %4 = fsub fast double %[[a2]], %[[a3]]
-; CHECK-DAG:    %[[a5:.+]] = fmul fast double %0, {{(%1|%5)}}
-; CHECK-DAG:    %[[a6:.+]] = fadd fast double {{(%5|%1)}}, {{(%5|%1)}}
-; CHECK-NEXT:   %7 = call fast double @llvm.exp.f64(double %4)
-; CHECK-NEXT:   %8 = call fast double @llvm.cos.f64(double %6)
-; CHECK-NEXT:   %9 = fmul fast double %7, %8
-; CHECK-NEXT:   %10 = call fast double @llvm.sin.f64(double %6)
-; CHECK-NEXT:   %11 = fmul fast double %7, %10
-; CHECK-NEXT:   %12 = fmul fast double %9, 0x3FF20DD750429B6D
-; CHECK-NEXT:   %13 = insertvalue { double, double } undef, double %12, 0
-; CHECK-NEXT:   %14 = fmul fast double %11, 0x3FF20DD750429B6D
-; CHECK-NEXT:   %15 = insertvalue { double, double } %13, double %14, 1
-; CHECK-NEXT:   %16 = extractvalue { double, double } %"in'", 0
-; CHECK-NEXT:   %17 = extractvalue { double, double } %"in'", 1
-; CHECK-DAG:    %[[a18:.+]] = fmul fast double %14, %17
-; CHECK-DAG:    %[[a19:.+]] = fmul fast double %12, %16
-; CHECK-NEXT:   %20 = fsub fast double %[[a19]], %[[a18]]
-; CHECK-NEXT:   %21 = insertvalue { double, double } %15, double %20, 0
-; CHECK-DAG:    %[[a22:.+]] = fmul fast double %12, %17
-; CHECK-DAG:    %[[a23:.+]] = fmul fast double %14, %16
-; CHECK-NEXT:   %24 = fadd fast double %[[a23]], %[[a22]]
-; CHECK-NEXT:   %25 = insertvalue { double, double } %21, double %24, 1
-; CHECK-NEXT:   ret { double, double } %25
+; CHECK-NEXT:   %[[a0:.+]] = extractvalue { double, double } %in, 0
+; CHECK-NEXT:   %[[a1:.+]] = extractvalue { double, double } %in, 1
+; CHECK-NEXT:   %[[a2:.+]] = fmul fast double %[[a0]], %[[a0]]
+; CHECK-NEXT:   %[[a3:.+]] = fmul fast double %[[a1]], %[[a1]]
+; CHECK-NEXT:   %[[a4:.+]] = fsub fast double %[[a2]], %[[a3]]
+; CHECK-NEXT:   %[[a5:.+]] = fmul fast double %[[a0]], %[[a1]]
+; CHECK-NEXT:   %[[a6:.+]] = fadd fast double %[[a5]], %[[a5]]
+; CHECK-NEXT:   %[[a7:.+]] = call fast double @llvm.exp.f64(double %[[a4]])
+; CHECK-NEXT:   %[[a8:.+]] = call fast double @llvm.cos.f64(double %[[a6]])
+; CHECK-NEXT:   %[[a9:.+]] = fmul fast double %[[a7]], %[[a8]]
+; CHECK-NEXT:   %[[a10:.+]] = call fast double @llvm.sin.f64(double %[[a6]])
+; CHECK-NEXT:   %[[a11:.+]] = fmul fast double %[[a7]], %[[a10]]
+; CHECK-NEXT:   %[[a12:.+]] = fmul fast double 0x3FF20DD750429B6D, %[[a9]]
+; CHECK-NEXT:   %[[a14:.+]] = fmul fast double 0x3FF20DD750429B6D, %[[a11]]
+; CHECK-NEXT:   %[[a16:.+]] = extractvalue { double, double } %"in'", 0
+; CHECK-NEXT:   %[[a17:.+]] = extractvalue { double, double } %"in'", 1
+; CHECK-NEXT:   %[[a19:.+]] = fmul fast double %[[a16]], %[[a12]]
+; CHECK-NEXT:   %[[a18:.+]] = fmul fast double %[[a17]], %[[a14]]
+; CHECK-NEXT:   %[[a20:.+]] = fsub fast double %[[a19]], %[[a18]]
+; CHECK-NEXT:   %[[a23:.+]] = fmul fast double %[[a16]], %[[a14]]
+; CHECK-NEXT:   %[[a22:.+]] = fmul fast double %[[a12]], %[[a17]]
+; CHECK-NEXT:   %[[a24:.+]] = fadd fast double %[[a23]], %[[a22]]
+; CHECK-NEXT:   %[[a21:.+]] = insertvalue { double, double } undef, double %[[a20]], 0
+; CHECK-NEXT:   %[[a25:.+]] = insertvalue { double, double } %[[a21]], double %[[a24]], 1
+; CHECK-NEXT:   ret { double, double } %[[a25:.+]]
 ; CHECK-NEXT: }

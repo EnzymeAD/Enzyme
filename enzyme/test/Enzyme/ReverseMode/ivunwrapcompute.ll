@@ -1,5 +1,9 @@
-; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -S | FileCheck -check-prefixes LL14,CHECK %s; fi
-; RUN: if [ %llvmver -ge 10 ] && [ %llvmver -lt 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -S | FileCheck -check-prefixes LL13,CHECK %s; fi
+; RUN: if [ %llvmver -ge 15 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -S | FileCheck -check-prefixes LL14,CHECK %s; fi
+; RUN: if [ %llvmver -ge 10 ] && [ %llvmver -lt 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -S | FileCheck -check-prefixes LL13,CHECK %s; fi
+
+; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,correlated-propagation,adce,instsimplify,early-cse,%simplifycfg,correlated-propagation,adce,instsimplify,early-cse,%simplifycfg)" -S | FileCheck -check-prefixes LL14,CHECK %s; fi
+; RUN: if [ %llvmver -ge 10 ] && [ %llvmver -lt 14 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,correlated-propagation,adce,instsimplify,early-cse,%simplifycfg,correlated-propagation,adce,instsimplify,early-cse,%simplifycfg)" -S | FileCheck -check-prefixes LL13,CHECK %s; fi
+
 
 ; ModuleID = 'q2.ll'
 source_filename = "text"
@@ -131,8 +135,8 @@ exit:                                        ; preds = %loop2
 ; LL14-NEXT:   %"iv1'ac.0" = phi i64 [ %[[a10:.+]], %incinvertloop2 ], [ %smax, %loop2 ]
 ; CHECK-NEXT:   %[[a6:.+]] = getelementptr inbounds double, double* %tmp35_malloccache, i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %[[a7:.+]] = load double, double* %[[a6]], align 8
-; CHECK-NEXT:   %m0diffearg = fmul fast double %differeturn, %[[a7]]
-; CHECK-NEXT:   %[[a8]] = fadd fast double %"arg'de.0", %m0diffearg
+; CHECK-NEXT:   %[[m0diffearg:.+]] = fmul fast double %differeturn, %[[a7]]
+; CHECK-NEXT:   %[[a8]] = fadd fast double %"arg'de.0", %[[m0diffearg]]
 ; CHECK-NEXT:   %[[a9:.+]] = icmp eq i64 %"iv1'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[a9]], label %invertmid, label %incinvertloop2
 

@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -early-cse -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,early-cse,%simplifycfg)" -S | FileCheck %s
 
 source_filename = "/mnt/Data/git/Enzyme/enzyme/test/Integration/readwriteread.c"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
@@ -113,11 +114,11 @@ attributes #10 = { noreturn nounwind }
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"ret'", align 8
 ; CHECK-NEXT:   %2 = load double, double* %"x'", align 8
 ; CHECK-NEXT:   %3 = fadd fast double %1, %2
-; CHECK-NEXT:   %m0diffe = fmul fast double %3, %mul.i.i
-; CHECK-NEXT:   %m1diffemul.i.i = fmul fast double %3, %0
-; CHECK-NEXT:   %m0diffe1 = fmul fast double %m1diffemul.i.i, %0
-; CHECK-NEXT:   %4 = fadd fast double %m0diffe, %m0diffe1
-; CHECK-NEXT:   %5 = fadd fast double %4, %m0diffe1
-; CHECK-NEXT:   store double %5, double* %"x'", align 8
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %3, %mul.i.i
+; CHECK-NEXT:   %[[m1diffemul:.+]] = fmul fast double %3, %0
+; CHECK-NEXT:   %[[m0diffe1:.+]] = fmul fast double %[[m1diffemul]], %0
+; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %[[m0diffe]], %[[m0diffe1]]
+; CHECK-NEXT:   %[[i5:.+]] = fadd fast double %[[i4]], %[[m0diffe1]]
+; CHECK-NEXT:   store double %[[i5]], double* %"x'", align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

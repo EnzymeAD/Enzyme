@@ -9,9 +9,9 @@ jobs:
     
     steps:
     - uses: actions/checkout@v3
-    - uses: DoozyX/clang-format-lint-action@v0.11
+    - uses: DoozyX/clang-format-lint-action@v0.16.2
       with:
-        source: 'enzyme/Enzyme'
+        source: 'enzyme/Enzyme enzyme/tools/enzyme-tblgen'
         exclude: './CMakeLists.txt enzyme/Enzyme/SCEV'
         style: 'llvm'
-        clangFormatVersion: 11
+        clangFormatVersion: 16

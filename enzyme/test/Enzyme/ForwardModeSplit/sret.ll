@@ -1,6 +1,5 @@
 ; RUN: if [ %llvmver -lt 12 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse -S | FileCheck %s ; fi
 
-
 ; #include <stdio.h>
 ; #include <array>
 

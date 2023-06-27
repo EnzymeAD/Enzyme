@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: nounwind readnone uwtable
@@ -23,7 +23,7 @@ declare double @__enzyme_fwddiff(double (double, double)*, ...)
 ; CHECK: define internal double @fwddiffetester(double %x, double %y, double %"y'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:  %0 = call fast double @cabs(double %x, double %y)
-; CHECK-NEXT:  %1 = fdiv fast double %"y'", %0
-; CHECK-NEXT:  %2 = fmul fast double %x, %1
+; CHECK-NEXT:  %1 = fdiv fast double %y, %0
+; CHECK-NEXT:  %2 = fmul fast double %"y'", %1
 ; CHECK-NEXT:  ret double %2
 ; CHECK-NEXT:}

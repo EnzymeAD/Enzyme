@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
 
 ; #include <math.h>
@@ -56,17 +56,17 @@ attributes #3 = { nounwind }
 
 ; CHECK: cond.true:
 ; CHECK-NEXT:   %0 = tail call fast double @llvm.sin.f64(double %x)
-; CHECK-NEXT:   %1 = call fast double @llvm.cos.f64(double %x)
-; CHECK-NEXT:   %2 = fmul fast double %"x'", %1
+; CHECK-NEXT:   %[[i1:.+]] = call fast double @llvm.cos.f64(double %x)
+; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %"x'", %[[i1]]
 ; CHECK-NEXT:   %mul = fmul fast double %0, %x
-; CHECK-NEXT:   %3 = fmul fast double %2, %x
+; CHECK-NEXT:   %3 = fmul fast double %[[i2:.+]], %x
 ; CHECK-NEXT:   %4 = fmul fast double %"x'", %0
 ; CHECK-NEXT:   %5 = fadd fast double %3, %4
-; CHECK-NEXT:   %6 = call fast double @llvm.sqrt.f64(double %mul)
-; CHECK-NEXT:   %7 = fmul fast double 5.000000e-01, %5
-; CHECK-NEXT:   %8 = fdiv fast double %7, %6
-; CHECK-NEXT:   %9 = fcmp fast oeq double %mul, 0.000000e+00
-; CHECK-NEXT:   %10 = select  {{(fast )?}}i1 %9, double 0.000000e+00, double %8
+; CHECK-NEXT:   %[[i9:.+]] = fcmp fast ueq double %mul, 0.000000e+00
+; CHECK-NEXT:   %[[i6:.+]] = call fast double @llvm.sqrt.f64(double %mul)
+; CHECK-NEXT:   %[[i7:.+]] = fmul fast double 2.000000e+00, %[[i6]]
+; CHECK-NEXT:   %[[i8:.+]] = fdiv fast double %5, %[[i7]]
+; CHECK-NEXT:   %10 = select  {{(fast )?}}i1 %[[i9]], double 0.000000e+00, double %[[i8]]
 ; CHECK-NEXT:   br label %cond.end
 
 ; CHECK: cond.end: 

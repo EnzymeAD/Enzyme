@@ -27,6 +27,18 @@
 #ifndef ENZYME_CACHE_UTILITY_H
 #define ENZYME_CACHE_UTILITY_H
 
+#include <llvm/Config/llvm-config.h>
+#if LLVM_VERSION_MAJOR >= 16
+#define private public
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+#undef private
+#else
+#include "SCEV/ScalarEvolution.h"
+#include "SCEV/ScalarEvolutionExpander.h"
+#endif
+
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Instructions.h"
@@ -197,10 +209,16 @@ public:
 
   unsigned getCacheAlignment(unsigned bsize) const {
     if ((bsize & (bsize - 1)) == 0) {
-      if (bsize > 16)
-        return 16;
+      if (bsize > 8)
+        return 8;
       else
         return bsize;
+    } else if (bsize > 0 && bsize % 8 == 0) {
+      return 8;
+    } else if (bsize > 0 && bsize % 4 == 0) {
+      return 4;
+    } else if (bsize > 0 && bsize % 2 == 0) {
+      return 2;
     } else
       return 1;
   }
@@ -354,11 +372,10 @@ public:
   /// chose how and where to free it. It is by default not implemented, falling
   /// back to an error. Subclasses who want to free memory should implement this
   /// function.
-  virtual void freeCache(llvm::BasicBlock *forwardPreheader,
-                         const SubLimitType &antimap, int i,
-                         llvm::AllocaInst *alloc,
-                         llvm::ConstantInt *byteSizeOfType,
-                         llvm::Value *storeInto, llvm::MDNode *InvariantMD) {
+  virtual llvm::CallInst *
+  freeCache(llvm::BasicBlock *forwardPreheader, const SubLimitType &antimap,
+            int i, llvm::AllocaInst *alloc, llvm::ConstantInt *byteSizeOfType,
+            llvm::Value *storeInto, llvm::MDNode *InvariantMD) {
     assert(0 && "freeing cache not handled in this scenario");
     llvm_unreachable("freeing cache not handled in this scenario");
   }
@@ -379,9 +396,9 @@ public:
   /// pointer that can hold the underlying type being cached. This value should
   /// be computed at BuilderM. Optionally, instructions needed to generate this
   /// pointer can be stored in scopeInstructions
-  llvm::Value *getCachePointer(bool inForwardPass, llvm::IRBuilder<> &BuilderM,
-                               LimitContext ctx, llvm::Value *cache, bool isi1,
-                               bool storeInInstructionsMap,
+  llvm::Value *getCachePointer(llvm::Type *T, bool inForwardPass,
+                               llvm::IRBuilder<> &BuilderM, LimitContext ctx,
+                               llvm::Value *cache, bool storeInInstructionsMap,
                                const llvm::ValueToValueMapTy &available,
                                llvm::Value *extraSize);
 
@@ -403,13 +420,14 @@ protected:
 // Create a new canonical induction variable of Type Ty for Loop L
 // Return the variable and the increment instruction
 std::pair<llvm::PHINode *, llvm::Instruction *>
-InsertNewCanonicalIV(llvm::Loop *L, llvm::Type *Ty, std::string name = "iv");
+InsertNewCanonicalIV(llvm::Loop *L, llvm::Type *Ty,
+                     const llvm::Twine &Name = "iv");
 
 // Attempt to rewrite all phinode's in the loop in terms of the
 // induction variable
 void RemoveRedundantIVs(
     llvm::BasicBlock *Header, llvm::PHINode *CanonicalIV,
     llvm::Instruction *Increment, MustExitScalarEvolution &SE,
-    std::function<void(llvm::Instruction *, llvm::Value *)> replacer,
-    std::function<void(llvm::Instruction *)> eraser);
+    llvm::function_ref<void(llvm::Instruction *, llvm::Value *)> replacer,
+    llvm::function_ref<void(llvm::Instruction *)> eraser);
 #endif

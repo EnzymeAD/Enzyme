@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -adce -early-cse -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -simplifycfg -adce -early-cse -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,%simplifycfg,adce,early-cse)" -S | FileCheck %s
 
 source_filename = "/mnt/pci4/wmdata/Enzyme2/enzyme/test/Integration/ReverseMode/mycos.c"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
@@ -56,13 +57,13 @@ exit:                                             ; preds = %loop
 ; CHECK-NEXT:   %[[a0:.+]] = load double, double* %"xp'", align 8
 ; CHECK-NEXT:   %[[a1:.+]] = fadd fast double %[[a0]], %[[a3:.+]]
 ; CHECK-NEXT:   store double %[[a1]], double* %"xp'", align 8
-; CHECK-NEXT:   %[[a2:.+]] = insertvalue { double } undef, double %m1diffex, 0
+; CHECK-NEXT:   %[[a2:.+]] = insertvalue { double } undef, double %[[m1diffex:.+]], 0
 ; CHECK-NEXT:   %4 = bitcast double* %tapeArg to i8*
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %4)
 ; CHECK-NEXT:   ret { double } %[[a2]]
 
 ; CHECK: invertloop:                                       ; preds = %invertexit, %incinvertloop
-; CHECK-NEXT:   %"tmp24'de.0" = phi double [ %m0diffetmp24, %invertexit ], [ 0.000000e+00, %incinvertloop ]
+; CHECK-NEXT:   %"tmp24'de.0" = phi double [ %[[m0diffetmp24:.+]], %invertexit ], [ 0.000000e+00, %incinvertloop ]
 ; CHECK-NEXT:   %"tmp42'de.0" = phi double [ 0.000000e+00, %invertexit ], [ %[[a6:.+]], %incinvertloop ]
 ; CHECK-NEXT:   %"tmp41'de.0" = phi double [ 0.000000e+00, %invertexit ], [ %[[a3]], %incinvertloop ]
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 16, %invertexit ], [ %[[a7:.+]], %incinvertloop ]
@@ -77,8 +78,8 @@ exit:                                             ; preds = %loop
 ; CHECK-NEXT:   br label %invertloop
 
 ; CHECK: invertexit:                                       ; preds = %loop
-; CHECK-NEXT:   %m0diffetmp24 = fmul fast double %differeturn, %x
-; CHECK-NEXT:   %m1diffex = fmul fast double %differeturn, %tmp24
+; CHECK-NEXT:   %[[m0diffetmp24]] = fmul fast double %differeturn, %x
+; CHECK-NEXT:   %[[m1diffex]] = fmul fast double %differeturn, %tmp24
 ; CHECK-NEXT:   br label %invertloop
 ; CHECK-NEXT: }
 

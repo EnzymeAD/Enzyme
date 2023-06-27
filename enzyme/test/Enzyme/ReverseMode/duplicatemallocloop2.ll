@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -instsimplify -early-cse -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -simplifycfg -instsimplify -early-cse -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,%simplifycfg,instsimplify,early-cse,adce)" -S | FileCheck %s
 
 define dso_local double @f(double* nocapture readonly %a0) local_unnamed_addr #0 {
 entry:
@@ -98,8 +99,8 @@ attributes #6 = { nounwind }
 ; CHECK-NEXT:   %4 = load double, double* %"a10'ipg_unwrap", align 8
 ; CHECK-NEXT:   %5 = fadd fast double %4, %3
 ; CHECK-NEXT:   store double %5, double* %"a10'ipg_unwrap", align 8
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"a5'mi")
-; CHECK-NEXT:   tail call void @free(i8* %remat_a5)
+; CHECK-NEXT:   call void @free(i8* nonnull %"a5'mi")
+; CHECK-NEXT:   call void @free(i8* %remat_a5)
 ; CHECK-NEXT:   %6 = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   br i1 %6, label %invertentry, label %incinvertloop
 ; CHECK-NEXT: }

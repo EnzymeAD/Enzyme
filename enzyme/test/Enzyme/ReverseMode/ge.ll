@@ -1,5 +1,8 @@
-; RUN: if [ %llvmver -lt 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -adce -correlated-propagation -simplifycfg -early-cse -S | FileCheck %s -check-prefixes STORE,SHARED; fi
-; RUN: if [ %llvmver -ge 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -adce -correlated-propagation -simplifycfg -early-cse -S | FileCheck %s -check-prefixes MEMCPY,SHARED; fi
+; RUN: if [ %llvmver -lt 14 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -adce -correlated-propagation -simplifycfg -early-cse -S | FileCheck %s -check-prefixes STORE,SHARED; fi
+; RUN: if [ %llvmver -ge 14 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -adce -correlated-propagation -simplifycfg -early-cse -S | FileCheck %s -check-prefixes MEMCPY,SHARED; fi
+
+; RUN: if [ %llvmver -lt 14 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,adce,correlated-propagation,%simplifycfg,early-cse)" -S | FileCheck %s -check-prefixes STORE,SHARED; fi
+; RUN: if [ %llvmver -ge 14 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,adce,correlated-propagation,%simplifycfg,early-cse)" -S | FileCheck %s -check-prefixes MEMCPY,SHARED; fi
 
 ; void __enzyme_autodiff(void*, ...);
 
@@ -106,8 +109,8 @@ attributes #3 = { nounwind }
 ; SHARED:   %"iv'ac.0" = phi i64 [ %[[a1]], %for.cond.cleanup ], [ %[[a12:.+]], %incinvertfor.body ]
 ; SHARED-NEXT:   %[[a6:.+]] = getelementptr inbounds double, double* %_malloccache, i64 %"iv'ac.0"
 ; SHARED-NEXT:   %[[a7:.+]] = load double, double* %[[a6]], align 8, {{(!tbaa !2, )?}}!invariant.group !
-; SHARED-NEXT:   %m0diffe = fmul fast double %"add'de.0", %[[a7]]
-; SHARED-NEXT:   %[[a8:.+]] = fadd fast double %m0diffe, %m0diffe
+; SHARED-NEXT:   %[[m0diffe:.+]] = fmul fast double %"add'de.0", %[[a7]]
+; SHARED-NEXT:   %[[a8:.+]] = fadd fast double %[[m0diffe]], %[[m0diffe]]
 ; SHARED-NEXT:   %[[unwrap:.+]] = trunc i64 %"iv'ac.0" to i32
 ; SHARED-NEXT:   %idxprom_unwrap = zext i32 %[[unwrap]] to i64
 ; SHARED-NEXT:   %"arrayidx'ipg_unwrap" = getelementptr inbounds double, double* %"x'", i64 %idxprom_unwrap

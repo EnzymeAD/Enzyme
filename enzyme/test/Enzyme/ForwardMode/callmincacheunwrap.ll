@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -adce -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(adce)" -enzyme-preopt=false -S | FileCheck %s
 
 source_filename = "/mnt/pci4/wmdata/Enzyme2/enzyme/test/Integration/ReverseMode/eigensumsqdyn.cpp"
@@ -92,8 +92,8 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %[[i1:.+]] = fmul fast double %[[i0]], %ld
 ; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i0]], %ld
 ; CHECK-NEXT:   %[[i3:.+]] = fadd fast double %[[i1]], %[[i2]]
-; CHECK-NEXT:   store double %fmul, double* %call, align 8, !tbaa !11
 ; CHECK-NEXT:   store double %[[i3]], double* %"call'ipg", align 8
+; CHECK-NEXT:   store double %fmul, double* %call, align 8, !tbaa !11
 ; CHECK-NEXT:   %exitcond = icmp eq i64 %iv.next, %cols
 ; CHECK-NEXT:   br i1 %exitcond, label %exit, label %for.body
 

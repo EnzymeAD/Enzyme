@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline nounwind readnone uwtable
 define double @tester(double %x, double %y) {
@@ -16,7 +17,9 @@ entry:
 ; Function Attrs: nounwind
 declare { double, double } @__enzyme_autodiff(double (double, double)*, ...)
 
-; CHECK: define { double, double } @test_derivative(double %x, double %y)
+; CHECK: define internal { double, double } @diffetester(double %x, double %y, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   ret { double, double } { double 1.000000e+00, double 1.000000e+00 }
+; CHECK-NEXT:   %0 = insertvalue { double, double } undef, double %differeturn, 0
+; CHECK-NEXT:   %1 = insertvalue { double, double } %0, double %differeturn, 1
+; CHECK-NEXT:   ret { double, double } %1
 ; CHECK-NEXT: }
