@@ -668,33 +668,33 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
   B.CreateCall(fn, args, bundles);
 }
 
-Value *callInnerProdBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
-                         PointerType *BlasPT, Type *BlasIT, Type *fpTy,
-                         llvm::ArrayRef<llvm::Value *> args,
-                         llvm::ArrayRef<llvm::OperandBundleDef> bundlesProd,
-                         llvm::ArrayRef<llvm::OperandBundleDef> bundlesDot) {
+llvm::CallInst *
+getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                     Type *BlasPT, Type *BlasIT, Type *fpTy,
+                     llvm::ArrayRef<llvm::Value *> args,
+                     const llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
   assert(fpTy->isFloatingPointTy());
-  std::string prod_name = (blas.floatType + "innerProd" + blas.suffix).str();
-  std::string dot_name =
-      (blas.prefix + blas.floatType + "dot" + blas.suffix).str();
 
-  SmallVector<Type *, 1> tys;
-  for (auto arg : args)
-    tys.push_back(arg->getType());
-
-  auto FT = FunctionType::get(fpTy, tys, false);
-
+  // add inner_prod call if not already present
+  std::string prod_name =
+      (blas.floatType + "__enzyme_inner_prod" + blas.suffix).str();
+  auto FInnerProdT =
+      FunctionType::get(fpTy, {BlasIT, BlasIT, BlasPT, BlasIT, BlasPT}, false);
   Function *F =
-      cast<Function>(M.getOrInsertFunction(prod_name, FT).getCallee());
+      cast<Function>(M.getOrInsertFunction(prod_name, FInnerProdT).getCallee());
 
   if (!F->empty())
-    return F;
+    return B.CreateCall(F, args, bundles);
 
+  // add dot call if not already present
+  std::string dot_name =
+      (blas.prefix + blas.floatType + "dot" + blas.suffix).str();
   auto FDotT =
       FunctionType::get(fpTy, {BlasIT, BlasPT, BlasIT, BlasPT, BlasIT}, false);
   Function *FDot =
       cast<Function>(M.getOrInsertFunction(dot_name, FDotT).getCallee());
 
+  // now add the implementation for the inner_prod call
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
 #if LLVM_VERSION_MAJOR >= 16
   F->setOnlyAccessesArgMemory();
@@ -747,29 +747,31 @@ Value *callInnerProdBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
     B3.setFastMathFlags(getFast());
     PHINode *Aidx = B3.CreatePHI(intTy, 2, "Aidx");
     PHINode *Bidx = B3.CreatePHI(intTy, 2, "Bidx");
+    PHINode *iter = B3.CreatePHI(intTy, 2, "iteration");
     Aidx->addIncoming(ConstantInt::get(intTy, 0), init);
     Bidx->addIncoming(ConstantInt::get(intTy, 0), init);
+    iter->addIncoming(ConstantInt::get(intTy, 0), init);
 
     Value *Ai = B3.CreateInBoundsGEP(fpTy, matA, Aidx, "A.i");
     Value *Bi = B3.CreateInBoundsGEP(fpTy, matB, Bidx, "B.i");
     // TODO: use to_blas_callconv before calling dot for m, constOne
     Value *newDot =
-        B3.CreateCall(FDot, {m, Ai, constOne, Bi, constOne}, bundlesDot);
+        B3.CreateCall(FDot, {m, Ai, constOne, Bi, constOne}, bundles);
     res = B3.CreateFAdd(res, newDot);
 
     Value *Anext = B3.CreateNUWAdd(Aidx, lda, "Aidx.next");
     Value *Bnext = B3.CreateNUWAdd(Aidx, m, "Bidx.next");
-    iteration = B3.CreateAdd(iteration, constOne);
+    Value *iternext = B3.CreateAdd(iteration, constOne);
+    iter->addIncoming(iternext, body);
     Aidx->addIncoming(Anext, body);
     Bidx->addIncoming(Bnext, body);
-    B3.CreateCondBr(B.CreateICmpEQ(iteration, n), end, body);
+    B3.CreateCondBr(B.CreateICmpEQ(iter, n), end, body);
 
     IRBuilder<> B4(end);
     B4.CreateRet(res);
   }
 
-  Value *sum = B.CreateCall(F, args, bundlesProd);
-  return sum;
+  return B.CreateCall(F, args, bundles);
 }
 
 Function *getOrInsertMemcpyStrided(Module &M, Type *elementType, PointerType *T,

@@ -1526,7 +1526,7 @@ void emit_free_and_ending(const TGPattern &pattern, raw_ostream &os) {
     const DagInit *ruleDag = rule.getRuleDag();
     std::string toCache = get_input_mat(ruleDag);
     if (toCache != "") {
-      os << "      if (cache_" << name << ") {\n"
+      os << "      if (active_" << name << ") {\n"
          << "        CreateDealloc(Builder2, free_input_" << toCache << ");\n"
          << "      }\n";
       break;
@@ -1653,8 +1653,8 @@ void extract_scalar(StringRef name, StringRef elemTy, raw_ostream &os) {
      << "\n";
 }
 
-void extract_input_mat(StringRef name, raw_ostream &os) {
-  os << "    if (cache_" << name << ") {\n"
+void extract_input_mat(StringRef name, StringRef actName, raw_ostream &os) {
+  os << "    if (active_" << actName << ") {\n"
      << "      input_" << name << " = (cacheTypes.size() == 1)\n"
      << "                  ? cacheval\n"
      << "                  : Builder2.CreateExtractValue(cacheval, "
@@ -1733,12 +1733,14 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
   os << "    }\n";
 
   std::string toCache = "";
+  size_t actVar = 0;
   for (size_t a = 0; a < activeArgs.size(); a++) {
     auto rule = rules[a];
     const DagInit *ruleDag = rule.getRuleDag();
     std::string tmp = get_input_mat(ruleDag);
     if (tmp != "") {
       toCache = tmp;
+      actVar = activeArgs[a];
       break;
     }
   }
@@ -1748,13 +1750,14 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
     if (ty != ArgType::mldData)
       continue;
     auto name = nameVec[i];
+    auto actName = nameVec[actVar];
     if (name == toCache) {
       // this means we use input<name> in one rule,
       // so we force-load it from cache into input_<name>.
       // Do it here to get the cacheidx right
       // This does not modify the cacheidx,
       // so do it before the extract_mat_or_vec call
-      extract_input_mat(name, os);
+      extract_input_mat(name, actName, os);
     }
     extract_mat_or_vec(name, os);
   }
@@ -2191,25 +2194,9 @@ void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
     return;
     PrintFatalError("Unhandled Inst Rule!");
   } else if (Def->isSubClassOf("FrobInnerProd")) {
+    // nothing to prepare
     os << "    //handled prod\n";
     assert(ruleDag->getNumArgs() == 5);
-    auto m = ruleDag->getArgNameStr(0);
-    auto n = ruleDag->getArgNameStr(1);
-    auto A = ruleDag->getArgNameStr(2);
-    auto ldc = ruleDag->getArgNameStr(3);
-    auto B = ruleDag->getArgNameStr(4);
-    assert(typeMap.lookup(nameMap.lookup(m)) == ArgType::len);
-    assert(typeMap.lookup(nameMap.lookup(n)) == ArgType::len);
-    assert(typeMap.lookup(nameMap.lookup(ldc)) == ArgType::mldLD);
-    os << "    Type* tysInnerProd[] = {type_" << m << ", type_" << n
-       << ", type_" << ldc << ", type_A, type_A};\n"
-       << "    llvm::FunctionType *FTInnerProd"
-       << " = FunctionType::get(fpType, tysInnerProd, false);\n";
-
-    os << "    auto derivcall_inner_prod"
-       << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-       << "  \"__enzyme_inner_prod\", FTInnerProd);\n";
-    // call_inner_prod();
     os << "    //handled prod\n";
   } else {
     PrintFatalError("Unhandled deriv Rule!");
@@ -2590,10 +2577,15 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       rev_call_args("args1", rule, actArg, os);
       os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
+      // Now that we have the defs, we can create the call
+      os << "    auto derivcall_inner_prod = \n"
+            "      getorInsertInnerProd(Builder2, "
+            "*gutils->oldFunc->getParent(), blas, type_A, type_n, fpType,"
+            " ArrayRef<Value *>(args1), Defs);\n";
+
       assert(ty == ArgType::fp);
       os << "        CallInst *cubcall = "
-            "cast<CallInst>(Builder2.CreateCall(derivcall_inner_prod, args1, "
-            "Defs));\n"
+            "cast<CallInst>(derivcall_inner_prod);\n"
          << "        if (byRef) {\n"
          << "          ((DiffeGradientUtils *)gutils)"
          << "->addToInvertedPtrDiffe(&call, nullptr, fpType, 0,"
