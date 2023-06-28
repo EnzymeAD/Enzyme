@@ -668,18 +668,17 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
   B.CreateCall(fn, args, bundles);
 }
 
-llvm::CallInst *
-getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
-                     Type *BlasPT, Type *BlasIT, Type *fpTy,
-                     llvm::ArrayRef<llvm::Value *> args,
-                     const llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
+llvm::CallInst *getorInsertInnerProd(
+    llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas, IntegerType *IT,
+    Type *BlasPT, Type *BlasIT, Type *fpTy, llvm::ArrayRef<llvm::Value *> args,
+    const llvm::ArrayRef<llvm::OperandBundleDef> bundles, bool byRef) {
   assert(fpTy->isFloatingPointTy());
 
   // add inner_prod call if not already present
   std::string prod_name =
       (blas.floatType + "__enzyme_inner_prod" + blas.suffix).str();
   auto FInnerProdT =
-      FunctionType::get(fpTy, {BlasIT, BlasIT, BlasPT, BlasIT, BlasPT}, false);
+      FunctionType::get(fpTy, {IT, IT, BlasPT, IT, BlasPT}, false);
   Function *F =
       cast<Function>(M.getOrInsertFunction(prod_name, FInnerProdT).getCallee());
 
@@ -752,9 +751,10 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
     Bidx->addIncoming(ConstantInt::get(intTy, 0), init);
     iter->addIncoming(ConstantInt::get(intTy, 0), init);
 
-    Value *Ai = B3.CreateInBoundsGEP(fpTy, matA, Aidx, "A.i");
-    Value *Bi = B3.CreateInBoundsGEP(fpTy, matB, Bidx, "B.i");
-    // TODO: use to_blas_callconv before calling dot for m, constOne
+    Value *Ai = B3.CreateInBoundsGEP(BlasPT, matA, Aidx, "A.i");
+    Value *Bi = B3.CreateInBoundsGEP(BlasPT, matB, Bidx, "B.i");
+    // Value *Ai = B3.CreateInBoundsGEP(fpTy, matA, Aidx, "A.i");
+    // Value *Bi = B3.CreateInBoundsGEP(fpTy, matB, Bidx, "B.i");
     Value *newDot =
         B3.CreateCall(FDot, {m, Ai, constOne, Bi, constOne}, bundles);
     res = B3.CreateFAdd(res, newDot);

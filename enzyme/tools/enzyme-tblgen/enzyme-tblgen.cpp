@@ -2580,8 +2580,9 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       // Now that we have the defs, we can create the call
       os << "    auto derivcall_inner_prod = \n"
             "      getorInsertInnerProd(Builder2, "
-            "*gutils->oldFunc->getParent(), blas, type_A, type_n, fpType,"
-            " ArrayRef<Value *>(args1), Defs);\n";
+            "*gutils->oldFunc->getParent(), blas, intType, type_A, type_n, "
+            "fpType,"
+            " ArrayRef<Value *>(args1), Defs, byRef);\n";
 
       assert(ty == ArgType::fp);
       os << "        CallInst *cubcall = "
