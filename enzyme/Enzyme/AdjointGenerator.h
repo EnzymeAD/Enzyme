@@ -325,113 +325,17 @@ public:
     return B.CreateLoad(rankTy, alloc);
   }
 
-#if LLVM_VERSION_MAJOR >= 10
-  void visitFreezeInst(llvm::FreezeInst &inst) {
-    using namespace llvm;
-
-    eraseIfUnused(inst);
-    if (gutils->isConstantInstruction(&inst))
-      return;
-    Value *orig_op0 = inst.getOperand(0);
-
-    switch (Mode) {
-    case DerivativeMode::ReverseModeCombined:
-    case DerivativeMode::ReverseModeGradient: {
-      IRBuilder<> Builder2(&inst);
-      getReverseBuilder(Builder2);
-
-      auto rule = [&](Value *idiff) { return Builder2.CreateFreeze(idiff); };
-      Value *idiff = diffe(&inst, Builder2);
-      Value *dif1 = applyChainRule(orig_op0->getType(), Builder2, rule, idiff);
-      setDiffe(&inst,
-               Constant::getNullValue(gutils->getShadowType(inst.getType())),
-               Builder2);
-      size_t size = 1;
-      if (inst.getType()->isSized())
-        size = (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
-                    orig_op0->getType()) +
-                7) /
-               8;
-      addToDiffe(orig_op0, dif1, Builder2, TR.addingType(size, orig_op0));
-      return;
-    }
-    case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
-      IRBuilder<> BuilderZ(&inst);
-      getForwardBuilder(BuilderZ);
-
-      auto rule = [&](Value *idiff) { return BuilderZ.CreateFreeze(idiff); };
-      Value *idiff = diffe(orig_op0, BuilderZ);
-      Value *dif1 = applyChainRule(inst.getType(), BuilderZ, rule, idiff);
-      setDiffe(&inst, dif1, BuilderZ);
-      return;
-    }
-    case DerivativeMode::ReverseModePrimal:
-      return;
-    }
-  }
-#endif
-
   void visitInstruction(llvm::Instruction &inst) {
     using namespace llvm;
 
     // TODO explicitly handle all instructions rather than using the catch all
     // below
 
-#if LLVM_VERSION_MAJOR >= 10
-    if (auto *FPMO = dyn_cast<FPMathOperator>(&inst)) {
-      if (FPMO->getOpcode() == Instruction::FNeg) {
-        eraseIfUnused(inst);
-        if (gutils->isConstantInstruction(&inst))
-          return;
-
-        Value *orig_op1 = FPMO->getOperand(0);
-        bool constantval1 = gutils->isConstantValue(orig_op1);
-
-        if (constantval1) {
-          return;
-        }
-
-        switch (Mode) {
-        case DerivativeMode::ReverseModeCombined:
-        case DerivativeMode::ReverseModeGradient: {
-          IRBuilder<> Builder2(&inst);
-          getReverseBuilder(Builder2);
-
-          auto rule = [&](Value *idiff) { return Builder2.CreateFNeg(idiff); };
-          Value *idiff = diffe(FPMO, Builder2);
-          Value *dif1 =
-              applyChainRule(orig_op1->getType(), Builder2, rule, idiff);
-          setDiffe(
-              FPMO,
-              Constant::getNullValue(gutils->getShadowType(FPMO->getType())),
-              Builder2);
-          addToDiffe(orig_op1, dif1, Builder2,
-                     dif1->getType()->getScalarType());
-          break;
-        }
-        case DerivativeMode::ForwardModeSplit:
-        case DerivativeMode::ForwardMode: {
-          IRBuilder<> Builder2(&inst);
-          getForwardBuilder(Builder2);
-
-          auto rule = [&Builder2](Value *idiff) {
-            return Builder2.CreateFNeg(idiff);
-          };
-
-          Value *idiff = diffe(orig_op1, Builder2);
-          Value *dif1 = applyChainRule(inst.getType(), Builder2, rule, idiff);
-
-          setDiffe(FPMO, dif1, Builder2);
-          break;
-        }
-        case DerivativeMode::ReverseModePrimal:
-          return;
-        }
-        return;
-      }
+    switch (inst.getOpcode()) {
+#include "InstructionDerivatives.inc"
+    default:
+      break;
     }
-#endif
 
     std::string s;
     llvm::raw_string_ostream ss(s);
@@ -8486,7 +8390,7 @@ public:
         llvm_unreachable("unhandled openmp function");
       }
 
-#include "InstructionDerivatives.inc"
+#include "CallDerivatives.inc"
 
       // Functions that only modify pointers and don't allocate memory,
       // needs to be run on shadow in primal

@@ -60,20 +60,20 @@ entry:
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertend:                                        ; preds = %entry
-; CHECK-NEXT:   br i1 %cmp2, label %invertend_phirc, label %invertend_phirc1
+; CHECK-NEXT:   br i1 %cmp2, label %invertend_phirc, label %[[invertend_phirc1:.+]]
 
 ; CHECK: invertend_phirc:                                  ; preds = %invertend
 ; CHECK-NEXT:   %g1_unwrap = getelementptr inbounds double, double* %a, i32 32
 ; CHECK-NEXT:   %l1_unwrap = load double, double* %g1_unwrap, align 8
 ; CHECK-NEXT:   br label %invertend_phimerge
 
-; CHECK: invertend_phirc1:                                 ; preds = %invertend
+; CHECK: [[invertend_phirc1]]:                                 ; preds = %invertend
 ; CHECK-NEXT:   %g2_unwrap = getelementptr inbounds double, double* %a, i32 64
 ; CHECK-NEXT:   %l2_unwrap = load double, double* %g2_unwrap, align 8
 ; CHECK-NEXT:   br label %invertend_phimerge
 
-; CHECK: invertend_phimerge:                               ; preds = %invertend_phirc1, %invertend_phirc
-; CHECK-NEXT:   %5 = phi {{(fast )?}}double [ %l1_unwrap, %invertend_phirc ], [ %l2_unwrap, %invertend_phirc1 ]
+; CHECK: invertend_phimerge: 
+; CHECK-NEXT:   %5 = phi {{(fast )?}}double [ %l1_unwrap, %invertend_phirc ], [ %l2_unwrap, %[[invertend_phirc1]] ]
 ; CHECK-NEXT:   %[[m0diffep:.+]] = fmul fast double %0, %5
 ; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %[[m0diffep]], %[[m0diffep]]
 ; CHECK-NEXT:   %[[i7]] = select {{(fast )?}}i1 %cmp2, double 0.000000e+00, double %[[i6]]
