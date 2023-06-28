@@ -253,7 +253,8 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
   sample_call->addAttribute(AttributeList::FunctionIndex, activity_attribute);
 #endif
 
-  if (autodiff) {
+  if (autodiff &&
+      (mode == ProbProgMode::Trace || mode == ProbProgMode::Condition)) {
     auto gradient_setter =
         ValueAsMetadata::get(tutils->interface->insertChoiceGradient(Builder));
     auto gradient_setter_node =

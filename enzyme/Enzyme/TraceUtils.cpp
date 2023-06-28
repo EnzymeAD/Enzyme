@@ -509,10 +509,10 @@ CallInst *TraceUtils::CreateOutlinedFunction(
 
 bool TraceUtils::isSampleCall(CallInst *call) {
   auto F = getFunctionFromCall(call);
-  return sampleFunctions.contains(F);
+  return sampleFunctions.count(F);
 }
 
 bool TraceUtils::isObserveCall(CallInst *call) {
   auto F = getFunctionFromCall(call);
-  return observeFunctions.contains(F);
+  return observeFunctions.count(F);
 }
