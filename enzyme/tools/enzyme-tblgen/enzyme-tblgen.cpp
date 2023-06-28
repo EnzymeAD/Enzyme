@@ -1131,7 +1131,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       nameToOrdinal.insert(tree->getNameStr(),
                            (Twine("(&") + origName + ")").str(), false);
 
-    if (intrinsic != BinopDerivatives) {
+    if (intrinsic != BinopDerivatives && intrinsic != InstDerivatives) {
       os << "    if (gutils->knownRecomputeHeuristic.find(&" << origName
          << ") !=\n";
       os << "        gutils->knownRecomputeHeuristic.end()) {\n";
