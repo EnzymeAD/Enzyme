@@ -202,18 +202,16 @@ EnzymeTraceInterfaceRef FindEnzymeStaticTraceInterface(LLVMModuleRef M) {
 }
 
 EnzymeTraceInterfaceRef CreateEnzymeStaticTraceInterface(
-    LLVMContextRef C, LLVMValueRef sampleFunction,
-    LLVMValueRef getTraceFunction, LLVMValueRef getChoiceFunction,
-    LLVMValueRef insertCallFunction, LLVMValueRef insertChoiceFunction,
-    LLVMValueRef insertArgumentFunction, LLVMValueRef insertReturnFunction,
-    LLVMValueRef insertFunctionFunction,
+    LLVMContextRef C, LLVMValueRef getTraceFunction,
+    LLVMValueRef getChoiceFunction, LLVMValueRef insertCallFunction,
+    LLVMValueRef insertChoiceFunction, LLVMValueRef insertArgumentFunction,
+    LLVMValueRef insertReturnFunction, LLVMValueRef insertFunctionFunction,
     LLVMValueRef insertChoiceGradientFunction,
     LLVMValueRef insertArgumentGradientFunction, LLVMValueRef newTraceFunction,
     LLVMValueRef freeTraceFunction, LLVMValueRef hasCallFunction,
     LLVMValueRef hasChoiceFunction) {
   return (EnzymeTraceInterfaceRef)(new StaticTraceInterface(
-      *unwrap(C), cast<Function>(unwrap(sampleFunction)),
-      cast<Function>(unwrap(getTraceFunction)),
+      *unwrap(C), cast<Function>(unwrap(getTraceFunction)),
       cast<Function>(unwrap(getChoiceFunction)),
       cast<Function>(unwrap(insertCallFunction)),
       cast<Function>(unwrap(insertChoiceFunction)),
@@ -622,13 +620,11 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
       forceAnonymousTape, width, AtomicAdd));
 }
 
-LLVMValueRef CreateTrace(EnzymeLogicRef Logic, LLVMValueRef totrace,
-                         LLVMValueRef *generative_functions,
-                         size_t generative_functions_size,
-                         const char *active_random_variables[],
-                         size_t active_random_variables_size,
-                         CProbProgMode mode, uint8_t autodiff,
-                         EnzymeTraceInterfaceRef interface) {
+LLVMValueRef CreateTrace(
+    EnzymeLogicRef Logic, LLVMValueRef totrace, LLVMValueRef sample_function,
+    LLVMValueRef *generative_functions, size_t generative_functions_size,
+    const char *active_random_variables[], size_t active_random_variables_size,
+    CProbProgMode mode, uint8_t autodiff, EnzymeTraceInterfaceRef interface) {
 
   SmallPtrSet<Function *, 4> GenerativeFunctions;
   for (size_t i = 0; i < generative_functions_size; i++) {
@@ -641,9 +637,9 @@ LLVMValueRef CreateTrace(EnzymeLogicRef Logic, LLVMValueRef totrace,
   }
 
   return wrap(eunwrap(Logic).CreateTrace(
-      cast<Function>(unwrap(totrace)), GenerativeFunctions,
-      ActiveRandomVariables, (ProbProgMode)mode, (bool)autodiff,
-      eunwrap(interface)));
+      cast<Function>(unwrap(totrace)), cast<Function>(unwrap(sample_function)),
+      GenerativeFunctions, ActiveRandomVariables, (ProbProgMode)mode,
+      (bool)autodiff, eunwrap(interface)));
 }
 
 LLVMValueRef

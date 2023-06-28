@@ -4988,7 +4988,7 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 };
 
 Function *
-EnzymeLogic::CreateTrace(Function *totrace,
+EnzymeLogic::CreateTrace(Function *totrace, Function *sampleFunction,
                          SmallPtrSetImpl<Function *> &GenerativeFunctions,
                          StringSet<> &ActiveRandomVariables, ProbProgMode mode,
                          bool autodiff, TraceInterface *interface) {
@@ -4998,8 +4998,8 @@ EnzymeLogic::CreateTrace(Function *totrace,
   }
 
   ValueToValueMapTy originalToNewFn;
-  TraceUtils *tutils =
-      TraceUtils::FromClone(mode, interface, totrace, originalToNewFn);
+  TraceUtils *tutils = TraceUtils::FromClone(mode, sampleFunction, interface,
+                                             totrace, originalToNewFn);
   TraceGenerator *tracer =
       new TraceGenerator(*this, tutils, autodiff, originalToNewFn,
                          GenerativeFunctions, ActiveRandomVariables);

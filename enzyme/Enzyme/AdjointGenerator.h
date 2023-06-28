@@ -10117,14 +10117,20 @@ public:
         dchoice = diffe(&call, Builder2);
       }
 
-      auto gradient_setter = cast<Function>(
-          cast<ValueAsMetadata>(
-              call.getMetadata("enzyme_gradient_setter")->getOperand(0).get())
-              ->getValue());
+#if LLVM_VERSION_MAJOR >= 10
+      if (call.hasMetadata("enzyme_gradient_setter")) {
+#else
+      if (call.getMetadata("enzyme_gradient_setter")) {
+#endif
+        auto gradient_setter = cast<Function>(
+            cast<ValueAsMetadata>(
+                call.getMetadata("enzyme_gradient_setter")->getOperand(0).get())
+                ->getValue());
 
-      TraceUtils::InsertChoiceGradient(
-          Builder2, gradient_setter->getFunctionType(), gradient_setter,
-          daddress, dchoice, dtrace);
+        TraceUtils::InsertChoiceGradient(
+            Builder2, gradient_setter->getFunctionType(), gradient_setter,
+            daddress, dchoice, dtrace);
+      }
 
       return;
     }
@@ -10133,8 +10139,8 @@ public:
       IRBuilder<> Builder2(&call);
       getReverseBuilder(Builder2);
 
-      auto arg = call.getArgOperand(0);
-      auto name = call.getArgOperand(1);
+      auto name = call.getArgOperand(0);
+      auto arg = call.getArgOperand(1);
       auto trace = call.getArgOperand(2);
 
       auto gradient_setter = cast<Function>(
