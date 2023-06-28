@@ -89,7 +89,7 @@ class transpose<string _name> {
   string name = _name;
 }
 
-class FrobInnerProd;
+class FrobInnerProd<string _tmp>;
 
 
 // General note: If return is scalar, return it. If return is vec, update it.
@@ -197,7 +197,7 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   /* alpha */ (inactive),
                   /* A     */ (b<"gemm"> $layout, $transa, transpose<"transb">, $m, $k, $n, $alpha, adj<"C">, $ldc, $B, (ld $B, $transb, $ldb, $k, $n), $beta, adj<"A">, $lda),
                   /* B     */ (b<"gemm"> $layout, transpose<"transa">, $transb, $k, $n, $m, $alpha, $A, (ld $A, $transa, $lda, $m, $k), adj<"C">, $ldc, $beta, adj<"B">, $ldb),
-                  /* beta  */ (FrobInnerProd<> $m, $n, adj<"C">, $ldc, input<"C">),
+                  /* beta  */ (FrobInnerProd<""> $m, $n, adj<"C">, $ldc, input<"C">),
                   /* C     */ (b<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, adj<"C">, $ldc, ConstantInt<0>)
                   ]
                   >;
