@@ -2774,8 +2774,8 @@ public:
               if ((pdf->arg_end() - 1)->getType() != observed->getType()) {
                 EmitFailure(
                     "IllegalSampleType", CI->getDebugLoc(), CI,
-                    "Return type of ", *observed, " (",
-                    *observed->getType(), ")",
+                    "Return type of ", *observed, " (", *observed->getType(),
+                    ")",
                     " does not match the last argument type of the density "
                     "function: ",
                     *pdf, " (", *(pdf->arg_end() - 1)->getType(), ")");
