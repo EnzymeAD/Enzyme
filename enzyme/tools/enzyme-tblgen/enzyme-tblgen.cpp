@@ -1143,7 +1143,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
             "CacheType::Self));\n";
       os << "        }\n";
       os << "    }\n";
-
     }
     os << "    eraseIfUnused(" << origName << ");\n";
 
