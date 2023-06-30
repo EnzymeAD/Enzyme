@@ -734,10 +734,8 @@ llvm::CallInst *getorInsertInnerProd(
 
   {
     IRBuilder<> B1(entry);
-    Value *res = ConstantFP::get(fpTy, 0.0);
-    Value *blasOne = ConstantInt::get(IT, 1);
-    //blasOne = to_blas_callconv(B, blasOne, byRef, BlasIT, B1,
-    blasOne = to_blas_callconv(B1, blasOne, byRef, IT, AllocationBuilder,
+    //blasOne = to_blas_callconv(B1, blasOne, byRef, IT, AllocationBuilder,
+    Value *blasOne = to_blas_callconv(B1, ConstantInt::get(IT, 1), byRef, IT, B1,
                           "constant.one");
     Value *m = load_if_ref(B1, IT, blasm, byRef);
     Value *n = load_if_ref(B1, IT, blasn, byRef);
@@ -762,9 +760,11 @@ llvm::CallInst *getorInsertInnerProd(
     PHINode *Aidx = B3.CreatePHI(IT, 2, "Aidx");
     PHINode *Bidx = B3.CreatePHI(IT, 2, "Bidx");
     PHINode *iter = B3.CreatePHI(IT, 2, "iteration");
+    PHINode *sum = B3.CreatePHI(fpTy, 2, "sum");
     Aidx->addIncoming(ConstantInt::get(IT, 0), init);
     Bidx->addIncoming(ConstantInt::get(IT, 0), init);
     iter->addIncoming(ConstantInt::get(IT, 0), init);
+    sum->addIncoming(ConstantFP::get(fpTy, 0.0), init);
 
     Value *Ai = B3.CreateInBoundsGEP(fpTy, Afloat, Aidx, "A.i");
     Value *Bi = B3.CreateInBoundsGEP(fpTy, Bfloat, Bidx, "B.i");
@@ -772,17 +772,23 @@ llvm::CallInst *getorInsertInnerProd(
     Value *BiDot = B3.CreatePointerCast(Bi, BlasPT);
     Value *newDot =
         B3.CreateCall(FDot, {blasm, AiDot, blasOne, BiDot, blasOne}, bundles);
-    res = B3.CreateFAdd(res, newDot);
 
     Value *Anext = B3.CreateNUWAdd(Aidx, lda, "Aidx.next");
     Value *Bnext = B3.CreateNUWAdd(Aidx, m, "Bidx.next");
     Value *iternext = B3.CreateAdd(iter, ConstantInt::get(IT, 1), "iter.next");
+    Value *sumnext = B3.CreateFAdd(sum, newDot);
+
     iter->addIncoming(iternext, body);
     Aidx->addIncoming(Anext, body);
     Bidx->addIncoming(Bnext, body);
+    sum->addIncoming(sumnext, body);
+
     B3.CreateCondBr(B3.CreateICmpEQ(iter, n), end, body);
 
     IRBuilder<> B4(end);
+    PHINode *res = B4.CreatePHI(fpTy, 2, "res");
+    res->addIncoming(ConstantFP::get(fpTy, 0.0), entry);
+    res->addIncoming(sum, body);
     B4.CreateRet(res);
   }
 
