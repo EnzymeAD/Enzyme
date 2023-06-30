@@ -107,11 +107,11 @@ entry:
 ; CHECK-NEXT:   %19 = or i1 %[[i18]], %[[i17]]
 ; CHECK-NEXT:   %20 = select i1 %19, i8* %m_p, i8* %k_p
 ; CHECK-NEXT:   %21 = select i1 %19, i8* %k_p, i8* %m_p
-; CHECK-NEXT:   %22 = bitcast i8* %20 to i64*
-; CHECK-NEXT:   %23 = bitcast i8* %21 to i64*
-; CHECK-NEXT:   %24 = load i64, i64* %22
-; CHECK-NEXT:   %25 = load i64, i64* %23
-; CHECK-NEXT:   %26 = mul i64 %24, %25
+; CHECK-NEXT:   %[[i22:.+]] = bitcast i8* %20 to i64*
+; CHECK-NEXT:   %[[i24:.+]] = load i64, i64* %[[i22]]
+; CHECK-NEXT:   %[[i23:.+]] = bitcast i8* %21 to i64*
+; CHECK-NEXT:   %[[i25:.+]] = load i64, i64* %[[i23]]
+; CHECK-NEXT:   %26 = mul i64 %[[i24]], %[[i25]]
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %26, 8
 ; CHECK-NEXT:   %malloccall10 = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   %cache.A = bitcast i8* %malloccall10 to double*
@@ -119,7 +119,7 @@ entry:
 ; CHECK-NEXT:   %27 = bitcast i8* %lda_p to i64*
 ; CHECK-NEXT:   %28 = load i64, i64* %27
 ; CHECK-NEXT:   %29 = bitcast i8* %A to double*
-; CHECK:   %mul.i = add nuw nsw i64 %24, %25
+; CHECK:   %mul.i = add nuw nsw i64 %[[i24]], %[[i25]]
 ; CHECK-NEXT:   %30 = icmp eq i64 %mul.i, 0
 ; CHECK-NEXT:   br i1 %30, label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
 
@@ -129,7 +129,7 @@ entry:
 
 ; CHECK: for.body.i:                                       ; preds = %for.body.i, %init.idx.i
 ; CHECK-NEXT:   %i.i = phi i64 [ 0, %init.idx.i ], [ %i.next.i, %for.body.i ]
-; CHECK-NEXT:   %31 = mul nuw nsw i64 %j.i, %24
+; CHECK-NEXT:   %31 = mul nuw nsw i64 %j.i, %[[i24]]
 ; CHECK-NEXT:   %32 = add nuw nsw i64 %i.i, %31
 ; CHECK-NEXT:   %dst.i.i = getelementptr inbounds double, double* %cache.A, i64 %32
 ; CHECK-NEXT:   %33 = mul nuw nsw i64 %j.i, %28
@@ -138,12 +138,12 @@ entry:
 ; CHECK-NEXT:   %src.i.l.i = load double, double* %dst.i1.i
 ; CHECK-NEXT:   store double %src.i.l.i, double* %dst.i.i
 ; CHECK-NEXT:   %i.next.i = add nuw nsw i64 %i.i, 1
-; CHECK-NEXT:   %35 = icmp eq i64 %i.next.i, %24
+; CHECK-NEXT:   %35 = icmp eq i64 %i.next.i, %[[i24]]
 ; CHECK-NEXT:   br i1 %35, label %init.end.i, label %for.body.i
 
 ; CHECK: init.end.i:                                       ; preds = %for.body.i
 ; CHECK-NEXT:   %j.next.i = add nuw nsw i64 %j.i, 1
-; CHECK-NEXT:   %36 = icmp eq i64 %j.next.i, %25
+; CHECK-NEXT:   %36 = icmp eq i64 %j.next.i, %[[i25]]
 ; CHECK-NEXT:   br i1 %36, label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
 
 ; CHECK: __enzyme_memcpy_double_mat_64.exit:               ; preds = %entry, %init.end.i

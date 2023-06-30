@@ -639,6 +639,14 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
                              BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
                              llvm::ArrayRef<llvm::OperandBundleDef> bundles);
 
+llvm::CallInst *
+getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                     llvm::IntegerType *IT, llvm::Type *BlasPT,
+                     llvm::Type *BlasIT, llvm::Type *fpTy,
+                     llvm::ArrayRef<llvm::Value *> args,
+                     const llvm::ArrayRef<llvm::OperandBundleDef> bundles,
+                     bool byRef, bool julia_decl);
+
 /// Create function for type that performs memcpy with a stride
 llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M,
                                          llvm::Type *elementType,
@@ -1628,6 +1636,9 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, const llvm::Twine &name = "");
+
+llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::IntegerType *intType,
+                         llvm::Value *V, bool byRef);
 
 // julia_decl null means not julia decl, otherwise it is the integer type needed
 // to cast to

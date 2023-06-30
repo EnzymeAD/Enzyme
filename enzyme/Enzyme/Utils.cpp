@@ -668,6 +668,148 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
   B.CreateCall(fn, args, bundles);
 }
 
+llvm::CallInst *
+getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                     IntegerType *IT, Type *BlasPT, Type *BlasIT, Type *fpTy,
+                     llvm::ArrayRef<llvm::Value *> args,
+                     const llvm::ArrayRef<llvm::OperandBundleDef> bundles,
+                     bool byRef, bool julia_decl) {
+  assert(fpTy->isFloatingPointTy());
+
+  // add inner_prod call if not already present
+  std::string prod_name =
+      ("__enzyme_inner_prod" + blas.floatType + blas.suffix).str();
+  auto FInnerProdT =
+      FunctionType::get(fpTy, {BlasIT, BlasIT, BlasPT, BlasIT, BlasPT}, false);
+  Function *F =
+      cast<Function>(M.getOrInsertFunction(prod_name, FInnerProdT).getCallee());
+
+  if (!F->empty())
+    return B.CreateCall(F, args, bundles);
+
+  // add dot call if not already present
+  std::string dot_name =
+      (blas.prefix + blas.floatType + "dot" + blas.suffix).str();
+  auto FDotT =
+      FunctionType::get(fpTy, {BlasIT, BlasPT, BlasIT, BlasPT, BlasIT}, false);
+  Function *FDot =
+      cast<Function>(M.getOrInsertFunction(dot_name, FDotT).getCallee());
+
+  // now add the implementation for the inner_prod call
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+  F->setOnlyReadsMemory();
+#else
+  F->addFnAttr(Attribute::ArgMemOnly);
+  F->addFnAttr(Attribute::ReadOnly);
+#endif
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
+  if (!julia_decl) {
+    F->addParamAttr(2, Attribute::NoCapture);
+    F->addParamAttr(4, Attribute::NoCapture);
+    F->addParamAttr(2, Attribute::NoAlias);
+    F->addParamAttr(4, Attribute::NoAlias);
+    F->addParamAttr(2, Attribute::ReadOnly);
+    F->addParamAttr(4, Attribute::ReadOnly);
+  }
+
+  BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+  BasicBlock *init = BasicBlock::Create(M.getContext(), "init.idx", F);
+  BasicBlock *fastPath = BasicBlock::Create(M.getContext(), "fast.path", F);
+  BasicBlock *body = BasicBlock::Create(M.getContext(), "for.body", F);
+  BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
+
+  // This is the .td declaration which we need to match
+  // No need to support ld for the second matrix, as it will
+  // always be based on a matrix which we allocated (contiguous)
+  //(FrobInnerProd<> $m, $n, adj<"C">, $ldc, use<"AB">)
+
+  auto blasm = F->arg_begin();
+  blasm->setName("blasm");
+  auto blasn = blasm + 1;
+  blasn->setName("blasn");
+  auto matA = blasn + 1;
+  matA->setName("A");
+  auto blaslda = matA + 1;
+  blaslda->setName("lda");
+  auto matB = blaslda + 1;
+  matB->setName("B");
+
+  {
+    IRBuilder<> B1(entry);
+    Value *blasOne = to_blas_callconv(B1, ConstantInt::get(IT, 1), byRef, IT,
+                                      B1, "constant.one");
+    Value *m = load_if_ref(B1, IT, blasm, byRef);
+    Value *n = load_if_ref(B1, IT, blasn, byRef);
+    Value *size = B1.CreateNUWMul(m, n, "mat.size");
+    Value *blasSize = to_blas_callconv(B1, size, byRef, IT, B1, "mat.size");
+    B1.CreateCondBr(B1.CreateICmpEQ(size, ConstantInt::get(IT, 0)), end, init);
+
+    IRBuilder<> B2(init);
+    B2.setFastMathFlags(getFast());
+    Value *lda = load_if_ref(B2, IT, blaslda, byRef);
+    Value *Afloat = B2.CreatePointerCast(
+        matA, PointerType::get(
+                  fpTy, cast<PointerType>(matA->getType())->getAddressSpace()));
+    Value *Bfloat = B2.CreatePointerCast(
+        matB, PointerType::get(
+                  fpTy, cast<PointerType>(matB->getType())->getAddressSpace()));
+    B2.CreateCondBr(B2.CreateICmpEQ(m, lda), fastPath, body);
+
+    // our second matrix is always continuos, by construction.
+    // If our first matrix is continuous too (lda == m), then we can
+    // use a single dot call.
+    IRBuilder<> B3(fastPath);
+    B3.setFastMathFlags(getFast());
+    Value *blasA = B3.CreatePointerCast(matA, BlasPT);
+    Value *blasB = B3.CreatePointerCast(matB, BlasPT);
+    Value *fastSum = B3.CreateCall(
+        FDot, {blasSize, blasA, blasOne, blasB, blasOne}, bundles);
+    B3.CreateBr(end);
+
+    IRBuilder<> B4(body);
+    B4.setFastMathFlags(getFast());
+    PHINode *Aidx = B4.CreatePHI(IT, 2, "Aidx");
+    PHINode *Bidx = B4.CreatePHI(IT, 2, "Bidx");
+    PHINode *iter = B4.CreatePHI(IT, 2, "iteration");
+    PHINode *sum = B4.CreatePHI(fpTy, 2, "sum");
+    Aidx->addIncoming(ConstantInt::get(IT, 0), init);
+    Bidx->addIncoming(ConstantInt::get(IT, 0), init);
+    iter->addIncoming(ConstantInt::get(IT, 0), init);
+    sum->addIncoming(ConstantFP::get(fpTy, 0.0), init);
+
+    Value *Ai = B4.CreateInBoundsGEP(fpTy, Afloat, Aidx, "A.i");
+    Value *Bi = B4.CreateInBoundsGEP(fpTy, Bfloat, Bidx, "B.i");
+    Value *AiDot = B4.CreatePointerCast(Ai, BlasPT);
+    Value *BiDot = B4.CreatePointerCast(Bi, BlasPT);
+    Value *newDot =
+        B4.CreateCall(FDot, {blasm, AiDot, blasOne, BiDot, blasOne}, bundles);
+
+    Value *Anext = B4.CreateNUWAdd(Aidx, lda, "Aidx.next");
+    Value *Bnext = B4.CreateNUWAdd(Aidx, m, "Bidx.next");
+    Value *iternext = B4.CreateAdd(iter, ConstantInt::get(IT, 1), "iter.next");
+    Value *sumnext = B4.CreateFAdd(sum, newDot);
+
+    iter->addIncoming(iternext, body);
+    Aidx->addIncoming(Anext, body);
+    Bidx->addIncoming(Bnext, body);
+    sum->addIncoming(sumnext, body);
+
+    B4.CreateCondBr(B4.CreateICmpEQ(iter, n), end, body);
+
+    IRBuilder<> B5(end);
+    PHINode *res = B5.CreatePHI(fpTy, 3, "res");
+    res->addIncoming(ConstantFP::get(fpTy, 0.0), entry);
+    res->addIncoming(sum, body);
+    res->addIncoming(fastSum, fastPath);
+    B5.CreateRet(res);
+  }
+
+  return B.CreateCall(F, args, bundles);
+}
+
 Function *getOrInsertMemcpyStrided(Module &M, Type *elementType, PointerType *T,
                                    Type *IT, unsigned dstalign,
                                    unsigned srcalign) {
@@ -2170,6 +2312,17 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
 
   return to_blas_callconv(B, V, byRef, julia_decl, entryBuilder,
                           "transpose." + name);
+}
+
+llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::IntegerType *intType,
+                         llvm::Value *V, bool byRef) {
+  if (!byRef)
+    return V;
+
+  auto VP = B.CreatePointerCast(
+      V, PointerType::get(intType,
+                          cast<PointerType>(V->getType())->getAddressSpace()));
+  return B.CreateLoad(intType, VP);
 }
 
 llvm::Value *get_blas_row(llvm::IRBuilder<> &B, llvm::Value *trans,

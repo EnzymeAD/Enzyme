@@ -27,9 +27,50 @@ os << "  bool need_" << name << " = false;\n";
       }
       os 
 << ";\n";
-    }
-    os 
+  }
+  os 
 << "  bool cache_" << name << " = cacheMode && overwritten_" << name << " && need_" << name << ";\n";
+}
+  
+std::string get_input_mat(const DagInit *ruleDag) {
+  std::string toCache = "";
+  for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
+    Init *subArg = ruleDag->getArg(i);
+    if (DefInit *def = dyn_cast<DefInit>(subArg)) {
+      const auto Def = def->getDef();
+      if (Def->isSubClassOf("input")) {
+        toCache = Def->getValueAsString("name");
+        break;
+      }
+    }
+  }
+  return toCache;
+}
+
+void emit_input_caching(const TGPattern &pattern, raw_ostream &os) {
+  // now we check for primal<X> usages, those must be cached,
+  // if the corresponding rule is active
+  auto rules = pattern.getRules();
+  const auto nameVec = pattern.getArgNames();
+  const auto activeArgs = pattern.getActiveArgs();
+  assert(rules.size() == activeArgs.size());
+  for (size_t i = 0; i < rules.size(); i++) {
+    auto rule = rules[i];
+    const auto activeArg = activeArgs[i];
+    const auto name = nameVec[activeArg];
+    const DagInit *ruleDag = rule.getRuleDag();
+    // will update it directly in the next PR for nested rules
+    std::string toCache = get_input_mat(ruleDag);
+    if (toCache != "") {
+      os << "  // we cache the following matrix,\n"
+         << "  // since one rule uses input<" << toCache << ">\n"
+         << "  if (active_" << name << ") {\n"
+         << "    need_" << toCache << " = true;\n"
+         << "    cache_" << toCache << " = true;\n"
+         << "  }\n";
+    }
+
+  }
 }
 
 // scalar (e.g xinc) is needed to be preserved if
@@ -76,6 +117,7 @@ os << "  bool need_" << name << " = false;\n";
 
   }
 }
+
 void emit_scalar_cacheTypes(const TGPattern &pattern, raw_ostream &os) {
   auto typeMap = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
@@ -204,7 +246,6 @@ void emit_mat_copy(const TGPattern &pattern, raw_ostream &os) {
     }
     os
 << "    if (cache_" << matName << ") {\n"
-<< "      Value *matSize;\n"
 << "      auto charTy = IntegerType::get(intType->getContext(), 8);\n"
 << "      Value *M, *N;\n";
 
@@ -220,17 +261,9 @@ void emit_mat_copy(const TGPattern &pattern, raw_ostream &os) {
     }
 
     os
-<< "      auto *len1 = M;\n"
-<< "      auto *len2 = N;\n"
-<< "      if (byRef) {\n"
-<< "        auto MP = BuilderZ.CreatePointerCast(M, PointerType::get(intType, cast<PointerType>(M->getType())->getAddressSpace()));\n"
-<< "        auto NP = BuilderZ.CreatePointerCast(N, PointerType::get(intType, cast<PointerType>(N->getType())->getAddressSpace()));\n"
-<< "        len1 = BuilderZ.CreateLoad(intType, MP);\n"
-<< "        len2 = BuilderZ.CreateLoad(intType, NP);\n"
-<< "        matSize = BuilderZ.CreateMul(len1, len2);\n"
-<< "      } else {\n"
-<< "        matSize = BuilderZ.CreateMul(M,N);\n"
-<< "      }\n"
+<< "      auto *len1 = load_if_ref(BuilderZ, intType, M, byRef);\n"
+<< "      auto *len2 = load_if_ref(BuilderZ, intType, N, byRef);\n"
+<< "      auto *matSize = BuilderZ.CreateMul(len1, len2);\n"
 << "      auto malins = CreateAllocation(BuilderZ, fpType, matSize, \"cache." << matName << "\");\n"
 << "      ValueType valueTypes[] = {" << valueTypes << "};\n"
 <<"       valueTypes[" << argIdx << "] = ValueType::Primal;\n"
@@ -269,6 +302,8 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
   auto typeMap = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
   auto argUsers = pattern.getArgUsers();
+  const auto activeArgs = pattern.getActiveArgs();
+  auto rules = pattern.getRules();
 
   os 
 << "  if ((Mode == DerivativeMode::ReverseModeCombined ||\n"
@@ -312,36 +347,41 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
 << "  }\n"
 << "  unsigned cacheidx = 0;\n";
 
-  // following code is just leftovers
-  // once cleaned up, at most free_ args should be left
-  for (size_t i = 0; i < nameVec.size(); i++) {
+  assert(rules.size() == activeArgs.size());
+  for (size_t a = 0; a < rules.size(); a++) {
+    auto rule = rules[a];
+    auto i = activeArgs[a];
     auto name = nameVec[i];
     auto ty = typeMap.lookup(i);
     if (ty == ArgType::vincData) {
       assert(typeMap.lookup(i+1) == ArgType::vincInc);
       auto vecName = nameVec[i];
       auto incName = nameVec[i+1];
-      os 
+      os
 << "  Value *true_" << incName << " = arg_" << incName << ";\n"
 << "  Value *free_" << vecName << " = nullptr;\n";
     } else if (ty == ArgType::mldData) {
       assert(typeMap.lookup(i+1) == ArgType::mldLD);
       auto vecName = nameVec[i];
       auto ldName = nameVec[i+1];
-      os 
+      os
 << "  Value *true_" << ldName << " = arg_" << ldName << ";\n"
 << "  Value *" << ldName << " = true_" << ldName << ";\n"
 << "  Value *free_" << vecName << " = nullptr;\n";
-    } else if (ty == ArgType::len) {
-    } else if (ty == ArgType::fp) {
-    } else if (ty == ArgType::trans) {
+     
+    }
+
+    const DagInit *ruleDag = rule.getRuleDag();
+    std::string toCache = get_input_mat(ruleDag);
+    if (toCache != "") {
+      os << "  Value *input_" << toCache << " = nullptr;\n"
+         << "  Value *free_input_" << toCache << " = nullptr;\n";
     }
   }
 
-
   os
-<< "  IRBuilder<> Builder2(&call);\n"
-<< "  switch (Mode) {\n"
+<< "  IRBuilder<> Builder2(&call);\n"               
+<< "  switch (Mode) {\n"                            
 << "    case DerivativeMode::ReverseModeCombined:\n"
 << "    case DerivativeMode::ReverseModeGradient:\n"
 << "      getReverseBuilder(Builder2);\n"
@@ -388,6 +428,8 @@ void emit_caching(const TGPattern &pattern, raw_ostream &os) {
     assert(typeMap.lookup(i+1) == ArgType::mldLD);
     emit_mat_vec_caching(pattern, i, os);
   }
+
+  emit_input_caching(pattern, os);
 
   for (auto&& actEn : enumerate(actArgs)) {
     if (typeMap.lookup(actEn.value()) == ArgType::fp) continue;
