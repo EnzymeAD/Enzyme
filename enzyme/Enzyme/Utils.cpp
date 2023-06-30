@@ -699,10 +699,11 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
 #if LLVM_VERSION_MAJOR >= 16
   F->setOnlyAccessesArgMemory();
+  F->setOnlyReadsMemory();
 #else
   F->addFnAttr(Attribute::ArgMemOnly);
-#endif
   F->addFnAttr(Attribute::ReadOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   if (!julia_decl) {
