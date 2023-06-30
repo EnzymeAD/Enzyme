@@ -668,11 +668,12 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
   B.CreateCall(fn, args, bundles);
 }
 
-
-llvm::CallInst *getorInsertInnerProd(
-    llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas, IntegerType *IT,
-    Type *BlasPT, Type *BlasIT, Type *fpTy, llvm::ArrayRef<llvm::Value *> args,
-    const llvm::ArrayRef<llvm::OperandBundleDef> bundles, bool byRef, bool julia_decl) {
+llvm::CallInst *
+getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                     IntegerType *IT, Type *BlasPT, Type *BlasIT, Type *fpTy,
+                     llvm::ArrayRef<llvm::Value *> args,
+                     const llvm::ArrayRef<llvm::OperandBundleDef> bundles,
+                     bool byRef, bool julia_decl) {
   assert(fpTy->isFloatingPointTy());
 
   // add inner_prod call if not already present
@@ -720,7 +721,7 @@ llvm::CallInst *getorInsertInnerProd(
   BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
 
   // This is the .td declaration which we need to match
-  // No need to support ld for the second matrix, as it will 
+  // No need to support ld for the second matrix, as it will
   // always be based on a matrix which we allocated (contiguous)
   //(FrobInnerProd<> $m, $n, adj<"C">, $ldc, use<"AB">)
 
@@ -737,35 +738,34 @@ llvm::CallInst *getorInsertInnerProd(
 
   {
     IRBuilder<> B1(entry);
-    Value *blasOne = to_blas_callconv(B1, ConstantInt::get(IT, 1), byRef, IT, B1,
-                          "constant.one");
+    Value *blasOne = to_blas_callconv(B1, ConstantInt::get(IT, 1), byRef, IT,
+                                      B1, "constant.one");
     Value *m = load_if_ref(B1, IT, blasm, byRef);
     Value *n = load_if_ref(B1, IT, blasn, byRef);
     Value *size = B1.CreateNUWMul(m, n, "mat.size");
     Value *blasSize = to_blas_callconv(B1, size, byRef, IT, B1, "mat.size");
-    B1.CreateCondBr(B1.CreateICmpEQ(size, ConstantInt::get(IT, 0)), end,
-                    init);
+    B1.CreateCondBr(B1.CreateICmpEQ(size, ConstantInt::get(IT, 0)), end, init);
 
     IRBuilder<> B2(init);
     B2.setFastMathFlags(getFast());
     Value *lda = load_if_ref(B2, IT, blaslda, byRef);
     Value *Afloat = B2.CreatePointerCast(
-        matA, PointerType::get(fpTy,
-                               cast<PointerType>(matA->getType())->getAddressSpace()));
+        matA, PointerType::get(
+                  fpTy, cast<PointerType>(matA->getType())->getAddressSpace()));
     Value *Bfloat = B2.CreatePointerCast(
-        matB, PointerType::get(fpTy,
-                               cast<PointerType>(matB->getType())->getAddressSpace()));
+        matB, PointerType::get(
+                  fpTy, cast<PointerType>(matB->getType())->getAddressSpace()));
     B2.CreateCondBr(B2.CreateICmpEQ(m, lda), fastPath, body);
 
     // our second matrix is always continuos, by construction.
-    // If our first matrix is continuous too (lda == m), then we can 
+    // If our first matrix is continuous too (lda == m), then we can
     // use a single dot call.
     IRBuilder<> B3(fastPath);
     B3.setFastMathFlags(getFast());
     Value *blasA = B3.CreatePointerCast(matA, BlasPT);
     Value *blasB = B3.CreatePointerCast(matB, BlasPT);
-    Value *fastSum =
-        B3.CreateCall(FDot, {blasSize, blasA, blasOne, blasB, blasOne}, bundles);
+    Value *fastSum = B3.CreateCall(
+        FDot, {blasSize, blasA, blasOne, blasB, blasOne}, bundles);
     B3.CreateBr(end);
 
     IRBuilder<> B4(body);
