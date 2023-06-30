@@ -25,7 +25,20 @@ cc_binary(
 gentbl(
     name = "call-derivatives",
     tbl_outs = [(
-        "-gen-derivatives",
+        "-gen-call-derivatives",
+        "CallDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/InstructionDerivatives.td",
+    td_srcs = ["Enzyme/BlasDerivatives.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+gentbl(
+    name = "inst-derivatives",
+    tbl_outs = [(
+        "-gen-inst-derivatives",
         "InstructionDerivatives.inc",
     )],
     tblgen = ":enzyme-tblgen",
@@ -132,6 +145,7 @@ cc_library(
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:IRReader",
         ":call-derivatives",
+        ":inst-derivatives",
         ":intr-derivatives",
         ":binop-derivatives",
         ":blas-derivatives",

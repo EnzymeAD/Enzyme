@@ -29,7 +29,8 @@
 using namespace llvm;
 
 enum ActionType {
-  GenDerivatives,
+  CallDerivatives,
+  InstDerivatives,
   BinopDerivatives,
   IntrDerivatives,
   GenBlasDerivatives,
@@ -52,8 +53,10 @@ static cl::opt<ActionType>
                                  "Generate intrinsic derivative")),
            cl::values(clEnumValN(BinopDerivatives, "gen-binop-derivatives",
                                  "Generate binaryoperator derivative")),
-           cl::values(clEnumValN(GenDerivatives, "gen-derivatives",
-                                 "Generate instruction derivative")));
+           cl::values(clEnumValN(InstDerivatives, "gen-inst-derivatives",
+                                 "Generate instruction derivative")),
+           cl::values(clEnumValN(CallDerivatives, "gen-call-derivatives",
+                                 "Generate call derivative")));
 
 bool hasDiffeRet(Init *resultTree) {
   if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
@@ -947,8 +950,11 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
   emitSourceFileHeader("Rewriters", os);
   const char *patternNames;
   switch (intrinsic) {
-  case GenDerivatives:
+  case CallDerivatives:
     patternNames = "CallPattern";
+    break;
+  case InstDerivatives:
+    patternNames = "InstPattern";
     break;
   case IntrDerivatives:
     patternNames = "IntrPattern";
@@ -979,7 +985,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     std::string origName;
     switch (intrinsic) {
-    case GenDerivatives: {
+    case CallDerivatives: {
       os << "  if ((";
       bool prev = false;
       for (auto *nameI :
@@ -1032,6 +1038,30 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << ")->getCalledFunction();\n";
       os << "    CallInst *const newCall = "
             "cast<CallInst>(gutils->getNewFromOriginal(&"
+         << origName << "));\n";
+      os << "    IRBuilder<> BuilderZ(newCall);\n";
+      os << "    BuilderZ.setFastMathFlags(getFast());\n";
+      break;
+    }
+    case InstDerivatives: {
+      auto minVer = pattern->getValueAsInt("minVer");
+      auto maxVer = pattern->getValueAsInt("maxVer");
+      auto name = pattern->getValueAsString("name");
+      if (minVer != 0) {
+        if (LLVM_VERSION_MAJOR < minVer)
+          continue;
+      }
+      if (maxVer != 0) {
+        if (LLVM_VERSION_MAJOR > maxVer)
+          continue;
+      }
+      os << " case llvm::Instruction::" << name << ":\n";
+
+      origName = "inst";
+      os << " {\n";
+      os << "    auto mod = inst.getParent()->getParent()->getParent();\n";
+      os << "    auto *const newCall = "
+            "cast<llvm::Instruction>(gutils->getNewFromOriginal(&"
          << origName << "));\n";
       os << "    IRBuilder<> BuilderZ(newCall);\n";
       os << "    BuilderZ.setFastMathFlags(getFast());\n";
@@ -1101,7 +1131,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       nameToOrdinal.insert(tree->getNameStr(),
                            (Twine("(&") + origName + ")").str(), false);
 
-    if (intrinsic != BinopDerivatives) {
+    if (intrinsic != BinopDerivatives && intrinsic != InstDerivatives) {
       os << "    if (gutils->knownRecomputeHeuristic.find(&" << origName
          << ") !=\n";
       os << "        gutils->knownRecomputeHeuristic.end()) {\n";
@@ -1113,9 +1143,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
             "CacheType::Self));\n";
       os << "        }\n";
       os << "    }\n";
-
-      os << "    eraseIfUnused(" << origName << ");\n";
     }
+    os << "    eraseIfUnused(" << origName << ");\n";
 
     os << "    if (gutils->isConstantInstruction(&" << origName << "))\n";
     if (intrinsic == IntrDerivatives)
@@ -2690,7 +2719,8 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
 
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
   switch (action) {
-  case GenDerivatives:
+  case CallDerivatives:
+  case InstDerivatives:
   case IntrDerivatives:
   case BinopDerivatives:
     emitDerivatives(records, os, action);

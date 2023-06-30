@@ -37,6 +37,14 @@ class BinopPattern<dag patternToMatch, string funcName, int minVer_, int maxVer_
   dag ArgDuals = forwardOps;
 }
 
+class InstPattern<dag patternToMatch, string funcName, int minVer_, int maxVer_, list<dag> resultOps, dag forwardOps> {
+  dag PatternToMatch = patternToMatch;
+  string name = funcName;
+  int minVer = minVer_;
+  int maxVer = maxVer_;
+  list<dag> ArgDerivatives = resultOps;
+  dag ArgDuals = forwardOps;
+}
 
 class Inst<string mnemonic> {
   string name = mnemonic;
@@ -71,6 +79,7 @@ def FAdd : Inst<"FAdd">;
 def FSub : Inst<"FSub">;
 def FMul : Inst<"FMul">;
 def FNeg : Inst<"FNeg">;
+def Freeze : Inst<"Freeze">;
 def Select : Inst<"Select">;
 def ICmpEQ : Inst<"ICmpEQ">;
 def FCmpUEQ : Inst<"FCmpUEQ">;
@@ -876,6 +885,19 @@ def : BinopPattern<(Op $x, $y), "FRem", 0, 0,
                     [
                       (DiffeRet),
                       (CheckedMul (DiffeRet), (FNeg (Intrinsic<"copysign"> (Intrinsic<"floor"> (Intrinsic<"fabs"> (FDiv $x, $y):$div)), $div)))
+                    ],
+                    (ForwardFromSummedReverse)
+                  >;
+
+def : InstPattern<(Op $x), "FNeg", 10, 0,
+                    [
+                      (FNeg (DiffeRet)),
+                    ],
+                    (ForwardFromSummedReverse)
+                  >;
+def : InstPattern<(Op $x), "Freeze", 10, 0,
+                    [
+                      (Freeze (DiffeRet)),
                     ],
                     (ForwardFromSummedReverse)
                   >;

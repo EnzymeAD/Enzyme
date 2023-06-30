@@ -47,17 +47,17 @@ declare %struct.Gradients @__enzyme_fwddiff(i8*, ...)
 ; CHECK-NEXT:    [[TMP18:%.*]] = fadd fast double [[TMP16]], [[TMP17]]
 ; CHECK-NEXT:    [[TMP22:%.*]] = fadd fast double [[TMP20]], [[TMP21]]
 
-; CHECK-NEXT:    %".fca.0.insert'ipiv" = insertvalue { double, double } zeroinitializer, double [[TMP2]], 0
-; CHECK-NEXT:    %".fca.0.insert'ipiv1" = insertvalue { double, double } zeroinitializer, double [[TMP6]], 0
-; CHECK-NEXT:    %".fca.0.insert'ipiv2" = insertvalue { double, double } zeroinitializer, double [[TMP10]], 0
+; CHECK-NEXT:    %[[ipiv:.+]] = insertvalue { double, double } zeroinitializer, double [[TMP2]], 0
+; CHECK-NEXT:    %[[ipiv1:.+]] = insertvalue { double, double } zeroinitializer, double [[TMP6]], 0
+; CHECK-NEXT:    %[[ipiv2:.+]] = insertvalue { double, double } zeroinitializer, double [[TMP10]], 0
 
-; CHECK-NEXT:    %".fca.1.insert'ipiv" = insertvalue { double, double } %".fca.0.insert'ipiv", double [[TMP14]], 1
+; CHECK-NEXT:    %".fca.1.insert'ipiv" = insertvalue { double, double } %[[ipiv]], double [[TMP14]], 1
 ; CHECK-NEXT:    [[TMP27:%.*]] = insertvalue [3 x { double, double }] undef, { double, double } %".fca.1.insert'ipiv", 0
 
-; CHECK-NEXT:    %".fca.1.insert'ipiv3" = insertvalue { double, double } %".fca.0.insert'ipiv1", double [[TMP18]], 1
-; CHECK-NEXT:    [[TMP28:%.*]] = insertvalue [3 x { double, double }] [[TMP27]], { double, double } %".fca.1.insert'ipiv3", 1
+; CHECK-NEXT:    %[[jipiv3:.+]] = insertvalue { double, double } %[[ipiv1]], double [[TMP18]], 1
+; CHECK-NEXT:    [[TMP28:%.*]] = insertvalue [3 x { double, double }] [[TMP27]], { double, double } %[[jipiv3]], 1
 
-; CHECK-NEXT:    %".fca.1.insert'ipiv4" = insertvalue { double, double } %".fca.0.insert'ipiv2", double [[TMP22]], 1
-; CHECK-NEXT:    [[TMP29:%.*]] = insertvalue [3 x { double, double }] [[TMP28]], { double, double } %".fca.1.insert'ipiv4", 2
+; CHECK-NEXT:    %[[jipiv4:.+]] = insertvalue { double, double } %[[ipiv2]], double [[TMP22]], 1
+; CHECK-NEXT:    [[TMP29:%.*]] = insertvalue [3 x { double, double }] [[TMP28]], { double, double } %[[jipiv4]], 2
 ; CHECK-NEXT:    ret [3 x { double, double }] [[TMP29]]
 ;
