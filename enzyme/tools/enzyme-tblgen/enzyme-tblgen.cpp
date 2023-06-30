@@ -2052,14 +2052,14 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
 
 void emit_deriv_blas_call(DagInit *ruleDag,
                           const StringMap<TGPattern> &patternMap,
-                          llvm::StringSet<> &handled, llvm::raw_ostream &os) {
+                          StringSet<> &handled, raw_ostream &os) {
 
   const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
   const auto dfnc_name = Def->getValueAsString("s");
-  if (patternMap.find(dfnc_name.str()) == patternMap.end()) {
+  if (patternMap.find(dfnc_name) == patternMap.end()) {
     PrintFatalError("calling unknown Blas function");
   }
-  TGPattern calledPattern = patternMap.find(dfnc_name.str())->getValue();
+  TGPattern calledPattern = patternMap.find(dfnc_name)->getValue();
   bool derivlv23 = calledPattern.isBLASLevel2or3();
   DenseSet<size_t> mutableArgs = calledPattern.getMutableArgs();
 
@@ -2106,7 +2106,7 @@ void emit_deriv_blas_call(DagInit *ruleDag,
         // we only use tmp matrices, so mat type
         // TODO: use actual mat type, not hardcoded A
         // auto argStr = Def->getValueAsString("name");
-        typeToAdd = (Twine("type_A")).str();
+        typeToAdd = "type_A";
       } else {
         PrintFatalError(Def->getLoc(), "PANIC! Unsupported Definit");
       }

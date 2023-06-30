@@ -32,7 +32,7 @@ os << "  bool need_" << name << " = false;\n";
 << "  bool cache_" << name << " = cacheMode && overwritten_" << name << " && need_" << name << ";\n";
 }
   
-std::string get_input_mat(const llvm::DagInit *ruleDag) {
+std::string get_input_mat(const DagInit *ruleDag) {
   std::string toCache = "";
   for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
     Init *subArg = ruleDag->getArg(i);
@@ -58,7 +58,7 @@ void emit_input_caching(const TGPattern &pattern, raw_ostream &os) {
     auto rule = rules[i];
     const auto activeArg = activeArgs[i];
     const auto name = nameVec[activeArg];
-    const llvm::DagInit *ruleDag = rule.getRuleDag();
+    const DagInit *ruleDag = rule.getRuleDag();
     // will update it directly in the next PR for nested rules
     std::string toCache = get_input_mat(ruleDag);
     if (toCache != "") {
