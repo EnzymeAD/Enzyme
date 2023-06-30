@@ -640,10 +640,10 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
                              llvm::ArrayRef<llvm::OperandBundleDef> bundles);
 
 llvm::CallInst *getorInsertInnerProd(
-    llvm::IRBuilder<> &B, llvm::IRBuilder<> &AllocationBuilder, llvm::Module &M, BlasInfo blas, llvm::IntegerType *IT,
+    llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas, llvm::IntegerType *IT,
     llvm::Type *BlasPT, llvm::Type *BlasIT, llvm::Type *fpTy,
     llvm::ArrayRef<llvm::Value *> args,
-    const llvm::ArrayRef<llvm::OperandBundleDef> bundles, bool byRef);
+    const llvm::ArrayRef<llvm::OperandBundleDef> bundles, bool byRef, bool julia_decl);
 
 /// Create function for type that performs memcpy with a stride
 llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M,

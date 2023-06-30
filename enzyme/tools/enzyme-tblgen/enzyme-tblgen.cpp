@@ -2195,9 +2195,7 @@ void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
     PrintFatalError("Unhandled Inst Rule!");
   } else if (Def->isSubClassOf("FrobInnerProd")) {
     // nothing to prepare
-    os << "    //handled prod\n";
     assert(ruleDag->getNumArgs() == 5);
-    os << "    //handled prod\n";
   } else {
     PrintFatalError("Unhandled deriv Rule!");
   }
@@ -2581,10 +2579,10 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
       // Now that we have the defs, we can create the call
       os << "    auto derivcall_inner_prod = \n"
-            "      getorInsertInnerProd(Builder2, allocationBuilder, "
+            "      getorInsertInnerProd(Builder2, "
             "*gutils->oldFunc->getParent(), blas, intType, type_A, type_n, "
             "fpType,"
-            " ArrayRef<Value *>(args1), Defs, byRef);\n";
+            " ArrayRef<Value *>(args1), Defs, byRef, julia_decl);\n";
 
       assert(ty == ArgType::fp);
       os << "        CallInst *cubcall = "
@@ -2593,11 +2591,9 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
          << "          ((DiffeGradientUtils *)gutils)"
          << "->addToInvertedPtrDiffe(&call, nullptr, fpType, 0,"
          << "(blas.suffix.contains(\"64\") ? 8 : 4), orig_" << name
-         //<< "(blas.suffix.contains(\"64\") ? 8 : 4), arg_" << name
          << ", cubcall, Builder2);\n"
          << "        } else {\n"
          << "          addToDiffe(orig_" << name
-         //<< "          addToDiffe(arg_" << name
          << ", cubcall, Builder2, fpType);\n"
          << "        }\n"
          << "      }\n";
