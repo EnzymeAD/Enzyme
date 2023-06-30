@@ -147,20 +147,18 @@ entry:
 ; CHECK-NEXT:   store i8 %[[i41]], i8* %byref.transpose.transb
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %byref.transpose.transb, i8* %m_p, i8* %k_p, i8* %n_p, i8* %alpha_p, i8* %"C'", i8* %ldc_p, i8* %B, i8* %ldb_p, i8* %beta, i8* %"A'", i8* %lda_p)
 ; CHECK-NEXT:   %loaded.trans5 = load i8, i8* %transa
-; CHECK-NEXT:   %36 = icmp eq i8 %loaded.trans5, 78
-; CHECK-NEXT:   %37 = icmp eq i8 %loaded.trans5, 110
-; CHECK-NEXT:   %38 = or i1 %37, %36
-; CHECK-NEXT:   %39 = select i1 %38, i8* %m_p, i8* %k_p
+; CHECK-DAG:   %[[i46:.+]] = icmp eq i8 %loaded.trans5, 78
+; CHECK-DAG:   %[[i47:.+]] = icmp eq i8 %loaded.trans5, 110
+; CHECK-NEXT:   %[[i48:.+]] = or i1 %[[i47]], %[[i46]]
+; CHECK-NEXT:   %39 = select i1 %[[i48]], i8* %m_p, i8* %k_p
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %byref.transpose.transa, i8* %transb, i8* %k_p, i8* %n_p, i8* %m_p, i8* %alpha_p, i8* %17, i8* %39, i8* %"C'", i8* %ldc_p, i8* %beta, i8* %"B'", i8* %ldb_p)
 ; CHECK:   %40 = bitcast i64* %byref.constant.one.i to i8*
-; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8* %40)
-; CHECK-NEXT:   %41 = bitcast i64* %byref.mat.size.i to i8*
-; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8* %41)
-; CHECK-NEXT:   store i64 1, i64* %byref.constant.one.i
+; CHECK:   %41 = bitcast i64* %byref.mat.size.i to i8*
+; CHECK:   store i64 1, i64* %byref.constant.one.i
 ; CHECK-NEXT:   %cast.constant.one.i = bitcast i64* %byref.constant.one.i to i8*
-; CHECK-NEXT:   %42 = load i64, i64* %m
-; CHECK-NEXT:   %43 = load i64, i64* %n
-; CHECK-NEXT:   %mat.size.i = mul nuw i64 %42, %43
+; CHECK-DAG:   %[[i52:.+]] = load i64, i64* %m
+; CHECK-DAG:   %[[i53:.+]] = load i64, i64* %n
+; CHECK-DAG:   %mat.size.i = mul nuw i64 %[[i52]], %[[i53]]
 ; CHECK-NEXT:   store i64 %mat.size.i, i64* %byref.mat.size.i
 ; CHECK-NEXT:   %cast.mat.size.i = bitcast i64* %byref.mat.size.i to i8*
 ; CHECK-NEXT:   %44 = icmp eq i64 %mat.size.i, 0
