@@ -2540,10 +2540,12 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
            << "        if (byRef) {\n"
            << "          ((DiffeGradientUtils *)gutils)"
            << "->addToInvertedPtrDiffe(&call, nullptr, fpType, 0,"
-           << "(blas.suffix.contains(\"64\") ? 8 : 4), arg_" << name
+           << "(blas.suffix.contains(\"64\") ? 8 : 4), orig_" << name
+           //<< "(blas.suffix.contains(\"64\") ? 8 : 4), arg_" << name
            << ", cubcall, Builder2);\n"
            << "        } else {\n"
-           << "          addToDiffe(arg_" << name
+           << "          addToDiffe(orig_" << name
+           //<< "          addToDiffe(arg_" << name
            << ", cubcall, Builder2, fpType);\n"
            << "        }\n"
            << "      }\n";
@@ -2579,7 +2581,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
       // Now that we have the defs, we can create the call
       os << "    auto derivcall_inner_prod = \n"
-            "      getorInsertInnerProd(Builder2, "
+            "      getorInsertInnerProd(Builder2, allocationBuilder, "
             "*gutils->oldFunc->getParent(), blas, intType, type_A, type_n, "
             "fpType,"
             " ArrayRef<Value *>(args1), Defs, byRef);\n";
@@ -2590,10 +2592,12 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
          << "        if (byRef) {\n"
          << "          ((DiffeGradientUtils *)gutils)"
          << "->addToInvertedPtrDiffe(&call, nullptr, fpType, 0,"
-         << "(blas.suffix.contains(\"64\") ? 8 : 4), arg_" << name
+         << "(blas.suffix.contains(\"64\") ? 8 : 4), orig_" << name
+         //<< "(blas.suffix.contains(\"64\") ? 8 : 4), arg_" << name
          << ", cubcall, Builder2);\n"
          << "        } else {\n"
-         << "          addToDiffe(arg_" << name
+         << "          addToDiffe(orig_" << name
+         //<< "          addToDiffe(arg_" << name
          << ", cubcall, Builder2, fpType);\n"
          << "        }\n"
          << "      }\n";

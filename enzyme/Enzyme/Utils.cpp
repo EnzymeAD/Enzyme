@@ -668,8 +668,9 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
   B.CreateCall(fn, args, bundles);
 }
 
+
 llvm::CallInst *getorInsertInnerProd(
-    llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas, IntegerType *IT,
+    llvm::IRBuilder<> &B, llvm::IRBuilder<> &AllocationBuilder, llvm::Module &M, BlasInfo blas, IntegerType *IT,
     Type *BlasPT, Type *BlasIT, Type *fpTy, llvm::ArrayRef<llvm::Value *> args,
     const llvm::ArrayRef<llvm::OperandBundleDef> bundles, bool byRef) {
   assert(fpTy->isFloatingPointTy());
@@ -678,7 +679,7 @@ llvm::CallInst *getorInsertInnerProd(
   std::string prod_name =
       (blas.floatType + "__enzyme_inner_prod" + blas.suffix).str();
   auto FInnerProdT =
-      FunctionType::get(fpTy, {IT, IT, BlasPT, IT, BlasPT}, false);
+      FunctionType::get(fpTy, {BlasIT, BlasIT, BlasPT, BlasIT, BlasPT}, false);
   Function *F =
       cast<Function>(M.getOrInsertFunction(prod_name, FInnerProdT).getCallee());
 
@@ -700,6 +701,7 @@ llvm::CallInst *getorInsertInnerProd(
 #else
   F->addFnAttr(Attribute::ArgMemOnly);
 #endif
+  F->addFnAttr(Attribute::ReadOnly);
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   F->addParamAttr(2, Attribute::NoCapture);
@@ -716,56 +718,69 @@ llvm::CallInst *getorInsertInnerProd(
 
   //(FrobInnerProd<> $m, $n, adj<"C">, $ldc, use<"AB">)
 
-  auto m = F->arg_begin();
-  m->setName("m");
-  auto n = m + 1;
-  n->setName("n");
-  auto matA = n + 1;
+  auto blasm = F->arg_begin();
+  blasm->setName("blasm");
+  auto blasn = blasm + 1;
+  blasn->setName("blasn");
+  auto matA = blasn + 1;
   matA->setName("A");
-  auto lda = matA + 1;
-  lda->setName("lda");
-  auto matB = lda + 1;
+  auto blaslda = matA + 1;
+  blaslda->setName("lda");
+  auto matB = blaslda + 1;
   matB->setName("B");
 
-  auto intTy = n->getType();
+  // TODO: update
+  llvm::IntegerType *julia_decl = nullptr;
 
   {
     IRBuilder<> B1(entry);
+    Value *res = ConstantFP::get(fpTy, 0.0);
+    Value *blasOne = ConstantInt::get(IT, 1);
+    //blasOne = to_blas_callconv(B, blasOne, byRef, BlasIT, B1,
+    blasOne = to_blas_callconv(B1, blasOne, byRef, IT, AllocationBuilder,
+                          "constant.one");
+    Value *m = load_if_ref(B1, IT, blasm, byRef);
+    Value *n = load_if_ref(B1, IT, blasn, byRef);
+    Value *lda = load_if_ref(B1, IT, blaslda, byRef);
+
+    Value *Afloat = B1.CreatePointerCast(
+        matA, PointerType::get(fpTy,
+                               cast<PointerType>(matA->getType())->getAddressSpace()));
+    Value *Bfloat = B1.CreatePointerCast(
+        matB, PointerType::get(fpTy,
+                               cast<PointerType>(matB->getType())->getAddressSpace()));
     Value *size = B1.CreateNUWMul(m, n, "matsize");
-    B1.CreateCondBr(B1.CreateICmpEQ(size, ConstantInt::get(intTy, 0)), end,
+    B1.CreateCondBr(B1.CreateICmpEQ(size, ConstantInt::get(IT, 0)), end,
                     init);
 
     IRBuilder<> B2(init);
     B2.setFastMathFlags(getFast());
-    Value *res = ConstantFP::get(fpTy, 0.0);
-    Value *constOne = ConstantInt::get(intTy, 1);
-    Value *iteration = ConstantInt::get(intTy, 0);
     B2.CreateBr(body);
 
     IRBuilder<> B3(body);
     B3.setFastMathFlags(getFast());
-    PHINode *Aidx = B3.CreatePHI(intTy, 2, "Aidx");
-    PHINode *Bidx = B3.CreatePHI(intTy, 2, "Bidx");
-    PHINode *iter = B3.CreatePHI(intTy, 2, "iteration");
-    Aidx->addIncoming(ConstantInt::get(intTy, 0), init);
-    Bidx->addIncoming(ConstantInt::get(intTy, 0), init);
-    iter->addIncoming(ConstantInt::get(intTy, 0), init);
+    PHINode *Aidx = B3.CreatePHI(IT, 2, "Aidx");
+    PHINode *Bidx = B3.CreatePHI(IT, 2, "Bidx");
+    PHINode *iter = B3.CreatePHI(IT, 2, "iteration");
+    Aidx->addIncoming(ConstantInt::get(IT, 0), init);
+    Bidx->addIncoming(ConstantInt::get(IT, 0), init);
+    iter->addIncoming(ConstantInt::get(IT, 0), init);
 
-    Value *Ai = B3.CreateInBoundsGEP(BlasPT, matA, Aidx, "A.i");
-    Value *Bi = B3.CreateInBoundsGEP(BlasPT, matB, Bidx, "B.i");
-    // Value *Ai = B3.CreateInBoundsGEP(fpTy, matA, Aidx, "A.i");
-    // Value *Bi = B3.CreateInBoundsGEP(fpTy, matB, Bidx, "B.i");
+    Value *Ai = B3.CreateInBoundsGEP(fpTy, Afloat, Aidx, "A.i");
+    Value *Bi = B3.CreateInBoundsGEP(fpTy, Bfloat, Bidx, "B.i");
+    Value *AiDot = B3.CreatePointerCast(Ai, BlasPT);
+    Value *BiDot = B3.CreatePointerCast(Bi, BlasPT);
     Value *newDot =
-        B3.CreateCall(FDot, {m, Ai, constOne, Bi, constOne}, bundles);
+        B3.CreateCall(FDot, {blasm, AiDot, blasOne, BiDot, blasOne}, bundles);
     res = B3.CreateFAdd(res, newDot);
 
     Value *Anext = B3.CreateNUWAdd(Aidx, lda, "Aidx.next");
     Value *Bnext = B3.CreateNUWAdd(Aidx, m, "Bidx.next");
-    Value *iternext = B3.CreateAdd(iteration, constOne);
+    Value *iternext = B3.CreateAdd(iter, ConstantInt::get(IT, 1), "iter.next");
     iter->addIncoming(iternext, body);
     Aidx->addIncoming(Anext, body);
     Bidx->addIncoming(Bnext, body);
-    B3.CreateCondBr(B.CreateICmpEQ(iter, n), end, body);
+    B3.CreateCondBr(B3.CreateICmpEQ(iter, n), end, body);
 
     IRBuilder<> B4(end);
     B4.CreateRet(res);
