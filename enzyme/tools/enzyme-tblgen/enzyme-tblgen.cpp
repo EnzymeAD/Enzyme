@@ -2192,7 +2192,7 @@ void emit_deriv_blas_call(DagInit *ruleDag,
        << ", false);\n";
   }
 
-  os << "auto derivcall_" << dfnc_name
+  os << "    auto derivcall_" << dfnc_name
      << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
      << "  (blas.prefix + blas.floatType + \"" << dfnc_name
      << "\" + blas.suffix).str(), FT" << dfnc_name << ");\n";
@@ -2248,7 +2248,7 @@ void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
     }
     const auto matName = args[0];
     const auto allocName = "mat_" + matName;
-    os << "    auto " << allocName
+    os << "    Value *" << allocName
        << " = CreateAllocation(allocationBuilder, fpType, size_" << matName
        << ", \"" << allocName << "\");\n"
        << "    if (type_A->isIntegerTy()) {\n"
@@ -2283,13 +2283,11 @@ void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
   }
 }
 
-void rev_call_arg(StringRef argName, Init *arg, Rule &rule, size_t actArg,
-                  size_t &pos, raw_ostream &os) {
+void rev_call_arg(StringRef argName, DagInit *ruleDag, Rule &rule,
+                  size_t actArg, size_t &pos, raw_ostream &os) {
   const auto nameMap = rule.getArgNameMap();
   const auto typeMap = rule.getArgTypeMap();
-  const auto ruleDag = rule.getRuleDag();
-  const size_t numArgs = ruleDag->getNumArgs();
-  const size_t startArg = rule.isBLASLevel2or3() ? 1 : 0;
+  auto arg = ruleDag->getArg(pos);
   if (auto Dag = dyn_cast<DagInit>(arg)) {
     auto Def = cast<DefInit>(Dag->getOperator())->getDef();
 
@@ -2312,7 +2310,7 @@ void rev_call_arg(StringRef argName, Init *arg, Rule &rule, size_t actArg,
          << ", arg_" << dim2Name << ", cache_" << matName << ", byRef)";
     } else {
       errs() << Def->getName() << "\n";
-      PrintFatalError("Dag/Def that isn't a DiffeRet!");
+      PrintFatalError("Dag/Def that isn't a DiffeRet!!");
     }
   } else if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
     auto Def = DefArg->getDef();
@@ -2324,6 +2322,9 @@ void rev_call_arg(StringRef argName, Init *arg, Rule &rule, size_t actArg,
     } else if (Def->isSubClassOf("input")) {
       auto name = Def->getValueAsString("name");
       os << "input_" << name;
+    } else if (Def->isSubClassOf("use")) {
+      auto name = Def->getValueAsString("name");
+      os << "mat_" << name;
     } else if (Def->isSubClassOf("MagicInst")) {
       errs() << "MagicInst\n";
     } else if (Def->isSubClassOf("Constant")) {
@@ -2350,7 +2351,10 @@ void rev_call_arg(StringRef argName, Init *arg, Rule &rule, size_t actArg,
     }
   } else {
     auto name = ruleDag->getArgNameStr(pos);
-    assert(name != "");
+    if (name == "") {
+      PrintFatalError("arg has no name!" + std::to_string(pos));
+      assert(name != "");
+    }
     // get the position of the argument in the primary blas call
     if (nameMap.count(name) != 1) {
       errs() << "couldn't find name: " << name << "\n";
@@ -2406,16 +2410,18 @@ void rev_call_arg(StringRef argName, Init *arg, Rule &rule, size_t actArg,
     } else if (ty == ArgType::mldLD) {
       auto prevArg = ruleDag->getArg(pos - 1);
       if (DefInit *DefArg = dyn_cast<DefInit>(prevArg)) {
-        if (DefArg->getDef()->isSubClassOf("adj")) {
+        auto Def = DefArg->getDef();
+        if (Def->isSubClassOf("adj")) {
           // all ok, single LD after shadow of mat
           // use original ld, since shadow is never cached
           os << "arg_" << name;
         } else {
           errs() << rule.to_string() << "\n";
-          PrintFatalError("sholdn't be hit??\n");
+          PrintFatalError("sholdn't be hit?\n");
         }
       } else {
         errs() << rule.to_string() << "\n";
+        llvm::errs() << "name: " << name << " typename: " << ty << "\n";
         PrintFatalError("sholdn't be hit??\n");
       }
     } else if (ty == ArgType::trans) {
@@ -2429,13 +2435,29 @@ void rev_call_arg(StringRef argName, Init *arg, Rule &rule, size_t actArg,
 
 // fill the result string and return the number of added args
 void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
-                   raw_ostream &os) {
+                   raw_ostream &os, int subRule = -1) {
 
   const auto nameMap = rule.getArgNameMap();
   const auto typeMap = rule.getArgTypeMap();
-  const auto ruleDag = rule.getRuleDag();
-  const size_t numArgs = ruleDag->getNumArgs();
-  const size_t startArg = rule.isBLASLevel2or3() ? 1 : 0;
+
+  auto ruleDag = rule.getRuleDag();
+  size_t numArgs = ruleDag->getNumArgs();
+
+  if (subRule != -1) {
+    llvm::errs() << "accessing subrule: " << subRule
+                 << " from subrules: " << ruleDag->getNumArgs() << "\n";
+    // handle Seq
+    ruleDag = cast<DagInit>(ruleDag->getArg(subRule));
+    numArgs = ruleDag->getNumArgs();
+  }
+
+  size_t startArg = (ruleDag->getArgNameStr(0) == "layout") ? 1 : 0;
+  llvm::errs() << "startArg: " << startArg << "\n";
+  llvm::errs() << "numArgs: " << numArgs << "\n";
+
+  for (size_t i = 0; i < numArgs; i++) {
+    llvm::errs() << "name i: " << ruleDag->getArgNameStr(i) << "\n";
+  }
 
   os << "        Value *" << argName << "[" << (numArgs - startArg) << "] = {";
 
@@ -2445,8 +2467,8 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
       os << ", ";
     }
 
-    auto arg = ruleDag->getArg(pos);
-    rev_call_arg(argName, arg, rule, actArg, pos, os);
+    llvm::errs() << "name: " << ruleDag->getArgNameStr(pos) << "\n";
+    rev_call_arg(argName, ruleDag, rule, actArg, pos, os);
     pos++;
   }
   os << "};\n";
@@ -2668,14 +2690,13 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
       // Now that we have the defs, we can create the call
+      assert(ty == ArgType::fp);
       os << "    auto derivcall_inner_prod = \n"
             "      getorInsertInnerProd(Builder2, "
             "*gutils->oldFunc->getParent(), blas, intType, type_A, type_n, "
             "fpType,"
-            " ArrayRef<Value *>(args1), Defs, byRef, julia_decl);\n";
-
-      assert(ty == ArgType::fp);
-      os << "        CallInst *cubcall = "
+            " ArrayRef<Value *>(args1), Defs, byRef, julia_decl);\n"
+         << "        CallInst *cubcall = "
             "cast<CallInst>(derivcall_inner_prod);\n"
          << "        if (byRef) {\n"
          << "          ((DiffeGradientUtils *)gutils)"
@@ -2685,10 +2706,92 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
          << "        } else {\n"
          << "          addToDiffe(orig_" << name
          << ", cubcall, Builder2, fpType);\n"
-         << "        }\n"
-         << "      }\n";
+         << "        }\n";
+      os << "      }\n";
     } else if (Def->isSubClassOf("Seq")) {
       os << "      // Seq\n";
+      // (Currently) we only need advanced rules for differentiating
+      // wrt. scalar. Make this more generic once we have more testcases.
+      assert(ty == ArgType::fp);
+      auto actCondition = "active_" + name;
+      for (size_t pos = 0; pos < ruleDag->getNumArgs();) {
+        auto arg = ruleDag->getArg(pos);
+        if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
+          auto Def = DefArg->getDef();
+          if (Def->isSubClassOf("adj")) {
+            auto name = Def->getValueAsString("name");
+            actCondition.append((Twine(" && d_") + name).str());
+          }
+        }
+        pos++;
+      }
+
+      os << "      if (" << actCondition << ") {\n";
+
+      os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
+         << valueTypes << "}, Builder2, /* lookup */ true);\n";
+
+      llvm::errs() << "num subrules: " << ruleDag->getNumArgs() << "\n";
+      // handle seq rules
+      for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
+        std::string argName = "args" + std::to_string(i);
+        rev_call_args(argName, rule, actArg, os, i);
+        Init *subArg = ruleDag->getArg(i);
+        DagInit *sub_Dag = cast<DagInit>(subArg);
+        if (auto sub_def = dyn_cast<DefInit>(sub_Dag->getOperator())) {
+          const auto sub_Def = sub_def->getDef();
+          if (sub_Def->isSubClassOf("b")) {
+            const auto dfnc_name = sub_Def->getValueAsString("s");
+            os << "    //handling nested blas: " << std::to_string(i) << "\n";
+            emit_deriv_blas_call(sub_Dag, patternMap, handled, os);
+
+            // TODO: make generic
+            if (dfnc_name == "dot") {
+              // returns, so assume it's the last step of the sequence
+              // and update the diffe accordingly
+              assert(i == ruleDag->getNumArgs() - 1);
+              os << "        CallInst *cubcall = "
+                    "cast<CallInst>(Builder2.CreateCall(derivcall_"
+                 << dfnc_name << ", " << argName << ", Defs));\n";
+              os << "          if (byRef) {\n"
+                 << "            ((DiffeGradientUtils *)gutils)"
+                 << "->addToInvertedPtrDiffe(&call, nullptr, fpType, 0,"
+                 << "(blas.suffix.contains(\"64\") ? 8 : 4), orig_" << name
+                 << ", cubcall, Builder2);\n"
+                 << "          } else {\n"
+                 << "            addToDiffe(orig_" << name
+                 << ", cubcall, Builder2, fpType);\n"
+                 << "          }\n";
+            } else {
+              os << "        Builder2.CreateCall(derivcall_" << dfnc_name
+                 << ", " << argName << ", Defs);\n";
+            }
+            os << "    //handled nested blas: " << std::to_string(i) << "\n";
+          } else if (sub_Def->isSubClassOf("FrobInnerProd")) {
+            assert(sub_Dag->getNumArgs() == 5);
+            assert(ty == ArgType::fp);
+            os << "    auto derivcall_inner_prod = \n"
+                  "      getorInsertInnerProd(Builder2, "
+                  "*gutils->oldFunc->getParent(), blas, intType, type_A, "
+                  "type_n, "
+                  "fpType,"
+                  " ArrayRef<Value *>("
+               << argName << "), Defs, byRef, julia_decl);\n"
+               << "        CallInst *cubcall = "
+                  "cast<CallInst>(derivcall_inner_prod);\n"
+               << "        if (byRef) {\n"
+               << "          ((DiffeGradientUtils *)gutils)"
+               << "->addToInvertedPtrDiffe(&call, nullptr, fpType, 0,"
+               << "(blas.suffix.contains(\"64\") ? 8 : 4), orig_" << name
+               << ", cubcall, Builder2);\n"
+               << "        } else {\n"
+               << "          addToDiffe(orig_" << name
+               << ", cubcall, Builder2, fpType);\n"
+               << "        }\n";
+          }
+        }
+      }
+      os << "      }\n";
     } else {
       errs() << Def->getName() << "\n";
       PrintFatalError("Unhandled blas-rev case!");
