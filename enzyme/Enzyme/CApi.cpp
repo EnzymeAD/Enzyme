@@ -1692,4 +1692,18 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   F->eraseFromParent();
 }
 #endif
+
+LLVMValueRef EnzymeBuildExtractValue(LLVMBuilderRef B, LLVMValueRef AggVal,
+                                     unsigned *Index, unsigned Size,
+                                     const char *Name) {
+  return wrap(unwrap(B)->CreateExtractValue(
+      unwrap(AggVal), ArrayRef<unsigned>(Index, Size), Name));
+}
+
+LLVMValueRef EnzymeBuildInsertValue(LLVMBuilderRef B, LLVMValueRef AggVal,
+                                    LLVMValueRef EltVal, unsigned *Index,
+                                    unsigned Size, const char *Name) {
+  return wrap(unwrap(B)->CreateInsertValue(
+      unwrap(AggVal), unwrap(EltVal), ArrayRef<unsigned>(Index, Size), Name));
+}
 }
