@@ -6,32 +6,26 @@
 ;                       trans,                  M,                       N,                     alpha,                  A,    lda,                    x,  , incx,                  beta,                    y,  incy
 declare void @dgemv_64_(i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* , i8* nocapture readonly, i8*, i8* nocapture readonly, i8* nocapture readonly, i8* , i8* nocapture readonly) 
 
-define void @f(i8* noalias %y, i8* noalias %A, i8* noalias %x) {
+define void @f(i8* noalias %y, i8* noalias %A, i8* noalias %x, i8* noalias %alpha, i8* noalias %beta) {
 entry:
   %transa = alloca i8, align 1
   %m = alloca i64, align 16
   %m_p = bitcast i64* %m to i8*
   %n = alloca i64, align 16
   %n_p = bitcast i64* %n to i8*
-  %alpha = alloca double, align 16
-  %alpha_p = bitcast double* %alpha to i8*
   %lda = alloca i64, align 16
   %lda_p = bitcast i64* %lda to i8*
   %incx = alloca i64, align 16
   %incx_p = bitcast i64* %incx to i8*
-  %beta = alloca double, align 16
-  %beta_p = bitcast double* %beta to i8*
   %incy = alloca i64, align 16
   %incy_p = bitcast i64* %incy to i8*
   store i8 78, i8* %transa, align 1
   store i64 4, i64* %m, align 16
   store i64 4, i64* %n, align 16
-  store double 1.000000e+00, double* %alpha, align 16
   store i64 4, i64* %lda, align 16
   store i64 2, i64* %incx, align 16
-  store double 0.000000e+00, double* %beta
   store i64 1, i64* %incy, align 16
-  call void @dgemv_64_(i8* %transa, i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta_p, i8* %y, i8* %incy_p) 
+  call void @dgemv_64_(i8* %transa, i8* %m_p, i8* %n_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta, i8* %y, i8* %incy_p) 
   ret void
 }
 
@@ -47,7 +41,7 @@ declare dso_local void @__enzyme_autodiff(...)
 
 define void @active(i8* %y, i8* %dy, i8* %A, i8* %dA, i8* %x, i8* %dx) {
 entry:
-  call void (...) @__enzyme_autodiff(void (i8*,i8*,i8*)* @g, metadata !"enzyme_dup", i8* %y, i8* %dy, metadata !"enzyme_dup", i8* %A, i8* %dA, metadata !"enzyme_dup", i8* %x, i8* %dx)
+  call void (...) @__enzyme_autodiff(void (i8*,i8*,i8*,i8*,i8*)* @g, metadata !"enzyme_dup", i8* %y, i8* %dy, metadata !"enzyme_dup", i8* %A, i8* %dA, metadata !"enzyme_dup", i8* %x, i8* %dx, metadata !"enzyme_dup", i8* %alpha, i8* %dalpha, metadata !"enzyme_dup", i8* %beta, i8* %dbeta)
   ret void
 }
 
