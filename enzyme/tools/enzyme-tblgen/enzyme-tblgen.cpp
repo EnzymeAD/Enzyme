@@ -1545,22 +1545,27 @@ void emit_free_and_ending(const TGPattern &pattern, raw_ostream &os) {
   }
 
   // next one is to handle input<name> usages.
-  auto activeArgs = pattern.getActiveArgs();
-  auto rules = pattern.getRules();
-  std::string toCache = "";
-  for (size_t a = 0; a < activeArgs.size(); a++) {
-    auto rule = rules[a];
-    auto i = activeArgs[a];
-    auto name = nameVec[i];
-    const DagInit *ruleDag = rule.getRuleDag();
-    std::string toCache = get_input_mat(ruleDag);
-    if (toCache != "") {
-      os << "      if (active_" << name << ") {\n"
-         << "        CreateDealloc(Builder2, free_input_" << toCache << ");\n"
-         << "      }\n";
-      break;
-    }
-  }
+  // Disabled for now, since input<X> and arg_x
+  // overlap in the case that x will be cached.
+  // This is ok for now since we don't have any rule which
+  // would overwrite x internally. Figure out what to do
+  // once we hit more complex rules that make good tests.
+  // auto activeArgs = pattern.getActiveArgs();
+  // auto rules = pattern.getRules();
+  // std::string toCache = "";
+  // for (size_t a = 0; a < activeArgs.size(); a++) {
+  //  auto rule = rules[a];
+  //  auto i = activeArgs[a];
+  //  auto name = nameVec[i];
+  //  const DagInit *ruleDag = rule.getRuleDag();
+  //  std::string toCache = get_input_mat(ruleDag);
+  //  if (toCache != "") {
+  //    os << "      if (active_" << name << ") {\n"
+  //       << "        CreateDealloc(Builder2, free_input_" << toCache << ");\n"
+  //       << "      }\n";
+  //    break;
+  //  }
+  //}
 
   os << "    }\n"
      << "  }\n"
