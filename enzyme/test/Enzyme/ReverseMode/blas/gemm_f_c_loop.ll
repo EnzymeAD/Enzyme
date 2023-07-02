@@ -304,8 +304,9 @@ entry:
 ; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.0
 ; CHECK-NEXT:   store i64 0, i64* %[[byrefconstantint30]]
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
+; CHECK-NEXT:   %fpcast.constant.fp.1.0 = bitcast double* %byref.constant.fp.1.0 to i8*
 ; CHECK-NEXT:   store i64 0, i64* %[[byrefconstantint31]]
-; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i64* %byref.constant.int.0, i64* %byref.constant.int.031, double* %byref.constant.fp.1.0, i8* %cast.beta, i8* %46, i8* %n_p_unwrap, i8* %"C'", i8* %cast.ldc, i64* %byref.constant.int.032)
+; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i64* %byref.constant.int.0, i64* %byref.constant.int.031, i8* %fpcast.constant.fp.1.0, i8* %cast.beta, i8* %46, i8* %n_p_unwrap, i8* %"C'", i8* %cast.ldc, i64* %byref.constant.int.032)
 ; CHECK-NEXT:   %68 = bitcast double* %tape.ext.A to i8*
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %68)
 ; CHECK-NEXT:   call void @free(i8* %46)
