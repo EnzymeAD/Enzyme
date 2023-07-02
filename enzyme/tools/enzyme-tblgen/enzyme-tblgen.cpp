@@ -1619,6 +1619,20 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
     os << "\n";
   }
 
+  bool hasFP = false;
+  for (auto name : enumerate(nameVec)) {
+    assert(argTypeMap.count(name.index()) == 1);
+    auto ty = argTypeMap.lookup(name.index());
+    if (ty == ArgType::fp) {
+      os << "  Type* blasFPType = type_" << name.value()
+         << ";\n";
+      hasFP = true;
+      break;
+    }
+  }
+  if (!hasFP)
+    os << "  Type* blasFPType = byRef ? (Type*)PointerType::getUnqual(fpType) : (Type*)fpType;\n";
+
   for (auto name : enumerate(nameVec)) {
     assert(argTypeMap.count(name.index()) == 1);
     auto ty = argTypeMap.lookup(name.index());
@@ -2119,8 +2133,7 @@ void emit_deriv_blas_call(DagInit *ruleDag,
         //  primary and adj have the same type
         typeToAdd = (Twine("type_") + argStr).str();
       } else if (Def->isSubClassOf("Constant")) {
-        typeToAdd =
-            "byRef ? (Type*)PointerType::getUnqual(fpType) : (Type*)fpType";
+        typeToAdd = "blasFPType";
       } else if (Def->isSubClassOf("Char")) {
         typeToAdd = "byRef ? (Type*)PointerType::getUnqual(charType) : "
                     "(Type*)charType";
@@ -2205,6 +2218,49 @@ void emit_deriv_blas_call(DagInit *ruleDag,
   return;
 }
 
+void emit_tmp_creation(Record *Def, raw_ostream &os) {
+  const auto args = Def->getValueAsListOfStrings("args");
+  // First, let's prepare some cache for the vec or mat
+  assert(args.size() == 3 || args.size() == 4);
+  if (args.size() == 3) {
+    const auto matName = args[0];
+    const auto dim1 = "arg_" + args[1];
+    const auto dim2 = "arg_" + args[2];
+    os << "    Value *len1 = load_if_ref(BuilderZ, intType," << dim1
+       << ", byRef);\n"
+       << "    Value *len2 = load_if_ref(BuilderZ, intType," << dim2
+       << ", byRef);\n"
+       << "    Value *size_" << matName
+       << " = BuilderZ.CreateNUWMul(len1, len2, \"size_" << matName << "\");\n";
+  } else {
+    const auto vecName = args[0];
+    const auto trans = "arg_" + args[1];
+    const auto dim1 = "arg_" + args[2];
+    const auto dim2 = "arg_" + args[3];
+    os << "    Value *len1 = load_if_ref(BuilderZ, intType," << dim1
+       << ", byRef);\n"
+       << "    Value *len2 = load_if_ref(BuilderZ, intType," << dim2
+       << ", byRef);\n";
+    os << "    Value *size_" << vecName
+       << " = BuilderZ.CreateSelect(is_normal(BuilderZ, " << trans
+       << ", byRef), len1, len2);\n";
+  }
+  const auto matName = args[0];
+  const auto allocName = "mat_" + matName;
+  os << "    Value *" << allocName
+     << " = CreateAllocation(BuilderZ, fpType, size_"
+     << matName
+     //<< " = CreateAllocation(allocationBuilder, fpType, size_" << matName
+     << ", \"" << allocName << "\");\n"
+     << "    if (type_A->isIntegerTy()) {\n"
+     << "      " << allocName << " = BuilderZ.CreatePtrToInt(" << allocName
+     << ", type_A);\n"
+     << "    } else if (" << allocName << "->getType() != type_A){\n"
+     << "      " << allocName << " = BuilderZ.CreatePointerCast(" << allocName
+     << ", type_A);\n"
+     << "    }\n";
+}
+
 void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
                      StringSet<> &handled, raw_ostream &os) {
   const auto ruleDag = rule.getRuleDag();
@@ -2223,41 +2279,6 @@ void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
     return;
     PrintFatalError("Unhandled Inst Rule!");
   } else if (Def->isSubClassOf("Seq")) {
-    const auto args = Def->getValueAsListOfStrings("args");
-    // First, let's prepare some cache for the vec or mat
-    assert(args.size() == 3 || args.size() == 4);
-    if (args.size() == 3) {
-      const auto matName = args[0];
-      const auto dim1 = "arg_" + args[1];
-      const auto dim2 = "arg_" + args[2];
-      os << "    Value *len1 = load_if_ref(Builder2, intType," << dim1
-         << ", byRef);\n"
-         << "    Value *len2 = load_if_ref(Builder2, intType," << dim2
-         << ", byRef);\n"
-         << "    Value *size_" << matName
-         << " = Builder2.CreateNUWMul(len1, len2, \"size_" << matName
-         << "\");\n";
-    } else {
-      const auto vecName = args[0];
-      const auto trans = "arg_" + args[1];
-      const auto dim1 = "arg_" + args[2];
-      const auto dim2 = "arg_" + args[3];
-      os << "    Value *size_" << vecName
-         << " = Builder2.CreateSelect(is_normal(Builder2, " << trans
-         << ", byRef), " << dim1 << ", " << dim2 << ");\n";
-    }
-    const auto matName = args[0];
-    const auto allocName = "mat_" + matName;
-    os << "    Value *" << allocName
-       << " = CreateAllocation(allocationBuilder, fpType, size_" << matName
-       << ", \"" << allocName << "\");\n"
-       << "    if (type_A->isIntegerTy()) {\n"
-       << "      " << allocName << " = Builder2.CreatePtrToInt(" << allocName
-       << ", type_A);\n"
-       << "    } else if (" << allocName << "->getType() != type_A){\n"
-       << "      " << allocName << " = Builder2.CreatePointerCast(" << allocName
-       << ", type_A);\n"
-       << "    }\n";
     llvm::errs() << "num subrules: " << ruleDag->getNumArgs() << "\n";
     // handle seq rules
     for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
@@ -2329,8 +2350,8 @@ void rev_call_arg(StringRef argName, DagInit *ruleDag, Rule &rule,
       errs() << "MagicInst\n";
     } else if (Def->isSubClassOf("Constant")) {
       auto val = Def->getValueAsString("value");
-      os << "to_blas_callconv(Builder2, ConstantFP::get(fpType, " << val
-         << "), byRef, nullptr, allocationBuilder, \"constant.fp." << val
+      os << "to_blas_fp_callconv(Builder2, ConstantFP::get(fpType, " << val
+         << "), byRef, blasFPType, allocationBuilder, \"constant.fp." << val
          << "\")";
     } else if (Def->isSubClassOf("Char")) {
       auto val = Def->getValueAsString("value");
@@ -2708,6 +2729,9 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       os << "      if (";
       emit_rule_activity_req(ruleDag, name, os);
       os << ") {\n";
+
+      // We might need to create a tmp vec or matrix
+      emit_tmp_creation(Def, os);
 
       os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
          << valueTypes << "}, Builder2, /* lookup */ true);\n";

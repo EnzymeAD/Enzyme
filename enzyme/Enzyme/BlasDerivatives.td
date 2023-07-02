@@ -112,13 +112,13 @@ def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
                   ]
                   >;
 
-def lacpy : CallBlasPattern<(Op $layout, $m, $n, $A, $lda, $B, $ldb),
-                  ["B"],[cblas_layout, len, len, mld<["m", "n"]>, mld<["m", "n"]>],
-                  [
-                  (inactive), // from
-                  (inactive), // to
-                  ]
-                  >;
+// def lacpy : CallBlasPattern<(Op $layout, $m, $n, $A, $lda, $B, $ldb),
+//                   ["B"],[cblas_layout, len, len, mld<["m", "n"]>, mld<["m", "n"]>],
+//                   [
+//                   (inactive), // from
+//                   (inactive), // to
+//                   ]
+//                   >;
 
 def lascl : CallBlasPattern<(Op $layout, $type, $kl, $ku, $cfrom, $cto, $m, $n, $A, $lda, $info),
                   ["A"],[cblas_layout, uplo, len, len, fp, fp, len, len, mld<["m", "n"]>, len],

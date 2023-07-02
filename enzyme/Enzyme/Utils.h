@@ -1646,6 +1646,10 @@ llvm::Value *to_blas_callconv(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                               llvm::IntegerType *julia_decl,
                               llvm::IRBuilder<> &entryBuilder,
                               llvm::Twine const & = "");
+llvm::Value *to_blas_fp_callconv(llvm::IRBuilder<> &B, llvm::Value *V,
+                                 bool byRef, llvm::Type *julia_decl,
+                                 llvm::IRBuilder<> &entryBuilder,
+                                 llvm::Twine const & = "");
 
 llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
                                   llvm::Value *arg_ld, llvm::Value *dim_1,
