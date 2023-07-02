@@ -1629,14 +1629,14 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
     assert(argTypeMap.count(name.index()) == 1);
     auto ty = argTypeMap.lookup(name.index());
     if (ty == ArgType::fp) {
-      os << "  Type* blasFPType = type_" << name.value()
-         << ";\n";
+      os << "  Type* blasFPType = type_" << name.value() << ";\n";
       hasFP = true;
       break;
     }
   }
   if (!hasFP)
-    os << "  Type* blasFPType = byRef ? (Type*)PointerType::getUnqual(fpType) : (Type*)fpType;\n";
+    os << "  Type* blasFPType = byRef ? (Type*)PointerType::getUnqual(fpType) "
+          ": (Type*)fpType;\n";
 
   for (auto name : enumerate(nameVec)) {
     assert(argTypeMap.count(name.index()) == 1);
