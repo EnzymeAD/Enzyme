@@ -2277,7 +2277,6 @@ void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
     // TODO:
     return;
   } else if (Def->isSubClassOf("Seq")) {
-    llvm::errs() << "num subrules: " << ruleDag->getNumArgs() << "\n";
     // handle seq rules
     for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
       Init *subArg = ruleDag->getArg(i);
@@ -2463,20 +2462,12 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
   size_t numArgs = ruleDag->getNumArgs();
 
   if (subRule != -1) {
-    llvm::errs() << "accessing subrule: " << subRule
-                 << " from subrules: " << ruleDag->getNumArgs() << "\n";
     // handle Seq
     ruleDag = cast<DagInit>(ruleDag->getArg(subRule));
     numArgs = ruleDag->getNumArgs();
   }
 
   size_t startArg = (ruleDag->getArgNameStr(0) == "layout") ? 1 : 0;
-  llvm::errs() << "startArg: " << startArg << "\n";
-  llvm::errs() << "numArgs: " << numArgs << "\n";
-
-  for (size_t i = 0; i < numArgs; i++) {
-    llvm::errs() << "name i: " << ruleDag->getArgNameStr(i) << "\n";
-  }
 
   os << "        Value *" << argName << "[" << (numArgs - startArg) << "] = {";
 
@@ -2486,7 +2477,6 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
       os << ", ";
     }
 
-    llvm::errs() << "name: " << ruleDag->getArgNameStr(pos) << "\n";
     rev_call_arg(argName, ruleDag, rule, actArg, pos, os);
     pos++;
   }
@@ -2734,7 +2724,6 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
 
-      llvm::errs() << "num subrules: " << ruleDag->getNumArgs() << "\n";
       // handle seq rules
       for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
         std::string argName = "args" + std::to_string(i);
