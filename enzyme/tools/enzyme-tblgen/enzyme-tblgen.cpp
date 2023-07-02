@@ -2248,9 +2248,7 @@ void emit_tmp_creation(Record *Def, raw_ostream &os) {
   const auto matName = args[0];
   const auto allocName = "mat_" + matName;
   os << "    Value *" << allocName
-     << " = CreateAllocation(BuilderZ, fpType, size_"
-     << matName
-     //<< " = CreateAllocation(allocationBuilder, fpType, size_" << matName
+     << " = CreateAllocation(allocationBuilder, fpType, size_" << matName
      << ", \"" << allocName << "\");\n"
      << "    if (type_A->isIntegerTy()) {\n"
      << "      " << allocName << " = BuilderZ.CreatePtrToInt(" << allocName
@@ -2275,9 +2273,9 @@ void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
   } else if (Def->isSubClassOf("DiffeRetIndex")) {
     // nothing to prepare
   } else if (Def->isSubClassOf("Inst")) {
+    PrintFatalError("Unhandled Inst Rule!");
     // TODO:
     return;
-    PrintFatalError("Unhandled Inst Rule!");
   } else if (Def->isSubClassOf("Seq")) {
     llvm::errs() << "num subrules: " << ruleDag->getNumArgs() << "\n";
     // handle seq rules
