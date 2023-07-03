@@ -8227,9 +8227,7 @@ public:
             gutils->replaceAWithB(newCall, normalReturn);
             BuilderZ.SetInsertPoint(newCall->getNextNode());
             gutils->erase(newCall);
-          } else if (Mode == DerivativeMode::ReverseModeGradient &&
-                     !call.getType()->isTokenTy() &&
-                     funcName != "llvm.julia.gc_preserve_end")
+          } else if (Mode == DerivativeMode::ReverseModeGradient)
             eraseIfUnused(call, /*erase*/ true, /*check*/ false);
         }
         return;
@@ -8392,6 +8390,105 @@ public:
       }
 
 #include "CallDerivatives.inc"
+
+      if (funcName == "llvm.julia.gc_preserve_end") {
+        if (Mode == DerivativeMode::ReverseModeGradient ||
+            Mode == DerivativeMode::ReverseModeCombined) {
+
+          auto begin_call = cast<CallInst>(call.getOperand(0));
+
+          IRBuilder<> Builder2(&call);
+          getReverseBuilder(Builder2);
+          SmallVector<Value *, 1> args;
+#if LLVM_VERSION_MAJOR >= 14
+          for (auto &arg : begin_call->args())
+#else
+          for (auto &arg : begin_call->arg_operands())
+#endif
+          {
+            bool primalUsed = false;
+            bool shadowUsed = false;
+            gutils->getReturnDiffeType(arg, &primalUsed, &shadowUsed);
+
+            if (primalUsed)
+              args.push_back(
+                  gutils->lookupM(gutils->getNewFromOriginal(arg), Builder2));
+
+            if (!gutils->isConstantValue(arg) && shadowUsed) {
+              Value *ptrshadow = gutils->lookupM(
+                  gutils->invertPointerM(arg, BuilderZ), Builder2);
+              if (gutils->getWidth() == 1)
+                args.push_back(ptrshadow);
+              else
+                for (size_t i = 0; i < gutils->getWidth(); ++i)
+                  args.push_back(gutils->extractMeta(Builder2, ptrshadow, i));
+            }
+          }
+
+          auto newp = Builder2.CreateCall(
+              called->getParent()->getOrInsertFunction(
+                  "llvm.julia.gc_preserve_begin",
+                  FunctionType::get(Type::getTokenTy(call.getContext()),
+                                    ArrayRef<Type *>(), true)),
+              args);
+          auto ifound = gutils->invertedPointers.find(begin_call);
+          assert(ifound != gutils->invertedPointers.end());
+          auto placeholder = cast<CallInst>(&*ifound->second);
+          gutils->invertedPointers.erase(ifound);
+          gutils->invertedPointers.insert(std::make_pair(
+              (const Value *)begin_call, InvertedPointerVH(gutils, newp)));
+
+          gutils->replaceAWithB(placeholder, newp);
+          gutils->erase(placeholder);
+        }
+        return;
+      }
+      if (funcName == "llvm.julia.gc_preserve_begin") {
+        SmallVector<Value *, 1> args;
+#if LLVM_VERSION_MAJOR >= 14
+        for (auto &arg : call.args())
+#else
+        for (auto &arg : call.arg_operands())
+#endif
+        {
+          bool primalUsed = false;
+          bool shadowUsed = false;
+          gutils->getReturnDiffeType(arg, &primalUsed, &shadowUsed);
+
+          if (primalUsed)
+            args.push_back(gutils->getNewFromOriginal(arg));
+
+          if (!gutils->isConstantValue(arg) && shadowUsed) {
+            Value *ptrshadow = gutils->invertPointerM(arg, BuilderZ);
+            if (gutils->getWidth() == 1)
+              args.push_back(ptrshadow);
+            else
+              for (size_t i = 0; i < gutils->getWidth(); ++i)
+                args.push_back(gutils->extractMeta(BuilderZ, ptrshadow, i));
+          }
+        }
+
+        auto newp = BuilderZ.CreateCall(called, args);
+        auto oldp = gutils->getNewFromOriginal(&call);
+        gutils->replaceAWithB(oldp, newp);
+        gutils->erase(oldp);
+
+        if (Mode == DerivativeMode::ReverseModeGradient ||
+            Mode == DerivativeMode::ReverseModeCombined) {
+          IRBuilder<> Builder2(&call);
+          getReverseBuilder(Builder2);
+
+          auto ifound = gutils->invertedPointers.find(&call);
+          assert(ifound != gutils->invertedPointers.end());
+          auto placeholder = cast<CallInst>(&*ifound->second);
+          Builder2.CreateCall(called->getParent()->getOrInsertFunction(
+                                  "llvm.julia.gc_preserve_end",
+                                  FunctionType::get(Builder2.getVoidTy(),
+                                                    call.getType(), false)),
+                              placeholder);
+        }
+        return;
+      }
 
       // Functions that only modify pointers and don't allocate memory,
       // needs to be run on shadow in primal
