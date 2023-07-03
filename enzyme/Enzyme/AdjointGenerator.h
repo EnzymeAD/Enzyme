@@ -8228,7 +8228,8 @@ public:
             BuilderZ.SetInsertPoint(newCall->getNextNode());
             gutils->erase(newCall);
           } else if (Mode == DerivativeMode::ReverseModeGradient &&
-                     !call.getType()->isTokenTy())
+                     !call.getType()->isTokenTy() &&
+                     funcName != "llvm.julia.gc_preserve_end")
             eraseIfUnused(call, /*erase*/ true, /*check*/ false);
         }
         return;
