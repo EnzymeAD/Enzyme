@@ -8177,6 +8177,22 @@ void GradientUtils::forceAugmentedReturns() {
         continue;
       }
 
+      CallInst *op = cast<CallInst>(inst);
+      Function *called = op->getCalledFunction();
+
+      if ((mode == DerivativeMode::ReverseModeGradient ||
+           mode == DerivativeMode::ReverseModeCombined) &&
+          called && called->getName() == "llvm.julia.gc_preserve_begin") {
+        IRBuilder<> BuilderZ(inst);
+        getForwardBuilder(BuilderZ);
+        auto anti = BuilderZ.CreateCall(called, ArrayRef<Value *>(),
+                                        op->getName() + "'ip");
+        anti->setDebugLoc(getNewFromOriginal(op->getDebugLoc()));
+        invertedPointers.insert(
+            std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
+        continue;
+      }
+
       if (isa<IntrinsicInst>(inst)) {
         continue;
       }
@@ -8184,9 +8200,6 @@ void GradientUtils::forceAugmentedReturns() {
       if (isConstantValue(inst)) {
         continue;
       }
-
-      CallInst *op = cast<CallInst>(inst);
-      Function *called = op->getCalledFunction();
 
       IRBuilder<> BuilderZ(inst);
       getForwardBuilder(BuilderZ);
