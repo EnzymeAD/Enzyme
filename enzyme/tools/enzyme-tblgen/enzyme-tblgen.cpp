@@ -2098,6 +2098,15 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
   os << "  }\n";
 }
 
+// TODO: add this to .td file and generate it based on that
+std::string get_blas_ret_ty(StringRef dfnc_name) {
+  if (dfnc_name == "dot" || dfnc_name == "asum" || dfnc_name == "nrm2" ||
+      dfnc_name == "iamax" || dfnc_name == "iamin" || dfnc_name == "inner_prod") {
+    return "fpType";
+  }
+  return "Builder2.getVoidTy()";
+}
+
 void emit_deriv_blas_call(DagInit *ruleDag,
                           const StringMap<TGPattern> &patternMap,
                           StringSet<> &handled, raw_ostream &os) {
@@ -2116,12 +2125,8 @@ void emit_deriv_blas_call(DagInit *ruleDag,
   else
     handled.insert(dfnc_name);
 
-  auto retTy = "Builder2.getVoidTy()";
-  // TODO: add this to .td file and generate it based on that
-  if (dfnc_name == "dot" || dfnc_name == "asum" || dfnc_name == "nrm2" ||
-      dfnc_name == "iamax" || dfnc_name == "iamin") {
-    retTy = "fpType";
-  }
+  auto retTy = get_blas_ret_ty(dfnc_name);
+
   // insert arg types based on .td file
   std::string typeString = "";
   bool first = true;
@@ -2189,24 +2194,25 @@ void emit_deriv_blas_call(DagInit *ruleDag,
     first = false;
   }
 
+  std::string dfnc_ret_ty = get_blas_ret_ty(dfnc_name);
   os << "    llvm::FunctionType *FT" << dfnc_name << " = nullptr;\n";
   if (derivlv23) {
     os << "    if(byRef) {\n"
        << "      Type* tys" << dfnc_name << "[] = {" << typeString << "};\n"
        << "      FT" << dfnc_name
-       << " = FunctionType::get(Builder2.getVoidTy(), tys" << dfnc_name
+       << " = FunctionType::get(" << dfnc_ret_ty << ", tys" << dfnc_name
        << ", false);\n"
        << "    } else {\n"
        << "      Type* tys" << dfnc_name << "[] = {type_layout, " << typeString
        << "};\n"
        << "      FT" << dfnc_name
-       << " = FunctionType::get(Builder2.getVoidTy(), tys" << dfnc_name
+       << " = FunctionType::get(" << dfnc_ret_ty << ", tys" << dfnc_name
        << ", false);\n"
        << "    }\n";
   } else {
     os << "    Type* tys" << dfnc_name << "[] = {" << typeString << "};\n"
        << "    FT" << dfnc_name
-       << " = FunctionType::get(Builder2.getVoidTy(), tys" << dfnc_name
+       << " = FunctionType::get(" << dfnc_ret_ty << ", tys" << dfnc_name
        << ", false);\n";
   }
 
@@ -2255,7 +2261,6 @@ void emit_tmp_creation(Record *Def, raw_ostream &os) {
   os << "    Value *" << allocName
      << " = CreateAllocation(BuilderZ, fpType, size_"
      << matName
-     //<< " = CreateAllocation(allocationBuilder, fpType, size_" << matName
      << ", \"" << allocName << "\");\n"
      << "    if (type_A->isIntegerTy()) {\n"
      << "      " << allocName << " = BuilderZ.CreatePtrToInt(" << allocName
@@ -2744,7 +2749,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
             os << "    //handling nested blas: " << std::to_string(i) << "\n";
             emit_deriv_blas_call(sub_Dag, patternMap, handled, os);
             // TODO: make generic
-            if (dfnc_name == "dot") {
+            if (get_blas_ret_ty(dfnc_name) == "fpType") {
               // returns, so assume it's the last step of the sequence
               // and update the diffe accordingly
               assert(i == ruleDag->getNumArgs() - 1);
