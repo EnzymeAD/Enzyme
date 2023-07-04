@@ -29,9 +29,9 @@ entry:
   ret void
 }
 
-define void @g(i8* noalias %y, i8* noalias %A, i8* noalias %x) {
+define void @g(i8* noalias %y, i8* noalias %A, i8* noalias %x, i8* noalias %alpha, i8* noalias %beta) {
 entry:
-  call void @f(i8* %y, i8* %A, i8* %x)
+  call void @f(i8* %y, i8* %A, i8* %x, i8* %alpha, i8* %beta)
   %ptr = bitcast i8* %x to double*
   store double 0.0000000e+00, double* %ptr, align 8
   ret void
@@ -39,7 +39,7 @@ entry:
 
 declare dso_local void @__enzyme_autodiff(...)
 
-define void @active(i8* %y, i8* %dy, i8* %A, i8* %dA, i8* %x, i8* %dx) {
+define void @active(i8* %y, i8* %dy, i8* %A, i8* %dA, i8* %x, i8* %dx, i8* %alpha, i8* %dalpha, i8* %beta, i8* %dbeta) {
 entry:
   call void (...) @__enzyme_autodiff(void (i8*,i8*,i8*,i8*,i8*)* @g, metadata !"enzyme_dup", i8* %y, i8* %dy, metadata !"enzyme_dup", i8* %A, i8* %dA, metadata !"enzyme_dup", i8* %x, i8* %dx, metadata !"enzyme_dup", i8* %alpha, i8* %dalpha, metadata !"enzyme_dup", i8* %beta, i8* %dbeta)
   ret void

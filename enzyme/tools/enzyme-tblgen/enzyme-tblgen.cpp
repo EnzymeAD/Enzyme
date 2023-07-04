@@ -1638,6 +1638,18 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
     os << "  Type* blasFPType = byRef ? (Type*)PointerType::getUnqual(fpType) "
           ": (Type*)fpType;\n";
 
+  bool hasInt = false;
+  for (auto name : enumerate(nameVec)) {
+    assert(argTypeMap.count(name.index()) == 1);
+    auto ty = argTypeMap.lookup(name.index());
+    if (ty == ArgType::len || ty == ArgType::vincInc || ty == ArgType::mldLD) {
+      os << "  Type* blasIntType = type_" << name.value() << ";\n";
+      hasInt = true;
+      break;
+    }
+  }
+  assert(hasInt);
+
   for (auto name : enumerate(nameVec)) {
     assert(argTypeMap.count(name.index()) == 1);
     auto ty = argTypeMap.lookup(name.index());
@@ -1780,47 +1792,51 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
   }
   os << "    }\n";
 
-  std::string toCache = "";
+  std::string input_var = "";
   size_t actVar = 0;
   for (size_t a = 0; a < activeArgs.size(); a++) {
     auto rule = rules[a];
     const DagInit *ruleDag = rule.getRuleDag();
     std::string tmp = get_input_mat(ruleDag);
     if (tmp != "") {
-      toCache = tmp;
+      input_var = tmp;
       actVar = activeArgs[a];
       break;
     }
   }
 
-  for (size_t i = 0; i < nameVec.size(); i++) {
-    auto ty = typeMap.lookup(i);
-    if (ty != ArgType::mldData)
+  for (size_t j = 0; j < activeArgs.size(); j++) {
+    size_t i = activeArgs[j];
+    if (typeMap.lookup(i) != ArgType::mldData)
       continue;
     auto name = nameVec[i];
-    auto actName = nameVec[actVar];
-    if (name == toCache) {
-      // this means we use input<name> in one rule,
-      // so we force-load it from cache into input_<name>.
-      // Do it here to get the cacheidx right
-      // This does not modify the cacheidx,
-      // so do it before the extract_mat_or_vec call
-      extract_input_mat(name, actName, os);
+    auto rule = rules[j];
+    auto input_mat_name = nameVec[actVar];
+    if (name == input_var) {
+      // we not only use arg_<X>, but also input_<X>
+      extract_input_mat(name, input_mat_name, os);
     }
     extract_mat_or_vec(name, os);
+    // TODO: corresponding LD should become matrix width?
   }
 
   // If we cached matrix or vector X, then we did that in a dense form.
   // Therefore, we overwrite the related inc_X to be 1 and ld_X to be = m
-  for (size_t i = 0; i < nameVec.size(); i++) {
-    auto ty = typeMap.lookup(i);
-    if (ty != ArgType::vincData)
+  for (size_t j = 0; j < activeArgs.size(); j++) {
+    size_t i = activeArgs[j];
+    if (typeMap.lookup(i) != ArgType::vincData)
       continue;
     auto name = nameVec[i];
-    const auto vecPosition = i;
-    const auto vecUsers = argUsers.lookup(vecPosition);
-    const auto incName = nameVec[i + 1];
+    auto rule = rules[j];
+    auto input_vec_name = nameVec[actVar];
+    if (name == input_var) {
+      // we not only use arg_<X>, but also input_<X>
+      extract_input_mat(name, input_vec_name, os);
+    }
     extract_mat_or_vec(name, os);
+
+    // caching a vector implies that the corresponding inc will now be 1.
+    const auto incName = nameVec[i + 1];
     os << "    if (cache_" << name << ") {\n"
        << "      arg_" << incName << " = ConstantInt::get(intType, 1);\n"
        << "      if (byRef) {\n"
@@ -2149,7 +2165,7 @@ void emit_deriv_blas_call(DagInit *ruleDag,
                     "(Type*)charType";
       } else if (Def->isSubClassOf("ConstantInt")) {
         typeToAdd =
-            "byRef ? (Type*)PointerType::getUnqual(intType) : (Type*)intType";
+            "byRef ? (Type*)blasIntType : (Type*)intType";
       } else if (Def->isSubClassOf("transpose")) {
         auto argStr = Def->getValueAsString("name");
         // transpose the given trans arg, but type stays
@@ -2370,7 +2386,7 @@ void rev_call_arg(StringRef argName, DagInit *ruleDag, Rule &rule,
     } else if (Def->isSubClassOf("ConstantInt")) {
       auto val = Def->getValueAsInt("value");
       os << "to_blas_callconv(Builder2, ConstantInt::get(intType, " << val
-         << "), byRef, nullptr, allocationBuilder, \"constant.int." << val
+         << "), byRef, intType, allocationBuilder, \"constant.int." << val
          << "\")";
     } else if (Def->isSubClassOf("transpose")) {
       auto name = Def->getValueAsString("name");
@@ -2748,7 +2764,6 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
             const auto dfnc_name = sub_Def->getValueAsString("s");
             os << "    //handling nested blas: " << std::to_string(i) << "\n";
             emit_deriv_blas_call(sub_Dag, patternMap, handled, os);
-            // TODO: make generic
             if (get_blas_ret_ty(dfnc_name) == "fpType") {
               // returns, so assume it's the last step of the sequence
               // and update the diffe accordingly

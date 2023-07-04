@@ -31,16 +31,37 @@ os << "  bool need_" << name << " = false;\n";
   os 
 << "  bool cache_" << name << " = cacheMode && overwritten_" << name << " && need_" << name << ";\n";
 }
-  
+
+// TODO: maybe update to return set<StringRef>,
+// for the case of multiple inputs
 std::string get_input_mat(const DagInit *ruleDag) {
   std::string toCache = "";
-  for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
-    Init *subArg = ruleDag->getArg(i);
-    if (DefInit *def = dyn_cast<DefInit>(subArg)) {
-      const auto Def = def->getDef();
-      if (Def->isSubClassOf("input")) {
-        toCache = Def->getValueAsString("name");
-        break;
+  const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
+  if (Def->isSubClassOf("Seq")) {
+    // handle seq rules
+    for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
+      Init *subArg = ruleDag->getArg(i);
+      DagInit *sub_Dag = cast<DagInit>(subArg);
+      for (size_t j = 0; j < sub_Dag->getNumArgs(); j++) {
+        Init *subArg = sub_Dag->getArg(j);
+        if (DefInit *def = dyn_cast<DefInit>(subArg)) {
+          const auto Def = def->getDef();
+          if (Def->isSubClassOf("input")) {
+            toCache = Def->getValueAsString("name");
+            break;
+          }
+        }
+      }
+    }
+  } else {
+    for (size_t j = 0; j < ruleDag->getNumArgs(); j++) {
+      Init *subArg = ruleDag->getArg(j);
+      if (DefInit *def = dyn_cast<DefInit>(subArg)) {
+        const auto Def = def->getDef();
+        if (Def->isSubClassOf("input")) {
+          toCache = Def->getValueAsString("name");
+          break;
+        }
       }
     }
   }
