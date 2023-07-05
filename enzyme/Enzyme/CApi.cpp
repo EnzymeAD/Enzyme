@@ -1663,7 +1663,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       auto gep =
           ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount) : sret;
       auto ld = B.CreateLoad(Types[sretCount], gep);
-      B.CreateStore(ld, ptr);
+      auto SI = B.CreateStore(ld, ptr);
+      PostCacheStore(SI, B);
       sretCount++;
     }
     for (auto ptr_v : sretv_vals) {
@@ -1673,7 +1674,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
                       : sret;
         auto ptr = GradientUtils::extractMeta(B, ptr_v, j);
         auto ld = B.CreateLoad(Types[sretCount], gep);
-        B.CreateStore(ld, ptr);
+        auto SI = B.CreateStore(ld, ptr);
+        PostCacheStore(SI, B);
       }
       sretCount += AT->getNumElements();
     }
