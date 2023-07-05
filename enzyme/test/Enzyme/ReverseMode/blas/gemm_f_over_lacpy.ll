@@ -120,11 +120,12 @@ entry:
 ; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.0
 ; CHECK-NEXT:   %intcast.constant.int.0 = bitcast i64* %byref.constant.int.0 to i8*
 ; CHECK-NEXT:   store i64 0, i64* %[[byrefconstantint1]]
-; CHECK-NEXT:   %intcast.constant.int.02 = bitcast i64* %byref.constant.int.01 to i8*
+; CHECK-NEXT:   %intcast.constant.int.02 = bitcast i64* %[[byrefconstantint1]] to i8*
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
 ; CHECK-NEXT:   %fpcast.constant.fp.1.0 = bitcast double* %byref.constant.fp.1.0 to i8*
 ; CHECK-NEXT:   store i64 0, i64* %[[byrefconstantint2]]
-; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i64* %byref.constant.int.0, i64* %[[byrefconstantint1]], i8* %fpcast.constant.fp.1.0, i8* %beta_p, i8* %cast.m, i8* %n_p, i8* %"C'", i8* %ldc_p, i8* %[[byrefconstantint2]])
+; CHECK-NEXT:   %intcast.constant.int.04 = bitcast i64* %[[byrefconstantint2]] to i8*
+; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i8* %intcast.constant.int.0, i8* %intcast.constant.int.02, i8* %fpcast.constant.fp.1.0, i8* %beta_p, i8* %cast.m, i8* %n_p, i8* %"C'", i8* %ldc_p, i8* %intcast.constant.int.04)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
