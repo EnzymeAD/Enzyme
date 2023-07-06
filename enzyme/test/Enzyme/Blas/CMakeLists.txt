@@ -6,7 +6,3 @@ add_lit_testsuite(check-enzyme-blas "Running enzyme blas regression tests"
 )
 
 set_target_properties(check-enzyme-blas PROPERTIES FOLDER "Tests")
-
-#add_lit_testsuites(ENZYME ${CMAKE_CURRENT_SOURCE_DIR}
-    #    DEPENDS ${ENZYME_TEST_DEPS}
-#)
