@@ -8038,12 +8038,22 @@ void GradientUtils::eraseFictiousPHIs() {
   for (auto pair : phis) {
     auto pp = pair.first;
     if (pp->getNumUses() != 0) {
-      llvm::errs() << "mod:" << *oldFunc->getParent() << "\n";
-      llvm::errs() << "oldFunc:" << *oldFunc << "\n";
-      llvm::errs() << "newFunc:" << *newFunc << "\n";
-      llvm::errs() << " pp: " << *pp << " of " << *pair.second << "\n";
+      if (CustomErrorHandler) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Illegal replace ficticious phi for: " << *pp << " of "
+           << *pair.second;
+        CustomErrorHandler(str.c_str(), wrap(pair.second),
+                           ErrorType::IllegalReplaceFicticiousPHIs, this,
+                           wrap(pp), nullptr);
+      } else {
+        llvm::errs() << "mod:" << *oldFunc->getParent() << "\n";
+        llvm::errs() << "oldFunc:" << *oldFunc << "\n";
+        llvm::errs() << "newFunc:" << *newFunc << "\n";
+        llvm::errs() << " pp: " << *pp << " of " << *pair.second << "\n";
+        assert(pp->getNumUses() == 0);
+      }
     }
-    assert(pp->getNumUses() == 0);
     pp->replaceAllUsesWith(UndefValue::get(pp->getType()));
     erase(pp);
   }
