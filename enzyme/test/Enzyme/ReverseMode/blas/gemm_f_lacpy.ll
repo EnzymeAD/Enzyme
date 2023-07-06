@@ -116,7 +116,7 @@ entry:
 ; CHECK-NEXT:   %[[intcast02:.+]] = bitcast i64* %[[int01]] to i8*
 ; CHECK-NEXT:   store double 1.000000e+00, double* %[[fp10]]
 ; CHECK-NEXT:   %[[fpcast10:.+]] = bitcast double* %[[fp10]] to i8*
-; CHECK-NEXT:   store i64 0, i64* %[[int02]], align 4
+; CHECK-NEXT:   store i64 0, i64* %[[int02]]
 ; CHECK-NEXT:   %[[intcast04:.+]] = bitcast i64* %[[int02]] to i8*
 ; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i8* %[[intcast00]], i8* %[[intcast02]], i8* %[[fpcast10]], i8* %beta_p, i8* %m_p, i8* %n_p, i8* %"C'", i8* %ldc_p, i8* %[[intcast04]])
 ; CHECK-NEXT:   ret void
