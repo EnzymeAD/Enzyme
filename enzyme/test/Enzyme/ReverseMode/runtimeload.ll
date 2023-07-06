@@ -30,8 +30,8 @@ bb:
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %"i8'il_phi" = extractvalue { double*, double*, double*, double* } %tapeArg, 2
 ; CHECK-NEXT:   %i8 = extractvalue { double*, double*, double*, double* } %tapeArg, 3
-; CHECK-NEXT:   %i17 = extractvalue { double*, double*, double*, double* } %tapeArg, 1
 ; CHECK-NEXT:   %"i17'mi" = extractvalue { double*, double*, double*, double* } %tapeArg, 0
+; CHECK-NEXT:   %i17 = extractvalue { double*, double*, double*, double* } %tapeArg, 1
 ; CHECK-NEXT:   %0 = load double, double* %"i17'mi", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"i17'mi", align 8
 ; CHECK-NEXT:   %1 = icmp ne double* %i8, %"i8'il_phi"
