@@ -2238,7 +2238,22 @@ llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
 
   if (julia_decl)
     allocV = B.CreatePointerCast(allocV, Type::getInt8PtrTy(V->getContext()),
-                                 "cast." + name);
+                                 "intcast." + name);
+
+  return allocV;
+}
+llvm::Value *to_blas_fp_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
+                                 Type *fpTy, IRBuilder<> &entryBuilder,
+                                 llvm::Twine const &name) {
+  if (!byRef)
+    return V;
+
+  Value *allocV =
+      entryBuilder.CreateAlloca(V->getType(), nullptr, "byref." + name);
+  B.CreateStore(V, allocV);
+
+  if (fpTy)
+    allocV = B.CreatePointerCast(allocV, fpTy, "fpcast." + name);
 
   return allocV;
 }

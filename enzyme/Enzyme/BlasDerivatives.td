@@ -89,6 +89,14 @@ class transpose<string _name> {
   string name = _name;
 }
 
+class Seq<list<string> _args> {
+  list<string> args = _args;
+}
+
+class use<string _name> {
+  string name = _name;
+}
+
 class FrobInnerProd<string _tmp>;
 
 
@@ -103,6 +111,14 @@ def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
                   (b<"scal"> $n, $alpha, adj<"x">, $incx)
                   ]
                   >;
+
+// def lacpy : CallBlasPattern<(Op $layout, $m, $n, $A, $lda, $B, $ldb),
+//                   ["B"],[cblas_layout, len, len, mld<["m", "n"]>, mld<["m", "n"]>],
+//                   [
+//                   (inactive), // from
+//                   (inactive), // to
+//                   ]
+//                   >;
 
 def lascl : CallBlasPattern<(Op $layout, $type, $kl, $ku, $cfrom, $cto, $m, $n, $A, $lda, $info),
                   ["A"],[cblas_layout, uplo, len, len, fp, fp, len, len, mld<["m", "n"]>, len],
@@ -166,10 +182,12 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $incx, $beta, $y, $incy),
                   ["y"], [cblas_layout, trans,  len, len,  fp,   mld<["m", "n"]>,      vinc<["transa", "n", "m"]>,      fp,    vinc<["transa", "m", "n"]>],
                   [
-                  /* alpha  */  (inactive), //(b<"dot"> $y, (b<"gemv"> $A, $x)),
+                  /* alpha  */  (Seq<["Ax", "transa", "m", "n"]>
+                      (b<"gemv"> $layout, $transa, $m, $n, Constant<"1.0">, $A, (ld $A, $transa, $lda, $m, $n), $x, $incx, Constant<"0.0">, use<"Ax">, Constant<"1">),
+                      (b<"dot"> (Rows $transa, $m, $n), adj<"y">, $incy, use<"Ax">, ConstantInt<1>)),
                   /* A      */  (b<"ger">  $layout, $m, $n, $alpha, adj<"y">, $incy, $x, $incx, adj<"A">, $lda),
                   /* x      */  (b<"gemv"> $layout, transpose<"transa">, $m, $n, $alpha, $A, (ld $A, $transa, $lda, $m, $n), adj<"y">, $incy, Constant<"1.0">, adj<"x">, $incx),
-                  /* beta   */  (inactive), //(b<"dot"> $y, DiffeRet),
+                  /* beta   */  (b<"dot"> (Rows $transa, $m, $n), adj<"y">, $incy, input<"y">, $incy),
                   /* y      */  (b<"scal"> (Rows $transa, $m, $n), $beta, adj<"y">, $incy)
                   ]
                   >;
@@ -194,7 +212,10 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   ["C"],
                   [cblas_layout, trans, trans, len, len, len, fp, mld<["transa", "m", "k"]>, mld<["transb", "k", "n"]>, fp, mld<["m", "n"]>],
                   [
-                  /* alpha */ (inactive),
+                  
+                  /* alpha */ (Seq<["AB", "m", "n"]> 
+                      (b<"gemm"> $layout, $transa, $transb, $m, $n, $k, Constant<"1.0">, $A, (ld $A, $transa, $lda, $m, $k), $B, (ld $B, $transb, $ldb, $k, $n), Constant<"0.0">, use<"AB">, $m),// TODO: check if last arg should be $m or $n
+                      (FrobInnerProd<""> $m, $n, adj<"C">, $ldc, use<"AB">)),
                   /* A     */ (b<"gemm"> $layout, $transa, transpose<"transb">, $m, $k, $n, $alpha, adj<"C">, $ldc, $B, (ld $B, $transb, $ldb, $k, $n), $beta, adj<"A">, $lda),
                   /* B     */ (b<"gemm"> $layout, transpose<"transa">, $transb, $k, $n, $m, $alpha, $A, (ld $A, $transa, $lda, $m, $k), adj<"C">, $ldc, $beta, adj<"B">, $ldb),
                   /* beta  */ (FrobInnerProd<""> $m, $n, adj<"C">, $ldc, input<"C">),
