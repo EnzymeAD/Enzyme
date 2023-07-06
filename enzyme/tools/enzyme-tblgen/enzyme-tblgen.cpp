@@ -2117,7 +2117,8 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
 // TODO: add this to .td file and generate it based on that
 std::string get_blas_ret_ty(StringRef dfnc_name) {
   if (dfnc_name == "dot" || dfnc_name == "asum" || dfnc_name == "nrm2" ||
-      dfnc_name == "iamax" || dfnc_name == "iamin" || dfnc_name == "inner_prod") {
+      dfnc_name == "iamax" || dfnc_name == "iamin" ||
+      dfnc_name == "inner_prod") {
     return "fpType";
   }
   return "Builder2.getVoidTy()";
@@ -2164,8 +2165,7 @@ void emit_deriv_blas_call(DagInit *ruleDag,
         typeToAdd = "byRef ? (Type*)PointerType::getUnqual(charType) : "
                     "(Type*)charType";
       } else if (Def->isSubClassOf("ConstantInt")) {
-        typeToAdd =
-            "byRef ? (Type*)blasIntType : (Type*)intType";
+        typeToAdd = "byRef ? (Type*)blasIntType : (Type*)intType";
       } else if (Def->isSubClassOf("transpose")) {
         auto argStr = Def->getValueAsString("name");
         // transpose the given trans arg, but type stays
@@ -2215,21 +2215,18 @@ void emit_deriv_blas_call(DagInit *ruleDag,
   if (derivlv23) {
     os << "    if(byRef) {\n"
        << "      Type* tys" << dfnc_name << "[] = {" << typeString << "};\n"
-       << "      FT" << dfnc_name
-       << " = FunctionType::get(" << dfnc_ret_ty << ", tys" << dfnc_name
-       << ", false);\n"
+       << "      FT" << dfnc_name << " = FunctionType::get(" << dfnc_ret_ty
+       << ", tys" << dfnc_name << ", false);\n"
        << "    } else {\n"
        << "      Type* tys" << dfnc_name << "[] = {type_layout, " << typeString
        << "};\n"
-       << "      FT" << dfnc_name
-       << " = FunctionType::get(" << dfnc_ret_ty << ", tys" << dfnc_name
-       << ", false);\n"
+       << "      FT" << dfnc_name << " = FunctionType::get(" << dfnc_ret_ty
+       << ", tys" << dfnc_name << ", false);\n"
        << "    }\n";
   } else {
     os << "    Type* tys" << dfnc_name << "[] = {" << typeString << "};\n"
-       << "    FT" << dfnc_name
-       << " = FunctionType::get(" << dfnc_ret_ty << ", tys" << dfnc_name
-       << ", false);\n";
+       << "    FT" << dfnc_name << " = FunctionType::get(" << dfnc_ret_ty
+       << ", tys" << dfnc_name << ", false);\n";
   }
 
   os << "    auto derivcall_" << dfnc_name
