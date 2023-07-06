@@ -207,8 +207,8 @@ entry:
 ; CHECK-NEXT:   %fpcast.constant.fp.1.08 = bitcast double* %byref.constant.fp.1.07 to i8*
 ; CHECK-NEXT:   call void @dgemv_64_(i8* %byref.transpose.transa, i8* %m_p, i8* %n_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %"y'", i8* %cast.incy, i8* %fpcast.constant.fp.1.08, i8* %"x'", i8* %cast.incx)
 ; CHECK-NEXT:   %ld.row.trans9 = load i8, i8* %byref.transpose.transa
-; CHECK-NEXT:   %[[r39:.+]] = icmp eq i8 %ld.row.trans9, 110
-; CHECK-NEXT:   %[[r40:.+]] = icmp eq i8 %ld.row.trans9, 78
+; CHECK-DAG:   %[[r39:.+]] = icmp eq i8 %ld.row.trans9, 110
+; CHECK-DAG:   %[[r40:.+]] = icmp eq i8 %ld.row.trans9, 78
 ; CHECK-NEXT:   %41 = or i1 %[[r40]], %[[r39]]
 ; CHECK-NEXT:   %42 = select i1 %41, i8* %m_p, i8* %n_p
 ; CHECK-NEXT:   %43 = call fast double @ddot_64_(i8* %42, i8* %"y'", i8* %cast.incy, i8* %21, i8* %cast.incy)
@@ -217,8 +217,8 @@ entry:
 ; CHECK-NEXT:   %46 = fadd fast double %45, %43
 ; CHECK-NEXT:   store double %46, double* %44
 ; CHECK-NEXT:   %ld.row.trans10 = load i8, i8* %byref.transpose.transa
-; CHECK-NEXT:   %[[r47:.+]] = icmp eq i8 %ld.row.trans10, 110
-; CHECK-NEXT:   %[[r48:.+]] = icmp eq i8 %ld.row.trans10, 78
+; CHECK-DAG:   %[[r47:.+]] = icmp eq i8 %ld.row.trans10, 110
+; CHECK-DAG:   %[[r48:.+]] = icmp eq i8 %ld.row.trans10, 78
 ; CHECK-NEXT:   %49 = or i1 %[[r48]], %[[r47]]
 ; CHECK-NEXT:   %50 = select i1 %49, i8* %m_p, i8* %n_p
 ; CHECK-NEXT:   call void @dscal_64_(i8* %50, i8* %beta, i8* %"y'", i8* %cast.incy)
