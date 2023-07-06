@@ -1,13 +1,11 @@
-add_subdirectory(blas)
-
 # Run regression and unit tests
-add_lit_testsuite(check-enzyme-reverse "Running enzyme reverse mode regression tests"
+add_lit_testsuite(check-enzyme-blas "Running blas reverse mode regression tests"
     ${CMAKE_CURRENT_BINARY_DIR}
     DEPENDS ${ENZYME_TEST_DEPS}
     ARGS -v
 )
 
-set_target_properties(check-enzyme-reverse PROPERTIES FOLDER "Tests")
+set_target_properties(check-enzyme-blas PROPERTIES FOLDER "Tests")
 
 #add_lit_testsuites(ENZYME ${CMAKE_CURRENT_SOURCE_DIR}
     #    DEPENDS ${ENZYME_TEST_DEPS}
