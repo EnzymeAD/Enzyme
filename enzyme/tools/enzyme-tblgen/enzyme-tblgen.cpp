@@ -2272,9 +2272,8 @@ void emit_tmp_creation(Record *Def, raw_ostream &os) {
   const auto matName = args[0];
   const auto allocName = "mat_" + matName;
   os << "    Value *" << allocName
-     << " = CreateAllocation(BuilderZ, fpType, size_"
-     << matName
-     << ", \"" << allocName << "\");\n"
+     << " = CreateAllocation(BuilderZ, fpType, size_" << matName << ", \""
+     << allocName << "\");\n"
      << "    if (type_A->isIntegerTy()) {\n"
      << "      " << allocName << " = BuilderZ.CreatePtrToInt(" << allocName
      << ", type_A);\n"
