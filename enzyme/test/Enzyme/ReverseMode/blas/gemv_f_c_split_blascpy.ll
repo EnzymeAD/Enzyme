@@ -154,8 +154,8 @@ entry:
 ; CHECK-NEXT:   %loaded.trans = load i8, i8* %malloccall
 ; CHECK-DAG:   %[[r15:.+]] = icmp eq i8 %loaded.trans, 78
 ; CHECK-DAG:   %[[r16:.+]] = icmp eq i8 %loaded.trans, 110
-; CHECK-NEXT:   %17 = or i1 %[[r16]], %[[r15]]
-; CHECK-NEXT:   %18 = select i1 %17, i64 %12, i64 %14
+; CHECK-NEXT:   %[[r17:.+]] = or i1 %[[r16]], %[[r15]]
+; CHECK-NEXT:   %18 = select i1 %[[r17]], i64 %12, i64 %14
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %18, 8
 ; CHECK-NEXT:   %malloccall6 = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   %mat_Ax = bitcast i8* %malloccall6 to double*
