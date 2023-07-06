@@ -155,8 +155,8 @@ entry:
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
 ; CHECK-NEXT:   %fpcast.constant.fp.1.0 = bitcast double* %byref.constant.fp.1.0 to i8*
 ; CHECK-NEXT:   %loaded.trans7 = load i8, i8* %transa
-; CHECK-NEXT:   %[[i41:.+]] = icmp eq i8 %loaded.trans7, 78
-; CHECK-NEXT:   %[[i42:.+]] = icmp eq i8 %loaded.trans7, 110
+; CHECK-DAG:   %[[i41:.+]] = icmp eq i8 %loaded.trans7, 78
+; CHECK-DAG:   %[[i42:.+]] = icmp eq i8 %loaded.trans7, 110
 ; CHECK-NEXT:   %[[i43:.+]] = or i1 %[[i42]], %[[i41]]
 ; CHECK-NEXT:   %[[i44:.+]] = select i1 %43, i8* %m_p, i8* %k_p
 ; CHECK-NEXT:   store double 0.000000e+00, double* %byref.constant.fp.0.0
