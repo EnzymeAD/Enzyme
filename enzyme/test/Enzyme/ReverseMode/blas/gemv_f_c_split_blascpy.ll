@@ -45,7 +45,7 @@ entry:
   ret void
 }
 
-; CHECK: define internal { double*, double* } @augmented_f(i8* noalias %y, i8* %"y'", i8* noalias %A, i8* %"A'", i8* noalias %x, i8* %"x'", i8* noalias %alpha, i8* %"alpha'", i8* noalias %beta, i8* %"beta'") #1 {
+; CHECK: define internal { double*, double* } @augmented_f(i8* noalias %y, i8* %"y'", i8* noalias %A, i8* %"A'", i8* noalias %x, i8* %"x'", i8* noalias %alpha, i8* %"alpha'", i8* noalias %beta, i8* %"beta'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = alloca { double*, double* }
 ; CHECK-NEXT:   %byref. = alloca i64
@@ -104,7 +104,7 @@ entry:
 ; CHECK-NEXT:   %23 = insertvalue { double*, double* } undef, double* %cache.x, 0
 ; CHECK-NEXT:   %24 = insertvalue { double*, double* } %23, double* %cache.y, 1
 ; CHECK-NEXT:   store { double*, double* } %24, { double*, double* }* %0
-; CHECK-NEXT:   call void @dgemv_64_(i8* %malloccall, i8* %m_p, i8* %n_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta, i8* %y, i8* %incy_p) #1
+; CHECK-NEXT:   call void @dgemv_64_(i8* %malloccall, i8* %m_p, i8* %n_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta, i8* %y, i8* %incy_p)
 ; CHECK-NEXT:   %25 = load { double*, double* }, { double*, double* }* %0
 ; CHECK-NEXT:   ret { double*, double* } %25
 ; CHECK-NEXT: }
