@@ -2666,8 +2666,13 @@ public:
         }
       ss << "cannot handle unknown binary operator: " << BO << "\n";
       if (CustomErrorHandler) {
-        CustomErrorHandler(ss.str().c_str(), wrap(&BO), ErrorType::NoDerivative,
-                           gutils, nullptr, wrap(&Builder2));
+        auto rval = unwrap(CustomErrorHandler(ss.str().c_str(), wrap(&BO),
+                                              ErrorType::NoDerivative, gutils,
+                                              nullptr, wrap(&Builder2)));
+        if (!rval)
+          rval = Constant::getNullValue(gutils->getShadowType(BO.getType()));
+        if (!gutils->isConstantValue(&BO))
+          setDiffe(&BO, rval, Builder2);
       } else {
         llvm::errs() << ss.str() << "\n";
         report_fatal_error("unknown binary operator");
