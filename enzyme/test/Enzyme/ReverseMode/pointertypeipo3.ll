@@ -90,9 +90,9 @@ attributes #22 = { readnone }
 
 ; CHECK: define internal { {{.*}}, i64 } @augmented_pop(i64 %arr.coerce0)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   %"malloccall'mi" = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"malloccall'mi", i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   %"arr'ipc" = bitcast i8* %"malloccall'mi" to i64*
 ; CHECK-NEXT:   %arr = bitcast i8* %malloccall to i64*
 ; CHECK-NEXT:   store i64 %arr.coerce0, i64* %arr
@@ -134,8 +134,8 @@ attributes #22 = { readnone }
 
 ; CHECK: define internal { i64 } @diffepop(i64 %arr.coerce0, i64 %differeturn, {{.*}} %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[malloccall:.+]] = extractvalue { i64*, i8*, i8*, i64 } %tapeArg, 2
 ; CHECK-NEXT:   %[[dmalloccall:.+]] = extractvalue { i64*, i8*, i8*, i64 } %tapeArg, 1
+; CHECK-NEXT:   %[[malloccall:.+]] = extractvalue { i64*, i8*, i8*, i64 } %tapeArg, 2
 ; CHECK-NEXT:   %[[darr:.+]] = bitcast i8* %[[dmalloccall]] to i64*
 ; CHECK-NEXT:   %[[arr:.+]] = bitcast i8* %[[malloccall]] to i64*
 ; CHECK-NEXT:   %[[dcall:.+]] = extractvalue { i64*, i8*, i8*, i64 } %tapeArg, 0

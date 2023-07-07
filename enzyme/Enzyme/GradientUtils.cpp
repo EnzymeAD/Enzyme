@@ -8213,6 +8213,22 @@ void GradientUtils::forceAugmentedReturns() {
 
       IRBuilder<> BuilderZ(inst);
       getForwardBuilder(BuilderZ);
+
+      // Shadow allocations must strictly preceede the primal, lest Julia have
+      // GC issues. Consider the following: %r = gc_alloc() init %r
+      // ...
+      // if the shadow did not preceed
+      // %r = gc_alloc()
+      // %dr = gc_alloc()
+      // zero %dr
+      // init %r, %dr
+      // ...
+      // After %r, before %dr the %r memory would be uninit, so the allocator
+      // inside %dr would hit garbage and segfault. However, by having the %dr
+      // first, then it will be zero'd before the %r allocation, preventing the
+      // issue.
+      if (isAllocationCall(inst, TLI))
+        BuilderZ.SetInsertPoint(getNewFromOriginal(inst));
       Type *antiTy = getShadowType(inst->getType());
 
       PHINode *anti = BuilderZ.CreatePHI(antiTy, 1, op->getName() + "'ip_phi");
@@ -8220,7 +8236,7 @@ void GradientUtils::forceAugmentedReturns() {
       invertedPointers.insert(
           std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
 
-      if (called && isAllocationFunction(called->getName(), TLI)) {
+      if (isAllocationCall(inst, TLI)) {
         anti->setName(op->getName() + "'mi");
       }
     }

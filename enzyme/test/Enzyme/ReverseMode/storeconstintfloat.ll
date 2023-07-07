@@ -51,9 +51,9 @@ entry:
 
 ; CHECK: define internal { double } @diffe_Z6foobard(double %t, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   %"malloccall'mi" = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"malloccall'mi", i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   %[[xipc:.+]] = bitcast i8* %"malloccall'mi" to double*
 ; CHECK-NEXT:   %x = bitcast i8* %malloccall to double*
 ; CHECK-NEXT:   %[[ipc:.+]] = bitcast i8* %"malloccall'mi" to i64*

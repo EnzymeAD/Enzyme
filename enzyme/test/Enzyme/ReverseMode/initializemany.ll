@@ -147,9 +147,9 @@ attributes #4 = { nounwind }
 ; CHECK: for.body:                                         ; preds = %for.body, %entry
 ; CHECK-NEXT:   %[[iv:.+]] = phi i64 [ %[[ivnext:.+]], %for.body ], [ 0, %entry ]
 ; CHECK-NEXT:   %[[ivnext:.+]] = add nuw nsw i64 %[[iv]], 1
-; CHECK-NEXT:   %call = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   %"call'mi" = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"call'mi", i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %call = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   %[[bitcaster:.+]] = bitcast i8* %call to double*
 ; CHECK-NEXT:   %[[arrayidxipg:.+]] = getelementptr inbounds double*, double** %"arrayp'", i64 %[[iv]]
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds double*, double** %arrayp, i64 %[[iv]]

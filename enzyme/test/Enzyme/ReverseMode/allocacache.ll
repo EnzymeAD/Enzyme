@@ -484,9 +484,9 @@ attributes #11 = { cold }
 
 ; CHECK: define internal { { <2 x double>, i8*, i8*, <2 x double> }, <2 x double> } @augmented_subfn(<2 x double>* %W, <2 x double>* %"W'", double %B1, double %B2, i64 %row)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   %"malloccall'mi" = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* {{(noundef )?}}nonnull align 1 dereferenceable(16) dereferenceable_or_null(16) %"malloccall'mi", i8 0, i64 16, i1 false)
+; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   %"Bref'ipc" = bitcast i8* %"malloccall'mi" to <2 x double>*
 ; CHECK-NEXT:   %Bref = bitcast i8* %malloccall to <2 x double>*
 ; CHECK-NEXT:   %W34p = getelementptr inbounds <2 x double>, <2 x double>* %W, i64 1
@@ -512,8 +512,8 @@ attributes #11 = { cold }
 
 ; CHECK: define internal { double, double } @diffesubfn(<2 x double>* %W, <2 x double>* %"W'", double %B1, double %B2, i64 %row, <2 x double> %differeturn, { <2 x double>, i8*, i8*, <2 x double> } %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[malloccall:.+]] = extractvalue { <2 x double>, i8*, i8*, <2 x double> } %tapeArg, 2
 ; CHECK-NEXT:   %[[malloccallmi:.+]] = extractvalue { <2 x double>, i8*, i8*, <2 x double> } %tapeArg, 1
+; CHECK-NEXT:   %[[malloccall:.+]] = extractvalue { <2 x double>, i8*, i8*, <2 x double> } %tapeArg, 2
 ; CHECK-NEXT:   %[[Brefipc:.+]] = bitcast i8* %[[malloccallmi]] to <2 x double>*
 ; CHECK-NEXT:   %[[Bref:.+]] = bitcast i8* %[[malloccall]] to <2 x double>*
 ; CHECK-NEXT:   %[[W34pipge:.+]] = getelementptr inbounds <2 x double>, <2 x double>* %"W'", i64 1

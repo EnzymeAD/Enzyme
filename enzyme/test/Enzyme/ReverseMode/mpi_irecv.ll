@@ -72,8 +72,8 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = alloca i32
 ; CHECK-NEXT:   %1 = alloca %struct.ompi_status_public_t
-; CHECK-NEXT:   %malloccall = extractvalue { { i8*, i64, i8*, i64, i64, i8*, i8, i8* }*, i8*, i8* } %tapeArg, 2
 ; CHECK-NEXT:   %"malloccall'mi" = extractvalue { { i8*, i64, i8*, i64, i64, i8*, i8, i8* }*, i8*, i8* } %tapeArg, 1
+; CHECK-NEXT:   %malloccall = extractvalue { { i8*, i64, i8*, i64, i64, i8*, i8, i8* }*, i8*, i8* } %tapeArg, 2
 ; CHECK-NEXT:   %"r2'ipc" = bitcast i8* %"malloccall'mi" to %struct.ompi_request_t**
 ; CHECK-NEXT:   %r2 = bitcast i8* %malloccall to %struct.ompi_request_t**
 ; CHECK-NEXT:   %2 = extractvalue { { i8*, i64, i8*, i64, i64, i8*, i8, i8* }*, i8*, i8* } %tapeArg, 0
