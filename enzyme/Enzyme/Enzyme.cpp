@@ -1120,19 +1120,10 @@ public:
       return {};
     }
 
-#if LLVM_VERSION_MAJOR > 16
-    return std::optional<Options>(
-        {differet, tape, dynamic_interface, trace, observations, likelihood,
-         diffeLikelihood, width, allocatedTapeSize, freeMemory, returnUsed,
-         tapeIsPointer, differentialReturn, diffeTrace, retType, primalReturn,
-         ActiveRandomVariables});
-#else
-    return Optional<Options>({differet, tape, dynamic_interface, trace,
-                              observations, likelihood, diffeLikelihood, width,
-                              allocatedTapeSize, freeMemory, returnUsed,
-                              tapeIsPointer, differentialReturn, diffeTrace,
-                              retType, primalReturn, ActiveRandomVariables});
-#endif
+    return Options({differet, tape, dynamic_interface, trace, observations,
+                    likelihood, diffeLikelihood, width, allocatedTapeSize,
+                    freeMemory, returnUsed, tapeIsPointer, differentialReturn,
+                    diffeTrace, retType, primalReturn, ActiveRandomVariables});
   }
 
   static FnTypeInfo
