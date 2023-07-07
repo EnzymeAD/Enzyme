@@ -520,7 +520,10 @@ bool preserveNVVM(bool Begin, Function &F) {
           deallocfn = CE->getOperand(0);
         }
         size_t index = 0;
-        if (auto CI = dyn_cast<ConstantInt>(name)) {
+        if (isa<ConstantPointerNull>(name)) {
+          // An integer 0 may have been implicitly converted to a null pointer
+          index = 0;
+        } else if (auto CI = dyn_cast<ConstantInt>(name)) {
           index = CI->getZExtValue();
         } else {
           llvm::errs() << *name << "\n";
