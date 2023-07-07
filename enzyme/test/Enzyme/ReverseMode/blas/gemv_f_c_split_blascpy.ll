@@ -90,8 +90,8 @@ entry:
 ; CHECK-NEXT:   store i64 1, i64* %byref.
 ; CHECK-NEXT:   call void @dcopy_64_(i8* %[[i14]], i8* %x, i8* %incx_p, double* %cache.x, i64* %byref.)
 ; CHECK-NEXT:   %loaded.trans7 = load i8, i8* %malloccall
-; CHECK-NEXT:   %[[i17:.+]] = icmp eq i8 %loaded.trans7, 78
-; CHECK-NEXT:   %[[i18:.+]] = icmp eq i8 %loaded.trans7, 110
+; CHECK-DAG:   %[[i17:.+]] = icmp eq i8 %loaded.trans7, 78
+; CHECK-DAG:   %[[i18:.+]] = icmp eq i8 %loaded.trans7, 110
 ; CHECK-NEXT:   %[[i19:.+]] = or i1 %[[i18]], %[[i17]]
 ; CHECK-NEXT:   %[[i20:.+]] = select i1 %[[i19]], i8* %m_p, i8* %n_p
 ; CHECK-NEXT:   %[[i21:.+]] = bitcast i8* %[[i20]] to i64*
@@ -207,9 +207,9 @@ entry:
 ; CHECK-NEXT:   %fpcast.constant.fp.1.08 = bitcast double* %byref.constant.fp.1.07 to i8*
 ; CHECK-NEXT:   call void @dgemv_64_(i8* %byref.transpose.transa, i8* %m_p, i8* %n_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %"y'", i8* %cast.incy, i8* %fpcast.constant.fp.1.08, i8* %"x'", i8* %cast.incx)
 ; CHECK-NEXT:   %ld.row.trans9 = load i8, i8* %byref.transpose.transa
-; CHECK-NEXT:   %39 = icmp eq i8 %ld.row.trans9, 110
-; CHECK-NEXT:   %40 = icmp eq i8 %ld.row.trans9, 78
-; CHECK-NEXT:   %41 = or i1 %40, %39
+; CHECK-DAG:   %[[r39:.+]] = icmp eq i8 %ld.row.trans9, 110
+; CHECK-DAG:   %[[r40:.+]] = icmp eq i8 %ld.row.trans9, 78
+; CHECK-NEXT:   %41 = or i1 %[[r40]], %[[r39]]
 ; CHECK-NEXT:   %42 = select i1 %41, i8* %m_p, i8* %n_p
 ; CHECK-NEXT:   %43 = call fast double @ddot_64_(i8* %42, i8* %"y'", i8* %cast.incy, i8* %21, i8* %cast.incy)
 ; CHECK-NEXT:   %44 = bitcast i8* %"beta'" to double*
@@ -217,9 +217,9 @@ entry:
 ; CHECK-NEXT:   %46 = fadd fast double %45, %43
 ; CHECK-NEXT:   store double %46, double* %44
 ; CHECK-NEXT:   %ld.row.trans10 = load i8, i8* %byref.transpose.transa
-; CHECK-NEXT:   %47 = icmp eq i8 %ld.row.trans10, 110
-; CHECK-NEXT:   %48 = icmp eq i8 %ld.row.trans10, 78
-; CHECK-NEXT:   %49 = or i1 %48, %47
+; CHECK-DAG:   %[[r47:.+]] = icmp eq i8 %ld.row.trans10, 110
+; CHECK-DAG:   %[[r48:.+]] = icmp eq i8 %ld.row.trans10, 78
+; CHECK-NEXT:   %49 = or i1 %[[r48]], %[[r47]]
 ; CHECK-NEXT:   %50 = select i1 %49, i8* %m_p, i8* %n_p
 ; CHECK-NEXT:   call void @dscal_64_(i8* %50, i8* %beta, i8* %"y'", i8* %cast.incy)
 ; CHECK-NEXT:   %51 = bitcast double* %tape.ext.x to i8*
