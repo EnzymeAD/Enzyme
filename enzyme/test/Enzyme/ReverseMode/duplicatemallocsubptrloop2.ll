@@ -72,9 +72,9 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = alloca { { double**, double* }, double }
 ; CHECK-NEXT:   %1 = getelementptr inbounds { { double**, double* }, double }, { { double**, double* }, double }* %0, i32 0, i32 0
-; CHECK-NEXT:   %p2 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   %"p2'mi" = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"p2'mi", i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %p2 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
 ; CHECK-NEXT:   %"a4'ac_malloccache" = bitcast i8* %malloccall to double**
 ; CHECK-NEXT:   %2 = getelementptr inbounds { double**, double* }, { double**, double* }* %1, i32 0, i32 0
@@ -123,9 +123,9 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = extractvalue { double**, double* } %tapeArg, 0
 ; CHECK-NEXT:   %1 = extractvalue { double**, double* } %tapeArg, 1
-; CHECK-NEXT:   %p2 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   %"p2'mi" = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"p2'mi", i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %p2 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   br label %loop
 
 ; CHECK: loop:                                             ; preds = %loop, %entry

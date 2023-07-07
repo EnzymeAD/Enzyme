@@ -312,8 +312,8 @@ attributes #10 = { noreturn nounwind }
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %"ptr0'il_phi" = extractvalue { i8*, i8*, double* } %tapeArg, 2
 ; CHECK-NEXT:   %ptrsize = shl i64 %size, 3
-; CHECK-NEXT:   %alloc = extractvalue { i8*, i8*, double* } %tapeArg, 1
 ; CHECK-NEXT:   %"alloc'mi" = extractvalue { i8*, i8*, double* } %tapeArg, 0
+; CHECK-NEXT:   %alloc = extractvalue { i8*, i8*, double* } %tapeArg, 1
 ; CHECK-NEXT:   %"nptr'ipc" = bitcast i8* %"alloc'mi" to double*
 ; CHECK-NEXT:   %"insertptr'ipg" = getelementptr inbounds double, double* %"nptr'ipc", i64 %size
 ; CHECK-NEXT:   %0 = udiv i64 %ptrsize, 8
