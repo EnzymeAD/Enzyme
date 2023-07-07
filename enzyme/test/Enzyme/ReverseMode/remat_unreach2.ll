@@ -79,14 +79,14 @@ declare dso_local void @_Z17__enzyme_autodiffPFddiEz(...)
 
 ; CHECK: define internal void @diffematvec(double* %tmp4, double* %"tmp4'", i1 %cmp, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %tcall = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   %"tcall'mi" = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(128) dereferenceable_or_null(128) %"tcall'mi", i8 0, i64 128, i1 false)
+; CHECK-NEXT:   %tcall = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   %"tmp'ipc" = bitcast i8* %"tcall'mi" to double*
 ; CHECK-NEXT:   %tmp = bitcast i8* %tcall to double*
-; CHECK-NEXT:   %omem = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   %"omem'mi" = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(128) dereferenceable_or_null(128) %"omem'mi", i8 0, i64 128, i1 false)
+; CHECK-NEXT:   %omem = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   %"tmp19'ipc" = bitcast i8* %"omem'mi" to double*
 ; CHECK-NEXT:   %tmp19 = bitcast i8* %omem to double*
 ; CHECK-NEXT:   %spec.select = select i1 %cmp, double* null, double* %"tmp19'ipc"

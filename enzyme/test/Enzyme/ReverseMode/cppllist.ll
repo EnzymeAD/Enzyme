@@ -182,9 +182,9 @@ attributes #8 = { builtin nounwind }
 ; CHECK-NEXT:   %[[nodevar:.+]] = phi %class.node* [ %"'ipc", %for.body ], [ null, %entry ]
 ; CHECK-NEXT:   %list.09 = phi %class.node* [ %[[bcnode:.+]], %for.body ], [ null, %entry ]
 ; CHECK-NEXT:   %[[ivnext]] = add nuw nsw i64 %[[iv]], 1
-; CHECK-NEXT:   %call = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @_Znwm(i64 16) 
 ; CHECK-NEXT:   %"call'mi" = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @_Znwm(i64 16) 
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* {{(noundef )?}}nonnull {{(align 1 )?}}dereferenceable(16) dereferenceable_or_null(16) %"call'mi", i8 0, i64 16, {{(i32 1, )?}}i1 false)
+; CHECK-NEXT:   %call = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @_Znwm(i64 16) 
 ; CHECK-NEXT:   %"'ipc" = bitcast i8* %"call'mi" to %class.node*
 ; CHECK-NEXT:   %[[bcnode]] = bitcast i8* %call to %class.node*
 ; CHECK-NEXT:   %value.i = bitcast i8* %call to double*

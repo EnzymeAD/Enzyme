@@ -2666,8 +2666,13 @@ public:
         }
       ss << "cannot handle unknown binary operator: " << BO << "\n";
       if (CustomErrorHandler) {
-        CustomErrorHandler(ss.str().c_str(), wrap(&BO), ErrorType::NoDerivative,
-                           gutils, nullptr, wrap(&Builder2));
+        auto rval = unwrap(CustomErrorHandler(ss.str().c_str(), wrap(&BO),
+                                              ErrorType::NoDerivative, gutils,
+                                              nullptr, wrap(&Builder2)));
+        if (!rval)
+          rval = Constant::getNullValue(gutils->getShadowType(BO.getType()));
+        if (!gutils->isConstantValue(&BO))
+          setDiffe(&BO, rval, Builder2);
       } else {
         llvm::errs() << ss.str() << "\n";
         report_fatal_error("unknown binary operator");
@@ -8938,6 +8943,7 @@ public:
                 anti = gutils->cacheForReverse(
                     bb, anti, getIndex(&call, CacheType::Shadow));
             } else {
+              bool zeroed = false;
               auto rule = [&]() {
 #if LLVM_VERSION_MAJOR >= 11
                 Value *anti = bb.CreateCall(call.getFunctionType(),
@@ -9006,6 +9012,19 @@ public:
 #endif
                     }
                   }
+                  if (Mode == DerivativeMode::ReverseModeCombined ||
+                      (Mode == DerivativeMode::ReverseModePrimal &&
+                       forwardsShadow) ||
+                      (Mode == DerivativeMode::ReverseModeGradient &&
+                       backwardsShadow) ||
+                      (Mode == DerivativeMode::ForwardModeSplit &&
+                       backwardsShadow)) {
+                    if (!inLoop) {
+                      zeroKnownAllocation(bb, anti, args, funcName, gutils->TLI,
+                                          &call);
+                      zeroed = true;
+                    }
+                  }
                 }
                 return anti;
               };
@@ -9024,6 +9043,7 @@ public:
               else {
                 if (auto MD = hasMetadata(&call, "enzyme_fromstack")) {
                   isAlloca = true;
+                  bb.SetInsertPoint(cast<Instruction>(anti));
                   Value *Size;
                   if (funcName == "malloc")
                     Size = args[0];
@@ -9058,55 +9078,60 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
                   }
 #endif
-                  Value *replacement = bb.CreateAlloca(elTy, Size, name);
-                  if (name.size() == 0)
-                    replacement->takeName(anti);
-                  else
-                    anti->setName("");
-                  auto Alignment = cast<ConstantInt>(cast<ConstantAsMetadata>(
-                                                         MD->getOperand(0))
-                                                         ->getValue())
-                                       ->getLimitedValue();
-                  if (Alignment) {
+                  auto rule = [&](Value *anti) {
+                    Value *replacement = bb.CreateAlloca(elTy, Size, name);
+                    if (name.size() == 0)
+                      replacement->takeName(anti);
+                    else
+                      anti->setName("");
+                    auto Alignment = cast<ConstantInt>(cast<ConstantAsMetadata>(
+                                                           MD->getOperand(0))
+                                                           ->getValue())
+                                         ->getLimitedValue();
+                    if (Alignment) {
 #if LLVM_VERSION_MAJOR >= 10
-                    cast<AllocaInst>(replacement)
-                        ->setAlignment(Align(Alignment));
+                      cast<AllocaInst>(replacement)
+                          ->setAlignment(Align(Alignment));
 #else
-                    cast<AllocaInst>(replacement)->setAlignment(Alignment);
+                      cast<AllocaInst>(replacement)->setAlignment(Alignment);
 #endif
-                  }
-#if LLVM_VERSION_MAJOR >= 15
-                  if (call.getContext().supportsTypedPointers()) {
-#endif
-                    if (anti->getType()->getPointerElementType() != elTy)
-                      replacement = bb.CreatePointerCast(
-                          replacement,
-                          PointerType::getUnqual(
-                              anti->getType()->getPointerElementType()));
-#if LLVM_VERSION_MAJOR >= 15
-                  }
-#endif
-
-                  if (int AS = cast<PointerType>(anti->getType())
-                                   ->getAddressSpace()) {
-                    llvm::PointerType *PT;
+                    }
 #if LLVM_VERSION_MAJOR >= 15
                     if (call.getContext().supportsTypedPointers()) {
 #endif
-                      PT = PointerType::get(
-                          anti->getType()->getPointerElementType(), AS);
+                      if (anti->getType()->getPointerElementType() != elTy)
+                        replacement = bb.CreatePointerCast(
+                            replacement,
+                            PointerType::getUnqual(
+                                anti->getType()->getPointerElementType()));
 #if LLVM_VERSION_MAJOR >= 15
-                    } else {
-                      PT = PointerType::get(anti->getContext(), AS);
                     }
 #endif
-                    replacement = bb.CreateAddrSpaceCast(replacement, PT);
-                    cast<Instruction>(replacement)
-                        ->setMetadata(
-                            "enzyme_backstack",
-                            MDNode::get(replacement->getContext(), {}));
-                  }
 
+                    if (int AS = cast<PointerType>(anti->getType())
+                                     ->getAddressSpace()) {
+                      llvm::PointerType *PT;
+#if LLVM_VERSION_MAJOR >= 15
+                      if (call.getContext().supportsTypedPointers()) {
+#endif
+                        PT = PointerType::get(
+                            anti->getType()->getPointerElementType(), AS);
+#if LLVM_VERSION_MAJOR >= 15
+                      } else {
+                        PT = PointerType::get(anti->getContext(), AS);
+                      }
+#endif
+                      replacement = bb.CreateAddrSpaceCast(replacement, PT);
+                      cast<Instruction>(replacement)
+                          ->setMetadata(
+                              "enzyme_backstack",
+                              MDNode::get(replacement->getContext(), {}));
+                    }
+                    return replacement;
+                  };
+
+                  auto replacement =
+                      applyChainRule(call.getType(), bb, rule, anti);
                   gutils->replaceAWithB(cast<Instruction>(anti), replacement);
                   gutils->erase(cast<Instruction>(anti));
                   anti = replacement;
@@ -9121,13 +9146,7 @@ public:
                   (Mode == DerivativeMode::ForwardModeSplit &&
                    backwardsShadow)) {
                 if (!inLoop) {
-                  applyChainRule(
-                      bb,
-                      [&](Value *anti) {
-                        zeroKnownAllocation(bb, anti, args, funcName,
-                                            gutils->TLI, &call);
-                      },
-                      anti);
+                  assert(zeroed);
                 }
               }
             }

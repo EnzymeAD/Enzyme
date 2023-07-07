@@ -495,9 +495,9 @@ attributes #9 = { cold }
 
 ; CHECK: define internal { <2 x double>*, i8*, i8*, <2 x double>, double, <2 x double>, double } @augmented_subfn(<2 x double>* %dst, <2 x double>* %"dst'", %"class.Eigen::Matrix"* %W, %"class.Eigen::Matrix"* %"W'", double* %B, double* %"B'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   %"malloccall'mi" = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* {{(noundef )?}}nonnull align 1 dereferenceable(16) dereferenceable_or_null(16) %"malloccall'mi", i8 0, i64 16, i1 false)
+; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   %"tmp.i'ipc" = bitcast i8* %"malloccall'mi" to <2 x double>*
 ; CHECK-NEXT:   %tmp.i = bitcast i8* %malloccall to <2 x double>*
 ; CHECK-NEXT:   %subcast_augmented = call { <2 x double>*, <2 x double>* } @augmented_subcast(<2 x double>*{{( nonnull)?}} %tmp.i, <2 x double>*{{( nonnull)?}} %"tmp.i'ipc")
@@ -534,8 +534,8 @@ attributes #9 = { cold }
 
 ; CHECK: define internal void @diffesubfn(<2 x double>* %dst, <2 x double>* %"dst'", %"class.Eigen::Matrix"* %W, %"class.Eigen::Matrix"* %"W'", double* %B, double* %"B'", { <2 x double>*, i8*, i8*, <2 x double>, double, <2 x double>, double } %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[malloccall:.+]] = extractvalue { <2 x double>*, i8*, i8*, <2 x double>, double, <2 x double>, double } %tapeArg, 2
 ; CHECK-NEXT:   %[[malloccallmi:.+]] = extractvalue { <2 x double>*, i8*, i8*, <2 x double>, double, <2 x double>, double } %tapeArg, 1
+; CHECK-NEXT:   %[[malloccall:.+]] = extractvalue { <2 x double>*, i8*, i8*, <2 x double>, double, <2 x double>, double } %tapeArg, 2
 
 ; CHECK-NEXT:   %[[tmpiipc:.+]] = bitcast i8* %[[malloccallmi]] to <2 x double>*
 ; CHECK-NEXT:   %[[tmpi:.+]] = bitcast i8* %[[malloccall]] to <2 x double>*

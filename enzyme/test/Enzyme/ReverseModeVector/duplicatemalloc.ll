@@ -56,13 +56,13 @@ attributes #4 = { nounwind }
 ; SHARED: define internal { [3 x double] } @diffe3malloced(double %x, i64 %n, [3 x double] %differeturn)
 ; SHARED-NEXT: entry:
 ; SHARED-NEXT:   %mul = shl i64 %n, 3
-; SHARED-NEXT:   %call = tail call i8* @malloc(i64 %mul)
 ; SHARED-NEXT:   %[[alloc1:.+]] = tail call noalias nonnull i8* @malloc(i64 %mul)
-; SHARED-NEXT:   %[[alloc2:.+]] = tail call noalias nonnull i8* @malloc(i64 %mul)
-; SHARED-NEXT:   %[[alloc3:.+]] = tail call noalias nonnull i8* @malloc(i64 %mul)
 ; SHARED-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull %[[alloc1]], i8 0, i64 %mul, i1 false)
+; SHARED-NEXT:   %[[alloc2:.+]] = tail call noalias nonnull i8* @malloc(i64 %mul)
 ; SHARED-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull %[[alloc2]], i8 0, i64 %mul, i1 false)
+; SHARED-NEXT:   %[[alloc3:.+]] = tail call noalias nonnull i8* @malloc(i64 %mul)
 ; SHARED-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull %[[alloc3]], i8 0, i64 %mul, i1 false)
+; SHARED-NEXT:   %call = tail call i8* @malloc(i64 %mul)
 ; SHARED-NEXT:   %[[ipc:.+]] = bitcast i8* %[[alloc1]] to double*
 ; SHARED-NEXT:   %0 = insertvalue [3 x double*] {{(undef|poison)}}, double* %[[ipc]], 0
 ; SHARED-NEXT:   %[[ipc5:.+]] = bitcast i8* %[[alloc2]] to double*
