@@ -1618,11 +1618,30 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
        << "  const bool overwritten_" << name
        << " = (cacheMode ? overwritten_args[pos_" << name << "] : false);\n";
     if (std::count(actArgs.begin(), actArgs.end(), i)) {
-      os << "  const bool active_" << name
+      os << "  bool active_" << name
          << " = !gutils->isConstantValue(orig_" << name << ");\n";
     }
     os << "\n";
   }
+
+  os << "\n  // <X> is inactive either if gutils->isConstantValue(<X>)\n"
+     << "  // returns true, or if runtimeActivity is on and the\n"
+     << "  // shadow points to the primal arg.\n";
+
+  os << "  if(EnzymeRuntimeActivityCheck) {\n";
+  for (size_t i = 0; i < actArgs.size(); i++) {
+    auto name = nameVec[actArgs[i]];
+
+    // floats are passed by calue, except of the Fortran Abi (byRef)
+    auto ty = argTypeMap.lookup(actArgs[i]);
+      os << "  if (";
+      if (ty == ArgType::fp)
+        os << "byRef && ";
+      os << "active_" << name << " && arg_" << name
+         << " == gutils->invertPointerM(orig_" << name << ", BuilderZ))\n"
+         << "    active_" << name << " = false;\n";
+  }
+  os << "  }\n";
 
   bool hasFP = false;
   for (auto name : enumerate(nameVec)) {
