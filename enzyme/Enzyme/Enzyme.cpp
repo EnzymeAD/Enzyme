@@ -37,7 +37,11 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
+#if LLVM_VERSION_MAJOR <= 16
 #include "llvm/ADT/Optional.h"
+#else
+#include <optional>
+#endif
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -153,14 +157,7 @@ void attributeKnownFunctions(llvm::Function &F) {
       }
   }
 
-  auto blasMetaData = extractBLAS(F.getName());
-#if LLVM_VERSION_MAJOR >= 16
-  if (blasMetaData.has_value())
-    attributeBLAS(blasMetaData.value(), &F);
-#else
-  if (blasMetaData.hasValue())
-    attributeBLAS(blasMetaData.getValue(), &F);
-#endif
+  attributeTablegen(F);
 
   if (F.getName() ==
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_createERmm") {
@@ -317,11 +314,24 @@ castToDiffeFunctionArgType(IRBuilder<> &Builder, llvm::CallInst *CI,
   return Builder.CreateBitCast(value, destType);
 }
 
+#if LLVM_VERSION_MAJOR > 16
+static std::optional<StringRef> getMetadataName(llvm::Value *res);
+#else
 static Optional<StringRef> getMetadataName(llvm::Value *res);
+#endif
 
 // if all phi arms are (recursively) based on the same metaString, use that
-static Optional<StringRef> recursePhiReads(PHINode *val) {
+#if LLVM_VERSION_MAJOR > 16
+static std::optional<StringRef> recursePhiReads(PHINode *val)
+#else
+static Optional<StringRef> recursePhiReads(PHINode *val)
+#endif
+{
+#if LLVM_VERSION_MAJOR > 16
+  std::optional<StringRef> finalMetadata;
+#else
   Optional<StringRef> finalMetadata;
+#endif
   SmallVector<PHINode *, 1> todo = {val};
   SmallSet<PHINode *, 1> done;
   while (todo.size()) {
@@ -349,7 +359,12 @@ static Optional<StringRef> recursePhiReads(PHINode *val) {
   return finalMetadata;
 }
 
-static Optional<StringRef> getMetadataName(llvm::Value *res) {
+#if LLVM_VERSION_MAJOR > 16
+std::optional<StringRef> getMetadataName(llvm::Value *res)
+#else
+Optional<StringRef> getMetadataName(llvm::Value *res)
+#endif
+{
   if (auto av = dyn_cast<MetadataAsValue>(res)) {
     return cast<MDString>(av->getMetadata())->getString();
   } else if ((isa<LoadInst>(res) || isa<CastInst>(res)) &&
@@ -536,7 +551,12 @@ public:
     return cast<Function>(fn);
   }
 
-  static Optional<unsigned> parseWidthParameter(CallInst *CI) {
+#if LLVM_VERSION_MAJOR > 16
+  static std::optional<unsigned> parseWidthParameter(CallInst *CI)
+#else
+  static Optional<unsigned> parseWidthParameter(CallInst *CI)
+#endif
+  {
     unsigned width = 1;
 
 #if LLVM_VERSION_MAJOR >= 14
@@ -598,6 +618,8 @@ public:
     Value *dynamic_interface;
     Value *trace;
     Value *observations;
+    Value *likelihood;
+    Value *diffeLikelihood;
     unsigned width;
     int allocatedTapeSize;
     bool freeMemory;
@@ -607,14 +629,23 @@ public:
     bool diffeTrace;
     DIFFE_TYPE retType;
     bool primalReturn;
+    StringSet<> ActiveRandomVariables;
   };
 
-  static Optional<Options> handleArguments(IRBuilder<> &Builder, CallInst *CI,
-                                           Function *fn, DerivativeMode mode,
-                                           bool sizeOnly,
-                                           std::vector<DIFFE_TYPE> &constants,
-                                           SmallVectorImpl<Value *> &args,
-                                           std::map<int, Type *> &byVal) {
+#if LLVM_VERSION_MAJOR > 16
+  static std::optional<Options>
+  handleArguments(IRBuilder<> &Builder, CallInst *CI, Function *fn,
+                  DerivativeMode mode, bool sizeOnly,
+                  std::vector<DIFFE_TYPE> &constants,
+                  SmallVectorImpl<Value *> &args, std::map<int, Type *> &byVal)
+#else
+  static Optional<Options>
+  handleArguments(IRBuilder<> &Builder, CallInst *CI, Function *fn,
+                  DerivativeMode mode, bool sizeOnly,
+                  std::vector<DIFFE_TYPE> &constants,
+                  SmallVectorImpl<Value *> &args, std::map<int, Type *> &byVal)
+#endif
+  {
     FunctionType *FT = fn->getFunctionType();
 
     Value *differet = nullptr;
@@ -622,6 +653,8 @@ public:
     Value *dynamic_interface = nullptr;
     Value *trace = nullptr;
     Value *observations = nullptr;
+    Value *likelihood = nullptr;
+    Value *diffeLikelihood = nullptr;
     unsigned width = 1;
     int allocatedTapeSize = -1;
     bool freeMemory = true;
@@ -630,18 +663,41 @@ public:
     unsigned truei = 0;
     unsigned byRefSize = 0;
     bool primalReturn = false;
+    StringSet<> ActiveRandomVariables;
 
     DIFFE_TYPE retType = whatType(fn->getReturnType(), mode);
 
     bool returnUsed =
         !fn->getReturnType()->isVoidTy() && !fn->getReturnType()->isEmptyTy();
 
+    bool sret = CI->hasStructRetAttr() ||
+                fn->hasParamAttribute(0, Attribute::StructRet);
+
+#if LLVM_VERSION_MAJOR >= 14
+    for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
+#else
+    for (unsigned i = 1 + sret; i < CI->getNumArgOperands(); ++i)
+#endif
+    {
+      Value *res = CI->getArgOperand(i);
+      auto metaString = getMetadataName(res);
+      // handle metadata
+      if (metaString && metaString->startswith("enzyme_")) {
+        if (*metaString == "enzyme_const_return") {
+          retType = DIFFE_TYPE::CONSTANT;
+          continue;
+        } else if (*metaString == "enzyme_active_return") {
+          retType = DIFFE_TYPE::OUT_DIFF;
+          continue;
+        } else if (*metaString == "enzyme_dup_return") {
+          retType = DIFFE_TYPE::DUP_ARG;
+          continue;
+        }
+      }
+    }
     bool differentialReturn = (mode == DerivativeMode::ReverseModeCombined ||
                                mode == DerivativeMode::ReverseModeGradient) &&
                               (retType == DIFFE_TYPE::OUT_DIFF);
-
-    bool sret = CI->hasStructRetAttr() ||
-                fn->hasParamAttribute(0, Attribute::StructRet);
 
     // find and handle enzyme_width
     if (auto parsedWidth = parseWidthParameter(CI)) {
@@ -722,9 +778,14 @@ public:
 #endif
     {
       Value *res = CI->getArgOperand(i);
-      Optional<DIFFE_TYPE> opt_ty;
       auto metaString = getMetadataName(res);
+#if LLVM_VERSION_MAJOR > 16
+      std::optional<Value *> batchOffset;
+      std::optional<DIFFE_TYPE> opt_ty;
+#else
       Optional<Value *> batchOffset;
+      Optional<DIFFE_TYPE> opt_ty;
+#endif
 
       // handle metadata
       if (metaString && metaString->startswith("enzyme_")) {
@@ -802,6 +863,12 @@ public:
         } else if (*metaString == "enzyme_primal_return") {
           primalReturn = true;
           continue;
+        } else if (*metaString == "enzyme_const_return") {
+          continue;
+        } else if (*metaString == "enzyme_active_return") {
+          continue;
+        } else if (*metaString == "enzyme_dup_return") {
+          continue;
         } else if (*metaString == "enzyme_width") {
           ++i;
           continue;
@@ -818,9 +885,30 @@ public:
           diffeTrace = true;
           opt_ty = DIFFE_TYPE::CONSTANT;
           continue;
+        } else if (*metaString == "enzyme_likelihood") {
+          likelihood = CI->getArgOperand(++i);
+          opt_ty = DIFFE_TYPE::CONSTANT;
+          continue;
+        } else if (*metaString == "enzyme_duplikelihood") {
+          likelihood = CI->getArgOperand(++i);
+          diffeLikelihood = CI->getArgOperand(++i);
+          opt_ty = DIFFE_TYPE::DUP_ARG;
+          continue;
         } else if (*metaString == "enzyme_observations") {
           observations = CI->getArgOperand(++i);
           opt_ty = DIFFE_TYPE::CONSTANT;
+          continue;
+        } else if (*metaString == "enzyme_active_rand_var") {
+          Value *string = CI->getArgOperand(++i);
+          StringRef const_string;
+          if (getConstantStringInfo(string, const_string)) {
+            ActiveRandomVariables.insert(const_string);
+          } else {
+            EmitFailure(
+                "IllegalStringType", CI->getDebugLoc(), CI,
+                "active variable address must be a compile-time constant", *CI,
+                *metaString);
+          }
           continue;
         } else {
           EmitFailure("IllegalDiffeType", CI->getDebugLoc(), CI,
@@ -1032,10 +1120,11 @@ public:
       return {};
     }
 
-    return Optional<Options>(
-        {differet, tape, dynamic_interface, trace, observations, width,
-         allocatedTapeSize, freeMemory, returnUsed, tapeIsPointer,
-         differentialReturn, diffeTrace, retType, primalReturn});
+    return Optional<Options>({differet, tape, dynamic_interface, trace,
+                              observations, likelihood, diffeLikelihood, width,
+                              allocatedTapeSize, freeMemory, returnUsed,
+                              tapeIsPointer, differentialReturn, diffeTrace,
+                              retType, primalReturn, ActiveRandomVariables});
   }
 
   static FnTypeInfo
@@ -1332,7 +1421,7 @@ public:
           return true;
         }
         if (tapeType &&
-            DL.getTypeSizeInBits(tapeType) < 8 * (size_t)allocatedTapeSize) {
+            DL.getTypeSizeInBits(tapeType) > 8 * (size_t)allocatedTapeSize) {
           auto bytes = DL.getTypeSizeInBits(tapeType) / 8;
           EmitFailure("Insufficient tape allocation size", CI->getDebugLoc(),
                       CI, "need ", bytes, " bytes have ", allocatedTapeSize,
@@ -1402,7 +1491,7 @@ public:
           return true;
         }
         if (tapeType &&
-            DL.getTypeSizeInBits(tapeType) < 8 * (size_t)allocatedTapeSize) {
+            DL.getTypeSizeInBits(tapeType) > 8 * (size_t)allocatedTapeSize) {
           auto bytes = DL.getTypeSizeInBits(tapeType) / 8;
           EmitFailure("Insufficient tape allocation size", CI->getDebugLoc(),
                       CI, "need ", bytes, " bytes have ", allocatedTapeSize,
@@ -1702,32 +1791,51 @@ public:
     auto trace = opt->trace;
     auto dtrace = opt->diffeTrace;
     auto observations = opt->observations;
+    auto likelihood = opt->likelihood;
+    auto dlikelihood = opt->diffeLikelihood;
 
     // Interface
     bool has_dynamic_interface = dynamic_interface != nullptr;
-    TraceInterface *interface;
+    bool needs_interface =
+        mode == ProbProgMode::Trace || mode == ProbProgMode::Condition;
+    TraceInterface *interface = nullptr;
     if (has_dynamic_interface) {
       interface =
           new DynamicTraceInterface(dynamic_interface, CI->getFunction());
-    } else {
+    } else if (needs_interface) {
       interface = new StaticTraceInterface(F->getParent());
     }
 
-    bool autodiff = dtrace;
+    // Find sample function
+    Function *sampleFunction = nullptr;
+    for (auto &&interface_func : F->getParent()->functions()) {
+      if (interface_func.getName().contains("__enzyme_sample")) {
+        assert(interface_func.getFunctionType()->getNumParams() >= 3);
+        sampleFunction = &interface_func;
+      }
+    }
 
+    assert(sampleFunction);
+
+    bool autodiff = dtrace || dlikelihood;
     IRBuilder<> AllocaBuilder(CI->getParent()->getFirstNonPHI());
 
-    auto likelihood = AllocaBuilder.CreateAlloca(AllocaBuilder.getDoubleTy(),
-                                                 nullptr, "likelihood");
-    Builder.CreateStore(ConstantFP::getNullValue(Builder.getDoubleTy()),
-                        likelihood);
+    if (!likelihood) {
+      likelihood = AllocaBuilder.CreateAlloca(AllocaBuilder.getDoubleTy(),
+                                              nullptr, "likelihood");
+      Builder.CreateStore(ConstantFP::getNullValue(Builder.getDoubleTy()),
+                          likelihood);
+    }
     args.push_back(likelihood);
 
-    if (autodiff) {
-      auto dlikelihood = AllocaBuilder.CreateAlloca(AllocaBuilder.getDoubleTy(),
-                                                    nullptr, "dlikelihood");
+    if (autodiff && !dlikelihood) {
+      dlikelihood = AllocaBuilder.CreateAlloca(AllocaBuilder.getDoubleTy(),
+                                               nullptr, "dlikelihood");
       Builder.CreateStore(ConstantFP::get(Builder.getDoubleTy(), 1.0),
                           dlikelihood);
+    }
+
+    if (autodiff) {
       dargs.push_back(likelihood);
       dargs.push_back(dlikelihood);
       constants.push_back(DIFFE_TYPE::DUP_ARG);
@@ -1741,15 +1849,17 @@ public:
       constants.push_back(DIFFE_TYPE::CONSTANT);
     }
 
-    args.push_back(trace);
-    dargs.push_back(trace);
-    constants.push_back(DIFFE_TYPE::CONSTANT);
+    if (mode == ProbProgMode::Trace || mode == ProbProgMode::Condition) {
+      args.push_back(trace);
+      dargs.push_back(trace);
+      constants.push_back(DIFFE_TYPE::CONSTANT);
+    }
 
     // Determine generative functions
     SmallPtrSet<Function *, 4> generativeFunctions;
     SetVector<Function *, std::deque<Function *>> workList;
-    workList.insert(interface->getSampleFunction());
-    generativeFunctions.insert(interface->getSampleFunction());
+    workList.insert(sampleFunction);
+    generativeFunctions.insert(sampleFunction);
 
     while (!workList.empty()) {
       auto todo = *workList.begin();
@@ -1776,8 +1886,9 @@ public:
 #endif
     }
 
-    auto newFunc =
-        Logic.CreateTrace(F, generativeFunctions, mode, autodiff, interface);
+    auto newFunc = Logic.CreateTrace(F, sampleFunction, generativeFunctions,
+                                     opt->ActiveRandomVariables, mode, autodiff,
+                                     interface);
 
     if (!autodiff) {
       auto call = CallInst::Create(newFunc->getFunctionType(), newFunc, args);
@@ -2228,6 +2339,10 @@ public:
         } else if (Fn->getName().contains("__enzyme_batch")) {
           enableEnzyme = true;
           batch = true;
+        } else if (Fn->getName().contains("__enzyme_likelihood")) {
+          enableEnzyme = true;
+          probProgMode = ProbProgMode::Likelihood;
+          probProg = true;
         } else if (Fn->getName().contains("__enzyme_trace")) {
           enableEnzyme = true;
           probProgMode = ProbProgMode::Trace;
@@ -2549,8 +2664,8 @@ public:
         for (auto &&Inst : BB) {
           if (auto CI = dyn_cast<CallInst>(&Inst)) {
             Function *enzyme_sample = CI->getCalledFunction();
-            if (enzyme_sample && enzyme_sample->getName().contains(
-                                     TraceInterface::sampleFunctionName)) {
+            if (enzyme_sample &&
+                enzyme_sample->getName().contains("__enzyme_sample")) {
               if (CI->getNumOperands() < 3) {
                 EmitFailure(
                     "IllegalNumberOfArguments", CI->getDebugLoc(), CI,

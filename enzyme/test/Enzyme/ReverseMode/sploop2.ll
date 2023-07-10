@@ -113,14 +113,16 @@ declare double @__enzyme_autodiff(void (double*, double*, i64*)*, ...)
 ; CHECK-NEXT:   store double 0.000000e+00, double* %[[tostoreipg]]
 ; CHECK-NEXT:   %[[rgep:.+]] = getelementptr inbounds double, double* %L2_malloccache, i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %[[a15:.+]] = load double, double* %[[rgep]], align 8, !invariant.group !
-; CHECK-NEXT:   %m0diffeL1 = fmul fast double %[[a11]], %[[a15]]
+; CHECK-NEXT:   %[[m0diffeL1:.+]] = fmul fast double %[[a11]], %[[a15]]
+
+; CHECK-NEXT:   %[[a18]] = fadd fast double %"L1'de.0", %[[m0diffeL1]]
+
 ; CHECK-NEXT:   %[[a16:.+]] = getelementptr inbounds double, double* %L1_malloccache, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %[[a17:.+]] = load double, double* %[[a16]], align 8, !invariant.group !
-; CHECK-NEXT:   %m1diffeL2 = fmul fast double %[[a11]], %[[a17]]
-; CHECK-NEXT:   %[[a18]] = fadd fast double %"L1'de.0", %m0diffeL1
+; CHECK-NEXT:   %[[m1diffeL2:.+]] = fmul fast double %[[a11]], %[[a17]]
 ; CHECK-NEXT:   %[[X2ipg:.+]] = getelementptr inbounds double, double* %"x'", i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %[[a19:.+]] = load double, double* %[[X2ipg]]
-; CHECK-NEXT:   %[[a20:.+]] = fadd fast double %[[a19]], %m1diffeL2
+; CHECK-NEXT:   %[[a20:.+]] = fadd fast double %[[a19]], %[[m1diffeL2]]
 ; CHECK-NEXT:   store double %[[a20]], double* %[[X2ipg]]
 ; CHECK-NEXT:   %[[a21:.+]] = icmp eq i64 %"iv1'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[a21]], label %invertloop1, label %incinvertloop2

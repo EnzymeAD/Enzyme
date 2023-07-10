@@ -866,13 +866,13 @@ attributes #10 = { cold }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = alloca { { <2 x double>*, i1, i8*, i8*, <2 x double> }, <2 x double> }
 ; CHECK-NEXT:   %1 = getelementptr inbounds { { <2 x double>*, i1, i8*, i8*, <2 x double> }, <2 x double> }, { { <2 x double>*, i1, i8*, i8*, <2 x double> }, <2 x double> }* %0, i32 0, i32 0
-; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
-; CHECK-NEXT:   %2 = getelementptr inbounds { <2 x double>*, i1, i8*, i8*, <2 x double> }, { <2 x double>*, i1, i8*, i8*, <2 x double> }* %1, i32 0, i32 3
-; CHECK-NEXT:   store i8* %malloccall, i8** %2
 ; CHECK-NEXT:   %"malloccall'mi" = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
-; CHECK-NEXT:   %3 = getelementptr inbounds { <2 x double>*, i1, i8*, i8*, <2 x double> }, { <2 x double>*, i1, i8*, i8*, <2 x double> }* %1, i32 0, i32 2
-; CHECK-NEXT:   store i8* %"malloccall'mi", i8** %3
+; CHECK-NEXT:   %[[a3:.+]] = getelementptr inbounds { <2 x double>*, i1, i8*, i8*, <2 x double> }, { <2 x double>*, i1, i8*, i8*, <2 x double> }* %1, i32 0, i32 2
+; CHECK-NEXT:   store i8* %"malloccall'mi", i8** %[[a3]]
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"malloccall'mi", i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
+; CHECK-NEXT:   %[[a2:.+]] = getelementptr inbounds { <2 x double>*, i1, i8*, i8*, <2 x double> }, { <2 x double>*, i1, i8*, i8*, <2 x double> }* %1, i32 0, i32 3
+; CHECK-NEXT:   store i8* %malloccall, i8** %[[a2]]
 ; CHECK-NEXT:   %"coerce.dive349'ipc" = bitcast i8* %"malloccall'mi" to double**
 ; CHECK-NEXT:   %coerce.dive349 = bitcast i8* %malloccall to double**
 ; CHECK-NEXT:   %a2 = load double, double* %b, align 8, !tbaa !15
@@ -927,8 +927,8 @@ attributes #10 = { cold }
 
 ; CHECK: define internal void @diffemid(double* noalias %W, double* %"W'", double* noalias %b, double* %"b'", <2 x double> %differeturn, { <2 x double>*, i1, i8*, i8*, <2 x double> } %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %malloccall = extractvalue { <2 x double>*, i1, i8*, i8*, <2 x double> } %tapeArg, 3
 ; CHECK-NEXT:   %"malloccall'mi" = extractvalue { <2 x double>*, i1, i8*, i8*, <2 x double> } %tapeArg, 2
+; CHECK-NEXT:   %malloccall = extractvalue { <2 x double>*, i1, i8*, i8*, <2 x double> } %tapeArg, 3
 ; CHECK-NEXT:   %"coerce.dive349'ipc" = bitcast i8* %"malloccall'mi" to double**
 ; CHECK-NEXT:   %coerce.dive349 = bitcast i8* %malloccall to double**
 ; CHECK-NEXT:   %a2 = load double, double* %b, align 8, !tbaa !15
@@ -947,46 +947,46 @@ attributes #10 = { cold }
 ; CHECK-NEXT:   %vecinit.i.i.1 = insertelement <2 x double> undef, double %a11, i32 0
 ; CHECK-NEXT:   %vecinit1.i.i.1 = insertelement <2 x double> %vecinit.i.i.1, double %a11, i32 1
 ; CHECK-NEXT:   %a13 = load <2 x double>, <2 x double>* %.cast, align 16, !tbaa !10
-; CHECK-NEXT:   %m0diffea13 = fmul fast <2 x double> %differeturn, %vecinit1.i.i.1
-; CHECK-NEXT:   %m1diffevecinit1.i.i.1 = fmul fast <2 x double> %differeturn, %a13
-; CHECK-NEXT:   %0 = load <2 x double>, <2 x double>* %".cast'ipc", align 16
-; CHECK-NEXT:   %1 = fadd fast <2 x double> %0, %m0diffea13
-; CHECK-NEXT:   store <2 x double> %1, <2 x double>* %".cast'ipc", align 16
-; CHECK-NEXT:   %2 = insertelement <2 x double> %m1diffevecinit1.i.i.1, double 0.000000e+00, i32 1
-; CHECK-NEXT:   %3 = extractelement <2 x double> %m1diffevecinit1.i.i.1, i32 1
-; CHECK-NEXT:   %4 = extractelement <2 x double> %2, i32 0
-; CHECK-NEXT:   %5 = fadd fast double %3, %4
-; CHECK-NEXT:   %6 = load double, double* %"arrayidx.i769.1'ipg", align 8
-; CHECK-NEXT:   %7 = fadd fast double %6, %5
-; CHECK-NEXT:   store double %7, double* %"arrayidx.i769.1'ipg", align 8
-; CHECK-NEXT:   %m0diffea9.sink = fmul fast <2 x double> %differeturn, %vecinit1.i.i
-; CHECK-NEXT:   %m1diffevecinit1.i.i = fmul fast <2 x double> %differeturn, %a9.sink
-; CHECK-NEXT:   %8 = select{{( fast)?}} i1 %[[call365]], <2 x double> zeroinitializer, <2 x double> %m0diffea9.sink
-; CHECK-NEXT:   %9 = select{{( fast)?}} i1 %[[call365]], <2 x double> %m0diffea9.sink, <2 x double> zeroinitializer
+; CHECK-NEXT:   %[[m0diffea13:.+]] = fmul fast <2 x double> %differeturn, %vecinit1.i.i.1
+; CHECK-NEXT:   %[[m1diffevecinit1ii1:.+]] = fmul fast <2 x double> %differeturn, %a13
+; CHECK-NEXT:   %[[i0:.+]] = load <2 x double>, <2 x double>* %".cast'ipc", align 16
+; CHECK-NEXT:   %[[i1:.+]] = fadd fast <2 x double> %[[i0]], %[[m0diffea13]]
+; CHECK-NEXT:   store <2 x double> %[[i1:.+]], <2 x double>* %".cast'ipc", align 16
+; CHECK-NEXT:   %[[i2:.+]] = insertelement <2 x double> %[[m1diffevecinit1ii1]], double 0.000000e+00, i32 1
+; CHECK-NEXT:   %[[i3:.+]] = extractelement <2 x double> %[[m1diffevecinit1ii1]], i32 1
+; CHECK-NEXT:   %[[i4:.+]] = extractelement <2 x double> %[[i2:.+]], i32 0
+; CHECK-NEXT:   %[[i5:.+]] = fadd fast double %[[i3:.+]], %[[i4:.+]]
+; CHECK-NEXT:   %[[i6:.+]] = load double, double* %"arrayidx.i769.1'ipg", align 8
+; CHECK-NEXT:   %[[i7:.+]] = fadd fast double %[[i6]], %[[i5]]
+; CHECK-NEXT:   store double %[[i7:.+]], double* %"arrayidx.i769.1'ipg", align 8
+; CHECK-NEXT:   %[[m0diffea9sink:.+]] = fmul fast <2 x double> %differeturn, %vecinit1.i.i
+; CHECK-NEXT:   %[[m1diffevecinit1ii:.+]] = fmul fast <2 x double> %differeturn, %a9.sink
+; CHECK-NEXT:   %[[i8:.+]] = select{{( fast)?}} i1 %[[call365]], <2 x double> zeroinitializer, <2 x double> %[[m0diffea9sink]]
+; CHECK-NEXT:   %[[i9:.+]] = select{{( fast)?}} i1 %[[call365]], <2 x double> %[[m0diffea9sink]], <2 x double> zeroinitializer
 ; CHECK-NEXT:   br i1 %[[call365]], label %invertfor.body371, label %invertfor.body388
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.body388, %invertfor.body371
 ; CHECK-NEXT:   call void @diffelast(double** %coerce.dive349, double** %"coerce.dive349'ipc")
-; CHECK-NEXT:   %10 = insertelement <2 x double> %m1diffevecinit1.i.i, double 0.000000e+00, i32 1
-; CHECK-NEXT:   %11 = extractelement <2 x double> %m1diffevecinit1.i.i, i32 1
-; CHECK-NEXT:   %12 = extractelement <2 x double> %10, i32 0
-; CHECK-NEXT:   %13 = fadd fast double %11, %12
-; CHECK-NEXT:   %14 = load double, double* %"b'", align 8
-; CHECK-NEXT:   %15 = fadd fast double %14, %13
-; CHECK-NEXT:   store double %15, double* %"b'", align 8
+; CHECK-NEXT:   %[[i10:.+]] = insertelement <2 x double> %[[m1diffevecinit1ii]], double 0.000000e+00, i32 1
+; CHECK-NEXT:   %[[i11:.+]] = extractelement <2 x double> %[[m1diffevecinit1ii]], i32 1
+; CHECK-NEXT:   %[[i12:.+]] = extractelement <2 x double> %[[i10]], i32 0
+; CHECK-NEXT:   %[[i13:.+]] = fadd fast double %[[i11]], %[[i12]]
+; CHECK-NEXT:   %[[i14:.+]] = load double, double* %"b'", align 8
+; CHECK-NEXT:   %[[i15:.+]] = fadd fast double %[[i14]], %[[i13]]
+; CHECK-NEXT:   store double %[[i15:.+]], double* %"b'", align 8
 ; CHECK-NEXT:   call void @free(i8* nonnull %"malloccall'mi")
 ; CHECK-NEXT:   call void @free(i8* %malloccall)
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.body371:                                ; preds = %entry
-; CHECK-NEXT:   %16 = load <2 x double>, <2 x double>* %"a7'il_phi", align 16
-; CHECK-NEXT:   %17 = fadd fast <2 x double> %16, %9
-; CHECK-NEXT:   store <2 x double> %17, <2 x double>* %"a7'il_phi", align 16
+; CHECK-NEXT:   %[[i16:.+]] = load <2 x double>, <2 x double>* %"a7'il_phi", align 16
+; CHECK-NEXT:   %[[i17:.+]] = fadd fast <2 x double> %[[i16]], %[[i9]]
+; CHECK-NEXT:   store <2 x double> %[[i17]], <2 x double>* %"a7'il_phi", align 16
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertfor.body388:                                ; preds = %entry
-; CHECK-NEXT:   %18 = load <2 x double>, <2 x double>* %"a7'il_phi", align 1
-; CHECK-NEXT:   %19 = fadd fast <2 x double> %18, %8
-; CHECK-NEXT:   store <2 x double> %19, <2 x double>* %"a7'il_phi", align 1
+; CHECK-NEXT:   %[[i18:.+]] = load <2 x double>, <2 x double>* %"a7'il_phi", align 1
+; CHECK-NEXT:   %[[i19:.+]] = fadd fast <2 x double> %[[i18]], %[[i8]]
+; CHECK-NEXT:   store <2 x double> %[[i19]], <2 x double>* %"a7'il_phi", align 1
 ; CHECK-NEXT:   br label %invertentry
 ; CHECK-NEXT: }

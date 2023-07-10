@@ -46,14 +46,14 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; CHECK: define internal void @diffefoo(double* nocapture readonly %x, double* nocapture %"x'", double %differeturn, double %f2)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"arrayidx1'ipg" = getelementptr inbounds double, double* %"x'", i64 2
-; CHECK-NEXT:   %m0diffef2 = fmul fast double %differeturn, %f2
-; CHECK-NEXT:   %0 = fadd fast double %m0diffef2, %m0diffef2
-; CHECK-NEXT:   %1 = fmul fast double %0, 2.000000e+00
-; CHECK-NEXT:   %2 = load double, double* %"arrayidx1'ipg", align 8
-; CHECK-NEXT:   %3 = fadd fast double %2, %0
-; CHECK-NEXT:   store double %3, double* %"arrayidx1'ipg", align 8
-; CHECK-NEXT:   %4 = load double, double* %"x'", align 8
-; CHECK-NEXT:   %5 = fadd fast double %4, %1
-; CHECK-NEXT:   store double %5, double* %"x'", align 8
+; CHECK-NEXT:   %[[m0diffef2:.+]] = fmul fast double %differeturn, %f2
+; CHECK-NEXT:   %[[i0:.+]] = fadd fast double %[[m0diffef2]], %[[m0diffef2]]
+; CHECK-NEXT:   %[[i1:.+]] = fmul fast double %[[i0]], 2.000000e+00
+; CHECK-NEXT:   %[[i2:.+]] = load double, double* %"arrayidx1'ipg", align 8
+; CHECK-NEXT:   %[[i3:.+]] = fadd fast double %[[i2]], %[[i0]]
+; CHECK-NEXT:   store double %[[i3]], double* %"arrayidx1'ipg", align 8
+; CHECK-NEXT:   %[[i4:.+]] = load double, double* %"x'", align 8
+; CHECK-NEXT:   %[[i5:.+]] = fadd fast double %[[i4]], %[[i1]]
+; CHECK-NEXT:   store double %[[i5]], double* %"x'", align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

@@ -47,10 +47,10 @@ define double @dsquare({} addrspace(10)* %x, {} addrspace(10)* %dx) {
 ; CHECK-NEXT:   %m_augmented = call { {} addrspace(10)*, double } @augmented_mid({} addrspace(10)* %x, {} addrspace(10)* %"x'")
 ; CHECK-NEXT:   %subcache = extractvalue { {} addrspace(10)*, double } %m_augmented, 0
 ; CHECK-NEXT:   %m = extractvalue { {} addrspace(10)*, double } %m_augmented, 1
-; CHECK-NEXT:   %m0diffem = fmul fast double %differeturn, %m
-; CHECK-NEXT:   %m1diffem = fmul fast double %differeturn, %m
-; CHECK-NEXT:   %0 = fadd fast double %m0diffem, %m1diffem
-; CHECK-NEXT:   call void @diffemid({} addrspace(10)* %x, {} addrspace(10)* %"x'", double %0, {} addrspace(10)* %subcache)
+; CHECK-NEXT:   %[[m0diffem:.+]] = fmul fast double %differeturn, %m
+; CHECK-NEXT:   %[[m1diffem:.+]] = fmul fast double %differeturn, %m
+; CHECK-NEXT:   %[[i0:.+]] = fadd fast double %[[m0diffem]], %[[m1diffem]]
+; CHECK-NEXT:   call void @diffemid({} addrspace(10)* %x, {} addrspace(10)* %"x'", double %[[i0]], {} addrspace(10)* %subcache)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 

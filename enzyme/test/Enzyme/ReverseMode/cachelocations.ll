@@ -70,9 +70,9 @@ declare dso_local double @__enzyme_autodiff(i8*, i1 zeroext, double*, double*)
 ; CHECK: invertif.then:                                    ; preds = %entry
 ; CHECK-NEXT:   %[[px:.+]] = load double, double* %"x'"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'", align 8
-; CHECK-NEXT:   %m0diffe = fmul fast double %[[px]], %0
-; CHECK-NEXT:   %m1diffe = fmul fast double %[[px]], %0
-; CHECK-NEXT:   %[[de:.+]] = fadd fast double %m0diffe, %m1diffe
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %[[px]], %0
+; CHECK-NEXT:   %[[m1diffe:.+]] = fmul fast double %[[px]], %0
+; CHECK-NEXT:   %[[de:.+]] = fadd fast double %[[m0diffe]], %[[m1diffe]]
 ; CHECK-NEXT:   %[[ppx:.+]] = load double, double* %"x'"
 ; CHECK-NEXT:   %[[postx:.+]] = fadd fast double %[[ppx]], %[[de]]
 ; CHECK-NEXT:   store double %[[postx]], double* %"x'"

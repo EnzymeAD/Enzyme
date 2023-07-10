@@ -237,9 +237,9 @@ attributes #22 = { readnone speculatable }
 
 ; CHECK: define internal void @diffe_ZL6matvecPKN5Eigen6MatrixIdLin1ELin1ELi0ELin1ELin1EEES3_(double* noalias %W, double* %"W'", double* noalias %M, double* %"M'", double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call.i.i.i.i.i.i.i = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   %"call.i.i.i.i.i.i.i'mi" = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(128) dereferenceable_or_null(128) %"call.i.i.i.i.i.i.i'mi", i8 0, i64 128, i1 false)
+; CHECK-NEXT:   %call.i.i.i.i.i.i.i = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   %"'ipc" = bitcast i8* %"call.i.i.i.i.i.i.i'mi" to double*
 ; CHECK-NEXT:   %0 = bitcast i8* %call.i.i.i.i.i.i.i to double*
 ; CHECK-NEXT:   br label %for.body.i.i
@@ -258,9 +258,9 @@ attributes #22 = { readnone speculatable }
 ; CHECK-NEXT:   br i1 %exitcond.i.i, label %_ZN5Eigen8internal26call_dense_assignment_loopINS_6MatrixIdLin1ELin1ELi0ELin1ELin1EEENS_13CwiseBinaryOpINS0_20scalar_difference_opIddEEKS3_S7_EENS0_9assign_opIddEEEEvRT_RKT0_RKT1_.exit, label %for.body.i.i
 
 ; CHECK: _ZN5Eigen8internal26call_dense_assignment_loopINS_6MatrixIdLin1ELin1ELi0ELin1ELin1EEENS_13CwiseBinaryOpINS0_20scalar_difference_opIddEEKS3_S7_EENS0_9assign_opIddEEEEvRT_RKT0_RKT1_.exit: ; preds = %for.body.i.i
-; CHECK-NEXT:   %call.i.i.i.i.i.i.i13 = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   %"call.i.i.i.i.i.i.i13'mi" = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(128) dereferenceable_or_null(128) %"call.i.i.i.i.i.i.i13'mi", i8 0, i64 128, i1 false)
+; CHECK-NEXT:   %call.i.i.i.i.i.i.i13 = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   %[[ipc8:.+]] = bitcast i8* %"call.i.i.i.i.i.i.i13'mi" to double*
 ; CHECK-NEXT:   %3 = bitcast i8* %call.i.i.i.i.i.i.i13 to double*
 ; CHECK-NEXT:   %_augmented = call double** @augmented_subfn(double* nonnull %3, double* nonnull %[[ipc8]], double* nonnull %0, double* nonnull %"'ipc")
@@ -379,8 +379,8 @@ attributes #22 = { readnone speculatable }
 ; CHECK-NEXT:   %[[iv35a:.+]] = add {{(nuw )?}}nsw i64 %"iv5'ac.0", %[[iv54]]
 ; CHECK-NEXT:   %[[bcq:.+]] = getelementptr inbounds double, double* %[[malloccache]], i64 %[[iv35a]]
 ; CHECK-NEXT:   %[[unwrap13:.+]] = load double, double* %[[bcq]], align 8, !invariant.group !
-; CHECK-NEXT:   %m0diffe = fmul fast double %[[fad]], %[[unwrap13]]
-; CHECK-NEXT:   %[[m2a:.+]] = fadd fast double %m0diffe, %m0diffe
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %[[fad]], %[[unwrap13]]
+; CHECK-NEXT:   %[[m2a:.+]] = fadd fast double %[[m0diffe]], %[[m0diffe]]
 ; CHECK-NEXT:   %[[dessa:.+]] = bitcast double %[[m2a]] to i64
 ; CHECK-NEXT:   %"arrayidx.i.i'ipg_unwrap" = getelementptr inbounds double, double* %[[ipc8]], i64 %[[iv35a]]
 ; CHECK-NEXT:   %[[ddpc:.+]] = load double, double* %"arrayidx.i.i'ipg_unwrap", align 8
@@ -566,8 +566,8 @@ attributes #22 = { readnone speculatable }
 ; CHECK-NEXT:   %[[ge1:.+]] = getelementptr inbounds double, double* %tapeArg, i64 %"iv'ac.0"
 ; TODO make this use iga6
 ; CHECK-NEXT:   %[[loc:.+]] = load double, double* %[[ge1]], align 8, !tbaa !2, !invariant.group ![[iga6_other:[0-9]+]]
-; CHECK-NEXT:   %m0diffea6 = fmul fast double %differeturn, %[[loc]]
-; CHECK-NEXT:   %[[adx:.+]] = fadd fast double %m0diffea6, %m0diffea6
+; CHECK-NEXT:   %[[m0diffea6:.+]] = fmul fast double %differeturn, %[[loc]]
+; CHECK-NEXT:   %[[adx:.+]] = fadd fast double %[[m0diffea6]], %[[m0diffea6]]
 ; CHECK-NEXT:   %mul.i.i.i_unwrap = mul nsw i64 4, %"iv'ac.0"
 ; CHECK-NEXT:   %"arrayidx.i.i.i'ipg_unwrap" = getelementptr inbounds double, double* %"a3'", i64 %mul.i.i.i_unwrap
 ; CHECK-NEXT:   %[[paidx:.+]] = load double, double* %"arrayidx.i.i.i'ipg_unwrap", align 8

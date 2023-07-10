@@ -48,16 +48,16 @@ define void @df(double* %x, double* %xp, double* %y, double* %dy) {
 ; SHARED-NEXT:   %0 = load double, double* %"x'", align 8
 ; SHARED-NEXT:   store double 0.000000e+00, double* %"x'", align 8
 ; SHARED-NEXT:   %1 = fadd fast double 0.000000e+00, %0
-; SHARED-NEXT:   %m0diffex1 = fmul fast double %1, %y1
-; SHARED-NEXT:   %m1diffey1 = fmul fast double %1, %x1
-; SHARED-NEXT:   %2 = fadd fast double 0.000000e+00, %m0diffex1
-; SHARED-NEXT:   %3 = fadd fast double 0.000000e+00, %m1diffey1
-; SHARED-NEXT:   %4 = load double, double* %"y'", align 8
-; SHARED-NEXT:   %5 = fadd fast double %4, %3
-; SHARED-NEXT:   store double %5, double* %"y'", align 8
-; SHARED-NEXT:   %6 = load double, double* %"x'", align 8
-; SHARED-NEXT:   %7 = fadd fast double %6, %2
-; SHARED-NEXT:   store double %7, double* %"x'", align 8
+; SHARED-NEXT:   %[[m0diffex1:.+]] = fmul fast double %1, %y1
+; SHARED-NEXT:   %[[i2:.+]] = fadd fast double 0.000000e+00, %[[m0diffex1]]
+; SHARED-NEXT:   %[[m1diffey1:.+]] = fmul fast double %1, %x1
+; SHARED-NEXT:   %[[i3:.+]] = fadd fast double 0.000000e+00, %[[m1diffey1]]
+; SHARED-NEXT:   %[[i4:.+]] = load double, double* %"y'", align 8
+; SHARED-NEXT:   %[[i5:.+]] = fadd fast double %[[i4]], %[[i3]]
+; SHARED-NEXT:   store double %[[i5]], double* %"y'", align 8
+; SHARED-NEXT:   %[[i6:.+]] = load double, double* %"x'", align 8
+; SHARED-NEXT:   %[[i7:.+]] = fadd fast double %[[i6]], %[[i2]]
+; SHARED-NEXT:   store double %[[i7]], double* %"x'", align 8
 ; MEMSET-NEXT:   call void @llvm.memset.p0i8.i64(i8* %"yptr'ipc", i8 0, i64 8, i1 false)
 ; STORE-NEXT:    store double 0.000000e+00, double* %"y'", align 8
 ; SHARED-NEXT:   ret void

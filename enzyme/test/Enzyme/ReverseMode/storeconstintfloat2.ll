@@ -47,9 +47,9 @@ attributes #4 = { nounwind }
 
 ; CHECK: define internal { double } @diffe_Z6foobard(double %t, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   %"malloccall'mi" = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"malloccall'mi", i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   %[[xipc:.+]] = bitcast i8* %"malloccall'mi" to double*
 ; CHECK-NEXT:   %x = bitcast i8* %malloccall to double*
 ; CHECK-NEXT:   %[[ipc:.+]] = bitcast i8* %"malloccall'mi" to i64*
@@ -110,11 +110,11 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %[[a8:.+]] = load double, double* %[[xipc]], align 8
 ; CHECK-NEXT:   %[[a9:.+]] = fadd fast double %[[a8]], %[[a17:.+]]
 ; CHECK-NEXT:   store double %[[a9]], double* %[[xipc]], align 8
-; CHECK-NEXT:   %m0diffet = fmul fast double %[[a13:.+]], 1.000000e-02
+; CHECK-NEXT:   %[[m0diffet:.+]] = fmul fast double %[[a13:.+]], 1.000000e-02
 ; CHECK-NEXT:   store i64 0, i64* %[[ipc]], align 8
 ; CHECK-NEXT:   call void @free(i8* nonnull %"malloccall'mi")
 ; CHECK-NEXT:   call void @free(i8* nonnull %malloccall)
-; CHECK-NEXT:   %[[a10:.+]] = insertvalue { double } undef, double %m0diffet, 0
+; CHECK-NEXT:   %[[a10:.+]] = insertvalue { double } undef, double %[[m0diffet]], 0
 ; CHECK-NEXT:   call void @free(i8* nonnull %[[phiptr]])
 ; CHECK-NEXT:   ret { double } %[[a10]]
 
@@ -123,13 +123,13 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %"x.promoted'de.0" = phi double [ 0.000000e+00, %loopexit ], [ %[[a17]], %incinvertwhile.body.i.i.i ]
 ; CHECK-NEXT:   %"add10.i.i.i'de.0" = phi double [ %[[a7:.+]], %loopexit ], [ %[[p14:.+]], %incinvertwhile.body.i.i.i ]
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %iv, %loopexit ], [ %[[a18:.+]], %incinvertwhile.body.i.i.i ]
-; CHECK-NEXT:   %m0diffe = fmul fast double %"add10.i.i.i'de.0", %div
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %"add10.i.i.i'de.0", %div
 ; CHECK-NEXT:   %[[a11:.+]] = getelementptr inbounds double, double* %[[loadi1_realloccast]], i64 %"iv'ac.0"
 ; CHECK-NEXT:   %[[a12:.+]] = load double, double* %[[a11]], align 8, !invariant.group ![[g0]]
-; CHECK-NEXT:   %m1diffediv = fmul fast double %"add10.i.i.i'de.0", %[[a12]]
-; CHECK-NEXT:   %[[a13]] = fadd fast double %"div'de.0", %m1diffediv
-; CHECK-NEXT:   %m0diffeload.i1 = fmul fast double %m0diffe, 0xBFF3333333333332
-; CHECK-NEXT:   %[[a14:.+]] = fadd fast double %"add10.i.i.i'de.0", %m0diffeload.i1
+; CHECK-NEXT:   %[[m1diffediv:.+]] = fmul fast double %"add10.i.i.i'de.0", %[[a12]]
+; CHECK-NEXT:   %[[a13]] = fadd fast double %"div'de.0", %[[m1diffediv]]
+; CHECK-NEXT:   %[[m0diffeload:.+]] = fmul fast double %[[m0diffe]], 0xBFF3333333333332
+; CHECK-NEXT:   %[[a14:.+]] = fadd fast double %"add10.i.i.i'de.0", %[[m0diffeload]]
 ; CHECK-NEXT:   %[[a15:.+]] = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   %[[p14]] = select{{( fast)?}} i1 %[[a15]], double 0.000000e+00, double %[[a14]]
 ; CHECK-NEXT:   %[[a16:.+]] = fadd fast double %"x.promoted'de.0", %[[a14]]

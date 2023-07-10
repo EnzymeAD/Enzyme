@@ -96,51 +96,51 @@ declare double @__enzyme_autodiff(void (double*, double*, i64*)*, ...)
 
 ; CHECK: invertloop1:                                      ; preds = %invertloop2
 ; CHECK-NEXT:   %[[X1ipg:.+]] = getelementptr inbounds double, double* %"x'", i64 %"iv'ac.0"
-; CHECK-NEXT:   %5 = load double, double* %[[X1ipg]]
-; CHECK-NEXT:   %6 = fadd fast double %5, %21
-; CHECK-NEXT:   store double %6, double* %[[X1ipg]]
-; CHECK-NEXT:   %7 = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   br i1 %7, label %invertentry, label %incinvertloop1
+; CHECK-NEXT:   %[[i5:.+]] = load double, double* %[[X1ipg]]
+; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %[[i5]], %[[i21:.+]]
+; CHECK-NEXT:   store double %[[i6]], double* %[[X1ipg]]
+; CHECK-NEXT:   %[[i7:.+]] = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   br i1 %[[i7]], label %invertentry, label %incinvertloop1
 
 ; CHECK: incinvertloop1:                                   ; preds = %invertloop1
 ; CHECK-NEXT:   %8 = add nsw i64 %"iv'ac.0", -1
 ; CHECK-NEXT:   br label %invertcleanup
 
 ; CHECK: invertloop2:                                      ; preds = %invertcleanup, %incinvertloop2
-; CHECK-NEXT:   %"L1'de.0" = phi double [ 0.000000e+00, %invertcleanup ], [ %21, %incinvertloop2 ]
-; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 3, %invertcleanup ], [ %25, %incinvertloop2 ]
-; CHECK-NEXT:   %9 = icmp ne i64 %"iv'ac.0", 0
-; CHECK-NEXT:   br i1 %9, label %invertloop2_phirc, label %invertloop2_phimerge
+; CHECK-NEXT:   %"L1'de.0" = phi double [ 0.000000e+00, %invertcleanup ], [ %[[i21]], %incinvertloop2 ]
+; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 3, %invertcleanup ], [ %[[i25:.+]], %incinvertloop2 ]
+; CHECK-NEXT:   %[[i9:.+]] = icmp ne i64 %"iv'ac.0", 0
+; CHECK-NEXT:   br i1 %[[i9]], label %invertloop2_phirc, label %invertloop2_phimerge
 
 ; CHECK: invertloop2_phirc:                                ; preds = %invertloop2
-; CHECK-NEXT:   %10 = sub nuw i64 %"iv'ac.0", 1
-; CHECK-NEXT:   %11 = getelementptr inbounds i64, i64* %.pre_malloccache, i64 %10
-; CHECK-NEXT:   %12 = load i64, i64* %11, align 8, !invariant.group ![[g2]]
+; CHECK-NEXT:   %[[i10:.+]] = sub nuw i64 %"iv'ac.0", 1
+; CHECK-NEXT:   %[[i11:.+]] = getelementptr inbounds i64, i64* %.pre_malloccache, i64 %[[i10]]
+; CHECK-NEXT:   %[[i12:.+]] = load i64, i64* %[[i11]], align 8, !invariant.group ![[g2]]
 ; CHECK-NEXT:   br label %invertloop2_phimerge
 
 ; CHECK: invertloop2_phimerge:                             ; preds = %invertloop2, %invertloop2_phirc
-; CHECK-NEXT:   %13 = phi i64 [ %12, %invertloop2_phirc ], [ 4, %invertloop2 ]
-; CHECK-NEXT:   %"tostore'ipg_unwrap" = getelementptr inbounds double, double* %"z'", i64 %13
-; CHECK-NEXT:   %14 = load double, double* %"tostore'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i13:.+]] = phi i64 [ %[[i12]], %invertloop2_phirc ], [ 4, %invertloop2 ]
+; CHECK-NEXT:   %"tostore'ipg_unwrap" = getelementptr inbounds double, double* %"z'", i64 %[[i13]]
+; CHECK-NEXT:   %[[i14:.+]] = load double, double* %"tostore'ipg_unwrap", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"tostore'ipg_unwrap", align 8
-; CHECK-NEXT:   %15 = mul nuw nsw i64 %"iv'ac.0", 4
-; CHECK-NEXT:   %16 = add nuw nsw i64 %"iv1'ac.0", %15
-; CHECK-NEXT:   %17 = getelementptr inbounds double, double* %L2_malloccache, i64 %16
-; CHECK-NEXT:   %18 = load double, double* %17, align 8, !invariant.group ![[g1]]
-; CHECK-NEXT:   %m0diffeL1 = fmul fast double %14, %18
-; CHECK-NEXT:   %19 = getelementptr inbounds double, double* %L1_malloccache, i64 %"iv'ac.0"
-; CHECK-NEXT:   %20 = load double, double* %19, align 8, !alias.scope ![[SC0]], !noalias ![[AL0]], !invariant.group ![[g0]]
-; CHECK-NEXT:   %m1diffeL2 = fmul fast double %14, %20
-; CHECK-NEXT:   %21 = fadd fast double %"L1'de.0", %m0diffeL1
+; CHECK-NEXT:   %[[i15:.+]] = mul nuw nsw i64 %"iv'ac.0", 4
+; CHECK-NEXT:   %[[i16:.+]] = add nuw nsw i64 %"iv1'ac.0", %[[i15]]
+; CHECK-NEXT:   %[[i17:.+]] = getelementptr inbounds double, double* %L2_malloccache, i64 %[[i16]]
+; CHECK-NEXT:   %[[i18:.+]] = load double, double* %[[i17]], align 8, !invariant.group ![[g1]]
+; CHECK-NEXT:   %[[m0diffeL1:.+]] = fmul fast double %[[i14]], %[[i18]]
+; CHECK-NEXT:   %[[i21]] = fadd fast double %"L1'de.0", %[[m0diffeL1]]
+; CHECK-NEXT:   %[[i19:.+]] = getelementptr inbounds double, double* %L1_malloccache, i64 %"iv'ac.0"
+; CHECK-NEXT:   %[[i20:.+]] = load double, double* %[[i19]], align 8, !alias.scope ![[SC0]], !noalias ![[AL0]], !invariant.group ![[g0]]
+; CHECK-NEXT:   %[[m1diffeL2:.+]] = fmul fast double %[[i14]], %[[i20]]
 ; CHECK-NEXT:   %"X2'ipg_unwrap" = getelementptr inbounds double, double* %"x'", i64 %"iv1'ac.0"
-; CHECK-NEXT:   %22 = load double, double* %"X2'ipg_unwrap", align 8
-; CHECK-NEXT:   %23 = fadd fast double %22, %m1diffeL2
-; CHECK-NEXT:   store double %23, double* %"X2'ipg_unwrap", align 8
-; CHECK-NEXT:   %24 = icmp eq i64 %"iv1'ac.0", 0
-; CHECK-NEXT:   br i1 %24, label %invertloop1, label %incinvertloop2
+; CHECK-NEXT:   %[[i22:.+]] = load double, double* %"X2'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i23:.+]] = fadd fast double %[[i22]], %[[m1diffeL2]]
+; CHECK-NEXT:   store double %[[i23]], double* %"X2'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i24:.+]] = icmp eq i64 %"iv1'ac.0", 0
+; CHECK-NEXT:   br i1 %[[i24]], label %invertloop1, label %incinvertloop2
 
 ; CHECK: incinvertloop2:                                   ; preds = %invertloop2_phimerge
-; CHECK-NEXT:   %25 = add nsw i64 %"iv1'ac.0", -1
+; CHECK-NEXT:   %[[i25]] = add nsw i64 %"iv1'ac.0", -1
 ; CHECK-NEXT:   br label %invertloop2
 
 ; CHECK: invertcleanup:                                    ; preds = %cleanup, %incinvertloop1

@@ -56,41 +56,41 @@ attributes #4 = { nounwind }
 ; SHARED: define internal { [3 x double] } @diffe3malloced(double %x, i64 %n, [3 x double] %differeturn)
 ; SHARED-NEXT: entry:
 ; SHARED-NEXT:   %mul = shl i64 %n, 3
-; SHARED-NEXT:   %call = tail call i8* @malloc(i64 %mul)
 ; SHARED-NEXT:   %[[alloc1:.+]] = tail call noalias nonnull i8* @malloc(i64 %mul)
-; SHARED-NEXT:   %[[alloc2:.+]] = tail call noalias nonnull i8* @malloc(i64 %mul)
-; SHARED-NEXT:   %[[alloc3:.+]] = tail call noalias nonnull i8* @malloc(i64 %mul)
 ; SHARED-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull %[[alloc1]], i8 0, i64 %mul, i1 false)
+; SHARED-NEXT:   %[[alloc2:.+]] = tail call noalias nonnull i8* @malloc(i64 %mul)
 ; SHARED-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull %[[alloc2]], i8 0, i64 %mul, i1 false)
+; SHARED-NEXT:   %[[alloc3:.+]] = tail call noalias nonnull i8* @malloc(i64 %mul)
 ; SHARED-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull %[[alloc3]], i8 0, i64 %mul, i1 false)
-; SHARED-NEXT:   %"'ipc" = bitcast i8* %[[alloc1]] to double*
-; SHARED-NEXT:   %0 = insertvalue [3 x double*] {{(undef|poison)}}, double* %"'ipc", 0
-; SHARED-NEXT:   %"'ipc5" = bitcast i8* %[[alloc2]] to double*
-; SHARED-NEXT:   %1 = insertvalue [3 x double*] %0, double* %"'ipc5", 1
-; SHARED-NEXT:   %"'ipc6" = bitcast i8* %[[alloc3]] to double*
-; SHARED-NEXT:   %2 = insertvalue [3 x double*] %1, double* %"'ipc6", 2
+; SHARED-NEXT:   %call = tail call i8* @malloc(i64 %mul)
+; SHARED-NEXT:   %[[ipc:.+]] = bitcast i8* %[[alloc1]] to double*
+; SHARED-NEXT:   %0 = insertvalue [3 x double*] {{(undef|poison)}}, double* %[[ipc]], 0
+; SHARED-NEXT:   %[[ipc5:.+]] = bitcast i8* %[[alloc2]] to double*
+; SHARED-NEXT:   %1 = insertvalue [3 x double*] %0, double* %[[ipc5]], 1
+; SHARED-NEXT:   %[[ipc6:.+]] = bitcast i8* %[[alloc3]] to double*
+; SHARED-NEXT:   %2 = insertvalue [3 x double*] %1, double* %[[ipc6]], 2
 ; SHARED-NEXT:   %3 = bitcast i8* %call to double*
 ; SHARED-NEXT:   store double %x, double* %3
 ; SHARED-NEXT:   %call1 = call fast double @augmented_f(double* %3, [3 x double*] %2)
 ; SHARED-NEXT:   %[[d4:.+]] = extractvalue [3 x double] %differeturn, 0
-; SHARED-NEXT:   %m0diffecall1 = fmul fast double %[[d4]], %call1
+; SHARED-NEXT:   %[[m0diffecall1:.+]] = fmul fast double %[[d4]], %call1
 ; SHARED-NEXT:   %[[d5:.+]] = extractvalue [3 x double] %differeturn, 1
-; SHARED-NEXT:   %m0diffecall11 = fmul fast double %[[d5]], %call1
+; SHARED-NEXT:   %[[m0diffecall11:.+]] = fmul fast double %[[d5]], %call1
 ; SHARED-NEXT:   %[[d6:.+]] = extractvalue [3 x double] %differeturn, 2
-; SHARED-NEXT:   %m0diffecall12 = fmul fast double %[[d6]], %call1
-; SHARED-NEXT:   %[[factor7:.+]] = fadd fast double %m0diffecall1, %m0diffecall1
-; SHARED-NEXT:   %[[factor8:.+]] = fadd fast double %m0diffecall11, %m0diffecall11
-; SHARED-NEXT:   %[[factor9:.+]] = fadd fast double %m0diffecall12, %m0diffecall12
+; SHARED-NEXT:   %[[m0diffecall12:.+]] = fmul fast double %[[d6]], %call1
+; SHARED-NEXT:   %[[factor7:.+]] = fadd fast double %[[m0diffecall1]], %[[m0diffecall1]]
+; SHARED-NEXT:   %[[factor8:.+]] = fadd fast double %[[m0diffecall11]], %[[m0diffecall11]]
+; SHARED-NEXT:   %[[factor9:.+]] = fadd fast double %[[m0diffecall12]], %[[m0diffecall12]]
 ; SHARED-NEXT:   %[[i4:.+]] = insertvalue [3 x double] {{(undef|poison)}}, double %[[factor7]], 0
 ; SHARED-NEXT:   %[[i5:.+]] = insertvalue [3 x double] %[[i4]], double %[[factor8]], 1
 ; SHARED-NEXT:   %[[i6:.+]] = insertvalue [3 x double] %[[i5]], double %[[factor9]], 2
 ; SHARED-NEXT:   call void @diffe3f(double* %3, [3 x double*] %2, [3 x double] %[[i6]])
-; SHARED-NEXT:   %[[res10:.+]] = load double, double* %"'ipc"
-; SHARED-NEXT:   %[[res11:.+]] = load double, double* %"'ipc5"
-; SHARED-NEXT:   %[[res12:.+]] = load double, double* %"'ipc6"
-; SHARED-NEXT:   store double 0.000000e+00, double* %"'ipc"
-; SHARED-NEXT:   store double 0.000000e+00, double* %"'ipc5"
-; SHARED-NEXT:   store double 0.000000e+00, double* %"'ipc6"
+; SHARED-NEXT:   %[[res10:.+]] = load double, double* %[[ipc]]
+; SHARED-NEXT:   %[[res11:.+]] = load double, double* %[[ipc5]]
+; SHARED-NEXT:   %[[res12:.+]] = load double, double* %[[ipc6]]
+; SHARED-NEXT:   store double 0.000000e+00, double* %[[ipc]]
+; SHARED-NEXT:   store double 0.000000e+00, double* %[[ipc5]]
+; SHARED-NEXT:   store double 0.000000e+00, double* %[[ipc6]]
 ; SHARED-NEXT:   call void bitcast (i32 (...)* @free to void (i8*)*)(i8* nonnull %[[alloc1]])
 ; SHARED-NEXT:   call void bitcast (i32 (...)* @free to void (i8*)*)(i8* nonnull %[[alloc2]])
 ; SHARED-NEXT:   call void bitcast (i32 (...)* @free to void (i8*)*)(i8* nonnull %[[alloc3]])

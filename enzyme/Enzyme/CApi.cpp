@@ -202,18 +202,16 @@ EnzymeTraceInterfaceRef FindEnzymeStaticTraceInterface(LLVMModuleRef M) {
 }
 
 EnzymeTraceInterfaceRef CreateEnzymeStaticTraceInterface(
-    LLVMContextRef C, LLVMValueRef sampleFunction,
-    LLVMValueRef getTraceFunction, LLVMValueRef getChoiceFunction,
-    LLVMValueRef insertCallFunction, LLVMValueRef insertChoiceFunction,
-    LLVMValueRef insertArgumentFunction, LLVMValueRef insertReturnFunction,
-    LLVMValueRef insertFunctionFunction,
+    LLVMContextRef C, LLVMValueRef getTraceFunction,
+    LLVMValueRef getChoiceFunction, LLVMValueRef insertCallFunction,
+    LLVMValueRef insertChoiceFunction, LLVMValueRef insertArgumentFunction,
+    LLVMValueRef insertReturnFunction, LLVMValueRef insertFunctionFunction,
     LLVMValueRef insertChoiceGradientFunction,
     LLVMValueRef insertArgumentGradientFunction, LLVMValueRef newTraceFunction,
     LLVMValueRef freeTraceFunction, LLVMValueRef hasCallFunction,
     LLVMValueRef hasChoiceFunction) {
   return (EnzymeTraceInterfaceRef)(new StaticTraceInterface(
-      *unwrap(C), cast<Function>(unwrap(sampleFunction)),
-      cast<Function>(unwrap(getTraceFunction)),
+      *unwrap(C), cast<Function>(unwrap(getTraceFunction)),
       cast<Function>(unwrap(getChoiceFunction)),
       cast<Function>(unwrap(insertCallFunction)),
       cast<Function>(unwrap(insertChoiceFunction)),
@@ -397,8 +395,8 @@ EnzymeGradientUtilsGetReturnDiffeType(GradientUtils *G, LLVMValueRef oval,
                                       uint8_t *needsShadow) {
   bool needsPrimalB;
   bool needsShadowB;
-  auto res = (CDIFFE_TYPE)(G->getReturnDiffeType(cast<CallInst>(unwrap(oval)),
-                                                 &needsPrimalB, &needsShadowB));
+  auto res = (CDIFFE_TYPE)(G->getReturnDiffeType(unwrap(oval), &needsPrimalB,
+                                                 &needsShadowB));
   if (needsPrimal)
     *needsPrimal = needsPrimalB;
   if (needsShadow)
@@ -622,18 +620,25 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
       forceAnonymousTape, width, AtomicAdd));
 }
 
-LLVMValueRef CreateTrace(EnzymeLogicRef Logic, LLVMValueRef totrace,
-                         LLVMValueRef *generative_functions,
-                         size_t generative_functions_size, CProbProgMode mode,
-                         uint8_t autodiff, EnzymeTraceInterfaceRef interface) {
+LLVMValueRef CreateTrace(
+    EnzymeLogicRef Logic, LLVMValueRef totrace, LLVMValueRef sample_function,
+    LLVMValueRef *generative_functions, size_t generative_functions_size,
+    const char *active_random_variables[], size_t active_random_variables_size,
+    CProbProgMode mode, uint8_t autodiff, EnzymeTraceInterfaceRef interface) {
 
-  llvm::SmallPtrSet<Function *, 4> GenerativeFunctions;
-  for (uint64_t i = 0; i < generative_functions_size; i++) {
+  SmallPtrSet<Function *, 4> GenerativeFunctions;
+  for (size_t i = 0; i < generative_functions_size; i++) {
     GenerativeFunctions.insert(cast<Function>(unwrap(generative_functions[i])));
   }
 
+  StringSet<> ActiveRandomVariables;
+  for (size_t i = 0; i < active_random_variables_size; i++) {
+    ActiveRandomVariables.insert(active_random_variables[i]);
+  }
+
   return wrap(eunwrap(Logic).CreateTrace(
-      cast<Function>(unwrap(totrace)), GenerativeFunctions, (ProbProgMode)mode,
+      cast<Function>(unwrap(totrace)), cast<Function>(unwrap(sample_function)),
+      GenerativeFunctions, ActiveRandomVariables, (ProbProgMode)mode,
       (bool)autodiff, eunwrap(interface)));
 }
 
@@ -1636,9 +1641,11 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     CI->getAllMetadataOtherThanDebugLoc(TheMDs);
     SmallVector<unsigned, 1> toCopy;
     for (auto pair : TheMDs)
-      if (pair.first != LLVMContext::MD_range)
+      if (pair.first != LLVMContext::MD_range) {
         toCopy.push_back(pair.first);
-    NC->copyMetadata(*CI, toCopy);
+      }
+    if (!toCopy.empty())
+      NC->copyMetadata(*CI, toCopy);
     NC->setDebugLoc(CI->getDebugLoc());
 
     sretCount = 0;
@@ -1656,7 +1663,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       auto gep =
           ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount) : sret;
       auto ld = B.CreateLoad(Types[sretCount], gep);
-      B.CreateStore(ld, ptr);
+      auto SI = B.CreateStore(ld, ptr);
+      PostCacheStore(SI, B);
       sretCount++;
     }
     for (auto ptr_v : sretv_vals) {
@@ -1666,7 +1674,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
                       : sret;
         auto ptr = GradientUtils::extractMeta(B, ptr_v, j);
         auto ld = B.CreateLoad(Types[sretCount], gep);
-        B.CreateStore(ld, ptr);
+        auto SI = B.CreateStore(ld, ptr);
+        PostCacheStore(SI, B);
       }
       sretCount += AT->getNumElements();
     }
@@ -1685,4 +1694,18 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   F->eraseFromParent();
 }
 #endif
+
+LLVMValueRef EnzymeBuildExtractValue(LLVMBuilderRef B, LLVMValueRef AggVal,
+                                     unsigned *Index, unsigned Size,
+                                     const char *Name) {
+  return wrap(unwrap(B)->CreateExtractValue(
+      unwrap(AggVal), ArrayRef<unsigned>(Index, Size), Name));
+}
+
+LLVMValueRef EnzymeBuildInsertValue(LLVMBuilderRef B, LLVMValueRef AggVal,
+                                    LLVMValueRef EltVal, unsigned *Index,
+                                    unsigned Size, const char *Name) {
+  return wrap(unwrap(B)->CreateInsertValue(
+      unwrap(AggVal), unwrap(EltVal), ArrayRef<unsigned>(Index, Size), Name));
+}
 }

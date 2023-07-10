@@ -108,8 +108,8 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %[[innerdata:.+]] = load double*, double** %[[invertedgep1]], align 8
 ; CHECK-NEXT:   %[[invertedgep2:.+]] = getelementptr inbounds double, double* %[[innerdata]], i64 %[[iv1]]
 ; CHECK-NEXT:   %[[cached:.+]] = load double, double* %[[invertedgep2]], align 8, !invariant.group ![[ig1]]
-; CHECK-NEXT:   %m0diffecall = fmul fast double %differeturn, %[[cached]]
-; CHECK-NEXT:   %[[innerdiffe:.+]] = fadd fast double %m0diffecall, %m0diffecall
+; CHECK-NEXT:   %[[m0diffecall:.+]] = fmul fast double %differeturn, %[[cached]]
+; CHECK-NEXT:   %[[innerdiffe:.+]] = fadd fast double %[[m0diffecall]], %[[m0diffecall]]
 ; CHECK-NEXT:   call void @diffeget(double* %x, double* %"x'", i64 undef, i64 %[[iv1]], double %[[innerdiffe]])
 ; CHECK-NEXT:   %[[done2:.+]] = icmp eq i64 %[[iv1]], 0
 ; CHECK-NEXT:   br i1 %[[done2]], label %invertfor.cond3.preheader, label %incinvertfor.body7

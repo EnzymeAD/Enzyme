@@ -469,9 +469,10 @@ public:
                               BATCH_TYPE ret_type);
 
   llvm::Function *
-  CreateTrace(llvm::Function *totrace,
+  CreateTrace(llvm::Function *totrace, llvm::Function *sampleFunction,
               llvm::SmallPtrSetImpl<llvm::Function *> &GenerativeFunctions,
-              ProbProgMode mode, bool autodiff, TraceInterface *interface);
+              llvm::StringSet<> &ActiveRandomVariables, ProbProgMode mode,
+              bool autodiff, TraceInterface *interface);
 
   void clear();
 };

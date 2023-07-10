@@ -79,8 +79,8 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %loop ], [ 0, %entry ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %4 = trunc i64 %iv to i32
-; CHECK-NEXT:   %p2 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   %"p2'mi" = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
+; CHECK-NEXT:   %p2 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   %"p3'ipc" = bitcast i8* %"p2'mi" to double**
 ; CHECK-NEXT:   %p3 = bitcast i8* %p2 to double**
 ; CHECK-NEXT:   %"a10'ipg" = getelementptr inbounds double, double* %"a0'", i32 %4
@@ -159,22 +159,22 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %8 = extractvalue { double**, double* } %tapeArg, 1
 ; CHECK-NEXT:   %9 = getelementptr inbounds double, double* %8, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %10 = load double, double* %9, align 8
-; CHECK-NEXT:   %m0differ = fmul fast double %7, %10
-; CHECK-NEXT:   %m1differ = fmul fast double %7, %10
-; CHECK-NEXT:   %11 = fadd fast double %m0differ, %m1differ
-; CHECK-NEXT:   %12 = extractvalue { double**, double* } %tapeArg, 0
-; CHECK-NEXT:   %13 = getelementptr inbounds double*, double** %12, i64 %"iv'ac.0"
-; CHECK-NEXT:   %14 = load double*, double** %13, align 8
-; CHECK-NEXT:   %15 = load double, double* %14
-; CHECK-NEXT:   %16 = fadd fast double %15, %11
-; CHECK-NEXT:   store double %16, double* %14
+; CHECK-NEXT:   %[[m0differ:.+]] = fmul fast double %7, %10
+; CHECK-NEXT:   %[[m1differ:.+]] = fmul fast double %7, %10
+; CHECK-NEXT:   %[[i11:.+]] = fadd fast double %[[m0differ]], %[[m1differ]]
+; CHECK-NEXT:   %[[i12:.+]] = extractvalue { double**, double* } %tapeArg, 0
+; CHECK-NEXT:   %[[i13:.+]] = getelementptr inbounds double*, double** %[[i12]], i64 %"iv'ac.0"
+; CHECK-NEXT:   %[[i14:.+]] = load double*, double** %[[i13]], align 8
+; CHECK-NEXT:   %[[i15:.+]] = load double, double* %[[i14]]
+; CHECK-NEXT:   %[[i16:.+]] = fadd fast double %[[i15]], %[[i11]]
+; CHECK-NEXT:   store double %[[i16:.+]], double* %[[i14]]
 ; CHECK-NEXT:   %p3_unwrap = bitcast i8* %remat_p2 to double**
-; CHECK-NEXT:   %17 = getelementptr inbounds i8*, i8** %"p2'mi_malloccache", i64 %"iv'ac.0"
-; CHECK-NEXT:   %18 = load i8*, i8** %17, align 8
-; CHECK-NEXT:   %"p3'ipc_unwrap" = bitcast i8* %18 to double**
+; CHECK-NEXT:   %[[i17:.+]] = getelementptr inbounds i8*, i8** %"p2'mi_malloccache", i64 %"iv'ac.0"
+; CHECK-NEXT:   %[[i18:.+]] = load i8*, i8** %[[i17]], align 8
+; CHECK-NEXT:   %"p3'ipc_unwrap" = bitcast i8* %[[i18]] to double**
 ; CHECK-NEXT:   call void @diffef(double** %p3_unwrap, double** %"p3'ipc_unwrap")
-; CHECK-NEXT:   call void @free(i8* nonnull %18)
+; CHECK-NEXT:   call void @free(i8* nonnull %[[i18]])
 ; CHECK-NEXT:   call void @free(i8* %remat_p2)
-; CHECK-NEXT:   %19 = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   br i1 %19, label %invertentry, label %incinvertloop
+; CHECK-NEXT:   %[[i19:.+]] = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   br i1 %[[i19]], label %invertentry, label %incinvertloop
 ; CHECK-NEXT: }

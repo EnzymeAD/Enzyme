@@ -25,8 +25,8 @@ declare double @__enzyme_autodiff(double (double*)*, ...)
 ; CHECK-NEXT:   fence syncscope("singlethread") seq_cst
 ; CHECK-NEXT:   %x = load double, double* %xp, align 8
 ; CHECK-NEXT:   fence syncscope("singlethread") seq_cst
-; CHECK-NEXT:   %m0diffex = fmul fast double %differeturn, %x
-; CHECK-NEXT:   %[[i0:.+]] = fadd fast double %m0diffex, %m0diffex
+; CHECK-NEXT:   %[[m0diffex:.+]] = fmul fast double %differeturn, %x
+; CHECK-NEXT:   %[[i0:.+]] = fadd fast double %[[m0diffex]], %[[m0diffex]]
 ; CHECK-NEXT:   fence syncscope("singlethread") seq_cst
 ; CHECK-NEXT:   %[[i1:.+]] = load double, double* %"xp'", align 8
 ; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[i1]], %[[i0]]

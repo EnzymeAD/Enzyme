@@ -495,9 +495,9 @@ attributes #9 = { cold }
 
 ; CHECK: define internal { <2 x double>*, i8*, i8*, <2 x double>, double, <2 x double>, double } @augmented_subfn(<2 x double>* %dst, <2 x double>* %"dst'", %"class.Eigen::Matrix"* %W, %"class.Eigen::Matrix"* %"W'", double* %B, double* %"B'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   %"malloccall'mi" = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* {{(noundef )?}}nonnull align 1 dereferenceable(16) dereferenceable_or_null(16) %"malloccall'mi", i8 0, i64 16, i1 false)
+; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   %"tmp.i'ipc" = bitcast i8* %"malloccall'mi" to <2 x double>*
 ; CHECK-NEXT:   %tmp.i = bitcast i8* %malloccall to <2 x double>*
 ; CHECK-NEXT:   %subcast_augmented = call { <2 x double>*, <2 x double>* } @augmented_subcast(<2 x double>*{{( nonnull)?}} %tmp.i, <2 x double>*{{( nonnull)?}} %"tmp.i'ipc")
@@ -534,8 +534,8 @@ attributes #9 = { cold }
 
 ; CHECK: define internal void @diffesubfn(<2 x double>* %dst, <2 x double>* %"dst'", %"class.Eigen::Matrix"* %W, %"class.Eigen::Matrix"* %"W'", double* %B, double* %"B'", { <2 x double>*, i8*, i8*, <2 x double>, double, <2 x double>, double } %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[malloccall:.+]] = extractvalue { <2 x double>*, i8*, i8*, <2 x double>, double, <2 x double>, double } %tapeArg, 2
 ; CHECK-NEXT:   %[[malloccallmi:.+]] = extractvalue { <2 x double>*, i8*, i8*, <2 x double>, double, <2 x double>, double } %tapeArg, 1
+; CHECK-NEXT:   %[[malloccall:.+]] = extractvalue { <2 x double>*, i8*, i8*, <2 x double>, double, <2 x double>, double } %tapeArg, 2
 
 ; CHECK-NEXT:   %[[tmpiipc:.+]] = bitcast i8* %[[malloccallmi]] to <2 x double>*
 ; CHECK-NEXT:   %[[tmpi:.+]] = bitcast i8* %[[malloccall]] to <2 x double>*
@@ -573,10 +573,10 @@ attributes #9 = { cold }
 
 ; CHECK-NEXT:   %[[loadsc:.+]] = load <2 x double>, <2 x double>* %[[dsubcast]], align 16
 ; CHECK-NEXT:   store <2 x double> zeroinitializer, <2 x double>* %[[dsubcast]], align 16
-; CHECK-NEXT:   %m0diffeW34 = fmul fast <2 x double> %[[loadsc]], %B22
-; CHECK-NEXT:   %m1diffeB22 = fmul fast <2 x double> %[[loadsc]], %[[W34]]
-; CHECK-DAG:    %[[b221:.+]] = extractelement <2 x double> %m1diffeB22, {{(i32|i64)}} 1
-; CHECK-DAG:    %[[b220:.+]] = extractelement <2 x double> %m1diffeB22, {{(i32|i64)}} 0
+; CHECK-NEXT:   %[[m0diffeW34:.+]] = fmul fast <2 x double> %[[loadsc]], %B22
+; CHECK-NEXT:   %[[m1diffeB22:.+]] = fmul fast <2 x double> %[[loadsc]], %[[W34]]
+; CHECK-DAG:    %[[b221:.+]] = extractelement <2 x double> %[[m1diffeB22:.+]], {{(i32|i64)}} 1
+; CHECK-DAG:    %[[b220:.+]] = extractelement <2 x double> %[[m1diffeB22:.+]], {{(i32|i64)}} 0
 ; CHECK-NEXT:   %[[added:.+]] = fadd fast double %[[b221]], %[[b220]]
 
 ; CHECK-NEXT:   %[[lb2p:.+]] = load double, double* %[[B2p_ipge]], align 8
@@ -585,20 +585,20 @@ attributes #9 = { cold }
 
 
 ; CHECK-NEXT:   %[[lvW34:.+]] = load <2 x double>, <2 x double>* %[[vW34]], align 16
-; CHECK-NEXT:   %[[addDW34:.+]] = fadd fast <2 x double> %[[lvW34]], %m0diffeW34
+; CHECK-NEXT:   %[[addDW34:.+]] = fadd fast <2 x double> %[[lvW34]], %[[m0diffeW34]]
 ; CHECK-NEXT:   store <2 x double> %[[addDW34]], <2 x double>* %[[vW34]], align 16
 
-; CHECK-NEXT:   %m0diffeW12 = fmul fast <2 x double> %[[loadsc]], %B11
-; CHECK-NEXT:   %m1diffeB11 = fmul fast <2 x double> %[[loadsc]], %[[W12]]
-; CHECK-NEXT:   %12 = extractelement <2 x double> %m1diffeB11, {{(i32|i64)}} 1
-; CHECK-NEXT:   %13 = extractelement <2 x double> %m1diffeB11, {{(i32|i64)}} 0
-; CHECK-NEXT:   %14 = fadd fast double %12, %13
-; CHECK-NEXT:   %15 = load double, double* %"B'", align 8
-; CHECK-NEXT:   %16 = fadd fast double %15, %14
-; CHECK-NEXT:   store double %16, double* %"B'", align 8
-; CHECK-NEXT:   %17 = load <2 x double>, <2 x double>* %[[W12p_ipc1]], align 16
-; CHECK-NEXT:   %18 = fadd fast <2 x double> %17, %m0diffeW12
-; CHECK-NEXT:   store <2 x double> %18, <2 x double>* %[[W12p_ipc1]], align 16
+; CHECK-NEXT:   %[[m0diffeW12:.+]] = fmul fast <2 x double> %[[loadsc]], %B11
+; CHECK-NEXT:   %[[m1diffeB11:.+]] = fmul fast <2 x double> %[[loadsc]], %[[W12]]
+; CHECK-NEXT:   %[[i12:.+]] = extractelement <2 x double> %[[m1diffeB11]], {{(i32|i64)}} 1
+; CHECK-NEXT:   %[[i13:.+]] = extractelement <2 x double> %[[m1diffeB11]], {{(i32|i64)}} 0
+; CHECK-NEXT:   %[[i14:.+]] = fadd fast double %[[i12]], %[[i13]]
+; CHECK-NEXT:   %[[i15:.+]] = load double, double* %"B'", align 8
+; CHECK-NEXT:   %[[i16:.+]] = fadd fast double %[[i15]], %[[i14]]
+; CHECK-NEXT:   store double %[[i16]], double* %"B'", align 8
+; CHECK-NEXT:   %[[i17:.+]] = load <2 x double>, <2 x double>* %[[W12p_ipc1]], align 16
+; CHECK-NEXT:   %[[i18:.+]] = fadd fast <2 x double> %[[i17]], %[[m0diffeW12]]
+; CHECK-NEXT:   store <2 x double> %[[i18]], <2 x double>* %[[W12p_ipc1]], align 16
 ; CHECK-NEXT:   call void @diffeget2(%"class.Eigen::Matrix"* %W, %"class.Eigen::Matrix"* %"W'")
 
 ; CHECK-NEXT:   call void @diffesubcast(<2 x double>* %[[tmpi]], <2 x double>* {{(nonnull )?}}%[[tmpiipc]])

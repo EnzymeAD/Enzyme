@@ -179,7 +179,8 @@ GradientUtils::GradientUtils(
           notForAnalysis, TLI_, constantvalues_, activevals_, ReturnActivity)),
       tid(nullptr), numThreads(nullptr),
       OrigAA(Logic.PPC.getAAResultsFromFunction(oldFunc_)), TA(TA_), TR(TR_),
-      omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_) {
+      omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_),
+      overwritten_args_map_ptr(nullptr) {
   if (oldFunc_->getSubprogram()) {
     assert(originalToNewFn_.hasMD());
   }
@@ -4338,7 +4339,7 @@ GradientUtils *GradientUtils::CreateFromClone(
   return res;
 }
 
-DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::CallInst *orig,
+DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
                                              bool *primalReturnUsedP,
                                              bool *shadowReturnUsedP) const {
   bool shadowReturnUsed = false;
@@ -4892,12 +4893,13 @@ Type *GradientUtils::getShadowType(Type *ty) {
 }
 
 Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
-                                  unsigned off) {
-  return extractMeta(Builder, Agg, ArrayRef<unsigned>({off}));
+                                  unsigned off, const Twine &name) {
+  return extractMeta(Builder, Agg, ArrayRef<unsigned>({off}), name);
 }
 
 Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
-                                  ArrayRef<unsigned> off_init) {
+                                  ArrayRef<unsigned> off_init,
+                                  const Twine &name) {
   std::vector<unsigned> off(off_init.begin(), off_init.end());
   while (off.size() != 0) {
     if (auto Ins = dyn_cast<InsertValueInst>(Agg)) {
@@ -4937,9 +4939,90 @@ Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
   if (off.size() == 0)
     return Agg;
   if (Agg->getType()->isVectorTy() && off.size() == 1)
-    return Builder.CreateExtractElement(Agg, off[0]);
+    return Builder.CreateExtractElement(Agg, off[0], name);
 
-  return Builder.CreateExtractValue(Agg, off);
+  return Builder.CreateExtractValue(Agg, off, name);
+}
+
+llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
+                                          llvm::Value *lhs, llvm::Value *rhs,
+                                          llvm::ArrayRef<unsigned> lhs_off,
+                                          llvm::ArrayRef<unsigned> rhs_off,
+                                          llvm::Value *prev, bool vectorLayer) {
+  llvm::Type *lhs_ty = lhs->getType();
+  if (!vectorLayer) {
+    for (auto idx : lhs_off)
+      lhs_ty = getSubType(lhs_ty, idx);
+    llvm::Type *rhs_ty = rhs->getType();
+    for (auto idx : rhs_off)
+      rhs_ty = getSubType(rhs_ty, idx);
+    assert(lhs_ty == rhs_ty);
+  }
+  if (lhs_ty->isFPOrFPVectorTy()) {
+    if (lhs_off.size())
+      lhs = extractMeta(B, lhs, lhs_off);
+    if (rhs_off.size())
+      rhs = extractMeta(B, rhs, rhs_off);
+    llvm::Value *res = nullptr;
+    if (auto fp = llvm::dyn_cast<llvm::ConstantFP>(lhs)) {
+      if (fp->isZero())
+        res = rhs;
+    }
+    if (auto fp = llvm::dyn_cast<llvm::ConstantFP>(rhs)) {
+      if (fp->isZero())
+        res = lhs;
+    }
+    if (!res) {
+#if LLVM_VERSION_MAJOR >= 10
+      if (auto *FPMO = dyn_cast<FPMathOperator>(rhs))
+        if (FPMO->getOpcode() == Instruction::FNeg) {
+          res = B.CreateFSub(lhs, FPMO->getOperand(0));
+        }
+#endif
+    }
+    if (!res) {
+      if (auto *S = dyn_cast<BinaryOperator>(rhs)) {
+        if (S->getOpcode() == Instruction::FSub) {
+          if (auto C = dyn_cast<ConstantFP>(S->getOperand(0)))
+            if (C->isZero())
+              res = B.CreateFSub(lhs, S->getOperand(1));
+        }
+      }
+    }
+    if (!res) {
+      res = B.CreateFAdd(lhs, rhs);
+    }
+    if (lhs_off.size()) {
+      assert(prev);
+      res = B.CreateInsertValue(prev, res, lhs_off);
+    }
+    return res;
+  } else if (isa<ArrayType>(lhs_ty) || isa<StructType>(lhs_ty)) {
+    if (prev == nullptr)
+      prev = llvm::UndefValue::get(lhs_ty);
+
+    size_t size;
+    if (auto AT = dyn_cast<ArrayType>(lhs_ty))
+      size = AT->getNumElements();
+    else
+      size = cast<StructType>(lhs_ty)->getNumElements();
+
+    for (size_t i = 0; i < size; ++i) {
+      llvm::SmallVector<unsigned, 1> nlhs_off(lhs_off.begin(), lhs_off.end());
+      if (vectorLayer)
+        nlhs_off.insert(nlhs_off.begin(), i);
+      else
+        nlhs_off.push_back(i);
+      llvm::SmallVector<unsigned, 1> nrhs_off(rhs_off.begin(), rhs_off.end());
+      if (vectorLayer)
+        nrhs_off.insert(nrhs_off.begin(), i);
+      else
+        nrhs_off.push_back(i);
+      prev = recursiveFAdd(B, lhs, rhs, nlhs_off, nrhs_off, prev);
+    }
+    return prev;
+  }
+  llvm_unreachable("Unknown type to recursively accumulate");
 }
 
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
@@ -5081,8 +5164,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
       Value *args[] = {dst_arg, val_arg, len_arg, volatile_arg};
       Type *tys[] = {dst_arg->getType(), len_arg->getType()};
-      cast<CallInst>(bb.CreateCall(
-          Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
+      bb.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args);
 
       return antialloca;
     };
@@ -7956,12 +8038,22 @@ void GradientUtils::eraseFictiousPHIs() {
   for (auto pair : phis) {
     auto pp = pair.first;
     if (pp->getNumUses() != 0) {
-      llvm::errs() << "mod:" << *oldFunc->getParent() << "\n";
-      llvm::errs() << "oldFunc:" << *oldFunc << "\n";
-      llvm::errs() << "newFunc:" << *newFunc << "\n";
-      llvm::errs() << " pp: " << *pp << " of " << *pair.second << "\n";
+      if (CustomErrorHandler) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Illegal replace ficticious phi for: " << *pp << " of "
+           << *pair.second;
+        CustomErrorHandler(str.c_str(), wrap(pair.second),
+                           ErrorType::IllegalReplaceFicticiousPHIs, this,
+                           wrap(pp), nullptr);
+      } else {
+        llvm::errs() << "mod:" << *oldFunc->getParent() << "\n";
+        llvm::errs() << "oldFunc:" << *oldFunc << "\n";
+        llvm::errs() << "newFunc:" << *newFunc << "\n";
+        llvm::errs() << " pp: " << *pp << " of " << *pair.second << "\n";
+        assert(pp->getNumUses() == 0);
+      }
     }
-    assert(pp->getNumUses() == 0);
     pp->replaceAllUsesWith(UndefValue::get(pp->getType()));
     erase(pp);
   }
@@ -8095,6 +8187,22 @@ void GradientUtils::forceAugmentedReturns() {
         continue;
       }
 
+      CallInst *op = cast<CallInst>(inst);
+      Function *called = op->getCalledFunction();
+
+      if ((mode == DerivativeMode::ReverseModeGradient ||
+           mode == DerivativeMode::ReverseModeCombined) &&
+          called && called->getName() == "llvm.julia.gc_preserve_begin") {
+        IRBuilder<> BuilderZ(inst);
+        getForwardBuilder(BuilderZ);
+        auto anti = BuilderZ.CreateCall(called, ArrayRef<Value *>(),
+                                        op->getName() + "'ip");
+        anti->setDebugLoc(getNewFromOriginal(op->getDebugLoc()));
+        invertedPointers.insert(
+            std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
+        continue;
+      }
+
       if (isa<IntrinsicInst>(inst)) {
         continue;
       }
@@ -8103,11 +8211,24 @@ void GradientUtils::forceAugmentedReturns() {
         continue;
       }
 
-      CallInst *op = cast<CallInst>(inst);
-      Function *called = op->getCalledFunction();
-
       IRBuilder<> BuilderZ(inst);
       getForwardBuilder(BuilderZ);
+
+      // Shadow allocations must strictly preceede the primal, lest Julia have
+      // GC issues. Consider the following: %r = gc_alloc() init %r
+      // ...
+      // if the shadow did not preceed
+      // %r = gc_alloc()
+      // %dr = gc_alloc()
+      // zero %dr
+      // init %r, %dr
+      // ...
+      // After %r, before %dr the %r memory would be uninit, so the allocator
+      // inside %dr would hit garbage and segfault. However, by having the %dr
+      // first, then it will be zero'd before the %r allocation, preventing the
+      // issue.
+      if (isAllocationCall(inst, TLI))
+        BuilderZ.SetInsertPoint(getNewFromOriginal(inst));
       Type *antiTy = getShadowType(inst->getType());
 
       PHINode *anti = BuilderZ.CreatePHI(antiTy, 1, op->getName() + "'ip_phi");
@@ -8115,7 +8236,7 @@ void GradientUtils::forceAugmentedReturns() {
       invertedPointers.insert(
           std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
 
-      if (called && isAllocationFunction(called->getName(), TLI)) {
+      if (isAllocationCall(inst, TLI)) {
         anti->setName(op->getName() + "'mi");
       }
     }

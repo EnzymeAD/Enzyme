@@ -59,22 +59,22 @@ bb13:                                             ; preds = %bb12, %bb9, %bb8, %
 ; CHECK-NEXT:   ]
 
 ; CHECK: invertbb:                                         ; preds = %bb, %invertbb9, %invertbb7
-; CHECK-NEXT:   %"arg'de.0" = phi double [ %13, %invertbb9 ], [ %8, %invertbb7 ], [ %3, %bb ]
+; CHECK-NEXT:   %"arg'de.0" = phi double [ %[[i13:.+]], %invertbb9 ], [ %[[i8:.+]], %invertbb7 ], [ %3, %bb ]
 ; CHECK-NEXT:   %6 = insertvalue { double } undef, double %"arg'de.0", 0
 ; CHECK-NEXT:   ret { double } %6
 
 ; CHECK: invertbb7:                                        ; preds = %bb
-; CHECK-NEXT:   %m0diffearg = fmul fast double %5, %arg
-; CHECK-NEXT:   %7 = fadd fast double %3, %m0diffearg
-; CHECK-NEXT:   %8 = fadd fast double %7, %m0diffearg
+; CHECK-NEXT:   %[[m0diffearg:.+]] = fmul fast double %5, %arg
+; CHECK-NEXT:   %[[i7:.+]] = fadd fast double %3, %[[m0diffearg]]
+; CHECK-NEXT:   %[[i8]] = fadd fast double %[[i7]], %[[m0diffearg]]
 ; CHECK-NEXT:   br label %invertbb
 
 ; CHECK: invertbb9:                                        ; preds = %bb
 ; CHECK-NEXT:   %ti5_unwrap = uitofp i64 %i5 to double
-; CHECK-NEXT:   %9 = fsub fast double %ti5_unwrap, 1.000000e+00
-; CHECK-NEXT:   %10 = call fast double @llvm.pow.f64(double %arg, double %9)
-; CHECK-NEXT:   %11 = fmul fast double %10, %ti5_unwrap
-; CHECK-NEXT:   %12 = fmul fast double %4, %11
-; CHECK-NEXT:   %13 = fadd fast double %3, %12
+; CHECK-NEXT:   %[[i9:.+]] = fsub fast double %ti5_unwrap, 1.000000e+00
+; CHECK-NEXT:   %[[i10:.+]] = call fast double @llvm.pow.f64(double %arg, double %[[i9]])
+; CHECK-NEXT:   %[[i11:.+]] = fmul fast double %ti5_unwrap, %[[i10]]
+; CHECK-NEXT:   %[[i12:.+]] = fmul fast double %4, %[[i11]]
+; CHECK-NEXT:   %[[i13]] = fadd fast double %3, %[[i12]]
 ; CHECK-NEXT:   br label %invertbb
 ; CHECK-NEXT: }

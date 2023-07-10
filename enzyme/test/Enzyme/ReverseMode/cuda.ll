@@ -79,7 +79,7 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   store double %res, double* %gep, align 4, !tbaa !11
 ; CHECK-NEXT:   %0 = load double, double* %"gep'ipg", align 4
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"gep'ipg", align 4
-; CHECK-NEXT:   %m0diffeld = fmul fast double %0, %x
-; CHECK-NEXT:   %1 = atomicrmw fadd double* %"g0'ipg", double %m0diffeld monotonic
+; CHECK-NEXT:   %[[m0diffeld:.+]] = fmul fast double %0, %x
+; CHECK-NEXT:   %{{.*}} = atomicrmw fadd double* %"g0'ipg", double %[[m0diffeld]] monotonic
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

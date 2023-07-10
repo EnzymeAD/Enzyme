@@ -48,9 +48,9 @@ declare void @llvm.trap()
 ; CHECK-NEXT:   br label %invertL24
 
 ; CHECK: inverttop:                                        ; preds = %invertL24
-; CHECK-NEXT:   %0 = call fastcc { double } @diffejulia_besselj_685(double %x, double %y, double %m1diffec)
-; CHECK-NEXT:   ret { double } %0
+; CHECK-NEXT:   %[[i0:.+]] = call fastcc { double } @diffejulia_besselj_685(double %x, double %y, double %[[m1diffec:.+]])
+; CHECK-NEXT:   ret { double } %[[i0]]
 
 ; CHECK: invertL24:                                        ; preds = %L24
-; CHECK-NEXT:   %m1diffec = fmul fast double %differeturn, %sq
+; CHECK-NEXT:   %[[m1diffec]] = fmul fast double %differeturn, %sq
 ; CHECK-NEXT:   br label %inverttop

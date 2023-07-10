@@ -55,10 +55,10 @@ attributes #0 = { noinline norecurse nounwind readonly }
 ; CHECK: define internal void @diffeloadSq(double** noalias nocapture readonly %x, double** nocapture %"x'", double %differeturn, double %l1)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"l0'ipl" = load double*, double** %"x'", align 8
-; CHECK-NEXT:   %m0diffel1 = fmul fast double %differeturn, %l1
-; CHECK-NEXT:   %0 = fadd fast double %m0diffel1, %m0diffel1
-; CHECK-NEXT:   %1 = load double, double* %"l0'ipl", align 8
-; CHECK-NEXT:   %2 = fadd fast double %1, %0
-; CHECK-NEXT:   store double %2, double* %"l0'ipl", align 8
+; CHECK-NEXT:   %[[m0diffel1:.+]] = fmul fast double %differeturn, %l1
+; CHECK-NEXT:   %[[i0:.+]] = fadd fast double %[[m0diffel1]], %[[m0diffel1]]
+; CHECK-NEXT:   %[[i1:.+]] = load double, double* %"l0'ipl", align 8
+; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[i1]], %[[i0]]
+; CHECK-NEXT:   store double %[[i2]], double* %"l0'ipl", align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

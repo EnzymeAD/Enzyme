@@ -125,8 +125,8 @@ exit:                                        ; preds = %.lr.ph
 ; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ %[[a10:.+]], %incinvertloop2 ], [ %[[a0]], %loop2 ]
 ; CHECK-NEXT:   %[[a6:.+]] = getelementptr inbounds double, double* %g_malloccache, i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %[[a7:.+]] = load double, double* %[[a6]], align 8, !invariant.group !{{[0-9]+}}
-; CHECK-NEXT:   %m1diffearg = fmul fast double %differeturn, %[[a7]]
-; CHECK-NEXT:   %[[a8]] = fadd fast double %"arg'de.0", %m1diffearg
+; CHECK-NEXT:   %[[m1diffearg:.+]] = fmul fast double %differeturn, %[[a7]]
+; CHECK-NEXT:   %[[a8]] = fadd fast double %"arg'de.0", %[[m1diffearg]]
 ; CHECK-NEXT:   %[[a9:.+]] = icmp eq i64 %"iv1'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[a9]], label %invertmid, label %incinvertloop2
 

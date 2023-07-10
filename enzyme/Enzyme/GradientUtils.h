@@ -376,7 +376,7 @@ public:
 public:
   DIFFE_TYPE getDiffeType(llvm::Value *v, bool foreignFunction) const;
 
-  DIFFE_TYPE getReturnDiffeType(llvm::CallInst *orig, bool *primalReturnUsedP,
+  DIFFE_TYPE getReturnDiffeType(llvm::Value *orig, bool *primalReturnUsedP,
                                 bool *shadowReturnUsedP) const;
 
   static GradientUtils *
@@ -507,9 +507,17 @@ public:
   llvm::Type *getShadowType(llvm::Type *ty);
 
   static llvm::Value *extractMeta(llvm::IRBuilder<> &Builder, llvm::Value *Agg,
-                                  unsigned off);
+                                  unsigned off, const llvm::Twine &name = "");
   static llvm::Value *extractMeta(llvm::IRBuilder<> &Builder, llvm::Value *Agg,
-                                  llvm::ArrayRef<unsigned> off);
+                                  llvm::ArrayRef<unsigned> off,
+                                  const llvm::Twine &name = "");
+
+  static llvm::Value *recursiveFAdd(llvm::IRBuilder<> &B, llvm::Value *lhs,
+                                    llvm::Value *rhs,
+                                    llvm::ArrayRef<unsigned> lhs_off = {},
+                                    llvm::ArrayRef<unsigned> rhs_off = {},
+                                    llvm::Value *prev = nullptr,
+                                    bool vectorLayer = false);
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.

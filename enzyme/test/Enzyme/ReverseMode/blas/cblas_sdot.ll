@@ -114,27 +114,27 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:  %mallocsize = mul nuw nsw i32 %len, 4
 ; CHECK-NEXT:  %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
-; CHECK-NEXT:  %0 = bitcast i8* %malloccall to float*
-; CHECK-NEXT:  call void @cblas_scopy(i32 %len, float* %m, i32 %incm, float* %0, i32 1)
+; CHECK-NEXT:  %cache.x = bitcast i8* %malloccall to float*
+; CHECK-NEXT:  call void @cblas_scopy(i32 %len, float* %m, i32 %incm, float* %cache.x, i32 1)
 ; CHECK-NEXT:  %mallocsize1 = mul nuw nsw i32 %len, 4
 ; CHECK-NEXT:  %malloccall2 = tail call noalias nonnull i8* @malloc(i32 %mallocsize1)
-; CHECK-NEXT:  %1 = bitcast i8* %malloccall2 to float*
-; CHECK-NEXT:  call void @cblas_scopy(i32 %len, float* %n, i32 %incn, float* %1, i32 1)
-; CHECK-NEXT:  %2 = insertvalue { float*, float* } undef, float* %0, 0
-; CHECK-NEXT:  %3 = insertvalue { float*, float* } %2, float* %1, 1
-; CHECK-NEXT:  ret { float*, float* } %3
+; CHECK-NEXT:  %cache.y = bitcast i8* %malloccall2 to float*
+; CHECK-NEXT:  call void @cblas_scopy(i32 %len, float* %n, i32 %incn, float* %cache.y, i32 1)
+; CHECK-NEXT:  %0 = insertvalue { float*, float* } undef, float* %cache.x, 0
+; CHECK-NEXT:  %1 = insertvalue { float*, float* } %0, float* %cache.y, 1
+; CHECK-NEXT:  ret { float*, float* } %1
 ; CHECK-NEXT:  }
 
 ; CHECK: define internal void @[[revMod]](i32 %len, float* noalias %m, float* %"m'", i32 %incm, float* noalias %n, float* %"n'", i32 %incn, float %differeturn, { float*, float* }
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %1 = extractvalue { float*, float* } %0, 0
-; CHECK-NEXT:   %2 = extractvalue { float*, float* } %0, 1
-; CHECK-NEXT:   call void @cblas_saxpy(i32 %len, float %differeturn, float* %2, i32 1, float* %"m'", i32 %incm)
-; CHECK-NEXT:   call void @cblas_saxpy(i32 %len, float %differeturn, float* %1, i32 1, float* %"n'", i32 %incn)
-; CHECK-NEXT:   %3 = bitcast float* %1 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %3)
-; CHECK-NEXT:   %4 = bitcast float* %2 to i8*
-; CHECK-NEXT:   tail call void @free(i8* nonnull %4)
+; CHECK-NEXT:   %tape.ext.x = extractvalue { float*, float* } %0, 0
+; CHECK-NEXT:   %tape.ext.y = extractvalue { float*, float* } %0, 1
+; CHECK-NEXT:   call void @cblas_saxpy(i32 %len, float %differeturn, float* %tape.ext.y, i32 1, float* %"m'", i32 %incm)
+; CHECK-NEXT:   call void @cblas_saxpy(i32 %len, float %differeturn, float* %tape.ext.x, i32 1, float* %"n'", i32 %incn)
+; CHECK-NEXT:   %1 = bitcast float* %tape.ext.x to i8*
+; CHECK-NEXT:   tail call void @free(i8* nonnull %1)
+; CHECK-NEXT:   %2 = bitcast float* %tape.ext.y to i8*
+; CHECK-NEXT:   tail call void @free(i8* nonnull %2)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
@@ -149,9 +149,9 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i32 %len, 4
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
-; CHECK-NEXT:   %0 = bitcast i8* %malloccall to float*
-; CHECK-NEXT:   call void @cblas_scopy(i32 %len, float* %m, i32 %incm, float* %0, i32 1)
-; CHECK-NEXT:   ret float* %0
+; CHECK-NEXT:   %cache.x = bitcast i8* %malloccall to float*
+; CHECK-NEXT:   call void @cblas_scopy(i32 %len, float* %m, i32 %incm, float* %cache.x, i32 1)
+; CHECK-NEXT:   ret float* %cache.x
 ; CHECK-NEXT: }
 
 ; CHECK: define internal void @[[revModFirst]](i32 %len, float* noalias %m, i32 %incm, float* noalias %n, float* %"n'", i32 %incn, float %differeturn, float*
@@ -173,9 +173,9 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:  %mallocsize = mul nuw nsw i32 %len, 4
 ; CHECK-NEXT:  %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
-; CHECK-NEXT:  %0 = bitcast i8* %malloccall to float*
-; CHECK-NEXT:  call void @cblas_scopy(i32 %len, float* %n, i32 %incn, float* %0, i32 1)
-; CHECK-NEXT:  ret float* %0
+; CHECK-NEXT:  %cache.y = bitcast i8* %malloccall to float*
+; CHECK-NEXT:  call void @cblas_scopy(i32 %len, float* %n, i32 %incn, float* %cache.y, i32 1)
+; CHECK-NEXT:  ret float* %cache.y
 ; CHECK-NEXT: }
 
 

@@ -82,17 +82,17 @@ attributes #4 = { nounwind }
 ; CHECK: define internal { double } @diffemalloced(double %x, i64 %n, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %mul = shl i64 %n, 3
-; CHECK-NEXT:   %call = tail call i8* @malloc(i64 %mul)
 ; CHECK-NEXT:   %[[dcall:.+]] = tail call noalias nonnull i8* @malloc(i64 %mul)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull {{(align 1 )?}}%"call'mi", i8 0, i64 %mul, {{(i32 1, )?}}i1 false)
+; CHECK-NEXT:   %call = tail call i8* @malloc(i64 %mul)
 ; CHECK-NEXT:   %[[ipci:.+]] = bitcast i8* %[[dcall]] to double*
 ; CHECK-NEXT:   %[[bccall:.+]] = bitcast i8* %call to double*
 ; CHECK-NEXT:   store double %x, double* %[[bccall]], align 8, !tbaa !2
 ; CHECK-NEXT:   %[[fresult:.+]] = call fast double @augmented_f(double* %[[bccall]], double* %[[ipci]])
 ;; TODO MAKE NON AUGMENTED:   %[[fresult:.+]] = call fast double @f(double* %[[bccall]])
-; CHECK-NEXT:  %m0diffecall1 = fmul fast double %differeturn, %[[fresult]]
-; CHECK-NEXT:  %m1diffecall1 = fmul fast double %differeturn, %[[fresult]]
-; CHECK-NEXT:   %[[factor:.+]] = fadd fast double %m0diffecall1, %m1diffecall1
+; CHECK-NEXT:  %[[m0diffecall1:.+]] = fmul fast double %differeturn, %[[fresult]]
+; CHECK-NEXT:  %[[m1diffecall1:.+]] = fmul fast double %differeturn, %[[fresult]]
+; CHECK-NEXT:   %[[factor:.+]] = fadd fast double %[[m0diffecall1]], %[[m1diffecall1]]
 ; CHECK-NEXT:   call void @diffef(double* %[[bccall]], double* %[[ipci]], double %[[factor]])
 ; CHECK-NEXT:   %[[res:.+]] = load double, double* %"'ipc"
 ; NOTE BETTER 03 / dead store elimination can get rid of the next line which is optional

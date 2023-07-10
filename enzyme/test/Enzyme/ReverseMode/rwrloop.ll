@@ -200,9 +200,9 @@ attributes #9 = { noreturn nounwind }
 ; CHECK-NEXT:   %[[a17:.+]] = add nuw nsw i64 %"iv1'ac.1", %[[a16]]
 ; CHECK-NEXT:   %[[a18:.+]] = getelementptr inbounds double, double* %_malloccache, i64 %[[a17]]
 ; CHECK-NEXT:   %[[a19:.+]] = load double, double* %[[a18]], align 8, !tbaa !6, !invariant.group ![[g9]]
-; CHECK-NEXT:   %m0diffe = fmul fast double %[[a14]], %[[a19]]
-; CHECK-NEXT:   %[[a20:.+]] = fadd fast double %"'de.1", %m0diffe
-; CHECK-NEXT:   %[[a21:.+]] = fadd fast double %[[a20]], %m0diffe
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %[[a14]], %[[a19]]
+; CHECK-NEXT:   %[[a20:.+]] = fadd fast double %"'de.1", %[[m0diffe]]
+; CHECK-NEXT:   %[[a21:.+]] = fadd fast double %[[a20]], %[[m0diffe]]
 ; CHECK-NEXT:   store double %[[a21]], double* %"arrayidx'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[a22:.+]] = icmp eq i64 %"iv1'ac.1", 0
 ; CHECK-NEXT:   br i1 %[[a22]], label %invertfor.cond1.preheader, label %incinvertfor.body4

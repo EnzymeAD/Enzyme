@@ -375,8 +375,11 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   }
 
   if (auto CI = dyn_cast<CallInst>(user)) {
-    auto funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
 
+    auto Mode = gutils->mode;
+    const bool cacheMode = (Mode != DerivativeMode::ForwardMode);
+
+    auto funcName = getFuncNameFromCall(CI);
     auto blasMetaData = extractBLAS(funcName);
 #if LLVM_VERSION_MAJOR >= 16
     if (blasMetaData.has_value())
@@ -384,6 +387,13 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     if (blasMetaData.hasValue())
 #endif
     {
+      const std::vector<bool> *overwritten_args_ptr = nullptr;
+      if (gutils->overwritten_args_map_ptr) {
+        auto found =
+            gutils->overwritten_args_map_ptr->find(const_cast<CallInst *>(CI));
+        assert(found != gutils->overwritten_args_map_ptr->end());
+        overwritten_args_ptr = &found->second;
+      }
 #if LLVM_VERSION_MAJOR >= 16
       BlasInfo blas = blasMetaData.value();
 #else
