@@ -1618,8 +1618,9 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
        << "  const bool overwritten_" << name
        << " = (cacheMode ? overwritten_args[pos_" << name << "] : false);\n";
     if (std::count(actArgs.begin(), actArgs.end(), i)) {
-      os << "  bool active_" << name
-         << " = !gutils->isConstantValue(orig_" << name << ");\n";
+      os << "  bool active_" << name << " = !gutils->isConstantValue(orig_"
+         << name << ");\n"
+         << "  Value *rt_active_" << name << " = nullptr;\n";
     }
     os << "\n";
   }
@@ -1634,12 +1635,15 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
 
     // floats are passed by calue, except of the Fortran Abi (byRef)
     auto ty = argTypeMap.lookup(actArgs[i]);
-      os << "  if (";
-      if (ty == ArgType::fp)
-        os << "byRef && ";
-      os << "active_" << name << " && arg_" << name
-         << " == gutils->invertPointerM(orig_" << name << ", BuilderZ))\n"
-         << "    active_" << name << " = false;\n";
+    os << "    if (";
+    if (ty == ArgType::fp)
+      os << "byRef && ";
+    os << "active_" << name << ") {\n"
+       << "      auto shadow_" << name << " = gutils->invertPointerM(orig_"
+       << name << ", BuilderZ);\n"
+       << "      rt_active_" << name << " = BuilderZ.CreateICmpEQ(shadow_"
+       << name << ", arg_" << name << ");\n"
+       << "    }\n";
   }
   os << "  }\n";
 
@@ -2527,10 +2531,12 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
 }
 
 void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
-                    raw_ostream &os) {
+                    StringRef bb, raw_ostream &os) {
   if (dfnc_name == "inner_prod") {
     os << "    auto derivcall_inner_prod = \n"
-          "      getorInsertInnerProd(Builder2, "
+          "      getorInsertInnerProd("
+       << bb
+       << ", "
           "*gutils->oldFunc->getParent(), blas, intType, type_A, "
           "type_n, fpType, ArrayRef<Value *>("
        << argName << "), Defs, byRef, julia_decl);\n"
@@ -2538,17 +2544,18 @@ void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
           "cast<CallInst>(derivcall_inner_prod);\n";
   } else {
     os << "        CallInst *cubcall = "
-          "cast<CallInst>(Builder2.CreateCall(derivcall_"
-       << dfnc_name << ", " << argName << ", Defs));\n";
+          "cast<CallInst>("
+       << bb << ".CreateCall(derivcall_" << dfnc_name << ", " << argName
+       << ", Defs));\n";
   }
   os << "        if (byRef) {\n"
      << "          ((DiffeGradientUtils *)gutils)"
      << "->addToInvertedPtrDiffe(&call, nullptr, fpType, 0,"
-     << "(blas.suffix.contains(\"64\") ? 8 : 4), orig_" << name
-     << ", cubcall, Builder2);\n"
+     << "(blas.suffix.contains(\"64\") ? 8 : 4), orig_" << name << ", cubcall, "
+     << bb << ");\n"
      << "        } else {\n"
-     << "          addToDiffe(orig_" << name
-     << ", cubcall, Builder2, fpType);\n"
+     << "          addToDiffe(orig_" << name << ", cubcall, " << bb
+     << ", fpType);\n"
      << "        }\n";
 }
 
@@ -2674,6 +2681,11 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
          << ", byRef, charType, allocationBuilder, \"" << name << "\");\n";
     }
   }
+  // first iteration to set BB and control flow
+  // logic: enter first BB, then check for ptr equality.
+  // if ptr equal enter next BB.
+  // After last BB enter final BB
+  os << "    std::vector<BasicBlock *> BBs;\n";
 
   os << "    applyChainRule(\n"
      << "      Builder2,\n"
@@ -2703,6 +2715,26 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
 
   for (Rule rule : rules) {
     const size_t actArg = rule.getHandledArgIdx();
+    const auto name = nameVec[actArg];
+    std::string impl_bb = "impl_" + name;
+    std::string cfg_bb = "cfg_" + name;
+
+    os << "      "
+          "BBs.push_back(BasicBlock::Create(gutils->newFunc->getContext(), "
+          "\"cfg."
+       << name << "\", gutils->newFunc));\n";
+    os << "      "
+          "BBs.push_back(BasicBlock::Create(gutils->newFunc->getContext(), "
+          "\"impl."
+       << name << "\", gutils->newFunc));\n";
+  }
+  os << "      BBs.push_back(BasicBlock::Create(gutils->newFunc->getContext(), "
+        "\"end\", gutils->newFunc));\n";
+  os << "      Builder2.CreateBr(BBs[0]);\n";
+  os << "      Builder2.SetInsertPoint(BBs[0]);\n";
+  for (size_t i = 0; i < activeArgs.size(); i++) {
+    auto rule = rules[i];
+    const size_t actArg = activeArgs[i];
     const auto ruleDag = rule.getRuleDag();
     const auto name = nameVec[actArg];
     const auto nameMap = rule.getArgNameMap();
@@ -2710,11 +2742,37 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     const auto valueTypes = ValueType_helper(pattern, actArg);
     const auto opName = ruleDag->getOperator()->getAsString();
     const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
+
+    std::string impl_bb = "impl_" + name;
+    std::string cfg_bb = "cfg_" + name;
+
+    os << "      BasicBlock *BB_cfg" << i << " = BBs[2*" << i << "];\n";
+    os << "      BasicBlock *BB_impl" << i << " = BBs[2*" << i << "+1];\n";
+
+    os << "      BasicBlock *BB_next_cfg" << i << " = BBs[2*" << i + 1
+       << "];\n";
+
+    os << "      Builder2.SetInsertPoint(BB_cfg" << i << ");\n"
+       << "      if (!active_" << name << ") {\n"
+       << "        Builder2.CreateBr(BB_next_cfg" << i << ");\n"
+       << "      } else {\n"
+       << "        Value *shadow_" << name << " = gutils->invertPointerM(orig_"
+       << name << ", Builder2);\n"
+       << "        Value *ptrEqual = Builder2.CreateICmpEQ(shadow_" << name
+       << ", arg_" << name << ");\n"
+       << "        Builder2.CreateCondBr(ptrEqual, BB_next_cfg" << i
+       << ", BB_impl" << i << ");\n"
+       << "      }\n";
+
+    os << "      Builder2.SetInsertPoint(BB_impl" << i << ");\n";
+    // add the branching at the end of the loop (and thus block)
+    // os << "    BuilderZ.CreateBr(BB_next_cfg);\n";
+
     if (Def->isSubClassOf("DiffeRetIndex")) {
       os << "      if (active_" << name << ") {\n"
          << "        Value *toadd = dif;\n"
-         << "        addToDiffe(arg_" << name << ", toadd, Builder2, type_"
-         << name << ");\n"
+         << "        addToDiffe(arg_" << name << ", toadd, " << impl_bb
+         << ", type_" << name << ");\n"
          << "      }\n";
     } else if (Def->isSubClassOf("b")) {
       os << "      if (";
@@ -2729,17 +2787,17 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
         // extra handling, since we will update only a fp scalar as part of the
         // return struct it's presumably done by setting it to the value
         // returned by this call
-        emit_fret_call(dfnc_name, "args1", name, os);
+        emit_fret_call(dfnc_name, "args1", name, "Builder2", os);
       } else {
         os << "        Builder2.CreateCall(derivcall_" << dfnc_name
            << ", args1, Defs);\n";
       }
       os << "      }\n";
-    } else if (Def->isSubClassOf("adj")) {
+      //} else if (Def->isSubClassOf("adj")) {
     } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "noop") {
     } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "inactive") {
       os << "      assert(!active_" << name << ");\n";
-    } else if (Def->isSubClassOf("Constant")) {
+      //} else if (Def->isSubClassOf("Constant")) {
     } else if (Def->isSubClassOf("FrobInnerProd")) {
       os << "      // FrobInnerProd\n";
       os << "      if (";
@@ -2750,7 +2808,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
       // Now that we have the defs, we can create the call
       assert(ty == ArgType::fp);
-      emit_fret_call("inner_prod", "args1", name, os);
+      emit_fret_call("inner_prod", "args1", name, "Builder2", os);
       os << "      }\n";
     } else if (Def->isSubClassOf("Seq")) {
       os << "      // Seq\n";
@@ -2783,7 +2841,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
               // returns, so assume it's the last step of the sequence
               // and update the diffe accordingly
               assert(i == ruleDag->getNumArgs() - 1);
-              emit_fret_call(dfnc_name, argName, name, os);
+              emit_fret_call(dfnc_name, argName, name, "Builder2", os);
             } else {
               os << "        Builder2.CreateCall(derivcall_" << dfnc_name
                  << ", " << argName << ", Defs);\n";
@@ -2792,7 +2850,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
           } else if (sub_Def->isSubClassOf("FrobInnerProd")) {
             assert(sub_Dag->getNumArgs() == 5);
             assert(ty == ArgType::fp);
-            emit_fret_call("inner_prod", argName, name, os);
+            emit_fret_call("inner_prod", argName, name, "Builder2", os);
           }
         }
       }
@@ -2801,9 +2859,11 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       errs() << Def->getName() << "\n";
       PrintFatalError("Unhandled blas-rev case!");
     }
+    os << "      Builder2.CreateBr(BB_next_cfg" << i << ");\n";
   }
   os << "    },\n"
      << "    ";
+
 
   first = true;
   for (auto arg : activeArgs) {
@@ -2822,9 +2882,17 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
        << "    &call,\n"
        << "    Constant::getNullValue(gutils->getShadowType(call.getType())),\n"
        << "    Builder2);\n"
+       //<< "  Builder2.CreateBr(BB_end);\n"
+       //<< "  Builder2.SetInsertPoint(BB_end);\n"
+       //<< "  Builder2.CreateBr(BBs[BBs.size()-1]);\n"
+       << "  Builder2.SetInsertPoint(BBs[BBs.size()-1]);\n"
        << "  }\n";
   } else {
     os << "  );\n"
+       //<< "  Builder2.CreateBr(BB_end);\n"
+       //<< "  Builder2.SetInsertPoint(BB_end);\n"
+       //<< "  Builder2.CreateBr(BBs[BBs.size()-1]);\n"
+       << "  Builder2.SetInsertPoint(BBs[BBs.size()-1]);\n"
        << "  }\n";
   }
 }
