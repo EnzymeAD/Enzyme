@@ -21,5 +21,6 @@ void registerBuiltinDialectAutoDiffInterface(DialectRegistry &registry);
 void registerLLVMDialectAutoDiffInterface(DialectRegistry &registry);
 void registerMemRefDialectAutoDiffInterface(DialectRegistry &registry);
 void registerSCFDialectAutoDiffInterface(DialectRegistry &registry);
+void registerLinalgDialectAutoDiffInterface(DialectRegistry &registry);
 } // namespace enzyme
 } // namespace mlir
