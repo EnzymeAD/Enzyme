@@ -903,3 +903,4 @@ def : InstPattern<(Op $x), "Freeze", 10, 0,
                   >;
 
 include "BlasDerivatives.td"                  
+include "MPIDerivatives.td"

@@ -25,6 +25,7 @@
 
 #include "caching.h"
 #include "datastructures.h"
+#include "datastructures-mpi.h"
 
 using namespace llvm;
 
@@ -37,6 +38,7 @@ enum ActionType {
   UpdateBlasDecl,
   UpdateBlasTA,
   GenBlasDiffUse,
+  GenMPIDerivatives,
 };
 
 static cl::opt<ActionType>
@@ -56,7 +58,9 @@ static cl::opt<ActionType>
            cl::values(clEnumValN(InstDerivatives, "gen-inst-derivatives",
                                  "Generate instruction derivative")),
            cl::values(clEnumValN(CallDerivatives, "gen-call-derivatives",
-                                 "Generate call derivative")));
+                                 "Generate call derivative")),
+           cl::values(clEnumValN(GenMPIDerivatives, "gen-mpi-derivatives",
+                                 "Generate MPI derivatives")));
 
 bool hasDiffeRet(Init *resultTree) {
   if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
@@ -1507,6 +1511,51 @@ void emit_handleBLAS(ArrayRef<TGPattern> blasPatterns, raw_ostream &os) {
      << "}                                                                  \n";
 }
 
+using MPITGPattern = mpi::TGPattern;
+using MPIRule = mpi::Rule;
+
+void emit_handleMPI(ArrayRef<MPITGPattern> MPIPatterns, raw_ostream &os) {
+  os << "bool handleMPI(llvm::CallInst &call, llvm::Function *called,"
+        "StringRef funcName) {         \n"
+     << "  using llvm::Type;                                                \n"
+     << "  bool result = true;                                              \n"
+     << "  if (!gutils->isConstantInstruction(&call)) {                     \n";
+  bool first = true;
+  for (auto &&pattern : MPIPatterns) {
+    bool hasNonInactive = false;
+    for (MPIRule rule : pattern.getRules()) {
+      const auto ruleDag = rule.getRuleDag();
+      const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
+      if (Def->isSubClassOf("MagicInst") && Def->getName() == "inactive")
+        continue;
+      hasNonInactive = true;
+      break;
+    }
+    if (!hasNonInactive)
+      continue;
+    auto name = pattern.getName();
+    os << "    " << ((first) ? "" : "} else ") << " if (funcName == \""
+       << name << "\") {                           \n"
+       << "      result = handle_" << name
+       << "(call, called, funcName);                 \n";
+    first = false;
+  }
+  os << "    } else {                                                       \n"
+     << "      llvm::errs() << \" fallback?\\n\";                           \n"
+     << "      return false;                                                \n"
+     << "    }                                                              \n"
+     << "  }                                                                \n"
+     << "                                                                   \n"
+     << "  if (Mode == DerivativeMode::ReverseModeGradient) {               \n"
+     << "    eraseIfUnused(call, /*erase*/ true, /*check*/ false);          \n"
+     << "  } else {                                                         \n"
+     << "    eraseIfUnused(call);                                           \n"
+     << "  }                                                                \n"
+     << "                                                                   \n"
+     << "  return result;                                                   \n"
+     << "}                                                                  \n";
+}
+
 void emit_beginning(const TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
   os << "\nbool handle_" << name
@@ -2865,6 +2914,53 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   }
 }
 
+void emitMPIDerivatives(const RecordKeeper &RK, raw_ostream &os) {
+
+  emitSourceFileHeader("Rewriters", os);
+  const auto &mpiPatterns = RK.getAllDerivedDefinitions("CallMPIPattern");
+
+  SmallVector<MPITGPattern, 8> newMPIPatterns;
+  StringMap<MPITGPattern> patternMap;
+  for (auto &&pattern : mpiPatterns) {
+    auto parsedPattern = MPITGPattern(pattern);
+    newMPIPatterns.push_back(MPITGPattern(pattern));
+    auto newEntry = std::pair<std::string, MPITGPattern>(parsedPattern.getName(),
+                                                      parsedPattern);
+    patternMap.insert(newEntry);
+  }
+
+  // checkBlasCalls(RK, mpiPatterns);
+  emit_handleMPI(newMPIPatterns, os);
+  // // emitEnumMatcher(blas_modes, os);
+
+  for (auto &&newPattern : newMPIPatterns) {
+    bool hasNonInactive = false;
+    for (mpi::Rule rule : newPattern.getRules()) {
+      const auto ruleDag = rule.getRuleDag();
+      const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
+      if (Def->isSubClassOf("MagicInst") && Def->getName() == "inactive")
+        continue;
+      hasNonInactive = true;
+      break;
+    }
+    if (!hasNonInactive)
+      continue;
+
+    // emit_beginning(newPattern, os);
+    // emit_helper(newPattern, os);
+    // emit_scalar_types(newPattern, os);
+
+    // emit_caching(newPattern, os);
+    // emit_extract_calls(newPattern, os);
+
+    // emit_fwd_rewrite_rules(newPattern, os);
+    // emit_rev_rewrite_rules(patternMap, newPattern, os);
+
+    // //// writeEnums(pattern, blas_modes, os);
+    // emit_free_and_ending(newPattern, os);
+  }
+}
+
 #include "blasDeclUpdater.h"
 #include "blasDiffUseUpdater.h"
 #include "blasTAUpdater.h"
@@ -2888,6 +2984,9 @@ static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
     return false;
   case UpdateBlasTA:
     emitBlasTAUpdater(records, os);
+    return false;
+  case GenMPIDerivatives:
+    emitMPIDerivatives(records, os);
     return false;
 
   default:
