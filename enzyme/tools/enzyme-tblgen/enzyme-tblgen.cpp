@@ -2687,6 +2687,8 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   // After last BB enter final BB
   os << "    std::vector<BasicBlock *> BBs;\n";
   os << "    BasicBlock *current = Builder2.GetInsertBlock();\n";
+  os << "    BBs.push_back(current);\n";
+  os << "    BasicBlock *end = nullptr;\n";
   os << "    auto cname = current->getName();\n";
 
   os << "    applyChainRule(\n"
@@ -2718,12 +2720,6 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   for (size_t i = 0; i < activeArgs.size(); i++) {
     auto rule = rules[i];
     const size_t actArg = activeArgs[i];
-    const auto name = nameVec[actArg];
-  }
-
-  for (size_t i = 0; i < activeArgs.size(); i++) {
-    auto rule = rules[i];
-    const size_t actArg = activeArgs[i];
     const auto ruleDag = rule.getRuleDag();
     const auto name = nameVec[actArg];
     const auto nameMap = rule.getArgNameMap();
@@ -2735,39 +2731,38 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     std::string impl_bb = "impl_" + name;
     std::string cfg_bb = "cfg_" + name;
 
-
-
-    os << "      if (active_" << name << ") {\n"
+    os << "      if (active_" << name << " && EnzymeRuntimeActivityCheck) {\n"
        << "        // if runtimeActivity, then add extra blocks to check it\n"
-       << "        // otherwise just add the corresponding code to the current block\n";
-    
-    os << "        if (EnzymeRuntimeActivityCheck) {\n"
-       << "          BasicBlock *before_" << cfg_bb
-       << " = BBs.empty() ? current : BBs[BBs.size()-1];\n"
-       << "      BasicBlock *" << cfg_bb
+       << "        // otherwise just add the corresponding code to the current "
+          "block\n";
+
+    os << "        BasicBlock *before_" << cfg_bb
+       << " = BBs[BBs.size()-1];\n"
+       //   << " = BBs.empty() ? current : BBs[BBs.size()-1];\n"
+       << "        BasicBlock *" << cfg_bb
        << " = gutils->addReverseBlock(before_" << cfg_bb << ", cname + \"_"
        << cfg_bb << "\");\n"
-       << "      BasicBlock *" << impl_bb << " = gutils->addReverseBlock("
+       << "        BasicBlock *" << impl_bb << " = gutils->addReverseBlock("
        << cfg_bb << ", cname + \"_" << impl_bb << "\");\n";
 
-    os << "      BBs.push_back(" << cfg_bb << ");\n";
-    os << "      BBs.push_back(" << impl_bb << ");\n";
+    os << "        BBs.push_back(" << cfg_bb << ");\n";
+    os << "        BBs.push_back(" << impl_bb << ");\n";
 
-    os << "      Builder2.SetInsertPoint(before_" << cfg_bb << ");\n";
+    os << "        Builder2.CreateBr(" << cfg_bb << ");\n";
 
-    os << "        Value *shadow_" << name << " = gutils->invertPointerM(orig_"
-       << name << ", Builder2);\n"
-       << "        Value *ptrEqual = Builder2.CreateICmpEQ(shadow_" << name
-       << ", arg_" << name << ");\n"
-       << "        Builder2.CreateCondBr(ptrEqual, " << cfg_bb
-       << ", " << impl_bb << ");\n";
+    // Next lines require knowing the next cfg bb
+    // os << "        Builder2.SetInsertPoint(" << cfg_bb << ");\n";
 
-    os << "      Builder2.SetInsertPoint(" << impl_bb << ");\n"
-       << "      }\n"
-       << "    }\n";
+    // os << "        Value *shadow_" << name << " =
+    // gutils->invertPointerM(orig_"
+    //    << name << ", Builder2);\n"
+    //    << "        Value *ptrEqual = Builder2.CreateICmpEQ(shadow_" << name
+    //    << ", arg_" << name << ");\n"
+    //    << "        Builder2.CreateCondBr(ptrEqual, " << cfg_bb << ", "
+    //    << impl_bb << ");\n";
 
-
-
+    os << "        Builder2.SetInsertPoint(" << impl_bb << ");\n"
+       << "      }\n";
 
     if (Def->isSubClassOf("DiffeRetIndex")) {
       os << "      if (active_" << name << ") {\n"
@@ -2860,9 +2855,6 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       errs() << Def->getName() << "\n";
       PrintFatalError("Unhandled blas-rev case!");
     }
-    //os << "if (EnzymeRuntimeActivityCheck) {\n"
-    //   << "   Builder2.CreateBr(BB_next_cfg" << i << ");\n"
-    //   << "}\n";
   }
   os << "    },\n"
      << "    ";
@@ -2884,22 +2876,53 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
        << "  setDiffe(\n"
        << "    &call,\n"
        << "    Constant::getNullValue(gutils->getShadowType(call.getType())),\n"
-       << "    Builder2);\n"
-       << "    if (EnzymeRuntimeActivityCheck) {\n"
-       << "      BBs.push_back(gutils->addReverseBlock(BBs[BBs.size()-1], "
-          "cname + \"_end\"));\n"
-       << "      Builder2.SetInsertPoint(BBs[BBs.size()-1]);\n"
-       << "    }\n"
-       << "  }\n";
+       << "    Builder2);\n";
   } else {
-    os << "  );\n"
-       << "  if (EnzymeRuntimeActivityCheck) {\n"
-       << "    BBs.push_back(gutils->addReverseBlock(BBs[BBs.size()-1], "
-          "cname + \"_end\"));\n"
-       << "    Builder2.SetInsertPoint(BBs[BBs.size()-1]);\n"
-       << "  }\n"
-       << "  }\n";
+    os << "  );\n";
   }
+
+  os << "    if (EnzymeRuntimeActivityCheck) {\n"
+     << "      BBs.push_back(gutils->addReverseBlock(BBs[BBs.size()-1], "
+        "cname + \"_end\"));\n"
+     << "      Builder2.CreateBr(BBs[BBs.size()-1]);\n"
+     << "      Builder2.SetInsertPoint(BBs[BBs.size()-1]);\n"
+     << "    }\n";
+
+  os << "    size_t pos = 1;\n";
+  for (size_t i = 0; i < activeArgs.size(); i++) {
+    auto rule = rules[i];
+    const size_t actArg = activeArgs[i];
+    const auto name = nameVec[actArg];
+
+    std::string impl_bb = "impl_" + name;
+    std::string cfg_bb = "cfg_" + name;
+
+    os << "      if (active_" << name << " && EnzymeRuntimeActivityCheck) {\n"
+       << "        // if runtimeActivity, then add extra blocks to check it\n"
+       << "        // otherwise just add the corresponding code to the current "
+          "block\n";
+
+    os << "        BasicBlock *cfg1 = BBs[pos++];\n"
+       << "        BasicBlock *impl = BBs[pos++];\n"
+       << "        BasicBlock *cfg2 = BBs[pos];\n";
+
+    // Next lines require knowing the next cfg bb
+    os << "        Builder2.SetInsertPoint(cfg1);\n";
+
+    os << "        Value *shadow_" << name << " = gutils->invertPointerM(orig_"
+       << name << ", Builder2);\n"
+       << "        Value *ptrEqual = Builder2.CreateICmpEQ(shadow_" << name
+       << ", arg_" << name << ");\n"
+       << "        Builder2.CreateCondBr(ptrEqual, cfg2, impl);\n";
+
+    os << "      }\n";
+  }
+  os << "    if (EnzymeRuntimeActivityCheck) {\n"
+     << "      Builder2.SetInsertPoint(BBs[BBs.size()-1]);\n"
+     << "    }\n";
+
+  // end ReverseModeGradient
+  os << "  }\n";
 }
 
 // Further optimization: re-use / share caches where possible
