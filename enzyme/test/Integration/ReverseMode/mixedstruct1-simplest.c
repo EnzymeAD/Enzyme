@@ -30,7 +30,7 @@ float tile_multiply(float* data, long long int R_start, long long int R_end, lon
       float sum2 = tile_multiply(data, R_start, R_end, C_midpoint, C_end);
       return sum1 + sum2;
   } else {
-    printf("data[%d*8 + %d]\n", R_start, C_start);
+    printf("data[%lld*8 + %lld]\n", R_start, C_start);
     return data[R_start*8 + C_start];//*window[(r+c)%10];
   }
 }
