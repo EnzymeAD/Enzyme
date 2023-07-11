@@ -155,16 +155,6 @@ struct GenericOpInterfaceReverse
       inputs.push_back(view);
     }
 
-    // linalg::GenericOp adjoint = builder.create<linalg::GenericOp>(
-    //     op->getLoc(), outputs, inputs, indexingMaps, iteratorTypes);
-    // static void build(::mlir::OpBuilder &odsBuilder, ::mlir::OperationState
-    // &odsState, ::mlir::TypeRange result_tensors, ::mlir::ValueRange inputs,
-    // ::mlir::ValueRange outputs, ::mlir::ArrayAttr indexing_maps,
-    // ::mlir::ArrayAttr iterator_types, /*optional*/::mlir::StringAttr doc,
-    // /*optional*/::mlir::StringAttr library_call); static void
-    // build(::mlir::OpBuilder &, ::mlir::OperationState &odsState,
-    // ::mlir::TypeRange resultTypes, ::mlir::ValueRange operands,
-    // ::llvm::ArrayRef<::mlir::NamedAttribute> attributes = {});
     ArrayAttr indexingMapsArrayAttr =
         builder.getAffineMapArrayAttr(indexingMaps);
     ArrayAttr iteratorTypesArrayAttr =
