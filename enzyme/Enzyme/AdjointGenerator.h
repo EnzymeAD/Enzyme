@@ -1389,7 +1389,7 @@ public:
           } else {
             std::string s;
             llvm::raw_string_ostream ss(s);
-            ss << *I.getParent()->getParent() << "\n" << *I.getParent() << "\n";
+            ss << *I.getParent()->getParent() << "\n";
             ss << "cannot handle above cast " << I << "\n";
             if (CustomErrorHandler) {
               CustomErrorHandler(ss.str().c_str(), wrap(&I),
@@ -2402,7 +2402,6 @@ public:
     def:;
       std::string s;
       llvm::raw_string_ostream ss(s);
-      ss << *gutils->oldFunc->getParent() << "\n";
       ss << *gutils->oldFunc << "\n";
       for (auto &arg : gutils->oldFunc->args()) {
         ss << " constantarg[" << arg << "] = " << gutils->isConstantValue(&arg)
@@ -2648,7 +2647,6 @@ public:
     def:;
       std::string s;
       llvm::raw_string_ostream ss(s);
-      ss << *gutils->oldFunc->getParent() << "\n";
       ss << *gutils->oldFunc << "\n";
       for (auto &arg : gutils->oldFunc->args()) {
         ss << " constantarg[" << arg << "] = " << gutils->isConstantValue(&arg)
