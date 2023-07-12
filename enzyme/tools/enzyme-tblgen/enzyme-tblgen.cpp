@@ -1620,7 +1620,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
     if (std::count(actArgs.begin(), actArgs.end(), i)) {
       os << "  bool active_" << name << " = !gutils->isConstantValue(orig_"
          << name << ");\n"
-         << "  Value *rt_active_" << name << " = nullptr;\n";
+         << "  Value *rt_inactive_" << name << " = nullptr;\n";
     }
     os << "\n";
   }
@@ -1641,7 +1641,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
     os << "active_" << name << ") {\n"
        << "      auto shadow_" << name << " = gutils->invertPointerM(orig_"
        << name << ", BuilderZ);\n"
-       << "      rt_active_" << name << " = BuilderZ.CreateICmpEQ(shadow_"
+       << "      rt_inactive_" << name << " = BuilderZ.CreateICmpEQ(shadow_"
        << name << ", arg_" << name << ", (Twine(\"rt.inactive.\") + \"" << name
        << "\").str());\n"
        << "    }\n";
@@ -2560,9 +2560,35 @@ void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
      << "        }\n";
 }
 
-// TODO: handle Seq
-void emit_rule_activity_req(DagInit *ruleDag, StringRef name, raw_ostream &os) {
-  os << "active_" << name;
+// todo: update rt_active_<X> to use actual dag requirements,
+// possibly by or-ing them
+void emit_runtime_condition(DagInit *ruleDag, StringRef name, StringRef tab,
+                            StringRef B, bool isFP, raw_ostream &os) {
+  os << tab << "BasicBlock *nextBlock_" << name << " = nullptr;\n"
+     << tab << "if (EnzymeRuntimeActivityCheck" << (isFP ? " && byRef" : "")
+     << ") {\n"
+     << tab << "  BasicBlock *current = Builder2.GetInsertBlock();\n"
+     << tab << "  auto activeBlock = gutils->addReverseBlock(current,"
+     << "bb_name + \"." << name << ".active\");\n"
+     << tab << "  nextBlock_" << name << " = gutils->addReverseBlock("
+     << "activeBlock, bb_name + \"." << name << ".done\");\n"
+     << tab << "  " << B << ".CreateCondBr(rt_inactive_" << name
+     << ", nextBlock_" << name << ", activeBlock);\n"
+     << tab << "  " << B << ".SetInsertPoint(activeBlock);\n"
+     << tab << "}\n";
+}
+
+void emit_runtime_continue(DagInit *ruleDag, StringRef name, StringRef tab,
+                           StringRef B, bool isFP, raw_ostream &os) {
+  os << tab << "if (nextBlock_" << name << (isFP ? " && byRef" : "") << ") {\n"
+     << tab << "  " << B << ".CreateBr(nextBlock_" << name << ");\n"
+     << tab << "  " << B << ".SetInsertPoint(nextBlock_" << name << ");\n"
+     << tab << "}\n";
+}
+
+void emit_if_rule_condition(DagInit *ruleDag, StringRef name, StringRef tab,
+                            raw_ostream &os) {
+  os << tab << "if (active_" << name;
   for (size_t pos = 0; pos < ruleDag->getNumArgs();) {
     auto arg = ruleDag->getArg(pos);
     if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
@@ -2574,6 +2600,7 @@ void emit_rule_activity_req(DagInit *ruleDag, StringRef name, raw_ostream &os) {
     }
     pos++;
   }
+  os << ") {\n";
 }
 
 void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
@@ -2683,7 +2710,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     if (ty == ArgType::fp)
       os << "byRef && ";
     os << "active_" << name << ") {\n"
-       << "      rt_active_" << name << " = lookup(rt_active_" << name
+       << "      rt_inactive_" << name << " = lookup(rt_inactive_" << name
        << ", Builder2);\n"
        << "    }\n";
   }
@@ -2702,11 +2729,11 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   // logic: enter first BB, then check for ptr equality.
   // if ptr equal enter next BB.
   // After last BB enter final BB
-  os << "    std::vector<BasicBlock *> BBs;\n";
-  os << "    BasicBlock *current = Builder2.GetInsertBlock();\n";
-  os << "    BBs.push_back(current);\n";
-  os << "    BasicBlock *end = nullptr;\n";
-  os << "    auto cname = current->getName();\n";
+  // os << "    std::vector<BasicBlock *> BBs;\n";
+  // os << "    BasicBlock *current = Builder2.GetInsertBlock();\n";
+  // os << "    BBs.push_back(current);\n";
+  // os << "    BasicBlock *end = nullptr;\n";
+  // os << "    auto cname = current->getName();\n";
 
   os << "    applyChainRule(\n"
      << "      Builder2,\n"
@@ -2734,6 +2761,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     os << ") {\n";
   }
 
+  os << "      auto bb_name = Builder2.GetInsertBlock()->getName();\n";
   for (size_t i = 0; i < activeArgs.size(); i++) {
     auto rule = rules[i];
     const size_t actArg = activeArgs[i];
@@ -2745,37 +2773,16 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     const auto opName = ruleDag->getOperator()->getAsString();
     const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
 
-    std::string impl_bb = "impl_" + name;
-    std::string cfg_bb = "cfg_" + name;
-
-    os << "      if (active_" << name << " && EnzymeRuntimeActivityCheck) {\n"
-       << "        // if runtimeActivity, then add extra blocks to check it\n"
-       << "        // otherwise just add the corresponding code to the current "
-          "block\n";
-
-    os << "        BasicBlock *before_" << cfg_bb << " = BBs[BBs.size()-1];\n"
-       << "        BasicBlock *" << cfg_bb
-       << " = gutils->addReverseBlock(before_" << cfg_bb << ", cname + \"_"
-       << cfg_bb << "\");\n"
-       << "        BasicBlock *" << impl_bb << " = gutils->addReverseBlock("
-       << cfg_bb << ", cname + \"_" << impl_bb << "\");\n";
-
-    os << "        BBs.push_back(" << cfg_bb << ");\n"
-       << "        BBs.push_back(" << impl_bb << ");\n"
-       << "        Builder2.CreateBr(" << cfg_bb << ");\n"
-       << "        Builder2.SetInsertPoint(" << impl_bb << ");\n"
-       << "      }\n";
-
     if (Def->isSubClassOf("DiffeRetIndex")) {
       os << "      if (active_" << name << ") {\n"
          << "        Value *toadd = dif;\n"
-         << "        addToDiffe(arg_" << name << ", toadd, " << impl_bb
+         << "        addToDiffe(arg_" << name << ", toadd, Builder2, "
          << ", type_" << name << ");\n"
          << "      }\n";
     } else if (Def->isSubClassOf("b")) {
-      os << "      if (";
-      emit_rule_activity_req(ruleDag, name, os);
-      os << ") {\n";
+      emit_if_rule_condition(ruleDag, name, "      ", os);
+      emit_runtime_condition(ruleDag, name, "        ", "Builder2",
+                             (ty == ArgType::fp), os);
       rev_call_args("args1", rule, actArg, os);
       os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
@@ -2790,32 +2797,31 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
         os << "        Builder2.CreateCall(derivcall_" << dfnc_name
            << ", args1, Defs);\n";
       }
+      emit_runtime_continue(ruleDag, name, "        ", "Builder2",
+                            (ty == ArgType::fp), os);
       os << "      }\n";
-      //} else if (Def->isSubClassOf("adj")) {
     } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "noop") {
     } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "inactive") {
       os << "      assert(!active_" << name << ");\n";
-      //} else if (Def->isSubClassOf("Constant")) {
     } else if (Def->isSubClassOf("FrobInnerProd")) {
+      assert(ty == ArgType::fp);
       os << "      // FrobInnerProd\n";
-      os << "      if (";
-      emit_rule_activity_req(ruleDag, name, os);
-      os << ") {\n";
+      emit_if_rule_condition(ruleDag, name, "      ", os);
+      emit_runtime_condition(ruleDag, name, "        ", "Builder2", true, os);
       rev_call_args("args1", rule, actArg, os);
       os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
       // Now that we have the defs, we can create the call
-      assert(ty == ArgType::fp);
       emit_fret_call("inner_prod", "args1", name, "Builder2", os);
+      emit_runtime_continue(ruleDag, name, "        ", "Builder2", true, os);
       os << "      }\n";
     } else if (Def->isSubClassOf("Seq")) {
       os << "      // Seq\n";
       // (Currently) we only need advanced rules for differentiating
       // wrt. scalar. Make this more generic once we have more testcases.
       assert(ty == ArgType::fp);
-      os << "      if (";
-      emit_rule_activity_req(ruleDag, name, os);
-      os << ") {\n";
+      emit_if_rule_condition(ruleDag, name, "      ", os);
+      emit_runtime_condition(ruleDag, name, "        ", "Builder2", true, os);
 
       // We might need to create a tmp vec or matrix
       emit_tmp_creation(Def, os);
@@ -2852,6 +2858,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
           }
         }
       }
+      emit_runtime_continue(ruleDag, name, "        ", "Builder2", true, os);
       os << "      }\n";
     } else {
       errs() << Def->getName() << "\n";
@@ -2882,30 +2889,30 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     os << "  );\n";
   }
 
-  os << "    if (EnzymeRuntimeActivityCheck) {\n"
-     << "      BBs.push_back(gutils->addReverseBlock(BBs[BBs.size()-1], "
-        "cname + \"_end\"));\n"
-     << "      Builder2.CreateBr(BBs[BBs.size()-1]);\n"
-     << "      Builder2.SetInsertPoint(BBs[BBs.size()-1]);\n"
-     << "      size_t pos = 1;\n";
+  // os << "    if (EnzymeRuntimeActivityCheck) {\n"
+  //    << "      BBs.push_back(gutils->addReverseBlock(BBs[BBs.size()-1], "
+  //       "cname + \"_end\"));\n"
+  //    << "      Builder2.CreateBr(BBs[BBs.size()-1]);\n"
+  //    << "      Builder2.SetInsertPoint(BBs[BBs.size()-1]);\n"
+  //    << "      size_t pos = 1;\n";
 
-  for (size_t i = 0; i < activeArgs.size(); i++) {
-    auto rule = rules[i];
-    const size_t actArg = activeArgs[i];
-    const auto name = nameVec[actArg];
+  // for (size_t i = 0; i < activeArgs.size(); i++) {
+  //   auto rule = rules[i];
+  //   const size_t actArg = activeArgs[i];
+  //   const auto name = nameVec[actArg];
 
-    os << "      if (active_" << name << ") {\n"
-       << "        BasicBlock *cfg1 = BBs[pos++];\n"
-       << "        BasicBlock *impl = BBs[pos++];\n"
-       << "        BasicBlock *cfg2 = BBs[pos];\n"
-       << "        Builder2.SetInsertPoint(cfg1);\n"
-       << "        Builder2.CreateCondBr(rt_active_" << name
-       << ", cfg2, impl);\n"
-       << "      }\n";
-  }
+  //  os << "      if (active_" << name << ") {\n"
+  //     << "        BasicBlock *cfg1 = BBs[pos++];\n"
+  //     << "        BasicBlock *impl = BBs[pos++];\n"
+  //     << "        BasicBlock *cfg2 = BBs[pos];\n"
+  //     << "        Builder2.SetInsertPoint(cfg1);\n"
+  //     << "        Builder2.CreateCondBr(rt_inactive_" << name
+  //     << ", cfg2, impl);\n"
+  //     << "      }\n";
+  //}
 
-  os << "      Builder2.SetInsertPoint(BBs[BBs.size()-1]);\n"
-     << "    }\n";
+  // os << "      Builder2.SetInsertPoint(BBs[BBs.size()-1]);\n"
+  //    << "    }\n";
 
   // end ReverseModeGradient
   os << "  }\n";
