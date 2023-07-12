@@ -26,7 +26,7 @@ static double df(double x) {
 
 int main(int argc, char** argv) {
   double ret = __enzyme_autodiff2((void*)df, 5.0);
-  printf("ret=%f\n");
+  printf("ret=%f\n", ret);
   APPROX_EQ(ret, 10.0, 1e-7);
 
   return 0;
