@@ -3515,6 +3515,8 @@ public:
       return false;
     }
 
+    auto mod = I.getParent()->getParent()->getParent();
+    auto called = cast<CallInst>(&I)->getCalledFunction();
     switch (ID) {
 #include "IntrinsicDerivatives.inc"
     default:
@@ -3542,14 +3544,16 @@ public:
         ss << *gutils->newFunc << "\n";
         ss << "cannot handle (augmented) unknown intrinsic\n" << I;
         if (CustomErrorHandler) {
-          IRBuilder<> BuilderZ(I.getParent());
+          IRBuilder<> BuilderZ(&I);
           getForwardBuilder(BuilderZ);
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
                              ErrorType::NoDerivative, gutils, nullptr,
                              wrap(&BuilderZ));
+          return false;
         } else {
-          llvm::errs() << ss.str() << "\n";
-          report_fatal_error("(augmented) unknown intrinsic");
+          ss.str();
+          EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
+          return false;
         }
       }
       return false;
@@ -3760,9 +3764,11 @@ public:
           setDiffe(&I,
                    Constant::getNullValue(gutils->getShadowType(I.getType())),
                    Builder2);
+          return false;
         } else {
           llvm::errs() << ss.str() << "\n";
           report_fatal_error("(forward) unknown intrinsic");
+          return false;
         }
       }
       return false;
@@ -8395,6 +8401,7 @@ public:
         llvm_unreachable("unhandled openmp function");
       }
 
+      auto mod = call.getParent()->getParent()->getParent();
 #include "CallDerivatives.inc"
 
       if (funcName == "llvm.julia.gc_preserve_end") {
