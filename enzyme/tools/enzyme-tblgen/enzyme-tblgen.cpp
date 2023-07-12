@@ -2733,7 +2733,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   } else {
     os << ") {\n";
   }
-  
+
   for (size_t i = 0; i < activeArgs.size(); i++) {
     auto rule = rules[i];
     const size_t actArg = activeArgs[i];

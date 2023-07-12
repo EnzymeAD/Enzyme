@@ -81,6 +81,11 @@ entry:
 ; CHECK-NEXT:   store i64 4, i64* %lda, align 16
 ; CHECK-NEXT:   store i64 8, i64* %ldb, align 16
 ; CHECK-NEXT:   store i64 4, i64* %ldc, align 16
+; CHECK-NEXT:   %rt.inactive.alpha = icmp eq i8* %"alpha'", %alpha
+; CHECK-NEXT:   %rt.inactive.A = icmp eq i8* %"A'", %A
+; CHECK-NEXT:   %rt.inactive.B = icmp eq i8* %"B'", %B
+; CHECK-NEXT:   %rt.inactive.beta = icmp eq i8* %"beta'", %beta
+; CHECK-NEXT:   %rt.inactive.C = icmp eq i8* %"C'", %C
 ; CHECK-NEXT:   %loaded.trans = load i8, i8* %transa
 ; CHECK-DAG:   %[[i0:.+]] = icmp eq i8 %loaded.trans, 78
 ; CHECK-DAG:   %[[i1:.+]] = icmp eq i8 %loaded.trans, 110
@@ -152,6 +157,12 @@ entry:
 ; CHECK-DAG:    %[[i39:.+]] = icmp eq i8 %ld.transb, 84
 ; CHECK-DAG:    %[[i40:.+]] = select i1 %[[i39]], i8 78, i8 %[[i38]]
 ; CHECK-NEXT:   store i8 %[[i40]], i8* %byref.transpose.transb
+; CHECK-NEXT:   br label %invertentry_cfg_alpha
+
+; CHECK: invertentry_cfg_alpha:                            ; preds = %invertentry
+; CHECK-NEXT:   br i1 %rt.inactive.alpha, label %invertentry_cfg_A, label %invertentry_impl_alpha
+
+; CHECK: invertentry_impl_alpha:                           ; preds = %invertentry_cfg_alpha
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
 ; CHECK-NEXT:   %fpcast.constant.fp.1.0 = bitcast double* %byref.constant.fp.1.0 to i8*
 ; CHECK-NEXT:   %loaded.trans7 = load i8, i8* %transa
@@ -174,7 +185,7 @@ entry:
 ; CHECK-NEXT:   %[[i49:.+]] = icmp eq i64 %mat.size.i, 0
 ; CHECK-NEXT:   br i1 %[[i49]], label %__enzyme_inner_prodd_64_.exit, label %init.idx.i
 
-; CHECK: init.idx.i:                                       ; preds = %invertentry
+; CHECK: init.idx.i:                                       ; preds = %invertentry_impl_alpha
 ; CHECK-NEXT:   %[[i50:.+]] = load i64, i64* %ldc
 ; CHECK-NEXT:   %[[i51:.+]] = bitcast i8* %"C'" to double*
 ; CHECK-NEXT:   %[[i52:.+]] = icmp eq i64 %[[i47]], %[[i50]]
@@ -201,21 +212,39 @@ entry:
 ; CHECK-NEXT:   %58 = icmp eq i64 %iteration.i, %48
 ; CHECK-NEXT:   br i1 %58, label %__enzyme_inner_prodd_64_.exit, label %for.body.i
 
-; CHECK: __enzyme_inner_prodd_64_.exit:                    ; preds = %invertentry, %fast.path.i, %for.body.i
-; CHECK-NEXT:   %res.i = phi double [ 0.000000e+00, %invertentry ], [ %sum.i, %for.body.i ], [ %[[i53]], %fast.path.i ]
+; CHECK: __enzyme_inner_prodd_64_.exit:                    ; preds = %invertentry_impl_alpha, %fast.path.i, %for.body.i
+; CHECK-NEXT:   %res.i = phi double [ 0.000000e+00, %invertentry_impl_alpha ], [ %sum.i, %for.body.i ], [ %[[i53]], %fast.path.i ]
 ; CHECK-NEXT:   %59 = bitcast i64* %byref.constant.one.i to i8*
 ; CHECK:   %60 = bitcast i64* %byref.mat.size.i to i8*
 ; CHECK:   %61 = bitcast i8* %"alpha'" to double*
 ; CHECK-NEXT:   %62 = load double, double* %61
 ; CHECK-NEXT:   %63 = fadd fast double %62, %res.i
 ; CHECK-NEXT:   store double %63, double* %61
+; CHECK-NEXT:   br label %invertentry_cfg_A
+
+; CHECK: invertentry_cfg_A:                                ; preds = %invertentry_cfg_alpha, %__enzyme_inner_prodd_64_.exit
+; CHECK-NEXT:   br i1 %rt.inactive.A, label %invertentry_cfg_B, label %invertentry_impl_A
+
+; CHECK: invertentry_impl_A:                               ; preds = %invertentry_cfg_A
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %byref.transpose.transb, i8* %m_p, i8* %k_p, i8* %n_p, i8* %alpha, i8* %"C'", i8* %ldc_p, i8* %B, i8* %ldb_p, i8* %beta, i8* %"A'", i8* %lda_p)
+; CHECK-NEXT:   br label %invertentry_cfg_B
+
+; CHECK: invertentry_cfg_B:                                ; preds = %invertentry_cfg_A, %invertentry_impl_A
+; CHECK-NEXT:   br i1 %rt.inactive.B, label %invertentry_cfg_beta, label %invertentry_impl_B
+
+; CHECK: invertentry_impl_B:                               ; preds = %invertentry_cfg_B
 ; CHECK-NEXT:   %loaded.trans8 = load i8, i8* %transa
 ; CHECK-DAG:   %[[i64:.+]] = icmp eq i8 %loaded.trans8, 78
 ; CHECK-DAG:   %[[i65:.+]] = icmp eq i8 %loaded.trans8, 110
 ; CHECK-DAG:   %[[i66:.+]] = or i1 %[[i65]], %[[i64]]
 ; CHECK-NEXT:   %[[i67:.+]] = select i1 %[[i66]], i8* %m_p, i8* %k_p
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %byref.transpose.transa, i8* %transb, i8* %k_p, i8* %n_p, i8* %m_p, i8* %alpha, i8* %22, i8* %[[i67]], i8* %"C'", i8* %ldc_p, i8* %beta, i8* %"B'", i8* %ldb_p)
+; CHECK-NEXT:   br label %invertentry_cfg_beta
+
+; CHECK: invertentry_cfg_beta:                             ; preds = %invertentry_cfg_B, %invertentry_impl_B
+; CHECK-NEXT:   br i1 %rt.inactive.beta, label %invertentry_cfg_C, label %invertentry_impl_beta
+
+; CHECK: invertentry_impl_beta:                            ; preds = %invertentry_cfg_beta
 ; CHECK:   %68 = bitcast i64* %byref.constant.one.i15 to i8*
 ; CHECK:   %69 = bitcast i64* %byref.mat.size.i18 to i8*
 ; CHECK:   store i64 1, i64* %byref.constant.one.i15
@@ -228,7 +257,7 @@ entry:
 ; CHECK-NEXT:   %72 = icmp eq i64 %mat.size.i17, 0
 ; CHECK-NEXT:   br i1 %72, label %__enzyme_inner_prodd_64_.exit33, label %init.idx.i20
 
-; CHECK: init.idx.i20:                                     ; preds = %__enzyme_inner_prodd_64_.exit
+; CHECK: init.idx.i20:                                     ; preds = %invertentry_impl_beta
 ; CHECK-NEXT:   %73 = load i64, i64* %ldc
 ; CHECK-NEXT:   %74 = bitcast i8* %"C'" to double*
 ; CHECK-NEXT:   %75 = icmp eq i64 %70, %73
@@ -255,14 +284,20 @@ entry:
 ; CHECK-NEXT:   %81 = icmp eq i64 %iteration.i24, %71
 ; CHECK-NEXT:   br i1 %81, label %__enzyme_inner_prodd_64_.exit33, label %for.body.i31
 
-; CHECK: __enzyme_inner_prodd_64_.exit33:                  ; preds = %__enzyme_inner_prodd_64_.exit, %fast.path.i21, %for.body.i31
-; CHECK-NEXT:   %res.i32 = phi double [ 0.000000e+00, %__enzyme_inner_prodd_64_.exit ], [ %sum.i25, %for.body.i31 ], [ %76, %fast.path.i21 ]
+; CHECK: __enzyme_inner_prodd_64_.exit33:                  ; preds = %invertentry_impl_beta, %fast.path.i21, %for.body.i31
+; CHECK-NEXT:   %res.i32 = phi double [ 0.000000e+00, %invertentry_impl_beta ], [ %sum.i25, %for.body.i31 ], [ %76, %fast.path.i21 ]
 ; CHECK-NEXT:   %82 = bitcast i64* %byref.constant.one.i15 to i8*
 ; CHECK:   %83 = bitcast i64* %byref.mat.size.i18 to i8*
 ; CHECK:   %84 = bitcast i8* %"beta'" to double*
 ; CHECK-NEXT:   %85 = load double, double* %84
 ; CHECK-NEXT:   %86 = fadd fast double %85, %res.i32
 ; CHECK-NEXT:   store double %86, double* %84
+; CHECK-NEXT:   br label %invertentry_cfg_C
+
+; CHECK: invertentry_cfg_C:                                ; preds = %invertentry_cfg_beta, %__enzyme_inner_prodd_64_.exit33
+; CHECK-NEXT:   br i1 %rt.inactive.C, label %invertentry_end, label %invertentry_impl_C
+
+; CHECK: invertentry_impl_C:                               ; preds = %invertentry_cfg_C
 ; CHECK-NEXT:   store i8 71, i8* %byref.constant.char.G
 ; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.0
 ; CHECK-NEXT:   %intcast.constant.int.0 = bitcast i64* %byref.constant.int.0 to i8*
@@ -273,6 +308,9 @@ entry:
 ; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.013
 ; CHECK-NEXT:   %intcast.constant.int.014 = bitcast i64* %byref.constant.int.013 to i8*
 ; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i8* %intcast.constant.int.0, i8* %intcast.constant.int.010, i8* %fpcast.constant.fp.1.012, i8* %beta, i8* %m_p, i8* %n_p, i8* %"C'", i8* %ldc_p, i8* %intcast.constant.int.014)
+; CHECK-NEXT:   br label %invertentry_end
+
+; CHECK: invertentry_end:                                  ; preds = %invertentry_cfg_C, %invertentry_impl_C
 ; CHECK-NEXT:   %[[i87:.+]] = bitcast double* %tape.ext.A to i8*
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %[[i87]])
 ; CHECK-NEXT:   %[[i88:.+]] = bitcast double* %tape.ext.C4 to i8*
