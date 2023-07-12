@@ -40,35 +40,42 @@ def MPISum: MagicInst;
 def MemSet: MagicInst;
 def False: MagicInst;
 def True: MagicInst;
-def MPITySize: MagicInst;
+def MPITypeSize: MagicInst;
+def MPICommRank: MagicInst;
 
 // as CallBlasPattern
-class CallMPIPattern<dag patternToMatch, list<string> mutables, list<MPI_ArgType> paramTypes, 
-                      list<dag> resultOps> {
+class CallMPIPattern<dag patternToMatch, list<string> funcNames, list<string> mutables, list<string> actArgs, 
+                      list<MPI_ArgType> paramTypes, list<dag> resultOps, dag forwardOps> {
   dag PatternToMatch = patternToMatch;
+  list<string> FuncNames = funcNames;
+  list<string> ActiveArgs = actArgs;
   list<MPI_ArgType> inputTypes = paramTypes;
   list<dag> ArgDerivatives = resultOps;
   list<string> mutable = mutables;
+  dag ArgDuals = forwardOps;
 }
 
 // def MPI_Isend : CallMPIPattern<(Op $buf, $count, $datatype, $source, $tag, $comm, $request),
-//                     ["request"], [buf, size, datatype, integer, integer, comm, request],
+//                     ["MPI_Isend", "PMPI_Isend"], ["request"], ["buf", "request"], 
+//                     [buf, size, datatype, integer, integer, comm, request],
 //                     [
-
+//
 //                     ]>;
 
 def MPI_Gather : CallMPIPattern<(Op $sendbuf, $sendcount, $sendtype, $recvbuf, $recvcount, $recvtype, $root, $comm),
-                    ["recvbuf"], [buf, size, datatype, buf, size, datatype, integer, comm],
+                    ["MPI_Gather"], ["recvbuf"], ["sendbuf", "recvbuf"], [buf, size, datatype, buf, size, datatype, integer, comm],
                     [
-                      (b<"MPI_Scatter"> adj<"recvbuf">, $recvcount, $recvtype, $buf, $sendcount, $sendtype, $root, $comm),
-                      // TODO: if root, Zero diff(recvbuffer) [memset to 0]
-                      (MemCopyFloats $buf, adj<"sendbuf">, (Mul $sendcount, (MPITySize $sendtype))),
+                      (MPI_Scatter (Shadow $recvbuf), $recvcount, $recvtype, $buf, $sendcount, $sendtype, $root, $comm),
+                      (Select (ICmpEQ $root (MPICommRank $comm)) 
+                        (MemSet (Shadow $recvbuf), 0, (Mul $recvcount, (MPITypeSize $recvtype)), False) 
+                        (Noop))
+                      (MemCopyFloats $buf, (Shadow $sendbuf), (Mul $sendcount, (MPITypeSize $sendtype))),
                     ]>;
 
 def MPI_AllGather : CallMPIPattern<(Op $sendbuf, $sendcount, $sendtype, $recvbuf, $recvcount, $recvtype, $comm),
-                    ["recvbuf"], [buf, size, datatype, buf, size, datatype, comm],
+                    ["MPI_AllGather"], ["recvbuf"], ["sendbuf", "recvbuf"], [buf, size, datatype, buf, size, datatype, comm],
                     [
-                      (b<"MPI_Reduce_scatter_block"> adj<"recvbuf">, $buf, $sendcount, $sendtype, MPISum, $comm),
-                      (MemSet adj<"recvbuf">, 0, (Mul $recvcount, (MPITySize $recvtype)), False),
-                      (MemCopyFloats $buf, adj<"sendbuf">, (Mul $sendcount, (MPITySize $sendtype))),
+                      (MPI_Reduce_scatter_block (Shadow $recvbuf), $buf, $sendcount, $sendtype, MPISum, $comm),
+                      (MemSet (Shadow $recvbuf), 0, (Mul $recvcount, (MPITypeSize $recvtype)), False),
+                      (MemCopyFloats $buf, (Shadow $sendbuf), (Mul $sendcount, (MPITypeSize $sendtype))),
                     ]>;
