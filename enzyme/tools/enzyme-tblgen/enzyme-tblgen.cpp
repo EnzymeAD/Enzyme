@@ -2753,8 +2753,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
        << "        // otherwise just add the corresponding code to the current "
           "block\n";
 
-    os << "        BasicBlock *before_" << cfg_bb
-       << " = BBs[BBs.size()-1];\n"
+    os << "        BasicBlock *before_" << cfg_bb << " = BBs[BBs.size()-1];\n"
        << "        BasicBlock *" << cfg_bb
        << " = gutils->addReverseBlock(before_" << cfg_bb << ", cname + \"_"
        << cfg_bb << "\");\n"
@@ -2861,7 +2860,6 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   }
   os << "    },\n"
      << "    ";
-
 
   first = true;
   for (auto arg : activeArgs) {
