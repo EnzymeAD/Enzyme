@@ -60,7 +60,8 @@ class CallMPIPattern<dag patternToMatch, list<string> funcNames, list<string> mu
 //                     [buf, size, datatype, integer, integer, comm, request],
 //                     [
 //
-//                     ]>;
+//                     ],
+//                     (ForwardFromSummedReverse)>;
 
 def MPI_Gather : CallMPIPattern<(Op $sendbuf, $sendcount, $sendtype, $recvbuf, $recvcount, $recvtype, $root, $comm),
                     ["MPI_Gather"], ["recvbuf"], ["sendbuf", "recvbuf"], [buf, size, datatype, buf, size, datatype, integer, comm],
@@ -70,7 +71,8 @@ def MPI_Gather : CallMPIPattern<(Op $sendbuf, $sendcount, $sendtype, $recvbuf, $
                         (MemSet (Shadow $recvbuf), 0, (Mul $recvcount, (MPITypeSize $recvtype)), False) 
                         (Noop))
                       (MemCopyFloats $buf, (Shadow $sendbuf), (Mul $sendcount, (MPITypeSize $sendtype))),
-                    ]>;
+                    ],
+                    (ForwardFromSummedReverse)>;
 
 def MPI_AllGather : CallMPIPattern<(Op $sendbuf, $sendcount, $sendtype, $recvbuf, $recvcount, $recvtype, $comm),
                     ["MPI_AllGather"], ["recvbuf"], ["sendbuf", "recvbuf"], [buf, size, datatype, buf, size, datatype, comm],
@@ -78,4 +80,5 @@ def MPI_AllGather : CallMPIPattern<(Op $sendbuf, $sendcount, $sendtype, $recvbuf
                       (MPI_Reduce_scatter_block (Shadow $recvbuf), $buf, $sendcount, $sendtype, MPISum, $comm),
                       (MemSet (Shadow $recvbuf), 0, (Mul $recvcount, (MPITypeSize $recvtype)), False),
                       (MemCopyFloats $buf, (Shadow $sendbuf), (Mul $sendcount, (MPITypeSize $sendtype))),
-                    ]>;
+                    ],
+                    (ForwardFromSummedReverse)>;
