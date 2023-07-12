@@ -1642,7 +1642,8 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
        << "      auto shadow_" << name << " = gutils->invertPointerM(orig_"
        << name << ", BuilderZ);\n"
        << "      rt_active_" << name << " = BuilderZ.CreateICmpEQ(shadow_"
-       << name << ", arg_" << name << ");\n"
+       << name << ", arg_" << name << ", (Twine(\"rt.inactive.\") + \"" << name
+       << "\").str());\n"
        << "    }\n";
   }
   os << "  }\n";
@@ -2900,12 +2901,6 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
        << "        BasicBlock *impl = BBs[pos++];\n"
        << "        BasicBlock *cfg2 = BBs[pos];\n"
        << "        Builder2.SetInsertPoint(cfg1);\n"
-       //<< "        Value *shadow_" << name << " =
-       //gutils->invertPointerM(orig_"
-       //<< name << ", Builder2);\n"
-       //<< "        Value *ptrEqual = Builder2.CreateICmpEQ(shadow_" << name
-       //<< ", arg_" << name << ");\n"
-       //<< "        Builder2.CreateCondBr(ptrEqual, cfg2, impl);\n"
        << "        Builder2.CreateCondBr(rt_active_" << name
        << ", cfg2, impl);\n"
        << "      }\n";
