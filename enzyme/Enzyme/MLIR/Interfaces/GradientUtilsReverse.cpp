@@ -41,7 +41,7 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
       originalToNewFn(originalToNewFn_),
       originalToNewFnOps(originalToNewFnOps_), symbolTable(symbolTable_) {
 
-  initInitializationBlock(invertedPointers_, activevals_);
+  initInitializationBlock(invertedPointers_, ArgDiffeTypes_);
 }
 
 // for(auto x : v.getUsers()){x->dump();} DEBUG
@@ -72,10 +72,34 @@ Type mlir::enzyme::MGradientUtilsReverse::getCacheType(Type t) {
   return cacheType;
 }
 
+void MGradientUtilsReverse::registerCacheCreatorHook(
+    std::function<std::pair<Value, Value>(Type)> hook) {
+  if (hook != nullptr) {
+    cacheCreatorHook.push_back(hook);
+  }
+}
+
+void MGradientUtilsReverse::deregisterCacheCreatorHook(
+    std::function<std::pair<Value, Value>(Type)> hook) {
+  if (hook != nullptr) {
+    cacheCreatorHook.pop_back();
+  }
+}
+
+std::pair<Value, Value> MGradientUtilsReverse::getNewCache(Type t) {
+  if (cacheCreatorHook.empty()) {
+    Value cache = insertInit(t);
+    return {cache, cache};
+  }
+  return cacheCreatorHook.back()(t);
+}
+
+// We assume that caches will only be written to at one location. The returned
+// cache is (might be) "pop only"
 Value MGradientUtilsReverse::initAndPushCache(Value v, OpBuilder &builder) {
-  Value cache = insertInit(getCacheType(v.getType()));
-  builder.create<enzyme::PushOp>(v.getLoc(), cache, v);
-  return cache;
+  auto [pushCache, popCache] = getNewCache(getCacheType(v.getType()));
+  auto pushOp = builder.create<enzyme::PushOp>(v.getLoc(), pushCache, v);
+  return popCache;
 }
 
 Value MGradientUtilsReverse::popCache(Value cache, OpBuilder &builder) {
@@ -266,22 +290,25 @@ bool mlir::enzyme::MGradientUtilsReverse::hasInvertPointer(mlir::Value v) {
 }
 
 void MGradientUtilsReverse::initInitializationBlock(
-    IRMapping invertedPointers_, const SmallPtrSetImpl<Value> &activevals_) {
+    IRMapping invertedPointers_, ArrayRef<DIFFE_TYPE> argDiffeTypes) {
   initializationBlock = &*(this->newFunc.getFunctionBody().begin());
 
   OpBuilder initializationBuilder(
       &*(this->newFunc.getFunctionBody().begin()),
       this->newFunc.getFunctionBody().begin()->begin());
 
-  for (Value activeval : activevals_) {
-    if (auto iface = dyn_cast<AutoDiffTypeInterface>(activeval.getType())) {
-      Value zero =
-          iface.createNullValue(initializationBuilder, activeval.getLoc());
-      mapInvertPointer(activeval, zero, initializationBuilder);
-    } else {
+  for (const auto &[val, diffe_type] : llvm::zip(
+           this->oldFunc.getFunctionBody().getArguments(), argDiffeTypes)) {
+    if (diffe_type != DIFFE_TYPE::OUT_DIFF) {
+      continue;
+    }
+    auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
+    if (!iface) {
       llvm_unreachable(
           "Type does not have an associated AutoDiffTypeInterface");
     }
+    Value zero = iface.createNullValue(initializationBuilder, val.getLoc());
+    mapInvertPointer(val, zero, initializationBuilder);
   }
   for (auto const &x : invertedPointers_.getValueMap()) {
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(x.first.getType())) {
