@@ -82,9 +82,9 @@ attributes #4 = { nounwind }
 ; CHECK: define internal { double } @diffemalloced(double %x, i64 %n, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %mul = shl i64 %n, 3
-; CHECK-NEXT:   %call = tail call i8* @malloc(i64 %mul)
 ; CHECK-NEXT:   %[[dcall:.+]] = tail call noalias nonnull i8* @malloc(i64 %mul)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull {{(align 1 )?}}%"call'mi", i8 0, i64 %mul, {{(i32 1, )?}}i1 false)
+; CHECK-NEXT:   %call = tail call i8* @malloc(i64 %mul)
 ; CHECK-NEXT:   %[[ipci:.+]] = bitcast i8* %[[dcall]] to double*
 ; CHECK-NEXT:   %[[bccall:.+]] = bitcast i8* %call to double*
 ; CHECK-NEXT:   store double %x, double* %[[bccall]], align 8, !tbaa !2

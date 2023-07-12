@@ -220,9 +220,9 @@ attributes #11 = { noreturn nounwind }
 ; CHECK-NEXT:   %"_M_start.i.i'ipa" = alloca double*, align 8
 ; CHECK-NEXT:   store double* null, double** %"_M_start.i.i'ipa", align 8
 ; CHECK-NEXT:   %_M_start.i.i = alloca double*, align 8
-; CHECK-NEXT:   %call5.i.i.i.i.i = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   %"call5.i.i.i.i.i'mi" = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"call5.i.i.i.i.i'mi", i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %call5.i.i.i.i.i = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   %"tmp1'ipc" = bitcast double* %"arrayidx'ipg" to i64*
 ; CHECK-NEXT:   %tmp1 = bitcast double* %arrayidx to i64*
 ; CHECK-NEXT:   %tmp2 = load i64, i64* %tmp1, align 8, !tbaa !2

@@ -77,9 +77,9 @@ attributes #9 = { nounwind }
 
 ; CHECK: define internal { double } @diffesubmalloced(double %a0, double %differeturn) 
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %a2 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   %"a2'mi" = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"a2'mi", i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %a2 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   %"a3'ipc" = bitcast i8* %"a2'mi" to double*
 ; CHECK-NEXT:   %a3 = bitcast i8* %a2 to double*
 ; CHECK-NEXT:   store double %a0, double* %a3, align 8

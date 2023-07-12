@@ -866,13 +866,13 @@ attributes #10 = { cold }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = alloca { { <2 x double>*, i1, i8*, i8*, <2 x double> }, <2 x double> }
 ; CHECK-NEXT:   %1 = getelementptr inbounds { { <2 x double>*, i1, i8*, i8*, <2 x double> }, <2 x double> }, { { <2 x double>*, i1, i8*, i8*, <2 x double> }, <2 x double> }* %0, i32 0, i32 0
-; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
-; CHECK-NEXT:   %2 = getelementptr inbounds { <2 x double>*, i1, i8*, i8*, <2 x double> }, { <2 x double>*, i1, i8*, i8*, <2 x double> }* %1, i32 0, i32 3
-; CHECK-NEXT:   store i8* %malloccall, i8** %2
 ; CHECK-NEXT:   %"malloccall'mi" = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
-; CHECK-NEXT:   %3 = getelementptr inbounds { <2 x double>*, i1, i8*, i8*, <2 x double> }, { <2 x double>*, i1, i8*, i8*, <2 x double> }* %1, i32 0, i32 2
-; CHECK-NEXT:   store i8* %"malloccall'mi", i8** %3
+; CHECK-NEXT:   %[[a3:.+]] = getelementptr inbounds { <2 x double>*, i1, i8*, i8*, <2 x double> }, { <2 x double>*, i1, i8*, i8*, <2 x double> }* %1, i32 0, i32 2
+; CHECK-NEXT:   store i8* %"malloccall'mi", i8** %[[a3]]
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"malloccall'mi", i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
+; CHECK-NEXT:   %[[a2:.+]] = getelementptr inbounds { <2 x double>*, i1, i8*, i8*, <2 x double> }, { <2 x double>*, i1, i8*, i8*, <2 x double> }* %1, i32 0, i32 3
+; CHECK-NEXT:   store i8* %malloccall, i8** %[[a2]]
 ; CHECK-NEXT:   %"coerce.dive349'ipc" = bitcast i8* %"malloccall'mi" to double**
 ; CHECK-NEXT:   %coerce.dive349 = bitcast i8* %malloccall to double**
 ; CHECK-NEXT:   %a2 = load double, double* %b, align 8, !tbaa !15
@@ -927,8 +927,8 @@ attributes #10 = { cold }
 
 ; CHECK: define internal void @diffemid(double* noalias %W, double* %"W'", double* noalias %b, double* %"b'", <2 x double> %differeturn, { <2 x double>*, i1, i8*, i8*, <2 x double> } %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %malloccall = extractvalue { <2 x double>*, i1, i8*, i8*, <2 x double> } %tapeArg, 3
 ; CHECK-NEXT:   %"malloccall'mi" = extractvalue { <2 x double>*, i1, i8*, i8*, <2 x double> } %tapeArg, 2
+; CHECK-NEXT:   %malloccall = extractvalue { <2 x double>*, i1, i8*, i8*, <2 x double> } %tapeArg, 3
 ; CHECK-NEXT:   %"coerce.dive349'ipc" = bitcast i8* %"malloccall'mi" to double**
 ; CHECK-NEXT:   %coerce.dive349 = bitcast i8* %malloccall to double**
 ; CHECK-NEXT:   %a2 = load double, double* %b, align 8, !tbaa !15

@@ -6,11 +6,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+//include "mlir/Dialect/Linalg/IR/LinalgBase.td"
+
 #ifndef ENZYME_OPS
 #define ENZYME_OPS
 
 include "Dialect.td"
-include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/IR/EnumAttr.td"
@@ -18,9 +19,13 @@ include "mlir/IR/EnumAttr.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/FunctionInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
-include "mlir/Interfaces/SideEffectInterfaces.td"
 
 include "mlir/IR/AttrTypeBase.td"
+
+include "mlir/Interfaces/ControlFlowInterfaces.td"
+include "mlir/Interfaces/LoopLikeInterface.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
+
 
 def Activity : I32EnumAttr<"Activity",
     "Possible activity states for variables",
@@ -130,6 +135,31 @@ def ShadowedGradient : Enzyme_Type<"ShadowedGradient"> {
   let parameters = (ins "Type":$basetype);
   let mnemonic = "ShadowedGradient";
   let assemblyFormat = "`<` $basetype `>`";
+}
+
+def AddToOp : Enzyme_Op<"addTo", [Pure, Terminator, ReturnLike]>,
+    Arguments<(ins Variadic<AnyType>:$values)> {
+  let summary = "Linalg add to operation";
+  let description = [{
+    TODO
+  }];
+  let builders = [OpBuilder<(ins), [{ /* nothing to do */ }]>];
+  let hasCustomAssemblyFormat = 0;
+  let hasVerifier = 0;
+}
+
+def GenericAdjointOp : Enzyme_Op<"genericAdjoint", [AttrSizedOperandSegments]> {
+  let description = [{ }];
+
+  let arguments = (ins Variadic<AnyType>:$inputs,
+                       Variadic<AnyShaped>:$outputs,
+                       AffineMapArrayAttr:$indexing_maps,
+                       ArrayAttr:$iterator_types,
+                       OptionalAttr<StrAttr>:$doc,
+                       OptionalAttr<StrAttr>:$library_call);
+  let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
+  let regions = (region AnyRegion:$region);
+  
 }
 
 #endif // ENZYME_OPS

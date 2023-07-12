@@ -36,12 +36,8 @@ void* myallocator(void* buffer, int size, int* off) {
     return &cur[prev];
 }
 
-static void* myfree(int* off, void* tofree) {
+static void myfree(int* off, void* tofree) {
     printf("freeing %p and %d\n", tofree, *off);
-}
-
-double log1p_like_function(double a) {
-  return 2*a;
 }
 
 __attribute__((noinline))

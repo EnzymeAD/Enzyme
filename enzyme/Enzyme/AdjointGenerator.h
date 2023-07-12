@@ -325,113 +325,17 @@ public:
     return B.CreateLoad(rankTy, alloc);
   }
 
-#if LLVM_VERSION_MAJOR >= 10
-  void visitFreezeInst(llvm::FreezeInst &inst) {
-    using namespace llvm;
-
-    eraseIfUnused(inst);
-    if (gutils->isConstantInstruction(&inst))
-      return;
-    Value *orig_op0 = inst.getOperand(0);
-
-    switch (Mode) {
-    case DerivativeMode::ReverseModeCombined:
-    case DerivativeMode::ReverseModeGradient: {
-      IRBuilder<> Builder2(&inst);
-      getReverseBuilder(Builder2);
-
-      auto rule = [&](Value *idiff) { return Builder2.CreateFreeze(idiff); };
-      Value *idiff = diffe(&inst, Builder2);
-      Value *dif1 = applyChainRule(orig_op0->getType(), Builder2, rule, idiff);
-      setDiffe(&inst,
-               Constant::getNullValue(gutils->getShadowType(inst.getType())),
-               Builder2);
-      size_t size = 1;
-      if (inst.getType()->isSized())
-        size = (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
-                    orig_op0->getType()) +
-                7) /
-               8;
-      addToDiffe(orig_op0, dif1, Builder2, TR.addingType(size, orig_op0));
-      return;
-    }
-    case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
-      IRBuilder<> BuilderZ(&inst);
-      getForwardBuilder(BuilderZ);
-
-      auto rule = [&](Value *idiff) { return BuilderZ.CreateFreeze(idiff); };
-      Value *idiff = diffe(orig_op0, BuilderZ);
-      Value *dif1 = applyChainRule(inst.getType(), BuilderZ, rule, idiff);
-      setDiffe(&inst, dif1, BuilderZ);
-      return;
-    }
-    case DerivativeMode::ReverseModePrimal:
-      return;
-    }
-  }
-#endif
-
   void visitInstruction(llvm::Instruction &inst) {
     using namespace llvm;
 
     // TODO explicitly handle all instructions rather than using the catch all
     // below
 
-#if LLVM_VERSION_MAJOR >= 10
-    if (auto *FPMO = dyn_cast<FPMathOperator>(&inst)) {
-      if (FPMO->getOpcode() == Instruction::FNeg) {
-        eraseIfUnused(inst);
-        if (gutils->isConstantInstruction(&inst))
-          return;
-
-        Value *orig_op1 = FPMO->getOperand(0);
-        bool constantval1 = gutils->isConstantValue(orig_op1);
-
-        if (constantval1) {
-          return;
-        }
-
-        switch (Mode) {
-        case DerivativeMode::ReverseModeCombined:
-        case DerivativeMode::ReverseModeGradient: {
-          IRBuilder<> Builder2(&inst);
-          getReverseBuilder(Builder2);
-
-          auto rule = [&](Value *idiff) { return Builder2.CreateFNeg(idiff); };
-          Value *idiff = diffe(FPMO, Builder2);
-          Value *dif1 =
-              applyChainRule(orig_op1->getType(), Builder2, rule, idiff);
-          setDiffe(
-              FPMO,
-              Constant::getNullValue(gutils->getShadowType(FPMO->getType())),
-              Builder2);
-          addToDiffe(orig_op1, dif1, Builder2,
-                     dif1->getType()->getScalarType());
-          break;
-        }
-        case DerivativeMode::ForwardModeSplit:
-        case DerivativeMode::ForwardMode: {
-          IRBuilder<> Builder2(&inst);
-          getForwardBuilder(Builder2);
-
-          auto rule = [&Builder2](Value *idiff) {
-            return Builder2.CreateFNeg(idiff);
-          };
-
-          Value *idiff = diffe(orig_op1, Builder2);
-          Value *dif1 = applyChainRule(inst.getType(), Builder2, rule, idiff);
-
-          setDiffe(FPMO, dif1, Builder2);
-          break;
-        }
-        case DerivativeMode::ReverseModePrimal:
-          return;
-        }
-        return;
-      }
+    switch (inst.getOpcode()) {
+#include "InstructionDerivatives.inc"
+    default:
+      break;
     }
-#endif
 
     std::string s;
     llvm::raw_string_ostream ss(s);
@@ -2762,8 +2666,13 @@ public:
         }
       ss << "cannot handle unknown binary operator: " << BO << "\n";
       if (CustomErrorHandler) {
-        CustomErrorHandler(ss.str().c_str(), wrap(&BO), ErrorType::NoDerivative,
-                           gutils, nullptr, wrap(&Builder2));
+        auto rval = unwrap(CustomErrorHandler(ss.str().c_str(), wrap(&BO),
+                                              ErrorType::NoDerivative, gutils,
+                                              nullptr, wrap(&Builder2)));
+        if (!rval)
+          rval = Constant::getNullValue(gutils->getShadowType(BO.getType()));
+        if (!gutils->isConstantValue(&BO))
+          setDiffe(&BO, rval, Builder2);
       } else {
         llvm::errs() << ss.str() << "\n";
         report_fatal_error("unknown binary operator");
@@ -8323,8 +8232,7 @@ public:
             gutils->replaceAWithB(newCall, normalReturn);
             BuilderZ.SetInsertPoint(newCall->getNextNode());
             gutils->erase(newCall);
-          } else if (Mode == DerivativeMode::ReverseModeGradient &&
-                     !call.getType()->isTokenTy())
+          } else if (Mode == DerivativeMode::ReverseModeGradient)
             eraseIfUnused(call, /*erase*/ true, /*check*/ false);
         }
         return;
@@ -8486,7 +8394,106 @@ public:
         llvm_unreachable("unhandled openmp function");
       }
 
-#include "InstructionDerivatives.inc"
+#include "CallDerivatives.inc"
+
+      if (funcName == "llvm.julia.gc_preserve_end") {
+        if (Mode == DerivativeMode::ReverseModeGradient ||
+            Mode == DerivativeMode::ReverseModeCombined) {
+
+          auto begin_call = cast<CallInst>(call.getOperand(0));
+
+          IRBuilder<> Builder2(&call);
+          getReverseBuilder(Builder2);
+          SmallVector<Value *, 1> args;
+#if LLVM_VERSION_MAJOR >= 14
+          for (auto &arg : begin_call->args())
+#else
+          for (auto &arg : begin_call->arg_operands())
+#endif
+          {
+            bool primalUsed = false;
+            bool shadowUsed = false;
+            gutils->getReturnDiffeType(arg, &primalUsed, &shadowUsed);
+
+            if (primalUsed)
+              args.push_back(
+                  gutils->lookupM(gutils->getNewFromOriginal(arg), Builder2));
+
+            if (!gutils->isConstantValue(arg) && shadowUsed) {
+              Value *ptrshadow = gutils->lookupM(
+                  gutils->invertPointerM(arg, BuilderZ), Builder2);
+              if (gutils->getWidth() == 1)
+                args.push_back(ptrshadow);
+              else
+                for (size_t i = 0; i < gutils->getWidth(); ++i)
+                  args.push_back(gutils->extractMeta(Builder2, ptrshadow, i));
+            }
+          }
+
+          auto newp = Builder2.CreateCall(
+              called->getParent()->getOrInsertFunction(
+                  "llvm.julia.gc_preserve_begin",
+                  FunctionType::get(Type::getTokenTy(call.getContext()),
+                                    ArrayRef<Type *>(), true)),
+              args);
+          auto ifound = gutils->invertedPointers.find(begin_call);
+          assert(ifound != gutils->invertedPointers.end());
+          auto placeholder = cast<CallInst>(&*ifound->second);
+          gutils->invertedPointers.erase(ifound);
+          gutils->invertedPointers.insert(std::make_pair(
+              (const Value *)begin_call, InvertedPointerVH(gutils, newp)));
+
+          gutils->replaceAWithB(placeholder, newp);
+          gutils->erase(placeholder);
+        }
+        return;
+      }
+      if (funcName == "llvm.julia.gc_preserve_begin") {
+        SmallVector<Value *, 1> args;
+#if LLVM_VERSION_MAJOR >= 14
+        for (auto &arg : call.args())
+#else
+        for (auto &arg : call.arg_operands())
+#endif
+        {
+          bool primalUsed = false;
+          bool shadowUsed = false;
+          gutils->getReturnDiffeType(arg, &primalUsed, &shadowUsed);
+
+          if (primalUsed)
+            args.push_back(gutils->getNewFromOriginal(arg));
+
+          if (!gutils->isConstantValue(arg) && shadowUsed) {
+            Value *ptrshadow = gutils->invertPointerM(arg, BuilderZ);
+            if (gutils->getWidth() == 1)
+              args.push_back(ptrshadow);
+            else
+              for (size_t i = 0; i < gutils->getWidth(); ++i)
+                args.push_back(gutils->extractMeta(BuilderZ, ptrshadow, i));
+          }
+        }
+
+        auto newp = BuilderZ.CreateCall(called, args);
+        auto oldp = gutils->getNewFromOriginal(&call);
+        gutils->replaceAWithB(oldp, newp);
+        gutils->erase(oldp);
+
+        if (Mode == DerivativeMode::ReverseModeGradient ||
+            Mode == DerivativeMode::ReverseModeCombined) {
+          IRBuilder<> Builder2(&call);
+          getReverseBuilder(Builder2);
+
+          auto ifound = gutils->invertedPointers.find(&call);
+          assert(ifound != gutils->invertedPointers.end());
+          auto placeholder = cast<CallInst>(&*ifound->second);
+          Builder2.CreateCall(called->getParent()->getOrInsertFunction(
+                                  "llvm.julia.gc_preserve_end",
+                                  FunctionType::get(Builder2.getVoidTy(),
+                                                    call.getType(), false)),
+                              placeholder);
+        }
+        return;
+      }
 
       // Functions that only modify pointers and don't allocate memory,
       // needs to be run on shadow in primal
@@ -8936,6 +8943,7 @@ public:
                 anti = gutils->cacheForReverse(
                     bb, anti, getIndex(&call, CacheType::Shadow));
             } else {
+              bool zeroed = false;
               auto rule = [&]() {
 #if LLVM_VERSION_MAJOR >= 11
                 Value *anti = bb.CreateCall(call.getFunctionType(),
@@ -9004,6 +9012,19 @@ public:
 #endif
                     }
                   }
+                  if (Mode == DerivativeMode::ReverseModeCombined ||
+                      (Mode == DerivativeMode::ReverseModePrimal &&
+                       forwardsShadow) ||
+                      (Mode == DerivativeMode::ReverseModeGradient &&
+                       backwardsShadow) ||
+                      (Mode == DerivativeMode::ForwardModeSplit &&
+                       backwardsShadow)) {
+                    if (!inLoop) {
+                      zeroKnownAllocation(bb, anti, args, funcName, gutils->TLI,
+                                          &call);
+                      zeroed = true;
+                    }
+                  }
                 }
                 return anti;
               };
@@ -9022,6 +9043,7 @@ public:
               else {
                 if (auto MD = hasMetadata(&call, "enzyme_fromstack")) {
                   isAlloca = true;
+                  bb.SetInsertPoint(cast<Instruction>(anti));
                   Value *Size;
                   if (funcName == "malloc")
                     Size = args[0];
@@ -9056,55 +9078,60 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
                   }
 #endif
-                  Value *replacement = bb.CreateAlloca(elTy, Size, name);
-                  if (name.size() == 0)
-                    replacement->takeName(anti);
-                  else
-                    anti->setName("");
-                  auto Alignment = cast<ConstantInt>(cast<ConstantAsMetadata>(
-                                                         MD->getOperand(0))
-                                                         ->getValue())
-                                       ->getLimitedValue();
-                  if (Alignment) {
+                  auto rule = [&](Value *anti) {
+                    Value *replacement = bb.CreateAlloca(elTy, Size, name);
+                    if (name.size() == 0)
+                      replacement->takeName(anti);
+                    else
+                      anti->setName("");
+                    auto Alignment = cast<ConstantInt>(cast<ConstantAsMetadata>(
+                                                           MD->getOperand(0))
+                                                           ->getValue())
+                                         ->getLimitedValue();
+                    if (Alignment) {
 #if LLVM_VERSION_MAJOR >= 10
-                    cast<AllocaInst>(replacement)
-                        ->setAlignment(Align(Alignment));
+                      cast<AllocaInst>(replacement)
+                          ->setAlignment(Align(Alignment));
 #else
-                    cast<AllocaInst>(replacement)->setAlignment(Alignment);
+                      cast<AllocaInst>(replacement)->setAlignment(Alignment);
 #endif
-                  }
-#if LLVM_VERSION_MAJOR >= 15
-                  if (call.getContext().supportsTypedPointers()) {
-#endif
-                    if (anti->getType()->getPointerElementType() != elTy)
-                      replacement = bb.CreatePointerCast(
-                          replacement,
-                          PointerType::getUnqual(
-                              anti->getType()->getPointerElementType()));
-#if LLVM_VERSION_MAJOR >= 15
-                  }
-#endif
-
-                  if (int AS = cast<PointerType>(anti->getType())
-                                   ->getAddressSpace()) {
-                    llvm::PointerType *PT;
+                    }
 #if LLVM_VERSION_MAJOR >= 15
                     if (call.getContext().supportsTypedPointers()) {
 #endif
-                      PT = PointerType::get(
-                          anti->getType()->getPointerElementType(), AS);
+                      if (anti->getType()->getPointerElementType() != elTy)
+                        replacement = bb.CreatePointerCast(
+                            replacement,
+                            PointerType::getUnqual(
+                                anti->getType()->getPointerElementType()));
 #if LLVM_VERSION_MAJOR >= 15
-                    } else {
-                      PT = PointerType::get(anti->getContext(), AS);
                     }
 #endif
-                    replacement = bb.CreateAddrSpaceCast(replacement, PT);
-                    cast<Instruction>(replacement)
-                        ->setMetadata(
-                            "enzyme_backstack",
-                            MDNode::get(replacement->getContext(), {}));
-                  }
 
+                    if (int AS = cast<PointerType>(anti->getType())
+                                     ->getAddressSpace()) {
+                      llvm::PointerType *PT;
+#if LLVM_VERSION_MAJOR >= 15
+                      if (call.getContext().supportsTypedPointers()) {
+#endif
+                        PT = PointerType::get(
+                            anti->getType()->getPointerElementType(), AS);
+#if LLVM_VERSION_MAJOR >= 15
+                      } else {
+                        PT = PointerType::get(anti->getContext(), AS);
+                      }
+#endif
+                      replacement = bb.CreateAddrSpaceCast(replacement, PT);
+                      cast<Instruction>(replacement)
+                          ->setMetadata(
+                              "enzyme_backstack",
+                              MDNode::get(replacement->getContext(), {}));
+                    }
+                    return replacement;
+                  };
+
+                  auto replacement =
+                      applyChainRule(call.getType(), bb, rule, anti);
                   gutils->replaceAWithB(cast<Instruction>(anti), replacement);
                   gutils->erase(cast<Instruction>(anti));
                   anti = replacement;
@@ -9119,13 +9146,7 @@ public:
                   (Mode == DerivativeMode::ForwardModeSplit &&
                    backwardsShadow)) {
                 if (!inLoop) {
-                  applyChainRule(
-                      bb,
-                      [&](Value *anti) {
-                        zeroKnownAllocation(bb, anti, args, funcName,
-                                            gutils->TLI, &call);
-                      },
-                      anti);
+                  assert(zeroed);
                 }
               }
             }

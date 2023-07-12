@@ -81,9 +81,9 @@ attributes #6 = { nounwind }
 
 ; CHECK: define internal { { i8*, i8* }, i64* } @augmented_substore(i64 %flt, i64 %integral)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   %"call'mi" = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* {{(noundef )?}}nonnull align 1 dereferenceable(16) dereferenceable_or_null(16) %"call'mi", i8 0, i64 16, i1 false)
+; CHECK-NEXT:   %call = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   %[[ipc1:.+]] = bitcast i8* %"call'mi" to i64*
 ; CHECK-NEXT:   %"arrayidx1'ipg" = getelementptr inbounds i8, i8* %"call'mi", i64 8
 ; CHECK-NEXT:   %[[ipc2:.+]] = bitcast i8* %"arrayidx1'ipg" to i64*
@@ -96,8 +96,8 @@ attributes #6 = { nounwind }
 
 ; CHECK: define internal { i64 } @diffesubstore(i64 %flt, i64 %integral, { i8*, i8* } %[[tapeArg:.+]])
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call = extractvalue { i8*, i8* } %[[tapeArg]], 1
 ; CHECK-NEXT:   %"call'mi" = extractvalue { i8*, i8* } %[[tapeArg]], 0
+; CHECK-NEXT:   %call = extractvalue { i8*, i8* } %[[tapeArg]], 1
 ; CHECK-NEXT:   %[[ipc:.+]] = bitcast i8* %"call'mi" to i64*
 ; CHECK-NEXT:   %0 = bitcast i8* %"call'mi" to i64*
 ; CHECK-NEXT:   %1 = load i64, i64* %0, align 8

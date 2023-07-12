@@ -8038,12 +8038,22 @@ void GradientUtils::eraseFictiousPHIs() {
   for (auto pair : phis) {
     auto pp = pair.first;
     if (pp->getNumUses() != 0) {
-      llvm::errs() << "mod:" << *oldFunc->getParent() << "\n";
-      llvm::errs() << "oldFunc:" << *oldFunc << "\n";
-      llvm::errs() << "newFunc:" << *newFunc << "\n";
-      llvm::errs() << " pp: " << *pp << " of " << *pair.second << "\n";
+      if (CustomErrorHandler) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Illegal replace ficticious phi for: " << *pp << " of "
+           << *pair.second;
+        CustomErrorHandler(str.c_str(), wrap(pair.second),
+                           ErrorType::IllegalReplaceFicticiousPHIs, this,
+                           wrap(pp), nullptr);
+      } else {
+        llvm::errs() << "mod:" << *oldFunc->getParent() << "\n";
+        llvm::errs() << "oldFunc:" << *oldFunc << "\n";
+        llvm::errs() << "newFunc:" << *newFunc << "\n";
+        llvm::errs() << " pp: " << *pp << " of " << *pair.second << "\n";
+        assert(pp->getNumUses() == 0);
+      }
     }
-    assert(pp->getNumUses() == 0);
     pp->replaceAllUsesWith(UndefValue::get(pp->getType()));
     erase(pp);
   }
@@ -8177,6 +8187,22 @@ void GradientUtils::forceAugmentedReturns() {
         continue;
       }
 
+      CallInst *op = cast<CallInst>(inst);
+      Function *called = op->getCalledFunction();
+
+      if ((mode == DerivativeMode::ReverseModeGradient ||
+           mode == DerivativeMode::ReverseModeCombined) &&
+          called && called->getName() == "llvm.julia.gc_preserve_begin") {
+        IRBuilder<> BuilderZ(inst);
+        getForwardBuilder(BuilderZ);
+        auto anti = BuilderZ.CreateCall(called, ArrayRef<Value *>(),
+                                        op->getName() + "'ip");
+        anti->setDebugLoc(getNewFromOriginal(op->getDebugLoc()));
+        invertedPointers.insert(
+            std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
+        continue;
+      }
+
       if (isa<IntrinsicInst>(inst)) {
         continue;
       }
@@ -8185,11 +8211,24 @@ void GradientUtils::forceAugmentedReturns() {
         continue;
       }
 
-      CallInst *op = cast<CallInst>(inst);
-      Function *called = op->getCalledFunction();
-
       IRBuilder<> BuilderZ(inst);
       getForwardBuilder(BuilderZ);
+
+      // Shadow allocations must strictly preceede the primal, lest Julia have
+      // GC issues. Consider the following: %r = gc_alloc() init %r
+      // ...
+      // if the shadow did not preceed
+      // %r = gc_alloc()
+      // %dr = gc_alloc()
+      // zero %dr
+      // init %r, %dr
+      // ...
+      // After %r, before %dr the %r memory would be uninit, so the allocator
+      // inside %dr would hit garbage and segfault. However, by having the %dr
+      // first, then it will be zero'd before the %r allocation, preventing the
+      // issue.
+      if (isAllocationCall(inst, TLI))
+        BuilderZ.SetInsertPoint(getNewFromOriginal(inst));
       Type *antiTy = getShadowType(inst->getType());
 
       PHINode *anti = BuilderZ.CreatePHI(antiTy, 1, op->getName() + "'ip_phi");
@@ -8197,7 +8236,7 @@ void GradientUtils::forceAugmentedReturns() {
       invertedPointers.insert(
           std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
 
-      if (called && isAllocationFunction(called->getName(), TLI)) {
+      if (isAllocationCall(inst, TLI)) {
         anti->setName(op->getName() + "'mi");
       }
     }

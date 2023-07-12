@@ -192,7 +192,8 @@ entry:
 ; CHECK-NEXT:   store i8 %23, i8* %byref.transpose.transa
 ; CHECK-NEXT:   call void @dger_64_(i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %"y'", i8* %incy_p, i8* %15, i8* %cast.incx, i8* %"A'", i8* %lda_p)
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
-; CHECK-NEXT:   call void bitcast (void (i8*, i8*, i8*, i8*, i8*, i8*, i8*, i8*, i8*, i8*, i8*)* @dgemv_64_ to void (i8*, i8*, i8*, i8*, i8*, i8*, i8*, i8*, double*, i8*, i8*)*)(i8* %byref.transpose.transa, i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %"y'", i8* %incy_p, double* %byref.constant.fp.1.0, i8* %"x'", i8* %cast.incx)
+; CHECK-NEXT:   %fpcast.constant.fp.1.0 = bitcast double* %byref.constant.fp.1.0 to i8*
+; CHECK-NEXT:   call void @dgemv_64_(i8* %byref.transpose.transa, i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %"y'", i8* %incy_p, i8* %fpcast.constant.fp.1.0, i8* %"x'", i8* %cast.incx)
 ; CHECK-NEXT:   %ld.row.trans = load i8, i8* %byref.transpose.transa
 ; CHECK-DAG:    %[[r2:.+]] = icmp eq i8 %ld.row.trans, 110
 ; CHECK-DAG:    %[[r3:.+]] = icmp eq i8 %ld.row.trans, 78

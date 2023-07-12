@@ -74,8 +74,8 @@ entry:
 
 ; CHECK: invertend:                                        ; preds = %entry
 ; CHECK-NEXT:  switch i32 %val, label %invertend_phirc [
-; CHECK-NEXT:    i32 17, label %invertend_phirc1
-; CHECK-NEXT:    i32 42, label %invertend_phirc2
+; CHECK-NEXT:    i32 17, label %[[invertend_phirc1:.+]]
+; CHECK-NEXT:    i32 42, label %[[invertend_phirc2:.+]]
 ; CHECK-NEXT:  ]
 
 ; CHECK: invertend_phirc:                                  ; preds = %invertend
@@ -83,18 +83,18 @@ entry:
 ; CHECK-NEXT:   %l3_unwrap = load double, double* %g3_unwrap, align 8
 ; CHECK-NEXT:   br label %invertend_phimerge
 
-; CHECK: invertend_phirc1:                                 ; preds = %invertend
+; CHECK: [[invertend_phirc1]]:                                 ; preds = %invertend
 ; CHECK-NEXT:   %g1_unwrap = getelementptr inbounds double, double* %a, i32 32
 ; CHECK-NEXT:   %l1_unwrap = load double, double* %g1_unwrap, align 8
 ; CHECK-NEXT:   br label %invertend_phimerge
 
-; CHECK: invertend_phirc2:                                 ; preds = %invertend
+; CHECK: [[invertend_phirc2]]:                                 ; preds = %invertend
 ; CHECK-NEXT:   %g2_unwrap = getelementptr inbounds double, double* %a, i32 64
 ; CHECK-NEXT:   %l2_unwrap = load double, double* %g2_unwrap, align 8
 ; CHECK-NEXT:   br label %invertend_phimerge
 
 ; CHECK: invertend_phimerge: 
-; CHECK-NEXT:   %7 = phi {{(fast )?}}double [ %l3_unwrap, %invertend_phirc ], [ %l1_unwrap, %invertend_phirc1 ], [ %l2_unwrap, %invertend_phirc2 ]
+; CHECK-NEXT:   %7 = phi {{(fast )?}}double [ %l3_unwrap, %invertend_phirc ], [ %l1_unwrap, %[[invertend_phirc1]] ], [ %l2_unwrap, %[[invertend_phirc2]] ]
 ; CHECK-NEXT:   %[[m0diffep:.+]] = fmul fast double %0, %7
 ; CHECK-NEXT:   %[[i8:.+]] = fadd fast double %[[m0diffep]], %[[m0diffep]]
 ; CHECK-DAG:   %[[i9:.+]] = icmp eq i32 17, %val

@@ -218,9 +218,9 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %[[dstruct:.+]] = phi %struct.n* [ %[[ipci]], %for.cond.cleanup7 ], [ null, %entry ]
 ; CHECK-NEXT:   %list.029 = phi %struct.n* [ %[[bccast]], %for.cond.cleanup7 ], [ null, %entry ]
 ; CHECK-NEXT:   %[[nextvar]] = add nuw nsw i64 %[[iv]], 1
-; CHECK-NEXT:   %call = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   %"call'mi" = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* {{(noundef )?}}nonnull {{(align 1 )?}}dereferenceable(16) dereferenceable_or_null(16) %"call'mi", i8 0, i64 16, {{(i32 1, )?}}i1 false)
+; CHECK-NEXT:   %call = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   %[[nextipgi:.+]] = getelementptr inbounds i8, i8* %"call'mi", i64 8
 ; CHECK-NEXT:   %next = getelementptr inbounds i8, i8* %call, i64 8
 ; CHECK-NEXT:   %[[thisipc:.+]] = bitcast i8* %[[nextipgi]] to %struct.n**
@@ -231,9 +231,9 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %[[callpgep:.+]] = getelementptr inbounds i8*, i8** %"call'mi_malloccache", i64 %[[iv]]
 ; CHECK-NEXT:   store i8* %"call'mi", i8** %[[callpgep]]
 ; CHECK-NEXT:   store %struct.n* %list.029, %struct.n** %[[bc4]], align 8, !tbaa !7
-; CHECK-NEXT:   %call2 = tail call noalias i8* @malloc(i64 %mul)
 ; CHECK-NEXT:   %"call2'mi" = tail call noalias nonnull i8* @malloc(i64 %mul)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull {{(align 1 )?}}%"call2'mi", i8 0, i64 %mul, {{(i32 1, )?}}i1 false)
+; CHECK-NEXT:   %call2 = tail call noalias i8* @malloc(i64 %mul)
 ; CHECK-NEXT:   %[[thatipc:.+]] = bitcast i8* %"call'mi" to i8**
 ; CHECK-NEXT:   %[[herebc:.+]] = bitcast i8* %call to i8**
 ; CHECK-NEXT:   store i8* %"call2'mi", i8** %[[thatipc]], align 8

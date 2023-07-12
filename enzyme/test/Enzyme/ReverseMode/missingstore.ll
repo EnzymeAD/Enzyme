@@ -38,10 +38,12 @@ declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8*, i64)
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { i64, i64 }*
 ; CHECK-NEXT:   %truetape = load { i64, i64 }, { i64, i64 }* %0
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
-; CHECK-NEXT:   %i11 = call noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8* null, i64 8) 
 ; CHECK-NEXT:   %"i11'mi" = call noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8* null, i64 8) 
 ; CHECK-NEXT:   %1 = bitcast {} addrspace(10)* %"i11'mi" to i8 addrspace(10)*
 ; CHECK-NEXT:   call void @llvm.memset.p10i8.i64(i8 addrspace(10)* nonnull dereferenceable(8) dereferenceable_or_null(8) %1, i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %i11 = call noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8* null, i64 8) 
+;; NOTE FOR ABOVE, the PRIMAL MUST COME AFTER THE SHADOW. This is because between the allocations there is otherwise undefined memory
+;; that gc-alloc will error upon. But if the shadow comes first, it is at least null'd
 ; CHECK-NEXT:   %"i13'ipc" = bitcast {} addrspace(10)* %"i11'mi" to i64 addrspace(10)*
 ; CHECK-NEXT:   %i13 = bitcast {} addrspace(10)* %i11 to i64 addrspace(10)*
 ; CHECK-NEXT:   %"i14'il_phi" = extractvalue { i64, i64 } %truetape, 0
