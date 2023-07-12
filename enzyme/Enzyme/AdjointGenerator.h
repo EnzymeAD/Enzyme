@@ -3757,6 +3757,9 @@ public:
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
                              ErrorType::NoDerivative, gutils, nullptr,
                              wrap(&Builder2));
+          setDiffe(&I,
+                   Constant::getNullValue(gutils->getShadowType(I.getType())),
+                   Builder2);
         } else {
           llvm::errs() << ss.str() << "\n";
           report_fatal_error("(forward) unknown intrinsic");
