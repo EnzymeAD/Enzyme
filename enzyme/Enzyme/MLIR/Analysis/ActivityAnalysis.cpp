@@ -19,8 +19,453 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/ModRef.h"
 
+#include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
+#include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
+#include "mlir/Analysis/DataFlow/DenseAnalysis.h"
+#include "mlir/Analysis/DataFlow/SparseAnalysis.h"
+#include "mlir/Analysis/DataFlowFramework.h"
+
 using namespace mlir;
+using namespace mlir::dataflow;
 using namespace mlir::enzyme;
+
+/// From Enzyme proper's activity analysis, there are four activity states.
+// constant instruction vs constant value, a value/instruction (one and the same
+// in LLVM) can be a constant instruction but active value, active instruction
+// but constant value, or active/constant both.
+
+// In MLIR, values are not the same as instructions. Many operations produce
+// zero or one result, but there are operations that can produce multiple.
+
+// The result of activity states are potentially different for multiple
+// enzyme.autodiff calls.
+
+// We could use enyzme::Activity here but I don't know that it would help from a
+// dataflow perspective (distinguishing between enzyme_dup, enzyme_dupnoneed,
+// enzyme_out, which are all active)
+
+enum class ActivityKind { Active, Constant };
+
+using llvm::errs;
+class ValueActivity {
+public:
+  static ValueActivity getConstant() {
+    return ValueActivity(ActivityKind::Constant);
+  }
+
+  static ValueActivity getActive() {
+    return ValueActivity(ActivityKind::Active);
+  }
+
+  bool isActive() const {
+    return value.has_value() && *value == ActivityKind::Active;
+  }
+
+  bool isConstant() const {
+    return value.has_value() && *value == ActivityKind::Constant;
+  }
+
+  ValueActivity(std::optional<ActivityKind> value = std::nullopt)
+      : value(std::move(value)) {}
+
+  /// Whether the activity state is uninitialized. This happens when the state
+  /// hasn't been set during the analysis.
+  bool isUninitialized() const { return !value.has_value(); }
+
+  /// Get the known activity state.
+  const ActivityKind &getValue() const {
+    assert(!isUninitialized());
+    return *value;
+  }
+
+  /// Compare two ranges.
+  bool operator==(const ValueActivity &rhs) const { return value == rhs.value; }
+
+  /// Take the union of two ranges.
+  static ValueActivity join(const ValueActivity &lhs,
+                            const ValueActivity &rhs) {
+    if (lhs.isUninitialized())
+      return rhs;
+    if (rhs.isUninitialized())
+      return lhs;
+    if (lhs.isConstant() && rhs.isConstant()) {
+      return ValueActivity::getConstant();
+    }
+
+    return ValueActivity::getActive();
+  }
+
+  void print(raw_ostream &os) const {
+    if (!value) {
+      os << "<uninitialized>";
+      return;
+    }
+    switch (*value) {
+    case ActivityKind::Active:
+      os << "Active";
+      break;
+    case ActivityKind::Constant:
+      os << "Constant";
+      break;
+    }
+  }
+
+  raw_ostream &operator<<(raw_ostream &os) const {
+    print(os);
+    return os;
+  }
+
+private:
+  /// The known activity kind.
+  std::optional<ActivityKind> value;
+};
+
+class ForwardValueActivity : public Lattice<ValueActivity> {
+public:
+  using Lattice::Lattice;
+};
+
+class BackwardValueActivity : public Lattice<ValueActivity> {
+public:
+  using Lattice::Lattice;
+};
+
+/// This needs to keep track of three things:
+///   1. Could active info store in?
+///   2. Could active info load out?
+///   3. Could constant info propagate (store?) in?
+///
+/// Active: active in && active out && !const in
+/// ActiveOrConstant: active in && active out && const in
+/// Constant: everything else
+struct MemoryActivityState {
+  bool activeLoad;
+  bool activeStore;
+  // Active init is like active store, but a special case for arguments. We need
+  // to distinguish arguments that start with active data vs arguments that get
+  // active data stored into them during the function.
+  bool activeInit;
+
+  bool operator==(const MemoryActivityState &other) {
+    return activeLoad == other.activeLoad && activeStore == other.activeStore &&
+           activeInit == other.activeInit;
+  }
+
+  bool operator!=(const MemoryActivityState &other) {
+    return !(*this == other);
+  }
+};
+
+class MemoryActivity : public AbstractDenseLattice {
+public:
+  using AbstractDenseLattice::AbstractDenseLattice;
+
+  /// Clear all modifications.
+  ChangeResult reset() {
+    if (activityStates.empty())
+      return ChangeResult::NoChange;
+    activityStates.clear();
+    return ChangeResult::Change;
+  }
+
+  /// Join the activity states.
+  ChangeResult join(const AbstractDenseLattice &lattice) override {
+    const auto &rhs = static_cast<const MemoryActivity &>(lattice);
+    ChangeResult result = ChangeResult::NoChange;
+    for (const auto &state : rhs.activityStates) {
+      auto &lhsState = activityStates[state.first];
+      if (lhsState != state.second) {
+        lhsState.activeLoad |= state.second.activeLoad;
+        lhsState.activeStore |= state.second.activeStore;
+        lhsState.activeInit |= state.second.activeInit;
+        result |= ChangeResult::Change;
+      }
+    }
+    return result;
+  }
+
+  bool hasActiveData(Value value) const {
+    auto state = activityStates.lookup(value);
+    return state.activeStore || state.activeInit;
+  }
+
+  bool hasActiveStore(Value value) const {
+    return activityStates.lookup(value).activeStore;
+  }
+
+  /// Set the internal activity state.
+  ChangeResult setActiveStore(Value value, bool activeStore) {
+    auto &state = activityStates[value];
+    ChangeResult result = ChangeResult::NoChange;
+    if (state.activeStore != activeStore) {
+      result = ChangeResult::Change;
+      state.activeStore = activeStore;
+    }
+    return result;
+  }
+
+  ChangeResult setActiveLoad(Value value, bool activeLoad) {
+    auto &state = activityStates[value];
+    ChangeResult result = ChangeResult::NoChange;
+    if (state.activeLoad != activeLoad) {
+      result = ChangeResult::Change;
+      state.activeLoad = activeLoad;
+    }
+    return result;
+  }
+
+  ChangeResult setActiveInit(Value value, bool activeInit) {
+    auto &state = activityStates[value];
+    ChangeResult result = ChangeResult::NoChange;
+    if (state.activeInit != activeInit) {
+      result = ChangeResult::Change;
+      state.activeInit = activeInit;
+    }
+    return result;
+  }
+
+  void print(raw_ostream &os) const override {
+    for (const auto &state : activityStates) {
+      os << state.first << ": active load " << state.second.activeLoad
+         << " active store " << state.second.activeStore << " active init "
+         << state.second.activeInit << "\n";
+    }
+  }
+
+  raw_ostream &operator<<(raw_ostream &os) const {
+    print(os);
+    return os;
+  }
+
+private:
+  DenseMap<Value, MemoryActivityState> activityStates;
+};
+
+/// Sparse activity analysis reasons about activity by traversing forward down
+/// the def-use chains starting from active function arguments.
+class SparseForwardActivityAnalysis
+    : public SparseDataFlowAnalysis<ForwardValueActivity> {
+public:
+  using SparseDataFlowAnalysis::SparseDataFlowAnalysis;
+
+  /// In general, we don't know anything about entry operands.
+  /// TODO: If we're going forward though, we should always have initialized
+  /// them.
+  void setToEntryState(ForwardValueActivity *lattice) override {
+    propagateIfChanged(lattice, lattice->join(ValueActivity()));
+  }
+
+  void visitOperation(Operation *op,
+                      ArrayRef<const ForwardValueActivity *> operands,
+                      ArrayRef<ForwardValueActivity *> results) override {
+    if (op->hasTrait<OpTrait::ConstantLike>()) {
+      for (auto result : results) {
+        result->join(ValueActivity::getConstant());
+      }
+      return;
+    }
+
+    // For value-based AA, assume any active argument leads to an active result.
+    // TODO: Could prune values based on the types of the operands (but would
+    // require type analysis for full robustness)
+    // TODO: Could we differentiate between values that don't propagate active
+    // information? memcpy, stores don't produce active results (they don't
+    // produce any). There are undoubtedly also function calls that don't
+    // produce active results.
+    ValueActivity joinedResult;
+    for (auto operand : operands) {
+      joinedResult = ValueActivity::join(joinedResult, operand->getValue());
+    }
+
+    for (auto result : results) {
+      propagateIfChanged(result, result->join(joinedResult));
+    }
+  }
+};
+
+class SparseBackwardActivityAnalysis
+    : public SparseBackwardDataFlowAnalysis<BackwardValueActivity> {
+public:
+  using SparseBackwardDataFlowAnalysis::SparseBackwardDataFlowAnalysis;
+
+  void setToExitState(BackwardValueActivity *lattice) override {}
+
+  void visitBranchOperand(OpOperand &operand) override {
+    errs() << "Visiting branch operand: " << operand.get() << "\n";
+  }
+
+  void
+  visitOperation(Operation *op, ArrayRef<BackwardValueActivity *> operands,
+                 ArrayRef<const BackwardValueActivity *> results) override {
+    ValueActivity joinedResult;
+    for (auto result : results) {
+      joinedResult = ValueActivity::join(joinedResult, result->getValue());
+    }
+
+    for (auto operand : operands) {
+      propagateIfChanged(operand, operand->join(joinedResult));
+    }
+  }
+};
+
+class DenseForwardActivityAnalysis
+    : public DenseDataFlowAnalysis<MemoryActivity> {
+public:
+  using DenseDataFlowAnalysis::DenseDataFlowAnalysis;
+
+  void visitOperation(Operation *op, const MemoryActivity &before,
+                      MemoryActivity *after) override {
+    auto memory = dyn_cast<MemoryEffectOpInterface>(op);
+    // If we can't reason about the memory effects, then conservatively assume
+    // we can't deduce anything about activity via side-effects.
+    if (!memory)
+      return setToEntryState(after);
+
+    SmallVector<MemoryEffects::EffectInstance> effects;
+    memory.getEffects(effects);
+
+    ChangeResult result = after->join(before);
+    for (const auto &effect : effects) {
+      Value value = effect.getValue();
+
+      // If we see an effect on anything other than a value, assume we can't
+      // deduce anything about the activity.
+      if (!value)
+        return setToEntryState(after);
+
+      // value = getMostUnderlyingValue(value, [&](Value value) {
+      //   return getOrCreateFor<UnderlyingValueLattice>(op, value);
+      // });
+      // if (!value)
+      //   return;
+
+      // In forward-flow, a value is active if loaded from a memory resource
+      // that has previously been actively stored to.
+      if (isa<MemoryEffects::Read>(effect.getEffect())) {
+        // TODO: Look into using the MemorySlot interface to make this more
+        // dialect agnostic
+        if (auto loadOp = dyn_cast<LLVM::LoadOp>(op)) {
+          if (before.hasActiveData(value)) {
+            result |= after->setActiveLoad(value, true);
+
+            // Mark the result as (forward) active
+            auto *valueState =
+                getOrCreate<ForwardValueActivity>(loadOp.getResult());
+            result |= valueState->join(ValueActivity::getActive());
+          }
+        } else if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
+          if (before.hasActiveData(value)) {
+            result |= after->setActiveLoad(value, true);
+
+            auto *valueState =
+                getOrCreate<ForwardValueActivity>(loadOp.getResult());
+            result |= valueState->join(ValueActivity::getActive());
+          }
+        }
+      }
+
+      if (isa<MemoryEffects::Write>(effect.getEffect())) {
+        if (auto storeOp = dyn_cast<LLVM::StoreOp>(op)) {
+          // If the activity for the stored value is updated, this should be
+          // re-evaluated.
+          auto *valueState =
+              getOrCreateFor<ForwardValueActivity>(op, storeOp.getValue());
+          if (valueState->getValue().isActive()) {
+            result |= after->setActiveStore(value, true);
+          }
+        }
+      }
+    }
+    propagateIfChanged(after, result);
+  }
+
+  // Not sure what this should be, unknown?
+  void setToEntryState(MemoryActivity *lattice) override {
+    propagateIfChanged(lattice, lattice->reset());
+  }
+};
+
+void enzyme::runDataFlowActivityAnalysis(Operation *top, Operation *calleeOp) {
+  // TODO(jacob): activity analysis is independent of autodiff or forward diff
+  auto autodiffOp = cast<enzyme::AutoDiffOp>(top);
+  auto callee = cast<FunctionOpInterface>(calleeOp);
+  SymbolTableCollection symbolTable;
+  DataFlowSolver solver;
+  solver.load<SparseForwardActivityAnalysis>();
+  solver.load<SparseBackwardActivityAnalysis>(symbolTable);
+  solver.load<DenseForwardActivityAnalysis>();
+
+  // Required for the dataflow framework to traverse region-based control flow
+  solver.load<DeadCodeAnalysis>();
+  solver.load<SparseConstantPropagation>();
+
+  // Initialize the argument states based on the given activity annotations.
+  for (const auto &[arg, activity] : llvm::zip(
+           callee.getArguments(),
+           autodiffOp.getActivity()
+               .getAsValueRange<enzyme::ActivityAttr, enzyme::Activity>())) {
+    // Need to determine if this is a pointer (or memref) or not, the dup
+    // activity is kind of a proxy
+    if (activity == enzyme::Activity::enzyme_dup ||
+        activity == enzyme::Activity::enzyme_dupnoneed) {
+      auto initialState = solver.getOrCreateState<MemoryActivity>(
+          &callee.getFunctionBody().front());
+      initialState->setActiveInit(arg, true);
+    } else {
+      auto *argLattice = solver.getOrCreateState<ForwardValueActivity>(arg);
+      auto state = activity == enzyme::Activity::enzyme_const
+                       ? ValueActivity::getConstant()
+                       : ValueActivity::getActive();
+      argLattice->join(state);
+    }
+  }
+
+  callee.walk([&](Operation *op) {
+    // Is there an interface just for function return ops?
+    if (auto returnOp = dyn_cast<func::ReturnOp>(op)) {
+      for (Value operand : returnOp.getOperands()) {
+        // Assume all outputs are active for now
+        auto *returnLattice =
+            solver.getOrCreateState<BackwardValueActivity>(operand);
+        returnLattice->join(ValueActivity::getActive());
+      }
+    }
+  });
+
+  if (failed(solver.initializeAndRun(callee))) {
+    assert(false && "dataflow analysis failed\n");
+  }
+
+  for (BlockArgument arg : callee.getArguments()) {
+    auto argState = solver.lookupState<BackwardValueActivity>(arg);
+    if (argState) {
+      errs() << "function arg state: ";
+      argState->getValue().print(errs());
+      errs() << "\n";
+    } else {
+      errs() << "function argument backward state was null\n";
+    }
+  }
+
+  auto returnOp = callee.getFunctionBody().front().getTerminator();
+  if (returnOp->getNumOperands()) {
+    auto returnState =
+        solver.lookupState<ForwardValueActivity>(returnOp->getOperand(0));
+    if (returnState) {
+      errs() << "return operand: ";
+      returnState->getValue().print(errs());
+      errs() << "\n";
+    } else {
+      errs() << "**return operand was null**\n";
+    }
+  }
+  auto state = solver.lookupState<MemoryActivity>(returnOp);
+  if (state) {
+    errs() << "resulting state:\n" << *state << "\n";
+  } else {
+    errs() << "state was null\n";
+  }
+}
 
 const char *KnownInactiveFunctionsStartingWith[] = {
     "f90io",
@@ -377,80 +822,81 @@ bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(
 
 /// Call the function propagateFromOperand on all operands of CI
 /// that could impact the activity of the call instruction
-static inline void propagateArgumentInformation(
-    /*TargetLibraryInfo &TLI,*/ CallOpInterface CI,
-    std::function<bool(Value)> propagateFromOperand) {
+// static inline void propagateArgumentInformation(
+//     /*TargetLibraryInfo &TLI,*/ CallOpInterface CI,
+//     std::function<bool(Value)> propagateFromOperand) {
 
-  if (Operation *F = getFunctionFromCall(CI)) {
-    // These functions are known to only have the first argument impact
-    // the activity of the call instruction
-    StringRef Name = cast<SymbolOpInterface>(F).getName();
-    if (Name == "lgamma" || Name == "lgammaf" || Name == "lgammal" ||
-        Name == "lgamma_r" || Name == "lgammaf_r" || Name == "lgammal_r" ||
-        Name == "__lgamma_r_finite" || Name == "__lgammaf_r_finite" ||
-        Name == "__lgammal_r_finite") {
+//   if (Operation *F = getFunctionFromCall(CI)) {
+//     // These functions are known to only have the first argument impact
+//     // the activity of the call instruction
+//     StringRef Name = cast<SymbolOpInterface>(F).getName();
+//     if (Name == "lgamma" || Name == "lgammaf" || Name == "lgammal" ||
+//         Name == "lgamma_r" || Name == "lgammaf_r" || Name == "lgammal_r" ||
+//         Name == "__lgamma_r_finite" || Name == "__lgammaf_r_finite" ||
+//         Name == "__lgammal_r_finite") {
 
-      propagateFromOperand(CI.getArgOperands()[0]);
-      return;
-    }
+//       propagateFromOperand(CI.getArgOperands()[0]);
+//       return;
+//     }
 
-    // Allocations, deallocations, and c++ guards are fully inactive
-    // if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI)
-    // ||
-    //     Name == "__cxa_guard_acquire" || Name == "__cxa_guard_release" ||
-    //     Name == "__cxa_guard_abort")
-    //   return;
+//     // Allocations, deallocations, and c++ guards are fully inactive
+//     // if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name,
+//     TLI)
+//     // ||
+//     //     Name == "__cxa_guard_acquire" || Name == "__cxa_guard_release" ||
+//     //     Name == "__cxa_guard_abort")
+//     //   return;
 
-    /// Only the first argument (magnitude) of copysign is active
-    if (Name == llvm::Intrinsic::getName(llvm::Intrinsic::copysign)) {
-      propagateFromOperand(CI.getArgOperands()[0]);
-      return;
-    }
+//     /// Only the first argument (magnitude) of copysign is active
+//     if (Name == llvm::Intrinsic::getName(llvm::Intrinsic::copysign)) {
+//       propagateFromOperand(CI.getArgOperands()[0]);
+//       return;
+//     }
 
-    // Certain intrinsics are inactive by definition
-    // and have nothing to propagate.
-    for (unsigned intrinsicID : constantIntrinsics) {
-      if (Name.startswith(llvm::Intrinsic::getBaseName(intrinsicID)))
-        return;
-    }
+//     // Certain intrinsics are inactive by definition
+//     // and have nothing to propagate.
+//     for (unsigned intrinsicID : constantIntrinsics) {
+//       if (Name.startswith(llvm::Intrinsic::getBaseName(intrinsicID)))
+//         return;
+//     }
 
-    if (Name.startswith(
-            llvm::Intrinsic::getBaseName(llvm::Intrinsic::memcpy)) ||
-        Name.startswith(
-            llvm::Intrinsic::getBaseName(llvm::Intrinsic::memmove))) {
-      propagateFromOperand(CI.getArgOperands()[0]);
-      propagateFromOperand(CI.getArgOperands()[1]);
-      return;
-    }
+//     if (Name.startswith(
+//             llvm::Intrinsic::getBaseName(llvm::Intrinsic::memcpy)) ||
+//         Name.startswith(
+//             llvm::Intrinsic::getBaseName(llvm::Intrinsic::memmove))) {
+//       propagateFromOperand(CI.getArgOperands()[0]);
+//       propagateFromOperand(CI.getArgOperands()[1]);
+//       return;
+//     }
 
-    if (Name == "frexp" || Name == "frexpf" || Name == "frexpl") {
-      propagateFromOperand(CI.getArgOperands()[0]);
-      return;
-    }
-    if (Name == "Faddeeva_erf" || Name == "Faddeeva_erfc" ||
-        Name == "Faddeeva_erfcx" || Name == "Faddeeva_erfi" ||
-        Name == "Faddeeva_dawson") {
-      for (size_t i = 0; i < CI.getArgOperands().size() - 1; i++) {
-        propagateFromOperand(CI.getArgOperands()[i]);
-      }
-      return;
-    }
+//     if (Name == "frexp" || Name == "frexpf" || Name == "frexpl") {
+//       propagateFromOperand(CI.getArgOperands()[0]);
+//       return;
+//     }
+//     if (Name == "Faddeeva_erf" || Name == "Faddeeva_erfc" ||
+//         Name == "Faddeeva_erfcx" || Name == "Faddeeva_erfi" ||
+//         Name == "Faddeeva_dawson") {
+//       for (size_t i = 0; i < CI.getArgOperands().size() - 1; i++) {
+//         propagateFromOperand(CI.getArgOperands()[i]);
+//       }
+//       return;
+//     }
 
-    if (Name == "julia.call" || Name == "julia.call2") {
-      for (size_t i = 1; i < CI.getArgOperands().size(); i++) {
-        propagateFromOperand(CI.getArgOperands()[i]);
-      }
-      return;
-    }
-  }
+//     if (Name == "julia.call" || Name == "julia.call2") {
+//       for (size_t i = 1; i < CI.getArgOperands().size(); i++) {
+//         propagateFromOperand(CI.getArgOperands()[i]);
+//       }
+//       return;
+//     }
+//   }
 
-  // For other calls, check all operands of the operation
-  // as conservatively they may impact the activity of the call
-  for (Value a : CI->getOperands()) {
-    if (propagateFromOperand(a))
-      break;
-  }
-}
+//   // For other calls, check all operands of the operation
+//   // as conservatively they may impact the activity of the call
+//   for (Value a : CI->getOperands()) {
+//     if (propagateFromOperand(a))
+//       break;
+//   }
+// }
 
 /// Return whether this operation is known not to propagate adjoints
 /// Note that operation could return an active pointer, but
@@ -971,7 +1417,7 @@ static std::vector<Value> getPotentialIncomingValues(BlockArgument arg) {
     };
 
     // Find all possible source regions for the current region.
-    isRegionSucessorOf(iface, parentRegion, llvm::None, potentialSources);
+    isRegionSucessorOf(iface, parentRegion, std::nullopt, potentialSources);
     for (unsigned i = 0, e = parent->getNumRegions(); i < e; ++i)
       isRegionSucessorOf(iface, parentRegion, i, potentialSources);
 
@@ -1039,7 +1485,7 @@ static void allFollowersOf(Operation *op,
                                     bool skipNested) {
     // 1. If op has regions, consider control flow into those.
     if (op->getNumRegions() != 0 && !skipNested)
-      addEntryBlocksOfSuccessorRegions(op, llvm::None, todo);
+      addEntryBlocksOfSuccessorRegions(op, std::nullopt, todo);
 
     // 2. If op is a terminator, consider control flow from it.
     if (!op->mightHaveTrait<OpTrait::IsTerminator>() ||
@@ -2475,7 +2921,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromOrigin(
         };
 
         // Find all possible source regions for the current region.
-        isRegionSucessorOf(iface, parentRegion, llvm::None, potentialSources);
+        isRegionSucessorOf(iface, parentRegion, std::nullopt, potentialSources);
         for (unsigned i = 0, e = parent->getNumRegions(); i < e; ++i)
           isRegionSucessorOf(iface, parentRegion, i, potentialSources);
 
@@ -2790,7 +3236,7 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
             // TODO: the interface may also tell us which regions are allowed to
             // yield parent op results, and which only branch to other regions.
             auto successorOperands =
-                llvm::to_vector(iface.getSuccessorOperands(llvm::None));
+                llvm::to_vector(iface.getSuccessorOperands(std::nullopt));
             // TODO: understand/document the assumption of how operands flow.
             assert(successorOperands.size() == op->getNumResults() &&
                    "expected all results to be populated with yielded "

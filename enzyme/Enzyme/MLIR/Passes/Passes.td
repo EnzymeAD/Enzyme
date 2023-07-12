@@ -16,6 +16,11 @@ def DifferentiatePass : Pass<"enzyme"> {
   let constructor = "mlir::enzyme::createDifferentiatePass()";
 }
 
+def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
+  let summary = "Print the results of activity analysis";
+  let constructor = "mlir::enzyme::createPrintActivityAnalysisPass()";
+}
+
 def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
   let summary = "Lower custom Enzyme ops to the MemRef dialect";
   let dependentDialects = [

@@ -14,6 +14,8 @@ namespace enzyme {
 
 class MTypeResults;
 
+void runDataFlowActivityAnalysis(Operation *top, Operation *callee);
+
 /// Helper class to analyze the differential activity
 class ActivityAnalyzer {
   // PreProcessCache &PPC;
@@ -147,7 +149,7 @@ private:
   /// produced.
   bool
   isOperationInactiveFromOrigin(MTypeResults const &TR, Operation *op,
-                                llvm::Optional<unsigned> resultNo = llvm::None);
+                                llvm::Optional<unsigned> resultNo = std::nullopt);
 
 public:
   enum class UseActivity {
