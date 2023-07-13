@@ -49,8 +49,8 @@ using namespace llvm;
 TraceGenerator::TraceGenerator(
     EnzymeLogic &Logic, TraceUtils *tutils, bool autodiff,
     ValueMap<const Value *, WeakTrackingVH> &originalToNewFn,
-    SmallPtrSetImpl<Function *> &generativeFunctions,
-    StringSet<> &activeRandomVariables)
+    const SmallPtrSetImpl<Function *> &generativeFunctions,
+    const StringSet<> &activeRandomVariables)
     : Logic(Logic), tutils(tutils), autodiff(autodiff),
       originalToNewFn(originalToNewFn),
       generativeFunctions(generativeFunctions),
@@ -118,6 +118,83 @@ void TraceGenerator::visitFunction(Function &F) {
       call->setMetadata("enzyme_gradient_setter", gradient_setter_node);
     }
   }
+}
+
+void TraceGenerator::handleObserveCall(CallInst &call, CallInst *new_call) {
+  IRBuilder<> Builder(new_call);
+
+  SmallVector<Value *, 4> Args(
+      make_range(new_call->arg_begin() + 2, new_call->arg_end()));
+
+  Value *observed = new_call->getArgOperand(0);
+  Function *likelihoodfn = GetFunctionFromValue(new_call->getArgOperand(1));
+  Value *address = new_call->getArgOperand(2);
+
+  StringRef const_address;
+  bool is_address_const = getConstantStringInfo(address, const_address);
+  bool is_random_var_active =
+      activeRandomVariables.empty() ||
+      (is_address_const && activeRandomVariables.count(const_address));
+  Attribute activity_attribute = Attribute::get(
+      call.getContext(),
+      is_random_var_active ? "enzyme_active" : "enzyme_inactive_val");
+
+  // calculate and accumulate log likelihood
+  Args.push_back(observed);
+
+  auto score = Builder.CreateCall(likelihoodfn->getFunctionType(), likelihoodfn,
+                                  ArrayRef<Value *>(Args).slice(1),
+                                  "likelihood." + call.getName());
+
+#if LLVM_VERSION_MAJOR >= 14
+  score->addAttributeAtIndex(AttributeList::FunctionIndex, activity_attribute);
+#else
+  score->addAttribute(AttributeList::FunctionIndex, activity_attribute);
+#endif
+
+  auto log_prob_sum = Builder.CreateLoad(
+      Builder.getDoubleTy(), tutils->getLikelihood(), "log_prob_sum");
+  auto acc = Builder.CreateFAdd(log_prob_sum, score);
+  Builder.CreateStore(acc, tutils->getLikelihood());
+
+  // create outlined trace function
+  if (mode == ProbProgMode::Trace || mode == ProbProgMode::Condition) {
+    Value *trace_args[] = {address, score, observed};
+
+    auto OutlinedTrace = [](IRBuilder<> &OutlineBuilder,
+                            TraceUtils *OutlineTutils,
+                            ArrayRef<Value *> Arguments) {
+      OutlineTutils->InsertChoice(OutlineBuilder, Arguments[0], Arguments[1],
+                                  Arguments[2]);
+      OutlineBuilder.CreateRetVoid();
+    };
+
+    auto trace_call = tutils->CreateOutlinedFunction(
+        Builder, OutlinedTrace, Builder.getVoidTy(), trace_args, false,
+        "outline_insert_choice");
+
+#if LLVM_VERSION_MAJOR >= 14
+    trace_call->addAttributeAtIndex(
+        AttributeList::FunctionIndex,
+        Attribute::get(call.getContext(), "enzyme_inactive"));
+    trace_call->addAttributeAtIndex(
+        AttributeList::FunctionIndex,
+        Attribute::get(call.getContext(), "enzyme_notypeanalysis"));
+#else
+    trace_call->addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(call.getContext(), "enzyme_inactive"));
+    trace_call->addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(call.getContext(), "enzyme_notypeanalysis"));
+#endif
+  }
+
+  if (!call.getType()->isVoidTy()) {
+    observed->takeName(new_call);
+    new_call->replaceAllUsesWith(observed);
+  }
+  new_call->eraseFromParent();
 }
 
 void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
@@ -255,8 +332,9 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
   assert(called);
 
   Function *samplefn = Logic.CreateTrace(
-      called, tutils->sampleFunction, generativeFunctions,
-      activeRandomVariables, mode, autodiff, tutils->interface);
+      called, tutils->sampleFunctions, tutils->observeFunctions,
+      generativeFunctions, activeRandomVariables, mode, autodiff,
+      tutils->interface);
 
   Instruction *replacement;
   switch (mode) {
@@ -352,6 +430,8 @@ void TraceGenerator::visitCallInst(CallInst &call) {
 
   if (tutils->isSampleCall(&call)) {
     handleSampleCall(call, new_call);
+  } else if (tutils->isObserveCall(&call)) {
+    handleObserveCall(call, new_call);
   } else {
     handleArbitraryCall(call, new_call);
   }

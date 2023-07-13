@@ -1806,15 +1806,19 @@ public:
     }
 
     // Find sample function
-    Function *sampleFunction = nullptr;
-    for (auto &&interface_func : F->getParent()->functions()) {
-      if (interface_func.getName().contains("__enzyme_sample")) {
-        assert(interface_func.getFunctionType()->getNumParams() >= 3);
-        sampleFunction = &interface_func;
+    SmallPtrSet<Function *, 4> sampleFunctions;
+    SmallPtrSet<Function *, 4> observeFunctions;
+    for (auto &func : F->getParent()->functions()) {
+      if (func.getName().contains("__enzyme_sample")) {
+        assert(func.getFunctionType()->getNumParams() >= 3);
+        sampleFunctions.insert(&func);
+      } else if (func.getName().contains("__enzyme_observe")) {
+        assert(func.getFunctionType()->getNumParams() >= 3);
+        observeFunctions.insert(&func);
       }
     }
 
-    assert(sampleFunction);
+    assert(!sampleFunctions.empty() || !observeFunctions.empty());
 
     bool autodiff = dtrace || dlikelihood;
     IRBuilder<> AllocaBuilder(CI->getParent()->getFirstNonPHI());
@@ -1857,8 +1861,12 @@ public:
     // Determine generative functions
     SmallPtrSet<Function *, 4> generativeFunctions;
     SetVector<Function *, std::deque<Function *>> workList;
-    workList.insert(sampleFunction);
-    generativeFunctions.insert(sampleFunction);
+    workList.insert(sampleFunctions.begin(), sampleFunctions.end());
+    workList.insert(observeFunctions.begin(), observeFunctions.end());
+
+    generativeFunctions.insert(sampleFunctions.begin(), sampleFunctions.end());
+    generativeFunctions.insert(observeFunctions.begin(),
+                               observeFunctions.end());
 
     while (!workList.empty()) {
       auto todo = *workList.begin();
@@ -1885,9 +1893,9 @@ public:
 #endif
     }
 
-    auto newFunc = Logic.CreateTrace(F, sampleFunction, generativeFunctions,
-                                     opt->ActiveRandomVariables, mode, autodiff,
-                                     interface);
+    auto newFunc = Logic.CreateTrace(
+        F, sampleFunctions, observeFunctions, generativeFunctions,
+        opt->ActiveRandomVariables, mode, autodiff, interface);
 
     if (!autodiff) {
       auto call = CallInst::Create(newFunc->getFunctionType(), newFunc, args);
@@ -2657,14 +2665,17 @@ public:
       changed = true;
     }
 
-    SmallPtrSet<CallInst *, 4> sample_calls;
+    SmallPtrSet<CallInst *, 16> sample_calls;
+    SmallPtrSet<CallInst *, 16> observe_calls;
     for (auto &&func : M) {
       for (auto &&BB : func) {
         for (auto &&Inst : BB) {
           if (auto CI = dyn_cast<CallInst>(&Inst)) {
-            Function *enzyme_sample = CI->getCalledFunction();
-            if (enzyme_sample &&
-                enzyme_sample->getName().contains("__enzyme_sample")) {
+            Function *fun = CI->getCalledFunction();
+            if (!fun)
+              continue;
+
+            if (fun->getName().contains("__enzyme_sample")) {
               if (CI->getNumOperands() < 3) {
                 EmitFailure(
                     "IllegalNumberOfArguments", CI->getDebugLoc(), CI,
@@ -2721,6 +2732,54 @@ public:
                     *pdf, " (", *(pdf->arg_end() - 1)->getType(), ")");
               }
               sample_calls.insert(CI);
+
+            } else if (fun->getName().contains("__enzyme_observe")) {
+              if (CI->getNumOperands() < 3) {
+                EmitFailure(
+                    "IllegalNumberOfArguments", CI->getDebugLoc(), CI,
+                    "Not enough arguments passed to call to __enzyme_sample");
+              }
+              Value *observed = CI->getOperand(0);
+              Function *pdf = GetFunctionFromValue(CI->getArgOperand(1));
+              unsigned expected = pdf->getFunctionType()->getNumParams() - 1;
+
+#if LLVM_VERSION_MAJOR >= 14
+              unsigned actual = CI->arg_size();
+#else
+              unsigned actual = CI->getNumArgOperands();
+#endif
+              if (actual - 3 != expected) {
+                EmitFailure("IllegalNumberOfArguments", CI->getDebugLoc(), CI,
+                            "Illegal number of arguments passed to call to "
+                            "__enzyme_observe.",
+                            " Expected: ", expected, " got: ", actual);
+              }
+
+              for (unsigned i = 0;
+                   i < pdf->getFunctionType()->getNumParams() - 1; ++i) {
+                Value *ci_arg = CI->getArgOperand(i + 3);
+                Value *pdf_arg = pdf->arg_begin() + i;
+
+                if (ci_arg->getType() != pdf_arg->getType()) {
+                  EmitFailure("IllegalSampleType", CI->getDebugLoc(), CI,
+                              "Type of: ", *ci_arg, " (", *ci_arg->getType(),
+                              ")",
+                              " does not match the argument type of the "
+                              "density function: ",
+                              *pdf, " at: ", i, " (", *pdf_arg->getType(), ")");
+                }
+              }
+
+              if ((pdf->arg_end() - 1)->getType() != observed->getType()) {
+                EmitFailure(
+                    "IllegalSampleType", CI->getDebugLoc(), CI,
+                    "Return type of ", *observed, " (", *observed->getType(),
+                    ")",
+                    " does not match the last argument type of the density "
+                    "function: ",
+                    *pdf, " (", *(pdf->arg_end() - 1)->getType(), ")");
+              }
+              observe_calls.insert(CI);
             }
           }
         }
@@ -2740,6 +2799,14 @@ public:
           CallInst::Create(samplefn->getFunctionType(), samplefn, args);
 
       ReplaceInstWithInst(call, choice);
+    }
+
+    for (auto call : observe_calls) {
+      Value *observed = call->getArgOperand(0);
+
+      if (!call->getType()->isVoidTy())
+        call->replaceAllUsesWith(observed);
+      call->eraseFromParent();
     }
 
     for (const auto &pair : Logic.PPC.cache)

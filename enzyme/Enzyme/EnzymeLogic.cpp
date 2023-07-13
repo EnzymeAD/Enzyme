@@ -4987,19 +4987,21 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   return BatchCachedFunctions[tup] = NewF;
 };
 
-Function *
-EnzymeLogic::CreateTrace(Function *totrace, Function *sampleFunction,
-                         SmallPtrSetImpl<Function *> &GenerativeFunctions,
-                         StringSet<> &ActiveRandomVariables, ProbProgMode mode,
-                         bool autodiff, TraceInterface *interface) {
+Function *EnzymeLogic::CreateTrace(
+    Function *totrace, const SmallPtrSetImpl<Function *> &sampleFunctions,
+    const SmallPtrSetImpl<Function *> &observeFunctions,
+    const SmallPtrSetImpl<Function *> &GenerativeFunctions,
+    const StringSet<> &ActiveRandomVariables, ProbProgMode mode, bool autodiff,
+    TraceInterface *interface) {
   TraceCacheKey tup = std::make_tuple(totrace, mode);
   if (TraceCachedFunctions.find(tup) != TraceCachedFunctions.end()) {
     return TraceCachedFunctions.find(tup)->second;
   }
 
   ValueToValueMapTy originalToNewFn;
-  TraceUtils *tutils = TraceUtils::FromClone(mode, sampleFunction, interface,
-                                             totrace, originalToNewFn);
+  TraceUtils *tutils =
+      TraceUtils::FromClone(mode, sampleFunctions, observeFunctions, interface,
+                            totrace, originalToNewFn);
   TraceGenerator *tracer =
       new TraceGenerator(*this, tutils, autodiff, originalToNewFn,
                          GenerativeFunctions, ActiveRandomVariables);
