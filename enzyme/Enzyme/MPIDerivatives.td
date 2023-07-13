@@ -35,28 +35,24 @@ def comm: MPI_ArgType<4>;
 def request: MPI_ArgType<5>;
 
 // special op
-def MemCopyFloats: MagicInst;
+def DiffMemCopyFloats: MagicInst;
 def MPISum: MagicInst;
 def MemSet: MagicInst;
 def False: MagicInst;
 def True: MagicInst;
 def MPITypeSize: MagicInst;
 def MPICommRank: MagicInst;
+def CreateAllocation: MagicInst;
 
-// as CallBlasPattern
-class CallMPIPattern<dag patternToMatch, list<string> funcNames, list<string> mutables, list<string> actArgs, 
-                      list<MPI_ArgType> paramTypes, list<dag> resultOps, dag forwardOps> {
-  dag PatternToMatch = patternToMatch;
-  list<string> FuncNames = funcNames;
-  list<string> ActiveArgs = actArgs;
+class CallMPIPattern<dag patternToMatch, list<string> funcNames, list<string> mutables,
+                      list<MPI_ArgType> paramTypes, list<dag> resultOps, dag forwardOps>
+       : CallPattern<patternToMatch, funcNames, resultOps, forwardOps> {
   list<MPI_ArgType> inputTypes = paramTypes;
-  list<dag> ArgDerivatives = resultOps;
   list<string> mutable = mutables;
-  dag ArgDuals = forwardOps;
 }
 
 // def MPI_Isend : CallMPIPattern<(Op $buf, $count, $datatype, $source, $tag, $comm, $request),
-//                     ["MPI_Isend", "PMPI_Isend"], ["request"], ["buf", "request"], 
+//                     ["MPI_Isend", "PMPI_Isend"], ["request"], 
 //                     [buf, size, datatype, integer, integer, comm, request],
 //                     [
 //
@@ -64,21 +60,38 @@ class CallMPIPattern<dag patternToMatch, list<string> funcNames, list<string> mu
 //                     (ForwardFromSummedReverse)>;
 
 def MPI_Gather : CallMPIPattern<(Op $sendbuf, $sendcount, $sendtype, $recvbuf, $recvcount, $recvtype, $root, $comm),
-                    ["MPI_Gather"], ["recvbuf"], ["sendbuf", "recvbuf"], [buf, size, datatype, buf, size, datatype, integer, comm],
+                    ["MPI_Gather"], ["recvbuf"], [buf, size, datatype, buf, size, datatype, integer, comm],
                     [
+                      (CreateAllocation $buf, (Mul $sendcount, (MPITypeSize $sendtype)))
                       (MPI_Scatter (Shadow $recvbuf), $recvcount, $recvtype, $buf, $sendcount, $sendtype, $root, $comm),
                       (Select (ICmpEQ $root (MPICommRank $comm)) 
-                        (MemSet (Shadow $recvbuf), 0, (Mul $recvcount, (MPITypeSize $recvtype)), False) 
+                        (MemSet (Shadow $recvbuf), 0, (Mul $recvcount, (MPITypeSize $recvtype)), False),
                         (Noop))
-                      (MemCopyFloats $buf, (Shadow $sendbuf), (Mul $sendcount, (MPITypeSize $sendtype))),
+                      (DiffMemCopyFloats $sendbuf, $buf, (Shadow $sendbuf), (Mul $sendcount, (MPITypeSize $sendtype))),
                     ],
                     (ForwardFromSummedReverse)>;
 
 def MPI_AllGather : CallMPIPattern<(Op $sendbuf, $sendcount, $sendtype, $recvbuf, $recvcount, $recvtype, $comm),
-                    ["MPI_AllGather"], ["recvbuf"], ["sendbuf", "recvbuf"], [buf, size, datatype, buf, size, datatype, comm],
+                    ["MPI_AllGather"], ["recvbuf"], [buf, size, datatype, buf, size, datatype, comm],
                     [
+                      (CreateAllocation $buf, (Mul $sendcount, (MPITypeSize $sendtype)))
                       (MPI_Reduce_scatter_block (Shadow $recvbuf), $buf, $sendcount, $sendtype, MPISum, $comm),
                       (MemSet (Shadow $recvbuf), 0, (Mul $recvcount, (MPITypeSize $recvtype)), False),
-                      (MemCopyFloats $buf, (Shadow $sendbuf), (Mul $sendcount, (MPITypeSize $sendtype))),
+                      (DiffMemCopyFloats $sendbuf, $buf, (Shadow $sendbuf), (Mul $sendcount, (MPITypeSize $sendtype))),
+                    ],
+                    (ForwardFromSummedReverse)>;
+
+def MPI_Scatter   : CallMPIPattern<(Op $sendbuf, $sendcount, $sendtype, $recvbuf, $recvcount, $recvtype, $root, $comm),
+                    ["MPI_AllGather"], ["recvbuf"], [buf, size, datatype, buf, size, datatype, comm],
+                    [
+                      (Select (ICmpEQ $root (MPICommRank $comm)) 
+                        (CreateAllocation $buf, (Mul $sendcount, (MPITypeSize $sendtype))),
+                        (Assign $buf, UndefValue))
+                      (MPI_Gather (Shadow $recvbuf), $buf, $recvcount, $recvtype, $sendcount, $sendtype, $root, $comm),
+                      (MemSet (Shadow $recvbuf), 0, (Mul $recvcount, (MPITypeSize $recvtype)), False),
+                      (Select (ICmpEQ $root (MPICommRank $comm)) 
+                        (DiffMemCopyFloats $sendbuf, $buf, (Shadow $sendbuf), (Mul $sendcount, (MPITypeSize $sendtype))),
+                        (Noop)
+                      )
                     ],
                     (ForwardFromSummedReverse)>;
