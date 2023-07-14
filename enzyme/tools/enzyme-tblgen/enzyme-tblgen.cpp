@@ -22,7 +22,7 @@
 #include "llvm/TableGen/Main.h"
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
-#include <llvm-12/llvm/Support/raw_ostream.h>
+#include "llvm/Support/raw_ostream.h"
 
 #include "caching.h"
 #include "datastructures.h"
