@@ -22,6 +22,7 @@
 #include "llvm/TableGen/Main.h"
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
+#include <llvm-12/llvm/Support/raw_ostream.h>
 
 #include "caching.h"
 #include "datastructures.h"
@@ -2959,6 +2960,52 @@ void emitMPIDerivatives(const RecordKeeper &RK, raw_ostream &os) {
     // //// writeEnums(pattern, blas_modes, os);
     // emit_free_and_ending(newPattern, os);
   }
+}
+
+bool isMPIShadow(StringRef argType) {
+  return argType == "buf" || argType == "request";
+}
+
+void emitMPIForwardMode(StringRef funcName, const std::vector<StringRef>& argNames, 
+  const std::vector<StringRef>& argTypes, raw_ostream& os) {
+    assert(argNames.size() == argTypes.size());
+
+    os << "IRBuilder<> Builder2(&call);\n";
+    os << "getForwardBuilder(Builder2);\n";
+
+    for(size_t i = 0; i < argNames.size(); ++i) {
+      os << "Value* origin_" << argNames[i] << " = call.getOperand(" << i << ");\n";
+      os << "Value* " << argNames[i] << " = ";
+      if (isMPIShadow(argTypes[i])) {
+        os << "gutils->invertPointerM(origin_" << argNames[i] << ", Builder2);\n";
+      } else {
+        os << "gutils->getNewFromOriginal(origin_" << argNames[i] << ");\n";
+      }
+    }
+
+    os << "Value* args[] = {";
+    for(size_t i = 0; i < argNames.size(); ++i) {
+      if (i == 0) {
+        os << argNames[i];
+      } else {
+        os << ", " << argNames[i];
+      }
+    }
+    os << "};\n";
+
+    os << "auto defs = gutils->getInvertedBundles(&call, {";
+    for(size_t i = 0; i < argNames.size(); ++i) {
+      auto def = isMPIShadow(argTypes[i]) ? "ValueType::Shadow" : "ValueType::Primal";
+      if (i == 0) {
+        os << def;
+      } else {
+        os << ", " << def;
+      }
+    }
+    os << "}, Builder2, false);\n";
+
+    os << "Value* callval = call.getCalledOperand();\n";
+    os << "Builder2.CreateCall(call.getFunctionType(), callval, args, defs);\n";
 }
 
 #include "blasDeclUpdater.h"
