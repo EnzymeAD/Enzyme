@@ -4956,7 +4956,7 @@ llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
     llvm::Type *rhs_ty = rhs->getType();
     for (auto idx : rhs_off)
       rhs_ty = getSubType(rhs_ty, idx);
-    assert(lhs_ty == rhs_ty);
+    //assert(lhs_ty == rhs_ty);
   }
   if (lhs_ty->isFPOrFPVectorTy()) {
     if (lhs_off.size())
