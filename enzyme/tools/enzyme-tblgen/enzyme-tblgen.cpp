@@ -1629,7 +1629,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
      << "  // returns true, or if runtimeActivity is on and the\n"
      << "  // shadow points to the primal arg.\n";
 
-  os << "  if(EnzymeRuntimeActivityCheck) {\n";
+  os << "  if(EnzymeRuntimeActivityCheck && cacheMode) {\n";
   for (size_t i = 0; i < actArgs.size(); i++) {
     auto name = nameVec[actArgs[i]];
 
@@ -2565,8 +2565,8 @@ void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
 void emit_runtime_condition(DagInit *ruleDag, StringRef name, StringRef tab,
                             StringRef B, bool isFP, raw_ostream &os) {
   os << tab << "BasicBlock *nextBlock_" << name << " = nullptr;\n"
-     << tab << "if (EnzymeRuntimeActivityCheck" << (isFP ? " && byRef" : "")
-     << ") {\n"
+     << tab << "if (EnzymeRuntimeActivityCheck && cacheMode"
+     << (isFP ? " && byRef" : "") << ") {\n"
      << tab << "  BasicBlock *current = Builder2.GetInsertBlock();\n"
      << tab << "  auto activeBlock = gutils->addReverseBlock(current,"
      << "bb_name + \"." << name << ".active\");\n"
@@ -2700,7 +2700,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     }
   }
 
-  os << "  if(EnzymeRuntimeActivityCheck) {\n";
+  os << "  if(EnzymeRuntimeActivityCheck && cacheMode) {\n";
   for (size_t i = 0; i < activeArgs.size(); i++) {
     auto name = nameVec[activeArgs[i]];
 
