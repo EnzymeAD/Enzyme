@@ -1858,44 +1858,9 @@ public:
       constants.push_back(DIFFE_TYPE::CONSTANT);
     }
 
-    // Determine generative functions
-    SmallPtrSet<Function *, 4> generativeFunctions;
-    SetVector<Function *, std::deque<Function *>> workList;
-    workList.insert(sampleFunctions.begin(), sampleFunctions.end());
-    workList.insert(observeFunctions.begin(), observeFunctions.end());
-
-    generativeFunctions.insert(sampleFunctions.begin(), sampleFunctions.end());
-    generativeFunctions.insert(observeFunctions.begin(),
-                               observeFunctions.end());
-
-    while (!workList.empty()) {
-      auto todo = *workList.begin();
-      workList.erase(workList.begin());
-
-#if LLVM_VERSION_MAJOR > 10
-      for (auto &&U : todo->uses()) {
-        if (auto ACS = AbstractCallSite(&U)) {
-          auto fun = ACS.getInstruction()->getParent()->getParent();
-          auto [it, inserted] = generativeFunctions.insert(fun);
-          if (inserted)
-            workList.insert(fun);
-        }
-      }
-#else
-      for (auto &&U : todo->uses()) {
-        if (auto &&call = dyn_cast<CallInst>(U.getUser())) {
-          auto &&fun = call->getParent()->getParent();
-          auto &&[it, inserted] = generativeFunctions.insert(fun);
-          if (inserted)
-            workList.insert(fun);
-        }
-      }
-#endif
-    }
-
-    auto newFunc = Logic.CreateTrace(
-        F, sampleFunctions, observeFunctions, generativeFunctions,
-        opt->ActiveRandomVariables, mode, autodiff, interface);
+    auto newFunc = Logic.CreateTrace(F, sampleFunctions, observeFunctions,
+                                     opt->ActiveRandomVariables, mode, autodiff,
+                                     interface);
 
     if (!autodiff) {
       auto call = CallInst::Create(newFunc->getFunctionType(), newFunc, args);

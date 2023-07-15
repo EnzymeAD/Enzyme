@@ -620,11 +620,10 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
       forceAnonymousTape, width, AtomicAdd));
 }
 
-LLVMValueRef CreateTrace(
+LLVMValueRef EnzymeCreateTrace(
     EnzymeLogicRef Logic, LLVMValueRef totrace, LLVMValueRef *sample_functions,
     size_t sample_functions_size, LLVMValueRef *observe_functions,
-    size_t observe_functions_size, LLVMValueRef *generative_functions,
-    size_t generative_functions_size, const char *active_random_variables[],
+    size_t observe_functions_size, const char *active_random_variables[],
     size_t active_random_variables_size, CProbProgMode mode, uint8_t autodiff,
     EnzymeTraceInterfaceRef interface) {
 
@@ -638,11 +637,6 @@ LLVMValueRef CreateTrace(
     ObserveFunctions.insert(cast<Function>(unwrap(observe_functions[i])));
   }
 
-  SmallPtrSet<Function *, 4> GenerativeFunctions;
-  for (size_t i = 0; i < generative_functions_size; i++) {
-    GenerativeFunctions.insert(cast<Function>(unwrap(generative_functions[i])));
-  }
-
   StringSet<> ActiveRandomVariables;
   for (size_t i = 0; i < active_random_variables_size; i++) {
     ActiveRandomVariables.insert(active_random_variables[i]);
@@ -650,8 +644,8 @@ LLVMValueRef CreateTrace(
 
   return wrap(eunwrap(Logic).CreateTrace(
       cast<Function>(unwrap(totrace)), SampleFunctions, ObserveFunctions,
-      GenerativeFunctions, ActiveRandomVariables, (ProbProgMode)mode,
-      (bool)autodiff, eunwrap(interface)));
+      ActiveRandomVariables, (ProbProgMode)mode, (bool)autodiff,
+      eunwrap(interface)));
 }
 
 LLVMValueRef
