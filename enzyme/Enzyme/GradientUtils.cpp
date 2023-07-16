@@ -4950,7 +4950,8 @@ static inline Type *normalizedAggregateType(Type *ty) {
 
   if (auto AT = dyn_cast<ArrayType>(ty)) {
     auto eltype = AT->getElementType();
-    return StructType.create(std::vector<Type *>(AT->getNumElements(), eltype));
+    return StructType::get(eltype->getContext(), 
+      std::vector<Type *>(AT->getNumElements(), eltype));
   }
 
   return ty;
@@ -4960,7 +4961,10 @@ static inline bool normalizedEqualTypes(Type *lhs, Type *rhs) {
   if (lhs == rhs)
     return true;
 
-  return normalizedAggregateType(lhs) == normalizedAggregateType(rhs);
+  auto a = normalizedAggregateType(lhs);
+  auto b = normalizedAggregateType(rhs);
+  
+  return a == b;
 }
 
 llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
