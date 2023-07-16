@@ -1550,8 +1550,8 @@ public:
         if (AT->getElementType()->isFPOrFPVectorTy()) {
           auto eltype = AT->getElementType();
           std::vector<Constant *> csts(
-            AT->getNumElements(), 
-            (llvm::Constant*)ConstantFP::get(eltype, 1.0));
+              AT->getNumElements(),
+              (llvm::Constant *)ConstantFP::get(eltype, 1.0));
           args.push_back(ConstantArray::get(AT, csts));
         }
       }
