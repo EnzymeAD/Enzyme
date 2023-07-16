@@ -333,8 +333,7 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
 
   Function *samplefn = Logic.CreateTrace(
       called, tutils->sampleFunctions, tutils->observeFunctions,
-      generativeFunctions, activeRandomVariables, mode, autodiff,
-      tutils->interface);
+      activeRandomVariables, mode, autodiff, tutils->interface);
 
   Instruction *replacement;
   switch (mode) {
@@ -422,8 +421,9 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
 }
 
 void TraceGenerator::visitCallInst(CallInst &call) {
+  auto fn = getFunctionFromCall(&call);
 
-  if (!generativeFunctions.count(call.getCalledFunction()))
+  if (!generativeFunctions.count(fn))
     return;
 
   CallInst *new_call = dyn_cast<CallInst>(originalToNewFn[&call]);

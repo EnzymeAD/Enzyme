@@ -26,6 +26,8 @@
 
 #include "TraceInterface.h"
 
+#include "Utils.h"
+
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -35,6 +37,12 @@
 using namespace llvm;
 
 TraceInterface::TraceInterface(LLVMContext &C) : C(C){};
+
+PointerType *traceType(LLVMContext &C) {
+  return getDefaultAnonymousTapeType(C);
+}
+
+Type *addressType(LLVMContext &C) { return PointerType::getInt8PtrTy(C); }
 
 IntegerType *TraceInterface::sizeType(LLVMContext &C) {
   return IntegerType::getInt64Ty(C);
@@ -63,16 +71,13 @@ FunctionType *TraceInterface::hasCallTy() { return hasCallTy(C); }
 FunctionType *TraceInterface::hasChoiceTy() { return hasChoiceTy(C); }
 
 FunctionType *TraceInterface::getTraceTy(LLVMContext &C) {
-  return FunctionType::get(PointerType::getInt8PtrTy(C),
-                           {PointerType::getInt8PtrTy(C), stringType(C)},
-                           false);
+  return FunctionType::get(traceType(C), {traceType(C), stringType(C)}, false);
 }
 
 FunctionType *TraceInterface::getChoiceTy(LLVMContext &C) {
-  return FunctionType::get(sizeType(C),
-                           {PointerType::getInt8PtrTy(C), stringType(C),
-                            PointerType::getInt8PtrTy(C), sizeType(C)},
-                           false);
+  return FunctionType::get(
+      sizeType(C), {traceType(C), stringType(C), addressType(C), sizeType(C)},
+      false);
 }
 
 FunctionType *TraceInterface::insertCallTy(LLVMContext &C) {
