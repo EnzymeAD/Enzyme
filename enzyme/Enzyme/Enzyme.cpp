@@ -1546,11 +1546,12 @@ public:
           csts.push_back(ConstantFP::get(e, 1.0));
         }
         args.push_back(ConstantStruct::get(ST, csts));
-      } else if (auto AT = dyn_cast<ArrayType>(fn->getReturnType()))
-      {
+      } else if (auto AT = dyn_cast<ArrayType>(fn->getReturnType())) {
         if (AT->getElementType()->isFPOrFPVectorTy()) {
           auto eltype = AT->getElementType();
-          std::vector<Constant *> csts(AT->getNumElements(), (llvm::Constant*)ConstantFP::get(eltype, 1.0));
+          std::vector<Constant *> csts(
+            AT->getNumElements(), 
+            (llvm::Constant*)ConstantFP::get(eltype, 1.0));
           args.push_back(ConstantArray::get(AT, csts));
         }
       }

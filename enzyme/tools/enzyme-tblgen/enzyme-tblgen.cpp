@@ -496,8 +496,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                             resultTree->getAsString());
       os << "->getType();\n";
       os << curIndent << INDENT << "Value *ret = nullptr;\n";
-      os << curIndent << INDENT
-         << "if (auto ST = dyn_cast<ArrayType>(ty)) {\n";
+      os << curIndent << INDENT << "if (auto ST = dyn_cast<ArrayType>(ty)) {\n";
       os << curIndent << INDENT << INDENT
          << "ret = ConstantArray::get(ST, "
             "{(llvm::Constant*)ConstantFP::get(ST->getElementType(), \""
@@ -1010,7 +1009,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << ") && call.getNumArgOperands() == " << tree->getNumArgs()
          << " ){\n";
 #endif
-      os << "    auto mod = call.getParent()->getParent()->getParent();\n";
       break;
     }
     case IntrDerivatives: {
@@ -1041,9 +1039,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         continue;
       origName = "I";
       os << " {\n";
-      os << "    auto mod = I.getParent()->getParent()->getParent();\n";
-      os << "    auto called = cast<CallInst>(&" << origName
-         << ")->getCalledFunction();\n";
       os << "    CallInst *const newCall = "
             "cast<CallInst>(gutils->getNewFromOriginal(&"
          << origName << "));\n";

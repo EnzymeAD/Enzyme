@@ -4944,6 +4944,25 @@ Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
   return Builder.CreateExtractValue(Agg, off, name);
 }
 
+static inline Type *normalizedAggregateType(Type *ty) {
+  if (auto ST = dyn_cast<StructType>(ty))
+    return (Type *)ST;
+
+  if (auto AT = dyn_cast<ArrayType>(ty)) {
+    auto eltype = AT->getElementType();
+    return StructType.create(std::vector<Type *>(AT->getNumElements(), eltype));
+  }
+
+  return ty;
+}
+
+static inline bool normalizedEqualTypes(Type *lhs, Type *rhs) {
+  if (lhs == rhs)
+    return true;
+
+  return normalizedAggregateType(lhs) == normalizedAggregateType(rhs);
+}
+
 llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
                                           llvm::Value *lhs, llvm::Value *rhs,
                                           llvm::ArrayRef<unsigned> lhs_off,
@@ -4956,7 +4975,8 @@ llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
     llvm::Type *rhs_ty = rhs->getType();
     for (auto idx : rhs_off)
       rhs_ty = getSubType(rhs_ty, idx);
-    //assert(lhs_ty == rhs_ty);
+    // { double, double } = [2 x double]  
+    assert(normalizedEqualTypes(lhs_ty,rhs_ty));
   }
   if (lhs_ty->isFPOrFPVectorTy()) {
     if (lhs_off.size())
