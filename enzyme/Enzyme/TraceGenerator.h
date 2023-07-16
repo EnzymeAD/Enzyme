@@ -40,19 +40,22 @@ private:
   ProbProgMode mode = tutils->mode;
   bool autodiff;
   llvm::ValueMap<const llvm::Value *, llvm::WeakTrackingVH> &originalToNewFn;
-  llvm::SmallPtrSetImpl<llvm::Function *> &generativeFunctions;
-  llvm::StringSet<> &activeRandomVariables;
+  const llvm::SmallPtrSetImpl<llvm::Function *> &generativeFunctions;
+  const llvm::StringSet<> &activeRandomVariables;
 
 public:
-  TraceGenerator(EnzymeLogic &Logic, TraceUtils *tutils, bool autodiff,
-                 llvm::ValueMap<const llvm::Value *, llvm::WeakTrackingVH>
-                     &originalToNewFn,
-                 llvm::SmallPtrSetImpl<llvm::Function *> &generativeFunctions,
-                 llvm::StringSet<> &activeRandomVariables);
+  TraceGenerator(
+      EnzymeLogic &Logic, TraceUtils *tutils, bool autodiff,
+      llvm::ValueMap<const llvm::Value *, llvm::WeakTrackingVH>
+          &originalToNewFn,
+      const llvm::SmallPtrSetImpl<llvm::Function *> &generativeFunctions,
+      const llvm::StringSet<> &activeRandomVariables);
 
   void visitFunction(llvm::Function &F);
 
   void handleSampleCall(llvm::CallInst &call, llvm::CallInst *new_call);
+
+  void handleObserveCall(llvm::CallInst &call, llvm::CallInst *new_call);
 
   void handleArbitraryCall(llvm::CallInst &call, llvm::CallInst *new_call);
 

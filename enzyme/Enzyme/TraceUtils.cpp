@@ -44,17 +44,23 @@
 
 using namespace llvm;
 
-TraceUtils::TraceUtils(ProbProgMode mode, Function *sampleFunction,
+TraceUtils::TraceUtils(ProbProgMode mode,
+                       const SmallPtrSetImpl<Function *> &sampleFunctions,
+                       const SmallPtrSetImpl<Function *> &observeFunctions,
                        Function *newFunc, Argument *trace,
                        Argument *observations, Argument *likelihood,
                        TraceInterface *interface)
     : trace(trace), observations(observations), likelihood(likelihood),
-      sampleFunction(sampleFunction), interface(interface), mode(mode),
-      newFunc(newFunc){};
+      interface(interface), mode(mode), newFunc(newFunc),
+      sampleFunctions(sampleFunctions.begin(), sampleFunctions.end()),
+      observeFunctions(observeFunctions.begin(), observeFunctions.end()){};
 
-TraceUtils *TraceUtils::FromClone(ProbProgMode mode, Function *sampleFunction,
-                                  TraceInterface *interface, Function *oldFunc,
-                                  ValueToValueMapTy &originalToNewFn) {
+TraceUtils *
+TraceUtils::FromClone(ProbProgMode mode,
+                      const SmallPtrSetImpl<Function *> &sampleFunctions,
+                      const SmallPtrSetImpl<Function *> &observeFunctions,
+                      TraceInterface *interface, Function *oldFunc,
+                      ValueToValueMapTy &originalToNewFn) {
   auto &Context = oldFunc->getContext();
   FunctionType *orig_FTy = oldFunc->getFunctionType();
   SmallVector<Type *, 4> params;
@@ -143,8 +149,8 @@ TraceUtils *TraceUtils::FromClone(ProbProgMode mode, Function *sampleFunction,
   arg->setName("likelihood");
   arg->addAttr(Attribute::get(Context, LikelihoodParameterAttribute));
 
-  return new TraceUtils(mode, sampleFunction, newFunc, trace, observations,
-                        likelihood, interface);
+  return new TraceUtils(mode, sampleFunctions, observeFunctions, newFunc, trace,
+                        observations, likelihood, interface);
 };
 
 TraceUtils::~TraceUtils() = default;
@@ -493,8 +499,8 @@ CallInst *TraceUtils::CreateOutlinedFunction(
     trace_arg = idx++;
 
   TraceUtils OutlineTutils =
-      TraceUtils(mode, sampleFunction, F, trace_arg, observations_arg,
-                 likelihood_arg, interface);
+      TraceUtils(mode, sampleFunctions, observeFunctions, F, trace_arg,
+                 observations_arg, likelihood_arg, interface);
   IRBuilder<> OutlineBuilder(Entry);
   Outlined(OutlineBuilder, &OutlineTutils, Rets);
 
@@ -502,5 +508,11 @@ CallInst *TraceUtils::CreateOutlinedFunction(
 }
 
 bool TraceUtils::isSampleCall(CallInst *call) {
-  return call->getCalledFunction() == sampleFunction;
+  auto F = getFunctionFromCall(call);
+  return sampleFunctions.count(F);
+}
+
+bool TraceUtils::isObserveCall(CallInst *call) {
+  auto F = getFunctionFromCall(call);
+  return observeFunctions.count(F);
 }

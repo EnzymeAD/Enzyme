@@ -1002,7 +1002,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << ") && call.getNumArgOperands() == " << tree->getNumArgs()
          << " ){\n";
 #endif
-      os << "    auto mod = call.getParent()->getParent()->getParent();\n";
       break;
     }
     case IntrDerivatives: {
@@ -1033,9 +1032,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         continue;
       origName = "I";
       os << " {\n";
-      os << "    auto mod = I.getParent()->getParent()->getParent();\n";
-      os << "    auto called = cast<CallInst>(&" << origName
-         << ")->getCalledFunction();\n";
       os << "    CallInst *const newCall = "
             "cast<CallInst>(gutils->getNewFromOriginal(&"
          << origName << "));\n";

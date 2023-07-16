@@ -341,10 +341,25 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       }
     }
     if (!addingType) {
-      TR.dump();
-      llvm::errs() << "oldFunc: " << *oldFunc << "\n";
-      llvm::errs() << "newFunc: " << *newFunc << "\n";
-      llvm::errs() << "val: " << *val << " old: " << *old << "\n";
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "oldFunc: " << *oldFunc << "\n";
+      ss << "Cannot deduce adding type of: " << *old << "\n";
+      if (CustomErrorHandler) {
+        CustomErrorHandler(ss.str().c_str(), wrap(old), ErrorType::NoType,
+                           &TR.analyzer, nullptr, wrap(&BuilderM));
+        return addedSelects;
+      } else {
+        TR.dump();
+        DebugLoc loc;
+        if (auto inst = dyn_cast<Instruction>(old))
+          EmitFailure("CannotDeduceType", inst->getDebugLoc(), inst, ss.str());
+        else {
+          llvm::errs() << ss.str() << "\n";
+          llvm_unreachable("Cannot deduce adding type");
+        }
+        return addedSelects;
+      }
     }
     assert(addingType);
     assert(addingType->isFPOrFPVectorTy());
