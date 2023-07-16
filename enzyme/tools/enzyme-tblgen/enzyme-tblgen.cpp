@@ -1621,11 +1621,35 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
        << "  const bool overwritten_" << name
        << " = (cacheMode ? overwritten_args[pos_" << name << "] : false);\n";
     if (std::count(actArgs.begin(), actArgs.end(), i)) {
-      os << "  const bool active_" << name
-         << " = !gutils->isConstantValue(orig_" << name << ");\n";
+      os << "  bool active_" << name << " = !gutils->isConstantValue(orig_"
+         << name << ");\n"
+         << "  Value *rt_inactive_" << name << " = nullptr;\n";
     }
     os << "\n";
   }
+
+  os << "\n  // <X> is inactive either if gutils->isConstantValue(<X>)\n"
+     << "  // returns true, or if runtimeActivity is on and the\n"
+     << "  // shadow points to the primal arg.\n";
+
+  os << "  if(EnzymeRuntimeActivityCheck && cacheMode) {\n";
+  for (size_t i = 0; i < actArgs.size(); i++) {
+    auto name = nameVec[actArgs[i]];
+
+    // floats are passed by calue, except of the Fortran Abi (byRef)
+    auto ty = argTypeMap.lookup(actArgs[i]);
+    os << "    if (";
+    if (ty == ArgType::fp)
+      os << "byRef && ";
+    os << "active_" << name << ") {\n"
+       << "      auto shadow_" << name << " = gutils->invertPointerM(orig_"
+       << name << ", BuilderZ);\n"
+       << "      rt_inactive_" << name << " = BuilderZ.CreateICmpEQ(shadow_"
+       << name << ", arg_" << name << ", (Twine(\"rt.inactive.\") + \"" << name
+       << "\").str());\n"
+       << "    }\n";
+  }
+  os << "  }\n";
 
   bool hasFP = false;
   for (auto name : enumerate(nameVec)) {
@@ -2511,10 +2535,12 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
 }
 
 void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
-                    raw_ostream &os) {
+                    StringRef bb, raw_ostream &os) {
   if (dfnc_name == "inner_prod") {
     os << "    auto derivcall_inner_prod = \n"
-          "      getorInsertInnerProd(Builder2, "
+          "      getorInsertInnerProd("
+       << bb
+       << ", "
           "*gutils->oldFunc->getParent(), blas, intType, type_A, "
           "type_n, fpType, ArrayRef<Value *>("
        << argName << "), Defs, byRef, julia_decl);\n"
@@ -2522,23 +2548,50 @@ void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
           "cast<CallInst>(derivcall_inner_prod);\n";
   } else {
     os << "        CallInst *cubcall = "
-          "cast<CallInst>(Builder2.CreateCall(derivcall_"
-       << dfnc_name << ", " << argName << ", Defs));\n";
+          "cast<CallInst>("
+       << bb << ".CreateCall(derivcall_" << dfnc_name << ", " << argName
+       << ", Defs));\n";
   }
   os << "        if (byRef) {\n"
      << "          ((DiffeGradientUtils *)gutils)"
      << "->addToInvertedPtrDiffe(&call, nullptr, fpType, 0,"
-     << "(blas.suffix.contains(\"64\") ? 8 : 4), orig_" << name
-     << ", cubcall, Builder2);\n"
+     << "(blas.suffix.contains(\"64\") ? 8 : 4), orig_" << name << ", cubcall, "
+     << bb << ");\n"
      << "        } else {\n"
-     << "          addToDiffe(orig_" << name
-     << ", cubcall, Builder2, fpType);\n"
+     << "          addToDiffe(orig_" << name << ", cubcall, " << bb
+     << ", fpType);\n"
      << "        }\n";
 }
 
-// TODO: handle Seq
-void emit_rule_activity_req(DagInit *ruleDag, StringRef name, raw_ostream &os) {
-  os << "active_" << name;
+// todo: update rt_active_<X> to use actual dag requirements,
+// possibly by or-ing them
+void emit_runtime_condition(DagInit *ruleDag, StringRef name, StringRef tab,
+                            StringRef B, bool isFP, raw_ostream &os) {
+  os << tab << "BasicBlock *nextBlock_" << name << " = nullptr;\n"
+     << tab << "if (EnzymeRuntimeActivityCheck && cacheMode"
+     << (isFP ? " && byRef" : "") << ") {\n"
+     << tab << "  BasicBlock *current = Builder2.GetInsertBlock();\n"
+     << tab << "  auto activeBlock = gutils->addReverseBlock(current,"
+     << "bb_name + \"." << name << ".active\");\n"
+     << tab << "  nextBlock_" << name << " = gutils->addReverseBlock("
+     << "activeBlock, bb_name + \"." << name << ".done\");\n"
+     << tab << "  " << B << ".CreateCondBr(rt_inactive_" << name
+     << ", nextBlock_" << name << ", activeBlock);\n"
+     << tab << "  " << B << ".SetInsertPoint(activeBlock);\n"
+     << tab << "}\n";
+}
+
+void emit_runtime_continue(DagInit *ruleDag, StringRef name, StringRef tab,
+                           StringRef B, bool isFP, raw_ostream &os) {
+  os << tab << "if (nextBlock_" << name << (isFP ? " && byRef" : "") << ") {\n"
+     << tab << "  " << B << ".CreateBr(nextBlock_" << name << ");\n"
+     << tab << "  " << B << ".SetInsertPoint(nextBlock_" << name << ");\n"
+     << tab << "}\n";
+}
+
+void emit_if_rule_condition(DagInit *ruleDag, StringRef name, StringRef tab,
+                            raw_ostream &os) {
+  os << tab << "if (active_" << name;
   for (size_t pos = 0; pos < ruleDag->getNumArgs();) {
     auto arg = ruleDag->getArg(pos);
     if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
@@ -2550,6 +2603,7 @@ void emit_rule_activity_req(DagInit *ruleDag, StringRef name, raw_ostream &os) {
     }
     pos++;
   }
+  os << ") {\n";
 }
 
 void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
@@ -2649,6 +2703,22 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     }
   }
 
+  os << "  if(EnzymeRuntimeActivityCheck && cacheMode) {\n";
+  for (size_t i = 0; i < activeArgs.size(); i++) {
+    auto name = nameVec[activeArgs[i]];
+
+    // floats are passed by calue, except of the Fortran Abi (byRef)
+    auto ty = typeMap.lookup(activeArgs[i]);
+    os << "    if (";
+    if (ty == ArgType::fp)
+      os << "byRef && ";
+    os << "active_" << name << ") {\n"
+       << "      rt_inactive_" << name << " = lookup(rt_inactive_" << name
+       << ", Builder2);\n"
+       << "    }\n";
+  }
+  os << "  }\n";
+
   // now we can use it to transpose our trans arguments if they exist
   for (size_t i = (lv23 ? 1 : 0); i < nameVec.size(); i++) {
     auto name = nameVec[i];
@@ -2658,6 +2728,15 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
          << ", byRef, charType, allocationBuilder, \"" << name << "\");\n";
     }
   }
+  // first iteration to set BB and control flow
+  // logic: enter first BB, then check for ptr equality.
+  // if ptr equal enter next BB.
+  // After last BB enter final BB
+  // os << "    std::vector<BasicBlock *> BBs;\n";
+  // os << "    BasicBlock *current = Builder2.GetInsertBlock();\n";
+  // os << "    BBs.push_back(current);\n";
+  // os << "    BasicBlock *end = nullptr;\n";
+  // os << "    auto cname = current->getName();\n";
 
   os << "    applyChainRule(\n"
      << "      Builder2,\n"
@@ -2685,8 +2764,10 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     os << ") {\n";
   }
 
-  for (Rule rule : rules) {
-    const size_t actArg = rule.getHandledArgIdx();
+  os << "      auto bb_name = Builder2.GetInsertBlock()->getName();\n";
+  for (size_t i = 0; i < activeArgs.size(); i++) {
+    auto rule = rules[i];
+    const size_t actArg = activeArgs[i];
     const auto ruleDag = rule.getRuleDag();
     const auto name = nameVec[actArg];
     const auto nameMap = rule.getArgNameMap();
@@ -2694,16 +2775,17 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     const auto valueTypes = ValueType_helper(pattern, actArg);
     const auto opName = ruleDag->getOperator()->getAsString();
     const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
+
     if (Def->isSubClassOf("DiffeRetIndex")) {
       os << "      if (active_" << name << ") {\n"
          << "        Value *toadd = dif;\n"
-         << "        addToDiffe(arg_" << name << ", toadd, Builder2, type_"
-         << name << ");\n"
+         << "        addToDiffe(arg_" << name << ", toadd, Builder2, "
+         << ", type_" << name << ");\n"
          << "      }\n";
     } else if (Def->isSubClassOf("b")) {
-      os << "      if (";
-      emit_rule_activity_req(ruleDag, name, os);
-      os << ") {\n";
+      emit_if_rule_condition(ruleDag, name, "      ", os);
+      emit_runtime_condition(ruleDag, name, "        ", "Builder2",
+                             (ty == ArgType::fp), os);
       rev_call_args("args1", rule, actArg, os);
       os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
@@ -2713,37 +2795,36 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
         // extra handling, since we will update only a fp scalar as part of the
         // return struct it's presumably done by setting it to the value
         // returned by this call
-        emit_fret_call(dfnc_name, "args1", name, os);
+        emit_fret_call(dfnc_name, "args1", name, "Builder2", os);
       } else {
         os << "        Builder2.CreateCall(derivcall_" << dfnc_name
            << ", args1, Defs);\n";
       }
+      emit_runtime_continue(ruleDag, name, "        ", "Builder2",
+                            (ty == ArgType::fp), os);
       os << "      }\n";
-    } else if (Def->isSubClassOf("adj")) {
     } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "noop") {
     } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "inactive") {
       os << "      assert(!active_" << name << ");\n";
-    } else if (Def->isSubClassOf("Constant")) {
     } else if (Def->isSubClassOf("FrobInnerProd")) {
+      assert(ty == ArgType::fp);
       os << "      // FrobInnerProd\n";
-      os << "      if (";
-      emit_rule_activity_req(ruleDag, name, os);
-      os << ") {\n";
+      emit_if_rule_condition(ruleDag, name, "      ", os);
+      emit_runtime_condition(ruleDag, name, "        ", "Builder2", true, os);
       rev_call_args("args1", rule, actArg, os);
       os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
       // Now that we have the defs, we can create the call
-      assert(ty == ArgType::fp);
-      emit_fret_call("inner_prod", "args1", name, os);
+      emit_fret_call("inner_prod", "args1", name, "Builder2", os);
+      emit_runtime_continue(ruleDag, name, "        ", "Builder2", true, os);
       os << "      }\n";
     } else if (Def->isSubClassOf("Seq")) {
       os << "      // Seq\n";
       // (Currently) we only need advanced rules for differentiating
       // wrt. scalar. Make this more generic once we have more testcases.
       assert(ty == ArgType::fp);
-      os << "      if (";
-      emit_rule_activity_req(ruleDag, name, os);
-      os << ") {\n";
+      emit_if_rule_condition(ruleDag, name, "      ", os);
+      emit_runtime_condition(ruleDag, name, "        ", "Builder2", true, os);
 
       // We might need to create a tmp vec or matrix
       emit_tmp_creation(Def, os);
@@ -2767,7 +2848,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
               // returns, so assume it's the last step of the sequence
               // and update the diffe accordingly
               assert(i == ruleDag->getNumArgs() - 1);
-              emit_fret_call(dfnc_name, argName, name, os);
+              emit_fret_call(dfnc_name, argName, name, "Builder2", os);
             } else {
               os << "        Builder2.CreateCall(derivcall_" << dfnc_name
                  << ", " << argName << ", Defs);\n";
@@ -2776,10 +2857,11 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
           } else if (sub_Def->isSubClassOf("FrobInnerProd")) {
             assert(sub_Dag->getNumArgs() == 5);
             assert(ty == ArgType::fp);
-            emit_fret_call("inner_prod", argName, name, os);
+            emit_fret_call("inner_prod", argName, name, "Builder2", os);
           }
         }
       }
+      emit_runtime_continue(ruleDag, name, "        ", "Builder2", true, os);
       os << "      }\n";
     } else {
       errs() << Def->getName() << "\n";
@@ -2805,12 +2887,38 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
        << "  setDiffe(\n"
        << "    &call,\n"
        << "    Constant::getNullValue(gutils->getShadowType(call.getType())),\n"
-       << "    Builder2);\n"
-       << "  }\n";
+       << "    Builder2);\n";
   } else {
-    os << "  );\n"
-       << "  }\n";
+    os << "  );\n";
   }
+
+  // os << "    if (EnzymeRuntimeActivityCheck) {\n"
+  //    << "      BBs.push_back(gutils->addReverseBlock(BBs[BBs.size()-1], "
+  //       "cname + \"_end\"));\n"
+  //    << "      Builder2.CreateBr(BBs[BBs.size()-1]);\n"
+  //    << "      Builder2.SetInsertPoint(BBs[BBs.size()-1]);\n"
+  //    << "      size_t pos = 1;\n";
+
+  // for (size_t i = 0; i < activeArgs.size(); i++) {
+  //   auto rule = rules[i];
+  //   const size_t actArg = activeArgs[i];
+  //   const auto name = nameVec[actArg];
+
+  //  os << "      if (active_" << name << ") {\n"
+  //     << "        BasicBlock *cfg1 = BBs[pos++];\n"
+  //     << "        BasicBlock *impl = BBs[pos++];\n"
+  //     << "        BasicBlock *cfg2 = BBs[pos];\n"
+  //     << "        Builder2.SetInsertPoint(cfg1);\n"
+  //     << "        Builder2.CreateCondBr(rt_inactive_" << name
+  //     << ", cfg2, impl);\n"
+  //     << "      }\n";
+  //}
+
+  // os << "      Builder2.SetInsertPoint(BBs[BBs.size()-1]);\n"
+  //    << "    }\n";
+
+  // end ReverseModeGradient
+  os << "  }\n";
 }
 
 // Further optimization: re-use / share caches where possible
