@@ -192,13 +192,19 @@ def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $
                   ]
                   >;
 // 
+// TODO: GerHelper:   
+// k = 1
+// do i = 1, n
+//   alphaa = alphaa + sdot(m, x, incx, Aa(1,i), 1)*y(k)
+//   k = k + incy
+// enddo
 def ger : CallBlasPattern<(Op $layout, $m, $n, $alpha, $x, $incx, $y, $incy, $A, $lda),
                   ["A"],[cblas_layout, len, len, fp, vinc<["m"]>, vinc<["n"]>, mld<["m", "n"]>],
                   [
-                  (inactive),
-                  (inactive),
-                  (inactive),
-                  (inactive)
+                  /* alpha  */ (GerHelper $, $n, $x, $incx, $y, $incy, adj<"A">, $lda),
+                  /* x      */ (b<"gemv"> $layout, ConstantChar<"N">, $m, $n, $alpha, adj<"A">, $lda, $y, $incy, Constant<"1.0">, adj<"x">, $incx),
+                  /* y      */ (b<"gemv"> $layout, ConstantChar<"T">, $m, $n, $alpha, adj<"A">, $lda, $x, $incx, Constant<"1.0">, adj<"y">, $incy),
+                  /* A      */ (noop)
                   ]
                   >;
 //(ld $A, $transa, $lda, $m, $k)
