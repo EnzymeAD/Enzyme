@@ -1604,4 +1604,3 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
     emit_free_and_ending(newPattern, os);
   }
 }
-
