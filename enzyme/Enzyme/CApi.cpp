@@ -1222,8 +1222,12 @@ CountTrackedPointers::CountTrackedPointers(Type *T) {
     all = false;
 }
 
-static size_t num_rooting(llvm::Type *T) {
+static size_t num_rooting(llvm::Type *T, llvm::Function *F) {
   CountTrackedPointers tracked(T);
+  if (tracked.derived) {
+    llvm::errs() << *F << "\n";
+    llvm::errs() << "Invalid Derived Type: " << *T << "\n";
+  }
   assert(!tracked.derived);
   if (tracked.count != 0 && !tracked.all)
     return tracked.count;
@@ -1301,7 +1305,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   Type *sretTy = nullptr;
   if (Types.size())
     sretTy = Types.size() == 1 ? Types[0] : ST;
-  size_t numRooting = sretTy ? num_rooting(sretTy) : 0;
+  size_t numRooting = sretTy ? num_rooting(sretTy, F) : 0;
 
   auto T_jlvalue = StructType::get(F->getContext(), {});
   auto T_prjlvalue = PointerType::get(T_jlvalue, AddressSpace::Tracked);

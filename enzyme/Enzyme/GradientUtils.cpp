@@ -5529,6 +5529,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     goto end;
   } else if (auto arg = dyn_cast<ExtractValueInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
+    assert(!isConstantValue(arg));
     auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
 
     auto rule = [&bb, &arg](Value *ip) {
