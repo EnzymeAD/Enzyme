@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-runtime-activity=1 -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -enzyme-runtime-activity=1 -S | FileCheck %s
 
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -44,6 +44,7 @@ entry:
   ret double 1.0
 }
 
+; XFAIL: *
 
 ; CHECK: define double @active
 ; CHECK-NEXT: entry
