@@ -5130,8 +5130,26 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     // Nulling the shadow for a constant is only necessary if any of the data
     // could contain a float (e.g. should not be applied to pointers).
     if (nullShadow) {
-      auto CT = TR.query(oval)[{-1}];
-      if (!CT.isKnown() || CT.isFloat()) {
+      auto ty = TR.query(oval);
+      auto &dl = newFunc->getParent()->getDataLayout();
+      size_t size = (dl.getTypeSizeInBits(oval->getType()) + 7) / 8;
+      auto CT = ty[{-1}];
+      bool couldContainFloat = CT.isFloat();
+      if (!CT.isKnown()) {
+        size_t i = 0;
+        for (; i < size;) {
+          auto CT2 = ty[{(int)i}];
+          if (CT2.isFloat() || !CT2.isKnown()) {
+            couldContainFloat = true;
+            break;
+          }
+          if (CT2 == BaseType::Pointer) {
+            i += dl.getPointerSizeInBits() / 8;
+          }
+          i++;
+        }
+      }
+      if (couldContainFloat) {
         return Constant::getNullValue(getShadowType(oval->getType()));
       }
     }
@@ -5529,10 +5547,11 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     goto end;
   } else if (auto arg = dyn_cast<ExtractValueInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
-    assert(!isConstantValue(arg));
     auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
 
-    auto rule = [&bb, &arg](Value *ip) {
+    auto rule = [&bb, &arg, this](Value *ip) -> llvm::Value * {
+      if (ip == getNewFromOriginal(arg->getOperand(0)))
+        return getNewFromOriginal(arg);
       return bb.CreateExtractValue(ip, arg->getIndices(),
                                    arg->getName() + "'ipev");
     };
