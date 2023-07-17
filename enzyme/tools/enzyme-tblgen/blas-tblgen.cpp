@@ -670,8 +670,26 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
      << "    auto callval = call.getCalledValue();           \n"
      << "#endif                                            \n\n";
 
-  os << "    assert(!EnzymeRuntimeActivityCheck && \"RuntimeActivity for "
-        "fwd-mode is not implemented yet!\");\n";
+  os << "  if (EnzymeRuntimeActivityCheck) {\n"
+     << "    std::string s;\n"
+     << "    llvm::raw_string_ostream ss(s);\n"
+     << "    ss << \"" << pattern.getName() << "\" << \"\\n\";\n"
+     << "    ss << call.getDebugLoc() << \"\\n\";\n"
+     << "    ss << \"Runtime Activity not supported for BLAS calls\" << "
+        "\"\\n\";\n"
+     << "    if (CustomErrorHandler) {\n"
+     << "      IRBuilder<> Builder2(&call);\n"
+     << "      getForwardBuilder(BuilderZ);\n"
+     << "      CustomErrorHandler(ss.str().c_str(), wrap(&call), "
+        "ErrorType::NoDerivative,\n"
+     << "                         gutils, nullptr, wrap(&BuilderZ));\n"
+     << "      return false;\n"
+     << "    } else {\n"
+     << "      EmitFailure(\"Unsupported Mode\", call.getDebugLoc(), &call, "
+        "ss.str());\n"
+     << "      return false;\n"
+     << "    }\n"
+     << "  }\n";
 
   const auto nameVec = pattern.getArgNames();
   const auto inputTypes = pattern.getArgTypeMap();
