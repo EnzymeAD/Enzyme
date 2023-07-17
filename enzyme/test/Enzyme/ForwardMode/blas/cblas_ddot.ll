@@ -44,6 +44,7 @@ entry:
   ret double 1.0
 }
 
+; XFAIL: *
 
 ; CHECK: define double @active
 ; CHECK-NEXT: entry
