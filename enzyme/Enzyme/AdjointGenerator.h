@@ -1370,9 +1370,18 @@ public:
               8;
         Type *FT = TR.addingType(size, orig_op0);
         if (!FT) {
-          llvm::errs() << " " << *gutils->oldFunc << "\n";
-          TR.dump();
-          llvm::errs() << " " << *orig_op0 << "\n";
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Cannot deduce adding type of " << I;
+          if (CustomErrorHandler) {
+            CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoType,
+                               &TR.analyzer, nullptr, wrap(&Builder2));
+            return;
+          } else {
+            TR.dump();
+            EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
+            return;
+          }
         }
         assert(FT);
 
@@ -1732,6 +1741,12 @@ public:
     using namespace llvm;
 
     eraseIfUnused(EVI);
+
+    if (!gutils->isConstantValue(&EVI) && gutils->isConstantValue(&EVI)) {
+      llvm::errs() << *gutils->oldFunc->getParent() << "\n";
+      llvm::errs() << EVI << "\n";
+      llvm_unreachable("Illegal activity for extractvalue");
+    }
 
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
