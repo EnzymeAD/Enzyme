@@ -670,7 +670,8 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
      << "    auto callval = call.getCalledValue();           \n"
      << "#endif                                            \n\n";
 
-  os << "    assert(!EnzymeRuntimeActivityCheck && \"RuntimeActivity for fwd-mode is not implemented yet!\");\n";
+  os << "    assert(!EnzymeRuntimeActivityCheck && \"RuntimeActivity for "
+        "fwd-mode is not implemented yet!\");\n";
 
   const auto nameVec = pattern.getArgNames();
   const auto inputTypes = pattern.getArgTypeMap();
