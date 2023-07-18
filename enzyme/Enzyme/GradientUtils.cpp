@@ -5135,6 +5135,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       size_t size = (dl.getTypeSizeInBits(oval->getType()) + 7) / 8;
       auto CT = ty[{-1}];
       bool couldContainFloat = CT.isFloat();
+      bool allFloat = CT.isFloat();
       if (!CT.isKnown()) {
         size_t i = 0;
         for (; i < size;) {
@@ -5145,12 +5146,58 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           }
           if (CT2 == BaseType::Pointer) {
             i += dl.getPointerSizeInBits() / 8;
+            continue;
           }
           i++;
         }
       }
       if (couldContainFloat) {
-        return Constant::getNullValue(getShadowType(oval->getType()));
+        if (allFloat)
+          return Constant::getNullValue(getShadowType(oval->getType()));
+        else {
+          IRBuilder<> bb(inversionAllocs);
+          if (auto arg = dyn_cast<Instruction>(oval))
+            bb.SetInsertPoint(getNewFromOriginal(arg));
+          auto alloc = bb.CreateAlloca(oval->getType());
+          auto AT = ArrayType::get(bb.getInt8Ty(), size);
+          bb.CreateStore(getNewFromOriginal(oval), alloc);
+          Value *cur = bb.CreatePointerCast(alloc, PointerType::getUnqual(AT));
+          size_t i = 0;
+          for (; i < size;) {
+            auto CT2 = ty[{(int)i}];
+            if (CT2 == BaseType::Pointer) {
+              i += dl.getPointerSizeInBits() / 8;
+              continue;
+            } else if (auto flt = CT2.isFloat()) {
+              auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
+              ptr = bb.CreatePointerCast(ptr, PointerType::getUnqual(flt));
+              bb.CreateStore(Constant::getNullValue(flt), ptr);
+              size_t chunk = 0;
+              if (flt->isFloatTy()) {
+                chunk = 4;
+              } else if (flt->isDoubleTy()) {
+                chunk = 8;
+              } else if (flt->isHalfTy()) {
+                chunk = 2;
+              } else {
+                llvm::errs() << *flt << "\n";
+                assert(0 && "unhandled float type");
+              }
+              i += chunk;
+            } else if (!CT2.isKnown()) {
+              auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
+              bb.CreateStore(Constant::getNullValue(bb.getInt8Ty()), ptr);
+            } else {
+              i++;
+            }
+          }
+          auto res = bb.CreateLoad(oval->getType(), alloc);
+          auto rule = [&res]() { return res; };
+          auto res2 = applyChainRule(oval->getType(), BuilderM, rule);
+          invertedPointers.insert(std::make_pair(
+              (const Value *)oval, InvertedPointerVH(this, res2)));
+          return res2;
+        }
       }
     }
 
