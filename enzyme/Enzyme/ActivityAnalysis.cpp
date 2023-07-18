@@ -1489,6 +1489,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           if (directions & DOWN &&
               (funcName == "malloc" || funcName == "calloc" ||
                funcName == "_Znwm" || funcName == "julia.gc_alloc_obj" ||
+               funcName == "??2@YAPAXI@Z" || funcName == "??2@YAPEAX_K@Z" ||
                funcName == "jl_gc_alloc_typed" ||
                funcName == "ijl_gc_alloc_typed")) {
             std::shared_ptr<ActivityAnalyzer> Hypothesis =

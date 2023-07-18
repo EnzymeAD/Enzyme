@@ -8992,7 +8992,8 @@ public:
                                                      Attribute::NonNull);
 #endif
 
-                  if (funcName == "malloc" || funcName == "_Znwm") {
+                  if (funcName == "malloc" || funcName == "_Znwm" ||
+                      funcName == "??2@YAPAXI@Z" || funcName == "??2@YAPEAX_K@Z") {
                     if (auto ci = dyn_cast<ConstantInt>(args[0])) {
                       unsigned derefBytes = ci->getLimitedValue();
                       CallInst *cal =
