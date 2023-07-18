@@ -11,7 +11,7 @@ else()
 endif()
 
 if (APPLE)
-    set(BC_LOAD_FLAGS2 "${BC_LOAD_FLAGS} --sysroot=${CMAKE_OSX_SYSROOT}")
+    set(BC_LOAD_FLAGS2 "${BC_LOAD_FLAGS2} --sysroot=${CMAKE_OSX_SYSROOT}")
 endif()
 
 if (NOT ("${BC_LOAD_HEADER}" STREQUAL ""))
