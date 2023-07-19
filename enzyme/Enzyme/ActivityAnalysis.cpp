@@ -906,6 +906,16 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
 }
 
 bool isValuePotentiallyUsedAsPointer(llvm::Value *val) {
+  if (auto CI = dyn_cast<CallInst>(val)) {
+    if (CI->hasFnAttr("enzyme_immutable"))
+      return false;
+    auto called = getFunctionFromCall(CI);
+
+    if (called) {
+      if (called->hasFnAttribute("enzyme_immutable"))
+        return false;
+    }
+  }
   std::deque<llvm::Value *> todo = {val};
   SmallPtrSet<Value *, 3> seen;
   while (todo.size()) {
