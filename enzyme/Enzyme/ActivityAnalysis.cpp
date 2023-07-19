@@ -380,6 +380,31 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
 
   auto F = getFunctionFromCall(CI);
 
+#if LLVM_VERSION_MAJOR >= 11
+  bool all_inactive = val != CI->getCalledOperand();
+#else
+  bool all_inactive = val != CI->getCalledValue();
+#endif
+
+#if LLVM_VERSION_MAJOR >= 14
+  for (size_t i = 0; i < CI->arg_size(); i++)
+#else
+  for (size_t i = 0; i < CI->getNumArgOperands(); i++)
+#endif
+  {
+    if (val == CI->getArgOperand(i)) {
+      if (!CI->getAttributes().hasParamAttr(i, "enzyme_inactive") &&
+          !(F && F->getCallingConv() == CI->getCallingConv() &&
+            F->getAttributes().hasParamAttr(i, "enzyme_inactive"))) {
+        all_inactive = false;
+        break;
+      }
+    }
+  }
+
+  if (all_inactive)
+    return true;
+
   // Indirect function calls may actively use the argument
   if (F == nullptr)
     return false;
@@ -557,7 +582,9 @@ static inline void propagateArgumentInformation(
       Name == "__cxa_guard_abort")
     return;
 
-  if (auto F = getFunctionFromCall(&CI)) {
+  auto F = getFunctionFromCall(&CI);
+
+  if (F) {
 
     /// Only the first argument (magnitude) of copysign is active
     if (F->getIntrinsicID() == Intrinsic::copysign) {
@@ -581,14 +608,24 @@ static inline void propagateArgumentInformation(
 
   // For other calls, check all operands of the instruction
   // as conservatively they may impact the activity of the call
+  size_t i = 0;
 #if LLVM_VERSION_MAJOR >= 14
   for (auto &a : CI.args())
 #else
   for (auto &a : CI.arg_operands())
 #endif
   {
+
+    if (CI.getAttributes().hasParamAttr(i, "enzyme_inactive") ||
+        (F && F->getCallingConv() == CI.getCallingConv() &&
+         F->getAttributes().hasParamAttr(i, "enzyme_inactive"))) {
+      i++;
+      continue;
+    }
+
     if (propagateFromOperand(a))
       break;
+    i++;
   }
 }
 
