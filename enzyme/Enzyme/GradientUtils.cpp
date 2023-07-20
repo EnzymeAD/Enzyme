@@ -5163,6 +5163,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           bb.CreateStore(getNewFromOriginal(oval), alloc);
           Value *cur = bb.CreatePointerCast(alloc, PointerType::getUnqual(AT));
           size_t i = 0;
+          assert(size > 0);
           for (; i < size;) {
             auto CT2 = ty[{(int)i}];
             if (CT2 == BaseType::Pointer) {
@@ -5184,9 +5185,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                 assert(0 && "unhandled float type");
               }
               i += chunk;
-            } else if (!CT2.isKnown()) {
+            } else if (CT2 != BaseType::Integer) {
               auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
               bb.CreateStore(Constant::getNullValue(bb.getInt8Ty()), ptr);
+              i++;
             } else {
               i++;
             }
