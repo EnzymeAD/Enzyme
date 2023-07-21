@@ -303,6 +303,11 @@ void *EnzymeGradientUtilsTypeAnalyzer(GradientUtils *G) {
 void EnzymeGradientUtilsErase(GradientUtils *G, LLVMValueRef I) {
   return G->erase(cast<Instruction>(unwrap(I)));
 }
+void EnzymeGradientUtilsEraseWithPlaceholder(GradientUtils *G, LLVMValueRef I,
+                                             uint8_t erase) {
+  return G->eraseWithPlaceholder(cast<Instruction>(unwrap(I)),
+                                 "_replacementABI", erase != 0);
+}
 
 void EnzymeGradientUtilsReplaceAWithB(GradientUtils *G, LLVMValueRef A,
                                       LLVMValueRef B) {
