@@ -326,7 +326,7 @@ public:
   void erase(llvm::Instruction *I) override;
 
   void eraseWithPlaceholder(llvm::Instruction *I,
-                            llvm::Twine suffix = "_replacementA",
+                            const llvm::Twine &suffix = "_replacementA",
                             bool erase = true);
 
   // TODO consider invariant group and/or valueInvariant group

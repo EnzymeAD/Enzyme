@@ -8932,7 +8932,7 @@ void GradientUtils::erase(Instruction *I) {
   CacheUtility::erase(I);
 }
 
-void GradientUtils::eraseWithPlaceholder(llvm::Instruction *I, Twine suffix,
+void GradientUtils::eraseWithPlaceholder(Instruction *I, const Twine &suffix,
                                          bool erase) {
   PHINode *pn = nullptr;
   if (!I->getType()->isVoidTy() && !I->getType()->isTokenTy()) {
