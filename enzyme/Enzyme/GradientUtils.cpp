@@ -2586,6 +2586,15 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
     llvm::errs() << " malloc: " << *malloc << "\n";
   }
   assert(!malloc->getType()->isTokenTy());
+  {
+    CountTrackedPointers T(malloc->getType());
+    if (T.derived) {
+      llvm::errs() << " oldFunc: " << *oldFunc << "\n";
+      llvm::errs() << " newFunc: " << *newFunc << "\n";
+      llvm::errs() << " malloc: " << *malloc << "\n";
+    }
+    assert(!T.derived);
+  }
 
   if (tape) {
     if (idx >= 0 && !tape->getType()->isStructTy()) {
