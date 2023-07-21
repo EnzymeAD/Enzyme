@@ -5156,8 +5156,15 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           return Constant::getNullValue(getShadowType(oval->getType()));
         else {
           IRBuilder<> bb(inversionAllocs);
-          if (auto arg = dyn_cast<Instruction>(oval))
-            bb.SetInsertPoint(getNewFromOriginal(arg));
+          if (auto arg = dyn_cast<Instruction>(oval)) {
+            arg = getNewFromOriginal(arg);
+            while (auto PN = dyn_cast<PHINode>(arg)) {
+              if (PN->getNumIncomingValues() == 0)
+                break;
+              arg = PN->getNextNode();
+            }
+            bb.SetInsertPoint(arg);
+          }
           auto alloc = bb.CreateAlloca(oval->getType());
           auto AT = ArrayType::get(bb.getInt8Ty(), size);
           bb.CreateStore(getNewFromOriginal(oval), alloc);
