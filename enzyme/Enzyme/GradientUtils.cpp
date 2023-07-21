@@ -8956,6 +8956,21 @@ void GradientUtils::erase(Instruction *I) {
   CacheUtility::erase(I);
 }
 
+void GradientUtils::eraseWithPlaceholder(Instruction *I, const Twine &suffix,
+                                         bool erase) {
+  PHINode *pn = nullptr;
+  if (!I->getType()->isVoidTy() && !I->getType()->isTokenTy()) {
+    IRBuilder<> BuilderZ(I);
+    auto pn = BuilderZ.CreatePHI(I->getType(), 1, I->getName() + suffix);
+    fictiousPHIs[pn] = I;
+    replaceAWithB(I, pn);
+  }
+
+  if (erase) {
+    this->erase(I);
+  }
+}
+
 void GradientUtils::setTape(Value *newtape) {
   assert(tape == nullptr);
   assert(newtape != nullptr);
