@@ -1732,4 +1732,27 @@ static inline llvm::Type *getSubType(llvm::Type *T, Arg1 i, Args... args) {
   llvm_unreachable("unknown subtype");
 }
 
+enum AddressSpace {
+  Generic = 0,
+  Tracked = 10,
+  Derived = 11,
+  CalleeRooted = 12,
+  Loaded = 13,
+  FirstSpecial = Tracked,
+  LastSpecial = Loaded,
+};
+struct CountTrackedPointers {
+  unsigned count = 0;
+  bool all = true;
+  bool derived = false;
+  CountTrackedPointers(llvm::Type *T);
+};
+static inline bool isSpecialPtr(llvm::Type *Ty) {
+  llvm::PointerType *PTy = llvm::dyn_cast<llvm::PointerType>(Ty);
+  if (!PTy)
+    return false;
+  unsigned AS = PTy->getAddressSpace();
+  return AddressSpace::FirstSpecial <= AS && AS <= AddressSpace::LastSpecial;
+}
+
 #endif
