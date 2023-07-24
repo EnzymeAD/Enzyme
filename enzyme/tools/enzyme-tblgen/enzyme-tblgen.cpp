@@ -482,8 +482,15 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                             resultTree->getAsString());
       os << "->getType();\n";
       os << curIndent << INDENT << "Value *ret = nullptr;\n";
-      os << curIndent << INDENT
-         << "if (auto ST = dyn_cast<StructType>(ty)) {\n";
+      os << curIndent << INDENT << "if (auto ST = dyn_cast<ArrayType>(ty)) {\n";
+      os << curIndent << INDENT << INDENT
+         << "ret = ConstantArray::get(ST, "
+            "{(llvm::Constant*)ConstantFP::get(ST->getElementType(), \""
+         << rvalue->getValue()
+         << "\"), (llvm::Constant*)ConstantFP::get(ST->getElementType(), \""
+         << ivalue->getValue() << "\")});\n";
+      os << curIndent << INDENT << "}";
+      os << "else if (auto ST = dyn_cast<StructType>(ty)) {\n";
       os << curIndent << INDENT << INDENT
          << "ret = ConstantStruct::get(ST, "
             "{(llvm::Constant*)ConstantFP::get(ST->getElementType(0), \""
@@ -632,7 +639,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
 
       if (Def->getValueAsBit("scalarcfp")) {
-        os << curIndent << "auto ity = call.getOperand(0)->getType();\n" << "res = UndefValue::get(ity);\n";
+        os << curIndent << "auto ity = call.getOperand(0)->getType();\n"
+           << "res = UndefValue::get(ity);\n";
       }
 
       if (anyVector)
