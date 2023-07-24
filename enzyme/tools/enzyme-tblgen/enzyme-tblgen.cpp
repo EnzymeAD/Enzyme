@@ -639,8 +639,17 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
 
       if (Def->getValueAsBit("scalarcfp")) {
-        os << curIndent << "auto ity = call.getOperand(0)->getType();\n"
-           << "res = UndefValue::get(ity);\n";
+        os << curIndent << "auto ity = call.getOperand(0)->getType();\n";
+
+        if (!anyVector) {
+           os << "res = UndefValue::get(ity);\n";
+        } else {
+           os << curIndent << "if (auto AT = dyn_cast<ArrayType>(res->getType())) {\n";
+           os << curIndent << INDENT << "auto num_els = AT->getNumElements();\n";
+           os << curIndent << INDENT << "AT = ArrayType::get(ity, num_els);\n";
+           os << curIndent << "res = UndefValue::get(AT);\n} else {\n";
+           os << curIndent << "res = UndefValue::get(ity);}";
+        } 
       }
 
       if (anyVector)
