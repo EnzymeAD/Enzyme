@@ -637,6 +637,11 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << ")";
       os << ");\n";
 
+
+      if (Def->getValueAsBit("scalarcfp")) {
+        os << curIndent << "auto ity = call.getOperand(0)->getType();\n" << "res = UndefValue::get(ity);\n";
+      }
+
       if (anyVector)
         os << curIndent << INDENT
            << "for(unsigned int idx=0, W=gutils->getWidth(); idx<W; idx++) {\n";
