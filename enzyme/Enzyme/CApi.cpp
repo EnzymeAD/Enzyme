@@ -303,6 +303,11 @@ void *EnzymeGradientUtilsTypeAnalyzer(GradientUtils *G) {
 void EnzymeGradientUtilsErase(GradientUtils *G, LLVMValueRef I) {
   return G->erase(cast<Instruction>(unwrap(I)));
 }
+void EnzymeGradientUtilsEraseWithPlaceholder(GradientUtils *G, LLVMValueRef I,
+                                             uint8_t erase) {
+  return G->eraseWithPlaceholder(cast<Instruction>(unwrap(I)),
+                                 "_replacementABI", erase != 0);
+}
 
 void EnzymeGradientUtilsReplaceAWithB(GradientUtils *G, LLVMValueRef A,
                                       LLVMValueRef B) {
@@ -1167,59 +1172,6 @@ LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
 LLVMTypeRef EnzymeAllocaType(LLVMValueRef V) {
   return wrap(cast<AllocaInst>(unwrap(V))->getAllocatedType());
 }
-}
-
-enum AddressSpace {
-  Generic = 0,
-  Tracked = 10,
-  Derived = 11,
-  CalleeRooted = 12,
-  Loaded = 13,
-  FirstSpecial = Tracked,
-  LastSpecial = Loaded,
-};
-struct CountTrackedPointers {
-  unsigned count = 0;
-  bool all = true;
-  bool derived = false;
-  CountTrackedPointers(llvm::Type *T);
-};
-static bool isSpecialPtr(Type *Ty) {
-  PointerType *PTy = dyn_cast<PointerType>(Ty);
-  if (!PTy)
-    return false;
-  unsigned AS = PTy->getAddressSpace();
-  return AddressSpace::FirstSpecial <= AS && AS <= AddressSpace::LastSpecial;
-}
-
-// return how many Special pointers are in T (count > 0),
-// and if there is anything else in T (all == false)
-CountTrackedPointers::CountTrackedPointers(Type *T) {
-  if (isa<PointerType>(T)) {
-    if (isSpecialPtr(T)) {
-      count++;
-      if (T->getPointerAddressSpace() != AddressSpace::Tracked)
-        derived = true;
-    }
-  } else if (isa<StructType>(T) || isa<ArrayType>(T) || isa<VectorType>(T)) {
-    for (Type *ElT : T->subtypes()) {
-      auto sub = CountTrackedPointers(ElT);
-      count += sub.count;
-      all &= sub.all;
-      derived |= sub.derived;
-    }
-    if (isa<ArrayType>(T))
-      count *= cast<ArrayType>(T)->getNumElements();
-    else if (isa<VectorType>(T)) {
-#if LLVM_VERSION_MAJOR >= 12
-      count *= cast<VectorType>(T)->getElementCount().getKnownMinValue();
-#else
-      count *= cast<VectorType>(T)->getNumElements();
-#endif
-    }
-  }
-  if (count == 0)
-    all = false;
 }
 
 static size_t num_rooting(llvm::Type *T, llvm::Function *F) {

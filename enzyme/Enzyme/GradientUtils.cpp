@@ -2586,6 +2586,15 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
     llvm::errs() << " malloc: " << *malloc << "\n";
   }
   assert(!malloc->getType()->isTokenTy());
+  {
+    CountTrackedPointers T(malloc->getType());
+    if (T.derived) {
+      llvm::errs() << " oldFunc: " << *oldFunc << "\n";
+      llvm::errs() << " newFunc: " << *newFunc << "\n";
+      llvm::errs() << " malloc: " << *malloc << "\n";
+    }
+    assert(!T.derived);
+  }
 
   if (tape) {
     if (idx >= 0 && !tape->getType()->isStructTy()) {
@@ -5132,8 +5141,15 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           return Constant::getNullValue(getShadowType(oval->getType()));
         else {
           IRBuilder<> bb(inversionAllocs);
-          if (auto arg = dyn_cast<Instruction>(oval))
-            bb.SetInsertPoint(getNewFromOriginal(arg));
+          if (auto arg = dyn_cast<Instruction>(oval)) {
+            arg = getNewFromOriginal(arg);
+            while (auto PN = dyn_cast<PHINode>(arg)) {
+              if (PN->getNumIncomingValues() == 0)
+                break;
+              arg = PN->getNextNode();
+            }
+            bb.SetInsertPoint(arg);
+          }
           auto alloc = bb.CreateAlloca(oval->getType());
           auto AT = ArrayType::get(bb.getInt8Ty(), size);
           bb.CreateStore(getNewFromOriginal(oval), alloc);
@@ -8923,6 +8939,21 @@ void GradientUtils::erase(Instruction *I) {
       pair.second.erase(I);
   }
   CacheUtility::erase(I);
+}
+
+void GradientUtils::eraseWithPlaceholder(Instruction *I, const Twine &suffix,
+                                         bool erase) {
+  PHINode *pn = nullptr;
+  if (!I->getType()->isVoidTy() && !I->getType()->isTokenTy()) {
+    IRBuilder<> BuilderZ(I);
+    auto pn = BuilderZ.CreatePHI(I->getType(), 1, I->getName() + suffix);
+    fictiousPHIs[pn] = I;
+    replaceAWithB(I, pn);
+  }
+
+  if (erase) {
+    this->erase(I);
+  }
 }
 
 void GradientUtils::setTape(Value *newtape) {

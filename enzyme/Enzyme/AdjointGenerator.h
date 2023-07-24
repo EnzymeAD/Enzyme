@@ -110,8 +110,6 @@ public:
     }
   }
 
-  llvm::SmallPtrSet<llvm::Instruction *, 4> erased;
-
   void eraseIfUnused(llvm::Instruction &I, bool erase = true,
                      bool check = true) {
     using namespace llvm;
@@ -129,21 +127,8 @@ public:
     if (used && check)
       return;
 
-    PHINode *pn = nullptr;
-    if (!I.getType()->isVoidTy() && !I.getType()->isTokenTy() &&
-        isa<Instruction>(iload)) {
-      IRBuilder<> BuilderZ(cast<Instruction>(iload));
-      pn = BuilderZ.CreatePHI(I.getType(), 1, I.getName() + "_replacementA");
-      gutils->fictiousPHIs[pn] = &I;
-      gutils->replaceAWithB(iload, pn);
-    }
-
-    erased.insert(&I);
-    if (erase) {
-      if (auto inst = dyn_cast<Instruction>(iload)) {
-        gutils->erase(inst);
-      }
-    }
+    if (auto newi = dyn_cast<Instruction>(iload))
+      gutils->eraseWithPlaceholder(newi, "_replacementA", erase);
   }
 
   llvm::Value *MPI_TYPE_SIZE(llvm::Value *DT, llvm::IRBuilder<> &B,
@@ -7970,7 +7955,6 @@ public:
       gutils->newToOriginalFn.erase(newCall);
       gutils->newToOriginalFn[retval ? retval : diffes] = &call;
 
-      erased.insert(&call);
       gutils->erase(newCall);
 
       return;
