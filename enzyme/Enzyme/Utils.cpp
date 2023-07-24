@@ -668,6 +668,109 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
   B.CreateCall(fn, args, bundles);
 }
 
+void callSPMVDiagUpdate(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                        IntegerType *IT, llvm::Type *BlasCT,
+                        llvm::Type *BlasFPT, llvm::Type *BlasPT,
+                        llvm::Type *BlasIT, llvm::Type *fpTy,
+                        llvm::ArrayRef<llvm::Value *> args,
+                        const llvm::ArrayRef<llvm::OperandBundleDef> bundles,
+                        bool byRef, bool julia_decl) {
+  // add spmv diag update call if not already present
+  std::string fnc_name =
+      ("__enzyme_spmv_diag" + blas.floatType + blas.suffix).str();
+
+  //  spmvDiagHelper(uplo, n, alpha, x, incx, ya, incy, APa)
+  auto FDiagUpdateT = FunctionType::get(
+      B.getVoidTy(),
+      {BlasCT, BlasIT, BlasFPT, BlasPT, BlasIT, BlasPT, BlasIT, BlasPT}, false);
+  Function *F =
+      cast<Function>(M.getOrInsertFunction(fnc_name, FDiagUpdateT).getCallee());
+
+  if (!F->empty()) {
+    B.CreateCall(F, args, bundles);
+    return;
+  }
+
+  // now add the implementation for the call
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
+  F->addFnAttr(Attribute::ArgMemOnly);
+#endif
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
+  if (!julia_decl) {
+    F->addParamAttr(3, Attribute::NoCapture);
+    F->addParamAttr(5, Attribute::NoCapture);
+    F->addParamAttr(7, Attribute::NoCapture);
+    F->addParamAttr(3, Attribute::NoAlias);
+    F->addParamAttr(5, Attribute::NoAlias);
+    F->addParamAttr(7, Attribute::NoAlias);
+    F->addParamAttr(3, Attribute::ReadOnly);
+    F->addParamAttr(5, Attribute::ReadOnly);
+    if (byRef) {
+      F->addParamAttr(2, Attribute::NoCapture);
+      F->addParamAttr(2, Attribute::NoAlias);
+      F->addParamAttr(2, Attribute::ReadOnly);
+    }
+  }
+
+  BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+  // BasicBlock *uploU = BasicBlock::Create(M.getContext(), "uplo.u", F);
+  // BasicBlock *uploOther = BasicBlock::Create(M.getContext(), "uplo.other",
+  // F); BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
+
+  //  spmvDiagHelper(uplo, n, alpha, x, incx, ya, incy, APa)
+  auto blasuplo = F->arg_begin();
+  blasuplo->setName("blasuplo");
+  auto blasn = blasuplo + 1;
+  blasn->setName("blasn");
+  auto blasalpha = blasn + 1;
+  blasalpha->setName("blasalpha");
+  auto blasx = blasalpha + 1;
+  blasx->setName("blasx");
+  auto blasincx = blasx + 1;
+  blasincx->setName("blasincx");
+  auto blasdy = blasx + 1;
+  blasdy->setName("blasdy");
+  auto blasincy = blasdy + 1;
+  blasincy->setName("blasincy");
+  auto blasdAP = blasincy + 1;
+  blasdAP->setName("blasdAP");
+  // if(uplo == 'u' .or. uplo == 'U') then
+  //   k = 0
+  //   do i = 1,n
+  //     k = k+i
+  //     APa(k) = APa(k) - alpha*x(1 + (i-1)*incx)*ya(1 + (i-1)*incy)
+  //   end do
+  // else
+  //   k = 1
+  //   do i = 1,n
+  //     APa(k) = APa(k) - alpha*x(1 + (i-1)*incx)*ya(1 + (i-1)*incy)
+  //     k = k+n-i+1
+  //   end do
+  // end if
+
+  {
+    IRBuilder<> B1(entry);
+    B1.CreateRetVoid();
+  }
+
+  //{
+  //  IRBuilder<> B1(entry);
+  //  Value *blasOne = to_blas_callconv(B1, ConstantInt::get(IT, 1), byRef, IT,
+  //                                    B1, "constant.one");
+  //  Value *m = load_if_ref(B1, IT, blasm, byRef);
+  //  Value *n = load_if_ref(B1, IT, blasn, byRef);
+  //  Value *size = B1.CreateNUWMul(m, n, "mat.size");
+  //  Value *blasSize = to_blas_callconv(B1, size, byRef, IT, B1, "mat.size");
+  //  B1.CreateCondBr(is_u(blasuplo), uploU, uploOther);
+  //}
+  B.CreateCall(F, args, bundles);
+  return;
+}
+
 llvm::CallInst *
 getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                      IntegerType *IT, Type *BlasPT, Type *BlasIT, Type *fpTy,

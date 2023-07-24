@@ -51,7 +51,7 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
   emit_scalar_caching(pattern, os);
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
-    if (ty != ArgType::vincData && ty != ArgType::mldData)
+    if (ty != ArgType::vincData && ty != ArgType::mldData && ty != ArgType::ap)
       continue;
     emit_mat_vec_caching(pattern, i, os);
   }

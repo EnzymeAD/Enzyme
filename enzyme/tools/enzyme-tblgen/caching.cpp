@@ -108,8 +108,9 @@ void emit_scalar_caching(const TGPattern &pattern, raw_ostream &os) {
 << "  // len, fp, etc. must be preserved if overwritten\n";
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
-    if (ty != ArgType::len && ty != ArgType::fp && ty != ArgType::trans 
-        && ty != ArgType::vincInc && ty != ArgType::mldLD) {
+    if (!(ty == ArgType::len || ty == ArgType::fp || ty == ArgType::trans ||
+          ty == ArgType::vincInc || ty == ArgType::mldLD ||
+          ty == ArgType::uplo || ty == ArgType::diag)) {    
       continue;
     }
     auto name = nameVec[i];
@@ -147,7 +148,8 @@ void emit_scalar_cacheTypes(const TGPattern &pattern, raw_ostream &os) {
     const char* scalarType;
     if (ty == ArgType::len || ty == ArgType::vincInc || ty == ArgType::mldLD) {
       scalarType = "intType";
-    } else if (ty == ArgType::trans) {
+    } else if (ty == ArgType::trans || ty == ArgType::uplo ||
+               ty == ArgType::diag || ty == ArgType::side) {      
       scalarType = "charType";
     } else if (ty == ArgType::fp) {
       scalarType = "fpType";
@@ -381,6 +383,9 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
       os
 << "  Value *true_" << incName << " = arg_" << incName << ";\n"
 << "  Value *free_" << vecName << " = nullptr;\n";
+    } else if (ty == ArgType::ap) {
+      auto apName = nameVec[i];
+      os << "  Value *free_" << apName << " = nullptr;\n";      
     } else if (ty == ArgType::mldData) {
       assert(typeMap.lookup(i+1) == ArgType::mldLD);
       auto vecName = nameVec[i];
@@ -437,9 +442,8 @@ void emit_caching(const TGPattern &pattern, raw_ostream &os) {
   // once fixed we can merge this calls
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
-    if (ty != ArgType::vincData)
+    if (ty != ArgType::vincData && ty != ArgType::ap)
       continue;
-    assert(typeMap.lookup(i+1) == ArgType::vincInc);
     emit_mat_vec_caching(pattern, i, os);
   }
   for (size_t i = 0; i < nameVec.size(); i++) {
