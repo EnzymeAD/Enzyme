@@ -25,6 +25,8 @@
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Analysis/DataFlowFramework.h"
 
+#include "mlir/Analysis/AliasAnalysis/LocalAliasAnalysis.h"
+
 using namespace mlir;
 using namespace mlir::dataflow;
 using namespace mlir::enzyme;
@@ -78,10 +80,8 @@ public:
     return *value;
   }
 
-  /// Compare two ranges.
   bool operator==(const ValueActivity &rhs) const { return value == rhs.value; }
 
-  /// Take the union of two ranges.
   static ValueActivity join(const ValueActivity &lhs,
                             const ValueActivity &rhs) {
     if (lhs.isUninitialized())
@@ -156,6 +156,7 @@ struct MemoryActivityState {
   }
 };
 
+static DenseMap<Value, unsigned> aliasClasses;
 class MemoryActivity : public AbstractDenseLattice {
 public:
   using AbstractDenseLattice::AbstractDenseLattice;
@@ -185,17 +186,17 @@ public:
   }
 
   bool hasActiveData(Value value) const {
-    auto state = activityStates.lookup(value);
+    auto state = activityStates.lookup(aliasClasses[value]);
     return state.activeStore || state.activeInit;
   }
 
   bool hasActiveStore(Value value) const {
-    return activityStates.lookup(value).activeStore;
+    return activityStates.lookup(aliasClasses[value]).activeStore;
   }
 
   /// Set the internal activity state.
   ChangeResult setActiveStore(Value value, bool activeStore) {
-    auto &state = activityStates[value];
+    auto &state = activityStates[aliasClasses.lookup(value)];
     ChangeResult result = ChangeResult::NoChange;
     if (state.activeStore != activeStore) {
       result = ChangeResult::Change;
@@ -205,7 +206,7 @@ public:
   }
 
   ChangeResult setActiveLoad(Value value, bool activeLoad) {
-    auto &state = activityStates[value];
+    auto &state = activityStates[aliasClasses.lookup(value)];
     ChangeResult result = ChangeResult::NoChange;
     if (state.activeLoad != activeLoad) {
       result = ChangeResult::Change;
@@ -215,7 +216,7 @@ public:
   }
 
   ChangeResult setActiveInit(Value value, bool activeInit) {
-    auto &state = activityStates[value];
+    auto &state = activityStates[aliasClasses.lookup(value)];
     ChangeResult result = ChangeResult::NoChange;
     if (state.activeInit != activeInit) {
       result = ChangeResult::Change;
@@ -225,6 +226,10 @@ public:
   }
 
   void print(raw_ostream &os) const override {
+    if (activityStates.empty()) {
+      os << "<memory activity state was empty>"
+         << "\n";
+    }
     for (const auto &state : activityStates) {
       os << state.first << ": active load " << state.second.activeLoad
          << " active store " << state.second.activeStore << " active init "
@@ -238,7 +243,9 @@ public:
   }
 
 private:
-  DenseMap<Value, MemoryActivityState> activityStates;
+  // TODO: the internal representation of an alias class is an unsigned. In the
+  // long run, this should be switched with one or more distinct attributes.
+  DenseMap<unsigned, MemoryActivityState> activityStates;
 };
 
 /// Sparse activity analysis reasons about activity by traversing forward down
@@ -385,14 +392,12 @@ public:
   }
 };
 
-void enzyme::runDataFlowActivityAnalysis(Operation *top, Operation *calleeOp) {
-  // TODO(jacob): activity analysis is independent of autodiff or forward diff
-  auto autodiffOp = cast<enzyme::AutoDiffOp>(top);
-  auto callee = cast<FunctionOpInterface>(calleeOp);
+void enzyme::runDataFlowActivityAnalysis(
+    FunctionOpInterface callee, ArrayRef<enzyme::Activity> argumentActivity) {
   SymbolTableCollection symbolTable;
   DataFlowSolver solver;
   solver.load<SparseForwardActivityAnalysis>();
-  solver.load<SparseBackwardActivityAnalysis>(symbolTable);
+  // solver.load<SparseBackwardActivityAnalysis>(symbolTable);
   solver.load<DenseForwardActivityAnalysis>();
 
   // Required for the dataflow framework to traverse region-based control flow
@@ -400,10 +405,8 @@ void enzyme::runDataFlowActivityAnalysis(Operation *top, Operation *calleeOp) {
   solver.load<SparseConstantPropagation>();
 
   // Initialize the argument states based on the given activity annotations.
-  for (const auto &[arg, activity] : llvm::zip(
-           callee.getArguments(),
-           autodiffOp.getActivity()
-               .getAsValueRange<enzyme::ActivityAttr, enzyme::Activity>())) {
+  for (const auto &[arg, activity] :
+       llvm::zip(callee.getArguments(), argumentActivity)) {
     // Need to determine if this is a pointer (or memref) or not, the dup
     // activity is kind of a proxy
     if (activity == enzyme::Activity::enzyme_dup ||
@@ -420,8 +423,32 @@ void enzyme::runDataFlowActivityAnalysis(Operation *top, Operation *calleeOp) {
     }
   }
 
+  LocalAliasAnalysis localAliasAnalysis;
+  aliasClasses.clear();
   callee.walk([&](Operation *op) {
-    // Is there an interface just for function return ops?
+    for (Value result : op->getResults()) {
+      bool found = false;
+      unsigned toInsert;
+      for (const auto &[key, aliasClass] : aliasClasses) {
+        if (!localAliasAnalysis.alias(key, result).isNo()) {
+          toInsert = aliasClass;
+          found = true;
+        }
+      }
+      if (!found) {
+        toInsert = aliasClasses.size();
+      }
+      aliasClasses.insert({result, toInsert});
+
+      op->setAttr("ac",
+                  IntegerAttr::get(IntegerType::get(callee.getContext(), 64),
+                                   aliasClasses.lookup(result)));
+    }
+  });
+
+  callee.walk([&](Operation *op) {
+    // TODO: Is there an interface just for function return ops? ReturnLike is
+    // too general.
     if (auto returnOp = dyn_cast<func::ReturnOp>(op)) {
       for (Value operand : returnOp.getOperands()) {
         // Assume all outputs are active for now
@@ -436,29 +463,43 @@ void enzyme::runDataFlowActivityAnalysis(Operation *top, Operation *calleeOp) {
     assert(false && "dataflow analysis failed\n");
   }
 
-  for (BlockArgument arg : callee.getArguments()) {
-    auto argState = solver.lookupState<BackwardValueActivity>(arg);
-    if (argState) {
-      errs() << "function arg state: ";
-      argState->getValue().print(errs());
-      errs() << "\n";
-    } else {
-      errs() << "function argument backward state was null\n";
+  callee.walk([&](Operation *op) {
+    for (OpResult result : op->getResults()) {
+      auto forwardValueActivity =
+          solver.lookupState<ForwardValueActivity>(result);
+      if (forwardValueActivity) {
+        std::string dest;
+        llvm::raw_string_ostream sstream(dest);
+        forwardValueActivity->getValue().print(sstream);
+        op->setAttr("fvactive" + std::to_string(result.getResultNumber()),
+                    StringAttr::get(op->getContext(), dest));
+      }
     }
-  }
+  });
+
+  // for (BlockArgument arg : callee.getArguments()) {
+  //   auto argState = solver.lookupState<BackwardValueActivity>(arg);
+  //   if (argState) {
+  //     errs() << "function arg state: ";
+  //     argState->getValue().print(errs());
+  //     errs() << "\n";
+  //   } else {
+  //     errs() << "function argument backward state was null\n";
+  //   }
+  // }
 
   auto returnOp = callee.getFunctionBody().front().getTerminator();
-  if (returnOp->getNumOperands()) {
-    auto returnState =
-        solver.lookupState<ForwardValueActivity>(returnOp->getOperand(0));
-    if (returnState) {
-      errs() << "return operand: ";
-      returnState->getValue().print(errs());
-      errs() << "\n";
-    } else {
-      errs() << "**return operand was null**\n";
-    }
-  }
+  // if (returnOp->getNumOperands()) {
+  //   auto returnState =
+  //       solver.lookupState<ForwardValueActivity>(returnOp->getOperand(0));
+  //   if (returnState) {
+  //     errs() << "return operand: ";
+  //     returnState->getValue().print(errs());
+  //     errs() << "\n";
+  //   } else {
+  //     errs() << "**return operand was null**\n";
+  //   }
+  // }
   auto state = solver.lookupState<MemoryActivity>(returnOp);
   if (state) {
     errs() << "resulting state:\n" << *state << "\n";
