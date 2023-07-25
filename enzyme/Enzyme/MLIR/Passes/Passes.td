@@ -19,6 +19,29 @@ def DifferentiatePass : Pass<"enzyme"> {
 def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
   let summary = "Print the results of activity analysis";
   let constructor = "mlir::enzyme::createPrintActivityAnalysisPass()";
+  let options = [
+    Option<
+      /*C++ variable name=*/"funcToAnalyze",
+      /*CLI argument=*/"func",
+      /*type=*/"std::string",
+      /*default=*/"\"\"",
+      /*description=*/"The name of the function to perform activity analysis on"
+    >,
+    Option<
+      /*C++ variable name=*/"inactiveArgs",
+      /*CLI argument=*/"inactive-args",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Whether all arguments are assumed to be inactive"
+    >,
+    Option<
+      /*C++ variable name=*/"duplicatedRet",
+      /*CLI argument=*/"duplicated-ret",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Whether the return is duplicated"
+    >,
+  ];
 }
 
 def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {

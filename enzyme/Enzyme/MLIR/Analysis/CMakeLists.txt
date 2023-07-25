@@ -1,5 +1,6 @@
 add_mlir_library(MLIREnzymeAnalysis
   ActivityAnalysis.cpp
+  DataFlowActivityAnalysis.cpp
 
   DEPENDS
   MLIRAutoDiffTypeInterfaceIncGen

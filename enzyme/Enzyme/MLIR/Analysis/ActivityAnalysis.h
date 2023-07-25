@@ -11,14 +11,9 @@ class FunctionOpInterface;
 
 namespace enzyme {
 
-enum class Activity : uint32_t;
-
 // class TypeResults {};
 
 class MTypeResults;
-
-void runDataFlowActivityAnalysis(FunctionOpInterface callee,
-                                 ArrayRef<enzyme::Activity> argumentActivity);
 
 /// Helper class to analyze the differential activity
 class ActivityAnalyzer {
