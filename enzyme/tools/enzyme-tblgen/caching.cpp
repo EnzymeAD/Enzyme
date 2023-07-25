@@ -162,6 +162,50 @@ void emit_scalar_cacheTypes(const TGPattern &pattern, raw_ostream &os) {
   }
 }
 
+void emit_ap_copy(const TGPattern &pattern, raw_ostream &os) {
+  auto actArgs = pattern.getActiveArgs();
+  auto typeMap = pattern.getArgTypeMap();
+  auto nameVec = pattern.getArgNames();
+  auto argUsers = pattern.getArgUsers();
+
+  std::string valueTypes = "";
+  { bool comma = false;
+  for (auto i : nameVec) {
+    if (comma) valueTypes += ", ";
+    valueTypes += "ValueType::None";
+    comma = true;
+  }
+  }
+
+  for (size_t i = 0; i < actArgs.size(); i++) {
+    size_t argIdx = actArgs[i];
+    auto ty = typeMap.lookup(argIdx);
+    if (ty != ArgType::ap)
+      continue;
+    auto apName = nameVec[argIdx];
+    auto dimensions = pattern.getRelatedLengthArgs(argIdx);
+    os
+<< "    if (cache_" << apName << ") {\n"
+<< "      Value *malloc_size;\n"
+<< "      // arg_malloc_size will keep the original type\n"
+<< "      Value *arg_malloc_size;\n"
+<< "      malloc_size = arg_" << nameVec[dimensions[0]] << ";\n"
+<< "      arg_malloc_size = malloc_size;\n"
+<< "      if (byRef) {\n"
+<< "        malloc_size = BuilderZ.CreateLoad(intType, BuilderZ.CreatePointerCast(malloc_size, PointerType::get(intType, cast<PointerType>(malloc_size->getType())->getAddressSpace())));\n"
+<< "      }\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << apName << "\");\n";
+
+    os
+<< "      Value *margs[] = {malins, arg_" << apName << ", malloc_size, llvm::ConstantInt::getFalse(IntegerType::getInt1Ty(call.getContext()))};\n"
+<< "      Type *tys[] = {margs[0]->getType(), margs[1]->getType(),"
+<< "                     margs[2]->getType(), IntegerType::getInt1Ty(call.getContext())};\n"
+<< "      auto memsetF = Intrinsic::getDeclaration(gutils->oldFunc->getParent(), Intrinsic::memcpy, tys);\n"
+<< "      BuilderZ.CreateCall(memsetF, margs);\n"
+<< "    }\n";
+  }
+}
+
 void emit_vec_copy(const TGPattern &pattern, raw_ostream &os) {
   auto actArgs = pattern.getActiveArgs();
   auto typeMap = pattern.getArgTypeMap();
@@ -355,6 +399,7 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
   os << "    }\n";
 
   emit_mat_copy(pattern, os);
+  emit_ap_copy(pattern, os);
   emit_vec_copy(pattern, os);
 
   os

@@ -244,7 +244,8 @@ void fillRelatedLenghts(
   auto inputTypes = pattern->getValueAsListOfDefs("inputTypes");
   size_t pos = 0;
   for (auto val : inputTypes) {
-    if (!val->isSubClassOf("vinc") && !val->isSubClassOf("mld")) {
+    if (!val->isSubClassOf("vinc") && !val->isSubClassOf("mld") &&
+        !val->isSubClassOf("ap")) {
       pos += val->getValueAsInt("nelem");
       continue;
     }
