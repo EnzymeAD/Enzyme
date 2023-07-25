@@ -4469,7 +4469,8 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
       return arg->getWithOperands(NewOps);
     }
   } else if (auto arg = dyn_cast<GlobalAlias>(oval)) {
-    return GetOrCreateShadowConstant(Logic, TLI, TA, arg->getAliasee(), mode, width, AtomicAdd);
+    return GetOrCreateShadowConstant(Logic, TLI, TA, arg->getAliasee(), mode,
+                                     width, AtomicAdd);
   } else if (auto arg = dyn_cast<GlobalVariable>(oval)) {
     if (arg->getName() == "_ZTVN10__cxxabiv120__si_class_type_infoE" ||
         arg->getName() == "_ZTVN10__cxxabiv117__class_type_infoE" ||
@@ -9185,12 +9186,12 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
     freefunc = LibFunc_ZdaPv;
     break;
 
-  case LibFunc_msvc_new_longlong:          // new(unsigned long long);
-  case LibFunc_msvc_new_longlong_nothrow:  // new(unsigned long long, nothrow);
+  case LibFunc_msvc_new_longlong:         // new(unsigned long long);
+  case LibFunc_msvc_new_longlong_nothrow: // new(unsigned long long, nothrow);
     freefunc = LibFunc_msvc_delete_ptr64_longlong;
     break;
 
-  case LibFunc_msvc_new_array_longlong:    // new[](unsigned long long);
+  case LibFunc_msvc_new_array_longlong:         // new[](unsigned long long);
   case LibFunc_msvc_new_array_longlong_nothrow: // new[](unsigned long long,
                                                 // nothrow);
     freefunc = LibFunc_msvc_delete_array_ptr64_longlong;
