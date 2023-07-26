@@ -227,9 +227,9 @@ struct GenericOpInterfaceReverse
           op->getLoc(), type, ValueRange(iterationDomains));
       Value cache = gutils->initAndPushCache(alloc, cacheBuilder);
       // TODO use higher level API
-      alloc->setAttr(
-          alloc.getOperandSegmentSizesAttrName(),
-          cacheBuilder.getDenseI32ArrayAttr({iterationDomains.size(), 0}));
+      alloc->setAttr(alloc.getOperandSegmentSizesAttrName(),
+                     cacheBuilder.getDenseI32ArrayAttr(
+                         {static_cast<int32_t>(iterationDomains.size()), 0}));
 
       cast<linalg::GenericOp>(newOp).getOutputsMutable().append(
           ValueRange({alloc}));
