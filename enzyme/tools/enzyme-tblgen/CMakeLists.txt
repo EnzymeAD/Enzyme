@@ -7,7 +7,7 @@ set(LLVM_LINK_COMPONENTS
 )
 
 add_tablegen(enzyme-tblgen Enzyme
-  datastructures.cpp caching.cpp enzyme-tblgen.cpp
+  blas-tblgen.cpp datastructures.cpp caching.cpp enzyme-tblgen.cpp
   )
 
 get_target_property(TBL_LINKED_LIBS LLVMSupport INTERFACE_LINK_LIBRARIES)

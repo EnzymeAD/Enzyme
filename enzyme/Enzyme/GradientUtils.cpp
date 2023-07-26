@@ -2586,6 +2586,15 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
     llvm::errs() << " malloc: " << *malloc << "\n";
   }
   assert(!malloc->getType()->isTokenTy());
+  {
+    CountTrackedPointers T(malloc->getType());
+    if (T.derived) {
+      llvm::errs() << " oldFunc: " << *oldFunc << "\n";
+      llvm::errs() << " newFunc: " << *newFunc << "\n";
+      llvm::errs() << " malloc: " << *malloc << "\n";
+    }
+    assert(!T.derived);
+  }
 
   if (tape) {
     if (idx >= 0 && !tape->getType()->isStructTy()) {
@@ -5106,9 +5115,83 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     // Nulling the shadow for a constant is only necessary if any of the data
     // could contain a float (e.g. should not be applied to pointers).
     if (nullShadow) {
-      auto CT = TR.query(oval)[{-1}];
-      if (!CT.isKnown() || CT.isFloat()) {
-        return Constant::getNullValue(getShadowType(oval->getType()));
+      auto ty = TR.query(oval);
+      auto &dl = newFunc->getParent()->getDataLayout();
+      size_t size = (dl.getTypeSizeInBits(oval->getType()) + 7) / 8;
+      auto CT = ty[{-1}];
+      bool couldContainFloat = CT.isFloat();
+      bool allFloat = CT.isFloat();
+      if (!CT.isKnown()) {
+        size_t i = 0;
+        for (; i < size;) {
+          auto CT2 = ty[{(int)i}];
+          if (CT2.isFloat() || !CT2.isKnown()) {
+            couldContainFloat = true;
+            break;
+          }
+          if (CT2 == BaseType::Pointer) {
+            i += dl.getPointerSizeInBits() / 8;
+            continue;
+          }
+          i++;
+        }
+      }
+      if (couldContainFloat) {
+        if (allFloat)
+          return Constant::getNullValue(getShadowType(oval->getType()));
+        else {
+          IRBuilder<> bb(inversionAllocs);
+          if (auto arg = dyn_cast<Instruction>(oval)) {
+            arg = getNewFromOriginal(arg);
+            while (auto PN = dyn_cast<PHINode>(arg)) {
+              if (PN->getNumIncomingValues() == 0)
+                break;
+              arg = PN->getNextNode();
+            }
+            bb.SetInsertPoint(arg);
+          }
+          auto alloc = bb.CreateAlloca(oval->getType());
+          auto AT = ArrayType::get(bb.getInt8Ty(), size);
+          bb.CreateStore(getNewFromOriginal(oval), alloc);
+          Value *cur = bb.CreatePointerCast(alloc, PointerType::getUnqual(AT));
+          size_t i = 0;
+          assert(size > 0);
+          for (; i < size;) {
+            auto CT2 = ty[{(int)i}];
+            if (CT2 == BaseType::Pointer) {
+              i += dl.getPointerSizeInBits() / 8;
+              continue;
+            } else if (auto flt = CT2.isFloat()) {
+              auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
+              ptr = bb.CreatePointerCast(ptr, PointerType::getUnqual(flt));
+              bb.CreateStore(Constant::getNullValue(flt), ptr);
+              size_t chunk = 0;
+              if (flt->isFloatTy()) {
+                chunk = 4;
+              } else if (flt->isDoubleTy()) {
+                chunk = 8;
+              } else if (flt->isHalfTy()) {
+                chunk = 2;
+              } else {
+                llvm::errs() << *flt << "\n";
+                assert(0 && "unhandled float type");
+              }
+              i += chunk;
+            } else if (CT2 != BaseType::Integer) {
+              auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
+              bb.CreateStore(Constant::getNullValue(bb.getInt8Ty()), ptr);
+              i++;
+            } else {
+              i++;
+            }
+          }
+          auto res = bb.CreateLoad(oval->getType(), alloc);
+          auto rule = [&res]() { return res; };
+          auto res2 = applyChainRule(oval->getType(), BuilderM, rule);
+          invertedPointers.insert(std::make_pair(
+              (const Value *)oval, InvertedPointerVH(this, res2)));
+          return res2;
+        }
       }
     }
 
@@ -5507,7 +5590,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(getNewFromOriginal(arg));
     auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
 
-    auto rule = [&bb, &arg](Value *ip) {
+    auto rule = [&bb, &arg, this](Value *ip) -> llvm::Value * {
+      if (ip == getNewFromOriginal(arg->getOperand(0)))
+        return getNewFromOriginal(arg);
       return bb.CreateExtractValue(ip, arg->getIndices(),
                                    arg->getName() + "'ipev");
     };
@@ -8854,6 +8939,21 @@ void GradientUtils::erase(Instruction *I) {
       pair.second.erase(I);
   }
   CacheUtility::erase(I);
+}
+
+void GradientUtils::eraseWithPlaceholder(Instruction *I, const Twine &suffix,
+                                         bool erase) {
+  PHINode *pn = nullptr;
+  if (!I->getType()->isVoidTy() && !I->getType()->isTokenTy()) {
+    IRBuilder<> BuilderZ(I);
+    auto pn = BuilderZ.CreatePHI(I->getType(), 1, I->getName() + suffix);
+    fictiousPHIs[pn] = I;
+    replaceAWithB(I, pn);
+  }
+
+  if (erase) {
+    this->erase(I);
+  }
 }
 
 void GradientUtils::setTape(Value *newtape) {

@@ -110,8 +110,6 @@ public:
     }
   }
 
-  llvm::SmallPtrSet<llvm::Instruction *, 4> erased;
-
   void eraseIfUnused(llvm::Instruction &I, bool erase = true,
                      bool check = true) {
     using namespace llvm;
@@ -129,21 +127,8 @@ public:
     if (used && check)
       return;
 
-    PHINode *pn = nullptr;
-    if (!I.getType()->isVoidTy() && !I.getType()->isTokenTy() &&
-        isa<Instruction>(iload)) {
-      IRBuilder<> BuilderZ(cast<Instruction>(iload));
-      pn = BuilderZ.CreatePHI(I.getType(), 1, I.getName() + "_replacementA");
-      gutils->fictiousPHIs[pn] = &I;
-      gutils->replaceAWithB(iload, pn);
-    }
-
-    erased.insert(&I);
-    if (erase) {
-      if (auto inst = dyn_cast<Instruction>(iload)) {
-        gutils->erase(inst);
-      }
-    }
+    if (auto newi = dyn_cast<Instruction>(iload))
+      gutils->eraseWithPlaceholder(newi, "_replacementA", erase);
   }
 
   llvm::Value *MPI_TYPE_SIZE(llvm::Value *DT, llvm::IRBuilder<> &B,
@@ -350,8 +335,8 @@ public:
                          gutils, nullptr, wrap(&Builder2));
       return;
     } else {
-      llvm::errs() << ss.str() << "\n";
-      report_fatal_error("unknown instruction");
+      EmitFailure("NoDerivative", inst.getDebugLoc(), &inst, ss.str());
+      return;
     }
   }
 
@@ -925,9 +910,8 @@ public:
                          gutils, nullptr, wrap(&BuilderZ));
       return;
     } else {
-      TR.dump();
-      llvm::errs() << ss.str() << "\n";
-      llvm_unreachable("Active atomic inst not yet handled");
+      EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
+      return;
     }
   }
 
@@ -1371,9 +1355,18 @@ public:
               8;
         Type *FT = TR.addingType(size, orig_op0);
         if (!FT) {
-          llvm::errs() << " " << *gutils->oldFunc << "\n";
-          TR.dump();
-          llvm::errs() << " " << *orig_op0 << "\n";
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Cannot deduce adding type of " << I;
+          if (CustomErrorHandler) {
+            CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoType,
+                               &TR.analyzer, nullptr, wrap(&Builder2));
+            return;
+          } else {
+            TR.dump();
+            EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
+            return;
+          }
         }
         assert(FT);
 
@@ -1389,7 +1382,7 @@ public:
           } else {
             std::string s;
             llvm::raw_string_ostream ss(s);
-            ss << *I.getParent()->getParent() << "\n" << *I.getParent() << "\n";
+            ss << *I.getParent()->getParent() << "\n";
             ss << "cannot handle above cast " << I << "\n";
             if (CustomErrorHandler) {
               CustomErrorHandler(ss.str().c_str(), wrap(&I),
@@ -1733,6 +1726,12 @@ public:
     using namespace llvm;
 
     eraseIfUnused(EVI);
+
+    if (!gutils->isConstantValue(&EVI) && gutils->isConstantValue(&EVI)) {
+      llvm::errs() << *gutils->oldFunc->getParent() << "\n";
+      llvm::errs() << EVI << "\n";
+      llvm_unreachable("Illegal activity for extractvalue");
+    }
 
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
@@ -2402,7 +2401,6 @@ public:
     def:;
       std::string s;
       llvm::raw_string_ostream ss(s);
-      ss << *gutils->oldFunc->getParent() << "\n";
       ss << *gutils->oldFunc << "\n";
       for (auto &arg : gutils->oldFunc->args()) {
         ss << " constantarg[" << arg << "] = " << gutils->isConstantValue(&arg)
@@ -2648,7 +2646,6 @@ public:
     def:;
       std::string s;
       llvm::raw_string_ostream ss(s);
-      ss << *gutils->oldFunc->getParent() << "\n";
       ss << *gutils->oldFunc << "\n";
       for (auto &arg : gutils->oldFunc->args()) {
         ss << " constantarg[" << arg << "] = " << gutils->isConstantValue(&arg)
@@ -2674,8 +2671,8 @@ public:
         if (!gutils->isConstantValue(&BO))
           setDiffe(&BO, rval, Builder2);
       } else {
-        llvm::errs() << ss.str() << "\n";
-        report_fatal_error("unknown binary operator");
+        EmitFailure("NoDerivative", BO.getDebugLoc(), &BO, ss.str());
+        return;
       }
       break;
     }
@@ -3517,6 +3514,8 @@ public:
       return false;
     }
 
+    auto mod = I.getParent()->getParent()->getParent();
+    auto called = cast<CallInst>(&I)->getCalledFunction();
     switch (ID) {
 #include "IntrinsicDerivatives.inc"
     default:
@@ -3544,14 +3543,15 @@ public:
         ss << *gutils->newFunc << "\n";
         ss << "cannot handle (augmented) unknown intrinsic\n" << I;
         if (CustomErrorHandler) {
-          IRBuilder<> BuilderZ(I.getParent());
+          IRBuilder<> BuilderZ(&I);
           getForwardBuilder(BuilderZ);
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
                              ErrorType::NoDerivative, gutils, nullptr,
                              wrap(&BuilderZ));
+          return false;
         } else {
-          llvm::errs() << ss.str() << "\n";
-          report_fatal_error("(augmented) unknown intrinsic");
+          EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
+          return false;
         }
       }
       return false;
@@ -3679,9 +3679,10 @@ public:
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
                              ErrorType::NoDerivative, gutils, nullptr,
                              wrap(&Builder2));
+          return false;
         } else {
-          llvm::errs() << ss.str() << "\n";
-          report_fatal_error("(reverse) unknown intrinsic");
+          EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
+          return false;
         }
       }
       return false;
@@ -3759,9 +3760,13 @@ public:
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
                              ErrorType::NoDerivative, gutils, nullptr,
                              wrap(&Builder2));
+          setDiffe(&I,
+                   Constant::getNullValue(gutils->getShadowType(I.getType())),
+                   Builder2);
+          return false;
         } else {
-          llvm::errs() << ss.str() << "\n";
-          report_fatal_error("(forward) unknown intrinsic");
+          EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
+          return false;
         }
       }
       return false;
@@ -5666,8 +5671,8 @@ public:
                                ErrorType::NoDerivative, gutils, nullptr,
                                wrap(&BuilderZ));
           } else {
-            llvm::errs() << ss.str() << "\n";
-            report_fatal_error("unhandled mpi_allreduce op");
+            EmitFailure("NoDerivative", call.getDebugLoc(), &call, ss.str());
+            return;
           }
         }
 
@@ -5918,8 +5923,8 @@ public:
                                ErrorType::NoDerivative, gutils, nullptr,
                                wrap(&BuilderZ));
           } else {
-            llvm::errs() << ss.str() << "\n";
-            report_fatal_error("unhandled mpi_allreduce op");
+            EmitFailure("NoDerivative", call.getDebugLoc(), &call, ss.str());
+            return;
           }
         }
 
@@ -7312,15 +7317,15 @@ public:
         if (isa<ConstantInt>(uncast)) {
           std::string str;
           raw_string_ostream ss(str);
-          ss << "cannot find shadow for " << *callval;
+          ss << "cannot find shadow for " << *callval
+             << " for use as function in " << call;
           if (CustomErrorHandler) {
             CustomErrorHandler(ss.str().c_str(), wrap(&call),
                                ErrorType::NoDerivative, gutils, nullptr,
                                wrap(&BuilderZ));
           } else {
-            llvm::errs() << *gutils->oldFunc << "\n";
-            llvm::errs() << ss.str() << "\n";
-            report_fatal_error("cannot call active int operand");
+            EmitFailure("NoDerivative", call.getDebugLoc(), &call, ss.str());
+            return;
           }
         }
         newcalled = gutils->invertPointerM(callval, BuilderZ);
@@ -7950,7 +7955,6 @@ public:
       gutils->newToOriginalFn.erase(newCall);
       gutils->newToOriginalFn[retval ? retval : diffes] = &call;
 
-      erased.insert(&call);
       gutils->erase(newCall);
 
       return;
@@ -8394,6 +8398,7 @@ public:
         llvm_unreachable("unhandled openmp function");
       }
 
+      auto mod = call.getParent()->getParent()->getParent();
 #include "CallDerivatives.inc"
 
       if (funcName == "llvm.julia.gc_preserve_end") {

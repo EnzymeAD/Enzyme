@@ -10,6 +10,10 @@ else()
     set(BC_LOAD_FLAGS2 "${BC_LOAD_FLAGS} -Xclang -no-opaque-pointers")
 endif()
 
+if (APPLE)
+    set(BC_LOAD_FLAGS2 "${BC_LOAD_FLAGS2} --sysroot=${CMAKE_OSX_SYSROOT}")
+endif()
+
 if (NOT ("${BC_LOAD_HEADER}" STREQUAL ""))
     add_custom_target(blasheaders mkdir -p "${CMAKE_CURRENT_BINARY_DIR}/gsl" && cp ${BC_LOAD_HEADER} "${CMAKE_CURRENT_BINARY_DIR}/gsl/blas_headers.h")
 set_target_properties(blasheaders PROPERTIES EXCLUDE_FROM_ALL TRUE)
