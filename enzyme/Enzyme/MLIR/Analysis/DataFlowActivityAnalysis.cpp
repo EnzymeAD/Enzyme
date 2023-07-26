@@ -420,7 +420,8 @@ void basicAliasAnalysis(FunctionOpInterface callee,
 }
 
 void enzyme::runDataFlowActivityAnalysis(
-    FunctionOpInterface callee, ArrayRef<enzyme::Activity> argumentActivity) {
+    FunctionOpInterface callee, ArrayRef<enzyme::Activity> argumentActivity,
+    bool print) {
   SymbolTableCollection symbolTable;
   DataFlowSolver solver;
   basicAliasAnalysis(callee, aliasClasses, /*annotate=*/true);
@@ -475,19 +476,21 @@ void enzyme::runDataFlowActivityAnalysis(
     assert(false && "dataflow analysis failed\n");
   }
 
-  callee.walk([&](Operation *op) {
-    for (OpResult result : op->getResults()) {
-      auto forwardValueActivity =
-          solver.lookupState<ForwardValueActivity>(result);
-      if (forwardValueActivity) {
-        std::string dest;
-        llvm::raw_string_ostream sstream(dest);
-        forwardValueActivity->getValue().print(sstream);
-        op->setAttr("fvactive" + std::to_string(result.getResultNumber()),
-                    StringAttr::get(op->getContext(), dest));
+  if (print) {
+    callee.walk([&](Operation *op) {
+      for (OpResult result : op->getResults()) {
+        auto forwardValueActivity =
+            solver.lookupState<ForwardValueActivity>(result);
+        if (forwardValueActivity) {
+          std::string dest;
+          llvm::raw_string_ostream sstream(dest);
+          forwardValueActivity->getValue().print(sstream);
+          op->setAttr("fvactive" + std::to_string(result.getResultNumber()),
+                      StringAttr::get(op->getContext(), dest));
+        }
       }
-    }
-  });
+    });
+  }
 
   // for (BlockArgument arg : callee.getArguments()) {
   //   auto argState = solver.lookupState<BackwardValueActivity>(arg);
@@ -499,7 +502,6 @@ void enzyme::runDataFlowActivityAnalysis(
   //     errs() << "function argument backward state was null\n";
   //   }
   // }
-
   auto returnOp = callee.getFunctionBody().front().getTerminator();
   auto state = solver.lookupState<MemoryActivity>(returnOp);
   if (state) {

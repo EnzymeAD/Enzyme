@@ -11,7 +11,8 @@ namespace enzyme {
 enum class Activity : uint32_t;
 
 void runDataFlowActivityAnalysis(FunctionOpInterface callee,
-                                 ArrayRef<enzyme::Activity> argumentActivity);
+                                 ArrayRef<enzyme::Activity> argumentActivity,
+                                 bool print = false);
 
 } // namespace enzyme
 } // namespace mlir
