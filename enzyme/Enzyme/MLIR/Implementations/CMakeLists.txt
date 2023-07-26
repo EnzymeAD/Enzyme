@@ -2,6 +2,7 @@ add_mlir_library(MLIREnzymeImplementations
   ArithAutoDiffOpInterfaceImpl.cpp
   LLVMAutoDiffOpInterfaceImpl.cpp
   MemRefAutoDiffOpInterfaceImpl.cpp
+  TensorAutoDiffOpInterfaceImpl.cpp
   LinalgAutoDiffOpInterfaceImpl.cpp
   BuiltinAutoDiffTypeInterfaceImpl.cpp
   SCFAutoDiffOpInterfaceImpl.cpp
