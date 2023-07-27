@@ -278,6 +278,11 @@ public:
     llvm_unreachable("Cannot create null of memref (todo polygeist null)");
   }
 
+  mlir::Value createNullValueReverse(mlir::Type self, mlir::OpBuilder & builder, mlir::Value primal, mlir::Operation * op, mlir::enzyme::MGradientUtilsReverse * gutils) const {
+    llvm_unreachable("TODO");
+  }
+
+
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
                     Value b) const {
     llvm_unreachable("TODO");

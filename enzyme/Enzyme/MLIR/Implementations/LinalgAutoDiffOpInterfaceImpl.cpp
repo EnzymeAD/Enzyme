@@ -261,10 +261,32 @@ struct GenericOpInterfaceReverse
               return linalg::IteratorTypeAttr::get(builder.getContext(), iter);
             })));
     
+    SmallVector<Type> resultTypes;
+    if (usesTensors){
+      for (auto inp : inputs){
+        resultTypes.push_back(cast<TensorType>(inp.getType()));
+      }
+    }
+
     auto adjoint = builder.create<enzyme::GenericAdjointOp>(
-        op->getLoc(), TypeRange(), ValueRange(outputs), ValueRange(inputs),
+        op->getLoc(), TypeRange(resultTypes), ValueRange(outputs), ValueRange(inputs),
         indexingMapsArrayAttr, iteratorTypesArrayAttr, StringAttr(),
         StringAttr());
+
+    if (usesTensors){
+      for (unsigned i = 0; i < adjoint->getNumResults(); i++) {
+        Value currentInput = linalgOp.getDpsInputOperand(i)->get();
+        if (! gutils->hasInvertPointer(currentInput)){
+          gutils->mapInvertPointer(linalgOp.getDpsInputOperand(i)->get(), adjoint->getResult(i), builder);
+        }
+        else{
+        Value grad = gutils->invertPointerM(linalgOp.getDpsInputOperand(i)->get(), builder);
+        Value addedGradient = cast<AutoDiffTypeInterface>(currentInput.getType()).createAddOp(
+            builder, op->getLoc(), adjoint->getResult(i), grad);
+        gutils->mapInvertPointer(linalgOp.getDpsInputOperand(i)->get(), addedGradient, builder);
+        }
+      }
+    }
 
     int numInputs = inputs.size();
     auto buildFuncReturnOp = [numInputs, indexingMaps, &newOp, &adjoint,

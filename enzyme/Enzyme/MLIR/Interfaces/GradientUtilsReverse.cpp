@@ -307,7 +307,8 @@ void MGradientUtilsReverse::initInitializationBlock(
       llvm_unreachable(
           "Type does not have an associated AutoDiffTypeInterface");
     }
-    Value zero = iface.createNullValue(initializationBuilder, val.getLoc());
+    //Value zero = iface.createNullValue(initializationBuilder, val.getLoc());
+    Value zero = iface.createNullValueReverse(initializationBuilder, val, val.getDefiningOp(), this);
     mapInvertPointer(val, zero, initializationBuilder);
   }
   for (auto const &x : invertedPointers_.getValueMap()) {

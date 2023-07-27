@@ -14,6 +14,7 @@
 #include "AutoDiffTypeInterface.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Value.h"
+#include "Interfaces/GradientUtilsReverse.h"
 
 using namespace mlir;
 

@@ -34,6 +34,11 @@ public:
         loc, APFloat(fltType.getFloatSemantics(), 0), fltType);
   }
 
+  mlir::Value createNullValueReverse(mlir::Type self, mlir::OpBuilder & builder, mlir::Value primal, mlir::Operation * op, mlir::enzyme::MGradientUtilsReverse * gutils) const {
+    llvm_unreachable("TODO");
+  }
+
+
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
                     Value b) const {
     return builder.create<arith::AddFOp>(loc, a, b);
@@ -56,6 +61,10 @@ public:
       return builder.create<arith::ConstantIndexOp>(loc, 0);
     }
     return builder.create<arith::ConstantIntOp>(loc, 0, self);
+  }
+
+  mlir::Value createNullValueReverse(mlir::Type self, mlir::OpBuilder & builder, mlir::Value primal, mlir::Operation * op, mlir::enzyme::MGradientUtilsReverse * gutils) const {
+    llvm_unreachable("TODO");
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,

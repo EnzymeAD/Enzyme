@@ -31,7 +31,7 @@ using namespace mlir::enzyme;
 
 namespace {
 
-Value duplicateNullTensor(Value tensor, OpBuilder& builder){
+Value duplicateNullTensor(Value tensor, Operation * op, OpBuilder& builder, MGradientUtilsReverse* gutils){
   auto tensorType = tensor.getType().cast<TensorType>();
   auto tensorShape = tensorType.getShape();
   auto elementType = tensorType.getElementType();
@@ -39,7 +39,14 @@ Value duplicateNullTensor(Value tensor, OpBuilder& builder){
   SmallVector<Value> dynamicSizes;
   for (auto dim : tensorShape) {
     if (dim == ShapedType::kDynamic) {
-      dynamicSizes.push_back(builder.create<tensor::DimOp>(tensor.getLoc(), tensor, dynamicSizes.size()));
+      auto insertionLocation = builder.saveInsertionPoint();
+      builder.setInsertionPointAfter(op);
+      Value myDim = builder.create<tensor::DimOp>(tensor.getLoc(), tensor, dynamicSizes.size());
+      Value cachedDim = gutils->initAndPushCache(myDim, builder);
+      builder.restoreInsertionPoint(insertionLocation);
+
+      Value retrievedValue = gutils->popCache(cachedDim, builder);
+      dynamicSizes.push_back(retrievedValue);
     }
   }
   //Create new tensor
@@ -74,8 +81,9 @@ struct ExtractOpInterfaceReverse
     }
     Value extractGradient = gutils->invertPointerM(extractOp, builder);
     if (!gutils->hasInvertPointer(tensor)) {
-      Value nullTensor = duplicateNullTensor(tensor, builder);
-      gutils->mapInvertPointer(tensor, nullTensor, builder);
+      auto ifaceTensor = cast<AutoDiffTypeInterface>(tensor.getType());
+      Value newTensorGradient = ifaceTensor.createNullValueReverse(builder, tensor, op, gutils);
+      gutils->mapInvertPointer(tensor, newTensorGradient, builder);
     }
     Value tensorGradient = gutils->invertPointerM(tensor, builder);
     Value currentGradient = builder.create<tensor::ExtractOp>(extractOp.getLoc(), tensorGradient, retrievedArguments);
@@ -180,17 +188,22 @@ public:
     llvm_unreachable("Cannot create null of memref (todo polygeist null)");
   }
 
+  mlir::Value createNullValueReverse(mlir::Type self, mlir::OpBuilder & builder, mlir::Value primal, mlir::Operation * op, mlir::enzyme::MGradientUtilsReverse * gutils) const {
+    return duplicateNullTensor(primal, op, builder, gutils);
+  }
+
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
                     Value b) const {
-    llvm_unreachable("TODO");
+    auto elementwiseAdd = builder.create<linalg::ElemwiseBinaryOp>(loc, self, ValueRange({a, b}), ValueRange({a}));
+    elementwiseAdd.setFun(linalg::BinaryFn::add);
+    return elementwiseAdd->getResult(0);
   }
 
   Type getShadowType(Type self, unsigned width) const {
-    assert(width == 1 && "unsupported width != 1");
     return self;
   }
 
-  bool requiresShadow(Type self) const { return false; }
+  bool requiresShadow(Type self) const { return true; }
 };
 
 class UnrankedTensorTypeInterface
@@ -202,17 +215,23 @@ public:
     llvm_unreachable("Cannot create null of memref (todo polygeist null)");
   }
 
+  mlir::Value createNullValueReverse(mlir::Type self, mlir::OpBuilder & builder, mlir::Value primal, mlir::Operation * op, mlir::enzyme::MGradientUtilsReverse * gutils) const {
+    return duplicateNullTensor(primal, op, builder, gutils);
+  }
+
+
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
                     Value b) const {
-    llvm_unreachable("TODO");
+    auto elementwiseAdd = builder.create<linalg::ElemwiseBinaryOp>(loc, self, ValueRange({a, b}), ValueRange({a}));
+    elementwiseAdd.setFun(linalg::BinaryFn::add);
+    return elementwiseAdd->getResult(0);
   }
 
   Type getShadowType(Type self, unsigned width) const {
-    assert(width == 1 && "unsupported width != 1");
     return self;
   }
 
-  bool requiresShadow(Type self) const { return false; }
+  bool requiresShadow(Type self) const { return true; }
 };
 
 } // namespace
