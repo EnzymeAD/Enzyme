@@ -5169,7 +5169,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZNSt3__116__do_string_hashIPKcEEmT_S3_",
       "_ZNKSt3__14hashIPKcEclES2_",
       "_ZNSt3__19addressofIcEEPT_RS1_",
-      "_ZNSt3__19addressofIKcEEPT_RS2_"};
+      "_ZNSt3__19addressofIKcEEPT_RS2_",
+      "_ZNSt3__113random_deviceclEv",
+  };
 
   if (F->getName().startswith("_ZNSolsE") || NoFrees.count(F->getName()))
     return F;
