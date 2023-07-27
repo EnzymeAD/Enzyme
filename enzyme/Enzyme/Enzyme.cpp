@@ -496,7 +496,8 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
     return true;
   }
 
-  if (mode != DerivativeMode::ReverseModePrimal) {
+  if (mode != DerivativeMode::ReverseModePrimal &&
+      diffret->getType()->isAggregateType()) {
     auto diffreti = Builder.CreateExtractValue(diffret, {0});
     if (diffreti->getType() == retType) {
       CI->replaceAllUsesWith(diffreti);
