@@ -13,7 +13,6 @@
 
 #include "test_utils.h"
 
-int enzyme_const, enzyme_dup;
 double __enzyme_fwddiff(void*, ...);
 
 double alldiv(double* __restrict__ a, int *__restrict__ N) {

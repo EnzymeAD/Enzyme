@@ -3,6 +3,13 @@
 #include <stdbool.h>
 #include <math.h> 
 
+extern
+#ifdef __cplusplus
+"C"
+#endif
+int enzyme_allocated, enzyme_const, enzyme_dup, enzyme_dupnoneed, enzyme_out,
+    enzyme_tape;
+
 /*
 #ifdef __cplusplus
 extern "C" {
