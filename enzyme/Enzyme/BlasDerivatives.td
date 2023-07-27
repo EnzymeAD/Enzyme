@@ -144,8 +144,8 @@ def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
 def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   [],[len, vinc<["n"]>, vinc<["n"]>],
                   [
-                  (b<"axpy"> $n, DiffeRet, $y, $incy, $x, $incx), 
-                  (b<"axpy"> $n, DiffeRet, $x, $incx, $y, $incy)
+                  (b<"axpy"> $n, DiffeRet, $y, $incy, adj<"x">, $incx), 
+                  (b<"axpy"> $n, DiffeRet, $x, $incx, adj<"y">, $incy)
                   ]
                   >;
 
