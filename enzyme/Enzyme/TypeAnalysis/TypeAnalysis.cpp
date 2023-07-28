@@ -5288,6 +5288,7 @@ void TypeAnalyzer::visitIPOCall(CallInst &call, Function &fn) {
     return;
 
   FnTypeInfo typeInfo = getCallInfo(call, fn);
+  typeInfo = preventTypeAnalysisLoops(typeInfo, call.getParent()->getParent());
 
   if (EnzymePrintType)
     llvm::errs() << " starting IPO of " << call << "\n";
@@ -5664,3 +5665,51 @@ std::set<int64_t> TypeAnalyzer::knownIntegralValues(Value *val) {
 }
 
 void TypeAnalysis::clear() { analyzedFunctions.clear(); }
+
+FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
+                                    llvm::Function *todiff) {
+  FnTypeInfo oldTypeInfo = oldTypeInfo_;
+  for (auto &pair : oldTypeInfo.KnownValues) {
+    if (pair.second.size() != 0) {
+      bool recursiveUse = false;
+      std::set<std::pair<Value *, Value *>> seen;
+      SetVector<std::pair<Value *, Value *>> todo;
+      for (auto user : pair.first->users())
+        todo.insert(std::make_pair(user, pair.first));
+      while (todo.size()) {
+        auto spair = todo.pop_back_val();
+        if (seen.count(spair))
+          continue;
+        seen.insert(spair);
+        auto [v, prev] = spair;
+        if (isa<BinaryOperator>(v) || isa<PHINode>(v) || isa<Argument>(v)) {
+          for (auto user : v->users())
+            todo.insert(std::make_pair(user, v));
+          continue;
+        }
+        if (auto ci = dyn_cast<CallInst>(v)) {
+          if (ci->getCalledFunction() == todiff &&
+              ci->getArgOperand(pair.first->getArgNo()) == prev) {
+            if (prev == pair.first)
+              continue;
+            recursiveUse = true;
+            break;
+          }
+        }
+        if (auto ci = dyn_cast<InvokeInst>(v)) {
+          if (ci->getCalledFunction() == todiff &&
+              ci->getArgOperand(pair.first->getArgNo()) == prev) {
+            if (prev == pair.first)
+              continue;
+            recursiveUse = true;
+            break;
+          }
+        }
+      }
+      if (recursiveUse) {
+        pair.second.clear();
+      }
+    }
+  }
+  return oldTypeInfo;
+}

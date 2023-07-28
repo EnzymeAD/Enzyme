@@ -1768,35 +1768,6 @@ void cleanupInversionAllocs(DiffeGradientUtils *gutils, BasicBlock *entry) {
   }
 }
 
-static FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
-                                           llvm::Function *todiff) {
-  FnTypeInfo oldTypeInfo = oldTypeInfo_;
-  for (auto &pair : oldTypeInfo.KnownValues) {
-    if (pair.second.size() != 0) {
-      bool recursiveUse = false;
-      for (auto user : pair.first->users()) {
-        if (auto bi = dyn_cast<BinaryOperator>(user)) {
-          for (auto biuser : bi->users()) {
-            if (auto ci = dyn_cast<CallInst>(biuser)) {
-              if (ci->getCalledFunction() == todiff &&
-                  ci->getArgOperand(pair.first->getArgNo()) == bi) {
-                recursiveUse = true;
-                break;
-              }
-            }
-          }
-        }
-        if (recursiveUse)
-          break;
-      }
-      if (recursiveUse) {
-        pair.second.clear();
-      }
-    }
-  }
-  return oldTypeInfo;
-}
-
 void restoreCache(
     DiffeGradientUtils *gutils,
     const std::map<std::pair<Instruction *, CacheType>, int> &mapping,
