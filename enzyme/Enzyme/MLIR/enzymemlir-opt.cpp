@@ -83,6 +83,11 @@ int main(int argc, char **argv) {
   mlir::registerConvertSCFToOpenMPPass();
   mlir::registerAffinePasses();
   mlir::registerReconcileUnrealizedCasts();
+  mlir::bufferization::registerEmptyTensorToAllocTensor();
+  mlir::bufferization::registerBufferizationPasses();
+  mlir::func::registerFuncBufferizePass();
+  mlir::registerLinalgBufferizePass();
+  mlir::tensor::registerTensorBufferizePass();
 
   registry.addExtension(+[](MLIRContext *ctx, LLVM::LLVMDialect *dialect) {
     LLVM::LLVMFunctionType::attachInterface<MemRefInsider>(*ctx);
@@ -97,6 +102,7 @@ int main(int argc, char **argv) {
     LLVM::LLVMArrayType::attachInterface<PtrElementModel<LLVM::LLVMArrayType>>(
         *ctx);
     enzyme::CacheType::attachInterface<MemRefInsider>(*ctx);
+    RankedTensorType::attachInterface<MemRefInsider>(*ctx);
   });
 
   // Register the autodiff interface implementations for upstream dialects.

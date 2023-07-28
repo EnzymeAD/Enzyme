@@ -26,6 +26,10 @@ linalg::GenericOp Utils::adjointToGeneric(enzyme::GenericAdjointOp &op,
   auto &body = genericOp.getRegion();
   body.takeBody(op.getRegion());
 
+  for(auto result : llvm::enumerate(op->getResults())) {
+    result.value().replaceAllUsesWith(genericOp->getResult(result.index()));
+  }
+
   op.erase();
 
   return genericOp;

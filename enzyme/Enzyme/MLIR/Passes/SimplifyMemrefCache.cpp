@@ -133,7 +133,7 @@ struct SimplifyMemrefCachePass
           continue;
         }
         for (auto &&input : llvm::enumerate(linalgOp.getInputs())) {
-          if (input.value() != subviewOp) {
+          if (input.value() != subviewOp && input.value() != extractSliceOp) {
             continue;
           }
           unsigned inputIndex = (unsigned)input.index();

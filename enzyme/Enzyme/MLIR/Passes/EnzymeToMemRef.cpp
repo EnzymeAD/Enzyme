@@ -18,6 +18,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "llvm/Support/raw_ostream.h"
@@ -374,7 +375,7 @@ struct EnzymeToMemRefPass
     RewritePatternSet patterns(context);
     TypeConverter typeConverter;
     typeConverter.addConversion([](Type type) -> llvm::Optional<Type> {
-      if (type.isIntOrIndexOrFloat() || type.isa<MemRefType>())
+      if (type.isIntOrIndexOrFloat() || type.isa<MemRefType>() || type.isa<TensorType>())
         return type;
       return {};
     });
@@ -404,6 +405,7 @@ struct EnzymeToMemRefPass
 
     ConversionTarget target(*context);
     target.addLegalDialect<memref::MemRefDialect>();
+    target.addLegalDialect<tensor::TensorDialect>();
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<scf::SCFDialect>();
     target.addLegalDialect<cf::ControlFlowDialect>();

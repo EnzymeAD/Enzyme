@@ -37,6 +37,11 @@ def AddToOpToIndexAndLoadPass : Pass<"add-to-op-to-index-and-load"> {
   let constructor = "mlir::enzyme::createAddToOpToIndexAndLoadPass()";
 }
 
+def LowerTensorGenericAdjointPass : Pass<"lower-tensor-generic-adjoint"> {
+  let summary = "TODO";
+  let constructor = "mlir::enzyme::createLowerTensorGenericAdjointPass()";
+}
+
 def AddToOpToSplitPass : Pass<"add-to-op-to-split"> {
   let summary = "Duplicate linalg.generic once for each output to remove enzyme.addTo op";
   let constructor = "mlir::enzyme::createAddToOpToSplitPass()";
