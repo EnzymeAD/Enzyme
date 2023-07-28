@@ -177,6 +177,21 @@ public:
     return result;
   }
 
+  ChangeResult meet(const AbstractDenseLattice &lattice) override {
+    const auto &rhs = static_cast<const MemoryActivity &>(lattice);
+    ChangeResult result = ChangeResult::NoChange;
+    for (const auto &state : rhs.activityStates) {
+      auto &lhsState = activityStates[state.first];
+      if (lhsState != state.second) {
+        lhsState.activeLoad |= state.second.activeLoad;
+        lhsState.activeStore |= state.second.activeStore;
+        lhsState.activeInit |= state.second.activeInit;
+        result |= ChangeResult::Change;
+      }
+    }
+    return result;
+  }
+
   bool hasActiveData(Value value) const {
     auto state = activityStates.lookup(aliasClasses[value]);
     return state.activeStore || state.activeInit;
@@ -308,7 +323,6 @@ public:
 class DenseForwardActivityAnalysis
     : public DenseDataFlowAnalysis<MemoryActivity> {
 public:
-  // DenseForwardActivityAnalysis()
   using DenseDataFlowAnalysis::DenseDataFlowAnalysis;
 
   void visitOperation(Operation *op, const MemoryActivity &before,
@@ -375,6 +389,12 @@ public:
           if (valueState->getValue().isActive()) {
             result |= after->setActiveStore(value, true);
           }
+        } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
+          auto *valueState =
+              getOrCreateFor<ForwardValueActivity>(op, storeOp.getValue());
+          if (valueState->getValue().isActive()) {
+            result |= after->setActiveStore(value, true);
+          }
         }
       }
     }
@@ -383,6 +403,73 @@ public:
 
   // Not sure what this should be, unknown?
   void setToEntryState(MemoryActivity *lattice) override {
+    propagateIfChanged(lattice, lattice->reset());
+  }
+};
+
+class DenseBackwardActivityAnalysis
+    : public DenseBackwardDataFlowAnalysis<MemoryActivity> {
+public:
+  using DenseBackwardDataFlowAnalysis::DenseBackwardDataFlowAnalysis;
+
+  void visitOperation(Operation *op, const MemoryActivity &after,
+                      MemoryActivity *before) override {
+    auto memory = dyn_cast<MemoryEffectOpInterface>(op);
+    // If we can't reason about the memory effects, then conservatively assume
+    // we can't deduce anything about activity via side-effects.
+    if (!memory)
+      return setToExitState(before);
+
+    errs() << "dense backward visiting operation " << *op << "\n";
+    SmallVector<MemoryEffects::EffectInstance> effects;
+    memory.getEffects(effects);
+
+    ChangeResult result = before->join(after);
+    for (const auto &effect : effects) {
+      Value value = effect.getValue();
+
+      // If we see an effect on anything other than a value, assume we can't
+      // deduce anything about the activity.
+      if (!value)
+        return setToExitState(before);
+
+      // TODO: From the upstream test dense analysis, we may need to copy paste
+      // "Underlying Value" analysis to traverse call graphs correctly.
+
+      // value =
+      // getMostUnderlyingValue(value, [&](Value value) {
+      //   return getOrCreateFor<UnderlyingValueLattice>(op, value);
+      // });
+      // if (!value)
+      //   return;
+
+      // In backward-flow, a value is active if stored into a memory resource
+      // that has subsequently been actively loaded from.
+      if (isa<MemoryEffects::Read>(effect.getEffect())) {
+        if (auto loadOp = dyn_cast<LLVM::LoadOp>(op)) {
+          auto *valueState =
+              getOrCreateFor<BackwardValueActivity>(op, loadOp.getResult());
+          if (valueState->getValue().isActive()) {
+            result |= before->setActiveLoad(value, true);
+          }
+        }
+      }
+      if (isa<MemoryEffects::Write>(effect.getEffect())) {
+        if (auto storeOp = dyn_cast<LLVM::StoreOp>(op)) {
+          if (after.hasActiveData(value)) {
+            result |= before->setActiveStore(value, true);
+
+            // Mark the stored value as (backward) active
+            auto *valueState =
+                getOrCreate<BackwardValueActivity>(storeOp.getValue());
+            result |= valueState->meet(ValueActivity::getActive());
+          }
+        }
+      }
+    }
+  }
+
+  void setToExitState(MemoryActivity *lattice) override {
     propagateIfChanged(lattice, lattice->reset());
   }
 };
@@ -427,8 +514,9 @@ void enzyme::runDataFlowActivityAnalysis(
   basicAliasAnalysis(callee, aliasClasses, /*annotate=*/true);
 
   solver.load<SparseForwardActivityAnalysis>();
-  // solver.load<SparseBackwardActivityAnalysis>(symbolTable);
   solver.load<DenseForwardActivityAnalysis>();
+  solver.load<SparseBackwardActivityAnalysis>(symbolTable);
+  solver.load<DenseBackwardActivityAnalysis>(symbolTable);
 
   // Required for the dataflow framework to traverse region-based control flow
   solver.load<DeadCodeAnalysis>();
@@ -478,6 +566,20 @@ void enzyme::runDataFlowActivityAnalysis(
 
   if (print) {
     callee.walk([&](Operation *op) {
+      if (op->hasAttr("tag")) {
+        errs() << op->getAttr("tag") << ": ";
+        for (Value operand : op->getOperands()) {
+          auto forwardValueActivity =
+              solver.lookupState<ForwardValueActivity>(operand);
+          if (forwardValueActivity) {
+            errs() << "  ";
+            forwardValueActivity->print(errs());
+            errs() << "\n";
+          } else {
+            errs() << "  <null>\n";
+          }
+        }
+      }
       for (OpResult result : op->getResults()) {
         auto forwardValueActivity =
             solver.lookupState<ForwardValueActivity>(result);

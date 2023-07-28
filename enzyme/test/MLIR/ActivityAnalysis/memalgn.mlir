@@ -10,8 +10,10 @@ module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<i1, dense<8> : ve
     %5 = llvm.load %2 : !llvm.ptr<ptr<f32>>
     llvm.store %arg0, %5 : f32, !llvm.ptr<f32>
     %6 = llvm.load %2 : !llvm.ptr<ptr<f32>>
-    %7 = llvm.load %6 {tag = "out"} : !llvm.ptr<f32>
-    llvm.return %7 : f32
+    %7 = llvm.load %6 : !llvm.ptr<f32>
+    llvm.return {tag = "retval"} %7 : f32
   }
   llvm.func @posix_memalign(!llvm.ptr, i64, i64) -> i32
 }
+
+// CHECK: "retval": Active

@@ -65,7 +65,7 @@ LogicalResult inferEnzymeAutodiffOps(ModuleOp moduleOp) {
         argActivities.push_back(enzyme::Activity::enzyme_const);
       }
     }
-    enzyme::runDataFlowActivityAnalysis(callee, argActivities);
+    enzyme::runDataFlowActivityAnalysis(callee, argActivities, /*print=*/true);
   }
   return success();
 }
@@ -128,7 +128,7 @@ struct PrintActivityAnalysisPass
         resultActivities{callee.getNumResults()};
     initializeArgAndResActivities(callee, argActivities, resultActivities);
 
-    enzyme::runDataFlowActivityAnalysis(callee, argActivities);
+    enzyme::runDataFlowActivityAnalysis(callee, argActivities, /*print=*/true);
   }
 };
 } // namespace
