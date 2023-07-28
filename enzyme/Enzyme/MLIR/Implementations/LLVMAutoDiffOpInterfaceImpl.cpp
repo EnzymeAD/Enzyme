@@ -79,7 +79,7 @@ public:
   }
 
   mlir::Value createNullValueReverse(mlir::Type self, mlir::OpBuilder & builder, mlir::Value primal, mlir::Operation * op, mlir::enzyme::MGradientUtilsReverse * gutils) const {
-    llvm_unreachable("TODO");
+    return builder.create<LLVM::NullOp>(primal.getLoc(), self);
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,

@@ -35,7 +35,10 @@ public:
   }
 
   mlir::Value createNullValueReverse(mlir::Type self, mlir::OpBuilder & builder, mlir::Value primal, mlir::Operation * op, mlir::enzyme::MGradientUtilsReverse * gutils) const {
-    llvm_unreachable("TODO");
+    auto loc = primal.getLoc();
+    auto fltType = self.cast<FloatType>();
+    return builder.create<arith::ConstantFloatOp>(
+        loc, APFloat(fltType.getFloatSemantics(), 0), fltType);
   }
 
 
@@ -64,7 +67,11 @@ public:
   }
 
   mlir::Value createNullValueReverse(mlir::Type self, mlir::OpBuilder & builder, mlir::Value primal, mlir::Operation * op, mlir::enzyme::MGradientUtilsReverse * gutils) const {
-    llvm_unreachable("TODO");
+    auto loc = primal.getLoc();
+    if (isa<IndexType>(self)) {
+      return builder.create<arith::ConstantIndexOp>(loc, 0);
+    }
+    return builder.create<arith::ConstantIntOp>(loc, 0, self);
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
