@@ -504,6 +504,7 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
     auto rule = rules[j];
     auto input_vec_name = nameVec[actVar];
     if (name == input_var) {
+      os << "    //handling input\n";
       // we not only use arg_<X>, but also input_<X>
       extract_input_mat(name, input_vec_name, os);
     }
@@ -1154,8 +1155,22 @@ void rev_call_arg(StringRef argName, DagInit *ruleDag, Rule &rule,
       }
       pos++; // extra ++ due to also handling vincInc
     } else if (ty == ArgType::vincInc) {
-      // might come without vincData, e.g. after DiffeRet
-      os << "arg_" << name;
+      auto prevArg = ruleDag->getArg(pos - 1);
+      if (DefInit *DefArg = dyn_cast<DefInit>(prevArg)) {
+        auto Def = DefArg->getDef();
+        if (Def->isSubClassOf("adj")) {
+          // all ok, single inc after shadow of vec
+          // use original inc, since shadow is never cached
+          os << "true_" << name;
+        } else {
+          // single inc might be reused in other places?
+          os << "arg_" << name;
+        }
+      } else {
+        errs() << rule.to_string() << "\n";
+        llvm::errs() << "name: " << name << " typename: " << ty << "\n";
+        PrintFatalError("sholdn't be hit??\n");
+      }
     } else if (ty == ArgType::mldData) {
       auto nextName = ruleDag->getArgNameStr(pos + 1);
       // get the position of the argument in the primary blas call

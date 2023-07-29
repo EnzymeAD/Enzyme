@@ -47,12 +47,19 @@ os << "  bool need_" << name << " = false;\n";
       os 
 << ";\n";
     }
+  }
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    auto ty = typeMap.lookup(i);
+    // how about layout?
+    if (ty == ArgType::cblas_layout) {
+      continue;
+    }
+    auto name = nameVec[i];
     os << "  bool cache_" << name << " = cacheMode";
     // scalars passed by value don't have to be cached
     if (!isVecLikeArg(ty))
       os << " && byRef";
     os << " && overwritten_" << name << " && need_" << name << ";\n";
-
   }
 }
 
@@ -428,8 +435,8 @@ void emit_caching(const TGPattern &pattern, raw_ostream &os) {
 << "  SmallVector<Type *, 2> cacheTypes;\n\n";
 
   emit_need_cache_info(pattern, os);
-  emit_cacheTypes(pattern, os);
   emit_input_caching(pattern, os);
+  emit_cacheTypes(pattern, os);
 
   os
 << "  Type *cachetype = nullptr;\n"
