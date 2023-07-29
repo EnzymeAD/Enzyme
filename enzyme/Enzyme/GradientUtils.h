@@ -292,9 +292,10 @@ private:
   unsigned tapeidx;
   llvm::Value *tape;
 
-  std::map<llvm::BasicBlock *,
-           llvm::ValueMap<llvm::Value *,
-                          std::map<llvm::BasicBlock *, llvm::WeakTrackingVH>>>
+  std::map<
+      llvm::BasicBlock *,
+      llvm::ValueMap<llvm::Value *, std::map<std::vector<llvm::BasicBlock *>,
+                                             llvm::WeakTrackingVH>>>
       unwrap_cache;
   std::map<llvm::BasicBlock *,
            llvm::ValueMap<llvm::Value *, llvm::WeakTrackingVH>>
@@ -462,7 +463,8 @@ public:
   /// etc
   llvm::Value *unwrapM(llvm::Value *const val, llvm::IRBuilder<> &BuilderM,
                        const llvm::ValueToValueMapTy &available,
-                       UnwrapMode unwrapMode, llvm::BasicBlock *scope = nullptr,
+                       UnwrapMode unwrapMode,
+                       std::vector<llvm::BasicBlock *> scope = {},
                        bool permitCache = true) override final;
 
   void ensureLookupCached(llvm::Instruction *inst, bool shouldFree = true,
@@ -480,7 +482,7 @@ public:
                        const llvm::ValueToValueMapTy &incoming_availalble =
                            llvm::ValueToValueMapTy(),
                        bool tryLegalRecomputeCheck = true,
-                       llvm::BasicBlock *scope = nullptr) override;
+                       std::vector<llvm::BasicBlock *> scope = {}) override;
 
   llvm::Value *invertPointerM(llvm::Value *val, llvm::IRBuilder<> &BuilderM,
                               bool nullShadow = false);

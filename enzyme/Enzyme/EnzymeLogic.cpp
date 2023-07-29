@@ -1840,7 +1840,7 @@ void restoreCache(
       // replacement.
       Value *nval = gutils->unwrapM(nexti, lb, available,
                                     UnwrapMode::LegalFullUnwrapNoTapeReplace,
-                                    /*scope*/ nullptr, /*permitCache*/ false);
+                                    /*scope*/{}, /*permitCache*/ false);
       assert(nval);
       V->replaceAllUsesWith(nval);
       V->eraseFromParent();
