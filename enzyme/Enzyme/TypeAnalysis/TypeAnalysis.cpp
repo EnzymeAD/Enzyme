@@ -27,6 +27,9 @@
 
 #include <llvm/Config/llvm-config.h>
 
+#include "llvm/Demangle/Demangle.h"
+#include "llvm/Demangle/ItaniumDemangle.h"
+
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"
@@ -177,6 +180,36 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"llround", Intrinsic::llround},
     {"lrint", Intrinsic::lrint},
     {"llrint", Intrinsic::llrint}};
+
+
+static bool isItaniumEncoding(StringRef S) {
+  // Itanium encoding requires 1 or 3 leading underscores, followed by 'Z'.
+  return S.startswith("_Z") || S.startswith("___Z");
+}
+
+bool dontAnalyze(StringRef str) {
+  if (isItaniumEncoding(str)) {
+    if (str.empty())
+    return false;
+
+	ItaniumPartialDemangler Parser;
+	char* data = (char*)malloc(str.size()+1);
+	memcpy(data, str.data(), str.size());
+	data[str.size()] = 0;
+	bool hasError = Parser.partialDemangle(data);
+	if (hasError) {
+		free(data);
+		return false;
+	}
+	
+	auto basename = Parser.getFunctionBaseName(0, 0);
+	auto base = Parser.getFunctionDeclContextName(0, 0);
+	auto fn = Parser.getFunctionName(0, 0);
+	llvm::errs() << " err: " << base << " - " << basename << " fn - " << fn << "\n";
+	free(data);
+  }
+  return false;
+}
 
 TypeAnalyzer::TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
                            uint8_t direction)
@@ -4787,6 +4820,9 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
         funcName == "vprintf" || funcName == "puts" || funcName == "fprintf") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
     }
+
+    if (dontAnalyze(funcName))
+      return;
 
     if (!ci->empty() && !hasMetadata(ci, "enzyme_gradient") &&
         !hasMetadata(ci, "enzyme_derivative")) {
