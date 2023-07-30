@@ -181,7 +181,6 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"lrint", Intrinsic::lrint},
     {"llrint", Intrinsic::llrint}};
 
-
 static bool isItaniumEncoding(StringRef S) {
   // Itanium encoding requires 1 or 3 leading underscores, followed by 'Z'.
   return S.startswith("_Z") || S.startswith("___Z");
@@ -190,23 +189,24 @@ static bool isItaniumEncoding(StringRef S) {
 bool dontAnalyze(StringRef str) {
   if (isItaniumEncoding(str)) {
     if (str.empty())
-    return false;
+      return false;
 
-	ItaniumPartialDemangler Parser;
-	char* data = (char*)malloc(str.size()+1);
-	memcpy(data, str.data(), str.size());
-	data[str.size()] = 0;
-	bool hasError = Parser.partialDemangle(data);
-	if (hasError) {
-		free(data);
-		return false;
-	}
-	
-	auto basename = Parser.getFunctionBaseName(0, 0);
-	auto base = Parser.getFunctionDeclContextName(0, 0);
-	auto fn = Parser.getFunctionName(0, 0);
-	llvm::errs() << " err: " << base << " - " << basename << " fn - " << fn << "\n";
-	free(data);
+    ItaniumPartialDemangler Parser;
+    char *data = (char *)malloc(str.size() + 1);
+    memcpy(data, str.data(), str.size());
+    data[str.size()] = 0;
+    bool hasError = Parser.partialDemangle(data);
+    if (hasError) {
+      free(data);
+      return false;
+    }
+
+    auto basename = Parser.getFunctionBaseName(0, 0);
+    auto base = Parser.getFunctionDeclContextName(0, 0);
+    auto fn = Parser.getFunctionName(0, 0);
+    // llvm::errs() << " err: " << base << " - " << basename << " fn - " << fn
+    //              << "\n";
+    free(data);
   }
   return false;
 }
