@@ -385,4 +385,6 @@ public:
 
 TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
                                 bool intIsPointer = true);
+FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
+                                    llvm::Function *todiff);
 #endif
