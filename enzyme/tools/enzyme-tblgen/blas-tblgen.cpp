@@ -511,19 +511,21 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
     extract_mat_or_vec(name, os);
 
     // caching a vector implies that the corresponding inc will now be 1.
-    const auto incName = nameVec[i + 1];
-    os << "    if (cache_" << name << ") {\n"
-       << "      arg_" << incName << " = ConstantInt::get(intType, 1);\n"
-       << "      if (byRef) {\n"
-       << "        auto alloc = allocationBuilder.CreateAlloca(intType, "
-          "nullptr, \"byref."
-       << incName << "\");\n"
-       << "        Builder2.CreateStore(arg_" << incName << ", alloc);\n"
-       << "        arg_" << incName << " = Builder2.CreatePointerCast(\n"
-       << "          alloc, type_" << incName << ", \"cast." << incName
-       << "\");\n"
-       << "      }\n"
-       << "    }\n";
+    // TODO: commented out because we might need the original inc in other 
+    // locations. So just check once we emit the actual args
+    //const auto incName = nameVec[i + 1];
+    //os << "    if (cache_" << name << ") {\n"
+    //   << "      arg_" << incName << " = ConstantInt::get(intType, 1);\n"
+    //   << "      if (byRef) {\n"
+    //   << "        auto alloc = allocationBuilder.CreateAlloca(intType, "
+    //      "nullptr, \"byref."
+    //   << incName << "\");\n"
+    //   << "        Builder2.CreateStore(arg_" << incName << ", alloc);\n"
+    //   << "        arg_" << incName << " = Builder2.CreatePointerCast(\n"
+    //   << "          alloc, type_" << incName << ", \"cast." << incName
+    //   << "\");\n"
+    //   << "      }\n"
+    //   << "    }\n";
   }
 
   os << "  } else {\n"
@@ -1133,27 +1135,27 @@ void rev_call_arg(StringRef argName, DagInit *ruleDag, Rule &rule,
     // Now we create the adj call args through concating type and primal name
     if (ty == ArgType::len) {
       os << "arg_" << name;
-    } else if (ty == ArgType::fp || ty == ArgType::ap) {
+    } else if (ty == ArgType::fp || ty == ArgType::ap || ty == ArgType::vincData) {
       if (argPosition == actArg) {
         os << "d_" << name;
       } else {
         os << "arg_" << name;
       }
-    } else if (ty == ArgType::vincData) {
-      auto nextName = ruleDag->getArgNameStr(pos + 1);
-      // get the position of the argument in the primary blas call
-      auto nextArgPosition = nameMap.lookup(nextName);
-      // and based on that get the fp/int + scalar/vector type
-      auto typeOfNextArg = typeMap.lookup(nextArgPosition);
-      assert(typeOfNextArg == ArgType::vincInc);
-      if (argPosition == actArg) {
-        // shadow d_<X> wasn't overwritten or cached, so use true_inc<X>
-        // since arg_inc<X> was set to 1 if arg_<X> was cached
-        os << "d_" << name << ", true_" << nextName;
-      } else {
-        os << "arg_" << name << ", arg_" << nextName;
-      }
-      pos++; // extra ++ due to also handling vincInc
+    //} else if (ty == ArgType::vincData) {
+    //  auto nextName = ruleDag->getArgNameStr(pos + 1);
+    //  // get the position of the argument in the primary blas call
+    //  auto nextArgPosition = nameMap.lookup(nextName);
+    //  // and based on that get the fp/int + scalar/vector type
+    //  auto typeOfNextArg = typeMap.lookup(nextArgPosition);
+    //  assert(typeOfNextArg == ArgType::vincInc);
+    //  if (argPosition == actArg) {
+    //    // shadow d_<X> wasn't overwritten or cached, so use true_inc<X>
+    //    // since arg_inc<X> was set to 1 if arg_<X> was cached
+    //    os << "d_" << name << ", arg_" << nextName;
+    //  } else {
+    //    os << "arg_" << name << ", arg_" << nextName;
+    //  }
+    //  pos++; // extra ++ due to also handling vincInc
     } else if (ty == ArgType::vincInc) {
       auto prevArg = ruleDag->getArg(pos - 1);
       if (DefInit *DefArg = dyn_cast<DefInit>(prevArg)) {
@@ -1161,17 +1163,18 @@ void rev_call_arg(StringRef argName, DagInit *ruleDag, Rule &rule,
         if (Def->isSubClassOf("adj")) {
           // all ok, single inc after shadow of vec
           // use original inc, since shadow is never cached
-          os << "true_" << name;
-        } else {
-          // single inc might be reused in other places?
           os << "arg_" << name;
+        } else {
+          auto prevName = Def->getValueAsString("name");
+          os << "(cache_" << prevName << " ? const_one : arg_" << name << ")";
         }
       } else {
-        errs() << rule.to_string() << "\n";
-        llvm::errs() << "name: " << name << " typename: " << ty << "\n";
-        PrintFatalError("sholdn't be hit??\n");
+        auto prevName = ruleDag->getArgNameStr(pos - 1);
+        os << "(cache_" << prevName << " ? const_one : arg_" << name << ")";
       }
     } else if (ty == ArgType::mldData) {
+      // TODO: update this to use width_<X> instead of true_<X>,
+      // similar to the vector inc case
       auto nextName = ruleDag->getArgNameStr(pos + 1);
       // get the position of the argument in the primary blas call
       auto nextArgPosition = nameMap.lookup(nextName);
@@ -1201,7 +1204,7 @@ void rev_call_arg(StringRef argName, DagInit *ruleDag, Rule &rule,
       } else {
         errs() << rule.to_string() << "\n";
         llvm::errs() << "name: " << name << " typename: " << ty << "\n";
-        PrintFatalError("sholdn't be hit??\n");
+        PrintFatalError("shouldn't be hit??\n");
       }
     } else if (ty == ArgType::trans || ty == ArgType::diag ||
                ty == ArgType::uplo || ty == ArgType::side) {
@@ -1474,6 +1477,10 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   } else {
     os << ") {\n";
   }
+
+  // just make this const one available now to have less variable name repition
+  os << "Value * const_one = to_blas_callconv(Builder2, ConstantInt::get(intType, 1), "
+     << "byRef, intType, allocationBuilder, \"int.one\");\n";
 
   os << "      auto bb_name = Builder2.GetInsertBlock()->getName();\n";
   for (size_t i = 0; i < activeArgs.size(); i++) {

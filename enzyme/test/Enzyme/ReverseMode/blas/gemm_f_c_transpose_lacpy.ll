@@ -46,6 +46,9 @@ entry:
   call void (...) @__enzyme_autodiff(void (i8*,i8*,i8*)* @f, metadata !"enzyme_dup", i8* %C, i8* %dC, metadata !"enzyme_dup", i8* %A, i8* %dA, metadata !"enzyme_dup", i8* %B, i8* %dB)
   ret void
 }
+; CHECK-COM:   %byref.int.one = alloca i64
+; CHECK-COM:   store i64 1, i64* %byref.int.one
+; CHECK-COM:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
 
 ; CHECK: define internal void @diffef(i8* %C, i8* %"C'", i8* %A, i8* %"A'", i8* %B, i8* %"B'")
 ; CHECK-NEXT: entry:
@@ -54,6 +57,7 @@ entry:
 ; CHECK-NEXT:   %ret = alloca double
 ; CHECK-NEXT:   %byref.transpose.transa = alloca i8
 ; CHECK-NEXT:   %byref.transpose.transb = alloca i8
+; CHECK-NEXT:   %byref.int.one = alloca i64
 ; CHECK-NEXT:   %byref.constant.char.G = alloca i8
 ; CHECK-NEXT:   %byref.constant.int.0 = alloca i64
 ; CHECK-NEXT:   %[[int04:.+]] = alloca i64
@@ -153,6 +157,8 @@ entry:
 ; CHECK-DAG:   %[[i40:.+]] = icmp eq i8 %ld.transb, 84
 ; CHECK-DAG:   %[[i41:.+]] = select i1 %[[i40]], i8 78, i8 %[[i39]]
 ; CHECK-NEXT:   store i8 %[[i41]], i8* %byref.transpose.transb
+; CHECK-NEXT:   store i64 1, i64* %byref.int.one
+; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
 ; CHECK-NEXT:   %loaded.trans5 = load i8, i8* %transb
 ; CHECK-DAG:   %[[i40:.+]] = icmp eq i8 %loaded.trans5, 78
 ; CHECK-DAG:   %[[i41:.+]] = icmp eq i8 %loaded.trans5, 110

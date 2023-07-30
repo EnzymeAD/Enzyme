@@ -48,12 +48,18 @@ entry:
   ret void
 }
 
+; CHECK-COM:   %byref.int.one = alloca i64
+; CHECK-COM:   store i64 1, i64* %byref.int.one
+; CHECK-COM:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
+
+
 ; CHECK: define internal void @diffef(i8* noalias %C, i8* %"C'", i8* noalias %A, i8* %"A'", i8* noalias %B)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %byref.copy.garbage = alloca i8
 ; CHECK-NEXT:   %ret = alloca double
 ; CHECK-NEXT:   %byref.transpose.transa = alloca i8
 ; CHECK-NEXT:   %byref.transpose.transb = alloca i8
+; CHECK-NEXT:   %byref.int.one = alloca i64
 ; CHECK-NEXT:   %byref.constant.char.G = alloca i8
 ; CHECK-NEXT:   %byref.constant.int.0 = alloca i64
 ; CHECK-NEXT:   %[[byrefint03:.+]] = alloca i64
@@ -130,6 +136,8 @@ entry:
 ; CHECK-DAG:    %[[r14:.+]] = icmp eq i8 %ld.transb, 84
 ; CHECK-DAG:    %[[r15:.+]] = select i1 %[[r14]], i8 78, i8 %[[r13]]
 ; CHECK-DAG:    store i8 %[[r15]], i8* %byref.transpose.transb
+; CHECK-NEXT:   store i64 1, i64* %byref.int.one
+; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
 ; CHECK-NEXT:   %loaded.trans1 = load i8, i8* %transb
 ; CHECK-DAG:   %[[r16:.+]] = icmp eq i8 %loaded.trans1, 78
 ; CHECK-DAG:   %[[r17:.+]] = icmp eq i8 %loaded.trans1, 110
