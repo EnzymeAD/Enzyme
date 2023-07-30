@@ -854,16 +854,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
               noLookup = true;                                                 \
           }                                                                    \
         origParent = lookupInst;                                               \
-        if (BasicBlock *forwardBlock = origParent)                             \
-          if (auto opinst = dyn_cast<Instruction>(v)) {                        \
-            if (!isOriginalBlock(*forwardBlock)) {                             \
-              forwardBlock = originalForReverseBlock(*forwardBlock);           \
-            }                                                                  \
-            if (isPotentialLastLoopValue(opinst, forwardBlock, LI)) {          \
-              v = fixLCSSA(opinst, forwardBlock);                              \
-              origParent = nullptr;                                            \
-            }                                                                  \
-          }                                                                    \
         if (!noLookup)                                                         \
           ___res = lookupM(v, Builder, available, v != val, origParent);       \
       }                                                                        \
@@ -871,16 +861,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         assert(___res->getType() == v->getType() && "uw");                     \
     } else {                                                                   \
       origParent = lookupInst;                                                 \
-      if (BasicBlock *forwardBlock = origParent)                               \
-        if (auto opinst = dyn_cast<Instruction>(v)) {                          \
-          if (!isOriginalBlock(*forwardBlock)) {                               \
-            forwardBlock = originalForReverseBlock(*forwardBlock);             \
-          }                                                                    \
-          if (isPotentialLastLoopValue(opinst, forwardBlock, LI)) {            \
-            v = fixLCSSA(opinst, forwardBlock);                                \
-            origParent = nullptr;                                              \
-          }                                                                    \
-        }                                                                      \
       assert(unwrapMode == UnwrapMode::AttemptSingleUnwrap);                   \
       auto found = available.find(v);                                          \
       assert(found == available.end() || found->second);                       \
@@ -2041,17 +2021,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                   if (!noLookup) {
                     BasicBlock *nS2 = nextScope;
                     Value *v = inst;
-                    if (BasicBlock *forwardBlock = nextScope)
-                      if (auto opinst = dyn_cast<Instruction>(v)) {
-                        if (!isOriginalBlock(*forwardBlock)) {
-                          forwardBlock = originalForReverseBlock(*forwardBlock);
-                        }
-                        if (isPotentialLastLoopValue(opinst, forwardBlock,
-                                                     LI)) {
-                          v = fixLCSSA(opinst, forwardBlock);
-                          nS2 = nullptr;
-                        }
-                      }
                     ___res = lookupM(v, B, prevAvailable, v != val, nS2);
                   }
                 }
@@ -2060,16 +2029,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
               } else {
                 BasicBlock *nS2 = nextScope;
                 Value *v = inst;
-                if (BasicBlock *forwardBlock = nextScope)
-                  if (auto opinst = dyn_cast<Instruction>(v)) {
-                    if (!isOriginalBlock(*forwardBlock)) {
-                      forwardBlock = originalForReverseBlock(*forwardBlock);
-                    }
-                    if (isPotentialLastLoopValue(opinst, forwardBlock, LI)) {
-                      v = fixLCSSA(opinst, forwardBlock);
-                      nS2 = nullptr;
-                    }
-                  }
                 ___res = lookupM(v, B, prevAvailable, v != val, nS2);
                 if (___res && ___res->getType() != v->getType()) {
                   llvm::errs() << *newFunc << "\n";
@@ -2362,18 +2321,8 @@ endCheck:
           return nullptr;
         }
       }
-    BasicBlock *nS2 = scope;
-    if (BasicBlock *forwardBlock = scope)
-      if (auto opinst = dyn_cast<Instruction>(nval)) {
-        if (!isOriginalBlock(*forwardBlock)) {
-          forwardBlock = originalForReverseBlock(*forwardBlock);
-        }
-        if (isPotentialLastLoopValue(opinst, forwardBlock, LI)) {
-          nval = fixLCSSA(opinst, forwardBlock);
-        }
-      }
     auto toreturn = lookupM(nval, BuilderM, available,
-                            /*tryLegalRecomputeCheck*/ false, nS2);
+                            /*tryLegalRecomputeCheck*/ false, scope);
     assert(val->getType() == toreturn->getType());
     return toreturn;
   }
