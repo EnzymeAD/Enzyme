@@ -618,7 +618,7 @@ BasicBlock *GradientUtils::isOriginal(const BasicBlock *newinst) const {
 Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                               const ValueToValueMapTy &available,
                               UnwrapMode unwrapMode,
-                              std::vector<BasicBlock *> scope,
+                              const std::vector<BasicBlock *> scope,
                               bool permitCache) {
   assert(val);
   assert(val->getName() != "<badref>");
@@ -863,7 +863,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             }                                                                  \
             if (isPotentialLastLoopValue(opinst, forwardBlock, LI)) {          \
               v = fixLCSSA(opinst, forwardBlock);                              \
-              origParent.pop_back();                                           \
             }                                                                  \
           }                                                                    \
         if (!noLookup)                                                         \
@@ -881,7 +880,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           }                                                                    \
           if (isPotentialLastLoopValue(opinst, forwardBlock, LI)) {            \
             v = fixLCSSA(opinst, forwardBlock);                                \
-            origParent.pop_back();                                             \
           }                                                                    \
         }                                                                      \
       assert(unwrapMode == UnwrapMode::AttemptSingleUnwrap);                   \
@@ -2024,7 +2022,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             //                OR
             // 3) the value comes from a previous iteration.
             auto nextScope = scope;
-            scope.push_back(PB);
+            nextScope.push_back(PB);
             // if (inst->getParent() == nextScope) nextScope = phi->getParent();
             if (prevIteration.count(PB)) {
               prevAvailable[ctx.incvar] = prevIdx;
@@ -2087,6 +2085,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                 if (___res)
                   assert(___res->getType() == inst->getType() && "lu");
               }
+              assert(!isa<UndefValue>(___res));
               vals.push_back(___res);
             } else if (!DT.dominates(inst->getParent(), phi->getParent()) ||
                        (!EnzymeSpeculatePHIs &&
@@ -6243,8 +6242,13 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   }
   assert(inst->getParent()->getParent() == newFunc);
   assert(BuilderM.GetInsertBlock()->getParent() == newFunc);
-  if (scope.size() == 0)
-    scope.push_back(BuilderM.GetInsertBlock());
+  if (scope.size() == 0) {
+    auto scopeB = BuilderM.GetInsertBlock();
+    if (scopeB != inversionAllocs && !isOriginalBlock(*scopeB)) {
+      scopeB = originalForReverseBlock(*scopeB);
+    }
+    scope.push_back(scopeB);
+  }
   assert(scope.back()->getParent() == newFunc);
 
   bool reduceRegister = false;
