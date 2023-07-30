@@ -41,11 +41,6 @@ entry:
   ret void
 }
 
-; CHECK-COM:   %byref.int.one = alloca i64
-; CHECK-COM:   store i64 1, i64* %byref.int.one
-; CHECK-COM:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
-
-
 ; CHECK: define internal void @diffef(i8* noalias %C, i8* %"C'", i8* noalias %A, i8* %"A'", i8* noalias %B, i8* %"B'", i8* noalias %alpha, i8* %"alpha'", i8* noalias %beta, i8*
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %byref.constant.one.i15 = alloca i64

@@ -114,8 +114,6 @@ entry:
 
 ; CHECK: define internal void @diffef(i8* noalias %y, i8* %"y'", i8* noalias %A, i8* %"A'", i8* noalias %x, i8* noalias %alpha, i8* noalias %beta, i8* %"beta'", { double*, double* } 
 ; CHECK-NEXT: entry:
-; CHECK-COM:   %byref.incx = alloca i64
-; CHECK-COM:   %byref.incy = alloca i64
 ; CHECK-NEXT:   %ret = alloca double
 ; CHECK-NEXT:   %byref.transpose.transa = alloca i8
 ; CHECK-NEXT:   %byref.int.one = alloca i64
