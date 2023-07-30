@@ -159,6 +159,7 @@ public:
 static clang::FrontendPluginRegistry::Add<EnzymeAction<EnzymePlugin>>
     X("enzyme", "Enzyme Plugin");
 
+#if LLVM_VERSION_MAJOR > 10
 namespace {
 
 struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
@@ -250,18 +251,40 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
                                   loc, FD->getType(), ExprValueKind::VK_LValue,
                                   FD, TemplateArgs);
 
+#if LLVM_VERSION_MAJOR >= 13
+    auto rval = ExprValueKind::VK_PRValue;
+#else
+    auto rval = ExprValueKind::VK_RValue;
+#endif
+#if LLVM_VERSION_MAJOR >= 15
+    auto stringkind = clang::StringLiteral::StringKind::Ordinary;
+#else
+    auto stringkind = clang::StringLiteral::StringKind::Ascii;
+#endif
     StringRef cstr = Literal->getString();
     Expr *exprs[2] = {
-        ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
-                                 DR, nullptr, ExprValueKind::VK_PRValue,
-                                 FPOptionsOverride()),
-        ImplicitCastExpr::Create(
-            AST, AST.getPointerType(CharTy), CastKind::CK_ArrayToPointerDecay,
-            StringLiteral::Create(
-                AST, cstr, clang::StringLiteral::StringKind::Ordinary,
-                /*Pascal*/ false,
-                AST.getStringLiteralArrayType(CharTy, cstr.size()), loc),
-            nullptr, ExprValueKind::VK_PRValue, FPOptionsOverride())};
+#if LLVM_VERSION_MAJOR >= 12
+      ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay, DR,
+                               nullptr, rval, FPOptionsOverride()),
+      ImplicitCastExpr::Create(
+          AST, AST.getPointerType(CharTy), CastKind::CK_ArrayToPointerDecay,
+          StringLiteral::Create(
+              AST, cstr, stringkind,
+              /*Pascal*/ false,
+              AST.getStringLiteralArrayType(CharTy, cstr.size()), loc),
+          nullptr, rval, FPOptionsOverride())
+#else
+      ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay, DR,
+                               nullptr, rval),
+      ImplicitCastExpr::Create(
+          AST, AST.getPointerType(CharTy), CastKind::CK_ArrayToPointerDecay,
+          StringLiteral::Create(
+              AST, cstr, stringkind,
+              /*Pascal*/ false,
+              AST.getStringLiteralArrayType(CharTy, cstr.size()), loc),
+          nullptr, rval)
+#endif
+    };
     auto IL = new (AST) InitListExpr(AST, loc, exprs, loc);
     V->setInit(IL);
     IL->setType(T);
@@ -282,3 +305,4 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
 
 static ParsedAttrInfoRegistry::Add<EnzymeFunctionLikeAttrInfo>
     X3("enzyme_function_like", "");
+#endif
