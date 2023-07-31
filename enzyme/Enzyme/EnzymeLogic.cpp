@@ -103,6 +103,10 @@ cl::opt<bool> EnzymeJuliaAddrLoad(
     "enzyme-julia-addr-load", cl::init(false), cl::Hidden,
     cl::desc("Mark all loads resulting in an addr(13)* to be legal to redo"));
 
+cl::opt<bool> EnzymeExecuteUnreachable(
+    "enzyme-execute-unreachable", cl::init(false), cl::Hidden,
+    cl::desc("Execute the instructions inside of unreachable"));
+
 LLVMValueRef (*EnzymeFixupReturn)(LLVMBuilderRef, LLVMValueRef) = nullptr;
 }
 
@@ -1407,7 +1411,8 @@ bool legalCombinedForwardReverse(
     // (unless this is the original function)
     if (usetree.count(I))
       return;
-    if (gutils->notForAnalysis.count(I->getParent()))
+    if (!EnzymeExecuteUnreachable &&
+        gutils->notForAnalysis.count(I->getParent()))
       return;
     if (auto ri = dyn_cast<ReturnInst>(I)) {
       auto find = replacedReturns.find(ri);

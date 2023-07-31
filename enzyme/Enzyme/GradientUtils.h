@@ -96,6 +96,7 @@ extern llvm::cl::opt<bool> EnzymeRuntimeActivityCheck;
 extern llvm::cl::opt<bool> EnzymeInactiveDynamic;
 extern llvm::cl::opt<bool> EnzymeFreeInternalAllocations;
 extern llvm::cl::opt<bool> EnzymeRematerialize;
+extern llvm::cl::opt<bool> EnzymeExecuteUnreachable;
 }
 extern llvm::SmallVector<unsigned int, 9> MD_ToCopy;
 
