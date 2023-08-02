@@ -189,10 +189,10 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
   AttrHandling handleDeclAttribute(Sema &S, Decl *D,
                                    const ParsedAttr &Attr) const override {
     auto FD = cast<FunctionDecl>(D);
-    if (Attr.getNumArgs() == 0) {
+    if (Attr.getNumArgs() != 1) {
       unsigned ID = S.getDiagnostics().getCustomDiagID(
           DiagnosticsEngine::Error,
-          "'enzyme_function_like' attribute requires a string argument");
+          "'enzyme_function' attribute requires a single string argument");
       S.Diag(Attr.getLoc(), ID);
       return AttributeNotApplied;
     }
@@ -200,9 +200,8 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
     StringLiteral *Literal = dyn_cast<StringLiteral>(Arg0->IgnoreParenCasts());
     if (!Literal) {
       unsigned ID = S.getDiagnostics().getCustomDiagID(
-          DiagnosticsEngine::Error,
-          "first argument to the 'enzyme_function_like' "
-          "attribute must be a string literal");
+          DiagnosticsEngine::Error, "first argument to 'enzyme_function_like' "
+                                    "attribute must be a string literal");
       S.Diag(Attr.getLoc(), ID);
       return AttributeNotApplied;
     }
@@ -225,7 +224,6 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
     auto Tinfo0 = nullptr;
     auto FT = AST.getPointerType(FD->getType());
     auto CharTy = AST.getIntTypeForBitwidth(8, false);
-    // VarDecl::Create(AST, RD, loc, loc, nullptr, FT, Tinfo, SC_None);
     auto FD0 = FieldDecl::Create(AST, RD, loc, loc, /*Ud*/ nullptr, FT, Tinfo0,
                                  /*expr*/ nullptr, /*mutable*/ true,
                                  /*inclassinit*/ ICIS_NoInit);
@@ -238,19 +236,16 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
     RD->addDecl(FD1);
     RD->completeDefinition();
     assert(RD->getDefinition());
-
     auto &Id = AST.Idents.get("__enzyme_function_like_autoreg_" +
                               FD->getNameAsString());
     auto T = AST.getRecordType(RD);
     auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, T, Tinfo, SC_None);
-    // V->setStorageClass(SC_Extern);
     V->setStorageClass(SC_PrivateExtern);
     V->addAttr(clang::UsedAttr::CreateImplicit(AST));
     TemplateArgumentListInfo *TemplateArgs = nullptr;
     auto DR = DeclRefExpr::Create(AST, NestedNameSpecifierLoc(), loc, FD, false,
                                   loc, FD->getType(), ExprValueKind::VK_LValue,
                                   FD, TemplateArgs);
-
 #if LLVM_VERSION_MAJOR >= 13
     auto rval = ExprValueKind::VK_PRValue;
 #else
@@ -301,8 +296,114 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
   }
 };
 
-} // namespace
-
 static ParsedAttrInfoRegistry::Add<EnzymeFunctionLikeAttrInfo>
     X3("enzyme_function_like", "");
+
+struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
+  EnzymeInactiveAttrInfo() {
+    OptArgs = 1;
+    // GNU-style __attribute__(("example")) and C++/C2x-style [[example]] and
+    // [[plugin::example]] supported.
+    static constexpr Spelling S[] = {
+        {ParsedAttr::AS_GNU, "enzyme_inactive"},
+        {ParsedAttr::AS_C2x, "enzyme_inactive"},
+        {ParsedAttr::AS_CXX11, "enzyme_inactive"},
+        {ParsedAttr::AS_CXX11, "enzyme::inactive"}};
+    Spellings = S;
+  }
+
+  bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr,
+                            const Decl *D) const override {
+    // This attribute appertains to functions only.
+    if (isa<FunctionDecl>(D))
+      return true;
+    if (auto VD = dyn_cast<VarDecl>(D)) {
+      if (VD->hasGlobalStorage())
+        return true;
+    }
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
+        << Attr << "functions and globals";
+    return false;
+  }
+
+  AttrHandling handleDeclAttribute(Sema &S, Decl *D,
+                                   const ParsedAttr &Attr) const override {
+    if (Attr.getNumArgs() != 0) {
+      unsigned ID = S.getDiagnostics().getCustomDiagID(
+          DiagnosticsEngine::Error,
+          "'enzyme_inactive' attribute requires zero arguments");
+      S.Diag(Attr.getLoc(), ID);
+      return AttributeNotApplied;
+    }
+
+    auto &AST = S.getASTContext();
+    DeclContext *declCtx = D->getDeclContext();
+    auto loc = D->getLocation();
+    RecordDecl *RD;
+    if (S.getLangOpts().CPlusPlus)
+      RD = CXXRecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx,
+                                 loc, loc, nullptr); // rId);
+    else
+      RD = RecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx, loc,
+                              loc, nullptr); // rId);
+    RD->setAnonymousStructOrUnion(true);
+    RD->setImplicit();
+    RD->startDefinition();
+    auto T = isa<FunctionDecl>(D) ? cast<FunctionDecl>(D)->getType()
+                                  : cast<VarDecl>(D)->getType();
+    auto Name = isa<FunctionDecl>(D) ? cast<FunctionDecl>(D)->getNameAsString()
+                                     : cast<VarDecl>(D)->getNameAsString();
+    auto FT = AST.getPointerType(T);
+    auto subname = isa<FunctionDecl>(D) ? "inactivefn" : "inactive_global";
+    auto &Id = AST.Idents.get(
+        (StringRef("__enzyme_") + subname + "_autoreg_" + Name).str());
+    auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, FT, nullptr, SC_None);
+    V->setStorageClass(SC_PrivateExtern);
+    V->addAttr(clang::UsedAttr::CreateImplicit(AST));
+    TemplateArgumentListInfo *TemplateArgs = nullptr;
+    auto DR = DeclRefExpr::Create(
+        AST, NestedNameSpecifierLoc(), loc, cast<ValueDecl>(D), false, loc, T,
+        ExprValueKind::VK_LValue, cast<NamedDecl>(D), TemplateArgs);
+#if LLVM_VERSION_MAJOR >= 13
+    auto rval = ExprValueKind::VK_PRValue;
+#else
+    auto rval = ExprValueKind::VK_RValue;
+#endif
+    Expr *expr = nullptr;
+    if (isa<FunctionDecl>(D)) {
+#if LLVM_VERSION_MAJOR >= 12
+      expr =
+          ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
+                                   DR, nullptr, rval, FPOptionsOverride());
+#else
+      expr = ImplicitCastExpr::Create(
+          AST, FT, CastKind::CK_FunctionToPointerDecay, DR, nullptr, rval);
+#endif
+    } else {
+      expr =
+          UnaryOperator::Create(AST, DR, UnaryOperatorKind::UO_AddrOf, FT, rval,
+                                clang::ExprObjectKind ::OK_Ordinary, loc,
+                                /*canoverflow*/ false, FPOptionsOverride());
+    }
+
+    if (expr->isValueDependent()) {
+      unsigned ID = S.getDiagnostics().getCustomDiagID(
+          DiagnosticsEngine::Error, "use of attribute 'enzyme_inactive' "
+                                    "in a templated context not yet supported");
+      S.Diag(Attr.getLoc(), ID);
+      return AttributeNotApplied;
+    }
+    V->setInit(expr);
+    V->dump();
+    S.MarkVariableReferenced(loc, V);
+    S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
+    return AttributeApplied;
+  }
+};
+
+static ParsedAttrInfoRegistry::Add<EnzymeInactiveAttrInfo> X4("enzyme_inactive",
+                                                              "");
+
+} // namespace
+
 #endif
