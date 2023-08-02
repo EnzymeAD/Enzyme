@@ -854,7 +854,6 @@ void callSPMVDiagUpdate(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 
     IRBuilder<> B5(end);
     B5.CreateRetVoid();
-
   }
   B.CreateCall(F, args, bundles);
   return;
