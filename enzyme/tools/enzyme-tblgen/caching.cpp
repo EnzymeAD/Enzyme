@@ -195,7 +195,6 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
 << "      Value *margs[] = {malins, arg_" << name << ", malloc_size, llvm::ConstantInt::getFalse(IntegerType::getInt1Ty(call.getContext()))};\n"
 << "      Type *tys[] = {margs[0]->getType(), margs[1]->getType(),"
 << "                     margs[2]->getType()};\n"
-//<< "                     margs[2]->getType(), IntegerType::getInt1Ty(call.getContext())};\n"
 << "      auto memcpyF = Intrinsic::getDeclaration(gutils->oldFunc->getParent(), Intrinsic::memcpy, tys);\n"
 << "      BuilderZ.CreateCall(memcpyF, margs);\n"
 << "      cacheValues.push_back(malins);\n"

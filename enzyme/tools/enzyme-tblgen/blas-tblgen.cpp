@@ -1561,13 +1561,6 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
                   "type_n, fpType, "
                   "ArrayRef<Value *>("
                << argName << "), Defs, byRef, julia_decl);\n";
-            // os << "        Builder2.CreateCall(derivcall_spmv_diag, " <<
-            // argName
-            //    << ", Defs);\n";
-            //  TODO: want we this?
-            // } else {
-            //   errs() << sub_Def->getName() << "\n";
-            //   PrintFatalError("Unhandled seq case!");
           }
         }
       }
