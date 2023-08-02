@@ -15,5 +15,6 @@ target_link_libraries(enzyme_test_1 PUBLIC ClangEnzymeFlags)
 
 if (${Enzyme_LLVM_VERSION_MAJOR} GREATER 10)
     add_executable(enzyme_test_2 main.c)
+    target_compile_definitions(enzyme_test_2 PUBLIC -DNOVERSION)
     target_link_libraries(enzyme_test_2 PUBLIC LLDEnzymeFlags)
 endif()
