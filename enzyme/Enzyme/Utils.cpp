@@ -798,7 +798,8 @@ void callSPMVDiagUpdate(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
       PHINode *kval = B3.CreatePHI(IT, 2, "k");
       iter->addIncoming(ConstantInt::get(IT, 0), init);
       kval->addIncoming(ConstantInt::get(IT, 0), init);
-      Value *iternext = B3.CreateAdd(iter, ConstantInt::get(IT, 1), "iter.next");
+      Value *iternext =
+          B3.CreateAdd(iter, ConstantInt::get(IT, 1), "iter.next");
       // 0, 2, 5, 9, 14, 20, 27, 35, 44, 54, ... are diag elements
       Value *kvalnext = B3.CreateAdd(kval, iternext, "k.next");
       iter->addIncoming(iternext, uper_code);

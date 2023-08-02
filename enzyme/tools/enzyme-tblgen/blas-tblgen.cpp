@@ -611,24 +611,7 @@ size_t fwd_call_args(const TGPattern &pattern, size_t actArg,
       } else {
         result.append((Twine("arg_") + name).str());
       }
-      //} else if (ty == ArgType::vincData) {
-      //  auto nextName = nameVec[pos + 1];
-      //  // get the position of the argument in the primary blas call
-      //  auto nextArgPosition = nameMap.lookup(nextName);
-      //  // and based on that get the fp/int + scalar/vector type
-      //  auto typeOfNextArg = typeMap.lookup(nextArgPosition);
-      //  assert(typeOfNextArg == ArgType::vincInc);
-      //  if (pos == actArg) {
-      //    result.append((Twine("d_") + name + ", true_" + nextName).str());
-      //  } else {
-      //    result.append((Twine("arg_") + name + ", arg_" + nextName).str());
-      //  }
-      //  pos++; // extra ++ due to also handling vincInc
     } else if (ty == ArgType::vincInc) {
-      // auto prevArg = ruleDag->getArg(pos - 1);
-      // if (DefInit *DefArg = dyn_cast<DefInit>(prevArg)) {
-      //   auto Def = DefArg->getDef();
-      //   if (Def->isSubClassOf("adj")) {
       if (pos - 1 == actArg) {
         // all ok, single inc after shadow of vec
         // use original inc, since shadow is never cached
@@ -639,10 +622,6 @@ size_t fwd_call_args(const TGPattern &pattern, size_t actArg,
             (Twine("(cache_") + prevName + " ? const_one : arg_" + name + ")")
                 .str());
       }
-      //} else {
-      //  auto prevName = ruleDag->getArgNameStr(pos - 1);
-      //  os << "(cache_" << prevName << " ? const_one : arg_" << name << ")";
-      //}
     } else if (ty == ArgType::mldData) {
       auto nextName = nameVec[pos + 1];
       // get the position of the argument in the primary blas call
