@@ -188,7 +188,7 @@ entry:
 ; CHECK-DAG:    %[[r6:.+]] = icmp eq i8 %ld.transa, 84
 ; CHECK-DAG:    %[[r7:.+]] = select i1 %[[r6]], i8 78, i8 %[[r5]]
 ; CHECK-NEXT:   store i8 %23, i8* %byref.transpose.transa
-; CHECK-NEXT:   store i64 1, i64* %byref.int.one, align 4 
+; CHECK-NEXT:   store i64 1, i64* %byref.int.one
 ; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8* 
 ; CHECK-NEXT:   call void @dger_64_(i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %"y'", i8* %incy_p, i8* %15, i8* %intcast.int.one, i8* %"A'", i8* %lda_p)
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0

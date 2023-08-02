@@ -166,7 +166,7 @@ entry:
 ; CHECK-DAG:    %[[r6:.+]] = icmp eq i8 %ld.transa, 84
 ; CHECK-DAG:    %[[r7:.+]] = select i1 %[[r6]], i8 78, i8 %[[r5]]
 ; CHECK-NEXT:   store i8 %[[r7]], i8* %byref.transpose.transa
-; CHECK-NEXT:   store i64 1, i64* %byref.int.one, align 4 
+; CHECK-NEXT:   store i64 1, i64* %byref.int.one
 ; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
 ; CHECK-NEXT:   br i1 %rt.inactive.A, label %invertentry.A.done, label %invertentry.A.active
 
