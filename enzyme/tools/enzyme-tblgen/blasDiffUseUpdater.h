@@ -49,7 +49,7 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
   }
 
   emit_need_cache_info(pattern, os);
-  
+
   for (size_t argPos = (lv23 ? 1 : 0); argPos < typeMap.size(); argPos++) {
     auto users = argUsers.lookup(argPos);
     auto name = nameVec[argPos];

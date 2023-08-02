@@ -719,7 +719,7 @@ void callSPMVDiagUpdate(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
   BasicBlock *init = BasicBlock::Create(M.getContext(), "init", F);
   BasicBlock *uper_code = BasicBlock::Create(M.getContext(), "uper", F);
-  BasicBlock *lower_code = BasicBlock::Create(M.getContext(), "lower", F); 
+  BasicBlock *lower_code = BasicBlock::Create(M.getContext(), "lower", F);
   BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
 
   //  spmvDiagHelper(uplo, n, alpha, x, incx, ya, incy, APa)
@@ -765,24 +765,30 @@ void callSPMVDiagUpdate(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
     Value *alpha = blasalpha;
     if (byRef) {
       auto VP = B1.CreatePointerCast(
-          blasalpha, PointerType::get(fpTy,
-                              cast<PointerType>(blasalpha->getType())->getAddressSpace()));
+          blasalpha,
+          PointerType::get(
+              fpTy,
+              cast<PointerType>(blasalpha->getType())->getAddressSpace()));
       alpha = B1.CreateLoad(fpTy, VP);
     }
     Value *is_u = is_uper(B1, blasuplo, byRef);
-    Value *k = B1.CreateSelect(is_u, ConstantInt::get(IT, 0), ConstantInt::get(IT, 1), "k");
+    Value *k = B1.CreateSelect(is_u, ConstantInt::get(IT, 0),
+                               ConstantInt::get(IT, 1), "k");
     B1.CreateCondBr(B1.CreateICmpEQ(n, ConstantInt::get(IT, 0)), end, init);
 
     IRBuilder<> B2(init);
     Value *xfloat = B2.CreatePointerCast(
-        blasx, PointerType::get(
-                  fpTy, cast<PointerType>(blasx->getType())->getAddressSpace()));
+        blasx,
+        PointerType::get(
+            fpTy, cast<PointerType>(blasx->getType())->getAddressSpace()));
     Value *dyfloat = B2.CreatePointerCast(
-        blasdy, PointerType::get(
-                  fpTy, cast<PointerType>(blasdy->getType())->getAddressSpace()));
+        blasdy,
+        PointerType::get(
+            fpTy, cast<PointerType>(blasdy->getType())->getAddressSpace()));
     Value *dAPfloat = B2.CreatePointerCast(
-        blasdAP, PointerType::get(
-                  fpTy, cast<PointerType>(blasdAP->getType())->getAddressSpace()));
+        blasdAP,
+        PointerType::get(
+            fpTy, cast<PointerType>(blasdAP->getType())->getAddressSpace()));
     B2.CreateCondBr(is_u, uper_code, lower_code);
 
     IRBuilder<> B3(uper_code);
@@ -821,7 +827,8 @@ void callSPMVDiagUpdate(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
       PHINode *kval = B4.CreatePHI(IT, 2, "k");
       iter->addIncoming(ConstantInt::get(IT, 0), init);
       kval->addIncoming(ConstantInt::get(IT, 0), init);
-      Value *iternext = B4.CreateAdd(iter, ConstantInt::get(IT, 1), "iter.next");
+      Value *iternext =
+          B4.CreateAdd(iter, ConstantInt::get(IT, 1), "iter.next");
       Value *ktmp = B4.CreateAdd(n, ConstantInt::get(IT, 1), "tmp.val");
       Value *ktmp2 = B4.CreateSub(ktmp, iternext, "tmp.val.other");
       Value *kvalnext = B4.CreateAdd(kval, ktmp2, "k.next");
@@ -843,7 +850,7 @@ void callSPMVDiagUpdate(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 
       B4.CreateCondBr(B4.CreateICmpEQ(iternext, n), end, lower_code);
     }
-    
+
     IRBuilder<> B5(end);
     B5.CreateRetVoid();
 
