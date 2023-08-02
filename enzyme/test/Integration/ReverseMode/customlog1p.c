@@ -25,6 +25,7 @@
 
 double __enzyme_autodiff(void*, ...);
 
+__attribute__((enzyme_function_like("log1p")))
 double log1p_like_function(double a) {
   return 2*a;
 }
@@ -32,8 +33,6 @@ double log1p_like_function(double a) {
 double test(double a) {
   return log1p_like_function(a);
 }
-
-void* __enzyme_function_like[2] = {(void*)log1p_like_function, "log1p"}; 
 
 int main(int argc, char** argv) {
 
