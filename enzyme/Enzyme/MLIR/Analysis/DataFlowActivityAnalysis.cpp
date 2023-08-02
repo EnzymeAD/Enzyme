@@ -81,6 +81,19 @@ public:
     return ValueActivity::getActive();
   }
 
+  static ValueActivity meet(const ValueActivity &lhs,
+                            const ValueActivity &rhs) {
+    if (lhs.isUninitialized())
+      return rhs;
+    if (rhs.isUninitialized())
+      return lhs;
+    if (lhs.isConstant() && rhs.isConstant()) {
+      return ValueActivity::getConstant();
+    }
+
+    return ValueActivity::getActive();
+  }
+
   void print(raw_ostream &os) const {
     if (!value) {
       os << "<uninitialized>";
@@ -106,14 +119,45 @@ private:
   std::optional<ActivityKind> value;
 };
 
+raw_ostream &operator<<(raw_ostream &os, const ValueActivity &val) {
+  val.print(os);
+  return os;
+}
+
 class ForwardValueActivity : public Lattice<ValueActivity> {
 public:
   using Lattice::Lattice;
 };
 
-class BackwardValueActivity : public Lattice<ValueActivity> {
+// Inheriting Lattice<ValueActivity> would be the easiest (because we define a
+// meet function for ValueActivity) but the meet function doesn't look like it's
+// being picked up for some reason. I don't know how to debug the trait that's
+// causing this issue.
+class BackwardValueActivity : public AbstractSparseLattice {
 public:
-  using Lattice::Lattice;
+  using AbstractSparseLattice::AbstractSparseLattice;
+
+  ChangeResult meet(const AbstractSparseLattice &other) override {
+    const auto *rhs = reinterpret_cast<const BackwardValueActivity *>(&other);
+    return meet(rhs->getValue());
+  }
+
+  void print(raw_ostream &os) const override { value.print(os); }
+
+  ValueActivity getValue() const { return value; }
+
+  ChangeResult meet(ValueActivity other) {
+    auto met = ValueActivity::meet(getValue(), other);
+    if (getValue() == met) {
+      return ChangeResult::NoChange;
+    }
+
+    value = met;
+    return ChangeResult::Change;
+  }
+
+private:
+  ValueActivity value;
 };
 
 /// This needs to keep track of three things:
@@ -195,6 +239,10 @@ public:
   bool hasActiveData(Value value) const {
     auto state = activityStates.lookup(aliasClasses[value]);
     return state.activeStore || state.activeInit;
+  }
+
+  bool hasActiveLoad(Value value) const {
+    return activityStates.lookup(aliasClasses[value]).activeLoad;
   }
 
   bool hasActiveStore(Value value) const {
@@ -300,7 +348,9 @@ class SparseBackwardActivityAnalysis
 public:
   using SparseBackwardDataFlowAnalysis::SparseBackwardDataFlowAnalysis;
 
-  void setToExitState(BackwardValueActivity *lattice) override {}
+  void setToExitState(BackwardValueActivity *lattice) override {
+    errs() << "setting to exit state\n";
+  }
 
   void visitBranchOperand(OpOperand &operand) override {
     errs() << "Visiting branch operand: " << operand.get() << "\n";
@@ -309,13 +359,11 @@ public:
   void
   visitOperation(Operation *op, ArrayRef<BackwardValueActivity *> operands,
                  ArrayRef<const BackwardValueActivity *> results) override {
-    ValueActivity joinedResult;
-    for (auto result : results) {
-      joinedResult = ValueActivity::join(joinedResult, result->getValue());
-    }
-
+    // Propagate all operands to all results
     for (auto operand : operands) {
-      propagateIfChanged(operand, operand->join(joinedResult));
+      for (auto result : results) {
+        meet(operand, *result);
+      }
     }
   }
 };
@@ -420,7 +468,6 @@ public:
     if (!memory)
       return setToExitState(before);
 
-    errs() << "dense backward visiting operation " << *op << "\n";
     SmallVector<MemoryEffects::EffectInstance> effects;
     memory.getEffects(effects);
 
@@ -456,7 +503,7 @@ public:
       }
       if (isa<MemoryEffects::Write>(effect.getEffect())) {
         if (auto storeOp = dyn_cast<LLVM::StoreOp>(op)) {
-          if (after.hasActiveData(value)) {
+          if (after.hasActiveLoad(value)) {
             result |= before->setActiveStore(value, true);
 
             // Mark the stored value as (backward) active
@@ -467,6 +514,7 @@ public:
         }
       }
     }
+    propagateIfChanged(before, result);
   }
 
   void setToExitState(MemoryActivity *lattice) override {
@@ -552,7 +600,7 @@ void enzyme::runDataFlowActivityAnalysis(
         auto *returnLattice =
             solver.getOrCreateState<BackwardValueActivity>(operand);
         // Very basic type inference of the type
-        returnLattice->join(
+        returnLattice->meet(
             isa<FloatType, MemRefType, LLVM::LLVMPointerType>(operand.getType())
                 ? ValueActivity::getActive()
                 : ValueActivity::getConstant());
@@ -590,20 +638,38 @@ void enzyme::runDataFlowActivityAnalysis(
           op->setAttr("fvactive" + std::to_string(result.getResultNumber()),
                       StringAttr::get(op->getContext(), dest));
         }
+
+        auto backwardValueActivity =
+            solver.lookupState<BackwardValueActivity>(result);
+        if (backwardValueActivity) {
+          std::string dest;
+          llvm::raw_string_ostream os(dest);
+          backwardValueActivity->getValue().print(os);
+          op->setAttr("bvactive" + std::to_string(result.getResultNumber()),
+                      StringAttr::get(op->getContext(), dest));
+        }
       }
     });
+
+    // Annotate function attributes
+    for (BlockArgument arg : callee.getArguments()) {
+      auto backwardValueActivity =
+          solver.lookupState<BackwardValueActivity>(arg);
+      if (backwardValueActivity) {
+        std::string dest;
+        llvm::raw_string_ostream os(dest);
+        backwardValueActivity->getValue().print(os);
+        callee.setArgAttr(arg.getArgNumber(), "enzyme.bvactive",
+                          StringAttr::get(callee->getContext(), dest));
+      }
+    }
   }
 
-  // for (BlockArgument arg : callee.getArguments()) {
-  //   auto argState = solver.lookupState<BackwardValueActivity>(arg);
-  //   if (argState) {
-  //     errs() << "function arg state: ";
-  //     argState->getValue().print(errs());
-  //     errs() << "\n";
-  //   } else {
-  //     errs() << "function argument backward state was null\n";
-  //   }
-  // }
+  auto startState =
+      solver.lookupState<MemoryActivity>(&callee.getFunctionBody().front());
+  if (startState) {
+    errs() << "starting state:\n" << *startState << "\n";
+  }
   auto returnOp = callee.getFunctionBody().front().getTerminator();
   auto state = solver.lookupState<MemoryActivity>(returnOp);
   if (state) {
