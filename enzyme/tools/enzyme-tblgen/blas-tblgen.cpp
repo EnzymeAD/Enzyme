@@ -604,30 +604,45 @@ size_t fwd_call_args(const TGPattern &pattern, size_t actArg,
     auto ty = typeMap.lookup(pos);
     if (ty == ArgType::len) {
       result.append((Twine("arg_") + name).str());
-    } else if (ty == ArgType::fp || ty == ArgType::ap) {
+    } else if (ty == ArgType::fp || ty == ArgType::ap ||
+               ty == ArgType::vincData) {
       if (pos == actArg) {
         result.append((Twine("d_") + name).str());
       } else {
         result.append((Twine("arg_") + name).str());
       }
-    } else if (ty == ArgType::vincData) {
-      auto nextName = nameVec[pos + 1];
-      // get the position of the argument in the primary blas call
-      auto nextArgPosition = nameMap.lookup(nextName);
-      // and based on that get the fp/int + scalar/vector type
-      auto typeOfNextArg = typeMap.lookup(nextArgPosition);
-      assert(typeOfNextArg == ArgType::vincInc);
-      if (pos == actArg) {
-        result.append((Twine("d_") + name + ", true_" + nextName).str());
-      } else {
-        result.append((Twine("arg_") + name + ", arg_" + nextName).str());
-      }
-      pos++; // extra ++ due to also handling vincInc
+      //} else if (ty == ArgType::vincData) {
+      //  auto nextName = nameVec[pos + 1];
+      //  // get the position of the argument in the primary blas call
+      //  auto nextArgPosition = nameMap.lookup(nextName);
+      //  // and based on that get the fp/int + scalar/vector type
+      //  auto typeOfNextArg = typeMap.lookup(nextArgPosition);
+      //  assert(typeOfNextArg == ArgType::vincInc);
+      //  if (pos == actArg) {
+      //    result.append((Twine("d_") + name + ", true_" + nextName).str());
+      //  } else {
+      //    result.append((Twine("arg_") + name + ", arg_" + nextName).str());
+      //  }
+      //  pos++; // extra ++ due to also handling vincInc
     } else if (ty == ArgType::vincInc) {
-      // might come without vincData, e.g. after DiffeRet
-      errs() << "name: " << name << " typename: " << ty << "\n";
-      llvm_unreachable("incorrect name in forward mode!\n");
-      result.append(name);
+      // auto prevArg = ruleDag->getArg(pos - 1);
+      // if (DefInit *DefArg = dyn_cast<DefInit>(prevArg)) {
+      //   auto Def = DefArg->getDef();
+      //   if (Def->isSubClassOf("adj")) {
+      if (pos - 1 == actArg) {
+        // all ok, single inc after shadow of vec
+        // use original inc, since shadow is never cached
+        result.append((Twine("arg_") + name).str());
+      } else {
+        auto prevName = nameVec[pos - 1];
+        result.append(
+            (Twine("(cache_") + prevName + " ? const_one : arg_" + name + ")")
+                .str());
+      }
+      //} else {
+      //  auto prevName = ruleDag->getArgNameStr(pos - 1);
+      //  os << "(cache_" << prevName << " ? const_one : arg_" << name << ")";
+      //}
     } else if (ty == ArgType::mldData) {
       auto nextName = nameVec[pos + 1];
       // get the position of the argument in the primary blas call
@@ -697,6 +712,11 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
      << "      return false;\n"
      << "    }\n"
      << "  }\n";
+
+  // just make this const one available now to have less variable name repition
+  os << "Value * const_one = to_blas_callconv(Builder2, "
+        "ConstantInt::get(intType, 1), "
+     << "byRef, intType, allocationBuilder, \"int.one\");\n";
 
   const auto nameVec = pattern.getArgNames();
   const auto inputTypes = pattern.getArgTypeMap();
