@@ -87,7 +87,7 @@ entry:
 ; CHECK-NEXT:   %malloccall5 = tail call noalias nonnull i8* @malloc(i64 %mallocsize4)
 ; CHECK-NEXT:   %mat_y0 = bitcast i8* %malloccall5 to double*
 ; CHECK-NEXT:   %9 = bitcast double* %mat_y0 to i8*
-; CHECK-NEXT:   call void @dspmv_64_(i8* %uplo, i8* %n_p, i8* %alpha, i8* %AP, i8* %X, i8* %incx_p, i8* %beta, i8* %Y, i8* %incy_p) #1
+; CHECK-NEXT:   call void @dspmv_64_(i8* %uplo, i8* %n_p, i8* %alpha, i8* %AP, i8* %X, i8* %incx_p, i8* %beta, i8* %Y, i8* %incy_p)
 ; CHECK-NEXT:   %"ptr'ipc" = bitcast i8* %"AP'" to double*
 ; CHECK-NEXT:   %ptr = bitcast i8* %AP to double*
 ; CHECK-NEXT:   store double 0.000000e+00, double* %ptr, align 8, !alias.scope !0, !noalias !3
