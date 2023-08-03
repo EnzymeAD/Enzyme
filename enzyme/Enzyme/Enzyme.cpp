@@ -2881,6 +2881,7 @@ public:
 AnalysisKey EnzymeNewPM::Key;
 
 #include "ActivityAnalysisPrinter.h"
+#include "OptBlas.h"
 #include "PreserveNVVM.h"
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
 #include "llvm/Passes/PassBuilder.h"
@@ -3417,6 +3418,10 @@ llvmGetPassPluginInfo() {
             PB.registerPipelineParsingCallback(
                 [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
                    llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+                  if (Name == "blas-opt") {
+                    MPM.addPass(createOptimizeBlasPass(/*Begin*/ true));
+                    return true;
+                  }
                   if (Name == "enzyme") {
                     MPM.addPass(EnzymeNewPM());
                     return true;
