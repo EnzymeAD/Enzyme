@@ -20,12 +20,11 @@ def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
   let summary = "Print the results of activity analysis";
   let constructor = "mlir::enzyme::createPrintActivityAnalysisPass()";
   let options = [
-    Option<
-      /*C++ variable name=*/"funcToAnalyze",
-      /*CLI argument=*/"func",
+    ListOption<
+      /*C++ variable name=*/"funcsToAnalyze",
+      /*CLI argument=*/"funcs",
       /*type=*/"std::string",
-      /*default=*/"\"\"",
-      /*description=*/"The name of the function to perform activity analysis on"
+      /*description=*/"The names of the functions to perform activity analysis on"
     >,
     Option<
       /*C++ variable name=*/"inactiveArgs",

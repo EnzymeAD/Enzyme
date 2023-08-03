@@ -11,6 +11,7 @@
 
 // TODO: Don't depend on specific dialects
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 
 #include "mlir/Analysis/AliasAnalysis/LocalAliasAnalysis.h"
@@ -205,37 +206,6 @@ public:
     return ChangeResult::Change;
   }
 
-  /// Join the activity states.
-  ChangeResult join(const AbstractDenseLattice &lattice) override {
-    const auto &rhs = static_cast<const MemoryActivity &>(lattice);
-    ChangeResult result = ChangeResult::NoChange;
-    for (const auto &state : rhs.activityStates) {
-      auto &lhsState = activityStates[state.first];
-      if (lhsState != state.second) {
-        lhsState.activeLoad |= state.second.activeLoad;
-        lhsState.activeStore |= state.second.activeStore;
-        lhsState.activeInit |= state.second.activeInit;
-        result |= ChangeResult::Change;
-      }
-    }
-    return result;
-  }
-
-  ChangeResult meet(const AbstractDenseLattice &lattice) override {
-    const auto &rhs = static_cast<const MemoryActivity &>(lattice);
-    ChangeResult result = ChangeResult::NoChange;
-    for (const auto &state : rhs.activityStates) {
-      auto &lhsState = activityStates[state.first];
-      if (lhsState != state.second) {
-        lhsState.activeLoad |= state.second.activeLoad;
-        lhsState.activeStore |= state.second.activeStore;
-        lhsState.activeInit |= state.second.activeInit;
-        result |= ChangeResult::Change;
-      }
-    }
-    return result;
-  }
-
   bool hasActiveData(Value value) const {
     auto state = activityStates.lookup(aliasClasses[value]);
     return state.activeStore || state.activeInit;
@@ -297,8 +267,49 @@ public:
     return os;
   }
 
-private:
+protected:
   DenseMap<AliasClass, MemoryActivityState> activityStates;
+};
+
+class ForwardMemoryActivity : public MemoryActivity {
+public:
+  using MemoryActivity::MemoryActivity;
+
+  /// Join the activity states.
+  ChangeResult join(const AbstractDenseLattice &lattice) {
+    const auto &rhs = static_cast<const ForwardMemoryActivity &>(lattice);
+    ChangeResult result = ChangeResult::NoChange;
+    for (const auto &state : rhs.activityStates) {
+      auto &lhsState = activityStates[state.first];
+      if (lhsState != state.second) {
+        lhsState.activeLoad |= state.second.activeLoad;
+        lhsState.activeStore |= state.second.activeStore;
+        lhsState.activeInit |= state.second.activeInit;
+        result |= ChangeResult::Change;
+      }
+    }
+    return result;
+  }
+};
+
+class BackwardMemoryActivity : public MemoryActivity {
+public:
+  using MemoryActivity::MemoryActivity;
+
+  ChangeResult meet(const AbstractDenseLattice &lattice) override {
+    const auto &rhs = static_cast<const BackwardMemoryActivity &>(lattice);
+    ChangeResult result = ChangeResult::NoChange;
+    for (const auto &state : rhs.activityStates) {
+      auto &lhsState = activityStates[state.first];
+      if (lhsState != state.second) {
+        lhsState.activeLoad |= state.second.activeLoad;
+        lhsState.activeStore |= state.second.activeStore;
+        lhsState.activeInit |= state.second.activeInit;
+        result |= ChangeResult::Change;
+      }
+    }
+    return result;
+  }
 };
 
 /// Sparse activity analysis reasons about activity by traversing forward down
@@ -369,12 +380,12 @@ public:
 };
 
 class DenseForwardActivityAnalysis
-    : public DenseDataFlowAnalysis<MemoryActivity> {
+    : public DenseDataFlowAnalysis<ForwardMemoryActivity> {
 public:
   using DenseDataFlowAnalysis::DenseDataFlowAnalysis;
 
-  void visitOperation(Operation *op, const MemoryActivity &before,
-                      MemoryActivity *after) override {
+  void visitOperation(Operation *op, const ForwardMemoryActivity &before,
+                      ForwardMemoryActivity *after) override {
     auto memory = dyn_cast<MemoryEffectOpInterface>(op);
     // If we can't reason about the memory effects, then conservatively assume
     // we can't deduce anything about activity via side-effects.
@@ -425,6 +436,19 @@ public:
                 getOrCreate<ForwardValueActivity>(loadOp.getResult());
             result |= valueState->join(ValueActivity::getActive());
           }
+        } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
+          if (before.hasActiveData(value)) {
+            result |= after->setActiveLoad(value, true);
+
+            // propagate from input to block argument
+            for (OpOperand *inputOperand : linalgOp.getDpsInputOperands()) {
+              if (inputOperand->get() == value) {
+                auto *valueState = getOrCreate<ForwardValueActivity>(
+                    linalgOp.getMatchingBlockArgument(inputOperand));
+                result |= valueState->join(ValueActivity::getActive());
+              }
+            }
+          }
         }
       }
 
@@ -443,6 +467,23 @@ public:
           if (valueState->getValue().isActive()) {
             result |= after->setActiveStore(value, true);
           }
+        } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
+          // linalg.yield stores to the corresponding value.
+          for (OpOperand *dpsInit : linalgOp.getDpsInitOperands()) {
+            if (dpsInit->get() == value) {
+              int64_t resultIndex =
+                  dpsInit->getOperandNumber() - linalgOp.getNumDpsInputs();
+              Value yieldOperand =
+                  linalgOp.getBlock()->getTerminator()->getOperand(resultIndex);
+              auto *valueState =
+                  getOrCreateFor<ForwardValueActivity>(op, yieldOperand);
+              errs() << "forward value storing to linalg "
+                     << valueState->getValue() << "\n";
+              if (valueState->getValue().isActive()) {
+                result |= after->setActiveStore(value, true);
+              }
+            }
+          }
         }
       }
     }
@@ -450,18 +491,18 @@ public:
   }
 
   // Not sure what this should be, unknown?
-  void setToEntryState(MemoryActivity *lattice) override {
+  void setToEntryState(ForwardMemoryActivity *lattice) override {
     propagateIfChanged(lattice, lattice->reset());
   }
 };
 
 class DenseBackwardActivityAnalysis
-    : public DenseBackwardDataFlowAnalysis<MemoryActivity> {
+    : public DenseBackwardDataFlowAnalysis<BackwardMemoryActivity> {
 public:
   using DenseBackwardDataFlowAnalysis::DenseBackwardDataFlowAnalysis;
 
-  void visitOperation(Operation *op, const MemoryActivity &after,
-                      MemoryActivity *before) override {
+  void visitOperation(Operation *op, const BackwardMemoryActivity &after,
+                      BackwardMemoryActivity *before) override {
     auto memory = dyn_cast<MemoryEffectOpInterface>(op);
     // If we can't reason about the memory effects, then conservatively assume
     // we can't deduce anything about activity via side-effects.
@@ -511,13 +552,29 @@ public:
                 getOrCreate<BackwardValueActivity>(storeOp.getValue());
             result |= valueState->meet(ValueActivity::getActive());
           }
+        } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
+          if (after.hasActiveLoad(value)) {
+            result |= before->setActiveStore(value, true);
+            for (OpOperand *dpsInit : linalgOp.getDpsInitOperands()) {
+              if (dpsInit->get() == value) {
+                int64_t resultIndex =
+                    dpsInit->getOperandNumber() - linalgOp.getNumDpsInputs();
+                Value yieldOperand =
+                    linalgOp.getBlock()->getTerminator()->getOperand(
+                        resultIndex);
+                auto *valueState =
+                    getOrCreate<BackwardValueActivity>(yieldOperand);
+                result |= valueState->meet(ValueActivity::getActive());
+              }
+            }
+          }
         }
       }
     }
     propagateIfChanged(before, result);
   }
 
-  void setToExitState(MemoryActivity *lattice) override {
+  void setToExitState(BackwardMemoryActivity *lattice) override {
     propagateIfChanged(lattice, lattice->reset());
   }
 };
@@ -529,22 +586,36 @@ void basicAliasAnalysis(FunctionOpInterface callee,
                         bool annotate = false) {
   LocalAliasAnalysis localAliasAnalysis;
   aliasClasses.clear();
+  auto insert = [&](Value val) {
+    bool found = false;
+    AliasClass toInsert;
+    for (const auto &[key, aliasClass] : aliasClasses) {
+      if (!localAliasAnalysis.alias(key, val).isNo()) {
+        toInsert = aliasClass;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      toInsert = aliasClasses.size();
+    }
+    aliasClasses.insert({val, toInsert});
+  };
+
+  // Add function arguments to the alias results
+  for (BlockArgument arg : callee.getArguments()) {
+    insert(arg);
+    if (annotate) {
+      callee.setArgAttr(
+          arg.getArgNumber(), "enzyme.ac",
+          IntegerAttr::get(IntegerType::get(callee.getContext(), 64),
+                           aliasClasses.lookup(arg)));
+    }
+  }
+
   callee.walk([&](Operation *op) {
     for (Value result : op->getResults()) {
-      bool found = false;
-      AliasClass toInsert;
-      for (const auto &[key, aliasClass] : aliasClasses) {
-        if (!localAliasAnalysis.alias(key, result).isNo()) {
-          toInsert = aliasClass;
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        toInsert = aliasClasses.size();
-      }
-      aliasClasses.insert({result, toInsert});
-
+      insert(result);
       if (annotate) {
         op->setAttr("ac",
                     IntegerAttr::get(IntegerType::get(callee.getContext(), 64),
@@ -577,7 +648,7 @@ void enzyme::runDataFlowActivityAnalysis(
     // activity is kind of a proxy
     if (activity == enzyme::Activity::enzyme_dup ||
         activity == enzyme::Activity::enzyme_dupnoneed) {
-      auto initialState = solver.getOrCreateState<MemoryActivity>(
+      auto initialState = solver.getOrCreateState<ForwardMemoryActivity>(
           &callee.getFunctionBody().front());
       initialState->setActiveInit(arg, true);
     } else {
@@ -665,15 +736,15 @@ void enzyme::runDataFlowActivityAnalysis(
     }
   }
 
-  auto startState =
-      solver.lookupState<MemoryActivity>(&callee.getFunctionBody().front());
+  auto startState = solver.lookupState<BackwardMemoryActivity>(
+      &callee.getFunctionBody().front());
   if (startState) {
     errs() << "starting state:\n" << *startState << "\n";
   }
   auto returnOp = callee.getFunctionBody().front().getTerminator();
-  auto state = solver.lookupState<MemoryActivity>(returnOp);
+  auto state = solver.lookupState<ForwardMemoryActivity>(returnOp);
   if (state) {
-    errs() << "resulting state:\n" << *state << "\n";
+    errs() << "resulting forward state:\n" << *state << "\n";
   } else {
     errs() << "state was null\n";
   }

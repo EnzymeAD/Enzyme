@@ -36,7 +36,7 @@ LogicalResult inferEnzymeAutodiffOps(ModuleOp moduleOp) {
   for (Operation &op : moduleOp.getBody()->getOperations()) {
     if (auto funcOp = dyn_cast<FunctionOpInterface>(&op))
       if (StringRef(llvm::demangle(funcOp.getName().str()))
-              .starts_with("__enzyme_autodiff")) {
+              .contains("__enzyme_autodiff")) {
         enzymeOp = funcOp;
         break;
       }
@@ -103,32 +103,33 @@ struct PrintActivityAnalysisPass
   void runOnOperation() override {
     auto moduleOp = cast<ModuleOp>(getOperation());
 
-    if (funcToAnalyze == "") {
+    if (funcsToAnalyze.empty()) {
       if (failed(inferEnzymeAutodiffOps(moduleOp))) {
         signalPassFailure();
       }
       return;
     }
 
-    auto *op = moduleOp.lookupSymbol(funcToAnalyze);
-    if (!op) {
-      moduleOp.emitError() << "Failed to find requested function "
-                           << funcToAnalyze;
-      return signalPassFailure();
+    for (std::string funcName : funcsToAnalyze) {
+      Operation *op = moduleOp.lookupSymbol(funcName);
+      if (!op) {
+        continue;
+      }
+
+      if (!isa<FunctionOpInterface>(op)) {
+        moduleOp.emitError()
+            << "Operation " << funcName << " was not a FunctionOpInterface";
+        return signalPassFailure();
+      }
+
+      auto callee = cast<FunctionOpInterface>(op);
+      SmallVector<enzyme::Activity> argActivities{callee.getNumArguments()},
+          resultActivities{callee.getNumResults()};
+      initializeArgAndResActivities(callee, argActivities, resultActivities);
+
+      enzyme::runDataFlowActivityAnalysis(callee, argActivities,
+                                          /*print=*/true);
     }
-
-    if (!isa<FunctionOpInterface>(op)) {
-      moduleOp.emitError() << "Operation " << funcToAnalyze
-                           << " was not a FunctionOpInterface";
-      return signalPassFailure();
-    }
-
-    auto callee = cast<FunctionOpInterface>(op);
-    SmallVector<enzyme::Activity> argActivities{callee.getNumArguments()},
-        resultActivities{callee.getNumResults()};
-    initializeArgAndResActivities(callee, argActivities, resultActivities);
-
-    enzyme::runDataFlowActivityAnalysis(callee, argActivities, /*print=*/true);
   }
 };
 } // namespace
