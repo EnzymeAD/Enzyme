@@ -29,6 +29,8 @@ namespace llvm {
 class ModulePass;
 }
 
+bool optimizeFncsWithBlas(llvm::Module &M);
+
 llvm::ModulePass *createOptimizeBlasPass(bool Begin);
 
 class OptimizeBlasNewPM final
