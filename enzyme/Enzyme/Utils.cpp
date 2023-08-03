@@ -226,7 +226,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
       Value *tmp = SubZero->getOperand(0);
       Type *tmpT = tmp->getType();
       tmp = BB.CreatePointerCast(tmp, bTy);
-      tmp = BB.CreateInBoundsGEP(tmp->getType()->getPointerElementType(), tmp,
+      tmp = BB.CreateInBoundsGEP(Type::getInt8Ty(tmp->getContext()), tmp,
                                  prevSize);
       tmp = BB.CreatePointerCast(tmp, tmpT);
       SubZero->setOperand(0, tmp);
@@ -237,11 +237,10 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
   if (ZeroInit) {
     Value *zeroSize = B.CreateSub(next, prevSize);
 
-    Value *margs[] = {
-        B.CreateInBoundsGEP(gVal->getType()->getPointerElementType(), gVal,
-                            prevSize),
-        ConstantInt::get(Type::getInt8Ty(M.getContext()), 0), zeroSize,
-        ConstantInt::getFalse(M.getContext())};
+    Value *margs[] = {B.CreateInBoundsGEP(Type::getInt8Ty(gVal->getContext()),
+                                          gVal, prevSize),
+                      ConstantInt::get(Type::getInt8Ty(M.getContext()), 0),
+                      zeroSize, ConstantInt::getFalse(M.getContext())};
     Type *tys[] = {margs[0]->getType(), margs[2]->getType()};
     auto memsetF = Intrinsic::getDeclaration(&M, Intrinsic::memset, tys);
     B.CreateCall(memsetF, margs);
@@ -375,12 +374,14 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
     Value *tozero = malloccall;
 
     bool needsCast = false;
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
     if (PT->getContext().supportsTypedPointers()) {
 #endif
       needsCast = !PT->getPointerElementType()->isIntegerTy(8);
 #if LLVM_VERSION_MAJOR >= 15
     }
+#endif
 #endif
     if (needsCast)
       tozero = Builder.CreatePointerCast(
@@ -924,12 +925,14 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
                                IntegerType *IT, unsigned dstalign,
                                unsigned srcalign) {
   assert(elementType->isFloatingPointTy());
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
   if (Mod.getContext().supportsTypedPointers()) {
 #endif
     assert(PT->getPointerElementType() == elementType);
 #if LLVM_VERSION_MAJOR >= 15
   }
+#endif
 #endif
   std::string name = "__enzyme_memcpy_" + tofltstr(elementType) + "_mat_" +
                      std::to_string(cast<IntegerType>(IT)->getBitWidth());
@@ -1198,11 +1201,10 @@ llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
   auto inc = B.CreateAdd(idx, ConstantInt::get(count->getType(), 1));
   idx->addIncoming(inc, loopBlock);
 
+  Type *reqT = reqType; // req->getType()->getPointerElementType();
   Value *idxs[] = {idx};
-  Value *ireq =
-      B.CreateInBoundsGEP(req->getType()->getPointerElementType(), req, idxs);
-  Value *idreq =
-      B.CreateInBoundsGEP(req->getType()->getPointerElementType(), dreq, idxs);
+  Value *ireq = B.CreateInBoundsGEP(reqT, req, idxs);
+  Value *idreq = B.CreateInBoundsGEP(reqT, dreq, idxs);
   Value *iout = B.CreateInBoundsGEP(reqType, ret, idxs);
   Value *isNull = nullptr;
   if (auto GV = M.getNamedValue("ompi_request_null")) {
@@ -1335,8 +1337,8 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
 }
 
 llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
-                                   ConcreteType CT, llvm::Type *intType,
-                                   IRBuilder<> &B2) {
+                                   llvm::Type *OpType, ConcreteType CT,
+                                   llvm::Type *intType, IRBuilder<> &B2) {
   std::string name = "__enzyme_mpi_sum" + CT.str();
   assert(CT.isFloat());
   auto FlT = CT.isFloat();
@@ -1385,7 +1387,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
 
   {
     IRBuilder<> B(entry);
-    len = B.CreateLoad(lenp->getType()->getPointerElementType(), lenp);
+    len = B.CreateLoad(intType, lenp);
     B.CreateCondBr(B.CreateICmpEQ(len, ConstantInt::get(len->getType(), 0)),
                    end, body);
   }
@@ -1396,15 +1398,11 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
     PHINode *idx = B.CreatePHI(len->getType(), 2, "idx");
     idx->addIncoming(ConstantInt::get(len->getType(), 0), entry);
 
-    Value *dsti = B.CreateInBoundsGEP(dst->getType()->getPointerElementType(),
-                                      dst, idx, "dst.i");
-    LoadInst *dstl =
-        B.CreateLoad(dsti->getType()->getPointerElementType(), dsti, "dst.i.l");
+    Value *dsti = B.CreateInBoundsGEP(FlT, dst, idx, "dst.i");
+    LoadInst *dstl = B.CreateLoad(FlT, dsti, "dst.i.l");
 
-    Value *srci = B.CreateInBoundsGEP(src->getType()->getPointerElementType(),
-                                      src, idx, "src.i");
-    LoadInst *srcl =
-        B.CreateLoad(srci->getType()->getPointerElementType(), srci, "src.i.l");
+    Value *srci = B.CreateInBoundsGEP(FlT, src, idx, "src.i");
+    LoadInst *srcl = B.CreateLoad(FlT, srci, "src.i.l");
     B.CreateStore(B.CreateFAdd(srcl, dstl), dsti);
 
     Value *next =
@@ -1429,9 +1427,9 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
     RF = ConstantExpr::getBitCast(RF, PointerType::getUnqual(RFT));
   }
 
-  GlobalVariable *GV = new GlobalVariable(
-      M, OpPtr->getPointerElementType(), false, GlobalVariable::InternalLinkage,
-      UndefValue::get(OpPtr->getPointerElementType()), name);
+  GlobalVariable *GV =
+      new GlobalVariable(M, OpType, false, GlobalVariable::InternalLinkage,
+                         UndefValue::get(OpType), name);
 
   Type *i1Ty = Type::getInt1Ty(M.getContext());
   GlobalVariable *initD = new GlobalVariable(
@@ -1457,9 +1455,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
         BasicBlock::Create(M.getContext(), "end", initializerFunction);
     IRBuilder<> B(entry);
 
-    B.CreateCondBr(
-        B.CreateLoad(initD->getType()->getPointerElementType(), initD), end,
-        run);
+    B.CreateCondBr(B.CreateLoad(initD->getValueType(), initD), end, run);
 
     B.SetInsertPoint(run);
     Value *args[] = {ConstantExpr::getPointerCast(F, rtypes[0]),
@@ -2208,6 +2204,7 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
   }
   if (!cache_arg)
     return;
+#if LLVM_VERSION_MAJOR < 18
   auto PT = cast<PointerType>(arg->getType());
 #if LLVM_VERSION_MAJOR <= 14
   if (PT->getElementType() != ty)
@@ -2218,6 +2215,7 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
   if (!PT->isOpaqueOrPointeeTypeMatches(PT2))
     arg = BuilderZ.CreatePointerCast(
         arg, PointerType::get(ty, PT->getAddressSpace()), "pcld." + name);
+#endif
 #endif
   arg = BuilderZ.CreateLoad(ty, arg, "avld." + name);
   cacheValues.push_back(arg);

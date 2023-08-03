@@ -281,9 +281,21 @@ castToDiffeFunctionArgType(IRBuilder<> &Builder, llvm::CallInst *CI,
   if (auto ptr = dyn_cast<PointerType>(res->getType())) {
     if (auto PT = dyn_cast<PointerType>(destType)) {
       if (ptr->getAddressSpace() != PT->getAddressSpace()) {
-        res = Builder.CreateAddrSpaceCast(
-            res, PointerType::get(ptr->getPointerElementType(),
-                                  PT->getAddressSpace()));
+#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR >= 15
+        if (CI->getContext().supportsTypedPointers()) {
+#endif
+          res = Builder.CreateAddrSpaceCast(
+              res, PointerType::get(ptr->getPointerElementType(),
+                                    PT->getAddressSpace()));
+#if LLVM_VERSION_MAJOR >= 15
+        } else {
+          res = Builder.CreateAddrSpaceCast(res, PT);
+        }
+#endif
+#else
+        res = Builder.CreateAddrSpaceCast(res, PT);
+#endif
         assert(value);
         assert(destType);
         assert(FT);
@@ -735,14 +747,13 @@ public:
         Value *sretPt = CI->getArgOperand(0);
         if (width > 1) {
           PointerType *pty = cast<PointerType>(sretPt->getType());
-          if (auto sty = dyn_cast<StructType>(pty->getPointerElementType())) {
+          if (auto sty = dyn_cast<StructType>(Ty)) {
             Value *acc = UndefValue::get(
                 ArrayType::get(PointerType::get(sty->getElementType(0),
                                                 pty->getAddressSpace()),
                                width));
             for (size_t i = 0; i < width; ++i) {
-              Value *elem = Builder.CreateStructGEP(
-                  sretPt->getType()->getPointerElementType(), sretPt, i);
+              Value *elem = Builder.CreateStructGEP(sty, sretPt, i);
               acc = Builder.CreateInsertValue(acc, elem, i);
             }
             shadow = acc;
@@ -928,7 +939,22 @@ public:
       }
 
       if (byRefSize) {
-        Type *subTy = res->getType()->getPointerElementType();
+        Type *subTy = nullptr;
+        if (truei < FT->getNumParams()) {
+          subTy = FT->getParamType(i);
+        } else if ((mode == DerivativeMode::ReverseModeGradient ||
+                    mode == DerivativeMode::ForwardModeSplit)) {
+          if (differentialReturn && differet == nullptr) {
+            subTy = FT->getReturnType();
+          }
+        }
+
+        if (!subTy) {
+          EmitFailure("IllegalByVal", CI->getDebugLoc(), CI,
+                      "illegal enzyme byval arg", truei, " ", *res);
+          return {};
+        }
+
         auto &DL = fn->getParent()->getDataLayout();
         auto BitSize = DL.getTypeSizeInBits(subTy);
         if (BitSize / 8 != byRefSize) {
@@ -948,8 +974,13 @@ public:
           if (differentialReturn && differet == nullptr) {
             differet = res;
             if (CI->paramHasAttr(i, Attribute::ByVal)) {
-              differet = Builder.CreateLoad(
-                  differet->getType()->getPointerElementType(), differet);
+              Type *T = nullptr;
+#if LLVM_VERSION_MAJOR > 12
+              T = CI->getParamAttr(i, Attribute::ByVal).getValueAsType();
+#else
+              T = differet->getType()->getPointerElementType();
+#endif
+              differet = Builder.CreateLoad(T, differet);
             }
             if (differet->getType() != fn->getReturnType())
               if (auto ST0 = dyn_cast<StructType>(differet->getType()))
@@ -976,8 +1007,13 @@ public:
           } else if (tape == nullptr) {
             tape = res;
             if (CI->paramHasAttr(i, Attribute::ByVal)) {
-              tape = Builder.CreateLoad(
-                  tape->getType()->getPointerElementType(), tape);
+              Type *T = nullptr;
+#if LLVM_VERSION_MAJOR > 12
+              T = CI->getParamAttr(i, Attribute::ByVal).getValueAsType();
+#else
+              T = tape->getType()->getPointerElementType();
+#endif
+              tape = Builder.CreateLoad(T, tape);
             }
             continue;
           }
@@ -1000,9 +1036,21 @@ public:
         if (auto ptr = dyn_cast<PointerType>(res->getType())) {
           if (auto PT = dyn_cast<PointerType>(PTy)) {
             if (ptr->getAddressSpace() != PT->getAddressSpace()) {
-              res = Builder.CreateAddrSpaceCast(
-                  res, PointerType::get(ptr->getPointerElementType(),
-                                        PT->getAddressSpace()));
+#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR >= 15
+              if (CI->getContext().supportsTypedPointers()) {
+#endif
+                res = Builder.CreateAddrSpaceCast(
+                    res, PointerType::get(ptr->getPointerElementType(),
+                                          PT->getAddressSpace()));
+#if LLVM_VERSION_MAJOR >= 15
+              } else {
+                res = Builder.CreateAddrSpaceCast(res, PT);
+              }
+#endif
+#else
+              res = Builder.CreateAddrSpaceCast(res, PT);
+#endif
               assert(res);
               assert(PTy);
               assert(FT);
@@ -1139,6 +1187,7 @@ public:
       if (a.getType()->isFPOrFPVectorTy()) {
         dt = ConcreteType(a.getType()->getScalarType());
       } else if (a.getType()->isPointerTy()) {
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
         if (a.getContext().supportsTypedPointers()) {
 #endif
@@ -1150,6 +1199,7 @@ public:
           }
 #if LLVM_VERSION_MAJOR >= 15
         }
+#endif
 #endif
         dt.insert({}, BaseType::Pointer);
       } else if (a.getType()->isIntOrIntVectorTy()) {
@@ -2482,20 +2532,31 @@ public:
                                  /* CGSCC */ nullptr);
 
       DenseSet<const char *> Allowed = {
-          &AAHeapToStack::ID,     &AANoCapture::ID,
+        &AAHeapToStack::ID,
+        &AANoCapture::ID,
 
-          &AAMemoryBehavior::ID,  &AAMemoryLocation::ID, &AANoUnwind::ID,
-          &AANoSync::ID,          &AANoRecurse::ID,      &AAWillReturn::ID,
-          &AANoReturn::ID,        &AANonNull::ID,        &AANoAlias::ID,
-          &AADereferenceable::ID, &AAAlign::ID,
+        &AAMemoryBehavior::ID,
+        &AAMemoryLocation::ID,
+        &AANoUnwind::ID,
+        &AANoSync::ID,
+        &AANoRecurse::ID,
+        &AAWillReturn::ID,
+        &AANoReturn::ID,
+        &AANonNull::ID,
+        &AANoAlias::ID,
+        &AADereferenceable::ID,
+        &AAAlign::ID,
+#if LLVM_VERSION_MAJOR < 18
+        &AAReturnedValues::ID,
+#endif
+        &AANoFree::ID,
+        &AANoUndef::ID,
 
-          &AAReturnedValues::ID,  &AANoFree::ID,         &AANoUndef::ID,
-
-          //&AAValueSimplify::ID,
-          //&AAReachability::ID,
-          //&AAValueConstantRange::ID,
-          //&AAUndefinedBehavior::ID,
-          //&AAPotentialValues::ID,
+        //&AAValueSimplify::ID,
+        //&AAReachability::ID,
+        //&AAValueConstantRange::ID,
+        //&AAUndefinedBehavior::ID,
+        //&AAPotentialValues::ID,
       };
 
 #if LLVM_VERSION_MAJOR >= 15
