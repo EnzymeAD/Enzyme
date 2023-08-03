@@ -47,4 +47,4 @@ jobs:
     - name: cmake
       run: |
           cd enzyme
-           "${GITHUB_WORKSPACE}/bin/bazel" build 
+          "${GITHUB_WORKSPACE}/bin/bazel" build :EnzymeStatic 
