@@ -2,14 +2,12 @@
 new_local_repository(
     name = "llvm-raw",
     build_file_content = "# empty",
-    path = "../../llvm-project",
+    path = "../llvm-project",
 )
 
-load("@llvm-raw//utils/bazel:configure.bzl", "llvm_configure", "llvm_disable_optional_support_deps")
+load("@llvm-raw//utils/bazel:configure.bzl", "llvm_configure")
 
-llvm_disable_optional_support_deps()
 llvm_configure(name = "llvm-project", targets = ["X86"])
-
 
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
