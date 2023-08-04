@@ -38,6 +38,7 @@ enum ActionType {
   UpdateBlasDecl,
   UpdateBlasTA,
   GenBlasDiffUse,
+  GenBlasOpts,
 };
 
 static cl::opt<ActionType>
@@ -56,6 +57,8 @@ static cl::opt<ActionType>
                                  "Generate binaryoperator derivative")),
            cl::values(clEnumValN(InstDerivatives, "gen-inst-derivatives",
                                  "Generate instruction derivative")),
+           cl::values(clEnumValN(GenBlasOpts, "gen-blas-optimizations",
+                                 "Generate BLAS optimizations")),
            cl::values(clEnumValN(CallDerivatives, "gen-call-derivatives",
                                  "Generate call derivative")));
 
@@ -1397,6 +1400,117 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 #include "blasDiffUseUpdater.h"
 #include "blasTAUpdater.h"
 
+// class BlasOptPattern< list<dag> _inputs, list<string> _tmps, list<dag>
+// _outputs> {
+//   list<dag> inputs = _inputs;
+//   // tmp variables will dissapear during the transformation
+//   // and therefore are not allowed to be read elsewhere
+//   list<string> tmps = _tmps;
+//   list<dag> outputs = _outputs;
+// }
+// def first : BlasOptPattern<,
+// [
+// (b<"ger"> $layout, $m, $n, $alpha, $x, $incx, $y, $incy, $A, $lda),
+// (b<"ger"> $layout, $m, $k, $beta, $v, $incv, $w, $incw, $B, $ldb),
+// (b<"gemm"> $layout, $transa, $transb, $m, $n, $k, $alpha, $A, $lda, $B, $ldb,
+// $beta, $C, $ldc),
+// ],
+// ["A", "B"],
+// [
+// (Value<1> (b<"dot"> $layout, $n, $v, $incv, $y, $incy)),
+// (Value<2> (FMul $alpha Value<1>)),
+// (Value<3> (FMul $beta Value<2>)),
+// (b<"ger"> $layout, $m, $k, Value<3>, $x, $incx, $w, $incw, $C, $ldc),
+// ]
+// >;
+void emitBlasOpt(StringRef name, std::vector<DagInit *> inputs,
+                 std::vector<StringRef>, std::vector<DagInit *> outputs,
+                 raw_ostream &os) {
+  os << "bool opt" << name << "(llvm::Function *F) {\n";
+  os << "  using namespace llvm;\n";
+
+  StringSet usedArgs{};
+  std::vector<StringRef> functions{};
+  StringMap<std::vector<DagInit *>> unique_functions{};
+  for (auto input : inputs) {
+    ArrayRef<StringInit *> args = input->getArgNames();
+    auto Def = cast<DefInit>(input->getOperator())->getDef();
+    assert(Def->isSubClassOf("b"));
+    auto fnc_name = Def->getValueAsString("s");
+    // auto fnc_name = input->getNameStr();
+    functions.push_back(fnc_name);
+    unique_functions[fnc_name].push_back(input);
+    for (auto &arg : args) {
+      if (usedArgs.count(arg->getValue()))
+        continue;
+      os << "  Value *" << arg->getValue() << " = nullptr;\n";
+      usedArgs.insert(arg->getValue());
+    }
+  }
+
+  size_t idx = 0;
+
+  for (auto fnc : unique_functions.keys()) {
+    if (unique_functions.count(fnc) > 1)
+      os << "  size_t idx_" << fnc << " = 0;\n";
+  }
+
+  os << "  for (auto &BB : *F) {\n"
+     << "    for (auto &I : BB) {\n"
+     << "      if (auto *CI = dyn_cast<CallInst>(&I)) {\n"
+     << "        name = CI->getCalledFunction()->getName();\n";
+
+  for (auto fnc : unique_functions.keys()) {
+    os << "        if (name == \"" << fnc << "\") {\n";
+    auto fnc_vec = unique_functions[fnc];
+    for (size_t i = 0; i < fnc_vec.size(); ++i) {
+      if (fnc_vec.size() > 1) {
+        os << "          if (idx_" << fnc << " == " << i << ") {\n";
+      }
+      auto input = fnc_vec[i];
+      ArrayRef<StringInit *> args = input->getArgNames();
+      for (size_t j = 0; j < args.size(); ++j) {
+        os << "          " << args[j]->getValue() << " = CI->getArgOperand("
+           << j << ");\n";
+      }
+      if (fnc_vec.size() > 1) {
+        os << "          }\n";
+      }
+    }
+    os << "        }\n";
+  }
+  os << "      }\n";
+  os << "    }\n";
+  os << "  }\n";
+  os << "}\n";
+}
+
+static void emitBlasOpts(const RecordKeeper &recordKeeper, raw_ostream &os) {
+  emitSourceFileHeader("Rewriters", os);
+  const char *patternNames = "BlasOptPattern";
+  const auto &patterns = recordKeeper.getAllDerivedDefinitions(patternNames);
+
+  for (Record *pattern : patterns) {
+    ListInit *inputs = pattern->getValueAsListInit("inputs");
+    std::vector<StringRef> tmps = pattern->getValueAsListOfStrings("tmps");
+    ListInit *outputs = pattern->getValueAsListInit("outputs");
+
+    std::vector<DagInit *> inputDags;
+    for (auto input : *inputs) {
+      DagInit *dag = dyn_cast<DagInit>(input);
+      assert(dag);
+      inputDags.push_back(dag);
+    }
+    std::vector<DagInit *> outputDags;
+    for (auto output : *outputs) {
+      DagInit *dag = dyn_cast<DagInit>(output);
+      assert(dag);
+      outputDags.push_back(dag);
+    }
+    emitBlasOpt(pattern->getName(), inputDags, tmps, outputDags, os);
+  }
+}
+
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
   switch (action) {
   case CallDerivatives:
@@ -1416,6 +1530,9 @@ static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
     return false;
   case UpdateBlasTA:
     emitBlasTAUpdater(records, os);
+    return false;
+  case GenBlasOpts:
+    emitBlasOpts(records, os);
     return false;
 
   default:
