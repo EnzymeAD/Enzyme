@@ -14,7 +14,7 @@ class Value<int _i> {
 def first : BlasOptPattern<
                   [
                   (b<"ger"> $layout, $m, $n, $alpha, $x, $incx, $y, $incy, $A, $lda),
-                  (b<"ger"> $layout, $m, $k, $beta, $v, $incv, $w, $incw, $B, $ldb),
+                  (b<"ger"> $layout, $n, $k, $beta, $v, $incv, $w, $incw, $B, $ldb),
                   (b<"gemm"> $layout, $transa, $transb, $m, $n, $k, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),
                   ],
                   ["A", "B"],

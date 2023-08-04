@@ -1448,12 +1448,14 @@ void emitBlasOpt(StringRef name, std::vector<DagInit *> inputs,
     }
   }
 
-  size_t idx = 0;
+  os << "\n";
 
   for (auto fnc : unique_functions.keys()) {
-    if (unique_functions.count(fnc) > 1)
-      os << "  size_t idx_" << fnc << " = 0;\n";
+    os << "  size_t idx_" << fnc << " = 0;\n";
   }
+
+  os << "  // create a vector of calls to delete\n";
+  os << "  std::vector<CallInst *> todelete;\n";
 
   os << "  for (auto &BB : *F) {\n"
      << "    for (auto &I : BB) {\n"
@@ -1470,6 +1472,8 @@ void emitBlasOpt(StringRef name, std::vector<DagInit *> inputs,
       auto input = fnc_vec[i];
       ArrayRef<StringInit *> args = input->getArgNames();
       for (size_t j = 0; j < args.size(); ++j) {
+        if (fnc_vec.size() > 1)
+          os << "  ";
         os << "          " << args[j]->getValue() << " = CI->getArgOperand("
            << j << ");\n";
       }
@@ -1477,11 +1481,45 @@ void emitBlasOpt(StringRef name, std::vector<DagInit *> inputs,
         os << "          }\n";
       }
     }
-    os << "        }\n";
+    os << "        idx_" << fnc << "++;\n"
+       << "        todelete.push_back(CI);\n"
+       << "        }\n";
   }
   os << "      }\n";
   os << "    }\n";
   os << "  }\n";
+
+  // check that all functions have been found
+  os << "  bool found = true;\n";
+  for (auto fnc : unique_functions.keys()) {
+    os << "  if (idx_" << fnc << " != " << unique_functions[fnc].size() << ")\n"
+       << "    found = false;\n";
+  }
+  os << "  if (!found)\n"
+     << "    return false;\n";
+
+  // now that we found an optimization to apply,
+  // we can delete the old calls
+  os << "  for (auto *CI : todelete) {\n"
+     << "    CI->eraseFromParent();\n"
+     << "  }\n";
+
+  // emit the actual optimization
+  // for (auto output : outputs) {
+  //  auto Def = cast<DefInit>(output->getOperator())->getDef();
+  //  assert(Def->isSubClassOf("b"));
+  //  auto fnc_name = Def->getValueAsString("s");
+  //  // auto fnc_name = output->getNameStr();
+  //  os << "  " << fnc_name << "(";
+  //  ArrayRef<StringInit *> args = output->getArgNames();
+  //  for (size_t i = 0; i < args.size(); ++i) {
+  //    if (i > 0)
+  //      os << ", ";
+  //    os << args[i]->getValue();
+  //  }
+  //  os << ");\n";
+  //}
+
   os << "}\n";
 }
 
