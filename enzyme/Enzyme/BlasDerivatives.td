@@ -7,15 +7,16 @@ class BLASType<int _n, bit _active> {
   bit active = _active;
 }
 
+// scalar types
 def len   : BLASType<1, 0>; // num of elements
 def hbw   : BLASType<1, 0>; // half matrix-bandwith}
 def bw    : BLASType<1, 0>; // matrix-bandwith}
 def fp    : BLASType<1, 1>;  // floating point
-def ap    : BLASType<1, 1>;  // packed array, alternative to vld
-//def vinc  : BLASType<2, 1>;  // {vector, increment}
-def vld   : BLASType<2, 1>;  // {vector, leading dim}
-//def mld   : BLASType<2, 1>;  // {matrix, leading dim}, assumes m, n as existing args
 
+// packed array of size ( n * (n  + 1) / 2 )
+class ap<list<string> _args> : BLASType<1, 1> {
+  list<string> args = _args;
+}
 class vinc<list<string> _args> : BLASType<2, 1> {
   list<string> args = _args;
 }
@@ -99,6 +100,7 @@ class use<string _name> {
 
 class FrobInnerProd<string _tmp>;
 
+class DiagUpdateSPMV<string _tmp>;
 
 // General note: If return is scalar, return it. If return is vec, update it.
 
@@ -142,8 +144,8 @@ def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
 def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   [],[len, vinc<["n"]>, vinc<["n"]>],
                   [
-                  (b<"axpy"> $n, DiffeRet, $y, $incy, $x, $incx), 
-                  (b<"axpy"> $n, DiffeRet, $x, $incx, $y, $incy)
+                  (b<"axpy"> $n, DiffeRet, $y, $incy, adj<"x">, $incx), 
+                  (b<"axpy"> $n, DiffeRet, $x, $incx, adj<"y">, $incy)
                   ]
                   >;
 
@@ -182,7 +184,7 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $incx, $beta, $y, $incy),
                   ["y"], [cblas_layout, trans,  len, len,  fp,   mld<["m", "n"]>,      vinc<["transa", "n", "m"]>,      fp,    vinc<["transa", "m", "n"]>],
                   [
-                  /* alpha  */  (Seq<["Ax", "transa", "m", "n"]>
+                  /* alpha  */  (Seq<["Ax", "is_normal", "transa", "m", "n"]>
                       (b<"gemv"> $layout, $transa, $m, $n, Constant<"1.0">, $A, (ld $A, $transa, $lda, $m, $n), $x, $incx, Constant<"0.0">, use<"Ax">, ConstantInt<1>),
                       (b<"dot"> (Rows $transa, $m, $n), adj<"y">, $incy, use<"Ax">, ConstantInt<1>)),
                   /* A      */  (b<"ger">  $layout, $m, $n, $alpha, adj<"y">, $incy, $x, $incx, adj<"A">, $lda),
@@ -213,7 +215,7 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   [cblas_layout, trans, trans, len, len, len, fp, mld<["transa", "m", "k"]>, mld<["transb", "k", "n"]>, fp, mld<["m", "n"]>],
                   [
                   
-                  /* alpha */ (Seq<["AB", "m", "n"]> 
+                  /* alpha */ (Seq<["AB", "product", "m", "n"]> 
                       (b<"gemm"> $layout, $transa, $transb, $m, $n, $k, Constant<"1.0">, $A, (ld $A, $transa, $lda, $m, $k), $B, (ld $B, $transb, $ldb, $k, $n), Constant<"0.0">, use<"AB">, $m),// TODO: check if last arg should be $m or $n
                       (FrobInnerProd<""> $m, $n, adj<"C">, $ldc, use<"AB">)),
                   /* A     */ (b<"gemm"> $layout, $transa, transpose<"transb">, $m, $k, $n, $alpha, adj<"C">, $ldc, $B, (ld $B, $transb, $ldb, $k, $n), $beta, adj<"A">, $lda),
@@ -223,19 +225,35 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   ]
                   >;
 
-// def spmv : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $v, $ld, $x, $incx, $beta, $y, $incy),
-//                   ["spmv"],
-//                   [cblas_layout, uplo, len, fp, vld, vinc, fp, vinc],
-//                   []
-//                   >;
-// 
+def spmv : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $ap, $x, $incx, $beta, $y, $incy),
+                  ["y"],
+                  [cblas_layout, uplo, len, fp, ap<["n"]>, vinc<["n"]>, fp, vinc<["n"]>],
+                  [
+                  /* alpha */ (Seq<["y0", "triangular", "n"]>
+                    (b<"spmv"> $layout, $uplo, $n, Constant<"1.0">, $ap, $x, $incx, Constant<"0.0">, use<"y0">, ConstantInt<1>),
+                    (b<"dot"> $n, adj<"y">, $incy, use<"y0">, ConstantInt<1>)),
+                  /* ap    */ (Seq<[]>
+                    (b<"spr2"> $layout, $uplo, $n, $alpha, $x, $incx, adj<"y">, $incy, adj<"ap">),
+                    (DiagUpdateSPMV<""> $uplo, $n, $alpha, $x, $incx, adj<"y">, $incy, adj<"ap">)),
+                  /* x     */ (b<"spmv"> $layout, $uplo, $n, $alpha, $ap, adj<"y">, $incy, Constant<"1.0">, adj<"x">, $incx),
+                  /* beta  */ (b<"dot"> $n, adj<"y">, $incy, input<"y">, $incy),
+                  /* y     */ (b<"scal"> $n, $beta, adj<"y">, $incy)
+                  ]
+                  >;
+
+def spr2 : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $x, $incx, $y, $incy, $ap),
+                  ["ap"],
+                  [cblas_layout, uplo, len, fp, vinc<["n"]>, vinc<["n"]>, ap<["n"]>],
+                  [
+                  /* alpha */ (inactive),
+                  /* x     */ (inactive),
+                  /* y     */ (inactive),
+                  /* ap    */ (inactive),
+                  ]
+                  >;
+
 // def spr : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $x, $incx, $v, $ld),
 //                   [cblas_layout, uplo, len, fp, vinc, vld],
-//                   []
-//                   >;
-// 
-// def spr2 : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $x, $incx, $y, $incy, $v, $ld),
-//                   [cblas_layout, uplo, len, fp, vinc, vinc, vld],
 //                   []
 //                   >;
 // 

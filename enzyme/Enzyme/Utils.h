@@ -644,6 +644,14 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
                              BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
                              llvm::ArrayRef<llvm::OperandBundleDef> bundles);
 
+void callSPMVDiagUpdate(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                        llvm::IntegerType *IT, llvm::Type *BlasCT,
+                        llvm::Type *BlasFPT, llvm::Type *BlasPT,
+                        llvm::Type *BlasIT, llvm::Type *fpTy,
+                        llvm::ArrayRef<llvm::Value *> args,
+                        const llvm::ArrayRef<llvm::OperandBundleDef> bundles,
+                        bool byRef, bool julia_decl);
+
 llvm::CallInst *
 getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                      llvm::IntegerType *IT, llvm::Type *BlasPT,
@@ -1661,6 +1669,7 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
                                   llvm::Value *dim_2, bool cacheMat,
                                   bool byRef);
 llvm::Value *is_normal(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef);
+llvm::Value *is_uper(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef);
 llvm::Value *select_vec_dims(llvm::IRBuilder<> &B, llvm::Value *trans,
                              llvm::Value *dim1, llvm::Value *dim2, bool byRef);
 // first one assume V is an Integer

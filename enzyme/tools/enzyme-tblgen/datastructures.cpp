@@ -27,6 +27,8 @@ const char *TyToString(ArgType ty) {
   switch (ty) {
   case ArgType::fp:
     return "fp";
+  case ArgType::ap:
+    return "ap";
   case ArgType::len:
     return "len";
   case ArgType::vincData:
@@ -50,6 +52,12 @@ const char *TyToString(ArgType ty) {
   default:
     return "unknown";
   }
+}
+
+bool isVecLikeArg(ArgType ty) {
+  if (ty == ArgType::vincData || ty == ArgType::mldData || ty == ArgType::ap)
+    return true;
+  return false;
 }
 
 bool isArgUsed(StringRef toFind, const DagInit *toSearch) {
@@ -186,6 +194,8 @@ void fillArgTypes(const Record *pattern, DenseMap<size_t, ArgType> &argTypes) {
     } else if (val->isSubClassOf("mld")) {
       argTypes.insert(std::make_pair(pos, ArgType::mldData));
       argTypes.insert(std::make_pair(pos + 1, ArgType::mldLD));
+    } else if (val->isSubClassOf("ap")) {
+      argTypes.insert(std::make_pair(pos, ArgType::ap));
     } else {
       // TODO: fix assertion
       // assert(isa<DefInit>(val));
@@ -234,7 +244,8 @@ void fillRelatedLenghts(
   auto inputTypes = pattern->getValueAsListOfDefs("inputTypes");
   size_t pos = 0;
   for (auto val : inputTypes) {
-    if (!val->isSubClassOf("vinc") && !val->isSubClassOf("mld")) {
+    if (!val->isSubClassOf("vinc") && !val->isSubClassOf("mld") &&
+        !val->isSubClassOf("ap")) {
       pos += val->getValueAsInt("nelem");
       continue;
     }
@@ -257,6 +268,10 @@ void fillRelatedLenghts(
         assert(argTypes.lookup(lengths[1]) == ArgType::len);
         assert(argTypes.lookup(lengths[2]) == ArgType::len);
       }
+      relatedLengths.insert(std::make_pair(pos, lengths));
+    } else if (val->isSubClassOf("ap")) {
+      assert(argsSize == 1);
+      assert(argTypes.lookup(lengths[0]) == ArgType::len);
       relatedLengths.insert(std::make_pair(pos, lengths));
     } else if (val->isSubClassOf("mld")) {
       assert(argsSize == 2 || argsSize == 3);
@@ -326,7 +341,8 @@ TGPattern::TGPattern(Record *r) : blasName(r->getNameInitAsString()) {
 SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg) const {
   auto ty = argTypes.lookup(arg);
   // other args are unrelated to length args
-  assert(ty == ArgType::vincData || ty == ArgType::mldData);
+  assert(ty == ArgType::vincData || ty == ArgType::mldData ||
+         ty == ArgType::ap);
 
   assert(relatedLengths.count(arg) == 1);
   auto related = relatedLengths.lookup(arg);

@@ -667,6 +667,197 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
   B.CreateCall(fn, args, bundles);
 }
 
+void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
+                        IntegerType *IT, Type *BlasCT,
+                        Type *BlasFPT, Type *BlasPT,
+                        Type *BlasIT, Type *fpTy,
+                        ArrayRef<Value *> args,
+                        ArrayRef<OperandBundleDef> bundles,
+                        bool byRef, bool julia_decl) {
+  // add spmv diag update call if not already present
+  std::string fnc_name =
+      ("__enzyme_spmv_diag" + blas.floatType + blas.suffix).str();
+
+  //  spmvDiagHelper(uplo, n, alpha, x, incx, ya, incy, APa)
+  auto FDiagUpdateT = FunctionType::get(
+      B.getVoidTy(),
+      {BlasCT, BlasIT, BlasFPT, BlasPT, BlasIT, BlasPT, BlasIT, BlasPT}, false);
+  Function *F =
+      cast<Function>(M.getOrInsertFunction(fnc_name, FDiagUpdateT).getCallee());
+
+  if (!F->empty()) {
+    B.CreateCall(F, args, bundles);
+    return;
+  }
+
+  // now add the implementation for the call
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
+  F->addFnAttr(Attribute::ArgMemOnly);
+#endif
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
+  if (!julia_decl) {
+    F->addParamAttr(3, Attribute::NoCapture);
+    F->addParamAttr(5, Attribute::NoCapture);
+    F->addParamAttr(7, Attribute::NoCapture);
+    F->addParamAttr(3, Attribute::NoAlias);
+    F->addParamAttr(5, Attribute::NoAlias);
+    F->addParamAttr(7, Attribute::NoAlias);
+    F->addParamAttr(3, Attribute::ReadOnly);
+    F->addParamAttr(5, Attribute::ReadOnly);
+    if (byRef) {
+      F->addParamAttr(2, Attribute::NoCapture);
+      F->addParamAttr(2, Attribute::NoAlias);
+      F->addParamAttr(2, Attribute::ReadOnly);
+    }
+  }
+
+  BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+  BasicBlock *init = BasicBlock::Create(M.getContext(), "init", F);
+  BasicBlock *uper_code = BasicBlock::Create(M.getContext(), "uper", F);
+  BasicBlock *lower_code = BasicBlock::Create(M.getContext(), "lower", F);
+  BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
+
+  //  spmvDiagHelper(uplo, n, alpha, x, incx, ya, incy, APa)
+  auto blasuplo = F->arg_begin();
+  blasuplo->setName("blasuplo");
+  auto blasn = blasuplo + 1;
+  blasn->setName("blasn");
+  auto blasalpha = blasn + 1;
+  blasalpha->setName("blasalpha");
+  auto blasx = blasalpha + 1;
+  blasx->setName("blasx");
+  auto blasincx = blasx + 1;
+  blasincx->setName("blasincx");
+  auto blasdy = blasx + 1;
+  blasdy->setName("blasdy");
+  auto blasincy = blasdy + 1;
+  blasincy->setName("blasincy");
+  auto blasdAP = blasincy + 1;
+  blasdAP->setName("blasdAP");
+
+  // TODO: consider cblas_layout
+
+  // https://dl.acm.org/doi/pdf/10.1145/3382191
+  // Following example is Fortran based, thus 1 indexed
+  // if(uplo == 'u' .or. uplo == 'U') then
+  //   k = 0
+  //   do i = 1,n
+  //     k = k+i
+  //     APa(k) = APa(k) - alpha*x(1 + (i-1)*incx)*ya(1 + (i-1)*incy)
+  //   end do
+  // else
+  //   k = 1
+  //   do i = 1,n
+  //     APa(k) = APa(k) - alpha*x(1 + (i-1)*incx)*ya(1 + (i-1)*incy)
+  //     k = k+n-i+1
+  //   end do
+  // end if
+  {
+    IRBuilder<> B1(entry);
+    Value *n = load_if_ref(B1, IT, blasn, byRef);
+    Value *incx = load_if_ref(B1, IT, blasincx, byRef);
+    Value *incy = load_if_ref(B1, IT, blasincy, byRef);
+    Value *alpha = blasalpha;
+    if (byRef) {
+      auto VP = B1.CreatePointerCast(
+          blasalpha,
+          PointerType::get(
+              fpTy,
+              cast<PointerType>(blasalpha->getType())->getAddressSpace()));
+      alpha = B1.CreateLoad(fpTy, VP);
+    }
+    Value *is_u = is_uper(B1, blasuplo, byRef);
+    Value *k = B1.CreateSelect(is_u, ConstantInt::get(IT, 0),
+                               ConstantInt::get(IT, 1), "k");
+    B1.CreateCondBr(B1.CreateICmpEQ(n, ConstantInt::get(IT, 0)), end, init);
+
+    IRBuilder<> B2(init);
+    Value *xfloat = B2.CreatePointerCast(
+        blasx,
+        PointerType::get(
+            fpTy, cast<PointerType>(blasx->getType())->getAddressSpace()));
+    Value *dyfloat = B2.CreatePointerCast(
+        blasdy,
+        PointerType::get(
+            fpTy, cast<PointerType>(blasdy->getType())->getAddressSpace()));
+    Value *dAPfloat = B2.CreatePointerCast(
+        blasdAP,
+        PointerType::get(
+            fpTy, cast<PointerType>(blasdAP->getType())->getAddressSpace()));
+    B2.CreateCondBr(is_u, uper_code, lower_code);
+
+    IRBuilder<> B3(uper_code);
+    B3.setFastMathFlags(getFast());
+    {
+      PHINode *iter = B3.CreatePHI(IT, 2, "iteration");
+      PHINode *kval = B3.CreatePHI(IT, 2, "k");
+      iter->addIncoming(ConstantInt::get(IT, 0), init);
+      kval->addIncoming(ConstantInt::get(IT, 0), init);
+      Value *iternext =
+          B3.CreateAdd(iter, ConstantInt::get(IT, 1), "iter.next");
+      // 0, 2, 5, 9, 14, 20, 27, 35, 44, 54, ... are diag elements
+      Value *kvalnext = B3.CreateAdd(kval, iternext, "k.next");
+      iter->addIncoming(iternext, uper_code);
+      kval->addIncoming(kvalnext, uper_code);
+
+      Value *xidx = B3.CreateNUWMul(iter, incx, "x.idx");
+      Value *yidx = B3.CreateNUWMul(iter, incy, "y.idx");
+      Value *x = B3.CreateInBoundsGEP(fpTy, xfloat, xidx, "x.ptr");
+      Value *y = B3.CreateInBoundsGEP(fpTy, dyfloat, yidx, "y.ptr");
+      Value *xval = B3.CreateLoad(fpTy, x, "x.val");
+      Value *yval = B3.CreateLoad(fpTy, y, "y.val");
+      Value *xy = B3.CreateFMul(xval, yval, "xy");
+      Value *xyalpha = B3.CreateFMul(xy, alpha, "xy.alpha");
+      Value *kptr = B3.CreateInBoundsGEP(fpTy, dAPfloat, kval, "k.ptr");
+      Value *kvalloaded = B3.CreateLoad(fpTy, kptr, "k.val");
+      Value *kvalnew = B3.CreateFSub(kvalloaded, xyalpha, "k.val.new");
+      B3.CreateStore(kvalnew, kptr);
+
+      B3.CreateCondBr(B3.CreateICmpEQ(iternext, n), end, uper_code);
+    }
+
+    IRBuilder<> B4(lower_code);
+    B4.setFastMathFlags(getFast());
+    {
+      PHINode *iter = B4.CreatePHI(IT, 2, "iteration");
+      PHINode *kval = B4.CreatePHI(IT, 2, "k");
+      iter->addIncoming(ConstantInt::get(IT, 0), init);
+      kval->addIncoming(ConstantInt::get(IT, 0), init);
+      Value *iternext =
+          B4.CreateAdd(iter, ConstantInt::get(IT, 1), "iter.next");
+      Value *ktmp = B4.CreateAdd(n, ConstantInt::get(IT, 1), "tmp.val");
+      Value *ktmp2 = B4.CreateSub(ktmp, iternext, "tmp.val.other");
+      Value *kvalnext = B4.CreateAdd(kval, ktmp2, "k.next");
+      iter->addIncoming(iternext, lower_code);
+      kval->addIncoming(kvalnext, lower_code);
+
+      Value *xidx = B4.CreateNUWMul(iter, incx, "x.idx");
+      Value *yidx = B4.CreateNUWMul(iter, incy, "y.idx");
+      Value *x = B4.CreateInBoundsGEP(fpTy, xfloat, xidx, "x.ptr");
+      Value *y = B4.CreateInBoundsGEP(fpTy, dyfloat, yidx, "y.ptr");
+      Value *xval = B4.CreateLoad(fpTy, x, "x.val");
+      Value *yval = B4.CreateLoad(fpTy, y, "y.val");
+      Value *xy = B4.CreateFMul(xval, yval, "xy");
+      Value *xyalpha = B4.CreateFMul(xy, alpha, "xy.alpha");
+      Value *kptr = B4.CreateInBoundsGEP(fpTy, dAPfloat, kval, "k.ptr");
+      Value *kvalloaded = B4.CreateLoad(fpTy, kptr, "k.val");
+      Value *kvalnew = B4.CreateFSub(kvalloaded, xyalpha, "k.val.new");
+      B4.CreateStore(kvalnew, kptr);
+
+      B4.CreateCondBr(B4.CreateICmpEQ(iternext, n), end, lower_code);
+    }
+
+    IRBuilder<> B5(end);
+    B5.CreateRetVoid();
+  }
+  B.CreateCall(F, args, bundles);
+  return;
+}
+
 llvm::CallInst *
 getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                      IntegerType *IT, Type *BlasPT, Type *BlasIT, Type *fpTy,
@@ -2144,7 +2335,7 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
   llvm::Twine floatType[] = {"s", "d"}; // c, z
-  llvm::Twine extractable[] = {"dot", "scal", "axpy", "gemv", "gemm"};
+  llvm::Twine extractable[] = {"dot", "scal", "axpy", "gemv", "gemm", "spmv"};
   llvm::Twine prefixes[] = {"" /*Fortran*/, "cblas_", "cublas_"};
   llvm::Twine suffixes[] = {"", "_", "64_", "_64_"};
   for (auto t : floatType) {
@@ -2259,6 +2450,19 @@ llvm::Value *select_vec_dims(IRBuilder<> &B, llvm::Value *trans,
   Value *width = B.CreateSelect(is_normal(B, trans, byRef), dim1, dim2);
 
   return width;
+}
+
+Value *is_uper(IRBuilder<> &B, Value *trans, bool byRef) {
+  auto charTy = IntegerType::get(trans->getContext(), 8);
+  if (byRef)
+    trans = B.CreateLoad(charTy, trans, "loaded.trans");
+
+  Value *trueVal = ConstantInt::getTrue(trans->getContext());
+
+  Value *isUper =
+      B.CreateOr(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'u')),
+                 B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'U')));
+  return isUper;
 }
 
 llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef) {
