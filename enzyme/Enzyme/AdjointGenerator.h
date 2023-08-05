@@ -4893,8 +4893,7 @@ public:
         Builder2.CreateCondBr(isNull, endBlock, nonnullBlock);
         Builder2.SetInsertPoint(nonnullBlock);
 
-        Value *cache =
-            Builder2.CreateLoad(PointerType::getUnqual(impi), d_reqp);
+        Value *cache = Builder2.CreateLoad(impi, d_reqp);
 
         Value *args[] = {
             getMPIMemberPtr<MPI_Elem::Buf, false>(Builder2, cache, impi),

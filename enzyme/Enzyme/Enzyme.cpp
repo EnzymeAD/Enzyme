@@ -731,6 +731,13 @@ public:
       Type *fnsrety = cast<PointerType>(FT->getParamType(0));
       Ty = fnsrety->getPointerElementType();
 #endif
+      Type *CTy = nullptr;
+#if LLVM_VERSION_MAJOR >= 12
+      CTy = CI->getAttribute(AttributeList::FirstArgIndex, Attribute::StructRet)
+                .getValueAsType();
+#else
+      CTy = cast<PointerType>(CI->getArgOperand(0))->getPointerElementType();
+#endif
 #if LLVM_VERSION_MAJOR >= 11
       AllocaInst *primal = new AllocaInst(Ty, DL.getAllocaAddrSpace(), nullptr,
                                           DL.getPrefTypeAlign(Ty));
@@ -747,7 +754,7 @@ public:
         Value *sretPt = CI->getArgOperand(0);
         if (width > 1) {
           PointerType *pty = cast<PointerType>(sretPt->getType());
-          if (auto sty = dyn_cast<StructType>(Ty)) {
+          if (auto sty = dyn_cast<StructType>(CTy)) {
             Value *acc = UndefValue::get(
                 ArrayType::get(PointerType::get(sty->getElementType(0),
                                                 pty->getAddressSpace()),
@@ -963,6 +970,10 @@ public:
                       byRefSize, " (bytes) actual size ", BitSize,
                       " (bits) in ", *CI);
         }
+        res = Builder.CreateBitCast(
+            res,
+            PointerType::get(
+                subTy, cast<PointerType>(res->getType())->getAddressSpace()));
         res = Builder.CreateLoad(subTy, res);
         byRefSize = 0;
       }

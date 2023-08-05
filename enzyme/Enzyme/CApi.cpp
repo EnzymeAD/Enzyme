@@ -1249,7 +1249,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
             .getValueAsType();
 #else
     T = FT->getParamType(idx)
-            ->getPointerElementType()
+            ->getPointerElementType();
 #endif
     Types.push_back(T);
   }
