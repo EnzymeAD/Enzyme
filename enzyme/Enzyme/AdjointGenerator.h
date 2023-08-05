@@ -6811,9 +6811,10 @@ public:
 #endif
           );
 #if LLVM_VERSION_MAJOR >= 13
-          structAttrs[args.size()].push_back(Attribute::get(
-              call.getContext(), Attribute::AttrKind::ElementType,
-              call.getParamAttr(i, Attribute::StructRet).getValueAsType()));
+          // TODO
+          // structAttrs[args.size()].push_back(Attribute::get(
+          //     call.getContext(), Attribute::AttrKind::ElementType,
+          //     call.getParamAttr(i, Attribute::StructRet).getValueAsType()));
 #endif
         }
         if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
@@ -6894,9 +6895,11 @@ public:
 #endif
             );
 #if LLVM_VERSION_MAJOR >= 13
-            structAttrs[args.size()].push_back(Attribute::get(
-                call.getContext(), Attribute::AttrKind::ElementType,
-                call.getParamAttr(i, Attribute::StructRet).getValueAsType()));
+            // TODO
+            // structAttrs[args.size()].push_back(Attribute::get(
+            //     call.getContext(), Attribute::AttrKind::ElementType,
+            //     call.getParamAttr(i,
+            //     Attribute::StructRet).getValueAsType()));
 #endif
           } else {
             structAttrs[args.size()].push_back(
@@ -6907,9 +6910,11 @@ public:
 #endif
             );
 #if LLVM_VERSION_MAJOR >= 13
-            structAttrs[args.size()].push_back(Attribute::get(
-                call.getContext(), Attribute::AttrKind::ElementType,
-                call.getParamAttr(i, Attribute::StructRet).getValueAsType()));
+            // TODO
+            // structAttrs[args.size()].push_back(Attribute::get(
+            //     call.getContext(), Attribute::AttrKind::ElementType,
+            //     call.getParamAttr(i,
+            //     Attribute::StructRet).getValueAsType()));
 #endif
           }
         }

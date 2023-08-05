@@ -2142,18 +2142,22 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     if (F->hasParamAttribute(ii, Attribute::StructRet)) {
       NewF->addParamAttr(jj, Attribute::get(F->getContext(), "enzyme_sret"));
 #if LLVM_VERSION_MAJOR >= 13
-      NewF->addParamAttr(
-          jj,
-          Attribute::get(
-              F->getContext(), Attribute::AttrKind::ElementType,
-              F->getParamAttribute(ii, Attribute::StructRet).getValueAsType()));
+      // TODO
+      // NewF->addParamAttr(
+      //    jj,
+      //    Attribute::get(
+      //        F->getContext(), Attribute::AttrKind::ElementType,
+      //        F->getParamAttribute(ii,
+      //        Attribute::StructRet).getValueAsType()));
 #endif
     }
     if (F->getAttributes().hasParamAttr(ii, "enzymejl_returnRoots")) {
       NewF->addParamAttr(
           jj, F->getAttributes().getParamAttr(ii, "enzymejl_returnRoots"));
 #if LLVM_VERSION_MAJOR >= 13
-      NewF->addParamAttr(jj, F->getParamAttribute(ii, Attribute::ElementType));
+      // TODO
+      // NewF->addParamAttr(jj, F->getParamAttribute(ii,
+      // Attribute::ElementType));
 #endif
     }
     for (auto ty : PrimalParamAttrsToPreserve)
@@ -2209,8 +2213,9 @@ Function *PreProcessCache::CloneFunctionWithReturns(
                                                     "enzymejl_returnRoots_v"));
         }
 #if LLVM_VERSION_MAJOR >= 13
-        NewF->addParamAttr(jj + 1,
-                           F->getParamAttribute(ii, Attribute::ElementType));
+        // TODO
+        // NewF->addParamAttr(jj + 1,
+        //                   F->getParamAttribute(ii, Attribute::ElementType));
 #endif
       }
 
@@ -2224,11 +2229,13 @@ Function *PreProcessCache::CloneFunctionWithReturns(
                              Attribute::get(F->getContext(), "enzyme_sret"));
 #endif
 #if LLVM_VERSION_MAJOR >= 13
-          NewF->addParamAttr(
-              jj + 1,
-              Attribute::get(F->getContext(), Attribute::AttrKind::ElementType,
-                             F->getParamAttribute(ii, Attribute::StructRet)
-                                 .getValueAsType()));
+          // TODO
+          // NewF->addParamAttr(
+          //     jj + 1,
+          //     Attribute::get(F->getContext(),
+          //     Attribute::AttrKind::ElementType,
+          //                    F->getParamAttribute(ii, Attribute::StructRet)
+          //                        .getValueAsType()));
 #endif
         } else {
 #if LLVM_VERSION_MAJOR >= 12
@@ -2239,11 +2246,13 @@ Function *PreProcessCache::CloneFunctionWithReturns(
                              Attribute::get(F->getContext(), "enzyme_sret_v"));
 #endif
 #if LLVM_VERSION_MAJOR >= 13
-          NewF->addParamAttr(
-              jj + 1,
-              Attribute::get(F->getContext(), Attribute::AttrKind::ElementType,
-                             F->getParamAttribute(ii, Attribute::StructRet)
-                                 .getValueAsType()));
+          // TODO
+          // NewF->addParamAttr(
+          //     jj + 1,
+          //     Attribute::get(F->getContext(),
+          //     Attribute::AttrKind::ElementType,
+          //                    F->getParamAttribute(ii, Attribute::StructRet)
+          //                        .getValueAsType()));
 #endif
         }
       }

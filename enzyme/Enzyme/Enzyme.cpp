@@ -736,7 +736,8 @@ public:
       CTy = CI->getAttribute(AttributeList::FirstArgIndex, Attribute::StructRet)
                 .getValueAsType();
 #else
-      CTy = cast<PointerType>(CI->getArgOperand(0))->getPointerElementType();
+      CTy = cast<PointerType>(CI->getArgOperand(0)->getType())
+                ->getPointerElementType();
 #endif
 #if LLVM_VERSION_MAJOR >= 11
       AllocaInst *primal = new AllocaInst(Ty, DL.getAllocaAddrSpace(), nullptr,

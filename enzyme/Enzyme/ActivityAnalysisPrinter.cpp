@@ -90,7 +90,6 @@ bool printActivityAnalysis(llvm::Function &F, TargetLibraryInfo &TLI) {
       dt = ConcreteType(a.getType()->getScalarType());
     } else if (a.getType()->isPointerTy()) {
 #if LLVM_VERSION_MAJOR >= 18
-      dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
 #else
       auto et = a.getType()->getPointerElementType();
       if (et->isFPOrFPVectorTy()) {
@@ -115,7 +114,6 @@ bool printActivityAnalysis(llvm::Function &F, TargetLibraryInfo &TLI) {
     dt = ConcreteType(F.getReturnType()->getScalarType());
   } else if (F.getReturnType()->isPointerTy()) {
 #if LLVM_VERSION_MAJOR >= 18
-    dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
 #else
     auto et = F.getReturnType()->getPointerElementType();
     if (et->isFPOrFPVectorTy()) {

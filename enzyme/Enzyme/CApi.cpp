@@ -1244,21 +1244,22 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
 
   for (auto idx : enzyme_srets) {
     llvm::Type *T = nullptr;
-#if LLVM_VERSION_MAJOR >= 13
-    T = F->getParamAttribute(idx, Attribute::AttrKind::ElementType)
-            .getValueAsType();
+#if LLVM_VERSION_MAJOR >= 18
+    llvm_unreachable("Unhandled");
+    // T = F->getParamAttribute(idx, Attribute::AttrKind::ElementType)
+    //        .getValueAsType();
 #else
-    T = FT->getParamType(idx)
-            ->getPointerElementType();
+    T = FT->getParamType(idx)->getPointerElementType();
 #endif
     Types.push_back(T);
   }
   for (auto idx : enzyme_srets_v) {
     llvm::Type *T = nullptr;
     auto AT = cast<ArrayType>(FT->getParamType(idx));
-#if LLVM_VERSION_MAJOR >= 13
-    T = F->getParamAttribute(idx, Attribute::AttrKind::ElementType)
-            .getValueAsType();
+#if LLVM_VERSION_MAJOR >= 18
+    llvm_unreachable("Unhandled");
+    // T = F->getParamAttribute(idx, Attribute::AttrKind::ElementType)
+    //         .getValueAsType();
 #else
     T = AT->getElementType()->getPointerElementType();
 #endif
@@ -1505,9 +1506,10 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     auto arg = delArgMap[i];
     assert(arg);
     llvm::Type *T = nullptr;
-#if LLVM_VERSION_MAJOR >= 13
-    T = F->getParamAttribute(i, Attribute::AttrKind::ElementType)
-            .getValueAsType();
+#if LLVM_VERSION_MAJOR >= 18
+    llvm_unreachable("Unhandled");
+    // T = F->getParamAttribute(i, Attribute::AttrKind::ElementType)
+    //        .getValueAsType();
 #else
     T = FT->getParamType(i)->getPointerElementType();
 #endif
@@ -1520,9 +1522,10 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     assert(arg);
     auto AT = cast<ArrayType>(FT->getParamType(i));
     llvm::Type *T = nullptr;
-#if LLVM_VERSION_MAJOR >= 13
-    T = F->getParamAttribute(i, Attribute::AttrKind::ElementType)
-            .getValueAsType();
+#if LLVM_VERSION_MAJOR >= 18
+    llvm_unreachable("Unhandled");
+    // T = F->getParamAttribute(i, Attribute::AttrKind::ElementType)
+    //        .getValueAsType();
 #else
     T = AT->getElementType()->getPointerElementType();
 #endif
