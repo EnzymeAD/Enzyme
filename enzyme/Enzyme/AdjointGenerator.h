@@ -2996,7 +2996,7 @@ public:
           if (start != 0) {
             Value *idxs[] = {
                 ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
-            op0 = BuilderZ.CreateInBoundsGEP(Type::getInt8Ty(op0->getContext()),
+            op0 = BuilderZ.CreateInBoundsGEP(BuilderZ.getInt8PtrTy(),
                                              op0, idxs);
           }
           SmallVector<Value *, 4> args = {op0, op1, length};
@@ -3033,7 +3033,7 @@ public:
           if (start != 0) {
             Value *idxs[] = {
                 ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
-            op0 = Builder2.CreateInBoundsGEP(Type::getInt8Ty(op0->getContext()),
+            op0 = Builder2.CreateInBoundsGEP(Builder2.getInt8PtrTy(),
                                              op0, idxs);
           }
           SmallVector<Value *, 4> args = {op0, op1l, length};
