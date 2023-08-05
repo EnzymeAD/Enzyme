@@ -238,7 +238,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     Value *zeroSize = B.CreateSub(next, prevSize);
 
     Value *margs[] = {B.CreateInBoundsGEP(B.getInt8Ty(), gVal, prevSize),
-                                   B.getInt8(0), zeroSize, B.getFalse()};
+                      B.getInt8(0), zeroSize, B.getFalse()};
     Type *tys[] = {margs[0]->getType(), margs[2]->getType()};
     auto memsetF = Intrinsic::getDeclaration(&M, Intrinsic::memset, tys);
     B.CreateCall(memsetF, margs);
