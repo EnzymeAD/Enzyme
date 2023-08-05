@@ -668,12 +668,12 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
   B.CreateCall(fn, args, bundles);
 }
 
-void callSPMVDiagUpdate(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
-                        IntegerType *IT, llvm::Type *BlasCT,
-                        llvm::Type *BlasFPT, llvm::Type *BlasPT,
-                        llvm::Type *BlasIT, llvm::Type *fpTy,
-                        llvm::ArrayRef<llvm::Value *> args,
-                        const llvm::ArrayRef<llvm::OperandBundleDef> bundles,
+void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
+                        IntegerType *IT, Type *BlasCT,
+                        Type *BlasFPT, Type *BlasPT,
+                        Type *BlasIT, Type *fpTy,
+                        ArrayRef<Value *> args,
+                        ArrayRef<OperandBundleDef> bundles,
                         bool byRef, bool julia_decl) {
   // add spmv diag update call if not already present
   std::string fnc_name =
@@ -2456,7 +2456,7 @@ llvm::Value *select_vec_dims(IRBuilder<> &B, llvm::Value *trans,
   return width;
 }
 
-llvm::Value *is_uper(IRBuilder<> &B, llvm::Value *trans, bool byRef) {
+Value *is_uper(IRBuilder<> &B, Value *trans, bool byRef) {
   auto charTy = IntegerType::get(trans->getContext(), 8);
   if (byRef)
     trans = B.CreateLoad(charTy, trans, "loaded.trans");
