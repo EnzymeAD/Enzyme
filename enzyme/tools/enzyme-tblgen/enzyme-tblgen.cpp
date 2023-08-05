@@ -1400,6 +1400,21 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 #include "blasDiffUseUpdater.h"
 #include "blasTAUpdater.h"
 
+void emit_args(DagInit *dag, raw_ostream &os) {
+  for (size_t i = 0; i < dag->getNumArgs(); ++i) {
+    if (i > 0)
+      os << ", ";
+    if (auto def = dyn_cast<DefInit>(dag->getArg(i))) {
+      auto Def = def->getDef();
+      if (Def->isSubClassOf("Value")) {
+        os << "tmp" << Def->getValueAsString("name");
+      }
+    } else {
+      os << dag->getArgNameStr(i);
+    }
+  }
+}
+
 // class BlasOptPattern< list<dag> _inputs, list<string> _tmps, list<dag>
 // _outputs> {
 //   list<dag> inputs = _inputs;
@@ -1460,29 +1475,33 @@ void emitBlasOpt(StringRef name, std::vector<DagInit *> inputs,
   os << "  for (auto &BB : *F) {\n"
      << "    for (auto &I : BB) {\n"
      << "      if (auto *CI = dyn_cast<CallInst>(&I)) {\n"
-     << "        name = CI->getCalledFunction()->getName();\n";
-
+     << "        auto name = CI->getCalledFunction()->getName();\n";
   for (auto fnc : unique_functions.keys()) {
     os << "        if (name == \"" << fnc << "\") {\n";
+    std::string tab = "          ";
     auto fnc_vec = unique_functions[fnc];
+    bool multiple = fnc_vec.size() > 1;
+    os << tab << "assert(idx_" << fnc << " < " << fnc_vec.size()
+       << " && \"idx out of bounds\");\n";
+    os << tab << "std::vector<Value *> values;\n";
     for (size_t i = 0; i < fnc_vec.size(); ++i) {
-      if (fnc_vec.size() > 1) {
-        os << "          if (idx_" << fnc << " == " << i << ") {\n";
+      if (multiple) {
+        os << tab << "if (idx_" << fnc << " == " << i << ")\n  ";
       }
-      auto input = fnc_vec[i];
-      ArrayRef<StringInit *> args = input->getArgNames();
-      for (size_t j = 0; j < args.size(); ++j) {
-        if (fnc_vec.size() > 1)
-          os << "  ";
-        os << "          " << args[j]->getValue() << " = CI->getArgOperand("
-           << j << ");\n";
+      os << tab << "values = {";
+      ArrayRef<StringInit *> args = fnc_vec[i]->getArgNames();
+      bool first = true;
+      for (auto arg : args) {
+        os << (first ? "" : ", ") << arg->getValue();
+        first = false;
       }
-      if (fnc_vec.size() > 1) {
-        os << "          }\n";
-      }
+      os << "};\n";
     }
-    os << "        idx_" << fnc << "++;\n"
-       << "        todelete.push_back(CI);\n"
+    os << tab << "bool set = cmp_or_set(CI, values);\n";
+    os << tab << "if (!set) continue;\n";
+    os << tab << "llvm::errs() << \"found " << fnc << "\\n\";\n";
+    os << tab << "idx_" << fnc << "++;\n"
+       << tab << "todelete.push_back(CI);\n"
        << "        }\n";
   }
   os << "      }\n";
@@ -1498,28 +1517,49 @@ void emitBlasOpt(StringRef name, std::vector<DagInit *> inputs,
   os << "  if (!found)\n"
      << "    return false;\n";
 
+  os << "  llvm::errs() << \"found optimization " << name << "\\n\";\n";
+
   // now that we found an optimization to apply,
   // we can delete the old calls
   os << "  for (auto *CI : todelete) {\n"
      << "    CI->eraseFromParent();\n"
      << "  }\n";
 
-  // emit the actual optimization
-  // for (auto output : outputs) {
-  //  auto Def = cast<DefInit>(output->getOperator())->getDef();
-  //  assert(Def->isSubClassOf("b"));
-  //  auto fnc_name = Def->getValueAsString("s");
-  //  // auto fnc_name = output->getNameStr();
-  //  os << "  " << fnc_name << "(";
-  //  ArrayRef<StringInit *> args = output->getArgNames();
-  //  for (size_t i = 0; i < args.size(); ++i) {
-  //    if (i > 0)
-  //      os << ", ";
-  //    os << args[i]->getValue();
-  //  }
-  //  os << ");\n";
-  //}
+  
+  os << "  BasicBlock *bb = &F->getEntryBlock();\n"
+     << "  IRBuilder<> B1(bb);\n";
 
+  for (auto outerOutput : outputs) {
+    DagInit *output = outerOutput;
+    auto Def = cast<DefInit>(output->getOperator())->getDef();
+    if (Def->isSubClassOf("Value")) {
+      assert(output->getNumArgs() == 1);
+      auto name = Def->getValueAsString("name");
+      os << "  Value *tmp" << name << " = ";
+      // This is just wrapping the actual DagInit in a Value<>.
+      // So now strip the Value wrapper to handle it in the next if/else
+      output = cast<DagInit>(output->getArg(0));
+      Def = cast<DefInit>(output->getOperator())->getDef();
+    }
+    if (Def->isSubClassOf("Inst")) {
+      auto name = Def->getValueAsString("name");
+      os << "  B1.CreateCall(" << name << "";
+      emit_args(output, os);
+      os << ");\n";
+    } else if (Def->isSubClassOf("b")) {
+      auto fnc_name = Def->getValueAsString("s");
+      os << "  " << fnc_name << "(";
+      emit_args(output, os);
+      os << ");\n";
+    } else {
+      llvm::errs() << "failed with: " << Def->getName() << "\n";
+      PrintFatalError(Def->getLoc(), "unknown output type");
+      assert(false);
+      llvm_unreachable("unknown output type");
+    }
+  }
+
+  os << "  return true;\n";
   os << "}\n";
 }
 

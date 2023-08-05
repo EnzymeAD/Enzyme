@@ -97,6 +97,26 @@ extern "C" void AddOptimizeBlasPass(LLVMPassManagerRef PM, uint8_t Begin) {
 
 llvm::AnalysisKey OptimizeBlasNewPM::Key;
 
+bool cmp_or_set(llvm::CallInst *CI, std::vector<llvm::Value *> values) {
+  // first run trough to see if the already set args match.
+  // second run if they do and then we set the nullptr.
+  for (size_t i = 0; i < values.size(); ++i) {
+    if (values[i] == nullptr) {
+      continue;
+    }
+    if (CI->getArgOperand(i) != values[i])
+      return false;
+  }
+  for (size_t i = 0; i < values.size(); ++i) {
+    if (values[i] == nullptr) {
+      values[i] = CI->getArgOperand(i);
+    }
+  }
+  return true;
+}
+
+#include "BlasOpts.inc"
+
 bool optimizeFncsWithBlas(llvm::Module &M) {
 
   using namespace llvm;
@@ -107,6 +127,8 @@ bool optimizeFncsWithBlas(llvm::Module &M) {
   } else {
     return false;
   }
+
+  optfirst(F);
 
   BasicBlock *bb = &F->getEntryBlock();
 
