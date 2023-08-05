@@ -150,6 +150,10 @@ endif()
 
 if (${LLVM_VERSION_MAJOR} GREATER 10)
 add_library(LLDEnzymeFlags INTERFACE)
+target_include_directories(LLDEnzymeFlags INTERFACE 
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:include>
+)
 target_compile_options(LLDEnzymeFlags INTERFACE -flto)
 target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -fuse-ld=lld")
 
@@ -171,6 +175,10 @@ add_dependencies(LLDEnzymeFlags LLDEnzymeDummy)
 endif()
 
 add_library(ClangEnzymeFlags INTERFACE)
+target_include_directories(ClangEnzymeFlags INTERFACE 
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:include>
+)
 target_compile_options(ClangEnzymeFlags INTERFACE "-fplugin=$<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
 
 # this custom target exists to prevent CMake from incorrectly assuming that 
