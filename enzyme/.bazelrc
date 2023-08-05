@@ -3,8 +3,6 @@ build --announce_rc
 build --experimental_repo_remote_exec
 build --cxxopt=-std=c++17 --host_cxxopt=-std=c++17
 build --cxxopt=-w --host_cxxopt=-w
-build --repo_env=CC=/home/wmoses/llvms/llvm16-r/clang+llvm-16.0.2-x86_64-linux-gnu-ubuntu-22.04/bin/clang
-build --repo_env=CXX=/home/wmoses/llvms/llvm16-r/clang+llvm-16.0.2-x86_64-linux-gnu-ubuntu-22.04/bin/clang++
 #build --features=external_include_paths
 
 build --define=grpc_no_ares=true

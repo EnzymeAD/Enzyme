@@ -434,6 +434,9 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
   }
 
   if (arg->isPointerTy()) {
+#if LLVM_VERSION_MAJOR >= 18
+    return DIFFE_TYPE::DUP_ARG;
+#else
 #if LLVM_VERSION_MAJOR >= 15
     if (!arg->getContext().supportsTypedPointers()) {
       return DIFFE_TYPE::DUP_ARG;
@@ -454,6 +457,7 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
     llvm::errs() << "arg: " << *arg << "\n";
     assert(0 && "Cannot handle type0");
     return DIFFE_TYPE::CONSTANT;
+#endif
   } else if (arg->isArrayTy()) {
     return whatType(llvm::cast<llvm::ArrayType>(arg)->getElementType(), mode,
                     integersAreConstant, seen);
@@ -1008,15 +1012,15 @@ static inline llvm::StructType *getMPIHelper(llvm::LLVMContext &Context) {
 }
 
 template <MPI_Elem E, bool Pointer = true>
-static inline llvm::Value *getMPIMemberPtr(llvm::IRBuilder<> &B,
-                                           llvm::Value *V) {
+static inline llvm::Value *getMPIMemberPtr(llvm::IRBuilder<> &B, llvm::Value *V,
+                                           llvm::Type *T) {
   using namespace llvm;
   auto i64 = Type::getInt64Ty(V->getContext());
   auto i32 = Type::getInt32Ty(V->getContext());
   auto c0_64 = ConstantInt::get(i64, 0);
 
   if (Pointer) {
-    return B.CreateInBoundsGEP(V->getType()->getPointerElementType(), V,
+    return B.CreateInBoundsGEP(T, V,
                                {c0_64, ConstantInt::get(i32, (uint64_t)E)});
   } else {
     return B.CreateExtractValue(V, {(unsigned)E});
@@ -1024,8 +1028,8 @@ static inline llvm::Value *getMPIMemberPtr(llvm::IRBuilder<> &B,
 }
 
 llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
-                                   ConcreteType CT, llvm::Type *intType,
-                                   llvm::IRBuilder<> &B2);
+                                   llvm::Type *OpType, ConcreteType CT,
+                                   llvm::Type *intType, llvm::IRBuilder<> &B2);
 
 class AssertingReplacingVH final : public llvm::CallbackVH {
 public:

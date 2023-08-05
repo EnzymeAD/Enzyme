@@ -1729,6 +1729,9 @@ void clearFunctionAttributes(Function *f) {
 #endif
   }
   Attribute::AttrKind attrs[] = {
+#if LLVM_VERSION_MAJOR >= 17
+    Attribute::NoFPClass,
+#endif
 #if LLVM_VERSION_MAJOR >= 11
     Attribute::NoUndef,
 #endif
@@ -2516,6 +2519,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
 
   llvm::Attribute::AttrKind attrs[] = {
+#if LLVM_VERSION_MAJOR >= 17
+    llvm::Attribute::NoFPClass,
+#endif
     llvm::Attribute::NoAlias,
 #if LLVM_VERSION_MAJOR >= 11
     llvm::Attribute::NoUndef,
