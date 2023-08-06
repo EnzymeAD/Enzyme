@@ -1391,17 +1391,17 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
       auto mask = v.CreateNot(v.CreateShl(
           ConstantInt::get(Type::getInt8Ty(cache->getContext()), 1), subidx));
 
-      Value *loadChunk =
-          v.CreateLoad(loc->getType()->getPointerElementType(), loc);
+      Value *loadChunk = v.CreateLoad(mask->getType(), loc);
       auto cleared = v.CreateAnd(loadChunk, mask);
 
       auto toset = v.CreateShl(
           v.CreateZExt(val, Type::getInt8Ty(cache->getContext())), subidx);
       tostore = v.CreateOr(cleared, toset);
-      assert(tostore->getType() == loc->getType()->getPointerElementType());
+      assert(tostore->getType() == mask->getType());
     }
   }
 
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
   if (tostore->getContext().supportsTypedPointers()) {
 #endif
@@ -1414,6 +1414,8 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
 #if LLVM_VERSION_MAJOR >= 15
   }
 #endif
+#endif
+
   StoreInst *storeinst = v.CreateStore(tostore, loc);
 
   // If the value stored doesnt change (per efficient bool cache),

@@ -1729,6 +1729,9 @@ void clearFunctionAttributes(Function *f) {
 #endif
   }
   Attribute::AttrKind attrs[] = {
+#if LLVM_VERSION_MAJOR >= 17
+    Attribute::NoFPClass,
+#endif
 #if LLVM_VERSION_MAJOR >= 11
     Attribute::NoUndef,
 #endif
@@ -1766,35 +1769,6 @@ void cleanupInversionAllocs(DiffeGradientUtils *gutils, BasicBlock *entry) {
       DeleteDeadBlock(BBs.second.front());
     }
   }
-}
-
-static FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
-                                           llvm::Function *todiff) {
-  FnTypeInfo oldTypeInfo = oldTypeInfo_;
-  for (auto &pair : oldTypeInfo.KnownValues) {
-    if (pair.second.size() != 0) {
-      bool recursiveUse = false;
-      for (auto user : pair.first->users()) {
-        if (auto bi = dyn_cast<BinaryOperator>(user)) {
-          for (auto biuser : bi->users()) {
-            if (auto ci = dyn_cast<CallInst>(biuser)) {
-              if (ci->getCalledFunction() == todiff &&
-                  ci->getArgOperand(pair.first->getArgNo()) == bi) {
-                recursiveUse = true;
-                break;
-              }
-            }
-          }
-        }
-        if (recursiveUse)
-          break;
-      }
-      if (recursiveUse) {
-        pair.second.clear();
-      }
-    }
-  }
-  return oldTypeInfo;
 }
 
 void restoreCache(
@@ -2545,6 +2519,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
 
   llvm::Attribute::AttrKind attrs[] = {
+#if LLVM_VERSION_MAJOR >= 17
+    llvm::Attribute::NoFPClass,
+#endif
     llvm::Attribute::NoAlias,
 #if LLVM_VERSION_MAJOR >= 11
     llvm::Attribute::NoUndef,
@@ -5155,7 +5132,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZNSt3__116__do_string_hashIPKcEEmT_S3_",
       "_ZNKSt3__14hashIPKcEclES2_",
       "_ZNSt3__19addressofIcEEPT_RS1_",
-      "_ZNSt3__19addressofIKcEEPT_RS2_"};
+      "_ZNSt3__19addressofIKcEEPT_RS2_",
+      "_ZNSt3__113random_deviceclEv",
+  };
 
   if (F->getName().startswith("_ZNSolsE") || NoFrees.count(F->getName()))
     return F;

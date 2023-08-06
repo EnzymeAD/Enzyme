@@ -178,7 +178,14 @@ declare dso_local noalias i8* @malloc(i64)
 ; CHECK-NEXT:   %"call'mi" = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"call'mi", i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   %"tmp1'ipc" = bitcast i8* %"call'mi" to double*
-; CHECK-NEXT:   br label %invertfor.body
+; CHECK-NEXT:   br label %for.body.i.i.i.i.i.i.i
+
+; CHECK: for.body.i.i.i.i.i.i.i:
+; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.body.i.i.i.i.i.i.i ], [ 0, %entry ]
+; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
+; CHECK-NEXT:   %exitcond.i.i.i.i.i.i.i = icmp eq i64 %iv.next, 16
+; CHECK-NEXT:   br i1 %exitcond.i.i.i.i.i.i.i, label %invertfor.body, label %for.body.i.i.i.i.i.i.i
+
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.body.i.i.i.i.i.i.i
 ; CHECK-NEXT:   call void @free(i8* nonnull %"call'mi")
@@ -201,7 +208,7 @@ declare dso_local noalias i8* @malloc(i64)
 ; CHECK-NEXT:   br label %invertfor.body.i.i.i.i.i.i.i
 
 ; CHECK: invertfor.body: 
-; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 15, %entry ], [ %8, %incinvertfor.body ]
+; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ %8, %incinvertfor.body ], [ 15, %for.body.i.i.i.i.i.i.i ]
 ; CHECK-NEXT:   %"arrayidxOut2'ipg_unwrap" = getelementptr inbounds double, double* %"tmp1'ipc", i64 15
 ; CHECK-NEXT:   %5 = load double, double* %"arrayidxOut2'ipg_unwrap", align 8
 ; CHECK-NEXT:   %6 = fadd fast double %5, %differeturn

@@ -356,7 +356,15 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::basic_stringbuf",
     "std::basic_filebuf",
     "std::basic_streambuf",
-
+    "std::random_device",
+    "std::mersenne_twister_engine",
+    "std::linear_congruential_engine",
+    "std::subtract_with_carry_engine",
+    "std::discard_block_engine",
+    "std::independent_bits_engine",
+    "std::shuffle_order_engine",
+  
+  
     // libc++
     "std::__1::basic_string",
     "std::__1::__do_string_hash",
@@ -365,7 +373,15 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::__1::to_string",
     "std::__1::basic_ostream",
     "std::__1::cout",
+    "std::__1::random_device",
+    "std::__1::mersenne_twister_engine",
+    "std::__1::linear_congruential_engine",
+    "std::__1::subtract_with_carry_engine",
+    "std::__1::discard_block_engine",
+    "std::__1::independent_bits_engine",
+    "std::__1::shuffle_order_engine",
   
+
     "std::__detail::_Prime_rehash_policy",
     "std::__detail::_Hash_code_base",
 };
