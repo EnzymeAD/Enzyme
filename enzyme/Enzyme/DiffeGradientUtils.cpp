@@ -181,12 +181,14 @@ AllocaInst *DiffeGradientUtils::getDifferential(Value *val) {
     ZeroMemory(entryBuilder, type, differentials[val],
                /*isTape*/ false);
   }
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
   if (val->getContext().supportsTypedPointers()) {
 #endif
     assert(differentials[val]->getType()->getPointerElementType() == type);
 #if LLVM_VERSION_MAJOR >= 15
   }
+#endif
 #endif
   return differentials[val];
 }
@@ -506,6 +508,7 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
     return;
   }
   Value *tostore = getDifferential(val);
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
   if (toset->getContext().supportsTypedPointers()) {
 #endif
@@ -516,6 +519,7 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
     assert(toset->getType() == tostore->getType()->getPointerElementType());
 #if LLVM_VERSION_MAJOR >= 15
   }
+#endif
 #endif
   BuilderM.CreateStore(toset, tostore);
 }
@@ -555,6 +559,7 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
   Value *metaforfree =
       unwrapM(storeInto, tbuild, antimap, UnwrapMode::LegalFullUnwrap);
   Type *T;
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
   if (metaforfree->getContext().supportsTypedPointers()) {
 #endif
@@ -563,6 +568,9 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
   } else {
     T = PointerType::getUnqual(metaforfree->getContext());
   }
+#endif
+#else
+  T = PointerType::getUnqual(metaforfree->getContext());
 #endif
   LoadInst *forfree = cast<LoadInst>(tbuild.CreateLoad(T, metaforfree));
   forfree->setMetadata(LLVMContext::MD_invariant_group, InvariantMD);
@@ -636,12 +644,14 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   }
 
   bool needsCast = false;
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
   if (origptr->getContext().supportsTypedPointers()) {
 #endif
     needsCast = origptr->getType()->getPointerElementType() != addingType;
 #if LLVM_VERSION_MAJOR >= 15
   }
+#endif
 #endif
 
   assert(ptr);
