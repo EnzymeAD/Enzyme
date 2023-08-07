@@ -12,16 +12,16 @@ class Value<string _i> {
 }
 
 def first : BlasOptPattern<
-                  [
-                  (b<"dger_64_"> $m, $n, $alpha, $x, $incx, $y, $incy, $A, $lda),
-                  (b<"dger_64_"> $n, $k, $beta, $v, $incv, $w, $incw, $B, $ldb),
-                  (b<"dgemm_64_"> $transa, $transb, $m, $n, $k, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),
-                  ],
-                  ["A", "B"],
-                  [
-                  (Value<"1"> (b<"dot"> $n, $v, $incv, $y, $incy)),
-                  (Value<"2"> (FMul $alpha, Value<"1">)),
-                  (Value<"3"> (FMul $beta, Value<"2">)),
-                  (b<"ger"> $m, $k, Value<"3">, $x, $incx, $w, $incw, $C, $ldc),
-                  ]
-                  >;
+       [
+       (b<"ger"> $m, $n, $alpha, $x, $incx, $y, $incy, $A, $lda),
+       (b<"ger"> $n, $k, $beta, $v, $incv, $w, $incw, $B, $ldb),
+       (b<"gemm"> $transa, $transb, $m, $n, $k, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),
+       ],
+       ["A", "B"],
+       [
+       (Value<"1"> (b<"dot"> $n, $v, $incv, $y, $incy)),
+       (Value<"2"> (FMul $alpha, Value<"1">)),
+       (Value<"3"> (FMul $beta, Value<"2">)),
+       (b<"ger"> $m, $k, Value<"3">, $x, $incx, $w, $incw, $C, $ldc),
+       ]
+       >;
