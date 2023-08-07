@@ -668,12 +668,11 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
 }
 
 void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
-                        IntegerType *IT, Type *BlasCT,
-                        Type *BlasFPT, Type *BlasPT,
-                        Type *BlasIT, Type *fpTy,
+                        IntegerType *IT, Type *BlasCT, Type *BlasFPT,
+                        Type *BlasPT, Type *BlasIT, Type *fpTy,
                         ArrayRef<Value *> args,
-                        ArrayRef<OperandBundleDef> bundles,
-                        bool byRef, bool julia_decl) {
+                        ArrayRef<OperandBundleDef> bundles, bool byRef,
+                        bool julia_decl) {
   // add spmv diag update call if not already present
   std::string fnc_name =
       ("__enzyme_spmv_diag" + blas.floatType + blas.suffix).str();

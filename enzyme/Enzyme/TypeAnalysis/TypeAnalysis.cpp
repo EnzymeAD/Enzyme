@@ -489,6 +489,15 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       return;
     }
 
+    // from julia code
+    if (GV->getName() == "small_typeof") {
+      TypeTree T;
+      T.insert({-1}, BaseType::Pointer);
+      T.insert({-1, -1}, BaseType::Pointer);
+      analysis[Val] = T;
+      return;
+    }
+
     TypeTree &Result = analysis[Val];
     Result.insert({-1}, ConcreteType(BaseType::Pointer));
 
