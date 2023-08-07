@@ -214,7 +214,7 @@ void emitBlasOpt(StringRef name, std::vector<DagInit *> inputs,
   }
   //// bb->setInsertPoint(insertionPoint);
 
-  //B1.CreateRetVoid();
+  // B1.CreateRetVoid();
 
   os << "  return true;\n";
   os << "}\n";
