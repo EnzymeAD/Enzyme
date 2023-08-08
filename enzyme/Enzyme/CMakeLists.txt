@@ -71,6 +71,7 @@ if (${Clang_FOUND})
 	LLVM
     )
 target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
+target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_CLANG)
 endif()
         add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
@@ -101,6 +102,7 @@ if (${Clang_FOUND})
         opt
     )
 target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
+target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_CLANG)
 endif()
     add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymePassLoader.cpp

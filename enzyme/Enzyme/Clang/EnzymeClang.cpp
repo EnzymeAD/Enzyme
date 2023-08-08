@@ -108,9 +108,30 @@ public:
     Builder.defineMacro("ENZYME_VERSION_PATCH",
                         std::to_string(ENZYME_VERSION_PATCH));
     CI.getPreprocessor().setPredefines(Predefines.str());
+
   }
   ~EnzymePlugin() {}
-  void HandleTranslationUnit(ASTContext &context) override {}
+  void HandleTranslationUnit(ASTContext &AST) override {
+    auto &S = CI.getSema();
+    DeclContext *declCtx = TranslationUnitDecl::Create(AST);
+    auto loc = S.getSourceManager().getLocForStartOfFile(S.getSourceManager().getMainFileID());
+    auto CharTy = AST.getIntTypeForBitwidth(8*sizeof(&CI), false);
+    auto &Id = AST.Idents.get("__enzyme_clang_compiler_instance");
+    auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, CharTy, nullptr, SC_None);
+    V->setStorageClass(SC_PrivateExtern);
+    V->addAttr(clang::UsedAttr::CreateImplicit(AST));
+    TemplateArgumentListInfo *TemplateArgs = nullptr;
+#if LLVM_VERSION_MAJOR >= 13
+    auto rval = ExprValueKind::VK_PRValue;
+#else
+    auto rval = ExprValueKind::VK_RValue;
+#endif
+    llvm::APInt apint(sizeof(&CI)*8, (uint64_t)(&CI));
+    Expr *expr = IntegerLiteral::Create(AST, apint, CharTy, loc);
+    V->setInit(expr);
+    S.MarkVariableReferenced(loc, V);
+    S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
+  }
   bool HandleTopLevelDecl(clang::DeclGroupRef dg) override {
     using namespace clang;
     DeclGroupRef::iterator it;
@@ -339,16 +360,6 @@ struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
     auto &AST = S.getASTContext();
     DeclContext *declCtx = D->getDeclContext();
     auto loc = D->getLocation();
-    RecordDecl *RD;
-    if (S.getLangOpts().CPlusPlus)
-      RD = CXXRecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx,
-                                 loc, loc, nullptr); // rId);
-    else
-      RD = RecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx, loc,
-                              loc, nullptr); // rId);
-    RD->setAnonymousStructOrUnion(true);
-    RD->setImplicit();
-    RD->startDefinition();
     auto T = isa<FunctionDecl>(D) ? cast<FunctionDecl>(D)->getType()
                                   : cast<VarDecl>(D)->getType();
     auto Name = isa<FunctionDecl>(D) ? cast<FunctionDecl>(D)->getNameAsString()
@@ -394,7 +405,6 @@ struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
       return AttributeNotApplied;
     }
     V->setInit(expr);
-    V->dump();
     S.MarkVariableReferenced(loc, V);
     S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
     return AttributeApplied;
