@@ -25,7 +25,7 @@
 
 double __enzyme_autodiff(void*, ...);
 
-__attribute__((enzyme_function_like("log1p")))
+__attribute__((enzyme_inactive))
 double log1p_like_function(double a) {
   return 2*a;
 }
@@ -35,9 +35,8 @@ double test(double a) {
 }
 
 int main(int argc, char** argv) {
-
-  double out = __enzyme_autodiff(test, 2.0); 
-  APPROX_EQ(out, 1/3.0, 1e-10); 
-
+  double out = __enzyme_autodiff(test, 2.0);
+  printf("out=%f\n", out);
+  APPROX_EQ(out, 0.0, 1e-10); 
   return 0;
 }

@@ -111,10 +111,9 @@ entry:
 
 ; CHECK: define internal void @diffef(i8* noalias %y, i8* %"y'", i8* noalias %A, i8* %"A'", i8* noalias %x, i8* %"x'", i8* noalias %alpha, i8* %"alpha'", i8* noalias %beta, i8* %"beta'", { double*, double* }
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %byref.incx = alloca i64
-; CHECK-NEXT:   %byref.incy = alloca i64
 ; CHECK-NEXT:   %ret = alloca double
 ; CHECK-NEXT:   %byref.transpose.transa = alloca i8
+; CHECK-NEXT:   %byref.int.one = alloca i64
 ; CHECK-NEXT:   %byref.constant.fp.1.0 = alloca double
 ; CHECK-NEXT:   %byref.constant.fp.0.0 = alloca double
 ; CHECK-NEXT:   %byref.constant.int.1 = alloca i64
@@ -165,14 +164,10 @@ entry:
 ; CHECK: invertentry:                                      ; preds = %entry
 ; CHECK-NEXT:   %tape.ext.x = extractvalue { double*, double* } %0, 0
 ; CHECK-NEXT:   %20 = bitcast double* %tape.ext.x to i8*
-; CHECK-NEXT:   store i64 1, i64* %byref.incx
-; CHECK-NEXT:   %cast.incx = bitcast i64* %byref.incx to i8*
 ; CHECK-NEXT:   %tape.ext.y = extractvalue { double*, double* } %0, 1
 ; CHECK-NEXT:   %21 = bitcast double* %tape.ext.y to i8*
 ; CHECK-NEXT:   %tape.ext.y1 = extractvalue { double*, double* } %0, 1
 ; CHECK-NEXT:   %22 = bitcast double* %tape.ext.y1 to i8*
-; CHECK-NEXT:   store i64 1, i64* %byref.incy
-; CHECK-NEXT:   %cast.incy = bitcast i64* %byref.incy to i8*
 ; CHECK-NEXT:   %ld.transa = load i8, i8* %malloccall
 ; CHECK-DAG:    %[[r0:.+]] = icmp eq i8 %ld.transa, 110
 ; CHECK-DAG:    %[[r1:.+]] = select i1 %[[r0]], i8 116, i8 0
@@ -183,13 +178,15 @@ entry:
 ; CHECK-DAG:    %[[r6:.+]] = icmp eq i8 %ld.transa, 84
 ; CHECK-DAG:    %[[r7:.+]] = select i1 %[[r6]], i8 78, i8 %[[r5]]
 ; CHECK-NEXT:   store i8 %[[r7]], i8* %byref.transpose.transa
+; CHECK-NEXT:   store i64 1, i64* %byref.int.one
+; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
 ; CHECK-NEXT:   %fpcast.constant.fp.1.0 = bitcast double* %byref.constant.fp.1.0 to i8*
 ; CHECK-NEXT:   store double 0.000000e+00, double* %byref.constant.fp.0.0
 ; CHECK-NEXT:   %fpcast.constant.fp.0.0 = bitcast double* %byref.constant.fp.0.0 to i8*
 ; CHECK-NEXT:   store i64 1, i64* %byref.constant.int.1
 ; CHECK-NEXT:   %intcast.constant.int.1 = bitcast i64* %byref.constant.int.1 to i8*
-; CHECK-NEXT:   call void @dgemv_64_(i8* %malloccall, i8* %m_p, i8* %n_p, i8* %fpcast.constant.fp.1.0, i8* %A, i8* %lda_p, i8* %20, i8* %cast.incx, i8* %fpcast.constant.fp.0.0, i8* %19, i8* %intcast.constant.int.1)
+; CHECK-NEXT:   call void @dgemv_64_(i8* %malloccall, i8* %m_p, i8* %n_p, i8* %fpcast.constant.fp.1.0, i8* %A, i8* %lda_p, i8* %20, i8* %intcast.int.one, i8* %fpcast.constant.fp.0.0, i8* %19, i8* %intcast.constant.int.1)
 ; CHECK-NEXT:   %ld.row.trans = load i8, i8* %byref.transpose.transa
 ; CHECK-DAG:    %[[c1:.+]] = icmp eq i8 %ld.row.trans, 110
 ; CHECK-DAG:    %[[c2:.+]] = icmp eq i8 %ld.row.trans, 78
@@ -197,21 +194,21 @@ entry:
 ; CHECK-NEXT:   %34 = select i1 %[[c3]], i8* %m_p, i8* %n_p
 ; CHECK-NEXT:   store i64 1, i64* %byref.constant.int.17
 ; CHECK-NEXT:   %intcast.constant.int.18 = bitcast i64* %byref.constant.int.17 to i8*
-; CHECK-NEXT:   %35 = call fast double @ddot_64_(i8* %34, i8* %"y'", i8* %cast.incy, i8* %19, i8* %intcast.constant.int.18)
+; CHECK-NEXT:   %35 = call fast double @ddot_64_(i8* %34, i8* %"y'", i8* %incy_p, i8* %19, i8* %intcast.constant.int.18)
 ; CHECK-NEXT:   %36 = bitcast i8* %"alpha'" to double*
 ; CHECK-NEXT:   %37 = load double, double* %36
 ; CHECK-NEXT:   %38 = fadd fast double %37, %35
 ; CHECK-NEXT:   store double %38, double* %36
-; CHECK-NEXT:   call void @dger_64_(i8* %m_p, i8* %n_p, i8* %alpha, i8* %"y'", i8* %cast.incy, i8* %20, i8* %cast.incx, i8* %"A'", i8* %lda_p)
+; CHECK-NEXT:   call void @dger_64_(i8* %m_p, i8* %n_p, i8* %alpha, i8* %"y'", i8* %incy_p, i8* %20, i8* %intcast.int.one, i8* %"A'", i8* %lda_p)
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.09
 ; CHECK-NEXT:   %fpcast.constant.fp.1.010 = bitcast double* %byref.constant.fp.1.09 to i8*
-; CHECK-NEXT:   call void @dgemv_64_(i8* %byref.transpose.transa, i8* %m_p, i8* %n_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %"y'", i8* %cast.incy, i8* %fpcast.constant.fp.1.010, i8* %"x'", i8* %cast.incx)
+; CHECK-NEXT:   call void @dgemv_64_(i8* %byref.transpose.transa, i8* %m_p, i8* %n_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %"y'", i8* %incy_p, i8* %fpcast.constant.fp.1.010, i8* %"x'", i8* %incx_p)
 ; CHECK-NEXT:   %ld.row.trans11 = load i8, i8* %byref.transpose.transa
 ; CHECK-DAG:   %[[r39:.+]] = icmp eq i8 %ld.row.trans11, 110
 ; CHECK-DAG:   %[[r40:.+]] = icmp eq i8 %ld.row.trans11, 78
 ; CHECK-NEXT:   %41 = or i1 %[[r40]], %[[r39]]
 ; CHECK-NEXT:   %42 = select i1 %41, i8* %m_p, i8* %n_p
-; CHECK-NEXT:   %43 = call fast double @ddot_64_(i8* %42, i8* %"y'", i8* %cast.incy, i8* %21, i8* %cast.incy)
+; CHECK-NEXT:   %43 = call fast double @ddot_64_(i8* %42, i8* %"y'", i8* %incy_p, i8* %21, i8* %intcast.int.one)
 ; CHECK-NEXT:   %44 = bitcast i8* %"beta'" to double*
 ; CHECK-NEXT:   %45 = load double, double* %44
 ; CHECK-NEXT:   %46 = fadd fast double %45, %43
@@ -221,7 +218,7 @@ entry:
 ; CHECK-DAG:   %[[r48:.+]] = icmp eq i8 %ld.row.trans12, 78
 ; CHECK-NEXT:   %49 = or i1 %[[r48]], %[[r47]]
 ; CHECK-NEXT:   %50 = select i1 %49, i8* %m_p, i8* %n_p
-; CHECK-NEXT:   call void @dscal_64_(i8* %50, i8* %beta, i8* %"y'", i8* %cast.incy)
+; CHECK-NEXT:   call void @dscal_64_(i8* %50, i8* %beta, i8* %"y'", i8* %incy_p)
 ; CHECK-NEXT:   %51 = bitcast double* %tape.ext.x to i8*
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %51)
 ; CHECK-NEXT:   %52 = bitcast double* %tape.ext.y1 to i8*
