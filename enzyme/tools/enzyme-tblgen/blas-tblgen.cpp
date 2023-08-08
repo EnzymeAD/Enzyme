@@ -665,11 +665,7 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
      << "  if (Mode == DerivativeMode::ForwardMode ||        \n"
      << "      Mode == DerivativeMode::ForwardModeSplit) {   \n"
      << "                                                    \n"
-     << "#if LLVM_VERSION_MAJOR >= 11                        \n"
-     << "    auto callval = call.getCalledOperand();         \n"
-     << "#else                                               \n"
-     << "    auto callval = call.getCalledValue();           \n"
-     << "#endif                                            \n\n";
+     << "    auto callval = call.getCalledOperand();       \n\n";
 
   os << "  if (EnzymeRuntimeActivityCheck) {\n"
      << "    std::string s;\n"

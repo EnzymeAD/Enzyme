@@ -331,11 +331,7 @@ inline bool is_value_needed_in_reverse(
             mode == DerivativeMode::ReverseModeGradient)
           return false;
 
-#if LLVM_VERSION_MAJOR >= 11
         const Value *FV = CI->getCalledOperand();
-#else
-        const Value *FV = CI->getCalledValue();
-#endif
         if (FV == inst) {
           if (!gutils->isConstantInstruction(const_cast<Instruction *>(user)) ||
               !gutils->isConstantValue(const_cast<Value *>((Value *)user))) {

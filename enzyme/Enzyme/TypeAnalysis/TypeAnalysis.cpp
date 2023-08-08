@@ -808,12 +808,7 @@ void TypeAnalyzer::considerTBAA() {
 
       if (CallInst *call = dyn_cast<CallInst>(&I)) {
         Function *F = call->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-        if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledOperand()))
-#else
-        if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledValue()))
-#endif
-        {
+        if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledOperand())) {
           if (castinst->isCast())
             if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
               F = fn;
@@ -1189,7 +1184,6 @@ void TypeAnalyzer::visitValue(Value &val) {
   if (!isa<Argument>(&val) && !isa<Instruction>(&val))
     return;
 
-#if LLVM_VERSION_MAJOR >= 10
   if (auto *FPMO = dyn_cast<FPMathOperator>(&val)) {
     if (FPMO->getOpcode() == Instruction::FNeg) {
       Value *op = FPMO->getOperand(0);
@@ -1203,7 +1197,6 @@ void TypeAnalyzer::visitValue(Value &val) {
       return;
     }
   }
-#endif
 
   if (auto inst = dyn_cast<Instruction>(&val)) {
     visit(*inst);
@@ -1335,14 +1328,7 @@ void TypeAnalyzer::visitStoreInst(StoreInst &I) {
   // https://doc.rust-lang.org/src/core/ptr/non_null.rs.html#70-78
   if (RustTypeRules)
     if (auto CI = dyn_cast<ConstantInt>(I.getValueOperand())) {
-#if LLVM_VERSION_MAJOR >= 11
       auto alignment = I.getAlign().value();
-#elif LLVM_VERSION_MAJOR >= 10
-      auto alignment =
-          I.getAlign().hasValue() ? I.getAlign().getValue().value() : 10000;
-#else
-      auto alignment = I.getAlignment();
-#endif
 
       if (CI->getLimitedValue() == alignment) {
         return;
@@ -1886,14 +1872,12 @@ void TypeAnalyzer::visitIntToPtrInst(IntToPtrInst &I) {
     updateAnalysis(I.getOperand(0), getAnalysis(&I), &I);
 }
 
-#if LLVM_VERSION_MAJOR >= 10
 void TypeAnalyzer::visitFreezeInst(FreezeInst &I) {
   if (direction & DOWN)
     updateAnalysis(&I, getAnalysis(I.getOperand(0)), &I);
   if (direction & UP)
     updateAnalysis(I.getOperand(0), getAnalysis(&I), &I);
 }
-#endif
 
 void TypeAnalyzer::visitBitCastInst(BitCastInst &I) {
   if (direction & DOWN)
@@ -3260,12 +3244,6 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
                    &I);
     return;
 
-#if LLVM_VERSION_MAJOR < 10
-  case Intrinsic::x86_sse_max_ss:
-  case Intrinsic::x86_sse_max_ps:
-  case Intrinsic::x86_sse_min_ss:
-  case Intrinsic::x86_sse_min_ps:
-#endif
 #if LLVM_VERSION_MAJOR >= 12
   case Intrinsic::vector_reduce_fadd:
   case Intrinsic::vector_reduce_fmul:
@@ -3596,13 +3574,8 @@ void TypeAnalyzer::visitInvokeInst(InvokeInst &call) {
   {
     args.push_back(val);
   }
-#if LLVM_VERSION_MAJOR >= 11
   CallInst *tmpCall =
       B.CreateCall(call.getFunctionType(), call.getCalledOperand(), args);
-#else
-  CallInst *tmpCall =
-      B.CreateCall(call.getFunctionType(), call.getCalledValue(), args);
-#endif
   analysis[tmpCall] = analysis[&call];
   visitCallInst(*tmpCall);
   analysis[&call] = analysis[tmpCall];
@@ -3739,11 +3712,7 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
   assert(fntypeinfo.KnownValues.size() ==
          fntypeinfo.Function->getFunctionType()->getNumParams());
 
-#if LLVM_VERSION_MAJOR >= 11
   if (auto iasm = dyn_cast<InlineAsm>(call.getCalledOperand())) {
-#else
-  if (auto iasm = dyn_cast<InlineAsm>(call.getCalledValue())) {
-#endif
     // NO direction check as always valid
     if (StringRef(iasm->getAsmString()).contains("cpuid")) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);

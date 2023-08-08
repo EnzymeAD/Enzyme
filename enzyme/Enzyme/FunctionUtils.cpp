@@ -150,12 +150,7 @@ cl::opt<int> EnzymePostOptLevel(
 bool couldFunctionArgumentCapture(llvm::CallInst *CI, llvm::Value *val) {
   Function *F = CI->getCalledFunction();
 
-#if LLVM_VERSION_MAJOR >= 11
-  if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-#else
-  if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
-#endif
-  {
+  if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand())) {
     if (castinst->isCast())
       if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
         F = fn;
@@ -488,11 +483,7 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
     auto rep = CreateAllocation(
         B, AI->getAllocatedType(), B.CreateZExtOrTrunc(AI->getArraySize(), i64),
         nam, &CI, /*ZeroMem*/ EnzymeZeroCache ? &ZeroInst : nullptr);
-#if LLVM_VERSION_MAJOR > 10
     auto align = AI->getAlign().value();
-#else
-    auto align = AI->getAlignment();
-#endif
     CI->setMetadata(
         "enzyme_fromstack",
         MDNode::get(CI->getContext(),
@@ -732,11 +723,7 @@ void PreProcessCache::AlwaysInline(Function *NewF) {
   }
   for (auto CI : ToInline) {
     InlineFunctionInfo IFI;
-#if LLVM_VERSION_MAJOR >= 11
     InlineFunction(*CI, IFI);
-#else
-    InlineFunction(CI, IFI);
-#endif
   }
 }
 
@@ -903,10 +890,8 @@ Function *CreateMPIWrapper(Function *F) {
     Attribute::Speculatable,
     Attribute::NoUnwind,
     Attribute::AlwaysInline,
-#if LLVM_VERSION_MAJOR >= 10
     Attribute::NoFree,
     Attribute::NoSync,
-#endif
 #if LLVM_VERSION_MAJOR < 16
     Attribute::InaccessibleMemOnly
 #endif
@@ -1092,11 +1077,7 @@ static void ForceRecursiveInlining(Function *NewF, size_t Limit) {
             continue;
           }
           InlineFunctionInfo IFI;
-#if LLVM_VERSION_MAJOR >= 11
           InlineFunction(*CI, IFI);
-#else
-          InlineFunction(CI, IFI);
-#endif
           goto outermostContinue;
         }
       }
@@ -1345,12 +1326,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
         if (auto CI = dyn_cast<CallInst>(&I)) {
 
           Function *called = CI->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-          if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-#else
-          if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
-#endif
-          {
+          if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand())) {
             if (castinst->isCast()) {
               if (auto fn = dyn_cast<Function>(castinst->getOperand(0)))
                 called = fn;
@@ -1469,12 +1445,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
           if (isa<IntrinsicInst>(CI))
             continue;
           Function *F = CI->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-          if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-#else
-          if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
-#endif
-          {
+          if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand())) {
             if (castinst->isCast())
               if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
                 F = fn;
@@ -1533,14 +1504,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 
               if (auto CI = dyn_cast<CallInst>(u)) {
                 Function *F = CI->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
                 if (auto castinst =
-                        dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-#else
-                if (auto castinst =
-                        dyn_cast<ConstantExpr>(CI->getCalledValue()))
-#endif
-                {
+                        dyn_cast<ConstantExpr>(CI->getCalledOperand())) {
                   if (castinst->isCast())
                     if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
                       F = fn;
@@ -1597,11 +1562,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
               g.getName() + "_local");
 
           if (g.getAlignment()) {
-#if LLVM_VERSION_MAJOR >= 10
             antialloca->setAlignment(Align(g.getAlignment()));
-#else
-            antialloca->setAlignment(g.getAlignment());
-#endif
           }
 
           std::map<Constant *, Value *> remap;
@@ -1661,19 +1622,12 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 
             auto cal = bb.CreateCall(intr, args);
             if (g.getAlignment()) {
-#if LLVM_VERSION_MAJOR >= 10
               cal->addParamAttr(
                   0, Attribute::getWithAlignment(g.getContext(),
                                                  Align(g.getAlignment())));
               cal->addParamAttr(
                   1, Attribute::getWithAlignment(g.getContext(),
                                                  Align(g.getAlignment())));
-#else
-              cal->addParamAttr(0, Attribute::getWithAlignment(
-                                       g.getContext(), g.getAlignment()));
-              cal->addParamAttr(1, Attribute::getWithAlignment(
-                                       g.getContext(), g.getAlignment()));
-#endif
             }
           }
 
@@ -1683,19 +1637,12 @@ Function *PreProcessCache::preprocessForClone(Function *F,
             IRBuilder<> IB(RI);
             auto cal = IB.CreateCall(intr, args);
             if (g.getAlignment()) {
-#if LLVM_VERSION_MAJOR >= 10
               cal->addParamAttr(
                   0, Attribute::getWithAlignment(g.getContext(),
                                                  Align(g.getAlignment())));
               cal->addParamAttr(
                   1, Attribute::getWithAlignment(g.getContext(),
                                                  Align(g.getAlignment())));
-#else
-              cal->addParamAttr(0, Attribute::getWithAlignment(
-                                       g.getContext(), g.getAlignment()));
-              cal->addParamAttr(1, Attribute::getWithAlignment(
-                                       g.getContext(), g.getAlignment()));
-#endif
             }
           }
         }
@@ -2185,11 +2132,9 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       if (F->hasParamAttribute(ii, Attribute::NonNull)) {
         NewF->removeParamAttr(jj, Attribute::NonNull);
       }
-#if LLVM_VERSION_MAJOR >= 11
       if (F->hasParamAttribute(ii, Attribute::NoUndef)) {
         NewF->removeParamAttr(jj, Attribute::NoUndef);
       }
-#endif
     }
 
     if (constant_args[ii] == DIFFE_TYPE::DUP_ARG ||
@@ -2450,13 +2395,8 @@ void ReplaceFunctionImplementation(Module &M) {
           continue;
         use.set(cext);
         if (auto CI = dyn_cast<CallInst>(use.getUser())) {
-#if LLVM_VERSION_MAJOR >= 11
           if (CI->getCalledOperand() == cext ||
-              CI->getCalledFunction() == &Impl)
-#else
-          if (CI->getCalledValue() == cext || CI->getCalledFunction() == &Impl)
-#endif
-          {
+              CI->getCalledFunction() == &Impl) {
             CI->setCallingConv(Impl.getCallingConv());
           }
         }
@@ -2641,11 +2581,7 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
           for (auto U : CI->users()) {
             users.push_back(std::make_pair(cast<Instruction>(U), CI));
           }
-#if LLVM_VERSION_MAJOR >= 11
           auto *F = CI->getCalledOperand();
-#else
-          auto *F = CI->getCalledValue();
-#endif
 
           SmallVector<Value *, 1> args;
 #if LLVM_VERSION_MAJOR >= 14
@@ -2730,11 +2666,7 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
 
         if (load_fn->hasFnAttribute(Attribute::AlwaysInline)) {
           InlineFunctionInfo IFI;
-#if LLVM_VERSION_MAJOR >= 11
           InlineFunction(*call, IFI);
-#else
-          InlineFunction(call, IFI);
-#endif
         }
         toErase.push_back(LI);
         continue;
@@ -2754,11 +2686,7 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
         call->setDebugLoc(SI->getDebugLoc());
         if (load_fn->hasFnAttribute(Attribute::AlwaysInline)) {
           InlineFunctionInfo IFI;
-#if LLVM_VERSION_MAJOR >= 11
           InlineFunction(*call, IFI);
-#else
-          InlineFunction(call, IFI);
-#endif
         }
         toErase.push_back(SI);
         continue;

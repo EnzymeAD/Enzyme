@@ -67,14 +67,10 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions = {}) {
     SMDiagnostic Err;
     MemoryBufferRef buf(mod, StringRef("bcloader"));
 
-#if LLVM_VERSION_MAJOR <= 10
-    auto BC = llvm::parseIR(buf, Err, M.getContext(), true,
-                            M.getDataLayout().getStringRepresentation());
-#else
     auto BC = llvm::parseIR(buf, Err, M.getContext(), [&](StringRef) {
       return Optional<std::string>(M.getDataLayout().getStringRepresentation());
     });
-#endif
+
     if (!BC)
       Err.print("bcloader", llvm::errs());
     assert(BC);

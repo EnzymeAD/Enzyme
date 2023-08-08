@@ -444,13 +444,9 @@ void EnzymeGradientUtilsAddToInvertedPointerDiffe(
     LLVMTypeRef addingType, unsigned start, unsigned size, LLVMValueRef origptr,
     LLVMValueRef dif, LLVMBuilderRef BuilderM, unsigned align,
     LLVMValueRef mask) {
-#if LLVM_VERSION_MAJOR >= 10
   MaybeAlign align2;
   if (align)
     align2 = MaybeAlign(align);
-#else
-  auto align2 = align;
-#endif
   auto inst = cast_or_null<Instruction>(unwrap(orig));
   gutils->addToInvertedPtrDiffe(inst, unwrap(origVal), unwrap(addingType),
                                 start, size, unwrap(origptr), unwrap(dif),
@@ -462,13 +458,9 @@ void EnzymeGradientUtilsAddToInvertedPointerDiffeTT(
     CTypeTreeRef vd, unsigned LoadSize, LLVMValueRef origptr,
     LLVMValueRef prediff, LLVMBuilderRef BuilderM, unsigned align,
     LLVMValueRef premask) {
-#if LLVM_VERSION_MAJOR >= 10
   MaybeAlign align2;
   if (align)
     align2 = MaybeAlign(align);
-#else
-  auto align2 = align;
-#endif
   auto inst = cast_or_null<Instruction>(unwrap(orig));
   gutils->addToInvertedPtrDiffe(inst, unwrap(origVal), *(TypeTree *)vd,
                                 LoadSize, unwrap(origptr), unwrap(prediff),
@@ -1187,7 +1179,7 @@ static size_t num_rooting(llvm::Type *T, llvm::Function *F) {
 }
 
 extern "C" {
-#if LLVM_VERSION_MAJOR >= 10
+
 void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   auto F = cast<Function>(unwrap(F_C));
   if (F->empty())
@@ -1684,7 +1676,6 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   NewF->setCallingConv(F->getCallingConv());
   F->eraseFromParent();
 }
-#endif
 
 LLVMValueRef EnzymeBuildExtractValue(LLVMBuilderRef B, LLVMValueRef AggVal,
                                      unsigned *Index, unsigned Size,

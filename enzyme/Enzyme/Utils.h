@@ -51,11 +51,8 @@
 #include "llvm/ADT/StringMap.h"
 
 #include "llvm/IR/Dominators.h"
-
-#if LLVM_VERSION_MAJOR >= 10
 #include "llvm/IR/IntrinsicsAMDGPU.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
-#endif
 
 #include <map>
 #include <set>
@@ -540,11 +537,7 @@ static inline llvm::Type *FloatToIntTy(llvm::Type *T) {
   assert(T->isFPOrFPVectorTy());
   if (auto ty = llvm::dyn_cast<llvm::VectorType>(T)) {
     return llvm::VectorType::get(FloatToIntTy(ty->getElementType()),
-#if LLVM_VERSION_MAJOR >= 11
                                  ty->getElementCount());
-#else
-                                 ty->getNumElements());
-#endif
   }
   if (T->isHalfTy())
     return llvm::IntegerType::get(T->getContext(), 16);
@@ -562,11 +555,7 @@ static inline llvm::Type *IntToFloatTy(llvm::Type *T) {
   assert(T->isIntOrIntVectorTy());
   if (auto ty = llvm::dyn_cast<llvm::VectorType>(T)) {
     return llvm::VectorType::get(IntToFloatTy(ty->getElementType()),
-#if LLVM_VERSION_MAJOR >= 11
                                  ty->getElementCount());
-#else
-                                 ty->getNumElements());
-#endif
   }
   if (auto ty = llvm::dyn_cast<llvm::IntegerType>(T)) {
     switch (ty->getBitWidth()) {
@@ -1060,11 +1049,7 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
   const llvm::Function *called = nullptr;
   using namespace llvm;
   const llvm::Value *callVal;
-#if LLVM_VERSION_MAJOR >= 11
   callVal = op->getCalledOperand();
-#else
-  callVal = op->getCalledValue();
-#endif
 
   while (!called) {
     if (auto castinst = dyn_cast<ConstantExpr>(callVal))
@@ -1076,12 +1061,10 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
       called = fn;
       break;
     }
-#if LLVM_VERSION_MAJOR >= 11
     if (auto alias = dyn_cast<GlobalAlias>(callVal)) {
       callVal = dyn_cast<Function>(alias->getAliasee());
       continue;
     }
-#endif
     break;
   }
   return called ? const_cast<llvm::Function *>(called) : nullptr;
@@ -1380,21 +1363,11 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
       // because it should be in sync with CaptureTracking. Not using it may
       // cause weird miscompilations where 2 aliasing pointers are assumed to
       // noalias.
-#if LLVM_VERSION_MAJOR >= 10
       if (auto *RP = llvm::getArgumentAliasingToReturnedPointer(Call, false)) {
         V = RP;
         continue;
       }
-#endif
     }
-#if LLVM_VERSION_MAJOR < 10
-    if (auto CS = llvm::dyn_cast<llvm::CallBase>(V)) {
-      if (auto *RP = llvm::getArgumentAliasingToReturnedPointer(CS)) {
-        V = RP;
-        continue;
-      }
-    }
-#endif
 
     if (auto I = llvm::dyn_cast<llvm::Instruction>(V)) {
 #if LLVM_VERSION_MAJOR >= 12
@@ -1693,9 +1666,7 @@ static inline llvm::Attribute::AttrKind PrimalParamAttrsToPreserve[] = {
 #if LLVM_VERSION_MAJOR >= 12
     llvm::Attribute::AttrKind::ByRef,
 #endif
-#if LLVM_VERSION_MAJOR >= 11
     llvm::Attribute::AttrKind::Preallocated,
-#endif
     llvm::Attribute::AttrKind::InAlloca,
 #if LLVM_VERSION_MAJOR >= 13
     llvm::Attribute::AttrKind::ElementType,
@@ -1703,9 +1674,7 @@ static inline llvm::Attribute::AttrKind PrimalParamAttrsToPreserve[] = {
 #if LLVM_VERSION_MAJOR >= 15
     llvm::Attribute::AttrKind::AllocAlign,
 #endif
-#if LLVM_VERSION_MAJOR >= 10
     llvm::Attribute::AttrKind::NoFree,
-#endif
     llvm::Attribute::AttrKind::Alignment,
     llvm::Attribute::AttrKind::StackAlignment,
     llvm::Attribute::AttrKind::NoCapture,
@@ -1720,9 +1689,7 @@ static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
 #if LLVM_VERSION_MAJOR >= 13
     llvm::Attribute::AttrKind::ElementType,
 #endif
-#if LLVM_VERSION_MAJOR >= 10
     llvm::Attribute::AttrKind::NoFree,
-#endif
     llvm::Attribute::AttrKind::Alignment,
     llvm::Attribute::AttrKind::StackAlignment,
     llvm::Attribute::AttrKind::NoCapture,
