@@ -403,11 +403,7 @@ Value *GradientUtils::getOrInsertTotalMultiplicativeProduct(Value *val,
   auto PN = lbuilder.CreatePHI(val->getType(), 2);
   Constant *One = ConstantFP::get(val->getType()->getScalarType(), "1");
   if (VectorType *VTy = dyn_cast<VectorType>(val->getType())) {
-#if LLVM_VERSION_MAJOR >= 11
     One = ConstantVector::getSplat(VTy->getElementCount(), One);
-#else
-    One = ConstantVector::getSplat(VTy->getNumElements(), One);
-#endif
   }
   PN->addIncoming(One, lc.preheader);
   lbuilder.SetInsertPoint(lc.header->getFirstNonPHI());
@@ -898,7 +894,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
   if (isa<Argument>(val) || isa<Constant>(val)) {
     return val;
-#if LLVM_VERSION_MAJOR >= 10
   } else if (auto op = dyn_cast<FreezeInst>(val)) {
     auto op0 = getOp(op->getOperand(0));
     if (op0 == nullptr)
@@ -912,7 +907,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] = toreturn;
     assert(val->getType() == toreturn->getType());
     return toreturn;
-#endif
   } else if (auto op = dyn_cast<CastInst>(val)) {
     auto op0 = getOp(op->getOperand(0));
     if (op0 == nullptr)
@@ -1034,13 +1028,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     auto op1 = getOp(op->getOperand(1));
     if (op1 == nullptr)
       goto endCheck;
-#if LLVM_VERSION_MAJOR >= 11
     auto toreturn = BuilderM.CreateShuffleVector(
         op0, op1, op->getShuffleMaskForBitcode(), op->getName() + "'_unwrap");
-#else
-    auto toreturn = BuilderM.CreateShuffleVector(op0, op1, op->getOperand(2),
-                                                 op->getName() + "'_unwrap");
-#endif
     if (permitCache)
       unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] = toreturn;
     if (auto newi = dyn_cast<Instruction>(toreturn)) {
@@ -1263,11 +1252,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       toreturn->setDebugLoc(nullptr);
     else
       toreturn->setDebugLoc(getNewFromOriginal(load->getDebugLoc()));
-#if LLVM_VERSION_MAJOR >= 10
     toreturn->setAlignment(load->getAlign());
-#else
-    toreturn->setAlignment(load->getAlignment());
-#endif
     toreturn->setVolatile(load->isVolatile());
     toreturn->setOrdering(load->getOrdering());
     toreturn->setSyncScopeID(load->getSyncScopeID());
@@ -1325,11 +1310,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         goto endCheck;
     }
 
-#if LLVM_VERSION_MAJOR >= 11
     Value *fn = getOp(op->getCalledOperand());
-#else
-    Value *fn = getOp(op->getCalledValue());
-#endif
     if (fn == nullptr)
       goto endCheck;
 
@@ -1406,11 +1387,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                 newi->copyIRFlags(dli);
                 unwrappedLoads[toreturn] = dli;
               }
-#if LLVM_VERSION_MAJOR >= 10
               toreturn->setAlignment(dli->getAlign());
-#else
-              toreturn->setAlignment(dli->getAlignment());
-#endif
               toreturn->setVolatile(dli->isVolatile());
               toreturn->setOrdering(dli->getOrdering());
               toreturn->setSyncScopeID(dli->getSyncScopeID());
@@ -3220,11 +3197,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   ToCopy2.push_back(LLVMContext::MD_noalias);
                   ToCopy2.push_back(LLVMContext::MD_alias_scope);
                   ts->copyMetadata(*SI, ToCopy2);
-#if LLVM_VERSION_MAJOR >= 10
                   ts->setAlignment(SI->getAlign());
-#else
-                  ts->setAlignment(SI->getAlignment());
-#endif
                   ts->setVolatile(SI->isVolatile());
                   ts->setOrdering(SI->getOrdering());
                   ts->setSyncScopeID(SI->getSyncScopeID());
@@ -3251,13 +3224,9 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
 
                     auto Defs = getInvertedBundles(CI, BundleTypes, NB,
                                                    /*lookup*/ true, available);
-#if LLVM_VERSION_MAJOR >= 11
                     auto cal =
                         NB.CreateCall(CI->getFunctionType(),
                                       CI->getCalledOperand(), args, Defs);
-#else
-                    auto cal = NB.CreateCall(CI->getCalledValue(), args, Defs);
-#endif
                     cal->setAttributes(CI->getAttributes());
                     cal->setCallingConv(CI->getCallingConv());
                     cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
@@ -3295,11 +3264,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                                                          MD->getOperand(0))
                                                          ->getValue())
                                        ->getLimitedValue();
-#if LLVM_VERSION_MAJOR >= 10
                   replacement->setAlignment(Align(Alignment));
-#else
-                  replacement->setAlignment(Alignment);
-#endif
                   replacement->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                   storeInstructionInCache(lctx, NB, replacement, cache);
                 } else if (auto CI = dyn_cast<CallInst>(&I)) {
@@ -3411,11 +3376,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                         prevNoAlias.push_back(M);
                       }
                     }
-#if LLVM_VERSION_MAJOR >= 10
                     auto align = SI->getAlign();
-#else
-                    auto align = SI->getAlignment();
-#endif
                     setPtrDiffe(SI, orig_ptr, valueop, NB, align,
                                 SI->isVolatile(), SI->getOrdering(),
                                 SI->getSyncScopeID(),
@@ -3471,14 +3432,9 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                       auto Defs =
                           getInvertedBundles(CI, BundleTypes, NB,
                                              /*lookup*/ true, available);
-#if LLVM_VERSION_MAJOR >= 11
                       auto cal =
                           NB.CreateCall(CI->getFunctionType(),
                                         CI->getCalledOperand(), args, Defs);
-#else
-                      auto cal =
-                          NB.CreateCall(CI->getCalledValue(), args, Defs);
-#endif
                       cal->setAttributes(CI->getAttributes());
                       cal->setCallingConv(CI->getCallingConv());
                       cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
@@ -3535,14 +3491,9 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     anti = shadowHandlers[funcName](NB, orig, args, this);
                   } else {
                     auto rule = [&]() {
-#if LLVM_VERSION_MAJOR >= 11
                       Value *anti = NB.CreateCall(
                           orig->getFunctionType(), orig->getCalledOperand(),
                           args, orig->getName() + "'mi");
-#else
-                      Value *anti = NB.CreateCall(orig->getCalledValue(), args,
-                                                  orig->getName() + "'mi");
-#endif
                       cast<CallInst>(anti)->setAttributes(
                           orig->getAttributes());
                       cast<CallInst>(anti)->setCallingConv(
@@ -3569,11 +3520,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                                 cast<ConstantAsMetadata>(MD->getOperand(0))
                                     ->getValue())
                                 ->getLimitedValue();
-#if LLVM_VERSION_MAJOR >= 10
                         replacement->setAlignment(Align(Alignment));
-#else
-                        replacement->setAlignment(Alignment);
-#endif
                         replacement->setDebugLoc(
                             getNewFromOriginal(I.getDebugLoc()));
                         return replacement;
@@ -4483,11 +4430,7 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
       arg->setMetadata("enzyme_shadow",
                        MDTuple::get(shadow->getContext(),
                                     {ConstantAsMetadata::get(shadow)}));
-#if LLVM_VERSION_MAJOR >= 11
       shadow->setAlignment(arg->getAlign());
-#else
-      shadow->setAlignment(arg->getAlignment());
-#endif
       shadow->setUnnamedAddr(arg->getUnnamedAddr());
       if (arg->hasInitializer())
         shadow->setInitializer(GetOrCreateShadowConstant(
@@ -4747,22 +4690,12 @@ void GradientUtils::getForwardBuilder(IRBuilder<> &Builder2) {
   Builder2.setFastMathFlags(getFast());
 }
 
-#if LLVM_VERSION_MAJOR >= 10
 void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                                 IRBuilder<> &BuilderM, MaybeAlign align,
                                 bool isVolatile, AtomicOrdering ordering,
                                 SyncScope::ID syncScope, Value *mask,
                                 ArrayRef<Metadata *> noAlias,
-                                ArrayRef<Metadata *> scopes)
-#else
-void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
-                                IRBuilder<> &BuilderM, unsigned align,
-                                bool isVolatile, AtomicOrdering ordering,
-                                SyncScope::ID syncScope, Value *mask,
-                                ArrayRef<Metadata *> noAlias,
-                                ArrayRef<Metadata *> scopes)
-#endif
-{
+                                ArrayRef<Metadata *> scopes) {
   if (auto inst = dyn_cast<Instruction>(ptr)) {
     assert(inst->getParent()->getParent() == oldFunc);
   }
@@ -4787,11 +4720,8 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
     if (!mask) {
       auto ts = BuilderM.CreateStore(newval, ptr);
       if (align)
-#if LLVM_VERSION_MAJOR >= 10
         ts->setAlignment(*align);
-#else
-        ts->setAlignment(align);
-#endif
+
       ts->setVolatile(isVolatile);
       ts->setOrdering(ordering);
       ts->setSyncScopeID(syncScope);
@@ -4824,13 +4754,8 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
       auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
                                          Intrinsic::masked_store, tys);
       assert(align);
-#if LLVM_VERSION_MAJOR >= 10
       Value *alignv =
           ConstantInt::get(Type::getInt32Ty(ptr->getContext()), align->value());
-#else
-      Value *alignv =
-          ConstantInt::get(Type::getInt32Ty(ptr->getContext()), align);
-#endif
       Value *args[] = {newval, ptr, alignv, mask};
       auto ts = BuilderM.CreateCall(F, args);
       ts->setCallingConv(F->getCallingConv());
@@ -4941,12 +4866,10 @@ llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
         res = lhs;
     }
     if (!res) {
-#if LLVM_VERSION_MAJOR >= 10
       if (auto *FPMO = dyn_cast<FPMathOperator>(rhs))
         if (FPMO->getOpcode() == Instruction::FNeg) {
           res = B.CreateFSub(lhs, FPMO->getOperand(0));
         }
-#endif
     }
     if (!res) {
       if (auto *S = dyn_cast<BinaryOperator>(rhs)) {
@@ -5268,11 +5191,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                   allocaTy, arg->getType()->getPointerAddressSpace(), nullptr,
                   arg->getName() + "'ipa");
               if (arg->getAlignment()) {
-#if LLVM_VERSION_MAJOR >= 10
                 antialloca->setAlignment(Align(arg->getAlignment()));
-#else
-                antialloca->setAlignment(arg->getAlignment());
-#endif
               }
               return antialloca;
             };
@@ -5298,19 +5217,11 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               Type *tys[] = {dst_arg->getType(), len_arg->getType()};
               auto memset = cast<CallInst>(bb.CreateCall(
                   Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
-#if LLVM_VERSION_MAJOR >= 10
               if (arg->getAlignment()) {
                 memset->addParamAttr(
                     0, Attribute::getWithAlignment(arg->getContext(),
                                                    Align(arg->getAlignment())));
               }
-#else
-              if (arg->getAlignment() != 0) {
-                memset->addParamAttr(
-                    0, Attribute::getWithAlignment(arg->getContext(),
-                                                   arg->getAlignment()));
-              }
-#endif
               memset->addParamAttr(0, Attribute::NonNull);
               assert((width > 1 && antialloca->getType() ==
                                        ArrayType::get(arg->getType(), width)) ||
@@ -5334,7 +5245,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
            Arch == Triple::amdgcn) &&
           AddrSpace == SharedAddrSpace) {
         llvm::errs() << "warning found shared memory\n";
-        // #if LLVM_VERSION_MAJOR >= 11
         Type *type = arg->getValueType();
         // TODO this needs initialization by entry
         auto shadow = new GlobalVariable(
@@ -5347,11 +5257,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                                       {ConstantAsMetadata::get(shadow)}));
         shadow->setMetadata("enzyme_internalshadowglobal",
                             MDTuple::get(shadow->getContext(), {}));
-#if LLVM_VERSION_MAJOR >= 11
         shadow->setAlignment(arg->getAlign());
-#else
-        shadow->setAlignment(arg->getAlignment());
-#endif
         shadow->setUnnamedAddr(arg->getUnnamedAddr());
         invertedPointers.insert(std::make_pair(
             (const Value *)oval, InvertedPointerVH(this, shadow)));
@@ -5381,11 +5287,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           arg->setMetadata("enzyme_shadow",
                            MDTuple::get(shadow->getContext(),
                                         {ConstantAsMetadata::get(shadow)}));
-#if LLVM_VERSION_MAJOR >= 11
           shadow->setAlignment(arg->getAlign());
-#else
-          shadow->setAlignment(arg->getAlignment());
-#endif
           shadow->setUnnamedAddr(arg->getUnnamedAddr());
 
           return shadow;
@@ -5623,13 +5525,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     auto ip1 = invertPointerM(op1, bb, nullShadow);
 
     auto rule = [&bb, &arg](Value *ip0, Value *ip1) {
-#if LLVM_VERSION_MAJOR >= 11
       return bb.CreateShuffleVector(ip0, ip1, arg->getShuffleMaskForBitcode(),
                                     arg->getName() + "'ipsv");
-#else
-      return bb.CreateShuffleVector(ip0, ip1, arg->getOperand(2),
-                                    arg->getName() + "'ipsv");
-#endif
     };
 
     Value *shadow = applyChainRule(arg->getType(), bb, rule, ip0, ip1);
@@ -5728,11 +5625,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         li->setMetadata(LLVMContext::MD_noalias, noscope);
       }
 
-#if LLVM_VERSION_MAJOR >= 10
       li->setAlignment(arg->getAlign());
-#else
-      li->setAlignment(arg->getAlignment());
-#endif
       li->setDebugLoc(getNewFromOriginal(arg->getDebugLoc()));
       li->setVolatile(arg->isVolatile());
       li->setOrdering(arg->getOrdering());
@@ -5807,17 +5700,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       AllocaInst *antialloca = bb.CreateAlloca(
           inst->getAllocatedType(), inst->getType()->getPointerAddressSpace(),
           asize, inst->getName() + "'ipa");
-#if LLVM_VERSION_MAJOR >= 11
       antialloca->setAlignment(inst->getAlign());
-#elif LLVM_VERSION_MAJOR == 10
-      if (inst->getAlignment()) {
-        antialloca->setAlignment(Align(inst->getAlignment()));
-      }
-#else
-      if (inst->getAlignment()) {
-        antialloca->setAlignment(inst->getAlignment());
-      }
-#endif
       return antialloca;
     };
 
@@ -5832,17 +5715,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         auto rule = [&](Value *antialloca) {
           StoreInst *st = bb.CreateStore(
               Constant::getNullValue(inst->getAllocatedType()), antialloca);
-#if LLVM_VERSION_MAJOR >= 11
           cast<StoreInst>(st)->setAlignment(inst->getAlign());
-#elif LLVM_VERSION_MAJOR == 10
-          if (inst->getAlignment()) {
-            cast<StoreInst>(st)->setAlignment(Align(inst->getAlignment()));
-          }
-#else
-          if (inst->getAlignment()) {
-            cast<StoreInst>(st)->setAlignment(inst->getAlignment());
-          }
-#endif
         };
 
         applyChainRule(bb, rule, antialloca);
@@ -5870,21 +5743,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       Type *tys[] = {dst_arg->getType(), len_arg->getType()};
       auto memset = cast<CallInst>(bb.CreateCall(
           Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
-#if LLVM_VERSION_MAJOR >= 11
       memset->addParamAttr(
           0, Attribute::getWithAlignment(inst->getContext(), inst->getAlign()));
-#elif LLVM_VERSION_MAJOR == 10
-      if (inst->getAlignment() != 0) {
-        memset->addParamAttr(
-            0, Attribute::getWithAlignment(inst->getContext(),
-                                           Align(inst->getAlignment())));
-      }
-#else
-      if (inst->getAlignment() != 0) {
-        memset->addParamAttr(0, Attribute::getWithAlignment(
-                                    inst->getContext(), inst->getAlignment()));
-      }
-#endif
       memset->addParamAttr(0, Attribute::NonNull);
     };
 
@@ -6869,17 +6729,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                                         /*extraSize*/ nullptr);
 
                     auto ld = v.CreateLoad(AT, AI);
-#if LLVM_VERSION_MAJOR >= 11
                     ld->setAlignment(AI->getAlign());
-#elif LLVM_VERSION_MAJOR == 10
-                    if (AI->getAlignment()) {
-                      ld->setAlignment(Align(AI->getAlignment()));
-                    }
-#else
-                    if (AI->getAlignment()) {
-                      ld->setAlignment(AI->getAlignment());
-                    }
-#endif
                     scopeInstructions[cache].push_back(ld);
                     auto st = v.CreateStore(ld, outer);
                     auto bsize = newFunc->getParent()
@@ -6887,11 +6737,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                                      .getTypeAllocSizeInBits(AT) /
                                  8;
                     if ((bsize & (bsize - 1)) == 0) {
-#if LLVM_VERSION_MAJOR >= 10
                       st->setAlignment(Align(bsize));
-#else
-                      st->setAlignment(bsize);
-#endif
                     }
                     scopeInstructions[cache].push_back(st);
                     for (auto post : PostCacheStore(st, v)) {
@@ -7137,30 +6983,12 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       li->getType()) /
                   8;
               if ((bsize & (bsize - 1)) == 0) {
-#if LLVM_VERSION_MAJOR >= 10
                 mem->addParamAttr(0, Attribute::getWithAlignment(
                                          memcpyF->getContext(), Align(bsize)));
-#else
-                mem->addParamAttr(0, Attribute::getWithAlignment(
-                                         memcpyF->getContext(), bsize));
-#endif
               }
 
-#if LLVM_VERSION_MAJOR >= 11
               mem->addParamAttr(1, Attribute::getWithAlignment(
                                        memcpyF->getContext(), li->getAlign()));
-#elif LLVM_VERSION_MAJOR >= 10
-              if (li->getAlign())
-                mem->addParamAttr(
-                    1, Attribute::getWithAlignment(memcpyF->getContext(),
-                                                   li->getAlign().getValue()));
-#else
-              if (li->getAlignment())
-                mem->addParamAttr(
-                    1, Attribute::getWithAlignment(memcpyF->getContext(),
-                                                   li->getAlignment()));
-#endif
-
               scopeInstructions[cache].push_back(mem);
             }
 
@@ -8343,13 +8171,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
           auto cal = Builder2.CreateCall(memsetIntr, args);
           cal->setCallingConv(memsetIntr->getCallingConv());
           if (dstalign != 0) {
-#if LLVM_VERSION_MAJOR >= 10
             cal->addParamAttr(0, Attribute::getWithAlignment(MTI->getContext(),
                                                              Align(dstalign)));
-#else
-            cal->addParamAttr(
-                0, Attribute::getWithAlignment(MTI->getContext(), dstalign));
-#endif
           }
         }
 
@@ -8388,17 +8211,12 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
               srco, PointerType::get(secretty, srcaddr));
 
         if (mode == DerivativeMode::ForwardModeSplit) {
-#if LLVM_VERSION_MAJOR >= 11
           MaybeAlign dalign;
           if (dstalign)
             dalign = MaybeAlign(dstalign);
           MaybeAlign salign;
           if (srcalign)
             salign = MaybeAlign(srcalign);
-#else
-          auto dalign = dstalign;
-          auto salign = srcalign;
-#endif
 
           if (intrinsic == Intrinsic::memmove) {
             Builder2.CreateMemMove(dsto, dalign, srco, salign, length);
@@ -8487,22 +8305,12 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
       cal->setTailCallKind(MTI->getTailCallKind());
 
       if (dstalign != 0) {
-#if LLVM_VERSION_MAJOR >= 10
         cal->addParamAttr(
             0, Attribute::getWithAlignment(MTI->getContext(), Align(dstalign)));
-#else
-        cal->addParamAttr(
-            0, Attribute::getWithAlignment(MTI->getContext(), dstalign));
-#endif
       }
       if (srcalign != 0) {
-#if LLVM_VERSION_MAJOR >= 10
         cal->addParamAttr(
             1, Attribute::getWithAlignment(MTI->getContext(), Align(srcalign)));
-#else
-        cal->addParamAttr(
-            1, Attribute::getWithAlignment(MTI->getContext(), srcalign));
-#endif
       }
     }
   }

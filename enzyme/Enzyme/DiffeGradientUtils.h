@@ -101,35 +101,19 @@ public:
             int i, llvm::AllocaInst *alloc, llvm::ConstantInt *byteSizeOfType,
             llvm::Value *storeInto, llvm::MDNode *InvariantMD) override;
 
-/// align is the alignment that should be specified for load/store to pointer
-#if LLVM_VERSION_MAJOR >= 10
+  /// align is the alignment that should be specified for load/store to pointer
   void addToInvertedPtrDiffe(llvm::Instruction *orig, llvm::Value *origVal,
                              llvm::Type *addingType, unsigned start,
                              unsigned size, llvm::Value *origptr,
                              llvm::Value *dif, llvm::IRBuilder<> &BuilderM,
                              llvm::MaybeAlign align = llvm::MaybeAlign(),
                              llvm::Value *mask = nullptr);
-#else
-  void addToInvertedPtrDiffe(llvm::Instruction *orig, llvm::Value *origVal,
-                             llvm::Type *addingType, unsigned start,
-                             unsigned size, llvm::Value *origptr,
-                             llvm::Value *dif, llvm::IRBuilder<> &BuilderM,
-                             unsigned align = 0, llvm::Value *mask = nullptr);
-#endif
 
-#if LLVM_VERSION_MAJOR >= 10
   void addToInvertedPtrDiffe(llvm::Instruction *orig, llvm::Value *origVal,
                              TypeTree vd, unsigned size, llvm::Value *origptr,
                              llvm::Value *prediff, llvm::IRBuilder<> &Builder2,
                              llvm::MaybeAlign align = llvm::MaybeAlign(),
                              llvm::Value *premask = nullptr);
-#else
-  void addToInvertedPtrDiffe(llvm::Instruction *orig, llvm::Value *origVal,
-                             TypeTree vd, unsigned size, llvm::Value *origptr,
-                             llvm::Value *prediff, llvm::IRBuilder<> &Builder2,
-                             unsigned align = 0,
-                             llvm::Value *premask = nullptr);
-#endif
 };
 
 #endif

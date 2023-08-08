@@ -275,9 +275,7 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::llrint,
     Intrinsic::nearbyint,
     Intrinsic::round,
-#if LLVM_VERSION_MAJOR >= 11
     Intrinsic::roundeven,
-#endif
     Intrinsic::lround,
     Intrinsic::llround,
     Intrinsic::nvvm_barrier0,
@@ -396,11 +394,7 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
 
   auto F = getFunctionFromCall(CI);
 
-#if LLVM_VERSION_MAJOR >= 11
   bool all_inactive = val != CI->getCalledOperand();
-#else
-  bool all_inactive = val != CI->getCalledValue();
-#endif
 
 #if LLVM_VERSION_MAJOR >= 14
   for (size_t i = 0; i < CI->arg_size(); i++)
@@ -1739,12 +1733,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             CI->hasFnAttr("enzyme_inactive_inst"))
           return false;
 
-#if LLVM_VERSION_MAJOR >= 11
-        if (auto iasm = dyn_cast<InlineAsm>(CI->getCalledOperand()))
-#else
-        if (auto iasm = dyn_cast<InlineAsm>(CI->getCalledValue()))
-#endif
-        {
+        if (auto iasm = dyn_cast<InlineAsm>(CI->getCalledOperand())) {
           if (StringRef(iasm->getAsmString()).contains("exit") ||
               StringRef(iasm->getAsmString()).contains("cpuid"))
             return false;
@@ -2303,11 +2292,7 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
 
   // cpuid is explicitly an inactive instruction
   if (auto call = dyn_cast<CallInst>(inst)) {
-#if LLVM_VERSION_MAJOR >= 11
     if (auto iasm = dyn_cast<InlineAsm>(call->getCalledOperand())) {
-#else
-    if (auto iasm = dyn_cast<InlineAsm>(call->getCalledValue())) {
-#endif
       if (StringRef(iasm->getAsmString()).contains("cpuid")) {
         if (EnzymePrintActivity)
           llvm::errs() << " constant instruction from known cpuid instruction "
@@ -2411,11 +2396,7 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
     }
     // Calls to print/assert/cxa guard are definitionally inactive
     llvm::Value *callVal;
-#if LLVM_VERSION_MAJOR >= 11
     callVal = op->getCalledOperand();
-#else
-    callVal = op->getCalledValue();
-#endif
     StringRef funcName = getFuncNameFromCall(op);
     auto called = getFunctionFromCall(op);
 
@@ -3042,11 +3023,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         // the function is only active if the function stored into
         // the allocation is active (all functions not explicitly marked
         // inactive), or one of the args to the call is active
-#if LLVM_VERSION_MAJOR >= 11
         Value *operand = call->getCalledOperand();
-#else
-        Value *operand = call->getCalledValue();
-#endif
 
         bool toContinue = false;
         if (isa<LoadInst>(operand)) {
