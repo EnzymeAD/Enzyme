@@ -83,6 +83,7 @@ enum class ErrorType {
   InternalError = 5,
   TypeDepthExceeded = 6,
   MixedActivityError = 7,
+  IllegalReplaceFicticiousPHIs = 8
 };
 
 extern "C" {
@@ -321,8 +322,9 @@ enum class DerivativeMode {
 };
 
 enum class ProbProgMode {
-  Trace = 0,
-  Condition = 1,
+  Likelihood = 0,
+  Trace = 1,
+  Condition = 2,
 };
 
 /// Classification of value as an original program
@@ -432,6 +434,9 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
   }
 
   if (arg->isPointerTy()) {
+#if LLVM_VERSION_MAJOR >= 18
+    return DIFFE_TYPE::DUP_ARG;
+#else
 #if LLVM_VERSION_MAJOR >= 15
     if (!arg->getContext().supportsTypedPointers()) {
       return DIFFE_TYPE::DUP_ARG;
@@ -452,6 +457,7 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
     llvm::errs() << "arg: " << *arg << "\n";
     assert(0 && "Cannot handle type0");
     return DIFFE_TYPE::CONSTANT;
+#endif
   } else if (arg->isArrayTy()) {
     return whatType(llvm::cast<llvm::ArrayType>(arg)->getElementType(), mode,
                     integersAreConstant, seen);
@@ -637,6 +643,22 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
                              BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
                              llvm::ArrayRef<llvm::OperandBundleDef> bundles);
+
+void callSPMVDiagUpdate(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                        llvm::IntegerType *IT, llvm::Type *BlasCT,
+                        llvm::Type *BlasFPT, llvm::Type *BlasPT,
+                        llvm::Type *BlasIT, llvm::Type *fpTy,
+                        llvm::ArrayRef<llvm::Value *> args,
+                        const llvm::ArrayRef<llvm::OperandBundleDef> bundles,
+                        bool byRef, bool julia_decl);
+
+llvm::CallInst *
+getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                     llvm::IntegerType *IT, llvm::Type *BlasPT,
+                     llvm::Type *BlasIT, llvm::Type *fpTy,
+                     llvm::ArrayRef<llvm::Value *> args,
+                     const llvm::ArrayRef<llvm::OperandBundleDef> bundles,
+                     bool byRef, bool julia_decl);
 
 /// Create function for type that performs memcpy with a stride
 llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M,
@@ -998,15 +1020,15 @@ static inline llvm::StructType *getMPIHelper(llvm::LLVMContext &Context) {
 }
 
 template <MPI_Elem E, bool Pointer = true>
-static inline llvm::Value *getMPIMemberPtr(llvm::IRBuilder<> &B,
-                                           llvm::Value *V) {
+static inline llvm::Value *getMPIMemberPtr(llvm::IRBuilder<> &B, llvm::Value *V,
+                                           llvm::Type *T) {
   using namespace llvm;
   auto i64 = Type::getInt64Ty(V->getContext());
   auto i32 = Type::getInt32Ty(V->getContext());
   auto c0_64 = ConstantInt::get(i64, 0);
 
   if (Pointer) {
-    return B.CreateInBoundsGEP(V->getType()->getPointerElementType(), V,
+    return B.CreateInBoundsGEP(T, V,
                                {c0_64, ConstantInt::get(i32, (uint64_t)E)});
   } else {
     return B.CreateExtractValue(V, {(unsigned)E});
@@ -1014,8 +1036,8 @@ static inline llvm::Value *getMPIMemberPtr(llvm::IRBuilder<> &B,
 }
 
 llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
-                                   ConcreteType CT, llvm::Type *intType,
-                                   llvm::IRBuilder<> &B2);
+                                   llvm::Type *OpType, ConcreteType CT,
+                                   llvm::Type *intType, llvm::IRBuilder<> &B2);
 
 class AssertingReplacingVH final : public llvm::CallbackVH {
 public:
@@ -1628,18 +1650,26 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, const llvm::Twine &name = "");
 
+llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::IntegerType *intType,
+                         llvm::Value *V, bool byRef);
+
 // julia_decl null means not julia decl, otherwise it is the integer type needed
 // to cast to
 llvm::Value *to_blas_callconv(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                               llvm::IntegerType *julia_decl,
                               llvm::IRBuilder<> &entryBuilder,
                               llvm::Twine const & = "");
+llvm::Value *to_blas_fp_callconv(llvm::IRBuilder<> &B, llvm::Value *V,
+                                 bool byRef, llvm::Type *julia_decl,
+                                 llvm::IRBuilder<> &entryBuilder,
+                                 llvm::Twine const & = "");
 
 llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
                                   llvm::Value *arg_ld, llvm::Value *dim_1,
                                   llvm::Value *dim_2, bool cacheMat,
                                   bool byRef);
 llvm::Value *is_normal(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef);
+llvm::Value *is_uper(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef);
 llvm::Value *select_vec_dims(llvm::IRBuilder<> &B, llvm::Value *trans,
                              llvm::Value *dim1, llvm::Value *dim2, bool byRef);
 // first one assume V is an Integer
@@ -1713,6 +1743,29 @@ static inline llvm::Type *getSubType(llvm::Type *T, Arg1 i, Args... args) {
   }
   llvm::errs() << *T << "\n";
   llvm_unreachable("unknown subtype");
+}
+
+enum AddressSpace {
+  Generic = 0,
+  Tracked = 10,
+  Derived = 11,
+  CalleeRooted = 12,
+  Loaded = 13,
+  FirstSpecial = Tracked,
+  LastSpecial = Loaded,
+};
+struct CountTrackedPointers {
+  unsigned count = 0;
+  bool all = true;
+  bool derived = false;
+  CountTrackedPointers(llvm::Type *T);
+};
+static inline bool isSpecialPtr(llvm::Type *Ty) {
+  llvm::PointerType *PTy = llvm::dyn_cast<llvm::PointerType>(Ty);
+  if (!PTy)
+    return false;
+  unsigned AS = PTy->getAddressSpace();
+  return AddressSpace::FirstSpecial <= AS && AS <= AddressSpace::LastSpecial;
 }
 
 #endif

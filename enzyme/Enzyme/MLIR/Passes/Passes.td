@@ -32,9 +32,24 @@ def ShadowedGradientToCachePass : Pass<"convert-enzyme-shadowed-gradient-to-cach
   let constructor = "mlir::enzyme::createShadowedGradientToCachePass()";
 }
 
+def AddToOpToIndexAndLoadPass : Pass<"add-to-op-to-index-and-load"> {
+  let summary = "Convert AddTo op inside linalg generic to index and memref load/store DEPRECATED";
+  let constructor = "mlir::enzyme::createAddToOpToIndexAndLoadPass()";
+}
+
+def AddToOpToSplitPass : Pass<"add-to-op-to-split"> {
+  let summary = "Duplicate linalg.generic once for each output to remove enzyme.addTo op";
+  let constructor = "mlir::enzyme::createAddToOpToSplitPass()";
+}
+
 def RemoveUnusedEnzymeOpsPass : Pass<"remove-unnecessary-enzyme-ops"> {
   let summary = "Remove Unnecessary Enzyme Ops";
   let constructor = "mlir::enzyme::createRemoveUnusedEnzymeOpsPass()";
+}
+
+def SimplifyMemrefCachePass : Pass<"simplify-memref-cache"> {
+  let summary = "Rewrite all cache<memref<cache<...>>> to cache<memref<...>> if possible";
+  let constructor = "mlir::enzyme::createSimplifyMemrefCachePass()";
 }
 
 def LowerToLLVMEnzymePass : Pass<"lower-to-llvm-enzyme"> {

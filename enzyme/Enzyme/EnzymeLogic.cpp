@@ -1729,6 +1729,9 @@ void clearFunctionAttributes(Function *f) {
 #endif
   }
   Attribute::AttrKind attrs[] = {
+#if LLVM_VERSION_MAJOR >= 17
+    Attribute::NoFPClass,
+#endif
 #if LLVM_VERSION_MAJOR >= 11
     Attribute::NoUndef,
 #endif
@@ -1766,35 +1769,6 @@ void cleanupInversionAllocs(DiffeGradientUtils *gutils, BasicBlock *entry) {
       DeleteDeadBlock(BBs.second.front());
     }
   }
-}
-
-static FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
-                                           llvm::Function *todiff) {
-  FnTypeInfo oldTypeInfo = oldTypeInfo_;
-  for (auto &pair : oldTypeInfo.KnownValues) {
-    if (pair.second.size() != 0) {
-      bool recursiveUse = false;
-      for (auto user : pair.first->users()) {
-        if (auto bi = dyn_cast<BinaryOperator>(user)) {
-          for (auto biuser : bi->users()) {
-            if (auto ci = dyn_cast<CallInst>(biuser)) {
-              if (ci->getCalledFunction() == todiff &&
-                  ci->getArgOperand(pair.first->getArgNo()) == bi) {
-                recursiveUse = true;
-                break;
-              }
-            }
-          }
-        }
-        if (recursiveUse)
-          break;
-      }
-      if (recursiveUse) {
-        pair.second.clear();
-      }
-    }
-  }
-  return oldTypeInfo;
 }
 
 void restoreCache(
@@ -2545,6 +2519,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
 
   llvm::Attribute::AttrKind attrs[] = {
+#if LLVM_VERSION_MAJOR >= 17
+    llvm::Attribute::NoFPClass,
+#endif
     llvm::Attribute::NoAlias,
 #if LLVM_VERSION_MAJOR >= 11
     llvm::Attribute::NoUndef,
@@ -4987,19 +4964,51 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   return BatchCachedFunctions[tup] = NewF;
 };
 
-Function *
-EnzymeLogic::CreateTrace(Function *totrace,
-                         SmallPtrSetImpl<Function *> &GenerativeFunctions,
-                         StringSet<> &ActiveRandomVariables, ProbProgMode mode,
-                         bool autodiff, TraceInterface *interface) {
-  TraceCacheKey tup = std::make_tuple(totrace, mode);
+llvm::Function *EnzymeLogic::CreateTrace(
+    llvm::Function *totrace, const SmallPtrSetImpl<Function *> &sampleFunctions,
+    const SmallPtrSetImpl<Function *> &observeFunctions,
+    const StringSet<> &ActiveRandomVariables, ProbProgMode mode, bool autodiff,
+    TraceInterface *interface) {
+  TraceCacheKey tup(totrace, mode, autodiff, interface);
   if (TraceCachedFunctions.find(tup) != TraceCachedFunctions.end()) {
     return TraceCachedFunctions.find(tup)->second;
   }
 
+  // Determine generative functions
+  SmallPtrSet<Function *, 4> GenerativeFunctions;
+  SetVector<Function *, std::deque<Function *>> workList;
+  workList.insert(sampleFunctions.begin(), sampleFunctions.end());
+  workList.insert(observeFunctions.begin(), observeFunctions.end());
+  GenerativeFunctions.insert(sampleFunctions.begin(), sampleFunctions.end());
+  GenerativeFunctions.insert(observeFunctions.begin(), observeFunctions.end());
+
+  while (!workList.empty()) {
+    auto todo = *workList.begin();
+    workList.erase(workList.begin());
+
+    for (auto &&U : todo->uses()) {
+#if LLVM_VERSION_MAJOR > 10
+      if (auto &&call = dyn_cast<CallBase>(U.getUser())) {
+        auto &&fun = call->getParent()->getParent();
+        auto &&[it, inserted] = GenerativeFunctions.insert(fun);
+        if (inserted)
+          workList.insert(fun);
+      }
+#else
+      if (auto &&call = dyn_cast<CallInst>(U.getUser())) {
+        auto &&fun = call->getParent()->getParent();
+        auto &&[it, inserted] = GenerativeFunctions.insert(fun);
+        if (inserted)
+          workList.insert(fun);
+      }
+#endif
+    }
+  }
+
   ValueToValueMapTy originalToNewFn;
   TraceUtils *tutils =
-      TraceUtils::FromClone(mode, interface, totrace, originalToNewFn);
+      TraceUtils::FromClone(mode, sampleFunctions, observeFunctions, interface,
+                            totrace, originalToNewFn);
   TraceGenerator *tracer =
       new TraceGenerator(*this, tutils, autodiff, originalToNewFn,
                          GenerativeFunctions, ActiveRandomVariables);
@@ -5123,7 +5132,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZNSt3__116__do_string_hashIPKcEEmT_S3_",
       "_ZNKSt3__14hashIPKcEclES2_",
       "_ZNSt3__19addressofIcEEPT_RS1_",
-      "_ZNSt3__19addressofIKcEEPT_RS2_"};
+      "_ZNSt3__19addressofIKcEEPT_RS2_",
+      "_ZNSt3__113random_deviceclEv",
+  };
 
   if (F->getName().startswith("_ZNSolsE") || NoFrees.count(F->getName()))
     return F;

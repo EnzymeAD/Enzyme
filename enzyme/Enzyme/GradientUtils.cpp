@@ -854,16 +854,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
               noLookup = true;                                                 \
           }                                                                    \
         origParent = lookupInst;                                               \
-        if (BasicBlock *forwardBlock = origParent)                             \
-          if (auto opinst = dyn_cast<Instruction>(v)) {                        \
-            if (!isOriginalBlock(*forwardBlock)) {                             \
-              forwardBlock = originalForReverseBlock(*forwardBlock);           \
-            }                                                                  \
-            if (isPotentialLastLoopValue(opinst, forwardBlock, LI)) {          \
-              v = fixLCSSA(opinst, forwardBlock);                              \
-              origParent = nullptr;                                            \
-            }                                                                  \
-          }                                                                    \
         if (!noLookup)                                                         \
           ___res = lookupM(v, Builder, available, v != val, origParent);       \
       }                                                                        \
@@ -871,16 +861,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         assert(___res->getType() == v->getType() && "uw");                     \
     } else {                                                                   \
       origParent = lookupInst;                                                 \
-      if (BasicBlock *forwardBlock = origParent)                               \
-        if (auto opinst = dyn_cast<Instruction>(v)) {                          \
-          if (!isOriginalBlock(*forwardBlock)) {                               \
-            forwardBlock = originalForReverseBlock(*forwardBlock);             \
-          }                                                                    \
-          if (isPotentialLastLoopValue(opinst, forwardBlock, LI)) {            \
-            v = fixLCSSA(opinst, forwardBlock);                                \
-            origParent = nullptr;                                              \
-          }                                                                    \
-        }                                                                      \
       assert(unwrapMode == UnwrapMode::AttemptSingleUnwrap);                   \
       auto found = available.find(v);                                          \
       assert(found == available.end() || found->second);                       \
@@ -2041,17 +2021,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                   if (!noLookup) {
                     BasicBlock *nS2 = nextScope;
                     Value *v = inst;
-                    if (BasicBlock *forwardBlock = nextScope)
-                      if (auto opinst = dyn_cast<Instruction>(v)) {
-                        if (!isOriginalBlock(*forwardBlock)) {
-                          forwardBlock = originalForReverseBlock(*forwardBlock);
-                        }
-                        if (isPotentialLastLoopValue(opinst, forwardBlock,
-                                                     LI)) {
-                          v = fixLCSSA(opinst, forwardBlock);
-                          nS2 = nullptr;
-                        }
-                      }
                     ___res = lookupM(v, B, prevAvailable, v != val, nS2);
                   }
                 }
@@ -2060,16 +2029,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
               } else {
                 BasicBlock *nS2 = nextScope;
                 Value *v = inst;
-                if (BasicBlock *forwardBlock = nextScope)
-                  if (auto opinst = dyn_cast<Instruction>(v)) {
-                    if (!isOriginalBlock(*forwardBlock)) {
-                      forwardBlock = originalForReverseBlock(*forwardBlock);
-                    }
-                    if (isPotentialLastLoopValue(opinst, forwardBlock, LI)) {
-                      v = fixLCSSA(opinst, forwardBlock);
-                      nS2 = nullptr;
-                    }
-                  }
                 ___res = lookupM(v, B, prevAvailable, v != val, nS2);
                 if (___res && ___res->getType() != v->getType()) {
                   llvm::errs() << *newFunc << "\n";
@@ -2362,18 +2321,8 @@ endCheck:
           return nullptr;
         }
       }
-    BasicBlock *nS2 = scope;
-    if (BasicBlock *forwardBlock = scope)
-      if (auto opinst = dyn_cast<Instruction>(nval)) {
-        if (!isOriginalBlock(*forwardBlock)) {
-          forwardBlock = originalForReverseBlock(*forwardBlock);
-        }
-        if (isPotentialLastLoopValue(opinst, forwardBlock, LI)) {
-          nval = fixLCSSA(opinst, forwardBlock);
-        }
-      }
     auto toreturn = lookupM(nval, BuilderM, available,
-                            /*tryLegalRecomputeCheck*/ false, nS2);
+                            /*tryLegalRecomputeCheck*/ false, scope);
     assert(val->getType() == toreturn->getType());
     return toreturn;
   }
@@ -2586,6 +2535,15 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
     llvm::errs() << " malloc: " << *malloc << "\n";
   }
   assert(!malloc->getType()->isTokenTy());
+  {
+    CountTrackedPointers T(malloc->getType());
+    if (T.derived) {
+      llvm::errs() << " oldFunc: " << *oldFunc << "\n";
+      llvm::errs() << " newFunc: " << *newFunc << "\n";
+      llvm::errs() << " malloc: " << *malloc << "\n";
+    }
+    assert(!T.derived);
+  }
 
   if (tape) {
     if (idx >= 0 && !tape->getType()->isStructTy()) {
@@ -2667,6 +2625,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
 
       Type *innerType = nullptr;
 
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
       if (ret->getContext().supportsTypedPointers()) {
 #endif
@@ -2706,6 +2665,13 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
           innerType = malloc->getType();
       }
 #endif
+#else
+      if (EfficientBoolCache && malloc->getType()->isIntegerTy() &&
+          cast<IntegerType>(malloc->getType())->getBitWidth() == 1)
+        innerType = Type::getInt8Ty(malloc->getContext());
+      else
+        innerType = malloc->getType();
+#endif
 
       if (EfficientBoolCache && malloc->getType()->isIntegerTy() &&
           cast<IntegerType>(malloc->getType())->getBitWidth() == 1 &&
@@ -2733,12 +2699,14 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
       bool isi1 = malloc->getType()->isIntegerTy() &&
                   cast<IntegerType>(malloc->getType())->getBitWidth() == 1;
       assert(isa<PointerType>(cache->getType()));
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
       if (cache->getContext().supportsTypedPointers()) {
 #endif
         assert(cache->getType()->getPointerElementType() == ret->getType());
 #if LLVM_VERSION_MAJOR >= 15
       }
+#endif
 #endif
       entryBuilder.CreateStore(ret, cache);
 
@@ -2800,11 +2768,9 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
                               : lb.CreateExtractValue(tape, {(unsigned)idx});
                 if (!inLoop && omp) {
                   Value *tid = ompThreadId();
-                  Value *tPtr = lb.CreateInBoundsGEP(
-                      replacewith->getType()->getPointerElementType(),
-                      replacewith, ArrayRef<Value *>(tid));
-                  replacewith = lb.CreateLoad(
-                      replacewith->getType()->getPointerElementType(), tPtr);
+                  Value *tPtr = lb.CreateInBoundsGEP(li->getType(), replacewith,
+                                                     ArrayRef<Value *>(tid));
+                  replacewith = lb.CreateLoad(li->getType(), tPtr);
                 }
                 if (li->getType() != replacewith->getType()) {
                   llvm::errs() << " oldFunc: " << *oldFunc << "\n";
@@ -2992,6 +2958,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
 
     // llvm::errs() << " malloc: " << *malloc << "\n";
     // llvm::errs() << " toadd: " << *toadd << "\n";
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
     if (toadd->getContext().supportsTypedPointers()) {
 #endif
@@ -3022,6 +2989,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
       }
 #if LLVM_VERSION_MAJOR >= 15
     }
+#endif
 #endif
     addedTapeVals.push_back(toadd);
     return malloc;
@@ -5106,9 +5074,86 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     // Nulling the shadow for a constant is only necessary if any of the data
     // could contain a float (e.g. should not be applied to pointers).
     if (nullShadow) {
-      auto CT = TR.query(oval)[{-1}];
-      if (!CT.isKnown() || CT.isFloat()) {
-        return Constant::getNullValue(getShadowType(oval->getType()));
+      auto ty = TR.query(oval);
+      auto &dl = newFunc->getParent()->getDataLayout();
+      size_t size = (dl.getTypeSizeInBits(oval->getType()) + 7) / 8;
+      auto CT = ty[{-1}];
+      bool couldContainFloat = CT.isFloat();
+      bool allFloat = CT.isFloat();
+      if (!CT.isKnown()) {
+        size_t i = 0;
+        for (; i < size;) {
+          auto CT2 = ty[{(int)i}];
+          if (CT2.isFloat() || !CT2.isKnown()) {
+            couldContainFloat = true;
+            break;
+          }
+          if (CT2 == BaseType::Pointer) {
+            i += dl.getPointerSizeInBits() / 8;
+            continue;
+          }
+          i++;
+        }
+      }
+      if (couldContainFloat) {
+        if (allFloat)
+          return Constant::getNullValue(getShadowType(oval->getType()));
+        else {
+          IRBuilder<> bb(inversionAllocs);
+          if (auto arg = dyn_cast<Instruction>(oval)) {
+            arg = getNewFromOriginal(arg);
+            // Go one after since otherwise we won't be able
+            // to use in the store.
+            arg = arg->getNextNode();
+            while (auto PN = dyn_cast<PHINode>(arg)) {
+              if (PN->getNumIncomingValues() == 0)
+                break;
+              arg = PN->getNextNode();
+            }
+            bb.SetInsertPoint(arg);
+          }
+          auto alloc = bb.CreateAlloca(oval->getType());
+          auto AT = ArrayType::get(bb.getInt8Ty(), size);
+          bb.CreateStore(getNewFromOriginal(oval), alloc);
+          Value *cur = bb.CreatePointerCast(alloc, PointerType::getUnqual(AT));
+          size_t i = 0;
+          assert(size > 0);
+          for (; i < size;) {
+            auto CT2 = ty[{(int)i}];
+            if (CT2 == BaseType::Pointer) {
+              i += dl.getPointerSizeInBits() / 8;
+              continue;
+            } else if (auto flt = CT2.isFloat()) {
+              auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
+              ptr = bb.CreatePointerCast(ptr, PointerType::getUnqual(flt));
+              bb.CreateStore(Constant::getNullValue(flt), ptr);
+              size_t chunk = 0;
+              if (flt->isFloatTy()) {
+                chunk = 4;
+              } else if (flt->isDoubleTy()) {
+                chunk = 8;
+              } else if (flt->isHalfTy()) {
+                chunk = 2;
+              } else {
+                llvm::errs() << *flt << "\n";
+                assert(0 && "unhandled float type");
+              }
+              i += chunk;
+            } else if (CT2 != BaseType::Integer) {
+              auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
+              bb.CreateStore(Constant::getNullValue(bb.getInt8Ty()), ptr);
+              i++;
+            } else {
+              i++;
+            }
+          }
+          auto res = bb.CreateLoad(oval->getType(), alloc);
+          auto rule = [&res]() { return res; };
+          auto res2 = applyChainRule(oval->getType(), BuilderM, rule);
+          invertedPointers.insert(std::make_pair(
+              (const Value *)oval, InvertedPointerVH(this, res2)));
+          return res2;
+        }
       }
     }
 
@@ -5290,7 +5335,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           AddrSpace == SharedAddrSpace) {
         llvm::errs() << "warning found shared memory\n";
         // #if LLVM_VERSION_MAJOR >= 11
-        Type *type = arg->getType()->getPointerElementType();
+        Type *type = arg->getValueType();
         // TODO this needs initialization by entry
         auto shadow = new GlobalVariable(
             *arg->getParent(), type, arg->isConstant(), arg->getLinkage(),
@@ -5395,7 +5440,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             ConstantInt::get(Type::getInt32Ty(cs->getContext()), 0),
             ConstantInt::get(Type::getInt32Ty(cs->getContext()), i)};
         Constant *elem = ConstantExpr::getInBoundsGetElementPtr(
-            cs->getType()->getPointerElementType(), cs, idxs);
+            getShadowType(arg->getValueType()), cs, idxs);
         Vals.push_back(elem);
       }
 
@@ -5442,12 +5487,14 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
 
     if (arg->isCast()) {
+#if LLVM_VERSION_MAJOR < 18
       if (auto PT = dyn_cast<PointerType>(arg->getType())) {
         if (isConstantValue(arg->getOperand(0)) &&
             PT->getPointerElementType()->isFunctionTy()) {
           goto end;
         }
       }
+#endif
       if (isa<Constant>(ip)) {
         auto rule = [&arg](Value *ip) {
           return ConstantExpr::getCast(arg->getOpcode(), cast<Constant>(ip),
@@ -5488,7 +5535,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
         auto rule = [&bb, &arg, &invertargs](Value *ip) {
           // TODO mark this the same inbounds as the original
-          return bb.CreateGEP(ip->getType()->getPointerElementType(), ip,
+          return bb.CreateGEP(cast<GEPOperator>(ip)->getSourceElementType(), ip,
                               invertargs, arg->getName() + "'ipg");
         };
 
@@ -5507,7 +5554,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(getNewFromOriginal(arg));
     auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
 
-    auto rule = [&bb, &arg](Value *ip) {
+    auto rule = [&bb, &arg, this](Value *ip) -> llvm::Value * {
+      if (ip == getNewFromOriginal(arg->getOperand(0)))
+        return getNewFromOriginal(arg);
       return bb.CreateExtractValue(ip, arg->getIndices(),
                                    arg->getName() + "'ipev");
     };
@@ -8038,12 +8087,22 @@ void GradientUtils::eraseFictiousPHIs() {
   for (auto pair : phis) {
     auto pp = pair.first;
     if (pp->getNumUses() != 0) {
-      llvm::errs() << "mod:" << *oldFunc->getParent() << "\n";
-      llvm::errs() << "oldFunc:" << *oldFunc << "\n";
-      llvm::errs() << "newFunc:" << *newFunc << "\n";
-      llvm::errs() << " pp: " << *pp << " of " << *pair.second << "\n";
+      if (CustomErrorHandler) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Illegal replace ficticious phi for: " << *pp << " of "
+           << *pair.second;
+        CustomErrorHandler(str.c_str(), wrap(pair.second),
+                           ErrorType::IllegalReplaceFicticiousPHIs, this,
+                           wrap(pp), nullptr);
+      } else {
+        llvm::errs() << "mod:" << *oldFunc->getParent() << "\n";
+        llvm::errs() << "oldFunc:" << *oldFunc << "\n";
+        llvm::errs() << "newFunc:" << *newFunc << "\n";
+        llvm::errs() << " pp: " << *pp << " of " << *pair.second << "\n";
+        assert(pp->getNumUses() == 0);
+      }
     }
-    assert(pp->getNumUses() == 0);
     pp->replaceAllUsesWith(UndefValue::get(pp->getType()));
     erase(pp);
   }
@@ -8177,6 +8236,22 @@ void GradientUtils::forceAugmentedReturns() {
         continue;
       }
 
+      CallInst *op = cast<CallInst>(inst);
+      Function *called = op->getCalledFunction();
+
+      if ((mode == DerivativeMode::ReverseModeGradient ||
+           mode == DerivativeMode::ReverseModeCombined) &&
+          called && called->getName() == "llvm.julia.gc_preserve_begin") {
+        IRBuilder<> BuilderZ(inst);
+        getForwardBuilder(BuilderZ);
+        auto anti = BuilderZ.CreateCall(called, ArrayRef<Value *>(),
+                                        op->getName() + "'ip");
+        anti->setDebugLoc(getNewFromOriginal(op->getDebugLoc()));
+        invertedPointers.insert(
+            std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
+        continue;
+      }
+
       if (isa<IntrinsicInst>(inst)) {
         continue;
       }
@@ -8185,11 +8260,24 @@ void GradientUtils::forceAugmentedReturns() {
         continue;
       }
 
-      CallInst *op = cast<CallInst>(inst);
-      Function *called = op->getCalledFunction();
-
       IRBuilder<> BuilderZ(inst);
       getForwardBuilder(BuilderZ);
+
+      // Shadow allocations must strictly preceede the primal, lest Julia have
+      // GC issues. Consider the following: %r = gc_alloc() init %r
+      // ...
+      // if the shadow did not preceed
+      // %r = gc_alloc()
+      // %dr = gc_alloc()
+      // zero %dr
+      // init %r, %dr
+      // ...
+      // After %r, before %dr the %r memory would be uninit, so the allocator
+      // inside %dr would hit garbage and segfault. However, by having the %dr
+      // first, then it will be zero'd before the %r allocation, preventing the
+      // issue.
+      if (isAllocationCall(inst, TLI))
+        BuilderZ.SetInsertPoint(getNewFromOriginal(inst));
       Type *antiTy = getShadowType(inst->getType());
 
       PHINode *anti = BuilderZ.CreatePHI(antiTy, 1, op->getName() + "'ip_phi");
@@ -8197,7 +8285,7 @@ void GradientUtils::forceAugmentedReturns() {
       invertedPointers.insert(
           std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
 
-      if (called && isAllocationFunction(called->getName(), TLI)) {
+      if (isAllocationCall(inst, TLI)) {
         anti->setName(op->getName() + "'mi");
       }
     }
@@ -8815,6 +8903,21 @@ void GradientUtils::erase(Instruction *I) {
       pair.second.erase(I);
   }
   CacheUtility::erase(I);
+}
+
+void GradientUtils::eraseWithPlaceholder(Instruction *I, const Twine &suffix,
+                                         bool erase) {
+  PHINode *pn = nullptr;
+  if (!I->getType()->isVoidTy() && !I->getType()->isTokenTy()) {
+    IRBuilder<> BuilderZ(I);
+    auto pn = BuilderZ.CreatePHI(I->getType(), 1, I->getName() + suffix);
+    fictiousPHIs[pn] = I;
+    replaceAWithB(I, pn);
+  }
+
+  if (erase) {
+    this->erase(I);
+  }
 }
 
 void GradientUtils::setTape(Value *newtape) {

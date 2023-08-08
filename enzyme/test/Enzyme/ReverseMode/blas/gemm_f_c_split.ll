@@ -52,7 +52,6 @@ entry:
   call void (...) @__enzyme_autodiff(void (i8*,i8*,i8*)* @g, metadata !"enzyme_dup", i8* %C, i8* %dC, metadata !"enzyme_dup", i8* %A, i8* %dA, metadata !"enzyme_dup", i8* %B, i8* %dB)
   ret void
 }
-; CHECK-COM:   %byref.copy.garbage = alloca i8, align 1
 
 ; CHECK: define internal double* @augmented_f(i8* noalias %C, i8* %"C'", i8* noalias %A, i8* %"A'", i8* noalias %B, i8* %"B'")
 ; CHECK-NEXT: entry:
@@ -107,11 +106,11 @@ entry:
 ; CHECK-NEXT:   %19 = or i1 %[[i18]], %[[i17]]
 ; CHECK-NEXT:   %20 = select i1 %19, i8* %m_p, i8* %k_p
 ; CHECK-NEXT:   %21 = select i1 %19, i8* %k_p, i8* %m_p
-; CHECK-NEXT:   %22 = bitcast i8* %20 to i64*
-; CHECK-NEXT:   %23 = bitcast i8* %21 to i64*
-; CHECK-NEXT:   %24 = load i64, i64* %22
-; CHECK-NEXT:   %25 = load i64, i64* %23
-; CHECK-NEXT:   %26 = mul i64 %24, %25
+; CHECK-NEXT:   %[[i22:.+]] = bitcast i8* %20 to i64*
+; CHECK-NEXT:   %[[i24:.+]] = load i64, i64* %[[i22]]
+; CHECK-NEXT:   %[[i23:.+]] = bitcast i8* %21 to i64*
+; CHECK-NEXT:   %[[i25:.+]] = load i64, i64* %[[i23]]
+; CHECK-NEXT:   %26 = mul i64 %[[i24]], %[[i25]]
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %26, 8
 ; CHECK-NEXT:   %malloccall10 = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   %cache.A = bitcast i8* %malloccall10 to double*
@@ -119,7 +118,7 @@ entry:
 ; CHECK-NEXT:   %27 = bitcast i8* %lda_p to i64*
 ; CHECK-NEXT:   %28 = load i64, i64* %27
 ; CHECK-NEXT:   %29 = bitcast i8* %A to double*
-; CHECK:   %mul.i = add nuw nsw i64 %24, %25
+; CHECK:   %mul.i = add nuw nsw i64 %[[i24]], %[[i25]]
 ; CHECK-NEXT:   %30 = icmp eq i64 %mul.i, 0
 ; CHECK-NEXT:   br i1 %30, label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
 
@@ -129,7 +128,7 @@ entry:
 
 ; CHECK: for.body.i:                                       ; preds = %for.body.i, %init.idx.i
 ; CHECK-NEXT:   %i.i = phi i64 [ 0, %init.idx.i ], [ %i.next.i, %for.body.i ]
-; CHECK-NEXT:   %31 = mul nuw nsw i64 %j.i, %24
+; CHECK-NEXT:   %31 = mul nuw nsw i64 %j.i, %[[i24]]
 ; CHECK-NEXT:   %32 = add nuw nsw i64 %i.i, %31
 ; CHECK-NEXT:   %dst.i.i = getelementptr inbounds double, double* %cache.A, i64 %32
 ; CHECK-NEXT:   %33 = mul nuw nsw i64 %j.i, %28
@@ -138,12 +137,12 @@ entry:
 ; CHECK-NEXT:   %src.i.l.i = load double, double* %dst.i1.i
 ; CHECK-NEXT:   store double %src.i.l.i, double* %dst.i.i
 ; CHECK-NEXT:   %i.next.i = add nuw nsw i64 %i.i, 1
-; CHECK-NEXT:   %35 = icmp eq i64 %i.next.i, %24
+; CHECK-NEXT:   %35 = icmp eq i64 %i.next.i, %[[i24]]
 ; CHECK-NEXT:   br i1 %35, label %init.end.i, label %for.body.i
 
 ; CHECK: init.end.i:                                       ; preds = %for.body.i
 ; CHECK-NEXT:   %j.next.i = add nuw nsw i64 %j.i, 1
-; CHECK-NEXT:   %36 = icmp eq i64 %j.next.i, %25
+; CHECK-NEXT:   %36 = icmp eq i64 %j.next.i, %[[i25]]
 ; CHECK-NEXT:   br i1 %36, label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
 
 ; CHECK: __enzyme_memcpy_double_mat_64.exit:               ; preds = %entry, %init.end.i
@@ -157,6 +156,7 @@ entry:
 ; CHECK-NEXT:   %ret = alloca double
 ; CHECK-NEXT:   %byref.transpose.transa = alloca i8
 ; CHECK-NEXT:   %byref.transpose.transb = alloca i8
+; CHECK-NEXT:   %byref.int.one = alloca i64
 ; CHECK-NEXT:   %byref.constant.char.G = alloca i8
 ; CHECK-NEXT:   %byref.constant.int.0 = alloca i64
 ; CHECK-NEXT:   %[[byrefconstantint1:.+]] = alloca i64
@@ -230,6 +230,8 @@ entry:
 ; CHECK-DAG:    %[[r14:.+]] = icmp eq i8 %ld.transb, 84
 ; CHECK-DAG:    %[[r15:.+]] = select i1 %[[r14]], i8 78, i8 %[[r13]]
 ; CHECK-NEXT:   store i8 %[[r15]], i8* %byref.transpose.transb
+; CHECK-NEXT:   store i64 1, i64* %byref.int.one
+; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %malloccall, i8* %byref.transpose.transb, i8* %m_p, i8* %k_p, i8* %n_p, i8* %alpha_p, i8* %"C'", i8* %ldc_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %"A'", i8* %lda_p)
 ; CHECK-NEXT:   %loaded.trans = load i8, i8* %malloccall
 ; CHECK-DAG:   %[[r18:.+]] = icmp eq i8 %loaded.trans, 78
@@ -239,10 +241,14 @@ entry:
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %byref.transpose.transa, i8* %malloccall1, i8* %k_p, i8* %n_p, i8* %m_p, i8* %alpha_p, i8* %17, i8* %[[r21]], i8* %"C'", i8* %ldc_p, i8* %beta_p, i8* %"B'", i8* %ldb_p)
 ; CHECK-NEXT:   store i8 71, i8* %byref.constant.char.G
 ; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.0
+; CHECK-NEXT:   %intcast.constant.int.0 = bitcast i64* %byref.constant.int.0 to i8*
 ; CHECK-NEXT:   store i64 0, i64* %[[byrefconstantint1]]
+; CHECK-NEXT:   %intcast.constant.int.02 = bitcast i64* %[[byrefconstantint1]] to i8*
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
+; CHECK-NEXT:   %fpcast.constant.fp.1.0 = bitcast double* %byref.constant.fp.1.0 to i8*
 ; CHECK-NEXT:   store i64 0, i64* %[[byrefconstantint2]]
-; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i64* %byref.constant.int.0, i64* %[[byrefconstantint1]], double* %byref.constant.fp.1.0, i8* %beta_p, i8* %m_p, i8* %n_p, i8* %"C'", i8* %ldc_p, i64* %[[byrefconstantint2]])
+; CHECK-NEXT:   %intcast.constant.int.04 = bitcast i64* %[[byrefconstantint2]] to i8*
+; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i8* %intcast.constant.int.0, i8* %intcast.constant.int.02, i8* %fpcast.constant.fp.1.0, i8* %beta_p, i8* %m_p, i8* %n_p, i8* %"C'", i8* %ldc_p, i8* %intcast.constant.int.04)
 ; CHECK-NEXT:   %[[i34:.+]] = bitcast double* %0 to i8*
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %[[i34]])
 ; CHECK-NEXT:   ret void

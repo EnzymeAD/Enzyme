@@ -433,7 +433,8 @@ public:
                                    std::vector<BATCH_TYPE>, BATCH_TYPE>;
   std::map<BatchCacheKey, llvm::Function *> BatchCachedFunctions;
 
-  using TraceCacheKey = std::tuple<llvm::Function *, ProbProgMode>;
+  using TraceCacheKey =
+      std::tuple<llvm::Function *, ProbProgMode, bool, TraceInterface *>;
   std::map<TraceCacheKey, llvm::Function *> TraceCachedFunctions;
 
   /// Create the derivative function itself.
@@ -470,8 +471,9 @@ public:
 
   llvm::Function *
   CreateTrace(llvm::Function *totrace,
-              llvm::SmallPtrSetImpl<llvm::Function *> &GenerativeFunctions,
-              llvm::StringSet<> &ActiveRandomVariables, ProbProgMode mode,
+              const llvm::SmallPtrSetImpl<llvm::Function *> &sampleFunctions,
+              const llvm::SmallPtrSetImpl<llvm::Function *> &observeFunctions,
+              const llvm::StringSet<> &ActiveRandomVariables, ProbProgMode mode,
               bool autodiff, TraceInterface *interface);
 
   void clear();

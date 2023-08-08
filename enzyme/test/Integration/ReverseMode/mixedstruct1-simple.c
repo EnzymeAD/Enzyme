@@ -36,9 +36,9 @@ float tile_multiply(WINDOW_FRAME* frame) {
       frame2->data = frame->data;
       frame2->R_start = frame->R_start+1;
 
-    printf("inner considering %d\n", frame->R_start);
+    printf("inner considering %lld\n", frame->R_start);
       float sum1 = frame->data[frame->R_start];//tile_multiply(frame1);
-    printf("post inner considering %d\n", frame->R_start);
+    printf("post inner considering %lld\n", frame->R_start);
       float sum2 = tile_multiply(frame2);
     //printf("postrec inner considering %d\n", frame->R_start);
       free(frame2);

@@ -34,5 +34,5 @@ int main() {
     dmyfunction(3,4,5,res);
     APPROX_EQ(res[0], 4*5., 1e-7);
     APPROX_EQ(res[1], 3*5., 1e-7);
-    APPROX_EQ(res[1], 3*4., 1e-7);
+    APPROX_EQ(res[2], 3*4., 1e-7);
 }

@@ -55,9 +55,9 @@ declare dso_local noalias nonnull i8* @_Znwm(i64)
 
 ; CHECK: define internal { double } @differ(double %d, double %differeturn) 
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call5.i.i.i.i39 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @_Znwm(i64 8)
 ; CHECK-NEXT:   %"call5.i.i.i.i39'mi" = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @_Znwm(i64 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"call5.i.i.i.i39'mi", i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %call5.i.i.i.i39 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @_Znwm(i64 8)
 ; CHECK-NEXT:   %"tmp'ipc" = bitcast i8* %"call5.i.i.i.i39'mi" to double*
 ; CHECK-NEXT:   %tmp = bitcast i8* %call5.i.i.i.i39 to double*
 ; CHECK-NEXT:   store double %d, double* %tmp, align 8

@@ -14,4 +14,7 @@ int main() {
   for(double i=1; i<5; i++) {
     printf("%f %f\n", square(i), dsquare(i));
   }
+#ifndef NOVERSION
+  printf("Enzyme version %d %d %d\n", ENZYME_VERSION_MAJOR, ENZYME_VERSION_MINOR, ENZYME_VERSION_PATCH);
+#endif
 }

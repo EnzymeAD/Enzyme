@@ -1,7 +1,9 @@
 name: Clang-Format
 
-on: [push]
-
+on:
+  push:
+  pull_request:
+   
 jobs:
   build:
     name: Format

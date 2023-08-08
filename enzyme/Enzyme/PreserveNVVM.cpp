@@ -165,11 +165,25 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
                 if (!F->hasParamAttribute(i, Attribute::StructRet)) {
                   if (!byref.count(realidx))
                     args.push_back(arg.getType());
-                  else
-                    args.push_back(arg.getType()->getPointerElementType());
+                  else {
+                    // TODO in opaque pointers
+                    Type *subTy = nullptr;
+#if LLVM_VERSION_MAJOR < 18
+                    subTy = arg.getType()->getPointerElementType();
+#endif
+                    assert(subTy);
+                    args.push_back(subTy);
+                  }
                   realidx++;
                 } else {
-                  sretTy = arg.getType()->getPointerElementType();
+                  llvm::Type *T = nullptr;
+#if LLVM_VERSION_MAJOR > 12
+                  T = F->getParamAttribute(i, Attribute::StructRet)
+                          .getValueAsType();
+#else
+                  T = arg.getType()->getPointerElementType();
+#endif
+                  sretTy = T;
                 }
                 i++;
               }
@@ -520,7 +534,10 @@ bool preserveNVVM(bool Begin, Function &F) {
           deallocfn = CE->getOperand(0);
         }
         size_t index = 0;
-        if (auto CI = dyn_cast<ConstantInt>(name)) {
+        if (isa<ConstantPointerNull>(name)) {
+          // An integer 0 may have been implicitly converted to a null pointer
+          index = 0;
+        } else if (auto CI = dyn_cast<ConstantInt>(name)) {
           index = CI->getZExtValue();
         } else {
           llvm::errs() << *name << "\n";

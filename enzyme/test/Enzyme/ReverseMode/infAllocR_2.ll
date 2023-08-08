@@ -203,8 +203,8 @@ attributes #3 = { nounwind }
 ; CHECK: remat_for.cond_for.end: 
 ; CHECK-NEXT:   %[[i18:.+]] = fadd fast double %"ld'de.1", %"fadd'de.1"
 ; CHECK-NEXT:   %[[i19]] = fadd fast double %"val'de.1", %"fadd'de.1"
-; CHECK-NEXT:   %"i4'ipc_unwrap8" = bitcast i8* %"call'mi" to double*
-; CHECK-NEXT:   %"lgep'ipg_unwrap" = getelementptr inbounds double, double* %"i4'ipc_unwrap8", i64 999998
+; CHECK-NEXT:   %[[i4ipc_unwrap8:.+]] = bitcast i8* %"call'mi" to double*
+; CHECK-NEXT:   %"lgep'ipg_unwrap" = getelementptr inbounds double, double* %[[i4ipc_unwrap8]], i64 999998
 ; CHECK-NEXT:   %[[i20:.+]] = load double, double* %"lgep'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[i21:.+]] = fadd fast double %[[i20]], %[[i18]]
 ; CHECK-NEXT:   store double %[[i21]], double* %"lgep'ipg_unwrap", align 8

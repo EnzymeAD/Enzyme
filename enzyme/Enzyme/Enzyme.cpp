@@ -281,9 +281,21 @@ castToDiffeFunctionArgType(IRBuilder<> &Builder, llvm::CallInst *CI,
   if (auto ptr = dyn_cast<PointerType>(res->getType())) {
     if (auto PT = dyn_cast<PointerType>(destType)) {
       if (ptr->getAddressSpace() != PT->getAddressSpace()) {
-        res = Builder.CreateAddrSpaceCast(
-            res, PointerType::get(ptr->getPointerElementType(),
-                                  PT->getAddressSpace()));
+#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR >= 15
+        if (CI->getContext().supportsTypedPointers()) {
+#endif
+          res = Builder.CreateAddrSpaceCast(
+              res, PointerType::get(ptr->getPointerElementType(),
+                                    PT->getAddressSpace()));
+#if LLVM_VERSION_MAJOR >= 15
+        } else {
+          res = Builder.CreateAddrSpaceCast(res, PT);
+        }
+#endif
+#else
+        res = Builder.CreateAddrSpaceCast(res, PT);
+#endif
         assert(value);
         assert(destType);
         assert(FT);
@@ -496,7 +508,8 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
     return true;
   }
 
-  if (mode != DerivativeMode::ReverseModePrimal) {
+  if (mode != DerivativeMode::ReverseModePrimal &&
+      diffret->getType()->isAggregateType()) {
     auto diffreti = Builder.CreateExtractValue(diffret, {0});
     if (diffreti->getType() == retType) {
       CI->replaceAllUsesWith(diffreti);
@@ -718,6 +731,14 @@ public:
       Type *fnsrety = cast<PointerType>(FT->getParamType(0));
       Ty = fnsrety->getPointerElementType();
 #endif
+      Type *CTy = nullptr;
+#if LLVM_VERSION_MAJOR >= 12
+      CTy = CI->getAttribute(AttributeList::FirstArgIndex, Attribute::StructRet)
+                .getValueAsType();
+#else
+      CTy = cast<PointerType>(CI->getArgOperand(0)->getType())
+                ->getPointerElementType();
+#endif
 #if LLVM_VERSION_MAJOR >= 11
       AllocaInst *primal = new AllocaInst(Ty, DL.getAllocaAddrSpace(), nullptr,
                                           DL.getPrefTypeAlign(Ty));
@@ -734,14 +755,13 @@ public:
         Value *sretPt = CI->getArgOperand(0);
         if (width > 1) {
           PointerType *pty = cast<PointerType>(sretPt->getType());
-          if (auto sty = dyn_cast<StructType>(pty->getPointerElementType())) {
+          if (auto sty = dyn_cast<StructType>(CTy)) {
             Value *acc = UndefValue::get(
                 ArrayType::get(PointerType::get(sty->getElementType(0),
                                                 pty->getAddressSpace()),
                                width));
             for (size_t i = 0; i < width; ++i) {
-              Value *elem = Builder.CreateStructGEP(
-                  sretPt->getType()->getPointerElementType(), sretPt, i);
+              Value *elem = Builder.CreateStructGEP(sty, sretPt, i);
               acc = Builder.CreateInsertValue(acc, elem, i);
             }
             shadow = acc;
@@ -927,7 +947,22 @@ public:
       }
 
       if (byRefSize) {
-        Type *subTy = res->getType()->getPointerElementType();
+        Type *subTy = nullptr;
+        if (truei < FT->getNumParams()) {
+          subTy = FT->getParamType(i);
+        } else if ((mode == DerivativeMode::ReverseModeGradient ||
+                    mode == DerivativeMode::ForwardModeSplit)) {
+          if (differentialReturn && differet == nullptr) {
+            subTy = FT->getReturnType();
+          }
+        }
+
+        if (!subTy) {
+          EmitFailure("IllegalByVal", CI->getDebugLoc(), CI,
+                      "illegal enzyme byval arg", truei, " ", *res);
+          return {};
+        }
+
         auto &DL = fn->getParent()->getDataLayout();
         auto BitSize = DL.getTypeSizeInBits(subTy);
         if (BitSize / 8 != byRefSize) {
@@ -936,6 +971,10 @@ public:
                       byRefSize, " (bytes) actual size ", BitSize,
                       " (bits) in ", *CI);
         }
+        res = Builder.CreateBitCast(
+            res,
+            PointerType::get(
+                subTy, cast<PointerType>(res->getType())->getAddressSpace()));
         res = Builder.CreateLoad(subTy, res);
         byRefSize = 0;
       }
@@ -947,8 +986,13 @@ public:
           if (differentialReturn && differet == nullptr) {
             differet = res;
             if (CI->paramHasAttr(i, Attribute::ByVal)) {
-              differet = Builder.CreateLoad(
-                  differet->getType()->getPointerElementType(), differet);
+              Type *T = nullptr;
+#if LLVM_VERSION_MAJOR > 12
+              T = CI->getParamAttr(i, Attribute::ByVal).getValueAsType();
+#else
+              T = differet->getType()->getPointerElementType();
+#endif
+              differet = Builder.CreateLoad(T, differet);
             }
             if (differet->getType() != fn->getReturnType())
               if (auto ST0 = dyn_cast<StructType>(differet->getType()))
@@ -975,8 +1019,13 @@ public:
           } else if (tape == nullptr) {
             tape = res;
             if (CI->paramHasAttr(i, Attribute::ByVal)) {
-              tape = Builder.CreateLoad(
-                  tape->getType()->getPointerElementType(), tape);
+              Type *T = nullptr;
+#if LLVM_VERSION_MAJOR > 12
+              T = CI->getParamAttr(i, Attribute::ByVal).getValueAsType();
+#else
+              T = tape->getType()->getPointerElementType();
+#endif
+              tape = Builder.CreateLoad(T, tape);
             }
             continue;
           }
@@ -999,9 +1048,21 @@ public:
         if (auto ptr = dyn_cast<PointerType>(res->getType())) {
           if (auto PT = dyn_cast<PointerType>(PTy)) {
             if (ptr->getAddressSpace() != PT->getAddressSpace()) {
-              res = Builder.CreateAddrSpaceCast(
-                  res, PointerType::get(ptr->getPointerElementType(),
-                                        PT->getAddressSpace()));
+#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR >= 15
+              if (CI->getContext().supportsTypedPointers()) {
+#endif
+                res = Builder.CreateAddrSpaceCast(
+                    res, PointerType::get(ptr->getPointerElementType(),
+                                          PT->getAddressSpace()));
+#if LLVM_VERSION_MAJOR >= 15
+              } else {
+                res = Builder.CreateAddrSpaceCast(res, PT);
+              }
+#endif
+#else
+              res = Builder.CreateAddrSpaceCast(res, PT);
+#endif
               assert(res);
               assert(PTy);
               assert(FT);
@@ -1120,11 +1181,10 @@ public:
       return {};
     }
 
-    return Optional<Options>({differet, tape, dynamic_interface, trace,
-                              observations, likelihood, diffeLikelihood, width,
-                              allocatedTapeSize, freeMemory, returnUsed,
-                              tapeIsPointer, differentialReturn, diffeTrace,
-                              retType, primalReturn, ActiveRandomVariables});
+    return Options({differet, tape, dynamic_interface, trace, observations,
+                    likelihood, diffeLikelihood, width, allocatedTapeSize,
+                    freeMemory, returnUsed, tapeIsPointer, differentialReturn,
+                    diffeTrace, retType, primalReturn, ActiveRandomVariables});
   }
 
   static FnTypeInfo
@@ -1139,6 +1199,7 @@ public:
       if (a.getType()->isFPOrFPVectorTy()) {
         dt = ConcreteType(a.getType()->getScalarType());
       } else if (a.getType()->isPointerTy()) {
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
         if (a.getContext().supportsTypedPointers()) {
 #endif
@@ -1150,6 +1211,7 @@ public:
           }
 #if LLVM_VERSION_MAJOR >= 15
         }
+#endif
 #endif
         dt.insert({}, BaseType::Pointer);
       } else if (a.getType()->isIntOrIntVectorTy()) {
@@ -1796,15 +1858,32 @@ public:
 
     // Interface
     bool has_dynamic_interface = dynamic_interface != nullptr;
-    TraceInterface *interface;
+    bool needs_interface =
+        mode == ProbProgMode::Trace || mode == ProbProgMode::Condition;
+    TraceInterface *interface = nullptr;
     if (has_dynamic_interface) {
       interface =
           new DynamicTraceInterface(dynamic_interface, CI->getFunction());
-    } else {
+    } else if (needs_interface) {
       interface = new StaticTraceInterface(F->getParent());
     }
 
-    bool autodiff = dtrace;
+    // Find sample function
+    SmallPtrSet<Function *, 4> sampleFunctions;
+    SmallPtrSet<Function *, 4> observeFunctions;
+    for (auto &func : F->getParent()->functions()) {
+      if (func.getName().contains("__enzyme_sample")) {
+        assert(func.getFunctionType()->getNumParams() >= 3);
+        sampleFunctions.insert(&func);
+      } else if (func.getName().contains("__enzyme_observe")) {
+        assert(func.getFunctionType()->getNumParams() >= 3);
+        observeFunctions.insert(&func);
+      }
+    }
+
+    assert(!sampleFunctions.empty() || !observeFunctions.empty());
+
+    bool autodiff = dtrace || dlikelihood;
     IRBuilder<> AllocaBuilder(CI->getParent()->getFirstNonPHI());
 
     if (!likelihood) {
@@ -1812,8 +1891,8 @@ public:
                                               nullptr, "likelihood");
       Builder.CreateStore(ConstantFP::getNullValue(Builder.getDoubleTy()),
                           likelihood);
-      args.push_back(likelihood);
     }
+    args.push_back(likelihood);
 
     if (autodiff && !dlikelihood) {
       dlikelihood = AllocaBuilder.CreateAlloca(AllocaBuilder.getDoubleTy(),
@@ -1836,44 +1915,15 @@ public:
       constants.push_back(DIFFE_TYPE::CONSTANT);
     }
 
-    args.push_back(trace);
-    dargs.push_back(trace);
-    constants.push_back(DIFFE_TYPE::CONSTANT);
-
-    // Determine generative functions
-    SmallPtrSet<Function *, 4> generativeFunctions;
-    SetVector<Function *, std::deque<Function *>> workList;
-    workList.insert(interface->getSampleFunction());
-    generativeFunctions.insert(interface->getSampleFunction());
-
-    while (!workList.empty()) {
-      auto todo = *workList.begin();
-      workList.erase(workList.begin());
-
-#if LLVM_VERSION_MAJOR > 10
-      for (auto &&U : todo->uses()) {
-        if (auto ACS = AbstractCallSite(&U)) {
-          auto fun = ACS.getInstruction()->getParent()->getParent();
-          auto [it, inserted] = generativeFunctions.insert(fun);
-          if (inserted)
-            workList.insert(fun);
-        }
-      }
-#else
-      for (auto &&U : todo->uses()) {
-        if (auto &&call = dyn_cast<CallInst>(U.getUser())) {
-          auto &&fun = call->getParent()->getParent();
-          auto &&[it, inserted] = generativeFunctions.insert(fun);
-          if (inserted)
-            workList.insert(fun);
-        }
-      }
-#endif
+    if (mode == ProbProgMode::Trace || mode == ProbProgMode::Condition) {
+      args.push_back(trace);
+      dargs.push_back(trace);
+      constants.push_back(DIFFE_TYPE::CONSTANT);
     }
 
-    auto newFunc =
-        Logic.CreateTrace(F, generativeFunctions, opt->ActiveRandomVariables,
-                          mode, autodiff, interface);
+    auto newFunc = Logic.CreateTrace(F, sampleFunctions, observeFunctions,
+                                     opt->ActiveRandomVariables, mode, autodiff,
+                                     interface);
 
     if (!autodiff) {
       auto call = CallInst::Create(newFunc->getFunctionType(), newFunc, args);
@@ -2324,6 +2374,10 @@ public:
         } else if (Fn->getName().contains("__enzyme_batch")) {
           enableEnzyme = true;
           batch = true;
+        } else if (Fn->getName().contains("__enzyme_likelihood")) {
+          enableEnzyme = true;
+          probProgMode = ProbProgMode::Likelihood;
+          probProg = true;
         } else if (Fn->getName().contains("__enzyme_trace")) {
           enableEnzyme = true;
           probProgMode = ProbProgMode::Trace;
@@ -2490,20 +2544,31 @@ public:
                                  /* CGSCC */ nullptr);
 
       DenseSet<const char *> Allowed = {
-          &AAHeapToStack::ID,     &AANoCapture::ID,
+        &AAHeapToStack::ID,
+        &AANoCapture::ID,
 
-          &AAMemoryBehavior::ID,  &AAMemoryLocation::ID, &AANoUnwind::ID,
-          &AANoSync::ID,          &AANoRecurse::ID,      &AAWillReturn::ID,
-          &AANoReturn::ID,        &AANonNull::ID,        &AANoAlias::ID,
-          &AADereferenceable::ID, &AAAlign::ID,
+        &AAMemoryBehavior::ID,
+        &AAMemoryLocation::ID,
+        &AANoUnwind::ID,
+        &AANoSync::ID,
+        &AANoRecurse::ID,
+        &AAWillReturn::ID,
+        &AANoReturn::ID,
+        &AANonNull::ID,
+        &AANoAlias::ID,
+        &AADereferenceable::ID,
+        &AAAlign::ID,
+#if LLVM_VERSION_MAJOR < 18
+        &AAReturnedValues::ID,
+#endif
+        &AANoFree::ID,
+        &AANoUndef::ID,
 
-          &AAReturnedValues::ID,  &AANoFree::ID,         &AANoUndef::ID,
-
-          //&AAValueSimplify::ID,
-          //&AAReachability::ID,
-          //&AAValueConstantRange::ID,
-          //&AAUndefinedBehavior::ID,
-          //&AAPotentialValues::ID,
+        //&AAValueSimplify::ID,
+        //&AAReachability::ID,
+        //&AAValueConstantRange::ID,
+        //&AAUndefinedBehavior::ID,
+        //&AAPotentialValues::ID,
       };
 
 #if LLVM_VERSION_MAJOR >= 15
@@ -2639,14 +2704,17 @@ public:
       changed = true;
     }
 
-    SmallPtrSet<CallInst *, 4> sample_calls;
+    SmallPtrSet<CallInst *, 16> sample_calls;
+    SmallPtrSet<CallInst *, 16> observe_calls;
     for (auto &&func : M) {
       for (auto &&BB : func) {
         for (auto &&Inst : BB) {
           if (auto CI = dyn_cast<CallInst>(&Inst)) {
-            Function *enzyme_sample = CI->getCalledFunction();
-            if (enzyme_sample && enzyme_sample->getName().contains(
-                                     TraceInterface::sampleFunctionName)) {
+            Function *fun = CI->getCalledFunction();
+            if (!fun)
+              continue;
+
+            if (fun->getName().contains("__enzyme_sample")) {
               if (CI->getNumOperands() < 3) {
                 EmitFailure(
                     "IllegalNumberOfArguments", CI->getDebugLoc(), CI,
@@ -2703,6 +2771,54 @@ public:
                     *pdf, " (", *(pdf->arg_end() - 1)->getType(), ")");
               }
               sample_calls.insert(CI);
+
+            } else if (fun->getName().contains("__enzyme_observe")) {
+              if (CI->getNumOperands() < 3) {
+                EmitFailure(
+                    "IllegalNumberOfArguments", CI->getDebugLoc(), CI,
+                    "Not enough arguments passed to call to __enzyme_sample");
+              }
+              Value *observed = CI->getOperand(0);
+              Function *pdf = GetFunctionFromValue(CI->getArgOperand(1));
+              unsigned expected = pdf->getFunctionType()->getNumParams() - 1;
+
+#if LLVM_VERSION_MAJOR >= 14
+              unsigned actual = CI->arg_size();
+#else
+              unsigned actual = CI->getNumArgOperands();
+#endif
+              if (actual - 3 != expected) {
+                EmitFailure("IllegalNumberOfArguments", CI->getDebugLoc(), CI,
+                            "Illegal number of arguments passed to call to "
+                            "__enzyme_observe.",
+                            " Expected: ", expected, " got: ", actual);
+              }
+
+              for (unsigned i = 0;
+                   i < pdf->getFunctionType()->getNumParams() - 1; ++i) {
+                Value *ci_arg = CI->getArgOperand(i + 3);
+                Value *pdf_arg = pdf->arg_begin() + i;
+
+                if (ci_arg->getType() != pdf_arg->getType()) {
+                  EmitFailure("IllegalSampleType", CI->getDebugLoc(), CI,
+                              "Type of: ", *ci_arg, " (", *ci_arg->getType(),
+                              ")",
+                              " does not match the argument type of the "
+                              "density function: ",
+                              *pdf, " at: ", i, " (", *pdf_arg->getType(), ")");
+                }
+              }
+
+              if ((pdf->arg_end() - 1)->getType() != observed->getType()) {
+                EmitFailure(
+                    "IllegalSampleType", CI->getDebugLoc(), CI,
+                    "Return type of ", *observed, " (", *observed->getType(),
+                    ")",
+                    " does not match the last argument type of the density "
+                    "function: ",
+                    *pdf, " (", *(pdf->arg_end() - 1)->getType(), ")");
+              }
+              observe_calls.insert(CI);
             }
           }
         }
@@ -2722,6 +2838,14 @@ public:
           CallInst::Create(samplefn->getFunctionType(), samplefn, args);
 
       ReplaceInstWithInst(call, choice);
+    }
+
+    for (auto call : observe_calls) {
+      Value *observed = call->getArgOperand(0);
+
+      if (!call->getType()->isVoidTy())
+        call->replaceAllUsesWith(observed);
+      call->eraseFromParent();
     }
 
     for (const auto &pair : Logic.PPC.cache)

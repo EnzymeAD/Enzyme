@@ -226,7 +226,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
       Value *tmp = SubZero->getOperand(0);
       Type *tmpT = tmp->getType();
       tmp = BB.CreatePointerCast(tmp, bTy);
-      tmp = BB.CreateInBoundsGEP(tmp->getType()->getPointerElementType(), tmp,
+      tmp = BB.CreateInBoundsGEP(Type::getInt8Ty(tmp->getContext()), tmp,
                                  prevSize);
       tmp = BB.CreatePointerCast(tmp, tmpT);
       SubZero->setOperand(0, tmp);
@@ -237,11 +237,8 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
   if (ZeroInit) {
     Value *zeroSize = B.CreateSub(next, prevSize);
 
-    Value *margs[] = {
-        B.CreateInBoundsGEP(gVal->getType()->getPointerElementType(), gVal,
-                            prevSize),
-        ConstantInt::get(Type::getInt8Ty(M.getContext()), 0), zeroSize,
-        ConstantInt::getFalse(M.getContext())};
+    Value *margs[] = {B.CreateInBoundsGEP(B.getInt8Ty(), gVal, prevSize),
+                      B.getInt8(0), zeroSize, B.getFalse()};
     Type *tys[] = {margs[0]->getType(), margs[2]->getType()};
     auto memsetF = Intrinsic::getDeclaration(&M, Intrinsic::memset, tys);
     B.CreateCall(memsetF, margs);
@@ -375,12 +372,14 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
     Value *tozero = malloccall;
 
     bool needsCast = false;
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
     if (PT->getContext().supportsTypedPointers()) {
 #endif
       needsCast = !PT->getPointerElementType()->isIntegerTy(8);
 #if LLVM_VERSION_MAJOR >= 15
     }
+#endif
 #endif
     if (needsCast)
       tozero = Builder.CreatePointerCast(
@@ -668,6 +667,338 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
   B.CreateCall(fn, args, bundles);
 }
 
+void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
+                        IntegerType *IT, Type *BlasCT, Type *BlasFPT,
+                        Type *BlasPT, Type *BlasIT, Type *fpTy,
+                        ArrayRef<Value *> args,
+                        ArrayRef<OperandBundleDef> bundles, bool byRef,
+                        bool julia_decl) {
+  // add spmv diag update call if not already present
+  std::string fnc_name =
+      ("__enzyme_spmv_diag" + blas.floatType + blas.suffix).str();
+
+  //  spmvDiagHelper(uplo, n, alpha, x, incx, ya, incy, APa)
+  auto FDiagUpdateT = FunctionType::get(
+      B.getVoidTy(),
+      {BlasCT, BlasIT, BlasFPT, BlasPT, BlasIT, BlasPT, BlasIT, BlasPT}, false);
+  Function *F =
+      cast<Function>(M.getOrInsertFunction(fnc_name, FDiagUpdateT).getCallee());
+
+  if (!F->empty()) {
+    B.CreateCall(F, args, bundles);
+    return;
+  }
+
+  // now add the implementation for the call
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
+  F->addFnAttr(Attribute::ArgMemOnly);
+#endif
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
+  if (!julia_decl) {
+    F->addParamAttr(3, Attribute::NoCapture);
+    F->addParamAttr(5, Attribute::NoCapture);
+    F->addParamAttr(7, Attribute::NoCapture);
+    F->addParamAttr(3, Attribute::NoAlias);
+    F->addParamAttr(5, Attribute::NoAlias);
+    F->addParamAttr(7, Attribute::NoAlias);
+    F->addParamAttr(3, Attribute::ReadOnly);
+    F->addParamAttr(5, Attribute::ReadOnly);
+    if (byRef) {
+      F->addParamAttr(2, Attribute::NoCapture);
+      F->addParamAttr(2, Attribute::NoAlias);
+      F->addParamAttr(2, Attribute::ReadOnly);
+    }
+  }
+
+  BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+  BasicBlock *init = BasicBlock::Create(M.getContext(), "init", F);
+  BasicBlock *uper_code = BasicBlock::Create(M.getContext(), "uper", F);
+  BasicBlock *lower_code = BasicBlock::Create(M.getContext(), "lower", F);
+  BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
+
+  //  spmvDiagHelper(uplo, n, alpha, x, incx, ya, incy, APa)
+  auto blasuplo = F->arg_begin();
+  blasuplo->setName("blasuplo");
+  auto blasn = blasuplo + 1;
+  blasn->setName("blasn");
+  auto blasalpha = blasn + 1;
+  blasalpha->setName("blasalpha");
+  auto blasx = blasalpha + 1;
+  blasx->setName("blasx");
+  auto blasincx = blasx + 1;
+  blasincx->setName("blasincx");
+  auto blasdy = blasx + 1;
+  blasdy->setName("blasdy");
+  auto blasincy = blasdy + 1;
+  blasincy->setName("blasincy");
+  auto blasdAP = blasincy + 1;
+  blasdAP->setName("blasdAP");
+
+  // TODO: consider cblas_layout
+
+  // https://dl.acm.org/doi/pdf/10.1145/3382191
+  // Following example is Fortran based, thus 1 indexed
+  // if(uplo == 'u' .or. uplo == 'U') then
+  //   k = 0
+  //   do i = 1,n
+  //     k = k+i
+  //     APa(k) = APa(k) - alpha*x(1 + (i-1)*incx)*ya(1 + (i-1)*incy)
+  //   end do
+  // else
+  //   k = 1
+  //   do i = 1,n
+  //     APa(k) = APa(k) - alpha*x(1 + (i-1)*incx)*ya(1 + (i-1)*incy)
+  //     k = k+n-i+1
+  //   end do
+  // end if
+  {
+    IRBuilder<> B1(entry);
+    Value *n = load_if_ref(B1, IT, blasn, byRef);
+    Value *incx = load_if_ref(B1, IT, blasincx, byRef);
+    Value *incy = load_if_ref(B1, IT, blasincy, byRef);
+    Value *alpha = blasalpha;
+    if (byRef) {
+      auto VP = B1.CreatePointerCast(
+          blasalpha,
+          PointerType::get(
+              fpTy,
+              cast<PointerType>(blasalpha->getType())->getAddressSpace()));
+      alpha = B1.CreateLoad(fpTy, VP);
+    }
+    Value *is_u = is_uper(B1, blasuplo, byRef);
+    Value *k = B1.CreateSelect(is_u, ConstantInt::get(IT, 0),
+                               ConstantInt::get(IT, 1), "k");
+    B1.CreateCondBr(B1.CreateICmpEQ(n, ConstantInt::get(IT, 0)), end, init);
+
+    IRBuilder<> B2(init);
+    Value *xfloat = B2.CreatePointerCast(
+        blasx,
+        PointerType::get(
+            fpTy, cast<PointerType>(blasx->getType())->getAddressSpace()));
+    Value *dyfloat = B2.CreatePointerCast(
+        blasdy,
+        PointerType::get(
+            fpTy, cast<PointerType>(blasdy->getType())->getAddressSpace()));
+    Value *dAPfloat = B2.CreatePointerCast(
+        blasdAP,
+        PointerType::get(
+            fpTy, cast<PointerType>(blasdAP->getType())->getAddressSpace()));
+    B2.CreateCondBr(is_u, uper_code, lower_code);
+
+    IRBuilder<> B3(uper_code);
+    B3.setFastMathFlags(getFast());
+    {
+      PHINode *iter = B3.CreatePHI(IT, 2, "iteration");
+      PHINode *kval = B3.CreatePHI(IT, 2, "k");
+      iter->addIncoming(ConstantInt::get(IT, 0), init);
+      kval->addIncoming(ConstantInt::get(IT, 0), init);
+      Value *iternext =
+          B3.CreateAdd(iter, ConstantInt::get(IT, 1), "iter.next");
+      // 0, 2, 5, 9, 14, 20, 27, 35, 44, 54, ... are diag elements
+      Value *kvalnext = B3.CreateAdd(kval, iternext, "k.next");
+      iter->addIncoming(iternext, uper_code);
+      kval->addIncoming(kvalnext, uper_code);
+
+      Value *xidx = B3.CreateNUWMul(iter, incx, "x.idx");
+      Value *yidx = B3.CreateNUWMul(iter, incy, "y.idx");
+      Value *x = B3.CreateInBoundsGEP(fpTy, xfloat, xidx, "x.ptr");
+      Value *y = B3.CreateInBoundsGEP(fpTy, dyfloat, yidx, "y.ptr");
+      Value *xval = B3.CreateLoad(fpTy, x, "x.val");
+      Value *yval = B3.CreateLoad(fpTy, y, "y.val");
+      Value *xy = B3.CreateFMul(xval, yval, "xy");
+      Value *xyalpha = B3.CreateFMul(xy, alpha, "xy.alpha");
+      Value *kptr = B3.CreateInBoundsGEP(fpTy, dAPfloat, kval, "k.ptr");
+      Value *kvalloaded = B3.CreateLoad(fpTy, kptr, "k.val");
+      Value *kvalnew = B3.CreateFSub(kvalloaded, xyalpha, "k.val.new");
+      B3.CreateStore(kvalnew, kptr);
+
+      B3.CreateCondBr(B3.CreateICmpEQ(iternext, n), end, uper_code);
+    }
+
+    IRBuilder<> B4(lower_code);
+    B4.setFastMathFlags(getFast());
+    {
+      PHINode *iter = B4.CreatePHI(IT, 2, "iteration");
+      PHINode *kval = B4.CreatePHI(IT, 2, "k");
+      iter->addIncoming(ConstantInt::get(IT, 0), init);
+      kval->addIncoming(ConstantInt::get(IT, 0), init);
+      Value *iternext =
+          B4.CreateAdd(iter, ConstantInt::get(IT, 1), "iter.next");
+      Value *ktmp = B4.CreateAdd(n, ConstantInt::get(IT, 1), "tmp.val");
+      Value *ktmp2 = B4.CreateSub(ktmp, iternext, "tmp.val.other");
+      Value *kvalnext = B4.CreateAdd(kval, ktmp2, "k.next");
+      iter->addIncoming(iternext, lower_code);
+      kval->addIncoming(kvalnext, lower_code);
+
+      Value *xidx = B4.CreateNUWMul(iter, incx, "x.idx");
+      Value *yidx = B4.CreateNUWMul(iter, incy, "y.idx");
+      Value *x = B4.CreateInBoundsGEP(fpTy, xfloat, xidx, "x.ptr");
+      Value *y = B4.CreateInBoundsGEP(fpTy, dyfloat, yidx, "y.ptr");
+      Value *xval = B4.CreateLoad(fpTy, x, "x.val");
+      Value *yval = B4.CreateLoad(fpTy, y, "y.val");
+      Value *xy = B4.CreateFMul(xval, yval, "xy");
+      Value *xyalpha = B4.CreateFMul(xy, alpha, "xy.alpha");
+      Value *kptr = B4.CreateInBoundsGEP(fpTy, dAPfloat, kval, "k.ptr");
+      Value *kvalloaded = B4.CreateLoad(fpTy, kptr, "k.val");
+      Value *kvalnew = B4.CreateFSub(kvalloaded, xyalpha, "k.val.new");
+      B4.CreateStore(kvalnew, kptr);
+
+      B4.CreateCondBr(B4.CreateICmpEQ(iternext, n), end, lower_code);
+    }
+
+    IRBuilder<> B5(end);
+    B5.CreateRetVoid();
+  }
+  B.CreateCall(F, args, bundles);
+  return;
+}
+
+llvm::CallInst *
+getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                     IntegerType *IT, Type *BlasPT, Type *BlasIT, Type *fpTy,
+                     llvm::ArrayRef<llvm::Value *> args,
+                     const llvm::ArrayRef<llvm::OperandBundleDef> bundles,
+                     bool byRef, bool julia_decl) {
+  assert(fpTy->isFloatingPointTy());
+
+  // add inner_prod call if not already present
+  std::string prod_name =
+      ("__enzyme_inner_prod" + blas.floatType + blas.suffix).str();
+  auto FInnerProdT =
+      FunctionType::get(fpTy, {BlasIT, BlasIT, BlasPT, BlasIT, BlasPT}, false);
+  Function *F =
+      cast<Function>(M.getOrInsertFunction(prod_name, FInnerProdT).getCallee());
+
+  if (!F->empty())
+    return B.CreateCall(F, args, bundles);
+
+  // add dot call if not already present
+  std::string dot_name =
+      (blas.prefix + blas.floatType + "dot" + blas.suffix).str();
+  auto FDotT =
+      FunctionType::get(fpTy, {BlasIT, BlasPT, BlasIT, BlasPT, BlasIT}, false);
+  Function *FDot =
+      cast<Function>(M.getOrInsertFunction(dot_name, FDotT).getCallee());
+
+  // now add the implementation for the inner_prod call
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+  F->setOnlyReadsMemory();
+#else
+  F->addFnAttr(Attribute::ArgMemOnly);
+  F->addFnAttr(Attribute::ReadOnly);
+#endif
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
+  if (!julia_decl) {
+    F->addParamAttr(2, Attribute::NoCapture);
+    F->addParamAttr(4, Attribute::NoCapture);
+    F->addParamAttr(2, Attribute::NoAlias);
+    F->addParamAttr(4, Attribute::NoAlias);
+    F->addParamAttr(2, Attribute::ReadOnly);
+    F->addParamAttr(4, Attribute::ReadOnly);
+  }
+
+  BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+  BasicBlock *init = BasicBlock::Create(M.getContext(), "init.idx", F);
+  BasicBlock *fastPath = BasicBlock::Create(M.getContext(), "fast.path", F);
+  BasicBlock *body = BasicBlock::Create(M.getContext(), "for.body", F);
+  BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
+
+  // This is the .td declaration which we need to match
+  // No need to support ld for the second matrix, as it will
+  // always be based on a matrix which we allocated (contiguous)
+  //(FrobInnerProd<> $m, $n, adj<"C">, $ldc, use<"AB">)
+
+  auto blasm = F->arg_begin();
+  blasm->setName("blasm");
+  auto blasn = blasm + 1;
+  blasn->setName("blasn");
+  auto matA = blasn + 1;
+  matA->setName("A");
+  auto blaslda = matA + 1;
+  blaslda->setName("lda");
+  auto matB = blaslda + 1;
+  matB->setName("B");
+
+  {
+    IRBuilder<> B1(entry);
+    Value *blasOne = to_blas_callconv(B1, ConstantInt::get(IT, 1), byRef, IT,
+                                      B1, "constant.one");
+    Value *m = load_if_ref(B1, IT, blasm, byRef);
+    Value *n = load_if_ref(B1, IT, blasn, byRef);
+    Value *size = B1.CreateNUWMul(m, n, "mat.size");
+    Value *blasSize = to_blas_callconv(B1, size, byRef, IT, B1, "mat.size");
+    B1.CreateCondBr(B1.CreateICmpEQ(size, ConstantInt::get(IT, 0)), end, init);
+
+    IRBuilder<> B2(init);
+    B2.setFastMathFlags(getFast());
+    Value *lda = load_if_ref(B2, IT, blaslda, byRef);
+    Value *Afloat = B2.CreatePointerCast(
+        matA, PointerType::get(
+                  fpTy, cast<PointerType>(matA->getType())->getAddressSpace()));
+    Value *Bfloat = B2.CreatePointerCast(
+        matB, PointerType::get(
+                  fpTy, cast<PointerType>(matB->getType())->getAddressSpace()));
+    B2.CreateCondBr(B2.CreateICmpEQ(m, lda), fastPath, body);
+
+    // our second matrix is always continuos, by construction.
+    // If our first matrix is continuous too (lda == m), then we can
+    // use a single dot call.
+    IRBuilder<> B3(fastPath);
+    B3.setFastMathFlags(getFast());
+    Value *blasA = B3.CreatePointerCast(matA, BlasPT);
+    Value *blasB = B3.CreatePointerCast(matB, BlasPT);
+    Value *fastSum = B3.CreateCall(
+        FDot, {blasSize, blasA, blasOne, blasB, blasOne}, bundles);
+    B3.CreateBr(end);
+
+    IRBuilder<> B4(body);
+    B4.setFastMathFlags(getFast());
+    PHINode *Aidx = B4.CreatePHI(IT, 2, "Aidx");
+    PHINode *Bidx = B4.CreatePHI(IT, 2, "Bidx");
+    PHINode *iter = B4.CreatePHI(IT, 2, "iteration");
+    PHINode *sum = B4.CreatePHI(fpTy, 2, "sum");
+    Aidx->addIncoming(ConstantInt::get(IT, 0), init);
+    Bidx->addIncoming(ConstantInt::get(IT, 0), init);
+    iter->addIncoming(ConstantInt::get(IT, 0), init);
+    sum->addIncoming(ConstantFP::get(fpTy, 0.0), init);
+
+    Value *Ai = B4.CreateInBoundsGEP(fpTy, Afloat, Aidx, "A.i");
+    Value *Bi = B4.CreateInBoundsGEP(fpTy, Bfloat, Bidx, "B.i");
+    Value *AiDot = B4.CreatePointerCast(Ai, BlasPT);
+    Value *BiDot = B4.CreatePointerCast(Bi, BlasPT);
+    Value *newDot =
+        B4.CreateCall(FDot, {blasm, AiDot, blasOne, BiDot, blasOne}, bundles);
+
+    Value *Anext = B4.CreateNUWAdd(Aidx, lda, "Aidx.next");
+    Value *Bnext = B4.CreateNUWAdd(Aidx, m, "Bidx.next");
+    Value *iternext = B4.CreateAdd(iter, ConstantInt::get(IT, 1), "iter.next");
+    Value *sumnext = B4.CreateFAdd(sum, newDot);
+
+    iter->addIncoming(iternext, body);
+    Aidx->addIncoming(Anext, body);
+    Bidx->addIncoming(Bnext, body);
+    sum->addIncoming(sumnext, body);
+
+    B4.CreateCondBr(B4.CreateICmpEQ(iter, n), end, body);
+
+    IRBuilder<> B5(end);
+    PHINode *res = B5.CreatePHI(fpTy, 3, "res");
+    res->addIncoming(ConstantFP::get(fpTy, 0.0), entry);
+    res->addIncoming(sum, body);
+    res->addIncoming(fastSum, fastPath);
+    B5.CreateRet(res);
+  }
+
+  return B.CreateCall(F, args, bundles);
+}
+
 Function *getOrInsertMemcpyStrided(Module &M, Type *elementType, PointerType *T,
                                    Type *IT, unsigned dstalign,
                                    unsigned srcalign) {
@@ -782,12 +1113,14 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
                                IntegerType *IT, unsigned dstalign,
                                unsigned srcalign) {
   assert(elementType->isFloatingPointTy());
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
   if (Mod.getContext().supportsTypedPointers()) {
 #endif
     assert(PT->getPointerElementType() == elementType);
 #if LLVM_VERSION_MAJOR >= 15
   }
+#endif
 #endif
   std::string name = "__enzyme_memcpy_" + tofltstr(elementType) + "_mat_" +
                      std::to_string(cast<IntegerType>(IT)->getBitWidth());
@@ -1056,11 +1389,10 @@ llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
   auto inc = B.CreateAdd(idx, ConstantInt::get(count->getType(), 1));
   idx->addIncoming(inc, loopBlock);
 
+  Type *reqT = reqType; // req->getType()->getPointerElementType();
   Value *idxs[] = {idx};
-  Value *ireq =
-      B.CreateInBoundsGEP(req->getType()->getPointerElementType(), req, idxs);
-  Value *idreq =
-      B.CreateInBoundsGEP(req->getType()->getPointerElementType(), dreq, idxs);
+  Value *ireq = B.CreateInBoundsGEP(reqT, req, idxs);
+  Value *idreq = B.CreateInBoundsGEP(reqT, dreq, idxs);
   Value *iout = B.CreateInBoundsGEP(reqType, ret, idxs);
   Value *isNull = nullptr;
   if (auto GV = M.getNamedValue("ompi_request_null")) {
@@ -1193,8 +1525,8 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
 }
 
 llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
-                                   ConcreteType CT, llvm::Type *intType,
-                                   IRBuilder<> &B2) {
+                                   llvm::Type *OpType, ConcreteType CT,
+                                   llvm::Type *intType, IRBuilder<> &B2) {
   std::string name = "__enzyme_mpi_sum" + CT.str();
   assert(CT.isFloat());
   auto FlT = CT.isFloat();
@@ -1243,7 +1575,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
 
   {
     IRBuilder<> B(entry);
-    len = B.CreateLoad(lenp->getType()->getPointerElementType(), lenp);
+    len = B.CreateLoad(intType, lenp);
     B.CreateCondBr(B.CreateICmpEQ(len, ConstantInt::get(len->getType(), 0)),
                    end, body);
   }
@@ -1254,15 +1586,11 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
     PHINode *idx = B.CreatePHI(len->getType(), 2, "idx");
     idx->addIncoming(ConstantInt::get(len->getType(), 0), entry);
 
-    Value *dsti = B.CreateInBoundsGEP(dst->getType()->getPointerElementType(),
-                                      dst, idx, "dst.i");
-    LoadInst *dstl =
-        B.CreateLoad(dsti->getType()->getPointerElementType(), dsti, "dst.i.l");
+    Value *dsti = B.CreateInBoundsGEP(FlT, dst, idx, "dst.i");
+    LoadInst *dstl = B.CreateLoad(FlT, dsti, "dst.i.l");
 
-    Value *srci = B.CreateInBoundsGEP(src->getType()->getPointerElementType(),
-                                      src, idx, "src.i");
-    LoadInst *srcl =
-        B.CreateLoad(srci->getType()->getPointerElementType(), srci, "src.i.l");
+    Value *srci = B.CreateInBoundsGEP(FlT, src, idx, "src.i");
+    LoadInst *srcl = B.CreateLoad(FlT, srci, "src.i.l");
     B.CreateStore(B.CreateFAdd(srcl, dstl), dsti);
 
     Value *next =
@@ -1287,9 +1615,9 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
     RF = ConstantExpr::getBitCast(RF, PointerType::getUnqual(RFT));
   }
 
-  GlobalVariable *GV = new GlobalVariable(
-      M, OpPtr->getPointerElementType(), false, GlobalVariable::InternalLinkage,
-      UndefValue::get(OpPtr->getPointerElementType()), name);
+  GlobalVariable *GV =
+      new GlobalVariable(M, OpType, false, GlobalVariable::InternalLinkage,
+                         UndefValue::get(OpType), name);
 
   Type *i1Ty = Type::getInt1Ty(M.getContext());
   GlobalVariable *initD = new GlobalVariable(
@@ -1315,9 +1643,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
         BasicBlock::Create(M.getContext(), "end", initializerFunction);
     IRBuilder<> B(entry);
 
-    B.CreateCondBr(
-        B.CreateLoad(initD->getType()->getPointerElementType(), initD), end,
-        run);
+    B.CreateCondBr(B.CreateLoad(initD->getValueType(), initD), end, run);
 
     B.SetInsertPoint(run);
     Value *args[] = {ConstantExpr::getPointerCast(F, rtypes[0]),
@@ -2008,7 +2334,7 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
   llvm::Twine floatType[] = {"s", "d"}; // c, z
-  llvm::Twine extractable[] = {"dot", "scal", "axpy", "gemv", "gemm"};
+  llvm::Twine extractable[] = {"dot", "scal", "axpy", "gemv", "gemm", "spmv"};
   llvm::Twine prefixes[] = {"" /*Fortran*/, "cblas_", "cublas_"};
   llvm::Twine suffixes[] = {"", "_", "64_", "_64_"};
   for (auto t : floatType) {
@@ -2066,6 +2392,7 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
   }
   if (!cache_arg)
     return;
+#if LLVM_VERSION_MAJOR < 18
   auto PT = cast<PointerType>(arg->getType());
 #if LLVM_VERSION_MAJOR <= 14
   if (PT->getElementType() != ty)
@@ -2076,6 +2403,7 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
   if (!PT->isOpaqueOrPointeeTypeMatches(PT2))
     arg = BuilderZ.CreatePointerCast(
         arg, PointerType::get(ty, PT->getAddressSpace()), "pcld." + name);
+#endif
 #endif
   arg = BuilderZ.CreateLoad(ty, arg, "avld." + name);
   cacheValues.push_back(arg);
@@ -2096,7 +2424,22 @@ llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
 
   if (julia_decl)
     allocV = B.CreatePointerCast(allocV, Type::getInt8PtrTy(V->getContext()),
-                                 "cast." + name);
+                                 "intcast." + name);
+
+  return allocV;
+}
+llvm::Value *to_blas_fp_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
+                                 Type *fpTy, IRBuilder<> &entryBuilder,
+                                 llvm::Twine const &name) {
+  if (!byRef)
+    return V;
+
+  Value *allocV =
+      entryBuilder.CreateAlloca(V->getType(), nullptr, "byref." + name);
+  B.CreateStore(V, allocV);
+
+  if (fpTy)
+    allocV = B.CreatePointerCast(allocV, fpTy, "fpcast." + name);
 
   return allocV;
 }
@@ -2106,6 +2449,19 @@ llvm::Value *select_vec_dims(IRBuilder<> &B, llvm::Value *trans,
   Value *width = B.CreateSelect(is_normal(B, trans, byRef), dim1, dim2);
 
   return width;
+}
+
+Value *is_uper(IRBuilder<> &B, Value *trans, bool byRef) {
+  auto charTy = IntegerType::get(trans->getContext(), 8);
+  if (byRef)
+    trans = B.CreateLoad(charTy, trans, "loaded.trans");
+
+  Value *trueVal = ConstantInt::getTrue(trans->getContext());
+
+  Value *isUper =
+      B.CreateOr(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'u')),
+                 B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'U')));
+  return isUper;
 }
 
 llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef) {
@@ -2172,6 +2528,17 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                           "transpose." + name);
 }
 
+llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::IntegerType *intType,
+                         llvm::Value *V, bool byRef) {
+  if (!byRef)
+    return V;
+
+  auto VP = B.CreatePointerCast(
+      V, PointerType::get(intType,
+                          cast<PointerType>(V->getType())->getAddressSpace()));
+  return B.CreateLoad(intType, VP);
+}
+
 llvm::Value *get_blas_row(llvm::IRBuilder<> &B, llvm::Value *trans,
                           llvm::Value *row, llvm::Value *col, bool byRef) {
 
@@ -2185,4 +2552,34 @@ llvm::Value *get_blas_row(llvm::IRBuilder<> &B, llvm::Value *trans,
           B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N')),
           B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'))),
       row, col);
+}
+
+// return how many Special pointers are in T (count > 0),
+// and if there is anything else in T (all == false)
+CountTrackedPointers::CountTrackedPointers(Type *T) {
+  if (isa<PointerType>(T)) {
+    if (isSpecialPtr(T)) {
+      count++;
+      if (T->getPointerAddressSpace() != AddressSpace::Tracked)
+        derived = true;
+    }
+  } else if (isa<StructType>(T) || isa<ArrayType>(T) || isa<VectorType>(T)) {
+    for (Type *ElT : T->subtypes()) {
+      auto sub = CountTrackedPointers(ElT);
+      count += sub.count;
+      all &= sub.all;
+      derived |= sub.derived;
+    }
+    if (isa<ArrayType>(T))
+      count *= cast<ArrayType>(T)->getNumElements();
+    else if (isa<VectorType>(T)) {
+#if LLVM_VERSION_MAJOR >= 12
+      count *= cast<VectorType>(T)->getElementCount().getKnownMinValue();
+#else
+      count *= cast<VectorType>(T)->getNumElements();
+#endif
+    }
+  }
+  if (count == 0)
+    all = false;
 }

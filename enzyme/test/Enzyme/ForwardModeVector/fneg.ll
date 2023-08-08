@@ -21,14 +21,14 @@ entry:
 
 ; CHECK: define internal [3 x double] @fwddiffe3fneg(double %x, [3 x double] %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = extractvalue [3 x double] %"x'", 0
-; CHECK-NEXT:   %1 = fneg fast double %0
-; CHECK-NEXT:   %2 = insertvalue [3 x double] undef, double %1, 0
-; CHECK-NEXT:   %3 = extractvalue [3 x double] %"x'", 1
-; CHECK-NEXT:   %4 = fneg fast double %3
-; CHECK-NEXT:   %5 = insertvalue [3 x double] %2, double %4, 1
-; CHECK-NEXT:   %6 = extractvalue [3 x double] %"x'", 2
-; CHECK-NEXT:   %7 = fneg fast double %6
-; CHECK-NEXT:   %8 = insertvalue [3 x double] %5, double %7, 2
-; CHECK-NEXT:   ret [3 x double] %8
+; CHECK-NEXT:   %[[i0:.+]] = extractvalue [3 x double] %"x'", 0
+; CHECK-NEXT:   %[[i1:.+]] = fneg fast double %[[i0]]
+; CHECK-NEXT:   %[[i3:.+]] = extractvalue [3 x double] %"x'", 1
+; CHECK-NEXT:   %[[i4:.+]] = fneg fast double %[[i3]]
+; CHECK-NEXT:   %[[i6:.+]] = extractvalue [3 x double] %"x'", 2
+; CHECK-NEXT:   %[[i7:.+]] = fneg fast double %[[i6]]
+; CHECK-NEXT:   %[[i2:.+]] = insertvalue [3 x double] undef, double %[[i1]], 0
+; CHECK-NEXT:   %[[i5:.+]] = insertvalue [3 x double] %[[i2]], double %[[i4]], 1
+; CHECK-NEXT:   %[[i8:.+]] = insertvalue [3 x double] %[[i5]], double %[[i7]], 2
+; CHECK-NEXT:   ret [3 x double] %[[i8]]
 ; CHECK-NEXT: }

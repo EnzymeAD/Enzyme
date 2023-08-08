@@ -37,7 +37,7 @@ entry:
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %"malloccall'mi" = extractvalue { { i8*, i8* }, i8*, double } %truetape, 1
 ; CHECK-NEXT:   %"a'ipc" = bitcast i8* %"malloccall'mi" to double**
-; CHECK-NEXT:   %tapeArg1 = extractvalue { { i8*, i8* }, i8*, double } %truetape, 0
+; CHECK-NEXT:   %[[tapeArg1:.+]] = extractvalue { { i8*, i8* }, i8*, double } %truetape, 0
 ; CHECK-NEXT:   %"m'ipl" = load double*, double** %"a'ipc", align 8
 ; CHECK-NEXT:   %ld = extractvalue { { i8*, i8* }, i8*, double } %truetape, 2
 ; CHECK-NEXT:   %[[m0diffeld:.+]] = fmul fast double %differeturn, %ld
@@ -48,7 +48,7 @@ entry:
 ; CHECK-NEXT:   store double %[[i3:.+]], double* %"m'ipl", align 8
 ; CHECK-NEXT:   %[[i4:.+]] = load double, double* %"m'ipl", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"m'ipl", align 8
-; CHECK-NEXT:   call void @diffeset(double** undef, double** undef, { i8*, i8* } %tapeArg1)
+; CHECK-NEXT:   call void @diffeset(double** undef, double** undef, { i8*, i8* } %[[tapeArg1]])
 ; CHECK-NEXT:   call void @free(i8* nonnull %"malloccall'mi")
 ; CHECK-NEXT:   %[[i5:.+]] = insertvalue { double } undef, double %[[i4:.+]], 0
 ; CHECK-NEXT:   ret { double } %[[i5:.+]]

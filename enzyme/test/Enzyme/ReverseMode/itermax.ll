@@ -88,7 +88,7 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   %2 = select i1 %cmp.i, i64 %1, i64 %iv.next
 ; CHECK-NEXT:   %cond.i = select i1 %cmp.i, double %cond.i12, double %.pre
 ; CHECK-NEXT:   %exitcond = icmp eq i64 %iv.next, %n
-; CHECK-NEXT:   br i1 %exitcond, label %invertfor.body.for.body_crit_edge, label %for.body.for.body_crit_edge
+; CHECK-NEXT:   br i1 %exitcond, label %invertfor.cond.cleanup, label %for.body.for.body_crit_edge
 
 ; CHECK: invertentry:                                      ; preds = %entry, %invertfor.body.for.body_crit_edge.preheader
 ; CHECK-NEXT:   %"'de.0" = phi double [ %6, %invertfor.body.for.body_crit_edge.preheader ], [ %differeturn, %entry ]
@@ -98,19 +98,23 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.body.for.body_crit_edge.preheader:  
-; CHECK-NEXT:   %5 = icmp eq i64 %2, 0
+; CHECK-NEXT:   %5 = icmp eq i64 %[[phisel5:.+]], 0
 ; CHECK-NEXT:   %6 = select{{( fast)?}} i1 %5, double %differeturn, double 0.000000e+00
 ; CHECK-NEXT:   br label %invertentry
 
+; CHECK: invertfor.cond.cleanup: 
+; CHECK-NEXT:   %[[phisel5]] = select i1 %cmp.i, i64 %1, i64 %n
+; CHECK-NEXT:   br label %invertfor.body.for.body_crit_edge
+
 ; CHECK: invertfor.body.for.body_crit_edge: 
-; CHECK-NEXT:   %"iv'ac.0.in" = phi i64 [ %"iv'ac.0", %invertfor.body.for.body_crit_edge ], [ %n, %for.body.for.body_crit_edge ]
+; CHECK-NEXT:   %"iv'ac.0.in" = phi i64 [ %n, %invertfor.cond.cleanup ], [ %"iv'ac.0", %invertfor.body.for.body_crit_edge ]
 ; CHECK-NEXT:   %"iv'ac.0" = add i64 %"iv'ac.0.in", -1
-; CHECK-NEXT:   %7 = icmp eq i64 %2, %"iv'ac.0.in"
-; CHECK-NEXT:   %8 = select{{( fast)?}} i1 %7, double %differeturn, double 0.000000e+00
+; CHECK-NEXT:   %[[i7:.+]] = icmp eq i64 %[[phisel5]], %"iv'ac.0.in"
+; CHECK-NEXT:   %[[i8:.+]] = select{{( fast)?}} i1 %[[i7]], double %differeturn, double 0.000000e+00
 ; CHECK-NEXT:   %"arrayidx2.phi.trans.insert'ipg_unwrap" = getelementptr inbounds double, double* %"x'", i64 %"iv'ac.0.in"
-; CHECK-NEXT:   %9 = load double, double* %"arrayidx2.phi.trans.insert'ipg_unwrap", align 8
-; CHECK-NEXT:   %10 = fadd fast double %9, %8
-; CHECK-NEXT:   store double %10, double* %"arrayidx2.phi.trans.insert'ipg_unwrap", align 8
-; CHECK-NEXT:   %11 = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   br i1 %11, label %invertfor.body.for.body_crit_edge.preheader, label %invertfor.body.for.body_crit_edge
+; CHECK-NEXT:   %[[i9:.+]] = load double, double* %"arrayidx2.phi.trans.insert'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i10:.+]] = fadd fast double %[[i9]], %[[i8]]
+; CHECK-NEXT:   store double %[[i10]], double* %"arrayidx2.phi.trans.insert'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i11:.+]] = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   br i1 %[[i11]], label %invertfor.body.for.body_crit_edge.preheader, label %invertfor.body.for.body_crit_edge
 ; CHECK-NEXT: }

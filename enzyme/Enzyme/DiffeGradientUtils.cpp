@@ -181,12 +181,14 @@ AllocaInst *DiffeGradientUtils::getDifferential(Value *val) {
     ZeroMemory(entryBuilder, type, differentials[val],
                /*isTape*/ false);
   }
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
   if (val->getContext().supportsTypedPointers()) {
 #endif
     assert(differentials[val]->getType()->getPointerElementType() == type);
 #if LLVM_VERSION_MAJOR >= 15
   }
+#endif
 #endif
   return differentials[val];
 }
@@ -341,10 +343,25 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       }
     }
     if (!addingType) {
-      TR.dump();
-      llvm::errs() << "oldFunc: " << *oldFunc << "\n";
-      llvm::errs() << "newFunc: " << *newFunc << "\n";
-      llvm::errs() << "val: " << *val << " old: " << *old << "\n";
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "oldFunc: " << *oldFunc << "\n";
+      ss << "Cannot deduce adding type of: " << *old << "\n";
+      if (CustomErrorHandler) {
+        CustomErrorHandler(ss.str().c_str(), wrap(old), ErrorType::NoType,
+                           &TR.analyzer, nullptr, wrap(&BuilderM));
+        return addedSelects;
+      } else {
+        TR.dump();
+        DebugLoc loc;
+        if (auto inst = dyn_cast<Instruction>(old))
+          EmitFailure("CannotDeduceType", inst->getDebugLoc(), inst, ss.str());
+        else {
+          llvm::errs() << ss.str() << "\n";
+          llvm_unreachable("Cannot deduce adding type");
+        }
+        return addedSelects;
+      }
     }
     assert(addingType);
     assert(addingType->isFPOrFPVectorTy());
@@ -491,6 +508,7 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
     return;
   }
   Value *tostore = getDifferential(val);
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
   if (toset->getContext().supportsTypedPointers()) {
 #endif
@@ -501,6 +519,7 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
     assert(toset->getType() == tostore->getType()->getPointerElementType());
 #if LLVM_VERSION_MAJOR >= 15
   }
+#endif
 #endif
   BuilderM.CreateStore(toset, tostore);
 }
@@ -540,6 +559,7 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
   Value *metaforfree =
       unwrapM(storeInto, tbuild, antimap, UnwrapMode::LegalFullUnwrap);
   Type *T;
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
   if (metaforfree->getContext().supportsTypedPointers()) {
 #endif
@@ -548,6 +568,9 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
   } else {
     T = PointerType::getUnqual(metaforfree->getContext());
   }
+#endif
+#else
+  T = PointerType::getUnqual(metaforfree->getContext());
 #endif
   LoadInst *forfree = cast<LoadInst>(tbuild.CreateLoad(T, metaforfree));
   forfree->setMetadata(LLVMContext::MD_invariant_group, InvariantMD);
@@ -621,12 +644,14 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   }
 
   bool needsCast = false;
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
   if (origptr->getContext().supportsTypedPointers()) {
 #endif
     needsCast = origptr->getType()->getPointerElementType() != addingType;
 #if LLVM_VERSION_MAJOR >= 15
   }
+#endif
 #endif
 
   assert(ptr);

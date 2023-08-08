@@ -44,13 +44,15 @@ class TraceUtils {
 
 private:
   llvm::Value *trace;
-  llvm::Value *observations = nullptr;
-  llvm::Value *likelihood = nullptr;
+  llvm::Value *observations;
+  llvm::Value *likelihood;
 
 public:
   TraceInterface *interface;
   ProbProgMode mode;
   llvm::Function *newFunc;
+  llvm::SmallPtrSet<llvm::Function *, 4> sampleFunctions;
+  llvm::SmallPtrSet<llvm::Function *, 4> observeFunctions;
 
   constexpr static const char TraceParameterAttribute[] = "enzyme_trace";
   constexpr static const char ObservationsParameterAttribute[] =
@@ -59,13 +61,18 @@ public:
       "enzyme_likelihood";
 
 public:
-  TraceUtils(ProbProgMode mode, llvm::Function *newFunc, llvm::Argument *trace,
+  TraceUtils(ProbProgMode mode,
+             const llvm::SmallPtrSetImpl<llvm::Function *> &sampleFunctions,
+             const llvm::SmallPtrSetImpl<llvm::Function *> &observeFunctions,
+             llvm::Function *newFunc, llvm::Argument *trace,
              llvm::Argument *observations, llvm::Argument *likelihood,
              TraceInterface *interface);
 
   static TraceUtils *
-  FromClone(ProbProgMode mode, TraceInterface *interface,
-            llvm::Function *oldFunc,
+  FromClone(ProbProgMode mode,
+            const llvm::SmallPtrSetImpl<llvm::Function *> &sampleFunctions,
+            const llvm::SmallPtrSetImpl<llvm::Function *> &observeFunctions,
+            TraceInterface *interface, llvm::Function *oldFunc,
             llvm::ValueMap<const llvm::Value *, llvm::WeakTrackingVH>
                 &originalToNewFn);
 
@@ -141,5 +148,10 @@ public:
           Outlined,
       llvm::Type *RetTy, llvm::ArrayRef<llvm::Value *> Arguments,
       bool needsLikelihood = true, const llvm::Twine &Name = "");
+
+  bool isSampleCall(llvm::CallInst *call);
+
+  bool isObserveCall(llvm::CallInst *call);
 };
+
 #endif /* TraceUtils_h */

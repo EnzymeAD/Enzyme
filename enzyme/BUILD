@@ -14,7 +14,7 @@ cc_library(
 )
 cc_binary(
     name="enzyme-tblgen",
-    srcs=["tools/enzyme-tblgen/enzyme-tblgen.cpp"],
+    srcs=glob(["tools/enzyme-tblgen/*.cpp"]),
     deps = [
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TableGen",
@@ -25,7 +25,20 @@ cc_binary(
 gentbl(
     name = "call-derivatives",
     tbl_outs = [(
-        "-gen-derivatives",
+        "-gen-call-derivatives",
+        "CallDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/InstructionDerivatives.td",
+    td_srcs = ["Enzyme/BlasDerivatives.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+gentbl(
+    name = "inst-derivatives",
+    tbl_outs = [(
+        "-gen-inst-derivatives",
         "InstructionDerivatives.inc",
     )],
     tblgen = ":enzyme-tblgen",
@@ -49,7 +62,7 @@ gentbl(
     ],
 )
 gentbl(
-    name = "gen-binop-derivatives",
+    name = "binop-derivatives",
     tbl_outs = [(
         "-gen-binop-derivatives",
         "BinopDerivatives.inc",
@@ -119,7 +132,7 @@ cc_library(
     srcs = glob(["Enzyme/*.cpp", "Enzyme/TypeAnalysis/*.cpp", "Enzyme/Clang/EnzymeClang.cpp"]),
     hdrs = glob(["Enzyme/*.h", "Enzyme/TypeAnalysis/*.h"]),
     data = ["@llvm-project//clang:builtin_headers_gen"],
-    copts = ["-DENZYME_RUNPASS=1"],
+    copts = ["-DENZYME_RUNPASS=1", "-DENZYME_VERSION_MAJOR=0", "-DENZYME_VERSION_MINOR=0", "-DENZYME_VERSION_PATCH=79"],
     deps = [
         "@llvm-project//clang:ast",
         "@llvm-project//clang:basic",
@@ -132,6 +145,7 @@ cc_library(
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:IRReader",
         ":call-derivatives",
+        ":inst-derivatives",
         ":intr-derivatives",
         ":binop-derivatives",
         ":blas-derivatives",
