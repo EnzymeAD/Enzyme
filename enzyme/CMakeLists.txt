@@ -345,4 +345,4 @@ install(EXPORT EnzymeTargets
   DESTINATION "${INSTALL_CMAKE_DIR}" 
   COMPONENT   dev)
 
-install(FILES Enzyme/declarations.hpp DESTINATION include/enzyme)
+install(FILES Enzyme/include/enzyme/declarations.hpp DESTINATION include/enzyme)
