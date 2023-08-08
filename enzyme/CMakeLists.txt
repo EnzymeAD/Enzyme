@@ -3,7 +3,6 @@ project(Enzyme)
 
 include(CMakePackageConfigHelpers)
 
-
 set(ENZYME_MAJOR_VERSION 0)
 set(ENZYME_MINOR_VERSION 0)
 set(ENZYME_PATCH_VERSION 79)
@@ -230,7 +229,7 @@ set(INSTALL_INCLUDE_DIR include CACHE PATH "Installation directory for header fi
 if(WIN32 AND NOT CYGWIN)
   set(DEF_INSTALL_CMAKE_DIR CMake)
 else()
-  set(DEF_INSTALL_CMAKE_DIR lib/CMake/Enzyme)
+  set(DEF_INSTALL_CMAKE_DIR lib/cmake/Enzyme)
 endif()
 set(INSTALL_CMAKE_DIR ${DEF_INSTALL_CMAKE_DIR} CACHE PATH
   "Installation directory for CMake files")
