@@ -16,6 +16,7 @@
 
 enum class ArgType {
   fp,
+  ap,
   len,
   vincData,
   vincInc,
@@ -37,6 +38,7 @@ raw_ostream &operator<<(raw_fd_ostream &os, ArgType arg);
 using namespace llvm;
 
 const char *TyToString(ArgType ty);
+bool isVecLikeArg(ArgType ty);
 
 bool isArgUsed(StringRef toFind, const DagInit *toSearch);
 

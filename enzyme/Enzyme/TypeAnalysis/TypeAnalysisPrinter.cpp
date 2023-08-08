@@ -81,12 +81,14 @@ bool printTypeAnalyses(llvm::Function &F) {
     if (a.getType()->isFPOrFPVectorTy()) {
       dt = ConcreteType(a.getType()->getScalarType());
     } else if (a.getType()->isPointerTy()) {
+#if LLVM_VERSION_MAJOR < 18
       auto et = cast<PointerType>(a.getType())->getPointerElementType();
       if (et->isFPOrFPVectorTy()) {
         dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
       } else if (et->isPointerTy()) {
         dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
       }
+#endif
       dt.insert({}, BaseType::Pointer);
     } else if (a.getType()->isIntOrIntVectorTy()) {
       dt = ConcreteType(BaseType::Integer);
@@ -103,12 +105,15 @@ bool printTypeAnalyses(llvm::Function &F) {
   if (F.getReturnType()->isFPOrFPVectorTy()) {
     dt = ConcreteType(F.getReturnType()->getScalarType());
   } else if (F.getReturnType()->isPointerTy()) {
+#if LLVM_VERSION_MAJOR < 18
     auto et = cast<PointerType>(F.getReturnType())->getPointerElementType();
     if (et->isFPOrFPVectorTy()) {
       dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
     } else if (et->isPointerTy()) {
       dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
     }
+#endif
+    dt.insert({}, BaseType::Pointer);
   } else if (F.getReturnType()->isIntOrIntVectorTy()) {
     dt = ConcreteType(BaseType::Integer);
   }

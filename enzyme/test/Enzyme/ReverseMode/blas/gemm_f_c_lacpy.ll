@@ -52,6 +52,7 @@ entry:
 ; CHECK-NEXT:   %ret = alloca double
 ; CHECK-NEXT:   %byref.transpose.transa = alloca i8
 ; CHECK-NEXT:   %byref.transpose.transb = alloca i8
+; CHECK-NEXT:   %byref.int.one = alloca i64
 ; CHECK-NEXT:   %byref.constant.fp.1.0 = alloca double
 ; CHECK-NEXT:   %byref.constant.fp.0.0 = alloca double
 ; CHECK-NEXT:   %byref.constant.char.G = alloca i8
@@ -152,6 +153,8 @@ entry:
 ; CHECK-DAG:    %[[i39:.+]] = icmp eq i8 %ld.transb, 84
 ; CHECK-DAG:    %[[i40:.+]] = select i1 %[[i39]], i8 78, i8 %[[i38]]
 ; CHECK-NEXT:   store i8 %[[i40]], i8* %byref.transpose.transb
+; CHECK-NEXT:   store i64 1, i64* %byref.int.one
+; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
 ; CHECK-NEXT:   %fpcast.constant.fp.1.0 = bitcast double* %byref.constant.fp.1.0 to i8*
 ; CHECK-NEXT:   %loaded.trans7 = load i8, i8* %transa

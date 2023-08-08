@@ -2852,6 +2852,7 @@ public:
     if (!vd.isKnownPastPointer()) {
       if (looseTypeAnalysis) {
         if (auto CI = dyn_cast<CastInst>(MS.getOperand(0))) {
+#if LLVM_VERSION_MAJOR < 18
           if (auto PT = dyn_cast<PointerType>(CI->getSrcTy())) {
             auto ET = PT->getPointerElementType();
             while (1) {
@@ -2880,6 +2881,7 @@ public:
               goto known;
             }
           }
+#endif
         }
         if (auto gep = dyn_cast<GetElementPtrInst>(MS.getOperand(0))) {
           if (auto AT = dyn_cast<ArrayType>(gep->getSourceElementType())) {
@@ -2997,8 +2999,8 @@ public:
           if (start != 0) {
             Value *idxs[] = {
                 ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
-            op0 = BuilderZ.CreateInBoundsGEP(
-                op0->getType()->getPointerElementType(), op0, idxs);
+            op0 =
+                BuilderZ.CreateInBoundsGEP(BuilderZ.getInt8PtrTy(), op0, idxs);
           }
           SmallVector<Value *, 4> args = {op0, op1, length};
           if (op3)
@@ -3034,8 +3036,8 @@ public:
           if (start != 0) {
             Value *idxs[] = {
                 ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
-            op0 = Builder2.CreateInBoundsGEP(
-                op0->getType()->getPointerElementType(), op0, idxs);
+            op0 =
+                Builder2.CreateInBoundsGEP(Builder2.getInt8PtrTy(), op0, idxs);
           }
           SmallVector<Value *, 4> args = {op0, op1l, length};
           if (op3l)
@@ -3142,6 +3144,7 @@ public:
       if (looseTypeAnalysis) {
         for (auto val : {orig_dst, orig_src}) {
           if (auto CI = dyn_cast<CastInst>(val)) {
+#if LLVM_VERSION_MAJOR < 18
             if (auto PT = dyn_cast<PointerType>(CI->getSrcTy())) {
               auto ET = PT->getPointerElementType();
               while (1) {
@@ -3170,6 +3173,7 @@ public:
                 goto known;
               }
             }
+#endif
           }
           if (auto gep = dyn_cast<GetElementPtrInst>(val)) {
             if (auto AT = dyn_cast<ArrayType>(gep->getSourceElementType())) {
@@ -4356,8 +4360,7 @@ public:
                 Value *Idxs[] = {
                     ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
                     ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
-                auto vptr = B.CreateInBoundsGEP(
-                    ptr->getType()->getPointerElementType(), ptr, Idxs);
+                auto vptr = B.CreateInBoundsGEP(vt, ptr, Idxs);
 #if LLVM_VERSION_MAJOR >= 13
                 B.CreateAtomicRMW(op, vptr, vdif, align,
                                   AtomicOrdering::Monotonic, SyncScope::System);
@@ -4452,6 +4455,7 @@ public:
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
     auto vd = TR.query(origArg).Data0().ShiftIndices(DL, 0, size, 0);
     if (!vd.isKnownPastPointer()) {
+#if LLVM_VERSION_MAJOR < 18
       if (looseTypeAnalysis) {
         if (isa<CastInst>(origArg) &&
             cast<CastInst>(origArg)->getSrcTy()->isPointerTy() &&
@@ -4467,6 +4471,7 @@ public:
           goto knownF;
         }
       }
+#endif
       EmitFailure("CannotDeduceType", call.getDebugLoc(), &call,
                   "failed to deduce type of copy ", call);
 
@@ -4592,7 +4597,7 @@ public:
           BuilderZ.CreateStore(
               BuilderZ.CreatePointerCast(d_req_prev,
                                          Type::getInt8PtrTy(call.getContext())),
-              getMPIMemberPtr<MPI_Elem::Old>(BuilderZ, impialloc));
+              getMPIMemberPtr<MPI_Elem::Old>(BuilderZ, impialloc, impi));
           BuilderZ.CreateStore(impialloc, d_req);
 
           if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
@@ -4614,21 +4619,21 @@ public:
                                  len_arg, "mpirecv_malloccache");
             BuilderZ.CreateStore(
                 firstallocation,
-                getMPIMemberPtr<MPI_Elem::Buf>(BuilderZ, impialloc));
+                getMPIMemberPtr<MPI_Elem::Buf>(BuilderZ, impialloc, impi));
             BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call));
           } else {
             Value *ibuf = gutils->invertPointerM(call.getOperand(0), BuilderZ);
             if (ibuf->getType()->isIntegerTy())
               ibuf = BuilderZ.CreateIntToPtr(
                   ibuf, Type::getInt8PtrTy(call.getContext()));
-            BuilderZ.CreateStore(
-                ibuf, getMPIMemberPtr<MPI_Elem::Buf>(BuilderZ, impialloc));
+            BuilderZ.CreateStore(ibuf, getMPIMemberPtr<MPI_Elem::Buf>(
+                                           BuilderZ, impialloc, impi));
           }
 
           BuilderZ.CreateStore(
               BuilderZ.CreateZExtOrTrunc(
                   gutils->getNewFromOriginal(call.getOperand(1)), i64),
-              getMPIMemberPtr<MPI_Elem::Count>(BuilderZ, impialloc));
+              getMPIMemberPtr<MPI_Elem::Count>(BuilderZ, impialloc, impi));
 
           Value *dataType = gutils->getNewFromOriginal(call.getOperand(2));
           if (dataType->getType()->isIntegerTy())
@@ -4637,17 +4642,17 @@ public:
           BuilderZ.CreateStore(
               BuilderZ.CreatePointerCast(dataType,
                                          Type::getInt8PtrTy(call.getContext())),
-              getMPIMemberPtr<MPI_Elem::DataType>(BuilderZ, impialloc));
+              getMPIMemberPtr<MPI_Elem::DataType>(BuilderZ, impialloc, impi));
 
           BuilderZ.CreateStore(
               BuilderZ.CreateZExtOrTrunc(
                   gutils->getNewFromOriginal(call.getOperand(3)), i64),
-              getMPIMemberPtr<MPI_Elem::Src>(BuilderZ, impialloc));
+              getMPIMemberPtr<MPI_Elem::Src>(BuilderZ, impialloc, impi));
 
           BuilderZ.CreateStore(
               BuilderZ.CreateZExtOrTrunc(
                   gutils->getNewFromOriginal(call.getOperand(4)), i64),
-              getMPIMemberPtr<MPI_Elem::Tag>(BuilderZ, impialloc));
+              getMPIMemberPtr<MPI_Elem::Tag>(BuilderZ, impialloc, impi));
 
           Value *comm = gutils->getNewFromOriginal(call.getOperand(5));
           if (comm->getType()->isIntegerTy())
@@ -4656,7 +4661,7 @@ public:
           BuilderZ.CreateStore(
               BuilderZ.CreatePointerCast(comm,
                                          Type::getInt8PtrTy(call.getContext())),
-              getMPIMemberPtr<MPI_Elem::Comm>(BuilderZ, impialloc));
+              getMPIMemberPtr<MPI_Elem::Comm>(BuilderZ, impialloc, impi));
 
           BuilderZ.CreateStore(
               ConstantInt::get(
@@ -4664,7 +4669,7 @@ public:
                   (funcName == "MPI_Isend" || funcName == "PMPI_Isend")
                       ? (int)MPI_CallType::ISEND
                       : (int)MPI_CallType::IRECV),
-              getMPIMemberPtr<MPI_Elem::Call>(BuilderZ, impialloc));
+              getMPIMemberPtr<MPI_Elem::Call>(BuilderZ, impialloc, impi));
           // TODO old
         }
         if (Mode == DerivativeMode::ReverseModeGradient ||
@@ -4673,7 +4678,7 @@ public:
           getReverseBuilder(Builder2);
 
           Type *statusType = nullptr;
-
+#if LLVM_VERSION_MAJOR < 18
           if (Function *recvfn =
                   called->getParent()->getFunction("PMPI_Wait")) {
             auto statusArg = recvfn->arg_end();
@@ -4687,6 +4692,7 @@ public:
             if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
               statusType = PT->getPointerElementType();
           }
+#endif
           if (statusType == nullptr) {
             statusType = ArrayType::get(Type::getInt8Ty(call.getContext()), 24);
             llvm::errs() << " warning could not automatically determine mpi "
@@ -4700,8 +4706,8 @@ public:
             d_req = Builder2.CreateIntToPtr(
                 d_req, Type::getInt8PtrTy(call.getContext()));
           }
-          Type *helperTy =
-              llvm::PointerType::getUnqual(getMPIHelper(call.getContext()));
+          auto impi = getMPIHelper(call.getContext());
+          Type *helperTy = llvm::PointerType::getUnqual(impi);
           Value *helper = Builder2.CreatePointerCast(
               d_req, PointerType::getUnqual(helperTy));
           helper = Builder2.CreateLoad(helperTy, helper);
@@ -4711,14 +4717,14 @@ public:
           Value *firstallocation;
           firstallocation = Builder2.CreateLoad(
               Type::getInt8PtrTy(call.getContext()),
-              getMPIMemberPtr<MPI_Elem::Buf>(Builder2, helper));
+              getMPIMemberPtr<MPI_Elem::Buf>(Builder2, helper, impi));
           Value *len_arg = nullptr;
           if (auto C = dyn_cast<Constant>(
                   gutils->getNewFromOriginal(call.getOperand(1)))) {
             len_arg = Builder2.CreateZExtOrTrunc(C, i64);
           } else {
             len_arg = Builder2.CreateLoad(
-                i64, getMPIMemberPtr<MPI_Elem::Count>(Builder2, helper));
+                i64, getMPIMemberPtr<MPI_Elem::Count>(Builder2, helper, impi));
           }
           Value *tysize = nullptr;
           if (auto C = dyn_cast<Constant>(
@@ -4727,13 +4733,13 @@ public:
           } else {
             tysize = Builder2.CreateLoad(
                 Type::getInt8PtrTy(call.getContext()),
-                getMPIMemberPtr<MPI_Elem::DataType>(Builder2, helper));
+                getMPIMemberPtr<MPI_Elem::DataType>(Builder2, helper, impi));
           }
 
           Value *prev;
           prev = Builder2.CreateLoad(
               Type::getInt8PtrTy(call.getContext()),
-              getMPIMemberPtr<MPI_Elem::Old>(Builder2, helper));
+              getMPIMemberPtr<MPI_Elem::Old>(Builder2, helper, impi));
 
           Builder2.CreateStore(
               prev, Builder2.CreatePointerCast(
@@ -4945,17 +4951,16 @@ public:
         Builder2.CreateCondBr(isNull, endBlock, nonnullBlock);
         Builder2.SetInsertPoint(nonnullBlock);
 
-        Value *cache = Builder2.CreateLoad(
-            d_reqp->getType()->getPointerElementType(), d_reqp);
+        Value *cache = Builder2.CreateLoad(impi, d_reqp);
 
         Value *args[] = {
-            getMPIMemberPtr<MPI_Elem::Buf, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Count, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::DataType, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Src, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Tag, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Comm, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Call, false>(Builder2, cache),
+            getMPIMemberPtr<MPI_Elem::Buf, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Count, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::DataType, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Src, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Tag, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Comm, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Call, false>(Builder2, cache, impi),
             req};
         Type *types[sizeof(args) / sizeof(*args) - 1];
         for (size_t i = 0; i < sizeof(args) / sizeof(*args) - 1; i++)
@@ -5029,6 +5034,7 @@ public:
     if (funcName == "MPI_Waitall" || funcName == "PMPI_Waitall") {
       Value *d_reqp = nullptr;
       auto impi = getMPIHelper(call.getContext());
+      PointerType *reqType = PointerType::getUnqual(impi);
       if (Mode == DerivativeMode::ReverseModePrimal ||
           Mode == DerivativeMode::ReverseModeCombined) {
         Value *count = gutils->getNewFromOriginal(call.getOperand(0));
@@ -5049,8 +5055,7 @@ public:
 
         Function *dsave = getOrInsertDifferentialWaitallSave(
             *gutils->oldFunc->getParent(),
-            {count->getType(), req->getType(), d_req->getType()},
-            PointerType::getUnqual(impi));
+            {count->getType(), req->getType(), d_req->getType()}, reqType);
 
         d_reqp = BuilderZ.CreateCall(dsave, {count, req, d_req});
         cast<CallInst>(d_reqp)->setCallingConv(dsave->getCallingConv());
@@ -5071,8 +5076,7 @@ public:
             lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2);
 
         if (Mode != DerivativeMode::ReverseModeCombined) {
-          d_reqp = BuilderZ.CreatePHI(
-              PointerType::getUnqual(PointerType::getUnqual(impi)), 0);
+          d_reqp = BuilderZ.CreatePHI(PointerType::getUnqual(reqType), 0);
           d_reqp = gutils->cacheForReverse(BuilderZ, d_reqp,
                                            getIndex(&call, CacheType::Tape));
         }
@@ -5104,10 +5108,8 @@ public:
         idx->addIncoming(inc, eloopBlock);
 
         Value *idxs[] = {idx};
-        Value *req = Builder2.CreateInBoundsGEP(
-            req_orig->getType()->getPointerElementType(), req_orig, idxs);
-        Value *d_req = Builder2.CreateInBoundsGEP(
-            d_reqp->getType()->getPointerElementType(), d_reqp, idxs);
+        Value *req = Builder2.CreateInBoundsGEP(reqType, req_orig, idxs);
+        Value *d_req = Builder2.CreateInBoundsGEP(reqType, d_reqp, idxs);
 
         d_req = Builder2.CreateLoad(
             PointerType::getUnqual(impi),
@@ -5120,17 +5122,16 @@ public:
         Builder2.CreateCondBr(isNull, eloopBlock, nonnullBlock);
         Builder2.SetInsertPoint(nonnullBlock);
 
-        Value *cache = Builder2.CreateLoad(
-            d_req->getType()->getPointerElementType(), d_req);
+        Value *cache = Builder2.CreateLoad(impi, d_req);
 
         Value *args[] = {
-            getMPIMemberPtr<MPI_Elem::Buf, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Count, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::DataType, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Src, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Tag, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Comm, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Call, false>(Builder2, cache),
+            getMPIMemberPtr<MPI_Elem::Buf, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Count, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::DataType, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Src, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Tag, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Comm, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Call, false>(Builder2, cache, impi),
             req};
         Type *types[sizeof(args) / sizeof(*args) - 1];
         for (size_t i = 0; i < sizeof(args) / sizeof(*args) - 1; i++)
@@ -5236,6 +5237,7 @@ public:
               shadow, Type::getInt8PtrTy(call.getContext()));
 
         Type *statusType = nullptr;
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
         if (called->getContext().supportsTypedPointers()) {
 #endif
@@ -5253,6 +5255,7 @@ public:
           }
 #if LLVM_VERSION_MAJOR >= 15
         }
+#endif
 #endif
         if (statusType == nullptr) {
           statusType = ArrayType::get(Type::getInt8Ty(call.getContext()), 24);
@@ -5493,8 +5496,8 @@ public:
               shadow, Type::getInt8PtrTy(call.getContext()));
 
         ConcreteType CT = TR.firstPointer(1, call.getOperand(0), &call);
-        Type *MPI_OP_Ptr_type =
-            PointerType::getUnqual(Type::getInt8PtrTy(call.getContext()));
+        auto MPI_OP_type = Type::getInt8PtrTy(call.getContext());
+        Type *MPI_OP_Ptr_type = PointerType::getUnqual(MPI_OP_type);
 
         Value *count = gutils->getNewFromOriginal(call.getOperand(1));
         if (!forwardMode)
@@ -5591,8 +5594,8 @@ public:
               /*datatype*/ datatype,
               /*op (MPI_SUM)*/
               getOrInsertOpFloatSum(*gutils->newFunc->getParent(),
-                                    MPI_OP_Ptr_type, CT, root->getType(),
-                                    Builder2),
+                                    MPI_OP_Ptr_type, MPI_OP_type, CT,
+                                    root->getType(), Builder2),
               /*int root*/ root,
               /*comm*/ comm,
           };
@@ -6676,8 +6679,8 @@ public:
                              sendlen_arg, "mpireduce_malloccache");
 
         ConcreteType CT = TR.firstPointer(1, orig_sendbuf, &call);
-        Type *MPI_OP_Ptr_type =
-            PointerType::getUnqual(Type::getInt8PtrTy(call.getContext()));
+        auto MPI_OP_type = Type::getInt8PtrTy(call.getContext());
+        Type *MPI_OP_Ptr_type = PointerType::getUnqual(MPI_OP_type);
 
         // 2. reduce diff(recvbuffer) then scatter to corresponding input node's
         // intermediate buffer
@@ -6695,8 +6698,8 @@ public:
               /*recvtype*/ sendtype,
               /*op (MPI_SUM)*/
               getOrInsertOpFloatSum(*gutils->newFunc->getParent(),
-                                    MPI_OP_Ptr_type, CT, call.getType(),
-                                    Builder2),
+                                    MPI_OP_Ptr_type, MPI_OP_type, CT,
+                                    call.getType(), Builder2),
               /*comm*/ comm,
           };
           Type *types[sizeof(args) / sizeof(*args)];
@@ -6860,14 +6863,17 @@ public:
         if (call.paramHasAttr(i, Attribute::StructRet)) {
           structAttrs[args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
-              // TODO persist types
               Attribute::get(call.getContext(), "enzyme_sret")
-          // Attribute::get(orig->getContext(), "enzyme_sret",
-          // orig->getParamAttr(i, Attribute::StructRet).getValueAsType());
 #else
               Attribute::get(call.getContext(), "enzyme_sret")
 #endif
           );
+#if LLVM_VERSION_MAJOR >= 13
+          // TODO
+          // structAttrs[args.size()].push_back(Attribute::get(
+          //     call.getContext(), Attribute::AttrKind::ElementType,
+          //     call.getParamAttr(i, Attribute::StructRet).getValueAsType()));
+#endif
         }
         if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
           structAttrs[args.size()].push_back(
@@ -6940,26 +6946,34 @@ public:
           if (gutils->getWidth() == 1) {
             structAttrs[args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
-                // TODO persist types
                 Attribute::get(call.getContext(), "enzyme_sret")
-            // Attribute::get(orig->getContext(), "enzyme_sret",
             // orig->getParamAttr(i, Attribute::StructRet).getValueAsType());
 #else
                 Attribute::get(call.getContext(), "enzyme_sret")
 #endif
             );
+#if LLVM_VERSION_MAJOR >= 13
+            // TODO
+            // structAttrs[args.size()].push_back(Attribute::get(
+            //     call.getContext(), Attribute::AttrKind::ElementType,
+            //     call.getParamAttr(i,
+            //     Attribute::StructRet).getValueAsType()));
+#endif
           } else {
             structAttrs[args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
-                // TODO persist types
                 Attribute::get(call.getContext(), "enzyme_sret")
-            // Attribute::get(orig->getContext(), "enzyme_sret_v",
-            // gutils->getShadowType(orig->getParamAttr(ii,
-            // Attribute::StructRet).getValueAsType()));
 #else
                 Attribute::get(call.getContext(), "enzyme_sret_v")
 #endif
             );
+#if LLVM_VERSION_MAJOR >= 13
+            // TODO
+            // structAttrs[args.size()].push_back(Attribute::get(
+            //     call.getContext(), Attribute::AttrKind::ElementType,
+            //     call.getParamAttr(i,
+            //     Attribute::StructRet).getValueAsType()));
+#endif
           }
         }
 
@@ -9119,6 +9133,7 @@ public:
 
                   Type *elTy = Type::getInt8Ty(call.getContext());
                   std::string name = "";
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
                   if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -9141,6 +9156,7 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
                   }
 #endif
+#endif
                   auto rule = [&](Value *anti) {
                     Value *replacement = bb.CreateAlloca(elTy, Size, name);
                     if (name.size() == 0)
@@ -9159,6 +9175,7 @@ public:
                       cast<AllocaInst>(replacement)->setAlignment(Alignment);
 #endif
                     }
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
                     if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -9170,10 +9187,11 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
                     }
 #endif
-
+#endif
                     if (int AS = cast<PointerType>(anti->getType())
                                      ->getAddressSpace()) {
                       llvm::PointerType *PT;
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
                       if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -9183,6 +9201,7 @@ public:
                       } else {
                         PT = PointerType::get(anti->getContext(), AS);
                       }
+#endif
 #endif
                       replacement = bb.CreateAddrSpaceCast(replacement, PT);
                       cast<Instruction>(replacement)
@@ -9325,6 +9344,7 @@ public:
         }
         Type *elTy = Type::getInt8Ty(call.getContext());
         Instruction *I = nullptr;
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
         if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -9345,6 +9365,7 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
         }
 #endif
+#endif
         Value *replacement = B.CreateAlloca(elTy, Size);
         if (I)
           replacement->takeName(I);
@@ -9362,6 +9383,7 @@ public:
           cast<AllocaInst>(replacement)->setAlignment(Alignment);
 #endif
         }
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
         if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -9373,9 +9395,11 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
         }
 #endif
+#endif
         if (int AS = cast<PointerType>(call.getType())->getAddressSpace()) {
 
           llvm::PointerType *PT;
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
           if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -9384,6 +9408,7 @@ public:
           } else {
             PT = PointerType::get(call.getContext(), AS);
           }
+#endif
 #endif
           replacement = B.CreateAddrSpaceCast(replacement, PT);
           cast<Instruction>(replacement)
@@ -9716,6 +9741,7 @@ public:
     if (funcName == "cuStreamCreate") {
       Value *val = nullptr;
       llvm::Type *PT = Type::getInt8PtrTy(call.getContext());
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
       if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -9723,6 +9749,7 @@ public:
           PT = call.getArgOperand(0)->getType()->getPointerElementType();
 #if LLVM_VERSION_MAJOR >= 15
       }
+#endif
 #endif
       if (Mode == DerivativeMode::ReverseModePrimal ||
           Mode == DerivativeMode::ReverseModeCombined) {
@@ -9785,6 +9812,7 @@ public:
 
       Value *val;
       llvm::Type *PT = Type::getInt8PtrTy(call.getContext());
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
       if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -9792,6 +9820,7 @@ public:
           PT = call.getArgOperand(0)->getType()->getPointerElementType();
 #if LLVM_VERSION_MAJOR >= 15
       }
+#endif
 #endif
       if (!constval) {
         Value *stream = nullptr;
