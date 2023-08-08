@@ -22,7 +22,7 @@ declare double @__enzyme_fwddiff(double (double)*, ...)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:    %0 = fmul fast double %x, %x
 ; CHECK-NEXT:    %1 = call fast double @llvm.exp.f64(double %0)
-; CHECK-NEXT:    %2 = fmul fast double %1, 0x3FF20DD750429B6D
-; CHECK-NEXT:    %3 = fmul fast double %2, %"x'"
+; CHECK-NEXT:    %2 = fmul fast double 0x3FF20DD750429B6D, %1
+; CHECK-NEXT:    %3 = fmul fast double %"x'", %2
 ; CHECK-NEXT:    ret double %3
 ; CHECK-NEXT: }

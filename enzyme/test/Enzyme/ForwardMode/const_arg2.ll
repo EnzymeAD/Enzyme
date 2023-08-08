@@ -38,7 +38,7 @@ entry:
 ; CHECK-NEXT:   %0 = fmul fast double %"a1'", %a1
 ; CHECK-NEXT:   %1 = fmul fast double %"a1'", %a1
 ; CHECK-NEXT:   %2 = fadd fast double %0, %1
-; CHECK-NEXT:   store double %a3, double* %a0, align 8
 ; CHECK-NEXT:   store double %2, double* %"a0'", align 8
+; CHECK-NEXT:   store double %a3, double* %a0, align 8
 ; CHECK-NEXT:   ret double %2
 ; CHECK-NEXT: }

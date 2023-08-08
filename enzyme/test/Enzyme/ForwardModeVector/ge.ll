@@ -75,10 +75,10 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:    br label [[FOR_BODY:%.*]]
 ; CHECK:       for.cond.cleanup:
-; CHECK-NEXT:    store double 0.000000e+00, double* [[X]], align 8, !tbaa !2
 ; CHECK-NEXT:    store double 0.000000e+00, double* [[TMP2:%.*]], align 8
 ; CHECK-NEXT:    store double 0.000000e+00, double* [[TMP3:%.*]], align 8
 ; CHECK-NEXT:    store double 0.000000e+00, double* [[TMP4:%.*]], align 8
+; CHECK-NEXT:    store double 0.000000e+00, double* [[X]], align 8, !tbaa !2
 ; CHECK-NEXT:    ret [3 x double] [[TMP20:%.*]]
 ; CHECK:       for.body:
 ; CHECK-NEXT:    [[TMP0_0:%.*]] = phi {{(fast )?}}double [ 0.000000e+00, [[ENTRY:%.*]] ], [ [[TMP13:%.*]], [[FOR_BODY]] ]
@@ -100,10 +100,10 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:    %"'ipl4" = load double, double* %"arrayidx'ipg2", align 8, !tbaa !2
 ; CHECK-NEXT:    [[TMP5:%.*]] = load double, double* [[ARRAYIDX]], align 8, !tbaa !2
 ; CHECK-NEXT:    [[TMP6:%.*]] = fmul fast double %"'ipl", [[TMP5]]
-; CHECK-NEXT:    [[TMP7:%.*]] = fadd fast double [[TMP6]], [[TMP6]]
 ; CHECK-NEXT:    [[TMP8:%.*]] = fmul fast double %"'ipl3", [[TMP5]]
-; CHECK-NEXT:    [[TMP9:%.*]] = fadd fast double [[TMP8]], [[TMP8]]
 ; CHECK-NEXT:    [[TMP10:%.*]] = fmul fast double %"'ipl4", [[TMP5]]
+; CHECK-NEXT:    [[TMP7:%.*]] = fadd fast double [[TMP6]], [[TMP6]]
+; CHECK-NEXT:    [[TMP9:%.*]] = fadd fast double [[TMP8]], [[TMP8]]
 ; CHECK-NEXT:    [[TMP11:%.*]] = fadd fast double [[TMP10]], [[TMP10]]
 ; CHECK-NEXT:    [[TMP13]] = fadd fast double [[TMP0_0]], [[TMP7]]
 ; CHECK-NEXT:    [[TMP14:%.*]] = insertvalue [3 x double] undef, double [[TMP13]], 0

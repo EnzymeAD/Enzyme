@@ -6,10 +6,13 @@ include(CMakePackageConfigHelpers)
 
 set(ENZYME_MAJOR_VERSION 0)
 set(ENZYME_MINOR_VERSION 0)
-set(ENZYME_PATCH_VERSION 65)
+set(ENZYME_PATCH_VERSION 79)
 set(ENZYME_VERSION
   ${ENZYME_MAJOR_VERSION}.${ENZYME_MINOR_VERSION}.${ENZYME_PATCH_VERSION})
 
+add_definitions(-DENZYME_VERSION_MAJOR=${ENZYME_MAJOR_VERSION})
+add_definitions(-DENZYME_VERSION_MINOR=${ENZYME_MINOR_VERSION})
+add_definitions(-DENZYME_VERSION_PATCH=${ENZYME_PATCH_VERSION})
 
 SET(CMAKE_CXX_FLAGS "-Wall -fPIC -fno-rtti ${CMAKE_CXX_FLAGS}")
 SET(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g -ggdb")
@@ -205,8 +208,12 @@ add_definitions(${LLVM_DEFINITIONS})
 include_directories(${LLVM_INCLUDE_DIRS})
 message("LLVM_INSTALL_PREFIX: ${LLVM_INSTALL_PREFIX}")
 message("LLVM_INCLUDE_DIRS: ${LLVM_INCLUDE_DIRS}")
-message("found llvm definitions " ${LLVM_DEFINITIONS})
-message("found llvm version " ${LLVM_VERSION_MAJOR})
+message("found LLVM definitions " ${LLVM_DEFINITIONS})
+message("found LLVM version " ${LLVM_VERSION_MAJOR})
+
+if(LLVM_VERSION_MAJOR LESS 9)
+  message(FATAL_ERROR "LLVM version < 9 is not supported")
+endif()
 
 option(ENZYME_FLANG_VERSION "Build for non-version compliant FLANG" OFF)
 if (ENZYME_FLANG_VERSION)

@@ -36,12 +36,12 @@ declare dso_local double @__enzyme_autodiff(i8*, i1 zeroext, double*, double*)
 
 ; CHECK: define internal void @diffef(i1 zeroext %z, double* nocapture %x, double* nocapture %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[augsubf:.+]] = call fast double @augmented_subf(i1 %z, double* %x, double* %"x'")
+; CHECK-NEXT:   %[[augsubf:.+]] = call fast double @augmented_subf(i1 zeroext %z, double* %x, double* %"x'")
 ; CHECK-NEXT:   %[[arrayidxipge:.+]] = getelementptr inbounds double, double* %"x'", i64 1
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %x, i64 1
 ; CHECK-NEXT:   store double 2.000000e+00, double* %arrayidx, align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %[[arrayidxipge]], align 8
-; CHECK-NEXT:   call void @diffesubf(i1 %z, double* nonnull %x, double* %"x'", double %[[augsubf]])
+; CHECK-NEXT:   call void @diffesubf(i1 zeroext %z, double* nonnull %x, double* %"x'", double %[[augsubf]])
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
@@ -70,9 +70,9 @@ declare dso_local double @__enzyme_autodiff(i8*, i1 zeroext, double*, double*)
 ; CHECK: invertif.then:                                    ; preds = %entry
 ; CHECK-NEXT:   %[[px:.+]] = load double, double* %"x'"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'", align 8
-; CHECK-NEXT:   %m0diffe = fmul fast double %[[px]], %0
-; CHECK-NEXT:   %m1diffe = fmul fast double %[[px]], %0
-; CHECK-NEXT:   %[[de:.+]] = fadd fast double %m0diffe, %m1diffe
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %[[px]], %0
+; CHECK-NEXT:   %[[m1diffe:.+]] = fmul fast double %[[px]], %0
+; CHECK-NEXT:   %[[de:.+]] = fadd fast double %[[m0diffe]], %[[m1diffe]]
 ; CHECK-NEXT:   %[[ppx:.+]] = load double, double* %"x'"
 ; CHECK-NEXT:   %[[postx:.+]] = fadd fast double %[[ppx]], %[[de]]
 ; CHECK-NEXT:   store double %[[postx]], double* %"x'"

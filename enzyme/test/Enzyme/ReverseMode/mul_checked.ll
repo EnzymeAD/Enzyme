@@ -20,11 +20,11 @@ declare double @__enzyme_autodiff(double (double, double)*, ...)
 ; CHECK: define internal {{(dso_local )?}}{ double, double } @diffetester(double %x, double %y, double %[[differet:.+]])
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[diffex:.+]] = fmul fast double %[[differet]], %y
-; CHECK-NEXT:   %0 = fcmp fast oeq double %differeturn, 0.000000e+00
+; CHECK-NEXT:   %[[i0:.+]] = fcmp fast oeq double %differeturn, 0.000000e+00
+; CHECK-NEXT:   %[[i2:.+]] = select {{(fast )?}}i1 %[[i0]], double 0.000000e+00, double %[[diffex]]
 ; CHECK-NEXT:   %[[diffey:.+]] = fmul fast double %[[differet]], %x
-; CHECK-NEXT:   %1 = fcmp fast oeq double %differeturn, 0.000000e+00
-; CHECK-NEXT:   %2 = select {{(fast )?}}i1 %0, double 0.000000e+00, double %[[diffex]]
-; CHECK-NEXT:   %3 = select {{(fast )?}}i1 %1, double 0.000000e+00, double %[[diffey]]
-; CHECK-NEXT:   %4 = insertvalue { double, double } undef, double %2, 0
-; CHECK-NEXT:   %5 = insertvalue { double, double } %4, double %3, 1
-; CHECK-NEXT:   ret { double, double } %5
+; CHECK-NEXT:   %[[i1:.+]] = fcmp fast oeq double %differeturn, 0.000000e+00
+; CHECK-NEXT:   %[[i3:.+]] = select {{(fast )?}}i1 %[[i1]], double 0.000000e+00, double %[[diffey]]
+; CHECK-NEXT:   %[[i4:.+]] = insertvalue { double, double } undef, double %[[i2]], 0
+; CHECK-NEXT:   %[[i5:.+]] = insertvalue { double, double } %[[i4]], double %[[i3]], 1
+; CHECK-NEXT:   ret { double, double } %[[i5]]

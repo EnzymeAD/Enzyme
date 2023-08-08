@@ -47,13 +47,13 @@ declare i8* @malloc(i64)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = alloca { { i8*, i8* }, float* }
 ; CHECK-NEXT:   %1 = getelementptr inbounds { { i8*, i8* }, float* }, { { i8*, i8* }, float* }* %0, i32 0, i32 0
-; CHECK-NEXT:   %tmp11 = call noalias nonnull dereferenceable(140) dereferenceable_or_null(140) i8* @malloc(i64 140)
-; CHECK-NEXT:   %2 = getelementptr inbounds { i8*, i8* }, { i8*, i8* }* %1, i32 0, i32 1
-; CHECK-NEXT:   store i8* %tmp11, i8** %2
 ; CHECK-NEXT:   %"tmp11'mi" = call noalias nonnull dereferenceable(140) dereferenceable_or_null(140) i8* @malloc(i64 140)
-; CHECK-NEXT:   %3 = getelementptr inbounds { i8*, i8* }, { i8*, i8* }* %1, i32 0, i32 0
-; CHECK-NEXT:   store i8* %"tmp11'mi", i8** %3
+; CHECK-NEXT:   %[[a3:.+]] = getelementptr inbounds { i8*, i8* }, { i8*, i8* }* %1, i32 0, i32 0
+; CHECK-NEXT:   store i8* %"tmp11'mi", i8** %[[a3]]
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(140) dereferenceable_or_null(140) %"tmp11'mi", i8 0, i64 140, i1 false)
+; CHECK-NEXT:   %tmp11 = call noalias nonnull dereferenceable(140) dereferenceable_or_null(140) i8* @malloc(i64 140)
+; CHECK-NEXT:   %[[a2:.+]] = getelementptr inbounds { i8*, i8* }, { i8*, i8* }* %1, i32 0, i32 1
+; CHECK-NEXT:   store i8* %tmp11, i8** %[[a2]]
 ; CHECK-NEXT:   %"tmp12'ipc" = bitcast i8* %"tmp11'mi" to float*
 ; CHECK-NEXT:   %tmp12 = bitcast i8* %tmp11 to float*
 ; CHECK-NEXT:   %tmp13 = ptrtoint float* %tmp12 to i64
@@ -71,8 +71,8 @@ declare i8* @malloc(i64)
 
 ; CHECK: define internal void @diffekernel_main(float* %tmp1, float* %"tmp1'", { i8*, i8* } %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %tmp11 = extractvalue { i8*, i8* } %tapeArg, 1
 ; CHECK-NEXT:   %"tmp11'mi" = extractvalue { i8*, i8* } %tapeArg, 0
+; CHECK-NEXT:   %tmp11 = extractvalue { i8*, i8* } %tapeArg, 1
 ; CHECK-NEXT:   %"tmp12'ipc" = bitcast i8* %"tmp11'mi" to float*
 ; CHECK-NEXT:   %tmp12 = bitcast i8* %tmp11 to float*
 ; CHECK-NEXT:   %"tmp13'ipc" = ptrtoint float* %"tmp12'ipc" to i64
@@ -87,7 +87,7 @@ declare i8* @malloc(i64)
 ; CHECK-NEXT:   %1 = load float, float* %"tmp1'", align 4
 ; CHECK-NEXT:   %2 = fadd fast float %1, %0
 ; CHECK-NEXT:   store float %2, float* %"tmp1'", align 4
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"tmp11'mi")
-; CHECK-NEXT:   tail call void @free(i8* %tmp11)
+; CHECK-NEXT:   call void @free(i8* nonnull %"tmp11'mi")
+; CHECK-NEXT:   call void @free(i8* %tmp11)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

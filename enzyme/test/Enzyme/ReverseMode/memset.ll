@@ -40,16 +40,16 @@ define void @df(double* %x, double* %xp, double* %y, double* %dy) {
 ; CHECK-NEXT:   %2 = load double, double* %"x'"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'"
 ; CHECK-NEXT:   %3 = fadd fast double %1, %2
-; CHECK-NEXT:   %m0diffex1 = fmul fast double %3, %y1
-; CHECK-NEXT:   %m1diffey1 = fmul fast double %3, %x1
-; CHECK-NEXT:   %4 = fadd fast double 0.000000e+00, %m0diffex1
-; CHECK-NEXT:   %5 = fadd fast double 0.000000e+00, %m1diffey1
-; CHECK-NEXT:   %6 = load double, double* %"y'"
-; CHECK-NEXT:   %7 = fadd fast double %6, %5
-; CHECK-NEXT:   store double %7, double* %"y'"
+; CHECK-NEXT:   %[[m0diffex1:.+]] = fmul fast double %3, %y1
+; CHECK-NEXT:   %[[i4:.+]] = fadd fast double 0.000000e+00, %[[m0diffex1]]
+; CHECK-NEXT:   %[[m1diffey1:.+]] = fmul fast double %3, %x1
+; CHECK-NEXT:   %[[i5:.+]] = fadd fast double 0.000000e+00, %[[m1diffey1]]
+; CHECK-NEXT:   %[[i6:.+]] = load double, double* %"y'"
+; CHECK-NEXT:   %[[i7:.+]] = fadd fast double %[[i6]], %[[i5]]
+; CHECK-NEXT:   store double %[[i7]], double* %"y'"
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* %"yptr'ipc", i8 0, i64 8, i1 false)
-; CHECK-NEXT:   %8 = load double, double* %"x'"
-; CHECK-NEXT:   %9 = fadd fast double %8, %4
-; CHECK-NEXT:   store double %9, double* %"x'"
+; CHECK-NEXT:   %[[i8:.+]] = load double, double* %"x'"
+; CHECK-NEXT:   %[[i9:.+]] = fadd fast double %[[i8]], %[[i4]]
+; CHECK-NEXT:   store double %[[i9]], double* %"x'"
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

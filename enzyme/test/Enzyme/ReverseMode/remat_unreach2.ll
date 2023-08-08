@@ -79,14 +79,14 @@ declare dso_local void @_Z17__enzyme_autodiffPFddiEz(...)
 
 ; CHECK: define internal void @diffematvec(double* %tmp4, double* %"tmp4'", i1 %cmp, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %tcall = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   %"tcall'mi" = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(128) dereferenceable_or_null(128) %"tcall'mi", i8 0, i64 128, i1 false)
+; CHECK-NEXT:   %tcall = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   %"tmp'ipc" = bitcast i8* %"tcall'mi" to double*
 ; CHECK-NEXT:   %tmp = bitcast i8* %tcall to double*
-; CHECK-NEXT:   %omem = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   %"omem'mi" = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(128) dereferenceable_or_null(128) %"omem'mi", i8 0, i64 128, i1 false)
+; CHECK-NEXT:   %omem = call noalias nonnull dereferenceable(128) dereferenceable_or_null(128) i8* @malloc(i64 128)
 ; CHECK-NEXT:   %"tmp19'ipc" = bitcast i8* %"omem'mi" to double*
 ; CHECK-NEXT:   %tmp19 = bitcast i8* %omem to double*
 ; CHECK-NEXT:   %spec.select = select i1 %cmp, double* null, double* %"tmp19'ipc"
@@ -127,10 +127,10 @@ declare dso_local void @_Z17__enzyme_autodiffPFddiEz(...)
 ; CHECK-NEXT:   %3 = load double, double* %"tmp4'", align 8
 ; CHECK-NEXT:   %4 = fadd fast double %3, %6
 ; CHECK-NEXT:   store double %4, double* %"tmp4'", align 8
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"omem'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %omem)
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"tcall'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %tcall)
+; CHECK-NEXT:   call void @free(i8* nonnull %"omem'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %omem)
+; CHECK-NEXT:   call void @free(i8* nonnull %"tcall'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %tcall)
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.body.i.i.i:                             ; preds = %invertfor.body.i, %incinvertfor.body.i.i.i
@@ -148,19 +148,19 @@ declare dso_local void @_Z17__enzyme_autodiffPFddiEz(...)
 ; CHECK-NEXT:   br label %invertfor.body.i.i.i
 
 ; CHECK: invertfor.body.i: 
-; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 3, %el ], [ %14, %incinvertfor.body.i ]
+; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 3, %el ], [ %[[i14:.+]], %incinvertfor.body.i ]
 ; CHECK-NEXT:   %tmp28_unwrap = load double, double* %tmp19, align 8
-; CHECK-NEXT:   %m0diffetmp28 = fmul fast double %2, %tmp28_unwrap
-; CHECK-NEXT:   %m1diffetmp28 = fmul fast double %2, %tmp28_unwrap
-; CHECK-NEXT:   %9 = fadd fast double %m0diffetmp28, %m1diffetmp28
-; CHECK-NEXT:   %10 = load double, double* %"tmp19'ipc", align 8
-; CHECK-NEXT:   %11 = fadd fast double %10, %9
-; CHECK-NEXT:   store double %11, double* %"tmp19'ipc", align 8
-; CHECK-NEXT:   %12 = icmp eq i64 %"iv1'ac.0", 0
-; CHECK-NEXT:   %13 = select {{(fast )?}}i1 %12, double 0.000000e+00, double %2
-; CHECK-NEXT:   br i1 %12, label %invertfor.body.i.i.i, label %incinvertfor.body.i
+; CHECK-NEXT:   %[[m0diffetmp28:.+]] = fmul fast double %2, %tmp28_unwrap
+; CHECK-NEXT:   %[[m1diffetmp28:.+]] = fmul fast double %2, %tmp28_unwrap
+; CHECK-NEXT:   %[[i9:.+]] = fadd fast double %[[m0diffetmp28]], %[[m1diffetmp28]]
+; CHECK-NEXT:   %[[i10:.+]] = load double, double* %"tmp19'ipc", align 8
+; CHECK-NEXT:   %[[i11:.+]] = fadd fast double %[[i10]], %[[i9]]
+; CHECK-NEXT:   store double %[[i11]], double* %"tmp19'ipc", align 8
+; CHECK-NEXT:   %[[i12:.+]] = icmp eq i64 %"iv1'ac.0", 0
+; CHECK-NEXT:   %{{.*}} = select {{(fast )?}}i1 %[[i12]], double 0.000000e+00, double %2
+; CHECK-NEXT:   br i1 %[[i12]], label %invertfor.body.i.i.i, label %incinvertfor.body.i
 
 ; CHECK: incinvertfor.body.i:                              ; preds = %invertfor.body.i
-; CHECK-NEXT:   %14 = add nsw i64 %"iv1'ac.0", -1
+; CHECK-NEXT:   %[[i14]] = add nsw i64 %"iv1'ac.0", -1
 ; CHECK-NEXT:   br label %invertfor.body.i
 ; CHECK-NEXT: }

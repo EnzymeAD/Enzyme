@@ -29,7 +29,13 @@
 
 #include <llvm/Config/llvm-config.h>
 
+#include "llvm/ADT/ImmutableSet.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
+
+#include "llvm/ADT/STLExtras.h"
+
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"
@@ -47,9 +53,7 @@
 #include "ActivityAnalysis.h"
 #include "Utils.h"
 
-#if LLVM_VERSION_MAJOR >= 9
 #include "llvm/Demangle/Demangle.h"
-#endif
 
 #include "FunctionUtils.h"
 #include "LibraryFuncs.h"
@@ -91,78 +95,13 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZNSt16allocator_traitsISaIdEE10deallocate",
     "_ZNSaIcED1Ev",
     "_ZNSaIcEC1Ev",
-#if LLVM_VERSION_MAJOR <= 8
-    // TODO this returns allocated memory and thus can be an active value
-    // "_ZNSt16allocator_traits",
-    "_ZN4core3fmt",
-    "_ZN3std2io5stdio6_print",
-    "_ZNSt7__cxx1112basic_string",
-    "_ZNSt7__cxx1118basic_string",
-    "_ZNKSt7__cxx1112basic_string",
-    "_ZNKSt3__112basic_string",
-    "_ZN9__gnu_cxx12__to_xstringINSt7__cxx1112basic_string",
-    "_ZNSt12__basic_file",
-    "_ZNSt15basic_streambufIcSt11char_traits",
-    "_ZNSt13basic_filebufIcSt11char_traits",
-    "_ZNSt14basic_ofstreamIcSt11char_traits",
-    "_ZNSi4readEPcl",
-    "_ZNKSt14basic_ifstreamIcSt11char_traits",
-    "_ZNSt14basic_ifstreamIcSt11char_traits",
-    "_ZNSo5writeEPKcl",
-    "_ZNSt19basic_ostringstreamIcSt11char_traits",
-    "_ZStrsIcSt11char_traitsIcESaIcEERSt13basic_istream",
-    "_ZStlsIcSt11char_traitsIcESaIcEERSt13basic_ostream",
-    "_ZNSt7__cxx1119basic_ostringstreamIcSt11char_traits",
-    "_ZNKSt7__cxx1119basic_ostringstreamIcSt11char_traits",
-    "_ZNSoD1Ev",
-    "_ZNSoC1EPSt15basic_streambufIcSt11char_traits",
-    "_ZStlsISt11char_traitsIcEERSt13basic_ostream",
-    "_ZSt16__ostream_insert",
-    "_ZStlsIwSt11char_traitsIwEERSt13basic_ostream",
-    "_ZNSo9_M_insert",
-    "_ZNSt13basic_ostream",
-    "_ZNSo3put",
-    "_ZNKSt5ctypeIcE13_M_widen_init",
-    "_ZNSi3get",
-    "_ZNSi7getline",
-    "_ZNSirsER",
-    "_ZNSt7__cxx1115basic_stringbuf",
-    "_ZNKSt7__cxx1115basic_stringbuf",
-    "_ZNSi6ignore",
-    "_ZNSt8ios_base",
-    "_ZNKSt9basic_ios",
-    "_ZNSt9basic_ios",
-    "_ZStorSt13_Ios_OpenmodeS_",
-    "_ZNSt6locale",
-    "_ZNKSt6locale4name",
-    "_ZStL8__ioinit"
-    "_ZNSt9basic_ios",
-    "_ZSt4cout",
-    "_ZNSt3__14coutE",
-    "_ZNSt3__113basic_ostreamIcNS_11char_traitsIcEEE6sentryC1ERS3_",
-    "_ZSt3cin",
-    "_ZNSi10_M_extract",
-    "_ZNSolsE",
-    "_ZSt5flush",
-    "_ZNSo5flush",
-    "_ZSt4endl",
-    "_ZNSaIcE",
-    "_ZSt11_Hash_bytes",
-    "_ZNKSt3__14hash",
-    "_ZNSt3__116__do_string_hash",
-    "_ZNKSt8__detail20_Prime_rehash_policy",
-    "_ZNSt8__detail20_Prime_rehash_policy",
-    "_ZNKSt3__122__unordered_map_hasher",
-    "_ZNKSt8__detail15_Hash_code_base",
-    "_ZNSt3__19to_string"
-#endif
 };
 
 const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_float", "__enzyme_double", "__enzyme_integer",
     "__enzyme_pointer"};
 
-const std::set<std::string> InactiveGlobals = {
+const StringSet<> InactiveGlobals = {
     "ompi_request_null",
     "ompi_mpi_double",
     "ompi_mpi_comm_world",
@@ -197,7 +136,7 @@ const std::set<std::string> InactiveGlobals = {
     "_ZTVN10__cxxabiv121__vmi_class_type_infoE"
 };
 
-const std::map<std::string, size_t> MPIInactiveCommAllocators = {
+const llvm::StringMap<size_t> MPIInactiveCommAllocators = {
     {"MPI_Graph_create", 5},
     {"MPI_Comm_split", 2},
     {"MPI_Intercomm_create", 6},
@@ -215,7 +154,7 @@ const std::map<std::string, size_t> MPIInactiveCommAllocators = {
 
 // Instructions which themselves are inactive
 // the returned value, however, may still be active
-const std::set<std::string> KnownInactiveFunctionInsts = {
+const StringSet<> KnownInactiveFunctionInsts = {
     "__dynamic_cast",
     "_ZSt18_Rb_tree_decrementPKSt18_Rb_tree_node_base",
     "_ZSt18_Rb_tree_incrementPKSt18_Rb_tree_node_base",
@@ -224,7 +163,17 @@ const std::set<std::string> KnownInactiveFunctionInsts = {
     "jl_ptr_to_array",
     "jl_ptr_to_array_1d"};
 
-const std::set<std::string> KnownInactiveFunctions = {
+const StringSet<> KnownInactiveFunctions = {
+    "cublasCreate_v2",
+    "cublasSetMathMode",
+    "cublasSetStream_v2",
+    "cuMemPoolTrimTo",
+    "cuDeviceGetMemPool",
+    "cuStreamCreate",
+    "cuStreamSynchronize",
+    "cuStreamDestroy",
+    "cuStreamQuery",
+    "cuCtxGetCurrent",
     "enzyme_zerotype",
     "abort",
     "time",
@@ -322,19 +271,15 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::ceil,
     Intrinsic::trunc,
     Intrinsic::rint,
-#if LLVM_VERSION_MAJOR >= 9
     Intrinsic::lrint,
     Intrinsic::llrint,
-#endif
     Intrinsic::nearbyint,
     Intrinsic::round,
 #if LLVM_VERSION_MAJOR >= 11
     Intrinsic::roundeven,
 #endif
-#if LLVM_VERSION_MAJOR >= 9
     Intrinsic::lround,
     Intrinsic::llround,
-#endif
     Intrinsic::nvvm_barrier0,
     Intrinsic::nvvm_barrier0_popc,
     Intrinsic::nvvm_barrier0_and,
@@ -348,12 +293,13 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::stackrestore,
     Intrinsic::lifetime_start,
     Intrinsic::lifetime_end,
+#if LLVM_VERSION_MAJOR <= 16
     Intrinsic::dbg_addr,
+#endif
+
     Intrinsic::dbg_declare,
     Intrinsic::dbg_value,
-#if LLVM_VERSION_MAJOR > 6
     Intrinsic::dbg_label,
-#endif
     Intrinsic::invariant_start,
     Intrinsic::invariant_end,
     Intrinsic::var_annotation,
@@ -365,9 +311,7 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::donothing,
     Intrinsic::prefetch,
     Intrinsic::trap,
-#if LLVM_VERSION_MAJOR >= 8
     Intrinsic::is_constant,
-#endif
     Intrinsic::memset};
 
 const char *DemangledKnownInactiveFunctionsStartingWith[] = {
@@ -412,7 +356,15 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::basic_stringbuf",
     "std::basic_filebuf",
     "std::basic_streambuf",
-
+    "std::random_device",
+    "std::mersenne_twister_engine",
+    "std::linear_congruential_engine",
+    "std::subtract_with_carry_engine",
+    "std::discard_block_engine",
+    "std::independent_bits_engine",
+    "std::shuffle_order_engine",
+  
+  
     // libc++
     "std::__1::basic_string",
     "std::__1::__do_string_hash",
@@ -421,7 +373,15 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::__1::to_string",
     "std::__1::basic_ostream",
     "std::__1::cout",
+    "std::__1::random_device",
+    "std::__1::mersenne_twister_engine",
+    "std::__1::linear_congruential_engine",
+    "std::__1::subtract_with_carry_engine",
+    "std::__1::discard_block_engine",
+    "std::__1::independent_bits_engine",
+    "std::__1::shuffle_order_engine",
   
+
     "std::__detail::_Prime_rehash_policy",
     "std::__detail::_Hash_code_base",
 };
@@ -435,6 +395,31 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
     return true;
 
   auto F = getFunctionFromCall(CI);
+
+#if LLVM_VERSION_MAJOR >= 11
+  bool all_inactive = val != CI->getCalledOperand();
+#else
+  bool all_inactive = val != CI->getCalledValue();
+#endif
+
+#if LLVM_VERSION_MAJOR >= 14
+  for (size_t i = 0; i < CI->arg_size(); i++)
+#else
+  for (size_t i = 0; i < CI->getNumArgOperands(); i++)
+#endif
+  {
+    if (val == CI->getArgOperand(i)) {
+      if (!CI->getAttributes().hasParamAttr(i, "enzyme_inactive") &&
+          !(F && F->getCallingConv() == CI->getCallingConv() &&
+            F->getAttributes().hasParamAttr(i, "enzyme_inactive"))) {
+        all_inactive = false;
+        break;
+      }
+    }
+  }
+
+  if (all_inactive)
+    return true;
 
   // Indirect function calls may actively use the argument
   if (F == nullptr)
@@ -455,7 +440,6 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI))
     return true;
 
-#if LLVM_VERSION_MAJOR >= 9
   std::string demangledName = llvm::demangle(Name.str());
   auto dName = StringRef(demangledName);
   for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
@@ -470,7 +454,7 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
     //  llvm::errs() << "matching failed: " << Name.str() << " "
     //               << demangledName << "\n";
   }
-#endif
+
   for (auto FuncName : KnownInactiveFunctionsStartingWith) {
     if (Name.startswith(FuncName)) {
       return true;
@@ -482,12 +466,11 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
       return true;
     }
   }
-  if (KnownInactiveFunctions.count(Name.str())) {
+  if (KnownInactiveFunctions.count(Name)) {
     return true;
   }
 
-  if (MPIInactiveCommAllocators.find(Name.str()) !=
-      MPIInactiveCommAllocators.end()) {
+  if (MPIInactiveCommAllocators.find(Name) != MPIInactiveCommAllocators.end()) {
     return true;
   }
   if (KnownInactiveIntrinsics.count(F->getIntrinsicID())) {
@@ -560,7 +543,7 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
 /// that could impact the activity of the call instruction
 static inline void propagateArgumentInformation(
     TargetLibraryInfo &TLI, CallInst &CI,
-    std::function<bool(Value *)> propagateFromOperand) {
+    llvm::function_ref<bool(Value *)> propagateFromOperand) {
 
   // These functions are known to only have the first argument impact
   // the activity of the call instruction
@@ -615,7 +598,9 @@ static inline void propagateArgumentInformation(
       Name == "__cxa_guard_abort")
     return;
 
-  if (auto F = getFunctionFromCall(&CI)) {
+  auto F = getFunctionFromCall(&CI);
+
+  if (F) {
 
     /// Only the first argument (magnitude) of copysign is active
     if (F->getIntrinsicID() == Intrinsic::copysign) {
@@ -639,14 +624,24 @@ static inline void propagateArgumentInformation(
 
   // For other calls, check all operands of the instruction
   // as conservatively they may impact the activity of the call
+  size_t i = 0;
 #if LLVM_VERSION_MAJOR >= 14
   for (auto &a : CI.args())
 #else
   for (auto &a : CI.arg_operands())
 #endif
   {
+
+    if (CI.getAttributes().hasParamAttr(i, "enzyme_inactive") ||
+        (F && F->getCallingConv() == CI.getCallingConv() &&
+         F->getAttributes().hasParamAttr(i, "enzyme_inactive"))) {
+      i++;
+      continue;
+    }
+
     if (propagateFromOperand(a))
       break;
+    i++;
   }
 }
 
@@ -746,7 +741,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
         InsertConstantInstruction(TR, I);
         return true;
       }
-      if (KnownInactiveFunctionInsts.count(called->getName().str())) {
+      if (KnownInactiveFunctionInsts.count(called->getName())) {
         InsertConstantInstruction(TR, I);
         return true;
       }
@@ -1116,7 +1111,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     }
 
     if (GI->getName().contains("enzyme_const") ||
-        InactiveGlobals.count(GI->getName().str())) {
+        InactiveGlobals.count(GI->getName())) {
       InsertConstantValue(TR, Val);
       return true;
     }
@@ -1319,6 +1314,15 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   }
 
   if (containsPointer) {
+    // This value is certainly an integer (and only and integer, not a pointer
+    // or float). Therefore its value is constant
+    if (TR.query(Val)[{-1, -1}] == BaseType::Integer) {
+      if (EnzymePrintActivity)
+        llvm::errs() << " Value const as pointer to integer " << (int)directions
+                     << " " << *Val << " " << TR.query(Val).str() << "\n";
+      InsertConstantValue(TR, Val);
+      return true;
+    }
 
     auto TmpOrig = getBaseObject(Val);
 
@@ -1446,7 +1450,6 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           return true;
         }
 
-#if LLVM_VERSION_MAJOR >= 9
         auto dName = demangle(funcName.str());
         for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
           if (StringRef(dName).startswith(FuncName)) {
@@ -1455,7 +1458,6 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             return true;
           }
         }
-#endif
 
         for (auto FuncName : KnownInactiveFunctionsStartingWith) {
           if (funcName.startswith(FuncName)) {
@@ -1473,8 +1475,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           }
         }
 
-        if (KnownInactiveFunctions.count(funcName.str()) ||
-            MPIInactiveCommAllocators.find(funcName.str()) !=
+        if (KnownInactiveFunctions.count(funcName) ||
+            MPIInactiveCommAllocators.find(funcName) !=
                 MPIInactiveCommAllocators.end()) {
           InsertConstantValue(TR, Val);
           insertConstantsFrom(TR, *UpHypothesis);
@@ -1759,25 +1761,25 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             isDeallocationFunction(funcName, TLI)) {
           return false;
         }
-        if (KnownInactiveFunctions.count(funcName.str()) ||
-            MPIInactiveCommAllocators.find(funcName.str()) !=
+        if (KnownInactiveFunctions.count(funcName) ||
+            MPIInactiveCommAllocators.find(funcName) !=
                 MPIInactiveCommAllocators.end()) {
           return false;
         }
-        if (KnownInactiveFunctionInsts.count(funcName.str())) {
+        if (KnownInactiveFunctionInsts.count(funcName)) {
           return false;
         }
         if (isMemFreeLibMFunction(funcName)) {
           return false;
         }
-#if LLVM_VERSION_MAJOR >= 9
+
         auto dName = demangle(funcName.str());
         for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
           if (StringRef(dName).startswith(FuncName)) {
             return false;
           }
         }
-#endif
+
         for (auto FuncName : KnownInactiveFunctionsStartingWith) {
           if (funcName.startswith(FuncName)) {
             return false;
@@ -1791,7 +1793,11 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
         if (funcName == "__cxa_guard_acquire" ||
             funcName == "__cxa_guard_release" ||
-            funcName == "__cxa_guard_abort" || funcName == "posix_memalign") {
+            funcName == "__cxa_guard_abort" || funcName == "posix_memalign" ||
+            funcName == "cuMemAllocAsync" || funcName == "cuMemAlloc" ||
+            funcName == "cuMemAlloc_v2" || funcName == "cudaMallocAsync" ||
+            funcName == "cudaMallocHost" ||
+            funcName == "cudaMallocFromPoolAsync") {
           return false;
         }
 
@@ -1824,12 +1830,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 #if LLVM_VERSION_MAJOR >= 12
       auto AARes = AA.getModRefInfo(
           I, MemoryLocation(memval, LocationSize::beforeOrAfterPointer()));
-#elif LLVM_VERSION_MAJOR >= 9
+#else
       auto AARes =
           AA.getModRefInfo(I, MemoryLocation(memval, LocationSize::unknown()));
-#else
-      auto AARes = AA.getModRefInfo(
-          I, MemoryLocation(memval, MemoryLocation::UnknownSize));
 #endif
 
       // Still having failed to replace the location used by AA, fall back to
@@ -2425,14 +2428,12 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
       return true;
     }
 
-#if LLVM_VERSION_MAJOR >= 9
     auto dName = demangle(funcName.str());
     for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
       if (StringRef(dName).startswith(FuncName)) {
         return true;
       }
     }
-#endif
 
     for (auto FuncName : KnownInactiveFunctionsStartingWith) {
       if (funcName.startswith(FuncName)) {
@@ -2446,8 +2447,8 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
       }
     }
 
-    if (KnownInactiveFunctions.count(funcName.str()) ||
-        MPIInactiveCommAllocators.find(funcName.str()) !=
+    if (KnownInactiveFunctions.count(funcName) ||
+        MPIInactiveCommAllocators.find(funcName) !=
             MPIInactiveCommAllocators.end()) {
       if (EnzymePrintActivity)
         llvm::errs() << "constant(" << (int)directions
@@ -2714,7 +2715,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                 continue;
               }
               if (GV->getName().contains("enzyme_const") ||
-                  InactiveGlobals.count(GV->getName().str())) {
+                  InactiveGlobals.count(GV->getName())) {
                 continue;
               }
             }

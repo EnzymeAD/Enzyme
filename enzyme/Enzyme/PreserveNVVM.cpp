@@ -28,6 +28,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/IR/Constants.h"
@@ -164,11 +165,25 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
                 if (!F->hasParamAttribute(i, Attribute::StructRet)) {
                   if (!byref.count(realidx))
                     args.push_back(arg.getType());
-                  else
-                    args.push_back(arg.getType()->getPointerElementType());
+                  else {
+                    // TODO in opaque pointers
+                    Type *subTy = nullptr;
+#if LLVM_VERSION_MAJOR < 18
+                    subTy = arg.getType()->getPointerElementType();
+#endif
+                    assert(subTy);
+                    args.push_back(subTy);
+                  }
                   realidx++;
                 } else {
-                  sretTy = arg.getType()->getPointerElementType();
+                  llvm::Type *T = nullptr;
+#if LLVM_VERSION_MAJOR > 12
+                  T = F->getParamAttribute(i, Attribute::StructRet)
+                          .getValueAsType();
+#else
+                  T = arg.getType()->getPointerElementType();
+#endif
+                  sretTy = T;
                 }
                 i++;
               }
@@ -194,7 +209,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
               realidx = 0;
               for (size_t i = 0; i < F->arg_size(); i++) {
                 if (!F->hasParamAttribute(i, Attribute::StructRet)) {
-                  arg->setName("arg" + std::to_string(realidx));
+                  arg->setName("arg" + Twine(realidx));
                   if (!byref.count(realidx))
                     argVs.push_back(arg);
                   else {
@@ -212,11 +227,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
               cal->setCallingConv(F->getCallingConv());
 
               if (sretTy) {
-#if LLVM_VERSION_MAJOR > 7
                 Value *res = bb.CreateLoad(sretTy, AI);
-#else
-                Value *res = bb.CreateLoad(AI);
-#endif
                 bb.CreateRet(res);
               } else if (!RT->isVoidTy()) {
                 bb.CreateRet(cal);
@@ -290,7 +301,7 @@ bool preserveLinkage(bool Begin, Function &F) {
 
 bool preserveNVVM(bool Begin, Function &F) {
   bool changed = false;
-  std::map<std::string, std::pair<std::string, std::string>> Implements;
+  StringMap<std::pair<std::string, std::string>> Implements;
   for (std::string T : {"", "f"}) {
     // sincos, sinpi, cospi, sincospi, cyl_bessel_i1
     for (std::string name :
@@ -304,7 +315,7 @@ bool preserveNVVM(bool Begin, Function &F) {
           "normcdfinv", "normcdf", "lgamma",    "ldexp",  "scalbn", "frexp",
           "modf",       "fmod",    "remainder", "remquo", "powi",   "tgamma",
           "round",      "fdim",    "ilogb",     "logb",   "isinf",  "pow",
-          "sqrt"}) {
+          "sqrt",       "finite",  "fabs",      "fmax"}) {
       std::string nvname = "__nv_" + name;
       std::string llname = "llvm." + name + ".";
       std::string mathname = name;
@@ -320,7 +331,7 @@ bool preserveNVVM(bool Begin, Function &F) {
       Implements[nvname] = std::make_pair(mathname, llname);
     }
   }
-  auto found = Implements.find(F.getName().str());
+  auto found = Implements.find(F.getName());
   if (found != Implements.end()) {
     changed = true;
     if (Begin) {
@@ -523,7 +534,10 @@ bool preserveNVVM(bool Begin, Function &F) {
           deallocfn = CE->getOperand(0);
         }
         size_t index = 0;
-        if (auto CI = dyn_cast<ConstantInt>(name)) {
+        if (isa<ConstantPointerNull>(name)) {
+          // An integer 0 may have been implicitly converted to a null pointer
+          index = 0;
+        } else if (auto CI = dyn_cast<ConstantInt>(name)) {
           index = CI->getZExtValue();
         } else {
           llvm::errs() << *name << "\n";
@@ -610,7 +624,11 @@ bool preserveNVVM(bool Begin, Function &F) {
             GlobalVariable *NGV = new GlobalVariable(
                 CA->getType(), V->isConstant(), V->getLinkage(), CA, "",
                 V->getThreadLocalMode());
+#if LLVM_VERSION_MAJOR > 16
+            V->getParent()->insertGlobalVariable(V->getIterator(), NGV);
+#else
             V->getParent()->getGlobalList().insert(V->getIterator(), NGV);
+#endif
             NGV->takeName(V);
 
             // Nuke the old list, replacing any uses with the new one.

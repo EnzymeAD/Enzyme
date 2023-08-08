@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -ge 9 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -correlated-propagation -simplifycfg -S | FileCheck %s; fi
-; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,adce,correlated-propagation,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -correlated-propagation -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,adce,correlated-propagation,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 ; ModuleID = 'linked.ll'
 source_filename = "llvm-link"

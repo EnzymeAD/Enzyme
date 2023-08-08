@@ -52,9 +52,9 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = alloca { double*, double }
 ; CHECK-NEXT:   %1 = getelementptr inbounds { double*, double }, { double*, double }* %0, i32 0, i32 0
-; CHECK-NEXT:   %p2 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   %"p2'mi" = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"p2'mi", i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %p2 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   %"p3'ipc" = bitcast i8* %"p2'mi" to double**
 ; CHECK-NEXT:   %p3 = bitcast i8* %p2 to double**
 ; CHECK-NEXT:   store double* %"a0'", double** %"p3'ipc", align 8, !alias.scope ![[NA0:[0-9]+]], !noalias ![[NA1:[0-9]+]]
@@ -74,9 +74,9 @@ attributes #9 = { nounwind }
 
 ; CHECK: define internal void @diffesubmalloced(double* %a0, double* %"a0'", double %differeturn, double* %"a4'ip_phi") 
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %p2 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   %"p2'mi" = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"p2'mi", i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %p2 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   %"p3'ipc" = bitcast i8* %"p2'mi" to double**
 ; CHECK-NEXT:   %p3 = bitcast i8* %p2 to double**
 ; CHECK-NEXT:   store double* %"a0'", double** %"p3'ipc", align 8
@@ -85,7 +85,7 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %1 = fadd fast double %0, %differeturn
 ; CHECK-NEXT:   store double %1, double* %"a4'ip_phi"
 ; CHECK-NEXT:   call void @diffef(double** %p3, double** %"p3'ipc")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"p2'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %p2)
+; CHECK-NEXT:   call void @free(i8* nonnull %"p2'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %p2)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

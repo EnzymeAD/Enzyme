@@ -26,7 +26,7 @@
 
 #include "llvm-c/Core.h"
 #include "llvm-c/DataTypes.h"
-#include "llvm-c/Initialization.h"
+// #include "llvm-c/Initialization.h"
 #include "llvm-c/Target.h"
 #include <stddef.h>
 
@@ -158,10 +158,13 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
     size_t uncacheable_args_size, uint8_t forceAnonymousTape, unsigned width,
     uint8_t AtomicAdd);
 
-LLVMValueRef CreateTrace(EnzymeLogicRef Logic, LLVMValueRef totrace,
-                         LLVMValueRef *generative_functions,
-                         size_t generative_functions_size, CProbProgMode mode,
-                         uint8_t autodiff, EnzymeTraceInterfaceRef interface);
+LLVMValueRef CreateTrace(
+    EnzymeLogicRef Logic, LLVMValueRef totrace, LLVMValueRef *sample_functions,
+    size_t sample_functions_size, LLVMValueRef *observe_functions,
+    size_t observe_functions_size, LLVMValueRef *generative_functions,
+    size_t generative_functions_size, const char *active_random_variables[],
+    size_t active_random_variables_size, CProbProgMode mode, uint8_t autodiff,
+    EnzymeTraceInterfaceRef interface);
 
 typedef uint8_t (*CustomRuleType)(int /*direction*/, CTypeTreeRef /*return*/,
                                   CTypeTreeRef * /*args*/,
@@ -177,11 +180,10 @@ void FreeTypeAnalysis(EnzymeTypeAnalysisRef);
 
 EnzymeTraceInterfaceRef FindEnzymeStaticTraceInterface(LLVMModuleRef M);
 EnzymeTraceInterfaceRef CreateEnzymeStaticTraceInterface(
-    LLVMContextRef C, LLVMValueRef sampleFunction,
-    LLVMValueRef getTraceFunction, LLVMValueRef getChoiceFunction,
-    LLVMValueRef insertCallFunction, LLVMValueRef insertChoiceFunction,
-    LLVMValueRef insertArgumentFunction, LLVMValueRef insertReturnFunction,
-    LLVMValueRef insertFunctionFunction,
+    LLVMContextRef C, LLVMValueRef getTraceFunction,
+    LLVMValueRef getChoiceFunction, LLVMValueRef insertCallFunction,
+    LLVMValueRef insertChoiceFunction, LLVMValueRef insertArgumentFunction,
+    LLVMValueRef insertReturnFunction, LLVMValueRef insertFunctionFunction,
     LLVMValueRef insertChoiceGradientFunction,
     LLVMValueRef insertArgumentGradientFunction, LLVMValueRef newTraceFunction,
     LLVMValueRef freeTraceFunction, LLVMValueRef hasCallFunction,

@@ -107,7 +107,7 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal {{(dso_local )?}}{ double*, double* } @augmented_cast(double* readnone %x, double* %"x'")
+; CHECK: define internal {{(dso_local )?}}{ double*, double* } @augmented_cast(double* readnone %x, double* readnone %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = alloca { double*, double* }
 ; CHECK-NEXT:   %1 = getelementptr inbounds { double*, double* }, { double*, double* }* %0, i32 0, i32 0
@@ -132,14 +132,14 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[loadcallp:.+]] = load double, double* %[[callp]]
 ; CHECK-NEXT:   store double 0.000000e+00, double* %[[callp]]
-; CHECK-NEXT:   %m0diffez = fmul fast double %[[loadcallp]], %y
-; CHECK-NEXT:   %m1diffey = fmul fast double %[[loadcallp]], %z
-; CHECK-NEXT:   %[[toret0:.+]] = insertvalue { double, double } undef, double %m1diffey, 0
-; CHECK-NEXT:   %[[toret:.+]] = insertvalue { double, double } %[[toret0]], double %m0diffez, 1
+; CHECK-NEXT:   %[[m0diffez:.+]] = fmul fast double %[[loadcallp]], %y
+; CHECK-NEXT:   %[[m1diffey:.+]] = fmul fast double %[[loadcallp]], %z
+; CHECK-NEXT:   %[[toret0:.+]] = insertvalue { double, double } undef, double %[[m1diffey]], 0
+; CHECK-NEXT:   %[[toret:.+]] = insertvalue { double, double } %[[toret0]], double %[[m0diffez]], 1
 ; CHECK-NEXT:   ret { double, double } %[[toret]]
 ; CHECK-NEXT: }
 
-; CHECK: define internal {{(dso_local )?}}void @diffecast(double* readnone %x, double* %"x'")
+; CHECK: define internal {{(dso_local )?}}void @diffecast(double* readnone %x, double* readnone %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

@@ -32,10 +32,10 @@ declare double @__enzyme_autodiff(double (double)*, ...)
 ; CHECK-NEXT:   %mul = fmul fast double %[[copyload]], %x
 ; CHECK-NEXT:   %mul2 = fmul fast double %mul, %mul
 ; CHECK-NEXT:   store double %mul2, double* @global, align 8
-; CHECK-NEXT:   %m0diffemul = fmul fast double %differeturn, %mul
-; CHECK-NEXT:   %m1diffemul = fmul fast double %differeturn, %mul
-; CHECK-NEXT:   %[[add:.+]] = fadd fast double %m0diffemul, %m1diffemul
-; CHECK-NEXT:   %m1diffex = fmul fast double %[[add]], %[[copyload]]
-; CHECK-NEXT:   %[[res:.+]] = insertvalue { double } undef, double %m1diffex, 0
+; CHECK-NEXT:   %[[m0diffemul:.+]] = fmul fast double %differeturn, %mul
+; CHECK-NEXT:   %[[m1diffemul:.+]] = fmul fast double %differeturn, %mul
+; CHECK-NEXT:   %[[add:.+]] = fadd fast double %[[m0diffemul]], %[[m1diffemul]]
+; CHECK-NEXT:   %[[m1diffex:.+]] = fmul fast double %[[add]], %[[copyload]]
+; CHECK-NEXT:   %[[res:.+]] = insertvalue { double } undef, double %[[m1diffex]], 0
 ; CHECK-NEXT:   ret { double } %[[res]]
 ; CHECK-NEXT: }

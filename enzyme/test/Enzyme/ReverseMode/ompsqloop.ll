@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -ge 9 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -adce -simplifycfg -S | FileCheck %s; fi
-; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg,adce,%simplifycfg)" -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -adce -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg,adce,%simplifycfg)" -S | FileCheck %s
 
 source_filename = "lulesh.cc"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
@@ -116,7 +116,7 @@ attributes #1 = { argmemonly }
 !12 = !{i64 2, i64 -1, i64 -1, i1 true}
 
 
-; CHECK: define internal void @augmented_.omp_outlined..1(i32* noalias nocapture readonly %.global_tid., i32* noalias nocapture readnone %.bound_tid., i64 %length, double* nocapture nonnull align 8 dereferenceable(8) %tmp, double* nocapture %"tmp'", double** %tape)
+; CHECK: define internal void @augmented_.omp_outlined..1(i32* noalias nocapture readonly %.global_tid., i32* noalias nocapture readnone %.bound_tid., i64 %length, double* nocapture nonnull align 8 dereferenceable(8) %tmp, double* nocapture align 8 %"tmp'", double** %tape)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = load double*, double** %tape
 ; CHECK-NEXT:   %.omp.lb_smpl = alloca i64
@@ -167,7 +167,7 @@ attributes #1 = { argmemonly }
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffe.omp_outlined.(i32* noalias nocapture readonly %.global_tid., i32* noalias nocapture readnone %.bound_tid., i64 %length, double* nocapture nonnull align 8 dereferenceable(8) %tmp, double* nocapture %"tmp'", double** %tapeArg)
+; CHECK: define internal void @diffe.omp_outlined.(i32* noalias nocapture readonly %.global_tid., i32* noalias nocapture readnone %.bound_tid., i64 %length, double* nocapture align 8 dereferenceable(8) %tmp, double* nocapture align 8 %"tmp'", double** %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %truetape = load double*, double** %tapeArg
 ; CHECK-NEXT:   %.omp.lb_smpl = alloca i64
@@ -211,10 +211,10 @@ attributes #1 = { argmemonly }
 ; CHECK-NEXT:   %[[i9:.+]] = add nuw nsw i64 %"iv'ac.0", %_unwrap2
 ; CHECK-NEXT:   %[[i10:.+]] = getelementptr inbounds double, double* %truetape, i64 %[[i9]]
 ; CHECK-NEXT:   %[[i11:.+]] = load double, double* %[[i10]], align 8, !tbaa !9, !invariant.group !
-; CHECK-NEXT:   %[[i12:.+]] = call fast double @sqrt(double %[[i11]])
-; CHECK-NEXT:   %[[i13:.+]] = fmul fast double 5.000000e-01, %[[i8]]
-; CHECK-NEXT:   %[[i14:.+]] = fdiv fast double %[[i13]], %[[i12]]
 ; CHECK-NEXT:   %[[i15:.+]] = fcmp fast ueq double %[[i11]], 0.000000e+00
+; CHECK-NEXT:   %[[i12:.+]] = call fast double @sqrt(double %[[i11]])
+; CHECK-NEXT:   %[[i13:.+]] = fmul fast double 2.000000e+00, %[[i12]]
+; CHECK-NEXT:   %[[i14:.+]] = fdiv fast double %[[i8]], %[[i13]]
 ; CHECK-NEXT:   %[[i16:.+]] = select fast i1 %[[i15]], double 0.000000e+00, double %[[i14]]
 ; CHECK-NEXT:   %[[i17:.+]] = atomicrmw fadd double* %"arrayidx'ipg_unwrap", double %[[i16]] monotonic
 ; CHECK-NEXT:   %[[i18:.+]] = icmp eq i64 %"iv'ac.0", 0

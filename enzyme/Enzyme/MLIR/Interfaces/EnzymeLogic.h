@@ -1,16 +1,17 @@
 #pragma once
 
-#include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/FunctionInterfaces.h"
+#include "mlir/IR/IRMapping.h"
 
 #include "../../TypeAnalysis/TypeAnalysis.h"
 #include "../../Utils.h"
+#include <functional>
 
 namespace mlir {
 namespace enzyme {
 
-typedef void (*buildReturnFunction)(OpBuilder &, Location,
-                                    SmallVector<mlir::Value>);
+typedef void(buildReturnFunction)(OpBuilder &, Location,
+                                  SmallVector<mlir::Value>);
 
 class MGradientUtilsReverse;
 
@@ -126,8 +127,7 @@ public:
                          MGradientUtilsReverse *gutils);
   void handlePredecessors(Block *oBB, Block *newBB, Block *reverseBB,
                           MGradientUtilsReverse *gutils,
-                          void (*buildReturnOp)(OpBuilder &, Location,
-                                                SmallVector<mlir::Value>),
+                          llvm::function_ref<buildReturnFunction> buildReturnOp,
                           bool parentRegion);
   void visitChildren(Block *oBB, Block *reverseBB,
                      MGradientUtilsReverse *gutils);
@@ -143,7 +143,8 @@ public:
                                                   Region &region);
   void differentiate(MGradientUtilsReverse *gutils, Region &oldRegion,
                      Region &newRegion, bool parentRegion,
-                     buildReturnFunction buildFuncRetrunOp);
+                     llvm::function_ref<buildReturnFunction> buildFuncRetrunOp,
+                     std::function<std::pair<Value, Value>(Type)> cacheCreator);
 };
 
 } // Namespace enzyme

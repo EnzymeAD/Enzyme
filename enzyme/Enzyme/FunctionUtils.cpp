@@ -29,8 +29,6 @@
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
 
-#include "llvm/ADT/Triple.h"
-
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -59,9 +57,7 @@
 #include "llvm/Analysis/TypeBasedAliasAnalysis.h"
 #include "llvm/CodeGen/UnreachableBlockElim.h"
 
-#if LLVM_VERSION_MAJOR > 6
 #include "llvm/Analysis/PhiValues.h"
-#endif
 #include "llvm/Analysis/ProfileSummaryInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScopedNoAliasAA.h"
@@ -70,17 +66,7 @@
 #include "llvm/Transforms/IPO/FunctionAttrs.h"
 #include "llvm/Transforms/Utils/Mem2Reg.h"
 
-#if LLVM_VERSION_MAJOR > 6
 #include "llvm/Transforms/Utils.h"
-#endif
-
-#include "llvm/Transforms/Utils/Cloning.h"
-
-#if LLVM_VERSION_MAJOR > 6
-#include "llvm/Transforms/Scalar/InstSimplifyPass.h"
-#endif
-
-#include "llvm/Transforms/Scalar/MemCpyOptimizer.h"
 
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Scalar/CorrelatedValuePropagation.h"
@@ -89,9 +75,12 @@
 #include "llvm/Transforms/Scalar/EarlyCSE.h"
 #include "llvm/Transforms/Scalar/GVN.h"
 #include "llvm/Transforms/Scalar/IndVarSimplify.h"
+#include "llvm/Transforms/Scalar/InstSimplifyPass.h"
 #include "llvm/Transforms/Scalar/LoopIdiomRecognize.h"
+#include "llvm/Transforms/Scalar/MemCpyOptimizer.h"
 #include "llvm/Transforms/Scalar/SROA.h"
 #include "llvm/Transforms/Scalar/SimplifyCFG.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/LCSSA.h"
 #include "llvm/Transforms/Utils/LowerInvoke.h"
 
@@ -104,8 +93,9 @@
 #include "llvm/Transforms/Utils/Local.h"
 
 #include "llvm/IR/LegacyPassManager.h"
+#if LLVM_VERSION_MAJOR <= 16
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
-
+#endif
 #include "llvm/Analysis/ScalarEvolutionAliasAnalysis.h"
 
 #include "CacheUtility.h"
@@ -139,11 +129,9 @@ cl::opt<int>
 cl::opt<bool> EnzymeCoalese("enzyme-coalese", cl::init(false), cl::Hidden,
                             cl::desc("Whether to coalese memory allocations"));
 
-#if LLVM_VERSION_MAJOR >= 8
 static cl::opt<bool> EnzymePHIRestructure(
     "enzyme-phi-restructure", cl::init(false), cl::Hidden,
     cl::desc("Whether to restructure phi's to have better unwrap behavior"));
-#endif
 
 cl::opt<bool>
     EnzymeNameInstructions("enzyme-name-instructions", cl::init(false),
@@ -310,9 +298,13 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       IRBuilder<> B(CI);
       auto nCI = cast<CastInst>(B.CreateCast(
           CI->getOpcode(), rep,
-          PointerType::get(
-              CI->getType()->getPointerElementType(),
-              cast<PointerType>(rep->getType())->getAddressSpace())));
+#if LLVM_VERSION_MAJOR < 18
+          PointerType::get(CI->getType()->getPointerElementType(),
+                           cast<PointerType>(rep->getType())->getAddressSpace())
+#else
+          rep->getType()
+#endif
+              ));
       nCI->takeName(CI);
       for (auto U : CI->users()) {
         Todo.push_back(
@@ -324,12 +316,8 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
     if (auto GEP = dyn_cast<GetElementPtrInst>(inst)) {
       IRBuilder<> B(GEP);
       SmallVector<Value *, 1> ind(GEP->indices());
-#if LLVM_VERSION_MAJOR > 7
       auto nGEP = cast<GetElementPtrInst>(
           B.CreateGEP(GEP->getSourceElementType(), rep, ind));
-#else
-      auto nGEP = cast<GetElementPtrInst>(B.CreateGEP(rep, ind));
-#endif
       nGEP->takeName(GEP);
       for (auto U : GEP->users()) {
         Todo.push_back(
@@ -769,6 +757,7 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
       T0 = CI->getOperand(0);
     auto AI = cast<AllocaInst>(T0);
     llvm::Value *AIV = AI;
+#if LLVM_VERSION_MAJOR < 18
     if (AIV->getType()->getPointerElementType() !=
         T->getType()->getPointerElementType()) {
       IRBuilder<> B(AI->getNextNode());
@@ -777,6 +766,7 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
                    T->getType()->getPointerElementType(),
                    cast<PointerType>(AI->getType())->getAddressSpace()));
     }
+#endif
     RecursivelyReplaceAddressSpace(T, AIV, /*legal*/ true);
   }
 }
@@ -826,12 +816,7 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
 
     Value *p = CI->getArgOperand(0);
     Value *req = CI->getArgOperand(1);
-#if LLVM_VERSION_MAJOR > 7
     Value *old = B.CreateLoad(AI->getAllocatedType(), AI);
-#else
-    Value *old = B.CreateLoad(AI);
-#endif
-
     Value *cmp = B.CreateICmpULE(req, old);
     // if (req < old)
     B.CreateCondBr(cmp, nextBlock, resize);
@@ -908,9 +893,7 @@ Function *CreateMPIWrapper(Function *F) {
   Function *W = Function::Create(FT, GlobalVariable::InternalLinkage, name,
                                  F->getParent());
   llvm::Attribute::AttrKind attrs[] = {
-#if LLVM_VERSION_MAJOR >= 9
     Attribute::WillReturn,
-#endif
 #if LLVM_VERSION_MAJOR >= 12
     Attribute::MustProgress,
 #endif
@@ -956,11 +939,7 @@ Function *CreateMPIWrapper(Function *F) {
     args[1] = B.CreatePtrToInt(args[1], T);
   }
   B.CreateCall(F, args);
-#if LLVM_VERSION_MAJOR > 7
   B.CreateRet(B.CreateLoad(F->getReturnType(), alloc));
-#else
-  B.CreateRet(B.CreateLoad(alloc));
-#endif
   return W;
 }
 template <typename T>
@@ -1013,6 +992,7 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
     B.SetInsertPoint(res);
 
     if (auto PT = dyn_cast<PointerType>(storePointer->getType())) {
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
       if (PT->getContext().supportsTypedPointers()) {
 #endif
@@ -1022,6 +1002,7 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
               PointerType::get(res->getType(), PT->getAddressSpace()));
 #if LLVM_VERSION_MAJOR >= 15
       }
+#endif
 #endif
     } else {
       assert(isa<IntegerType>(storePointer->getType()));
@@ -1062,22 +1043,14 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
       auto AI2 = B.CreateAlloca(AI->getAllocatedType(), nullptr,
                                 AI->getName() + "_smpl");
       B.SetInsertPoint(Bound);
-#if LLVM_VERSION_MAJOR > 7
       B.CreateStore(B.CreateLoad(AI->getAllocatedType(), AI), AI2);
-#else
-      B.CreateStore(B.CreateLoad(AI), AI2);
-#endif
       Bound->setArgOperand(i, AI2);
       if (auto II = dyn_cast<InvokeInst>(Bound)) {
         B.SetInsertPoint(II->getNormalDest()->getFirstNonPHI());
       } else {
         B.SetInsertPoint(Bound->getNextNode());
       }
-#if LLVM_VERSION_MAJOR > 7
       B.CreateStore(B.CreateLoad(AI2->getAllocatedType(), AI2), AI);
-#else
-      B.CreateStore(B.CreateLoad(AI2), AI);
-#endif
       Bound->addParamAttr(i, Attribute::NoCapture);
     }
   }
@@ -1266,7 +1239,6 @@ PreProcessCache::getAAResultsFromFunction(llvm::Function *NewF) {
 }
 
 void setFullWillReturn(Function *NewF) {
-#if LLVM_VERSION_MAJOR >= 9
   for (auto &BB : *NewF) {
     for (auto &I : BB) {
       if (auto CI = dyn_cast<CallInst>(&I)) {
@@ -1293,7 +1265,6 @@ void setFullWillReturn(Function *NewF) {
       }
     }
   }
-#endif
 }
 
 Function *PreProcessCache::preprocessForClone(Function *F,
@@ -1349,7 +1320,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 #if LLVM_VERSION_MAJOR >= 14
   NewF->addFnAttr(Attribute::WillReturn);
   NewF->addFnAttr(Attribute::MustProgress);
-#elif LLVM_VERSION_MAJOR >= 9
+#else
   NewF->addAttribute(AttributeList::FunctionIndex, Attribute::WillReturn);
 #if LLVM_VERSION_MAJOR >= 12
   NewF->addAttribute(AttributeList::FunctionIndex, Attribute::MustProgress);
@@ -1490,10 +1461,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
         MemoryLocation
 #if LLVM_VERSION_MAJOR >= 12
             Loc = MemoryLocation(&g, LocationSize::beforeOrAfterPointer());
-#elif LLVM_VERSION_MAJOR >= 9
-            Loc = MemoryLocation(&g, LocationSize::unknown());
 #else
-            Loc = MemoryLocation(&g, MemoryLocation::UnknownSize);
+            Loc = MemoryLocation(&g, LocationSize::unknown());
 #endif
 
         for (CallInst *CI : Calls) {
@@ -1767,13 +1736,6 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     }
 
     {
-#if LLVM_VERSION_MAJOR <= 7
-      auto PA = GVN().run(*NewF, FAM);
-      FAM.invalidate(*NewF, PA);
-#endif
-    }
-
-    {
 #if LLVM_VERSION_MAJOR >= 16 && !defined(FLANG)
       auto PA = SROAPass(llvm::SROAOptions::ModifyCFG).run(*NewF, FAM);
 #elif LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
@@ -1860,9 +1822,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     PA.preserve<BasicAA>();
     PA.preserve<ScopedNoAliasAA>();
     PA.preserve<ScalarEvolutionAnalysis>();
-#if LLVM_VERSION_MAJOR > 6
     PA.preserve<PhiValuesAnalysis>();
-#endif
+
     FAM.invalidate(*NewF, PA);
 
     if (EnzymeNameInstructions) {
@@ -1882,7 +1843,6 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     }
   }
 
-#if LLVM_VERSION_MAJOR >= 8
   if (EnzymePHIRestructure) {
     if (false) {
     reset:;
@@ -2004,7 +1964,6 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       }
     }
   }
-#endif
 
   if (EnzymePrint)
     llvm::errs() << "after simplification :\n" << *NewF << "\n";
@@ -2106,7 +2065,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     ValueToValueMapTy &ptrInputs, ArrayRef<DIFFE_TYPE> constant_args,
     SmallPtrSetImpl<Value *> &constants, SmallPtrSetImpl<Value *> &nonconstant,
     SmallPtrSetImpl<Value *> &returnvals, ReturnType returnValue,
-    DIFFE_TYPE returnType, Twine name, ValueToValueMapTy *VMapO,
+    DIFFE_TYPE returnType, const Twine &name,
+    llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> *VMapO,
     bool diffeReturnArg, llvm::Type *additionalArg) {
   assert(!F->empty());
   F = preprocessForClone(F, mode);
@@ -2170,7 +2130,9 @@ Function *PreProcessCache::CloneFunctionWithReturns(
 #endif
   CloneOrigin[NewF] = F;
   if (VMapO) {
-    VMapO->insert(VMap.begin(), VMap.end());
+    for (const auto &data : VMap)
+      VMapO->insert(std::pair<const llvm::Value *, AssertingReplacingVH>(
+          data.first, (llvm::Value *)data.second));
     VMapO->getMDMap() = VMap.getMDMap();
   }
 
@@ -2178,20 +2140,31 @@ Function *PreProcessCache::CloneFunctionWithReturns(
   unsigned ii = 0, jj = 0;
   for (auto i = F->arg_begin(), j = NewF->arg_begin(); i != F->arg_end();) {
     if (F->hasParamAttribute(ii, Attribute::StructRet)) {
-      // TODO persist types
       NewF->addParamAttr(jj, Attribute::get(F->getContext(), "enzyme_sret"));
-      /*
-#if LLVM_VERSION_MAJOR >= 12
-      NewF->addParamAttr(jj, Attribute::get(F->getContext(), "enzyme_sret",
-F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
-      NewF->addParamAttr(jj, Attribute::get(F->getContext(), "enzyme_sret"));
+#if LLVM_VERSION_MAJOR >= 13
+      // TODO
+      // NewF->addParamAttr(
+      //    jj,
+      //    Attribute::get(
+      //        F->getContext(), Attribute::AttrKind::ElementType,
+      //        F->getParamAttribute(ii,
+      //        Attribute::StructRet).getValueAsType()));
 #endif
-      */
     }
     if (F->getAttributes().hasParamAttr(ii, "enzymejl_returnRoots")) {
       NewF->addParamAttr(
           jj, F->getAttributes().getParamAttr(ii, "enzymejl_returnRoots"));
+#if LLVM_VERSION_MAJOR >= 13
+      // TODO
+      // NewF->addParamAttr(jj, F->getParamAttribute(ii,
+      // Attribute::ElementType));
+#endif
     }
+    for (auto ty : PrimalParamAttrsToPreserve)
+      if (F->getAttributes().hasParamAttr(ii, ty)) {
+        auto attr = F->getAttributes().getParamAttr(ii, ty);
+        NewF->addParamAttr(jj, attr);
+      }
     if (constant_args[ii] == DIFFE_TYPE::CONSTANT) {
       if (!i->hasByValAttr())
         constants.insert(i);
@@ -2205,7 +2178,10 @@ F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
                      << " nonconstant arg " << *j << "\n";
     }
 
-    if (constant_args[ii] == DIFFE_TYPE::DUP_NONEED) {
+    // Always remove nonnull/noundef since the caller may choose to pass undef
+    // as an arg if provably it will not be used in the reverse pass
+    if (constant_args[ii] == DIFFE_TYPE::DUP_NONEED ||
+        mode == DerivativeMode::ReverseModeGradient) {
       if (F->hasParamAttribute(ii, Attribute::NonNull)) {
         NewF->removeParamAttr(jj, Attribute::NonNull);
       }
@@ -2221,43 +2197,62 @@ F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
       hasPtrInput = true;
       ptrInputs[i] = (j + 1);
       // TODO: find a way to keep the attributes in vector mode.
-      if (F->hasParamAttribute(ii, Attribute::NoCapture) && width == 1) {
-        NewF->addParamAttr(jj + 1, Attribute::NoCapture);
+      if (width == 1)
+        for (auto ty : ShadowParamAttrsToPreserve)
+          if (F->getAttributes().hasParamAttr(ii, ty)) {
+            auto attr = F->getAttributes().getParamAttr(ii, ty);
+            NewF->addParamAttr(jj + 1, attr);
+          }
+
+      if (F->getAttributes().hasParamAttr(ii, "enzymejl_returnRoots")) {
+        if (width == 1) {
+          NewF->addParamAttr(jj + 1, F->getAttributes().getParamAttr(
+                                         ii, "enzymejl_returnRoots"));
+        } else {
+          NewF->addParamAttr(jj + 1, Attribute::get(F->getContext(),
+                                                    "enzymejl_returnRoots_v"));
+        }
+#if LLVM_VERSION_MAJOR >= 13
+        // TODO
+        // NewF->addParamAttr(jj + 1,
+        //                   F->getParamAttribute(ii, Attribute::ElementType));
+#endif
       }
-      // TODO: find a way to keep sret for shadow
+
       if (F->hasParamAttribute(ii, Attribute::StructRet)) {
         if (width == 1) {
-          if (F->getAttributes().hasParamAttr(ii, "enzymejl_returnRoots")) {
-            NewF->addParamAttr(jj, F->getAttributes().getParamAttr(
-                                       ii, "enzymejl_returnRoots"));
-          }
 #if LLVM_VERSION_MAJOR >= 12
-          // TODO persist types
           NewF->addParamAttr(jj + 1,
                              Attribute::get(F->getContext(), "enzyme_sret"));
-          // NewF->addParamAttr(jj + 1, Attribute::get(F->getContext(),
-          // "enzyme_sret", F->getParamAttribute(ii,
-          // Attribute::StructRet).getValueAsType()));
 #else
           NewF->addParamAttr(jj + 1,
                              Attribute::get(F->getContext(), "enzyme_sret"));
 #endif
+#if LLVM_VERSION_MAJOR >= 13
+          // TODO
+          // NewF->addParamAttr(
+          //     jj + 1,
+          //     Attribute::get(F->getContext(),
+          //     Attribute::AttrKind::ElementType,
+          //                    F->getParamAttribute(ii, Attribute::StructRet)
+          //                        .getValueAsType()));
+#endif
         } else {
-          if (F->getAttributes().hasParamAttr(ii, "enzymejl_returnRoots")) {
-            NewF->addParamAttr(
-                jj, Attribute::get(F->getContext(), "enzymejl_returnRoots_v"));
-          }
 #if LLVM_VERSION_MAJOR >= 12
-          // TODO persist types
           NewF->addParamAttr(jj + 1,
                              Attribute::get(F->getContext(), "enzyme_sret_v"));
-          // NewF->addParamAttr(jj + 1, Attribute::get(F->getContext(),
-          // "enzyme_sret_v",
-          // GradientUtils::getShadowType(F->getParamAttribute(ii,
-          // Attribute::StructRet).getValueAsType(), width)));
 #else
           NewF->addParamAttr(jj + 1,
                              Attribute::get(F->getContext(), "enzyme_sret_v"));
+#endif
+#if LLVM_VERSION_MAJOR >= 13
+          // TODO
+          // NewF->addParamAttr(
+          //     jj + 1,
+          //     Attribute::get(F->getContext(),
+          //     Attribute::AttrKind::ElementType,
+          //                    F->getParamAttribute(ii, Attribute::StructRet)
+          //                        .getValueAsType()));
 #endif
         }
       }
@@ -2384,12 +2379,8 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
           ConstantInt::get(Size->getType(), 1));
       z.second->eraseFromParent();
       IRBuilder<> B2(z.first);
-#if LLVM_VERSION_MAJOR > 7
       Value *gepPtr = B2.CreateInBoundsGEP(Type::getInt8Ty(First->getContext()),
                                            First, Size);
-#else
-      Value *gepPtr = B2.CreateInBoundsGEP(First, Size);
-#endif
       z.first->replaceAllUsesWith(gepPtr);
       Size = B.CreateAdd(Size, z.first->getArgOperand(0));
       z.first->eraseFromParent();
@@ -2587,17 +2578,21 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
     auto toInt = [&](IRBuilder<> &B, llvm::Value *V) {
       if (auto PT = dyn_cast<PointerType>(V->getType())) {
         if (PT->getAddressSpace() != 0) {
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
           if (CI->getContext().supportsTypedPointers()) {
 #endif
             V = B.CreateAddrSpaceCast(
                 V, PointerType::getUnqual(PT->getPointerElementType()));
 #if LLVM_VERSION_MAJOR >= 15
-          }
-          {
+          } else {
             V = B.CreateAddrSpaceCast(V,
                                       PointerType::getUnqual(PT->getContext()));
           }
+#endif
+#else
+          V = B.CreateAddrSpaceCast(V,
+                                    PointerType::getUnqual(PT->getContext()));
 #endif
         }
         return B.CreatePtrToInt(V, intTy);
@@ -2694,12 +2689,8 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
           gep = B.CreateAdd(B.CreatePtrToInt(replacements[val], intTy), gep);
           gep = B.CreateIntToPtr(gep, CI->getType());
         } else if (!allconst) {
-#if LLVM_VERSION_MAJOR > 7
           gep =
               B.CreateGEP(CI->getSourceElementType(), replacements[val], inds);
-#else
-          gep = B.CreateGEP(replacements[val], inds);
-#endif
           if (auto ge = cast<GetElementPtrInst>(gep))
             ge->setIsInBounds(CI->isInBounds());
         } else {

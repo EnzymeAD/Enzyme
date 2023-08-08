@@ -7,11 +7,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/FunctionInterfaces.h"
+#include "mlir/IR/IRMapping.h"
 
 #include "CloneFunction.h"
 #include "EnzymeLogic.h"
+
+#include <functional>
 
 namespace mlir {
 namespace enzyme {
@@ -20,12 +22,12 @@ class MGradientUtilsReverse {
 public:
   MGradientUtilsReverse(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                         FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
-                        BlockAndValueMapping invertedPointers_,
+                        IRMapping invertedPointers_,
                         const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                         const SmallPtrSetImpl<mlir::Value> &activevals_,
                         DIFFE_TYPE ReturnActivity,
                         ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
-                        BlockAndValueMapping &originalToNewFn_,
+                        IRMapping &originalToNewFn_,
                         std::map<Operation *, Operation *> &originalToNewFnOps_,
                         DerivativeMode mode_, unsigned width,
                         SymbolTableCollection &symbolTable_);
@@ -37,15 +39,15 @@ public:
   MEnzymeLogic &Logic;
   bool AtomicAdd;
   DerivativeMode mode;
-  BlockAndValueMapping invertedPointersGlobal;
-  BlockAndValueMapping invertedPointersShadow;
-  BlockAndValueMapping shadowValues;
+  IRMapping invertedPointersGlobal;
+  IRMapping invertedPointersShadow;
+  IRMapping shadowValues;
   Block *initializationBlock;
 
-  BlockAndValueMapping mapReverseModeBlocks;
+  IRMapping mapReverseModeBlocks;
   DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments;
 
-  BlockAndValueMapping originalToNewFn;
+  IRMapping originalToNewFn;
   std::map<Operation *, Operation *> originalToNewFnOps;
 
   MTypeAnalysis &TA;
@@ -79,6 +81,13 @@ public:
   Type getIndexType();
   Value insertInit(Type t);
 
+  SmallVector<std::function<std::pair<Value, Value>(Type)>> cacheCreatorHook;
+  void
+  registerCacheCreatorHook(std::function<std::pair<Value, Value>(Type)> hook);
+  void
+  deregisterCacheCreatorHook(std::function<std::pair<Value, Value>(Type)> hook);
+  std::pair<Value, Value> getNewCache(Type t);
+
   // Cache
   Type getCacheType(Type t);
   Type getIndexCacheType();
@@ -94,8 +103,8 @@ public:
 
   bool requiresShadow(Type t);
 
-  void initInitializationBlock(BlockAndValueMapping invertedPointers_,
-                               const SmallPtrSetImpl<mlir::Value> &activevals_);
+  void initInitializationBlock(IRMapping invertedPointers_,
+                               ArrayRef<DIFFE_TYPE> argDiffeTypes);
 
   bool onlyUsedInParentBlock(Value v);
 

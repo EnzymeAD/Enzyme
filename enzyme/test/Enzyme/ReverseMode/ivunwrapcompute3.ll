@@ -105,7 +105,7 @@ attributes #2 = { nounwind }
 !22 = !{!23, !23, i64 0}
 !23 = !{!"double", !4, i64 0}
 
-; CHECK: define internal void @differelatives_to_absolutes(i1 %cmp, i64* %r, i64* %"r'", double* %tmp9, double* %"tmp9'")
+; CHECK: define internal void @differelatives_to_absolutes(i1 %cmp, i64* %r, double* %tmp9, double* %"tmp9'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   br i1 %cmp, label %cond, label %mid
 
@@ -115,7 +115,6 @@ attributes #2 = { nounwind }
 
 ; CHECK: mid:                                              ; preds = %cond, %entry
 ; CHECK-NEXT:   %lim = phi i64 [ %.pre.i, %cond ], [ 3, %entry ]
-; CHECK-NEXT:   store i64 %lim, i64* %"r'", align 8
 ; CHECK-NEXT:   store i64 %lim, i64* %r, align 8
 ; CHECK-NEXT:   %0 = add i64 %lim, -1
 ; CHECK-NEXT:   %1 = mul nuw nsw i64 22, %lim

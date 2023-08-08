@@ -35,6 +35,6 @@ declare dso_local void @_Z17__enzyme_autodiffPviPdS0_(i8*, i32, double*, double*
 ; CHECK-NEXT:   br label %invert
 
 ; CHECK: invert: 
-; CHECK-NEXT:   tail call void @free(i8* %i2)
+; CHECK-NEXT:   call void @free(i8* %i2)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

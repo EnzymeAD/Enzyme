@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 9 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false  -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
-; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ] ; then %opt < %s %loadEnzyme -enzyme-preopt=false  -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 ; ModuleID = '/workspaces/Enzyme/enzyme/test/Integration/ReverseMode/dbginfo2.c'
 source_filename = "/workspaces/Enzyme/enzyme/test/Integration/ReverseMode/dbginfo2.c"
@@ -210,6 +210,6 @@ attributes #9 = { noreturn nounwind }
 ; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[i1]], %differeturn
 ; CHECK-NEXT:   store double %[[i2]], double* %"'ipc", align 8
 ; CHECK-NEXT:   %[[i3:.+]] = call { double } @diffefoo(double %x, %struct.Data* undef, %struct.Data* %"'ipc2")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call'mi"), !dbg !{{.*}}[[DBG]]
+; CHECK-NEXT:   call void @free(i8* nonnull %"call'mi"), !dbg !{{.*}}[[DBG]]
 ; CHECK-NEXT:   ret { double } %[[i3]]
 ; CHECK-NEXT: }

@@ -129,52 +129,52 @@ declare void @_Z17__enzyme_autodiffPFddPdEz(double (double, double*)*, ...)
 ; CHECK: bb2:                                              ; preds = %bb5
 ; CHECK-NEXT:   %i = tail call i32 @_Z18evaluate_integrandii(i32 %i9, i32 %i10)
 ; CHECK-NEXT:   %i3 = sitofp i32 %i to double
-; CHECK-NEXT:   %m0diffei7 = fmul fast double %differeturn, %i3
+; CHECK-NEXT:   %[[m0diffei7:.+]] = fmul fast double %differeturn, %i3
 ; CHECK-NEXT:   br label %invertbb5
 
 ; CHECK: invertbb:                                         ; preds = %invertbb5_phimerge
-; CHECK-NEXT:   %1 = insertvalue { double } undef, double %14, 0
+; CHECK-NEXT:   %[[i1:.+]] = insertvalue { double } undef, double %[[i14:.+]], 0
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
-; CHECK-NEXT:   ret { double } %1
+; CHECK-NEXT:   ret { double } %[[i1]]
 
 ; CHECK: invertbb5:                                        ; preds = %bb2, %incinvertbb5
-; CHECK-NEXT:   %"i7'de.0" = phi double [ %m0diffei7, %bb2 ], [ 0.000000e+00, %incinvertbb5 ]
-; CHECK-NEXT:   %"i17'de.0" = phi double [ 0.000000e+00, %bb2 ], [ %12, %incinvertbb5 ]
-; CHECK-NEXT:   %"arg'de.0" = phi double [ 0.000000e+00, %bb2 ], [ %14, %incinvertbb5 ]
-; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 9, %bb2 ], [ %15, %incinvertbb5 ]
-; CHECK-NEXT:   %d0diffei7 = fdiv fast double %"i17'de.0", 8.000000e-01
-; CHECK-NEXT:   %2 = fadd fast double %"i7'de.0", %d0diffei7
+; CHECK-NEXT:   %"i7'de.0" = phi double [ %[[m0diffei7]], %bb2 ], [ 0.000000e+00, %incinvertbb5 ]
+; CHECK-NEXT:   %"i17'de.0" = phi double [ 0.000000e+00, %bb2 ], [ %[[i12:.+]], %incinvertbb5 ]
+; CHECK-NEXT:   %"arg'de.0" = phi double [ 0.000000e+00, %bb2 ], [ %[[i14]], %incinvertbb5 ]
+; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 9, %bb2 ], [ %[[i15:.+]], %incinvertbb5 ]
+; CHECK-NEXT:   %[[d0diffei7:.+]] = fdiv fast double %"i17'de.0", 8.000000e-01
+; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %"i7'de.0", %[[d0diffei7]]
 ; CHECK-NEXT:   %"i13'ipg_unwrap" = getelementptr inbounds double, double* %"arg1'", i64 %"iv'ac.0"
-; CHECK-NEXT:   %3 = load double, double* %"i13'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i3:.+]] = load double, double* %"i13'ipg_unwrap", align 8
 ; DCE-NEXT:   store double 0.000000e+00, double* %"i13'ipg_unwrap", align 8
-; CHECK:   %4 = getelementptr inbounds double, double* %i7_malloccache, i64 %"iv'ac.0"
-; CHECK-NEXT:   %5 = load double, double* %4, align 8, !invariant.group ![[g0]]
-; CHECK-NEXT:   %i9_unwrap = fptosi double %5 to i32
-; CHECK-NEXT:   %6 = icmp ne i64 %"iv'ac.0", 0
-; CHECK-NEXT:   br i1 %6, label %invertbb5_phirc, label %invertbb5_phimerge
+; CHECK:   %[[i4:.+]] = getelementptr inbounds double, double* %i7_malloccache, i64 %"iv'ac.0"
+; CHECK-NEXT:   %[[i5:.+]] = load double, double* %[[i4]], align 8, !invariant.group ![[g0]]
+; CHECK-NEXT:   %i9_unwrap = fptosi double %[[i5]] to i32
+; CHECK-NEXT:   %[[i6:.+]] = icmp ne i64 %"iv'ac.0", 0
+; CHECK-NEXT:   br i1 %[[i6:.+]], label %invertbb5_phirc, label %invertbb5_phimerge
 
 ; CHECK: invertbb5_phirc:                                  ; preds = %invertbb5
-; CHECK-NEXT:   %7 = sub nuw i64 %"iv'ac.0", 1
-; CHECK-NEXT:   %8 = getelementptr inbounds double, double* %i7_malloccache, i64 %7
-; CHECK-NEXT:   %9 = load double, double* %8, align 8, !invariant.group ![[g0]]
-; CHECK-NEXT:   %i17_unwrap = fdiv double %9, 8.000000e-01
+; CHECK-NEXT:   %[[i7:.+]] = sub nuw i64 %"iv'ac.0", 1
+; CHECK-NEXT:   %[[i8:.+]] = getelementptr inbounds double, double* %i7_malloccache, i64 %[[i7]]
+; CHECK-NEXT:   %[[i9:.+]] = load double, double* %[[i8]], align 8, !invariant.group ![[g0]]
+; CHECK-NEXT:   %i17_unwrap = fdiv double %[[i9]], 8.000000e-01
 ; CHECK-NEXT:   %i18_unwrap = fmul double %i17_unwrap, 2.500000e-01
 ; CHECK-NEXT:   br label %invertbb5_phimerge
 
 ; CHECK: invertbb5_phimerge:                               ; preds = %invertbb5, %invertbb5_phirc
-; CHECK-NEXT:   %10 = phi {{(fast )?}}double [ %i18_unwrap, %invertbb5_phirc ], [ 1.000000e+00, %invertbb5 ]
-; CHECK-NEXT:   %i10_unwrap = fptosi double %10 to i32
+; CHECK-NEXT:   %[[i10:.+]] = phi {{(fast )?}}double [ %i18_unwrap, %invertbb5_phirc ], [ 1.000000e+00, %invertbb5 ]
+; CHECK-NEXT:   %i10_unwrap = fptosi double %[[i10]] to i32
 ; CHECK-NEXT:   %i11_unwrap = mul nsw i32 %i9_unwrap, %i10_unwrap
 ; CHECK-NEXT:   %i12_unwrap = sitofp i32 %i11_unwrap to double
-; CHECK-NEXT:   %m0diffei14 = fmul fast double %3, %i12_unwrap
-; CHECK-NEXT:   store double %m0diffei14, double* %"i13'ipg_unwrap", align 8
-; CHECK-NEXT:   %11 = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   %12 = select {{(fast )?}}i1 %11, double 0.000000e+00, double %2
-; CHECK-NEXT:   %13 = fadd fast double %"arg'de.0", %2
-; CHECK-NEXT:   %14 = select {{(fast )?}}i1 %11, double %13, double %"arg'de.0"
-; CHECK-NEXT:   br i1 %11, label %invertbb, label %incinvertbb5
+; CHECK-NEXT:   %[[m0diffei14:.+]] = fmul fast double %[[i3]], %i12_unwrap
+; CHECK-NEXT:   store double %[[m0diffei14]], double* %"i13'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i11:.+]] = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   %[[i12]] = select {{(fast )?}}i1 %[[i11]], double 0.000000e+00, double %[[i2]]
+; CHECK-NEXT:   %[[i13:.+]] = fadd fast double %"arg'de.0", %[[i2]]
+; CHECK-NEXT:   %[[i14]] = select {{(fast )?}}i1 %[[i11]], double %[[i13]], double %"arg'de.0"
+; CHECK-NEXT:   br i1 %[[i11]], label %invertbb, label %incinvertbb5
 
 ; CHECK: incinvertbb5:                                     ; preds = %invertbb5_phimerge
-; CHECK-NEXT:   %15 = add nsw i64 %"iv'ac.0", -1
+; CHECK-NEXT:   %[[i15]] = add nsw i64 %"iv'ac.0", -1
 ; CHECK-NEXT:   br label %invertbb5
 ; CHECK-NEXT: }

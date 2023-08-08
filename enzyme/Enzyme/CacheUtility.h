@@ -27,6 +27,18 @@
 #ifndef ENZYME_CACHE_UTILITY_H
 #define ENZYME_CACHE_UTILITY_H
 
+#include <llvm/Config/llvm-config.h>
+#if LLVM_VERSION_MAJOR >= 16
+#define private public
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+#undef private
+#else
+#include "SCEV/ScalarEvolution.h"
+#include "SCEV/ScalarEvolutionExpander.h"
+#endif
+
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Instructions.h"
@@ -408,13 +420,14 @@ protected:
 // Create a new canonical induction variable of Type Ty for Loop L
 // Return the variable and the increment instruction
 std::pair<llvm::PHINode *, llvm::Instruction *>
-InsertNewCanonicalIV(llvm::Loop *L, llvm::Type *Ty, std::string name = "iv");
+InsertNewCanonicalIV(llvm::Loop *L, llvm::Type *Ty,
+                     const llvm::Twine &Name = "iv");
 
 // Attempt to rewrite all phinode's in the loop in terms of the
 // induction variable
 void RemoveRedundantIVs(
     llvm::BasicBlock *Header, llvm::PHINode *CanonicalIV,
     llvm::Instruction *Increment, MustExitScalarEvolution &SE,
-    std::function<void(llvm::Instruction *, llvm::Value *)> replacer,
-    std::function<void(llvm::Instruction *)> eraser);
+    llvm::function_ref<void(llvm::Instruction *, llvm::Value *)> replacer,
+    llvm::function_ref<void(llvm::Instruction *)> eraser);
 #endif

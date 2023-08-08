@@ -375,8 +375,11 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   }
 
   if (auto CI = dyn_cast<CallInst>(user)) {
-    auto funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
 
+    auto Mode = gutils->mode;
+    const bool cacheMode = (Mode != DerivativeMode::ForwardMode);
+
+    auto funcName = getFuncNameFromCall(CI);
     auto blasMetaData = extractBLAS(funcName);
 #if LLVM_VERSION_MAJOR >= 16
     if (blasMetaData.has_value())
@@ -384,6 +387,13 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     if (blasMetaData.hasValue())
 #endif
     {
+      const std::vector<bool> *overwritten_args_ptr = nullptr;
+      if (gutils->overwritten_args_map_ptr) {
+        auto found =
+            gutils->overwritten_args_map_ptr->find(const_cast<CallInst *>(CI));
+        assert(found != gutils->overwritten_args_map_ptr->end());
+        overwritten_args_ptr = &found->second;
+      }
 #if LLVM_VERSION_MAJOR >= 16
       BlasInfo blas = blasMetaData.value();
 #else
@@ -526,7 +536,8 @@ void DifferentialUseAnalysis::minCut(
     const SmallPtrSetImpl<Value *> &Intermediates,
     SmallPtrSetImpl<Value *> &Required, SmallPtrSetImpl<Value *> &MinReq,
     const ValueMap<Value *, GradientUtils::Rematerializer>
-        &rematerializableAllocations) {
+        &rematerializableAllocations,
+    llvm::TargetLibraryInfo &TLI) {
   Graph G;
   for (auto V : Intermediates) {
     G[Node(V, false)].insert(Node(V, true));
@@ -645,11 +656,41 @@ void DifferentialUseAnalysis::minCut(
         if (ASC->getSrcAddressSpace() == 10 && ASC->getDestAddressSpace() == 0)
           continue;
       }
-      if (auto I = dyn_cast<Instruction>((*found->second.begin()).V)) {
-        if (hasMetadata(I, "enzyme_caststack")) {
-          continue;
+      // If an allocation call, we cannot cache any "capturing" users
+      if (isAllocationCall(V, TLI)) {
+        auto next = (*found->second.begin()).V;
+        bool noncapture = false;
+        if (isa<LoadInst>(next)) {
+          noncapture = true;
+        } else if (auto II = dyn_cast<IntrinsicInst>(next)) {
+          if (II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_i ||
+              II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_p ||
+              II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_f ||
+              II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_i ||
+              II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_p ||
+              II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_f ||
+              II->getIntrinsicID() == Intrinsic::masked_load)
+            noncapture = true;
+        } else if (auto CI = dyn_cast<CallInst>(next)) {
+          bool captures = false;
+#if LLVM_VERSION_MAJOR >= 14
+          for (size_t i = 0; i < CI->arg_size(); i++)
+#else
+          for (size_t i = 0; i < CI->getNumArgOperands(); i++)
+#endif
+          {
+            if (CI->getArgOperand(i) == V && !isNoCapture(CI, i)) {
+              captures = true;
+              break;
+            }
+          }
+          noncapture = !captures;
         }
+
+        if (!noncapture)
+          continue;
       }
+
       if (moreOuterLoop == 1 ||
           (moreOuterLoop == 0 &&
            DL.getTypeSizeInBits(V->getType()) >=

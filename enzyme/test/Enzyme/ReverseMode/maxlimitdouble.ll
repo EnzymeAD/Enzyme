@@ -19052,8 +19052,7 @@ attributes #28 = { builtin }
 !174 = !{!173, !12, i64 0}
 !175 = !{!173, !12, i64 8}
 
-
-; CHECK: define internal void @diffe_Z19brusselator_2d_loopPdS_PKdS1_S1_d(double* noalias nocapture readnone %arg, double* nocapture %"arg'", double* noalias nocapture %arg1, double* nocapture %"arg1'", double* noalias nocapture readonly %arg2, double* nocapture %"arg2'", double* noalias nocapture readonly %arg3, double* nocapture %"arg3'", double* noalias nocapture readonly %arg4, double* nocapture %"arg4'", double %arg5)
+; CHECK: define internal void @diffe_Z19brusselator_2d_loopPdS_PKdS1_S1_d(double* noalias nocapture readnone %arg, double* nocapture readnone %"arg'", double* noalias nocapture %arg1, double* nocapture %"arg1'", double* noalias nocapture readonly %arg2, double* nocapture %"arg2'", double* noalias nocapture readonly %arg3, double* nocapture %"arg3'", double* noalias nocapture readonly %arg4, double* nocapture %"arg4'", double %arg5)
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %A = load double, double* %arg4, align 8, !tbaa !31
 ; CHECK-NEXT:   %v0 = load double, double* %arg3, align 8, !tbaa !31
@@ -19089,10 +19088,10 @@ attributes #28 = { builtin }
 
 ; CHECK: invertbb:                                         ; preds = %invertbb9
 ; CHECK-NEXT:   %0 = load double, double* %"arg3'", align 8
-; CHECK-NEXT:   %1 = fadd fast double %0, %21
+; CHECK-NEXT:   %1 = fadd fast double %0, %[[i21:.+]]
 ; CHECK-NEXT:   store double %1, double* %"arg3'", align 8
 ; CHECK-NEXT:   %2 = load double, double* %"arg4'", align 8
-; CHECK-NEXT:   %3 = fadd fast double %2, %18
+; CHECK-NEXT:   %3 = fadd fast double %2, %[[i18:.+]]
 ; CHECK-NEXT:   store double %3, double* %"arg4'", align 8
 ; CHECK-NEXT:   ret void
 
@@ -19105,8 +19104,8 @@ attributes #28 = { builtin }
 ; CHECK-NEXT:   br label %invertbb22
 
 ; CHECK: invertbb22:                                       ; preds = %bb22, %incinvertbb9
-; CHECK-NEXT:   %"A'de.0" = phi double [ %18, %incinvertbb9 ], [ 0.000000e+00, %bb22 ]
-; CHECK-NEXT:   %"v0'de.0" = phi double [ %21, %incinvertbb9 ], [ 0.000000e+00, %bb22 ]
+; CHECK-NEXT:   %"A'de.0" = phi double [ %[[i18]], %incinvertbb9 ], [ 0.000000e+00, %bb22 ]
+; CHECK-NEXT:   %"v0'de.0" = phi double [ %[[i21]], %incinvertbb9 ], [ 0.000000e+00, %bb22 ]
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %5, %incinvertbb9 ], [ 31, %bb22 ]
 ; CHECK-NEXT:   %i32_unwrap = shl i64 %"iv'ac.0", 5
 ; CHECK-NEXT:   br label %invertbb39
@@ -19116,12 +19115,12 @@ attributes #28 = { builtin }
 ; CHECK-NEXT:   br label %invertbb39
 
 ; CHECK: invertbb39:                                       ; preds = %incinvertbb25, %invertbb22
-; CHECK-NEXT:   %"A'de.1" = phi double [ %"A'de.0", %invertbb22 ], [ %18, %incinvertbb25 ]
-; CHECK-NEXT:   %"v0'de.1" = phi double [ %"v0'de.0", %invertbb22 ], [ %21, %incinvertbb25 ]
+; CHECK-NEXT:   %"A'de.1" = phi double [ %"A'de.0", %invertbb22 ], [ %[[i18]], %incinvertbb25 ]
+; CHECK-NEXT:   %"v0'de.1" = phi double [ %"v0'de.0", %invertbb22 ], [ %[[i21]], %incinvertbb25 ]
 ; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 31, %invertbb22 ], [ %6, %incinvertbb25 ]
 ; CHECK-NEXT:   %ij_unwrap = add nuw nsw i64 %"iv1'ac.0", %i32_unwrap
 ; CHECK-NEXT:   %"tmp65'ipg_unwrap" = getelementptr inbounds double, double* %"arg1'", i64 %ij_unwrap
-; CHECK-NEXT:   %7 = load double, double* %"tmp65'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i7:.+]] = load double, double* %"tmp65'ipg_unwrap", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"tmp65'ipg_unwrap", align 8
 ; CHECK-NEXT:   %tmp12_unwrap = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   %tmp14_unwrap = add i64 %i32_unwrap, -32
@@ -19155,42 +19154,42 @@ attributes #28 = { builtin }
 ; CHECK-NEXT:   %tmp54_unwrap = getelementptr inbounds double, double* %arg3, i64 %ijm1_unwrap
 ; CHECK-NEXT:   %vijm1_unwrap = load double, double* %tmp54_unwrap, align 8, !tbaa !31
 ; CHECK-NEXT:   %sum_unwrap = fadd fast double %tmp58_unwrap, %vijm1_unwrap
-; CHECK-NEXT:   %m0diffeA = fmul fast double %7, %sum_unwrap
-; CHECK-NEXT:   %m1diffesum = fmul fast double %7, %A
-; CHECK-NEXT:   %8 = fadd fast double %"A'de.1", %m0diffeA
-; CHECK-NEXT:   %9 = fadd fast double %"v0'de.1", %m1diffesum
+; CHECK-NEXT:   %[[m0diffeA:.+]] = fmul fast double %[[i7]], %sum_unwrap
+; CHECK-NEXT:   %[[i8:.+]] = fadd fast double %"A'de.1", %[[m0diffeA]]
+; CHECK-NEXT:   %[[m1diffesum:.+]] = fmul fast double %[[i7]], %A
+; CHECK-NEXT:   %[[i9:.+]] = fadd fast double %"v0'de.1", %[[m1diffesum]]
 ; CHECK-NEXT:   %"tmp54'ipg_unwrap" = getelementptr inbounds double, double* %"arg3'", i64 %ijm1_unwrap
-; CHECK-NEXT:   %10 = load double, double* %"tmp54'ipg_unwrap", align 8
-; CHECK-NEXT:   %11 = fadd fast double %10, %m1diffesum
-; CHECK-NEXT:   store double %11, double* %"tmp54'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i10:.+]] = load double, double* %"tmp54'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i11:.+]] = fadd fast double %[[i10]], %[[m1diffesum]]
+; CHECK-NEXT:   store double %[[i11]], double* %"tmp54'ipg_unwrap", align 8
 ; CHECK-NEXT:   %"tmp50'ipg_unwrap" = getelementptr inbounds double, double* %"arg3'", i64 %ijp1AND_unwrap
-; CHECK-NEXT:   %12 = load double, double* %"tmp50'ipg_unwrap", align 8
-; CHECK-NEXT:   %13 = fadd fast double %12, %m1diffesum
-; CHECK-NEXT:   store double %13, double* %"tmp50'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i12:.+]] = load double, double* %"tmp50'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i13:.+]] = fadd fast double %[[i12]], %[[m1diffesum]]
+; CHECK-NEXT:   store double %[[i13]], double* %"tmp50'ipg_unwrap", align 8
 ; CHECK-NEXT:   %"tmp46'ipg_unwrap" = getelementptr inbounds double, double* %"arg3'", i64 %ip1j_unwrap
-; CHECK-NEXT:   %14 = load double, double* %"tmp46'ipg_unwrap", align 8
-; CHECK-NEXT:   %15 = fadd fast double %14, %m1diffesum
-; CHECK-NEXT:   store double %15, double* %"tmp46'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i14:.+]] = load double, double* %"tmp46'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i15:.+]] = fadd fast double %[[i14]], %[[m1diffesum]]
+; CHECK-NEXT:   store double %[[i15]], double* %"tmp46'ipg_unwrap", align 8
 ; CHECK-NEXT:   %"tmp43'ipg_unwrap" = getelementptr inbounds double, double* %"arg3'", i64 %im1j_unwrap
-; CHECK-NEXT:   %16 = load double, double* %"tmp43'ipg_unwrap", align 8
-; CHECK-NEXT:   %17 = fadd fast double %16, %m1diffesum
-; CHECK-NEXT:   store double %17, double* %"tmp43'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i16:.+]] = load double, double* %"tmp43'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i17:.+]] = fadd fast double %[[i16]], %[[m1diffesum]]
+; CHECK-NEXT:   store double %[[i17]], double* %"tmp43'ipg_unwrap", align 8
 ; CHECK-NEXT:   %tmp33_unwrap = getelementptr inbounds double, double* %arg3, i64 %ij_unwrap
 ; CHECK-NEXT:   %vij_unwrap = load double, double* %tmp33_unwrap, align 8, !tbaa !31
-; CHECK-NEXT:   %m0diffeterm2 = fmul fast double %7, %vij_unwrap
+; CHECK-NEXT:   %[[m0diffeterm2:.+]] = fmul fast double %[[i7]], %vij_unwrap
 ; CHECK-NEXT:   %tmp61_unwrap = fmul fast double %vij_unwrap, %v0
 ; CHECK-NEXT:   %term2_unwrap = fsub fast double %A, %tmp61_unwrap
-; CHECK-NEXT:   %m1diffevij = fmul fast double %7, %term2_unwrap
-; CHECK-NEXT:   %18 = fadd fast double %8, %m0diffeterm2
-; CHECK-NEXT:   %19 = fsub fast double 0.000000e+00, %m0diffeterm2
-; CHECK-NEXT:   %m0diffevij = fmul fast double %19, %v0
-; CHECK-NEXT:   %m1diffev0 = fmul fast double %19, %vij_unwrap
-; CHECK-NEXT:   %20 = fadd fast double %m1diffevij, %m0diffevij
-; CHECK-NEXT:   %21 = fadd fast double %9, %m1diffev0
+; CHECK-NEXT:   %[[m1diffevij:.+]] = fmul fast double %[[i7]], %term2_unwrap
+; CHECK-NEXT:   %[[i18]] = fadd fast double %[[i8]], %[[m0diffeterm2]]
+; CHECK-NEXT:   %[[i19:.+]] = fsub fast double 0.000000e+00, %[[m0diffeterm2]]
+; CHECK-NEXT:   %[[m0diffevij:.+]] = fmul fast double %[[i19]], %v0
+; CHECK-NEXT:   %[[i20:.+]] = fadd fast double %[[m1diffevij]], %[[m0diffevij]]
+; CHECK-NEXT:   %[[m1diffev0:.+]] = fmul fast double %[[i19]], %vij_unwrap
+; CHECK-NEXT:   %[[i21]] = fadd fast double %[[i9]], %[[m1diffev0]]
 ; CHECK-NEXT:   %"tmp33'ipg_unwrap" = getelementptr inbounds double, double* %"arg3'", i64 %ij_unwrap
-; CHECK-NEXT:   %22 = load double, double* %"tmp33'ipg_unwrap", align 8
-; CHECK-NEXT:   %23 = fadd fast double %22, %20
-; CHECK-NEXT:   store double %23, double* %"tmp33'ipg_unwrap", align 8
-; CHECK-NEXT:   %24 = icmp eq i64 %"iv1'ac.0", 0
-; CHECK-NEXT:   br i1 %24, label %invertbb9, label %incinvertbb25
+; CHECK-NEXT:   %[[i22:.+]] = load double, double* %"tmp33'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i23:.+]] = fadd fast double %[[i22]], %[[i20]]
+; CHECK-NEXT:   store double %[[i23]], double* %"tmp33'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i24:.+]] = icmp eq i64 %"iv1'ac.0", 0
+; CHECK-NEXT:   br i1 %[[i24]], label %invertbb9, label %incinvertbb25
 ; CHECK-NEXT: }

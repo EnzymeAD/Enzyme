@@ -45,14 +45,14 @@ attributes #5 = { argmemonly nofree noinline nosync readonly }
 ; CHECK-NEXT:   %"i'ipa" = alloca double, align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"i'ipa", align 8
 ; CHECK-NEXT:   %i = alloca double, align 8
-; CHECK-NEXT:   call fastcc void @augmented_setup(double* %i, double* nonnull %"i'ipa", double %ai8)
-; CHECK-NEXT:   %0 = call fastcc { double } @diffeldcall(double* %i, double* nonnull %"i'ipa", i8 1, double %differeturn)
+; CHECK-NEXT:   call fastcc void @augmented_setup(double* nocapture nofree writeonly %i, double* nocapture nofree nonnull %"i'ipa", double %ai8)
+; CHECK-NEXT:   %0 = call fastcc { double } @diffeldcall(double* nocapture nofree readonly %i, double* nocapture nofree nonnull %"i'ipa", i8 1, double %differeturn)
 ; CHECK-NEXT:   %1 = extractvalue { double } %0, 0
-; CHECK-NEXT:   %2 = call fastcc { double } @diffeldcall.1(double* %i, double* nonnull %"i'ipa", i8 0, double %differeturn)
+; CHECK-NEXT:   %2 = call fastcc { double } @diffeldcall.1(double* nocapture nofree readonly %i, double* nocapture nofree nonnull %"i'ipa", i8 0, double %differeturn)
 ; CHECK-NEXT:   %3 = extractvalue { double } %2, 0
 ; CHECK-NEXT:   %i9 = fadd double %3, %1
 ; CHECK-NEXT:   %i11 = fadd double %i9, %ai8
-; CHECK-NEXT:   %4 = call fastcc { double } @diffesetup(double* undef, double* nonnull %"i'ipa", double %ai8)
+; CHECK-NEXT:   %4 = call fastcc { double } @diffesetup(double* nocapture nofree writeonly undef, double* nocapture nofree nonnull %"i'ipa", double %ai8)
 ; CHECK-NEXT:   %5 = extractvalue { double } %4, 0
 ; CHECK-NEXT:   %6 = fadd fast double %5, %differeturn
 ; CHECK-NEXT:   %7 = insertvalue { double, double } undef, double %i11, 0

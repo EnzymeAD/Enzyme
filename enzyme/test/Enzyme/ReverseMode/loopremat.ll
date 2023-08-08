@@ -124,11 +124,11 @@ attributes #4 = { nounwind }
 
 ; CHECK: invertif.true:                                    ; preds = %invertsetExit
 ; CHECK-NEXT:   %i17_unwrap4 = trunc i64 %"iv1'ac.0" to i32
-; CHECK-NEXT:   %6 = sub i32 %i17_unwrap4, 1
-; CHECK-NEXT:   %7 = call fast double @llvm.powi.f64{{(\.i32)?}}(double %arg, i32 %6)
+; CHECK-NEXT:   %[[i11:.+]] = icmp eq i32 %i17_unwrap4, 0
 ; CHECK-DAG:    %[[a8:.+]] = sitofp i32 %i17_unwrap4 to double
-; CHECK-DAG:    %[[a9:.+]] = fmul fast double %7, %[[a8]]
-; CHECK-NEXT:   %[[i11:.+]] = icmp eq i32 0, %i17_unwrap4
+; CHECK-NEXT:   %[[i6:.]] = sub i32 %i17_unwrap4, 1
+; CHECK-NEXT:   %[[i7:.+]] = call fast double @llvm.powi.f64{{(\.i32)?}}(double %arg, i32 %[[i6]])
+; CHECK-DAG:    %[[a9:.+]] = fmul fast double %[[a8]], %[[i7]]
 ; CHECK-NEXT:   %[[i10:.+]] = fmul fast double %16, %[[a9]]
 ; CHECK-NEXT:   %12 = fadd fast double %"arg'de.1", %[[i10]]
 ; CHECK-NEXT:   %13 = select {{(fast )?}}i1 %[[i11]], double %"arg'de.1", double %12
@@ -170,10 +170,10 @@ attributes #4 = { nounwind }
 ; CHECK: remat_loop_loopExit:                              ; preds = %remat_loop_setLoop
 ; CHECK-NEXT:   %i7_unwrap = getelementptr inbounds [30 x double], [30 x double]* %i, i64 0, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %i8_unwrap = load double, double* %i7_unwrap, align 8, !tbaa !2
-; CHECK-NEXT:   %m0diffei8 = fmul fast double %"i10'de.0", %i8_unwrap
-; CHECK-NEXT:   %20 = fadd fast double %m0diffei8, %m0diffei8
+; CHECK-NEXT:   %[[m0diffei8:.+]] = fmul fast double %"i10'de.0", %i8_unwrap
+; CHECK-NEXT:   %[[i20:.+]] = fadd fast double %[[m0diffei8]], %[[m0diffei8]]
 ; CHECK-NEXT:   %"i7'ipg_unwrap" = getelementptr inbounds [30 x double], [30 x double]* %"i'ipa", i64 0, i64 %"iv'ac.0"
-; CHECK-NEXT:   %21 = load double, double* %"i7'ipg_unwrap", align 8
-; CHECK-NEXT:   %22 = fadd fast double %21, %20
-; CHECK-NEXT:   store double %22, double* %"i7'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i21:.+]] = load double, double* %"i7'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i22:.+]] = fadd fast double %[[i21]], %[[i20]]
+; CHECK-NEXT:   store double %[[i22]], double* %"i7'ipg_unwrap", align 8
 ; CHECK-NEXT:   br label %invertsetExit

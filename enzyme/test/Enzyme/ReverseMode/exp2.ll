@@ -23,8 +23,8 @@ declare double @__enzyme_autodiff(double (double)*, ...)
 ; CHECK: define internal { double } @diffetester(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = call fast double @llvm.exp2.f64(double %x)
-; CHECK-NEXT:   %1 = fmul fast double %differeturn, %0
-; CHECK-NEXT:   %2 = fmul fast double %1, 0x3FE62E42FEFA39EF
+; CHECK-NEXT:   %1 = fmul fast double 0x3FE62E42FEFA39EF, %0
+; CHECK-NEXT:   %2 = fmul fast double %differeturn, %1
 ; CHECK-NEXT:   %3 = insertvalue { double } {{(undef|poison)}}, double %2, 0
 ; CHECK-NEXT:   ret { double } %3
 ; CHECK-NEXT: }

@@ -161,9 +161,9 @@ attributes #0 = { readnone speculatable }
 
 ; CHECK: define internal void @diffeinner(double* %blockA, double* %"blockA'", double %ld)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = load double, double* %"blockA'", align 8
-; CHECK-NEXT:   %m0diffeld = fmul fast double %0, %ld
-; CHECK-NEXT:   %1 = fadd fast double %m0diffeld, %m0diffeld
-; CHECK-NEXT:   store double %1, double* %"blockA'", align 8
+; CHECK-NEXT:   %[[i0:.+]] = load double, double* %"blockA'", align 8
+; CHECK-NEXT:   %[[m0diffeld:.+]] = fmul fast double %[[i0]], %ld
+; CHECK-NEXT:   %[[i1:.+]] = fadd fast double %[[m0diffeld]], %[[m0diffeld]]
+; CHECK-NEXT:   store double %[[i1]], double* %"blockA'", align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

@@ -312,8 +312,8 @@ attributes #10 = { noreturn nounwind }
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %"ptr0'il_phi" = extractvalue { i8*, i8*, double* } %tapeArg, 2
 ; CHECK-NEXT:   %ptrsize = shl i64 %size, 3
-; CHECK-NEXT:   %alloc = extractvalue { i8*, i8*, double* } %tapeArg, 1
 ; CHECK-NEXT:   %"alloc'mi" = extractvalue { i8*, i8*, double* } %tapeArg, 0
+; CHECK-NEXT:   %alloc = extractvalue { i8*, i8*, double* } %tapeArg, 1
 ; CHECK-NEXT:   %"nptr'ipc" = bitcast i8* %"alloc'mi" to double*
 ; CHECK-NEXT:   %"insertptr'ipg" = getelementptr inbounds double, double* %"nptr'ipc", i64 %size
 ; CHECK-NEXT:   %0 = udiv i64 %ptrsize, 8
@@ -336,8 +336,8 @@ attributes #10 = { noreturn nounwind }
 ; CHECK: __enzyme_memcpyadd_doubleda8sa8.exit:             ; preds = %bb, %for.body.i
 ; CHECK-NEXT:   %4 = load double, double* %"insertptr'ipg"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"insertptr'ipg", align 8
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"alloc'mi")
-; CHECK-NEXT:   tail call void @free(i8* %alloc)
+; CHECK-NEXT:   call void @free(i8* nonnull %"alloc'mi")
+; CHECK-NEXT:   call void @free(i8* %alloc)
 ; CHECK-NEXT:   %5 = insertvalue { double } undef, double %4, 0
 ; CHECK-NEXT:   ret { double } %5
 ; CHECK-NEXT: }

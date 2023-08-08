@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 9 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -adce -instsimplify -early-cse -simplifycfg -S | FileCheck %s; fi
-; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,gvn,adce,instsimplify,early-cse)" -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ] ; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -adce -instsimplify -early-cse -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,gvn,adce,instsimplify,early-cse)" -S | FileCheck %s
 
 ; ModuleID = 'cuda.cu'
 source_filename = "cuda.cu"
@@ -79,7 +79,7 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   store double %res, double* %gep, align 4, !tbaa !11
 ; CHECK-NEXT:   %0 = load double, double* %"gep'ipg", align 4
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"gep'ipg", align 4
-; CHECK-NEXT:   %m0diffeld = fmul fast double %0, %x
-; CHECK-NEXT:   %1 = atomicrmw fadd double* %"g0'ipg", double %m0diffeld monotonic
+; CHECK-NEXT:   %[[m0diffeld:.+]] = fmul fast double %0, %x
+; CHECK-NEXT:   %{{.*}} = atomicrmw fadd double* %"g0'ipg", double %[[m0diffeld]] monotonic
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

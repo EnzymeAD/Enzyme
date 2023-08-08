@@ -31,6 +31,15 @@
 #include <deque>
 
 #include <llvm/Config/llvm-config.h>
+#if LLVM_VERSION_MAJOR >= 16
+#define private public
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+#undef private
+#else
+#include "SCEV/ScalarEvolution.h"
+#include "SCEV/ScalarEvolutionExpander.h"
+#endif
 
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/IR/Constants.h"
@@ -39,6 +48,7 @@
 
 #include "llvm/Support/CommandLine.h"
 
+#include "llvm/ADT/StringMap.h"
 #include "llvm/IR/InstVisitor.h"
 
 #include "TypeAnalysis/TypeAnalysis.h"
@@ -55,7 +65,7 @@ class PreProcessCache;
 
 // A map of MPI comm allocators (otherwise inactive) to the
 // argument of the Comm* they allocate into.
-extern const std::map<std::string, size_t> MPIInactiveCommAllocators;
+extern const llvm::StringMap<size_t> MPIInactiveCommAllocators;
 
 /// Helper class to analyze the differential activity
 class ActivityAnalyzer {

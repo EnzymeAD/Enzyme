@@ -1188,9 +1188,9 @@ attributes #10 = { noreturn nounwind }
 
 ; CHECK: define internal { i8*, i8* } @augmented_subfn(float** %m_data.i.i, float** %"m_data.i.i'", float* %K, float* %"K'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call = tail call noalias nonnull dereferenceable(36) dereferenceable_or_null(36) i8* @malloc(i64 36)
 ; CHECK-NEXT:   %"call'mi" = tail call noalias nonnull dereferenceable(36) dereferenceable_or_null(36) i8* @malloc(i64 36)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(36) dereferenceable_or_null(36) %"call'mi", i8 0, i64 36, i1 false)
+; CHECK-NEXT:   %call = tail call noalias nonnull dereferenceable(36) dereferenceable_or_null(36) i8* @malloc(i64 36)
 ; CHECK-NEXT:   %"a0'ipc" = bitcast i8* %"call'mi" to float*
 ; CHECK-NEXT:   %a0 = bitcast i8* %call to float*
 ; CHECK-NEXT:   store float* %"a0'ipc", float** %"m_data.i.i'", align 8
@@ -1204,15 +1204,15 @@ attributes #10 = { noreturn nounwind }
 
 ; CHECK: define internal void @diffesubfn(float** %m_data.i.i, float** %"m_data.i.i'", float* %K, float* %"K'", { i8*, i8* } %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call = extractvalue { i8*, i8* } %tapeArg, 1
 ; CHECK-NEXT:   %"call'mi" = extractvalue { i8*, i8* } %tapeArg, 0
+; CHECK-NEXT:   %call = extractvalue { i8*, i8* } %tapeArg, 1
 ; CHECK-NEXT:   %[[a0ipc:.+]] = bitcast i8* %"call'mi" to float*
 ; CHECK-NEXT:   %0 = load float, float* %[[a0ipc]], align 4
 ; CHECK-NEXT:   store float 0.000000e+00, float* %[[a0ipc]], align 4
 ; CHECK-NEXT:   %1 = load float, float* %"K'", align 4
 ; CHECK-NEXT:   %2 = fadd fast float %1, %0
 ; CHECK-NEXT:   store float %2, float* %"K'", align 4
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call'mi")
-; CHECK-NEXT:   tail call void @free(i8* %call)
+; CHECK-NEXT:   call void @free(i8* nonnull %"call'mi")
+; CHECK-NEXT:   call void @free(i8* %call)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

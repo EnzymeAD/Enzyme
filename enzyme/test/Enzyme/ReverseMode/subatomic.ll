@@ -27,15 +27,7 @@ declare double @_Z17__enzyme_autodiffPviRdS0_(i8*)
 
 ; CHECK: define internal void @diffe_Z3fooRd(double %differeturn)
 ; CHECK-NEXT: invert:
-; CHECK-NEXT:   %"ap'ipa" = alloca i32, align 8
-; CHECK-NEXT:   store i32 0, i32* %"ap'ipa", align 8
 ; CHECK-NEXT:   %ap = alloca i32, align 8
-; CHECK-NEXT:   call void @diffe_ZN9__gnu_cxxL18__exchange_and_addEPVii(i32* %ap, i32* %"ap'ipa", i32 -1)
-; CHECK-NEXT:   ret void
-; CHECK-NEXT: }
-
-; CHECK: define internal void @diffe_ZN9__gnu_cxxL18__exchange_and_addEPVii(i32* %a0, i32* %"a0'", i32 %a1)
-; CHECK-NEXT: invert:
-; CHECK-NEXT:   %a10 = atomicrmw volatile add i32* %a0, i32 %a1 acq_rel
+; CHECK-NEXT:   %a5 = call i32 @_ZN9__gnu_cxxL18__exchange_and_addEPVii(i32* %ap, i32 -1)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

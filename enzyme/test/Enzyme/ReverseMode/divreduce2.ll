@@ -74,7 +74,7 @@ declare double @__enzyme_autodiff(i8*, double*, double*, i64, double)
 ; CHECK-NEXT:   ret { double } %2
 
 ; CHECK: invertloop:                                       ; preds = %loop, %incinvertloop
-; CHECK-NEXT:   %"reduce'de.0" = phi double [ %d0differeduce, %incinvertloop ], [ %differeturn, %loop ]
+; CHECK-NEXT:   %"reduce'de.0" = phi double [ %[[d0differeduce:.+]], %incinvertloop ], [ %differeturn, %loop ]
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %7, %incinvertloop ], [ %N, %loop ]
 ; CHECK-NEXT:   %3 = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   %4 = select{{( fast)?}} i1 %3, double 0.000000e+00, double %"reduce'de.0"
@@ -86,15 +86,15 @@ declare double @__enzyme_autodiff(i8*, double*, double*, i64, double)
 ; CHECK-NEXT:   %7 = add nsw i64 %"iv'ac.0", -1
 ; CHECK-NEXT:   %gep_unwrap = getelementptr inbounds double, double* %A, i64 %7
 ; CHECK-NEXT:   %ld_unwrap = load double, double* %gep_unwrap, align 8
-; CHECK-NEXT:   %d0differeduce = fdiv fast double %4, %ld_unwrap
-; CHECK-NEXT:   %8 = getelementptr inbounds double, double* %reduce_malloccache, i64 %7
-; CHECK-NEXT:   %9 = load double, double* %8, align 8, !invariant.group !{{[0-9]+}}
-; CHECK-NEXT:   %div_unwrap = fdiv double %9, %ld_unwrap
-; CHECK-NEXT:   %10 = fmul fast double %div_unwrap, %d0differeduce
-; CHECK-NEXT:   %11 = {{(fsub fast double \-?0.000000e\+00,|fneg fast double)}} %10
+; CHECK-NEXT:   %[[d0differeduce]] = fdiv fast double %4, %ld_unwrap
+; CHECK-NEXT:   %[[i8:.+]] = getelementptr inbounds double, double* %reduce_malloccache, i64 %7
+; CHECK-NEXT:   %[[i9:.+]] = load double, double* %[[i8]], align 8, !invariant.group !{{[0-9]+}}
+; CHECK-NEXT:   %[[div_unwrap:.+]] = fdiv {{(fast )?}}double %[[i9]], %ld_unwrap
+; CHECK-NEXT:   %[[i10:.+]] = fmul fast double %[[d0differeduce]], %[[div_unwrap]]
+; CHECK-NEXT:   %[[i11:.+]] = {{(fsub fast double \-?0.000000e\+00,|fneg fast double)}} %[[i10:.+]]
 ; CHECK-NEXT:   %"gep'ipg_unwrap" = getelementptr inbounds double, double* %"A'", i64 %7
-; CHECK-NEXT:   %12 = load double, double* %"gep'ipg_unwrap", align 8
-; CHECK-NEXT:   %13 = fadd fast double %12, %11
-; CHECK-NEXT:   store double %13, double* %"gep'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i12:.+]] = load double, double* %"gep'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i13:.+]] = fadd fast double %[[i12]], %[[i11]]
+; CHECK-NEXT:   store double %[[i13]], double* %"gep'ipg_unwrap", align 8
 ; CHECK-NEXT:   br label %invertloop
 ; CHECK-NEXT: }

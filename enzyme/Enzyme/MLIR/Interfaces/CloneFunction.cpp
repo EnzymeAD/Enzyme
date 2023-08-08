@@ -73,7 +73,7 @@ mlir::FunctionType getFunctionTypeForClone(
   return builder.getFunctionType(ArgTypes, RetTypes);
 }
 
-Operation *clone(Operation *src, BlockAndValueMapping &mapper,
+Operation *clone(Operation *src, IRMapping &mapper,
                  Operation::CloneOptions options,
                  std::map<Operation *, Operation *> &opMap) {
   SmallVector<Value, 8> operands;
@@ -110,15 +110,14 @@ Operation *clone(Operation *src, BlockAndValueMapping &mapper,
   return newOp;
 }
 
-void cloneInto(Region *src, Region *dest, BlockAndValueMapping &mapper,
+void cloneInto(Region *src, Region *dest, IRMapping &mapper,
                std::map<Operation *, Operation *> &opMap) {
   cloneInto(src, dest, dest->end(), mapper, opMap);
 }
 
 /// Clone this region into 'dest' before the given position in 'dest'.
 void cloneInto(Region *src, Region *dest, Region::iterator destPos,
-               BlockAndValueMapping &mapper,
-               std::map<Operation *, Operation *> &opMap) {
+               IRMapping &mapper, std::map<Operation *, Operation *> &opMap) {
   assert(src);
   assert(dest && "expected valid region to clone into");
   assert(src != dest && "cannot clone region into itself");
@@ -196,11 +195,11 @@ void cloneInto(Region *src, Region *dest, Region::iterator destPos,
 
 FunctionOpInterface CloneFunctionWithReturns(
     DerivativeMode mode, unsigned width, FunctionOpInterface F,
-    BlockAndValueMapping &ptrInputs, ArrayRef<DIFFE_TYPE> constant_args,
+    IRMapping &ptrInputs, ArrayRef<DIFFE_TYPE> constant_args,
     SmallPtrSetImpl<mlir::Value> &constants,
     SmallPtrSetImpl<mlir::Value> &nonconstants,
     SmallPtrSetImpl<mlir::Value> &returnvals, ReturnType returnValue,
-    DIFFE_TYPE ReturnType, Twine name, BlockAndValueMapping &VMap,
+    DIFFE_TYPE ReturnType, Twine name, IRMapping &VMap,
     std::map<Operation *, Operation *> &OpMap, bool diffeReturnArg,
     mlir::Type additionalArg) {
   assert(!F.getFunctionBody().empty());

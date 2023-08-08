@@ -89,9 +89,9 @@ declare dso_local double @__enzyme_autodiff(i8*, double*, double*) local_unnamed
 ; CHECK-NEXT:   call void @diffemetasubf(double* %x, double* %"x'")
 ; CHECK-NEXT:   %[[px:.+]] = load double, double* %"x'"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'"
-; CHECK-NEXT:   %m0diffe = fmul fast double %[[px]], 2.000000e+00
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %[[px]], 2.000000e+00
 ; CHECK-NEXT:   %[[ppx:.+]] = load double, double* %"x'"
-; CHECK-NEXT:   %[[postx:.+]] = fadd fast double %[[ppx]], %m0diffe
+; CHECK-NEXT:   %[[postx:.+]] = fadd fast double %[[ppx]], %[[m0diffe]]
 ; CHECK-NEXT:   store double %[[postx]], double* %"x'"
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

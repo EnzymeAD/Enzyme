@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -lt 12 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse -S | FileCheck %s ; fi
+; RUN: if [ %llvmver -lt 12 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse -adce -S | FileCheck %s ; fi
 
 
 ; #include <stdio.h>
@@ -103,60 +103,50 @@ attributes #6 = { nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = extractvalue [3 x %"struct.std::array"*] %"agg.result'", 0
 ; CHECK-NEXT:   %"arrayinit.begin'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %0, i64 0, i32 0, i64 0
-; CHECK-NEXT:   %1 = insertvalue [3 x double*] undef, double* %"arrayinit.begin'ipg", 0
-; CHECK-NEXT:   %2 = extractvalue [3 x %"struct.std::array"*] %"agg.result'", 1
-; CHECK-NEXT:   %"arrayinit.begin'ipg1" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %2, i64 0, i32 0, i64 0
-; CHECK-NEXT:   %3 = insertvalue [3 x double*] %1, double* %"arrayinit.begin'ipg1", 1
-; CHECK-NEXT:   %4 = extractvalue [3 x %"struct.std::array"*] %"agg.result'", 2
-; CHECK-NEXT:   %"arrayinit.begin'ipg2" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %4, i64 0, i32 0, i64 0
+; CHECK-NEXT:   %[[i2:.+]] = extractvalue [3 x %"struct.std::array"*] %"agg.result'", 1
+; CHECK-NEXT:   %"arrayinit.begin'ipg1" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %[[i2]], i64 0, i32 0, i64 0
+; CHECK-NEXT:   %[[i4:.+]] = extractvalue [3 x %"struct.std::array"*] %"agg.result'", 2
+; CHECK-NEXT:   %"arrayinit.begin'ipg2" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %[[i4]], i64 0, i32 0, i64 0
 ; CHECK-NEXT:   %arrayinit.begin = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %agg.result, i64 0, i32 0, i64 0
 ; CHECK-NEXT:   %mul = fmul double %x, %x
 ; CHECK-NEXT:   %[[i6:.+]] = extractvalue [3 x double] %"x'", 0
 ; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %[[i6]], %x
-; CHECK-NEXT:   %[[i8:.+]] = fadd fast double %[[i7]], %[[i7]]
-; CHECK-NEXT:   %[[i9:.+]] = insertvalue [3 x double] undef, double %[[i8]], 0
 ; CHECK-NEXT:   %[[i10:.+]] = extractvalue [3 x double] %"x'", 1
 ; CHECK-NEXT:   %[[i11:.+]] = fmul fast double %[[i10]], %x
-; CHECK-NEXT:   %[[i12:.+]] = fadd fast double %[[i11]], %[[i11]]
-; CHECK-NEXT:   %[[i13:.+]] = insertvalue [3 x double] %[[i9]], double %[[i12]], 1
 ; CHECK-NEXT:   %[[i14:.+]] = extractvalue [3 x double] %"x'", 2
 ; CHECK-NEXT:   %[[i15:.+]] = fmul fast double %[[i14]], %x
+; CHECK-NEXT:   %[[i8:.+]] = fadd fast double %[[i7]], %[[i7]]
+; CHECK-NEXT:   %[[i12:.+]] = fadd fast double %[[i11]], %[[i11]]
 ; CHECK-NEXT:   %[[i16:.+]] = fadd fast double %[[i15]], %[[i15]]
-; CHECK-NEXT:   store double %mul, double* %arrayinit.begin, align 8
 ; CHECK-NEXT:   store double %[[i8]], double* %"arrayinit.begin'ipg", align 8
 ; CHECK-NEXT:   store double %[[i12]], double* %"arrayinit.begin'ipg1", align 8
 ; CHECK-NEXT:   store double %[[i16]], double* %"arrayinit.begin'ipg2", align 8
+; CHECK-NEXT:   store double %mul, double* %arrayinit.begin, align 8
 ; CHECK-NEXT:   %"arrayinit.element'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %0, i64 0, i32 0, i64 1
-; CHECK-NEXT:   %[[i18:.+]] = insertvalue [3 x double*] undef, double* %"arrayinit.element'ipg", 0
-; CHECK-NEXT:   %"arrayinit.element'ipg3" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %2, i64 0, i32 0, i64 1
-; CHECK-NEXT:   %[[i19:.+]] = insertvalue [3 x double*] %[[i18]], double* %"arrayinit.element'ipg3", 1
-; CHECK-NEXT:   %"arrayinit.element'ipg4" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %4, i64 0, i32 0, i64 1
+; CHECK-NEXT:   %"arrayinit.element'ipg3" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %[[i2]], i64 0, i32 0, i64 1
+; CHECK-NEXT:   %"arrayinit.element'ipg4" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %[[i4]], i64 0, i32 0, i64 1
 ; CHECK-NEXT:   %arrayinit.element = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %agg.result, i64 0, i32 0, i64 1
 ; CHECK-NEXT:   %mul2 = fmul double %mul, %x
 ; CHECK-NEXT:   %[[i21:.+]] = fmul fast double %[[i8]], %x
-; CHECK-NEXT:   %[[i22:.+]] = fmul fast double %[[i6]], %mul
-; CHECK-NEXT:   %[[i23:.+]] = fadd fast double %[[i21]], %[[i22]]
-; CHECK-NEXT:   %[[i24:.+]] = insertvalue [3 x double] undef, double %[[i23]], 0
 ; CHECK-NEXT:   %[[i25:.+]] = fmul fast double %[[i12]], %x
-; CHECK-NEXT:   %[[i26:.+]] = fmul fast double %[[i10]], %mul
-; CHECK-NEXT:   %[[i27:.+]] = fadd fast double %[[i25]], %[[i26]]
-; CHECK-NEXT:   %[[i28:.+]] = insertvalue [3 x double] %[[i24]], double %[[i27]], 1
 ; CHECK-NEXT:   %[[i29:.+]] = fmul fast double %[[i16]], %x
+; CHECK-NEXT:   %[[i22:.+]] = fmul fast double %[[i6]], %mul
+; CHECK-NEXT:   %[[i26:.+]] = fmul fast double %[[i10]], %mul
 ; CHECK-NEXT:   %[[i30:.+]] = fmul fast double %[[i14]], %mul
+; CHECK-NEXT:   %[[i23:.+]] = fadd fast double %[[i21]], %[[i22]]
+; CHECK-NEXT:   %[[i27:.+]] = fadd fast double %[[i25]], %[[i26]]
 ; CHECK-NEXT:   %[[i31:.+]] = fadd fast double %[[i29]], %[[i30]]
-; CHECK-NEXT:   store double %mul2, double* %arrayinit.element, align 8
 ; CHECK-NEXT:   store double %[[i23]], double* %"arrayinit.element'ipg", align 8
 ; CHECK-NEXT:   store double %[[i27]], double* %"arrayinit.element'ipg3", align 8
 ; CHECK-NEXT:   store double %[[i31]], double* %"arrayinit.element'ipg4", align 8
+; CHECK-NEXT:   store double %mul2, double* %arrayinit.element, align 8
 ; CHECK-NEXT:   %"arrayinit.element3'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %0, i64 0, i32 0, i64 2
-; CHECK-NEXT:   %[[i33:.+]] = insertvalue [3 x double*] undef, double* %"arrayinit.element3'ipg", 0
-; CHECK-NEXT:   %"arrayinit.element3'ipg5" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %2, i64 0, i32 0, i64 2
-; CHECK-NEXT:   %[[i34:.+]] = insertvalue [3 x double*] %[[i33]], double* %"arrayinit.element3'ipg5", 1
-; CHECK-NEXT:   %"arrayinit.element3'ipg6" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %4, i64 0, i32 0, i64 2
+; CHECK-NEXT:   %"arrayinit.element3'ipg5" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %[[i2]], i64 0, i32 0, i64 2
+; CHECK-NEXT:   %"arrayinit.element3'ipg6" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %[[i4]], i64 0, i32 0, i64 2
 ; CHECK-NEXT:   %arrayinit.element3 = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %agg.result, i64 0, i32 0, i64 2
-; CHECK-NEXT:   store double %x, double* %arrayinit.element3, align 8
 ; CHECK-NEXT:   store double %[[i6]], double* %"arrayinit.element3'ipg", align 8
 ; CHECK-NEXT:   store double %[[i10]], double* %"arrayinit.element3'ipg5", align 8
 ; CHECK-NEXT:   store double %[[i14]], double* %"arrayinit.element3'ipg6", align 8
+; CHECK-NEXT:   store double %x, double* %arrayinit.element3, align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

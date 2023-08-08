@@ -418,6 +418,14 @@ inline bool is_value_needed_in_reverse(
       if (isa<StoreInst>(user) || isa<MemTransferInst>(user) ||
           isa<MemSetInst>(user)) {
         for (auto pair : gutils->rematerializableAllocations) {
+          // If caching the outer allocation and have already set that this is
+          // not needed return early. This is necessary to avoid unnecessarily
+          // deciding stored values are needed if we have already decided to
+          // cache the whole allocation.
+          auto found = seen.find(std::make_pair(pair.first, ValueType::Primal));
+          if (found != seen.end() && !found->second)
+            continue;
+
           // Directly consider all the load uses to avoid an illegal inductive
           // recurrence. Specifically if we're asking if the alloca is used,
           // we'll set it to unused, then check the gep, then here we'll
@@ -633,7 +641,8 @@ void minCut(const llvm::DataLayout &DL, llvm::LoopInfo &OrigLI,
             llvm::SmallPtrSetImpl<llvm::Value *> &Required,
             llvm::SmallPtrSetImpl<llvm::Value *> &MinReq,
             const llvm::ValueMap<llvm::Value *, GradientUtils::Rematerializer>
-                &rematerializableAllocations);
+                &rematerializableAllocations,
+            llvm::TargetLibraryInfo &TLI);
 
 }; // namespace DifferentialUseAnalysis
 

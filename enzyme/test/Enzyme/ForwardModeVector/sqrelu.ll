@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -early-cse -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(early-cse)" -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -early-cse -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(early-cse,adce)" -enzyme-preopt=false -S | FileCheck %s
 ;
 %struct.Gradients = type { double, double }
 
@@ -50,25 +50,21 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:    [[TMP1:%.*]] = call fast double @llvm.cos.f64(double [[X]])
 ; CHECK-NEXT:    [[TMP2:%.*]] = extractvalue [2 x double] %"x'", 0
 ; CHECK-NEXT:    [[TMP3:%.*]] = fmul fast double [[TMP2]], [[TMP1]]
-; CHECK-NEXT:    [[TMP4:%.*]] = insertvalue [2 x double] undef, double [[TMP3]], 0
 ; CHECK-NEXT:    [[TMP5:%.*]] = extractvalue [2 x double] %"x'", 1
 ; CHECK-NEXT:    [[TMP6:%.*]] = fmul fast double [[TMP5]], [[TMP1]]
 ; CHECK-NEXT:    [[MUL:%.*]] = fmul fast double [[TMP0]], [[X]]
 ; CHECK-NEXT:    [[TMP7:%.*]] = fmul fast double [[TMP3]], [[X]]
-; CHECK-NEXT:    [[TMP8:%.*]] = fmul fast double [[TMP2]], [[TMP0]]
-; CHECK-NEXT:    [[TMP9:%.*]] = fadd fast double [[TMP7]], [[TMP8]]
-; CHECK-NEXT:    [[TMP10:%.*]] = insertvalue [2 x double] undef, double [[TMP9]], 0
 ; CHECK-NEXT:    [[TMP11:%.*]] = fmul fast double [[TMP6]], [[X]]
+; CHECK-NEXT:    [[TMP8:%.*]] = fmul fast double [[TMP2]], [[TMP0]]
 ; CHECK-NEXT:    [[TMP12:%.*]] = fmul fast double [[TMP5]], [[TMP0]]
+; CHECK-NEXT:    [[TMP9:%.*]] = fadd fast double [[TMP7]], [[TMP8]]
 ; CHECK-NEXT:    [[TMP13:%.*]] = fadd fast double [[TMP11]], [[TMP12]]
-; CHECK-NEXT:    [[TMP14:%.*]] = call fast double @llvm.sqrt.f64(double [[MUL]])
-; CHECK-NEXT:    [[TMP15:%.*]] = fmul fast double 5.000000e-01, [[TMP9]]
-; CHECK-NEXT:    [[TMP16:%.*]] = fdiv fast double [[TMP15]], [[TMP14]]
 ; CHECK-NEXT:    [[TMP17:%.*]] = fcmp fast ueq double [[MUL]], 0.000000e+00
+; CHECK-NEXT:    [[TMP14:%.*]] = call fast double @llvm.sqrt.f64(double [[MUL]])
+; CHECK-NEXT:    [[TMP15:%.*]] = fmul fast double 2.000000e+00, [[TMP14]]
+; CHECK-NEXT:    [[TMP16:%.*]] = fdiv fast double [[TMP9]], [[TMP15]]
+; CHECK-NEXT:    [[TMP21:%.*]] = fdiv fast double [[TMP13]], [[TMP15]]
 ; CHECK-NEXT:    [[TMP18:%.*]] = select {{(fast )?}}i1 [[TMP17]], double 0.000000e+00, double [[TMP16]]
-; CHECK-NEXT:    [[TMP19:%.*]] = insertvalue [2 x double] undef, double [[TMP18]], 0
-; CHECK-NEXT:    [[TMP20:%.*]] = fmul fast double 5.000000e-01, [[TMP13]]
-; CHECK-NEXT:    [[TMP21:%.*]] = fdiv fast double [[TMP20]], [[TMP14]]
 ; CHECK-NEXT:    [[TMP22:%.*]] = select {{(fast )?}}i1 [[TMP17]], double 0.000000e+00, double [[TMP21]]
 ; CHECK-NEXT:    br label [[COND_END]]
 ; CHECK:       cond.end:

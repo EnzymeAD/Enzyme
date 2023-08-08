@@ -30,10 +30,10 @@ using namespace mlir::enzyme;
 mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
     FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
-    BlockAndValueMapping invertedPointers_,
+    IRMapping invertedPointers_,
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
     const SmallPtrSetImpl<mlir::Value> &activevals_, DIFFE_TYPE ReturnActivity,
-    ArrayRef<DIFFE_TYPE> ArgDiffeTypes_, BlockAndValueMapping &originalToNewFn_,
+    ArrayRef<DIFFE_TYPE> ArgDiffeTypes_, IRMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode_, unsigned width, SymbolTableCollection &symbolTable_)
     : newFunc(newFunc_), Logic(Logic), mode(mode_), oldFunc(oldFunc_), TA(TA_),
@@ -41,7 +41,7 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
       originalToNewFn(originalToNewFn_),
       originalToNewFnOps(originalToNewFnOps_), symbolTable(symbolTable_) {
 
-  initInitializationBlock(invertedPointers_, activevals_);
+  initInitializationBlock(invertedPointers_, ArgDiffeTypes_);
 }
 
 // for(auto x : v.getUsers()){x->dump();} DEBUG
@@ -72,10 +72,34 @@ Type mlir::enzyme::MGradientUtilsReverse::getCacheType(Type t) {
   return cacheType;
 }
 
+void MGradientUtilsReverse::registerCacheCreatorHook(
+    std::function<std::pair<Value, Value>(Type)> hook) {
+  if (hook != nullptr) {
+    cacheCreatorHook.push_back(hook);
+  }
+}
+
+void MGradientUtilsReverse::deregisterCacheCreatorHook(
+    std::function<std::pair<Value, Value>(Type)> hook) {
+  if (hook != nullptr) {
+    cacheCreatorHook.pop_back();
+  }
+}
+
+std::pair<Value, Value> MGradientUtilsReverse::getNewCache(Type t) {
+  if (cacheCreatorHook.empty()) {
+    Value cache = insertInit(t);
+    return {cache, cache};
+  }
+  return cacheCreatorHook.back()(t);
+}
+
+// We assume that caches will only be written to at one location. The returned
+// cache is (might be) "pop only"
 Value MGradientUtilsReverse::initAndPushCache(Value v, OpBuilder &builder) {
-  Value cache = insertInit(getCacheType(v.getType()));
-  builder.create<enzyme::PushOp>(v.getLoc(), cache, v);
-  return cache;
+  auto [pushCache, popCache] = getNewCache(getCacheType(v.getType()));
+  auto pushOp = builder.create<enzyme::PushOp>(v.getLoc(), pushCache, v);
+  return popCache;
 }
 
 Value MGradientUtilsReverse::popCache(Value cache, OpBuilder &builder) {
@@ -152,7 +176,7 @@ Operation *mlir::enzyme::MGradientUtilsReverse::getNewFromOriginal(
 Operation *
 mlir::enzyme::MGradientUtilsReverse::cloneWithNewOperands(OpBuilder &B,
                                                           Operation *op) {
-  BlockAndValueMapping map;
+  IRMapping map;
   for (auto operand : op->getOperands())
     map.map(operand, getNewFromOriginal(operand));
   return B.clone(*op, map);
@@ -266,23 +290,25 @@ bool mlir::enzyme::MGradientUtilsReverse::hasInvertPointer(mlir::Value v) {
 }
 
 void MGradientUtilsReverse::initInitializationBlock(
-    BlockAndValueMapping invertedPointers_,
-    const SmallPtrSetImpl<Value> &activevals_) {
+    IRMapping invertedPointers_, ArrayRef<DIFFE_TYPE> argDiffeTypes) {
   initializationBlock = &*(this->newFunc.getFunctionBody().begin());
 
   OpBuilder initializationBuilder(
       &*(this->newFunc.getFunctionBody().begin()),
       this->newFunc.getFunctionBody().begin()->begin());
 
-  for (Value activeval : activevals_) {
-    if (auto iface = dyn_cast<AutoDiffTypeInterface>(activeval.getType())) {
-      Value zero =
-          iface.createNullValue(initializationBuilder, activeval.getLoc());
-      mapInvertPointer(activeval, zero, initializationBuilder);
-    } else {
+  for (const auto &[val, diffe_type] : llvm::zip(
+           this->oldFunc.getFunctionBody().getArguments(), argDiffeTypes)) {
+    if (diffe_type != DIFFE_TYPE::OUT_DIFF) {
+      continue;
+    }
+    auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
+    if (!iface) {
       llvm_unreachable(
           "Type does not have an associated AutoDiffTypeInterface");
     }
+    Value zero = iface.createNullValue(initializationBuilder, val.getLoc());
+    mapInvertPointer(val, zero, initializationBuilder);
   }
   for (auto const &x : invertedPointers_.getValueMap()) {
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(x.first.getType())) {
@@ -377,13 +403,13 @@ MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
   if (width > 1)
     prefix += std::to_string(width);
 
-  BlockAndValueMapping originalToNew;
+  IRMapping originalToNew;
   std::map<Operation *, Operation *> originalToNewOps;
 
   SmallPtrSet<mlir::Value, 1> returnvals;
   SmallPtrSet<mlir::Value, 1> constant_values;
   SmallPtrSet<mlir::Value, 1> nonconstant_values;
-  BlockAndValueMapping invertedPointers;
+  IRMapping invertedPointers;
   FunctionOpInterface newFunc = CloneFunctionWithReturns(
       mode_, width, todiff, invertedPointers, constant_args, constant_values,
       nonconstant_values, returnvals, returnValue, retType,

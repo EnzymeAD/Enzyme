@@ -72,7 +72,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT: }
 
 
-; CHECK: define internal { double } @diffe_Z6squared(%"struct.std::array"* noalias nocapture align 8 "enzyme_sret" %agg.result, %"struct.std::array"* nocapture "enzyme_sret" %"agg.result'", double %x)
+; CHECK: define internal { double } @diffe_Z6squared(%"struct.std::array"* noalias nocapture align 8 "enzyme_sret" %agg.result, %"struct.std::array"* nocapture align 8 "enzyme_sret" %"agg.result'", double %x)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"arrayinit.begin'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %"agg.result'", i64 0, i32 0, i64 0
 ; CHECK-NEXT:   %arrayinit.begin = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %agg.result, i64 0, i32 0, i64 0
@@ -87,17 +87,17 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   store double %mul3, double* %arrayinit.element1, align 8
 ; CHECK-NEXT:   %0 = load double, double* %"arrayinit.element1'ipg", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayinit.element1'ipg", align 8
-; CHECK-NEXT:   %m0diffemul = fmul fast double %0, %x
-; CHECK-NEXT:   %m1diffex = fmul fast double %0, %mul
-; CHECK-NEXT:   %1 = load double, double* %"arrayinit.element'ipg", align 8
+; CHECK-NEXT:   %[[m0diffemul:.+]] = fmul fast double %0, %x
+; CHECK-NEXT:   %[[m1diffex:.+]] = fmul fast double %0, %mul
+; CHECK-NEXT:   %[[i1:.+]] = load double, double* %"arrayinit.element'ipg", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayinit.element'ipg", align 8
-; CHECK-NEXT:   %2 = fadd fast double %m0diffemul, %1
-; CHECK-NEXT:   %m0diffex = fmul fast double %2, %x
-; CHECK-NEXT:   %3 = fadd fast double %m1diffex, %m0diffex
-; CHECK-NEXT:   %4 = fadd fast double %3, %m0diffex
-; CHECK-NEXT:   %5 = load double, double* %"arrayinit.begin'ipg", align 8
+; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[m0diffemul]], %[[i1]]
+; CHECK-NEXT:   %[[m0diffex:.+]] = fmul fast double %[[i2]], %x
+; CHECK-NEXT:   %[[i3:.+]] = fadd fast double %[[m1diffex]], %[[m0diffex]]
+; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %[[i3]], %[[m0diffex]]
+; CHECK-NEXT:   %[[i5:.+]] = load double, double* %"arrayinit.begin'ipg", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayinit.begin'ipg", align 8
-; CHECK-NEXT:   %6 = fadd fast double %4, %5
-; CHECK-NEXT:   %7 = insertvalue { double } undef, double %6, 0
-; CHECK-NEXT:   ret { double } %7
+; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %[[i4]], %[[i5]]
+; CHECK-NEXT:   %[[i7:.+]] = insertvalue { double } undef, double %[[i6]], 0
+; CHECK-NEXT:   ret { double } %[[i7]]
 ; CHECK-NEXT: }
