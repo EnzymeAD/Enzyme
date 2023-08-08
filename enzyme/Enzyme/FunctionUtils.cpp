@@ -298,9 +298,13 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       IRBuilder<> B(CI);
       auto nCI = cast<CastInst>(B.CreateCast(
           CI->getOpcode(), rep,
-          PointerType::get(
-              CI->getType()->getPointerElementType(),
-              cast<PointerType>(rep->getType())->getAddressSpace())));
+#if LLVM_VERSION_MAJOR < 18
+          PointerType::get(CI->getType()->getPointerElementType(),
+                           cast<PointerType>(rep->getType())->getAddressSpace())
+#else
+          rep->getType()
+#endif
+              ));
       nCI->takeName(CI);
       for (auto U : CI->users()) {
         Todo.push_back(
@@ -753,6 +757,7 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
       T0 = CI->getOperand(0);
     auto AI = cast<AllocaInst>(T0);
     llvm::Value *AIV = AI;
+#if LLVM_VERSION_MAJOR < 18
     if (AIV->getType()->getPointerElementType() !=
         T->getType()->getPointerElementType()) {
       IRBuilder<> B(AI->getNextNode());
@@ -761,6 +766,7 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
                    T->getType()->getPointerElementType(),
                    cast<PointerType>(AI->getType())->getAddressSpace()));
     }
+#endif
     RecursivelyReplaceAddressSpace(T, AIV, /*legal*/ true);
   }
 }
@@ -986,6 +992,7 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
     B.SetInsertPoint(res);
 
     if (auto PT = dyn_cast<PointerType>(storePointer->getType())) {
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
       if (PT->getContext().supportsTypedPointers()) {
 #endif
@@ -995,6 +1002,7 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
               PointerType::get(res->getType(), PT->getAddressSpace()));
 #if LLVM_VERSION_MAJOR >= 15
       }
+#endif
 #endif
     } else {
       assert(isa<IntegerType>(storePointer->getType()));
@@ -2132,19 +2140,25 @@ Function *PreProcessCache::CloneFunctionWithReturns(
   unsigned ii = 0, jj = 0;
   for (auto i = F->arg_begin(), j = NewF->arg_begin(); i != F->arg_end();) {
     if (F->hasParamAttribute(ii, Attribute::StructRet)) {
-      // TODO persist types
       NewF->addParamAttr(jj, Attribute::get(F->getContext(), "enzyme_sret"));
-      /*
-#if LLVM_VERSION_MAJOR >= 12
-      NewF->addParamAttr(jj, Attribute::get(F->getContext(), "enzyme_sret",
-F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
-      NewF->addParamAttr(jj, Attribute::get(F->getContext(), "enzyme_sret"));
+#if LLVM_VERSION_MAJOR >= 13
+      // TODO
+      // NewF->addParamAttr(
+      //    jj,
+      //    Attribute::get(
+      //        F->getContext(), Attribute::AttrKind::ElementType,
+      //        F->getParamAttribute(ii,
+      //        Attribute::StructRet).getValueAsType()));
 #endif
-      */
     }
     if (F->getAttributes().hasParamAttr(ii, "enzymejl_returnRoots")) {
       NewF->addParamAttr(
           jj, F->getAttributes().getParamAttr(ii, "enzymejl_returnRoots"));
+#if LLVM_VERSION_MAJOR >= 13
+      // TODO
+      // NewF->addParamAttr(jj, F->getParamAttribute(ii,
+      // Attribute::ElementType));
+#endif
     }
     for (auto ty : PrimalParamAttrsToPreserve)
       if (F->getAttributes().hasParamAttr(ii, ty)) {
@@ -2189,40 +2203,56 @@ F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
             auto attr = F->getAttributes().getParamAttr(ii, ty);
             NewF->addParamAttr(jj + 1, attr);
           }
-      // TODO: find a way to keep sret for shadow
+
+      if (F->getAttributes().hasParamAttr(ii, "enzymejl_returnRoots")) {
+        if (width == 1) {
+          NewF->addParamAttr(jj + 1, F->getAttributes().getParamAttr(
+                                         ii, "enzymejl_returnRoots"));
+        } else {
+          NewF->addParamAttr(jj + 1, Attribute::get(F->getContext(),
+                                                    "enzymejl_returnRoots_v"));
+        }
+#if LLVM_VERSION_MAJOR >= 13
+        // TODO
+        // NewF->addParamAttr(jj + 1,
+        //                   F->getParamAttribute(ii, Attribute::ElementType));
+#endif
+      }
+
       if (F->hasParamAttribute(ii, Attribute::StructRet)) {
         if (width == 1) {
-          if (F->getAttributes().hasParamAttr(ii, "enzymejl_returnRoots")) {
-            NewF->addParamAttr(jj, F->getAttributes().getParamAttr(
-                                       ii, "enzymejl_returnRoots"));
-          }
 #if LLVM_VERSION_MAJOR >= 12
-          // TODO persist types
           NewF->addParamAttr(jj + 1,
                              Attribute::get(F->getContext(), "enzyme_sret"));
-          // NewF->addParamAttr(jj + 1, Attribute::get(F->getContext(),
-          // "enzyme_sret", F->getParamAttribute(ii,
-          // Attribute::StructRet).getValueAsType()));
 #else
           NewF->addParamAttr(jj + 1,
                              Attribute::get(F->getContext(), "enzyme_sret"));
 #endif
+#if LLVM_VERSION_MAJOR >= 13
+          // TODO
+          // NewF->addParamAttr(
+          //     jj + 1,
+          //     Attribute::get(F->getContext(),
+          //     Attribute::AttrKind::ElementType,
+          //                    F->getParamAttribute(ii, Attribute::StructRet)
+          //                        .getValueAsType()));
+#endif
         } else {
-          if (F->getAttributes().hasParamAttr(ii, "enzymejl_returnRoots")) {
-            NewF->addParamAttr(
-                jj, Attribute::get(F->getContext(), "enzymejl_returnRoots_v"));
-          }
 #if LLVM_VERSION_MAJOR >= 12
-          // TODO persist types
           NewF->addParamAttr(jj + 1,
                              Attribute::get(F->getContext(), "enzyme_sret_v"));
-          // NewF->addParamAttr(jj + 1, Attribute::get(F->getContext(),
-          // "enzyme_sret_v",
-          // GradientUtils::getShadowType(F->getParamAttribute(ii,
-          // Attribute::StructRet).getValueAsType(), width)));
 #else
           NewF->addParamAttr(jj + 1,
                              Attribute::get(F->getContext(), "enzyme_sret_v"));
+#endif
+#if LLVM_VERSION_MAJOR >= 13
+          // TODO
+          // NewF->addParamAttr(
+          //     jj + 1,
+          //     Attribute::get(F->getContext(),
+          //     Attribute::AttrKind::ElementType,
+          //                    F->getParamAttribute(ii, Attribute::StructRet)
+          //                        .getValueAsType()));
 #endif
         }
       }
@@ -2548,17 +2578,21 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
     auto toInt = [&](IRBuilder<> &B, llvm::Value *V) {
       if (auto PT = dyn_cast<PointerType>(V->getType())) {
         if (PT->getAddressSpace() != 0) {
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
           if (CI->getContext().supportsTypedPointers()) {
 #endif
             V = B.CreateAddrSpaceCast(
                 V, PointerType::getUnqual(PT->getPointerElementType()));
 #if LLVM_VERSION_MAJOR >= 15
-          }
-          {
+          } else {
             V = B.CreateAddrSpaceCast(V,
                                       PointerType::getUnqual(PT->getContext()));
           }
+#endif
+#else
+          V = B.CreateAddrSpaceCast(V,
+                                    PointerType::getUnqual(PT->getContext()));
 #endif
         }
         return B.CreatePtrToInt(V, intTy);

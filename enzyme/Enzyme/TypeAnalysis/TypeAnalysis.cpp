@@ -489,6 +489,15 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       return;
     }
 
+    // from julia code
+    if (GV->getName() == "small_typeof") {
+      TypeTree T;
+      T.insert({-1}, BaseType::Pointer);
+      T.insert({-1, -1}, BaseType::Pointer);
+      analysis[Val] = T;
+      return;
+    }
+
     TypeTree &Result = analysis[Val];
     Result.insert({-1}, ConcreteType(BaseType::Pointer));
 
@@ -4805,10 +4814,13 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
                      TypeTree(ConcreteType(call.getType())).Only(-1, &call),
                      &call);
       TypeTree ival(BaseType::Pointer);
-      auto objSize =
-          DL.getTypeSizeInBits(
-              call.getOperand(1)->getType()->getPointerElementType()) /
-          8;
+      size_t objSize = 1;
+
+#if LLVM_VERSION_MAJOR < 18
+      objSize = DL.getTypeSizeInBits(
+                    call.getOperand(1)->getType()->getPointerElementType()) /
+                8;
+#endif
       for (size_t i = 0; i < objSize; ++i) {
         ival.insert({(int)i}, BaseType::Integer);
       }
