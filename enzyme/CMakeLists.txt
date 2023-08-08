@@ -340,9 +340,7 @@ install(FILES
      "${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/EnzymeConfig.cmake"
      "${PROJECT_BINARY_DIR}/EnzymeConfigVersion.cmake"
      DESTINATION "${INSTALL_CMAKE_DIR}" COMPONENT dev)
-
+   
 install(EXPORT EnzymeTargets 
   DESTINATION "${INSTALL_CMAKE_DIR}" 
   COMPONENT   dev)
-
-install(FILES Enzyme/include/enzyme/declarations.hpp DESTINATION include/enzyme)
