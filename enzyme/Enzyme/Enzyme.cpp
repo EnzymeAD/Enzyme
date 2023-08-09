@@ -61,17 +61,15 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Scalar.h"
 
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
-#include "llvm/Transforms/Utils/Cloning.h"
-#if LLVM_VERSION_MAJOR >= 11
-#include "llvm/Analysis/InlineAdvisor.h"
-#include "llvm/IR/AbstractCallSite.h"
-#endif
 #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/GlobalsModRef.h"
+#include "llvm/Analysis/InlineAdvisor.h"
 #include "llvm/Analysis/InlineCost.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/IR/AbstractCallSite.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 #include "ActivityAnalysis.h"
 #include "DiffeGradientUtils.h"
@@ -422,11 +420,7 @@ static Value *adaptReturnedVector(Value *ret, Value *diffret,
 
     for (unsigned int i = 0; i < width; i++) {
       Value *elem = Builder.CreateExtractValue(diffret, {i});
-#if LLVM_VERSION_MAJOR >= 11
       if (auto vty = dyn_cast<FixedVectorType>(elem->getType())) {
-#else
-      if (auto vty = dyn_cast<VectorType>(elem->getType())) {
-#endif
         for (unsigned j = 0; j < vty->getNumElements(); ++j) {
           Value *vecelem = Builder.CreateExtractElement(elem, j);
           agg = Builder.CreateInsertValue(agg, vecelem, {i * j});
@@ -739,12 +733,8 @@ public:
       CTy = cast<PointerType>(CI->getArgOperand(0)->getType())
                 ->getPointerElementType();
 #endif
-#if LLVM_VERSION_MAJOR >= 11
       AllocaInst *primal = new AllocaInst(Ty, DL.getAllocaAddrSpace(), nullptr,
                                           DL.getPrefTypeAlign(Ty));
-#else
-      AllocaInst *primal = new AllocaInst(Ty, DL.getAllocaAddrSpace(), nullptr);
-#endif
 
       primal->insertBefore(CI);
 
@@ -1714,7 +1704,6 @@ public:
     ReplaceOriginalCall(Builder, ret, retElemType, diffret, CI, mode);
 
     if (Logic.PostOpt) {
-#if LLVM_VERSION_MAJOR >= 11
       auto Params = llvm::getInlineParams();
 
       llvm::SetVector<CallInst *> Q;
@@ -1745,12 +1734,7 @@ public:
             };
             if (llvm::shouldInline(*cur, GetInlineCost, ORE)) {
               InlineFunctionInfo IFI;
-              InlineResult IR =
-#if LLVM_VERSION_MAJOR >= 11
-                  InlineFunction(*cur, IFI);
-#else
-                  InlineFunction(cur, IFI);
-#endif
+              InlineResult IR = InlineFunction(*cur, IFI);
               if (IR.isSuccess()) {
                 LowerSparsification(outerFunc, /*replaceAll*/ false);
                 for (auto U : outerFunc->users()) {
@@ -1768,7 +1752,6 @@ public:
           }
         }
       }
-#endif
     }
     return true;
   }
@@ -1974,12 +1957,7 @@ public:
 
         Function *Fn = II->getCalledFunction();
 
-#if LLVM_VERSION_MAJOR >= 11
-        if (auto castinst = dyn_cast<ConstantExpr>(II->getCalledOperand()))
-#else
-        if (auto castinst = dyn_cast<ConstantExpr>(II->getCalledValue()))
-#endif
-        {
+        if (auto castinst = dyn_cast<ConstantExpr>(II->getCalledOperand())) {
           if (castinst->isCast())
             if (auto fn = dyn_cast<Function>(castinst->getOperand(0)))
               Fn = fn;
@@ -2044,12 +2022,7 @@ public:
 
         Function *Fn = CI->getCalledFunction();
 
-#if LLVM_VERSION_MAJOR >= 11
-        if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-#else
-        if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
-#endif
-        {
+        if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand())) {
           if (castinst->isCast())
             if (auto fn = dyn_cast<Function>(castinst->getOperand(0)))
               Fn = fn;
@@ -2606,12 +2579,8 @@ public:
         for (Instruction &I : BB) {
           if (auto CI = dyn_cast<CallInst>(&I)) {
             Function *F = CI->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-            if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-#else
-            if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
-#endif
-            {
+            if (auto castinst =
+                    dyn_cast<ConstantExpr>(CI->getCalledOperand())) {
               if (castinst->isCast())
                 if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
                   F = fn;
@@ -2672,12 +2641,8 @@ public:
         for (Instruction &I : BB) {
           if (auto CI = dyn_cast<CallInst>(&I)) {
             Function *F = CI->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-            if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-#else
-            if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
-#endif
-            {
+            if (auto castinst =
+                    dyn_cast<ConstantExpr>(CI->getCalledOperand())) {
               if (castinst->isCast())
                 if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
                   F = fn;
@@ -3155,9 +3120,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     bool LTOPreLink = false;
     // First rotate loops that may have been un-rotated by prior passes.
     // Disable header duplication at -Oz.
-#if LLVM_VERSION_MAJOR >= 11
     LPM.addPass(LoopRotatePass(Level != OptimizationLevel::Oz, LTOPreLink));
-#endif
     // Some loops may have become dead by now. Try to delete them.
     // FIXME: see discussion in https://reviews.llvm.org/D112851,
     //        this may need to be revisited once we run GVN before

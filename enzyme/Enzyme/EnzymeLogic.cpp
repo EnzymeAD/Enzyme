@@ -262,12 +262,7 @@ struct CacheAnalysis {
     // the load value won't change over the course of a function, but
     // may change from a caller.
     bool checkFunction = true;
-#if LLVM_VERSION_MAJOR >= 10
-    if (li.hasMetadata(LLVMContext::MD_invariant_load))
-#else
-    if (li.getMetadata(LLVMContext::MD_invariant_load))
-#endif
-    {
+    if (li.hasMetadata(LLVMContext::MD_invariant_load)) {
       if (!EnzymeJuliaAddrLoad || mode == DerivativeMode::ReverseModeCombined)
         return false;
       else
@@ -522,12 +517,7 @@ struct CacheAnalysis {
           return false;
         }
 
-#if LLVM_VERSION_MAJOR >= 11
-        if (auto iasm = dyn_cast<InlineAsm>(obj_op->getCalledOperand()))
-#else
-        if (auto iasm = dyn_cast<InlineAsm>(obj_op->getCalledValue()))
-#endif
-        {
+        if (auto iasm = dyn_cast<InlineAsm>(obj_op->getCalledOperand())) {
           if (StringRef(iasm->getAsmString()).contains("exit"))
             return false;
         }
@@ -1364,11 +1354,7 @@ bool legalCombinedForwardReverse(
     const SmallPtrSetImpl<BasicBlock *> &oldUnreachable,
     const bool subretused) {
   Function *called = origop->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
   Value *calledValue = origop->getCalledOperand();
-#else
-  Value *calledValue = origop->getCalledValue();
-#endif
 
   if (isa<PointerType>(origop->getType())) {
     bool sret = subretused;
@@ -1732,9 +1718,7 @@ void clearFunctionAttributes(Function *f) {
 #if LLVM_VERSION_MAJOR >= 17
     Attribute::NoFPClass,
 #endif
-#if LLVM_VERSION_MAJOR >= 11
     Attribute::NoUndef,
-#endif
     Attribute::NonNull,
     Attribute::ZExt,
     Attribute::NoAlias
@@ -2523,9 +2507,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     llvm::Attribute::NoFPClass,
 #endif
     llvm::Attribute::NoAlias,
-#if LLVM_VERSION_MAJOR >= 11
     llvm::Attribute::NoUndef,
-#endif
     llvm::Attribute::NonNull,
     llvm::Attribute::ZExt,
   };
@@ -4206,13 +4188,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 #if LLVM_VERSION_MAJOR >= 16
         if (g.getAlign())
           store->setAlignment(g.getAlign().value());
-#elif LLVM_VERSION_MAJOR >= 11
+#else
         if (g.getAlign())
           store->setAlignment(g.getAlign().getValue());
-#elif LLVM_VERSION_MAJOR >= 10
-        store->setAlignment(Align(g.getAlignment()));
-#else
-        store->setAlignment(g.getAlignment());
 #endif
       }
     }
@@ -4987,21 +4965,12 @@ llvm::Function *EnzymeLogic::CreateTrace(
     workList.erase(workList.begin());
 
     for (auto &&U : todo->uses()) {
-#if LLVM_VERSION_MAJOR > 10
       if (auto &&call = dyn_cast<CallBase>(U.getUser())) {
         auto &&fun = call->getParent()->getParent();
         auto &&[it, inserted] = GenerativeFunctions.insert(fun);
         if (inserted)
           workList.insert(fun);
       }
-#else
-      if (auto &&call = dyn_cast<CallInst>(U.getUser())) {
-        auto &&fun = call->getParent()->getParent();
-        auto &&[it, inserted] = GenerativeFunctions.insert(fun);
-        if (inserted)
-          workList.insert(fun);
-      }
-#endif
     }
   }
 
@@ -5217,19 +5186,11 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
         toErase.push_back(&I);
       else {
         if (auto CI = dyn_cast<CallInst>(&I)) {
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = CI->getCalledOperand();
-#else
-          auto callval = CI->getCalledValue();
-#endif
           CI->setCalledOperand(CreateNoFree(callval));
         }
         if (auto CI = dyn_cast<InvokeInst>(&I)) {
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = CI->getCalledOperand();
-#else
-          auto callval = CI->getCalledValue();
-#endif
           CI->setCalledOperand(CreateNoFree(callval));
         }
       }

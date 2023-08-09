@@ -601,26 +601,16 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     LoadInst *dstl = B.CreateLoad(elementType, dsti, "dst.i.l");
     StoreInst *dsts = B.CreateStore(Constant::getNullValue(elementType), dsti);
     if (dstalign) {
-#if LLVM_VERSION_MAJOR >= 10
       dstl->setAlignment(Align(dstalign));
       dsts->setAlignment(Align(dstalign));
-#else
-      dstl->setAlignment(dstalign);
-      dsts->setAlignment(dstalign);
-#endif
     }
 
     Value *srci = B.CreateInBoundsGEP(elementType, src, idx, "src.i");
     LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
     StoreInst *srcs = B.CreateStore(B.CreateFAdd(srcl, dstl), srci);
     if (srcalign) {
-#if LLVM_VERSION_MAJOR >= 10
       srcl->setAlignment(Align(srcalign));
       srcs->setAlignment(Align(srcalign));
-#else
-      srcl->setAlignment(srcalign);
-      srcs->setAlignment(srcalign);
-#endif
     }
 
     Value *next =
@@ -668,12 +658,11 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
 }
 
 void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
-                        IntegerType *IT, Type *BlasCT,
-                        Type *BlasFPT, Type *BlasPT,
-                        Type *BlasIT, Type *fpTy,
+                        IntegerType *IT, Type *BlasCT, Type *BlasFPT,
+                        Type *BlasPT, Type *BlasIT, Type *fpTy,
                         ArrayRef<Value *> args,
-                        ArrayRef<OperandBundleDef> bundles,
-                        bool byRef, bool julia_decl) {
+                        ArrayRef<OperandBundleDef> bundles, bool byRef,
+                        bool julia_decl) {
   // add spmv diag update call if not already present
   std::string fnc_name =
       ("__enzyme_spmv_diag" + blas.floatType + blas.suffix).str();
@@ -1080,18 +1069,10 @@ Function *getOrInsertMemcpyStrided(Module &M, Type *elementType, PointerType *T,
     StoreInst *dsts = B.CreateStore(srcl, dsti);
 
     if (dstalign) {
-#if LLVM_VERSION_MAJOR >= 10
       dsts->setAlignment(Align(dstalign));
-#else
-      dsts->setAlignment(dstalign);
-#endif
     }
     if (srcalign) {
-#if LLVM_VERSION_MAJOR >= 10
       srcl->setAlignment(Align(srcalign));
-#else
-      srcl->setAlignment(srcalign);
-#endif
     }
 
     Value *next =
@@ -1198,18 +1179,10 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
     StoreInst *dsts = B.CreateStore(srcl, dsti);
 
     if (dstalign) {
-#if LLVM_VERSION_MAJOR >= 10
       dsts->setAlignment(Align(dstalign));
-#else
-      dsts->setAlignment(dstalign);
-#endif
     }
     if (srcalign) {
-#if LLVM_VERSION_MAJOR >= 10
       srcl->setAlignment(Align(srcalign));
-#else
-      srcl->setAlignment(srcalign);
-#endif
     }
 
     Value *nexti =
@@ -1248,11 +1221,7 @@ getOrInsertDifferentialFloatMemmove(Module &M, Type *T, unsigned dstalign,
 Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
                                  unsigned width) {
   FunctionType *FreeTy = call->getFunctionType();
-#if LLVM_VERSION_MAJOR >= 11
   Value *Free = call->getCalledOperand();
-#else
-  Value *Free = call->getCalledValue();
-#endif
   AttributeList FreeAttributes = call->getAttributes();
   CallingConv::ID CallingConvention = call->getCallingConv();
   DebugLoc DebugLoc = call->getDebugLoc();
@@ -1934,13 +1903,8 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
       auto &DL = maybeWriter->getModule()->getDataLayout();
       auto width = cast<IntegerType>(DL.getIndexType(LoadBegin->getType()))
                        ->getBitWidth();
-#if LLVM_VERSION_MAJOR >= 10
       auto TS = SE.getConstant(
           APInt(width, DL.getTypeStoreSize(LI->getType()).getFixedSize()));
-#else
-      auto TS =
-          SE.getConstant(APInt(width, DL.getTypeStoreSize(LI->getType())));
-#endif
       LoadEnd = SE.getAddExpr(LoadBegin, TS);
     }
   }
@@ -1950,14 +1914,9 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
       auto &DL = maybeWriter->getModule()->getDataLayout();
       auto width = cast<IntegerType>(DL.getIndexType(StoreBegin->getType()))
                        ->getBitWidth();
-#if LLVM_VERSION_MAJOR >= 10
       auto TS = SE.getConstant(
           APInt(width, DL.getTypeStoreSize(SI->getValueOperand()->getType())
                            .getFixedSize()));
-#else
-      auto TS = SE.getConstant(
-          APInt(width, DL.getTypeStoreSize(SI->getValueOperand()->getType())));
-#endif
       StoreEnd = SE.getAddExpr(StoreBegin, TS);
     }
   }
@@ -2138,12 +2097,7 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
 #endif
     }
 
-#if LLVM_VERSION_MAJOR >= 11
-    if (auto iasm = dyn_cast<InlineAsm>(call->getCalledOperand()))
-#else
-    if (auto iasm = dyn_cast<InlineAsm>(call->getCalledValue()))
-#endif
-    {
+    if (auto iasm = dyn_cast<InlineAsm>(call->getCalledOperand())) {
       if (StringRef(iasm->getAsmString()).contains("exit"))
         return false;
     }
@@ -2193,12 +2147,7 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     if (funcName == "jl_array_copy" || funcName == "ijl_array_copy")
       return false;
 
-#if LLVM_VERSION_MAJOR >= 11
-    if (auto iasm = dyn_cast<InlineAsm>(call->getCalledOperand()))
-#else
-    if (auto iasm = dyn_cast<InlineAsm>(call->getCalledValue()))
-#endif
-    {
+    if (auto iasm = dyn_cast<InlineAsm>(call->getCalledOperand())) {
       if (StringRef(iasm->getAsmString()).contains("exit"))
         return false;
     }
