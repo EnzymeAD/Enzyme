@@ -636,7 +636,8 @@ void calculateUnusedValuesInFunction(
     const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
   std::map<UsageKey, bool> CacheResults;
   for (auto pair : gutils->knownRecomputeHeuristic) {
-    if (!pair.second) {
+    if (!pair.second ||
+        gutils->unnecessaryIntermediates.count(cast<Instruction>(pair.first))) {
       CacheResults[UsageKey(pair.first, ValueType::Primal)] = false;
     }
   }
