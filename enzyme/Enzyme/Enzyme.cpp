@@ -3199,6 +3199,8 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 #endif
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizerPM)));
     MPM.addPass(EnzymeNewPM(/*PostOpt=*/true));
+    // Manuel, new
+    MPM.addPass(OptimizeBlasNewPM(/*Begin*/ false));
     MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false));
 #if LLVM_VERSION_MAJOR >= 16
     OptimizerPM2.addPass(llvm::GVNPass());
@@ -3491,10 +3493,10 @@ llvmGetPassPluginInfo() {
             PB.registerPipelineParsingCallback(
                 [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
                    llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
-                  // if (Name == "blas-opt") {
-                  //   MPM.addPass(createOptimizeBlasPass(/*Begin*/ true));
-                  //   return true;
-                  // }
+                  if (Name == "blas-opt") {
+                    MPM.addPass(OptimizeBlasNewPM(/*Begin*/ true));
+                    return true;
+                  }
                   if (Name == "enzyme") {
                     MPM.addPass(EnzymeNewPM());
                     return true;

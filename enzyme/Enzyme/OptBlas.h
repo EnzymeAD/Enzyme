@@ -35,16 +35,17 @@ llvm::ModulePass *createOptimizeBlasPass(bool Begin);
 
 class OptimizeBlasNewPM final
     : public llvm::AnalysisInfoMixin<OptimizeBlasNewPM> {
-  // friend struct llvm::AnalysisInfoMixin<OptimizeBlasNewPM>;
+  friend struct llvm::AnalysisInfoMixin<OptimizeBlasNewPM>;
 
 private:
   bool Begin;
   static llvm::AnalysisKey Key;
 
 public:
+  using Result = llvm::PreservedAnalyses;
   OptimizeBlasNewPM(bool Begin) : Begin(Begin) {}
 
-  bool runOnModule(llvm::Module &M);
+  Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
 
   static bool isRequired() { return true; }
 };

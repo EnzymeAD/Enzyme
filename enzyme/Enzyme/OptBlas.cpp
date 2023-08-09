@@ -62,11 +62,10 @@ bool optimizeBlas(bool Begin, Function &F) {
 namespace {
 
 class OptimizeBlas final : public ModulePass {
+  // class OptimizeBlas final : public PassInfoMixin<OptimizeBlas> {
 public:
   static char ID;
   // bool Begin;
-  // OptimizeBlas(bool Begin = true) : ModulePass(ID), Begin(Begin) {}
-
   OptimizeBlas() : ModulePass(ID) {}
   OptimizeBlas(char &pid) : ModulePass(pid) {}
   void getAnalysisUsage(AnalysisUsage &AU) const override {}
@@ -93,8 +92,6 @@ extern "C" void AddOptimizeBlasPass(LLVMPassManagerRef PM, uint8_t Begin) {
   unwrap(PM)->add(createOptimizeBlasPass((bool)Begin));
 }
 
-llvm::AnalysisKey OptimizeBlasNewPM::Key;
-
 bool cmp_or_set(llvm::CallInst *CI, std::vector<llvm::Value *> values) {
   // first run trough to see if the already set args match.
   // second run if they do and then we set the nullptr.
@@ -119,6 +116,7 @@ bool optimizeFncsWithBlas(llvm::Module &M) {
 
   using namespace llvm;
 
+  errs() << "asdf\n";
   Function *F = M.getFunction("f");
   if (F) {
     errs() << "Found function: " << F->getName() << "\n";
@@ -130,3 +128,11 @@ bool optimizeFncsWithBlas(llvm::Module &M) {
 
   return true;
 }
+
+OptimizeBlasNewPM::Result
+OptimizeBlasNewPM::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
+  llvm::errs() << "fooBar\n";
+  bool changed = optimizeFncsWithBlas(M);
+  return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
+}
+llvm::AnalysisKey OptimizeBlasNewPM::Key;
