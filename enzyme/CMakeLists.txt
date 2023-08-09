@@ -344,3 +344,7 @@ install(FILES
 install(EXPORT EnzymeTargets 
   DESTINATION "${INSTALL_CMAKE_DIR}" 
   COMPONENT   dev)
+
+install(FILES Enzyme/include/enzyme/tuple.hpp 
+              Enzyme/include/enzyme/enzyme.hpp 
+        DESTINATION include/enzyme)
