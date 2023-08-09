@@ -128,7 +128,7 @@ public:
       return;
 
     if (auto newi = dyn_cast<Instruction>(iload))
-      gutils->eraseWithPlaceholder(newi, "_replacementA", erase);
+      gutils->eraseWithPlaceholder(newi, &I, "_replacementA", erase);
   }
 
   llvm::Value *MPI_TYPE_SIZE(llvm::Value *DT, llvm::IRBuilder<> &B,
@@ -10041,6 +10041,7 @@ public:
       }
       if (!noFree) {
         auto callval = call.getCalledOperand();
+        llvm::errs() << " call: " << call << "\n";
         newCall->setCalledOperand(gutils->Logic.CreateNoFree(callval));
       }
       if (gutils->knownRecomputeHeuristic.find(&call) !=
