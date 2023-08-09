@@ -3140,6 +3140,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   auto loadPass = [prePass](ModulePassManager &MPM)
 #endif
   {
+    MPM.addPass(OptimizeBlasNewPM(/*Begin*/ false));
     MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
 
 #if LLVM_VERSION_MAJOR >= 12
@@ -3193,6 +3194,18 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 #endif
 
 #if LLVM_VERSION_MAJOR >= 12
+  auto optBLAS = [](ModulePassManager &MPM, OptimizationLevel)
+#else
+  auto optBLAS = [](ModulePassManager &MPM)
+#endif
+  { MPM.addPass(OptimizeBlasNewPM(/*Begin*/ true)); };
+
+  // We should register at vectorizer start for consistency, however,
+  // that requires a functionpass, and we have a modulepass.
+  // PB.registerVectorizerStartEPCallback(loadPass);
+  PB.registerPipelineStartEPCallback(optBLAS);
+
+#if LLVM_VERSION_MAJOR >= 12
   auto loadNVVM = [](ModulePassManager &MPM, OptimizationLevel)
 #else
   auto loadNVVM = [](ModulePassManager &MPM)
@@ -3204,6 +3217,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   // PB.registerVectorizerStartEPCallback(loadPass);
   PB.registerPipelineStartEPCallback(loadNVVM);
 #if LLVM_VERSION_MAJOR >= 15
+  PB.registerFullLinkTimeOptimizationEarlyEPCallback(optBLAS);
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadNVVM);
 
   auto preLTOPass = [](ModulePassManager &MPM, OptimizationLevel Level) {
