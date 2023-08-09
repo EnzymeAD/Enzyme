@@ -1,4 +1,4 @@
-//===- OptBlas.h - Mark NVVM attributes for preservation.  -------===//
+//===- OptBlas.h - Rewrite BLAS calls for better performance.  -------===//
 //
 //                             Enzyme Project
 //
@@ -18,7 +18,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file contains createOptimizeBlas,
+// This file contains code to handle this new blas optimization pass.
 //
 //===----------------------------------------------------------------------===//
 

@@ -1,4 +1,4 @@
-//===- PreserveNVVM.cpp - Mark NVVM attributes for preservation.  -------===//
+//===- OptBlas.cpp - Rewrite BLAS calls for better performance.  -------===//
 //
 //                             Enzyme Project
 //
@@ -18,9 +18,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file contains createPreserveNVVM, a transformation pass that marks
-// calls to __nv_* functions, marking them as noinline as implementing the llvm
-// intrinsic.
+// This file contains code to handle this new blas optimization pass.
 //
 //===----------------------------------------------------------------------===//
 #include <llvm/Config/llvm-config.h>
