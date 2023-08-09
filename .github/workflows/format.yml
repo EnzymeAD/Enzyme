@@ -3,6 +3,7 @@ name: Clang-Format
 on:
   push:
   pull_request:
+  merge_group:
    
 jobs:
   build:
