@@ -304,8 +304,9 @@ void EnzymeGradientUtilsErase(GradientUtils *G, LLVMValueRef I) {
   return G->erase(cast<Instruction>(unwrap(I)));
 }
 void EnzymeGradientUtilsEraseWithPlaceholder(GradientUtils *G, LLVMValueRef I,
-                                             uint8_t erase) {
+                                             LLVMValueRef orig, uint8_t erase) {
   return G->eraseWithPlaceholder(cast<Instruction>(unwrap(I)),
+                                 cast<Instruction>(unwrap(orig)),
                                  "_replacementABI", erase != 0);
 }
 
