@@ -252,7 +252,49 @@ public:
   }
   
   bool operator<(const Trie &vd) const; // TODO;
-  
+
+  /// Whether this TypeTree contains any information
+  bool isKnown() const {
+    if (ct.has_value())
+      return true;
+    // The following might make it slower, still keep it?
+    for (auto &&[idx, trie] : mapping) {
+      bool inner = trie->isKnown();
+      if (inner)
+        return true;
+    }
+    return false;
+  }
+
+  /// Whether this TypeTree knows any non-pointer information
+  bool isKnownPastPointer() const {
+    for (auto &&[idx, trie] : mapping) {
+      if (trie.ct.has_value()) {
+        auto val = trie.ct.value();
+        if (val != BaseType::Pointer && val != BaseType::Anything)
+          return true;
+      }
+      bool inner = trie->isKnownPastPointer();
+      if (inner)
+        return true;
+    }
+    return false;
+  }
+
+  /// Select only the Integer ConcreteTypes
+  TypeTree JustInt() const {
+    TypeTree vd;
+    for (auto &&[idx, trie] : mapping) {
+      if (trie->ct.has_value() {
+        auto val = trie->ct.value();
+        if (val == BaseType::Integer) {
+          vd.insert(idx, val);
+        }
+      }
+    }
+    return vd;
+  }
+
   /// Returns a string representation of this TypeTree
   std::string str() const {
     std::string out = "{";
