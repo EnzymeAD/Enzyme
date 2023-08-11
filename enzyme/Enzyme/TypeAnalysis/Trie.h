@@ -1,23 +1,17 @@
 class Trie : public std::enable_shared_from_this<Trie> {
 private:
-  int depth;
-  bool is_leaf;
   std::map<int, Trie *> mapping;
   std::optional<ConcreteType> ct;
 
 public:
-  Trie(BaseType BT, int depth = 0) {
-    depth = depth;
-    is_leaf = false;
+  Trie(BaseType BT) {
     ct = BT;
     mapping = std::map<int, Trie *>{};
   };
   Trie() : Trie(ConcreteType(BaseType::Unknown)){};
-  Trie(ConcreteType dat, int depth = 0) {
-      depth = depth;
-      is_leaf = false;
-      ct = dat;
-      mapping = std::map<int, Trie *>{};
+  Trie(ConcreteType dat) {
+    ct = dat;
+    mapping = std::map<int, Trie *>{};
   }
 
   /// Lookup the underlying ConcreteType at a given offset sequence
@@ -42,13 +36,13 @@ public:
     Trie *res;
     std::map<int, Trie *> Found0 = mapping;
     while (1) {
-      if ((!res->is_leaf) && Found0.count({-1}) != 1) {
+      if ((res->ct.has_value()) && Found0.count({-1}) != 1) {
         // without -1 we can add random elements
         return false;
       }
       res = Found0.at({-1});
       Found0 = res->mapping;
-      if (res->is_leaf) {
+      if (!res->has_value()) {
         if (res->ct.has_value()) {
           return (res->ct.value() != BaseType::Pointer);
         }
@@ -88,7 +82,6 @@ public:
       return false;
     }
     if (SeqSize == 0) {
-      is_leaf = true;
       ct = CT;
       // mapping.insert(std::pair<const std::vector<int>, ConcreteType>(Seq,
       // CT));
