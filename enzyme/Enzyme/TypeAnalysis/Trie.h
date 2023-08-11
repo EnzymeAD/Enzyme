@@ -286,6 +286,15 @@ public:
     
     return mapping.size() != 0;
   }
+  
+  bool isKnownPastPointer() const {
+    for (auto&& [idx, trie] : mapping) {
+      assert(trie->ct.isKnown())
+      return true;
+    }
+
+    return false;
+  }
 
   /// Returns a string representation of this TypeTree
   std::string str() const {
