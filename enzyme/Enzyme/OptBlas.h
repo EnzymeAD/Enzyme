@@ -33,13 +33,12 @@ bool optimizeFncsWithBlas(llvm::Module &M);
 
 llvm::ModulePass *createOptimizeBlasPass(bool Begin);
 
-class OptimizeBlasNewPM final
-    : public llvm::AnalysisInfoMixin<OptimizeBlasNewPM> {
-  friend struct llvm::AnalysisInfoMixin<OptimizeBlasNewPM>;
+class OptimizeBlasNewPM final : public llvm::PassInfoMixin<OptimizeBlasNewPM> {
+  friend struct llvm::PassInfoMixin<OptimizeBlasNewPM>;
 
 private:
   bool Begin;
-  static llvm::AnalysisKey Key;
+  // static llvm::AnalysisKey Key;
 
 public:
   using Result = llvm::PreservedAnalyses;

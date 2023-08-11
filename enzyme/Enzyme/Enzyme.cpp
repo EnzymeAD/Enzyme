@@ -3140,7 +3140,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   auto loadPass = [prePass](ModulePassManager &MPM)
 #endif
   {
-    MPM.addPass(OptimizeBlasNewPM(/*Begin*/ false));
+    // MPM.addPass(OptimizeBlasNewPM(/*Begin*/ false));
     MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
 
 #if LLVM_VERSION_MAJOR >= 12
@@ -3163,8 +3163,6 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 #endif
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizerPM)));
     MPM.addPass(EnzymeNewPM(/*PostOpt=*/true));
-    // Manuel, new
-    MPM.addPass(OptimizeBlasNewPM(/*Begin*/ false));
     MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false));
 #if LLVM_VERSION_MAJOR >= 16
     OptimizerPM2.addPass(llvm::GVNPass());
@@ -3194,18 +3192,6 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 #endif
 
 #if LLVM_VERSION_MAJOR >= 12
-  auto optBLAS = [](ModulePassManager &MPM, OptimizationLevel)
-#else
-  auto optBLAS = [](ModulePassManager &MPM)
-#endif
-  { MPM.addPass(OptimizeBlasNewPM(/*Begin*/ true)); };
-
-  // We should register at vectorizer start for consistency, however,
-  // that requires a functionpass, and we have a modulepass.
-  // PB.registerVectorizerStartEPCallback(loadPass);
-  PB.registerPipelineStartEPCallback(optBLAS);
-
-#if LLVM_VERSION_MAJOR >= 12
   auto loadNVVM = [](ModulePassManager &MPM, OptimizationLevel)
 #else
   auto loadNVVM = [](ModulePassManager &MPM)
@@ -3217,7 +3203,6 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   // PB.registerVectorizerStartEPCallback(loadPass);
   PB.registerPipelineStartEPCallback(loadNVVM);
 #if LLVM_VERSION_MAJOR >= 15
-  PB.registerFullLinkTimeOptimizationEarlyEPCallback(optBLAS);
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadNVVM);
 
   auto preLTOPass = [](ModulePassManager &MPM, OptimizationLevel Level) {
@@ -3467,10 +3452,12 @@ llvmGetPassPluginInfo() {
 #ifdef ENZYME_RUNPASS
             augmentPassBuilder(PB);
 #endif
+            llvm::errs() << "CCCCCC\n";
             PB.registerPipelineParsingCallback(
                 [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
                    llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
                   if (Name == "blas-opt") {
+                    llvm::errs() << "AAAA\n";
                     MPM.addPass(OptimizeBlasNewPM(/*Begin*/ true));
                     return true;
                   }
@@ -3486,7 +3473,9 @@ llvmGetPassPluginInfo() {
                     MPM.addPass(TypeAnalysisPrinterNewPM());
                     return true;
                   }
-                  return false;
+                  llvm::errs() << "BBBB\n";
+                  return true;
+                  // return false;
                 });
             PB.registerPipelineParsingCallback(
                 [](llvm::StringRef Name, llvm::FunctionPassManager &FPM,
@@ -3495,7 +3484,8 @@ llvmGetPassPluginInfo() {
                     FPM.addPass(ActivityAnalysisPrinterNewPM());
                     return true;
                   }
-                  return false;
+                  return true;
+                  // return false;
                 });
           }};
 }

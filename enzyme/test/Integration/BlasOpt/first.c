@@ -13,7 +13,7 @@ void cblas_dgemm(const enum CBLAS_ORDER Order, const enum CBLAS_TRANSPOSE TransA
                  const int lda, const double *B, const int ldb,
                  const double beta, double *C, const int ldc);
 
-void g(double *restrict x, double *restrict y, double *restrict v, double *restrict w, double *restrict C) {
+void f(double *restrict x, double *restrict y, double *restrict v, double *restrict w, double *restrict C) {
     double A[] = {0.00, 0.00, 0.00, 0.00,
                  0.00, 0.00, 0.00, 0.00,
                  0.00};
@@ -38,7 +38,7 @@ int main() {
     double C[] = {0.00, 0.00, 0.00, 0.00,
                  0.00, 0.00, 0.00, 0.00,
                  0.00};
-    g(x,y,v,w,C);
+    f(x,y,v,w,C);
     for (int i = 0; i < 9; i++)
       printf("%f\n", C[i]);
 }

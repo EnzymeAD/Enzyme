@@ -131,8 +131,8 @@ bool optimizeFncsWithBlas(llvm::Module &M) {
 
 OptimizeBlasNewPM::Result
 OptimizeBlasNewPM::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
-  llvm::errs() << "fooBar\n";
+  llvm::errs() << "newPM opt-blas\n";
   bool changed = optimizeFncsWithBlas(M);
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
-llvm::AnalysisKey OptimizeBlasNewPM::Key;
+// llvm::AnalysisKey OptimizeBlasNewPM::Key;
