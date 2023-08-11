@@ -251,6 +251,8 @@ public:
     return true;
   }
   
+  bool operator<(const Trie &vd) const; // TODO;
+  
   /// Returns a string representation of this TypeTree
   std::string str() const {
     std::string out = "{";
