@@ -252,4 +252,25 @@ public:
     mapping.insert(std::pair<const std::vector<int>, ConcreteType>(Seq, CT));
     return true;
   }
+  
+  /// Returns a string representation of this TypeTree
+  std::string str() const {
+    std::string out = "{";
+    bool first = true;
+    for (auto &pair : mapping) {
+      if (!first) {
+        out += ", ";
+      }
+      out += "[";
+      for (unsigned i = 0; i < pair.first.size(); ++i) {
+        if (i != 0)
+          out += ",";
+        out += std::to_string(pair.first[i]);
+      }
+      out += "]:" + pair.second.str();
+      first = false;
+    }
+    out += "}";
+    return out;
+  }
 };
