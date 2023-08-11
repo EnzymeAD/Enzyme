@@ -269,13 +269,13 @@ public:
       
       if (it == current_node->mappings.end()) {
         // go one level down to the right
-        if (queue.empty())
+        if (current_idx.empty())
           break;
         
         current_node = this;
-        for (int i = 0; i < queue.size(); ++i) {
-          bool is_top = i == (queue.size() - 1);
-          current_node = current_node->mapping.begin() + queue[i] + is_top;
+        for (int i = 0; i < current_idx.size(); ++i) {
+          bool is_top = i == (current_idx.size() - 1);
+          current_node = current_node->mapping.begin() + current_idx[i] + is_top;
         }
       }
       
