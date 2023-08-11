@@ -72,12 +72,12 @@ public:
       if (EnzymeTypeWarning) {
         if (CustomErrorHandler) {
           CustomErrorHandler("TypeAnalysisDepthLimit", nullptr,
-                             ErrorType::TypeDepthExceeded, this);
+                             ErrorType::TypeDepthExceeded, this, nullptr, nullptr);
         } else
           llvm::errs() << "not handling more than " << EnzymeMaxTypeDepth
-                       << " pointer lookups deep dt:" << str()
-                       << " adding v: " << to_string(Seq) << ": " << CT.str()
-                       << "\n";
+          << " pointer lookups deep dt:" << str()
+          << " adding v: " << to_string(Seq) << ": " << CT.str()
+          << "\n";
       }
       return false;
     }
