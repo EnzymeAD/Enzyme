@@ -1,5 +1,3 @@
-#include <queue>
-
 class Trie : public std::enable_shared_from_this<Trie> {
 private:
   std::map<int, Trie *> mapping;
@@ -255,38 +253,6 @@ public:
   
   bool operator<(const Trie &vd) const; // TODO;
   
-  /// Whether this TypeTree contains any information
-  bool isKnown() const {
-    
-    std::queue<int> current_idx;
-    Trie *current_node = this;
-    auto it = current_node->mappings.begin();
-    
-    while(true) {
-      assert(current_node->ct.isKnown());
-      
-      int idx = it - current_node->mappings.begin();
-      
-      if (it == current_node->mappings.end()) {
-        // go one level down to the right
-        if (queue.empty())
-          break;
-        
-        current_node = this;
-        for (int i = 0; i < queue.size(); ++i) {
-          bool is_top = i == (queue.size() - 1);
-          current_node = current_node->mapping.begin() + queue[i] + is_top;
-        }
-      }
-      
-      // go up
-      current_idx.push(idx);
-      it = current_node->mapping.begin() + idx + 1;
-    }
-    
-    return mapping.size() != 0;
-  }
-
   /// Returns a string representation of this TypeTree
   std::string str() const {
     std::string out = "{";
