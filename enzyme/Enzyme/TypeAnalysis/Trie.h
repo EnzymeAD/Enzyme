@@ -4,15 +4,9 @@ private:
   std::optional<ConcreteType> ct;
 
 public:
-  Trie(BaseType BT) {
-    ct = BT;
-    mapping = std::map<int, Trie *>{};
-  };
-  Trie() : Trie(ConcreteType(BaseType::Unknown)){};
-  Trie(ConcreteType dat) {
-    ct = dat;
-    mapping = std::map<int, Trie *>{};
-  }
+  Trie(BaseType BT) : ct(BT) {};
+  Trie() : Trie(ConcreteType(BaseType::Unknown)) {};
+  Trie(ConcreteType dat) : ct(dat) {};
 
   /// Lookup the underlying ConcreteType at a given offset sequence
   /// or Unknown if none exists
