@@ -20,9 +20,13 @@ public:
     Trie *res;
     std::map<int, Trie *> Found0 = mapping;
     for (auto elem : Seq) {
-      if (Found0.count(elem) == 0)
+      if (Found0.count(elem) == 1) {
+        res = mapping.at(elem);
+      } else if (Found0.count({-1}) == 1) {
+        res = Found0.at({-1});
+      } else {
         return BaseType::Unknown;
-      res = mapping.at(elem);
+      }
       Found0 = res->mapping;
     }
     if (!res->ct.has_value())
