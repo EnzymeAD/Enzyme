@@ -267,7 +267,7 @@ public:
           out += ",";
         out += std::to_string(pair.first[i]);
       }
-      out += "]:" + pair.second.str();
+      out += "]:" + pair.second->str();
       first = false;
     }
     out += "}";
