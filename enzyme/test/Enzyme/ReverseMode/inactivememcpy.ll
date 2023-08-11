@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -dce -instcombine -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -simplifycfg -dce -instcombine -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,%simplifycfg,dce,instcombine)" -S | FileCheck %s
 
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
 target triple = "x86_64-linux-gnu"
@@ -41,14 +42,14 @@ entry:
   ret float %f
 }
 
-; CHECK: define internal i64 @augmented_metamove(i8* %dst, i8* %"dst'", i8* %src, i64* %lenp, i64* %"lenp'")
+; CHECK: define internal i64 @augmented_metamove(i8* %dst, i8* %"dst'", i8* %src, i64* %lenp)
 ; CHECK-NEXT: top:
 ; CHECK-NEXT:   %len = load i64, i64* %lenp, align 8
 ; CHECK-NEXT:   call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %dst, i8* align 1 %src, i64 %len, i1 false)
 ; CHECK-NEXT:   ret i64 %len
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffemetamove(i8* %dst, i8* %"dst'", i8* %src, i64* %lenp, i64* %"lenp'", i64 %len)
+; CHECK: define internal void @diffemetamove(i8* %dst, i8* %"dst'", i8* %src, i64* %lenp, i64 %len)
 ; CHECK-NEXT: top:
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* align 1 %"dst'", i8 0, i64 %len, i1 false)
 ; CHECK-NEXT:   ret void

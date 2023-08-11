@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -O3 -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -O3 -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,default<O3>" -enzyme-preopt=false -S | FileCheck %s
 
 %struct.Gradients = type { double, double, double }
 
@@ -24,16 +25,16 @@ declare %struct.Gradients @__enzyme_fwddiff(double (double)*, ...)
 
 ; CHECK: define %struct.Gradients @test_derivative(double %x)
 ; CHECK-NEXT: entry
-; CHECK-NEXT:   %0 = tail call fast double @llvm.sqrt.f64(double %x)
-; CHECK-NEXT:   %1 = fdiv fast double 5.000000e-01, %0
-; CHECK-NEXT:   %2 = fcmp fast oeq double %x, 0.000000e+00
-; CHECK-NEXT:   %3 = select {{(fast )?}}i1 %2, double 0.000000e+00, double %1
-; CHECK-NEXT:   %4 = fdiv fast double 1.000000e+00, %0
-; CHECK-NEXT:   %5 = select {{(fast )?}}i1 %2, double 0.000000e+00, double %4
-; CHECK-NEXT:   %6 = fdiv fast double 1.500000e+00, %0
-; CHECK-NEXT:   %7 = select {{(fast )?}}i1 %2, double 0.000000e+00, double %6
-; CHECK-NEXT:   %8 = insertvalue %struct.Gradients zeroinitializer, double %3, 0
-; CHECK-NEXT:   %9 = insertvalue %struct.Gradients %8, double %5, 1
-; CHECK-NEXT:   %10 = insertvalue %struct.Gradients %9, double %7, 2
-; CHECK-NEXT:   ret %struct.Gradients %10
+; CHECK-NEXT:   %[[i2:.+]] = fcmp fast ueq double %x, 0.000000e+00
+; CHECK-NEXT:   %[[i0:.+]] = tail call fast double @llvm.sqrt.f64(double %x)
+; CHECK-NEXT:   %[[i1:.+]] = fdiv fast double 5.000000e-01, %[[i0]]
+; CHECK-NEXT:   %[[i4:.+]] = fdiv fast double 1.000000e+00, %[[i0]]
+; CHECK-NEXT:   %[[i6:.+]] = fdiv fast double 1.500000e+00, %[[i0]]
+; CHECK-NEXT:   %[[i3:.+]] = select {{(fast )?}}i1 %[[i2]], double 0.000000e+00, double %[[i1]]
+; CHECK-NEXT:   %[[i5:.+]] = select {{(fast )?}}i1 %[[i2]], double 0.000000e+00, double %[[i4]]
+; CHECK-NEXT:   %[[i7:.+]] = select {{(fast )?}}i1 %[[i2]], double 0.000000e+00, double %[[i6]]
+; CHECK-NEXT:   %[[i8:.+]] = insertvalue %struct.Gradients zeroinitializer, double %[[i3]], 0
+; CHECK-NEXT:   %[[i9:.+]] = insertvalue %struct.Gradients %[[i8]], double %[[i5]], 1
+; CHECK-NEXT:   %[[i10:.+]] = insertvalue %struct.Gradients %[[i9]], double %[[i7]], 2
+; CHECK-NEXT:   ret %struct.Gradients %[[i10]]
 ; CHECK-NEXT: }

@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -simplifycfg -correlated-propagation -instsimplify -early-cse -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -gvn -simplifycfg -correlated-propagation -instsimplify -early-cse -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,gvn,%simplifycfg,correlated-propagation,instsimplify,early-cse,adce)" -S | FileCheck %s
 
 ; this test checks that no malloc needs to be made for the code
 
@@ -116,8 +117,8 @@ declare dso_local void @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.body:                                   ; preds = %invertfor.body8, %invertif.end
-; CHECK-NEXT:   %"'de3.0" = phi double [ %"'de3.2", %invertif.end ], [ 0.000000e+00, %invertfor.body8 ]
-; CHECK-NEXT:   %"'de2.0" = phi double [ %"'de2.2", %invertif.end ], [ 0.000000e+00, %invertfor.body8 ]
+; CHECK-NEXT:   %"'de3.0" = phi double [ %[[de32:.+]], %invertif.end ], [ 0.000000e+00, %invertfor.body8 ]
+; CHECK-NEXT:   %[[de20:.+]] = phi double [ %[[de22:.+]], %invertif.end ], [ 0.000000e+00, %invertfor.body8 ]
 ; CHECK-NEXT:   %"mul12'de.0" = phi double [ %"mul12'de.2", %invertif.end ], [ 0.000000e+00, %invertfor.body8 ]
 ; CHECK-NEXT:   %"tmp.034'de.0" = phi double [ %"tmp.034'de.2", %invertif.end ], [ 0.000000e+00, %invertfor.body8 ]
 ; CHECK-NEXT:   %"sub13'de.0" = phi double [ %"sub13'de.2", %invertif.end ], [ 0.000000e+00, %invertfor.body8 ]
@@ -134,26 +135,26 @@ declare dso_local void @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   br label %invertif.end
 
 ; CHECK: invertfor.body8:                                  ; preds = %invertif.end.loopexit, %incinvertfor.body8
-; CHECK-NEXT:   %"'de3.1" = phi double [ %"'de3.2", %invertif.end.loopexit ], [ 0.000000e+00, %incinvertfor.body8 ]
-; CHECK-NEXT:   %"'de2.1" = phi double [ %"'de2.2", %invertif.end.loopexit ], [ 0.000000e+00, %incinvertfor.body8 ]
+; CHECK-NEXT:   %"'de3.1" = phi double [ %[[de32]], %invertif.end.loopexit ], [ 0.000000e+00, %incinvertfor.body8 ]
+; CHECK-NEXT:   %[[de21:.+]] = phi double [ %[[de22]], %invertif.end.loopexit ], [ 0.000000e+00, %incinvertfor.body8 ]
 ; CHECK-NEXT:   %"mul12'de.1" = phi double [ %"mul12'de.2", %invertif.end.loopexit ], [ 0.000000e+00, %incinvertfor.body8 ]
 ; CHECK-NEXT:   %"tmp.034'de.1" = phi double [ %"tmp.034'de.2", %invertif.end.loopexit ], [ 0.000000e+00, %incinvertfor.body8 ]
 ; CHECK-NEXT:   %"sub13'de.1" = phi double [ %[[i21:.+]], %invertif.end.loopexit ], [ %[[i10:.+]], %incinvertfor.body8 ]
 ; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ %[[_unwrap7:.+]], %invertif.end.loopexit ], [ %[[i19:.+]], %incinvertfor.body8 ]
+; CHECK-NEXT:   %[[i10]] = fadd fast double %"tmp.034'de.1", %"sub13'de.1"
 ; :   %[[i9:.+]] = fneg fast double %"sub13'de.1"
-; CHECK-DAG:   %[[i10]] = fadd fast double %"tmp.034'de.1", %"sub13'de.1"
-; CHECK-NEXT:   %[[i11:.+]] = {{(fadd|fsub)}} fast double %"mul12'de.1"
+; CHECK:   %[[i11:.+]] = {{(fadd|fsub)}} fast double %"mul12'de.1"
 ; , %[[i9]]
 ; CHECK-NEXT:   %arrayidx11_unwrap = getelementptr inbounds double, double* %out, i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %_unwrap = load double, double* %arrayidx11_unwrap, align 8, !tbaa !2
-; CHECK-NEXT:   %m0diffe = fmul fast double %[[i11]], %_unwrap
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %[[i11]], %_unwrap
+; CHECK-NEXT:   %[[i12:.+]] = fadd fast double %[[de21]], %[[m0diffe]]
 ; CHECK-NEXT:   %mul_unwrap = mul i64 %"iv'ac.0", %N
 ; CHECK-NEXT:   %add_unwrap = add i64 %"iv1'ac.0", %mul_unwrap
 ; CHECK-NEXT:   %arrayidx10_unwrap = getelementptr inbounds double, double* %L, i64 %add_unwrap
 ; CHECK-NEXT:   %[[_unwrap3:.+]] = load double, double* %arrayidx10_unwrap, align 8, !tbaa !2
-; CHECK-NEXT:   %m1diffe = fmul fast double %[[i11]], %[[_unwrap3]]
-; CHECK-NEXT:   %[[i12:.+]] = fadd fast double %"'de2.1", %m0diffe
-; CHECK-NEXT:   %[[i13:.+]] = fadd fast double %"'de3.1", %m1diffe
+; CHECK-NEXT:   %[[m1diffe:.+]] = fmul fast double %[[i11]], %[[_unwrap3]]
+; CHECK-NEXT:   %[[i13:.+]] = fadd fast double %"'de3.1", %[[m1diffe]]
 ; CHECK-NEXT:   %"arrayidx11'ipg_unwrap" = getelementptr inbounds double, double* %"out'", i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %[[i14:.+]] = load double, double* %"arrayidx11'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[i15:.+]] = fadd fast double %[[i14]], %[[i13]]
@@ -174,8 +175,8 @@ declare dso_local void @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   br label %invertfor.body8
 
 ; CHECK: invertif.end:                                     ; preds = %if.end, %incinvertfor.body
-; CHECK-NEXT:   %"'de3.2" = phi double [ %"'de3.0", %incinvertfor.body ], [ 0.000000e+00, %if.end ]
-; CHECK-NEXT:   %"'de2.2" = phi double [ %"'de2.0", %incinvertfor.body ], [ 0.000000e+00, %if.end ]
+; CHECK-NEXT:   %[[de32]] = phi double [ %"'de3.0", %incinvertfor.body ], [ 0.000000e+00, %if.end ]
+; CHECK-NEXT:   %[[de22]] = phi double [ %[[de20]], %incinvertfor.body ], [ 0.000000e+00, %if.end ]
 ; CHECK-NEXT:   %"mul12'de.2" = phi double [ %"mul12'de.0", %incinvertfor.body ], [ 0.000000e+00, %if.end ]
 ; CHECK-NEXT:   %"tmp.034'de.2" = phi double [ %"tmp.034'de.0", %incinvertfor.body ], [ 0.000000e+00, %if.end ]
 ; CHECK-NEXT:   %"sub13'de.2" = phi double [ %"sub13'de.0", %incinvertfor.body ], [ 0.000000e+00, %if.end ]

@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg,adce)" -S | FileCheck %s
 
 ; ModuleID = 'test.cpp'
 source_filename = "test.cpp"
@@ -141,22 +142,22 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %sub.ptr = sub i64 %endi64, %veci64
 ; CHECK-NEXT:   %num = sdiv exact i64 %sub.ptr, 8
 ; CHECK-NEXT:   %conv = uitofp i64 %num to double
-; CHECK-NEXT:   %d0diffeadd = fdiv fast double %differeturn, %conv
+; CHECK-NEXT:   %[[d0diffeadd:.+]] = fdiv fast double %differeturn, %conv
 ; CHECK-NEXT:   br label %invertfor.cond13
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.cond13
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.cond13:                                 ; preds = %endloop, %incinvertfor.cond13
-; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %iv, %endloop ], [ %3, %incinvertfor.cond13 ]
+; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %iv, %endloop ], [ %[[i3:.+]], %incinvertfor.cond13 ]
 ; CHECK-NEXT:   %"scevgep'ipg_unwrap" = getelementptr double, double* %"vec'", i64 %"iv'ac.0"
-; CHECK-NEXT:   %0 = load double, double* %"scevgep'ipg_unwrap", align 8
-; CHECK-NEXT:   %1 = fadd fast double %0, %d0diffeadd
-; CHECK-NEXT:   store double %1, double* %"scevgep'ipg_unwrap", align 8
-; CHECK-NEXT:   %2 = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   br i1 %2, label %invertentry, label %incinvertfor.cond13
+; CHECK-NEXT:   %[[i0:.+]] = load double, double* %"scevgep'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i1:.+]] = fadd fast double %[[i0]], %[[d0diffeadd]]
+; CHECK-NEXT:   store double %[[i1]], double* %"scevgep'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i2:.+]] = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   br i1 %[[i2]], label %invertentry, label %incinvertfor.cond13
 
 ; CHECK: incinvertfor.cond13:                              ; preds = %invertfor.cond13
-; CHECK-NEXT:   %3 = add nsw i64 %"iv'ac.0", -1
+; CHECK-NEXT:   %[[i3]] = add nsw i64 %"iv'ac.0", -1
 ; CHECK-NEXT:   br label %invertfor.cond13
 ; CHECK-NEXT: }

@@ -24,6 +24,7 @@ enum class MyMemoryType
    DEFAULT
 };
 
+__attribute__((enzyme_inactive))
 extern MyMemoryType host_mem_type;
 
 __attribute__((noinline))
@@ -37,7 +38,6 @@ double square(double a)
   D[0] = a;
   return D[0];
 }
-void* __enzyme_inactive_global = &host_mem_type;
 
 int main() {
   double out = __enzyme_autodiff((void*)square, 10.0);

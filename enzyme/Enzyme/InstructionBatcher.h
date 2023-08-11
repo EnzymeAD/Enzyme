@@ -27,6 +27,18 @@
 #ifndef INSTRUCTION_BATCHER_H_
 #define INSTRUCTION_BATCHER_H_
 
+#include <llvm/Config/llvm-config.h>
+
+#if LLVM_VERSION_MAJOR >= 16
+#define private public
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+#undef private
+#else
+#include "SCEV/ScalarEvolution.h"
+#include "SCEV/ScalarEvolutionExpander.h"
+#endif
+
 #include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Value.h"

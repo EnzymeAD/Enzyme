@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -instsimplify -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -instsimplify -instsimplify -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,instsimplify)" -S | FileCheck %s
 
 ; ModuleID = '<stdin>'
 source_filename = "/home/runner/work/Enzyme/Enzyme/enzyme/test/Integration/multivecmax.cpp"
@@ -53,5 +54,4 @@ attributes #2 = { nounwind }
 !3 = !{!"Simple C++ TBAA"}
 
 ; CHECK: define internal void @differmax(double* %arg, double* %"arg'", i64 %arg1, double %differeturn)
-; CHECK:  %"tmp51!manual_lcssa{{.*}}" = phi double* [ %tmp51, %bb88 ], [ %tmp51, %bb81 ], [ undef, %entry ]
-; OLD:  %"tmp50!manual_lcssa" = phi i8* [ %tmp50, %bb81 ], [ %tmp50, %bb88 ], [ undef, %entry ]
+; CHECK:  %"tmp50!manual_lcssa" = phi i8* [ %tmp50, %bb88 ], [ %tmp50, %bb81 ], [ undef, %entry ]

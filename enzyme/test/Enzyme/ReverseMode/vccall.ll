@@ -1,4 +1,6 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
+
 source_filename = "vccall.c"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -41,11 +43,11 @@ attributes #3 = { nounwind }
 ; CHECK: define internal {{(dso_local )?}}{ double } @diffef(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %call = tail call fast double @h(double %x)
-; CHECK-NEXT:   %m0diffecall = fmul fast double %differeturn, %x
-; CHECK-NEXT:   %m1diffex = fmul fast double %differeturn, %call
-; CHECK-NEXT:   %0 = call { double } @diffeh(double %x, double %m0diffecall)
-; CHECK-NEXT:   %1 = extractvalue { double } %0, 0
-; CHECK-NEXT:   %2 = fadd fast double %m1diffex, %1
-; CHECK-NEXT:   %3 = insertvalue { double } undef, double %2, 0
-; CHECK-NEXT:   ret { double } %3
+; CHECK-NEXT:   %[[m0diffecall:.+]] = fmul fast double %differeturn, %x
+; CHECK-NEXT:   %[[m1diffex:.+]] = fmul fast double %differeturn, %call
+; CHECK-NEXT:   %[[i0:.+]] = call { double } @diffeh(double %x, double %[[m0diffecall]])
+; CHECK-NEXT:   %[[i1:.+]] = extractvalue { double } %[[i0]], 0
+; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[m1diffex]], %[[i1]]
+; CHECK-NEXT:   %[[i3:.+]] = insertvalue { double } undef, double %[[i2]], 0
+; CHECK-NEXT:   ret { double } %[[i3]]
 ; CHECK-NEXT: }

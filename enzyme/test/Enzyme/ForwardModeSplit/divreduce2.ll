@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse-memssa -instsimplify -correlated-propagation -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse -instsimplify -correlated-propagation -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,%simplifycfg,early-cse,instsimplify,correlated-propagation,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 ; TODO optimize this style reduction
 
@@ -69,7 +70,7 @@ declare double @__enzyme_fwdsplit(...)
 ; TODO this should keep tbaa
 ; CHECK-NEXT:   %ld = load double, double* %[[i4]], align 8
 ; CHECK-NEXT:   %[[i6:.+]] = fmul fast double %[[dreduce]], %ld
-; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %reduce, %[[i5]]
+; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %[[i5]], %reduce
 ; CHECK-NEXT:   %[[i8:.+]] = fsub fast double %[[i6]], %[[i7]]
 ; CHECK-NEXT:   %[[i9:.+]] = fmul fast double %ld, %ld
 ; CHECK-NEXT:   %[[i10]] = fdiv fast double %[[i8]], %[[i9]]

@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg)" -S | FileCheck %s
 
 source_filename = "/mnt/Data/git/Enzyme/enzyme/test/Integration/eigensumsqdyn.cpp"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
@@ -155,9 +156,9 @@ exit:                                             ; preds = %end2
 ; CHECK-DAG:   %[[idx:.+]] = add nuw nsw i64 %"iv1'ac.0", %[[mul]]
 ; CHECK-NEXT:   %[[gepidx:.+]] = getelementptr inbounds double, double* %[[ev]], i64 %[[idx]]
 ; CHECK-NEXT:   %[[ld:.+]] = load double, double* %[[gepidx]], align 8, !tbaa !2, !invariant.group ![[fda:.+]]
-; CHECK-NEXT:   %m0diffeloaded = fmul fast double %[[dadd:.+]], %[[ld]]
-; CHECK-NEXT:   %m1diffeloaded = fmul fast double %[[dadd]], %[[ld]]
-; CHECK-NEXT:   %[[diffe:.+]] = fadd fast double %m0diffeloaded, %m1diffeloaded
+; CHECK-NEXT:   %[[m0diffeloaded:.+]] = fmul fast double %[[dadd:.+]], %[[ld]]
+; CHECK-NEXT:   %[[m1diffeloaded:.+]] = fmul fast double %[[dadd]], %[[ld]]
+; CHECK-NEXT:   %[[diffe:.+]] = fadd fast double %[[m0diffeloaded]], %[[m1diffeloaded]]
 ; CHECK-NEXT:   %iv.next2_unwrap = add nuw nsw i64 %"iv1'ac.0", 1
 ; CHECK-NEXT:   %[[arrayidxipg:.+]] = getelementptr inbounds double, double* %"place'", i64 %iv.next2_unwrap
 ; CHECK-NEXT:   %[[didx:.+]] = load double, double* %[[arrayidxipg]], align 8

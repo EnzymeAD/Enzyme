@@ -1,4 +1,6 @@
-; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -adce -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
+
 source_filename = "lulesh.cc"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -116,9 +118,9 @@ exit:                                             ; preds = %bb23, %bb
 ; CHECK-NEXT:   %[[i2:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
 ; CHECK-NEXT:   %i18_malloccache_unwrap = bitcast i8* %2 to double*
 ; CHECK-NEXT:   store double* %i18_malloccache_unwrap, double** %[[i0]]
-; CHECK-NEXT:   call void (%1*, i32, void (i32*, i32*, ...)*, ...) @__kmpc_fork_call(%1* @5, i32 5, void (i32*, i32*, ...)* bitcast (void (i32*, i32*, double*, double*, double*, double*, double**)* @augmented_outlined.1 to void (i32*, i32*, ...)*), double* %arg, double* %"arg'", double* %arg1, double* %"arg1'", double** nonnull %[[i0]])
+; CHECK-NEXT:   call void (%1*, i32, void (i32*, i32*, ...)*, ...) @__kmpc_fork_call(%1* @5, i32 5, void (i32*, i32*, ...)* bitcast (void (i32*, i32*, double*, double*, double*, double*, double**)* @augmented_outlined.1 to void (i32*, i32*, ...)*), double* %arg, double* %"arg'", double* %arg1, double* %"arg1'", double** %[[i0]])
 ; CHECK-NEXT:   store double* %i18_malloccache_unwrap, double** %[[i1]]
-; CHECK-NEXT:   call void (%1*, i32, void (i32*, i32*, ...)*, ...) @__kmpc_fork_call(%1* @5, i32 5, void (i32*, i32*, ...)* bitcast (void (i32*, i32*, double*, double*, double*, double*, double**)* @diffeoutlined to void (i32*, i32*, ...)*), double* %arg, double* %"arg'", double* %arg1, double* %"arg1'", double** nonnull %[[i1]])
+; CHECK-NEXT:   call void (%1*, i32, void (i32*, i32*, ...)*, ...) @__kmpc_fork_call(%1* @5, i32 5, void (i32*, i32*, ...)* bitcast (void (i32*, i32*, double*, double*, double*, double*, double**)* @diffeoutlined to void (i32*, i32*, ...)*), double* %arg, double* %"arg'", double* %arg1, double* %"arg1'", double** %[[i1]])
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %[[i2]])
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

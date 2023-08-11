@@ -59,20 +59,40 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   if (oldUnreachable.count(user->getParent()))
     return false;
 
-  if (isa<CastInst>(user) || isa<PHINode>(user) ||
-      isa<GetElementPtrInst>(user)) {
+  if (isPointerArithmeticInst(user, /*includephi*/ true,
+                              /*includebin*/ false)) {
     return false;
   }
 
-  if (isa<LoadInst>(user)) {
-    if (EnzymeRuntimeActivityCheck &&
-        TR.query(const_cast<llvm::Instruction *>(user))[{-1}].isFloat() &&
-        !gutils->isConstantInstruction(const_cast<llvm::Instruction *>(user))) {
-      if (EnzymePrintDiffUse)
-        llvm::errs() << " Need direct primal of " << *val
-                     << " in reverse from runtime active load " << *user
-                     << "\n";
-      return true;
+  if (auto LI = dyn_cast<LoadInst>(user)) {
+    if (EnzymeRuntimeActivityCheck) {
+      auto vd = TR.query(const_cast<llvm::Instruction *>(user));
+      if (!vd.isKnown()) {
+        auto ET = LI->getType();
+        // It verbatim needs to replicate the same behavior as adjointgenerator.
+        // From reverse mode type analysis
+        // (https://github.com/EnzymeAD/Enzyme/blob/194875cbccd73d63cacfefbfa85c1f583c2fa1fe/enzyme/Enzyme/AdjointGenerator.h#L556)
+        if (looseTypeAnalysis || true) {
+          vd = defaultTypeTreeForLLVM(ET, const_cast<LoadInst *>(LI));
+        }
+      }
+      auto &DL = gutils->newFunc->getParent()->getDataLayout();
+      auto LoadSize = (DL.getTypeSizeInBits(LI->getType()) + 1) / 8;
+      bool hasFloat = true;
+      for (ssize_t i = -1; i < (ssize_t)LoadSize; ++i) {
+        if (vd[{(int)i}].isFloat()) {
+          hasFloat = true;
+          break;
+        }
+      }
+      if (hasFloat && !gutils->isConstantInstruction(
+                          const_cast<llvm::Instruction *>(user))) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need direct primal of " << *val
+                       << " in reverse from runtime active load " << *user
+                       << "\n";
+        return true;
+      }
     }
     return false;
   }
@@ -161,10 +181,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   }
 
   if (isa<CmpInst>(user) || isa<BranchInst>(user) || isa<ReturnInst>(user) ||
-      isa<FPExtInst>(user) || isa<FPTruncInst>(user)
-#if LLVM_VERSION_MAJOR >= 10
-      || isa<FreezeInst>(user)
-#endif
+      isa<FPExtInst>(user) || isa<FPTruncInst>(user) || isa<FreezeInst>(user)
       // isa<ExtractElement>(use) ||
       // isa<InsertElementInst>(use) || isa<ShuffleVectorInst>(use) ||
       // isa<ExtractValueInst>(use) || isa<AllocaInst>(use)
@@ -355,10 +372,32 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   }
 
   if (auto CI = dyn_cast<CallInst>(user)) {
-    auto funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
 
-    if (funcName == "julia.pointer_from_objref")
-      return false;
+    auto Mode = gutils->mode;
+    const bool cacheMode = (Mode != DerivativeMode::ForwardMode);
+
+    auto funcName = getFuncNameFromCall(CI);
+    auto blasMetaData = extractBLAS(funcName);
+#if LLVM_VERSION_MAJOR >= 16
+    if (blasMetaData.has_value())
+#else
+    if (blasMetaData.hasValue())
+#endif
+    {
+      const std::vector<bool> *overwritten_args_ptr = nullptr;
+      if (gutils->overwritten_args_map_ptr) {
+        auto found =
+            gutils->overwritten_args_map_ptr->find(const_cast<CallInst *>(CI));
+        assert(found != gutils->overwritten_args_map_ptr->end());
+        overwritten_args_ptr = &found->second;
+      }
+#if LLVM_VERSION_MAJOR >= 16
+      BlasInfo blas = blasMetaData.value();
+#else
+      BlasInfo blas = blasMetaData.getValue();
+#endif
+#include "BlasDiffUse.inc"
+    }
 
     // Only need primal (and shadow) request for reverse
     if (funcName == "MPI_Isend" || funcName == "MPI_Irecv" ||
@@ -395,10 +434,6 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
       return true;
     }
 
-#if LLVM_VERSION_MAJOR < 14
-    auto F = getFunctionFromCall(CI);
-#endif
-
     bool writeOnlyNoCapture = true;
 
     if (shouldDisableNoWrite(CI)) {
@@ -411,29 +446,11 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 #endif
     {
       if (val == CI->getArgOperand(i)) {
-#if LLVM_VERSION_MAJOR >= 8
-        if (!CI->doesNotCapture(i))
-#else
-        if (!(CI->dataOperandHasImpliedAttr(i + 1, Attribute::NoCapture) ||
-              (F && F->hasParamAttribute(i, Attribute::NoCapture))))
-#endif
-        {
+        if (!isNoCapture(CI, i)) {
           writeOnlyNoCapture = false;
           break;
         }
-#if LLVM_VERSION_MAJOR >= 14
-        if (!(CI->onlyWritesMemory(i) || CI->onlyWritesMemory()))
-#else
-        if (!(CI->dataOperandHasImpliedAttr(i + 1, Attribute::WriteOnly) ||
-              CI->dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
-              CI->hasFnAttr(Attribute::WriteOnly) ||
-              CI->hasFnAttr(Attribute::ReadNone) ||
-              (F && (F->hasParamAttribute(i, Attribute::WriteOnly) ||
-                     F->hasParamAttribute(i, Attribute::ReadNone) ||
-                     F->hasFnAttribute(Attribute::WriteOnly) ||
-                     F->hasFnAttribute(Attribute::ReadNone)))))
-#endif
-        {
+        if (!isWriteOnly(CI, i)) {
           writeOnlyNoCapture = false;
           break;
         }
@@ -516,7 +533,8 @@ void DifferentialUseAnalysis::minCut(
     const SmallPtrSetImpl<Value *> &Intermediates,
     SmallPtrSetImpl<Value *> &Required, SmallPtrSetImpl<Value *> &MinReq,
     const ValueMap<Value *, GradientUtils::Rematerializer>
-        &rematerializableAllocations) {
+        &rematerializableAllocations,
+    llvm::TargetLibraryInfo &TLI) {
   Graph G;
   for (auto V : Intermediates) {
     G[Node(V, false)].insert(Node(V, true));
@@ -635,11 +653,41 @@ void DifferentialUseAnalysis::minCut(
         if (ASC->getSrcAddressSpace() == 10 && ASC->getDestAddressSpace() == 0)
           continue;
       }
-      if (auto I = dyn_cast<Instruction>((*found->second.begin()).V)) {
-        if (hasMetadata(I, "enzyme_caststack")) {
-          continue;
+      // If an allocation call, we cannot cache any "capturing" users
+      if (isAllocationCall(V, TLI)) {
+        auto next = (*found->second.begin()).V;
+        bool noncapture = false;
+        if (isa<LoadInst>(next)) {
+          noncapture = true;
+        } else if (auto II = dyn_cast<IntrinsicInst>(next)) {
+          if (II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_i ||
+              II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_p ||
+              II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_f ||
+              II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_i ||
+              II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_p ||
+              II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_f ||
+              II->getIntrinsicID() == Intrinsic::masked_load)
+            noncapture = true;
+        } else if (auto CI = dyn_cast<CallInst>(next)) {
+          bool captures = false;
+#if LLVM_VERSION_MAJOR >= 14
+          for (size_t i = 0; i < CI->arg_size(); i++)
+#else
+          for (size_t i = 0; i < CI->getNumArgOperands(); i++)
+#endif
+          {
+            if (CI->getArgOperand(i) == V && !isNoCapture(CI, i)) {
+              captures = true;
+              break;
+            }
+          }
+          noncapture = !captures;
         }
+
+        if (!noncapture)
+          continue;
       }
+
       if (moreOuterLoop == 1 ||
           (moreOuterLoop == 0 &&
            DL.getTypeSizeInBits(V->getType()) >=

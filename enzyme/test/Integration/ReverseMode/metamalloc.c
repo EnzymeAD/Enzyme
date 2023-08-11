@@ -1,11 +1,11 @@
-// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O0 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - 
-// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -fno-unroll-loops -O1 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - 
-// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - 
-// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - 
-// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O0 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme --enzyme-inline=1 -S | %lli - 
-// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O1 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme --enzyme-inline=1 -S | %lli - 
-// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme --enzyme-inline=1 -S | %lli - 
-// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme --enzyme-inline=1 -S | %lli - 
+// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - 
+// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -fno-unroll-loops -O1 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - 
+// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - 
+// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - 
+// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme --enzyme-inline=1 -S | %lli - 
+// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O1 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme --enzyme-inline=1 -S | %lli - 
+// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme --enzyme-inline=1 -S | %lli - 
+// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme --enzyme-inline=1 -S | %lli - 
 
 #include <stdio.h>
 #include <math.h>
@@ -17,10 +17,10 @@ double __enzyme_autodiff(void*, ...);
 
 struct {
     int count;
-void* (*allocfn)(long int);
+void* (*allocfn)(size_t);
 } tup = {0, malloc};
 __attribute__((noinline))
-void* metamalloc(long int size) {
+void* metamalloc(size_t size) {
     void* ret = tup.allocfn(size);
     //if (ret != 0)
     //  tup.count++;
@@ -38,7 +38,7 @@ double alldiv(double x) {
 }
 
 
-static void* (*sallocfn)(int) = malloc;
+static void* (*sallocfn)(size_t) = malloc;
 __attribute__((noinline))
 void* smetamalloc(int size) {
     return sallocfn(size);

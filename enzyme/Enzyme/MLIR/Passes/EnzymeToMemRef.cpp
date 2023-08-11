@@ -20,7 +20,6 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Transforms/DialectConversion.h"
-
 #include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
@@ -198,7 +197,6 @@ struct LoweredCache {
                               ValueRange{elements, size, capacity})
         .getResult(0);
   }
-
   static llvm::Optional<LoweredCache>
   getFromEnzymeCache(Location loc, TypeConverter *typeConverter,
                      Value enzymeCache, OpBuilder &b) {
@@ -206,7 +204,7 @@ struct LoweredCache {
     auto cacheType = enzymeCache.getType().cast<enzyme::CacheType>();
     SmallVector<Type> resultTypes;
     if (failed(typeConverter->convertType(cacheType, resultTypes))) {
-      return llvm::None;
+      return {};
     }
     auto unpackedCache =
         b.create<UnrealizedConversionCastOp>(loc, resultTypes, enzymeCache);
@@ -378,7 +376,7 @@ struct EnzymeToMemRefPass
     typeConverter.addConversion([](Type type) -> llvm::Optional<Type> {
       if (type.isIntOrIndexOrFloat() || type.isa<MemRefType>())
         return type;
-      return llvm::None;
+      return {};
     });
     typeConverter.addConversion(
         [](enzyme::GradientType type) -> llvm::Optional<Type> {
@@ -388,7 +386,7 @@ struct EnzymeToMemRefPass
         [](enzyme::CacheType type, SmallVectorImpl<Type> &resultTypes) {
           // Data
           resultTypes.push_back(MemRefType::get(
-              {}, MemRefType::get({ShapedType::kDynamicSize}, type.getType())));
+              {}, MemRefType::get({ShapedType::kDynamic}, type.getType())));
           auto indexMemRefType =
               MemRefType::get({}, IndexType::get(type.getContext()));
           // Size

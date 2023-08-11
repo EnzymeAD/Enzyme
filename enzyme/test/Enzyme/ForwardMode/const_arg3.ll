@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
 
 declare double @__enzyme_fwddiff(...) 
@@ -48,8 +48,8 @@ entry:
 ; CHECK-NEXT:   %0 = fmul fast double %"a1'", %a1
 ; CHECK-NEXT:   %1 = fmul fast double %"a1'", %a1
 ; CHECK-NEXT:   %2 = fadd fast double %0, %1
-; CHECK-NEXT:   store double %a3, double* %a0, align 8
 ; CHECK-NEXT:   store double %2, double* %"a0'", align 8
+; CHECK-NEXT:   store double %a3, double* %a0, align 8
 ; CHECK-NEXT:   %3 = insertvalue { double, double } {{(undef|poison)?}}, double %a3, 0
 ; CHECK-NEXT:   %4 = insertvalue { double, double } %3, double %2, 1
 ; CHECK-NEXT:   ret { double, double } %4

@@ -28,6 +28,7 @@
 #define TraceUtils_h
 
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -43,30 +44,37 @@ class TraceUtils {
 
 private:
   llvm::Value *trace;
-  llvm::Value *observations = nullptr;
+  llvm::Value *observations;
+  llvm::Value *likelihood;
 
 public:
   TraceInterface *interface;
   ProbProgMode mode;
   llvm::Function *newFunc;
+  llvm::SmallPtrSet<llvm::Function *, 4> sampleFunctions;
+  llvm::SmallPtrSet<llvm::Function *, 4> observeFunctions;
 
   constexpr static const char TraceParameterAttribute[] = "enzyme_trace";
   constexpr static const char ObservationsParameterAttribute[] =
       "enzyme_observations";
+  constexpr static const char LikelihoodParameterAttribute[] =
+      "enzyme_likelihood";
 
 public:
-  TraceUtils(ProbProgMode mode, llvm::Function *newFunc, llvm::Argument *trace,
-             llvm::Argument *observations, TraceInterface *interface);
+  TraceUtils(ProbProgMode mode,
+             const llvm::SmallPtrSetImpl<llvm::Function *> &sampleFunctions,
+             const llvm::SmallPtrSetImpl<llvm::Function *> &observeFunctions,
+             llvm::Function *newFunc, llvm::Argument *trace,
+             llvm::Argument *observations, llvm::Argument *likelihood,
+             TraceInterface *interface);
 
   static TraceUtils *
-  FromClone(ProbProgMode mode, TraceInterface *interface,
-            llvm::Function *oldFunc,
+  FromClone(ProbProgMode mode,
+            const llvm::SmallPtrSetImpl<llvm::Function *> &sampleFunctions,
+            const llvm::SmallPtrSetImpl<llvm::Function *> &observeFunctions,
+            TraceInterface *interface, llvm::Function *oldFunc,
             llvm::ValueMap<const llvm::Value *, llvm::WeakTrackingVH>
                 &originalToNewFn);
-
-  static TraceUtils *CreateEmpty(ProbProgMode mode, TraceInterface *interface,
-                                 llvm::FunctionType *orig_FTy, llvm::Module *M,
-                                 const llvm::Twine &Name = "");
 
   ~TraceUtils();
 
@@ -82,28 +90,38 @@ public:
 
   llvm::Value *getObservations();
 
+  llvm::Value *getLikelihood();
+
   llvm::CallInst *CreateTrace(llvm::IRBuilder<> &Builder,
                               const llvm::Twine &Name = "trace");
+
+  llvm::CallInst *FreeTrace(llvm::IRBuilder<> &Builder);
 
   llvm::CallInst *InsertChoice(llvm::IRBuilder<> &Builder, llvm::Value *address,
                                llvm::Value *score, llvm::Value *choice);
 
-  static llvm::CallInst *InsertChoice(llvm::IRBuilder<> &Builder,
-                                      llvm::FunctionType *interface_type,
-                                      llvm::Value *interface_function,
-                                      llvm::Value *address, llvm::Value *score,
-                                      llvm::Value *choice, llvm::Value *trace);
-
   llvm::CallInst *InsertCall(llvm::IRBuilder<> &Builder, llvm::Value *address,
                              llvm::Value *subtrace);
 
-  llvm::CallInst *InsertArgument(llvm::IRBuilder<> &Builder,
-                                 llvm::Argument *argument);
+  llvm::CallInst *InsertArgument(llvm::IRBuilder<> &Builder, llvm::Value *name,
+                                 llvm::Value *argument);
 
   llvm::CallInst *InsertReturn(llvm::IRBuilder<> &Builder, llvm::Value *ret);
 
   llvm::CallInst *InsertFunction(llvm::IRBuilder<> &Builder,
                                  llvm::Function *function);
+
+  static llvm::CallInst *
+  InsertChoiceGradient(llvm::IRBuilder<> &Builder,
+                       llvm::FunctionType *interface_type,
+                       llvm::Value *interface_function, llvm::Value *address,
+                       llvm::Value *choice, llvm::Value *trace);
+
+  static llvm::CallInst *
+  InsertArgumentGradient(llvm::IRBuilder<> &Builder,
+                         llvm::FunctionType *interface_type,
+                         llvm::Value *interface_function, llvm::Value *name,
+                         llvm::Value *argument, llvm::Value *trace);
 
   llvm::CallInst *GetTrace(llvm::IRBuilder<> &Builder, llvm::Value *address,
                            const llvm::Twine &Name = "");
@@ -112,26 +130,28 @@ public:
                                llvm::Type *choiceType,
                                const llvm::Twine &Name = "");
 
-  static llvm::Instruction *
-  GetChoice(llvm::IRBuilder<> &Builder, llvm::FunctionType *interface_type,
-            llvm::Value *interface_function, llvm::Value *address,
-            llvm::Type *choiceType, llvm::Value *trace,
-            const llvm::Twine &Name = "");
-
-  llvm::Instruction *GetLikelihood(llvm::IRBuilder<> &Builder,
-                                   llvm::Value *address,
-                                   const llvm::Twine &Name = "");
-
-  static llvm::Instruction *
-  GetLikelihood(llvm::IRBuilder<> &Builder, llvm::FunctionType *interface_type,
-                llvm::Value *interface_function, llvm::Value *address,
-                llvm::Value *trace, const llvm::Twine &Name = "");
-
   llvm::Instruction *HasChoice(llvm::IRBuilder<> &Builder, llvm::Value *address,
                                const llvm::Twine &Name = "");
 
   llvm::Instruction *HasCall(llvm::IRBuilder<> &Builder, llvm::Value *address,
                              const llvm::Twine &Name = "");
+
+  llvm::Instruction *
+  SampleOrCondition(llvm::IRBuilder<> &Builder, llvm::Function *sample_fn,
+                    llvm::ArrayRef<llvm::Value *> sample_args,
+                    llvm::Value *address, const llvm::Twine &Name = "");
+
+  llvm::CallInst *CreateOutlinedFunction(
+      llvm::IRBuilder<> &Builder,
+      llvm::function_ref<void(llvm::IRBuilder<> &, TraceUtils *,
+                              llvm::ArrayRef<llvm::Value *>)>
+          Outlined,
+      llvm::Type *RetTy, llvm::ArrayRef<llvm::Value *> Arguments,
+      bool needsLikelihood = true, const llvm::Twine &Name = "");
+
+  bool isSampleCall(llvm::CallInst *call);
+
+  bool isObserveCall(llvm::CallInst *call);
 };
 
 #endif /* TraceUtils_h */

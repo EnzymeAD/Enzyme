@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -early-cse -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -early-cse -adce -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(early-cse,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 ; void __enzyme_autodiff(void*, ...);
@@ -73,8 +73,8 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   br label %for.body
 
 ; CHECK: for.cond.cleanup:                                 ; preds = %for.body
-; CHECK-NEXT:   store double 0.000000e+00, double* %x, align 8, !tbaa !2
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'", align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %x, align 8, !tbaa !2
 ; CHECK-NEXT:   ret double %[[i5:.+]]
 
 ; CHECK: for.body:                                         ; preds = %for.body, %entry

@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 define dso_local void @square(double* %arg, i32* noalias nocapture readonly %arg1) {
   %tmp = icmp eq double* %arg, null
@@ -64,20 +65,20 @@ declare dso_local void @__enzyme_autodiff(i8*, double*, double*, i32*) local_unn
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertbb5:                                        ; preds = %bb12, %incinvertbb5
-; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %5, %incinvertbb5 ], [ 199, %bb12 ]
+; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %[[i5:.+]], %incinvertbb5 ], [ 199, %bb12 ]
 ; CHECK-NEXT:   %"tmp7'ipg_unwrap" = getelementptr inbounds double, double* %"arg'", i64 %"iv'ac.0"
-; CHECK-NEXT:   %1 = load double, double* %"tmp7'ipg_unwrap", align 8, !alias.scope ![[NA_SC]], !noalias ![[ARG_SC]]
+; CHECK-NEXT:   %[[i1:.+]] = load double, double* %"tmp7'ipg_unwrap", align 8, !alias.scope ![[NA_SC]], !noalias ![[ARG_SC]]
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"tmp7'ipg_unwrap", align 8, !alias.scope ![[NA_SC]], !noalias ![[ARG_SC]]
 ; CHECK-NEXT:   %tmp3_unwrap = load i32, i32* %arg1, align 4, !alias.scope ![[ARG1_SC]], !noalias ![[NA1_SC]], !invariant.group ![[INVG]]
 ; CHECK-NEXT:   %tmp4_unwrap = sitofp i32 %tmp3_unwrap to double
-; CHECK-NEXT:   %m0diffetmp8 = fmul fast double %1, %tmp4_unwrap
-; CHECK-NEXT:   %2 = load double, double* %"tmp7'ipg_unwrap", align 8, !alias.scope ![[NA_SC]], !noalias ![[ARG_SC]]
-; CHECK-NEXT:   %3 = fadd fast double %2, %m0diffetmp8
-; CHECK-NEXT:   store double %3, double* %"tmp7'ipg_unwrap", align 8, !alias.scope ![[NA_SC]], !noalias ![[ARG_SC]]
-; CHECK-NEXT:   %4 = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   br i1 %4, label %invert, label %incinvertbb5
+; CHECK-NEXT:   %[[m0diffetmp8:.+]] = fmul fast double %[[i1]], %tmp4_unwrap
+; CHECK-NEXT:   %[[i2:.+]] = load double, double* %"tmp7'ipg_unwrap", align 8, !alias.scope ![[NA_SC]], !noalias ![[ARG_SC]]
+; CHECK-NEXT:   %[[i3:.+]] = fadd fast double %[[i2]], %[[m0diffetmp8]]
+; CHECK-NEXT:   store double %[[i3]], double* %"tmp7'ipg_unwrap", align 8, !alias.scope ![[NA_SC]], !noalias ![[ARG_SC]]
+; CHECK-NEXT:   %[[i4:.+]] = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   br i1 %[[i4:.+]], label %invert, label %incinvertbb5
 
 ; CHECK: incinvertbb5:                                     ; preds = %invertbb5
-; CHECK-NEXT:   %5 = add nsw i64 %"iv'ac.0", -1
+; CHECK-NEXT:   %[[i5]] = add nsw i64 %"iv'ac.0", -1
 ; CHECK-NEXT:   br label %invertbb5
 ; CHECK-NEXT: }

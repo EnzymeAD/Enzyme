@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instsimplify -gvn -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instsimplify -gvn -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,instsimplify,%simplifycfg,gvn,adce)" -S | FileCheck %s
 
 define void @set(double* nocapture writeonly %a, double %x) {
 entry:
@@ -34,8 +35,8 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; CHECK: define internal { double } @diffemsg(double %in, double %differeturn) 
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %hst = call fast double @augmented_above(double %in)
-; CHECK-NEXT:   %m0diffehst = fmul fast double %differeturn, %hst
-; CHECK-NEXT:   %[[i1:.+]] = fadd fast double %m0diffehst, %m0diffehst
+; CHECK-NEXT:   %[[m0diffehst:.+]] = fmul fast double %differeturn, %hst
+; CHECK-NEXT:   %[[i1:.+]] = fadd fast double %[[m0diffehst]], %[[m0diffehst]]
 ; CHECK-NEXT:   %[[i2:.+]] = call { double } @diffeabove(double %in, double %[[i1]])
 ; CHECK-NEXT:   ret { double } %[[i2]]
 ; CHECK-NEXT: }

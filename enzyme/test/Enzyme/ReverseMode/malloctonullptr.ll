@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instsimplify -early-cse -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 source_filename = "/mnt/Data/git/Enzyme/enzyme/test/Integration/eigentensor.cpp"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
@@ -1187,9 +1188,9 @@ attributes #10 = { noreturn nounwind }
 
 ; CHECK: define internal { i8*, i8* } @augmented_subfn(float** %m_data.i.i, float** %"m_data.i.i'", float* %K, float* %"K'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call = tail call noalias nonnull dereferenceable(36) dereferenceable_or_null(36) i8* @malloc(i64 36)
 ; CHECK-NEXT:   %"call'mi" = tail call noalias nonnull dereferenceable(36) dereferenceable_or_null(36) i8* @malloc(i64 36)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(36) dereferenceable_or_null(36) %"call'mi", i8 0, i64 36, i1 false)
+; CHECK-NEXT:   %call = tail call noalias nonnull dereferenceable(36) dereferenceable_or_null(36) i8* @malloc(i64 36)
 ; CHECK-NEXT:   %"a0'ipc" = bitcast i8* %"call'mi" to float*
 ; CHECK-NEXT:   %a0 = bitcast i8* %call to float*
 ; CHECK-NEXT:   store float* %"a0'ipc", float** %"m_data.i.i'", align 8
@@ -1203,15 +1204,15 @@ attributes #10 = { noreturn nounwind }
 
 ; CHECK: define internal void @diffesubfn(float** %m_data.i.i, float** %"m_data.i.i'", float* %K, float* %"K'", { i8*, i8* } %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call = extractvalue { i8*, i8* } %tapeArg, 1
 ; CHECK-NEXT:   %"call'mi" = extractvalue { i8*, i8* } %tapeArg, 0
+; CHECK-NEXT:   %call = extractvalue { i8*, i8* } %tapeArg, 1
 ; CHECK-NEXT:   %[[a0ipc:.+]] = bitcast i8* %"call'mi" to float*
 ; CHECK-NEXT:   %0 = load float, float* %[[a0ipc]], align 4
 ; CHECK-NEXT:   store float 0.000000e+00, float* %[[a0ipc]], align 4
 ; CHECK-NEXT:   %1 = load float, float* %"K'", align 4
 ; CHECK-NEXT:   %2 = fadd fast float %1, %0
 ; CHECK-NEXT:   store float %2, float* %"K'", align 4
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"call'mi")
-; CHECK-NEXT:   tail call void @free(i8* %call)
+; CHECK-NEXT:   call void @free(i8* nonnull %"call'mi")
+; CHECK-NEXT:   call void @free(i8* %call)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

@@ -114,6 +114,8 @@ public:
 
   std::set<ssize_t> tapeIndiciesToFree;
 
+  const std::vector<DIFFE_TYPE> constant_args;
+
   bool isComplete;
 
   AugmentedReturn(
@@ -121,10 +123,12 @@ public:
       std::map<std::pair<llvm::Instruction *, CacheType>, int> tapeIndices,
       std::map<AugmentedStruct, int> returns,
       std::map<llvm::CallInst *, const std::vector<bool>> overwritten_args_map,
-      std::map<llvm::Instruction *, bool> can_modref_map)
+      std::map<llvm::Instruction *, bool> can_modref_map,
+      const std::vector<DIFFE_TYPE> &constant_args)
       : fn(fn), tapeType(tapeType), tapeIndices(tapeIndices), returns(returns),
         overwritten_args_map(overwritten_args_map),
-        can_modref_map(can_modref_map), isComplete(false) {}
+        can_modref_map(can_modref_map), constant_args(constant_args),
+        isComplete(false) {}
 };
 
 struct ReverseCacheKey {
@@ -429,7 +433,8 @@ public:
                                    std::vector<BATCH_TYPE>, BATCH_TYPE>;
   std::map<BatchCacheKey, llvm::Function *> BatchCachedFunctions;
 
-  using TraceCacheKey = std::tuple<llvm::Function *, ProbProgMode>;
+  using TraceCacheKey =
+      std::tuple<llvm::Function *, ProbProgMode, bool, TraceInterface *>;
   std::map<TraceCacheKey, llvm::Function *> TraceCachedFunctions;
 
   /// Create the derivative function itself.
@@ -466,8 +471,10 @@ public:
 
   llvm::Function *
   CreateTrace(llvm::Function *totrace,
-              llvm::SmallPtrSetImpl<llvm::Function *> &GenerativeFunctions,
-              ProbProgMode mode, bool autodiff, TraceInterface *interface);
+              const llvm::SmallPtrSetImpl<llvm::Function *> &sampleFunctions,
+              const llvm::SmallPtrSetImpl<llvm::Function *> &observeFunctions,
+              const llvm::StringSet<> &ActiveRandomVariables, ProbProgMode mode,
+              bool autodiff, TraceInterface *interface);
 
   void clear();
 };

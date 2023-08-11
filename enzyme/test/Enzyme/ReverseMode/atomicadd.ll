@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,adce,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: norecurse nounwind readonly uwtable
 define dso_local double @sum(i64* nocapture %n, double %x) #0 {
@@ -27,7 +28,7 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %res = atomicrmw add i64* %n, i64 1 monotonic
 ; CHECK-NEXT:   %fp = uitofp i64 %res to double
-; CHECK-NEXT:   %m1diffex = fmul fast double %differeturn, %fp
-; CHECK-NEXT:   %0 = insertvalue { double } undef, double %m1diffex, 0
-; CHECK-NEXT:   ret { double } %0
+; CHECK-NEXT:   %[[m1diffex:.+]] = fmul fast double %differeturn, %fp
+; CHECK-NEXT:   %[[i0:.+]] = insertvalue { double } undef, double %[[m1diffex]], 0
+; CHECK-NEXT:   ret { double } %[[i0]]
 ; CHECK-NEXT: }

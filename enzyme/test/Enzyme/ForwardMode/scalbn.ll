@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
 
 declare double @scalbn(double, i32)
@@ -19,9 +19,6 @@ entry:
 
 ; CHECK: define internal double @fwddiffetest(double %x, double %"x'", i32 %exp)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast double @scalbn(double %x, i32 %exp)
-; CHECK-NEXT:   %1 = call fast double @scalbn(double %"x'", i32 %exp)
-; CHECK-NEXT:   %2 = fmul fast double %0, 0x3FD3441350A96098
-; CHECK-NEXT:   %3 = fadd fast double %2, %1
-; CHECK-NEXT:   ret double %3
+; CHECK-NEXT:   %[[v:.+]] = call fast double @scalbn(double %"x'", i32 %exp)
+; CHECK-NEXT:   ret double %[[v]]
 ; CHECK-NEXT: }

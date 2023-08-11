@@ -154,7 +154,8 @@ public:
       if (EnzymeTypeWarning) {
         if (CustomErrorHandler) {
           CustomErrorHandler("TypeAnalysisDepthLimit", nullptr,
-                             ErrorType::TypeDepthExceeded, this);
+                             ErrorType::TypeDepthExceeded, this, nullptr,
+                             nullptr);
         } else
           llvm::errs() << "not handling more than " << EnzymeMaxTypeDepth
                        << " pointer lookups deep dt:" << str()
@@ -191,13 +192,15 @@ public:
     bool changed = false;
 
     // if this is a ending -1, remove other elems if no more info
-    if (Seq.back() == -1) {
+    for (size_t suffixSize = 1; suffixSize <= SeqSize; suffixSize++) {
+      if (Seq[SeqSize - suffixSize] != -1)
+        break;
       std::set<std::vector<int>> toremove;
       for (const auto &pair : mapping) {
         if (pair.first.size() != SeqSize)
           continue;
         bool matches = true;
-        for (unsigned i = 0; i < SeqSize - 1; ++i) {
+        for (unsigned i = 0; i < SeqSize - suffixSize; ++i) {
           if (pair.first[i] != Seq[i]) {
             matches = false;
             break;
@@ -229,13 +232,15 @@ public:
     }
 
     // if this is a starting -1, remove other -1's
-    if (Seq[0] == -1) {
+    for (size_t prefixSize = 1; prefixSize <= SeqSize; prefixSize++) {
+      if (Seq[prefixSize - 1] != -1)
+        break;
       std::set<std::vector<int>> toremove;
       for (const auto &pair : mapping) {
         if (pair.first.size() != SeqSize)
           continue;
         bool matches = true;
-        for (unsigned i = 1; i < SeqSize; ++i) {
+        for (unsigned i = prefixSize; i < SeqSize; ++i) {
           if (pair.first[i] != Seq[i]) {
             matches = false;
             break;
@@ -382,7 +387,8 @@ public:
       if (EnzymeTypeWarning) {
         if (CustomErrorHandler) {
           CustomErrorHandler("TypeAnalysisDepthLimit", wrap(orig),
-                             ErrorType::TypeDepthExceeded, this);
+                             ErrorType::TypeDepthExceeded, this, nullptr,
+                             nullptr);
         } else if (orig) {
           EmitWarning("TypeAnalysisDepthLimit", *orig, *orig,
                       " not handling more than ", EnzymeMaxTypeDepth,
@@ -900,10 +906,12 @@ public:
     if (!LegalOr)
       return subchanged;
 
-    if (Seq.size() > 0) {
+    auto SeqSize = Seq.size();
+
+    if (SeqSize > 0) {
       // check pointer abilities from before
-      {
-        std::vector<int> tmp(Seq.begin(), Seq.end() - 1);
+      for (size_t i = 0; i < SeqSize; ++i) {
+        std::vector<int> tmp(Seq.begin(), Seq.end() - 1 - i);
         auto found = mapping.find(tmp);
         if (found != mapping.end()) {
           if (!(found->second == BaseType::Pointer ||
@@ -915,12 +923,14 @@ public:
       }
 
       // if this is a ending -1, remove other elems if no more info
-      if (Seq.back() == -1) {
+      for (size_t suffixSize = 1; suffixSize <= SeqSize; suffixSize++) {
+        if (Seq[SeqSize - suffixSize] != -1)
+          break;
         std::set<std::vector<int>> toremove;
         for (const auto &pair : mapping) {
-          if (pair.first.size() == Seq.size()) {
+          if (pair.first.size() == SeqSize) {
             bool matches = true;
-            for (unsigned i = 0; i < pair.first.size() - 1; ++i) {
+            for (unsigned i = 0; i < SeqSize - suffixSize; ++i) {
               if (pair.first[i] != Seq[i]) {
                 matches = false;
                 break;
@@ -948,12 +958,14 @@ public:
       }
 
       // if this is a starting -1, remove other -1's
-      if (Seq[0] == -1) {
+      for (size_t prefixSize = 1; prefixSize <= SeqSize; prefixSize++) {
+        if (Seq[prefixSize - 1] != -1)
+          break;
         std::set<std::vector<int>> toremove;
         for (const auto &pair : mapping) {
-          if (pair.first.size() == Seq.size()) {
+          if (pair.first.size() == SeqSize) {
             bool matches = true;
-            for (unsigned i = 1; i < pair.first.size(); ++i) {
+            for (unsigned i = prefixSize; i < SeqSize; ++i) {
               if (pair.first[i] != Seq[i]) {
                 matches = false;
                 break;

@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -early-cse -simplifycfg -instsimplify -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,early-cse,%simplifycfg,instsimplify,adce)" -S | FileCheck %s
 
 ; Function Attrs: noinline nounwind readnone uwtable
 define double @tester(double* %xp) {
@@ -24,8 +25,8 @@ declare double @__enzyme_autodiff(double (double*)*, ...)
 ; CHECK-NEXT:   fence syncscope("singlethread") seq_cst
 ; CHECK-NEXT:   %x = load double, double* %xp, align 8
 ; CHECK-NEXT:   fence syncscope("singlethread") seq_cst
-; CHECK-NEXT:   %m0diffex = fmul fast double %differeturn, %x
-; CHECK-NEXT:   %[[i0:.+]] = fadd fast double %m0diffex, %m0diffex
+; CHECK-NEXT:   %[[m0diffex:.+]] = fmul fast double %differeturn, %x
+; CHECK-NEXT:   %[[i0:.+]] = fadd fast double %[[m0diffex]], %[[m0diffex]]
 ; CHECK-NEXT:   fence syncscope("singlethread") seq_cst
 ; CHECK-NEXT:   %[[i1:.+]] = load double, double* %"xp'", align 8
 ; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[i1]], %[[i0]]

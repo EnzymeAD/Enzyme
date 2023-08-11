@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,early-cse,%simplifycfg,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 %struct.Gradients = type { double, double }
 
@@ -21,17 +22,17 @@ entry:
 
 ; CHECK: define internal [2 x double] @fwddiffe2tester(double %x, [2 x double] %"x'", double %y, [2 x double] %"y'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = extractvalue [2 x double] %"x'", 0
-; CHECK-NEXT:   %1 = extractvalue [2 x double] %"y'", 0
-; CHECK-NEXT:   %2 = fmul fast double %0, %y
-; CHECK-NEXT:   %3 = fmul fast double %1, %x
-; CHECK-NEXT:   %4 = fadd fast double %2, %3
-; CHECK-NEXT:   %5 = insertvalue [2 x double] undef, double %4, 0
-; CHECK-NEXT:   %6 = extractvalue [2 x double] %"x'", 1
-; CHECK-NEXT:   %7 = extractvalue [2 x double] %"y'", 1
-; CHECK-NEXT:   %8 = fmul fast double %6, %y
-; CHECK-NEXT:   %9 = fmul fast double %7, %x
-; CHECK-NEXT:   %10 = fadd fast double %8, %9
-; CHECK-NEXT:   %11 = insertvalue [2 x double] %5, double %10, 1
-; CHECK-NEXT:   ret [2 x double] %11
+; CHECK-NEXT:   %[[i0:.+]] = extractvalue [2 x double] %"x'", 0
+; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i0]], %y
+; CHECK-NEXT:   %[[i6:.+]] = extractvalue [2 x double] %"x'", 1
+; CHECK-NEXT:   %[[i8:.+]] = fmul fast double %[[i6]], %y
+; CHECK-NEXT:   %[[i1:.+]] = extractvalue [2 x double] %"y'", 0
+; CHECK-NEXT:   %[[i3:.+]] = fmul fast double %[[i1]], %x
+; CHECK-NEXT:   %[[i7:.+]] = extractvalue [2 x double] %"y'", 1
+; CHECK-NEXT:   %[[i9:.+]] = fmul fast double %[[i7]], %x
+; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %[[i2]], %[[i3]]
+; CHECK-NEXT:   %[[i5:.+]] = insertvalue [2 x double] undef, double %[[i4]], 0
+; CHECK-NEXT:   %[[i10:.+]] = fadd fast double %[[i8]], %[[i9]]
+; CHECK-NEXT:   %[[i11:.+]] = insertvalue [2 x double] %[[i5]], double %[[i10]], 1
+; CHECK-NEXT:   ret [2 x double] %[[i11]]
 ; CHECK-NEXT: }

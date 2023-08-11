@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -adce -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,early-cse,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 ; ModuleID = '../test/Integration/rwrloop.c'
@@ -147,8 +147,8 @@ attributes #9 = { noreturn nounwind }
 ; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %[[i6]], %[[i5]]
 ; CHECK-NEXT:   %[[i8:.+]] = fadd fast double %[[i7]], %[[i7]]
 ; CHECK-NEXT:   %[[i9]] = fadd fast double %[[sum134]], %[[i8]]
-; CHECK-NEXT:   store double 0.000000e+00, double* %arrayidx, align 8, !tbaa !6
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx'ipg", align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %arrayidx, align 8, !tbaa !6
 ; CHECK-NEXT:   %cmp2 = icmp slt i64 %iv.next2, %[[i3]]
 ; CHECK-NEXT:   br i1 %cmp2, label %for.body4, label %for.cond.cleanup3.loopexit
 

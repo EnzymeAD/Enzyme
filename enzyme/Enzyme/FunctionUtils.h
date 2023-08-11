@@ -28,8 +28,15 @@
 #include <deque>
 #include <set>
 
+#if LLVM_VERSION_MAJOR >= 16
+#define private public
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+#undef private
+#else
 #include "SCEV/ScalarEvolution.h"
 #include "SCEV/ScalarEvolutionExpander.h"
+#endif
 
 #include "Utils.h"
 
@@ -43,6 +50,8 @@
 
 #include "llvm/IR/Instructions.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
+
+#include "llvm/ADT/STLExtras.h"
 
 //;
 
@@ -77,7 +86,8 @@ public:
       llvm::SmallPtrSetImpl<llvm::Value *> &constants,
       llvm::SmallPtrSetImpl<llvm::Value *> &nonconstant,
       llvm::SmallPtrSetImpl<llvm::Value *> &returnvals, ReturnType returnValue,
-      DIFFE_TYPE returnType, llvm::Twine name, llvm::ValueToValueMapTy *VMapO,
+      DIFFE_TYPE returnType, const llvm::Twine &name,
+      llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> *VMapO,
       bool diffeReturnArg, llvm::Type *additionalArg = nullptr);
 
   void ReplaceReallocs(llvm::Function *NewF, bool mem2reg = false);
@@ -225,9 +235,9 @@ static inline void calculateUnusedValues(
     const llvm::Function &oldFunc,
     llvm::SmallPtrSetImpl<const llvm::Value *> &unnecessaryValues,
     llvm::SmallPtrSetImpl<const llvm::Instruction *> &unnecessaryInstructions,
-    bool returnValue, std::function<bool(const llvm::Value *)> valneeded,
-    std::function<UseReq(const llvm::Instruction *)> instneeded,
-    std::function<bool(const llvm::Instruction *, const llvm::Value *)>
+    bool returnValue, llvm::function_ref<bool(const llvm::Value *)> valneeded,
+    llvm::function_ref<UseReq(const llvm::Instruction *)> instneeded,
+    llvm::function_ref<bool(const llvm::Instruction *, const llvm::Value *)>
         useneeded) {
 
   std::deque<const llvm::Instruction *> todo;
@@ -342,7 +352,7 @@ static inline void calculateUnusedValues(
 static inline void calculateUnusedStores(
     const llvm::Function &oldFunc,
     llvm::SmallPtrSetImpl<const llvm::Instruction *> &unnecessaryStores,
-    std::function<bool(const llvm::Instruction *)> needStore) {
+    llvm::function_ref<bool(const llvm::Instruction *)> needStore) {
 
   std::deque<const llvm::Instruction *> todo;
 
@@ -381,5 +391,8 @@ llvm::FunctionType *getFunctionTypeForClone(
     llvm::FunctionType *FTy, DerivativeMode mode, unsigned width,
     llvm::Type *additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
     bool diffeReturnArg, ReturnType returnValue, DIFFE_TYPE returnType);
+
+/// Lower __enzyme_todense, returning if changed.
+bool LowerSparsification(llvm::Function *F, bool replaceAll = true);
 
 #endif

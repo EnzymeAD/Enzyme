@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -correlated-propagation -simplifycfg -adce -S | FileCheck %s
+; RUN: if [ %llvmver -ge 11 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -correlated-propagation -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 11 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,correlated-propagation,%simplifycfg,adce)" -S | FileCheck %s; fi
 
 source_filename = "<source>"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
@@ -29,7 +30,7 @@ bb12:                                             ; preds = %bb12, %bb2
   %i14 = phi double [ %i18, %bb12 ], [ 0.000000e+00, %bb2 ]
   %i15 = tail call noalias dereferenceable_or_null(8) i8* @malloc(i64 8)
   %i16 = bitcast i8* %i15 to double*
-  tail call fastcc void @evaluate_integrand(double* %i16)
+  tail call fastcc void @evaluate_integrand(double* nonnull noundef %i16)
   %i17 = load double, double* %i16, align 8
   %i18 = fadd double %i14, %i17
   tail call void @free(i8* %i15)
@@ -45,7 +46,7 @@ declare double @llvm.ceil.f64(double)
 
 declare dso_local noalias i8* @malloc(i64)
 
-define internal fastcc void @evaluate_integrand(double* nocapture writeonly %a0) {
+define internal fastcc void @evaluate_integrand(double* nonnull noundef nocapture writeonly %a0) {
 bb:
   store double 0.000000e+00, double* %a0, align 8, !tbaa !2
   ret void
@@ -147,7 +148,7 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %"i14'de.2" = phi double [ %"i14'de.1", %invertbb7.loopexit ], [ 0.000000e+00, %incinvertbb12 ]
 ; CHECK-NEXT:   %"i17'de.2" = phi double [ %"i17'de.1", %invertbb7.loopexit ], [ 0.000000e+00, %incinvertbb12 ]
 ; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ %[[_unwrap2]], %invertbb7.loopexit ], [ %[[i18]], %incinvertbb12 ]
-; CHECK-NEXT:   %"i15'mi" = tail call noalias nonnull dereferenceable_or_null(8) i8* @malloc(i64 8)
+; CHECK-NEXT:   %"i15'mi" = call noalias nonnull dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"i15'mi", i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   %[[i19]] = fadd fast double %"i14'de.2", %"i18'de.2"
 ; CHECK-NEXT:   %[[i20:.+]] = fadd fast double %"i17'de.2", %"i18'de.2"
@@ -156,8 +157,13 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %[[i22:.+]] = fadd fast double %[[i21]], %[[i20]]
 ; CHECK-NEXT:   store double %[[i22]], double* %"i16'ipc_unwrap", align 8
 ; CHECK-NEXT:   call fastcc void @diffeevaluate_integrand(double* {{(undef|poison)?}}, double* nonnull %"i16'ipc_unwrap")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"i15'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %"i15'mi")
 ; CHECK-NEXT:   %[[i27:.+]] = icmp eq i64 %"iv1'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[i27]], label %invertbb2, label %incinvertbb12
 ; CHECK-NEXT: }
 
+; should not contain nonnull/noundef on primal
+; CHECK: define internal fastcc void @augmented_evaluate_integrand(double* nocapture writeonly %a0, double* nocapture %"a0'") 
+
+; should not contain nonnull/noundef on primal
+; CHECK: define internal fastcc void @diffeevaluate_integrand(double* nocapture writeonly %a0, double* nocapture %"a0'")

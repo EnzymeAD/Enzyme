@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -simplifycfg -instsimplify -correlated-propagation -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -simplifycfg -instsimplify -correlated-propagation -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,early-cse,%simplifycfg,instsimplify,correlated-propagation,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 ; ModuleID = '../test/Integration/rwrloop.c'
 source_filename = "../test/Integration/rwrloop.c"
@@ -157,19 +158,21 @@ attributes #9 = { noreturn nounwind }
 ; CHECK-NEXT:   %[[i10:.+]] = load double, double* %"arrayidx'ipg1", align 8
 ; CHECK-NEXT:   %[[i11:.+]] = load double, double* %"arrayidx'ipg2", align 8
 ; CHECK-NEXT:   %[[i8:.+]] = load double, double* %arrayidx, align 8, !tbaa !6
+
 ; CHECK-NEXT:   %[[i12:.+]] = fmul fast double %[[i9]], %[[i8]]
-; CHECK-NEXT:   %[[i13:.+]] = fadd fast double %[[i12]], %[[i12]]
 ; CHECK-NEXT:   %[[i14:.+]] = fmul fast double %[[i10]], %[[i8]]
-; CHECK-NEXT:   %[[i15:.+]] = fadd fast double %[[i14]], %[[i14]]
 ; CHECK-NEXT:   %[[i16:.+]] = fmul fast double %[[i11]], %[[i8]]
+
+; CHECK-NEXT:   %[[i13:.+]] = fadd fast double %[[i12]], %[[i12]]
+; CHECK-NEXT:   %[[i15:.+]] = fadd fast double %[[i14]], %[[i14]]
 ; CHECK-NEXT:   %[[i17:.+]] = fadd fast double %[[i16]], %[[i16]]
 ; CHECK-NEXT:   %[[i26_0:.+]] = fadd fast double %[[sum134_0]], %[[i13]]
 ; CHECK-NEXT:   %[[i26_1:.+]] = fadd fast double %[[sum134_1]], %[[i15]]
 ; CHECK-NEXT:   %[[i26_2:.+]] = fadd fast double %[[sum134_2]], %[[i17]]
-; CHECK-NEXT:   store double 0.000000e+00, double* %arrayidx, align 8, !tbaa !6
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx'ipg", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx'ipg1", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx'ipg2", align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %arrayidx, align 8, !tbaa !6
 ; CHECK-NEXT:   %cmp2 = icmp slt i64 %iv.next2, %[[i3]]
 ; CHECK-NEXT:   br i1 %cmp2, label %for.body4, label %for.cond.cleanup3
 

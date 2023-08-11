@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -dce -instcombine -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -dce -instcombine -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,%simplifycfg,dce,instcombine)" -enzyme-preopt=false -S | FileCheck %s
 
 %struct.Gradients = type { double, double, double, double, double, double }
 
@@ -27,7 +28,6 @@ entry:
 
 ; CHECK: define internal void @fwddiffe3loader(<2 x double>* %ptr, [3 x <2 x double>*] %"ptr'", <2 x i1> %mask, <2 x double> %val, [3 x <2 x double>] %"val'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   call void @llvm.masked.store.v2f64.p0v2f64(<2 x double> %val, <2 x double>* %ptr, i32 16, <2 x i1> %mask)
 ; CHECK-NEXT:   %0 = extractvalue [3 x <2 x double>*] %"ptr'", 0
 ; CHECK-NEXT:   %1 = extractvalue [3 x <2 x double>] %"val'", 0
 ; CHECK-NEXT:   call void @llvm.masked.store.v2f64.p0v2f64(<2 x double> %1, <2 x double>* %0, i32 16, <2 x i1> %mask)
@@ -37,5 +37,6 @@ entry:
 ; CHECK-NEXT:   %4 = extractvalue [3 x <2 x double>*] %"ptr'", 2
 ; CHECK-NEXT:   %5 = extractvalue [3 x <2 x double>] %"val'", 2
 ; CHECK-NEXT:   call void @llvm.masked.store.v2f64.p0v2f64(<2 x double> %5, <2 x double>* %4, i32 16, <2 x i1> %mask)
+; CHECK-NEXT:   call void @llvm.masked.store.v2f64.p0v2f64(<2 x double> %val, <2 x double>* %ptr, i32 16, <2 x i1> %mask)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

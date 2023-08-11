@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 ; THIS TEST ENSURES THAT STORES TO CONSTANT MEMORY SHOULD BE CONSIDERED CONSTANT INSTRUCTIONS
 
@@ -31,10 +32,10 @@ declare double @__enzyme_autodiff(i8*, ...)
 
 ; CHECK: define internal void @diffesubfn(double* %a1, double* %"a1'", double* %res, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %a2 = load double, double* %a1, align 8
-; CHECK-NEXT:   store double %a2, double* %res, align 8
-; CHECK-NEXT:   %0 = load double, double* %"a1'", align 8
+; CHECK-NEXT:   %a2 = load double, double* %a1
+; CHECK-NEXT:   store double %a2, double* %res
+; CHECK-NEXT:   %0 = load double, double* %"a1'"
 ; CHECK-NEXT:   %1 = fadd fast double %0, %differeturn
-; CHECK-NEXT:   store double %1, double* %"a1'", align 8
+; CHECK-NEXT:   store double %1, double* %"a1'"
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

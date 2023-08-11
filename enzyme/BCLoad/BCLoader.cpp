@@ -16,7 +16,7 @@ using namespace llvm;
 #include "blas_headers.h"
 #undef DATA
 
-bool provideDefinitions(Module &M) {
+bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions = {}) {
   std::vector<StringRef> todo;
   bool seen32 = false;
   bool seen64 = false;
@@ -27,11 +27,14 @@ bool provideDefinitions(Module &M) {
     int index = 0;
     for (auto postfix : {"", "_", "_64_"}) {
       std::string str;
-      if (strlen(postfix) == 0)
+      if (strlen(postfix) == 0) {
         str = F.getName().str();
-      else if (F.getName().endswith(postfix)) {
-        str = "cblas_" +
-              F.getName().substr(0, F.getName().size() - strlen(postfix)).str();
+        if (ignoreFunctions.count(str)) continue;
+      } else if (F.getName().endswith(postfix)) {
+        auto blasName =
+            F.getName().substr(0, F.getName().size() - strlen(postfix)).str();
+        if (ignoreFunctions.count(blasName)) continue;
+        str = "cblas_" + blasName;
       }
 
       auto found = EnzymeBlasBC.find(str);
@@ -64,14 +67,10 @@ bool provideDefinitions(Module &M) {
     SMDiagnostic Err;
     MemoryBufferRef buf(mod, StringRef("bcloader"));
 
-#if LLVM_VERSION_MAJOR <= 10
-    auto BC = llvm::parseIR(buf, Err, M.getContext(), true,
-                            M.getDataLayout().getStringRepresentation());
-#else
     auto BC = llvm::parseIR(buf, Err, M.getContext(), [&](StringRef) {
       return Optional<std::string>(M.getDataLayout().getStringRepresentation());
     });
-#endif
+
     if (!BC)
       Err.print("bcloader", llvm::errs());
     assert(BC);
@@ -96,8 +95,13 @@ bool provideDefinitions(Module &M) {
 }
 
 extern "C" {
-uint8_t EnzymeBitcodeReplacement(LLVMModuleRef M) {
-  return provideDefinitions(*unwrap(M));
+uint8_t EnzymeBitcodeReplacement(LLVMModuleRef M, char **FncsNamesToIgnore,
+                                 size_t numFncNames) {
+  std::set<std::string> ignoreFunctions = {};
+  for (size_t i = 0; i < numFncNames; i++) {
+    ignoreFunctions.insert(std::string(FncsNamesToIgnore[i]));
+  }
+  return provideDefinitions(*unwrap(M), ignoreFunctions);
 }
 }
 
@@ -107,7 +111,7 @@ public:
   static char ID;
   BCLoader() : ModulePass(ID) {}
 
-  bool runOnModule(Module &M) override { return provideDefinitions(M); }
+  bool runOnModule(Module &M) override { return provideDefinitions(M, {}); }
 };
 } // namespace
 

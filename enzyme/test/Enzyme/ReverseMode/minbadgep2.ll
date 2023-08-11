@@ -1,7 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -instsimplify -adce -simplifycfg -S | FileCheck %s
-
-;; TODO MAKE TEST WHERE gep of known constant pointer is returned or would otherwise be deduced active
-
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -early-cse -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,early-cse,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 @enzyme_const = external dso_local local_unnamed_addr global i32, align 4
 
@@ -32,7 +30,7 @@ define dso_local double @_Z11matvec_realPdS_(double* nocapture %mat, double* noc
 ; CHECK-NEXT:   %mul = fmul fast double %vload, %mload
 ; CHECK-NEXT:   store double %mul, double* %mat
 ; CHECK-NEXT:   %0 = load double, double* %"mat'"
-; CHECK-NEXT:   %m1diffemload = fmul fast double %0, %vload
-; CHECK-NEXT:   store double %m1diffemload, double* %"mat'"
+; CHECK-NEXT:   %[[m1diffemload:.+]] = fmul fast double %0, %vload
+; CHECK-NEXT:   store double %[[m1diffemload]], double* %"mat'"
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

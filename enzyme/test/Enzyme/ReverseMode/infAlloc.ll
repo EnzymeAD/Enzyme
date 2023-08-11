@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -simplifycfg -loop-deletion -simplifycfg -instsimplify -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -gvn -loop-deletion -simplifycfg -instsimplify -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,gvn,loop(loop-deletion),%simplifycfg,instsimplify,adce)" -S | FileCheck %s
 
 source_filename = "mem.c"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
@@ -146,6 +147,6 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   br i1 %cmp2_unwrap, label %remat_for.body_for.body3, label %remat_for.body_for.end
 
 ; CHECK: remat_for.body_for.end:                           ; preds = %remat_for.body_for.body3
-; CHECK-NEXT:   tail call void @free(i8* %remat_call)
+; CHECK-NEXT:   call void @free(i8* %remat_call)
 ; CHECK-NEXT:   %[[i3:.+]] = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[i3]], label %invertentry, label %incinvertfor.body

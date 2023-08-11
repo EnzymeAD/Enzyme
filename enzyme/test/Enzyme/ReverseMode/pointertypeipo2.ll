@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instsimplify -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -sroa -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 declare void @__enzyme_autodiff(...)
 
@@ -92,9 +93,9 @@ attributes #4 = { nounwind }
 
 ; CHECK: define internal { {{.*}}, i64 } @augmented_pop(i64 %arr.coerce0)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   %"malloccall'mi" = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"malloccall'mi", i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   %"arr'ipc" = bitcast i8* %"malloccall'mi" to i64*
 ; CHECK-NEXT:   %arr = bitcast i8* %malloccall to i64*
 ; CHECK-NEXT:   store i64 %arr.coerce0, i64* %arr
@@ -136,8 +137,8 @@ attributes #4 = { nounwind }
 
 ; CHECK: define internal { i64 } @diffepop(i64 %arr.coerce0, i64 %differeturn, {{.*}} %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[malloccall:.+]] = extractvalue { i64*, i8*, i8*, i64 } %tapeArg, 2
 ; CHECK-NEXT:   %[[dmalloccall:.+]] = extractvalue { i64*, i8*, i8*, i64 } %tapeArg, 1
+; CHECK-NEXT:   %[[malloccall:.+]] = extractvalue { i64*, i8*, i8*, i64 } %tapeArg, 2
 ; CHECK-NEXT:   %[[darr:.+]] = bitcast i8* %[[dmalloccall]] to i64*
 ; CHECK-NEXT:   %[[arr:.+]] = bitcast i8* %[[malloccall]] to i64*
 ; CHECK-NEXT:   %[[dcall:.+]] = extractvalue { i64*, i8*, i8*, i64 } %tapeArg, 0
@@ -152,8 +153,8 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   call void @diffecast(i64* %arr, i64* %"arr'ipc")
 ; CHECK-NEXT:   %[[a7:.+]] = load i64, i64* %"arr'ipc"
 ; CHECK-NEXT:   store i64 0, i64* %"arr'ipc"
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"malloccall'mi")
-; CHECK-NEXT:   tail call void @free(i8* %malloccall)
+; CHECK-NEXT:   call void @free(i8* nonnull %"malloccall'mi")
+; CHECK-NEXT:   call void @free(i8* %malloccall)
 ; CHECK-NEXT:   %[[a8:.+]] = insertvalue { i64 } undef, i64 %[[a7]], 0
 ; CHECK-NEXT:   ret { i64 } %[[a8]]
 ; CHECK-NEXT: }

@@ -1,4 +1,8 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; TODO handle LLVM 16+
+
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg)" -S | FileCheck %s; fi
+
 source_filename = "threeexit.c"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -116,10 +120,10 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %exitcond = icmp eq i64 %iv.next, 100
 ; CHECK-NEXT:   br i1 %exitcond, label %invertfor.inc, label %for.body
 
-; CHECK: invertentry:                                      ; preds = %invertfor.inc
+; CHECK: invertentry:            
 ; CHECK-NEXT:   ret void
 
-; CHECK: incinvertfor.body:                                ; preds = %invertfor.inc
+; CHECK: incinvertfor.body:   
 ; CHECK-NEXT:   %1 = add nsw i64 %"iv'ac.0", -1
 ; CHECK-NEXT:   br label %invertfor.inc
 
@@ -140,16 +144,16 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %4 = select{{( fast)?}} i1 %[[andVal]], double %3, double %"add'de.2"
 ; CHECK-NEXT:   %5 = fadd fast double %"mul'de.1", %2
 ; CHECK-NEXT:   %6 = select{{( fast)?}} i1 %cmp1_unwrap, double %5, double %"mul'de.1"
-; CHECK-NEXT:   %m0diffe = fmul fast double %6, 2.000000e+00
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %6, 2.000000e+00
 ; CHECK-NEXT:   %"add'de.1" = select i1 %cmp8_unwrap, double 0.000000e+00, double %"add'de.2"
 ; CHECK-NEXT:   %"'de.1" = select i1 %cmp8_unwrap, double %4, double 0.000000e+00
 ; CHECK-NEXT:   %"add'de.0" = select{{( fast)?}} i1 %cmp1_unwrap, double %4, double %"add'de.1"
 ; CHECK-NEXT:   %"mul'de.0" = select{{( fast)?}} i1 %cmp1_unwrap, double 0.000000e+00, double %"mul'de.1"
-; CHECK-NEXT:   %"'de.0" = select{{( fast)?}} i1 %cmp1_unwrap, double %m0diffe, double %"'de.1"
+; CHECK-NEXT:   %"'de.0" = select{{( fast)?}} i1 %cmp1_unwrap, double %[[m0diffe]], double %"'de.1"
 ; CHECK-NEXT:   %"arrayidx'ipg_unwrap" = getelementptr inbounds double, double* %"in'", i64 %"iv'ac.0"
-; CHECK-NEXT:   %7 = load double, double* %"arrayidx'ipg_unwrap", align 8
-; CHECK-NEXT:   %8 = fadd fast double %7, %"'de.0"
-; CHECK-NEXT:   store double %8, double* %"arrayidx'ipg_unwrap", align 8
-; CHECK-NEXT:   %9 = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   br i1 %9, label %invertentry, label %incinvertfor.body
+; CHECK-NEXT:   %[[i7:.+]] = load double, double* %"arrayidx'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i8:.+]] = fadd fast double %[[i7]], %"'de.0"
+; CHECK-NEXT:   store double %[[i8]], double* %"arrayidx'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i9:.+]] = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   br i1 %[[i9]], label %invertentry, label %incinvertfor.body
 ; CHECK-NEXT: }

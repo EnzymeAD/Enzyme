@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -adce -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(adce)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: norecurse nounwind readonly uwtable
@@ -76,7 +76,7 @@ declare double @__enzyme_fwddiff2(i8*, double*, double*, i64)
 ; CHECK-NEXT:   %ld = load double, double* %gep, align 8, !tbaa !2
 ; CHECK-NEXT:   %div = fdiv double %reduce, %ld
 ; CHECK-NEXT:   %[[i1:.+]] = fmul fast double %[[dreduce]], %ld
-; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %reduce, %[[i0]]
+; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i0]], %reduce
 ; CHECK-NEXT:   %[[i3:.+]] = fsub fast double %[[i1]], %[[i2]]
 ; CHECK-NEXT:   %[[i4:.+]] = fmul fast double %ld, %ld
 ; CHECK-NEXT:   %[[i5]] = fdiv fast double %[[i3]], %[[i4]]
@@ -103,7 +103,7 @@ declare double @__enzyme_fwddiff2(i8*, double*, double*, i64)
 ; CHECK-NEXT:   %ld = load double, double* %gep, align 8, !tbaa !2
 ; CHECK-NEXT:   %div = fdiv double %reduce, %ld
 ; CHECK-NEXT:   %[[i1:.+]] = fmul fast double %[[dreduce]], %ld
-; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %reduce, %[[i0]]
+; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i0]], %reduce
 ; CHECK-NEXT:   %[[i3:.+]] = fsub fast double %[[i1]], %[[i2]]
 ; CHECK-NEXT:   %[[i4:.+]] = fmul fast double %ld, %ld
 ; CHECK-NEXT:   %[[i5:.+]] = fdiv fast double %[[i3]], %[[i4]]

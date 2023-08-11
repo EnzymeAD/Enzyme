@@ -34,9 +34,20 @@
 
 #include <llvm/Config/llvm-config.h>
 
+#if LLVM_VERSION_MAJOR >= 16
+#define private public
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+#undef private
+#else
+#include "SCEV/ScalarEvolution.h"
+#include "SCEV/ScalarEvolutionExpander.h"
+#endif
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DebugInfoMetadata.h"
@@ -62,25 +73,21 @@
 #include "llvm-c/Core.h"
 
 class GradientUtils;
-extern std::map<std::string,
-                std::function<llvm::Value *(
-                    llvm::IRBuilder<> &, llvm::CallInst *,
-                    llvm::ArrayRef<llvm::Value *>, GradientUtils *)>>
+extern llvm::StringMap<std::function<llvm::Value *(
+    llvm::IRBuilder<> &, llvm::CallInst *, llvm::ArrayRef<llvm::Value *>,
+    GradientUtils *)>>
     shadowHandlers;
 
 class DiffeGradientUtils;
-extern std::map<
-    std::string,
-    std::pair<std::function<void(llvm::IRBuilder<> &, llvm::CallInst *,
-                                 GradientUtils &, llvm::Value *&,
-                                 llvm::Value *&, llvm::Value *&)>,
-              std::function<void(llvm::IRBuilder<> &, llvm::CallInst *,
-                                 DiffeGradientUtils &, llvm::Value *)>>>
+extern llvm::StringMap<std::pair<
+    std::function<bool(llvm::IRBuilder<> &, llvm::CallInst *, GradientUtils &,
+                       llvm::Value *&, llvm::Value *&, llvm::Value *&)>,
+    std::function<void(llvm::IRBuilder<> &, llvm::CallInst *,
+                       DiffeGradientUtils &, llvm::Value *)>>>
     customCallHandlers;
 
-extern std::map<
-    std::string,
-    std::function<void(llvm::IRBuilder<> &, llvm::CallInst *, GradientUtils &,
+extern llvm::StringMap<
+    std::function<bool(llvm::IRBuilder<> &, llvm::CallInst *, GradientUtils &,
                        llvm::Value *&, llvm::Value *&)>>
     customFwdCallHandlers;
 
@@ -159,8 +166,8 @@ public:
   llvm::SmallPtrSet<llvm::Instruction *, 4> TapesToPreventRecomputation;
 
   llvm::ValueMap<llvm::PHINode *, llvm::WeakTrackingVH> fictiousPHIs;
-  llvm::ValueToValueMapTy originalToNewFn;
-  llvm::ValueToValueMapTy newToOriginalFn;
+  llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> originalToNewFn;
+  llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> newToOriginalFn;
   llvm::SmallVector<llvm::CallInst *, 4> originalCalls;
 
   llvm::SmallPtrSet<llvm::Instruction *, 4> unnecessaryIntermediates;
@@ -294,6 +301,8 @@ private:
       lookup_cache;
 
 public:
+  void replaceAndRemoveUnwrapCacheFor(llvm::Value *A, llvm::Value *B);
+
   llvm::BasicBlock *addReverseBlock(llvm::BasicBlock *currentBlock,
                                     llvm::Twine const &name,
                                     bool forkCache = true, bool push = true);
@@ -315,6 +324,10 @@ public:
                      bool storeInCache = false) override;
 
   void erase(llvm::Instruction *I) override;
+
+  void eraseWithPlaceholder(llvm::Instruction *I, llvm::Instruction *orig,
+                            const llvm::Twine &suffix = "_replacementA",
+                            bool erase = true);
 
   // TODO consider invariant group and/or valueInvariant group
 
@@ -360,13 +373,14 @@ public:
                 const llvm::SmallPtrSetImpl<llvm::Value *> &activevals_,
                 DIFFE_TYPE ReturnActivity,
                 llvm::ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
-                llvm::ValueToValueMapTy &originalToNewFn_, DerivativeMode mode,
-                unsigned width, bool omp);
+                llvm::ValueMap<const llvm::Value *, AssertingReplacingVH>
+                    &originalToNewFn_,
+                DerivativeMode mode, unsigned width, bool omp);
 
 public:
   DIFFE_TYPE getDiffeType(llvm::Value *v, bool foreignFunction) const;
 
-  DIFFE_TYPE getReturnDiffeType(llvm::CallInst *orig, bool *primalReturnUsedP,
+  DIFFE_TYPE getReturnDiffeType(llvm::Value *orig, bool *primalReturnUsedP,
                                 bool *shadowReturnUsedP) const;
 
   static GradientUtils *
@@ -384,21 +398,12 @@ public:
   llvm::MDNode *getDerivativeAliasScope(const llvm::Value *origptr,
                                         ssize_t newptr);
 
-#if LLVM_VERSION_MAJOR >= 10
   void setPtrDiffe(llvm::Instruction *orig, llvm::Value *ptr,
                    llvm::Value *newval, llvm::IRBuilder<> &BuilderM,
                    llvm::MaybeAlign align, bool isVolatile,
                    llvm::AtomicOrdering ordering, llvm::SyncScope::ID syncScope,
                    llvm::Value *mask, llvm::ArrayRef<llvm::Metadata *> noAlias,
                    llvm::ArrayRef<llvm::Metadata *> scopes);
-#else
-  void setPtrDiffe(llvm::Instruction *orig, llvm::Value *ptr,
-                   llvm::Value *newval, llvm::IRBuilder<> &BuilderM,
-                   unsigned align, bool isVolatile,
-                   llvm::AtomicOrdering ordering, llvm::SyncScope::ID syncScope,
-                   llvm::Value *mask, llvm::ArrayRef<llvm::Metadata *> noAlias,
-                   llvm::ArrayRef<llvm::Metadata *> scopes);
-#endif
 
 private:
   llvm::BasicBlock *originalForReverseBlock(llvm::BasicBlock &BB2) const;
@@ -497,9 +502,17 @@ public:
   llvm::Type *getShadowType(llvm::Type *ty);
 
   static llvm::Value *extractMeta(llvm::IRBuilder<> &Builder, llvm::Value *Agg,
-                                  unsigned off);
+                                  unsigned off, const llvm::Twine &name = "");
   static llvm::Value *extractMeta(llvm::IRBuilder<> &Builder, llvm::Value *Agg,
-                                  llvm::ArrayRef<unsigned> off);
+                                  llvm::ArrayRef<unsigned> off,
+                                  const llvm::Twine &name = "");
+
+  static llvm::Value *recursiveFAdd(llvm::IRBuilder<> &B, llvm::Value *lhs,
+                                    llvm::Value *rhs,
+                                    llvm::ArrayRef<unsigned> lhs_off = {},
+                                    llvm::ArrayRef<unsigned> rhs_off = {},
+                                    llvm::Value *prev = nullptr,
+                                    bool vectorLayer = false);
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
@@ -580,6 +593,8 @@ public:
       return rule(diffs);
     }
   }
+
+  bool needsCacheWholeAllocation(const llvm::Value *V) const;
 };
 
 void SubTransferHelper(GradientUtils *gutils, DerivativeMode Mode,

@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
 
 ; __attribute__((noinline))
@@ -44,7 +44,7 @@ declare double @__enzyme_fwddiff(void (double*)*, ...)
 ; CHECK-NEXT:   %"'ipl" = load double, double* %"x'", align 8, !tbaa !2
 ; CHECK-NEXT:   %0 = load double, double* %x, align 8, !tbaa !2
 ; CHECK-NEXT:   %add = fadd fast double %0, 1.000000e+00
-; CHECK-NEXT:   store double %add, double* %x, align 8, !tbaa !2
 ; CHECK-NEXT:   store double %"'ipl", double* %"x'", align 8, !tbaa !2
+; CHECK-NEXT:   store double %add, double* %x, align 8, !tbaa !2
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

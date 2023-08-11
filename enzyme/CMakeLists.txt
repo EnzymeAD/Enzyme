@@ -1,15 +1,17 @@
-cmake_minimum_required(VERSION 3.9)
+cmake_minimum_required(VERSION 3.13)
 project(Enzyme)
 
 include(CMakePackageConfigHelpers)
 
-
 set(ENZYME_MAJOR_VERSION 0)
 set(ENZYME_MINOR_VERSION 0)
-set(ENZYME_PATCH_VERSION 58)
+set(ENZYME_PATCH_VERSION 79)
 set(ENZYME_VERSION
   ${ENZYME_MAJOR_VERSION}.${ENZYME_MINOR_VERSION}.${ENZYME_PATCH_VERSION})
 
+add_definitions(-DENZYME_VERSION_MAJOR=${ENZYME_MAJOR_VERSION})
+add_definitions(-DENZYME_VERSION_MINOR=${ENZYME_MINOR_VERSION})
+add_definitions(-DENZYME_VERSION_PATCH=${ENZYME_PATCH_VERSION})
 
 SET(CMAKE_CXX_FLAGS "-Wall -fPIC -fno-rtti ${CMAKE_CXX_FLAGS}")
 SET(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g -ggdb")
@@ -205,8 +207,12 @@ add_definitions(${LLVM_DEFINITIONS})
 include_directories(${LLVM_INCLUDE_DIRS})
 message("LLVM_INSTALL_PREFIX: ${LLVM_INSTALL_PREFIX}")
 message("LLVM_INCLUDE_DIRS: ${LLVM_INCLUDE_DIRS}")
-message("found llvm definitions " ${LLVM_DEFINITIONS})
-message("found llvm version " ${LLVM_VERSION_MAJOR})
+message("found LLVM definitions " ${LLVM_DEFINITIONS})
+message("found LLVM version " ${LLVM_VERSION_MAJOR})
+
+if(LLVM_VERSION_MAJOR LESS 9)
+  message(FATAL_ERROR "LLVM version < 9 is not supported")
+endif()
 
 option(ENZYME_FLANG_VERSION "Build for non-version compliant FLANG" OFF)
 if (ENZYME_FLANG_VERSION)
@@ -223,7 +229,7 @@ set(INSTALL_INCLUDE_DIR include CACHE PATH "Installation directory for header fi
 if(WIN32 AND NOT CYGWIN)
   set(DEF_INSTALL_CMAKE_DIR CMake)
 else()
-  set(DEF_INSTALL_CMAKE_DIR lib/CMake/Enzyme)
+  set(DEF_INSTALL_CMAKE_DIR lib/cmake/Enzyme)
 endif()
 set(INSTALL_CMAKE_DIR ${DEF_INSTALL_CMAKE_DIR} CACHE PATH
   "Installation directory for CMake files")
@@ -286,6 +292,8 @@ export(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
 if (${Clang_FOUND})
 export(TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+export(TARGETS ClangEnzymeFlags
+    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 endif()
 
 if (${ENZYME_FLANG} AND ${Clang_FOUND})
@@ -299,6 +307,11 @@ endif()
 export(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 
+if (${LLVM_VERSION_MAJOR} GREATER 10)
+export(TARGETS LLDEnzymeFlags
+    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+endif()
+
 export(PACKAGE Enzyme)
 
 set(CONF_LLVM_VERSION_MAJOR ${LLVM_VERSION_MAJOR})
@@ -306,6 +319,11 @@ set(CONF_LLVM_VERSION_MINOR ${LLVM_VERSION_MINOR})
 set(CONF_LLVM_VERSION_PATCH ${LLVM_VERSION_PATCH})
 set(CONF_LLVM_DIR ${LLVM_DIR})
 set(CONF_LLVM_BINARY_DIR ${LLVM_BINARY_DIR})
+if (${Clang_FOUND})
+    get_property(CONF_CLANG_EXE TARGET clang PROPERTY LOCATION)
+else()
+    set(CONF_CLANG_EXE "")
+endif()
 
 set(CONF_INCLUDE_DIRS lib)
 configure_file(cmake/EnzymeConfig.cmake.in
@@ -323,6 +341,6 @@ install(FILES
      "${PROJECT_BINARY_DIR}/EnzymeConfigVersion.cmake"
      DESTINATION "${INSTALL_CMAKE_DIR}" COMPONENT dev)
    
-install(EXPORT EnzymeTargets DESTINATION
-    "${INSTALL_CMAKE_DIR}" COMPONENT dev)
-   
+install(EXPORT EnzymeTargets 
+  DESTINATION "${INSTALL_CMAKE_DIR}" 
+  COMPONENT   dev)

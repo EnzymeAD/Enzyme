@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -print-activity-analysis -activity-analysis-func=matvec -o /dev/null | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-activity-analysis -activity-analysis-func=matvec -o /dev/null | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=matvec -S | FileCheck %s
 
 define void @matvec(i32* %ptr, i32 %v) {
   %l = load i32, i32* %ptr, align 4, !tbaa !2

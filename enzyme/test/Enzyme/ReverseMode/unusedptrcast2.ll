@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 declare void @__enzyme_autodiff(i8*, ...)
 
@@ -42,11 +43,11 @@ entry:
 ; CHECK-NEXT:   store double %z2, double* %x
 ; CHECK-NEXT:   %0 = load double, double* %"x'"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'"
-; CHECK-NEXT:   %m0diffez = fmul fast double %0, %z
-; CHECK-NEXT:   %m1diffez = fmul fast double %0, %z
-; CHECK-NEXT:   %1 = fadd fast double %m0diffez, %m1diffez
-; CHECK-NEXT:   %2 = load double, double* %"x'"
-; CHECK-NEXT:   %3 = fadd fast double %2, %1
-; CHECK-NEXT:   store double %3, double* %"x'"
+; CHECK-NEXT:   %[[m0diffez:.+]] = fmul fast double %0, %z
+; CHECK-NEXT:   %[[m1diffez:.+]] = fmul fast double %0, %z
+; CHECK-NEXT:   %[[i1:.+]] = fadd fast double %[[m0diffez]], %[[m1diffez]]
+; CHECK-NEXT:   %[[i2:.+]] = load double, double* %"x'"
+; CHECK-NEXT:   %[[i3:.+]] = fadd fast double %[[i2]], %[[i1]]
+; CHECK-NEXT:   store double %[[i3]], double* %"x'"
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

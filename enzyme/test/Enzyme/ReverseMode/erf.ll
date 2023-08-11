@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -instsimplify -simplifycfg -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -simplifycfg -instsimplify -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,%simplifycfg,instsimplify,adce)" -S | FileCheck %s
 
 declare double @erf(double)
 
@@ -22,8 +23,8 @@ declare double @__enzyme_autodiff(double (double)*, ...)
 ; CHECK-NEXT:   %0 = fmul fast double %x, %x
 ; CHECK-NEXT:   %1 = {{(fsub fast double \-?0.000000e\+00,|fneg fast double)}} %0
 ; CHECK-NEXT:   %2 = call fast double @llvm.exp.f64(double %1)
-; CHECK-NEXT:   %3 = fmul fast double %2, 0x3FF20DD750429B6D
-; CHECK-NEXT:   %4 = fmul fast double %3, %differeturn
+; CHECK-NEXT:   %3 = fmul fast double 0x3FF20DD750429B6D, %2
+; CHECK-NEXT:   %4 = fmul fast double %differeturn, %3
 ; CHECK-NEXT:   %5 = insertvalue { double } undef, double %4, 0
 ; CHECK-NEXT:   ret { double } %5
 ; CHECK-NEXT: }

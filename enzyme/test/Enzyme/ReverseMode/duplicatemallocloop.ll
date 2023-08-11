@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -instsimplify -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -simplifycfg -instsimplify -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,%simplifycfg,instsimplify,adce)" -S | FileCheck %s
 
 define dso_local double @f(double* nocapture readonly %a0) local_unnamed_addr #0 {
 entry:
@@ -55,9 +56,9 @@ attributes #6 = { nounwind }
 
 ; CHECK: define internal void @diffemalloced(double* noalias nocapture %a0, double* nocapture %"a0'", double* noalias nocapture readonly %a1, double* nocapture %"a1'", i32 %a2)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %a5 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   %"a5'mi" = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"a5'mi", i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %a5 = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i32 8)
 ; CHECK-NEXT:   %"a6'ipc" = bitcast i8* %"a5'mi" to double*
 ; CHECK-NEXT:   %a6 = bitcast i8* %a5 to double*
 ; CHECK-NEXT:   br label %loop
@@ -77,8 +78,8 @@ attributes #6 = { nounwind }
 ; CHECK-NEXT:   br i1 %a15, label %remat_enter, label %loop
 
 ; CHECK: invertentry:     
-; CHECK-NEXT:   tail call void @free(i8* nonnull %"a5'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %a5)
+; CHECK-NEXT:   call void @free(i8* nonnull %"a5'mi")
+; CHECK-NEXT:   call void @free(i8* nonnull %a5)
 ; CHECK-NEXT:   ret void
 
 ; CHECK: incinvertloop: 

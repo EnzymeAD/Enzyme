@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 declare double @__enzyme_autodiff(i8*, ...)
 declare double @logb(double)
@@ -18,6 +19,5 @@ entry:
 
 ; CHECK: define internal { double } @diffetest(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = insertvalue { double } undef, double 0.000000e+00, 0
-; CHECK-NEXT:   ret { double } %0
+; CHECK-NEXT:   ret { double } zeroinitializer
 ; CHECK-NEXT: }

@@ -1,5 +1,7 @@
-; RUN: if [ %llvmver -lt 15 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -gvn -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -licm -early-cse -simplifycfg -instsimplify -S | FileCheck %s -check-prefixes LL14,CHECK; fi
-; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -gvn -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -licm -early-cse -simplifycfg -instsimplify -S | FileCheck %s -check-prefixes LL15,CHECK; fi
+; RUN: if [ %llvmver -lt 15 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -licm -early-cse -simplifycfg -instsimplify -S | FileCheck %s -check-prefixes LL14,CHECK; fi
+; RUN: if [ %llvmver -ge 15 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -licm -early-cse -simplifycfg -instsimplify -S | FileCheck %s -check-prefixes LL15,CHECK; fi
+; RUN: if [ %llvmver -lt 15 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,gvn,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg,%loopmssa(licm),early-cse,%simplifycfg,instsimplify)" -S | FileCheck %s -check-prefixes LL14,CHECK; fi
+; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,gvn,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg,%loopmssa(licm),early-cse,%simplifycfg,instsimplify)" -S | FileCheck %s -check-prefixes LL15,CHECK; fi
 
 ; Function Attrs: noinline norecurse nounwind uwtable
 define dso_local double @get(double* nocapture %x, i64 %i) local_unnamed_addr #0 {
@@ -189,9 +191,9 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %[[a16]] = fadd fast double %"innersum'de.1", %"add'de.1"
 ; CHECK-NEXT:   %[[a17:.+]] = getelementptr inbounds double, double* %[[pre6]], i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %[[a18:.+]] = load double, double* %[[a17]], align 8, !invariant.group !1
-; CHECK-NEXT:   %m0diffephi = fmul fast double %"add'de.1", %[[a18]]
-; CHECK-NEXT:   %[[a19:.+]] = fadd fast double %"phiadd'de.1", %m0diffephi
-; CHECK-NEXT:   %[[a20]] = fadd fast double %[[a19]], %m0diffephi
+; CHECK-NEXT:   %[[m0diffephi:.+]] = fmul fast double %"add'de.1", %[[a18]]
+; CHECK-NEXT:   %[[a19:.+]] = fadd fast double %"phiadd'de.1", %[[m0diffephi]]
+; CHECK-NEXT:   %[[a20]] = fadd fast double %[[a19]], %[[m0diffephi]]
 ; CHECK-NEXT:   %[[a21:.+]] = icmp eq i64 %"iv1'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[a21]], label %invertfor.body.ph, label %incinvertfor.body
 

@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -loop-deletion -correlated-propagation -adce -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -loop-deletion -correlated-propagation -adce -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,loop(loop-deletion),correlated-propagation,adce,%simplifycfg)" -S | FileCheck %s
 
 ; This requires the additional optimization to create memcpy's
 
@@ -137,9 +138,9 @@ attributes #7 = { nounwind }
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 99, %entry ], [ %[[inc:.+]], %incinvertfor.body ]
 ; CHECK-NEXT:   %[[gep:.+]] = getelementptr inbounds double, double* %_malloccache, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %[[ld:.+]] = load double, double* %[[gep]], align 8, !invariant.group !
-; CHECK-NEXT:   %m0diffe = fmul fast double %differeturn, %[[ld]]
-; CHECK-NEXT:   %m1diffe = fmul fast double %differeturn, %[[ld]]
-; CHECK-NEXT:   %[[add:.+]] = fadd fast double %m0diffe, %m1diffe
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %differeturn, %[[ld]]
+; CHECK-NEXT:   %[[m1diffe:.+]] = fmul fast double %differeturn, %[[ld]]
+; CHECK-NEXT:   %[[add:.+]] = fadd fast double %[[m0diffe]], %[[m1diffe]]
 ; CHECK-NEXT:   %"arrayidx'ipg_unwrap" = getelementptr inbounds double, double* %"a'", i64 %"iv'ac.0"
 ; CHECK-NEXT:   %[[pre:.+]] = load double, double* %"arrayidx'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[post:.+]] = fadd fast double %[[pre]], %[[add]]

@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -gvn -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -licm -early-cse -simplifycfg -instsimplify -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -early-cse -simplifycfg -instsimplify -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg,early-cse,%simplifycfg,instsimplify)" -S | FileCheck %s
 
 ; Function Attrs: noinline norecurse nounwind uwtable
 define dso_local double @get(double* nocapture %x, i64 %i, i64 %j) local_unnamed_addr #0 {
@@ -76,7 +77,8 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %for.body7 ], [ 0, %for.cond3.preheader ]
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
 ; CHECK-NEXT:   %[[augmented:.+]] = call fast double @augmented_get(double* %x, double* %"x'", i64 undef, i64 %iv1)
-; CHECK-NEXT:   %[[mallocgep2:.+]] = getelementptr inbounds double, double* %[[call_malloccache3]], i64 %iv1
+; CHECK-NEXT:   %[[call_malloccache3_2:.+]] = load double*, double** %[[mallocgep1]]
+; CHECK-NEXT:   %[[mallocgep2:.+]] = getelementptr inbounds double, double* %[[call_malloccache3_2]], i64 %iv1
 ; CHECK-NEXT:   store double %[[augmented]], double* %[[mallocgep2]], align 8, !invariant.group ![[ig1:[0-9]+]]
 ; CHECK-NEXT:   %exitcond = icmp eq i64 %iv1, %iv
 ; CHECK-NEXT:   br i1 %exitcond, label %for.cond.cleanup6, label %for.body7
@@ -91,7 +93,8 @@ attributes #1 = { noinline nounwind uwtable }
 
 ; CHECK: invertfor.cond3.preheader:
 ; CHECK-NEXT:   %[[done1:.+]] = icmp eq i64 %[[iv:.+]], 0
-; CHECK-NEXT:   %[[innerdatai8:.+]] = bitcast double* %[[innerdata:.+]] to i8*
+; CHECK-NEXT:   %[[innerdata_7:.+]] = load double*, double** %[[invertedgep1:.+]], align 8
+; CHECK-NEXT:   %[[innerdatai8:.+]] = bitcast double* %[[innerdata_7]] to i8*
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %[[innerdatai8]])
 ; CHECK-NEXT:   br i1 %[[done1]], label %invertentry, label %incinvertfor.cond3.preheader
 
@@ -101,10 +104,12 @@ attributes #1 = { noinline nounwind uwtable }
 
 ; CHECK: invertfor.body7:
 ; CHECK-NEXT:   %[[iv1:.+]] = phi i64 [ %[[iv]], %invertfor.cond.cleanup6 ], [ %[[subinner:.+]], %incinvertfor.body7 ]
+; CHECK-NEXT:   %[[invertedgep1]] = getelementptr inbounds double*, double** %call_malloccache, i64 %[[iv]]
+; CHECK-NEXT:   %[[innerdata:.+]] = load double*, double** %[[invertedgep1]], align 8
 ; CHECK-NEXT:   %[[invertedgep2:.+]] = getelementptr inbounds double, double* %[[innerdata]], i64 %[[iv1]]
 ; CHECK-NEXT:   %[[cached:.+]] = load double, double* %[[invertedgep2]], align 8, !invariant.group ![[ig1]]
-; CHECK-NEXT:   %m0diffecall = fmul fast double %differeturn, %[[cached]]
-; CHECK-NEXT:   %[[innerdiffe:.+]] = fadd fast double %m0diffecall, %m0diffecall
+; CHECK-NEXT:   %[[m0diffecall:.+]] = fmul fast double %differeturn, %[[cached]]
+; CHECK-NEXT:   %[[innerdiffe:.+]] = fadd fast double %[[m0diffecall]], %[[m0diffecall]]
 ; CHECK-NEXT:   call void @diffeget(double* %x, double* %"x'", i64 undef, i64 %[[iv1]], double %[[innerdiffe]])
 ; CHECK-NEXT:   %[[done2:.+]] = icmp eq i64 %[[iv1]], 0
 ; CHECK-NEXT:   br i1 %[[done2]], label %invertfor.cond3.preheader, label %incinvertfor.body7
@@ -115,7 +120,5 @@ attributes #1 = { noinline nounwind uwtable }
 
 ; CHECK: invertfor.cond.cleanup6:
 ; CHECK-NEXT:   %[[iv]] = phi i64 [ %[[subouter]], %incinvertfor.cond3.preheader ], [ %n, %for.cond.cleanup6 ]
-; CHECK-NEXT:   %[[invertedgep1:.+]] = getelementptr inbounds double*, double** %call_malloccache, i64 %[[iv]]
-; CHECK-NEXT:   %[[innerdata]] = load double*, double** %[[invertedgep1]], align 8, !invariant.group ![[ig0]]
 ; CHECK-NEXT:   br label %invertfor.body7
 ; CHECK-NEXT: }

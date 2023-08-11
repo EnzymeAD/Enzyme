@@ -1,6 +1,6 @@
-; TODO handle llvm 13
-; RUN: if [ %llvmver -lt 13 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -early-cse -adce -S | FileCheck %s; fi
-; ModuleID = 'inp.ll'
+; TODO handle llvm 13 +
+; RUN: if [ %llvmver -lt 13 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -simplifycfg -early-cse -adce -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 13 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,%simplifycfg,early-cse,adce)" -S | FileCheck %s; fi
 
 declare dso_local void @_Z17__enzyme_autodiffPvPdS0_i(i8*, double*, double*, i64*) local_unnamed_addr #4
 define dso_local void @outer(double* %m, double* %m2, i64* %n) local_unnamed_addr #2 {
@@ -161,9 +161,9 @@ attributes #0 = { readnone speculatable }
 
 ; CHECK: define internal void @diffeinner(double* %blockA, double* %"blockA'", double %ld)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = load double, double* %"blockA'", align 8
-; CHECK-NEXT:   %m0diffeld = fmul fast double %0, %ld
-; CHECK-NEXT:   %1 = fadd fast double %m0diffeld, %m0diffeld
-; CHECK-NEXT:   store double %1, double* %"blockA'", align 8
+; CHECK-NEXT:   %[[i0:.+]] = load double, double* %"blockA'", align 8
+; CHECK-NEXT:   %[[m0diffeld:.+]] = fmul fast double %[[i0]], %ld
+; CHECK-NEXT:   %[[i1:.+]] = fadd fast double %[[m0diffeld]], %[[m0diffeld]]
+; CHECK-NEXT:   store double %[[i1]], double* %"blockA'", align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

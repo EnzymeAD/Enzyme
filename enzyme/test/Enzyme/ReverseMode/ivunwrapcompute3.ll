@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -jump-threading -instsimplify -early-cse -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,correlated-propagation,adce,instsimplify,early-cse,%simplifycfg,correlated-propagation,adce,instsimplify,early-cse,%simplifycfg)" -S | FileCheck %s
 
 ; ModuleID = 'inp.ll'
 source_filename = "../benchmarks/hand/hand.cpp"
@@ -104,7 +105,7 @@ attributes #2 = { nounwind }
 !22 = !{!23, !23, i64 0}
 !23 = !{!"double", !4, i64 0}
 
-; CHECK: define internal void @differelatives_to_absolutes(i1 %cmp, i64* %r, i64* %"r'", double* %tmp9, double* %"tmp9'")
+; CHECK: define internal void @differelatives_to_absolutes(i1 %cmp, i64* %r, double* %tmp9, double* %"tmp9'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   br i1 %cmp, label %cond, label %mid
 
@@ -114,7 +115,6 @@ attributes #2 = { nounwind }
 
 ; CHECK: mid:                                              ; preds = %cond, %entry
 ; CHECK-NEXT:   %lim = phi i64 [ %.pre.i, %cond ], [ 3, %entry ]
-; CHECK-NEXT:   store i64 %lim, i64* %"r'", align 8
 ; CHECK-NEXT:   store i64 %lim, i64* %r, align 8
 ; CHECK-NEXT:   %0 = add i64 %lim, -1
 ; CHECK-NEXT:   %1 = mul nuw nsw i64 22, %lim

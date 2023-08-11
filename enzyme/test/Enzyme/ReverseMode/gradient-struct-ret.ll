@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 %struct.Gradients = type { double, double }
 
@@ -22,9 +23,9 @@ attributes #2 = { "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-
 
 ; CHECK: define internal {{(dso_local )?}}{ double, double } @diffemuldd(double %x, double %y, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %m0diffex = fmul fast double %differeturn, %y
-; CHECK-NEXT:   %m1diffey = fmul fast double %differeturn, %x
-; CHECK-NEXT:   %0 = insertvalue { double, double } undef, double %m0diffex, 0
-; CHECK-NEXT:   %1 = insertvalue { double, double } %0, double %m1diffey, 1
-; CHECK-NEXT:   ret { double, double } %1
+; CHECK-NEXT:   %[[m0diffex:.+]] = fmul fast double %differeturn, %y
+; CHECK-NEXT:   %[[m1diffey:.+]] = fmul fast double %differeturn, %x
+; CHECK-NEXT:   %[[i0:.+]] = insertvalue { double, double } undef, double %[[m0diffex]], 0
+; CHECK-NEXT:   %[[i1:.+]] = insertvalue { double, double } %[[i0]], double %[[m1diffey]], 1
+; CHECK-NEXT:   ret { double, double } %[[i1]]
 ; CHECK-NEXT: }

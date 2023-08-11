@@ -1,4 +1,5 @@
-; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -enzyme-shared-forward -mem2reg -sroa -instsimplify -early-cse -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-shared-forward -enzyme -mem2reg -sroa -instsimplify -early-cse -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-shared-forward -passes="enzyme,function(mem2reg,sroa,instsimplify,early-cse,%simplifycfg)" -S | FileCheck %s
 
 ; TODO the code generated here may cause illegal reads as the phi recopmutation does not check that a load is legal to recompute for
 ; bounds reasons, only aliasing reasons. This code illustrates an example where it is incorrect and should be remedied. Now, the value
@@ -387,7 +388,7 @@ attributes #6 = { nounwind }
 
 ; CHECK: invertfor.body44_phimerge:                        ; preds = %invertfor.body44, %invertfor.body44_phirc
 ; CHECK-NEXT:   %[[v32:.+]] = phi {{(fast )?}}float [ %[[_unwrap34]], %invertfor.body44_phirc ], [ 0.000000e+00, %invertfor.body44 ]
-; CHECK-NEXT:   %m0diffe = fmul fast float %"add56'de.1", %[[v32]]
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast float %"add56'de.1", %[[v32]]
 ; CHECK-NEXT:   %[[mul9_unwrap35]] = mul i64 %conv, %n
 ; CHECK-NEXT:   %[[add11_unwrap38:.+]] = add i64 %[[mul9_unwrap35]], %[[idxprom_unwrap20]]
 ; CHECK-NEXT:   %[[add14_unwrap40:.+]] = add i64 %[[add11_unwrap38]], %[[mul10_unwrap16]]
@@ -401,15 +402,15 @@ attributes #6 = { nounwind }
 
 ; CHECK: invertfor.body44_phimerge_phimerge:
 ; CHECK-NEXT:   %[[v33:.+]] = phi {{(fast )?}}float [ %[[_unwrap51]], %invertfor.body44_phimerge_phirc ], [ 0.000000e+00, %invertfor.body44_phimerge ]
-; CHECK-NEXT:   %m1diffe = fmul fast float %"add56'de.1", %[[v33]]
+; CHECK-NEXT:   %[[m1diffe:.+]] = fmul fast float %"add56'de.1", %[[v33]]
 ; CHECK-NEXT:   %[[conv13_unwrap53]] = zext i32 %[[v12]] to i64
 ; CHECK-NEXT:   %"arrayidx54101'ipg_unwrap" = getelementptr inbounds [16 x [16 x float]], [16 x [16 x float]] addrspace(3)* @_ZZ22gpu_square_matrix_multPfS_S_mE6tile_b_shadow, i64 0, i64 %[[idxprom_unwrap20]], i64 %[[conv13_unwrap53]]
 ; CHECK-NEXT:   %"arrayidx54'ipc_unwrap" = addrspacecast float addrspace(3)* %"arrayidx54101'ipg_unwrap" to float*
-; CHECK-NEXT:   %{{.+}} = atomicrmw fadd float* %"arrayidx54'ipc_unwrap", float %m1diffe monotonic
+; CHECK-NEXT:   %{{.+}} = atomicrmw fadd float* %"arrayidx54'ipc_unwrap", float %[[m1diffe]] monotonic
 ; CHECK-NEXT:   %[[idxprom_unwrap54]] = zext i32 %[[v10]] to i64
 ; CHECK-NEXT:   %"arrayidx4999'ipg_unwrap" = getelementptr inbounds [16 x [16 x float]], [16 x [16 x float]] addrspace(3)* @_ZZ22gpu_square_matrix_multPfS_S_mE6tile_a_shadow, i64 0, i64 %[[idxprom_unwrap54]], i64 %[[idxprom_unwrap20]]
 ; CHECK-NEXT:   %"arrayidx49'ipc_unwrap" = addrspacecast float addrspace(3)* %"arrayidx4999'ipg_unwrap" to float*
-; CHECK-NEXT:   %{{.+}} = atomicrmw fadd float* %"arrayidx49'ipc_unwrap", float %m0diffe monotonic
+; CHECK-NEXT:   %{{.+}} = atomicrmw fadd float* %"arrayidx49'ipc_unwrap", float %[[m0diffe]] monotonic
 ; CHECK-NEXT:   %[[v36:.+]] = icmp eq i64 %"iv1'ac.0", 0
 ; CHECK-NEXT:   %[[v37]] = select fast i1 %[[v36]], float 0.000000e+00, float %"add56'de.1"
 ; CHECK-NEXT:   %[[v38:.+]] = fadd fast float %"tmp.0105'de.1", %"add56'de.1"

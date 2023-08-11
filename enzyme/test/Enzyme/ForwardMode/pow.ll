@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -instsimplify -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -instsimplify -enzyme-preopt=false -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(instsimplify)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline nounwind readnone uwtable
@@ -25,11 +25,11 @@ declare double @__enzyme_fwddiff(double (double, double)*, ...)
 ; CHECK-NEXT:   %[[i0:.+]] = fsub fast double %y, 1.000000e+00
 ; CHECK-NEXT:   %[[i1:.+]] = call fast double @llvm.pow.f64(double %x, double %[[i0]])
 ; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %y, %[[i1]]
-; CHECK-NEXT:   %[[dx:.+]] = fmul fast double %[[i2]], %"x'"
+; CHECK-NEXT:   %[[dx:.+]] = fmul fast double %"x'", %[[i2]]
 ; CHECK-NEXT:   %[[i3:.+]] = call fast double @llvm.pow.f64(double %x, double %y)
 ; CHECK-NEXT:   %[[i4:.+]] = call fast double @llvm.log.f64(double %x)
 ; CHECK-DAG:    %[[i5:.+]] = fmul fast double %[[i3]], %[[i4]]
-; CHECK-NEXT:   %[[dy:.+]] = fmul fast double %[[i5]], %"y'"
+; CHECK-NEXT:   %[[dy:.+]] = fmul fast double %"y'", %[[i5]]
 ; CHECK-DAG:    %[[i6:.+]] = fadd fast double %[[dx]], %[[dy]]
 ; CHECK-NEXT:   ret double %[[i6]]
 ; CHECK-NEXT: }

@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -early-cse -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -early-cse -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,early-cse,%simplifycfg)" -S | FileCheck %s
 
 @.str = private unnamed_addr constant [12 x i8] c"x=%f xp=%f\0A\00", align 1
 
@@ -83,8 +84,8 @@ attributes #5 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 ; CHECK-NEXT:   %[[ipc:.+]] = bitcast i64* %"x'" to double*
 ; CHECK-NEXT:   %[[uw:.+]] = bitcast i64* %x to double*
 ; CHECK-NEXT:   %[[uw1:.+]] = load double, double* %[[uw]]
-; CHECK-NEXT:   %m0diffe = fmul fast double %differeturn, %[[uw1]]
-; CHECK-NEXT:   %[[added:.+]] = fadd fast double %m0diffe, %m0diffe
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %differeturn, %[[uw1]]
+; CHECK-NEXT:   %[[added:.+]] = fadd fast double %[[m0diffe]], %[[m0diffe]]
 ; CHECK-NEXT:   %[[prev:.+]] = load double, double* %[[ipc]]
 ; CHECK-NEXT:   %[[tostore:.+]] = fadd fast double %[[prev]], %[[added]]
 ; CHECK-NEXT:   store double %[[tostore]], double* %[[ipc]]

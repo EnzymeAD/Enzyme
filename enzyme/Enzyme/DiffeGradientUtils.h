@@ -55,6 +55,10 @@
 
 #include "llvm-c/Core.h"
 
+#if LLVM_VERSION_MAJOR <= 16
+#include "llvm/ADT/Triple.h"
+#endif
+
 class DiffeGradientUtils final : public GradientUtils {
   DiffeGradientUtils(
       EnzymeLogic &Logic, llvm::Function *newFunc_, llvm::Function *oldFunc_,
@@ -63,8 +67,8 @@ class DiffeGradientUtils final : public GradientUtils {
       const llvm::SmallPtrSetImpl<llvm::Value *> &constantvalues_,
       const llvm::SmallPtrSetImpl<llvm::Value *> &returnvals_,
       DIFFE_TYPE ActiveReturn, llvm::ArrayRef<DIFFE_TYPE> constant_values,
-      llvm::ValueToValueMapTy &origToNew_, DerivativeMode mode, unsigned width,
-      bool omp);
+      llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &origToNew_,
+      DerivativeMode mode, unsigned width, bool omp);
 
 public:
   /// Whether to free memory in reverse pass or split forward.
@@ -97,34 +101,19 @@ public:
             int i, llvm::AllocaInst *alloc, llvm::ConstantInt *byteSizeOfType,
             llvm::Value *storeInto, llvm::MDNode *InvariantMD) override;
 
-/// align is the alignment that should be specified for load/store to pointer
-#if LLVM_VERSION_MAJOR >= 10
-  void addToInvertedPtrDiffe(llvm::Instruction *orig, llvm::Type *addingType,
-                             unsigned start, unsigned size,
-                             llvm::Value *origptr, llvm::Value *dif,
-                             llvm::IRBuilder<> &BuilderM,
-                             llvm::MaybeAlign align,
+  /// align is the alignment that should be specified for load/store to pointer
+  void addToInvertedPtrDiffe(llvm::Instruction *orig, llvm::Value *origVal,
+                             llvm::Type *addingType, unsigned start,
+                             unsigned size, llvm::Value *origptr,
+                             llvm::Value *dif, llvm::IRBuilder<> &BuilderM,
+                             llvm::MaybeAlign align = llvm::MaybeAlign(),
                              llvm::Value *mask = nullptr);
-#else
-  void addToInvertedPtrDiffe(llvm::Instruction *orig, llvm::Type *addingType,
-                             unsigned start, unsigned size,
-                             llvm::Value *origptr, llvm::Value *dif,
-                             llvm::IRBuilder<> &BuilderM, unsigned align,
-                             llvm::Value *mask = nullptr);
-#endif
 
-#if LLVM_VERSION_MAJOR >= 10
-  void addToInvertedPtrDiffe(llvm::Instruction *orig, TypeTree vd,
-                             unsigned size, llvm::Value *origptr,
+  void addToInvertedPtrDiffe(llvm::Instruction *orig, llvm::Value *origVal,
+                             TypeTree vd, unsigned size, llvm::Value *origptr,
                              llvm::Value *prediff, llvm::IRBuilder<> &Builder2,
-                             llvm::MaybeAlign align,
+                             llvm::MaybeAlign align = llvm::MaybeAlign(),
                              llvm::Value *premask = nullptr);
-#else
-  void addToInvertedPtrDiffe(llvm::Instruction *orig, TypeTree vd,
-                             unsigned size, llvm::Value *origptr,
-                             llvm::Value *prediff, llvm::IRBuilder<> &Builder2,
-                             unsigned align, llvm::Value *premask = nullptr);
-#endif
 };
 
 #endif

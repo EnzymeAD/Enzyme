@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -instsimplify -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -sroa -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,sroa)" -S | FileCheck %s
 
 source_filename = "<source>"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
@@ -34,6 +35,6 @@ declare dso_local void @_Z17__enzyme_autodiffPviPdS0_(i8*, i32, double*, double*
 ; CHECK-NEXT:   br label %invert
 
 ; CHECK: invert: 
-; CHECK-NEXT:   tail call void @free(i8* %i2)
+; CHECK-NEXT:   call void @free(i8* %i2)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,%simplifycfg,early-cse,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 %struct.Gradients = type { double, double, double }
 
@@ -20,17 +21,17 @@ entry:
 
 ; CHECK: define internal [3 x double] @fwddiffe3square(double %x, [3 x double] %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = extractvalue [3 x double] %"x'", 0
-; CHECK-NEXT:   %1 = fmul fast double %0, %x
-; CHECK-NEXT:   %2 = fadd fast double %1, %1
-; CHECK-NEXT:   %3 = insertvalue [3 x double] undef, double %2, 0
-; CHECK-NEXT:   %4 = extractvalue [3 x double] %"x'", 1
-; CHECK-NEXT:   %5 = fmul fast double %4, %x
-; CHECK-NEXT:   %6 = fadd fast double %5, %5
-; CHECK-NEXT:   %7 = insertvalue [3 x double] %3, double %6, 1
-; CHECK-NEXT:   %8 = extractvalue [3 x double] %"x'", 2
-; CHECK-NEXT:   %9 = fmul fast double %8, %x
-; CHECK-NEXT:   %10 = fadd fast double %9, %9
-; CHECK-NEXT:   %11 = insertvalue [3 x double] %7, double %10, 2
-; CHECK-NEXT:   ret [3 x double] %11
+; CHECK-NEXT:   %[[i0:.+]] = extractvalue [3 x double] %"x'", 0
+; CHECK-NEXT:   %[[i1:.+]] = fmul fast double %[[i0]], %x
+; CHECK-NEXT:   %[[i4:.+]] = extractvalue [3 x double] %"x'", 1
+; CHECK-NEXT:   %[[i5:.+]] = fmul fast double %[[i4]], %x
+; CHECK-NEXT:   %[[i8:.+]] = extractvalue [3 x double] %"x'", 2
+; CHECK-NEXT:   %[[i9:.+]] = fmul fast double %[[i8]], %x
+; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[i1]], %[[i1]]
+; CHECK-NEXT:   %[[i3:.+]] = insertvalue [3 x double] undef, double %[[i2]], 0
+; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %[[i5]], %[[i5]]
+; CHECK-NEXT:   %[[i7:.+]] = insertvalue [3 x double] %[[i3]], double %[[i6]], 1
+; CHECK-NEXT:   %[[i10:.+]] = fadd fast double %[[i9]], %[[i9]]
+; CHECK-NEXT:   %[[i11:.+]] = insertvalue [3 x double] %[[i7]], double %[[i10]], 2
+; CHECK-NEXT:   ret [3 x double] %[[i11]]
 ; CHECK-NEXT: }

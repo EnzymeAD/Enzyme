@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -simplifycfg -instsimplify -correlated-propagation -simplifycfg -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=0 -enzyme -mem2reg -early-cse -simplifycfg -instsimplify -correlated-propagation -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=0 -passes="enzyme,function(mem2reg,early-cse,%simplifycfg,instsimplify,correlated-propagation,%simplifycfg,adce)" -S | FileCheck %s
 
 declare double @__enzyme_autodiff(i8*, ...)
 
@@ -46,37 +47,37 @@ entry:
 
 ; CHECK: invertb1:                                         ; preds = %invertend_phimerge
 ; CHECK-NEXT:   %"g1'ipg_unwrap" = getelementptr inbounds double, double* %"a'", i32 32
-; CHECK-NEXT:   %1 = load double, double* %"g1'ipg_unwrap", align 8
-; CHECK-NEXT:   %2 = fadd fast double %1, %8
-; CHECK-NEXT:   store double %2, double* %"g1'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i1:.+]] = load double, double* %"g1'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %[[i1]], %[[i8:.+]]
+; CHECK-NEXT:   store double %[[i2]], double* %"g1'ipg_unwrap", align 8
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertb2:                                         ; preds = %invertend_phimerge
 ; CHECK-NEXT:   %"g2'ipg_unwrap" = getelementptr inbounds double, double* %"a'", i32 64
-; CHECK-NEXT:   %3 = load double, double* %"g2'ipg_unwrap", align 8
-; CHECK-NEXT:   %4 = fadd fast double %3, %7
-; CHECK-NEXT:   store double %4, double* %"g2'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i3:.+]] = load double, double* %"g2'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %[[i3]], %[[i7:.+]]
+; CHECK-NEXT:   store double %[[i4]], double* %"g2'ipg_unwrap", align 8
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertend:                                        ; preds = %entry
-; CHECK-NEXT:   br i1 %cmp2, label %invertend_phirc, label %invertend_phirc1
+; CHECK-NEXT:   br i1 %cmp2, label %invertend_phirc, label %[[invertend_phirc1:.+]]
 
 ; CHECK: invertend_phirc:                                  ; preds = %invertend
 ; CHECK-NEXT:   %g1_unwrap = getelementptr inbounds double, double* %a, i32 32
 ; CHECK-NEXT:   %l1_unwrap = load double, double* %g1_unwrap, align 8
 ; CHECK-NEXT:   br label %invertend_phimerge
 
-; CHECK: invertend_phirc1:                                 ; preds = %invertend
+; CHECK: [[invertend_phirc1]]:                                 ; preds = %invertend
 ; CHECK-NEXT:   %g2_unwrap = getelementptr inbounds double, double* %a, i32 64
 ; CHECK-NEXT:   %l2_unwrap = load double, double* %g2_unwrap, align 8
 ; CHECK-NEXT:   br label %invertend_phimerge
 
-; CHECK: invertend_phimerge:                               ; preds = %invertend_phirc1, %invertend_phirc
-; CHECK-NEXT:   %5 = phi {{(fast )?}}double [ %l1_unwrap, %invertend_phirc ], [ %l2_unwrap, %invertend_phirc1 ]
-; CHECK-NEXT:   %m0diffep = fmul fast double %0, %5
-; CHECK-NEXT:   %6 = fadd fast double %m0diffep, %m0diffep
-; CHECK-NEXT:   %7 = select {{(fast )?}}i1 %cmp2, double 0.000000e+00, double %6
-; CHECK-NEXT:   %8 = select {{(fast )?}}i1 %cmp2, double %6, double 0.000000e+00
+; CHECK: invertend_phimerge: 
+; CHECK-NEXT:   %5 = phi {{(fast )?}}double [ %l1_unwrap, %invertend_phirc ], [ %l2_unwrap, %[[invertend_phirc1]] ]
+; CHECK-NEXT:   %[[m0diffep:.+]] = fmul fast double %0, %5
+; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %[[m0diffep]], %[[m0diffep]]
+; CHECK-NEXT:   %[[i7]] = select {{(fast )?}}i1 %cmp2, double 0.000000e+00, double %[[i6]]
+; CHECK-NEXT:   %[[i8]] = select {{(fast )?}}i1 %cmp2, double %[[i6]], double 0.000000e+00
 ; CHECK-NEXT:   br i1 %cmp2, label %invertb1, label %invertb2
 ; CHECK-NEXT: }
 

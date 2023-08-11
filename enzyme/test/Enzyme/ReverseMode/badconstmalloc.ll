@@ -1,5 +1,7 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -adce -S | FileCheck %s
-; ONLYLINUX: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -adce -S | %lli - 
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,sroa,%simplifycfg,instcombine,adce)" -enzyme-preopt=false -S | FileCheck %s
+; ONLYLINUX: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -adce -S | %lli - ; fi
+; ONLYLINUX: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,sroa,%simplifycfg,instcombine,adce)" -S | %lli - 
 
 source_filename = "/home/enzyme/Enzyme/enzyme/test/Integration/simpleeigen-made.cpp"
 
@@ -751,9 +753,9 @@ attributes #12 = { cold }
 
 ; CHECK: define internal { { i8*, i8* }, double*, double* } @augmented_inneralloc()
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call.i.i = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   %"call.i.i'mi" = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* {{(noundef )?}}nonnull align 1 dereferenceable(16) dereferenceable_or_null(16) %"call.i.i'mi", i8 0, i64 16, i1 false)
+; CHECK-NEXT:   %call.i.i = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) i8* @malloc(i64 16)
 ; CHECK-NEXT:   %"'ipc" = bitcast i8* %"call.i.i'mi" to double*
 ; CHECK-NEXT:   %0 = bitcast i8* %call.i.i to double*
 ; CHECK-NEXT:   %.fca.0.0.insert = insertvalue { { i8*, i8* }, double*, double* } {{(undef|poison)}}, i8* %"call.i.i'mi", 0, 0

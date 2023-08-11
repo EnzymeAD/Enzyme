@@ -10,14 +10,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["7", "8", "9", "10", "11", "12", "13"] #, "14"]
+        llvm: ["11", "12", "13", "14", "15", "16"]
         build: ["Release"] # "RelWithDebInfo"
         os: [ubuntu-20.04]
-
-        exclude:
-          # How to install FileCheck on ubuntu-18.04?
-          - os: ubuntu-18.04
-            llvm: 8
 
     timeout-minutes: 30
     steps:
@@ -26,12 +21,7 @@ jobs:
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
           sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
           sudo apt-get install -y autoconf cmake gcc g++ libtool gfortran llvm-${{ matrix.llvm }}-dev libomp-${{ matrix.llvm }}-dev clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev libeigen3-dev libboost-dev
-          sudo python3 -m pip install --upgrade pip setuptools
-          sudo python3 -m pip install lit
-          sudo touch /usr/lib/llvm-${{ matrix.llvm }}/bin/yaml-bench
-          if [[ '${{ matrix.llvm }}' == '7' || '${{ matrix.llvm }}' == '8' || '${{ matrix.llvm }}' == '9' ]]; then
-            sudo apt-get install -y llvm-${{ matrix.llvm }}-tools
-          fi
+          sudo python3 -m pip install --upgrade pip setuptools lit
           if [[ '${{ matrix.llvm }}' == '13' ]]; then
             sudo sed -i 's/add_executable(llvm-omp-device-info IMPORTED)//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
             sudo sed -i 's/llvm-omp-device-info//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
@@ -44,47 +34,4 @@ jobs:
           cd enzyme/build
           cmake .. -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
     - name: make check-bcpass
-      run: cd enzyme/build && make check-bcpass -j`nproc`
-  
-  build-container:
-    name: Bitcode loading CI LLVM ${{ matrix.llvm }} ${{ matrix.build }} ubuntu-18.04
-    runs-on: ubuntu-latest
-    container: ubuntu:18.04
-
-    strategy:
-      fail-fast: false
-      matrix:
-        llvm: ["7", "8", "9", "10", "11", "12", "13"] #, "14"]
-        build: ["Release"] # "RelWithDebInfo"
-
-        exclude:
-          - llvm: 8
-
-    timeout-minutes: 30
-    steps:
-    - name: add llvm
-      run: |
-          apt-get -q update
-          apt-get install -y ca-certificates software-properties-common wget gnupg2 python3 python3-pip sed git ssh zlib1g-dev
-          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key| apt-key add -
-          apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
-          apt-get install -y autoconf cmake gcc g++ libtool gfortran llvm-${{ matrix.llvm }}-dev libomp-${{ matrix.llvm }}-dev clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev libeigen3-dev libboost-dev
-          python3 -m pip install --upgrade pip setuptools
-          python3 -m pip install lit
-          touch /usr/lib/llvm-${{ matrix.llvm }}/bin/yaml-bench
-          if [[ '${{ matrix.llvm }}' == '7' || '${{ matrix.llvm }}' == '8' || '${{ matrix.llvm }}' == '9' ]]; then
-            apt-get install -y llvm-${{ matrix.llvm }}-tools
-          fi
-          if [[ '${{ matrix.llvm }}' == '13' ]]; then
-            sed -i 's/add_executable(llvm-omp-device-info IMPORTED)//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
-            sed -i 's/llvm-omp-device-info//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
-          fi
-    - uses: actions/checkout@v3
-    - name: mkdir
-      run: cd enzyme && rm -rf build && mkdir build
-    - name: cmake
-      run: |
-          cd enzyme/build
-          cmake .. -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
-    - name: make check-bcpass
-      run: cd enzyme/build && make check-bcpass -j`nproc`
+      run: cd enzyme/build && make -j `nproc` check-bcpass

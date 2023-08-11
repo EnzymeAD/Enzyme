@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse-memssa -instsimplify -correlated-propagation -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse -instsimplify -correlated-propagation -adce -S | FileCheck %s; fi
+; RUN:  %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,%simplifycfg,early-cse,instsimplify,correlated-propagation,adce)" -S | FileCheck %s
 
 ; Function Attrs: norecurse nounwind readonly uwtable
 define double @alldiv(double* nocapture readonly %A, i64 %N, double %start) {
