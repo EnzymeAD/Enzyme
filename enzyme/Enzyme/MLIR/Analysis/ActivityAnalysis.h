@@ -148,7 +148,7 @@ private:
   /// produced.
   bool isOperationInactiveFromOrigin(
       MTypeResults const &TR, Operation *op,
-      llvm::Optional<unsigned> resultNo = std::nullopt);
+      std::optional<unsigned> resultNo = std::nullopt);
 
 public:
   enum class UseActivity {

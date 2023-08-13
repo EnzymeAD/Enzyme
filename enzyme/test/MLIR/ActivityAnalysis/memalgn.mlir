@@ -1,6 +1,7 @@
-// RUN: %eopt --print-activity-analysis=func=memalgn %s | FileCheck %s
+// RUN: %eopt --print-activity-analysis=funcs=memalgn %s | FileCheck %s
 
 module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<i1, dense<8> : vector<2xi32>>, #dlti.dl_entry<i8, dense<8> : vector<2xi32>>, #dlti.dl_entry<i16, dense<16> : vector<2xi32>>, #dlti.dl_entry<i32, dense<32> : vector<2xi32>>, #dlti.dl_entry<i64, dense<[32, 64]> : vector<2xi32>>, #dlti.dl_entry<f16, dense<16> : vector<2xi32>>, #dlti.dl_entry<f32, dense<64> : vector<2xi32>>, #dlti.dl_entry<f128, dense<128> : vector<2xi32>>>} {
+  // Test aliasing of dense analysis (%5, which is stored to, aliases with %6, which is loaded from)
   llvm.func @memalgn(%arg0: f32) -> f32 {
     %0 = llvm.mlir.constant(1 : i32) : i32
     %1 = llvm.mlir.constant(8 : i64) : i64

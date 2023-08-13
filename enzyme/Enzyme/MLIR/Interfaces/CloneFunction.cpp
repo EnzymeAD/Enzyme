@@ -94,7 +94,8 @@ Operation *clone(Operation *src, IRMapping &mapper,
   // Create the new operation.
   auto *newOp =
       src->create(src->getLoc(), src->getName(), src->getResultTypes(),
-                  operands, src->getAttrs(), successors, src->getNumRegions());
+                  operands, src->getAttrs(), OpaqueProperties(nullptr),
+                  successors, src->getNumRegions());
 
   // Clone the regions.
   if (options.shouldCloneRegions()) {

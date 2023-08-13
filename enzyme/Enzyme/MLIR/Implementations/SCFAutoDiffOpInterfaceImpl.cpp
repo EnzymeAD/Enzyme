@@ -89,10 +89,10 @@ struct ForOpInterface
       if (!gutils->isConstantValue(std::get<0>(r)))
         nYields.push_back(gutils->invertPointerM(std::get<1>(r), builder));
     }
-    repFor.getBody()->push_back(
-        oldYield->create(oldYield->getLoc(), oldYield->getName(), TypeRange(),
-                         nYields, oldYield->getAttrs(),
-                         oldYield->getSuccessors(), oldYield->getNumRegions()));
+    repFor.getBody()->push_back(oldYield->create(
+        oldYield->getLoc(), oldYield->getName(), TypeRange(), nYields,
+        oldYield->getAttrs(), OpaqueProperties(nullptr),
+        oldYield->getSuccessors(), oldYield->getNumRegions()));
     gutils->erase(oldYield);
     return success();
   }

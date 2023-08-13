@@ -176,23 +176,19 @@ struct MemoryActivityState {
   // to distinguish arguments that start with active data vs arguments that get
   // active data stored into them during the function.
   bool activeInit;
+  // Analogous special case for arguments that are written to, thus having
+  // active data escape
+  bool activeEscape;
 
   bool operator==(const MemoryActivityState &other) {
     return activeLoad == other.activeLoad && activeStore == other.activeStore &&
-           activeInit == other.activeInit;
+           activeInit == other.activeInit && activeEscape == other.activeEscape;
   }
 
   bool operator!=(const MemoryActivityState &other) {
     return !(*this == other);
   }
 };
-
-// TODO: the internal representation of an alias class is an unsigned. In the
-// long run, this should be switched with one or more distinct attributes.
-using AliasClass = unsigned;
-// TODO: This should not be global, but it needs to be shared by the various
-// MemoryActivity lattices.
-static DenseMap<Value, AliasClass> aliasClasses;
 
 class MemoryActivity : public AbstractDenseLattice {
 public:
@@ -206,32 +202,73 @@ public:
     return ChangeResult::Change;
   }
 
+  bool mayAlias(Value lhs, Value rhs) const {
+    return !const_cast<LocalAliasAnalysis *>(&aliasAnalysis)
+                ->alias(lhs, rhs)
+                .isNo();
+  }
+
   bool hasActiveData(Value value) const {
-    auto state = activityStates.lookup(aliasClasses[value]);
-    return state.activeStore || state.activeInit;
+    bool activeData = false;
+    for (const auto &[other, state] : activityStates)
+      if (mayAlias(value, other)) {
+        activeData |= state.activeStore || state.activeInit;
+        if (activeData)
+          return activeData;
+      }
+
+    return activeData;
+  }
+
+  bool activeDataFlowsOut(Value value) const {
+    bool flowsOut = false;
+    for (const auto &[other, state] : activityStates)
+      if (mayAlias(value, other)) {
+        flowsOut |= state.activeLoad || state.activeEscape;
+        if (flowsOut)
+          return flowsOut;
+      }
+
+    return flowsOut;
   }
 
   bool hasActiveLoad(Value value) const {
-    return activityStates.lookup(aliasClasses[value]).activeLoad;
+    bool activeLoad = activityStates.lookup(value).activeLoad;
+    for (const auto &[other, otherState] : activityStates)
+      if (mayAlias(value, other)) {
+        activeLoad |= otherState.activeLoad;
+        if (activeLoad)
+          return activeLoad;
+      }
+    return activeLoad;
   }
 
   bool hasActiveStore(Value value) const {
-    return activityStates.lookup(aliasClasses[value]).activeStore;
+    bool activeStore = activityStates.lookup(value).activeStore;
+    for (const auto &[other, otherState] : activityStates) {
+      if (mayAlias(value, other)) {
+        activeStore |= otherState.activeStore;
+        if (activeStore)
+          return activeStore;
+      }
+    }
+    return activeStore;
   }
 
   /// Set the internal activity state.
   ChangeResult setActiveStore(Value value, bool activeStore) {
-    auto &state = activityStates[aliasClasses.lookup(value)];
     ChangeResult result = ChangeResult::NoChange;
-    if (state.activeStore != activeStore) {
-      result = ChangeResult::Change;
-      state.activeStore = activeStore;
+    for (auto &[other, state] : activityStates) {
+      if (mayAlias(value, other) && state.activeStore != activeStore) {
+        result |= ChangeResult::Change;
+        state.activeStore = activeStore;
+      }
     }
     return result;
   }
 
   ChangeResult setActiveLoad(Value value, bool activeLoad) {
-    auto &state = activityStates[aliasClasses.lookup(value)];
+    auto &state = activityStates[value];
     ChangeResult result = ChangeResult::NoChange;
     if (state.activeLoad != activeLoad) {
       result = ChangeResult::Change;
@@ -241,11 +278,21 @@ public:
   }
 
   ChangeResult setActiveInit(Value value, bool activeInit) {
-    auto &state = activityStates[aliasClasses.lookup(value)];
+    auto &state = activityStates[value];
     ChangeResult result = ChangeResult::NoChange;
     if (state.activeInit != activeInit) {
       result = ChangeResult::Change;
       state.activeInit = activeInit;
+    }
+    return result;
+  }
+
+  ChangeResult setActiveEscape(Value value, bool activeEscape) {
+    auto &state = activityStates[value];
+    ChangeResult result = ChangeResult::NoChange;
+    if (state.activeEscape != activeEscape) {
+      result = ChangeResult::Change;
+      state.activeEscape = activeEscape;
     }
     return result;
   }
@@ -255,10 +302,10 @@ public:
       os << "<memory activity state was empty>"
          << "\n";
     }
-    for (const auto &state : activityStates) {
-      os << state.first << ": active load " << state.second.activeLoad
-         << " active store " << state.second.activeStore << " active init "
-         << state.second.activeInit << "\n";
+    for (const auto &[value, state] : activityStates) {
+      os << value << ": active load " << state.activeLoad << " active store "
+         << state.activeStore << " active init " << state.activeInit
+         << " active escape " << state.activeEscape << "\n";
     }
   }
 
@@ -268,7 +315,8 @@ public:
   }
 
 protected:
-  DenseMap<AliasClass, MemoryActivityState> activityStates;
+  DenseMap<Value, MemoryActivityState> activityStates;
+  LocalAliasAnalysis aliasAnalysis;
 };
 
 class ForwardMemoryActivity : public MemoryActivity {
@@ -279,12 +327,13 @@ public:
   ChangeResult join(const AbstractDenseLattice &lattice) {
     const auto &rhs = static_cast<const ForwardMemoryActivity &>(lattice);
     ChangeResult result = ChangeResult::NoChange;
-    for (const auto &state : rhs.activityStates) {
-      auto &lhsState = activityStates[state.first];
-      if (lhsState != state.second) {
-        lhsState.activeLoad |= state.second.activeLoad;
-        lhsState.activeStore |= state.second.activeStore;
-        lhsState.activeInit |= state.second.activeInit;
+    for (const auto &[value, rhsState] : rhs.activityStates) {
+      auto &lhsState = activityStates[value];
+      if (lhsState != rhsState) {
+        lhsState.activeLoad |= rhsState.activeLoad;
+        lhsState.activeStore |= rhsState.activeStore;
+        lhsState.activeInit |= rhsState.activeInit;
+        lhsState.activeEscape |= rhsState.activeEscape;
         result |= ChangeResult::Change;
       }
     }
@@ -299,12 +348,13 @@ public:
   ChangeResult meet(const AbstractDenseLattice &lattice) override {
     const auto &rhs = static_cast<const BackwardMemoryActivity &>(lattice);
     ChangeResult result = ChangeResult::NoChange;
-    for (const auto &state : rhs.activityStates) {
-      auto &lhsState = activityStates[state.first];
-      if (lhsState != state.second) {
-        lhsState.activeLoad |= state.second.activeLoad;
-        lhsState.activeStore |= state.second.activeStore;
-        lhsState.activeInit |= state.second.activeInit;
+    for (const auto &[value, rhsState] : rhs.activityStates) {
+      auto &lhsState = activityStates[value];
+      if (lhsState != rhsState) {
+        lhsState.activeLoad |= rhsState.activeLoad;
+        lhsState.activeStore |= rhsState.activeStore;
+        lhsState.activeInit |= rhsState.activeInit;
+        lhsState.activeEscape |= rhsState.activeEscape;
         result |= ChangeResult::Change;
       }
     }
@@ -315,9 +365,9 @@ public:
 /// Sparse activity analysis reasons about activity by traversing forward down
 /// the def-use chains starting from active function arguments.
 class SparseForwardActivityAnalysis
-    : public SparseDataFlowAnalysis<ForwardValueActivity> {
+    : public SparseForwardDataFlowAnalysis<ForwardValueActivity> {
 public:
-  using SparseDataFlowAnalysis::SparseDataFlowAnalysis;
+  using SparseForwardDataFlowAnalysis::SparseForwardDataFlowAnalysis;
 
   /// In general, we don't know anything about entry operands.
   /// TODO: If we're going forward though, we should always have initialized
@@ -372,6 +422,13 @@ public:
                  ArrayRef<const BackwardValueActivity *> results) override {
     // Propagate all operands to all results
     for (auto operand : operands) {
+      if (Operation *definingOp = operand->getPoint().getDefiningOp()) {
+        if (definingOp->hasTrait<OpTrait::ConstantLike>()) {
+          propagateIfChanged(operand,
+                             operand->meet(ValueActivity::getConstant()));
+          continue;
+        }
+      }
       for (auto result : results) {
         meet(operand, *result);
       }
@@ -380,9 +437,9 @@ public:
 };
 
 class DenseForwardActivityAnalysis
-    : public DenseDataFlowAnalysis<ForwardMemoryActivity> {
+    : public DenseForwardDataFlowAnalysis<ForwardMemoryActivity> {
 public:
-  using DenseDataFlowAnalysis::DenseDataFlowAnalysis;
+  using DenseForwardDataFlowAnalysis::DenseForwardDataFlowAnalysis;
 
   void visitOperation(Operation *op, const ForwardMemoryActivity &before,
                       ForwardMemoryActivity *after) override {
@@ -544,7 +601,7 @@ public:
       }
       if (isa<MemoryEffects::Write>(effect.getEffect())) {
         if (auto storeOp = dyn_cast<LLVM::StoreOp>(op)) {
-          if (after.hasActiveLoad(value)) {
+          if (after.activeDataFlowsOut(value)) {
             result |= before->setActiveStore(value, true);
 
             // Mark the stored value as (backward) active
@@ -553,7 +610,7 @@ public:
             result |= valueState->meet(ValueActivity::getActive());
           }
         } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
-          if (after.hasActiveLoad(value)) {
+          if (after.activeDataFlowsOut(value)) {
             result |= before->setActiveStore(value, true);
             for (OpOperand *dpsInit : linalgOp.getDpsInitOperands()) {
               if (dpsInit->get() == value) {
@@ -579,58 +636,11 @@ public:
   }
 };
 
-/// Dense activity analysis requires a mapping from values to distinct alias
-/// classes that are proven to not alias.
-void basicAliasAnalysis(FunctionOpInterface callee,
-                        DenseMap<Value, AliasClass> &aliasClasses,
-                        bool annotate = false) {
-  LocalAliasAnalysis localAliasAnalysis;
-  aliasClasses.clear();
-  auto insert = [&](Value val) {
-    bool found = false;
-    AliasClass toInsert;
-    for (const auto &[key, aliasClass] : aliasClasses) {
-      if (!localAliasAnalysis.alias(key, val).isNo()) {
-        toInsert = aliasClass;
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
-      toInsert = aliasClasses.size();
-    }
-    aliasClasses.insert({val, toInsert});
-  };
-
-  // Add function arguments to the alias results
-  for (BlockArgument arg : callee.getArguments()) {
-    insert(arg);
-    if (annotate) {
-      callee.setArgAttr(
-          arg.getArgNumber(), "enzyme.ac",
-          IntegerAttr::get(IntegerType::get(callee.getContext(), 64),
-                           aliasClasses.lookup(arg)));
-    }
-  }
-
-  callee.walk([&](Operation *op) {
-    for (Value result : op->getResults()) {
-      insert(result);
-      if (annotate) {
-        op->setAttr("ac",
-                    IntegerAttr::get(IntegerType::get(callee.getContext(), 64),
-                                     aliasClasses.lookup(result)));
-      }
-    }
-  });
-}
-
 void enzyme::runDataFlowActivityAnalysis(
     FunctionOpInterface callee, ArrayRef<enzyme::Activity> argumentActivity,
     bool print) {
   SymbolTableCollection symbolTable;
   DataFlowSolver solver;
-  basicAliasAnalysis(callee, aliasClasses, /*annotate=*/true);
 
   solver.load<SparseForwardActivityAnalysis>();
   solver.load<DenseForwardActivityAnalysis>();
@@ -648,9 +658,15 @@ void enzyme::runDataFlowActivityAnalysis(
     // activity is kind of a proxy
     if (activity == enzyme::Activity::enzyme_dup ||
         activity == enzyme::Activity::enzyme_dupnoneed) {
-      auto initialState = solver.getOrCreateState<ForwardMemoryActivity>(
+      auto *initialState = solver.getOrCreateState<ForwardMemoryActivity>(
           &callee.getFunctionBody().front());
       initialState->setActiveInit(arg, true);
+
+      //   // Should this be the front or back?
+      //   auto initBackwardState =
+      //   solver.getOrCreateState<BackwardMemoryActivity>(
+      //       &callee.getFunctionBody().back());
+      //   initBackwardState->setActiveEscape(arg, true);
     } else {
       auto *argLattice = solver.getOrCreateState<ForwardValueActivity>(arg);
       auto state = activity == enzyme::Activity::enzyme_const
@@ -667,6 +683,15 @@ void enzyme::runDataFlowActivityAnalysis(
   // shouldn't be traversed.
   for (Operation &op : callee.getFunctionBody().getOps()) {
     if (op.hasTrait<OpTrait::ReturnLike>()) {
+      auto *returnDenseLattice =
+          solver.getOrCreateState<BackwardMemoryActivity>(&op);
+      for (const auto &[arg, activity] :
+           llvm::zip(callee.getArguments(), argumentActivity)) {
+        if (activity == enzyme::Activity::enzyme_dup ||
+            activity == enzyme::Activity::enzyme_dupnoneed) {
+          returnDenseLattice->setActiveEscape(arg, true);
+        }
+      }
       for (Value operand : op.getOperands()) {
         auto *returnLattice =
             solver.getOrCreateState<BackwardValueActivity>(operand);
@@ -737,9 +762,11 @@ void enzyme::runDataFlowActivityAnalysis(
   }
 
   auto startState = solver.lookupState<BackwardMemoryActivity>(
-      &callee.getFunctionBody().front());
+      &callee.getFunctionBody().front().front());
   if (startState) {
-    errs() << "starting state:\n" << *startState << "\n";
+    errs() << "backwards end state:\n" << *startState << "\n";
+  } else {
+    errs() << "backwards end state was null\n";
   }
   auto returnOp = callee.getFunctionBody().front().getTerminator();
   auto state = solver.lookupState<ForwardMemoryActivity>(returnOp);

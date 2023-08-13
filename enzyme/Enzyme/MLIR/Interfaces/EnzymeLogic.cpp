@@ -61,9 +61,10 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
         attr.setValue(nBuilder.getDenseI32ArrayAttr(segSizes));
     }
 
-    nBB->push_back(newInst->create(
-        newInst->getLoc(), newInst->getName(), TypeRange(), newVals, attrs,
-        newInst->getSuccessors(), newInst->getNumRegions()));
+    nBB->push_back(
+        newInst->create(newInst->getLoc(), newInst->getName(), TypeRange(),
+                        newVals, attrs, OpaqueProperties(nullptr),
+                        newInst->getSuccessors(), newInst->getNumRegions()));
     gutils->erase(newInst);
     return;
   }
@@ -128,9 +129,10 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
   }
   }
 
-  nBB->push_back(newInst->create(
-      newInst->getLoc(), newInst->getName(), TypeRange(), retargs,
-      newInst->getAttrs(), newInst->getSuccessors(), newInst->getNumRegions()));
+  nBB->push_back(
+      newInst->create(newInst->getLoc(), newInst->getName(), TypeRange(),
+                      retargs, newInst->getAttrs(), OpaqueProperties(nullptr),
+                      newInst->getSuccessors(), newInst->getNumRegions()));
   gutils->erase(newInst);
   return;
 }

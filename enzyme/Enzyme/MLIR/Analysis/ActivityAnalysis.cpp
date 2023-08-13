@@ -222,7 +222,7 @@ const static unsigned constantIntrinsics[] = {
     llvm::Intrinsic::stackrestore,
     llvm::Intrinsic::lifetime_start,
     llvm::Intrinsic::lifetime_end,
-    llvm::Intrinsic::dbg_addr,
+    // llvm::Intrinsic::dbg_addr,
     llvm::Intrinsic::dbg_declare,
     llvm::Intrinsic::dbg_value,
     llvm::Intrinsic::invariant_start,
@@ -888,7 +888,7 @@ static FunctionOpInterface getFunctionIfArgument(Value value) {
 }
 
 // TODO: move the extraction based on dataflow here.
-static std::vector<Value> getPotentialIncomingValues(BlockArgument arg) {
+static SmallVector<Value> getPotentialIncomingValues(BlockArgument arg) {
   SetVector<Value> potentialSources;
 
   if (!arg.getOwner()->isEntryBlock()) {
@@ -917,7 +917,7 @@ static std::vector<Value> getPotentialIncomingValues(BlockArgument arg) {
   if (auto iface = dyn_cast<RegionBranchOpInterface>(parent)) {
     auto isRegionSucessorOf = [arg](RegionBranchOpInterface iface,
                                     Region *region,
-                                    Optional<unsigned> predecessor,
+                                    std::optional<unsigned> predecessor,
                                     SetVector<Value> &potentialSources) {
       SmallVector<RegionSuccessor> successors;
       iface.getSuccessorRegions(predecessor, successors);
@@ -1012,7 +1012,7 @@ static void allFollowersOf(Operation *op,
   // `RegionBranchOpInterface` when `op` implements it and assume all regions
   // may be successors otherwise.
   auto addEntryBlocksOfSuccessorRegions =
-      [](Operation *op, llvm::Optional<unsigned> regionNumber,
+      [](Operation *op, std::optional<unsigned> regionNumber,
          std::deque<Block *> &todo) {
         if (auto iface = dyn_cast<RegionBranchOpInterface>(op)) {
           SmallVector<RegionSuccessor> regionSuccessors;
@@ -1166,8 +1166,8 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
   // }
 
   if (Operation *definingOp = Val.getDefiningOp()) {
-    // Undef, metadata, non-global constants are inactive.
-    if (isa<LLVM::UndefOp, LLVM::MetadataOp, LLVM::ConstantOp>(definingOp)) {
+    // Undef & non-global constants are inactive.
+    if (isa<LLVM::UndefOp, LLVM::ConstantOp>(definingOp)) {
       return true;
     }
 
@@ -2418,7 +2418,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromOrigin(
       if (auto iface = dyn_cast<RegionBranchOpInterface>(parent)) {
         auto isRegionSucessorOf = [arg](RegionBranchOpInterface iface,
                                         Region *region,
-                                        Optional<unsigned> predecessor,
+                                        std::optional<unsigned> predecessor,
                                         SetVector<Value> &potentialSources) {
           SmallVector<RegionSuccessor> successors;
           iface.getSuccessorRegions(predecessor, successors);
@@ -2523,7 +2523,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromOrigin(
 }
 
 bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
-    MTypeResults const &TR, Operation *op, llvm::Optional<unsigned> resultNo) {
+    MTypeResults const &TR, Operation *op, std::optional<unsigned> resultNo) {
   // Must be an analyzer only searching up
   assert(directions == UP);
 

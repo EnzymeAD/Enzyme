@@ -123,8 +123,8 @@ struct GenericOpInterfaceReverse
     SmallVector<int64_t> shapes;
     for (unsigned int i = 0; i < aMap.getNumResults(); i++) {
       AffineMap subMap = aMap.getSubMap({i});
-      Value domain = cacheBuilder.create<AffineApplyOp>(op->getLoc(), subMap,
-                                                        ValueRange(dims));
+      Value domain = cacheBuilder.create<affine::AffineApplyOp>(
+          op->getLoc(), subMap, ValueRange(dims));
       iterationDomains.push_back(domain);
       shapes.push_back(ShapedType::kDynamic);
     }
@@ -168,16 +168,14 @@ struct GenericOpInterfaceReverse
         StringAttr());
 
     int numInputs = inputs.size();
-    auto buildFuncReturnOp = [numInputs, indexingMaps, &newOp, &adjoint,
-                              &inputs](OpBuilder &builder, Location loc,
-                                       SmallVector<Value> retargs) {
+    auto buildFuncReturnOp = [numInputs](OpBuilder &builder, Location loc,
+                                         SmallVector<Value> retargs) {
       builder.create<enzyme::AddToOp>(
           loc, ValueRange{retargs}.take_front(numInputs));
       return;
     };
 
     Region *newOpRegion = newOp.getBlock()->getParent();
-    int numInputsNewOp = cast<linalg::GenericOp>(newOp).getInputs().size();
     Region *adjointRegion = &adjoint.getRegion();
     int numInputsAdjoint = adjoint.getInputs().size();
     Location loc = op->getLoc();
@@ -185,8 +183,7 @@ struct GenericOpInterfaceReverse
     SmallVector<Value> pushCaches;
 
     auto hook = [newOpRegion, adjointRegion, loc, &numCaches = numCaches,
-                 numInputsNewOp, numInputsAdjoint,
-                 &pushCaches = pushCaches](Type t) {
+                 numInputsAdjoint, &pushCaches = pushCaches](Type t) {
       OpBuilder builder(newOpRegion);
       Value pushCache = builder.create<enzyme::InitOp>(loc, t);
       pushCaches.push_back(pushCache);
