@@ -28,10 +28,10 @@
 #include "llvm/Passes/PassPlugin.h"
 
 namespace llvm {
-class FunctionPass;
+class ModulePass;
 }
 
-llvm::FunctionPass *createPreserveNVVMPass(bool Begin);
+llvm::ModulePass *createPreserveNVVMPass(bool Begin);
 
 class PreserveNVVMNewPM final
     : public llvm::AnalysisInfoMixin<PreserveNVVMNewPM> {

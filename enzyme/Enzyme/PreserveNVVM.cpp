@@ -41,6 +41,25 @@
 
 #include "llvm/Transforms/Utils.h"
 
+#ifdef ENZYME_CLANG
+#define protected public
+#include "clang/CodeGen/CodeGenAction.h"
+#undef protected
+#include "clang/Parse/ParseAST.h"
+#include "clang/AST/Attr.h"
+#include "clang/Frontend/CompilerInstance.h"
+// #include "clang/FrontendTool/Utils.h"
+#include "clang/Lex/Preprocessor.h"
+#include "clang/CodeGen/ModuleBuilder.h"
+
+class MacroPPCallbacks : public clang::PPCallbacks {
+public:
+  /// A pointer to code generator, where debug info generator can be found.
+  clang::CodeGenerator *Gen;
+};
+
+#endif
+
 #include <map>
 
 #include "PreserveNVVM.h"
@@ -299,7 +318,7 @@ bool preserveLinkage(bool Begin, Function &F) {
   return false;
 }
 
-bool preserveNVVM(bool Begin, Function &F) {
+bool preserveNVVM(bool Begin, Module &M) {
   bool changed = false;
   StringMap<std::pair<std::string, std::string>> Implements;
   for (std::string T : {"", "f"}) {
@@ -331,22 +350,24 @@ bool preserveNVVM(bool Begin, Function &F) {
       Implements[nvname] = std::make_pair(mathname, llname);
     }
   }
-  auto found = Implements.find(F.getName());
-  if (found != Implements.end()) {
-    changed = true;
-    if (Begin) {
-      F.removeFnAttr(Attribute::AlwaysInline);
-      F.addFnAttr(Attribute::NoInline);
-      // As a side effect, enforces arguments
-      // cannot be erased.
-      F.setLinkage(Function::LinkageTypes::ExternalLinkage);
-      F.addFnAttr("implements", found->second.second);
-      F.addFnAttr("implements2", found->second.first);
-      F.addFnAttr("enzyme_math", found->second.first);
-    } else {
-      F.addFnAttr(Attribute::AlwaysInline);
-      F.removeFnAttr(Attribute::NoInline);
-      F.setLinkage(Function::LinkageTypes::InternalLinkage);
+  for (auto &F : M) {
+    auto found = Implements.find(F.getName());
+    if (found != Implements.end()) {
+      changed = true;
+      if (Begin) {
+        F.removeFnAttr(Attribute::AlwaysInline);
+        F.addFnAttr(Attribute::NoInline);
+        // As a side effect, enforces arguments
+        // cannot be erased.
+        F.setLinkage(Function::LinkageTypes::ExternalLinkage);
+        F.addFnAttr("implements", found->second.second);
+        F.addFnAttr("implements2", found->second.first);
+        F.addFnAttr("enzyme_math", found->second.first);
+      } else {
+        F.addFnAttr(Attribute::AlwaysInline);
+        F.removeFnAttr(Attribute::NoInline);
+        F.setLinkage(Function::LinkageTypes::InternalLinkage);
+      }
     }
   }
   constexpr static const char gradient_handler_name[] =
@@ -355,7 +376,7 @@ bool preserveNVVM(bool Begin, Function &F) {
       "__enzyme_register_derivative";
   constexpr static const char splitderivative_handler_name[] =
       "__enzyme_register_splitderivative";
-  for (GlobalVariable &g : F.getParent()->globals()) {
+  for (GlobalVariable &g : M.globals()) {
     if (g.getName().contains(gradient_handler_name) ||
         g.getName().contains(derivative_handler_name) ||
         g.getName().contains(splitderivative_handler_name) ||
@@ -375,16 +396,15 @@ bool preserveNVVM(bool Begin, Function &F) {
           }
           break;
         }
-        if (V == &F) {
-          changed |= preserveLinkage(Begin, F);
+        if (auto F = dyn_cast<Function>(V)) {
+          changed |= preserveLinkage(Begin, *F);
           break;
         }
       }
     }
   }
-  auto &M = *F.getParent();
   SmallVector<GlobalVariable *, 1> toErase;
-  for (GlobalVariable &g : F.getParent()->globals()) {
+  for (GlobalVariable &g : M.globals()) {
     if (g.getName().contains(gradient_handler_name)) {
       handleCustomDerivative<gradient_handler_name,
                              DerivativeMode::ReverseModeGradient, 3>(M, g,
@@ -400,6 +420,67 @@ bool preserveNVVM(bool Begin, Function &F) {
                                                                   toErase);
       changed = true;
     }
+    #ifdef ENZYME_CLANG
+    if (g.getName().contains("__enzyme_clang_compiler_instance")) {
+      if (g.hasInitializer()) {
+        auto &CI = *(clang::CompilerInstance*)(void*)cast<ConstantInt>(g.getInitializer())->getZExtValue();
+
+        auto Act = std::make_unique<clang::EmitCodeGenOnlyAction>();
+        Act->setCompilerInstance(&CI);
+        auto cons = Act->CreateASTConsumer(CI, /*InFile*/"<tmpfile>");
+
+        auto Gen = Act->getCodeGenerator();
+        assert(Gen);
+        cons->Initialize(CI.getASTContext());
+
+        auto oldPP = CI.getPreprocessorPtr();
+        CI.createPreprocessor(clang::TU_Complete);
+        // Note that right here we reparse/recompile all of llvm things
+        clang::ParseAST(CI.getPreprocessor(), cons.get(), CI.getASTContext());
+        CI.setPreprocessor(oldPP);
+
+        assert(&Gen->CGM());
+        assert(Gen->GetModule());
+
+
+        for (auto &f : M) {
+          f.addFnAttr("clang_compiler_instance", std::to_string((size_t)(void*)&CI));
+          if (f.empty()) continue;
+          if (auto FD = Gen->GetDeclForMangledName(f.getName())) {
+            llvm::errs() << " considering f name: " << f.getName(); 
+            FD->dump();
+            llvm::errs() << "\n";
+            f.addFnAttr("clang_decl", std::to_string((size_t)(void*)FD));
+            for (auto attr : FD->getAttrs()) {
+              if (auto aa = dyn_cast<clang::AnnotateAttr>(attr)) {
+                if (aa->getAnnotation() == "enzyme_inactive") {
+                  f.addAttribute(AttributeList::FunctionIndex,
+                                  Attribute::get(g.getContext(), "enzyme_inactive"));
+                }
+              }
+            }
+          }
+        }
+        for (auto &g : M.globals()) {
+          if (auto FD = Gen->GetDeclForMangledName(g.getName())) {
+            llvm::errs() << " considering g name: " << g.getName(); 
+            FD->dump();
+            llvm::errs() << "\n";
+            for (auto attr : FD->getAttrs()) {
+              if (auto aa = dyn_cast<clang::AnnotateAttr>(attr)) {
+                if (aa->getAnnotation() == "enzyme_inactive") {
+                  g.setMetadata("enzyme_inactive", MDNode::get(g.getContext(), {}));
+                }
+              }
+            }
+            //f.addFnAttr("clang_decl", std::to_string((size_t)(void*)FD));
+          }
+        }
+        toErase.push_back(&g);
+        changed = true;
+      }
+    } else
+    #endif
     if (g.getName().contains("__enzyme_inactive_global")) {
       if (g.hasInitializer()) {
         Value *V = g.getInitializer();
@@ -605,7 +686,7 @@ bool preserveNVVM(bool Begin, Function &F) {
 
   for (auto G : toErase) {
     for (auto name : {"llvm.used", "llvm.compiler.used"}) {
-      if (auto V = F.getParent()->getGlobalVariable(name)) {
+      if (auto V = M.getGlobalVariable(name)) {
         auto C = cast<ConstantArray>(V->getInitializer());
         SmallVector<Constant *, 1> toKeep;
         bool found = false;
@@ -648,35 +729,45 @@ bool preserveNVVM(bool Begin, Function &F) {
     G->eraseFromParent();
   }
 
-  if (!Begin && F.hasFnAttribute("prev_fixup")) {
-    changed = true;
-    F.removeFnAttr("prev_fixup");
-    if (F.hasFnAttribute("prev_always_inline")) {
-      F.addFnAttr(Attribute::AlwaysInline);
-      F.removeFnAttr("prev_always_inline");
+  if (!Begin) {
+    for (auto &F : M) {
+      if (F.hasFnAttribute("prev_fixup")) {
+        changed = true;
+        F.removeFnAttr("prev_fixup");
+        if (F.hasFnAttribute("prev_always_inline")) {
+          F.addFnAttr(Attribute::AlwaysInline);
+          F.removeFnAttr("prev_always_inline");
+        }
+        if (F.hasFnAttribute("prev_no_inline")) {
+          F.removeFnAttr("prev_no_inline");
+        } else {
+          F.removeFnAttr(Attribute::NoInline);
+        }
+        int64_t val;
+        F.getFnAttribute("prev_linkage").getValueAsString().getAsInteger(10, val);
+        F.setLinkage((Function::LinkageTypes)val);
+      }
+      if (F.hasFnAttribute("clang_compiler_instance")) {
+        F.removeFnAttr("clang_compiler_instance");
+      }
+      if (F.hasFnAttribute("clang_decl")) {
+        F.removeFnAttr("clang_decl");
+      }
     }
-    if (F.hasFnAttribute("prev_no_inline")) {
-      F.removeFnAttr("prev_no_inline");
-    } else {
-      F.removeFnAttr(Attribute::NoInline);
-    }
-    int64_t val;
-    F.getFnAttribute("prev_linkage").getValueAsString().getAsInteger(10, val);
-    F.setLinkage((Function::LinkageTypes)val);
   }
   return changed;
 }
 
 namespace {
 
-class PreserveNVVM final : public FunctionPass {
+class PreserveNVVM final : public ModulePass {
 public:
   static char ID;
   bool Begin;
-  PreserveNVVM(bool Begin = true) : FunctionPass(ID), Begin(Begin) {}
+  PreserveNVVM(bool Begin = true) : ModulePass(ID), Begin(Begin) {}
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {}
-  bool runOnFunction(Function &F) override { return preserveNVVM(Begin, F); }
+  bool runOnModule(Module &M) override { return preserveNVVM(Begin, M); }
 };
 
 } // namespace
@@ -685,7 +776,7 @@ char PreserveNVVM::ID = 0;
 
 static RegisterPass<PreserveNVVM> X("preserve-nvvm", "Preserve NVVM Pass");
 
-FunctionPass *createPreserveNVVMPass(bool Begin) {
+ModulePass *createPreserveNVVMPass(bool Begin) {
   return new PreserveNVVM(Begin);
 }
 
@@ -700,9 +791,7 @@ extern "C" void AddPreserveNVVMPass(LLVMPassManagerRef PM, uint8_t Begin) {
 
 PreserveNVVMNewPM::Result
 PreserveNVVMNewPM::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
-  bool changed = false;
-  for (auto &F : M)
-    changed |= preserveNVVM(Begin, F);
+  bool changed = preserveNVVM(Begin, M);
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 llvm::AnalysisKey PreserveNVVMNewPM::Key;
