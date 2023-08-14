@@ -7,7 +7,11 @@
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Analysis/DataFlowFramework.h"
+#include "mlir/Interfaces/MemorySlotInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+
+// Necessary for MemorySlotInterface
+#include "mlir/Transforms/DialectConversion.h"
 
 // TODO: Don't depend on specific dialects
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -209,18 +213,22 @@ public:
   }
 
   bool hasActiveData(Value value) const {
-    bool activeData = false;
-    for (const auto &[other, state] : activityStates)
-      if (mayAlias(value, other)) {
-        activeData |= state.activeStore || state.activeInit;
-        if (activeData)
-          return activeData;
-      }
+    const auto &state = activityStates.lookup(value);
+    return state.activeInit || state.activeStore;
+    // bool activeData = false;
+    // for (const auto &[other, state] : activityStates)
+    //   if (mayAlias(value, other)) {
+    //     activeData |= state.activeStore || state.activeInit;
+    //     if (activeData)
+    //       return activeData;
+    //   }
 
-    return activeData;
+    // return activeData;
   }
 
   bool activeDataFlowsOut(Value value) const {
+    // const auto &state = activityStates.lookup(value);
+    // return state.activeLoad || state.activeEscape;
     bool flowsOut = false;
     for (const auto &[other, state] : activityStates)
       if (mayAlias(value, other)) {
@@ -232,31 +240,10 @@ public:
     return flowsOut;
   }
 
-  bool hasActiveLoad(Value value) const {
-    bool activeLoad = activityStates.lookup(value).activeLoad;
-    for (const auto &[other, otherState] : activityStates)
-      if (mayAlias(value, other)) {
-        activeLoad |= otherState.activeLoad;
-        if (activeLoad)
-          return activeLoad;
-      }
-    return activeLoad;
-  }
-
-  bool hasActiveStore(Value value) const {
-    bool activeStore = activityStates.lookup(value).activeStore;
-    for (const auto &[other, otherState] : activityStates) {
-      if (mayAlias(value, other)) {
-        activeStore |= otherState.activeStore;
-        if (activeStore)
-          return activeStore;
-      }
-    }
-    return activeStore;
-  }
-
   /// Set the internal activity state.
   ChangeResult setActiveStore(Value value, bool activeStore) {
+    // Make sure an entry for the value exists
+    activityStates[value];
     ChangeResult result = ChangeResult::NoChange;
     for (auto &[other, state] : activityStates) {
       if (mayAlias(value, other) && state.activeStore != activeStore) {
@@ -268,11 +255,13 @@ public:
   }
 
   ChangeResult setActiveLoad(Value value, bool activeLoad) {
-    auto &state = activityStates[value];
+    activityStates[value];
     ChangeResult result = ChangeResult::NoChange;
-    if (state.activeLoad != activeLoad) {
-      result = ChangeResult::Change;
-      state.activeLoad = activeLoad;
+    for (auto &[other, state] : activityStates) {
+      if (mayAlias(value, other) && state.activeLoad != activeLoad) {
+        result = ChangeResult::Change;
+        state.activeLoad = activeLoad;
+      }
     }
     return result;
   }
@@ -303,9 +292,9 @@ public:
          << "\n";
     }
     for (const auto &[value, state] : activityStates) {
-      os << value << ": active load " << state.activeLoad << " active store "
-         << state.activeStore << " active init " << state.activeInit
-         << " active escape " << state.activeEscape << "\n";
+      os << value << ": load " << state.activeLoad << " store "
+         << state.activeStore << " init " << state.activeInit << " escape "
+         << state.activeEscape << "\n";
     }
   }
 
@@ -370,8 +359,6 @@ public:
   using SparseForwardDataFlowAnalysis::SparseForwardDataFlowAnalysis;
 
   /// In general, we don't know anything about entry operands.
-  /// TODO: If we're going forward though, we should always have initialized
-  /// them.
   void setToEntryState(ForwardValueActivity *lattice) override {
     propagateIfChanged(lattice, lattice->join(ValueActivity()));
   }
@@ -413,9 +400,7 @@ public:
     errs() << "setting to exit state\n";
   }
 
-  void visitBranchOperand(OpOperand &operand) override {
-    errs() << "Visiting branch operand: " << operand.get() << "\n";
-  }
+  void visitBranchOperand(OpOperand &operand) override {}
 
   void
   visitOperation(Operation *op, ArrayRef<BackwardValueActivity *> operands,
@@ -474,24 +459,13 @@ public:
       // In forward-flow, a value is active if loaded from a memory resource
       // that has previously been actively stored to.
       if (isa<MemoryEffects::Read>(effect.getEffect())) {
-        // TODO: Look into using the MemorySlot interface to make this more
-        // dialect agnostic
-        if (auto loadOp = dyn_cast<LLVM::LoadOp>(op)) {
-          if (before.hasActiveData(value)) {
-            result |= after->setActiveLoad(value, true);
-
+        if (before.hasActiveData(value)) {
+          result |= after->setActiveLoad(value, true);
+          for (OpResult opResult : op->getResults()) {
             // Mark the result as (forward) active
-            auto *valueState =
-                getOrCreate<ForwardValueActivity>(loadOp.getResult());
-            result |= valueState->join(ValueActivity::getActive());
-          }
-        } else if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
-          if (before.hasActiveData(value)) {
-            result |= after->setActiveLoad(value, true);
-
-            auto *valueState =
-                getOrCreate<ForwardValueActivity>(loadOp.getResult());
-            result |= valueState->join(ValueActivity::getActive());
+            auto *valueState = getOrCreate<ForwardValueActivity>(opResult);
+            propagateIfChanged(valueState,
+                               valueState->join(ValueActivity::getActive()));
           }
         } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
           if (before.hasActiveData(value)) {
@@ -502,7 +476,8 @@ public:
               if (inputOperand->get() == value) {
                 auto *valueState = getOrCreate<ForwardValueActivity>(
                     linalgOp.getMatchingBlockArgument(inputOperand));
-                result |= valueState->join(ValueActivity::getActive());
+                propagateIfChanged(
+                    valueState, valueState->join(ValueActivity::getActive()));
               }
             }
           }
@@ -510,17 +485,12 @@ public:
       }
 
       if (isa<MemoryEffects::Write>(effect.getEffect())) {
-        if (auto storeOp = dyn_cast<LLVM::StoreOp>(op)) {
-          // If the activity for the stored value is updated, this should be
-          // re-evaluated.
-          auto *valueState =
-              getOrCreateFor<ForwardValueActivity>(op, storeOp.getValue());
-          if (valueState->getValue().isActive()) {
-            result |= after->setActiveStore(value, true);
-          }
-        } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
-          auto *valueState =
-              getOrCreateFor<ForwardValueActivity>(op, storeOp.getValue());
+        if (auto memOp = dyn_cast<PromotableMemOpInterface>(op)) {
+          // In practice the slot should not matter, nor should the rewriter.
+          MemorySlot slot{.ptr = value};
+          ConversionPatternRewriter rewriter{op->getContext()};
+          auto *valueState = getOrCreateFor<ForwardValueActivity>(
+              op, memOp.getStored(slot, rewriter));
           if (valueState->getValue().isActive()) {
             result |= after->setActiveStore(value, true);
           }
@@ -534,8 +504,6 @@ public:
                   linalgOp.getBlock()->getTerminator()->getOperand(resultIndex);
               auto *valueState =
                   getOrCreateFor<ForwardValueActivity>(op, yieldOperand);
-              errs() << "forward value storing to linalg "
-                     << valueState->getValue() << "\n";
               if (valueState->getValue().isActive()) {
                 result |= after->setActiveStore(value, true);
               }
@@ -549,6 +517,7 @@ public:
 
   // Not sure what this should be, unknown?
   void setToEntryState(ForwardMemoryActivity *lattice) override {
+    errs() << "setting to entry state\n";
     propagateIfChanged(lattice, lattice->reset());
   }
 };
@@ -561,6 +530,7 @@ public:
   void visitOperation(Operation *op, const BackwardMemoryActivity &after,
                       BackwardMemoryActivity *before) override {
     auto memory = dyn_cast<MemoryEffectOpInterface>(op);
+    ChangeResult result = before->meet(after);
     // If we can't reason about the memory effects, then conservatively assume
     // we can't deduce anything about activity via side-effects.
     if (!memory)
@@ -569,7 +539,6 @@ public:
     SmallVector<MemoryEffects::EffectInstance> effects;
     memory.getEffects(effects);
 
-    ChangeResult result = before->join(after);
     for (const auto &effect : effects) {
       Value value = effect.getValue();
 
@@ -591,23 +560,27 @@ public:
       // In backward-flow, a value is active if stored into a memory resource
       // that has subsequently been actively loaded from.
       if (isa<MemoryEffects::Read>(effect.getEffect())) {
-        if (auto loadOp = dyn_cast<LLVM::LoadOp>(op)) {
+        for (Value opResult : op->getResults()) {
           auto *valueState =
-              getOrCreateFor<BackwardValueActivity>(op, loadOp.getResult());
+              getOrCreateFor<BackwardValueActivity>(op, opResult);
           if (valueState->getValue().isActive()) {
             result |= before->setActiveLoad(value, true);
           }
         }
       }
       if (isa<MemoryEffects::Write>(effect.getEffect())) {
-        if (auto storeOp = dyn_cast<LLVM::StoreOp>(op)) {
+        if (auto memOp = dyn_cast<PromotableMemOpInterface>(op)) {
           if (after.activeDataFlowsOut(value)) {
             result |= before->setActiveStore(value, true);
 
-            // Mark the stored value as (backward) active
-            auto *valueState =
-                getOrCreate<BackwardValueActivity>(storeOp.getValue());
-            result |= valueState->meet(ValueActivity::getActive());
+            // In practice the slot should not matter for memref/llvm, nor
+            // should the rewriter.
+            MemorySlot slot{.ptr = value};
+            ConversionPatternRewriter rewriter{op->getContext()};
+            auto *valueState = getOrCreate<BackwardValueActivity>(
+                memOp.getStored(slot, rewriter));
+            propagateIfChanged(valueState,
+                               valueState->meet(ValueActivity::getActive()));
           }
         } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
           if (after.activeDataFlowsOut(value)) {
@@ -621,7 +594,8 @@ public:
                         resultIndex);
                 auto *valueState =
                     getOrCreate<BackwardValueActivity>(yieldOperand);
-                result |= valueState->meet(ValueActivity::getActive());
+                propagateIfChanged(
+                    valueState, valueState->meet(ValueActivity::getActive()));
               }
             }
           }
@@ -632,6 +606,7 @@ public:
   }
 
   void setToExitState(BackwardMemoryActivity *lattice) override {
+    errs() << "setting to exit state\n";
     propagateIfChanged(lattice, lattice->reset());
   }
 };
@@ -661,12 +636,6 @@ void enzyme::runDataFlowActivityAnalysis(
       auto *initialState = solver.getOrCreateState<ForwardMemoryActivity>(
           &callee.getFunctionBody().front());
       initialState->setActiveInit(arg, true);
-
-      //   // Should this be the front or back?
-      //   auto initBackwardState =
-      //   solver.getOrCreateState<BackwardMemoryActivity>(
-      //       &callee.getFunctionBody().back());
-      //   initBackwardState->setActiveEscape(arg, true);
     } else {
       auto *argLattice = solver.getOrCreateState<ForwardValueActivity>(arg);
       auto state = activity == enzyme::Activity::enzyme_const
@@ -681,8 +650,10 @@ void enzyme::runDataFlowActivityAnalysis(
   // considered returns of that function. Other terminators (various
   // scf/affine/linalg yield) also have the ReturnLike trait, but nested regions
   // shouldn't be traversed.
+  SmallPtrSet<Operation *, 2> returnOps;
   for (Operation &op : callee.getFunctionBody().getOps()) {
     if (op.hasTrait<OpTrait::ReturnLike>()) {
+      returnOps.insert(&op);
       auto *returnDenseLattice =
           solver.getOrCreateState<BackwardMemoryActivity>(&op);
       for (const auto &[arg, activity] :
@@ -759,20 +730,20 @@ void enzyme::runDataFlowActivityAnalysis(
                           StringAttr::get(callee->getContext(), dest));
       }
     }
-  }
 
-  auto startState = solver.lookupState<BackwardMemoryActivity>(
-      &callee.getFunctionBody().front().front());
-  if (startState) {
-    errs() << "backwards end state:\n" << *startState << "\n";
-  } else {
-    errs() << "backwards end state was null\n";
-  }
-  auto returnOp = callee.getFunctionBody().front().getTerminator();
-  auto state = solver.lookupState<ForwardMemoryActivity>(returnOp);
-  if (state) {
-    errs() << "resulting forward state:\n" << *state << "\n";
-  } else {
-    errs() << "state was null\n";
+    auto startState = solver.lookupState<BackwardMemoryActivity>(
+        &callee.getFunctionBody().front().front());
+    if (startState)
+      errs() << "backwards end state:\n" << *startState << "\n";
+    else
+      errs() << "backwards end state was null\n";
+
+    for (Operation *returnOp : returnOps) {
+      auto state = solver.lookupState<ForwardMemoryActivity>(returnOp);
+      if (state)
+        errs() << "resulting forward state:\n" << *state << "\n";
+      else
+        errs() << "state was null\n";
+    }
   }
 }
