@@ -211,7 +211,6 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
 
   AttrHandling handleDeclAttribute(Sema &S, Decl *D,
                                    const ParsedAttr &Attr) const override {
-    auto FD = cast<FunctionDecl>(D);
     if (Attr.getNumArgs() != 1) {
       unsigned ID = S.getDiagnostics().getCustomDiagID(
           DiagnosticsEngine::Error,
@@ -229,92 +228,13 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
       return AttributeNotApplied;
     }
 
-    // if (FD->isLateTemplateParsed()) return;
-    auto &AST = S.getASTContext();
-    DeclContext *declCtx = FD->getDeclContext();
-    auto loc = FD->getLocation();
-    RecordDecl *RD;
-    if (S.getLangOpts().CPlusPlus)
-      RD = CXXRecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx,
-                                 loc, loc, nullptr); // rId);
-    else
-      RD = RecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx, loc,
-                              loc, nullptr); // rId);
-    RD->setAnonymousStructOrUnion(true);
-    RD->setImplicit();
-    RD->startDefinition();
-    auto Tinfo = nullptr;
-    auto Tinfo0 = nullptr;
-    auto FT = AST.getPointerType(FD->getType());
-    auto CharTy = AST.getIntTypeForBitwidth(8, false);
-    auto FD0 = FieldDecl::Create(AST, RD, loc, loc, /*Ud*/ nullptr, FT, Tinfo0,
-                                 /*expr*/ nullptr, /*mutable*/ true,
-                                 /*inclassinit*/ ICIS_NoInit);
-    FD0->setAccess(AS_public);
-    RD->addDecl(FD0);
-    auto FD1 = FieldDecl::Create(
-        AST, RD, loc, loc, /*Ud*/ nullptr, AST.getPointerType(CharTy), Tinfo0,
-        /*expr*/ nullptr, /*mutable*/ true, /*inclassinit*/ ICIS_NoInit);
-    FD1->setAccess(AS_public);
-    RD->addDecl(FD1);
-    RD->completeDefinition();
-    assert(RD->getDefinition());
-    auto &Id = AST.Idents.get("__enzyme_function_like_autoreg_" +
-                              FD->getNameAsString());
-    auto T = AST.getRecordType(RD);
-    auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, T, Tinfo, SC_None);
-    V->setStorageClass(SC_PrivateExtern);
-    V->addAttr(clang::UsedAttr::CreateImplicit(AST));
-    TemplateArgumentListInfo *TemplateArgs = nullptr;
-    auto DR = DeclRefExpr::Create(AST, NestedNameSpecifierLoc(), loc, FD, false,
-                                  loc, FD->getType(), ExprValueKind::VK_LValue,
-                                  FD, TemplateArgs);
-#if LLVM_VERSION_MAJOR >= 13
-    auto rval = ExprValueKind::VK_PRValue;
-#else
-    auto rval = ExprValueKind::VK_RValue;
-#endif
-#if LLVM_VERSION_MAJOR >= 15
-    auto stringkind = clang::StringLiteral::StringKind::Ordinary;
-#else
-    auto stringkind = clang::StringLiteral::StringKind::Ascii;
-#endif
-    StringRef cstr = Literal->getString();
-    Expr *exprs[2] = {
-#if LLVM_VERSION_MAJOR >= 12
-      ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay, DR,
-                               nullptr, rval, FPOptionsOverride()),
-      ImplicitCastExpr::Create(
-          AST, AST.getPointerType(CharTy), CastKind::CK_ArrayToPointerDecay,
-          StringLiteral::Create(
-              AST, cstr, stringkind,
-              /*Pascal*/ false,
-              AST.getStringLiteralArrayType(CharTy, cstr.size()), loc),
-          nullptr, rval, FPOptionsOverride())
-#else
-      ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay, DR,
-                               nullptr, rval),
-      ImplicitCastExpr::Create(
-          AST, AST.getPointerType(CharTy), CastKind::CK_ArrayToPointerDecay,
-          StringLiteral::Create(
-              AST, cstr, stringkind,
-              /*Pascal*/ false,
-              AST.getStringLiteralArrayType(CharTy, cstr.size()), loc),
-          nullptr, rval)
-#endif
-    };
-    auto IL = new (AST) InitListExpr(AST, loc, exprs, loc);
-    V->setInit(IL);
-    IL->setType(T);
-    if (IL->isValueDependent()) {
-      unsigned ID = S.getDiagnostics().getCustomDiagID(
-          DiagnosticsEngine::Error, "use of attribute 'enzyme_function_like' "
-                                    "in a templated context not yet supported");
-      S.Diag(Attr.getLoc(), ID);
-      return AttributeNotApplied;
-    }
-    S.MarkVariableReferenced(loc, V);
-    S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
+    SmallVector<Expr *, 16> ArgsBuf;
+    ArgsBuf.push_back(Arg0);
+
+    // Attach an annotate attribute to the Decl.
+    D->addAttr(AnnotateAttr::Create(S.Context, "enzyme_function_like", ArgsBuf.data(),
+                                      ArgsBuf.size(),
+                                      Attr.getRange()));
     return AttributeApplied;
   }
 };
@@ -367,6 +287,57 @@ struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
 };
 
 static ParsedAttrInfoRegistry::Add<EnzymeInactiveAttrInfo> X4("enzyme_inactive",
+                                                              "");
+
+struct EnzymeDerivativeAttrInfo : public ParsedAttrInfo {
+  EnzymeDerivativeAttrInfo() {
+    OptArgs = 1;
+    // GNU-style __attribute__(("example")) and C++/C2x-style [[example]] and
+    // [[plugin::example]] supported.
+    static constexpr Spelling S[] = {
+        {ParsedAttr::AS_GNU, "enzyme_derivative"},
+        {ParsedAttr::AS_C2x, "enzyme_derivative"},
+        {ParsedAttr::AS_CXX11, "enzyme_derivative"},
+        {ParsedAttr::AS_CXX11, "enzyme::enzyme_derivative"}};
+    Spellings = S;
+  }
+
+  bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr,
+                            const Decl *D) const override {
+    // This attribute appertains to functions only.
+    if (!isa<FunctionDecl>(D)) {
+      S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
+          << Attr << "functions";
+      return false;
+    }
+    return true;
+  }
+
+  AttrHandling handleDeclAttribute(Sema &S, Decl *D,
+                                   const ParsedAttr &Attr) const override {
+    if (Attr.getNumArgs() != 1) {
+      unsigned ID = S.getDiagnostics().getCustomDiagID(
+          DiagnosticsEngine::Error,
+          "'enzyme_derivative' attribute requires one arguments");
+      S.Diag(Attr.getLoc(), ID);
+      return AttributeNotApplied;
+    }
+    auto Arg0 = Attr.getArgAsIdent(0);
+    // StringLiteral *Literal = dyn_cast<StringLiteral>(Arg0->IgnoreParenCasts());
+    auto SizeTy = S.getASTContext().getIntTypeForBitwidth(8*sizeof(Arg0), false);
+    llvm::APInt V(8*sizeof(Arg0), (size_t)(void*)Arg0);
+    Expr *exprs[1] = {IntegerLiteral::Create(S.getASTContext(), V, SizeTy, D->getLocation())};
+
+    // Attach an annotate attribute to the Decl.
+    D->addAttr(AnnotateAttr::Create(S.Context, "enzyme_derivative", exprs, 1,
+                                      Attr.getRange()));
+    llvm::errs() << " applying derivative attr:\n";
+    D->dump();
+    return AttributeApplied;
+  }
+};
+
+static ParsedAttrInfoRegistry::Add<EnzymeDerivativeAttrInfo> X5("enzyme_derivative",
                                                               "");
 
 } // namespace

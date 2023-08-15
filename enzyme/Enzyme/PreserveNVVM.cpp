@@ -48,16 +48,8 @@
 #include "clang/Parse/ParseAST.h"
 #include "clang/AST/Attr.h"
 #include "clang/Frontend/CompilerInstance.h"
-// #include "clang/FrontendTool/Utils.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/CodeGen/ModuleBuilder.h"
-
-class MacroPPCallbacks : public clang::PPCallbacks {
-public:
-  /// A pointer to code generator, where debug info generator can be found.
-  clang::CodeGenerator *Gen;
-};
-
 #endif
 
 #include <map>
@@ -404,6 +396,10 @@ bool preserveNVVM(bool Begin, Module &M) {
     }
   }
   SmallVector<GlobalVariable *, 1> toErase;
+  #ifdef ENZYME_CLANG
+  clang::EmitCodeGenOnlyAction *Act = nullptr;
+  llvm::Type *ActType = nullptr;
+  #endif
   for (GlobalVariable &g : M.globals()) {
     if (g.getName().contains(gradient_handler_name)) {
       handleCustomDerivative<gradient_handler_name,
@@ -421,11 +417,21 @@ bool preserveNVVM(bool Begin, Module &M) {
       changed = true;
     }
     #ifdef ENZYME_CLANG
-    if (g.getName().contains("__enzyme_clang_compiler_instance")) {
+    if (!Begin && g.getName().contains("__enzyme_clang_codegen")) {
       if (g.hasInitializer()) {
-        auto &CI = *(clang::CompilerInstance*)(void*)cast<ConstantInt>(g.getInitializer())->getZExtValue();
-
-        auto Act = std::make_unique<clang::EmitCodeGenOnlyAction>();
+        Act = (clang::EmitCodeGenOnlyAction *)(void*)cast<ConstantInt>(g.getInitializer())->getZExtValue();
+        delete Act;
+        Act = nullptr;
+        toErase.push_back(&g);
+        changed = true;
+      }
+    } else if (Begin && g.getName().contains("__enzyme_clang_compiler_instance")) {
+      if (g.hasInitializer()) {
+        auto init = cast<ConstantInt>(g.getInitializer());
+        ActType = init->getType();
+        auto &CI = *(clang::CompilerInstance*)(void*)init->getZExtValue();
+        assert(!Act);
+        Act = new clang::EmitCodeGenOnlyAction();
         Act->setCompilerInstance(&CI);
         auto cons = Act->CreateASTConsumer(CI, /*InFile*/"<tmpfile>");
 
@@ -441,31 +447,34 @@ bool preserveNVVM(bool Begin, Module &M) {
 
         assert(&Gen->CGM());
         assert(Gen->GetModule());
+        // auto &Ty = Gen->CGM().getTypes();
 
 
         for (auto &f : M) {
           f.addFnAttr("clang_compiler_instance", std::to_string((size_t)(void*)&CI));
           if (f.empty()) continue;
           if (auto FD = Gen->GetDeclForMangledName(f.getName())) {
-            llvm::errs() << " considering f name: " << f.getName(); 
-            FD->dump();
-            llvm::errs() << "\n";
             f.addFnAttr("clang_decl", std::to_string((size_t)(void*)FD));
+            f.addFnAttr("clang_codegen", std::to_string((size_t)(void*)Act));
+            FD->dump();
             for (auto attr : FD->getAttrs()) {
               if (auto aa = dyn_cast<clang::AnnotateAttr>(attr)) {
                 if (aa->getAnnotation() == "enzyme_inactive") {
                   f.addAttribute(AttributeList::FunctionIndex,
                                   Attribute::get(g.getContext(), "enzyme_inactive"));
                 }
+                if (aa->getAnnotation() == "enzyme_derivative") {
+                  auto oexpr = *aa->args_begin();
+                  auto rexpr = (clang::IdentifierLoc*)(void*)(((clang::IntegerLiteral*)oexpr)->getValue().getZExtValue());
+                  llvm::errs() << " ident found: " << rexpr->Ident->getName() << "\n";
+                }
               }
             }
+            // auto CGI = arrangeGlobalDeclaration(FD);
           }
         }
         for (auto &g : M.globals()) {
           if (auto FD = Gen->GetDeclForMangledName(g.getName())) {
-            llvm::errs() << " considering g name: " << g.getName(); 
-            FD->dump();
-            llvm::errs() << "\n";
             for (auto attr : FD->getAttrs()) {
               if (auto aa = dyn_cast<clang::AnnotateAttr>(attr)) {
                 if (aa->getAnnotation() == "enzyme_inactive") {
@@ -473,7 +482,6 @@ bool preserveNVVM(bool Begin, Module &M) {
                 }
               }
             }
-            //f.addFnAttr("clang_decl", std::to_string((size_t)(void*)FD));
           }
         }
         toErase.push_back(&g);
@@ -706,9 +714,9 @@ bool preserveNVVM(bool Begin, Module &M) {
                 CA->getType(), V->isConstant(), V->getLinkage(), CA, "",
                 V->getThreadLocalMode());
 #if LLVM_VERSION_MAJOR > 16
-            V->getParent()->insertGlobalVariable(V->getIterator(), NGV);
+            M.insertGlobalVariable(V->getIterator(), NGV);
 #else
-            V->getParent()->getGlobalList().insert(V->getIterator(), NGV);
+            M.getGlobalList().insert(V->getIterator(), NGV);
 #endif
             NGV->takeName(V);
 
@@ -729,6 +737,14 @@ bool preserveNVVM(bool Begin, Module &M) {
     G->eraseFromParent();
   }
 
+
+  #ifdef ENZYME_CLANG
+  if (Act) {
+    assert(ActType);
+    GlobalVariable *NGV = new GlobalVariable(M, ActType, true, Function::LinkageTypes::ExternalLinkage,
+      ConstantInt::get(ActType, (size_t)(void*)Act), "__enzyme_clang_codegen");
+  }
+  #endif
   if (!Begin) {
     for (auto &F : M) {
       if (F.hasFnAttribute("prev_fixup")) {

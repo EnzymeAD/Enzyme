@@ -60,6 +60,12 @@
 
 #include <math.h>
 
+#ifdef ENZYME_CLANG
+#include "clang/CodeGen/CodeGenAction.h"
+#include "clang/Frontend/CompilerInstance.h"
+#include "clang/CodeGen/ModuleBuilder.h"
+#endif
+
 using namespace llvm;
 
 extern "C" {
@@ -184,6 +190,29 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
 static bool isItaniumEncoding(StringRef S) {
   // Itanium encoding requires 1 or 3 leading underscores, followed by 'Z'.
   return S.startswith("_Z") || S.startswith("___Z");
+}
+
+bool fallbackAnalyze(llvm::CallInst &CI) {
+  if (auto F = CI.getCalledFunction()) {
+#ifdef ENZYME_CLANG
+    if (F->hasFnAttribute("clang_decl")) {
+      size_t declint = 0;
+      llvm::errs() << "F: " << *F << "\n";
+      llvm::errs() <<" declval: " << F->getFnAttribute("clang_decl").getValueAsString() << "\n";
+      bool err = F->getFnAttribute("clang_decl").getValueAsString().getAsInteger(10, declint);
+      assert(!err);
+      llvm::errs() << " declint" << declint << "\n";
+      auto FD = cast<clang::FunctionDecl>((clang::Decl*)(void*)declint);
+      size_t cgint = 0;
+      auto err2 = F->getFnAttribute("clang_codegen").getValueAsString().getAsInteger(10, cgint);
+      assert(!err2);
+      llvm::errs() << " cgint" << cgint << "\n";
+      auto Gen = ((clang::CodeGenAction *)(void*)cgint)->getCodeGenerator();
+      FD->dump();
+    }
+#endif 
+  }
+  return false;
 }
 
 bool dontAnalyze(StringRef str) {
@@ -4823,6 +4852,9 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
         funcName == "vprintf" || funcName == "puts" || funcName == "fprintf") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
     }
+
+    if (fallbackAnalyze(call))
+      return;
 
     if (dontAnalyze(funcName))
       return;
