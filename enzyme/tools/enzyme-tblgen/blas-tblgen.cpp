@@ -1361,24 +1361,6 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       os << "    if (!cache_" << name << " && need_" << name << ")\n"
          << "      arg_" << name << " = lookup(arg_" << name
          << ", Builder2);\n";
-      //} else if (ty == ArgType::vincInc) {
-      //  // extra handling, because if we cache a vec we overwrite the inc
-      //  const auto prevTy = typeMap.lookup(i - 1);
-      //  assert(prevTy == ArgType::vincData);
-      //  const auto vecName = nameVec[i - 1];
-      //  os << "    if (!(cache_" << name << " || cache_" << vecName
-      //     << ") && need_" << name << ")\n"
-      //     << "      arg_" << name << " = lookup(arg_" << name
-      //     << ", Builder2);\n";
-      //} else if (ty == ArgType::mldLD) {
-      //  // extra handling, because if we cache a mat we overwrite the ld
-      //  const auto prevTy = typeMap.lookup(i - 1);
-      //  assert(prevTy == ArgType::mldData);
-      //  const auto matName = nameVec[i - 1];
-      //  os << "    if (!(cache_" << name << " || cache_" << matName
-      //     << ") && need_" << name << ")\n"
-      //     << "      arg_" << name << " = lookup(arg_" << name
-      //     << ", Builder2);\n";
     }
   }
 
