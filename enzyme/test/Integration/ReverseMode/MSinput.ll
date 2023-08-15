@@ -1,3 +1,5 @@
+; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -S | FileCheck %s; fi
+
 %rtti.CompleteObjectLocator = type { i32, i32, i32, i32, i32, i32 }
 %rtti.TypeDescriptor13 = type { ptr, ptr, [14 x i8] }
 %rtti.ClassHierarchyDescriptor = type { i32, i32, i32, i32 }
