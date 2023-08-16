@@ -13,6 +13,9 @@ include "mlir/Pass/PassBase.td"
 
 def DifferentiatePass : Pass<"enzyme"> {
   let summary = "Differentiate Passes";
+  let dependentDialects = [
+    "cf::ControlFlowDialect"
+  ];
   let constructor = "mlir::enzyme::createDifferentiatePass()";
 }
 
@@ -25,6 +28,13 @@ def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
       /*CLI argument=*/"funcs",
       /*type=*/"std::string",
       /*description=*/"The names of the functions to perform activity analysis on"
+    >,
+    Option<
+      /*C++ variable name=*/"verbose",
+      /*CLI argument=*/"verbose",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Print detailed activity information"
     >,
     Option<
       /*C++ variable name=*/"inactiveArgs",

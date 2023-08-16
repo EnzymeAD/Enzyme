@@ -27,49 +27,6 @@ using namespace mlir;
 namespace {
 using llvm::errs;
 
-/// Parse calls to __enzyme_autodiff to enzyme.autodiff ops. Specific to
-/// importing LLVM IR tests to MLIR. This will hopefully be replaced with a more
-/// robust mechanism (e.g. Polygeist).
-LogicalResult inferEnzymeAutodiffOps(ModuleOp moduleOp) {
-  SymbolTableCollection symbolTable;
-  FunctionOpInterface enzymeOp = nullptr;
-  for (Operation &op : moduleOp.getBody()->getOperations()) {
-    if (auto funcOp = dyn_cast<FunctionOpInterface>(&op))
-      if (StringRef(llvm::demangle(funcOp.getName().str()))
-              .contains("__enzyme_autodiff")) {
-        enzymeOp = funcOp;
-        break;
-      }
-  }
-  if (!enzymeOp) {
-    moduleOp.emitError("Failed to find __enzyme_autodiff op");
-    return failure();
-  }
-
-  auto uses = enzymeOp.getSymbolUses(moduleOp);
-  for (SymbolTable::SymbolUse use : *uses) {
-    if (!isa<CallOpInterface>(use.getUser()))
-      continue;
-    auto callOp = cast<CallOpInterface>(use.getUser());
-    auto operands = callOp.getArgOperands();
-
-    // Get the callee
-    auto addressOf = cast<LLVM::AddressOfOp>(operands[0].getDefiningOp());
-    auto callee = addressOf.getFunction(symbolTable);
-    SmallVector<enzyme::Activity> argActivities;
-    argActivities.reserve(callee.getNumArguments());
-    for (Value operand : operands.drop_front(1)) {
-      if (isa<FloatType>(operand.getType())) {
-        argActivities.push_back(enzyme::Activity::enzyme_out);
-      } else if (operand.getType().isIntOrIndex()) {
-        argActivities.push_back(enzyme::Activity::enzyme_const);
-      }
-    }
-    enzyme::runDataFlowActivityAnalysis(callee, argActivities, /*print=*/true);
-  }
-  return success();
-}
-
 struct PrintActivityAnalysisPass
     : public enzyme::PrintActivityAnalysisPassBase<PrintActivityAnalysisPass> {
 
@@ -104,9 +61,17 @@ struct PrintActivityAnalysisPass
     auto moduleOp = cast<ModuleOp>(getOperation());
 
     if (funcsToAnalyze.empty()) {
-      if (failed(inferEnzymeAutodiffOps(moduleOp))) {
-        signalPassFailure();
-      }
+      moduleOp.walk([this](FunctionOpInterface callee) {
+        if (callee.isExternal())
+          return;
+
+        SmallVector<enzyme::Activity> argActivities{callee.getNumArguments()},
+            resultActivities{callee.getNumResults()};
+        initializeArgAndResActivities(callee, argActivities, resultActivities);
+
+        enzyme::runDataFlowActivityAnalysis(callee, argActivities,
+                                            /*print=*/true, verbose);
+      });
       return;
     }
 
@@ -128,7 +93,7 @@ struct PrintActivityAnalysisPass
       initializeArgAndResActivities(callee, argActivities, resultActivities);
 
       enzyme::runDataFlowActivityAnalysis(callee, argActivities,
-                                          /*print=*/true);
+                                          /*print=*/true, verbose);
     }
   }
 };

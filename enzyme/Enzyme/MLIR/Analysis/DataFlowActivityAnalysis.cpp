@@ -214,16 +214,19 @@ public:
 
   bool hasActiveData(Value value) const {
     const auto &state = activityStates.lookup(value);
-    return state.activeInit || state.activeStore;
-    // bool activeData = false;
-    // for (const auto &[other, state] : activityStates)
-    //   if (mayAlias(value, other)) {
-    //     activeData |= state.activeStore || state.activeInit;
-    //     if (activeData)
-    //       return activeData;
-    //   }
+    if (state.activeInit || state.activeStore) {
+      return true;
+    }
 
-    // return activeData;
+    bool activeData = false;
+    for (const auto &[other, state] : activityStates)
+      if (mayAlias(value, other)) {
+        activeData |= state.activeStore || state.activeInit;
+        if (activeData)
+          return activeData;
+      }
+
+    return activeData;
   }
 
   bool activeDataFlowsOut(Value value) const {
@@ -467,8 +470,7 @@ public:
             propagateIfChanged(valueState,
                                valueState->join(ValueActivity::getActive()));
           }
-        } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
-          if (before.hasActiveData(value)) {
+          if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
             result |= after->setActiveLoad(value, true);
 
             // propagate from input to block argument
@@ -493,6 +495,11 @@ public:
               op, memOp.getStored(slot, rewriter));
           if (valueState->getValue().isActive()) {
             result |= after->setActiveStore(value, true);
+
+            auto ptrValueActivity = getOrCreate<ForwardValueActivity>(value);
+            propagateIfChanged(
+                ptrValueActivity,
+                ptrValueActivity->join(ValueActivity::getActive()));
           }
         } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
           // linalg.yield stores to the corresponding value.
@@ -613,7 +620,7 @@ public:
 
 void enzyme::runDataFlowActivityAnalysis(
     FunctionOpInterface callee, ArrayRef<enzyme::Activity> argumentActivity,
-    bool print) {
+    bool print, bool verbose) {
   SymbolTableCollection symbolTable;
   DataFlowSolver solver;
 
@@ -636,6 +643,18 @@ void enzyme::runDataFlowActivityAnalysis(
       auto *initialState = solver.getOrCreateState<ForwardMemoryActivity>(
           &callee.getFunctionBody().front());
       initialState->setActiveInit(arg, true);
+
+      // May be too conservative to mark the duplicated arguments as active
+      // values.
+      auto *argLattice = solver.getOrCreateState<ForwardValueActivity>(arg);
+      auto state = activity == enzyme::Activity::enzyme_const
+                       ? ValueActivity::getConstant()
+                       : ValueActivity::getActive();
+      argLattice->join(state);
+
+      auto *backwardLattice =
+          solver.getOrCreateState<BackwardValueActivity>(arg);
+      backwardLattice->meet(state);
     } else {
       auto *argLattice = solver.getOrCreateState<ForwardValueActivity>(arg);
       auto state = activity == enzyme::Activity::enzyme_const
@@ -680,40 +699,55 @@ void enzyme::runDataFlowActivityAnalysis(
   }
 
   if (print) {
+    errs() << FlatSymbolRefAttr::get(callee) << ":\n";
+    for (BlockArgument arg : callee.getArguments()) {
+      if (Attribute tagAttr =
+              callee.getArgAttr(arg.getArgNumber(), "enzyme.tag")) {
+        errs() << "  " << tagAttr << ": ";
+        auto fva = solver.lookupState<ForwardValueActivity>(arg);
+        auto bva = solver.lookupState<BackwardValueActivity>(arg);
+        if (fva->getValue().isActive() && bva->getValue().isActive()) {
+          errs() << "Active\n";
+        } else {
+          errs() << "Constant\n";
+        }
+      }
+    }
     callee.walk([&](Operation *op) {
       if (op->hasAttr("tag")) {
-        errs() << op->getAttr("tag") << ": ";
-        for (Value operand : op->getOperands()) {
-          auto forwardValueActivity =
-              solver.lookupState<ForwardValueActivity>(operand);
-          if (forwardValueActivity) {
-            errs() << "  ";
-            forwardValueActivity->print(errs());
-            errs() << "\n";
+        errs() << "  " << op->getAttr("tag") << ": ";
+        for (OpResult opResult : op->getResults()) {
+          auto fva = solver.lookupState<ForwardValueActivity>(opResult);
+          auto bva = solver.lookupState<BackwardValueActivity>(opResult);
+          if (fva->getValue().isActive() && bva->getValue().isActive()) {
+            errs() << "Active\n";
           } else {
-            errs() << "  <null>\n";
+            errs() << "Constant\n";
           }
         }
       }
+
       for (OpResult result : op->getResults()) {
         auto forwardValueActivity =
             solver.lookupState<ForwardValueActivity>(result);
         if (forwardValueActivity) {
-          std::string dest;
-          llvm::raw_string_ostream sstream(dest);
-          forwardValueActivity->getValue().print(sstream);
-          op->setAttr("fvactive" + std::to_string(result.getResultNumber()),
-                      StringAttr::get(op->getContext(), dest));
+          std::string dest, key{"fva"};
+          llvm::raw_string_ostream os(dest);
+          if (op->getNumResults() != 1)
+            key += result.getResultNumber();
+          forwardValueActivity->getValue().print(os);
+          op->setAttr(key, StringAttr::get(op->getContext(), dest));
         }
 
         auto backwardValueActivity =
             solver.lookupState<BackwardValueActivity>(result);
         if (backwardValueActivity) {
-          std::string dest;
+          std::string dest, key{"bva"};
           llvm::raw_string_ostream os(dest);
+          if (op->getNumResults() != 1)
+            key += result.getResultNumber();
           backwardValueActivity->getValue().print(os);
-          op->setAttr("bvactive" + std::to_string(result.getResultNumber()),
-                      StringAttr::get(op->getContext(), dest));
+          op->setAttr(key, StringAttr::get(op->getContext(), dest));
         }
       }
     });
@@ -726,24 +760,26 @@ void enzyme::runDataFlowActivityAnalysis(
         std::string dest;
         llvm::raw_string_ostream os(dest);
         backwardValueActivity->getValue().print(os);
-        callee.setArgAttr(arg.getArgNumber(), "enzyme.bvactive",
+        callee.setArgAttr(arg.getArgNumber(), "enzyme.bva",
                           StringAttr::get(callee->getContext(), dest));
       }
     }
 
-    auto startState = solver.lookupState<BackwardMemoryActivity>(
-        &callee.getFunctionBody().front().front());
-    if (startState)
-      errs() << "backwards end state:\n" << *startState << "\n";
-    else
-      errs() << "backwards end state was null\n";
-
-    for (Operation *returnOp : returnOps) {
-      auto state = solver.lookupState<ForwardMemoryActivity>(returnOp);
-      if (state)
-        errs() << "resulting forward state:\n" << *state << "\n";
+    if (verbose) {
+      auto startState = solver.lookupState<BackwardMemoryActivity>(
+          &callee.getFunctionBody().front().front());
+      if (startState)
+        errs() << "backwards end state:\n" << *startState << "\n";
       else
-        errs() << "state was null\n";
+        errs() << "backwards end state was null\n";
+
+      for (Operation *returnOp : returnOps) {
+        auto state = solver.lookupState<ForwardMemoryActivity>(returnOp);
+        if (state)
+          errs() << "resulting forward state:\n" << *state << "\n";
+        else
+          errs() << "state was null\n";
+      }
     }
   }
 }
