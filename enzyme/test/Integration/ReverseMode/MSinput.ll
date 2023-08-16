@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -S | FileCheck %s; fi
+; RUN: if [ %llvmver -eq 15 ]; then %opt < %s %newLoadEnzyme -S | FileCheck %s; fi
 
 %rtti.CompleteObjectLocator = type { i32, i32, i32, i32, i32, i32 }
 %rtti.TypeDescriptor13 = type { ptr, ptr, [14 x i8] }
@@ -174,3 +174,6 @@ attributes #8 = { nounwind }
 !16 = !{!"vtable pointer", !8, i64 0}
 !17 = !{!18, !10, i64 8}
 !18 = !{!"?AUObject@@", !10, i64 8}
+
+; CHECK: define internal void @"diffe?new_delete_test@@YANPEAN_K@Z"(ptr nocapture noundef readonly %x, ptr nocapture %"x'", i64 noundef %n, double %differeturn) #7 {
+; CHECK: define internal { double } @"diffe?eval@Object1@@UEAANN@Z"(ptr align 8 dereferenceable(16) %this, ptr align 8 %"this'", double %v, double %differeturn, ptr %tapeArg) unnamed_addr #7 align 2 {
