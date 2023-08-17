@@ -3131,6 +3131,7 @@ public:
           ss << "Cannot deduce type of copy " << MTI;
           CustomErrorHandler(str.c_str(), wrap(&MTI), ErrorType::NoType,
                              &TR.analyzer, nullptr, wrap(&BuilderZ));
+          vd = TypeTree(BaseType::Integer).Only(0, &MTI);
         } else {
           EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI,
                       "failed to deduce type of copy ", MTI);
