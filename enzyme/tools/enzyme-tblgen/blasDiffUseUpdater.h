@@ -46,6 +46,8 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
     auto name = nameVec[arg];
     os << "  bool active_" << name << " = !gutils->isConstantValue(arg_" << name
        << ");\n";
+    os << "  if (EnzymeRuntimeActivityCheck && active_" << name
+       << ") return true;\n";
   }
 
   emit_need_cache_info(pattern, os);
