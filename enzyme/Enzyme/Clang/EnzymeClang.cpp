@@ -76,7 +76,9 @@ class EnzymePlugin final : public clang::ASTConsumer {
 
 public:
   EnzymePlugin(clang::CompilerInstance &CI) : CI(CI) {
+#if LLVM_VERSION_MAJOR >= 13
     CI.getCodeGenOpts().ClearASTBeforeBackend = false;
+#endif
     FrontendOptions &Opts = CI.getFrontendOpts();
     CodeGenOptions &CGOpts = CI.getCodeGenOpts();
     auto PluginName = "ClangEnzyme-" + std::to_string(LLVM_VERSION_MAJOR);
@@ -131,8 +133,10 @@ public:
     V->setInit(expr);
     S.MarkVariableReferenced(loc, V);
     S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
+#if LLVM_VERSION_MAJOR >= 13
     CI.getCodeGenOpts().ClearASTBeforeBackend = false;
     assert(CI.getCodeGenOpts().ClearASTBeforeBackend == false);
+#endif
   }
   bool HandleTopLevelDecl(clang::DeclGroupRef dg) override {
     using namespace clang;
@@ -228,6 +232,7 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
       return AttributeNotApplied;
     }
 
+#if LLVM_VERSION_MAJOR >= 13
     SmallVector<Expr *, 16> ArgsBuf;
     ArgsBuf.push_back(Arg0);
 
@@ -235,6 +240,94 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
     D->addAttr(AnnotateAttr::Create(S.Context, "enzyme_function_like", ArgsBuf.data(),
                                       ArgsBuf.size(),
                                       Attr.getRange()));
+#else
+    auto &AST = S.getASTContext();
+    auto FD = cast<FunctionDecl>(D);
+    DeclContext *declCtx = FD->getDeclContext();
+    auto loc = FD->getLocation();
+    RecordDecl *RD;
+    if (S.getLangOpts().CPlusPlus)
+      RD = CXXRecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx,
+                                 loc, loc, nullptr); // rId);
+    else
+      RD = RecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx, loc,
+                              loc, nullptr); // rId);
+    RD->setAnonymousStructOrUnion(true);
+    RD->setImplicit();
+    RD->startDefinition();
+    auto Tinfo = nullptr;
+    auto Tinfo0 = nullptr;
+    auto FT = AST.getPointerType(FD->getType());
+    auto CharTy = AST.getIntTypeForBitwidth(8, false);
+    auto FD0 = FieldDecl::Create(AST, RD, loc, loc, /*Ud*/ nullptr, FT, Tinfo0,
+                                 /*expr*/ nullptr, /*mutable*/ true,
+                                 /*inclassinit*/ ICIS_NoInit);
+    FD0->setAccess(AS_public);
+    RD->addDecl(FD0);
+    auto FD1 = FieldDecl::Create(
+        AST, RD, loc, loc, /*Ud*/ nullptr, AST.getPointerType(CharTy), Tinfo0,
+        /*expr*/ nullptr, /*mutable*/ true, /*inclassinit*/ ICIS_NoInit);
+    FD1->setAccess(AS_public);
+    RD->addDecl(FD1);
+    RD->completeDefinition();
+    assert(RD->getDefinition());
+    auto &Id = AST.Idents.get("__enzyme_function_like_autoreg_" +
+                              FD->getNameAsString());
+    auto T = AST.getRecordType(RD);
+    auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, T, Tinfo, SC_None);
+    V->setStorageClass(SC_PrivateExtern);
+    V->addAttr(clang::UsedAttr::CreateImplicit(AST));
+    TemplateArgumentListInfo *TemplateArgs = nullptr;
+    auto DR = DeclRefExpr::Create(AST, NestedNameSpecifierLoc(), loc, FD, false,
+                                  loc, FD->getType(), ExprValueKind::VK_LValue,
+                                  FD, TemplateArgs);
+#if LLVM_VERSION_MAJOR >= 13
+    auto rval = ExprValueKind::VK_PRValue;
+#else
+    auto rval = ExprValueKind::VK_RValue;
+#endif
+#if LLVM_VERSION_MAJOR >= 15
+    auto stringkind = clang::StringLiteral::StringKind::Ordinary;
+#else
+    auto stringkind = clang::StringLiteral::StringKind::Ascii;
+#endif
+    StringRef cstr = Literal->getString();
+    Expr *exprs[2] = {
+#if LLVM_VERSION_MAJOR >= 12
+      ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay, DR,
+                               nullptr, rval, FPOptionsOverride()),
+      ImplicitCastExpr::Create(
+          AST, AST.getPointerType(CharTy), CastKind::CK_ArrayToPointerDecay,
+          StringLiteral::Create(
+              AST, cstr, stringkind,
+              /*Pascal*/ false,
+              AST.getStringLiteralArrayType(CharTy, cstr.size()), loc),
+          nullptr, rval, FPOptionsOverride())
+#else
+      ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay, DR,
+                               nullptr, rval),
+      ImplicitCastExpr::Create(
+          AST, AST.getPointerType(CharTy), CastKind::CK_ArrayToPointerDecay,
+          StringLiteral::Create(
+              AST, cstr, stringkind,
+              /*Pascal*/ false,
+              AST.getStringLiteralArrayType(CharTy, cstr.size()), loc),
+          nullptr, rval)
+#endif
+    };
+    auto IL = new (AST) InitListExpr(AST, loc, exprs, loc);
+    V->setInit(IL);
+    IL->setType(T);
+    if (IL->isValueDependent()) {
+      unsigned ID = S.getDiagnostics().getCustomDiagID(
+          DiagnosticsEngine::Error, "use of attribute 'enzyme_function_like' "
+                                    "in a templated context not yet supported");
+      S.Diag(Attr.getLoc(), ID);
+      return AttributeNotApplied;
+    }
+    S.MarkVariableReferenced(loc, V);
+    S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
+#endif
     return AttributeApplied;
   }
 };
@@ -279,9 +372,72 @@ struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
       return AttributeNotApplied;
     }
 
+#if LLVM_VERSION_MAJOR >= 13
     // Attach an annotate attribute to the Decl.
     D->addAttr(AnnotateAttr::Create(S.Context, "enzyme_inactive", nullptr, 0,
                                       Attr.getRange()));
+#else
+    auto &AST = S.getASTContext();
+    DeclContext *declCtx = D->getDeclContext();
+    auto loc = D->getLocation();
+    RecordDecl *RD;
+    if (S.getLangOpts().CPlusPlus)
+      RD = CXXRecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx,
+                                 loc, loc, nullptr); // rId);
+    else
+      RD = RecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx, loc,
+                              loc, nullptr); // rId);
+    RD->setAnonymousStructOrUnion(true);
+    RD->setImplicit();
+    RD->startDefinition();
+    auto T = isa<FunctionDecl>(D) ? cast<FunctionDecl>(D)->getType()
+                                  : cast<VarDecl>(D)->getType();
+    auto Name = isa<FunctionDecl>(D) ? cast<FunctionDecl>(D)->getNameAsString()
+                                     : cast<VarDecl>(D)->getNameAsString();
+    auto FT = AST.getPointerType(T);
+    auto subname = isa<FunctionDecl>(D) ? "inactivefn" : "inactive_global";
+    auto &Id = AST.Idents.get(
+        (StringRef("__enzyme_") + subname + "_autoreg_" + Name).str());
+    auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, FT, nullptr, SC_None);
+    V->setStorageClass(SC_PrivateExtern);
+    V->addAttr(clang::UsedAttr::CreateImplicit(AST));
+    TemplateArgumentListInfo *TemplateArgs = nullptr;
+    auto DR = DeclRefExpr::Create(
+        AST, NestedNameSpecifierLoc(), loc, cast<ValueDecl>(D), false, loc, T,
+        ExprValueKind::VK_LValue, cast<NamedDecl>(D), TemplateArgs);
+#if LLVM_VERSION_MAJOR >= 13
+    auto rval = ExprValueKind::VK_PRValue;
+#else
+    auto rval = ExprValueKind::VK_RValue;
+#endif
+    Expr *expr = nullptr;
+    if (isa<FunctionDecl>(D)) {
+#if LLVM_VERSION_MAJOR >= 12
+      expr =
+          ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
+                                   DR, nullptr, rval, FPOptionsOverride());
+#else
+      expr = ImplicitCastExpr::Create(
+          AST, FT, CastKind::CK_FunctionToPointerDecay, DR, nullptr, rval);
+#endif
+    } else {
+      expr =
+          UnaryOperator::Create(AST, DR, UnaryOperatorKind::UO_AddrOf, FT, rval,
+                                clang::ExprObjectKind ::OK_Ordinary, loc,
+                                /*canoverflow*/ false, FPOptionsOverride());
+    }
+
+    if (expr->isValueDependent()) {
+      unsigned ID = S.getDiagnostics().getCustomDiagID(
+          DiagnosticsEngine::Error, "use of attribute 'enzyme_inactive' "
+                                    "in a templated context not yet supported");
+      S.Diag(Attr.getLoc(), ID);
+      return AttributeNotApplied;
+    }
+    V->setInit(expr);
+    S.MarkVariableReferenced(loc, V);
+    S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
+#endif
     return AttributeApplied;
   }
 };

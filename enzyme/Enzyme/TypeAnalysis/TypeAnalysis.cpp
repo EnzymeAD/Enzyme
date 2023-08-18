@@ -207,7 +207,9 @@ bool fallbackAnalyze(llvm::CallInst &CI) {
       auto err2 = F->getFnAttribute("clang_codegen").getValueAsString().getAsInteger(10, cgint);
       assert(!err2);
       llvm::errs() << " cgint" << cgint << "\n";
+#if LLVM_VERSION_MAJOR >= 13
       auto Gen = ((clang::CodeGenAction *)(void*)cgint)->getCodeGenerator();
+#endif
       FD->dump();
     }
 #endif 

@@ -32,6 +32,7 @@ class ModulePass;
 }
 
 llvm::ModulePass *createPreserveNVVMPass(bool Begin);
+llvm::FunctionPass *createPreserveNVVMFunctionPass(bool Begin);
 
 class PreserveNVVMNewPM final
     : public llvm::AnalysisInfoMixin<PreserveNVVMNewPM> {

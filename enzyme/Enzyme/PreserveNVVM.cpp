@@ -50,6 +50,7 @@
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/CodeGen/ModuleBuilder.h"
+#include "clang/Sema/Sema.h"
 #endif
 
 #include <map>
@@ -310,7 +311,7 @@ bool preserveLinkage(bool Begin, Function &F) {
   return false;
 }
 
-bool preserveNVVM(bool Begin, Module &M) {
+bool preserveNVVM(bool Begin, Module &M, llvm::Function *SF) {
   bool changed = false;
   StringMap<std::pair<std::string, std::string>> Implements;
   for (std::string T : {"", "f"}) {
@@ -343,6 +344,7 @@ bool preserveNVVM(bool Begin, Module &M) {
     }
   }
   for (auto &F : M) {
+    if (SF && &F != SF) continue;
     auto found = Implements.find(F.getName());
     if (found != Implements.end()) {
       changed = true;
@@ -435,24 +437,30 @@ bool preserveNVVM(bool Begin, Module &M) {
         Act->setCompilerInstance(&CI);
         auto cons = Act->CreateASTConsumer(CI, /*InFile*/"<tmpfile>");
 
+#if LLVM_VERSION_MAJOR >= 13
         auto Gen = Act->getCodeGenerator();
         assert(Gen);
-        cons->Initialize(CI.getASTContext());
+#endif
 
         auto oldPP = CI.getPreprocessorPtr();
         CI.createPreprocessor(clang::TU_Complete);
+        cons->Initialize(CI.getASTContext());
+        CI.setSema(new clang::Sema(CI.getPreprocessor(), CI.getASTContext(), *cons,
+                          clang::TU_Complete, nullptr));
         // Note that right here we reparse/recompile all of llvm things
         clang::ParseAST(CI.getPreprocessor(), cons.get(), CI.getASTContext());
         CI.setPreprocessor(oldPP);
 
+#if LLVM_VERSION_MAJOR >= 13
         assert(&Gen->CGM());
         assert(Gen->GetModule());
         // auto &Ty = Gen->CGM().getTypes();
-
+#endif
 
         for (auto &f : M) {
           f.addFnAttr("clang_compiler_instance", std::to_string((size_t)(void*)&CI));
           if (f.empty()) continue;
+#if LLVM_VERSION_MAJOR >= 13
           if (auto FD = Gen->GetDeclForMangledName(f.getName())) {
             f.addFnAttr("clang_decl", std::to_string((size_t)(void*)FD));
             f.addFnAttr("clang_codegen", std::to_string((size_t)(void*)Act));
@@ -470,9 +478,10 @@ bool preserveNVVM(bool Begin, Module &M) {
                 }
               }
             }
-            // auto CGI = arrangeGlobalDeclaration(FD);
           }
+#endif
         }
+#if LLVM_VERSION_MAJOR >= 13
         for (auto &g : M.globals()) {
           if (auto FD = Gen->GetDeclForMangledName(g.getName())) {
             for (auto attr : FD->getAttrs()) {
@@ -484,6 +493,7 @@ bool preserveNVVM(bool Begin, Module &M) {
             }
           }
         }
+#endif
         toErase.push_back(&g);
         changed = true;
       }
@@ -531,10 +541,12 @@ bool preserveNVVM(bool Begin, Module &M) {
           break;
         }
         if (auto F = cast<Function>(V)) {
+          if (!SF || F == SF) {
           F->addAttribute(AttributeList::FunctionIndex,
                           Attribute::get(g.getContext(), "enzyme_inactive"));
           toErase.push_back(&g);
           changed = true;
+          }
         } else {
           llvm::errs() << "Param of __enzyme_inactivefn must be a "
                           "constant function"
@@ -581,11 +593,13 @@ bool preserveNVVM(bool Begin, Module &M) {
           llvm_unreachable("enzyme_function_like");
         }
         if (auto F = cast<Function>(V)) {
+          if (!SF || F == SF) {
           F->addAttribute(
               AttributeList::FunctionIndex,
               Attribute::get(g.getContext(), "enzyme_math", nameVal));
           toErase.push_back(&g);
           changed = true;
+          }
         } else {
           llvm::errs() << "Param of __enzyme_function_like must be a "
                           "constant function"
@@ -661,6 +675,10 @@ bool preserveNVVM(bool Begin, Module &M) {
           F->addAttribute(AttributeList::FunctionIndex,
                           Attribute::get(g.getContext(), "enzyme_allocator",
                                          std::to_string(index)));
+          F->addAttribute(AttributeList::FunctionIndex,
+                                        Attribute::get(g.getContext(),
+                                                       "enzyme_deallocator",
+                                                       deallocIndStr));
         } else {
           llvm::errs() << "Param of __enzyme_allocation_like must be a "
                           "function"
@@ -668,17 +686,13 @@ bool preserveNVVM(bool Begin, Module &M) {
                        << *V << "\n";
           llvm_unreachable("__enzyme_allocation_like");
         }
-        cast<Function>(V)->addAttribute(AttributeList::FunctionIndex,
-                                        Attribute::get(g.getContext(),
-                                                       "enzyme_deallocator",
-                                                       deallocIndStr));
 
         if (auto F = dyn_cast<Function>(deallocfn)) {
           cast<Function>(V)->setMetadata(
               "enzyme_deallocator_fn",
               llvm::MDTuple::get(F->getContext(),
                                  {llvm::ValueAsMetadata::get(F)}));
-          changed |= preserveLinkage(Begin, *F);
+          preserveLinkage(Begin, *F);
         } else {
           llvm::errs() << "Free fn of __enzyme_allocation_like must be a "
                           "function"
@@ -747,6 +761,7 @@ bool preserveNVVM(bool Begin, Module &M) {
   #endif
   if (!Begin) {
     for (auto &F : M) {
+      if (SF && &F != SF) continue;
       if (F.hasFnAttribute("prev_fixup")) {
         changed = true;
         F.removeFnAttr("prev_fixup");
@@ -783,7 +798,7 @@ public:
   PreserveNVVM(bool Begin = true) : ModulePass(ID), Begin(Begin) {}
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {}
-  bool runOnModule(Module &M) override { return preserveNVVM(Begin, M); }
+  bool runOnModule(Module &M) override { return preserveNVVM(Begin, M, nullptr); }
 };
 
 } // namespace
@@ -794,6 +809,27 @@ static RegisterPass<PreserveNVVM> X("preserve-nvvm", "Preserve NVVM Pass");
 
 ModulePass *createPreserveNVVMPass(bool Begin) {
   return new PreserveNVVM(Begin);
+}
+
+namespace {
+
+class PreserveNVVMFunc final : public FunctionPass {
+public:
+  static char ID;
+  bool Begin;
+  PreserveNVVMFunc(bool Begin = true) : FunctionPass(ID), Begin(Begin) {}
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {}
+  bool runOnFunction(Function &F) override { return preserveNVVM(Begin, *F.getParent(), &F); }
+};
+
+} // namespace
+
+char PreserveNVVMFunc::ID = 0;
+
+static RegisterPass<PreserveNVVMFunc> X2("preserve-nvvm-function", "Preserve NVVM Pass");
+FunctionPass *createPreserveNVVMFunctionPass(bool Begin) {
+  return new PreserveNVVMFunc(Begin);
 }
 
 #include <llvm-c/Core.h>
@@ -807,7 +843,7 @@ extern "C" void AddPreserveNVVMPass(LLVMPassManagerRef PM, uint8_t Begin) {
 
 PreserveNVVMNewPM::Result
 PreserveNVVMNewPM::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
-  bool changed = preserveNVVM(Begin, M);
+  bool changed = preserveNVVM(Begin, M, nullptr);
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 llvm::AnalysisKey PreserveNVVMNewPM::Key;

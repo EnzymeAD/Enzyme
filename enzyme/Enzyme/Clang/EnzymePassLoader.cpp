@@ -55,7 +55,7 @@ static void loadPass(const PassManagerBuilder &Builder,
 
 static void loadNVVMPass(const PassManagerBuilder &Builder,
                          legacy::PassManagerBase &PM) {
-  PM.add(createPreserveNVVMPass(/*Begin=*/true));
+  PM.add(createPreserveNVVMFunctionPass(/*Begin=*/true));
 }
 
 // These constructors add our pass to a list of global extensions.
