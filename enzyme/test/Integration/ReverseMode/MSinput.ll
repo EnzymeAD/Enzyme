@@ -176,3 +176,5 @@ attributes #8 = { nounwind }
 !18 = !{!"?AUObject@@", !10, i64 8}
 
 ; CHECK: %rtti.CompleteObjectLocator = type { i32, i32, i32, i32, i32, i32 }
+; CHECK: define internal void @"diffe?new_delete_test@@YANPEAN_K@Z"
+; CHECK: define internal { double } @"diffe?eval@Object1@@UEAANN@Z"
