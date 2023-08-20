@@ -7,11 +7,7 @@
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Analysis/DataFlowFramework.h"
-#include "mlir/Interfaces/MemorySlotInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-
-// Necessary for MemorySlotInterface
-#include "mlir/Transforms/DialectConversion.h"
 
 // TODO: Don't depend on specific dialects
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -424,6 +420,15 @@ public:
   }
 };
 
+std::optional<Value> getStored(Operation *op) {
+  if (auto storeOp = dyn_cast<LLVM::StoreOp>(op)) {
+    return storeOp.getValue();
+  } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
+    return storeOp.getValue();
+  }
+  return std::nullopt;
+}
+
 class DenseForwardActivityAnalysis
     : public DenseForwardDataFlowAnalysis<ForwardMemoryActivity> {
 public:
@@ -487,12 +492,9 @@ public:
       }
 
       if (isa<MemoryEffects::Write>(effect.getEffect())) {
-        if (auto memOp = dyn_cast<PromotableMemOpInterface>(op)) {
-          // In practice the slot should not matter, nor should the rewriter.
-          MemorySlot slot{.ptr = value};
-          ConversionPatternRewriter rewriter{op->getContext()};
-          auto *valueState = getOrCreateFor<ForwardValueActivity>(
-              op, memOp.getStored(slot, rewriter));
+        std::optional<Value> stored = getStored(op);
+        if (stored.has_value()) {
+          auto *valueState = getOrCreateFor<ForwardValueActivity>(op, *stored);
           if (valueState->getValue().isActive()) {
             result |= after->setActiveStore(value, true);
 
@@ -576,16 +578,11 @@ public:
         }
       }
       if (isa<MemoryEffects::Write>(effect.getEffect())) {
-        if (auto memOp = dyn_cast<PromotableMemOpInterface>(op)) {
+        std::optional<Value> stored = getStored(op);
+        if (stored.has_value()) {
           if (after.activeDataFlowsOut(value)) {
             result |= before->setActiveStore(value, true);
-
-            // In practice the slot should not matter for memref/llvm, nor
-            // should the rewriter.
-            MemorySlot slot{.ptr = value};
-            ConversionPatternRewriter rewriter{op->getContext()};
-            auto *valueState = getOrCreate<BackwardValueActivity>(
-                memOp.getStored(slot, rewriter));
+            auto *valueState = getOrCreate<BackwardValueActivity>(*stored);
             propagateIfChanged(valueState,
                                valueState->meet(ValueActivity::getActive()));
           }
