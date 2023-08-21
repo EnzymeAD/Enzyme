@@ -1244,8 +1244,8 @@ void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
        << bb
        << ", "
           "*gutils->oldFunc->getParent(), blas, intType, type_vec_like, "
-          "type_n, fpType, ArrayRef<Value *>("
-       << argName << "), Defs, byRef, julia_decl);\n"
+          "type_n, fpType, "
+       << argName << ", Defs, byRef, julia_decl);\n"
        << "        CallInst *cubcall = "
           "cast<CallInst>(derivcall_inner_prod);\n";
   } else {
