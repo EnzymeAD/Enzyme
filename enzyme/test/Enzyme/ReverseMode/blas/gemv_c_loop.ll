@@ -69,7 +69,7 @@ entry:
 ; CHECK-NEXT:   call void @cblas_dcopy(i32 %1, double* %x0, i32 1, double* %cache.x, i32 1)
 ; CHECK-NEXT:   %6 = insertvalue { double*, double* } undef, double* %cache.A, 0
 ; CHECK-NEXT:   %7 = insertvalue { double*, double* } %6, double* %cache.x, 1
-; CHECK-NEXT:   tail call void @cblas_dgemv(i32 noundef 101, i32 noundef 111, i32 noundef %N, i32 noundef %N, double noundef 1.000000e-03, double* noundef %K, i32 noundef %N, double* noundef %x0, i32 noundef 1, double noundef 1.000000e+00, double* noundef %v0, i32 noundef 1) #1
+; CHECK-NEXT:   tail call void @cblas_dgemv(i32 noundef 101, i32 noundef 111, i32 noundef %N, i32 noundef %N, double noundef 1.000000e-03, double* noundef %K, i32 noundef %N, double* noundef %x0, i32 noundef 1, double noundef 1.000000e+00, double* noundef %v0, i32 noundef 1)
 ; CHECK-NEXT:   %exitcond.not = icmp eq i64 %iv.next, 5000
 ; CHECK-NEXT:   br i1 %exitcond.not, label %for.cond.cleanup, label %for.body
 
