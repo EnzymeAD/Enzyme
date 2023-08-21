@@ -113,7 +113,7 @@ entry:
 ; CHECK-NEXT:   %tape.ext.x = extractvalue { double*, double* } %_unwrap24, 1
 ; CHECK-NEXT:   call void @cblas_dger(i32 101, i32 %N, i32 %N, double 1.000000e-03, double* %"v0'", i32 1, double* %tape.ext.x, i32 1, double* %"K'", i32 %N)
 ; CHECK-NEXT:   %22 = select i1 false, i32 %N, i32 %N
-; CHECK-NEXT:   call void @cblas_dgemv(i32 101, i32 0, i32 %N, i32 %N, double 1.000000e-03, double* %tape.ext.A, i32 %22, double* %"v0'", i32 1, double 1.000000e+00, double* %"x0'", i32 1)
+; CHECK-NEXT:   call void @cblas_dgemv(i32 101, i32 112, i32 %N, i32 %N, double 1.000000e-03, double* %tape.ext.A, i32 %22, double* %"v0'", i32 1, double 1.000000e+00, double* %"x0'", i32 1)
 ; CHECK-NEXT:   %23 = select i1 false, i32 %N, i32 %N
 ; CHECK-NEXT:   call void @cblas_dscal(i32 %23, double 1.000000e+00, double* %"v0'", i32 1)
 ; CHECK-NEXT:   %24 = bitcast double* %tape.ext.A to i8*
