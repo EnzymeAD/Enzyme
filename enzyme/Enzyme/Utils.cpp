@@ -2402,10 +2402,16 @@ llvm::Value *select_vec_dims(IRBuilder<> &B, llvm::Value *trans,
 }
 
 Value *is_uper(IRBuilder<> &B, Value *trans, bool byRef) {
-  unsigned int len = trans->getType()->getScalarSizeInBits();
-  auto charTy = IntegerType::get(trans->getContext(), len);
-  if (byRef)
+  IntegerType *charTy;
+  if (byRef) {
+    // can't inspect opaque ptr, so assume 8 (Julia)
+    charTy = IntegerType::get(trans->getContext(), 8);
     trans = B.CreateLoad(charTy, trans, "loaded.trans");
+  } else {
+    // we can inspect scalars
+    unsigned int len = trans->getType()->getScalarSizeInBits();
+    charTy = IntegerType::get(trans->getContext(), len);
+  }
 
   Value *trueVal = ConstantInt::getTrue(trans->getContext());
 
@@ -2416,10 +2422,16 @@ Value *is_uper(IRBuilder<> &B, Value *trans, bool byRef) {
 }
 
 llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef) {
-  unsigned int len = trans->getType()->getScalarSizeInBits();
-  auto charTy = IntegerType::get(trans->getContext(), len);
-  if (byRef)
+  IntegerType *charTy;
+  if (byRef) {
+    // can't inspect opaque ptr, so assume 8 (Julia)
+    charTy = IntegerType::get(trans->getContext(), 8);
     trans = B.CreateLoad(charTy, trans, "loaded.trans");
+  } else {
+    // we can inspect scalars
+    unsigned int len = trans->getType()->getScalarSizeInBits();
+    charTy = IntegerType::get(trans->getContext(), len);
+  }
 
   Value *trueVal = ConstantInt::getTrue(trans->getContext());
 
