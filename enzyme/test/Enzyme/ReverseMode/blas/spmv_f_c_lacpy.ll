@@ -208,8 +208,8 @@ entry:
 ; CHECK-NEXT:   %7 = bitcast i8* %blasalpha to double*
 ; CHECK-NEXT:   %8 = load double, double* %7
 ; CHECK-NEXT:   %loaded.trans = load i8, i8* %blasuplo
-; CHECK-DAG:   %[[i9:.+]] = icmp eq i8 %loaded.trans.i, 85
-; CHECK-DAG:   %[[i10:.+]] = icmp eq i8 %loaded.trans.i, 117
+; CHECK-DAG:   %[[i9:.+]] = icmp eq i8 %loaded.trans, 85
+; CHECK-DAG:   %[[i10:.+]] = icmp eq i8 %loaded.trans, 117
 ; CHECK-NEXT:   %11 = or i1 %[[i10]], %[[i9]]
 ; CHECK-NEXT:   %k = select i1 %11, i64 0, i64 1
 ; CHECK-NEXT:   %12 = icmp eq i64 %2, 0
