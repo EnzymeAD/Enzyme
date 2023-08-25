@@ -1,5 +1,7 @@
 #pragma once
 
+#include "tuple.h"
+
 namespace enzyme {
 
     struct nodiff{};

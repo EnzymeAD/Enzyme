@@ -1,8 +1,8 @@
 #pragma once
 
-///////////////
-// tuple.hpp //
-///////////////
+/////////////
+// tuple.h //
+/////////////
 
 // why reinvent the wheel and implement a tuple class?
 //  - ensure data is laid out in the same order the types are specified
