@@ -1175,6 +1175,10 @@ void rev_call_arg(StringRef argName, DagInit *ruleDag, Rule &rule,
     } else if (ty == ArgType::trans || ty == ArgType::diag ||
                ty == ArgType::uplo || ty == ArgType::side) {
       os << "arg_" << name;
+      // Extra handled in the calling function, so
+      // if we are here for a layout arg something went wrong (error)
+      //} else if (ty == ArgType::cblas_layout) {
+      //  os << "arg_" << name;
     } else {
       errs() << "name: " << name << " typename: " << ty << "\n";
       llvm_unreachable("unimplemented input type in reverse mode!\n");
@@ -1198,20 +1202,38 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
     numArgs = ruleDag->getNumArgs();
   }
 
-  size_t startArg = (ruleDag->getArgNameStr(0) == "layout") ? 1 : 0;
+  // layout exist only under the cBLas ABI and not for all fncs.
+  bool fncHasLayout = (ruleDag->getArgNameStr(0) == "layout");
+  if (!fncHasLayout) {
+    os << "        std::vector<Value *>" << argName << " = {";
+    for (size_t pos = 0; pos < numArgs;) {
+      if (pos > 0) {
+        os << ", ";
+      }
 
-  os << "        Value *" << argName << "[" << (numArgs - startArg) << "] = {";
+      rev_call_arg(argName, ruleDag, rule, actArg, pos, os);
+      pos++;
+    }
+    os << "};\n";
+    return;
+  }
 
+  // Fnc has a layout if cBLAS, that makes it more complex.
+  // Distinguish later trough byRef if it is cblas (thus has layout)
+
+  os << "        std::vector<Value *>" << argName << ";\n";
+  os << "        if (!byRef) " << argName << ".push_back(arg_layout);\n";
+  os << "        auto tmp = {\n";
   // just replace argOps with rule
-  for (size_t pos = startArg; pos < numArgs;) {
-    if (pos > startArg) {
+  for (size_t pos = 1; pos < numArgs;) {
+    if (pos > 1) {
       os << ", ";
     }
-
     rev_call_arg(argName, ruleDag, rule, actArg, pos, os);
     pos++;
   }
   os << "};\n";
+  os << "        for (auto val : tmp) " << argName << ".push_back(val);\n";
 }
 
 void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
@@ -1222,8 +1244,8 @@ void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
        << bb
        << ", "
           "*gutils->oldFunc->getParent(), blas, intType, type_vec_like, "
-          "type_n, fpType, ArrayRef<Value *>("
-       << argName << "), Defs, byRef, julia_decl);\n"
+          "type_n, fpType, "
+       << argName << ", Defs, byRef, julia_decl);\n"
        << "        CallInst *cubcall = "
           "cast<CallInst>(derivcall_inner_prod);\n";
   } else {
@@ -1471,10 +1493,11 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
         // extra handling, since we will update only a fp scalar as part of the
         // return struct it's presumably done by setting it to the value
         // returned by this call
-        emit_fret_call(dfnc_name, "args1", name, "Builder2", os);
+        emit_fret_call(dfnc_name, "ArrayRef<Value *>(args1)", name, "Builder2",
+                       os);
       } else {
         os << "        Builder2.CreateCall(derivcall_" << dfnc_name
-           << ", args1, Defs);\n";
+           << ", ArrayRef<Value *>(args1), Defs);\n";
       }
       emit_runtime_continue(ruleDag, name, "        ", "Builder2",
                             (ty == ArgType::fp), os);
@@ -1506,7 +1529,8 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
       // Now that we have the defs, we can create the call
-      emit_fret_call("inner_prod", "args1", name, "Builder2", os);
+      emit_fret_call("inner_prod", "ArrayRef<Value *>(args1)", name, "Builder2",
+                     os);
       emit_runtime_continue(ruleDag, name, "        ", "Builder2", true, os);
       os << "      }\n";
     } else if (Def->isSubClassOf("Seq")) {
@@ -1591,32 +1615,6 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     os << "  );\n";
   }
 
-  // os << "    if (EnzymeRuntimeActivityCheck) {\n"
-  //    << "      BBs.push_back(gutils->addReverseBlock(BBs[BBs.size()-1], "
-  //       "cname + \"_end\"));\n"
-  //    << "      Builder2.CreateBr(BBs[BBs.size()-1]);\n"
-  //    << "      Builder2.SetInsertPoint(BBs[BBs.size()-1]);\n"
-  //    << "      size_t pos = 1;\n";
-
-  // for (size_t i = 0; i < activeArgs.size(); i++) {
-  //   auto rule = rules[i];
-  //   const size_t actArg = activeArgs[i];
-  //   const auto name = nameVec[actArg];
-
-  //  os << "      if (active_" << name << ") {\n"
-  //     << "        BasicBlock *cfg1 = BBs[pos++];\n"
-  //     << "        BasicBlock *impl = BBs[pos++];\n"
-  //     << "        BasicBlock *cfg2 = BBs[pos];\n"
-  //     << "        Builder2.SetInsertPoint(cfg1);\n"
-  //     << "        Builder2.CreateCondBr(rt_inactive_" << name
-  //     << ", cfg2, impl);\n"
-  //     << "      }\n";
-  //}
-
-  // os << "      Builder2.SetInsertPoint(BBs[BBs.size()-1]);\n"
-  //    << "    }\n";
-
-  // end ReverseModeGradient
   os << "  }\n";
 }
 

@@ -636,7 +636,8 @@ void calculateUnusedValuesInFunction(
     const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
   std::map<UsageKey, bool> CacheResults;
   for (auto pair : gutils->knownRecomputeHeuristic) {
-    if (!pair.second) {
+    if (!pair.second ||
+        gutils->unnecessaryIntermediates.count(cast<Instruction>(pair.first))) {
       CacheResults[UsageKey(pair.first, ValueType::Primal)] = false;
     }
   }
@@ -1892,6 +1893,11 @@ void restoreCache(
           while (cases.count(legalNot))
             legalNot++;
           repVal = ConstantInt::getSigned(condition->getType(), legalNot);
+          cast<SwitchInst>(gutils->getNewFromOriginal(si))
+              ->setCondition(repVal);
+          // knowing which input was provided for the default dest is not
+          // possible at compile time, give up on other use replacement
+          continue;
         } else {
           for (auto c : si->cases()) {
             if (c.getCaseSuccessor() == reachables[0]) {
@@ -4126,6 +4132,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         gutils->erase(newBB->getTerminator());
       IRBuilder<> builder(newBB);
       builder.CreateUnreachable();
+
       continue;
     }
 
