@@ -7884,6 +7884,22 @@ void GradientUtils::computeMinCache() {
 
     for (auto V : Intermediates) {
       knownRecomputeHeuristic[V] = !MinReq.count(V);
+      if (!MinReq.count(V) && NeedGraph.count(V)) {
+        if (auto CI = dyn_cast<CallInst>(V))
+          if (getFuncNameFromCall(CI) == "julia.call")
+            assert(0);
+
+        ValueToValueMapTy Available2;
+        for (auto a : Available)
+          Available2[a.first] = a.second;
+        for (Loop *L = OrigLI.getLoopFor(cast<Instruction>(V)->getParent());
+             L != nullptr; L = L->getParentLoop()) {
+          for (auto v : LoopAvail[L]) {
+            Available2[v] = v;
+          }
+        }
+        assert(legalRecompute(V, Available2, nullptr));
+      }
       if (!NeedGraph.count(V)) {
         unnecessaryIntermediates.insert(cast<Instruction>(V));
       }
@@ -8713,13 +8729,13 @@ void GradientUtils::erase(Instruction *I) {
   CacheUtility::erase(I);
 }
 
-void GradientUtils::eraseWithPlaceholder(Instruction *I, const Twine &suffix,
-                                         bool erase) {
+void GradientUtils::eraseWithPlaceholder(Instruction *I, Instruction *orig,
+                                         const Twine &suffix, bool erase) {
   PHINode *pn = nullptr;
   if (!I->getType()->isVoidTy() && !I->getType()->isTokenTy()) {
     IRBuilder<> BuilderZ(I);
     auto pn = BuilderZ.CreatePHI(I->getType(), 1, I->getName() + suffix);
-    fictiousPHIs[pn] = I;
+    fictiousPHIs[pn] = orig;
     replaceAWithB(I, pn);
   }
 

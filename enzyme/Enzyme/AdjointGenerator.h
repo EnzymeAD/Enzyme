@@ -128,7 +128,7 @@ public:
       return;
 
     if (auto newi = dyn_cast<Instruction>(iload))
-      gutils->eraseWithPlaceholder(newi, "_replacementA", erase);
+      gutils->eraseWithPlaceholder(newi, &I, "_replacementA", erase);
   }
 
   llvm::Value *MPI_TYPE_SIZE(llvm::Value *DT, llvm::IRBuilder<> &B,
@@ -3131,6 +3131,7 @@ public:
           ss << "Cannot deduce type of copy " << MTI;
           CustomErrorHandler(str.c_str(), wrap(&MTI), ErrorType::NoType,
                              &TR.analyzer, nullptr, wrap(&BuilderZ));
+          vd = TypeTree(BaseType::Integer).Only(0, &MTI);
         } else {
           EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI,
                       "failed to deduce type of copy ", MTI);
@@ -10041,6 +10042,7 @@ public:
       }
       if (!noFree) {
         auto callval = call.getCalledOperand();
+        llvm::errs() << " call: " << call << "\n";
         newCall->setCalledOperand(gutils->Logic.CreateNoFree(callval));
       }
       if (gutils->knownRecomputeHeuristic.find(&call) !=

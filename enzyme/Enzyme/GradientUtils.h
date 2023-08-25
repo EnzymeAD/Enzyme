@@ -325,7 +325,7 @@ public:
 
   void erase(llvm::Instruction *I) override;
 
-  void eraseWithPlaceholder(llvm::Instruction *I,
+  void eraseWithPlaceholder(llvm::Instruction *I, llvm::Instruction *orig,
                             const llvm::Twine &suffix = "_replacementA",
                             bool erase = true);
 
