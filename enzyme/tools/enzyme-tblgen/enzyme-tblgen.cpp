@@ -66,13 +66,8 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
     auto opName = resultRoot->getOperator()->getAsString();
     auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
     if (opName == "SameFunc" || Def->isSubClassOf("SameFunc")) {
-      os << "#if LLVM_VERSION_MAJOR >= 11\n";
       os << curIndent << "auto " << callval << " = cast<CallInst>(&" << origName
          << ")->getCalledOperand();\n";
-      os << "#else\n";
-      os << curIndent << "auto " << callval << " = cast<CallInst>(&" << origName
-         << ")->getCalledValue();\n";
-      os << "#endif\n";
       os << curIndent << "auto " << FT << " = cast<CallInst>(&" << origName
          << ")->getFunctionType();\n";
       os << curIndent << "auto " << cconv << " = cast<CallInst>(&" << origName
@@ -347,13 +342,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                origName, newFromOriginal);
 
       os << ")";
-#if LLVM_VERSION_MAJOR >= 11
       os << "->getElementCount()";
 #if LLVM_VERSION_MAJOR == 11
       os << ".Min";
-#endif
-#else
-      os << "->getNumElements()";
 #endif
       return false;
     } else if (opName == "SelectIfActive" ||

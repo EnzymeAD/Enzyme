@@ -125,9 +125,9 @@ entry:
 ; CHECK-NEXT:   %21 = bitcast i8* %alpha to double*
 ; CHECK-NEXT:   %22 = load double, double* %21
 ; CHECK-NEXT:   %loaded.trans.i = load i8, i8* %uplo
-; CHECK-NEXT:   %23 = icmp eq i8 %loaded.trans.i, 85
-; CHECK-NEXT:   %24 = icmp eq i8 %loaded.trans.i, 117
-; CHECK-NEXT:   %25 = or i1 %24, %23
+; CHECK-DAG:   %[[i0:.+]] = icmp eq i8 %loaded.trans.i, 85
+; CHECK-DAG:   %[[i1:.+]] = icmp eq i8 %loaded.trans.i, 117
+; CHECK-NEXT:   %25 = or i1 %[[i1]], %[[i0]]
 ; CHECK-NEXT:   %k.i = select i1 %25, i64 0, i64 1
 ; CHECK-NEXT:   %26 = icmp eq i64 %17, 0
 ; CHECK-NEXT:   br i1 %26, label %__enzyme_spmv_diagd_64_.exit, label %init.i
@@ -208,9 +208,9 @@ entry:
 ; CHECK-NEXT:   %7 = bitcast i8* %blasalpha to double*
 ; CHECK-NEXT:   %8 = load double, double* %7
 ; CHECK-NEXT:   %loaded.trans = load i8, i8* %blasuplo
-; CHECK-NEXT:   %9 = icmp eq i8 %loaded.trans, 85
-; CHECK-NEXT:   %10 = icmp eq i8 %loaded.trans, 117
-; CHECK-NEXT:   %11 = or i1 %10, %9
+; CHECK-DAG:   %[[i9:.+]] = icmp eq i8 %loaded.trans, 85
+; CHECK-DAG:   %[[i10:.+]] = icmp eq i8 %loaded.trans, 117
+; CHECK-NEXT:   %11 = or i1 %[[i10]], %[[i9]]
 ; CHECK-NEXT:   %k = select i1 %11, i64 0, i64 1
 ; CHECK-NEXT:   %12 = icmp eq i64 %2, 0
 ; CHECK-NEXT:   br i1 %12, label %for.end, label %init

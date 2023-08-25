@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
     - main
+  merge_group:
     
 concurrency: 
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -20,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["9", "10", "11", "12", "13"] #, "14"]
+        llvm: ["11", "12", "13", "14", "15", "16"]
         build: ["Release", "Debug"] # "RelWithDebInfo"
         os: [openstack18]
     timeout-minutes: 120 

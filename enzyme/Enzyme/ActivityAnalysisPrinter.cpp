@@ -194,11 +194,7 @@ public:
 
   bool runOnFunction(Function &F) override {
 
-#if LLVM_VERSION_MAJOR >= 10
     auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
-#else
-    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-#endif
 
     return printActivityAnalysis(F, TLI);
   }

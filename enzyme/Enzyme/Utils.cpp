@@ -601,26 +601,16 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     LoadInst *dstl = B.CreateLoad(elementType, dsti, "dst.i.l");
     StoreInst *dsts = B.CreateStore(Constant::getNullValue(elementType), dsti);
     if (dstalign) {
-#if LLVM_VERSION_MAJOR >= 10
       dstl->setAlignment(Align(dstalign));
       dsts->setAlignment(Align(dstalign));
-#else
-      dstl->setAlignment(dstalign);
-      dsts->setAlignment(dstalign);
-#endif
     }
 
     Value *srci = B.CreateInBoundsGEP(elementType, src, idx, "src.i");
     LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
     StoreInst *srcs = B.CreateStore(B.CreateFAdd(srcl, dstl), srci);
     if (srcalign) {
-#if LLVM_VERSION_MAJOR >= 10
       srcl->setAlignment(Align(srcalign));
       srcs->setAlignment(Align(srcalign));
-#else
-      srcl->setAlignment(srcalign);
-      srcs->setAlignment(srcalign);
-#endif
     }
 
     Value *next =
@@ -1079,18 +1069,10 @@ Function *getOrInsertMemcpyStrided(Module &M, Type *elementType, PointerType *T,
     StoreInst *dsts = B.CreateStore(srcl, dsti);
 
     if (dstalign) {
-#if LLVM_VERSION_MAJOR >= 10
       dsts->setAlignment(Align(dstalign));
-#else
-      dsts->setAlignment(dstalign);
-#endif
     }
     if (srcalign) {
-#if LLVM_VERSION_MAJOR >= 10
       srcl->setAlignment(Align(srcalign));
-#else
-      srcl->setAlignment(srcalign);
-#endif
     }
 
     Value *next =
@@ -1197,18 +1179,10 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
     StoreInst *dsts = B.CreateStore(srcl, dsti);
 
     if (dstalign) {
-#if LLVM_VERSION_MAJOR >= 10
       dsts->setAlignment(Align(dstalign));
-#else
-      dsts->setAlignment(dstalign);
-#endif
     }
     if (srcalign) {
-#if LLVM_VERSION_MAJOR >= 10
       srcl->setAlignment(Align(srcalign));
-#else
-      srcl->setAlignment(srcalign);
-#endif
     }
 
     Value *nexti =
@@ -1247,11 +1221,7 @@ getOrInsertDifferentialFloatMemmove(Module &M, Type *T, unsigned dstalign,
 Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
                                  unsigned width) {
   FunctionType *FreeTy = call->getFunctionType();
-#if LLVM_VERSION_MAJOR >= 11
   Value *Free = call->getCalledOperand();
-#else
-  Value *Free = call->getCalledValue();
-#endif
   AttributeList FreeAttributes = call->getAttributes();
   CallingConv::ID CallingConvention = call->getCallingConv();
   DebugLoc DebugLoc = call->getDebugLoc();
@@ -1933,13 +1903,8 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
       auto &DL = maybeWriter->getModule()->getDataLayout();
       auto width = cast<IntegerType>(DL.getIndexType(LoadBegin->getType()))
                        ->getBitWidth();
-#if LLVM_VERSION_MAJOR >= 10
       auto TS = SE.getConstant(
           APInt(width, DL.getTypeStoreSize(LI->getType()).getFixedSize()));
-#else
-      auto TS =
-          SE.getConstant(APInt(width, DL.getTypeStoreSize(LI->getType())));
-#endif
       LoadEnd = SE.getAddExpr(LoadBegin, TS);
     }
   }
@@ -1949,14 +1914,9 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
       auto &DL = maybeWriter->getModule()->getDataLayout();
       auto width = cast<IntegerType>(DL.getIndexType(StoreBegin->getType()))
                        ->getBitWidth();
-#if LLVM_VERSION_MAJOR >= 10
       auto TS = SE.getConstant(
           APInt(width, DL.getTypeStoreSize(SI->getValueOperand()->getType())
                            .getFixedSize()));
-#else
-      auto TS = SE.getConstant(
-          APInt(width, DL.getTypeStoreSize(SI->getValueOperand()->getType())));
-#endif
       StoreEnd = SE.getAddExpr(StoreBegin, TS);
     }
   }
@@ -2137,12 +2097,7 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
 #endif
     }
 
-#if LLVM_VERSION_MAJOR >= 11
-    if (auto iasm = dyn_cast<InlineAsm>(call->getCalledOperand()))
-#else
-    if (auto iasm = dyn_cast<InlineAsm>(call->getCalledValue()))
-#endif
-    {
+    if (auto iasm = dyn_cast<InlineAsm>(call->getCalledOperand())) {
       if (StringRef(iasm->getAsmString()).contains("exit"))
         return false;
     }
@@ -2192,12 +2147,7 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     if (funcName == "jl_array_copy" || funcName == "ijl_array_copy")
       return false;
 
-#if LLVM_VERSION_MAJOR >= 11
-    if (auto iasm = dyn_cast<InlineAsm>(call->getCalledOperand()))
-#else
-    if (auto iasm = dyn_cast<InlineAsm>(call->getCalledValue()))
-#endif
-    {
+    if (auto iasm = dyn_cast<InlineAsm>(call->getCalledOperand())) {
       if (StringRef(iasm->getAsmString()).contains("exit"))
         return false;
     }
@@ -2452,9 +2402,16 @@ llvm::Value *select_vec_dims(IRBuilder<> &B, llvm::Value *trans,
 }
 
 Value *is_uper(IRBuilder<> &B, Value *trans, bool byRef) {
-  auto charTy = IntegerType::get(trans->getContext(), 8);
-  if (byRef)
+  IntegerType *charTy;
+  if (byRef) {
+    // can't inspect opaque ptr, so assume 8 (Julia)
+    charTy = IntegerType::get(trans->getContext(), 8);
     trans = B.CreateLoad(charTy, trans, "loaded.trans");
+  } else {
+    // we can inspect scalars
+    unsigned int len = trans->getType()->getScalarSizeInBits();
+    charTy = IntegerType::get(trans->getContext(), len);
+  }
 
   Value *trueVal = ConstantInt::getTrue(trans->getContext());
 
@@ -2465,9 +2422,16 @@ Value *is_uper(IRBuilder<> &B, Value *trans, bool byRef) {
 }
 
 llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef) {
-  auto charTy = IntegerType::get(trans->getContext(), 8);
-  if (byRef)
+  IntegerType *charTy;
+  if (byRef) {
+    // can't inspect opaque ptr, so assume 8 (Julia)
+    charTy = IntegerType::get(trans->getContext(), 8);
     trans = B.CreateLoad(charTy, trans, "loaded.trans");
+  } else {
+    // we can inspect scalars
+    unsigned int len = trans->getType()->getScalarSizeInBits();
+    charTy = IntegerType::get(trans->getContext(), len);
+  }
 
   Value *trueVal = ConstantInt::getTrue(trans->getContext());
 
@@ -2477,20 +2441,47 @@ llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef) {
   return isNormal;
 }
 
+// Ok. Here we are.
+// netlib declares trans args as something out of
+// N,n,T,t,C,c, represented as 8 bit chars.
+// However, if we ask openBlas c ABI,
+// it is one of the following 32 bit integers values:
+// enum CBLAS_TRANSPOSE {CblasNoTrans=111, CblasTrans=112, CblasConjTrans=113};
 llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
-  Value *out = B.CreateSelect(
-      B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'T')),
-      ConstantInt::get(V->getType(), 'N'),
-      B.CreateSelect(
-          B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 't')),
-          ConstantInt::get(V->getType(), 'n'),
-          B.CreateSelect(
-              B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'N')),
-              ConstantInt::get(V->getType(), 'T'),
-              B.CreateSelect(
-                  B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'n')),
-                  ConstantInt::get(V->getType(), 't'),
-                  ConstantInt::get(V->getType(), 0)))));
+  llvm::Type *T = V->getType();
+  Value *out;
+  if (T->isIntegerTy(8)) {
+    out = B.CreateSelect(
+        B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'T')),
+        ConstantInt::get(V->getType(), 'N'),
+        B.CreateSelect(
+            B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 't')),
+            ConstantInt::get(V->getType(), 'n'),
+            B.CreateSelect(
+                B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'N')),
+                ConstantInt::get(V->getType(), 'T'),
+                B.CreateSelect(
+                    B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'n')),
+                    ConstantInt::get(V->getType(), 't'),
+                    ConstantInt::get(V->getType(), 0)))));
+  } else if (T->isIntegerTy(32)) {
+    out = B.CreateSelect(
+        B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 111)),
+        ConstantInt::get(V->getType(), 112),
+        B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 112)),
+                       ConstantInt::get(V->getType(), 111),
+                       ConstantInt::get(V->getType(), 0)));
+  } else {
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "cannot handle unknown trans blas value\n" << V;
+    if (CustomErrorHandler) {
+      CustomErrorHandler(ss.str().c_str(), nullptr, ErrorType::NoDerivative,
+                         nullptr, nullptr, nullptr);
+    } else {
+      EmitFailure("unknown trans blas value", nullptr, nullptr, ss.str());
+    }
+  }
   return out;
 }
 
