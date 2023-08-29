@@ -459,11 +459,7 @@ llvm::AllocaInst *CacheUtility::getDynamicLoopLimit(llvm::Loop *L,
     auto Limit = B.CreatePHI(found.var->getType(), 1);
 
     for (BasicBlock *Pred : predecessors(ExitBlock)) {
-      if (LI.getLoopFor(Pred) == L) {
-        Limit->addIncoming(found.var, Pred);
-      } else {
-        Limit->addIncoming(UndefValue::get(found.var->getType()), Pred);
-      }
+      Limit->addIncoming(found.var, Pred);
     }
 
     storeInstructionInCache(lctx, Limit, LimitVar);
