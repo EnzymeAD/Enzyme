@@ -7507,7 +7507,7 @@ public:
                         : BuilderZ.CreateExtractValue(augmentcall,
                                                       {(unsigned)drval},
                                                       call.getName() + "'ac");
-            assert(newip->getType() == call.getType());
+            assert(newip->getType() == placeholder->getType());
             placeholder->replaceAllUsesWith(newip);
             if (placeholder == &*BuilderZ.GetInsertPoint()) {
               BuilderZ.SetInsertPoint(placeholder->getNextNode());
