@@ -98,7 +98,7 @@ if (${Clang_FOUND})
         DEPENDS
         intrinsics_gen
         PLUGIN_TOOL
-        opt
+        clang
     )
 target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
 endif()
