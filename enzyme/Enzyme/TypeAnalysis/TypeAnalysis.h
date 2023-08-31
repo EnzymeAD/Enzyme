@@ -339,7 +339,8 @@ public:
   void visitBinaryOperator(llvm::BinaryOperator &I);
   void visitBinaryOperation(const llvm::DataLayout &DL, llvm::Type *T,
                             llvm::Instruction::BinaryOps, llvm::Value *Args[2],
-                            TypeTree &Ret, TypeTree &LHS, TypeTree &RHS);
+                            TypeTree &Ret, TypeTree &LHS, TypeTree &RHS,
+                            llvm::Instruction *I);
 
   void visitIPOCall(llvm::CallInst &call, llvm::Function &fn);
 
