@@ -2264,31 +2264,31 @@ void TypeAnalyzer::visitAtomicRMWInst(llvm::AtomicRMWInst &I) {
   }
   case AtomicRMWInst::Add:
     visitBinaryOperation(DL, I.getType(), BinaryOperator::Add, Args, Ret, LHS,
-                         RHS);
+                         RHS, &I);
     break;
   case AtomicRMWInst::Sub:
     visitBinaryOperation(DL, I.getType(), BinaryOperator::Sub, Args, Ret, LHS,
-                         RHS);
+                         RHS, &I);
     break;
   case AtomicRMWInst::And:
     visitBinaryOperation(DL, I.getType(), BinaryOperator::And, Args, Ret, LHS,
-                         RHS);
+                         RHS, &I);
     break;
   case AtomicRMWInst::Or:
     visitBinaryOperation(DL, I.getType(), BinaryOperator::Or, Args, Ret, LHS,
-                         RHS);
+                         RHS, &I);
     break;
   case AtomicRMWInst::Xor:
     visitBinaryOperation(DL, I.getType(), BinaryOperator::Xor, Args, Ret, LHS,
-                         RHS);
+                         RHS, &I);
     break;
   case AtomicRMWInst::FAdd:
     visitBinaryOperation(DL, I.getType(), BinaryOperator::FAdd, Args, Ret, LHS,
-                         RHS);
+                         RHS, &I);
     break;
   case AtomicRMWInst::FSub:
     visitBinaryOperation(DL, I.getType(), BinaryOperator::FSub, Args, Ret, LHS,
-                         RHS);
+                         RHS, &I);
     break;
   case AtomicRMWInst::Max:
   case AtomicRMWInst::Min:
@@ -2323,7 +2323,8 @@ void TypeAnalyzer::visitAtomicRMWInst(llvm::AtomicRMWInst &I) {
 void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
                                         llvm::Instruction::BinaryOps Opcode,
                                         Value *Args[2], TypeTree &Ret,
-                                        TypeTree &LHS, TypeTree &RHS) {
+                                        TypeTree &LHS, TypeTree &RHS,
+                                        Instruction *origin) {
   if (Opcode == BinaryOperator::FAdd || Opcode == BinaryOperator::FSub ||
       Opcode == BinaryOperator::FMul || Opcode == BinaryOperator::FDiv ||
       Opcode == BinaryOperator::FRem) {
@@ -2331,8 +2332,32 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
     assert(ty->isFloatingPointTy());
     ConcreteType dt(ty);
     if (direction & UP) {
-      LHS |= TypeTree(dt).Only(-1, nullptr);
-      RHS |= TypeTree(dt).Only(-1, nullptr);
+      bool LegalOr = true;
+      auto Data = TypeTree(dt).Only(-1, nullptr);
+      LHS.checkedOrIn(Data, /*PointerIntSame*/ false, LegalOr);
+      if (CustomErrorHandler && !LegalOr) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Illegal updateAnalysis prev:" << LHS.str()
+           << " new: " << Data.str() << "\n";
+        ss << "val: " << *Args[0];
+        ss << "origin: " << *origin;
+        CustomErrorHandler(str.c_str(), wrap(Args[0]),
+                           ErrorType::IllegalTypeAnalysis, (void *)this,
+                           wrap(origin), nullptr);
+      }
+      RHS.checkedOrIn(Data, /*PointerIntSame*/ false, LegalOr);
+      if (CustomErrorHandler && !LegalOr) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Illegal updateAnalysis prev:" << RHS.str()
+           << " new: " << Data.str() << "\n";
+        ss << "val: " << *Args[1];
+        ss << "origin: " << *origin;
+        CustomErrorHandler(str.c_str(), wrap(Args[1]),
+                           ErrorType::IllegalTypeAnalysis, (void *)this,
+                           wrap(origin), nullptr);
+      }
     }
     if (direction & DOWN)
       Ret |= TypeTree(dt).Only(-1, nullptr);
@@ -2722,7 +2747,7 @@ void TypeAnalyzer::visitBinaryOperator(BinaryOperator &I) {
   TypeTree LHS = getAnalysis(I.getOperand(0));
   TypeTree RHS = getAnalysis(I.getOperand(1));
   auto &DL = I.getParent()->getParent()->getParent()->getDataLayout();
-  visitBinaryOperation(DL, I.getType(), I.getOpcode(), Args, Ret, LHS, RHS);
+  visitBinaryOperation(DL, I.getType(), I.getOpcode(), Args, Ret, LHS, RHS, &I);
 
   if (direction & UP) {
     updateAnalysis(I.getOperand(0), LHS, &I);
