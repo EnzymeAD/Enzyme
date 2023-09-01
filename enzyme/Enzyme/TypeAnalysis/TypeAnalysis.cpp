@@ -2333,8 +2333,6 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
     ConcreteType dt(ty);
     if (direction & UP) {
       bool LegalOr = true;
-      // LHS |= TypeTree(dt).Only(-1, nullptr);
-      // RHS |= TypeTree(dt).Only(-1, nullptr);
       auto Data = TypeTree(dt).Only(-1, nullptr);
       LHS.checkedOrIn(Data, /*PointerIntSame*/ false, LegalOr);
       if (CustomErrorHandler && !LegalOr) {
