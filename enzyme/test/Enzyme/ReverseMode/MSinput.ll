@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -enzyme -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,early-cse,sroa,instsimplify,%simplifycfg,adce)" -enzyme-preopt=false -opaque-pointers -S | FileCheck %s; fi
 
 %rtti.CompleteObjectLocator = type { i32, i32, i32, i32, i32, i32 }
 %rtti.TypeDescriptor13 = type { ptr, ptr, [14 x i8] }
