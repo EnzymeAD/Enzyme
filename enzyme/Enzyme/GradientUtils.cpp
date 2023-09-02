@@ -499,6 +499,14 @@ bool GradientUtils::assumeDynamicLoopOfSizeOne(Loop *L) const {
     for (auto &OI : *OB) {
       if (!isConstantInstruction(&OI))
         return false;
+      if (auto SI = dyn_cast<StoreInst>(&OI)) {
+        if (!isConstantValue(SI->getPointerOperand()))
+          return false;
+      }
+      if (auto MTI = dyn_cast<MemTransferInst>(&OI)) {
+        if (!isConstantValue(MTI->getArgOperand(0)))
+          return false;
+      }
     }
   }
   return true;
