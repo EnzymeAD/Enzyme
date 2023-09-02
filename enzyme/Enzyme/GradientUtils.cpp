@@ -5084,7 +5084,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       }
     }
 
-    if (isa<ConstantExpr>(oval)) {
+    if (isa<ConstantExpr>(oval) || isa<GlobalValue>(oval)) {
       auto rule = [&oval]() { return oval; };
       return applyChainRule(oval->getType(), BuilderM, rule);
     }
