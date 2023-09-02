@@ -5177,9 +5177,11 @@ bool TypeAnalyzer::mustRemainInteger(Value *val, bool *returned) {
         continue;
     }
     if (isa<BinaryOperator>(u) || isa<IntrinsicInst>(u) || isa<PHINode>(u) ||
-        isa<UDivOperator>(u) || isa<SDivOperator>(u) || isa<LShrOperator>(u) ||
-        isa<AShrOperator>(u) || isa<AddOperator>(u) || isa<MulOperator>(u) ||
-        isa<ShlOperator>(u)) {
+#if LLVM_VERSION_MAJOR <= 17
+        isa<UDivOperator>(u) || isa<SDivOperator>(u) ||
+#endif
+        isa<LShrOperator>(u) || isa<AShrOperator>(u) || isa<AddOperator>(u) ||
+        isa<MulOperator>(u) || isa<ShlOperator>(u)) {
       if (!mustRemainInteger(u, returned)) {
         seen[val].first = false;
         seen[val].second |= seen[u].second;
