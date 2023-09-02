@@ -476,6 +476,10 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
                                TA.notForAnalysis, TA);
       tmpAnalysis.visit(*I);
       analysis[Val] = tmpAnalysis.getAnalysis(I);
+
+      if (tmpAnalysis.workList.remove(I)) {
+        TA.workList.insert(CE);
+      }
     }
 
     I->eraseFromParent();
@@ -731,6 +735,7 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
         Data = analysis[Val].Lookup(Size, DL).Only(-1, nullptr);
         Data.insert({-1}, BaseType::Pointer);
         analysis[Val] = Data;
+        Origin = Val;
       }
     }
     // Add val so it can explicitly propagate this new info, if able to
@@ -1266,6 +1271,9 @@ void TypeAnalyzer::visitConstantExpr(ConstantExpr &CE) {
   visit(*I);
   updateAnalysis(&CE, analysis[I], &CE);
   analysis.erase(I);
+  if (workList.remove(I)) {
+    workList.insert(&CE);
+  }
   I->eraseFromParent();
 }
 
@@ -3606,11 +3614,9 @@ void TypeAnalyzer::visitInvokeInst(InvokeInst &call) {
   analysis[&call] = analysis[tmpCall];
   analysis.erase(tmpCall);
 
-  if (workList.count(tmpCall)) {
-    workList.remove(tmpCall);
+  if (workList.remove(tmpCall)) {
     workList.insert(&call);
   }
-
   tmpCall->eraseFromParent();
 }
 
