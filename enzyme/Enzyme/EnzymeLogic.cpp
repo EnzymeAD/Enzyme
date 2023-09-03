@@ -5202,10 +5202,14 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       else {
         if (auto CI = dyn_cast<CallInst>(&I)) {
           auto callval = CI->getCalledOperand();
+          if (!isa<Constant>(callval))
+            callval = gutils->getNewFromOriginal(callval);
           CI->setCalledOperand(CreateNoFree(callval));
         }
         if (auto CI = dyn_cast<InvokeInst>(&I)) {
           auto callval = CI->getCalledOperand();
+          if (!isa<Constant>(callval))
+            callval = gutils->getNewFromOriginal(callval);
           CI->setCalledOperand(CreateNoFree(callval));
         }
       }
