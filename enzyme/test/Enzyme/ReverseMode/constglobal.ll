@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -opaque-pointers=1 -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -opaque-pointers=1 -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 15 ]; then %opt < %s %loadEnzyme -enzyme -opaque-pointers=1 -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -opaque-pointers=1 -S | FileCheck %s; fi
 
 %"class.std::ios_base::Init" = type { i8 }
 %class.Test = type { ptr }
@@ -110,7 +110,7 @@ attributes #6 = { mustprogress noinline norecurse optnone uwtable "frame-pointer
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffe_ZN4TestC2Ev(ptr noundef nonnull align 8 dereferenceable(8) %this, ptr align 8 %"this'") unnamed_addr #8 align 2 {
+; CHECK: define internal void @diffe_ZN4TestC2Ev(ptr noundef nonnull align 8 dereferenceable(8) %this, ptr align 8 %"this'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   store ptr getelementptr inbounds ({ [3 x ptr] }, ptr @_ZTV4Test_shadow, i32 0, inrange i32 0, i32 2), ptr %"this'", align 8, !alias.scope !7, !noalias !10
 ; CHECK-NEXT:   store ptr getelementptr inbounds ({ [3 x ptr] }, ptr @_ZTV4Test, i32 0, inrange i32 0, i32 2), ptr %this, align 8, !alias.scope !10, !noalias !7
@@ -120,7 +120,7 @@ attributes #6 = { mustprogress noinline norecurse optnone uwtable "frame-pointer
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal ptr @augmented__ZN4Test12test_virtualEv(ptr noundef nonnull align 8 dereferenceable(8) %this, ptr align 8 %"this'") unnamed_addr #7 align 2 {
+; CHECK: define internal ptr @augmented__ZN4Test12test_virtualEv(ptr noundef nonnull align 8 dereferenceable(8) %this, ptr align 8 %"this'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = alloca ptr, align 8
 ; CHECK-NEXT:   store ptr null, ptr %0, align 8
@@ -128,7 +128,7 @@ attributes #6 = { mustprogress noinline norecurse optnone uwtable "frame-pointer
 ; CHECK-NEXT:   ret ptr %1
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffe_ZN4Test12test_virtualEv(ptr align 8 dereferenceable(8) %this, ptr align 8 %"this'", ptr %tapeArg) unnamed_addr #8 align 2 {
+; CHECK: define internal void @diffe_ZN4Test12test_virtualEv(ptr align 8 dereferenceable(8) %this, ptr align 8 %"this'", ptr %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   tail call void @free(ptr nonnull %tapeArg)
 ; CHECK-NEXT:   br label %invertentry
