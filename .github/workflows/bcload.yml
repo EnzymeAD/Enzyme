@@ -10,7 +10,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["11", "12", "13", "14", "15", "16"]
+        # BCLoad tests only run with old pass manager [aka up to and including 13]
+        llvm: ["11", "12", "13"]
         build: ["Release"] # "RelWithDebInfo"
         os: [ubuntu-20.04]
 
