@@ -255,7 +255,7 @@ EnzymeTypeAnalysisRef CreateTypeAnalysis(EnzymeLogicRef Log,
     CustomRuleType rule = customRules[i];
     TA->CustomRules[customRuleNames[i]] =
         [=](int direction, TypeTree &returnTree, ArrayRef<TypeTree> argTrees,
-            ArrayRef<std::set<int64_t>> knownValues, CallInst *call,
+            ArrayRef<std::set<int64_t>> knownValues, CallBase *call,
             TypeAnalyzer *TA) -> uint8_t {
       CTypeTreeRef creturnTree = (CTypeTreeRef)(&returnTree);
       CTypeTreeRef *cargs = new CTypeTreeRef[argTrees.size()];
