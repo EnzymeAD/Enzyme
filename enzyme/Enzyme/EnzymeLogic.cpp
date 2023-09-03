@@ -5032,6 +5032,14 @@ llvm::Value *EnzymeLogic::CreateNoFree(llvm::Value *todiff) {
     CustomErrorHandler(ss.str().c_str(), wrap(todiff), ErrorType::NoDerivative,
                        nullptr, nullptr, nullptr);
   }
+
+  if (auto arg = dyn_cast<Instruction>(todiff)) {
+    auto loc = arg->getDebugLoc();
+    EmitFailure("IllegalNoFree", loc, arg,
+                "Cannot create nofree of instruction-created value: ", *arg);
+    return todiff;
+  }
+
   llvm::errs() << " unhandled, create no free of: " << *todiff << "\n";
   llvm_unreachable("unhandled, create no free");
 }
