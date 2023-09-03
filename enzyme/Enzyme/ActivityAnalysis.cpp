@@ -3083,11 +3083,19 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           }
           if (legal) {
             toContinue = true;
-            break;
           }
         }
-        if (toContinue)
+        if (toContinue) {
+          if (EnzymePrintActivity) {
+            llvm::errs() << "Value found indirect call use which must be "
+                            "constant as all stored functions are constant val:"
+                         << *val << " user " << *call << "\n";
+          }
+          for (auto u : call->users()) {
+            todo.push_back(std::make_tuple(u, a, UseActivity::None));
+          }
           continue;
+        }
       }
     }
 
