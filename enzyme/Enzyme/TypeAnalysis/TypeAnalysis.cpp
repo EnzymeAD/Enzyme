@@ -3895,14 +3895,19 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
         funcName == "__kmpc_for_static_init_8u") {
       TypeTree ptrint;
       ptrint.insert({-1}, BaseType::Pointer);
-      ptrint.insert({-1, 0}, BaseType::Integer);
-      updateAnalysis(call.getOperand(3), ptrint, &call);
-      updateAnalysis(call.getOperand(4), ptrint, &call);
-      updateAnalysis(call.getOperand(5), ptrint, &call);
-      updateAnalysis(call.getOperand(6), ptrint, &call);
-      updateAnalysis(call.getOperand(7),
+      size_t numBytes = 4;
+      if (funcName == "__kmpc_for_static_init_8" ||
+          funcName == "__kmpc_for_static_init_8u")
+        numBytes = 8;
+      for (size_t i = 0; i < numBytes; i++)
+        ptrint.insert({-1, (int)i}, BaseType::Integer);
+      updateAnalysis(call.getArgOperand(3), ptrint, &call);
+      updateAnalysis(call.getArgOperand(4), ptrint, &call);
+      updateAnalysis(call.getArgOperand(5), ptrint, &call);
+      updateAnalysis(call.getArgOperand(6), ptrint, &call);
+      updateAnalysis(call.getArgOperand(7),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
-      updateAnalysis(call.getOperand(8),
+      updateAnalysis(call.getArgOperand(8),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
