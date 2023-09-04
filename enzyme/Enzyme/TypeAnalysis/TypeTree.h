@@ -537,7 +537,7 @@ public:
         if (!legalCombine) {
           size_t chunk = 1;
           // Implicit pointer
-          if (set.size() > 0) {
+          if (pnext.size() > 0) {
             chunk = dl.getPointerSizeInBits() / 8;
           } else {
             if (auto flt = dt.isFloat()) {

@@ -17,10 +17,6 @@
 #include <math.h>
 #include <complex>      // std::complex, std::abs, std::arg
 
-int enzyme_dup;
-int enzyme_out;
-int enzyme_const;
-
 void __enzyme_autodiff(...);
 
 using namespace std;

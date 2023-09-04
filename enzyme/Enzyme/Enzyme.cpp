@@ -61,17 +61,15 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Scalar.h"
 
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
-#include "llvm/Transforms/Utils/Cloning.h"
-#if LLVM_VERSION_MAJOR >= 11
-#include "llvm/Analysis/InlineAdvisor.h"
-#include "llvm/IR/AbstractCallSite.h"
-#endif
 #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/GlobalsModRef.h"
+#include "llvm/Analysis/InlineAdvisor.h"
 #include "llvm/Analysis/InlineCost.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/IR/AbstractCallSite.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 #include "ActivityAnalysis.h"
 #include "DiffeGradientUtils.h"
@@ -281,9 +279,21 @@ castToDiffeFunctionArgType(IRBuilder<> &Builder, llvm::CallInst *CI,
   if (auto ptr = dyn_cast<PointerType>(res->getType())) {
     if (auto PT = dyn_cast<PointerType>(destType)) {
       if (ptr->getAddressSpace() != PT->getAddressSpace()) {
-        res = Builder.CreateAddrSpaceCast(
-            res, PointerType::get(ptr->getPointerElementType(),
-                                  PT->getAddressSpace()));
+#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR >= 15
+        if (CI->getContext().supportsTypedPointers()) {
+#endif
+          res = Builder.CreateAddrSpaceCast(
+              res, PointerType::get(ptr->getPointerElementType(),
+                                    PT->getAddressSpace()));
+#if LLVM_VERSION_MAJOR >= 15
+        } else {
+          res = Builder.CreateAddrSpaceCast(res, PT);
+        }
+#endif
+#else
+        res = Builder.CreateAddrSpaceCast(res, PT);
+#endif
         assert(value);
         assert(destType);
         assert(FT);
@@ -410,11 +420,7 @@ static Value *adaptReturnedVector(Value *ret, Value *diffret,
 
     for (unsigned int i = 0; i < width; i++) {
       Value *elem = Builder.CreateExtractValue(diffret, {i});
-#if LLVM_VERSION_MAJOR >= 11
       if (auto vty = dyn_cast<FixedVectorType>(elem->getType())) {
-#else
-      if (auto vty = dyn_cast<VectorType>(elem->getType())) {
-#endif
         for (unsigned j = 0; j < vty->getNumElements(); ++j) {
           Value *vecelem = Builder.CreateExtractElement(elem, j);
           agg = Builder.CreateInsertValue(agg, vecelem, {i * j});
@@ -496,7 +502,8 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
     return true;
   }
 
-  if (mode != DerivativeMode::ReverseModePrimal) {
+  if (mode != DerivativeMode::ReverseModePrimal &&
+      diffret->getType()->isAggregateType()) {
     auto diffreti = Builder.CreateExtractValue(diffret, {0});
     if (diffreti->getType() == retType) {
       CI->replaceAllUsesWith(diffreti);
@@ -718,12 +725,16 @@ public:
       Type *fnsrety = cast<PointerType>(FT->getParamType(0));
       Ty = fnsrety->getPointerElementType();
 #endif
-#if LLVM_VERSION_MAJOR >= 11
+      Type *CTy = nullptr;
+#if LLVM_VERSION_MAJOR >= 12
+      CTy = CI->getAttribute(AttributeList::FirstArgIndex, Attribute::StructRet)
+                .getValueAsType();
+#else
+      CTy = cast<PointerType>(CI->getArgOperand(0)->getType())
+                ->getPointerElementType();
+#endif
       AllocaInst *primal = new AllocaInst(Ty, DL.getAllocaAddrSpace(), nullptr,
                                           DL.getPrefTypeAlign(Ty));
-#else
-      AllocaInst *primal = new AllocaInst(Ty, DL.getAllocaAddrSpace(), nullptr);
-#endif
 
       primal->insertBefore(CI);
 
@@ -734,14 +745,13 @@ public:
         Value *sretPt = CI->getArgOperand(0);
         if (width > 1) {
           PointerType *pty = cast<PointerType>(sretPt->getType());
-          if (auto sty = dyn_cast<StructType>(pty->getPointerElementType())) {
+          if (auto sty = dyn_cast<StructType>(CTy)) {
             Value *acc = UndefValue::get(
                 ArrayType::get(PointerType::get(sty->getElementType(0),
                                                 pty->getAddressSpace()),
                                width));
             for (size_t i = 0; i < width; ++i) {
-              Value *elem = Builder.CreateStructGEP(
-                  sretPt->getType()->getPointerElementType(), sretPt, i);
+              Value *elem = Builder.CreateStructGEP(sty, sretPt, i);
               acc = Builder.CreateInsertValue(acc, elem, i);
             }
             shadow = acc;
@@ -927,7 +937,22 @@ public:
       }
 
       if (byRefSize) {
-        Type *subTy = res->getType()->getPointerElementType();
+        Type *subTy = nullptr;
+        if (truei < FT->getNumParams()) {
+          subTy = FT->getParamType(i);
+        } else if ((mode == DerivativeMode::ReverseModeGradient ||
+                    mode == DerivativeMode::ForwardModeSplit)) {
+          if (differentialReturn && differet == nullptr) {
+            subTy = FT->getReturnType();
+          }
+        }
+
+        if (!subTy) {
+          EmitFailure("IllegalByVal", CI->getDebugLoc(), CI,
+                      "illegal enzyme byval arg", truei, " ", *res);
+          return {};
+        }
+
         auto &DL = fn->getParent()->getDataLayout();
         auto BitSize = DL.getTypeSizeInBits(subTy);
         if (BitSize / 8 != byRefSize) {
@@ -936,6 +961,10 @@ public:
                       byRefSize, " (bytes) actual size ", BitSize,
                       " (bits) in ", *CI);
         }
+        res = Builder.CreateBitCast(
+            res,
+            PointerType::get(
+                subTy, cast<PointerType>(res->getType())->getAddressSpace()));
         res = Builder.CreateLoad(subTy, res);
         byRefSize = 0;
       }
@@ -947,8 +976,13 @@ public:
           if (differentialReturn && differet == nullptr) {
             differet = res;
             if (CI->paramHasAttr(i, Attribute::ByVal)) {
-              differet = Builder.CreateLoad(
-                  differet->getType()->getPointerElementType(), differet);
+              Type *T = nullptr;
+#if LLVM_VERSION_MAJOR > 12
+              T = CI->getParamAttr(i, Attribute::ByVal).getValueAsType();
+#else
+              T = differet->getType()->getPointerElementType();
+#endif
+              differet = Builder.CreateLoad(T, differet);
             }
             if (differet->getType() != fn->getReturnType())
               if (auto ST0 = dyn_cast<StructType>(differet->getType()))
@@ -975,8 +1009,13 @@ public:
           } else if (tape == nullptr) {
             tape = res;
             if (CI->paramHasAttr(i, Attribute::ByVal)) {
-              tape = Builder.CreateLoad(
-                  tape->getType()->getPointerElementType(), tape);
+              Type *T = nullptr;
+#if LLVM_VERSION_MAJOR > 12
+              T = CI->getParamAttr(i, Attribute::ByVal).getValueAsType();
+#else
+              T = tape->getType()->getPointerElementType();
+#endif
+              tape = Builder.CreateLoad(T, tape);
             }
             continue;
           }
@@ -999,9 +1038,21 @@ public:
         if (auto ptr = dyn_cast<PointerType>(res->getType())) {
           if (auto PT = dyn_cast<PointerType>(PTy)) {
             if (ptr->getAddressSpace() != PT->getAddressSpace()) {
-              res = Builder.CreateAddrSpaceCast(
-                  res, PointerType::get(ptr->getPointerElementType(),
-                                        PT->getAddressSpace()));
+#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR >= 15
+              if (CI->getContext().supportsTypedPointers()) {
+#endif
+                res = Builder.CreateAddrSpaceCast(
+                    res, PointerType::get(ptr->getPointerElementType(),
+                                          PT->getAddressSpace()));
+#if LLVM_VERSION_MAJOR >= 15
+              } else {
+                res = Builder.CreateAddrSpaceCast(res, PT);
+              }
+#endif
+#else
+              res = Builder.CreateAddrSpaceCast(res, PT);
+#endif
               assert(res);
               assert(PTy);
               assert(FT);
@@ -1138,6 +1189,7 @@ public:
       if (a.getType()->isFPOrFPVectorTy()) {
         dt = ConcreteType(a.getType()->getScalarType());
       } else if (a.getType()->isPointerTy()) {
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
         if (a.getContext().supportsTypedPointers()) {
 #endif
@@ -1149,6 +1201,7 @@ public:
           }
 #if LLVM_VERSION_MAJOR >= 15
         }
+#endif
 #endif
         dt.insert({}, BaseType::Pointer);
       } else if (a.getType()->isIntOrIntVectorTy()) {
@@ -1651,7 +1704,6 @@ public:
     ReplaceOriginalCall(Builder, ret, retElemType, diffret, CI, mode);
 
     if (Logic.PostOpt) {
-#if LLVM_VERSION_MAJOR >= 11
       auto Params = llvm::getInlineParams();
 
       llvm::SetVector<CallInst *> Q;
@@ -1682,12 +1734,7 @@ public:
             };
             if (llvm::shouldInline(*cur, GetInlineCost, ORE)) {
               InlineFunctionInfo IFI;
-              InlineResult IR =
-#if LLVM_VERSION_MAJOR >= 11
-                  InlineFunction(*cur, IFI);
-#else
-                  InlineFunction(cur, IFI);
-#endif
+              InlineResult IR = InlineFunction(*cur, IFI);
               if (IR.isSuccess()) {
                 LowerSparsification(outerFunc, /*replaceAll*/ false);
                 for (auto U : outerFunc->users()) {
@@ -1705,7 +1752,6 @@ public:
           }
         }
       }
-#endif
     }
     return true;
   }
@@ -1911,12 +1957,7 @@ public:
 
         Function *Fn = II->getCalledFunction();
 
-#if LLVM_VERSION_MAJOR >= 11
-        if (auto castinst = dyn_cast<ConstantExpr>(II->getCalledOperand()))
-#else
-        if (auto castinst = dyn_cast<ConstantExpr>(II->getCalledValue()))
-#endif
-        {
+        if (auto castinst = dyn_cast<ConstantExpr>(II->getCalledOperand())) {
           if (castinst->isCast())
             if (auto fn = dyn_cast<Function>(castinst->getOperand(0)))
               Fn = fn;
@@ -1981,12 +2022,7 @@ public:
 
         Function *Fn = CI->getCalledFunction();
 
-#if LLVM_VERSION_MAJOR >= 11
-        if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-#else
-        if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
-#endif
-        {
+        if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand())) {
           if (castinst->isCast())
             if (auto fn = dyn_cast<Function>(castinst->getOperand(0)))
               Fn = fn;
@@ -2481,20 +2517,31 @@ public:
                                  /* CGSCC */ nullptr);
 
       DenseSet<const char *> Allowed = {
-          &AAHeapToStack::ID,     &AANoCapture::ID,
+        &AAHeapToStack::ID,
+        &AANoCapture::ID,
 
-          &AAMemoryBehavior::ID,  &AAMemoryLocation::ID, &AANoUnwind::ID,
-          &AANoSync::ID,          &AANoRecurse::ID,      &AAWillReturn::ID,
-          &AANoReturn::ID,        &AANonNull::ID,        &AANoAlias::ID,
-          &AADereferenceable::ID, &AAAlign::ID,
+        &AAMemoryBehavior::ID,
+        &AAMemoryLocation::ID,
+        &AANoUnwind::ID,
+        &AANoSync::ID,
+        &AANoRecurse::ID,
+        &AAWillReturn::ID,
+        &AANoReturn::ID,
+        &AANonNull::ID,
+        &AANoAlias::ID,
+        &AADereferenceable::ID,
+        &AAAlign::ID,
+#if LLVM_VERSION_MAJOR < 18
+        &AAReturnedValues::ID,
+#endif
+        &AANoFree::ID,
+        &AANoUndef::ID,
 
-          &AAReturnedValues::ID,  &AANoFree::ID,         &AANoUndef::ID,
-
-          //&AAValueSimplify::ID,
-          //&AAReachability::ID,
-          //&AAValueConstantRange::ID,
-          //&AAUndefinedBehavior::ID,
-          //&AAPotentialValues::ID,
+        //&AAValueSimplify::ID,
+        //&AAReachability::ID,
+        //&AAValueConstantRange::ID,
+        //&AAUndefinedBehavior::ID,
+        //&AAPotentialValues::ID,
       };
 
 #if LLVM_VERSION_MAJOR >= 15
@@ -2532,12 +2579,8 @@ public:
         for (Instruction &I : BB) {
           if (auto CI = dyn_cast<CallInst>(&I)) {
             Function *F = CI->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-            if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-#else
-            if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
-#endif
-            {
+            if (auto castinst =
+                    dyn_cast<ConstantExpr>(CI->getCalledOperand())) {
               if (castinst->isCast())
                 if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
                   F = fn;
@@ -2598,12 +2641,8 @@ public:
         for (Instruction &I : BB) {
           if (auto CI = dyn_cast<CallInst>(&I)) {
             Function *F = CI->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-            if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-#else
-            if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
-#endif
-            {
+            if (auto castinst =
+                    dyn_cast<ConstantExpr>(CI->getCalledOperand())) {
               if (castinst->isCast())
                 if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
                   F = fn;
@@ -3080,9 +3119,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     bool LTOPreLink = false;
     // First rotate loops that may have been un-rotated by prior passes.
     // Disable header duplication at -Oz.
-#if LLVM_VERSION_MAJOR >= 11
     LPM.addPass(LoopRotatePass(Level != OptimizationLevel::Oz, LTOPreLink));
-#endif
     // Some loops may have become dead by now. Try to delete them.
     // FIXME: see discussion in https://reviews.llvm.org/D112851,
     //        this may need to be revisited once we run GVN before

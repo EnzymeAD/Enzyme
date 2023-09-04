@@ -51,11 +51,8 @@
 #include "llvm/ADT/StringMap.h"
 
 #include "llvm/IR/Dominators.h"
-
-#if LLVM_VERSION_MAJOR >= 10
 #include "llvm/IR/IntrinsicsAMDGPU.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
-#endif
 
 #include <map>
 #include <set>
@@ -434,6 +431,9 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
   }
 
   if (arg->isPointerTy()) {
+#if LLVM_VERSION_MAJOR >= 17
+    return DIFFE_TYPE::DUP_ARG;
+#else
 #if LLVM_VERSION_MAJOR >= 15
     if (!arg->getContext().supportsTypedPointers()) {
       return DIFFE_TYPE::DUP_ARG;
@@ -454,6 +454,7 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
     llvm::errs() << "arg: " << *arg << "\n";
     assert(0 && "Cannot handle type0");
     return DIFFE_TYPE::CONSTANT;
+#endif
   } else if (arg->isArrayTy()) {
     return whatType(llvm::cast<llvm::ArrayType>(arg)->getElementType(), mode,
                     integersAreConstant, seen);
@@ -536,11 +537,7 @@ static inline llvm::Type *FloatToIntTy(llvm::Type *T) {
   assert(T->isFPOrFPVectorTy());
   if (auto ty = llvm::dyn_cast<llvm::VectorType>(T)) {
     return llvm::VectorType::get(FloatToIntTy(ty->getElementType()),
-#if LLVM_VERSION_MAJOR >= 11
                                  ty->getElementCount());
-#else
-                                 ty->getNumElements());
-#endif
   }
   if (T->isHalfTy())
     return llvm::IntegerType::get(T->getContext(), 16);
@@ -558,11 +555,7 @@ static inline llvm::Type *IntToFloatTy(llvm::Type *T) {
   assert(T->isIntOrIntVectorTy());
   if (auto ty = llvm::dyn_cast<llvm::VectorType>(T)) {
     return llvm::VectorType::get(IntToFloatTy(ty->getElementType()),
-#if LLVM_VERSION_MAJOR >= 11
                                  ty->getElementCount());
-#else
-                                 ty->getNumElements());
-#endif
   }
   if (auto ty = llvm::dyn_cast<llvm::IntegerType>(T)) {
     switch (ty->getBitWidth()) {
@@ -639,6 +632,14 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
                              BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
                              llvm::ArrayRef<llvm::OperandBundleDef> bundles);
+
+void callSPMVDiagUpdate(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                        llvm::IntegerType *IT, llvm::Type *BlasCT,
+                        llvm::Type *BlasFPT, llvm::Type *BlasPT,
+                        llvm::Type *BlasIT, llvm::Type *fpTy,
+                        llvm::ArrayRef<llvm::Value *> args,
+                        const llvm::ArrayRef<llvm::OperandBundleDef> bundles,
+                        bool byRef, bool julia_decl);
 
 llvm::CallInst *
 getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
@@ -1008,15 +1009,15 @@ static inline llvm::StructType *getMPIHelper(llvm::LLVMContext &Context) {
 }
 
 template <MPI_Elem E, bool Pointer = true>
-static inline llvm::Value *getMPIMemberPtr(llvm::IRBuilder<> &B,
-                                           llvm::Value *V) {
+static inline llvm::Value *getMPIMemberPtr(llvm::IRBuilder<> &B, llvm::Value *V,
+                                           llvm::Type *T) {
   using namespace llvm;
   auto i64 = Type::getInt64Ty(V->getContext());
   auto i32 = Type::getInt32Ty(V->getContext());
   auto c0_64 = ConstantInt::get(i64, 0);
 
   if (Pointer) {
-    return B.CreateInBoundsGEP(V->getType()->getPointerElementType(), V,
+    return B.CreateInBoundsGEP(T, V,
                                {c0_64, ConstantInt::get(i32, (uint64_t)E)});
   } else {
     return B.CreateExtractValue(V, {(unsigned)E});
@@ -1024,8 +1025,8 @@ static inline llvm::Value *getMPIMemberPtr(llvm::IRBuilder<> &B,
 }
 
 llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
-                                   ConcreteType CT, llvm::Type *intType,
-                                   llvm::IRBuilder<> &B2);
+                                   llvm::Type *OpType, ConcreteType CT,
+                                   llvm::Type *intType, llvm::IRBuilder<> &B2);
 
 class AssertingReplacingVH final : public llvm::CallbackVH {
 public:
@@ -1048,11 +1049,7 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
   const llvm::Function *called = nullptr;
   using namespace llvm;
   const llvm::Value *callVal;
-#if LLVM_VERSION_MAJOR >= 11
   callVal = op->getCalledOperand();
-#else
-  callVal = op->getCalledValue();
-#endif
 
   while (!called) {
     if (auto castinst = dyn_cast<ConstantExpr>(callVal))
@@ -1064,12 +1061,10 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
       called = fn;
       break;
     }
-#if LLVM_VERSION_MAJOR >= 11
     if (auto alias = dyn_cast<GlobalAlias>(callVal)) {
       callVal = dyn_cast<Function>(alias->getAliasee());
       continue;
     }
-#endif
     break;
   }
   return called ? const_cast<llvm::Function *>(called) : nullptr;
@@ -1368,21 +1363,11 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
       // because it should be in sync with CaptureTracking. Not using it may
       // cause weird miscompilations where 2 aliasing pointers are assumed to
       // noalias.
-#if LLVM_VERSION_MAJOR >= 10
       if (auto *RP = llvm::getArgumentAliasingToReturnedPointer(Call, false)) {
         V = RP;
         continue;
       }
-#endif
     }
-#if LLVM_VERSION_MAJOR < 10
-    if (auto CS = llvm::dyn_cast<llvm::CallBase>(V)) {
-      if (auto *RP = llvm::getArgumentAliasingToReturnedPointer(CS)) {
-        V = RP;
-        continue;
-      }
-    }
-#endif
 
     if (auto I = llvm::dyn_cast<llvm::Instruction>(V)) {
 #if LLVM_VERSION_MAJOR >= 12
@@ -1657,6 +1642,7 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
                                   llvm::Value *dim_2, bool cacheMat,
                                   bool byRef);
 llvm::Value *is_normal(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef);
+llvm::Value *is_uper(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef);
 llvm::Value *select_vec_dims(llvm::IRBuilder<> &B, llvm::Value *trans,
                              llvm::Value *dim1, llvm::Value *dim2, bool byRef);
 // first one assume V is an Integer
@@ -1680,9 +1666,7 @@ static inline llvm::Attribute::AttrKind PrimalParamAttrsToPreserve[] = {
 #if LLVM_VERSION_MAJOR >= 12
     llvm::Attribute::AttrKind::ByRef,
 #endif
-#if LLVM_VERSION_MAJOR >= 11
     llvm::Attribute::AttrKind::Preallocated,
-#endif
     llvm::Attribute::AttrKind::InAlloca,
 #if LLVM_VERSION_MAJOR >= 13
     llvm::Attribute::AttrKind::ElementType,
@@ -1690,9 +1674,7 @@ static inline llvm::Attribute::AttrKind PrimalParamAttrsToPreserve[] = {
 #if LLVM_VERSION_MAJOR >= 15
     llvm::Attribute::AttrKind::AllocAlign,
 #endif
-#if LLVM_VERSION_MAJOR >= 10
     llvm::Attribute::AttrKind::NoFree,
-#endif
     llvm::Attribute::AttrKind::Alignment,
     llvm::Attribute::AttrKind::StackAlignment,
     llvm::Attribute::AttrKind::NoCapture,
@@ -1707,9 +1689,7 @@ static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
 #if LLVM_VERSION_MAJOR >= 13
     llvm::Attribute::AttrKind::ElementType,
 #endif
-#if LLVM_VERSION_MAJOR >= 10
     llvm::Attribute::AttrKind::NoFree,
-#endif
     llvm::Attribute::AttrKind::Alignment,
     llvm::Attribute::AttrKind::StackAlignment,
     llvm::Attribute::AttrKind::NoCapture,

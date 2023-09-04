@@ -255,7 +255,7 @@ EnzymeTypeAnalysisRef CreateTypeAnalysis(EnzymeLogicRef Log,
     CustomRuleType rule = customRules[i];
     TA->CustomRules[customRuleNames[i]] =
         [=](int direction, TypeTree &returnTree, ArrayRef<TypeTree> argTrees,
-            ArrayRef<std::set<int64_t>> knownValues, CallInst *call,
+            ArrayRef<std::set<int64_t>> knownValues, CallBase *call,
             TypeAnalyzer *TA) -> uint8_t {
       CTypeTreeRef creturnTree = (CTypeTreeRef)(&returnTree);
       CTypeTreeRef *cargs = new CTypeTreeRef[argTrees.size()];
@@ -304,8 +304,9 @@ void EnzymeGradientUtilsErase(GradientUtils *G, LLVMValueRef I) {
   return G->erase(cast<Instruction>(unwrap(I)));
 }
 void EnzymeGradientUtilsEraseWithPlaceholder(GradientUtils *G, LLVMValueRef I,
-                                             uint8_t erase) {
+                                             LLVMValueRef orig, uint8_t erase) {
   return G->eraseWithPlaceholder(cast<Instruction>(unwrap(I)),
+                                 cast<Instruction>(unwrap(orig)),
                                  "_replacementABI", erase != 0);
 }
 
@@ -444,13 +445,9 @@ void EnzymeGradientUtilsAddToInvertedPointerDiffe(
     LLVMTypeRef addingType, unsigned start, unsigned size, LLVMValueRef origptr,
     LLVMValueRef dif, LLVMBuilderRef BuilderM, unsigned align,
     LLVMValueRef mask) {
-#if LLVM_VERSION_MAJOR >= 10
   MaybeAlign align2;
   if (align)
     align2 = MaybeAlign(align);
-#else
-  auto align2 = align;
-#endif
   auto inst = cast_or_null<Instruction>(unwrap(orig));
   gutils->addToInvertedPtrDiffe(inst, unwrap(origVal), unwrap(addingType),
                                 start, size, unwrap(origptr), unwrap(dif),
@@ -462,13 +459,9 @@ void EnzymeGradientUtilsAddToInvertedPointerDiffeTT(
     CTypeTreeRef vd, unsigned LoadSize, LLVMValueRef origptr,
     LLVMValueRef prediff, LLVMBuilderRef BuilderM, unsigned align,
     LLVMValueRef premask) {
-#if LLVM_VERSION_MAJOR >= 10
   MaybeAlign align2;
   if (align)
     align2 = MaybeAlign(align);
-#else
-  auto align2 = align;
-#endif
   auto inst = cast_or_null<Instruction>(unwrap(orig));
   gutils->addToInvertedPtrDiffe(inst, unwrap(origVal), *(TypeTree *)vd,
                                 LoadSize, unwrap(origptr), unwrap(prediff),
@@ -782,9 +775,10 @@ const char *EnzymeGradientUtilsInvertedPointersToString(GradientUtils *gutils,
 }
 
 LLVMValueRef EnzymeGradientUtilsCallWithInvertedBundles(
-    GradientUtils *gutils, LLVMValueRef func, LLVMValueRef *args_vr,
-    uint64_t args_size, LLVMValueRef orig_vr, CValueType *valTys,
-    uint64_t valTys_size, LLVMBuilderRef B, uint8_t lookup) {
+    GradientUtils *gutils, LLVMValueRef func, LLVMTypeRef funcTy,
+    LLVMValueRef *args_vr, uint64_t args_size, LLVMValueRef orig_vr,
+    CValueType *valTys, uint64_t valTys_size, LLVMBuilderRef B,
+    uint8_t lookup) {
   auto orig = cast<CallInst>(unwrap(orig_vr));
 
   ArrayRef<ValueType> ar((ValueType *)valTys, valTys_size);
@@ -800,9 +794,8 @@ LLVMValueRef EnzymeGradientUtilsCallWithInvertedBundles(
 
   auto callval = unwrap(func);
 
-  auto res = BR.CreateCall(
-      cast<FunctionType>(callval->getType()->getPointerElementType()), callval,
-      args, Defs);
+  auto res =
+      BR.CreateCall(cast<FunctionType>(unwrap(funcTy)), callval, args, Defs);
   return wrap(res);
 }
 
@@ -1187,7 +1180,7 @@ static size_t num_rooting(llvm::Type *T, llvm::Function *F) {
 }
 
 extern "C" {
-#if LLVM_VERSION_MAJOR >= 10
+
 void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   auto F = cast<Function>(unwrap(F_C));
   if (F->empty())
@@ -1243,13 +1236,28 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   }
 
   for (auto idx : enzyme_srets) {
-    Types.push_back(FT->getParamType(idx)->getPointerElementType());
+    llvm::Type *T = nullptr;
+#if LLVM_VERSION_MAJOR >= 17
+    llvm_unreachable("Unhandled");
+    // T = F->getParamAttribute(idx, Attribute::AttrKind::ElementType)
+    //        .getValueAsType();
+#else
+    T = FT->getParamType(idx)->getPointerElementType();
+#endif
+    Types.push_back(T);
   }
   for (auto idx : enzyme_srets_v) {
+    llvm::Type *T = nullptr;
     auto AT = cast<ArrayType>(FT->getParamType(idx));
-    auto ET = AT->getElementType()->getPointerElementType();
+#if LLVM_VERSION_MAJOR >= 17
+    llvm_unreachable("Unhandled");
+    // T = F->getParamAttribute(idx, Attribute::AttrKind::ElementType)
+    //         .getValueAsType();
+#else
+    T = AT->getElementType()->getPointerElementType();
+#endif
     for (size_t i = 0; i < AT->getNumElements(); i++)
-      Types.push_back(ET);
+      Types.push_back(T);
   }
 
   StructType *ST =
@@ -1490,20 +1498,34 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   for (auto i : rroots) {
     auto arg = delArgMap[i];
     assert(arg);
-    auto AT2 = cast<ArrayType>(FT->getParamType(i)->getPointerElementType());
+    llvm::Type *T = nullptr;
+#if LLVM_VERSION_MAJOR >= 17
+    llvm_unreachable("Unhandled");
+    // T = F->getParamAttribute(i, Attribute::AttrKind::ElementType)
+    //        .getValueAsType();
+#else
+    T = FT->getParamType(i)->getPointerElementType();
+#endif
     IRBuilder<> EB(&NewF->getEntryBlock().front());
-    arg->replaceAllUsesWith(EB.CreateAlloca(AT2));
+    arg->replaceAllUsesWith(EB.CreateAlloca(T));
     delete arg;
   }
   for (auto i : rroots_v) {
     auto arg = delArgMap[i];
     assert(arg);
     auto AT = cast<ArrayType>(FT->getParamType(i));
-    auto AT2 = cast<ArrayType>(AT->getElementType()->getPointerElementType());
+    llvm::Type *T = nullptr;
+#if LLVM_VERSION_MAJOR >= 17
+    llvm_unreachable("Unhandled");
+    // T = F->getParamAttribute(i, Attribute::AttrKind::ElementType)
+    //        .getValueAsType();
+#else
+    T = AT->getElementType()->getPointerElementType();
+#endif
     IRBuilder<> EB(&NewF->getEntryBlock().front());
     Value *val = UndefValue::get(AT);
     for (size_t j = 0; j < AT->getNumElements(); j++) {
-      val = EB.CreateInsertValue(val, EB.CreateAlloca(AT2), j);
+      val = EB.CreateInsertValue(val, EB.CreateAlloca(T), j);
     }
     arg->replaceAllUsesWith(val);
     delete arg;
@@ -1655,7 +1677,6 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   NewF->setCallingConv(F->getCallingConv());
   F->eraseFromParent();
 }
-#endif
 
 LLVMValueRef EnzymeBuildExtractValue(LLVMBuilderRef B, LLVMValueRef AggVal,
                                      unsigned *Index, unsigned Size,

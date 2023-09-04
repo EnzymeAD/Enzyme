@@ -128,6 +128,7 @@ entry:
 ; CHECK-NEXT:   %ret = alloca double
 ; CHECK-NEXT:   %byref.transpose.transa = alloca i8
 ; CHECK-NEXT:   %byref.transpose.transb = alloca i8
+; CHECK-NEXT:   %byref.int.one = alloca i64
 ; CHECK-NEXT:   %byref.constant.char.G = alloca i8
 ; CHECK-NEXT:   %byref.constant.int.0 = alloca i64
 ; CHECK-NEXT:   %[[byrefconstantint1:.+]] = alloca i64
@@ -201,6 +202,8 @@ entry:
 ; CHECK-DAG:   %[[i32:.+]] = icmp eq i8 %ld.transb, 84
 ; CHECK-DAG:   %[[i33:.+]] = select i1 %[[i32]], i8 78, i8 %[[i31]]
 ; CHECK-NEXT:   store i8 %[[i33]], i8* %byref.transpose.transb
+; CHECK-NEXT:   store i64 1, i64* %byref.int.one
+; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %malloccall, i8* %byref.transpose.transb, i8* %m_p, i8* %k_p, i8* %n_p, i8* %alpha_p, i8* %"C'", i8* %ldc_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %"A'", i8* %lda_p)
 ; CHECK-NEXT:   %loaded.trans = load i8, i8* %malloccall
 ; CHECK-DAG:   %[[i34:.+]] = icmp eq i8 %loaded.trans, 78

@@ -30,7 +30,7 @@ void square(double** p_delv, double** p_e, int ** idx, int numReg, int numElemRe
         free(tmp);
     }
 }
-int enzyme_dup, enzyme_const;
+
 int main() {
     int numReg = 100;
     double *delv = (double*)malloc(sizeof(double)*numReg);

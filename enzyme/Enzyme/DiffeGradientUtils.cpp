@@ -173,20 +173,18 @@ AllocaInst *DiffeGradientUtils::getDifferential(Value *val) {
         entryBuilder.CreateAlloca(type, nullptr, val->getName() + "'de");
     auto Alignment =
         oldFunc->getParent()->getDataLayout().getPrefTypeAlignment(type);
-#if LLVM_VERSION_MAJOR >= 10
     differentials[val]->setAlignment(Align(Alignment));
-#else
-    differentials[val]->setAlignment(Alignment);
-#endif
     ZeroMemory(entryBuilder, type, differentials[val],
                /*isTape*/ false);
   }
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
   if (val->getContext().supportsTypedPointers()) {
 #endif
     assert(differentials[val]->getType()->getPointerElementType() == type);
 #if LLVM_VERSION_MAJOR >= 15
   }
+#endif
 #endif
   return differentials[val];
 }
@@ -371,11 +369,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
 
     if (oldBitSize > newBitSize && oldBitSize % newBitSize == 0 &&
         !addingType->isVectorTy()) {
-#if LLVM_VERSION_MAJOR >= 11
       addingType = VectorType::get(addingType, oldBitSize / newBitSize, false);
-#else
-      addingType = VectorType::get(addingType, oldBitSize / newBitSize);
-#endif
     }
 
     Value *bcold = BuilderM.CreateBitCast(old, addingType);
@@ -400,11 +394,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       Type *tys[] = {res->getType(), ptr->getType()};
       auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
                                          Intrinsic::masked_store, tys);
-#if LLVM_VERSION_MAJOR > 10
       auto align = cast<AllocaInst>(ptr)->getAlign().value();
-#else
-      auto align = cast<AllocaInst>(ptr)->getAlignment();
-#endif
       assert(align);
       Value *alignv =
           ConstantInt::get(Type::getInt32Ty(mask->getContext()), align);
@@ -423,11 +413,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       Type *tys[] = {res->getType(), ptr->getType()};
       auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
                                          Intrinsic::masked_store, tys);
-#if LLVM_VERSION_MAJOR > 10
       auto align = cast<AllocaInst>(ptr)->getAlign().value();
-#else
-      auto align = cast<AllocaInst>(ptr)->getAlignment();
-#endif
       assert(align);
       Value *alignv =
           ConstantInt::get(Type::getInt32Ty(mask->getContext()), align);
@@ -506,6 +492,7 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
     return;
   }
   Value *tostore = getDifferential(val);
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
   if (toset->getContext().supportsTypedPointers()) {
 #endif
@@ -516,6 +503,7 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
     assert(toset->getType() == tostore->getType()->getPointerElementType());
 #if LLVM_VERSION_MAJOR >= 15
   }
+#endif
 #endif
   BuilderM.CreateStore(toset, tostore);
 }
@@ -555,6 +543,7 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
   Value *metaforfree =
       unwrapM(storeInto, tbuild, antimap, UnwrapMode::LegalFullUnwrap);
   Type *T;
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
   if (metaforfree->getContext().supportsTypedPointers()) {
 #endif
@@ -563,6 +552,9 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
   } else {
     T = PointerType::getUnqual(metaforfree->getContext());
   }
+#endif
+#else
+  T = PointerType::getUnqual(metaforfree->getContext());
 #endif
   LoadInst *forfree = cast<LoadInst>(tbuild.CreateLoad(T, metaforfree));
   forfree->setMetadata(LLVMContext::MD_invariant_group, InvariantMD);
@@ -573,11 +565,7 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
   forfree->setName("forfree");
   unsigned align = getCacheAlignment(
       (unsigned)newFunc->getParent()->getDataLayout().getPointerSize());
-#if LLVM_VERSION_MAJOR >= 10
   forfree->setAlignment(Align(align));
-#else
-  forfree->setAlignment(align);
-#endif
 
   CallInst *ci = CreateDealloc(tbuild, forfree);
   if (ci) {
@@ -589,22 +577,12 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
   return ci;
 }
 
-#if LLVM_VERSION_MAJOR >= 10
 void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
                                                Value *origVal, Type *addingType,
                                                unsigned start, unsigned size,
                                                Value *origptr, Value *dif,
                                                IRBuilder<> &BuilderM,
-                                               MaybeAlign align, Value *mask)
-#else
-void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
-                                               Value *origVal, Type *addingType,
-                                               unsigned start, unsigned size,
-                                               Value *origptr, Value *dif,
-                                               IRBuilder<> &BuilderM,
-                                               unsigned align, Value *mask)
-#endif
-{
+                                               MaybeAlign align, Value *mask) {
   auto &DL = oldFunc->getParent()->getDataLayout();
 
   auto addingSize = (DL.getTypeSizeInBits(addingType) + 1) / 8;
@@ -636,12 +614,14 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   }
 
   bool needsCast = false;
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
   if (origptr->getContext().supportsTypedPointers()) {
 #endif
     needsCast = origptr->getType()->getPointerElementType() != addingType;
 #if LLVM_VERSION_MAJOR >= 15
   }
+#endif
 #endif
 
   assert(ptr);
@@ -808,7 +788,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           BuilderM.CreateAtomicRMW(op, vptr, vdif, alignv,
                                    AtomicOrdering::Monotonic,
                                    SyncScope::System);
-#elif LLVM_VERSION_MAJOR >= 11
+#else
           AtomicRMWInst *rmw = BuilderM.CreateAtomicRMW(
               op, vptr, vdif, AtomicOrdering::Monotonic, SyncScope::System);
           if (align) {
@@ -822,9 +802,6 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
             }
             rmw->setAlignment(Align(alignv));
           }
-#else
-          BuilderM.CreateAtomicRMW(op, vptr, vdif, AtomicOrdering::Monotonic,
-                                   SyncScope::System);
 #endif
         }
       };
@@ -850,7 +827,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         }
         BuilderM.CreateAtomicRMW(op, ptr, dif, alignv,
                                  AtomicOrdering::Monotonic, SyncScope::System);
-#elif LLVM_VERSION_MAJOR >= 11
+#else
         AtomicRMWInst *rmw = BuilderM.CreateAtomicRMW(
             op, ptr, dif, AtomicOrdering::Monotonic, SyncScope::System);
         if (align) {
@@ -864,9 +841,6 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           }
           rmw->setAlignment(Align(alignv));
         }
-#else
-        BuilderM.CreateAtomicRMW(op, ptr, dif, AtomicOrdering::Monotonic,
-                                 SyncScope::System);
 #endif
       };
       applyChainRule(BuilderM, rule, dif, ptr);
@@ -928,10 +902,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       if (align) {
 #if LLVM_VERSION_MAJOR >= 16
         auto alignv = align ? align.value().value() : 0;
-#elif LLVM_VERSION_MAJOR >= 10
-        auto alignv = align ? align.getValue().value() : 0;
 #else
-        auto alignv = align;
+        auto alignv = align ? align.getValue().value() : 0;
 #endif
         if (alignv != 0) {
           if (start != 0) {
@@ -940,13 +912,9 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
               alignv = 1;
             }
           }
-#if LLVM_VERSION_MAJOR >= 10
+
           LI->setAlignment(Align(alignv));
           st->setAlignment(Align(alignv));
-#else
-          LI->setAlignment(alignv);
-          st->setAlignment(alignv);
-#endif
         }
       }
     };
@@ -957,11 +925,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
                                         Intrinsic::masked_load, tys);
     auto SF = Intrinsic::getDeclaration(oldFunc->getParent(),
                                         Intrinsic::masked_store, tys);
-#if LLVM_VERSION_MAJOR >= 10
     unsigned aligni = align ? align->value() : 0;
-#else
-    unsigned aligni = align;
-#endif
+
     if (aligni != 0)
       if (start != 0) {
         // todo make better alignment calculation
@@ -984,17 +949,11 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   }
 }
 
-#if LLVM_VERSION_MAJOR >= 10
 void DiffeGradientUtils::addToInvertedPtrDiffe(
     llvm::Instruction *orig, llvm::Value *origVal, TypeTree vd,
     unsigned LoadSize, llvm::Value *origptr, llvm::Value *prediff,
     llvm::IRBuilder<> &Builder2, MaybeAlign alignment, llvm::Value *premask)
-#else
-void DiffeGradientUtils::addToInvertedPtrDiffe(
-    llvm::Instruction *orig, llvm::Value *origVal, TypeTree vd,
-    unsigned LoadSize, llvm::Value *origptr, llvm::Value *prediff,
-    llvm::IRBuilder<> &Builder2, unsigned alignment, llvm::Value *premask)
-#endif
+
 {
 
   unsigned start = 0;

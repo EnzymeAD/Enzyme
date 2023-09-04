@@ -3,13 +3,15 @@ project(Enzyme)
 
 include(CMakePackageConfigHelpers)
 
-
 set(ENZYME_MAJOR_VERSION 0)
 set(ENZYME_MINOR_VERSION 0)
-set(ENZYME_PATCH_VERSION 65)
+set(ENZYME_PATCH_VERSION 79)
 set(ENZYME_VERSION
   ${ENZYME_MAJOR_VERSION}.${ENZYME_MINOR_VERSION}.${ENZYME_PATCH_VERSION})
 
+add_definitions(-DENZYME_VERSION_MAJOR=${ENZYME_MAJOR_VERSION})
+add_definitions(-DENZYME_VERSION_MINOR=${ENZYME_MINOR_VERSION})
+add_definitions(-DENZYME_VERSION_PATCH=${ENZYME_PATCH_VERSION})
 
 SET(CMAKE_CXX_FLAGS "-Wall -fPIC -fno-rtti ${CMAKE_CXX_FLAGS}")
 SET(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g -ggdb")
@@ -28,6 +30,7 @@ option(ENZYME_FLANG "Build enzyme flang symlink" OFF)
 option(ENZYME_MLIR "Build enzyme mlir plugin" OFF)
 option(ENZYME_IFX "Enable enzyme support for the Intel Fortran compiler IFX" OFF)
 option(ENZYME_EXTERNAL_SHARED_LIB "Build external shared library" OFF)
+option(ENZYME_STATIC_LIB "Build static library" OFF)
 set(ENZYME_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(ENZYME_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
 list(APPEND CMAKE_MODULE_PATH "${ENZYME_SOURCE_DIR}/cmake/modules")
@@ -227,7 +230,7 @@ set(INSTALL_INCLUDE_DIR include CACHE PATH "Installation directory for header fi
 if(WIN32 AND NOT CYGWIN)
   set(DEF_INSTALL_CMAKE_DIR CMake)
 else()
-  set(DEF_INSTALL_CMAKE_DIR lib/CMake/Enzyme)
+  set(DEF_INSTALL_CMAKE_DIR lib/cmake/Enzyme)
 endif()
 set(INSTALL_CMAKE_DIR ${DEF_INSTALL_CMAKE_DIR} CACHE PATH
   "Installation directory for CMake files")

@@ -184,7 +184,7 @@ public:
   /// The set of values val will take on during this program
   std::set<int64_t> knownIntegralValues(llvm::Value *val) const;
 
-  FnTypeInfo getCallInfo(llvm::CallInst &CI, llvm::Function &fn) const;
+  FnTypeInfo getCallInfo(llvm::CallBase &CI, llvm::Function &fn) const;
 
   llvm::Function *getFunction() const;
 };
@@ -240,7 +240,7 @@ public:
   llvm::LoopInfo &LI;
   llvm::ScalarEvolution &SE;
 
-  FnTypeInfo getCallInfo(llvm::CallInst &CI, llvm::Function &fn);
+  FnTypeInfo getCallInfo(llvm::CallBase &CI, llvm::Function &fn);
 
   TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
                uint8_t direction = BOTH);
@@ -339,15 +339,15 @@ public:
   void visitBinaryOperator(llvm::BinaryOperator &I);
   void visitBinaryOperation(const llvm::DataLayout &DL, llvm::Type *T,
                             llvm::Instruction::BinaryOps, llvm::Value *Args[2],
-                            TypeTree &Ret, TypeTree &LHS, TypeTree &RHS);
+                            TypeTree &Ret, TypeTree &LHS, TypeTree &RHS,
+                            llvm::Instruction *I);
 
-  void visitIPOCall(llvm::CallInst &call, llvm::Function &fn);
+  void visitIPOCall(llvm::CallBase &call, llvm::Function &fn);
 
-  void visitInvokeInst(llvm::InvokeInst &call);
-  void visitCallInst(llvm::CallInst &call);
+  void visitCallBase(llvm::CallBase &call);
 
   void visitMemTransferInst(llvm::MemTransferInst &MTI);
-  void visitMemTransferCommon(llvm::CallInst &MTI);
+  void visitMemTransferCommon(llvm::CallBase &MTI);
 
   void visitIntrinsicInst(llvm::IntrinsicInst &II);
 
@@ -370,7 +370,7 @@ public:
       std::function<bool(int /*direction*/, TypeTree & /*returnTree*/,
                          llvm::ArrayRef<TypeTree> /*argTrees*/,
                          llvm::ArrayRef<std::set<int64_t>> /*knownValues*/,
-                         llvm::CallInst * /*call*/, TypeAnalyzer *)>>
+                         llvm::CallBase * /*call*/, TypeAnalyzer *)>>
       CustomRules;
 
   /// Map of possible query states to TypeAnalyzer intermediate results
@@ -385,4 +385,6 @@ public:
 
 TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
                                 bool intIsPointer = true);
+FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
+                                    llvm::Function *todiff);
 #endif

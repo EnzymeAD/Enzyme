@@ -128,7 +128,7 @@ public:
       return;
 
     if (auto newi = dyn_cast<Instruction>(iload))
-      gutils->eraseWithPlaceholder(newi, "_replacementA", erase);
+      gutils->eraseWithPlaceholder(newi, &I, "_replacementA", erase);
   }
 
   llvm::Value *MPI_TYPE_SIZE(llvm::Value *DT, llvm::IRBuilder<> &B,
@@ -388,13 +388,8 @@ public:
 
   void visitFCmpInst(llvm::FCmpInst &I) { eraseIfUnused(I); }
 
-#if LLVM_VERSION_MAJOR >= 10
   void visitLoadLike(llvm::Instruction &I, llvm::MaybeAlign alignment,
-                     bool constantval,
-#else
-  void visitLoadLike(llvm::Instruction &I, unsigned alignment, bool constantval,
-#endif
-                     llvm::Value *mask = nullptr,
+                     bool constantval, llvm::Value *mask = nullptr,
                      llvm::Value *orig_maskInit = nullptr) {
     using namespace llvm;
 
@@ -753,12 +748,7 @@ public:
       }
     }
 
-#if LLVM_VERSION_MAJOR >= 10
     auto alignment = LI.getAlign();
-#else
-    auto alignment = LI.getAlignment();
-#endif
-
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
 
     bool constantval = parseTBAA(LI, DL).Inner0().isIntegral();
@@ -798,14 +788,10 @@ public:
             rmw = BuilderZ.CreateAtomicRMW(I.getOperation(), ptr, dif,
                                            I.getAlign(), I.getOrdering(),
                                            I.getSyncScopeID());
-#elif LLVM_VERSION_MAJOR >= 11
+#else
             rmw = BuilderZ.CreateAtomicRMW(I.getOperation(), ptr, dif,
                                            I.getOrdering(), I.getSyncScopeID());
             rmw->setAlignment(I.getAlign());
-#else
-                               rmw = BuilderZ.CreateAtomicRMW(
-                                   I.getOperation(), ptr, dif, I.getOrdering(),
-                                   I.getSyncScopeID());
 #endif
             rmw->setVolatile(I.isVolatile());
             if (gutils->isConstantValue(&I))
@@ -853,17 +839,7 @@ public:
             LoadInst *dif1 =
                 Builder2.CreateLoad(I.getType(), ip, I.isVolatile());
 
-#if LLVM_VERSION_MAJOR >= 11
             dif1->setAlignment(I.getAlign());
-#else
-            const DataLayout &DL = I.getModule()->getDataLayout();
-            auto tmpAlign = DL.getTypeStoreSize(I.getValOperand()->getType());
-#if LLVM_VERSION_MAJOR >= 10
-            dif1->setAlignment(MaybeAlign(tmpAlign.getFixedSize()));
-#else
-            dif1->setAlignment(tmpAlign);
-#endif
-#endif
             dif1->setOrdering(order);
             dif1->setSyncScopeID(I.getSyncScopeID());
             return dif1;
@@ -932,11 +908,7 @@ public:
         }
       }
     }
-#if LLVM_VERSION_MAJOR >= 10
     auto align = SI.getAlign();
-#else
-    auto align = SI.getAlignment();
-#endif
 
     visitCommonStore(SI, SI.getPointerOperand(), SI.getValueOperand(), align,
                      SI.isVolatile(), SI.getOrdering(), SI.getSyncScopeID(),
@@ -956,18 +928,10 @@ public:
       eraseIfUnused(SI);
   }
 
-#if LLVM_VERSION_MAJOR >= 10
   void visitCommonStore(llvm::Instruction &I, llvm::Value *orig_ptr,
                         llvm::Value *orig_val, llvm::MaybeAlign align,
                         bool isVolatile, llvm::AtomicOrdering ordering,
-                        llvm::SyncScope::ID syncScope, llvm::Value *mask)
-#else
-  void visitCommonStore(llvm::Instruction &I, llvm::Value *orig_ptr,
-                        llvm::Value *orig_val, unsigned align, bool isVolatile,
-                        llvm::AtomicOrdering ordering,
-                        llvm::SyncScope::ID syncScope, llvm::Value *mask)
-#endif
-  {
+                        llvm::SyncScope::ID syncScope, llvm::Value *mask) {
     using namespace llvm;
 
     Value *val = gutils->getNewFromOriginal(orig_val);
@@ -1132,11 +1096,7 @@ public:
               LoadInst *dif1 =
                   Builder2.CreateLoad(valType, dif1Ptr, isVolatile);
               if (align)
-#if LLVM_VERSION_MAJOR >= 11
                 dif1->setAlignment(*align);
-#else
-                dif1->setAlignment(align);
-#endif
               dif1->setOrdering(ordering);
               dif1->setSyncScopeID(syncScope);
 
@@ -1171,14 +1131,9 @@ public:
             Type *tys[] = {valType, orig_ptr->getType()};
             auto F = Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
                                                Intrinsic::masked_load, tys);
-#if LLVM_VERSION_MAJOR >= 10
             Value *alignv =
                 ConstantInt::get(Type::getInt32Ty(mask->getContext()),
                                  align ? align->value() : 0);
-#else
-            Value *alignv =
-                ConstantInt::get(Type::getInt32Ty(mask->getContext()), align);
-#endif
             Value *ip =
                 lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
 
@@ -2849,6 +2804,7 @@ public:
     if (!vd.isKnownPastPointer()) {
       if (looseTypeAnalysis) {
         if (auto CI = dyn_cast<CastInst>(MS.getOperand(0))) {
+#if LLVM_VERSION_MAJOR < 18
           if (auto PT = dyn_cast<PointerType>(CI->getSrcTy())) {
             auto ET = PT->getPointerElementType();
             while (1) {
@@ -2877,6 +2833,7 @@ public:
               goto known;
             }
           }
+#endif
         }
         if (auto gep = dyn_cast<GetElementPtrInst>(MS.getOperand(0))) {
           if (auto AT = dyn_cast<ArrayType>(gep->getSourceElementType())) {
@@ -2909,13 +2866,8 @@ public:
   known:;
 
 #if 0
-#if LLVM_VERSION_MAJOR >= 10
     unsigned dstalign = dstAlign.valueOrOne().value();
     unsigned srcalign = srcAlign.valueOrOne().value();
-#else
-    unsigned dstalign = dstAlign;
-    unsigned srcalign = srcAlign;
-#endif
 #endif
 
     unsigned start = 0;
@@ -2994,8 +2946,8 @@ public:
           if (start != 0) {
             Value *idxs[] = {
                 ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
-            op0 = BuilderZ.CreateInBoundsGEP(
-                op0->getType()->getPointerElementType(), op0, idxs);
+            op0 =
+                BuilderZ.CreateInBoundsGEP(BuilderZ.getInt8PtrTy(), op0, idxs);
           }
           SmallVector<Value *, 4> args = {op0, op1, length};
           if (op3)
@@ -3031,8 +2983,8 @@ public:
           if (start != 0) {
             Value *idxs[] = {
                 ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
-            op0 = Builder2.CreateInBoundsGEP(
-                op0->getType()->getPointerElementType(), op0, idxs);
+            op0 =
+                Builder2.CreateInBoundsGEP(Builder2.getInt8PtrTy(), op0, idxs);
           }
           SmallVector<Value *, 4> args = {op0, op1l, length};
           if (op3l)
@@ -3060,31 +3012,18 @@ public:
   void visitMemTransferInst(llvm::MemTransferInst &MTI) {
     using namespace llvm;
     Value *isVolatile = gutils->getNewFromOriginal(MTI.getOperand(3));
-#if LLVM_VERSION_MAJOR >= 10
     auto srcAlign = MTI.getSourceAlign();
     auto dstAlign = MTI.getDestAlign();
-#else
-    auto srcAlign = MTI.getSourceAlignment();
-    auto dstAlign = MTI.getDestAlignment();
-#endif
     visitMemTransferCommon(MTI.getIntrinsicID(), srcAlign, dstAlign, MTI,
                            MTI.getOperand(0), MTI.getOperand(1),
                            gutils->getNewFromOriginal(MTI.getOperand(2)),
                            isVolatile);
   }
 
-#if LLVM_VERSION_MAJOR >= 10
   void visitMemTransferCommon(llvm::Intrinsic::ID ID, llvm::MaybeAlign srcAlign,
                               llvm::MaybeAlign dstAlign, llvm::CallInst &MTI,
                               llvm::Value *orig_dst, llvm::Value *orig_src,
-                              llvm::Value *new_size, llvm::Value *isVolatile)
-#else
-  void visitMemTransferCommon(llvm::Intrinsic::ID ID, unsigned srcAlign,
-                              unsigned dstAlign, llvm::CallInst &MTI,
-                              llvm::Value *orig_dst, llvm::Value *orig_src,
-                              llvm::Value *new_size, llvm::Value *isVolatile)
-#endif
-  {
+                              llvm::Value *new_size, llvm::Value *isVolatile) {
     using namespace llvm;
 
     if (gutils->isConstantValue(MTI.getOperand(0))) {
@@ -3139,6 +3078,7 @@ public:
       if (looseTypeAnalysis) {
         for (auto val : {orig_dst, orig_src}) {
           if (auto CI = dyn_cast<CastInst>(val)) {
+#if LLVM_VERSION_MAJOR < 18
             if (auto PT = dyn_cast<PointerType>(CI->getSrcTy())) {
               auto ET = PT->getPointerElementType();
               while (1) {
@@ -3167,6 +3107,7 @@ public:
                 goto known;
               }
             }
+#endif
           }
           if (auto gep = dyn_cast<GetElementPtrInst>(val)) {
             if (auto AT = dyn_cast<ArrayType>(gep->getSourceElementType())) {
@@ -3190,6 +3131,7 @@ public:
           ss << "Cannot deduce type of copy " << MTI;
           CustomErrorHandler(str.c_str(), wrap(&MTI), ErrorType::NoType,
                              &TR.analyzer, nullptr, wrap(&BuilderZ));
+          vd = TypeTree(BaseType::Integer).Only(0, &MTI);
         } else {
           EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI,
                       "failed to deduce type of copy ", MTI);
@@ -3204,16 +3146,11 @@ public:
     }
   known:;
 
-  // llvm::errs() << "MIT: " << MTI << "|size: " << size << " vd: " <<
-  // vd.str() << "\n";
+    // llvm::errs() << "MIT: " << MTI << "|size: " << size << " vd: " <<
+    // vd.str() << "\n";
 
-#if LLVM_VERSION_MAJOR >= 10
     unsigned dstalign = dstAlign.valueOrOne().value();
     unsigned srcalign = srcAlign.valueOrOne().value();
-#else
-    unsigned dstalign = dstAlign;
-    unsigned srcalign = srcAlign;
-#endif
 
     unsigned start = 0;
 
@@ -3318,17 +3255,12 @@ public:
           ddst = gutils->getNewFromOriginal(orig_dst);
         if (dsrc == nullptr)
           dsrc = gutils->getNewFromOriginal(orig_src);
-#if LLVM_VERSION_MAJOR >= 10
         MaybeAlign dalign;
         if (subdstalign)
           dalign = MaybeAlign(subdstalign);
         MaybeAlign salign;
         if (subsrcalign)
           salign = MaybeAlign(subsrcalign);
-#else
-        auto dalign = dstalign;
-        auto salign = srcalign;
-#endif
         if (ddst->getType()->isIntegerTy())
           ddst = BuilderZ.CreateIntToPtr(
               ddst, Type::getInt8PtrTy(ddst->getContext()));
@@ -3473,12 +3405,8 @@ public:
     case Intrinsic::nvvm_ldg_global_p:
     case Intrinsic::nvvm_ldg_global_f: {
       auto CI = cast<ConstantInt>(I.getOperand(1));
-#if LLVM_VERSION_MAJOR >= 10
       visitLoadLike(I, /*Align*/ MaybeAlign(CI->getZExtValue()),
                     /*constantval*/ false);
-#else
-      visitLoadLike(I, /*Align*/ CI->getZExtValue(), /*constantval*/ false);
-#endif
       return false;
     }
     default:
@@ -3487,11 +3415,7 @@ public:
 
     if (ID == Intrinsic::masked_store) {
       auto align0 = cast<ConstantInt>(I.getOperand(2))->getZExtValue();
-#if LLVM_VERSION_MAJOR >= 10
       auto align = MaybeAlign(align0);
-#else
-      auto align = align0;
-#endif
       visitCommonStore(I, /*orig_ptr*/ I.getOperand(1),
                        /*orig_val*/ I.getOperand(0), align,
                        /*isVolatile*/ false, llvm::AtomicOrdering::NotAtomic,
@@ -3501,11 +3425,7 @@ public:
     }
     if (ID == Intrinsic::masked_load) {
       auto align0 = cast<ConstantInt>(I.getOperand(1))->getZExtValue();
-#if LLVM_VERSION_MAJOR >= 10
       auto align = MaybeAlign(align0);
-#else
-      auto align = align0;
-#endif
       auto &DL = gutils->newFunc->getParent()->getDataLayout();
       bool constantval = parseTBAA(I, DL).Inner0().isIntegral();
       visitLoadLike(I, align, constantval,
@@ -4243,16 +4163,10 @@ public:
           MetaTypes.push_back(PointerType::getUnqual(ST));
           auto FT = FunctionType::get(Type::getVoidTy(newcalled->getContext()),
                                       MetaTypes, false);
-#if LLVM_VERSION_MAJOR >= 10
           Function *F =
               Function::Create(FT, GlobalVariable::InternalLinkage,
                                cast<Function>(newcalled)->getName() + "#out",
                                *task->getParent());
-#else
-          Function *F = Function::Create(
-              FT, GlobalVariable::InternalLinkage,
-              cast<Function>(newcalled)->getName() + "#out", task->getParent());
-#endif
           BasicBlock *entry =
               BasicBlock::Create(newcalled->getContext(), "entry", F);
           IRBuilder<> B(entry);
@@ -4279,12 +4193,7 @@ public:
               dif = B.CreateBitCast(dif, IntToFloatTy(dif->getType()));
             }
 
-#if LLVM_VERSION_MAJOR >= 10
             MaybeAlign align;
-#else
-            unsigned align = 0;
-#endif
-
             AtomicRMWInst::BinOp op = AtomicRMWInst::FAdd;
             if (auto vt = dyn_cast<VectorType>(dif->getType())) {
 #if LLVM_VERSION_MAJOR >= 12
@@ -4298,36 +4207,27 @@ public:
                 Value *Idxs[] = {
                     ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
                     ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
-                auto vptr = B.CreateInBoundsGEP(
-                    ptr->getType()->getPointerElementType(), ptr, Idxs);
+                auto vptr = B.CreateInBoundsGEP(vt, ptr, Idxs);
 #if LLVM_VERSION_MAJOR >= 13
                 B.CreateAtomicRMW(op, vptr, vdif, align,
                                   AtomicOrdering::Monotonic, SyncScope::System);
-#elif LLVM_VERSION_MAJOR >= 11
+#else
                 AtomicRMWInst *rmw =
                     B.CreateAtomicRMW(op, vptr, vdif, AtomicOrdering::Monotonic,
                                       SyncScope::System);
                 if (align)
                   rmw->setAlignment(align.getValue());
-#else
-                                   B.CreateAtomicRMW(op, vptr, vdif,
-                                                     AtomicOrdering::Monotonic,
-                                                     SyncScope::System);
 #endif
               }
             } else {
 #if LLVM_VERSION_MAJOR >= 13
               B.CreateAtomicRMW(op, ptr, dif, align, AtomicOrdering::Monotonic,
                                 SyncScope::System);
-#elif LLVM_VERSION_MAJOR >= 11
+#else
               AtomicRMWInst *rmw = B.CreateAtomicRMW(
                   op, ptr, dif, AtomicOrdering::Monotonic, SyncScope::System);
               if (align)
                 rmw->setAlignment(align.getValue());
-#else
-                                 B.CreateAtomicRMW(op, ptr, dif,
-                                                   AtomicOrdering::Monotonic,
-                                                   SyncScope::System);
 #endif
             }
           }
@@ -4394,6 +4294,7 @@ public:
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
     auto vd = TR.query(origArg).Data0().ShiftIndices(DL, 0, size, 0);
     if (!vd.isKnownPastPointer()) {
+#if LLVM_VERSION_MAJOR < 18
       if (looseTypeAnalysis) {
         if (isa<CastInst>(origArg) &&
             cast<CastInst>(origArg)->getSrcTy()->isPointerTy() &&
@@ -4409,6 +4310,7 @@ public:
           goto knownF;
         }
       }
+#endif
       EmitFailure("CannotDeduceType", call.getDebugLoc(), &call,
                   "failed to deduce type of copy ", call);
 
@@ -4534,7 +4436,7 @@ public:
           BuilderZ.CreateStore(
               BuilderZ.CreatePointerCast(d_req_prev,
                                          Type::getInt8PtrTy(call.getContext())),
-              getMPIMemberPtr<MPI_Elem::Old>(BuilderZ, impialloc));
+              getMPIMemberPtr<MPI_Elem::Old>(BuilderZ, impialloc, impi));
           BuilderZ.CreateStore(impialloc, d_req);
 
           if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
@@ -4556,21 +4458,21 @@ public:
                                  len_arg, "mpirecv_malloccache");
             BuilderZ.CreateStore(
                 firstallocation,
-                getMPIMemberPtr<MPI_Elem::Buf>(BuilderZ, impialloc));
+                getMPIMemberPtr<MPI_Elem::Buf>(BuilderZ, impialloc, impi));
             BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call));
           } else {
             Value *ibuf = gutils->invertPointerM(call.getOperand(0), BuilderZ);
             if (ibuf->getType()->isIntegerTy())
               ibuf = BuilderZ.CreateIntToPtr(
                   ibuf, Type::getInt8PtrTy(call.getContext()));
-            BuilderZ.CreateStore(
-                ibuf, getMPIMemberPtr<MPI_Elem::Buf>(BuilderZ, impialloc));
+            BuilderZ.CreateStore(ibuf, getMPIMemberPtr<MPI_Elem::Buf>(
+                                           BuilderZ, impialloc, impi));
           }
 
           BuilderZ.CreateStore(
               BuilderZ.CreateZExtOrTrunc(
                   gutils->getNewFromOriginal(call.getOperand(1)), i64),
-              getMPIMemberPtr<MPI_Elem::Count>(BuilderZ, impialloc));
+              getMPIMemberPtr<MPI_Elem::Count>(BuilderZ, impialloc, impi));
 
           Value *dataType = gutils->getNewFromOriginal(call.getOperand(2));
           if (dataType->getType()->isIntegerTy())
@@ -4579,17 +4481,17 @@ public:
           BuilderZ.CreateStore(
               BuilderZ.CreatePointerCast(dataType,
                                          Type::getInt8PtrTy(call.getContext())),
-              getMPIMemberPtr<MPI_Elem::DataType>(BuilderZ, impialloc));
+              getMPIMemberPtr<MPI_Elem::DataType>(BuilderZ, impialloc, impi));
 
           BuilderZ.CreateStore(
               BuilderZ.CreateZExtOrTrunc(
                   gutils->getNewFromOriginal(call.getOperand(3)), i64),
-              getMPIMemberPtr<MPI_Elem::Src>(BuilderZ, impialloc));
+              getMPIMemberPtr<MPI_Elem::Src>(BuilderZ, impialloc, impi));
 
           BuilderZ.CreateStore(
               BuilderZ.CreateZExtOrTrunc(
                   gutils->getNewFromOriginal(call.getOperand(4)), i64),
-              getMPIMemberPtr<MPI_Elem::Tag>(BuilderZ, impialloc));
+              getMPIMemberPtr<MPI_Elem::Tag>(BuilderZ, impialloc, impi));
 
           Value *comm = gutils->getNewFromOriginal(call.getOperand(5));
           if (comm->getType()->isIntegerTy())
@@ -4598,7 +4500,7 @@ public:
           BuilderZ.CreateStore(
               BuilderZ.CreatePointerCast(comm,
                                          Type::getInt8PtrTy(call.getContext())),
-              getMPIMemberPtr<MPI_Elem::Comm>(BuilderZ, impialloc));
+              getMPIMemberPtr<MPI_Elem::Comm>(BuilderZ, impialloc, impi));
 
           BuilderZ.CreateStore(
               ConstantInt::get(
@@ -4606,7 +4508,7 @@ public:
                   (funcName == "MPI_Isend" || funcName == "PMPI_Isend")
                       ? (int)MPI_CallType::ISEND
                       : (int)MPI_CallType::IRECV),
-              getMPIMemberPtr<MPI_Elem::Call>(BuilderZ, impialloc));
+              getMPIMemberPtr<MPI_Elem::Call>(BuilderZ, impialloc, impi));
           // TODO old
         }
         if (Mode == DerivativeMode::ReverseModeGradient ||
@@ -4615,7 +4517,7 @@ public:
           getReverseBuilder(Builder2);
 
           Type *statusType = nullptr;
-
+#if LLVM_VERSION_MAJOR < 18
           if (Function *recvfn =
                   called->getParent()->getFunction("PMPI_Wait")) {
             auto statusArg = recvfn->arg_end();
@@ -4629,6 +4531,7 @@ public:
             if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
               statusType = PT->getPointerElementType();
           }
+#endif
           if (statusType == nullptr) {
             statusType = ArrayType::get(Type::getInt8Ty(call.getContext()), 24);
             llvm::errs() << " warning could not automatically determine mpi "
@@ -4642,8 +4545,8 @@ public:
             d_req = Builder2.CreateIntToPtr(
                 d_req, Type::getInt8PtrTy(call.getContext()));
           }
-          Type *helperTy =
-              llvm::PointerType::getUnqual(getMPIHelper(call.getContext()));
+          auto impi = getMPIHelper(call.getContext());
+          Type *helperTy = llvm::PointerType::getUnqual(impi);
           Value *helper = Builder2.CreatePointerCast(
               d_req, PointerType::getUnqual(helperTy));
           helper = Builder2.CreateLoad(helperTy, helper);
@@ -4653,14 +4556,14 @@ public:
           Value *firstallocation;
           firstallocation = Builder2.CreateLoad(
               Type::getInt8PtrTy(call.getContext()),
-              getMPIMemberPtr<MPI_Elem::Buf>(Builder2, helper));
+              getMPIMemberPtr<MPI_Elem::Buf>(Builder2, helper, impi));
           Value *len_arg = nullptr;
           if (auto C = dyn_cast<Constant>(
                   gutils->getNewFromOriginal(call.getOperand(1)))) {
             len_arg = Builder2.CreateZExtOrTrunc(C, i64);
           } else {
             len_arg = Builder2.CreateLoad(
-                i64, getMPIMemberPtr<MPI_Elem::Count>(Builder2, helper));
+                i64, getMPIMemberPtr<MPI_Elem::Count>(Builder2, helper, impi));
           }
           Value *tysize = nullptr;
           if (auto C = dyn_cast<Constant>(
@@ -4669,13 +4572,13 @@ public:
           } else {
             tysize = Builder2.CreateLoad(
                 Type::getInt8PtrTy(call.getContext()),
-                getMPIMemberPtr<MPI_Elem::DataType>(Builder2, helper));
+                getMPIMemberPtr<MPI_Elem::DataType>(Builder2, helper, impi));
           }
 
           Value *prev;
           prev = Builder2.CreateLoad(
               Type::getInt8PtrTy(call.getContext()),
-              getMPIMemberPtr<MPI_Elem::Old>(Builder2, helper));
+              getMPIMemberPtr<MPI_Elem::Old>(Builder2, helper, impi));
 
           Builder2.CreateStore(
               prev, Builder2.CreatePointerCast(
@@ -4800,11 +4703,7 @@ public:
                ValueType::Shadow},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
 
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
@@ -4887,17 +4786,16 @@ public:
         Builder2.CreateCondBr(isNull, endBlock, nonnullBlock);
         Builder2.SetInsertPoint(nonnullBlock);
 
-        Value *cache = Builder2.CreateLoad(
-            d_reqp->getType()->getPointerElementType(), d_reqp);
+        Value *cache = Builder2.CreateLoad(impi, d_reqp);
 
         Value *args[] = {
-            getMPIMemberPtr<MPI_Elem::Buf, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Count, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::DataType, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Src, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Tag, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Comm, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Call, false>(Builder2, cache),
+            getMPIMemberPtr<MPI_Elem::Buf, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Count, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::DataType, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Src, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Tag, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Comm, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Call, false>(Builder2, cache, impi),
             req};
         Type *types[sizeof(args) / sizeof(*args) - 1];
         for (size_t i = 0; i < sizeof(args) / sizeof(*args) - 1; i++)
@@ -4954,11 +4852,7 @@ public:
             &call, {ValueType::Shadow, ValueType::Shadow}, Builder2,
             /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
 
         Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
         return;
@@ -4971,6 +4865,7 @@ public:
     if (funcName == "MPI_Waitall" || funcName == "PMPI_Waitall") {
       Value *d_reqp = nullptr;
       auto impi = getMPIHelper(call.getContext());
+      PointerType *reqType = PointerType::getUnqual(impi);
       if (Mode == DerivativeMode::ReverseModePrimal ||
           Mode == DerivativeMode::ReverseModeCombined) {
         Value *count = gutils->getNewFromOriginal(call.getOperand(0));
@@ -4991,8 +4886,7 @@ public:
 
         Function *dsave = getOrInsertDifferentialWaitallSave(
             *gutils->oldFunc->getParent(),
-            {count->getType(), req->getType(), d_req->getType()},
-            PointerType::getUnqual(impi));
+            {count->getType(), req->getType(), d_req->getType()}, reqType);
 
         d_reqp = BuilderZ.CreateCall(dsave, {count, req, d_req});
         cast<CallInst>(d_reqp)->setCallingConv(dsave->getCallingConv());
@@ -5013,8 +4907,7 @@ public:
             lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2);
 
         if (Mode != DerivativeMode::ReverseModeCombined) {
-          d_reqp = BuilderZ.CreatePHI(
-              PointerType::getUnqual(PointerType::getUnqual(impi)), 0);
+          d_reqp = BuilderZ.CreatePHI(PointerType::getUnqual(reqType), 0);
           d_reqp = gutils->cacheForReverse(BuilderZ, d_reqp,
                                            getIndex(&call, CacheType::Tape));
         }
@@ -5046,10 +4939,8 @@ public:
         idx->addIncoming(inc, eloopBlock);
 
         Value *idxs[] = {idx};
-        Value *req = Builder2.CreateInBoundsGEP(
-            req_orig->getType()->getPointerElementType(), req_orig, idxs);
-        Value *d_req = Builder2.CreateInBoundsGEP(
-            d_reqp->getType()->getPointerElementType(), d_reqp, idxs);
+        Value *req = Builder2.CreateInBoundsGEP(reqType, req_orig, idxs);
+        Value *d_req = Builder2.CreateInBoundsGEP(reqType, d_reqp, idxs);
 
         d_req = Builder2.CreateLoad(
             PointerType::getUnqual(impi),
@@ -5062,17 +4953,16 @@ public:
         Builder2.CreateCondBr(isNull, eloopBlock, nonnullBlock);
         Builder2.SetInsertPoint(nonnullBlock);
 
-        Value *cache = Builder2.CreateLoad(
-            d_req->getType()->getPointerElementType(), d_req);
+        Value *cache = Builder2.CreateLoad(impi, d_req);
 
         Value *args[] = {
-            getMPIMemberPtr<MPI_Elem::Buf, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Count, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::DataType, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Src, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Tag, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Comm, false>(Builder2, cache),
-            getMPIMemberPtr<MPI_Elem::Call, false>(Builder2, cache),
+            getMPIMemberPtr<MPI_Elem::Buf, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Count, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::DataType, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Src, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Tag, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Comm, false>(Builder2, cache, impi),
+            getMPIMemberPtr<MPI_Elem::Call, false>(Builder2, cache, impi),
             req};
         Type *types[sizeof(args) / sizeof(*args) - 1];
         for (size_t i = 0; i < sizeof(args) / sizeof(*args) - 1; i++)
@@ -5141,11 +5031,7 @@ public:
              ValueType::None, ValueType::None, ValueType::Shadow},
             Builder2, /*lookup*/ true);
 
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
 
         Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
         return;
@@ -5178,6 +5064,7 @@ public:
               shadow, Type::getInt8PtrTy(call.getContext()));
 
         Type *statusType = nullptr;
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
         if (called->getContext().supportsTypedPointers()) {
 #endif
@@ -5195,6 +5082,7 @@ public:
           }
 #if LLVM_VERSION_MAJOR >= 15
         }
+#endif
 #endif
         if (statusType == nullptr) {
           statusType = ArrayType::get(Type::getInt8Ty(call.getContext()), 24);
@@ -5238,11 +5126,7 @@ public:
                ValueType::Primal, ValueType::Primal, ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -5354,11 +5238,7 @@ public:
             Builder2, /*lookup*/ !forwardMode);
 
         if (forwardMode) {
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
 
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
@@ -5435,8 +5315,8 @@ public:
               shadow, Type::getInt8PtrTy(call.getContext()));
 
         ConcreteType CT = TR.firstPointer(1, call.getOperand(0), &call);
-        Type *MPI_OP_Ptr_type =
-            PointerType::getUnqual(Type::getInt8PtrTy(call.getContext()));
+        auto MPI_OP_type = Type::getInt8PtrTy(call.getContext());
+        Type *MPI_OP_Ptr_type = PointerType::getUnqual(MPI_OP_type);
 
         Value *count = gutils->getNewFromOriginal(call.getOperand(1));
         if (!forwardMode)
@@ -5467,11 +5347,7 @@ public:
                ValueType::Primal, ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -5533,8 +5409,8 @@ public:
               /*datatype*/ datatype,
               /*op (MPI_SUM)*/
               getOrInsertOpFloatSum(*gutils->newFunc->getParent(),
-                                    MPI_OP_Ptr_type, CT, root->getType(),
-                                    Builder2),
+                                    MPI_OP_Ptr_type, MPI_OP_type, CT,
+                                    root->getType(), Builder2),
               /*int root*/ root,
               /*comm*/ comm,
           };
@@ -5738,11 +5614,7 @@ public:
                ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -5975,11 +5847,7 @@ public:
               /*comm*/ comm,
           };
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args,
                               BufferDefs);
 
@@ -6143,11 +6011,7 @@ public:
                ValueType::Primal, ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -6350,11 +6214,7 @@ public:
                ValueType::Primal, ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -6587,11 +6447,7 @@ public:
                ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -6618,8 +6474,8 @@ public:
                              sendlen_arg, "mpireduce_malloccache");
 
         ConcreteType CT = TR.firstPointer(1, orig_sendbuf, &call);
-        Type *MPI_OP_Ptr_type =
-            PointerType::getUnqual(Type::getInt8PtrTy(call.getContext()));
+        auto MPI_OP_type = Type::getInt8PtrTy(call.getContext());
+        Type *MPI_OP_Ptr_type = PointerType::getUnqual(MPI_OP_type);
 
         // 2. reduce diff(recvbuffer) then scatter to corresponding input node's
         // intermediate buffer
@@ -6637,8 +6493,8 @@ public:
               /*recvtype*/ sendtype,
               /*op (MPI_SUM)*/
               getOrInsertOpFloatSum(*gutils->newFunc->getParent(),
-                                    MPI_OP_Ptr_type, CT, call.getType(),
-                                    Builder2),
+                                    MPI_OP_Ptr_type, MPI_OP_type, CT,
+                                    call.getType(), Builder2),
               /*comm*/ comm,
           };
           Type *types[sizeof(args) / sizeof(*args)];
@@ -6699,11 +6555,7 @@ public:
           Mode == DerivativeMode::ReverseModeCombined) {
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
         Value *args[] = {
             lookup(gutils->getNewFromOriginal(call.getOperand(0)), Builder2)};
         Builder2.CreateCall(call.getFunctionType(), callval, args);
@@ -6802,14 +6654,17 @@ public:
         if (call.paramHasAttr(i, Attribute::StructRet)) {
           structAttrs[args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
-              // TODO persist types
               Attribute::get(call.getContext(), "enzyme_sret")
-          // Attribute::get(orig->getContext(), "enzyme_sret",
-          // orig->getParamAttr(i, Attribute::StructRet).getValueAsType());
 #else
               Attribute::get(call.getContext(), "enzyme_sret")
 #endif
           );
+#if LLVM_VERSION_MAJOR >= 13
+          // TODO
+          // structAttrs[args.size()].push_back(Attribute::get(
+          //     call.getContext(), Attribute::AttrKind::ElementType,
+          //     call.getParamAttr(i, Attribute::StructRet).getValueAsType()));
+#endif
         }
         if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
           structAttrs[args.size()].push_back(
@@ -6882,26 +6737,34 @@ public:
           if (gutils->getWidth() == 1) {
             structAttrs[args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
-                // TODO persist types
                 Attribute::get(call.getContext(), "enzyme_sret")
-            // Attribute::get(orig->getContext(), "enzyme_sret",
             // orig->getParamAttr(i, Attribute::StructRet).getValueAsType());
 #else
                 Attribute::get(call.getContext(), "enzyme_sret")
 #endif
             );
+#if LLVM_VERSION_MAJOR >= 13
+            // TODO
+            // structAttrs[args.size()].push_back(Attribute::get(
+            //     call.getContext(), Attribute::AttrKind::ElementType,
+            //     call.getParamAttr(i,
+            //     Attribute::StructRet).getValueAsType()));
+#endif
           } else {
             structAttrs[args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
-                // TODO persist types
                 Attribute::get(call.getContext(), "enzyme_sret")
-            // Attribute::get(orig->getContext(), "enzyme_sret_v",
-            // gutils->getShadowType(orig->getParamAttr(ii,
-            // Attribute::StructRet).getValueAsType()));
 #else
                 Attribute::get(call.getContext(), "enzyme_sret_v")
 #endif
             );
+#if LLVM_VERSION_MAJOR >= 13
+            // TODO
+            // structAttrs[args.size()].push_back(Attribute::get(
+            //     call.getContext(), Attribute::AttrKind::ElementType,
+            //     call.getParamAttr(i,
+            //     Attribute::StructRet).getValueAsType()));
+#endif
           }
         }
 
@@ -6960,11 +6823,7 @@ public:
             /*augmented*/ subdata);
         FT = cast<Function>(newcalled)->getFunctionType();
       } else {
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
         newcalled = gutils->invertPointerM(callval, BuilderZ);
 
         if (gutils->getWidth() > 1) {
@@ -7301,11 +7160,7 @@ public:
       const AugmentedReturn *fnandtapetype = nullptr;
 
       if (!called) {
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
         Value *uncast = callval;
         while (auto CE = dyn_cast<ConstantExpr>(uncast)) {
           if (CE->isCast()) {
@@ -7652,7 +7507,7 @@ public:
                         : BuilderZ.CreateExtractValue(augmentcall,
                                                       {(unsigned)drval},
                                                       call.getName() + "'ac");
-            assert(newip->getType() == call.getType());
+            assert(newip->getType() == placeholder->getType());
             placeholder->replaceAllUsesWith(newip);
             if (placeholder == &*BuilderZ.GetInsertPoint()) {
               BuilderZ.SetInsertPoint(placeholder->getNextNode());
@@ -7771,11 +7626,7 @@ public:
 
       assert(subMode != DerivativeMode::ReverseModeCombined);
 
-#if LLVM_VERSION_MAJOR >= 11
       auto callval = call.getCalledOperand();
-#else
-      auto callval = call.getCalledValue();
-#endif
 
       if (gutils->isConstantValue(callval)) {
         llvm::errs() << *gutils->newFunc->getParent() << "\n";
@@ -8339,11 +8190,7 @@ public:
             Mode == DerivativeMode::ReverseModeCombined) {
           IRBuilder<> Builder2(&call);
           getReverseBuilder(Builder2);
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Value *args[] = {
               lookup(gutils->getNewFromOriginal(call.getOperand(0)), Builder2),
               lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2)};
@@ -8756,12 +8603,7 @@ public:
         }
       }
     }
-#if LLVM_VERSION_MAJOR >= 11
-    if (auto assembly = dyn_cast<InlineAsm>(call.getCalledOperand()))
-#else
-    if (auto assembly = dyn_cast<InlineAsm>(call.getCalledValue()))
-#endif
-    {
+    if (auto assembly = dyn_cast<InlineAsm>(call.getCalledOperand())) {
       if (assembly->getAsmString() == "maxpd $1, $0") {
         if (Mode == DerivativeMode::ReverseModePrimal ||
             gutils->isConstantInstruction(&call)) {
@@ -8950,14 +8792,9 @@ public:
             } else {
               bool zeroed = false;
               auto rule = [&]() {
-#if LLVM_VERSION_MAJOR >= 11
                 Value *anti = bb.CreateCall(call.getFunctionType(),
                                             call.getCalledOperand(), args,
                                             call.getName() + "'mi");
-#else
-                anti = bb.CreateCall(call.getCalledValue(), args,
-                                     call.getName() + "'mi");
-#endif
                 cast<CallInst>(anti)->setAttributes(call.getAttributes());
                 cast<CallInst>(anti)->setCallingConv(call.getCallingConv());
                 cast<CallInst>(anti)->setTailCallKind(call.getTailCallKind());
@@ -8976,7 +8813,9 @@ public:
                                                      Attribute::NonNull);
 #endif
 
-                  if (funcName == "malloc" || funcName == "_Znwm") {
+                  if (funcName == "malloc" || funcName == "_Znwm" ||
+                      funcName == "??2@YAPAXI@Z" ||
+                      funcName == "??2@YAPEAX_K@Z") {
                     if (auto ci = dyn_cast<ConstantInt>(args[0])) {
                       unsigned derefBytes = ci->getLimitedValue();
                       CallInst *cal =
@@ -9061,6 +8900,7 @@ public:
 
                   Type *elTy = Type::getInt8Ty(call.getContext());
                   std::string name = "";
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
                   if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -9083,6 +8923,7 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
                   }
 #endif
+#endif
                   auto rule = [&](Value *anti) {
                     Value *replacement = bb.CreateAlloca(elTy, Size, name);
                     if (name.size() == 0)
@@ -9094,13 +8935,10 @@ public:
                                                            ->getValue())
                                          ->getLimitedValue();
                     if (Alignment) {
-#if LLVM_VERSION_MAJOR >= 10
                       cast<AllocaInst>(replacement)
                           ->setAlignment(Align(Alignment));
-#else
-                      cast<AllocaInst>(replacement)->setAlignment(Alignment);
-#endif
                     }
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
                     if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -9112,10 +8950,11 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
                     }
 #endif
-
+#endif
                     if (int AS = cast<PointerType>(anti->getType())
                                      ->getAddressSpace()) {
                       llvm::PointerType *PT;
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
                       if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -9125,6 +8964,7 @@ public:
                       } else {
                         PT = PointerType::get(anti->getContext(), AS);
                       }
+#endif
 #endif
                       replacement = bb.CreateAddrSpaceCast(replacement, PT);
                       cast<Instruction>(replacement)
@@ -9267,6 +9107,7 @@ public:
         }
         Type *elTy = Type::getInt8Ty(call.getContext());
         Instruction *I = nullptr;
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
         if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -9287,6 +9128,7 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
         }
 #endif
+#endif
         Value *replacement = B.CreateAlloca(elTy, Size);
         if (I)
           replacement->takeName(I);
@@ -9298,12 +9140,9 @@ public:
                 ->getLimitedValue();
         // Don't set zero alignment
         if (Alignment) {
-#if LLVM_VERSION_MAJOR >= 10
           cast<AllocaInst>(replacement)->setAlignment(Align(Alignment));
-#else
-          cast<AllocaInst>(replacement)->setAlignment(Alignment);
-#endif
         }
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
         if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -9315,9 +9154,11 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
         }
 #endif
+#endif
         if (int AS = cast<PointerType>(call.getType())->getAddressSpace()) {
 
           llvm::PointerType *PT;
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
           if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -9326,6 +9167,7 @@ public:
           } else {
             PT = PointerType::get(call.getContext(), AS);
           }
+#endif
 #endif
           replacement = B.CreateAddrSpaceCast(replacement, PT);
           cast<Instruction>(replacement)
@@ -9589,19 +9431,11 @@ public:
 
     if (funcName == "memcpy" || funcName == "memmove") {
       auto ID = (funcName == "memcpy") ? Intrinsic::memcpy : Intrinsic::memmove;
-#if LLVM_VERSION_MAJOR >= 10
       visitMemTransferCommon(ID, /*srcAlign*/ MaybeAlign(1),
                              /*dstAlign*/ MaybeAlign(1), call,
                              call.getArgOperand(0), call.getArgOperand(1),
                              gutils->getNewFromOriginal(call.getArgOperand(2)),
                              ConstantInt::getFalse(call.getContext()));
-#else
-      visitMemTransferCommon(ID, /*srcAlign*/ 1,
-                             /*dstAlign*/ 1, call, call.getArgOperand(0),
-                             call.getArgOperand(1),
-                             gutils->getNewFromOriginal(call.getArgOperand(2)),
-                             ConstantInt::getFalse(call.getContext()));
-#endif
       return;
     }
     if (funcName == "memset" || funcName == "memset_pattern16") {
@@ -9658,6 +9492,7 @@ public:
     if (funcName == "cuStreamCreate") {
       Value *val = nullptr;
       llvm::Type *PT = Type::getInt8PtrTy(call.getContext());
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
       if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -9665,6 +9500,7 @@ public:
           PT = call.getArgOperand(0)->getType()->getPointerElementType();
 #if LLVM_VERSION_MAJOR >= 15
       }
+#endif
 #endif
       if (Mode == DerivativeMode::ReverseModePrimal ||
           Mode == DerivativeMode::ReverseModeCombined) {
@@ -9708,11 +9544,7 @@ public:
         getReverseBuilder(Builder2);
         Value *nargs[] = {gutils->lookupM(
             gutils->getNewFromOriginal(call.getOperand(0)), Builder2)};
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
         Builder2.CreateCall(call.getFunctionType(), callval, nargs);
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -9727,6 +9559,7 @@ public:
 
       Value *val;
       llvm::Type *PT = Type::getInt8PtrTy(call.getContext());
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
       if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -9734,6 +9567,7 @@ public:
           PT = call.getArgOperand(0)->getType()->getPointerElementType();
 #if LLVM_VERSION_MAJOR >= 15
       }
+#endif
 #endif
       if (!constval) {
         Value *stream = nullptr;
@@ -10019,11 +9853,7 @@ public:
         }
         eraseIfUnused(call);
       }
-#if LLVM_VERSION_MAJOR >= 11
       auto callval = call.getCalledOperand();
-#else
-      auto callval = call.getCalledValue();
-#endif
 
       for (auto rmat : gutils->backwardsOnlyShadows) {
         if (rmat.second.frees.count(&call)) {
@@ -10143,11 +9973,7 @@ public:
         dchoice = diffe(&call, Builder2);
       }
 
-#if LLVM_VERSION_MAJOR >= 10
       if (call.hasMetadata("enzyme_gradient_setter")) {
-#else
-      if (call.getMetadata("enzyme_gradient_setter")) {
-#endif
         auto gradient_setter = cast<Function>(
             cast<ValueAsMetadata>(
                 call.getMetadata("enzyme_gradient_setter")->getOperand(0).get())
@@ -10217,11 +10043,9 @@ public:
           noFree = true;
       }
       if (!noFree) {
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
+        if (!isa<Constant>(callval))
+          callval = gutils->getNewFromOriginal(callval);
         newCall->setCalledOperand(gutils->Logic.CreateNoFree(callval));
       }
       if (gutils->knownRecomputeHeuristic.find(&call) !=

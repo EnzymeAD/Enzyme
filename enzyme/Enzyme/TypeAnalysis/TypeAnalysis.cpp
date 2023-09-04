@@ -27,6 +27,9 @@
 
 #include <llvm/Config/llvm-config.h>
 
+#include "llvm/Demangle/Demangle.h"
+#include "llvm/Demangle/ItaniumDemangle.h"
+
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"
@@ -177,6 +180,36 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"llround", Intrinsic::llround},
     {"lrint", Intrinsic::lrint},
     {"llrint", Intrinsic::llrint}};
+
+static bool isItaniumEncoding(StringRef S) {
+  // Itanium encoding requires 1 or 3 leading underscores, followed by 'Z'.
+  return S.startswith("_Z") || S.startswith("___Z");
+}
+
+bool dontAnalyze(StringRef str) {
+  if (isItaniumEncoding(str)) {
+    if (str.empty())
+      return false;
+
+    ItaniumPartialDemangler Parser;
+    char *data = (char *)malloc(str.size() + 1);
+    memcpy(data, str.data(), str.size());
+    data[str.size()] = 0;
+    bool hasError = Parser.partialDemangle(data);
+    if (hasError) {
+      free(data);
+      return false;
+    }
+
+    auto basename = Parser.getFunctionBaseName(0, 0);
+    auto base = Parser.getFunctionDeclContextName(0, 0);
+    auto fn = Parser.getFunctionName(0, 0);
+    // llvm::errs() << " err: " << base << " - " << basename << " fn - " << fn
+    //              << "\n";
+    free(data);
+  }
+  return false;
+}
 
 TypeAnalyzer::TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
                            uint8_t direction)
@@ -443,6 +476,10 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
                                TA.notForAnalysis, TA);
       tmpAnalysis.visit(*I);
       analysis[Val] = tmpAnalysis.getAnalysis(I);
+
+      if (tmpAnalysis.workList.remove(I)) {
+        TA.workList.insert(CE);
+      }
     }
 
     I->eraseFromParent();
@@ -453,6 +490,15 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
 
     if (GV->getName() == "__cxa_thread_atexit_impl") {
       analysis[Val] = TypeTree(BaseType::Pointer).Only(-1, nullptr);
+      return;
+    }
+
+    // from julia code
+    if (GV->getName() == "small_typeof") {
+      TypeTree T;
+      T.insert({-1}, BaseType::Pointer);
+      T.insert({-1, -1}, BaseType::Pointer);
+      analysis[Val] = T;
       return;
     }
 
@@ -689,6 +735,7 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
         Data = analysis[Val].Lookup(Size, DL).Only(-1, nullptr);
         Data.insert({-1}, BaseType::Pointer);
         analysis[Val] = Data;
+        Origin = Val;
       }
     }
     // Add val so it can explicitly propagate this new info, if able to
@@ -764,14 +811,9 @@ void TypeAnalyzer::considerTBAA() {
   for (BasicBlock &BB : *fntypeinfo.Function) {
     for (Instruction &I : BB) {
 
-      if (CallInst *call = dyn_cast<CallInst>(&I)) {
+      if (CallBase *call = dyn_cast<CallBase>(&I)) {
         Function *F = call->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-        if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledOperand()))
-#else
-        if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledValue()))
-#endif
-        {
+        if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledOperand())) {
           if (castinst->isCast())
             if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
               F = fn;
@@ -852,7 +894,7 @@ void TypeAnalyzer::considerTBAA() {
               "jl_alloc_array_3d",  "ijl_alloc_array_1d", "ijl_alloc_array_2d",
               "ijl_alloc_array_3d", "jl_gc_alloc_typed",  "ijl_gc_alloc_typed"};
           if (JuliaKnownTypes.count(F->getName())) {
-            visitCallInst(*call);
+            visitCallBase(*call);
             continue;
           }
         }
@@ -865,7 +907,7 @@ void TypeAnalyzer::considerTBAA() {
       if (!vdptr.isKnownPastPointer())
         continue;
 
-      if (CallInst *call = dyn_cast<CallInst>(&I)) {
+      if (CallBase *call = dyn_cast<CallBase>(&I)) {
         if (call->getCalledFunction() &&
             (call->getCalledFunction()->getIntrinsicID() == Intrinsic::memcpy ||
              call->getCalledFunction()->getIntrinsicID() ==
@@ -1064,25 +1106,13 @@ void TypeAnalyzer::run() {
   // only analyze any call instances after all other potential
   // updates have been done. This is to minimize the number
   // of expensive interprocedural analyses
-  std::deque<Instruction *> pendingCalls;
+  std::deque<CallBase *> pendingCalls;
 
   do {
-
     while (!Invalid && workList.size()) {
       auto todo = *workList.begin();
       workList.erase(workList.begin());
-      if (auto call = dyn_cast<CallInst>(todo)) {
-        StringRef funcName = getFuncNameFromCall(call);
-        auto ci = getFunctionFromCall(call);
-        if (ci && !ci->empty()) {
-          if (interprocedural.CustomRules.find(funcName) ==
-              interprocedural.CustomRules.end()) {
-            pendingCalls.push_back(call);
-            continue;
-          }
-        }
-      }
-      if (auto call = dyn_cast<InvokeInst>(todo)) {
+      if (auto call = dyn_cast<CallBase>(todo)) {
         StringRef funcName = getFuncNameFromCall(call);
         auto ci = getFunctionFromCall(call);
         if (ci && !ci->empty()) {
@@ -1113,11 +1143,7 @@ void TypeAnalyzer::run() {
     while (!Invalid && workList.size()) {
       auto todo = *workList.begin();
       workList.erase(workList.begin());
-      if (auto ci = dyn_cast<CallInst>(todo)) {
-        pendingCalls.push_back(ci);
-        continue;
-      }
-      if (auto ci = dyn_cast<InvokeInst>(todo)) {
+      if (auto ci = dyn_cast<CallBase>(todo)) {
         pendingCalls.push_back(ci);
         continue;
       }
@@ -1147,7 +1173,6 @@ void TypeAnalyzer::visitValue(Value &val) {
   if (!isa<Argument>(&val) && !isa<Instruction>(&val))
     return;
 
-#if LLVM_VERSION_MAJOR >= 10
   if (auto *FPMO = dyn_cast<FPMathOperator>(&val)) {
     if (FPMO->getOpcode() == Instruction::FNeg) {
       Value *op = FPMO->getOperand(0);
@@ -1161,7 +1186,6 @@ void TypeAnalyzer::visitValue(Value &val) {
       return;
     }
   }
-#endif
 
   if (auto inst = dyn_cast<Instruction>(&val)) {
     visit(*inst);
@@ -1231,6 +1255,9 @@ void TypeAnalyzer::visitConstantExpr(ConstantExpr &CE) {
   visit(*I);
   updateAnalysis(&CE, analysis[I], &CE);
   analysis.erase(I);
+  if (workList.remove(I)) {
+    workList.insert(&CE);
+  }
   I->eraseFromParent();
 }
 
@@ -1293,14 +1320,7 @@ void TypeAnalyzer::visitStoreInst(StoreInst &I) {
   // https://doc.rust-lang.org/src/core/ptr/non_null.rs.html#70-78
   if (RustTypeRules)
     if (auto CI = dyn_cast<ConstantInt>(I.getValueOperand())) {
-#if LLVM_VERSION_MAJOR >= 11
       auto alignment = I.getAlign().value();
-#elif LLVM_VERSION_MAJOR >= 10
-      auto alignment =
-          I.getAlign().hasValue() ? I.getAlign().getValue().value() : 10000;
-#else
-      auto alignment = I.getAlignment();
-#endif
 
       if (CI->getLimitedValue() == alignment) {
         return;
@@ -1844,14 +1864,12 @@ void TypeAnalyzer::visitIntToPtrInst(IntToPtrInst &I) {
     updateAnalysis(I.getOperand(0), getAnalysis(&I), &I);
 }
 
-#if LLVM_VERSION_MAJOR >= 10
 void TypeAnalyzer::visitFreezeInst(FreezeInst &I) {
   if (direction & DOWN)
     updateAnalysis(&I, getAnalysis(I.getOperand(0)), &I);
   if (direction & UP)
     updateAnalysis(I.getOperand(0), getAnalysis(&I), &I);
 }
-#endif
 
 void TypeAnalyzer::visitBitCastInst(BitCastInst &I) {
   if (direction & DOWN)
@@ -2238,31 +2256,31 @@ void TypeAnalyzer::visitAtomicRMWInst(llvm::AtomicRMWInst &I) {
   }
   case AtomicRMWInst::Add:
     visitBinaryOperation(DL, I.getType(), BinaryOperator::Add, Args, Ret, LHS,
-                         RHS);
+                         RHS, &I);
     break;
   case AtomicRMWInst::Sub:
     visitBinaryOperation(DL, I.getType(), BinaryOperator::Sub, Args, Ret, LHS,
-                         RHS);
+                         RHS, &I);
     break;
   case AtomicRMWInst::And:
     visitBinaryOperation(DL, I.getType(), BinaryOperator::And, Args, Ret, LHS,
-                         RHS);
+                         RHS, &I);
     break;
   case AtomicRMWInst::Or:
     visitBinaryOperation(DL, I.getType(), BinaryOperator::Or, Args, Ret, LHS,
-                         RHS);
+                         RHS, &I);
     break;
   case AtomicRMWInst::Xor:
     visitBinaryOperation(DL, I.getType(), BinaryOperator::Xor, Args, Ret, LHS,
-                         RHS);
+                         RHS, &I);
     break;
   case AtomicRMWInst::FAdd:
     visitBinaryOperation(DL, I.getType(), BinaryOperator::FAdd, Args, Ret, LHS,
-                         RHS);
+                         RHS, &I);
     break;
   case AtomicRMWInst::FSub:
     visitBinaryOperation(DL, I.getType(), BinaryOperator::FSub, Args, Ret, LHS,
-                         RHS);
+                         RHS, &I);
     break;
   case AtomicRMWInst::Max:
   case AtomicRMWInst::Min:
@@ -2297,7 +2315,8 @@ void TypeAnalyzer::visitAtomicRMWInst(llvm::AtomicRMWInst &I) {
 void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
                                         llvm::Instruction::BinaryOps Opcode,
                                         Value *Args[2], TypeTree &Ret,
-                                        TypeTree &LHS, TypeTree &RHS) {
+                                        TypeTree &LHS, TypeTree &RHS,
+                                        Instruction *origin) {
   if (Opcode == BinaryOperator::FAdd || Opcode == BinaryOperator::FSub ||
       Opcode == BinaryOperator::FMul || Opcode == BinaryOperator::FDiv ||
       Opcode == BinaryOperator::FRem) {
@@ -2305,8 +2324,32 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
     assert(ty->isFloatingPointTy());
     ConcreteType dt(ty);
     if (direction & UP) {
-      LHS |= TypeTree(dt).Only(-1, nullptr);
-      RHS |= TypeTree(dt).Only(-1, nullptr);
+      bool LegalOr = true;
+      auto Data = TypeTree(dt).Only(-1, nullptr);
+      LHS.checkedOrIn(Data, /*PointerIntSame*/ false, LegalOr);
+      if (CustomErrorHandler && !LegalOr) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Illegal updateAnalysis prev:" << LHS.str()
+           << " new: " << Data.str() << "\n";
+        ss << "val: " << *Args[0];
+        ss << "origin: " << *origin;
+        CustomErrorHandler(str.c_str(), wrap(Args[0]),
+                           ErrorType::IllegalTypeAnalysis, (void *)this,
+                           wrap(origin), nullptr);
+      }
+      RHS.checkedOrIn(Data, /*PointerIntSame*/ false, LegalOr);
+      if (CustomErrorHandler && !LegalOr) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Illegal updateAnalysis prev:" << RHS.str()
+           << " new: " << Data.str() << "\n";
+        ss << "val: " << *Args[1];
+        ss << "origin: " << *origin;
+        CustomErrorHandler(str.c_str(), wrap(Args[1]),
+                           ErrorType::IllegalTypeAnalysis, (void *)this,
+                           wrap(origin), nullptr);
+      }
     }
     if (direction & DOWN)
       Ret |= TypeTree(dt).Only(-1, nullptr);
@@ -2696,7 +2739,7 @@ void TypeAnalyzer::visitBinaryOperator(BinaryOperator &I) {
   TypeTree LHS = getAnalysis(I.getOperand(0));
   TypeTree RHS = getAnalysis(I.getOperand(1));
   auto &DL = I.getParent()->getParent()->getParent()->getDataLayout();
-  visitBinaryOperation(DL, I.getType(), I.getOpcode(), Args, Ret, LHS, RHS);
+  visitBinaryOperation(DL, I.getType(), I.getOpcode(), Args, Ret, LHS, RHS, &I);
 
   if (direction & UP) {
     updateAnalysis(I.getOperand(0), LHS, &I);
@@ -2717,7 +2760,7 @@ void TypeAnalyzer::visitMemTransferInst(llvm::MemTransferInst &MTI) {
   visitMemTransferCommon(MTI);
 }
 
-void TypeAnalyzer::visitMemTransferCommon(llvm::CallInst &MTI) {
+void TypeAnalyzer::visitMemTransferCommon(llvm::CallBase &MTI) {
   if (MTI.getType()->isIntegerTy()) {
     updateAnalysis(&MTI, TypeTree(BaseType::Integer).Only(-1, &MTI), &MTI);
   }
@@ -3218,12 +3261,6 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
                    &I);
     return;
 
-#if LLVM_VERSION_MAJOR < 10
-  case Intrinsic::x86_sse_max_ss:
-  case Intrinsic::x86_sse_max_ps:
-  case Intrinsic::x86_sse_min_ss:
-  case Intrinsic::x86_sse_min_ps:
-#endif
 #if LLVM_VERSION_MAJOR >= 12
   case Intrinsic::vector_reduce_fadd:
   case Intrinsic::vector_reduce_fmul:
@@ -3338,7 +3375,7 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
 template <typename T> struct TypeHandler {};
 
 template <> struct TypeHandler<double> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TA.updateAnalysis(
         val,
         TypeTree(ConcreteType(Type::getDoubleTy(call.getContext())))
@@ -3348,7 +3385,7 @@ template <> struct TypeHandler<double> {
 };
 
 template <> struct TypeHandler<float> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TA.updateAnalysis(
         val,
         TypeTree(ConcreteType(Type::getFloatTy(call.getContext())))
@@ -3358,7 +3395,7 @@ template <> struct TypeHandler<float> {
 };
 
 template <> struct TypeHandler<long double> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TA.updateAnalysis(
         val,
         TypeTree(ConcreteType(Type::getX86_FP80Ty(call.getContext())))
@@ -3369,7 +3406,7 @@ template <> struct TypeHandler<long double> {
 
 #if defined(__FLOAT128__) || defined(__SIZEOF_FLOAT128__)
 template <> struct TypeHandler<__float128> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TA.updateAnalysis(
         val,
         TypeTree(ConcreteType(Type::getFP128Ty(call.getContext())))
@@ -3380,7 +3417,7 @@ template <> struct TypeHandler<__float128> {
 #endif
 
 template <> struct TypeHandler<double *> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TypeTree vd = TypeTree(Type::getDoubleTy(call.getContext())).Only(0, &call);
     vd |= TypeTree(BaseType::Pointer);
     TA.updateAnalysis(val, vd.Only(-1, &call), &call);
@@ -3388,7 +3425,7 @@ template <> struct TypeHandler<double *> {
 };
 
 template <> struct TypeHandler<float *> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TypeTree vd = TypeTree(Type::getFloatTy(call.getContext())).Only(0, &call);
     vd |= TypeTree(BaseType::Pointer);
     TA.updateAnalysis(val, vd.Only(-1, &call), &call);
@@ -3396,7 +3433,7 @@ template <> struct TypeHandler<float *> {
 };
 
 template <> struct TypeHandler<long double *> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TypeTree vd =
         TypeTree(Type::getX86_FP80Ty(call.getContext())).Only(0, &call);
     vd |= TypeTree(BaseType::Pointer);
@@ -3406,7 +3443,7 @@ template <> struct TypeHandler<long double *> {
 
 #if defined(__FLOAT128__) || defined(__SIZEOF_FLOAT128__)
 template <> struct TypeHandler<__float128 *> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TypeTree vd = TypeTree(Type::getFP128Ty(call.getContext())).Only(0, &call);
     vd |= TypeTree(BaseType::Pointer);
     TA.updateAnalysis(val, vd.Only(-1, &call), &call);
@@ -3415,25 +3452,25 @@ template <> struct TypeHandler<__float128 *> {
 #endif
 
 template <> struct TypeHandler<void> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {}
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {}
 };
 
 template <> struct TypeHandler<void *> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TypeTree vd = TypeTree(BaseType::Pointer);
     TA.updateAnalysis(val, vd.Only(-1, &call), &call);
   }
 };
 
 template <> struct TypeHandler<int> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TypeTree vd = TypeTree(BaseType::Integer);
     TA.updateAnalysis(val, vd.Only(-1, &call), &call);
   }
 };
 
 template <> struct TypeHandler<int *> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TypeTree vd = TypeTree(BaseType::Integer).Only(0, &call);
     vd |= TypeTree(BaseType::Pointer);
     TA.updateAnalysis(val, vd.Only(-1, &call), &call);
@@ -3441,14 +3478,14 @@ template <> struct TypeHandler<int *> {
 };
 
 template <> struct TypeHandler<unsigned int> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TypeTree vd = TypeTree(BaseType::Integer);
     TA.updateAnalysis(val, vd.Only(-1, &call), &call);
   }
 };
 
 template <> struct TypeHandler<unsigned int *> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TypeTree vd = TypeTree(BaseType::Integer).Only(0, &call);
     vd |= TypeTree(BaseType::Pointer);
     TA.updateAnalysis(val, vd.Only(-1, &call), &call);
@@ -3456,14 +3493,14 @@ template <> struct TypeHandler<unsigned int *> {
 };
 
 template <> struct TypeHandler<long int> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TypeTree vd = TypeTree(BaseType::Integer);
     TA.updateAnalysis(val, vd.Only(-1, &call), &call);
   }
 };
 
 template <> struct TypeHandler<long int *> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TypeTree vd = TypeTree(BaseType::Integer).Only(0, &call);
     vd |= TypeTree(BaseType::Pointer);
     TA.updateAnalysis(val, vd.Only(-1, &call), &call);
@@ -3471,14 +3508,14 @@ template <> struct TypeHandler<long int *> {
 };
 
 template <> struct TypeHandler<long unsigned int> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TypeTree vd = TypeTree(BaseType::Integer);
     TA.updateAnalysis(val, vd.Only(-1, &call), &call);
   }
 };
 
 template <> struct TypeHandler<long unsigned int *> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TypeTree vd = TypeTree(BaseType::Integer).Only(0, &call);
     vd |= TypeTree(BaseType::Pointer);
     TA.updateAnalysis(val, vd.Only(-1, &call), &call);
@@ -3486,14 +3523,14 @@ template <> struct TypeHandler<long unsigned int *> {
 };
 
 template <> struct TypeHandler<long long int> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TypeTree vd = TypeTree(BaseType::Integer);
     TA.updateAnalysis(val, vd.Only(-1, &call), &call);
   }
 };
 
 template <> struct TypeHandler<long long int *> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TypeTree vd = TypeTree(BaseType::Integer).Only(0, &call);
     vd |= TypeTree(BaseType::Pointer);
     TA.updateAnalysis(val, vd.Only(-1, &call), &call);
@@ -3501,14 +3538,14 @@ template <> struct TypeHandler<long long int *> {
 };
 
 template <> struct TypeHandler<long long unsigned int> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TypeTree vd = TypeTree(BaseType::Integer);
     TA.updateAnalysis(val, vd.Only(-1, &call), &call);
   }
 };
 
 template <> struct TypeHandler<long long unsigned int *> {
-  static void analyzeType(Value *val, CallInst &call, TypeAnalyzer &TA) {
+  static void analyzeType(Value *val, CallBase &call, TypeAnalyzer &TA) {
     TypeTree vd = TypeTree(BaseType::Integer).Only(0, &call);
     vd |= TypeTree(BaseType::Pointer);
     TA.updateAnalysis(val, vd.Only(-1, &call), &call);
@@ -3516,13 +3553,13 @@ template <> struct TypeHandler<long long unsigned int *> {
 };
 
 template <typename... Arg0> struct FunctionArgumentIterator {
-  static void analyzeFuncTypesHelper(unsigned idx, CallInst &call,
+  static void analyzeFuncTypesHelper(unsigned idx, CallBase &call,
                                      TypeAnalyzer &TA) {}
 };
 
 template <typename Arg0, typename... Args>
 struct FunctionArgumentIterator<Arg0, Args...> {
-  static void analyzeFuncTypesHelper(unsigned idx, CallInst &call,
+  static void analyzeFuncTypesHelper(unsigned idx, CallBase &call,
                                      TypeAnalyzer &TA) {
     TypeHandler<Arg0>::analyzeType(call.getOperand(idx), call, TA);
     FunctionArgumentIterator<Args...>::analyzeFuncTypesHelper(idx + 1, call,
@@ -3531,47 +3568,14 @@ struct FunctionArgumentIterator<Arg0, Args...> {
 };
 
 template <typename RT, typename... Args>
-void analyzeFuncTypesNoFn(CallInst &call, TypeAnalyzer &TA) {
+void analyzeFuncTypesNoFn(CallBase &call, TypeAnalyzer &TA) {
   TypeHandler<RT>::analyzeType(&call, call, TA);
   FunctionArgumentIterator<Args...>::analyzeFuncTypesHelper(0, call, TA);
 }
 
 template <typename RT, typename... Args>
-void analyzeFuncTypes(RT (*fn)(Args...), CallInst &call, TypeAnalyzer &TA) {
+void analyzeFuncTypes(RT (*fn)(Args...), CallBase &call, TypeAnalyzer &TA) {
   analyzeFuncTypesNoFn<RT, Args...>(call, TA);
-}
-
-void TypeAnalyzer::visitInvokeInst(InvokeInst &call) {
-  TypeTree Result;
-
-  IRBuilder<> B(&call);
-  SmallVector<Value *, 4> args;
-#if LLVM_VERSION_MAJOR >= 14
-  for (auto &val : call.args())
-#else
-  for (auto &val : call.arg_operands())
-#endif
-  {
-    args.push_back(val);
-  }
-#if LLVM_VERSION_MAJOR >= 11
-  CallInst *tmpCall =
-      B.CreateCall(call.getFunctionType(), call.getCalledOperand(), args);
-#else
-  CallInst *tmpCall =
-      B.CreateCall(call.getFunctionType(), call.getCalledValue(), args);
-#endif
-  analysis[tmpCall] = analysis[&call];
-  visitCallInst(*tmpCall);
-  analysis[&call] = analysis[tmpCall];
-  analysis.erase(tmpCall);
-
-  if (workList.count(tmpCall)) {
-    workList.remove(tmpCall);
-    workList.insert(&call);
-  }
-
-  tmpCall->eraseFromParent();
 }
 
 void analyzeIntelSubscriptIntrinsic(IntrinsicInst &II, TypeAnalyzer &TA) {
@@ -3693,15 +3697,11 @@ void analyzeIntelSubscriptIntrinsic(IntrinsicInst &II, TypeAnalyzer &TA) {
     TA.updateAnalysis(II.getOperand(ptrArgIndex), upTree.Only(-1, &II), &II);
 }
 
-void TypeAnalyzer::visitCallInst(CallInst &call) {
+void TypeAnalyzer::visitCallBase(CallBase &call) {
   assert(fntypeinfo.KnownValues.size() ==
          fntypeinfo.Function->getFunctionType()->getNumParams());
 
-#if LLVM_VERSION_MAJOR >= 11
   if (auto iasm = dyn_cast<InlineAsm>(call.getCalledOperand())) {
-#else
-  if (auto iasm = dyn_cast<InlineAsm>(call.getCalledValue())) {
-#endif
     // NO direction check as always valid
     if (StringRef(iasm->getAsmString()).contains("cpuid")) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
@@ -3737,7 +3737,7 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
     // When compiling Enzyme against standard LLVM, and not Intel's
     // modified version of LLVM, the intrinsic `llvm.intel.subscript` is
     // not fully understood by LLVM. One of the results of this is that the
-    // visitor dispatches to visitCallInst, rather than visitIntrinsicInst, when
+    // visitor dispatches to visitCallBase, rather than visitIntrinsicInst, when
     // presented with the intrinsic - hence why we are handling it here.
     if (funcName.startswith("llvm.intel.subscript")) {
       assert(isa<IntrinsicInst>(call));
@@ -3895,14 +3895,19 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
         funcName == "__kmpc_for_static_init_8u") {
       TypeTree ptrint;
       ptrint.insert({-1}, BaseType::Pointer);
-      ptrint.insert({-1, 0}, BaseType::Integer);
-      updateAnalysis(call.getOperand(3), ptrint, &call);
-      updateAnalysis(call.getOperand(4), ptrint, &call);
-      updateAnalysis(call.getOperand(5), ptrint, &call);
-      updateAnalysis(call.getOperand(6), ptrint, &call);
-      updateAnalysis(call.getOperand(7),
+      size_t numBytes = 4;
+      if (funcName == "__kmpc_for_static_init_8" ||
+          funcName == "__kmpc_for_static_init_8u")
+        numBytes = 8;
+      for (size_t i = 0; i < numBytes; i++)
+        ptrint.insert({-1, (int)i}, BaseType::Integer);
+      updateAnalysis(call.getArgOperand(3), ptrint, &call);
+      updateAnalysis(call.getArgOperand(4), ptrint, &call);
+      updateAnalysis(call.getArgOperand(5), ptrint, &call);
+      updateAnalysis(call.getArgOperand(6), ptrint, &call);
+      updateAnalysis(call.getArgOperand(7),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
-      updateAnalysis(call.getOperand(8),
+      updateAnalysis(call.getArgOperand(8),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
@@ -4772,10 +4777,13 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
                      TypeTree(ConcreteType(call.getType())).Only(-1, &call),
                      &call);
       TypeTree ival(BaseType::Pointer);
-      auto objSize =
-          DL.getTypeSizeInBits(
-              call.getOperand(1)->getType()->getPointerElementType()) /
-          8;
+      size_t objSize = 1;
+
+#if LLVM_VERSION_MAJOR < 18
+      objSize = DL.getTypeSizeInBits(
+                    call.getOperand(1)->getType()->getPointerElementType()) /
+                8;
+#endif
       for (size_t i = 0; i < objSize; ++i) {
         ival.insert({(int)i}, BaseType::Integer);
       }
@@ -4787,6 +4795,9 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
         funcName == "vprintf" || funcName == "puts" || funcName == "fprintf") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
     }
+
+    if (dontAnalyze(funcName))
+      return;
 
     if (!ci->empty() && !hasMetadata(ci, "enzyme_gradient") &&
         !hasMetadata(ci, "enzyme_derivative")) {
@@ -4929,7 +4940,7 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
           if (!cast<Instruction>(u)->mayReadOrWriteMemory() &&
               cast<Instruction>(u)->use_empty())
             continue;
-          if (auto CI = dyn_cast<CallInst>(u)) {
+          if (auto CI = dyn_cast<CallBase>(u)) {
             if (auto F = CI->getCalledFunction()) {
               auto funcName = F->getName();
               if (funcName == "__kmpc_for_static_init_4" ||
@@ -5160,9 +5171,11 @@ bool TypeAnalyzer::mustRemainInteger(Value *val, bool *returned) {
         continue;
     }
     if (isa<BinaryOperator>(u) || isa<IntrinsicInst>(u) || isa<PHINode>(u) ||
-        isa<UDivOperator>(u) || isa<SDivOperator>(u) || isa<LShrOperator>(u) ||
-        isa<AShrOperator>(u) || isa<AddOperator>(u) || isa<MulOperator>(u) ||
-        isa<ShlOperator>(u)) {
+#if LLVM_VERSION_MAJOR <= 17
+        isa<UDivOperator>(u) || isa<SDivOperator>(u) ||
+#endif
+        isa<LShrOperator>(u) || isa<AShrOperator>(u) || isa<AddOperator>(u) ||
+        isa<MulOperator>(u) || isa<ShlOperator>(u)) {
       if (!mustRemainInteger(u, returned)) {
         seen[val].first = false;
         seen[val].second |= seen[u].second;
@@ -5179,7 +5192,7 @@ bool TypeAnalyzer::mustRemainInteger(Value *val, bool *returned) {
       seen[val].second = true;
       continue;
     }
-    if (auto CI = dyn_cast<CallInst>(u)) {
+    if (auto CI = dyn_cast<CallBase>(u)) {
       if (auto F = CI->getCalledFunction()) {
         if (!F->empty()) {
           int argnum = 0;
@@ -5212,7 +5225,7 @@ bool TypeAnalyzer::mustRemainInteger(Value *val, bool *returned) {
   return seen[val].first;
 }
 
-FnTypeInfo TypeAnalyzer::getCallInfo(CallInst &call, Function &fn) {
+FnTypeInfo TypeAnalyzer::getCallInfo(CallBase &call, Function &fn) {
   FnTypeInfo typeInfo(&fn);
 
   int argnum = 0;
@@ -5241,7 +5254,7 @@ FnTypeInfo TypeAnalyzer::getCallInfo(CallInst &call, Function &fn) {
   return typeInfo;
 }
 
-void TypeAnalyzer::visitIPOCall(CallInst &call, Function &fn) {
+void TypeAnalyzer::visitIPOCall(CallBase &call, Function &fn) {
 #if LLVM_VERSION_MAJOR >= 14
   if (call.arg_size() != fn.getFunctionType()->getNumParams())
     return;
@@ -5288,6 +5301,7 @@ void TypeAnalyzer::visitIPOCall(CallInst &call, Function &fn) {
     return;
 
   FnTypeInfo typeInfo = getCallInfo(call, fn);
+  typeInfo = preventTypeAnalysisLoops(typeInfo, call.getParent()->getParent());
 
   if (EnzymePrintType)
     llvm::errs() << " starting IPO of " << call << "\n";
@@ -5405,7 +5419,7 @@ FnTypeInfo TypeResults::getAnalyzedTypeInfo() const {
   return res;
 }
 
-FnTypeInfo TypeResults::getCallInfo(CallInst &CI, Function &fn) const {
+FnTypeInfo TypeResults::getCallInfo(CallBase &CI, Function &fn) const {
   return analyzer.getCallInfo(CI, fn);
 }
 
@@ -5664,3 +5678,42 @@ std::set<int64_t> TypeAnalyzer::knownIntegralValues(Value *val) {
 }
 
 void TypeAnalysis::clear() { analyzedFunctions.clear(); }
+
+FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
+                                    llvm::Function *todiff) {
+  FnTypeInfo oldTypeInfo = oldTypeInfo_;
+  for (auto &pair : oldTypeInfo.KnownValues) {
+    if (pair.second.size() != 0) {
+      bool recursiveUse = false;
+      std::set<std::pair<Value *, Value *>> seen;
+      SetVector<std::pair<Value *, Value *>> todo;
+      for (auto user : pair.first->users())
+        todo.insert(std::make_pair(user, pair.first));
+      while (todo.size()) {
+        auto spair = todo.pop_back_val();
+        if (seen.count(spair))
+          continue;
+        seen.insert(spair);
+        auto [v, prev] = spair;
+        if (isa<BinaryOperator>(v) || isa<PHINode>(v) || isa<Argument>(v)) {
+          for (auto user : v->users())
+            todo.insert(std::make_pair(user, v));
+          continue;
+        }
+        if (auto ci = dyn_cast<CallBase>(v)) {
+          if (ci->getCalledFunction() == todiff &&
+              ci->getArgOperand(pair.first->getArgNo()) == prev) {
+            if (prev == pair.first)
+              continue;
+            recursiveUse = true;
+            break;
+          }
+        }
+      }
+      if (recursiveUse) {
+        pair.second.clear();
+      }
+    }
+  }
+  return oldTypeInfo;
+}

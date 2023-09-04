@@ -5,6 +5,7 @@ on:
     branches:
       - main
   pull_request:
+  merge_group:
 
 jobs:
   build-linux:
@@ -14,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["9", "10", "11", "12", "13", "14", "15", "16"]
+        llvm: ["11", "12", "13", "14", "15", "16"]
         build: ["Release", "Debug"] # "RelWithDebInfo"
         os: [ubuntu-20.04]
   
@@ -25,8 +26,8 @@ jobs:
       run: |
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
           sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
-          sudo apt-get install -y cmake gcc g++ gfortran llvm-${{ matrix.llvm }}-dev
-          sudo python3 -m pip install --upgrade pip setuptools lit
+          sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev
+          sudo python3 -m pip install --upgrade pip lit
           if [[ '${{ matrix.llvm }}' == '13' ]]; then
             sudo sed -i 's/add_executable(llvm-omp-device-info IMPORTED)//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
             sudo sed -i 's/llvm-omp-device-info//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
@@ -60,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["9", "11", "12", "13", "14", "15"]
+        llvm: ["11", "12", "13", "14", "15"]
         build: ["Release", "Debug"] # "RelWithDebInfo"
   
     timeout-minutes: 30 
@@ -69,7 +70,7 @@ jobs:
       run: |
           brew update
           brew install llvm@${{ matrix.llvm }} make cmake
-          sudo python3 -m pip install --upgrade pip setuptools lit requests
+          sudo python3 -m pip install --upgrade pip lit requests
     - uses: actions/checkout@v3
     - name: mkdir
       run: rm -rf build && mkdir build
@@ -107,7 +108,7 @@ jobs:
     - name: add llvm
       run: |
           brew install llvm@${{ matrix.llvm }} make cmake gcc
-          sudo python3 -m pip install --upgrade pip setuptools lit
+          sudo python3 -m pip install --upgrade pip lit
     - uses: actions/checkout@v3
     - name: mkdir
       run: rm -rf build && mkdir build

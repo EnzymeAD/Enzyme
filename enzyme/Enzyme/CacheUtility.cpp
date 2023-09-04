@@ -516,13 +516,8 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       IRBuilder<>(inversionAllocs)
           .CreateAlloca(CanonicalIV->getType(), nullptr,
                         CanonicalIV->getName() + "'ac");
-#if LLVM_VERSION_MAJOR >= 10
   loopContexts[L].antivaralloc->setAlignment(
       Align(cast<IntegerType>(CanonicalIV->getType())->getBitWidth() / 8));
-#else
-  loopContexts[L].antivaralloc->setAlignment(
-      cast<IntegerType>(CanonicalIV->getType())->getBitWidth() / 8);
-#endif
 
   const SCEV *Limit = nullptr;
   const SCEV *MaxIterations = nullptr;
@@ -829,11 +824,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
                  8);
     unsigned align =
         getCacheAlignment((unsigned)byteSizeOfType->getZExtValue());
-#if LLVM_VERSION_MAJOR >= 10
     alloc->setAlignment(Align(align));
-#else
-    alloc->setAlignment(align);
-#endif
   }
   if (sublimits.size() == 0) {
     auto val = getUndefinedValueForType(types.back());
@@ -986,11 +977,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
 
       // Regardless of how allocated (dynamic vs static), mark it
       // as having the requisite alignment
-#if LLVM_VERSION_MAJOR >= 10
       storealloc->setAlignment(Align(alignSize));
-#else
-      storealloc->setAlignment(alignSize);
-#endif
     }
 
     // Free the memory, if requested
@@ -1024,11 +1011,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
           /*available*/ ValueToValueMapTy());
 
       storeInto = v.CreateLoad(types[i + 1], storeInto);
-#if LLVM_VERSION_MAJOR >= 10
       cast<LoadInst>(storeInto)->setAlignment(Align(alignSize));
-#else
-      cast<LoadInst>(storeInto)->setAlignment(alignSize);
-#endif
       storeInto = v.CreateGEP(types[i], storeInto, idx);
       cast<GetElementPtrInst>(storeInto)->setIsInBounds(true);
     }
@@ -1391,17 +1374,17 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
       auto mask = v.CreateNot(v.CreateShl(
           ConstantInt::get(Type::getInt8Ty(cache->getContext()), 1), subidx));
 
-      Value *loadChunk =
-          v.CreateLoad(loc->getType()->getPointerElementType(), loc);
+      Value *loadChunk = v.CreateLoad(mask->getType(), loc);
       auto cleared = v.CreateAnd(loadChunk, mask);
 
       auto toset = v.CreateShl(
           v.CreateZExt(val, Type::getInt8Ty(cache->getContext())), subidx);
       tostore = v.CreateOr(cleared, toset);
-      assert(tostore->getType() == loc->getType()->getPointerElementType());
+      assert(tostore->getType() == mask->getType());
     }
   }
 
+#if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
   if (tostore->getContext().supportsTypedPointers()) {
 #endif
@@ -1414,6 +1397,8 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
 #if LLVM_VERSION_MAJOR >= 15
   }
 #endif
+#endif
+
   StoreInst *storeinst = v.CreateStore(tostore, loc);
 
   // If the value stored doesnt change (per efficient bool cache),
@@ -1437,11 +1422,7 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
                            8);
   unsigned align = getCacheAlignment((unsigned)byteSizeOfType->getZExtValue());
   storeinst->setMetadata(LLVMContext::MD_tbaa, TBAA);
-#if LLVM_VERSION_MAJOR >= 10
   storeinst->setAlignment(Align(align));
-#else
-  storeinst->setAlignment(align);
-#endif
   scopeInstructions[cache].push_back(storeinst);
   for (auto post : PostCacheStore(storeinst, v)) {
     scopeInstructions[cache].push_back(post);
@@ -1558,11 +1539,7 @@ Value *CacheUtility::getCachePointer(llvm::Type *T, bool inForwardPass,
             ArrayRef<Metadata *>(ConstantAsMetadata::get(byteSizeOfType))));
     unsigned align =
         getCacheAlignment((unsigned)byteSizeOfType->getZExtValue());
-#if LLVM_VERSION_MAJOR >= 10
     cast<LoadInst>(next)->setAlignment(Align(align));
-#else
-    cast<LoadInst>(next)->setAlignment(align);
-#endif
 
     const auto &containedloops = sublimits[i].second;
 
@@ -1611,11 +1588,7 @@ llvm::Value *CacheUtility::loadFromCachePointer(Type *T,
           result->getType()) /
           8);
   unsigned align = getCacheAlignment((unsigned)byteSizeOfType->getZExtValue());
-#if LLVM_VERSION_MAJOR >= 10
   result->setAlignment(Align(align));
-#else
-  result->setAlignment(align);
-#endif
 
   return result;
 }
