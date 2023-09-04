@@ -255,7 +255,7 @@ EnzymeTypeAnalysisRef CreateTypeAnalysis(EnzymeLogicRef Log,
     CustomRuleType rule = customRules[i];
     TA->CustomRules[customRuleNames[i]] =
         [=](int direction, TypeTree &returnTree, ArrayRef<TypeTree> argTrees,
-            ArrayRef<std::set<int64_t>> knownValues, CallInst *call,
+            ArrayRef<std::set<int64_t>> knownValues, CallBase *call,
             TypeAnalyzer *TA) -> uint8_t {
       CTypeTreeRef creturnTree = (CTypeTreeRef)(&returnTree);
       CTypeTreeRef *cargs = new CTypeTreeRef[argTrees.size()];
@@ -1237,7 +1237,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
 
   for (auto idx : enzyme_srets) {
     llvm::Type *T = nullptr;
-#if LLVM_VERSION_MAJOR >= 18
+#if LLVM_VERSION_MAJOR >= 17
     llvm_unreachable("Unhandled");
     // T = F->getParamAttribute(idx, Attribute::AttrKind::ElementType)
     //        .getValueAsType();
@@ -1249,7 +1249,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   for (auto idx : enzyme_srets_v) {
     llvm::Type *T = nullptr;
     auto AT = cast<ArrayType>(FT->getParamType(idx));
-#if LLVM_VERSION_MAJOR >= 18
+#if LLVM_VERSION_MAJOR >= 17
     llvm_unreachable("Unhandled");
     // T = F->getParamAttribute(idx, Attribute::AttrKind::ElementType)
     //         .getValueAsType();
@@ -1499,7 +1499,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     auto arg = delArgMap[i];
     assert(arg);
     llvm::Type *T = nullptr;
-#if LLVM_VERSION_MAJOR >= 18
+#if LLVM_VERSION_MAJOR >= 17
     llvm_unreachable("Unhandled");
     // T = F->getParamAttribute(i, Attribute::AttrKind::ElementType)
     //        .getValueAsType();
@@ -1515,7 +1515,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     assert(arg);
     auto AT = cast<ArrayType>(FT->getParamType(i));
     llvm::Type *T = nullptr;
-#if LLVM_VERSION_MAJOR >= 18
+#if LLVM_VERSION_MAJOR >= 17
     llvm_unreachable("Unhandled");
     // T = F->getParamAttribute(i, Attribute::AttrKind::ElementType)
     //        .getValueAsType();

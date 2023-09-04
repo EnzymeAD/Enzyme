@@ -431,7 +431,7 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
   }
 
   if (arg->isPointerTy()) {
-#if LLVM_VERSION_MAJOR >= 18
+#if LLVM_VERSION_MAJOR >= 17
     return DIFFE_TYPE::DUP_ARG;
 #else
 #if LLVM_VERSION_MAJOR >= 15

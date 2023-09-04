@@ -168,10 +168,15 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
     // GNU-style __attribute__(("example")) and C++/C2x-style [[example]] and
     // [[plugin::example]] supported.
     static constexpr Spelling S[] = {
-        {ParsedAttr::AS_GNU, "enzyme_function_like"},
-        {ParsedAttr::AS_C2x, "enzyme_function_like"},
-        {ParsedAttr::AS_CXX11, "enzyme_function_like"},
-        {ParsedAttr::AS_CXX11, "enzyme::function_like"}};
+      {ParsedAttr::AS_GNU, "enzyme_function_like"},
+#if LLVM_VERSION_MAJOR > 17
+      {ParsedAttr::AS_C23, "enzyme_function_like"},
+#else
+      {ParsedAttr::AS_C2x, "enzyme_function_like"},
+#endif
+      {ParsedAttr::AS_CXX11, "enzyme_function_like"},
+      {ParsedAttr::AS_CXX11, "enzyme::function_like"}
+    };
     Spellings = S;
   }
 
@@ -305,10 +310,15 @@ struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
     // GNU-style __attribute__(("example")) and C++/C2x-style [[example]] and
     // [[plugin::example]] supported.
     static constexpr Spelling S[] = {
-        {ParsedAttr::AS_GNU, "enzyme_inactive"},
-        {ParsedAttr::AS_C2x, "enzyme_inactive"},
-        {ParsedAttr::AS_CXX11, "enzyme_inactive"},
-        {ParsedAttr::AS_CXX11, "enzyme::inactive"}};
+      {ParsedAttr::AS_GNU, "enzyme_inactive"},
+#if LLVM_VERSION_MAJOR > 17
+      {ParsedAttr::AS_C23, "enzyme_inactive"},
+#else
+      {ParsedAttr::AS_C2x, "enzyme_inactive"},
+#endif
+      {ParsedAttr::AS_CXX11, "enzyme_inactive"},
+      {ParsedAttr::AS_CXX11, "enzyme::inactive"}
+    };
     Spellings = S;
   }
 

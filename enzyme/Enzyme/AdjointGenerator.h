@@ -10044,7 +10044,8 @@ public:
       }
       if (!noFree) {
         auto callval = call.getCalledOperand();
-        llvm::errs() << " call: " << call << "\n";
+        if (!isa<Constant>(callval))
+          callval = gutils->getNewFromOriginal(callval);
         newCall->setCalledOperand(gutils->Logic.CreateNoFree(callval));
       }
       if (gutils->knownRecomputeHeuristic.find(&call) !=
