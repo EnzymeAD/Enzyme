@@ -7,6 +7,8 @@ on:
   pull_request:
     branches: 
     - main
+  merge_group:
+    
 jobs:
   build-and-test-fortran:
     name: Fortran ${{matrix.build}} ${{matrix.os}}
@@ -27,8 +29,8 @@ jobs:
       run: |
         wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
         sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
-        sudo apt-get update && sudo apt-get install -y cmake gcc g++ gfortran llvm-${{ matrix.llvm }}-dev ninja-build pip
-        sudo python3 -m pip install --upgrade pip setuptools lit
+        sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev ninja-build pip
+        sudo python3 -m pip install --upgrade pip lit
     - name: add intel tools
       run: |
         wget https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB

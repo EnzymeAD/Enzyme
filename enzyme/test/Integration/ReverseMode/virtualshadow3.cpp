@@ -11,8 +11,6 @@ void __enzyme_autodiff(...);
 template <typename... Args>
 double __enzyme_autodiff(void *, Args...);
 
-int enzyme_dup, enzyme_const, enzyme_out, enzyme_dupnoneed;
-
 struct Object
 {
     virtual double eval(double v) = 0;
