@@ -131,7 +131,7 @@ public:
       return;
 
     if (auto newi = dyn_cast<Instruction>(iload))
-      gutils->eraseWithPlaceholder(newi, "_replacementA", erase);
+      gutils->eraseWithPlaceholder(newi, &I, "_replacementA", erase);
   }
 
   llvm::Value *MPI_TYPE_SIZE(llvm::Value *DT, llvm::IRBuilder<> &B,
@@ -391,13 +391,8 @@ public:
 
   void visitFCmpInst(llvm::FCmpInst &I) { eraseIfUnused(I); }
 
-#if LLVM_VERSION_MAJOR >= 10
   void visitLoadLike(llvm::Instruction &I, llvm::MaybeAlign alignment,
-                     bool constantval,
-#else
-  void visitLoadLike(llvm::Instruction &I, unsigned alignment, bool constantval,
-#endif
-                     llvm::Value *mask = nullptr,
+                     bool constantval, llvm::Value *mask = nullptr,
                      llvm::Value *orig_maskInit = nullptr) {
     using namespace llvm;
 
@@ -756,12 +751,7 @@ public:
       }
     }
 
-#if LLVM_VERSION_MAJOR >= 10
     auto alignment = LI.getAlign();
-#else
-    auto alignment = LI.getAlignment();
-#endif
-
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
 
     bool constantval = parseTBAA(LI, DL).Inner0().isIntegral();
@@ -801,14 +791,10 @@ public:
             rmw = BuilderZ.CreateAtomicRMW(I.getOperation(), ptr, dif,
                                            I.getAlign(), I.getOrdering(),
                                            I.getSyncScopeID());
-#elif LLVM_VERSION_MAJOR >= 11
+#else
             rmw = BuilderZ.CreateAtomicRMW(I.getOperation(), ptr, dif,
                                            I.getOrdering(), I.getSyncScopeID());
             rmw->setAlignment(I.getAlign());
-#else
-                               rmw = BuilderZ.CreateAtomicRMW(
-                                   I.getOperation(), ptr, dif, I.getOrdering(),
-                                   I.getSyncScopeID());
 #endif
             rmw->setVolatile(I.isVolatile());
             if (gutils->isConstantValue(&I))
@@ -856,17 +842,7 @@ public:
             LoadInst *dif1 =
                 Builder2.CreateLoad(I.getType(), ip, I.isVolatile());
 
-#if LLVM_VERSION_MAJOR >= 11
             dif1->setAlignment(I.getAlign());
-#else
-            const DataLayout &DL = I.getModule()->getDataLayout();
-            auto tmpAlign = DL.getTypeStoreSize(I.getValOperand()->getType());
-#if LLVM_VERSION_MAJOR >= 10
-            dif1->setAlignment(MaybeAlign(tmpAlign.getFixedSize()));
-#else
-            dif1->setAlignment(tmpAlign);
-#endif
-#endif
             dif1->setOrdering(order);
             dif1->setSyncScopeID(I.getSyncScopeID());
             return dif1;
@@ -935,11 +911,7 @@ public:
         }
       }
     }
-#if LLVM_VERSION_MAJOR >= 10
     auto align = SI.getAlign();
-#else
-    auto align = SI.getAlignment();
-#endif
 
     visitCommonStore(SI, SI.getPointerOperand(), SI.getValueOperand(), align,
                      SI.isVolatile(), SI.getOrdering(), SI.getSyncScopeID(),
@@ -959,18 +931,10 @@ public:
       eraseIfUnused(SI);
   }
 
-#if LLVM_VERSION_MAJOR >= 10
   void visitCommonStore(llvm::Instruction &I, llvm::Value *orig_ptr,
                         llvm::Value *orig_val, llvm::MaybeAlign align,
                         bool isVolatile, llvm::AtomicOrdering ordering,
-                        llvm::SyncScope::ID syncScope, llvm::Value *mask)
-#else
-  void visitCommonStore(llvm::Instruction &I, llvm::Value *orig_ptr,
-                        llvm::Value *orig_val, unsigned align, bool isVolatile,
-                        llvm::AtomicOrdering ordering,
-                        llvm::SyncScope::ID syncScope, llvm::Value *mask)
-#endif
-  {
+                        llvm::SyncScope::ID syncScope, llvm::Value *mask) {
     using namespace llvm;
 
     Value *val = gutils->getNewFromOriginal(orig_val);
@@ -1135,11 +1099,7 @@ public:
               LoadInst *dif1 =
                   Builder2.CreateLoad(valType, dif1Ptr, isVolatile);
               if (align)
-#if LLVM_VERSION_MAJOR >= 11
                 dif1->setAlignment(*align);
-#else
-                dif1->setAlignment(align);
-#endif
               dif1->setOrdering(ordering);
               dif1->setSyncScopeID(syncScope);
 
@@ -1174,14 +1134,9 @@ public:
             Type *tys[] = {valType, orig_ptr->getType()};
             auto F = Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
                                                Intrinsic::masked_load, tys);
-#if LLVM_VERSION_MAJOR >= 10
             Value *alignv =
                 ConstantInt::get(Type::getInt32Ty(mask->getContext()),
                                  align ? align->value() : 0);
-#else
-            Value *alignv =
-                ConstantInt::get(Type::getInt32Ty(mask->getContext()), align);
-#endif
             Value *ip =
                 lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
 
@@ -2914,13 +2869,8 @@ public:
   known:;
 
 #if 0
-#if LLVM_VERSION_MAJOR >= 10
     unsigned dstalign = dstAlign.valueOrOne().value();
     unsigned srcalign = srcAlign.valueOrOne().value();
-#else
-    unsigned dstalign = dstAlign;
-    unsigned srcalign = srcAlign;
-#endif
 #endif
 
     unsigned start = 0;
@@ -3065,31 +3015,18 @@ public:
   void visitMemTransferInst(llvm::MemTransferInst &MTI) {
     using namespace llvm;
     Value *isVolatile = gutils->getNewFromOriginal(MTI.getOperand(3));
-#if LLVM_VERSION_MAJOR >= 10
     auto srcAlign = MTI.getSourceAlign();
     auto dstAlign = MTI.getDestAlign();
-#else
-    auto srcAlign = MTI.getSourceAlignment();
-    auto dstAlign = MTI.getDestAlignment();
-#endif
     visitMemTransferCommon(MTI.getIntrinsicID(), srcAlign, dstAlign, MTI,
                            MTI.getOperand(0), MTI.getOperand(1),
                            gutils->getNewFromOriginal(MTI.getOperand(2)),
                            isVolatile);
   }
 
-#if LLVM_VERSION_MAJOR >= 10
   void visitMemTransferCommon(llvm::Intrinsic::ID ID, llvm::MaybeAlign srcAlign,
                               llvm::MaybeAlign dstAlign, llvm::CallInst &MTI,
                               llvm::Value *orig_dst, llvm::Value *orig_src,
-                              llvm::Value *new_size, llvm::Value *isVolatile)
-#else
-  void visitMemTransferCommon(llvm::Intrinsic::ID ID, unsigned srcAlign,
-                              unsigned dstAlign, llvm::CallInst &MTI,
-                              llvm::Value *orig_dst, llvm::Value *orig_src,
-                              llvm::Value *new_size, llvm::Value *isVolatile)
-#endif
-  {
+                              llvm::Value *new_size, llvm::Value *isVolatile) {
     using namespace llvm;
 
     if (gutils->isConstantValue(MTI.getOperand(0))) {
@@ -3197,6 +3134,7 @@ public:
           ss << "Cannot deduce type of copy " << MTI;
           CustomErrorHandler(str.c_str(), wrap(&MTI), ErrorType::NoType,
                              &TR.analyzer, nullptr, wrap(&BuilderZ));
+          vd = TypeTree(BaseType::Integer).Only(0, &MTI);
         } else {
           EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI,
                       "failed to deduce type of copy ", MTI);
@@ -3211,16 +3149,11 @@ public:
     }
   known:;
 
-  // llvm::errs() << "MIT: " << MTI << "|size: " << size << " vd: " <<
-  // vd.str() << "\n";
+    // llvm::errs() << "MIT: " << MTI << "|size: " << size << " vd: " <<
+    // vd.str() << "\n";
 
-#if LLVM_VERSION_MAJOR >= 10
     unsigned dstalign = dstAlign.valueOrOne().value();
     unsigned srcalign = srcAlign.valueOrOne().value();
-#else
-    unsigned dstalign = dstAlign;
-    unsigned srcalign = srcAlign;
-#endif
 
     unsigned start = 0;
 
@@ -3325,17 +3258,12 @@ public:
           ddst = gutils->getNewFromOriginal(orig_dst);
         if (dsrc == nullptr)
           dsrc = gutils->getNewFromOriginal(orig_src);
-#if LLVM_VERSION_MAJOR >= 10
         MaybeAlign dalign;
         if (subdstalign)
           dalign = MaybeAlign(subdstalign);
         MaybeAlign salign;
         if (subsrcalign)
           salign = MaybeAlign(subsrcalign);
-#else
-        auto dalign = dstalign;
-        auto salign = srcalign;
-#endif
         if (ddst->getType()->isIntegerTy())
           ddst = BuilderZ.CreateIntToPtr(
               ddst, Type::getInt8PtrTy(ddst->getContext()));
@@ -3535,12 +3463,8 @@ public:
     case Intrinsic::nvvm_ldg_global_p:
     case Intrinsic::nvvm_ldg_global_f: {
       auto CI = cast<ConstantInt>(I.getOperand(1));
-#if LLVM_VERSION_MAJOR >= 10
       visitLoadLike(I, /*Align*/ MaybeAlign(CI->getZExtValue()),
                     /*constantval*/ false);
-#else
-      visitLoadLike(I, /*Align*/ CI->getZExtValue(), /*constantval*/ false);
-#endif
       return false;
     }
     default:
@@ -3549,11 +3473,7 @@ public:
 
     if (ID == Intrinsic::masked_store) {
       auto align0 = cast<ConstantInt>(I.getOperand(2))->getZExtValue();
-#if LLVM_VERSION_MAJOR >= 10
       auto align = MaybeAlign(align0);
-#else
-      auto align = align0;
-#endif
       visitCommonStore(I, /*orig_ptr*/ I.getOperand(1),
                        /*orig_val*/ I.getOperand(0), align,
                        /*isVolatile*/ false, llvm::AtomicOrdering::NotAtomic,
@@ -3563,11 +3483,7 @@ public:
     }
     if (ID == Intrinsic::masked_load) {
       auto align0 = cast<ConstantInt>(I.getOperand(1))->getZExtValue();
-#if LLVM_VERSION_MAJOR >= 10
       auto align = MaybeAlign(align0);
-#else
-      auto align = align0;
-#endif
       auto &DL = gutils->newFunc->getParent()->getDataLayout();
       bool constantval = parseTBAA(I, DL).Inner0().isIntegral();
       visitLoadLike(I, align, constantval,
@@ -4305,16 +4221,10 @@ public:
           MetaTypes.push_back(PointerType::getUnqual(ST));
           auto FT = FunctionType::get(Type::getVoidTy(newcalled->getContext()),
                                       MetaTypes, false);
-#if LLVM_VERSION_MAJOR >= 10
           Function *F =
               Function::Create(FT, GlobalVariable::InternalLinkage,
                                cast<Function>(newcalled)->getName() + "#out",
                                *task->getParent());
-#else
-          Function *F = Function::Create(
-              FT, GlobalVariable::InternalLinkage,
-              cast<Function>(newcalled)->getName() + "#out", task->getParent());
-#endif
           BasicBlock *entry =
               BasicBlock::Create(newcalled->getContext(), "entry", F);
           IRBuilder<> B(entry);
@@ -4341,12 +4251,7 @@ public:
               dif = B.CreateBitCast(dif, IntToFloatTy(dif->getType()));
             }
 
-#if LLVM_VERSION_MAJOR >= 10
             MaybeAlign align;
-#else
-            unsigned align = 0;
-#endif
-
             AtomicRMWInst::BinOp op = AtomicRMWInst::FAdd;
             if (auto vt = dyn_cast<VectorType>(dif->getType())) {
 #if LLVM_VERSION_MAJOR >= 12
@@ -4364,31 +4269,23 @@ public:
 #if LLVM_VERSION_MAJOR >= 13
                 B.CreateAtomicRMW(op, vptr, vdif, align,
                                   AtomicOrdering::Monotonic, SyncScope::System);
-#elif LLVM_VERSION_MAJOR >= 11
+#else
                 AtomicRMWInst *rmw =
                     B.CreateAtomicRMW(op, vptr, vdif, AtomicOrdering::Monotonic,
                                       SyncScope::System);
                 if (align)
                   rmw->setAlignment(align.getValue());
-#else
-                                   B.CreateAtomicRMW(op, vptr, vdif,
-                                                     AtomicOrdering::Monotonic,
-                                                     SyncScope::System);
 #endif
               }
             } else {
 #if LLVM_VERSION_MAJOR >= 13
               B.CreateAtomicRMW(op, ptr, dif, align, AtomicOrdering::Monotonic,
                                 SyncScope::System);
-#elif LLVM_VERSION_MAJOR >= 11
+#else
               AtomicRMWInst *rmw = B.CreateAtomicRMW(
                   op, ptr, dif, AtomicOrdering::Monotonic, SyncScope::System);
               if (align)
                 rmw->setAlignment(align.getValue());
-#else
-                                 B.CreateAtomicRMW(op, ptr, dif,
-                                                   AtomicOrdering::Monotonic,
-                                                   SyncScope::System);
 #endif
             }
           }
@@ -4864,11 +4761,7 @@ public:
                ValueType::Shadow},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
 
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
@@ -5017,11 +4910,7 @@ public:
             &call, {ValueType::Shadow, ValueType::Shadow}, Builder2,
             /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
 
         Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
         return;
@@ -5200,11 +5089,7 @@ public:
              ValueType::None, ValueType::None, ValueType::Shadow},
             Builder2, /*lookup*/ true);
 
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
 
         Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
         return;
@@ -5299,11 +5184,7 @@ public:
                ValueType::Primal, ValueType::Primal, ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -5415,11 +5296,7 @@ public:
             Builder2, /*lookup*/ !forwardMode);
 
         if (forwardMode) {
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
 
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
@@ -5528,11 +5405,7 @@ public:
                ValueType::Primal, ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -5799,11 +5672,7 @@ public:
                ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -6036,11 +5905,7 @@ public:
               /*comm*/ comm,
           };
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args,
                               BufferDefs);
 
@@ -6204,11 +6069,7 @@ public:
                ValueType::Primal, ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -6411,11 +6272,7 @@ public:
                ValueType::Primal, ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -6648,11 +6505,7 @@ public:
                ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -6760,11 +6613,7 @@ public:
           Mode == DerivativeMode::ReverseModeCombined) {
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
         Value *args[] = {
             lookup(gutils->getNewFromOriginal(call.getOperand(0)), Builder2)};
         Builder2.CreateCall(call.getFunctionType(), callval, args);
@@ -7032,11 +6881,7 @@ public:
             /*augmented*/ subdata);
         FT = cast<Function>(newcalled)->getFunctionType();
       } else {
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
         newcalled = gutils->invertPointerM(callval, BuilderZ);
 
         if (gutils->getWidth() > 1) {
@@ -7373,11 +7218,7 @@ public:
       const AugmentedReturn *fnandtapetype = nullptr;
 
       if (!called) {
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
         Value *uncast = callval;
         while (auto CE = dyn_cast<ConstantExpr>(uncast)) {
           if (CE->isCast()) {
@@ -7724,7 +7565,7 @@ public:
                         : BuilderZ.CreateExtractValue(augmentcall,
                                                       {(unsigned)drval},
                                                       call.getName() + "'ac");
-            assert(newip->getType() == call.getType());
+            assert(newip->getType() == placeholder->getType());
             placeholder->replaceAllUsesWith(newip);
             if (placeholder == &*BuilderZ.GetInsertPoint()) {
               BuilderZ.SetInsertPoint(placeholder->getNextNode());
@@ -7843,11 +7684,7 @@ public:
 
       assert(subMode != DerivativeMode::ReverseModeCombined);
 
-#if LLVM_VERSION_MAJOR >= 11
       auto callval = call.getCalledOperand();
-#else
-      auto callval = call.getCalledValue();
-#endif
 
       if (gutils->isConstantValue(callval)) {
         llvm::errs() << *gutils->newFunc->getParent() << "\n";
@@ -8411,11 +8248,7 @@ public:
             Mode == DerivativeMode::ReverseModeCombined) {
           IRBuilder<> Builder2(&call);
           getReverseBuilder(Builder2);
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Value *args[] = {
               lookup(gutils->getNewFromOriginal(call.getOperand(0)), Builder2),
               lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2)};
@@ -8828,12 +8661,7 @@ public:
         }
       }
     }
-#if LLVM_VERSION_MAJOR >= 11
-    if (auto assembly = dyn_cast<InlineAsm>(call.getCalledOperand()))
-#else
-    if (auto assembly = dyn_cast<InlineAsm>(call.getCalledValue()))
-#endif
-    {
+    if (auto assembly = dyn_cast<InlineAsm>(call.getCalledOperand())) {
       if (assembly->getAsmString() == "maxpd $1, $0") {
         if (Mode == DerivativeMode::ReverseModePrimal ||
             gutils->isConstantInstruction(&call)) {
@@ -9022,14 +8850,9 @@ public:
             } else {
               bool zeroed = false;
               auto rule = [&]() {
-#if LLVM_VERSION_MAJOR >= 11
                 Value *anti = bb.CreateCall(call.getFunctionType(),
                                             call.getCalledOperand(), args,
                                             call.getName() + "'mi");
-#else
-                anti = bb.CreateCall(call.getCalledValue(), args,
-                                     call.getName() + "'mi");
-#endif
                 cast<CallInst>(anti)->setAttributes(call.getAttributes());
                 cast<CallInst>(anti)->setCallingConv(call.getCallingConv());
                 cast<CallInst>(anti)->setTailCallKind(call.getTailCallKind());
@@ -9048,7 +8871,9 @@ public:
                                                      Attribute::NonNull);
 #endif
 
-                  if (funcName == "malloc" || funcName == "_Znwm") {
+                  if (funcName == "malloc" || funcName == "_Znwm" ||
+                      funcName == "??2@YAPAXI@Z" ||
+                      funcName == "??2@YAPEAX_K@Z") {
                     if (auto ci = dyn_cast<ConstantInt>(args[0])) {
                       unsigned derefBytes = ci->getLimitedValue();
                       CallInst *cal =
@@ -9168,12 +8993,8 @@ public:
                                                            ->getValue())
                                          ->getLimitedValue();
                     if (Alignment) {
-#if LLVM_VERSION_MAJOR >= 10
                       cast<AllocaInst>(replacement)
                           ->setAlignment(Align(Alignment));
-#else
-                      cast<AllocaInst>(replacement)->setAlignment(Alignment);
-#endif
                     }
 #if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
@@ -9377,11 +9198,7 @@ public:
                 ->getLimitedValue();
         // Don't set zero alignment
         if (Alignment) {
-#if LLVM_VERSION_MAJOR >= 10
           cast<AllocaInst>(replacement)->setAlignment(Align(Alignment));
-#else
-          cast<AllocaInst>(replacement)->setAlignment(Alignment);
-#endif
         }
 #if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
@@ -9672,19 +9489,11 @@ public:
 
     if (funcName == "memcpy" || funcName == "memmove") {
       auto ID = (funcName == "memcpy") ? Intrinsic::memcpy : Intrinsic::memmove;
-#if LLVM_VERSION_MAJOR >= 10
       visitMemTransferCommon(ID, /*srcAlign*/ MaybeAlign(1),
                              /*dstAlign*/ MaybeAlign(1), call,
                              call.getArgOperand(0), call.getArgOperand(1),
                              gutils->getNewFromOriginal(call.getArgOperand(2)),
                              ConstantInt::getFalse(call.getContext()));
-#else
-      visitMemTransferCommon(ID, /*srcAlign*/ 1,
-                             /*dstAlign*/ 1, call, call.getArgOperand(0),
-                             call.getArgOperand(1),
-                             gutils->getNewFromOriginal(call.getArgOperand(2)),
-                             ConstantInt::getFalse(call.getContext()));
-#endif
       return;
     }
     if (funcName == "memset" || funcName == "memset_pattern16") {
@@ -9793,11 +9602,7 @@ public:
         getReverseBuilder(Builder2);
         Value *nargs[] = {gutils->lookupM(
             gutils->getNewFromOriginal(call.getOperand(0)), Builder2)};
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
         Builder2.CreateCall(call.getFunctionType(), callval, nargs);
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -10106,11 +9911,7 @@ public:
         }
         eraseIfUnused(call);
       }
-#if LLVM_VERSION_MAJOR >= 11
       auto callval = call.getCalledOperand();
-#else
-      auto callval = call.getCalledValue();
-#endif
 
       for (auto rmat : gutils->backwardsOnlyShadows) {
         if (rmat.second.frees.count(&call)) {
@@ -10230,11 +10031,7 @@ public:
         dchoice = diffe(&call, Builder2);
       }
 
-#if LLVM_VERSION_MAJOR >= 10
       if (call.hasMetadata("enzyme_gradient_setter")) {
-#else
-      if (call.getMetadata("enzyme_gradient_setter")) {
-#endif
         auto gradient_setter = cast<Function>(
             cast<ValueAsMetadata>(
                 call.getMetadata("enzyme_gradient_setter")->getOperand(0).get())
@@ -10304,11 +10101,9 @@ public:
           noFree = true;
       }
       if (!noFree) {
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
+        if (!isa<Constant>(callval))
+          callval = gutils->getNewFromOriginal(callval);
         newCall->setCalledOperand(gutils->Logic.CreateNoFree(callval));
       }
       if (gutils->knownRecomputeHeuristic.find(&call) !=
