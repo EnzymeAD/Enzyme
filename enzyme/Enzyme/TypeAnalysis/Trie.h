@@ -23,16 +23,15 @@ class trie_iterator {
 private:
   using key_type = Key;
   using index_type = Index;
-  using mapped_type = T;
   using allocator_type = Allocator;
-  using self = trie_iterator<key_type, index_type, mapped_type, allocator_type>;
+  using self = trie_iterator<Key, Index, T, Allocator>;
 
 public:
   using iterator_category = std::bidirectional_iterator_tag;
-  using value_type = std::pair<const key_type, mapped_type>;
+  using value_type = T;
   using difference_type = std::ptrdiff_t;
-  using pointer = value_type *;
-  using reference = value_type &;
+  using pointer = std::pair<const key_type, value_type*>;
+  using reference = std::pair<const key_type, value_type&>;
 
 private:
   template <typename S, typename C, typename M, typename A>
@@ -41,7 +40,7 @@ private:
   template <typename KeyT, typename TT, typename AllocatorT> friend class trie;
 
   trie<Key, T, Allocator> *_trie;
-  trie_node<Key, Index, value_type> *_node;
+  trie_node<Key, Index, T> *_node;
 
 public:
   trie_iterator() : _trie(nullptr), _node(nullptr) {}
@@ -64,12 +63,12 @@ public:
 
   reference operator*() const {
     assert(_node != nullptr && "dereferencing end() iterator");
-    return *_node->_value;
+    return std::make_pair(_node->get_key(), *_node->_value);
   }
 
   pointer operator->() const {
     assert(_node != nullptr && "dereferencing end() iterator");
-    return _node->_value;
+    return std::make_pair(_node->get_key(), _node->_value);
   }
 
   self &operator++() {
@@ -168,17 +167,15 @@ class trie_const_iterator {
 private:
   using key_type = Key;
   using index_type = Index;
-  using mapped_type = T;
   using allocator_type = Allocator;
-  using self =
-      trie_const_iterator<key_type, index_type, mapped_type, allocator_type>;
+  using self = trie_const_iterator<Key, Index, T, Allocator>;
 
 public:
-  using iterator_category = std::forward_iterator_tag;
-  using value_type = std::pair<const key_type, mapped_type>;
+  using iterator_category = std::bidirectional_iterator_tag;
+  using value_type = T;
   using difference_type = std::ptrdiff_t;
-  using pointer = const value_type *;
-  using reference = const value_type &;
+  using pointer = std::pair<const key_type, const value_type *>;
+  using reference = std::pair<const key_type, const value_type &>;
 
 private:
   template <typename KeyT, typename TT, typename AllocatorT> friend class trie;
@@ -210,12 +207,12 @@ public:
 
   reference operator*() const {
     assert(_node != nullptr && "dereferencing end() iterator");
-    return *_node->_value;
+    return std::make_pair(_node->get_key(), *_node->_value);
   }
 
   pointer operator->() const {
     assert(_node != nullptr && "dereferencing end() iterator");
-    return _node->_value;
+    return std::make_pair(_node->get_key(), _node->_value);
   }
 
   self &operator++() {
@@ -316,7 +313,7 @@ private:
   using key_type = Key;
   using index_type = typename Key::value_type;
   using mapped_type = T;
-  using tree_node = trie_node<Key, index_type, std::pair<const Key, T>>;
+  using tree_node = trie_node<Key, index_type, T>;
 
 private:
   tree_node *_root;
@@ -476,6 +473,9 @@ template <typename Key, typename Index, typename Value> struct trie_node {
   trie_node &operator=(const trie_node &) = delete;
   trie_node &operator=(trie_node &&) = delete;
   ~trie_node() = default;
+  
+  
+  key_type get_key() const;
 
   template <typename AllocatorT, typename... Args>
   void set_value(AllocatorT alloc, Args &&...args) {
@@ -568,32 +568,28 @@ template <typename Key, typename Index, typename Value> struct trie_node {
 // MARK: - Interface
 
 template <typename Key, typename T,
-          typename Allocator = std::allocator<std::pair<const Key, T>>>
+          typename Allocator = std::allocator<T>>
 class trie {
 public:
   using key_type = Key;
-  using mapped_type = T;
-  using value_type = std::pair<const key_type, mapped_type>;
+  using value_type = T;
   using index_type = typename key_type::value_type;
   using size_type = std::size_t;
   using allocator_type = Allocator;
-  using reference = mapped_type &;
-  using const_reference = const mapped_type &;
-  using pointer = typename std::allocator_traits<allocator_type>::pointer;
-  using const_pointer =
-      typename std::allocator_traits<allocator_type>::const_pointer;
-  using iterator =
-      trie_iterator<key_type, index_type, mapped_type, allocator_type>;
-  using const_iterator =
-      trie_const_iterator<key_type, index_type, mapped_type, allocator_type>;
+  using reference = std::pair<const key_type, value_type&>;
+  using const_reference = std::pair<const key_type, const value_type&>;
+  using pointer = std::pair<const key_type, const value_type*>;
+  using const_pointer = std::pair<const key_type, const value_type*>;
+  using iterator = trie_iterator<key_type, index_type, value_type, allocator_type>;
+  using const_iterator = trie_const_iterator<key_type, index_type, value_type, allocator_type>;
   using reverse_iterator = std::reverse_iterator<iterator>;
   using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
 private:
-  using self = trie<key_type, mapped_type, allocator_type>;
+  using self = trie<key_type, value_type, allocator_type>;
 
 private:
-  using impl_type = trie_impl<key_type, mapped_type, allocator_type>;
+  using impl_type = trie_impl<key_type, value_type, allocator_type>;
 
 private:
   impl_type _impl;
@@ -657,7 +653,7 @@ public:
   }
 
   std::pair<iterator, bool> insert(const key_type &key,
-                                   const mapped_type &value) {
+                                   const value_type &value) {
     auto [node, inserted] = _impl.insert(key, value);
     return std::make_pair(iterator(this, node), inserted);
   }
@@ -673,7 +669,7 @@ public:
   reference operator[](const key_type &key) {
     auto node = _impl.find(key);
     if (node == nullptr) {
-      node = _impl.insert(key, mapped_type()).first;
+      node = _impl.insert(key, value_type()).first;
     }
 
     return node->_value->second;
