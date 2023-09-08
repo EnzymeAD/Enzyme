@@ -2862,6 +2862,7 @@ public:
                         /*pointerIntSame*/ true);
         llvm_unreachable("bad msi");
       }
+      return;
     }
   known:;
 
