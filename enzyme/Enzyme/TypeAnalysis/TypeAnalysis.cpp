@@ -5433,7 +5433,7 @@ TypeTree TypeResults::query(Value *val) const {
   return analyzer.getAnalysis(val);
 }
 
-void TypeResults::dump() const { analyzer.dump(); }
+void TypeResults::dump(llvm::raw_ostream &ss) const { analyzer.dump(ss); }
 
 ConcreteType TypeResults::intType(size_t num, Value *val, bool errIfNotFound,
                                   bool pointerIntSame) const {

@@ -436,25 +436,24 @@ public:
 
     IRBuilder<> BuilderZ(newi);
     if (!vd.isKnown()) {
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "Cannot deduce type of load " << I;
       auto ET = I.getType();
       if (looseTypeAnalysis || true) {
         vd = defaultTypeTreeForLLVM(ET, &I);
-        EmitWarning("CannotDeduceType", I, "failed to deduce type of load ", I);
+        ss << "\n";
+        TR.dump(ss);
+        EmitWarning("CannotDeduceType", I, ss.str());
         goto known;
       }
       if (CustomErrorHandler) {
-        std::string str;
-        raw_string_ostream ss(str);
-        ss << "Cannot deduce type of load " << I;
         CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
                            &TR.analyzer, nullptr, wrap(&BuilderZ));
       } else {
-        EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
-                    "failed to deduce type of load ", I);
-
-        TR.intType(LoadSize, &I, /*errifnotfound*/ true,
-                   /*pointerIntSame*/ true);
-        llvm_unreachable("bad mti");
+        ss << "\n";
+        TR.dump(ss);
+        EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
       }
     known:;
     }
@@ -987,27 +986,25 @@ public:
     auto vd = TR.query(orig_ptr).Lookup(storeSize, DL);
 
     if (!vd.isKnown()) {
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "Cannot deduce type of store " << I;
       if (looseTypeAnalysis || true) {
+        ss << "\n";
+        TR.dump(ss);
         vd = defaultTypeTreeForLLVM(valType, &I);
-        EmitWarning("CannotDeduceType", I, "failed to deduce type of xtore ",
-                    I);
+        EmitWarning("CannotDeduceType", I, ss.str());
         goto known;
       }
       if (CustomErrorHandler) {
-        std::string str;
-        raw_string_ostream ss(str);
-        ss << "Cannot deduce type of store " << I;
         CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
                            &TR.analyzer, nullptr, wrap(&BuilderZ));
-        return;
       } else {
-        EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
-                    "failed to deduce type of store ", I);
-
-        TR.intType(storeSize, orig_ptr, /*errifnotfound*/ true,
-                   /*pointerIntSame*/ true);
-        llvm_unreachable("bad mti");
+        ss << "\n";
+        TR.dump(ss);
+        EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
       }
+      return;
     known:;
     }
 
@@ -1016,17 +1013,16 @@ public:
       bool Legal = true;
       dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
       if (!Legal) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Cannot deduce single type of store " << I;
         if (CustomErrorHandler) {
-          std::string str;
-          raw_string_ostream ss(str);
-          ss << "Cannot deduce single type of store " << I;
           CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
                              &TR.analyzer, nullptr, wrap(&BuilderZ));
-          return;
         } else {
-          EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
-                      "failed to deduce single type of store ", I);
+          EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
         }
+        return;
       }
     }
 
@@ -1318,7 +1314,8 @@ public:
                                &TR.analyzer, nullptr, wrap(&Builder2));
             return;
           } else {
-            TR.dump();
+            ss << "\n";
+            TR.dump(ss);
             EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
             return;
           }
@@ -1343,12 +1340,12 @@ public:
               CustomErrorHandler(ss.str().c_str(), wrap(&I),
                                  ErrorType::NoDerivative, gutils, nullptr,
                                  wrap(&Builder2));
-              return (llvm::Value *)UndefValue::get(op0->getType());
             } else {
-              TR.dump();
-              llvm::errs() << ss.str() << "\n";
-              report_fatal_error("unknown instruction");
+              ss << "\n";
+              TR.dump(ss);
+              EmitFailure("CannotHandleCast", I.getDebugLoc(), &I, ss.str());
             }
+            return (llvm::Value *)UndefValue::get(op0->getType());
           }
         };
 
@@ -2376,8 +2373,7 @@ public:
         CustomErrorHandler(ss.str().c_str(), wrap(&BO), ErrorType::NoDerivative,
                            gutils, nullptr, wrap(&Builder2));
       } else {
-        llvm::errs() << ss.str() << "\n";
-        report_fatal_error("unknown binary operator");
+        EmitFailure("NoDerivative", BO.getDebugLoc(), &BO, ss.str());
       }
     }
 
@@ -2677,8 +2673,7 @@ public:
         CustomErrorHandler(ss.str().c_str(), wrap(&MS), ErrorType::NoDerivative,
                            gutils, nullptr, wrap(&BuilderZ));
       } else {
-        llvm::errs() << ss.str() << "\n";
-        report_fatal_error("non constant in memset");
+        EmitFailure("NoDerivative", MS.getDebugLoc(), &MS, ss.str());
       }
     }
 
@@ -2848,19 +2843,16 @@ public:
         vd = TypeTree(BaseType::Pointer).Only(0, &MS);
         goto known;
       }
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "Cannot deduce type of memset " << MS;
       if (CustomErrorHandler) {
-        std::string str;
-        raw_string_ostream ss(str);
-        ss << "Cannot deduce type of memset " << MS;
         CustomErrorHandler(str.c_str(), wrap(&MS), ErrorType::NoType,
                            &TR.analyzer, nullptr, wrap(&BuilderZ));
       } else {
-        EmitFailure("CannotDeduceType", MS.getDebugLoc(), &MS,
-                    "failed to deduce type of memset ", MS);
-
-        TR.firstPointer(size, MS.getOperand(0), &MS, /*errifnotfound*/ true,
-                        /*pointerIntSame*/ true);
-        llvm_unreachable("bad msi");
+        ss << "\n";
+        TR.dump(ss);
+        EmitFailure("CannotDeduceType", MS.getDebugLoc(), &MS, ss.str());
       }
       return;
     }
@@ -3126,21 +3118,18 @@ public:
         goto known;
       }
       if (errorIfNoType) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Cannot deduce type of copy " << MTI;
         if (CustomErrorHandler) {
-          std::string str;
-          raw_string_ostream ss(str);
-          ss << "Cannot deduce type of copy " << MTI;
           CustomErrorHandler(str.c_str(), wrap(&MTI), ErrorType::NoType,
                              &TR.analyzer, nullptr, wrap(&BuilderZ));
-          vd = TypeTree(BaseType::Integer).Only(0, &MTI);
         } else {
-          EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI,
-                      "failed to deduce type of copy ", MTI);
-
-          TR.firstPointer(size, orig_dst, &MTI, /*errifnotfound*/ true,
-                          /*pointerIntSame*/ true);
-          llvm_unreachable("bad mti");
+          ss << "\n";
+          TR.dump(ss);
+          EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI, ss.str());
         }
+        vd = TypeTree(BaseType::Integer).Only(0, &MTI);
       } else {
         vd = TypeTree(BaseType::Pointer).Only(0, &MTI);
       }
@@ -4312,12 +4301,9 @@ public:
         }
       }
 #endif
+      TR.dump();
       EmitFailure("CannotDeduceType", call.getDebugLoc(), &call,
                   "failed to deduce type of copy ", call);
-
-      TR.firstPointer(size, origArg, &call, /*errifnotfound*/ true,
-                      /*pointerIntSame*/ true);
-      llvm_unreachable("bad mti");
     }
   knownF:;
     unsigned start = 0;

@@ -342,15 +342,15 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       std::string s;
       llvm::raw_string_ostream ss(s);
       ss << "oldFunc: " << *oldFunc << "\n";
-      ss << "Cannot deduce adding type of: " << *old << "\n";
+      ss << "Cannot deduce adding type of: " << *val << "\n";
       if (CustomErrorHandler) {
-        CustomErrorHandler(ss.str().c_str(), wrap(old), ErrorType::NoType,
+        CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
                            &TR.analyzer, nullptr, wrap(&BuilderM));
         return addedSelects;
       } else {
         TR.dump();
         DebugLoc loc;
-        if (auto inst = dyn_cast<Instruction>(old))
+        if (auto inst = dyn_cast<Instruction>(val))
           EmitFailure("CannotDeduceType", inst->getDebugLoc(), inst, ss.str());
         else {
           llvm::errs() << ss.str() << "\n";
@@ -367,9 +367,32 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     auto newBitSize =
         oldFunc->getParent()->getDataLayout().getTypeSizeInBits(addingType);
 
-    if (oldBitSize > newBitSize && oldBitSize % newBitSize == 0 &&
-        !addingType->isVectorTy()) {
-      addingType = VectorType::get(addingType, oldBitSize / newBitSize, false);
+    if (oldBitSize == newBitSize) {
+    } else if (oldBitSize > newBitSize && oldBitSize % newBitSize == 0) {
+      if (!addingType->isVectorTy())
+        addingType =
+            VectorType::get(addingType, oldBitSize / newBitSize, false);
+    } else {
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "oldFunc: " << *oldFunc << "\n";
+      ss << "Illegal intermediate when adding to: " << *val
+         << " with addingType: " << *addingType << "\n";
+      if (CustomErrorHandler) {
+        CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
+                           &TR.analyzer, nullptr, wrap(&BuilderM));
+        return addedSelects;
+      } else {
+        TR.dump();
+        DebugLoc loc;
+        if (auto inst = dyn_cast<Instruction>(val))
+          EmitFailure("CannotDeduceType", inst->getDebugLoc(), inst, ss.str());
+        else {
+          llvm::errs() << ss.str() << "\n";
+          llvm_unreachable("Cannot deduce adding type");
+        }
+        return addedSelects;
+      }
     }
 
     Value *bcold = BuilderM.CreateBitCast(old, addingType);
