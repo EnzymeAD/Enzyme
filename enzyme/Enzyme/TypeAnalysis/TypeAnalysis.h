@@ -179,7 +179,7 @@ public:
   TypeTree getReturnAnalysis() const;
 
   /// Prints all known information
-  void dump() const;
+  void dump(llvm::raw_ostream &ss = llvm::errs()) const;
 
   /// The set of values val will take on during this program
   std::set<int64_t> knownIntegralValues(llvm::Value *val) const;
