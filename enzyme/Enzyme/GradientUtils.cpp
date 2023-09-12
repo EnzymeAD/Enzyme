@@ -5653,8 +5653,22 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return li;
 
   } else if (auto arg = dyn_cast<BinaryOperator>(oval)) {
-    if (arg->getOpcode() == Instruction::FAdd)
-      return getNewFromOriginal(arg);
+    switch (mode) {
+    case DerivativeMode::ReverseModePrimal:
+    case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeGradient:
+      if (TR.query(arg)[{-1}].isFloat()) {
+        auto newv = getNewFromOriginal(arg);
+        IRBuilder<> bb(newv);
+        auto res =
+            applyChainRule(newv->getType(), bb, [&newv] { return newv; });
+        invertedPointers.insert(
+            std::make_pair((const Value *)oval, InvertedPointerVH(this, res)));
+        return res;
+      }
+    default:
+      break;
+    }
 
     if (!arg->getType()->isIntOrIntVectorTy()) {
       llvm::errs() << *oval << "\n";
