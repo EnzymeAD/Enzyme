@@ -1504,6 +1504,8 @@ void TypeAnalyzer::visitGetElementPtrInst(GetElementPtrInst &gep) {
 
   bool seenIdx = false;
 
+  llvm::errs() << " pre downtree of: " << gep << " from " << *gep.getPointerOperand() << " data0: " << getData0.str() << "\n";
+
   for (auto vec : getSet<Value *>(idnext, idnext.size() - 1)) {
     auto g2 = GetElementPtrInst::Create(gep.getSourceElementType(),
                                         gep.getOperand(0), vec);
@@ -1533,6 +1535,7 @@ void TypeAnalyzer::visitGetElementPtrInst(GetElementPtrInst &gep) {
         downTree &= shft;
       else
         downTree = shft;
+      llvm::errs() << " + at offset " << off << " maxSize " << maxSize << " shft: " << shft.str() << " downTree: " << downTree.str() << "\n";
     }
 
     if (direction & UP) {
