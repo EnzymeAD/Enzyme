@@ -5470,20 +5470,18 @@ ConcreteType TypeResults::intType(size_t num, Value *val, bool errIfNotFound,
 Type *TypeResults::addingType(size_t num, Value *val) const {
   assert(val);
   assert(val->getType());
-  auto q = query(val).PurgeAnything();
-  auto dt = q[{0}];
-  /*
-  size_t ObjSize = 1;
-  if (val->getType()->isSized())
-    ObjSize = (fn.Function->getParent()->getDataLayout().getTypeSizeInBits(
-        val->getType()) +7) / 8;
-  */
-  dt.orIn(q[{-1}], /*pointerIntSame*/ true);
-  for (size_t i = 1; i < num; ++i) {
-    dt.orIn(q[{(int)i}], /*pointerIntSame*/ true);
+  auto q = query(val);
+  Type *ty = q[{-1}].isFloat();
+  for (size_t i = 0; i < num; ++i) {
+    auto ty2 = q[{(int)i}].isFloat();
+    if (ty) {
+      if (ty2)
+        assert(ty == ty2);
+    } else {
+      ty = ty2;
+    }
   }
-
-  return dt.isFloat();
+  return ty;
 }
 
 ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
