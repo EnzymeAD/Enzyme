@@ -501,11 +501,20 @@ public:
 
   llvm::Type *getShadowType(llvm::Type *ty);
 
+  //! Helper routine to extract a nested element from a struct/array. This is
+  //  a one dimensional special case of the multi-dim extractMeta below.
   static llvm::Value *extractMeta(llvm::IRBuilder<> &Builder, llvm::Value *Agg,
                                   unsigned off, const llvm::Twine &name = "");
+
+  //! Helper routine to extract a nested element from a struct/array. Unlike the
+  //  LLVM instruction, this will attempt to re-use the inserted value, if it
+  //  exists, rather than always creating a new instruction. If fallback is
+  //  true (the default), it will create an instruction if it fails to find an
+  //  appropriate existing value, otherwise it returns nullptr.
   static llvm::Value *extractMeta(llvm::IRBuilder<> &Builder, llvm::Value *Agg,
                                   llvm::ArrayRef<unsigned> off,
-                                  const llvm::Twine &name = "");
+                                  const llvm::Twine &name = "",
+                                  bool fallback = true);
 
   static llvm::Value *recursiveFAdd(llvm::IRBuilder<> &B, llvm::Value *lhs,
                                     llvm::Value *rhs,

@@ -29,9 +29,9 @@ declare double @llvm.fabs.f64(double)
 ; CHECK-NEXT:   %[[i2:.+]] = select {{(fast )?}}i1 %[[i1]], double -1.000000e+00, double 1.000000e+00
 ; CHECK-NEXT:   %[[i0:.+]] = extractvalue [2 x double] %"x'", 0
 ; CHECK-NEXT:   %[[i3:.+]] = fmul fast double %[[i0]], %[[i2]]
-; CHECK-NEXT:   %[[i4:.+]] = insertvalue [2 x double] undef, double %[[i3]], 0
 ; CHECK-NEXT:   %[[i5:.+]] = extractvalue [2 x double] %"x'", 1
 ; CHECK-NEXT:   %[[i6:.+]] = fmul fast double %[[i5]], %[[i2]]
+; CHECK-NEXT:   %[[i4:.+]] = insertvalue [2 x double] undef, double %[[i3]], 0
 ; CHECK-NEXT:   %[[i7:.+]] = insertvalue [2 x double] %[[i4]], double %[[i6]], 1
 ; CHECK-NEXT:   ret [2 x double] %[[i7]]
 ; CHECK-NEXT: }
