@@ -8629,31 +8629,16 @@ public:
           IRBuilder<> Builder2(&call);
           getForwardBuilder(Builder2);
 
-          SmallVector<Value *, 2> args;
-#if LLVM_VERSION_MAJOR >= 14
-          for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-          for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
-          {
-            auto arg = call.getArgOperand(i);
-            if (i == 0) {
-              assert(!gutils->isConstantValue(arg));
-              arg = gutils->invertPointerM(arg, Builder2);
-            } else {
-              arg = gutils->getNewFromOriginal(arg);
-            }
-            args.push_back(arg);
-          }
           auto dbgLoc = gutils->getNewFromOriginal(&call)->getDebugLoc();
 
-          auto rule = [&]() {
-            SmallVector<ValueType, 2> BundleTypes(args.size(),
-                                                  ValueType::Primal);
+          auto rule = [&](Value *ip) {
+            ValueType BundleTypes[2] = {ValueType::Shadow, ValueType::Primal};
 
             auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
                                                    /*lookup*/ false);
 
+            llvm::Value *args[2] = {
+                ip, gutils->getNewFromOriginal(call.getOperand(1))};
             CallInst *CI = Builder2.CreateCall(
                 call.getFunctionType(), call.getCalledFunction(), args, Defs);
             CI->setAttributes(call.getAttributes());
@@ -8663,7 +8648,9 @@ public:
             return CI;
           };
 
-          Value *CI = applyChainRule(call.getType(), Builder2, rule);
+          Value *CI = applyChainRule(
+              call.getType(), Builder2, rule,
+              gutils->invertPointerM(call.getOperand(0), Builder2));
 
           auto found = gutils->invertedPointers.find(&call);
           PHINode *placeholder = cast<PHINode>(&*found->second);
