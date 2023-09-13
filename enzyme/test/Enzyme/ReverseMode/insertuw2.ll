@@ -57,11 +57,7 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NEXT:   %pre_x1 = load double, double* %in1
 ; CHECK-NEXT:   store double 0.000000e+00, double* %in1
 ; CHECK-NEXT:   %x1 = insertvalue { double, double, double* } %x0, double %pre_x1, 1
-; CHECK-NEXT:   %out1 = insertvalue { double, double, double* } %x1, double* %in0, 2
-; CHECK-NEXT:   %out2 = insertvalue { double, double, double* } %out1, double 0.000000e+00, 1
-; CHECK-NEXT:   %post_x0 = extractvalue { double, double, double* } %out2, 0
-; CHECK-NEXT:   %post_x1 = extractvalue { double, double, double* } %x1, 1
-; CHECK-NEXT:   %mul0 = fmul double %post_x0, %post_x1
+; CHECK-NEXT:   %mul0 = fmul double %pre_x0, %pre_x1
 ; CHECK-NEXT:   store double %mul0, double* %in0
 ; CHECK-NEXT:   br label %exit
 
@@ -93,7 +89,6 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NEXT:   %[[i9:.+]] = fadd fast double %[[i8]], %[[i2]]
 ; CHECK-NEXT:   store double %[[i9]], double* %[[i7]]
 ; CHECK-NEXT:   %[[i10:.+]] = load { double, double, double* }, { double, double, double* }* %"out2'de"
-; CHECK-NEXT:   %[[i11:.+]] = insertvalue { double, double, double* } %[[i10]], double 0.000000e+00, 1
 ; CHECK-NEXT:   %[[i12:.+]] = load { double, double, double* }, { double, double, double* }* %"out1'de"
 ; CHECK-NEXT:   %[[i13:.+]] = extractvalue { double, double, double* } %[[i10]], 0
 ; CHECK-NEXT:   %[[i14:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"out1'de", i32 0, i32 0
@@ -106,7 +101,6 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NEXT:   store double %[[i19]], double* %[[i17]]
 ; CHECK-NEXT:   store { double, double, double* } zeroinitializer, { double, double, double* }* %"out2'de"
 ; CHECK-NEXT:   %[[i20:.+]] = load { double, double, double* }, { double, double, double* }* %"out1'de"
-; CHECK-NEXT:   %[[i21:.+]] = insertvalue { double, double, double* } %[[i20]], double* null, 2
 ; CHECK-NEXT:   %[[i22:.+]] = load { double, double, double* }, { double, double, double* }* %"x1'de"
 ; CHECK-NEXT:   %[[i23:.+]] = extractvalue { double, double, double* } %[[i20]], 0
 ; CHECK-NEXT:   %[[i24:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x1'de", i32 0, i32 0
@@ -123,7 +117,6 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NEXT:   %[[i32:.+]] = extractvalue { double, double, double* } %[[i31]], 1
 ; CHECK-NEXT:   %[[i33:.+]] = fadd fast double 0.000000e+00, %[[i32]]
 ; CHECK-NEXT:   %[[i34:.+]] = load { double, double, double* }, { double, double, double* }* %"x1'de"
-; CHECK-NEXT:   %[[i35:.+]] = insertvalue { double, double, double* } %[[i34]], double 0.000000e+00, 1
 ; CHECK-NEXT:   %[[i36:.+]] = load { double, double, double* }, { double, double, double* }* %"x0'de"
 ; CHECK-NEXT:   %[[i37:.+]] = extractvalue { double, double, double* } %[[i34]], 0
 ; CHECK-NEXT:   %[[i38:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x0'de", i32 0, i32 0

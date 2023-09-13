@@ -4804,7 +4804,7 @@ Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
 
 Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
                                   ArrayRef<unsigned> off_init,
-                                  const Twine &name) {
+                                  const Twine &name, bool fallback) {
   std::vector<unsigned> off(off_init.begin(), off_init.end());
   while (off.size() != 0) {
     if (auto Ins = dyn_cast<InsertValueInst>(Agg)) {
@@ -4843,6 +4843,10 @@ Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
   }
   if (off.size() == 0)
     return Agg;
+
+  if (!fallback)
+    return nullptr;
+
   if (Agg->getType()->isVectorTy() && off.size() == 1)
     return Builder.CreateExtractElement(Agg, off[0], name);
 

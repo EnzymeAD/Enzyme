@@ -727,7 +727,52 @@ void PreProcessCache::AlwaysInline(Function *NewF) {
   }
 }
 
+// Simplify all extractions to use inserted values, if possible.
+void simplifyExtractions(Function *NewF) {
+  // First rewrite/remove any extractions
+  for (auto &BB : *NewF) {
+    IRBuilder<> B(&BB);
+    auto first = BB.begin();
+    auto last = BB.empty() ? BB.end() : std::prev(BB.end());
+    for (auto it = first; it != last;) {
+      auto inst = &*it;
+      // We iterate first here, since we may delete the instruction
+      // in the body
+      ++it;
+      if (auto E = dyn_cast<ExtractValueInst>(inst)) {
+        auto rep = GradientUtils::extractMeta(B, E->getAggregateOperand(),
+                                              E->getIndices(), E->getName(),
+                                              /*fallback*/ false);
+        if (rep) {
+          E->replaceAllUsesWith(rep);
+          E->eraseFromParent();
+        }
+      }
+    }
+  }
+  // Now that there may be unused insertions, delete them. We keep a list of
+  // todo's since deleting an insertvalue may cause a different insertvalue to
+  // have no uses
+  SmallVector<InsertValueInst *, 1> todo;
+  for (auto &BB : *NewF) {
+    for (auto &inst : BB)
+      if (auto I = dyn_cast<InsertValueInst>(&inst)) {
+        if (I->getNumUses() == 0)
+          todo.push_back(I);
+      }
+  }
+  while (todo.size()) {
+    auto I = todo.pop_back_val();
+    auto op = I->getAggregateOperand();
+    I->eraseFromParent();
+    if (auto I2 = dyn_cast<InsertValueInst>(op))
+      if (I2->getNumUses() == 0)
+        todo.push_back(I2);
+  }
+}
+
 void PreProcessCache::LowerAllocAddr(Function *NewF) {
+  simplifyExtractions(NewF);
   SmallVector<Instruction *, 1> Todo;
   for (auto &BB : *NewF) {
     for (auto &I : BB) {

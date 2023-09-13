@@ -33,7 +33,6 @@ bb:
 ; CHECK-NEXT:   store double 0.000000e+00, double* %3
 ; CHECK-NEXT:   %4 = load { double*, i64, double }, { double*, i64, double }* %0
 ; CHECK-NEXT:   %"res'ipiv" = insertvalue { { double*, i64, double }, double } zeroinitializer, { double*, i64, double } %4, 0
-; CHECK-NEXT:   %res = insertvalue { { double*, i64, double }, double } undef, { double*, i64, double } %const, 0
 ; CHECK-NEXT:   %"res2'ipiv" = insertvalue { { double*, i64, double }, double } %"res'ipiv", double %"act'", 1
 ; CHECK-NEXT:   ret { { double*, i64, double }, double } %"res2'ipiv"
 ; CHECK-NEXT: }
