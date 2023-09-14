@@ -8526,7 +8526,14 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         // If we may write to memory, we cannot promote if any values
         // need the allocation or any descendants for the reverse pass.
         if (!ReadOnly) {
-          if (primalNeededInReverse) {
+          // There is an exception for Julia returnRoots which will be
+          // separately handled in a GC postprocessing pass. Moreover these
+          // values are never `needed` in the reverse pass (just we need to mark
+          // those values as being GC'd by the function).
+          bool returnRoots =
+              CI->getAttributes().hasParamAttr(idx, "enzymejl_returnRoots") ||
+              CI->getAttributes().hasParamAttr(idx, "enzymejl_returnRoots_v");
+          if (primalNeededInReverse && !returnRoots) {
             promotable = false;
             EmitWarning("NotPromotable", *cur, " Could not promote allocation ",
                         *V, " due to unknown writing call ", *cur);
