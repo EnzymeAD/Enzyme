@@ -2,7 +2,27 @@
 
 #include "tuple.h"
 
+#include <tuple> // for std::apply
+#include <type_traits>
+
+int enzyme_dup;
+int enzyme_dupnoneed;
+int enzyme_out;
+int enzyme_const;
+
+template < typename return_type, typename ... T >
+return_type __enzyme_fwddiff(void*, T ... );
+
+template < typename return_type, typename ... T >
+return_type __enzyme_autodiff(T ... ) { return {}; }
+
 namespace enzyme {
+    
+    enum ReturnActivity{
+        INACTIVE,
+        ACTIVE,
+        DUPLICATED
+    };
 
     struct nodiff{};
 
@@ -22,7 +42,9 @@ namespace enzyme {
     };
 
     template < typename T >
-    struct inactive{};
+    struct inactive{
+      T value;
+    };
 
     template < typename T >
     struct type_info {
@@ -54,16 +76,50 @@ namespace enzyme {
         using type = tuple< T ... >;
     };
 
+    template < typename T >
+    struct concatenated < tuple<T> > {
+        using type = T;
+    };
+
+    // Yikes!
+    // slightly cleaner in C++20, with std::remove_cvref
     template < typename ... T >
     struct autodiff_return {
         using type = typename concatenated< 
-            typename type_info<T>::type ...
+            typename type_info< 
+                typename std::remove_reference<
+                    typename std::remove_cv<
+                        T
+                    >::type
+                >::type
+            >::type ...
         >::type;
     };
 
-    template < typename function, typename ... arg_types >
-    typename autodiff_return<arg_types...>::type autodiff(function && f, arg_types && ... args) {
-      // TODO
+    template < typename T >
+    auto splat(const enzyme::duplicated<T> & arg) {
+        return std::tuple<int, T, T>{enzyme_dup, arg.value, arg.shadow};
+    }
+
+    template < typename T >
+    auto splat(const enzyme::active<T> & arg) {
+        return std::tuple<int, T>{enzyme_out, arg.value};
+    }
+
+    template < typename T >
+    auto splat(const enzyme::inactive<T> & arg) {
+        return std::tuple<int, T>{enzyme_const, arg.value};
+    }
+
+    template < typename return_type, typename function, typename ... enz_arg_types >
+    auto autodiff_impl(function && f, std::tuple< enz_arg_types ... > && arg_tup) {
+      return std::apply(__enzyme_autodiff<return_type, enz_arg_types ... >, arg_tup);
+    }
+
+    template < typename function, typename ... arg_types>
+    auto autodiff(function && f, arg_types && ... args) {
+        using return_type = typename autodiff_return<arg_types...>::type;
+        return autodiff_impl<return_type>(f, std::tuple_cat(std::tuple{f}, splat(args)...));
     }
 
 }
