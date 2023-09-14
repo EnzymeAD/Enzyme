@@ -13,8 +13,18 @@ int enzyme_const;
 template < typename return_type, typename ... T >
 return_type __enzyme_fwddiff(void*, T ... );
 
+#if 1
+// getting undefined reference issues with 
+// std::apply(__enzyme_autodiff<...>(...))
+// when this func template is left undefined
+template < typename return_type, typename ... T >
+return_type __enzyme_autodiff(T ... );
+#else
+// getting wrong answers when providing a dummy impl
+// in an attempt to work around undef ref issues
 template < typename return_type, typename ... T >
 return_type __enzyme_autodiff(T ... ) { return {}; }
+#endif
 
 namespace enzyme {
     

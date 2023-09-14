@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(enzyme_consumer LANGUAGES C)
+project(enzyme_consumer LANGUAGES C CXX)
 
 find_package(Enzyme REQUIRED CONFIG NO_DEFAULT_PATH)
 message("found dir ${Enzyme_DIR}")
@@ -13,11 +13,13 @@ message("imported targets ${importTargetsAfter}")
 add_executable(enzyme_test_1 basic.c)
 target_link_libraries(enzyme_test_1 PUBLIC ClangEnzymeFlags)
 
-if (${Enzyme_LLVM_VERSION_MAJOR} GREATER 10)
+# see: https://github.com/EnzymeAD/Enzyme/issues/1389
+# for discussion about APPLE incompatibility
+if (${Enzyme_LLVM_VERSION_MAJOR} GREATER 10 AND NOT APPLE)
     add_executable(enzyme_test_2 basic.c)
     target_compile_definitions(enzyme_test_2 PUBLIC -DNOVERSION)
     target_link_libraries(enzyme_test_2 PUBLIC LLDEnzymeFlags)
 endif()
 
-add_executable(cpp_interface cpp_interface.c)
+add_executable(cpp_interface cpp_interface.cpp)
 target_link_libraries(cpp_interface PUBLIC ClangEnzymeFlags)
