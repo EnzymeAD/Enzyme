@@ -72,4 +72,8 @@ int main()
     void* tape = __enzyme_augmentfwd((void*)f, x, x_b);
     __enzyme_reverse((void*)f, x, x_b, tape);
     __enzyme_autodiff((void*)fcheck, y, y_b);
+    APPROX_EQ(x[0], y[0], 1e-10);
+    APPROX_EQ(x[1], y[1], 1e-10);
+    APPROX_EQ(x_b[0], y_b[0], 1e-10);
+    APPROX_EQ(x_b[1], y_b[1], 1e-10);
 }
