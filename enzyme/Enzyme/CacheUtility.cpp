@@ -459,7 +459,7 @@ llvm::AllocaInst *CacheUtility::getDynamicLoopLimit(llvm::Loop *L,
     auto Limit = B.CreatePHI(found.var->getType(), 1);
 
     for (BasicBlock *Pred : predecessors(ExitBlock)) {
-      if (LI.getLoopFor(Pred) == L) {
+      if (LI.getLoopFor(Pred) == L || L->contains(Pred)) {
         Limit->addIncoming(found.var, Pred);
       } else {
         Limit->addIncoming(UndefValue::get(found.var->getType()), Pred);
@@ -467,6 +467,10 @@ llvm::AllocaInst *CacheUtility::getDynamicLoopLimit(llvm::Loop *L,
     }
 
     storeInstructionInCache(lctx, Limit, LimitVar);
+    if (loopContexts[L].antivaralloc) {
+      IRBuilder<> B2(&ExitBlock->back());
+      B2.CreateStore(Limit, loopContexts[L].antivaralloc);
+    }
   }
   found.trueLimit = LimitVar;
   return LimitVar;
