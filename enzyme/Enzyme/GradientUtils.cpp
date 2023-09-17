@@ -867,6 +867,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       origParent = lookupInst;                                                 \
       assert(unwrapMode == UnwrapMode::AttemptSingleUnwrap);                   \
       auto found = available.find(v);                                          \
+      if (found != available.end() && !found->second)                          \
+        llvm::errs() << *oldFunc << "\n" << *newFunc << "\n" << *v << "\n";    \
       assert(found == available.end() || found->second);                       \
       ___res = lookupM(v, Builder, available, v != val, origParent);           \
       if (___res && ___res->getType() != v->getType()) {                       \
