@@ -417,11 +417,22 @@ public:
       newBlocksForLoop_cache;
 
   //! This cache stores a rematerialized forward pass in the loop
-  //! specified
-  std::map<llvm::Loop *, llvm::BasicBlock *> rematerializedLoops_cache;
+  //! specified. The key is the loop header.
+  std::map<const llvm::BasicBlock *, llvm::BasicBlock *>
+      rematerializedLoops_cache;
   llvm::BasicBlock *getReverseOrLatchMerge(llvm::BasicBlock *BB,
                                            llvm::BasicBlock *branchingBlock);
 
+private:
+  //! Given a loop `lc`, create the rematerialization blocks for the reverse pass,
+  //! if required, caching if already created. Given an original intended block
+  //! to branch to `resumeBlock`, this function will return the new block for the
+  //! rematerialized loop entry to branch to, if created. Otherwise it will 
+  //! return the original intended destination block `resumeBlock.
+  llvm::BasicBlock *prepRematerializedLoopEntry(LoopContext &lc,
+                                                llvm::BasicBlock *resumeblock);
+
+public:
   void forceContexts();
 
   void computeMinCache();
