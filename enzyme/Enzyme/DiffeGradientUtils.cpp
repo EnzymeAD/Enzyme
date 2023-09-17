@@ -46,6 +46,8 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include "LibraryFuncs.h"
+
 using namespace llvm;
 
 DiffeGradientUtils::DiffeGradientUtils(
@@ -1037,7 +1039,13 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
       }
 
       if (!isConstantValue(origptr)) {
-        if (EnzymeRuntimeActivityCheck && !merge) {
+        auto basePtr = getBaseObject(origptr);
+        assert(!isConstantValue(basePtr));
+        // If runtime activity, first see if we can prove that the shadow/primal
+        // are distinct statically as they are allocas/mallocs, if not compare
+        // the pointers and conditionally execute.
+        if ((!isa<AllocaInst>(basePtr) && !isAllocationCall(basePtr, TLI)) &&
+            EnzymeRuntimeActivityCheck && !merge) {
           Value *shadow = Builder2.CreateICmpNE(
               lookupM(getNewFromOriginal(origptr), Builder2),
               lookupM(invertPointerM(origptr, Builder2), Builder2));
