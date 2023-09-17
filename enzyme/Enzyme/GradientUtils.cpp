@@ -868,15 +868,16 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       assert(unwrapMode == UnwrapMode::AttemptSingleUnwrap);                   \
       auto found = available.find(v);                                          \
       if (found != available.end() && !found->second)                          \
-        llvm::errs() << *oldFunc << "\n" << *newFunc << "\n" << *v << "\n";    \
-      assert(found == available.end() || found->second);                       \
-      ___res = lookupM(v, Builder, available, v != val, origParent);           \
-      if (___res && ___res->getType() != v->getType()) {                       \
-        llvm::errs() << *newFunc << "\n";                                      \
-        llvm::errs() << " v = " << *v << " res = " << *___res << "\n";         \
+        ___res = nullptr;                                                      \
+      else {                                                                   \
+        ___res = lookupM(v, Builder, available, v != val, origParent);         \
+        if (___res && ___res->getType() != v->getType()) {                     \
+          llvm::errs() << *newFunc << "\n";                                    \
+          llvm::errs() << " v = " << *v << " res = " << *___res << "\n";       \
+        }                                                                      \
+        if (___res)                                                            \
+          assert(___res->getType() == v->getType() && "lu");                   \
       }                                                                        \
-      if (___res)                                                              \
-        assert(___res->getType() == v->getType() && "lu");                     \
     }                                                                          \
     ___res;                                                                    \
   })
