@@ -2987,9 +2987,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
   assert(false);
 }
 
-BasicBlock *
-GradientUtils::prepRematerializedLoopEntry(LoopContext &lc,
-                                           BasicBlock *resumeBlock) {
+BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
   auto header = lc.header;
   SmallPtrSet<Instruction *, 1> loopRematerializations;
   SmallPtrSet<Instruction *, 1> loopReallocations;
@@ -3057,183 +3055,127 @@ GradientUtils::prepRematerializedLoopEntry(LoopContext &lc,
       return found->second;
     }
 
-      BasicBlock *enterB =
-          BasicBlock::Create(header->getContext(), "remat_enter", newFunc);
-      rematerializedLoops_cache[header] = enterB;
-      std::map<BasicBlock *, BasicBlock *> origToNewForward;
-      for (auto B : origLI->getBlocks()) {
-        BasicBlock *newB = BasicBlock::Create(
-            B->getContext(), "remat_" + header->getName() + "_" + B->getName(),
-            newFunc);
-        origToNewForward[B] = newB;
-        reverseBlockToPrimal[newB] = getNewFromOriginal(B);
-        if (B == origLI->getHeader()) {
-          IRBuilder<> NB(newB);
-          for (auto inst : loopShadowZeroInits) {
-            auto anti = lookupM(invertPointerM(inst, NB), NB);
-            StringRef funcName;
-            SmallVector<Value *, 8> args;
-            if (auto orig = dyn_cast<CallInst>(inst)) {
-#if LLVM_VERSION_MAJOR >= 14
-              for (auto &arg : orig->args())
-#else
-              for (auto &arg : orig->arg_operands())
-#endif
-              {
-                args.push_back(lookupM(getNewFromOriginal(arg), NB));
-              }
-              funcName = getFuncNameFromCall(orig);
-            } else if (auto AI = dyn_cast<AllocaInst>(inst)) {
-              funcName = "malloc";
-              Value *sz = lookupM(getNewFromOriginal(AI->getArraySize()), NB);
-
-              auto ci = ConstantInt::get(
-                  sz->getType(),
-                  B->getParent()
-                          ->getParent()
-                          ->getDataLayout()
-                          .getTypeAllocSizeInBits(AI->getAllocatedType()) /
-                      8);
-              sz = NB.CreateMul(sz, ci);
-              args.push_back(sz);
-            }
-            assert(funcName.size());
-
-            applyChainRule(
-                NB,
-                [&](Value *anti) {
-                  zeroKnownAllocation(NB, anti, args, funcName, TLI,
-                                      dyn_cast<CallInst>(inst));
-                },
-                anti);
-          }
-        }
-      }
-
-      ValueToValueMapTy available;
-
-      {
-        IRBuilder<> NB(enterB);
-        NB.CreateBr(origToNewForward[origLI->getHeader()]);
-      }
-
-      std::function<void(Loop *, bool)> handleLoop = [&](Loop *OL,
-                                                         bool subLoop) {
-        if (subLoop) {
-          auto Header = OL->getHeader();
-          IRBuilder<> NB(origToNewForward[Header]);
-          LoopContext flc;
-          getContext(getNewFromOriginal(Header), flc);
-
-          auto iv = NB.CreatePHI(flc.var->getType(), 2, "fiv");
-          auto inc = NB.CreateAdd(iv, ConstantInt::get(iv->getType(), 1));
-
-          for (auto PH : predecessors(Header)) {
-            if (notForAnalysis.count(PH))
-              continue;
-
-            if (OL->contains(PH))
-              iv->addIncoming(inc, origToNewForward[PH]);
-            else
-              iv->addIncoming(ConstantInt::get(iv->getType(), 0),
-                              origToNewForward[PH]);
-          }
-          available[flc.var] = iv;
-          available[flc.incvar] = inc;
-        }
-        for (auto SL : OL->getSubLoops())
-          handleLoop(SL, /*subLoop*/ true);
-      };
-      handleLoop(origLI, /*subLoop*/ false);
-
-      for (auto B : origLI->getBlocks()) {
-        auto newB = origToNewForward[B];
+    BasicBlock *enterB =
+        BasicBlock::Create(header->getContext(), "remat_enter", newFunc);
+    rematerializedLoops_cache[header] = enterB;
+    std::map<BasicBlock *, BasicBlock *> origToNewForward;
+    for (auto B : origLI->getBlocks()) {
+      BasicBlock *newB = BasicBlock::Create(
+          B->getContext(), "remat_" + header->getName() + "_" + B->getName(),
+          newFunc);
+      origToNewForward[B] = newB;
+      reverseBlockToPrimal[newB] = getNewFromOriginal(B);
+      if (B == origLI->getHeader()) {
         IRBuilder<> NB(newB);
-
-        // TODO fill available with relevant IV's surrounding and
-        // IV's of inner loop phi's
-
-        for (auto &I : *B) {
-          // Only handle store, memset, and julia.write_barrier
-          if (loopRematerializations.count(&I)) {
-            if (auto SI = dyn_cast<StoreInst>(&I)) {
-              auto ts = NB.CreateStore(
-                  lookupM(getNewFromOriginal(SI->getValueOperand()), NB,
-                          available),
-                  lookupM(getNewFromOriginal(SI->getPointerOperand()), NB,
-                          available));
-              llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
-              ToCopy2.push_back(LLVMContext::MD_noalias);
-              ToCopy2.push_back(LLVMContext::MD_alias_scope);
-              ts->copyMetadata(*SI, ToCopy2);
-              ts->setAlignment(SI->getAlign());
-              ts->setVolatile(SI->isVolatile());
-              ts->setOrdering(SI->getOrdering());
-              ts->setSyncScopeID(SI->getSyncScopeID());
-              ts->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
-            } else if (auto CI = dyn_cast<CallInst>(&I)) {
-              StringRef funcName = getFuncNameFromCall(CI);
-              if (funcName == "enzyme_zerotype")
-                continue;
-              if (funcName == "julia.write_barrier" || isa<MemSetInst>(&I) ||
-                  isa<MemTransferInst>(&I)) {
-
-                // TODO
-                SmallVector<Value *, 2> args;
+        for (auto inst : loopShadowZeroInits) {
+          auto anti = lookupM(invertPointerM(inst, NB), NB);
+          StringRef funcName;
+          SmallVector<Value *, 8> args;
+          if (auto orig = dyn_cast<CallInst>(inst)) {
 #if LLVM_VERSION_MAJOR >= 14
-                for (auto &arg : CI->args())
+            for (auto &arg : orig->args())
 #else
-                for (auto &arg : CI->arg_operands())
+            for (auto &arg : orig->arg_operands())
 #endif
-                  args.push_back(
-                      lookupM(getNewFromOriginal(arg), NB, available));
-
-                SmallVector<ValueType, 2> BundleTypes(args.size(),
-                                                      ValueType::Primal);
-
-                auto Defs = getInvertedBundles(CI, BundleTypes, NB,
-                                               /*lookup*/ true, available);
-                auto cal = NB.CreateCall(CI->getFunctionType(),
-                                         CI->getCalledOperand(), args, Defs);
-                cal->setAttributes(CI->getAttributes());
-                cal->setCallingConv(CI->getCallingConv());
-                cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
-              } else {
-                assert(isDeallocationFunction(funcName, TLI));
-                continue;
-              }
-            } else {
-              assert(0 && "unhandlable loop rematerialization instruction");
+            {
+              args.push_back(lookupM(getNewFromOriginal(arg), NB));
             }
-          } else if (loopReallocations.count(&I)) {
-            LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
-                              &newFunc->getEntryBlock());
+            funcName = getFuncNameFromCall(orig);
+          } else if (auto AI = dyn_cast<AllocaInst>(inst)) {
+            funcName = "malloc";
+            Value *sz = lookupM(getNewFromOriginal(AI->getArraySize()), NB);
 
-            auto inst = getNewFromOriginal((Value *)&I);
+            auto ci = ConstantInt::get(
+                sz->getType(),
+                B->getParent()
+                        ->getParent()
+                        ->getDataLayout()
+                        .getTypeAllocSizeInBits(AI->getAllocatedType()) /
+                    8);
+            sz = NB.CreateMul(sz, ci);
+            args.push_back(sz);
+          }
+          assert(funcName.size());
 
-            auto found = scopeMap.find(inst);
-            if (found == scopeMap.end()) {
-              AllocaInst *cache = createCacheForScope(
-                  lctx, inst->getType(), inst->getName(), /*shouldFree*/ true);
-              assert(cache);
-              found = insert_or_assign(
-                  scopeMap, inst,
-                  std::pair<AssertingVH<AllocaInst>, LimitContext>(cache,
-                                                                   lctx));
-            }
-            auto cache = found->second.first;
-            if (auto MD = hasMetadata(&I, "enzyme_fromstack")) {
-              auto replacement = NB.CreateAlloca(
-                  Type::getInt8Ty(I.getContext()),
-                  lookupM(getNewFromOriginal(I.getOperand(0)), NB, available));
-              auto Alignment =
-                  cast<ConstantInt>(
-                      cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
-                      ->getLimitedValue();
-              replacement->setAlignment(Align(Alignment));
-              replacement->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
-              storeInstructionInCache(lctx, NB, replacement, cache);
-            } else if (auto CI = dyn_cast<CallInst>(&I)) {
+          applyChainRule(
+              NB,
+              [&](Value *anti) {
+                zeroKnownAllocation(NB, anti, args, funcName, TLI,
+                                    dyn_cast<CallInst>(inst));
+              },
+              anti);
+        }
+      }
+    }
+
+    ValueToValueMapTy available;
+
+    {
+      IRBuilder<> NB(enterB);
+      NB.CreateBr(origToNewForward[origLI->getHeader()]);
+    }
+
+    std::function<void(Loop *, bool)> handleLoop = [&](Loop *OL, bool subLoop) {
+      if (subLoop) {
+        auto Header = OL->getHeader();
+        IRBuilder<> NB(origToNewForward[Header]);
+        LoopContext flc;
+        getContext(getNewFromOriginal(Header), flc);
+
+        auto iv = NB.CreatePHI(flc.var->getType(), 2, "fiv");
+        auto inc = NB.CreateAdd(iv, ConstantInt::get(iv->getType(), 1));
+
+        for (auto PH : predecessors(Header)) {
+          if (notForAnalysis.count(PH))
+            continue;
+
+          if (OL->contains(PH))
+            iv->addIncoming(inc, origToNewForward[PH]);
+          else
+            iv->addIncoming(ConstantInt::get(iv->getType(), 0),
+                            origToNewForward[PH]);
+        }
+        available[flc.var] = iv;
+        available[flc.incvar] = inc;
+      }
+      for (auto SL : OL->getSubLoops())
+        handleLoop(SL, /*subLoop*/ true);
+    };
+    handleLoop(origLI, /*subLoop*/ false);
+
+    for (auto B : origLI->getBlocks()) {
+      auto newB = origToNewForward[B];
+      IRBuilder<> NB(newB);
+
+      // TODO fill available with relevant IV's surrounding and
+      // IV's of inner loop phi's
+
+      for (auto &I : *B) {
+        // Only handle store, memset, and julia.write_barrier
+        if (loopRematerializations.count(&I)) {
+          if (auto SI = dyn_cast<StoreInst>(&I)) {
+            auto ts = NB.CreateStore(
+                lookupM(getNewFromOriginal(SI->getValueOperand()), NB,
+                        available),
+                lookupM(getNewFromOriginal(SI->getPointerOperand()), NB,
+                        available));
+            llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
+            ToCopy2.push_back(LLVMContext::MD_noalias);
+            ToCopy2.push_back(LLVMContext::MD_alias_scope);
+            ts->copyMetadata(*SI, ToCopy2);
+            ts->setAlignment(SI->getAlign());
+            ts->setVolatile(SI->isVolatile());
+            ts->setOrdering(SI->getOrdering());
+            ts->setSyncScopeID(SI->getSyncScopeID());
+            ts->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
+          } else if (auto CI = dyn_cast<CallInst>(&I)) {
+            StringRef funcName = getFuncNameFromCall(CI);
+            if (funcName == "enzyme_zerotype")
+              continue;
+            if (funcName == "julia.write_barrier" || isa<MemSetInst>(&I) ||
+                isa<MemTransferInst>(&I)) {
+
+              // TODO
               SmallVector<Value *, 2> args;
 #if LLVM_VERSION_MAJOR >= 14
               for (auto &arg : CI->args())
@@ -3247,349 +3189,396 @@ GradientUtils::prepRematerializedLoopEntry(LoopContext &lc,
 
               auto Defs = getInvertedBundles(CI, BundleTypes, NB,
                                              /*lookup*/ true, available);
-              auto cal = NB.CreateCall(CI->getCalledFunction(), args, Defs);
-              llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
-              ToCopy2.push_back(LLVMContext::MD_noalias);
-              ToCopy2.push_back(LLVMContext::MD_alias_scope);
-              cal->copyMetadata(*CI, ToCopy2);
-              cal->setName("remat_" + CI->getName());
+              auto cal = NB.CreateCall(CI->getFunctionType(),
+                                       CI->getCalledOperand(), args, Defs);
               cal->setAttributes(CI->getAttributes());
               cal->setCallingConv(CI->getCallingConv());
               cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
-              storeInstructionInCache(lctx, NB, cal, cache);
             } else {
-              llvm::errs() << " realloc: " << I << "\n";
-              llvm_unreachable("Unknown loop reallocation");
+              assert(isDeallocationFunction(funcName, TLI));
+              continue;
             }
+          } else {
+            assert(0 && "unhandlable loop rematerialization instruction");
           }
-          if (loopShadowRematerializations.count(&I)) {
-            if (auto SI = dyn_cast<StoreInst>(&I)) {
-              Value *orig_ptr = SI->getPointerOperand();
-              Value *orig_val = SI->getValueOperand();
-              Type *valType = orig_val->getType();
-              assert(!isConstantValue(orig_ptr));
+        } else if (loopReallocations.count(&I)) {
+          LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
+                            &newFunc->getEntryBlock());
 
-              auto &DL = newFunc->getParent()->getDataLayout();
+          auto inst = getNewFromOriginal((Value *)&I);
 
-              bool constantval = isConstantValue(orig_val) ||
-                                 parseTBAA(I, DL).Inner0().isIntegral();
+          auto found = scopeMap.find(inst);
+          if (found == scopeMap.end()) {
+            AllocaInst *cache = createCacheForScope(
+                lctx, inst->getType(), inst->getName(), /*shouldFree*/ true);
+            assert(cache);
+            found = insert_or_assign(
+                scopeMap, inst,
+                std::pair<AssertingVH<AllocaInst>, LimitContext>(cache, lctx));
+          }
+          auto cache = found->second.first;
+          if (auto MD = hasMetadata(&I, "enzyme_fromstack")) {
+            auto replacement = NB.CreateAlloca(
+                Type::getInt8Ty(I.getContext()),
+                lookupM(getNewFromOriginal(I.getOperand(0)), NB, available));
+            auto Alignment =
+                cast<ConstantInt>(
+                    cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
+                    ->getLimitedValue();
+            replacement->setAlignment(Align(Alignment));
+            replacement->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
+            storeInstructionInCache(lctx, NB, replacement, cache);
+          } else if (auto CI = dyn_cast<CallInst>(&I)) {
+            SmallVector<Value *, 2> args;
+#if LLVM_VERSION_MAJOR >= 14
+            for (auto &arg : CI->args())
+#else
+            for (auto &arg : CI->arg_operands())
+#endif
+              args.push_back(lookupM(getNewFromOriginal(arg), NB, available));
 
-              // TODO allow recognition of other types that could contain
-              // pointers [e.g. {void*, void*} or <2 x i64> ]
-              auto storeSize = DL.getTypeSizeInBits(valType) / 8;
+            SmallVector<ValueType, 2> BundleTypes(args.size(),
+                                                  ValueType::Primal);
 
-              //! Storing a floating point value
-              Type *FT = nullptr;
-              if (valType->isFPOrFPVectorTy()) {
-                FT = valType->getScalarType();
-              } else if (!valType->isPointerTy()) {
-                if (looseTypeAnalysis) {
-                  auto fp = TR.firstPointer(storeSize, orig_ptr, &I,
-                                            /*errifnotfound*/ false,
-                                            /*pointerIntSame*/ true);
-                  if (fp.isKnown()) {
-                    FT = fp.isFloat();
-                  } else if (isa<ConstantInt>(orig_val) ||
-                             valType->isIntOrIntVectorTy()) {
-                    llvm::errs()
-                        << "assuming type as integral for store: " << I << "\n";
-                    FT = nullptr;
-                  } else {
-                    TR.firstPointer(storeSize, orig_ptr, &I,
-                                    /*errifnotfound*/ true,
-                                    /*pointerIntSame*/ true);
-                    llvm::errs() << "cannot deduce type of store " << I << "\n";
-                    assert(0 && "cannot deduce");
-                  }
+            auto Defs = getInvertedBundles(CI, BundleTypes, NB,
+                                           /*lookup*/ true, available);
+            auto cal = NB.CreateCall(CI->getCalledFunction(), args, Defs);
+            llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
+            ToCopy2.push_back(LLVMContext::MD_noalias);
+            ToCopy2.push_back(LLVMContext::MD_alias_scope);
+            cal->copyMetadata(*CI, ToCopy2);
+            cal->setName("remat_" + CI->getName());
+            cal->setAttributes(CI->getAttributes());
+            cal->setCallingConv(CI->getCallingConv());
+            cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
+            storeInstructionInCache(lctx, NB, cal, cache);
+          } else {
+            llvm::errs() << " realloc: " << I << "\n";
+            llvm_unreachable("Unknown loop reallocation");
+          }
+        }
+        if (loopShadowRematerializations.count(&I)) {
+          if (auto SI = dyn_cast<StoreInst>(&I)) {
+            Value *orig_ptr = SI->getPointerOperand();
+            Value *orig_val = SI->getValueOperand();
+            Type *valType = orig_val->getType();
+            assert(!isConstantValue(orig_ptr));
+
+            auto &DL = newFunc->getParent()->getDataLayout();
+
+            bool constantval = isConstantValue(orig_val) ||
+                               parseTBAA(I, DL).Inner0().isIntegral();
+
+            // TODO allow recognition of other types that could contain
+            // pointers [e.g. {void*, void*} or <2 x i64> ]
+            auto storeSize = DL.getTypeSizeInBits(valType) / 8;
+
+            //! Storing a floating point value
+            Type *FT = nullptr;
+            if (valType->isFPOrFPVectorTy()) {
+              FT = valType->getScalarType();
+            } else if (!valType->isPointerTy()) {
+              if (looseTypeAnalysis) {
+                auto fp = TR.firstPointer(storeSize, orig_ptr, &I,
+                                          /*errifnotfound*/ false,
+                                          /*pointerIntSame*/ true);
+                if (fp.isKnown()) {
+                  FT = fp.isFloat();
+                } else if (isa<ConstantInt>(orig_val) ||
+                           valType->isIntOrIntVectorTy()) {
+                  llvm::errs()
+                      << "assuming type as integral for store: " << I << "\n";
+                  FT = nullptr;
                 } else {
-                  FT = TR.firstPointer(storeSize, orig_ptr, &I,
-                                       /*errifnotfound*/ true,
-                                       /*pointerIntSame*/ true)
-                           .isFloat();
+                  TR.firstPointer(storeSize, orig_ptr, &I,
+                                  /*errifnotfound*/ true,
+                                  /*pointerIntSame*/ true);
+                  llvm::errs() << "cannot deduce type of store " << I << "\n";
+                  assert(0 && "cannot deduce");
+                }
+              } else {
+                FT = TR.firstPointer(storeSize, orig_ptr, &I,
+                                     /*errifnotfound*/ true,
+                                     /*pointerIntSame*/ true)
+                         .isFloat();
+              }
+            }
+            if (!FT) {
+              Value *valueop = nullptr;
+              if (constantval) {
+                Value *val =
+                    lookupM(getNewFromOriginal(orig_val), NB, available);
+                valueop = val;
+                if (getWidth() > 1) {
+                  Value *array = UndefValue::get(getShadowType(val->getType()));
+                  for (unsigned i = 0; i < getWidth(); ++i) {
+                    array = NB.CreateInsertValue(array, val, {i});
+                  }
+                  valueop = array;
+                }
+              } else {
+                valueop = lookupM(invertPointerM(orig_val, NB), NB, available);
+              }
+              SmallVector<Metadata *, 1> prevScopes;
+              if (auto prev = SI->getMetadata(LLVMContext::MD_alias_scope)) {
+                for (auto &M : cast<MDNode>(prev)->operands()) {
+                  prevScopes.push_back(M);
                 }
               }
-              if (!FT) {
-                Value *valueop = nullptr;
-                if (constantval) {
-                  Value *val =
-                      lookupM(getNewFromOriginal(orig_val), NB, available);
-                  valueop = val;
-                  if (getWidth() > 1) {
-                    Value *array =
-                        UndefValue::get(getShadowType(val->getType()));
-                    for (unsigned i = 0; i < getWidth(); ++i) {
-                      array = NB.CreateInsertValue(array, val, {i});
-                    }
-                    valueop = array;
-                  }
-                } else {
-                  valueop =
-                      lookupM(invertPointerM(orig_val, NB), NB, available);
+              SmallVector<Metadata *, 1> prevNoAlias;
+              if (auto prev = SI->getMetadata(LLVMContext::MD_noalias)) {
+                for (auto &M : cast<MDNode>(prev)->operands()) {
+                  prevNoAlias.push_back(M);
                 }
-                SmallVector<Metadata *, 1> prevScopes;
-                if (auto prev = SI->getMetadata(LLVMContext::MD_alias_scope)) {
-                  for (auto &M : cast<MDNode>(prev)->operands()) {
-                    prevScopes.push_back(M);
-                  }
-                }
-                SmallVector<Metadata *, 1> prevNoAlias;
-                if (auto prev = SI->getMetadata(LLVMContext::MD_noalias)) {
-                  for (auto &M : cast<MDNode>(prev)->operands()) {
-                    prevNoAlias.push_back(M);
-                  }
-                }
-                auto align = SI->getAlign();
-                setPtrDiffe(SI, orig_ptr, valueop, NB, align, SI->isVolatile(),
-                            SI->getOrdering(), SI->getSyncScopeID(),
-                            /*mask*/ nullptr, prevNoAlias, prevScopes);
               }
-              // TODO shadow memtransfer
-            } else if (auto MS = dyn_cast<MemSetInst>(&I)) {
-              if (!isConstantValue(MS->getArgOperand(0))) {
-                Value *args[4] = {
-                    lookupM(invertPointerM(MS->getArgOperand(0), NB), NB,
-                            available),
-                    lookupM(getNewFromOriginal(MS->getArgOperand(1)), NB,
-                            available),
-                    lookupM(getNewFromOriginal(MS->getArgOperand(2)), NB,
-                            available),
-                    lookupM(getNewFromOriginal(MS->getArgOperand(3)), NB,
-                            available)};
+              auto align = SI->getAlign();
+              setPtrDiffe(SI, orig_ptr, valueop, NB, align, SI->isVolatile(),
+                          SI->getOrdering(), SI->getSyncScopeID(),
+                          /*mask*/ nullptr, prevNoAlias, prevScopes);
+            }
+            // TODO shadow memtransfer
+          } else if (auto MS = dyn_cast<MemSetInst>(&I)) {
+            if (!isConstantValue(MS->getArgOperand(0))) {
+              Value *args[4] = {
+                  lookupM(invertPointerM(MS->getArgOperand(0), NB), NB,
+                          available),
+                  lookupM(getNewFromOriginal(MS->getArgOperand(1)), NB,
+                          available),
+                  lookupM(getNewFromOriginal(MS->getArgOperand(2)), NB,
+                          available),
+                  lookupM(getNewFromOriginal(MS->getArgOperand(3)), NB,
+                          available)};
 
-                ValueType BundleTypes[4] = {
-                    ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-                    ValueType::Primal};
-                auto Defs = getInvertedBundles(MS, BundleTypes, NB,
+              ValueType BundleTypes[4] = {ValueType::Shadow, ValueType::Primal,
+                                          ValueType::Primal, ValueType::Primal};
+              auto Defs = getInvertedBundles(MS, BundleTypes, NB,
+                                             /*lookup*/ true, available);
+              auto cal = NB.CreateCall(MS->getCalledFunction(), args, Defs);
+              llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
+              ToCopy2.push_back(LLVMContext::MD_noalias);
+              ToCopy2.push_back(LLVMContext::MD_alias_scope);
+              cal->copyMetadata(*MS, ToCopy2);
+              cal->setAttributes(MS->getAttributes());
+              cal->setCallingConv(MS->getCallingConv());
+              cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
+            }
+          } else if (auto CI = dyn_cast<CallInst>(&I)) {
+            StringRef funcName = getFuncNameFromCall(CI);
+            if (funcName == "julia.write_barrier") {
+
+              // TODO
+              SmallVector<Value *, 2> args;
+#if LLVM_VERSION_MAJOR >= 14
+              for (auto &arg : CI->args())
+#else
+              for (auto &arg : CI->arg_operands())
+#endif
+                if (!isConstantValue(arg))
+                  args.push_back(
+                      lookupM(invertPointerM(arg, NB), NB, available));
+
+              if (args.size()) {
+                SmallVector<ValueType, 2> BundleTypes(args.size(),
+                                                      ValueType::Primal);
+
+                auto Defs = getInvertedBundles(CI, BundleTypes, NB,
                                                /*lookup*/ true, available);
-                auto cal = NB.CreateCall(MS->getCalledFunction(), args, Defs);
-                llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
-                ToCopy2.push_back(LLVMContext::MD_noalias);
-                ToCopy2.push_back(LLVMContext::MD_alias_scope);
-                cal->copyMetadata(*MS, ToCopy2);
-                cal->setAttributes(MS->getAttributes());
-                cal->setCallingConv(MS->getCallingConv());
+                auto cal = NB.CreateCall(CI->getFunctionType(),
+                                         CI->getCalledOperand(), args, Defs);
+                cal->setAttributes(CI->getAttributes());
+                cal->setCallingConv(CI->getCallingConv());
                 cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
               }
-            } else if (auto CI = dyn_cast<CallInst>(&I)) {
-              StringRef funcName = getFuncNameFromCall(CI);
-              if (funcName == "julia.write_barrier") {
-
-                // TODO
-                SmallVector<Value *, 2> args;
-#if LLVM_VERSION_MAJOR >= 14
-                for (auto &arg : CI->args())
-#else
-                for (auto &arg : CI->arg_operands())
-#endif
-                  if (!isConstantValue(arg))
-                    args.push_back(
-                        lookupM(invertPointerM(arg, NB), NB, available));
-
-                if (args.size()) {
-                  SmallVector<ValueType, 2> BundleTypes(args.size(),
-                                                        ValueType::Primal);
-
-                  auto Defs = getInvertedBundles(CI, BundleTypes, NB,
-                                                 /*lookup*/ true, available);
-                  auto cal = NB.CreateCall(CI->getFunctionType(),
-                                           CI->getCalledOperand(), args, Defs);
-                  cal->setAttributes(CI->getAttributes());
-                  cal->setCallingConv(CI->getCallingConv());
-                  cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
-                }
-              } else {
-                assert(isDeallocationFunction(funcName, TLI));
-                continue;
-              }
             } else {
-              assert(0 &&
-                     "unhandlable loop shadow rematerialization instruction");
+              assert(isDeallocationFunction(funcName, TLI));
+              continue;
             }
-          } else if (loopShadowReallocations.count(&I)) {
+          } else {
+            assert(0 &&
+                   "unhandlable loop shadow rematerialization instruction");
+          }
+        } else if (loopShadowReallocations.count(&I)) {
 
-            LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
-                              &newFunc->getEntryBlock());
-            auto ipfound = invertedPointers.find(&I);
-            PHINode *placeholder = cast<PHINode>(&*ipfound->second);
+          LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
+                            &newFunc->getEntryBlock());
+          auto ipfound = invertedPointers.find(&I);
+          PHINode *placeholder = cast<PHINode>(&*ipfound->second);
 
-            auto found = scopeMap.find(placeholder);
-            if (found == scopeMap.end()) {
-              AllocaInst *cache = createCacheForScope(
-                  lctx, placeholder->getType(), placeholder->getName(),
-                  /*shouldFree*/ true);
-              assert(cache);
-              found = insert_or_assign(
-                  scopeMap, (Value *&)placeholder,
-                  std::pair<AssertingVH<AllocaInst>, LimitContext>(cache,
-                                                                   lctx));
-            }
-            auto cache = found->second.first;
-            Value *anti = nullptr;
+          auto found = scopeMap.find(placeholder);
+          if (found == scopeMap.end()) {
+            AllocaInst *cache = createCacheForScope(
+                lctx, placeholder->getType(), placeholder->getName(),
+                /*shouldFree*/ true);
+            assert(cache);
+            found = insert_or_assign(
+                scopeMap, (Value *&)placeholder,
+                std::pair<AssertingVH<AllocaInst>, LimitContext>(cache, lctx));
+          }
+          auto cache = found->second.first;
+          Value *anti = nullptr;
 
-            if (auto orig = dyn_cast<CallInst>(&I)) {
-              StringRef funcName = getFuncNameFromCall(orig);
-              assert(funcName.size());
+          if (auto orig = dyn_cast<CallInst>(&I)) {
+            StringRef funcName = getFuncNameFromCall(orig);
+            assert(funcName.size());
 
-              auto dbgLoc = getNewFromOriginal(orig)->getDebugLoc();
+            auto dbgLoc = getNewFromOriginal(orig)->getDebugLoc();
 
-              SmallVector<Value *, 8> args;
+            SmallVector<Value *, 8> args;
 #if LLVM_VERSION_MAJOR >= 14
-              for (auto &arg : orig->args())
+            for (auto &arg : orig->args())
 #else
-              for (auto &arg : orig->arg_operands())
+            for (auto &arg : orig->arg_operands())
 #endif
-              {
-                args.push_back(lookupM(getNewFromOriginal(arg), NB));
-              }
+            {
+              args.push_back(lookupM(getNewFromOriginal(arg), NB));
+            }
 
-              placeholder->setName("");
-              if (shadowHandlers.find(funcName) != shadowHandlers.end()) {
+            placeholder->setName("");
+            if (shadowHandlers.find(funcName) != shadowHandlers.end()) {
 
-                anti = shadowHandlers[funcName](NB, orig, args, this);
-              } else {
-                auto rule = [&]() {
-                  Value *anti = NB.CreateCall(orig->getFunctionType(),
-                                              orig->getCalledOperand(), args,
-                                              orig->getName() + "'mi");
-                  cast<CallInst>(anti)->setAttributes(orig->getAttributes());
-                  cast<CallInst>(anti)->setCallingConv(orig->getCallingConv());
-                  cast<CallInst>(anti)->setDebugLoc(
-                      getNewFromOriginal(I.getDebugLoc()));
+              anti = shadowHandlers[funcName](NB, orig, args, this);
+            } else {
+              auto rule = [&]() {
+                Value *anti = NB.CreateCall(orig->getFunctionType(),
+                                            orig->getCalledOperand(), args,
+                                            orig->getName() + "'mi");
+                cast<CallInst>(anti)->setAttributes(orig->getAttributes());
+                cast<CallInst>(anti)->setCallingConv(orig->getCallingConv());
+                cast<CallInst>(anti)->setDebugLoc(
+                    getNewFromOriginal(I.getDebugLoc()));
 
-                  cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
-                                                     Attribute::NoAlias);
-                  cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
-                                                     Attribute::NonNull);
-                  return anti;
+                cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
+                                                   Attribute::NoAlias);
+                cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
+                                                   Attribute::NonNull);
+                return anti;
+              };
+
+              anti = applyChainRule(orig->getType(), NB, rule);
+
+              if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
+                auto rule = [&](Value *anti) {
+                  AllocaInst *replacement = NB.CreateAlloca(
+                      Type::getInt8Ty(orig->getContext()), args[0]);
+                  replacement->takeName(anti);
+                  auto Alignment = cast<ConstantInt>(cast<ConstantAsMetadata>(
+                                                         MD->getOperand(0))
+                                                         ->getValue())
+                                       ->getLimitedValue();
+                  replacement->setAlignment(Align(Alignment));
+                  replacement->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
+                  return replacement;
                 };
 
-                anti = applyChainRule(orig->getType(), NB, rule);
+                Value *replacement = applyChainRule(
+                    Type::getInt8Ty(orig->getContext()), NB, rule, anti);
 
-                if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
-                  auto rule = [&](Value *anti) {
-                    AllocaInst *replacement = NB.CreateAlloca(
-                        Type::getInt8Ty(orig->getContext()), args[0]);
-                    replacement->takeName(anti);
-                    auto Alignment = cast<ConstantInt>(cast<ConstantAsMetadata>(
-                                                           MD->getOperand(0))
-                                                           ->getValue())
-                                         ->getLimitedValue();
-                    replacement->setAlignment(Align(Alignment));
-                    replacement->setDebugLoc(
-                        getNewFromOriginal(I.getDebugLoc()));
-                    return replacement;
-                  };
-
-                  Value *replacement = applyChainRule(
-                      Type::getInt8Ty(orig->getContext()), NB, rule, anti);
-
-                  replaceAWithB(cast<Instruction>(anti), replacement);
-                  erase(cast<Instruction>(anti));
-                  anti = replacement;
-                }
-
-                applyChainRule(
-                    NB,
-                    [&](Value *anti) {
-                      zeroKnownAllocation(NB, anti, args, funcName, TLI, orig);
-                    },
-                    anti);
+                replaceAWithB(cast<Instruction>(anti), replacement);
+                erase(cast<Instruction>(anti));
+                anti = replacement;
               }
-            } else {
-              llvm_unreachable("Unknown shadow rematerialization value");
+
+              applyChainRule(
+                  NB,
+                  [&](Value *anti) {
+                    zeroKnownAllocation(NB, anti, args, funcName, TLI, orig);
+                  },
+                  anti);
             }
-            assert(anti);
-            storeInstructionInCache(lctx, NB, anti, cache);
-          }
-        }
-
-        llvm::SmallPtrSet<llvm::BasicBlock *, 8> origExitBlocks;
-        getExitBlocks(origLI, origExitBlocks);
-        // Remap a branch to the header to enter the incremented
-        // reverse of that block.
-        auto remap = [&](BasicBlock *rB) {
-          // Remap of an exit branch is to go to the reverse
-          // exiting block.
-          if (origExitBlocks.count(rB)) {
-            return reverseBlocks[getNewFromOriginal(B)].front();
-          }
-          // Reverse of an incrementing branch is go to the
-          // reverse of the branching block.
-          if (rB == origLI->getHeader())
-            return reverseBlocks[getNewFromOriginal(B)].front();
-          auto found = origToNewForward.find(rB);
-          if (found == origToNewForward.end()) {
-            llvm::errs() << *newFunc << "\n";
-            llvm::errs() << *origLI << "\n";
-            llvm::errs() << *rB << "\n";
-          }
-          assert(found != origToNewForward.end());
-          return found->second;
-        };
-
-        // TODO clone terminator
-        auto TI = B->getTerminator();
-        assert(TI);
-        if (notForAnalysis.count(B)) {
-          NB.CreateUnreachable();
-        } else if (auto BI = dyn_cast<BranchInst>(TI)) {
-          if (BI->isUnconditional()) {
-            if (notForAnalysis.count(BI->getSuccessor(0)))
-              NB.CreateUnreachable();
-            else
-              NB.CreateBr(remap(BI->getSuccessor(0)));
           } else {
-            if (notForAnalysis.count(BI->getSuccessor(0))) {
-              if (notForAnalysis.count(BI->getSuccessor(1))) {
-                NB.CreateUnreachable();
-              } else {
-                NB.CreateBr(remap(BI->getSuccessor(1)));
-              }
-            } else if (notForAnalysis.count(BI->getSuccessor(1))) {
-              NB.CreateBr(remap(BI->getSuccessor(0)));
-            } else {
-              NB.CreateCondBr(lookupM(getNewFromOriginal(BI->getCondition()),
-                                      NB, available),
-                              remap(BI->getSuccessor(0)),
-                              remap(BI->getSuccessor(1)));
-            }
+            llvm_unreachable("Unknown shadow rematerialization value");
           }
-        } else if (auto SI = dyn_cast<SwitchInst>(TI)) {
-          auto NSI = NB.CreateSwitch(
-              lookupM(getNewFromOriginal(SI->getCondition()), NB, available),
-              remap(SI->getDefaultDest()));
-          for (auto cas : SI->cases()) {
-            if (!notForAnalysis.count(cas.getCaseSuccessor()))
-              NSI->addCase(cas.getCaseValue(), remap(cas.getCaseSuccessor()));
-          }
-        } else {
-          assert(isa<UnreachableInst>(TI));
-          NB.CreateUnreachable();
+          assert(anti);
+          storeInstructionInCache(lctx, NB, anti, cache);
         }
-        // Fixup phi nodes that may have their predecessors now changed by
-        // the phi unwrapping
-        if (!notForAnalysis.count(B) &&
-            NB.GetInsertBlock() != origToNewForward[B]) {
-          for (auto S0 : successors(B)) {
-            if (!origToNewForward.count(S0))
-              continue;
-            auto S = origToNewForward[S0];
-            assert(S);
-            for (auto I = S->begin(), E = S->end(); I != E; ++I) {
-              PHINode *orig = dyn_cast<PHINode>(&*I);
-              if (orig == nullptr)
-                break;
-              for (unsigned Op = 0, NumOps = orig->getNumOperands();
-                   Op != NumOps; ++Op)
-                if (orig->getIncomingBlock(Op) == origToNewForward[B])
-                  orig->setIncomingBlock(Op, NB.GetInsertBlock());
+      }
+
+      llvm::SmallPtrSet<llvm::BasicBlock *, 8> origExitBlocks;
+      getExitBlocks(origLI, origExitBlocks);
+      // Remap a branch to the header to enter the incremented
+      // reverse of that block.
+      auto remap = [&](BasicBlock *rB) {
+        // Remap of an exit branch is to go to the reverse
+        // exiting block.
+        if (origExitBlocks.count(rB)) {
+          return reverseBlocks[getNewFromOriginal(B)].front();
+        }
+        // Reverse of an incrementing branch is go to the
+        // reverse of the branching block.
+        if (rB == origLI->getHeader())
+          return reverseBlocks[getNewFromOriginal(B)].front();
+        auto found = origToNewForward.find(rB);
+        if (found == origToNewForward.end()) {
+          llvm::errs() << *newFunc << "\n";
+          llvm::errs() << *origLI << "\n";
+          llvm::errs() << *rB << "\n";
+        }
+        assert(found != origToNewForward.end());
+        return found->second;
+      };
+
+      // TODO clone terminator
+      auto TI = B->getTerminator();
+      assert(TI);
+      if (notForAnalysis.count(B)) {
+        NB.CreateUnreachable();
+      } else if (auto BI = dyn_cast<BranchInst>(TI)) {
+        if (BI->isUnconditional()) {
+          if (notForAnalysis.count(BI->getSuccessor(0)))
+            NB.CreateUnreachable();
+          else
+            NB.CreateBr(remap(BI->getSuccessor(0)));
+        } else {
+          if (notForAnalysis.count(BI->getSuccessor(0))) {
+            if (notForAnalysis.count(BI->getSuccessor(1))) {
+              NB.CreateUnreachable();
+            } else {
+              NB.CreateBr(remap(BI->getSuccessor(1)));
             }
+          } else if (notForAnalysis.count(BI->getSuccessor(1))) {
+            NB.CreateBr(remap(BI->getSuccessor(0)));
+          } else {
+            NB.CreateCondBr(
+                lookupM(getNewFromOriginal(BI->getCondition()), NB, available),
+                remap(BI->getSuccessor(0)), remap(BI->getSuccessor(1)));
+          }
+        }
+      } else if (auto SI = dyn_cast<SwitchInst>(TI)) {
+        auto NSI = NB.CreateSwitch(
+            lookupM(getNewFromOriginal(SI->getCondition()), NB, available),
+            remap(SI->getDefaultDest()));
+        for (auto cas : SI->cases()) {
+          if (!notForAnalysis.count(cas.getCaseSuccessor()))
+            NSI->addCase(cas.getCaseValue(), remap(cas.getCaseSuccessor()));
+        }
+      } else {
+        assert(isa<UnreachableInst>(TI));
+        NB.CreateUnreachable();
+      }
+      // Fixup phi nodes that may have their predecessors now changed by
+      // the phi unwrapping
+      if (!notForAnalysis.count(B) &&
+          NB.GetInsertBlock() != origToNewForward[B]) {
+        for (auto S0 : successors(B)) {
+          if (!origToNewForward.count(S0))
+            continue;
+          auto S = origToNewForward[S0];
+          assert(S);
+          for (auto I = S->begin(), E = S->end(); I != E; ++I) {
+            PHINode *orig = dyn_cast<PHINode>(&*I);
+            if (orig == nullptr)
+              break;
+            for (unsigned Op = 0, NumOps = orig->getNumOperands(); Op != NumOps;
+                 ++Op)
+              if (orig->getIncomingBlock(Op) == origToNewForward[B])
+                orig->setIncomingBlock(Op, NB.GetInsertBlock());
           }
         }
       }
-      return enterB;
+    }
+    return enterB;
   }
-  return resumeBlock;
+  return nullptr;
 }
 
 /// Given an edge from BB to branchingBlock get the corresponding block to
@@ -3619,53 +3608,53 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
   if (newBlocksForLoop_cache.find(tup) != newBlocksForLoop_cache.end())
     return newBlocksForLoop_cache[tup];
 
-    // If we're reversing a latch edge.
-    bool incEntering = inLoopContext && branchingBlock == lc.header &&
-                       lc.header == branchingContext.header;
+  // If we're reversing a latch edge.
+  bool incEntering = inLoopContext && branchingBlock == lc.header &&
+                     lc.header == branchingContext.header;
 
-    auto L = LI.getLoopFor(BB);
-    auto latches = getLatches(L, lc.exitBlocks);
-    // If we're reverseing a loop exit.
-    bool exitEntering =
-        std::find(latches.begin(), latches.end(), BB) != latches.end() &&
-        std::find(lc.exitBlocks.begin(), lc.exitBlocks.end(), branchingBlock) !=
-            lc.exitBlocks.end();
+  auto L = LI.getLoopFor(BB);
+  auto latches = getLatches(L, lc.exitBlocks);
+  // If we're reverseing a loop exit.
+  bool exitEntering =
+      std::find(latches.begin(), latches.end(), BB) != latches.end() &&
+      std::find(lc.exitBlocks.begin(), lc.exitBlocks.end(), branchingBlock) !=
+          lc.exitBlocks.end();
 
-    // It is illegal to be both an increment into a loop, and exiting the loop.
-    assert(!(incEntering && exitEntering));
-    
-    // If we're re-entering a loop, prepare a loop-level forward pass to
-    // rematerialize any loop-scope rematerialization.
+  // It is illegal to be both an increment into a loop, and exiting the loop.
+  assert(!(incEntering && exitEntering));
 
-    if (incEntering) {
-      BasicBlock *resumeblock = reverseBlocks[BB].front();
-      resumeblock = prepRematerializedLoopEntry(lc, resumeblock);
-      if (incEntering) {
-        BasicBlock *incB = BasicBlock::Create(
-            BB->getContext(),
-            "inc" + reverseBlocks[lc.header].front()->getName(),
-            BB->getParent());
-        incB->moveAfter(reverseBlocks[lc.header].back());
+  // If we're re-entering a loop, prepare a loop-level forward pass to
+  // rematerialize any loop-scope rematerialization.
 
-        IRBuilder<> tbuild(incB);
+  if (incEntering) {
+    BasicBlock *resumeblock = reverseBlocks[BB].front();
+    auto tmp_resumeblock = prepRematerializedLoopEntry(lc);
+    if (tmp_resumeblock)
+      resumeblock = tmp_resumeblock;
+    BasicBlock *incB = BasicBlock::Create(
+        BB->getContext(), "inc" + reverseBlocks[lc.header].front()->getName(),
+        BB->getParent());
+    incB->moveAfter(reverseBlocks[lc.header].back());
 
-        Value *av = tbuild.CreateLoad(lc.var->getType(), lc.antivaralloc);
-        Value *sub =
-            tbuild.CreateAdd(av, ConstantInt::get(av->getType(), -1), "",
-                             /*NUW*/ false, /*NSW*/ true);
-        tbuild.CreateStore(sub, lc.antivaralloc);
-        tbuild.CreateBr(resumeblock);
-        return newBlocksForLoop_cache[tup] = incB;
-    }
+    IRBuilder<> tbuild(incB);
 
-    if (exitEntering) {
-        SmallVector<LoopContext, 1> exitingContexts = {lc};
+    Value *av = tbuild.CreateLoad(lc.var->getType(), lc.antivaralloc);
+    Value *sub = tbuild.CreateAdd(av, ConstantInt::get(av->getType(), -1), "",
+                                  /*NUW*/ false, /*NSW*/ true);
+    tbuild.CreateStore(sub, lc.antivaralloc);
+    tbuild.CreateBr(resumeblock);
+    return newBlocksForLoop_cache[tup] = incB;
+  }
 
-        auto L2 = L;
-        while (L2 = L2->getParentLoop()) {
+  if (exitEntering) {
+    SmallVector<LoopContext, 1> exitingContexts = {lc};
+
+    auto L2 = L;
+    while ((L2 = L2->getParentLoop())) {
       LoopContext lc2;
       bool inLoop = getContext(L2->getHeader(), lc2);
-      if (!inLoop) break;
+      if (!inLoop)
+        break;
 
       auto latches2 = getLatches(L2, lc2.exitBlocks);
 
@@ -3674,59 +3663,65 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
           std::find(latches2.begin(), latches2.end(), BB) != latches2.end() &&
           std::find(lc2.exitBlocks.begin(), lc2.exitBlocks.end(),
                     branchingBlock) != lc2.exitBlocks.end();
-      assert(!exitEntering2);
-      if (exitEntering) {
-          exitingContexts.push_back(lc2);
+      if (exitEntering2) {
+        exitingContexts.push_back(lc2);
       } else
-          break;
+        break;
     }
-      
-      BasicBlock *resumeblock = reverseBlocks[BB].front();
-      BasicBlock *prevBlock = reverseBlocks[branchingBlock].back();
 
-      // TODO fix ordering here.
+    BasicBlock *resumeblock = reverseBlocks[BB].front();
+    BasicBlock *prevBlock = reverseBlocks[branchingBlock].back();
 
-      for (auto I = exitingContexts.rbegin(), E = exitingContexts.rend(); I != E; I++) {
-          auto &lc = *I;
-      
-          resumeblock = prepRematerializedLoopEntry(lc, resumeblock);
-        
-          BasicBlock *incB = BasicBlock::Create(
-            BB->getContext(),
-            "merge" + reverseBlocks[lc.header].front()->getName() + "_" +
-                branchingBlock->getName(),
-            BB->getParent());
-        incB->moveAfter(prevBlock);
+    BasicBlock *outerMerge = nullptr;
 
-        IRBuilder<> tbuild(prevBlock);
+    BasicBlock *incB = BasicBlock::Create(
+        BB->getContext(),
+        "merge" + reverseBlocks[lc.header].front()->getName() + "_" +
+            branchingBlock->getName(),
+        BB->getParent());
+    if (!outerMerge)
+      outerMerge = incB;
+    incB->moveAfter(prevBlock);
 
-        Value *lim = nullptr;
-        if (lc.dynamic && assumeDynamicLoopOfSizeOne(L2)) {
-          lim = ConstantInt::get(lc.var->getType(), 0);
-        } else if (lc.dynamic) {
-          // Must be in a reverse pass fashion for a lookup to index bound to be
-          // legal
-          assert(/*ReverseLimit*/ reverseBlocks.size() > 0);
-          LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
-                            lc.preheader);
-          lim = lookupValueFromCache(
-              lc.var->getType(),
-              /*forwardPass*/ false, tbuild, lctx,
-              getDynamicLoopLimit(LI.getLoopFor(lc.header)),
-              /*isi1*/ false, /*available*/ ValueToValueMapTy());
-        } else {
-          lim = lookupM(lc.trueLimit, tbuild);
-        }
+    IRBuilder<> tbuild(prevBlock);
 
-        tbuild.SetInsertPoint(incB);
-        tbuild.CreateStore(lim, lc.antivaralloc);
-        tbuild.CreateBr(resumeblock);
-        prevBlock = incB;
+    SmallVector<std::pair<Value *, Value *>, 1> lims;
+    for (auto I = exitingContexts.rbegin(), E = exitingContexts.rend(); I != E;
+         I++) {
+      auto &lc = *I;
+      auto L = LI.getLoopFor(lc.header);
+      Value *lim = nullptr;
+      if (lc.dynamic && assumeDynamicLoopOfSizeOne(L)) {
+        lim = ConstantInt::get(lc.var->getType(), 0);
+      } else if (lc.dynamic) {
+        // Must be in a reverse pass fashion for a lookup to index bound to be
+        // legal
+        assert(/*ReverseLimit*/ reverseBlocks.size() > 0);
+        LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
+                          lc.preheader);
+        lim = lookupValueFromCache(
+            lc.var->getType(),
+            /*forwardPass*/ false, tbuild, lctx, getDynamicLoopLimit(L),
+            /*isi1*/ false, /*available*/ ValueToValueMapTy());
+      } else {
+        lim = lookupM(lc.trueLimit, tbuild);
       }
-
-      return newBlocksForLoop_cache[tup] = prevBlock;
-
+      lims.push_back(std::make_pair(lim, (Value *)lc.antivaralloc));
     }
+
+    tbuild.SetInsertPoint(incB);
+    for (auto &pair : lims) {
+      tbuild.CreateStore(pair.first, pair.second);
+    }
+
+    auto tmp_resumeblock = prepRematerializedLoopEntry(exitingContexts.back());
+    if (tmp_resumeblock)
+      resumeblock = tmp_resumeblock;
+
+    tbuild.CreateBr(resumeblock);
+
+    return newBlocksForLoop_cache[tup] = incB;
+  }
 
   return newBlocksForLoop_cache[tup] = reverseBlocks[BB].front();
 }

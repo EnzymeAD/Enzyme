@@ -424,13 +424,11 @@ public:
                                            llvm::BasicBlock *branchingBlock);
 
 private:
-  //! Given a loop `lc`, create the rematerialization blocks for the reverse pass,
-  //! if required, caching if already created. Given an original intended block
-  //! to branch to `resumeBlock`, this function will return the new block for the
-  //! rematerialized loop entry to branch to, if created. Otherwise it will 
-  //! return the original intended destination block `resumeBlock.
-  llvm::BasicBlock *prepRematerializedLoopEntry(LoopContext &lc,
-                                                llvm::BasicBlock *resumeblock);
+  //! Given a loop `lc`, create the rematerialization blocks for the reverse
+  //! pass, if required, caching if already created. This function will return
+  //! the new block for the rematerialized loop entry to branch to, if created.
+  //! Otherwise it will return nullptr.
+  llvm::BasicBlock *prepRematerializedLoopEntry(LoopContext &lc);
 
 public:
   void forceContexts();
