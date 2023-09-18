@@ -1401,6 +1401,16 @@ void TypeAnalyzer::visitGetElementPtrInst(GetElementPtrInst &gep) {
       return;
     }
   }
+  if (auto GV = dyn_cast<GlobalVariable>(gep.getPointerOperand())) {
+    // from julia code, do not propagate int to operands
+    if (GV->getName() == "small_typeof") {
+      TypeTree T;
+      T.insert({-1}, BaseType::Pointer);
+      T.insert({-1, -1}, BaseType::Pointer);
+      updateAnalysis(&gep, T, &gep);
+      return;
+    }
+  }
 
   if (gep.indices().begin() == gep.indices().end()) {
     if (direction & DOWN)
