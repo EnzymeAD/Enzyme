@@ -2766,10 +2766,12 @@ public:
                   if (II->getIntrinsicID() == Intrinsic::lifetime_start) {
                     if (getBaseObject(II->getOperand(1)) == root) {
                       if (auto CI2 = dyn_cast<ConstantInt>(II->getOperand(0))) {
-                        if (MCI->getValue().ult(CI2->getValue()))
+                        if (MCI->getValue().ule(CI2->getValue()))
                           break;
                       }
                     }
+                    cur = cur->getPrevNode();
+                    continue;
                   }
                 }
               }
