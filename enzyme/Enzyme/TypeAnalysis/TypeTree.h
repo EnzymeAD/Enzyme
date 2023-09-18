@@ -981,8 +981,12 @@ public:
                 return false;
 
               // Inserting say a [0]:anything into a [-1]:Float
-              if (CT == BaseType::Anything)
+              if (CT == BaseType::Anything) {
+                // If both at same index, remove old index
+                if (newMoreGeneralThanOld)
+                  toremove.insert(pair.first);
                 continue;
+              }
 
               // Otherwise, inserting a non-equivalent pair into a more general
               // slot. This is invalid.
