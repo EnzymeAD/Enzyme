@@ -5490,12 +5490,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     }
     goto end;
   } else if (auto arg = dyn_cast<ExtractValueInst>(oval)) {
-    IRBuilder<> bb(getNewFromOriginal(arg));
+    auto newi = getNewFromOriginal(arg);
+    IRBuilder<> bb(newi->getNextNode());
     auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
 
-    auto rule = [&bb, &arg, this](Value *ip) -> llvm::Value * {
+    auto rule = [&bb, &arg, &newi, this](Value *ip) -> llvm::Value * {
       if (ip == getNewFromOriginal(arg->getOperand(0)))
-        return getNewFromOriginal(arg);
+        return newi;
       return bb.CreateExtractValue(ip, arg->getIndices(),
                                    arg->getName() + "'ipev");
     };
