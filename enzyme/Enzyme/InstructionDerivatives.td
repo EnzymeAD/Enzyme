@@ -370,7 +370,7 @@ def : CallPattern<(Op $x),
                   [ReadNone, NoUnwind]
                   >;
 def : CallPattern<(Op $x),
-                  ["expm1"],
+                  ["expm1", "expm1f", "expm1l"],
                   [(FMul (Intrinsic<"exp"> $x), (DiffeRet))],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
