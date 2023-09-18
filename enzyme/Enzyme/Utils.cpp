@@ -2271,6 +2271,66 @@ Function *GetFunctionFromValue(Value *fn) {
         }
       }
     }
+    if (auto LI = dyn_cast<LoadInst>(fn)) {
+      auto obj = getBaseObject(LI->getPointerOperand());
+      if (isa<AllocaInst>(obj)) {
+        std::set<std::pair<Instruction *, Value *>> done;
+        SmallVector<std::pair<Instruction *, Value *>, 1> todo;
+        Value *stored = nullptr;
+        bool legal = true;
+        for (auto U : obj->users()) {
+          if (auto I = dyn_cast<Instruction>(U))
+            todo.push_back(std::make_pair(I, obj));
+          else {
+            legal = false;
+            break;
+          }
+        }
+        while (legal && todo.size()) {
+          auto tup = todo.pop_back_val();
+          if (done.count(tup))
+            continue;
+          done.insert(tup);
+          auto cur = tup.first;
+          auto prev = tup.second;
+          if (auto SI = dyn_cast<StoreInst>(cur))
+            if (SI->getPointerOperand() == prev) {
+              if (stored == SI->getValueOperand())
+                continue;
+              else if (stored == nullptr) {
+                stored = SI->getValueOperand();
+                continue;
+              } else {
+                legal = false;
+                break;
+              }
+            }
+
+          if (isPointerArithmeticInst(cur, /*includephi*/ true)) {
+            for (auto U : cur->users()) {
+              if (auto I = dyn_cast<Instruction>(U))
+                todo.push_back(std::make_pair(I, cur));
+              else {
+                legal = false;
+                break;
+              }
+            }
+            continue;
+          }
+
+          if (!cur->mayWriteToMemory() && cur->getType()->isVoidTy())
+            continue;
+
+          legal = false;
+          break;
+        }
+
+        if (legal && stored) {
+          fn = stored;
+          continue;
+        }
+      }
+    }
     break;
   }
 
