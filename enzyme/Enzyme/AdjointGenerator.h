@@ -2754,7 +2754,12 @@ public:
         if (CI->isZero()) {
           auto root = getBaseObject(MS.getOperand(0));
           bool writtenTo = false;
-          if (isa<AllocaInst>(root) || isAllocationCall(root, gutils->TLI)) {
+          bool undefMemory =
+              isa<AllocaInst>(root) || isAllocationCall(root, gutils->TLI);
+          if (auto arg = dyn_cast<Argument>(root))
+            if (arg->hasStructRetAttr())
+              undefMemory = true;
+          if (undefMemory) {
             Instruction *cur = MS.getPrevNode();
             while (cur) {
               if (cur == root)
