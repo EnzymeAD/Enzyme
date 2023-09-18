@@ -290,6 +290,8 @@ public:
 
   void visitGetElementPtrInst(llvm::GetElementPtrInst &gep);
 
+  void visitGEPOperator(llvm::GEPOperator &gep);
+
   void visitPHINode(llvm::PHINode &phi);
 
   void visitTruncInst(llvm::TruncInst &I);
