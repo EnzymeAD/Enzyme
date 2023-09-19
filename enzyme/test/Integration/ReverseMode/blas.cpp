@@ -1,11 +1,17 @@
-// RUN: %clang++ -std=c++11 -fno-exceptions -ffast-math -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S
-// RUN: %clang++ -std=c++11 -fno-exceptions -ffast-math -O1 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S
-// RUN: %clang++ -std=c++11 -fno-exceptions -ffast-math -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S
-// RUN: %clang++ -std=c++11 -fno-exceptions -ffast-math -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S
-// RUN: %clang++ -std=c++11 -fno-exceptions -ffast-math -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S
-// RUN: %clang++ -std=c++11 -fno-exceptions -ffast-math -O1 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S
-// RUN: %clang++ -std=c++11 -fno-exceptions -ffast-math -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S
-// RUN: %clang++ -std=c++11 -fno-exceptions -ffast-math -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S
+// This should work on LLVM 7, 8, 9, however in CI the version of clang installed on Ubuntu 18.04 cannot load
+// a clang plugin properly without segfaulting on exit. This is fine on Ubuntu 20.04 or later LLVM versions...
+// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli -
 
 #include "test_utils.h"
 
@@ -17,13 +23,6 @@
 #include <sstream>
 
 bool inDerivative = false;
-
-__attribute__((noinline))
-__attribute__((enzyme_inactive))
-void swapToDerivative() {
-    inDerivative = true;
-}
-
 
     char DEFAULT_LAYOUT = 0x72;
     
@@ -126,6 +125,7 @@ std::string astr(double v) {
 
 template<typename T>
 void assert_eq(std::string scope, std::string varName, int i, T expected, T real) {
+    std::cerr << "Checking test: " << scope << " call: " << i << ", var " << varName << ":\n";
     if (expected == real) return;
     std::cerr << "Failure on test: " << scope << " call: " << i << ", var " << varName << ":\n";
     std::cerr << "  found, " << astr(expected) << " expected " << astr(real) << "\n";
@@ -154,6 +154,8 @@ void check_equiv(std::string scope, int i, BlasCall expected, BlasCall real) {
 }
 
 std::vector<BlasCall> calls;
+
+extern "C" {
 
 // Y = alpha * A * X + beta * Y
 __attribute__((noinline))
@@ -200,14 +202,17 @@ void cblas_dger(char layout, int M, int N, double alpha, double* X, int incX, do
                                 N, UNUSED_INT, UNUSED_INT, incX, UNUSED_INT, UNUSED_INT});
 }
 
+}
+
 int enzyme_dup;
 int enzyme_out;
 int enzyme_const;
-void __enzyme_autodiff(void*, ...);
+template<typename ...T>
+void __enzyme_autodiff(void*, T...);
 
 void my_dgemv(char layout, char trans, int M, int N, double alpha, double* A, int lda, double* X, int incx, double beta, double* Y, int incy) {
     cblas_dgemv(layout, trans, M, N, alpha, A, lda, X, incx, beta, Y, incy);
-    swapToDerivative();
+    inDerivative = true;
 }
 
 void init() {
@@ -225,7 +230,7 @@ int main() {
 
     {
     assert(calls.size() == 1);
-    assert(calls[0].inDerivative = false);
+    assert(calls[0].inDerivative == false);
     assert(calls[0].type == CallType::GEMM);
     assert(calls[0].pout_arg1 == C);
     assert(calls[0].pin_arg1 == A);
@@ -265,7 +270,7 @@ int main() {
 
         inDerivative = true;
         // dC = alpha * X * transpose(Y) + A
-        cblas_dger(DEFAULT_LAYOUT, M, N, alpha, dC, incC, B, incB, dA, lda);
+        cblas_dger(DEFAULT_LAYOUT+1, M, N, alpha, dC, incC, B, incB, dA, lda);
         // dY = beta * dY
         cblas_dscal((transA == 'N' || transA == 'n') ? M : N,
                     beta, dC, incC);
@@ -274,6 +279,7 @@ int main() {
         for (size_t i=0; i<calls.size(); i++) {
             check_equiv("GEMV active A, C", i, foundCalls[i], calls[i]);
         }
+        assert(0 && "should not get here");
     }
 
 
