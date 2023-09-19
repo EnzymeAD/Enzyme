@@ -1309,19 +1309,36 @@ void emit_runtime_continue(DagInit *ruleDag, StringRef name, StringRef tab,
      << tab << "}\n";
 }
 
-void emit_if_rule_condition(DagInit *ruleDag, StringRef name, StringRef tab,
-                            raw_ostream &os) {
-  os << tab << "if (active_" << name;
+void if_rule_condition_inner(DagInit *ruleDag, StringRef name, StringRef tab,
+                            raw_ostream &os, llvm::StringSet<> &seen) {
   for (size_t pos = 0; pos < ruleDag->getNumArgs();) {
-    auto arg = ruleDag->getArg(pos);
+    Init *arg = ruleDag->getArg(pos);
     if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
       auto Def = DefArg->getDef();
       if (Def->isSubClassOf("adj")) {
         auto name = Def->getValueAsString("name");
-        os << " && d_" << name;
+        seen.insert(name);
       }
+    } else if (auto sub_Dag = dyn_cast<DagInit>(arg)) {
+      if_rule_condition_inner(sub_Dag, name, tab, os, seen);
     }
     pos++;
+  }
+}
+
+
+// primal arguments are always available,
+// shadow arguments (d_<X>) might not, so check if they are active
+void emit_if_rule_condition(DagInit *ruleDag, StringRef name, StringRef tab,
+                            raw_ostream &os) {
+  llvm::StringSet<> seen = llvm::StringSet<>();
+
+  if_rule_condition_inner(ruleDag, name, tab, os, seen);
+
+  // this will only run once, at the end of the outermost call
+  os << tab << "if (active_" << name;
+  for (auto name : seen.keys()) {
+    os << " && d_" << name.str();
   }
   os << ") {\n";
 }
