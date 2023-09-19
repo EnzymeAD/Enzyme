@@ -862,8 +862,15 @@ void emit_deriv_blas_call(DagInit *ruleDag,
         if (Def->isSubClassOf("MagicInst") && Def->getName() == "Rows") {
           if (!first)
             typeString += ", ";
-          typeString += (Twine("type_") + Dag->getArgNameStr(1)).str();
-          first = false;
+          if (DefInit *def = dyn_cast<DefInit>(Dag->getArg(1))) {
+            const auto Def = def->getDef();
+            assert(Def->isSubClassOf("adj"));
+            typeString += (Twine("type_") + Def->getValueAsString("name")).str();
+          } else {
+            assert(Dag->getArgNameStr(1) != "");
+            typeString += (Twine("type_") + Dag->getArgNameStr(1)).str();
+            first = false;
+          }
           continue;
         } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "ld") {
           if (!first)
@@ -985,7 +992,6 @@ void emit_tmp_creation(Record *Def, raw_ostream &os) {
 void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
                      StringSet<> &handled, raw_ostream &os) {
   const auto ruleDag = rule.getRuleDag();
-  const auto typeMap = rule.getArgTypeMap();
   const auto opName = ruleDag->getOperator()->getAsString();
   const auto nameMap = rule.getArgNameMap();
   const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
@@ -1039,9 +1045,22 @@ void rev_call_arg(StringRef argName, DagInit *ruleDag, Rule &rule,
     auto Def = cast<DefInit>(Dag->getOperator())->getDef();
 
     if (Def->isSubClassOf("MagicInst") && Def->getName() == "Rows") {
-      auto tname = Dag->getArgNameStr(0);
-      auto rname = Dag->getArgNameStr(1);
-      auto cname = Dag->getArgNameStr(2);
+      std::string tname, rname, cname;
+      tname = Dag->getArgNameStr(0);
+      if (DefInit *Def1 = dyn_cast<DefInit>(Dag->getArg(1))) {
+        auto Def1Name = Def1->getDef()->getValueAsString("name");
+        assert(Def1->getDef()->isSubClassOf("adj"));
+        rname = (Twine("d_") + Def1Name).str();
+      } else {
+        rname = (Twine("arg_") + Dag->getArgNameStr(1)).str();
+      }
+      if (DefInit *Def2 = dyn_cast<DefInit>(Dag->getArg(2))) {
+        auto Def2Name = Def2->getDef()->getValueAsString("name");
+        assert(Def2->getDef()->isSubClassOf("adj"));
+        cname = (Twine("d_") + Def2Name).str();
+      } else {
+        cname = (Twine("arg_") + Dag->getArgNameStr(2)).str();
+      }
       os << "get_blas_row(Builder2, arg_" << tname << ", arg_" << rname
          << ", arg_" << cname << ", byRef)";
     } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "ld") {
@@ -1191,7 +1210,6 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
                    raw_ostream &os, int subRule = -1) {
 
   const auto nameMap = rule.getArgNameMap();
-  const auto typeMap = rule.getArgTypeMap();
 
   auto ruleDag = rule.getRuleDag();
   size_t numArgs = ruleDag->getNumArgs();
