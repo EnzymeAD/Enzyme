@@ -8157,15 +8157,13 @@ public:
       return;
     }
 
-    if (!called || called->empty()) {
-      if (auto blas = extractBLAS(funcName)) {
+    if (auto blas = extractBLAS(funcName)) {
 #if LLVM_VERSION_MAJOR >= 16
-        if (handleBLAS(call, called, blas.value(), overwritten_args))
+      if (handleBLAS(call, called, blas.value(), overwritten_args))
 #else
-        if (handleBLAS(call, called, blas.getValue(), overwritten_args))
+      if (handleBLAS(call, called, blas.getValue(), overwritten_args))
 #endif
-          return;
-      }
+        return;
     }
 
     if (funcName == "printf" || funcName == "puts" ||

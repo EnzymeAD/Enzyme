@@ -43,6 +43,7 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
     os << "#if LLVM_VERSION_MAJOR >= 16\n";
     os << "  F->setOnlyReadsMemory();\n";
     os << "#else\n";
+    os << "  F->removeFnAttr(llvm::Attribute::ReadNone);\n";
     os << "  F->addFnAttr(llvm::Attribute::ReadOnly);\n";
     os << "#endif\n";
   }
@@ -76,7 +77,9 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
         typeOfArg == ArgType::fp || typeOfArg == ArgType::trans ||
         typeOfArg == ArgType::mldLD || typeOfArg == ArgType::uplo ||
         typeOfArg == ArgType::diag || typeOfArg == ArgType::side) {
-      os << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+      os << "      F->removeParamAttr(" << i << (lv23 ? " + offset" : "")
+         << ", llvm::Attribute::ReadNone);\n"
+         << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
          << ", llvm::Attribute::ReadOnly);\n"
          << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
          << ", llvm::Attribute::NoCapture);\n";
@@ -95,7 +98,9 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
          << ", llvm::Attribute::NoCapture);\n";
       if (mutableArgs.count(argPos) == 0) {
         // Only emit ReadOnly if the arg isn't mutable
-        os << "    F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+        os << "    F->removeParamAttr(" << i << (lv23 ? " + offset" : "")
+           << ", llvm::Attribute::ReadNone);\n"
+           << "    F->addParamAttr(" << i << (lv23 ? " + offset" : "")
            << ", llvm::Attribute::ReadOnly);\n";
       }
     }
