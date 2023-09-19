@@ -2318,6 +2318,9 @@ Function *GetFunctionFromValue(Value *fn) {
             continue;
           }
 
+          if (isa<LoadInst>(cur))
+            continue;
+
           if (!cur->mayWriteToMemory() && cur->getType()->isVoidTy())
             continue;
 
