@@ -1047,7 +1047,7 @@ void rev_call_arg(StringRef argName, DagInit *ruleDag, Rule &rule,
 
     if (Def->isSubClassOf("MagicInst") && Def->getName() == "Rows") {
       std::string tname, rname, cname;
-      tname = Dag->getArgNameStr(0);
+      tname = (Twine("arg_") + Dag->getArgNameStr(0)).str();
       if (DefInit *Def1 = dyn_cast<DefInit>(Dag->getArg(1))) {
         auto Def1Name = Def1->getDef()->getValueAsString("name");
         assert(Def1->getDef()->isSubClassOf("adj"));
