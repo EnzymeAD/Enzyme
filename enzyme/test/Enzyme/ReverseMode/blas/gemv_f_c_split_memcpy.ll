@@ -194,7 +194,7 @@ entry:
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
 ; CHECK-NEXT:   %fpcast.constant.fp.1.0 = bitcast double* %byref.constant.fp.1.0 to i8*
 ; CHECK-NEXT:   call void @dgemv_64_(i8* %byref.transpose.transa, i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %"y'", i8* %incy_p, i8* %fpcast.constant.fp.1.0, i8* %"x'", i8* %incx_p)
-; CHECK-NEXT:   %ld.row.trans = load i8, i8* %byref.transpose.transa
+; CHECK-NEXT:   %ld.row.trans = load i8, i8* %malloccall
 ; CHECK-DAG:    %[[r2:.+]] = icmp eq i8 %ld.row.trans, 110
 ; CHECK-DAG:    %[[r3:.+]] = icmp eq i8 %ld.row.trans, 78
 ; CHECK-NEXT:   %26 = or i1 %[[r3]], %[[r2]]

@@ -178,7 +178,7 @@ entry:
 ; CHECK-NEXT:   br i1 %rt.inactive.beta, label %invertentry.beta.done, label %invertentry.beta.active
 
 ; CHECK: invertentry.beta.active:                          ; preds = %invertentry.A.done
-; CHECK-NEXT:   %ld.row.trans = load i8, i8* %byref.transpose.transa
+; CHECK-NEXT:   %ld.row.trans = load i8, i8* %malloccall
 ; CHECK-DAG:   %[[r39:.+]] = icmp eq i8 %ld.row.trans, 110
 ; CHECK-DAG:   %[[r40:.+]] = icmp eq i8 %ld.row.trans, 78
 ; CHECK-NEXT:   %[[r41:.+]] = or i1 %[[r40]], %[[r39]]
@@ -194,7 +194,7 @@ entry:
 ; CHECK-NEXT:   br i1 %rt.inactive.y, label %invertentry.y.done, label %invertentry.y.active
 
 ; CHECK: invertentry.y.active:                             ; preds = %invertentry.beta.done
-; CHECK-NEXT:   %ld.row.trans2 = load i8, i8* %byref.transpose.transa
+; CHECK-NEXT:   %ld.row.trans2 = load i8, i8* %malloccall
 ; CHECK-DAG:   %[[r47:.+]] = icmp eq i8 %ld.row.trans2, 110
 ; CHECK-DAG:   %[[r48:.+]] = icmp eq i8 %ld.row.trans2, 78
 ; CHECK-NEXT:   %[[r49:.+]] = or i1 %[[r48]], %[[r47]]
