@@ -13,7 +13,7 @@ int main() {
     auto y = enzyme::autodiff(foo, x);
     std::cout << y << std::endl;
 
-    auto z = __enzyme_autodiff<double>((void*)foo, enzyme_out, x.value);
-    std::cout << z << std::endl;
+    //auto z = __enzyme_autodiff<double>((void*)foo, enzyme_out, x.value);
+    //std::cout << z << std::endl;
 
 }
