@@ -865,7 +865,8 @@ void emit_deriv_blas_call(DagInit *ruleDag,
           if (DefInit *def = dyn_cast<DefInit>(Dag->getArg(1))) {
             const auto Def = def->getDef();
             assert(Def->isSubClassOf("adj"));
-            typeString += (Twine("type_") + Def->getValueAsString("name")).str();
+            typeString +=
+                (Twine("type_") + Def->getValueAsString("name")).str();
           } else {
             assert(Dag->getArgNameStr(1) != "");
             typeString += (Twine("type_") + Dag->getArgNameStr(1)).str();
@@ -1061,8 +1062,8 @@ void rev_call_arg(StringRef argName, DagInit *ruleDag, Rule &rule,
       } else {
         cname = (Twine("arg_") + Dag->getArgNameStr(2)).str();
       }
-      os << "get_blas_row(Builder2, arg_" << tname << ", arg_" << rname
-         << ", arg_" << cname << ", byRef)";
+      os << "get_blas_row(Builder2, " << tname << ", " << rname << ", " << cname
+         << ", byRef)";
     } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "ld") {
       assert(Dag->getNumArgs() == 5);
       //(ld $A, $transa, $lda, $m, $k)
@@ -1310,7 +1311,7 @@ void emit_runtime_continue(DagInit *ruleDag, StringRef name, StringRef tab,
 }
 
 void if_rule_condition_inner(DagInit *ruleDag, StringRef name, StringRef tab,
-                            raw_ostream &os, llvm::StringSet<> &seen) {
+                             raw_ostream &os, llvm::StringSet<> &seen) {
   for (size_t pos = 0; pos < ruleDag->getNumArgs();) {
     Init *arg = ruleDag->getArg(pos);
     if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
@@ -1325,7 +1326,6 @@ void if_rule_condition_inner(DagInit *ruleDag, StringRef name, StringRef tab,
     pos++;
   }
 }
-
 
 // primal arguments are always available,
 // shadow arguments (d_<X>) might not, so check if they are active
