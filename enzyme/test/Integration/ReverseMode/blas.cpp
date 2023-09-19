@@ -76,11 +76,11 @@ public:
 	} 
 };
 
+char CblasRowMajor = 101;
+char CblasColMajor = 102;
 
 bool inDerivative = false;
 
-    char DEFAULT_LAYOUT = 0x72;
-    
     double *UNUSED_POINTER = (double*)0x00000070;
 
     double *A = (double*)0x00000100;
@@ -196,10 +196,14 @@ void printty(int v) {
     printf(" (%d)", v);
 }
 void printty(char v) {
-    if (v == DEFAULT_LAYOUT) {
-		printf("DEFAULT_LAYOUT (0x%x)", v);
-		return;
-	}
+    if (v == CblasRowMajor) {
+        printf("RowMajor (%d)", v);
+        return;
+    }
+    if (v == CblasColMajor) {
+        printf("RowMajor (%d)", v);
+        return;
+    }
     if (v == UNUSED_TRANS) {
 		printf("UNUSED_TRANS (%c)", v);
 		return;
@@ -385,7 +389,7 @@ vector<BlasCall> foundCalls;
 
 extern "C" {
 
-// Y = alpha * A * X + beta * Y
+// Y = alpha * op(A) * X + beta * Y
 __attribute__((noinline))
 void cblas_dgemv(char layout, char trans, int M, int N, double alpha, double* A, int lda, double* X, int incx, double beta, double* Y, int incy) {
     BlasCall call = {inDerivative, CallType::GEMV,
@@ -442,6 +446,262 @@ void cblas_dcopy(int N, double* X, int incX, double* Y, int incY) {
 }
 }
 
+enum class ValueType {
+    Matrix,
+    Vector
+};
+struct BlasInfo {
+    ValueType ty;
+    int vec_length;
+    int vec_increment;
+    char mat_layout;
+    int mat_rows;
+    int mat_cols;
+    int mat_ld;
+    BlasInfo (int length, int increment) {
+        ty = ValueType::Vector;
+        vec_length = length;
+        vec_increment = increment;
+        mat_layout = '@';
+        mat_rows = -1;
+        mat_cols = -1;
+        mat_ld = -1;
+    }
+    BlasInfo (char layout, int rows, int cols, int ld) {
+        ty = ValueType::Matrix;
+        vec_length = -1;
+        vec_increment = -1;
+        mat_layout = layout;
+        mat_rows = rows;
+        mat_cols = cols;
+        mat_ld = ld;
+    }
+};
+
+int pointer_to_index(void* v) {
+    if (v == A || v == dA) return 0;
+    if (v == B || v == dB) return 1;
+    if (v == C || v == dC) return 2;
+    assert(0 && " illegal pointer to invert");
+}
+
+void checkVector(BlasInfo info, std::string vecname, int length, int increment, std::string test, BlasCall rcall, const vector<BlasCall> & trace) {
+  if (info.ty != ValueType::Vector) {
+    printf("Error in test %s, invalid memory\n", test.c_str());
+    printTrace(trace);
+    printcall(rcall);
+    printf(" Input %s is not a vector\n", vecname.c_str());
+    exit(1);
+  }
+  if (info.vec_length != length) {
+        printf("Error in test %s, invalid memory\n", test.c_str());
+        printTrace(trace);
+        printcall(rcall);
+        printf(" Input %s length must be ", vecname.c_str());
+        printty(info.vec_length);
+        printf(" found ");
+        printty(length);
+        printf("\n");
+        exit(1);
+  }
+  if (info.vec_increment != increment) {
+        printf("Error in test %s, invalid memory\n", test.c_str());
+        printTrace(trace);
+        printcall(rcall);
+        printf(" Input %s increment must be ", vecname.c_str());
+        printty(info.vec_increment);
+        printf(" found ");
+        printty(increment);
+        printf("\n");
+        exit(1);
+  }
+}
+
+void checkMatrix(BlasInfo info, std::string matname, char layout, int rows, int cols, int ld, std::string test, BlasCall rcall, const vector<BlasCall> & trace) {
+  if (info.ty != ValueType::Matrix) {
+    printf("Error in test %s, invalid memory\n", test.c_str());
+    printTrace(trace);
+    printcall(rcall);
+    printf(" Input %s is not a matrix\n", matname.c_str());
+    exit(1);
+  }
+  if (info.mat_layout != layout) {
+    printf("Error in test %s, invalid memory\n", test.c_str());
+    printTrace(trace);
+    printcall(rcall);
+    printf(" Input %s layout must be ", matname.c_str());
+    printty(info.mat_layout);
+    printf(" found layout=");
+    printty(layout);
+    printf("\n");
+    exit(1);
+  }
+  if (info.mat_rows != rows) {
+    printf("Error in test %s, invalid memory\n", test.c_str());
+    printTrace(trace);
+    printcall(rcall);
+    printf(" Input %s rows must be ", matname.c_str());
+    printty(info.mat_rows);
+    printf(" found ");
+    printty(rows);
+    printf("\n");
+    exit(1);
+  }
+  if (info.mat_cols != cols) {
+    printf("Error in test %s, invalid memory\n", test.c_str());
+    printTrace(trace);
+    printcall(rcall);
+    printf(" Input %s cols must be ", matname.c_str());
+    printty(info.mat_cols);
+    printf(" found ");
+    printty(cols);
+    printf("\n");
+    exit(1);
+  }
+  if (info.mat_ld != ld) {
+    printf("Error in test %s, invalid memory\n", test.c_str());
+    printTrace(trace);
+    printcall(rcall);
+    printf(" Input %s leading dimension rows must be ", test.c_str());
+    printty(info.mat_ld);
+    printf(" found ");
+    printty(ld);
+    printf("\n");
+    exit(1);
+  }
+}
+
+void checkMemory(BlasCall rcall, BlasInfo inputs[3], std::string test, const vector<BlasCall> & trace) {
+  switch (rcall.type) {
+      case CallType::GEMV:{
+        // Y = alpha * op(A) * X + beta * Y
+        auto Y = inputs[pointer_to_index(rcall.pout_arg1)];
+        auto A = inputs[pointer_to_index(rcall.pin_arg1)];
+        auto X = inputs[pointer_to_index(rcall.pin_arg2)];
+		
+        auto layout = rcall.layout;
+		auto trans_char = rcall.targ1;
+        auto trans = (trans_char == 'N' || trans_char == 'n');
+		auto M = rcall.iarg1;
+		auto N =rcall.iarg2;
+		auto alpha = rcall.farg1;
+		auto lda = rcall.iarg4;
+		auto incX = rcall.iarg5;
+		auto beta = rcall.farg2;
+		auto incY = rcall.iarg6;
+
+        // A is an m-by-n matrix
+        checkMatrix(A, "A", layout, /*rows=*/M, /*cols=*/N, /*ld=*/lda, test, rcall, trace);
+
+        // if no trans, X must be N otherwise must be M
+        // From https://www.netlib.org/lapack/explore-html/d7/d15/group__double__blas__level2_gadd421a107a488d524859b4a64c1901a9.html
+        //    X is DOUBLE PRECISION array, dimension at least
+        //   ( 1 + ( n - 1 )*abs( INCX ) ) when TRANS = 'N' or 'n'
+        //   and at least
+        //   ( 1 + ( m - 1 )*abs( INCX ) ) otherwise.
+        //   Before entry, the incremented array X must contain the
+        //   vector x.
+        auto Xlen = trans ? N : M;
+        checkVector(X, "X", /*len=*/Xlen, /*inc=*/incX, test, rcall, trace);
+        
+        // if no trans, Y must be M otherwise must be N
+        auto Ylen = trans ? M : N;
+        checkVector(Y, "Y", /*len=*/Ylen, /*inc=*/incY, test, rcall, trace);
+
+		return;
+      }
+      case CallType::GEMM:{
+        // C = alpha * A^transA * B^transB + beta * C
+        auto C = inputs[pointer_to_index(rcall.pout_arg1)];
+        auto A = inputs[pointer_to_index(rcall.pin_arg1)];
+        auto B = inputs[pointer_to_index(rcall.pin_arg2)];
+	
+        auto layout = rcall.layout;
+		auto transA = rcall.targ1;
+		auto transB = rcall.targ2;
+		auto M = rcall.iarg1;
+		auto N = rcall.iarg2;
+		auto K = rcall.iarg3;
+		auto alpha = rcall.farg1;
+		auto lda = rcall.iarg4;
+		auto ldb = rcall.iarg5;
+		auto beta = rcall.farg2;
+		auto ldc = rcall.iarg6;
+
+        // From https://www.netlib.org/lapack/explore-html/d1/d54/group__double__blas__level3_gaeda3cbd99c8fb834a60a6412878226e1.html
+        /*
+            M is INTEGER
+           On entry,  M  specifies  the number  of rows  of the  matrix
+           op( A )  and of the  matrix  C.  M  must  be at least  zero.
+          N is INTEGER
+           On entry,  N  specifies the number  of columns of the matrix
+           op( B ) and the number of columns of the matrix C. N must be
+           at least zero.
+          K is INTEGER
+           On entry,  K  specifies  the number of columns of the matrix
+           op( A ) and the number of rows of the matrix op( B ). K must
+           be at least  zero.
+          LDA is INTEGER
+           On entry, LDA specifies the first dimension of A as declared
+           in the calling (sub) program. When  TRANSA = 'N' or 'n' then
+           LDA must be at least  max( 1, m ), otherwise  LDA must be at
+           least  max( 1, k ).
+        */
+        checkMatrix(A, "A", layout, /*rows=*/(!transA) ? M : K, /*cols=*/(!transA) ? K : M, /*ld=*/lda, test, rcall, trace);
+        checkMatrix(B, "B", layout, /*rows=*/(!transB) ? K : N, /*cols=*/(!transB) ? N : K, /*ld=*/ldb, test, rcall, trace);
+        checkMatrix(C, "C", layout, /*rows=*/M, /*cols=*/N, /*ld=*/ldc, test, rcall, trace);
+		return;
+      }
+
+      case CallType::SCAL: {
+		auto N = rcall.iarg1;
+		auto alpha = rcall.farg1;
+        auto X = inputs[pointer_to_index(rcall.pout_arg1)];
+		auto incX = rcall.iarg4;
+        checkVector(X, "X", /*len=*/N, /*inc=*/incX, test, rcall, trace);
+		return;
+      }
+      case CallType::GER: {
+        // A = alpha * X * transpose(Y) + A
+        auto A = inputs[pointer_to_index(rcall.pout_arg1)];
+        auto X = inputs[pointer_to_index(rcall.pin_arg1)];
+        auto Y = inputs[pointer_to_index(rcall.pin_arg2)];
+
+		auto layout = rcall.layout;
+		auto M = rcall.iarg1;
+	    auto N = rcall.iarg2;
+		auto alpha = rcall.farg1;
+		auto incX = rcall.iarg4;
+		auto incY = rcall.iarg5;
+		auto incA = rcall.iarg6;
+
+        // From https://www.netlib.org/lapack/explore-html/d7/d15/group__double__blas__level2_ga458222e01b4d348e9b52b9343d52f828.html
+        // x is an m element vector, y is an n element
+        // vector and A is an m by n matrix.
+        checkVector(X, "X", /*len=*/M, /*inc=*/incX, test, rcall, trace);
+        checkVector(Y, "Y", /*len=*/N, /*inc=*/incY, test, rcall, trace);
+        checkMatrix(A, "A", layout, /*rows=*/M, /*cols=*/N, /*ld=*/incA, test, rcall, trace);
+		return;
+      }
+      case CallType::COPY: {
+        auto Y = inputs[pointer_to_index(rcall.pout_arg1)];
+        auto X = inputs[pointer_to_index(rcall.pin_arg1)];
+        
+		auto N = rcall.iarg1;
+		auto incX = rcall.iarg4;
+        checkVector(X, "X", /*len=*/N, /*inc=*/incX, test, rcall, trace);
+        checkVector(Y, "Y", /*len=*/N, /*inc=*/incX, test, rcall, trace);
+		return;
+      }
+      default: printf("UNKNOWN CALL (%d)", (int)rcall.type); return;
+    }
+}
+
+void checkMemoryTrace(BlasInfo inputs[3], std::string test, const vector<BlasCall> & trace) {
+    for (size_t i=0; i<trace.size(); i++)
+        checkMemory(trace[i], inputs, test, trace);
+}
+
 int enzyme_dup;
 int enzyme_out;
 int enzyme_const;
@@ -483,12 +743,19 @@ void checkTest(std::string name) {
 int main() {
 
   // N means normal matrix, T means transposed
+  for (char layout : { CblasRowMajor, CblasColMajor }) {
   for (char transA : {'N', 'n', 'T', 't'}) {
   
-    init();
-    my_dgemv(DEFAULT_LAYOUT, transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
-
     {
+        std::string Test = "GEMV active A, C";
+    BlasInfo inputs[3] = {
+        /*A*/ BlasInfo(layout, M, N, lda),
+        /*B*/ BlasInfo((transA == 'N' || transA == 'n') ? N : M, incB),
+        /*C*/ BlasInfo((transA == 'N' || transA == 'n') ? M : N, incC),
+    };
+    init();
+    my_dgemv(layout, transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
+
     assert(calls.size() == 1);
     assert(calls[0].inDerivative == false);
     assert(calls[0].type == CallType::GEMV);
@@ -497,7 +764,7 @@ int main() {
     assert(calls[0].pin_arg2 == B);
     assert(calls[0].farg1 == alpha);
     assert(calls[0].farg2 == beta);
-    assert(calls[0].layout == DEFAULT_LAYOUT);
+    assert(calls[0].layout == layout);
     assert(calls[0].targ1 == transA);
     assert(calls[0].targ2 == UNUSED_TRANS);
     assert(calls[0].iarg1 == M);
@@ -506,11 +773,13 @@ int main() {
     assert(calls[0].iarg4 == lda);
     assert(calls[0].iarg5 == incB);
     assert(calls[0].iarg6 == incC);
-    }
+
+    // Check memory of primal on own.
+    checkMemoryTrace(inputs, "Primal " + Test, calls);
 
     init();
     __enzyme_autodiff((void*) my_dgemv,
-                            enzyme_const, DEFAULT_LAYOUT,
+                            enzyme_const, layout,
                             enzyme_const, transA,
                             enzyme_const, M,
                             enzyme_const, N,
@@ -522,24 +791,30 @@ int main() {
                             enzyme_const, beta,
                             enzyme_dup, C, dC,
                             enzyme_const, incC);
-    {
         foundCalls = calls;
         init();
 
-        my_dgemv(DEFAULT_LAYOUT, transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
+        my_dgemv(layout, transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
 
         inDerivative = true;
         // dC = alpha * X * transpose(Y) + A
-        cblas_dger(DEFAULT_LAYOUT, M, N, alpha, dC, incC, B, incB, dA, lda);
+        cblas_dger(layout, M, N, alpha, dC, incC, B, incB, dA, lda);
         // dY = beta * dY
         cblas_dscal((transA == 'N' || transA == 'n') ? M : N,
                     beta, dC, incC);
 
-		checkTest("GEMV active A, C");
+		checkTest(Test);
+    
+        // Check memory of primal of expected derivative
+        checkMemoryTrace(inputs, "Expected " + Test, calls);
+        
+        // Check memory of primal of our derivative (if equal above, it
+        // should be the same).
+        checkMemoryTrace(inputs, "Found " + Test, foundCalls);
     }
 
 
   }
-
+  }
 
 }
