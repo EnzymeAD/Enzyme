@@ -1042,8 +1042,8 @@ void rev_call_arg(StringRef argName, DagInit *ruleDag, Rule &rule,
       auto tname = Dag->getArgNameStr(0);
       auto rname = Dag->getArgNameStr(1);
       auto cname = Dag->getArgNameStr(2);
-      os << "get_blas_row(Builder2, arg_transposed_" << tname << ", arg_"
-         << rname << ", arg_" << cname << ", byRef)";
+      os << "get_blas_row(Builder2, arg_" << tname << ", arg_" << rname
+         << ", arg_" << cname << ", byRef)";
     } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "ld") {
       assert(Dag->getNumArgs() == 5);
       //(ld $A, $transa, $lda, $m, $k)
