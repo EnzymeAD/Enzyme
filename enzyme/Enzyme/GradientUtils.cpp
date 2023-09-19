@@ -3686,6 +3686,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
     IRBuilder<> tbuild(prevBlock);
 
     SmallVector<std::pair<Value *, Value *>, 1> lims;
+    ValueToValueMapTy available;
     for (auto I = exitingContexts.rbegin(), E = exitingContexts.rend(); I != E;
          I++) {
       auto &lc = *I;
@@ -3699,13 +3700,14 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
         assert(/*ReverseLimit*/ reverseBlocks.size() > 0);
         LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
                           lc.preheader);
-        lim = lookupValueFromCache(
-            lc.var->getType(),
-            /*forwardPass*/ false, tbuild, lctx, getDynamicLoopLimit(L),
-            /*isi1*/ false, /*available*/ ValueToValueMapTy());
+        lim = lookupValueFromCache(lc.var->getType(),
+                                   /*forwardPass*/ false, tbuild, lctx,
+                                   getDynamicLoopLimit(L),
+                                   /*isi1*/ false, available);
       } else {
-        lim = lookupM(lc.trueLimit, tbuild);
+        lim = lookupM(lc.trueLimit, tbuild, available);
       }
+      available[lc.var] = lim;
       lims.push_back(std::make_pair(lim, (Value *)lc.antivaralloc));
     }
 

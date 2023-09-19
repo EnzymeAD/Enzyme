@@ -200,8 +200,7 @@ define float @c() {
 ; CHECK-NEXT:   store float %differeturn, float* %"sum.2'de", align 4
 ; CHECK-NEXT:   %[[i89:.+]] = load i64, i64* %loopLimit_cache, align 8
 ; CHECK-NEXT:   %[[i90:.+]] = load i64*, i64** %loopLimit_cache2, align 8
-; CHECK-NEXT:   %[[i91:.+]] = load i64, i64* %"iv'ac", align 4
-; CHECK-NEXT:   %[[i92:.+]] = getelementptr inbounds i64, i64* %[[i90]], i64 %[[i91]]
+; CHECK-NEXT:   %[[i92:.+]] = getelementptr inbounds i64, i64* %[[i90]], i64 %[[i89]]
 ; CHECK-NEXT:   %[[i93:.+]] = load i64, i64* %[[i92]], align 8
 ; CHECK-NEXT:   br label %mergeinvertloop2_exit
 
