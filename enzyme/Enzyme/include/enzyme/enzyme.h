@@ -89,11 +89,7 @@ namespace enzyme {
     struct autodiff_return {
         using type = typename concatenated< 
             typename type_info< 
-                typename std::remove_reference<
-                    typename std::remove_cv<
-                        T
-                    >::type
-                >::type
+                typename remove_cvref< T >::type
             >::type ...
         >::type;
     };
