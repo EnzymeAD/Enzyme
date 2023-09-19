@@ -360,7 +360,6 @@ void assert_eq(std::string scope, std::string varName, int i, T expected, T real
     printf(" expected ");
     printty(real);
     printf("\n");
-    assert(0);
     exit(1);
 }
 
@@ -747,11 +746,13 @@ int main() {
   for (char transA : {'N', 'n', 'T', 't'}) {
   
     {
-        std::string Test = "GEMV active A, C";
+
+        bool trans = !(transA == 'N' || transA == 'n');
+        std::string Test = "GEMV active A, C ";
     BlasInfo inputs[3] = {
         /*A*/ BlasInfo(layout, M, N, lda),
-        /*B*/ BlasInfo((transA == 'N' || transA == 'n') ? N : M, incB),
-        /*C*/ BlasInfo((transA == 'N' || transA == 'n') ? M : N, incC),
+        /*B*/ BlasInfo( trans ? M : N, incB),
+        /*C*/ BlasInfo( trans ? N : M, incC),
     };
     init();
     my_dgemv(layout, transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
@@ -798,10 +799,9 @@ int main() {
 
         inDerivative = true;
         // dC = alpha * X * transpose(Y) + A
-        cblas_dger(layout, M, N, alpha, dC, incC, B, incB, dA, lda);
+        cblas_dger(layout, M, N, alpha, trans ? B : dC, trans ? incB : incC, trans ? dC : B, trans ? incC : incB, dA, lda);
         // dY = beta * dY
-        cblas_dscal((transA == 'N' || transA == 'n') ? M : N,
-                    beta, dC, incC);
+        cblas_dscal(trans ? N : M, beta, dC, incC);
 
 		checkTest(Test);
     
