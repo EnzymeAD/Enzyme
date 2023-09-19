@@ -6,12 +6,12 @@
 // RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli -
 // RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli -
 // RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli -
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli - ; fi
 
 #include "test_utils.h"
 
@@ -197,7 +197,7 @@ void printty(int v) {
 }
 void printty(char v) {
     if (v == DEFAULT_LAYOUT) {
-		printf("DEFAULT_LAYOUT (%x)", v);
+		printf("DEFAULT_LAYOUT (0x%x)", v);
 		return;
 	}
     if (v == UNUSED_TRANS) {
@@ -210,7 +210,7 @@ void printty(char v) {
 			return;
 		}
 	}
-    printf("Unknown char ('%c'=%d)", v, v);
+    printf("Unknown char ('%c'=0x%x)", v, v);
 }
 void printty(double v) {
     if (v == alpha) printf("alpha");
@@ -309,10 +309,11 @@ void printcall(BlasCall rcall) {
 		printf(", incY=");
 		printty(rcall.iarg5);
 		printf(", A=");
-		printty(rcall.pin_arg2);
+		printty(rcall.pout_arg1);
 		printf(", lda=");
 		printty(rcall.iarg6);
 		printf(")");
+		return;
       case CallType::COPY:
 		printf("COPY(N=");
 		printty(rcall.iarg1);
@@ -325,6 +326,7 @@ void printcall(BlasCall rcall) {
 		printf(", incY=");
 		printty(rcall.iarg5);
 		printf(")");
+		return;
       default: printf("UNKNOWN CALL (%d)", (int)rcall.type); return;
     }
 }
@@ -420,10 +422,10 @@ void cblas_dscal(int N, double alpha, double* X, int incX) {
 // A = alpha * X * transpose(Y) + A
 __attribute__((noinline))
 void cblas_dger(char layout, int M, int N, double alpha, double* X, int incX, double* Y, int incY, double* A, int lda) {
-    calls.push_back((BlasCall){inDerivative, CallType::SCAL,
+    calls.push_back((BlasCall){inDerivative, CallType::GER,
                                 A, X, Y,
                                 alpha, UNUSED_DOUBLE,
-                                UNUSED_TRANS,
+                                layout,
                                 UNUSED_TRANS, UNUSED_TRANS,
                                 M, N, UNUSED_INT, incX, incY, lda});
 }
@@ -457,7 +459,6 @@ void init() {
 }
 
 void checkTest(std::string name) {
-
         if (foundCalls.size() != calls.size()) {
             printf("Test %s failed: Expected %zu calls, found %zu\n", name.c_str(), calls.size(), foundCalls.size());
 			printf("Expected:\n");
@@ -529,7 +530,7 @@ int main() {
 
         inDerivative = true;
         // dC = alpha * X * transpose(Y) + A
-        cblas_dger(DEFAULT_LAYOUT+1, M, N, alpha, dC, incC, B, incB, dA, lda);
+        cblas_dger(DEFAULT_LAYOUT, M, N, alpha, dC, incC, B, incB, dA, lda);
         // dY = beta * dY
         cblas_dscal((transA == 'N' || transA == 'n') ? M : N,
                     beta, dC, incC);
