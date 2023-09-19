@@ -187,7 +187,17 @@ def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $
                   /* alpha  */  (Seq<["Ax", "is_normal", "transa", "m", "n"]>
                       (b<"gemv"> $layout, $transa, $m, $n, Constant<"1.0">, $A, (ld $A, $transa, $lda, $m, $n), $x, $incx, Constant<"0.0">, use<"Ax">, ConstantInt<1>),
                       (b<"dot"> (Rows $transa, $m, $n), adj<"y">, $incy, use<"Ax">, ConstantInt<1>)),
-                  /* A      */  (b<"ger">  $layout, $m, $n, $alpha, adj<"y">, $incy, $x, $incx, adj<"A">, $lda),
+
+                      //if (is_normal $transa) {
+                      //  call sger(m, n, alpha, ya, incy, x, incx, Aa, lda)
+                      //} else {
+                      //  call sger(m, n, alpha, x, incx, ya, incy, Aa, lda)
+                      //}
+                  /* A      */  (b<"ger">  $layout, $m, $n, $alpha, (Rows $transa, adj<"y">, $x),
+                                                                    (Rows $transa, $incy, $incx),
+                                                                    (Rows $transa, $x, adj<"y">),
+                                                                    (Rows $transa, $incx, $incy),
+                                                                    adj<"A">, $lda),
                   /* x      */  (b<"gemv"> $layout, transpose<"transa">, $m, $n, $alpha, $A, (ld $A, $transa, $lda, $m, $n), adj<"y">, $incy, Constant<"1.0">, adj<"x">, $incx),
                   /* beta   */  (b<"dot"> (Rows $transa, $m, $n), adj<"y">, $incy, input<"y">, $incy),
                   /* y      */  (b<"scal"> (Rows $transa, $m, $n), $beta, adj<"y">, $incy)

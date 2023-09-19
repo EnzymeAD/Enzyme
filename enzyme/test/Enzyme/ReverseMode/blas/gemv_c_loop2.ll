@@ -105,7 +105,9 @@ entry:
 ; CHECK-NEXT:   %[[i20:.+]] = getelementptr inbounds i8*, i8** %[[i19]], i64 %[[i15]]
 ; CHECK-NEXT:   %[[i21:.+]] = load i8*, i8** %[[i20]], align 8, !invariant.group !8
 ; CHECK-NEXT:   %cache.A_unwrap = bitcast i8* %[[i21]] to double*
-; CHECK-NEXT:   call void @cblas_dger(i32 101, i32 %N, i32 %N, double 1.000000e-03, double* %"v0'", i32 1, double* %cache.x_unwrap, i32 1, double* %"K'", i32 %N)
+; CHECK-DAG:   %[[r20:.+]] = select i1 false, double* %"v0'", double* %cache.x_unwrap
+; CHECK-DAG:   %[[r21:.+]] = select i1 false, double* %cache.x_unwrap, double* %"v0'"
+; CHECK-NEXT:   call void @cblas_dger(i32 101, i32 %N, i32 %N, double 1.000000e-03, double* %[[r20]], i32 1, double* %[[r21]], i32 1, double* %"K'", i32 %N)
 ; CHECK-NEXT:   %[[i22:.+]] = select i1 false, i32 %N, i32 %N
 ; CHECK-NEXT:   call void @cblas_dgemv(i32 101, i32 112, i32 %N, i32 %N, double 1.000000e-03, double* %cache.A_unwrap, i32 %[[i22]], double* %"v0'", i32 1, double 1.000000e+00, double* %"x0'", i32 1)
 ; CHECK-NEXT:   %[[i23:.+]] = select i1 false, i32 %N, i32 %N
