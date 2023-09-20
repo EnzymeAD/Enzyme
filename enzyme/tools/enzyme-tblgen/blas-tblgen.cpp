@@ -918,7 +918,13 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
         return;
       }
       if (Def->getName() == "Concat") {
-        os << "concat_values(";
+        os << "concat_values<";
+        for (size_t i = 0; i < Dag->getNumArgs(); i++) {
+          if (i != 0)
+            os << ", ";
+          os << "ArrayRef<Value*>";
+        }
+        os << ">(";
         for (size_t i = 0; i < Dag->getNumArgs(); i++) {
           if (i != 0)
             os << ", ";
