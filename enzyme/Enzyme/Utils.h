@@ -1192,7 +1192,7 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
                             llvm::Value *shadow, const char *Message,
                             llvm::DebugLoc &&loc, llvm::Instruction *orig);
 
-llvm::Function *GetFunctionFromValue(llvm::Value *fn);
+llvm::Function *GetFunctionFromValue(llvm::Value *fn, llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI, llvm::Value **lastVal=nullptr);
 
 static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
   auto F = getFunctionFromCall(CI);
