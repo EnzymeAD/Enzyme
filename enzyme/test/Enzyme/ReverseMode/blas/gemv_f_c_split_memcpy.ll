@@ -195,28 +195,20 @@ entry:
 ; CHECK-DAG:   %[[r25:.+]] = icmp eq i8 %ld.row.trans, 78
 ; CHECK-DAG:   %[[r26:.+]] = or i1 %[[r25]], %[[r24]]
 ; CHECK-NEXT:   %[[r27:.+]] = select i1 %[[r26]], i8* %"y'", i8* %15
-; CHECK-NEXT:   %ld.row.trans1 = load i8, i8* %malloccall, align 1
-; CHECK-DAG:   %[[r28:.+]] = icmp eq i8 %ld.row.trans1, 110
-; CHECK-DAG:   %[[r29:.+]] = icmp eq i8 %ld.row.trans1, 78
-; CHECK-DAG:   %[[r30:.+]] = or i1 %[[r29]], %[[r28]]
-; CHECK-NEXT:   %[[r31:.+]] = select i1 %[[r30]], i8* %incy_p, i8* %incx_p
-; CHECK-NEXT:   %ld.row.trans2 = load i8, i8* %malloccall, align 1
-; CHECK-DAG:   %[[r32:.+]] = icmp eq i8 %ld.row.trans2, 110
-; CHECK-DAG:   %[[r33:.+]] = icmp eq i8 %ld.row.trans2, 78
+; CHECK-NEXT:   %[[r31:.+]] = select i1 %[[r26]], i8* %incy_p, i8* %intcast.int.one
+; CHECK-NEXT:   %ld.row.trans1 = load i8, i8* %malloccall
+; CHECK-DAG:   %[[r32:.+]] = icmp eq i8 %ld.row.trans1, 110
+; CHECK-DAG:   %[[r33:.+]] = icmp eq i8 %ld.row.trans1, 78
 ; CHECK-DAG:   %[[r34:.+]] = or i1 %[[r33]], %[[r32]]
 ; CHECK-NEXT:   %[[r35:.+]] = select i1 %[[r34]], i8* %15, i8* %"y'"
-; CHECK-NEXT:   %ld.row.trans3 = load i8, i8* %malloccall, align 1
-; CHECK-DAG:   %[[r36:.+]] = icmp eq i8 %ld.row.trans3, 110
-; CHECK-DAG:   %[[r37:.+]] = icmp eq i8 %ld.row.trans3, 78
-; CHECK-DAG:   %[[r38:.+]] = or i1 %[[r37]], %[[r36]]
-; CHECK-NEXT:   %[[r39:.+]] = select i1 %[[r38]], i8* %incx_p, i8* %incy_p
-; CHECK-NEXT:   call void @dger_64_(i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %27, i8* %31, i8* %35, i8* %39, i8* %"A'", i8* %lda_p)
+; CHECK-NEXT:   %[[r39:.+]] = select i1 %[[r34]], i8* %intcast.int.one, i8* %incy_p
+; CHECK-NEXT:   call void @dger_64_(i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %[[r27]], i8* %[[r31]], i8* %[[r35]], i8* %[[r39]], i8* %"A'", i8* %lda_p)
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
 ; CHECK-NEXT:   %fpcast.constant.fp.1.0 = bitcast double* %byref.constant.fp.1.0 to i8*
 ; CHECK-NEXT:   call void @dgemv_64_(i8* %byref.transpose.transa, i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %"y'", i8* %incy_p, i8* %fpcast.constant.fp.1.0, i8* %"x'", i8* %incx_p)
-; CHECK-NEXT:   %ld.row.trans4 = load i8, i8* %malloccall
-; CHECK-DAG:    %[[r40:.+]] = icmp eq i8 %ld.row.trans4, 110
-; CHECK-DAG:    %[[r41:.+]] = icmp eq i8 %ld.row.trans4, 78
+; CHECK-NEXT:   %ld.row.trans2 = load i8, i8* %malloccall
+; CHECK-DAG:    %[[r40:.+]] = icmp eq i8 %ld.row.trans2, 110
+; CHECK-DAG:    %[[r41:.+]] = icmp eq i8 %ld.row.trans2, 78
 ; CHECK-NEXT:   %[[r42:.+]] = or i1 %[[r41]], %[[r40]]
 ; CHECK-NEXT:   %[[r43:.+]] = select i1 %[[r42]], i8* %m_p, i8* %n_p
 ; CHECK-NEXT:   call void @dscal_64_(i8* %[[r43]], i8* %beta_p, i8* %"y'", i8* %incy_p)

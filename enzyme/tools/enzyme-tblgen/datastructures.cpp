@@ -60,11 +60,11 @@ bool isVecLikeArg(ArgType ty) {
   return false;
 }
 
-bool isArgUsed(StringRef toFind, const DagInit *toSearch) {
+bool isArgUsed(StringRef toFind, const DagInit *toSearch, ArrayRef<std::string> nameVec, const DenseMap<size_t, ArgType> & argTypesFull) {
   for (size_t i = 0; i < toSearch->getNumArgs(); i++) {
     if (DagInit *arg = dyn_cast<DagInit>(toSearch->getArg(i))) {
       // os << " Recursing. Magic!\n";
-      if (isArgUsed(toFind, arg))
+      if (isArgUsed(toFind, arg, nameVec, argTypesFull))
         return true;
     } else {
       auto name = toSearch->getArgNameStr(i);
@@ -80,12 +80,48 @@ bool isArgUsed(StringRef toFind, const DagInit *toSearch) {
           if (toFind == transName) {
             return true;
           }
-        } else if (opName == "adj" || Def->isSubClassOf("adj")) {
+        } else if (opName == "adj" || Def->isSubClassOf("adj") || opName == "input" || Def->isSubClassOf("input")) {
           // shadow is unrelated, ignore it
+          // However, consider the extra added inc.
+      
+          auto name = Def->getValueAsString("name");
+      
+          size_t argPosition = (size_t)(-1);
+          for (size_t i=0; i<nameVec.size(); i++) {
+              if (nameVec[i] == name) {
+                argPosition = i;
+                break;
+              }
+          }
+        if (argPosition == (size_t)(-1)) {
+          errs() << "couldn't find name: " << name << " ap=" << argPosition << "\n";
+          PrintFatalError("arg not in inverted nameMap!");
+        }
+        auto ty = argTypesFull.lookup(argPosition);
+        if (ty == ArgType::vincData || ((opName == "adj" || Def->isSubClassOf("adj")) && ty == ArgType::mldData)) {
+            auto incName = nameVec[argPosition+1];
+            if (incName == toFind) return true;
+        }
         }
       } else {
         if (name == toFind) {
           return true;
+        }
+        size_t argPosition = (size_t)(-1);
+          for (size_t i=0; i<nameVec.size(); i++) {
+              if (nameVec[i] == name) {
+                argPosition = i;
+                break;
+              }
+          }
+        if (argPosition == (size_t)(-1)) {
+          errs() << "couldn't find name: " << name << " ap=" << argPosition << "\n";
+          PrintFatalError("arg not in inverted nameMap!");
+        }
+        auto ty = argTypesFull.lookup(argPosition);
+        if (ty == ArgType::vincData || ty == ArgType::mldData) {
+            auto incName = nameVec[argPosition+1];
+            if (incName == toFind) return true;
         }
       }
     }
@@ -93,17 +129,22 @@ bool isArgUsed(StringRef toFind, const DagInit *toSearch) {
   return false;
 }
 
-Rule::Rule(DagInit *dag, size_t activeArgIdx,
+Rule::Rule(ArrayRef<std::string> nameVec, DagInit *dag, size_t activeArgIdx,
            const StringMap<size_t> &patternArgs,
            const DenseMap<size_t, ArgType> &patternTypes,
            const DenseSet<size_t> &patternMutables)
-    : rewriteRule(dag), activeArg(activeArgIdx) {
+    : rewriteRule(dag), activeArg(activeArgIdx), nameVec(nameVec.begin(), nameVec.end()) {
   // For each arg found in the dag:
   //        1) copy patternArgs to ruleArgs if arg shows up in this rule
   for (auto argName : patternArgs.keys()) {
     assert(patternArgs.count(argName) == 1);
     size_t argPos = patternArgs.lookup(argName);
-    bool argUsedInRule = isArgUsed(argName, rewriteRule);
+    argTypesFull.insert(*patternTypes.find(argPos));
+  }
+  for (auto argName : patternArgs.keys()) {
+    assert(patternArgs.count(argName) == 1);
+    size_t argPos = patternArgs.lookup(argName);
+    bool argUsedInRule = isArgUsed(argName, rewriteRule, nameVec, argTypesFull);
     if (argUsedInRule) {
       argNameToPos.insert(std::pair<std::string, size_t>(argName, argPos));
       //        2) look up and copy the corresponding argType
@@ -331,7 +372,7 @@ TGPattern::TGPattern(Record *r) : blasName(r->getNameInitAsString()) {
       DagInit *derivRule = cast<DagInit>(derivOp.value());
       size_t actIdx = posActArgs[derivOp.index()];
       rules.push_back(
-          Rule(derivRule, actIdx, argNameToPos, argTypes, mutables));
+          Rule(args, derivRule, actIdx, argNameToPos, argTypes, mutables));
     }
   }
 

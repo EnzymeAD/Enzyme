@@ -2593,19 +2593,25 @@ llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::IntegerType *intType,
   return B.CreateLoad(intType, VP);
 }
 
-llvm::Value *get_blas_row(llvm::IRBuilder<> &B, llvm::Value *trans,
-                          llvm::Value *row, llvm::Value *col, bool byRef) {
-
+SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B, ArrayRef<llvm::Value *>transA,
+                          ArrayRef<llvm::Value *> row, ArrayRef<llvm::Value *> col, bool byRef) {
+  assert(transA.size() == 1);
+  auto trans = transA[0];
   if (byRef) {
     auto charType = IntegerType::get(trans->getContext(), 8);
     trans = B.CreateLoad(charType, trans, "ld.row.trans");
   }
 
-  return B.CreateSelect(
+  auto cond = 
       B.CreateOr(
           B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N')),
-          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'))),
-      row, col);
+          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n')));
+  assert(row.size() == col.size());
+  SmallVector<Value*, 1> toreturn;
+  for (size_t i=0; i<row.size(); i++) {
+    toreturn.push_back(B.CreateSelect(cond, row[i], col[i]));
+  }
+  return toreturn;
 }
 
 // return how many Special pointers are in T (count > 0),
