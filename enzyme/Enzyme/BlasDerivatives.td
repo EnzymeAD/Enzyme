@@ -235,10 +235,10 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                                                   //(Rows $transa, ____, ),
                                                   (Rows $transa, (Concat $B, (ld $B, $transb, $ldb, $k, $n)), adj<"C">),
                                                   //(Rows $transa, , ____),
-                                                  $beta, adj<"A">),
+                                                  Constant<"1.0">, adj<"A">),
 
                   /* B     */ (b<"gemm"> $layout, (Rows $transb, transpose<"transa">, Char<"T">), 
-                                                  (Rows $transb, Char<"N">, transpose<"transa">),
+                                                  (Rows $transb, Char<"N">, $transa),
                                                   (Rows $transb, $k, $n),
                                                   (Rows $transb, $n, $k),
                                                   $m, $alpha, 
@@ -247,7 +247,7 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                                                   // check next line
                                                   (Rows $transb, adj<"C">, (Concat $A, (ld $A, $transa, $lda, $m, $k))),
                                                   //(Rows $transb, ____, $lda),
-                                                  $beta, adj<"B">),
+                                                  Constant<"1.0">, adj<"B">),
                   /* beta  */ (FrobInnerProd<""> $m, $n, adj<"C">, input<"C">),
                   /* C     */ (b<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, adj<"C">, ConstantInt<0>)
                   ]
