@@ -136,6 +136,7 @@ entry:
 ; CHECK-NEXT:   %ret = alloca double
 ; CHECK-NEXT:   %byref.transpose.transa = alloca i8
 ; CHECK-NEXT:   %byref.int.one = alloca i64
+; CHECK-NEXT:   %byref.constant.char.N = alloca i8, align 1
 ; CHECK-NEXT:   %byref.constant.fp.1.0 = alloca double
 ; CHECK-NEXT:   %incy = alloca i64, i64 1, align 16
 ; CHECK-NEXT:   %1 = bitcast i64* %incy to i8*
@@ -203,6 +204,7 @@ entry:
 ; CHECK-NEXT:   %[[r35:.+]] = select i1 %[[r34]], i8* %15, i8* %"y'"
 ; CHECK-NEXT:   %[[r39:.+]] = select i1 %[[r34]], i8* %intcast.int.one, i8* %incy_p
 ; CHECK-NEXT:   call void @dger_64_(i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %[[r27]], i8* %[[r31]], i8* %[[r35]], i8* %[[r39]], i8* %"A'", i8* %lda_p)
+; CHECK-NEXT:   store i8 78, i8* %byref.constant.char.N, align 1
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
 ; CHECK-NEXT:   %fpcast.constant.fp.1.0 = bitcast double* %byref.constant.fp.1.0 to i8*
 ; CHECK-NEXT:   call void @dgemv_64_(i8* %byref.transpose.transa, i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %"y'", i8* %incy_p, i8* %fpcast.constant.fp.1.0, i8* %"x'", i8* %incx_p)

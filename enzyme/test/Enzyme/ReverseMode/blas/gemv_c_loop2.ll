@@ -108,8 +108,7 @@ entry:
 ; CHECK-DAG:   %[[r20:.+]] = select i1 false, double* %"v0'", double* %cache.x_unwrap
 ; CHECK-DAG:   %[[r21:.+]] = select i1 false, double* %cache.x_unwrap, double* %"v0'"
 ; CHECK-NEXT:   call void @cblas_dger(i32 101, i32 %N, i32 %N, double 1.000000e-03, double* %[[r20]], i32 1, double* %[[r21]], i32 1, double* %"K'", i32 %N)
-; CHECK-NEXT:   %[[i22:.+]] = select i1 false, i32 %N, i32 %N
-; CHECK-NEXT:   call void @cblas_dgemv(i32 101, i32 112, i32 %N, i32 %N, double 1.000000e-03, double* %cache.A_unwrap, i32 %[[i22]], double* %"v0'", i32 1, double 1.000000e+00, double* %"x0'", i32 1)
+; CHECK-NEXT:   call void @cblas_dgemv(i32 101, i32 112, i32 %N, i32 %N, double 1.000000e-03, double* %cache.A_unwrap, i32 %N, double* %"v0'", i32 1, double 1.000000e+00, double* %"x0'", i32 1)
 ; CHECK-NEXT:   %[[i23:.+]] = select i1 false, i32 %N, i32 %N
 ; CHECK-NEXT:   call void @cblas_dscal(i32 %[[i23]], double 1.000000e+00, double* %"v0'", i32 1)
 ; CHECK-NEXT:   %[[i24:.+]] = bitcast double* %cache.A_unwrap to i8*

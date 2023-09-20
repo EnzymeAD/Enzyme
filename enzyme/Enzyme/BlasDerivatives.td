@@ -134,8 +134,8 @@ def lascl : CallBlasPattern<(Op $layout, $type, $kl, $ku, $cfrom, $cto, $m, $n, 
 def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   ["y"],[len, fp, vinc<["n"]>, vinc<["n"]>],
                   [
-                  (b<"dot"> $n, adj<"y">, $incy, $x, $incx),
-                  (b<"axpy"> $n, $alpha, adj<"y">, $incy, adj<"x">, $incx),
+                  (b<"dot"> $n, adj<"y">, $x),
+                  (b<"axpy"> $n, $alpha, adj<"y">, adj<"x">),
                   (noop) // y = alpha*x + y, so nothing to do here
                   ]
                   >;
@@ -158,7 +158,7 @@ def copy : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   ["y"],[len, vinc<["n"]>, vinc<["n"]>],
                   [
                   (noop),// copy moves x into y, so x is never modified.
-                  (b<"axpy"> $n, Constant<"1.0">, adj<"y">, $incy, adj<"x">, $incx)
+                  (b<"axpy"> $n, Constant<"1.0">, adj<"y">, adj<"x">)
                   ]
                   >;
 
