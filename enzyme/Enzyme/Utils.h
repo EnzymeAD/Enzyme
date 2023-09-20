@@ -1637,7 +1637,8 @@ llvm::Value *to_blas_fp_callconv(llvm::IRBuilder<> &B, llvm::Value *V,
                                  llvm::IRBuilder<> &entryBuilder,
                                  llvm::Twine const & = "");
 
-llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
+llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
+                                  llvm::ArrayRef<llvm::Value *> trans,
                                   llvm::Value *arg_ld, llvm::Value *dim_1,
                                   llvm::Value *dim_2, bool cacheMat,
                                   bool byRef);
@@ -1651,8 +1652,10 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V);
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                        llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder,
                        const llvm::Twine &name);
-llvm::SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,
-                          llvm::ArrayRef<llvm::Value *> row, llvm::ArrayRef<llvm::Value *> col, bool byRef);
+llvm::SmallVector<llvm::Value *, 1>
+get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,
+             llvm::ArrayRef<llvm::Value *> row,
+             llvm::ArrayRef<llvm::Value *> col, bool byRef);
 
 // Parameter attributes from the original function/call that
 // we should preserve on the primal of the derivative code.

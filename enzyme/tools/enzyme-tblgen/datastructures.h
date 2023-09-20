@@ -40,7 +40,9 @@ using namespace llvm;
 const char *TyToString(ArgType ty);
 bool isVecLikeArg(ArgType ty);
 
-bool isArgUsed(StringRef toFind, const DagInit *toSearch, llvm::ArrayRef<std::string> nameVec, const llvm::DenseMap<size_t, ArgType> & argTypesFull);
+bool isArgUsed(StringRef toFind, const DagInit *toSearch,
+               llvm::ArrayRef<std::string> nameVec,
+               const llvm::DenseMap<size_t, ArgType> &argTypesFull);
 
 /// Subset of the general pattern info,
 /// but only the part that affects the specific argument being active.
@@ -57,7 +59,8 @@ private:
 public:
   SmallVector<std::string, 1> nameVec;
   DenseMap<size_t, ArgType> argTypesFull;
-  Rule(ArrayRef<std::string> nameVec, DagInit *dag, size_t activeArgIdx, const StringMap<size_t> &patternArgs,
+  Rule(ArrayRef<std::string> nameVec, DagInit *dag, size_t activeArgIdx,
+       const StringMap<size_t> &patternArgs,
        const DenseMap<size_t, ArgType> &patternTypes,
        const DenseSet<size_t> &patternMutables);
   bool isBLASLevel2or3() const;

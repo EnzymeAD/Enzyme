@@ -985,7 +985,7 @@ void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
   const auto nameMap = rule.getArgNameMap();
   const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
   if (Def->isSubClassOf("b")) {
-    //emit_deriv_blas_call(ruleDag, patternMap, handled, os);
+    // emit_deriv_blas_call(ruleDag, patternMap, handled, os);
   } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "noop") {
     // nothing to prepare
   } else if (Def->isSubClassOf("DiffeRetIndex")) {
@@ -1003,7 +1003,7 @@ void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
         const auto sub_Def = sub_def->getDef();
         if (sub_Def->isSubClassOf("b")) {
           os << "    //handling nested blas: " << std::to_string(i) << "\n";
-          //emit_deriv_blas_call(sub_Dag, patternMap, handled, os);
+          // emit_deriv_blas_call(sub_Dag, patternMap, handled, os);
           os << "    //handled nested blas: " << std::to_string(i) << "\n";
         } else if (sub_Def->isSubClassOf("FrobInnerProd")) {
           // nothing to prepare
@@ -1029,9 +1029,8 @@ void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
 // that the arg being differentiated is argAct.
 // The map offsetToBaseNames takes vinc, ld, and maps them to
 // the arg name of the original vector/matrix
-void rev_call_arg(DagInit *ruleDag, Rule &rule,
-                  size_t actArg, size_t pos, raw_ostream &os,
-                  StringMap<StringRef> & offsetToBaseNames ) {
+void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
+                  raw_ostream &os) {
   const auto nameMap = rule.getArgNameMap();
   const auto typeMap = rule.getArgTypeMap();
   auto arg = ruleDag->getArg(pos);
@@ -1039,28 +1038,29 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule,
     auto Def = cast<DefInit>(Dag->getOperator())->getDef();
 
     if (Def->isSubClassOf("MagicInst")) {
-        if (Def->getName() == "Rows") {
-            os << "get_blas_row(Builder2, ";
-            for (size_t i=0; i<Dag->getNumArgs(); i++) {
-                rev_call_arg(Dag, rule, actArg, i, os, offsetToBaseNames);
-                os << ", ";
-            }
-            os << "byRef)";
-            return;
+      if (Def->getName() == "Rows") {
+        os << "get_blas_row(Builder2, ";
+        for (size_t i = 0; i < Dag->getNumArgs(); i++) {
+          rev_call_arg(Dag, rule, actArg, i, os);
+          os << ", ";
         }
-        if (Def->getName() == "ld") {
-      assert(Dag->getNumArgs() == 5);
-      //(ld $A, $transa, $lda, $m, $k)
-      const auto transName = Dag->getArgNameStr(1);
-      const auto ldName = Dag->getArgNameStr(2);
-      const auto dim1Name = Dag->getArgNameStr(3);
-      const auto dim2Name = Dag->getArgNameStr(4);
-      const auto matName = Dag->getArgNameStr(0);
-      os << "{get_cached_mat_width(Builder2, "
-         << "arg_" << transName << ", arg_" << ldName << ", arg_" << dim1Name
-         << ", arg_" << dim2Name << ", cache_" << matName << ", byRef)}";
-         return;
-        }
+        os << "byRef)";
+        return;
+      }
+      if (Def->getName() == "ld") {
+        assert(Dag->getNumArgs() == 5);
+        //(ld $A, $transa, $lda, $m, $k)
+        const auto transName = Dag->getArgNameStr(1);
+        const auto ldName = Dag->getArgNameStr(2);
+        const auto dim1Name = Dag->getArgNameStr(3);
+        const auto dim2Name = Dag->getArgNameStr(4);
+        const auto matName = Dag->getArgNameStr(0);
+        os << "{get_cached_mat_width(Builder2, ";
+        rev_call_arg(Dag, rule, actArg, 1, os);
+        os << ", arg_" << ldName << ", arg_" << dim1Name << ", arg_" << dim2Name
+           << ", cache_" << matName << ", byRef)}";
+        return;
+      }
     }
 
     errs() << Def->getName() << "\n";
@@ -1073,43 +1073,46 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule,
       auto name = Def->getValueAsString("name");
       os << "{d_" << name;
       size_t argPosition = (size_t)(-1);
-      for (size_t i=0; i<rule.nameVec.size(); i++) {
-          if (rule.nameVec[i] == name) {
-            argPosition = i;
-            break;
-          }
-      }
-        if (argPosition == (size_t)(-1)) {
-          errs() << "couldn't find name: " << name << " ap=" << argPosition << "\n";
-          PrintFatalError("arg not in inverted nameMap!");
+      for (size_t i = 0; i < rule.nameVec.size(); i++) {
+        if (rule.nameVec[i] == name) {
+          argPosition = i;
+          break;
         }
-        auto ty = rule.argTypesFull.lookup(argPosition);
-        auto incName = rule.nameVec[argPosition+1];
+      }
+      if (argPosition == (size_t)(-1)) {
+        errs() << "couldn't find name: " << name << " ap=" << argPosition
+               << "\n";
+        PrintFatalError("arg not in inverted nameMap!");
+      }
+      auto ty = rule.argTypesFull.lookup(argPosition);
+      auto incName = rule.nameVec[argPosition + 1];
       if (ty == ArgType::vincData || ty == ArgType::mldData)
         os << ", arg_" << incName;
       else
-          assert(ty == ArgType::fp || ty == ArgType::ap);
+        assert(ty == ArgType::fp || ty == ArgType::ap);
       os << "}";
     } else if (Def->isSubClassOf("input")) {
       auto name = Def->getValueAsString("name");
       os << "{input_" << name;
       size_t argPosition = (size_t)(-1);
-      for (size_t i=0; i<rule.nameVec.size(); i++) {
-          if (rule.nameVec[i] == name) {
-            argPosition = i;
-            break;
-          }
-      }
-        if (argPosition == (size_t)(-1)) {
-          errs() << "couldn't find name: " << name << " ap=" << argPosition << "\n";
-          PrintFatalError("arg not in inverted nameMap!");
+      for (size_t i = 0; i < rule.nameVec.size(); i++) {
+        if (rule.nameVec[i] == name) {
+          argPosition = i;
+          break;
         }
-        auto ty = rule.argTypesFull.lookup(argPosition);
-        auto incName = rule.nameVec[argPosition+1];
+      }
+      if (argPosition == (size_t)(-1)) {
+        errs() << "couldn't find name: " << name << " ap=" << argPosition
+               << "\n";
+        PrintFatalError("arg not in inverted nameMap!");
+      }
+      auto ty = rule.argTypesFull.lookup(argPosition);
+      auto incName = rule.nameVec[argPosition + 1];
       if (ty == ArgType::vincData)
         os << ", (cache_" << name << " ? const_one : arg_" << incName << ")";
       else
-          assert(ty == ArgType::fp || ty == ArgType::ap || ty == ArgType::mldData);
+        assert(ty == ArgType::fp || ty == ArgType::ap ||
+               ty == ArgType::mldData);
       os << "}";
     } else if (Def->isSubClassOf("use")) {
       auto name = Def->getValueAsString("name");
@@ -1153,45 +1156,44 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule,
     auto ty = typeMap.lookup(argPosition);
 
     switch (ty) {
-        case ArgType::cblas_layout:
-        case ArgType::len:
-        case ArgType::fp:
-        case ArgType::ap:
-        case ArgType::trans:
-        case ArgType::diag:
-        case ArgType::uplo:
-        case ArgType::side:
-        case ArgType::vincInc:
-        case ArgType::vincData:
-        case ArgType::mldData:{
-        os << "{";
+    case ArgType::cblas_layout:
+    case ArgType::len:
+    case ArgType::fp:
+    case ArgType::ap:
+    case ArgType::trans:
+    case ArgType::diag:
+    case ArgType::uplo:
+    case ArgType::side:
+    case ArgType::vincInc:
+    case ArgType::vincData:
+    case ArgType::mldData: {
+      os << "{";
+      if (argPosition == actArg) {
+        os << "d_" << name;
+      } else {
+        os << "arg_" << name;
+      }
+      if (ty == ArgType::vincData) {
+        auto incName = rule.nameVec[argPosition + 1];
+        os << ", (cache_" << name << " ? const_one : arg_" << incName << ")";
+      }
+      if (ty == ArgType::mldData) {
+        auto ldName = rule.nameVec[argPosition + 1];
         if (argPosition == actArg) {
-            os << "d_" << name;
+          os << ", true_" << ldName;
         } else {
-            os << "arg_" << name;
+          // if this matrix got cached, we need more complex logic
+          // to determine the next arg. Thus handle it once we reach it
         }
-        if (ty == ArgType::vincData) {
-          auto incName = rule.nameVec[argPosition+1];
-          os << ", (cache_" << name << " ? const_one : arg_" << incName << ")";
-        }
-        if (ty == ArgType::mldData) {
-          auto ldName = rule.nameVec[argPosition+1];
-          if (argPosition == actArg) {
-            os << ", true_" << ldName;
-          } else {
-            // if this matrix got cached, we need more complex logic
-            // to determine the next arg. Thus handle it once we reach it
-          }
-        }
+      }
 
-        os << "}";
-        return;
-        }
-        default:
-          errs() << "name: " << name << " typename: " << ty << "\n";
-          llvm_unreachable("unimplemented input type in reverse mode!\n");
+      os << "}";
+      return;
     }
-
+    default:
+      errs() << "name: " << name << " typename: " << ty << "\n";
+      llvm_unreachable("unimplemented input type in reverse mode!\n");
+    }
   }
 }
 
@@ -1210,10 +1212,8 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
     numArgs = ruleDag->getNumArgs();
   }
 
-  StringMap<StringRef> offsetToBaseNames;
-
   os << "        std::vector<Value *>" << argName << ";\n";
-  
+
   // layout exist only under the cBLas ABI and not for all fncs.
   bool fncHasLayout = (ruleDag->getArgNameStr(0) == "layout");
   if (fncHasLayout) {
@@ -1224,7 +1224,7 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
 
   for (size_t pos = fncHasLayout ? 1 : 0; pos < numArgs; pos++) {
     os << "        for (auto item : ";
-    rev_call_arg(ruleDag, rule, actArg, pos, os, offsetToBaseNames);
+    rev_call_arg(ruleDag, rule, actArg, pos, os);
     os << ") " << argName << ".push_back(item);\n";
   }
 }
@@ -1243,20 +1243,21 @@ void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
        << "        CallInst *cubcall = "
           "cast<CallInst>(derivcall_inner_prod);\n";
   } else {
-        os << "      SmallVector<Type*, 1> tys; for (auto arg : " << argName << ") tys.push_back(arg->getType());\n";
-  std::string dfnc_ret_ty = get_blas_ret_ty(dfnc_name);
-  os << "    llvm::FunctionType *FT" << dfnc_name << " = FunctionType::get(" << dfnc_ret_ty
-       << ", tys, false);\n";
+    os << "      SmallVector<Type*, 1> tys; for (auto arg : " << argName
+       << ") tys.push_back(arg->getType());\n";
+    std::string dfnc_ret_ty = get_blas_ret_ty(dfnc_name);
+    os << "    llvm::FunctionType *FT" << dfnc_name << " = FunctionType::get("
+       << dfnc_ret_ty << ", tys, false);\n";
     os << "    auto derivcall_" << dfnc_name
-     << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-     << "  (blas.prefix + blas.floatType + \"" << dfnc_name
-     << "\" + blas.suffix).str(), FT" << dfnc_name << ");\n";
+       << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
+       << "  (blas.prefix + blas.floatType + \"" << dfnc_name
+       << "\" + blas.suffix).str(), FT" << dfnc_name << ");\n";
 
-  os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
-     << ".getCallee()))\n"
-     << "    {\n"
-     << "      attribute_" << dfnc_name << "(blas, F);\n"
-     << "    }\n\n";
+    os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
+       << ".getCallee()))\n"
+       << "    {\n"
+       << "      attribute_" << dfnc_name << "(blas, F);\n"
+       << "    }\n\n";
     os << "        CallInst *cubcall = "
           "cast<CallInst>("
        << bb << ".CreateCall(derivcall_" << dfnc_name << ", " << argName
@@ -1502,20 +1503,21 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
         emit_fret_call(dfnc_name, "ArrayRef<Value *>(args1)", name, "Builder2",
                        os);
       } else {
-        os << "    SmallVector<Type*, 1> tys; for (auto arg : args1) tys.push_back(arg->getType());\n";
-  std::string dfnc_ret_ty = get_blas_ret_ty(dfnc_name);
-  os << "    llvm::FunctionType *FT" << dfnc_name << " = FunctionType::get(" << dfnc_ret_ty
-       << ", tys, false);\n";
-    os << "    auto derivcall_" << dfnc_name
-     << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-     << "  (blas.prefix + blas.floatType + \"" << dfnc_name
-     << "\" + blas.suffix).str(), FT" << dfnc_name << ");\n";
+        os << "    SmallVector<Type*, 1> tys; for (auto arg : args1) "
+              "tys.push_back(arg->getType());\n";
+        std::string dfnc_ret_ty = get_blas_ret_ty(dfnc_name);
+        os << "    llvm::FunctionType *FT" << dfnc_name
+           << " = FunctionType::get(" << dfnc_ret_ty << ", tys, false);\n";
+        os << "    auto derivcall_" << dfnc_name
+           << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
+           << "  (blas.prefix + blas.floatType + \"" << dfnc_name
+           << "\" + blas.suffix).str(), FT" << dfnc_name << ");\n";
 
-  os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
-     << ".getCallee()))\n"
-     << "    {\n"
-     << "      attribute_" << dfnc_name << "(blas, F);\n"
-     << "    }\n\n";
+        os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
+           << ".getCallee()))\n"
+           << "    {\n"
+           << "      attribute_" << dfnc_name << "(blas, F);\n"
+           << "    }\n\n";
         os << "        Builder2.CreateCall(derivcall_" << dfnc_name
            << ", args1, Defs);\n";
       }
@@ -1578,27 +1580,29 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
           if (sub_Def->isSubClassOf("b")) {
             const auto dfnc_name = sub_Def->getValueAsString("s");
             os << "    //handling nested blas: " << std::to_string(i) << "\n";
-            //emit_deriv_blas_call(sub_Dag, patternMap, handled, os);
+            // emit_deriv_blas_call(sub_Dag, patternMap, handled, os);
             if (get_blas_ret_ty(dfnc_name) == "fpType") {
               // returns, so assume it's the last step of the sequence
               // and update the diffe accordingly
               assert(i == ruleDag->getNumArgs() - 1);
               emit_fret_call(dfnc_name, argName, name, "Builder2", os);
             } else {
-        os << "    SmallVector<Type*, 1> tys; for (auto arg : " << argName << ") tys.push_back(arg->getType());\n";
-  std::string dfnc_ret_ty = get_blas_ret_ty(dfnc_name);
-  os << "    llvm::FunctionType *FT" << dfnc_name << " = FunctionType::get(" << dfnc_ret_ty
-       << ", tys, false);\n";
-    os << "    auto derivcall_" << dfnc_name
-     << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-     << "  (blas.prefix + blas.floatType + \"" << dfnc_name
-     << "\" + blas.suffix).str(), FT" << dfnc_name << ");\n";
+              os << "    SmallVector<Type*, 1> tys; for (auto arg : " << argName
+                 << ") tys.push_back(arg->getType());\n";
+              std::string dfnc_ret_ty = get_blas_ret_ty(dfnc_name);
+              os << "    llvm::FunctionType *FT" << dfnc_name
+                 << " = FunctionType::get(" << dfnc_ret_ty
+                 << ", tys, false);\n";
+              os << "    auto derivcall_" << dfnc_name
+                 << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
+                 << "  (blas.prefix + blas.floatType + \"" << dfnc_name
+                 << "\" + blas.suffix).str(), FT" << dfnc_name << ");\n";
 
-  os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
-     << ".getCallee()))\n"
-     << "    {\n"
-     << "      attribute_" << dfnc_name << "(blas, F);\n"
-     << "    }\n\n";
+              os << "    if (auto F = dyn_cast<Function>(derivcall_"
+                 << dfnc_name << ".getCallee()))\n"
+                 << "    {\n"
+                 << "      attribute_" << dfnc_name << "(blas, F);\n"
+                 << "    }\n\n";
               os << "        Builder2.CreateCall(derivcall_" << dfnc_name
                  << ", " << argName << ", Defs);\n";
             }

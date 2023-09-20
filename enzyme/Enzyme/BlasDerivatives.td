@@ -184,7 +184,7 @@ def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $
                   ["y"], [cblas_layout, trans,  len, len,  fp,   mld<["m", "n"]>,      vinc<["transa", "n", "m"]>,      fp,    vinc<["transa", "m", "n"]>],
                   [
                   /* alpha  */  (Seq<["Ax", "is_normal", "transa", "m", "n"]>
-                      (b<"gemv"> $layout, $transa, $m, $n, Constant<"1.0">, $A, (ld $A, $transa, $lda, $m, $n), $x, Constant<"0.0">, use<"Ax">, ConstantInt<1>),
+                      (b<"gemv"> $layout, $transa, $m, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $m, $n), $x, Constant<"0.0">, use<"Ax">, ConstantInt<1>),
                       (b<"dot"> (Rows $transa, $m, $n), adj<"y">, use<"Ax">, ConstantInt<1>)),
 
                       //if (is_normal $transa) {
@@ -195,7 +195,7 @@ def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $
                   /* A      */  (b<"ger">  $layout, $m, $n, $alpha, (Rows $transa, adj<"y">, $x),
                                                                     (Rows $transa, $x, adj<"y">),
                                                                     adj<"A">),
-                  /* x      */  (b<"gemv"> $layout, transpose<"transa">, $m, $n, $alpha, $A, (ld $A, $transa, $lda, $m, $n), adj<"y">, Constant<"1.0">, adj<"x">),
+                  /* x      */  (b<"gemv"> $layout, transpose<"transa">, $m, $n, $alpha, $A, (ld $A, Char<"N">, $lda, $m, $n), adj<"y">, Constant<"1.0">, adj<"x">),
                   /* beta   */  (b<"dot"> (Rows $transa, $m, $n), adj<"y">, input<"y">),
                   /* y      */  (b<"scal"> (Rows $transa, $m, $n), $beta, adj<"y">)
                   ]

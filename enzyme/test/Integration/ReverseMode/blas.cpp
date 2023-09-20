@@ -889,8 +889,9 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test, const vec
         
 		auto N = rcall.iarg1;
 		auto incX = rcall.iarg4;
+		auto incY = rcall.iarg5;
         checkVector(X, "X", /*len=*/N, /*inc=*/incX, test, rcall, trace);
-        checkVector(Y, "Y", /*len=*/N, /*inc=*/incX, test, rcall, trace);
+        checkVector(Y, "Y", /*len=*/N, /*inc=*/incY, test, rcall, trace);
 		return;
       }
       case CallType::LACPY: {
@@ -982,7 +983,7 @@ void checkTest(std::string name) {
         }
 }
 
-void dotTests() {
+static void dotTests() {
 
     std::string Test = "DOT active both ";
     BlasInfo inputs[6] = {
@@ -1026,7 +1027,7 @@ void dotTests() {
         checkMemoryTrace(inputs, "Found " + Test, foundCalls);
 }
 
-void gemvTests() {
+static void gemvTests() {
   // N means normal matrix, T means transposed
   for (char layout : { CblasRowMajor, CblasColMajor }) {
   for (char transA : {'N', 'n', 'T', 't'}) {
@@ -1167,8 +1168,8 @@ void gemvTests() {
 			cblas_dlacpy(layout, '\0', M, N, A, lda, A_cache, M);
 			inputs[4] = BlasInfo(A_cache, layout, M, N, M);
 			auto B_cache = (double*)foundCalls[1].pout_arg1;
-			cblas_dcopy(N, B, incB, B_cache, 1);
-			inputs[5] = BlasInfo(B_cache, N, 1);
+			cblas_dcopy(trans ? M : N, B, incB, B_cache, 1);
+			inputs[5] = BlasInfo(B_cache, trans ? M : N, 1);
 
             ow_dgemv(layout, transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
 
@@ -1205,7 +1206,7 @@ void gemvTests() {
   }
 }
 
-void gemmTests() {
+static void gemmTests() {
   // N means normal matrix, T means transposed
   for (char layout : { CblasRowMajor, CblasColMajor }) {
   for (char transA : {'N', 'n', 'T', 't'}) {

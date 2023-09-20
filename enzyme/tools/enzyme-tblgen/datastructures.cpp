@@ -60,7 +60,9 @@ bool isVecLikeArg(ArgType ty) {
   return false;
 }
 
-bool isArgUsed(StringRef toFind, const DagInit *toSearch, ArrayRef<std::string> nameVec, const DenseMap<size_t, ArgType> & argTypesFull) {
+bool isArgUsed(StringRef toFind, const DagInit *toSearch,
+               ArrayRef<std::string> nameVec,
+               const DenseMap<size_t, ArgType> &argTypesFull) {
   for (size_t i = 0; i < toSearch->getNumArgs(); i++) {
     if (DagInit *arg = dyn_cast<DagInit>(toSearch->getArg(i))) {
       // os << " Recursing. Magic!\n";
@@ -80,48 +82,55 @@ bool isArgUsed(StringRef toFind, const DagInit *toSearch, ArrayRef<std::string> 
           if (toFind == transName) {
             return true;
           }
-        } else if (opName == "adj" || Def->isSubClassOf("adj") || opName == "input" || Def->isSubClassOf("input")) {
+        } else if (opName == "adj" || Def->isSubClassOf("adj") ||
+                   opName == "input" || Def->isSubClassOf("input")) {
           // shadow is unrelated, ignore it
           // However, consider the extra added inc.
-      
+
           auto name = Def->getValueAsString("name");
-      
+
           size_t argPosition = (size_t)(-1);
-          for (size_t i=0; i<nameVec.size(); i++) {
-              if (nameVec[i] == name) {
-                argPosition = i;
-                break;
-              }
+          for (size_t i = 0; i < nameVec.size(); i++) {
+            if (nameVec[i] == name) {
+              argPosition = i;
+              break;
+            }
           }
-        if (argPosition == (size_t)(-1)) {
-          errs() << "couldn't find name: " << name << " ap=" << argPosition << "\n";
-          PrintFatalError("arg not in inverted nameMap!");
-        }
-        auto ty = argTypesFull.lookup(argPosition);
-        if (ty == ArgType::vincData || ((opName == "adj" || Def->isSubClassOf("adj")) && ty == ArgType::mldData)) {
-            auto incName = nameVec[argPosition+1];
-            if (incName == toFind) return true;
-        }
+          if (argPosition == (size_t)(-1)) {
+            errs() << "couldn't find name: " << name << " ap=" << argPosition
+                   << "\n";
+            PrintFatalError("arg not in inverted nameMap!");
+          }
+          auto ty = argTypesFull.lookup(argPosition);
+          if (ty == ArgType::vincData ||
+              ((opName == "adj" || Def->isSubClassOf("adj")) &&
+               ty == ArgType::mldData)) {
+            auto incName = nameVec[argPosition + 1];
+            if (incName == toFind)
+              return true;
+          }
         }
       } else {
         if (name == toFind) {
           return true;
         }
         size_t argPosition = (size_t)(-1);
-          for (size_t i=0; i<nameVec.size(); i++) {
-              if (nameVec[i] == name) {
-                argPosition = i;
-                break;
-              }
+        for (size_t i = 0; i < nameVec.size(); i++) {
+          if (nameVec[i] == name) {
+            argPosition = i;
+            break;
           }
+        }
         if (argPosition == (size_t)(-1)) {
-          errs() << "couldn't find name: " << name << " ap=" << argPosition << "\n";
+          errs() << "couldn't find name: " << name << " ap=" << argPosition
+                 << "\n";
           PrintFatalError("arg not in inverted nameMap!");
         }
         auto ty = argTypesFull.lookup(argPosition);
         if (ty == ArgType::vincData || ty == ArgType::mldData) {
-            auto incName = nameVec[argPosition+1];
-            if (incName == toFind) return true;
+          auto incName = nameVec[argPosition + 1];
+          if (incName == toFind)
+            return true;
         }
       }
     }
@@ -133,7 +142,8 @@ Rule::Rule(ArrayRef<std::string> nameVec, DagInit *dag, size_t activeArgIdx,
            const StringMap<size_t> &patternArgs,
            const DenseMap<size_t, ArgType> &patternTypes,
            const DenseSet<size_t> &patternMutables)
-    : rewriteRule(dag), activeArg(activeArgIdx), nameVec(nameVec.begin(), nameVec.end()) {
+    : rewriteRule(dag), activeArg(activeArgIdx),
+      nameVec(nameVec.begin(), nameVec.end()) {
   // For each arg found in the dag:
   //        1) copy patternArgs to ruleArgs if arg shows up in this rule
   for (auto argName : patternArgs.keys()) {
