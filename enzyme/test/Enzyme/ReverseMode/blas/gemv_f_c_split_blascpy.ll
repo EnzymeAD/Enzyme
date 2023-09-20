@@ -4,7 +4,7 @@
 ; Here we don't transpose the matrix a (78 equals 'N' in ASCII) and we therefore also don't transpose x.
 ; Therfore the first arg to dcopy is n_p, as opposed to the gemv_transpose test.
 ;                       trans,                  M,                       N,                     alpha,                  A,    lda,                    x,  , incx,                  beta,                    y,  incy
-declare void @dgemv_64_(i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* , i8* nocapture readonly, i8*, i8* nocapture readonly, i8* nocapture readonly, i8* , i8* nocapture readonly) 
+declare void @dgemv_64_(i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* , i8* nocapture readonly, i8*, i8* nocapture readonly, i8* nocapture readonly, i8* , i8* nocapture readonly, i64) 
 
 define void @f(i8* noalias %y, i8* noalias %A, i8* noalias %x, i8* noalias %alpha, i8* noalias %beta) {
 entry:
@@ -25,7 +25,7 @@ entry:
   store i64 4, i64* %lda, align 16
   store i64 2, i64* %incx, align 16
   store i64 1, i64* %incy, align 16
-  call void @dgemv_64_(i8* %transa, i8* %m_p, i8* %n_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta, i8* %y, i8* %incy_p)
+  call void @dgemv_64_(i8* %transa, i8* %m_p, i8* %n_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta, i8* %y, i8* %incy_p, i64 1)
   ret void
 }
 
@@ -104,7 +104,7 @@ entry:
 ; CHECK-NEXT:   %23 = insertvalue { double*, double* } undef, double* %cache.x, 0
 ; CHECK-NEXT:   %24 = insertvalue { double*, double* } %23, double* %cache.y, 1
 ; CHECK-NEXT:   store { double*, double* } %24, { double*, double* }* %0
-; CHECK-NEXT:   call void @dgemv_64_(i8* %malloccall, i8* %m_p, i8* %n_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta, i8* %y, i8* %incy_p)
+; CHECK-NEXT:   call void @dgemv_64_(i8* %malloccall, i8* %m_p, i8* %n_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta, i8* %y, i8* %incy_p, i64 1)
 ; CHECK-NEXT:   %25 = load { double*, double* }, { double*, double* }* %0
 ; CHECK-NEXT:   ret { double*, double* } %25
 ; CHECK-NEXT: }
@@ -189,7 +189,7 @@ entry:
 ; CHECK-NEXT:   %fpcast.constant.fp.0.0 = bitcast double* %byref.constant.fp.0.0 to i8*
 ; CHECK-NEXT:   store i64 1, i64* %byref.constant.int.1
 ; CHECK-NEXT:   %intcast.constant.int.1 = bitcast i64* %byref.constant.int.1 to i8*
-; CHECK-NEXT:   call void @dgemv_64_(i8* %malloccall, i8* %m_p, i8* %n_p, i8* %fpcast.constant.fp.1.0, i8* %A, i8* %lda_p, i8* %20, i8* %intcast.int.one, i8* %fpcast.constant.fp.0.0, i8* %19, i8* %intcast.constant.int.1)
+; CHECK-NEXT:   call void @dgemv_64_(i8* %malloccall, i8* %m_p, i8* %n_p, i8* %fpcast.constant.fp.1.0, i8* %A, i8* %lda_p, i8* %20, i8* %intcast.int.one, i8* %fpcast.constant.fp.0.0, i8* %19, i8* %intcast.constant.int.1, i64 1)
 ; CHECK-NEXT:   %ld.row.trans = load i8, i8* %malloccall
 ; CHECK-DAG:    %[[c1:.+]] = icmp eq i8 %ld.row.trans, 110
 ; CHECK-DAG:    %[[c2:.+]] = icmp eq i8 %ld.row.trans, 78
@@ -218,7 +218,7 @@ entry:
 ; CHECK-NEXT:   store i8 78, i8* %byref.constant.char.N11, align 1
 ; CHECK-NEXT:   store double 1.000000e+00, double* %[[byrefconstantfp1]]
 ; CHECK-NEXT:   %[[fpcast14:.+]] = bitcast double* %[[byrefconstantfp1]] to i8*
-; CHECK-NEXT:   call void @dgemv_64_(i8* %byref.transpose.transa, i8* %m_p, i8* %n_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %"y'", i8* %incy_p, i8* %[[fpcast14]], i8* %"x'", i8* %incx_p)
+; CHECK-NEXT:   call void @dgemv_64_(i8* %byref.transpose.transa, i8* %m_p, i8* %n_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %"y'", i8* %incy_p, i8* %[[fpcast14]], i8* %"x'", i8* %incx_p, i64 1)
 ; CHECK-NEXT:   %ld.row.trans14 = load i8, i8* %malloccall
 ; CHECK-DAG:   %[[r39:.+]] = icmp eq i8 %ld.row.trans14, 110
 ; CHECK-DAG:   %[[r40:.+]] = icmp eq i8 %ld.row.trans14, 78

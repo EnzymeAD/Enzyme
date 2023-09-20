@@ -1,7 +1,7 @@
 ;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-lapack-copy=1 -S | FileCheck %s; fi
 ;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-lapack-copy=1  -S | FileCheck %s
 
-declare void @dgemm_64_(i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8*, i8* nocapture readonly, i8*, i8* nocapture readonly, i8* nocapture readonly, i8*, i8* nocapture readonly) 
+declare void @dgemm_64_(i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8*, i8* nocapture readonly, i8*, i8* nocapture readonly, i8* nocapture readonly, i8*, i8* nocapture readonly, i64, i64) 
 
 define void @f(i8* %C, i8* %A, i8* %B) {
 entry:
@@ -33,7 +33,7 @@ entry:
   store i64 8, i64* %ldb, align 16
   store double 0.000000e+00, double* %beta
   store i64 4, i64* %ldc, align 16
-  call void @dgemm_64_(i8* %transa, i8* %transb, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %C, i8* %ldc_p) 
+  call void @dgemm_64_(i8* %transa, i8* %transb, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %C, i8* %ldc_p, i64 1, i64 1) 
   %ptr = bitcast i8* %A to double*
   store double 0.0000000e+00, double* %ptr, align 8
   ret void
@@ -120,7 +120,7 @@ entry:
 ; CHECK-NEXT:   %cache.B = bitcast i8* %[[malloccall2]] to double*
 ; CHECK-NEXT:   store i8 0, i8* %byref.copy.garbage4
 ; CHECK-NEXT:   call void @dlacpy_64_(i8* %[[byrefgarbage2]], i8* %13, i8* %14, i8* %B, i8* %ldb_p, double* %cache.B, i8* %13)
-; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %transb, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %C, i8* %ldc_p)
+; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %transb, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %C, i8* %ldc_p, i64 1, i64 1)
 ; CHECK-NEXT:   %"ptr'ipc" = bitcast i8* %"A'" to double*
 ; CHECK-NEXT:   %ptr = bitcast i8* %A to double*
 ; CHECK-NEXT:   store double 0.000000e+00, double* %ptr, align 8, !alias.scope !0, !noalias !3
@@ -157,13 +157,13 @@ entry:
 ; CHECK-DAG:   %[[i41:.+]] = icmp eq i8 %loaded.trans5, 110
 ; CHECK-NEXT:   %[[i42:.+]] = or i1 %[[i41]], %[[i40]]
 ; CHECK-NEXT:   %[[i43:.+]] = select i1 %[[i42]], i8* %k_p, i8* %n_p
-; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %byref.transpose.transb, i8* %m_p, i8* %k_p, i8* %n_p, i8* %alpha_p, i8* %"C'", i8* %ldc_p, i8* %[[i25]], i8* %[[i43]], i8* %beta_p, i8* %"A'", i8* %lda_p)
+; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %byref.transpose.transb, i8* %m_p, i8* %k_p, i8* %n_p, i8* %alpha_p, i8* %"C'", i8* %ldc_p, i8* %[[i25]], i8* %[[i43]], i8* %beta_p, i8* %"A'", i8* %lda_p, i64 1, i64 1)
 ; CHECK-NEXT:   %[[cachedtrans2:.+]] = load i8, i8* %transa
 ; CHECK-DAG:   %[[i54:.+]] = icmp eq i8 %[[cachedtrans2]], 78
 ; CHECK-DAG:   %[[i55:.+]] = icmp eq i8 %[[cachedtrans2]], 110
 ; CHECK-NEXT:   %[[i56:.+]] = or i1 %[[i55]], %[[i54]]
 ; CHECK-NEXT:   %[[i57:.+]] = select i1 %[[i56]], i8* %m_p, i8* %k_p
-; CHECK-NEXT:   call void @dgemm_64_(i8* %byref.transpose.transa, i8* %transb, i8* %k_p, i8* %n_p, i8* %m_p, i8* %alpha_p, i8* %[[i24]], i8* %[[i57]], i8* %"C'", i8* %ldc_p, i8* %beta_p, i8* %"B'", i8* %ldb_p)
+; CHECK-NEXT:   call void @dgemm_64_(i8* %byref.transpose.transa, i8* %transb, i8* %k_p, i8* %n_p, i8* %m_p, i8* %alpha_p, i8* %[[i24]], i8* %[[i57]], i8* %"C'", i8* %ldc_p, i8* %beta_p, i8* %"B'", i8* %ldb_p, i64 1, i64 1)
 ; CHECK-NEXT:   store i8 71, i8* %byref.constant.char.G
 ; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.0
 ; CHECK-NEXT:   %[[intcast0:.+]] = bitcast i64* %byref.constant.int.0 to i8*
