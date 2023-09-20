@@ -1,11 +1,11 @@
 // This should work on LLVM 7, 8, 9, however in CI the version of clang installed on Ubuntu 18.04 cannot load
 // a clang plugin properly without segfaulting on exit. This is fine on Ubuntu 20.04 or later LLVM versions...
-// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1 | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1  | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-lapack-copy=1 | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -S | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -S | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1  -S | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1 -mllvm -enzyme-runtime-activity | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1 -mllvm -enzyme-runtime-activity  | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-lapack-copy=1 -mllvm -enzyme-runtime-activity |  %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -mllvm -enzyme-runtime-activity -S | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -mllvm -enzyme-runtime-activity -S | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -mllvm -enzyme-runtime-activity  -S | %lli -
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
@@ -65,7 +65,7 @@ static void dotTests() {
                             enzyme_const, N,
                             enzyme_dup, A, dA,
                             enzyme_const, incA,
-                            enzyme_dup, B, dB,
+                            enzyme_dup, B, B,
                             enzyme_const, incB);
         foundCalls = calls;
         init();
@@ -75,7 +75,6 @@ static void dotTests() {
         inDerivative = true;
 
         cblas_daxpy(N, 1.0, B, incB, dA, incA);
-        cblas_daxpy(N, 1.0, A, incA, dB, incB);
 
 		checkTest(Test);
     
@@ -95,7 +94,7 @@ static void gemvTests() {
     {
 
         bool trans = !(transA == 'N' || transA == 'n');
-        std::string Test = "GEMV active A, C ";
+        std::string Test = "GEMV active A, C [runtime const B] ";
     BlasInfo inputs[6] = {
         /*A*/ BlasInfo(A, layout, M, N, lda),
         /*B*/ BlasInfo(B, trans ? M : N, incB),
@@ -137,7 +136,7 @@ static void gemvTests() {
                             enzyme_const, alpha,
                             enzyme_dup, A, dA,
                             enzyme_const, lda,
-                            enzyme_const, B,
+                            enzyme_dup, B, B,
                             enzyme_const, incB,
                             enzyme_const, beta,
                             enzyme_dup, C, dC,
@@ -162,7 +161,7 @@ static void gemvTests() {
         // should be the same).
         checkMemoryTrace(inputs, "Found " + Test, foundCalls);
         
-        Test = "GEMV active A, B, C ";
+        Test = "GEMV active B, C [Runtime Const A]";
     
         init();
         __enzyme_autodiff((void*) my_dgemv,
@@ -171,7 +170,7 @@ static void gemvTests() {
                                 enzyme_const, M,
                                 enzyme_const, N,
                                 enzyme_const, alpha,
-                                enzyme_dup, A, dA,
+                                enzyme_dup, A, A,
                                 enzyme_const, lda,
                                 enzyme_dup, B, dB,
                                 enzyme_const, incB,
@@ -184,8 +183,6 @@ static void gemvTests() {
             my_dgemv(layout, transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
 
             inDerivative = true;
-            // dC = alpha * X * transpose(Y) + A
-            cblas_dger(layout, M, N, alpha, trans ? B : dC, trans ? incB : incC, trans ? dC : B, trans ? incC : incB, dA, lda);
 
             // dB = alpha * trans(A) * dC + dB
             cblas_dgemv(layout, transpose(transA), M, N, alpha, A, lda, dC, incC, 1.0, dB, incB); 
@@ -203,11 +200,10 @@ static void gemvTests() {
             checkMemoryTrace(inputs, "Found " + Test, foundCalls);
 
 
-
-        Test = "GEMV active/overwrite";
+        Test = "GEMV active A B [Runtime Const C]";
     
         init();
-        __enzyme_autodiff((void*) ow_dgemv,
+        __enzyme_autodiff((void*) my_dgemv,
                                 enzyme_const, layout,
                                 enzyme_const, transA,
                                 enzyme_const, M,
@@ -218,35 +214,22 @@ static void gemvTests() {
                                 enzyme_dup, B, dB,
                                 enzyme_const, incB,
                                 enzyme_const, beta,
-                                enzyme_dup, C, dC,
+                                enzyme_dup, C, C,
                                 enzyme_const, incC);
             foundCalls = calls;
             init();
 
-			assert(foundCalls.size() > 2);
-			auto A_cache = (double*)foundCalls[0].pout_arg1;
-			cblas_dlacpy(layout, '\0', M, N, A, lda, A_cache, M);
-			inputs[4] = BlasInfo(A_cache, layout, M, N, M);
-			auto B_cache = (double*)foundCalls[1].pout_arg1;
-			cblas_dcopy(trans ? M : N, B, incB, B_cache, 1);
-			inputs[5] = BlasInfo(B_cache, trans ? M : N, 1);
-
-            ow_dgemv(layout, transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
+            my_dgemv(layout, transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
 
             inDerivative = true;
             // dC = alpha * X * transpose(Y) + A
-            cblas_dger(layout, M, N, alpha,
-							trans ? B_cache : dC, 
-							trans ? 1 : incC, 
-							trans ? dC : B_cache,
-							trans ? incC : 1, dA,
-							lda);
+            // cblas_dger(layout, M, N, alpha, trans ? B : dC, trans ? incB : incC, trans ? dC : B, trans ? incC : incB, dA, lda);
 
             // dB = alpha * trans(A) * dC + dB
-            cblas_dgemv(layout, transpose(transA), M, N, alpha, A_cache, M, dC, incC, 1.0, dB, incB); 
+            // cblas_dgemv(layout, transpose(transA), M, N, alpha, A, lda, dC, incC, 1.0, dB, incB); 
 
             // dY = beta * dY
-            cblas_dscal(trans ? N : M, beta, dC, incC);
+            // cblas_dscal(trans ? N : M, beta, dC, incC);
 
             checkTest(Test);
         
@@ -285,6 +268,8 @@ static void gemmTests() {
 		BlasInfo(),
 		BlasInfo()
     };
+
+    printf("TODO GEMM runtime activity\n");
     init();
     my_dgemm(layout, transA, transB, M, N, K, alpha, A, lda, B, incB, beta, C, incC);
 
