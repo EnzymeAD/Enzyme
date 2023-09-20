@@ -1642,6 +1642,19 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
                                   llvm::Value *arg_ld, llvm::Value *dim_1,
                                   llvm::Value *dim_2, bool cacheMat,
                                   bool byRef);
+
+template <typename... T> static inline void nothing(T...){};
+template <typename... T>
+static inline llvm::SmallVector<llvm::Value *, 1> concat_values(T... t) {
+  llvm::SmallVector<llvm::Value *, 1> res;
+  auto append = [&](llvm::ArrayRef<llvm::Value *> V) {
+    res.append(V.begin(), V.end());
+    return 0;
+  };
+  nothing(append(t)...);
+  return res;
+}
+
 llvm::Value *is_normal(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef);
 llvm::Value *is_uper(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef);
 llvm::Value *select_vec_dims(llvm::IRBuilder<> &B, llvm::Value *trans,
