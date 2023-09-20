@@ -281,7 +281,7 @@ os << "      if (EnzymeBlasCopy) {\n"
 << "      auto *len2 = load_if_ref(BuilderZ, intType, N, byRef);\n"
 << "      auto *matSize = BuilderZ.CreateMul(len1, len2);\n"
 << "      auto malins = CreateAllocation(BuilderZ, fpType, matSize, \"cache." << matName << "\");\n"
-<< "      ValueType valueTypes[] = {" << valueTypes << "};\n"
+<< "      SmallVector<ValueType, 7> valueTypes = {" << valueTypes << "};\n"
 <<"       valueTypes[" << argIdx << "] = ValueType::Primal;\n"
 << "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
     for (auto len_pos : dimensions ) {
@@ -290,7 +290,9 @@ os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
 os << "      if (EnzymeLapackCopy) {\n"
 << "        Value *uplo = llvm::ConstantInt::get(charTy, 0);\n" // garbage data, just should not match U or L
 << "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, nullptr, allocationBuilder, \"copy.garbage\");\n"
-<< "        Value *args[7] = {uplo, M, N, arg_" << matName << ", arg_" << ldName << ", malins, M};\n"
+<< "        SmallVector<Value *, 7> args = {uplo, M, N, arg_" << matName << ", arg_" << ldName << ", malins, M};\n"
+<< "        if (!byRef) {\n"
+<< "           args.insert(args.begin(), arg_layout); valueTypes.insert(valueTypes.begin(), ValueType::Primal); }\n"
 << "        callMemcpyStridedLapack(BuilderZ, *gutils->oldFunc->getParent(), blas, args, gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
 << "      } else {\n"
 << "        auto dmemcpy = getOrInsertMemcpyMat(*gutils->oldFunc->getParent(), fpType, cast<PointerType>(malins->getType()), intType, 0, 0);\n"
