@@ -110,6 +110,9 @@ enum class CallType {
     GEMM,
     SCAL,
     GER,
+    DOT,
+    AXPY,
+    LASCL,
     COPY
 };
 
@@ -168,6 +171,9 @@ void printty(CallType v) {
       case CallType::SCAL: printf("SCAL"); return;
       case CallType::GER: printf("GER"); return;
       case CallType::COPY: printf("COPY"); return;
+      case CallType::DOT: printf("DOT"); return;
+      case CallType::AXPY: printf("AXPY"); return;
+      case CallType::LASCL: printf("LASCL"); return;
       default: printf("UNKNOWN CALL (%d)", (int)v);
     }
 }
@@ -226,6 +232,34 @@ void printty(double v) {
 
 void printcall(BlasCall rcall) {
   switch (rcall.type) {
+      case CallType::AXPY:
+		printf("DOT(N=");
+		printty(rcall.iarg1);
+		printf(", alpha=");
+		printty(rcall.farg1);
+		printf(", X=");
+		printty(rcall.pin_arg1);
+		printf(", incx=");
+		printty(rcall.iarg4);
+		printf(", Y=");
+		printty(rcall.pout_arg1);
+		printf(", incy=");
+		printty(rcall.iarg5);
+		printf(")");
+		return;
+      case CallType::DOT:
+		printf("DOT(N=");
+		printty(rcall.iarg1);
+		printf(", X=");
+		printty(rcall.pin_arg1);
+		printf(", incx=");
+		printty(rcall.iarg4);
+		printf(", Y=");
+		printty(rcall.pin_arg2);
+		printf(", incy=");
+		printty(rcall.iarg5);
+		printf(")");
+		return;
       case CallType::GEMV:
 		printf("GEMV(layout=");
 		printty(rcall.layout);
@@ -387,6 +421,30 @@ vector<BlasCall> calls;
 vector<BlasCall> foundCalls;
 
 extern "C" {
+
+__attribute__((noinline))
+double cblas_ddot(int N, double* X, int incx, double* Y, int incy) {
+    BlasCall call = {inDerivative, CallType::DOT,
+                                UNUSED_POINTER, X, Y,
+                                UNUSED_DOUBLE, UNUSED_DOUBLE,
+                                UNUSED_TRANS,
+                                UNUSED_TRANS, UNUSED_TRANS,
+                                N, UNUSED_INT, UNUSED_INT, incx, incy, UNUSED_INT};
+    calls.push_back(call);
+    return 3.15+N;
+}
+
+// Y += alpha * X
+__attribute__((noinline))
+void cblas_daxpy(int N, double alpha, double* X, int incx, double* Y, int incy) {
+    BlasCall call = {inDerivative, CallType::AXPY,
+                                Y, X, UNUSED_POINTER,
+                                alpha, UNUSED_DOUBLE,
+                                UNUSED_TRANS,
+                                UNUSED_TRANS, UNUSED_TRANS,
+                                N, UNUSED_INT, UNUSED_INT, incx, incy, UNUSED_INT};
+    calls.push_back(call);
+}
 
 // Y = alpha * op(A) * X + beta * Y
 __attribute__((noinline))
@@ -572,6 +630,33 @@ void checkMatrix(BlasInfo info, std::string matname, char layout, int rows, int 
 
 void checkMemory(BlasCall rcall, BlasInfo inputs[3], std::string test, const vector<BlasCall> & trace) {
   switch (rcall.type) {
+      case CallType::AXPY: {
+        auto Y = inputs[pointer_to_index(rcall.pout_arg1)];
+        
+        auto X = inputs[pointer_to_index(rcall.pin_arg1)];
+		
+		auto alpha = rcall.farg1;
+        
+        auto N = rcall.iarg1;
+		auto incX = rcall.iarg4;
+		auto incY = rcall.iarg5;
+        
+        checkVector(X, "X", /*len=*/N, /*inc=*/incX, test, rcall, trace);
+        checkVector(Y, "Y", /*len=*/N, /*inc=*/incY, test, rcall, trace);
+		return;
+      }
+      case CallType::DOT: {
+        auto X = inputs[pointer_to_index(rcall.pin_arg1)];
+        auto Y = inputs[pointer_to_index(rcall.pin_arg2)];
+		
+        auto N = rcall.iarg1;
+		auto incX = rcall.iarg4;
+		auto incY = rcall.iarg5;
+        
+        checkVector(X, "X", /*len=*/N, /*inc=*/incX, test, rcall, trace);
+        checkVector(Y, "Y", /*len=*/N, /*inc=*/incY, test, rcall, trace);
+		return;
+      }
       case CallType::GEMV:{
         // Y = alpha * op(A) * X + beta * Y
         auto Y = inputs[pointer_to_index(rcall.pout_arg1)];
@@ -701,6 +786,11 @@ void checkMemoryTrace(BlasInfo inputs[3], std::string test, const vector<BlasCal
         checkMemory(trace[i], inputs, test, trace);
 }
 
+void init() {
+    inDerivative = false;
+    calls.clear();
+}
+
 int enzyme_dup;
 int enzyme_out;
 int enzyme_const;
@@ -712,9 +802,22 @@ void my_dgemv(char layout, char trans, int M, int N, double alpha, double* __res
     inDerivative = true;
 }
 
-void init() {
-    inDerivative = false;
-    calls.clear();
+double my_ddot(int N, double* __restrict__ X, int incx, double* __restrict__ Y, int incy) {
+    double res = cblas_ddot(N, X, incx, Y, incy);
+    inDerivative = true;
+    return res;
+}
+
+char transpose(char c) {
+    switch (c) {
+        case 'N': return 'T';
+        case 'n': return 't';
+        case 'T': return 'N';
+        case 't': return 'n';
+        default:
+                  printf("Illegal transpose of '%c'\n", c);
+                  exit(1);
+                }
 }
 
 void checkTest(std::string name) {
@@ -740,6 +843,47 @@ void checkTest(std::string name) {
 }
 
 int main() {
+    
+    {
+
+    std::string Test = "DOT active both ";
+    BlasInfo inputs[3] = {
+        /*A*/ BlasInfo(N, incA),
+        /*B*/ BlasInfo(N, incB),
+        /*C*/ BlasInfo(M, incC),
+    };
+    init();
+    my_ddot(N, A, incA, B, incB);
+
+    // Check memory of primal on own.
+    checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+    init();
+    __enzyme_autodiff((void*) my_ddot,
+                            enzyme_const, N,
+                            enzyme_dup, A, dA,
+                            enzyme_const, incA,
+                            enzyme_dup, B, dB,
+                            enzyme_const, incB);
+        foundCalls = calls;
+        init();
+
+        my_ddot(N, A, incA, B, incB);
+
+        inDerivative = true;
+
+        cblas_daxpy(N, 1.0, B, incB, dA, incA);
+        cblas_daxpy(N, 1.0, A, incA, dB, incB);
+
+		checkTest(Test);
+    
+        // Check memory of primal of expected derivative
+        checkMemoryTrace(inputs, "Expected " + Test, calls);
+        
+        // Check memory of primal of our derivative (if equal above, it
+        // should be the same).
+        checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+    }
 
   // N means normal matrix, T means transposed
   for (char layout : { CblasRowMajor, CblasColMajor }) {
@@ -811,6 +955,46 @@ int main() {
         // Check memory of primal of our derivative (if equal above, it
         // should be the same).
         checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+        
+        Test = "GEMV active A, B, C ";
+    
+        init();
+        __enzyme_autodiff((void*) my_dgemv,
+                                enzyme_const, layout,
+                                enzyme_const, transA,
+                                enzyme_const, M,
+                                enzyme_const, N,
+                                enzyme_const, alpha,
+                                enzyme_dup, A, dA,
+                                enzyme_const, lda,
+                                enzyme_dup, B, dB,
+                                enzyme_const, incB,
+                                enzyme_const, beta,
+                                enzyme_dup, C, dC,
+                                enzyme_const, incC);
+            foundCalls = calls;
+            init();
+
+            my_dgemv(layout, transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
+
+            inDerivative = true;
+            // dC = alpha * X * transpose(Y) + A
+            cblas_dger(layout, M, N, alpha, trans ? B : dC, trans ? incB : incC, trans ? dC : B, trans ? incC : incB, dA, lda);
+
+            // dB = alpha * trans(A) * dC + dB
+            cblas_dgemv(layout, transpose(transA), M, N, alpha, A, lda, dC, incC, 1.0, dB, incB); 
+
+            // dY = beta * dY
+            cblas_dscal(trans ? N : M, beta, dC, incC);
+
+            checkTest(Test);
+        
+            // Check memory of primal of expected derivative
+            checkMemoryTrace(inputs, "Expected " + Test, calls);
+            
+            // Check memory of primal of our derivative (if equal above, it
+            // should be the same).
+            checkMemoryTrace(inputs, "Found " + Test, foundCalls);
     }
 
 
