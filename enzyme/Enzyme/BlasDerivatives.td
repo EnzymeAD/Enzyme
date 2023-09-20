@@ -134,10 +134,9 @@ def lascl : CallBlasPattern<(Op $layout, $type, $kl, $ku, $cfrom, $cto, $m, $n, 
 def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   ["y"],[len, fp, vinc<["n"]>, vinc<["n"]>],
                   [
-                  // dot must proceed scal, because scal modifies adj<"x">
-                  (inactive),
-                  (inactive),//(b<"scal"> $n, $alpha, adj<"x">, $incy),
-                  (inactive) // y = (Ax) + y, so nothing to do here
+                  (b<"dot"> $n, adj<"y">, $incy, $x, $incx),
+                  (b<"axpy"> $n, $alpha, adj<"y">, $incy, adj<"x">, $incx),
+                  (noop) // y = alpha*x + y, so nothing to do here
                   ]
                   >;
 
