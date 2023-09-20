@@ -154,13 +154,13 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 //                   >;
 
 
-// def copy : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
-//                   ["y"],[len, vinc, vinc],
-//                   [
-//                   (noop),// copy moves x into y, so x is never modified.
-//                   (b<"axpy"> $n, Constant<"1.0">, adj<"y">, $incy, adj<"x">, $incx)
-//                   ]
-//                   >;
+def copy : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
+                  ["y"],[len, vinc<["n"]>, vinc<["n"]>],
+                  [
+                  (noop),// copy moves x into y, so x is never modified.
+                  (b<"axpy"> $n, Constant<"1.0">, adj<"y">, $incy, adj<"x">, $incx)
+                  ]
+                  >;
 
 // def swap : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 //                   ["x","y"],[len, vinc, vinc],
