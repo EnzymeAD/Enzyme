@@ -645,7 +645,7 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
                              BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
                              llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
-  std::string copy_name = (blas.floatType + "lacpy" + blas.suffix).str();
+  std::string copy_name = (blas.prefix + blas.floatType + "lacpy" + blas.suffix).str();
 
   SmallVector<Type *, 1> tys;
   for (auto arg : args)
