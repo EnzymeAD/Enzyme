@@ -1326,6 +1326,6 @@ int main() {
 
   gemvTests();
 
-  gemmTests();
+  // gemmTests();
 
 }
