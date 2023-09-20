@@ -1114,7 +1114,7 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
   }
   os << "        if (byRef) {\n";
   int n = 0;
-  if (func == "gemv")
+  if (func == "gemv" || func == "lascl")
     n = 1;
   if (func == "gemm")
     n = 2;
