@@ -1215,11 +1215,11 @@ static void gemmTests() {
     {
 
         bool transA_bool = !(transA == 'N' || transA == 'n');
-        bool transB_bool = !(transA == 'N' || transA == 'n');
+        bool transB_bool = !(transB == 'N' || transB == 'n');
         std::string Test = "GEMM";
     BlasInfo inputs[6] = {
         /*A*/ BlasInfo(A, layout, transA_bool ? K : M, transA_bool ? M : K, lda),
-        /*B*/ BlasInfo(B, layout, transB_bool ? N : K , transA_bool ? K : N, incB),
+        /*B*/ BlasInfo(B, layout, transB_bool ? N : K , transB_bool ? K : N, incB),
         /*C*/ BlasInfo(C, layout, M, N, incC),
 		BlasInfo(),
 		BlasInfo(),
@@ -1275,22 +1275,22 @@ static void gemmTests() {
 
         // dA = 
         my_dgemm(layout,
-                    transA_bool ? transpose(transB) : transA,
-                    transA_bool ? transA : transpose(transB),
+                    transA_bool ? transB : 'N',
+                    transA_bool ? 'T' : transpose(transB),
                     transA_bool ? K : M,
                     transA_bool ? M : K,
                     N,
                     alpha,
                     transA_bool ? B : dC,
                     transA_bool ? incB : incC,
-                    transA_bool ? C : dB,
+                    transA_bool ? dC : B,
                     transA_bool ? incC : incB,
                     1.0, dA, lda);
         
         // dB = 
         my_dgemm(layout,
-                    transB_bool ? transB : transpose(transA),
-                    transB_bool ? transA : transB,
+                    transB_bool ? 'T' : transpose(transA),
+                    transB_bool ? transA : 'N', //transB,
                     transB_bool ? N : K,
                     transB_bool ? K : N,
                     M,
