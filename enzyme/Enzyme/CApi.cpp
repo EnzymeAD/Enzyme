@@ -580,7 +580,7 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
     overwritten_args.push_back(_overwritten_args[i]);
   }
   return wrap(eunwrap(Logic).CreatePrimalAndGradient(
-      RequestContext(cast<Instruction>(unwrap(request_req)),
+      RequestContext(cast_or_null<Instruction>(unwrap(request_req)),
                      unwrap(request_ip)),
       (ReverseCacheKey){
           .todiff = cast<Function>(unwrap(todiff)),
