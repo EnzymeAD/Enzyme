@@ -5296,7 +5296,6 @@ TypeResults TypeAnalysis::analyzeFunction(const FnTypeInfo &fn) {
   assert(fn.KnownValues.size() ==
          fn.Function->getFunctionType()->getNumParams());
   assert(fn.Function);
-  assert(!fn.Function->empty());
   auto found = analyzedFunctions.find(fn);
   if (found != analyzedFunctions.end()) {
     auto &analysis = *found->second;
@@ -5309,6 +5308,8 @@ TypeResults TypeAnalysis::analyzeFunction(const FnTypeInfo &fn) {
 
     return TypeResults(analysis);
   }
+  if (fn.Function->empty())
+    return TypeResults(*(TypeAnalyzer *)nullptr);
 
   auto res = analyzedFunctions.emplace(fn, new TypeAnalyzer(fn, *this));
   auto &analysis = *res.first->second;

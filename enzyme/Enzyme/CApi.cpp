@@ -541,11 +541,11 @@ void EnzymeGradientUtilsSubTransferHelper(
 }
 
 LLVMValueRef EnzymeCreateForwardDiff(
-    EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
-    CDIFFE_TYPE *constant_args, size_t constant_args_size,
-    EnzymeTypeAnalysisRef TA, uint8_t returnValue, CDerivativeMode mode,
-    uint8_t freeMemory, unsigned width, LLVMTypeRef additionalArg,
-    CFnTypeInfo typeInfo, uint8_t *_overwritten_args,
+    EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
+    LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
+    size_t constant_args_size, EnzymeTypeAnalysisRef TA, uint8_t returnValue,
+    CDerivativeMode mode, uint8_t freeMemory, unsigned width,
+    LLVMTypeRef additionalArg, CFnTypeInfo typeInfo, uint8_t *_overwritten_args,
     size_t overwritten_args_size, EnzymeAugmentedReturnPtr augmented) {
   SmallVector<DIFFE_TYPE, 4> nconstant_args((DIFFE_TYPE *)constant_args,
                                             (DIFFE_TYPE *)constant_args +
@@ -556,16 +556,18 @@ LLVMValueRef EnzymeCreateForwardDiff(
     overwritten_args.push_back(_overwritten_args[i]);
   }
   return wrap(eunwrap(Logic).CreateForwardDiff(
+      RequestContext(cast_or_null<Instruction>(unwrap(request_req)),
+                     unwrap(request_ip)),
       cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
       eunwrap(TA), returnValue, (DerivativeMode)mode, freeMemory, width,
       unwrap(additionalArg), eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
       overwritten_args, eunwrap(augmented)));
 }
 LLVMValueRef EnzymeCreatePrimalAndGradient(
-    EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
-    CDIFFE_TYPE *constant_args, size_t constant_args_size,
-    EnzymeTypeAnalysisRef TA, uint8_t returnValue, uint8_t dretUsed,
-    CDerivativeMode mode, unsigned width, uint8_t freeMemory,
+    EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
+    LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
+    size_t constant_args_size, EnzymeTypeAnalysisRef TA, uint8_t returnValue,
+    uint8_t dretUsed, CDerivativeMode mode, unsigned width, uint8_t freeMemory,
     LLVMTypeRef additionalArg, uint8_t forceAnonymousTape, CFnTypeInfo typeInfo,
     uint8_t *_overwritten_args, size_t overwritten_args_size,
     EnzymeAugmentedReturnPtr augmented, uint8_t AtomicAdd) {
@@ -578,6 +580,8 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
     overwritten_args.push_back(_overwritten_args[i]);
   }
   return wrap(eunwrap(Logic).CreatePrimalAndGradient(
+      RequestContext(cast<Instruction>(unwrap(request_req)),
+                     unwrap(request_ip)),
       (ReverseCacheKey){
           .todiff = cast<Function>(unwrap(todiff)),
           .retType = (DIFFE_TYPE)retType,
@@ -596,10 +600,10 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
       eunwrap(TA), eunwrap(augmented)));
 }
 EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
-    EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
-    CDIFFE_TYPE *constant_args, size_t constant_args_size,
-    EnzymeTypeAnalysisRef TA, uint8_t returnUsed, uint8_t shadowReturnUsed,
-    CFnTypeInfo typeInfo, uint8_t *_overwritten_args,
+    EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
+    LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
+    size_t constant_args_size, EnzymeTypeAnalysisRef TA, uint8_t returnUsed,
+    uint8_t shadowReturnUsed, CFnTypeInfo typeInfo, uint8_t *_overwritten_args,
     size_t overwritten_args_size, uint8_t forceAnonymousTape, unsigned width,
     uint8_t AtomicAdd) {
 
@@ -612,14 +616,31 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
     overwritten_args.push_back(_overwritten_args[i]);
   }
   return ewrap(eunwrap(Logic).CreateAugmentedPrimal(
+      RequestContext(cast_or_null<Instruction>(unwrap(request_req)),
+                     unwrap(request_ip)),
       cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
       eunwrap(TA), returnUsed, shadowReturnUsed,
       eunwrap(typeInfo, cast<Function>(unwrap(todiff))), overwritten_args,
       forceAnonymousTape, width, AtomicAdd));
 }
 
+LLVMValueRef EnzymeCreateBatch(EnzymeLogicRef Logic, LLVMValueRef request_req,
+                               LLVMBuilderRef request_ip, LLVMValueRef tobatch,
+                               unsigned width, CBATCH_TYPE *arg_types,
+                               size_t arg_types_size, CBATCH_TYPE retType) {
+
+  return wrap(eunwrap(Logic).CreateBatch(
+      RequestContext(cast_or_null<Instruction>(unwrap(request_req)),
+                     unwrap(request_ip)),
+      cast<Function>(unwrap(tobatch)), width,
+      ArrayRef<BATCH_TYPE>((BATCH_TYPE *)arg_types,
+                           (BATCH_TYPE *)arg_types + arg_types_size),
+      (BATCH_TYPE)retType));
+}
+
 LLVMValueRef EnzymeCreateTrace(
-    EnzymeLogicRef Logic, LLVMValueRef totrace, LLVMValueRef *sample_functions,
+    EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
+    LLVMValueRef totrace, LLVMValueRef *sample_functions,
     size_t sample_functions_size, LLVMValueRef *observe_functions,
     size_t observe_functions_size, const char *active_random_variables[],
     size_t active_random_variables_size, CProbProgMode mode, uint8_t autodiff,
@@ -641,6 +662,8 @@ LLVMValueRef EnzymeCreateTrace(
   }
 
   return wrap(eunwrap(Logic).CreateTrace(
+      RequestContext(cast_or_null<Instruction>(unwrap(request_req)),
+                     unwrap(request_ip)),
       cast<Function>(unwrap(totrace)), SampleFunctions, ObserveFunctions,
       ActiveRandomVariables, (ProbProgMode)mode, (bool)autodiff,
       eunwrap(interface)));
