@@ -87,16 +87,16 @@ entry:
 
 ; CHECK: define internal void @[[active]](i32 %len, float* noalias %m, float* %"m'", i32 %incm, float* noalias %n, float* %"n'", i32 %incn, float %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:  %rt.inactive.x = icmp eq float* %"m'", %m
-; CHECK-NEXT:  %rt.inactive.y = icmp eq float* %"n'", %n
-; CHECK-NEXT:  br i1 %rt.inactive.x, label %invertentry.x.done, label %invertentry.x.active
+; CHECK-NEXT:  %[[rtinactivex:.+]] = icmp eq float* %"m'", %m
+; CHECK-NEXT:  %[[rtinactivey:.+]] = icmp eq float* %"n'", %n
+; CHECK-NEXT:  br i1 %[[rtinactivex]], label %invertentry.x.done, label %invertentry.x.active
 
 ; CHECK: invertentry.x.active:                             ; preds = %entry
 ; CHECK-NEXT:  call void @cblas_saxpy(i32 %len, float %differeturn, float* %n, i32 %incn, float* %"m'", i32 %incm)
 ; CHECK-NEXT:  br label %invertentry.x.done
 
 ; CHECK: invertentry.x.done:                               ; preds = %invertentry.x.active, %entry
-; CHECK-NEXT:  br i1 %rt.inactive.y, label %invertentry.y.done, label %invertentry.y.active
+; CHECK-NEXT:  br i1 %[[rtinactivey]], label %invertentry.y.done, label %invertentry.y.active
 
 ; CHECK: invertentry.y.active:                             ; preds = %invertentry.x.done
 ; CHECK-NEXT:  call void @cblas_saxpy(i32 %len, float %differeturn, float* %m, i32 %incm, float* %"n'", i32 %incn)
@@ -108,8 +108,8 @@ entry:
 
 ; CHECK: define internal void @[[inactiveFirst]](i32 %len, float* noalias %m, i32 %incm, float* noalias %n, float* %"n'", i32 %incn, float %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %rt.inactive.y = icmp eq float* %"n'", %n
-; CHECK-NEXT:   br i1 %rt.inactive.y, label %invertentry.y.done, label %invertentry.y.active
+; CHECK-NEXT:   %[[rtinactivey:.+]] = icmp eq float* %"n'", %n
+; CHECK-NEXT:   br i1 %[[rtinactivey]], label %invertentry.y.done, label %invertentry.y.active
 
 ; CHECK: invertentry.y.active:                             ; preds = %entry
 ; CHECK-NEXT:   call void @cblas_saxpy(i32 %len, float %differeturn, float* %m, i32 %incm, float* %"n'", i32 %incn)
@@ -121,8 +121,8 @@ entry:
 
 ; CHECK: define internal void @[[inactiveSecond]](i32 %len, float* noalias %m, float* %"m'", i32 %incm, float* noalias %n, i32 %incn, float %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %rt.inactive.x = icmp eq float* %"m'", %m
-; CHECK-NEXT:   br i1 %rt.inactive.x, label %invertentry.x.done, label %invertentry.x.active
+; CHECK-NEXT:   %[[rtinactivex]] = icmp eq float* %"m'", %m
+; CHECK-NEXT:   br i1 %[[rtinactivex]], label %invertentry.x.done, label %invertentry.x.active
 
 ; CHECK: invertentry.x.active:                             ; preds = %entry
 ; CHECK-NEXT:   call void @cblas_saxpy(i32 %len, float %differeturn, float* %n, i32 %incn, float* %"m'", i32 %incm)
@@ -156,18 +156,18 @@ entry:
 
 ; CHECK: define internal void @[[revMod]](i32 %len, float* noalias %m, float* %"m'", i32 %incm, float* noalias %n, float* %"n'", i32 %incn, float %differeturn, { float*, float* }
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %rt.inactive.x = icmp eq float* %"m'", %m
-; CHECK-NEXT:   %rt.inactive.y = icmp eq float* %"n'", %n
+; CHECK-NEXT:   %[[rtinactivex:.+]] = icmp eq float* %"m'", %m
+; CHECK-NEXT:   %[[rtinactivey:.+]] = icmp eq float* %"n'", %n
 ; CHECK-NEXT:   %tape.ext.x = extractvalue { float*, float* } %0, 0
 ; CHECK-NEXT:   %tape.ext.y = extractvalue { float*, float* } %0, 1
-; CHECK-NEXT:   br i1 %rt.inactive.x, label %invertentry.x.done, label %invertentry.x.active
+; CHECK-NEXT:   br i1 %[[rtinactivex]], label %invertentry.x.done, label %invertentry.x.active
 
 ; CHECK: invertentry.x.active:                             ; preds = %entry
 ; CHECK-NEXT:   call void @cblas_saxpy(i32 %len, float %differeturn, float* %tape.ext.y, i32 1, float* %"m'", i32 %incm)
 ; CHECK-NEXT:   br label %invertentry.x.done
 
 ; CHECK: invertentry.x.done:                               ; preds = %invertentry.x.active, %entry
-; CHECK-NEXT:   br i1 %rt.inactive.y, label %invertentry.y.done, label %invertentry.y.active
+; CHECK-NEXT:   br i1 %[[rtinactivey]], label %invertentry.y.done, label %invertentry.y.active
 
 ; CHECK: invertentry.y.active:                             ; preds = %invertentry.x.done
 ; CHECK-NEXT:   call void @cblas_saxpy(i32 %len, float %differeturn, float* %tape.ext.x, i32 1, float* %"n'", i32 %incn)
@@ -199,8 +199,8 @@ entry:
 
 ; CHECK: define internal void @[[revModFirst]](i32 %len, float* noalias %m, i32 %incm, float* noalias %n, float* %"n'", i32 %incn, float %differeturn, float*
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %rt.inactive.y = icmp eq float* %"n'", %n
-; CHECK-NEXT:   br i1 %rt.inactive.y, label %invertentry.y.done, label %invertentry.y.active
+; CHECK-NEXT:   %[[rtinactivey:.+]] = icmp eq float* %"n'", %n
+; CHECK-NEXT:   br i1 %[[rtinactivey]], label %invertentry.y.done, label %invertentry.y.active
 
 ; CHECK: invertentry.y.active:                             ; preds = %entry
 ; CHECK-NEXT:   call void @cblas_saxpy(i32 %len, float %differeturn, float* %0, i32 1, float* %"n'", i32 %incn)
@@ -231,8 +231,8 @@ entry:
 
 ; CHECK: define internal void @[[revModSecond]](i32 %len, float* noalias %m, float* %"m'", i32 %incm, float* noalias %n, i32 %incn, float %differeturn, float*
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %rt.inactive.x = icmp eq float* %"m'", %m
-; CHECK-NEXT:   br i1 %rt.inactive.x, label %invertentry.x.done, label %invertentry.x.active
+; CHECK-NEXT:   %[[rtinactivex:.+]] = icmp eq float* %"m'", %m
+; CHECK-NEXT:   br i1 %[[rtinactivex]], label %invertentry.x.done, label %invertentry.x.active
 
 ; CHECK: invertentry.x.active:                             ; preds = %entry
 ; CHECK-NEXT:   call void @cblas_saxpy(i32 %len, float %differeturn, float* %0, i32 1, float* %"m'", i32 %incm)
