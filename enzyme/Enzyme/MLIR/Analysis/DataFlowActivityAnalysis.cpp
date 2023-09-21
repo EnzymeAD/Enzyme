@@ -214,29 +214,25 @@ public:
       return true;
     }
 
-    bool activeData = false;
     for (const auto &[other, state] : activityStates)
       if (mayAlias(value, other)) {
-        activeData |= state.activeStore || state.activeInit;
-        if (activeData)
-          return activeData;
+        if (state.activeStore || state.activeInit)
+          return true;
       }
 
-    return activeData;
+    return false;
   }
 
   bool activeDataFlowsOut(Value value) const {
     // const auto &state = activityStates.lookup(value);
     // return state.activeLoad || state.activeEscape;
-    bool flowsOut = false;
     for (const auto &[other, state] : activityStates)
       if (mayAlias(value, other)) {
-        flowsOut |= state.activeLoad || state.activeEscape;
-        if (flowsOut)
-          return flowsOut;
+        if (state.activeLoad || state.activeEscape)
+          return true;
       }
 
-    return flowsOut;
+    return false;
   }
 
   /// Set the internal activity state.
@@ -498,10 +494,10 @@ public:
           if (valueState->getValue().isActive()) {
             result |= after->setActiveStore(value, true);
 
-            auto ptrValueActivity = getOrCreate<ForwardValueActivity>(value);
-            propagateIfChanged(
-                ptrValueActivity,
-                ptrValueActivity->join(ValueActivity::getActive()));
+            // auto ptrValueActivity = getOrCreate<ForwardValueActivity>(value);
+            // propagateIfChanged(
+            //     ptrValueActivity,
+            //     ptrValueActivity->join(ValueActivity::getActive()));
           }
         } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
           // linalg.yield stores to the corresponding value.
@@ -539,7 +535,6 @@ public:
   void visitOperation(Operation *op, const BackwardMemoryActivity &after,
                       BackwardMemoryActivity *before) override {
     auto memory = dyn_cast<MemoryEffectOpInterface>(op);
-    ChangeResult result = before->meet(after);
     // If we can't reason about the memory effects, then conservatively assume
     // we can't deduce anything about activity via side-effects.
     if (!memory)
@@ -548,6 +543,7 @@ public:
     SmallVector<MemoryEffects::EffectInstance> effects;
     memory.getEffects(effects);
 
+    ChangeResult result = before->meet(after);
     for (const auto &effect : effects) {
       Value value = effect.getValue();
 
