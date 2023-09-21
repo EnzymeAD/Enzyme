@@ -704,6 +704,19 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
     return true;
   }
 
+  if (hasMetadata(I, "enzyme_active") || hasMetadata(I, "enzyme_active_inst")) {
+    if (EnzymePrintActivity)
+      llvm::errs() << "forced active " << *I << "\n";
+    ActiveInstructions.insert(I);
+    return false;
+  }
+  if (hasMetadata(I, "enzyme_inactive") ||
+      hasMetadata(I, "enzyme_inactive_inst")) {
+    if (EnzymePrintActivity)
+      llvm::errs() << "forced inactive " << *I << "\n";
+    InsertConstantInstruction(TR, I);
+    return true;
+  }
   if (auto CI = dyn_cast<CallInst>(I)) {
     if (CI->hasFnAttr("enzyme_active") || CI->hasFnAttr("enzyme_active_inst")) {
       if (EnzymePrintActivity)
@@ -1236,6 +1249,38 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     return false;
   }
 
+  if (auto I = dyn_cast<Instruction>(Val)) {
+    if (hasMetadata(I, "enzyme_active") ||
+        hasMetadata(I, "enzyme_active_val")) {
+      if (EnzymePrintActivity)
+        llvm::errs() << "forced active val " << *Val << "\n";
+      ActiveValues.insert(Val);
+      return false;
+    }
+    if (hasMetadata(I, "enzyme_inactive") ||
+        hasMetadata(I, "enzyme_inactive_val")) {
+      if (EnzymePrintActivity)
+        llvm::errs() << "forced inactive val " << *Val << "\n";
+      InsertConstantValue(TR, Val);
+      return true;
+    }
+  }
+  if (auto I = dyn_cast<GlobalObject>(Val)) {
+    if (hasMetadata(I, "enzyme_active") ||
+        hasMetadata(I, "enzyme_active_val")) {
+      if (EnzymePrintActivity)
+        llvm::errs() << "forced active val " << *Val << "\n";
+      ActiveValues.insert(Val);
+      return false;
+    }
+    if (hasMetadata(I, "enzyme_inactive") ||
+        hasMetadata(I, "enzyme_inactive_val")) {
+      if (EnzymePrintActivity)
+        llvm::errs() << "forced inactive val " << *Val << "\n";
+      InsertConstantValue(TR, Val);
+      return true;
+    }
+  }
   if (auto CI = dyn_cast<CallInst>(Val)) {
     if (CI->hasFnAttr("enzyme_active") || CI->hasFnAttr("enzyme_active_val")) {
       if (EnzymePrintActivity)
