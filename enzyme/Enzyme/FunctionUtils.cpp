@@ -2060,8 +2060,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     DIFFE_TYPE returnType, const Twine &name,
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> *VMapO,
     bool diffeReturnArg, llvm::Type *additionalArg) {
-  assert(!F->empty());
-  F = preprocessForClone(F, mode);
+  if (!F->empty())
+    F = preprocessForClone(F, mode);
   llvm::ValueToValueMapTy VMap;
   llvm::FunctionType *FTy = getFunctionTypeForClone(
       F->getFunctionType(), mode, width, additionalArg, constant_args,
@@ -2120,6 +2120,11 @@ Function *PreProcessCache::CloneFunctionWithReturns(
   CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
                     nullptr);
 #endif
+  if (NewF->empty()) {
+    auto entry = BasicBlock::Create(NewF->getContext(), "entry", NewF);
+    IRBuilder<> B(entry);
+    B.CreateUnreachable();
+  }
   CloneOrigin[NewF] = F;
   if (VMapO) {
     for (const auto &data : VMap)

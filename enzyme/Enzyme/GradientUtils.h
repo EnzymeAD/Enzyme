@@ -485,13 +485,17 @@ public:
   llvm::Value *invertPointerM(llvm::Value *val, llvm::IRBuilder<> &BuilderM,
                               bool nullShadow = false);
 
-  static llvm::Constant *GetOrCreateShadowConstant(
-      EnzymeLogic &Logic, llvm::TargetLibraryInfo &TLI, TypeAnalysis &TA,
-      llvm::Constant *F, DerivativeMode mode, unsigned width, bool AtomicAdd);
+  static llvm::Constant *
+  GetOrCreateShadowConstant(RequestContext context, EnzymeLogic &Logic,
+                            llvm::TargetLibraryInfo &TLI, TypeAnalysis &TA,
+                            llvm::Constant *F, DerivativeMode mode,
+                            unsigned width, bool AtomicAdd);
 
-  static llvm::Constant *GetOrCreateShadowFunction(
-      EnzymeLogic &Logic, llvm::TargetLibraryInfo &TLI, TypeAnalysis &TA,
-      llvm::Function *F, DerivativeMode mode, unsigned width, bool AtomicAdd);
+  static llvm::Constant *
+  GetOrCreateShadowFunction(RequestContext context, EnzymeLogic &Logic,
+                            llvm::TargetLibraryInfo &TLI, TypeAnalysis &TA,
+                            llvm::Function *F, DerivativeMode mode,
+                            unsigned width, bool AtomicAdd);
 
   void branchToCorrespondingTarget(
       llvm::BasicBlock *ctx, llvm::IRBuilder<> &BuilderM,

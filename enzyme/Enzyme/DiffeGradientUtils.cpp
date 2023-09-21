@@ -83,7 +83,6 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
     TargetLibraryInfo &TLI, TypeAnalysis &TA, FnTypeInfo &oldTypeInfo,
     DIFFE_TYPE retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
     ReturnType returnValue, Type *additionalArg, bool omp) {
-  assert(!todiff->empty());
   Function *oldFunc = todiff;
   assert(mode == DerivativeMode::ReverseModeGradient ||
          mode == DerivativeMode::ReverseModeCombined ||
@@ -149,7 +148,8 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   }
 
   TypeResults TR = TA.analyzeFunction(typeInfo);
-  assert(TR.getFunction() == oldFunc);
+  if (!oldFunc->empty())
+    assert(TR.getFunction() == oldFunc);
 
   auto res = new DiffeGradientUtils(Logic, newFunc, oldFunc, TLI, TA, TR,
                                     invertedPointers, constant_values,

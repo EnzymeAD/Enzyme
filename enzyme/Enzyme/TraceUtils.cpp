@@ -122,6 +122,11 @@ TraceUtils::FromClone(ProbProgMode mode,
   CloneFunctionInto(newFunc, oldFunc, originalToNewFn, true, Returns, "",
                     nullptr);
 #endif
+  if (newFunc->empty()) {
+    auto entry = BasicBlock::Create(newFunc->getContext(), "entry", newFunc);
+    IRBuilder<> B(entry);
+    B.CreateUnreachable();
+  }
 
   newFunc->setLinkage(Function::LinkageTypes::InternalLinkage);
 

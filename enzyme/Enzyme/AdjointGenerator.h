@@ -3896,8 +3896,9 @@ public:
         Mode == DerivativeMode::ReverseModeCombined) {
       if (called) {
         subdata = &gutils->Logic.CreateAugmentedPrimal(
-            cast<Function>(called), subretType, argsInverted,
-            TR.analyzer.interprocedural, /*return is used*/ false,
+            RequestContext(&call, &BuilderZ), cast<Function>(called),
+            subretType, argsInverted, TR.analyzer.interprocedural,
+            /*return is used*/ false,
             /*shadowReturnUsed*/ false, nextTypeInfo, overwritten_args, false,
             gutils->getWidth(),
             /*AtomicAdd*/ true,
@@ -4096,6 +4097,7 @@ public:
         }
 
         newcalled = gutils->Logic.CreatePrimalAndGradient(
+            RequestContext(&call, &Builder2),
             (ReverseCacheKey){.todiff = cast<Function>(called),
                               .retType = subretType,
                               .constant_args = argsInverted,
@@ -6851,8 +6853,9 @@ public:
 
       if (called) {
         newcalled = gutils->Logic.CreateForwardDiff(
-            cast<Function>(called), subretType, argsInverted,
-            TR.analyzer.interprocedural, /*returnValue*/ subretused, Mode,
+            RequestContext(&call, &BuilderZ), cast<Function>(called),
+            subretType, argsInverted, TR.analyzer.interprocedural,
+            /*returnValue*/ subretused, Mode,
             ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->getWidth(),
             tape ? tape->getType() : nullptr, nextTypeInfo, overwritten_args,
             /*augmented*/ subdata);
@@ -7254,10 +7257,10 @@ public:
         if (Mode == DerivativeMode::ReverseModePrimal ||
             Mode == DerivativeMode::ReverseModeCombined) {
           subdata = &gutils->Logic.CreateAugmentedPrimal(
-              cast<Function>(called), subretType, argsInverted,
-              TR.analyzer.interprocedural, /*return is used*/ subretused,
-              shadowReturnUsed, nextTypeInfo, overwritten_args, false,
-              gutils->getWidth(), gutils->AtomicAdd);
+              RequestContext(&call, &BuilderZ), cast<Function>(called),
+              subretType, argsInverted, TR.analyzer.interprocedural,
+              /*return is used*/ subretused, shadowReturnUsed, nextTypeInfo,
+              overwritten_args, false, gutils->getWidth(), gutils->AtomicAdd);
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
             auto subaugmentations =
@@ -7639,6 +7642,7 @@ public:
       }
 
       newcalled = gutils->Logic.CreatePrimalAndGradient(
+          RequestContext(&call, &Builder2),
           (ReverseCacheKey){.todiff = cast<Function>(called),
                             .retType = subretType,
                             .constant_args = argsInverted,
@@ -10066,7 +10070,8 @@ public:
         auto callval = call.getCalledOperand();
         if (!isa<Constant>(callval))
           callval = gutils->getNewFromOriginal(callval);
-        newCall->setCalledOperand(gutils->Logic.CreateNoFree(callval));
+        newCall->setCalledOperand(gutils->Logic.CreateNoFree(
+            RequestContext(&call, &BuilderZ), callval));
       }
       if (gutils->knownRecomputeHeuristic.find(&call) !=
           gutils->knownRecomputeHeuristic.end()) {

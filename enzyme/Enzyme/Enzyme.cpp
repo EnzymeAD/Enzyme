@@ -1377,7 +1377,8 @@ public:
                               ? BATCH_TYPE::SCALAR
                               : BATCH_TYPE::VECTOR;
 
-    auto newFunc = Logic.CreateBatch(F, width, arg_types, ret_type);
+    auto newFunc = Logic.CreateBatch(RequestContext(CI, &Builder), F, width,
+                                     arg_types, ret_type);
 
     if (!newFunc)
       return false;
@@ -1432,6 +1433,7 @@ public:
         populate_overwritten_args(TA, fn, mode, overwritten_args);
 
     IRBuilder Builder(CI);
+    RequestContext context(CI, &Builder);
 
     // differentiate fn
     Function *newFunc = nullptr;
@@ -1440,7 +1442,7 @@ public:
     switch (mode) {
     case DerivativeMode::ForwardMode:
       newFunc = Logic.CreateForwardDiff(
-          fn, retType, constants, TA,
+          context, fn, retType, constants, TA,
           /*should return*/ primalReturn, mode, freeMemory, width,
           /*addedType*/ nullptr, type_args, overwritten_args,
           /*augmented*/ nullptr);
@@ -1448,7 +1450,7 @@ public:
     case DerivativeMode::ForwardModeSplit: {
       bool forceAnonymousTape = !sizeOnly && allocatedTapeSize == -1;
       aug = &Logic.CreateAugmentedPrimal(
-          fn, retType, constants, TA,
+          context, fn, retType, constants, TA,
           /*returnUsed*/ false, /*shadowReturnUsed*/ false, type_args,
           overwritten_args, forceAnonymousTape, width, /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
@@ -1484,7 +1486,7 @@ public:
         tapeType = PointerType::getInt8PtrTy(fn->getContext());
       }
       newFunc = Logic.CreateForwardDiff(
-          fn, retType, constants, TA,
+          context, fn, retType, constants, TA,
           /*should return*/ primalReturn, mode, freeMemory, width,
           /*addedType*/ tapeType, type_args, overwritten_args, aug);
       break;
@@ -1492,6 +1494,7 @@ public:
     case DerivativeMode::ReverseModeCombined:
       assert(freeMemory);
       newFunc = Logic.CreatePrimalAndGradient(
+          context,
           (ReverseCacheKey){.todiff = fn,
                             .retType = retType,
                             .constant_args = constants,
@@ -1518,8 +1521,8 @@ public:
       bool shadowReturnUsed = returnUsed && (retType == DIFFE_TYPE::DUP_ARG ||
                                              retType == DIFFE_TYPE::DUP_NONEED);
       aug = &Logic.CreateAugmentedPrimal(
-          fn, retType, constants, TA, returnUsed, shadowReturnUsed, type_args,
-          overwritten_args, forceAnonymousTape, width,
+          context, fn, retType, constants, TA, returnUsed, shadowReturnUsed,
+          type_args, overwritten_args, forceAnonymousTape, width,
           /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
@@ -1557,6 +1560,7 @@ public:
         newFunc = aug->fn;
       else
         newFunc = Logic.CreatePrimalAndGradient(
+            context,
             (ReverseCacheKey){.todiff = fn,
                               .retType = retType,
                               .constant_args = constants,
@@ -1856,9 +1860,9 @@ public:
       constants.push_back(DIFFE_TYPE::CONSTANT);
     }
 
-    auto newFunc = Logic.CreateTrace(F, sampleFunctions, observeFunctions,
-                                     opt->ActiveRandomVariables, mode, autodiff,
-                                     interface);
+    auto newFunc = Logic.CreateTrace(
+        RequestContext(CI, &Builder), F, sampleFunctions, observeFunctions,
+        opt->ActiveRandomVariables, mode, autodiff, interface);
 
     if (!autodiff) {
       auto call = CallInst::Create(newFunc->getFunctionType(), newFunc, args);
@@ -2438,8 +2442,10 @@ public:
       bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
                        Arch == Triple::amdgcn;
 
+      IRBuilder<> Builder(CI);
       auto val = GradientUtils::GetOrCreateShadowConstant(
-          Logic, Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F), TA, fn,
+          RequestContext(CI, &Builder), Logic,
+          Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F), TA, fn,
           pair.second, /*width*/ 1, AtomicAdd);
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
