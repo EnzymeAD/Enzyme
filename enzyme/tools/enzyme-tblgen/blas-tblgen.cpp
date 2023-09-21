@@ -199,6 +199,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
   assert(nameVec.size() > 0);
   auto argTypeMap = pattern.getArgTypeMap();
   bool lv23 = pattern.isBLASLevel2or3();
+  const auto mutArgSet = pattern.getMutableArgs();
 
   os << "  const bool byRef = blas.prefix == \"\";\n";
   os << "  Value *cacheval = nullptr;\n\n";
@@ -256,10 +257,39 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
        << "      auto shadow_" << name << " = gutils->invertPointerM(orig_"
        << name << ", BuilderZ);\n"
        << "      rt_inactive_" << name << " = BuilderZ.CreateICmpEQ(shadow_"
-       << name << ", arg_" << name << ", (Twine(\"rt.inactive.\") + \"" << name
-       << "\").str());\n"
+       << name << ", arg_" << name << ", \"rt.tmp.inactive.\" \"" << name
+       << "\");\n"
        << "    }\n";
   }
+  // Blas functions return one float XOR modify one output arg.
+  // If we have runtimeActivity and the output arg is inactive,
+  // we don't need to do anything here and can return early.
+  if (mutArgSet.size() == 1) {
+    for (auto pos : mutArgSet) {
+      auto name = nameVec[pos];
+      os << "    Value *rt_inactive_out = nullptr;\n";
+      os << "    if (active_" << name << ") {\n"
+         << "      rt_inactive_out = rt_inactive_" << name << ";\n"
+         << "    } else {\n"
+         << "      rt_inactive_out = "
+            "ConstantInt::getTrue(BuilderZ.getContext());\n"
+         << "    }\n";
+      break;
+    }
+    for (size_t i = 0; i < actArgs.size(); i++) {
+      auto name = nameVec[actArgs[i]];
+      // floats are passed by calue, except of the Fortran Abi (byRef)
+      auto ty = argTypeMap.lookup(actArgs[i]);
+      os << "    if (";
+      if (ty == ArgType::fp)
+        os << "byRef && ";
+      os << "active_" << name << ") {\n"
+         << "      rt_inactive_" << name << " = BuilderZ.CreateOr(rt_inactive_"
+         << name << ", rt_inactive_out, \"rt.inactive.\" \"" << name << "\");\n"
+         << "    }\n";
+    }
+  }
+
   os << "  }\n";
 
   bool hasFP = false;
@@ -918,7 +948,13 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
         return;
       }
       if (Def->getName() == "Concat") {
-        os << "concat_values(";
+        os << "concat_values<";
+        for (size_t i = 0; i < Dag->getNumArgs(); i++) {
+          if (i != 0)
+            os << ", ";
+          os << "ArrayRef<Value*>";
+        }
+        os << ">(";
         for (size_t i = 0; i < Dag->getNumArgs(); i++) {
           if (i != 0)
             os << ", ";
@@ -1108,7 +1144,7 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
   }
   os << "        if (byRef) {\n";
   int n = 0;
-  if (func == "gemv")
+  if (func == "gemv" || func == "lascl")
     n = 1;
   if (func == "gemm")
     n = 2;
@@ -1334,8 +1370,8 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   for (auto arg : activeArgs) {
     const auto name = nameVec[arg];
     const auto ty = typeMap.lookup(arg);
-    // We don't pass in shaddows of fp values,
-    // we just create and struct-return the shaddows
+    // We don't pass in shadows of fp values,
+    // we just create and struct-return the shadows
     if (ty == ArgType::fp)
       continue;
     os << ((first) ? "" : ", ") << "Value *"
@@ -1529,8 +1565,8 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   for (auto arg : activeArgs) {
     const auto name = nameVec[arg];
     const auto ty = typeMap.lookup(arg);
-    // We don't pass in shaddows of fp values,
-    // we just create and struct-return the shaddows
+    // We don't pass in shadows of fp values,
+    // we just create and struct-return the shadows
     if (ty == ArgType::fp)
       continue;
     os << ((first) ? "" : ", ") << "d_" + name;

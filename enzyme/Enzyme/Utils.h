@@ -1643,15 +1643,18 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
                                   llvm::Value *dim_2, bool cacheMat,
                                   bool byRef);
 
-template <typename... T> static inline void nothing(T...){};
+template <typename T>
+static inline void append(llvm::SmallVectorImpl<T> &vec) {}
+template <typename T, typename... T2>
+static inline void append(llvm::SmallVectorImpl<T> &vec, llvm::ArrayRef<T> vals,
+                          T2 &&...ts) {
+  vec.append(vals.begin(), vals.end());
+  append(vec, std::forward<T2>(ts)...);
+}
 template <typename... T>
-static inline llvm::SmallVector<llvm::Value *, 1> concat_values(T... t) {
+static inline llvm::SmallVector<llvm::Value *, 1> concat_values(T &&...t) {
   llvm::SmallVector<llvm::Value *, 1> res;
-  auto append = [&](llvm::ArrayRef<llvm::Value *> V) {
-    res.append(V.begin(), V.end());
-    return 0;
-  };
-  nothing(append(t)...);
+  append(res, std::forward<T>(t)...);
   return res;
 }
 

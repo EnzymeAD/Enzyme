@@ -23,6 +23,13 @@ raw_ostream &operator<<(raw_fd_ostream &os, ArgType arg) {
 
 using namespace llvm;
 
+bool is_char_arg(ArgType ty) {
+  if (ty == ArgType::side || ty == ArgType::diag || ty == ArgType::trans ||
+      ty == ArgType::uplo)
+    return true;
+  return false;
+}
+
 const char *TyToString(ArgType ty) {
   switch (ty) {
   case ArgType::fp:

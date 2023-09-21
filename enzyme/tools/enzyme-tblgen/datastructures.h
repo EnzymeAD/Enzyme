@@ -30,6 +30,8 @@ enum class ArgType {
   side
 };
 
+bool is_char_arg(ArgType ty);
+
 namespace llvm {
 raw_ostream &operator<<(raw_ostream &os, ArgType arg);
 raw_ostream &operator<<(raw_fd_ostream &os, ArgType arg);

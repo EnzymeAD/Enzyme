@@ -57,6 +57,7 @@ def tp   : MagicInst; // transpose the trans param.
 def noop : MagicInst; // gradient is zero 
 def inactive : MagicInst; // like noop, but assert it's inactive
 def Rows : MagicInst; // given a transpose, normal rows, normal cols get the true rows, aka normal rows if N else normal cols
+def Concat : MagicInst;
 
 // if !cache_A, then just use $lda.
 // if cache_A, then check $transa.
@@ -192,9 +193,7 @@ def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $
                       //} else {
                       //  call sger(m, n, alpha, x, incx, ya, incy, Aa, lda)
                       //}
-                  /* A      */  (b<"ger">  $layout, $m, $n, $alpha, (Rows $transa, adj<"y">, $x),
-                                                                    (Rows $transa, $x, adj<"y">),
-                                                                    adj<"A">),
+                  /* A      */  (b<"ger">  $layout, $m, $n, $alpha, (Rows $transa, (Concat adj<"y">, $x), (Concat $x, adj<"y">)), adj<"A">),
                   /* x      */  (b<"gemv"> $layout, transpose<"transa">, $m, $n, $alpha, $A, (ld $A, Char<"N">, $lda, $m, $n), adj<"y">, Constant<"1.0">, adj<"x">),
                   /* beta   */  (b<"dot"> (Rows $transa, $m, $n), adj<"y">, input<"y">),
                   /* y      */  (b<"scal"> (Rows $transa, $m, $n), $beta, adj<"y">)
@@ -225,10 +224,25 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   /* alpha */ (Seq<["AB", "product", "m", "n"]> 
                       (b<"gemm"> $layout, $transa, $transb, $m, $n, $k, Constant<"1.0">, $A, (ld $A, $transa, $lda, $m, $k), $B, (ld $B, $transb, $ldb, $k, $n), Constant<"0.0">, use<"AB">, $m),// TODO: check if last arg should be $m or $n
                       (FrobInnerProd<""> $m, $n, adj<"C">, use<"AB">)),
-                  /* A     */ (b<"gemm"> $layout, $transa, transpose<"transb">, $m, $k, $n, $alpha, adj<"C">, $B, (ld $B, $transb, $ldb, $k, $n), $beta, adj<"A">),
-                  /* B     */ (b<"gemm"> $layout, transpose<"transa">, $transb, $k, $n, $m, $alpha, $A, (ld $A, $transa, $lda, $m, $k), adj<"C">, $beta, adj<"B">),
+                  /* A     */ (b<"gemm"> $layout, (Rows $transa, 
+                                                    (Concat Char<"N">, transpose<"transb">, $m, $k), 
+                                                    (Concat $transb, Char<"T">, $k, $m)),
+                                                  $n, $alpha, 
+                                                  (Rows $transa, 
+                                                    (Concat adj<"C">, $B, (ld $B, $transb, $ldb, $k, $n)), 
+                                                    (Concat $B, (ld $B, $transb, $ldb, $k, $n), adj<"C">)),
+                                                  Constant<"1.0">, adj<"A">),
+
+                  /* B     */ (b<"gemm"> $layout, (Rows $transb, 
+                                                    (Concat transpose<"transa">, Char<"N">, $k, $n),
+                                                    (Concat Char<"T">, $transa, $n, $k)),
+                                                  $m, $alpha, 
+                                                  (Rows $transb, 
+                                                    (Concat $A, (ld $A, $transa, $lda, $m, $k), adj<"C">),
+                                                    (Concat adj<"C">, $A, (ld $A, $transa, $lda, $m, $k))),
+                                                  Constant<"1.0">, adj<"B">),
                   /* beta  */ (FrobInnerProd<""> $m, $n, adj<"C">, input<"C">),
-                  /* C     */ (b<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, adj<"C">, ConstantInt<0>)
+                  /* C     */ (b<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, adj<"C">)
                   ]
                   >;
 
