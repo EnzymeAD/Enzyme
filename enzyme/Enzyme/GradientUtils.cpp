@@ -195,6 +195,8 @@ GradientUtils::GradientUtils(
                                : Logic.PPC.getAAResultsFromFunction(oldFunc_)),
       TA(TA_), TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_),
       overwritten_args_map_ptr(nullptr) {
+  if (oldFunc_->empty())
+    return;
   if (oldFunc_->getSubprogram()) {
     assert(originalToNewFn_.hasMD());
   }

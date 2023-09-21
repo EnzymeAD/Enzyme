@@ -1325,16 +1325,18 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 
   SmallVector<ReturnInst *, 4> Returns;
 
+  if (!F->empty()) {
 #if LLVM_VERSION_MAJOR >= 13
-  CloneFunctionInto(
-      NewF, F, VMap,
-      /*ModuleLevelChanges*/ CloneFunctionChangeType::LocalChangesOnly, Returns,
-      "", nullptr);
+    CloneFunctionInto(
+        NewF, F, VMap,
+        /*ModuleLevelChanges*/ CloneFunctionChangeType::LocalChangesOnly,
+        Returns, "", nullptr);
 #else
-  CloneFunctionInto(NewF, F, VMap,
-                    /*ModuleLevelChanges*/ F->getSubprogram() != nullptr,
-                    Returns, "", nullptr);
+    CloneFunctionInto(NewF, F, VMap,
+                      /*ModuleLevelChanges*/ F->getSubprogram() != nullptr,
+                      Returns, "", nullptr);
 #endif
+  }
   CloneOrigin[NewF] = F;
   NewF->setAttributes(F->getAttributes());
   if (EnzymeNoAlias)
@@ -2113,13 +2115,15 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       VMap[&I] = &*DestI++;        // Add mapping to VMap
     }
   SmallVector<ReturnInst *, 4> Returns;
+  if (!F->empty()) {
 #if LLVM_VERSION_MAJOR >= 13
-  CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
-                    Returns, "", nullptr);
+    CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
+                      Returns, "", nullptr);
 #else
-  CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
-                    nullptr);
+    CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
+                      nullptr);
 #endif
+  }
   if (NewF->empty()) {
     auto entry = BasicBlock::Create(NewF->getContext(), "entry", NewF);
     IRBuilder<> B(entry);

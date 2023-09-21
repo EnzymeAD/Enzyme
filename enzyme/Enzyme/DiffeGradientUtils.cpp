@@ -62,6 +62,8 @@ DiffeGradientUtils::DiffeGradientUtils(
     : GradientUtils(Logic, newFunc_, oldFunc_, TLI, TA, TR, invertedPointers_,
                     constantvalues_, returnvals_, ActiveReturn, constant_values,
                     origToNew_, mode, width, omp) {
+  if (oldFunc_->empty())
+    return;
   assert(reverseBlocks.size() == 0);
   if (mode == DerivativeMode::ForwardMode ||
       mode == DerivativeMode::ForwardModeSplit) {

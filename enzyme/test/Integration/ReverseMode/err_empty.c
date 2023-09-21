@@ -12,7 +12,7 @@ extern double __enzyme_autodiff(void*, double);
 double unknown(double in);
 
 double g(double in) {
-    return unknown(unknown(in)); // expected-error {{Enzyme: No reverse pass found for unknown}}  expected-error {{Enzyme: No augmented forward pass found for unknown}} expected-error {{Enzyme: No reverse pass found for unknown at context}}
+    return unknown(unknown(in)); // expected-error {{Enzyme: No reverse pass found for unknown}}  expected-error {{Enzyme: No augmented forward pass found for unknown}} expected-error {{Enzyme: No reverse pass found for unknown}}
 }
 
 double square(double x) {

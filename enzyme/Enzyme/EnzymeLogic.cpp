@@ -2279,16 +2279,17 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       CustomErrorHandler(ss.str().c_str(), wrap(toshow),
                          ErrorType::NoDerivative, nullptr, wrap(todiff),
                          wrap(context.ip));
+      auto newFunc = gutils->newFunc;
+      delete gutils;
+      return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
+                 AugmentedCachedFunctions, tup,
+                 AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
+                                 constant_args))
+          ->second;
     }
     if (context.req) {
       EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
                   ss.str());
-
-      if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
-        llvm::errs() << *gutils->oldFunc << "\n";
-        llvm::errs() << *gutils->newFunc << "\n";
-        report_fatal_error("function failed verification (r5)");
-      }
       auto newFunc = gutils->newFunc;
       delete gutils;
       return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
@@ -3938,14 +3939,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       CustomErrorHandler(ss.str().c_str(), wrap(toshow),
                          ErrorType::NoDerivative, nullptr, wrap(key.todiff),
                          wrap(context.ip));
+      auto newFunc = gutils->newFunc;
+      delete gutils;
+      return newFunc;
     }
     if (context.req) {
-
-      if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
-        llvm::errs() << *gutils->oldFunc << "\n";
-        llvm::errs() << *gutils->newFunc << "\n";
-        report_fatal_error("function failed verification (r4)");
-      }
       EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
                   ss.str());
       auto newFunc = gutils->newFunc;
@@ -4566,6 +4564,9 @@ Function *EnzymeLogic::CreateForwardDiff(
       CustomErrorHandler(ss.str().c_str(), wrap(toshow),
                          ErrorType::NoDerivative, nullptr, wrap(todiff),
                          wrap(context.ip));
+      auto newFunc = gutils->newFunc;
+      delete gutils;
+      return newFunc;
     }
     if (context.req) {
       EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
@@ -4817,6 +4818,7 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
       CustomErrorHandler(ss.str().c_str(), wrap(toshow),
                          ErrorType::NoDerivative, nullptr, wrap(tobatch),
                          wrap(context.ip));
+      return NewF;
     }
     if (context.req) {
       EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
@@ -5112,6 +5114,10 @@ EnzymeLogic::CreateTrace(RequestContext context, llvm::Function *totrace,
       CustomErrorHandler(ss.str().c_str(), wrap(toshow),
                          ErrorType::NoDerivative, nullptr, wrap(totrace),
                          wrap(context.ip));
+      auto newFunc = tutils->newFunc;
+      delete tracer;
+      delete tutils;
+      return newFunc;
     }
     if (context.req) {
       EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
@@ -5173,6 +5179,7 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
     CustomErrorHandler(ss.str().c_str(), wrap(context.req),
                        ErrorType::NoDerivative, nullptr, wrap(todiff),
                        wrap(context.ip));
+    return todiff;
   }
 
   if (context.req) {
@@ -5296,6 +5303,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       CustomErrorHandler(ss.str().c_str(), wrap(context.req),
                          ErrorType::NoDerivative, nullptr, wrap(F),
                          wrap(context.ip));
+      return F;
     }
     if (context.req) {
       EmitFailure("IllegalNoFree", context.req->getDebugLoc(), context.req,
