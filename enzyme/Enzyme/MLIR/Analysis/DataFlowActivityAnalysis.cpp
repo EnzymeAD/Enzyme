@@ -465,7 +465,7 @@ public:
   using SparseBackwardDataFlowAnalysis::SparseBackwardDataFlowAnalysis;
 
   void setToExitState(BackwardValueActivity *lattice) override {
-    errs() << "setting to exit state\n";
+    errs() << "backward sparse setting to exit state\n";
   }
 
   void visitBranchOperand(OpOperand &operand) override {}
@@ -620,7 +620,7 @@ public:
 
   // Not sure what this should be, unknown?
   void setToEntryState(ForwardMemoryActivity *lattice) override {
-    errs() << "setting to entry state\n";
+    errs() << "forward memory setting to entry state\n";
     propagateIfChanged(lattice, lattice->reset());
   }
 };
@@ -714,7 +714,7 @@ public:
   }
 
   void setToExitState(BackwardMemoryActivity *lattice) override {
-    errs() << "setting to exit state\n";
+    errs() << "backward memory setting to exit state\n";
     propagateIfChanged(lattice, lattice->reset());
   }
 };
