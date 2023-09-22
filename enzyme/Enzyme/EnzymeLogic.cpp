@@ -839,6 +839,14 @@ void calculateUnusedValuesInFunction(
         if (llvm::isa<llvm::ReturnInst>(inst) && returnValue) {
           return UseReq::Need;
         }
+
+        if (auto dbg = llvm::dyn_cast<llvm::DbgValueInst>(inst)) {
+          if (unnecessaryValues.count(dbg->getValue())) {
+            return UseReq::Recur;
+          }
+          return UseReq::Need;
+        }
+
         if (llvm::isa<llvm::BranchInst>(inst) ||
             llvm::isa<llvm::SwitchInst>(inst)) {
           size_t num = 0;
@@ -3104,6 +3112,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
   assert(BB2);
   IRBuilder<> Builder(BB2);
   Builder.setFastMathFlags(getFast());
+  if (!BB->empty())
+    Builder.SetCurrentDebugLocation(BB->back().getDebugLoc());
 
   std::map<BasicBlock *, SmallVector<BasicBlock *, 4>> targetToPreds;
   for (auto pred : predecessors(BB)) {
@@ -3431,6 +3441,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     }
     BB2 = gutils->reverseBlocks[BB].back();
     Builder.SetInsertPoint(BB2);
+    if (!BB->empty())
+      Builder.SetCurrentDebugLocation(BB->back().getDebugLoc());
 
     Builder.CreateCondBr(
         phi, gutils->getReverseOrLatchMerge(loopContext.preheader, BB),
@@ -3461,6 +3473,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     }
     BB2 = gutils->reverseBlocks[BB].back();
     Builder.SetInsertPoint(BB2);
+    if (!BB->empty())
+      Builder.SetCurrentDebugLocation(BB->back().getDebugLoc());
     gutils->branchToCorrespondingTarget(BB, Builder, targetToPreds);
   }
 
