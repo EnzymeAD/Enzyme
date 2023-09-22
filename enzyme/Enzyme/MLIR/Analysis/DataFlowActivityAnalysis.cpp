@@ -33,7 +33,7 @@ using namespace mlir::dataflow;
 // We could use enyzme::Activity here but I don't know that it would help from a
 // dataflow perspective (distinguishing between enzyme_dup, enzyme_dupnoneed,
 // enzyme_out, which are all active)
-enum class ActivityKind { Active, Constant };
+enum class ActivityKind { ActiveVal, ActivePtr, Constant, Unknown };
 
 using llvm::errs;
 class ValueActivity {
@@ -42,16 +42,32 @@ public:
     return ValueActivity(ActivityKind::Constant);
   }
 
-  static ValueActivity getActive() {
-    return ValueActivity(ActivityKind::Active);
+  static ValueActivity getActiveVal() {
+    return ValueActivity(ActivityKind::ActiveVal);
   }
 
-  bool isActive() const {
-    return value.has_value() && *value == ActivityKind::Active;
+  static ValueActivity getActivePtr() {
+    return ValueActivity(ActivityKind::ActivePtr);
+  }
+
+  static ValueActivity getUnknown() {
+    return ValueActivity(ActivityKind::Unknown);
+  }
+
+  bool isActiveVal() const {
+    return value.has_value() && *value == ActivityKind::ActiveVal;
+  }
+
+  bool isActivePtr() const {
+    return value.has_value() && *value == ActivityKind::ActivePtr;
   }
 
   bool isConstant() const {
     return value.has_value() && *value == ActivityKind::Constant;
+  }
+
+  bool isUnknown() const {
+    return value.has_value() && *value == ActivityKind::Unknown;
   }
 
   ValueActivity(std::optional<ActivityKind> value = std::nullopt)
@@ -69,30 +85,34 @@ public:
 
   bool operator==(const ValueActivity &rhs) const { return value == rhs.value; }
 
-  static ValueActivity join(const ValueActivity &lhs,
-                            const ValueActivity &rhs) {
+  static ValueActivity merge(const ValueActivity &lhs,
+                             const ValueActivity &rhs) {
     if (lhs.isUninitialized())
       return rhs;
     if (rhs.isUninitialized())
       return lhs;
-    if (lhs.isConstant() && rhs.isConstant()) {
-      return ValueActivity::getConstant();
-    }
+    if (lhs.isUnknown() || rhs.isUnknown())
+      return ValueActivity::getUnknown();
 
-    return ValueActivity::getActive();
+    // We can't merge an active value with an active pointer
+    if ((lhs.isActivePtr() && rhs.isActiveVal()) ||
+        (rhs.isActiveVal() && lhs.isActivePtr()))
+      return ValueActivity::getUnknown();
+
+    if (lhs.isConstant() && rhs.isConstant())
+      return ValueActivity::getConstant();
+
+    // Active Val + Constant = Active Val
+    // Active Ptr + Constant = Active Ptr
+    if (lhs.isActiveVal() || rhs.isActiveVal()) {
+      return ValueActivity::getActiveVal();
+    }
+    return ValueActivity::getActivePtr();
   }
 
-  static ValueActivity meet(const ValueActivity &lhs,
+  static ValueActivity join(const ValueActivity &lhs,
                             const ValueActivity &rhs) {
-    if (lhs.isUninitialized())
-      return rhs;
-    if (rhs.isUninitialized())
-      return lhs;
-    if (lhs.isConstant() && rhs.isConstant()) {
-      return ValueActivity::getConstant();
-    }
-
-    return ValueActivity::getActive();
+    return ValueActivity::merge(lhs, rhs);
   }
 
   void print(raw_ostream &os) const {
@@ -101,11 +121,17 @@ public:
       return;
     }
     switch (*value) {
-    case ActivityKind::Active:
-      os << "Active";
+    case ActivityKind::ActiveVal:
+      os << "ActiveVal";
+      break;
+    case ActivityKind::ActivePtr:
+      os << "ActivePtr";
       break;
     case ActivityKind::Constant:
       os << "Constant";
+      break;
+    case ActivityKind::Unknown:
+      os << "Unknown";
       break;
     }
   }
@@ -148,7 +174,7 @@ public:
   ValueActivity getValue() const { return value; }
 
   ChangeResult meet(ValueActivity other) {
-    auto met = ValueActivity::meet(getValue(), other);
+    auto met = ValueActivity::merge(getValue(), other);
     if (getValue() == met) {
       return ChangeResult::NoChange;
     }
@@ -187,6 +213,18 @@ struct MemoryActivityState {
 
   bool operator!=(const MemoryActivityState &other) {
     return !(*this == other);
+  }
+
+  ChangeResult merge(const MemoryActivityState &other) {
+    if (*this == other) {
+      return ChangeResult::NoChange;
+    }
+
+    activeLoad |= other.activeLoad;
+    activeStore |= other.activeStore;
+    activeInit |= other.activeInit;
+    activeEscape |= other.activeEscape;
+    return ChangeResult::Change;
   }
 };
 
@@ -235,28 +273,67 @@ public:
     return false;
   }
 
+  void forEachAliasedAlloc(Value ptr, function_ref<void(Value)> valueFunc) {
+    for (const auto &[value, _] : activityStates) {
+      if (mayAlias(ptr, value))
+        valueFunc(value);
+    }
+  }
+
   /// Set the internal activity state.
+  ChangeResult addAllocation(Value value) {
+    if (activityStates.contains(value)) {
+      return ChangeResult::NoChange;
+    }
+    activityStates.insert({value, MemoryActivityState{.activeLoad = false,
+                                                      .activeStore = false,
+                                                      .activeInit = false,
+                                                      .activeEscape = false}});
+    return ChangeResult::Change;
+  }
+
   ChangeResult setActiveStore(Value value, bool activeStore) {
-    // Make sure an entry for the value exists
-    activityStates[value];
+    // First check if a canonical allocation exists for this value in the map
+    bool found = false;
     ChangeResult result = ChangeResult::NoChange;
     for (auto &[other, state] : activityStates) {
-      if (mayAlias(value, other) && state.activeStore != activeStore) {
-        result |= ChangeResult::Change;
-        state.activeStore = activeStore;
+      if (mayAlias(value, other)) {
+        found = true;
+        if (state.activeStore != activeStore) {
+          result = ChangeResult::Change;
+          state.activeStore = activeStore;
+        }
       }
+    }
+
+    // If not, this value becomes the canonical allocation.
+    if (!found) {
+      auto &state = activityStates[value];
+      result = ChangeResult::Change;
+      state.activeStore = activeStore;
     }
     return result;
   }
 
   ChangeResult setActiveLoad(Value value, bool activeLoad) {
-    activityStates[value];
+    // First check if a canonical allocation exists for this value in the map
+    bool found = false;
     ChangeResult result = ChangeResult::NoChange;
     for (auto &[other, state] : activityStates) {
-      if (mayAlias(value, other) && state.activeLoad != activeLoad) {
-        result = ChangeResult::Change;
-        state.activeLoad = activeLoad;
+      if (mayAlias(value, other)) {
+        found = true;
+        if (state.activeLoad != activeLoad) {
+          result = ChangeResult::Change;
+          state.activeLoad = activeLoad;
+        }
       }
+    }
+
+    // If not, this value becomes the canonical allocation.
+    if (!found) {
+      auto &state = activityStates[value];
+      result = ChangeResult::Change;
+      state.activeLoad = activeLoad;
     }
     return result;
   }
@@ -313,13 +390,7 @@ public:
     ChangeResult result = ChangeResult::NoChange;
     for (const auto &[value, rhsState] : rhs.activityStates) {
       auto &lhsState = activityStates[value];
-      if (lhsState != rhsState) {
-        lhsState.activeLoad |= rhsState.activeLoad;
-        lhsState.activeStore |= rhsState.activeStore;
-        lhsState.activeInit |= rhsState.activeInit;
-        lhsState.activeEscape |= rhsState.activeEscape;
-        result |= ChangeResult::Change;
-      }
+      result |= lhsState.merge(rhsState);
     }
     return result;
   }
@@ -334,13 +405,7 @@ public:
     ChangeResult result = ChangeResult::NoChange;
     for (const auto &[value, rhsState] : rhs.activityStates) {
       auto &lhsState = activityStates[value];
-      if (lhsState != rhsState) {
-        lhsState.activeLoad |= rhsState.activeLoad;
-        lhsState.activeStore |= rhsState.activeStore;
-        lhsState.activeInit |= rhsState.activeInit;
-        lhsState.activeEscape |= rhsState.activeEscape;
-        result |= ChangeResult::Change;
-      }
+      result |= lhsState.merge(rhsState);
     }
     return result;
   }
@@ -368,6 +433,14 @@ public:
       return;
     }
 
+    // Bail out if this op affects memory.
+    if (auto memory = dyn_cast<MemoryEffectOpInterface>(op)) {
+      SmallVector<MemoryEffects::EffectInstance> effects;
+      memory.getEffects(effects);
+      if (!effects.empty())
+        return;
+    }
+
     // For value-based AA, assume any active argument leads to an active result.
     // TODO: Could prune values based on the types of the operands (but would
     // require type analysis for full robustness)
@@ -377,7 +450,7 @@ public:
     // produce active results.
     ValueActivity joinedResult;
     for (auto operand : operands) {
-      joinedResult = ValueActivity::join(joinedResult, operand->getValue());
+      joinedResult = ValueActivity::merge(joinedResult, operand->getValue());
     }
 
     for (auto result : results) {
@@ -400,6 +473,14 @@ public:
   void
   visitOperation(Operation *op, ArrayRef<BackwardValueActivity *> operands,
                  ArrayRef<const BackwardValueActivity *> results) override {
+    // Bail out if the op propagates memory
+    if (auto memory = dyn_cast<MemoryEffectOpInterface>(op)) {
+      SmallVector<MemoryEffects::EffectInstance> effects;
+      memory.getEffects(effects);
+      if (!effects.empty())
+        return;
+    }
+
     // Propagate all operands to all results
     for (auto operand : operands) {
       if (Operation *definingOp = operand->getPoint().getDefiningOp()) {
@@ -460,6 +541,11 @@ public:
       // if (!value)
       //   return;
 
+      // Keep track of distinct allocations in the lattice
+      if (isa<MemoryEffects::Allocate>(effect.getEffect())) {
+        result |= after->addAllocation(value);
+      }
+
       // In forward-flow, a value is active if loaded from a memory resource
       // that has previously been actively stored to.
       if (isa<MemoryEffects::Read>(effect.getEffect())) {
@@ -467,9 +553,13 @@ public:
           result |= after->setActiveLoad(value, true);
           for (OpResult opResult : op->getResults()) {
             // Mark the result as (forward) active
+            // TODO: We might need type analysis here
+            ValueActivity resultActivity =
+                isa<FloatType, ComplexType>(opResult.getType())
+                    ? ValueActivity::getActiveVal()
+                    : ValueActivity::getActivePtr();
             auto *valueState = getOrCreate<ForwardValueActivity>(opResult);
-            propagateIfChanged(valueState,
-                               valueState->join(ValueActivity::getActive()));
+            propagateIfChanged(valueState, valueState->join(resultActivity));
           }
           if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
             result |= after->setActiveLoad(value, true);
@@ -480,7 +570,8 @@ public:
                 auto *valueState = getOrCreate<ForwardValueActivity>(
                     linalgOp.getMatchingBlockArgument(inputOperand));
                 propagateIfChanged(
-                    valueState, valueState->join(ValueActivity::getActive()));
+                    valueState,
+                    valueState->join(ValueActivity::getActiveVal()));
               }
             }
           }
@@ -491,13 +582,20 @@ public:
         std::optional<Value> stored = getStored(op);
         if (stored.has_value()) {
           auto *valueState = getOrCreateFor<ForwardValueActivity>(op, *stored);
-          if (valueState->getValue().isActive()) {
+          // This nesting is imperfect. Storing an active pointer results in an
+          // active pointer, but loading doesn't undo the layers of nesting.
+          if (valueState->getValue().isActiveVal() ||
+              valueState->getValue().isActivePtr()) {
             result |= after->setActiveStore(value, true);
 
-            // auto ptrValueActivity = getOrCreate<ForwardValueActivity>(value);
-            // propagateIfChanged(
-            //     ptrValueActivity,
-            //     ptrValueActivity->join(ValueActivity::getActive()));
+            after->forEachAliasedAlloc(value, [&](Value allocation) {
+              // This allocation is an active pointer
+              auto ptrValueActivity =
+                  getOrCreate<ForwardValueActivity>(allocation);
+              propagateIfChanged(
+                  ptrValueActivity,
+                  ptrValueActivity->join(ValueActivity::getActivePtr()));
+            });
           }
         } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
           // linalg.yield stores to the corresponding value.
@@ -509,7 +607,7 @@ public:
                   linalgOp.getBlock()->getTerminator()->getOperand(resultIndex);
               auto *valueState =
                   getOrCreateFor<ForwardValueActivity>(op, yieldOperand);
-              if (valueState->getValue().isActive()) {
+              if (valueState->getValue().isActiveVal()) {
                 result |= after->setActiveStore(value, true);
               }
             }
@@ -568,8 +666,14 @@ public:
         for (Value opResult : op->getResults()) {
           auto *valueState =
               getOrCreateFor<BackwardValueActivity>(op, opResult);
-          if (valueState->getValue().isActive()) {
+          if (valueState->getValue().isActiveVal() ||
+              valueState->getValue().isActivePtr()) {
             result |= before->setActiveLoad(value, true);
+            before->forEachAliasedAlloc(value, [&](Value alloc) {
+              auto ptrState = getOrCreate<BackwardValueActivity>(alloc);
+              propagateIfChanged(ptrState,
+                                 ptrState->meet(ValueActivity::getActivePtr()));
+            });
           }
         }
       }
@@ -578,9 +682,12 @@ public:
         if (stored.has_value()) {
           if (after.activeDataFlowsOut(value)) {
             result |= before->setActiveStore(value, true);
+            ValueActivity resultActivity =
+                isa<FloatType, ComplexType>(stored->getType())
+                    ? ValueActivity::getActiveVal()
+                    : ValueActivity::getActivePtr();
             auto *valueState = getOrCreate<BackwardValueActivity>(*stored);
-            propagateIfChanged(valueState,
-                               valueState->meet(ValueActivity::getActive()));
+            propagateIfChanged(valueState, valueState->meet(resultActivity));
           }
         } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
           if (after.activeDataFlowsOut(value)) {
@@ -595,7 +702,8 @@ public:
                 auto *valueState =
                     getOrCreate<BackwardValueActivity>(yieldOperand);
                 propagateIfChanged(
-                    valueState, valueState->meet(ValueActivity::getActive()));
+                    valueState,
+                    valueState->meet(ValueActivity::getActiveVal()));
               }
             }
           }
@@ -642,17 +750,18 @@ void enzyme::runDataFlowActivityAnalysis(
       auto *argLattice = solver.getOrCreateState<ForwardValueActivity>(arg);
       auto state = activity == enzyme::Activity::enzyme_const
                        ? ValueActivity::getConstant()
-                       : ValueActivity::getActive();
+                       : ValueActivity::getActivePtr();
       argLattice->join(state);
 
-      auto *backwardLattice =
-          solver.getOrCreateState<BackwardValueActivity>(arg);
-      backwardLattice->meet(state);
+      // TODO: Not sure why this is here
+      // auto *backwardLattice =
+      //     solver.getOrCreateState<BackwardValueActivity>(arg);
+      // backwardLattice->meet(state);
     } else {
       auto *argLattice = solver.getOrCreateState<ForwardValueActivity>(arg);
       auto state = activity == enzyme::Activity::enzyme_const
                        ? ValueActivity::getConstant()
-                       : ValueActivity::getActive();
+                       : ValueActivity::getActiveVal();
       argLattice->join(state);
     }
   }
@@ -679,10 +788,13 @@ void enzyme::runDataFlowActivityAnalysis(
         auto *returnLattice =
             solver.getOrCreateState<BackwardValueActivity>(operand);
         // Very basic type inference of the type
-        returnLattice->meet(
-            isa<FloatType, MemRefType, LLVM::LLVMPointerType>(operand.getType())
-                ? ValueActivity::getActive()
-                : ValueActivity::getConstant());
+        if (isa<FloatType>(operand.getType())) {
+          returnLattice->meet(ValueActivity::getActiveVal());
+        } else if (isa<MemRefType, LLVM::LLVMPointerType>(operand.getType())) {
+          returnLattice->meet(ValueActivity::getActivePtr());
+        } else {
+          returnLattice->meet(ValueActivity::getConstant());
+        }
       }
     }
   }
@@ -699,7 +811,11 @@ void enzyme::runDataFlowActivityAnalysis(
         errs() << "  " << tagAttr << ": ";
         auto fva = solver.lookupState<ForwardValueActivity>(arg);
         auto bva = solver.lookupState<BackwardValueActivity>(arg);
-        if (fva->getValue().isActive() && bva->getValue().isActive()) {
+        bool forwardActive =
+            fva->getValue().isActivePtr() || fva->getValue().isActiveVal();
+        bool backwardActive =
+            bva->getValue().isActivePtr() || bva->getValue().isActiveVal();
+        if (forwardActive && backwardActive) {
           errs() << "Active\n";
         } else {
           errs() << "Constant\n";
@@ -712,7 +828,11 @@ void enzyme::runDataFlowActivityAnalysis(
         for (OpResult opResult : op->getResults()) {
           auto fva = solver.lookupState<ForwardValueActivity>(opResult);
           auto bva = solver.lookupState<BackwardValueActivity>(opResult);
-          if (fva->getValue().isActive() && bva->getValue().isActive()) {
+          bool forwardActive =
+              fva->getValue().isActivePtr() || fva->getValue().isActiveVal();
+          bool backwardActive =
+              bva->getValue().isActivePtr() || bva->getValue().isActiveVal();
+          if (forwardActive && backwardActive) {
             errs() << "Active\n";
           } else {
             errs() << "Constant\n";
