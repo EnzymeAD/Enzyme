@@ -60,10 +60,33 @@ public:
 	} 
 };
 
+enum class cublasStatus_t{
+  CUBLAS_STATUS_SUCCESS,
+  CUBLAS_STATUS_NOT_INITIALIZED,
+  CUBLAS_STATUS_ALLOC_FAILED,
+  CUBLAS_STATUS_INVALID_VALUE,
+  CUBLAS_STATUS_ARCH_MISMATCH,
+  CUBLAS_STATUS_MAPPING_ERROR,
+  CUBLAS_STATUS_EXECUTION_FAILED,
+  CUBLAS_STATUS_INTERNAL_ERROR,
+  CUBLAS_STATUS_NOT_SUPPORTED,
+  CUBLAS_STATUS_LICENSE_ERROR,
+};
+enum class cublasOperation_t{
+  CUBLAS_OP_N,
+  CUBLAS_OP_T,
+  CUBLAS_OP_C,
+  CUBLAS_OP_UNUSED,
+};
+//typedef cublasOperation_t OP_UNUSED = cublasOperation_t::CUBLAS_OP_UNUSED;
+struct cublasHandle_t{};
 char CblasRowMajor = 101;
 char CblasColMajor = 102;
 
 bool inDerivative = false;
+
+    cublasHandle_t *UNUSED_CUBLAS_HANDLE = (cublasHandle_t*) 0x00000124;
+    cublasHandle_t *USED_CUBLAS_HANDLE = (cublasHandle_t*) 0x00000126;
 
     double *UNUSED_POINTER = (double*)0x00000070;
 
@@ -143,6 +166,49 @@ struct BlasCall {
 		return !(operator==(rhs));
 	}
 };
+struct CuBlasCall {
+    bool inDerivative;
+    CallType type;
+    void* pout_arg1;
+    void* pin_arg1;
+    void* pin_arg2;
+    double farg1;
+    double farg2;
+    cublasHandle_t *handle;
+    cublasOperation_t op1;
+    cublasOperation_t op2;
+    int iarg1;
+    int iarg2;
+    int iarg3;
+    int iarg4;
+    int iarg5;
+    int iarg6;
+    double *result;
+	bool operator==(const CuBlasCall &rhs) const {
+#define CHECK(A) if (A != rhs.A) return false;
+		CHECK(inDerivative)
+		CHECK(type)
+		CHECK(pout_arg1)
+		CHECK(pin_arg1)
+		CHECK(pout_arg1)
+		CHECK(farg1)
+		CHECK(farg2)
+		CHECK(handle)
+                CHECK(op1)
+                CHECK(op2)
+		CHECK(iarg1)
+		CHECK(iarg2)
+		CHECK(iarg3)
+		CHECK(iarg4)
+		CHECK(iarg5)
+		CHECK(iarg6)
+                CHECK(result)
+		return true;
+	}
+	bool operator!=(const CuBlasCall& rhs) const {
+		return !(operator==(rhs));
+	}
+};
 
 
 void printty(bool v) {
@@ -189,6 +255,13 @@ void printty(int v) {
     else printf("Unknown int");
     printf(" (%d)", v);
 }
+void printOp(cublasOperation_t v) {
+    if (v == cublasOperation_t::CUBLAS_OP_N) printf("CUBLAS_OP_N");
+    else if (v == cublasOperation_t::CUBLAS_OP_T) printf("CUBLAS_OP_T");
+    else if (v == cublasOperation_t::CUBLAS_OP_C) printf("CUBLAS_OP_C");
+    else printf("Unknown cublasOperation_t");
+    printf(" (%i)", v);
+}
 void printty(char v) {
     if (v == CblasRowMajor) {
         printf("RowMajor (%d)", v);
@@ -225,7 +298,7 @@ void printcall(BlasCall rcall) {
 		printty(rcall.layout);
 		printf(", uplo=");
 		printty(rcall.targ1);
-        printf(", M=");
+                printf(", M=");
 		printty(rcall.iarg1);
 		printf(", N=");
 		printty(rcall.iarg2);
@@ -252,8 +325,7 @@ void printcall(BlasCall rcall) {
 		printty(rcall.farg1);
 		printf(", cto=");
 		printty(rcall.farg2);
-		
-        printf(", M=");
+                printf(", M=");
 		printty(rcall.iarg1);
 		printf(", N=");
 		printty(rcall.iarg2);
@@ -451,6 +523,9 @@ void check_equiv(std::string scope, int i, BlasCall expected, BlasCall real) {
 vector<BlasCall> calls;
 vector<BlasCall> foundCalls;
 
+vector<CuBlasCall> cucalls;
+vector<CuBlasCall> foundCuCalls;
+
 extern "C" {
 
 // https://www.intel.com/content/www/us/en/docs/onemkl/developer-reference-c/2023-0/lascl.html
@@ -511,6 +586,30 @@ void cblas_dgemm(char layout, char transA, char transB, int M, int N, int K, dou
                                 layout,
                                 transA, transB,
                                 M, N, K, lda, ldb, ldc});
+}
+
+using cublasOperation_t::CUBLAS_OP_UNUSED;
+
+__attribute__((noinline))
+cublasStatus_t cublas_ddot(cublasHandle_t *handle, int N, double* X, int incx, double* Y, int incy, double* result) {
+    CuBlasCall call = {inDerivative, CallType::DOT,
+                                UNUSED_POINTER, X, Y,
+                                UNUSED_DOUBLE, UNUSED_DOUBLE,
+                                handle, CUBLAS_OP_UNUSED, CUBLAS_OP_UNUSED,
+                                N, UNUSED_INT, UNUSED_INT, incx, incy, UNUSED_INT, result};
+    *result = 3.15+N;
+    cucalls.push_back(call);
+    return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+__attribute__((noinline))
+cublasStatus_t cublas_dgemm(cublasHandle_t *handle, cublasOperation_t transA, cublasOperation_t transB, int M, int N, int K, double alpha, double* A, int lda, double* B, int ldb, double beta, double* C, int ldc) {
+    cucalls.push_back((CuBlasCall){inDerivative, CallType::GEMM,
+                                C, A, B,
+                                alpha, beta,
+                                handle,
+                                transA, transB,
+                                M, N, K, lda, ldb, ldc, UNUSED_POINTER});
+    return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
 
 // X = alpha * X
@@ -906,6 +1005,15 @@ void init() {
     calls.clear();
 }
 
+cublasOperation_t transpose(cublasOperation_t op) {
+    switch (op) {
+        case CUBLAS_OP_N: return CUBLAS_OP_T;
+        case CUBLAS_OP_T: return CUBLAS_OP_N;
+        default:
+      printf("Illegal transpose of '%c'\n", op);
+      exit(1);
+    }
+}
 char transpose(char c) {
     switch (c) {
         case 'N': return 'T';
