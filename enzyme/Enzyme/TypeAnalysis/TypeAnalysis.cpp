@@ -867,9 +867,10 @@ void TypeAnalyzer::considerTBAA() {
         }
         if (F) {
           StringSet<> JuliaKnownTypes = {
-              "julia.gc_alloc_obj", "jl_alloc_array_1d",  "jl_alloc_array_2d",
-              "jl_alloc_array_3d",  "ijl_alloc_array_1d", "ijl_alloc_array_2d",
-              "ijl_alloc_array_3d", "jl_gc_alloc_typed",  "ijl_gc_alloc_typed"};
+              "jl_new_array",       "ijl_new_array",      "julia.gc_alloc_obj",
+              "jl_alloc_array_1d",  "jl_alloc_array_2d",  "jl_alloc_array_3d",
+              "ijl_alloc_array_1d", "ijl_alloc_array_2d", "ijl_alloc_array_3d",
+              "jl_gc_alloc_typed",  "ijl_gc_alloc_typed"};
           if (JuliaKnownTypes.count(F->getName())) {
             visitCallBase(*call);
             continue;

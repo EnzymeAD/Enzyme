@@ -9228,11 +9228,11 @@ public:
             if (funcName == "ijl_alloc_array_1d" ||
                 funcName == "ijl_alloc_array_2d" ||
                 funcName == "ijl_alloc_array_3d" ||
-                funcName == "ijl_array_copy" ||
+                funcName == "ijl_array_copy" || funcName == "ijl_new_array" ||
                 funcName == "jl_alloc_array_1d" ||
                 funcName == "jl_alloc_array_2d" ||
                 funcName == "jl_alloc_array_3d" ||
-                funcName == "jl_array_copy" ||
+                funcName == "jl_array_copy" || funcName == "jl_new_array" ||
                 funcName == "julia.gc_alloc_obj" ||
                 funcName == "jl_gc_alloc_typed" ||
                 funcName == "ijl_gc_alloc_typed") {
@@ -9304,11 +9304,11 @@ public:
       // Thus it only needs caching if there is a need for it in the reverse.
       if (funcName == "jl_alloc_array_1d" || funcName == "jl_alloc_array_2d" ||
           funcName == "jl_alloc_array_3d" || funcName == "jl_array_copy" ||
-          funcName == "ijl_alloc_array_1d" ||
+          funcName == "jl_new_array" || funcName == "ijl_alloc_array_1d" ||
           funcName == "ijl_alloc_array_2d" ||
           funcName == "ijl_alloc_array_3d" || funcName == "ijl_array_copy" ||
-          funcName == "julia.gc_alloc_obj" || funcName == "jl_gc_alloc_typed" ||
-          funcName == "ijl_gc_alloc_typed") {
+          funcName == "ijl_new_array" || funcName == "julia.gc_alloc_obj" ||
+          funcName == "jl_gc_alloc_typed" || funcName == "ijl_gc_alloc_typed") {
         if (!subretused) {
           eraseIfUnused(call, /*erase*/ true, /*check*/ false);
           return;
