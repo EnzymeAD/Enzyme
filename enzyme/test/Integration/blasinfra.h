@@ -78,7 +78,6 @@ enum class cublasOperation_t{
   CUBLAS_OP_C,
   CUBLAS_OP_UNUSED,
 };
-//typedef cublasOperation_t OP_UNUSED = cublasOperation_t::CUBLAS_OP_UNUSED;
 struct cublasHandle_t{};
 char CblasRowMajor = 101;
 char CblasColMajor = 102;
@@ -588,30 +587,6 @@ void cblas_dgemm(char layout, char transA, char transB, int M, int N, int K, dou
                                 M, N, K, lda, ldb, ldc});
 }
 
-using cublasOperation_t::CUBLAS_OP_UNUSED;
-
-__attribute__((noinline))
-cublasStatus_t cublas_ddot(cublasHandle_t *handle, int N, double* X, int incx, double* Y, int incy, double* result) {
-    CuBlasCall call = {inDerivative, CallType::DOT,
-                                UNUSED_POINTER, X, Y,
-                                UNUSED_DOUBLE, UNUSED_DOUBLE,
-                                handle, CUBLAS_OP_UNUSED, CUBLAS_OP_UNUSED,
-                                N, UNUSED_INT, UNUSED_INT, incx, incy, UNUSED_INT, result};
-    *result = 3.15+N;
-    cucalls.push_back(call);
-    return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
-}
-__attribute__((noinline))
-cublasStatus_t cublas_dgemm(cublasHandle_t *handle, cublasOperation_t transA, cublasOperation_t transB, int M, int N, int K, double alpha, double* A, int lda, double* B, int ldb, double beta, double* C, int ldc) {
-    cucalls.push_back((CuBlasCall){inDerivative, CallType::GEMM,
-                                C, A, B,
-                                alpha, beta,
-                                handle,
-                                transA, transB,
-                                M, N, K, lda, ldb, ldc, UNUSED_POINTER});
-    return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
-}
-
 // X = alpha * X
 __attribute__((noinline))
 void cblas_dscal(int N, double alpha, double* X, int incX) {
@@ -659,6 +634,96 @@ __attribute__((noinline))
 void dlacpy(char *uplo, int *M, int* N, double* A, int *lda, double* B, int* ldb) {
   cblas_dlacpy(CblasColMajor, *uplo, *M, *N, A, *lda, B, *ldb);
 }
+
+using cublasOperation_t::CUBLAS_OP_UNUSED;
+
+__attribute__((noinline))
+cublasStatus_t cublas_dlascl(cublasHandle_t *handle, cublasOperation_t type, int KL, int KU, double cfrom, double cto, int M, int N, double* A, int lda) {
+    CuBlasCall call = {inDerivative, CallType::LASCL,
+                                A, UNUSED_POINTER, UNUSED_POINTER,
+                                cfrom, cto,
+                                handle,
+                                type, CUBLAS_OP_UNUSED,
+                                M, N, UNUSED_INT, lda, KL, KU, UNUSED_POINTER};
+    cucalls.push_back(call);
+    return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+__attribute__((noinline))
+cublasStatus_t cublas_ddot(cublasHandle_t *handle, int N, double* X, int incx, double* Y, int incy, double* result) {
+    CuBlasCall call = {inDerivative, CallType::DOT,
+                                UNUSED_POINTER, X, Y,
+                                UNUSED_DOUBLE, UNUSED_DOUBLE,
+                                handle, CUBLAS_OP_UNUSED, CUBLAS_OP_UNUSED,
+                                N, UNUSED_INT, UNUSED_INT, incx, incy, UNUSED_INT, result};
+    *result = 3.15+N;
+    cucalls.push_back(call);
+    return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+__attribute__((noinline))
+cublasStatus_t cublas_daxpy(cublasHandle_t *handle, int N, double alpha, double* X, int incx, double* Y, int incy) {
+    CuBlasCall call = {inDerivative, CallType::AXPY,
+                                Y, X, UNUSED_POINTER,
+                                alpha, UNUSED_DOUBLE,
+                                handle, CUBLAS_OP_UNUSED, CUBLAS_OP_UNUSED,
+                                N, UNUSED_INT, UNUSED_INT, incx, incy, UNUSED_INT, UNUSED_POINTER};
+    cucalls.push_back(call);
+    return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+__attribute__((noinline))
+cublasStatus_t cublas_dgemv(cublasHandle_t *handle, cublasOperation_t trans, int M, int N, double alpha, double* A, int lda, double* X, int incx, double beta, double* Y, int incy) {
+    CuBlasCall call = {inDerivative, CallType::GEMV,
+                                Y, A, X,
+                                alpha, beta,
+                                handle,
+                                trans, CUBLAS_OP_UNUSED,
+                                M, N, UNUSED_INT, lda, incx, incy, UNUSED_POINTER};
+    cucalls.push_back(call);
+    return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+__attribute__((noinline))
+cublasStatus_t cublas_dgemm(cublasHandle_t *handle, cublasOperation_t transA, cublasOperation_t transB, int M, int N, int K, double alpha, double* A, int lda, double* B, int ldb, double beta, double* C, int ldc) {
+    cucalls.push_back((CuBlasCall){inDerivative, CallType::GEMM,
+                                C, A, B,
+                                alpha, beta,
+                                handle,
+                                transA, transB,
+                                M, N, K, lda, ldb, ldc, UNUSED_POINTER});
+    return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+__attribute__((noinline))
+cublasStatus_t cublas_dscal(cublasHandle_t *handle, int N, double alpha, double* X, int incX) {
+    cucalls.push_back((CuBlasCall){inDerivative, CallType::SCAL,
+                                X, UNUSED_POINTER, UNUSED_POINTER,
+                                alpha, UNUSED_DOUBLE,
+                                handle,
+                                CUBLAS_OP_UNUSED, CUBLAS_OP_UNUSED,
+                                N, UNUSED_INT, UNUSED_INT, incX, UNUSED_INT, UNUSED_INT, UNUSED_POINTER});
+    return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+
+// A = alpha * X * transpose(Y) + A
+__attribute__((noinline))
+cublasStatus_t cublas_dger(cublasHandle_t *handle, int M, int N, double alpha, double* X, int incX, double* Y, int incY, double* A, int lda) {
+    cucalls.push_back((CuBlasCall){inDerivative, CallType::GER,
+                                A, X, Y,
+                                alpha, UNUSED_DOUBLE,
+                                handle,
+                                CUBLAS_OP_UNUSED, CUBLAS_OP_UNUSED,
+                                M, N, UNUSED_INT, incX, incY, lda, UNUSED_POINTER});
+    return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+
+__attribute__((noinline))
+cublasStatus_t cublas_dcopy(cublasHandle_t *handle, int N, double* X, int incX, double* Y, int incY) {
+    cucalls.push_back((CuBlasCall){inDerivative, CallType::COPY,
+                                Y, X, UNUSED_POINTER,
+                                alpha, UNUSED_DOUBLE,
+                                handle,
+                                CUBLAS_OP_UNUSED, CUBLAS_OP_UNUSED,
+                                N, UNUSED_INT, UNUSED_INT, incX, incY, UNUSED_INT, UNUSED_POINTER});
+    return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+
 
 }
 
@@ -1007,8 +1072,8 @@ void init() {
 
 cublasOperation_t transpose(cublasOperation_t op) {
     switch (op) {
-        case CUBLAS_OP_N: return CUBLAS_OP_T;
-        case CUBLAS_OP_T: return CUBLAS_OP_N;
+      case cublasOperation_t::CUBLAS_OP_N: return cublasOperation_t::CUBLAS_OP_T;
+      case cublasOperation_t::CUBLAS_OP_T: return cublasOperation_t::CUBLAS_OP_N;
         default:
       printf("Illegal transpose of '%c'\n", op);
       exit(1);
