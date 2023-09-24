@@ -1,4 +1,3 @@
-
 #include <cassert>
 #include <stdlib.h>
 #include <string.h>
@@ -60,41 +59,55 @@ public:
   void clear() { length = 0; }
 };
 
-bool is_normal(char c) {
-  switch (c) {
-  case 'N':
+enum class cublasStatus_t {
+  CUBLAS_STATUS_SUCCESS,
+  CUBLAS_STATUS_NOT_INITIALIZED,
+  CUBLAS_STATUS_ALLOC_FAILED,
+  CUBLAS_STATUS_INVALID_VALUE,
+  CUBLAS_STATUS_ARCH_MISMATCH,
+  CUBLAS_STATUS_MAPPING_ERROR,
+  CUBLAS_STATUS_EXECUTION_FAILED,
+  CUBLAS_STATUS_INTERNAL_ERROR,
+  CUBLAS_STATUS_NOT_SUPPORTED,
+  CUBLAS_STATUS_LICENSE_ERROR,
+};
+enum class cublasOperation_t {
+  CUBLAS_OP_N,
+  CUBLAS_OP_T,
+  CUBLAS_OP_C,
+  CUBLAS_OP_UNUSED,
+};
+bool is_normal(cublasOperation_t op) {
+  switch (op) {
+  case cublasOperation_t::CUBLAS_OP_N:
     return true;
-  case 'n':
-    return true;
-  case 'T':
-    return false;
-  case 't':
+  case cublasOperation_t::CUBLAS_OP_T:
     return false;
   default:
-    printf("Illegal transpose of '%c'\n", c);
+    printf("Illegal transpose of '%c'\n", op);
     exit(1);
   }
 }
-char transpose(char c) {
-  switch (c) {
-  case 'N':
-    return 'T';
-  case 'n':
-    return 't';
-  case 'T':
-    return 'N';
-  case 't':
-    return 'n';
+cublasOperation_t transpose(cublasOperation_t op) {
+  switch (op) {
+  case cublasOperation_t::CUBLAS_OP_N:
+    return cublasOperation_t::CUBLAS_OP_T;
+  case cublasOperation_t::CUBLAS_OP_T:
+    return cublasOperation_t::CUBLAS_OP_N;
   default:
-    printf("Illegal transpose of '%c'\n", c);
+    printf("Illegal transpose of '%c'\n", op);
     exit(1);
   }
 }
-char CblasRowMajor = 101;
-char CblasColMajor = 102;
+struct cublasHandle_t {};
 
 bool inDerivative = false;
+
+cublasHandle_t *UNUSED_CUBLAS_HANDLE = (cublasHandle_t *)0x00000124;
+cublasHandle_t *USED_CUBLAS_HANDLE = (cublasHandle_t *)0x00000126;
+
 double *UNUSED_POINTER = (double *)0x00000070;
+
 double *A = (double *)0x00000100;
 double *dA = (double *)0x00000700;
 int incA = 1234;
@@ -114,7 +127,6 @@ int M = 105688;
 int N = 78412;
 int K = 5013424;
 int lda = 3416;
-char UNUSED_TRANS = 'A';
 int UNUSED_INT = -1;
 double UNUSED_DOUBLE;
 
@@ -130,7 +142,7 @@ enum class CallType {
   LACPY,
 };
 
-struct BlasCall {
+struct CuBlasCall {
   bool inDerivative;
   CallType type;
   void *pout_arg1;
@@ -138,16 +150,17 @@ struct BlasCall {
   void *pin_arg2;
   double farg1;
   double farg2;
-  char layout;
-  char targ1;
-  char targ2;
+  cublasHandle_t *handle;
+  cublasOperation_t op1;
+  cublasOperation_t op2;
   int iarg1;
   int iarg2;
   int iarg3;
   int iarg4;
   int iarg5;
   int iarg6;
-  bool operator==(const BlasCall &rhs) const {
+  double *result;
+  bool operator==(const CuBlasCall &rhs) const {
 #define CHECK(A)                                                               \
   if (A != rhs.A)                                                              \
     return false;
@@ -158,18 +171,19 @@ struct BlasCall {
     CHECK(pout_arg1)
     CHECK(farg1)
     CHECK(farg2)
-    CHECK(layout)
-    CHECK(targ1)
-    CHECK(targ2)
+    CHECK(handle)
+    CHECK(op1)
+    CHECK(op2)
     CHECK(iarg1)
     CHECK(iarg2)
     CHECK(iarg3)
     CHECK(iarg4)
     CHECK(iarg5)
     CHECK(iarg6)
+    CHECK(result)
     return true;
   }
-  bool operator!=(const BlasCall &rhs) const { return !(operator==(rhs)); }
+  bool operator!=(const CuBlasCall &rhs) const { return !(operator==(rhs)); }
 };
 
 void printty(bool v) {
@@ -254,26 +268,20 @@ void printty(int v) {
     printf("Unknown int");
   printf(" (%d)", v);
 }
-void printty(char v) {
-  if (v == CblasRowMajor) {
-    printf("RowMajor (%d)", v);
+void printty(cublasOperation_t v) {
+  if (v == cublasOperation_t::CUBLAS_OP_UNUSED) {
+    printf("UNUSED_OP (%c)", v);
     return;
   }
-  if (v == CblasColMajor) {
-    printf("RowMajor (%d)", v);
+  if (v == cublasOperation_t::CUBLAS_OP_N) {
+    printf("CUBLAS_OP_N (%i)", v);
     return;
   }
-  if (v == UNUSED_TRANS) {
-    printf("UNUSED_TRANS (%c)", v);
+  if (v == cublasOperation_t::CUBLAS_OP_T) {
+    printf("CUBLAS_OP_T (%i)", v);
     return;
   }
-  for (auto t : {'N', 'n', 'T', 't'}) {
-    if (v == t) {
-      printf("'%c'", v);
-      return;
-    }
-  }
-  printf("Unknown char ('%c'=0x%x)", v, v);
+  printf("Unknown CuBlas Operation");
 }
 void printty(double v) {
   if (v == alpha)
@@ -287,15 +295,15 @@ void printty(double v) {
   printf(" (%f)", v);
 }
 
-void printcall(BlasCall rcall) {
+void printcall(CuBlasCall rcall) {
   switch (rcall.type) {
   case CallType::LACPY:
-    printf("LACPY(layout=");
-    printty(rcall.layout);
+    printf("LACPY(handle=");
+    printty(rcall.handle);
     printf(", uplo=");
-    printty(rcall.targ1);
+    printty(rcall.op1);
     printf(", M=");
-    printty(rcall.iarg1);
+    printty(rcall.op2);
     printf(", N=");
     printty(rcall.iarg2);
     printf(", A=");
@@ -309,10 +317,10 @@ void printcall(BlasCall rcall) {
     printf(")");
     return;
   case CallType::LASCL:
-    printf("LASCL(layout=");
-    printty(rcall.layout);
+    printf("LASCL(handle=");
+    printty(rcall.handle);
     printf(", type=");
-    printty(rcall.targ1);
+    printty(rcall.op1);
     printf(", KL=");
     printty(rcall.iarg5);
     printf(", KU=");
@@ -360,10 +368,10 @@ void printcall(BlasCall rcall) {
     printf(")");
     return;
   case CallType::GEMV:
-    printf("GEMV(layout=");
-    printty(rcall.layout);
+    printf("GEMV(handle=");
+    printty(rcall.handle);
     printf(", trans=");
-    printty(rcall.targ1);
+    printty(rcall.op1);
     printf(", M=");
     printty(rcall.iarg1);
     printf(", N=");
@@ -387,12 +395,12 @@ void printcall(BlasCall rcall) {
     printf(")");
     return;
   case CallType::GEMM:
-    printf("GEMM(layout=");
-    printty(rcall.layout);
+    printf("GEMM(handle=");
+    printty(rcall.handle);
     printf(", transA=");
-    printty(rcall.targ1);
+    printty(rcall.op1);
     printf(", transB=");
-    printty(rcall.targ2);
+    printty(rcall.op2);
     printf(", M=");
     printty(rcall.iarg1);
     printf(", N=");
@@ -429,8 +437,8 @@ void printcall(BlasCall rcall) {
     printf(")");
     return;
   case CallType::GER:
-    printf("GER(layout=");
-    printty(rcall.layout);
+    printf("GER(handle=");
+    printty(rcall.handle);
     printf(", M=");
     printty(rcall.iarg1);
     printf(", N=");
@@ -470,7 +478,7 @@ void printcall(BlasCall rcall) {
   }
 }
 
-void printTrace(const vector<BlasCall> &tr, std::string prefix = "") {
+void printTrace(const vector<CuBlasCall> &tr, std::string prefix = "") {
   printf("%sPrimal:\n", prefix.c_str());
   bool reverse = false;
   for (size_t i = 0; i < tr.size(); i++) {
@@ -489,7 +497,7 @@ void printTrace(const vector<BlasCall> &tr, std::string prefix = "") {
 
 template <typename T>
 void assert_eq(std::string scope, std::string varName, int i, T expected,
-               T real, BlasCall texpected, BlasCall rcall) {
+               T real, CuBlasCall texpected, CuBlasCall rcall) {
   if (expected == real)
     return;
   printf("Failure on call %d var %s found ", i, varName.c_str());
@@ -500,7 +508,8 @@ void assert_eq(std::string scope, std::string varName, int i, T expected,
   exit(1);
 }
 
-void check_equiv(std::string scope, int i, BlasCall expected, BlasCall real) {
+void check_equiv(std::string scope, int i, CuBlasCall expected,
+                 CuBlasCall real) {
 #define MAKEASSERT(name)                                                       \
   assert_eq(scope, #name, i, expected.name, real.name, expected, real);
   MAKEASSERT(inDerivative)
@@ -510,9 +519,9 @@ void check_equiv(std::string scope, int i, BlasCall expected, BlasCall real) {
   MAKEASSERT(pin_arg2);
   MAKEASSERT(farg1);
   MAKEASSERT(farg2);
-  MAKEASSERT(layout);
-  MAKEASSERT(targ1);
-  MAKEASSERT(targ2);
+  MAKEASSERT(handle);
+  MAKEASSERT(op1);
+  MAKEASSERT(op2);
   MAKEASSERT(iarg1);
   MAKEASSERT(iarg2);
   MAKEASSERT(iarg3);
@@ -521,170 +530,150 @@ void check_equiv(std::string scope, int i, BlasCall expected, BlasCall real) {
   MAKEASSERT(iarg6);
 }
 
-vector<BlasCall> calls;
-vector<BlasCall> foundCalls;
+vector<CuBlasCall> cucalls;
+vector<CuBlasCall> foundCuCalls;
 
 extern "C" {
 
-// https://www.intel.com/content/www/us/en/docs/onemkl/developer-reference-c/2023-0/lascl.html
-// technically LAPACKE_dlascl
-__attribute__((noinline)) void cblas_dlascl(char layout, char type, int KL,
-                                            int KU, double cfrom, double cto,
-                                            int M, int N, double *A, int lda) {
-  BlasCall call = {inDerivative,
-                   CallType::LASCL,
-                   A,
-                   UNUSED_POINTER,
-                   UNUSED_POINTER,
-                   cfrom,
-                   cto,
-                   layout,
-                   type,
-                   UNUSED_TRANS,
-                   M,
-                   N,
-                   UNUSED_INT,
-                   lda,
-                   KL,
-                   KU};
-  calls.push_back(call);
-}
+using cublasOperation_t::CUBLAS_OP_UNUSED;
 
-__attribute__((noinline)) double cblas_ddot(int N, double *X, int incx,
-                                            double *Y, int incy) {
-  BlasCall call = {inDerivative,
-                   CallType::DOT,
-                   UNUSED_POINTER,
-                   X,
-                   Y,
-                   UNUSED_DOUBLE,
-                   UNUSED_DOUBLE,
-                   UNUSED_TRANS,
-                   UNUSED_TRANS,
-                   UNUSED_TRANS,
-                   N,
-                   UNUSED_INT,
-                   UNUSED_INT,
-                   incx,
-                   incy,
-                   UNUSED_INT};
-  calls.push_back(call);
-  return 3.15 + N;
+__attribute__((noinline)) cublasStatus_t
+cublas_dlascl(cublasHandle_t *handle, cublasOperation_t type, int KL, int KU,
+              double cfrom, double cto, int M, int N, double *A, int lda) {
+  cucalls.push_back((CuBlasCall){inDerivative, CallType::LASCL, A,
+                                 UNUSED_POINTER, UNUSED_POINTER, cfrom, cto,
+                                 handle, type, CUBLAS_OP_UNUSED, M, N,
+                                 UNUSED_INT, lda, KL, KU, UNUSED_POINTER});
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
-
-// Y += alpha * X
-__attribute__((noinline)) void cblas_daxpy(int N, double alpha, double *X,
-                                           int incx, double *Y, int incy) {
-  BlasCall call = {inDerivative,
-                   CallType::AXPY,
-                   Y,
-                   X,
-                   UNUSED_POINTER,
-                   alpha,
-                   UNUSED_DOUBLE,
-                   UNUSED_TRANS,
-                   UNUSED_TRANS,
-                   UNUSED_TRANS,
-                   N,
-                   UNUSED_INT,
-                   UNUSED_INT,
-                   incx,
-                   incy,
-                   UNUSED_INT};
-  calls.push_back(call);
+__attribute__((noinline)) cublasStatus_t cublas_ddot(cublasHandle_t *handle,
+                                                     int N, double *X, int incx,
+                                                     double *Y, int incy,
+                                                     double *result) {
+  CuBlasCall call = {inDerivative,
+                     CallType::DOT,
+                     UNUSED_POINTER,
+                     X,
+                     Y,
+                     UNUSED_DOUBLE,
+                     UNUSED_DOUBLE,
+                     handle,
+                     CUBLAS_OP_UNUSED,
+                     CUBLAS_OP_UNUSED,
+                     N,
+                     UNUSED_INT,
+                     UNUSED_INT,
+                     incx,
+                     incy,
+                     UNUSED_INT,
+                     result};
+  *result = 3.15 + N;
+  cucalls.push_back(call);
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
-
-// Y = alpha * op(A) * X + beta * Y
-__attribute__((noinline)) void cblas_dgemv(char layout, char trans, int M,
-                                           int N, double alpha, double *A,
-                                           int lda, double *X, int incx,
-                                           double beta, double *Y, int incy) {
-  BlasCall call = {
-      inDerivative, CallType::GEMV, Y, A, X,          alpha, beta, layout,
-      trans,        UNUSED_TRANS,   M, N, UNUSED_INT, lda,   incx, incy};
-  calls.push_back(call);
+__attribute__((noinline)) cublasStatus_t cublas_daxpy(cublasHandle_t *handle,
+                                                      int N, double alpha,
+                                                      double *X, int incx,
+                                                      double *Y, int incy) {
+  CuBlasCall call = {inDerivative,
+                     CallType::AXPY,
+                     Y,
+                     X,
+                     UNUSED_POINTER,
+                     alpha,
+                     UNUSED_DOUBLE,
+                     handle,
+                     CUBLAS_OP_UNUSED,
+                     CUBLAS_OP_UNUSED,
+                     N,
+                     UNUSED_INT,
+                     UNUSED_INT,
+                     incx,
+                     incy,
+                     UNUSED_INT,
+                     UNUSED_POINTER};
+  cucalls.push_back(call);
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
-
-// C = alpha * A^transA * B^transB + beta * C
-__attribute__((noinline)) void cblas_dgemm(char layout, char transA,
-                                           char transB, int M, int N, int K,
-                                           double alpha, double *A, int lda,
-                                           double *B, int ldb, double beta,
-                                           double *C, int ldc) {
-  calls.push_back((BlasCall){inDerivative, CallType::GEMM, C, A, B, alpha, beta,
-                             layout, transA, transB, M, N, K, lda, ldb, ldc});
+__attribute__((noinline)) cublasStatus_t
+cublas_dgemv(cublasHandle_t *handle, cublasOperation_t trans, int M, int N,
+             double alpha, double *A, int lda, double *X, int incx, double beta,
+             double *Y, int incy) {
+  CuBlasCall call = {
+      inDerivative,  CallType::GEMV,   Y, A, X,          alpha, beta, handle,
+      trans,         CUBLAS_OP_UNUSED, M, N, UNUSED_INT, lda,   incx, incy,
+      UNUSED_POINTER};
+  cucalls.push_back(call);
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
-
-// X = alpha * X
-__attribute__((noinline)) void cblas_dscal(int N, double alpha, double *X,
-                                           int incX) {
-  calls.push_back((BlasCall){inDerivative, CallType::SCAL, X, UNUSED_POINTER,
-                             UNUSED_POINTER, alpha, UNUSED_DOUBLE, UNUSED_TRANS,
-                             UNUSED_TRANS, UNUSED_TRANS, N, UNUSED_INT,
-                             UNUSED_INT, incX, UNUSED_INT, UNUSED_INT});
+__attribute__((noinline)) cublasStatus_t
+cublas_dgemm(cublasHandle_t *handle, cublasOperation_t transA,
+             cublasOperation_t transB, int M, int N, int K, double alpha,
+             double *A, int lda, double *B, int ldb, double beta, double *C,
+             int ldc) {
+  cucalls.push_back((CuBlasCall){inDerivative, CallType::GEMM, C, A, B, alpha,
+                                 beta, handle, transA, transB, M, N, K, lda,
+                                 ldb, ldc, UNUSED_POINTER});
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+__attribute__((noinline)) cublasStatus_t
+cublas_dscal(cublasHandle_t *handle, int N, double alpha, double *X, int incX) {
+  cucalls.push_back((CuBlasCall){
+      inDerivative, CallType::SCAL, X, UNUSED_POINTER, UNUSED_POINTER, alpha,
+      UNUSED_DOUBLE, handle, CUBLAS_OP_UNUSED, CUBLAS_OP_UNUSED, N, UNUSED_INT,
+      UNUSED_INT, incX, UNUSED_INT, UNUSED_INT, UNUSED_POINTER});
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
 
 // A = alpha * X * transpose(Y) + A
-__attribute__((noinline)) void cblas_dger(char layout, int M, int N,
-                                          double alpha, double *X, int incX,
-                                          double *Y, int incY, double *A,
-                                          int lda) {
-  calls.push_back((BlasCall){inDerivative, CallType::GER, A, X, Y, alpha,
-                             UNUSED_DOUBLE, layout, UNUSED_TRANS, UNUSED_TRANS,
-                             M, N, UNUSED_INT, incX, incY, lda});
+__attribute__((noinline)) cublasStatus_t
+cublas_dger(cublasHandle_t *handle, int M, int N, double alpha, double *X,
+            int incX, double *Y, int incY, double *A, int lda) {
+  cucalls.push_back((CuBlasCall){inDerivative, CallType::GER, A, X, Y, alpha,
+                                 UNUSED_DOUBLE, handle, CUBLAS_OP_UNUSED,
+                                 CUBLAS_OP_UNUSED, M, N, UNUSED_INT, incX, incY,
+                                 lda, UNUSED_POINTER});
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
 
-__attribute__((noinline)) void cblas_dcopy(int N, double *X, int incX,
-                                           double *Y, int incY) {
-
-  calls.push_back((BlasCall){inDerivative, CallType::COPY, Y, X, UNUSED_POINTER,
-                             alpha, UNUSED_DOUBLE, UNUSED_TRANS, UNUSED_TRANS,
-                             UNUSED_TRANS, N, UNUSED_INT, UNUSED_INT, incX,
-                             incY, UNUSED_INT});
+__attribute__((noinline)) cublasStatus_t cublas_dcopy(cublasHandle_t *handle,
+                                                      int N, double *X,
+                                                      int incX, double *Y,
+                                                      int incY) {
+  cucalls.push_back((CuBlasCall){
+      inDerivative, CallType::COPY, Y, X, UNUSED_POINTER, alpha, UNUSED_DOUBLE,
+      handle, CUBLAS_OP_UNUSED, CUBLAS_OP_UNUSED, N, UNUSED_INT, UNUSED_INT,
+      incX, incY, UNUSED_INT, UNUSED_POINTER});
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
-
-__attribute__((noinline)) void cblas_dlacpy(char layout, char uplo, int M,
-                                            int N, double *A, int lda,
-                                            double *B, int ldb) {
-  calls.push_back((BlasCall){inDerivative, CallType::LACPY, B, A,
-                             UNUSED_POINTER, UNUSED_DOUBLE, UNUSED_DOUBLE,
-                             layout, uplo, UNUSED_TRANS, M, N, UNUSED_INT, lda,
-                             ldb, UNUSED_INT});
-}
-
-__attribute__((noinline)) void dlacpy(char *uplo, int *M, int *N, double *A,
-                                      int *lda, double *B, int *ldb) {
-  cblas_dlacpy(CblasColMajor, *uplo, *M, *N, A, *lda, B, *ldb);
-}
-
 }
 
 enum class ValueType { Matrix, Vector };
 struct BlasInfo {
   void *ptr;
   ValueType ty;
+  cublasHandle_t *cu_handle;
   int vec_length;
   int vec_increment;
-  char mat_layout;
   int mat_rows;
   int mat_cols;
   int mat_ld;
-  BlasInfo(void *v_ptr, int length, int increment) {
+  BlasInfo(void *v_ptr, cublasHandle_t *handle, int length, int increment) {
     ptr = v_ptr;
     ty = ValueType::Vector;
+    cu_handle = handle;
     vec_length = length;
     vec_increment = increment;
-    mat_layout = '@';
     mat_rows = -1;
     mat_cols = -1;
     mat_ld = -1;
   }
-  BlasInfo(void *v_ptr, char layout, int rows, int cols, int ld) {
+  BlasInfo(void *v_ptr, cublasHandle_t *handle, int rows, int cols, int ld) {
     ptr = v_ptr;
     ty = ValueType::Matrix;
+    cu_handle = handle;
     vec_length = -1;
     vec_increment = -1;
-    mat_layout = layout;
     mat_rows = rows;
     mat_cols = cols;
     mat_ld = ld;
@@ -692,9 +681,9 @@ struct BlasInfo {
   BlasInfo() {
     ptr = (void *)(-1);
     ty = ValueType::Matrix;
+    cu_handle = UNUSED_CUBLAS_HANDLE;
     vec_length = -1;
     vec_increment = -1;
-    mat_layout = -1;
     mat_rows = -1;
     mat_cols = -1;
     mat_ld = -1;
@@ -715,8 +704,8 @@ BlasInfo pointer_to_index(void *v, BlasInfo inputs[6]) {
 }
 
 void checkVector(BlasInfo info, std::string vecname, int length, int increment,
-                 std::string test, BlasCall rcall,
-                 const vector<BlasCall> &trace) {
+                 std::string test, CuBlasCall rcall,
+                 const vector<CuBlasCall> &trace) {
   if (info.ty != ValueType::Vector) {
     printf("Error in test %s, invalid memory\n", test.c_str());
     printTrace(trace);
@@ -748,25 +737,14 @@ void checkVector(BlasInfo info, std::string vecname, int length, int increment,
   }
 }
 
-void checkMatrix(BlasInfo info, std::string matname, char layout, int rows,
-                 int cols, int ld, std::string test, BlasCall rcall,
-                 const vector<BlasCall> &trace) {
+void checkMatrix(BlasInfo info, std::string matname, int rows, int cols, int ld,
+                 std::string test, CuBlasCall rcall,
+                 const vector<CuBlasCall> &trace) {
   if (info.ty != ValueType::Matrix) {
     printf("Error in test %s, invalid memory\n", test.c_str());
     printTrace(trace);
     printcall(rcall);
     printf(" Input %s is not a matrix\n", matname.c_str());
-    exit(1);
-  }
-  if (info.mat_layout != layout) {
-    printf("Error in test %s, invalid memory\n", test.c_str());
-    printTrace(trace);
-    printcall(rcall);
-    printf(" Input %s layout must be ", matname.c_str());
-    printty(info.mat_layout);
-    printf(" found layout=");
-    printty(layout);
-    printf("\n");
     exit(1);
   }
   if (info.mat_rows != rows) {
@@ -804,39 +782,22 @@ void checkMatrix(BlasInfo info, std::string matname, char layout, int rows,
   }
 }
 
-void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
-                 const vector<BlasCall> &trace) {
+void checkMemory(CuBlasCall rcall, BlasInfo inputs[6], std::string test,
+                 const vector<CuBlasCall> &trace) {
   switch (rcall.type) {
     return;
   case CallType::LASCL: {
-    auto A = pointer_to_index(rcall.pout_arg1, inputs);
-
-    auto layout = rcall.layout;
-    auto type = rcall.targ1;
-    auto KL = rcall.iarg5;
-    auto KU = rcall.iarg6;
-    auto cfrom = rcall.farg1;
-    auto cto = rcall.farg2;
-
-    auto M = rcall.iarg1;
-    auto N = rcall.iarg2;
-    auto lda = rcall.iarg4;
-
-    // = 'G': A is a full matrix.
-    assert(type == 'G');
-
-    // A is an m-by-n matrix
-    checkMatrix(A, "A", layout, /*rows=*/M, /*cols=*/N, /*ld=*/lda, test, rcall,
-                trace);
-    return;
+    printf("unsupported cublas call LASCL");
+    exit(1);
+  }
+  case CallType::LACPY: {
+    printf("unsupported cublas call LACPY");
+    exit(1);
   }
   case CallType::AXPY: {
     auto Y = pointer_to_index(rcall.pout_arg1, inputs);
-
     auto X = pointer_to_index(rcall.pin_arg1, inputs);
-
     auto alpha = rcall.farg1;
-
     auto N = rcall.iarg1;
     auto incX = rcall.iarg4;
     auto incY = rcall.iarg5;
@@ -863,9 +824,8 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     auto A = pointer_to_index(rcall.pin_arg1, inputs);
     auto X = pointer_to_index(rcall.pin_arg2, inputs);
 
-    auto layout = rcall.layout;
-    auto trans_char = rcall.targ1;
-    auto trans = !(trans_char == 'N' || trans_char == 'n');
+    auto trans_char = rcall.op1;
+    auto trans = !is_normal(trans_char);
     auto M = rcall.iarg1;
     auto N = rcall.iarg2;
     auto alpha = rcall.farg1;
@@ -875,8 +835,7 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     auto incY = rcall.iarg6;
 
     // A is an m-by-n matrix
-    checkMatrix(A, "A", layout, /*rows=*/M, /*cols=*/N, /*ld=*/lda, test, rcall,
-                trace);
+    checkMatrix(A, "A", /*rows=*/M, /*cols=*/N, /*ld=*/lda, test, rcall, trace);
 
     // if no trans, X must be N otherwise must be M
     // From
@@ -902,10 +861,9 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     auto A = pointer_to_index(rcall.pin_arg1, inputs);
     auto B = pointer_to_index(rcall.pin_arg2, inputs);
 
-    auto layout = rcall.layout;
-    auto transA_char = rcall.targ1;
+    auto transA_char = rcall.op1;
     auto transA = !is_normal(transA_char);
-    auto transB_char = rcall.targ2;
+    auto transB_char = rcall.op2;
     auto transB = !is_normal(transB_char);
     auto M = rcall.iarg1;
     auto N = rcall.iarg2;
@@ -936,12 +894,11 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
        LDA must be at least  max( 1, m ), otherwise  LDA must be at
        least  max( 1, k ).
     */
-    checkMatrix(A, "A", layout, /*rows=*/(!transA) ? M : K,
+    checkMatrix(A, "A", /*rows=*/(!transA) ? M : K,
                 /*cols=*/(!transA) ? K : M, /*ld=*/lda, test, rcall, trace);
-    checkMatrix(B, "B", layout, /*rows=*/(!transB) ? K : N,
+    checkMatrix(B, "B", /*rows=*/(!transB) ? K : N,
                 /*cols=*/(!transB) ? N : K, /*ld=*/ldb, test, rcall, trace);
-    checkMatrix(C, "C", layout, /*rows=*/M, /*cols=*/N, /*ld=*/ldc, test, rcall,
-                trace);
+    checkMatrix(C, "C", /*rows=*/M, /*cols=*/N, /*ld=*/ldc, test, rcall, trace);
     return;
   }
 
@@ -959,7 +916,6 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     auto X = pointer_to_index(rcall.pin_arg1, inputs);
     auto Y = pointer_to_index(rcall.pin_arg2, inputs);
 
-    auto layout = rcall.layout;
     auto M = rcall.iarg1;
     auto N = rcall.iarg2;
     auto alpha = rcall.farg1;
@@ -973,8 +929,8 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     // vector and A is an m by n matrix.
     checkVector(X, "X", /*len=*/M, /*inc=*/incX, test, rcall, trace);
     checkVector(Y, "Y", /*len=*/N, /*inc=*/incY, test, rcall, trace);
-    checkMatrix(A, "A", layout, /*rows=*/M, /*cols=*/N, /*ld=*/incA, test,
-                rcall, trace);
+    checkMatrix(A, "A", /*rows=*/M, /*cols=*/N, /*ld=*/incA, test, rcall,
+                trace);
     return;
   }
   case CallType::COPY: {
@@ -988,58 +944,42 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     checkVector(Y, "Y", /*len=*/N, /*inc=*/incY, test, rcall, trace);
     return;
   }
-  case CallType::LACPY: {
-    auto B = pointer_to_index(rcall.pout_arg1, inputs);
-    auto A = pointer_to_index(rcall.pin_arg1, inputs);
-
-    auto layout = rcall.layout;
-    auto uplo = rcall.targ1;
-    auto M = rcall.iarg1;
-    auto N = rcall.iarg2;
-    auto lda = rcall.iarg4;
-    auto ldb = rcall.iarg5;
-    checkMatrix(A, "A", layout, /*rows=*/M, /*cols=*/N, /*ld=*/lda, test, rcall,
-                trace);
-    checkMatrix(B, "B", layout, /*rows=*/M, /*cols=*/N, /*ld=*/ldb, test, rcall,
-                trace);
-    return;
-  }
   default:
-    printf("UNKNOWN CALL (%d)", (int)rcall.type);
-    return;
+    printf("unsupported cublas call LASCL");
+    exit(1);
   }
 }
 
 void checkMemoryTrace(BlasInfo inputs[6], std::string test,
-                      const vector<BlasCall> &trace) {
+                      const vector<CuBlasCall> &trace) {
   for (size_t i = 0; i < trace.size(); i++)
     checkMemory(trace[i], inputs, test, trace);
 }
 
 void init() {
   inDerivative = false;
-  calls.clear();
+  cucalls.clear();
 }
 
 void checkTest(std::string name) {
-  if (foundCalls.size() != calls.size()) {
+  if (foundCuCalls.size() != cucalls.size()) {
     printf("Test %s failed: Expected %zu calls, found %zu\n", name.c_str(),
-           calls.size(), foundCalls.size());
+           cucalls.size(), foundCuCalls.size());
     printf("Expected:\n");
-    printTrace(calls, "  ");
+    printTrace(cucalls, "  ");
     printf("Found:\n");
-    printTrace(foundCalls, "  ");
+    printTrace(foundCuCalls, "  ");
     assert(0 && "non-equal call count");
     exit(1);
   }
-  if (foundCalls != calls) {
+  if (foundCuCalls != cucalls) {
     printf("Test %s failed\n", name.c_str());
     printf("Expected:\n");
-    printTrace(calls, "  ");
+    printTrace(cucalls, "  ");
     printf("Found:\n");
-    printTrace(foundCalls, "  ");
+    printTrace(foundCuCalls, "  ");
   }
-  for (size_t i = 0; i < calls.size(); i++) {
-    check_equiv(name, i, foundCalls[i], calls[i]);
+  for (size_t i = 0; i < cucalls.size(); i++) {
+    check_equiv(name, i, foundCuCalls[i], cucalls[i]);
   }
 }
