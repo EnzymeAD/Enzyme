@@ -2,8 +2,8 @@
 
 void emit_BLASTypes(raw_ostream &os) {
   os << "const bool byRef = blas.prefix == \"\";\n";
-  os << "const int offset = (byRef ? 0 : 1);\n";
-  os << "const bool cublas = blas.prefix == \"cublas\";\n";
+  os << "const bool cblas = blas.prefix == \"cblas_\";\n";
+  os << "const bool cublas = blas.prefix == \"cublas_\";\n";
 
   os << "TypeTree ttFloat;\n"
      << "llvm::Type *floatType; \n"
@@ -56,11 +56,22 @@ void emit_BLASTypes(raw_ostream &os) {
      << "ttPtr.insert({-1,0},floatType);\n";
 }
 
+
+// cblas lv23 => layout
+// cublas => always handle
 void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
   bool lv23 = pattern.isBLASLevel2or3();
 
   os << "if (blas.function == \"" << name << "\") {\n";
+  
+  os << "  const int offset = (";
+  if (lv23) {
+    os << "(cblas || cublas)";
+  } else {
+    os << "cublas";
+  }
+  os << " ? 1 : 0);\n";
 
   auto argTypeMap = pattern.getArgTypeMap();
   DenseSet<size_t> mutableArgs = pattern.getMutableArgs();
@@ -84,24 +95,23 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
       // TODO, we need a get length arg number from vector since always assuming
       // it is arg 0 is wrong.
       if (!lv23)
-        os << "  if (auto n = dyn_cast<ConstantInt>(call.getArgOperand(0"
-           << (lv23 ? " + offset" : "") << "))) {\n"
+        os << "  if (auto n = dyn_cast<ConstantInt>(call.getArgOperand(0 + offset))) {\n"
            << "    if (auto inc = dyn_cast<ConstantInt>(call.getArgOperand("
-           << i << (lv23 ? " + offset" : "") << "))) {\n"
+           << i << " + offset))) {\n"
            << "      assert(!inc->isNegative());\n"
            << "      TypeTree ttData = ttPtr;\n"
            << "      for (size_t i = 1; i < n->getZExtValue(); i++)\n"
            << "          ttData.insert({-1, int(i * inc->getZExtValue())}, "
               "floatType);\n"
            << "      updateAnalysis(call.getArgOperand(" << i
-           << (lv23 ? " + offset" : "") << "), ttData, &call);\n"
+           << " + offset), ttData, &call);\n"
            << "    } else {\n"
            << "      updateAnalysis(call.getArgOperand(" << i
-           << (lv23 ? " + offset" : "") << "), ttPtr, &call);\n"
+           << " + offset), ttPtr, &call);\n"
            << "    }\n"
            << "  } else {\n"
            << "    updateAnalysis(call.getArgOperand(" << i
-           << (lv23 ? " + offset" : "") << "), ttPtr, &call);\n"
+           << " + offset), ttPtr, &call);\n"
            << "  }\n";
       else
         os << "  updateAnalysis(call.getArgOperand(" << i
@@ -139,7 +149,7 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
     // under cublas, these functions have an extra return ptr argument
     size_t ptrRetArg = argTypeMap.size();
     os << "  if (cublas) {\n"
-       << "    updateAnalysis(call.getArgOperand(" << ptrRetArg << "), ttFloatRet, &call);\n"
+       << "    updateAnalysis(call.getArgOperand(" << ptrRetArg << " + offset), ttPtr, &call);\n"
        << "  } else {\n"
        << "    assert(call.getType()->isFloatingPointTy());\n"
        << "    updateAnalysis(&call, ttFloatRet, &call);\n"
