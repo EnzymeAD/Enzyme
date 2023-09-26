@@ -28,6 +28,16 @@
 
 using namespace llvm;
 
+// TODO: add this to .td file and generate it based on that
+std::string get_blas_ret_ty(StringRef dfnc_name) {
+  if (dfnc_name == "dot" || dfnc_name == "asum" || dfnc_name == "nrm2" ||
+      dfnc_name == "iamax" || dfnc_name == "iamin" ||
+      dfnc_name == "inner_prod") {
+    return "fpType";
+  }
+  return "Builder2.getVoidTy()";
+}
+
 bool hasDiffeRet(Init *resultTree) {
   if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
     auto opName = resultRoot->getOperator()->getAsString();
@@ -202,12 +212,35 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
   const auto mutArgSet = pattern.getMutableArgs();
 
   os << "  const bool byRef = blas.prefix == \"\";\n";
+  os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
+  os << "  const bool cublas = blas.prefix == \"cublas_\";\n";
   os << "  Value *cacheval = nullptr;\n\n";
   // lv 2 or 3 functions have an extra arg under the cblas_ abi
+  os << "  const int offset = (";
   if (lv23) {
-    os << "  const int offset = (byRef ? 0 : 1);\n\n";
+    os << "(cblas || cublas)";
+  } else {
+    os << "cublas";
+  }
+  os << " ? 1 : 0);\n";
+  
+  os << "// Next ones shall only be called in the cublas case,\n"
+     << "// they have incorrect meaning otherwise\n"
+     << "  const int pos_handle = 0;\n"
+     << "  Value *orig_handle = nullptr;\n"
+     << "  Value *arg_handle = nullptr;\n"
+     << "  Type *type_handle = nullptr;\n"
+     << "  bool overwritten_handle = true;\n"
+     << "  if (cublas) {\n"
+     << "    orig_handle = call.getArgOperand(pos_handle);\n"
+     << "    arg_handle = gutils->getNewFromOriginal(orig_handle);\n"
+     << "    type_handle = arg_handle->getType();\n"
+     << "    overwritten_handle"
+     << " = (cacheMode ? overwritten_args[pos_handle] : false);\n\n"
+     << "  }\n\n";
+  if (lv23) {
     auto name = nameVec[0];
-    os << "// Next ones shall only be called in the !byRef (thus cblas) case,\n"
+    os << "// Next ones shall only be called in the cblas case,\n"
        << "// they have incorrect meaning otherwise\n"
        << "  const int pos_" << name << " = 0;\n"
        << "  const auto orig_" << name << " = call.getArgOperand(pos_" << name
@@ -222,9 +255,8 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
   auto actArgs = pattern.getActiveArgs();
   for (size_t i = (lv23 ? 1 : 0); i < nameVec.size(); i++) {
     auto name = nameVec[i];
-    size_t j = (lv23 ? i - 1 : i);
-    os << "  const int pos_" << name << " = " << j << (lv23 ? " + offset" : "")
-       << ";\n"
+    //size_t j = (lv23 ? i - 1 : i);
+    os << "  const int pos_" << name << " = " << i << " + offset\n"
        << "  const auto orig_" << name << " = call.getArgOperand(pos_" << name
        << ");\n"
        << "  auto arg_" << name << " = gutils->getNewFromOriginal(orig_" << name
@@ -238,6 +270,18 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
          << "  Value *rt_inactive_" << name << " = nullptr;\n";
     }
     os << "\n";
+  }
+  if (get_blas_ret_ty(pattern.getName()) == "fpType") {
+    os << "  if (cublas) {\n"
+       << "    const int pos_ret = " << nameVec.size() << "\n"
+       << "    const auto orig_ret = call.getArgOperand(pos_ret);\n"
+       << "    auto arg_ret = gutils->getNewFromOriginal(orig_ret);\n"
+       << "    const auto type_ret = arg_ret->getType();\n"
+       // TODO: check next line
+       << "    const bool overwritten_ret = (cacheMode ? overwritten_args[pos_ret] : false);\n"
+       << "    bool active_ret = !gutils->isConstantValue(orig_ret);\n"
+       << "    Value *rt_inactive_ret = nullptr;\n"
+       << "  }\n\n";
   }
 
   os << "\n  // <X> is inactive either if gutils->isConstantValue(<X>)\n"
@@ -811,16 +855,6 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
   os << ");\n";
   os << "    setDiffe(&call, dres, Builder2);\n";
   os << "  }\n";
-}
-
-// TODO: add this to .td file and generate it based on that
-std::string get_blas_ret_ty(StringRef dfnc_name) {
-  if (dfnc_name == "dot" || dfnc_name == "asum" || dfnc_name == "nrm2" ||
-      dfnc_name == "iamax" || dfnc_name == "iamin" ||
-      dfnc_name == "inner_prod") {
-    return "fpType";
-  }
-  return "Builder2.getVoidTy()";
 }
 
 void emit_tmp_creation(Record *Def, raw_ostream &os) {
