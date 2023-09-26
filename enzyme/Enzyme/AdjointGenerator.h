@@ -8542,7 +8542,8 @@ public:
       }
 
       if (called) {
-        if (funcName == "julia.write_barrier") {
+        if (funcName == "julia.write_barrier" ||
+            funcName == "julia.write_barrier_binding") {
           bool backwardsShadow = false;
           bool forwardsShadow = true;
           for (auto pair : gutils->backwardsOnlyShadows) {
