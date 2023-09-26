@@ -5319,8 +5319,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                             MDTuple::get(shadow->getContext(), {}));
         shadow->setAlignment(arg->getAlign());
         shadow->setUnnamedAddr(arg->getUnnamedAddr());
-        invertedPointers.insert(std::make_pair(
-            (const Value *)oval, InvertedPointerVH(this, shadow)));
         return shadow;
       }
 
