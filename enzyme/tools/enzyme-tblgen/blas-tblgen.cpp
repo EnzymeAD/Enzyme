@@ -334,6 +334,14 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
   }
   assert(hasInt);
 
+  os << "  bool cublas = blas.prefix == \"cublas\";\n"
+     << "  Type* cublas_retty = nullptr;\n"
+     << "  Value* cublas_handle = nullptr;\n"
+     << "  if (cublas) {\n"
+     << "    cublas_retty = call.getFunctionType()->getReturnType();\n"
+     << "    cublas_handle = call.getArgOperand(0);\n"
+     << "  }\n";
+
   for (auto name : enumerate(nameVec)) {
     assert(argTypeMap.count(name.index()) == 1);
     auto ty = argTypeMap.lookup(name.index());
@@ -1430,14 +1438,20 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
         // extra handling, since we will update only a fp scalar as part of the
         // return struct it's presumably done by setting it to the value
         // returned by this call
+        os << "      if (cublas) assert(0 && \"cublas not supported\");\n";
         emit_fret_call(dfnc_name, "ArrayRef<Value *>(args1)", name, "Builder2",
                        os);
       } else {
         os << "    SmallVector<Type*, 1> tys; for (auto arg : args1) "
               "tys.push_back(arg->getType());\n";
         std::string dfnc_ret_ty = get_blas_ret_ty(dfnc_name);
-        os << "    llvm::FunctionType *FT" << dfnc_name
-           << " = FunctionType::get(" << dfnc_ret_ty << ", tys, false);\n";
+        
+        os << "    llvm::FunctionType *FT" << dfnc_name << ";\n";
+        os << "    if (cublas) {\n"
+           << "      FT" << dfnc_name << " = FunctionType::get(cublas_retty, tys, false);\n"
+           << "    } else {\n"
+           << "      FT" << dfnc_name << " = FunctionType::get(" << dfnc_ret_ty << ", tys, false);\n"
+           << "    }\n";
         os << "    auto derivcall_" << dfnc_name
            << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
            << "  (blas.prefix + blas.floatType + \"" << dfnc_name
@@ -1515,6 +1529,8 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
               // returns, so assume it's the last step of the sequence
               // and update the diffe accordingly
               assert(i == ruleDag->getNumArgs() - 1);
+              os << "    if (cublas) assert(false && "
+                    "\"cublas not implemented\");\n";
               emit_fret_call(dfnc_name, argName, name, "Builder2", os);
             } else {
               os << "    SmallVector<Type*, 1> tys; for (auto arg : " << argName

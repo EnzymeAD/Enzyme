@@ -3,6 +3,7 @@
 void emit_BLASTypes(raw_ostream &os) {
   os << "const bool byRef = blas.prefix == \"\";\n";
   os << "const int offset = (byRef ? 0 : 1);\n";
+  os << "const bool cublas = blas.prefix == \"cublas\";\n";
 
   os << "TypeTree ttFloat;\n"
      << "llvm::Type *floatType; \n"
@@ -12,27 +13,28 @@ void emit_BLASTypes(raw_ostream &os) {
      << "  floatType = Type::getDoubleTy(call.getContext());\n"
      << "}\n"
      << "if (byRef) {\n"
-     << "  ttFloat.insert({0},BaseType::Pointer);\n"
-     << "  ttFloat.insert({0,0},floatType);\n"
+     << "  ttFloat.insert({-1},BaseType::Pointer);\n"
+     << "  ttFloat.insert({-1,0},floatType);\n"
      << "} else { \n"
      << "  ttFloat.insert({-1},floatType);\n"
      << "}\n";
 
   os << "TypeTree ttFloatRet;\n"
-     << "ttFloatRet.insert({-1},floatType);\n";
+     << "ttFloatRet.insert({-1},floatType);\n"
+     << "TypeTree ttCuBlasRet;\n"
 
   os << "TypeTree ttInt;\n"
      << "if (byRef) {\n"
-     << "  ttInt.insert({0},BaseType::Pointer);\n"
-     << "  ttInt.insert({0,0},BaseType::Integer);\n"
-     << "  ttInt.insert({0,1},BaseType::Integer);\n"
-     << "  ttInt.insert({0,2},BaseType::Integer);\n"
-     << "  ttInt.insert({0,3},BaseType::Integer);\n"
+     << "  ttInt.insert({-1},BaseType::Pointer);\n"
+     << "  ttInt.insert({-1,0},BaseType::Integer);\n"
+     << "  ttInt.insert({-1,1},BaseType::Integer);\n"
+     << "  ttInt.insert({-1,2},BaseType::Integer);\n"
+     << "  ttInt.insert({-1,3},BaseType::Integer);\n"
      << "  if (blas.suffix == \"_64_\" || blas.suffix == \"64_\") {\n"
-     << "    ttInt.insert({0,4},BaseType::Integer);\n"
-     << "    ttInt.insert({0,5},BaseType::Integer);\n"
-     << "    ttInt.insert({0,6},BaseType::Integer);\n"
-     << "    ttInt.insert({0,7},BaseType::Integer);\n"
+     << "    ttInt.insert({-1,4},BaseType::Integer);\n"
+     << "    ttInt.insert({-1,5},BaseType::Integer);\n"
+     << "    ttInt.insert({-1,6},BaseType::Integer);\n"
+     << "    ttInt.insert({-1,7},BaseType::Integer);\n"
      << "  }\n"
      << "} else {\n"
      << "  ttInt.insert({-1},BaseType::Integer);\n"
@@ -40,11 +42,14 @@ void emit_BLASTypes(raw_ostream &os) {
 
   os << "TypeTree ttChar;\n"
      << "if (byRef) {\n"
-     << "  ttChar.insert({0},BaseType::Pointer);\n"
-     << "  ttChar.insert({0,0},BaseType::Integer);\n"
+     << "  ttChar.insert({-1},BaseType::Pointer);\n"
+     << "  ttChar.insert({-1,0},BaseType::Integer);\n"
      << "} else {\n"
      << "  ttChar.insert({-1},BaseType::Integer);\n"
      << "}\n";
+
+  os << "TypeTree ttCuHandle;\n"
+     << "ttCuHandle.insert({-1},BaseType::Pointer);\n"
 
   os << "TypeTree ttPtr;\n"
      << "ttPtr.insert({-1},BaseType::Pointer);\n"
@@ -127,9 +132,18 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
       break;
     }
   }
+  os << "  if (cublas) {\n"
+     << "    updateAnalysis(&call, ttCuBlasRet, &call);\n"
+     << "  }\n";
   if (name == "dot" || name == "asum" || name == "nrm2") {
-    os << "  assert(call.getType()->isFloatingPointTy());\n"
-       << "  updateAnalysis(&call, ttFloatRet, &call);\n";
+    // under cublas, these functions have an extra return ptr argument
+    size_t ptrRetArg = argTypeMap.size();
+    os << "  if (cublas) {\n"
+       << "    updateAnalysis(call.getArgOperand(" << ptrRetArg << "), ttFloatRet, &call);\n"
+       << "  } else {\n"
+       << "    assert(call.getType()->isFloatingPointTy());\n"
+       << "    updateAnalysis(&call, ttFloatRet, &call);\n"
+       << "  }\n";
   }
 
   os << "}\n";
