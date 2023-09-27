@@ -30,6 +30,7 @@
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -3696,8 +3697,6 @@ public:
           return false;
         std::string s;
         llvm::raw_string_ostream ss(s);
-        ss << *gutils->oldFunc << "\n";
-        ss << *gutils->newFunc << "\n";
         if (Intrinsic::isOverloaded(ID))
 #if LLVM_VERSION_MAJOR >= 13
           ss << "cannot handle (forward) unknown intrinsic\n"
@@ -3718,14 +3717,12 @@ public:
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
                              ErrorType::NoDerivative, gutils, nullptr,
                              wrap(&Builder2));
-          setDiffe(&I,
-                   Constant::getNullValue(gutils->getShadowType(I.getType())),
-                   Builder2);
-          return false;
         } else {
           EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-          return false;
         }
+        setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
+                 Builder2);
+        return false;
       }
       return false;
     }
