@@ -255,8 +255,8 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
   auto actArgs = pattern.getActiveArgs();
   for (size_t i = (lv23 ? 1 : 0); i < nameVec.size(); i++) {
     auto name = nameVec[i];
-    //size_t j = (lv23 ? i - 1 : i);
-    os << "  const int pos_" << name << " = " << i << " + offset\n"
+    size_t j = (lv23 ? i - 1 : i);
+    os << "  const int pos_" << name << " = " << j << " + offset;\n"
        << "  const auto orig_" << name << " = call.getArgOperand(pos_" << name
        << ");\n"
        << "  auto arg_" << name << " = gutils->getNewFromOriginal(orig_" << name
@@ -273,7 +273,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
   }
   if (get_blas_ret_ty(pattern.getName()) == "fpType") {
     os << "  if (cublas) {\n"
-       << "    const int pos_ret = " << nameVec.size() << "\n"
+       << "    const int pos_ret = " << nameVec.size() << ";\n"
        << "    const auto orig_ret = call.getArgOperand(pos_ret);\n"
        << "    auto arg_ret = gutils->getNewFromOriginal(orig_ret);\n"
        << "    const auto type_ret = arg_ret->getType();\n"
@@ -378,8 +378,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
   }
   assert(hasInt);
 
-  os << "  bool cublas = blas.prefix == \"cublas\";\n"
-     << "  Type* cublas_retty = nullptr;\n"
+  os << "  Type* cublas_retty = nullptr;\n"
      << "  Value* cublas_handle = nullptr;\n"
      << "  if (cublas) {\n"
      << "    cublas_retty = call.getFunctionType()->getReturnType();\n"
