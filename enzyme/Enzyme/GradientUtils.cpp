@@ -3188,8 +3188,9 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
             StringRef funcName = getFuncNameFromCall(CI);
             if (funcName == "enzyme_zerotype")
               continue;
-            if (funcName == "julia.write_barrier" || isa<MemSetInst>(&I) ||
-                isa<MemTransferInst>(&I)) {
+            if (funcName == "julia.write_barrier" ||
+                funcName == "julia.write_barrier_binding" ||
+                isa<MemSetInst>(&I) || isa<MemTransferInst>(&I)) {
 
               // TODO
               SmallVector<Value *, 2> args;
@@ -3380,7 +3381,8 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
             }
           } else if (auto CI = dyn_cast<CallInst>(&I)) {
             StringRef funcName = getFuncNameFromCall(CI);
-            if (funcName == "julia.write_barrier") {
+            if (funcName == "julia.write_barrier" ||
+                funcName == "julia.write_barrier_binding") {
 
               // TODO
               SmallVector<Value *, 2> args;
@@ -8514,7 +8516,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         frees.insert(CI);
         continue;
       }
-      if (funcName == "julia.write_barrier") {
+      if (funcName == "julia.write_barrier" ||
+          funcName == "julia.write_barrier_binding") {
         stores.insert(CI);
         continue;
       }

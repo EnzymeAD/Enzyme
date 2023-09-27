@@ -2930,7 +2930,8 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
       if (F) {
         if (UA == UseActivity::AllStores &&
-            F->getName() == "julia.write_barrier")
+            (F->getName() == "julia.write_barrier" ||
+             F->getName() == "julia.write_barrier_binding"))
           continue;
         if (F->getIntrinsicID() == Intrinsic::memcpy ||
             F->getIntrinsicID() == Intrinsic::memmove) {

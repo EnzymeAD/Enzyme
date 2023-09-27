@@ -409,6 +409,10 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
           toErase.push_back(CI);
           continue;
         }
+        if (F->getName() == "julia.write_barrier_binding" && legal) {
+          toErase.push_back(CI);
+          continue;
+        }
       }
       IRBuilder<> B(CI);
       auto Addr = B.CreateAddrSpaceCast(rep, prev->getType());
