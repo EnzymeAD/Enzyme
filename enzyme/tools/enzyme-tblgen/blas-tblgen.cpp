@@ -754,7 +754,7 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
   // just make this const one available now to have less variable name repition
   os << "Value * const_one = to_blas_callconv(Builder2, "
         "ConstantInt::get(intType, 1), "
-     << "byRef, intType, allocationBuilder, \"int.one\");\n";
+     << "byRef, cublas, intType, allocationBuilder, \"int.one\");\n";
 
   const auto nameVec = pattern.getArgNames();
   const auto inputTypes = pattern.getArgTypeMap();
@@ -985,7 +985,7 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
           rev_call_arg(Dag, rule, actArg, i, os);
           os << ", ";
         }
-        os << "byRef)";
+        os << "byRef, cublas)";
         return;
       }
       if (Def->getName() == "Concat") {
@@ -1081,7 +1081,7 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
     } else if (Def->isSubClassOf("Char")) {
       auto val = Def->getValueAsString("value");
       os << "{to_blas_callconv(Builder2, ConstantInt::get(charType, '" << val
-         << "'), byRef, nullptr, allocationBuilder, \"constant.char." << val
+         << "'), byRef, cublas, nullptr, allocationBuilder, \"constant.char." << val
          << "\")}";
     } else if (Def->isSubClassOf("Alloca")) {
       auto val = Def->getValueAsInt("value");
@@ -1091,7 +1091,7 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
     } else if (Def->isSubClassOf("ConstantInt")) {
       auto val = Def->getValueAsInt("value");
       os << "{to_blas_callconv(Builder2, ConstantInt::get(intType, " << val
-         << "), byRef, intType, allocationBuilder, \"constant.int." << val
+         << "), byRef, cublas, intType, allocationBuilder, \"constant.int." << val
          << "\")}";
     } else if (Def->isSubClassOf("transpose")) {
       auto name = Def->getValueAsString("name");
@@ -1210,7 +1210,7 @@ void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
        << ", "
           "*gutils->oldFunc->getParent(), blas, intType, type_vec_like, "
           "type_n, fpType, "
-       << argName << ", Defs, byRef, julia_decl);\n"
+       << argName << ", Defs, byRef, cublas, julia_decl);\n"
        << "        CallInst *cubcall = "
           "cast<CallInst>(derivcall_inner_prod);\n";
   } else {
@@ -1405,7 +1405,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     if (typeMap.lookup(i) == ArgType::trans) {
       os << "    llvm::Value* arg_transposed_" << name
          << " = transpose(Builder2, arg_" << name
-         << ", byRef, charType, allocationBuilder, \"" << name << "\");\n";
+         << ", byRef, cublas, charType, allocationBuilder, \"" << name << "\");\n";
     }
   }
 
@@ -1438,7 +1438,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   // just make this const one available now to have less variable name repition
   os << "Value * const_one = to_blas_callconv(Builder2, "
         "ConstantInt::get(intType, 1), "
-     << "byRef, intType, allocationBuilder, \"int.one\");\n";
+     << "byRef, cublas, intType, allocationBuilder, \"int.one\");\n";
 
   os << "      auto bb_name = Builder2.GetInsertBlock()->getName();\n";
   for (size_t i = 0; i < activeArgs.size(); i++) {

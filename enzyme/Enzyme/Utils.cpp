@@ -863,7 +863,7 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                      IntegerType *IT, Type *BlasPT, Type *BlasIT, Type *fpTy,
                      llvm::ArrayRef<llvm::Value *> args,
                      const llvm::ArrayRef<llvm::OperandBundleDef> bundles,
-                     bool byRef, bool julia_decl) {
+                     bool byRef, bool cublas, bool julia_decl) {
   assert(fpTy->isFloatingPointTy());
 
   // add inner_prod call if not already present
@@ -929,12 +929,12 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 
   {
     IRBuilder<> B1(entry);
-    Value *blasOne = to_blas_callconv(B1, ConstantInt::get(IT, 1), byRef, IT,
+    Value *blasOne = to_blas_callconv(B1, ConstantInt::get(IT, 1), byRef, cublas, IT,
                                       B1, "constant.one");
     Value *m = load_if_ref(B1, IT, blasm, byRef);
     Value *n = load_if_ref(B1, IT, blasn, byRef);
     Value *size = B1.CreateNUWMul(m, n, "mat.size");
-    Value *blasSize = to_blas_callconv(B1, size, byRef, IT, B1, "mat.size");
+    Value *blasSize = to_blas_callconv(B1, size, byRef, cublas, IT, B1, "mat.size");
     B1.CreateCondBr(B1.CreateICmpEQ(size, ConstantInt::get(IT, 0)), end, init);
 
     IRBuilder<> B2(init);
@@ -2435,7 +2435,7 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
 
 // julia_decl null means not julia decl, otherwise it is the integer type needed
 // to cast to
-llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
+llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef, bool cublas,
                               IntegerType *julia_decl,
                               IRBuilder<> &entryBuilder,
                               llvm::Twine const &name) {
@@ -2521,7 +2521,7 @@ llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef) {
 // However, if we ask openBlas c ABI,
 // it is one of the following 32 bit integers values:
 // enum CBLAS_TRANSPOSE {CblasNoTrans=111, CblasTrans=112, CblasConjTrans=113};
-llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
+llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
   llvm::Type *T = V->getType();
   Value *out;
   if (T->isIntegerTy(8)) {
@@ -2579,7 +2579,7 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
   return width;
 }
 
-llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
+llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef, bool cublas,
                        llvm::IntegerType *julia_decl,
                        llvm::IRBuilder<> &entryBuilder,
                        const llvm::Twine &name) {
@@ -2589,9 +2589,9 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
     V = B.CreateLoad(charType, V, "ld." + name);
   }
 
-  V = transpose(B, V);
+  V = transpose(B, V, cublas);
 
-  return to_blas_callconv(B, V, byRef, julia_decl, entryBuilder,
+  return to_blas_callconv(B, V, byRef, cublas, julia_decl, entryBuilder,
                           "transpose." + name);
 }
 
@@ -2610,7 +2610,7 @@ SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
                                            ArrayRef<llvm::Value *> transA,
                                            ArrayRef<llvm::Value *> row,
                                            ArrayRef<llvm::Value *> col,
-                                           bool byRef) {
+                                           bool byRef, bool cublas) {
   assert(transA.size() == 1);
   auto trans = transA[0];
   if (byRef) {
@@ -2618,9 +2618,16 @@ SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
     trans = B.CreateLoad(charType, trans, "ld.row.trans");
   }
 
-  auto cond = B.CreateOr(
+  Value *cond = nullptr;
+  if (!cublas) {
+    cond = B.CreateOr(
       B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N')),
       B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n')));
+  } else {
+      // CUBLAS_OP_N = 0, CUBLAS_OP_T = 1, CUBLAS_OP_C = 2
+      // TODO: verify
+      cond = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 0));
+  }
   assert(row.size() == col.size());
   SmallVector<Value *, 1> toreturn;
   for (size_t i = 0; i < row.size(); i++) {
