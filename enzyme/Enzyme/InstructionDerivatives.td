@@ -370,7 +370,7 @@ def : CallPattern<(Op $x),
                   [ReadNone, NoUnwind]
                   >;
 def : CallPattern<(Op $x),
-                  ["expm1"],
+                  ["expm1", "expm1f", "expm1l"],
                   [(FMul (Intrinsic<"exp"> $x), (DiffeRet))],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
@@ -777,7 +777,7 @@ def : IntrPattern<(Op $x, $y),
                   >;
 
 def : IntrPattern<(Op $x, $y),
-                  [["minnum"], ["nvvm_fmin_f"], ["nvvm_fmin_d"], ["nvvm_fmin_ftz_f"], ["x86_sse_min_ss", "", "9"], ["x86_sse_min_ps", "", "9"], ["minimum", "15", ""]],
+                  [["minnum"], ["nvvm_fmin_f"], ["nvvm_fmin_d"], ["nvvm_fmin_ftz_f"], ["x86_sse_min_ss", "", "9"], ["x86_sse_min_ps", "", "9"], ["x86_sse2_min_pd", "", ""], ["minimum", "15", ""]],
                   [
                     (Select (FCmpOLT $x, $y), (DiffeRet), (ConstantFP<"0"> $x)),
                     (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $x), (DiffeRet))
@@ -786,7 +786,7 @@ def : IntrPattern<(Op $x, $y),
                   >;
 
 def : IntrPattern<(Op $x, $y),
-                  [["maxnum"], ["nvvm_fmax_f"], ["nvvm_fmax_d"], ["nvvm_fmax_ftz_f"], ["x86_sse_max_ss", "", "9"], ["x86_sse_max_ps", "", "9"], ["maximum", "15", ""]],
+                  [["maxnum"], ["nvvm_fmax_f"], ["nvvm_fmax_d"], ["nvvm_fmax_ftz_f"], ["x86_sse_max_ss", "", "9"], ["x86_sse_max_ps", "", "9"], ["x86_sse2_max_pd", "", ""], ["maximum", "15", ""]],
                   [
                     (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $x), (DiffeRet)),
                     (Select (FCmpOLT $x, $y), (DiffeRet), (ConstantFP<"0"> $x))

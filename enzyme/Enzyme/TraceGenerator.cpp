@@ -332,8 +332,9 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
   assert(called);
 
   Function *samplefn = Logic.CreateTrace(
-      called, tutils->sampleFunctions, tutils->observeFunctions,
-      activeRandomVariables, mode, autodiff, tutils->interface);
+      RequestContext(&call, &Builder), called, tutils->sampleFunctions,
+      tutils->observeFunctions, activeRandomVariables, mode, autodiff,
+      tutils->interface);
 
   Instruction *replacement;
   switch (mode) {

@@ -296,7 +296,8 @@ inline bool is_value_needed_in_reverse(
         // Use in a write barrier requires the shadow in the forward, even
         // though the instruction is active.
         if (mode != DerivativeMode::ReverseModeGradient &&
-            funcName == "julia.write_barrier") {
+            (funcName == "julia.write_barrier" ||
+             funcName == "julia.write_barrier_binding")) {
           if (EnzymePrintDiffUse)
             llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
                          << " in reverse as shadow write_barrier " << *CI

@@ -43,6 +43,7 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
     os << "#if LLVM_VERSION_MAJOR >= 16\n";
     os << "  F->setOnlyReadsMemory();\n";
     os << "#else\n";
+    os << "  F->removeFnAttr(llvm::Attribute::ReadNone);\n";
     os << "  F->addFnAttr(llvm::Attribute::ReadOnly);\n";
     os << "#endif\n";
   }
@@ -69,17 +70,29 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   }
 
   os << "  if (byRef) {\n";
-  for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {
+  int numCharArgs = 0;
+  size_t numArgs = argTypeMap.size();
+  for (size_t argPos = 0; argPos < numArgs; argPos++) {
+    const auto typeOfArg = argTypeMap.lookup(argPos);
+    if (is_char_arg(typeOfArg))
+      numCharArgs++;
+  }
+
+  for (size_t argPos = 0; argPos < numArgs; argPos++) {
     const auto typeOfArg = argTypeMap.lookup(argPos);
     size_t i = (lv23 ? argPos - 1 : argPos);
-    if (typeOfArg == ArgType::len || typeOfArg == ArgType::vincInc ||
-        typeOfArg == ArgType::fp || typeOfArg == ArgType::trans ||
-        typeOfArg == ArgType::mldLD || typeOfArg == ArgType::uplo ||
-        typeOfArg == ArgType::diag || typeOfArg == ArgType::side) {
-      os << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
-         << ", llvm::Attribute::ReadOnly);\n"
-         << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
-         << ", llvm::Attribute::NoCapture);\n";
+
+    if (is_char_arg(typeOfArg) || typeOfArg == ArgType::len ||
+        typeOfArg == ArgType::vincInc || typeOfArg == ArgType::fp ||
+        typeOfArg == ArgType::mldLD) {
+      if (is_char_arg(typeOfArg) && numArgs - argPos <= numCharArgs) {
+        os << "      F->removeParamAttr(" << i << (lv23 ? " + offset" : "")
+           << ", llvm::Attribute::ReadNone);\n"
+           << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+           << ", llvm::Attribute::ReadOnly);\n"
+           << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+           << ", llvm::Attribute::NoCapture);\n";
+      }
     }
   }
 
@@ -87,7 +100,7 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
      << "  // Julia declares double* pointers as Int64,\n"
      << "  //  so LLVM won't let us add these Attributes.\n"
      << "  if (!julia_decl) {\n";
-  for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {
+  for (size_t argPos = 0; argPos < numArgs; argPos++) {
     auto typeOfArg = argTypeMap.lookup(argPos);
     size_t i = (lv23 ? argPos - 1 : argPos);
     if (typeOfArg == ArgType::vincData || typeOfArg == ArgType::mldData) {
@@ -95,7 +108,9 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
          << ", llvm::Attribute::NoCapture);\n";
       if (mutableArgs.count(argPos) == 0) {
         // Only emit ReadOnly if the arg isn't mutable
-        os << "    F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+        os << "    F->removeParamAttr(" << i << (lv23 ? " + offset" : "")
+           << ", llvm::Attribute::ReadNone);\n"
+           << "    F->addParamAttr(" << i << (lv23 ? " + offset" : "")
            << ", llvm::Attribute::ReadOnly);\n";
       }
     }

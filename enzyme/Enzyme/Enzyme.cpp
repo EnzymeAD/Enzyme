@@ -1377,7 +1377,8 @@ public:
                               ? BATCH_TYPE::SCALAR
                               : BATCH_TYPE::VECTOR;
 
-    auto newFunc = Logic.CreateBatch(F, width, arg_types, ret_type);
+    auto newFunc = Logic.CreateBatch(RequestContext(CI, &Builder), F, width,
+                                     arg_types, ret_type);
 
     if (!newFunc)
       return false;
@@ -1409,7 +1410,8 @@ public:
                       Type *retElemType, SmallVectorImpl<Value *> &args,
                       const std::map<int, Type *> &byVal,
                       const std::vector<DIFFE_TYPE> &constants, Function *fn,
-                      DerivativeMode mode, Options &options, bool sizeOnly) {
+                      DerivativeMode mode, Options &options, bool sizeOnly,
+                      SmallVectorImpl<CallInst *> &calls) {
     auto &differet = options.differet;
     auto &tape = options.tape;
     auto &width = options.width;
@@ -1431,6 +1433,7 @@ public:
         populate_overwritten_args(TA, fn, mode, overwritten_args);
 
     IRBuilder Builder(CI);
+    RequestContext context(CI, &Builder);
 
     // differentiate fn
     Function *newFunc = nullptr;
@@ -1439,7 +1442,7 @@ public:
     switch (mode) {
     case DerivativeMode::ForwardMode:
       newFunc = Logic.CreateForwardDiff(
-          fn, retType, constants, TA,
+          context, fn, retType, constants, TA,
           /*should return*/ primalReturn, mode, freeMemory, width,
           /*addedType*/ nullptr, type_args, overwritten_args,
           /*augmented*/ nullptr);
@@ -1447,7 +1450,7 @@ public:
     case DerivativeMode::ForwardModeSplit: {
       bool forceAnonymousTape = !sizeOnly && allocatedTapeSize == -1;
       aug = &Logic.CreateAugmentedPrimal(
-          fn, retType, constants, TA,
+          context, fn, retType, constants, TA,
           /*returnUsed*/ false, /*shadowReturnUsed*/ false, type_args,
           overwritten_args, forceAnonymousTape, width, /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
@@ -1483,7 +1486,7 @@ public:
         tapeType = PointerType::getInt8PtrTy(fn->getContext());
       }
       newFunc = Logic.CreateForwardDiff(
-          fn, retType, constants, TA,
+          context, fn, retType, constants, TA,
           /*should return*/ primalReturn, mode, freeMemory, width,
           /*addedType*/ tapeType, type_args, overwritten_args, aug);
       break;
@@ -1491,6 +1494,7 @@ public:
     case DerivativeMode::ReverseModeCombined:
       assert(freeMemory);
       newFunc = Logic.CreatePrimalAndGradient(
+          context,
           (ReverseCacheKey){.todiff = fn,
                             .retType = retType,
                             .constant_args = constants,
@@ -1517,8 +1521,8 @@ public:
       bool shadowReturnUsed = returnUsed && (retType == DIFFE_TYPE::DUP_ARG ||
                                              retType == DIFFE_TYPE::DUP_NONEED);
       aug = &Logic.CreateAugmentedPrimal(
-          fn, retType, constants, TA, returnUsed, shadowReturnUsed, type_args,
-          overwritten_args, forceAnonymousTape, width,
+          context, fn, retType, constants, TA, returnUsed, shadowReturnUsed,
+          type_args, overwritten_args, forceAnonymousTape, width,
           /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
@@ -1556,6 +1560,7 @@ public:
         newFunc = aug->fn;
       else
         newFunc = Logic.CreatePrimalAndGradient(
+            context,
             (ReverseCacheKey){.todiff = fn,
                               .retType = retType,
                               .constant_args = constants,
@@ -1702,63 +1707,13 @@ public:
     }
 
     ReplaceOriginalCall(Builder, ret, retElemType, diffret, CI, mode);
-
-    if (Logic.PostOpt) {
-      auto Params = llvm::getInlineParams();
-
-      llvm::SetVector<CallInst *> Q;
-      Q.insert(diffretc);
-      while (Q.size()) {
-        auto cur = *Q.begin();
-        Function *outerFunc = cur->getParent()->getParent();
-        llvm::OptimizationRemarkEmitter ORE(outerFunc);
-        Q.erase(Q.begin());
-        if (auto F = cur->getCalledFunction()) {
-          if (!F->empty()) {
-            // Garbage collect AC's created
-            SmallVector<AssumptionCache *, 2> ACAlloc;
-            auto getAC = [&](Function &F) -> llvm::AssumptionCache & {
-              auto AC = new AssumptionCache(F);
-              ACAlloc.push_back(AC);
-              return *AC;
-            };
-            auto GetTLI =
-                [&](llvm::Function &F) -> const llvm::TargetLibraryInfo & {
-              return Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F);
-            };
-
-            auto GetInlineCost = [&](CallBase &CB) {
-              TargetTransformInfo TTI(F->getParent()->getDataLayout());
-              auto cst = llvm::getInlineCost(CB, Params, TTI, getAC, GetTLI);
-              return cst;
-            };
-            if (llvm::shouldInline(*cur, GetInlineCost, ORE)) {
-              InlineFunctionInfo IFI;
-              InlineResult IR = InlineFunction(*cur, IFI);
-              if (IR.isSuccess()) {
-                LowerSparsification(outerFunc, /*replaceAll*/ false);
-                for (auto U : outerFunc->users()) {
-                  if (auto CI = dyn_cast<CallInst>(U)) {
-                    if (CI->getCalledFunction() == outerFunc) {
-                      Q.insert(CI);
-                    }
-                  }
-                }
-              }
-            }
-            for (auto AC : ACAlloc) {
-              delete AC;
-            }
-          }
-        }
-      }
-    }
-    return true;
+    calls.push_back(diffretc);
+    return diffret;
   }
 
   /// Return whether successful
-  bool HandleAutoDiffArguments(CallInst *CI, DerivativeMode mode,
-                               bool sizeOnly) {
+  bool HandleAutoDiffArguments(CallInst *CI, DerivativeMode mode, bool sizeOnly,
+                               SmallVectorImpl<CallInst *> &calls) {
 
     // determine function to differentiate
     Function *fn = parseFunctionParameter(CI);
@@ -1796,16 +1751,17 @@ public:
 
 #if LLVM_VERSION_MAJOR >= 16
     return HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, args,
-                          byVal, constants, fn, mode, options.value(),
-                          sizeOnly);
+                          byVal, constants, fn, mode, options.value(), sizeOnly,
+                          calls);
 #else
     return HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, args,
                           byVal, constants, fn, mode, options.getValue(),
-                          sizeOnly);
+                          sizeOnly, calls);
 #endif
   }
 
-  bool HandleProbProg(CallInst *CI, ProbProgMode mode) {
+  bool HandleProbProg(CallInst *CI, ProbProgMode mode,
+                      SmallVectorImpl<CallInst *> &calls) {
     IRBuilder<> Builder(CI);
     Function *F = parseFunctionParameter(CI);
     if (!F)
@@ -1904,9 +1860,9 @@ public:
       constants.push_back(DIFFE_TYPE::CONSTANT);
     }
 
-    auto newFunc = Logic.CreateTrace(F, sampleFunctions, observeFunctions,
-                                     opt->ActiveRandomVariables, mode, autodiff,
-                                     interface);
+    auto newFunc = Logic.CreateTrace(
+        RequestContext(CI, &Builder), F, sampleFunctions, observeFunctions,
+        opt->ActiveRandomVariables, mode, autodiff, interface);
 
     if (!autodiff) {
       auto call = CallInst::Create(newFunc->getFunctionType(), newFunc, args);
@@ -1928,13 +1884,15 @@ public:
     }
 
 #if LLVM_VERSION_MAJOR >= 16
-    bool status = HandleAutoDiff(
-        CI, CI->getCallingConv(), ret, retElemType, dargs, byVal, constants,
-        newFunc, DerivativeMode::ReverseModeCombined, opt.value(), false);
+    bool status =
+        HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, dargs, byVal,
+                       constants, newFunc, DerivativeMode::ReverseModeCombined,
+                       opt.value(), false, calls);
 #else
-    bool status = HandleAutoDiff(
-        CI, CI->getCallingConv(), ret, retElemType, dargs, byVal, constants,
-        newFunc, DerivativeMode::ReverseModeCombined, opt.getValue(), false);
+    bool status =
+        HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, dargs, byVal,
+                       constants, newFunc, DerivativeMode::ReverseModeCombined,
+                       opt.getValue(), false, calls);
 #endif
 
     delete interface;
@@ -2447,17 +2405,19 @@ public:
       Changed = true;
     }
 
+    SmallVector<CallInst *, 1> calls;
+
     // Perform all the size replacements first to create constants
     for (auto pair : toSize) {
       bool successful = HandleAutoDiffArguments(pair.first, pair.second,
-                                                /*sizeOnly*/ true);
+                                                /*sizeOnly*/ true, calls);
       Changed = true;
       if (!successful)
         break;
     }
     for (auto pair : toLower) {
       bool successful = HandleAutoDiffArguments(pair.first, pair.second,
-                                                /*sizeOnly*/ false);
+                                                /*sizeOnly*/ false, calls);
       Changed = true;
       if (!successful)
         break;
@@ -2482,8 +2442,10 @@ public:
       bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
                        Arch == Triple::amdgcn;
 
+      IRBuilder<> Builder(CI);
       auto val = GradientUtils::GetOrCreateShadowConstant(
-          Logic, Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F), TA, fn,
+          RequestContext(CI, &Builder), Logic,
+          Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F), TA, fn,
           pair.second, /*width*/ 1, AtomicAdd);
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
@@ -2495,7 +2457,59 @@ public:
     }
 
     for (auto &&[call, mode] : toProbProg) {
-      HandleProbProg(call, mode);
+      HandleProbProg(call, mode, calls);
+    }
+
+    if (Logic.PostOpt) {
+      auto Params = llvm::getInlineParams();
+
+      llvm::SetVector<CallInst *> Q;
+      for (auto call : calls)
+        Q.insert(call);
+      while (Q.size()) {
+        auto cur = *Q.begin();
+        Function *outerFunc = cur->getParent()->getParent();
+        llvm::OptimizationRemarkEmitter ORE(outerFunc);
+        Q.erase(Q.begin());
+        if (auto F = cur->getCalledFunction()) {
+          if (!F->empty()) {
+            // Garbage collect AC's created
+            SmallVector<AssumptionCache *, 2> ACAlloc;
+            auto getAC = [&](Function &F) -> llvm::AssumptionCache & {
+              auto AC = new AssumptionCache(F);
+              ACAlloc.push_back(AC);
+              return *AC;
+            };
+            auto GetTLI =
+                [&](llvm::Function &F) -> const llvm::TargetLibraryInfo & {
+              return Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F);
+            };
+
+            auto GetInlineCost = [&](CallBase &CB) {
+              TargetTransformInfo TTI(F->getParent()->getDataLayout());
+              auto cst = llvm::getInlineCost(CB, Params, TTI, getAC, GetTLI);
+              return cst;
+            };
+            if (llvm::shouldInline(*cur, GetInlineCost, ORE)) {
+              InlineFunctionInfo IFI;
+              InlineResult IR = InlineFunction(*cur, IFI);
+              if (IR.isSuccess()) {
+                LowerSparsification(outerFunc, /*replaceAll*/ false);
+                for (auto U : outerFunc->users()) {
+                  if (auto CI = dyn_cast<CallInst>(U)) {
+                    if (CI->getCalledFunction() == outerFunc) {
+                      Q.insert(CI);
+                    }
+                  }
+                }
+              }
+            }
+            for (auto AC : ACAlloc) {
+              delete AC;
+            }
+          }
+        }
+      }
     }
 
     if (Changed && EnzymeAttributor) {

@@ -260,7 +260,8 @@ void InstructionBatcher::visitCallInst(llvm::CallInst &call) {
                             ? BATCH_TYPE::SCALAR
                             : BATCH_TYPE::VECTOR;
 
-  Function *new_func = Logic.CreateBatch(orig_func, width, arg_types, ret_type);
+  Function *new_func = Logic.CreateBatch(RequestContext(&call, &Builder2),
+                                         orig_func, width, arg_types, ret_type);
   CallInst *new_call = Builder2.CreateCall(new_func->getFunctionType(),
                                            new_func, args, call.getName());
 

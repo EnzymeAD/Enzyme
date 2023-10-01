@@ -430,6 +430,9 @@ struct CacheAnalysis {
     if (funcName == "julia.write_barrier")
       return {};
 
+    if (funcName == "julia.write_barrier_binding")
+      return {};
+
     if (funcName == "enzyme_zerotype")
       return {};
 
@@ -762,6 +765,9 @@ void calculateUnusedValuesInFunction(
               if (getFuncNameFromCall(CI) == "julia.write_barrier") {
                 continue;
               }
+              if (getFuncNameFromCall(CI) == "julia.write_barrier_binding") {
+                continue;
+              }
               bool writeOnlyNoCapture = true;
               if (shouldDisableNoWrite(CI)) {
                 writeOnlyNoCapture = false;
@@ -1004,7 +1010,8 @@ void calculateUnusedValuesInFunction(
           const Function *CF = CI ? getFunctionFromCall(CI) : nullptr;
           StringRef funcName = CF ? CF->getName() : "";
           if (isa<MemTransferInst>(inst) || isa<StoreInst>(inst) ||
-              isa<MemSetInst>(inst) || funcName == "julia.write_barrier") {
+              isa<MemSetInst>(inst) || funcName == "julia.write_barrier" ||
+              funcName == "julia.write_barrier_binding") {
             for (auto pair : gutils->rematerializableAllocations) {
               if (pair.second.stores.count(inst)) {
                 if (DifferentialUseAnalysis::is_value_needed_in_reverse<
@@ -1918,10 +1925,11 @@ void restoreCache(
 
 //! return structtype if recursive function
 const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
-    Function *todiff, DIFFE_TYPE retType, ArrayRef<DIFFE_TYPE> constant_args,
-    TypeAnalysis &TA, bool returnUsed, bool shadowReturnUsed,
-    const FnTypeInfo &oldTypeInfo_, const std::vector<bool> _overwritten_args,
-    bool forceAnonymousTape, unsigned width, bool AtomicAdd, bool omp) {
+    RequestContext context, Function *todiff, DIFFE_TYPE retType,
+    ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA, bool returnUsed,
+    bool shadowReturnUsed, const FnTypeInfo &oldTypeInfo_,
+    const std::vector<bool> _overwritten_args, bool forceAnonymousTape,
+    unsigned width, bool AtomicAdd, bool omp) {
   if (returnUsed)
     assert(!todiff->getReturnType()->isEmptyTy() &&
            !todiff->getReturnType()->isVoidTy());
@@ -1999,9 +2007,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       }
 
       auto &aug = CreateAugmentedPrimal(
-          todiff, retType, next_constant_args, TA, returnUsed, shadowReturnUsed,
-          oldTypeInfo_, _overwritten_args, forceAnonymousTape, width, AtomicAdd,
-          omp);
+          context, todiff, retType, next_constant_args, TA, returnUsed,
+          shadowReturnUsed, oldTypeInfo_, _overwritten_args, forceAnonymousTape,
+          width, AtomicAdd, omp);
 
       FunctionType *FTy =
           FunctionType::get(aug.fn->getReturnType(), dupargs,
@@ -2253,26 +2261,54 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         ->second; // dyn_cast<StructType>(st->getElementType(0)));
   }
 
-  if (todiff->empty()) {
-    if (todiff->empty() && CustomErrorHandler) {
-      std::string s;
-      llvm::raw_string_ostream ss(s);
-      ss << "No augmented forward pass found for " + todiff->getName() << "\n";
-      ss << *todiff << "\n";
-      CustomErrorHandler(ss.str().c_str(), wrap(todiff),
-                         ErrorType::NoDerivative, nullptr, nullptr, nullptr);
-    }
-    llvm::errs() << "mod: " << *todiff->getParent() << "\n";
-    llvm::errs() << *todiff << "\n";
-    assert(0 && "attempting to differentiate function without definition");
-    llvm_unreachable("attempting to differentiate function without definition");
-  }
   std::map<AugmentedStruct, int> returnMapping;
 
   GradientUtils *gutils = GradientUtils::CreateFromClone(
       *this, width, todiff, TLI, TA, oldTypeInfo, retType, constant_args,
       /*returnUsed*/ returnUsed, /*shadowReturnUsed*/ shadowReturnUsed,
       returnMapping, omp);
+
+  if (todiff->empty()) {
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "No augmented forward pass found for " + todiff->getName() << "\n";
+    llvm::Value *toshow = todiff;
+    if (context.req) {
+      toshow = context.req;
+      ss << " at context: " << *context.req;
+    } else {
+      ss << *todiff << "\n";
+    }
+    (IRBuilder<>(gutils->inversionAllocs)).CreateUnreachable();
+    DeleteDeadBlock(gutils->inversionAllocs);
+    clearFunctionAttributes(gutils->newFunc);
+    if (CustomErrorHandler) {
+      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
+                         ErrorType::NoDerivative, nullptr, wrap(todiff),
+                         wrap(context.ip));
+      auto newFunc = gutils->newFunc;
+      delete gutils;
+      return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
+                 AugmentedCachedFunctions, tup,
+                 AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
+                                 constant_args))
+          ->second;
+    }
+    if (context.req) {
+      EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
+                  ss.str());
+      auto newFunc = gutils->newFunc;
+      delete gutils;
+      return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
+                 AugmentedCachedFunctions, tup,
+                 AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
+                                 constant_args))
+          ->second;
+    }
+    llvm::errs() << "mod: " << *todiff->getParent() << "\n";
+    llvm::errs() << *todiff << "\n";
+    llvm_unreachable("attempting to differentiate function without definition");
+  }
   gutils->AtomicAdd = AtomicAdd;
   const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
       getGuaranteedUnreachable(gutils->oldFunc);
@@ -2915,7 +2951,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     auto GV = pair.first;
     GV->setName("_tmp");
     auto R = gutils->GetOrCreateShadowFunction(
-        *this, TLI, TA, todiff, pair.second, width, gutils->AtomicAdd);
+        context, *this, TLI, TA, todiff, pair.second, width, gutils->AtomicAdd);
     SmallVector<std::pair<ConstantExpr *, bool>, 1> users;
     GV->replaceAllUsesWith(ConstantExpr::getPointerCast(R, GV->getType()));
     GV->eraseFromParent();
@@ -3462,7 +3498,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
 }
 
 Function *EnzymeLogic::CreatePrimalAndGradient(
-    const ReverseCacheKey &&key, TypeAnalysis &TA,
+    RequestContext context, const ReverseCacheKey &&key, TypeAnalysis &TA,
     const AugmentedReturn *augmenteddata, bool omp) {
 
   assert(key.mode == DerivativeMode::ReverseModeCombined ||
@@ -3536,8 +3572,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       IRBuilder<> bb(BB);
 
       auto &aug = CreateAugmentedPrimal(
-          key.todiff, key.retType, key.constant_args, TA, key.returnUsed,
-          key.shadowReturnUsed, key.typeInfo, key.overwritten_args,
+          context, key.todiff, key.retType, key.constant_args, TA,
+          key.returnUsed, key.shadowReturnUsed, key.typeInfo,
+          key.overwritten_args,
           /*forceAnonymousTape*/ false, key.width, key.AtomicAdd, omp);
 
       SmallVector<Value *, 4> fwdargs;
@@ -3578,6 +3615,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       }
 
       auto revfn = CreatePrimalAndGradient(
+          context,
           (ReverseCacheKey){.todiff = key.todiff,
                             .retType = key.retType,
                             .constant_args = key.constant_args,
@@ -3658,6 +3696,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       }
 
       auto revfn = CreatePrimalAndGradient(
+          context,
           (ReverseCacheKey){.todiff = key.todiff,
                             .retType = key.retType,
                             .constant_args = next_constant_args,
@@ -3872,21 +3911,6 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     assert(augmenteddata->constant_args == key.constant_args);
   }
 
-  if (key.todiff->empty()) {
-    std::string s;
-    llvm::raw_string_ostream ss(s);
-    ss << "No reverse pass found for " + key.todiff->getName() << "\n";
-    ss << *key.todiff << "\n";
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(key.todiff),
-                         ErrorType::NoDerivative, nullptr, nullptr, nullptr);
-      return nullptr;
-    } else {
-      llvm_unreachable(ss.str().c_str());
-    }
-  }
-  assert(!key.todiff->empty());
-
   ReturnType retVal =
       key.returnUsed ? (key.shadowReturnUsed ? ReturnType::ArgsWithTwoReturns
                                              : ReturnType::ArgsWithReturn)
@@ -3903,6 +3927,40 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   gutils->FreeMemory = key.freeMemory;
   insert_or_assign2<ReverseCacheKey, Function *>(ReverseCachedFunctions, key,
                                                  gutils->newFunc);
+
+  if (key.todiff->empty()) {
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "No reverse pass found for " + key.todiff->getName() << "\n";
+    llvm::Value *toshow = key.todiff;
+    if (context.req) {
+      toshow = context.req;
+      ss << " at context: " << *context.req;
+    } else {
+      ss << *key.todiff << "\n";
+    }
+    BasicBlock *entry = &gutils->newFunc->getEntryBlock();
+    cleanupInversionAllocs(gutils, entry);
+    clearFunctionAttributes(gutils->newFunc);
+    if (CustomErrorHandler) {
+      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
+                         ErrorType::NoDerivative, nullptr, wrap(key.todiff),
+                         wrap(context.ip));
+      auto newFunc = gutils->newFunc;
+      delete gutils;
+      return newFunc;
+    }
+    if (context.req) {
+      EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
+                  ss.str());
+      auto newFunc = gutils->newFunc;
+      delete gutils;
+      return newFunc;
+    }
+    llvm::errs() << "mod: " << *key.todiff->getParent() << "\n";
+    llvm::errs() << *key.todiff << "\n";
+    llvm_unreachable("attempting to differentiate function without definition");
+  }
 
   if (augmenteddata && !augmenteddata->isComplete) {
     auto nf = gutils->newFunc;
@@ -4293,9 +4351,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 }
 
 Function *EnzymeLogic::CreateForwardDiff(
-    Function *todiff, DIFFE_TYPE retType, ArrayRef<DIFFE_TYPE> constant_args,
-    TypeAnalysis &TA, bool returnUsed, DerivativeMode mode, bool freeMemory,
-    unsigned width, llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
+    RequestContext context, Function *todiff, DIFFE_TYPE retType,
+    ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA, bool returnUsed,
+    DerivativeMode mode, bool freeMemory, unsigned width,
+    llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
     const std::vector<bool> _overwritten_args,
     const AugmentedReturn *augmenteddata, bool omp) {
   assert(retType != DIFFE_TYPE::OUT_DIFF);
@@ -4478,17 +4537,6 @@ Function *EnzymeLogic::CreateForwardDiff(
     EmitWarning("NoCustom", *todiff,
                 "Cannot use provided custom derivative pass");
   }
-  if (todiff->empty() && CustomErrorHandler) {
-    std::string s;
-    llvm::raw_string_ostream ss(s);
-    ss << "No forward derivative found for " + todiff->getName() << "\n";
-    ss << *todiff << "\n";
-    CustomErrorHandler(s.c_str(), wrap(todiff), ErrorType::NoDerivative,
-                       nullptr, nullptr, nullptr);
-  }
-  if (todiff->empty())
-    llvm::errs() << *todiff << "\n";
-  assert(!todiff->empty());
 
   bool retActive = retType != DIFFE_TYPE::CONSTANT;
 
@@ -4505,6 +4553,45 @@ Function *EnzymeLogic::CreateForwardDiff(
   insert_or_assign2<ForwardCacheKey, Function *>(ForwardCachedFunctions, tup,
                                                  gutils->newFunc);
 
+  if (todiff->empty()) {
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "No forward mode derivative found for " + todiff->getName() << "\n";
+    llvm::Value *toshow = todiff;
+    if (context.req) {
+      toshow = context.req;
+      ss << " at context: " << *context.req;
+    } else {
+      ss << *todiff << "\n";
+    }
+    BasicBlock *entry = &gutils->newFunc->getEntryBlock();
+    cleanupInversionAllocs(gutils, entry);
+    clearFunctionAttributes(gutils->newFunc);
+    if (CustomErrorHandler) {
+      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
+                         ErrorType::NoDerivative, nullptr, wrap(todiff),
+                         wrap(context.ip));
+      auto newFunc = gutils->newFunc;
+      delete gutils;
+      return newFunc;
+    }
+    if (context.req) {
+      EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
+                  ss.str());
+
+      if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
+        llvm::errs() << *gutils->oldFunc << "\n";
+        llvm::errs() << *gutils->newFunc << "\n";
+        report_fatal_error("function failed verification (r6)");
+      }
+      auto newFunc = gutils->newFunc;
+      delete gutils;
+      return newFunc;
+    }
+    llvm::errs() << "mod: " << *todiff->getParent() << "\n";
+    llvm::errs() << *todiff << "\n";
+    llvm_unreachable("attempting to differentiate function without definition");
+  }
   gutils->FreeMemory = freeMemory;
 
   const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
@@ -4692,7 +4779,8 @@ Function *EnzymeLogic::CreateForwardDiff(
   return nf;
 }
 
-llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
+llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
+                                         Function *tobatch, unsigned width,
                                          ArrayRef<BATCH_TYPE> arg_types,
                                          BATCH_TYPE ret_type) {
 
@@ -4721,6 +4809,33 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   Function *NewF =
       Function::Create(FTy, tobatch->getLinkage(),
                        "batch_" + tobatch->getName(), tobatch->getParent());
+
+  if (tobatch->empty()) {
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "No batch mode found for " + tobatch->getName() << "\n";
+    llvm::Value *toshow = tobatch;
+    if (context.req) {
+      toshow = context.req;
+      ss << " at context: " << *context.req;
+    } else {
+      ss << *tobatch << "\n";
+    }
+    if (CustomErrorHandler) {
+      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
+                         ErrorType::NoDerivative, nullptr, wrap(tobatch),
+                         wrap(context.ip));
+      return NewF;
+    }
+    if (context.req) {
+      EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
+                  ss.str());
+      return NewF;
+    }
+    llvm::errs() << "mod: " << *tobatch->getParent() << "\n";
+    llvm::errs() << *tobatch << "\n";
+    llvm_unreachable("attempting to batch function without definition");
+  }
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
@@ -4949,11 +5064,13 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   return BatchCachedFunctions[tup] = NewF;
 };
 
-llvm::Function *EnzymeLogic::CreateTrace(
-    llvm::Function *totrace, const SmallPtrSetImpl<Function *> &sampleFunctions,
-    const SmallPtrSetImpl<Function *> &observeFunctions,
-    const StringSet<> &ActiveRandomVariables, ProbProgMode mode, bool autodiff,
-    TraceInterface *interface) {
+llvm::Function *
+EnzymeLogic::CreateTrace(RequestContext context, llvm::Function *totrace,
+                         const SmallPtrSetImpl<Function *> &sampleFunctions,
+                         const SmallPtrSetImpl<Function *> &observeFunctions,
+                         const StringSet<> &ActiveRandomVariables,
+                         ProbProgMode mode, bool autodiff,
+                         TraceInterface *interface) {
   TraceCacheKey tup(totrace, mode, autodiff, interface);
   if (TraceCachedFunctions.find(tup) != TraceCachedFunctions.end()) {
     return TraceCachedFunctions.find(tup)->second;
@@ -4989,6 +5106,39 @@ llvm::Function *EnzymeLogic::CreateTrace(
       new TraceGenerator(*this, tutils, autodiff, originalToNewFn,
                          GenerativeFunctions, ActiveRandomVariables);
 
+  if (totrace->empty()) {
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "No tracer found for " + totrace->getName() << "\n";
+    llvm::Value *toshow = totrace;
+    if (context.req) {
+      toshow = context.req;
+      ss << " at context: " << *context.req;
+    } else {
+      ss << *totrace << "\n";
+    }
+    if (CustomErrorHandler) {
+      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
+                         ErrorType::NoDerivative, nullptr, wrap(totrace),
+                         wrap(context.ip));
+      auto newFunc = tutils->newFunc;
+      delete tracer;
+      delete tutils;
+      return newFunc;
+    }
+    if (context.req) {
+      EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
+                  ss.str());
+      auto newFunc = tutils->newFunc;
+      delete tracer;
+      delete tutils;
+      return newFunc;
+    }
+    llvm::errs() << "mod: " << *totrace->getParent() << "\n";
+    llvm::errs() << *totrace << "\n";
+    llvm_unreachable("attempting to trace function without definition");
+  }
+
   tracer->visit(totrace);
 
   if (verifyFunction(*tutils->newFunc, &errs())) {
@@ -5015,13 +5165,14 @@ llvm::Function *EnzymeLogic::CreateTrace(
   return TraceCachedFunctions[tup] = NewF;
 }
 
-llvm::Value *EnzymeLogic::CreateNoFree(llvm::Value *todiff) {
+llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
+                                       llvm::Value *todiff) {
   if (auto F = dyn_cast<Function>(todiff))
-    return CreateNoFree(F);
+    return CreateNoFree(context, F);
   if (auto castinst = dyn_cast<ConstantExpr>(todiff))
     if (castinst->isCast()) {
       llvm::Constant *reps[] = {
-          cast<llvm::Constant>(CreateNoFree(castinst->getOperand(0)))};
+          cast<llvm::Constant>(CreateNoFree(context, castinst->getOperand(0)))};
       return castinst->getWithOperands(reps);
     }
   if (CustomErrorHandler) {
@@ -5029,14 +5180,24 @@ llvm::Value *EnzymeLogic::CreateNoFree(llvm::Value *todiff) {
     llvm::raw_string_ostream ss(s);
     ss << "No create nofree of unknown value\n";
     ss << *todiff << "\n";
-    CustomErrorHandler(ss.str().c_str(), wrap(todiff), ErrorType::NoDerivative,
-                       nullptr, nullptr, nullptr);
+    if (context.req) {
+      ss << " at context: " << *context.req;
+    }
+    CustomErrorHandler(ss.str().c_str(), wrap(context.req),
+                       ErrorType::NoDerivative, nullptr, wrap(todiff),
+                       wrap(context.ip));
+    return todiff;
   }
 
+  if (context.req) {
+    EmitFailure("IllegalNoFree", context.req->getDebugLoc(), context.req,
+                "Cannot create nofree of instruction-created value: ", *todiff);
+    return todiff;
+  }
   if (auto arg = dyn_cast<Instruction>(todiff)) {
     auto loc = arg->getDebugLoc();
     EmitFailure("IllegalNoFree", loc, arg,
-                "Cannot create nofree of instruction-created value: ", *arg);
+                "Cannot create nofree of instruction-created value: ", *todiff);
     return todiff;
   }
 
@@ -5044,7 +5205,7 @@ llvm::Value *EnzymeLogic::CreateNoFree(llvm::Value *todiff) {
   llvm_unreachable("unhandled, create no free");
 }
 
-llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
+llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   if (NoFreeCachedFunctions.find(F) != NoFreeCachedFunctions.end()) {
     return NoFreeCachedFunctions.find(F)->second;
   }
@@ -5141,9 +5302,20 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       std::string s;
       llvm::raw_string_ostream ss(s);
       ss << "No create nofree of empty function " << F->getName() << "\n";
-      ss << *F << "\n";
-      CustomErrorHandler(ss.str().c_str(), wrap(F), ErrorType::NoDerivative,
-                         nullptr, nullptr, nullptr);
+      if (context.req) {
+        ss << " at context: " << *context.req;
+      } else {
+        ss << *F << "\n";
+      }
+      CustomErrorHandler(ss.str().c_str(), wrap(context.req),
+                         ErrorType::NoDerivative, nullptr, wrap(F),
+                         wrap(context.ip));
+      return F;
+    }
+    if (context.req) {
+      EmitFailure("IllegalNoFree", context.req->getDebugLoc(), context.req,
+                  "Cannot create nofree of empty function: ", *F);
+      return F;
     }
     llvm::errs() << " unhandled, create no free of empty function: " << *F
                  << "\n";
@@ -5202,11 +5374,11 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       else {
         if (auto CI = dyn_cast<CallInst>(&I)) {
           auto callval = CI->getCalledOperand();
-          CI->setCalledOperand(CreateNoFree(callval));
+          CI->setCalledOperand(CreateNoFree(context, callval));
         }
         if (auto CI = dyn_cast<InvokeInst>(&I)) {
           auto callval = CI->getCalledOperand();
-          CI->setCalledOperand(CreateNoFree(callval));
+          CI->setCalledOperand(CreateNoFree(context, callval));
         }
       }
     }

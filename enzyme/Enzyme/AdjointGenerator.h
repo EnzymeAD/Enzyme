@@ -30,6 +30,7 @@
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -2748,6 +2749,54 @@ public:
     auto vd = TR.query(MS.getOperand(0)).Data0().ShiftIndices(DL, 0, size, 0);
 
     if (!vd.isKnownPastPointer()) {
+      // If unknown type results, and zeroing known undef allocation, consider
+      // integers
+      if (auto CI = dyn_cast<ConstantInt>(MS.getOperand(1)))
+        if (CI->isZero()) {
+          auto root = getBaseObject(MS.getOperand(0));
+          bool writtenTo = false;
+          bool undefMemory =
+              isa<AllocaInst>(root) || isAllocationCall(root, gutils->TLI);
+          if (auto arg = dyn_cast<Argument>(root))
+            if (arg->hasStructRetAttr())
+              undefMemory = true;
+          if (undefMemory) {
+            Instruction *cur = MS.getPrevNode();
+            while (cur) {
+              if (cur == root)
+                break;
+              if (auto MCI = dyn_cast<ConstantInt>(MS.getOperand(2))) {
+                if (auto II = dyn_cast<IntrinsicInst>(cur)) {
+                  // If the start of the lifetime for more memory than being
+                  // memset, its valid.
+                  if (II->getIntrinsicID() == Intrinsic::lifetime_start) {
+                    if (getBaseObject(II->getOperand(1)) == root) {
+                      if (auto CI2 = dyn_cast<ConstantInt>(II->getOperand(0))) {
+                        if (MCI->getValue().ule(CI2->getValue()))
+                          break;
+                      }
+                    }
+                    cur = cur->getPrevNode();
+                    continue;
+                  }
+                }
+              }
+              if (cur->mayWriteToMemory()) {
+                writtenTo = true;
+                break;
+              }
+              cur = cur->getPrevNode();
+            }
+
+            if (!writtenTo) {
+              vd = TypeTree(BaseType::Pointer);
+              vd.insert({-1}, BaseType::Integer);
+            }
+          }
+        }
+    }
+
+    if (!vd.isKnownPastPointer()) {
       // If unknown type results, consider the intersection of all incoming.
       if (isa<PHINode>(MS.getOperand(0)) || isa<SelectInst>(MS.getOperand(0))) {
         SmallVector<Value *, 2> todo = {MS.getOperand(0)};
@@ -3648,8 +3697,6 @@ public:
           return false;
         std::string s;
         llvm::raw_string_ostream ss(s);
-        ss << *gutils->oldFunc << "\n";
-        ss << *gutils->newFunc << "\n";
         if (Intrinsic::isOverloaded(ID))
 #if LLVM_VERSION_MAJOR >= 13
           ss << "cannot handle (forward) unknown intrinsic\n"
@@ -3670,14 +3717,12 @@ public:
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
                              ErrorType::NoDerivative, gutils, nullptr,
                              wrap(&Builder2));
-          setDiffe(&I,
-                   Constant::getNullValue(gutils->getShadowType(I.getType())),
-                   Builder2);
-          return false;
         } else {
           EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-          return false;
         }
+        setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
+                 Builder2);
+        return false;
       }
       return false;
     }
@@ -3848,8 +3893,9 @@ public:
         Mode == DerivativeMode::ReverseModeCombined) {
       if (called) {
         subdata = &gutils->Logic.CreateAugmentedPrimal(
-            cast<Function>(called), subretType, argsInverted,
-            TR.analyzer.interprocedural, /*return is used*/ false,
+            RequestContext(&call, &BuilderZ), cast<Function>(called),
+            subretType, argsInverted, TR.analyzer.interprocedural,
+            /*return is used*/ false,
             /*shadowReturnUsed*/ false, nextTypeInfo, overwritten_args, false,
             gutils->getWidth(),
             /*AtomicAdd*/ true,
@@ -4048,6 +4094,7 @@ public:
         }
 
         newcalled = gutils->Logic.CreatePrimalAndGradient(
+            RequestContext(&call, &Builder2),
             (ReverseCacheKey){.todiff = cast<Function>(called),
                               .retType = subretType,
                               .constant_args = argsInverted,
@@ -6803,8 +6850,9 @@ public:
 
       if (called) {
         newcalled = gutils->Logic.CreateForwardDiff(
-            cast<Function>(called), subretType, argsInverted,
-            TR.analyzer.interprocedural, /*returnValue*/ subretused, Mode,
+            RequestContext(&call, &BuilderZ), cast<Function>(called),
+            subretType, argsInverted, TR.analyzer.interprocedural,
+            /*returnValue*/ subretused, Mode,
             ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->getWidth(),
             tape ? tape->getType() : nullptr, nextTypeInfo, overwritten_args,
             /*augmented*/ subdata);
@@ -7206,10 +7254,10 @@ public:
         if (Mode == DerivativeMode::ReverseModePrimal ||
             Mode == DerivativeMode::ReverseModeCombined) {
           subdata = &gutils->Logic.CreateAugmentedPrimal(
-              cast<Function>(called), subretType, argsInverted,
-              TR.analyzer.interprocedural, /*return is used*/ subretused,
-              shadowReturnUsed, nextTypeInfo, overwritten_args, false,
-              gutils->getWidth(), gutils->AtomicAdd);
+              RequestContext(&call, &BuilderZ), cast<Function>(called),
+              subretType, argsInverted, TR.analyzer.interprocedural,
+              /*return is used*/ subretused, shadowReturnUsed, nextTypeInfo,
+              overwritten_args, false, gutils->getWidth(), gutils->AtomicAdd);
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
             auto subaugmentations =
@@ -7591,6 +7639,7 @@ public:
       }
 
       newcalled = gutils->Logic.CreatePrimalAndGradient(
+          RequestContext(&call, &Builder2),
           (ReverseCacheKey){.todiff = cast<Function>(called),
                             .retType = subretType,
                             .constant_args = argsInverted,
@@ -8109,15 +8158,13 @@ public:
       return;
     }
 
-    if (!called || called->empty()) {
-      if (auto blas = extractBLAS(funcName)) {
+    if (auto blas = extractBLAS(funcName)) {
 #if LLVM_VERSION_MAJOR >= 16
-        if (handleBLAS(call, called, blas.value(), overwritten_args))
+      if (handleBLAS(call, called, blas.value(), overwritten_args))
 #else
-        if (handleBLAS(call, called, blas.getValue(), overwritten_args))
+      if (handleBLAS(call, called, blas.getValue(), overwritten_args))
 #endif
-          return;
-      }
+        return;
     }
 
     if (funcName == "printf" || funcName == "puts" ||
@@ -8496,7 +8543,8 @@ public:
       }
 
       if (called) {
-        if (funcName == "julia.write_barrier") {
+        if (funcName == "julia.write_barrier" ||
+            funcName == "julia.write_barrier_binding") {
           bool backwardsShadow = false;
           bool forwardsShadow = true;
           for (auto pair : gutils->backwardsOnlyShadows) {
@@ -10020,7 +10068,8 @@ public:
         auto callval = call.getCalledOperand();
         if (!isa<Constant>(callval))
           callval = gutils->getNewFromOriginal(callval);
-        newCall->setCalledOperand(gutils->Logic.CreateNoFree(callval));
+        newCall->setCalledOperand(gutils->Logic.CreateNoFree(
+            RequestContext(&call, &BuilderZ), callval));
       }
       if (gutils->knownRecomputeHeuristic.find(&call) !=
           gutils->knownRecomputeHeuristic.end()) {

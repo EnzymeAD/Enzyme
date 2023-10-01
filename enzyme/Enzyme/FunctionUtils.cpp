@@ -409,6 +409,10 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
           toErase.push_back(CI);
           continue;
         }
+        if (F->getName() == "julia.write_barrier_binding" && legal) {
+          toErase.push_back(CI);
+          continue;
+        }
       }
       IRBuilder<> B(CI);
       auto Addr = B.CreateAddrSpaceCast(rep, prev->getType());
@@ -1325,16 +1329,18 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 
   SmallVector<ReturnInst *, 4> Returns;
 
+  if (!F->empty()) {
 #if LLVM_VERSION_MAJOR >= 13
-  CloneFunctionInto(
-      NewF, F, VMap,
-      /*ModuleLevelChanges*/ CloneFunctionChangeType::LocalChangesOnly, Returns,
-      "", nullptr);
+    CloneFunctionInto(
+        NewF, F, VMap,
+        /*ModuleLevelChanges*/ CloneFunctionChangeType::LocalChangesOnly,
+        Returns, "", nullptr);
 #else
-  CloneFunctionInto(NewF, F, VMap,
-                    /*ModuleLevelChanges*/ F->getSubprogram() != nullptr,
-                    Returns, "", nullptr);
+    CloneFunctionInto(NewF, F, VMap,
+                      /*ModuleLevelChanges*/ F->getSubprogram() != nullptr,
+                      Returns, "", nullptr);
 #endif
+  }
   CloneOrigin[NewF] = F;
   NewF->setAttributes(F->getAttributes());
   if (EnzymeNoAlias)
@@ -2060,8 +2066,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     DIFFE_TYPE returnType, const Twine &name,
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> *VMapO,
     bool diffeReturnArg, llvm::Type *additionalArg) {
-  assert(!F->empty());
-  F = preprocessForClone(F, mode);
+  if (!F->empty())
+    F = preprocessForClone(F, mode);
   llvm::ValueToValueMapTy VMap;
   llvm::FunctionType *FTy = getFunctionTypeForClone(
       F->getFunctionType(), mode, width, additionalArg, constant_args,
@@ -2113,13 +2119,20 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       VMap[&I] = &*DestI++;        // Add mapping to VMap
     }
   SmallVector<ReturnInst *, 4> Returns;
+  if (!F->empty()) {
 #if LLVM_VERSION_MAJOR >= 13
-  CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
-                    Returns, "", nullptr);
+    CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
+                      Returns, "", nullptr);
 #else
-  CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
-                    nullptr);
+    CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
+                      nullptr);
 #endif
+  }
+  if (NewF->empty()) {
+    auto entry = BasicBlock::Create(NewF->getContext(), "entry", NewF);
+    IRBuilder<> B(entry);
+    B.CreateUnreachable();
+  }
   CloneOrigin[NewF] = F;
   if (VMapO) {
     for (const auto &data : VMap)

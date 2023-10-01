@@ -645,7 +645,8 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
                              BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
                              llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
-  std::string copy_name = (blas.floatType + "lacpy" + blas.suffix).str();
+  std::string copy_name =
+      (blas.prefix + blas.floatType + "lacpy" + blas.suffix).str();
 
   SmallVector<Type *, 1> tys;
   for (auto arg : args)
@@ -2271,6 +2272,69 @@ Function *GetFunctionFromValue(Value *fn) {
         }
       }
     }
+    if (auto LI = dyn_cast<LoadInst>(fn)) {
+      auto obj = getBaseObject(LI->getPointerOperand());
+      if (isa<AllocaInst>(obj)) {
+        std::set<std::pair<Instruction *, Value *>> done;
+        SmallVector<std::pair<Instruction *, Value *>, 1> todo;
+        Value *stored = nullptr;
+        bool legal = true;
+        for (auto U : obj->users()) {
+          if (auto I = dyn_cast<Instruction>(U))
+            todo.push_back(std::make_pair(I, obj));
+          else {
+            legal = false;
+            break;
+          }
+        }
+        while (legal && todo.size()) {
+          auto tup = todo.pop_back_val();
+          if (done.count(tup))
+            continue;
+          done.insert(tup);
+          auto cur = tup.first;
+          auto prev = tup.second;
+          if (auto SI = dyn_cast<StoreInst>(cur))
+            if (SI->getPointerOperand() == prev) {
+              if (stored == SI->getValueOperand())
+                continue;
+              else if (stored == nullptr) {
+                stored = SI->getValueOperand();
+                continue;
+              } else {
+                legal = false;
+                break;
+              }
+            }
+
+          if (isPointerArithmeticInst(cur, /*includephi*/ true)) {
+            for (auto U : cur->users()) {
+              if (auto I = dyn_cast<Instruction>(U))
+                todo.push_back(std::make_pair(I, cur));
+              else {
+                legal = false;
+                break;
+              }
+            }
+            continue;
+          }
+
+          if (isa<LoadInst>(cur))
+            continue;
+
+          if (!cur->mayWriteToMemory() && cur->getType()->isVoidTy())
+            continue;
+
+          legal = false;
+          break;
+        }
+
+        if (legal && stored) {
+          fn = stored;
+          continue;
+        }
+      }
+    }
     break;
   }
 
@@ -2491,14 +2555,16 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V) {
 // } else {
 //   ld_A = arg_lda;
 // }
-llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
+llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
+                                  llvm::ArrayRef<llvm::Value *> trans,
                                   llvm::Value *arg_ld, llvm::Value *dim1,
                                   llvm::Value *dim2, bool cacheMat,
                                   bool byRef) {
   if (!cacheMat)
     return arg_ld;
 
-  Value *width = B.CreateSelect(is_normal(B, trans, byRef), dim1, dim2);
+  assert(trans.size() == 1);
+  Value *width = CreateSelect(B, is_normal(B, trans[0], byRef), dim1, dim2);
 
   return width;
 }
@@ -2530,19 +2596,27 @@ llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::IntegerType *intType,
   return B.CreateLoad(intType, VP);
 }
 
-llvm::Value *get_blas_row(llvm::IRBuilder<> &B, llvm::Value *trans,
-                          llvm::Value *row, llvm::Value *col, bool byRef) {
-
+SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
+                                           ArrayRef<llvm::Value *> transA,
+                                           ArrayRef<llvm::Value *> row,
+                                           ArrayRef<llvm::Value *> col,
+                                           bool byRef) {
+  assert(transA.size() == 1);
+  auto trans = transA[0];
   if (byRef) {
     auto charType = IntegerType::get(trans->getContext(), 8);
     trans = B.CreateLoad(charType, trans, "ld.row.trans");
   }
 
-  return B.CreateSelect(
-      B.CreateOr(
-          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N')),
-          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'))),
-      row, col);
+  auto cond = B.CreateOr(
+      B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N')),
+      B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n')));
+  assert(row.size() == col.size());
+  SmallVector<Value *, 1> toreturn;
+  for (size_t i = 0; i < row.size(); i++) {
+    toreturn.push_back(B.CreateSelect(cond, row[i], col[i]));
+  }
+  return toreturn;
 }
 
 // return how many Special pointers are in T (count > 0),

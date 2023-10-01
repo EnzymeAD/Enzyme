@@ -46,6 +46,8 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include "LibraryFuncs.h"
+
 using namespace llvm;
 
 DiffeGradientUtils::DiffeGradientUtils(
@@ -60,6 +62,8 @@ DiffeGradientUtils::DiffeGradientUtils(
     : GradientUtils(Logic, newFunc_, oldFunc_, TLI, TA, TR, invertedPointers_,
                     constantvalues_, returnvals_, ActiveReturn, constant_values,
                     origToNew_, mode, width, omp) {
+  if (oldFunc_->empty())
+    return;
   assert(reverseBlocks.size() == 0);
   if (mode == DerivativeMode::ForwardMode ||
       mode == DerivativeMode::ForwardModeSplit) {
@@ -81,7 +85,6 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
     TargetLibraryInfo &TLI, TypeAnalysis &TA, FnTypeInfo &oldTypeInfo,
     DIFFE_TYPE retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
     ReturnType returnValue, Type *additionalArg, bool omp) {
-  assert(!todiff->empty());
   Function *oldFunc = todiff;
   assert(mode == DerivativeMode::ReverseModeGradient ||
          mode == DerivativeMode::ReverseModeCombined ||
@@ -147,7 +150,8 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   }
 
   TypeResults TR = TA.analyzeFunction(typeInfo);
-  assert(TR.getFunction() == oldFunc);
+  if (!oldFunc->empty())
+    assert(TR.getFunction() == oldFunc);
 
   auto res = new DiffeGradientUtils(Logic, newFunc, oldFunc, TLI, TA, TR,
                                     invertedPointers, constant_values,
@@ -1037,7 +1041,13 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
       }
 
       if (!isConstantValue(origptr)) {
-        if (EnzymeRuntimeActivityCheck && !merge) {
+        auto basePtr = getBaseObject(origptr);
+        assert(!isConstantValue(basePtr));
+        // If runtime activity, first see if we can prove that the shadow/primal
+        // are distinct statically as they are allocas/mallocs, if not compare
+        // the pointers and conditionally execute.
+        if ((!isa<AllocaInst>(basePtr) && !isAllocationCall(basePtr, TLI)) &&
+            EnzymeRuntimeActivityCheck && !merge) {
           Value *shadow = Builder2.CreateICmpNE(
               lookupM(getNewFromOriginal(origptr), Builder2),
               lookupM(invertPointerM(origptr, Builder2), Builder2));
