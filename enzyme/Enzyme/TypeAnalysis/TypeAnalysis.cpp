@@ -35,6 +35,7 @@
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/ModuleSlotTracker.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 
@@ -2168,8 +2169,15 @@ void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
 
 void TypeAnalyzer::dump(llvm::raw_ostream &ss) {
   ss << "<analysis>\n";
+  // We don't care about correct MD node numbering here.
+  ModuleSlotTracker MST(fntypeinfo.Function->getParent(),
+                        /*ShouldInitializeAllMetadata*/ false);
   for (auto &pair : analysis) {
-    ss << *pair.first << ": " << pair.second.str()
+    if (auto F = dyn_cast<Function>(pair.first))
+      ss << "@" << F->getName();
+    else
+      pair.first->print(ss, MST);
+    ss << ": " << pair.second.str()
        << ", intvals: " << to_string(knownIntegralValues(pair.first)) << "\n";
   }
   ss << "</analysis>\n";
