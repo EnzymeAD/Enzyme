@@ -62,7 +62,7 @@ struct PrintActivityAnalysisPass
 
     if (funcsToAnalyze.empty()) {
       moduleOp.walk([this](FunctionOpInterface callee) {
-        if (callee.isExternal())
+        if (callee.isPrivate())
           return;
 
         SmallVector<enzyme::Activity> argActivities{callee.getNumArguments()},

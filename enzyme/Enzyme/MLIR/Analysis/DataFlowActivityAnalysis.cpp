@@ -420,6 +420,7 @@ public:
 
   /// In general, we don't know anything about entry operands.
   void setToEntryState(ForwardValueActivity *lattice) override {
+    // errs() << "sparse forward setting to entry state\n";
     propagateIfChanged(lattice, lattice->join(ValueActivity()));
   }
 
@@ -465,7 +466,7 @@ public:
   using SparseBackwardDataFlowAnalysis::SparseBackwardDataFlowAnalysis;
 
   void setToExitState(BackwardValueActivity *lattice) override {
-    errs() << "backward sparse setting to exit state\n";
+    // errs() << "backward sparse setting to exit state\n";
   }
 
   void visitBranchOperand(OpOperand &operand) override {}
@@ -530,16 +531,6 @@ public:
       // deduce anything about the activity.
       if (!value)
         return setToEntryState(after);
-
-      // TODO: From the upstream test dense analysis, we may need to copy paste
-      // "Underlying Value" analysis to traverse call graphs correctly.
-
-      // value =
-      // getMostUnderlyingValue(value, [&](Value value) {
-      //   return getOrCreateFor<UnderlyingValueLattice>(op, value);
-      // });
-      // if (!value)
-      //   return;
 
       // Keep track of distinct allocations in the lattice
       if (isa<MemoryEffects::Allocate>(effect.getEffect())) {
@@ -620,8 +611,10 @@ public:
 
   // Not sure what this should be, unknown?
   void setToEntryState(ForwardMemoryActivity *lattice) override {
-    errs() << "forward memory setting to entry state\n";
-    propagateIfChanged(lattice, lattice->reset());
+    // errs() << "forward memory setting to entry state for point "
+    //        << lattice->getPoint() << "\n";
+    // errs() << "current lattice value: " << *lattice << "\n\n";
+    // propagateIfChanged(lattice, lattice->reset());
   }
 };
 
@@ -649,16 +642,6 @@ public:
       // deduce anything about the activity.
       if (!value)
         return setToExitState(before);
-
-      // TODO: From the upstream test dense analysis, we may need to copy paste
-      // "Underlying Value" analysis to traverse call graphs correctly.
-
-      // value =
-      // getMostUnderlyingValue(value, [&](Value value) {
-      //   return getOrCreateFor<UnderlyingValueLattice>(op, value);
-      // });
-      // if (!value)
-      //   return;
 
       // In backward-flow, a value is active if stored into a memory resource
       // that has subsequently been actively loaded from.
@@ -714,7 +697,7 @@ public:
   }
 
   void setToExitState(BackwardMemoryActivity *lattice) override {
-    errs() << "backward memory setting to exit state\n";
+    // errs() << "backward memory setting to exit state\n";
     propagateIfChanged(lattice, lattice->reset());
   }
 };
@@ -744,19 +727,11 @@ void enzyme::runDataFlowActivityAnalysis(
       auto *initialState = solver.getOrCreateState<ForwardMemoryActivity>(
           &callee.getFunctionBody().front());
       initialState->setActiveInit(arg, true);
-
-      // May be too conservative to mark the duplicated arguments as active
-      // values.
       auto *argLattice = solver.getOrCreateState<ForwardValueActivity>(arg);
       auto state = activity == enzyme::Activity::enzyme_const
                        ? ValueActivity::getConstant()
                        : ValueActivity::getActivePtr();
       argLattice->join(state);
-
-      // TODO: Not sure why this is here
-      // auto *backwardLattice =
-      //     solver.getOrCreateState<BackwardValueActivity>(arg);
-      // backwardLattice->meet(state);
     } else {
       auto *argLattice = solver.getOrCreateState<ForwardValueActivity>(arg);
       auto state = activity == enzyme::Activity::enzyme_const
@@ -766,11 +741,8 @@ void enzyme::runDataFlowActivityAnalysis(
     }
   }
 
-  // TODO: Double-check the way we detect return-like ops. For now, all direct
-  // children of the FunctionOpInterface that have the ReturnLike trait are
-  // considered returns of that function. Other terminators (various
-  // scf/affine/linalg yield) also have the ReturnLike trait, but nested regions
-  // shouldn't be traversed.
+  // Detect function returns as direct children of the FunctionOpInterface that
+  // have the ReturnLike trait.
   SmallPtrSet<Operation *, 2> returnOps;
   for (Operation &op : callee.getFunctionBody().getOps()) {
     if (op.hasTrait<OpTrait::ReturnLike>()) {
@@ -799,7 +771,7 @@ void enzyme::runDataFlowActivityAnalysis(
     }
   }
 
-  if (failed(solver.initializeAndRun(callee))) {
+  if (failed(solver.initializeAndRun(callee->getParentOfType<ModuleOp>()))) {
     assert(false && "dataflow analysis failed\n");
   }
 
@@ -811,10 +783,10 @@ void enzyme::runDataFlowActivityAnalysis(
         errs() << "  " << tagAttr << ": ";
         auto fva = solver.lookupState<ForwardValueActivity>(arg);
         auto bva = solver.lookupState<BackwardValueActivity>(arg);
-        bool forwardActive =
-            fva->getValue().isActivePtr() || fva->getValue().isActiveVal();
-        bool backwardActive =
-            bva->getValue().isActivePtr() || bva->getValue().isActiveVal();
+        bool forwardActive = fva && (fva->getValue().isActivePtr() ||
+                                     fva->getValue().isActiveVal());
+        bool backwardActive = bva && (bva->getValue().isActivePtr() ||
+                                      bva->getValue().isActiveVal());
         if (forwardActive && backwardActive) {
           errs() << "Active\n";
         } else {
@@ -828,16 +800,22 @@ void enzyme::runDataFlowActivityAnalysis(
         for (OpResult opResult : op->getResults()) {
           auto fva = solver.lookupState<ForwardValueActivity>(opResult);
           auto bva = solver.lookupState<BackwardValueActivity>(opResult);
-          bool forwardActive =
-              fva->getValue().isActivePtr() || fva->getValue().isActiveVal();
-          bool backwardActive =
-              bva->getValue().isActivePtr() || bva->getValue().isActiveVal();
+          bool forwardActive = fva && (fva->getValue().isActivePtr() ||
+                                       fva->getValue().isActiveVal());
+          bool backwardActive = bva && (bva->getValue().isActivePtr() ||
+                                        bva->getValue().isActiveVal());
           if (forwardActive && backwardActive) {
             errs() << "Active\n";
           } else {
             errs() << "Constant\n";
           }
         }
+      }
+
+      if (op->hasAttr("fmatag")) {
+        errs() << "fma state at " << *op << "\n";
+        auto fma = solver.lookupState<ForwardMemoryActivity>(op);
+        errs() << *fma << "\n";
       }
 
       for (OpResult result : op->getResults()) {
