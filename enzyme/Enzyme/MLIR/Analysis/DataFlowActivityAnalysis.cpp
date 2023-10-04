@@ -19,20 +19,14 @@
 using namespace mlir;
 using namespace mlir::dataflow;
 
-/// From Enzyme proper's activity analysis, there are four activity states.
+/// From LLVM Enzyme's activity analysis, there are four activity states.
 // constant instruction vs constant value, a value/instruction (one and the same
 // in LLVM) can be a constant instruction but active value, active instruction
 // but constant value, or active/constant both.
 
-// In MLIR, values are not the same as instructions. Many operations produce
-// zero or one result, but there are operations that can produce multiple.
-
 // The result of activity states are potentially different for multiple
 // enzyme.autodiff calls.
 
-// We could use enyzme::Activity here but I don't know that it would help from a
-// dataflow perspective (distinguishing between enzyme_dup, enzyme_dupnoneed,
-// enzyme_out, which are all active)
 enum class ActivityKind { ActiveVal, ActivePtr, Constant, Unknown };
 
 using llvm::errs;
@@ -190,9 +184,10 @@ private:
 /// This needs to keep track of three things:
 ///   1. Could active info store in?
 ///   2. Could active info load out?
+///   TODO: Necessary for run-time activity
 ///   3. Could constant info propagate (store?) in?
 ///
-/// Active: active in && active out && !const in
+/// Active: (forward) active in && (backward) active out && (??) !const in
 /// ActiveOrConstant: active in && active out && const in
 /// Constant: everything else
 struct MemoryActivityState {
@@ -262,8 +257,6 @@ public:
   }
 
   bool activeDataFlowsOut(Value value) const {
-    // const auto &state = activityStates.lookup(value);
-    // return state.activeLoad || state.activeEscape;
     for (const auto &[other, state] : activityStates)
       if (mayAlias(value, other)) {
         if (state.activeLoad || state.activeEscape)
@@ -811,52 +804,48 @@ void enzyme::runDataFlowActivityAnalysis(
           }
         }
       }
+      if (verbose) {
+        // Annotate each op's results with its value activity states
+        for (OpResult result : op->getResults()) {
+          auto forwardValueActivity =
+              solver.lookupState<ForwardValueActivity>(result);
+          if (forwardValueActivity) {
+            std::string dest, key{"fva"};
+            llvm::raw_string_ostream os(dest);
+            if (op->getNumResults() != 1)
+              key += result.getResultNumber();
+            forwardValueActivity->getValue().print(os);
+            op->setAttr(key, StringAttr::get(op->getContext(), dest));
+          }
 
-      if (op->hasAttr("fmatag")) {
-        errs() << "fma state at " << *op << "\n";
-        auto fma = solver.lookupState<ForwardMemoryActivity>(op);
-        errs() << *fma << "\n";
-      }
-
-      for (OpResult result : op->getResults()) {
-        auto forwardValueActivity =
-            solver.lookupState<ForwardValueActivity>(result);
-        if (forwardValueActivity) {
-          std::string dest, key{"fva"};
-          llvm::raw_string_ostream os(dest);
-          if (op->getNumResults() != 1)
-            key += result.getResultNumber();
-          forwardValueActivity->getValue().print(os);
-          op->setAttr(key, StringAttr::get(op->getContext(), dest));
-        }
-
-        auto backwardValueActivity =
-            solver.lookupState<BackwardValueActivity>(result);
-        if (backwardValueActivity) {
-          std::string dest, key{"bva"};
-          llvm::raw_string_ostream os(dest);
-          if (op->getNumResults() != 1)
-            key += result.getResultNumber();
-          backwardValueActivity->getValue().print(os);
-          op->setAttr(key, StringAttr::get(op->getContext(), dest));
+          auto backwardValueActivity =
+              solver.lookupState<BackwardValueActivity>(result);
+          if (backwardValueActivity) {
+            std::string dest, key{"bva"};
+            llvm::raw_string_ostream os(dest);
+            if (op->getNumResults() != 1)
+              key += result.getResultNumber();
+            backwardValueActivity->getValue().print(os);
+            op->setAttr(key, StringAttr::get(op->getContext(), dest));
+          }
         }
       }
     });
 
-    // Annotate function attributes
-    for (BlockArgument arg : callee.getArguments()) {
-      auto backwardValueActivity =
-          solver.lookupState<BackwardValueActivity>(arg);
-      if (backwardValueActivity) {
-        std::string dest;
-        llvm::raw_string_ostream os(dest);
-        backwardValueActivity->getValue().print(os);
-        callee.setArgAttr(arg.getArgNumber(), "enzyme.bva",
-                          StringAttr::get(callee->getContext(), dest));
-      }
-    }
-
     if (verbose) {
+      // Annotate function attributes
+      for (BlockArgument arg : callee.getArguments()) {
+        auto backwardValueActivity =
+            solver.lookupState<BackwardValueActivity>(arg);
+        if (backwardValueActivity) {
+          std::string dest;
+          llvm::raw_string_ostream os(dest);
+          backwardValueActivity->getValue().print(os);
+          callee.setArgAttr(arg.getArgNumber(), "enzyme.bva",
+                            StringAttr::get(callee->getContext(), dest));
+        }
+      }
+
       auto startState = solver.lookupState<BackwardMemoryActivity>(
           &callee.getFunctionBody().front().front());
       if (startState)
