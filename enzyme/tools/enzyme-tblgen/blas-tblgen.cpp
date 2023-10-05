@@ -223,7 +223,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
     os << "cublas";
   }
   os << " ? 1 : 0);\n";
-  
+
   os << "// Next ones shall only be called in the cublas case,\n"
      << "// they have incorrect meaning otherwise\n"
      << "  const int pos_handle = 0;\n"
@@ -278,7 +278,8 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
        << "    auto arg_ret = gutils->getNewFromOriginal(orig_ret);\n"
        << "    const auto type_ret = arg_ret->getType();\n"
        // TODO: check next line
-       << "    const bool overwritten_ret = (cacheMode ? overwritten_args[pos_ret] : false);\n"
+       << "    const bool overwritten_ret = (cacheMode ? "
+          "overwritten_args[pos_ret] : false);\n"
        << "    bool active_ret = !gutils->isConstantValue(orig_ret);\n"
        << "    Value *rt_inactive_ret = nullptr;\n"
        << "  }\n\n";
@@ -366,6 +367,16 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
           "(Type*) Type::getInt8PtrTy(call.getContext()) : "
           "(Type*) Type::getInt8Ty(call.getContext());\n";
 
+  os << "  Type *cublasEnumType = nullptr;\n";
+  for (auto name : enumerate(nameVec)) {
+    assert(argTypeMap.count(name.index()) == 1);
+    auto ty = argTypeMap.lookup(name.index());
+    if (ty == ArgType::trans) {
+      os << "  if (cublas) cublasEnumType = type_" << name.value() << ";\n";
+      break;
+    }
+  }
+
   bool hasInt = false;
   for (auto name : enumerate(nameVec)) {
     assert(argTypeMap.count(name.index()) == 1);
@@ -431,6 +442,22 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
   os << "  IntegerType *julia_decl_type = nullptr;\n"
      << "  if (julia_decl)\n"
      << "    julia_decl_type = intType;\n";
+
+  os << "  Value *valueN = nullptr;\n"
+     << "  Value *valueT = nullptr;\n"
+     << "  Value *valueG = nullptr;\n"
+     << "  if (cublas) {\n"
+     << "    valueN = ConstantInt::get(cublasEnumType, "
+        "cublasOperation_t::CUBLAS_OP_N);\n"
+     << "    valueT = ConstantInt::get(cublasEnumType, "
+        "cublasOperation_t::CUBLAS_OP_T);\n"
+     << "    // valueG is only used in lascl, which isn't  available in "
+        "cublas.\n"
+     << "  } else {\n"
+     << "    valueN = ConstantInt::get(charType, 'N');\n"
+     << "    valueT = ConstantInt::get(charType, 'T');\n"
+     << "    valueG = ConstantInt::get(charType, 'G');\n"
+     << "  }\n\n";
 }
 
 void extract_scalar(StringRef name, StringRef elemTy, raw_ostream &os) {
@@ -1080,9 +1107,21 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
          << "\")}";
     } else if (Def->isSubClassOf("Char")) {
       auto val = Def->getValueAsString("value");
-      os << "{to_blas_callconv(Builder2, ConstantInt::get(charType, '" << val
-         << "'), byRef, cublas, nullptr, allocationBuilder, \"constant.char." << val
-         << "\")}";
+      if (val == "N") {
+        os << "{to_blas_callconv(Builder2, valueN, byRef, cublas, nullptr, "
+              "allocationBuilder, \"constant.char.N\")}";
+      } else if (val == "T") {
+        os << "{to_blas_callconv(Builder2, valueT, byRef, cublas, nullptr, "
+              "allocationBuilder, \"constant.char.T\")}";
+      } else if (val == "G") {
+        os << "{to_blas_callconv(Builder2, valueG, byRef, cublas, nullptr, "
+              "allocationBuilder, \"constant.char.G\")}";
+        // C is not supported yet
+        //} else if (val == "C") {
+      } else {
+        errs() << "unknown char: " << val << "\n";
+        PrintFatalError("unknown char");
+      }
     } else if (Def->isSubClassOf("Alloca")) {
       auto val = Def->getValueAsInt("value");
       os << "{allocationBuilder.CreateAlloca(Type::getIntNTy(allocationBuilder."
@@ -1091,8 +1130,8 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
     } else if (Def->isSubClassOf("ConstantInt")) {
       auto val = Def->getValueAsInt("value");
       os << "{to_blas_callconv(Builder2, ConstantInt::get(intType, " << val
-         << "), byRef, cublas, intType, allocationBuilder, \"constant.int." << val
-         << "\")}";
+         << "), byRef, cublas, intType, allocationBuilder, \"constant.int."
+         << val << "\")}";
     } else if (Def->isSubClassOf("transpose")) {
       auto name = Def->getValueAsString("name");
       os << "{arg_transposed_" << name << "}";
@@ -1405,7 +1444,8 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     if (typeMap.lookup(i) == ArgType::trans) {
       os << "    llvm::Value* arg_transposed_" << name
          << " = transpose(Builder2, arg_" << name
-         << ", byRef, cublas, charType, allocationBuilder, \"" << name << "\");\n";
+         << ", byRef, cublas, charType, allocationBuilder, \"" << name
+         << "\");\n";
     }
   }
 
@@ -1478,12 +1518,14 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
         os << "    SmallVector<Type*, 1> tys; for (auto arg : args1) "
               "tys.push_back(arg->getType());\n";
         std::string dfnc_ret_ty = get_blas_ret_ty(dfnc_name);
-        
+
         os << "    llvm::FunctionType *FT" << dfnc_name << ";\n";
         os << "    if (cublas) {\n"
-           << "      FT" << dfnc_name << " = FunctionType::get(cublas_retty, tys, false);\n"
+           << "      FT" << dfnc_name
+           << " = FunctionType::get(cublas_retty, tys, false);\n"
            << "    } else {\n"
-           << "      FT" << dfnc_name << " = FunctionType::get(" << dfnc_ret_ty << ", tys, false);\n"
+           << "      FT" << dfnc_name << " = FunctionType::get(" << dfnc_ret_ty
+           << ", tys, false);\n"
            << "    }\n";
         os << "    auto derivcall_" << dfnc_name
            << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
@@ -1665,6 +1707,13 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   // //checkBlasCalls2(newBlasPatterns);
   emit_handleBLAS(newBlasPatterns, os);
   // // emitEnumMatcher(blas_modes, os);
+
+  os << "enum class cublasOperation_t {\n"
+     << "  CUBLAS_OP_N,\n"
+     << "  CUBLAS_OP_T,\n"
+     << "  CUBLAS_OP_C,\n"
+     << "  CUBLAS_OP_UNUSED,\n"
+     << "};\n";
 
   for (auto &&newPattern : newBlasPatterns) {
     bool hasNonInactive = false;
