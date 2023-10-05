@@ -1708,7 +1708,7 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   emit_handleBLAS(newBlasPatterns, os);
   // // emitEnumMatcher(blas_modes, os);
 
-  os << "enum class cublasOperation_t {\n"
+  os << "enum cublasOperation_t {\n"
      << "  CUBLAS_OP_N,\n"
      << "  CUBLAS_OP_T,\n"
      << "  CUBLAS_OP_C,\n"
