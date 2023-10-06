@@ -1888,10 +1888,11 @@ void TypeAnalyzer::visitExtractElementInst(ExtractElementInst &I) {
   auto &dl = fntypeinfo.Function->getParent()->getDataLayout();
   VectorType *vecType = cast<VectorType>(I.getVectorOperand()->getType());
 
-  size_t size = (dl.getTypeSizeInBits(vecType->getElementType()) + 7) / 8;
+  size_t bitsize = dl.getTypeSizeInBits(vecType->getElementType());
+  size_t size = (bitsize + 7) / 8;
 
   if (auto CI = dyn_cast<ConstantInt>(I.getIndexOperand())) {
-    size_t off = CI->getZExtValue() * size;
+    size_t off = (CI->getZExtValue() * bitsize) / 8;
 
     if (direction & DOWN)
       updateAnalysis(&I,
