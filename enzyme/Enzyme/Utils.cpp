@@ -37,6 +37,7 @@
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Module.h"
@@ -2647,4 +2648,68 @@ CountTrackedPointers::CountTrackedPointers(Type *T) {
   }
   if (count == 0)
     all = false;
+}
+
+bool collectOffset(GetElementPtrInst *gep, const DataLayout &DL,
+                   unsigned BitWidth,
+                   MapVector<Value *, APInt> &VariableOffsets,
+                   APInt &ConstantOffset) {
+#if LLVM_VERSION_MAJOR >= 13
+  return cast<GEPOperator>(gep)->collectOffset(DL, BitWidth, VariableOffsets,
+                                               ConstantOffset);
+#else
+  assert(BitWidth == DL.getIndexSizeInBits(gep->getPointerAddressSpace()) &&
+         "The offset bit width does not match DL specification.");
+
+  auto CollectConstantOffset = [&](APInt Index, uint64_t Size) {
+    Index = Index.sextOrTrunc(BitWidth);
+    APInt IndexedSize = APInt(BitWidth, Size);
+    ConstantOffset += Index * IndexedSize;
+  };
+
+  for (gep_type_iterator GTI = gep_type_begin(gep), GTE = gep_type_end(gep);
+       GTI != GTE; ++GTI) {
+    // Scalable vectors are multiplied by a runtime constant.
+    bool ScalableType = isa<ScalableVectorType>(GTI.getIndexedType());
+
+    Value *V = GTI.getOperand();
+    StructType *STy = GTI.getStructTypeOrNull();
+    // Handle ConstantInt if possible.
+    if (auto ConstOffset = dyn_cast<ConstantInt>(V)) {
+      if (ConstOffset->isZero())
+        continue;
+      // If the type is scalable and the constant is not zero (vscale * n * 0 =
+      // 0) bailout.
+      // TODO: If the runtime value is accessible at any point before DWARF
+      // emission, then we could potentially keep a forward reference to it
+      // in the debug value to be filled in later.
+      if (ScalableType)
+        return false;
+      // Handle a struct index, which adds its field offset to the pointer.
+      if (STy) {
+        unsigned ElementIdx = ConstOffset->getZExtValue();
+        const StructLayout *SL = DL.getStructLayout(STy);
+        // Element offset is in bytes.
+        CollectConstantOffset(APInt(BitWidth, SL->getElementOffset(ElementIdx)),
+                              1);
+        continue;
+      }
+      CollectConstantOffset(ConstOffset->getValue(),
+                            DL.getTypeAllocSize(GTI.getIndexedType()));
+      continue;
+    }
+
+    if (STy || ScalableType)
+      return false;
+    APInt IndexedSize =
+        APInt(BitWidth, DL.getTypeAllocSize(GTI.getIndexedType()));
+    // Insert an initial offset of 0 for V iff none exists already, then
+    // increment the offset by IndexedSize.
+    if (IndexedSize != 0) {
+      VariableOffsets.insert({V, APInt(BitWidth, 0)});
+      VariableOffsets[V] += IndexedSize;
+    }
+  }
+  return true;
+#endif
 }
