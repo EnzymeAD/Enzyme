@@ -35,6 +35,7 @@
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/ModuleSlotTracker.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 
@@ -1887,10 +1888,11 @@ void TypeAnalyzer::visitExtractElementInst(ExtractElementInst &I) {
   auto &dl = fntypeinfo.Function->getParent()->getDataLayout();
   VectorType *vecType = cast<VectorType>(I.getVectorOperand()->getType());
 
-  size_t size = (dl.getTypeSizeInBits(vecType->getElementType()) + 7) / 8;
+  size_t bitsize = dl.getTypeSizeInBits(vecType->getElementType());
+  size_t size = (bitsize + 7) / 8;
 
   if (auto CI = dyn_cast<ConstantInt>(I.getIndexOperand())) {
-    size_t off = CI->getZExtValue() * size;
+    size_t off = (CI->getZExtValue() * bitsize) / 8;
 
     if (direction & DOWN)
       updateAnalysis(&I,
@@ -2168,8 +2170,15 @@ void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
 
 void TypeAnalyzer::dump(llvm::raw_ostream &ss) {
   ss << "<analysis>\n";
+  // We don't care about correct MD node numbering here.
+  ModuleSlotTracker MST(fntypeinfo.Function->getParent(),
+                        /*ShouldInitializeAllMetadata*/ false);
   for (auto &pair : analysis) {
-    ss << *pair.first << ": " << pair.second.str()
+    if (auto F = dyn_cast<Function>(pair.first))
+      ss << "@" << F->getName();
+    else
+      pair.first->print(ss, MST);
+    ss << ": " << pair.second.str()
        << ", intvals: " << to_string(knownIntegralValues(pair.first)) << "\n";
   }
   ss << "</analysis>\n";
@@ -4023,6 +4032,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
             buf.insert({0}, Type::getDoubleTy(C->getContext()));
           } else if (GV->getName() == "ompi_mpi_float") {
             buf.insert({0}, Type::getFloatTy(C->getContext()));
+          } else if (GV->getName() == "ompi_mpi_cxx_bool") {
+            buf.insert({0}, BaseType::Integer);
           }
         } else if (auto CI = dyn_cast<ConstantInt>(C)) {
           // MPICH
@@ -4043,7 +4054,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
-    if (funcName == "MPI_Isend" || funcName == "MPI_Irecv") {
+    if (funcName == "MPI_Isend" || funcName == "MPI_Irecv" ||
+        funcName == "PMPI_Isend" || funcName == "PMPI_Irecv") {
       TypeTree buf = TypeTree(BaseType::Pointer);
 
       if (Constant *C = dyn_cast<Constant>(call.getOperand(2))) {
@@ -4055,6 +4067,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
             buf.insert({0}, Type::getDoubleTy(C->getContext()));
           } else if (GV->getName() == "ompi_mpi_float") {
             buf.insert({0}, Type::getFloatTy(C->getContext()));
+          } else if (GV->getName() == "ompi_mpi_cxx_bool") {
+            buf.insert({0}, BaseType::Integer);
           }
         } else if (auto CI = dyn_cast<ConstantInt>(C)) {
           // MPICH
@@ -4129,6 +4143,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
             buf.insert({0}, Type::getDoubleTy(C->getContext()));
           } else if (GV->getName() == "ompi_mpi_float") {
             buf.insert({0}, Type::getFloatTy(C->getContext()));
+          } else if (GV->getName() == "ompi_mpi_cxx_bool") {
+            buf.insert({0}, BaseType::Integer);
           }
         } else if (auto CI = dyn_cast<ConstantInt>(C)) {
           // MPICH
@@ -4156,7 +4172,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
-    if (funcName == "MPI_Allreduce") {
+    if (funcName == "MPI_Allreduce" || funcName == "PMPI_Allreduce") {
       TypeTree buf = TypeTree(BaseType::Pointer);
 
       if (Constant *C = dyn_cast<Constant>(call.getOperand(3))) {
@@ -4168,6 +4184,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
             buf.insert({0}, Type::getDoubleTy(C->getContext()));
           } else if (GV->getName() == "ompi_mpi_float") {
             buf.insert({0}, Type::getFloatTy(C->getContext()));
+          } else if (GV->getName() == "ompi_mpi_cxx_bool") {
+            buf.insert({0}, BaseType::Integer);
           }
         } else if (auto CI = dyn_cast<ConstantInt>(C)) {
           // MPICH

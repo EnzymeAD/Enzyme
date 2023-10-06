@@ -25,6 +25,7 @@
 #ifndef ENZYME_UTILS_H
 #define ENZYME_UTILS_H
 
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
@@ -1754,4 +1755,8 @@ static inline bool isSpecialPtr(llvm::Type *Ty) {
   return AddressSpace::FirstSpecial <= AS && AS <= AddressSpace::LastSpecial;
 }
 
+bool collectOffset(llvm::GetElementPtrInst *gep, const llvm::DataLayout &DL,
+                   unsigned BitWidth,
+                   llvm::MapVector<llvm::Value *, llvm::APInt> &VariableOffsets,
+                   llvm::APInt &ConstantOffset);
 #endif

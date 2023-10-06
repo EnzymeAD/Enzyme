@@ -1188,6 +1188,24 @@ LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
 LLVMTypeRef EnzymeAllocaType(LLVMValueRef V) {
   return wrap(cast<AllocaInst>(unwrap(V))->getAllocatedType());
 }
+LLVMValueRef EnzymeComputeByteOffsetOfGEP(LLVMBuilderRef B_r, LLVMValueRef V_r,
+                                          LLVMTypeRef T_r) {
+  IRBuilder<> &B = *unwrap(B_r);
+  auto T = cast<IntegerType>(unwrap(T_r));
+  auto width = T->getBitWidth();
+  auto gep = cast<GetElementPtrInst>(unwrap(V_r));
+  auto &DL = B.GetInsertBlock()->getParent()->getParent()->getDataLayout();
+
+  MapVector<Value *, APInt> VariableOffsets;
+  APInt Offset(width, 0);
+  bool success = collectOffset(gep, DL, width, VariableOffsets, Offset);
+  assert(success);
+  Value *start = ConstantInt::get(T, Offset);
+  for (auto &pair : VariableOffsets)
+    start = B.CreateAdd(
+        start, B.CreateMul(pair.first, ConstantInt::get(T, pair.second)));
+  return wrap(start);
+}
 }
 
 static size_t num_rooting(llvm::Type *T, llvm::Function *F) {
