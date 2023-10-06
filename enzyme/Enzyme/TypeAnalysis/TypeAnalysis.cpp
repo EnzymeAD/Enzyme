@@ -4031,6 +4031,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
             buf.insert({0}, Type::getDoubleTy(C->getContext()));
           } else if (GV->getName() == "ompi_mpi_float") {
             buf.insert({0}, Type::getFloatTy(C->getContext()));
+          } else if (GV->getName() == "ompi_mpi_cxx_bool") {
+            buf.insert({0}, BaseType::Integer);
           }
         } else if (auto CI = dyn_cast<ConstantInt>(C)) {
           // MPICH
@@ -4051,7 +4053,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
-    if (funcName == "MPI_Isend" || funcName == "MPI_Irecv") {
+    if (funcName == "MPI_Isend" || funcName == "MPI_Irecv" ||
+        funcName == "PMPI_Isend" || funcName == "PMPI_Irecv") {
       TypeTree buf = TypeTree(BaseType::Pointer);
 
       if (Constant *C = dyn_cast<Constant>(call.getOperand(2))) {
@@ -4063,6 +4066,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
             buf.insert({0}, Type::getDoubleTy(C->getContext()));
           } else if (GV->getName() == "ompi_mpi_float") {
             buf.insert({0}, Type::getFloatTy(C->getContext()));
+          } else if (GV->getName() == "ompi_mpi_cxx_bool") {
+            buf.insert({0}, BaseType::Integer);
           }
         } else if (auto CI = dyn_cast<ConstantInt>(C)) {
           // MPICH
@@ -4137,6 +4142,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
             buf.insert({0}, Type::getDoubleTy(C->getContext()));
           } else if (GV->getName() == "ompi_mpi_float") {
             buf.insert({0}, Type::getFloatTy(C->getContext()));
+          } else if (GV->getName() == "ompi_mpi_cxx_bool") {
+            buf.insert({0}, BaseType::Integer);
           }
         } else if (auto CI = dyn_cast<ConstantInt>(C)) {
           // MPICH
@@ -4164,7 +4171,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
-    if (funcName == "MPI_Allreduce") {
+    if (funcName == "MPI_Allreduce" || funcName == "PMPI_Allreduce") {
       TypeTree buf = TypeTree(BaseType::Pointer);
 
       if (Constant *C = dyn_cast<Constant>(call.getOperand(3))) {
@@ -4176,6 +4183,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
             buf.insert({0}, Type::getDoubleTy(C->getContext()));
           } else if (GV->getName() == "ompi_mpi_float") {
             buf.insert({0}, Type::getFloatTy(C->getContext()));
+          } else if (GV->getName() == "ompi_mpi_cxx_bool") {
+            buf.insert({0}, BaseType::Integer);
           }
         } else if (auto CI = dyn_cast<ConstantInt>(C)) {
           // MPICH
