@@ -53,6 +53,11 @@ def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
   ];
 }
 
+def PrintAliasAnalysisPass : Pass<"test-print-alias-analysis"> {
+  let summary = "Print the results of alias analysis";
+  let constructor = "mlir::enzyme::createPrintAliasAnalysisPass()";
+}
+
 def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
   let summary = "Lower custom Enzyme ops to the MemRef dialect";
   let dependentDialects = [
