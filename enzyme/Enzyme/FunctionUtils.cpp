@@ -976,14 +976,14 @@ Function *CreateMPIWrapper(Function *F) {
   B.CreateRet(B.CreateLoad(F->getReturnType(), alloc));
   return W;
 }
-template <typename T>
+
 static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
   DominatorTree &DT = FAM.getResult<DominatorTreeAnalysis>(NewF);
-  SmallVector<T *, 4> Todo;
-  SmallVector<T *, 4> OMPBounds;
+  SmallVector<CallBase *, 4> Todo;
+  SmallVector<CallBase *, 4> OMPBounds;
   for (auto &BB : NewF) {
     for (auto &I : BB) {
-      if (auto CI = dyn_cast<T>(&I)) {
+      if (auto CI = dyn_cast<CallBase>(&I)) {
         Function *Fn = CI->getCalledFunction();
         if (Fn == nullptr)
           continue;
@@ -1009,8 +1009,12 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
     Value *arg[] = {CI->getArgOperand(0)};
     SmallVector<OperandBundleDef, 2> Defs;
     CI->getOperandBundlesAsDefs(Defs);
-    auto res =
-        B.CreateCall(CreateMPIWrapper(CI->getCalledFunction()), arg, Defs);
+    CallBase *res = nullptr;
+    if (auto II = dyn_cast<InvokeInst>(CI))
+      res = B.CreateInvoke(CreateMPIWrapper(CI->getCalledFunction()),
+                           II->getNormalDest(), II->getUnwindDest(), arg, Defs);
+    else
+      res = B.CreateCall(CreateMPIWrapper(CI->getCalledFunction()), arg, Defs);
     Value *storePointer = CI->getArgOperand(1);
 
     // Comm_rank and Comm_size return Err, assume 0 is success
@@ -1431,8 +1435,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       ConstantFoldTerminator(BE);
   }
 
-  SimplifyMPIQueries<CallInst>(*NewF, FAM);
-  SimplifyMPIQueries<InvokeInst>(*NewF, FAM);
+  SimplifyMPIQueries(*NewF, FAM);
   {
     auto PA = PromotePass().run(*NewF, FAM);
     FAM.invalidate(*NewF, PA);
