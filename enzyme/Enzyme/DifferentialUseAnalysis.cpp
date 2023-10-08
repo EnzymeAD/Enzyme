@@ -56,7 +56,9 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   }
   assert(user->getParent()->getParent() == gutils->oldFunc);
 
-  if (oldUnreachable.count(user->getParent()))
+  if ((!EnzymeExecuteUnreachable ||
+       gutils->mode == DerivativeMode::ReverseModeGradient) &&
+      oldUnreachable.count(user->getParent()))
     return false;
 
   if (isPointerArithmeticInst(user, /*includephi*/ true,

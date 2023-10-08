@@ -103,6 +103,10 @@ cl::opt<bool> EnzymeJuliaAddrLoad(
     "enzyme-julia-addr-load", cl::init(false), cl::Hidden,
     cl::desc("Mark all loads resulting in an addr(13)* to be legal to redo"));
 
+cl::opt<bool> EnzymeExecuteUnreachable(
+    "enzyme-execute-unreachable", cl::init(false), cl::Hidden,
+    cl::desc("Execute the instructions inside of unreachable"));
+
 LLVMValueRef (*EnzymeFixupReturn)(LLVMBuilderRef, LLVMValueRef) = nullptr;
 }
 
@@ -635,8 +639,7 @@ void calculateUnusedValuesInFunction(
     Function &func, llvm::SmallPtrSetImpl<const Value *> &unnecessaryValues,
     llvm::SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions,
     bool returnValue, DerivativeMode mode, GradientUtils *gutils,
-    TargetLibraryInfo &TLI, ArrayRef<DIFFE_TYPE> constant_args,
-    const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
+    TargetLibraryInfo &TLI, ArrayRef<DIFFE_TYPE> constant_args) {
   std::map<UsageKey, bool> CacheResults;
   for (auto pair : gutils->knownRecomputeHeuristic) {
     if (!pair.second ||
@@ -655,7 +658,7 @@ void calculateUnusedValuesInFunction(
 
     bool primalNeededInReverse =
         DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Primal>(
-            gutils, pair.first, mode, CacheResults, oldUnreachable);
+            gutils, pair.first, mode, CacheResults, gutils->notForAnalysis);
 
     // If rematerializing a split or loop-level allocation, the primal
     // allocation is not needed in the reverse.
@@ -693,7 +696,8 @@ void calculateUnusedValuesInFunction(
 
     bool primalNeededInReverse =
         DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Primal>(
-            gutils, rmat.first, mode, CacheResults, oldUnreachable);
+            gutils, rmat.first, mode, CacheResults, gutils->notForAnalysis);
+
     // If rematerializing a split or loop-level allocation, the primal
     // allocation is not needed in the reverse.
     if (gutils->needsCacheWholeAllocation(rmat.first)) {
@@ -749,7 +753,7 @@ void calculateUnusedValuesInFunction(
             if (auto I = dyn_cast<Instruction>(u)) {
               if (unnecessaryInstructions.count(I)) {
                 if (!DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
-                        gutils, cur, I, oldUnreachable)) {
+                        gutils, cur, I, gutils->notForAnalysis)) {
                   continue;
                 }
               }
@@ -821,7 +825,8 @@ void calculateUnusedValuesInFunction(
       func, unnecessaryValues, unnecessaryInstructions, returnValue,
       [&](const Value *val) {
         bool ivn = DifferentialUseAnalysis::is_value_needed_in_reverse<
-            ValueType::Primal>(gutils, val, mode, PrimalSeen, oldUnreachable);
+            ValueType::Primal>(gutils, val, mode, PrimalSeen,
+                               gutils->notForAnalysis);
         return ivn;
       },
       [&](const Instruction *inst) {
@@ -849,7 +854,7 @@ void calculateUnusedValuesInFunction(
             llvm::isa<llvm::SwitchInst>(inst)) {
           size_t num = 0;
           for (auto suc : successors(inst->getParent())) {
-            if (!oldUnreachable.count(suc)) {
+            if (!gutils->notForAnalysis.count(suc)) {
               num++;
             }
           }
@@ -1016,7 +1021,7 @@ void calculateUnusedValuesInFunction(
               if (pair.second.stores.count(inst)) {
                 if (DifferentialUseAnalysis::is_value_needed_in_reverse<
                         ValueType::Primal>(gutils, pair.first, mode, PrimalSeen,
-                                           oldUnreachable)) {
+                                           gutils->notForAnalysis)) {
                   return UseReq::Need;
                 }
               }
@@ -1026,7 +1031,8 @@ void calculateUnusedValuesInFunction(
         }
 
         bool ivn = DifferentialUseAnalysis::is_value_needed_in_reverse<
-            ValueType::Primal>(gutils, inst, mode, PrimalSeen, oldUnreachable);
+            ValueType::Primal>(gutils, inst, mode, PrimalSeen,
+                               gutils->notForAnalysis);
         if (ivn) {
           return UseReq::Need;
         }
@@ -1079,9 +1085,11 @@ void calculateUnusedValuesInFunction(
     for (auto &BB : func)
       for (auto &I : BB) {
         bool ivn = DifferentialUseAnalysis::is_value_needed_in_reverse<
-            ValueType::Primal>(gutils, &I, mode, PrimalSeen, oldUnreachable);
+            ValueType::Primal>(gutils, &I, mode, PrimalSeen,
+                               gutils->notForAnalysis);
         bool isn = DifferentialUseAnalysis::is_value_needed_in_reverse<
-            ValueType::Shadow>(gutils, &I, mode, PrimalSeen, oldUnreachable);
+            ValueType::Shadow>(gutils, &I, mode, PrimalSeen,
+                               gutils->notForAnalysis);
         llvm::errs() << I << " ivn=" << (int)ivn << " isn: " << (int)isn;
         auto found = gutils->knownRecomputeHeuristic.find(&I);
         if (found != gutils->knownRecomputeHeuristic.end()) {
@@ -1093,9 +1101,11 @@ void calculateUnusedValuesInFunction(
                  << ": mode=" << to_string(mode) << "\n";
     for (auto a : unnecessaryValues) {
       bool ivn = DifferentialUseAnalysis::is_value_needed_in_reverse<
-          ValueType::Primal>(gutils, a, mode, PrimalSeen, oldUnreachable);
+          ValueType::Primal>(gutils, a, mode, PrimalSeen,
+                             gutils->notForAnalysis);
       bool isn = DifferentialUseAnalysis::is_value_needed_in_reverse<
-          ValueType::Shadow>(gutils, a, mode, PrimalSeen, oldUnreachable);
+          ValueType::Shadow>(gutils, a, mode, PrimalSeen,
+                             gutils->notForAnalysis);
       llvm::errs() << *a << " ivn=" << (int)ivn << " isn: " << (int)isn;
       auto found = gutils->knownRecomputeHeuristic.find(a);
       if (found != gutils->knownRecomputeHeuristic.end()) {
@@ -1401,7 +1411,8 @@ bool legalCombinedForwardReverse(
     // (unless this is the original function)
     if (usetree.count(I))
       return;
-    if (gutils->notForAnalysis.count(I->getParent()))
+    if (!EnzymeExecuteUnreachable &&
+        gutils->notForAnalysis.count(I->getParent()))
       return;
     if (auto ri = dyn_cast<ReturnInst>(I)) {
       auto find = replacedReturns.find(ri);
@@ -1765,8 +1776,7 @@ void cleanupInversionAllocs(DiffeGradientUtils *gutils, BasicBlock *entry) {
 
 void restoreCache(
     DiffeGradientUtils *gutils,
-    const std::map<std::pair<Instruction *, CacheType>, int> &mapping,
-    const SmallPtrSetImpl<BasicBlock *> &guaranteedUnreachable) {
+    const std::map<std::pair<Instruction *, CacheType>, int> &mapping) {
   // One must use this temporary map to first create all the replacements
   // prior to actually replacing to ensure that getSubLimits has the same
   // behavior and unwrap behavior for all replacements.
@@ -1859,7 +1869,7 @@ void restoreCache(
     SmallVector<BasicBlock *, 4> unreachables;
     SmallVector<BasicBlock *, 4> reachables;
     for (auto Succ : successors(&BB)) {
-      if (guaranteedUnreachable.find(Succ) != guaranteedUnreachable.end()) {
+      if (gutils->notForAnalysis.find(Succ) != gutils->notForAnalysis.end()) {
         unreachables.push_back(Succ);
       } else {
         reachables.push_back(Succ);
@@ -2310,8 +2320,6 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     llvm_unreachable("attempting to differentiate function without definition");
   }
   gutils->AtomicAdd = AtomicAdd;
-  const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
-      getGuaranteedUnreachable(gutils->oldFunc);
 
   // Convert uncacheable args from the input function to the preprocessed
   // function
@@ -2324,7 +2332,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                    gutils->rematerializableAllocations, gutils->TR,
                    gutils->OrigAA, gutils->oldFunc,
                    PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
-                   gutils->OrigLI, gutils->OrigDT, TLI, guaranteedUnreachable,
+                   gutils->OrigLI, gutils->OrigDT, TLI, gutils->notForAnalysis,
                    _overwritten_argsPP, DerivativeMode::ReverseModePrimal, omp);
   const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
       CA.compute_overwritten_args_for_callsites();
@@ -2340,10 +2348,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   SmallPtrSet<const Value *, 4> unnecessaryValues;
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
-  calculateUnusedValuesInFunction(*gutils->oldFunc, unnecessaryValues,
-                                  unnecessaryInstructions, returnUsed,
-                                  DerivativeMode::ReverseModePrimal, gutils,
-                                  TLI, constant_args, guaranteedUnreachable);
+  calculateUnusedValuesInFunction(
+      *gutils->oldFunc, unnecessaryValues, unnecessaryInstructions, returnUsed,
+      DerivativeMode::ReverseModePrimal, gutils, TLI, constant_args);
   gutils->unnecessaryValuesP = &unnecessaryValues;
 
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;
@@ -2398,7 +2405,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       DerivativeMode::ReverseModePrimal, gutils, constant_args, retType,
       getIndex, overwritten_args_map, &returnuses,
       &AugmentedCachedFunctions.find(tup)->second, nullptr, unnecessaryValues,
-      unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
+      unnecessaryInstructions, unnecessaryStores, gutils->notForAnalysis,
       nullptr);
 
   for (BasicBlock &oBB : *gutils->oldFunc) {
@@ -2406,7 +2413,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     assert(term);
 
     // Don't create derivatives for code that results in termination
-    if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
+    if (gutils->notForAnalysis.find(&oBB) != gutils->notForAnalysis.end()) {
       SmallVector<Instruction *, 4> toerase;
 
       // For having the prints still exist on bugs, check if indeed unused
@@ -3970,9 +3977,6 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     return nf;
   }
 
-  const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
-      getGuaranteedUnreachable(gutils->oldFunc);
-
   // Convert uncacheable args from the input function to the preprocessed
   // function
   const std::vector<bool> &_overwritten_argsPP = key.overwritten_args;
@@ -3987,7 +3991,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                    gutils->rematerializableAllocations, gutils->TR,
                    gutils->OrigAA, gutils->oldFunc,
                    PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
-                   gutils->OrigLI, gutils->OrigDT, TLI, guaranteedUnreachable,
+                   gutils->OrigLI, gutils->OrigDT, TLI, gutils->notForAnalysis,
                    _overwritten_argsPP, key.mode, omp);
   const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
       (augmenteddata) ? augmenteddata->overwritten_args_map
@@ -4017,8 +4021,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
   calculateUnusedValuesInFunction(*gutils->oldFunc, unnecessaryValues,
                                   unnecessaryInstructions, key.returnUsed,
-                                  key.mode, gutils, TLI, key.constant_args,
-                                  guaranteedUnreachable);
+                                  key.mode, gutils, TLI, key.constant_args);
   gutils->unnecessaryValuesP = &unnecessaryValues;
 
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;
@@ -4144,11 +4147,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       overwritten_args_map,
       /*returnuses*/ nullptr, augmenteddata, &replacedReturns,
       unnecessaryValues, unnecessaryInstructions, unnecessaryStores,
-      guaranteedUnreachable, dretAlloca);
+      gutils->notForAnalysis, dretAlloca);
 
   for (BasicBlock &oBB : *gutils->oldFunc) {
     // Don't create derivatives for code that results in termination
-    if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
+    if (gutils->notForAnalysis.find(&oBB) != gutils->notForAnalysis.end()) {
       auto newBB = cast<BasicBlock>(gutils->getNewFromOriginal(&oBB));
       SmallVector<BasicBlock *, 4> toRemove;
       if (auto II = dyn_cast<InvokeInst>(oBB.getTerminator())) {
@@ -4221,7 +4224,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   }
 
   if (key.mode == DerivativeMode::ReverseModeGradient)
-    restoreCache(gutils, mapping, guaranteedUnreachable);
+    restoreCache(gutils, mapping);
 
   gutils->eraseFictiousPHIs();
 
@@ -4594,18 +4597,8 @@ Function *EnzymeLogic::CreateForwardDiff(
   }
   gutils->FreeMemory = freeMemory;
 
-  const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
-      getGuaranteedUnreachable(gutils->oldFunc);
-
   gutils->forceActiveDetection();
 
-  // TODO populate with actual unnecessaryInstructions once the dependency
-  // cycle with activity analysis is removed
-  SmallPtrSet<const Instruction *, 4> unnecessaryInstructionsTmp;
-  for (auto BB : guaranteedUnreachable) {
-    for (auto &I : *BB)
-      unnecessaryInstructionsTmp.insert(&I);
-  }
   if (mode == DerivativeMode::ForwardModeSplit)
     gutils->computeGuaranteedFrees();
 
@@ -4625,7 +4618,7 @@ Function *EnzymeLogic::CreateForwardDiff(
         gutils->rematerializableAllocations, gutils->TR, gutils->OrigAA,
         gutils->oldFunc,
         PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
-        gutils->OrigLI, gutils->OrigDT, TLI, guaranteedUnreachable,
+        gutils->OrigLI, gutils->OrigDT, TLI, gutils->notForAnalysis,
         _overwritten_argsPP, mode, omp);
     const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
         CA.compute_overwritten_args_for_callsites();
@@ -4643,9 +4636,9 @@ Function *EnzymeLogic::CreateForwardDiff(
       return gutils->getIndex(std::make_pair(I, u), augmenteddata->tapeIndices);
     };
 
-    calculateUnusedValuesInFunction(
-        *gutils->oldFunc, unnecessaryValues, unnecessaryInstructions,
-        returnUsed, mode, gutils, TLI, constant_args, guaranteedUnreachable);
+    calculateUnusedValuesInFunction(*gutils->oldFunc, unnecessaryValues,
+                                    unnecessaryInstructions, returnUsed, mode,
+                                    gutils, TLI, constant_args);
     gutils->unnecessaryValuesP = &unnecessaryValues;
 
     calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
@@ -4654,7 +4647,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     maker = new AdjointGenerator<const AugmentedReturn *>(
         mode, gutils, constant_args, retType, getIndex, overwritten_args_map,
         /*returnuses*/ nullptr, augmenteddata, nullptr, unnecessaryValues,
-        unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
+        unnecessaryInstructions, unnecessaryStores, gutils->notForAnalysis,
         nullptr);
 
     if (additionalArg) {
@@ -4697,9 +4690,9 @@ Function *EnzymeLogic::CreateForwardDiff(
     }
   } else {
     gutils->forceAugmentedReturns();
-    calculateUnusedValuesInFunction(
-        *gutils->oldFunc, unnecessaryValues, unnecessaryInstructions,
-        returnUsed, mode, gutils, TLI, constant_args, guaranteedUnreachable);
+    calculateUnusedValuesInFunction(*gutils->oldFunc, unnecessaryValues,
+                                    unnecessaryInstructions, returnUsed, mode,
+                                    gutils, TLI, constant_args);
     gutils->unnecessaryValuesP = &unnecessaryValues;
 
     calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
@@ -4707,13 +4700,13 @@ Function *EnzymeLogic::CreateForwardDiff(
     maker = new AdjointGenerator<const AugmentedReturn *>(
         mode, gutils, constant_args, retType, nullptr, {},
         /*returnuses*/ nullptr, nullptr, nullptr, unnecessaryValues,
-        unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
+        unnecessaryInstructions, unnecessaryStores, gutils->notForAnalysis,
         nullptr);
   }
 
   for (BasicBlock &oBB : *gutils->oldFunc) {
     // Don't create derivatives for code that results in termination
-    if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
+    if (gutils->notForAnalysis.find(&oBB) != gutils->notForAnalysis.end()) {
       for (auto &I : oBB) {
         maker->eraseIfUnused(I, /*erase*/ true, /*check*/ true);
       }
@@ -4739,7 +4732,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   }
 
   if (mode == DerivativeMode::ForwardModeSplit && augmenteddata)
-    restoreCache(gutils, augmenteddata->tapeIndices, guaranteedUnreachable);
+    restoreCache(gutils, augmenteddata->tapeIndices);
 
   gutils->eraseFictiousPHIs();
 
@@ -5350,12 +5343,11 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   NewF->setVisibility(llvm::GlobalValue::DefaultVisibility);
   NewF->setLinkage(llvm::GlobalValue::InternalLinkage);
 
-  const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
-      getGuaranteedUnreachable(NewF);
+  auto notForAnalysis = getGuaranteedUnreachable(F);
 
   SmallVector<Instruction *, 2> toErase;
   for (BasicBlock &BB : *NewF) {
-    if (guaranteedUnreachable.count(&BB))
+    if (notForAnalysis.count(&BB))
       continue;
     for (Instruction &I : BB) {
       StringRef funcName = "";
