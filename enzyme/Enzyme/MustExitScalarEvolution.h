@@ -78,6 +78,10 @@ public:
                                               const llvm::Loop *L,
                                               bool IsSigned, bool ControlsExit,
                                               bool AllowPredicates);
+
+  ScalarEvolution::ExitLimit computeExitLimitFromSingleExitSwitch(
+      const llvm::Loop *L, llvm::SwitchInst *Switch,
+      llvm::BasicBlock *ExitingBB, bool IsSubExpr);
 };
 
 #endif
