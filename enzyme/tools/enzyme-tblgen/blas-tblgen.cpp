@@ -1042,6 +1042,11 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
       os << "{to_blas_callconv(Builder2, ConstantInt::get(charType, '" << val
          << "'), byRef, nullptr, allocationBuilder, \"constant.char." << val
          << "\")}";
+    } else if (Def->isSubClassOf("Alloca")) {
+      auto val = Def->getValueAsInt("value");
+      os << "{allocationBuilder.CreateAlloca(Type::getIntNTy(allocationBuilder."
+            "getContext(), "
+         << (8 * val) << "))}";
     } else if (Def->isSubClassOf("ConstantInt")) {
       auto val = Def->getValueAsInt("value");
       os << "{to_blas_callconv(Builder2, ConstantInt::get(intType, " << val

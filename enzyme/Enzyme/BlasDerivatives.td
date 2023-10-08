@@ -86,6 +86,9 @@ class Constant<string _value> {
 class Char<string _value> {
   string value = _value;
 }
+class Alloca<int _value> {
+  int value = _value;
+}
 
 class transpose<string _name> {
   string name = _name;
@@ -242,7 +245,7 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                                                     (Concat adj<"C">, $A, (ld $A, $transa, $lda, $m, $k))),
                                                   Constant<"1.0">, adj<"B">),
                   /* beta  */ (FrobInnerProd<""> $m, $n, adj<"C">, input<"C">),
-                  /* C     */ (b<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, adj<"C">)
+                  /* C     */ (b<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, adj<"C">, Alloca<1>)
                   ]
                   >;
 
