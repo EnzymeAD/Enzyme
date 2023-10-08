@@ -204,6 +204,22 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
            << attrName << "));\n";
         os << "  #endif \n";
       }
+      ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
+      for (auto argOpEn : enumerate(*argOps)) {
+        size_t argIdx = argOpEn.index();
+        if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+          auto opName = resultRoot->getOperator()->getAsString();
+          auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
+          if (opName == "InactiveArgSpec" ||
+              Def->isSubClassOf("InactiveArgSpec")) {
+            if (!Def->getValueAsBit("asserting"))
+              os << "    F.addParamAttr(" << argOpEn.index()
+                 << ", llvm::Attribute::get(F.getContext(), "
+                    "\"enzyme_inactive\"));\n";
+            continue;
+          }
+        }
+      }
       os << "  }\n";
     }
   }

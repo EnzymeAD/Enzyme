@@ -550,7 +550,7 @@ def : CallPattern<(Op $x, $tbd),
                   ["Faddeeva_erf"],
                   [
                     (ToStruct2 (CFMul (DiffeRet), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x)))))),
-                    (AssertingInactiveArg)
+                    (InactiveArg) // relerr
                   ],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
@@ -560,7 +560,7 @@ def : CallPattern<(Op $x, $tbd),
                   ["Faddeeva_erfi"],
                   [
                     (ToStruct2 (CFMul (DiffeRet), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFMul $x, $x))))),
-                    (AssertingInactiveArg)
+                    (InactiveArg) // relerr
                   ],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
@@ -570,7 +570,7 @@ def : CallPattern<(Op $x, $tbd),
                   ["Faddeeva_erfc"],
                   [
                     (ToStruct2 (CFMul (DiffeRet), (CFMul (ConstantCFP<"-1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x)))))),
-                    (AssertingInactiveArg)
+                    (InactiveArg) // relerr
                   ],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
