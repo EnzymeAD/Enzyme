@@ -122,14 +122,20 @@ class InsertValue<list<int> indices_> : Inst<"InsertValue"> {
 
 class MultiReturn {
   bit struct;
+  bit scalarcfp;
 }
 def StructRet : MultiReturn {
   bit struct = 1;
+  bit scalarcfp = 0;
 }
 def ArrayRet : MultiReturn {
   bit struct = 0;
+  bit scalarcfp = 0;
 }
-
+def ScalarCFPRet : MultiReturn {
+  bit struct = 1;
+  bit scalarcfp = 1;
+}
 def CFAdd : SubRoutine<(Op (Op $re1, $im1):$z1, (Op $re2, $im2):$z2),
                   (ArrayRet
                     (FAdd $re1, $re2),
@@ -546,10 +552,15 @@ def : CallPattern<(Op $x),
 def ToStruct2 : SubRoutine<(Op (Op $re, $im):$z),
                     (StructRet $re, $im)
                   >;
+
+def ToScalarCFP : SubRoutine<(Op (Op $re, $im):$z),
+                    (ScalarCFPRet $re, $im)
+                  >;
+
 def : CallPattern<(Op $x, $tbd),
                   ["Faddeeva_erf"],
                   [
-                    (ToStruct2 (CFMul (DiffeRet), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x)))))),
+                    (ToScalarCFP (CFMul (DiffeRet), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x)))))),
                     (AssertingInactiveArg)
                   ],
                   (ForwardFromSummedReverse),
@@ -559,7 +570,7 @@ def : CallPattern<(Op $x, $tbd),
 def : CallPattern<(Op $x, $tbd),
                   ["Faddeeva_erfi"],
                   [
-                    (ToStruct2 (CFMul (DiffeRet), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFMul $x, $x))))),
+                    (ToScalarCFP (CFMul (DiffeRet), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFMul $x, $x))))),
                     (AssertingInactiveArg)
                   ],
                   (ForwardFromSummedReverse),
@@ -569,7 +580,7 @@ def : CallPattern<(Op $x, $tbd),
 def : CallPattern<(Op $x, $tbd),
                   ["Faddeeva_erfc"],
                   [
-                    (ToStruct2 (CFMul (DiffeRet), (CFMul (ConstantCFP<"-1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x)))))),
+                    (ToScalarCFP (CFMul (DiffeRet), (CFMul (ConstantCFP<"-1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x)))))),
                     (AssertingInactiveArg)
                   ],
                   (ForwardFromSummedReverse),
