@@ -5282,6 +5282,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "_ZNSo5flushEv",
       "compress2",
       "_ZNSt6localeD1Ev",
+      "_ZNSt6localeC1Ev",
       "_ZNSt8ios_baseC2Ev",
       "_ZNSo9_M_insertIdEERSoT_",
       "malloc_usable_size",
