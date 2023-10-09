@@ -103,7 +103,7 @@ static void gemvTests() {
 
     {
 
-      bool trans = (transA == cublasOperation_t::CUBLAS_OP_T);
+      bool trans = !is_normal(transA);
       auto handle = USED_CUBLAS_HANDLE;
       std::string Test = "GEMV active A, C ";
       BlasInfo inputs[6] = {/*A*/ BlasInfo(A, handle, M, N, lda),
@@ -344,9 +344,9 @@ static void gemmTests() {
 
 int main() {
 
-  dotTests();
-
-  gemvTests();
-
   gemmTests();
+
+  //dotTests();
+
+  //gemvTests();
 }

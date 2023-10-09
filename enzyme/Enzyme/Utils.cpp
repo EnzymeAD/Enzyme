@@ -2357,15 +2357,16 @@ std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
-  llvm::Twine floatType[] = {"s", "d"}; // c, z
   llvm::Twine extractable[] = {"dot", "scal", "axpy", "gemv", "gemm", "spmv"};
-  llvm::Twine prefixes[] = {"" /*Fortran*/, "cblas_", "cublas_"};
+  llvm::Twine floatType[] = {"s", "d"}; // c, z
+  llvm::Twine prefixes[] = {"" /*Fortran*/, "cblas_"};
   llvm::Twine suffixes[] = {"", "_", "64_", "_64_"};
   for (auto t : floatType) {
     for (auto f : extractable) {
       for (auto p : prefixes) {
         for (auto s : suffixes) {
           if (in == (p + t + f + s).str()) {
+            llvm::errs() << "Found" << in << "\n";
             return BlasInfo{
                 t.getSingleStringRef(),
                 p.getSingleStringRef(),
@@ -2373,6 +2374,42 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
                 f.getSingleStringRef(),
             };
           }
+        }
+      }
+    }
+  }
+  // c interface to cublas
+  llvm::Twine cuCFloatType[] = {"S", "D"}; // c, z
+  llvm::Twine cuCPrefixes[] = {"cublas"};
+  for (auto t : cuCFloatType) {
+    for (auto f : extractable) {
+      for (auto p : cuCPrefixes) {
+        if (in == (p + t + f).str()) {
+          llvm::errs() << "Found" << in << "\n";
+          return BlasInfo{
+              t.getSingleStringRef(),
+              p.getSingleStringRef(),
+              "",
+              f.getSingleStringRef(),
+          };
+        }
+      }
+    }
+  }
+  // Fortran interface to cublas
+  llvm::Twine cuFFloatType[] = {"s", "d"}; // c, z
+  llvm::Twine cuFPrefixes[] = {"cublas_"};
+  for (auto t : cuFFloatType) {
+    for (auto f : extractable) {
+      for (auto p : cuFPrefixes) {
+        if (in == (p + t + f).str()) {
+          llvm::errs() << "Found" << in << "\n";
+          return BlasInfo{
+              t.getSingleStringRef(),
+              p.getSingleStringRef(),
+              "",
+              f.getSingleStringRef(),
+          };
         }
       }
     }
@@ -2524,6 +2561,15 @@ llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef) {
 llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
   llvm::Type *T = V->getType();
   Value *out;
+  if (cublas) {
+    out = B.CreateSelect(
+        B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 1)),
+        ConstantInt::get(V->getType(), 0),
+        B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 0)),
+                       ConstantInt::get(V->getType(), 1),
+                       ConstantInt::get(V->getType(), 42)));
+    return out;
+  }
   if (T->isIntegerTy(8)) {
     out = B.CreateSelect(
         B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'T')),

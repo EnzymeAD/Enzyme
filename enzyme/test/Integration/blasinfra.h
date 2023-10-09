@@ -332,7 +332,7 @@ void printcall(BlasCall rcall) {
     printf(")");
     return;
   case CallType::AXPY:
-    printf("DOT(N=");
+    printf("AXPY(N=");
     printty(rcall.iarg1);
     printf(", alpha=");
     printty(rcall.farg1);

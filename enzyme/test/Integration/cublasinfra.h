@@ -340,7 +340,7 @@ void printcall(CuBlasCall rcall) {
     printf(")");
     return;
   case CallType::AXPY:
-    printf("DOT(N=");
+    printf("AXPY(N=");
     printty(rcall.iarg1);
     printf(", alpha=");
     printty(rcall.farg1);
@@ -546,6 +546,31 @@ cublas_dlascl(cublasHandle_t *handle, cublasOperation_t type, int KL, int KU,
                                  UNUSED_INT, lda, KL, KU, UNUSED_POINTER});
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
+__attribute__((noinline)) cublasStatus_t cublas_dlacpy(cublasHandle_t *handle,
+                                                       int N, double *x,
+                                                       int incx, double *y,
+                                                       int incy) {
+  CuBlasCall call = {inDerivative,
+                     CallType::LACPY,
+                     x,
+                     y,
+                     UNUSED_POINTER,
+                     UNUSED_DOUBLE,
+                     UNUSED_DOUBLE,
+                     handle,
+                     CUBLAS_OP_UNUSED,
+                     CUBLAS_OP_UNUSED,
+                     N,
+                     UNUSED_INT,
+                     UNUSED_INT,
+                     incx,
+                     incy,
+                     UNUSED_INT,
+                     UNUSED_POINTER};
+  cucalls.push_back(call);
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+
 __attribute__((noinline)) cublasStatus_t cublas_ddot(cublasHandle_t *handle,
                                                      int N, double *X, int incx,
                                                      double *Y, int incy,
@@ -603,6 +628,9 @@ cublas_dgemv(cublasHandle_t *handle, cublasOperation_t trans, int M, int N,
       inDerivative,  CallType::GEMV,   Y, A, X,          alpha, beta, handle,
       trans,         CUBLAS_OP_UNUSED, M, N, UNUSED_INT, lda,   incx, incy,
       UNUSED_POINTER};
+  //BlasCall call = {
+  //    inDerivative, CallType::GEMV, Y, A, X,          alpha, beta, layout,
+  //    trans,        UNUSED_TRANS,   M, N, UNUSED_INT, lda,   incx, incy};
   cucalls.push_back(call);
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
@@ -614,6 +642,8 @@ cublas_dgemm(cublasHandle_t *handle, cublasOperation_t transA,
   cucalls.push_back((CuBlasCall){inDerivative, CallType::GEMM, C, A, B, alpha,
                                  beta, handle, transA, transB, M, N, K, lda,
                                  ldb, ldc, UNUSED_POINTER});
+  //calls.push_back((BlasCall){inDerivative, CallType::GEMM, C, A, B, alpha, beta,
+  //                           layout, transA, transB, M, N, K, lda, ldb, ldc});
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
 __attribute__((noinline)) cublasStatus_t
