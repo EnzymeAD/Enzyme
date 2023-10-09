@@ -110,10 +110,12 @@ ChangeResult enzyme::AliasClassLattice::markEntry() {
 }
 
 ChangeResult enzyme::AliasClassLattice::reset() {
-  if (aliasClasses.empty() && canonicalAllocations.empty() && !isUnknown) {
+  if (aliasClasses.empty() && canonicalAllocations.empty() && !isUnknown &&
+      !isEntry) {
     return ChangeResult::NoChange;
   }
   isUnknown = false;
+  isEntry = false;
   aliasClasses.clear();
   canonicalAllocations.clear();
   return ChangeResult::Change;
