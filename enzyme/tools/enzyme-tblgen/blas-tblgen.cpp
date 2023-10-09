@@ -1219,8 +1219,9 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
   if (fncHasLayout) {
     // Fnc has a layout if cBLAS, that makes it more complex.
     // Distinguish later trough byRef if it is cblas (thus has layout)
-    os << "        if (!byRef) " << argName << ".push_back(arg_layout);\n";
+    os << "        if (cblas) " << argName << ".push_back(arg_layout);\n";
   }
+  os << "        if (cublas) " << argName << ".push_back(arg_handle);\n";
 
   for (size_t pos = fncHasLayout ? 1 : 0; pos < numArgs; pos++) {
     os << "        for (auto item : ";
@@ -1511,9 +1512,10 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
         // extra handling, since we will update only a fp scalar as part of the
         // return struct it's presumably done by setting it to the value
         // returned by this call
-        os << "      if (cublas) assert(0 && \"cublas not supported\");\n";
+        os << "      if (!cublas) {\n";
         emit_fret_call(dfnc_name, "ArrayRef<Value *>(args1)", name, "Builder2",
                        os);
+        os << "      } else {\n";
       } else {
         os << "    SmallVector<Type*, 1> tys; for (auto arg : args1) "
               "tys.push_back(arg->getType());\n";
@@ -1540,6 +1542,8 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
         os << "        Builder2.CreateCall(derivcall_" << dfnc_name
            << ", args1, Defs);\n";
       }
+      if (ty == ArgType::fp) 
+        os << "      }\n";
       emit_runtime_continue(ruleDag, name, "        ", "Builder2",
                             (ty == ArgType::fp), os);
       os << "      }\n";

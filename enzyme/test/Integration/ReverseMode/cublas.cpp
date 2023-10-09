@@ -36,7 +36,7 @@ void ow_dgemv(cublasHandle_t *handle, cublasOperation_t trans, int M, int N,
   inDerivative = true;
 }
 
-double my_ddot(cublasHandle_t *handle, int N, double *__restrict__ X, int incx,
+__attribute__((noinline)) double my_ddot(cublasHandle_t *handle, int N, double *__restrict__ X, int incx,
                double *__restrict__ Y, int incy) {
   double res = 0.0;
   cublas_ddot(handle, N, X, incx, Y, incy, &res);
@@ -346,7 +346,8 @@ int main() {
 
   gemmTests();
 
-  //dotTests();
+  gemvTests();
+  
+  dotTests();
 
-  //gemvTests();
 }

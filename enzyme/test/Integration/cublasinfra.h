@@ -242,6 +242,10 @@ void printty(void *v) {
     printf("dC");
   else if (v == UNUSED_POINTER)
     printf("UNUSED_POINTER");
+  else if (v == USED_CUBLAS_HANDLE)
+    printf("USED_CUBLAS_HANDLE");
+  else if (v == UNUSED_CUBLAS_HANDLE)
+    printf("NOT_USED_CUBLAS_HANDLE");
   else
     printf("Unknown pointer");
   printf(" (%p)", v);
@@ -340,7 +344,9 @@ void printcall(CuBlasCall rcall) {
     printf(")");
     return;
   case CallType::AXPY:
-    printf("AXPY(N=");
+    printf("AXPY(handle=");
+    printty(rcall.handle);
+    printf(", N=");
     printty(rcall.iarg1);
     printf(", alpha=");
     printty(rcall.farg1);
@@ -355,7 +361,9 @@ void printcall(CuBlasCall rcall) {
     printf(")");
     return;
   case CallType::DOT:
-    printf("DOT(N=");
+    printf("DOT(handle=");
+    printty(rcall.handle);
+    printf(", N=");
     printty(rcall.iarg1);
     printf(", X=");
     printty(rcall.pin_arg1);
@@ -426,7 +434,9 @@ void printcall(CuBlasCall rcall) {
     printf(")");
     return;
   case CallType::SCAL:
-    printf("SCAL(N=");
+    printf("SCAL(handle=");
+    printty(rcall.handle);
+    printf(", N=");
     printty(rcall.iarg1);
     printf(", alpha=");
     printty(rcall.farg1);
@@ -460,7 +470,9 @@ void printcall(CuBlasCall rcall) {
     printf(")");
     return;
   case CallType::COPY:
-    printf("COPY(N=");
+    printf("COPY(handle=");
+    printty(rcall.handle);
+    printf(", N=");
     printty(rcall.iarg1);
     printf(", X=");
     printty(rcall.pin_arg1);
