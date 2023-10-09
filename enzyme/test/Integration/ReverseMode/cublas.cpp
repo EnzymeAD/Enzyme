@@ -197,7 +197,7 @@ static void gemvTests() {
       // should be the same).
       checkMemoryTrace(inputs, "Found " + Test, foundCuCalls);
 
-      Test = "GEMV active/overwrite";
+      Test = "GEMV A,B,C active/overwrite";
 
       init();
       __enzyme_autodiff((void *)ow_dgemv, enzyme_const, handle, enzyme_const,
@@ -211,7 +211,7 @@ static void gemvTests() {
       assert(foundCuCalls.size() > 2);
       auto A_cache = (double *)foundCuCalls[0].pout_arg1;
       // dlacpy is not supported for cublas @wsmoses
-      // cublas_dlacpy(handle, '\0', M, N, A, lda, A_cache, M);
+      cublas_dlacpy(handle, '\0', M, N, A, lda, A_cache, M);
       inputs[4] = BlasInfo(A_cache, handle, M, N, M);
       auto B_cache = (double *)foundCuCalls[1].pout_arg1;
       cublas_dcopy(handle, trans ? M : N, B, incB, B_cache, 1);
@@ -229,7 +229,7 @@ static void gemvTests() {
                    1.0, dB, incB);
 
       // dY = beta * dY
-      // cublas_dscal(trans ? N : M, beta, dC, incC);
+      cublas_dscal(handle, trans ? N : M, beta, dC, incC);
 
       checkTest(Test);
 
@@ -344,10 +344,10 @@ static void gemmTests() {
 
 int main() {
 
-  gemmTests();
+  //gemmTests();
 
   gemvTests();
   
-  dotTests();
+  //dotTests();
 
 }

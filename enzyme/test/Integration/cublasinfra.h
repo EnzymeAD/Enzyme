@@ -558,28 +558,13 @@ cublas_dlascl(cublasHandle_t *handle, cublasOperation_t type, int KL, int KU,
                                  UNUSED_INT, lda, KL, KU, UNUSED_POINTER});
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
-__attribute__((noinline)) cublasStatus_t cublas_dlacpy(cublasHandle_t *handle,
-                                                       int N, double *x,
-                                                       int incx, double *y,
-                                                       int incy) {
-  CuBlasCall call = {inDerivative,
-                     CallType::LACPY,
-                     x,
-                     y,
-                     UNUSED_POINTER,
-                     UNUSED_DOUBLE,
-                     UNUSED_DOUBLE,
-                     handle,
-                     CUBLAS_OP_UNUSED,
-                     CUBLAS_OP_UNUSED,
-                     N,
-                     UNUSED_INT,
-                     UNUSED_INT,
-                     incx,
-                     incy,
-                     UNUSED_INT,
-                     UNUSED_POINTER};
-  cucalls.push_back(call);
+__attribute__((noinline)) cublasStatus_t cublas_dlacpy(cublasHandle_t *handle, char uplo, int M,
+                                            int N, double *A, int lda,
+                                            double *B, int ldb) {
+  cucalls.push_back((CuBlasCall){inDerivative, CallType::LACPY, B, A,
+                             UNUSED_POINTER, UNUSED_DOUBLE, UNUSED_DOUBLE,
+                             handle, CUBLAS_OP_UNUSED, CUBLAS_OP_UNUSED, M, N, UNUSED_INT, lda,
+                             ldb, UNUSED_INT, UNUSED_POINTER});
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
 

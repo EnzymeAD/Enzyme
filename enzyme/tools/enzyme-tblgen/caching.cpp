@@ -227,7 +227,13 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
     for (auto len_pos : pattern.getRelatedLengthArgs(argIdx) ) {
 os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
-os << "      if (EnzymeBlasCopy) {\n"
+os << "      if (cublas) {\n"
+<< "          Value *args[6] = {arg_handle, arg_malloc_size, arg_" << vecName << ", arg_" << incName << ", malins, ConstantInt::get(intType, 1)};\n"
+<< "          FunctionType *cublasCopyTy = FunctionType::get(cublas_retty, {type_handle, intType, type_vec_like, intType, type_vec_like, intType}, false);\n"
+<< "          std::string name = Twine(blas.prefix + blas.floatType + \"copy\").str();\n"
+<< "          Function *F = cast<Function>(gutils->oldFunc->getParent()->getOrInsertFunction(name, cublasCopyTy).getCallee());\n"
+<< "          BuilderZ.CreateCall(F, args);\n"
+<< "        } else if (EnzymeBlasCopy) {\n"
 << "        Value *args[5] = {arg_malloc_size, arg_" << vecName << ", arg_" << incName << ", malins, to_blas_callconv(BuilderZ, ConstantInt::get(intType, 1), byRef, cublas, julia_decl_type, allocationBuilder)};\n"
 << "        callMemcpyStridedBlas(BuilderZ, *gutils->oldFunc->getParent(), blas, args, gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
 << "      } else {\n"
