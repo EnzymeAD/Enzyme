@@ -9,14 +9,13 @@ namespace mlir {
 
 class CallableOpInterface;
 
-namespace dataflow {
 namespace enzyme {
 
 //===----------------------------------------------------------------------===//
 // AliasClassLattice
 //===----------------------------------------------------------------------===//
 
-class AliasClassLattice : public AbstractSparseLattice {
+class AliasClassLattice : public dataflow::AbstractSparseLattice {
 public:
   using AbstractSparseLattice::AbstractSparseLattice;
 
@@ -25,10 +24,13 @@ public:
   AliasResult alias(const AbstractSparseLattice &other) const;
 
   std::optional<Value> getCanonicalAllocation() const;
+  void getCanonicalAllocations(SmallVectorImpl<Value> &allocations) const;
 
   ChangeResult join(const AbstractSparseLattice &other) override;
 
   ChangeResult markFresh();
+
+  ChangeResult markUnknown();
 
   ChangeResult markEntry();
 
@@ -41,14 +43,14 @@ public:
   /// within the region.
   bool isEntry = false;
 
+  /// We don't know anything about the aliasing of this value. TODO: re-evaluate
+  /// if we need this.
+  bool isUnknown = false;
+
 private:
   /// As we compute alias classes, additionally propagate the possible canonical
   /// allocation sites for this
   DenseSet<Value> canonicalAllocations;
-
-  /// We don't know anything about the aliasing of this value. TODO: re-evaluate
-  /// if we need this.
-  bool isUnknown = false;
 };
 
 //===----------------------------------------------------------------------===//
@@ -56,7 +58,8 @@ private:
 //===----------------------------------------------------------------------===//
 
 /// This analysis implements interprocedural alias analysis
-class AliasAnalysis : public SparseForwardDataFlowAnalysis<AliasClassLattice> {
+class AliasAnalysis
+    : public dataflow::SparseForwardDataFlowAnalysis<AliasClassLattice> {
 public:
   using SparseForwardDataFlowAnalysis::SparseForwardDataFlowAnalysis;
 
@@ -68,7 +71,6 @@ public:
 };
 
 } // namespace enzyme
-} // namespace dataflow
 } // namespace mlir
 
 #endif

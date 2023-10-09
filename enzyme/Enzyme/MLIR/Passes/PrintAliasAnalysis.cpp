@@ -30,7 +30,7 @@ struct PrintAliasAnalysisPass
   void runOnOperation() override {
     DataFlowSolver solver;
 
-    solver.load<dataflow::enzyme::AliasAnalysis>();
+    solver.load<enzyme::AliasAnalysis>();
     solver.load<dataflow::DeadCodeAnalysis>();
     solver.load<dataflow::SparseConstantPropagation>();
 
@@ -57,12 +57,11 @@ struct PrintAliasAnalysisPass
     });
 
     for (const auto &[tag, value] : taggedPointers) {
-      const auto *state =
-          solver.lookupState<dataflow::enzyme::AliasClassLattice>(value);
+      const auto *state = solver.lookupState<enzyme::AliasClassLattice>(value);
       if (state) {
         errs() << "tag " << tag
                << " canonical allocation: " << state->getCanonicalAllocation()
-               << "\n";
+               << " is unknown: " << state->isUnknown << "\n";
       }
     }
 
@@ -72,10 +71,8 @@ struct PrintAliasAnalysisPass
         const auto &[tagA, a] = taggedPointers[i];
         const auto &[tagB, b] = taggedPointers[j];
 
-        const auto *lhs =
-            solver.lookupState<dataflow::enzyme::AliasClassLattice>(a);
-        const auto *rhs =
-            solver.lookupState<dataflow::enzyme::AliasClassLattice>(b);
+        const auto *lhs = solver.lookupState<enzyme::AliasClassLattice>(a);
+        const auto *rhs = solver.lookupState<enzyme::AliasClassLattice>(b);
         if (!(lhs && rhs))
           continue;
 
@@ -86,8 +83,7 @@ struct PrintAliasAnalysisPass
     getOperation()->walk([&solver](Operation *op) {
       if (auto funcOp = dyn_cast<FunctionOpInterface>(op)) {
         for (auto arg : funcOp.getArguments()) {
-          auto *state =
-              solver.lookupState<dataflow::enzyme::AliasClassLattice>(arg);
+          auto *state = solver.lookupState<enzyme::AliasClassLattice>(arg);
           if (state) {
             if (state->isEntry)
               funcOp.setArgAttr(arg.getArgNumber(), "enzyme.ac_entry",
@@ -100,8 +96,7 @@ struct PrintAliasAnalysisPass
       }
       if (op->hasAttr("tag")) {
         for (OpResult result : op->getResults()) {
-          auto *state =
-              solver.lookupState<dataflow::enzyme::AliasClassLattice>(result);
+          auto *state = solver.lookupState<enzyme::AliasClassLattice>(result);
           if (state) {
             for (auto aliasClass : state->aliasClasses) {
               op->setAttr("ac", aliasClass);

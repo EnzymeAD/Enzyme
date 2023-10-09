@@ -33,6 +33,8 @@ enzyme::AliasClassLattice::alias(const AbstractSparseLattice &other) const {
 
   if (isEntry && rhs->isEntry)
     return AliasResult::MayAlias;
+  if (isUnknown || rhs->isUnknown)
+    return AliasResult::MayAlias;
 
   size_t overlap = llvm::count_if(aliasClasses, [rhs](DistinctAttr aliasClass) {
     return rhs->aliasClasses.contains(aliasClass);
@@ -57,6 +59,11 @@ std::optional<Value> enzyme::AliasClassLattice::getCanonicalAllocation() const {
     return *canonicalAllocations.begin();
   }
   return std::nullopt;
+}
+
+void enzyme::AliasClassLattice::getCanonicalAllocations(
+    SmallVectorImpl<Value> &allocations) const {
+  allocations.append(canonicalAllocations.begin(), canonicalAllocations.end());
 }
 
 ChangeResult
@@ -96,6 +103,15 @@ ChangeResult enzyme::AliasClassLattice::markFresh() {
   auto freshClass = DistinctAttr::create(UnitAttr::get(value.getContext()));
   aliasClasses.insert(freshClass);
   canonicalAllocations.insert(value);
+  return ChangeResult::Change;
+}
+
+ChangeResult enzyme::AliasClassLattice::markUnknown() {
+  if (isUnknown)
+    return ChangeResult::NoChange;
+
+  isUnknown = true;
+  aliasClasses.clear();
   return ChangeResult::Change;
 }
 
@@ -167,6 +183,10 @@ void enzyme::AliasAnalysis::visitOperation(
         // If the op reads memory, the results don't necessarily alias with the
         // operands.
         readsMemory = true;
+        // Conservatively mark the read results as unknown.
+        for (AliasClassLattice *result : results) {
+          propagateIfChanged(result, result->markUnknown());
+        }
       }
     }
   }
