@@ -35,6 +35,14 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
     >,
     InterfaceMethod<
       /*desc=*/[{
+        Constructs the canonical null (zero) value for the given type.
+      }],
+      /*retTy=*/"::mlir::Value",
+      /*methodName=*/"createNullValueReverse",
+      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Value":$primal, "::mlir::Operation *":$op, "::mlir::enzyme::MGradientUtilsReverse *":$gutils)
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
         Construct addition operation for the given type.
       }],
       /*retTy=*/"::mlir::Value",

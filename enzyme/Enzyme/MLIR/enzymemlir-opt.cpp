@@ -25,6 +25,8 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/OpenMP/OpenMPDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+
 #include "mlir/InitAllPasses.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
@@ -62,6 +64,8 @@ int main(int argc, char **argv) {
   registry.insert<mlir::omp::OpenMPDialect>();
   registry.insert<mlir::math::MathDialect>();
   registry.insert<mlir::linalg::LinalgDialect>();
+  registry.insert<mlir::tensor::TensorDialect>();
+
   registry.insert<DLTIDialect>();
 
   registry.insert<mlir::enzyme::EnzymeDialect>();
@@ -79,6 +83,11 @@ int main(int argc, char **argv) {
   mlir::registerConvertSCFToOpenMPPass();
   mlir::registerAffinePasses();
   mlir::registerReconcileUnrealizedCasts();
+  mlir::bufferization::registerEmptyTensorToAllocTensor();
+  mlir::bufferization::registerBufferizationPasses();
+  mlir::func::registerFuncBufferizePass();
+  mlir::registerLinalgBufferizePass();
+  mlir::tensor::registerTensorBufferizePass();
 
   registry.addExtension(+[](MLIRContext *ctx, LLVM::LLVMDialect *dialect) {
     LLVM::LLVMFunctionType::attachInterface<MemRefInsider>(*ctx);
@@ -93,6 +102,7 @@ int main(int argc, char **argv) {
     LLVM::LLVMArrayType::attachInterface<PtrElementModel<LLVM::LLVMArrayType>>(
         *ctx);
     enzyme::CacheType::attachInterface<MemRefInsider>(*ctx);
+    RankedTensorType::attachInterface<MemRefInsider>(*ctx);
   });
 
   // Register the autodiff interface implementations for upstream dialects.
@@ -102,6 +112,7 @@ int main(int argc, char **argv) {
   enzyme::registerMemRefDialectAutoDiffInterface(registry);
   enzyme::registerSCFDialectAutoDiffInterface(registry);
   enzyme::registerLinalgDialectAutoDiffInterface(registry);
+  enzyme::registerTensorDialectAutoDiffInterface(registry);
 
   return mlir::failed(
       mlir::MlirOptMain(argc, argv, "Enzyme modular optimizer driver", registry,

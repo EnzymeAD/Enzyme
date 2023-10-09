@@ -16,6 +16,7 @@
 
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
+#include "Interfaces/GradientUtilsReverse.h"
 
 namespace mlir {
 class OpBuilder;

@@ -9,6 +9,7 @@ add_mlir_dialect_library(MLIREnzymeTransforms
     LowerToLLVMEnzyme.cpp
     ShadowedGradientToCache.cpp
     AddToOpToIndexAndLoad.cpp
+    LowerTensorGenericAdjoint.cpp
     AddToOpToSplit.cpp
     RemoveUnusedEnzymeOps.cpp
     SimplifyMemrefCache.cpp

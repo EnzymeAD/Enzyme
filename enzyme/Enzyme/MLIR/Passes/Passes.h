@@ -26,6 +26,8 @@ std::unique_ptr<Pass> createShadowedGradientToCachePass();
 
 std::unique_ptr<Pass> createAddToOpToIndexAndLoadPass();
 
+std::unique_ptr<Pass> createLowerTensorGenericAdjointPass();
+
 std::unique_ptr<Pass> createAddToOpToSplitPass();
 
 std::unique_ptr<Pass> createRemoveUnusedEnzymeOpsPass();

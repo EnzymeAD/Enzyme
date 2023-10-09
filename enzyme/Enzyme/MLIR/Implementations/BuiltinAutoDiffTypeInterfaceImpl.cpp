@@ -34,6 +34,14 @@ public:
         loc, APFloat(fltType.getFloatSemantics(), 0), fltType);
   }
 
+  mlir::Value createNullValueReverse(mlir::Type self, mlir::OpBuilder & builder, mlir::Value primal, mlir::Operation * op, mlir::enzyme::MGradientUtilsReverse * gutils) const {
+    auto loc = primal.getLoc();
+    auto fltType = self.cast<FloatType>();
+    return builder.create<arith::ConstantFloatOp>(
+        loc, APFloat(fltType.getFloatSemantics(), 0), fltType);
+  }
+
+
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
                     Value b) const {
     return builder.create<arith::AddFOp>(loc, a, b);
@@ -52,6 +60,14 @@ class IntegerTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<IntegerTypeInterface<T>, T> {
 public:
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
+    if (isa<IndexType>(self)) {
+      return builder.create<arith::ConstantIndexOp>(loc, 0);
+    }
+    return builder.create<arith::ConstantIntOp>(loc, 0, self);
+  }
+
+  mlir::Value createNullValueReverse(mlir::Type self, mlir::OpBuilder & builder, mlir::Value primal, mlir::Operation * op, mlir::enzyme::MGradientUtilsReverse * gutils) const {
+    auto loc = primal.getLoc();
     if (isa<IndexType>(self)) {
       return builder.create<arith::ConstantIndexOp>(loc, 0);
     }

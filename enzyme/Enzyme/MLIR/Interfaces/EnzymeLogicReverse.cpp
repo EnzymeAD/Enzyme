@@ -241,8 +241,7 @@ void MEnzymeLogic::handlePredecessors(
           } else {
             if (auto iface = operandOld.first.getType()
                                  .dyn_cast<AutoDiffTypeInterface>()) {
-              Value nullValue =
-                  iface.createNullValue(revBuilder, oBB->rbegin()->getLoc());
+              Value nullValue = iface.createNullValueReverse(revBuilder, operandOld.first, operandOld.first.getDefiningOp(), gutils);
               operands.push_back(nullValue);
             } else {
               llvm_unreachable("no canonial null value found");
@@ -264,7 +263,7 @@ void MEnzymeLogic::handlePredecessors(
     for (auto argument : oBB->getArguments()) {
       if (gutils->hasInvertPointer(argument)) {
         auto iface = argument.getType().cast<AutoDiffTypeInterface>();
-        Value nullValue = iface.createNullValue(revBuilder, argument.getLoc());
+        Value nullValue = iface.createNullValueReverse(revBuilder, argument, argument.getDefiningOp(), gutils);
         gutils->mapInvertPointer(argument, nullValue, revBuilder);
       }
     }
