@@ -1742,6 +1742,18 @@ void clearFunctionAttributes(Function *f) {
     }
 #endif
   }
+  for (auto attr : {"enzyme_inactive"}) {
+#if LLVM_VERSION_MAJOR >= 14
+    if (f->getAttributes().hasRetAttribute(attr)) {
+      f->removeRetAttr(attr);
+    }
+#else
+    if (f->getAttributes().hasAttribute(llvm::AttributeList::ReturnIndex,
+                                        attr)) {
+      f->removeAttribute(llvm::AttributeList::ReturnIndex, attr);
+    }
+#endif
+  }
 }
 
 void cleanupInversionAllocs(DiffeGradientUtils *gutils, BasicBlock *entry) {
@@ -2560,6 +2572,18 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     }
 #else
     if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex, attr)) {
+      gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex, attr);
+    }
+#endif
+  }
+  for (auto attr : {"enzyme_inactive"}) {
+#if LLVM_VERSION_MAJOR >= 14
+    if (gutils->newFunc->getAttributes().hasRetAttribute(attr)) {
+      gutils->newFunc->removeRetAttr(attr);
+    }
+#else
+    if (gutils->newFunc->getAttributes().hasAttribute(
+            llvm::AttributeList::ReturnIndex, attr)) {
       gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex, attr);
     }
 #endif
