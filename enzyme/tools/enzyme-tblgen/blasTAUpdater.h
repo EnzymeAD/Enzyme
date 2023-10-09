@@ -12,8 +12,8 @@ void emit_BLASTypes(raw_ostream &os) {
      << "  floatType = Type::getDoubleTy(call.getContext());\n"
      << "}\n"
      << "if (byRef) {\n"
-     << "  ttFloat.insert({-1},BaseType::Pointer);\n"
-     << "  ttFloat.insert({-1,0},floatType);\n"
+     << "  ttFloat.insert({0},BaseType::Pointer);\n"
+     << "  ttFloat.insert({0,0},floatType);\n"
      << "} else { \n"
      << "  ttFloat.insert({-1},floatType);\n"
      << "}\n";
@@ -23,19 +23,27 @@ void emit_BLASTypes(raw_ostream &os) {
 
   os << "TypeTree ttInt;\n"
      << "if (byRef) {\n"
-     << "  ttInt.insert({-1},BaseType::Pointer);\n"
-     << "  ttInt.insert({-1,0},BaseType::Integer);\n"
-     << "  ttInt.insert({-1,1},BaseType::Integer);\n"
-     << "  ttInt.insert({-1,2},BaseType::Integer);\n"
-     << "  ttInt.insert({-1,3},BaseType::Integer);\n"
+     << "  ttInt.insert({0},BaseType::Pointer);\n"
+     << "  ttInt.insert({0,0},BaseType::Integer);\n"
+     << "  ttInt.insert({0,1},BaseType::Integer);\n"
+     << "  ttInt.insert({0,2},BaseType::Integer);\n"
+     << "  ttInt.insert({0,3},BaseType::Integer);\n"
      << "  if (blas.suffix == \"_64_\" || blas.suffix == \"64_\") {\n"
-     << "    ttInt.insert({-1,4},BaseType::Integer);\n"
-     << "    ttInt.insert({-1,5},BaseType::Integer);\n"
-     << "    ttInt.insert({-1,6},BaseType::Integer);\n"
-     << "    ttInt.insert({-1,7},BaseType::Integer);\n"
+     << "    ttInt.insert({0,4},BaseType::Integer);\n"
+     << "    ttInt.insert({0,5},BaseType::Integer);\n"
+     << "    ttInt.insert({0,6},BaseType::Integer);\n"
+     << "    ttInt.insert({0,7},BaseType::Integer);\n"
      << "  }\n"
      << "} else {\n"
      << "  ttInt.insert({-1},BaseType::Integer);\n"
+     << "}\n";
+
+  os << "TypeTree ttChar;\n"
+     << "if (byRef) {\n"
+     << "  ttChar.insert({0},BaseType::Pointer);\n"
+     << "  ttChar.insert({0,0},BaseType::Integer);\n"
+     << "} else {\n"
+     << "  ttChar.insert({-1},BaseType::Integer);\n"
      << "}\n";
 
   os << "TypeTree ttPtr;\n"
@@ -58,11 +66,18 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
     // sorry. will fix later. effectively, skip arg 0 for for lv23,
     // because we have the cblas layout in the .td declaration
     size_t i = (lv23 ? j - 1 : j);
-    if (currentType == ArgType::len || currentType == ArgType::vincInc) {
+    os << "  // " << currentType << " " << pattern.getArgNames()[j] << "\n";
+    switch (currentType) {
+    case ArgType::len:
+    case ArgType::vincInc:
+    case ArgType::mldLD:
       os << "  updateAnalysis(call.getArgOperand(" << i
          << (lv23 ? " + offset" : "") << "), ttInt, &call);\n";
-    } else if (currentType == ArgType::vincData) {
+      break;
+    case ArgType::vincData:
       assert(argTypeMap.lookup(j + 1) == ArgType::vincInc);
+      // TODO, we need a get length arg number from vector since always assuming
+      // it is arg 0 is wrong.
       if (!lv23)
         os << "  if (auto n = dyn_cast<ConstantInt>(call.getArgOperand(0"
            << (lv23 ? " + offset" : "") << "))) {\n"
@@ -84,11 +99,32 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
            << (lv23 ? " + offset" : "") << "), ttPtr, &call);\n"
            << "  }\n";
       else
-        os << "    updateAnalysis(call.getArgOperand(" << i
+        os << "  updateAnalysis(call.getArgOperand(" << i
            << (lv23 ? " + offset" : "") << "), ttPtr, &call);\n";
-    } else if (currentType == ArgType::fp) {
+      break;
+    case ArgType::mldData:
+      os << "  updateAnalysis(call.getArgOperand(" << i
+         << (lv23 ? " + offset" : "") << "), ttPtr, &call);\n";
+      break;
+    case ArgType::fp:
       os << "  updateAnalysis(call.getArgOperand(" << i
          << (lv23 ? " + offset" : "") << "), ttFloat, &call);\n";
+      break;
+    case ArgType::ap:
+      // TODO
+      break;
+    case ArgType::cblas_layout:
+      // TODO
+      break;
+    case ArgType::uplo:
+    case ArgType::trans:
+      os << "  updateAnalysis(call.getArgOperand(" << i
+         << (lv23 ? " + offset" : "") << "), ttChar, &call);\n";
+      break;
+    case ArgType::diag:
+    case ArgType::side:
+      // TODO
+      break;
     }
   }
   if (name == "dot" || name == "asum" || name == "nrm2") {

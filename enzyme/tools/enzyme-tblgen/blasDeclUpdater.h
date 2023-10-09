@@ -69,14 +69,20 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
     }
   }
 
-  os << "  if (byRef) {\n";
-  int numCharArgs = 0;
   size_t numArgs = argTypeMap.size();
+
   for (size_t argPos = 0; argPos < numArgs; argPos++) {
     const auto typeOfArg = argTypeMap.lookup(argPos);
-    if (is_char_arg(typeOfArg))
-      numCharArgs++;
+    size_t i = (lv23 ? argPos - 1 : argPos);
+
+    if (is_char_arg(typeOfArg) || typeOfArg == ArgType::len ||
+        typeOfArg == ArgType::vincInc || typeOfArg == ArgType::mldLD) {
+      os << "  F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+         << ", llvm::Attribute::get(F->getContext(), \"enzyme_inactive\"));\n";
+    }
   }
+
+  os << "  if (byRef) {\n";
 
   for (size_t argPos = 0; argPos < numArgs; argPos++) {
     const auto typeOfArg = argTypeMap.lookup(argPos);
@@ -85,14 +91,12 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
     if (is_char_arg(typeOfArg) || typeOfArg == ArgType::len ||
         typeOfArg == ArgType::vincInc || typeOfArg == ArgType::fp ||
         typeOfArg == ArgType::mldLD) {
-      if (is_char_arg(typeOfArg) && numArgs - argPos <= numCharArgs) {
-        os << "      F->removeParamAttr(" << i << (lv23 ? " + offset" : "")
-           << ", llvm::Attribute::ReadNone);\n"
-           << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
-           << ", llvm::Attribute::ReadOnly);\n"
-           << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
-           << ", llvm::Attribute::NoCapture);\n";
-      }
+      os << "      F->removeParamAttr(" << i << (lv23 ? " + offset" : "")
+         << ", llvm::Attribute::ReadNone);\n"
+         << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+         << ", llvm::Attribute::ReadOnly);\n"
+         << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+         << ", llvm::Attribute::NoCapture);\n";
     }
   }
 
@@ -199,6 +203,22 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
               "llvm::Attribute::get(F.getContext(), llvm::Attribute::"
            << attrName << "));\n";
         os << "  #endif \n";
+      }
+      ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
+      for (auto argOpEn : enumerate(*argOps)) {
+        size_t argIdx = argOpEn.index();
+        if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+          auto opName = resultRoot->getOperator()->getAsString();
+          auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
+          if (opName == "InactiveArgSpec" ||
+              Def->isSubClassOf("InactiveArgSpec")) {
+            if (!Def->getValueAsBit("asserting"))
+              os << "    F.addParamAttr(" << argOpEn.index()
+                 << ", llvm::Attribute::get(F.getContext(), "
+                    "\"enzyme_inactive\"));\n";
+            continue;
+          }
+        }
       }
       os << "  }\n";
     }

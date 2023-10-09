@@ -61,6 +61,7 @@ entry:
 ; CHECK-DAG:   %byref.constant.int.0 = alloca i64
 ; CHECK-DAG:   %[[byrefconstantint1:.+]] = alloca i64
 ; CHECK-DAG:   %byref.constant.fp.1.010 = alloca double
+; CHECK-DAG:   %[[tmp:.+]] = alloca i8
 ; CHECK-DAG:   %transa = alloca i8, align 1
 ; CHECK-DAG:   %transb = alloca i8, align 1
 ; CHECK-DAG:   %m = alloca i64, align 16
@@ -165,6 +166,6 @@ entry:
 ; CHECK-NEXT:   %[[int02:.+]] = bitcast i64* %[[byrefconstantint1]] to i8*
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
 ; CHECK-NEXT:   %[[fp11:.+]] = bitcast double* %byref.constant.fp.1.010 to i8*
-; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i8* %intcast.constant.int.0, i8* %[[int02]], i8* %[[fp11]], i8* %beta_p, i8* %m_p, i8* %n_p, i8* %"C'", i8* %ldc_p, i64 1)
+; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i8* %intcast.constant.int.0, i8* %[[int02]], i8* %[[fp11]], i8* %beta_p, i8* %m_p, i8* %n_p, i8* %"C'", i8* %ldc_p, i8* %[[tmp]], i64 1)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
