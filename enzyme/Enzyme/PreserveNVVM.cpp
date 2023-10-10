@@ -359,6 +359,7 @@ bool preserveNVVM(bool Begin, Function &F) {
     if (g.getName().contains(gradient_handler_name) ||
         g.getName().contains(derivative_handler_name) ||
         g.getName().contains(splitderivative_handler_name) ||
+        g.getName().contains("__enzyme_nofree") ||
         g.getName().contains("__enzyme_inactivefn") ||
         g.getName().contains("__enzyme_function_like") ||
         g.getName().contains("__enzyme_allocation_like")) {
@@ -452,6 +453,34 @@ bool preserveNVVM(bool Begin, Function &F) {
                        << g << "\n"
                        << *V << "\n";
           llvm_unreachable("__enzyme_inactivefn");
+        }
+      }
+    }
+    if (g.getName().contains("__enzyme_inactivefn")) {
+      if (g.hasInitializer()) {
+        Value *V = g.getInitializer();
+        while (1) {
+          if (auto CE = dyn_cast<ConstantExpr>(V)) {
+            V = CE->getOperand(0);
+            continue;
+          }
+          if (auto CA = dyn_cast<ConstantAggregate>(V)) {
+            V = CA->getOperand(0);
+            continue;
+          }
+          break;
+        }
+        if (auto F = cast<Function>(V)) {
+          F->addAttribute(AttributeList::FunctionIndex,
+                          Attribute::get(g.getContext(), Attribute::NoFree));
+          toErase.push_back(&g);
+          changed = true;
+        } else {
+          llvm::errs() << "Param of __enzyme_nofree must be a "
+                          "constant function"
+                       << g << "\n"
+                       << *V << "\n";
+          llvm_unreachable("__enzyme_nofree");
         }
       }
     }
