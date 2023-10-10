@@ -21,7 +21,7 @@ func.func @linalg_memref_freevar(%x: f64) -> f64 {
 #map = affine_map<() -> ()>
 // CHECK-LABEL: @linalg_memref_ins:
 // CHECK:         "final": Active
-func.func @linalg_memref_ins(%x: memref<f64>) -> f64 {
+func.func @linalg_memref_ins(%x: memref<f64> {llvm.noalias}) -> f64 {
   %out = memref.alloca() : memref<f64>
   linalg.generic {indexing_maps = [#map, #map], iterator_types = []} ins(%x: memref<f64>) outs(%out: memref<f64>) {
     ^bb0(%in: f64, %bbout: f64):
