@@ -35,7 +35,7 @@ float Q_rsqrt( float number )
 
   x2 = number * 0.5F;
   y  = number;
-  i  = * ( int32_t * ) &y;                       // evil floating point bit level hacking
+  i  = * ( int32_t * ) &y;                    // evil floating point bit level hacking
   i  = 0x5f3759df - ( i >> 1 );               // what the [...]?
   y  = * ( float * ) &i;
   y  = y * ( threehalfs - ( x2 * y * y ) );   // 1st iteration
@@ -51,7 +51,7 @@ double invmag(double* __restrict__ A, int n) {
   return Q_rsqrt(sumsq);
 }
 
-
+//// (1) An interface that just happens to work because Q_rsqrt is simple enough.
 
 // Returns { optional tape, original return (if pointer), shadow return (if pointer) }
 void aug_rsqrt(float x) {
@@ -66,33 +66,79 @@ float rev_rsqrt(float x, float grad_out) {
 
 void* __enzyme_register_gradient_rsqrt[3] = { (void*)Q_rsqrt, (void*)aug_rsqrt, (void*)rev_rsqrt };
 
+//// (2) That the above aug_rsqrt works is really a fluke. This is a correct interface in general.
+double rsqrt2(double x) {return Q_rsqrt(x);}
+double aug_rsqrt2(double x) {return Q_rsqrt(x);}
+double rev_rsqrt2(double x, double y_b) {return -y_b * Q_rsqrt(x) / (2 * x);}
+void* __enzyme_register_gradient_rsqrt2[3] = { (void*)rsqrt2, (void*)aug_rsqrt2, (void*)rev_rsqrt2};
+
+double invmag2(double* __restrict__ A, int n) {
+  double sumsq = 0;
+  for (int i=0; i<n; i++)
+    sumsq += A[i] * A[i];
+  return rsqrt2(sumsq);
+}
+
+//// (3) This is another possible interface for more complicated functions.
+void rsqrt3(double* y, double* x) {
+    *y = Q_rsqrt(*x);
+}
+void* aug_rsqrt3(double* y, double* y_b, double* x, double* x_b) {
+    double* tape = malloc(sizeof(double));
+    *tape = *x;
+    *y = Q_rsqrt(*x);
+    return tape;
+}
+void rev_rsqrt3(double* y, double* y_b, double* x, double* x_b, void* tape) {
+    double x0 = *(double*)tape; // x points to junk; original input *x must be obtained from the tape
+    *x_b -= (*y_b) * Q_rsqrt(x0) / (2 * x0);
+    *y_b = 0;   // Since y is used purely as an output, changes in y do not affect the calculation
+    free(tape);
+}
+void* __enzyme_register_gradient_rsqrt3[3] = { (void*)rsqrt3, (void*)aug_rsqrt3, (void*)rev_rsqrt3};
+
+double invmag3(double* __restrict__ A, int n) {
+  double sumsq = 0;
+  for (int i=0; i<n; i++)
+    sumsq += A[i] * A[i];
+  double res;
+  rsqrt3(&res, &sumsq);
+  return res;
+}
+
+
 void __enzyme_autodiff(void*, ...);
 
 int main(int argc, char *argv[]) {
   int n = 3;
 
-  double *A = (double*)malloc(sizeof(double) * n);
+  double *A  = (double*)malloc(sizeof(double) * n);
+  double *A2 = (double*)malloc(sizeof(double) * n);
+  double *A3 = (double*)malloc(sizeof(double) * n);
   for(int i=0; i<n; i++)
-   A[i] = (i+1);
-  assert(A != 0);
+    A[i] = A2[i] = A3[i] = i+1;
 
-  double *grad_A = (double*)malloc(sizeof(double) * n);
-  assert(grad_A != 0);
+  double *grad_A  = (double*)malloc(sizeof(double) * n);
+  double *grad_A2 = (double*)malloc(sizeof(double) * n);
+  double *grad_A3 = (double*)malloc(sizeof(double) * n);
   for(int i=0; i<n; i++)
-   grad_A[i] = 0;
- 
-  __enzyme_autodiff((void*)invmag, A, grad_A, n);
+    grad_A[i] = grad_A2[i] = grad_A3[i] = 0;
 
-  double im = invmag(A, n);
-  im = im*im*im;
+  __enzyme_autodiff((void*)invmag , A , grad_A , n);
+  __enzyme_autodiff((void*)invmag2, A2, grad_A2, n);
+  __enzyme_autodiff((void*)invmag3, A3, grad_A3, n);
 
-  for(int i=0; i<n; i++)
-    printf("A[%d]=%f dA[%d]=%f\n", i, A[i], i, grad_A[i]);
-
-  fflush(0);
+  for(int i=0; i<n; i++) {
+    printf("A [%d]=%f dA [%d]=%f\n", i, A [i], i, grad_A [i]);
+    printf("A2[%d]=%f dA2[%d]=%f\n", i, A2[i], i, grad_A2[i]);
+    printf("A3[%d]=%f dA3[%d]=%f\n", i, A3[i], i, grad_A3[i]);
+  }
   
-  for(int i=0; i<n; i++)
-    APPROX_EQ(grad_A[i], -A[i]*im, 1e-3); 
-
-  return 0;
+  double im  = invmag(A,  n);
+  im  = im *im *im;
+  for(int i=0; i<n; i++) {
+    APPROX_EQ(grad_A[i] , -A[i]*im, 1e-3);
+    APPROX_EQ(grad_A2[i], -A[i]*im, 1e-3);
+    APPROX_EQ(grad_A3[i], -A[i]*im, 1e-3);
+  }
 }
