@@ -432,7 +432,7 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
      << "  // TODO: add Fortran testcases for Fortran ABI\n"
      << "  if (!intType) {\n"
      << "    const auto PT = cast<PointerType>(type_" << name << ");\n"
-     << "    if (blas.suffix.contains(\"64\"))\n"
+     << "    if (blas.is64)\n"
      << "      intType = IntegerType::get(PT->getContext(), 64);\n"
      << "    else\n"
      << "      intType = IntegerType::get(PT->getContext(), 32);\n"
@@ -1261,8 +1261,8 @@ void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
        << dfnc_ret_ty << ", tys, false);\n";
     os << "    auto derivcall_" << dfnc_name
        << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-       << "  (blas.prefix + blas.floatType + \"" << dfnc_name
-       << "\" + blas.suffix).str(), FT" << dfnc_name << ");\n";
+       << "  blas.prefix + blas.floatType + \"" << dfnc_name
+       << "\" + blas.suffix, FT" << dfnc_name << ");\n";
 
     os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
        << ".getCallee()))\n"
@@ -1277,7 +1277,7 @@ void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
   os << "        if (byRef) {\n"
      << "          ((DiffeGradientUtils *)gutils)"
      << "->addToInvertedPtrDiffe(&call, nullptr, fpType, 0,"
-     << "(blas.suffix.contains(\"64\") ? 8 : 4), orig_" << name << ", cubcall, "
+     << "(blas.is64 ? 8 : 4), orig_" << name << ", cubcall, "
      << bb << ");\n"
      << "        } else {\n"
      << "          addToDiffe(orig_" << name << ", cubcall, " << bb
@@ -1531,8 +1531,8 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
            << "    }\n";
         os << "    auto derivcall_" << dfnc_name
            << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-           << "  (blas.prefix + blas.floatType + \"" << dfnc_name
-           << "\" + blas.suffix).str(), FT" << dfnc_name << ");\n";
+           << "  blas.prefix + blas.floatType + \"" << dfnc_name
+           << "\" + blas.suffix, FT" << dfnc_name << ");\n";
 
         os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
            << ".getCallee()))\n"
@@ -1620,8 +1620,8 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
                  << ", tys, false);\n";
               os << "    auto derivcall_" << dfnc_name
                  << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-                 << "  (blas.prefix + blas.floatType + \"" << dfnc_name
-                 << "\" + blas.suffix).str(), FT" << dfnc_name << ");\n";
+                 << "  blas.prefix + blas.floatType + \"" << dfnc_name
+                 << "\" + blas.suffix, FT" << dfnc_name << ");\n";
 
               os << "    if (auto F = dyn_cast<Function>(derivcall_"
                  << dfnc_name << ".getCallee()))\n"

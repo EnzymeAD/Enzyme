@@ -640,7 +640,7 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                            llvm::ArrayRef<llvm::Value *> args, llvm::Type *copy_retty,
                            llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
   std::string copy_name =
-      (blas.prefix + blas.floatType + "copy" + blas.suffix).str();
+      blas.prefix + blas.floatType + "copy" + blas.suffix;
 
   SmallVector<Type *, 1> tys;
   for (auto arg : args)
@@ -656,7 +656,7 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
                              BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
                              llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
   std::string copy_name =
-      (blas.prefix + blas.floatType + "lacpy" + blas.suffix).str();
+      blas.prefix + blas.floatType + "lacpy" + blas.suffix;
 
   SmallVector<Type *, 1> tys;
   for (auto arg : args)
@@ -676,7 +676,7 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
                         bool julia_decl) {
   // add spmv diag update call if not already present
   std::string fnc_name =
-      ("__enzyme_spmv_diag" + blas.floatType + blas.suffix).str();
+      "__enzyme_spmv_diag" + blas.floatType + blas.suffix;
 
   //  spmvDiagHelper(uplo, n, alpha, x, incx, ya, incy, APa)
   auto FDiagUpdateT = FunctionType::get(
@@ -868,7 +868,7 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 
   // add inner_prod call if not already present
   std::string prod_name =
-      ("__enzyme_inner_prod" + blas.floatType + blas.suffix).str();
+      "__enzyme_inner_prod" + blas.floatType + blas.suffix;
   auto FInnerProdT =
       FunctionType::get(fpTy, {BlasIT, BlasIT, BlasPT, BlasIT, BlasPT}, false);
   Function *F =
@@ -879,7 +879,7 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 
   // add dot call if not already present
   std::string dot_name =
-      (blas.prefix + blas.floatType + "dot" + blas.suffix).str();
+      blas.prefix + blas.floatType + "dot" + blas.suffix;
   auto FDotT =
       FunctionType::get(fpTy, {BlasIT, BlasPT, BlasIT, BlasPT, BlasIT}, false);
   Function *FDot =
@@ -2366,12 +2366,14 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
       for (auto p : prefixes) {
         for (auto s : suffixes) {
           if (in == (p + t + f + s).str()) {
-            llvm::errs() << "Found" << in << "\n";
+            std::string str = s.str();
+            bool is64 = llvm::StringRef(str).contains("64");
             return BlasInfo{
-                t.getSingleStringRef(),
-                p.getSingleStringRef(),
-                s.getSingleStringRef(),
-                f.getSingleStringRef(),
+                t.str(),
+                p.str(),
+                s.str(),
+                f.str(),
+                is64,
             };
           }
         }
@@ -2387,10 +2389,11 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
         if (in == (p + t + f).str()) {
           llvm::errs() << "Found" << in << "\n";
           return BlasInfo{
-              t.getSingleStringRef(),
-              p.getSingleStringRef(),
+              t.str(),
+              p.str(),
               "",
-              f.getSingleStringRef(),
+              f.str(),
+              false,
           };
         }
       }
@@ -2405,10 +2408,11 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
         if (in == (p + t + f).str()) {
           llvm::errs() << "Found" << in << "\n";
           return BlasInfo{
-              t.getSingleStringRef(),
-              p.getSingleStringRef(),
+              t.str(),
+              p.str(),
               "",
-              f.getSingleStringRef(),
+              f.str(),
+              false,
           };
         }
       }
