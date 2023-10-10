@@ -456,7 +456,7 @@ bool preserveNVVM(bool Begin, Function &F) {
         }
       }
     }
-    if (g.getName().contains("__enzyme_inactivefn")) {
+    if (g.getName().contains("__enzyme_nofree")) {
       if (g.hasInitializer()) {
         Value *V = g.getInitializer();
         while (1) {

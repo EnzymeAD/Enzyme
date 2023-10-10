@@ -415,7 +415,7 @@ static ParsedAttrInfoRegistry::Add<EnzymeInactiveAttrInfo> X4("enzyme_inactive",
                                                               "");
 
 struct EnzymeNoFreeAttrInfo : public ParsedAttrInfo {
-  EnzymeInactiveAttrInfo() {
+  EnzymeNoFreeAttrInfo() {
     OptArgs = 1;
     // GNU-style __attribute__(("example")) and C++/C2x-style [[example]] and
     // [[plugin::example]] supported.
@@ -520,7 +520,7 @@ struct EnzymeNoFreeAttrInfo : public ParsedAttrInfo {
   }
 };
 
-static ParsedAttrInfoRegistry::Add<EnzymeNofreeAttrInfo> X4("enzyme_nofree",
+static ParsedAttrInfoRegistry::Add<EnzymeNoFreeAttrInfo> X5("enzyme_nofree",
                                                             "");
 } // namespace
 
