@@ -309,6 +309,10 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
       ZeroMem = nullptr;
     }
   } else {
+#if LLVM_VERSION_MAJOR > 17
+    res =
+        Builder.CreateMalloc(Count->getType(), T, Align, Count, nullptr, Name);
+#else
     if (Builder.GetInsertPoint() == Builder.GetInsertBlock()->end()) {
       res = CallInst::CreateMalloc(Builder.GetInsertBlock(), Count->getType(),
                                    T, Align, Count, nullptr, Name);
@@ -319,6 +323,7 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
     }
     if (!cast<Instruction>(res)->getParent())
       Builder.Insert(cast<Instruction>(res));
+#endif
 
     malloccall = dyn_cast<CallInst>(res);
     if (malloccall == nullptr) {
@@ -408,6 +413,9 @@ CallInst *CreateDealloc(llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
 
     ToFree = Builder.CreatePointerCast(
         ToFree, Type::getInt8PtrTy(ToFree->getContext()));
+#if LLVM_VERSION_MAJOR > 17
+    res = cast<CallInst>(Builder.CreateFree(ToFree));
+#else
     if (Builder.GetInsertPoint() == Builder.GetInsertBlock()->end()) {
       res = cast<CallInst>(
           CallInst::CreateFree(ToFree, Builder.GetInsertBlock()));
@@ -418,6 +426,7 @@ CallInst *CreateDealloc(llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
     }
     if (!cast<Instruction>(res)->getParent())
       Builder.Insert(cast<Instruction>(res));
+#endif
 #if LLVM_VERSION_MAJOR >= 14
     res->addAttributeAtIndex(AttributeList::FirstArgIndex, Attribute::NonNull);
 #else
