@@ -212,7 +212,7 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
 
     if (dimensions.size() == 3) {
       os 
-<< "      malloc_size = select_vec_dims(BuilderZ, arg_" << nameVec[dimensions[0]] << ", arg_" << nameVec[dimensions[1]] << ", arg_" << nameVec[dimensions[2]] << ", byRef);\n";
+<< "      malloc_size = select_vec_dims(BuilderZ, arg_" << nameVec[dimensions[0]] << ", arg_" << nameVec[dimensions[1]] << ", arg_" << nameVec[dimensions[2]] << ", byRef, cublas);\n";
     } else {
       os 
 << "      malloc_size = arg_" << nameVec[dimensions[0]] << ";\n";
@@ -229,13 +229,10 @@ os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
 os << "      if (cublas) {\n"
 << "          Value *args[6] = {arg_handle, arg_malloc_size, arg_" << vecName << ", arg_" << incName << ", malins, ConstantInt::get(intType, 1)};\n"
-<< "          FunctionType *cublasCopyTy = FunctionType::get(cublas_retty, {type_handle, intType, type_vec_like, intType, type_vec_like, intType}, false);\n"
-<< "          std::string name = Twine(blas.prefix + blas.floatType + \"copy\").str();\n"
-<< "          Function *F = cast<Function>(gutils->oldFunc->getParent()->getOrInsertFunction(name, cublasCopyTy).getCallee());\n"
-<< "          BuilderZ.CreateCall(F, args);\n"
+<< "          callMemcpyStridedBlas(BuilderZ, *gutils->oldFunc->getParent(), blas, args, cublas_retty, gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
 << "        } else if (EnzymeBlasCopy) {\n"
 << "        Value *args[5] = {arg_malloc_size, arg_" << vecName << ", arg_" << incName << ", malins, to_blas_callconv(BuilderZ, ConstantInt::get(intType, 1), byRef, cublas, julia_decl_type, allocationBuilder)};\n"
-<< "        callMemcpyStridedBlas(BuilderZ, *gutils->oldFunc->getParent(), blas, args, gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
+<< "        callMemcpyStridedBlas(BuilderZ, *gutils->oldFunc->getParent(), blas, args, Type::getVoidTy(call.getContext()), gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
 << "      } else {\n"
 << "       auto dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(), fpType, cast<PointerType>(malins->getType()), intType, 0, 0);\n"
 << "        Value *inc = load_if_ref(BuilderZ, intType, arg_" << incName << ", byRef);\n"
@@ -273,7 +270,7 @@ os << "      if (cublas) {\n"
 
     if (dimensions.size() == 3) {
       os 
-<< "      Value *normal = is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef);\n"
+<< "      Value *normal = is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n"
 << "      M = BuilderZ.CreateSelect(normal, " << dim1 << ", " << dim2 << ");\n"
 << "      N = BuilderZ.CreateSelect(normal, " << dim2 << ", " << dim1 << ");\n";
     } else {

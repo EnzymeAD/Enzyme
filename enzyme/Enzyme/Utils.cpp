@@ -637,7 +637,7 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
 }
 
 void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
-                           llvm::ArrayRef<llvm::Value *> args,
+                           llvm::ArrayRef<llvm::Value *> args, llvm::Type *copy_retty,
                            llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
   std::string copy_name =
       (blas.prefix + blas.floatType + "copy" + blas.suffix).str();
@@ -646,7 +646,7 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   for (auto arg : args)
     tys.push_back(arg->getType());
 
-  auto FT = FunctionType::get(Type::getVoidTy(M.getContext()), tys, false);
+  FunctionType *FT = FunctionType::get(copy_retty, tys, false);
   auto fn = M.getOrInsertFunction(copy_name, FT);
 
   B.CreateCall(fn, args, bundles);
@@ -2506,8 +2506,8 @@ llvm::Value *to_blas_fp_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
 }
 
 llvm::Value *select_vec_dims(IRBuilder<> &B, llvm::Value *trans,
-                             llvm::Value *dim1, llvm::Value *dim2, bool byRef) {
-  Value *width = B.CreateSelect(is_normal(B, trans, byRef), dim1, dim2);
+                             llvm::Value *dim1, llvm::Value *dim2, bool byRef, bool cublas) {
+  Value *width = B.CreateSelect(is_normal(B, trans, byRef, cublas), dim1, dim2);
 
   return width;
 }
@@ -2532,7 +2532,12 @@ Value *is_uper(IRBuilder<> &B, Value *trans, bool byRef) {
   return isUper;
 }
 
-llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef) {
+llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef, bool cublas) {
+  if (cublas) {
+    Value *isNormal = nullptr;
+    isNormal = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 0));
+    return isNormal;
+  }
   IntegerType *charTy;
   if (byRef) {
     // can't inspect opaque ptr, so assume 8 (Julia)
@@ -2563,9 +2568,9 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
   Value *out;
   if (cublas) {
     out = B.CreateSelect(
-        B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 1)),
+        B.CreateICmpEQ(V, ConstantInt::get(T, 1)),
         ConstantInt::get(V->getType(), 0),
-        B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 0)),
+        B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(T, 0)),
                        ConstantInt::get(V->getType(), 1),
                        ConstantInt::get(V->getType(), 42)));
     return out;
@@ -2615,12 +2620,13 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
                                   llvm::ArrayRef<llvm::Value *> trans,
                                   llvm::Value *arg_ld, llvm::Value *dim1,
                                   llvm::Value *dim2, bool cacheMat,
-                                  bool byRef) {
+                                  bool byRef, bool cublas) {
   if (!cacheMat)
     return arg_ld;
 
   assert(trans.size() == 1);
-  Value *width = CreateSelect(B, is_normal(B, trans[0], byRef), dim1, dim2);
+
+  llvm::Value *width = CreateSelect(B, is_normal(B, trans[0], byRef, cublas), dim1, dim2);
 
   return width;
 }

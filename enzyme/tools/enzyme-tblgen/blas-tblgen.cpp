@@ -916,7 +916,7 @@ void emit_tmp_creation(Record *Def, raw_ostream &os) {
        << ", byRef);\n";
     os << "    Value *size_" << vecName
        << " = BuilderZ.CreateSelect(is_normal(BuilderZ, " << trans
-       << ", byRef), len1, len2);\n";
+       << ", byRef, cublas), len1, len2);\n";
   } else if (action == "triangular") {
     assert(args.size() == 3);
     const auto vecName = args[0];
@@ -1041,7 +1041,7 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
         os << "{get_cached_mat_width(Builder2, ";
         rev_call_arg(Dag, rule, actArg, 1, os);
         os << ", arg_" << ldName << ", arg_" << dim1Name << ", arg_" << dim2Name
-           << ", cache_" << matName << ", byRef)}";
+           << ", cache_" << matName << ", byRef, cublas)}";
         return;
       }
     }

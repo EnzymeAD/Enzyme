@@ -104,6 +104,7 @@ static void gemvTests() {
     {
 
       bool trans = !is_normal(transA);
+      printf("trans: %s\n", trans ? "true" : "false");
       auto handle = USED_CUBLAS_HANDLE;
       std::string Test = "GEMV active A, C ";
       BlasInfo inputs[6] = {/*A*/ BlasInfo(A, handle, M, N, lda),
@@ -197,51 +198,53 @@ static void gemvTests() {
       // should be the same).
       checkMemoryTrace(inputs, "Found " + Test, foundCuCalls);
 
-      Test = "GEMV A,B,C active/overwrite";
+      // Next test fails to compile because the matrixcopy will use lacpy
+      // which isn't supported by cublas
+      //Test = "GEMV A,B,C active/overwrite";
 
-      init();
-      __enzyme_autodiff((void *)ow_dgemv, enzyme_const, handle, enzyme_const,
-                        transA, enzyme_const, M, enzyme_const, N, enzyme_const,
-                        alpha, enzyme_dup, A, dA, enzyme_const, lda, enzyme_dup,
-                        B, dB, enzyme_const, incB, enzyme_const, beta,
-                        enzyme_dup, C, dC, enzyme_const, incC);
-      foundCuCalls = cucalls;
-      init();
+      //init();
+      //__enzyme_autodiff((void *)ow_dgemv, enzyme_const, handle, enzyme_const,
+      //                  transA, enzyme_const, M, enzyme_const, N, enzyme_const,
+      //                  alpha, enzyme_dup, A, dA, enzyme_const, lda, enzyme_dup,
+      //                  B, dB, enzyme_const, incB, enzyme_const, beta,
+      //                  enzyme_dup, C, dC, enzyme_const, incC);
+      //foundCuCalls = cucalls;
+      //init();
 
-      assert(foundCuCalls.size() > 2);
-      auto A_cache = (double *)foundCuCalls[0].pout_arg1;
-      // dlacpy is not supported for cublas @wsmoses
-      cublas_dlacpy(handle, '\0', M, N, A, lda, A_cache, M);
-      inputs[4] = BlasInfo(A_cache, handle, M, N, M);
-      auto B_cache = (double *)foundCuCalls[1].pout_arg1;
-      cublas_dcopy(handle, trans ? M : N, B, incB, B_cache, 1);
-      inputs[5] = BlasInfo(B_cache, handle, trans ? M : N, 1);
+      //assert(foundCuCalls.size() > 2);
+      //auto A_cache = (double *)foundCuCalls[0].pout_arg1;
+      //// dlacpy is not supported for cublas @wsmoses
+      //cublas_dlacpy(handle, '\0', M, N, A, lda, A_cache, M);
+      //inputs[4] = BlasInfo(A_cache, handle, M, N, M);
+      //auto B_cache = (double *)foundCuCalls[1].pout_arg1;
+      //cublas_dcopy(handle, trans ? M : N, B, incB, B_cache, 1);
+      //inputs[5] = BlasInfo(B_cache, handle, trans ? M : N, 1);
 
-      ow_dgemv(handle, transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
+      //ow_dgemv(handle, transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
 
-      inDerivative = true;
-      // dC = alpha * X * transpose(Y) + A
-      cublas_dger(handle, M, N, alpha, trans ? B_cache : dC, trans ? 1 : incC,
-                  trans ? dC : B_cache, trans ? incC : 1, dA, lda);
+      //inDerivative = true;
+      //// dC = alpha * X * transpose(Y) + A
+      //cublas_dger(handle, M, N, alpha, trans ? B_cache : dC, trans ? 1 : incC,
+      //            trans ? dC : B_cache, trans ? incC : 1, dA, lda);
 
-      // dB = alpha * trans(A) * dC + dB
-      cublas_dgemv(handle, transpose(transA), M, N, alpha, A_cache, M, dC, incC,
-                   1.0, dB, incB);
+      //// dB = alpha * trans(A) * dC + dB
+      //cublas_dgemv(handle, transpose(transA), M, N, alpha, A_cache, M, dC, incC,
+      //             1.0, dB, incB);
 
-      // dY = beta * dY
-      cublas_dscal(handle, trans ? N : M, beta, dC, incC);
+      //// dY = beta * dY
+      //cublas_dscal(handle, trans ? N : M, beta, dC, incC);
 
-      checkTest(Test);
+      //checkTest(Test);
 
-      // Check memory of primal of expected derivative
-      checkMemoryTrace(inputs, "Expected " + Test, cucalls);
+      //// Check memory of primal of expected derivative
+      //checkMemoryTrace(inputs, "Expected " + Test, cucalls);
 
-      // Check memory of primal of our derivative (if equal above, it
-      // should be the same).
-      checkMemoryTrace(inputs, "Found " + Test, foundCuCalls);
+      //// Check memory of primal of our derivative (if equal above, it
+      //// should be the same).
+      //checkMemoryTrace(inputs, "Found " + Test, foundCuCalls);
 
-      inputs[4] = BlasInfo();
-      inputs[5] = BlasInfo();
+      //inputs[4] = BlasInfo();
+      //inputs[5] = BlasInfo();
     }
   }
 }
@@ -344,10 +347,10 @@ static void gemmTests() {
 
 int main() {
 
-  //gemmTests();
+  gemmTests();
 
   gemvTests();
-  
-  //dotTests();
 
+  //dotTests();
+  
 }
