@@ -494,6 +494,10 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
                     {ConstantAsMetadata::get(ConstantInt::get(
                         IntegerType::get(AI->getContext(), 64), align))}));
 
+    for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type"})
+      if (auto M = AI->getMetadata(MD))
+        CI->setMetadata(MD, M);
+
     if (rep != CI) {
       cast<Instruction>(rep)->setMetadata("enzyme_caststack",
                                           MDNode::get(CI->getContext(), {}));

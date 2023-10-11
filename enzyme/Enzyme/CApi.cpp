@@ -711,6 +711,29 @@ void EnzymeExtractReturnInfo(EnzymeAugmentedReturnPtr ret, int64_t *data,
   }
 }
 
+static MDNode *extractMDNode(MetadataAsValue *MAV) {
+  Metadata *MD = MAV->getMetadata();
+  assert((isa<MDNode>(MD) || isa<ConstantAsMetadata>(MD)) &&
+         "Expected a metadata node or a canonicalized constant");
+
+  if (MDNode *N = dyn_cast<MDNode>(MD))
+    return N;
+
+  return MDNode::get(MAV->getContext(), MD);
+}
+
+CTypeTreeRef EnzymeTypeTreeFromMD(LLVMValueRef Val) {
+  TypeTree *Ret = new TypeTree();
+  MDNode *N = Val ? extractMDNode(unwrap<MetadataAsValue>(Val)) : nullptr;
+  Ret->insertFromMD(N);
+  return (CTypeTreeRef)N;
+}
+
+LLVMValueRef EnzymeTypeTreeToMD(CTypeTreeRef CTR, LLVMContextRef ctx) {
+  auto MD = ((TypeTree *)CTR)->toMD(*unwrap(ctx));
+  return wrap(MetadataAsValue::get(MD->getContext(), MD));
+}
+
 CTypeTreeRef EnzymeNewTypeTree() { return (CTypeTreeRef)(new TypeTree()); }
 CTypeTreeRef EnzymeNewTypeTreeCT(CConcreteType CT, LLVMContextRef ctx) {
   return (CTypeTreeRef)(new TypeTree(eunwrap(CT, *unwrap(ctx))));
@@ -850,7 +873,7 @@ void EnzymeSetStringMD(LLVMValueRef Inst, const char *Kind, LLVMValueRef Val) {
 LLVMValueRef EnzymeGetStringMD(LLVMValueRef Inst, const char *Kind) {
   auto *I = unwrap<Instruction>(Inst);
   assert(I && "Expected instruction");
-  if (auto *MD = I->getMetadata(KindID))
+  if (auto *MD = I->getMetadata(Kind))
     return wrap(MetadataAsValue::get(I->getContext(), MD));
   return nullptr;
 }
