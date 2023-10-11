@@ -842,6 +842,19 @@ void EnzymeMoveBefore(LLVMValueRef inst1, LLVMValueRef inst2,
   }
 }
 
+void EnzymeSetStringMD(LLVMValueRef Inst, const char *Kind, LLVMValueRef Val) {
+  MDNode *N = Val ? extractMDNode(unwrap<MetadataAsValue>(Val)) : nullptr;
+  unwrap<Instruction>(Inst)->setMetadata(Kind, N);
+}
+
+LLVMValueRef EnzymeGetStringMD(LLVMValueRef Inst, const char *Kind) {
+  auto *I = unwrap<Instruction>(Inst);
+  assert(I && "Expected instruction");
+  if (auto *MD = I->getMetadata(KindID))
+    return wrap(MetadataAsValue::get(I->getContext(), MD));
+  return nullptr;
+}
+
 void EnzymeSetMustCache(LLVMValueRef inst1) {
   Instruction *I1 = cast<Instruction>(unwrap(inst1));
   I1->setMetadata("enzyme_mustcache", MDNode::get(I1->getContext(), {}));
