@@ -788,6 +788,9 @@ void TypeAnalyzer::considerTBAA() {
 
   for (BasicBlock &BB : *fntypeinfo.Function) {
     for (Instruction &I : BB) {
+      if (auto MD = I.getMetadata("enzyme_type")) {
+        updateAnalysis(&I, TypeTree::fromMD(MD), &I);
+      }
 
       if (CallBase *call = dyn_cast<CallBase>(&I)) {
         Function *F = call->getCalledFunction();

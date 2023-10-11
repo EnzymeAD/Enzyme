@@ -1207,6 +1207,52 @@ public:
     out += "}";
     return out;
   }
+
+  llvm::MDNode *toMD(llvm::LLVMContext &ctx) {
+    llvm::SmallVector<llvm::Metadata *, 1> subMD;
+    std::map<int, TypeTree> todo;
+    ConcreteType base(BaseType::Unknown);
+    for (auto &pair : mapping) {
+      if (pair.first.size() == 0) {
+        base = pair.second;
+        continue;
+      }
+      auto next(pair.first);
+      next.erase(next.begin());
+      todo[pair.first[0]].mapping.insert(std::make_pair(next, pair.second));
+    }
+    subMD.push_back(llvm::MDString::get(ctx, base.str()));
+    for (auto pair : todo) {
+      subMD.push_back(llvm::ConstantAsMetadata::get(
+          llvm::ConstantInt::get(llvm::IntegerType::get(ctx, 32), pair.first)));
+      subMD.push_back(pair.second.toMD(ctx));
+    }
+    return llvm::MDNode::get(ctx, subMD);
+  };
+
+  void insertFromMD(llvm::MDNode *md, const std::vector<int> &prev = {}) {
+    ConcreteType base(
+        llvm::cast<llvm::MDString>(md->getOperand(0))->getString(),
+        md->getContext());
+    if (base != BaseType::Unknown)
+      mapping.insert(std::make_pair(prev, base));
+    for (size_t i = 1; i < md->getNumOperands(); i += 2) {
+      auto off = llvm::cast<llvm::ConstantInt>(
+                     llvm::cast<llvm::ConstantAsMetadata>(md->getOperand(i))
+                         ->getValue())
+                     ->getSExtValue();
+      auto next(prev);
+      next.push_back((int)off);
+      insertFromMD(llvm::cast<llvm::MDNode>(md->getOperand(i + 1)), next);
+    }
+  }
+
+  static TypeTree fromMD(llvm::MDNode *md) {
+    TypeTree ret;
+    std::vector<int> off;
+    ret.insertFromMD(md, off);
+    return ret;
+  }
 };
 
 #endif
