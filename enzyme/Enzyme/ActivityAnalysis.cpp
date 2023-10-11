@@ -1199,14 +1199,16 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   }
 
   if (auto CI = dyn_cast<CallInst>(Val)) {
-    if (CI->hasFnAttr("enzyme_active") || CI->hasFnAttr("enzyme_active_val")) {
+    if (CI->hasFnAttr("enzyme_active") || CI->hasFnAttr("enzyme_active_val") ||
+        CI->hasRetAttr("enzyme_active")) {
       if (EnzymePrintActivity)
         llvm::errs() << "forced active val " << *Val << "\n";
       ActiveValues.insert(Val);
       return false;
     }
     if (CI->hasFnAttr("enzyme_inactive") ||
-        CI->hasFnAttr("enzyme_inactive_val")) {
+        CI->hasFnAttr("enzyme_inactive_val") ||
+        CI->hasRetAttr("enzyme_inactive")) {
       if (EnzymePrintActivity)
         llvm::errs() << "forced inactive val " << *Val << "\n";
       InsertConstantValue(TR, Val);
@@ -1216,14 +1218,28 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
     if (called) {
       if (called->hasFnAttribute("enzyme_active") ||
-          called->hasFnAttribute("enzyme_active_val")) {
+          called->hasFnAttribute("enzyme_active_val")
+#if LLVM_VERSION_MAJOR >= 14
+          || called->hasRetAttribute("enzyme_active")
+#else
+          || called->getAttributes().hasAttribute(
+                 llvm::AttributeList::ReturnIndex, "enzyme_active")
+#endif
+      ) {
         if (EnzymePrintActivity)
           llvm::errs() << "forced active val " << *Val << "\n";
         ActiveValues.insert(Val);
         return false;
       }
       if (called->hasFnAttribute("enzyme_inactive") ||
-          called->hasFnAttribute("enzyme_inactive_val")) {
+          called->hasFnAttribute("enzyme_inactive_val")
+#if LLVM_VERSION_MAJOR >= 14
+          || called->hasRetAttribute("enzyme_inactive")
+#else
+          || called->getAttributes().hasAttribute(
+                 llvm::AttributeList::ReturnIndex, "enzyme_inactive")
+#endif
+      ) {
         if (EnzymePrintActivity)
           llvm::errs() << "forced inactive val " << *Val << "\n";
         InsertConstantValue(TR, Val);
