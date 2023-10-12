@@ -206,3 +206,43 @@ void enzyme::AliasAnalysis::visitOperation(
     // promising extension.
   }
 }
+
+// TODO: Move this somewhere shared
+void getEffectsForExternalCall(
+    CallOpInterface call,
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  if (auto symbol = dyn_cast<SymbolRefAttr>(call.getCallableForCallee())) {
+    StringRef callableName = symbol.getLeafReference().getValue();
+    if (callableName == "malloc") {
+      assert(call->getNumResults() == 1);
+      effects.push_back(MemoryEffects::EffectInstance(
+          MemoryEffects::Allocate::get(), call->getResult(0)));
+    }
+  }
+}
+
+void enzyme::AliasAnalysis::visitExternalCall(
+    CallOpInterface call, ArrayRef<const AliasClassLattice *> operands,
+    ArrayRef<AliasClassLattice *> results) {
+  SmallVector<MemoryEffects::EffectInstance> effects;
+  getEffectsForExternalCall(call, effects);
+  for (const auto &effect : effects) {
+    Value value = effect.getValue();
+    if (!value)
+      return;
+    if (isa<MemoryEffects::Allocate>(effect.getEffect())) {
+      // Mark the result of the allocation as a fresh memory location
+      for (AliasClassLattice *result : results) {
+        if (result->getPoint() == value) {
+          propagateIfChanged(result, result->markFresh());
+        }
+      }
+    }
+  }
+
+  for (auto *resultLattice : results) {
+    for (const auto *operandLattice : operands) {
+      join(resultLattice, *operandLattice);
+    }
+  }
+}

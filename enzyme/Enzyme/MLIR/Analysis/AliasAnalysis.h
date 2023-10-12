@@ -68,6 +68,10 @@ public:
   void visitOperation(Operation *op,
                       ArrayRef<const AliasClassLattice *> operands,
                       ArrayRef<AliasClassLattice *> results) override;
+
+  void visitExternalCall(CallOpInterface call,
+                         ArrayRef<const AliasClassLattice *> operands,
+                         ArrayRef<AliasClassLattice *> results) override;
 };
 
 } // namespace enzyme

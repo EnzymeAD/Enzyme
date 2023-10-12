@@ -65,6 +65,9 @@ struct PrintAliasAnalysisPass
       }
     }
 
+    if (taggedPointers.empty())
+      return;
+
     // Compare all tagged pointers
     for (unsigned i = 0; i < taggedPointers.size() - 1; i++) {
       for (unsigned j = i + 1; j < taggedPointers.size(); j++) {

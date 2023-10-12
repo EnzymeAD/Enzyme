@@ -224,6 +224,21 @@ private:
   DenseSet<Value> allocations;
 };
 
+raw_ostream &operator<<(raw_ostream &os, const CallControlFlowAction &action) {
+  switch (action) {
+  case CallControlFlowAction::EnterCallee:
+    os << "EnterCallee";
+    break;
+  case CallControlFlowAction::ExitCallee:
+    os << "ExitCallee";
+    break;
+  case CallControlFlowAction::ExternalCallee:
+    os << "ExternalCallee";
+    break;
+  }
+  return os;
+}
+
 class AvailableAllocAnalysis
     : public DenseForwardDataFlowAnalysis<AvailableAllocations> {
 public:
@@ -252,6 +267,22 @@ public:
   }
 
   void setToEntryState(AvailableAllocations *lattice) override {}
+
+  void visitCallControlFlowTransfer(CallOpInterface call,
+                                    CallControlFlowAction action,
+                                    const AvailableAllocations &before,
+                                    AvailableAllocations *after) override {
+    if (action == CallControlFlowAction::ExternalCallee) {
+      // Attempt to infer the language semantics from the name
+      auto symbol = cast<SymbolRefAttr>(call.getCallableForCallee());
+      if (symbol.getLeafReference().getValue() == "malloc") {
+        assert(call->getNumResults() == 1);
+        propagateIfChanged(after, after->addAllocation(call->getResult(0)));
+      }
+    }
+
+    join(after, before);
+  }
 };
 
 /// This needs to keep track of three things:
@@ -266,9 +297,9 @@ public:
 struct MemoryActivityState {
   bool activeLoad;
   bool activeStore;
-  // Active init is like active store, but a special case for arguments. We need
-  // to distinguish arguments that start with active data vs arguments that get
-  // active data stored into them during the function.
+  // Active init is like active store, but a special case for arguments. We
+  // need to distinguish arguments that start with active data vs arguments
+  // that get active data stored into them during the function.
   bool activeInit;
   // Analogous special case for arguments that are written to, thus having
   // active data escape
@@ -452,7 +483,8 @@ public:
         return;
     }
 
-    // For value-based AA, assume any active argument leads to an active result.
+    // For value-based AA, assume any active argument leads to an active
+    // result.
     // TODO: Could prune values based on the types of the operands (but would
     // require type analysis for full robustness)
     // TODO: Could we differentiate between values that don't propagate active
@@ -676,8 +708,8 @@ public:
   }
 
 private:
-  // The entry arguments for the top-level function being differentiated without
-  // alias attributes.
+  // The entry arguments for the top-level function being differentiated
+  // without alias attributes.
   SmallVectorImpl<Value> &entryAllocs;
 };
 
@@ -792,8 +824,8 @@ void enzyme::runDataFlowActivityAnalysis(
 
   solver.load<AvailableAllocAnalysis>();
   solver.load<enzyme::AliasAnalysis>();
-  // solver.load<SparseForwardActivityAnalysis>();
-  // solver.load<DenseForwardActivityAnalysis>(entryAllocations);
+  solver.load<SparseForwardActivityAnalysis>();
+  solver.load<DenseForwardActivityAnalysis>(entryAllocations);
   solver.load<SparseBackwardActivityAnalysis>(symbolTable);
   solver.load<DenseBackwardActivityAnalysis>(symbolTable, entryAllocations);
 
@@ -831,8 +863,8 @@ void enzyme::runDataFlowActivityAnalysis(
     }
   }
 
-  // Detect function returns as direct children of the FunctionOpInterface that
-  // have the ReturnLike trait.
+  // Detect function returns as direct children of the FunctionOpInterface
+  // that have the ReturnLike trait.
   SmallPtrSet<Operation *, 2> returnOps;
   for (Operation &op : callee.getFunctionBody().getOps()) {
     if (op.hasTrait<OpTrait::ReturnLike>()) {
@@ -869,39 +901,59 @@ void enzyme::runDataFlowActivityAnalysis(
   }
 
   if (print) {
+    auto isConstantValue = [&](DataFlowSolver &solver, Value value) {
+      // TODO: integers/vectors that might be pointers
+      // if (isa<LLVM::LLVMPointerType, MemRefType>(value.getType())) {
+      //   assert(returnOps.size() == 1);
+      //   auto *fma =
+      //       solver.lookupState<ForwardMemoryActivity>(*returnOps.begin());
+      //   auto *bma = solver.lookupState<BackwardMemoryActivity>(
+      //       &callee.getFunctionBody().front().front());
+
+      //   auto *aliasClass = solver.lookupState<AliasClassLattice>(value);
+      //   if (aliasClass->isEntry || aliasClass->isUnknown) {
+      //     errs() << "[activity analysis] unimplemented entry or unknown";
+      //   }
+      //   SmallVector<Value> canonicalAllocs;
+      //   aliasClass->getCanonicalAllocations(canonicalAllocs);
+      //   bool activePtr = false;
+      //   for (Value alloc : canonicalAllocs) {
+      //     // How do we combine the dense states correctly?
+      //     // If it's forward load and backward store it's definitely active
+      //     activePtr |=
+      //         fma->hasActiveData(alloc) && bma->activeDataFlowsOut(alloc);
+      //   }
+      //   return !activePtr;
+      // }
+
+      auto fva = solver.lookupState<ForwardValueActivity>(value);
+      auto bva = solver.lookupState<BackwardValueActivity>(value);
+      // bool forwardActive = fva && fva->getValue().isActiveVal();
+      // bool backwardActive = bva && bva->getValue().isActiveVal();
+      bool forwardActive = fva && (fva->getValue().isActiveVal() ||
+                                   fva->getValue().isActivePtr());
+      bool backwardActive = bva && (bva->getValue().isActiveVal() ||
+                                    bva->getValue().isActivePtr());
+      if (forwardActive && backwardActive)
+        return false;
+      return true;
+    };
+
     errs() << FlatSymbolRefAttr::get(callee) << ":\n";
     for (BlockArgument arg : callee.getArguments()) {
       if (Attribute tagAttr =
               callee.getArgAttr(arg.getArgNumber(), "enzyme.tag")) {
-        errs() << "  " << tagAttr << ": ";
-        auto fva = solver.lookupState<ForwardValueActivity>(arg);
-        auto bva = solver.lookupState<BackwardValueActivity>(arg);
-        bool forwardActive = fva && (fva->getValue().isActivePtr() ||
-                                     fva->getValue().isActiveVal());
-        bool backwardActive = bva && (bva->getValue().isActivePtr() ||
-                                      bva->getValue().isActiveVal());
-        if (forwardActive && backwardActive) {
-          errs() << "Active\n";
-        } else {
-          errs() << "Constant\n";
-        }
+        errs() << "  " << tagAttr << ": "
+               << (isConstantValue(solver, arg) ? "Constant" : "Active")
+               << "\n";
       }
     }
     callee.walk([&](Operation *op) {
       if (op->hasAttr("tag")) {
         errs() << "  " << op->getAttr("tag") << ": ";
         for (OpResult opResult : op->getResults()) {
-          auto fva = solver.lookupState<ForwardValueActivity>(opResult);
-          auto bva = solver.lookupState<BackwardValueActivity>(opResult);
-          bool forwardActive = fva && (fva->getValue().isActivePtr() ||
-                                       fva->getValue().isActiveVal());
-          bool backwardActive = bva && (bva->getValue().isActivePtr() ||
-                                        bva->getValue().isActiveVal());
-          if (forwardActive && backwardActive) {
-            errs() << "Active\n";
-          } else {
-            errs() << "Constant\n";
-          }
+          errs() << (isConstantValue(solver, opResult) ? "Constant" : "Active")
+                 << "\n";
         }
       }
       if (verbose) {
@@ -946,20 +998,24 @@ void enzyme::runDataFlowActivityAnalysis(
         }
       }
 
+      for (Operation *returnOp : returnOps) {
+        auto *allocations = solver.lookupState<AvailableAllocations>(returnOp);
+        errs() << "available allocations at end of function: " << *allocations
+               << "\n";
+
+        auto *state = solver.lookupState<ForwardMemoryActivity>(returnOp);
+        if (state)
+          errs() << "resulting forward state:\n" << *state << "\n";
+        else
+          errs() << "state was null\n";
+      }
+
       auto startState = solver.lookupState<BackwardMemoryActivity>(
           &callee.getFunctionBody().front().front());
       if (startState)
         errs() << "backwards end state:\n" << *startState << "\n";
       else
         errs() << "backwards end state was null\n";
-
-      for (Operation *returnOp : returnOps) {
-        auto state = solver.lookupState<ForwardMemoryActivity>(returnOp);
-        if (state)
-          errs() << "resulting forward state:\n" << *state << "\n";
-        else
-          errs() << "state was null\n";
-      }
     }
   }
 }
