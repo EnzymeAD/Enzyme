@@ -83,3 +83,29 @@ func.func @across_func_boundaries_const(%arg0: f64) -> f64 {
     %val = call @read(%ptr) {tag = "retval"} : (memref<f64>) -> f64
     return %val : f64
 }
+
+// -----
+
+// Like across_func_boundaries_const, but in the LLVM dialect
+llvm.func private @identity(%arg0: !llvm.ptr) -> !llvm.ptr attributes {} {
+    %c4 = llvm.mlir.constant (4) : i64
+    %mem = memref.alloc() : memref<f32>
+    %nonaliasidx = memref.extract_aligned_pointer_as_index %mem : memref<f32> -> index
+    %nonaliasi64 = arith.index_cast %nonaliasidx : index to i64
+    %nonalias = llvm.inttoptr %nonaliasi64 : i64 to !llvm.ptr
+    %inner = llvm.mlir.constant (4.5 : f32) : f32
+    llvm.store %inner, %nonalias : f32, !llvm.ptr
+    llvm.return %nonalias : !llvm.ptr
+}
+
+// CHECK-LABEL: @nonaliased_store:
+// CHECK:         "retval": Constant
+func.func @nonaliased_store(%arg0: f32) -> f32 {
+    %c1 = llvm.mlir.constant (1) : i64
+    %ptr = llvm.alloca %c1 x f32 : (i64) -> !llvm.ptr
+    llvm.store %arg0, %ptr : f32, !llvm.ptr
+
+    %new_ptr = llvm.call @identity(%ptr) : (!llvm.ptr) -> !llvm.ptr
+    %val = llvm.load %new_ptr {tag = "retval"} : !llvm.ptr -> f32
+    return %val : f32
+}

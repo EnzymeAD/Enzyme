@@ -213,7 +213,7 @@ void getEffectsForExternalCall(
     SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
   if (auto symbol = dyn_cast<SymbolRefAttr>(call.getCallableForCallee())) {
     StringRef callableName = symbol.getLeafReference().getValue();
-    if (callableName == "malloc") {
+    if (callableName == "malloc" || callableName == "_Znwm") {
       assert(call->getNumResults() == 1);
       effects.push_back(MemoryEffects::EffectInstance(
           MemoryEffects::Allocate::get(), call->getResult(0)));

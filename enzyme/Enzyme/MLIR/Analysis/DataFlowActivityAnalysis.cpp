@@ -280,8 +280,8 @@ public:
         assert(call->getNumResults() == 1);
         propagateIfChanged(after, after->addAllocation(call->getResult(0)));
       }
-      join(after, before);
     }
+    join(after, before);
   }
 };
 
@@ -704,9 +704,7 @@ public:
                                     CallControlFlowAction action,
                                     const ForwardMemoryActivity &before,
                                     ForwardMemoryActivity *after) override {
-    if (action == CallControlFlowAction::ExternalCallee) {
-      join(after, before);
-    }
+    join(after, before);
   }
 
   /// Entry states in the framework are synonymously with pessimistic states,
@@ -815,9 +813,7 @@ public:
                                     CallControlFlowAction action,
                                     const BackwardMemoryActivity &after,
                                     BackwardMemoryActivity *before) override {
-    if (action == CallControlFlowAction::ExternalCallee) {
-      meet(before, after);
-    }
+    meet(before, after);
   }
 
   void setToExitState(BackwardMemoryActivity *lattice) override {}

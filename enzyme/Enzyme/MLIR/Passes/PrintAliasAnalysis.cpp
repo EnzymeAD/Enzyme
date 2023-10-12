@@ -61,7 +61,8 @@ struct PrintAliasAnalysisPass
       if (state) {
         errs() << "tag " << tag
                << " canonical allocation: " << state->getCanonicalAllocation()
-               << " is unknown: " << state->isUnknown << "\n";
+               << " is unknown: " << state->isUnknown
+               << " is entry: " << state->isEntry << "\n";
       }
     }
 
