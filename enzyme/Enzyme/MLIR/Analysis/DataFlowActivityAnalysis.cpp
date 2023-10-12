@@ -274,14 +274,14 @@ public:
                                     AvailableAllocations *after) override {
     if (action == CallControlFlowAction::ExternalCallee) {
       // Attempt to infer the language semantics from the name
+      // TODO: Add these semantics in a shared spot with alias analysis
       auto symbol = cast<SymbolRefAttr>(call.getCallableForCallee());
       if (symbol.getLeafReference().getValue() == "malloc") {
         assert(call->getNumResults() == 1);
         propagateIfChanged(after, after->addAllocation(call->getResult(0)));
       }
+      join(after, before);
     }
-
-    join(after, before);
   }
 };
 
@@ -582,6 +582,7 @@ public:
   DenseForwardActivityAnalysis(DataFlowSolver &solver,
                                SmallVectorImpl<Value> &entryAllocs)
       : DenseForwardDataFlowAnalysis(solver), entryAllocs(entryAllocs) {}
+
   void visitOperation(Operation *op, const ForwardMemoryActivity &before,
                       ForwardMemoryActivity *after) override {
     auto memory = dyn_cast<MemoryEffectOpInterface>(op);
@@ -699,13 +700,19 @@ public:
     propagateIfChanged(after, result);
   }
 
-  // Not sure what this should be, unknown?
-  void setToEntryState(ForwardMemoryActivity *lattice) override {
-    // errs() << "forward memory setting to entry state for point "
-    //        << lattice->getPoint() << "\n";
-    // errs() << "current lattice value: " << *lattice << "\n\n";
-    // propagateIfChanged(lattice, lattice->reset());
+  void visitCallControlFlowTransfer(CallOpInterface call,
+                                    CallControlFlowAction action,
+                                    const ForwardMemoryActivity &before,
+                                    ForwardMemoryActivity *after) override {
+    if (action == CallControlFlowAction::ExternalCallee) {
+      join(after, before);
+    }
   }
+
+  /// Entry states in the framework are synonymously with pessimistic states,
+  /// which in dense AA would be "everything is active". However, dense AA is
+  /// actually initialized optimistically, assuming "everything is constant".
+  void setToEntryState(ForwardMemoryActivity *lattice) override {}
 
 private:
   // The entry arguments for the top-level function being differentiated
@@ -804,10 +811,16 @@ public:
     propagateIfChanged(before, result);
   }
 
-  void setToExitState(BackwardMemoryActivity *lattice) override {
-    // errs() << "backward memory setting to exit state\n";
-    propagateIfChanged(lattice, lattice->reset());
+  void visitCallControlFlowTransfer(CallOpInterface call,
+                                    CallControlFlowAction action,
+                                    const BackwardMemoryActivity &after,
+                                    BackwardMemoryActivity *before) override {
+    if (action == CallControlFlowAction::ExternalCallee) {
+      meet(before, after);
+    }
   }
+
+  void setToExitState(BackwardMemoryActivity *lattice) override {}
 
 private:
   SmallVectorImpl<Value> &entryAllocs;
