@@ -51,7 +51,7 @@ double invmag(double* __restrict__ A, int n) {
   return Q_rsqrt(sumsq);
 }
 
-//// (1) An interface that just happens to work because Q_rsqrt is simple enough.
+//// (1) An interface that works only because the usage of Q_rsqrt inside invmag is simple enough.
 
 // Returns { optional tape, original return (if pointer), shadow return (if pointer) }
 void aug_rsqrt(float x) {
