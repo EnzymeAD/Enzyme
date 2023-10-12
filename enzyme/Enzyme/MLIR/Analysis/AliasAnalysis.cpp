@@ -31,9 +31,9 @@ enzyme::AliasClassLattice::alias(const AbstractSparseLattice &other) const {
   if (getPoint() == rhs->getPoint())
     return AliasResult::MustAlias;
 
-  if (isEntry && rhs->isEntry)
+  if (entry && rhs->entry)
     return AliasResult::MayAlias;
-  if (isUnknown || rhs->isUnknown)
+  if (unknown || rhs->unknown)
     return AliasResult::MayAlias;
 
   size_t overlap = llvm::count_if(aliasClasses, [rhs](DistinctAttr aliasClass) {
@@ -71,11 +71,11 @@ enzyme::AliasClassLattice::join(const AbstractSparseLattice &other) {
   // Set union of the alias classes
   const auto *otherAliasClass =
       reinterpret_cast<const AliasClassLattice *>(&other);
-  if (isUnknown) {
+  if (unknown) {
     return ChangeResult::NoChange;
   }
-  if (otherAliasClass->isUnknown) {
-    isUnknown = true;
+  if (otherAliasClass->unknown) {
+    unknown = true;
     return ChangeResult::Change;
   }
 
@@ -87,8 +87,8 @@ enzyme::AliasClassLattice::join(const AbstractSparseLattice &other) {
   canonicalAllocations.insert(otherAliasClass->canonicalAllocations.begin(),
                               otherAliasClass->canonicalAllocations.end());
 
-  bool entryChanged = !isEntry && otherAliasClass->isEntry;
-  isEntry |= otherAliasClass->isEntry;
+  bool entryChanged = !entry && otherAliasClass->entry;
+  entry |= otherAliasClass->entry;
 
   return (oldSize == aliasClasses.size() &&
           oldAllocSize == canonicalAllocations.size() && !entryChanged)
@@ -107,31 +107,31 @@ ChangeResult enzyme::AliasClassLattice::markFresh() {
 }
 
 ChangeResult enzyme::AliasClassLattice::markUnknown() {
-  if (isUnknown)
+  if (unknown)
     return ChangeResult::NoChange;
 
-  isUnknown = true;
+  unknown = true;
   aliasClasses.clear();
   return ChangeResult::Change;
 }
 
 ChangeResult enzyme::AliasClassLattice::markEntry() {
-  if (isEntry)
+  if (entry)
     return ChangeResult::NoChange;
 
-  isEntry = true;
+  entry = true;
   aliasClasses.clear();
   canonicalAllocations.clear();
   return ChangeResult::Change;
 }
 
 ChangeResult enzyme::AliasClassLattice::reset() {
-  if (aliasClasses.empty() && canonicalAllocations.empty() && !isUnknown &&
-      !isEntry) {
+  if (aliasClasses.empty() && canonicalAllocations.empty() && !unknown &&
+      !entry) {
     return ChangeResult::NoChange;
   }
-  isUnknown = false;
-  isEntry = false;
+  unknown = false;
+  entry = false;
   aliasClasses.clear();
   canonicalAllocations.clear();
   return ChangeResult::Change;
@@ -157,36 +157,32 @@ void enzyme::AliasAnalysis::setToEntryState(AliasClassLattice *lattice) {
   }
 }
 
-void enzyme::AliasAnalysis::visitOperation(
-    Operation *op, ArrayRef<const AliasClassLattice *> operands,
+void enzyme::AliasAnalysis::transfer(
+    ArrayRef<MemoryEffects::EffectInstance> effects,
+    ArrayRef<const AliasClassLattice *> operands,
     ArrayRef<AliasClassLattice *> results) {
   bool readsMemory = false;
-  if (auto memory = dyn_cast<MemoryEffectOpInterface>(op)) {
-    SmallVector<MemoryEffects::EffectInstance> effects;
-    memory.getEffects(effects);
-    for (const auto &effect : effects) {
-      Value value = effect.getValue();
+  for (const auto &effect : effects) {
+    Value value = effect.getValue();
+    if (!value) {
+      // TODO: we can't assume anything about entry states
+      continue;
+    }
 
-      if (!value) {
-        // TODO: we can't assume anything about entry states
-        continue;
+    if (isa<MemoryEffects::Allocate>(effect.getEffect())) {
+      // Mark the result of the allocation as a fresh memory location
+      for (AliasClassLattice *result : results) {
+        if (result->getPoint() == value) {
+          propagateIfChanged(result, result->markFresh());
+        }
       }
-
-      if (isa<MemoryEffects::Allocate>(effect.getEffect())) {
-        // Mark the result of the allocation as a fresh memory location
-        for (AliasClassLattice *result : results) {
-          if (result->getPoint() == value) {
-            propagateIfChanged(result, result->markFresh());
-          }
-        }
-      } else if (isa<MemoryEffects::Read>(effect.getEffect())) {
-        // If the op reads memory, the results don't necessarily alias with the
-        // operands.
-        readsMemory = true;
-        // Conservatively mark the read results as unknown.
-        for (AliasClassLattice *result : results) {
-          propagateIfChanged(result, result->markUnknown());
-        }
+    } else if (isa<MemoryEffects::Read>(effect.getEffect())) {
+      // If the op reads memory, the results don't necessarily alias with the
+      // operands.
+      readsMemory = true;
+      // Conservatively mark the read results as unknown.
+      for (AliasClassLattice *result : results) {
+        propagateIfChanged(result, result->markUnknown());
       }
     }
   }
@@ -200,6 +196,16 @@ void enzyme::AliasAnalysis::visitOperation(
       join(resultLattice, *operandLattice);
     }
   }
+}
+
+void enzyme::AliasAnalysis::visitOperation(
+    Operation *op, ArrayRef<const AliasClassLattice *> operands,
+    ArrayRef<AliasClassLattice *> results) {
+  SmallVector<MemoryEffects::EffectInstance> effects;
+  if (auto memory = dyn_cast<MemoryEffectOpInterface>(op))
+    memory.getEffects(effects);
+
+  transfer(effects, operands, results);
   if (auto view = dyn_cast<OffsetSizeAndStrideOpInterface>(op)) {
     // TODO: special handling for offset size and stride op interface to prove
     // that non-overlapping subviews of the same buffer don't alias could be a
@@ -226,23 +232,5 @@ void enzyme::AliasAnalysis::visitExternalCall(
     ArrayRef<AliasClassLattice *> results) {
   SmallVector<MemoryEffects::EffectInstance> effects;
   getEffectsForExternalCall(call, effects);
-  for (const auto &effect : effects) {
-    Value value = effect.getValue();
-    if (!value)
-      return;
-    if (isa<MemoryEffects::Allocate>(effect.getEffect())) {
-      // Mark the result of the allocation as a fresh memory location
-      for (AliasClassLattice *result : results) {
-        if (result->getPoint() == value) {
-          propagateIfChanged(result, result->markFresh());
-        }
-      }
-    }
-  }
-
-  for (auto *resultLattice : results) {
-    for (const auto *operandLattice : operands) {
-      join(resultLattice, *operandLattice);
-    }
-  }
+  transfer(effects, operands, results);
 }

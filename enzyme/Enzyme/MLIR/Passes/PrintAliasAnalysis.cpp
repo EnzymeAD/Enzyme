@@ -61,8 +61,8 @@ struct PrintAliasAnalysisPass
       if (state) {
         errs() << "tag " << tag
                << " canonical allocation: " << state->getCanonicalAllocation()
-               << " is unknown: " << state->isUnknown
-               << " is entry: " << state->isEntry << "\n";
+               << " is unknown: " << state->isUnknown()
+               << " is entry: " << state->isEntry() << "\n";
       }
     }
 
@@ -89,7 +89,7 @@ struct PrintAliasAnalysisPass
         for (auto arg : funcOp.getArguments()) {
           auto *state = solver.lookupState<enzyme::AliasClassLattice>(arg);
           if (state) {
-            if (state->isEntry)
+            if (state->isEntry())
               funcOp.setArgAttr(arg.getArgNumber(), "enzyme.ac_entry",
                                 UnitAttr::get(funcOp.getContext()));
 

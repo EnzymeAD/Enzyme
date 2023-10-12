@@ -3,6 +3,7 @@
 
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include <optional>
 
 namespace mlir {
@@ -41,15 +42,19 @@ public:
   /// Special setting for entry arguments without aliasing information. These
   /// may alias other entry arguments, but will not alias allocations made
   /// within the region.
-  bool isEntry = false;
+  bool isEntry() const { return entry; };
 
   /// We don't know anything about the aliasing of this value. TODO: re-evaluate
   /// if we need this.
-  bool isUnknown = false;
+  bool isUnknown() const { return unknown; }
 
 private:
+  bool entry = false;
+  bool unknown = false;
+
   /// As we compute alias classes, additionally propagate the possible canonical
   /// allocation sites for this
+  /// TODO: Remove this and just use the distinct attributes directly
   DenseSet<Value> canonicalAllocations;
 };
 
@@ -72,6 +77,11 @@ public:
   void visitExternalCall(CallOpInterface call,
                          ArrayRef<const AliasClassLattice *> operands,
                          ArrayRef<AliasClassLattice *> results) override;
+
+private:
+  void transfer(ArrayRef<MemoryEffects::EffectInstance> effects,
+                ArrayRef<const AliasClassLattice *> operands,
+                ArrayRef<AliasClassLattice *> results);
 };
 
 } // namespace enzyme

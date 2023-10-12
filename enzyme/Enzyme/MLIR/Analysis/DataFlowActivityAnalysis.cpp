@@ -556,12 +556,12 @@ void forEachAliasedAlloc(const AliasClassLattice *ptrAliasClass,
                          ValueRange entryAllocs,
                          function_ref<void(Value alloc)> forEachFn) {
   SmallVector<Value> canonicalAllocs;
-  if (ptrAliasClass->isEntry) {
+  if (ptrAliasClass->isEntry()) {
     assert(!entryAllocs.empty() &&
            "found an entry alias class but entry args was empty");
     // Take the first unannotated entry argument as the canonical allocation
     canonicalAllocs.push_back(entryAllocs.front());
-  } else if (ptrAliasClass->isUnknown) {
+  } else if (ptrAliasClass->isUnknown()) {
     // Unknown pointers alias with the unknown entry arguments and all
     // known allocations
     if (!entryAllocs.empty())
