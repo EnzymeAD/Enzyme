@@ -5303,6 +5303,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "_ZNSt3__19addressofIcEEPT_RS1_",
       "_ZNSt3__19addressofIKcEEPT_RS2_",
       "_ZNSt3__113random_deviceclEv",
+      "MPI_Allreduce",
   };
 
   if (F->getName().startswith("_ZNSolsE") || NoFrees.count(F->getName()))
