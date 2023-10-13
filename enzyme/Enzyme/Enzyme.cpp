@@ -98,10 +98,9 @@ using namespace llvm;
 #endif
 #define DEBUG_TYPE "lower-enzyme-intrinsic"
 
-llvm::cl::opt<bool>
-    EnzymeEnable("enzyme-enable", cl::init(true), cl::Hidden,
-                  cl::desc("Run the Enzyme pass"));
-  
+llvm::cl::opt<bool> EnzymeEnable("enzyme-enable", cl::init(true), cl::Hidden,
+                                 cl::desc("Run the Enzyme pass"));
+
 llvm::cl::opt<bool>
     EnzymePostOpt("enzyme-postopt", cl::init(false), cl::Hidden,
                   cl::desc("Run enzymepostprocessing optimizations"));
@@ -3196,7 +3195,8 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   {
     MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
 
-    if (!EnzymeEnable) return;
+    if (!EnzymeEnable)
+      return;
 
 #if LLVM_VERSION_MAJOR >= 12
     if (Level != OptimizationLevel::O0)
