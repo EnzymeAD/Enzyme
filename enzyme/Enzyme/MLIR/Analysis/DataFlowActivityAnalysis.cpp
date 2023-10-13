@@ -50,43 +50,24 @@ public:
     return ValueActivity(ActivityKind::Unknown);
   }
 
-  bool isActiveVal() const {
-    return value.has_value() && *value == ActivityKind::ActiveVal;
-  }
+  bool isActiveVal() const { return value == ActivityKind::ActiveVal; }
 
-  bool isActivePtr() const {
-    return value.has_value() && *value == ActivityKind::ActivePtr;
-  }
+  bool isActivePtr() const { return value == ActivityKind::ActivePtr; }
 
-  bool isConstant() const {
-    return value.has_value() && *value == ActivityKind::Constant;
-  }
+  bool isConstant() const { return value == ActivityKind::Constant; }
 
-  bool isUnknown() const {
-    return value.has_value() && *value == ActivityKind::Unknown;
-  }
+  bool isUnknown() const { return value == ActivityKind::Unknown; }
 
-  ValueActivity(std::optional<ActivityKind> value = std::nullopt)
-      : value(std::move(value)) {}
-
-  /// Whether the activity state is uninitialized. This happens when the state
-  /// hasn't been set during the analysis.
-  bool isUninitialized() const { return !value.has_value(); }
+  ValueActivity() {}
+  ValueActivity(ActivityKind value) : value(value) {}
 
   /// Get the known activity state.
-  const ActivityKind &getValue() const {
-    assert(!isUninitialized());
-    return *value;
-  }
+  const ActivityKind &getValue() const { return value; }
 
   bool operator==(const ValueActivity &rhs) const { return value == rhs.value; }
 
   static ValueActivity merge(const ValueActivity &lhs,
                              const ValueActivity &rhs) {
-    if (lhs.isUninitialized())
-      return rhs;
-    if (rhs.isUninitialized())
-      return lhs;
     if (lhs.isUnknown() || rhs.isUnknown())
       return ValueActivity::getUnknown();
 
@@ -112,11 +93,7 @@ public:
   }
 
   void print(raw_ostream &os) const {
-    if (!value) {
-      os << "<uninitialized>";
-      return;
-    }
-    switch (*value) {
+    switch (value) {
     case ActivityKind::ActiveVal:
       os << "ActiveVal";
       break;
@@ -138,8 +115,8 @@ public:
   }
 
 private:
-  /// The known activity kind.
-  std::optional<ActivityKind> value;
+  /// The activity kind. Optimistically initialized to constant.
+  ActivityKind value = ActivityKind::Constant;
 };
 
 raw_ostream &operator<<(raw_ostream &os, const ValueActivity &val) {
@@ -295,19 +272,13 @@ public:
 /// ActiveOrConstant: active in && active out && const in
 /// Constant: everything else
 struct MemoryActivityState {
-  bool activeLoad;
-  bool activeStore;
-  // Active init is like active store, but a special case for arguments. We
-  // need to distinguish arguments that start with active data vs arguments
-  // that get active data stored into them during the function.
-  bool activeInit;
-  // Analogous special case for arguments that are written to, thus having
-  // active data escape
-  bool activeEscape;
+  /// Whether active data has stored into this memory location.
+  bool activeIn = false;
+  /// Whether active data was loaded out of this memory location.
+  bool activeOut = false;
 
   bool operator==(const MemoryActivityState &other) {
-    return activeLoad == other.activeLoad && activeStore == other.activeStore &&
-           activeInit == other.activeInit && activeEscape == other.activeEscape;
+    return activeIn == other.activeIn && activeOut == other.activeOut;
   }
 
   bool operator!=(const MemoryActivityState &other) {
@@ -319,10 +290,8 @@ struct MemoryActivityState {
       return ChangeResult::NoChange;
     }
 
-    activeLoad |= other.activeLoad;
-    activeStore |= other.activeStore;
-    activeInit |= other.activeInit;
-    activeEscape |= other.activeEscape;
+    activeIn |= other.activeIn;
+    activeOut |= other.activeOut;
     return ChangeResult::Change;
   }
 };
@@ -341,12 +310,12 @@ public:
 
   bool hasActiveData(Value value) const {
     const auto &state = activityStates.lookup(value);
-    return state.activeInit || state.activeStore;
+    return state.activeIn;
   }
 
   bool activeDataFlowsOut(Value value) const {
     const auto &state = activityStates.lookup(value);
-    return state.activeLoad || state.activeEscape;
+    return state.activeOut;
   }
 
   /// Set the internal activity state.
@@ -354,49 +323,23 @@ public:
     if (activityStates.contains(value)) {
       return ChangeResult::NoChange;
     }
-    activityStates.insert({value, MemoryActivityState{.activeLoad = false,
-                                                      .activeStore = false,
-                                                      .activeInit = false,
-                                                      .activeEscape = false}});
+    activityStates.insert({value, MemoryActivityState{}});
     return ChangeResult::Change;
   }
 
-  ChangeResult setActiveStore(Value value, bool activeStore) {
-    ChangeResult result = ChangeResult::NoChange;
+  ChangeResult setActiveIn(Value value) {
     auto &state = activityStates[value];
-    if (state.activeStore != activeStore)
-      result = ChangeResult::Change;
-    state.activeStore = activeStore;
+    ChangeResult result =
+        state.activeIn ? ChangeResult::NoChange : ChangeResult::Change;
+    state.activeIn = true;
     return result;
   }
 
-  ChangeResult setActiveLoad(Value value, bool activeLoad) {
-    ChangeResult result = ChangeResult::NoChange;
+  ChangeResult setActiveOut(Value value) {
     auto &state = activityStates[value];
-    if (state.activeLoad != activeLoad) {
-      result = ChangeResult::Change;
-    }
-    state.activeLoad = activeLoad;
-    return result;
-  }
-
-  ChangeResult setActiveInit(Value value, bool activeInit) {
-    auto &state = activityStates[value];
-    ChangeResult result = ChangeResult::NoChange;
-    if (state.activeInit != activeInit) {
-      result = ChangeResult::Change;
-      state.activeInit = activeInit;
-    }
-    return result;
-  }
-
-  ChangeResult setActiveEscape(Value value, bool activeEscape) {
-    auto &state = activityStates[value];
-    ChangeResult result = ChangeResult::NoChange;
-    if (state.activeEscape != activeEscape) {
-      result = ChangeResult::Change;
-      state.activeEscape = activeEscape;
-    }
+    ChangeResult result =
+        state.activeOut ? ChangeResult::NoChange : ChangeResult::Change;
+    state.activeOut = true;
     return result;
   }
 
@@ -406,9 +349,8 @@ public:
          << "\n";
     }
     for (const auto &[value, state] : activityStates) {
-      os << value << ": load " << state.activeLoad << " store "
-         << state.activeStore << " init " << state.activeInit << " escape "
-         << state.activeEscape << "\n";
+      os << value << ": in " << state.activeIn << " out " << state.activeOut
+         << "\n";
     }
   }
 
@@ -596,23 +538,23 @@ public:
 
   void visitOperation(Operation *op, const ForwardMemoryActivity &before,
                       ForwardMemoryActivity *after) override {
+    ChangeResult result = after->join(before);
     auto memory = dyn_cast<MemoryEffectOpInterface>(op);
     // If we can't reason about the memory effects, then conservatively assume
     // we can't deduce anything about activity via side-effects.
     if (!memory)
-      return setToEntryState(after);
+      return;
 
     SmallVector<MemoryEffects::EffectInstance> effects;
     memory.getEffects(effects);
 
-    ChangeResult result = after->join(before);
     for (const auto &effect : effects) {
       Value value = effect.getValue();
 
       // If we see an effect on anything other than a value, assume we can't
       // deduce anything about the activity.
       if (!value)
-        return setToEntryState(after);
+        return;
 
       // In forward-flow, a value is active if loaded from a memory resource
       // that has previously been actively stored to.
@@ -622,7 +564,7 @@ public:
         forEachAliasedAlloc(
             ptrAliasClass, availableAllocs, entryAllocs, [&](Value alloc) {
               if (before.hasActiveData(alloc)) {
-                result |= after->setActiveLoad(alloc, true);
+                result |= after->setActiveOut(alloc);
                 for (OpResult opResult : op->getResults()) {
                   // Mark the result as (forward) active
                   // TODO: We might need type analysis here
@@ -637,7 +579,7 @@ public:
                 }
 
                 if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
-                  result |= after->setActiveLoad(alloc, true);
+                  result |= after->setActiveOut(alloc);
 
                   // propagate from input to block argument
                   for (OpOperand *inputOperand :
@@ -667,7 +609,7 @@ public:
             forEachAliasedAlloc(
                 ptrAliasClass, availableAllocs, entryAllocs, [&](Value alloc) {
                   // Mark the pointer as having been actively stored into
-                  result |= after->setActiveStore(alloc, true);
+                  result |= after->setActiveIn(alloc);
 
                   // Mark the destination pointer as an active pointer
                   auto ptrValueActivity =
@@ -691,7 +633,7 @@ public:
                   forEachAliasedAlloc(
                       destAliasClass, availableAllocs, entryAllocs,
                       [&](Value destAlloc) {
-                        result |= after->setActiveStore(destAlloc, true);
+                        result |= after->setActiveIn(destAlloc);
                         auto ptrValueActivity =
                             getOrCreate<ForwardValueActivity>(destAlloc);
                         propagateIfChanged(ptrValueActivity,
@@ -718,7 +660,7 @@ public:
                 forEachAliasedAlloc(
                     ptrAliasClass, availableAllocs, entryAllocs,
                     [&](Value alloc) {
-                      result |= after->setActiveStore(alloc, true);
+                      result |= after->setActiveIn(alloc);
                       auto ptrValueActivity =
                           getOrCreate<ForwardValueActivity>(alloc);
                       propagateIfChanged(ptrValueActivity,
@@ -741,7 +683,7 @@ public:
     join(after, before);
   }
 
-  /// Entry states in the framework are synonymously with pessimistic states,
+  /// Entry states in the framework are synonymous with pessimistic states,
   /// which in dense AA would be "everything is active". However, dense AA is
   /// actually initialized optimistically, assuming "everything is constant".
   void setToEntryState(ForwardMemoryActivity *lattice) override {}
@@ -763,23 +705,23 @@ public:
 
   void visitOperation(Operation *op, const BackwardMemoryActivity &after,
                       BackwardMemoryActivity *before) override {
+    ChangeResult result = before->meet(after);
     auto memory = dyn_cast<MemoryEffectOpInterface>(op);
     // If we can't reason about the memory effects, then conservatively assume
     // we can't deduce anything about activity via side-effects.
     if (!memory)
-      return setToExitState(before);
+      return;
 
     SmallVector<MemoryEffects::EffectInstance> effects;
     memory.getEffects(effects);
 
-    ChangeResult result = before->meet(after);
     for (const auto &effect : effects) {
       Value value = effect.getValue();
 
       // If we see an effect on anything other than a value, assume we can't
       // deduce anything about the activity.
       if (!value)
-        return setToExitState(before);
+        return;
 
       // In backward-flow, a value is active if stored into a memory resource
       // that has subsequently been actively loaded from.
@@ -794,7 +736,7 @@ public:
                 getOrCreateFor<AvailableAllocations>(op, op);
             forEachAliasedAlloc(
                 ptrAliasClass, availableAllocs, entryAllocs, [&](Value alloc) {
-                  result |= before->setActiveLoad(alloc, true);
+                  result |= before->setActiveOut(alloc);
 
                   auto ptrState = getOrCreate<BackwardValueActivity>(value);
                   propagateIfChanged(
@@ -811,7 +753,7 @@ public:
         forEachAliasedAlloc(
             ptrAliasClass, availableAllocs, entryAllocs, [&](Value alloc) {
               if (stored.has_value() && after.activeDataFlowsOut(alloc)) {
-                result |= before->setActiveStore(alloc, true);
+                result |= before->setActiveIn(alloc);
                 ValueActivity resultActivity =
                     isa<FloatType, ComplexType>(stored->getType())
                         ? ValueActivity::getActiveVal()
@@ -821,13 +763,13 @@ public:
                                    valueState->meet(resultActivity));
               } else if (copySource.has_value() &&
                          after.activeDataFlowsOut(alloc)) {
-                result |= before->setActiveStore(alloc, true);
+                result |= before->setActiveIn(alloc);
                 auto *srcAliasClass =
                     getOrCreateFor<AliasClassLattice>(op, *copySource);
                 forEachAliasedAlloc(
                     srcAliasClass, availableAllocs, entryAllocs,
                     [&](Value srcAlloc) {
-                      before->setActiveLoad(srcAlloc, true);
+                      before->setActiveOut(srcAlloc);
                       auto *valueState =
                           getOrCreate<BackwardValueActivity>(srcAlloc);
                       propagateIfChanged(
@@ -836,7 +778,7 @@ public:
                     });
               } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
                 if (after.activeDataFlowsOut(alloc)) {
-                  result |= before->setActiveStore(alloc, true);
+                  result |= before->setActiveIn(alloc);
                   for (OpOperand *dpsInit : linalgOp.getDpsInitOperands()) {
                     if (dpsInit->get() == value) {
                       int64_t resultIndex = dpsInit->getOperandNumber() -
@@ -903,7 +845,7 @@ void enzyme::runDataFlowActivityAnalysis(
     // activity is kind of a proxy
     if (activity == enzyme::Activity::enzyme_dup ||
         activity == enzyme::Activity::enzyme_dupnoneed) {
-      initialState->setActiveInit(arg, true);
+      initialState->setActiveIn(arg);
 
       if (callee.getArgAttr(arg.getArgNumber(),
                             LLVM::LLVMDialect::getNoAliasAttrName()))
@@ -934,7 +876,7 @@ void enzyme::runDataFlowActivityAnalysis(
            llvm::zip(callee.getArguments(), argumentActivity)) {
         if (activity == enzyme::Activity::enzyme_dup ||
             activity == enzyme::Activity::enzyme_dupnoneed) {
-          returnDenseLattice->setActiveEscape(arg, true);
+          returnDenseLattice->setActiveOut(arg);
           auto *argLattice =
               solver.getOrCreateState<BackwardValueActivity>(arg);
           argLattice->meet(ValueActivity::getActivePtr());
