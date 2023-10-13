@@ -540,11 +540,22 @@ public:
   }
 };
 
+// When applying a transfer function to a store from memory, we need to know
+// what value is being stored.
 std::optional<Value> getStored(Operation *op) {
   if (auto storeOp = dyn_cast<LLVM::StoreOp>(op)) {
     return storeOp.getValue();
   } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
     return storeOp.getValue();
+  }
+  return std::nullopt;
+}
+
+std::optional<Value> getCopySource(Operation *op) {
+  if (auto copyOp = dyn_cast<CopyOpInterface>(op)) {
+    return copyOp.getSource();
+  } else if (isa<LLVM::MemcpyOp, LLVM::MemcpyInlineOp, LLVM::MemmoveOp>(op)) {
+    return op->getOperand(1);
   }
   return std::nullopt;
 }
@@ -666,6 +677,29 @@ public:
                       ptrValueActivity->join(ValueActivity::getActivePtr()));
                 });
           }
+        } else if (auto copySource = getCopySource(op)) {
+          auto *srcAliasClass =
+              getOrCreateFor<AliasClassLattice>(op, *copySource);
+          auto *availableAllocs = getOrCreateFor<AvailableAllocations>(op, op);
+          // Do we need to iterate over aliased allocations here?
+          // If there's *any* aliased allocation that contains active data
+          forEachAliasedAlloc(
+              srcAliasClass, availableAllocs, entryAllocs, [&](Value srcAlloc) {
+                if (before.hasActiveData(srcAlloc)) {
+                  auto *destAliasClass =
+                      getOrCreateFor<AliasClassLattice>(op, value);
+                  forEachAliasedAlloc(
+                      destAliasClass, availableAllocs, entryAllocs,
+                      [&](Value destAlloc) {
+                        result |= after->setActiveStore(destAlloc, true);
+                        auto ptrValueActivity =
+                            getOrCreate<ForwardValueActivity>(destAlloc);
+                        propagateIfChanged(ptrValueActivity,
+                                           ptrValueActivity->join(
+                                               ValueActivity::getActivePtr()));
+                      });
+                }
+              });
         } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
           // linalg.yield stores to the corresponding value.
           for (OpOperand *dpsInit : linalgOp.getDpsInitOperands()) {
@@ -773,6 +807,7 @@ public:
         auto *ptrAliasClass = getOrCreateFor<AliasClassLattice>(op, value);
         auto *availableAllocs = getOrCreateFor<AvailableAllocations>(op, op);
         std::optional<Value> stored = getStored(op);
+        std::optional<Value> copySource = getCopySource(op);
         forEachAliasedAlloc(
             ptrAliasClass, availableAllocs, entryAllocs, [&](Value alloc) {
               if (stored.has_value() && after.activeDataFlowsOut(alloc)) {
@@ -784,6 +819,21 @@ public:
                 auto *valueState = getOrCreate<BackwardValueActivity>(*stored);
                 propagateIfChanged(valueState,
                                    valueState->meet(resultActivity));
+              } else if (copySource.has_value() &&
+                         after.activeDataFlowsOut(alloc)) {
+                result |= before->setActiveStore(alloc, true);
+                auto *srcAliasClass =
+                    getOrCreateFor<AliasClassLattice>(op, *copySource);
+                forEachAliasedAlloc(
+                    srcAliasClass, availableAllocs, entryAllocs,
+                    [&](Value srcAlloc) {
+                      before->setActiveLoad(srcAlloc, true);
+                      auto *valueState =
+                          getOrCreate<BackwardValueActivity>(srcAlloc);
+                      propagateIfChanged(
+                          valueState,
+                          valueState->meet(ValueActivity::getActivePtr()));
+                    });
               } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
                 if (after.activeDataFlowsOut(alloc)) {
                   result |= before->setActiveStore(alloc, true);
