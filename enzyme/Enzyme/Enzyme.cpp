@@ -68,6 +68,7 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/AbstractCallSite.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
@@ -97,6 +98,9 @@ using namespace llvm;
 #undef DEBUG_TYPE
 #endif
 #define DEBUG_TYPE "lower-enzyme-intrinsic"
+
+llvm::cl::opt<bool> EnzymeEnable("enzyme-enable", cl::init(true), cl::Hidden,
+                                 cl::desc("Run the Enzyme pass"));
 
 llvm::cl::opt<bool>
     EnzymePostOpt("enzyme-postopt", cl::init(false), cl::Hidden,
@@ -3191,6 +3195,9 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 #endif
   {
     MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+
+    if (!EnzymeEnable)
+      return;
 
 #if LLVM_VERSION_MAJOR >= 12
     if (Level != OptimizationLevel::O0)
