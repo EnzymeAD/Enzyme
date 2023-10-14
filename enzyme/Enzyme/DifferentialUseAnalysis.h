@@ -51,11 +51,14 @@ extern llvm::cl::opt<bool> EnzymePrintDiffUse;
 namespace DifferentialUseAnalysis {
 
 /// Determine if a value is needed directly to compute the adjoint
-/// of the given instruction user
+/// of the given instruction user. `shadow` denotes whether we are considering
+/// the shadow of the value (shadow=true) or the primal of the value
+/// (shadow=false)
 bool is_use_directly_needed_in_reverse(
     const GradientUtils *gutils, const llvm::Value *val,
     const llvm::Instruction *user,
-    const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable);
+    const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable,
+    bool shadow);
 
 template <ValueType VT, bool OneLevel = false>
 inline bool is_value_needed_in_reverse(
@@ -439,7 +442,8 @@ inline bool is_value_needed_in_reverse(
               }
             for (auto &pair : pair.second.loadLikeCalls)
               if (is_use_directly_needed_in_reverse(
-                      gutils, pair.operand, pair.loadCall, oldUnreachable) ||
+                      gutils, pair.operand, pair.loadCall, oldUnreachable,
+                      /*shadow*/ false) ||
                   is_value_needed_in_reverse<VT>(gutils, pair.loadCall, mode,
                                                  seen, oldUnreachable)) {
                 if (EnzymePrintDiffUse)
@@ -575,8 +579,8 @@ inline bool is_value_needed_in_reverse(
         }
       }
 
-    bool direct =
-        is_use_directly_needed_in_reverse(gutils, inst, user, oldUnreachable);
+    bool direct = is_use_directly_needed_in_reverse(
+        gutils, inst, user, oldUnreachable, /*shadow*/ false);
     if (!direct)
       continue;
 

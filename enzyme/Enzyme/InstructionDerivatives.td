@@ -46,18 +46,20 @@ class InstPattern<dag patternToMatch, string funcName, int minVer_, int maxVer_,
   dag ArgDuals = forwardOps;
 }
 
-class Inst<string mnemonic> {
+class Operation<bit usesPrimal_, bit usesShadow_, bit usesCustom_=false> {
+  bit usesPrimal = usesPrimal_;
+  bit usesShadow = usesShadow_;
+  bit usesCustom = usesCustom_;
+}
+class Inst<string mnemonic>  : Operation</*primal*/true, /*shadow*/false> {
   string name = mnemonic;
 }
 
-def TypeOf {
+def TypeOf : Operation</*primal*/false, /*shadow*/false> {
 }
-def VectorSize {
+def VectorSize : Operation</*primal*/false, /*shadow*/false> {
 }
-
-
-
-def SelectIfActive {
+def SelectIfActive : Operation</*primal*/false, /*shadow*/false, /*custom*/true> {
   
 }
 
@@ -103,7 +105,7 @@ class Intrinsic<string name_, list<int> types_ = [0]> : Inst<"Intrinsic"> {
 def Op {
 }
 
-class SubRoutine<dag patternToMatch, dag insts_> {
+class SubRoutine<dag patternToMatch, dag insts_> : Operation</*primal*/true,/*shadow*/false> {
   dag PatternToMatch = patternToMatch;
   dag insts = insts_;
 }
@@ -120,7 +122,7 @@ class InsertValue<list<int> indices_> : Inst<"InsertValue"> {
   list<int> indices = indices_;
 }
 
-class MultiReturn {
+class MultiReturn : Operation</*primal*/true,/*shadow*/false> {
   bit struct;
 }
 def StructRet : MultiReturn {
@@ -166,8 +168,6 @@ def CFExp : SubRoutine<(Op (Op $re, $im):$z),
       (FMul $exp, (FSin $im))
     )>;
 
-def DifR : Inst<"DifR">;
-
 // Same function as the one being called
 def SameFunc {
 }
@@ -201,10 +201,10 @@ def AssertingInactiveArg : InactiveArgSpec {
   bit asserting = 1;
 }
 
-class GlobalExpr<string val> {
+class GlobalExpr<bit uses_primal, bit uses_shadow, string val> : Operation<uses_primal, uses_shadow>{
   string value = val;
 }
-def MantissaMaskOfReturn : GlobalExpr<"({\n"
+def MantissaMaskOfReturn : GlobalExpr</*primal*/false, /*shadow*/false, "({\n"
 "    auto ty = call.getType();\n"
 "    unsigned low = 0;\n"
 "    unsigned high = 0;\n"
@@ -233,20 +233,20 @@ def MantissaMaskOfReturn : GlobalExpr<"({\n"
 "    ConstantInt::get(ity, eval);\n"
 "  })">;
 
-class ConstantFP<string val> {
+class ConstantFP<string val> : Operation</*primal*/false, /*shadow*/false> {
   string value = val;
 }
-def Zero {
+def Zero : Operation</*primal*/false, /*shadow*/false> {
 }
-class ConstantCFP<string rval, string ival> {
+class ConstantCFP<string rval, string ival> : Operation</*primal*/false, /*shadow*/false> {
   string rvalue = rval;
   string ivalue = ival;
 }
-class ConstantInt<int value_, int bitwidth_=0> {
+class ConstantInt<int value_, int bitwidth_=0> : Operation</*primal*/false, /*shadow*/false> {
   int value = value_;
   int bitwidth=bitwidth_;
 }
-class Undef {
+class Undef : Operation</*primal*/false, /*shadow*/false> {
 }
 
 class DiffeRetIndex<list<int> indices_> {
@@ -254,7 +254,7 @@ class DiffeRetIndex<list<int> indices_> {
 }
 def DiffeRet : DiffeRetIndex<[-1]>;
 
-def Shadow {
+def Shadow : Operation</*primal*/false, /*shadow*/true> {
 }
 
 def : CallPattern<(Op $x),
@@ -822,7 +822,7 @@ def : IntrPattern<(Op $x, $y),
                   [["powi"]],
                   [
                     (Select 
-                      (Or (ICmpEQ $y, (ConstantInt<0> $y) ), (And (GlobalExpr<"ConstantInt::get(Type::getInt1Ty(gutils->newFunc->getContext()), EnzymeStrongZero)">), (FCmpOEQ (DiffeRet), (ConstantFP<"0"> $x) ) ) ),
+                      (Or (ICmpEQ $y, (ConstantInt<0> $y) ), (And (GlobalExpr</*needsprimal*/false, /*needsshadow*/false, "ConstantInt::get(Type::getInt1Ty(gutils->newFunc->getContext()), EnzymeStrongZero)">), (FCmpOEQ (DiffeRet), (ConstantFP<"0"> $x) ) ) ),
                       (ConstantFP<"0"> $x),
                       (FMul (DiffeRet),
                         (FMul (SIToFP $y, (TypeOf $x)), (Call<(SameFunc)> $x, (ISub $y, (ConstantInt<1> $y))))

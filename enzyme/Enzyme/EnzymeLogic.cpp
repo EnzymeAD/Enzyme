@@ -749,7 +749,7 @@ void calculateUnusedValuesInFunction(
             if (auto I = dyn_cast<Instruction>(u)) {
               if (unnecessaryInstructions.count(I)) {
                 if (!DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
-                        gutils, cur, I, oldUnreachable)) {
+                        gutils, cur, I, oldUnreachable, /*shadow*/false)) {
                   continue;
                 }
               }

@@ -33,6 +33,7 @@
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Instruction.h"
+#include "llvm/IR/IntrinsicsX86.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -49,7 +50,7 @@ using namespace llvm;
 
 bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     const GradientUtils *gutils, const Value *val, const Instruction *user,
-    const SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
+    const SmallPtrSetImpl<BasicBlock *> &oldUnreachable, bool shadow) {
   TypeResults const &TR = gutils->TR;
   if (auto ainst = dyn_cast<Instruction>(val)) {
     assert(ainst->getParent()->getParent() == gutils->oldFunc);
@@ -58,6 +59,8 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
   if (oldUnreachable.count(user->getParent()))
     return false;
+
+  assert(!shadow);
 
   if (isPointerArithmeticInst(user, /*includephi*/ true,
                               /*includebin*/ false)) {
@@ -181,7 +184,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   }
 
   if (isa<CmpInst>(user) || isa<BranchInst>(user) || isa<ReturnInst>(user) ||
-      isa<FPExtInst>(user) || isa<FPTruncInst>(user) || isa<FreezeInst>(user)
+      isa<FPExtInst>(user) || isa<FPTruncInst>(user)
       // isa<ExtractElement>(use) ||
       // isa<InsertElementInst>(use) || isa<ShuffleVectorInst>(use) ||
       // isa<ExtractValueInst>(use) || isa<AllocaInst>(use)
@@ -300,59 +303,6 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         ID == Intrinsic::stacksave || ID == Intrinsic::stackrestore) {
       return false;
     }
-    if (ID == Intrinsic::fma || ID == Intrinsic::fmuladd) {
-      bool needed = false;
-      if (user->getOperand(0) == val &&
-          !gutils->isConstantValue(user->getOperand(1)))
-        needed = true;
-      if (user->getOperand(1) == val &&
-          !gutils->isConstantValue(user->getOperand(0)))
-        needed = true;
-      if (needed) {
-        if (EnzymePrintDiffUse)
-          llvm::errs() << " Need direct primal of " << *val
-                       << " in reverse from fma " << *user << "\n";
-      }
-      return needed;
-    }
-  }
-
-  if (auto op = dyn_cast<BinaryOperator>(user)) {
-    if (op->getOpcode() == Instruction::FAdd ||
-        op->getOpcode() == Instruction::FSub) {
-      return false;
-    } else if (op->getOpcode() == Instruction::FMul) {
-      bool needed = false;
-      if (op->getOperand(0) == val &&
-          !gutils->isConstantValue(op->getOperand(1)))
-        needed = true;
-      if (op->getOperand(1) == val &&
-          !gutils->isConstantValue(op->getOperand(0)))
-        needed = true;
-      if (needed) {
-        if (EnzymePrintDiffUse)
-          llvm::errs() << " Need direct primal of " << *val
-                       << " in reverse from fmul " << *user << "\n";
-      }
-      return needed;
-    } else if (op->getOpcode() == Instruction::FDiv) {
-      bool needed = false;
-      if (op->getOperand(1) == val &&
-          !gutils->isConstantValue(op->getOperand(1)))
-        needed = true;
-      if (op->getOperand(1) == val &&
-          !gutils->isConstantValue(op->getOperand(0)))
-        needed = true;
-      if (op->getOperand(0) == val &&
-          !gutils->isConstantValue(op->getOperand(1)))
-        needed = true;
-      if (needed) {
-        if (EnzymePrintDiffUse)
-          llvm::errs() << " Need direct primal of " << *val
-                       << " in reverse from fdiv " << *user << "\n";
-      }
-      return needed;
-    }
   }
 
   if (auto si = dyn_cast<SelectInst>(user)) {
@@ -371,33 +321,10 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     return needed;
   }
 
-  if (auto CI = dyn_cast<CallInst>(user)) {
-
-    auto Mode = gutils->mode;
-    const bool cacheMode = (Mode != DerivativeMode::ForwardMode);
-
-    auto funcName = getFuncNameFromCall(CI);
-    auto blasMetaData = extractBLAS(funcName);
-#if LLVM_VERSION_MAJOR >= 16
-    if (blasMetaData.has_value())
-#else
-    if (blasMetaData.hasValue())
-#endif
-    {
-      const std::vector<bool> *overwritten_args_ptr = nullptr;
-      if (gutils->overwritten_args_map_ptr) {
-        auto found =
-            gutils->overwritten_args_map_ptr->find(const_cast<CallInst *>(CI));
-        assert(found != gutils->overwritten_args_map_ptr->end());
-        overwritten_args_ptr = &found->second;
-      }
-#if LLVM_VERSION_MAJOR >= 16
-      BlasInfo blas = blasMetaData.value();
-#else
-      BlasInfo blas = blasMetaData.getValue();
-#endif
 #include "BlasDiffUse.inc"
-    }
+
+  if (auto CI = dyn_cast<CallInst>(user)) {
+    auto funcName = getFuncNameFromCall(CI);
 
     // Only need primal (and shadow) request for reverse
     if (funcName == "MPI_Isend" || funcName == "MPI_Irecv" ||
