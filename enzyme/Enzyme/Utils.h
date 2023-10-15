@@ -355,8 +355,6 @@ static inline std::string to_string(ValueType mode) {
   llvm_unreachable("illegal valuetype");
 }
 
-typedef std::pair<const llvm::Value *, ValueType> UsageKey;
-
 static inline std::string to_string(DerivativeMode mode) {
   switch (mode) {
   case DerivativeMode::ForwardMode:

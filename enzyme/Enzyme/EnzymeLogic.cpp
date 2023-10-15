@@ -641,7 +641,7 @@ void calculateUnusedValuesInFunction(
   for (auto pair : gutils->knownRecomputeHeuristic) {
     if (!pair.second ||
         gutils->unnecessaryIntermediates.count(cast<Instruction>(pair.first))) {
-      CacheResults[UsageKey(pair.first, ValueType::Primal)] = false;
+      CacheResults[UsageKey(pair.first, QueryType::Primal)] = false;
     }
   }
   std::map<UsageKey, bool> PrimalSeen;
@@ -654,7 +654,7 @@ void calculateUnusedValuesInFunction(
       continue;
 
     bool primalNeededInReverse =
-        DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Primal>(
+        DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Primal>(
             gutils, pair.first, mode, CacheResults, oldUnreachable);
 
     // If rematerializing a split or loop-level allocation, the primal
@@ -692,7 +692,7 @@ void calculateUnusedValuesInFunction(
       continue;
 
     bool primalNeededInReverse =
-        DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Primal>(
+        DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Primal>(
             gutils, rmat.first, mode, CacheResults, oldUnreachable);
     // If rematerializing a split or loop-level allocation, the primal
     // allocation is not needed in the reverse.
@@ -749,7 +749,8 @@ void calculateUnusedValuesInFunction(
             if (auto I = dyn_cast<Instruction>(u)) {
               if (unnecessaryInstructions.count(I)) {
                 if (!DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
-                        gutils, cur, I, oldUnreachable, /*shadow*/false)) {
+                        gutils, cur, mode, I, oldUnreachable,
+                        QueryType::Primal)) {
                   continue;
                 }
               }
@@ -821,7 +822,7 @@ void calculateUnusedValuesInFunction(
       func, unnecessaryValues, unnecessaryInstructions, returnValue,
       [&](const Value *val) {
         bool ivn = DifferentialUseAnalysis::is_value_needed_in_reverse<
-            ValueType::Primal>(gutils, val, mode, PrimalSeen, oldUnreachable);
+            QueryType::Primal>(gutils, val, mode, PrimalSeen, oldUnreachable);
         return ivn;
       },
       [&](const Instruction *inst) {
@@ -1015,7 +1016,7 @@ void calculateUnusedValuesInFunction(
             for (auto pair : gutils->rematerializableAllocations) {
               if (pair.second.stores.count(inst)) {
                 if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-                        ValueType::Primal>(gutils, pair.first, mode, PrimalSeen,
+                        QueryType::Primal>(gutils, pair.first, mode, PrimalSeen,
                                            oldUnreachable)) {
                   return UseReq::Need;
                 }
@@ -1026,7 +1027,7 @@ void calculateUnusedValuesInFunction(
         }
 
         bool ivn = DifferentialUseAnalysis::is_value_needed_in_reverse<
-            ValueType::Primal>(gutils, inst, mode, PrimalSeen, oldUnreachable);
+            QueryType::Primal>(gutils, inst, mode, PrimalSeen, oldUnreachable);
         if (ivn) {
           return UseReq::Need;
         }
@@ -1079,9 +1080,9 @@ void calculateUnusedValuesInFunction(
     for (auto &BB : func)
       for (auto &I : BB) {
         bool ivn = DifferentialUseAnalysis::is_value_needed_in_reverse<
-            ValueType::Primal>(gutils, &I, mode, PrimalSeen, oldUnreachable);
+            QueryType::Primal>(gutils, &I, mode, PrimalSeen, oldUnreachable);
         bool isn = DifferentialUseAnalysis::is_value_needed_in_reverse<
-            ValueType::Shadow>(gutils, &I, mode, PrimalSeen, oldUnreachable);
+            QueryType::Shadow>(gutils, &I, mode, PrimalSeen, oldUnreachable);
         llvm::errs() << I << " ivn=" << (int)ivn << " isn: " << (int)isn;
         auto found = gutils->knownRecomputeHeuristic.find(&I);
         if (found != gutils->knownRecomputeHeuristic.end()) {
@@ -1093,9 +1094,9 @@ void calculateUnusedValuesInFunction(
                  << ": mode=" << to_string(mode) << "\n";
     for (auto a : unnecessaryValues) {
       bool ivn = DifferentialUseAnalysis::is_value_needed_in_reverse<
-          ValueType::Primal>(gutils, a, mode, PrimalSeen, oldUnreachable);
+          QueryType::Primal>(gutils, a, mode, PrimalSeen, oldUnreachable);
       bool isn = DifferentialUseAnalysis::is_value_needed_in_reverse<
-          ValueType::Shadow>(gutils, a, mode, PrimalSeen, oldUnreachable);
+          QueryType::Shadow>(gutils, a, mode, PrimalSeen, oldUnreachable);
       llvm::errs() << *a << " ivn=" << (int)ivn << " isn: " << (int)isn;
       auto found = gutils->knownRecomputeHeuristic.find(a);
       if (found != gutils->knownRecomputeHeuristic.end()) {
@@ -1368,7 +1369,7 @@ bool legalCombinedForwardReverse(
     bool sret = subretused;
     if (!sret && !gutils->isConstantValue(origop)) {
       sret = DifferentialUseAnalysis::is_value_needed_in_reverse<
-          ValueType::Shadow>(gutils, origop, gutils->mode, oldUnreachable);
+          QueryType::Shadow>(gutils, origop, gutils->mode, oldUnreachable);
     }
 
     if (sret) {
@@ -1432,7 +1433,7 @@ bool legalCombinedForwardReverse(
       bool needShadow = false;
       if (!gutils->isConstantValue(I)) {
         needShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
-            ValueType::Shadow>(gutils, I, DerivativeMode::ReverseModeCombined,
+            QueryType::Shadow>(gutils, I, DerivativeMode::ReverseModeCombined,
                                oldUnreachable);
       }
       if (!needShadow) {
@@ -1466,7 +1467,7 @@ bool legalCombinedForwardReverse(
       return;
     }
     if (!I->getType()->isVoidTy() &&
-        DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Primal>(
+        DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Primal>(
             gutils, I, DerivativeMode::ReverseModeCombined, oldUnreachable)) {
       legal = false;
       if (EnzymePrintPerf) {
@@ -1481,7 +1482,7 @@ bool legalCombinedForwardReverse(
     }
     if (!I->getType()->isVoidTy() &&
         gutils->TR.query(I)[{-1}].isPossiblePointer() &&
-        DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Shadow>(
+        DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Shadow>(
             gutils, I, DerivativeMode::ReverseModeCombined, oldUnreachable)) {
       legal = false;
       if (EnzymePrintPerf) {

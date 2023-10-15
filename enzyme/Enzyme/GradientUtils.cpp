@@ -3018,10 +3018,10 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
       std::map<UsageKey, bool> Seen;
       for (auto pair : knownRecomputeHeuristic)
         if (!pair.second)
-          Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+          Seen[UsageKey(pair.first, QueryType::Primal)] = false;
 
       if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-              ValueType::Primal>(this, pair.first, mode, Seen,
+              QueryType::Primal>(this, pair.first, mode, Seen,
                                  notForAnalysis)) {
         rematerialized = true;
       }
@@ -4320,7 +4320,7 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
       if (!orig->getType()->isFPOrFPVectorTy() &&
           TR.query(orig).Inner0().isPossiblePointer()) {
         if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-                ValueType::Shadow>(this, orig,
+                QueryType::Shadow>(this, orig,
                                    DerivativeMode::ReverseModePrimal,
                                    notForAnalysis)) {
           subretType = DIFFE_TYPE::DUP_ARG;
@@ -7846,8 +7846,8 @@ void GradientUtils::computeMinCache() {
         }
       }
       for (auto inst : NewLoopBoundReq) {
-        OneLevelSeen[UsageKey(inst, ValueType::Primal)] = true;
-        FullSeen[UsageKey(inst, ValueType::Primal)] = true;
+        OneLevelSeen[UsageKey(inst, QueryType::Primal)] = true;
+        FullSeen[UsageKey(inst, QueryType::Primal)] = true;
       }
     }
 
@@ -7870,10 +7870,10 @@ void GradientUtils::computeMinCache() {
       for (Instruction &I : BB) {
         if (!legalRecompute(&I, Available2, nullptr)) {
           if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-                  ValueType::Primal>(this, &I, minCutMode, FullSeen,
+                  QueryType::Primal>(this, &I, minCutMode, FullSeen,
                                      notForAnalysis)) {
             bool oneneed = DifferentialUseAnalysis::is_value_needed_in_reverse<
-                ValueType::Primal,
+                QueryType::Primal,
                 /*OneLevel*/ true>(this, &I, minCutMode, OneLevelSeen,
                                    notForAnalysis);
             if (oneneed) {
@@ -7898,7 +7898,7 @@ void GradientUtils::computeMinCache() {
       if (Intermediates.count(V))
         continue;
       if (!DifferentialUseAnalysis::is_value_needed_in_reverse<
-              ValueType::Primal>(this, V, minCutMode, FullSeen,
+              QueryType::Primal>(this, V, minCutMode, FullSeen,
                                  notForAnalysis)) {
         continue;
       }
@@ -7920,7 +7920,7 @@ void GradientUtils::computeMinCache() {
       }
       Intermediates.insert(V);
       if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-              ValueType::Primal, /*OneLevel*/ true>(
+              QueryType::Primal, /*OneLevel*/ true>(
               this, V, minCutMode, OneLevelSeen, notForAnalysis)) {
         Required.insert(V);
       } else {
@@ -8427,7 +8427,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
 
   std::map<UsageKey, bool> Seen;
   bool primalNeededInReverse =
-      DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Primal>(
+      DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Primal>(
           this, V, DerivativeMode::ReverseModeGradient, Seen, notForAnalysis);
 
   SmallVector<LoadInst *, 1> loads;

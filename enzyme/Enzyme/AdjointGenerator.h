@@ -353,7 +353,7 @@ public:
     auto placeholder = cast<PHINode>(&*found->second);
     gutils->invertedPointers.erase(found);
 
-    if (!DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Shadow>(
+    if (!DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Shadow>(
             gutils, &I, Mode, oldUnreachable)) {
       gutils->erase(placeholder);
       return;
@@ -470,7 +470,7 @@ public:
 
         // only make shadow where caching needed
         if (!DifferentialUseAnalysis::is_value_needed_in_reverse<
-                ValueType::Shadow>(gutils, &I, Mode, oldUnreachable)) {
+                QueryType::Shadow>(gutils, &I, Mode, oldUnreachable)) {
           gutils->erase(placeholder);
           return;
         }
@@ -528,7 +528,7 @@ public:
           // TODO: In the case of fwd mode this should be true if the loaded
           // value itself is used as a pointer.
           bool needShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
-              ValueType::Shadow>(gutils, &I, Mode, oldUnreachable);
+              QueryType::Shadow>(gutils, &I, Mode, oldUnreachable);
 
           switch (Mode) {
 
@@ -541,7 +541,7 @@ public:
               assert(newip->getType() == type);
               if (Mode == DerivativeMode::ReverseModePrimal && can_modref &&
                   DifferentialUseAnalysis::is_value_needed_in_reverse<
-                      ValueType::Shadow>(gutils, &I,
+                      QueryType::Shadow>(gutils, &I,
                                          DerivativeMode::ReverseModeGradient,
                                          oldUnreachable)) {
                 gutils->cacheForReverse(BuilderZ, newip,
@@ -606,13 +606,13 @@ public:
       bool primalNeededInReverse = false;
       for (auto pair : gutils->knownRecomputeHeuristic)
         if (!pair.second) {
-          Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+          Seen[UsageKey(pair.first, QueryType::Primal)] = false;
           if (pair.first == &I)
             primalNeededInReverse = true;
         }
       primalNeededInReverse |=
           DifferentialUseAnalysis::is_value_needed_in_reverse<
-              ValueType::Primal>(gutils, &I, Mode, Seen, oldUnreachable);
+              QueryType::Primal>(gutils, &I, Mode, Seen, oldUnreachable);
       if (primalNeededInReverse) {
         inst = gutils->cacheForReverse(BuilderZ, newi,
                                        getIndex(&I, CacheType::Self));
@@ -7435,7 +7435,7 @@ public:
                   primalNeededInReverse = true;
                   break;
                 } else {
-                  Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+                  Seen[UsageKey(pair.first, QueryType::Primal)] = false;
                 }
               }
             if (!primalNeededInReverse) {
@@ -7445,7 +7445,7 @@ public:
                                     : Mode;
               primalNeededInReverse =
                   DifferentialUseAnalysis::is_value_needed_in_reverse<
-                      ValueType::Primal>(gutils, &call, minCutMode, Seen,
+                      QueryType::Primal>(gutils, &call, minCutMode, Seen,
                                          oldUnreachable);
             }
             if (primalNeededInReverse)
@@ -7487,7 +7487,7 @@ public:
 
         if (subretused) {
           if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-                  ValueType::Primal>(gutils, &call, Mode, oldUnreachable) &&
+                  QueryType::Primal>(gutils, &call, Mode, oldUnreachable) &&
               !gutils->unnecessaryIntermediates.count(&call)) {
             cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
                                               call.getName() + "_tmpcacheB");
@@ -7594,7 +7594,7 @@ public:
       if (/*!topLevel*/ Mode != DerivativeMode::ReverseModeCombined &&
           subretused && !call.doesNotAccessMemory()) {
         if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-                ValueType::Primal>(gutils, &call, Mode, oldUnreachable) &&
+                QueryType::Primal>(gutils, &call, Mode, oldUnreachable) &&
             !gutils->unnecessaryIntermediates.count(&call)) {
           assert(!replaceFunction);
           cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
@@ -8102,10 +8102,10 @@ public:
           std::map<UsageKey, bool> Seen;
           for (auto pair : gutils->knownRecomputeHeuristic)
             if (!pair.second)
-              Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+              Seen[UsageKey(pair.first, QueryType::Primal)] = false;
           primalNeededInReverse =
               DifferentialUseAnalysis::is_value_needed_in_reverse<
-                  ValueType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
+                  QueryType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
         }
         if (subretused && primalNeededInReverse) {
           if (normalReturn != newCall) {
@@ -8525,10 +8525,10 @@ public:
         if (!shouldCache && !lrc) {
           std::map<UsageKey, bool> Seen;
           for (auto pair : gutils->knownRecomputeHeuristic)
-            Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+            Seen[UsageKey(pair.first, QueryType::Primal)] = false;
           bool primalNeededInReverse =
               DifferentialUseAnalysis::is_value_needed_in_reverse<
-                  ValueType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
+                  QueryType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
           shouldCache = primalNeededInReverse;
         }
 
@@ -9098,12 +9098,12 @@ public:
       std::map<UsageKey, bool> Seen;
       for (auto pair : gutils->knownRecomputeHeuristic)
         if (!pair.second)
-          Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+          Seen[UsageKey(pair.first, QueryType::Primal)] = false;
       bool primalNeededInReverse =
           Mode == DerivativeMode::ForwardMode
               ? false
               : DifferentialUseAnalysis::is_value_needed_in_reverse<
-                    ValueType::Primal>(gutils, &call, Mode, Seen,
+                    QueryType::Primal>(gutils, &call, Mode, Seen,
                                        oldUnreachable);
 
       bool cacheWholeAllocation = gutils->needsCacheWholeAllocation(&call);
@@ -9376,7 +9376,7 @@ public:
       auto placeholder = cast<PHINode>(&*ifound->second);
 
       bool needShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
-          ValueType::Shadow>(gutils, &call, Mode, oldUnreachable);
+          QueryType::Shadow>(gutils, &call, Mode, oldUnreachable);
       if (!needShadow) {
         gutils->invertedPointers.erase(ifound);
         gutils->erase(placeholder);
@@ -9409,7 +9409,7 @@ public:
       auto placeholder = cast<PHINode>(&*ifound->second);
 
       bool needShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
-          ValueType::Shadow>(gutils, &call, Mode, oldUnreachable);
+          QueryType::Shadow>(gutils, &call, Mode, oldUnreachable);
       if (!needShadow) {
         gutils->invertedPointers.erase(ifound);
         gutils->erase(placeholder);
@@ -9917,10 +9917,10 @@ public:
             std::map<UsageKey, bool> Seen;
             for (auto pair : gutils->knownRecomputeHeuristic)
               if (!pair.second)
-                Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+                Seen[UsageKey(pair.first, QueryType::Primal)] = false;
             bool primalNeededInReverse =
                 DifferentialUseAnalysis::is_value_needed_in_reverse<
-                    ValueType::Primal>(gutils, rmat.first, Mode, Seen,
+                    QueryType::Primal>(gutils, rmat.first, Mode, Seen,
                                        oldUnreachable);
             bool cacheWholeAllocation =
                 gutils->needsCacheWholeAllocation(rmat.first);
@@ -10098,7 +10098,7 @@ public:
                 primalNeededInReverse = true;
                 break;
               } else {
-                Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+                Seen[UsageKey(pair.first, QueryType::Primal)] = false;
               }
             }
           if (!primalNeededInReverse) {
@@ -10108,7 +10108,7 @@ public:
                                   : Mode;
             primalNeededInReverse =
                 DifferentialUseAnalysis::is_value_needed_in_reverse<
-                    ValueType::Primal>(gutils, &call, minCutMode, Seen,
+                    QueryType::Primal>(gutils, &call, minCutMode, Seen,
                                        oldUnreachable);
           }
           if (primalNeededInReverse)

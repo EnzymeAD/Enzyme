@@ -1488,7 +1488,7 @@ static void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
       }
       os << "  case llvm::Instruction::" << name << ":{\n";
 
-      origName = "inst";
+      origName = "user";
       prefix = "  ";
       break;
     }
@@ -1724,21 +1724,31 @@ static void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
         os << prefix << "  }\n";
       }
 
+      os << prefix << "  if (shadow && !gutils->isConstantValue(" << origName
+         << "->getOperand(" << argIdx << "))";
+
+      if (foundDiffRet) {
+        os << " && !gutils->isConstantValue(const_cast<Value*>((const Value*)"
+           << origName << "))";
+      } else {
+        os << " && !gutils->isConstantInstruction(const_cast<Instruction*>( "
+           << origName << "))";
+      }
+
+      os << ") {\n";
+
+      os << prefix
+         << "    if (qtype == QueryType::Shadow && (mode == "
+            "DerivativeMode::ForwardMode || mode == "
+            "DerivativeMode::ForwardModeSplit)) {\n";
+      os << prefix
+         << "      if (EnzymePrintDiffUse) llvm::errs() << \"Need forward "
+            "shadow of \" << *val << \" from condition \" << *user << "
+            "\"\\n\";\n";
+      os << prefix << "        return true;\n";
+      os << prefix << "      }\n";
+
       if (foundShadowUse != "") {
-
-        os << prefix << "  if (shadow && !gutils->isConstantValue(" << origName
-           << "->getOperand(" << argIdx << "))";
-
-        if (foundDiffRet) {
-          os << " && !gutils->isConstantValue(const_cast<Value*>((const Value*)"
-             << origName << "))";
-        } else {
-          os << " && !gutils->isConstantInstruction(const_cast<Instruction*>( "
-             << origName << "))";
-        }
-
-        os << ") {\n";
-
         os << prefix << "    if (" << foundShadowUse << ") {\n";
         os << prefix << "      if (EnzymePrintDiffUse)\n";
         os << "           llvm::errs() << \"Need direct shadow of \" << *val "
@@ -1748,9 +1758,9 @@ static void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
         os << "\";\n";
         os << prefix << "      return true;\n";
         os << prefix << "    }\n";
-
-        os << prefix << "  }\n";
       }
+
+      os << prefix << "  }\n";
     }
 
     os << prefix << "  return false;\n";
