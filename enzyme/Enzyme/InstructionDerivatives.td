@@ -46,20 +46,20 @@ class InstPattern<dag patternToMatch, string funcName, int minVer_, int maxVer_,
   dag ArgDuals = forwardOps;
 }
 
-class Operation<bit usesPrimal_, bit usesShadow_, bit usesCustom_=false> {
+class Operation<bit usesPrimal_, bit usesShadow_, bit usesCustom_=0> {
   bit usesPrimal = usesPrimal_;
   bit usesShadow = usesShadow_;
   bit usesCustom = usesCustom_;
 }
-class Inst<string mnemonic>  : Operation</*primal*/true, /*shadow*/false> {
+class Inst<string mnemonic>  : Operation</*primal*/1, /*shadow*/0> {
   string name = mnemonic;
 }
 
-def TypeOf : Operation</*primal*/false, /*shadow*/false> {
+def TypeOf : Operation</*primal*/0, /*shadow*/0> {
 }
-def VectorSize : Operation</*primal*/false, /*shadow*/false> {
+def VectorSize : Operation</*primal*/0, /*shadow*/0> {
 }
-def SelectIfActive : Operation</*primal*/false, /*shadow*/false, /*custom*/true> {
+def SelectIfActive : Operation</*primal*/0, /*shadow*/0, /*custom*/1> {
   
 }
 
@@ -105,7 +105,7 @@ class Intrinsic<string name_, list<int> types_ = [0]> : Inst<"Intrinsic"> {
 def Op {
 }
 
-class SubRoutine<dag patternToMatch, dag insts_> : Operation</*primal*/true,/*shadow*/false> {
+class SubRoutine<dag patternToMatch, dag insts_> : Operation</*primal*/1,/*shadow*/0> {
   dag PatternToMatch = patternToMatch;
   dag insts = insts_;
 }
@@ -122,7 +122,7 @@ class InsertValue<list<int> indices_> : Inst<"InsertValue"> {
   list<int> indices = indices_;
 }
 
-class MultiReturn : Operation</*primal*/true,/*shadow*/false> {
+class MultiReturn : Operation</*primal*/1,/*shadow*/0> {
   bit struct;
 }
 def StructRet : MultiReturn {
@@ -189,7 +189,7 @@ class PrependArgTypesFunc<string name_, list<string> pretys_> {
 // Specify that a given argument is inactive, aka not differentiable
 // By default this argument tells Enzyme that it must always be inactive
 // from the function semantics.
-// One can alternatively pass the asserting=true flag, causing an assertion
+// One can alternatively pass the asserting=1 flag, causing an assertion
 // error to be thrown if the value is actually active.
 class InactiveArgSpec {
   bit asserting;
@@ -204,7 +204,7 @@ def AssertingInactiveArg : InactiveArgSpec {
 class GlobalExpr<bit uses_primal, bit uses_shadow, string val> : Operation<uses_primal, uses_shadow>{
   string value = val;
 }
-def MantissaMaskOfReturn : GlobalExpr</*primal*/false, /*shadow*/false, "({\n"
+def MantissaMaskOfReturn : GlobalExpr</*primal*/0, /*shadow*/0, "({\n"
 "    auto ty = call.getType();\n"
 "    unsigned low = 0;\n"
 "    unsigned high = 0;\n"
@@ -233,20 +233,20 @@ def MantissaMaskOfReturn : GlobalExpr</*primal*/false, /*shadow*/false, "({\n"
 "    ConstantInt::get(ity, eval);\n"
 "  })">;
 
-class ConstantFP<string val> : Operation</*primal*/false, /*shadow*/false> {
+class ConstantFP<string val> : Operation</*primal*/0, /*shadow*/0> {
   string value = val;
 }
-def Zero : Operation</*primal*/false, /*shadow*/false> {
+def Zero : Operation</*primal*/0, /*shadow*/0> {
 }
-class ConstantCFP<string rval, string ival> : Operation</*primal*/false, /*shadow*/false> {
+class ConstantCFP<string rval, string ival> : Operation</*primal*/0, /*shadow*/0> {
   string rvalue = rval;
   string ivalue = ival;
 }
-class ConstantInt<int value_, int bitwidth_=0> : Operation</*primal*/false, /*shadow*/false> {
+class ConstantInt<int value_, int bitwidth_=0> : Operation</*primal*/0, /*shadow*/0> {
   int value = value_;
   int bitwidth=bitwidth_;
 }
-class Undef : Operation</*primal*/false, /*shadow*/false> {
+class Undef : Operation</*primal*/0, /*shadow*/0> {
 }
 
 class DiffeRetIndex<list<int> indices_> {
@@ -254,7 +254,7 @@ class DiffeRetIndex<list<int> indices_> {
 }
 def DiffeRet : DiffeRetIndex<[-1]>;
 
-def Shadow : Operation</*primal*/false, /*shadow*/true> {
+def Shadow : Operation</*primal*/0, /*shadow*/1> {
 }
 
 def : CallPattern<(Op $x),
@@ -822,7 +822,7 @@ def : IntrPattern<(Op $x, $y),
                   [["powi"]],
                   [
                     (Select 
-                      (Or (ICmpEQ $y, (ConstantInt<0> $y) ), (And (GlobalExpr</*needsprimal*/false, /*needsshadow*/false, "ConstantInt::get(Type::getInt1Ty(gutils->newFunc->getContext()), EnzymeStrongZero)">), (FCmpOEQ (DiffeRet), (ConstantFP<"0"> $x) ) ) ),
+                      (Or (ICmpEQ $y, (ConstantInt<0> $y) ), (And (GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "ConstantInt::get(Type::getInt1Ty(gutils->newFunc->getContext()), EnzymeStrongZero)">), (FCmpOEQ (DiffeRet), (ConstantFP<"0"> $x) ) ) ),
                       (ConstantFP<"0"> $x),
                       (FMul (DiffeRet),
                         (FMul (SIToFP $y, (TypeOf $x)), (Call<(SameFunc)> $x, (ISub $y, (ConstantInt<1> $y))))
