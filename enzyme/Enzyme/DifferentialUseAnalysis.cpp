@@ -465,24 +465,24 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
       if (val == CI->getArgOperand(6)) {
         if (EnzymePrintDiffUse)
-          llvm::errs() << " Need: (shadow?) request " << *val
+          llvm::errs() << " Need: " << to_string(qtype) << " request " << *val
                        << " in reverse for MPI " << *CI << "\n";
         return true;
       }
-      if (val == CI->getArgOperand(0)) {
+      if (shadow && val == CI->getArgOperand(0)) {
         if ((funcName == "MPI_Irecv" || funcName == "PMPI_Irecv") &&
             mode != DerivativeMode::ReverseModeGradient) {
           // Need shadow buffer for forward pass of irecieve
           if (EnzymePrintDiffUse)
-            llvm::errs() << " Need: shadow of " << *val
-                         << " in reverse as shadow MPI " << *CI << "\n";
+            llvm::errs() << " Need: shadow(" << to_string(qtype) << ") of "
+                         << *val << " in reverse as shadow MPI " << *CI << "\n";
           return true;
         }
         if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
           // Need shadow buffer for forward or reverse pass of isend
           if (EnzymePrintDiffUse)
-            llvm::errs() << " Need: shadow of " << *val
-                         << " in reverse as shadow MPI " << *CI << "\n";
+            llvm::errs() << " Need: shadow(" << to_string(qtype) << ") of "
+                         << *val << " in reverse as shadow MPI " << *CI << "\n";
         }
       }
 
