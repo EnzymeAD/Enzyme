@@ -79,7 +79,51 @@ void emitBlasDiffUse(const RecordKeeper &RK, llvm::raw_ostream &os) {
     patternMap.insert(newEntry);
   }
 
+  os << "switch(user->getOpcode()) {\n";
+  emitDiffUse(RK, os, InstDerivatives);
+  os << "  default: break;\n";
+  os << "}\n";
+  os << "if (auto BO = dyn_cast<BinaryOperator>(user)) {\n";
+  os << "  switch(BO->getOpcode()) {\n";
+  emitDiffUse(RK, os, BinopDerivatives);
+  os << "    default: break;\n";
+  os << "  }\n";
+  os << "}\n";
+  os << "if (auto CI = dyn_cast<CallInst>(user)) {\n";
+  os << "  switch(ID) {\n";
+  os << "    default: break;\n";
+  emitDiffUse(RK, os, IntrDerivatives);
+  os << "  }\n";
+
+  os << "  auto funcName = getFuncNameFromCall(CI);\n";
+
+  emitDiffUse(RK, os, CallDerivatives);
+
+  os << "    auto blasMetaData = extractBLAS(funcName);\n";
+  os << "    #if LLVM_VERSION_MAJOR >= 16\n";
+  os << "    if (blasMetaData.has_value())\n";
+  os << "    #else\n";
+  os << "    if (blasMetaData.hasValue())\n";
+  os << "    #endif\n";
+  os << "    {\n";
+  os << "      auto Mode = gutils->mode;\n";
+  os << "      const bool cacheMode = (Mode != DerivativeMode::ForwardMode);\n";
+  os << "      const std::vector<bool> *overwritten_args_ptr = nullptr;\n";
+  os << "      if (gutils->overwritten_args_map_ptr) {\n";
+  os << "        auto found = \n";
+  os << "          gutils->overwritten_args_map_ptr->find(const_cast<CallInst "
+        "*>(CI));\n";
+  os << "        assert(found != gutils->overwritten_args_map_ptr->end());\n";
+  os << "        overwritten_args_ptr = &found->second;\n";
+  os << "      }\n";
+  os << "      #if LLVM_VERSION_MAJOR >= 16\n";
+  os << "      BlasInfo blas = blasMetaData.value();\n";
+  os << "      #else\n";
+  os << "      BlasInfo blas = blasMetaData.getValue();\n";
+  os << "      #endif\n";
   for (auto &&newPattern : newBlasPatterns) {
     emit_BLASDiffUse(newPattern, os);
   }
+  os << "    }\n";
+  os << "}\n";
 }
