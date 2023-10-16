@@ -640,14 +640,14 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                            llvm::ArrayRef<llvm::Value *> args,
                            llvm::Type *copy_retty,
                            llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
-  std::string copy_name = blas.prefix + blas.floatType + "copy" + blas.suffix;
+  auto copy_name = Twine(blas.prefix) + blas.floatType + "copy" + blas.suffix;
 
   SmallVector<Type *, 1> tys;
   for (auto arg : args)
     tys.push_back(arg->getType());
 
   FunctionType *FT = FunctionType::get(copy_retty, tys, false);
-  auto fn = M.getOrInsertFunction(copy_name, FT);
+  auto fn = M.getOrInsertFunction(copy_name.str(), FT);
 
   B.CreateCall(fn, args, bundles);
 }
@@ -655,14 +655,14 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
                              BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
                              llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
-  std::string copy_name = blas.prefix + blas.floatType + "lacpy" + blas.suffix;
+  auto copy_name = Twine(blas.prefix) + blas.floatType + "lacpy" + blas.suffix;
 
   SmallVector<Type *, 1> tys;
   for (auto arg : args)
     tys.push_back(arg->getType());
 
   auto FT = FunctionType::get(Type::getVoidTy(M.getContext()), tys, false);
-  auto fn = M.getOrInsertFunction(copy_name, FT);
+  auto fn = M.getOrInsertFunction(copy_name.str(), FT);
 
   B.CreateCall(fn, args, bundles);
 }
@@ -674,14 +674,14 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
                         ArrayRef<OperandBundleDef> bundles, bool byRef,
                         bool julia_decl) {
   // add spmv diag update call if not already present
-  std::string fnc_name = "__enzyme_spmv_diag" + blas.floatType + blas.suffix;
+  auto fnc_name = Twine("__enzyme_spmv_diag") + blas.floatType + blas.suffix;
 
   //  spmvDiagHelper(uplo, n, alpha, x, incx, ya, incy, APa)
   auto FDiagUpdateT = FunctionType::get(
       B.getVoidTy(),
       {BlasCT, BlasIT, BlasFPT, BlasPT, BlasIT, BlasPT, BlasIT, BlasPT}, false);
-  Function *F =
-      cast<Function>(M.getOrInsertFunction(fnc_name, FDiagUpdateT).getCallee());
+  Function *F = cast<Function>(
+      M.getOrInsertFunction(fnc_name.str(), FDiagUpdateT).getCallee());
 
   if (!F->empty()) {
     B.CreateCall(F, args, bundles);

@@ -1022,6 +1022,7 @@ BlasInfo pointer_to_index(void *v, BlasInfo inputs[6]) {
   for (int i = 3; i < 6; i++)
     if (inputs[i].ptr == v)
       return inputs[i];
+  printty(v);
   assert(0 && " illegal pointer to invert");
 }
 
@@ -1152,8 +1153,6 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
 
     auto alpha = rcall.farg1;
 
-    auto cualpha = pointer_to_index(rcall.pin_arg2, inputs);
-
     auto N = rcall.iarg1;
     auto incX = rcall.iarg4;
     auto incY = rcall.iarg5;
@@ -1162,6 +1161,7 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     checkVector(Y, "Y", /*len=*/N, /*inc=*/incY, test, rcall, trace);
 
     if (rcall.abi == ABIType::CUBLAS) {
+      auto cualpha = pointer_to_index(rcall.pin_arg2, inputs);
       checkVector(cualpha, "alpha", /*len=*/1, /*inc=*/1, test, rcall, trace);
     }
     return;
