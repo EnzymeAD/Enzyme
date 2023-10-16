@@ -1240,6 +1240,7 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
     // Distinguish later trough byRef if it is cblas (thus has layout)
     os << "        if (cblas) " << argName << ".push_back(arg_layout);\n";
   }
+  // handle exist only under the cublas ABI, but there for all fncs.
   os << "        if (cublas) " << argName << ".push_back(arg_handle);\n";
 
   for (size_t pos = fncHasLayout ? 1 : 0; pos < numArgs; pos++) {
@@ -1304,8 +1305,6 @@ void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
   os << "}\n";
 }
 
-// todo: update rt_active_<X> to use actual dag requirements,
-// possibly by or-ing them
 void emit_runtime_condition(DagInit *ruleDag, StringRef name, StringRef tab,
                             StringRef B, bool isFP, raw_ostream &os) {
   os << tab << "BasicBlock *nextBlock_" << name << " = nullptr;\n"
@@ -1518,9 +1517,11 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
         os << "      if (!cublas) {\n";
         emit_fret_call(dfnc_name, "ArrayRef<Value *>(args1)", name, "Builder2",
                        os);
+        // TODO: think again about this cublas float ret part
         os << "      } else {\n";
       } else {
-        os << "    SmallVector<Type*, 1> tys; for (auto arg : args1) "
+        os << "    SmallVector<Type*, 1> tys;\n"
+           << "for (auto arg : args1) "
               "tys.push_back(arg->getType());\n";
         std::string dfnc_ret_ty = get_blas_ret_ty(dfnc_name);
 
@@ -1553,7 +1554,24 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "noop") {
     } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "inactive") {
       os << "      assert(!active_" << name << ");\n";
+    } else if (Def->isSubClassOf("ScaleMatrix")) {
+      // /* C     */ (ScaleMatrix<""> $m, $n, $beta, adj<"C">, $ldc)
+      assert(ty == ArgType::mldData);
+      os << "      // ScaleMatrix\n";
+      emit_if_rule_condition(ruleDag, name, "      ", os);
+      emit_runtime_condition(ruleDag, name, "        ", "Builder2", true, os);
+      rev_call_args("args1", rule, actArg, os, -1, "");
+      os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
+         << valueTypes << "}, Builder2, /* lookup */ true);\n";
+      // Now that we have the defs, we can create the call
+      os << "callScaleMatrix(Builder2, *gutils->oldFunc->getParent(), blas, "
+            "intType, blasCharType, blasFPType, type_vec_like, type_n, fpType, "
+            "ArrayRef<Value *>(args1), "
+            "Defs, byRef, cublas);\n";
+      emit_runtime_continue(ruleDag, name, "        ", "Builder2", true, os);
+      os << "      }\n";
     } else if (Def->isSubClassOf("DiagUpdateSPMV")) {
+      assert(ty == ArgType::ap);
       os << "      // DiagUpdateSPMV\n";
       emit_if_rule_condition(ruleDag, name, "      ", os);
       emit_runtime_condition(ruleDag, name, "        ", "Builder2", true, os);
@@ -1561,7 +1579,6 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
       // Now that we have the defs, we can create the call
-      assert(ty == ArgType::ap);
       os << "callSPMVDiagUpdate(Builder2, *gutils->oldFunc->getParent(), blas, "
             "intType, blasCharType, blasFPType, type_vec_like, type_n, fpType, "
             "ArrayRef<Value *>(args1), "
