@@ -149,7 +149,10 @@ void enzyme::AliasAnalysis::setToEntryState(AliasClassLattice *lattice) {
                             LLVM::LLVMDialect::getNoAliasAttrName())) {
         propagateIfChanged(lattice, lattice->markFresh());
       } else {
-        propagateIfChanged(lattice, lattice->markEntry());
+        // Not safe in general, integers can be a result of ptrtoint. We need a
+        // type analysis here I guess?
+        if (isa<LLVM::LLVMPointerType, MemRefType>(arg.getType()))
+          propagateIfChanged(lattice, lattice->markEntry());
       }
     }
   } else {
@@ -161,7 +164,6 @@ void enzyme::AliasAnalysis::transfer(
     ArrayRef<MemoryEffects::EffectInstance> effects,
     ArrayRef<const AliasClassLattice *> operands,
     ArrayRef<AliasClassLattice *> results) {
-  bool readsMemory = false;
   for (const auto &effect : effects) {
     Value value = effect.getValue();
     if (!value) {
@@ -177,9 +179,6 @@ void enzyme::AliasAnalysis::transfer(
         }
       }
     } else if (isa<MemoryEffects::Read>(effect.getEffect())) {
-      // If the op reads memory, the results don't necessarily alias with the
-      // operands.
-      readsMemory = true;
       // Conservatively mark the read results as unknown.
       for (AliasClassLattice *result : results) {
         propagateIfChanged(result, result->markUnknown());
@@ -187,7 +186,7 @@ void enzyme::AliasAnalysis::transfer(
     }
   }
 
-  if (readsMemory)
+  if (!effects.empty())
     return;
 
   // Conservatively assume all results alias all operands

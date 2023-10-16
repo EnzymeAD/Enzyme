@@ -38,12 +38,15 @@ struct PrintActivityAnalysisPass
       MutableArrayRef<enzyme::Activity> resActivities) const {
     for (const auto &[idx, argType] :
          llvm::enumerate(callee.getArgumentTypes())) {
-      if (inactiveArgs || argType.isIntOrIndex())
+      if (callee.getArgAttr(idx, "enzyme.const") || inactiveArgs ||
+          argType.isIntOrIndex())
         argActivities[idx] = enzyme::Activity::enzyme_const;
-      else if (isa<FloatType>(argType))
+      else if (isa<FloatType, ComplexType>(argType))
         argActivities[idx] = enzyme::Activity::enzyme_out;
-      else
+      else if (isa<LLVM::LLVMPointerType, MemRefType>(argType))
         argActivities[idx] = enzyme::Activity::enzyme_dup;
+      else
+        argActivities[idx] = enzyme::Activity::enzyme_const;
     }
 
     for (const auto &[idx, resType] :

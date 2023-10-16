@@ -192,8 +192,8 @@ public:
   }
 
   void print(raw_ostream &os) const override {
-    os << "{";
-    llvm::interleaveComma(allocations, os);
+    os << "{\n  ";
+    llvm::interleave(allocations, os, ",\n  ");
     os << "}\n";
   }
 
@@ -912,18 +912,18 @@ void enzyme::runDataFlowActivityAnalysis(
       //       &callee.getFunctionBody().front().front());
 
       //   auto *aliasClass = solver.lookupState<AliasClassLattice>(value);
-      //   if (aliasClass->isEntry || aliasClass->isUnknown) {
-      //     errs() << "[activity analysis] unimplemented entry or unknown";
-      //   }
-      //   SmallVector<Value> canonicalAllocs;
-      //   aliasClass->getCanonicalAllocations(canonicalAllocs);
+      //   auto *availableAllocs =
+      //       solver.lookupState<AvailableAllocations>(*returnOps.begin());
       //   bool activePtr = false;
-      //   for (Value alloc : canonicalAllocs) {
-      //     // How do we combine the dense states correctly?
-      //     // If it's forward load and backward store it's definitely active
-      //     activePtr |=
-      //         fma->hasActiveData(alloc) && bma->activeDataFlowsOut(alloc);
-      //   }
+      //   forEachAliasedAlloc(aliasClass, availableAllocs, entryAllocations,
+      //                       [&](Value alloc) {
+      //                         // It's an active pointer if active data flows
+      //                         in
+      //                         // from the forward direction and active data
+      //                         // flows out from the backward direction.
+      //                         activePtr |= fma->hasActiveData(alloc) &&
+      //                                      bma->activeDataFlowsOut(alloc);
+      //                       });
       //   return !activePtr;
       // }
 
