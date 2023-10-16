@@ -83,7 +83,8 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
 
   if (hasDiffeRetVal) {
     size_t ptrRetArg = typeMap.size();
-    Twine retarg = "CI->getArgOperand(" + Twine(ptrRetArg) + " + offset)";
+    auto retarg =
+        "CI->getArgOperand(" + std::to_string(ptrRetArg) + " + offset)";
     os << "  if (cublas) {\n";
     os << "    if (!gutils->isConstantValue(" << retarg << "))\n";
     os << "      if ((shadow || EnzymeRuntimeActivityCheck) && val == "

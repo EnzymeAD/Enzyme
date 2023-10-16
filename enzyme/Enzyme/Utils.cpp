@@ -680,8 +680,8 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
   auto FDiagUpdateT = FunctionType::get(
       B.getVoidTy(),
       {BlasCT, BlasIT, BlasFPT, BlasPT, BlasIT, BlasPT, BlasIT, BlasPT}, false);
-  Function *F = cast<Function>(
-      M.getOrInsertFunction(fnc_name, FDiagUpdateT).getCallee());
+  Function *F =
+      cast<Function>(M.getOrInsertFunction(fnc_name, FDiagUpdateT).getCallee());
 
   if (!F->empty()) {
     B.CreateCall(F, args, bundles);
