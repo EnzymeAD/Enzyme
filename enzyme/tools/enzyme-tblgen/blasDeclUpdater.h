@@ -17,9 +17,11 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
   bool lv23 = pattern.isBLASLevel2or3();
   os << "void attribute_" << name << "(BlasInfo blas, llvm::Function *F) {\n";
-  os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == \"cublas_\";\n";
+  os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == "
+        "\"cublas_\";\n";
   os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
-  os << "  const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == \"cublas\";\n";
+  os << "  const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
+        "\"cublas\";\n";
   os << "#if LLVM_VERSION_MAJOR >= 16\n"
      << "  F->setOnlyAccessesArgMemory();\n"
      << "#else\n"
@@ -43,12 +45,20 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   DenseSet<size_t> mutableArgs = pattern.getMutableArgs();
 
   if (mutableArgs.size() == 0) {
+    // under cublas, these functions have an extra write-only return ptr
+    // argument
+    if (has_active_return(name)) {
+      os << "  if (!cublas) {\n";
+    }
     os << "#if LLVM_VERSION_MAJOR >= 16\n";
     os << "  F->setOnlyReadsMemory();\n";
     os << "#else\n";
     os << "  F->removeFnAttr(llvm::Attribute::ReadNone);\n";
     os << "  F->addFnAttr(llvm::Attribute::ReadOnly);\n";
     os << "#endif\n";
+    if (has_active_return(name)) {
+      os << "  }\n";
+    }
   }
 
   os << "  const int offset = (";
@@ -97,11 +107,11 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
     if (is_char_arg(typeOfArg) || typeOfArg == ArgType::len ||
         typeOfArg == ArgType::vincInc || typeOfArg == ArgType::fp ||
         typeOfArg == ArgType::mldLD) {
-      os << "      F->removeParamAttr(" << i << " + offset" 
+      os << "      F->removeParamAttr(" << i << " + offset"
          << ", llvm::Attribute::ReadNone);\n"
-         << "      F->addParamAttr(" << i << " + offset" 
+         << "      F->addParamAttr(" << i << " + offset"
          << ", llvm::Attribute::ReadOnly);\n"
-         << "      F->addParamAttr(" << i << " + offset" 
+         << "      F->addParamAttr(" << i << " + offset"
          << ", llvm::Attribute::NoCapture);\n";
     }
   }
@@ -134,14 +144,27 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
          << ", llvm::Attribute::get(F->getContext(), \"enzyme_NoCapture\"));\n";
       if (mutableArgs.count(argPos) == 0) {
         // Only emit ReadOnly if the arg isn't mutable
-        os << "    F->addParamAttr(" << i << " + offset" 
+        os << "    F->addParamAttr(" << i << " + offset"
            << ", llvm::Attribute::get(F->getContext(), "
               "\"enzyme_ReadOnly\"));\n";
       }
     }
   }
-  os << "  }\n"
-     << "}\n";
+  os << "  }\n";
+
+  if (has_active_return(name)) {
+    // under cublas, these functions have an extra return ptr argument
+    size_t ptrRetArg = argTypeMap.size();
+    os << "  if (cublas) {\n"
+       << "      F->removeParamAttr(" << ptrRetArg << " + offset"
+       << ", llvm::Attribute::ReadNone);\n"
+       << "      F->addParamAttr(" << ptrRetArg << " + offset"
+       << ", llvm::Attribute::WriteOnly);\n"
+       << "      F->addParamAttr(" << ptrRetArg << " + offset"
+       << ", llvm::Attribute::NoCapture);\n"
+       << "  }\n";
+  }
+  os << "}\n";
 }
 
 void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {

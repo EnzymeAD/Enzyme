@@ -466,8 +466,13 @@ void printcall(BlasCall rcall) {
     printty(rcall.handle);
     printf(", N=");
     printty(rcall.iarg1);
-    printf(", alpha=");
-    printty(rcall.farg1);
+    if (rcall.abi != ABIType::CUBLAS) {
+      printf(", alpha=");
+      printty(rcall.farg1);
+    } else {
+      printf(", alphap=");
+      printty(rcall.pin_arg2);
+    }
     printf(", X=");
     printty(rcall.pin_arg1);
     printf(", incx=");
@@ -493,6 +498,9 @@ void printcall(BlasCall rcall) {
     printty(rcall.pin_arg2);
     printf(", incy=");
     printty(rcall.iarg5);
+    if (rcall.abi == ABIType::CUBLAS)
+    printf(", result=");
+    printty(rcall.pout_arg1);
     printf(")");
     return;
   case CallType::GEMV:
@@ -879,17 +887,17 @@ __attribute__((noinline)) cublasStatus_t cublasDdot(cublasHandle_t *handle,
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
 __attribute__((noinline)) cublasStatus_t cublasDaxpy(cublasHandle_t *handle,
-                                                      int N, double alpha,
+                                                      int N, double *alpha,
                                                       double *X, int incx,
                                                       double *Y, int incy) {
   BlasCall call = {ABIType::CUBLAS,handle,inDerivative,
                      CallType::AXPY,
                      Y,
                      X,
-                     UNUSED_POINTER,
                      alpha,
                      UNUSED_DOUBLE,
-                                 CUBLAS_LAYOUT,
+                     UNUSED_DOUBLE,
+                     CUBLAS_LAYOUT,
                      UNUSED_TRANS,
                      UNUSED_TRANS,
                      N,
@@ -1144,12 +1152,18 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
 
     auto alpha = rcall.farg1;
 
+    auto cualpha = pointer_to_index(rcall.pin_arg2, inputs);
+
     auto N = rcall.iarg1;
     auto incX = rcall.iarg4;
     auto incY = rcall.iarg5;
 
     checkVector(X, "X", /*len=*/N, /*inc=*/incX, test, rcall, trace);
     checkVector(Y, "Y", /*len=*/N, /*inc=*/incY, test, rcall, trace);
+
+    if (rcall.abi == ABIType::CUBLAS) {
+      checkVector(cualpha, "alpha", /*len=*/1, /*inc=*/1, test, rcall, trace);
+    }
     return;
   }
   case CallType::DOT: {

@@ -149,7 +149,7 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
   os << "  if (cublas) {\n"
      << "    updateAnalysis(&call, ttCuBlasRet, &call);\n"
      << "  }\n";
-  if (name == "dot" || name == "asum" || name == "nrm2") {
+  if (has_active_return(name)) {
     // under cublas, these functions have an extra return ptr argument
     size_t ptrRetArg = argTypeMap.size();
     os << "  if (cublas) {\n"

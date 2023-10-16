@@ -46,6 +46,9 @@ bool isArgUsed(StringRef toFind, const DagInit *toSearch,
                llvm::ArrayRef<std::string> nameVec,
                const llvm::DenseMap<size_t, ArgType> &argTypesFull);
 
+// Whether the blas function returns an active value
+bool has_active_return(StringRef str);
+
 /// Subset of the general pattern info,
 /// but only the part that affects the specific argument being active.
 class Rule {

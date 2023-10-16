@@ -77,14 +77,20 @@ static void dotTests() {
                     enzyme_dup, A, dA, enzyme_const, incA, enzyme_dup, B, dB,
                     enzyme_const, incB);
   foundCalls = calls;
+
+  auto stack_ret = (double*)foundCalls[1].pin_arg2;
+  inputs[4] = BlasInfo(stack_ret, 1, 1);
+
   init();
 
   my_ddot(handle, N, A, incA, B, incB);
 
+  calls[0].pout_arg1 = (double*)foundCalls[0].pout_arg1;
+
   inDerivative = true;
 
-  cublasDaxpy(handle, N, 1.0, B, incB, dA, incA);
-  cublasDaxpy(handle, N, 1.0, A, incA, dB, incB);
+  cublasDaxpy(handle, N, stack_ret, B, incB, dA, incA);
+  cublasDaxpy(handle, N, stack_ret, A, incA, dB, incB);
 
   checkTest(Test);
 
