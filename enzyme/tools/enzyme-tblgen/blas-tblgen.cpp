@@ -211,9 +211,9 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
   bool lv23 = pattern.isBLASLevel2or3();
   const auto mutArgSet = pattern.getMutableArgs();
 
-  os << "  const bool byRef = blas.prefix == \"\";\n";
+  os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == \"cublas_\";\n";
   os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
-  os << "  const bool cublas = blas.prefix == \"cublas_\";\n";
+  os << "  const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == \"cublas\";\n";
   os << "  Value *cacheval = nullptr;\n\n";
   // lv 2 or 3 functions have an extra arg under the cblas_ abi
   os << "  const int offset = (";
@@ -451,8 +451,9 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
         "cublasOperation_t::CUBLAS_OP_N);\n"
      << "    valueT = ConstantInt::get(cublasEnumType, "
         "cublasOperation_t::CUBLAS_OP_T);\n"
-     << "    // valueG is only used in lascl, which isn't  available in "
-        "cublas.\n"
+     << "    // TODO lascl not available in cublas, nor op G\n"
+     << "    valueG = ConstantInt::get(cublasEnumType, "
+        "cublasOperation_t::CUBLAS_OP_N);\n"
      << "  } else {\n"
      << "    valueN = ConstantInt::get(charType, 'N');\n"
      << "    valueT = ConstantInt::get(charType, 'T');\n"
@@ -1712,11 +1713,11 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   emit_handleBLAS(newBlasPatterns, os);
   // // emitEnumMatcher(blas_modes, os);
 
+  // https://docs.altimesh.com/api/Hybridizer.Runtime.CUDAImports.cublasOperation_t.html
   os << "enum cublasOperation_t {\n"
-     << "  CUBLAS_OP_N,\n"
-     << "  CUBLAS_OP_T,\n"
-     << "  CUBLAS_OP_C,\n"
-     << "  CUBLAS_OP_UNUSED,\n"
+     << "  CUBLAS_OP_N = 0,\n"
+     << "  CUBLAS_OP_T = 1,\n"
+     << "  CUBLAS_OP_C = 2,\n"
      << "};\n";
 
   for (auto &&newPattern : newBlasPatterns) {

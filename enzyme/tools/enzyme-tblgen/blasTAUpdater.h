@@ -1,9 +1,9 @@
 #include "datastructures.h"
 
 void emit_BLASTypes(raw_ostream &os) {
-  os << "const bool byRef = blas.prefix == \"\";\n";
+  os << "const bool byRef = blas.prefix == \"\" || blas.prefix == \"cublas_\";\n";
   os << "const bool cblas = blas.prefix == \"cblas_\";\n";
-  os << "const bool cublas = blas.prefix == \"cublas_\";\n";
+  os << "const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == \"cublas\";\n";
 
   os << "TypeTree ttFloat;\n"
      << "llvm::Type *floatType; \n"
@@ -88,7 +88,7 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
     case ArgType::vincInc:
     case ArgType::mldLD:
       os << "  updateAnalysis(call.getArgOperand(" << i
-         << (lv23 ? " + offset" : "") << "), ttInt, &call);\n";
+         << " + offset), ttInt, &call);\n";
       break;
     case ArgType::vincData:
       assert(argTypeMap.lookup(j + 1) == ArgType::vincInc);

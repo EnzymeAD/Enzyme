@@ -2357,22 +2357,21 @@ std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
-  llvm::Twine extractable[] = {"dot", "scal", "axpy", "gemv", "gemm", "spmv"};
-  llvm::Twine floatType[] = {"s", "d"}; // c, z
-  llvm::Twine prefixes[] = {"" /*Fortran*/, "cblas_"};
-  llvm::Twine suffixes[] = {"", "_", "64_", "_64_"};
+  const char* extractable[] = {"dot", "scal", "axpy", "gemv", "gemm", "spmv"};
+  const char* floatType[] = {"s", "d"}; // c, z
+  const char* prefixes[] = {"" /*Fortran*/, "cblas_"};
+  const char* suffixes[] = {"", "_", "64_", "_64_"};
   for (auto t : floatType) {
     for (auto f : extractable) {
       for (auto p : prefixes) {
         for (auto s : suffixes) {
-          if (in == (p + t + f + s).str()) {
-            std::string str = s.str();
-            bool is64 = llvm::StringRef(str).contains("64");
+          if (in == (Twine(p) + t + f + s).str()) {
+            bool is64 = llvm::StringRef(s).contains("64");
             return BlasInfo{
-                t.str(),
-                p.str(),
-                s.str(),
-                f.str(),
+                t,
+                p,
+                s,
+                f,
                 is64,
             };
           }
@@ -2381,18 +2380,18 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
     }
   }
   // c interface to cublas
-  llvm::Twine cuCFloatType[] = {"S", "D"}; // c, z
-  llvm::Twine cuCPrefixes[] = {"cublas"};
-  for (auto t : cuCFloatType) {
+  const char* cuCFloatType[] = {"S", "D"}; // c, z
+  const char* cuFFloatType[] = {"s", "d"}; // c, z
+  const char* cuCPrefixes[] = {"cublas"};
+  for (auto t : llvm::enumerate(cuCFloatType)) {
     for (auto f : extractable) {
       for (auto p : cuCPrefixes) {
-        if (in == (p + t + f).str()) {
-          llvm::errs() << "Found" << in << "\n";
+        if (in == (Twine(p) + t.value() + f).str()) {
           return BlasInfo{
-              t.str(),
-              p.str(),
+              cuFFloatType[t.index()],
+              p,
               "",
-              f.str(),
+              f,
               false,
           };
         }
@@ -2400,18 +2399,16 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
     }
   }
   // Fortran interface to cublas
-  llvm::Twine cuFFloatType[] = {"s", "d"}; // c, z
-  llvm::Twine cuFPrefixes[] = {"cublas_"};
+  const char* cuFPrefixes[] = {"cublas_"};
   for (auto t : cuFFloatType) {
     for (auto f : extractable) {
       for (auto p : cuFPrefixes) {
-        if (in == (p + t + f).str()) {
-          llvm::errs() << "Found" << in << "\n";
+        if (in == (Twine(p) + t + f).str()) {
           return BlasInfo{
-              t.str(),
-              p.str(),
+              t,
+              p,
               "",
-              f.str(),
+              f,
               false,
           };
         }
