@@ -30,6 +30,13 @@ bool is_char_arg(ArgType ty) {
   return false;
 }
 
+// Whether the blas function returns an active value
+bool has_active_return(StringRef dfnc_name) {
+  return dfnc_name == "dot" || dfnc_name == "asum" || dfnc_name == "nrm2" ||
+         dfnc_name == "iamax" || dfnc_name == "iamin" ||
+         dfnc_name == "inner_prod";
+}
+
 const char *TyToString(ArgType ty) {
   switch (ty) {
   case ArgType::fp:

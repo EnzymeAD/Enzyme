@@ -604,10 +604,11 @@ static inline bool isCertainPrint(const llvm::StringRef name) {
 }
 
 struct BlasInfo {
-  llvm::StringRef floatType;
-  llvm::StringRef prefix;
-  llvm::StringRef suffix;
-  llvm::StringRef function;
+  std::string floatType;
+  std::string prefix;
+  std::string suffix;
+  std::string function;
+  bool is64;
 };
 
 #if LLVM_VERSION_MAJOR >= 16
@@ -625,6 +626,7 @@ llvm::Function *getOrInsertDifferentialFloatMemcpy(
 /// Create function for type that performs memcpy with a stride using blas copy
 void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                            llvm::ArrayRef<llvm::Value *> args,
+                           llvm::Type *cublas_retty,
                            llvm::ArrayRef<llvm::OperandBundleDef> bundles);
 
 /// Create function for type that performs memcpy using lapack copy
@@ -646,7 +648,7 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                      llvm::Type *BlasIT, llvm::Type *fpTy,
                      llvm::ArrayRef<llvm::Value *> args,
                      const llvm::ArrayRef<llvm::OperandBundleDef> bundles,
-                     bool byRef, bool julia_decl);
+                     bool byRef, bool cublas, bool julia_decl);
 
 /// Create function for type that performs memcpy with a stride
 llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M,
@@ -1628,7 +1630,7 @@ llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::IntegerType *intType,
 // julia_decl null means not julia decl, otherwise it is the integer type needed
 // to cast to
 llvm::Value *to_blas_callconv(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
-                              llvm::IntegerType *julia_decl,
+                              bool cublas, llvm::IntegerType *julia_decl,
                               llvm::IRBuilder<> &entryBuilder,
                               llvm::Twine const & = "");
 llvm::Value *to_blas_fp_callconv(llvm::IRBuilder<> &B, llvm::Value *V,
@@ -1639,8 +1641,8 @@ llvm::Value *to_blas_fp_callconv(llvm::IRBuilder<> &B, llvm::Value *V,
 llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
                                   llvm::ArrayRef<llvm::Value *> trans,
                                   llvm::Value *arg_ld, llvm::Value *dim_1,
-                                  llvm::Value *dim_2, bool cacheMat,
-                                  bool byRef);
+                                  llvm::Value *dim_2, bool cacheMat, bool byRef,
+                                  bool cublas);
 
 template <typename T>
 static inline void append(llvm::SmallVectorImpl<T> &vec) {}
@@ -1657,20 +1659,23 @@ static inline llvm::SmallVector<llvm::Value *, 1> concat_values(T &&...t) {
   return res;
 }
 
-llvm::Value *is_normal(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef);
+llvm::Value *is_normal(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef,
+                       bool cublas);
 llvm::Value *is_uper(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef);
 llvm::Value *select_vec_dims(llvm::IRBuilder<> &B, llvm::Value *trans,
-                             llvm::Value *dim1, llvm::Value *dim2, bool byRef);
+                             llvm::Value *dim1, llvm::Value *dim2, bool byRef,
+                             bool cublas);
 // first one assume V is an Integer
-llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V);
+llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool cublas);
 // secon one assume V is an Integer or a ptr to an int (depends on byRef)
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
-                       llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder,
+                       bool cublas, llvm::IntegerType *IT,
+                       llvm::IRBuilder<> &entryBuilder,
                        const llvm::Twine &name);
 llvm::SmallVector<llvm::Value *, 1>
 get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,
              llvm::ArrayRef<llvm::Value *> row,
-             llvm::ArrayRef<llvm::Value *> col, bool byRef);
+             llvm::ArrayRef<llvm::Value *> col, bool byRef, bool cublas);
 
 // Parameter attributes from the original function/call that
 // we should preserve on the primal of the derivative code.

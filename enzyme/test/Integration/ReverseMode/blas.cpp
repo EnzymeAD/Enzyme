@@ -77,7 +77,7 @@ static void dotTests() {
         cblas_daxpy(N, 1.0, B, incB, dA, incA);
         cblas_daxpy(N, 1.0, A, incA, dB, incB);
 
-		checkTest(Test);
+	checkTest(Test);
     
         // Check memory of primal of expected derivative
         checkMemoryTrace(inputs, "Expected " + Test, calls);

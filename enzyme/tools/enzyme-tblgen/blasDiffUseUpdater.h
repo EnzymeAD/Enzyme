@@ -13,11 +13,25 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
     return;
 
   os << "if (blas.function == \"" << name << "\") {\n";
-  os << "  const bool byRef = blas.prefix == \"\";\n";
+
+  os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == "
+        "\"cublas_\";\n";
+  os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
+  os << "  const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
+        "\"cublas\";\n";
+  os << "  Value *cacheval = nullptr;\n\n";
+  // lv 2 or 3 functions have an extra arg under the cblas_ abi
+  os << "  const int offset = (";
+  if (lv23) {
+    os << "(cblas || cublas)";
+  } else {
+    os << "cublas";
+  }
+  os << " ? 1 : 0);\n";
+
+  os << " if (cublas && !shadow && val == CI->getArgOperand(0)) return true;\n";
 
   if (lv23) {
-    os << "  const int offset = (byRef ? 0 : 1);\n";
-
     auto layout_users = argUsers.lookup(0);
     os << "  if (!byRef && val == CI->getArgOperand(0)) {\n";
     for (auto user : layout_users) {
@@ -32,7 +46,7 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
     assert(argPos < nameVec.size());
     auto name = nameVec[argPos];
     size_t i = (lv23 ? argPos - 1 : argPos);
-    os << "  auto pos_" << name << " = " << i << (lv23 ? " + offset " : "")
+    os << "  auto pos_" << name << " = " << i << " + offset "
        << ";\n";
     os << "  auto arg_" << name << " = CI->getArgOperand(pos_" << name
        << ");\n";
@@ -55,10 +69,29 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
   for (size_t argPos = (lv23 ? 1 : 0); argPos < typeMap.size(); argPos++) {
     auto users = argUsers.lookup(argPos);
     auto name = nameVec[argPos];
-    size_t i = (lv23 ? argPos - 1 : argPos);
     os << "  if (val == arg_" << name << " && need_" << name << " && !cache_"
        << name << ")\n"
        << "     return true;\n";
+  }
+
+  // If any of the rule uses DiffeRet, the primary function has a ret val
+  // and we should emit the code for handling it.
+  bool hasDiffeRetVal = false;
+  for (auto derivOp : pattern.getRules()) {
+    hasDiffeRetVal |= hasDiffeRet(derivOp.getRuleDag());
+  }
+
+  if (hasDiffeRetVal) {
+    size_t ptrRetArg = typeMap.size();
+    Twine retarg = "CI->getArgOperand(" + Twine(ptrRetArg) + " + offset)";
+    os << "  if (cublas) {\n";
+    os << "    if (!gutils->isConstantValue(" << retarg << "))\n";
+    os << "      if ((shadow || EnzymeRuntimeActivityCheck) && val == "
+       << retarg << ") return true;\n";
+    os << "    if (mode != DerivativeMode::ReverseModeGradient && !shadow && "
+          "val == "
+       << retarg << ") return true;\n";
+    os << "  }\n";
   }
 
   os << "  return false;\n";
