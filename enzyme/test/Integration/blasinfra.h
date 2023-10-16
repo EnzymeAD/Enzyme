@@ -60,6 +60,14 @@ public:
   void clear() { length = 0; }
 };
 
+
+enum class cublasOperation_t : char {
+  CUBLAS_OP_N = '#',
+  CUBLAS_OP_T = '$',
+  CUBLAS_OP_C = '&',
+  CUBLAS_OP_UNUSED = '%',
+};
+
 bool is_normal(char c) {
   switch (c) {
   case 'N':
@@ -70,8 +78,12 @@ bool is_normal(char c) {
     return false;
   case 't':
     return false;
+  case cublasOperation_t::CUBLAS_OP_N:
+    return true;
+  case cublasOperation_t::CUBLAS_OP_T:
+    return false;
   default:
-    printf("Illegal transpose of '%c'\n", c);
+    printf("Illegal isnormal of '%c'\n", c);
     exit(1);
   }
 }
@@ -85,11 +97,34 @@ char transpose(char c) {
     return 'N';
   case 't':
     return 'n';
+  case cublasOperation_t::CUBLAS_OP_N:
+    return cublasOperation_t::CUBLAS_OP_T;
+  case cublasOperation_t::CUBLAS_OP_T:
+    return cublasOperation_t::CUBLAS_OP_N;
   default:
     printf("Illegal transpose of '%c'\n", c);
     exit(1);
   }
 }
+
+enum class cublasStatus_t {
+  CUBLAS_STATUS_SUCCESS,
+  CUBLAS_STATUS_NOT_INITIALIZED,
+  CUBLAS_STATUS_ALLOC_FAILED,
+  CUBLAS_STATUS_INVALID_VALUE,
+  CUBLAS_STATUS_ARCH_MISMATCH,
+  CUBLAS_STATUS_MAPPING_ERROR,
+  CUBLAS_STATUS_EXECUTION_FAILED,
+  CUBLAS_STATUS_INTERNAL_ERROR,
+  CUBLAS_STATUS_NOT_SUPPORTED,
+  CUBLAS_STATUS_LICENSE_ERROR,
+};
+
+struct cublasHandle_t {};
+
+cublasHandle_t *UNUSED_HANDLE = (cublasHandle_t *)0x00000124;
+cublasHandle_t *DEFAULT_CUBLAS_HANDLE = (cublasHandle_t *)0x00000126;
+
 char CblasRowMajor = 101;
 char CblasColMajor = 102;
 
@@ -130,7 +165,15 @@ enum class CallType {
   LACPY,
 };
 
+enum class ABIType {
+  FORTRAN,
+  CBLAS,
+  CUBLAS
+};
+
 struct BlasCall {
+  ABIType abi;
+  void* handle;
   bool inDerivative;
   CallType type;
   void *pout_arg1;
@@ -151,6 +194,8 @@ struct BlasCall {
 #define CHECK(A)                                                               \
   if (A != rhs.A)                                                              \
     return false;
+    CHECK(abi)
+    CHECK(handle)
     CHECK(inDerivative)
     CHECK(type)
     CHECK(pout_arg1)
@@ -171,6 +216,20 @@ struct BlasCall {
   }
   bool operator!=(const BlasCall &rhs) const { return !(operator==(rhs)); }
 };
+
+void printty(ABIType v) {
+  switch (v) {
+  case ABIType::FORTRAN:
+    printf("FORTRAN");
+    return;
+  case ABIType::CBLAS:
+    printf("CBLAS");
+    return;
+  case ABIType::CUBLAS:
+    printf("CUBLAS");
+    return;
+  }
+}
 
 void printty(bool v) {
   if (v)
@@ -228,6 +287,10 @@ void printty(void *v) {
     printf("dC");
   else if (v == UNUSED_POINTER)
     printf("UNUSED_POINTER");
+  else if (v == DEFAULT_CUBLAS_HANDLE)
+    printf("DEFAULT_CUBLAS_HANDLE");
+  else if (v == UNUSED_HANDLE)
+    printf("UNUSED_HANDLE");
   else
     printf("Unknown pointer");
   printf(" (%p)", v);
@@ -273,6 +336,22 @@ void printty(char v) {
       return;
     }
   }
+  if (v == CublasOperation_t::CUBLAS_OP_N) {
+    printf("CUBLAS_OP_N (%c)", v);
+    return;
+  }
+  if (v == CublasOperation_t::CUBLAS_OP_T) {
+    printf("CUBLAS_OP_T (%c)", v);
+    return;
+  }
+  if (v == CublasOperation_t::CUBLAS_OP_C) {
+    printf("CUBLAS_OP_C (%c)", v);
+    return;
+  }
+  if (v == CublasOperation_t::CUBLAS_OP_UNUSED) {
+    printf("CUBLAS_OP_UNUSED (%c)", v);
+    return;
+  }
   printf("Unknown char ('%c'=0x%x)", v, v);
 }
 void printty(double v) {
@@ -290,7 +369,11 @@ void printty(double v) {
 void printcall(BlasCall rcall) {
   switch (rcall.type) {
   case CallType::LACPY:
-    printf("LACPY(layout=");
+    printf("LACPY(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", layout=");
     printty(rcall.layout);
     printf(", uplo=");
     printty(rcall.targ1);
@@ -309,7 +392,11 @@ void printcall(BlasCall rcall) {
     printf(")");
     return;
   case CallType::LASCL:
-    printf("LASCL(layout=");
+    printf("LASCL(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", layout=");
     printty(rcall.layout);
     printf(", type=");
     printty(rcall.targ1);
@@ -332,7 +419,11 @@ void printcall(BlasCall rcall) {
     printf(")");
     return;
   case CallType::AXPY:
-    printf("AXPY(N=");
+    printf("AXPY(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", N=");
     printty(rcall.iarg1);
     printf(", alpha=");
     printty(rcall.farg1);
@@ -347,7 +438,11 @@ void printcall(BlasCall rcall) {
     printf(")");
     return;
   case CallType::DOT:
-    printf("DOT(N=");
+    printf("DOT(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", N=");
     printty(rcall.iarg1);
     printf(", X=");
     printty(rcall.pin_arg1);
@@ -360,7 +455,11 @@ void printcall(BlasCall rcall) {
     printf(")");
     return;
   case CallType::GEMV:
-    printf("GEMV(layout=");
+    printf("GEMV(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", layout=");
     printty(rcall.layout);
     printf(", trans=");
     printty(rcall.targ1);
@@ -387,7 +486,11 @@ void printcall(BlasCall rcall) {
     printf(")");
     return;
   case CallType::GEMM:
-    printf("GEMM(layout=");
+    printf("GEMM(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", layout=");
     printty(rcall.layout);
     printf(", transA=");
     printty(rcall.targ1);
@@ -418,7 +521,11 @@ void printcall(BlasCall rcall) {
     printf(")");
     return;
   case CallType::SCAL:
-    printf("SCAL(N=");
+    printf("SCAL(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", N=");
     printty(rcall.iarg1);
     printf(", alpha=");
     printty(rcall.farg1);
@@ -429,7 +536,11 @@ void printcall(BlasCall rcall) {
     printf(")");
     return;
   case CallType::GER:
-    printf("GER(layout=");
+    printf("GER(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", layout=");
     printty(rcall.layout);
     printf(", M=");
     printty(rcall.iarg1);
@@ -452,7 +563,11 @@ void printcall(BlasCall rcall) {
     printf(")");
     return;
   case CallType::COPY:
-    printf("COPY(N=");
+    printf("COPY(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", N=");
     printty(rcall.iarg1);
     printf(", X=");
     printty(rcall.pin_arg1);
@@ -531,7 +646,8 @@ extern "C" {
 __attribute__((noinline)) void cblas_dlascl(char layout, char type, int KL,
                                             int KU, double cfrom, double cto,
                                             int M, int N, double *A, int lda) {
-  BlasCall call = {inDerivative,
+  BlasCall call = {ABIType::CBLAS,UNUSED_HANDLE,
+                   inDerivative,
                    CallType::LASCL,
                    A,
                    UNUSED_POINTER,
@@ -552,7 +668,8 @@ __attribute__((noinline)) void cblas_dlascl(char layout, char type, int KL,
 
 __attribute__((noinline)) double cblas_ddot(int N, double *X, int incx,
                                             double *Y, int incy) {
-  BlasCall call = {inDerivative,
+  BlasCall call = {ABIType::CBLAS,UNUSED_HANDLE,
+                   inDerivative,
                    CallType::DOT,
                    UNUSED_POINTER,
                    X,
@@ -575,7 +692,8 @@ __attribute__((noinline)) double cblas_ddot(int N, double *X, int incx,
 // Y += alpha * X
 __attribute__((noinline)) void cblas_daxpy(int N, double alpha, double *X,
                                            int incx, double *Y, int incy) {
-  BlasCall call = {inDerivative,
+  BlasCall call = {ABIType::CBLAS,UNUSED_HANDLE,
+                   inDerivative,
                    CallType::AXPY,
                    Y,
                    X,
@@ -599,7 +717,7 @@ __attribute__((noinline)) void cblas_dgemv(char layout, char trans, int M,
                                            int N, double alpha, double *A,
                                            int lda, double *X, int incx,
                                            double beta, double *Y, int incy) {
-  BlasCall call = {
+  BlasCall call = {ABIType::CBLAS,UNUSED_HANDLE,
       inDerivative, CallType::GEMV, Y, A, X,          alpha, beta, layout,
       trans,        UNUSED_TRANS,   M, N, UNUSED_INT, lda,   incx, incy};
   calls.push_back(call);
@@ -611,14 +729,16 @@ __attribute__((noinline)) void cblas_dgemm(char layout, char transA,
                                            double alpha, double *A, int lda,
                                            double *B, int ldb, double beta,
                                            double *C, int ldc) {
-  calls.push_back((BlasCall){inDerivative, CallType::GEMM, C, A, B, alpha, beta,
+  calls.push_back((BlasCall){ABIType::CBLAS,UNUSED_HANDLE,
+                             inDerivative, CallType::GEMM, C, A, B, alpha, beta,
                              layout, transA, transB, M, N, K, lda, ldb, ldc});
 }
 
 // X = alpha * X
 __attribute__((noinline)) void cblas_dscal(int N, double alpha, double *X,
                                            int incX) {
-  calls.push_back((BlasCall){inDerivative, CallType::SCAL, X, UNUSED_POINTER,
+  calls.push_back((BlasCall){ABIType::CBLAS,UNUSED_HANDLE,
+                             inDerivative, CallType::SCAL, X, UNUSED_POINTER,
                              UNUSED_POINTER, alpha, UNUSED_DOUBLE, UNUSED_TRANS,
                              UNUSED_TRANS, UNUSED_TRANS, N, UNUSED_INT,
                              UNUSED_INT, incX, UNUSED_INT, UNUSED_INT});
@@ -629,7 +749,8 @@ __attribute__((noinline)) void cblas_dger(char layout, int M, int N,
                                           double alpha, double *X, int incX,
                                           double *Y, int incY, double *A,
                                           int lda) {
-  calls.push_back((BlasCall){inDerivative, CallType::GER, A, X, Y, alpha,
+  calls.push_back((BlasCall){ABIType::CBLAS,UNUSED_HANDLE,
+                             inDerivative, CallType::GER, A, X, Y, alpha,
                              UNUSED_DOUBLE, layout, UNUSED_TRANS, UNUSED_TRANS,
                              M, N, UNUSED_INT, incX, incY, lda});
 }
@@ -637,7 +758,8 @@ __attribute__((noinline)) void cblas_dger(char layout, int M, int N,
 __attribute__((noinline)) void cblas_dcopy(int N, double *X, int incX,
                                            double *Y, int incY) {
 
-  calls.push_back((BlasCall){inDerivative, CallType::COPY, Y, X, UNUSED_POINTER,
+  calls.push_back((BlasCall){ABIType::CBLAS,UNUSED_HANDLE,
+                             inDerivative, CallType::COPY, Y, X, UNUSED_POINTER,
                              alpha, UNUSED_DOUBLE, UNUSED_TRANS, UNUSED_TRANS,
                              UNUSED_TRANS, N, UNUSED_INT, UNUSED_INT, incX,
                              incY, UNUSED_INT});
@@ -646,7 +768,8 @@ __attribute__((noinline)) void cblas_dcopy(int N, double *X, int incX,
 __attribute__((noinline)) void cblas_dlacpy(char layout, char uplo, int M,
                                             int N, double *A, int lda,
                                             double *B, int ldb) {
-  calls.push_back((BlasCall){inDerivative, CallType::LACPY, B, A,
+  calls.push_back((BlasCall){ABIType::CBLAS,UNUSED_HANDLE,
+                             inDerivative, CallType::LACPY, B, A,
                              UNUSED_POINTER, UNUSED_DOUBLE, UNUSED_DOUBLE,
                              layout, uplo, UNUSED_TRANS, M, N, UNUSED_INT, lda,
                              ldb, UNUSED_INT});
@@ -654,9 +777,134 @@ __attribute__((noinline)) void cblas_dlacpy(char layout, char uplo, int M,
 
 __attribute__((noinline)) void dlacpy(char *uplo, int *M, int *N, double *A,
                                       int *lda, double *B, int *ldb) {
-  cblas_dlacpy(CblasColMajor, *uplo, *M, *N, A, *lda, B, *ldb);
+  calls.push_back((BlasCall){ABIType::FORTRAN,UNUSED_HANDLE,
+                             inDerivative, CallType::LACPY, B, A,
+                             UNUSED_POINTER, UNUSED_DOUBLE, UNUSED_DOUBLE,
+                             layout, uplo, UNUSED_TRANS, M, N, UNUSED_INT, lda,
+                             ldb, UNUSED_INT});
 }
 
+}
+
+using cublasOperation_t::CUBLAS_OP_UNUSED;
+
+__attribute__((noinline)) cublasStatus_t
+cublas_dlascl(cublasHandle_t *handle, cublasOperation_t type, int KL, int KU,
+              double cfrom, double cto, int M, int N, double *A, int lda) {
+  calls.push_back((BlasCall){ABIType::CUBLAS,handle,inDerivative, CallType::LASCL, A,
+                                 UNUSED_POINTER, UNUSED_POINTER, cfrom, cto,
+                                 type, CUBLAS_OP_UNUSED, M, N,
+                                 UNUSED_INT, lda, KL, KU, UNUSED_POINTER});
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+__attribute__((noinline)) cublasStatus_t cublas_dlacpy(cublasHandle_t *handle, char uplo, int M,
+                                            int N, double *A, int lda,
+                                            double *B, int ldb) {
+  calls.push_back((BlasCall){ABIType::CUBLAS,handle,inDerivative, CallType::LACPY, B, A,
+                             UNUSED_POINTER, UNUSED_DOUBLE, UNUSED_DOUBLE,
+                            CUBLAS_OP_UNUSED, CUBLAS_OP_UNUSED, M, N, UNUSED_INT, lda,
+                             ldb, UNUSED_INT, UNUSED_POINTER});
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+
+__attribute__((noinline)) cublasStatus_t cublas_ddot(cublasHandle_t *handle,
+                                                     int N, double *X, int incx,
+                                                     double *Y, int incy,
+                                                     double *result) {
+  BlasCall call = {ABIType::CUBLAS,handle,inDerivative,
+                     CallType::DOT,
+                     UNUSED_POINTER,
+                     X,
+                     Y,
+                     UNUSED_DOUBLE,
+                     UNUSED_DOUBLE,
+                     CUBLAS_OP_UNUSED,
+                     CUBLAS_OP_UNUSED,
+                     N,
+                     UNUSED_INT,
+                     UNUSED_INT,
+                     incx,
+                     incy,
+                     UNUSED_INT,
+                     result};
+  *result = 3.15 + N;
+  calls.push_back(call);
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+__attribute__((noinline)) cublasStatus_t cublas_daxpy(cublasHandle_t *handle,
+                                                      int N, double alpha,
+                                                      double *X, int incx,
+                                                      double *Y, int incy) {
+  BlasCall call = {ABIType::CUBLAS,handle,inDerivative,
+                     CallType::AXPY,
+                     Y,
+                     X,
+                     UNUSED_POINTER,
+                     alpha,
+                     UNUSED_DOUBLE,
+                     CUBLAS_OP_UNUSED,
+                     CUBLAS_OP_UNUSED,
+                     N,
+                     UNUSED_INT,
+                     UNUSED_INT,
+                     incx,
+                     incy,
+                     UNUSED_INT,
+                     UNUSED_POINTER};
+  calls.push_back(call);
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+__attribute__((noinline)) cublasStatus_t
+cublas_dgemv(cublasOperation_t trans, int M, int N,
+             double alpha, double *A, int lda, double *X, int incx, double beta,
+             double *Y, int incy) {
+  CuBlasCall call = {ABIType::CUBLAS,handle,
+      inDerivative,  CallType::GEMV,   Y, A, X,          alpha, beta,
+      trans,         CUBLAS_OP_UNUSED, M, N, UNUSED_INT, lda,   incx, incy,
+      UNUSED_POINTER};
+  cucalls.push_back(call);
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+__attribute__((noinline)) cublasStatus_t
+cublas_dgemm(cublasHandle_t *handle, cublasOperation_t transA,
+             cublasOperation_t transB, int M, int N, int K, double alpha,
+             double *A, int lda, double *B, int ldb, double beta, double *C,
+             int ldc) {
+  calls.push_back((CuBlasCall){ABIType::CUBLAS,handle,inDerivative, CallType::GEMM, C, A, B, alpha,
+                                 beta, transA, transB, M, N, K, lda,
+                                 ldb, ldc, UNUSED_POINTER});
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+__attribute__((noinline)) cublasStatus_t
+cublas_dscal(cublasHandle_t *handle, int N, double alpha, double *X, int incX) {
+  calls.push_back((BlasCall){
+      ABIType::CUBLAS,handle,inDerivative, CallType::SCAL, X, UNUSED_POINTER, UNUSED_POINTER, alpha,
+      UNUSED_DOUBLE, CUBLAS_OP_UNUSED, CUBLAS_OP_UNUSED, N, UNUSED_INT,
+      UNUSED_INT, incX, UNUSED_INT, UNUSED_INT, UNUSED_POINTER});
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+
+// A = alpha * X * transpose(Y) + A
+__attribute__((noinline)) cublasStatus_t
+cublas_dger(cublasHandle_t *handle, int M, int N, double alpha, double *X,
+            int incX, double *Y, int incY, double *A, int lda) {
+  calls.push_back((BlasCall){ABIType::CUBLAS,handle,inDerivative, CallType::GER, A, X, Y, alpha,
+                                 UNUSED_DOUBLE, CUBLAS_OP_UNUSED,
+                                 CUBLAS_OP_UNUSED, M, N, UNUSED_INT, incX, incY,
+                                 lda, UNUSED_POINTER});
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+
+__attribute__((noinline)) cublasStatus_t cublas_dcopy(cublasHandle_t *handle,
+                                                      int N, double *X,
+                                                      int incX, double *Y,
+                                                      int incY) {
+  calls.push_back((BlasCall){
+      ABIType::CUBLAS,handle,
+      inDerivative, CallType::COPY, Y, X, UNUSED_POINTER, alpha, UNUSED_DOUBLE,
+      CUBLAS_OP_UNUSED, CUBLAS_OP_UNUSED, N, UNUSED_INT, UNUSED_INT,
+      incX, incY, UNUSED_INT, UNUSED_POINTER});
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
 
 enum class ValueType { Matrix, Vector };

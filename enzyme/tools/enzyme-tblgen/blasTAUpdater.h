@@ -21,7 +21,7 @@ void emit_BLASTypes(raw_ostream &os) {
 
   os << "TypeTree ttFloatRet;\n"
      << "ttFloatRet.insert({-1},floatType);\n"
-     << "TypeTree ttCuBlasRet;\n"
+     << "TypeTree ttCuBlasRet;\n";
 
   os << "TypeTree ttInt;\n"
      << "if (byRef) {\n"
@@ -49,7 +49,7 @@ void emit_BLASTypes(raw_ostream &os) {
      << "}\n";
 
   os << "TypeTree ttCuHandle;\n"
-     << "ttCuHandle.insert({-1},BaseType::Pointer);\n"
+     << "ttCuHandle.insert({-1},BaseType::Pointer);\n";
 
   os << "TypeTree ttPtr;\n"
      << "ttPtr.insert({-1},BaseType::Pointer);\n"
