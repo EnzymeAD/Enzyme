@@ -906,9 +906,8 @@ cublasDgemv(cublasHandle_t *handle, cublasOperation_t trans, int M, int N,
              double alpha, double *A, int lda, double *X, int incx, double beta,
              double *Y, int incy) {
   BlasCall call = {ABIType::CUBLAS,handle,
-      inDerivative,  CallType::GEMV,   Y, A, X,          alpha, beta,
-                                 CUBLAS_LAYOUT,
-      (char)trans,         UNUSED_TRANS, M, N, UNUSED_INT, lda,   incx, incy};
+      inDerivative, CallType::GEMV, Y, A, X,          alpha, beta, CUBLAS_LAYOUT,
+      (char)trans,        UNUSED_TRANS,   M, N, UNUSED_INT, lda,   incx, incy};
   calls.push_back(call);
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
@@ -1032,7 +1031,9 @@ void checkVector(BlasInfo info, std::string vecname, int length, int increment,
     printf("Error in test %s, invalid memory\n", test.c_str());
     printTrace(trace);
     printcall(rcall);
-    printf(" Input %s length must be ", vecname.c_str());
+    printf(" Input %s (", vecname.c_str());
+    printty(info.ptr);
+    printf(") length must be ");
     printty(info.vec_length);
     printf(" found ");
     printty(length);
@@ -1043,7 +1044,9 @@ void checkVector(BlasInfo info, std::string vecname, int length, int increment,
     printf("Error in test %s, invalid memory\n", test.c_str());
     printTrace(trace);
     printcall(rcall);
-    printf(" Input %s increment must be ", vecname.c_str());
+    printf(" Input %s (", vecname.c_str());
+    printty(info.ptr);
+    printf(") increment must be ");
     printty(info.vec_increment);
     printf(" found ");
     printty(increment);
@@ -1167,9 +1170,10 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     auto A = pointer_to_index(rcall.pin_arg1, inputs);
     auto X = pointer_to_index(rcall.pin_arg2, inputs);
 
+
     auto layout = rcall.layout;
     auto trans_char = rcall.targ1;
-    auto trans = !(trans_char == 'N' || trans_char == 'n');
+    auto trans = !is_normal(trans_char);
     auto M = rcall.iarg1;
     auto N = rcall.iarg2;
     auto alpha = rcall.farg1;

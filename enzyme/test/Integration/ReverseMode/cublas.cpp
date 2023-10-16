@@ -104,7 +104,6 @@ static void gemvTests() {
     {
 
       bool trans = !is_normal(transA);
-      printf("trans: %s\n", trans ? "true" : "false");
       auto handle = DEFAULT_CUBLAS_HANDLE;
       std::string Test = "GEMV active A, C ";
       BlasInfo inputs[6] = {/*A*/ BlasInfo(A, CUBLAS_LAYOUT, M, N, lda),
@@ -328,8 +327,8 @@ static void gemmTests() {
             transB_bool ? dC : A, transB_bool ? incC : lda,
             transB_bool ? A : dC, transB_bool ? lda : incC, 1.0, dB, incB);
 
-        // not supported yet by cublas @wsmoses
-        // cublasDlascl(handle, 'G', 0, 0, 1.0, beta, M, N, dC, incC /*, extra
+        // TODO we are currently faking support here, this needs to be actually implemented
+        cublasDlascl(handle, (cublasOperation_t)'G', 0, 0, 1.0, beta, M, N, dC, incC /*, extra
         // 0*/ );
 
         checkTest(Test);
