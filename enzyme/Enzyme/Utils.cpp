@@ -674,14 +674,14 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
                         ArrayRef<OperandBundleDef> bundles, bool byRef,
                         bool julia_decl) {
   // add spmv diag update call if not already present
-  Twine fnc_name = Twine("__enzyme_spmv_diag") + blas.floatType + blas.suffix;
+  auto fnc_name = "__enzyme_spmv_diag" + blas.floatType + blas.suffix;
 
   //  spmvDiagHelper(uplo, n, alpha, x, incx, ya, incy, APa)
   auto FDiagUpdateT = FunctionType::get(
       B.getVoidTy(),
       {BlasCT, BlasIT, BlasFPT, BlasPT, BlasIT, BlasPT, BlasIT, BlasPT}, false);
   Function *F = cast<Function>(
-      M.getOrInsertFunction(fnc_name.str(), FDiagUpdateT).getCallee());
+      M.getOrInsertFunction(fnc_name, FDiagUpdateT).getCallee());
 
   if (!F->empty()) {
     B.CreateCall(F, args, bundles);
