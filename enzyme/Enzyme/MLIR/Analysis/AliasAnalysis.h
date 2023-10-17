@@ -2,6 +2,7 @@
 #define ENZYME_MLIR_ANALYSIS_DATAFLOW_ALIASANALYSIS_H
 
 #include "mlir/Analysis/AliasAnalysis.h"
+#include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include <optional>
@@ -11,6 +12,44 @@ namespace mlir {
 class CallableOpInterface;
 
 namespace enzyme {
+
+//===----------------------------------------------------------------------===//
+// PointsToAnalysis
+//
+// Specifically for pointers to pointers. This tracks alias information through
+// pointers stored/loaded through memory.
+//===----------------------------------------------------------------------===//
+class PointsToSets : public dataflow::AbstractDenseLattice {
+public:
+  using AbstractDenseLattice::AbstractDenseLattice;
+
+  void print(raw_ostream &os) const override;
+
+  ChangeResult join(const AbstractDenseLattice &lattice) override;
+
+  ChangeResult insert(DistinctAttr dest, const DenseSet<DistinctAttr> &values);
+
+  // TODO: Encapsulation of this state
+  DenseMap<DistinctAttr, DenseSet<DistinctAttr>> pointsTo;
+
+private:
+};
+
+class PointsToPointerAnalysis
+    : public dataflow::DenseForwardDataFlowAnalysis<PointsToSets> {
+public:
+  using DenseForwardDataFlowAnalysis::DenseForwardDataFlowAnalysis;
+
+  void setToEntryState(PointsToSets *lattice) override;
+
+  void visitOperation(Operation *op, const PointsToSets &before,
+                      PointsToSets *after) override;
+
+  void visitCallControlFlowTransfer(CallOpInterface call,
+                                    dataflow::CallControlFlowAction action,
+                                    const PointsToSets &before,
+                                    PointsToSets *after) override;
+};
 
 //===----------------------------------------------------------------------===//
 // AliasClassLattice
@@ -24,38 +63,28 @@ public:
 
   AliasResult alias(const AbstractSparseLattice &other) const;
 
-  std::optional<Value> getCanonicalAllocation() const;
-  void getCanonicalAllocations(SmallVectorImpl<Value> &allocations) const;
-
   ChangeResult join(const AbstractSparseLattice &other) override;
 
-  ChangeResult markFresh();
+  ChangeResult insert(const DenseSet<DistinctAttr> &classes);
+
+  ChangeResult markFresh(/*optional=*/Attribute debugLabel);
 
   ChangeResult markUnknown();
 
-  ChangeResult markEntry();
-
   ChangeResult reset();
 
-  DenseSet<DistinctAttr> aliasClasses;
+  static DistinctAttr getFresh(Attribute debugLabel) {
+    return DistinctAttr::create(debugLabel);
+  }
 
-  /// Special setting for entry arguments without aliasing information. These
-  /// may alias other entry arguments, but will not alias allocations made
-  /// within the region.
-  bool isEntry() const { return entry; };
+  DenseSet<DistinctAttr> aliasClasses;
 
   /// We don't know anything about the aliasing of this value. TODO: re-evaluate
   /// if we need this.
   bool isUnknown() const { return unknown; }
 
 private:
-  bool entry = false;
   bool unknown = false;
-
-  /// As we compute alias classes, additionally propagate the possible canonical
-  /// allocation sites for this
-  /// TODO: Remove this and just use the distinct attributes directly
-  DenseSet<Value> canonicalAllocations;
 };
 
 //===----------------------------------------------------------------------===//
@@ -66,7 +95,9 @@ private:
 class AliasAnalysis
     : public dataflow::SparseForwardDataFlowAnalysis<AliasClassLattice> {
 public:
-  using SparseForwardDataFlowAnalysis::SparseForwardDataFlowAnalysis;
+  AliasAnalysis(DataFlowSolver &solver, MLIRContext *ctx)
+      : SparseForwardDataFlowAnalysis(solver),
+        entryClass(DistinctAttr::create(StringAttr::get(ctx, "entry"))) {}
 
   void setToEntryState(AliasClassLattice *lattice) override;
 
@@ -79,9 +110,12 @@ public:
                          ArrayRef<AliasClassLattice *> results) override;
 
 private:
-  void transfer(ArrayRef<MemoryEffects::EffectInstance> effects,
+  void transfer(Operation *op, ArrayRef<MemoryEffects::EffectInstance> effects,
                 ArrayRef<const AliasClassLattice *> operands,
                 ArrayRef<AliasClassLattice *> results);
+
+  /// A special alias class to denote unannotated pointer arguments.
+  const DistinctAttr entryClass;
 };
 
 } // namespace enzyme

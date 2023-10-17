@@ -3,7 +3,7 @@
 // CHECK-LABEL: @activereturn
 // CHECK:         "y": Active
 // CHECK:         "z": Active
-func.func @activereturn(%x: memref<f64>) -> memref<f64> {
+func.func @activereturn(%x: memref<f64> {enzyme.tag = "x"}) -> memref<f64> {
     %y = memref.alloca() {tag = "y"} : memref<memref<f64>>
     memref.store %x, %y[] : memref<memref<f64>>
     %z = memref.load %y[] {tag = "z"} : memref<memref<f64>>

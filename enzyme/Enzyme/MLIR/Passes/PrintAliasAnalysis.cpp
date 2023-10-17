@@ -30,7 +30,8 @@ struct PrintAliasAnalysisPass
   void runOnOperation() override {
     DataFlowSolver solver;
 
-    solver.load<enzyme::AliasAnalysis>();
+    solver.load<enzyme::AliasAnalysis>(&getContext());
+    solver.load<enzyme::PointsToPointerAnalysis>();
     solver.load<dataflow::DeadCodeAnalysis>();
     solver.load<dataflow::SparseConstantPropagation>();
 
@@ -59,10 +60,7 @@ struct PrintAliasAnalysisPass
     for (const auto &[tag, value] : taggedPointers) {
       const auto *state = solver.lookupState<enzyme::AliasClassLattice>(value);
       if (state) {
-        errs() << "tag " << tag
-               << " canonical allocation: " << state->getCanonicalAllocation()
-               << " is unknown: " << state->isUnknown()
-               << " is entry: " << state->isEntry() << "\n";
+        errs() << "tag " << tag << " " << *state << "\n";
       }
     }
 
@@ -89,10 +87,6 @@ struct PrintAliasAnalysisPass
         for (auto arg : funcOp.getArguments()) {
           auto *state = solver.lookupState<enzyme::AliasClassLattice>(arg);
           if (state) {
-            if (state->isEntry())
-              funcOp.setArgAttr(arg.getArgNumber(), "enzyme.ac_entry",
-                                UnitAttr::get(funcOp.getContext()));
-
             for (auto aliasClass : state->aliasClasses)
               funcOp.setArgAttr(arg.getArgNumber(), "enzyme.ac", aliasClass);
           }

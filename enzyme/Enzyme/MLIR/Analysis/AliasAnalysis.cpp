@@ -1,6 +1,7 @@
 #include "AliasAnalysis.h"
 
 #include "mlir/Analysis/AliasAnalysis.h"
+#include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/IR/FunctionInterfaces.h"
@@ -15,13 +16,118 @@ using namespace mlir;
 using namespace mlir::dataflow;
 
 //===----------------------------------------------------------------------===//
+// PointsToAnalysis
+//===----------------------------------------------------------------------===//
+
+void enzyme::PointsToSets::print(raw_ostream &os) const {
+  for (const auto &[srcClass, destClasses] : pointsTo) {
+    os << "  " << srcClass << " points to {";
+    llvm::interleaveComma(destClasses, os);
+    os << "}\n";
+  }
+}
+
+/// Union for every variable.
+ChangeResult enzyme::PointsToSets::join(const AbstractDenseLattice &lattice) {
+  const auto &rhs = static_cast<const PointsToSets &>(lattice);
+  ChangeResult result = ChangeResult::NoChange;
+  for (const auto &[alloc, allocSet] : rhs.pointsTo) {
+    auto &lhsSet = pointsTo[alloc];
+    size_t oldSize = lhsSet.size();
+    lhsSet.insert(allocSet.begin(), allocSet.end());
+    result |= (lhsSet.size() == oldSize) ? ChangeResult::NoChange
+                                         : ChangeResult::Change;
+  }
+  return result;
+}
+
+/// Mark the pointer stored in `dest` as possibly pointing to any of `values`.
+ChangeResult
+enzyme::PointsToSets::insert(DistinctAttr dest,
+                             const DenseSet<DistinctAttr> &values) {
+  auto &destPointsTo = pointsTo[dest];
+  size_t oldSize = destPointsTo.size();
+  destPointsTo.insert(values.begin(), values.end());
+  return oldSize == destPointsTo.size() ? ChangeResult::NoChange
+                                        : ChangeResult::Change;
+}
+
+// TODO: Reduce code duplication with activity analysis
+std::optional<Value> getStored(Operation *op);
+
+void enzyme::PointsToPointerAnalysis::visitOperation(Operation *op,
+                                                     const PointsToSets &before,
+                                                     PointsToSets *after) {
+  using llvm::errs;
+  join(after, before);
+
+  auto memory = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!memory) {
+    return;
+  }
+
+  SmallVector<MemoryEffects::EffectInstance> effects;
+  memory.getEffects(effects);
+  for (const auto &effect : effects) {
+    Value value = effect.getValue();
+    if (!value)
+      return;
+
+    if (isa<MemoryEffects::Write>(effect.getEffect())) {
+      if (auto stored = getStored(op)) {
+        auto *srcClasses = getOrCreateFor<AliasClassLattice>(op, *stored);
+        auto *destClasses = getOrCreateFor<AliasClassLattice>(op, value);
+        if (srcClasses->isUnknown()) {
+          errs() << "unimplemented unknown\n";
+        }
+        if (destClasses->isUnknown()) {
+          errs() << "unimplemented unknown\n";
+        }
+        for (DistinctAttr destClass : destClasses->aliasClasses) {
+          propagateIfChanged(
+              after, after->insert(destClass, srcClasses->aliasClasses));
+        }
+      }
+    }
+  }
+}
+
+void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
+    CallOpInterface call, CallControlFlowAction action,
+    const PointsToSets &before, PointsToSets *after) {
+  join(after, before);
+  if (action == CallControlFlowAction::ExternalCallee) {
+    auto symbol = cast<SymbolRefAttr>(call.getCallableForCallee());
+    if (symbol.getLeafReference().getValue() == "posix_memalign") {
+      // memalign deals with nested pointers and thus must be handled here
+      // memalign points to a value
+      OperandRange arguments = call.getArgOperands();
+      auto *memPtr = getOrCreateFor<AliasClassLattice>(call, arguments[0]);
+      for (DistinctAttr memPtrClass : memPtr->aliasClasses) {
+        auto debugLabel = StringAttr::get(call.getContext(), "memalign");
+        propagateIfChanged(
+            after, after->insert(memPtrClass,
+                                 {AliasClassLattice::getFresh(debugLabel)}));
+      }
+    }
+  }
+}
+
+// The default initialization (empty map of empty sets) is correct.
+void enzyme::PointsToPointerAnalysis::setToEntryState(PointsToSets *lattice) {}
+
+//===----------------------------------------------------------------------===//
 // AliasClassLattice
 //===----------------------------------------------------------------------===//
 
 void enzyme::AliasClassLattice::print(raw_ostream &os) const {
-  os << "size: " << aliasClasses.size() << ":\n";
-  for (auto aliasClass : aliasClasses) {
-    os << "  " << aliasClass << "\n";
+  if (unknown) {
+    os << "Unknown AC";
+  } else {
+    os << "size: " << aliasClasses.size() << ":\n";
+    for (auto aliasClass : aliasClasses) {
+      os << "  " << aliasClass << "\n";
+    }
   }
 }
 
@@ -31,8 +137,6 @@ enzyme::AliasClassLattice::alias(const AbstractSparseLattice &other) const {
   if (getPoint() == rhs->getPoint())
     return AliasResult::MustAlias;
 
-  if (entry && rhs->entry)
-    return AliasResult::MayAlias;
   if (unknown || rhs->unknown)
     return AliasResult::MayAlias;
 
@@ -54,18 +158,6 @@ enzyme::AliasClassLattice::alias(const AbstractSparseLattice &other) const {
   return AliasResult::MayAlias;
 }
 
-std::optional<Value> enzyme::AliasClassLattice::getCanonicalAllocation() const {
-  if (canonicalAllocations.size() == 1) {
-    return *canonicalAllocations.begin();
-  }
-  return std::nullopt;
-}
-
-void enzyme::AliasClassLattice::getCanonicalAllocations(
-    SmallVectorImpl<Value> &allocations) const {
-  allocations.append(canonicalAllocations.begin(), canonicalAllocations.end());
-}
-
 ChangeResult
 enzyme::AliasClassLattice::join(const AbstractSparseLattice &other) {
   // Set union of the alias classes
@@ -82,27 +174,26 @@ enzyme::AliasClassLattice::join(const AbstractSparseLattice &other) {
   size_t oldSize = aliasClasses.size();
   aliasClasses.insert(otherAliasClass->aliasClasses.begin(),
                       otherAliasClass->aliasClasses.end());
-
-  size_t oldAllocSize = canonicalAllocations.size();
-  canonicalAllocations.insert(otherAliasClass->canonicalAllocations.begin(),
-                              otherAliasClass->canonicalAllocations.end());
-
-  bool entryChanged = !entry && otherAliasClass->entry;
-  entry |= otherAliasClass->entry;
-
-  return (oldSize == aliasClasses.size() &&
-          oldAllocSize == canonicalAllocations.size() && !entryChanged)
-             ? ChangeResult::NoChange
-             : ChangeResult::Change;
+  return oldSize == aliasClasses.size() ? ChangeResult::NoChange
+                                        : ChangeResult::Change;
 }
 
-ChangeResult enzyme::AliasClassLattice::markFresh() {
+ChangeResult
+enzyme::AliasClassLattice::insert(const DenseSet<DistinctAttr> &classes) {
+  size_t oldSize = aliasClasses.size();
+  aliasClasses.insert(classes.begin(), classes.end());
+  return aliasClasses.size() == oldSize ? ChangeResult::NoChange
+                                        : ChangeResult::Change;
+}
+
+ChangeResult enzyme::AliasClassLattice::markFresh(Attribute debugLabel) {
   reset();
 
   Value value = getPoint();
-  auto freshClass = DistinctAttr::create(UnitAttr::get(value.getContext()));
+  if (!debugLabel)
+    debugLabel = UnitAttr::get(value.getContext());
+  auto freshClass = AliasClassLattice::getFresh(debugLabel);
   aliasClasses.insert(freshClass);
-  canonicalAllocations.insert(value);
   return ChangeResult::Change;
 }
 
@@ -115,25 +206,12 @@ ChangeResult enzyme::AliasClassLattice::markUnknown() {
   return ChangeResult::Change;
 }
 
-ChangeResult enzyme::AliasClassLattice::markEntry() {
-  if (entry)
-    return ChangeResult::NoChange;
-
-  entry = true;
-  aliasClasses.clear();
-  canonicalAllocations.clear();
-  return ChangeResult::Change;
-}
-
 ChangeResult enzyme::AliasClassLattice::reset() {
-  if (aliasClasses.empty() && canonicalAllocations.empty() && !unknown &&
-      !entry) {
+  if (aliasClasses.empty() && !unknown) {
     return ChangeResult::NoChange;
   }
   unknown = false;
-  entry = false;
   aliasClasses.clear();
-  canonicalAllocations.clear();
   return ChangeResult::Change;
 }
 
@@ -147,12 +225,14 @@ void enzyme::AliasAnalysis::setToEntryState(AliasClassLattice *lattice) {
             dyn_cast<FunctionOpInterface>(arg.getOwner()->getParentOp())) {
       if (funcOp.getArgAttr(arg.getArgNumber(),
                             LLVM::LLVMDialect::getNoAliasAttrName())) {
-        propagateIfChanged(lattice, lattice->markFresh());
+        Attribute debugLabel =
+            funcOp.getArgAttr(arg.getArgNumber(), "enzyme.tag");
+        propagateIfChanged(lattice, lattice->markFresh(debugLabel));
       } else {
-        // Not safe in general, integers can be a result of ptrtoint. We need a
-        // type analysis here I guess?
+        // TODO: Not safe in general, integers can be a result of ptrtoint. We
+        // need a type analysis here I guess?
         if (isa<LLVM::LLVMPointerType, MemRefType>(arg.getType()))
-          propagateIfChanged(lattice, lattice->markEntry());
+          propagateIfChanged(lattice, lattice->insert({entryClass}));
       }
     }
   } else {
@@ -161,7 +241,7 @@ void enzyme::AliasAnalysis::setToEntryState(AliasClassLattice *lattice) {
 }
 
 void enzyme::AliasAnalysis::transfer(
-    ArrayRef<MemoryEffects::EffectInstance> effects,
+    Operation *op, ArrayRef<MemoryEffects::EffectInstance> effects,
     ArrayRef<const AliasClassLattice *> operands,
     ArrayRef<AliasClassLattice *> results) {
   for (const auto &effect : effects) {
@@ -175,13 +255,17 @@ void enzyme::AliasAnalysis::transfer(
       // Mark the result of the allocation as a fresh memory location
       for (AliasClassLattice *result : results) {
         if (result->getPoint() == value) {
-          propagateIfChanged(result, result->markFresh());
+          Attribute debugLabel = op->getAttr("tag");
+          propagateIfChanged(result, result->markFresh(debugLabel));
         }
       }
     } else if (isa<MemoryEffects::Read>(effect.getEffect())) {
-      // Conservatively mark the read results as unknown.
-      for (AliasClassLattice *result : results) {
-        propagateIfChanged(result, result->markUnknown());
+      auto *pointsToSets = getOrCreateFor<PointsToSets>(op, op);
+      for (auto srcClass : getLatticeElement(value)->aliasClasses) {
+        const auto &srcPointsTo = pointsToSets->pointsTo.lookup(srcClass);
+        for (AliasClassLattice *result : results) {
+          propagateIfChanged(result, result->insert(srcPointsTo));
+        }
       }
     }
   }
@@ -189,7 +273,8 @@ void enzyme::AliasAnalysis::transfer(
   if (!effects.empty())
     return;
 
-  // Conservatively assume all results alias all operands
+  // For operations that don't touch memory, conservatively assume all results
+  // alias all operands
   for (auto *resultLattice : results) {
     for (const auto *operandLattice : operands) {
       join(resultLattice, *operandLattice);
@@ -204,7 +289,7 @@ void enzyme::AliasAnalysis::visitOperation(
   if (auto memory = dyn_cast<MemoryEffectOpInterface>(op))
     memory.getEffects(effects);
 
-  transfer(effects, operands, results);
+  transfer(op, effects, operands, results);
   if (auto view = dyn_cast<OffsetSizeAndStrideOpInterface>(op)) {
     // TODO: special handling for offset size and stride op interface to prove
     // that non-overlapping subviews of the same buffer don't alias could be a
@@ -231,5 +316,5 @@ void enzyme::AliasAnalysis::visitExternalCall(
     ArrayRef<AliasClassLattice *> results) {
   SmallVector<MemoryEffects::EffectInstance> effects;
   getEffectsForExternalCall(call, effects);
-  transfer(effects, operands, results);
+  transfer(call, effects, operands, results);
 }

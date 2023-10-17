@@ -308,35 +308,27 @@ public:
     return ChangeResult::Change;
   }
 
-  bool hasActiveData(Value value) const {
-    const auto &state = activityStates.lookup(value);
+  bool hasActiveData(DistinctAttr aliasClass) const {
+    const auto &state = activityStates.lookup(aliasClass);
     return state.activeIn;
   }
 
-  bool activeDataFlowsOut(Value value) const {
-    const auto &state = activityStates.lookup(value);
+  bool activeDataFlowsOut(DistinctAttr aliasClass) const {
+    const auto &state = activityStates.lookup(aliasClass);
     return state.activeOut;
   }
 
   /// Set the internal activity state.
-  ChangeResult addAllocation(Value value) {
-    if (activityStates.contains(value)) {
-      return ChangeResult::NoChange;
-    }
-    activityStates.insert({value, MemoryActivityState{}});
-    return ChangeResult::Change;
-  }
-
-  ChangeResult setActiveIn(Value value) {
-    auto &state = activityStates[value];
+  ChangeResult setActiveIn(DistinctAttr aliasClass) {
+    auto &state = activityStates[aliasClass];
     ChangeResult result =
         state.activeIn ? ChangeResult::NoChange : ChangeResult::Change;
     state.activeIn = true;
     return result;
   }
 
-  ChangeResult setActiveOut(Value value) {
-    auto &state = activityStates[value];
+  ChangeResult setActiveOut(DistinctAttr aliasClass) {
+    auto &state = activityStates[aliasClass];
     ChangeResult result =
         state.activeOut ? ChangeResult::NoChange : ChangeResult::Change;
     state.activeOut = true;
@@ -360,7 +352,7 @@ public:
   }
 
 protected:
-  DenseMap<Value, MemoryActivityState> activityStates;
+  DenseMap<DistinctAttr, MemoryActivityState> activityStates;
 };
 
 class ForwardMemoryActivity : public MemoryActivity {
@@ -507,24 +499,25 @@ std::optional<Value> getCopySource(Operation *op) {
 void forEachAliasedAlloc(const AliasClassLattice *ptrAliasClass,
                          const AvailableAllocations *availableAllocs,
                          ValueRange entryAllocs,
-                         function_ref<void(Value alloc)> forEachFn) {
-  SmallVector<Value> canonicalAllocs;
-  if (ptrAliasClass->isEntry()) {
-    assert(!entryAllocs.empty() &&
-           "found an entry alias class but entry args was empty");
-    // Take the first unannotated entry argument as the canonical allocation
-    canonicalAllocs.push_back(entryAllocs.front());
-  } else if (ptrAliasClass->isUnknown()) {
+                         function_ref<void(DistinctAttr alloc)> forEachFn) {
+  SmallVector<DistinctAttr> canonicalAllocs;
+  // if (ptrAliasClass->isEntry()) {
+  //   assert(!entryAllocs.empty() &&
+  //          "found an entry alias class but entry args was empty");
+  //   // Take the first unannotated entry argument as the canonical allocation
+  //   canonicalAllocs.push_back(entryAllocs.front());
+  // } else
+  if (ptrAliasClass->isUnknown()) {
+    errs() << "unhandled unknown alias class\n";
     // Unknown pointers alias with the unknown entry arguments and all
     // known allocations
-    if (!entryAllocs.empty())
-      canonicalAllocs.push_back(entryAllocs.front());
-    availableAllocs->getAllocations(canonicalAllocs);
+    // availableAllocs->getAllocations(canonicalAllocs);
   } else {
-    ptrAliasClass->getCanonicalAllocations(canonicalAllocs);
+    canonicalAllocs.append(ptrAliasClass->aliasClasses.begin(),
+                           ptrAliasClass->aliasClasses.end());
   }
 
-  for (Value alloc : canonicalAllocs) {
+  for (DistinctAttr alloc : canonicalAllocs) {
     forEachFn(alloc);
   }
 }
@@ -533,8 +526,11 @@ class DenseForwardActivityAnalysis
     : public DenseForwardDataFlowAnalysis<ForwardMemoryActivity> {
 public:
   DenseForwardActivityAnalysis(DataFlowSolver &solver,
-                               SmallVectorImpl<Value> &entryAllocs)
-      : DenseForwardDataFlowAnalysis(solver), entryAllocs(entryAllocs) {}
+                               SmallVectorImpl<Value> &entryAllocs,
+                               Block *entryBlock,
+                               ArrayRef<enzyme::Activity> argumentActivity)
+      : DenseForwardDataFlowAnalysis(solver), entryAllocs(entryAllocs),
+        entryBlock(entryBlock), argumentActivity(argumentActivity) {}
 
   void visitOperation(Operation *op, const ForwardMemoryActivity &before,
                       ForwardMemoryActivity *after) override {
@@ -562,7 +558,8 @@ public:
         auto *ptrAliasClass = getOrCreateFor<AliasClassLattice>(op, value);
         auto *availableAllocs = getOrCreateFor<AvailableAllocations>(op, op);
         forEachAliasedAlloc(
-            ptrAliasClass, availableAllocs, entryAllocs, [&](Value alloc) {
+            ptrAliasClass, availableAllocs, entryAllocs,
+            [&](DistinctAttr alloc) {
               if (before.hasActiveData(alloc)) {
                 result |= after->setActiveOut(alloc);
                 for (OpResult opResult : op->getResults()) {
@@ -607,13 +604,14 @@ public:
             auto *availableAllocs =
                 getOrCreateFor<AvailableAllocations>(op, op);
             forEachAliasedAlloc(
-                ptrAliasClass, availableAllocs, entryAllocs, [&](Value alloc) {
+                ptrAliasClass, availableAllocs, entryAllocs,
+                [&](DistinctAttr alloc) {
                   // Mark the pointer as having been actively stored into
                   result |= after->setActiveIn(alloc);
 
                   // Mark the destination pointer as an active pointer
                   auto ptrValueActivity =
-                      getOrCreate<ForwardValueActivity>(alloc);
+                      getOrCreate<ForwardValueActivity>(value);
                   propagateIfChanged(
                       ptrValueActivity,
                       ptrValueActivity->join(ValueActivity::getActivePtr()));
@@ -626,16 +624,17 @@ public:
           // Do we need to iterate over aliased allocations here?
           // If there's *any* aliased allocation that contains active data
           forEachAliasedAlloc(
-              srcAliasClass, availableAllocs, entryAllocs, [&](Value srcAlloc) {
+              srcAliasClass, availableAllocs, entryAllocs,
+              [&](DistinctAttr srcAlloc) {
                 if (before.hasActiveData(srcAlloc)) {
                   auto *destAliasClass =
                       getOrCreateFor<AliasClassLattice>(op, value);
                   forEachAliasedAlloc(
                       destAliasClass, availableAllocs, entryAllocs,
-                      [&](Value destAlloc) {
+                      [&](DistinctAttr destAlloc) {
                         result |= after->setActiveIn(destAlloc);
                         auto ptrValueActivity =
-                            getOrCreate<ForwardValueActivity>(destAlloc);
+                            getOrCreate<ForwardValueActivity>(value);
                         propagateIfChanged(ptrValueActivity,
                                            ptrValueActivity->join(
                                                ValueActivity::getActivePtr()));
@@ -659,10 +658,10 @@ public:
                     getOrCreateFor<AvailableAllocations>(op, op);
                 forEachAliasedAlloc(
                     ptrAliasClass, availableAllocs, entryAllocs,
-                    [&](Value alloc) {
+                    [&](DistinctAttr alloc) {
                       result |= after->setActiveIn(alloc);
                       auto ptrValueActivity =
-                          getOrCreate<ForwardValueActivity>(alloc);
+                          getOrCreate<ForwardValueActivity>(value);
                       propagateIfChanged(ptrValueActivity,
                                          ptrValueActivity->join(
                                              ValueActivity::getActivePtr()));
@@ -683,15 +682,34 @@ public:
     join(after, before);
   }
 
-  /// Entry states in the framework are synonymous with pessimistic states,
-  /// which in dense AA would be "everything is active". However, dense AA is
-  /// actually initialized optimistically, assuming "everything is constant".
-  void setToEntryState(ForwardMemoryActivity *lattice) override {}
+  /// Initialize the entry block with the supplied argument activities.
+  void setToEntryState(ForwardMemoryActivity *lattice) override {
+    if (auto *block = dyn_cast_if_present<Block *>(lattice->getPoint())) {
+      if (block == entryBlock) {
+        for (const auto &[arg, activity] :
+             llvm::zip(block->getArguments(), argumentActivity)) {
+          if (activity == enzyme::Activity::enzyme_dup ||
+              activity == enzyme::Activity::enzyme_dupnoneed) {
+            auto *argAliasClasses =
+                getOrCreateFor<AliasClassLattice>(block, arg);
+            for (DistinctAttr argAliasClass : argAliasClasses->aliasClasses) {
+              propagateIfChanged(lattice, lattice->setActiveIn(argAliasClass));
+            }
+          }
+        }
+      }
+    }
+  }
 
 private:
   // The entry arguments for the top-level function being differentiated
   // without alias attributes.
   SmallVectorImpl<Value> &entryAllocs;
+  // A pointer to the entry block and argument activities of the top-level
+  // function being differentiated. This is used to set the entry state because
+  // we need access to the results of points-to analysis.
+  Block *entryBlock;
+  ArrayRef<enzyme::Activity> argumentActivity;
 };
 
 class DenseBackwardActivityAnalysis
@@ -699,12 +717,28 @@ class DenseBackwardActivityAnalysis
 public:
   DenseBackwardActivityAnalysis(DataFlowSolver &solver,
                                 SymbolTableCollection &symbolTable,
-                                SmallVectorImpl<Value> &entryAllocs)
+                                SmallVectorImpl<Value> &entryAllocs,
+                                FunctionOpInterface parentOp,
+                                ArrayRef<enzyme::Activity> argumentActivity)
       : DenseBackwardDataFlowAnalysis(solver, symbolTable),
-        entryAllocs(entryAllocs) {}
+        entryAllocs(entryAllocs), parentOp(parentOp),
+        argumentActivity(argumentActivity) {}
 
   void visitOperation(Operation *op, const BackwardMemoryActivity &after,
                       BackwardMemoryActivity *before) override {
+    // Initialize the return activity of arguments.
+    if (op->hasTrait<OpTrait::ReturnLike>() && op->getParentOp() == parentOp) {
+      for (const auto &[arg, argActivity] : llvm::zip(
+               parentOp->getRegions().front().getArguments(), argumentActivity))
+        if (argActivity == enzyme::Activity::enzyme_dup ||
+            argActivity == enzyme::Activity::enzyme_dupnoneed) {
+          auto *argAliasClasses = getOrCreateFor<AliasClassLattice>(op, arg);
+          for (DistinctAttr argAliasClass : argAliasClasses->aliasClasses) {
+            propagateIfChanged(before, before->setActiveOut(argAliasClass));
+          }
+        }
+    }
+
     ChangeResult result = before->meet(after);
     auto memory = dyn_cast<MemoryEffectOpInterface>(op);
     // If we can't reason about the memory effects, then conservatively assume
@@ -735,7 +769,8 @@ public:
             auto *availableAllocs =
                 getOrCreateFor<AvailableAllocations>(op, op);
             forEachAliasedAlloc(
-                ptrAliasClass, availableAllocs, entryAllocs, [&](Value alloc) {
+                ptrAliasClass, availableAllocs, entryAllocs,
+                [&](DistinctAttr alloc) {
                   result |= before->setActiveOut(alloc);
 
                   auto ptrState = getOrCreate<BackwardValueActivity>(value);
@@ -751,7 +786,8 @@ public:
         std::optional<Value> stored = getStored(op);
         std::optional<Value> copySource = getCopySource(op);
         forEachAliasedAlloc(
-            ptrAliasClass, availableAllocs, entryAllocs, [&](Value alloc) {
+            ptrAliasClass, availableAllocs, entryAllocs,
+            [&](DistinctAttr alloc) {
               if (stored.has_value() && after.activeDataFlowsOut(alloc)) {
                 result |= before->setActiveIn(alloc);
                 ValueActivity resultActivity =
@@ -768,10 +804,10 @@ public:
                     getOrCreateFor<AliasClassLattice>(op, *copySource);
                 forEachAliasedAlloc(
                     srcAliasClass, availableAllocs, entryAllocs,
-                    [&](Value srcAlloc) {
+                    [&](DistinctAttr srcAlloc) {
                       before->setActiveOut(srcAlloc);
                       auto *valueState =
-                          getOrCreate<BackwardValueActivity>(srcAlloc);
+                          getOrCreate<BackwardValueActivity>(*copySource);
                       propagateIfChanged(
                           valueState,
                           valueState->meet(ValueActivity::getActivePtr()));
@@ -812,6 +848,8 @@ public:
 
 private:
   SmallVectorImpl<Value> &entryAllocs;
+  FunctionOpInterface parentOp;
+  ArrayRef<enzyme::Activity> argumentActivity;
 };
 
 void enzyme::runDataFlowActivityAnalysis(
@@ -821,14 +859,18 @@ void enzyme::runDataFlowActivityAnalysis(
   DataFlowSolver solver;
   // Keep track of all the entry pointers without noalias attributes (that
   // may alias all other entry pointers)
+  // TODO: See if we can remove all uses of the `entryAllocations`
   SmallVector<Value> entryAllocations;
 
   solver.load<AvailableAllocAnalysis>();
-  solver.load<enzyme::AliasAnalysis>();
+  solver.load<enzyme::PointsToPointerAnalysis>();
+  solver.load<enzyme::AliasAnalysis>(callee.getContext());
   solver.load<SparseForwardActivityAnalysis>();
-  solver.load<DenseForwardActivityAnalysis>(entryAllocations);
+  solver.load<DenseForwardActivityAnalysis>(
+      entryAllocations, &callee.getFunctionBody().front(), argumentActivity);
   solver.load<SparseBackwardActivityAnalysis>(symbolTable);
-  solver.load<DenseBackwardActivityAnalysis>(symbolTable, entryAllocations);
+  solver.load<DenseBackwardActivityAnalysis>(symbolTable, entryAllocations,
+                                             callee, argumentActivity);
 
   // Required for the dataflow framework to traverse region-based control flow
   solver.load<DeadCodeAnalysis>();
@@ -837,16 +879,14 @@ void enzyme::runDataFlowActivityAnalysis(
   // Initialize the argument states based on the given activity annotations.
   auto *noaliasEntryAllocs = solver.getOrCreateState<AvailableAllocations>(
       &callee.getFunctionBody().front());
-  auto *initialState = solver.getOrCreateState<ForwardMemoryActivity>(
-      &callee.getFunctionBody().front());
+  // auto *initialState = solver.getOrCreateState<ForwardMemoryActivity>(
+  //     &callee.getFunctionBody().front());
   for (const auto &[arg, activity] :
        llvm::zip(callee.getArguments(), argumentActivity)) {
     // Need to determine if this is a pointer (or memref) or not, the dup
     // activity is kind of a proxy
     if (activity == enzyme::Activity::enzyme_dup ||
         activity == enzyme::Activity::enzyme_dupnoneed) {
-      initialState->setActiveIn(arg);
-
       if (callee.getArgAttr(arg.getArgNumber(),
                             LLVM::LLVMDialect::getNoAliasAttrName()))
         noaliasEntryAllocs->addAllocation(arg);
@@ -870,13 +910,16 @@ void enzyme::runDataFlowActivityAnalysis(
   for (Operation &op : callee.getFunctionBody().getOps()) {
     if (op.hasTrait<OpTrait::ReturnLike>()) {
       returnOps.insert(&op);
-      auto *returnDenseLattice =
-          solver.getOrCreateState<BackwardMemoryActivity>(&op);
+      // auto *returnDenseLattice =
+      //     solver.getOrCreateState<BackwardMemoryActivity>(&op);
       for (const auto &[arg, activity] :
            llvm::zip(callee.getArguments(), argumentActivity)) {
         if (activity == enzyme::Activity::enzyme_dup ||
             activity == enzyme::Activity::enzyme_dupnoneed) {
-          returnDenseLattice->setActiveOut(arg);
+          // auto *argAliasClass =
+          // solver.getOrCreateState<AliasClassLattice>(arg);
+
+          // returnDenseLattice->setActiveOut(arg);
           auto *argLattice =
               solver.getOrCreateState<BackwardValueActivity>(arg);
           argLattice->meet(ValueActivity::getActivePtr());
@@ -904,28 +947,29 @@ void enzyme::runDataFlowActivityAnalysis(
   if (print) {
     auto isConstantValue = [&](DataFlowSolver &solver, Value value) {
       // TODO: integers/vectors that might be pointers
-      // if (isa<LLVM::LLVMPointerType, MemRefType>(value.getType())) {
-      //   assert(returnOps.size() == 1);
-      //   auto *fma =
-      //       solver.lookupState<ForwardMemoryActivity>(*returnOps.begin());
-      //   auto *bma = solver.lookupState<BackwardMemoryActivity>(
-      //       &callee.getFunctionBody().front().front());
+      // TODO: Doesn't detect pointers to pointers without the ActivePtr value
+      // state
+      if (isa<LLVM::LLVMPointerType, MemRefType>(value.getType())) {
+        assert(returnOps.size() == 1);
+        auto *fma =
+            solver.lookupState<ForwardMemoryActivity>(*returnOps.begin());
+        auto *bma = solver.lookupState<BackwardMemoryActivity>(
+            &callee.getFunctionBody().front().front());
 
-      //   auto *aliasClass = solver.lookupState<AliasClassLattice>(value);
-      //   auto *availableAllocs =
-      //       solver.lookupState<AvailableAllocations>(*returnOps.begin());
-      //   bool activePtr = false;
-      //   forEachAliasedAlloc(aliasClass, availableAllocs, entryAllocations,
-      //                       [&](Value alloc) {
-      //                         // It's an active pointer if active data flows
-      //                         in
-      //                         // from the forward direction and active data
-      //                         // flows out from the backward direction.
-      //                         activePtr |= fma->hasActiveData(alloc) &&
-      //                                      bma->activeDataFlowsOut(alloc);
-      //                       });
-      //   return !activePtr;
-      // }
+        auto *aliasClass = solver.lookupState<AliasClassLattice>(value);
+        auto *availableAllocs =
+            solver.lookupState<AvailableAllocations>(*returnOps.begin());
+        bool activePtr = false;
+        forEachAliasedAlloc(aliasClass, availableAllocs, entryAllocations,
+                            [&](DistinctAttr alloc) {
+                              // It's an active pointer if active data flows
+                              // in from the forward direction and active data
+                              // flows out from the backward direction.
+                              activePtr |= fma->hasActiveData(alloc) &&
+                                           bma->activeDataFlowsOut(alloc);
+                            });
+        return !activePtr;
+      }
 
       auto fva = solver.lookupState<ForwardValueActivity>(value);
       auto bva = solver.lookupState<BackwardValueActivity>(value);
