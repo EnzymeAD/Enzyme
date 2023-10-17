@@ -498,7 +498,6 @@ std::optional<Value> getCopySource(Operation *op) {
 /// Value corresponding to its allocation.
 void forEachAliasedAlloc(const AliasClassLattice *ptrAliasClass,
                          const AvailableAllocations *availableAllocs,
-                         ValueRange entryAllocs,
                          function_ref<void(DistinctAttr alloc)> forEachFn) {
   SmallVector<DistinctAttr> canonicalAllocs;
   // if (ptrAliasClass->isEntry()) {
@@ -525,12 +524,10 @@ void forEachAliasedAlloc(const AliasClassLattice *ptrAliasClass,
 class DenseForwardActivityAnalysis
     : public DenseForwardDataFlowAnalysis<ForwardMemoryActivity> {
 public:
-  DenseForwardActivityAnalysis(DataFlowSolver &solver,
-                               SmallVectorImpl<Value> &entryAllocs,
-                               Block *entryBlock,
+  DenseForwardActivityAnalysis(DataFlowSolver &solver, Block *entryBlock,
                                ArrayRef<enzyme::Activity> argumentActivity)
-      : DenseForwardDataFlowAnalysis(solver), entryAllocs(entryAllocs),
-        entryBlock(entryBlock), argumentActivity(argumentActivity) {}
+      : DenseForwardDataFlowAnalysis(solver), entryBlock(entryBlock),
+        argumentActivity(argumentActivity) {}
 
   void visitOperation(Operation *op, const ForwardMemoryActivity &before,
                       ForwardMemoryActivity *after) override {
@@ -558,8 +555,7 @@ public:
         auto *ptrAliasClass = getOrCreateFor<AliasClassLattice>(op, value);
         auto *availableAllocs = getOrCreateFor<AvailableAllocations>(op, op);
         forEachAliasedAlloc(
-            ptrAliasClass, availableAllocs, entryAllocs,
-            [&](DistinctAttr alloc) {
+            ptrAliasClass, availableAllocs, [&](DistinctAttr alloc) {
               if (before.hasActiveData(alloc)) {
                 result |= after->setActiveOut(alloc);
                 for (OpResult opResult : op->getResults()) {
@@ -604,8 +600,7 @@ public:
             auto *availableAllocs =
                 getOrCreateFor<AvailableAllocations>(op, op);
             forEachAliasedAlloc(
-                ptrAliasClass, availableAllocs, entryAllocs,
-                [&](DistinctAttr alloc) {
+                ptrAliasClass, availableAllocs, [&](DistinctAttr alloc) {
                   // Mark the pointer as having been actively stored into
                   result |= after->setActiveIn(alloc);
 
@@ -624,13 +619,12 @@ public:
           // Do we need to iterate over aliased allocations here?
           // If there's *any* aliased allocation that contains active data
           forEachAliasedAlloc(
-              srcAliasClass, availableAllocs, entryAllocs,
-              [&](DistinctAttr srcAlloc) {
+              srcAliasClass, availableAllocs, [&](DistinctAttr srcAlloc) {
                 if (before.hasActiveData(srcAlloc)) {
                   auto *destAliasClass =
                       getOrCreateFor<AliasClassLattice>(op, value);
                   forEachAliasedAlloc(
-                      destAliasClass, availableAllocs, entryAllocs,
+                      destAliasClass, availableAllocs,
                       [&](DistinctAttr destAlloc) {
                         result |= after->setActiveIn(destAlloc);
                         auto ptrValueActivity =
@@ -657,8 +651,7 @@ public:
                 auto *availableAllocs =
                     getOrCreateFor<AvailableAllocations>(op, op);
                 forEachAliasedAlloc(
-                    ptrAliasClass, availableAllocs, entryAllocs,
-                    [&](DistinctAttr alloc) {
+                    ptrAliasClass, availableAllocs, [&](DistinctAttr alloc) {
                       result |= after->setActiveIn(alloc);
                       auto ptrValueActivity =
                           getOrCreate<ForwardValueActivity>(value);
@@ -702,9 +695,6 @@ public:
   }
 
 private:
-  // The entry arguments for the top-level function being differentiated
-  // without alias attributes.
-  SmallVectorImpl<Value> &entryAllocs;
   // A pointer to the entry block and argument activities of the top-level
   // function being differentiated. This is used to set the entry state because
   // we need access to the results of points-to analysis.
@@ -717,11 +707,9 @@ class DenseBackwardActivityAnalysis
 public:
   DenseBackwardActivityAnalysis(DataFlowSolver &solver,
                                 SymbolTableCollection &symbolTable,
-                                SmallVectorImpl<Value> &entryAllocs,
                                 FunctionOpInterface parentOp,
                                 ArrayRef<enzyme::Activity> argumentActivity)
-      : DenseBackwardDataFlowAnalysis(solver, symbolTable),
-        entryAllocs(entryAllocs), parentOp(parentOp),
+      : DenseBackwardDataFlowAnalysis(solver, symbolTable), parentOp(parentOp),
         argumentActivity(argumentActivity) {}
 
   void visitOperation(Operation *op, const BackwardMemoryActivity &after,
@@ -769,8 +757,7 @@ public:
             auto *availableAllocs =
                 getOrCreateFor<AvailableAllocations>(op, op);
             forEachAliasedAlloc(
-                ptrAliasClass, availableAllocs, entryAllocs,
-                [&](DistinctAttr alloc) {
+                ptrAliasClass, availableAllocs, [&](DistinctAttr alloc) {
                   result |= before->setActiveOut(alloc);
 
                   auto ptrState = getOrCreate<BackwardValueActivity>(value);
@@ -786,8 +773,7 @@ public:
         std::optional<Value> stored = getStored(op);
         std::optional<Value> copySource = getCopySource(op);
         forEachAliasedAlloc(
-            ptrAliasClass, availableAllocs, entryAllocs,
-            [&](DistinctAttr alloc) {
+            ptrAliasClass, availableAllocs, [&](DistinctAttr alloc) {
               if (stored.has_value() && after.activeDataFlowsOut(alloc)) {
                 result |= before->setActiveIn(alloc);
                 ValueActivity resultActivity =
@@ -803,8 +789,7 @@ public:
                 auto *srcAliasClass =
                     getOrCreateFor<AliasClassLattice>(op, *copySource);
                 forEachAliasedAlloc(
-                    srcAliasClass, availableAllocs, entryAllocs,
-                    [&](DistinctAttr srcAlloc) {
+                    srcAliasClass, availableAllocs, [&](DistinctAttr srcAlloc) {
                       before->setActiveOut(srcAlloc);
                       auto *valueState =
                           getOrCreate<BackwardValueActivity>(*copySource);
@@ -847,7 +832,6 @@ public:
   void setToExitState(BackwardMemoryActivity *lattice) override {}
 
 private:
-  SmallVectorImpl<Value> &entryAllocs;
   FunctionOpInterface parentOp;
   ArrayRef<enzyme::Activity> argumentActivity;
 };
@@ -859,18 +843,16 @@ void enzyme::runDataFlowActivityAnalysis(
   DataFlowSolver solver;
   // Keep track of all the entry pointers without noalias attributes (that
   // may alias all other entry pointers)
-  // TODO: See if we can remove all uses of the `entryAllocations`
-  SmallVector<Value> entryAllocations;
 
   solver.load<AvailableAllocAnalysis>();
   solver.load<enzyme::PointsToPointerAnalysis>();
   solver.load<enzyme::AliasAnalysis>(callee.getContext());
   solver.load<SparseForwardActivityAnalysis>();
-  solver.load<DenseForwardActivityAnalysis>(
-      entryAllocations, &callee.getFunctionBody().front(), argumentActivity);
+  solver.load<DenseForwardActivityAnalysis>(&callee.getFunctionBody().front(),
+                                            argumentActivity);
   solver.load<SparseBackwardActivityAnalysis>(symbolTable);
-  solver.load<DenseBackwardActivityAnalysis>(symbolTable, entryAllocations,
-                                             callee, argumentActivity);
+  solver.load<DenseBackwardActivityAnalysis>(symbolTable, callee,
+                                             argumentActivity);
 
   // Required for the dataflow framework to traverse region-based control flow
   solver.load<DeadCodeAnalysis>();
@@ -890,8 +872,6 @@ void enzyme::runDataFlowActivityAnalysis(
       if (callee.getArgAttr(arg.getArgNumber(),
                             LLVM::LLVMDialect::getNoAliasAttrName()))
         noaliasEntryAllocs->addAllocation(arg);
-      else
-        entryAllocations.push_back(arg);
 
       auto *argLattice = solver.getOrCreateState<ForwardValueActivity>(arg);
       argLattice->join(ValueActivity::getActivePtr());
@@ -960,7 +940,7 @@ void enzyme::runDataFlowActivityAnalysis(
         auto *availableAllocs =
             solver.lookupState<AvailableAllocations>(*returnOps.begin());
         bool activePtr = false;
-        forEachAliasedAlloc(aliasClass, availableAllocs, entryAllocations,
+        forEachAliasedAlloc(aliasClass, availableAllocs,
                             [&](DistinctAttr alloc) {
                               // It's an active pointer if active data flows
                               // in from the forward direction and active data
