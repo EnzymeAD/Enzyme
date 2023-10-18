@@ -91,6 +91,12 @@ struct PrintAliasAnalysisPass
               funcOp.setArgAttr(arg.getArgNumber(), "enzyme.ac", aliasClass);
           }
         }
+      } else if (op->hasTrait<OpTrait::ReturnLike>() &&
+                 isa<FunctionOpInterface>(op->getParentOp())) {
+        auto *state = solver.lookupState<enzyme::PointsToSets>(op);
+        if (state) {
+          errs() << "points-to-pointer sets: " << *state << "\n";
+        }
       }
       if (op->hasAttr("tag")) {
         for (OpResult result : op->getResults()) {
