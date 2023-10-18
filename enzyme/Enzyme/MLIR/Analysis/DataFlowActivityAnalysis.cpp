@@ -291,12 +291,8 @@ public:
   void visitOperation(Operation *op,
                       ArrayRef<const ForwardValueActivity *> operands,
                       ArrayRef<ForwardValueActivity *> results) override {
-    if (op->hasTrait<OpTrait::ConstantLike>()) {
-      for (auto result : results) {
-        result->join(ValueActivity::getConstant());
-      }
+    if (op->hasTrait<OpTrait::ConstantLike>())
       return;
-    }
 
     // Bail out if this op affects memory.
     if (auto memory = dyn_cast<MemoryEffectOpInterface>(op)) {
@@ -559,6 +555,16 @@ public:
             propagateIfChanged(before, before->setActiveOut(argAliasClass));
           }
         }
+
+      // Initialize the return activity of the operands
+      for (Value operand : op->getOperands()) {
+        if (isa<MemRefType, LLVM::LLVMPointerType>(operand.getType())) {
+          auto *retAliasClasses =
+              getOrCreateFor<AliasClassLattice>(op, operand);
+          for (DistinctAttr retAliasClass : retAliasClasses->aliasClasses)
+            propagateIfChanged(before, before->setActiveOut(retAliasClass));
+        }
+      }
     }
 
     ChangeResult result = before->meet(after);
@@ -763,7 +769,7 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
     for (Operation *returnOp : returnOps) {
       auto *state = solver.lookupState<ForwardMemoryActivity>(returnOp);
       if (state)
-        errs() << "resulting forward state:\n" << *state << "\n";
+        errs() << "forward end state:\n" << *state << "\n";
       else
         errs() << "state was null\n";
     }

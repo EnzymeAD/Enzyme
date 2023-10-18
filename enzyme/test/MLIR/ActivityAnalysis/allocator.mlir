@@ -11,6 +11,7 @@ module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<f16, dense<16> : 
   }
   // CHECK-LABEL: @_Z10reduce_maxPdi:
   // CHECK:         "arg0": Active
+  // CHECK:         "allocator": Active
   // CHECK:         "loaded": Active
   llvm.func @_Z10reduce_maxPdi(%arg0: f64 {enzyme.tag = "arg0"}) -> f64 {
     %0 = llvm.mlir.constant(1 : i64) : i64
