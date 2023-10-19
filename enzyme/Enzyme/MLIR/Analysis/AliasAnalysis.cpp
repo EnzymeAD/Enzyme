@@ -171,11 +171,7 @@ enzyme::AliasClassLattice::join(const AbstractSparseLattice &other) {
     return ChangeResult::Change;
   }
 
-  size_t oldSize = aliasClasses.size();
-  aliasClasses.insert(otherAliasClass->aliasClasses.begin(),
-                      otherAliasClass->aliasClasses.end());
-  return oldSize == aliasClasses.size() ? ChangeResult::NoChange
-                                        : ChangeResult::Change;
+  return insert(otherAliasClass->aliasClasses);
 }
 
 ChangeResult
