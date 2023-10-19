@@ -31,8 +31,8 @@ declare void @free(i8*)
 
 ; CHECK: define internal void @fwddiffejac_rev(double* nocapture readonly %r, { i8* } %tapeArg, { i8* } %"tapeArg'", i1 %cmp)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %"arg0'ipev" = extractvalue { i8* } %"tapeArg'", 0
 ; CHECK-NEXT:   %arg0 = extractvalue { i8* } %tapeArg, 0
+; CHECK-NEXT:   %"arg0'ipev" = extractvalue { i8* } %"tapeArg'", 0
 ; CHECK-NEXT:   store i8 0, i8* %"arg0'ipev", align 8
 ; CHECK-NEXT:   store i8 0, i8* %arg0, align 8
 ; CHECK-NEXT:   br i1 %cmp, label %invertbaz, label %invertfoo
@@ -52,7 +52,7 @@ declare void @free(i8*)
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfoo:                                        ; preds = %entry
-; CHECK-NEXT:   %"arg1'ipev" = extractvalue { i8* } %"tapeArg'", 0
 ; CHECK-NEXT:   %arg1 = extractvalue { i8* } %tapeArg, 0
+; CHECK-NEXT:   %"arg1'ipev" = extractvalue { i8* } %"tapeArg'", 0
 ; CHECK-NEXT:   br label %invertbaz
 ; CHECK-NEXT: }

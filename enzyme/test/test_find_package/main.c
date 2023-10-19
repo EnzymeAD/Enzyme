@@ -1,4 +1,4 @@
-#include <stdio.h>
+int printf(const char*, ...);
 
 extern double __enzyme_autodiff(void*, double);
 

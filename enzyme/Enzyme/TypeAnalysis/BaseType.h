@@ -25,6 +25,7 @@
 #ifndef ENZYME_TYPE_ANALYSIS_BASE_TYPE_H
 #define ENZYME_TYPE_ANALYSIS_BASE_TYPE_H 1
 
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <string>
 
@@ -60,7 +61,7 @@ static inline std::string to_string(BaseType t) {
 }
 
 /// Convert string to BaseType
-static inline BaseType parseBaseType(std::string str) {
+static inline BaseType parseBaseType(llvm::StringRef str) {
   if (str == "Integer")
     return BaseType::Integer;
   if (str == "Float")

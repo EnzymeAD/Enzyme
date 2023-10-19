@@ -54,10 +54,7 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NEXT:   %pre_x1 = load double, double* %in1
 ; CHECK-NEXT:   store double 0.000000e+00, double* %in1
 ; CHECK-NEXT:   %x1 = insertvalue { double, double, double* } %x0, double %pre_x1, 1
-; CHECK-NEXT:   %out1 = insertvalue { double, double, double* } %x1, double* %in0, 2
-; CHECK-NEXT:   %post_x0 = extractvalue { double, double, double* } %out1, 0
-; CHECK-NEXT:   %post_x1 = extractvalue { double, double, double* } %x1, 1
-; CHECK-NEXT:   %mul0 = fmul double %post_x0, %post_x1
+; CHECK-NEXT:   %mul0 = fmul double %pre_x0, %pre_x1
 ; CHECK-NEXT:   store double %mul0, double* %in0
 ; CHECK-NEXT:   br label %exit
 
@@ -88,7 +85,6 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NEXT:   %[[i9:.+]] = fadd fast double %[[i8]], %[[i2]]
 ; CHECK-NEXT:   store double %[[i9]], double* %[[i7]]
 ; CHECK-NEXT:   %[[i10:.+]] = load { double, double, double* }, { double, double, double* }* %"out1'de"
-; CHECK-NEXT:   %[[i11:.+]] = insertvalue { double, double, double* } %[[i10]], double* null, 2
 ; CHECK-NEXT:   %[[i12:.+]] = load { double, double, double* }, { double, double, double* }* %"x1'de"
 ; CHECK-NEXT:   %[[i13:.+]] = extractvalue { double, double, double* } %[[i10]], 0
 ; CHECK-NEXT:   %[[i14:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x1'de", i32 0, i32 0
@@ -105,7 +101,6 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NEXT:   %[[i22:.+]] = extractvalue { double, double, double* } %[[i21]], 1
 ; CHECK-NEXT:   %[[i23:.+]] = fadd fast double 0.000000e+00, %[[i22]]
 ; CHECK-NEXT:   %[[i24:.+]] = load { double, double, double* }, { double, double, double* }* %"x1'de"
-; CHECK-NEXT:   %[[i25:.+]] = insertvalue { double, double, double* } %[[i24]], double 0.000000e+00, 1
 ; CHECK-NEXT:   %[[i26:.+]] = load { double, double, double* }, { double, double, double* }* %"x0'de"
 ; CHECK-NEXT:   %[[i27:.+]] = extractvalue { double, double, double* } %[[i24]], 0
 ; CHECK-NEXT:   %[[i28:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x0'de", i32 0, i32 0

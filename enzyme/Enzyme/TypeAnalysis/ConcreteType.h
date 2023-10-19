@@ -65,9 +65,9 @@ public:
   /// Construct a ConcreteType from a string
   ///  A Concrete Type's string representation is given by the string of the
   ///  enum If it is a floating point it is given by Float@<specific_type>
-  ConcreteType(std::string Str, llvm::LLVMContext &C) {
+  ConcreteType(llvm::StringRef Str, llvm::LLVMContext &C) {
     auto Sep = Str.find('@');
-    if (Sep != std::string::npos) {
+    if (Sep != llvm::StringRef::npos) {
       SubTypeEnum = BaseType::Float;
       assert(Str.substr(0, Sep) == "Float");
       auto SubName = Str.substr(Sep + 1);

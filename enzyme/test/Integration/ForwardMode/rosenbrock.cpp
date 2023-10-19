@@ -11,10 +11,6 @@
 #include <cmath>
 #include <vector>
 
-int enzyme_dup;
-int enzyme_out;
-int enzyme_const;
-
 using std::vector;
 
 template <typename T> T rosenbrock2(const vector<T> &control) {

@@ -212,7 +212,7 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
 
     if (dimensions.size() == 3) {
       os 
-<< "      malloc_size = select_vec_dims(BuilderZ, arg_" << nameVec[dimensions[0]] << ", arg_" << nameVec[dimensions[1]] << ", arg_" << nameVec[dimensions[2]] << ", byRef);\n";
+<< "      malloc_size = select_vec_dims(BuilderZ, arg_" << nameVec[dimensions[0]] << ", arg_" << nameVec[dimensions[1]] << ", arg_" << nameVec[dimensions[2]] << ", byRef, cublas);\n";
     } else {
       os 
 << "      malloc_size = arg_" << nameVec[dimensions[0]] << ";\n";
@@ -227,9 +227,12 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
     for (auto len_pos : pattern.getRelatedLengthArgs(argIdx) ) {
 os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
-os << "      if (EnzymeBlasCopy) {\n"
-<< "        Value *args[5] = {arg_malloc_size, arg_" << vecName << ", arg_" << incName << ", malins, to_blas_callconv(BuilderZ, ConstantInt::get(intType, 1), byRef, julia_decl_type, allocationBuilder)};\n"
-<< "        callMemcpyStridedBlas(BuilderZ, *gutils->oldFunc->getParent(), blas, args, gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
+os << "      if (cublas) {\n"
+<< "          Value *args[6] = {arg_handle, arg_malloc_size, arg_" << vecName << ", arg_" << incName << ", malins, ConstantInt::get(intType, 1)};\n"
+<< "          callMemcpyStridedBlas(BuilderZ, *gutils->oldFunc->getParent(), blas, args, cublas_retty, gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
+<< "        } else if (EnzymeBlasCopy) {\n"
+<< "        Value *args[5] = {arg_malloc_size, arg_" << vecName << ", arg_" << incName << ", malins, to_blas_callconv(BuilderZ, ConstantInt::get(intType, 1), byRef, cublas, julia_decl_type, allocationBuilder)};\n"
+<< "        callMemcpyStridedBlas(BuilderZ, *gutils->oldFunc->getParent(), blas, args, Type::getVoidTy(call.getContext()), gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
 << "      } else {\n"
 << "       auto dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(), fpType, cast<PointerType>(malins->getType()), intType, 0, 0);\n"
 << "        Value *inc = load_if_ref(BuilderZ, intType, arg_" << incName << ", byRef);\n"
@@ -267,7 +270,7 @@ os << "      if (EnzymeBlasCopy) {\n"
 
     if (dimensions.size() == 3) {
       os 
-<< "      Value *normal = is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef);\n"
+<< "      Value *normal = is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n"
 << "      M = BuilderZ.CreateSelect(normal, " << dim1 << ", " << dim2 << ");\n"
 << "      N = BuilderZ.CreateSelect(normal, " << dim2 << ", " << dim1 << ");\n";
     } else {
@@ -281,7 +284,7 @@ os << "      if (EnzymeBlasCopy) {\n"
 << "      auto *len2 = load_if_ref(BuilderZ, intType, N, byRef);\n"
 << "      auto *matSize = BuilderZ.CreateMul(len1, len2);\n"
 << "      auto malins = CreateAllocation(BuilderZ, fpType, matSize, \"cache." << matName << "\");\n"
-<< "      ValueType valueTypes[] = {" << valueTypes << "};\n"
+<< "      SmallVector<ValueType, 7> valueTypes = {" << valueTypes << "};\n"
 <<"       valueTypes[" << argIdx << "] = ValueType::Primal;\n"
 << "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
     for (auto len_pos : dimensions ) {
@@ -289,8 +292,10 @@ os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
 os << "      if (EnzymeLapackCopy) {\n"
 << "        Value *uplo = llvm::ConstantInt::get(charTy, 0);\n" // garbage data, just should not match U or L
-<< "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, nullptr, allocationBuilder, \"copy.garbage\");\n"
-<< "        Value *args[7] = {uplo, M, N, arg_" << matName << ", arg_" << ldName << ", malins, M};\n"
+<< "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, cublas, nullptr, allocationBuilder, \"copy.garbage\");\n"
+<< "        SmallVector<Value *, 7> args = {uplo, M, N, arg_" << matName << ", arg_" << ldName << ", malins, M};\n"
+<< "        if (!byRef) {\n"
+<< "           args.insert(args.begin(), arg_layout); valueTypes.insert(valueTypes.begin(), ValueType::Primal); }\n"
 << "        callMemcpyStridedLapack(BuilderZ, *gutils->oldFunc->getParent(), blas, args, gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
 << "      } else {\n"
 << "        auto dmemcpy = getOrInsertMemcpyMat(*gutils->oldFunc->getParent(), fpType, cast<PointerType>(malins->getType()), intType, 0, 0);\n"

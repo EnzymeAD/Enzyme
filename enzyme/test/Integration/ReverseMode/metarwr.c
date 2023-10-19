@@ -29,8 +29,6 @@ void alldiv(double* __restrict__ a, long** meta) {
   a[0] = 0;
 }
 
-int enzyme_dup, enzyme_const;
-
 int main(int argc, char** argv) {
 
   long meta[2] = { 198, 200 }; 

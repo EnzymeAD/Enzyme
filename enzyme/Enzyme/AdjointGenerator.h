@@ -30,6 +30,7 @@
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -128,7 +129,7 @@ public:
       return;
 
     if (auto newi = dyn_cast<Instruction>(iload))
-      gutils->eraseWithPlaceholder(newi, "_replacementA", erase);
+      gutils->eraseWithPlaceholder(newi, &I, "_replacementA", erase);
   }
 
   llvm::Value *MPI_TYPE_SIZE(llvm::Value *DT, llvm::IRBuilder<> &B,
@@ -352,7 +353,7 @@ public:
     auto placeholder = cast<PHINode>(&*found->second);
     gutils->invertedPointers.erase(found);
 
-    if (!DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Shadow>(
+    if (!DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Shadow>(
             gutils, &I, Mode, oldUnreachable)) {
       gutils->erase(placeholder);
       return;
@@ -388,13 +389,8 @@ public:
 
   void visitFCmpInst(llvm::FCmpInst &I) { eraseIfUnused(I); }
 
-#if LLVM_VERSION_MAJOR >= 10
   void visitLoadLike(llvm::Instruction &I, llvm::MaybeAlign alignment,
-                     bool constantval,
-#else
-  void visitLoadLike(llvm::Instruction &I, unsigned alignment, bool constantval,
-#endif
-                     llvm::Value *mask = nullptr,
+                     bool constantval, llvm::Value *mask = nullptr,
                      llvm::Value *orig_maskInit = nullptr) {
     using namespace llvm;
 
@@ -441,25 +437,24 @@ public:
 
     IRBuilder<> BuilderZ(newi);
     if (!vd.isKnown()) {
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "Cannot deduce type of load " << I;
       auto ET = I.getType();
       if (looseTypeAnalysis || true) {
         vd = defaultTypeTreeForLLVM(ET, &I);
-        EmitWarning("CannotDeduceType", I, "failed to deduce type of load ", I);
+        ss << "\n";
+        TR.dump(ss);
+        EmitWarning("CannotDeduceType", I, ss.str());
         goto known;
       }
       if (CustomErrorHandler) {
-        std::string str;
-        raw_string_ostream ss(str);
-        ss << "Cannot deduce type of load " << I;
         CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
                            &TR.analyzer, nullptr, wrap(&BuilderZ));
       } else {
-        EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
-                    "failed to deduce type of load ", I);
-
-        TR.intType(LoadSize, &I, /*errifnotfound*/ true,
-                   /*pointerIntSame*/ true);
-        llvm_unreachable("bad mti");
+        ss << "\n";
+        TR.dump(ss);
+        EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
       }
     known:;
     }
@@ -475,7 +470,7 @@ public:
 
         // only make shadow where caching needed
         if (!DifferentialUseAnalysis::is_value_needed_in_reverse<
-                ValueType::Shadow>(gutils, &I, Mode, oldUnreachable)) {
+                QueryType::Shadow>(gutils, &I, Mode, oldUnreachable)) {
           gutils->erase(placeholder);
           return;
         }
@@ -533,7 +528,7 @@ public:
           // TODO: In the case of fwd mode this should be true if the loaded
           // value itself is used as a pointer.
           bool needShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
-              ValueType::Shadow>(gutils, &I, Mode, oldUnreachable);
+              QueryType::Shadow>(gutils, &I, Mode, oldUnreachable);
 
           switch (Mode) {
 
@@ -546,7 +541,7 @@ public:
               assert(newip->getType() == type);
               if (Mode == DerivativeMode::ReverseModePrimal && can_modref &&
                   DifferentialUseAnalysis::is_value_needed_in_reverse<
-                      ValueType::Shadow>(gutils, &I,
+                      QueryType::Shadow>(gutils, &I,
                                          DerivativeMode::ReverseModeGradient,
                                          oldUnreachable)) {
                 gutils->cacheForReverse(BuilderZ, newip,
@@ -611,13 +606,13 @@ public:
       bool primalNeededInReverse = false;
       for (auto pair : gutils->knownRecomputeHeuristic)
         if (!pair.second) {
-          Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+          Seen[UsageKey(pair.first, QueryType::Primal)] = false;
           if (pair.first == &I)
             primalNeededInReverse = true;
         }
       primalNeededInReverse |=
           DifferentialUseAnalysis::is_value_needed_in_reverse<
-              ValueType::Primal>(gutils, &I, Mode, Seen, oldUnreachable);
+              QueryType::Primal>(gutils, &I, Mode, Seen, oldUnreachable);
       if (primalNeededInReverse) {
         inst = gutils->cacheForReverse(BuilderZ, newi,
                                        getIndex(&I, CacheType::Self));
@@ -753,12 +748,7 @@ public:
       }
     }
 
-#if LLVM_VERSION_MAJOR >= 10
     auto alignment = LI.getAlign();
-#else
-    auto alignment = LI.getAlignment();
-#endif
-
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
 
     bool constantval = parseTBAA(LI, DL).Inner0().isIntegral();
@@ -798,14 +788,10 @@ public:
             rmw = BuilderZ.CreateAtomicRMW(I.getOperation(), ptr, dif,
                                            I.getAlign(), I.getOrdering(),
                                            I.getSyncScopeID());
-#elif LLVM_VERSION_MAJOR >= 11
+#else
             rmw = BuilderZ.CreateAtomicRMW(I.getOperation(), ptr, dif,
                                            I.getOrdering(), I.getSyncScopeID());
             rmw->setAlignment(I.getAlign());
-#else
-                               rmw = BuilderZ.CreateAtomicRMW(
-                                   I.getOperation(), ptr, dif, I.getOrdering(),
-                                   I.getSyncScopeID());
 #endif
             rmw->setVolatile(I.isVolatile());
             if (gutils->isConstantValue(&I))
@@ -853,17 +839,7 @@ public:
             LoadInst *dif1 =
                 Builder2.CreateLoad(I.getType(), ip, I.isVolatile());
 
-#if LLVM_VERSION_MAJOR >= 11
             dif1->setAlignment(I.getAlign());
-#else
-            const DataLayout &DL = I.getModule()->getDataLayout();
-            auto tmpAlign = DL.getTypeStoreSize(I.getValOperand()->getType());
-#if LLVM_VERSION_MAJOR >= 10
-            dif1->setAlignment(MaybeAlign(tmpAlign.getFixedSize()));
-#else
-            dif1->setAlignment(tmpAlign);
-#endif
-#endif
             dif1->setOrdering(order);
             dif1->setSyncScopeID(I.getSyncScopeID());
             return dif1;
@@ -932,11 +908,7 @@ public:
         }
       }
     }
-#if LLVM_VERSION_MAJOR >= 10
     auto align = SI.getAlign();
-#else
-    auto align = SI.getAlignment();
-#endif
 
     visitCommonStore(SI, SI.getPointerOperand(), SI.getValueOperand(), align,
                      SI.isVolatile(), SI.getOrdering(), SI.getSyncScopeID(),
@@ -956,18 +928,10 @@ public:
       eraseIfUnused(SI);
   }
 
-#if LLVM_VERSION_MAJOR >= 10
   void visitCommonStore(llvm::Instruction &I, llvm::Value *orig_ptr,
                         llvm::Value *orig_val, llvm::MaybeAlign align,
                         bool isVolatile, llvm::AtomicOrdering ordering,
-                        llvm::SyncScope::ID syncScope, llvm::Value *mask)
-#else
-  void visitCommonStore(llvm::Instruction &I, llvm::Value *orig_ptr,
-                        llvm::Value *orig_val, unsigned align, bool isVolatile,
-                        llvm::AtomicOrdering ordering,
-                        llvm::SyncScope::ID syncScope, llvm::Value *mask)
-#endif
-  {
+                        llvm::SyncScope::ID syncScope, llvm::Value *mask) {
     using namespace llvm;
 
     Value *val = gutils->getNewFromOriginal(orig_val);
@@ -1023,27 +987,25 @@ public:
     auto vd = TR.query(orig_ptr).Lookup(storeSize, DL);
 
     if (!vd.isKnown()) {
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "Cannot deduce type of store " << I;
       if (looseTypeAnalysis || true) {
+        ss << "\n";
+        TR.dump(ss);
         vd = defaultTypeTreeForLLVM(valType, &I);
-        EmitWarning("CannotDeduceType", I, "failed to deduce type of xtore ",
-                    I);
+        EmitWarning("CannotDeduceType", I, ss.str());
         goto known;
       }
       if (CustomErrorHandler) {
-        std::string str;
-        raw_string_ostream ss(str);
-        ss << "Cannot deduce type of store " << I;
         CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
                            &TR.analyzer, nullptr, wrap(&BuilderZ));
-        return;
       } else {
-        EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
-                    "failed to deduce type of store ", I);
-
-        TR.intType(storeSize, orig_ptr, /*errifnotfound*/ true,
-                   /*pointerIntSame*/ true);
-        llvm_unreachable("bad mti");
+        ss << "\n";
+        TR.dump(ss);
+        EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
       }
+      return;
     known:;
     }
 
@@ -1052,17 +1014,16 @@ public:
       bool Legal = true;
       dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
       if (!Legal) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Cannot deduce single type of store " << I;
         if (CustomErrorHandler) {
-          std::string str;
-          raw_string_ostream ss(str);
-          ss << "Cannot deduce single type of store " << I;
           CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
                              &TR.analyzer, nullptr, wrap(&BuilderZ));
-          return;
         } else {
-          EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
-                      "failed to deduce single type of store ", I);
+          EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
         }
+        return;
       }
     }
 
@@ -1132,11 +1093,7 @@ public:
               LoadInst *dif1 =
                   Builder2.CreateLoad(valType, dif1Ptr, isVolatile);
               if (align)
-#if LLVM_VERSION_MAJOR >= 11
                 dif1->setAlignment(*align);
-#else
-                dif1->setAlignment(align);
-#endif
               dif1->setOrdering(ordering);
               dif1->setSyncScopeID(syncScope);
 
@@ -1171,14 +1128,9 @@ public:
             Type *tys[] = {valType, orig_ptr->getType()};
             auto F = Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
                                                Intrinsic::masked_load, tys);
-#if LLVM_VERSION_MAJOR >= 10
             Value *alignv =
                 ConstantInt::get(Type::getInt32Ty(mask->getContext()),
                                  align ? align->value() : 0);
-#else
-            Value *alignv =
-                ConstantInt::get(Type::getInt32Ty(mask->getContext()), align);
-#endif
             Value *ip =
                 lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
 
@@ -1363,7 +1315,8 @@ public:
                                &TR.analyzer, nullptr, wrap(&Builder2));
             return;
           } else {
-            TR.dump();
+            ss << "\n";
+            TR.dump(ss);
             EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
             return;
           }
@@ -1388,12 +1341,12 @@ public:
               CustomErrorHandler(ss.str().c_str(), wrap(&I),
                                  ErrorType::NoDerivative, gutils, nullptr,
                                  wrap(&Builder2));
-              return (llvm::Value *)UndefValue::get(op0->getType());
             } else {
-              TR.dump();
-              llvm::errs() << ss.str() << "\n";
-              report_fatal_error("unknown instruction");
+              ss << "\n";
+              TR.dump(ss);
+              EmitFailure("CannotHandleCast", I.getDebugLoc(), &I, ss.str());
             }
+            return (llvm::Value *)UndefValue::get(op0->getType());
           }
         };
 
@@ -2421,8 +2374,7 @@ public:
         CustomErrorHandler(ss.str().c_str(), wrap(&BO), ErrorType::NoDerivative,
                            gutils, nullptr, wrap(&Builder2));
       } else {
-        llvm::errs() << ss.str() << "\n";
-        report_fatal_error("unknown binary operator");
+        EmitFailure("NoDerivative", BO.getDebugLoc(), &BO, ss.str());
       }
     }
 
@@ -2722,8 +2674,7 @@ public:
         CustomErrorHandler(ss.str().c_str(), wrap(&MS), ErrorType::NoDerivative,
                            gutils, nullptr, wrap(&BuilderZ));
       } else {
-        llvm::errs() << ss.str() << "\n";
-        report_fatal_error("non constant in memset");
+        EmitFailure("NoDerivative", MS.getDebugLoc(), &MS, ss.str());
       }
     }
 
@@ -2796,6 +2747,54 @@ public:
 
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
     auto vd = TR.query(MS.getOperand(0)).Data0().ShiftIndices(DL, 0, size, 0);
+
+    if (!vd.isKnownPastPointer()) {
+      // If unknown type results, and zeroing known undef allocation, consider
+      // integers
+      if (auto CI = dyn_cast<ConstantInt>(MS.getOperand(1)))
+        if (CI->isZero()) {
+          auto root = getBaseObject(MS.getOperand(0));
+          bool writtenTo = false;
+          bool undefMemory =
+              isa<AllocaInst>(root) || isAllocationCall(root, gutils->TLI);
+          if (auto arg = dyn_cast<Argument>(root))
+            if (arg->hasStructRetAttr())
+              undefMemory = true;
+          if (undefMemory) {
+            Instruction *cur = MS.getPrevNode();
+            while (cur) {
+              if (cur == root)
+                break;
+              if (auto MCI = dyn_cast<ConstantInt>(MS.getOperand(2))) {
+                if (auto II = dyn_cast<IntrinsicInst>(cur)) {
+                  // If the start of the lifetime for more memory than being
+                  // memset, its valid.
+                  if (II->getIntrinsicID() == Intrinsic::lifetime_start) {
+                    if (getBaseObject(II->getOperand(1)) == root) {
+                      if (auto CI2 = dyn_cast<ConstantInt>(II->getOperand(0))) {
+                        if (MCI->getValue().ule(CI2->getValue()))
+                          break;
+                      }
+                    }
+                    cur = cur->getPrevNode();
+                    continue;
+                  }
+                }
+              }
+              if (cur->mayWriteToMemory()) {
+                writtenTo = true;
+                break;
+              }
+              cur = cur->getPrevNode();
+            }
+
+            if (!writtenTo) {
+              vd = TypeTree(BaseType::Pointer);
+              vd.insert({-1}, BaseType::Integer);
+            }
+          }
+        }
+    }
 
     if (!vd.isKnownPastPointer()) {
       // If unknown type results, consider the intersection of all incoming.
@@ -2893,31 +2892,24 @@ public:
         vd = TypeTree(BaseType::Pointer).Only(0, &MS);
         goto known;
       }
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "Cannot deduce type of memset " << MS;
       if (CustomErrorHandler) {
-        std::string str;
-        raw_string_ostream ss(str);
-        ss << "Cannot deduce type of memset " << MS;
         CustomErrorHandler(str.c_str(), wrap(&MS), ErrorType::NoType,
                            &TR.analyzer, nullptr, wrap(&BuilderZ));
       } else {
-        EmitFailure("CannotDeduceType", MS.getDebugLoc(), &MS,
-                    "failed to deduce type of memset ", MS);
-
-        TR.firstPointer(size, MS.getOperand(0), &MS, /*errifnotfound*/ true,
-                        /*pointerIntSame*/ true);
-        llvm_unreachable("bad msi");
+        ss << "\n";
+        TR.dump(ss);
+        EmitFailure("CannotDeduceType", MS.getDebugLoc(), &MS, ss.str());
       }
+      return;
     }
   known:;
 
 #if 0
-#if LLVM_VERSION_MAJOR >= 10
     unsigned dstalign = dstAlign.valueOrOne().value();
     unsigned srcalign = srcAlign.valueOrOne().value();
-#else
-    unsigned dstalign = dstAlign;
-    unsigned srcalign = srcAlign;
-#endif
 #endif
 
     unsigned start = 0;
@@ -2996,8 +2988,8 @@ public:
           if (start != 0) {
             Value *idxs[] = {
                 ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
-            op0 =
-                BuilderZ.CreateInBoundsGEP(BuilderZ.getInt8PtrTy(), op0, idxs);
+            op0 = BuilderZ.CreateInBoundsGEP(Type::getInt8Ty(op0->getContext()),
+                                             op0, idxs);
           }
           SmallVector<Value *, 4> args = {op0, op1, length};
           if (op3)
@@ -3033,8 +3025,8 @@ public:
           if (start != 0) {
             Value *idxs[] = {
                 ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
-            op0 =
-                Builder2.CreateInBoundsGEP(Builder2.getInt8PtrTy(), op0, idxs);
+            op0 = BuilderZ.CreateInBoundsGEP(Type::getInt8Ty(op0->getContext()),
+                                             op0, idxs);
           }
           SmallVector<Value *, 4> args = {op0, op1l, length};
           if (op3l)
@@ -3062,31 +3054,18 @@ public:
   void visitMemTransferInst(llvm::MemTransferInst &MTI) {
     using namespace llvm;
     Value *isVolatile = gutils->getNewFromOriginal(MTI.getOperand(3));
-#if LLVM_VERSION_MAJOR >= 10
     auto srcAlign = MTI.getSourceAlign();
     auto dstAlign = MTI.getDestAlign();
-#else
-    auto srcAlign = MTI.getSourceAlignment();
-    auto dstAlign = MTI.getDestAlignment();
-#endif
     visitMemTransferCommon(MTI.getIntrinsicID(), srcAlign, dstAlign, MTI,
                            MTI.getOperand(0), MTI.getOperand(1),
                            gutils->getNewFromOriginal(MTI.getOperand(2)),
                            isVolatile);
   }
 
-#if LLVM_VERSION_MAJOR >= 10
   void visitMemTransferCommon(llvm::Intrinsic::ID ID, llvm::MaybeAlign srcAlign,
                               llvm::MaybeAlign dstAlign, llvm::CallInst &MTI,
                               llvm::Value *orig_dst, llvm::Value *orig_src,
-                              llvm::Value *new_size, llvm::Value *isVolatile)
-#else
-  void visitMemTransferCommon(llvm::Intrinsic::ID ID, unsigned srcAlign,
-                              unsigned dstAlign, llvm::CallInst &MTI,
-                              llvm::Value *orig_dst, llvm::Value *orig_src,
-                              llvm::Value *new_size, llvm::Value *isVolatile)
-#endif
-  {
+                              llvm::Value *new_size, llvm::Value *isVolatile) {
     using namespace llvm;
 
     if (gutils->isConstantValue(MTI.getOperand(0))) {
@@ -3188,36 +3167,29 @@ public:
         goto known;
       }
       if (errorIfNoType) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Cannot deduce type of copy " << MTI;
         if (CustomErrorHandler) {
-          std::string str;
-          raw_string_ostream ss(str);
-          ss << "Cannot deduce type of copy " << MTI;
           CustomErrorHandler(str.c_str(), wrap(&MTI), ErrorType::NoType,
                              &TR.analyzer, nullptr, wrap(&BuilderZ));
         } else {
-          EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI,
-                      "failed to deduce type of copy ", MTI);
-
-          TR.firstPointer(size, orig_dst, &MTI, /*errifnotfound*/ true,
-                          /*pointerIntSame*/ true);
-          llvm_unreachable("bad mti");
+          ss << "\n";
+          TR.dump(ss);
+          EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI, ss.str());
         }
+        vd = TypeTree(BaseType::Integer).Only(0, &MTI);
       } else {
         vd = TypeTree(BaseType::Pointer).Only(0, &MTI);
       }
     }
   known:;
 
-  // llvm::errs() << "MIT: " << MTI << "|size: " << size << " vd: " <<
-  // vd.str() << "\n";
+    // llvm::errs() << "MIT: " << MTI << "|size: " << size << " vd: " <<
+    // vd.str() << "\n";
 
-#if LLVM_VERSION_MAJOR >= 10
     unsigned dstalign = dstAlign.valueOrOne().value();
     unsigned srcalign = srcAlign.valueOrOne().value();
-#else
-    unsigned dstalign = dstAlign;
-    unsigned srcalign = srcAlign;
-#endif
 
     unsigned start = 0;
 
@@ -3322,17 +3294,12 @@ public:
           ddst = gutils->getNewFromOriginal(orig_dst);
         if (dsrc == nullptr)
           dsrc = gutils->getNewFromOriginal(orig_src);
-#if LLVM_VERSION_MAJOR >= 10
         MaybeAlign dalign;
         if (subdstalign)
           dalign = MaybeAlign(subdstalign);
         MaybeAlign salign;
         if (subsrcalign)
           salign = MaybeAlign(subsrcalign);
-#else
-        auto dalign = dstalign;
-        auto salign = srcalign;
-#endif
         if (ddst->getType()->isIntegerTy())
           ddst = BuilderZ.CreateIntToPtr(
               ddst, Type::getInt8PtrTy(ddst->getContext()));
@@ -3477,12 +3444,8 @@ public:
     case Intrinsic::nvvm_ldg_global_p:
     case Intrinsic::nvvm_ldg_global_f: {
       auto CI = cast<ConstantInt>(I.getOperand(1));
-#if LLVM_VERSION_MAJOR >= 10
       visitLoadLike(I, /*Align*/ MaybeAlign(CI->getZExtValue()),
                     /*constantval*/ false);
-#else
-      visitLoadLike(I, /*Align*/ CI->getZExtValue(), /*constantval*/ false);
-#endif
       return false;
     }
     default:
@@ -3491,11 +3454,7 @@ public:
 
     if (ID == Intrinsic::masked_store) {
       auto align0 = cast<ConstantInt>(I.getOperand(2))->getZExtValue();
-#if LLVM_VERSION_MAJOR >= 10
       auto align = MaybeAlign(align0);
-#else
-      auto align = align0;
-#endif
       visitCommonStore(I, /*orig_ptr*/ I.getOperand(1),
                        /*orig_val*/ I.getOperand(0), align,
                        /*isVolatile*/ false, llvm::AtomicOrdering::NotAtomic,
@@ -3505,11 +3464,7 @@ public:
     }
     if (ID == Intrinsic::masked_load) {
       auto align0 = cast<ConstantInt>(I.getOperand(1))->getZExtValue();
-#if LLVM_VERSION_MAJOR >= 10
       auto align = MaybeAlign(align0);
-#else
-      auto align = align0;
-#endif
       auto &DL = gutils->newFunc->getParent()->getDataLayout();
       bool constantval = parseTBAA(I, DL).Inner0().isIntegral();
       visitLoadLike(I, align, constantval,
@@ -3742,8 +3697,6 @@ public:
           return false;
         std::string s;
         llvm::raw_string_ostream ss(s);
-        ss << *gutils->oldFunc << "\n";
-        ss << *gutils->newFunc << "\n";
         if (Intrinsic::isOverloaded(ID))
 #if LLVM_VERSION_MAJOR >= 13
           ss << "cannot handle (forward) unknown intrinsic\n"
@@ -3764,14 +3717,12 @@ public:
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
                              ErrorType::NoDerivative, gutils, nullptr,
                              wrap(&Builder2));
-          setDiffe(&I,
-                   Constant::getNullValue(gutils->getShadowType(I.getType())),
-                   Builder2);
-          return false;
         } else {
           EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-          return false;
         }
+        setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
+                 Builder2);
+        return false;
       }
       return false;
     }
@@ -3942,8 +3893,9 @@ public:
         Mode == DerivativeMode::ReverseModeCombined) {
       if (called) {
         subdata = &gutils->Logic.CreateAugmentedPrimal(
-            cast<Function>(called), subretType, argsInverted,
-            TR.analyzer.interprocedural, /*return is used*/ false,
+            RequestContext(&call, &BuilderZ), cast<Function>(called),
+            subretType, argsInverted, TR.analyzer.interprocedural,
+            /*return is used*/ false,
             /*shadowReturnUsed*/ false, nextTypeInfo, overwritten_args, false,
             gutils->getWidth(),
             /*AtomicAdd*/ true,
@@ -4142,6 +4094,7 @@ public:
         }
 
         newcalled = gutils->Logic.CreatePrimalAndGradient(
+            RequestContext(&call, &Builder2),
             (ReverseCacheKey){.todiff = cast<Function>(called),
                               .retType = subretType,
                               .constant_args = argsInverted,
@@ -4247,16 +4200,10 @@ public:
           MetaTypes.push_back(PointerType::getUnqual(ST));
           auto FT = FunctionType::get(Type::getVoidTy(newcalled->getContext()),
                                       MetaTypes, false);
-#if LLVM_VERSION_MAJOR >= 10
           Function *F =
               Function::Create(FT, GlobalVariable::InternalLinkage,
                                cast<Function>(newcalled)->getName() + "#out",
                                *task->getParent());
-#else
-          Function *F = Function::Create(
-              FT, GlobalVariable::InternalLinkage,
-              cast<Function>(newcalled)->getName() + "#out", task->getParent());
-#endif
           BasicBlock *entry =
               BasicBlock::Create(newcalled->getContext(), "entry", F);
           IRBuilder<> B(entry);
@@ -4283,12 +4230,7 @@ public:
               dif = B.CreateBitCast(dif, IntToFloatTy(dif->getType()));
             }
 
-#if LLVM_VERSION_MAJOR >= 10
             MaybeAlign align;
-#else
-            unsigned align = 0;
-#endif
-
             AtomicRMWInst::BinOp op = AtomicRMWInst::FAdd;
             if (auto vt = dyn_cast<VectorType>(dif->getType())) {
 #if LLVM_VERSION_MAJOR >= 12
@@ -4306,31 +4248,23 @@ public:
 #if LLVM_VERSION_MAJOR >= 13
                 B.CreateAtomicRMW(op, vptr, vdif, align,
                                   AtomicOrdering::Monotonic, SyncScope::System);
-#elif LLVM_VERSION_MAJOR >= 11
+#else
                 AtomicRMWInst *rmw =
                     B.CreateAtomicRMW(op, vptr, vdif, AtomicOrdering::Monotonic,
                                       SyncScope::System);
                 if (align)
                   rmw->setAlignment(align.getValue());
-#else
-                                   B.CreateAtomicRMW(op, vptr, vdif,
-                                                     AtomicOrdering::Monotonic,
-                                                     SyncScope::System);
 #endif
               }
             } else {
 #if LLVM_VERSION_MAJOR >= 13
               B.CreateAtomicRMW(op, ptr, dif, align, AtomicOrdering::Monotonic,
                                 SyncScope::System);
-#elif LLVM_VERSION_MAJOR >= 11
+#else
               AtomicRMWInst *rmw = B.CreateAtomicRMW(
                   op, ptr, dif, AtomicOrdering::Monotonic, SyncScope::System);
               if (align)
                 rmw->setAlignment(align.getValue());
-#else
-                                 B.CreateAtomicRMW(op, ptr, dif,
-                                                   AtomicOrdering::Monotonic,
-                                                   SyncScope::System);
 #endif
             }
           }
@@ -4414,12 +4348,9 @@ public:
         }
       }
 #endif
+      TR.dump();
       EmitFailure("CannotDeduceType", call.getDebugLoc(), &call,
                   "failed to deduce type of copy ", call);
-
-      TR.firstPointer(size, origArg, &call, /*errifnotfound*/ true,
-                      /*pointerIntSame*/ true);
-      llvm_unreachable("bad mti");
     }
   knownF:;
     unsigned start = 0;
@@ -4806,11 +4737,7 @@ public:
                ValueType::Shadow},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
 
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
@@ -4959,11 +4886,7 @@ public:
             &call, {ValueType::Shadow, ValueType::Shadow}, Builder2,
             /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
 
         Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
         return;
@@ -5142,11 +5065,7 @@ public:
              ValueType::None, ValueType::None, ValueType::Shadow},
             Builder2, /*lookup*/ true);
 
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
 
         Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
         return;
@@ -5241,11 +5160,7 @@ public:
                ValueType::Primal, ValueType::Primal, ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -5357,11 +5272,7 @@ public:
             Builder2, /*lookup*/ !forwardMode);
 
         if (forwardMode) {
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
 
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
@@ -5470,11 +5381,7 @@ public:
                ValueType::Primal, ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -5741,11 +5648,7 @@ public:
                ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -5978,11 +5881,7 @@ public:
               /*comm*/ comm,
           };
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args,
                               BufferDefs);
 
@@ -6146,11 +6045,7 @@ public:
                ValueType::Primal, ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -6353,11 +6248,7 @@ public:
                ValueType::Primal, ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -6590,11 +6481,7 @@ public:
                ValueType::Primal},
               Builder2, /*lookup*/ false);
 
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
@@ -6702,11 +6589,7 @@ public:
           Mode == DerivativeMode::ReverseModeCombined) {
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
         Value *args[] = {
             lookup(gutils->getNewFromOriginal(call.getOperand(0)), Builder2)};
         Builder2.CreateCall(call.getFunctionType(), callval, args);
@@ -6967,18 +6850,15 @@ public:
 
       if (called) {
         newcalled = gutils->Logic.CreateForwardDiff(
-            cast<Function>(called), subretType, argsInverted,
-            TR.analyzer.interprocedural, /*returnValue*/ subretused, Mode,
+            RequestContext(&call, &BuilderZ), cast<Function>(called),
+            subretType, argsInverted, TR.analyzer.interprocedural,
+            /*returnValue*/ subretused, Mode,
             ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->getWidth(),
             tape ? tape->getType() : nullptr, nextTypeInfo, overwritten_args,
             /*augmented*/ subdata);
         FT = cast<Function>(newcalled)->getFunctionType();
       } else {
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
         newcalled = gutils->invertPointerM(callval, BuilderZ);
 
         if (gutils->getWidth() > 1) {
@@ -7315,11 +7195,7 @@ public:
       const AugmentedReturn *fnandtapetype = nullptr;
 
       if (!called) {
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
         Value *uncast = callval;
         while (auto CE = dyn_cast<ConstantExpr>(uncast)) {
           if (CE->isCast()) {
@@ -7378,10 +7254,10 @@ public:
         if (Mode == DerivativeMode::ReverseModePrimal ||
             Mode == DerivativeMode::ReverseModeCombined) {
           subdata = &gutils->Logic.CreateAugmentedPrimal(
-              cast<Function>(called), subretType, argsInverted,
-              TR.analyzer.interprocedural, /*return is used*/ subretused,
-              shadowReturnUsed, nextTypeInfo, overwritten_args, false,
-              gutils->getWidth(), gutils->AtomicAdd);
+              RequestContext(&call, &BuilderZ), cast<Function>(called),
+              subretType, argsInverted, TR.analyzer.interprocedural,
+              /*return is used*/ subretused, shadowReturnUsed, nextTypeInfo,
+              overwritten_args, false, gutils->getWidth(), gutils->AtomicAdd);
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
             auto subaugmentations =
@@ -7559,7 +7435,7 @@ public:
                   primalNeededInReverse = true;
                   break;
                 } else {
-                  Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+                  Seen[UsageKey(pair.first, QueryType::Primal)] = false;
                 }
               }
             if (!primalNeededInReverse) {
@@ -7569,7 +7445,7 @@ public:
                                     : Mode;
               primalNeededInReverse =
                   DifferentialUseAnalysis::is_value_needed_in_reverse<
-                      ValueType::Primal>(gutils, &call, minCutMode, Seen,
+                      QueryType::Primal>(gutils, &call, minCutMode, Seen,
                                          oldUnreachable);
             }
             if (primalNeededInReverse)
@@ -7611,7 +7487,7 @@ public:
 
         if (subretused) {
           if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-                  ValueType::Primal>(gutils, &call, Mode, oldUnreachable) &&
+                  QueryType::Primal>(gutils, &call, Mode, oldUnreachable) &&
               !gutils->unnecessaryIntermediates.count(&call)) {
             cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
                                               call.getName() + "_tmpcacheB");
@@ -7666,7 +7542,7 @@ public:
                         : BuilderZ.CreateExtractValue(augmentcall,
                                                       {(unsigned)drval},
                                                       call.getName() + "'ac");
-            assert(newip->getType() == call.getType());
+            assert(newip->getType() == placeholder->getType());
             placeholder->replaceAllUsesWith(newip);
             if (placeholder == &*BuilderZ.GetInsertPoint()) {
               BuilderZ.SetInsertPoint(placeholder->getNextNode());
@@ -7718,7 +7594,7 @@ public:
       if (/*!topLevel*/ Mode != DerivativeMode::ReverseModeCombined &&
           subretused && !call.doesNotAccessMemory()) {
         if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-                ValueType::Primal>(gutils, &call, Mode, oldUnreachable) &&
+                QueryType::Primal>(gutils, &call, Mode, oldUnreachable) &&
             !gutils->unnecessaryIntermediates.count(&call)) {
           assert(!replaceFunction);
           cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
@@ -7763,6 +7639,7 @@ public:
       }
 
       newcalled = gutils->Logic.CreatePrimalAndGradient(
+          RequestContext(&call, &Builder2),
           (ReverseCacheKey){.todiff = cast<Function>(called),
                             .retType = subretType,
                             .constant_args = argsInverted,
@@ -7785,11 +7662,7 @@ public:
 
       assert(subMode != DerivativeMode::ReverseModeCombined);
 
-#if LLVM_VERSION_MAJOR >= 11
       auto callval = call.getCalledOperand();
-#else
-      auto callval = call.getCalledValue();
-#endif
 
       if (gutils->isConstantValue(callval)) {
         llvm::errs() << *gutils->newFunc->getParent() << "\n";
@@ -8229,10 +8102,10 @@ public:
           std::map<UsageKey, bool> Seen;
           for (auto pair : gutils->knownRecomputeHeuristic)
             if (!pair.second)
-              Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+              Seen[UsageKey(pair.first, QueryType::Primal)] = false;
           primalNeededInReverse =
               DifferentialUseAnalysis::is_value_needed_in_reverse<
-                  ValueType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
+                  QueryType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
         }
         if (subretused && primalNeededInReverse) {
           if (normalReturn != newCall) {
@@ -8285,15 +8158,13 @@ public:
       return;
     }
 
-    if (!called || called->empty()) {
-      if (auto blas = extractBLAS(funcName)) {
+    if (auto blas = extractBLAS(funcName)) {
 #if LLVM_VERSION_MAJOR >= 16
-        if (handleBLAS(call, called, blas.value(), overwritten_args))
+      if (handleBLAS(call, called, blas.value(), overwritten_args))
 #else
-        if (handleBLAS(call, called, blas.getValue(), overwritten_args))
+      if (handleBLAS(call, called, blas.getValue(), overwritten_args))
 #endif
-          return;
-      }
+        return;
     }
 
     if (funcName == "printf" || funcName == "puts" ||
@@ -8353,11 +8224,7 @@ public:
             Mode == DerivativeMode::ReverseModeCombined) {
           IRBuilder<> Builder2(&call);
           getReverseBuilder(Builder2);
-#if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
           Value *args[] = {
               lookup(gutils->getNewFromOriginal(call.getOperand(0)), Builder2),
               lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2)};
@@ -8658,10 +8525,10 @@ public:
         if (!shouldCache && !lrc) {
           std::map<UsageKey, bool> Seen;
           for (auto pair : gutils->knownRecomputeHeuristic)
-            Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+            Seen[UsageKey(pair.first, QueryType::Primal)] = false;
           bool primalNeededInReverse =
               DifferentialUseAnalysis::is_value_needed_in_reverse<
-                  ValueType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
+                  QueryType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
           shouldCache = primalNeededInReverse;
         }
 
@@ -8676,7 +8543,8 @@ public:
       }
 
       if (called) {
-        if (funcName == "julia.write_barrier") {
+        if (funcName == "julia.write_barrier" ||
+            funcName == "julia.write_barrier_binding") {
           bool backwardsShadow = false;
           bool forwardsShadow = true;
           for (auto pair : gutils->backwardsOnlyShadows) {
@@ -8770,12 +8638,7 @@ public:
         }
       }
     }
-#if LLVM_VERSION_MAJOR >= 11
-    if (auto assembly = dyn_cast<InlineAsm>(call.getCalledOperand()))
-#else
-    if (auto assembly = dyn_cast<InlineAsm>(call.getCalledValue()))
-#endif
-    {
+    if (auto assembly = dyn_cast<InlineAsm>(call.getCalledOperand())) {
       if (assembly->getAsmString() == "maxpd $1, $0") {
         if (Mode == DerivativeMode::ReverseModePrimal ||
             gutils->isConstantInstruction(&call)) {
@@ -8814,31 +8677,16 @@ public:
           IRBuilder<> Builder2(&call);
           getForwardBuilder(Builder2);
 
-          SmallVector<Value *, 2> args;
-#if LLVM_VERSION_MAJOR >= 14
-          for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-          for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
-          {
-            auto arg = call.getArgOperand(i);
-            if (i == 0) {
-              assert(!gutils->isConstantValue(arg));
-              arg = gutils->invertPointerM(arg, Builder2);
-            } else {
-              arg = gutils->getNewFromOriginal(arg);
-            }
-            args.push_back(arg);
-          }
           auto dbgLoc = gutils->getNewFromOriginal(&call)->getDebugLoc();
 
-          auto rule = [&]() {
-            SmallVector<ValueType, 2> BundleTypes(args.size(),
-                                                  ValueType::Primal);
+          auto rule = [&](Value *ip) {
+            ValueType BundleTypes[2] = {ValueType::Shadow, ValueType::Primal};
 
             auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
                                                    /*lookup*/ false);
 
+            llvm::Value *args[2] = {
+                ip, gutils->getNewFromOriginal(call.getOperand(1))};
             CallInst *CI = Builder2.CreateCall(
                 call.getFunctionType(), call.getCalledFunction(), args, Defs);
             CI->setAttributes(call.getAttributes());
@@ -8848,7 +8696,9 @@ public:
             return CI;
           };
 
-          Value *CI = applyChainRule(call.getType(), Builder2, rule);
+          Value *CI = applyChainRule(
+              call.getType(), Builder2, rule,
+              gutils->invertPointerM(call.getOperand(0), Builder2));
 
           auto found = gutils->invertedPointers.find(&call);
           PHINode *placeholder = cast<PHINode>(&*found->second);
@@ -8964,14 +8814,9 @@ public:
             } else {
               bool zeroed = false;
               auto rule = [&]() {
-#if LLVM_VERSION_MAJOR >= 11
                 Value *anti = bb.CreateCall(call.getFunctionType(),
                                             call.getCalledOperand(), args,
                                             call.getName() + "'mi");
-#else
-                anti = bb.CreateCall(call.getCalledValue(), args,
-                                     call.getName() + "'mi");
-#endif
                 cast<CallInst>(anti)->setAttributes(call.getAttributes());
                 cast<CallInst>(anti)->setCallingConv(call.getCallingConv());
                 cast<CallInst>(anti)->setTailCallKind(call.getTailCallKind());
@@ -8990,7 +8835,9 @@ public:
                                                      Attribute::NonNull);
 #endif
 
-                  if (funcName == "malloc" || funcName == "_Znwm") {
+                  if (funcName == "malloc" || funcName == "_Znwm" ||
+                      funcName == "??2@YAPAXI@Z" ||
+                      funcName == "??2@YAPEAX_K@Z") {
                     if (auto ci = dyn_cast<ConstantInt>(args[0])) {
                       unsigned derefBytes = ci->getLimitedValue();
                       CallInst *cal =
@@ -9110,12 +8957,8 @@ public:
                                                            ->getValue())
                                          ->getLimitedValue();
                     if (Alignment) {
-#if LLVM_VERSION_MAJOR >= 10
                       cast<AllocaInst>(replacement)
                           ->setAlignment(Align(Alignment));
-#else
-                      cast<AllocaInst>(replacement)->setAlignment(Alignment);
-#endif
                     }
 #if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
@@ -9255,12 +9098,12 @@ public:
       std::map<UsageKey, bool> Seen;
       for (auto pair : gutils->knownRecomputeHeuristic)
         if (!pair.second)
-          Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+          Seen[UsageKey(pair.first, QueryType::Primal)] = false;
       bool primalNeededInReverse =
           Mode == DerivativeMode::ForwardMode
               ? false
               : DifferentialUseAnalysis::is_value_needed_in_reverse<
-                    ValueType::Primal>(gutils, &call, Mode, Seen,
+                    QueryType::Primal>(gutils, &call, Mode, Seen,
                                        oldUnreachable);
 
       bool cacheWholeAllocation = gutils->needsCacheWholeAllocation(&call);
@@ -9319,11 +9162,7 @@ public:
                 ->getLimitedValue();
         // Don't set zero alignment
         if (Alignment) {
-#if LLVM_VERSION_MAJOR >= 10
           cast<AllocaInst>(replacement)->setAlignment(Align(Alignment));
-#else
-          cast<AllocaInst>(replacement)->setAlignment(Alignment);
-#endif
         }
 #if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
@@ -9537,7 +9376,7 @@ public:
       auto placeholder = cast<PHINode>(&*ifound->second);
 
       bool needShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
-          ValueType::Shadow>(gutils, &call, Mode, oldUnreachable);
+          QueryType::Shadow>(gutils, &call, Mode, oldUnreachable);
       if (!needShadow) {
         gutils->invertedPointers.erase(ifound);
         gutils->erase(placeholder);
@@ -9570,7 +9409,7 @@ public:
       auto placeholder = cast<PHINode>(&*ifound->second);
 
       bool needShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
-          ValueType::Shadow>(gutils, &call, Mode, oldUnreachable);
+          QueryType::Shadow>(gutils, &call, Mode, oldUnreachable);
       if (!needShadow) {
         gutils->invertedPointers.erase(ifound);
         gutils->erase(placeholder);
@@ -9614,19 +9453,11 @@ public:
 
     if (funcName == "memcpy" || funcName == "memmove") {
       auto ID = (funcName == "memcpy") ? Intrinsic::memcpy : Intrinsic::memmove;
-#if LLVM_VERSION_MAJOR >= 10
       visitMemTransferCommon(ID, /*srcAlign*/ MaybeAlign(1),
                              /*dstAlign*/ MaybeAlign(1), call,
                              call.getArgOperand(0), call.getArgOperand(1),
                              gutils->getNewFromOriginal(call.getArgOperand(2)),
                              ConstantInt::getFalse(call.getContext()));
-#else
-      visitMemTransferCommon(ID, /*srcAlign*/ 1,
-                             /*dstAlign*/ 1, call, call.getArgOperand(0),
-                             call.getArgOperand(1),
-                             gutils->getNewFromOriginal(call.getArgOperand(2)),
-                             ConstantInt::getFalse(call.getContext()));
-#endif
       return;
     }
     if (funcName == "memset" || funcName == "memset_pattern16") {
@@ -9735,11 +9566,7 @@ public:
         getReverseBuilder(Builder2);
         Value *nargs[] = {gutils->lookupM(
             gutils->getNewFromOriginal(call.getOperand(0)), Builder2)};
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
         Builder2.CreateCall(call.getFunctionType(), callval, nargs);
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -10048,11 +9875,7 @@ public:
         }
         eraseIfUnused(call);
       }
-#if LLVM_VERSION_MAJOR >= 11
       auto callval = call.getCalledOperand();
-#else
-      auto callval = call.getCalledValue();
-#endif
 
       for (auto rmat : gutils->backwardsOnlyShadows) {
         if (rmat.second.frees.count(&call)) {
@@ -10094,10 +9917,10 @@ public:
             std::map<UsageKey, bool> Seen;
             for (auto pair : gutils->knownRecomputeHeuristic)
               if (!pair.second)
-                Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+                Seen[UsageKey(pair.first, QueryType::Primal)] = false;
             bool primalNeededInReverse =
                 DifferentialUseAnalysis::is_value_needed_in_reverse<
-                    ValueType::Primal>(gutils, rmat.first, Mode, Seen,
+                    QueryType::Primal>(gutils, rmat.first, Mode, Seen,
                                        oldUnreachable);
             bool cacheWholeAllocation =
                 gutils->needsCacheWholeAllocation(rmat.first);
@@ -10172,11 +9995,7 @@ public:
         dchoice = diffe(&call, Builder2);
       }
 
-#if LLVM_VERSION_MAJOR >= 10
       if (call.hasMetadata("enzyme_gradient_setter")) {
-#else
-      if (call.getMetadata("enzyme_gradient_setter")) {
-#endif
         auto gradient_setter = cast<Function>(
             cast<ValueAsMetadata>(
                 call.getMetadata("enzyme_gradient_setter")->getOperand(0).get())
@@ -10246,12 +10065,11 @@ public:
           noFree = true;
       }
       if (!noFree) {
-#if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
-#else
-        auto callval = call.getCalledValue();
-#endif
-        newCall->setCalledOperand(gutils->Logic.CreateNoFree(callval));
+        if (!isa<Constant>(callval))
+          callval = gutils->getNewFromOriginal(callval);
+        newCall->setCalledOperand(gutils->Logic.CreateNoFree(
+            RequestContext(&call, &BuilderZ), callval));
       }
       if (gutils->knownRecomputeHeuristic.find(&call) !=
           gutils->knownRecomputeHeuristic.end()) {
@@ -10280,7 +10098,7 @@ public:
                 primalNeededInReverse = true;
                 break;
               } else {
-                Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+                Seen[UsageKey(pair.first, QueryType::Primal)] = false;
               }
             }
           if (!primalNeededInReverse) {
@@ -10290,7 +10108,7 @@ public:
                                   : Mode;
             primalNeededInReverse =
                 DifferentialUseAnalysis::is_value_needed_in_reverse<
-                    ValueType::Primal>(gutils, &call, minCutMode, Seen,
+                    QueryType::Primal>(gutils, &call, minCutMode, Seen,
                                        oldUnreachable);
           }
           if (primalNeededInReverse)

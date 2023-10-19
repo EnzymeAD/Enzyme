@@ -114,6 +114,31 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimit(
 }
 
 ScalarEvolution::ExitLimit
+MustExitScalarEvolution::computeExitLimitFromSingleExitSwitch(
+    const Loop *L, SwitchInst *Switch, BasicBlock *ExitingBlock,
+    bool ControlsOnlyExit) {
+  assert(!L->contains(ExitingBlock) && "Not an exiting block!");
+
+  // Give up if the exit is the default dest of a switch.
+  if (Switch->getDefaultDest() == ExitingBlock)
+    return getCouldNotCompute();
+
+  ///! If we're guaranteed unreachable, the default dest does not matter.
+  if (!GuaranteedUnreachable.count(Switch->getDefaultDest()))
+    assert(L->contains(Switch->getDefaultDest()) &&
+           "Default case must not exit the loop!");
+  const SCEV *LHS = getSCEVAtScope(Switch->getCondition(), L);
+  const SCEV *RHS = getConstant(Switch->findCaseDest(ExitingBlock));
+
+  // while (X != Y) --> while (X-Y != 0)
+  ExitLimit EL = howFarToZero(getMinusSCEV(LHS, RHS), L, ControlsOnlyExit);
+  if (EL.hasAnyInfo())
+    return EL;
+
+  return getCouldNotCompute();
+}
+
+ScalarEvolution::ExitLimit
 MustExitScalarEvolution::computeExitLimitFromCondCached(
     ExitLimitCacheTy &Cache, const Loop *L, Value *ExitCond, bool ExitIfTrue,
     bool ControlsExit, bool AllowPredicates) {
