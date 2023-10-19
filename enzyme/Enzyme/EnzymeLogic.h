@@ -135,7 +135,7 @@ struct ReverseCacheKey {
   llvm::Function *todiff;
   DIFFE_TYPE retType;
   const std::vector<DIFFE_TYPE> constant_args;
-  std::vector<bool> overwritten_args;
+  std::vector<bool> overwritten_args, nocache_args;
   bool returnUsed;
   bool shadowReturnUsed;
   DerivativeMode mode;
@@ -266,7 +266,7 @@ public:
     llvm::Function *fn;
     DIFFE_TYPE retType;
     const std::vector<DIFFE_TYPE> constant_args;
-    std::vector<bool> overwritten_args;
+    std::vector<bool> overwritten_args, nocache_args;
     bool returnUsed;
     bool shadowReturnUsed;
     const FnTypeInfo typeInfo;
@@ -302,6 +302,15 @@ public:
       if (std::lexicographical_compare(
               rhs.overwritten_args.begin(), rhs.overwritten_args.end(),
               overwritten_args.begin(), overwritten_args.end()))
+        return false;
+
+      if (std::lexicographical_compare(
+              nocache_args.begin(), nocache_args.end(),
+              rhs.nocache_args.begin(), rhs.nocache_args.end()))
+        return true;
+      if (std::lexicographical_compare(
+              rhs.nocache_args.begin(), rhs.nocache_args.end(),
+              nocache_args.begin(), nocache_args.end()))
         return false;
 
       if (returnUsed < rhs.returnUsed)
@@ -358,15 +367,18 @@ public:
   ///  \p returnUsed is whether the primal's return should also be returned
   ///  \p typeInfo is the type info information about the calling context
   ///  \p _overwritten_args marks whether an argument may be rewritten before
-  ///  loads in the generated function (and thus cannot be cached). \p
-  ///  forceAnonymousTape forces the tape to be an i8* rather than the true tape
-  ///  structure \p AtomicAdd is whether to perform all adjoint updates to
-  ///  memory in an atomic way
+  ///  loads in the generated function (and thus cannot be cached).
+  ///  \p _nocache_args marks whether an argument may bypass the cache.
+  ///  \p forceAnonymousTape forces the tape to be an i8* rather than the true
+  ///  tape structure
+  ///  \p AtomicAdd is whether to perform all adjoint updates to memory in an
+  ///  atomic way
   const AugmentedReturn &CreateAugmentedPrimal(
       RequestContext context, llvm::Function *todiff, DIFFE_TYPE retType,
       llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
       bool returnUsed, bool shadowReturnUsed, const FnTypeInfo &typeInfo,
-      const std::vector<bool> _overwritten_args, bool forceAnonymousTape,
+      const std::vector<bool> _overwritten_args,
+      const std::vector<bool> _nocache_args, bool forceAnonymousTape,
       unsigned width, bool AtomicAdd, bool omp = false);
 
   std::map<ReverseCacheKey, llvm::Function *> ReverseCachedFunctions;
@@ -375,7 +387,7 @@ public:
     llvm::Function *todiff;
     DIFFE_TYPE retType;
     const std::vector<DIFFE_TYPE> constant_args;
-    std::vector<bool> overwritten_args;
+    std::vector<bool> overwritten_args, nocache_args;
     bool returnUsed;
     DerivativeMode mode;
     unsigned width;
@@ -462,6 +474,7 @@ public:
   ///  \p typeInfo is the type info information about the calling context
   ///  \p _overwritten_args marks whether an argument may be rewritten
   ///  before loads in the generated function (and thus cannot be cached).
+  ///  \p _nocache_args marks whether an argument may bypass the cache.
   ///  \p augmented is the data structure created by prior call to an
   ///   augmented forward pass
   ///  \p AtomicAdd is whether to perform all adjoint
@@ -488,6 +501,10 @@ public:
   ///  \p FnTypeInfo is the known types of the argument and returns
   ///  \p _overwritten_args marks whether an argument may be rewritten
   ///  before loads in the generated function (and thus cannot be cached).
+  ///  \p _nocache_args marks whether an argument may bypass the cache.
+  ///  This option allows the user to increase performance if it is known that
+  ///  loads related to a certain arugment do not need caching. If used
+  ///  incorrectly, this option can produce incorrect derivatives.
   ///  \p augmented is the data structure created by prior call to an
   ///   augmented forward pass
   ///  \p omp is whether this function is an OpenMP closure body.
@@ -497,6 +514,7 @@ public:
       bool returnValue, DerivativeMode mode, bool freeMemory, unsigned width,
       llvm::Type *additionalArg, const FnTypeInfo &typeInfo,
       const std::vector<bool> _overwritten_args,
+      const std::vector<bool> _nocache_args,
       const AugmentedReturn *augmented, bool omp = false);
 
   /// Create a function batched in its inputs.

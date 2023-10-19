@@ -550,10 +550,11 @@ LLVMValueRef EnzymeCreateForwardDiff(
   SmallVector<DIFFE_TYPE, 4> nconstant_args((DIFFE_TYPE *)constant_args,
                                             (DIFFE_TYPE *)constant_args +
                                                 constant_args_size);
-  std::vector<bool> overwritten_args;
+  std::vector<bool> overwritten_args, nocache_args;
   assert(overwritten_args_size == cast<Function>(unwrap(todiff))->arg_size());
   for (uint64_t i = 0; i < overwritten_args_size; i++) {
     overwritten_args.push_back(_overwritten_args[i]);
+    nocache_args.push_back(false);
   }
   return wrap(eunwrap(Logic).CreateForwardDiff(
       RequestContext(cast_or_null<Instruction>(unwrap(request_req)),
@@ -561,7 +562,7 @@ LLVMValueRef EnzymeCreateForwardDiff(
       cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
       eunwrap(TA), returnValue, (DerivativeMode)mode, freeMemory, width,
       unwrap(additionalArg), eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
-      overwritten_args, eunwrap(augmented)));
+      overwritten_args, nocache_args, eunwrap(augmented)));
 }
 LLVMValueRef EnzymeCreatePrimalAndGradient(
     EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
@@ -610,17 +611,18 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
   SmallVector<DIFFE_TYPE, 4> nconstant_args((DIFFE_TYPE *)constant_args,
                                             (DIFFE_TYPE *)constant_args +
                                                 constant_args_size);
-  std::vector<bool> overwritten_args;
+  std::vector<bool> overwritten_args, nocache_args;
   assert(overwritten_args_size == cast<Function>(unwrap(todiff))->arg_size());
   for (uint64_t i = 0; i < overwritten_args_size; i++) {
     overwritten_args.push_back(_overwritten_args[i]);
+    nocache_args.push_back(false);
   }
   return ewrap(eunwrap(Logic).CreateAugmentedPrimal(
       RequestContext(cast_or_null<Instruction>(unwrap(request_req)),
                      unwrap(request_ip)),
       cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
       eunwrap(TA), returnUsed, shadowReturnUsed,
-      eunwrap(typeInfo, cast<Function>(unwrap(todiff))), overwritten_args,
+      eunwrap(typeInfo, cast<Function>(unwrap(todiff))), overwritten_args, nocache_args,
       forceAnonymousTape, width, AtomicAdd));
 }
 
