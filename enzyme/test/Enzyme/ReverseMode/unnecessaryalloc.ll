@@ -59,7 +59,6 @@ declare void @free(i8*)
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %i1, 8
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
-; CHECK-NEXT:   %0 = insertvalue { i8*, double } undef, double %x, 1
 ; CHECK-NEXT:   ret double %x
 ; CHECK-NEXT: }
 

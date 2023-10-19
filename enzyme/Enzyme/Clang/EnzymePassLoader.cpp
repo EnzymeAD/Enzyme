@@ -28,6 +28,7 @@
 #if LLVM_VERSION_MAJOR < 16
 
 #include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/Scalar.h"
@@ -37,11 +38,15 @@
 #include "../OptBlas.h"
 #include "../PreserveNVVM.h"
 
+extern llvm::cl::opt<bool> EnzymeEnable;
+
 using namespace llvm;
 
 // This function is of type PassManagerBuilder::ExtensionFn
 static void loadPass(const PassManagerBuilder &Builder,
                      legacy::PassManagerBase &PM) {
+  if (!EnzymeEnable)
+    return;
   PM.add(createPreserveNVVMPass(/*Begin=*/true));
   PM.add(createGVNPass());
   PM.add(createSROAPass());
@@ -76,6 +81,8 @@ static RegisterStandardPasses
 
 static void loadLTOPass(const PassManagerBuilder &Builder,
                         legacy::PassManagerBase &PM) {
+  if (!EnzymeEnable)
+    return;
   loadPass(Builder, PM);
   PassManagerBuilder Builder2 = Builder;
   Builder2.Inliner = nullptr;

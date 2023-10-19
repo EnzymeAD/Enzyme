@@ -11,7 +11,7 @@
 
 # include <stdlib.h>
 # include <stdio.h>
-
+#include "test_utils.h"
 
 void msg(double* in, int *len, unsigned int slen) {
     if (slen != 0) {
@@ -27,8 +27,6 @@ void msg(double* in, int *len, unsigned int slen) {
     }
     }
 }
-
-int enzyme_dup, enzyme_const;
 
 void __enzyme_autodiff(void*, ...);
 

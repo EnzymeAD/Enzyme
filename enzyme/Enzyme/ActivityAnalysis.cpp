@@ -63,6 +63,13 @@
 
 using namespace llvm;
 
+#if LLVM_VERSION_MAJOR >= 14
+#define addAttribute addAttributeAtIndex
+#define removeAttribute removeAttributeAtIndex
+#define getAttribute getAttributeAtIndex
+#define hasAttribute hasAttributeAtIndex
+#endif
+
 extern "C" {
 cl::opt<bool>
     EnzymePrintActivity("enzyme-print-activity", cl::init(false), cl::Hidden,
@@ -484,27 +491,6 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
       CI->getArgOperand(0) != val && CI->getArgOperand(1) != val)
     return true;
 
-  // only the float arg input is potentially active
-  if (Name == "frexp" || Name == "frexpf" || Name == "frexpl") {
-    return val != CI->getOperand(0);
-  }
-
-  // The relerr argument is inactive
-  if (Name == "Faddeeva_erf" || Name == "Faddeeva_erfc" ||
-      Name == "Faddeeva_erfcx" || Name == "Faddeeva_erfi" ||
-      Name == "Faddeeva_dawson") {
-#if LLVM_VERSION_MAJOR >= 14
-    for (size_t i = 0; i < CI->arg_size() - 1; i++)
-#else
-    for (size_t i = 0; i < CI->getNumArgOperands() - 1; i++)
-#endif
-    {
-      if (val == CI->getOperand(i))
-        return false;
-    }
-    return true;
-  }
-
   // only the buffer is active for mpi send/recv
   if (Name == "MPI_Recv" || Name == "PMPI_Recv" || Name == "MPI_Send" ||
       Name == "PMPI_Send") {
@@ -548,23 +534,6 @@ static inline void propagateArgumentInformation(
       Name == "__lgammal_r_finite") {
 
     propagateFromOperand(CI.getArgOperand(0));
-    return;
-  }
-  if (Name == "frexp" || Name == "frexpf" || Name == "frexpl") {
-    propagateFromOperand(CI.getOperand(0));
-    return;
-  }
-  if (Name == "Faddeeva_erf" || Name == "Faddeeva_erfc" ||
-      Name == "Faddeeva_erfcx" || Name == "Faddeeva_erfi" ||
-      Name == "Faddeeva_dawson") {
-#if LLVM_VERSION_MAJOR >= 14
-    for (size_t i = 0; i < CI.arg_size() - 1; i++)
-#else
-    for (size_t i = 0; i < CI.getNumArgOperands() - 1; i++)
-#endif
-    {
-      propagateFromOperand(CI.getOperand(i));
-    }
     return;
   }
 
@@ -1236,15 +1205,35 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     return false;
   }
 
+  if (auto I = dyn_cast<Instruction>(Val)) {
+    if (hasMetadata(I, "enzyme_active") ||
+        hasMetadata(I, "enzyme_active_val")) {
+      if (EnzymePrintActivity)
+        llvm::errs() << "forced active val (MD)" << *Val << "\n";
+      InsertConstantValue(TR, Val);
+      return true;
+    }
+    if (hasMetadata(I, "enzyme_inactive") ||
+        hasMetadata(I, "enzyme_inactive_val")) {
+      if (EnzymePrintActivity)
+        llvm::errs() << "forced inactive val (MD)" << *Val << "\n";
+      InsertConstantValue(TR, Val);
+      return true;
+    }
+  }
   if (auto CI = dyn_cast<CallInst>(Val)) {
-    if (CI->hasFnAttr("enzyme_active") || CI->hasFnAttr("enzyme_active_val")) {
+    if (CI->hasFnAttr("enzyme_active") || CI->hasFnAttr("enzyme_active_val") ||
+        CI->getAttributes().hasAttribute(llvm::AttributeList::ReturnIndex,
+                                         "enzyme_active")) {
       if (EnzymePrintActivity)
         llvm::errs() << "forced active val " << *Val << "\n";
       ActiveValues.insert(Val);
       return false;
     }
     if (CI->hasFnAttr("enzyme_inactive") ||
-        CI->hasFnAttr("enzyme_inactive_val")) {
+        CI->hasFnAttr("enzyme_inactive_val") ||
+        CI->getAttributes().hasAttribute(llvm::AttributeList::ReturnIndex,
+                                         "enzyme_inactive")) {
       if (EnzymePrintActivity)
         llvm::errs() << "forced inactive val " << *Val << "\n";
       InsertConstantValue(TR, Val);
@@ -1254,14 +1243,18 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
     if (called) {
       if (called->hasFnAttribute("enzyme_active") ||
-          called->hasFnAttribute("enzyme_active_val")) {
+          called->hasFnAttribute("enzyme_active_val") ||
+          called->getAttributes().hasAttribute(llvm::AttributeList::ReturnIndex,
+                                               "enzyme_active")) {
         if (EnzymePrintActivity)
           llvm::errs() << "forced active val " << *Val << "\n";
         ActiveValues.insert(Val);
         return false;
       }
       if (called->hasFnAttribute("enzyme_inactive") ||
-          called->hasFnAttribute("enzyme_inactive_val")) {
+          called->hasFnAttribute("enzyme_inactive_val") ||
+          called->getAttributes().hasAttribute(llvm::AttributeList::ReturnIndex,
+                                               "enzyme_inactive")) {
         if (EnzymePrintActivity)
           llvm::errs() << "forced inactive val " << *Val << "\n";
         InsertConstantValue(TR, Val);
@@ -1422,7 +1415,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         }
       } else if (auto op = dyn_cast<CallInst>(TmpOrig)) {
         if (op->hasFnAttr("enzyme_inactive") ||
-            op->hasFnAttr("enzyme_inactive_val")) {
+            op->hasFnAttr("enzyme_inactive_val") ||
+            op->getAttributes().hasAttribute(llvm::AttributeList::ReturnIndex,
+                                             "enzyme_inactive")) {
           InsertConstantValue(TR, Val);
           insertConstantsFrom(TR, *UpHypothesis);
           return true;
@@ -1431,8 +1426,11 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
         StringRef funcName = getFuncNameFromCall(op);
 
-        if (called && (called->hasFnAttribute("enzyme_inactive") ||
-                       called->hasFnAttribute("enzyme_inactive_val"))) {
+        if (called &&
+            (called->hasFnAttribute("enzyme_inactive") ||
+             called->hasFnAttribute("enzyme_inactive_val") ||
+             called->getAttributes().hasAttribute(
+                 llvm::AttributeList::ReturnIndex, "enzyme_inactive"))) {
           InsertConstantValue(TR, Val);
           insertConstantsFrom(TR, *UpHypothesis);
           return true;
@@ -1536,6 +1534,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           if (directions & DOWN &&
               (funcName == "malloc" || funcName == "calloc" ||
                funcName == "_Znwm" || funcName == "julia.gc_alloc_obj" ||
+               funcName == "??2@YAPAXI@Z" || funcName == "??2@YAPEAX_K@Z" ||
                funcName == "jl_gc_alloc_typed" ||
                funcName == "ijl_gc_alloc_typed")) {
             std::shared_ptr<ActivityAnalyzer> Hypothesis =
@@ -2929,7 +2928,8 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
       if (F) {
         if (UA == UseActivity::AllStores &&
-            F->getName() == "julia.write_barrier")
+            (F->getName() == "julia.write_barrier" ||
+             F->getName() == "julia.write_barrier_binding"))
           continue;
         if (F->getIntrinsicID() == Intrinsic::memcpy ||
             F->getIntrinsicID() == Intrinsic::memmove) {
@@ -3082,11 +3082,19 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           }
           if (legal) {
             toContinue = true;
-            break;
           }
         }
-        if (toContinue)
+        if (toContinue) {
+          if (EnzymePrintActivity) {
+            llvm::errs() << "Value found indirect call use which must be "
+                            "constant as all stored functions are constant val:"
+                         << *val << " user " << *call << "\n";
+          }
+          for (auto u : call->users()) {
+            todo.push_back(std::make_tuple(u, a, UseActivity::None));
+          }
           continue;
+        }
       }
     }
 

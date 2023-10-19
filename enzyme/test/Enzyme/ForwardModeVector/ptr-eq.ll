@@ -24,13 +24,10 @@ entry:
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:    [[TMP0:%.*]] = extractvalue [3 x double*] %"x'", 0
 ; CHECK-NEXT:    %"val'ipl" = load double, double* [[TMP0]]
-; CHECK-NEXT:    [[TMP1:%.*]] = insertvalue [3 x double] undef, double %"val'ipl", 0
 ; CHECK-NEXT:    [[TMP2:%.*]] = extractvalue [3 x double*] %"x'", 1
 ; CHECK-NEXT:    %"val'ipl1" = load double, double* [[TMP2]]
-; CHECK-NEXT:    [[TMP3:%.*]] = insertvalue [3 x double] [[TMP1]], double %"val'ipl1", 1
 ; CHECK-NEXT:    [[TMP4:%.*]] = extractvalue [3 x double*] %"x'", 2
 ; CHECK-NEXT:    %"val'ipl2" = load double, double* [[TMP4]]
-; CHECK-NEXT:    [[TMP5:%.*]] = insertvalue [3 x double] [[TMP3]], double %"val'ipl2", 2
 ; CHECK-NEXT:    [[VAL:%.*]] = load double, double* [[X]]
 ; CHECK-NEXT:    [[TMP6:%.*]] = extractvalue [3 x double*] %"y'", 0
 ; CHECK-NEXT:    store double %"val'ipl", double* [[TMP6]]
@@ -41,13 +38,10 @@ entry:
 ; CHECK-NEXT:    store double [[VAL]], double* [[Y]]
 ; CHECK-NEXT:    [[TMP12:%.*]] = extractvalue [3 x double*] %"x'", 0
 ; CHECK-NEXT:    %"ptr'ipc" = bitcast double* [[TMP12]] to i8*
-; CHECK-NEXT:    [[TMP13:%.*]] = insertvalue [3 x i8*] undef, i8* %"ptr'ipc", 0
 ; CHECK-NEXT:    [[TMP14:%.*]] = extractvalue [3 x double*] %"x'", 1
 ; CHECK-NEXT:    %"ptr'ipc3" = bitcast double* [[TMP14]] to i8*
-; CHECK-NEXT:    [[TMP15:%.*]] = insertvalue [3 x i8*] [[TMP13]], i8* %"ptr'ipc3", 1
 ; CHECK-NEXT:    [[TMP16:%.*]] = extractvalue [3 x double*] %"x'", 2
 ; CHECK-NEXT:    %"ptr'ipc4" = bitcast double* [[TMP16]] to i8*
-; CHECK-NEXT:    [[TMP17:%.*]] = insertvalue [3 x i8*] [[TMP15]], i8* %"ptr'ipc4", 2
 ; CHECK-NEXT:    [[PTR:%.*]] = bitcast double* [[X]] to i8*
 ; CHECK-NEXT:    call void @free(i8* [[PTR]]) 
 ; CHECK-NEXT:    [[TMPZ4:%.*]] = icmp ne i8* [[PTR]], %"ptr'ipc"

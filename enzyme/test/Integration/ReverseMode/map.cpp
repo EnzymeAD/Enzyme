@@ -15,8 +15,6 @@
 #include <unordered_map>
 #include <string>
 
-int enzyme_dup;
-
 using dictSU = std::unordered_map<std::string, double>;
 using dictCU = std::unordered_map<const char*, double>;
 

@@ -1387,6 +1387,390 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
   }
 }
 
+static void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
+                        ActionType intrinsic) {
+  const char *patternNames;
+  switch (intrinsic) {
+  case CallDerivatives:
+    patternNames = "CallPattern";
+    break;
+  case InstDerivatives:
+    patternNames = "InstPattern";
+    break;
+  case IntrDerivatives:
+    patternNames = "IntrPattern";
+    break;
+  case BinopDerivatives:
+    patternNames = "BinopPattern";
+    break;
+  default:
+    assert(0 && "Illegal pattern type");
+  }
+  const auto &patterns = recordKeeper.getAllDerivedDefinitions(patternNames);
+
+  for (Record *pattern : patterns) {
+    DagInit *tree = pattern->getValueAsDag("PatternToMatch");
+
+    DagInit *duals = pattern->getValueAsDag("ArgDuals");
+
+    // Emit RewritePattern for Pattern.
+    ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
+
+    if (tree->getNumArgs() != argOps->size()) {
+      PrintFatalError(pattern->getLoc(),
+                      Twine("Defined rule pattern to have ") +
+                          Twine(tree->getNumArgs()) +
+                          " args but reverse rule array is a list of size " +
+                          Twine(argOps->size()));
+    }
+
+    std::string origName;
+    std::string prefix;
+    switch (intrinsic) {
+    case CallDerivatives: {
+      os << "  if ((";
+      bool prev = false;
+      for (auto *nameI :
+           *cast<ListInit>(pattern->getValueAsListInit("names"))) {
+        if (prev)
+          os << " ||\n      ";
+        os << "funcName == " << cast<StringInit>(nameI)->getAsString() << "";
+        prev = true;
+      }
+      origName = "CI";
+#if LLVM_VERSION_MAJOR >= 14
+      os << ") && CI->arg_size() == " << tree->getNumArgs() << " ){\n";
+#else
+      os << ") && CI->getNumArgOperands() == " << tree->getNumArgs() << " ){\n";
+#endif
+      prefix = "  ";
+      break;
+    }
+    case IntrDerivatives: {
+      bool anyVersion = false;
+      for (auto *nameI :
+           *cast<ListInit>(pattern->getValueAsListInit("names"))) {
+        auto lst = cast<ListInit>(nameI);
+        assert(lst->size() >= 1);
+        StringRef name = cast<StringInit>(lst->getValues()[0])->getValue();
+        if (lst->size() >= 2) {
+          auto min = cast<StringInit>(lst->getValues()[1])->getValue();
+          int min_int;
+          min.getAsInteger(10, min_int);
+          if (min.size() != 0 && LLVM_VERSION_MAJOR < min_int)
+            continue;
+          if (lst->size() >= 3) {
+            auto max = cast<StringInit>(lst->getValues()[2])->getValue();
+            int max_int;
+            max.getAsInteger(10, max_int);
+            if (max.size() != 0 && LLVM_VERSION_MAJOR > max_int)
+              continue;
+          }
+        }
+        os << "    case Intrinsic::" << name << ":\n";
+        anyVersion = true;
+      }
+      if (!anyVersion)
+        continue;
+      origName = "CI";
+      prefix = "    ";
+      os << prefix << "{\n";
+      break;
+    }
+    case InstDerivatives: {
+      auto minVer = pattern->getValueAsInt("minVer");
+      auto maxVer = pattern->getValueAsInt("maxVer");
+      auto name = pattern->getValueAsString("name");
+      if (minVer != 0) {
+        if (LLVM_VERSION_MAJOR < minVer)
+          continue;
+      }
+      if (maxVer != 0) {
+        if (LLVM_VERSION_MAJOR > maxVer)
+          continue;
+      }
+      os << "  case llvm::Instruction::" << name << ":{\n";
+
+      origName = "user";
+      prefix = "  ";
+      break;
+    }
+    case BinopDerivatives: {
+      auto minVer = pattern->getValueAsInt("minVer");
+      auto maxVer = pattern->getValueAsInt("maxVer");
+      auto name = pattern->getValueAsString("name");
+      if (minVer != 0) {
+        if (LLVM_VERSION_MAJOR < minVer)
+          continue;
+      }
+      if (maxVer != 0) {
+        if (LLVM_VERSION_MAJOR > maxVer)
+          continue;
+      }
+
+      os << "  case llvm::Instruction::" << name << ":{\n";
+      origName = "BO";
+      prefix = "  ";
+      break;
+    }
+    }
+
+    using StringTy = std::string;
+
+    StringMap<std::tuple<StringTy, StringTy, bool>> varNameToCondition;
+
+    size_t numArgs = tree->getNumArgs();
+
+    std::function<void(DagInit *, ArrayRef<unsigned>)> insert =
+        [&](DagInit *ptree, ArrayRef<unsigned> prev) {
+          for (auto treeEn : llvm::enumerate(ptree->getArgs())) {
+            auto tree = treeEn.value();
+            auto name = ptree->getArgNameStr(treeEn.index());
+            SmallVector<unsigned, 2> next(prev.begin(), prev.end());
+            next.push_back(treeEn.index());
+            if (auto dg = dyn_cast<DagInit>(tree))
+              insert(dg, next);
+
+            if (name.size()) {
+              auto op = (Twine(origName) + "->getOperand(" + Twine(next[0]) +
+                         ") == val")
+                            .str();
+              bool foundDiffRet = false;
+              varNameToCondition[name] = std::make_tuple(op, "", false);
+            }
+          }
+        };
+
+    insert(tree, {});
+
+    if (tree->getNameStr().size())
+      varNameToCondition[tree->getNameStr()] =
+          std::make_tuple("ILLEGAL", "ILLEGAL", false);
+
+    std::function<void(DagInit *, DagInit *, StringTy &, StringTy &, bool &,
+                       std::string)>
+        handleUse = [&](DagInit *root, DagInit *resultTree,
+                        StringTy &foundPrimalUse, StringTy &foundShadowUse,
+                        bool &foundDiffRet, std::string precondition) {
+          auto opName = resultTree->getOperator()->getAsString();
+          auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
+          if (opName == "DiffeRetIndex" || Def->isSubClassOf("DiffeRetIndex")) {
+            foundDiffRet = true;
+            return;
+          }
+          assert(Def->isSubClassOf("Operation"));
+          bool usesPrimal = Def->getValueAsBit("usesPrimal");
+          bool usesShadow = Def->getValueAsBit("usesShadow");
+          bool usesCustom = Def->getValueAsBit("usesCustom");
+
+          // We don't handle any custom primal/shadow
+          assert(!usesCustom);
+
+          for (auto argEn : llvm::enumerate(resultTree->getArgs())) {
+            auto name = resultTree->getArgNameStr(argEn.index());
+
+            auto arg2 = dyn_cast<DagInit>(argEn.value());
+
+            if (arg2) {
+              // Recursive use of shadow is unhandled
+              assert(!usesShadow);
+
+              StringTy foundPrimalUse2 = "";
+              StringTy foundShadowUse2 = "";
+
+              bool foundDiffRet2 = false;
+              // We set precondition to be false (aka "") if we do not need the
+              // primal, since we are now only recurring to set variables
+              // correctly.
+              if (name.size() || usesPrimal)
+                handleUse(root, arg2,
+                          name.size() ? foundPrimalUse2 : foundPrimalUse,
+                          name.size() ? foundShadowUse2 : foundShadowUse,
+                          name.size() ? foundDiffRet2 : foundDiffRet,
+                          usesPrimal ? precondition : "");
+
+              if (name.size()) {
+                if (foundPrimalUse2.size() &&
+                    !(StringRef(foundPrimalUse).startswith(foundPrimalUse2) ||
+                      StringRef(foundPrimalUse).endswith(foundPrimalUse2))) {
+                  if (foundPrimalUse.size() == 0)
+                    foundPrimalUse = foundPrimalUse2;
+                  else
+                    foundPrimalUse += " || " + foundPrimalUse2;
+                }
+                if (foundShadowUse2.size() &&
+                    !(StringRef(foundShadowUse).startswith(foundShadowUse2) ||
+                      StringRef(foundShadowUse).endswith(foundShadowUse2))) {
+                  if (foundShadowUse.size() == 0)
+                    foundShadowUse = foundShadowUse2;
+                  else
+                    foundShadowUse += " || " + foundShadowUse2;
+                }
+                foundDiffRet |= foundDiffRet2;
+
+                varNameToCondition[name] = std::make_tuple(
+                    foundPrimalUse2, foundShadowUse2, foundDiffRet2);
+              }
+            } else {
+              assert(name.size());
+
+              if (name.size()) {
+                auto found = varNameToCondition.find(name);
+                if (found == varNameToCondition.end()) {
+                  llvm::errs() << "tree scope: " << *tree << "\n";
+                  llvm::errs() << "root scope: " << *root << "\n";
+                  llvm::errs() << "could not find var name: " << name << "\n";
+                }
+                assert(found != varNameToCondition.end());
+              }
+
+              if (precondition.size()) {
+                auto [foundPrimalUse2, foundShadowUse2, foundDiffRet2] =
+                    varNameToCondition[name];
+                if (precondition != "true") {
+                  if (foundPrimalUse2.size()) {
+                    foundPrimalUse2 =
+                        "((" + foundPrimalUse2 + ")&&(" + precondition + ")";
+                  }
+                  if (foundShadowUse2.size()) {
+                    foundShadowUse2 =
+                        "((" + foundShadowUse2 + ")&&(" + precondition + ")";
+                  }
+                }
+                if (usesPrimal) {
+                  if (foundPrimalUse2.size() &&
+                      !(StringRef(foundPrimalUse).startswith(foundPrimalUse2) ||
+                        StringRef(foundPrimalUse).endswith(foundPrimalUse2))) {
+                    if (foundPrimalUse.size() == 0)
+                      foundPrimalUse = foundPrimalUse2;
+                    else
+                      foundPrimalUse += " || " + foundPrimalUse2;
+                  }
+                  if (foundShadowUse2.size() &&
+                      !(StringRef(foundShadowUse).startswith(foundShadowUse2) ||
+                        StringRef(foundShadowUse).endswith(foundShadowUse2))) {
+                    if (foundShadowUse.size() == 0)
+                      foundShadowUse = foundShadowUse2;
+                    else
+                      foundShadowUse += " || " + foundShadowUse2;
+                  }
+                  foundDiffRet |= foundDiffRet2;
+                }
+                if (usesShadow) {
+                  if (foundPrimalUse2.size() &&
+                      !(StringRef(foundShadowUse).startswith(foundPrimalUse2) ||
+                        StringRef(foundShadowUse).endswith(foundPrimalUse2))) {
+                    if (foundShadowUse.size() == 0)
+                      foundShadowUse = foundPrimalUse2;
+                    else
+                      foundShadowUse += " || " + foundPrimalUse2;
+                  }
+                  assert(!foundDiffRet2);
+                  assert(foundShadowUse2 == "");
+                }
+              }
+            }
+          }
+        };
+
+    os << prefix << "  // Rule " << *tree << "\n";
+
+    for (auto argOpEn : enumerate(*argOps)) {
+      size_t argIdx = argOpEn.index();
+      if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+        auto opName = resultRoot->getOperator()->getAsString();
+        auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
+        if (opName == "InactiveArgSpec" ||
+            Def->isSubClassOf("InactiveArgSpec")) {
+          continue;
+        }
+      }
+
+      // The condition necessary to require the use of the arg
+      StringTy foundPrimalUse = "";
+      StringTy foundShadowUse = "";
+      bool foundDiffRet = false;
+
+      DagInit *resultTree = cast<DagInit>(argOpEn.value());
+
+      // hasDiffeRet(resultTree)
+      handleUse(resultTree, resultTree, foundPrimalUse, foundShadowUse,
+                foundDiffRet, /*precondition*/ "true");
+
+      os << prefix << "  // Arg " << argIdx << " : " << *resultTree << "\n";
+
+      if (foundPrimalUse != "") {
+
+        os << prefix
+           << "  if (!shadow && !gutils->isConstantValue(const_cast<Value*>("
+           << origName << "->getOperand(" << argIdx << ")))";
+
+        if (foundDiffRet) {
+          os << " && !gutils->isConstantValue(const_cast<Value*>((const Value*)"
+             << origName << "))";
+        } else {
+          os << " && !gutils->isConstantInstruction(const_cast<Instruction*>( "
+             << origName << "))";
+        }
+
+        os << ") {\n";
+        os << prefix << "    if (" << foundPrimalUse << ") {\n";
+        os << prefix << "      if (EnzymePrintDiffUse)\n";
+        os << prefix
+           << "         llvm::errs() << \"Need direct primal of \" << *val << ";
+        os << "\"in reverse from \" << *user << \" from condition "
+           << foundPrimalUse;
+        os << "\";\n";
+        os << prefix << "      return true;\n";
+        os << prefix << "    }\n";
+
+        os << prefix << "  }\n";
+      }
+
+      os << prefix << "  if (shadow && !gutils->isConstantValue(" << origName
+         << "->getOperand(" << argIdx << "))";
+
+      if (foundDiffRet) {
+        os << " && !gutils->isConstantValue(const_cast<Value*>((const Value*)"
+           << origName << "))";
+      } else {
+        os << " && !gutils->isConstantInstruction(const_cast<Instruction*>( "
+           << origName << "))";
+      }
+
+      os << ") {\n";
+
+      os << prefix
+         << "    if (qtype == QueryType::Shadow && (mode == "
+            "DerivativeMode::ForwardMode || mode == "
+            "DerivativeMode::ForwardModeSplit)) {\n";
+      os << prefix
+         << "      if (EnzymePrintDiffUse) llvm::errs() << \"Need forward "
+            "shadow of \" << *val << \" from condition \" << *user << "
+            "\"\\n\";\n";
+      os << prefix << "        return true;\n";
+      os << prefix << "      }\n";
+
+      if (foundShadowUse != "") {
+        os << prefix << "    if (" << foundShadowUse << ") {\n";
+        os << prefix << "      if (EnzymePrintDiffUse)\n";
+        os << "           llvm::errs() << \"Need direct shadow of \" << *val "
+              "<< ";
+        os << "\"in reverse from \" << *user << \" from condition "
+           << foundShadowUse;
+        os << "\";\n";
+        os << prefix << "      return true;\n";
+        os << prefix << "    }\n";
+      }
+
+      os << prefix << "  }\n";
+    }
+
+    os << prefix << "  return false;\n";
+    os << prefix << "}\n";
+  }
+}
+
 #include "blasDeclUpdater.h"
 #include "blasDiffUseUpdater.h"
 #include "blasTAUpdater.h"

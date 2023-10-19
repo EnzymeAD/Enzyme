@@ -100,7 +100,7 @@ if (${Clang_FOUND})
         DEPENDS
         intrinsics_gen
         PLUGIN_TOOL
-        opt
+        clang
     )
 target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
 endif()
@@ -113,6 +113,15 @@ endif()
         opt
     )
 target_compile_definitions(LLDEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
+endif()
+
+if (${ENZYME_STATIC_LIB})
+    add_llvm_library( EnzymeStatic-${LLVM_VERSION_MAJOR}
+        ${ENZYME_SRC}
+        STATIC
+        DEPENDS
+        intrinsics_gen
+    )
 endif()
 
 if (${ENZYME_EXTERNAL_SHARED_LIB})

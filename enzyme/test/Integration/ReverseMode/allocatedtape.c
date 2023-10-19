@@ -19,7 +19,6 @@
 
 #include "test_utils.h"
 
-extern int enzyme_dup, enzyme_allocated, enzyme_tape;
 void __enzyme_autodiff(void*, ...);
 void* __enzyme_augmentfwd(void*, ...);
 void __enzyme_reverse(void*, ...);

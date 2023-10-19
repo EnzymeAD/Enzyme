@@ -409,6 +409,10 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
           toErase.push_back(CI);
           continue;
         }
+        if (F->getName() == "julia.write_barrier_binding" && legal) {
+          toErase.push_back(CI);
+          continue;
+        }
       }
       IRBuilder<> B(CI);
       auto Addr = B.CreateAddrSpaceCast(rep, prev->getType());
@@ -489,6 +493,10 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
         MDNode::get(CI->getContext(),
                     {ConstantAsMetadata::get(ConstantInt::get(
                         IntegerType::get(AI->getContext(), 64), align))}));
+
+    for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type"})
+      if (auto M = AI->getMetadata(MD))
+        CI->setMetadata(MD, M);
 
     if (rep != CI) {
       cast<Instruction>(rep)->setMetadata("enzyme_caststack",
@@ -727,7 +735,52 @@ void PreProcessCache::AlwaysInline(Function *NewF) {
   }
 }
 
+// Simplify all extractions to use inserted values, if possible.
+void simplifyExtractions(Function *NewF) {
+  // First rewrite/remove any extractions
+  for (auto &BB : *NewF) {
+    IRBuilder<> B(&BB);
+    auto first = BB.begin();
+    auto last = BB.empty() ? BB.end() : std::prev(BB.end());
+    for (auto it = first; it != last;) {
+      auto inst = &*it;
+      // We iterate first here, since we may delete the instruction
+      // in the body
+      ++it;
+      if (auto E = dyn_cast<ExtractValueInst>(inst)) {
+        auto rep = GradientUtils::extractMeta(B, E->getAggregateOperand(),
+                                              E->getIndices(), E->getName(),
+                                              /*fallback*/ false);
+        if (rep) {
+          E->replaceAllUsesWith(rep);
+          E->eraseFromParent();
+        }
+      }
+    }
+  }
+  // Now that there may be unused insertions, delete them. We keep a list of
+  // todo's since deleting an insertvalue may cause a different insertvalue to
+  // have no uses
+  SmallVector<InsertValueInst *, 1> todo;
+  for (auto &BB : *NewF) {
+    for (auto &inst : BB)
+      if (auto I = dyn_cast<InsertValueInst>(&inst)) {
+        if (I->getNumUses() == 0)
+          todo.push_back(I);
+      }
+  }
+  while (todo.size()) {
+    auto I = todo.pop_back_val();
+    auto op = I->getAggregateOperand();
+    I->eraseFromParent();
+    if (auto I2 = dyn_cast<InsertValueInst>(op))
+      if (I2->getNumUses() == 0)
+        todo.push_back(I2);
+  }
+}
+
 void PreProcessCache::LowerAllocAddr(Function *NewF) {
+  simplifyExtractions(NewF);
   SmallVector<Instruction *, 1> Todo;
   for (auto &BB : *NewF) {
     for (auto &I : BB) {
@@ -927,14 +980,14 @@ Function *CreateMPIWrapper(Function *F) {
   B.CreateRet(B.CreateLoad(F->getReturnType(), alloc));
   return W;
 }
-template <typename T>
+
 static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
   DominatorTree &DT = FAM.getResult<DominatorTreeAnalysis>(NewF);
-  SmallVector<T *, 4> Todo;
-  SmallVector<T *, 4> OMPBounds;
+  SmallVector<CallBase *, 4> Todo;
+  SmallVector<CallBase *, 4> OMPBounds;
   for (auto &BB : NewF) {
     for (auto &I : BB) {
-      if (auto CI = dyn_cast<T>(&I)) {
+      if (auto CI = dyn_cast<CallBase>(&I)) {
         Function *Fn = CI->getCalledFunction();
         if (Fn == nullptr)
           continue;
@@ -960,8 +1013,12 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
     Value *arg[] = {CI->getArgOperand(0)};
     SmallVector<OperandBundleDef, 2> Defs;
     CI->getOperandBundlesAsDefs(Defs);
-    auto res =
-        B.CreateCall(CreateMPIWrapper(CI->getCalledFunction()), arg, Defs);
+    CallBase *res = nullptr;
+    if (auto II = dyn_cast<InvokeInst>(CI))
+      res = B.CreateInvoke(CreateMPIWrapper(CI->getCalledFunction()),
+                           II->getNormalDest(), II->getUnwindDest(), arg, Defs);
+    else
+      res = B.CreateCall(CreateMPIWrapper(CI->getCalledFunction()), arg, Defs);
     Value *storePointer = CI->getArgOperand(1);
 
     // Comm_rank and Comm_size return Err, assume 0 is success
@@ -1280,16 +1337,18 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 
   SmallVector<ReturnInst *, 4> Returns;
 
+  if (!F->empty()) {
 #if LLVM_VERSION_MAJOR >= 13
-  CloneFunctionInto(
-      NewF, F, VMap,
-      /*ModuleLevelChanges*/ CloneFunctionChangeType::LocalChangesOnly, Returns,
-      "", nullptr);
+    CloneFunctionInto(
+        NewF, F, VMap,
+        /*ModuleLevelChanges*/ CloneFunctionChangeType::LocalChangesOnly,
+        Returns, "", nullptr);
 #else
-  CloneFunctionInto(NewF, F, VMap,
-                    /*ModuleLevelChanges*/ F->getSubprogram() != nullptr,
-                    Returns, "", nullptr);
+    CloneFunctionInto(NewF, F, VMap,
+                      /*ModuleLevelChanges*/ F->getSubprogram() != nullptr,
+                      Returns, "", nullptr);
 #endif
+  }
   CloneOrigin[NewF] = F;
   NewF->setAttributes(F->getAttributes());
   if (EnzymeNoAlias)
@@ -1380,8 +1439,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       ConstantFoldTerminator(BE);
   }
 
-  SimplifyMPIQueries<CallInst>(*NewF, FAM);
-  SimplifyMPIQueries<InvokeInst>(*NewF, FAM);
+  SimplifyMPIQueries(*NewF, FAM);
   {
     auto PA = PromotePass().run(*NewF, FAM);
     FAM.invalidate(*NewF, PA);
@@ -2015,8 +2073,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     DIFFE_TYPE returnType, const Twine &name,
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> *VMapO,
     bool diffeReturnArg, llvm::Type *additionalArg) {
-  assert(!F->empty());
-  F = preprocessForClone(F, mode);
+  if (!F->empty())
+    F = preprocessForClone(F, mode);
   llvm::ValueToValueMapTy VMap;
   llvm::FunctionType *FTy = getFunctionTypeForClone(
       F->getFunctionType(), mode, width, additionalArg, constant_args,
@@ -2068,13 +2126,20 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       VMap[&I] = &*DestI++;        // Add mapping to VMap
     }
   SmallVector<ReturnInst *, 4> Returns;
+  if (!F->empty()) {
 #if LLVM_VERSION_MAJOR >= 13
-  CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
-                    Returns, "", nullptr);
+    CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
+                      Returns, "", nullptr);
 #else
-  CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
-                    nullptr);
+    CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
+                      nullptr);
 #endif
+  }
+  if (NewF->empty()) {
+    auto entry = BasicBlock::Create(NewF->getContext(), "entry", NewF);
+    IRBuilder<> B(entry);
+    B.CreateUnreachable();
+  }
   CloneOrigin[NewF] = F;
   if (VMapO) {
     for (const auto &data : VMap)

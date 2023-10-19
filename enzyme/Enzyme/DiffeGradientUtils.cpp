@@ -46,6 +46,8 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include "LibraryFuncs.h"
+
 using namespace llvm;
 
 DiffeGradientUtils::DiffeGradientUtils(
@@ -60,6 +62,8 @@ DiffeGradientUtils::DiffeGradientUtils(
     : GradientUtils(Logic, newFunc_, oldFunc_, TLI, TA, TR, invertedPointers_,
                     constantvalues_, returnvals_, ActiveReturn, constant_values,
                     origToNew_, mode, width, omp) {
+  if (oldFunc_->empty())
+    return;
   assert(reverseBlocks.size() == 0);
   if (mode == DerivativeMode::ForwardMode ||
       mode == DerivativeMode::ForwardModeSplit) {
@@ -81,7 +85,6 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
     TargetLibraryInfo &TLI, TypeAnalysis &TA, FnTypeInfo &oldTypeInfo,
     DIFFE_TYPE retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
     ReturnType returnValue, Type *additionalArg, bool omp) {
-  assert(!todiff->empty());
   Function *oldFunc = todiff;
   assert(mode == DerivativeMode::ReverseModeGradient ||
          mode == DerivativeMode::ReverseModeCombined ||
@@ -147,7 +150,8 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   }
 
   TypeResults TR = TA.analyzeFunction(typeInfo);
-  assert(TR.getFunction() == oldFunc);
+  if (!oldFunc->empty())
+    assert(TR.getFunction() == oldFunc);
 
   auto res = new DiffeGradientUtils(Logic, newFunc, oldFunc, TLI, TA, TR,
                                     invertedPointers, constant_values,
@@ -342,15 +346,15 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       std::string s;
       llvm::raw_string_ostream ss(s);
       ss << "oldFunc: " << *oldFunc << "\n";
-      ss << "Cannot deduce adding type of: " << *old << "\n";
+      ss << "Cannot deduce adding type of: " << *val << "\n";
       if (CustomErrorHandler) {
-        CustomErrorHandler(ss.str().c_str(), wrap(old), ErrorType::NoType,
+        CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
                            &TR.analyzer, nullptr, wrap(&BuilderM));
         return addedSelects;
       } else {
         TR.dump();
         DebugLoc loc;
-        if (auto inst = dyn_cast<Instruction>(old))
+        if (auto inst = dyn_cast<Instruction>(val))
           EmitFailure("CannotDeduceType", inst->getDebugLoc(), inst, ss.str());
         else {
           llvm::errs() << ss.str() << "\n";
@@ -367,9 +371,32 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     auto newBitSize =
         oldFunc->getParent()->getDataLayout().getTypeSizeInBits(addingType);
 
-    if (oldBitSize > newBitSize && oldBitSize % newBitSize == 0 &&
-        !addingType->isVectorTy()) {
-      addingType = VectorType::get(addingType, oldBitSize / newBitSize, false);
+    if (oldBitSize == newBitSize) {
+    } else if (oldBitSize > newBitSize && oldBitSize % newBitSize == 0) {
+      if (!addingType->isVectorTy())
+        addingType =
+            VectorType::get(addingType, oldBitSize / newBitSize, false);
+    } else {
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "oldFunc: " << *oldFunc << "\n";
+      ss << "Illegal intermediate when adding to: " << *val
+         << " with addingType: " << *addingType << "\n";
+      if (CustomErrorHandler) {
+        CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
+                           &TR.analyzer, nullptr, wrap(&BuilderM));
+        return addedSelects;
+      } else {
+        TR.dump();
+        DebugLoc loc;
+        if (auto inst = dyn_cast<Instruction>(val))
+          EmitFailure("CannotDeduceType", inst->getDebugLoc(), inst, ss.str());
+        else {
+          llvm::errs() << ss.str() << "\n";
+          llvm_unreachable("Cannot deduce adding type");
+        }
+        return addedSelects;
+      }
     }
 
     Value *bcold = BuilderM.CreateBitCast(old, addingType);
@@ -1014,7 +1041,13 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
       }
 
       if (!isConstantValue(origptr)) {
-        if (EnzymeRuntimeActivityCheck && !merge) {
+        auto basePtr = getBaseObject(origptr);
+        assert(!isConstantValue(basePtr));
+        // If runtime activity, first see if we can prove that the shadow/primal
+        // are distinct statically as they are allocas/mallocs, if not compare
+        // the pointers and conditionally execute.
+        if ((!isa<AllocaInst>(basePtr) && !isAllocationCall(basePtr, TLI)) &&
+            EnzymeRuntimeActivityCheck && !merge) {
           Value *shadow = Builder2.CreateICmpNE(
               lookupM(getNewFromOriginal(origptr), Builder2),
               lookupM(invertPointerM(origptr, Builder2), Builder2));

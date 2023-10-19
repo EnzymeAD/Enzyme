@@ -119,6 +119,8 @@ typedef enum {
                      // but don't need the forward
 } CDIFFE_TYPE;
 
+typedef enum { BT_SCALAR = 0, BT_VECTOR = 1 } CBATCH_TYPE;
+
 typedef enum {
   DEM_ForwardMode = 0,
   DEM_ReverseModePrimal = 1,
@@ -131,40 +133,6 @@ typedef enum {
   DEM_Trace = 0,
   DEM_Condition = 1,
 } CProbProgMode;
-
-LLVMValueRef EnzymeCreateForwardDiff(
-    EnzymeLogicRef, LLVMValueRef todiff, CDIFFE_TYPE retType,
-    CDIFFE_TYPE *constant_args, size_t constant_args_size,
-    EnzymeTypeAnalysisRef TA, uint8_t returnValue, CDerivativeMode mode,
-    uint8_t freeMemory, unsigned width, LLVMTypeRef additionalArg,
-    struct CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
-    size_t uncacheable_args_size, EnzymeAugmentedReturnPtr augmented);
-
-LLVMValueRef EnzymeCreatePrimalAndGradient(
-    EnzymeLogicRef, LLVMValueRef todiff, CDIFFE_TYPE retType,
-    CDIFFE_TYPE *constant_args, size_t constant_args_size,
-    EnzymeTypeAnalysisRef TA, uint8_t returnValue, uint8_t dretUsed,
-    CDerivativeMode mode, unsigned width, uint8_t freeMemory,
-    LLVMTypeRef additionalArg, uint8_t forceAnonymousTape,
-    struct CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
-    size_t uncacheable_args_size, EnzymeAugmentedReturnPtr augmented,
-    uint8_t AtomicAdd);
-
-EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
-    EnzymeLogicRef, LLVMValueRef todiff, CDIFFE_TYPE retType,
-    CDIFFE_TYPE *constant_args, size_t constant_args_size,
-    EnzymeTypeAnalysisRef TA, uint8_t returnUsed, uint8_t shadowReturnUsed,
-    struct CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
-    size_t uncacheable_args_size, uint8_t forceAnonymousTape, unsigned width,
-    uint8_t AtomicAdd);
-
-LLVMValueRef CreateTrace(
-    EnzymeLogicRef Logic, LLVMValueRef totrace, LLVMValueRef *sample_functions,
-    size_t sample_functions_size, LLVMValueRef *observe_functions,
-    size_t observe_functions_size, LLVMValueRef *generative_functions,
-    size_t generative_functions_size, const char *active_random_variables[],
-    size_t active_random_variables_size, CProbProgMode mode, uint8_t autodiff,
-    EnzymeTraceInterfaceRef interface);
 
 typedef uint8_t (*CustomRuleType)(int /*direction*/, CTypeTreeRef /*return*/,
                                   CTypeTreeRef * /*args*/,

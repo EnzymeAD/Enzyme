@@ -8,6 +8,7 @@
 // RUN: %clang++ -std=c++14 -fno-exceptions -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli -
 
 #include <cmath>
+#include "test_utils.h"
 
 template <typename T, int... n>
 struct tensor;
@@ -27,10 +28,6 @@ struct tensor<T, first, rest...> {
 
   tensor<T, rest...> value[first];
 };
-
-int enzyme_dup;
-int enzyme_out;
-int enzyme_const;
 
 template<typename return_type, typename... Args>
 return_type __enzyme_autodiff(Args...);
