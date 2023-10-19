@@ -1554,27 +1554,25 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             }
           }
         }
-        if (funcName == "jl_array_copy" || funcName == "ijl_array_copy") {
-          // This pointer is inactive if it is either not actively stored to
-          // and not actively loaded from.
-          if (directions & DOWN && directions & UP) {
-            if (UpHypothesis->isConstantValue(TR, op->getOperand(0))) {
-              auto DownHypothesis = std::shared_ptr<ActivityAnalyzer>(
-                  new ActivityAnalyzer(*this, DOWN));
-              DownHypothesis->ConstantValues.insert(TmpOrig);
-              for (auto UA :
-                   {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
-                    UseActivity::AllStores, UseActivity::None}) {
-                Instruction *LoadReval = nullptr;
-                if (DownHypothesis->isValueInactiveFromUsers(TR, TmpOrig, UA,
-                                                             &LoadReval)) {
-                  insertConstantsFrom(TR, *DownHypothesis);
-                  InsertConstantValue(TR, Val);
-                  return true;
-                } else {
-                  if (LoadReval && UA != UseActivity::AllStores) {
-                    ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
-                  }
+        if (directions & DOWN && directions & UP) { 
+          if (isInstructionAllConstArgOrDeducing(TR, op)) {
+            // This pointer is inactive if it is either not actively stored to
+            // and not actively loaded from.
+            auto DownHypothesis = std::shared_ptr<ActivityAnalyzer>(
+                new ActivityAnalyzer(*this, DOWN));
+            DownHypothesis->ConstantValues.insert(TmpOrig);
+            for (auto UA :
+                 {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
+                  UseActivity::AllStores, UseActivity::None}) {
+              Instruction *LoadReval = nullptr;
+              if (DownHypothesis->isValueInactiveFromUsers(TR, TmpOrig, UA,
+                                                           &LoadReval)) {
+                insertConstantsFrom(TR, *DownHypothesis);
+                InsertConstantValue(TR, Val);
+                return true;
+              } else {
+                if (LoadReval && UA != UseActivity::AllStores) {
+                  ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
                 }
               }
             }
@@ -1663,7 +1661,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         }
       }
       if (auto inst = dyn_cast<Instruction>(Val)) {
-        if (!inst->mayReadFromMemory() && !isa<AllocaInst>(Val)) {
+        if (!inst->mayReadFromMemory()) {
           if (directions == UP && !isa<PHINode>(inst)) {
             if (isInstructionInactiveFromOrigin(TR, inst, true)) {
               InsertConstantValue(TR, Val);
@@ -1886,7 +1884,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                                       Intrinsic::nvvm_ldg_global_f))) {
           // If the ref'ing value is a load check if the loaded value is
           // active
-          if (!Hypothesis->isConstantValue(TR, I)) {
+          bool constval = Hypothesis->isConstantValue(TR, I);
+          if (!constval) {
             potentiallyActiveLoad = I;
             // returns whether seen
             std::function<bool(Value * V, SmallPtrSetImpl<Value *> &)>
@@ -2022,8 +2021,13 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     // prior to its creation. Otherwise, check all instructions in the
     // function as a store to an aliasing location may have occured
     // prior to the instruction generating the value.
+    //
+    // Similarly if an inst has no active arguments, the value created
+    // cannot have any active load or store prior.
 
-    if (auto VI = dyn_cast<AllocaInst>(Val)) {
+    if (isa<Instruction>(Val) && UpHypothesis->isInstructionAllConstArgOrDeducing(TR, cast<Instruction>(Val))) {
+      allFollowersOf(cast<Instruction>(Val), checkActivity);
+    } else if (auto VI = dyn_cast<AllocaInst>(Val)) {
       allFollowersOf(VI, checkActivity);
     } else if (auto VI = dyn_cast<CallInst>(Val)) {
       if (VI->hasRetAttr(Attribute::NoAlias))
@@ -2288,6 +2292,21 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
   Instruction *inst = cast<Instruction>(val);
   if (EnzymePrintActivity)
     llvm::errs() << " < UPSEARCH" << (int)directions << ">" << *inst << "\n";
+
+  if (!considerValue && !TR.query(val)[{-1}].isPossiblePointer()) {
+  if (isInstructionAllConstArgOrDeducing(TR, inst, false)) {
+    if (EnzymePrintActivity)
+      llvm::errs() << " </ UPSEARCH" << (int)directions << ">" << *inst << " -- const from up via non-pointer return with const args\n";
+    return true;
+  }
+  /*
+  if (!TR.query(val)[{-1}].isPossiblePointer() && isInstructionAllConstArgOrDeducing(TR, inst)) {
+    if (EnzymePrintActivity)
+      llvm::errs() << " </ UPSEARCH" << (int)directions << ">" << *inst << " -- const from up via non-pointer return with const/deducing args\n";
+    return true;
+  }
+  */
+  }
 
   // cpuid is explicitly an inactive instruction
   if (auto call = dyn_cast<CallInst>(inst)) {
@@ -3255,25 +3274,6 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults const &TR,
       }
     }
 
-    if (auto inst = dyn_cast<Instruction>(a)) {
-      if (!inst->mayWriteToMemory() ||
-          (isa<CallInst>(inst) && (AA.onlyReadsMemory(cast<CallInst>(inst)) ||
-                                   isReadOnly(cast<CallInst>(inst))))) {
-        // if not written to memory and returning a known constant, this
-        // cannot be actively returned/stored
-        if (inst->getParent()->getParent() == TR.getFunction() &&
-            isConstantValue(TR, a)) {
-          continue;
-        }
-        // if not written to memory and returning a value itself
-        // not actively stored or returned, this is not actively
-        // stored or returned
-        if (!isValueActivelyStoredOrReturned(TR, a, outside)) {
-          continue;
-        }
-      }
-    }
-
     if (isAllocationCall(a, TLI)) {
       // if not written to memory and returning a known constant, this
       // cannot be actively returned/stored
@@ -3290,6 +3290,28 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults const &TR,
       // freeing memory never counts
       continue;
     }
+
+    if (auto inst = dyn_cast<Instruction>(a)) {
+      if (!inst->mayWriteToMemory() ||
+          (isa<CallInst>(inst) && (AA.onlyReadsMemory(cast<CallInst>(inst)) ||
+                                   isReadOnly(cast<CallInst>(inst)))) || isConstantInstruction(TR, inst)) {
+                                   //isReadOnly(cast<CallInst>(inst)))) || isInstructionAllConstArgOrDeducing(TR, inst)) {
+          llvm::errs() << " assumed ro or constant inst: " << *inst << "\n";
+        // if not written to memory and returning a known constant, this
+        // cannot be actively returned/stored
+        if (inst->getParent()->getParent() == TR.getFunction() &&
+            isConstantValue(TR, a)) {
+          continue;
+        }
+        // if not written to memory and returning a value itself
+        // not actively stored or returned, this is not actively
+        // stored or returned
+        if (!isValueActivelyStoredOrReturned(TR, a, outside)) {
+          continue;
+        }
+      }
+    }
+    
     // fallback and conservatively assume that if the value is written to
     // it is written to active memory
     // TODO handle more memory instructions above to be less conservative
@@ -3371,4 +3393,33 @@ void ActivityAnalyzer::InsertConstantValue(TypeResults const &TR,
     }
   }
   InsertConstValueRecursionHandler = nullptr;
+}
+
+bool ActivityAnalyzer::isInstructionAllConstArgOrDeducing(TypeResults const &TR, llvm::Instruction* inst, bool allowDeducing) {
+      for (unsigned i = 0; i < inst->getNumOperands(); ++i)
+      {
+        if (isa<CallInst>(inst) && i == inst->getNumOperands() - 1)
+            continue;
+        auto op = inst->getOperand(i);
+        if (allowDeducing && DeducingPointers.count(op))
+            continue;
+        // todo could also add isFunctionArgumentConstant(CallInst *CI,
+        // Value *val);
+        bool isConst = false;
+        if (directions & UP) {
+            isConst = isConstantValue(TR, op);
+        } else {
+          if (op->getType()->isVoidTy())
+            isConst = true;
+          /// If we've already shown this value to be inactive
+          else if (ConstantValues.find(op) != ConstantValues.end()) {
+            isConst = true;
+          } else if (isa<Constant>(op)) {
+            isConst = isConstantValue(TR, op);
+          }
+        }
+        if (!isConst)
+          return false;
+      }
+      return true;
 }

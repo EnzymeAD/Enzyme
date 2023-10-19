@@ -259,6 +259,12 @@ public:
   bool isValueActivelyStoredOrReturned(TypeResults const &TR, llvm::Value *val,
                                        bool outside = false);
 
+  /// Does this instruction have all constant arguments, or arguments which
+  /// are `deducing` aka values with all constant inputs but may allocate
+  /// memory (and thus contain no active data, but is a pointer that could
+  /// have active data stored into).
+  bool isInstructionAllConstArgOrDeducing(TypeResults const &TR, llvm::Instruction *val, bool allowDeducing=true);
+
 private:
   /// StoredOrReturnedCache acts as an inductive cache of results for
   /// isValueActivelyStoredOrReturned
