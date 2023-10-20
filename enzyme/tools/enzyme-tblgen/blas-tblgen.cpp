@@ -57,6 +57,29 @@ bool hasDiffeRet(Init *resultTree) {
   return false;
 }
 
+bool hasAdjoint(Init *resultTree, StringRef argName) {
+  if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
+    auto opName = resultRoot->getOperator()->getAsString();
+    auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
+    if (Def->isSubClassOf("adj")) {
+      auto name = Def->getValueAsString("name");
+      return name == argName;
+    }
+    for (auto arg : resultRoot->getArgs()) {
+      if (hasAdjoint(arg, argName))
+        return true;
+    }
+  }
+  if (DefInit *DefArg = dyn_cast<DefInit>(resultTree)) {
+    auto Def = DefArg->getDef();
+    if (Def->isSubClassOf("adj")) {
+      auto name = Def->getValueAsString("name");
+      return name == argName;
+    }
+  }
+  return false;
+}
+
 static void checkBlasCallsInDag(const RecordKeeper &RK,
                                 ArrayRef<Record *> blasPatterns,
                                 StringRef blasName, const DagInit *toSearch) {
