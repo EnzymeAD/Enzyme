@@ -100,13 +100,23 @@ void emitBlasOpt(StringRef name, std::vector<DagInit *> inputs,
 
   os << "  // create a vector of calls to delete\n";
   os << "  std::vector<CallInst *> todelete;\n";
+  os << "  int num_calls = 0;\n";
 
   os << "  for (auto &BB : *F) {\n"
      << "    for (auto &I : BB) {\n"
      << "      if (auto *CI = dyn_cast<CallInst>(&I)) {\n"
-     << "        auto name = CI->getCalledFunction()->getName();\n";
+     << "        num_calls++;\n"
+     << "        auto CIname = CI->getCalledFunction()->getName();\n"
+     << "        auto blasOption = extractBLAS(CIname);\n"
+     << "#if LLVM_VERSION_MAJOR >= 16\n"
+     << "        if (!blasOption.has_value()) continue;\n"
+     << "        auto blas = blasOption.value();\n"
+     << "#else\n"
+     << "        if (!blasOption.hasValue()) continue;\n"
+     << "        auto blas = blasOption.getValue();\n"
+     << "#endif\n";
   for (auto fnc : unique_functions.keys()) {
-    os << "        if (name == \"" << fnc << "\") {\n";
+    os << "        if (blas.function == \"" << fnc << "\") {\n";
     std::string tab = "          ";
     auto fnc_vec = unique_functions[fnc];
     bool multiple = fnc_vec.size() > 1;
@@ -127,12 +137,28 @@ void emitBlasOpt(StringRef name, std::vector<DagInit *> inputs,
       os << "};\n";
     }
     os << tab << "bool set = cmp_or_set(CI, values);\n";
-    os << tab << "if (!set) continue;\n";
+    os << tab << "if (!set) {\n";
+    os << tab << "  llvm::errs() << \"args missmatch: " << fnc << "\";\n";
+    os << tab << "  continue;\n";
+    os << tab << "}\n";
+    for (size_t i = 0; i < fnc_vec[0]->getNumArgs(); i++) {
+      os << tab << "values[" << i << "] = CI->getArgOperand(" << i << ");\n";
+    }
+    for (size_t i = 0; i < fnc_vec.size(); ++i) {
+      ArrayRef<StringInit *> args = fnc_vec[i]->getArgNames();
+      size_t pos = 0;
+      for (auto arg : args) {
+        os << tab << arg->getValue() << " = CI->getArgOperand(" << i << ");\n";
+        pos++;
+      }
+    }
     os << tab << "llvm::errs() << \"found " << fnc << "\\n\";\n";
     os << tab << "idx_" << fnc << "++;\n"
        << tab << "todelete.push_back(CI);\n"
+       << tab << "continue;\n"
        << "        }\n";
   }
+  os << "        llvm::errs() << \"unhandled: \" << blas.function << \"\\n\";\n";
   os << "      }\n";
   os << "    }\n";
   os << "  }\n";
@@ -143,8 +169,10 @@ void emitBlasOpt(StringRef name, std::vector<DagInit *> inputs,
     os << "  if (idx_" << fnc << " != " << unique_functions[fnc].size() << ")\n"
        << "    found = false;\n";
   }
-  os << "  if (!found)\n"
-     << "    return false;\n";
+  os << "  if (!found) {\n"
+     << "    llvm::errs() << \"num calls: \" << num_calls << \"\\n\";\n"
+     << "    return false;\n"
+     << "  }\n";
 
   os << "  llvm::errs() << \"found optimization " << name << "\\n\";\n";
 

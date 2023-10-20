@@ -99,8 +99,11 @@ bool cmp_or_set(llvm::CallInst *CI, std::vector<llvm::Value *> values) {
     if (values[i] == nullptr) {
       continue;
     }
-    if (CI->getArgOperand(i) != values[i])
+    if (CI->getArgOperand(i) != values[i]) {
+      llvm::errs() << "cmp_or_set: " << i << " " << *CI->getArgOperand(i)
+                   << " != " << *values[i] << "\n";
       return false;
+    }
   }
   for (size_t i = 0; i < values.size(); ++i) {
     if (values[i] == nullptr) {

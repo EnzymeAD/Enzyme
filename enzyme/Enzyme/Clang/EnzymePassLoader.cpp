@@ -77,7 +77,8 @@ static RegisterStandardPasses
     clangtoolLoader_OEarly(PassManagerBuilder::EP_EarlyAsPossible,
                            loadNVVMPass);
 static RegisterStandardPasses
-    clangtoolLoader_Ox(PassManagerBuilder::EP_VectorizerStart, loadBLASPass);
+    clangtoolBlasLoader_Ox(PassManagerBuilder::EP_VectorizerStart,
+                           loadBLASPass);
 
 static void loadLTOPass(const PassManagerBuilder &Builder,
                         legacy::PassManagerBase &PM) {
