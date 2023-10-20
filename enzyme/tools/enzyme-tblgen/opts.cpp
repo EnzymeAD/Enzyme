@@ -141,9 +141,6 @@ void emitBlasOpt(StringRef name, std::vector<DagInit *> inputs,
     os << tab << "  llvm::errs() << \"args missmatch: " << fnc << "\";\n";
     os << tab << "  continue;\n";
     os << tab << "}\n";
-    for (size_t i = 0; i < fnc_vec[0]->getNumArgs(); i++) {
-      os << tab << "values[" << i << "] = CI->getArgOperand(" << i << ");\n";
-    }
     for (size_t i = 0; i < fnc_vec.size(); ++i) {
       ArrayRef<StringInit *> args = fnc_vec[i]->getArgNames();
       size_t pos = 0;

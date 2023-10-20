@@ -11,8 +11,8 @@ entry:
   store double 0.000000e+00, double* %A
   %B = alloca double, align 16
   store double 0.000000e+00, double* %B
-  call void @dger_64_(i64 %m, i64 %n, double %alpha, double* %x, i64 %incx, double* %y, i64 %incy, double* %A, i64 %lda) 
   call void @dger_64_(i64 %n, i64 %p, double %beta,  double* %v, i64 %incv, double* %w, i64 %incw, double* %B, i64 %ldb) 
+  call void @dger_64_(i64 %m, i64 %n, double %alpha, double* %x, i64 %incx, double* %y, i64 %incy, double* %A, i64 %lda) 
   call void @dgemm_64_(i8 %transa, i8 %transb, i64 %m, i64 %n, i64 %p, double %alpha, double* %A, i64 %lda, double* %B, i64 %ldb, double %beta, double* %C, i64 %ldc) 
   ;%ptr = bitcast i8* %A to double*
   ;store double 0.0000000e+00, double* %ptr, align 8
