@@ -11,8 +11,14 @@ set(Enzyme_CLANG_EXE "@CONF_CLANG_EXE@")
 set(Enzyme_TABLEGEN_EXE "@Enzyme_CONFIG_TABLEGEN_EXE@")
 
 # Our library dependencies (contains definitions for IMPORTED targets)
-if(NOT TARGET ClangEnzymeFlags AND NOT TARGET LLDEnzymeFlags AND NOT TARGET LLVMEnzyme-${Enzyme_LLVM_VERSION_MAJOR} AND NOT TARGET ClangEnzyme-${Enzyme_LLVM_VERSION_MAJOR} AND NOT TARGET LLDEnzyme-${Enzyme_LLVM_VERSION_MAJOR} AND NOT Enzyme_BINARY_DIR)
+if(NOT TARGET ClangEnzymeFlags AND NOT TARGET LLDEnzymeFlags 
+    AND NOT TARGET LLDEnzymeLooseTypeFlags
+    AND NOT TARGET LLDEnzymePrintTypeFlags
+        AND NOT TARGET LLVMEnzyme-${Enzyme_LLVM_VERSION_MAJOR} AND NOT TARGET ClangEnzyme-${Enzyme_LLVM_VERSION_MAJOR} AND NOT TARGET LLDEnzyme-${Enzyme_LLVM_VERSION_MAJOR} AND NOT Enzyme_BINARY_DIR)
     include("${Enzyme_CMAKE_DIR}/EnzymeTargets.cmake")
     # These are IMPORTED targets created by EnzymeTargets.cmake
-    set(Enzyme_LIBRARIES ClangEnzymeFlags LLDEnzymeFlags LLVMEnzyme-${Enzyme_LLVM_VERSION_MAJOR} ClangEnzyme-${Enzyme_LLVM_VERSION_MAJOR} LLDEnzyme-${LLD_LLVM_VERSION_MAJOR})
+    set(Enzyme_LIBRARIES ClangEnzymeFlags LLDEnzymeFlags
+        LLDEnzymeLooseTypeFlags
+        LLDEnzymePrintTypeFlags
+        LLVMEnzyme-${Enzyme_LLVM_VERSION_MAJOR} ClangEnzyme-${Enzyme_LLVM_VERSION_MAJOR} LLDEnzyme-${LLD_LLVM_VERSION_MAJOR})
 endif()

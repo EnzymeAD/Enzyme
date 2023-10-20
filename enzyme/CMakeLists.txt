@@ -308,10 +308,12 @@ endif()
 export(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 
-if (${LLVM_VERSION_MAJOR} GREATER 10)
 export(TARGETS LLDEnzymeFlags
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
-endif()
+export(TARGETS LLDEnzymeLooseTypeFlags
+    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+export(TARGETS LLDEnzymePrintTypeFlags
+    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 
 export(PACKAGE Enzyme)
 
