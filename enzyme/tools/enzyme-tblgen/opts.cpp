@@ -44,29 +44,8 @@ void emit_types(DagInit *dag, raw_ostream &os) {
   }
 }
 
-// class BlasOptPattern< list<dag> _inputs, list<string> _tmps, list<dag>
-// _outputs> {
-//   list<dag> inputs = _inputs;
-//   // tmp variables will dissapear during the transformation
-//   // and therefore are not allowed to be read elsewhere
-//   list<string> tmps = _tmps;
-//   list<dag> outputs = _outputs;
-// }
-// def first : BlasOptPattern<,
-// [
-// (b<"ger"> $layout, $m, $n, $alpha, $x, $incx, $y, $incy, $A, $lda),
-// (b<"ger"> $layout, $m, $k, $beta, $v, $incv, $w, $incw, $B, $ldb),
-// (b<"gemm"> $layout, $transa, $transb, $m, $n, $k, $alpha, $A, $lda, $B, $ldb,
-// $beta, $C, $ldc),
-// ],
-// ["A", "B"],
-// [
-// (Value<1> (b<"dot"> $layout, $n, $v, $incv, $y, $incy)),
-// (Value<2> (FMul $alpha Value<1>)),
-// (Value<3> (FMul $beta Value<2>)),
-// (b<"ger"> $layout, $m, $k, Value<3>, $x, $incx, $w, $incw, $C, $ldc),
-// ]
-// >;
+
+//       (ZeroMat $n, $C, $ldc),
 void emitBlasOpt(StringRef name, std::vector<DagInit *> inputs,
                  std::vector<StringRef>, std::vector<DagInit *> outputs,
                  raw_ostream &os) {
@@ -212,6 +191,8 @@ void emitBlasOpt(StringRef name, std::vector<DagInit *> inputs,
         // iff the buffer is empty, we return void, othewise
         // the buffer would be equal to 'Value *tmp = ...'
         std::string retTy = "Type::getVoidTy(M.getContext())";
+        // this is wrong, needs to be decided at compile time, not codegen time,
+        // based on the blas fnc names we see from the user
         if (!buffer.empty()) {
           if (fnc_name.contains("64")) {
             retTy = "Type::getDoubleTy(M.getContext())";

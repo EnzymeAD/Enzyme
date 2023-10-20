@@ -11,6 +11,42 @@ class Value<string _i> {
   string name = _i;
 }
 
+class ZeroInst : Inst<"blas">;
+def ZeroVec  : ZeroInst;
+def ZeroMat  : ZeroInst;
+
+def zeroOne : BlasOptPattern<
+       [
+       (ZeroVec $n, $y, $incy),
+       (b<"gemv"> $transa, $m, $n, $alpha, $A, $lda, $x, $incx, $beta, $y, $incy),
+       ],
+       [],
+       [
+       (b<"gemv"> $transa, $m, $n, $alpha, $A, $lda, $x, $incx, Constant<"0.0">, $y, $incy),
+       ]
+       >;
+def zeroTwo : BlasOptPattern<
+       [
+       (ZeroVec $n, $x, $incx),
+       (b<"axpy"> $n, $alpha, $x, $incx, $y, $incy),
+       ],
+       [],
+       [
+       //  y = alpha * x + y becomes no-op if x is zero.
+       (ZeroVec $n, $x, $incx),
+       ]
+       >;
+def zeroThree : BlasOptPattern<
+       [
+       (ZeroMat $n, $C, $ldc),
+       (b<"gemm"> $transa, $transb, $m, $n, $k, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),
+       ],
+       [],
+       [
+       (b<"gemm"> $transa, $transb, $m, $n, $k, $alpha, $A, $lda, $B, $ldb, Constant<"0.0">, $C, $ldc),
+       ]
+       >;
+
 def first : BlasOptPattern<
        [
        (b<"ger"> $m, $n, $alpha, $x, $incx, $y, $incy, $A, $lda),
