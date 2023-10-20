@@ -1306,10 +1306,28 @@ public:
                7) /
               8;
         Type *FT = TR.addingType(size, orig_op0);
+        if (!FT && looseTypeAnalysis) {
+          if (auto ET = I.getSrcTy()->getScalarType())
+            if (ET->isFPOrFPVectorTy()) {
+              FT = ET;
+              EmitWarning("CannotDeduceType", I,
+                          "failed to deduce adding type of cast ", I,
+                          " assumed ", FT, " from src");
+            }
+        }
+        if (!FT && looseTypeAnalysis) {
+          if (auto ET = I.getDestTy()->getScalarType())
+            if (ET->isFPOrFPVectorTy()) {
+              FT = ET;
+              EmitWarning("CannotDeduceType", I,
+                          "failed to deduce adding type of cast ", I,
+                          " assumed ", FT, " from dst");
+            }
+        }
         if (!FT) {
           std::string str;
           raw_string_ostream ss(str);
-          ss << "Cannot deduce adding type of " << I;
+          ss << "Cannot deduce adding type (cast) of " << I;
           if (CustomErrorHandler) {
             CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoType,
                                &TR.analyzer, nullptr, wrap(&Builder2));
