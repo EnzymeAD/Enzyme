@@ -196,7 +196,6 @@ public:
   /// changed Setting `PointerIntSame` considers pointers and integers as
   /// equivalent If this is an illegal operation, `LegalOr` will be set to false
   bool checkedOrIn(const ConcreteType CT, bool PointerIntSame, bool &LegalOr) {
-    LegalOr = true;
     if (SubTypeEnum == BaseType::Anything) {
       return false;
     }
