@@ -681,28 +681,29 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
       Invalid = true;
       return;
     }
+    std::string str;
+    raw_string_ostream ss(str);
+    if (!CustomErrorHandler) {
+      llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
+      llvm::errs() << *fntypeinfo.Function << "\n";
+      dump(ss);
+    }
+    ss << "Illegal updateAnalysis prev:" << prev.str() << " new: " << Data.str()
+       << "\n";
+    ss << "val: " << *Val;
+    if (Origin)
+      ss << " origin=" << *Origin;
+
     if (CustomErrorHandler) {
-      std::string str;
-      raw_string_ostream ss(str);
-      ss << "Illegal updateAnalysis prev:" << prev.str()
-         << " new: " << Data.str() << "\n";
-      ss << "val: " << *Val;
-      if (Origin)
-        ss << " origin=" << *Origin;
       CustomErrorHandler(str.c_str(), wrap(Val), ErrorType::IllegalTypeAnalysis,
                          (void *)this, wrap(Origin), nullptr);
     }
-    llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
-    llvm::errs() << *fntypeinfo.Function << "\n";
-    dump();
-    llvm::errs() << "Illegal updateAnalysis prev:" << prev.str()
-                 << " new: " << Data.str() << "\n";
-    llvm::errs() << "val: " << *Val;
-    if (Origin)
-      llvm::errs() << " origin=" << *Origin;
-    llvm::errs() << "\n";
-    assert(0 && "Performed illegal updateAnalysis");
-    llvm_unreachable("Performed illegal updateAnalysis");
+    if (auto I = dyn_cast<Instruction>(Val)) {
+      EmitFailure("IllegalUpdateAnalysis", I->getDebugLoc(), I, ss.str());
+    } else {
+      llvm::errs() << ss.str() << "\n";
+    }
+    report_fatal_error("Performed illegal updateAnalysis");
   }
 
   if (Changed) {

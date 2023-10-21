@@ -176,6 +176,9 @@ target_link_options(LLDEnzymeLooseTypeFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-en
 add_library(LLDEnzymePrintTypeFlags INTERFACE)
 target_link_options(LLDEnzymePrintTypeFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-print-type=1")
 
+add_library(LLDEnzymePrintFlags INTERFACE)
+target_link_options(LLDEnzymePrintFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-print=1")
+
 # this custom target exists to prevent CMake from incorrectly assuming that 
 # targets that link depend on LLDEnzyme-XX can be built at the same time or 
 # before LLDEnzyme-XX has finished.
