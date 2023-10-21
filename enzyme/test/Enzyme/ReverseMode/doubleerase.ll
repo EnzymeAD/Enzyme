@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -enzyme-loose-types -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -enzyme-loose-types -enzyme-strict-aliasing=0 -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme" -enzyme-loose-types -S | FileCheck %s
 
 
