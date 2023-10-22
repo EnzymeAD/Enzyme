@@ -322,6 +322,7 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
 const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     // TODO this returns allocated memory and thus can be an active value
     // "std::allocator",
+    "std::chrono::_V2::steady_clock::now",
     "std::string",
     "std::cerr",
     "std::istream",
