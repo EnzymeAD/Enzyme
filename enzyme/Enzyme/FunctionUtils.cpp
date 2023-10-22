@@ -2632,6 +2632,21 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
         replacements[CI] = rep;
         continue;
       }
+      if (auto SI = dyn_cast<SelectInst>(U)) {
+        for (auto U : SI->users()) {
+          users.push_back(std::make_pair(cast<Instruction>(U), SI));
+        }
+        auto tval = SI->getTrueValue();
+        auto fval = SI->getFalseValue();
+        auto rep = B.CreateSelect(
+            SI->getCondition(),
+            replacements.count(tval) ? (Value *)replacements[tval] : tval,
+            replacements.count(fval) ? (Value *)replacements[fval] : fval);
+        if (auto I = dyn_cast<Instruction>(rep))
+          I->setDebugLoc(CI->getDebugLoc());
+        replacements[CI] = rep;
+        continue;
+      }
       /*
       if (auto CI = dyn_cast<PHINode>(U)) {
         for (auto U : CI->users()) {
