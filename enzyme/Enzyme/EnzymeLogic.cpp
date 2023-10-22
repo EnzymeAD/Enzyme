@@ -2400,9 +2400,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       }
 
       auto newri = ib.CreateRet(rt);
-      gutils->originalToNewFn[orig_ri] = newri;
-      gutils->newToOriginalFn.erase(ri);
-      gutils->newToOriginalFn[newri] = orig_ri;
+      gutils->replaceOriginalToNewFn(ri, newri);
       gutils->erase(ri);
     }
   }

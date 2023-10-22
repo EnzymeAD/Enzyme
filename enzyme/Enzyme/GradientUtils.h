@@ -323,6 +323,8 @@ public:
   void replaceAWithB(llvm::Value *A, llvm::Value *B,
                      bool storeInCache = false) override;
 
+  void replaceOriginalToNewFn(llvm::Value *A, llvm::Value *B);
+
   void erase(llvm::Instruction *I) override;
 
   void eraseWithPlaceholder(llvm::Instruction *I, llvm::Instruction *orig,
