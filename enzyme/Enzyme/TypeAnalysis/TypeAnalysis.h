@@ -45,6 +45,7 @@
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/InstVisitor.h"
+#include "llvm/IR/ModuleSlotTracker.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 
@@ -192,6 +193,10 @@ public:
 /// Helper class that computes the fixed-point type results of a given function
 class TypeAnalyzer : public llvm::InstVisitor<TypeAnalyzer> {
 public:
+  /// Cache of metadata indices, for faster printing.
+  /// Only initialized if EnzymePrintType is true
+  std::shared_ptr<llvm::ModuleSlotTracker> MST;
+
   /// List of value's which should be re-analyzed now with new information
   llvm::SetVector<llvm::Value *, std::deque<llvm::Value *>> workList;
 

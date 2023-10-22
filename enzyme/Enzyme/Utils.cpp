@@ -2021,10 +2021,10 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
         if (!isRefSet(AA.getModRefInfo(maybeReader,
                                        call->getArgOperand(off + 0), loc)))
           return false;
-        auto R = parseTBAA(*maybeReader, maybeReader->getParent()
-                                             ->getParent()
-                                             ->getParent()
-                                             ->getDataLayout())[{-1}];
+        auto R = parseTBAA(
+            *maybeReader,
+            maybeReader->getParent()->getParent()->getParent()->getDataLayout(),
+            nullptr)[{-1}];
         // Could still conflict with the mpi_request unless a non pointer
         // type.
         if (R != BaseType::Unknown && R != BaseType::Anything &&
@@ -2034,10 +2034,10 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     }
     // Isend only writes to inaccessible mem and request.
     if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
-      auto R = parseTBAA(*maybeReader, maybeReader->getParent()
-                                           ->getParent()
-                                           ->getParent()
-                                           ->getDataLayout())[{-1}];
+      auto R = parseTBAA(
+          *maybeReader,
+          maybeReader->getParent()->getParent()->getParent()->getDataLayout(),
+          nullptr)[{-1}];
       // Could still conflict with the mpi_request, unless either
       // synchronous, or a non pointer type.
       if (R != BaseType::Unknown && R != BaseType::Anything &&
@@ -2070,10 +2070,10 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
         }
       }
       if (type.isKnown()) {
-        auto R = parseTBAA(*maybeReader, maybeReader->getParent()
-                                             ->getParent()
-                                             ->getParent()
-                                             ->getDataLayout())[{-1}];
+        auto R = parseTBAA(
+            *maybeReader,
+            maybeReader->getParent()->getParent()->getParent()->getDataLayout(),
+            nullptr)[{-1}];
         if (R.isKnown() && type != R) {
           // Could still conflict with the mpi_request, unless either
           // synchronous, or a non pointer type.

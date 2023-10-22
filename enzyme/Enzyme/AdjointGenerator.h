@@ -751,7 +751,7 @@ public:
     auto alignment = LI.getAlign();
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
 
-    bool constantval = parseTBAA(LI, DL).Inner0().isIntegral();
+    bool constantval = parseTBAA(LI, DL, nullptr).Inner0().isIntegral();
     visitLoadLike(LI, alignment, constantval);
     eraseIfUnused(LI);
   }
@@ -975,7 +975,7 @@ public:
     NewI->setMetadata(LLVMContext::MD_noalias, noscope);
 
     bool constantval = gutils->isConstantValue(orig_val) ||
-                       parseTBAA(I, DL).Inner0().isIntegral();
+                       parseTBAA(I, DL, nullptr).Inner0().isIntegral();
 
     IRBuilder<> BuilderZ(NewI);
     BuilderZ.setFastMathFlags(getFast());
@@ -3484,7 +3484,7 @@ public:
       auto align0 = cast<ConstantInt>(I.getOperand(1))->getZExtValue();
       auto align = MaybeAlign(align0);
       auto &DL = gutils->newFunc->getParent()->getDataLayout();
-      bool constantval = parseTBAA(I, DL).Inner0().isIntegral();
+      bool constantval = parseTBAA(I, DL, nullptr).Inner0().isIntegral();
       visitLoadLike(I, align, constantval,
                     /*mask*/ gutils->getNewFromOriginal(I.getOperand(2)),
                     /*orig_maskInit*/ I.getOperand(3));
