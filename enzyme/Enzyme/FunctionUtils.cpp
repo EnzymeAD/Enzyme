@@ -2643,8 +2643,8 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
             replacements.count(tval) ? (Value *)replacements[tval] : tval,
             replacements.count(fval) ? (Value *)replacements[fval] : fval);
         if (auto I = dyn_cast<Instruction>(rep))
-          I->setDebugLoc(CI->getDebugLoc());
-        replacements[CI] = rep;
+          I->setDebugLoc(SI->getDebugLoc());
+        replacements[SI] = rep;
         continue;
       }
       /*
