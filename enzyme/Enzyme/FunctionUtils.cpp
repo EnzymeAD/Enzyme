@@ -2780,6 +2780,7 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
       CI->replaceAllUsesWith(Constant::getNullValue(CI->getType()));
       CI->eraseFromParent();
     } else if (replaceAll) {
+      llvm::errs() << *F << "\n";
       llvm::errs() << " U: " << *remaining << " of " << *CI << "\n";
       llvm_unreachable("Illegal replacement use of enzyme sparisification");
     }
