@@ -308,7 +308,7 @@ static SmallPtrSet<PHINode *, 1> findLoopIndices(llvm::Value *val, LoopInfo &LI,
   }
   if (auto pn = dyn_cast<PHINode>(val)) {
     auto L = LI.getLoopFor(pn->getParent());
-    if (L->getHeader() == pn->getParent())
+    if (L && L->getHeader() == pn->getParent())
       return {pn};
     SmallPtrSet<PHINode *, 1> ops;
     for (unsigned i = 0; i < pn->getNumIncomingValues(); ++i) {
