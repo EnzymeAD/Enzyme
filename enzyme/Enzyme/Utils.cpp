@@ -2553,18 +2553,15 @@ llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef,
 // enum CBLAS_TRANSPOSE {CblasNoTrans=111, CblasTrans=112, CblasConjTrans=113};
 llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
   llvm::Type *T = V->getType();
-  Value *out;
   if (cublas) {
-    out =
-        B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(T, 1)),
-                       ConstantInt::get(V->getType(), 0),
-                       B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(T, 0)),
-                                      ConstantInt::get(V->getType(), 1),
-                                      ConstantInt::get(V->getType(), 42)));
-    return out;
-  }
-  if (T->isIntegerTy(8)) {
-    out = B.CreateSelect(
+    return B.CreateSelect(
+        B.CreateICmpEQ(V, ConstantInt::get(T, 1)),
+        ConstantInt::get(V->getType(), 0),
+        B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(T, 0)),
+                       ConstantInt::get(V->getType(), 1),
+                       ConstantInt::get(V->getType(), 42)));
+  } else if (T->isIntegerTy(8)) {
+    return B.CreateSelect(
         B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'T')),
         ConstantInt::get(V->getType(), 'N'),
         B.CreateSelect(
@@ -2578,7 +2575,7 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
                     ConstantInt::get(V->getType(), 't'),
                     ConstantInt::get(V->getType(), 0)))));
   } else if (T->isIntegerTy(32)) {
-    out = B.CreateSelect(
+    return B.CreateSelect(
         B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 111)),
         ConstantInt::get(V->getType(), 112),
         B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 112)),
@@ -2594,8 +2591,8 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
     } else {
       EmitFailure("unknown trans blas value", nullptr, nullptr, ss.str());
     }
+    return V;
   }
-  return out;
 }
 
 // Implement the following logic to get the width of a matrix
