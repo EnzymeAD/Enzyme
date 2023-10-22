@@ -214,7 +214,9 @@ bool dontAnalyze(StringRef str) {
 
 TypeAnalyzer::TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
                            uint8_t direction)
-    : notForAnalysis(getGuaranteedUnreachable(fn.Function)), intseen(),
+    : MST(EnzymePrintType ? new ModuleSlotTracker(fn.Function->getParent())
+                          : nullptr),
+      notForAnalysis(getGuaranteedUnreachable(fn.Function)), intseen(),
       fntypeinfo(fn), interprocedural(TA), direction(direction), Invalid(false),
       PHIRecur(false),
       TLI(TA.FAM.getResult<TargetLibraryAnalysis>(*fn.Function)),
@@ -249,7 +251,8 @@ TypeAnalyzer::TypeAnalyzer(
     const FnTypeInfo &fn, TypeAnalysis &TA,
     const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &notForAnalysis,
     const TypeAnalyzer &Prev, uint8_t direction, bool PHIRecur)
-    : notForAnalysis(notForAnalysis.begin(), notForAnalysis.end()), intseen(),
+    : MST(Prev.MST),
+      notForAnalysis(notForAnalysis.begin(), notForAnalysis.end()), intseen(),
       fntypeinfo(fn), interprocedural(TA), direction(direction), Invalid(false),
       PHIRecur(PHIRecur), TLI(Prev.TLI), DT(Prev.DT), PDT(Prev.PDT),
       LI(Prev.LI), SE(Prev.SE) {
@@ -257,8 +260,8 @@ TypeAnalyzer::TypeAnalyzer(
          fntypeinfo.Function->getFunctionType()->getNumParams());
 }
 
-static SmallPtrSet<PHINode *, 1> findLoopIndices(llvm::Value *val, LoopInfo &LI,
-                                                 DominatorTree &DT) {
+static SmallPtrSet<BasicBlock *, 1>
+findLoopIndices(llvm::Value *val, LoopInfo &LI, DominatorTree &DT) {
   if (isa<Constant>(val))
     return {};
   if (auto CI = dyn_cast<CastInst>(val))
@@ -309,8 +312,8 @@ static SmallPtrSet<PHINode *, 1> findLoopIndices(llvm::Value *val, LoopInfo &LI,
   if (auto pn = dyn_cast<PHINode>(val)) {
     auto L = LI.getLoopFor(pn->getParent());
     if (L && L->getHeader() == pn->getParent())
-      return {pn};
-    SmallPtrSet<PHINode *, 1> ops;
+      return {pn->getParent()};
+    SmallPtrSet<BasicBlock *, 1> ops;
     for (unsigned i = 0; i < pn->getNumIncomingValues(); ++i) {
       auto a = pn->getIncomingValue(i);
       auto seti = findLoopIndices(a, LI, DT);
@@ -1003,9 +1006,13 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
             }
           }
           if (!allocationWithAllUsersInBlock) {
-            if (EnzymePrintType)
-              llvm::errs() << " skipping update into " << *I << " of "
-                           << Data.str() << " from " << *OI << "\n";
+            if (EnzymePrintType) {
+              llvm::errs() << " skipping update into ";
+              I->print(llvm::errs(), *MST);
+              llvm::errs() << " of " << Data.str() << " from ";
+              OI->print(llvm::errs(), *MST);
+              llvm::errs() << "\n";
+            }
             return;
           }
         }
@@ -1018,9 +1025,13 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
         auto I = &*fntypeinfo.Function->getEntryBlock().begin();
         if (OI->getParent() != I->getParent() &&
             !PDT.dominates(OI->getParent(), I->getParent())) {
-          if (EnzymePrintType)
-            llvm::errs() << " skipping update into " << *Arg << " of "
-                         << Data.str() << " from " << *OI << "\n";
+          if (EnzymePrintType) {
+            llvm::errs() << " skipping update into ";
+            Arg->print(llvm::errs(), *MST);
+            llvm::errs() << " of " << Data.str() << " from ";
+            OI->print(llvm::errs(), *MST);
+            llvm::errs() << "\n";
+          }
           return;
         }
       }
@@ -1044,10 +1055,13 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
 
   // Print the update being made, if requested
   if (EnzymePrintType) {
-    llvm::errs() << "updating analysis of val: " << *Val
-                 << " current: " << prev.str() << " new " << Data.str();
-    if (Origin)
-      llvm::errs() << " from " << *Origin;
+    llvm::errs() << "updating analysis of val: ";
+    Val->print(llvm::errs(), *MST);
+    llvm::errs() << " current: " << prev.str() << " new " << Data.str();
+    if (Origin) {
+      llvm::errs() << " from ";
+      Origin->print(llvm::errs(), *MST);
+    }
     llvm::errs() << " Changed=" << Changed << " legal=" << LegalOr << "\n";
   }
 
@@ -1257,7 +1271,7 @@ void TypeAnalyzer::considerTBAA() {
         }
       }
 
-      TypeTree vdptr = parseTBAA(I, DL);
+      TypeTree vdptr = parseTBAA(I, DL, MST);
 
       // If we don't have any useful information,
       // don't bother updating
@@ -1826,14 +1840,14 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
 
   SmallVector<std::set<int>, 4> idnext;
 
-  SmallPtrSet<Value *, 1> previousVals;
+  SmallPtrSet<BasicBlock *, 1> previousLoopInductionHeaders;
   {
     Value *ptr = gep.getPointerOperand();
     while (true) {
       if (auto gepop = dyn_cast<GEPOperator>(ptr)) {
         for (auto I = gepop->idx_begin(), E = gepop->idx_end(); I != E; I++) {
           for (auto loopInd : findLoopIndices(*I, LI, DT)) {
-            previousVals.insert(loopInd);
+            previousLoopInductionHeaders.insert(loopInd);
           }
         }
         ptr = gepop->getPointerOperand();
@@ -1868,7 +1882,7 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
     //   TODO, in the future, mutually compute the offset together.
     if (vset.size() != 1) {
       for (auto loopInd : findLoopIndices(pair.first, LI, DT))
-        if (previousVals.count(pair.first))
+        if (previousLoopInductionHeaders.count(loopInd))
           return;
     }
     idnext.push_back(vset);
@@ -1960,9 +1974,13 @@ void TypeAnalyzer::visitPHINode(PHINode &phi) {
       }
     } else {
       if (EnzymePrintType) {
-        for (size_t i = 0, end = phi.getNumIncomingValues(); i < end; ++i)
-          llvm::errs() << " skipping update into " << *phi.getIncomingValue(i)
-                       << " of " << upVal.str() << " from " << phi << "\n";
+        for (size_t i = 0, end = phi.getNumIncomingValues(); i < end; ++i) {
+          llvm::errs() << " skipping update into ";
+          phi.getIncomingValue(i)->print(llvm::errs(), *MST);
+          llvm::errs() << " of " << upVal.str() << " from ";
+          phi.print(llvm::errs(), *MST);
+          llvm::errs() << "\n";
+        }
       }
     }
   }
@@ -2268,10 +2286,16 @@ void TypeAnalyzer::visitSelectInst(SelectInst &I) {
       updateAnalysis(I.getFalseValue(), Data, &I);
     } else {
       if (EnzymePrintType) {
-        llvm::errs() << " skipping update into " << *I.getTrueValue() << " of "
-                     << Data.str() << " from " << I << "\n";
-        llvm::errs() << " skipping update into " << *I.getFalseValue() << " of "
-                     << Data.str() << " from " << I << "\n";
+        llvm::errs() << " skipping update into ";
+        I.getTrueValue()->print(llvm::errs(), *MST);
+        llvm::errs() << " of " << Data.str() << " from ";
+        I.print(llvm::errs(), *MST);
+        llvm::errs() << "\n";
+        llvm::errs() << " skipping update into ";
+        I.getFalseValue()->print(llvm::errs(), *MST);
+        llvm::errs() << " of " << Data.str() << " from ";
+        I.print(llvm::errs(), *MST);
+        llvm::errs() << "\n";
       }
     }
   }
@@ -4258,8 +4282,11 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
             ++argnum;
           }
 
-          if (EnzymePrintType)
-            llvm::errs() << " starting omp IPO of " << call << "\n";
+          if (EnzymePrintType) {
+            llvm::errs() << " starting omp IPO of ";
+            call.print(llvm::errs(), *MST);
+            llvm::errs() << "\n";
+          }
 
           auto a = fn->arg_begin();
           ++a;
@@ -5242,7 +5269,7 @@ bool TypeAnalyzer::mustRemainInteger(Value *val, bool *returned) {
   seen[val] = std::make_pair(true, false);
   for (auto u : val->users()) {
     if (auto SI = dyn_cast<StoreInst>(u)) {
-      if (parseTBAA(*SI, DL).Inner0().isIntegral())
+      if (parseTBAA(*SI, DL, MST).Inner0().isIntegral())
         continue;
       seen[val].first = false;
       continue;
@@ -5391,13 +5418,19 @@ void TypeAnalyzer::visitIPOCall(CallBase &call, Function &fn) {
   FnTypeInfo typeInfo = getCallInfo(call, fn);
   typeInfo = preventTypeAnalysisLoops(typeInfo, call.getParent()->getParent());
 
-  if (EnzymePrintType)
-    llvm::errs() << " starting IPO of " << call << "\n";
+  if (EnzymePrintType) {
+    llvm::errs() << " starting IPO of ";
+    call.print(llvm::errs(), *MST);
+    llvm::errs() << "\n";
+  }
 
   TypeResults STR = interprocedural.analyzeFunction(typeInfo);
 
-  if (EnzymePrintType)
-    llvm::errs() << " ending IPO of " << call << "\n";
+  if (EnzymePrintType) {
+    llvm::errs() << " ending IPO of ";
+    call.print(llvm::errs(), *MST);
+    llvm::errs() << "\n";
+  }
 
   if (hasUp) {
     auto a = fn.arg_begin();
@@ -5408,9 +5441,15 @@ void TypeAnalyzer::visitIPOCall(CallBase &call, Function &fn) {
 #endif
     {
       auto dt = STR.query(a);
-      if (EnzymePrintType)
-        llvm::errs() << " updating " << *arg << " = " << dt.str()
-                     << "  via IPO of " << call << " arg " << *a << "\n";
+      if (EnzymePrintType) {
+        llvm::errs() << " updating ";
+        arg->print(llvm::errs(), *MST);
+        llvm::errs() << " = " << dt.str() << "  via IPO of ";
+        call.print(llvm::errs(), *MST);
+        llvm::errs() << " arg ";
+        a->print(llvm::errs(), *MST);
+        llvm::errs() << "\n";
+      }
       updateAnalysis(arg, dt, &call);
       ++a;
     }
@@ -5454,8 +5493,9 @@ TypeResults TypeAnalysis::analyzeFunction(const FnTypeInfo &fn) {
   if (EnzymePrintType) {
     llvm::errs() << "analyzing function " << fn.Function->getName() << "\n";
     for (auto &pair : fn.Arguments) {
-      llvm::errs() << " + knowndata: " << *pair.first << " : "
-                   << pair.second.str();
+      llvm::errs() << " + knowndata: ";
+      pair.first->print(llvm::errs(), *analysis.MST);
+      llvm::errs() << " : " << pair.second.str();
       auto found = fn.KnownValues.find(pair.first);
       if (found != fn.KnownValues.end()) {
         llvm::errs() << " - " << to_string(found->second);

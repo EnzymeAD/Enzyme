@@ -3284,7 +3284,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
             auto &DL = newFunc->getParent()->getDataLayout();
 
             bool constantval = isConstantValue(orig_val) ||
-                               parseTBAA(I, DL).Inner0().isIntegral();
+                               parseTBAA(I, DL, nullptr).Inner0().isIntegral();
 
             // TODO allow recognition of other types that could contain
             // pointers [e.g. {void*, void*} or <2 x i64> ]
