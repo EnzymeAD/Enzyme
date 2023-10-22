@@ -148,7 +148,7 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
         getReverseBuilder(Builder2);
 
         Type *statusType = nullptr;
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
         if (Function *recvfn = called->getParent()->getFunction("PMPI_Wait")) {
           auto statusArg = recvfn->arg_end();
           statusArg--;
@@ -686,7 +686,7 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
                                          Type::getInt8PtrTy(call.getContext()));
 
       Type *statusType = nullptr;
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
       if (called->getContext().supportsTypedPointers()) {
 #endif
@@ -2998,7 +2998,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
 
                 Type *elTy = Type::getInt8Ty(call.getContext());
                 std::string name = "";
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 13
                 if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -3034,7 +3034,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
                     cast<AllocaInst>(replacement)
                         ->setAlignment(Align(Alignment));
                   }
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 13
                   if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -3050,7 +3050,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
                   if (int AS = cast<PointerType>(anti->getType())
                                    ->getAddressSpace()) {
                     llvm::PointerType *PT;
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 13
                     if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -3058,11 +3058,11 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
                           anti->getType()->getPointerElementType(), AS);
 #endif
 #if LLVM_VERSION_MAJOR >= 13
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
                     } else {
 #endif
                       PT = PointerType::get(anti->getContext(), AS);
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
                     }
 #endif
 #endif
@@ -3203,7 +3203,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
       }
       Type *elTy = Type::getInt8Ty(call.getContext());
       Instruction *I = nullptr;
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
       if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -3238,7 +3238,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
       if (Alignment) {
         cast<AllocaInst>(replacement)->setAlignment(Align(Alignment));
       }
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 13
       if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -3253,18 +3253,18 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
 #endif
       if (int AS = cast<PointerType>(call.getType())->getAddressSpace()) {
         llvm::PointerType *PT;
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 13
         if (call.getContext().supportsTypedPointers()) {
 #endif
           PT = PointerType::get(call.getType()->getPointerElementType(), AS);
 #endif
 #if LLVM_VERSION_MAJOR >= 13
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
         } else {
 #endif
           PT = PointerType::get(call.getContext(), AS);
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
         }
 #endif
 #endif
@@ -3596,7 +3596,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
   if (funcName == "cuStreamCreate") {
     Value *val = nullptr;
     llvm::Type *PT = Type::getInt8PtrTy(call.getContext());
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
     if (call.getContext().supportsTypedPointers()) {
 #endif
@@ -3663,7 +3663,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
 
     Value *val;
     llvm::Type *PT = Type::getInt8PtrTy(call.getContext());
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
     if (call.getContext().supportsTypedPointers()) {
 #endif

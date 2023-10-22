@@ -168,7 +168,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
                   else {
                     // TODO in opaque pointers
                     Type *subTy = nullptr;
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
                     subTy = arg.getType()->getPointerElementType();
 #endif
                     assert(subTy);

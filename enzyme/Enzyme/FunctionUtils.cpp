@@ -306,7 +306,7 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       IRBuilder<> B(CI);
       auto nCI = cast<CastInst>(B.CreateCast(
           CI->getOpcode(), rep,
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
           PointerType::get(CI->getType()->getPointerElementType(),
                            cast<PointerType>(rep->getType())->getAddressSpace())
 #else
@@ -810,7 +810,7 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
       T0 = CI->getOperand(0);
     auto AI = cast<AllocaInst>(T0);
     llvm::Value *AIV = AI;
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
     if (AIV->getType()->getPointerElementType() !=
         T->getType()->getPointerElementType()) {
       IRBuilder<> B(AI->getNextNode());
@@ -1047,7 +1047,7 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
     B.SetInsertPoint(res);
 
     if (auto PT = dyn_cast<PointerType>(storePointer->getType())) {
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
       if (PT->getContext().supportsTypedPointers()) {
 #endif
@@ -5880,7 +5880,7 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
     auto toInt = [&](IRBuilder<> &B, llvm::Value *V) {
       if (auto PT = dyn_cast<PointerType>(V->getType())) {
         if (PT->getAddressSpace() != 0) {
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
           if (CI->getContext().supportsTypedPointers()) {
 #endif

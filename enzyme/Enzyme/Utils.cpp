@@ -378,7 +378,7 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
     Value *tozero = malloccall;
 
     bool needsCast = false;
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
     if (PT->getContext().supportsTypedPointers()) {
 #endif
@@ -1108,7 +1108,7 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
                                IntegerType *IT, unsigned dstalign,
                                unsigned srcalign) {
   assert(elementType->isFloatingPointTy());
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
   if (Mod.getContext().supportsTypedPointers()) {
 #endif
@@ -2455,7 +2455,7 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
   }
   if (!cache_arg)
     return;
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
   auto PT = cast<PointerType>(arg->getType());
 #if LLVM_VERSION_MAJOR <= 14
   if (PT->getElementType() != ty)

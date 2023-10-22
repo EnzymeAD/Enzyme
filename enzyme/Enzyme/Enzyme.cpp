@@ -334,7 +334,7 @@ castToDiffeFunctionArgType(IRBuilder<> &Builder, llvm::CallInst *CI,
   if (auto ptr = dyn_cast<PointerType>(res->getType())) {
     if (auto PT = dyn_cast<PointerType>(destType)) {
       if (ptr->getAddressSpace() != PT->getAddressSpace()) {
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
         if (CI->getContext().supportsTypedPointers()) {
 #endif
@@ -1133,7 +1133,7 @@ public:
         if (auto ptr = dyn_cast<PointerType>(res->getType())) {
           if (auto PT = dyn_cast<PointerType>(PTy)) {
             if (ptr->getAddressSpace() != PT->getAddressSpace()) {
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
               if (CI->getContext().supportsTypedPointers()) {
 #endif
@@ -1281,7 +1281,7 @@ public:
       if (a.getType()->isFPOrFPVectorTy()) {
         dt = ConcreteType(a.getType()->getScalarType());
       } else if (a.getType()->isPointerTy()) {
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 13
         if (a.getContext().supportsTypedPointers()) {
 #endif
@@ -2640,7 +2640,7 @@ public:
         &AANoAlias::ID,
         &AADereferenceable::ID,
         &AAAlign::ID,
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
         &AAReturnedValues::ID,
 #endif
         &AANoFree::ID,
