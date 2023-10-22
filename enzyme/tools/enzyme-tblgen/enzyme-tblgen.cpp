@@ -1120,7 +1120,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     os << "    eraseIfUnused(" << origName << ");\n";
 
     os << "    if (gutils->isConstantInstruction(&" << origName << "))\n";
-    if (intrinsic == IntrDerivatives)
+    if (intrinsic == IntrDerivatives || intrinsic == CallDerivatives)
       os << "      return true;\n";
     else
       os << "      return;\n";
@@ -1377,7 +1377,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     os << "      }\n";
     os << "    }\n";
 
-    if (intrinsic == IntrDerivatives)
+    if (intrinsic == IntrDerivatives || intrinsic == CallDerivatives)
       os << "    return true;\n  }\n";
     else
       os << "    return;\n  }\n";
