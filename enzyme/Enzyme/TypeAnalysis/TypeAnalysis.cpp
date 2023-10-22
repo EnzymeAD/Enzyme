@@ -257,6 +257,381 @@ TypeAnalyzer::TypeAnalyzer(
          fntypeinfo.Function->getFunctionType()->getNumParams());
 }
 
+static SmallPtrSet<PHINode *, 1> findLoopIndices(llvm::Value *val, LoopInfo &LI,
+                                                 DominatorTree &DT) {
+  if (isa<Constant>(val))
+    return {};
+  if (auto CI = dyn_cast<CastInst>(val))
+    return findLoopIndices(CI->getOperand(0), LI, DT);
+  if (auto CI = dyn_cast<UnaryOperator>(val))
+    return findLoopIndices(CI->getOperand(0), LI, DT);
+  if (auto bo = dyn_cast<BinaryOperator>(val)) {
+    auto inset0 = findLoopIndices(bo->getOperand(0), LI, DT);
+    auto inset1 = findLoopIndices(bo->getOperand(1), LI, DT);
+    inset0.insert(inset1.begin(), inset1.end());
+    return inset0;
+  }
+  if (auto LDI = dyn_cast<LoadInst>(val)) {
+    if (auto AI = dyn_cast<AllocaInst>(LDI->getPointerOperand())) {
+      StoreInst *SI = nullptr;
+      bool failed = false;
+      for (auto u : AI->users()) {
+        if (auto SIu = dyn_cast<StoreInst>(u)) {
+          if (SI && SIu->getValueOperand() == AI) {
+            failed = true;
+            break;
+          }
+          SI = SIu;
+        } else if (!isa<LoadInst>(u)) {
+          if (!cast<Instruction>(u)->mayReadOrWriteMemory() &&
+              cast<Instruction>(u)->use_empty())
+            continue;
+          if (auto CI = dyn_cast<CallBase>(u)) {
+            if (auto F = CI->getCalledFunction()) {
+              auto funcName = F->getName();
+              if (funcName == "__kmpc_for_static_init_4" ||
+                  funcName == "__kmpc_for_static_init_4u" ||
+                  funcName == "__kmpc_for_static_init_8" ||
+                  funcName == "__kmpc_for_static_init_8u") {
+                continue;
+              }
+            }
+          }
+          failed = true;
+          break;
+        }
+      }
+      if (SI && !failed && DT.dominates(SI, LDI)) {
+        return findLoopIndices(SI->getValueOperand(), LI, DT);
+      }
+    }
+  }
+  if (auto pn = dyn_cast<PHINode>(val)) {
+    auto L = LI.getLoopFor(pn->getParent());
+    if (L->getHeader() == pn->getParent())
+      return {pn};
+    SmallPtrSet<PHINode *, 1> ops;
+    for (unsigned i = 0; i < pn->getNumIncomingValues(); ++i) {
+      auto a = pn->getIncomingValue(i);
+      auto seti = findLoopIndices(a, LI, DT);
+      ops.insert(seti.begin(), seti.end());
+    }
+    return ops;
+  }
+  return {};
+}
+
+std::set<int64_t>
+FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
+                                std::map<Value *, std::set<int64_t>> &intseen,
+                                ScalarEvolution &SE) const {
+  if (auto constant = dyn_cast<ConstantInt>(val)) {
+#if LLVM_VERSION_MAJOR > 14
+    if (constant->getValue().getSignificantBits() > 64)
+      return {};
+#else
+    if (constant->getValue().getMinSignedBits() > 64)
+      return {};
+#endif
+    return {constant->getSExtValue()};
+  }
+
+  if (isa<ConstantPointerNull>(val)) {
+    return {0};
+  }
+
+  assert(KnownValues.size() == Function->getFunctionType()->getNumParams());
+
+  if (auto arg = dyn_cast<llvm::Argument>(val)) {
+    auto found = KnownValues.find(arg);
+    if (found == KnownValues.end()) {
+      for (const auto &pair : KnownValues) {
+        llvm::errs() << " KnownValues[" << *pair.first << "] - "
+                     << pair.first->getParent()->getName() << "\n";
+      }
+      llvm::errs() << " arg: " << *arg << " - " << arg->getParent()->getName()
+                   << "\n";
+    }
+    assert(found != KnownValues.end());
+    return found->second;
+  }
+
+  if (intseen.find(val) != intseen.end())
+    return intseen[val];
+  intseen[val] = {};
+
+  if (auto ci = dyn_cast<CastInst>(val)) {
+    intseen[val] = knownIntegralValues(ci->getOperand(0), DT, intseen, SE);
+  }
+
+  auto insert = [&](int64_t v) {
+    if (intseen[val].size() == 0) {
+      intseen[val].insert(v);
+    } else {
+      if (intseen[val].size() == 1) {
+        if (abs(*intseen[val].begin()) > MaxIntOffset) {
+          if (abs(*intseen[val].begin()) > abs(v)) {
+            intseen[val].clear();
+            intseen[val].insert(v);
+          } else {
+            return;
+          }
+        } else {
+          if (abs(v) > MaxIntOffset) {
+            return;
+          } else {
+            intseen[val].insert(v);
+          }
+        }
+      } else {
+        if (abs(v) > MaxIntOffset) {
+          return;
+        } else {
+          intseen[val].insert(v);
+        }
+      }
+    }
+  };
+  if (auto II = dyn_cast<IntrinsicInst>(val)) {
+    switch (II->getIntrinsicID()) {
+#if LLVM_VERSION_MAJOR >= 12
+    case Intrinsic::abs:
+      for (auto val :
+           knownIntegralValues(II->getArgOperand(0), DT, intseen, SE))
+        insert(abs(val));
+      break;
+#endif
+    case Intrinsic::nvvm_read_ptx_sreg_tid_x:
+    case Intrinsic::nvvm_read_ptx_sreg_tid_y:
+    case Intrinsic::nvvm_read_ptx_sreg_tid_z:
+    case Intrinsic::nvvm_read_ptx_sreg_ctaid_x:
+    case Intrinsic::nvvm_read_ptx_sreg_ctaid_y:
+    case Intrinsic::nvvm_read_ptx_sreg_ctaid_z:
+    case Intrinsic::amdgcn_workitem_id_x:
+    case Intrinsic::amdgcn_workitem_id_y:
+    case Intrinsic::amdgcn_workitem_id_z:
+      insert(0);
+      break;
+    default:
+      break;
+    }
+  }
+  if (auto LI = dyn_cast<LoadInst>(val)) {
+    if (auto AI = dyn_cast<AllocaInst>(LI->getPointerOperand())) {
+      StoreInst *SI = nullptr;
+      bool failed = false;
+      for (auto u : AI->users()) {
+        if (auto SIu = dyn_cast<StoreInst>(u)) {
+          if (SI && SIu->getValueOperand() == AI) {
+            failed = true;
+            break;
+          }
+          SI = SIu;
+        } else if (!isa<LoadInst>(u)) {
+          if (!cast<Instruction>(u)->mayReadOrWriteMemory() &&
+              cast<Instruction>(u)->use_empty())
+            continue;
+          if (auto CI = dyn_cast<CallBase>(u)) {
+            if (auto F = CI->getCalledFunction()) {
+              auto funcName = F->getName();
+              if (funcName == "__kmpc_for_static_init_4" ||
+                  funcName == "__kmpc_for_static_init_4u" ||
+                  funcName == "__kmpc_for_static_init_8" ||
+                  funcName == "__kmpc_for_static_init_8u") {
+                continue;
+              }
+            }
+          }
+          failed = true;
+          break;
+        }
+      }
+      if (SI && !failed && DT.dominates(SI, LI)) {
+        for (auto val :
+             knownIntegralValues(SI->getValueOperand(), DT, intseen, SE)) {
+          insert(val);
+        }
+      }
+    }
+  }
+  if (auto pn = dyn_cast<PHINode>(val)) {
+    if (SE.isSCEVable(pn->getType()))
+      if (auto S = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(pn))) {
+        if (auto StartC = dyn_cast<SCEVConstant>(S->getStart())) {
+          auto L = S->getLoop();
+          auto BE = SE.getBackedgeTakenCount(L);
+          if (BE != SE.getCouldNotCompute()) {
+            if (auto Iters = dyn_cast<SCEVConstant>(BE)) {
+              uint64_t ival = Iters->getAPInt().getZExtValue();
+              // If strict aliasing and the loop header does not dominate all
+              // blocks at low optimization levels the last "iteration" will
+              // actually exit leading to one extra backedge that would be wise
+              // to ignore.
+              if (EnzymeStrictAliasing) {
+                bool rotated = false;
+                BasicBlock *Latch = L->getLoopLatch();
+                rotated = Latch && L->isLoopExiting(Latch);
+                if (!rotated) {
+                  if (ival > 0)
+                    ival--;
+                }
+              }
+
+              uint64_t istart = 0;
+
+              if (S->isAffine()) {
+                if (auto StepC = dyn_cast<SCEVConstant>(S->getOperand(1))) {
+                  APInt StartI = StartC->getAPInt();
+                  APInt A = StepC->getAPInt();
+
+                  if (A.sle(-1)) {
+                    A = -A;
+                    StartI = -StartI;
+                  }
+
+                  if (A.sge(1)) {
+                    if (StartI.sge(MaxIntOffset)) {
+                      ival = std::min(ival, (uint64_t)0);
+                    } else {
+                      ival = std::min(
+                          ival,
+                          (MaxIntOffset - StartI + A).udiv(A).getZExtValue());
+                    }
+
+                    if (StartI.slt(-MaxIntOffset)) {
+                      istart = std::max(
+                          istart,
+                          (-MaxIntOffset - StartI).udiv(A).getZExtValue());
+                    }
+
+                  } else {
+                    ival = std::min(ival, (uint64_t)0);
+                  }
+                } else {
+                  ival = std::min(ival, (uint64_t)0);
+                }
+              }
+
+              for (uint64_t i = istart; i <= ival; i++) {
+                if (auto Val = dyn_cast<SCEVConstant>(S->evaluateAtIteration(
+                        SE.getConstant(Iters->getType(), i, /*signed*/ false),
+                        SE))) {
+                  insert(Val->getAPInt().getSExtValue());
+                }
+              }
+              return intseen[val];
+            }
+          }
+        }
+      }
+
+    for (unsigned i = 0; i < pn->getNumIncomingValues(); ++i) {
+      auto a = pn->getIncomingValue(i);
+      auto b = pn->getIncomingBlock(i);
+
+      // do not consider loop incoming edges
+      if (pn->getParent() == b || DT.dominates(pn, b)) {
+        continue;
+      }
+
+      auto inset = knownIntegralValues(a, DT, intseen, SE);
+
+      // TODO this here is not fully justified yet
+      for (auto pval : inset) {
+        if (pval < 20 && pval > -20) {
+          insert(pval);
+        }
+      }
+
+      // if we are an iteration variable, suppose that it could be zero in that
+      // range
+      // TODO: could actually check the range intercepts 0
+      if (auto bo = dyn_cast<BinaryOperator>(a)) {
+        if (bo->getOperand(0) == pn || bo->getOperand(1) == pn) {
+          if (bo->getOpcode() == BinaryOperator::Add ||
+              bo->getOpcode() == BinaryOperator::Sub) {
+            insert(0);
+          }
+        }
+      }
+    }
+    return intseen[val];
+  }
+
+  if (auto bo = dyn_cast<BinaryOperator>(val)) {
+    auto inset0 = knownIntegralValues(bo->getOperand(0), DT, intseen, SE);
+    auto inset1 = knownIntegralValues(bo->getOperand(1), DT, intseen, SE);
+    if (bo->getOpcode() == BinaryOperator::Mul) {
+
+      if (inset0.size() == 1 || inset1.size() == 1) {
+        for (auto val0 : inset0) {
+          for (auto val1 : inset1) {
+
+            insert(val0 * val1);
+          }
+        }
+      }
+      if (inset0.count(0) || inset1.count(0)) {
+        intseen[val].insert(0);
+      }
+    }
+
+    if (bo->getOpcode() == BinaryOperator::Add) {
+      if (inset0.size() == 1 || inset1.size() == 1) {
+        for (auto val0 : inset0) {
+          for (auto val1 : inset1) {
+            insert(val0 + val1);
+          }
+        }
+      }
+    }
+    if (bo->getOpcode() == BinaryOperator::Sub) {
+      if (inset0.size() == 1 || inset1.size() == 1) {
+        for (auto val0 : inset0) {
+          for (auto val1 : inset1) {
+            insert(val0 - val1);
+          }
+        }
+      }
+    }
+
+    if (bo->getOpcode() == BinaryOperator::SDiv) {
+      if (inset0.size() == 1 || inset1.size() == 1) {
+        for (auto val0 : inset0) {
+          for (auto val1 : inset1) {
+            insert(val0 / val1);
+          }
+        }
+      }
+    }
+
+    if (bo->getOpcode() == BinaryOperator::Shl) {
+      if (inset0.size() == 1 || inset1.size() == 1) {
+        for (auto val0 : inset0) {
+          for (auto val1 : inset1) {
+            insert(val0 << val1);
+          }
+        }
+      }
+    }
+
+    // TODO note C++ doesnt guarantee behavior of >> being arithmetic or logical
+    //     and should replace with llvm apint internal
+    if (bo->getOpcode() == BinaryOperator::AShr ||
+        bo->getOpcode() == BinaryOperator::LShr) {
+      if (inset0.size() == 1 || inset1.size() == 1) {
+        for (auto val0 : inset0) {
+          for (auto val1 : inset1) {
+            insert(val0 >> val1);
+          }
+        }
+      }
+    }
+  }
+
+  return intseen[val];
+}
+
 /// Given a constant value, deduce any type information applicable
 void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
                          std::map<llvm::Value *, TypeTree> &analysis) {
@@ -1430,24 +1805,6 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
     updateAnalysis(gep.getPointerOperand(),
                    TypeTree(getAnalysis(&gep).Inner0()).Only(-1, inst), &gep);
 
-  SmallVector<std::set<Value *>, 4> idnext;
-
-  for (auto I = gep.idx_begin(), E = gep.idx_end(); I != E; I++) {
-    auto a = I->get();
-    auto iset = fntypeinfo.knownIntegralValues(a, DT, intseen, SE);
-    std::set<Value *> vset;
-    for (auto i : iset) {
-      // Don't consider negative indices of gep
-      if (i < 0)
-        continue;
-      vset.insert(ConstantInt::get(a->getType(), i));
-    }
-    idnext.push_back(vset);
-    if (idnext.back().size() == 0)
-      return;
-  }
-  assert(idnext.size() != 0);
-
   TypeTree upTree;
   TypeTree downTree;
 
@@ -1458,26 +1815,95 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
   if (direction & DOWN)
     pointerData0 = pointerAnalysis.Data0();
 
+  auto BitWidth = DL.getIndexSizeInBits(gep.getPointerAddressSpace());
+
+  APInt constOffset(BitWidth, 0);
+
+  MapVector<Value *, APInt> VariableOffsets;
+  bool legalOffset =
+      collectOffset(&gep, DL, BitWidth, VariableOffsets, constOffset);
+  assert(legalOffset);
+
+  SmallVector<std::set<int>, 4> idnext;
+
+  SmallPtrSet<Value *, 1> previousVals;
+  {
+    Value *ptr = gep.getPointerOperand();
+    while (true) {
+      if (auto gepop = dyn_cast<GEPOperator>(ptr)) {
+        for (auto I = gepop->idx_begin(), E = gepop->idx_end(); I != E; I++) {
+          for (auto loopInd : findLoopIndices(*I, LI, DT)) {
+            previousVals.insert(loopInd);
+          }
+        }
+        ptr = gepop->getPointerOperand();
+        continue;
+      }
+      if (auto CI = dyn_cast<CastInst>(ptr)) {
+        ptr = CI->getOperand(0);
+        continue;
+      }
+      break;
+    }
+  }
+
+  for (auto &pair : VariableOffsets) {
+    auto a = pair.first;
+    auto iset = fntypeinfo.knownIntegralValues(a, DT, intseen, SE);
+    std::set<int> vset;
+    for (auto i : iset) {
+      // Don't consider negative indices of gep
+      if (i < 0)
+        continue;
+      vset.insert(i);
+    }
+    if (vset.size() == 0)
+      return;
+
+    // If seen the same variable before with > 1 option, we will accidentally
+    // do an offset for [option1, option2] * oldOffset + [option1, option2] *
+    // newOffset
+    //   instead of [option1, option2] * (oldOffset + newOffset).
+    //   In this case abort
+    //   TODO, in the future, mutually compute the offset together.
+    if (vset.size() != 1) {
+      for (auto loopInd : findLoopIndices(pair.first, LI, DT))
+        if (previousVals.count(pair.first))
+          return;
+    }
+    idnext.push_back(vset);
+  }
+
+  // Stores pair ([whether first offset is zero], offset)
+  std::vector<std::pair<bool, int>> offsets;
+  Value *firstIdx = *gep.idx_begin();
+  if (VariableOffsets.size() == 0) {
+    bool firstIsZero = cast<ConstantInt>(firstIdx)->getLimitedValue() == 0;
+    offsets.emplace_back(firstIsZero, (int)constOffset.getLimitedValue());
+  } else {
+    bool firstIsZero = false;
+    if (auto CI = dyn_cast<ConstantInt>(firstIdx))
+      firstIsZero = CI->getLimitedValue() == 0;
+    for (auto vec : getSet<int>(idnext, idnext.size() - 1)) {
+      APInt nextOffset = constOffset;
+      for (auto [varpair, const_value] : llvm::zip(VariableOffsets, vec)) {
+        nextOffset += varpair.second * const_value;
+        if (varpair.first == firstIdx)
+          firstIsZero = const_value == 0;
+      }
+      offsets.emplace_back(firstIsZero, (int)nextOffset.getLimitedValue());
+    }
+  }
+
   bool seenIdx = false;
 
-  for (auto vec : getSet<Value *>(idnext, idnext.size() - 1)) {
-    auto g2 = GetElementPtrInst::Create(gep.getSourceElementType(),
-                                        gep.getOperand(0), vec);
-    APInt ai(DL.getIndexSizeInBits(gep.getPointerAddressSpace()), 0);
-    bool valid = g2->accumulateConstantOffset(DL, ai);
-    assert(valid);
-    // Using destructor rather than eraseFromParent
-    //   as g2 has no parent
-    delete g2;
-
-    int off = (int)ai.getLimitedValue();
-
+  for (auto [firstIsZero, off] : offsets) {
     // TODO also allow negative offsets
     if (off < 0)
       continue;
 
     int maxSize = -1;
-    if (cast<ConstantInt>(vec[0])->getLimitedValue() == 0) {
+    if (firstIsZero) {
       maxSize = DL.getTypeAllocSizeInBits(gep.getResultElementType()) / 8;
     }
 
@@ -4801,317 +5227,6 @@ TypeTree TypeAnalyzer::getReturnAnalysis() {
     }
   }
   return vd;
-}
-
-std::set<int64_t>
-FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
-                                std::map<Value *, std::set<int64_t>> &intseen,
-                                ScalarEvolution &SE) const {
-  if (auto constant = dyn_cast<ConstantInt>(val)) {
-#if LLVM_VERSION_MAJOR > 14
-    if (constant->getValue().getSignificantBits() > 64)
-      return {};
-#else
-    if (constant->getValue().getMinSignedBits() > 64)
-      return {};
-#endif
-    return {constant->getSExtValue()};
-  }
-
-  if (isa<ConstantPointerNull>(val)) {
-    return {0};
-  }
-
-  assert(KnownValues.size() == Function->getFunctionType()->getNumParams());
-
-  if (auto arg = dyn_cast<llvm::Argument>(val)) {
-    auto found = KnownValues.find(arg);
-    if (found == KnownValues.end()) {
-      for (const auto &pair : KnownValues) {
-        llvm::errs() << " KnownValues[" << *pair.first << "] - "
-                     << pair.first->getParent()->getName() << "\n";
-      }
-      llvm::errs() << " arg: " << *arg << " - " << arg->getParent()->getName()
-                   << "\n";
-    }
-    assert(found != KnownValues.end());
-    return found->second;
-  }
-
-  if (intseen.find(val) != intseen.end())
-    return intseen[val];
-  intseen[val] = {};
-
-  if (auto ci = dyn_cast<CastInst>(val)) {
-    intseen[val] = knownIntegralValues(ci->getOperand(0), DT, intseen, SE);
-  }
-
-  auto insert = [&](int64_t v) {
-    if (intseen[val].size() == 0) {
-      intseen[val].insert(v);
-    } else {
-      if (intseen[val].size() == 1) {
-        if (abs(*intseen[val].begin()) > MaxIntOffset) {
-          if (abs(*intseen[val].begin()) > abs(v)) {
-            intseen[val].clear();
-            intseen[val].insert(v);
-          } else {
-            return;
-          }
-        } else {
-          if (abs(v) > MaxIntOffset) {
-            return;
-          } else {
-            intseen[val].insert(v);
-          }
-        }
-      } else {
-        if (abs(v) > MaxIntOffset) {
-          return;
-        } else {
-          intseen[val].insert(v);
-        }
-      }
-    }
-  };
-  if (auto II = dyn_cast<IntrinsicInst>(val)) {
-    switch (II->getIntrinsicID()) {
-#if LLVM_VERSION_MAJOR >= 12
-    case Intrinsic::abs:
-      for (auto val :
-           knownIntegralValues(II->getArgOperand(0), DT, intseen, SE))
-        insert(abs(val));
-      break;
-#endif
-    case Intrinsic::nvvm_read_ptx_sreg_tid_x:
-    case Intrinsic::nvvm_read_ptx_sreg_tid_y:
-    case Intrinsic::nvvm_read_ptx_sreg_tid_z:
-    case Intrinsic::nvvm_read_ptx_sreg_ctaid_x:
-    case Intrinsic::nvvm_read_ptx_sreg_ctaid_y:
-    case Intrinsic::nvvm_read_ptx_sreg_ctaid_z:
-    case Intrinsic::amdgcn_workitem_id_x:
-    case Intrinsic::amdgcn_workitem_id_y:
-    case Intrinsic::amdgcn_workitem_id_z:
-      insert(0);
-      break;
-    default:
-      break;
-    }
-  }
-  if (auto LI = dyn_cast<LoadInst>(val)) {
-    if (auto AI = dyn_cast<AllocaInst>(LI->getPointerOperand())) {
-      StoreInst *SI = nullptr;
-      bool failed = false;
-      for (auto u : AI->users()) {
-        if (auto SIu = dyn_cast<StoreInst>(u)) {
-          if (SI && SIu->getValueOperand() == AI) {
-            failed = true;
-            break;
-          }
-          SI = SIu;
-        } else if (!isa<LoadInst>(u)) {
-          if (!cast<Instruction>(u)->mayReadOrWriteMemory() &&
-              cast<Instruction>(u)->use_empty())
-            continue;
-          if (auto CI = dyn_cast<CallBase>(u)) {
-            if (auto F = CI->getCalledFunction()) {
-              auto funcName = F->getName();
-              if (funcName == "__kmpc_for_static_init_4" ||
-                  funcName == "__kmpc_for_static_init_4u" ||
-                  funcName == "__kmpc_for_static_init_8" ||
-                  funcName == "__kmpc_for_static_init_8u") {
-                continue;
-              }
-            }
-          }
-          failed = true;
-          break;
-        }
-      }
-      if (SI && !failed && DT.dominates(SI, LI)) {
-        for (auto val :
-             knownIntegralValues(SI->getValueOperand(), DT, intseen, SE)) {
-          insert(val);
-        }
-      }
-    }
-  }
-  if (auto pn = dyn_cast<PHINode>(val)) {
-    if (SE.isSCEVable(pn->getType()))
-      if (auto S = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(pn))) {
-        if (auto StartC = dyn_cast<SCEVConstant>(S->getStart())) {
-          auto L = S->getLoop();
-          auto BE = SE.getBackedgeTakenCount(L);
-          if (BE != SE.getCouldNotCompute()) {
-            if (auto Iters = dyn_cast<SCEVConstant>(BE)) {
-              uint64_t ival = Iters->getAPInt().getZExtValue();
-              // If strict aliasing and the loop header does not dominate all
-              // blocks at low optimization levels the last "iteration" will
-              // actually exit leading to one extra backedge that would be wise
-              // to ignore.
-              if (EnzymeStrictAliasing) {
-                bool rotated = false;
-                BasicBlock *Latch = L->getLoopLatch();
-                rotated = Latch && L->isLoopExiting(Latch);
-                if (!rotated) {
-                  if (ival > 0)
-                    ival--;
-                }
-              }
-
-              uint64_t istart = 0;
-
-              if (S->isAffine()) {
-                if (auto StepC = dyn_cast<SCEVConstant>(S->getOperand(1))) {
-                  APInt StartI = StartC->getAPInt();
-                  APInt A = StepC->getAPInt();
-
-                  if (A.sle(-1)) {
-                    A = -A;
-                    StartI = -StartI;
-                  }
-
-                  if (A.sge(1)) {
-                    if (StartI.sge(MaxIntOffset)) {
-                      ival = std::min(ival, (uint64_t)0);
-                    } else {
-                      ival = std::min(
-                          ival,
-                          (MaxIntOffset - StartI + A).udiv(A).getZExtValue());
-                    }
-
-                    if (StartI.slt(-MaxIntOffset)) {
-                      istart = std::max(
-                          istart,
-                          (-MaxIntOffset - StartI).udiv(A).getZExtValue());
-                    }
-
-                  } else {
-                    ival = std::min(ival, (uint64_t)0);
-                  }
-                } else {
-                  ival = std::min(ival, (uint64_t)0);
-                }
-              }
-
-              for (uint64_t i = istart; i <= ival; i++) {
-                if (auto Val = dyn_cast<SCEVConstant>(S->evaluateAtIteration(
-                        SE.getConstant(Iters->getType(), i, /*signed*/ false),
-                        SE))) {
-                  insert(Val->getAPInt().getSExtValue());
-                }
-              }
-              return intseen[val];
-            }
-          }
-        }
-      }
-
-    for (unsigned i = 0; i < pn->getNumIncomingValues(); ++i) {
-      auto a = pn->getIncomingValue(i);
-      auto b = pn->getIncomingBlock(i);
-
-      // do not consider loop incoming edges
-      if (pn->getParent() == b || DT.dominates(pn, b)) {
-        continue;
-      }
-
-      auto inset = knownIntegralValues(a, DT, intseen, SE);
-
-      // TODO this here is not fully justified yet
-      for (auto pval : inset) {
-        if (pval < 20 && pval > -20) {
-          insert(pval);
-        }
-      }
-
-      // if we are an iteration variable, suppose that it could be zero in that
-      // range
-      // TODO: could actually check the range intercepts 0
-      if (auto bo = dyn_cast<BinaryOperator>(a)) {
-        if (bo->getOperand(0) == pn || bo->getOperand(1) == pn) {
-          if (bo->getOpcode() == BinaryOperator::Add ||
-              bo->getOpcode() == BinaryOperator::Sub) {
-            insert(0);
-          }
-        }
-      }
-    }
-    return intseen[val];
-  }
-
-  if (auto bo = dyn_cast<BinaryOperator>(val)) {
-    auto inset0 = knownIntegralValues(bo->getOperand(0), DT, intseen, SE);
-    auto inset1 = knownIntegralValues(bo->getOperand(1), DT, intseen, SE);
-    if (bo->getOpcode() == BinaryOperator::Mul) {
-
-      if (inset0.size() == 1 || inset1.size() == 1) {
-        for (auto val0 : inset0) {
-          for (auto val1 : inset1) {
-
-            insert(val0 * val1);
-          }
-        }
-      }
-      if (inset0.count(0) || inset1.count(0)) {
-        intseen[val].insert(0);
-      }
-    }
-
-    if (bo->getOpcode() == BinaryOperator::Add) {
-      if (inset0.size() == 1 || inset1.size() == 1) {
-        for (auto val0 : inset0) {
-          for (auto val1 : inset1) {
-            insert(val0 + val1);
-          }
-        }
-      }
-    }
-    if (bo->getOpcode() == BinaryOperator::Sub) {
-      if (inset0.size() == 1 || inset1.size() == 1) {
-        for (auto val0 : inset0) {
-          for (auto val1 : inset1) {
-            insert(val0 - val1);
-          }
-        }
-      }
-    }
-
-    if (bo->getOpcode() == BinaryOperator::SDiv) {
-      if (inset0.size() == 1 || inset1.size() == 1) {
-        for (auto val0 : inset0) {
-          for (auto val1 : inset1) {
-            insert(val0 / val1);
-          }
-        }
-      }
-    }
-
-    if (bo->getOpcode() == BinaryOperator::Shl) {
-      if (inset0.size() == 1 || inset1.size() == 1) {
-        for (auto val0 : inset0) {
-          for (auto val1 : inset1) {
-            insert(val0 << val1);
-          }
-        }
-      }
-    }
-
-    // TODO note C++ doesnt guarantee behavior of >> being arithmetic or logical
-    //     and should replace with llvm apint internal
-    if (bo->getOpcode() == BinaryOperator::AShr ||
-        bo->getOpcode() == BinaryOperator::LShr) {
-      if (inset0.size() == 1 || inset1.size() == 1) {
-        for (auto val0 : inset0) {
-          for (auto val1 : inset1) {
-            insert(val0 >> val1);
-          }
-        }
-      }
-    }
-  }
-
-  return intseen[val];
 }
 
 /// Helper function that calculates whether a given value must only be

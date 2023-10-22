@@ -1234,7 +1234,8 @@ LLVMValueRef EnzymeComputeByteOffsetOfGEP(LLVMBuilderRef B_r, LLVMValueRef V_r,
 
   MapVector<Value *, APInt> VariableOffsets;
   APInt Offset(width, 0);
-  bool success = collectOffset(gep, DL, width, VariableOffsets, Offset);
+  bool success =
+      collectOffset(cast<GEPOperator>(gep), DL, width, VariableOffsets, Offset);
   assert(success);
   Value *start = ConstantInt::get(T, Offset);
   for (auto &pair : VariableOffsets)

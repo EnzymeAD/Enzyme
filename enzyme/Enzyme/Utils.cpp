@@ -2704,13 +2704,11 @@ CountTrackedPointers::CountTrackedPointers(Type *T) {
     all = false;
 }
 
-bool collectOffset(GetElementPtrInst *gep, const DataLayout &DL,
-                   unsigned BitWidth,
+bool collectOffset(GEPOperator *gep, const DataLayout &DL, unsigned BitWidth,
                    MapVector<Value *, APInt> &VariableOffsets,
                    APInt &ConstantOffset) {
 #if LLVM_VERSION_MAJOR >= 13
-  return cast<GEPOperator>(gep)->collectOffset(DL, BitWidth, VariableOffsets,
-                                               ConstantOffset);
+  return gep->collectOffset(DL, BitWidth, VariableOffsets, ConstantOffset);
 #else
   assert(BitWidth == DL.getIndexSizeInBits(gep->getPointerAddressSpace()) &&
          "The offset bit width does not match DL specification.");
