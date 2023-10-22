@@ -316,6 +316,8 @@ export(TARGETS LLDEnzymePrintTypeFlags
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 export(TARGETS LLDEnzymePrintFlags
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+export(TARGETS LLDEnzymeNoStrictAliasingFlags
+    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 
 export(PACKAGE Enzyme)
 
