@@ -114,6 +114,19 @@ gentbl(
     ],
 )
 gentbl(
+    name = "blas-optimizations",
+    tbl_outs = [(
+        "-gen-blas-optimizations",
+        "BlasOpts.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/InstructionDerivatives.td",
+    td_srcs = ["Enzyme/BlasDerivatives.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+gentbl(
     name = "blas-diffuseanalysis",
     tbl_outs = [(
         "-gen-blas-diffuseanalysis",

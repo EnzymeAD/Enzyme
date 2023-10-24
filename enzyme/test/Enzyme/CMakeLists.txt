@@ -6,6 +6,7 @@ add_subdirectory(ForwardModeSplit)
 add_subdirectory(ForwardModeVector)
 add_subdirectory(BatchMode)
 add_subdirectory(ProbProg)
+add_subdirectory(BlasOpt)
 
 # Run regression and unit tests
 add_lit_testsuite(check-enzyme "Running enzyme regression tests"

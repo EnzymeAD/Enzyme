@@ -35,6 +35,7 @@
 #include "llvm/Transforms/Scalar/GVN.h"
 
 #include "../Enzyme.h"
+#include "../OptBlas.h"
 #include "../PreserveNVVM.h"
 
 extern llvm::cl::opt<bool> EnzymeEnable;
@@ -62,6 +63,10 @@ static void loadNVVMPass(const PassManagerBuilder &Builder,
                          legacy::PassManagerBase &PM) {
   PM.add(createPreserveNVVMPass(/*Begin=*/true));
 }
+static void loadBLASPass(const PassManagerBuilder &Builder,
+                         legacy::PassManagerBase &PM) {
+  PM.add(createOptimizeBlasPass(/*Begin=*/true));
+}
 
 // These constructors add our pass to a list of global extensions.
 static RegisterStandardPasses
@@ -71,6 +76,9 @@ static RegisterStandardPasses
 static RegisterStandardPasses
     clangtoolLoader_OEarly(PassManagerBuilder::EP_EarlyAsPossible,
                            loadNVVMPass);
+static RegisterStandardPasses
+    clangtoolBlasLoader_Ox(PassManagerBuilder::EP_VectorizerStart,
+                           loadBLASPass);
 
 static void loadLTOPass(const PassManagerBuilder &Builder,
                         legacy::PassManagerBase &PM) {

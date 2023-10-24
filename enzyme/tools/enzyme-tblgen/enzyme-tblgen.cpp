@@ -38,6 +38,7 @@ enum ActionType {
   UpdateBlasDecl,
   UpdateBlasTA,
   GenBlasDiffUse,
+  GenBlasOpts,
 };
 
 static cl::opt<ActionType>
@@ -56,6 +57,8 @@ static cl::opt<ActionType>
                                  "Generate binaryoperator derivative")),
            cl::values(clEnumValN(InstDerivatives, "gen-inst-derivatives",
                                  "Generate instruction derivative")),
+           cl::values(clEnumValN(GenBlasOpts, "gen-blas-optimizations",
+                                 "Generate BLAS optimizations")),
            cl::values(clEnumValN(CallDerivatives, "gen-call-derivatives",
                                  "Generate call derivative")));
 
@@ -1771,6 +1774,7 @@ static void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
 #include "blasDeclUpdater.h"
 #include "blasDiffUseUpdater.h"
 #include "blasTAUpdater.h"
+#include "opts.h"
 
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
   switch (action) {
@@ -1791,6 +1795,9 @@ static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
     return false;
   case UpdateBlasTA:
     emitBlasTAUpdater(records, os);
+    return false;
+  case GenBlasOpts:
+    emitBlasOpts(records, os);
     return false;
 
   default:

@@ -2354,7 +2354,7 @@ std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
-  const char *extractable[] = {"dot", "scal", "axpy", "gemv", "gemm", "spmv"};
+  const char *extractable[] = {"dot", "scal", "axpy", "gemv", "gemm", "spmv", "ger"};
   const char *floatType[] = {"s", "d"}; // c, z
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
   const char *suffixes[] = {"", "_", "64_", "_64_"};
@@ -2672,6 +2672,48 @@ SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
     toreturn.push_back(B.CreateSelect(cond, row[i], col[i]));
   }
   return toreturn;
+}
+
+bool isConstVecZeroing(llvm::CallInst *CI, llvm::Value *y, llvm::Value *n,
+                       llvm::Value *incy) {
+  // assert CI is memset.
+  if (isa<IntrinsicInst>(CI)) {
+    auto II = cast<IntrinsicInst>(CI);
+    if (II->getIntrinsicID() != Intrinsic::memset)
+      return false;
+  } else {
+    auto name = CI->getCalledFunction()->getName();
+    if (!name.startswith("llvm.memset"))
+      return false;
+  }
+
+  if (!isa<ConstantInt>(n) || !isa<ConstantInt>(incy))
+    return false;
+
+  //declare void @llvm.memset.p0.i32(ptr <dest>, i8 <val>, i32 <len>, i1 <isvolatile>)
+  auto memset_len = CI->getArgOperand(2);
+  if (!isa<ConstantInt>(memset_len))
+    return false;
+  auto memset_lenC = cast<ConstantInt>(memset_len);
+  auto nC = cast<ConstantInt>(n);
+  auto incyC = cast<ConstantInt>(incy);
+  if (memset_lenC->getZExtValue() < nC->getZExtValue() * incyC->getZExtValue())
+    return false;
+  return true;
+
+}
+
+// Used for BlasOpts
+Value *isVecZeroing(IRBuilder<> &B, llvm::CallInst *CI, llvm::Value *y, llvm::Value *n, llvm::Value *incy) {
+  Value *size = B.CreateMul(n, incy);
+  // assert CI is memset.
+
+  // conservative
+  return ConstantInt::getFalse(CI->getContext());
+}
+llvm::Value *isMatZeroing() {
+  // conservative
+  return ConstantInt::getFalse(CI->getContext());
 }
 
 // return how many Special pointers are in T (count > 0),

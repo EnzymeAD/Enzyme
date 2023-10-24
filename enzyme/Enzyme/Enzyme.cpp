@@ -2974,6 +2974,7 @@ public:
 AnalysisKey EnzymeNewPM::Key;
 
 #include "ActivityAnalysisPrinter.h"
+#include "OptBlas.h"
 #include "PreserveNVVM.h"
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
 #include "llvm/Passes/PassBuilder.h"
@@ -3194,6 +3195,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   auto loadPass = [prePass](ModulePassManager &MPM)
 #endif
   {
+    // MPM.addPass(OptimizeBlasNewPM(/*Begin*/ false));
     MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
 
     if (!EnzymeEnable)
@@ -3508,9 +3510,15 @@ llvmGetPassPluginInfo() {
 #ifdef ENZYME_RUNPASS
             augmentPassBuilder(PB);
 #endif
+            llvm::errs() << "CCCCCC\n";
             PB.registerPipelineParsingCallback(
                 [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
                    llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+                  if (Name == "blas-opt") {
+                    llvm::errs() << "AAAA\n";
+                    MPM.addPass(OptimizeBlasNewPM(/*Begin*/ true));
+                    return true;
+                  }
                   if (Name == "enzyme") {
                     MPM.addPass(EnzymeNewPM());
                     return true;
@@ -3523,7 +3531,9 @@ llvmGetPassPluginInfo() {
                     MPM.addPass(TypeAnalysisPrinterNewPM());
                     return true;
                   }
-                  return false;
+                  llvm::errs() << "BBBB\n";
+                  return true;
+                  // return false;
                 });
             PB.registerPipelineParsingCallback(
                 [](llvm::StringRef Name, llvm::FunctionPassManager &FPM,
@@ -3532,7 +3542,8 @@ llvmGetPassPluginInfo() {
                     FPM.addPass(ActivityAnalysisPrinterNewPM());
                     return true;
                   }
-                  return false;
+                  return true;
+                  // return false;
                 });
           }};
 }

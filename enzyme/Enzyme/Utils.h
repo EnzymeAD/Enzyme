@@ -1677,6 +1677,9 @@ get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,
              llvm::ArrayRef<llvm::Value *> row,
              llvm::ArrayRef<llvm::Value *> col, bool byRef, bool cublas);
 
+llvm::Value *isVecZeroing(llvm::IRBuilder<> &B, llvm::CallInst *CI, llvm::Value *y, llvm::Value *n, llvm::Value *incy);
+llvm::Value *isMatZeroing(llvm::IRBuilder<> &B, llvm::CallInst *CI, llvm::Value *C, llvm::Value *n, llvm::Value *ldc);
+
 // Parameter attributes from the original function/call that
 // we should preserve on the primal of the derivative code.
 static inline llvm::Attribute::AttrKind PrimalParamAttrsToPreserve[] = {
