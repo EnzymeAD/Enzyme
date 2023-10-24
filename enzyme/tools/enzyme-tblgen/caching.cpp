@@ -419,8 +419,6 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
 
 void emit_caching(const TGPattern &pattern, raw_ostream &os) {
 
-  auto actArgs = pattern.getActiveArgs();
-  auto nameVec = pattern.getArgNames();
   const auto typeMap = pattern.getArgTypeMap();
 
   // 1. No caching for fwd-mode

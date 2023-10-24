@@ -688,8 +688,8 @@ SmallString<80> ValueType_helper(const TGPattern &pattern, size_t actPos) {
       }
     } else if (ty == ArgType::vincData) {
       const auto nextName = nameVec[pos + 1];
-      const auto nextTy = typeMap.lookup(pos + 1);
-      assert(nextTy == ArgType::vincInc);
+      // Check that the next should be an increment
+      assert(typeMap.lookup(pos + 1) == ArgType::vincInc);
       const auto vecName = nameVec[pos];
       if (pos == actPos) {
         valueTypes.append("ValueType::Both, ValueType::Both");
@@ -760,6 +760,7 @@ size_t fwd_call_args(const TGPattern &pattern, size_t actArg,
       auto nextArgPosition = nameMap.lookup(nextName);
       // and based on that get the fp/int + scalar/vector type
       auto nextTy = typeMap.lookup(nextArgPosition);
+      (void)nextTy;
       assert(nextTy == ArgType::mldLD);
       if (pos == actArg) {
         result.append((Twine("d_") + name + ", true_" + nextName).str());
@@ -1418,7 +1419,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
 
   // We only emit one derivcall per blass call type.
   // This verifies that we don't end up with multiple declarations.
-  StringSet handled{};
+  StringSet<> handled{};
   for (auto rule : rules) {
     emit_deriv_rule(patternMap, rule, handled, os);
   }

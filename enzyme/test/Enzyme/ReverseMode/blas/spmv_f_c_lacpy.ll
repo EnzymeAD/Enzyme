@@ -123,7 +123,6 @@ entry:
 ; CHECK-DAG:   %[[i0:.+]] = icmp eq i8 %loaded.trans.i, 85
 ; CHECK-DAG:   %[[i1:.+]] = icmp eq i8 %loaded.trans.i, 117
 ; CHECK-NEXT:   %[[i25:.+]] = or i1 %[[i1]], %[[i0]]
-; CHECK-NEXT:   %k.i = select i1 %[[i25]], i64 0, i64 1
 ; CHECK-NEXT:   %[[i26:.+]] = icmp eq i64 %[[i17]], 0
 ; CHECK-NEXT:   br i1 %[[i26]], label %__enzyme_spmv_diagd_64_.exit, label %init.i
 
@@ -135,9 +134,9 @@ entry:
 
 ; CHECK: uper.i:                                           ; preds = %uper.i, %init.i
 ; CHECK-NEXT:   %iteration.i = phi i64 [ 0, %init.i ], [ %iter.next.i, %uper.i ]
-; CHECK-NEXT:   %k1.i = phi i64 [ 0, %init.i ], [ %k.next.i, %uper.i ]
+; CHECK-NEXT:   %k.i = phi i64 [ 0, %init.i ], [ %k.next.i, %uper.i ]
 ; CHECK-NEXT:   %iter.next.i = add i64 %iteration.i, 1
-; CHECK-NEXT:   %k.next.i = add i64 %k1.i, %iter.next.i
+; CHECK-NEXT:   %k.next.i = add i64 %k.i, %iter.next.i
 ; CHECK-NEXT:   %x.idx.i = mul nuw i64 %iteration.i, %[[i18]]
 ; CHECK-NEXT:   %y.idx.i = mul nuw i64 %iteration.i, %[[i20]]
 ; CHECK-NEXT:   %x.ptr.i = getelementptr inbounds double, double* %[[i27]], i64 %x.idx.i
@@ -146,7 +145,7 @@ entry:
 ; CHECK-NEXT:   %y.val.i = load double, double* %y.ptr.i
 ; CHECK-NEXT:   %xy.i = fmul fast double %x.val.i, %y.val.i
 ; CHECK-NEXT:   %xy.alpha.i = fmul fast double %xy.i, %[[i22]]
-; CHECK-NEXT:   %k.ptr.i = getelementptr inbounds double, double* %[[i29]], i64 %k1.i
+; CHECK-NEXT:   %k.ptr.i = getelementptr inbounds double, double* %[[i29]], i64 %k.i
 ; CHECK-NEXT:   %k.val.i = load double, double* %k.ptr.i
 ; CHECK-NEXT:   %k.val.new.i = fsub fast double %k.val.i, %xy.alpha.i
 ; CHECK-NEXT:   store double %k.val.new.i, double* %k.ptr.i
@@ -154,25 +153,25 @@ entry:
 ; CHECK-NEXT:   br i1 %[[i30]], label %__enzyme_spmv_diagd_64_.exit, label %uper.i
 
 ; CHECK: lower.i:                                          ; preds = %lower.i, %init.i
-; CHECK-NEXT:   %iteration2.i = phi i64 [ 0, %init.i ], [ %iter.next4.i, %lower.i ]
-; CHECK-NEXT:   %k3.i = phi i64 [ 0, %init.i ], [ %k.next5.i, %lower.i ]
-; CHECK-NEXT:   %iter.next4.i = add i64 %iteration2.i, 1
+; CHECK-NEXT:   %[[iteration2:.+]] = phi i64 [ 0, %init.i ], [ %[[next4:.+]], %lower.i ]
+; CHECK-NEXT:   %[[k3:.+]] = phi i64 [ 0, %init.i ], [ %[[next5:.+]], %lower.i ]
+; CHECK-NEXT:   %[[next4]] = add i64 %[[iteration2]], 1
 ; CHECK-NEXT:   %tmp.val.i = add i64 %[[i17]], 1
-; CHECK-NEXT:   %tmp.val.other.i = sub i64 %tmp.val.i, %iter.next4.i
-; CHECK-NEXT:   %k.next5.i = add i64 %k3.i, %tmp.val.other.i
-; CHECK-NEXT:   %x.idx6.i = mul nuw i64 %iteration2.i, %[[i18]]
-; CHECK-NEXT:   %y.idx7.i = mul nuw i64 %iteration2.i, %[[i20]]
-; CHECK-NEXT:   %x.ptr8.i = getelementptr inbounds double, double* %[[i27]], i64 %x.idx6.i
-; CHECK-NEXT:   %y.ptr9.i = getelementptr inbounds double, double* %[[i28]], i64 %y.idx7.i
-; CHECK-NEXT:   %x.val10.i = load double, double* %x.ptr8.i
-; CHECK-NEXT:   %y.val11.i = load double, double* %y.ptr9.i
-; CHECK-NEXT:   %xy12.i = fmul fast double %x.val10.i, %y.val11.i
-; CHECK-NEXT:   %xy.alpha13.i = fmul fast double %xy12.i, %[[i22]]
-; CHECK-NEXT:   %k.ptr14.i = getelementptr inbounds double, double* %[[i29]], i64 %k3.i
-; CHECK-NEXT:   %k.val15.i = load double, double* %k.ptr14.i
-; CHECK-NEXT:   %k.val.new16.i = fsub fast double %k.val15.i, %xy.alpha13.i
-; CHECK-NEXT:   store double %k.val.new16.i, double* %k.ptr14.i
-; CHECK-NEXT:   %[[i31:.+]] = icmp eq i64 %iter.next4.i, %[[i17]]
+; CHECK-NEXT:   %tmp.val.other.i = sub i64 %tmp.val.i, %[[next4]]
+; CHECK-NEXT:   %[[next5]] = add i64 %[[k3]], %tmp.val.other.i
+; CHECK-NEXT:   %[[idx6:.+]] = mul nuw i64 %[[iteration2]], %[[i18]]
+; CHECK-NEXT:   %[[idx7:.+]] = mul nuw i64 %[[iteration2]], %[[i20]]
+; CHECK-NEXT:   %[[ptr8:.+]] = getelementptr inbounds double, double* %[[i27]], i64 %[[idx6]]
+; CHECK-NEXT:   %[[ptr9:.+]] = getelementptr inbounds double, double* %[[i28]], i64 %[[idx7]]
+; CHECK-NEXT:   %[[val10:.+]] = load double, double* %[[ptr8]]
+; CHECK-NEXT:   %[[val11:.+]] = load double, double* %[[ptr9]]
+; CHECK-NEXT:   %[[xy12:.+]] = fmul fast double %[[val10]], %[[val11]]
+; CHECK-NEXT:   %[[alpha13:.+]] = fmul fast double %[[xy12]], %[[i22]]
+; CHECK-NEXT:   %[[ptr14:.+]] = getelementptr inbounds double, double* %[[i29]], i64 %[[k3]]
+; CHECK-NEXT:   %[[val15:.+]] = load double, double* %[[ptr14]]
+; CHECK-NEXT:   %[[new16:.+]] = fsub fast double %[[val15]], %[[alpha13]]
+; CHECK-NEXT:   store double %[[new16]], double* %[[ptr14]]
+; CHECK-NEXT:   %[[i31:.+]] = icmp eq i64 %[[next4]], %[[i17]]
 ; CHECK-NEXT:   br i1 %[[i31]], label %__enzyme_spmv_diagd_64_.exit, label %lower.i
 
 ; CHECK: __enzyme_spmv_diagd_64_.exit:                     ; preds = %invertentry, %uper.i, %lower.i
@@ -206,7 +205,6 @@ entry:
 ; CHECK-DAG:   %[[i9:.+]] = icmp eq i8 %loaded.trans, 85
 ; CHECK-DAG:   %[[i10:.+]] = icmp eq i8 %loaded.trans, 117
 ; CHECK-NEXT:   %11 = or i1 %[[i10]], %[[i9]]
-; CHECK-NEXT:   %k = select i1 %11, i64 0, i64 1
 ; CHECK-NEXT:   %12 = icmp eq i64 %2, 0
 ; CHECK-NEXT:   br i1 %12, label %for.end, label %init
 
@@ -218,9 +216,9 @@ entry:
 
 ; CHECK: uper:                                             ; preds = %uper, %init
 ; CHECK-NEXT:   %iteration = phi i64 [ 0, %init ], [ %iter.next, %uper ]
-; CHECK-NEXT:   %k1 = phi i64 [ 0, %init ], [ %k.next, %uper ]
+; CHECK-NEXT:   %[[k1:.+]] = phi i64 [ 0, %init ], [ %k.next, %uper ]
 ; CHECK-NEXT:   %iter.next = add i64 %iteration, 1
-; CHECK-NEXT:   %k.next = add i64 %k1, %iter.next
+; CHECK-NEXT:   %k.next = add i64 %[[k1]], %iter.next
 ; CHECK-NEXT:   %x.idx = mul nuw i64 %iteration, %4
 ; CHECK-NEXT:   %y.idx = mul nuw i64 %iteration, %6
 ; CHECK-NEXT:   %x.ptr = getelementptr inbounds double, double* %13, i64 %x.idx
@@ -229,7 +227,7 @@ entry:
 ; CHECK-NEXT:   %y.val = load double, double* %y.ptr
 ; CHECK-NEXT:   %xy = fmul fast double %x.val, %y.val
 ; CHECK-NEXT:   %xy.alpha = fmul fast double %xy, %8
-; CHECK-NEXT:   %k.ptr = getelementptr inbounds double, double* %15, i64 %k1
+; CHECK-NEXT:   %k.ptr = getelementptr inbounds double, double* %15, i64 %[[k1]]
 ; CHECK-NEXT:   %k.val = load double, double* %k.ptr
 ; CHECK-NEXT:   %k.val.new = fsub fast double %k.val, %xy.alpha
 ; CHECK-NEXT:   store double %k.val.new, double* %k.ptr
@@ -237,25 +235,25 @@ entry:
 ; CHECK-NEXT:   br i1 %16, label %for.end, label %uper
 
 ; CHECK: lower:                                            ; preds = %lower, %init
-; CHECK-NEXT:   %iteration2 = phi i64 [ 0, %init ], [ %iter.next4, %lower ]
-; CHECK-NEXT:   %k3 = phi i64 [ 0, %init ], [ %k.next5, %lower ]
-; CHECK-NEXT:   %iter.next4 = add i64 %iteration2, 1
+; CHECK-NEXT:   %[[iteration2:.+]] = phi i64 [ 0, %init ], [ %[[next4:.+]], %lower ]
+; CHECK-NEXT:   %[[k3:.+]] = phi i64 [ 0, %init ], [ %[[next5:.+]], %lower ]
+; CHECK-NEXT:   %[[next4]] = add i64 %[[iteration2]], 1
 ; CHECK-NEXT:   %tmp.val = add i64 %2, 1
-; CHECK-NEXT:   %tmp.val.other = sub i64 %tmp.val, %iter.next4
-; CHECK-NEXT:   %k.next5 = add i64 %k3, %tmp.val.other
-; CHECK-NEXT:   %x.idx6 = mul nuw i64 %iteration2, %4
-; CHECK-NEXT:   %y.idx7 = mul nuw i64 %iteration2, %6
-; CHECK-NEXT:   %x.ptr8 = getelementptr inbounds double, double* %13, i64 %x.idx6
-; CHECK-NEXT:   %y.ptr9 = getelementptr inbounds double, double* %14, i64 %y.idx7
-; CHECK-NEXT:   %x.val10 = load double, double* %x.ptr8
-; CHECK-NEXT:   %y.val11 = load double, double* %y.ptr9
-; CHECK-NEXT:   %xy12 = fmul fast double %x.val10, %y.val11
-; CHECK-NEXT:   %xy.alpha13 = fmul fast double %xy12, %8
-; CHECK-NEXT:   %k.ptr14 = getelementptr inbounds double, double* %15, i64 %k3
-; CHECK-NEXT:   %k.val15 = load double, double* %k.ptr14
-; CHECK-NEXT:   %k.val.new16 = fsub fast double %k.val15, %xy.alpha13
-; CHECK-NEXT:   store double %k.val.new16, double* %k.ptr14
-; CHECK-NEXT:   %17 = icmp eq i64 %iter.next4, %2
+; CHECK-NEXT:   %tmp.val.other = sub i64 %tmp.val, %[[next4]]
+; CHECK-NEXT:   %[[next5]] = add i64 %[[k3]], %tmp.val.other
+; CHECK-NEXT:   %[[idx6:.+]] = mul nuw i64 %[[iteration2]], %4
+; CHECK-NEXT:   %[[idx7:.+]] = mul nuw i64 %[[iteration2]], %6
+; CHECK-NEXT:   %[[ptr8:.+]] = getelementptr inbounds double, double* %13, i64 %[[idx6]]
+; CHECK-NEXT:   %[[ptr9:.+]] = getelementptr inbounds double, double* %14, i64 %[[idx7]]
+; CHECK-NEXT:   %[[val10:.+]] = load double, double* %[[ptr8]]
+; CHECK-NEXT:   %[[val11:.+]] = load double, double* %[[ptr9]]
+; CHECK-NEXT:   %[[xy12:.+]] = fmul fast double %[[val10]], %[[val11]]
+; CHECK-NEXT:   %[[alpha13:.+]] = fmul fast double %[[xy12]], %8
+; CHECK-NEXT:   %[[ptr14:.+]] = getelementptr inbounds double, double* %15, i64 %[[k3]]
+; CHECK-NEXT:   %[[val15:.+]] = load double, double* %[[ptr14]]
+; CHECK-NEXT:   %[[new16:.+]] = fsub fast double %[[val15]], %[[alpha13]]
+; CHECK-NEXT:   store double %[[new16]], double* %[[ptr14]]
+; CHECK-NEXT:   %17 = icmp eq i64 %[[next4]], %2
 ; CHECK-NEXT:   br i1 %17, label %for.end, label %lower
 
 ; CHECK: for.end:                                          ; preds = %lower, %uper, %entry

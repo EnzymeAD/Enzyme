@@ -235,7 +235,6 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
       }
       ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
       for (auto argOpEn : enumerate(*argOps)) {
-        size_t argIdx = argOpEn.index();
         if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
           auto opName = resultRoot->getOperator()->getAsString();
           auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();

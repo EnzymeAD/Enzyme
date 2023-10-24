@@ -455,6 +455,7 @@ public:
           }
           break;
         }
+        LLVM_FALLTHROUGH;
       case BinaryOperator::Add:
       case BinaryOperator::Mul:
         if (SubTypeEnum != BaseType::Pointer) {

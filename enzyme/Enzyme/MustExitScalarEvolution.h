@@ -27,6 +27,8 @@
 #ifndef ENZYME_MUST_EXIT_SCALAR_EVOLUTION_H_
 #define ENZYME_MUST_EXIT_SCALAR_EVOLUTION_H_
 
+#include <llvm/Config/llvm-config.h>
+
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
 #include "llvm/Analysis/ScalarEvolution.h"

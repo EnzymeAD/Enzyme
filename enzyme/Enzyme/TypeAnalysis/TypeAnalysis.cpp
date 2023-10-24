@@ -202,9 +202,9 @@ bool dontAnalyze(StringRef str) {
       return false;
     }
 
-    auto basename = Parser.getFunctionBaseName(0, 0);
-    auto base = Parser.getFunctionDeclContextName(0, 0);
-    auto fn = Parser.getFunctionName(0, 0);
+    // auto basename = Parser.getFunctionBaseName(0, 0);
+    // auto base = Parser.getFunctionDeclContextName(0, 0);
+    // auto fn = Parser.getFunctionName(0, 0);
     // llvm::errs() << " err: " << base << " - " << basename << " fn - " << fn
     //              << "\n";
     free(data);
@@ -5196,7 +5196,6 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
     if (funcName == "frexp" || funcName == "frexpf" || funcName == "frexpl") {
 
-      auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
       updateAnalysis(
           &call, TypeTree(ConcreteType(call.getType())).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(0),
@@ -5206,6 +5205,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       size_t objSize = 1;
 
 #if LLVM_VERSION_MAJOR < 18
+      auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
       objSize = DL.getTypeSizeInBits(
                     call.getOperand(1)->getType()->getPointerElementType()) /
                 8;
@@ -5484,8 +5484,11 @@ TypeResults TypeAnalysis::analyzeFunction(const FnTypeInfo &fn) {
 
     return TypeResults(analysis);
   }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnull-dereference"
   if (fn.Function->empty())
     return TypeResults(*(TypeAnalyzer *)nullptr);
+#pragma clang diagnostic pop
 
   auto res = analyzedFunctions.emplace(fn, new TypeAnalyzer(fn, *this));
   auto &analysis = *res.first->second;

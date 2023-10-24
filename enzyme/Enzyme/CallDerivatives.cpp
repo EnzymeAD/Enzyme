@@ -3056,9 +3056,13 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
 #endif
                       PT = PointerType::get(
                           anti->getType()->getPointerElementType(), AS);
+#endif
 #if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR < 18
                     } else {
+#endif
                       PT = PointerType::get(anti->getContext(), AS);
+#if LLVM_VERSION_MAJOR < 18
                     }
 #endif
 #endif
@@ -3248,16 +3252,19 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
 #endif
 #endif
       if (int AS = cast<PointerType>(call.getType())->getAddressSpace()) {
-
         llvm::PointerType *PT;
 #if LLVM_VERSION_MAJOR < 18
 #if LLVM_VERSION_MAJOR >= 15
         if (call.getContext().supportsTypedPointers()) {
 #endif
           PT = PointerType::get(call.getType()->getPointerElementType(), AS);
+#endif
 #if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR < 18
         } else {
+#endif
           PT = PointerType::get(call.getContext(), AS);
+#if LLVM_VERSION_MAJOR < 18
         }
 #endif
 #endif

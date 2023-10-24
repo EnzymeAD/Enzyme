@@ -404,10 +404,10 @@ TGPattern::TGPattern(Record *r) : blasName(r->getNameInitAsString()) {
 }
 
 SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg) const {
-  auto ty = argTypes.lookup(arg);
   // other args are unrelated to length args
-  assert(ty == ArgType::vincData || ty == ArgType::mldData ||
-         ty == ArgType::ap);
+  assert(argTypes.lookup(arg) == ArgType::vincData ||
+         argTypes.lookup(arg) == ArgType::mldData ||
+         argTypes.lookup(arg) == ArgType::ap);
 
   assert(relatedLengths.count(arg) == 1);
   auto related = relatedLengths.lookup(arg);

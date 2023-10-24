@@ -1316,6 +1316,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   for (auto idx : enzyme_srets) {
     llvm::Type *T = nullptr;
 #if LLVM_VERSION_MAJOR >= 17
+    (void)idx;
     llvm_unreachable("Unhandled");
     // T = F->getParamAttribute(idx, Attribute::AttrKind::ElementType)
     //        .getValueAsType();

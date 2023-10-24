@@ -10,7 +10,6 @@ package(
 cc_library(
     name = "enzyme-tblgen-hdrs",
     hdrs = glob(["tools/enzyme-tblgen/*.h"]),
-    copts = ["-Wno-unused-variable"],
     deps = [
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TableGen",
@@ -21,12 +20,6 @@ cc_library(
 cc_binary(
     name = "enzyme-tblgen",
     srcs = glob(["tools/enzyme-tblgen/*.cpp"]),
-    copts = [
-        "-Wno-unused-variable",
-        "-Wno-ctad-maybe-unsupported",
-        "-Wno-switch",
-        "-Wno-sometimes-uninitialized",
-    ],
     deps = [
         ":enzyme-tblgen-hdrs",
         "@llvm-project//llvm:Support",
@@ -163,12 +156,6 @@ cc_library(
         "-DENZYME_VERSION_MAJOR=0",
         "-DENZYME_VERSION_MINOR=0",
         "-DENZYME_VERSION_PATCH=79",
-        "-DLLVM_VERSION_MAJOR=17",
-        "-Wno-implicit-fallthrough",
-        "-Wno-unused-variable",
-        "-Wno-null-dereference",
-        "-Wno-reorder-ctor",
-        "-Wno-uninitialized",
     ],
     data = ["@llvm-project//clang:builtin_headers_gen"],
     visibility = ["//visibility:public"],
