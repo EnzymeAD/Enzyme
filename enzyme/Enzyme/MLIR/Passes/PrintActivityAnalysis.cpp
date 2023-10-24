@@ -20,6 +20,8 @@
 #include "mlir/IR/FunctionInterfaces.h"
 #include "mlir/Interfaces/CallInterfaces.h"
 
+#include "llvm/ADT/TypeSwitch.h"
+
 #include "llvm/Demangle/Demangle.h"
 
 using namespace mlir;
@@ -60,8 +62,96 @@ struct PrintActivityAnalysisPass
     }
   }
 
+  void inferArgActivitiesFromEnzymeAutodiff(
+      FunctionOpInterface callee, CallOpInterface autodiff_call,
+      MutableArrayRef<enzyme::Activity> argActivities,
+      MutableArrayRef<enzyme::Activity> resultActivities) {
+    unsigned argIdx = 1;
+    for (const auto &[paramIdx, paramType] :
+         llvm::enumerate(callee.getArgumentTypes())) {
+      Value arg = autodiff_call.getArgOperands()[argIdx];
+      if (auto loadOp =
+              dyn_cast_if_present<LLVM::LoadOp>(arg.getDefiningOp())) {
+        if (auto addressOf = dyn_cast_if_present<LLVM::AddressOfOp>(
+                loadOp.getAddr().getDefiningOp())) {
+          if (addressOf.getGlobalName() == "enzyme_const") {
+            argActivities[paramIdx] = enzyme::Activity::enzyme_const;
+          } else if (addressOf.getGlobalName() == "enzyme_dup") {
+            argActivities[paramIdx] = enzyme::Activity::enzyme_dup;
+            // Skip the shadow
+            argIdx++;
+          } else if (addressOf.getGlobalName() == "enzyme_dupnoneed") {
+            argActivities[paramIdx] = enzyme::Activity::enzyme_dupnoneed;
+            // Skip the shadow
+            argIdx++;
+          }
+        }
+        // Skip the enzyme_* annotation
+        argIdx++;
+      } else {
+        argActivities[paramIdx] =
+            llvm::TypeSwitch<Type, enzyme::Activity>(paramType)
+                .Case<FloatType, ComplexType>(
+                    [](auto type) { return enzyme::Activity::enzyme_out; })
+                .Case<LLVM::LLVMPointerType, MemRefType>([&](auto type) {
+                  // Skip the shadow
+                  argIdx++;
+                  return enzyme::Activity::enzyme_dup;
+                })
+                .Default(
+                    [](Type type) { return enzyme::Activity::enzyme_const; });
+      }
+      argIdx++;
+    }
+
+    for (const auto &[resIdx, resType] :
+         llvm::enumerate(callee.getResultTypes())) {
+      resultActivities[resIdx] =
+          llvm::TypeSwitch<Type, enzyme::Activity>(resType)
+              .Case<FloatType, ComplexType>(
+                  [](auto type) { return enzyme::Activity::enzyme_out; })
+              .Default(
+                  [](Type type) { return enzyme::Activity::enzyme_const; });
+    }
+  }
+
   void runOnOperation() override {
     auto moduleOp = cast<ModuleOp>(getOperation());
+
+    if (annotate) {
+      // Infer the activity attributes from the __enzyme_autodiff call
+      Operation *autodiff_decl = moduleOp.lookupSymbol("__enzyme_autodiff");
+      if (!autodiff_decl) {
+        moduleOp.emitError("Failed to find __enzyme_autodiff symbol");
+        return signalPassFailure();
+      }
+      auto uses = SymbolTable::getSymbolUses(autodiff_decl, moduleOp);
+      assert(uses && "failed to find symbol uses of autodiff decl");
+      if (std::distance(uses->begin(), uses->end()) != 1) {
+        autodiff_decl->emitError("Expected exactly 1 use of __enzyme_autodiff");
+        return signalPassFailure();
+      }
+
+      auto autodiff_call = cast<CallOpInterface>(uses->begin()->getUser());
+
+      FlatSymbolRefAttr calleeAttr =
+          cast<LLVM::AddressOfOp>(
+              autodiff_call.getArgOperands().front().getDefiningOp())
+              .getGlobalNameAttr();
+      auto callee =
+          cast<FunctionOpInterface>(moduleOp.lookupSymbol(calleeAttr));
+
+      SmallVector<enzyme::Activity> argActivities{callee.getNumArguments()},
+          resultActivities{callee.getNumResults()};
+
+      // Populate the argument activities based on either the type or the
+      // supplied annotation. First argument is the callee
+      inferArgActivitiesFromEnzymeAutodiff(callee, autodiff_call, argActivities,
+                                           resultActivities);
+      enzyme::runDataFlowActivityAnalysis(callee, argActivities, /*print=*/true,
+                                          verbose, annotate);
+      return;
+    }
 
     if (funcsToAnalyze.empty()) {
       moduleOp.walk([this](FunctionOpInterface callee) {
@@ -73,7 +163,7 @@ struct PrintActivityAnalysisPass
         initializeArgAndResActivities(callee, argActivities, resultActivities);
 
         enzyme::runDataFlowActivityAnalysis(callee, argActivities,
-                                            /*print=*/true, verbose);
+                                            /*print=*/true, verbose, annotate);
       });
       return;
     }
@@ -96,7 +186,7 @@ struct PrintActivityAnalysisPass
       initializeArgAndResActivities(callee, argActivities, resultActivities);
 
       enzyme::runDataFlowActivityAnalysis(callee, argActivities,
-                                          /*print=*/true, verbose);
+                                          /*print=*/true, verbose, annotate);
     }
   }
 };
