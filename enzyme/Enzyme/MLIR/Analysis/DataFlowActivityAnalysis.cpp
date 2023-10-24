@@ -655,10 +655,41 @@ private:
   ArrayRef<enzyme::Activity> argumentActivity;
 };
 
+void traverseCallGraph(FunctionOpInterface root,
+                       SymbolTableCollection *symbolTable,
+                       function_ref<void(FunctionOpInterface)> processFunc) {
+  std::deque<FunctionOpInterface> frontier{root};
+  DenseSet<FunctionOpInterface> visited{root};
+
+  while (!frontier.empty()) {
+    FunctionOpInterface curr = frontier.front();
+    frontier.pop_front();
+    processFunc(curr);
+
+    curr.walk([&](CallOpInterface call) {
+      auto neighbor = dyn_cast_if_present<FunctionOpInterface>(
+          call.resolveCallable(symbolTable));
+      if (neighbor && !visited.contains(neighbor)) {
+        frontier.push_back(neighbor);
+        visited.insert(neighbor);
+      }
+    });
+  }
+}
+
 void printActivityAnalysisResults(const DataFlowSolver &solver,
                                   FunctionOpInterface callee,
                                   const SmallPtrSet<Operation *, 2> &returnOps,
-                                  bool verbose) {
+                                  SymbolTableCollection *symbolTable,
+                                  bool verbose, bool annotate) {
+  auto isActiveData = [&](Value value) {
+    auto fva = solver.lookupState<ForwardValueActivity>(value);
+    auto bva = solver.lookupState<BackwardValueActivity>(value);
+    bool forwardActive = fva && fva->getValue().isActiveVal();
+    bool backwardActive = bva && bva->getValue().isActiveVal();
+    return forwardActive && backwardActive;
+  };
+
   auto isConstantValue = [&](Value value) {
     // TODO: integers/vectors that might be pointers
     if (isa<LLVM::LLVMPointerType, MemRefType>(value.getType())) {
@@ -700,13 +731,12 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
       return true;
     }
 
-    auto fva = solver.lookupState<ForwardValueActivity>(value);
-    auto bva = solver.lookupState<BackwardValueActivity>(value);
-    bool forwardActive = fva && fva->getValue().isActiveVal();
-    bool backwardActive = bva && bva->getValue().isActiveVal();
-    if (forwardActive && backwardActive)
-      return false;
-    return true;
+    return !isActiveData(value);
+  };
+
+  auto isConstantInstruction = [&](Operation *op) {
+    return llvm::none_of(op->getOperands(), isActiveData) &&
+           llvm::none_of(op->getResults(), isActiveData);
   };
 
   errs() << FlatSymbolRefAttr::get(callee) << ":\n";
@@ -716,6 +746,36 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
       errs() << "  " << tagAttr << ": "
              << (isConstantValue(arg) ? "Constant" : "Active") << "\n";
     }
+  }
+
+  if (annotate) {
+    MLIRContext *ctx = callee.getContext();
+    traverseCallGraph(callee, symbolTable, [&](FunctionOpInterface func) {
+      func.walk([&](Operation *op) {
+        if (op == func) {
+          SmallVector<bool> argICVs(func.getNumArguments());
+          llvm::transform(func.getArguments(), argICVs.begin(),
+                          isConstantValue);
+          func->setAttr("enzyme.icv", DenseBoolArrayAttr::get(ctx, argICVs));
+          return;
+        }
+
+        op->setAttr("enzyme.ici",
+                    BoolAttr::get(ctx, isConstantInstruction(op)));
+
+        bool icv;
+        if (op->getNumResults() == 0) {
+          icv = true;
+        } else if (op->getNumResults() == 1) {
+          icv = isConstantValue(op->getResult(0));
+        } else {
+          op->emitWarning(
+              "annotating icv for op that produces multiple results");
+          icv = false;
+        }
+        op->setAttr("enzyme.icv", BoolAttr::get(ctx, icv));
+      });
+    });
   }
   callee.walk([&](Operation *op) {
     if (op->hasAttr("tag")) {
@@ -785,7 +845,7 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
 
 void enzyme::runDataFlowActivityAnalysis(
     FunctionOpInterface callee, ArrayRef<enzyme::Activity> argumentActivity,
-    bool print, bool verbose) {
+    bool print, bool verbose, bool annotate) {
   SymbolTableCollection symbolTable;
   DataFlowSolver solver;
 
@@ -835,6 +895,7 @@ void enzyme::runDataFlowActivityAnalysis(
   }
 
   if (print) {
-    printActivityAnalysisResults(solver, callee, returnOps, verbose);
+    printActivityAnalysisResults(solver, callee, returnOps, &symbolTable,
+                                 verbose, annotate);
   }
 }

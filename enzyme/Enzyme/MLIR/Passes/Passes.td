@@ -37,6 +37,13 @@ def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
       /*description=*/"Print detailed activity information"
     >,
     Option<
+      /*C++ variable name=*/"annotate",
+      /*CLI argument=*/"annotate",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Annotate every operation and value with its activity"
+    >,
+    Option<
       /*C++ variable name=*/"inactiveArgs",
       /*CLI argument=*/"inactive-args",
       /*type=*/"bool",
