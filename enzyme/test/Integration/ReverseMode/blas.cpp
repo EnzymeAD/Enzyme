@@ -243,7 +243,7 @@ static void gemvTests() {
 							lda);
 
             // dB = alpha * trans(A) * dC + dB
-            cblas_dgemv(layout, transpose(transA), M, N, alpha, A_cache, M, dC, incC, 1.0, dB, incB); 
+            cblas_dgemv(layout, transpose(transA), M, N, alpha, A_cache, N, dC, incC, 1.0, dB, incB); 
 
             // dY = beta * dY
             cblas_dscal(trans ? N : M, beta, dC, incC);

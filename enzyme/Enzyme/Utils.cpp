@@ -2598,7 +2598,7 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
 
 // Implement the following logic to get the width of a matrix
 // if (cache_A) {
-//   ld_A = (arg_transa == 'N') ? arg_m : arg_k;
+//   ld_A = (arg_transa == 'N') ? arg_k : arg_m;
 // } else {
 //   ld_A = arg_lda;
 // }
@@ -2613,7 +2613,7 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
   assert(trans.size() == 1);
 
   llvm::Value *width =
-      CreateSelect(B, is_normal(B, trans[0], byRef, cublas), dim1, dim2);
+      CreateSelect(B, is_normal(B, trans[0], byRef, cublas), dim2, dim1);
 
   return width;
 }
