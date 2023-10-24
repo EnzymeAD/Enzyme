@@ -79,3 +79,13 @@ def zeroScal : BlasOptPattern<
        ]
        ]
        >;
+def continuousCopy : BlasOptPattern<
+       [
+       (b<"copy"> $n, $x, ConstantInt<1>, $y, ConstantInt<1>))
+       ],
+       [],
+       [
+       (memcopy $n, $x, $y),
+       ]
+       ]
+       >;
