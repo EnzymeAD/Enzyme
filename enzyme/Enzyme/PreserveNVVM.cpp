@@ -299,8 +299,23 @@ bool preserveLinkage(bool Begin, Function &F) {
   return false;
 }
 
+void attributeBLAS(BlasInfo blas, llvm::Function *F);
+
 bool preserveNVVM(bool Begin, Function &F) {
   bool changed = false;
+
+  auto name = getFuncName(&F);
+  auto blasMetaData = extractBLAS(name);
+#if LLVM_VERSION_MAJOR >= 16
+  if (blasMetaData.has_value()) {
+    attributeBLAS(blasMetaData.value(), &F);
+#else
+  if (blasMetaData.hasValue()) {
+    attributeBLAS(blasMetaData.getValue(), &F);
+#endif
+    changed = true;
+  }
+
   StringMap<std::pair<std::string, std::string>> Implements;
   for (std::string T : {"", "f"}) {
     // sincos, sinpi, cospi, sincospi, cyl_bessel_i1
