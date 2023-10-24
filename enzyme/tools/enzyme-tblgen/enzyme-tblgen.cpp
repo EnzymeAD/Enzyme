@@ -26,19 +26,9 @@
 #include "blas-tblgen.h"
 #include "caching.h"
 #include "datastructures.h"
+#include "enzyme-tblgen.h"
 
 using namespace llvm;
-
-enum ActionType {
-  CallDerivatives,
-  InstDerivatives,
-  BinopDerivatives,
-  IntrDerivatives,
-  GenBlasDerivatives,
-  UpdateBlasDecl,
-  UpdateBlasTA,
-  GenBlasDiffUse,
-};
 
 static cl::opt<ActionType>
     action(cl::desc("Action to perform:"),
@@ -1384,8 +1374,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
   }
 }
 
-static void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
-                        ActionType intrinsic) {
+void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
+                 ActionType intrinsic) {
   const char *patternNames;
   switch (intrinsic) {
   case CallDerivatives:

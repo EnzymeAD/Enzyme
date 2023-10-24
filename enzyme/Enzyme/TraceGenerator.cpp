@@ -339,7 +339,7 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
   Instruction *replacement;
   switch (mode) {
   case ProbProgMode::Likelihood: {
-    SmallVector<Value *, 2> args_and_likelihood = SmallVector(args);
+    SmallVector<Value *, 2> args_and_likelihood(args);
     args_and_likelihood.push_back(tutils->getLikelihood());
     replacement =
         Builder.CreateCall(samplefn->getFunctionType(), samplefn,
@@ -351,7 +351,7 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
     auto address = Builder.CreateGlobalStringPtr(
         (call.getName() + "." + called->getName()).str());
 
-    SmallVector<Value *, 2> args_and_trace = SmallVector(args);
+    SmallVector<Value *, 2> args_and_trace(args);
     args_and_trace.push_back(tutils->getLikelihood());
     args_and_trace.push_back(trace);
     replacement =
@@ -378,7 +378,7 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
     {
       ThenTerm->getParent()->setName("condition." + call.getName() +
                                      ".with.trace");
-      SmallVector<Value *, 2> args_and_cond = SmallVector(args);
+      SmallVector<Value *, 2> args_and_cond(args);
       auto observations =
           tutils->GetTrace(Builder, address, called->getName() + ".subtrace");
       args_and_cond.push_back(tutils->getLikelihood());
@@ -393,7 +393,7 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
     {
       ElseTerm->getParent()->setName("condition." + call.getName() +
                                      ".without.trace");
-      SmallVector<Value *, 2> args_and_null = SmallVector(args);
+      SmallVector<Value *, 2> args_and_null(args);
       auto observations = ConstantPointerNull::get(cast<PointerType>(
           tutils->getTraceInterface()->newTraceTy()->getReturnType()));
       args_and_null.push_back(tutils->getLikelihood());

@@ -96,7 +96,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
 
         SmallSet<size_t, 1> byref;
 
-        if (Mode == DerivativeMode::ReverseModeGradient) {
+        if constexpr (Mode == DerivativeMode::ReverseModeGradient) {
           assert(numargs >= 3);
           for (size_t i = numargs; i < CA->getNumOperands(); i++) {
             Value *V = CA->getOperand(i);

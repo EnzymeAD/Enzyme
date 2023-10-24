@@ -4370,7 +4370,7 @@ public:
       EmitFailure("CannotDeduceType", call.getDebugLoc(), &call,
                   "failed to deduce type of copy ", call);
     }
-  knownF:;
+
     unsigned start = 0;
     while (1) {
       unsigned nextStart = size;

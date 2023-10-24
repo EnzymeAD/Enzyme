@@ -1,4 +1,3 @@
-
 licenses(["notice"])
 
 load("@llvm-project//llvm:tblgen.bzl", "gentbl")
@@ -9,19 +8,33 @@ package(
 )
 
 cc_library(
-    name="enzyme-tblgen-hdrs",
-    hdrs=glob(["tools/enzyme-tblgen/*.h"])
-)
-cc_binary(
-    name="enzyme-tblgen",
-    srcs=glob(["tools/enzyme-tblgen/*.cpp"]),
+    name = "enzyme-tblgen-hdrs",
+    hdrs = glob(["tools/enzyme-tblgen/*.h"]),
+    copts = ["-Wno-unused-variable"],
     deps = [
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TableGen",
         "@llvm-project//llvm:config",
-        ":enzyme-tblgen-hdrs"
-    ]
+    ],
 )
+
+cc_binary(
+    name = "enzyme-tblgen",
+    srcs = glob(["tools/enzyme-tblgen/*.cpp"]),
+    copts = [
+        "-Wno-unused-variable",
+        "-Wno-ctad-maybe-unsupported",
+        "-Wno-switch",
+        "-Wno-sometimes-uninitialized",
+    ],
+    deps = [
+        ":enzyme-tblgen-hdrs",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TableGen",
+        "@llvm-project//llvm:config",
+    ],
+)
+
 gentbl(
     name = "call-derivatives",
     tbl_outs = [(
@@ -35,6 +48,7 @@ gentbl(
         ":enzyme-tblgen",
     ],
 )
+
 gentbl(
     name = "inst-derivatives",
     tbl_outs = [(
@@ -48,6 +62,7 @@ gentbl(
         ":enzyme-tblgen",
     ],
 )
+
 gentbl(
     name = "intr-derivatives",
     tbl_outs = [(
@@ -61,6 +76,7 @@ gentbl(
         ":enzyme-tblgen",
     ],
 )
+
 gentbl(
     name = "binop-derivatives",
     tbl_outs = [(
@@ -74,6 +90,7 @@ gentbl(
         ":enzyme-tblgen",
     ],
 )
+
 gentbl(
     name = "blas-derivatives",
     tbl_outs = [(
@@ -87,6 +104,7 @@ gentbl(
         ":enzyme-tblgen",
     ],
 )
+
 gentbl(
     name = "blas-attributor",
     tbl_outs = [(
@@ -100,6 +118,7 @@ gentbl(
         ":enzyme-tblgen",
     ],
 )
+
 gentbl(
     name = "blas-typeanalysis",
     tbl_outs = [(
@@ -113,6 +132,7 @@ gentbl(
         ":enzyme-tblgen",
     ],
 )
+
 gentbl(
     name = "blas-diffuseanalysis",
     tbl_outs = [(
@@ -129,29 +149,69 @@ gentbl(
 
 cc_library(
     name = "EnzymeStatic",
-    srcs = glob(["Enzyme/*.cpp", "Enzyme/TypeAnalysis/*.cpp", "Enzyme/Clang/EnzymeClang.cpp"]),
-    hdrs = glob(["Enzyme/*.h", "Enzyme/TypeAnalysis/*.h"]),
+    srcs = glob([
+        "Enzyme/*.cpp",
+        "Enzyme/TypeAnalysis/*.cpp",
+        "Enzyme/Clang/EnzymeClang.cpp",
+    ]),
+    hdrs = glob([
+        "Enzyme/*.h",
+        "Enzyme/TypeAnalysis/*.h",
+    ]),
+    copts = [
+        "-DENZYME_RUNPASS=1",
+        "-DENZYME_VERSION_MAJOR=0",
+        "-DENZYME_VERSION_MINOR=0",
+        "-DENZYME_VERSION_PATCH=79",
+        "-DLLVM_VERSION_MAJOR=17",
+        "-Wno-implicit-fallthrough",
+        "-Wno-unused-variable",
+        "-Wno-null-dereference",
+        "-Wno-reorder-ctor",
+        "-Wno-uninitialized",
+    ],
     data = ["@llvm-project//clang:builtin_headers_gen"],
-    copts = ["-DENZYME_RUNPASS=1", "-DENZYME_VERSION_MAJOR=0", "-DENZYME_VERSION_MINOR=0", "-DENZYME_VERSION_PATCH=79"],
+    visibility = ["//visibility:public"],
     deps = [
+        ":binop-derivatives",
+        ":blas-attributor",
+        ":blas-derivatives",
+        ":blas-diffuseanalysis",
+        ":blas-typeanalysis",
+        ":call-derivatives",
+        ":inst-derivatives",
+        ":intr-derivatives",
         "@llvm-project//clang:ast",
         "@llvm-project//clang:basic",
         "@llvm-project//clang:driver",
         "@llvm-project//clang:frontend",
         "@llvm-project//clang:frontend_tool",
         "@llvm-project//clang:lex",
+        "@llvm-project//clang:sema",
         "@llvm-project//clang:serialization",
-        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:AggressiveInstCombine",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:CodeGen",
         "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Demangle",
+        "@llvm-project//llvm:IPO",
         "@llvm-project//llvm:IRReader",
-        ":call-derivatives",
-        ":inst-derivatives",
-        ":intr-derivatives",
-        ":binop-derivatives",
-        ":blas-derivatives",
-        ":blas-attributor",
-        ":blas-typeanalysis",
-        ":blas-diffuseanalysis"
+        "@llvm-project//llvm:InstCombine",
+        "@llvm-project//llvm:Passes",
+        "@llvm-project//llvm:Scalar",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:config",
     ],
-    visibility = ["//visibility:public"],
+)
+
+sh_test(
+    name = "placeholder_test",
+    size = "small",
+    srcs = ["placeholdertest.sh"],
+    deps = [
+        ":EnzymeStatic",
+        "//testing/shbase",
+    ],
 )

@@ -1819,7 +1819,7 @@ public:
     auto opt = handleArguments(Builder, CI, F, diffeMode, false, constants,
                                args, byVal);
 
-    SmallVector<Value *, 6> dargs = SmallVector(args);
+    SmallVector<Value *, 6> dargs(args.begin(), args.end());
 
 #if LLVM_VERSION_MAJOR >= 16
     if (!opt.has_value())
