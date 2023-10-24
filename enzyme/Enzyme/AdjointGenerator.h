@@ -3741,7 +3741,8 @@ public:
   }
 
 // first one allows adding attributes to blas functions declared in the second
-#include "BlasHeader.h"
+#include "BlasAttributor.inc"
+#include "BlasDerivatives.inc"
 
   void visitOMPCall(llvm::CallInst &call) {
     using namespace llvm;

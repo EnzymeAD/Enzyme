@@ -90,7 +90,7 @@
 #include "llvm/Transforms/Utils/Mem2Reg.h"
 #endif
 
-#include "BlasHeader.h"
+#include "BlasAttributor.inc"
 
 #include "CApi.h"
 using namespace llvm;

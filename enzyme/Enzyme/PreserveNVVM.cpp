@@ -299,7 +299,7 @@ bool preserveLinkage(bool Begin, Function &F) {
   return false;
 }
 
-#include "BlasHeader.h"
+void attributeBLAS(BlasInfo blas, llvm::Function *F);
 
 bool preserveNVVM(bool Begin, Function &F) {
   bool changed = false;
