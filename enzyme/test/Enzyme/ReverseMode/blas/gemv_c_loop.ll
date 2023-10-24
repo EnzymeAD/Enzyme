@@ -56,7 +56,7 @@ entry:
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
 ; CHECK-NEXT:   %cache.A = bitcast i8* %malloccall to double*
 ; CHECK-NEXT:   call void @cblas_dlacpy(i32 101, i8 0, i32 %N, i32 %N, double* %K, i32 %N, double* %cache.A, i32 %N)
-; CHECK-NEXT:   %1 = select i1 false, i32 %N, i32 %N
+; CHECK-NEXT:   %1 = select i1 true, i32 %N, i32 %N
 ; CHECK-NEXT:   %mallocsize1 = mul nuw nsw i32 %1, 8
 ; CHECK-NEXT:   %malloccall2 = tail call noalias nonnull i8* @malloc(i32 %mallocsize1)
 ; CHECK-NEXT:   %2 = load i8**, i8*** %malloccall2_cache, align 8, !dereferenceable !6, !invariant.group !2
