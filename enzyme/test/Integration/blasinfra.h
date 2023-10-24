@@ -67,6 +67,12 @@ enum class cublasOperation_t : char {
   CUBLAS_OP_C = 2
 };
 
+enum class CBLAS_TRANSPOSE : char{
+    CblasNoTrans=111,
+    CblasTrans=112,
+    CblasConjTrans=113
+};
+
 bool is_normal(char c) {
   switch (c) {
   case 'N':
@@ -81,6 +87,10 @@ bool is_normal(char c) {
     return true;
   case (char)cublasOperation_t::CUBLAS_OP_T:
     return false;
+  case (char)CBLAS_TRANSPOSE::CblasNoTrans:
+    return true;
+  case (char)CBLAS_TRANSPOSE::CblasTrans:
+    return false;
   default:
     printf("Illegal isnormal of '%c'\n", c);
     exit(1);
@@ -92,6 +102,18 @@ bool is_normal(cublasOperation_t v) {
   case cublasOperation_t::CUBLAS_OP_N:
     return true;
   case cublasOperation_t::CUBLAS_OP_T:
+    return false;
+  default:
+    printf("Illegal is_normal of '%c'\n", (char)v);
+    exit(1);
+  }
+}
+
+bool is_normal(CBLAS_TRANSPOSE v) {
+  switch(v) {
+  case CBLAS_TRANSPOSE::CblasNoTrans:
+    return true;
+  case CBLAS_TRANSPOSE::CblasTrans:
     return false;
   default:
     printf("Illegal is_normal of '%c'\n", (char)v);
@@ -113,6 +135,10 @@ char transpose(char c) {
     return (char)cublasOperation_t::CUBLAS_OP_T;
   case (char)cublasOperation_t::CUBLAS_OP_T:
     return (char)cublasOperation_t::CUBLAS_OP_N;
+  case (char)CBLAS_TRANSPOSE::CblasNoTrans:
+    return (char)CBLAS_TRANSPOSE::CblasTrans;
+  case (char)CBLAS_TRANSPOSE::CblasTrans:
+    return (char)CBLAS_TRANSPOSE::CblasNoTrans;
   default:
     printf("Illegal transpose of '%c'\n", c);
     exit(1);
@@ -125,6 +151,18 @@ cublasOperation_t transpose(cublasOperation_t v) {
     return cublasOperation_t::CUBLAS_OP_T;
   case cublasOperation_t::CUBLAS_OP_T:
     return cublasOperation_t::CUBLAS_OP_N;
+  default:
+    printf("Illegal transpose of '%c'\n", (char)v);
+    exit(1);
+  }
+}
+
+CBLAS_TRANSPOSE transpose(CBLAS_TRANSPOSE v) {
+  switch(v) {
+  case CBLAS_TRANSPOSE::CblasNoTrans:
+    return CBLAS_TRANSPOSE::CblasTrans;
+  case CBLAS_TRANSPOSE::CblasTrans:
+    return CBLAS_TRANSPOSE::CblasNoTrans;
   default:
     printf("Illegal transpose of '%c'\n", (char)v);
     exit(1);
@@ -362,6 +400,18 @@ void printty(char v) {
       return;
     }
   }
+  if (v == (char)CBLAS_TRANSPOSE::CblasNoTrans) {
+    printf("CblasNoTrans (%c)", v);
+    return;
+  }
+  if (v == (char)CBLAS_TRANSPOSE::CblasTrans) {
+    printf("CblasTrans (%c)", v);
+    return;
+  }
+  if (v == (char)CBLAS_TRANSPOSE::CblasConjTrans) {
+    printf("CblasConjTrans (%c)", v);
+    return;
+  }
   if (v == (char)cublasOperation_t::CUBLAS_OP_N) {
     printf("CUBLAS_OP_N (%c)", v);
     return;
@@ -390,6 +440,21 @@ void printty(cublasOperation_t v) {
     return;
   case cublasOperation_t::CUBLAS_OP_C:
     printf("CUBLAS_OP_C");
+    return;
+  default:
+    printf("Unknown cublasOperation_t ('%c'=0x%x)", (char)v, (char)v);
+  }
+}
+void printty(CBLAS_TRANSPOSE v) {
+  switch(v) {
+  case CBLAS_TRANSPOSE::CblasNoTrans:
+    printf("CblasNoTrans");
+    return;
+  case CBLAS_TRANSPOSE::CblasTrans:
+    printf("CblasTrans");
+    return;
+  case CBLAS_TRANSPOSE::CblasConjTrans:
+    printf("CblasTrans");
     return;
   default:
     printf("Unknown cublasOperation_t ('%c'=0x%x)", (char)v, (char)v);
