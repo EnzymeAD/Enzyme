@@ -61,3 +61,21 @@ def first : BlasOptPattern<
        (b<"ger"> $m, $k, Value<"3">, $x, $incx, $w, $incw, $C, $ldc),
        ]
        >;
+def noopScal : BlasOptPattern<
+       [
+       (b<"scal"> $n, Constant<"1.0">, adj<"x">)
+       ],
+       [],
+       [
+       ]
+       >;
+def zeroScal : BlasOptPattern<
+       [
+       (b<"scal"> $n, Constant<"0.0">, adj<"x">)
+       ],
+       [],
+       [
+       (memset $x, $n, Constant<"0.0">)
+       ]
+       ]
+       >;
