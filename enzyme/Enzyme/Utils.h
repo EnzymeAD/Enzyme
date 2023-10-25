@@ -1496,7 +1496,7 @@ static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
   return false;
 }
 
-void attributeKnownFunctions(llvm::Function &F);
+bool attributeKnownFunctions(llvm::Function &F);
 
 llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero = false);
 

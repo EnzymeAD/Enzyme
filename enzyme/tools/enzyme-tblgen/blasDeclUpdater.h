@@ -186,15 +186,20 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
   }
   emit_attributeBLASCaller(newBlasPatterns, os);
 
-  os << "void attributeTablegen(llvm::Function &F) {\n";
+  os << "bool attributeTablegen(llvm::Function &F) {\n";
   os << "  auto name = getFuncName(&F);\n";
+  os << "  auto changed = false;\n";
   os << "  auto blasMetaData = extractBLAS(name);\n";
   os << "  #if LLVM_VERSION_MAJOR >= 16\n";
-  os << "    if (blasMetaData.has_value())\n";
+  os << "    if (blasMetaData.has_value()) {\n";
   os << "      attributeBLAS(blasMetaData.value(), &F);\n";
+  os << "      changed = true;\n";
+  os << "    }\n";
   os << "  #else\n";
-  os << "    if (blasMetaData.hasValue())\n";
+  os << "    if (blasMetaData.hasValue()) {\n";
   os << "      attributeBLAS(blasMetaData.getValue(), &F);\n";
+  os << "      changed = true;\n";
+  os << "    }\n";
   os << "  #endif\n";
   {
     const auto &patterns = RK.getAllDerivedDefinitions("CallPattern");
@@ -209,7 +214,9 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
         prev = true;
       }
       os << ") && F.getFunctionType()->getNumParams() == " << tree->getNumArgs()
-         << " ){\n";
+         << " ){\n"
+         << "    changed = true;\n";
+
       for (auto attr : *pattern->getValueAsListInit("FnAttrs")) {
         auto attrDef = cast<DefInit>(attr)->getDef();
         auto attrName = attrDef->getValueAsString("name");
@@ -251,6 +258,6 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
       os << "  }\n";
     }
   }
-
+  os << "  return changed;\n";
   os << "}\n";
 }
