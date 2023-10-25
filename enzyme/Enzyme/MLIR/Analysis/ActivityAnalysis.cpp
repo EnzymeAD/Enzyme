@@ -920,7 +920,7 @@ static SmallVector<Value> getPotentialIncomingValues(BlockArgument arg) {
                                     std::optional<unsigned> predecessor,
                                     SetVector<Value> &potentialSources) {
       SmallVector<RegionSuccessor> successors;
-      iface.getSuccessorRegions(predecessor, successors);
+      // iface.getSuccessorRegions(predecessor, successors);
       for (const RegionSuccessor &successor : successors) {
         if (successor.getSuccessor() != region)
           continue;
@@ -940,10 +940,10 @@ static SmallVector<Value> getPotentialIncomingValues(BlockArgument arg) {
         if (!predecessor) {
           // XXX: this assumes a contiguous slice of operands is mapped 1-1
           // without swaps to a contiguous slice of entry block arguments.
-          assert(iface.getSuccessorEntryOperands(region->getRegionNumber())
-                     .size() == successor.getSuccessorInputs().size());
-          potentialSources.insert(iface.getSuccessorEntryOperands(
-              region->getRegionNumber())[operandOffset]);
+          // assert(iface.getSuccessorEntryOperands(region->getRegionNumber())
+          //            .size() == successor.getSuccessorInputs().size());
+          // potentialSources.insert(iface.getSuccessorEntryOperands(
+          //     region->getRegionNumber())[operandOffset]);
         } else {
           // Find all block terminators in the predecessor region that
           // may be branching to this region, and get the operands they
@@ -955,10 +955,10 @@ static SmallVector<Value> getPotentialIncomingValues(BlockArgument arg) {
               // XXX: this assumes a contiguous slice of operands is mapped
               // 1-1 without swaps to a contiguous slice of entry block
               // arguments.
-              assert(terminator.getSuccessorOperands(region->getRegionNumber())
-                         .size() == successor.getSuccessorInputs().size());
-              potentialSources.insert(terminator.getSuccessorOperands(
-                  region->getRegionNumber())[operandOffset]);
+              // assert(terminator.getSuccessorOperands(region->getRegionNumber())
+              //            .size() == successor.getSuccessorInputs().size());
+              // potentialSources.insert(terminator.getSuccessorOperands(
+              //     region->getRegionNumber())[operandOffset]);
             } else {
               for (Value v : block.getTerminator()->getOperands())
                 potentialSources.insert(v);
@@ -1016,7 +1016,7 @@ static void allFollowersOf(Operation *op,
          std::deque<Block *> &todo) {
         if (auto iface = dyn_cast<RegionBranchOpInterface>(op)) {
           SmallVector<RegionSuccessor> regionSuccessors;
-          iface.getSuccessorRegions(regionNumber, regionSuccessors);
+          // iface.getSuccessorRegions(regionNumber, regionSuccessors);
           for (const RegionSuccessor &rs : regionSuccessors) {
             if (!rs.isParent() && !rs.getSuccessor()->empty())
               todo.push_back(&rs.getSuccessor()->front());
@@ -2421,7 +2421,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromOrigin(
                                         std::optional<unsigned> predecessor,
                                         SetVector<Value> &potentialSources) {
           SmallVector<RegionSuccessor> successors;
-          iface.getSuccessorRegions(predecessor, successors);
+          // iface.getSuccessorRegions(predecessor, successors);
           for (const RegionSuccessor &successor : successors) {
             if (successor.getSuccessor() != region)
               continue;
@@ -2442,10 +2442,10 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromOrigin(
             if (!predecessor) {
               // XXX: this assumes a contiguous slice of operands is mapped 1-1
               // without swaps to a contiguous slice of entry block arguments.
-              assert(iface.getSuccessorEntryOperands(region->getRegionNumber())
-                         .size() == successor.getSuccessorInputs().size());
-              potentialSources.insert(iface.getSuccessorEntryOperands(
-                  region->getRegionNumber())[operandOffset]);
+              // assert(iface.getSuccessorEntryOperands(region->getRegionNumber())
+              //            .size() == successor.getSuccessorInputs().size());
+              // potentialSources.insert(iface.getSuccessorEntryOperands(
+              //     region->getRegionNumber())[operandOffset]);
             } else {
               // Find all block terminators in the predecessor region that
               // may be branching to this region, and get the operands they
@@ -2458,11 +2458,11 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromOrigin(
                   // XXX: this assumes a contiguous slice of operands is mapped
                   // 1-1 without swaps to a contiguous slice of entry block
                   // arguments.
-                  assert(
-                      terminator.getSuccessorOperands(region->getRegionNumber())
-                          .size() == successor.getSuccessorInputs().size());
-                  potentialSources.insert(terminator.getSuccessorOperands(
-                      region->getRegionNumber())[operandOffset]);
+                  // assert(
+                  //     terminator.getSuccessorOperands(region->getRegionNumber())
+                  //         .size() == successor.getSuccessorInputs().size());
+                  // potentialSources.insert(terminator.getSuccessorOperands(
+                  //     region->getRegionNumber())[operandOffset]);
                 } else {
                   for (Value v : block.getTerminator()->getOperands())
                     potentialSources.insert(v);
@@ -2787,8 +2787,8 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
                   block.getTerminator())) {
             // TODO: the interface may also tell us which regions are allowed to
             // yield parent op results, and which only branch to other regions.
-            auto successorOperands =
-                llvm::to_vector(iface.getSuccessorOperands(std::nullopt));
+            auto successorOperands = llvm::to_vector(
+                iface.getSuccessorOperands(RegionBranchPoint::parent()));
             // TODO: understand/document the assumption of how operands flow.
             assert(successorOperands.size() == op->getNumResults() &&
                    "expected all results to be populated with yielded "
