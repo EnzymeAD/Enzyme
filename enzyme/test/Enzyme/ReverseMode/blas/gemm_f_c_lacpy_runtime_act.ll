@@ -55,11 +55,7 @@ entry:
 ; CHECK-NEXT:   %byref.int.one = alloca i64
 ; CHECK-NEXT:   %byref.constant.fp.1.0 = alloca double
 ; CHECK-NEXT:   %byref.constant.fp.0.0 = alloca double
-; CHECK-NEXT:   %byref.constant.char.T = alloca i8, align 1
-; CHECK-NEXT:   %byref.constant.char.N = alloca i8, align 1
 ; CHECK-NEXT:   %byref.constant.fp.1.09 = alloca double, align 8
-; CHECK-NEXT:   %byref.constant.char.T11 = alloca i8, align 1
-; CHECK-NEXT:   %byref.constant.char.N12 = alloca i8, align 1
 ; CHECK-NEXT:   %byref.constant.fp.1.017 = alloca double, align 8
 ; CHECK-NEXT:   %byref.constant.char.G = alloca i8, align 1
 ; CHECK-NEXT:   %byref.constant.int.0 = alloca i64, align 8
