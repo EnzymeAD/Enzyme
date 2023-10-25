@@ -759,7 +759,7 @@ extern "C" {
 // technically LAPACKE_dlascl
 __attribute__((noinline)) void cblas_dlascl(char layout, char type, int KL,
                                             int KU, double cfrom, double cto,
-                                            int M, int N, double *A, int lda) {
+                                            int M, int N, double *A, int lda, int info) {
   BlasCall call = {ABIType::CBLAS,UNUSED_HANDLE,
                    inDerivative,
                    CallType::LASCL,
