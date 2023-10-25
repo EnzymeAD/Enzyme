@@ -26,19 +26,9 @@
 #include "blas-tblgen.h"
 #include "caching.h"
 #include "datastructures.h"
+#include "enzyme-tblgen.h"
 
 using namespace llvm;
-
-enum ActionType {
-  CallDerivatives,
-  InstDerivatives,
-  BinopDerivatives,
-  IntrDerivatives,
-  GenBlasDerivatives,
-  UpdateBlasDecl,
-  UpdateBlasTA,
-  GenBlasDiffUse,
-};
 
 static cl::opt<ActionType>
     action(cl::desc("Action to perform:"),
@@ -764,6 +754,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
           handle(curIndent + INDENT, argPattern + "_sr", os, pattern, insts,
                  builder, nnameToOrdinal, /*lookup*/ false, nretidx,
                  "<ILLEGAL>", /*newFromOriginal*/ false);
+      (void)anyVector2;
       assert(anyVector == anyVector2);
       os << ";\n";
       os << curIndent << "})";
@@ -925,7 +916,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                             ActionType intrinsic) {
   emitSourceFileHeader("Rewriters", os);
-  const char *patternNames;
+  const char *patternNames = "";
   switch (intrinsic) {
   case CallDerivatives:
     patternNames = "CallPattern";
@@ -939,8 +930,11 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
   case BinopDerivatives:
     patternNames = "BinopPattern";
     break;
-  default:
-    assert(0 && "Illegal pattern type");
+  case GenBlasDerivatives:
+  case UpdateBlasDecl:
+  case UpdateBlasTA:
+  case GenBlasDiffUse:
+    llvm_unreachable("Cannot use blas updaters inside emitDerivatives");
   }
   const auto &patterns = recordKeeper.getAllDerivedDefinitions(patternNames);
 
@@ -962,6 +956,11 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     std::string origName;
     switch (intrinsic) {
+    case GenBlasDerivatives:
+    case UpdateBlasDecl:
+    case UpdateBlasTA:
+    case GenBlasDiffUse:
+      llvm_unreachable("Cannot use blas updaters inside emitDerivatives");
     case CallDerivatives: {
       os << "  if ((";
       bool prev = false;
@@ -1189,6 +1188,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                     resultTree, "Builder2", nameToOrdinal, /*lookup*/ false,
                     retidx, origName, /*newFromOriginal*/ true);
                 os << ";\n";
+                (void)vectorValued;
                 assert(vectorValued);
                 os << curIndent << INDENT << INDENT
                    << "arg_diff_tmp = GradientUtils::recursiveFAdd(Builder2,";
@@ -1229,6 +1229,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
           handle("            ", "fwdnsrarg", os, pattern, duals, "Builder2",
                  nameToOrdinal, /*lookup*/ false, retidx, origName,
                  /*newFromOriginal*/ true);
+      (void)vectorValued;
       assert(vectorValued);
       os << ";\n";
     }
@@ -1384,10 +1385,15 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
   }
 }
 
-static void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
-                        ActionType intrinsic) {
+void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
+                 ActionType intrinsic) {
   const char *patternNames;
   switch (intrinsic) {
+  case GenBlasDerivatives:
+  case UpdateBlasDecl:
+  case UpdateBlasTA:
+  case GenBlasDiffUse:
+    llvm_unreachable("Cannot use blas updaters inside emitDiffUse");
   case CallDerivatives:
     patternNames = "CallPattern";
     break;
@@ -1400,15 +1406,11 @@ static void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
   case BinopDerivatives:
     patternNames = "BinopPattern";
     break;
-  default:
-    assert(0 && "Illegal pattern type");
   }
   const auto &patterns = recordKeeper.getAllDerivedDefinitions(patternNames);
 
   for (Record *pattern : patterns) {
     DagInit *tree = pattern->getValueAsDag("PatternToMatch");
-
-    DagInit *duals = pattern->getValueAsDag("ArgDuals");
 
     // Emit RewritePattern for Pattern.
     ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
@@ -1424,6 +1426,11 @@ static void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
     std::string origName;
     std::string prefix;
     switch (intrinsic) {
+    case GenBlasDerivatives:
+    case UpdateBlasDecl:
+    case UpdateBlasTA:
+    case GenBlasDiffUse:
+      llvm_unreachable("Cannot use blas updaters inside emitDerivatives");
     case CallDerivatives: {
       os << "  if ((";
       bool prev = false;
@@ -1516,8 +1523,6 @@ static void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     StringMap<std::tuple<StringTy, StringTy, bool>> varNameToCondition;
 
-    size_t numArgs = tree->getNumArgs();
-
     std::function<void(DagInit *, ArrayRef<unsigned>)> insert =
         [&](DagInit *ptree, ArrayRef<unsigned> prev) {
           for (auto treeEn : llvm::enumerate(ptree->getArgs())) {
@@ -1532,7 +1537,6 @@ static void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
               auto op = (Twine(origName) + "->getOperand(" + Twine(next[0]) +
                          ") == val")
                             .str();
-              bool foundDiffRet = false;
               varNameToCondition[name] = std::make_tuple(op, "", false);
             }
           }
@@ -1561,6 +1565,7 @@ static void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
           bool usesCustom = Def->getValueAsBit("usesCustom");
 
           // We don't handle any custom primal/shadow
+          (void)usesCustom;
           assert(!usesCustom);
 
           for (auto argEn : llvm::enumerate(resultTree->getArgs())) {

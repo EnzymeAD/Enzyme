@@ -190,11 +190,10 @@ GradientUtils::GradientUtils(
                     Logic.PPC, Logic.PPC.getAAResultsFromFunction(oldFunc_),
                     notForAnalysis, TLI_, constantvalues_, activevals_,
                     ReturnActivity)),
-      tid(nullptr), numThreads(nullptr),
+      overwritten_args_map_ptr(nullptr), tid(nullptr), numThreads(nullptr),
       OrigAA(oldFunc_->empty() ? *((AAResults *)nullptr)
                                : Logic.PPC.getAAResultsFromFunction(oldFunc_)),
-      TA(TA_), TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_),
-      overwritten_args_map_ptr(nullptr) {
+      TA(TA_), TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_) {
   if (oldFunc_->empty())
     return;
   if (oldFunc_->getSubprogram()) {
@@ -5716,6 +5715,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             std::make_pair((const Value *)oval, InvertedPointerVH(this, res)));
         return res;
       }
+      break;
     default:
       break;
     }
@@ -8815,7 +8815,6 @@ void GradientUtils::erase(Instruction *I) {
 
 void GradientUtils::eraseWithPlaceholder(Instruction *I, Instruction *orig,
                                          const Twine &suffix, bool erase) {
-  PHINode *pn = nullptr;
   if (!I->getType()->isVoidTy() && !I->getType()->isTokenTy()) {
     IRBuilder<> BuilderZ(I);
     auto pn = BuilderZ.CreatePHI(I->getType(), 1, I->getName() + suffix);

@@ -1316,6 +1316,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   for (auto idx : enzyme_srets) {
     llvm::Type *T = nullptr;
 #if LLVM_VERSION_MAJOR >= 17
+    (void)idx;
     llvm_unreachable("Unhandled");
     // T = F->getParamAttribute(idx, Attribute::AttrKind::ElementType)
     //        .getValueAsType();
@@ -1487,7 +1488,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       size_t count = VT->getNumElements();
 #endif
       for (size_t i = 0; i < count; i++) {
-        offset = recur(B, B.CreateExtractElement(V, {i}), offset);
+        offset = recur(B, B.CreateExtractElement(V, i), offset);
       }
       return offset;
     }

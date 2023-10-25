@@ -1,4 +1,7 @@
+#include "blas-tblgen.h"
+#include "caching.h"
 #include "datastructures.h"
+#include "enzyme-tblgen.h"
 #include "llvm/Support/raw_ostream.h"
 
 void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {

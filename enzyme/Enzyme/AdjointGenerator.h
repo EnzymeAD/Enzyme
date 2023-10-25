@@ -406,7 +406,6 @@ public:
 
     constantval |= gutils->isConstantValue(&I);
 
-    BasicBlock *parent = I.getParent();
     Type *type = gutils->getShadowType(I.getType());
 
     auto *newi = dyn_cast<Instruction>(gutils->getNewFromOriginal(&I));
@@ -2013,8 +2012,9 @@ public:
         for (auto u : P0->users()) {
           if (!gutils->isConstantInstruction(cast<Instruction>(u))) {
             activeUses.push_back(cast<Instruction>(u));
-          } else if (retType == DIFFE_TYPE::OUT_DIFF && isa<ReturnInst>(u))
+          } else if (retType == DIFFE_TYPE::OUT_DIFF && isa<ReturnInst>(u)) {
             activeUses.push_back(cast<Instruction>(u));
+          }
         }
         if (activeUses.size() == 1 && activeUses[0] == &BO &&
             gutils->getContext(gutils->getNewFromOriginal(P0->getParent()),
@@ -2035,16 +2035,13 @@ public:
             getReverseBuilder(Builder2);
 
             Value *orig_op1 = BO.getOperand(1);
-            bool constantval0 = gutils->isConstantValue(orig_op0);
-            bool constantval1 = gutils->isConstantValue(orig_op1);
 
-            Value *dif0 = nullptr;
             Value *dif1 = nullptr;
             Value *idiff = diffe(&BO, Builder2);
 
             Type *addingType = BO.getType();
 
-            if (!constantval1) {
+            if (!gutils->isConstantValue(orig_op1)) {
               IRBuilder<> EB(*lc.exitBlocks.begin());
               getReverseBuilder(EB, /*original=*/false);
               Value *Pstart = P0->getIncomingValueForBlock(
@@ -2135,8 +2132,6 @@ public:
 
     Value *orig_op0 = BO.getOperand(0);
     Value *orig_op1 = BO.getOperand(1);
-    bool constantval0 = gutils->isConstantValue(orig_op0);
-    bool constantval1 = gutils->isConstantValue(orig_op1);
 
     Value *dif0 = nullptr;
     Value *dif1 = nullptr;
@@ -2146,7 +2141,7 @@ public:
 
     switch (BO.getOpcode()) {
     case Instruction::LShr: {
-      if (!constantval0) {
+      if (!gutils->isConstantValue(orig_op0)) {
         if (auto ci = dyn_cast<ConstantInt>(orig_op1)) {
           size_t size = 1;
           if (orig_op0->getType()->isSized())
@@ -2422,9 +2417,6 @@ public:
 
     bool constantval0 = gutils->isConstantValue(orig_op0);
     bool constantval1 = gutils->isConstantValue(orig_op1);
-
-    Value *dif[2] = {constantval0 ? nullptr : diffe(orig_op0, Builder2),
-                     constantval1 ? nullptr : diffe(orig_op1, Builder2)};
 
     switch (BO.getOpcode()) {
     case Instruction::And: {
@@ -3493,6 +3485,7 @@ public:
 
     auto mod = I.getParent()->getParent()->getParent();
     auto called = cast<CallInst>(&I)->getCalledFunction();
+    (void)called;
     switch (ID) {
 #include "IntrinsicDerivatives.inc"
     default:
@@ -4370,7 +4363,9 @@ public:
       EmitFailure("CannotDeduceType", call.getDebugLoc(), &call,
                   "failed to deduce type of copy ", call);
     }
-  knownF:;
+#if LLVM_VERSION_MAJOR < 18
+  knownF:
+#endif
     unsigned start = 0;
     while (1) {
       unsigned nextStart = size;

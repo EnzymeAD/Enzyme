@@ -769,8 +769,8 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
       alpha = B1.CreateLoad(fpTy, VP);
     }
     Value *is_u = is_uper(B1, blasuplo, byRef);
-    Value *k = B1.CreateSelect(is_u, ConstantInt::get(IT, 0),
-                               ConstantInt::get(IT, 1), "k");
+    // Value *k = B1.CreateSelect(is_u, ConstantInt::get(IT, 0),
+    //                           ConstantInt::get(IT, 1), "k");
     B1.CreateCondBr(B1.CreateICmpEQ(n, ConstantInt::get(IT, 0)), end, init);
 
     IRBuilder<> B2(init);
@@ -2511,8 +2511,6 @@ Value *is_uper(IRBuilder<> &B, Value *trans, bool byRef) {
     charTy = IntegerType::get(trans->getContext(), len);
   }
 
-  Value *trueVal = ConstantInt::getTrue(trans->getContext());
-
   Value *isUper =
       B.CreateOr(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'u')),
                  B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'U')));
@@ -2536,8 +2534,6 @@ llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef,
     unsigned int len = trans->getType()->getScalarSizeInBits();
     charTy = IntegerType::get(trans->getContext(), len);
   }
-
-  Value *trueVal = ConstantInt::getTrue(trans->getContext());
 
   Value *isNormal =
       B.CreateOr(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'n')),
