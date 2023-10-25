@@ -117,7 +117,8 @@ llvm::cl::opt<bool> EnzymeOMPOpt("enzyme-omp-opt", cl::init(false), cl::Hidden,
 #define addAttribute addAttributeAtIndex
 #define getAttribute getAttributeAtIndex
 #endif
-void attributeKnownFunctions(llvm::Function &F) {
+bool attributeKnownFunctions(llvm::Function &F) {
+  bool changed = false;
   if (F.getName().contains("__enzyme_float") ||
       F.getName().contains("__enzyme_double") ||
       F.getName().contains("__enzyme_integer") ||
@@ -125,6 +126,7 @@ void attributeKnownFunctions(llvm::Function &F) {
       F.getName().contains("__enzyme_todense") ||
       F.getName().contains("__enzyme_iter") ||
       F.getName().contains("__enzyme_virtualreverse")) {
+    changed = true;
 #if LLVM_VERSION_MAJOR >= 16
     F.setOnlyReadsMemory();
     F.setOnlyWritesMemory();
@@ -140,6 +142,7 @@ void attributeKnownFunctions(llvm::Function &F) {
       }
   }
   if (F.getName() == "memcmp") {
+    changed = true;
 #if LLVM_VERSION_MAJOR >= 16
     F.setOnlyAccessesArgMemory();
     F.setOnlyReadsMemory();
@@ -159,13 +162,15 @@ void attributeKnownFunctions(llvm::Function &F) {
       }
   }
 
-  attributeTablegen(F);
+  changed |= attributeTablegen(F);
 
   if (F.getName() ==
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_createERmm") {
+    changed = true;
     F.addFnAttr(Attribute::NoFree);
   }
   if (F.getName() == "MPI_Irecv" || F.getName() == "PMPI_Irecv") {
+    changed = true;
 #if LLVM_VERSION_MAJOR >= 16
     F.setOnlyAccessesInaccessibleMemOrArgMem();
 #else
@@ -184,6 +189,7 @@ void attributeKnownFunctions(llvm::Function &F) {
     F.addParamAttr(6, Attribute::WriteOnly);
   }
   if (F.getName() == "MPI_Isend" || F.getName() == "PMPI_Isend") {
+    changed = true;
 #if LLVM_VERSION_MAJOR >= 16
     F.setOnlyAccessesInaccessibleMemOrArgMem();
 #else
@@ -203,6 +209,7 @@ void attributeKnownFunctions(llvm::Function &F) {
   }
   if (F.getName() == "MPI_Comm_rank" || F.getName() == "PMPI_Comm_rank" ||
       F.getName() == "MPI_Comm_size" || F.getName() == "PMPI_Comm_size") {
+    changed = true;
 #if LLVM_VERSION_MAJOR >= 16
     F.setOnlyAccessesInaccessibleMemOrArgMem();
 #else
@@ -224,6 +231,7 @@ void attributeKnownFunctions(llvm::Function &F) {
     }
   }
   if (F.getName() == "MPI_Wait" || F.getName() == "PMPI_Wait") {
+    changed = true;
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
     F.addFnAttr(Attribute::WillReturn);
@@ -234,6 +242,7 @@ void attributeKnownFunctions(llvm::Function &F) {
     F.addParamAttr(1, Attribute::NoCapture);
   }
   if (F.getName() == "MPI_Waitall" || F.getName() == "PMPI_Waitall") {
+    changed = true;
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
     F.addFnAttr(Attribute::WillReturn);
@@ -269,6 +278,7 @@ void attributeKnownFunctions(llvm::Function &F) {
               }
               if (auto GV = dyn_cast<GlobalVariable>(C)) {
                 if (GV->getName() == "ompi_mpi_cxx_bool") {
+                  changed = true;
                   CI->addAttribute(
                       AttributeList::FunctionIndex,
                       Attribute::get(CI->getContext(), "enzyme_inactive"));
@@ -282,6 +292,7 @@ void attributeKnownFunctions(llvm::Function &F) {
 
   if (F.getName() == "omp_get_max_threads" ||
       F.getName() == "omp_get_thread_num") {
+    changed = true;
 #if LLVM_VERSION_MAJOR >= 16
     F.setOnlyAccessesInaccessibleMemory();
     F.setOnlyReadsMemory();
@@ -292,6 +303,7 @@ void attributeKnownFunctions(llvm::Function &F) {
   }
   if (F.getName() == "frexp" || F.getName() == "frexpf" ||
       F.getName() == "frexpl") {
+    changed = true;
 #if LLVM_VERSION_MAJOR >= 16
     F.setOnlyAccessesArgMemory();
 #else
@@ -301,6 +313,7 @@ void attributeKnownFunctions(llvm::Function &F) {
   }
   if (F.getName() == "__fd_sincos_1" || F.getName() == "__fd_cos_1" ||
       F.getName() == "__mth_i_ipowi") {
+    changed = true;
 #if LLVM_VERSION_MAJOR >= 16
     F.setOnlyReadsMemory();
     F.setOnlyWritesMemory();
@@ -308,6 +321,7 @@ void attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::ReadNone);
 #endif
   }
+  return changed;
 }
 
 namespace {
