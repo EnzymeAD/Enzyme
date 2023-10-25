@@ -636,7 +636,6 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
   return F;
 }
 
-void attribute_copy(BlasInfo blas, llvm::Function *F);
 void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                            llvm::ArrayRef<llvm::Value *> args,
                            llvm::Type *copy_retty,
@@ -650,7 +649,7 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   FunctionType *FT = FunctionType::get(copy_retty, tys, false);
   auto fn = M.getOrInsertFunction(copy_name.str(), FT);
   Function *F = cast<Function>(fn.getCallee());
-  attribute_copy(blas, F);
+  attributeKnownFunctions(*F);
 
   B.CreateCall(fn, args, bundles);
 }
@@ -666,6 +665,8 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
 
   auto FT = FunctionType::get(Type::getVoidTy(M.getContext()), tys, false);
   auto fn = M.getOrInsertFunction(copy_name.str(), FT);
+  Function *F = cast<Function>(fn.getCallee());
+  attributeKnownFunctions(*F);
 
   B.CreateCall(fn, args, bundles);
 }
@@ -859,7 +860,6 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
   return;
 }
 
-void attribute_dot(BlasInfo blas, llvm::Function *F);
 llvm::CallInst *
 getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                      IntegerType *IT, Type *BlasPT, Type *BlasIT, Type *fpTy,
@@ -884,7 +884,7 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
       FunctionType::get(fpTy, {BlasIT, BlasPT, BlasIT, BlasPT, BlasIT}, false);
   Function *FDot =
       cast<Function>(M.getOrInsertFunction(dot_name, FDotT).getCallee());
-  attribute_dot(blas, FDot);
+  attributeKnownFunctions(*F);
 
   // now add the implementation for the inner_prod call
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
