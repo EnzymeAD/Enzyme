@@ -226,7 +226,7 @@ static void gemvTests() {
 
 			assert(foundCalls.size() > 2);
 			auto A_cache = (double*)foundCalls[0].pout_arg1;
-			cblas_dlacpy(layout, '\0', M, N, A, lda, A_cache, M);
+			cblas_dlacpy(layout, '\0', M, N, A, lda, A_cache, N);
 			inputs[4] = BlasInfo(A_cache, layout, M, N, N);
 			auto B_cache = (double*)foundCalls[1].pout_arg1;
 			cblas_dcopy(trans ? M : N, B, incB, B_cache, 1);
