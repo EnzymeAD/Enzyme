@@ -254,6 +254,7 @@ struct BlasCall {
   int iarg4;
   int iarg5;
   int iarg6;
+  int iarg7;
   bool operator==(const BlasCall &rhs) const {
 #define CHECK(A)                                                               \
   if (A != rhs.A)                                                              \
@@ -276,6 +277,7 @@ struct BlasCall {
     CHECK(iarg4)
     CHECK(iarg5)
     CHECK(iarg6)
+    CHECK(iarg7)
     return true;
   }
   bool operator!=(const BlasCall &rhs) const { return !(operator==(rhs)); }
@@ -510,6 +512,8 @@ void printcall(BlasCall rcall) {
     printty(rcall.iarg5);
     printf(", KU=");
     printty(rcall.iarg6);
+    printf(", info=");
+    printty(rcall.iarg7);
     printf(", cfrom=");
     printty(rcall.farg1);
     printf(", cto=");
@@ -748,6 +752,7 @@ void check_equiv(std::string scope, int i, BlasCall expected, BlasCall real) {
   MAKEASSERT(iarg4);
   MAKEASSERT(iarg5);
   MAKEASSERT(iarg6);
+  MAKEASSERT(iarg7);
 }
 
 vector<BlasCall> calls;
@@ -906,7 +911,7 @@ __attribute__((noinline)) void dlacpy(char *uplo_p, int *M_p, int *N_p, double *
 
 __attribute__((noinline)) cublasStatus_t
 cublasDlascl(cublasHandle_t *handle, cublasOperation_t type, int KL, int KU,
-              double cfrom, double cto, int M, int N, double *A, int lda) {
+              double cfrom, double cto, int M, int N, double *A, int lda, int info) {
   calls.push_back((BlasCall){ABIType::CUBLAS,handle,
                                 inDerivative, CallType::LASCL,
                                 A, UNUSED_POINTER, UNUSED_POINTER,
