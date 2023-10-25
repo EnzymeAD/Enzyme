@@ -11,7 +11,7 @@
 #include "Interfaces/EnzymeLogic.h"
 
 #include "Analysis/ActivityAnalysis.h"
-#include "mlir/IR/FunctionInterfaces.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/IR/IRMapping.h"
 
 namespace mlir {

@@ -328,6 +328,8 @@ public:
 
   void visitBranchOperand(OpOperand &operand) override {}
 
+  void visitCallOperand(OpOperand &operand) override {}
+
   void
   visitOperation(Operation *op, ArrayRef<BackwardValueActivity *> operands,
                  ArrayRef<const BackwardValueActivity *> results) override {
@@ -475,10 +477,10 @@ public:
           });
         } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
           // linalg.yield stores to the corresponding value.
-          for (OpOperand *dpsInit : linalgOp.getDpsInitOperands()) {
-            if (dpsInit->get() == value) {
+          for (OpOperand &dpsInit : linalgOp.getDpsInitsMutable()) {
+            if (dpsInit.get() == value) {
               int64_t resultIndex =
-                  dpsInit->getOperandNumber() - linalgOp.getNumDpsInputs();
+                  dpsInit.getOperandNumber() - linalgOp.getNumDpsInputs();
               Value yieldOperand =
                   linalgOp.getBlock()->getTerminator()->getOperand(resultIndex);
               auto *valueState =
@@ -619,10 +621,10 @@ public:
             });
           } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
             if (after.activeDataFlowsOut(alloc)) {
-              for (OpOperand *dpsInit : linalgOp.getDpsInitOperands()) {
-                if (dpsInit->get() == value) {
+              for (OpOperand &dpsInit : linalgOp.getDpsInitsMutable()) {
+                if (dpsInit.get() == value) {
                   int64_t resultIndex =
-                      dpsInit->getOperandNumber() - linalgOp.getNumDpsInputs();
+                      dpsInit.getOperandNumber() - linalgOp.getNumDpsInputs();
                   Value yieldOperand =
                       linalgOp.getBlock()->getTerminator()->getOperand(
                           resultIndex);

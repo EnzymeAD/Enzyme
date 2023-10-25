@@ -108,13 +108,13 @@ struct GenericOpInterfaceReverse
         dims.push_back(dim);
       }
     }
-    for (OpOperand *output : newOp.getDpsInitOperands()) {
-      auto shape = cast<MemRefType>(output->get().getType()).getShape();
+    for (Value output : newOp.getDpsInits()) {
+      auto shape = cast<MemRefType>(output.getType()).getShape();
       for (unsigned i = 0; i < shape.size(); i++) {
         auto dimI =
             cacheBuilder.create<arith::ConstantIndexOp>(op->getLoc(), i);
-        auto dim = cacheBuilder.create<memref::DimOp>(op->getLoc(),
-                                                      output->get(), dimI);
+        auto dim =
+            cacheBuilder.create<memref::DimOp>(op->getLoc(), output, dimI);
         dims.push_back(dim);
       }
     }
@@ -135,12 +135,12 @@ struct GenericOpInterfaceReverse
     SmallVector<utils::IteratorType> iteratorTypes{
         linalgOp.getNumLoops(), utils::IteratorType::parallel};
 
-    for (OpOperand *output : linalgOp.getDpsInitOperands()) {
-      if (!gutils->hasInvertPointer(output->get())) {
+    for (OpOperand &output : linalgOp.getDpsInitsMutable()) {
+      if (!gutils->hasInvertPointer(output.get())) {
         continue;
       }
-      indexingMaps.push_back(linalgOp.getMatchingIndexingMap(output));
-      Value out = gutils->invertPointerM(output->get(), builder);
+      indexingMaps.push_back(linalgOp.getMatchingIndexingMap(&output));
+      Value out = gutils->invertPointerM(output.get(), builder);
       Value view = invertMemref(out, builder, op->getLoc());
       outputs.push_back(view);
     }

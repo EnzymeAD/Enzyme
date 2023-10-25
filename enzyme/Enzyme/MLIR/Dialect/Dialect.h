@@ -9,6 +9,7 @@
 #ifndef ENZYME_DIALECT_H
 #define ENZYME_DIALECT_H
 
+#include "mlir/Bytecode/BytecodeOpInterface.h"
 #include "mlir/IR/Dialect.h"
 
 #include "Dialect/EnzymeOpsDialect.h.inc"

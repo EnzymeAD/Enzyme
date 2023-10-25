@@ -198,7 +198,7 @@ struct LoweredCache {
         .getResult(0);
   }
   static std::optional<LoweredCache>
-  getFromEnzymeCache(Location loc, TypeConverter *typeConverter,
+  getFromEnzymeCache(Location loc, const TypeConverter *typeConverter,
                      Value enzymeCache, OpBuilder &b) {
     assert(enzymeCache.getType().isa<enzyme::CacheType>());
     auto cacheType = enzymeCache.getType().cast<enzyme::CacheType>();

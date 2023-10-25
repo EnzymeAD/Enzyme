@@ -27,8 +27,8 @@ module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<f16, dense<16> : 
     %2 = llvm.mlir.constant("d_reduce_max(%i)=%f\0A\00") : !llvm.array<21 x i8>
     %3 = llvm.mlir.addressof @".str.1" : !llvm.ptr
     %4 = llvm.mlir.constant(0 : i32) : i32
-    %5 = llvm.call @_Z17__enzyme_autodiffPvPdS0_i(%0, %1) : (!llvm.ptr, f64) -> f64
-    %6 = llvm.call @printf(%3, %4, %5) : (!llvm.ptr, i32, f64) -> i32
+    %5 = llvm.call @_Z17__enzyme_autodiffPvPdS0_i(%0, %1) vararg(!llvm.func<f64 (...)>) : (!llvm.ptr, f64) -> f64
+    %6 = llvm.call @printf(%3, %4, %5) vararg(!llvm.func<i32 (ptr, ...)>) : (!llvm.ptr, i32, f64) -> i32
     llvm.return %4 : i32
   }
   llvm.func @printf(!llvm.ptr {llvm.nocapture, llvm.readonly}, ...) -> i32

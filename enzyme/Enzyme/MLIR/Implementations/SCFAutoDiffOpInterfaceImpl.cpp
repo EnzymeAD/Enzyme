@@ -44,8 +44,7 @@ struct ForOpInterface
       }
     }
     SmallVector<mlir::Value> nArgs;
-    for (auto r :
-         llvm::zip(forOp.getIterOperands(), forOp.getRegionIterArgs())) {
+    for (auto r : llvm::zip(forOp.getInitArgs(), forOp.getRegionIterArgs())) {
       // TODO only if used
       nArgs.push_back(gutils->getNewFromOriginal(std::get<0>(r)));
       if (!gutils->isConstantValue(std::get<1>(r)))
@@ -105,7 +104,6 @@ struct ForOpInterfaceReverse
                                 MGradientUtilsReverse *gutils,
                                 SmallVector<Value> caches) const {
     auto forOp = cast<scf::ForOp>(op);
-    auto newForOp = cast<scf::ForOp>(gutils->getNewFromOriginal(op));
 
     SmallVector<Value> nArgs;
     for (Value v : forOp.getResults()) {
@@ -140,7 +138,7 @@ struct ForOpInterfaceReverse
     repFor.getRegion().insertArgument((unsigned)0, indexType, forOp.getLoc());
 
     for (const auto &[iterOperand, adjResult] :
-         llvm::zip(forOp.getIterOperands(), repFor.getResults())) {
+         llvm::zip(forOp.getInitArgs(), repFor.getResults())) {
       if (gutils->hasInvertPointer(iterOperand)) {
         auto autoDiffType = cast<AutoDiffTypeInterface>(iterOperand.getType());
         Value before = gutils->invertPointerM(iterOperand, builder);
@@ -176,7 +174,7 @@ struct ForOpInterfaceReverse
 
   void createShadowValues(Operation *op, OpBuilder &builder,
                           MGradientUtilsReverse *gutils) const {
-    auto forOp = cast<scf::ForOp>(op);
+    // auto forOp = cast<scf::ForOp>(op);
   }
 };
 

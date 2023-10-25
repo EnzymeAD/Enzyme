@@ -17,12 +17,12 @@ include "mlir/IR/SymbolInterfaces.td"
 include "mlir/IR/EnumAttr.td"
 
 include "mlir/IR/OpBase.td"
-include "mlir/IR/FunctionInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
 
 include "mlir/IR/AttrTypeBase.td"
 
 include "mlir/Interfaces/ControlFlowInterfaces.td"
+include "mlir/Interfaces/FunctionInterfaces.td"
 include "mlir/Interfaces/LoopLikeInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 

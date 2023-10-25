@@ -75,7 +75,7 @@ class PointerTypeInterface
 public:
   mlir::Value createNullValue(mlir::Type self, OpBuilder &builder,
                               Location loc) const {
-    return builder.create<LLVM::NullOp>(loc, self);
+    return builder.create<LLVM::ZeroOp>(loc, self);
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,

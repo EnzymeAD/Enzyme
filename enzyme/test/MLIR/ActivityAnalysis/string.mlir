@@ -41,7 +41,7 @@ module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<!llvm.ptr, dense<
     llvm.store %5, %16 {alignment = 8 : i64, tbaa = [#tbaa_tag2]} : i64, !llvm.ptr
     %17 = llvm.getelementptr inbounds %10[%1, 2, 1, %8] : (!llvm.ptr, i64, i64) -> !llvm.ptr, !llvm.struct<"class.std::__cxx11::basic_string", (struct<"struct.std::__cxx11::basic_string<char>::_Alloc_hider", (ptr)>, i64, struct<"union.anon", (i64, array<8 x i8>)>)>
     llvm.store %9, %17 {alignment = 1 : i64, tbaa = [#tbaa_tag]} : i8, !llvm.ptr
-    %18 = llvm.call @printf(%14) : (!llvm.ptr) -> i32
+    %18 = llvm.call @printf(%14) vararg(!llvm.func<i32 (ptr, ...)>) : (!llvm.ptr) -> i32
     %19 = llvm.load %15 {alignment = 8 : i64, tbaa = [#tbaa_tag3], tag = "loaded"} : !llvm.ptr -> !llvm.ptr
     %20 = llvm.icmp "eq" %19, %14 : !llvm.ptr
     llvm.cond_br %20, ^bb2, ^bb1

@@ -16,7 +16,7 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
-#include "mlir/IR/DialectImplementation.h"
+#include "mlir/Bytecode/BytecodeOpInterface.h"
 
 #define GET_OP_CLASSES
 #include "Dialect/EnzymeOps.h.inc"

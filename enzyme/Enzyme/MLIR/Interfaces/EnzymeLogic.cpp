@@ -3,9 +3,9 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
-#include "mlir/IR/FunctionInterfaces.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
 // TODO: this shouldn't depend on specific dialects except Enzyme.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -57,7 +57,7 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
 
     SmallVector<NamedAttribute> attrs(newInst->getAttrs());
     for (auto &attr : attrs) {
-      if (attr.getName() == "operand_segment_sizes")
+      if (attr.getName() == "operandSegmentSizes")
         attr.setValue(nBuilder.getDenseI32ArrayAttr(segSizes));
     }
 
