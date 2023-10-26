@@ -228,8 +228,8 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                       (b<"gemm"> $layout, $transa, $transb, $m, $n, $k, Constant<"1.0">, $A, (ld $A, $transa, $lda, $m, $k), $B, (ld $B, $transb, $ldb, $k, $n), Constant<"0.0">, use<"AB">, $m),// TODO: check if last arg should be $m or $n
                       (FrobInnerProd<""> $m, $n, adj<"C">, use<"AB">)),
                   /* A     */ (b<"gemm"> $layout, (Rows $transa, 
-                                                    (Concat Char<"N">, transpose<"transb">, $m, $k), 
-                                                    (Concat $transb, Char<"T">, $k, $m)),
+                                                    (Concat $transa, transpose<"transb">, $m, $k), 
+                                                    (Concat $transb, $transa, $k, $m)),
                                                   $n, $alpha, 
                                                   (Rows $transa, 
                                                     (Concat adj<"C">, $B, (ld $B, $transb, $ldb, $k, $n)), 
@@ -237,8 +237,8 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                                                   Constant<"1.0">, adj<"A">),
 
                   /* B     */ (b<"gemm"> $layout, (Rows $transb, 
-                                                    (Concat transpose<"transa">, Char<"N">, $k, $n),
-                                                    (Concat Char<"T">, $transa, $n, $k)),
+                                                    (Concat transpose<"transa">, $transb, $k, $n),
+                                                    (Concat $transb, $transa, $n, $k)),
                                                   $m, $alpha, 
                                                   (Rows $transb, 
                                                     (Concat $A, (ld $A, $transa, $lda, $m, $k), adj<"C">),

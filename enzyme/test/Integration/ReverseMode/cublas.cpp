@@ -334,8 +334,7 @@ static void gemmTests() {
             transB_bool ? A : dC, transB_bool ? lda : incC, 1.0, dB, incB);
 
         // TODO we are currently faking support here, this needs to be actually implemented
-        cublasDlascl(handle, (cublasOperation_t)'G', 0, 0, 1.0, beta, M, N, dC, incC /*, extra
-        // 0*/ );
+        cublasDlascl(handle, (cublasOperation_t)'G', 0, 0, 1.0, beta, M, N, dC, incC, 0);
 
         checkTest(Test);
 

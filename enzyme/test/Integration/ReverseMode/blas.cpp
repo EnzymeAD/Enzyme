@@ -90,11 +90,12 @@ static void dotTests() {
 static void gemvTests() {
   // N means normal matrix, T means transposed
   for (char layout : { CblasRowMajor, CblasColMajor }) {
-  for (char transA : {'N', 'n', 'T', 't'}) {
+  for (auto transA : {CBLAS_TRANSPOSE::CblasNoTrans, CBLAS_TRANSPOSE::CblasTrans}) {
+      // todo in fortran blas consider 'N', 'n', 'T', 't'}
   
     {
 
-        bool trans = !(transA == 'N' || transA == 'n');
+        bool trans = !is_normal(transA);
         std::string Test = "GEMV active A, C ";
     BlasInfo inputs[6] = {
         /*A*/ BlasInfo(A, layout, M, N, lda),
@@ -105,7 +106,7 @@ static void gemvTests() {
 		BlasInfo()
     };
     init();
-    my_dgemv(layout, transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
+    my_dgemv(layout, (char)transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
 
     assert(calls.size() == 1);
     assert(calls[0].inDerivative == false);
@@ -116,7 +117,7 @@ static void gemvTests() {
     assert(calls[0].farg1 == alpha);
     assert(calls[0].farg2 == beta);
     assert(calls[0].layout == layout);
-    assert(calls[0].targ1 == transA);
+    assert(calls[0].targ1 == (char)transA);
     assert(calls[0].targ2 == UNUSED_TRANS);
     assert(calls[0].iarg1 == M);
     assert(calls[0].iarg2 == N);
@@ -145,7 +146,7 @@ static void gemvTests() {
         foundCalls = calls;
         init();
 
-        my_dgemv(layout, transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
+        my_dgemv(layout, (char)transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
 
         inDerivative = true;
         // dC = alpha * X * transpose(Y) + A
@@ -181,14 +182,14 @@ static void gemvTests() {
             foundCalls = calls;
             init();
 
-            my_dgemv(layout, transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
+            my_dgemv(layout, (char)transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
 
             inDerivative = true;
             // dC = alpha * X * transpose(Y) + A
             cblas_dger(layout, M, N, alpha, trans ? B : dC, trans ? incB : incC, trans ? dC : B, trans ? incC : incB, dA, lda);
 
             // dB = alpha * trans(A) * dC + dB
-            cblas_dgemv(layout, transpose(transA), M, N, alpha, A, lda, dC, incC, 1.0, dB, incB); 
+            cblas_dgemv(layout, (char)transpose(transA), M, N, alpha, A, lda, dC, incC, 1.0, dB, incB); 
 
             // dY = beta * dY
             cblas_dscal(trans ? N : M, beta, dC, incC);
@@ -225,13 +226,13 @@ static void gemvTests() {
 
 			assert(foundCalls.size() > 2);
 			auto A_cache = (double*)foundCalls[0].pout_arg1;
-			cblas_dlacpy(layout, '\0', M, N, A, lda, A_cache, M);
-			inputs[4] = BlasInfo(A_cache, layout, M, N, M);
+			cblas_dlacpy(layout, '\0', M, N, A, lda, A_cache, N);
+			inputs[4] = BlasInfo(A_cache, layout, M, N, N);
 			auto B_cache = (double*)foundCalls[1].pout_arg1;
 			cblas_dcopy(trans ? M : N, B, incB, B_cache, 1);
 			inputs[5] = BlasInfo(B_cache, trans ? M : N, 1);
 
-            ow_dgemv(layout, transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
+            ow_dgemv(layout, (char)transA, M, N, alpha, A, lda, B, incB, beta, C, incC);
 
             inDerivative = true;
             // dC = alpha * X * transpose(Y) + A
@@ -243,7 +244,7 @@ static void gemvTests() {
 							lda);
 
             // dB = alpha * trans(A) * dC + dB
-            cblas_dgemv(layout, transpose(transA), M, N, alpha, A_cache, M, dC, incC, 1.0, dB, incB); 
+            cblas_dgemv(layout, (char)transpose(transA), M, N, alpha, A_cache, N, dC, incC, 1.0, dB, incB); 
 
             // dY = beta * dY
             cblas_dscal(trans ? N : M, beta, dC, incC);
@@ -269,13 +270,14 @@ static void gemvTests() {
 static void gemmTests() {
   // N means normal matrix, T means transposed
   for (char layout : { CblasRowMajor, CblasColMajor }) {
-  for (char transA : {'N', 'n', 'T', 't'}) {
-  for (char transB : {'N', 'n', 'T', 't'}) {
+  for (auto transA : {CBLAS_TRANSPOSE::CblasNoTrans, CBLAS_TRANSPOSE::CblasTrans}) {
+  for (auto transB : {CBLAS_TRANSPOSE::CblasNoTrans, CBLAS_TRANSPOSE::CblasTrans}) {
+    // todo fortran blas {'N', 'n', 'T', 't'}
   
     {
 
-        bool transA_bool = !(transA == 'N' || transA == 'n');
-        bool transB_bool = !(transB == 'N' || transB == 'n');
+        bool transA_bool = !is_normal(transA);
+        bool transB_bool = !is_normal(transB);
         std::string Test = "GEMM";
     BlasInfo inputs[6] = {
         /*A*/ BlasInfo(A, layout, transA_bool ? K : M, transA_bool ? M : K, lda),
@@ -286,7 +288,7 @@ static void gemmTests() {
 		BlasInfo()
     };
     init();
-    my_dgemm(layout, transA, transB, M, N, K, alpha, A, lda, B, incB, beta, C, incC);
+    my_dgemm(layout, (char)transA, (char)transB, M, N, K, alpha, A, lda, B, incB, beta, C, incC);
 
     assert(calls.size() == 1);
     assert(calls[0].inDerivative == false);
@@ -297,8 +299,8 @@ static void gemmTests() {
     assert(calls[0].farg1 == alpha);
     assert(calls[0].farg2 == beta);
     assert(calls[0].layout == layout);
-    assert(calls[0].targ1 == transA);
-    assert(calls[0].targ2 == transB);
+    assert(calls[0].targ1 == (char)transA);
+    assert(calls[0].targ2 == (char)transB);
     assert(calls[0].iarg1 == M);
     assert(calls[0].iarg2 == N);
     assert(calls[0].iarg3 == K);
@@ -329,14 +331,14 @@ static void gemmTests() {
         init();
 
     
-        my_dgemm(layout, transA, transB, M, N, K, alpha, A, lda, B, incB, beta, C, incC);
+        my_dgemm(layout, (char)transA, (char)transB, M, N, K, alpha, A, lda, B, incB, beta, C, incC);
 
         inDerivative = true;
 
         // dA = 
         my_dgemm(layout,
-                    transA_bool ? transB : 'N',
-                    transA_bool ? 'T' : transpose(transB),
+                    transA_bool ? (char)transB : (char)CBLAS_TRANSPOSE::CblasNoTrans,
+                    transA_bool ? (char)CBLAS_TRANSPOSE::CblasTrans : (char)transpose(transB),
                     transA_bool ? K : M,
                     transA_bool ? M : K,
                     N,
@@ -349,8 +351,8 @@ static void gemmTests() {
         
         // dB = 
         my_dgemm(layout,
-                    transB_bool ? 'T' : transpose(transA),
-                    transB_bool ? transA : 'N', //transB,
+                    transB_bool ? (char)CBLAS_TRANSPOSE::CblasTrans : (char)transpose(transA),
+                    transB_bool ? (char)transA : (char)CBLAS_TRANSPOSE::CblasNoTrans, //transB,
                     transB_bool ? N : K,
                     transB_bool ? K : N,
                     M,
@@ -361,7 +363,7 @@ static void gemmTests() {
                     transB_bool ? lda : incC,
                     1.0, dB, incB);
        
-        cblas_dlascl(layout, 'G', 0, 0, 1.0, beta, M, N, dC, incC /*, extra 0*/ );
+        cblas_dlascl(layout, 'G', 0, 0, 1.0, beta, M, N, dC, incC, 0 );
 		
         checkTest(Test);
     

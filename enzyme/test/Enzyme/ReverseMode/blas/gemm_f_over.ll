@@ -48,21 +48,17 @@ entry:
 
 ; CHECK: define internal void @diffef(i8* %C, i8* %"C'", i8* %A, i8* %"A'", i8* %B, i8* %"B'")
 ; CHECK-NEXT: entry:
+; CHECK-DAG:   %byref.m = alloca i64
 ; CHECK-DAG:   %ret = alloca double
 ; CHECK-DAG:   %byref.transpose.transa = alloca i8
 ; CHECK-DAG:   %byref.transpose.transb = alloca i8
 ; CHECK-DAG:   %byref.int.one = alloca i64
-; CHECK-DAG:   %byref.constant.char.T = alloca i8, align 1
-; CHECK-DAG:   %byref.constant.char.N = alloca i8, align 1
 ; CHECK-DAG:   %byref.constant.fp.1.0 = alloca double
-; CHECK-DAG:   %byref.constant.char.T2 = alloca i8, align 1
-; CHECK-DAG:   %byref.constant.char.N3 = alloca i8, align 1
-; CHECK-DAG:   %byref.constant.fp.1.06 = alloca double
+; CHECK-DAG:   %[[byref_fp_1_06:.+]] = alloca double
 ; CHECK-DAG:   %byref.constant.char.G = alloca i8
 ; CHECK-DAG:   %byref.constant.int.0 = alloca i64
-; CHECK-DAT:   %byref.constant.int.08 = alloca i64, align 8
-; CHECK-DAG:   %byref.m = alloca i64
-; CHECK-DAG:   %byref.constant.fp.1.010 = alloca double
+; CHECK-DAG:   %[[byref_int_08:.+]] = alloca i64, align 8
+; CHECK-DAG:   %[[byref_fp_1_010:.+]] = alloca double
 ; CHECK-DAG:   %[[tmp:.+]] = alloca i8
 ; CHECK-DAG:   %transa = alloca i8, align 1
 ; CHECK-DAG:   %transb = alloca i8, align 1
@@ -123,15 +119,12 @@ entry:
 ; CHECK-NEXT:   store i8 %[[i25]], i8* %byref.transpose.transb
 ; CHECK-NEXT:   store i64 1, i64* %byref.int.one
 ; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
-
-; CHECK-NEXT:   store i8 84, i8* %byref.constant.char.T, align 1
-; CHECK-NEXT:   store i8 78, i8* %byref.constant.char.N, align 1
 ; CHECK-NEXT:   %ld.row.trans = load i8, i8* %transa, align 1
 ; CHECK-NEXT:   %[[a16:.+]] = icmp eq i8 %ld.row.trans, 110
 ; CHECK-NEXT:   %[[a17:.+]] = icmp eq i8 %ld.row.trans, 78
 ; CHECK-NEXT:   %[[a18:.+]] = or i1 %[[a17]], %[[a16]]
-; CHECK-NEXT:   %[[a19:.+]] = select i1 %[[a18]], i8* %byref.constant.char.N, i8* %transb
-; CHECK-NEXT:   %[[a20:.+]] = select i1 %[[a18]], i8* %byref.transpose.transb, i8* %byref.constant.char.T
+; CHECK-NEXT:   %[[a19:.+]] = select i1 %[[a18]], i8* %transa, i8* %transb
+; CHECK-NEXT:   %[[a20:.+]] = select i1 %[[a18]], i8* %byref.transpose.transb, i8* %transa
 ; CHECK-NEXT:   %[[a21:.+]] = select i1 %[[a18]], i8* %cast.m, i8* %k_p
 ; CHECK-NEXT:   %[[a22:.+]] = select i1 %[[a18]], i8* %k_p, i8* %cast.m
 ; CHECK-NEXT:   %ld.row.trans1 = load i8, i8* %transa, align 1
@@ -145,34 +138,32 @@ entry:
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0, align 8
 ; CHECK-NEXT:   %fpcast.constant.fp.1.0 = bitcast double* %byref.constant.fp.1.0 to i8*
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %[[a19]], i8* %[[a20]], i8* %[[a21]], i8* %[[a22]], i8* %n_p, i8* %alpha_p, i8* %[[a26]], i8* %[[a27]], i8* %[[a28]], i8* %[[a29]], i8* %fpcast.constant.fp.1.0, i8* %"A'", i8* %lda_p, i64 1, i64 1)
-; CHECK-NEXT:   store i8 84, i8* %byref.constant.char.T2, align 1
-; CHECK-NEXT:   store i8 78, i8* %byref.constant.char.N3, align 1
-; CHECK-NEXT:   %ld.row.trans4 = load i8, i8* %transb, align 1
-; CHECK-NEXT:   %[[a30:.+]] = icmp eq i8 %ld.row.trans4, 110
-; CHECK-NEXT:   %[[a31:.+]] = icmp eq i8 %ld.row.trans4, 78
+; CHECK-NEXT:   %[[ld_row_trans4:.+]] = load i8, i8* %transb, align 1
+; CHECK-NEXT:   %[[a30:.+]] = icmp eq i8 %[[ld_row_trans4]], 110
+; CHECK-NEXT:   %[[a31:.+]] = icmp eq i8 %[[ld_row_trans4]], 78
 ; CHECK-NEXT:   %[[a32:.+]] = or i1 %[[a31]], %[[a30]]
-; CHECK-NEXT:   %[[a33:.+]] = select i1 %[[a32]], i8* %byref.transpose.transa, i8* %byref.constant.char.T2
-; CHECK-NEXT:   %[[a34:.+]] = select i1 %[[a32]], i8* %byref.constant.char.N3, i8* %transa
+; CHECK-NEXT:   %[[a33:.+]] = select i1 %[[a32]], i8* %byref.transpose.transa, i8* %transb
+; CHECK-NEXT:   %[[a34:.+]] = select i1 %[[a32]], i8* %transb, i8* %transa
 ; CHECK-NEXT:   %[[a35:.+]] = select i1 %[[a32]], i8* %k_p, i8* %n_p
 ; CHECK-NEXT:   %[[a36:.+]] = select i1 %[[a32]], i8* %n_p, i8* %k_p
-; CHECK-NEXT:   %ld.row.trans5 = load i8, i8* %transb, align 1
-; CHECK-NEXT:   %[[a37:.+]] = icmp eq i8 %ld.row.trans5, 110
-; CHECK-NEXT:   %[[a38:.+]] = icmp eq i8 %ld.row.trans5, 78
+; CHECK-NEXT:   %[[ld_row_trans5:.+]] = load i8, i8* %transb, align 1
+; CHECK-NEXT:   %[[a37:.+]] = icmp eq i8 %[[ld_row_trans5]], 110
+; CHECK-NEXT:   %[[a38:.+]] = icmp eq i8 %[[ld_row_trans5]], 78
 ; CHECK-NEXT:   %[[a39:.+]] = or i1 %[[a38]], %[[a37]]
 ; CHECK-NEXT:   %[[a40:.+]] = select i1 %[[a39]], i8* %A, i8* %"C'"
 ; CHECK-NEXT:   %[[a41:.+]] = select i1 %[[a39]], i8* %lda_p, i8* %ldc_p
 ; CHECK-NEXT:   %[[a42:.+]] = select i1 %[[a39]], i8* %"C'", i8* %A
 ; CHECK-NEXT:   %[[a43:.+]] = select i1 %[[a39]], i8* %ldc_p, i8* %lda_p
-; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.06, align 8
-; CHECK-NEXT:   %fpcast.constant.fp.1.07 = bitcast double* %byref.constant.fp.1.06 to i8*
-; CHECK-NEXT:   call void @dgemm_64_(i8* %[[a33]], i8* %[[a34]], i8* %[[a35]], i8* %[[a36]], i8* %cast.m, i8* %alpha_p, i8* %[[a40]], i8* %[[a41]], i8* %[[a42]], i8* %[[a43]], i8* %fpcast.constant.fp.1.07, i8* %"B'", i8* %ldb_p, i64 1, i64 1)
+; CHECK-NEXT:   store double 1.000000e+00, double* %[[byref_fp_1_06]], align 8
+; CHECK-NEXT:   %[[fpcast_1_07:.+]] = bitcast double* %[[byref_fp_1_06]] to i8*
+; CHECK-NEXT:   call void @dgemm_64_(i8* %[[a33]], i8* %[[a34]], i8* %[[a35]], i8* %[[a36]], i8* %cast.m, i8* %alpha_p, i8* %[[a40]], i8* %[[a41]], i8* %[[a42]], i8* %[[a43]], i8* %[[fpcast_1_07]], i8* %"B'", i8* %ldb_p, i64 1, i64 1)
 ; CHECK-NEXT:   store i8 71, i8* %byref.constant.char.G
 ; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.0
 ; CHECK-NEXT:   %intcast.constant.int.0 = bitcast i64* %byref.constant.int.0 to i8*
-; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.08
-; CHECK-NEXT:   %[[int02:.+]] = bitcast i64* %byref.constant.int.08 to i8*
+; CHECK-NEXT:   store i64 0, i64* %[[byref_int_08]]
+; CHECK-NEXT:   %[[int02:.+]] = bitcast i64* %[[byref_int_08]] to i8*
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
-; CHECK-NEXT:   %[[fp11:.+]] = bitcast double* %byref.constant.fp.1.010 to i8*
+; CHECK-NEXT:   %[[fp11:.+]] = bitcast double* %[[byref_fp_1_010]] to i8*
 ; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i8* %intcast.constant.int.0, i8* %[[int02]], i8* %[[fp11]], i8* %beta_p, i8* %cast.m, i8* %n_p, i8* %"C'", i8* %ldc_p, i8* %[[tmp]], i64 1)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

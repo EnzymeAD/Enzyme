@@ -2499,7 +2499,8 @@ llvm::Value *to_blas_fp_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
 llvm::Value *select_vec_dims(IRBuilder<> &B, llvm::Value *trans,
                              llvm::Value *dim1, llvm::Value *dim2, bool byRef,
                              bool cublas) {
-  Value *width = B.CreateSelect(is_normal(B, trans, byRef, cublas), dim1, dim2);
+  auto norm = is_normal(B, trans, byRef, cublas);
+  Value *width = B.CreateSelect(norm, dim1, dim2);
 
   return width;
 }
@@ -2529,21 +2530,24 @@ llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef,
     isNormal = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 0));
     return isNormal;
   }
-  IntegerType *charTy;
+  // Explicitly support 'N' always, since we use in the rule infra
+  if (auto CI = dyn_cast<ConstantInt>(trans)) {
+    if (CI->getValue() == 'N' || CI->getValue() == 'n')
+      return ConstantInt::getTrue(
+          B.getContext()); //(Type::getInt1Ty(B.getContext()), true);
+  }
   if (byRef) {
     // can't inspect opaque ptr, so assume 8 (Julia)
-    charTy = IntegerType::get(trans->getContext(), 8);
+    IntegerType *charTy = IntegerType::get(trans->getContext(), 8);
     trans = B.CreateLoad(charTy, trans, "loaded.trans");
+
+    // fortran blas
+    return B.CreateOr(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'n')),
+                      B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'N')));
   } else {
     // we can inspect scalars
-    unsigned int len = trans->getType()->getScalarSizeInBits();
-    charTy = IntegerType::get(trans->getContext(), len);
+    return B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 111));
   }
-
-  Value *isNormal =
-      B.CreateOr(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'n')),
-                 B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'N')));
-  return isNormal;
 }
 
 // Ok. Here we are.
@@ -2598,7 +2602,7 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
 
 // Implement the following logic to get the width of a matrix
 // if (cache_A) {
-//   ld_A = (arg_transa == 'N') ? arg_m : arg_k;
+//   ld_A = (arg_transa == 'N') ? arg_k : arg_m;
 // } else {
 //   ld_A = arg_lda;
 // }
@@ -2613,7 +2617,7 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
   assert(trans.size() == 1);
 
   llvm::Value *width =
-      CreateSelect(B, is_normal(B, trans[0], byRef, cublas), dim1, dim2);
+      CreateSelect(B, is_normal(B, trans[0], byRef, cublas), dim2, dim1);
 
   return width;
 }
@@ -2622,6 +2626,23 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                        bool cublas, llvm::IntegerType *julia_decl,
                        llvm::IRBuilder<> &entryBuilder,
                        const llvm::Twine &name) {
+
+  if (!byRef) {
+    // Explicitly support 'N' always, since we use in the rule infra
+    if (auto CI = dyn_cast<ConstantInt>(V)) {
+      if (CI->getValue() == 'N')
+        return ConstantInt::get(CI->getType(), 'T');
+      if (CI->getValue() == 'n')
+        return ConstantInt::get(CI->getType(), 't');
+    }
+
+    // cblas
+    if (!cublas)
+      return B.CreateSelect(
+          B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 111)),
+          ConstantInt::get(V->getType(), 112),
+          ConstantInt::get(V->getType(), 111));
+  }
 
   if (byRef) {
     auto charType = IntegerType::get(V->getContext(), 8);
@@ -2659,9 +2680,14 @@ SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
 
   Value *cond = nullptr;
   if (!cublas) {
-    cond = B.CreateOr(
-        B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N')),
-        B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n')));
+
+    if (!byRef) {
+      cond = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 111));
+    } else {
+      cond = B.CreateOr(
+          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N')),
+          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n')));
+    }
   } else {
     // CUBLAS_OP_N = 0, CUBLAS_OP_T = 1, CUBLAS_OP_C = 2
     // TODO: verify
