@@ -270,14 +270,12 @@ entry:
 ; CHECK-NEXT:   store i8 %[[r15]], i8* %byref.transpose.transb
 ; CHECK-NEXT:   store i64 1, i64* %byref.int.one
 ; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
-; CHECK-NEXT:   store i8 84, i8* %byref.constant.char.T, align 1
-; CHECK-NEXT:   store i8 78, i8* %byref.constant.char.N, align 1
 ; CHECK-NEXT:   %ld.row.trans = load i8, i8* %byref.transb, align 1
 ; CHECK-NEXT:   %[[r55:.+]] = icmp eq i8 %ld.row.trans, 110
 ; CHECK-NEXT:   %[[r56:.+]] = icmp eq i8 %ld.row.trans, 78
 ; CHECK-NEXT:   %[[r57:.+]] = or i1 %[[r56]], %[[r55]]
-; CHECK-NEXT:   %[[r58:.+]] = select i1 %[[r57]], i8* %byref.transpose.transa, i8* %byref.constant.char.T
-; CHECK-NEXT:   %[[r59:.+]] = select i1 %[[r57]], i8* %byref.constant.char.N, i8* %byref.transa
+; CHECK-NEXT:   %[[r58:.+]] = select i1 %[[r57]], i8* %byref.transpose.transa, i8* %byref.transb
+; CHECK-NEXT:   %[[r59:.+]] = select i1 %[[r57]], i8* %byref.transb, i8* %byref.transa
 ; CHECK-NEXT:   %[[r60:.+]] = select i1 %[[r57]], i8* %cast.k, i8* %n_p_unwrap
 ; CHECK-NEXT:   %[[r61:.+]] = select i1 %[[r57]], i8* %n_p_unwrap, i8* %cast.k
 ; CHECK-NEXT:   %loaded.trans30 = load i8, i8* %byref.transa, align 1
