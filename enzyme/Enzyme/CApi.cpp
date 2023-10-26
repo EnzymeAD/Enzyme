@@ -1586,7 +1586,9 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     T = FT->getParamType(i)->getPointerElementType();
 #endif
     IRBuilder<> EB(&NewF->getEntryBlock().front());
-    arg->replaceAllUsesWith(EB.CreateAlloca(T));
+    auto AL = EB.CreateAlloca(T);
+    EB.CreateStore(Constant::getNullValue(T), AL);
+    arg->replaceAllUsesWith(AL);
     delete arg;
   }
   for (auto i : rroots_v) {
@@ -1604,7 +1606,9 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     IRBuilder<> EB(&NewF->getEntryBlock().front());
     Value *val = UndefValue::get(AT);
     for (size_t j = 0; j < AT->getNumElements(); j++) {
-      val = EB.CreateInsertValue(val, EB.CreateAlloca(T), j);
+      auto AL = EB.CreateAlloca(T);
+      EB.CreateStore(Constant::getNullValue(T), AL);
+      val = EB.CreateInsertValue(val, AL, j);
     }
     arg->replaceAllUsesWith(val);
     delete arg;
@@ -1622,6 +1626,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     Value *sret = nullptr;
     if (sretTy) {
       sret = EB.CreateAlloca(sretTy);
+      EB.CreateStore(Constant::getNullValue(sretTy), sret);
       vals.push_back(sret);
       NewAttrs = NewAttrs.addAttribute(
           F->getContext(), AttributeList::FirstArgIndex + nexti,
@@ -1631,6 +1636,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     AllocaInst *roots = nullptr;
     if (roots_AT) {
       roots = EB.CreateAlloca(roots_AT);
+      EB.CreateStore(Constant::getNullValue(roots_AT), roots);
       vals.push_back(roots);
       NewAttrs = NewAttrs.addAttribute(
 
