@@ -2637,10 +2637,11 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
     }
 
     // cblas
-    return B.CreateSelect(
-        B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 111)),
-        ConstantInt::get(V->getType(), 112),
-        ConstantInt::get(V->getType(), 111));
+    if (!cublas)
+      return B.CreateSelect(
+          B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 111)),
+          ConstantInt::get(V->getType(), 112),
+          ConstantInt::get(V->getType(), 111));
   }
 
   if (byRef) {
