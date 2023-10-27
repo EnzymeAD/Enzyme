@@ -2103,7 +2103,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
       BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
       IRBuilder<> bb(BB);
-      auto AI = bb.CreateAlloca(sretTy, 0, "stack_fixaugment");
+      auto AI = bb.CreateAlloca(sretTy);
       SmallVector<Value *, 3> argVs;
       auto arg = NewF->arg_begin();
       size_t realidx = 0;
@@ -2174,8 +2174,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           Value *res = UndefValue::get(RT);
           res = bb.CreateInsertValue(res, bb.CreateExtractValue(cal, {0}), {0});
           for (unsigned i = 1; i <= 2; i++) {
-            auto AI = bb.CreateAlloca(todiff->getReturnType(), 0,
-                                      "stack_enzyme_augment");
+            auto AI = bb.CreateAlloca(todiff->getReturnType());
             bb.CreateStore(
                 bb.CreateExtractValue(cal, {i}),
                 bb.CreatePointerCast(
@@ -2240,8 +2239,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           Value *res = UndefValue::get(RT);
           res = bb.CreateInsertValue(res, bb.CreateExtractValue(cal, {0}), {0});
           for (unsigned i = 1; i <= 1; i++) {
-            auto AI = bb.CreateAlloca(todiff->getReturnType(), 0,
-                                      "stack_enzymeaugmentv2");
+            auto AI = bb.CreateAlloca(todiff->getReturnType());
             bb.CreateStore(
                 bb.CreateExtractValue(cal, {i}),
                 bb.CreatePointerCast(
@@ -2743,8 +2741,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   IRBuilder<> ib(NewF->getEntryBlock().getFirstNonPHI());
 
-  AllocaInst *ret =
-      noReturn ? nullptr : ib.CreateAlloca(RetType, 0, "stack_tapretmem");
+  AllocaInst *ret = noReturn ? nullptr : ib.CreateAlloca(RetType);
 
   if (!noTape) {
     Value *tapeMemory;
@@ -3885,7 +3882,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           auto idx = hasTape ? (args.size() - 2) : (args.size() - 1);
           Type *T = (foundcalled->arg_begin() + idx)->getType();
 
-          auto AI = bb.CreateAlloca(T, 0, "stack_fixgradient");
+          auto AI = bb.CreateAlloca(T);
           bb.CreateStore(args[idx],
                          bb.CreatePointerCast(
                              AI, PointerType::getUnqual(args[idx]->getType())));
