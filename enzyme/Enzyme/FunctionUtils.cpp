@@ -2726,16 +2726,31 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
         for (size_t i = argstart; i < num_args; i++)
           args.push_back(CI->getArgOperand(i));
         if (load_fn->getFunctionType()->getNumParams() != args.size()) {
-          llvm::errs() << *load_fn << "\n";
+          auto fnName = load_fn->getName();
+          auto found_numargs = load_fn->getFunctionType()->getNumParams();
+          auto expected_numargs = args.size();
+          EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
+                      " incorrect number of arguments to loader function ",
+                      fnName, " expected ", expected_numargs, " found ",
+                      found_numargs, " - ", *load_fn->getFunctionType());
+          continue;
         } else {
+          bool tocontinue = false;
           for (size_t i = 0; i < args.size(); i++) {
             if (load_fn->getFunctionType()->getParamType(i) !=
                 args[i]->getType()) {
-              llvm::errs() << "i: " << i << " lfn: " << *load_fn
-                           << " arg[i]: " << *args[i] << "\n";
+              auto fnName = load_fn->getName();
+              EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
+                          " incorrect type of argument ", i,
+                          " to loader function ", fnName, " expected ",
+                          *args[i]->getType(), " found ",
+                          load_fn->getFunctionType()->params()[i]);
+              tocontinue = true;
               break;
             }
           }
+          if (tocontinue)
+            continue;
         }
         CallInst *call = B.CreateCall(load_fn, args);
         call->setDebugLoc(LI->getDebugLoc());
@@ -2780,9 +2795,9 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
       CI->replaceAllUsesWith(Constant::getNullValue(CI->getType()));
       CI->eraseFromParent();
     } else if (replaceAll) {
-      llvm::errs() << *F << "\n";
-      llvm::errs() << " U: " << *remaining << " of " << *CI << "\n";
-      llvm_unreachable("Illegal replacement use of enzyme sparisification");
+      EmitFailure("IllegalSparse", remaining->getDebugLoc(), remaining,
+                  " Illegal remaining use (", *remaining, ") of todense (", *CI,
+                  ") in function ", *F);
     }
   }
   return changed;
