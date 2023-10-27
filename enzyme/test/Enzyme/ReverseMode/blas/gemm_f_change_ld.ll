@@ -52,9 +52,8 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %byref.copy.garbage = alloca i8
 ; CHECK-NEXT:   %ret = alloca double
-; CHECK-NEXT:   %byref.transpose.transa = alloca i8
-; CHECK-NEXT:   %byref.transpose.transb = alloca i8
 ; CHECK-NEXT:   %byref.int.one = alloca i64
+; CHECK-NEXT:   %byref.transpose.transb = alloca i8
 ; CHECK-NEXT:   %byref.constant.fp.1.0 = alloca double, align 8
 ; CHECK-NEXT:   %byref.constant.char.G = alloca i8
 ; CHECK-NEXT:   %byref.constant.int.0 = alloca i64
@@ -112,16 +111,8 @@ entry:
 
 ; CHECK: invertentry:                                      ; preds = %entry
 ; CHECK-NEXT:   %[[a10:.+]] = bitcast double* %cache.B to i8*
-; CHECK-NEXT:   %ld.transa = load i8, i8* %transa
-; CHECK-DAG:    %[[r0:.+]] = icmp eq i8 %ld.transa, 110
-; CHECK-DAG:    %[[r1:.+]] = select i1 %[[r0]], i8 116, i8 0
-; CHECK-DAG:    %[[r2:.+]] = icmp eq i8 %ld.transa, 78
-; CHECK-DAG:    %[[r3:.+]] = select i1 %[[r2]], i8 84, i8 %[[r1]]
-; CHECK-DAG:    %[[r4:.+]] = icmp eq i8 %ld.transa, 116
-; CHECK-DAG:    %[[r5:.+]] = select i1 %[[r4]], i8 110, i8 %[[r3]]
-; CHECK-DAG:    %[[r6:.+]] = icmp eq i8 %ld.transa, 84
-; CHECK-DAG:    %[[r7:.+]] = select i1 %[[r6]], i8 78, i8 %[[r5]]
-; CHECK-DAG:    store i8 %[[r7]], i8* %byref.transpose.transa
+; CHECK-NEXT:   store i64 1, i64* %byref.int.one
+; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
 ; CHECK-NEXT:   %ld.transb = load i8, i8* %transb
 ; CHECK-DAG:    %[[r8:.+]] = icmp eq i8 %ld.transb, 110
 ; CHECK-DAG:    %[[r9:.+]] = select i1 %[[r8]], i8 116, i8 0
@@ -132,8 +123,6 @@ entry:
 ; CHECK-DAG:    %[[r14:.+]] = icmp eq i8 %ld.transb, 84
 ; CHECK-DAG:    %[[r15:.+]] = select i1 %[[r14]], i8 78, i8 %[[r13]]
 ; CHECK-DAG:    store i8 %[[r15]], i8* %byref.transpose.transb
-; CHECK-NEXT:   store i64 1, i64* %byref.int.one
-; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
 ; CHECK-NEXT:   %ld.row.trans = load i8, i8* %transa, align 1
 ; CHECK-NEXT:   %[[a27:.+]] = icmp eq i8 %ld.row.trans, 110
 ; CHECK-NEXT:   %[[a28:.+]] = icmp eq i8 %ld.row.trans, 78

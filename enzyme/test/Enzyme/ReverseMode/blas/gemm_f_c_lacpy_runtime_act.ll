@@ -50,12 +50,12 @@ entry:
 ; CHECK-NEXT:   %[[byrefgarbage:.+]] = alloca i8
 ; CHECK-NEXT:   %[[byrefgarbage2:.+]] = alloca i8
 ; CHECK-NEXT:   %ret = alloca double
-; CHECK-NEXT:   %byref.transpose.transa = alloca i8
-; CHECK-NEXT:   %byref.transpose.transb = alloca i8
 ; CHECK-NEXT:   %byref.int.one = alloca i64
 ; CHECK-NEXT:   %byref.constant.fp.1.0 = alloca double
 ; CHECK-NEXT:   %byref.constant.fp.0.0 = alloca double
+; CHECK-NEXT:   %byref.transpose.transb = alloca i8
 ; CHECK-NEXT:   %byref.constant.fp.1.09 = alloca double, align 8
+; CHECK-NEXT:   %byref.transpose.transa = alloca i8
 ; CHECK-NEXT:   %[[byref_fp_1_017:.+]] = alloca double, align 8
 ; CHECK-NEXT:   %byref.constant.char.G = alloca i8, align 1
 ; CHECK-NEXT:   %byref.constant.int.0 = alloca i64, align 8
@@ -140,26 +140,6 @@ entry:
 ; CHECK-NEXT:   %[[matA:.+]] = bitcast double* %cache.A to i8*
 ; CHECK-NEXT:   %[[matC0:.+]] = bitcast double* %cache.C to i8*
 ; CHECK-NEXT:   %[[matC:.+]] = bitcast double* %cache.C to i8*
-; CHECK-NEXT:   %ld.transa = load i8, i8* %transa
-; CHECK-DAG:    %[[i25:.+]] = icmp eq i8 %ld.transa, 110
-; CHECK-DAG:    %[[i26:.+]] = select i1 %[[i25]], i8 116, i8 0
-; CHECK-DAG:    %[[i27:.+]] = icmp eq i8 %ld.transa, 78
-; CHECK-DAG:    %[[i28:.+]] = select i1 %[[i27]], i8 84, i8 %[[i26]]
-; CHECK-DAG:    %[[i29:.+]] = icmp eq i8 %ld.transa, 116
-; CHECK-DAG:    %[[i30:.+]] = select i1 %[[i29]], i8 110, i8 %[[i28]]
-; CHECK-DAG:    %[[i31:.+]] = icmp eq i8 %ld.transa, 84
-; CHECK-DAG:    %[[i32:.+]] = select i1 %[[i31]], i8 78, i8 %[[i30]]
-; CHECK-NEXT:   store i8 %[[i32]], i8* %byref.transpose.transa
-; CHECK-NEXT:   %ld.transb = load i8, i8* %transb
-; CHECK-DAG:    %[[i33:.+]] = icmp eq i8 %ld.transb, 110
-; CHECK-DAG:    %[[i34:.+]] = select i1 %[[i33]], i8 116, i8 0
-; CHECK-DAG:    %[[i35:.+]] = icmp eq i8 %ld.transb, 78
-; CHECK-DAG:    %[[i36:.+]] = select i1 %[[i35]], i8 84, i8 %[[i34]]
-; CHECK-DAG:    %[[i37:.+]] = icmp eq i8 %ld.transb, 116
-; CHECK-DAG:    %[[i38:.+]] = select i1 %[[i37]], i8 110, i8 %[[i36]]
-; CHECK-DAG:    %[[i39:.+]] = icmp eq i8 %ld.transb, 84
-; CHECK-DAG:    %[[i40:.+]] = select i1 %[[i39]], i8 78, i8 %[[i38]]
-; CHECK-NEXT:   store i8 %[[i40]], i8* %byref.transpose.transb
 ; CHECK-NEXT:   store i64 1, i64* %byref.int.one
 ; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
 ; CHECK-NEXT:   br i1 %rt.inactive.alpha, label %invertentry.alpha.done, label %invertentry.alpha.active
@@ -228,6 +208,16 @@ entry:
 ; CHECK-NEXT:   br i1 %rt.inactive.A, label %invertentry.A.done, label %invertentry.A.active
 
 ; CHECK: invertentry.A.active:                             ; preds = %invertentry.alpha.done
+; CHECK-NEXT:   %ld.transb = load i8, i8* %transb
+; CHECK-DAG:    %[[i33:.+]] = icmp eq i8 %ld.transb, 110
+; CHECK-DAG:    %[[i34:.+]] = select i1 %[[i33]], i8 116, i8 0
+; CHECK-DAG:    %[[i35:.+]] = icmp eq i8 %ld.transb, 78
+; CHECK-DAG:    %[[i36:.+]] = select i1 %[[i35]], i8 84, i8 %[[i34]]
+; CHECK-DAG:    %[[i37:.+]] = icmp eq i8 %ld.transb, 116
+; CHECK-DAG:    %[[i38:.+]] = select i1 %[[i37]], i8 110, i8 %[[i36]]
+; CHECK-DAG:    %[[i39:.+]] = icmp eq i8 %ld.transb, 84
+; CHECK-DAG:    %[[i40:.+]] = select i1 %[[i39]], i8 78, i8 %[[i38]]
+; CHECK-NEXT:   store i8 %[[i40]], i8* %byref.transpose.transb
 ; CHECK-NEXT:   %ld.row.trans = load i8, i8* %transa, align 1
 ; CHECK-NEXT:   %[[r62:.+]] = icmp eq i8 %ld.row.trans, 110
 ; CHECK-NEXT:   %[[r63:.+]] = icmp eq i8 %ld.row.trans, 78
@@ -253,6 +243,16 @@ entry:
 ; CHECK-NEXT:   br i1 %rt.inactive.B, label %invertentry.B.done, label %invertentry.B.active
 
 ; CHECK: invertentry.B.active:                             ; preds = %invertentry.A.done
+; CHECK-NEXT:   %ld.transa = load i8, i8* %transa
+; CHECK-DAG:    %[[i25:.+]] = icmp eq i8 %ld.transa, 110
+; CHECK-DAG:    %[[i26:.+]] = select i1 %[[i25]], i8 116, i8 0
+; CHECK-DAG:    %[[i27:.+]] = icmp eq i8 %ld.transa, 78
+; CHECK-DAG:    %[[i28:.+]] = select i1 %[[i27]], i8 84, i8 %[[i26]]
+; CHECK-DAG:    %[[i29:.+]] = icmp eq i8 %ld.transa, 116
+; CHECK-DAG:    %[[i30:.+]] = select i1 %[[i29]], i8 110, i8 %[[i28]]
+; CHECK-DAG:    %[[i31:.+]] = icmp eq i8 %ld.transa, 84
+; CHECK-DAG:    %[[i32:.+]] = select i1 %[[i31]], i8 78, i8 %[[i30]]
+; CHECK-NEXT:   store i8 %[[i32]], i8* %byref.transpose.transa
 ; CHECK-NEXT:   %[[ld_row_trans13:.+]] = load i8, i8* %transb, align 1
 ; CHECK-NEXT:   %[[r76:.+]] = icmp eq i8 %[[ld_row_trans13]], 110
 ; CHECK-NEXT:   %[[r77:.+]] = icmp eq i8 %[[ld_row_trans13]], 78
