@@ -1177,7 +1177,11 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
          << val << "\")}";
     } else if (Def->isSubClassOf("transpose")) {
       auto name = Def->getValueAsString("name");
-      os << "{arg_transposed_" << name << "}";
+      os << "{(arg_transposed_" << name << " = arg_transposed_" << name
+         << " ? arg_transposed_" << name << " : "
+         << "transpose(Builder2, arg_" << name
+         << ", byRef, cublas, charType, allocationBuilder, \"" << name
+         << "\"))}";
     } else {
       errs() << Def->getName() << "\n";
       PrintFatalError("Def that isn't a DiffeRet!");
@@ -1470,10 +1474,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   for (size_t i = (lv23 ? 1 : 0); i < nameVec.size(); i++) {
     auto name = nameVec[i];
     if (typeMap.lookup(i) == ArgType::trans) {
-      os << "    llvm::Value* arg_transposed_" << name
-         << " = transpose(Builder2, arg_" << name
-         << ", byRef, cublas, charType, allocationBuilder, \"" << name
-         << "\");\n";
+      os << "    llvm::Value* arg_transposed_" << name << " = nullptr;\n";
     }
   }
 
