@@ -2551,6 +2551,446 @@ void PreProcessCache::clear() {
   cache.clear();
 }
 
+void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM) {
+  llvm::SetVector<Instruction *> Q;
+  for (auto &BB : F)
+    for (auto &I : BB)
+      if (!I.getType()->isVoidTy())
+        Q.insert(&I);
+
+  auto &DT = FAM.getResult<DominatorTreeAnalysis>(F);
+
+  while (!Q.empty()) {
+    auto cur = Q.pop_back_val();
+    if (!cur->getType()->isVoidTy() && !cur->mayReadOrWriteMemory() &&
+        cur->getNumUses() == 0) {
+      cur->eraseFromParent();
+      continue;
+    }
+    IRBuilder<> B(cur);
+    if (auto fcmp = dyn_cast<FCmpInst>(cur)) {
+      if (fcmp->getPredicate() == FCmpInst::FCMP_OEQ) {
+        bool done = false;
+        for (int i = 0; i < 2; i++)
+          if (auto C = dyn_cast<ConstantFP>(fcmp->getOperand(i))) {
+            if (C->isZero()) {
+              if (auto fmul = dyn_cast<BinaryOperator>(fcmp->getOperand(1 - i)))
+                // (a*b) == 0 -> (a == 0) || (b == 0)
+                if (fmul->getOpcode() == Instruction::FMul) {
+                  auto ncmp1 = B.CreateFCmp(fcmp->getPredicate(),
+                                            fmul->getOperand(0), C);
+                  if (auto I = dyn_cast<Instruction>(ncmp1))
+                    Q.insert(I);
+                  auto ncmp2 = B.CreateFCmp(fcmp->getPredicate(),
+                                            fmul->getOperand(1), C);
+                  if (auto I = dyn_cast<Instruction>(ncmp2))
+                    Q.insert(I);
+                  auto ori = B.CreateOr(ncmp1, ncmp2);
+                  if (auto I = dyn_cast<Instruction>(ori))
+                    Q.insert(I);
+                  for (auto U : cur->users())
+                    Q.insert(cast<Instruction>(U));
+                  cur->replaceAllUsesWith(ori);
+                  done = true;
+                  break;
+                }
+            }
+          }
+        if (done) {
+          cur->eraseFromParent();
+          continue;
+        }
+      }
+    }
+    if (auto icmp = dyn_cast<BinaryOperator>(cur)) {
+      // fsub (ext a), (ext b) -> ext (a - b)
+      if (icmp->getOpcode() == Instruction::FSub) {
+        auto Ty = B.getInt64Ty();
+        SmallVector<Instruction *, 1> temporaries;
+        Value *lhs = nullptr;
+
+        APInt minval(64, 0);
+        APInt maxval(64, 0);
+        if (auto C = dyn_cast<ConstantFP>(icmp->getOperand(0))) {
+          APSInt Tmp(64);
+          bool isExact = false;
+          C->getValue().convertToInteger(Tmp, llvm::RoundingMode::TowardZero,
+                                         &isExact);
+          if (isExact) {
+            minval = maxval = Tmp;
+            lhs = ConstantInt::get(Ty, minval);
+          }
+        }
+        if (auto ext = dyn_cast<CastInst>(icmp->getOperand(0))) {
+          if (ext->getOpcode() == Instruction::UIToFP ||
+              ext->getOpcode() == Instruction::SIToFP) {
+            auto ity = cast<IntegerType>(ext->getOperand(0)->getType());
+            bool md = false;
+            if (auto I = dyn_cast<Instruction>(ext->getOperand(0)))
+              if (auto MD = hasMetadata(I, LLVMContext::MD_range)) {
+                md = true;
+                minval =
+                    cast<ConstantInt>(
+                        cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
+                        ->getValue()
+                        .zextOrTrunc(64);
+                maxval =
+                    cast<ConstantInt>(
+                        cast<ConstantAsMetadata>(MD->getOperand(1))->getValue())
+                        ->getValue()
+                        .zextOrTrunc(64);
+              }
+            if (!md) {
+              if (ext->getOpcode() == Instruction::UIToFP)
+                maxval = APInt::getMaxValue(ity->getBitWidth()).zextOrTrunc(64);
+              else {
+                maxval = APInt::getSignedMaxValue(ity->getBitWidth())
+                             .zextOrTrunc(64);
+                minval = APInt::getSignedMinValue(ity->getBitWidth())
+                             .zextOrTrunc(64);
+              }
+            }
+            if (ext->getOperand(0)->getType() == Ty)
+              lhs = ext->getOperand(0);
+            else if (ity->getBitWidth() < Ty->getBitWidth()) {
+              lhs = B.CreateZExt(ext->getOperand(0), Ty);
+              if (auto I = dyn_cast<Instruction>(lhs))
+                temporaries.push_back(I);
+            }
+          }
+        }
+
+        Value *rhs = nullptr;
+
+        if (auto C = dyn_cast<ConstantFP>(icmp->getOperand(1))) {
+          APSInt Tmp(64);
+          bool isExact = false;
+          C->getValue().convertToInteger(Tmp, llvm::RoundingMode::TowardZero,
+                                         &isExact);
+          if (isExact) {
+            minval -= Tmp;
+            maxval -= Tmp;
+            rhs = ConstantInt::get(Ty, minval);
+          }
+        }
+        if (auto ext = dyn_cast<CastInst>(icmp->getOperand(1))) {
+          if (ext->getOpcode() == Instruction::UIToFP ||
+              ext->getOpcode() == Instruction::SIToFP) {
+            auto ity = cast<IntegerType>(ext->getOperand(0)->getType());
+            bool md = false;
+            if (auto I = dyn_cast<Instruction>(ext->getOperand(0)))
+              if (auto MD = hasMetadata(I, LLVMContext::MD_range)) {
+                md = true;
+                minval -=
+                    cast<ConstantInt>(
+                        cast<ConstantAsMetadata>(MD->getOperand(1))->getValue())
+                        ->getValue()
+                        .zextOrTrunc(64);
+                maxval -=
+                    cast<ConstantInt>(
+                        cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
+                        ->getValue()
+                        .zextOrTrunc(64);
+              }
+            if (!md) {
+              if (ext->getOpcode() == Instruction::UIToFP)
+                minval -=
+                    APInt::getMaxValue(ity->getBitWidth()).zextOrTrunc(64);
+              else {
+                minval -= APInt::getSignedMaxValue(ity->getBitWidth())
+                              .zextOrTrunc(64);
+                maxval -= APInt::getSignedMinValue(ity->getBitWidth())
+                              .zextOrTrunc(64);
+              }
+            }
+            if (ext->getOperand(0)->getType() == Ty)
+              rhs = ext->getOperand(0);
+            else if (ity->getBitWidth() < Ty->getBitWidth()) {
+              rhs = B.CreateZExt(ext->getOperand(0), Ty);
+              if (auto I = dyn_cast<Instruction>(rhs))
+                temporaries.push_back(I);
+            }
+          }
+        }
+
+        if (lhs && rhs) {
+          auto res = B.CreateSub(lhs, rhs);
+          for (auto I : temporaries)
+            Q.insert(I);
+          if (auto I = dyn_cast<Instruction>(res)) {
+            Q.insert(I);
+            Metadata *vals[] = {(Metadata *)ConstantAsMetadata::get(
+                                    ConstantInt::get(Ty, minval)),
+                                (Metadata *)ConstantAsMetadata::get(
+                                    ConstantInt::get(Ty, maxval))};
+            I->setMetadata(LLVMContext::MD_range,
+                           MDNode::get(I->getContext(), vals));
+          }
+          for (auto U : cur->users())
+            Q.insert(cast<Instruction>(U));
+          auto ext = B.CreateSIToFP(res, cur->getType());
+          if (auto I = dyn_cast<Instruction>(ext))
+            Q.insert(I);
+          cur->replaceAllUsesWith(ext);
+          cur->eraseFromParent();
+          continue;
+
+        } else {
+          for (auto I : temporaries)
+            I->eraseFromParent();
+        }
+      }
+
+      if (icmp->getOpcode() == Instruction::Or) {
+        bool done = false;
+        for (int i = 0; i < 2; i++) {
+          if (auto C = dyn_cast<ConstantInt>(icmp->getOperand(i))) {
+            // or a, 0 -> a
+            if (C->isZero()) {
+              if (auto I = dyn_cast<Instruction>(icmp->getOperand(1 - i)))
+                Q.insert(I);
+              for (auto U : cur->users())
+                Q.insert(cast<Instruction>(U));
+              cur->replaceAllUsesWith(icmp->getOperand(1 - i));
+              done = true;
+              break;
+            }
+            // or a, 1 -> 1
+            if (C->isOne()) {
+              for (auto U : cur->users())
+                Q.insert(cast<Instruction>(U));
+              cur->replaceAllUsesWith(C);
+              done = true;
+              break;
+            }
+          }
+        }
+        if (done) {
+          cur->eraseFromParent();
+          continue;
+        }
+      }
+      if (icmp->getOpcode() == Instruction::And) {
+        bool done = false;
+        for (int i = 0; i < 2; i++) {
+          if (auto C = dyn_cast<ConstantInt>(icmp->getOperand(i))) {
+            // and a, 1 -> a
+            if (C->isOne()) {
+              if (auto I = dyn_cast<Instruction>(icmp->getOperand(1 - i)))
+                Q.insert(I);
+              for (auto U : cur->users())
+                Q.insert(cast<Instruction>(U));
+              cur->replaceAllUsesWith(icmp->getOperand(1 - i));
+              done = true;
+              break;
+            }
+            // and a, 0 -> 0
+            if (C->isZero()) {
+              for (auto U : cur->users())
+                Q.insert(cast<Instruction>(U));
+              cur->replaceAllUsesWith(C);
+              done = true;
+              break;
+            }
+          }
+        }
+        if (done) {
+          cur->eraseFromParent();
+          continue;
+        }
+      }
+      if (icmp->getOpcode() == Instruction::Xor) {
+        bool done = false;
+        for (int i = 0; i < 2; i++) {
+          if (auto C = dyn_cast<ConstantInt>(icmp->getOperand(i))) {
+            // !(cmp a, b) -> inverse(cmp), a, b
+            if (C->isOne()) {
+              if (auto scmp = dyn_cast<CmpInst>(icmp->getOperand(1 - i))) {
+                auto next =
+                    B.CreateCmp(scmp->getInversePredicate(),
+                                scmp->getOperand(0), scmp->getOperand(1));
+                if (auto I = dyn_cast<Instruction>(next))
+                  Q.insert(I);
+                for (auto U : cur->users())
+                  Q.insert(cast<Instruction>(U));
+                cur->replaceAllUsesWith(icmp->getOperand(1 - i));
+                done = true;
+                break;
+              }
+            }
+          }
+        }
+        if (done) {
+          cur->eraseFromParent();
+          continue;
+        }
+      }
+    }
+    // select cmp, (ext tval), (ext fval) ->  (cmp & tval) | (!cmp & fval)
+    if (auto SI = dyn_cast<SelectInst>(cur)) {
+
+      Value *trueVal = nullptr;
+      if (auto C = dyn_cast<ConstantFP>(SI->getTrueValue())) {
+        if (C->isZero()) {
+          trueVal = ConstantInt::getFalse(SI->getContext());
+        }
+        if (C->isExactlyValue(1.0)) {
+          trueVal = ConstantInt::getTrue(SI->getContext());
+        }
+      }
+      if (auto ext = dyn_cast<CastInst>(SI->getTrueValue())) {
+        if (ext->getOperand(0)->getType()->isIntegerTy(1))
+          trueVal = ext->getOperand(0);
+      }
+      Value *falseVal = nullptr;
+      if (auto C = dyn_cast<ConstantFP>(SI->getFalseValue())) {
+        if (C->isZero()) {
+          falseVal = ConstantInt::getFalse(SI->getContext());
+        }
+        if (C->isExactlyValue(1.0)) {
+          falseVal = ConstantInt::getTrue(SI->getContext());
+        }
+      }
+      if (auto ext = dyn_cast<CastInst>(SI->getFalseValue())) {
+        if (ext->getOperand(0)->getType()->isIntegerTy(1))
+          falseVal = ext->getOperand(0);
+      }
+      if (trueVal && falseVal) {
+        auto ncmp1 = B.CreateAnd(SI->getCondition(), trueVal);
+        if (auto I = dyn_cast<Instruction>(ncmp1))
+          Q.insert(I);
+        auto notV = B.CreateNot(SI->getCondition());
+        if (auto I = dyn_cast<Instruction>(notV))
+          Q.insert(I);
+        auto ncmp2 = B.CreateAnd(notV, falseVal);
+        if (auto I = dyn_cast<Instruction>(ncmp2))
+          Q.insert(I);
+        auto ori = B.CreateOr(ncmp1, ncmp2);
+        if (auto I = dyn_cast<Instruction>(ori))
+          Q.insert(I);
+        auto ext = B.CreateUIToFP(ori, SI->getType());
+        if (auto I = dyn_cast<Instruction>(ext))
+          Q.insert(I);
+        for (auto U : cur->users())
+          Q.insert(cast<Instruction>(U));
+        cur->replaceAllUsesWith(ext);
+        cur->eraseFromParent();
+        continue;
+      }
+    }
+    if (auto PN = dyn_cast<PHINode>(cur)) {
+      B.SetInsertPoint(PN->getParent()->getFirstNonPHI());
+      // phi (fneg a), (fneg b) -> fneg (phi a, b)
+      {
+        SmallVector<Value *, 1> negOps;
+        SmallVector<Instruction *, 1> prevNegOps;
+        bool legal = true;
+        for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
+          auto v = PN->getIncomingValue(i);
+          if (auto C = dyn_cast<ConstantFP>(v)) {
+            negOps.push_back(B.CreateFNeg(C));
+            continue;
+          }
+          if (auto fneg = dyn_cast<Instruction>(v)) {
+            if (fneg->getOpcode() == Instruction::FNeg) {
+              negOps.push_back(fneg->getOperand(0));
+              prevNegOps.push_back(fneg);
+              continue;
+            }
+          }
+          legal = false;
+        }
+        if (legal) {
+          for (auto val : llvm::enumerate(negOps))
+            PN->setIncomingValue(val.index(), val.value());
+
+          if (auto I = dyn_cast<Instruction>(PN))
+            Q.insert(I);
+
+          auto fneg = B.CreateFNeg(PN);
+          if (auto I = dyn_cast<Instruction>(fneg))
+            Q.insert(I);
+
+          for (auto &U : cur->uses()) {
+            if (U.getUser() == fneg)
+              continue;
+            Q.insert(cast<Instruction>(U.getUser()));
+            U.set(fneg);
+          }
+          for (auto I : prevNegOps)
+            Q.insert(I);
+          continue;
+        }
+      }
+      // phi  -> select
+      if (PN->getNumIncomingValues() == 2) {
+        bool done = false;
+        for (int i = 0; i < 2; i++) {
+          auto prev = PN->getIncomingBlock(i);
+          if (!DT.dominates(prev, PN->getParent())) {
+            continue;
+          }
+          auto br = dyn_cast<BranchInst>(prev->getTerminator());
+          if (!br) {
+            continue;
+          }
+          if (!br->isConditional()) {
+            continue;
+          }
+          if (br->getSuccessor(0) != PN->getParent()) {
+            continue;
+          }
+          if (br->getSuccessor(1) != PN->getIncomingBlock(1 - i)) {
+            continue;
+          }
+
+          Value *specVal = PN->getIncomingValue(1 - i);
+          SetVector<Value *, std::deque<Value *>> todo;
+          todo.insert(specVal);
+          SetVector<Instruction *> toMove;
+          bool legal = true;
+          while (!todo.empty()) {
+            auto cur = *todo.begin();
+            todo.erase(todo.begin());
+            auto I = dyn_cast<Instruction>(cur);
+            if (!I)
+              continue;
+            if (I->mayReadOrWriteMemory()) {
+              legal = false;
+              break;
+            }
+            if (DT.dominates(I, PN))
+              continue;
+            for (size_t i = 0; i < I->getNumOperands(); i++)
+              todo.insert(I->getOperand(i));
+            toMove.insert(I);
+          }
+          if (!legal)
+            continue;
+          for (auto iter = toMove.rbegin(), end = toMove.rend(); iter != end;
+               iter++) {
+            (*iter)->moveBefore(br);
+          }
+          auto sel = B.CreateSelect(
+              br->getCondition(), PN->getIncomingValueForBlock(prev),
+              PN->getIncomingValueForBlock(br->getSuccessor(1)));
+
+          if (auto I = dyn_cast<Instruction>(sel))
+            Q.insert(I);
+          for (auto U : cur->users())
+            Q.insert(cast<Instruction>(U));
+          cur->replaceAllUsesWith(sel);
+          done = true;
+        }
+        if (done) {
+          cur->eraseFromParent();
+          continue;
+        }
+      }
+    }
+  }
+}
+
 bool LowerSparsification(llvm::Function *F, bool replaceAll) {
   auto &DL = F->getParent()->getDataLayout();
   bool changed = false;
@@ -2799,6 +3239,23 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
                   " Illegal remaining use (", *remaining, ") of todense (", *CI,
                   ") in function ", *F);
     }
+  }
+
+  if (changed) {
+    PassBuilder PB;
+    LoopAnalysisManager LAM;
+    FunctionAnalysisManager FAM;
+    CGSCCAnalysisManager CGAM;
+    ModuleAnalysisManager MAM;
+    PB.registerModuleAnalyses(MAM);
+    PB.registerFunctionAnalyses(FAM);
+    PB.registerLoopAnalyses(LAM);
+    PB.registerCGSCCAnalyses(CGAM);
+    PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+    InstCombinePass().run(*F, FAM);
+    fixSparseIndices(*F, FAM);
+    llvm::errs() << " post sparse: " << *F << "\n";
   }
   return changed;
 }
