@@ -2585,7 +2585,7 @@ static bool isNot(Value *a, Value *b) {
   return false;
 }
 
-bool fixSparse_inner(Instruction *cur, llvm::Function &F,
+std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                      llvm::SetVector<Instruction *> &Q, DominatorTree &DT,
                      ScalarEvolution &SE, LoopInfo &LI, const DataLayout &DL) {
   auto push = [&](llvm::Value *V) {
@@ -2604,6 +2604,58 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
     }
     return V;
   };
+  auto pushcse = [&](llvm::Value *V) -> llvm::Value* {
+    if (auto I = dyn_cast<Instruction>(V)) {
+      for (size_t i = 0; i < I->getNumOperands(); i++) {
+        if (auto I2 = dyn_cast<Instruction>(I->getOperand(i))) {
+          Instruction *candidate = nullptr;
+          bool reverse = false;
+          for (auto U : I2->users()) {
+            candidate = dyn_cast<Instruction>(U);
+            if (!candidate)
+              continue;
+            if (candidate == I || !candidate->isIdenticalTo(I)) {
+              candidate = nullptr;
+              continue;
+            }
+
+            if (DT.dominates(candidate, I)) {
+              break;
+            }
+            candidate = nullptr;
+          }
+          if (candidate) {
+            I->eraseFromParent();
+            return candidate;
+          }
+        }
+      }
+      llvm::errs() << " * created: " << *I << "\n";
+      return push(I);
+    }
+    return V;
+  };
+  auto replaceAndErase = [&](llvm::Instruction *I, llvm::Value *candidate) {
+    for (auto U : I->users())
+      push(U);
+    I->replaceAllUsesWith(candidate);
+    push(candidate);
+
+    SetVector<Instruction*> operands;
+    for (size_t i = 0; i < I->getNumOperands(); i++) {
+      if (auto I2 = dyn_cast<Instruction>(I->getOperand(i))) {
+        if ((!I2->mayWriteToMemory() ||
+            (isa<CallInst>(I2) && cast<CallInst>(I2)->onlyReadsMemory())))
+            operands.insert(I2);
+      }
+    }
+    I->eraseFromParent();
+    for (auto op : operands)
+        if (op->getNumUses() == 0) {
+            Q.remove(op);
+            op->eraseFromParent();
+            }
+  };
   if (!cur->getType()->isVoidTy() &&
       (!cur->mayWriteToMemory() ||
        (isa<CallInst>(cur) && cast<CallInst>(cur)->onlyReadsMemory()))) {
@@ -2612,7 +2664,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
       for (size_t i = 0; i < cur->getNumOperands(); i++)
         push(cur->getOperand(i));
       cur->eraseFromParent();
-      return true;
+      return "DCE";
     }
     // CSE
     {
@@ -2644,17 +2696,56 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
               candidate = cur;
               cur = tmp;
             }
-            for (auto U : cur->users())
-              push(U);
-            cur->replaceAllUsesWith(candidate);
-            push(candidate);
-            cur->eraseFromParent();
-            return true;
+            replaceAndErase(cur, candidate);
+            return "CSE";
           }
         }
       }
     }
   }
+
+  if (auto SI = dyn_cast<SelectInst>(cur))
+      if (auto CI = dyn_cast<ConstantInt>(SI->getCondition())) {
+        if (CI->isOne()) {
+            replaceAndErase(cur, SI->getTrueValue());
+            return "SelectToTrue";
+        } else {
+            replaceAndErase(cur, SI->getFalseValue());
+            return "SelectToFalse";
+        }
+      }
+    if (cur->getOpcode() == Instruction::Or) {
+      for (int i = 0; i < 2; i++) {
+        if (auto C = dyn_cast<ConstantInt>(cur->getOperand(i))) {
+          // or a, 0 -> a
+          if (C->isZero()) {
+            replaceAndErase(cur, cur->getOperand(1-i));
+            return "OrZero";
+          }
+          // or a, 1 -> 1
+          if (C->isOne()) {
+            replaceAndErase(cur, C);
+            return "OrOne";
+          }
+        }
+      }
+    }
+    if (cur->getOpcode() == Instruction::And) {
+      for (int i = 0; i < 2; i++) {
+        if (auto C = dyn_cast<ConstantInt>(cur->getOperand(i))) {
+          // and a, 1 -> a
+          if (C->isOne()) {
+            replaceAndErase(cur, cur->getOperand(1-i));
+            return "AndOne";
+          }
+          // and a, 0 -> 0
+          if (C->isZero()) {
+            replaceAndErase(cur, C);
+            return "AndZero";
+          }
+        }
+      }
+    }
 
   IRBuilder<> B(cur);
   std::function<Value *(Value *, Value *, Value *)> replace = [&](Value *val,
@@ -2680,7 +2771,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
           return val;
         push(I);
-        return push(B.CreateAdd(lhs, rhs, "sel." + I->getName(),
+        return pushcse(B.CreateAdd(lhs, rhs, "sel." + I->getName(),
                                 I->hasNoUnsignedWrap(), I->hasNoSignedWrap()));
       }
 
@@ -2690,7 +2781,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
           return val;
         push(I);
-        return push(B.CreateSub(lhs, rhs, "sel." + I->getName(),
+        return pushcse(B.CreateSub(lhs, rhs, "sel." + I->getName(),
                                 I->hasNoUnsignedWrap(), I->hasNoSignedWrap()));
       }
 
@@ -2700,7 +2791,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
           return val;
         push(I);
-        return push(B.CreateMul(lhs, rhs, "sel." + I->getName(),
+        return pushcse(B.CreateMul(lhs, rhs, "sel." + I->getName(),
                                 I->hasNoUnsignedWrap(), I->hasNoSignedWrap()));
       }
 
@@ -2710,7 +2801,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
           return val;
         push(I);
-        return push(B.CreateAnd(lhs, rhs, "sel." + I->getName()));
+        return pushcse(B.CreateAnd(lhs, rhs, "sel." + I->getName()));
       }
 
       if (I->getOpcode() == Instruction::Or) {
@@ -2728,7 +2819,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
           return val;
         push(I);
-        return push(B.CreateXor(lhs, rhs, "sel." + I->getName()));
+        return pushcse(B.CreateXor(lhs, rhs, "sel." + I->getName()));
       }
 
       if (I->getOpcode() == Instruction::FAdd) {
@@ -2737,7 +2828,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
           return val;
         push(I);
-        return push(B.CreateFAddFMF(lhs, rhs, I, "sel." + I->getName()));
+        return pushcse(B.CreateFAddFMF(lhs, rhs, I, "sel." + I->getName()));
       }
 
       if (I->getOpcode() == Instruction::FSub) {
@@ -2746,7 +2837,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
           return val;
         push(I);
-        return push(B.CreateFSubFMF(lhs, rhs, I, "sel." + I->getName()));
+        return pushcse(B.CreateFSubFMF(lhs, rhs, I, "sel." + I->getName()));
       }
 
       if (I->getOpcode() == Instruction::FMul) {
@@ -2755,7 +2846,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
           return val;
         push(I);
-        return push(B.CreateFMulFMF(lhs, rhs, I, "sel." + I->getName()));
+        return pushcse(B.CreateFMulFMF(lhs, rhs, I, "sel." + I->getName()));
       }
 
       if (I->getOpcode() == Instruction::ZExt) {
@@ -2763,7 +2854,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (op == I->getOperand(0))
           return val;
         push(I);
-        return push(B.CreateZExt(op, I->getType(), "sel." + I->getName()));
+        return pushcse(B.CreateZExt(op, I->getType(), "sel." + I->getName()));
       }
 
       if (I->getOpcode() == Instruction::SExt) {
@@ -2771,7 +2862,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (op == I->getOperand(0))
           return val;
         push(I);
-        return push(B.CreateSExt(op, I->getType(), "sel." + I->getName()));
+        return pushcse(B.CreateSExt(op, I->getType(), "sel." + I->getName()));
       }
 
       if (I->getOpcode() == Instruction::UIToFP) {
@@ -2779,7 +2870,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (op == I->getOperand(0))
           return val;
         push(I);
-        return push(B.CreateUIToFP(op, I->getType(), "sel." + I->getName()));
+        return pushcse(B.CreateUIToFP(op, I->getType(), "sel." + I->getName()));
       }
 
       if (I->getOpcode() == Instruction::SIToFP) {
@@ -2787,7 +2878,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (op == I->getOperand(0))
           return val;
         push(I);
-        return push(B.CreateSIToFP(op, I->getType(), "sel." + I->getName()));
+        return pushcse(B.CreateSIToFP(op, I->getType(), "sel." + I->getName()));
       }
 
       if (auto CI = dyn_cast<CmpInst>(I)) {
@@ -2796,7 +2887,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
           return val;
         push(I);
-        return push(
+        return pushcse(
             B.CreateCmp(CI->getPredicate(), lhs, rhs, "sel." + I->getName()));
       }
 
@@ -2808,15 +2899,41 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
             fval == SI->getFalseValue())
           return val;
         push(I);
-        return push(B.CreateSelect(cond, tval, fval, "sel." + I->getName()));
+        return pushcse(B.CreateSelect(cond, tval, fval, "sel." + I->getName()));
       }
     }
     return val;
   };
 
-  // mul (mul a, const), b -> mul (mul a, b), const
+  // mul (mul a, const1), (mul b, const2) -> mul (mul a, b), (const1, const2)
   if (cur->getOpcode() == Instruction::FMul)
     if (cur->isFast())
+      if (auto mul1 = dyn_cast<Instruction>(cur->getOperand(0)))
+          if (mul1->getOpcode() == Instruction::FMul && mul1->isFast())
+        if (auto mul2 = dyn_cast<Instruction>(cur->getOperand(1)))
+          if (mul2->getOpcode() == Instruction::FMul && mul2->isFast())
+          for (auto i1 = 0; i1 < 2; i1++)
+          for (auto i2 = 0; i2 < 2; i2++)
+            if (isa<Constant>(mul1->getOperand(i1))) 
+            if (isa<Constant>(mul2->getOperand(i2))) 
+            {
+
+                  auto n0 = pushcse(B.CreateFMulFMF(mul1->getOperand(1 - i1),
+                                            mul2->getOperand(1 - i2), cur));
+                  auto n1 = pushcse(B.CreateFMulFMF(mul1->getOperand(i1),
+                                            mul2->getOperand(i2), cur));
+                  auto n2 = pushcse(B.CreateFMulFMF(n0, n1, cur));
+                  push(mul1);
+                  push(mul2);
+                  replaceAndErase(cur, n2);
+                  return "MulMulConstConst";
+            }
+  
+  // mul (mul a, const), b -> mul (mul a, b), const
+  //   note we avoid the case where b = (mul a, const) since otherwise
+  //   we create an infinite recursion
+  if (cur->getOpcode() == Instruction::FMul)
+    if (cur->isFast() && cur->getOperand(0) != cur->getOperand(1))
       for (auto ic = 0; ic < 2; ic++)
         if (auto mul = dyn_cast<Instruction>(cur->getOperand(ic)))
           if (mul->getOpcode() == Instruction::FMul && mul->isFast())
@@ -2824,17 +2941,13 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
 
               for (int i = 0; i < 2; i++)
                 if (auto C = dyn_cast<Constant>(mul->getOperand(i))) {
-                  auto n0 = B.CreateFMulFMF(mul->getOperand(1 - i),
-                                            cur->getOperand(1 - ic), mul);
-                  push(n0);
-                  auto n1 = B.CreateFMulFMF(n0, C, cur);
-                  push(n1);
+                  auto n0 = pushcse(B.CreateFMulFMF(mul->getOperand(1 - i),
+                                            cur->getOperand(1 - ic), mul));
+                  auto n1 = pushcse(B.CreateFMulFMF(n0, C, cur));
+                  push(mul);
 
-                  for (auto U : cur->users())
-                    push(U);
-                  cur->replaceAllUsesWith(n1);
-                  cur->eraseFromParent();
-                  return true;
+                  replaceAndErase(cur, n1);
+                  return "MulMulConst";
                 }
             }
 
@@ -2847,64 +2960,49 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
               // (a*b) == 0 -> (a == 0) || (b == 0)
               if (fmul->getOpcode() == Instruction::FMul) {
                 auto ncmp1 =
-                    B.CreateFCmp(fcmp->getPredicate(), fmul->getOperand(0), C);
-                push(ncmp1);
+                    pushcse(B.CreateFCmp(fcmp->getPredicate(), fmul->getOperand(0), C));
                 auto ncmp2 =
-                    B.CreateFCmp(fcmp->getPredicate(), fmul->getOperand(1), C);
-                push(ncmp2);
-                auto ori = B.CreateOr(ncmp1, ncmp2);
-                push(ori);
-                for (auto U : cur->users())
-                  push(U);
-                cur->replaceAllUsesWith(ori);
-                cur->eraseFromParent();
-                return true;
+                    pushcse(B.CreateFCmp(fcmp->getPredicate(), fmul->getOperand(1), C));
+                auto ori = pushcse(B.CreateOr(ncmp1, ncmp2));
+                replaceAndErase(cur, ori);
+                return "CmpFMulSplit";
               }
               // (a/b) == 0 -> (a == 0)
               if (fmul->getOpcode() == Instruction::FDiv) {
                 auto ncmp1 =
-                    B.CreateFCmp(fcmp->getPredicate(), fmul->getOperand(0), C);
-                push(ncmp1);
-                for (auto U : cur->users())
-                  push(U);
-                cur->replaceAllUsesWith(ncmp1);
-                cur->eraseFromParent();
-                return true;
+                    pushcse(B.CreateFCmp(fcmp->getPredicate(), fmul->getOperand(0), C));
+                replaceAndErase(cur, ncmp1);
+                return "CmpFDivSplit";
               }
               // (a - b) ?= 0 -> a ?= b
               if (fmul->getOpcode() == Instruction::FSub) {
                 auto ncmp1 =
-                    B.CreateFCmp(fcmp->getPredicate(), fmul->getOperand(0),
-                                 fmul->getOperand(1));
-                push(ncmp1);
-                for (auto U : cur->users())
-                  push(U);
-                cur->replaceAllUsesWith(ncmp1);
-                cur->eraseFromParent();
-                return true;
+                    pushcse(B.CreateFCmp(fcmp->getPredicate(), fmul->getOperand(0),
+                                 fmul->getOperand(1)));
+                replaceAndErase(cur, ncmp1);
+                return "CmpFSubSplit";
               }
             }
             if (auto cast = dyn_cast<SIToFPInst>(fcmp->getOperand(1 - i))) {
-              auto ncmp1 = B.CreateICmp(
+              auto ncmp1 = pushcse(B.CreateICmp(
                   ICmpInst::ICMP_EQ, cast->getOperand(0),
-                  ConstantInt::get(cast->getOperand(0)->getType(), 0));
-              push(ncmp1);
-              for (auto U : cur->users())
-                push(U);
-              cur->replaceAllUsesWith(ncmp1);
-              cur->eraseFromParent();
-              return true;
+                  ConstantInt::get(cast->getOperand(0)->getType(), 0)));
+              replaceAndErase(cur, ncmp1);
+              return "SFCmpToICmp";
             }
             if (auto cast = dyn_cast<UIToFPInst>(fcmp->getOperand(1 - i))) {
-              auto ncmp1 = B.CreateICmp(
+              auto ncmp1 = pushcse(B.CreateICmp(
                   ICmpInst::ICMP_EQ, cast->getOperand(0),
-                  ConstantInt::get(cast->getOperand(0)->getType(), 0));
-              push(ncmp1);
-              for (auto U : cur->users())
-                push(U);
-              cur->replaceAllUsesWith(ncmp1);
-              cur->eraseFromParent();
-              return true;
+                  ConstantInt::get(cast->getOperand(0)->getType(), 0)));
+              replaceAndErase(cur, ncmp1);
+              return "UFCmpToICmp";
+            }
+            if (auto SI = dyn_cast<SelectInst>(fcmp->getOperand(1 - i))) {
+              auto res = pushcse(B.CreateSelect(SI->getCondition(), 
+                          pushcse(B.CreateCmp(fcmp->getPredicate(), C, SI->getTrueValue())),
+                          pushcse(B.CreateCmp(fcmp->getPredicate(), C, SI->getFalseValue()))));
+              replaceAndErase(cur, res);
+              return "FCmpSelect";
             }
           }
         }
@@ -2916,30 +3014,37 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         fcmp->getPredicate() == CmpInst::FCMP_OEQ ||
         fcmp->getPredicate() == CmpInst::FCMP_ONE) {
 
+      // a + c ?= a  ->  c ?= 0  , if fast
+      for (int i=0; i<2; i++)
+          if (auto inst = dyn_cast<Instruction>(fcmp->getOperand(i)))
+              if (inst->getOpcode() == Instruction::FAdd && inst->isFast())
+                for (int i2=0; i2<2; i2++)
+                    if (inst->getOperand(i2) == fcmp->getOperand(1-i)) {
+                        auto res = pushcse(B.CreateCmp(fcmp->getPredicate(), inst->getOperand(1-i2), ConstantFP::get(inst->getType(), 0)));
+                          replaceAndErase(cur, res);
+                          return "CmpFAddSame";
+                    }
+
+
+
       // a == b -> a & b | !a & !b
       // a != b -> a & !b | !a & b
       if (fcmp->getOperand(0)->getType()->isIntegerTy(1)) {
         auto a = fcmp->getOperand(0);
         auto b = fcmp->getOperand(1);
         if (fcmp->getPredicate() == CmpInst::ICMP_EQ) {
-          auto res = push(B.CreateOr(
-              push(B.CreateAnd(a, b)),
-              push(B.CreateAnd(push(B.CreateNot(a)), push(B.CreateNot(b))))));
-          for (auto U : cur->users())
-            push(U);
-          cur->replaceAllUsesWith(res);
-          cur->eraseFromParent();
-          return true;
+          auto res = pushcse(B.CreateOr(
+              pushcse(B.CreateAnd(a, b)),
+              pushcse(B.CreateAnd(pushcse(B.CreateNot(a)), pushcse(B.CreateNot(b))))));
+          replaceAndErase(cur, res);
+          return "CmpI1EQ";
         }
-        if (fcmp->getPredicate() == CmpInst::ICMP_EQ) {
+        if (fcmp->getPredicate() == CmpInst::ICMP_NE) {
           auto res =
-              push(B.CreateOr(push(B.CreateAnd(push(B.CreateNot(a)), b)),
-                              push(B.CreateAnd(a, push(B.CreateNot(b))))));
-          for (auto U : cur->users())
-            push(U);
-          cur->replaceAllUsesWith(res);
-          cur->eraseFromParent();
-          return true;
+              pushcse(B.CreateOr(pushcse(B.CreateAnd(pushcse(B.CreateNot(a)), b)),
+                              pushcse(B.CreateAnd(a, pushcse(B.CreateNot(b))))));
+          replaceAndErase(cur, res);
+          return "CmpI1NE";
         }
       }
       
@@ -2950,13 +3055,9 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
                 if (auto addI = dyn_cast<Instruction>(fcmp->getOperand(1-i)))
                     if (addI->getOperand(0) == addI->getOperand(1)) {
                         Value *res =
-                                B.CreateCmp(fcmp->getPredicate(), addI->getOperand(0), CI);
-                        push(res);
-                for (auto U : cur->users())
-                  push(U);
-                cur->replaceAllUsesWith(res);
-                cur->eraseFromParent();
-                return true;
+                                pushcse(B.CreateCmp(fcmp->getPredicate(), addI->getOperand(0), CI));
+                replaceAndErase(cur, res);
+                return "CmpAddAdd";
                     }
 
       // (a * b) == (c * b) -> (a == c) ||  b == 0
@@ -2975,28 +3076,20 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
             for (int i = 0; i < 2; i++) {
               if (mul1->getOperand(i) == mul2->getOperand(i)) {
                 Value *res =
-                    B.CreateICmp(fcmp->getPredicate(), mul1->getOperand(1 - i),
-                                 mul2->getOperand(1 - i));
-                push(res);
+                    pushcse(B.CreateICmp(fcmp->getPredicate(), mul1->getOperand(1 - i),
+                                 mul2->getOperand(1 - i)));
                 auto b = mul1->getOperand(i);
                 if (fcmp->getPredicate() == CmpInst::ICMP_EQ) {
-                  Value *bZero = B.CreateICmp(
-                      CmpInst::ICMP_EQ, b, ConstantInt::get(b->getType(), 0));
-                  push(bZero);
-                  res = B.CreateOr(res, bZero);
-                  push(res);
+                  Value *bZero = pushcse(B.CreateICmp(
+                      CmpInst::ICMP_EQ, b, ConstantInt::get(b->getType(), 0)));
+                  res = pushcse(B.CreateOr(res, bZero));
                 } else {
-                  Value *bZero = B.CreateICmp(
-                      ICmpInst::ICMP_NE, b, ConstantInt::get(b->getType(), 0));
-                  push(bZero);
-                  res = B.CreateAnd(res, bZero);
-                  push(res);
+                  Value *bZero = pushcse(B.CreateICmp(
+                      ICmpInst::ICMP_NE, b, ConstantInt::get(b->getType(), 0)));
+                  res = pushcse(B.CreateAnd(res, bZero));
                 }
-                for (auto U : cur->users())
-                  push(U);
-                cur->replaceAllUsesWith(res);
-                cur->eraseFromParent();
-                return true;
+                replaceAndErase(cur, res);
+                return "CmpMulCommon";
               }
             }
           }
@@ -3007,28 +3100,20 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
             for (int i = 0; i < 2; i++) {
               if (mul1->getOperand(i) == mul2->getOperand(i)) {
                 Value *res =
-                    B.CreateFCmp(fcmp->getPredicate(), mul1->getOperand(1 - i),
-                                 mul2->getOperand(1 - i));
-                push(res);
+                    pushcse(B.CreateFCmp(fcmp->getPredicate(), mul1->getOperand(1 - i),
+                                 mul2->getOperand(1 - i)));
                 auto b = mul1->getOperand(i);
                 if (fcmp->getPredicate() == CmpInst::FCMP_OEQ) {
-                  Value *bZero = B.CreateICmp(CmpInst::FCMP_OEQ, b,
-                                              ConstantFP::get(b->getType(), 0));
-                  push(bZero);
-                  res = B.CreateOr(res, bZero);
-                  push(res);
+                  Value *bZero = pushcse(B.CreateCmp(CmpInst::FCMP_OEQ, b,
+                                              ConstantFP::get(b->getType(), 0)));
+                  res = pushcse(B.CreateOr(res, bZero));
                 } else {
-                  Value *bZero = B.CreateICmp(CmpInst::FCMP_ONE, b,
-                                              ConstantFP::get(b->getType(), 0));
-                  push(bZero);
-                  res = B.CreateAnd(res, bZero);
-                  push(res);
+                  Value *bZero = pushcse(B.CreateCmp(CmpInst::FCMP_ONE, b,
+                                              ConstantFP::get(b->getType(), 0)));
+                  res = pushcse(B.CreateAnd(res, bZero));
                 }
-                for (auto U : cur->users())
-                  push(U);
-                cur->replaceAllUsesWith(res);
-                cur->eraseFromParent();
-                return true;
+                replaceAndErase(cur, res);
+                return "CmpMulfCommon";
               }
             }
           }
@@ -3038,16 +3123,12 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
             if (mul1->getOpcode() == cond && mul2->getOpcode() == cond &&
                 mul1->getOperand(0)->getType() ==
                     mul2->getOperand(0)->getType()) {
-              Value *res = B.CreateICmp(
+              Value *res = pushcse(B.CreateICmp(
                   fcmp->getPredicate() == CmpInst::FCMP_OEQ ? CmpInst::ICMP_EQ
                                                             : CmpInst::ICMP_NE,
-                  mul1->getOperand(0), mul2->getOperand(0));
-              push(res);
-              for (auto U : cur->users())
-                push(U);
-              cur->replaceAllUsesWith(res);
-              cur->eraseFromParent();
-              return true;
+                  mul1->getOperand(0), mul2->getOperand(0)));
+              replaceAndErase(cur, res);
+              return "CmpUIToFP";
             }
 
           // (zext a ) ?= (zext b) -> a ?= b
@@ -3055,14 +3136,10 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
               mul2->getOpcode() == Instruction::ZExt &&
               mul1->getOperand(0)->getType() ==
                   mul2->getOperand(0)->getType()) {
-            Value *res = B.CreateICmp(fcmp->getPredicate(), mul1->getOperand(0),
-                                      mul2->getOperand(0));
-            push(res);
-            for (auto U : cur->users())
-              push(U);
-            cur->replaceAllUsesWith(res);
-            cur->eraseFromParent();
-            return true;
+            Value *res = pushcse(B.CreateICmp(fcmp->getPredicate(), mul1->getOperand(0),
+                                      mul2->getOperand(0)));
+            replaceAndErase(cur, res);
+            return "CmpZExt";
           }
 
           // (zext i1 a ) == (sext i1 b) -> (!a & !b)
@@ -3081,24 +3158,18 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
                 Value *nb = mul2->getOperand(0);
 
                 if (fcmp->getPredicate() == ICmpInst::ICMP_EQ) {
-                  na = B.CreateNot(na);
-                  push(na);
-                  nb = B.CreateNot(nb);
-                  push(nb);
+                  na = pushcse(B.CreateNot(na));
+                  nb = pushcse(B.CreateNot(nb));
                 }
 
                 Value *res = nullptr;
                 if (fcmp->getPredicate() == ICmpInst::ICMP_EQ)
-                  res = B.CreateAnd(na, nb);
+                  res = pushcse(B.CreateAnd(na, nb));
                 else
-                  res = B.CreateOr(na, nb);
+                  res = pushcse(B.CreateOr(na, nb));
 
-                push(res);
-                for (auto U : cur->users())
-                  push(U);
-                cur->replaceAllUsesWith(res);
-                cur->eraseFromParent();
-                return true;
+                replaceAndErase(cur, res);
+                return "CmpZExtSExt";
               }
         }
     }
@@ -3110,30 +3181,20 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
               // (a*b) == 0 -> (a == 0) || (b == 0)
               if (fmul->getOpcode() == Instruction::Mul) {
                 auto ncmp1 =
-                    B.CreateICmp(fcmp->getPredicate(), fmul->getOperand(0), C);
-                push(ncmp1);
+                    pushcse(B.CreateICmp(fcmp->getPredicate(), fmul->getOperand(0), C));
                 auto ncmp2 =
-                    B.CreateICmp(fcmp->getPredicate(), fmul->getOperand(1), C);
-                push(ncmp2);
-                auto ori = B.CreateOr(ncmp1, ncmp2);
-                push(ori);
-                for (auto U : cur->users())
-                  push(U);
-                cur->replaceAllUsesWith(ori);
-                cur->eraseFromParent();
-                return true;
+                    pushcse(B.CreateICmp(fcmp->getPredicate(), fmul->getOperand(1), C));
+                auto ori = pushcse(B.CreateOr(ncmp1, ncmp2));
+                replaceAndErase(cur, ori);
+                return "CmpIMulSplit";
               }
               // (a-b) == 0 -> a == b
               if (fmul->getOpcode() == Instruction::Sub) {
                 auto ncmp1 =
-                    B.CreateICmp(fcmp->getPredicate(), fmul->getOperand(0),
-                                 fmul->getOperand(1));
-                push(ncmp1);
-                for (auto U : cur->users())
-                  push(U);
-                cur->replaceAllUsesWith(ncmp1);
-                cur->eraseFromParent();
-                return true;
+                    pushcse(B.CreateICmp(fcmp->getPredicate(), fmul->getOperand(0),
+                                 fmul->getOperand(1)));
+                replaceAndErase(cur, ncmp1);
+                return "CmpISubSplit";
               }
             }
           }
@@ -3142,24 +3203,29 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
     }
   }
 
-  // add x, (y * -1) -> sub x, y
+  if (cur->getOpcode() == Instruction::FAdd) {
+    // add x, x -> mul 2.0
+    if (cur->getOperand(0) == cur->getOperand(1) && cur->isFast()) {
+        auto res = pushcse(B.CreateFMulFMF(cur->getOperand(0), ConstantFP::get(cur->getType(), 2.0), cur));
+        replaceAndErase(cur, res);
+        return "AddToMul2";
+    }
+  }
+
   if (cur->getOpcode() == Instruction::Add) {
+    // add x, (y * -1) -> sub x, y
     for (int i = 0; i < 2; i++) {
       if (auto mul1 = dyn_cast<Instruction>(cur->getOperand(i)))
         if (mul1->getOpcode() == Instruction::Mul) {
           for (int j = 0; j < 2; j++) {
             if (auto C = dyn_cast<ConstantInt>(mul1->getOperand(j))) {
               if (C->isMinusOne()) {
-                auto res = B.CreateSub(cur->getOperand(1 - i),
-                                       mul1->getOperand(1 - j));
-                push(res);
+                auto res = pushcse(B.CreateSub(cur->getOperand(1 - i),
+                                       mul1->getOperand(1 - j)));
                 push(mul1);
 
-                for (auto U : cur->users())
-                  push(U);
-                cur->replaceAllUsesWith(res);
-                cur->eraseFromParent();
-                return true;
+                replaceAndErase(cur, res);
+                return "AddToSub";
               }
             }
           }
@@ -3170,46 +3236,37 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
   if (auto SI = dyn_cast<SelectInst>(cur)) {
     auto shouldMove = [](Value *v) { return isa<Constant>(v); };
 
+    /*
+    // select c, 0, x -> fmul (uitofp (!c)), x
     if (auto C1 = dyn_cast<ConstantFP>(SI->getTrueValue())) {
       if (C1->isZero()) {
-        auto n = B.CreateNot(SI->getCondition());
-        push(n);
-        auto val = B.CreateUIToFP(n, SI->getType());
-        push(val);
-        auto res = B.CreateFMul(val, SI->getFalseValue());
+        auto n = pushcse(B.CreateNot(SI->getCondition()));
+        auto val = pushcse(B.CreateUIToFP(n, SI->getType()));
+        auto res = pushcse(B.CreateFMul(val, SI->getFalseValue()));
         if (auto I = dyn_cast<Instruction>(res))
           I->setFast(true);
-        push(res);
-        for (auto U : cur->users()) {
-          push(U);
-        }
-        cur->replaceAllUsesWith(res);
-        cur->eraseFromParent();
+        replaceAndErase(cur, res);
         return true;
       }
     }
+    // select c, x, 0 -> fmul (uitofp c), x
     if (auto C1 = dyn_cast<ConstantFP>(SI->getFalseValue())) {
       if (C1->isZero()) {
-        auto val = B.CreateUIToFP(SI->getCondition(), SI->getType());
-        push(val);
-        auto res = B.CreateFMul(val, SI->getTrueValue());
+        auto val = pushcse(B.CreateUIToFP(SI->getCondition(), SI->getType()));
+        auto res = pushcse(B.CreateFMul(val, SI->getTrueValue()));
         if (auto I = dyn_cast<Instruction>(res))
           I->setFast(true);
-        push(res);
-        for (auto U : cur->users()) {
-          push(U);
-        }
-        cur->replaceAllUsesWith(res);
-        cur->eraseFromParent();
+        replaceAndErase(cur, res);
         return true;
       }
     }
+    */
 
     // select c, (mul x y), 0 -> mul x, (select c, y, 0)
     for (int i = 0; i < 2; i++)
       if (auto inst = dyn_cast<Instruction>(SI->getOperand(1 + i)))
-        if (inst->getOpcode() == Instruction::Mul ||
-            inst->getOpcode() == Instruction::FMul)
+        if (inst->getOpcode() == Instruction::Mul)
+            // inst->getOpcode() == Instruction::FMul)
           if (auto C = dyn_cast<Constant>(SI->getOperand(1 + (1 - i))))
             if ((isa<ConstantInt>(C) && cast<ConstantInt>(C)->isZero()) ||
                 (isa<ConstantFP>(C) && cast<ConstantFP>(C)->isZero()))
@@ -3217,25 +3274,21 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
                 if (shouldMove(inst->getOperand(j))) {
                   auto x = inst->getOperand(j);
                   auto y = inst->getOperand(1 - j);
-                  auto isel = B.CreateSelect(
-                      SI->getCondition(), (i == 0) ? y : C, (i == 0) ? C : y);
+                  auto isel = pushcse(B.CreateSelect(
+                      SI->getCondition(), (i == 0) ? y : C, (i == 0) ? C : y, "smulmove." + SI->getName()));
                   Value *imul;
                   if (cur->getType()->isIntegerTy())
-                    imul = B.CreateMul(isel, x, "", inst->hasNoUnsignedWrap(),
-                                       inst->hasNoSignedWrap());
+                    imul = pushcse(B.CreateMul(isel, x, "", inst->hasNoUnsignedWrap(),
+                                       inst->hasNoSignedWrap()));
                   else
-                    imul = B.CreateFMulFMF(isel, x, inst, "");
-                  push(isel);
-                  push(imul);
+                    imul = pushcse(B.CreateFMulFMF(isel, x, inst, ""));
 
-                  for (auto U : cur->users()) {
-                    push(U);
-                  }
-                  cur->replaceAllUsesWith(imul);
-                  cur->eraseFromParent();
-                  return true;
+                  replaceAndErase(cur, imul);
+                  return "SelMulMove";
                 }
 
+    // select c, (sitofp x), (sitofp y) ->  sitofp (select c, x, y)
+    // select c, c5, (sitofp y) ->  sitofp (select c, c5, y)
     {
       Value *ops[2] = {nullptr, nullptr};
       bool legal = true;
@@ -3264,17 +3317,11 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         }
       }
       if (legal) {
-        auto isel = B.CreateSelect(SI->getCondition(), ops[0], ops[1]);
-        push(isel);
-        auto res = B.CreateSIToFP(isel, SI->getType());
-        push(res);
+        auto isel = pushcse(B.CreateSelect(SI->getCondition(), ops[0], ops[1], "seltofp." + SI->getName()));
+        auto res = pushcse(B.CreateSIToFP(isel, SI->getType()));
 
-        for (auto U : cur->users()) {
-          push(U);
-        }
-        cur->replaceAllUsesWith(res);
-        cur->eraseFromParent();
-        return true;
+        replaceAndErase(cur, res);
+        return "SelSIMerge";
       }
     }
   }
@@ -3284,13 +3331,8 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
       // mul (x, 1) -> x
       if (auto C = dyn_cast<ConstantInt>(cur->getOperand(i)))
         if (C->isOne()) {
-          push(cur->getOperand(1 - i));
-          for (auto U : cur->users()) {
-            push(U);
-          }
-          cur->replaceAllUsesWith(cur->getOperand(1 - i));
-          cur->eraseFromParent();
-          return true;
+          replaceAndErase(cur, cur->getOperand(1-i));
+          return "MulIdent";
         }
 
       // mul (zext i1 x), y -> mul (zext i1 x) y[x->1]
@@ -3300,14 +3342,11 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
           auto next = replace(prev, Z->getOperand(0),
                               ConstantInt::getTrue(cur->getContext()));
           if (next != prev) {
-            auto res = push(B.CreateMul(Z, next, "postmul." + cur->getName(),
+            auto res = pushcse(B.CreateMul(Z, next, "postmul." + cur->getName(),
                                         cur->hasNoUnsignedWrap(),
                                         cur->hasNoSignedWrap()));
-            for (auto U : cur->users())
-              push(U);
-            cur->replaceAllUsesWith(res);
-            cur->eraseFromParent();
-            return true;
+            replaceAndErase(cur, res);
+            return "MulReplaceZExt";
           }
         }
     }
@@ -3319,23 +3358,16 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
   for (int j=0; j<2; j++)
   if (auto CI = dyn_cast<ConstantInt>(SI->getOperand(1+j)))
     if (CI->isZero()) {
-            auto tval = (j == 0) ? CI : B.CreateMul(SI->getTrueValue(),
+            auto tval = (j == 0) ? CI : pushcse(B.CreateMul(SI->getTrueValue(),
   cur->getOperand(1-i), "tval." + cur->getName(), cur->hasNoUnsignedWrap(),
-                               cur->hasNoSignedWrap());
-            auto fval = (j == 1) ? CI : B.CreateMul(SI->getFalseValue(),
+                               cur->hasNoSignedWrap()));
+            auto fval = (j == 1) ? CI : pushcse(B.CreateMul(SI->getFalseValue(),
   cur->getOperand(1-i), "fval." + cur->getName(), cur->hasNoUnsignedWrap(),
-                               cur->hasNoSignedWrap());
-          push(tval);
-          push(fval);
+                               cur->hasNoSignedWrap()));
 
-          auto res = B.CreateSelect(SI->getCondition(), tval, fval);
-          push(res);
+          auto res = pushcse(B.CreateSelect(SI->getCondition(), tval, fval));
 
-          for (auto U : cur->users()) {
-            push(U);
-          }
-          cur->replaceAllUsesWith(res);
-          cur->eraseFromParent();
+          replaceAndErase(cur, res);
           return true;
         }
         */
@@ -3346,21 +3378,15 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (inst->getOpcode() == Instruction::Sub)
           if (auto CI = dyn_cast<ConstantInt>(cur->getOperand(1 - i)))
             if (CI->isNegative()) {
-              auto sub2 = B.CreateSub(inst->getOperand(1), inst->getOperand(0),
+              auto sub2 = pushcse(B.CreateSub(inst->getOperand(1), inst->getOperand(0),
                                       "", inst->hasNoUnsignedWrap(),
-                                      inst->hasNoSignedWrap());
-              push(sub2);
-              auto mul2 = B.CreateMul(
+                                      inst->hasNoSignedWrap()));
+              auto mul2 = pushcse(B.CreateMul(
                   sub2, ConstantInt::get(CI->getType(), -CI->getValue()), "",
-                  cur->hasNoUnsignedWrap(), cur->hasNoSignedWrap());
-              push(mul2);
+                  cur->hasNoUnsignedWrap(), cur->hasNoSignedWrap()));
 
-              for (auto U : cur->users()) {
-                push(U);
-              }
-              cur->replaceAllUsesWith(mul2);
-              cur->eraseFromParent();
-              return true;
+              replaceAndErase(cur, mul2);
+              return "MulSubNegConst";
             }
   }
 
@@ -3371,14 +3397,9 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
           // sub 0, (zext i1 x) -> sext x
           if (zext->getOpcode() == Instruction::ZExt &&
               zext->getOperand(0)->getType()->isIntegerTy(1)) {
-            auto res = B.CreateSExt(zext->getOperand(0), cur->getType());
-            push(res);
-
-            for (auto U : cur->users())
-              push(U);
-            cur->replaceAllUsesWith(res);
-            cur->eraseFromParent();
-            return true;
+            auto res = pushcse(B.CreateSExt(zext->getOperand(0), cur->getType()));
+            replaceAndErase(cur, res);
+            return "SubZExt";
           }
           // sub 0, (mul nsw nuw constant, x) -> mul nsw nuw -constant, x
           if (zext->getOpcode() == Instruction::Mul &&
@@ -3386,17 +3407,12 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
             bool done = true;
             for (int i = 0; i < 2; i++)
               if (auto CI = dyn_cast<ConstantInt>(zext->getOperand(i))) {
-                auto res = B.CreateMul(
+                auto res = pushcse(B.CreateMul(
                     zext->getOperand(1 - i),
                     ConstantInt::get(CI->getType(), -CI->getValue()),
-                    "neg." + zext->getName(), true, true);
-                push(res);
-                for (auto U : cur->users()) {
-                  push(U);
-                }
-                cur->replaceAllUsesWith(res);
-                cur->eraseFromParent();
-                return true;
+                    "neg." + zext->getName(), true, true));
+                replaceAndErase(cur, res);
+                return "SubMulConstant";
               }
           }
         }
@@ -3417,30 +3433,24 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
   and1->getOpcode() == Instruction::And && and2->getOpcode() ==
   Instruction::And) { bool done = false; for (int i1=0; i1<2; i1++) for (int
   i2=0; i2<2; i2++) if (and1->getOperand(i1) == and2->getOperand(i2)) { auto c1
-  = and1->getOperand(i1); auto x = and1->getOperand(1-i1); x = B.CreateZExt(x,
-  inst1->getType()); push(x); auto y = and2->getOperand(1-i2);
+  = and1->getOperand(i1); auto x = and1->getOperand(1-i1); x = pushcse(B.CreateZExt(x,
+  inst1->getType()));  auto y = and2->getOperand(1-i2);
 
-                y = B.CreateZExt(y, inst2->getType());
-                push(y);
+                y = pushcse(B.CreateZExt(y, inst2->getType()));
 
               Value *res = nullptr;
               switch (cur->getOpcode()) {
               case Instruction::Add:
-                res = B.CreateAdd(x, y, "", cur->hasNoUnsignedWrap(),
-  cur->hasNoSignedWrap()); break; case Instruction::Sub: res = B.CreateSub(x, y,
+                res = pushcse(B.CreateAdd(x, y, "", cur->hasNoUnsignedWrap(),
+  cur->hasNoSignedWrap())); break; case Instruction::Sub: res = B.CreateSub(x, y,
   "", cur->hasNoUnsignedWrap(), cur->hasNoSignedWrap()); break; case
   Instruction::Mul: res = B.CreateMul(x, y, "", cur->hasNoUnsignedWrap(),
   cur->hasNoSignedWrap()); break; default: llvm_unreachable("Illegal opcode");
               }
-              push(res);
-              res = B.CreateSelect(c1, res,
-  Constant::getNullValue(cur->getType())); push(res);
+              res = pushcse(B.CreateSelect(c1, res,
+  Constant::getNullValue(cur->getType())));
 
-              for (auto U : cur->users()) {
-                  push(U);
-                }
-                cur->replaceAllUsesWith(res);
-                cur->eraseFromParent();
+                replaceAndErase(cur, res);
                 return;
             }
             }
@@ -3584,18 +3594,15 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         default:
           llvm_unreachable("illegal opcode");
         }
-        push(tval);
-        push(fval);
+        tval = pushcse(tval);
+        fval = pushcse(fval);
 
-        auto res = B.CreateSelect(SI1cond, tval, fval);
-        push(res);
+        auto res = pushcse(B.CreateSelect(SI1cond, tval, fval, "selmerge." + cur->getName()));
 
-        for (auto U : cur->users()) {
-          push(U);
-        }
-        cur->replaceAllUsesWith(res);
-        cur->eraseFromParent();
-        return true;
+        push(cur->getOperand(0));
+        push(cur->getOperand(1));
+        replaceAndErase(cur, res);
+        return "BinopSelFuse";
       }
   }
 
@@ -3616,7 +3623,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
               Q.insert(cur);
               for (auto U : cur->users())
                 push(U);
-              return true;
+              return "AndOrProp";
             }
   }
 
@@ -3627,11 +3634,8 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (inst2->getOpcode() == Instruction::And)
           for (size_t i2 = 0; i2 < 2; i2++)
             if (inst2->getOperand(i2) == cur->getOperand(1 - i1)) {
-              for (auto U : cur->users())
-                push(U);
-              cur->replaceAllUsesWith(inst2);
-              push(inst2);
-              return true;
+              replaceAndErase(cur, inst2);
+              return "AndAndProp";
             }
   }
 
@@ -3652,7 +3656,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
               Q.insert(cur);
               for (auto U : cur->users())
                 push(U);
-              return true;
+              return "OrAndProp";
             }
   }
 
@@ -3685,31 +3689,22 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
                             Value *res = nullptr;
                             if (interOp == Instruction::Add)
                               res =
-                                  B.CreateSub(ia == 0 ? b : c, ia == 0 ? c : b);
+                                  pushcse(B.CreateSub(ia == 0 ? b : c, ia == 0 ? c : b));
                             else
                               res =
-                                  B.CreateAdd(ia == 0 ? b : c, ia == 0 ? c : b);
+                                  pushcse(B.CreateAdd(ia == 0 ? b : c, ia == 0 ? c : b));
 
-                            push(res);
-
-                            auto lhs = B.CreateCmp(cmpOp, a, res);
-                            push(lhs);
-                            auto rhs = B.CreateCmp(cmpOp, d, res);
-                            push(rhs);
+                            auto lhs = pushcse(B.CreateCmp(cmpOp, a, res));
+                            auto rhs = pushcse(B.CreateCmp(cmpOp, d, res));
 
                             Value *fres = nullptr;
                             if (cur->getOpcode() == Instruction::And)
-                              fres = B.CreateAnd(lhs, rhs);
+                              fres = pushcse(B.CreateAnd(lhs, rhs));
                             else
-                              fres = B.CreateOr(lhs, rhs);
+                              fres = pushcse(B.CreateOr(lhs, rhs));
 
-                            push(fres);
-
-                            for (auto U : cur->users())
-                              push(U);
-                            cur->replaceAllUsesWith(fres);
-                            cur->eraseFromParent();
-                            return true;
+                            replaceAndErase(cur, fres);
+                            return "AndLinearShift";
                           }
   }
 
@@ -3731,19 +3726,12 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
                   if (C->getAPInt().isZero()) {
                     push(cmp1);
                     push(cmp2);
-                    for (auto U : cur->users())
-                      push(U);
-                    cur->replaceAllUsesWith(cmp1);
-                    cur->eraseFromParent();
-                    return true;
+                    replaceAndErase(cur, cmp1);
+                    return "AndEQExpr";
                   } else {
                     // if non one constant they must be distinct.
-                    for (auto U : cur->users())
-                      push(U);
-                    cur->replaceAllUsesWith(
-                        ConstantInt::getFalse(cur->getContext()));
-                    cur->eraseFromParent();
-                    return true;
+                    replaceAndErase(cur, ConstantInt::getFalse(cur->getContext()));
+                    return "AndNEExpr";
                   }
                 }
               }
@@ -3771,18 +3759,15 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
               default:
                 llvm_unreachable("Illegal opcode");
               }
-              push(res);
+              res = pushcse(res);
               auto res2 = B.CreateMul(
                   res, mul1->getOperand(i), "",
                   mul1->hasNoUnsignedWrap() && mul1->hasNoUnsignedWrap(),
                   mul2->hasNoSignedWrap() && mul2->hasNoSignedWrap());
-              push(res2);
+              res2 = pushcse(res2);
 
-              for (auto U : cur->users())
-                push(U);
-              cur->replaceAllUsesWith(res2);
-              cur->eraseFromParent();
-              return true;
+              replaceAndErase(cur, res2);
+              return "InvDistributive";
             }
           }
         }
@@ -3800,9 +3785,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
     SmallVector<Instruction *, 1> precasts;
     Value *lhs = nullptr;
 
-    Value *prelhs = (cur->getOpcode() == Instruction::FNeg)
-                        ? ConstantFP::getZero(cur->getType())
-                        : cur->getOperand(0);
+    Value *prelhs = cur->getOperand(0);
     Value *prerhs = (cur->getOpcode() == Instruction::FNeg)
                         ? cur->getOperand(0)
                         : cur->getOperand(1);
@@ -3985,68 +3968,119 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
                        MDNode::get(I->getContext(), vals));
       }
       */
-      for (auto U : cur->users())
-        push(U);
       auto ext = B.CreateSIToFP(res, cur->getType());
-      if (auto I = dyn_cast<Instruction>(ext))
-        push(I);
-      cur->replaceAllUsesWith(ext);
-      cur->eraseFromParent();
-      return true;
+      replaceAndErase(cur, ext);
+      return "BinopExtToExtBinop";
 
     } else {
       for (auto I : temporaries)
         I->eraseFromParent();
     }
   }
+  
+  if (cur->getOpcode() == Instruction::FDiv) {
+    Value *prelhs = cur->getOperand(0);
+    Value *b = cur->getOperand(1);
+
+    
+    // fdiv (sitofp a), b -> select (a == 0), 0 [ (fdiv 1 / b) * sitofp a]
+    if (auto ext = dyn_cast<CastInst>(prelhs)) {
+      if (ext->getOpcode() == Instruction::UIToFP ||
+          ext->getOpcode() == Instruction::SIToFP) {
+        push(ext);
+        
+        Value *condition = pushcse(B.CreateICmpEQ(ext->getOperand(0), ConstantInt::get(ext->getOperand(0)->getType(), 0), "sdivcmp." + cur->getName()));
+      
+        Value *fdiv = pushcse(B.CreateFMulFMF(pushcse(B.CreateFDivFMF(ConstantFP::get(cur->getType(), 1.0), b, cur)), ext, cur));
+
+        Value *sel = pushcse(B.CreateSelect(condition, ConstantFP::get(cur->getType(), 0.0), fdiv, "sfdiv." + cur->getName()));
+
+        replaceAndErase(cur, sel);
+        return "FDivSIToFPProp";
+
+    }
+  }
+
+     // fdiv (select c, 0, a), b -> select c, 0 (fdiv a, b)
+    if (auto SI = dyn_cast<SelectInst>(prelhs)) {
+        auto tvalC = dyn_cast<ConstantFP>(SI->getTrueValue());
+        auto fvalC = dyn_cast<ConstantFP>(SI->getFalseValue());
+        if ((tvalC && tvalC->isZero()) || (fvalC && fvalC->isZero())) {
+           push(SI);
+           auto ntval = (tvalC && tvalC->isZero()) ? tvalC : pushcse(B.CreateFDivFMF(SI->getTrueValue(), b, cur));
+           auto nfval = (fvalC && fvalC->isZero()) ? fvalC : pushcse(B.CreateFDivFMF(SI->getFalseValue(), b, cur));
+           auto res = pushcse(B.CreateSelect(SI->getCondition(), ntval, nfval, "sfdiv2." + cur->getName()));
+        
+            replaceAndErase(cur, res);
+            return "FDivSelectProp";
+
+        }
+    }
+  }
+ 
+  if (cur->getOpcode() == Instruction::FMul) 
+  for (int i=0; i<2; i++) {
+
+    Value *prelhs = cur->getOperand(i);
+    Value *b = cur->getOperand(1-i);
+
+    auto contains = [](MDNode* MD, Value* V) {
+        if (!MD) return false;
+        for (auto &op : MD->operands()) {
+            auto V2 = cast<ValueAsMetadata>(op)->getValue();
+            if (V == V2) return true;
+        }
+        return false;
+    };
+
+    // fmul (sitofp a), b -> select (a == 0), 0 [noprop fmul ( sitofp a), b]
+    if (!contains(hasMetadata(cur, "enzyme_fmulnoprop"), prelhs))
+    if (auto ext = dyn_cast<CastInst>(prelhs)) {
+      if (ext->getOpcode() == Instruction::UIToFP ||
+          ext->getOpcode() == Instruction::SIToFP) {
+        push(ext);
+        
+        Value *condition = pushcse(B.CreateICmpEQ(ext->getOperand(0), ConstantInt::get(ext->getOperand(0)->getType(), 0), "mulcsicmp." + cur->getName()));
+      
+        Value *fmul = pushcse(B.CreateFMulFMF(ext, b, cur));
+        if (auto I = dyn_cast<Instruction>(fmul)) {
+            SmallVector<Metadata*, 1> nodes;
+            if (auto MD = hasMetadata(cur, "enzyme_fmulnoprop")) {
+                for (auto &M : MD->operands()) {
+                    nodes.push_back(M.get());
+                }
+            }
+            nodes.push_back(ValueAsMetadata::get(ext));
+            I->setMetadata("enzyme_fmulnoprop", MDNode::get(I->getContext(), nodes));
+        }
+
+        Value *sel = pushcse(B.CreateSelect(condition, ConstantFP::get(cur->getType(), 0.0), fmul, "mulcsi." + cur->getName()));
+
+        replaceAndErase(cur, sel);
+        return "FMulSIToFPProp";
+
+    }
+  }
+
+     // fmul (select c, 0, a), b -> select c, 0 (fmul a, b)
+    if (auto SI = dyn_cast<SelectInst>(prelhs)) {
+        auto tvalC = dyn_cast<ConstantFP>(SI->getTrueValue());
+        auto fvalC = dyn_cast<ConstantFP>(SI->getFalseValue());
+        if ((tvalC && tvalC->isZero()) || (fvalC && fvalC->isZero())) {
+           push(SI);
+           auto ntval = (tvalC && tvalC->isZero()) ? tvalC : pushcse(B.CreateFMulFMF(SI->getTrueValue(), b, cur));
+           auto nfval = (fvalC && fvalC->isZero()) ? fvalC : pushcse(B.CreateFMulFMF(SI->getFalseValue(), b, cur));
+           auto res = pushcse(B.CreateSelect(SI->getCondition(), ntval, nfval, "mulsi." + cur->getName()));
+       
+            replaceAndErase(cur, res);
+            return "FMulSelectProp";
+
+        }
+    }
+  }
+
 
   if (auto icmp = dyn_cast<BinaryOperator>(cur)) {
-    if (icmp->getOpcode() == Instruction::Or) {
-      for (int i = 0; i < 2; i++) {
-        if (auto C = dyn_cast<ConstantInt>(icmp->getOperand(i))) {
-          // or a, 0 -> a
-          if (C->isZero()) {
-            push(icmp->getOperand(1 - i));
-            for (auto U : cur->users())
-              push(U);
-            cur->replaceAllUsesWith(icmp->getOperand(1 - i));
-            cur->eraseFromParent();
-            return true;
-          }
-          // or a, 1 -> 1
-          if (C->isOne()) {
-            for (auto U : cur->users())
-              push(U);
-            cur->replaceAllUsesWith(C);
-            cur->eraseFromParent();
-            return true;
-          }
-        }
-      }
-    }
-    if (icmp->getOpcode() == Instruction::And) {
-      for (int i = 0; i < 2; i++) {
-        if (auto C = dyn_cast<ConstantInt>(icmp->getOperand(i))) {
-          // and a, 1 -> a
-          if (C->isOne()) {
-            push(icmp->getOperand(1 - i));
-            for (auto U : cur->users())
-              push(U);
-            cur->replaceAllUsesWith(icmp->getOperand(1 - i));
-            cur->eraseFromParent();
-            return true;
-          }
-          // and a, 0 -> 0
-          if (C->isZero()) {
-            for (auto U : cur->users())
-              push(U);
-            cur->replaceAllUsesWith(C);
-            cur->eraseFromParent();
-            return true;
-          }
-        }
-      }
-    }
     if (icmp->getOpcode() == Instruction::Xor) {
       for (int i = 0; i < 2; i++) {
         if (auto C = dyn_cast<ConstantInt>(icmp->getOperand(i))) {
@@ -4054,14 +4088,10 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
           if (C->isOne()) {
             if (auto scmp = dyn_cast<CmpInst>(icmp->getOperand(1 - i))) {
               auto next =
-                  B.CreateCmp(scmp->getInversePredicate(), scmp->getOperand(0),
-                              scmp->getOperand(1), "not." + scmp->getName());
-              push(next);
-              for (auto U : cur->users())
-                push(U);
-              cur->replaceAllUsesWith(next);
-              cur->eraseFromParent();
-              return true;
+                  pushcse(B.CreateCmp(scmp->getInversePredicate(), scmp->getOperand(0),
+                              scmp->getOperand(1), "not." + scmp->getName()));
+              replaceAndErase(cur, next);
+              return "NotCmp";
             }
           }
         }
@@ -4073,15 +4103,12 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
     auto tval = replace(SI->getTrueValue(), SI->getCondition(),
                         ConstantInt::getTrue(SI->getContext()));
     auto fval = replace(SI->getFalseValue(), SI->getCondition(),
-                        ConstantInt::getTrue(SI->getContext()));
+                        ConstantInt::getFalse(SI->getContext()));
     if (tval != SI->getTrueValue() || fval != SI->getFalseValue()) {
-      auto res = push(B.CreateSelect(SI->getCondition(), tval, fval,
+      auto res = pushcse(B.CreateSelect(SI->getCondition(), tval, fval,
                                      "postsel." + SI->getName()));
-      for (auto U : cur->users())
-        push(U);
-      cur->replaceAllUsesWith(res);
-      cur->eraseFromParent();
-      return true;
+      replaceAndErase(cur, res);
+      return "SelectReplace";
     }
   }
 
@@ -4115,41 +4142,25 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         falseVal = ext->getOperand(0);
     }
     if (trueVal && falseVal) {
-      auto ncmp1 = B.CreateAnd(SI->getCondition(), trueVal);
-      push(ncmp1);
-      auto notV = B.CreateNot(SI->getCondition());
-      push(notV);
-      auto ncmp2 = B.CreateAnd(notV, falseVal);
-      push(ncmp2);
-      auto ori = B.CreateOr(ncmp1, ncmp2);
-      push(ori);
-      auto ext = B.CreateUIToFP(ori, SI->getType());
-      push(ext);
-      for (auto U : cur->users())
-        push(U);
-      cur->replaceAllUsesWith(ext);
-      cur->eraseFromParent();
-      return true;
+      auto ncmp1 = pushcse(B.CreateAnd(SI->getCondition(), trueVal));
+      auto notV = pushcse(B.CreateNot(SI->getCondition()));
+      auto ncmp2 = pushcse(B.CreateAnd(notV, falseVal));
+      auto ori = pushcse(B.CreateOr(ncmp1, ncmp2));
+      auto ext = pushcse(B.CreateUIToFP(ori, SI->getType()));
+      replaceAndErase(cur, ext);
+      return "SelectI1Ext";
     }
   }
   // select cmp, (i1 tval), (i1 fval) ->  (cmp & tval) | (!cmp & fval)
   if (cur->getType()->isIntegerTy(1))
     if (auto SI = dyn_cast<SelectInst>(cur)) {
-      auto ncmp1 = B.CreateAnd(SI->getCondition(), SI->getTrueValue());
-      push(ncmp1);
-      auto notV = B.CreateNot(SI->getCondition());
-      push(notV);
-      auto ncmp2 = B.CreateAnd(notV, SI->getFalseValue());
-      push(ncmp2);
-      auto ori = B.CreateOr(ncmp1, ncmp2);
-      push(ori);
-      auto ext = B.CreateUIToFP(ori, SI->getType());
-      push(ext);
-      for (auto U : cur->users())
-        push(U);
-      cur->replaceAllUsesWith(ext);
-      cur->eraseFromParent();
-      return true;
+      auto ncmp1 = pushcse(B.CreateAnd(SI->getCondition(), SI->getTrueValue()));
+      auto notV = pushcse(B.CreateNot(SI->getCondition()));
+      auto ncmp2 = pushcse(B.CreateAnd(notV, SI->getFalseValue()));
+      auto ori = pushcse(B.CreateOr(ncmp1, ncmp2));
+      auto ext = pushcse(B.CreateUIToFP(ori, SI->getType()));
+      replaceAndErase(cur, ext);
+      return "SelectI1";
     }
   if (auto PN = dyn_cast<PHINode>(cur)) {
     B.SetInsertPoint(PN->getParent()->getFirstNonPHI());
@@ -4194,7 +4205,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
 
         tmp->replaceAllUsesWith(newIV);
         tmp->eraseFromParent();
-        return true;
+        return "InductVarSCEV";
       }
       if (SE.getCouldNotCompute() != S && !isa<SCEVUnknown>(S)) {
         llvm::errs() << "S: " << *S << " PN: " << *PN << "\n";
@@ -4212,14 +4223,8 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
       }
       if (legal) {
         auto val = PN->getIncomingValue(0);
-        push(val);
-
-        for (auto U : cur->users()) {
-          push(U);
-        }
-        PN->replaceAllUsesWith(val);
-        PN->eraseFromParent();
-        return true;
+        replaceAndErase(cur, val);
+        return "PhiMerge";
       }
     }
     // phi (idx=0) ? b, a, a -> select (idx == 0), b, a
@@ -4252,10 +4257,10 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
           }
           if (legal) {
             auto val = PN->getIncomingValue(1 - ph_idx);
-            if (val == idx) {
-              val = B.CreateSub(idx, ConstantInt::get(idx->getType(), 1));
-            }
             push(val);
+            if (val == idx) {
+              val = pushcse(B.CreateSub(idx, ConstantInt::get(idx->getType(), 1)));
+            }
 
             auto val2 = PN->getIncomingValue(ph_idx);
             push(val2);
@@ -4264,19 +4269,12 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
             // if (val2 == c0 && PN->getIncomingValue(1 - ph_idx) == idx) {
             //  val = B.CreateBinaryIntrinsic(Intrinsic::umax, c0, val);
             //} else {
-            auto eq = B.CreateICmpEQ(idx, c0);
-            push(eq);
-            val = B.CreateSelect(eq, val2, val);
+            auto eq = pushcse(B.CreateICmpEQ(idx, c0));
+            val = pushcse(B.CreateSelect(eq, val2, val, "phisel." + cur->getName()));
             //}
 
-            push(val);
-
-            for (auto U : cur->users()) {
-              push(U);
-            }
-            PN->replaceAllUsesWith(val);
-            PN->eraseFromParent();
-            return true;
+            replaceAndErase(cur, val);
+            return "PhiLoop0Sel";
           }
         }
     // phi (sitofp a), (sitofp b) -> sitofp (phi a, b)
@@ -4318,13 +4316,10 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         auto fneg = B.CreateSIToFP(PN2, PN->getType());
         push(fneg);
 
-        for (auto U : cur->users())
-          push(U);
-        PN->replaceAllUsesWith(fneg);
         for (auto I : prevNegOps)
           push(I);
-        PN->eraseFromParent();
-        return true;
+        replaceAndErase(cur, fneg);
+        return "PhiSIToFP";
       }
     }
     // phi (fneg a), (fneg b) -> fneg (phi a, b)
@@ -4365,7 +4360,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         }
         for (auto I : prevNegOps)
           push(I);
-        return true;
+        return "PhiFNeg";
       }
     }
     // phi (neg a), (neg b) -> neg (phi a, b)
@@ -4408,7 +4403,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         }
         for (auto I : prevNegOps)
           push(I);
-        return true;
+        return "PHINeg";
       }
     }
     // p = phi (mul a, c), (mul b, d) -> mul (phi a, b), (phi c, d)    if
@@ -4650,21 +4645,13 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
           if (preheader_fix != -1) {
             auto L = LI.getLoopFor(PN->getParent());
             auto idx = L->getCanonicalInductionVariable();
-            auto eq = B.CreateICmpEQ(idx, ConstantInt::get(idx->getType(), 0));
-            push(eq);
+            auto eq = pushcse(B.CreateICmpEQ(idx, ConstantInt::get(idx->getType(), 0)));
             fneg =
-                B.CreateSelect(eq, PN->getIncomingValue(preheader_fix), fneg);
-            push(fneg);
+                pushcse(B.CreateSelect(eq, PN->getIncomingValue(preheader_fix), fneg, "phphisel." + cur->getName()));
           }
 
-          for (auto U : cur->users()) {
-            push(U);
-          }
-          PN->replaceAllUsesWith(fneg);
-          for (auto I : prevOps)
-            push(I);
-          PN->eraseFromParent();
-          return true;
+          replaceAndErase(cur, fneg);
+          return "PHIBinop";
         }
       }
     }
@@ -4718,18 +4705,14 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
         }
         auto sel = B.CreateSelect(
             br->getCondition(), PN->getIncomingValueForBlock(prev),
-            PN->getIncomingValueForBlock(br->getSuccessor(1)));
+            PN->getIncomingValueForBlock(br->getSuccessor(1)), "tphisel." + cur->getName());
 
-        push(sel);
-        for (auto U : cur->users())
-          push(U);
-        cur->replaceAllUsesWith(sel);
-        cur->eraseFromParent();
-        return true;
+        replaceAndErase(cur, sel);
+        return "TPhiSel";
       }
     }
   }
-  return false;
+  return {};
 }
 
 void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
@@ -4764,15 +4747,17 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     auto cur = Q.pop_back_val();
     SetVector<Instruction *> prev(Q.begin(), Q.end());
     //llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
-    bool changed = fixSparse_inner(cur, F, Q, DT, SE, LI, DL);
-    //llvm::errs() << "changed: " << changed << "\n";
+    llvm::errs() << "cur: " << *cur << "\n";
+    auto changed = fixSparse_inner(cur, F, Q, DT, SE, LI, DL);
+    
+    if (changed) {
+    llvm::errs() << "changed: " << *changed << "\n";
 
-    /*
     for (auto I : Q)
       if (!prev.contains(I))
         llvm::errs() << " + " << *I << "\n";
     llvm::errs() << F << "\n\n";
-    */
+    }
   }
 
   llvm::errs() << " post fix inner: " << F << "\n";
@@ -4818,6 +4803,8 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     assert(L);
     auto idx = L->getCanonicalInductionVariable();
     assert(idx);
+    auto preheader = L->getLoopPreheader();
+    assert(preheader);
 
     // default is condition avoids sparse, negated is condition goes
     // to sparse
@@ -4910,14 +4897,24 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
           if (add->isAffine()) {
             // 0 === A + B * inc -> -A / B = inc
             auto A = add->getStart();
-            auto B = dyn_cast<SCEVConstant>(add->getStepRecurrence(SE));
+            if (auto B = dyn_cast<SCEVConstant>(add->getStepRecurrence(SE))) {
 
-            auto MA = SE.getNegativeSCEV(A);
+            auto MA = A;
+            if (B->getAPInt().isNegative())
+                B = cast<SCEVConstant>(SE.getNegativeSCEV(B));
+            else
+                SE.getNegativeSCEV(A);
             auto div = SE.getUDivExpr(MA, B);
             auto div_e = SE.getUDivExactExpr(MA, B);
             if (div == div_e) {
               solutions.push_back(div);
+              llvm::errs() <<" solution : " << *div << "\n";
+              llvm::errs() << " + c: " << *c << " lhs: " << *lhs << " rhs: " << *rhs << "\n";
+              llvm::errs() << " + add: " << *add << "\n";
+              llvm::errs() << " + A: " << *A << "\n";
+              llvm::errs() << " + B: " << *B << "\n";
               continue;
+            }
             }
           }
         }
@@ -4932,7 +4929,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
 
     if (forSparsification.count(L) == 0) {
       {
-        IRBuilder<> PB(L->getLoopPreheader()->getTerminator());
+        IRBuilder<> PB(preheader->getTerminator());
         forSparsification[L].first =
             std::make_pair(PB.CreatePHI(idx->getType(), 0, "ph.idx"),
                            PB.CreatePHI(idx->getType(), 0, "loop.idx"));
@@ -5402,6 +5399,8 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
     PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
     InstCombinePass().run(*F, FAM);
+    // required to make preheaders
+    LoopSimplifyPass().run(*F, FAM);
     fixSparseIndices(*F, FAM, toDenseBlocks);
     llvm::errs() << " post sparse: " << *F << "\n";
   }
