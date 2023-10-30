@@ -103,6 +103,8 @@
 #endif
 #include "llvm/Analysis/ScalarEvolutionAliasAnalysis.h"
 
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+
 #include <optional>
 
 #include "CacheUtility.h"
@@ -4299,8 +4301,11 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           // We place that at first non phi as it may produce a non-phi
           // instruction and must thus be expanded after all phi's
           newIV = Exp.expandCodeFor(S, tmp->getType(), point);
+          // sadly this doesn't exist on 11
+#if LLVM_VERSION_MAJOR >= 12
           for (auto I : Exp.getAllInsertedInstructions())
             Q.insert(I);
+#endif
         }
 
         tmp->replaceAllUsesWith(newIV);
@@ -5498,8 +5503,9 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
   // block, bound, scev for indexset
   std::map<Loop *,
            std::pair<std::pair<PHINode *, PHINode *>,
-                     SmallVector<std::pair<
-                         BasicBlock *, std::shared_ptr<const Constraints>>>>>
+                     SmallVector<std::pair<BasicBlock *,
+                                           std::shared_ptr<const Constraints>>,
+                                 1>>>
       forSparsification;
 
   for (auto [blk, br] : sparseBlocks) {
