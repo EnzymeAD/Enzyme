@@ -2942,6 +2942,22 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
           return true;
         }
       }
+      
+      // a + a ?= 0 -> a ?= 0
+      for (int i=0; i<2; i++)
+        if (auto CI = dyn_cast<ConstantInt>(fcmp->getOperand(i)))
+            if (CI->isZero())
+                if (auto addI = dyn_cast<Instruction>(fcmp->getOperand(1-i)))
+                    if (addI->getOperand(0) == addI->getOperand(1)) {
+                        Value *res =
+                                B.CreateCmp(fcmp->getPredicate(), addI->getOperand(0), CI);
+                        push(res);
+                for (auto U : cur->users())
+                  push(U);
+                cur->replaceAllUsesWith(res);
+                cur->eraseFromParent();
+                return true;
+                    }
 
       // (a * b) == (c * b) -> (a == c) ||  b == 0
       // (a * b) != (c * b) -> (a != c) && b != 0
@@ -3942,14 +3958,14 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
       Value *res = nullptr;
       switch (cur->getOpcode()) {
       case Instruction::FAdd:
-        res = B.CreateAdd(lhs, rhs, "", true, true);
+        res = B.CreateAdd(lhs, rhs, "", false, true);
         break;
       case Instruction::FSub:
       case Instruction::FNeg:
-        res = B.CreateSub(lhs, rhs, "", true, false);
+        res = B.CreateSub(lhs, rhs, "", false, true);
         break;
       case Instruction::FMul:
-        res = B.CreateMul(lhs, rhs, "", true, true);
+        res = B.CreateMul(lhs, rhs, "", false, true);
         break;
       default:
         llvm_unreachable("Illegal opcode");
@@ -4426,7 +4442,7 @@ bool fixSparse_inner(Instruction *cur, llvm::Function &F,
           numOps = 2;
           break;
         case Instruction::Sub:
-          NUW = NSW = true;
+          NSW = true;
           numOps = 2;
           break;
         case Instruction::ICmp:
@@ -4747,17 +4763,19 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
   while (!Q.empty()) {
     auto cur = Q.pop_back_val();
     SetVector<Instruction *> prev(Q.begin(), Q.end());
-    llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
+    //llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
     bool changed = fixSparse_inner(cur, F, Q, DT, SE, LI, DL);
-    llvm::errs() << "changed: " << changed << "\n";
+    //llvm::errs() << "changed: " << changed << "\n";
 
+    /*
     for (auto I : Q)
       if (!prev.contains(I))
         llvm::errs() << " + " << *I << "\n";
     llvm::errs() << F << "\n\n";
+    */
   }
+
   llvm::errs() << " post fix inner: " << F << "\n";
-  return;
 
   SmallVector<std::pair<BasicBlock *, BranchInst *>, 1> sparseBlocks;
   for (auto &B : F)
@@ -4876,6 +4894,11 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     for (auto c : conditions) {
       auto Sidx = SE.getSCEVAtScope(idx, L);
 
+      if (c->getPredicate() != ICmpInst::ICMP_NE) {
+        llvm::errs() << "illegal ne condition c: " << *c << "\n";
+        legal = false;
+        break;
+      }
       assert(c->getPredicate() == ICmpInst::ICMP_NE);
       auto lhs = SE.getSCEVAtScope(c->getOperand(0), L);
       auto rhs = SE.getSCEVAtScope(c->getOperand(1), L);
@@ -5381,7 +5404,6 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
     InstCombinePass().run(*F, FAM);
     fixSparseIndices(*F, FAM, toDenseBlocks);
     llvm::errs() << " post sparse: " << *F << "\n";
-    llvm::errs() << *F->getParent() << "\n";
   }
   return changed;
 }
