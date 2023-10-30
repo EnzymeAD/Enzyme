@@ -89,6 +89,8 @@
 #include "llvm/Transforms/Scalar/LoopDeletion.h"
 #include "llvm/Transforms/Scalar/LoopRotation.h"
 
+#include "llvm/Transforms/Utils/CodeExtractor.h"
+
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 
@@ -2554,325 +2556,314 @@ void PreProcessCache::clear() {
 }
 
 // Returns if a is guaranteed to be equivalent to not b
-static bool isNot(Value* a, Value *b) {
-    // cmp pred, a, b    and cmp inverse(pred), a, b
-    if (auto I1 = dyn_cast<CmpInst>(a))
-        if (auto I2 = dyn_cast<CmpInst>(b))
-            if (I1->getOperand(0) == I2->getOperand(0) && I1->getOperand(1) == I2->getOperand(1) && I1->getPredicate() == I2->getInversePredicate())
-                return true;
-    // a := xor true, b
-    if (auto I = dyn_cast<Instruction>(a))
-        if (I->getOpcode() == Instruction::Xor)
-            for (int i=0; i<2; i++) {
-                if (I->getOperand(i) == b)
-                    if (auto CI = dyn_cast<ConstantInt>(I->getOperand(1-i)))
-                        if (CI->getValue().isAllOnes())
-                            return true;
-            }
-    // b := xor true, a
-    if (auto I = dyn_cast<Instruction>(b))
-        if (I->getOpcode() == Instruction::Xor)
-            for (int i=0; i<2; i++) {
-                if (I->getOperand(i) == a)
-                    if (auto CI = dyn_cast<ConstantInt>(I->getOperand(1-i)))
-                        if (CI->getValue().isAllOnes())
-                            return true;
-            }
-    return false;
+static bool isNot(Value *a, Value *b) {
+  // cmp pred, a, b    and cmp inverse(pred), a, b
+  if (auto I1 = dyn_cast<CmpInst>(a))
+    if (auto I2 = dyn_cast<CmpInst>(b))
+      if (I1->getOperand(0) == I2->getOperand(0) &&
+          I1->getOperand(1) == I2->getOperand(1) &&
+          I1->getPredicate() == I2->getInversePredicate())
+        return true;
+  // a := xor true, b
+  if (auto I = dyn_cast<Instruction>(a))
+    if (I->getOpcode() == Instruction::Xor)
+      for (int i = 0; i < 2; i++) {
+        if (I->getOperand(i) == b)
+          if (auto CI = dyn_cast<ConstantInt>(I->getOperand(1 - i)))
+            if (CI->getValue().isAllOnes())
+              return true;
+      }
+  // b := xor true, a
+  if (auto I = dyn_cast<Instruction>(b))
+    if (I->getOpcode() == Instruction::Xor)
+      for (int i = 0; i < 2; i++) {
+        if (I->getOperand(i) == a)
+          if (auto CI = dyn_cast<ConstantInt>(I->getOperand(1 - i)))
+            if (CI->getValue().isAllOnes())
+              return true;
+      }
+  return false;
 }
 
-bool fixSparse_inner(Instruction* cur, llvm::Function &F, llvm::SetVector<Instruction*> &Q, DominatorTree &DT, ScalarEvolution &SE, LoopInfo &LI, const DataLayout &DL) {
-    auto push = [&](llvm::Value *V) {
-      if (V == cur)
-        return V;
-      assert(V);
-      if (auto I = dyn_cast<Instruction>(V)) {
-        Q.insert(I);
-        for (auto U : I->users()) {
-          if (auto I2 = dyn_cast<Instruction>(U)) {
-            if (I2 == cur)
-              continue;
-            Q.insert(I2);
-          }
+bool fixSparse_inner(Instruction *cur, llvm::Function &F,
+                     llvm::SetVector<Instruction *> &Q, DominatorTree &DT,
+                     ScalarEvolution &SE, LoopInfo &LI, const DataLayout &DL) {
+  auto push = [&](llvm::Value *V) {
+    if (V == cur)
+      return V;
+    assert(V);
+    if (auto I = dyn_cast<Instruction>(V)) {
+      Q.insert(I);
+      for (auto U : I->users()) {
+        if (auto I2 = dyn_cast<Instruction>(U)) {
+          if (I2 == cur)
+            continue;
+          Q.insert(I2);
         }
       }
-      return V;
-    };
-    if (!cur->getType()->isVoidTy() &&
-        (!cur->mayWriteToMemory() ||
-         (isa<CallInst>(cur) && cast<CallInst>(cur)->onlyReadsMemory()))) {
-      // DCE
-      if (cur->getNumUses() == 0) {
-        for (size_t i = 0; i < cur->getNumOperands(); i++)
-          push(cur->getOperand(i));
-        cur->eraseFromParent();
-        return true;
-      }
-      // CSE
-      {
-        for (size_t i = 0; i < cur->getNumOperands(); i++) {
-          if (auto I = dyn_cast<Instruction>(cur->getOperand(i))) {
-            Instruction *candidate = nullptr;
-            bool reverse = false;
-            for (auto U : I->users()) {
-              candidate = dyn_cast<Instruction>(U);
-              if (!candidate)
-                continue;
-              if (candidate == cur || !candidate->isIdenticalTo(cur)) {
-                candidate = nullptr;
-                continue;
-              }
-
-              if (DT.dominates(candidate, cur)) {
-                break;
-              } else if (DT.dominates(cur, candidate)) {
-                reverse = true;
-                break;
-              }
+    }
+    return V;
+  };
+  if (!cur->getType()->isVoidTy() &&
+      (!cur->mayWriteToMemory() ||
+       (isa<CallInst>(cur) && cast<CallInst>(cur)->onlyReadsMemory()))) {
+    // DCE
+    if (cur->getNumUses() == 0) {
+      for (size_t i = 0; i < cur->getNumOperands(); i++)
+        push(cur->getOperand(i));
+      cur->eraseFromParent();
+      return true;
+    }
+    // CSE
+    {
+      for (size_t i = 0; i < cur->getNumOperands(); i++) {
+        if (auto I = dyn_cast<Instruction>(cur->getOperand(i))) {
+          Instruction *candidate = nullptr;
+          bool reverse = false;
+          for (auto U : I->users()) {
+            candidate = dyn_cast<Instruction>(U);
+            if (!candidate)
+              continue;
+            if (candidate == cur || !candidate->isIdenticalTo(cur)) {
               candidate = nullptr;
+              continue;
             }
-            if (candidate) {
-              if (reverse) {
-                Q.remove(candidate);
-                auto tmp = candidate;
-                candidate = cur;
-                cur = tmp;
-              }
-              for (auto U : cur->users())
-                push(U);
-              cur->replaceAllUsesWith(candidate);
-              push(candidate);
-              cur->eraseFromParent();
-              return true;
+
+            if (DT.dominates(candidate, cur)) {
+              break;
+            } else if (DT.dominates(cur, candidate)) {
+              reverse = true;
+              break;
             }
+            candidate = nullptr;
+          }
+          if (candidate) {
+            if (reverse) {
+              Q.remove(candidate);
+              auto tmp = candidate;
+              candidate = cur;
+              cur = tmp;
+            }
+            for (auto U : cur->users())
+              push(U);
+            cur->replaceAllUsesWith(candidate);
+            push(candidate);
+            cur->eraseFromParent();
+            return true;
           }
         }
       }
     }
+  }
 
-    IRBuilder<> B(cur);
-          std::function<Value*(Value*, Value*, Value*)> replace = [&](Value* val, Value* orig, Value* with) {
-            if (val == orig) {
-                return with;
-            }
-            if (isNot(val, orig)) {
-                return B.CreateNot(with);
-            }
-            if (isa<PHINode>(val)) return val;
+  IRBuilder<> B(cur);
+  std::function<Value *(Value *, Value *, Value *)> replace = [&](Value *val,
+                                                                  Value *orig,
+                                                                  Value *with) {
+    if (val == orig) {
+      return with;
+    }
+    if (isNot(val, orig)) {
+      return B.CreateNot(with);
+    }
+    if (isa<PHINode>(val))
+      return val;
 
-            if (auto I = dyn_cast<Instruction>(val)) {
-                if (I->mayWriteToMemory() && !(isa<CallInst>(I) && cast<CallInst>(I)->onlyReadsMemory()))
-                    return val;
+    if (auto I = dyn_cast<Instruction>(val)) {
+      if (I->mayWriteToMemory() &&
+          !(isa<CallInst>(I) && cast<CallInst>(I)->onlyReadsMemory()))
+        return val;
 
-                if (I->getOpcode() == Instruction::Add) {
-                    Value* lhs = replace(I->getOperand(0), orig, with);
-                    Value* rhs = replace(I->getOperand(1), orig, with);
-                    if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-                        return val;
-                    push(I);
-                    return push(B.CreateAdd(lhs, rhs, "sel." + I->getName(), I->hasNoUnsignedWrap(), I->hasNoSignedWrap()));
-                }
+      if (I->getOpcode() == Instruction::Add) {
+        Value *lhs = replace(I->getOperand(0), orig, with);
+        Value *rhs = replace(I->getOperand(1), orig, with);
+        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+          return val;
+        push(I);
+        return push(B.CreateAdd(lhs, rhs, "sel." + I->getName(),
+                                I->hasNoUnsignedWrap(), I->hasNoSignedWrap()));
+      }
 
-                if (I->getOpcode() == Instruction::Sub) {
-                    Value* lhs = replace(I->getOperand(0), orig, with);
-                    Value* rhs = replace(I->getOperand(1), orig, with);
-                    if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-                        return val;
-                    push(I);
-                    return push(B.CreateSub(lhs, rhs, "sel." + I->getName(), I->hasNoUnsignedWrap(), I->hasNoSignedWrap()));
-                }
+      if (I->getOpcode() == Instruction::Sub) {
+        Value *lhs = replace(I->getOperand(0), orig, with);
+        Value *rhs = replace(I->getOperand(1), orig, with);
+        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+          return val;
+        push(I);
+        return push(B.CreateSub(lhs, rhs, "sel." + I->getName(),
+                                I->hasNoUnsignedWrap(), I->hasNoSignedWrap()));
+      }
 
-                if (I->getOpcode() == Instruction::Mul) {
-                    Value* lhs = replace(I->getOperand(0), orig, with);
-                    Value* rhs = replace(I->getOperand(1), orig, with);
-                    if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-                        return val;
-                    push(I);
-                    return push(B.CreateMul(lhs, rhs, "sel." + I->getName(), I->hasNoUnsignedWrap(), I->hasNoSignedWrap()));
-                }
+      if (I->getOpcode() == Instruction::Mul) {
+        Value *lhs = replace(I->getOperand(0), orig, with);
+        Value *rhs = replace(I->getOperand(1), orig, with);
+        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+          return val;
+        push(I);
+        return push(B.CreateMul(lhs, rhs, "sel." + I->getName(),
+                                I->hasNoUnsignedWrap(), I->hasNoSignedWrap()));
+      }
 
-                if (I->getOpcode() == Instruction::And) {
-                    Value* lhs = replace(I->getOperand(0), orig, with);
-                    Value* rhs = replace(I->getOperand(1), orig, with);
-                    if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-                        return val;
-                    push(I);
-                    return push(B.CreateAnd(lhs, rhs, "sel." + I->getName()));
-                }
+      if (I->getOpcode() == Instruction::And) {
+        Value *lhs = replace(I->getOperand(0), orig, with);
+        Value *rhs = replace(I->getOperand(1), orig, with);
+        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+          return val;
+        push(I);
+        return push(B.CreateAnd(lhs, rhs, "sel." + I->getName()));
+      }
 
-                if (I->getOpcode() == Instruction::Or) {
-                    Value* lhs = replace(I->getOperand(0), orig, with);
-                    Value* rhs = replace(I->getOperand(1), orig, with);
-                    if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-                        return val;
-                    push(I);
-                    return push(B.CreateOr(lhs, rhs, "sel." + I->getName()));
-                }
+      if (I->getOpcode() == Instruction::Or) {
+        Value *lhs = replace(I->getOperand(0), orig, with);
+        Value *rhs = replace(I->getOperand(1), orig, with);
+        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+          return val;
+        push(I);
+        return push(B.CreateOr(lhs, rhs, "sel." + I->getName()));
+      }
 
-                if (I->getOpcode() == Instruction::Xor) {
-                    Value* lhs = replace(I->getOperand(0), orig, with);
-                    Value* rhs = replace(I->getOperand(1), orig, with);
-                    if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-                        return val;
-                    push(I);
-                    return push(B.CreateXor(lhs, rhs, "sel." + I->getName()));
-                }
-                
-                if (I->getOpcode() == Instruction::FAdd) {
-                    Value* lhs = replace(I->getOperand(0), orig, with);
-                    Value* rhs = replace(I->getOperand(1), orig, with);
-                    if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-                        return val;
-                    push(I);
-                    return push(B.CreateFAddFMF(lhs, rhs, I, "sel." + I->getName()));
-                }
-                
-                if (I->getOpcode() == Instruction::FSub) {
-                    Value* lhs = replace(I->getOperand(0), orig, with);
-                    Value* rhs = replace(I->getOperand(1), orig, with);
-                    if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-                        return val;
-                    push(I);
-                    return push(B.CreateFSubFMF(lhs, rhs, I, "sel."+I->getName()));
-                }
-                
-                if (I->getOpcode() == Instruction::FMul) {
-                    Value* lhs = replace(I->getOperand(0), orig, with);
-                    Value* rhs = replace(I->getOperand(1), orig, with);
-                    if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-                        return val;
-                    push(I);
-                    return push(B.CreateFMulFMF(lhs, rhs, I, "sel." + I->getName()));
-                }
-                
-                if (I->getOpcode() == Instruction::ZExt) {
-                    Value* op = replace(I->getOperand(0), orig, with);
-                    if (op == I->getOperand(0))
-                        return val;
-                    push(I);
-                    return push(B.CreateZExt(op, I->getType(), "sel." + I->getName()));
-                }
-                
-                if (I->getOpcode() == Instruction::SExt) {
-                    Value* op = replace(I->getOperand(0), orig, with);
-                    if (op == I->getOperand(0))
-                        return val;
-                    push(I);
-                    return push(B.CreateSExt(op, I->getType(), "sel." + I->getName()));
-                }
-                
-                if (I->getOpcode() == Instruction::UIToFP) {
-                    Value* op = replace(I->getOperand(0), orig, with);
-                    if (op == I->getOperand(0))
-                        return val;
-                    push(I);
-                    return push(B.CreateUIToFP(op, I->getType(), "sel." + I->getName()));
-                }
-                
-                if (I->getOpcode() == Instruction::SIToFP) {
-                    Value* op = replace(I->getOperand(0), orig, with);
-                    if (op == I->getOperand(0))
-                        return val;
-                    push(I);
-                    return push(B.CreateSIToFP(op, I->getType(), "sel." + I->getName()));
-                }
-                
-                if (auto CI = dyn_cast<CmpInst>(I)) {
-                    Value* lhs = replace(I->getOperand(0), orig, with);
-                    Value* rhs = replace(I->getOperand(1), orig, with);
-                    if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-                        return val;
-                    push(I);
-                    return push(B.CreateCmp(CI->getPredicate(), lhs, rhs, "sel." + I->getName()));
-                }
+      if (I->getOpcode() == Instruction::Xor) {
+        Value *lhs = replace(I->getOperand(0), orig, with);
+        Value *rhs = replace(I->getOperand(1), orig, with);
+        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+          return val;
+        push(I);
+        return push(B.CreateXor(lhs, rhs, "sel." + I->getName()));
+      }
 
-                if (auto SI = dyn_cast<SelectInst>(I)) {
-                    Value* cond = replace(SI->getCondition(), orig, with);
-                    Value* tval = replace(SI->getTrueValue(), orig, with);
-                    Value* fval = replace(SI->getFalseValue(), orig, with);
-                    if (cond == SI->getCondition() && tval == SI->getTrueValue() && fval == SI->getFalseValue())
-                        return val;
-                    push(I);
-                    return push(B.CreateSelect(cond, tval, fval, "sel." + I->getName()));
-                }
-            }
-            return val;
-        };
-       
-    // mul (mul a, const), b -> mul (mul a, b), const
-    if (cur->getOpcode() == Instruction::FMul)
-        if (cur->isFast())
-        for (auto ic=0; ic<2; ic++)
-    if (auto mul = dyn_cast<Instruction>(cur->getOperand(ic)))
-            if (mul->getOpcode() == Instruction::FMul && mul->isFast()) 
-            if (!isa<Constant>(cur->getOperand(1-ic))) {
+      if (I->getOpcode() == Instruction::FAdd) {
+        Value *lhs = replace(I->getOperand(0), orig, with);
+        Value *rhs = replace(I->getOperand(1), orig, with);
+        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+          return val;
+        push(I);
+        return push(B.CreateFAddFMF(lhs, rhs, I, "sel." + I->getName()));
+      }
 
-          for (int i = 0; i < 2; i++)
-            if (auto C = dyn_cast<Constant>(mul->getOperand(i))) {
-                auto n0 = B.CreateFMulFMF(mul->getOperand(1-i), cur->getOperand(1-ic), mul);
-                push(n0);
-                auto n1 = B.CreateFMulFMF(n0, C, cur);
-                push(n1);
-                  
-                for (auto U : cur->users())
+      if (I->getOpcode() == Instruction::FSub) {
+        Value *lhs = replace(I->getOperand(0), orig, with);
+        Value *rhs = replace(I->getOperand(1), orig, with);
+        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+          return val;
+        push(I);
+        return push(B.CreateFSubFMF(lhs, rhs, I, "sel." + I->getName()));
+      }
+
+      if (I->getOpcode() == Instruction::FMul) {
+        Value *lhs = replace(I->getOperand(0), orig, with);
+        Value *rhs = replace(I->getOperand(1), orig, with);
+        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+          return val;
+        push(I);
+        return push(B.CreateFMulFMF(lhs, rhs, I, "sel." + I->getName()));
+      }
+
+      if (I->getOpcode() == Instruction::ZExt) {
+        Value *op = replace(I->getOperand(0), orig, with);
+        if (op == I->getOperand(0))
+          return val;
+        push(I);
+        return push(B.CreateZExt(op, I->getType(), "sel." + I->getName()));
+      }
+
+      if (I->getOpcode() == Instruction::SExt) {
+        Value *op = replace(I->getOperand(0), orig, with);
+        if (op == I->getOperand(0))
+          return val;
+        push(I);
+        return push(B.CreateSExt(op, I->getType(), "sel." + I->getName()));
+      }
+
+      if (I->getOpcode() == Instruction::UIToFP) {
+        Value *op = replace(I->getOperand(0), orig, with);
+        if (op == I->getOperand(0))
+          return val;
+        push(I);
+        return push(B.CreateUIToFP(op, I->getType(), "sel." + I->getName()));
+      }
+
+      if (I->getOpcode() == Instruction::SIToFP) {
+        Value *op = replace(I->getOperand(0), orig, with);
+        if (op == I->getOperand(0))
+          return val;
+        push(I);
+        return push(B.CreateSIToFP(op, I->getType(), "sel." + I->getName()));
+      }
+
+      if (auto CI = dyn_cast<CmpInst>(I)) {
+        Value *lhs = replace(I->getOperand(0), orig, with);
+        Value *rhs = replace(I->getOperand(1), orig, with);
+        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+          return val;
+        push(I);
+        return push(
+            B.CreateCmp(CI->getPredicate(), lhs, rhs, "sel." + I->getName()));
+      }
+
+      if (auto SI = dyn_cast<SelectInst>(I)) {
+        Value *cond = replace(SI->getCondition(), orig, with);
+        Value *tval = replace(SI->getTrueValue(), orig, with);
+        Value *fval = replace(SI->getFalseValue(), orig, with);
+        if (cond == SI->getCondition() && tval == SI->getTrueValue() &&
+            fval == SI->getFalseValue())
+          return val;
+        push(I);
+        return push(B.CreateSelect(cond, tval, fval, "sel." + I->getName()));
+      }
+    }
+    return val;
+  };
+
+  // mul (mul a, const), b -> mul (mul a, b), const
+  if (cur->getOpcode() == Instruction::FMul)
+    if (cur->isFast())
+      for (auto ic = 0; ic < 2; ic++)
+        if (auto mul = dyn_cast<Instruction>(cur->getOperand(ic)))
+          if (mul->getOpcode() == Instruction::FMul && mul->isFast())
+            if (!isa<Constant>(cur->getOperand(1 - ic))) {
+
+              for (int i = 0; i < 2; i++)
+                if (auto C = dyn_cast<Constant>(mul->getOperand(i))) {
+                  auto n0 = B.CreateFMulFMF(mul->getOperand(1 - i),
+                                            cur->getOperand(1 - ic), mul);
+                  push(n0);
+                  auto n1 = B.CreateFMulFMF(n0, C, cur);
+                  push(n1);
+
+                  for (auto U : cur->users())
                     push(U);
                   cur->replaceAllUsesWith(n1);
                   cur->eraseFromParent();
                   return true;
-
-                    }
-
+                }
             }
 
-    if (auto fcmp = dyn_cast<FCmpInst>(cur)) {
-      if (fcmp->getPredicate() == FCmpInst::FCMP_OEQ) {
-        for (int i = 0; i < 2; i++)
-          if (auto C = dyn_cast<ConstantFP>(fcmp->getOperand(i))) {
-            if (C->isZero()) {
-              if (auto fmul = dyn_cast<BinaryOperator>(fcmp->getOperand(1 - i))) {
-                // (a*b) == 0 -> (a == 0) || (b == 0)
-                if (fmul->getOpcode() == Instruction::FMul) {
-                  auto ncmp1 = B.CreateFCmp(fcmp->getPredicate(),
-                                            fmul->getOperand(0), C);
-                  push(ncmp1);
-                  auto ncmp2 = B.CreateFCmp(fcmp->getPredicate(),
-                                            fmul->getOperand(1), C);
-                  push(ncmp2);
-                  auto ori = B.CreateOr(ncmp1, ncmp2);
-                  push(ori);
-                  for (auto U : cur->users())
-                    push(U);
-                  cur->replaceAllUsesWith(ori);
-                  cur->eraseFromParent();
-                  return true;
-                }
-                // (a/b) == 0 -> (a == 0) 
-                if (fmul->getOpcode() == Instruction::FDiv) {
-                  auto ncmp1 = B.CreateFCmp(fcmp->getPredicate(),
-                                            fmul->getOperand(0), C);
-                  push(ncmp1);
-                  for (auto U : cur->users())
-                    push(U);
-                  cur->replaceAllUsesWith(ncmp1);
-                  cur->eraseFromParent();
-                  return true;
-                }
-                // (a - b) ?= 0 -> a ?= b
-                if (fmul->getOpcode() == Instruction::FSub) {
-                  auto ncmp1 = B.CreateFCmp(fcmp->getPredicate(),
-                                            fmul->getOperand(0), fmul->getOperand(1));
-                  push(ncmp1);
-                  for (auto U : cur->users())
-                    push(U);
-                  cur->replaceAllUsesWith(ncmp1);
-                  cur->eraseFromParent();
-                  return true;
-                }
+  if (auto fcmp = dyn_cast<FCmpInst>(cur)) {
+    if (fcmp->getPredicate() == FCmpInst::FCMP_OEQ) {
+      for (int i = 0; i < 2; i++)
+        if (auto C = dyn_cast<ConstantFP>(fcmp->getOperand(i))) {
+          if (C->isZero()) {
+            if (auto fmul = dyn_cast<BinaryOperator>(fcmp->getOperand(1 - i))) {
+              // (a*b) == 0 -> (a == 0) || (b == 0)
+              if (fmul->getOpcode() == Instruction::FMul) {
+                auto ncmp1 =
+                    B.CreateFCmp(fcmp->getPredicate(), fmul->getOperand(0), C);
+                push(ncmp1);
+                auto ncmp2 =
+                    B.CreateFCmp(fcmp->getPredicate(), fmul->getOperand(1), C);
+                push(ncmp2);
+                auto ori = B.CreateOr(ncmp1, ncmp2);
+                push(ori);
+                for (auto U : cur->users())
+                  push(U);
+                cur->replaceAllUsesWith(ori);
+                cur->eraseFromParent();
+                return true;
               }
-              if (auto cast = dyn_cast<SIToFPInst>(fcmp->getOperand(1 - i))) {
-                auto ncmp1 = B.CreateICmp(
-                    ICmpInst::ICMP_EQ, cast->getOperand(0),
-                    ConstantInt::get(cast->getOperand(0)->getType(), 0));
+              // (a/b) == 0 -> (a == 0)
+              if (fmul->getOpcode() == Instruction::FDiv) {
+                auto ncmp1 =
+                    B.CreateFCmp(fcmp->getPredicate(), fmul->getOperand(0), C);
                 push(ncmp1);
                 for (auto U : cur->users())
                   push(U);
@@ -2880,10 +2871,11 @@ bool fixSparse_inner(Instruction* cur, llvm::Function &F, llvm::SetVector<Instru
                 cur->eraseFromParent();
                 return true;
               }
-              if (auto cast = dyn_cast<UIToFPInst>(fcmp->getOperand(1 - i))) {
-                auto ncmp1 = B.CreateICmp(
-                    ICmpInst::ICMP_EQ, cast->getOperand(0),
-                    ConstantInt::get(cast->getOperand(0)->getType(), 0));
+              // (a - b) ?= 0 -> a ?= b
+              if (fmul->getOpcode() == Instruction::FSub) {
+                auto ncmp1 =
+                    B.CreateFCmp(fcmp->getPredicate(), fmul->getOperand(0),
+                                 fmul->getOperand(1));
                 push(ncmp1);
                 for (auto U : cur->users())
                   push(U);
@@ -2892,772 +2884,781 @@ bool fixSparse_inner(Instruction* cur, llvm::Function &F, llvm::SetVector<Instru
                 return true;
               }
             }
-          }
-      }
-    }
-    if (auto fcmp = dyn_cast<CmpInst>(cur)) {
-      if (fcmp->getPredicate() == CmpInst::ICMP_EQ ||
-          fcmp->getPredicate() == CmpInst::ICMP_NE ||
-          fcmp->getPredicate() == CmpInst::FCMP_OEQ ||
-          fcmp->getPredicate() == CmpInst::FCMP_ONE
-          ) {
-
-        // a == b -> a & b | !a & !b
-        // a != b -> a & !b | !a & b
-        if (fcmp->getOperand(0)->getType()->isIntegerTy(1)) {
-            auto a = fcmp->getOperand(0);
-            auto b = fcmp->getOperand(1);
-            if (fcmp->getPredicate() == CmpInst::ICMP_EQ) {
-                auto res = push(B.CreateOr(
-                            push(B.CreateAnd(a, b)),
-                            push(B.CreateAnd(push(B.CreateNot(a)), push(B.CreateNot(b))))));
-                  for (auto U : cur->users())
-                    push(U);
-                  cur->replaceAllUsesWith(res);
-                  cur->eraseFromParent();
-                  return true;
-
-            }
-            if (fcmp->getPredicate() == CmpInst::ICMP_EQ) {
-                auto res = push(B.CreateOr(
-                            push(B.CreateAnd(push(B.CreateNot(a)), b)),
-                            push(B.CreateAnd(a, push(B.CreateNot(b))))));
-                  for (auto U : cur->users())
-                    push(U);
-                  cur->replaceAllUsesWith(res);
-                  cur->eraseFromParent();
-                  return true;
-
-            }
-        }
-
-        // (a * b) == (c * b) -> (a == c) ||  b == 0
-        // (a * b) != (c * b) -> (a != c) && b != 0
-              // auto S1 = SE.getSCEV(cur->getOperand(0));
-              // auto S2 = SE.getSCEV(cur->getOperand(1));
-              // llvm::errs() <<" attempting push: " << *cur << " S1: " << *S1 << " S2: " << *S2 << " and " << *cur->getOperand(0) << " " << *cur->getOperand(1) << "\n";
-        if (auto mul1 = dyn_cast<Instruction>(cur->getOperand(0)))
-          if (auto mul2 = dyn_cast<Instruction>(cur->getOperand(1))) {
-            if (mul1->getOpcode() == Instruction::Mul &&
-                mul2->getOpcode() == Instruction::Mul &&
-                mul1->hasNoUnsignedWrap() && mul1->hasNoSignedWrap() &&
-                mul2->hasNoUnsignedWrap() && mul2->hasNoSignedWrap()) {
-              for (int i = 0; i < 2; i++) {
-                if (mul1->getOperand(i) == mul2->getOperand(i)) {
-                  Value *res = B.CreateICmp(fcmp->getPredicate(),
-                                            mul1->getOperand(1 - i),
-                                            mul2->getOperand(1 - i));
-                  push(res);
-                  auto b = mul1->getOperand(i);
-                  if (fcmp->getPredicate() == CmpInst::ICMP_EQ) {
-                    Value *bZero = B.CreateICmp(CmpInst::ICMP_EQ, b, ConstantInt::get(b->getType(), 0));
-                    push(bZero);
-                    res = B.CreateOr(res, bZero);
-                    push(res);
-                  } else {
-                    Value *bZero = B.CreateICmp(ICmpInst::ICMP_NE, b, ConstantInt::get(b->getType(), 0));
-                    push(bZero);
-                    res = B.CreateAnd(res, bZero);
-                    push(res);
-                  }
-                  for (auto U : cur->users())
-                    push(U);
-                  cur->replaceAllUsesWith(res);
-                  cur->eraseFromParent();
-                  return true;
-                }
-              }
-            }
-            // same as above but now with floats
-            if (mul1->getOpcode() == Instruction::FMul &&
-                mul2->getOpcode() == Instruction::FMul &&
-                mul1->isFast() && mul2->isFast()) {
-              for (int i = 0; i < 2; i++) {
-                if (mul1->getOperand(i) == mul2->getOperand(i)) {
-                  Value *res = B.CreateFCmp(fcmp->getPredicate(),
-                                            mul1->getOperand(1 - i),
-                                            mul2->getOperand(1 - i));
-                  push(res);
-                  auto b = mul1->getOperand(i);
-                  if (fcmp->getPredicate() == CmpInst::FCMP_OEQ) {
-                    Value *bZero = B.CreateICmp(CmpInst::FCMP_OEQ, b, ConstantFP::get(b->getType(), 0));
-                    push(bZero);
-                    res = B.CreateOr(res, bZero);
-                    push(res);
-                  } else {
-                    Value *bZero = B.CreateICmp(CmpInst::FCMP_ONE, b, ConstantFP::get(b->getType(), 0));
-                    push(bZero);
-                    res = B.CreateAnd(res, bZero);
-                    push(res);
-                  }
-                  for (auto U : cur->users())
-                    push(U);
-                  cur->replaceAllUsesWith(res);
-                  cur->eraseFromParent();
-                  return true;
-                }
-              }
-            }
-
-            // (uitofp a ) ?= (uitofp b) -> a ?= b
-            for (auto cond : {Instruction::UIToFP, Instruction::SIToFP})
-                if (mul1->getOpcode() == cond &&
-                    mul2->getOpcode() == cond &&
-                    mul1->getOperand(0)->getType() ==
-                        mul2->getOperand(0)->getType()) {
-                  Value *res =
-                      B.CreateICmp(fcmp->getPredicate() == CmpInst::FCMP_OEQ ? CmpInst::ICMP_EQ : CmpInst::ICMP_NE, mul1->getOperand(0),
-                                   mul2->getOperand(0));
-                  push(res);
-                  for (auto U : cur->users())
-                    push(U);
-                  cur->replaceAllUsesWith(res);
-                  cur->eraseFromParent();
-                  return true;
-                }
-                
-            // (zext a ) ?= (zext b) -> a ?= b
-                if (mul1->getOpcode() == Instruction::ZExt &&
-                    mul2->getOpcode() == Instruction::ZExt &&
-                    mul1->getOperand(0)->getType() ==
-                        mul2->getOperand(0)->getType()) {
-                  Value *res =
-                      B.CreateICmp(fcmp->getPredicate(), mul1->getOperand(0),
-                                   mul2->getOperand(0));
-                  push(res);
-                  for (auto U : cur->users())
-                    push(U);
-                  cur->replaceAllUsesWith(res);
-                  cur->eraseFromParent();
-                  return true;
-                }
-
-            // (zext i1 a ) == (sext i1 b) -> (!a & !b)
-            // (zext i1 a ) != (sext i1 b) -> (a | b)
-            if (auto mul1 = dyn_cast<Instruction>(cur->getOperand(0)))
-              if (auto mul2 = dyn_cast<Instruction>(cur->getOperand(1)))
-                if (((mul1->getOpcode() == Instruction::ZExt &&
-                      mul2->getOpcode() == Instruction::SExt) ||
-                     (mul1->getOpcode() == Instruction::SExt &&
-                      mul2->getOpcode() == Instruction::ZExt)) &&
-                    mul1->getOperand(0)->getType() ==
-                        mul2->getOperand(0)->getType() &&
-                    mul1->getOperand(0)->getType()->isIntegerTy(1)) {
-
-                  Value *na = mul1->getOperand(0);
-                  Value *nb = mul2->getOperand(0);
-
-                  if (fcmp->getPredicate() == ICmpInst::ICMP_EQ) {
-                    na = B.CreateNot(na);
-                    push(na);
-                    nb = B.CreateNot(nb);
-                    push(nb);
-                  }
-
-                  Value *res = nullptr;
-                  if (fcmp->getPredicate() == ICmpInst::ICMP_EQ)
-                    res = B.CreateAnd(na, nb);
-                  else
-                    res = B.CreateOr(na, nb);
-
-                  push(res);
-                  for (auto U : cur->users())
-                    push(U);
-                  cur->replaceAllUsesWith(res);
-                  cur->eraseFromParent();
-                  return true;
-                }
-          }
-      }
-      if (fcmp->getPredicate() == ICmpInst::ICMP_EQ) {
-        for (int i = 0; i < 2; i++) {
-          if (auto C = dyn_cast<ConstantInt>(fcmp->getOperand(i))) {
-            if (C->isZero()) {
-              if (auto fmul =
-                      dyn_cast<BinaryOperator>(fcmp->getOperand(1 - i))) {
-                // (a*b) == 0 -> (a == 0) || (b == 0)
-                if (fmul->getOpcode() == Instruction::Mul) {
-                  auto ncmp1 = B.CreateICmp(fcmp->getPredicate(),
-                                            fmul->getOperand(0), C);
-                  push(ncmp1);
-                  auto ncmp2 = B.CreateICmp(fcmp->getPredicate(),
-                                            fmul->getOperand(1), C);
-                  push(ncmp2);
-                  auto ori = B.CreateOr(ncmp1, ncmp2);
-                  push(ori);
-                  for (auto U : cur->users())
-                    push(U);
-                  cur->replaceAllUsesWith(ori);
-                  cur->eraseFromParent();
-                  return true;
-                }
-                // (a-b) == 0 -> a == b
-                if (fmul->getOpcode() == Instruction::Sub) {
-                  auto ncmp1 = B.CreateICmp(fcmp->getPredicate(),
-                                            fmul->getOperand(0), fmul->getOperand(1));
-                  push(ncmp1);
-                  for (auto U : cur->users())
-                    push(U);
-                  cur->replaceAllUsesWith(ncmp1);
-                  cur->eraseFromParent();
-                  return true;
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // add x, (y * -1) -> sub x, y
-    if (cur->getOpcode() == Instruction::Add) {
-      for (int i = 0; i < 2; i++) {
-        if (auto mul1 = dyn_cast<Instruction>(cur->getOperand(i)))
-          if (mul1->getOpcode() == Instruction::Mul) {
-            for (int j = 0; j < 2; j++) {
-              if (auto C = dyn_cast<ConstantInt>(mul1->getOperand(j))) {
-                if (C->isMinusOne()) {
-                  auto res = B.CreateSub(cur->getOperand(1 - i),
-                                         mul1->getOperand(1 - j));
-                  push(res);
-                  push(mul1);
-
-                  for (auto U : cur->users())
-                    push(U);
-                  cur->replaceAllUsesWith(res);
-                  cur->eraseFromParent();
-                  return true;
-                }
-              }
-            }
-          }
-      }
-    }
-  
-    if (auto SI = dyn_cast<SelectInst>(cur)) {
-      auto shouldMove = [](Value* v) { return isa<Constant>(v); };
-
-      if (auto C1 = dyn_cast<ConstantFP>(SI->getTrueValue()))
-      {
-          if (C1->isZero()) {
-              auto n = B.CreateNot(SI->getCondition());
-              push(n);
-              auto val = B.CreateUIToFP(n, SI->getType());
-              push(val);
-              auto res = B.CreateFMul(val, SI->getFalseValue());
-              if (auto I=dyn_cast<Instruction>(res)) I->setFast(true);
-              push(res);
-              for (auto U : cur->users()) {
+            if (auto cast = dyn_cast<SIToFPInst>(fcmp->getOperand(1 - i))) {
+              auto ncmp1 = B.CreateICmp(
+                  ICmpInst::ICMP_EQ, cast->getOperand(0),
+                  ConstantInt::get(cast->getOperand(0)->getType(), 0));
+              push(ncmp1);
+              for (auto U : cur->users())
                 push(U);
+              cur->replaceAllUsesWith(ncmp1);
+              cur->eraseFromParent();
+              return true;
+            }
+            if (auto cast = dyn_cast<UIToFPInst>(fcmp->getOperand(1 - i))) {
+              auto ncmp1 = B.CreateICmp(
+                  ICmpInst::ICMP_EQ, cast->getOperand(0),
+                  ConstantInt::get(cast->getOperand(0)->getType(), 0));
+              push(ncmp1);
+              for (auto U : cur->users())
+                push(U);
+              cur->replaceAllUsesWith(ncmp1);
+              cur->eraseFromParent();
+              return true;
+            }
+          }
+        }
+    }
+  }
+  if (auto fcmp = dyn_cast<CmpInst>(cur)) {
+    if (fcmp->getPredicate() == CmpInst::ICMP_EQ ||
+        fcmp->getPredicate() == CmpInst::ICMP_NE ||
+        fcmp->getPredicate() == CmpInst::FCMP_OEQ ||
+        fcmp->getPredicate() == CmpInst::FCMP_ONE) {
+
+      // a == b -> a & b | !a & !b
+      // a != b -> a & !b | !a & b
+      if (fcmp->getOperand(0)->getType()->isIntegerTy(1)) {
+        auto a = fcmp->getOperand(0);
+        auto b = fcmp->getOperand(1);
+        if (fcmp->getPredicate() == CmpInst::ICMP_EQ) {
+          auto res = push(B.CreateOr(
+              push(B.CreateAnd(a, b)),
+              push(B.CreateAnd(push(B.CreateNot(a)), push(B.CreateNot(b))))));
+          for (auto U : cur->users())
+            push(U);
+          cur->replaceAllUsesWith(res);
+          cur->eraseFromParent();
+          return true;
+        }
+        if (fcmp->getPredicate() == CmpInst::ICMP_EQ) {
+          auto res =
+              push(B.CreateOr(push(B.CreateAnd(push(B.CreateNot(a)), b)),
+                              push(B.CreateAnd(a, push(B.CreateNot(b))))));
+          for (auto U : cur->users())
+            push(U);
+          cur->replaceAllUsesWith(res);
+          cur->eraseFromParent();
+          return true;
+        }
+      }
+
+      // (a * b) == (c * b) -> (a == c) ||  b == 0
+      // (a * b) != (c * b) -> (a != c) && b != 0
+      // auto S1 = SE.getSCEV(cur->getOperand(0));
+      // auto S2 = SE.getSCEV(cur->getOperand(1));
+      // llvm::errs() <<" attempting push: " << *cur << " S1: " << *S1 << " S2:
+      // " << *S2 << " and " << *cur->getOperand(0) << " " <<
+      // *cur->getOperand(1) << "\n";
+      if (auto mul1 = dyn_cast<Instruction>(cur->getOperand(0)))
+        if (auto mul2 = dyn_cast<Instruction>(cur->getOperand(1))) {
+          if (mul1->getOpcode() == Instruction::Mul &&
+              mul2->getOpcode() == Instruction::Mul &&
+              mul1->hasNoUnsignedWrap() && mul1->hasNoSignedWrap() &&
+              mul2->hasNoUnsignedWrap() && mul2->hasNoSignedWrap()) {
+            for (int i = 0; i < 2; i++) {
+              if (mul1->getOperand(i) == mul2->getOperand(i)) {
+                Value *res =
+                    B.CreateICmp(fcmp->getPredicate(), mul1->getOperand(1 - i),
+                                 mul2->getOperand(1 - i));
+                push(res);
+                auto b = mul1->getOperand(i);
+                if (fcmp->getPredicate() == CmpInst::ICMP_EQ) {
+                  Value *bZero = B.CreateICmp(
+                      CmpInst::ICMP_EQ, b, ConstantInt::get(b->getType(), 0));
+                  push(bZero);
+                  res = B.CreateOr(res, bZero);
+                  push(res);
+                } else {
+                  Value *bZero = B.CreateICmp(
+                      ICmpInst::ICMP_NE, b, ConstantInt::get(b->getType(), 0));
+                  push(bZero);
+                  res = B.CreateAnd(res, bZero);
+                  push(res);
+                }
+                for (auto U : cur->users())
+                  push(U);
+                cur->replaceAllUsesWith(res);
+                cur->eraseFromParent();
+                return true;
               }
+            }
+          }
+          // same as above but now with floats
+          if (mul1->getOpcode() == Instruction::FMul &&
+              mul2->getOpcode() == Instruction::FMul && mul1->isFast() &&
+              mul2->isFast()) {
+            for (int i = 0; i < 2; i++) {
+              if (mul1->getOperand(i) == mul2->getOperand(i)) {
+                Value *res =
+                    B.CreateFCmp(fcmp->getPredicate(), mul1->getOperand(1 - i),
+                                 mul2->getOperand(1 - i));
+                push(res);
+                auto b = mul1->getOperand(i);
+                if (fcmp->getPredicate() == CmpInst::FCMP_OEQ) {
+                  Value *bZero = B.CreateICmp(CmpInst::FCMP_OEQ, b,
+                                              ConstantFP::get(b->getType(), 0));
+                  push(bZero);
+                  res = B.CreateOr(res, bZero);
+                  push(res);
+                } else {
+                  Value *bZero = B.CreateICmp(CmpInst::FCMP_ONE, b,
+                                              ConstantFP::get(b->getType(), 0));
+                  push(bZero);
+                  res = B.CreateAnd(res, bZero);
+                  push(res);
+                }
+                for (auto U : cur->users())
+                  push(U);
+                cur->replaceAllUsesWith(res);
+                cur->eraseFromParent();
+                return true;
+              }
+            }
+          }
+
+          // (uitofp a ) ?= (uitofp b) -> a ?= b
+          for (auto cond : {Instruction::UIToFP, Instruction::SIToFP})
+            if (mul1->getOpcode() == cond && mul2->getOpcode() == cond &&
+                mul1->getOperand(0)->getType() ==
+                    mul2->getOperand(0)->getType()) {
+              Value *res = B.CreateICmp(
+                  fcmp->getPredicate() == CmpInst::FCMP_OEQ ? CmpInst::ICMP_EQ
+                                                            : CmpInst::ICMP_NE,
+                  mul1->getOperand(0), mul2->getOperand(0));
+              push(res);
+              for (auto U : cur->users())
+                push(U);
               cur->replaceAllUsesWith(res);
               cur->eraseFromParent();
               return true;
-          }
-      }
-      if (auto C1 = dyn_cast<ConstantFP>(SI->getFalseValue()))
-      {
-          if (C1->isZero()) {
-              auto val = B.CreateUIToFP(SI->getCondition(), SI->getType());
-              push(val);
-              auto res = B.CreateFMul(val, SI->getTrueValue());
-              if (auto I=dyn_cast<Instruction>(res)) I->setFast(true);
-              push(res);
-              for (auto U : cur->users()) {
-                push(U);
-              }
-              cur->replaceAllUsesWith(res);
-              cur->eraseFromParent();
-              return true;
-          }
-      }
+            }
 
-      // select c, (mul x y), 0 -> mul x, (select c, y, 0)
-      for (int i=0; i<2; i++)
-          if (auto inst = dyn_cast<Instruction>(SI->getOperand(1+i)))
-              if (inst->getOpcode() == Instruction::Mul || inst->getOpcode() == Instruction::FMul)
-                  if (auto C = dyn_cast<Constant>(SI->getOperand(1+(1-i))))
-                      if ((isa<ConstantInt>(C) && cast<ConstantInt>(C)->isZero()) || (isa<ConstantFP>(C) && cast<ConstantFP>(C)->isZero()))
-                        for (int j=0; j<2; j++)
-                            if (shouldMove(inst->getOperand(j))) {
-                                    auto x = inst->getOperand(j);
-                                    auto y = inst->getOperand(1-j);
-                                    auto isel = B.CreateSelect(SI->getCondition(), (i == 0) ? y : C, (i == 0) ? C : y);
-                                    Value *imul;
-                                    if (cur->getType()->isIntegerTy())
-                                        imul = B.CreateMul(isel, x, "", inst->hasNoUnsignedWrap(), inst->hasNoSignedWrap());
-                                    else
-                                        imul = B.CreateFMulFMF(isel, x, inst, "");
-                                    push(isel);
-                                    push(imul);
-
-              for (auto U : cur->users()) {
-                push(U);
-              }
-              cur->replaceAllUsesWith(imul);
-              cur->eraseFromParent();
-              return true;
-                                    }
-    
-      {
-          Value* ops[2] = {nullptr, nullptr};
-        bool legal = true;
-      for (int i=0; i<2; i++) {
-            if (auto C = dyn_cast<ConstantFP>(SI->getOperand(1+i))) {
-                ops[i] = nullptr;
-                continue;
-            }
-            if (auto CI = dyn_cast<CastInst>(SI->getOperand(1+i))) {
-                if (CI->getOpcode() == Instruction::SIToFP) {
-                    ops[i] = CI->getOperand(0);
-                    continue;
-                }
-            }
-            legal = false;
-            break;
-        }
-        for (int i=0; i<2; i++) {
-            if (!ops[i] && ops[1-i])
-                ops[i] = ConstantInt::get(ops[1-i]->getType(), 0);
-        }
-        for (int i=0; i<2; i++) {
-            if (ops[i] == nullptr || ops[i]->getType() != ops[0]->getType()) {
-                legal = false;
-                break;
-            }
-        }
-        if (legal) {
-            auto isel = B.CreateSelect(SI->getCondition(), ops[0], ops[1]);
-            push(isel);
-            auto res = B.CreateSIToFP(isel, SI->getType());
+          // (zext a ) ?= (zext b) -> a ?= b
+          if (mul1->getOpcode() == Instruction::ZExt &&
+              mul2->getOpcode() == Instruction::ZExt &&
+              mul1->getOperand(0)->getType() ==
+                  mul2->getOperand(0)->getType()) {
+            Value *res = B.CreateICmp(fcmp->getPredicate(), mul1->getOperand(0),
+                                      mul2->getOperand(0));
             push(res);
-
-            for (auto U : cur->users()) {
-                push(U);
-              }
-              cur->replaceAllUsesWith(res);
-              cur->eraseFromParent();
-              return true;
-        }
-      }
-
-    }
-
-    if (cur->getOpcode() == Instruction::Mul) {
-      for (int i=0; i<2; i++) {
-        // mul (x, 1) -> x
-      if (auto C = dyn_cast<ConstantInt>(cur->getOperand(i)))
-          if (C->isOne()) {
-            push(cur->getOperand(1-i));
-              for (auto U : cur->users()) {
-                push(U);
-              }
-              cur->replaceAllUsesWith(cur->getOperand(1-i));
-              cur->eraseFromParent();
-              return true;
-          }
-
-      // mul (zext i1 x), y -> mul (zext i1 x) y[x->1]
-    if (auto Z = dyn_cast<ZExtInst>(cur->getOperand(i)))
-        if (Z->getOperand(0)->getType()->isIntegerTy(1)) {
-            auto prev = cur->getOperand(1-i);
-        auto next = replace(prev, Z->getOperand(0), ConstantInt::getTrue(cur->getContext()));
-        if (next != prev) {
-            auto res = push(B.CreateMul(Z, next, "postmul." + cur->getName(), cur->hasNoUnsignedWrap(), cur->hasNoSignedWrap()));
             for (auto U : cur->users())
               push(U);
             cur->replaceAllUsesWith(res);
             cur->eraseFromParent();
             return true;
-        } 
+          }
+
+          // (zext i1 a ) == (sext i1 b) -> (!a & !b)
+          // (zext i1 a ) != (sext i1 b) -> (a | b)
+          if (auto mul1 = dyn_cast<Instruction>(cur->getOperand(0)))
+            if (auto mul2 = dyn_cast<Instruction>(cur->getOperand(1)))
+              if (((mul1->getOpcode() == Instruction::ZExt &&
+                    mul2->getOpcode() == Instruction::SExt) ||
+                   (mul1->getOpcode() == Instruction::SExt &&
+                    mul2->getOpcode() == Instruction::ZExt)) &&
+                  mul1->getOperand(0)->getType() ==
+                      mul2->getOperand(0)->getType() &&
+                  mul1->getOperand(0)->getType()->isIntegerTy(1)) {
+
+                Value *na = mul1->getOperand(0);
+                Value *nb = mul2->getOperand(0);
+
+                if (fcmp->getPredicate() == ICmpInst::ICMP_EQ) {
+                  na = B.CreateNot(na);
+                  push(na);
+                  nb = B.CreateNot(nb);
+                  push(nb);
+                }
+
+                Value *res = nullptr;
+                if (fcmp->getPredicate() == ICmpInst::ICMP_EQ)
+                  res = B.CreateAnd(na, nb);
+                else
+                  res = B.CreateOr(na, nb);
+
+                push(res);
+                for (auto U : cur->users())
+                  push(U);
+                cur->replaceAllUsesWith(res);
+                cur->eraseFromParent();
+                return true;
+              }
+        }
+    }
+    if (fcmp->getPredicate() == ICmpInst::ICMP_EQ) {
+      for (int i = 0; i < 2; i++) {
+        if (auto C = dyn_cast<ConstantInt>(fcmp->getOperand(i))) {
+          if (C->isZero()) {
+            if (auto fmul = dyn_cast<BinaryOperator>(fcmp->getOperand(1 - i))) {
+              // (a*b) == 0 -> (a == 0) || (b == 0)
+              if (fmul->getOpcode() == Instruction::Mul) {
+                auto ncmp1 =
+                    B.CreateICmp(fcmp->getPredicate(), fmul->getOperand(0), C);
+                push(ncmp1);
+                auto ncmp2 =
+                    B.CreateICmp(fcmp->getPredicate(), fmul->getOperand(1), C);
+                push(ncmp2);
+                auto ori = B.CreateOr(ncmp1, ncmp2);
+                push(ori);
+                for (auto U : cur->users())
+                  push(U);
+                cur->replaceAllUsesWith(ori);
+                cur->eraseFromParent();
+                return true;
+              }
+              // (a-b) == 0 -> a == b
+              if (fmul->getOpcode() == Instruction::Sub) {
+                auto ncmp1 =
+                    B.CreateICmp(fcmp->getPredicate(), fmul->getOperand(0),
+                                 fmul->getOperand(1));
+                push(ncmp1);
+                for (auto U : cur->users())
+                  push(U);
+                cur->replaceAllUsesWith(ncmp1);
+                cur->eraseFromParent();
+                return true;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // add x, (y * -1) -> sub x, y
+  if (cur->getOpcode() == Instruction::Add) {
+    for (int i = 0; i < 2; i++) {
+      if (auto mul1 = dyn_cast<Instruction>(cur->getOperand(i)))
+        if (mul1->getOpcode() == Instruction::Mul) {
+          for (int j = 0; j < 2; j++) {
+            if (auto C = dyn_cast<ConstantInt>(mul1->getOperand(j))) {
+              if (C->isMinusOne()) {
+                auto res = B.CreateSub(cur->getOperand(1 - i),
+                                       mul1->getOperand(1 - j));
+                push(res);
+                push(mul1);
+
+                for (auto U : cur->users())
+                  push(U);
+                cur->replaceAllUsesWith(res);
+                cur->eraseFromParent();
+                return true;
+              }
+            }
+          }
+        }
+    }
+  }
+
+  if (auto SI = dyn_cast<SelectInst>(cur)) {
+    auto shouldMove = [](Value *v) { return isa<Constant>(v); };
+
+    if (auto C1 = dyn_cast<ConstantFP>(SI->getTrueValue())) {
+      if (C1->isZero()) {
+        auto n = B.CreateNot(SI->getCondition());
+        push(n);
+        auto val = B.CreateUIToFP(n, SI->getType());
+        push(val);
+        auto res = B.CreateFMul(val, SI->getFalseValue());
+        if (auto I = dyn_cast<Instruction>(res))
+          I->setFast(true);
+        push(res);
+        for (auto U : cur->users()) {
+          push(U);
+        }
+        cur->replaceAllUsesWith(res);
+        cur->eraseFromParent();
+        return true;
+      }
+    }
+    if (auto C1 = dyn_cast<ConstantFP>(SI->getFalseValue())) {
+      if (C1->isZero()) {
+        auto val = B.CreateUIToFP(SI->getCondition(), SI->getType());
+        push(val);
+        auto res = B.CreateFMul(val, SI->getTrueValue());
+        if (auto I = dyn_cast<Instruction>(res))
+          I->setFast(true);
+        push(res);
+        for (auto U : cur->users()) {
+          push(U);
+        }
+        cur->replaceAllUsesWith(res);
+        cur->eraseFromParent();
+        return true;
+      }
     }
 
+    // select c, (mul x y), 0 -> mul x, (select c, y, 0)
+    for (int i = 0; i < 2; i++)
+      if (auto inst = dyn_cast<Instruction>(SI->getOperand(1 + i)))
+        if (inst->getOpcode() == Instruction::Mul ||
+            inst->getOpcode() == Instruction::FMul)
+          if (auto C = dyn_cast<Constant>(SI->getOperand(1 + (1 - i))))
+            if ((isa<ConstantInt>(C) && cast<ConstantInt>(C)->isZero()) ||
+                (isa<ConstantFP>(C) && cast<ConstantFP>(C)->isZero()))
+              for (int j = 0; j < 2; j++)
+                if (shouldMove(inst->getOperand(j))) {
+                  auto x = inst->getOperand(j);
+                  auto y = inst->getOperand(1 - j);
+                  auto isel = B.CreateSelect(
+                      SI->getCondition(), (i == 0) ? y : C, (i == 0) ? C : y);
+                  Value *imul;
+                  if (cur->getType()->isIntegerTy())
+                    imul = B.CreateMul(isel, x, "", inst->hasNoUnsignedWrap(),
+                                       inst->hasNoSignedWrap());
+                  else
+                    imul = B.CreateFMulFMF(isel, x, inst, "");
+                  push(isel);
+                  push(imul);
+
+                  for (auto U : cur->users()) {
+                    push(U);
+                  }
+                  cur->replaceAllUsesWith(imul);
+                  cur->eraseFromParent();
+                  return true;
+                }
+
+    {
+      Value *ops[2] = {nullptr, nullptr};
+      bool legal = true;
+      for (int i = 0; i < 2; i++) {
+        if (auto C = dyn_cast<ConstantFP>(SI->getOperand(1 + i))) {
+          ops[i] = nullptr;
+          continue;
+        }
+        if (auto CI = dyn_cast<CastInst>(SI->getOperand(1 + i))) {
+          if (CI->getOpcode() == Instruction::SIToFP) {
+            ops[i] = CI->getOperand(0);
+            continue;
+          }
+        }
+        legal = false;
+        break;
       }
+      for (int i = 0; i < 2; i++) {
+        if (!ops[i] && ops[1 - i])
+          ops[i] = ConstantInt::get(ops[1 - i]->getType(), 0);
+      }
+      for (int i = 0; i < 2; i++) {
+        if (ops[i] == nullptr || ops[i]->getType() != ops[0]->getType()) {
+          legal = false;
+          break;
+        }
+      }
+      if (legal) {
+        auto isel = B.CreateSelect(SI->getCondition(), ops[0], ops[1]);
+        push(isel);
+        auto res = B.CreateSIToFP(isel, SI->getType());
+        push(res);
 
+        for (auto U : cur->users()) {
+          push(U);
+        }
+        cur->replaceAllUsesWith(res);
+        cur->eraseFromParent();
+        return true;
+      }
+    }
+  }
 
-        /*
-      // mul x, (select c, 0, y) -> select c (mul x 0), (mul x y)
-      for (int i=0; i<2; i++)
-      if (auto SI = dyn_cast<SelectInst>(cur->getOperand(i)))
-      for (int j=0; j<2; j++)
-      if (auto CI = dyn_cast<ConstantInt>(SI->getOperand(1+j)))
-        if (CI->isZero()) {
-                auto tval = (j == 0) ? CI : B.CreateMul(SI->getTrueValue(), cur->getOperand(1-i),
-                                   "tval." + cur->getName(),
-                                   cur->hasNoUnsignedWrap(),
-                                   cur->hasNoSignedWrap());
-                auto fval = (j == 1) ? CI : B.CreateMul(SI->getFalseValue(), cur->getOperand(1-i),
-                                   "fval." + cur->getName(),
-                                   cur->hasNoUnsignedWrap(),
-                                   cur->hasNoSignedWrap());
-              push(tval);
-              push(fval);
+  if (cur->getOpcode() == Instruction::Mul) {
+    for (int i = 0; i < 2; i++) {
+      // mul (x, 1) -> x
+      if (auto C = dyn_cast<ConstantInt>(cur->getOperand(i)))
+        if (C->isOne()) {
+          push(cur->getOperand(1 - i));
+          for (auto U : cur->users()) {
+            push(U);
+          }
+          cur->replaceAllUsesWith(cur->getOperand(1 - i));
+          cur->eraseFromParent();
+          return true;
+        }
 
-              auto res = B.CreateSelect(SI->getCondition(), tval, fval);
-              push(res);
+      // mul (zext i1 x), y -> mul (zext i1 x) y[x->1]
+      if (auto Z = dyn_cast<ZExtInst>(cur->getOperand(i)))
+        if (Z->getOperand(0)->getType()->isIntegerTy(1)) {
+          auto prev = cur->getOperand(1 - i);
+          auto next = replace(prev, Z->getOperand(0),
+                              ConstantInt::getTrue(cur->getContext()));
+          if (next != prev) {
+            auto res = push(B.CreateMul(Z, next, "postmul." + cur->getName(),
+                                        cur->hasNoUnsignedWrap(),
+                                        cur->hasNoSignedWrap()));
+            for (auto U : cur->users())
+              push(U);
+            cur->replaceAllUsesWith(res);
+            cur->eraseFromParent();
+            return true;
+          }
+        }
+    }
+
+    /*
+  // mul x, (select c, 0, y) -> select c (mul x 0), (mul x y)
+  for (int i=0; i<2; i++)
+  if (auto SI = dyn_cast<SelectInst>(cur->getOperand(i)))
+  for (int j=0; j<2; j++)
+  if (auto CI = dyn_cast<ConstantInt>(SI->getOperand(1+j)))
+    if (CI->isZero()) {
+            auto tval = (j == 0) ? CI : B.CreateMul(SI->getTrueValue(),
+  cur->getOperand(1-i), "tval." + cur->getName(), cur->hasNoUnsignedWrap(),
+                               cur->hasNoSignedWrap());
+            auto fval = (j == 1) ? CI : B.CreateMul(SI->getFalseValue(),
+  cur->getOperand(1-i), "fval." + cur->getName(), cur->hasNoUnsignedWrap(),
+                               cur->hasNoSignedWrap());
+          push(tval);
+          push(fval);
+
+          auto res = B.CreateSelect(SI->getCondition(), tval, fval);
+          push(res);
+
+          for (auto U : cur->users()) {
+            push(U);
+          }
+          cur->replaceAllUsesWith(res);
+          cur->eraseFromParent();
+          return true;
+        }
+        */
+
+    // mul (sub x, y), -c   -> mul (sub, y, x), c
+    for (int i = 0; i < 2; i++)
+      if (auto inst = dyn_cast<Instruction>(cur->getOperand(i)))
+        if (inst->getOpcode() == Instruction::Sub)
+          if (auto CI = dyn_cast<ConstantInt>(cur->getOperand(1 - i)))
+            if (CI->isNegative()) {
+              auto sub2 = B.CreateSub(inst->getOperand(1), inst->getOperand(0),
+                                      "", inst->hasNoUnsignedWrap(),
+                                      inst->hasNoSignedWrap());
+              push(sub2);
+              auto mul2 = B.CreateMul(
+                  sub2, ConstantInt::get(CI->getType(), -CI->getValue()), "",
+                  cur->hasNoUnsignedWrap(), cur->hasNoSignedWrap());
+              push(mul2);
 
               for (auto U : cur->users()) {
-                push(U);
-              }
-              cur->replaceAllUsesWith(res);
-              cur->eraseFromParent();
-              return true;
-            }
-            */
-
-      // mul (sub x, y), -c   -> mul (sub, y, x), c
-      for (int i=0; i<2; i++)
-      if (auto inst = dyn_cast<Instruction>(cur->getOperand(i)))
-      if (inst->getOpcode() == Instruction::Sub)
-      if (auto CI = dyn_cast<ConstantInt>(cur->getOperand(1-i)))
-      if (CI->isNegative()) {
-          auto sub2 = B.CreateSub(inst->getOperand(1), inst->getOperand(0), "", inst->hasNoUnsignedWrap(), inst->hasNoSignedWrap());
-          push(sub2);
-          auto mul2 = B.CreateMul(sub2, ConstantInt::get(CI->getType(), -CI->getValue()), "", cur->hasNoUnsignedWrap(), cur->hasNoSignedWrap());
-          push(mul2);
-              
-          for (auto U : cur->users()) {
                 push(U);
               }
               cur->replaceAllUsesWith(mul2);
               cur->eraseFromParent();
               return true;
-      }
-    }
-
-    if (cur->getOpcode() == Instruction::Sub)
-      if (auto CI = dyn_cast<ConstantInt>(cur->getOperand(0)))
-        if (CI->isZero())
-          if (auto zext = dyn_cast<Instruction>(cur->getOperand(1))) {
-            // sub 0, (zext i1 x) -> sext x
-            if (zext->getOpcode() == Instruction::ZExt &&
-                zext->getOperand(0)->getType()->isIntegerTy(1)) {
-              auto res = B.CreateSExt(zext->getOperand(0), cur->getType());
-              push(res);
-
-              for (auto U : cur->users())
-                push(U);
-              cur->replaceAllUsesWith(res);
-              cur->eraseFromParent();
-              return true;
             }
-            // sub 0, (mul nsw nuw constant, x) -> mul nsw nuw -constant, x
-            if (zext->getOpcode() == Instruction::Mul && zext->hasNoUnsignedWrap() && zext->hasNoSignedWrap()) {
-                bool done = true;
-                for (int i=0; i<2; i++)
-                  if (auto CI = dyn_cast<ConstantInt>(zext->getOperand(i))) {
-                    auto res = B.CreateMul(zext->getOperand(1-i), ConstantInt::get(CI->getType(), -CI->getValue()), "neg." + zext->getName(), true, true);
-                    push(res);
-                  for (auto U : cur->users()) {
-                    push(U);
-                  }
-                  cur->replaceAllUsesWith(res);
-                  cur->eraseFromParent();
-                  return true;
-                  }
-            }
+  }
+
+  if (cur->getOpcode() == Instruction::Sub)
+    if (auto CI = dyn_cast<ConstantInt>(cur->getOperand(0)))
+      if (CI->isZero())
+        if (auto zext = dyn_cast<Instruction>(cur->getOperand(1))) {
+          // sub 0, (zext i1 x) -> sext x
+          if (zext->getOpcode() == Instruction::ZExt &&
+              zext->getOperand(0)->getType()->isIntegerTy(1)) {
+            auto res = B.CreateSExt(zext->getOperand(0), cur->getType());
+            push(res);
+
+            for (auto U : cur->users())
+              push(U);
+            cur->replaceAllUsesWith(res);
+            cur->eraseFromParent();
+            return true;
           }
-    
-    // add (zext (and c1, x) ), (zext (and c1, y)) -> select c1, (add (zext x), (zext y)), 0
-    /*
-    if (cur->getOpcode() == Instruction::Add ||
-        cur->getOpcode() == Instruction::Sub ||
-        cur->getOpcode() == Instruction::Mul)
-      if (auto inst1 = dyn_cast<Instruction>(cur->getOperand(0)))
-        if (auto inst2 = dyn_cast<Instruction>(cur->getOperand(1)))
-          if (inst1->getOpcode() == Instruction::ZExt && inst2->getOpcode() == Instruction::ZExt)
-            if (auto and1 = dyn_cast<Instruction>(inst1->getOperand(0)))
-            if (auto and2 = dyn_cast<Instruction>(inst2->getOperand(0)))
-              if (and1->getType()->isIntegerTy(1) && and2->getType()->isIntegerTy(1) && and1->getOpcode() == Instruction::And && and2->getOpcode() == Instruction::And) {
-                  bool done = false;
-              for (int i1=0; i1<2; i1++)
-              for (int i2=0; i2<2; i2++) 
-              if (and1->getOperand(i1) == and2->getOperand(i2)) {
-                  auto c1 = and1->getOperand(i1);
-                  auto x = and1->getOperand(1-i1);
-                  x = B.CreateZExt(x, inst1->getType());
-                  push(x);
-                  auto y = and2->getOperand(1-i2);
-                  
-                  y = B.CreateZExt(y, inst2->getType());
-                  push(y);
-
-                Value *res = nullptr;
-                switch (cur->getOpcode()) {
-                case Instruction::Add:
-                  res = B.CreateAdd(x, y, "", cur->hasNoUnsignedWrap(), cur->hasNoSignedWrap());
-                  break;
-                case Instruction::Sub:
-                  res = B.CreateSub(x, y, "", cur->hasNoUnsignedWrap(), cur->hasNoSignedWrap());
-                  break;
-                case Instruction::Mul:
-                  res = B.CreateMul(x, y, "", cur->hasNoUnsignedWrap(), cur->hasNoSignedWrap());
-                  break;
-                default:
-                  llvm_unreachable("Illegal opcode");
-                }
+          // sub 0, (mul nsw nuw constant, x) -> mul nsw nuw -constant, x
+          if (zext->getOpcode() == Instruction::Mul &&
+              zext->hasNoUnsignedWrap() && zext->hasNoSignedWrap()) {
+            bool done = true;
+            for (int i = 0; i < 2; i++)
+              if (auto CI = dyn_cast<ConstantInt>(zext->getOperand(i))) {
+                auto res = B.CreateMul(
+                    zext->getOperand(1 - i),
+                    ConstantInt::get(CI->getType(), -CI->getValue()),
+                    "neg." + zext->getName(), true, true);
                 push(res);
-                res = B.CreateSelect(c1, res, Constant::getNullValue(cur->getType()));
-                push(res);
-                  
                 for (auto U : cur->users()) {
-                    push(U);
-                  }
-                  cur->replaceAllUsesWith(res);
-                  cur->eraseFromParent();
-                  return;
+                  push(U);
+                }
+                cur->replaceAllUsesWith(res);
+                cur->eraseFromParent();
+                return true;
               }
-              }
-    */
-
-
-    // add (select %c   c0, x), (select %c, c1, y) -> select %c, (add c0, c1),
-    // (add x, y) and for sub/mul/cmp
-    if (cur->getOpcode() == Instruction::Add ||
-        cur->getOpcode() == Instruction::Sub ||
-        cur->getOpcode() == Instruction::Mul ||
-        cur->getOpcode() == Instruction::FAdd ||
-        cur->getOpcode() == Instruction::FSub ||
-        cur->getOpcode() == Instruction::FMul ||
-        // cur->getOpcode() == Instruction::SIToFP ||
-        // cur->getOpcode() == Instruction::UIToFP ||
-        cur->getOpcode() == Instruction::ICmp ||
-        cur->getOpcode() == Instruction::FCmp) {
-
-        Value* SI1cond = nullptr;
-        Value* SI1tval = nullptr;
-        Value* SI1fval = nullptr;
-        if (auto SI1 = dyn_cast<SelectInst>(cur->getOperand(0))) {
-            SI1cond = SI1->getCondition();
-            SI1tval = SI1->getTrueValue();
-            SI1fval = SI1->getFalseValue();
-        }
-        if (auto SI1 = dyn_cast<ZExtInst>(cur->getOperand(0)))
-        if (SI1->getOperand(0)->getType()->isIntegerTy(1)) {
-            SI1cond = SI1->getOperand(0);
-            SI1tval = SI1;
-            SI1fval = ConstantInt::get(SI1->getType(), 0);
-        }
-        if (auto SI1 = dyn_cast<SExtInst>(cur->getOperand(0)))
-        if (SI1->getOperand(0)->getType()->isIntegerTy(1)) {
-            SI1cond = SI1->getOperand(0);
-            SI1tval = SI1;
-            SI1fval = ConstantInt::get(SI1->getType(), 0);
-        }
-        Value* SI2cond = nullptr;
-        Value* SI2tval = nullptr;
-        Value* SI2fval = nullptr;
-
-        auto op2 = cur->getOperand((cur->getOpcode() == Instruction::SIToFP || cur->getOpcode() == Instruction::UIToFP) ? 0 : 1);
-        if (auto SI2 = dyn_cast<SelectInst>(op2)) {
-            SI2cond = SI2->getCondition();
-            SI2tval = SI2->getTrueValue();
-            SI2fval = SI2->getFalseValue();
-        }
-        if (auto SI2 = dyn_cast<ZExtInst>(op2))
-        if (SI2->getOperand(0)->getType()->isIntegerTy(1)) {
-            SI2cond = SI2->getOperand(0);
-            SI2tval = SI2;
-            SI2fval = ConstantInt::get(SI2->getType(), 0);
-        }
-        if (auto SI2 = dyn_cast<SExtInst>(op2))
-        if (SI2->getOperand(0)->getType()->isIntegerTy(1)) {
-            SI2cond = SI2->getOperand(0);
-            SI2tval = SI2;
-            SI2fval = ConstantInt::get(SI2->getType(), 0);
+          }
         }
 
-          if (SI1cond && SI2cond && (SI1cond == SI2cond || isNot(SI1cond, SI2cond) ) )
-            if (
-                  (SI1cond == SI2cond &&
-                   (
-                    (isa<Constant>(SI1tval) &&
-                 isa<Constant>(SI2tval)) ||
-                (isa<Constant>(SI1fval) &&
-                 isa<Constant>(SI2fval))
-                ))
-                   ||
-                  (SI1cond != SI2cond &&
-                   (
-                    (isa<Constant>(SI1tval) &&
-                 isa<Constant>(SI2fval)) ||
-                (isa<Constant>(SI1fval) &&
-                 isa<Constant>(SI2tval))
-                ))
+  // add (zext (and c1, x) ), (zext (and c1, y)) -> select c1, (add (zext x),
+  // (zext y)), 0
+  /*
+  if (cur->getOpcode() == Instruction::Add ||
+      cur->getOpcode() == Instruction::Sub ||
+      cur->getOpcode() == Instruction::Mul)
+    if (auto inst1 = dyn_cast<Instruction>(cur->getOperand(0)))
+      if (auto inst2 = dyn_cast<Instruction>(cur->getOperand(1)))
+        if (inst1->getOpcode() == Instruction::ZExt && inst2->getOpcode() ==
+  Instruction::ZExt) if (auto and1 =
+  dyn_cast<Instruction>(inst1->getOperand(0))) if (auto and2 =
+  dyn_cast<Instruction>(inst2->getOperand(0))) if
+  (and1->getType()->isIntegerTy(1) && and2->getType()->isIntegerTy(1) &&
+  and1->getOpcode() == Instruction::And && and2->getOpcode() ==
+  Instruction::And) { bool done = false; for (int i1=0; i1<2; i1++) for (int
+  i2=0; i2<2; i2++) if (and1->getOperand(i1) == and2->getOperand(i2)) { auto c1
+  = and1->getOperand(i1); auto x = and1->getOperand(1-i1); x = B.CreateZExt(x,
+  inst1->getType()); push(x); auto y = and2->getOperand(1-i2);
 
-                ) {
-              Value *tval = nullptr;
-              Value *fval = nullptr;
-              bool inverted = SI1cond != SI2cond;
+                y = B.CreateZExt(y, inst2->getType());
+                push(y);
+
+              Value *res = nullptr;
               switch (cur->getOpcode()) {
-              case Instruction::SIToFP:
-                tval = B.CreateSIToFP(SI1tval, cur->getType(),
-                                   "tval." + cur->getName());
-                fval = B.CreateSIToFP(SI1fval, cur->getType(),
-                                   "fval." + cur->getName());
-                break;
-              case Instruction::UIToFP:
-                tval = B.CreateUIToFP(SI1tval, cur->getType(),
-                                   "tval." + cur->getName());
-                fval = B.CreateUIToFP(SI1fval, cur->getType(),
-                                   "fval." + cur->getName());
-                break;
-              case Instruction::FAdd:
-                tval = B.CreateFAddFMF(SI1tval, inverted ? SI2fval: SI2tval,
-                                        cur,
-                                   "tval." + cur->getName());
-                fval = B.CreateFAddFMF(SI1fval, inverted ? SI2tval : SI2fval,
-                                        cur,
-                                   "fval." + cur->getName());
-                break;
-              case Instruction::FSub:
-                tval = B.CreateFSubFMF(SI1tval, inverted ? SI2fval: SI2tval,
-                                        cur,
-                                   "tval." + cur->getName());
-                fval = B.CreateFSubFMF(SI1fval, inverted ? SI2tval : SI2fval,
-                                        cur,
-                                   "fval." + cur->getName());
-                break;
-              case Instruction::FMul:
-                tval = B.CreateFMulFMF(SI1tval, inverted ? SI2fval: SI2tval,
-                                        cur,
-                                   "tval." + cur->getName());
-                fval = B.CreateFMulFMF(SI1fval, inverted ? SI2tval : SI2fval,
-                                        cur,
-                                   "fval." + cur->getName());
-                break;
               case Instruction::Add:
-                tval = B.CreateAdd(SI1tval, inverted ? SI2fval : SI2tval,
-                                   "tval." + cur->getName(),
-                                   cur->hasNoUnsignedWrap(),
-                                   cur->hasNoSignedWrap());
-                fval = B.CreateAdd(SI1fval, inverted ? SI2tval : SI2fval,
-                                   "fval." + cur->getName(),
-                                   cur->hasNoUnsignedWrap(),
-                                   cur->hasNoSignedWrap());
-                break;
-              case Instruction::Sub:
-                tval = B.CreateSub(SI1tval, inverted ? SI2fval : SI2tval,
-                                   "tval." + cur->getName(),
-                                   cur->hasNoUnsignedWrap(),
-                                   cur->hasNoSignedWrap());
-                fval = B.CreateSub(SI1fval, inverted ? SI2tval : SI2fval,
-                                   "fval." + cur->getName(),
-                                   cur->hasNoUnsignedWrap(),
-                                   cur->hasNoSignedWrap());
-                break;
-              case Instruction::Mul:
-                tval = B.CreateMul(SI1tval, inverted ? SI2fval : SI2tval,
-                                   "tval." + cur->getName(),
-                                   cur->hasNoUnsignedWrap(),
-                                   cur->hasNoSignedWrap());
-                fval = B.CreateMul(SI1fval, inverted ? SI2tval : SI2fval,
-                                   "fval." + cur->getName(),
-                                   cur->hasNoUnsignedWrap(),
-                                   cur->hasNoSignedWrap());
-                break;
-              case Instruction::ICmp:
-              case Instruction::FCmp:
-                tval = B.CreateCmp(cast<CmpInst>(cur)->getPredicate(), SI1tval, inverted ? SI2fval : SI2tval,
-                                   "tval." + cur->getName());
-                fval = B.CreateCmp(cast<CmpInst>(cur)->getPredicate(), SI1fval, inverted ? SI2tval : SI2fval,
-                                   "fval." + cur->getName());
-                break;
-              default:
-                llvm_unreachable("illegal opcode");
+                res = B.CreateAdd(x, y, "", cur->hasNoUnsignedWrap(),
+  cur->hasNoSignedWrap()); break; case Instruction::Sub: res = B.CreateSub(x, y,
+  "", cur->hasNoUnsignedWrap(), cur->hasNoSignedWrap()); break; case
+  Instruction::Mul: res = B.CreateMul(x, y, "", cur->hasNoUnsignedWrap(),
+  cur->hasNoSignedWrap()); break; default: llvm_unreachable("Illegal opcode");
               }
-              push(tval);
-              push(fval);
-
-              auto res = B.CreateSelect(SI1cond, tval, fval);
               push(res);
+              res = B.CreateSelect(c1, res,
+  Constant::getNullValue(cur->getType())); push(res);
 
               for (auto U : cur->users()) {
+                  push(U);
+                }
+                cur->replaceAllUsesWith(res);
+                cur->eraseFromParent();
+                return;
+            }
+            }
+  */
+
+  // add (select %c   c0, x), (select %c, c1, y) -> select %c, (add c0, c1),
+  // (add x, y) and for sub/mul/cmp
+  if (cur->getOpcode() == Instruction::Add ||
+      cur->getOpcode() == Instruction::Sub ||
+      cur->getOpcode() == Instruction::Mul ||
+      cur->getOpcode() == Instruction::FAdd ||
+      cur->getOpcode() == Instruction::FSub ||
+      cur->getOpcode() == Instruction::FMul ||
+      // cur->getOpcode() == Instruction::SIToFP ||
+      // cur->getOpcode() == Instruction::UIToFP ||
+      cur->getOpcode() == Instruction::ICmp ||
+      cur->getOpcode() == Instruction::FCmp) {
+
+    Value *SI1cond = nullptr;
+    Value *SI1tval = nullptr;
+    Value *SI1fval = nullptr;
+    if (auto SI1 = dyn_cast<SelectInst>(cur->getOperand(0))) {
+      SI1cond = SI1->getCondition();
+      SI1tval = SI1->getTrueValue();
+      SI1fval = SI1->getFalseValue();
+    }
+    if (auto SI1 = dyn_cast<ZExtInst>(cur->getOperand(0)))
+      if (SI1->getOperand(0)->getType()->isIntegerTy(1)) {
+        SI1cond = SI1->getOperand(0);
+        SI1tval = SI1;
+        SI1fval = ConstantInt::get(SI1->getType(), 0);
+      }
+    if (auto SI1 = dyn_cast<SExtInst>(cur->getOperand(0)))
+      if (SI1->getOperand(0)->getType()->isIntegerTy(1)) {
+        SI1cond = SI1->getOperand(0);
+        SI1tval = SI1;
+        SI1fval = ConstantInt::get(SI1->getType(), 0);
+      }
+    Value *SI2cond = nullptr;
+    Value *SI2tval = nullptr;
+    Value *SI2fval = nullptr;
+
+    auto op2 = cur->getOperand((cur->getOpcode() == Instruction::SIToFP ||
+                                cur->getOpcode() == Instruction::UIToFP)
+                                   ? 0
+                                   : 1);
+    if (auto SI2 = dyn_cast<SelectInst>(op2)) {
+      SI2cond = SI2->getCondition();
+      SI2tval = SI2->getTrueValue();
+      SI2fval = SI2->getFalseValue();
+    }
+    if (auto SI2 = dyn_cast<ZExtInst>(op2))
+      if (SI2->getOperand(0)->getType()->isIntegerTy(1)) {
+        SI2cond = SI2->getOperand(0);
+        SI2tval = SI2;
+        SI2fval = ConstantInt::get(SI2->getType(), 0);
+      }
+    if (auto SI2 = dyn_cast<SExtInst>(op2))
+      if (SI2->getOperand(0)->getType()->isIntegerTy(1)) {
+        SI2cond = SI2->getOperand(0);
+        SI2tval = SI2;
+        SI2fval = ConstantInt::get(SI2->getType(), 0);
+      }
+
+    if (SI1cond && SI2cond && (SI1cond == SI2cond || isNot(SI1cond, SI2cond)))
+      if ((SI1cond == SI2cond &&
+           ((isa<Constant>(SI1tval) && isa<Constant>(SI2tval)) ||
+            (isa<Constant>(SI1fval) && isa<Constant>(SI2fval)))) ||
+          (SI1cond != SI2cond &&
+           ((isa<Constant>(SI1tval) && isa<Constant>(SI2fval)) ||
+            (isa<Constant>(SI1fval) && isa<Constant>(SI2tval))))
+
+      ) {
+        Value *tval = nullptr;
+        Value *fval = nullptr;
+        bool inverted = SI1cond != SI2cond;
+        switch (cur->getOpcode()) {
+        case Instruction::SIToFP:
+          tval =
+              B.CreateSIToFP(SI1tval, cur->getType(), "tval." + cur->getName());
+          fval =
+              B.CreateSIToFP(SI1fval, cur->getType(), "fval." + cur->getName());
+          break;
+        case Instruction::UIToFP:
+          tval =
+              B.CreateUIToFP(SI1tval, cur->getType(), "tval." + cur->getName());
+          fval =
+              B.CreateUIToFP(SI1fval, cur->getType(), "fval." + cur->getName());
+          break;
+        case Instruction::FAdd:
+          tval = B.CreateFAddFMF(SI1tval, inverted ? SI2fval : SI2tval, cur,
+                                 "tval." + cur->getName());
+          fval = B.CreateFAddFMF(SI1fval, inverted ? SI2tval : SI2fval, cur,
+                                 "fval." + cur->getName());
+          break;
+        case Instruction::FSub:
+          tval = B.CreateFSubFMF(SI1tval, inverted ? SI2fval : SI2tval, cur,
+                                 "tval." + cur->getName());
+          fval = B.CreateFSubFMF(SI1fval, inverted ? SI2tval : SI2fval, cur,
+                                 "fval." + cur->getName());
+          break;
+        case Instruction::FMul:
+          tval = B.CreateFMulFMF(SI1tval, inverted ? SI2fval : SI2tval, cur,
+                                 "tval." + cur->getName());
+          fval = B.CreateFMulFMF(SI1fval, inverted ? SI2tval : SI2fval, cur,
+                                 "fval." + cur->getName());
+          break;
+        case Instruction::Add:
+          tval = B.CreateAdd(SI1tval, inverted ? SI2fval : SI2tval,
+                             "tval." + cur->getName(), cur->hasNoUnsignedWrap(),
+                             cur->hasNoSignedWrap());
+          fval = B.CreateAdd(SI1fval, inverted ? SI2tval : SI2fval,
+                             "fval." + cur->getName(), cur->hasNoUnsignedWrap(),
+                             cur->hasNoSignedWrap());
+          break;
+        case Instruction::Sub:
+          tval = B.CreateSub(SI1tval, inverted ? SI2fval : SI2tval,
+                             "tval." + cur->getName(), cur->hasNoUnsignedWrap(),
+                             cur->hasNoSignedWrap());
+          fval = B.CreateSub(SI1fval, inverted ? SI2tval : SI2fval,
+                             "fval." + cur->getName(), cur->hasNoUnsignedWrap(),
+                             cur->hasNoSignedWrap());
+          break;
+        case Instruction::Mul:
+          tval = B.CreateMul(SI1tval, inverted ? SI2fval : SI2tval,
+                             "tval." + cur->getName(), cur->hasNoUnsignedWrap(),
+                             cur->hasNoSignedWrap());
+          fval = B.CreateMul(SI1fval, inverted ? SI2tval : SI2fval,
+                             "fval." + cur->getName(), cur->hasNoUnsignedWrap(),
+                             cur->hasNoSignedWrap());
+          break;
+        case Instruction::ICmp:
+        case Instruction::FCmp:
+          tval = B.CreateCmp(cast<CmpInst>(cur)->getPredicate(), SI1tval,
+                             inverted ? SI2fval : SI2tval,
+                             "tval." + cur->getName());
+          fval = B.CreateCmp(cast<CmpInst>(cur)->getPredicate(), SI1fval,
+                             inverted ? SI2tval : SI2fval,
+                             "fval." + cur->getName());
+          break;
+        default:
+          llvm_unreachable("illegal opcode");
+        }
+        push(tval);
+        push(fval);
+
+        auto res = B.CreateSelect(SI1cond, tval, fval);
+        push(res);
+
+        for (auto U : cur->users()) {
+          push(U);
+        }
+        cur->replaceAllUsesWith(res);
+        cur->eraseFromParent();
+        return true;
+      }
+  }
+
+  // and a, (or q, (not a)) -> and a q
+  if (cur->getOpcode() == Instruction::And) {
+    for (size_t i1 = 0; i1 < 2; i1++)
+      if (auto inst2 = dyn_cast<Instruction>(cur->getOperand(1 - i1)))
+        if (inst2->getOpcode() == Instruction::Or)
+          for (size_t i2 = 0; i2 < 2; i2++)
+            if (isNot(cur->getOperand(i1), inst2->getOperand(i2))) {
+              auto q = inst2->getOperand(1 - i2);
+              cur->setOperand(1 - i1, q);
+              push(cur);
+              push(q);
+              push(inst2);
+              push(cur->getOperand(i1));
+              push(inst2->getOperand(i2));
+              Q.insert(cur);
+              for (auto U : cur->users())
                 push(U);
-              }
-              cur->replaceAllUsesWith(res);
-              cur->eraseFromParent();
               return true;
             }
-    }
+  }
 
-    // and a, (or q, (not a)) -> and a q
-    if (cur->getOpcode() == Instruction::And) {
-      for (size_t i1 = 0; i1 < 2; i1++)
-      if (auto inst2 = dyn_cast<Instruction>(cur->getOperand(1-i1)))
-          if (inst2->getOpcode() == Instruction::Or)
-        for (size_t i2 = 0; i2 < 2; i2++)
-          if (isNot(cur->getOperand(i1), inst2->getOperand(i2)))
-         {
-             auto q = inst2->getOperand(1-i2);
-             cur->setOperand(1-i1, q);
-             push(cur);
-             push(q);
-             push(inst2);
-             push(cur->getOperand(i1));
-             push(inst2->getOperand(i2));
-             Q.insert(cur);
-            for (auto U : cur->users())
-              push(U);
-            return true;
-         }
-        }
-
-    // and (and a, b), a) -> and a, b
-    if (cur->getOpcode() == Instruction::And) {
-      for (size_t i1 = 0; i1 < 2; i1++)
+  // and (and a, b), a) -> and a, b
+  if (cur->getOpcode() == Instruction::And) {
+    for (size_t i1 = 0; i1 < 2; i1++)
       if (auto inst2 = dyn_cast<Instruction>(cur->getOperand(i1)))
-          if (inst2->getOpcode() == Instruction::And)
-        for (size_t i2 = 0; i2 < 2; i2++)
-      if (inst2->getOperand(i2) == cur->getOperand(1-i1)) {
-             for (auto U : cur->users())
-              push(U);
-             cur->replaceAllUsesWith(inst2);
-             push(inst2);
-             return true;
-         }
-        }
-    
-    // or a, (and q, (not a)) -> and a q
-    if (cur->getOpcode() == Instruction::And) {
-      for (size_t i1 = 0; i1 < 2; i1++)
-      if (auto inst2 = dyn_cast<Instruction>(cur->getOperand(1-i1)))
-          if (inst2->getOpcode() == Instruction::Or)
-        for (size_t i2 = 0; i2 < 2; i2++)
-          if (isNot(cur->getOperand(i1), inst2->getOperand(i2)))
-         {
-             auto q = inst2->getOperand(1-i2);
-             cur->setOperand(1-i1, q);
-             push(cur);
-             push(q);
-             push(inst2);
-             push(cur->getOperand(i1));
-             push(inst2->getOperand(i2));
-             Q.insert(cur);
-            for (auto U : cur->users())
-              push(U);
-            return true;
-         }
-        }
+        if (inst2->getOpcode() == Instruction::And)
+          for (size_t i2 = 0; i2 < 2; i2++)
+            if (inst2->getOperand(i2) == cur->getOperand(1 - i1)) {
+              for (auto U : cur->users())
+                push(U);
+              cur->replaceAllUsesWith(inst2);
+              push(inst2);
+              return true;
+            }
+  }
 
-    // and ( (a +/- b) != c ), ( (d +/- b) != c )  -> and ( a != (c -/+ b) ), (
-    // d != (c -/+ b) )
-    //   also with or
-    if (cur->getOpcode() == Instruction::And ||
-        cur->getOpcode() == Instruction::Or) {
-      for (auto cmpOp : {ICmpInst::ICMP_EQ, ICmpInst::ICMP_NE})
-        for (auto interOp : {Instruction::Add, Instruction::Sub})
-          if (auto cmp1 = dyn_cast<ICmpInst>(cur->getOperand(0)))
-            if (auto cmp2 = dyn_cast<ICmpInst>(cur->getOperand(1)))
-              for (size_t i1 = 0; i1 < 2; i1++)
-                for (size_t i2 = 0; i2 < 2; i2++)
-                  if (cmp1->getOperand(1 - i1) == cmp2->getOperand(1 - i2) && cmp1->getPredicate() == cmpOp && cmp2->getPredicate() == cmpOp)
-                    if (auto add1 = dyn_cast<Instruction>(cmp1->getOperand(i1)))
-                      if (auto add2 =
-                              dyn_cast<Instruction>(cmp2->getOperand(i2)))
-                        if (add1->getOpcode() == interOp &&
-                            add2->getOpcode() == interOp)
-                          for (size_t ia = 0; ia < 2; ia++)
+  // or a, (and q, (not a)) -> and a q
+  if (cur->getOpcode() == Instruction::And) {
+    for (size_t i1 = 0; i1 < 2; i1++)
+      if (auto inst2 = dyn_cast<Instruction>(cur->getOperand(1 - i1)))
+        if (inst2->getOpcode() == Instruction::Or)
+          for (size_t i2 = 0; i2 < 2; i2++)
+            if (isNot(cur->getOperand(i1), inst2->getOperand(i2))) {
+              auto q = inst2->getOperand(1 - i2);
+              cur->setOperand(1 - i1, q);
+              push(cur);
+              push(q);
+              push(inst2);
+              push(cur->getOperand(i1));
+              push(inst2->getOperand(i2));
+              Q.insert(cur);
+              for (auto U : cur->users())
+                push(U);
+              return true;
+            }
+  }
+
+  // and ( (a +/- b) != c ), ( (d +/- b) != c )  -> and ( a != (c -/+ b) ), (
+  // d != (c -/+ b) )
+  //   also with or
+  if (cur->getOpcode() == Instruction::And ||
+      cur->getOpcode() == Instruction::Or) {
+    for (auto cmpOp : {ICmpInst::ICMP_EQ, ICmpInst::ICMP_NE})
+      for (auto interOp : {Instruction::Add, Instruction::Sub})
+        if (auto cmp1 = dyn_cast<ICmpInst>(cur->getOperand(0)))
+          if (auto cmp2 = dyn_cast<ICmpInst>(cur->getOperand(1)))
+            for (size_t i1 = 0; i1 < 2; i1++)
+              for (size_t i2 = 0; i2 < 2; i2++)
+                if (cmp1->getOperand(1 - i1) == cmp2->getOperand(1 - i2) &&
+                    cmp1->getPredicate() == cmpOp &&
+                    cmp2->getPredicate() == cmpOp)
+                  if (auto add1 = dyn_cast<Instruction>(cmp1->getOperand(i1)))
+                    if (auto add2 = dyn_cast<Instruction>(cmp2->getOperand(i2)))
+                      if (add1->getOpcode() == interOp &&
+                          add2->getOpcode() == interOp)
+                        for (size_t ia = 0; ia < 2; ia++)
                           if (add1->getOperand(ia) == add2->getOperand(ia)) {
 
                             auto b = add1->getOperand(ia);
@@ -3667,9 +3668,11 @@ bool fixSparse_inner(Instruction* cur, llvm::Function &F, llvm::SetVector<Instru
 
                             Value *res = nullptr;
                             if (interOp == Instruction::Add)
-                              res = B.CreateSub(ia == 0 ? b : c, ia == 0 ? c : b);
+                              res =
+                                  B.CreateSub(ia == 0 ? b : c, ia == 0 ? c : b);
                             else
-                              res = B.CreateAdd(ia == 0 ? b : c, ia == 0 ? c : b);
+                              res =
+                                  B.CreateAdd(ia == 0 ? b : c, ia == 0 ? c : b);
 
                             push(res);
 
@@ -3692,1181 +3695,1436 @@ bool fixSparse_inner(Instruction* cur, llvm::Function &F, llvm::SetVector<Instru
                             cur->eraseFromParent();
                             return true;
                           }
-    }
+  }
 
-    // and ( expr == c1 ), ( expr == c2 ) and c1 != c2  -> false
-    if (cur->getOpcode() == Instruction::And) {
-      for (auto cmpOp : {ICmpInst::ICMP_EQ})
-          if (auto cmp1 = dyn_cast<ICmpInst>(cur->getOperand(0)))
-            if (auto cmp2 = dyn_cast<ICmpInst>(cur->getOperand(1)))
-              for (size_t i1 = 0; i1 < 2; i1++)
-                for (size_t i2 = 0; i2 < 2; i2++)
-                  if (cmp1->getOperand(1 - i1) == cmp2->getOperand(1 - i2) && cmp1->getPredicate() == cmpOp && cmp2->getPredicate() == cmpOp) {
-                    auto c1 = SE.getSCEV(cmp1->getOperand(i1));
-                    auto c2 = SE.getSCEV(cmp2->getOperand(i2));
-                    auto m = SE.getMinusSCEV(c1, c2, SCEV::NoWrapMask);
-                    if (auto C = dyn_cast<SCEVConstant>(m)) {
-                        // if c1 == c2 don't need the and they are equivalent
-                        if (C->getAPInt().isZero()) {
-                            push(cmp1);
-                            push(cmp2);
-                            for (auto U : cur->users())
-                              push(U);
-                            cur->replaceAllUsesWith(cmp1);
-                            cur->eraseFromParent();
-                            return true;
-                        } else {
-                        // if non one constant they must be distinct.
-                            for (auto U : cur->users())
-                              push(U);
-                            cur->replaceAllUsesWith(ConstantInt::getFalse(cur->getContext()));
-                            cur->eraseFromParent();
-                            return true;
-                        }
-                    }
+  // and ( expr == c1 ), ( expr == c2 ) and c1 != c2  -> false
+  if (cur->getOpcode() == Instruction::And) {
+    for (auto cmpOp : {ICmpInst::ICMP_EQ})
+      if (auto cmp1 = dyn_cast<ICmpInst>(cur->getOperand(0)))
+        if (auto cmp2 = dyn_cast<ICmpInst>(cur->getOperand(1)))
+          for (size_t i1 = 0; i1 < 2; i1++)
+            for (size_t i2 = 0; i2 < 2; i2++)
+              if (cmp1->getOperand(1 - i1) == cmp2->getOperand(1 - i2) &&
+                  cmp1->getPredicate() == cmpOp &&
+                  cmp2->getPredicate() == cmpOp) {
+                auto c1 = SE.getSCEV(cmp1->getOperand(i1));
+                auto c2 = SE.getSCEV(cmp2->getOperand(i2));
+                auto m = SE.getMinusSCEV(c1, c2, SCEV::NoWrapMask);
+                if (auto C = dyn_cast<SCEVConstant>(m)) {
+                  // if c1 == c2 don't need the and they are equivalent
+                  if (C->getAPInt().isZero()) {
+                    push(cmp1);
+                    push(cmp2);
+                    for (auto U : cur->users())
+                      push(U);
+                    cur->replaceAllUsesWith(cmp1);
+                    cur->eraseFromParent();
+                    return true;
+                  } else {
+                    // if non one constant they must be distinct.
+                    for (auto U : cur->users())
+                      push(U);
+                    cur->replaceAllUsesWith(
+                        ConstantInt::getFalse(cur->getContext()));
+                    cur->eraseFromParent();
+                    return true;
                   }
-    }
-
-    //  add (mul a b), (mul c, b) -> mul (add a, c), b 
-    if (cur->getOpcode() == Instruction::Sub ||
-        cur->getOpcode() == Instruction::Add) {
-      if (auto mul1 = dyn_cast<Instruction>(cur->getOperand(0)))
-        if (auto mul2 = dyn_cast<Instruction>(cur->getOperand(1)))
-          if (mul1->getOpcode() == Instruction::Mul &&
-              mul2->getOpcode() == Instruction::Mul) {
-            for (int i = 0; i < 2; i++) {
-              if (mul1->getOperand(i) == mul2->getOperand(i)) {
-                Value *res = nullptr;
-                switch (cur->getOpcode()) {
-                case Instruction::Add:
-                  res = B.CreateAdd(mul1->getOperand(1 - i),
-                                    mul2->getOperand(1 - i));
-                  break;
-                case Instruction::Sub:
-                  res = B.CreateSub(mul1->getOperand(1 - i),
-                                    mul2->getOperand(1 - i));
-                  break;
-                default:
-                  llvm_unreachable("Illegal opcode");
                 }
-                push(res);
-                auto res2 = B.CreateMul(
-                    res, mul1->getOperand(i), "",
-                    mul1->hasNoUnsignedWrap() && mul1->hasNoUnsignedWrap(),
-                    mul2->hasNoSignedWrap() && mul2->hasNoSignedWrap());
-                push(res2);
-
-                for (auto U : cur->users())
-                  push(U);
-                cur->replaceAllUsesWith(res2);
-                cur->eraseFromParent();
-                return true;
               }
+  }
+
+  //  add (mul a b), (mul c, b) -> mul (add a, c), b
+  if (cur->getOpcode() == Instruction::Sub ||
+      cur->getOpcode() == Instruction::Add) {
+    if (auto mul1 = dyn_cast<Instruction>(cur->getOperand(0)))
+      if (auto mul2 = dyn_cast<Instruction>(cur->getOperand(1)))
+        if (mul1->getOpcode() == Instruction::Mul &&
+            mul2->getOpcode() == Instruction::Mul) {
+          for (int i = 0; i < 2; i++) {
+            if (mul1->getOperand(i) == mul2->getOperand(i)) {
+              Value *res = nullptr;
+              switch (cur->getOpcode()) {
+              case Instruction::Add:
+                res = B.CreateAdd(mul1->getOperand(1 - i),
+                                  mul2->getOperand(1 - i));
+                break;
+              case Instruction::Sub:
+                res = B.CreateSub(mul1->getOperand(1 - i),
+                                  mul2->getOperand(1 - i));
+                break;
+              default:
+                llvm_unreachable("Illegal opcode");
+              }
+              push(res);
+              auto res2 = B.CreateMul(
+                  res, mul1->getOperand(i), "",
+                  mul1->hasNoUnsignedWrap() && mul1->hasNoUnsignedWrap(),
+                  mul2->hasNoSignedWrap() && mul2->hasNoSignedWrap());
+              push(res2);
+
+              for (auto U : cur->users())
+                push(U);
+              cur->replaceAllUsesWith(res2);
+              cur->eraseFromParent();
+              return true;
             }
           }
+        }
+  }
+
+  // fadd (ext a), (ext b) -> ext (a + b)
+  // fsub (ext a), (ext b) -> ext (a - b)
+  // fmul (ext a), (ext b) -> ext (a * b)
+  if (cur->getOpcode() == Instruction::FSub ||
+      cur->getOpcode() == Instruction::FAdd ||
+      cur->getOpcode() == Instruction::FMul ||
+      cur->getOpcode() == Instruction::FNeg) {
+    auto Ty = B.getInt64Ty();
+    SmallVector<Instruction *, 1> temporaries;
+    SmallVector<Instruction *, 1> precasts;
+    Value *lhs = nullptr;
+
+    Value *prelhs = (cur->getOpcode() == Instruction::FNeg)
+                        ? ConstantFP::getZero(cur->getType())
+                        : cur->getOperand(0);
+    Value *prerhs = (cur->getOpcode() == Instruction::FNeg)
+                        ? cur->getOperand(0)
+                        : cur->getOperand(1);
+
+    APInt minval(64, 0);
+    APInt maxval(64, 0);
+    if (auto C = dyn_cast<ConstantFP>(prelhs)) {
+      APSInt Tmp(64);
+      bool isExact = false;
+      C->getValue().convertToInteger(Tmp, llvm::RoundingMode::TowardZero,
+                                     &isExact);
+      if (isExact || C->isZero()) {
+        minval = maxval = Tmp;
+        lhs = ConstantInt::get(Ty, Tmp);
+      }
+    }
+    if (auto ext = dyn_cast<CastInst>(prelhs)) {
+      if (ext->getOpcode() == Instruction::UIToFP ||
+          ext->getOpcode() == Instruction::SIToFP) {
+        precasts.push_back(ext);
+        auto ity = cast<IntegerType>(ext->getOperand(0)->getType());
+        bool md = false;
+        if (auto I = dyn_cast<Instruction>(ext->getOperand(0)))
+          if (auto MD = hasMetadata(I, LLVMContext::MD_range)) {
+            md = true;
+            minval =
+                cast<ConstantInt>(
+                    cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
+                    ->getValue()
+                    .zextOrTrunc(64);
+            maxval =
+                cast<ConstantInt>(
+                    cast<ConstantAsMetadata>(MD->getOperand(1))->getValue())
+                    ->getValue()
+                    .zextOrTrunc(64);
+          }
+        if (!md) {
+          if (ext->getOpcode() == Instruction::UIToFP)
+            maxval = APInt::getMaxValue(ity->getBitWidth()).zextOrTrunc(64);
+          else {
+            maxval =
+                APInt::getSignedMaxValue(ity->getBitWidth()).zextOrTrunc(64);
+            minval =
+                APInt::getSignedMinValue(ity->getBitWidth()).zextOrTrunc(64);
+          }
+        }
+        if (ext->getOperand(0)->getType() == Ty)
+          lhs = ext->getOperand(0);
+        else if (ity->getBitWidth() < Ty->getBitWidth()) {
+          lhs = B.CreateZExt(ext->getOperand(0), Ty);
+          if (auto I = dyn_cast<Instruction>(lhs))
+            temporaries.push_back(I);
+        }
+      }
     }
 
-    // fadd (ext a), (ext b) -> ext (a + b)
-    // fsub (ext a), (ext b) -> ext (a - b)
-    // fmul (ext a), (ext b) -> ext (a * b)
-    if (cur->getOpcode() == Instruction::FSub ||
-        cur->getOpcode() == Instruction::FAdd ||
-        cur->getOpcode() == Instruction::FMul ||
-        cur->getOpcode() == Instruction::FNeg) {
-      auto Ty = B.getInt64Ty();
-      SmallVector<Instruction *, 1> temporaries;
-      SmallVector<Instruction *, 1> precasts;
-      Value *lhs = nullptr;
+    Value *rhs = nullptr;
 
-      Value *prelhs = (cur->getOpcode() == Instruction::FNeg)
-                          ? ConstantFP::getZero(cur->getType())
-                          : cur->getOperand(0);
-      Value *prerhs = (cur->getOpcode() == Instruction::FNeg)
-                          ? cur->getOperand(0)
-                          : cur->getOperand(1);
-
-      APInt minval(64, 0);
-      APInt maxval(64, 0);
-      if (auto C = dyn_cast<ConstantFP>(prelhs)) {
-        APSInt Tmp(64);
-        bool isExact = false;
-        C->getValue().convertToInteger(Tmp, llvm::RoundingMode::TowardZero,
-                                       &isExact);
-        if (isExact || C->isZero()) {
-          minval = maxval = Tmp;
-          lhs = ConstantInt::get(Ty, Tmp);
-        }
-      }
-      if (auto ext = dyn_cast<CastInst>(prelhs)) {
-        if (ext->getOpcode() == Instruction::UIToFP ||
-            ext->getOpcode() == Instruction::SIToFP) {
-          precasts.push_back(ext);
-          auto ity = cast<IntegerType>(ext->getOperand(0)->getType());
-          bool md = false;
-          if (auto I = dyn_cast<Instruction>(ext->getOperand(0)))
-            if (auto MD = hasMetadata(I, LLVMContext::MD_range)) {
-              md = true;
-              minval =
-                  cast<ConstantInt>(
-                      cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
-                      ->getValue()
-                      .zextOrTrunc(64);
-              maxval =
-                  cast<ConstantInt>(
-                      cast<ConstantAsMetadata>(MD->getOperand(1))->getValue())
-                      ->getValue()
-                      .zextOrTrunc(64);
-            }
-          if (!md) {
-            if (ext->getOpcode() == Instruction::UIToFP)
-              maxval = APInt::getMaxValue(ity->getBitWidth()).zextOrTrunc(64);
-            else {
-              maxval =
-                  APInt::getSignedMaxValue(ity->getBitWidth()).zextOrTrunc(64);
-              minval =
-                  APInt::getSignedMinValue(ity->getBitWidth()).zextOrTrunc(64);
-            }
-          }
-          if (ext->getOperand(0)->getType() == Ty)
-            lhs = ext->getOperand(0);
-          else if (ity->getBitWidth() < Ty->getBitWidth()) {
-            lhs = B.CreateZExt(ext->getOperand(0), Ty);
-            if (auto I = dyn_cast<Instruction>(lhs))
-              temporaries.push_back(I);
-          }
-        }
-      }
-
-      Value *rhs = nullptr;
-
-      if (auto C = dyn_cast<ConstantFP>(prerhs)) {
-        APSInt Tmp(64);
-        bool isExact = false;
-        C->getValue().convertToInteger(Tmp, llvm::RoundingMode::TowardZero,
-                                       &isExact);
-        if (isExact || C->isZero()) {
-          rhs = ConstantInt::get(Ty, Tmp);
-          switch (cur->getOpcode()) {
-          case Instruction::FAdd:
-            minval *= Tmp;
-            maxval *= Tmp;
-            break;
-          case Instruction::FSub:
-          case Instruction::FNeg:
-            minval -= Tmp;
-            maxval -= Tmp;
-            break;
-          case Instruction::FMul:
-            minval -= Tmp;
-            maxval -= Tmp;
-            break;
-          default:
-            llvm_unreachable("Illegal opcode");
-          }
-        }
-      }
-      if (auto ext = dyn_cast<CastInst>(prerhs)) {
-        if (ext->getOpcode() == Instruction::UIToFP ||
-            ext->getOpcode() == Instruction::SIToFP) {
-          precasts.push_back(ext);
-          auto ity = cast<IntegerType>(ext->getOperand(0)->getType());
-          bool md = false;
-          APInt rhsMin(64, 0);
-          APInt rhsMax(64, 0);
-          if (auto I = dyn_cast<Instruction>(ext->getOperand(0)))
-            if (auto MD = hasMetadata(I, LLVMContext::MD_range)) {
-              md = true;
-              rhsMin =
-                  cast<ConstantInt>(
-                      cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
-                      ->getValue()
-                      .zextOrTrunc(64);
-              rhsMax =
-                  cast<ConstantInt>(
-                      cast<ConstantAsMetadata>(MD->getOperand(1))->getValue())
-                      ->getValue()
-                      .zextOrTrunc(64);
-            }
-          if (!md) {
-            if (ext->getOpcode() == Instruction::UIToFP) {
-              rhsMax = APInt::getMaxValue(ity->getBitWidth()).zextOrTrunc(64);
-              rhsMin = APInt::getZero(64);
-            } else {
-              rhsMax =
-                  APInt::getSignedMaxValue(ity->getBitWidth()).zextOrTrunc(64);
-              rhsMin =
-                  APInt::getSignedMinValue(ity->getBitWidth()).zextOrTrunc(64);
-            }
-          }
-          switch (cur->getOpcode()) {
-          case Instruction::FAdd:
-            minval += rhsMin;
-            maxval += rhsMax;
-            break;
-          case Instruction::FSub:
-          case Instruction::FNeg:
-            minval -= rhsMax;
-            maxval -= rhsMin;
-            break;
-          case Instruction::FMul: {
-            auto minf = [&](APInt a, APInt b) { return a.sle(b) ? a : b; };
-            auto maxf = [&](APInt a, APInt b) { return a.sle(b) ? b : b; };
-            minval = minf(
-                minval * rhsMin,
-                minf(minval * rhsMax, minf(maxval * rhsMin, maxval * rhsMax)));
-            maxval = maxf(
-                minval * rhsMin,
-                maxf(minval * rhsMax, maxf(maxval * rhsMin, maxval * rhsMax)));
-            break;
-          }
-          default:
-            llvm_unreachable("Illegal opcode");
-          }
-          if (ext->getOperand(0)->getType() == Ty)
-            rhs = ext->getOperand(0);
-          else if (ity->getBitWidth() < Ty->getBitWidth()) {
-            rhs = B.CreateZExt(ext->getOperand(0), Ty);
-            if (auto I = dyn_cast<Instruction>(rhs))
-              temporaries.push_back(I);
-          }
-        }
-      }
-
-      if (lhs && rhs) {
-        Value *res = nullptr;
+    if (auto C = dyn_cast<ConstantFP>(prerhs)) {
+      APSInt Tmp(64);
+      bool isExact = false;
+      C->getValue().convertToInteger(Tmp, llvm::RoundingMode::TowardZero,
+                                     &isExact);
+      if (isExact || C->isZero()) {
+        rhs = ConstantInt::get(Ty, Tmp);
         switch (cur->getOpcode()) {
         case Instruction::FAdd:
-          res = B.CreateAdd(lhs, rhs, "", true, true);
+          minval *= Tmp;
+          maxval *= Tmp;
           break;
         case Instruction::FSub:
         case Instruction::FNeg:
-          res = B.CreateSub(lhs, rhs, "", true, true);
+          minval -= Tmp;
+          maxval -= Tmp;
           break;
         case Instruction::FMul:
-          res = B.CreateMul(lhs, rhs, "", true, true);
+          minval -= Tmp;
+          maxval -= Tmp;
           break;
         default:
           llvm_unreachable("Illegal opcode");
         }
-        for (auto I : temporaries)
-          push(I);
-        for (auto I : precasts)
-          push(I);
-        /*
-        if (auto I = dyn_cast<Instruction>(res)) {
-          Q.insert(I);
-          Metadata *vals[] = {(Metadata *)ConstantAsMetadata::get(
-                                  ConstantInt::get(Ty, minval)),
-                              (Metadata *)ConstantAsMetadata::get(
-                                  ConstantInt::get(Ty, maxval))};
-          I->setMetadata(LLVMContext::MD_range,
-                         MDNode::get(I->getContext(), vals));
+      }
+    }
+    if (auto ext = dyn_cast<CastInst>(prerhs)) {
+      if (ext->getOpcode() == Instruction::UIToFP ||
+          ext->getOpcode() == Instruction::SIToFP) {
+        precasts.push_back(ext);
+        auto ity = cast<IntegerType>(ext->getOperand(0)->getType());
+        bool md = false;
+        APInt rhsMin(64, 0);
+        APInt rhsMax(64, 0);
+        if (auto I = dyn_cast<Instruction>(ext->getOperand(0)))
+          if (auto MD = hasMetadata(I, LLVMContext::MD_range)) {
+            md = true;
+            rhsMin =
+                cast<ConstantInt>(
+                    cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
+                    ->getValue()
+                    .zextOrTrunc(64);
+            rhsMax =
+                cast<ConstantInt>(
+                    cast<ConstantAsMetadata>(MD->getOperand(1))->getValue())
+                    ->getValue()
+                    .zextOrTrunc(64);
+          }
+        if (!md) {
+          if (ext->getOpcode() == Instruction::UIToFP) {
+            rhsMax = APInt::getMaxValue(ity->getBitWidth()).zextOrTrunc(64);
+            rhsMin = APInt::getZero(64);
+          } else {
+            rhsMax =
+                APInt::getSignedMaxValue(ity->getBitWidth()).zextOrTrunc(64);
+            rhsMin =
+                APInt::getSignedMinValue(ity->getBitWidth()).zextOrTrunc(64);
+          }
         }
-        */
-        for (auto U : cur->users())
-          push(U);
-        auto ext = B.CreateSIToFP(res, cur->getType());
-        if (auto I = dyn_cast<Instruction>(ext))
-          push(I);
-        cur->replaceAllUsesWith(ext);
-        cur->eraseFromParent();
-        return true;
-
-      } else {
-        for (auto I : temporaries)
-          I->eraseFromParent();
+        switch (cur->getOpcode()) {
+        case Instruction::FAdd:
+          minval += rhsMin;
+          maxval += rhsMax;
+          break;
+        case Instruction::FSub:
+        case Instruction::FNeg:
+          minval -= rhsMax;
+          maxval -= rhsMin;
+          break;
+        case Instruction::FMul: {
+          auto minf = [&](APInt a, APInt b) { return a.sle(b) ? a : b; };
+          auto maxf = [&](APInt a, APInt b) { return a.sle(b) ? b : b; };
+          minval = minf(
+              minval * rhsMin,
+              minf(minval * rhsMax, minf(maxval * rhsMin, maxval * rhsMax)));
+          maxval = maxf(
+              minval * rhsMin,
+              maxf(minval * rhsMax, maxf(maxval * rhsMin, maxval * rhsMax)));
+          break;
+        }
+        default:
+          llvm_unreachable("Illegal opcode");
+        }
+        if (ext->getOperand(0)->getType() == Ty)
+          rhs = ext->getOperand(0);
+        else if (ity->getBitWidth() < Ty->getBitWidth()) {
+          rhs = B.CreateZExt(ext->getOperand(0), Ty);
+          if (auto I = dyn_cast<Instruction>(rhs))
+            temporaries.push_back(I);
+        }
       }
     }
 
-    if (auto icmp = dyn_cast<BinaryOperator>(cur)) {
-      if (icmp->getOpcode() == Instruction::Or) {
-        for (int i = 0; i < 2; i++) {
-          if (auto C = dyn_cast<ConstantInt>(icmp->getOperand(i))) {
-            // or a, 0 -> a
-            if (C->isZero()) {
-              push(icmp->getOperand(1 - i));
-              for (auto U : cur->users())
-                push(U);
-              cur->replaceAllUsesWith(icmp->getOperand(1 - i));
-              cur->eraseFromParent();
-              return true;
-            }
-            // or a, 1 -> 1
-            if (C->isOne()) {
-              for (auto U : cur->users())
-                push(U);
-              cur->replaceAllUsesWith(C);
-              cur->eraseFromParent();
-              return true;
-            }
-          }
-        }
+    if (lhs && rhs) {
+      Value *res = nullptr;
+      switch (cur->getOpcode()) {
+      case Instruction::FAdd:
+        res = B.CreateAdd(lhs, rhs, "", true, true);
+        break;
+      case Instruction::FSub:
+      case Instruction::FNeg:
+        res = B.CreateSub(lhs, rhs, "", true, false);
+        break;
+      case Instruction::FMul:
+        res = B.CreateMul(lhs, rhs, "", true, true);
+        break;
+      default:
+        llvm_unreachable("Illegal opcode");
       }
-      if (icmp->getOpcode() == Instruction::And) {
-        for (int i = 0; i < 2; i++) {
-          if (auto C = dyn_cast<ConstantInt>(icmp->getOperand(i))) {
-            // and a, 1 -> a
-            if (C->isOne()) {
-              push(icmp->getOperand(1 - i));
-              for (auto U : cur->users())
-                push(U);
-              cur->replaceAllUsesWith(icmp->getOperand(1 - i));
-              cur->eraseFromParent();
-              return true;
-            }
-            // and a, 0 -> 0
-            if (C->isZero()) {
-              for (auto U : cur->users())
-                push(U);
-              cur->replaceAllUsesWith(C);
-              cur->eraseFromParent();
-              return true;
-            }
-          }
-        }
+      for (auto I : temporaries)
+        push(I);
+      for (auto I : precasts)
+        push(I);
+      /*
+      if (auto I = dyn_cast<Instruction>(res)) {
+        Q.insert(I);
+        Metadata *vals[] = {(Metadata *)ConstantAsMetadata::get(
+                                ConstantInt::get(Ty, minval)),
+                            (Metadata *)ConstantAsMetadata::get(
+                                ConstantInt::get(Ty, maxval))};
+        I->setMetadata(LLVMContext::MD_range,
+                       MDNode::get(I->getContext(), vals));
       }
-      if (icmp->getOpcode() == Instruction::Xor) {
-        for (int i = 0; i < 2; i++) {
-          if (auto C = dyn_cast<ConstantInt>(icmp->getOperand(i))) {
-            // !(cmp a, b) -> inverse(cmp), a, b
-            if (C->isOne()) {
-              if (auto scmp = dyn_cast<CmpInst>(icmp->getOperand(1 - i))) {
-                auto next = B.CreateCmp(
-                    scmp->getInversePredicate(), scmp->getOperand(0),
-                    scmp->getOperand(1), "not." + scmp->getName());
-                push(next);
-                for (auto U : cur->users())
-                  push(U);
-                cur->replaceAllUsesWith(next);
-                cur->eraseFromParent();
-                return true;
-              }
-            }
-          }
-        }
-      }
+      */
+      for (auto U : cur->users())
+        push(U);
+      auto ext = B.CreateSIToFP(res, cur->getType());
+      if (auto I = dyn_cast<Instruction>(ext))
+        push(I);
+      cur->replaceAllUsesWith(ext);
+      cur->eraseFromParent();
+      return true;
+
+    } else {
+      for (auto I : temporaries)
+        I->eraseFromParent();
     }
-      
-    if (auto SI = dyn_cast<SelectInst>(cur)) {
-        auto tval = replace(SI->getTrueValue(), SI->getCondition(), ConstantInt::getTrue(SI->getContext()));
-        auto fval = replace(SI->getFalseValue(), SI->getCondition(), ConstantInt::getTrue(SI->getContext()));
-        if (tval != SI->getTrueValue() || fval != SI->getFalseValue()) {
-            auto res = push(B.CreateSelect(SI->getCondition(), tval, fval, "postsel." + SI->getName()));
+  }
+
+  if (auto icmp = dyn_cast<BinaryOperator>(cur)) {
+    if (icmp->getOpcode() == Instruction::Or) {
+      for (int i = 0; i < 2; i++) {
+        if (auto C = dyn_cast<ConstantInt>(icmp->getOperand(i))) {
+          // or a, 0 -> a
+          if (C->isZero()) {
+            push(icmp->getOperand(1 - i));
             for (auto U : cur->users())
               push(U);
-            cur->replaceAllUsesWith(res);
+            cur->replaceAllUsesWith(icmp->getOperand(1 - i));
             cur->eraseFromParent();
             return true;
+          }
+          // or a, 1 -> 1
+          if (C->isOne()) {
+            for (auto U : cur->users())
+              push(U);
+            cur->replaceAllUsesWith(C);
+            cur->eraseFromParent();
+            return true;
+          }
         }
-    }
-
-    // select cmp, (ext tval), (ext fval) ->  (cmp & tval) | (!cmp & fval)
-    if (auto SI = dyn_cast<SelectInst>(cur)) {
-
-      Value *trueVal = nullptr;
-      if (auto C = dyn_cast<ConstantFP>(SI->getTrueValue())) {
-        if (C->isZero()) {
-          trueVal = ConstantInt::getFalse(SI->getContext());
-        }
-        if (C->isExactlyValue(1.0)) {
-          trueVal = ConstantInt::getTrue(SI->getContext());
-        }
-      }
-      if (auto ext = dyn_cast<CastInst>(SI->getTrueValue())) {
-        if (ext->getOperand(0)->getType()->isIntegerTy(1))
-          trueVal = ext->getOperand(0);
-      }
-      Value *falseVal = nullptr;
-      if (auto C = dyn_cast<ConstantFP>(SI->getFalseValue())) {
-        if (C->isZero()) {
-          falseVal = ConstantInt::getFalse(SI->getContext());
-        }
-        if (C->isExactlyValue(1.0)) {
-          falseVal = ConstantInt::getTrue(SI->getContext());
-        }
-      }
-      if (auto ext = dyn_cast<CastInst>(SI->getFalseValue())) {
-        if (ext->getOperand(0)->getType()->isIntegerTy(1))
-          falseVal = ext->getOperand(0);
-      }
-      if (trueVal && falseVal) {
-        auto ncmp1 = B.CreateAnd(SI->getCondition(), trueVal);
-        push(ncmp1);
-        auto notV = B.CreateNot(SI->getCondition());
-        push(notV);
-        auto ncmp2 = B.CreateAnd(notV, falseVal);
-        push(ncmp2);
-        auto ori = B.CreateOr(ncmp1, ncmp2);
-        push(ori);
-        auto ext = B.CreateUIToFP(ori, SI->getType());
-        push(ext);
-        for (auto U : cur->users())
-          push(U);
-        cur->replaceAllUsesWith(ext);
-        cur->eraseFromParent();
-        return true;
       }
     }
-    // select cmp, (i1 tval), (i1 fval) ->  (cmp & tval) | (!cmp & fval)
-    if (cur->getType()->isIntegerTy(1))
-      if (auto SI = dyn_cast<SelectInst>(cur)) {
-        auto ncmp1 = B.CreateAnd(SI->getCondition(), SI->getTrueValue());
-        push(ncmp1);
-        auto notV = B.CreateNot(SI->getCondition());
-        push(notV);
-        auto ncmp2 = B.CreateAnd(notV, SI->getFalseValue());
-        push(ncmp2);
-        auto ori = B.CreateOr(ncmp1, ncmp2);
-        push(ori);
-        auto ext = B.CreateUIToFP(ori, SI->getType());
-        push(ext);
-        for (auto U : cur->users())
-          push(U);
-        cur->replaceAllUsesWith(ext);
-        cur->eraseFromParent();
-        return true;
-      }
-    if (auto PN = dyn_cast<PHINode>(cur)) {
-      B.SetInsertPoint(PN->getParent()->getFirstNonPHI());
-      if (SE.isSCEVable(PN->getType())) {
-        auto S = SE.getSCEV(PN);
-
-        bool legal = false;
-        if (auto SV = dyn_cast<SCEVUnknown>(S)) {
-          auto val = SV->getValue();
-          legal |= isa<Constant>(val) || isa<Argument>(val);
-          if (auto I = dyn_cast<Instruction>(val)) {
-            auto L = LI.getLoopFor(I->getParent());
-            if ((!L || L->getCanonicalInductionVariable() != I) && I != PN)
-              legal = true;
+    if (icmp->getOpcode() == Instruction::And) {
+      for (int i = 0; i < 2; i++) {
+        if (auto C = dyn_cast<ConstantInt>(icmp->getOperand(i))) {
+          // and a, 1 -> a
+          if (C->isOne()) {
+            push(icmp->getOperand(1 - i));
+            for (auto U : cur->users())
+              push(U);
+            cur->replaceAllUsesWith(icmp->getOperand(1 - i));
+            cur->eraseFromParent();
+            return true;
           }
-        }
-        if (isa<SCEVAddRecExpr>(S)) {
-          auto L = LI.getLoopFor(PN->getParent());
-          assert(L);
-          if (L->getCanonicalInductionVariable() != PN)
-            legal = true;
-        }
-
-        if (legal) {
-          for (auto U : cur->users()) {
-            push(U);
+          // and a, 0 -> 0
+          if (C->isZero()) {
+            for (auto U : cur->users())
+              push(U);
+            cur->replaceAllUsesWith(C);
+            cur->eraseFromParent();
+            return true;
           }
-          auto point = PN->getParent()->getFirstNonPHI();
-          auto tmp = B.CreatePHI(cur->getType(), 1);
-          cur->replaceAllUsesWith(tmp);
-          cur->eraseFromParent();
-
-          Value *newIV = nullptr;
-          {
-            SCEVExpander Exp(SE, DL, "sparseenzyme");
-            // We place that at first non phi as it may produce a non-phi
-            // instruction and must thus be expanded after all phi's
-            newIV = Exp.expandCodeFor(S, tmp->getType(), point);
-            for (auto I : Exp.getAllInsertedInstructions())
-              Q.insert(I);
-          }
-
-          tmp->replaceAllUsesWith(newIV);
-          tmp->eraseFromParent();
-          return true;
-        }
-        if (SE.getCouldNotCompute() != S && !isa<SCEVUnknown>(S)) {
-          llvm::errs() << "S: " << *S << " PN: " << *PN << "\n";
         }
       }
-      // phi a, a -> a
-      {
-        bool legal = true;
-        for (size_t i = 1; i < PN->getNumIncomingValues(); i++) {
-          auto v = PN->getIncomingValue(i);
-          if (v != PN->getIncomingValue(0)) {
-            legal = false;
-            break;
-          }
-        }
-        if (legal) {
-          auto val = PN->getIncomingValue(0);
-          push(val);
-
-          for (auto U : cur->users()) {
-            push(U);
-          }
-          PN->replaceAllUsesWith(val);
-          PN->eraseFromParent();
-          return true;
-        }
-      }
-      // phi (idx=0) ? b, a, a -> select (idx == 0), b, a
-      if (auto L = LI.getLoopFor(PN->getParent()))
-        if (auto idx = L->getCanonicalInductionVariable())
-          if (auto PH = L->getLoopPreheader()) {
-            bool legal = idx != PN;
-            auto ph_idx = PN->getBasicBlockIndex(PH);
-            for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
-              if (i == ph_idx)
-                continue;
-              auto v = PN->getIncomingValue(i);
-              if (v != PN->getIncomingValue(1 - ph_idx)) {
-                legal = false;
-                break;
-              }
-              // The given var must dominate the loop
-              if (isa<Constant>(v))
-                continue;
-              if (isa<Argument>(v))
-                continue;
-              // exception for the induction itself, which we handle specially
-              if (v == idx)
-                continue;
-              auto I = cast<Instruction>(v);
-              if (!DT.dominates(I, PN)) {
-                legal = false;
-                break;
-              }
-            }
-            if (legal) {
-              auto val = PN->getIncomingValue(1 - ph_idx);
-              if (val == idx) {
-                val = B.CreateSub(idx, ConstantInt::get(idx->getType(), 1));
-              }
-              push(val);
-
-              auto val2 = PN->getIncomingValue(ph_idx);
-              push(val2);
-
-              auto c0 = ConstantInt::get(idx->getType(), 0);
-              // if (val2 == c0 && PN->getIncomingValue(1 - ph_idx) == idx) {
-              //  val = B.CreateBinaryIntrinsic(Intrinsic::umax, c0, val);
-              //} else {
-              auto eq = B.CreateICmpEQ(idx, c0);
-              push(eq);
-              val = B.CreateSelect(eq, val2, val);
-              //}
-
-              push(val);
-
-              for (auto U : cur->users()) {
+    }
+    if (icmp->getOpcode() == Instruction::Xor) {
+      for (int i = 0; i < 2; i++) {
+        if (auto C = dyn_cast<ConstantInt>(icmp->getOperand(i))) {
+          // !(cmp a, b) -> inverse(cmp), a, b
+          if (C->isOne()) {
+            if (auto scmp = dyn_cast<CmpInst>(icmp->getOperand(1 - i))) {
+              auto next =
+                  B.CreateCmp(scmp->getInversePredicate(), scmp->getOperand(0),
+                              scmp->getOperand(1), "not." + scmp->getName());
+              push(next);
+              for (auto U : cur->users())
                 push(U);
-              }
-              PN->replaceAllUsesWith(val);
-              PN->eraseFromParent();
+              cur->replaceAllUsesWith(next);
+              cur->eraseFromParent();
               return true;
             }
           }
-      // phi (sitofp a), (sitofp b) -> sitofp (phi a, b)
-      {
-        SmallVector<Value *, 1> negOps;
-        SmallVector<Instruction *, 1> prevNegOps;
-        bool legal = true;
-        for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
-          auto v = PN->getIncomingValue(i);
-          if (auto C = dyn_cast<ConstantFP>(v)) {
-            APSInt Tmp(64);
-            bool isExact = false;
-            C->getValue().convertToInteger(Tmp, llvm::RoundingMode::TowardZero,
-                                           &isExact);
-            if (isExact || C->isZero()) {
-              negOps.push_back(ConstantInt::get(B.getInt64Ty(), Tmp));
-              continue;
-            }
-          }
-          if (auto fneg = dyn_cast<Instruction>(v)) {
-            if (fneg->getOpcode() == Instruction::SIToFP &&
-                cast<IntegerType>(fneg->getOperand(0)->getType())
-                        ->getBitWidth() == 64) {
-              negOps.push_back(fneg->getOperand(0));
-              prevNegOps.push_back(fneg);
-              continue;
-            }
-          }
-          legal = false;
-        }
-        if (legal) {
-          auto PN2 = B.CreatePHI(B.getInt64Ty(), PN->getNumIncomingValues());
-          PN2->takeName(PN);
-          for (auto val : llvm::enumerate(negOps))
-            PN2->addIncoming(val.value(), PN->getIncomingBlock(val.index()));
-
-          push(PN2);
-
-          auto fneg = B.CreateSIToFP(PN2, PN->getType());
-          push(fneg);
-
-          for (auto U : cur->users())
-            push(U);
-          PN->replaceAllUsesWith(fneg);
-          for (auto I : prevNegOps)
-            push(I);
-          PN->eraseFromParent();
-          return true;
         }
       }
-      // phi (fneg a), (fneg b) -> fneg (phi a, b)
-      {
-        SmallVector<Value *, 1> negOps;
-        SmallVector<Instruction *, 1> prevNegOps;
-        bool legal = true;
-        bool hasNeg = false;
-        for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
-          auto v = PN->getIncomingValue(i);
-          if (auto C = dyn_cast<ConstantFP>(v)) {
-            negOps.push_back(C->isZero() ? C : B.CreateFNeg(C));
+    }
+  }
+
+  if (auto SI = dyn_cast<SelectInst>(cur)) {
+    auto tval = replace(SI->getTrueValue(), SI->getCondition(),
+                        ConstantInt::getTrue(SI->getContext()));
+    auto fval = replace(SI->getFalseValue(), SI->getCondition(),
+                        ConstantInt::getTrue(SI->getContext()));
+    if (tval != SI->getTrueValue() || fval != SI->getFalseValue()) {
+      auto res = push(B.CreateSelect(SI->getCondition(), tval, fval,
+                                     "postsel." + SI->getName()));
+      for (auto U : cur->users())
+        push(U);
+      cur->replaceAllUsesWith(res);
+      cur->eraseFromParent();
+      return true;
+    }
+  }
+
+  // select cmp, (ext tval), (ext fval) ->  (cmp & tval) | (!cmp & fval)
+  if (auto SI = dyn_cast<SelectInst>(cur)) {
+
+    Value *trueVal = nullptr;
+    if (auto C = dyn_cast<ConstantFP>(SI->getTrueValue())) {
+      if (C->isZero()) {
+        trueVal = ConstantInt::getFalse(SI->getContext());
+      }
+      if (C->isExactlyValue(1.0)) {
+        trueVal = ConstantInt::getTrue(SI->getContext());
+      }
+    }
+    if (auto ext = dyn_cast<CastInst>(SI->getTrueValue())) {
+      if (ext->getOperand(0)->getType()->isIntegerTy(1))
+        trueVal = ext->getOperand(0);
+    }
+    Value *falseVal = nullptr;
+    if (auto C = dyn_cast<ConstantFP>(SI->getFalseValue())) {
+      if (C->isZero()) {
+        falseVal = ConstantInt::getFalse(SI->getContext());
+      }
+      if (C->isExactlyValue(1.0)) {
+        falseVal = ConstantInt::getTrue(SI->getContext());
+      }
+    }
+    if (auto ext = dyn_cast<CastInst>(SI->getFalseValue())) {
+      if (ext->getOperand(0)->getType()->isIntegerTy(1))
+        falseVal = ext->getOperand(0);
+    }
+    if (trueVal && falseVal) {
+      auto ncmp1 = B.CreateAnd(SI->getCondition(), trueVal);
+      push(ncmp1);
+      auto notV = B.CreateNot(SI->getCondition());
+      push(notV);
+      auto ncmp2 = B.CreateAnd(notV, falseVal);
+      push(ncmp2);
+      auto ori = B.CreateOr(ncmp1, ncmp2);
+      push(ori);
+      auto ext = B.CreateUIToFP(ori, SI->getType());
+      push(ext);
+      for (auto U : cur->users())
+        push(U);
+      cur->replaceAllUsesWith(ext);
+      cur->eraseFromParent();
+      return true;
+    }
+  }
+  // select cmp, (i1 tval), (i1 fval) ->  (cmp & tval) | (!cmp & fval)
+  if (cur->getType()->isIntegerTy(1))
+    if (auto SI = dyn_cast<SelectInst>(cur)) {
+      auto ncmp1 = B.CreateAnd(SI->getCondition(), SI->getTrueValue());
+      push(ncmp1);
+      auto notV = B.CreateNot(SI->getCondition());
+      push(notV);
+      auto ncmp2 = B.CreateAnd(notV, SI->getFalseValue());
+      push(ncmp2);
+      auto ori = B.CreateOr(ncmp1, ncmp2);
+      push(ori);
+      auto ext = B.CreateUIToFP(ori, SI->getType());
+      push(ext);
+      for (auto U : cur->users())
+        push(U);
+      cur->replaceAllUsesWith(ext);
+      cur->eraseFromParent();
+      return true;
+    }
+  if (auto PN = dyn_cast<PHINode>(cur)) {
+    B.SetInsertPoint(PN->getParent()->getFirstNonPHI());
+    if (SE.isSCEVable(PN->getType())) {
+      auto S = SE.getSCEV(PN);
+
+      bool legal = false;
+      if (auto SV = dyn_cast<SCEVUnknown>(S)) {
+        auto val = SV->getValue();
+        legal |= isa<Constant>(val) || isa<Argument>(val);
+        if (auto I = dyn_cast<Instruction>(val)) {
+          auto L = LI.getLoopFor(I->getParent());
+          if ((!L || L->getCanonicalInductionVariable() != I) && I != PN)
+            legal = true;
+        }
+      }
+      if (isa<SCEVAddRecExpr>(S)) {
+        auto L = LI.getLoopFor(PN->getParent());
+        assert(L);
+        if (L->getCanonicalInductionVariable() != PN)
+          legal = true;
+      }
+
+      if (legal) {
+        for (auto U : cur->users()) {
+          push(U);
+        }
+        auto point = PN->getParent()->getFirstNonPHI();
+        auto tmp = B.CreatePHI(cur->getType(), 1);
+        cur->replaceAllUsesWith(tmp);
+        cur->eraseFromParent();
+
+        Value *newIV = nullptr;
+        {
+          SCEVExpander Exp(SE, DL, "sparseenzyme");
+          // We place that at first non phi as it may produce a non-phi
+          // instruction and must thus be expanded after all phi's
+          newIV = Exp.expandCodeFor(S, tmp->getType(), point);
+          for (auto I : Exp.getAllInsertedInstructions())
+            Q.insert(I);
+        }
+
+        tmp->replaceAllUsesWith(newIV);
+        tmp->eraseFromParent();
+        return true;
+      }
+      if (SE.getCouldNotCompute() != S && !isa<SCEVUnknown>(S)) {
+        llvm::errs() << "S: " << *S << " PN: " << *PN << "\n";
+      }
+    }
+    // phi a, a -> a
+    {
+      bool legal = true;
+      for (size_t i = 1; i < PN->getNumIncomingValues(); i++) {
+        auto v = PN->getIncomingValue(i);
+        if (v != PN->getIncomingValue(0)) {
+          legal = false;
+          break;
+        }
+      }
+      if (legal) {
+        auto val = PN->getIncomingValue(0);
+        push(val);
+
+        for (auto U : cur->users()) {
+          push(U);
+        }
+        PN->replaceAllUsesWith(val);
+        PN->eraseFromParent();
+        return true;
+      }
+    }
+    // phi (idx=0) ? b, a, a -> select (idx == 0), b, a
+    if (auto L = LI.getLoopFor(PN->getParent()))
+      if (auto idx = L->getCanonicalInductionVariable())
+        if (auto PH = L->getLoopPreheader()) {
+          bool legal = idx != PN;
+          auto ph_idx = PN->getBasicBlockIndex(PH);
+          for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
+            if (i == ph_idx)
+              continue;
+            auto v = PN->getIncomingValue(i);
+            if (v != PN->getIncomingValue(1 - ph_idx)) {
+              legal = false;
+              break;
+            }
+            // The given var must dominate the loop
+            if (isa<Constant>(v))
+              continue;
+            if (isa<Argument>(v))
+              continue;
+            // exception for the induction itself, which we handle specially
+            if (v == idx)
+              continue;
+            auto I = cast<Instruction>(v);
+            if (!DT.dominates(I, PN)) {
+              legal = false;
+              break;
+            }
+          }
+          if (legal) {
+            auto val = PN->getIncomingValue(1 - ph_idx);
+            if (val == idx) {
+              val = B.CreateSub(idx, ConstantInt::get(idx->getType(), 1));
+            }
+            push(val);
+
+            auto val2 = PN->getIncomingValue(ph_idx);
+            push(val2);
+
+            auto c0 = ConstantInt::get(idx->getType(), 0);
+            // if (val2 == c0 && PN->getIncomingValue(1 - ph_idx) == idx) {
+            //  val = B.CreateBinaryIntrinsic(Intrinsic::umax, c0, val);
+            //} else {
+            auto eq = B.CreateICmpEQ(idx, c0);
+            push(eq);
+            val = B.CreateSelect(eq, val2, val);
+            //}
+
+            push(val);
+
+            for (auto U : cur->users()) {
+              push(U);
+            }
+            PN->replaceAllUsesWith(val);
+            PN->eraseFromParent();
+            return true;
+          }
+        }
+    // phi (sitofp a), (sitofp b) -> sitofp (phi a, b)
+    {
+      SmallVector<Value *, 1> negOps;
+      SmallVector<Instruction *, 1> prevNegOps;
+      bool legal = true;
+      for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
+        auto v = PN->getIncomingValue(i);
+        if (auto C = dyn_cast<ConstantFP>(v)) {
+          APSInt Tmp(64);
+          bool isExact = false;
+          C->getValue().convertToInteger(Tmp, llvm::RoundingMode::TowardZero,
+                                         &isExact);
+          if (isExact || C->isZero()) {
+            negOps.push_back(ConstantInt::get(B.getInt64Ty(), Tmp));
             continue;
           }
-          if (auto fneg = dyn_cast<Instruction>(v)) {
-            if (fneg->getOpcode() == Instruction::FNeg) {
-              negOps.push_back(fneg->getOperand(0));
+        }
+        if (auto fneg = dyn_cast<Instruction>(v)) {
+          if (fneg->getOpcode() == Instruction::SIToFP &&
+              cast<IntegerType>(fneg->getOperand(0)->getType())
+                      ->getBitWidth() == 64) {
+            negOps.push_back(fneg->getOperand(0));
+            prevNegOps.push_back(fneg);
+            continue;
+          }
+        }
+        legal = false;
+      }
+      if (legal) {
+        auto PN2 = B.CreatePHI(B.getInt64Ty(), PN->getNumIncomingValues());
+        PN2->takeName(PN);
+        for (auto val : llvm::enumerate(negOps))
+          PN2->addIncoming(val.value(), PN->getIncomingBlock(val.index()));
+
+        push(PN2);
+
+        auto fneg = B.CreateSIToFP(PN2, PN->getType());
+        push(fneg);
+
+        for (auto U : cur->users())
+          push(U);
+        PN->replaceAllUsesWith(fneg);
+        for (auto I : prevNegOps)
+          push(I);
+        PN->eraseFromParent();
+        return true;
+      }
+    }
+    // phi (fneg a), (fneg b) -> fneg (phi a, b)
+    {
+      SmallVector<Value *, 1> negOps;
+      SmallVector<Instruction *, 1> prevNegOps;
+      bool legal = true;
+      bool hasNeg = false;
+      for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
+        auto v = PN->getIncomingValue(i);
+        if (auto C = dyn_cast<ConstantFP>(v)) {
+          negOps.push_back(C->isZero() ? C : B.CreateFNeg(C));
+          continue;
+        }
+        if (auto fneg = dyn_cast<Instruction>(v)) {
+          if (fneg->getOpcode() == Instruction::FNeg) {
+            negOps.push_back(fneg->getOperand(0));
+            prevNegOps.push_back(fneg);
+            continue;
+          }
+        }
+        legal = false;
+      }
+      if (legal && hasNeg) {
+        for (auto val : llvm::enumerate(negOps))
+          PN->setIncomingValue(val.index(), val.value());
+
+        push(PN);
+
+        auto fneg = B.CreateFNeg(PN);
+        push(fneg);
+
+        for (auto &U : cur->uses()) {
+          if (U.getUser() == fneg)
+            continue;
+          push(U.getUser());
+          U.set(fneg);
+        }
+        for (auto I : prevNegOps)
+          push(I);
+        return true;
+      }
+    }
+    // phi (neg a), (neg b) -> neg (phi a, b)
+    {
+      SmallVector<Value *, 1> negOps;
+      SmallVector<Instruction *, 1> prevNegOps;
+      bool legal = true;
+      bool hasNeg = false;
+      for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
+        auto v = PN->getIncomingValue(i);
+        if (auto C = dyn_cast<ConstantInt>(v)) {
+          negOps.push_back(B.CreateNeg(C));
+          continue;
+        }
+        if (auto fneg = dyn_cast<BinaryOperator>(v)) {
+          if (auto CI = dyn_cast<ConstantInt>(fneg->getOperand(0)))
+            if (fneg->getOpcode() == Instruction::Sub && CI->isZero()) {
+              negOps.push_back(fneg->getOperand(1));
               prevNegOps.push_back(fneg);
+              hasNeg = true;
               continue;
             }
-          }
-          legal = false;
         }
-        if (legal && hasNeg) {
-          for (auto val : llvm::enumerate(negOps))
-            PN->setIncomingValue(val.index(), val.value());
-
-          push(PN);
-
-          auto fneg = B.CreateFNeg(PN);
-          push(fneg);
-
-          for (auto &U : cur->uses()) {
-            if (U.getUser() == fneg)
-              continue;
-            push(U.getUser());
-            U.set(fneg);
-          }
-          for (auto I : prevNegOps)
-            push(I);
-          return true;
-        }
+        legal = false;
       }
-      // phi (neg a), (neg b) -> neg (phi a, b)
-      {
-        SmallVector<Value *, 1> negOps;
-        SmallVector<Instruction *, 1> prevNegOps;
+      if (legal && hasNeg) {
+        for (auto val : llvm::enumerate(negOps))
+          PN->setIncomingValue(val.index(), val.value());
+
+        push(PN);
+
+        auto fneg = B.CreateNeg(PN);
+        push(fneg);
+
+        for (auto &U : cur->uses()) {
+          if (U.getUser() == fneg)
+            continue;
+          push(U.getUser());
+          U.set(fneg);
+        }
+        for (auto I : prevNegOps)
+          push(I);
+        return true;
+      }
+    }
+    // p = phi (mul a, c), (mul b, d) -> mul (phi a, b), (phi c, d)    if
+    // a,b,c != p
+    {
+      for (auto code :
+           {(unsigned)Instruction::Mul, (unsigned)Instruction::Sub,
+            (unsigned)Instruction::Add, (unsigned)Instruction::ZExt,
+            (unsigned)Instruction::UIToFP, (unsigned)Instruction::ICmp,
+            (unsigned)Instruction::FMul, (unsigned)Instruction::Or,
+            (unsigned)Instruction::And}) {
+        SmallVector<Value *, 1> lhsOps;
+        SmallVector<Value *, 1> rhsOps;
+        SmallVector<Instruction *, 1> prevOps;
         bool legal = true;
-        bool hasNeg = false;
+        bool fast = false;
+        bool NUW = false;
+        bool NSW = false;
+        size_t numOps = 0;
+        std::optional<llvm::CmpInst::Predicate> cmpPredicate;
+        switch (code) {
+        case Instruction::FMul:
+        case Instruction::FSub:
+        case Instruction::FAdd:
+          fast = true;
+          numOps = 2;
+          break;
+        case Instruction::Mul:
+        case Instruction::Add:
+          NUW = NSW = true;
+          numOps = 2;
+          break;
+        case Instruction::Sub:
+          NUW = NSW = true;
+          numOps = 2;
+          break;
+        case Instruction::ICmp:
+        case Instruction::FCmp:
+        case Instruction::Or:
+        case Instruction::And:
+          numOps = 2;
+          break;
+        case Instruction::ZExt:
+        case Instruction::UIToFP:
+          numOps = 1;
+          break;
+        default:;
+          llvm_unreachable("unknown opcode");
+        }
+        bool changed = false;
         for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
           auto v = PN->getIncomingValue(i);
           if (auto C = dyn_cast<ConstantInt>(v)) {
-            negOps.push_back(B.CreateNeg(C));
-            continue;
-          }
-          if (auto fneg = dyn_cast<BinaryOperator>(v)) {
-            if (auto CI = dyn_cast<ConstantInt>(fneg->getOperand(0)))
-              if (fneg->getOpcode() == Instruction::Sub && CI->isZero()) {
-                negOps.push_back(fneg->getOperand(1));
-                prevNegOps.push_back(fneg);
-                hasNeg = true;
-                continue;
-              }
-          }
-          legal = false;
-        }
-        if (legal && hasNeg) {
-          for (auto val : llvm::enumerate(negOps))
-            PN->setIncomingValue(val.index(), val.value());
-
-          push(PN);
-
-          auto fneg = B.CreateNeg(PN);
-          push(fneg);
-
-          for (auto &U : cur->uses()) {
-            if (U.getUser() == fneg)
+            if (code == Instruction::ZExt) {
+              lhsOps.push_back(ConstantInt::getFalse(C->getContext()));
               continue;
-            push(U.getUser());
-            U.set(fneg);
+            } else if (C->isZero()) {
+              rhsOps.push_back(C);
+              lhsOps.push_back(C);
+              continue;
+            }
           }
-          for (auto I : prevNegOps)
-            push(I);
-          return true;
-        }
-      }
-      // p = phi (mul a, c), (mul b, d) -> mul (phi a, b), (phi c, d)    if
-      // a,b,c != p
-      {
-        for (auto code :
-             {(unsigned)Instruction::Mul, (unsigned)Instruction::Sub,
-              (unsigned)Instruction::Add, (unsigned)Instruction::ZExt,
-              (unsigned)Instruction::UIToFP, (unsigned)Instruction::ICmp,
-              (unsigned)Instruction::FMul,
-              (unsigned)Instruction::Or, (unsigned)Instruction::And}) {
-          SmallVector<Value *, 1> lhsOps;
-          SmallVector<Value *, 1> rhsOps;
-          SmallVector<Instruction *, 1> prevOps;
-          bool legal = true;
-          bool fast = false;
-          bool NUW = false;
-          bool NSW = false;
-          size_t numOps = 0;
-          std::optional<llvm::CmpInst::Predicate> cmpPredicate;
-          switch (code) {
-          case Instruction::FMul:
-          case Instruction::FSub:
-          case Instruction::FAdd:
-            fast = true;
-            numOps = 2;
-            break;
-          case Instruction::Mul:
-          case Instruction::Sub:
-          case Instruction::Add:
-            NUW = NSW = true;
-            numOps = 2;
-            break;
-          case Instruction::ICmp:
-          case Instruction::FCmp:
-          case Instruction::Or:
-          case Instruction::And:
-            numOps = 2;
-            break;
-          case Instruction::ZExt:
-          case Instruction::UIToFP:
-            numOps = 1;
-            break;
-          default:;
-            llvm_unreachable("unknown opcode");
-          }
-          bool changed = false;
-          for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
-            auto v = PN->getIncomingValue(i);
-            if (auto C = dyn_cast<ConstantInt>(v)) {
-              if (code == Instruction::ZExt) {
+          if (auto C = dyn_cast<ConstantFP>(v)) {
+            if (code == Instruction::UIToFP) {
+              if (C->isZero()) {
                 lhsOps.push_back(ConstantInt::getFalse(C->getContext()));
-                continue;
-              } else if (C->isZero()) {
+              }
+            } else if (code == Instruction::FMul || code == Instruction::FSub ||
+                       code == Instruction::FAdd) {
+              if (C->isZero()) {
                 rhsOps.push_back(C);
                 lhsOps.push_back(C);
                 continue;
               }
             }
-            if (auto C = dyn_cast<ConstantFP>(v)) {
-              if (code == Instruction::UIToFP) {
-                if (C->isZero()) {
-                  lhsOps.push_back(ConstantInt::getFalse(C->getContext()));
-                }
-              } else if (code == Instruction::FMul || code == Instruction::FSub || code == Instruction::FAdd) {
-                if (C->isZero()) {
-                  rhsOps.push_back(C);
-                  lhsOps.push_back(C);
-                  continue;
-                }
-              }
-            }
-            if (auto fneg = dyn_cast<Instruction>(v)) {
-              if (fneg->getOpcode() == code) {
-                switch (code) {
-                case Instruction::FMul:
-                case Instruction::FSub:
-                case Instruction::FAdd:
-                  fast &= fneg->isFast();
-                  if (fneg->getOperand(0) == PN)
-                    legal = false;
-                  if (fneg->getOperand(1) == PN)
-                    legal = false;
-                  lhsOps.push_back(fneg->getOperand(0));
-                  rhsOps.push_back(fneg->getOperand(1));
-                  break;
-                case Instruction::Mul:
-                case Instruction::Sub:
-                case Instruction::Add:
-                  NUW &= fneg->hasNoUnsignedWrap();
-                  NSW &= fneg->hasNoSignedWrap();
-                  if (fneg->getOperand(0) == PN)
-                    legal = false;
-                  if (fneg->getOperand(1) == PN)
-                    legal = false;
-                  lhsOps.push_back(fneg->getOperand(0));
-                  rhsOps.push_back(fneg->getOperand(1));
-                  break;
-                case Instruction::Or:
-                case Instruction::And:
-                  if (fneg->getOperand(0) == PN)
-                    legal = false;
-                  if (fneg->getOperand(1) == PN)
-                    legal = false;
-                  lhsOps.push_back(fneg->getOperand(0));
-                  rhsOps.push_back(fneg->getOperand(1));
-                  break;
-                case Instruction::ICmp:
-                case Instruction::FCmp:
-                  if (fneg->getOperand(0) == PN)
-                    legal = false;
-                  if (fneg->getOperand(1) == PN)
-                    legal = false;
-                  if (cmpPredicate) {
-                    if (cmpPredicate.value() !=
-                        cast<CmpInst>(fneg)->getPredicate())
-                      legal = false;
-                  } else {
-                    cmpPredicate = cast<CmpInst>(fneg)->getPredicate();
-                  }
-                  lhsOps.push_back(fneg->getOperand(0));
-                  rhsOps.push_back(fneg->getOperand(1));
-                  break;
-                case Instruction::ZExt:
-                case Instruction::UIToFP:
-                  if (cast<IntegerType>(fneg->getOperand(0)->getType())
-                          ->getBitWidth() != 1)
-                    legal = false;
-                  lhsOps.push_back(fneg->getOperand(0));
-                  break;
-                default:
-                  llvm_unreachable("unhandled opcode");
-                }
-                prevOps.push_back(fneg);
-                changed = true;
-                continue;
-              }
-            }
-            legal = false;
           }
-
-          int preheader_fix = -1;
-
-          if (code == Instruction::ICmp || code == Instruction::FCmp) {
-            if (!cmpPredicate)
-              legal = false;
-            auto L = LI.getLoopFor(PN->getParent());
-            if (legal && L && L->getLoopPreheader() &&
-                L->getCanonicalInductionVariable()) {
-              auto ph_idx = PN->getBasicBlockIndex(L->getLoopPreheader());
-              if (isa<ConstantInt>(PN->getIncomingValue(ph_idx))) {
-                lhsOps[ph_idx] =
-                    Constant::getNullValue(lhsOps[1 - ph_idx]->getType());
-                rhsOps[ph_idx] =
-                    Constant::getNullValue(rhsOps[1 - ph_idx]->getType());
-                preheader_fix = ph_idx;
+          if (auto fneg = dyn_cast<Instruction>(v)) {
+            if (fneg->getOpcode() == code) {
+              switch (code) {
+              case Instruction::FMul:
+              case Instruction::FSub:
+              case Instruction::FAdd:
+                fast &= fneg->isFast();
+                if (fneg->getOperand(0) == PN)
+                  legal = false;
+                if (fneg->getOperand(1) == PN)
+                  legal = false;
+                lhsOps.push_back(fneg->getOperand(0));
+                rhsOps.push_back(fneg->getOperand(1));
+                break;
+              case Instruction::Mul:
+              case Instruction::Sub:
+              case Instruction::Add:
+                NUW &= fneg->hasNoUnsignedWrap();
+                NSW &= fneg->hasNoSignedWrap();
+                if (fneg->getOperand(0) == PN)
+                  legal = false;
+                if (fneg->getOperand(1) == PN)
+                  legal = false;
+                lhsOps.push_back(fneg->getOperand(0));
+                rhsOps.push_back(fneg->getOperand(1));
+                break;
+              case Instruction::Or:
+              case Instruction::And:
+                if (fneg->getOperand(0) == PN)
+                  legal = false;
+                if (fneg->getOperand(1) == PN)
+                  legal = false;
+                lhsOps.push_back(fneg->getOperand(0));
+                rhsOps.push_back(fneg->getOperand(1));
+                break;
+              case Instruction::ICmp:
+              case Instruction::FCmp:
+                if (fneg->getOperand(0) == PN)
+                  legal = false;
+                if (fneg->getOperand(1) == PN)
+                  legal = false;
+                if (cmpPredicate) {
+                  if (cmpPredicate.value() !=
+                      cast<CmpInst>(fneg)->getPredicate())
+                    legal = false;
+                } else {
+                  cmpPredicate = cast<CmpInst>(fneg)->getPredicate();
+                }
+                lhsOps.push_back(fneg->getOperand(0));
+                rhsOps.push_back(fneg->getOperand(1));
+                break;
+              case Instruction::ZExt:
+              case Instruction::UIToFP:
+                if (cast<IntegerType>(fneg->getOperand(0)->getType())
+                        ->getBitWidth() != 1)
+                  legal = false;
+                lhsOps.push_back(fneg->getOperand(0));
+                break;
+              default:
+                llvm_unreachable("unhandled opcode");
               }
+              prevOps.push_back(fneg);
+              changed = true;
+              continue;
             }
-            for (auto v : lhsOps)
-              if (v->getType() != lhsOps[0]->getType())
-                legal = false;
-            for (auto v : rhsOps)
-              if (v->getType() != rhsOps[0]->getType())
-                legal = false;
           }
-
-          if (legal && changed) {
-            auto lhsPN =
-                B.CreatePHI(lhsOps[0]->getType(), PN->getNumIncomingValues());
-            PHINode *rhsPN = nullptr;
-            if (numOps == 2)
-              rhsPN =
-                  B.CreatePHI(rhsOps[0]->getType(), PN->getNumIncomingValues());
-
-            for (auto val : llvm::enumerate(lhsOps))
-              lhsPN->addIncoming(val.value(),
-                                 PN->getIncomingBlock(val.index()));
-
-            push(lhsPN);
-
-            if (numOps == 2) {
-              for (auto val : llvm::enumerate(rhsOps))
-                rhsPN->addIncoming(val.value(),
-                                   PN->getIncomingBlock(val.index()));
-              push(rhsPN);
-            }
-
-            Value *fneg = nullptr;
-            switch (code) {
-            case Instruction::FMul:
-              fneg = B.CreateFMul(lhsPN, rhsPN);
-              if (auto I = dyn_cast<Instruction>(fneg)) I->setFast(fast);
-              break;
-            case Instruction::FAdd:
-              fneg = B.CreateFAdd(lhsPN, rhsPN);
-              if (auto I = dyn_cast<Instruction>(fneg)) I->setFast(fast);
-              break;
-            case Instruction::FSub:
-              fneg = B.CreateFSub(lhsPN, rhsPN);
-              if (auto I = dyn_cast<Instruction>(fneg)) I->setFast(fast);
-              break;
-            case Instruction::Mul:
-              fneg = B.CreateMul(lhsPN, rhsPN, "", NUW, NSW);
-              break;
-            case Instruction::Add:
-              fneg = B.CreateAdd(lhsPN, rhsPN, "", NUW, NSW);
-              break;
-            case Instruction::Sub:
-              fneg = B.CreateSub(lhsPN, rhsPN, "", NUW, NSW);
-              break;
-            case Instruction::ZExt:
-              fneg = B.CreateZExt(lhsPN, PN->getType());
-              break;
-            case Instruction::FCmp:
-            case Instruction::ICmp:
-              fneg = B.CreateCmp(cmpPredicate.value(), lhsPN, rhsPN);
-              break;
-            case Instruction::UIToFP:
-              fneg = B.CreateUIToFP(lhsPN, PN->getType());
-              break;
-            case Instruction::Or:
-              fneg = B.CreateOr(lhsPN, rhsPN);
-              break;
-            case Instruction::And:
-              fneg = B.CreateAnd(lhsPN, rhsPN);
-              break;
-            default:
-              llvm_unreachable("unhandled opcode");
-            }
-
-            push(fneg);
-
-            if (preheader_fix != -1) {
-              auto L = LI.getLoopFor(PN->getParent());
-              auto idx = L->getCanonicalInductionVariable();
-              auto eq =
-                  B.CreateICmpEQ(idx, ConstantInt::get(idx->getType(), 0));
-              push(eq);
-              fneg =
-                  B.CreateSelect(eq, PN->getIncomingValue(preheader_fix), fneg);
-              push(fneg);
-            }
-
-            for (auto U : cur->users()) {
-              push(U);
-            }
-            PN->replaceAllUsesWith(fneg);
-            for (auto I : prevOps)
-              push(I);
-            PN->eraseFromParent();
-            return true;
-          }
+          legal = false;
         }
-      }
-      // phi  -> select
-      if (PN->getNumIncomingValues() == 2) {
-        bool done = false;
-        for (int i = 0; i < 2; i++) {
-          auto prev = PN->getIncomingBlock(i);
-          if (!DT.dominates(prev, PN->getParent())) {
-            continue;
-          }
-          auto br = dyn_cast<BranchInst>(prev->getTerminator());
-          if (!br) {
-            continue;
-          }
-          if (!br->isConditional()) {
-            continue;
-          }
-          if (br->getSuccessor(0) != PN->getParent()) {
-            continue;
-          }
-          if (br->getSuccessor(1) != PN->getIncomingBlock(1 - i)) {
-            continue;
-          }
 
-          Value *specVal = PN->getIncomingValue(1 - i);
-          SetVector<Value *, std::deque<Value *>> todo;
-          todo.insert(specVal);
-          SetVector<Instruction *> toMove;
-          bool legal = true;
-          while (!todo.empty()) {
-            auto cur = *todo.begin();
-            todo.erase(todo.begin());
-            auto I = dyn_cast<Instruction>(cur);
-            if (!I)
-              continue;
-            if (I->mayReadOrWriteMemory()) {
-              legal = false;
-              break;
+        int preheader_fix = -1;
+
+        if (code == Instruction::ICmp || code == Instruction::FCmp) {
+          if (!cmpPredicate)
+            legal = false;
+          auto L = LI.getLoopFor(PN->getParent());
+          if (legal && L && L->getLoopPreheader() &&
+              L->getCanonicalInductionVariable()) {
+            auto ph_idx = PN->getBasicBlockIndex(L->getLoopPreheader());
+            if (isa<ConstantInt>(PN->getIncomingValue(ph_idx))) {
+              lhsOps[ph_idx] =
+                  Constant::getNullValue(lhsOps[1 - ph_idx]->getType());
+              rhsOps[ph_idx] =
+                  Constant::getNullValue(rhsOps[1 - ph_idx]->getType());
+              preheader_fix = ph_idx;
             }
-            if (DT.dominates(I, PN))
-              continue;
-            for (size_t i = 0; i < I->getNumOperands(); i++)
-              todo.insert(I->getOperand(i));
-            toMove.insert(I);
           }
-          if (!legal)
-            continue;
-          for (auto iter = toMove.rbegin(), end = toMove.rend(); iter != end;
-               iter++) {
-            (*iter)->moveBefore(br);
-          }
-          auto sel = B.CreateSelect(
-              br->getCondition(), PN->getIncomingValueForBlock(prev),
-              PN->getIncomingValueForBlock(br->getSuccessor(1)));
+          for (auto v : lhsOps)
+            if (v->getType() != lhsOps[0]->getType())
+              legal = false;
+          for (auto v : rhsOps)
+            if (v->getType() != rhsOps[0]->getType())
+              legal = false;
+        }
 
-          push(sel);
-          for (auto U : cur->users())
+        if (legal && changed) {
+          auto lhsPN =
+              B.CreatePHI(lhsOps[0]->getType(), PN->getNumIncomingValues());
+          PHINode *rhsPN = nullptr;
+          if (numOps == 2)
+            rhsPN =
+                B.CreatePHI(rhsOps[0]->getType(), PN->getNumIncomingValues());
+
+          for (auto val : llvm::enumerate(lhsOps))
+            lhsPN->addIncoming(val.value(), PN->getIncomingBlock(val.index()));
+
+          push(lhsPN);
+
+          if (numOps == 2) {
+            for (auto val : llvm::enumerate(rhsOps))
+              rhsPN->addIncoming(val.value(),
+                                 PN->getIncomingBlock(val.index()));
+            push(rhsPN);
+          }
+
+          Value *fneg = nullptr;
+          switch (code) {
+          case Instruction::FMul:
+            fneg = B.CreateFMul(lhsPN, rhsPN);
+            if (auto I = dyn_cast<Instruction>(fneg))
+              I->setFast(fast);
+            break;
+          case Instruction::FAdd:
+            fneg = B.CreateFAdd(lhsPN, rhsPN);
+            if (auto I = dyn_cast<Instruction>(fneg))
+              I->setFast(fast);
+            break;
+          case Instruction::FSub:
+            fneg = B.CreateFSub(lhsPN, rhsPN);
+            if (auto I = dyn_cast<Instruction>(fneg))
+              I->setFast(fast);
+            break;
+          case Instruction::Mul:
+            fneg = B.CreateMul(lhsPN, rhsPN, "", NUW, NSW);
+            break;
+          case Instruction::Add:
+            fneg = B.CreateAdd(lhsPN, rhsPN, "", NUW, NSW);
+            break;
+          case Instruction::Sub:
+            fneg = B.CreateSub(lhsPN, rhsPN, "", NUW, NSW);
+            break;
+          case Instruction::ZExt:
+            fneg = B.CreateZExt(lhsPN, PN->getType());
+            break;
+          case Instruction::FCmp:
+          case Instruction::ICmp:
+            fneg = B.CreateCmp(cmpPredicate.value(), lhsPN, rhsPN);
+            break;
+          case Instruction::UIToFP:
+            fneg = B.CreateUIToFP(lhsPN, PN->getType());
+            break;
+          case Instruction::Or:
+            fneg = B.CreateOr(lhsPN, rhsPN);
+            break;
+          case Instruction::And:
+            fneg = B.CreateAnd(lhsPN, rhsPN);
+            break;
+          default:
+            llvm_unreachable("unhandled opcode");
+          }
+
+          push(fneg);
+
+          if (preheader_fix != -1) {
+            auto L = LI.getLoopFor(PN->getParent());
+            auto idx = L->getCanonicalInductionVariable();
+            auto eq = B.CreateICmpEQ(idx, ConstantInt::get(idx->getType(), 0));
+            push(eq);
+            fneg =
+                B.CreateSelect(eq, PN->getIncomingValue(preheader_fix), fneg);
+            push(fneg);
+          }
+
+          for (auto U : cur->users()) {
             push(U);
-          cur->replaceAllUsesWith(sel);
-          cur->eraseFromParent();
+          }
+          PN->replaceAllUsesWith(fneg);
+          for (auto I : prevOps)
+            push(I);
+          PN->eraseFromParent();
           return true;
         }
       }
     }
-    return false;
+    // phi  -> select
+    if (PN->getNumIncomingValues() == 2) {
+      for (int i = 0; i < 2; i++) {
+        auto prev = PN->getIncomingBlock(i);
+        if (!DT.dominates(prev, PN->getParent())) {
+          continue;
+        }
+        auto br = dyn_cast<BranchInst>(prev->getTerminator());
+        if (!br) {
+          continue;
+        }
+        if (!br->isConditional()) {
+          continue;
+        }
+        if (br->getSuccessor(0) != PN->getParent()) {
+          continue;
+        }
+        if (br->getSuccessor(1) != PN->getIncomingBlock(1 - i)) {
+          continue;
+        }
+
+        Value *specVal = PN->getIncomingValue(1 - i);
+        SetVector<Value *, std::deque<Value *>> todo;
+        todo.insert(specVal);
+        SetVector<Instruction *> toMove;
+        bool legal = true;
+        while (!todo.empty()) {
+          auto cur = *todo.begin();
+          todo.erase(todo.begin());
+          auto I = dyn_cast<Instruction>(cur);
+          if (!I)
+            continue;
+          if (I->mayReadOrWriteMemory()) {
+            legal = false;
+            break;
+          }
+          if (DT.dominates(I, PN))
+            continue;
+          for (size_t i = 0; i < I->getNumOperands(); i++)
+            todo.insert(I->getOperand(i));
+          toMove.insert(I);
+        }
+        if (!legal)
+          continue;
+        for (auto iter = toMove.rbegin(), end = toMove.rend(); iter != end;
+             iter++) {
+          (*iter)->moveBefore(br);
+        }
+        auto sel = B.CreateSelect(
+            br->getCondition(), PN->getIncomingValueForBlock(prev),
+            PN->getIncomingValueForBlock(br->getSuccessor(1)));
+
+        push(sel);
+        for (auto U : cur->users())
+          push(U);
+        cur->replaceAllUsesWith(sel);
+        cur->eraseFromParent();
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
-void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM) {
-
-  llvm::SetVector<Instruction *> Q;
-  for (auto &BB : F)
-    for (auto &I : BB)
-      if (!I.getType()->isVoidTy())
-        Q.insert(&I);
+void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
+                      SetVector<BasicBlock *> &toDenseBlocks) {
 
   auto &DT = FAM.getResult<DominatorTreeAnalysis>(F);
   auto &SE = FAM.getResult<ScalarEvolutionAnalysis>(F);
   auto &LI = FAM.getResult<LoopAnalysis>(F);
   auto &DL = F.getParent()->getDataLayout();
 
+  llvm::SetVector<Instruction *> Q;
+  {
+    llvm::SetVector<BasicBlock *> todoBlocks;
+    for (auto b : toDenseBlocks) {
+      auto L = LI.getLoopFor(b);
+      if (L) {
+        for (auto B : L->getBlocks())
+          todoBlocks.insert(B);
+      }
+    }
+    for (auto BB : todoBlocks)
+      for (auto &I : *BB)
+        if (!I.getType()->isVoidTy())
+          Q.insert(&I);
+  }
+
+  llvm::errs() << " pre fix inner: " << F << "\n";
+  // return;
+
   // Full simplification
   while (!Q.empty()) {
     auto cur = Q.pop_back_val();
-    SetVector<Instruction*> prev(Q.begin(), Q.end());
-    // llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
+    SetVector<Instruction *> prev(Q.begin(), Q.end());
+    llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
     bool changed = fixSparse_inner(cur, F, Q, DT, SE, LI, DL);
-    // llvm::errs() << "changed: " << changed << "\n";
-    
-    /*for (auto I : Q)
-        if (!prev.contains(I))
+    llvm::errs() << "changed: " << changed << "\n";
+
+    for (auto I : Q)
+      if (!prev.contains(I))
         llvm::errs() << " + " << *I << "\n";
     llvm::errs() << F << "\n\n";
-    */
   }
+  llvm::errs() << " post fix inner: " << F << "\n";
+  return;
 
-  for (auto &B : F) 
-    if (auto br = dyn_cast<BranchInst>(B.getTerminator())) 
-    if (br->isConditional())
-    for (int bidx = 0; bidx < 2; bidx++)
-    if (auto uncond_br = dyn_cast<BranchInst>(br->getSuccessor(bidx)->getTerminator()))
-    if (!uncond_br->isConditional())
-    if (uncond_br->getSuccessor(0) == br->getSuccessor(1-bidx))
-    {
-        auto blk = br->getSuccessor(bidx);
-        bool legal = true;
-        for (auto &I : *blk) {
-            if (!I.mayWriteToMemory()) continue;
-            if (auto CI = dyn_cast<CallInst>(&I)) {
-                if (auto F = CI->getCalledFunction()) {
-                    // todo make this a nice attribute
-                    if (F->getName().contains("inner_store")) {
+  SmallVector<std::pair<BasicBlock *, BranchInst *>, 1> sparseBlocks;
+  for (auto &B : F)
+    if (auto br = dyn_cast<BranchInst>(B.getTerminator()))
+      if (br->isConditional())
+        for (int bidx = 0; bidx < 2; bidx++)
+          if (auto uncond_br =
+                  dyn_cast<BranchInst>(br->getSuccessor(bidx)->getTerminator()))
+            if (!uncond_br->isConditional())
+              if (uncond_br->getSuccessor(0) == br->getSuccessor(1 - bidx)) {
+                auto blk = br->getSuccessor(bidx);
+                bool legal = true;
+                for (auto &I : *blk) {
+                  if (!I.mayWriteToMemory())
+                    continue;
+                  if (auto CI = dyn_cast<CallInst>(&I)) {
+                    if (auto F = CI->getCalledFunction()) {
+                      // todo make this a nice attribute
+                      if (F->getName().contains("inner_store")) {
                         continue;
-                    }
-                }
-            }
-            legal = false;
-            break;
-        }
-        if (legal) {
-            // default is condition avoids sparse, negated is condition goes to sparse
-            auto cond = br->getCondition();
-            bool negated = bidx == 0;
-            auto S = SE.getSCEV(cond);
-            llvm::errs() << " + legal, cond: " << *cond << " negated: " << negated << " S: " << *S << "\n";
-
-            /*
-            // Whether the given value contains no information about whether it is a given constant (e.g. zero) from any loop indices or constant
-            // propoagation. Thus whether it is unknown due to a data load
-            std::function<Value*(Value*, SmallPtrSet<llvm::Value*> seen)> dataDependentValue = [&](Value* val, SmallPtrSet<llvm::Value*> &seen) {
-              if (isa<LoadInst>(val)) return true;
-              
-              if (auto PN = dyn_cast<PHINode>(val)) {
-                  return false;
-              }
-
-              if (auto I = dyn_cast<Instruction>(val)) {
-                  if (I->getOpcode() == Instruction::FAdd || I->getOpcode() == Instruction::FSub) {
-                      if (dataDependentValue(I->getOperand(0))) {
-                          // data + constant -> data dependent
-                          if (isa<Constant>(I->getOperand(1))) return true;
-
-                          // data1 + data2 -> data dependent (usually, they could subtract to 0/etc)
-                          if (dataDependentValue(I->getOperand(1))) return true;
                       }
-                      return dataDependentValue(I->getOperand(0)) || dataDependentValue(I->getOperand(1));
-                  }
-                  if (I->getOpcode() == Instruction::FDiv) {
-                      if (dataDependentValue(I->getOperand(0))) || dataDependentValue(I->getOperand(1));
-                  }
-                  if (I->getOpcode() == Instruction::FMul) {
-                    for (int i=0; i<2; i++) {
-                        if (auto C = dyn_cast<Constant>(cmp->getOperand(i)))
-                            if (!C->isZero())
-                                return dataDependentValue(I->getOperand(1-i));
                     }
                   }
+                  legal = false;
+                  break;
+                }
+                if (!legal)
+                  continue;
+                sparseBlocks.emplace_back(blk, br);
               }
 
-              return false;
+  // block, bound, scev for indexset
+  std::map<Loop *, std::pair<std::pair<PHINode *, PHINode *>,
+                             SmallVector<std::pair<
+                                 BasicBlock *, SmallVector<const SCEV *, 1>>>>>
+      forSparsification;
+
+  for (auto [blk, br] : sparseBlocks) {
+    auto L = LI.getLoopFor(blk);
+    assert(L);
+    auto idx = L->getCanonicalInductionVariable();
+    assert(idx);
+
+    // default is condition avoids sparse, negated is condition goes
+    // to sparse
+    auto cond = br->getCondition();
+    bool negated = br->getSuccessor(0) == blk;
+    auto S = SE.getSCEV(cond);
+    llvm::errs() << " + legal, cond: " << *cond << " negated: " << negated
+                 << " S: " << *S << "\n";
+
+    bool legal = true;
+    // Whether the i1 value does not contain any icmp's
+    std::function<bool(Value *)> onlyDataDependentValues = [&](Value *val) {
+      auto I = cast<Instruction>(val);
+      if (I->getOpcode() == Instruction::Or) {
+        return onlyDataDependentValues(I->getOperand(0)) &&
+               onlyDataDependentValues(I->getOperand(1));
+      }
+      if (I->getOpcode() == Instruction::And) {
+        return onlyDataDependentValues(I->getOperand(0)) &&
+               onlyDataDependentValues(I->getOperand(1));
+      }
+      if (isa<FCmpInst>(I))
+        return true;
+      if (isa<ICmpInst>(I))
+        return false;
+      llvm::errs() << " bad datadependent values check " << *val << "\n";
+      legal = false;
+      return true;
+    };
+
+    // Simplify variable val which is known to branch away from the
+    // actual store (if not negated) or to the store (if negated) if
+    // ! negated the result may become more false if negated the
+    // result may become more true
+
+    std::function<SmallVector<ICmpInst *, 1>(Value *, bool)>
+        getSparseConditions =
+            [&](Value *val, bool negated) -> SmallVector<ICmpInst *, 1> {
+      assert(!negated);
+
+      if (auto I = dyn_cast<Instruction>(val)) {
+        // Binary `and` is a bit-wise `umin`.
+        if (I->getOpcode() == Instruction::And) {
+          auto res = getSparseConditions(I->getOperand(0), negated);
+          auto res2 = getSparseConditions(I->getOperand(1), negated);
+          res.append(res2.begin(), res2.end());
+          return res;
+        }
+
+        // Binary `or` is a bit-wise `umax`.
+        if (I->getOpcode() == Instruction::Or) {
+          if (onlyDataDependentValues(I->getOperand(1)))
+            return getSparseConditions(I->getOperand(0), negated);
+          if (onlyDataDependentValues(I->getOperand(0)))
+            return getSparseConditions(I->getOperand(1), negated);
+        }
+        if (onlyDataDependentValues(I))
+          return {};
+
+        // cmp x, 1.0 ->   false/true
+        if (auto icmp = dyn_cast<ICmpInst>(I)) {
+          return {icmp};
+        }
+      }
+      llvm::errs() << " nonsparsifiable: " << *val << "\n";
+      legal = false;
+      return {};
+    };
+
+    auto conditions = getSparseConditions(cond, negated);
+    if (!legal)
+      continue;
+    SmallVector<const SCEV *, 1> solutions;
+    for (auto c : conditions) {
+      auto Sidx = SE.getSCEVAtScope(idx, L);
+
+      assert(c->getPredicate() == ICmpInst::ICMP_NE);
+      auto lhs = SE.getSCEVAtScope(c->getOperand(0), L);
+      auto rhs = SE.getSCEVAtScope(c->getOperand(1), L);
+
+      auto sub1 = SE.getMinusSCEV(lhs, rhs);
+
+      if (auto add = dyn_cast<SCEVAddRecExpr>(sub1)) {
+        if (add->getLoop() == L) {
+          if (add->isAffine()) {
+            // 0 === A + B * inc -> -A / B = inc
+            auto A = add->getStart();
+            auto B = dyn_cast<SCEVConstant>(add->getStepRecurrence(SE));
+
+            auto MA = SE.getNegativeSCEV(A);
+            auto div = SE.getUDivExpr(MA, B);
+            auto div_e = SE.getUDivExactExpr(MA, B);
+            if (div == div_e) {
+              solutions.push_back(div);
+              continue;
             }
-            */
-
-            // Simplify variable val which is known to branch away from the actual store (if not negated) or to the store (if negated)
-            // if ! negated the result may become more false
-            // if negated the result may become more true
-
-            std::function<const SCEV*(Value*, bool)> simplifySparseCondition = [&](Value* val, bool negated) -> const SCEV* {
-
-            if (auto I = dyn_cast<Instruction>(val)) {
-                assert(!(I->mayWriteToMemory() && !(isa<CallInst>(I) && cast<CallInst>(I)->onlyReadsMemory())));
-                
-                // Binary `and` is a bit-wise `umin`.
-                if (I->getOpcode() == Instruction::And) {
-                    auto lhs = simplifySparseCondition(I->getOperand(0), negated);
-                    auto rhs = simplifySparseCondition(I->getOperand(1), negated);
-                    auto v = SE.getUMinExpr(lhs, rhs);
-                    llvm::errs() << " Iand: " << *I << " v: " << *v << "\n";
-                    return v;
-                }
-               
-                // Binary `or` is a bit-wise `umax`.
-                if (I->getOpcode() == Instruction::Or) {
-                    auto lhs = simplifySparseCondition(I->getOperand(0), negated);
-                    auto rhs = simplifySparseCondition(I->getOperand(1), negated);
-                    auto v = SE.getUMaxExpr(lhs, rhs);
-                    llvm::errs() << " Ior: " << *I << " v: " << *v << "\n";
-                    return v;
-                }
-
-                // cmp x, 1.0 ->   false/true
-                if (auto icmp = dyn_cast<ICmpInst>(I)) {
-                    auto lhs = simplifySparseCondition(I->getOperand(0), negated);
-                    auto rhs = simplifySparseCondition(I->getOperand(1), negated);
-                    if (icmp->getPredicate() == CmpInst::ICMP_NE) {
-                        auto sub = SE.getMinusSCEV(lhs, rhs, SCEV::NoWrapMask);
-                        auto v = SE.getTruncateOrNoop(sub, icmp->getType());
-                        llvm::errs() << " I: " << *I << " v: " << *v << "\n";
-                        llvm::errs() << " + sub2: " << *sub << "\n";
-                        return v;
-                    }
-                    if (icmp->getPredicate() == CmpInst::ICMP_EQ) {
-                        auto sub = SE.getMinusSCEV(lhs, rhs, SCEV::NoWrapMask);
-                        auto v = SE.getMinusSCEV(SE.getConstant(icmp->getType(), 1, false), SE.getTruncateOrNoop(sub, icmp->getType()), SCEV::NoWrapMask);
-                        llvm::errs() << " I: " << *I << " v: " << *v << "\n";
-                        llvm::errs() << " + sub: " << *sub << "\n";
-                        return v;
-                    }
-                }
-                
-                if (auto icmp = dyn_cast<FCmpInst>(I)) {
-                    if (!negated) return SE.getConstant(icmp->getType(), 0, false);
-                    else return SE.getConstant(icmp->getType(), 1, false);
-                }
-            }
-            auto v = SE.getSCEV(val);
-        };
-            llvm::errs() << " + legal, cond: " << *cond << " negated: " << negated << " S2: " << *simplifySparseCondition(cond, negated) << "\n";
+          }
         }
       }
 
+      llvm::errs() << " not sparse solvable " << *sub1 << "\n";
+      legal = false;
+      break;
+    }
+    if (!legal)
+      continue;
+
+    if (forSparsification.count(L) == 0) {
+      {
+        IRBuilder<> PB(L->getLoopPreheader()->getTerminator());
+        forSparsification[L].first =
+            std::make_pair(PB.CreatePHI(idx->getType(), 0, "ph.idx"),
+                           PB.CreatePHI(idx->getType(), 0, "loop.idx"));
+      }
+
+      Value *LoopCount = nullptr;
+
+      IRBuilder<> B(L->getHeader()->getFirstNonPHI());
+      {
+        SCEVExpander Exp(SE, DL, "sparseenzyme");
+        auto LoopCountS = SE.getBackedgeTakenCount(L);
+        LoopCount = B.CreateAdd(
+            ConstantInt::get(idx->getType(), 1),
+            Exp.expandCodeFor(LoopCountS, idx->getType(), &blk->front()));
+      }
+      Value *inbounds = B.CreateAnd(
+          B.CreateICmpSLT(idx, LoopCount),
+          B.CreateICmpSGE(idx, ConstantInt::get(idx->getType(), 0)));
+      Value *args[] = {inbounds, forSparsification[L].first.second};
+      B.CreateCall(F.getParent()->getOrInsertFunction(
+                       "enzyme.sparse.inbounds", B.getVoidTy(),
+                       inbounds->getType(), idx->getType()),
+                   args);
+    }
+
+    IRBuilder<> B(br);
+    B.SetInsertPoint(br);
+    auto nidx = B.CreateICmpEQ(
+        forSparsification[L].first.first,
+        ConstantInt::get(idx->getType(), forSparsification[L].second.size()));
+    // TODO check direction
+    if (!negated)
+      nidx = B.CreateNot(nidx);
+
+    br->setCondition(nidx);
+    forSparsification[L].second.emplace_back(blk, solutions);
+  }
+
+  if (forSparsification.size() == 0)
+    return;
+
+  for (const auto &pair : forSparsification) {
+    auto L = pair.first;
+    auto [PN, inductPN] = pair.second.first;
+
+    auto ph = L->getLoopPreheader();
+    CodeExtractor ext(DT, *L);
+    CodeExtractorAnalysisCache cache(F);
+    SetVector<Value *> Inputs, Outputs;
+    auto F2 = ext.extractCodeRegion(cache, Inputs, Outputs);
+    assert(F2);
+    F2->addFnAttr(Attribute::AlwaysInline);
+
+    for (auto U : F2->users())
+      cast<Instruction>(U)->eraseFromParent();
+
+    llvm::errs() << "F: " << F << "\n";
+    llvm::errs() << "F2: " << *F2 << "\n";
+
+    ssize_t induct_idx = -1;
+    ssize_t off_idx = -1;
+    for (auto en : llvm::enumerate(Inputs)) {
+      if (en.value() == inductPN)
+        induct_idx = en.index();
+      if (en.value() == PN)
+        off_idx = en.index();
+    }
+    assert(induct_idx != -1);
+    assert(off_idx != -1);
+
+    auto L2 = LI.getLoopFor(F2->getEntryBlock().getSingleSuccessor());
+    auto new_idx = F2->getArg(induct_idx);
+    auto L2Header = L2->getHeader();
+    auto new_lidx = L2->getCanonicalInductionVariable();
+
+    auto idxty = new_idx->getType();
+
+    auto new_pn = F2->getArg(off_idx);
+    // Find all sparse accumulates we weren't meant to handle
+    {
+      SmallVector<CallInst *, 1> toErase;
+      // First delete any accumulates in sub loops
+      for (auto SL : L2->getSubLoops())
+        for (auto B : SL->getBlocks())
+          for (auto &I : *B)
+            if (auto CI = dyn_cast<CallInst>(&I))
+              if (auto F = CI->getCalledFunction()) {
+                // todo make this a nice attribute
+                if (F->getName().contains("inner_store")) {
+                  toErase.push_back(CI);
+                  continue;
+                }
+              }
+      for (auto C : toErase)
+        C->eraseFromParent();
+      toErase.clear();
+      // Next delete any accumulates not in latchany loops
+      for (auto B : L2->getBlocks()) {
+        bool guarded = false;
+        if (auto P = B->getSinglePredecessor())
+          if (auto S = B->getSingleSuccessor())
+            if (auto BI = dyn_cast<BranchInst>(P->getTerminator()))
+              if (BI->isConditional())
+                for (size_t i = 0; i < 2; i++)
+                  if (BI->getSuccessor(i) == B &&
+                      BI->getSuccessor(1 - i) == S) {
+                    auto val = BI->getCondition();
+                    if (auto xori = dyn_cast<Instruction>(val))
+                      if (xori->getOpcode() == Instruction::Xor)
+                        val = xori->getOperand(0);
+                    if (auto cmp = dyn_cast<ICmpInst>(val))
+                      if (cmp->getOperand(0) == new_pn ||
+                          cmp->getOperand(1) == new_pn)
+                        guarded = true;
+                  }
+        if (guarded)
+          continue;
+        for (auto &I : *B)
+          if (auto CI = dyn_cast<CallInst>(&I))
+            if (auto F = CI->getCalledFunction()) {
+              // todo make this a nice attribute
+              if (F->getName().contains("inner_store")) {
+                toErase.push_back(CI);
+                continue;
+              }
+            }
+      }
+      for (auto C : toErase)
+        C->eraseFromParent();
+      toErase.clear();
+    }
+
+    auto guard = L2->getLoopLatch()->getTerminator();
+    assert(guard);
+    IRBuilder<> G(guard);
+    G.CreateRetVoid();
+    guard->eraseFromParent();
+    new_lidx->replaceAllUsesWith(new_idx);
+    new_lidx->eraseFromParent();
+
+    auto phterm = ph->getTerminator();
+    llvm::errs() << " phterm: " << *phterm << "\n";
+    IRBuilder<> B(phterm);
+    SCEVExpander Exp(SE, DL, "sparseenzyme");
+
+    for (auto en : llvm::enumerate(pair.second.second)) {
+      auto off = en.index();
+      auto &solutions = en.value().second;
+      for (auto sol : solutions) {
+        SmallVector<Value *, 1> args(Inputs.begin(), Inputs.end());
+        args[off_idx] = ConstantInt::get(idxty, off);
+        args[induct_idx] = Exp.expandCodeFor(sol, idxty, phterm);
+        B.CreateCall(F2, args);
+      }
+      auto blk = en.value().first;
+      auto term = blk->getTerminator();
+      IRBuilder<> B2(blk);
+      B2.CreateRetVoid();
+      term->eraseFromParent();
+    }
+
+    PN->eraseFromParent();
+
+    // B.CreateCondBr(ConstantInt::getTrue(B.getContext()), L->getExitBlock(),
+    // L->getHeader()); phterm->eraseFromParent();
+
+    for (auto &I : *L2Header) {
+      auto boundsCheck = dyn_cast<CallInst>(&I);
+      if (!boundsCheck)
+        continue;
+      auto BF = boundsCheck->getCalledFunction();
+      if (!BF)
+        continue;
+      if (BF->getName() != "enzyme.sparse.inbounds")
+        continue;
+
+      auto boundsCond = boundsCheck->getArgOperand(0);
+
+      auto next = L2Header->splitBasicBlock(boundsCheck);
+
+      auto exit = BasicBlock::Create(F2->getContext(), "bounds.exit", F2,
+                                     L2Header->getNextNode());
+      {
+        IRBuilder B(exit);
+        B.CreateRetVoid();
+      }
+      L2Header->getTerminator()->eraseFromParent();
+
+      {
+        IRBuilder B(L2Header);
+        B.CreateCondBr(boundsCond, next, exit);
+      }
+      boundsCheck->eraseFromParent();
+      inductPN->eraseFromParent();
+
+      break;
+    }
+
+    llvm::errs() << "post F2: " << *F2 << "\n";
+  }
+
+  llvm::errs() << "F: " << F << "\n";
 }
 
 bool LowerSparsification(llvm::Function *F, bool replaceAll) {
   auto &DL = F->getParent()->getDataLayout();
   bool changed = false;
   SmallVector<CallInst *, 1> todo;
+  SetVector<BasicBlock *> toDenseBlocks;
   for (auto &BB : *F) {
     for (auto &I : BB) {
       if (auto CI = dyn_cast<CallInst>(&I)) {
         if (getFuncNameFromCall(CI).contains("__enzyme_todense")) {
           todo.push_back(CI);
+          toDenseBlocks.insert(&BB);
         }
       }
     }
@@ -5121,8 +5379,9 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
     PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
     InstCombinePass().run(*F, FAM);
-    fixSparseIndices(*F, FAM);
+    fixSparseIndices(*F, FAM, toDenseBlocks);
     llvm::errs() << " post sparse: " << *F << "\n";
+    llvm::errs() << *F->getParent() << "\n";
   }
   return changed;
 }
