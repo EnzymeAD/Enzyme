@@ -1,7 +1,7 @@
 # Run regression and unit tests
 add_lit_testsuite(check-enzyme-integration-sparse "Running enzyme spare integration tests"
     ${CMAKE_CURRENT_BINARY_DIR}
-    DEPENDS ${ENZYME_TEST_DEPS}
+    DEPENDS ClangEnzyme-${LLVM_VERSION_MAJOR}
     ARGS -v
 )
 

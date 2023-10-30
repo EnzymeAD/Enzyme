@@ -39,6 +39,7 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Passes/PassBuilder.h"
 
+#include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/SetOperations.h"
 #include "llvm/Analysis/AliasAnalysis.h"
@@ -2576,7 +2577,11 @@ static bool isNot(Value *a, Value *b) {
       for (int i = 0; i < 2; i++) {
         if (I->getOperand(i) == b)
           if (auto CI = dyn_cast<ConstantInt>(I->getOperand(1 - i)))
+#if LLVM_VERSION_MAJOR > 16
             if (CI->getValue().isAllOnes())
+#else
+            if (CI->getValue().isAllOnesValue())
+#endif
               return true;
       }
   // b := xor true, a
@@ -2585,7 +2590,11 @@ static bool isNot(Value *a, Value *b) {
       for (int i = 0; i < 2; i++) {
         if (I->getOperand(i) == a)
           if (auto CI = dyn_cast<ConstantInt>(I->getOperand(1 - i)))
+#if LLVM_VERSION_MAJOR > 16
             if (CI->getValue().isAllOnes())
+#else
+            if (CI->getValue().isAllOnesValue())
+#endif
               return true;
       }
   return false;
@@ -3629,30 +3638,28 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         return "BinopSelFuse";
       }
   }
-  
+
   // and a, b -> and a b[with a true]
   if (cur->getOpcode() == Instruction::And) {
     auto lhs = replace(cur->getOperand(0), cur->getOperand(1),
-                        ConstantInt::getTrue(cur->getContext()));
+                       ConstantInt::getTrue(cur->getContext()));
     auto rhs = replace(cur->getOperand(1), cur->getOperand(0),
-                        ConstantInt::getTrue(cur->getContext()));
+                       ConstantInt::getTrue(cur->getContext()));
     if (lhs != cur->getOperand(0) || rhs != cur->getOperand(1)) {
-      auto res = pushcse(B.CreateAnd(lhs, rhs, 
-                                        "postand." + cur->getName()));
+      auto res = pushcse(B.CreateAnd(lhs, rhs, "postand." + cur->getName()));
       replaceAndErase(cur, res);
       return "AndReplace";
     }
   }
-  
+
   // and (i == c), (i != d) -> and (i == c) && (c != d)
   if (cur->getOpcode() == Instruction::And) {
     auto lhs = replace(cur->getOperand(0), cur->getOperand(1),
-                        ConstantInt::getTrue(cur->getContext()));
+                       ConstantInt::getTrue(cur->getContext()));
     auto rhs = replace(cur->getOperand(1), cur->getOperand(0),
-                        ConstantInt::getTrue(cur->getContext()));
+                       ConstantInt::getTrue(cur->getContext()));
     if (lhs != cur->getOperand(0) || rhs != cur->getOperand(1)) {
-      auto res = pushcse(B.CreateAnd(lhs, rhs, 
-                                        "postand." + cur->getName()));
+      auto res = pushcse(B.CreateAnd(lhs, rhs, "postand." + cur->getName()));
       replaceAndErase(cur, res);
       return "AndReplace";
     }
@@ -3775,7 +3782,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                 auto m = SE.getMinusSCEV(c1, c2, SCEV::NoWrapMask);
                 if (auto C = dyn_cast<SCEVConstant>(m)) {
                   // if c1 == c2 don't need the and they are equivalent
-                  if (C->getAPInt().isZero()) {
+                  if (C->getValue()->isZero()) {
                     push(cmp1);
                     push(cmp2);
                     replaceAndErase(cur, cmp1);
@@ -3795,56 +3802,51 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       cur->getOpcode() == Instruction::Add) {
     if (auto mul1 = dyn_cast<Instruction>(cur->getOperand(0)))
       if (auto mul2 = dyn_cast<Instruction>(cur->getOperand(1)))
-        if (
-                (
-            mul1->getOpcode() == Instruction::Mul &&
-            mul2->getOpcode() == Instruction::Mul) ||
-                (
-            mul1->getOpcode() == Instruction::FMul &&
-            mul2->getOpcode() == Instruction::FMul && mul1->isFast() && mul2->isFast() && cur->isFast())
-           ){
-          for (int i1 = 0; i1 < 2; i1++) 
-          for (int i2 = 0; i2 < 2; i2++) 
-          {
-            if (mul1->getOperand(i1) == mul2->getOperand(i2)) {
-              Value *res = nullptr;
-              switch (cur->getOpcode()) {
-              case Instruction::Add:
-                res = B.CreateAdd(mul1->getOperand(1 - i1),
-                                  mul2->getOperand(1 - i2));
-                break;
-              case Instruction::Sub:
-                res = B.CreateSub(mul1->getOperand(1 - i1),
-                                  mul2->getOperand(1 - i2));
-                break;
-              case Instruction::FAdd:
-                res = B.CreateFAddFMF(mul1->getOperand(1 - i1),
-                                  mul2->getOperand(1 - i2), cur);
-                break;
-              case Instruction::FSub:
-                res = B.CreateFSubFMF(mul1->getOperand(1 - i1),
-                                  mul2->getOperand(1 - i2), cur);
-                break;
-              default:
-                llvm_unreachable("Illegal opcode");
-              }
-              res = pushcse(res);
-              Value *res2 = nullptr;
-              if (cur->getType()->isIntegerTy())
+        if ((mul1->getOpcode() == Instruction::Mul &&
+             mul2->getOpcode() == Instruction::Mul) ||
+            (mul1->getOpcode() == Instruction::FMul &&
+             mul2->getOpcode() == Instruction::FMul && mul1->isFast() &&
+             mul2->isFast() && cur->isFast())) {
+          for (int i1 = 0; i1 < 2; i1++)
+            for (int i2 = 0; i2 < 2; i2++) {
+              if (mul1->getOperand(i1) == mul2->getOperand(i2)) {
+                Value *res = nullptr;
+                switch (cur->getOpcode()) {
+                case Instruction::Add:
+                  res = B.CreateAdd(mul1->getOperand(1 - i1),
+                                    mul2->getOperand(1 - i2));
+                  break;
+                case Instruction::Sub:
+                  res = B.CreateSub(mul1->getOperand(1 - i1),
+                                    mul2->getOperand(1 - i2));
+                  break;
+                case Instruction::FAdd:
+                  res = B.CreateFAddFMF(mul1->getOperand(1 - i1),
+                                        mul2->getOperand(1 - i2), cur);
+                  break;
+                case Instruction::FSub:
+                  res = B.CreateFSubFMF(mul1->getOperand(1 - i1),
+                                        mul2->getOperand(1 - i2), cur);
+                  break;
+                default:
+                  llvm_unreachable("Illegal opcode");
+                }
+                res = pushcse(res);
+                Value *res2 = nullptr;
+                if (cur->getType()->isIntegerTy())
                   res2 = B.CreateMul(
-                  res, mul1->getOperand(i1), "",
-                  mul1->hasNoUnsignedWrap() && mul1->hasNoUnsignedWrap(),
-                  mul2->hasNoSignedWrap() && mul2->hasNoSignedWrap());
-              else
-                  res2 = B.CreateFMulFMF(
-                  res, mul1->getOperand(i1), cur);
-              
-              res2 = pushcse(res2);
+                      res, mul1->getOperand(i1), "",
+                      mul1->hasNoUnsignedWrap() && mul1->hasNoUnsignedWrap(),
+                      mul2->hasNoSignedWrap() && mul2->hasNoSignedWrap());
+                else
+                  res2 = B.CreateFMulFMF(res, mul1->getOperand(i1), cur);
 
-              replaceAndErase(cur, res2);
-              return "InvDistributive";
+                res2 = pushcse(res2);
+
+                replaceAndErase(cur, res2);
+                return "InvDistributive";
+              }
             }
-          }
         }
   }
 
@@ -3970,7 +3972,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (!md) {
           if (ext->getOpcode() == Instruction::UIToFP) {
             rhsMax = APInt::getMaxValue(ity->getBitWidth()).zextOrTrunc(64);
-            rhsMin = APInt::getZero(64);
+            rhsMin = APInt(64, 0);
           } else {
             rhsMax =
                 APInt::getSignedMaxValue(ity->getBitWidth()).zextOrTrunc(64);
@@ -4818,558 +4820,571 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
 class Constraints;
 raw_ostream &operator<<(raw_ostream &os, const Constraints &c);
 class Constraints : public std::enable_shared_from_this<Constraints> {
-    public:
-    const enum class Type {
-        Union = 0,
-        Intersect = 1,
-        Compare = 2,
-        All = 3,
-        None = 4
-    } ty;
-    
+public:
+  const enum class Type {
+    Union = 0,
+    Intersect = 1,
+    Compare = 2,
+    All = 3,
+    None = 4
+  } ty;
 
+  using InnerTy = std::shared_ptr<const Constraints>;
 
-        using InnerTy = std::shared_ptr<const Constraints>;
-		
-	struct ConstraintComparator {
-		bool operator()(InnerTy lhs, InnerTy rhs) const {
-			if (lhs->ty < rhs->ty)
-				return true;
-			else if (lhs->ty > rhs->ty)
-				return false;
-			
-			if (lhs->node < rhs->node)
-				return true;
-			else if (lhs->node > rhs->node)
-				return false;
-			
-			if (lhs->isEqual < rhs->isEqual)
-				return true;
-			else if (lhs->isEqual > rhs->isEqual)
-				return false;
-
-			return lhs->values < rhs->values;
-			/*
-			auto lhss = lhs->values.size();	
-			auto rhss = rhs->values.size();	
-			if (lhss < rhss)
-				return true;
-			else if (lhss > rhss)
-				return false;
-			for (int i=0; i<lhss; i++) {
-				if (this->operator()(lhs->values[i], rhs->values[i]))
-					return true;
-				if (this->operator()(rhs->values[i], lhs->values[i]))
-					return false;
-			}
-			return false;
-			*/
-		}
-	};
-        using SetTy = std::set<InnerTy, ConstraintComparator>;
-
-	const SetTy values;
-    
-	const SCEV* const node;
-    // whether equal to the node, or not equal to the node
-    bool isEqual;
-        // using SetTy = SmallVector<InnerTy, 0>;
-        // using SetTy = SetVector<InnerTy, SmallVector<InnerTy, 0>, std::set<InnerTy>>;
-
-    Constraints() : ty(Type::Union), values(), node(nullptr), isEqual(false) {}
-
-    Constraints(const SCEV* v, bool isEqual) : ty(Type::Compare), values(), node(v), isEqual(isEqual) {
-    }
-    Constraints(Type t) : ty(t), values(), node(nullptr), isEqual(false) {
-        assert(t == Type::All || t == Type::None);
-    }
-    Constraints(Type t, const SetTy & c) : ty(t), values(c), node(nullptr), isEqual(false) {
-        assert(t != Type::All);
-        assert(t != Type::None);
-        assert(c.size() != 0);
-        assert(c.size() != 1);
-/*
-		for (int i=0; i<c.size(); i++)
-			for (int j=0; j<i; j++)
-				assert(*c[i] != *c[j]);
-*/
-    }
-
-    bool operator==(const Constraints &rhs) const {
-        if (ty != rhs.ty) {
-			return false;
-		}
-        if (node != rhs.node) {
-			return false;
-		}
-        if (isEqual != rhs.isEqual) {
-			return false;
-		}
-        if (values.size() != rhs.values.size()) {
-			return false;
-		}
-		for (auto pair : llvm::zip(values, rhs.values)) {
-			if (*std::get<0>(pair) != *std::get<1>(pair)) return false;
-		}
-		return true;
-		//) && !(rhs.values < values) 
-		/*
-        for (size_t i=0; i<values.size(); i++)
-            if (*values[i] != *rhs.values[i]) return false;
+  struct ConstraintComparator {
+    bool operator()(InnerTy lhs, InnerTy rhs) const {
+      if (lhs->ty < rhs->ty)
         return true;
-		*/
-    }
-    bool operator>(const Constraints &rhs) const {
-		return rhs < *this;
-	}
-    bool operator<(const Constraints &rhs) const {
-        if (ty < rhs.ty) {
-			return true;
-		}
-        if (ty > rhs.ty) {
-			return false;
-		}
-        if (node < rhs.node) {
-			return true;
-		}
-        if (node > rhs.node) {
-			return false;
-		}
-        if (isEqual < rhs.isEqual) {
-			return true;
-		}
-        if (isEqual > rhs.isEqual) {
-			return false;
-		}
-        if (values.size() < rhs.values.size()) {
-			return true;
-		}
-        if (values.size() > rhs.values.size()) {
-			return false;
-		}
-		for (auto pair : llvm::zip(values, rhs.values)) {
-			if (*std::get<0>(pair) < *std::get<1>(pair)) return true;
-			if (*std::get<0>(pair) > *std::get<1>(pair)) return false;
-		}
-		return true;
-		//) && !(rhs.values < values) 
-		/*
-        for (size_t i=0; i<values.size(); i++)
-            if (*values[i] != *rhs.values[i]) return false;
+      else if (lhs->ty > rhs->ty)
+        return false;
+
+      if (lhs->node < rhs->node)
         return true;
-		*/
-    }
-	unsigned hash() const {
-		unsigned res = 5 * (unsigned)ty +
-			DenseMapInfo<const SCEV*>::getHashValue(node) + isEqual;
-		for (auto v : values)
-			res = llvm::detail::combineHashValue(res, v->hash());
-		return res;
-	}
-    bool operator!=(const Constraints & rhs) const { return !(*this == rhs); }
-    static InnerTy all() {
-        static auto allv = std::make_shared<Constraints>(Type::All);
-        return allv;
-    }
-    static InnerTy none() {
-        static auto nonev = std::make_shared<Constraints>(Type::None);
-        return nonev;
-    }
-    bool isNone() const {
-        return ty == Type::None;
-    }
-    bool isAll() const {
-        return ty == Type::All;
-    }
-	static void insert(SetTy& set, InnerTy ty) {
-		set.insert(ty);
-/*
-		for (auto &v : set)
-			if (*v == *ty)
-				return;
-		set.push_back(ty);
-*/
-	}
-	static void set_subtract(SetTy& set, const SetTy& rhs) {
-		for (auto &v : rhs)
-			if (set.count(v))
-				set.erase(v);
-		/*
-		for (const auto &val : rhs)
-		for (auto I = set.begin(); I != set.end(); I++) {
-			if (**I == *val) {
-				set.erase(I);
-				break;
-			}
-		}
-*/
-	}
-    InnerTy notB() const {
-        switch (ty) {
-            case Type::None: return Constraints::all();
-            case Type::All: return Constraints::none();
-            case Type::Compare: return std::make_shared<Constraints>(node, !isEqual);
-            case Type::Union: {
-                // not of or's is and or not's
-                SetTy next;
-                for (const auto & v : values)
-                    insert(next, v->notB());
-				if (next.size() == 1)
-					llvm::errs() << " uold : " << *this << "\n";
-                return std::make_shared<Constraints>(Type::Intersect, next);
-            }
-            case Type::Intersect: {
-                // not of and's is or or not's
-                SetTy next;
-                for (const auto & v : values)
-                    insert(next, v->notB());
-				if (next.size() == 1)
-					llvm::errs() << " old : " << *this << "\n";
-                return std::make_shared<Constraints>(Type::Union, next);
-            }
-        }
-    }
-    InnerTy orB(InnerTy rhs, ScalarEvolution& SE) const {
-		return notB()->andB(rhs->notB(), SE)->notB();
-/*
-        if (*rhs == *this) return shared_from_this();
-        if (rhs->isNone()) return shared_from_this();
-        if (rhs->isAll()) return rhs;
-        if (isNone()) return rhs;
-        if (isAll()) return shared_from_this();
+      else if (lhs->node > rhs->node)
+        return false;
 
-        if (ty == Type::Compare && rhs->ty == Type::Compare) {
-            auto sub = SE.getMinusSCEV(node, rhs->node);
-            if (auto cst = dyn_cast<SCEVConstant>(sub)) {
-                // the two solves are equivalent to each other
-                if (cst->getAPInt().isZero()) {
-                    // iv = a or iv = a    
-                    //   also iv != a or iv != a
-                    if (isEqual == rhs->isEqual)
-                        return shared_from_this();
-                    else {
-                        // iv = a or iv != a
-                        return Constraints::all();
-                    }
-                } else {
-                    // the two solves are guaranteed to be distinct
-                    // iv == 0 or iv == 1
-                    if (isEqual && rhs->isEqual) {
-                        SetTy vals;
-                        insert(vals, shared_from_this());
-                        insert(vals, rhs);
-                        return std::make_shared<Constraints>(Type::Union, vals);
-                    } else if (!isEqual && !rhs->isEqual) {
-                        // iv != 0 or iv != 1
-                        return Constraints::all();
-                    } else if (!isEqual) {
-                        assert(rhs->isEqual);
-                        // iv != 0 or iv == 1
-                        return shared_from_this();
+      if (lhs->isEqual < rhs->isEqual)
+        return true;
+      else if (lhs->isEqual > rhs->isEqual)
+        return false;
+
+      return lhs->values < rhs->values;
+      /*
+      auto lhss = lhs->values.size();
+      auto rhss = rhs->values.size();
+      if (lhss < rhss)
+              return true;
+      else if (lhss > rhss)
+              return false;
+      for (int i=0; i<lhss; i++) {
+              if (this->operator()(lhs->values[i], rhs->values[i]))
+                      return true;
+              if (this->operator()(rhs->values[i], lhs->values[i]))
+                      return false;
+      }
+      return false;
+      */
+    }
+  };
+  using SetTy = std::set<InnerTy, ConstraintComparator>;
+
+  const SetTy values;
+
+  const SCEV *const node;
+  // whether equal to the node, or not equal to the node
+  bool isEqual;
+  // using SetTy = SmallVector<InnerTy, 0>;
+  // using SetTy = SetVector<InnerTy, SmallVector<InnerTy, 0>,
+  // std::set<InnerTy>>;
+
+  Constraints() : ty(Type::Union), values(), node(nullptr), isEqual(false) {}
+
+  Constraints(const SCEV *v, bool isEqual)
+      : ty(Type::Compare), values(), node(v), isEqual(isEqual) {}
+  Constraints(Type t) : ty(t), values(), node(nullptr), isEqual(false) {
+    assert(t == Type::All || t == Type::None);
+  }
+  Constraints(Type t, const SetTy &c)
+      : ty(t), values(c), node(nullptr), isEqual(false) {
+    assert(t != Type::All);
+    assert(t != Type::None);
+    assert(c.size() != 0);
+    assert(c.size() != 1);
+    /*
+                    for (int i=0; i<c.size(); i++)
+                            for (int j=0; j<i; j++)
+                                    assert(*c[i] != *c[j]);
+    */
+  }
+
+  bool operator==(const Constraints &rhs) const {
+    if (ty != rhs.ty) {
+      return false;
+    }
+    if (node != rhs.node) {
+      return false;
+    }
+    if (isEqual != rhs.isEqual) {
+      return false;
+    }
+    if (values.size() != rhs.values.size()) {
+      return false;
+    }
+    for (auto pair : llvm::zip(values, rhs.values)) {
+      if (*std::get<0>(pair) != *std::get<1>(pair))
+        return false;
+    }
+    return true;
+    //) && !(rhs.values < values)
+    /*
+for (size_t i=0; i<values.size(); i++)
+if (*values[i] != *rhs.values[i]) return false;
+return true;
+    */
+  }
+  bool operator>(const Constraints &rhs) const { return rhs < *this; }
+  bool operator<(const Constraints &rhs) const {
+    if (ty < rhs.ty) {
+      return true;
+    }
+    if (ty > rhs.ty) {
+      return false;
+    }
+    if (node < rhs.node) {
+      return true;
+    }
+    if (node > rhs.node) {
+      return false;
+    }
+    if (isEqual < rhs.isEqual) {
+      return true;
+    }
+    if (isEqual > rhs.isEqual) {
+      return false;
+    }
+    if (values.size() < rhs.values.size()) {
+      return true;
+    }
+    if (values.size() > rhs.values.size()) {
+      return false;
+    }
+    for (auto pair : llvm::zip(values, rhs.values)) {
+      if (*std::get<0>(pair) < *std::get<1>(pair))
+        return true;
+      if (*std::get<0>(pair) > *std::get<1>(pair))
+        return false;
+    }
+    return true;
+    //) && !(rhs.values < values)
+    /*
+for (size_t i=0; i<values.size(); i++)
+if (*values[i] != *rhs.values[i]) return false;
+return true;
+    */
+  }
+  unsigned hash() const {
+    unsigned res = 5 * (unsigned)ty +
+                   DenseMapInfo<const SCEV *>::getHashValue(node) + isEqual;
+    for (auto v : values)
+      res = llvm::detail::combineHashValue(res, v->hash());
+    return res;
+  }
+  bool operator!=(const Constraints &rhs) const { return !(*this == rhs); }
+  static InnerTy all() {
+    static auto allv = std::make_shared<Constraints>(Type::All);
+    return allv;
+  }
+  static InnerTy none() {
+    static auto nonev = std::make_shared<Constraints>(Type::None);
+    return nonev;
+  }
+  bool isNone() const { return ty == Type::None; }
+  bool isAll() const { return ty == Type::All; }
+  static void insert(SetTy &set, InnerTy ty) {
+    set.insert(ty);
+    /*
+                    for (auto &v : set)
+                            if (*v == *ty)
+                                    return;
+                    set.push_back(ty);
+    */
+  }
+  static void set_subtract(SetTy &set, const SetTy &rhs) {
+    for (auto &v : rhs)
+      if (set.count(v))
+        set.erase(v);
+    /*
+    for (const auto &val : rhs)
+    for (auto I = set.begin(); I != set.end(); I++) {
+            if (**I == *val) {
+                    set.erase(I);
+                    break;
+            }
+    }
+*/
+  }
+  InnerTy notB() const {
+    switch (ty) {
+    case Type::None:
+      return Constraints::all();
+    case Type::All:
+      return Constraints::none();
+    case Type::Compare:
+      return std::make_shared<Constraints>(node, !isEqual);
+    case Type::Union: {
+      // not of or's is and or not's
+      SetTy next;
+      for (const auto &v : values)
+        insert(next, v->notB());
+      if (next.size() == 1)
+        llvm::errs() << " uold : " << *this << "\n";
+      return std::make_shared<Constraints>(Type::Intersect, next);
+    }
+    case Type::Intersect: {
+      // not of and's is or or not's
+      SetTy next;
+      for (const auto &v : values)
+        insert(next, v->notB());
+      if (next.size() == 1)
+        llvm::errs() << " old : " << *this << "\n";
+      return std::make_shared<Constraints>(Type::Union, next);
+    }
+    }
+  }
+  InnerTy orB(InnerTy rhs, ScalarEvolution &SE) const {
+    return notB()->andB(rhs->notB(), SE)->notB();
+    /*
+            if (*rhs == *this) return shared_from_this();
+            if (rhs->isNone()) return shared_from_this();
+            if (rhs->isAll()) return rhs;
+            if (isNone()) return rhs;
+            if (isAll()) return shared_from_this();
+
+            if (ty == Type::Compare && rhs->ty == Type::Compare) {
+                auto sub = SE.getMinusSCEV(node, rhs->node);
+                if (auto cst = dyn_cast<SCEVConstant>(sub)) {
+                    // the two solves are equivalent to each other
+                    if (cst->getAPInt().isZero()) {
+                        // iv = a or iv = a
+                        //   also iv != a or iv != a
+                        if (isEqual == rhs->isEqual)
+                            return shared_from_this();
+                        else {
+                            // iv = a or iv != a
+                            return Constraints::all();
+                        }
                     } else {
-                        assert(isEqual);
-                        assert(!rhs->isEqual);
-                        return rhs;
+                        // the two solves are guaranteed to be distinct
+                        // iv == 0 or iv == 1
+                        if (isEqual && rhs->isEqual) {
+                            SetTy vals;
+                            insert(vals, shared_from_this());
+                            insert(vals, rhs);
+                            return std::make_shared<Constraints>(Type::Union,
+       vals); } else if (!isEqual && !rhs->isEqual) {
+                            // iv != 0 or iv != 1
+                            return Constraints::all();
+                        } else if (!isEqual) {
+                            assert(rhs->isEqual);
+                            // iv != 0 or iv == 1
+                            return shared_from_this();
+                        } else {
+                            assert(isEqual);
+                            assert(!rhs->isEqual);
+                            return rhs;
+                        }
                     }
                 }
+                SetTy vals;
+                insert(vals, shared_from_this());
+                insert(vals, rhs);
+                return std::make_shared<Constraints>(Type::Union, vals);
             }
-            SetTy vals;
-            insert(vals, shared_from_this());
-            insert(vals, rhs);
-            return std::make_shared<Constraints>(Type::Union, vals);
-        }
-        if (ty == Type::Union && rhs->ty == Type::Union) {
-            SetTy vals = values;
-            for (const auto &v : rhs->values)
-                insert(vals, v);
-            return std::make_shared<Constraints>(Type::Union, vals);
-        }
-        if (rhs->ty == Type::Union) {
-            SetTy vals = rhs->values;
-            insert(vals, shared_from_this());
-            return std::make_shared<Constraints>(Type::Union, vals);
-        }
-        if (ty == Type::Union) {
-            SetTy vals = values;
-            insert(vals, rhs);
-            return std::make_shared<Constraints>(Type::Union, vals);
-        }
-        // (m and a and b and d) or (m and a and c and e ...) -> m and a and ( (b and d) or (c and e))
-        if (ty == Type::Intersect && rhs->ty == Type::Intersect) {
-            SetTy intersection = values;
-            set_subtract(intersection, rhs->values);
-            if (intersection.size() != 0) {
-                InnerTy other_lhs = remove(intersection);
-                InnerTy other_rhs = rhs->remove(intersection);
-                InnerTy remainder;
-                if (intersection.size() == 1)
-                    remainder = intersection[0];
-                else {
-                    remainder = std::make_shared<Constraints>(Type::Intersect, intersection);
-                }
-                return remainder->andB(other_lhs->orB(other_rhs, SE), SE);
+            if (ty == Type::Union && rhs->ty == Type::Union) {
+                SetTy vals = values;
+                for (const auto &v : rhs->values)
+                    insert(vals, v);
+                return std::make_shared<Constraints>(Type::Union, vals);
             }
-            SetTy vals;
-            insert(vals, shared_from_this());
-            insert(vals, rhs);
-            return std::make_shared<Constraints>(Type::Union, vals);
-        }
-        llvm_unreachable("Illegal predicate state");
-*/
-    }
-    InnerTy andB(const InnerTy rhs, ScalarEvolution& SE) const {
-        if (*rhs == *this) return shared_from_this();
-        if (rhs->isNone()) return rhs;
-        if (rhs->isAll()) return shared_from_this();
-        if (isNone()) return shared_from_this();
-        if (isAll()) return rhs;
-
-        if (ty == Type::Compare && rhs->ty == Type::Compare) {
-            auto sub = SE.getMinusSCEV(node, rhs->node);
-            if (auto cst = dyn_cast<SCEVConstant>(sub)) {
-                // the two solves are equivalent to each other
-                if (cst->getAPInt().isZero()) {
-                    // iv = a and iv = a    
-                    //   also iv != a and iv != a
-                    if (isEqual == rhs->isEqual)
-                        return shared_from_this();
+            if (rhs->ty == Type::Union) {
+                SetTy vals = rhs->values;
+                insert(vals, shared_from_this());
+                return std::make_shared<Constraints>(Type::Union, vals);
+            }
+            if (ty == Type::Union) {
+                SetTy vals = values;
+                insert(vals, rhs);
+                return std::make_shared<Constraints>(Type::Union, vals);
+            }
+            // (m and a and b and d) or (m and a and c and e ...) -> m and a and
+       ( (b and d) or (c and e)) if (ty == Type::Intersect && rhs->ty ==
+       Type::Intersect) { SetTy intersection = values;
+                set_subtract(intersection, rhs->values);
+                if (intersection.size() != 0) {
+                    InnerTy other_lhs = remove(intersection);
+                    InnerTy other_rhs = rhs->remove(intersection);
+                    InnerTy remainder;
+                    if (intersection.size() == 1)
+                        remainder = intersection[0];
                     else {
-                        // iv = a and iv != a
-                        return Constraints::none();
+                        remainder =
+       std::make_shared<Constraints>(Type::Intersect, intersection);
                     }
-                } else {
-                    // the two solves are guaranteed to be distinct
-                    // iv == 0 and iv == 1
-                    if (isEqual && rhs->isEqual) {
-                        return Constraints::none();
-
-                    } else if (!isEqual && !rhs->isEqual) {
-                        // iv != 0 and iv != 1
-                        SetTy vals;
-                        insert(vals, shared_from_this());
-                        insert(vals, rhs);
-                        return std::make_shared<Constraints>(Type::Intersect, vals);
-                    } else if (!isEqual) {
-                        assert(rhs->isEqual);
-                        // iv != 0 and iv == 1
-                        return rhs;;
-                    } else {
-                        // iv == 0 and iv != 1
-                        assert(isEqual);
-                        assert(!rhs->isEqual);
-                        return shared_from_this();
-                    }
+                    return remainder->andB(other_lhs->orB(other_rhs, SE), SE);
                 }
+                SetTy vals;
+                insert(vals, shared_from_this());
+                insert(vals, rhs);
+                return std::make_shared<Constraints>(Type::Union, vals);
             }
+            llvm_unreachable("Illegal predicate state");
+    */
+  }
+  InnerTy andB(const InnerTy rhs, ScalarEvolution &SE) const {
+    if (*rhs == *this)
+      return shared_from_this();
+    if (rhs->isNone())
+      return rhs;
+    if (rhs->isAll())
+      return shared_from_this();
+    if (isNone())
+      return shared_from_this();
+    if (isAll())
+      return rhs;
+
+    if (ty == Type::Compare && rhs->ty == Type::Compare) {
+      auto sub = SE.getMinusSCEV(node, rhs->node);
+      if (auto cst = dyn_cast<SCEVConstant>(sub)) {
+        // the two solves are equivalent to each other
+        if (cst->getValue()->isZero()) {
+          // iv = a and iv = a
+          //   also iv != a and iv != a
+          if (isEqual == rhs->isEqual)
+            return shared_from_this();
+          else {
+            // iv = a and iv != a
+            return Constraints::none();
+          }
+        } else {
+          // the two solves are guaranteed to be distinct
+          // iv == 0 and iv == 1
+          if (isEqual && rhs->isEqual) {
+            return Constraints::none();
+
+          } else if (!isEqual && !rhs->isEqual) {
+            // iv != 0 and iv != 1
             SetTy vals;
             insert(vals, shared_from_this());
             insert(vals, rhs);
             return std::make_shared<Constraints>(Type::Intersect, vals);
+          } else if (!isEqual) {
+            assert(rhs->isEqual);
+            // iv != 0 and iv == 1
+            return rhs;
+            ;
+          } else {
+            // iv == 0 and iv != 1
+            assert(isEqual);
+            assert(!rhs->isEqual);
+            return shared_from_this();
+          }
         }
-        if (ty == Type::Intersect && rhs->ty == Type::Intersect) {
-            SetTy vals = values;
-            for (const auto &v : rhs->values)
-                insert(vals, v);
-            return std::make_shared<Constraints>(Type::Intersect, vals);
-        }
-        if (ty == Type::Intersect && rhs->ty == Type::Compare) {
-            SetTy vals;
-			// Force internal merging to do individual compares
-			bool foldedIn = false;
-			for (const auto &v : values) {
-				assert(v->ty != Type::Intersect);
-				assert(v->ty != Type::All);
-				assert(v->ty != Type::None);
-				if (foldedIn) {
-					insert(vals, v);
-					continue;
-				}
-				// this is either a compare or a union
-				auto tmp = rhs->andB(v, SE);
-				switch (tmp->ty) {
-					case Type::Union:
-					case Type::All:
-						llvm_unreachable("Impossible");
-					case Type::None:
-						return Constraints::none();
-					case Type::Compare:
-						insert(vals, tmp);
-						foldedIn = true;
-						break;
-					// if intersected, these two were not foldable, try folding into later
-					case Type::Intersect:{
-						insert(vals, v);
-					}
-				}
-			}
-			if (!foldedIn)
-              insert(vals, rhs);
-            return std::make_shared<Constraints>(Type::Intersect, vals);
-        }
-        if (ty == Type::Intersect && rhs->ty == Type::Union) {
-            SetTy unionVals = rhs->values;
-			bool changed = false;
-			for (const auto &iv : values) {
-            	SetTy nextunionVals;
-				for (auto &uv : unionVals) {
-				
-					auto tmp = iv->andB(uv, SE);
-					switch (tmp->ty) {
-						case Type::Compare:
-						case Type::Union:
-						case Type::None:
-							insert(nextunionVals, tmp);
-							changed = true;
-							break;
-						case Type::Intersect:
-							insert(nextunionVals, uv);
-							break;
-						case Type::All:
-							llvm_unreachable("Impossible");
-					}
-
-				}
-				unionVals = nextunionVals;
-			}
-
-			auto cur = rhs;
-			if (changed) {
-			cur = Constraints::all();
-			for (auto uv : unionVals)
-				cur = cur->orB(uv, SE);
-		
-			if (cur->ty != Type::Union)
-				return andB(cur, SE);
-			}
-			
-			SetTy vals = values;
-			insert(vals, cur);
-			return std::make_shared<Constraints>(Type::Intersect, vals);
-		}
-		// Handled above via symmetry
-        if (rhs->ty == Type::Intersect) {
-			return rhs->andB(shared_from_this(), SE);
-        }
-        // (m or a or b or d) and (m or a or c or e ...) -> m or a or ( (b or d) and (c or e))
-        if (ty == Type::Union && rhs->ty == Type::Union) {
-            SetTy intersection = values;
-            set_subtract(intersection, rhs->values);
-            if (intersection.size() != 0) {
-                InnerTy other_lhs = remove(intersection);
-                InnerTy other_rhs = rhs->remove(intersection);
-                InnerTy remainder;
-                if (intersection.size() == 1)
-                    remainder = *intersection.begin();
-                else {
-                    remainder = std::make_shared<Constraints>(Type::Union, intersection);
-                }
-                return remainder->orB(other_lhs->andB(other_rhs, SE), SE);
-            }
-            SetTy vals;
-            insert(vals, shared_from_this());
-            insert(vals, rhs);
-            auto res = std::make_shared<Constraints>(Type::Intersect, vals);
-			llvm::errs() << " res: " << *res << "lhs: "<< *this << " rhs " << *rhs << " eq " << (*this == *rhs) << "\n";
-			return res;
-        }
-        llvm_unreachable("Illegal predicate state");
+      }
+      SetTy vals;
+      insert(vals, shared_from_this());
+      insert(vals, rhs);
+      return std::make_shared<Constraints>(Type::Intersect, vals);
     }
-    // what this would be like when removing the following list of constraints
-    InnerTy remove(const SetTy& sub) const {
-        assert(ty == Type::Union);
-        assert(ty == Type::Intersect);
-        SetTy res = values;
-		set_subtract(res, sub);
-        // res.set_subtract(sub);
-        if (res.size() == 0) {
-            if (ty == Type::Union)
-                return Constraints::none();
-            else
-                return Constraints::all();
-        } else if (res.size() == 1) {
-			return *res.begin();
-		} else {
-        	return std::make_shared<Constraints>(ty, res);
-		}
+    if (ty == Type::Intersect && rhs->ty == Type::Intersect) {
+      SetTy vals = values;
+      for (const auto &v : rhs->values)
+        insert(vals, v);
+      return std::make_shared<Constraints>(Type::Intersect, vals);
     }
-	SmallVector<Value*, 1> allSolutions(SCEVExpander &Exp, llvm::Type* T, Instruction* IP) const;
-	bool canEvaluateSolutions() const {
-		switch (ty) {
-			case Type::None:
-				return true;
-			case Type::All:
-				return false;
-			case Type::Compare:
-				if (isEqual) {
-					return true;
-				}
-				return false;
-			case Type::Union:{
-				for (auto v : values)
-					if (!v->canEvaluateSolutions())
-						return false;
-				return true;
-			}
-			case Type::Intersect:
-				return false;
-		}
-	}
+    if (ty == Type::Intersect && rhs->ty == Type::Compare) {
+      SetTy vals;
+      // Force internal merging to do individual compares
+      bool foldedIn = false;
+      for (const auto &v : values) {
+        assert(v->ty != Type::Intersect);
+        assert(v->ty != Type::All);
+        assert(v->ty != Type::None);
+        if (foldedIn) {
+          insert(vals, v);
+          continue;
+        }
+        // this is either a compare or a union
+        auto tmp = rhs->andB(v, SE);
+        switch (tmp->ty) {
+        case Type::Union:
+        case Type::All:
+          llvm_unreachable("Impossible");
+        case Type::None:
+          return Constraints::none();
+        case Type::Compare:
+          insert(vals, tmp);
+          foldedIn = true;
+          break;
+        // if intersected, these two were not foldable, try folding into later
+        case Type::Intersect: {
+          insert(vals, v);
+        }
+        }
+      }
+      if (!foldedIn)
+        insert(vals, rhs);
+      return std::make_shared<Constraints>(Type::Intersect, vals);
+    }
+    if (ty == Type::Intersect && rhs->ty == Type::Union) {
+      SetTy unionVals = rhs->values;
+      bool changed = false;
+      for (const auto &iv : values) {
+        SetTy nextunionVals;
+        for (auto &uv : unionVals) {
+
+          auto tmp = iv->andB(uv, SE);
+          switch (tmp->ty) {
+          case Type::Compare:
+          case Type::Union:
+          case Type::None:
+            insert(nextunionVals, tmp);
+            changed = true;
+            break;
+          case Type::Intersect:
+            insert(nextunionVals, uv);
+            break;
+          case Type::All:
+            llvm_unreachable("Impossible");
+          }
+        }
+        unionVals = nextunionVals;
+      }
+
+      auto cur = rhs;
+      if (changed) {
+        cur = Constraints::all();
+        for (auto uv : unionVals)
+          cur = cur->orB(uv, SE);
+
+        if (cur->ty != Type::Union)
+          return andB(cur, SE);
+      }
+
+      SetTy vals = values;
+      insert(vals, cur);
+      return std::make_shared<Constraints>(Type::Intersect, vals);
+    }
+    // Handled above via symmetry
+    if (rhs->ty == Type::Intersect) {
+      return rhs->andB(shared_from_this(), SE);
+    }
+    // (m or a or b or d) and (m or a or c or e ...) -> m or a or ( (b or d) and
+    // (c or e))
+    if (ty == Type::Union && rhs->ty == Type::Union) {
+      SetTy intersection = values;
+      set_subtract(intersection, rhs->values);
+      if (intersection.size() != 0) {
+        InnerTy other_lhs = remove(intersection);
+        InnerTy other_rhs = rhs->remove(intersection);
+        InnerTy remainder;
+        if (intersection.size() == 1)
+          remainder = *intersection.begin();
+        else {
+          remainder = std::make_shared<Constraints>(Type::Union, intersection);
+        }
+        return remainder->orB(other_lhs->andB(other_rhs, SE), SE);
+      }
+      SetTy vals;
+      insert(vals, shared_from_this());
+      insert(vals, rhs);
+      auto res = std::make_shared<Constraints>(Type::Intersect, vals);
+      llvm::errs() << " res: " << *res << "lhs: " << *this << " rhs " << *rhs
+                   << " eq " << (*this == *rhs) << "\n";
+      return res;
+    }
+    llvm_unreachable("Illegal predicate state");
+  }
+  // what this would be like when removing the following list of constraints
+  InnerTy remove(const SetTy &sub) const {
+    assert(ty == Type::Union);
+    assert(ty == Type::Intersect);
+    SetTy res = values;
+    set_subtract(res, sub);
+    // res.set_subtract(sub);
+    if (res.size() == 0) {
+      if (ty == Type::Union)
+        return Constraints::none();
+      else
+        return Constraints::all();
+    } else if (res.size() == 1) {
+      return *res.begin();
+    } else {
+      return std::make_shared<Constraints>(ty, res);
+    }
+  }
+  SmallVector<Value *, 1> allSolutions(SCEVExpander &Exp, llvm::Type *T,
+                                       Instruction *IP) const;
+  bool canEvaluateSolutions() const {
+    switch (ty) {
+    case Type::None:
+      return true;
+    case Type::All:
+      return false;
+    case Type::Compare:
+      if (isEqual) {
+        return true;
+      }
+      return false;
+    case Type::Union: {
+      for (auto v : values)
+        if (!v->canEvaluateSolutions())
+          return false;
+      return true;
+    }
+    case Type::Intersect:
+      return false;
+    }
+  }
 };
 
 raw_ostream &operator<<(raw_ostream &os, const Constraints &c) {
-  switch(c.ty) {
-	case Constraints::Type::All: return os << "All";
-	case Constraints::Type::None: return os << "None";
-	case Constraints::Type::Union: {
-		os << "(Union ";
-		for (auto v : c.values)
-			os << *v << ", ";
-		os << ")";
-		return os;
-	}
-	case Constraints::Type::Intersect: {
-		os << "(Intersect ";
-		for (auto v : c.values)
-			os << *v << ", ";
-		os << ")";
-		return os;
-	}
-	case Constraints::Type::Compare: {
-		if (c.isEqual) {
-			os << "(eq " << *c.node << ")";
-		} else {
-			os << "(ne " << *c.node << ")";
-		}
-		return os;
-	}
+  switch (c.ty) {
+  case Constraints::Type::All:
+    return os << "All";
+  case Constraints::Type::None:
+    return os << "None";
+  case Constraints::Type::Union: {
+    os << "(Union ";
+    for (auto v : c.values)
+      os << *v << ", ";
+    os << ")";
+    return os;
+  }
+  case Constraints::Type::Intersect: {
+    os << "(Intersect ";
+    for (auto v : c.values)
+      os << *v << ", ";
+    os << ")";
+    return os;
+  }
+  case Constraints::Type::Compare: {
+    if (c.isEqual) {
+      os << "(eq " << *c.node << ")";
+    } else {
+      os << "(ne " << *c.node << ")";
+    }
+    return os;
+  }
+  }
 }
+
+SmallVector<Value *, 1> Constraints::allSolutions(SCEVExpander &Exp,
+                                                  llvm::Type *T,
+                                                  Instruction *IP) const {
+  switch (ty) {
+  case Type::None:
+    return {};
+  case Type::All:
+    llvm::errs() << *this << "\n";
+    llvm_unreachable("All not handled");
+  case Type::Compare:
+    if (isEqual) {
+      return {Exp.expandCodeFor(node, T, IP)};
+    }
+    llvm::errs() << *this << "\n";
+    llvm_unreachable("Constraint ne not handled");
+  case Type::Union: {
+    SmallVector<Value *, 1> vals;
+    for (auto v : values)
+      for (auto sol : v->allSolutions(Exp, T, IP))
+        vals.push_back(sol);
+    return vals;
+  }
+  case Type::Intersect:
+    llvm::errs() << *this << "\n";
+    llvm_unreachable("Intersect not handled");
+  }
 }
-	
-SmallVector<Value*, 1> Constraints::allSolutions(SCEVExpander &Exp, llvm::Type* T, Instruction* IP) const {
-		switch (ty) {
-			case Type::None:
-				return {};
-			case Type::All:
-				llvm::errs() << *this << "\n";
-				llvm_unreachable("All not handled");
-			case Type::Compare:
-				if (isEqual) {
-					return {Exp.expandCodeFor(node, T, IP)};
-				}
-				llvm::errs() << *this << "\n";
-				llvm_unreachable("Constraint ne not handled");
-			case Type::Union:{
-				SmallVector<Value*, 1> vals;
-				for (auto v : values)
-					for (auto sol : v->allSolutions(Exp, T, IP))
-						vals.push_back(sol);
-				return vals;
-			}
-			case Type::Intersect:
-				llvm::errs() << *this << "\n";
-				llvm_unreachable("Intersect not handled");
-		}
-	}
 
 void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
                       SetVector<BasicBlock *> &toDenseBlocks) {
@@ -5401,11 +5416,10 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
   while (!Q.empty()) {
     auto cur = Q.pop_back_val();
     SetVector<Instruction *> prev(Q.begin(), Q.end());
-    llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
-    llvm::errs() << "cur: " << *cur << "\n";
+    // llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
     auto changed = fixSparse_inner(cur, F, Q, DT, SE, LI, DL);
     (void)changed;
-    
+    /*
     if (changed) {
     llvm::errs() << "changed: " << *changed << "\n";
 
@@ -5414,7 +5428,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
         llvm::errs() << " + " << *I << "\n";
     llvm::errs() << F << "\n\n";
     }
-    
+    */
   }
 
   SmallVector<std::pair<BasicBlock *, BranchInst *>, 1> sparseBlocks;
@@ -5446,40 +5460,46 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
                   continue;
                 auto L = LI.getLoopFor(blk);
                 if (!L) {
-                    legalToSparse = false;
-                    llvm::errs() << " F: " << F << "\n";
-                    llvm::errs() << " Sparsification disabled, could not find loop for : " << *blk << "\n";
-                    break;
+                  legalToSparse = false;
+                  llvm::errs() << " F: " << F << "\n";
+                  llvm::errs()
+                      << " Sparsification disabled, could not find loop for : "
+                      << *blk << "\n";
+                  break;
                 }
                 auto idx = L->getCanonicalInductionVariable();
                 if (!idx) {
-                    legalToSparse = false;
-                    llvm::errs() << " F: " << F << "\n";
-                    llvm::errs() << " L: " << *L << "\n";
-                    llvm::errs() << " Sparsification disabled, could not find loop index " << *L->getHeader() << "\n";
-                    break;
+                  legalToSparse = false;
+                  llvm::errs() << " F: " << F << "\n";
+                  llvm::errs() << " L: " << *L << "\n";
+                  llvm::errs()
+                      << " Sparsification disabled, could not find loop index "
+                      << *L->getHeader() << "\n";
+                  break;
                 }
                 assert(idx);
                 auto preheader = L->getLoopPreheader();
                 if (!preheader) {
-                    legalToSparse = false;
-                    llvm::errs() << " F: " << F << "\n";
-                    llvm::errs() << " L: " << *L << "\n";
-                    llvm::errs() << " Sparsification disabled, could not find loop preheader\n";
-                    break;
+                  legalToSparse = false;
+                  llvm::errs() << " F: " << F << "\n";
+                  llvm::errs() << " L: " << *L << "\n";
+                  llvm::errs() << " Sparsification disabled, could not find "
+                                  "loop preheader\n";
+                  break;
                 }
                 sparseBlocks.emplace_back(blk, br);
               }
 
   if (!legalToSparse) {
-      llvm::errs() << " was found not legal to sparsify\n";
-      return;
-    }
+    llvm::errs() << " was found not legal to sparsify\n";
+    return;
+  }
 
   // block, bound, scev for indexset
-  std::map<Loop *, std::pair<std::pair<PHINode *, PHINode *>,
-                             SmallVector<std::pair<
-                                 BasicBlock *, std::shared_ptr<const Constraints>>>>>
+  std::map<Loop *,
+           std::pair<std::pair<PHINode *, PHINode *>,
+                     SmallVector<std::pair<
+                         BasicBlock *, std::shared_ptr<const Constraints>>>>>
       forSparsification;
 
   for (auto [blk, br] : sparseBlocks) {
@@ -5522,95 +5542,98 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     // if! negated the result may become more false if negated the
     // result may become more true
 
-	// 
-    std::function<std::shared_ptr<const Constraints>(Value *, std::shared_ptr<const Constraints>)>
+    //
+    std::function<std::shared_ptr<const Constraints>(
+        Value *, std::shared_ptr<const Constraints>)>
         getSparseConditions =
-            [&](Value *val, std::shared_ptr<const Constraints> defaultFloat) -> std::shared_ptr<const Constraints> {
-
+            [&](Value *val, std::shared_ptr<const Constraints> defaultFloat)
+        -> std::shared_ptr<const Constraints> {
       if (auto I = dyn_cast<Instruction>(val)) {
         // Binary `and` is a bit-wise `umin`.
         if (I->getOpcode() == Instruction::And) {
-          auto res = getSparseConditions(I->getOperand(0), Constraints::all())->
-					andB(getSparseConditions(I->getOperand(1), Constraints::all()), SE);
-	  	  llvm::errs() << " val(and): " << *val << " -- " << *res << " \n";
-		  return res;
+          auto res = getSparseConditions(I->getOperand(0), Constraints::all())
+                         ->andB(getSparseConditions(I->getOperand(1),
+                                                    Constraints::all()),
+                                SE);
+          return res;
         }
 
         // Binary `or` is a bit-wise `umax`.
         if (I->getOpcode() == Instruction::Or) {
-          auto res = getSparseConditions(I->getOperand(0), Constraints::none())->
-					orB(getSparseConditions(I->getOperand(1), Constraints::none()), SE);
-	  	  llvm::errs() << " val(or): " << *val << " -- " << *res << " \n";
-		  return res;
+          auto res = getSparseConditions(I->getOperand(0), Constraints::none())
+                         ->orB(getSparseConditions(I->getOperand(1),
+                                                   Constraints::none()),
+                               SE);
+          return res;
         }
 
         // cmp x, 1.0 ->   false/true
         if (auto icmp = dyn_cast<ICmpInst>(I)) {
-		  auto lhs = SE.getSCEVAtScope(icmp->getOperand(0), L);
-		  auto rhs = SE.getSCEVAtScope(icmp->getOperand(1), L);
+          auto lhs = SE.getSCEVAtScope(icmp->getOperand(0), L);
+          auto rhs = SE.getSCEVAtScope(icmp->getOperand(1), L);
 
-		  auto sub1 = SE.getMinusSCEV(lhs, rhs);
+          auto sub1 = SE.getMinusSCEV(lhs, rhs);
 
-		  if (auto add = dyn_cast<SCEVAddRecExpr>(sub1)) {
-			if (add->getLoop() == L) {
-			  if (add->isAffine()) {
-				// 0 === A + B * inc -> -A / B = inc
-				auto A = add->getStart();
-				if (auto B = dyn_cast<SCEVConstant>(add->getStepRecurrence(SE))) {
+          if (auto add = dyn_cast<SCEVAddRecExpr>(sub1)) {
+            if (add->getLoop() == L) {
+              if (add->isAffine()) {
+                // 0 === A + B * inc -> -A / B = inc
+                auto A = add->getStart();
+                if (auto B =
+                        dyn_cast<SCEVConstant>(add->getStepRecurrence(SE))) {
 
-				  auto MA = A;
-				  if (B->getAPInt().isNegative())
-					B = cast<SCEVConstant>(SE.getNegativeSCEV(B));
-				  else
-					SE.getNegativeSCEV(A);
-				  auto div = SE.getUDivExpr(MA, B);
-				  auto div_e = SE.getUDivExactExpr(MA, B);
-				  if (div == div_e) {
-					auto res = std::make_shared<Constraints>(div, icmp->getPredicate() == ICmpInst::ICMP_EQ);
-	  				llvm::errs() << " val(icmp): " << *val << " -- " << *res << " \n";
-					return res;
-				  }
-				}
-			  }
-			}
-		    llvm::errs() << " not sparse solvable " << *sub1 << "\n";
-		    legal = false;
-		  }
+                  auto MA = A;
+                  if (B->getAPInt().isNegative())
+                    B = cast<SCEVConstant>(SE.getNegativeSCEV(B));
+                  else
+                    SE.getNegativeSCEV(A);
+                  auto div = SE.getUDivExpr(MA, B);
+                  auto div_e = SE.getUDivExactExpr(MA, B);
+                  if (div == div_e) {
+                    auto res = std::make_shared<Constraints>(
+                        div, icmp->getPredicate() == ICmpInst::ICMP_EQ);
+                    return res;
+                  }
+                }
+              }
+            }
+            llvm::errs() << " not sparse solvable " << *sub1 << "\n";
+            legal = false;
+          }
         }
 
-		if (auto fcmp = dyn_cast<FCmpInst>(I)) {
-	  	  auto res = defaultFloat;
-	      llvm::errs() << " val(fcmp): " << *val << " -- " << *res << " \n";
-		  return res;
+        if (auto fcmp = dyn_cast<FCmpInst>(I)) {
+          auto res = defaultFloat;
+          return res;
 
-		  if (fcmp->getPredicate() == CmpInst::FCMP_OEQ || fcmp->getPredicate() == CmpInst::FCMP_UEQ) {
-			  llvm::errs() << " val(fcmp): " << *val << " -- All\n";
-			  return Constraints::all();
-		  } else if (fcmp->getPredicate() == CmpInst::FCMP_ONE || fcmp->getPredicate() == CmpInst::FCMP_UNE) {
-			  llvm::errs() << " val(fcmp): " << *val << " -- None\n";
-			  return Constraints::none();
-
-		  }
-
-		}
-
+          if (fcmp->getPredicate() == CmpInst::FCMP_OEQ ||
+              fcmp->getPredicate() == CmpInst::FCMP_UEQ) {
+            return Constraints::all();
+          } else if (fcmp->getPredicate() == CmpInst::FCMP_ONE ||
+                     fcmp->getPredicate() == CmpInst::FCMP_UNE) {
+            return Constraints::none();
+          }
+        }
       }
 
-	  llvm::errs() << " val(unknown): " << *val << " -- All\n";
-	  return Constraints::all();
+      llvm::errs() << " not sparse solvable " << *val << "\n";
+      legal = false;
+      return Constraints::all();
     };
 
-    auto solutions = getSparseConditions(cond, negated ? Constraints::all() : Constraints::none());
-	if (!negated) solutions = solutions->notB();
+    auto solutions = getSparseConditions(cond, negated ? Constraints::all()
+                                                       : Constraints::none());
+    if (!negated)
+      solutions = solutions->notB();
     if (!legal)
       continue;
 
-	if (!solutions->canEvaluateSolutions()) {
-		llvm::errs() << " not sparse solvable " << *solutions << "\n";
-		legal = false;
-		continue;
-	}
-	llvm::errs() << " found solvable solutions " << *solutions << "\n";
+    if (!solutions->canEvaluateSolutions()) {
+      llvm::errs() << " not sparse solvable " << *solutions << "\n";
+      legal = false;
+      continue;
+    }
+    llvm::errs() << " found solvable solutions " << *solutions << "\n";
 
     if (forSparsification.count(L) == 0) {
       {
@@ -5666,7 +5689,13 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     CodeExtractor ext(DT, *L);
     CodeExtractorAnalysisCache cache(F);
     SetVector<Value *> Inputs, Outputs;
+#if LLVM_VERSION_MAJOR >= 14
     auto F2 = ext.extractCodeRegion(cache, Inputs, Outputs);
+#else
+    SetVector<Value *> Sinking;
+    ext.findInputsOutputs(Inputs, Outputs, Sinking);
+    auto F2 = ext.extractCodeRegion(cache);
+#endif
     assert(F2);
     F2->addFnAttr(Attribute::AlwaysInline);
 
