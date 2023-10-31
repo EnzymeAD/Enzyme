@@ -277,6 +277,10 @@ static inline llvm::MDNode *hasMetadata(const llvm::Instruction *O,
                                         llvm::StringRef kind) {
   return O->getMetadata(kind);
 }
+static inline llvm::MDNode *hasMetadata(const llvm::Instruction *O,
+                                        unsigned kind) {
+  return O->getMetadata(kind);
+}
 
 /// Potential return type of generated functions
 enum class ReturnType {
