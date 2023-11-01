@@ -1,4 +1,7 @@
+#include "blas-tblgen.h"
+#include "caching.h"
 #include "datastructures.h"
+#include "enzyme-tblgen.h"
 #include "llvm/Support/raw_ostream.h"
 
 void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
@@ -60,7 +63,7 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
     auto name = nameVec[arg];
     os << "  bool active_" << name << " = !gutils->isConstantValue(arg_" << name
        << ");\n";
-    os << "  if (EnzymeRuntimeActivityCheck && active_" << name
+    os << "  if (!shadow && EnzymeRuntimeActivityCheck && active_" << name
        << ") return true;\n";
   }
 
@@ -68,10 +71,53 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
 
   for (size_t argPos = (lv23 ? 1 : 0); argPos < typeMap.size(); argPos++) {
     auto users = argUsers.lookup(argPos);
-    auto name = nameVec[argPos];
-    os << "  if (val == arg_" << name << " && need_" << name << " && !cache_"
-       << name << ")\n"
-       << "     return true;\n";
+    auto argname = nameVec[argPos];
+
+    os << "  if (val == arg_" << argname << ") {\n";
+
+    // We need the shadow of the value we're updating
+    if (typeMap[argPos] == ArgType::fp) {
+      os << "    if (shadow && byRef && active_" << argname
+         << ") return true;\n";
+    } else if (typeMap[argPos] == ArgType::vincData ||
+               typeMap[argPos] == ArgType::mldData) {
+      for (auto derivOp : pattern.getRules()) {
+        if (hasAdjoint(derivOp.getRuleDag(), argname)) {
+          os << "    if (shadow && active_"
+             << nameVec[derivOp.getHandledArgIdx()] << ") return true;\n";
+        } else {
+          bool isNoop = false;
+          if (DagInit *resultRoot = dyn_cast<DagInit>(derivOp.getRuleDag())) {
+            auto opName = resultRoot->getOperator()->getAsString();
+            auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
+            if (Def->getName() == "noop" || Def->getName() == "inactive") {
+              isNoop = true;
+            }
+          }
+          if (DefInit *DefArg = dyn_cast<DefInit>(derivOp.getRuleDag())) {
+            auto Def = DefArg->getDef();
+            if (Def->getName() == "noop" || Def->getName() == "inactive") {
+              isNoop = true;
+            }
+          }
+          // updates to a vector/matrix must definitionally use the shadow of
+          // the input, unless a noop-update
+          if (!isNoop) {
+            if (derivOp.getHandledArgIdx() == argPos) {
+              llvm::errs() << " fnname: " << name << " argPos: " << argPos
+                           << " argname: " << argname
+                           << " rule: " << *derivOp.getRuleDag() << "\n";
+            }
+            assert(derivOp.getHandledArgIdx() != argPos);
+          }
+        }
+      }
+    }
+
+    os << "    if (!shadow && need_" << argname << " && !cache_" << argname
+       << ")\n"
+       << "      return true;\n";
+    os << "  }\n";
   }
 
   // If any of the rule uses DiffeRet, the primary function has a ret val

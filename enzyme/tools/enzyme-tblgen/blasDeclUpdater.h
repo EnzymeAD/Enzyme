@@ -3,6 +3,8 @@
 void emit_attributeBLASCaller(ArrayRef<TGPattern> blasPatterns,
                               raw_ostream &os) {
   os << "void attributeBLAS(BlasInfo blas, llvm::Function *F) {             \n";
+  os << "  if (!F->empty())\n";
+  os << "    return;\n";
   for (auto &&pattern : blasPatterns) {
     auto name = pattern.getName();
     os << "  if (blas.function == \"" << name << "\") {                   \n"
@@ -17,6 +19,8 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
   bool lv23 = pattern.isBLASLevel2or3();
   os << "void attribute_" << name << "(BlasInfo blas, llvm::Function *F) {\n";
+  os << "  if (!F->empty())\n";
+  os << "    return;\n";
   os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == "
         "\"cublas_\";\n";
   os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
@@ -186,15 +190,20 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
   }
   emit_attributeBLASCaller(newBlasPatterns, os);
 
-  os << "void attributeTablegen(llvm::Function &F) {\n";
+  os << "bool attributeTablegen(llvm::Function &F) {\n";
   os << "  auto name = getFuncName(&F);\n";
+  os << "  auto changed = false;\n";
   os << "  auto blasMetaData = extractBLAS(name);\n";
   os << "  #if LLVM_VERSION_MAJOR >= 16\n";
-  os << "    if (blasMetaData.has_value())\n";
+  os << "    if (F.empty() && blasMetaData.has_value()) {\n";
   os << "      attributeBLAS(blasMetaData.value(), &F);\n";
+  os << "      changed = true;\n";
+  os << "    }\n";
   os << "  #else\n";
-  os << "    if (blasMetaData.hasValue())\n";
+  os << "    if (F.empty() && blasMetaData.hasValue()) {\n";
   os << "      attributeBLAS(blasMetaData.getValue(), &F);\n";
+  os << "      changed = true;\n";
+  os << "    }\n";
   os << "  #endif\n";
   {
     const auto &patterns = RK.getAllDerivedDefinitions("CallPattern");
@@ -209,7 +218,9 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
         prev = true;
       }
       os << ") && F.getFunctionType()->getNumParams() == " << tree->getNumArgs()
-         << " ){\n";
+         << " ){\n"
+         << "    changed = true;\n";
+
       for (auto attr : *pattern->getValueAsListInit("FnAttrs")) {
         auto attrDef = cast<DefInit>(attr)->getDef();
         auto attrName = attrDef->getValueAsString("name");
@@ -235,7 +246,6 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
       }
       ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
       for (auto argOpEn : enumerate(*argOps)) {
-        size_t argIdx = argOpEn.index();
         if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
           auto opName = resultRoot->getOperator()->getAsString();
           auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
@@ -252,6 +262,6 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
       os << "  }\n";
     }
   }
-
+  os << "  return changed;\n";
   os << "}\n";
 }

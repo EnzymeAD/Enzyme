@@ -277,6 +277,10 @@ static inline llvm::MDNode *hasMetadata(const llvm::Instruction *O,
                                         llvm::StringRef kind) {
   return O->getMetadata(kind);
 }
+static inline llvm::MDNode *hasMetadata(const llvm::Instruction *O,
+                                        unsigned kind) {
+  return O->getMetadata(kind);
+}
 
 /// Potential return type of generated functions
 enum class ReturnType {
@@ -1496,7 +1500,7 @@ static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
   return false;
 }
 
-void attributeKnownFunctions(llvm::Function &F);
+bool attributeKnownFunctions(llvm::Function &F);
 
 llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero = false);
 
@@ -1758,7 +1762,7 @@ static inline bool isSpecialPtr(llvm::Type *Ty) {
   return AddressSpace::FirstSpecial <= AS && AS <= AddressSpace::LastSpecial;
 }
 
-bool collectOffset(llvm::GetElementPtrInst *gep, const llvm::DataLayout &DL,
+bool collectOffset(llvm::GEPOperator *gep, const llvm::DataLayout &DL,
                    unsigned BitWidth,
                    llvm::MapVector<llvm::Value *, llvm::APInt> &VariableOffsets,
                    llvm::APInt &ConstantOffset);

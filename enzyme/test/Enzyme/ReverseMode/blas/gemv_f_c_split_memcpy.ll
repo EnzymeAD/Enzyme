@@ -134,9 +134,9 @@ entry:
 ; CHECK: define internal void @diffef(i8* noalias %y, i8* %"y'", i8* noalias %A, i8* %"A'", i8* noalias %x, i8* %"x'", double* 
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %ret = alloca double
-; CHECK-NEXT:   %byref.transpose.transa = alloca i8
 ; CHECK-NEXT:   %byref.int.one = alloca i64
-; CHECK-NEXT:   %byref.constant.char.N = alloca i8, align 1
+; CHECK-NEXT:   %byref.transpose.transa = alloca i8
+; CHECK-NEXT:   %byref.constant.char.N = alloca i8
 ; CHECK-NEXT:   %byref.constant.fp.1.0 = alloca double
 ; CHECK-NEXT:   %incy = alloca i64, i64 1, align 16
 ; CHECK-NEXT:   %1 = bitcast i64* %incy to i8*
@@ -179,16 +179,6 @@ entry:
 
 ; CHECK: invertentry:                                      ; preds = %entry
 ; CHECK-NEXT:   %15 = bitcast double* %0 to i8*
-; CHECK-NEXT:   %ld.transa = load i8, i8* %malloccall
-; CHECK-DAG:    %[[r0:.+]] = icmp eq i8 %ld.transa, 110
-; CHECK-DAG:    %[[r1:.+]] = select i1 %[[r0]], i8 116, i8 0
-; CHECK-DAG:    %[[r2:.+]] = icmp eq i8 %ld.transa, 78
-; CHECK-DAG:    %[[r3:.+]] = select i1 %[[r2]], i8 84, i8 %[[r1]]
-; CHECK-DAG:    %[[r4:.+]] = icmp eq i8 %ld.transa, 116
-; CHECK-DAG:    %[[r5:.+]] = select i1 %[[r4]], i8 110, i8 %[[r3]]
-; CHECK-DAG:    %[[r6:.+]] = icmp eq i8 %ld.transa, 84
-; CHECK-DAG:    %[[r7:.+]] = select i1 %[[r6]], i8 78, i8 %[[r5]]
-; CHECK-NEXT:   store i8 %23, i8* %byref.transpose.transa
 ; CHECK-NEXT:   store i64 1, i64* %byref.int.one
 ; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
 ; CHECK-NEXT:   %ld.row.trans = load i8, i8* %malloccall, align 1
@@ -200,6 +190,16 @@ entry:
 ; CHECK-NEXT:   %[[r35:.+]] = select i1 %[[r26]], i8* %15, i8* %"y'"
 ; CHECK-NEXT:   %[[r39:.+]] = select i1 %[[r26]], i8* %intcast.int.one, i8* %incy_p
 ; CHECK-NEXT:   call void @dger_64_(i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %[[r27]], i8* %[[r31]], i8* %[[r35]], i8* %[[r39]], i8* %"A'", i8* %lda_p)
+; CHECK-NEXT:   %ld.transa = load i8, i8* %malloccall
+; CHECK-DAG:    %[[r0:.+]] = icmp eq i8 %ld.transa, 110
+; CHECK-DAG:    %[[r1:.+]] = select i1 %[[r0]], i8 116, i8 0
+; CHECK-DAG:    %[[r2:.+]] = icmp eq i8 %ld.transa, 78
+; CHECK-DAG:    %[[r3:.+]] = select i1 %[[r2]], i8 84, i8 %[[r1]]
+; CHECK-DAG:    %[[r4:.+]] = icmp eq i8 %ld.transa, 116
+; CHECK-DAG:    %[[r5:.+]] = select i1 %[[r4]], i8 110, i8 %[[r3]]
+; CHECK-DAG:    %[[r6:.+]] = icmp eq i8 %ld.transa, 84
+; CHECK-DAG:    %[[r7:.+]] = select i1 %[[r6]], i8 78, i8 %[[r5]]
+; CHECK-NEXT:   store i8 %[[r7]], i8* %byref.transpose.transa
 ; CHECK-NEXT:   store i8 78, i8* %byref.constant.char.N, align 1
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
 ; CHECK-NEXT:   %fpcast.constant.fp.1.0 = bitcast double* %byref.constant.fp.1.0 to i8*

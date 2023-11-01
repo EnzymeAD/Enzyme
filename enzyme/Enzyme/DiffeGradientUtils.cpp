@@ -182,11 +182,11 @@ AllocaInst *DiffeGradientUtils::getDifferential(Value *val) {
                /*isTape*/ false);
   }
 #if LLVM_VERSION_MAJOR < 18
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
   if (val->getContext().supportsTypedPointers()) {
 #endif
     assert(differentials[val]->getType()->getPointerElementType() == type);
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
   }
 #endif
 #endif
@@ -520,7 +520,7 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
   }
   Value *tostore = getDifferential(val);
 #if LLVM_VERSION_MAJOR < 18
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
   if (toset->getContext().supportsTypedPointers()) {
 #endif
     if (toset->getType() != tostore->getType()->getPointerElementType()) {
@@ -528,7 +528,7 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
       llvm::errs() << "tostore:" << *tostore << "\n";
     }
     assert(toset->getType() == tostore->getType()->getPointerElementType());
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
   }
 #endif
 #endif
@@ -642,11 +642,11 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 
   bool needsCast = false;
 #if LLVM_VERSION_MAJOR < 18
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
   if (origptr->getContext().supportsTypedPointers()) {
 #endif
     needsCast = origptr->getType()->getPointerElementType() != addingType;
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
   }
 #endif
 #endif

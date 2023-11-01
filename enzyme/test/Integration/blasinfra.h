@@ -67,6 +67,12 @@ enum class cublasOperation_t : char {
   CUBLAS_OP_C = 2
 };
 
+enum class CBLAS_TRANSPOSE : char{
+    CblasNoTrans=111,
+    CblasTrans=112,
+    CblasConjTrans=113
+};
+
 bool is_normal(char c) {
   switch (c) {
   case 'N':
@@ -81,6 +87,10 @@ bool is_normal(char c) {
     return true;
   case (char)cublasOperation_t::CUBLAS_OP_T:
     return false;
+  case (char)CBLAS_TRANSPOSE::CblasNoTrans:
+    return true;
+  case (char)CBLAS_TRANSPOSE::CblasTrans:
+    return false;
   default:
     printf("Illegal isnormal of '%c'\n", c);
     exit(1);
@@ -92,6 +102,18 @@ bool is_normal(cublasOperation_t v) {
   case cublasOperation_t::CUBLAS_OP_N:
     return true;
   case cublasOperation_t::CUBLAS_OP_T:
+    return false;
+  default:
+    printf("Illegal is_normal of '%c'\n", (char)v);
+    exit(1);
+  }
+}
+
+bool is_normal(CBLAS_TRANSPOSE v) {
+  switch(v) {
+  case CBLAS_TRANSPOSE::CblasNoTrans:
+    return true;
+  case CBLAS_TRANSPOSE::CblasTrans:
     return false;
   default:
     printf("Illegal is_normal of '%c'\n", (char)v);
@@ -113,6 +135,10 @@ char transpose(char c) {
     return (char)cublasOperation_t::CUBLAS_OP_T;
   case (char)cublasOperation_t::CUBLAS_OP_T:
     return (char)cublasOperation_t::CUBLAS_OP_N;
+  case (char)CBLAS_TRANSPOSE::CblasNoTrans:
+    return (char)CBLAS_TRANSPOSE::CblasTrans;
+  case (char)CBLAS_TRANSPOSE::CblasTrans:
+    return (char)CBLAS_TRANSPOSE::CblasNoTrans;
   default:
     printf("Illegal transpose of '%c'\n", c);
     exit(1);
@@ -125,6 +151,18 @@ cublasOperation_t transpose(cublasOperation_t v) {
     return cublasOperation_t::CUBLAS_OP_T;
   case cublasOperation_t::CUBLAS_OP_T:
     return cublasOperation_t::CUBLAS_OP_N;
+  default:
+    printf("Illegal transpose of '%c'\n", (char)v);
+    exit(1);
+  }
+}
+
+CBLAS_TRANSPOSE transpose(CBLAS_TRANSPOSE v) {
+  switch(v) {
+  case CBLAS_TRANSPOSE::CblasNoTrans:
+    return CBLAS_TRANSPOSE::CblasTrans;
+  case CBLAS_TRANSPOSE::CblasTrans:
+    return CBLAS_TRANSPOSE::CblasNoTrans;
   default:
     printf("Illegal transpose of '%c'\n", (char)v);
     exit(1);
@@ -216,6 +254,7 @@ struct BlasCall {
   int iarg4;
   int iarg5;
   int iarg6;
+  int iarg7;
   bool operator==(const BlasCall &rhs) const {
 #define CHECK(A)                                                               \
   if (A != rhs.A)                                                              \
@@ -238,6 +277,7 @@ struct BlasCall {
     CHECK(iarg4)
     CHECK(iarg5)
     CHECK(iarg6)
+    CHECK(iarg7)
     return true;
   }
   bool operator!=(const BlasCall &rhs) const { return !(operator==(rhs)); }
@@ -362,6 +402,18 @@ void printty(char v) {
       return;
     }
   }
+  if (v == (char)CBLAS_TRANSPOSE::CblasNoTrans) {
+    printf("CblasNoTrans (%c)", v);
+    return;
+  }
+  if (v == (char)CBLAS_TRANSPOSE::CblasTrans) {
+    printf("CblasTrans (%c)", v);
+    return;
+  }
+  if (v == (char)CBLAS_TRANSPOSE::CblasConjTrans) {
+    printf("CblasConjTrans (%c)", v);
+    return;
+  }
   if (v == (char)cublasOperation_t::CUBLAS_OP_N) {
     printf("CUBLAS_OP_N (%c)", v);
     return;
@@ -390,6 +442,21 @@ void printty(cublasOperation_t v) {
     return;
   case cublasOperation_t::CUBLAS_OP_C:
     printf("CUBLAS_OP_C");
+    return;
+  default:
+    printf("Unknown cublasOperation_t ('%c'=0x%x)", (char)v, (char)v);
+  }
+}
+void printty(CBLAS_TRANSPOSE v) {
+  switch(v) {
+  case CBLAS_TRANSPOSE::CblasNoTrans:
+    printf("CblasNoTrans");
+    return;
+  case CBLAS_TRANSPOSE::CblasTrans:
+    printf("CblasTrans");
+    return;
+  case CBLAS_TRANSPOSE::CblasConjTrans:
+    printf("CblasTrans");
     return;
   default:
     printf("Unknown cublasOperation_t ('%c'=0x%x)", (char)v, (char)v);
@@ -445,6 +512,8 @@ void printcall(BlasCall rcall) {
     printty(rcall.iarg5);
     printf(", KU=");
     printty(rcall.iarg6);
+    printf(", info=");
+    printty(rcall.iarg7);
     printf(", cfrom=");
     printty(rcall.farg1);
     printf(", cto=");
@@ -683,6 +752,7 @@ void check_equiv(std::string scope, int i, BlasCall expected, BlasCall real) {
   MAKEASSERT(iarg4);
   MAKEASSERT(iarg5);
   MAKEASSERT(iarg6);
+  MAKEASSERT(iarg7);
 }
 
 vector<BlasCall> calls;
@@ -694,7 +764,7 @@ extern "C" {
 // technically LAPACKE_dlascl
 __attribute__((noinline)) void cblas_dlascl(char layout, char type, int KL,
                                             int KU, double cfrom, double cto,
-                                            int M, int N, double *A, int lda) {
+                                            int M, int N, double *A, int lda, int info) {
   BlasCall call = {ABIType::CBLAS,UNUSED_HANDLE,
                    inDerivative,
                    CallType::LASCL,
@@ -841,7 +911,7 @@ __attribute__((noinline)) void dlacpy(char *uplo_p, int *M_p, int *N_p, double *
 
 __attribute__((noinline)) cublasStatus_t
 cublasDlascl(cublasHandle_t *handle, cublasOperation_t type, int KL, int KU,
-              double cfrom, double cto, int M, int N, double *A, int lda) {
+              double cfrom, double cto, int M, int N, double *A, int lda, int info) {
   calls.push_back((BlasCall){ABIType::CUBLAS,handle,
                                 inDerivative, CallType::LASCL,
                                 A, UNUSED_POINTER, UNUSED_POINTER,

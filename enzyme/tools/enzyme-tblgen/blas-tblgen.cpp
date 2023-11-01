@@ -57,6 +57,29 @@ bool hasDiffeRet(Init *resultTree) {
   return false;
 }
 
+bool hasAdjoint(Init *resultTree, StringRef argName) {
+  if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
+    auto opName = resultRoot->getOperator()->getAsString();
+    auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
+    if (Def->isSubClassOf("adj")) {
+      auto name = Def->getValueAsString("name");
+      return name == argName;
+    }
+    for (auto arg : resultRoot->getArgs()) {
+      if (hasAdjoint(arg, argName))
+        return true;
+    }
+  }
+  if (DefInit *DefArg = dyn_cast<DefInit>(resultTree)) {
+    auto Def = DefArg->getDef();
+    if (Def->isSubClassOf("adj")) {
+      auto name = Def->getValueAsString("name");
+      return name == argName;
+    }
+  }
+  return false;
+}
+
 static void checkBlasCallsInDag(const RecordKeeper &RK,
                                 ArrayRef<Record *> blasPatterns,
                                 StringRef blasName, const DagInit *toSearch) {
@@ -665,8 +688,8 @@ SmallString<80> ValueType_helper(const TGPattern &pattern, size_t actPos) {
       }
     } else if (ty == ArgType::vincData) {
       const auto nextName = nameVec[pos + 1];
-      const auto nextTy = typeMap.lookup(pos + 1);
-      assert(nextTy == ArgType::vincInc);
+      // Check that the next should be an increment
+      assert(typeMap.lookup(pos + 1) == ArgType::vincInc);
       const auto vecName = nameVec[pos];
       if (pos == actPos) {
         valueTypes.append("ValueType::Both, ValueType::Both");
@@ -737,6 +760,7 @@ size_t fwd_call_args(const TGPattern &pattern, size_t actArg,
       auto nextArgPosition = nameMap.lookup(nextName);
       // and based on that get the fp/int + scalar/vector type
       auto nextTy = typeMap.lookup(nextArgPosition);
+      (void)nextTy;
       assert(nextTy == ArgType::mldLD);
       if (pos == actArg) {
         result.append((Twine("d_") + name + ", true_" + nextName).str());
@@ -1153,7 +1177,11 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
          << val << "\")}";
     } else if (Def->isSubClassOf("transpose")) {
       auto name = Def->getValueAsString("name");
-      os << "{arg_transposed_" << name << "}";
+      os << "{(arg_transposed_" << name << " = arg_transposed_" << name
+         << " ? arg_transposed_" << name << " : "
+         << "transpose(Builder2, arg_" << name
+         << ", byRef, cublas, charType, allocationBuilder, \"" << name
+         << "\"))}";
     } else {
       errs() << Def->getName() << "\n";
       PrintFatalError("Def that isn't a DiffeRet!");
@@ -1395,7 +1423,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
 
   // We only emit one derivcall per blass call type.
   // This verifies that we don't end up with multiple declarations.
-  StringSet handled{};
+  StringSet<> handled{};
   for (auto rule : rules) {
     emit_deriv_rule(patternMap, rule, handled, os);
   }
@@ -1446,10 +1474,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   for (size_t i = (lv23 ? 1 : 0); i < nameVec.size(); i++) {
     auto name = nameVec[i];
     if (typeMap.lookup(i) == ArgType::trans) {
-      os << "    llvm::Value* arg_transposed_" << name
-         << " = transpose(Builder2, arg_" << name
-         << ", byRef, cublas, charType, allocationBuilder, \"" << name
-         << "\");\n";
+      os << "    llvm::Value* arg_transposed_" << name << " = nullptr;\n";
     }
   }
 

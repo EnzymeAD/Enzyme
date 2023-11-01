@@ -648,6 +648,8 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 
   FunctionType *FT = FunctionType::get(copy_retty, tys, false);
   auto fn = M.getOrInsertFunction(copy_name.str(), FT);
+  Function *F = cast<Function>(fn.getCallee());
+  attributeKnownFunctions(*F);
 
   B.CreateCall(fn, args, bundles);
 }
@@ -663,6 +665,8 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
 
   auto FT = FunctionType::get(Type::getVoidTy(M.getContext()), tys, false);
   auto fn = M.getOrInsertFunction(copy_name.str(), FT);
+  Function *F = cast<Function>(fn.getCallee());
+  attributeKnownFunctions(*F);
 
   B.CreateCall(fn, args, bundles);
 }
@@ -769,8 +773,8 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
       alpha = B1.CreateLoad(fpTy, VP);
     }
     Value *is_u = is_uper(B1, blasuplo, byRef);
-    Value *k = B1.CreateSelect(is_u, ConstantInt::get(IT, 0),
-                               ConstantInt::get(IT, 1), "k");
+    // Value *k = B1.CreateSelect(is_u, ConstantInt::get(IT, 0),
+    //                           ConstantInt::get(IT, 1), "k");
     B1.CreateCondBr(B1.CreateICmpEQ(n, ConstantInt::get(IT, 0)), end, init);
 
     IRBuilder<> B2(init);
@@ -880,6 +884,7 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
       FunctionType::get(fpTy, {BlasIT, BlasPT, BlasIT, BlasPT, BlasIT}, false);
   Function *FDot =
       cast<Function>(M.getOrInsertFunction(dot_name, FDotT).getCallee());
+  attributeKnownFunctions(*F);
 
   // now add the implementation for the inner_prod call
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
@@ -1911,8 +1916,13 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
       auto &DL = maybeWriter->getModule()->getDataLayout();
       auto width = cast<IntegerType>(DL.getIndexType(LoadBegin->getType()))
                        ->getBitWidth();
+#if LLVM_VERSION_MAJOR >= 18
+      auto TS = SE.getConstant(
+          APInt(width, (int64_t)DL.getTypeStoreSize(LI->getType())));
+#else
       auto TS = SE.getConstant(
           APInt(width, DL.getTypeStoreSize(LI->getType()).getFixedSize()));
+#endif
       LoadEnd = SE.getAddExpr(LoadBegin, TS);
     }
   }
@@ -1922,9 +1932,15 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
       auto &DL = maybeWriter->getModule()->getDataLayout();
       auto width = cast<IntegerType>(DL.getIndexType(StoreBegin->getType()))
                        ->getBitWidth();
+#if LLVM_VERSION_MAJOR >= 18
+      auto TS =
+          SE.getConstant(APInt(width, (int64_t)DL.getTypeStoreSize(
+                                          SI->getValueOperand()->getType())));
+#else
       auto TS = SE.getConstant(
           APInt(width, DL.getTypeStoreSize(SI->getValueOperand()->getType())
                            .getFixedSize()));
+#endif
       StoreEnd = SE.getAddExpr(StoreBegin, TS);
     }
   }
@@ -2021,10 +2037,10 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
         if (!isRefSet(AA.getModRefInfo(maybeReader,
                                        call->getArgOperand(off + 0), loc)))
           return false;
-        auto R = parseTBAA(*maybeReader, maybeReader->getParent()
-                                             ->getParent()
-                                             ->getParent()
-                                             ->getDataLayout())[{-1}];
+        auto R = parseTBAA(
+            *maybeReader,
+            maybeReader->getParent()->getParent()->getParent()->getDataLayout(),
+            nullptr)[{-1}];
         // Could still conflict with the mpi_request unless a non pointer
         // type.
         if (R != BaseType::Unknown && R != BaseType::Anything &&
@@ -2034,10 +2050,10 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     }
     // Isend only writes to inaccessible mem and request.
     if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
-      auto R = parseTBAA(*maybeReader, maybeReader->getParent()
-                                           ->getParent()
-                                           ->getParent()
-                                           ->getDataLayout())[{-1}];
+      auto R = parseTBAA(
+          *maybeReader,
+          maybeReader->getParent()->getParent()->getParent()->getDataLayout(),
+          nullptr)[{-1}];
       // Could still conflict with the mpi_request, unless either
       // synchronous, or a non pointer type.
       if (R != BaseType::Unknown && R != BaseType::Anything &&
@@ -2070,10 +2086,10 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
         }
       }
       if (type.isKnown()) {
-        auto R = parseTBAA(*maybeReader, maybeReader->getParent()
-                                             ->getParent()
-                                             ->getParent()
-                                             ->getDataLayout())[{-1}];
+        auto R = parseTBAA(
+            *maybeReader,
+            maybeReader->getParent()->getParent()->getParent()->getDataLayout(),
+            nullptr)[{-1}];
         if (R.isKnown() && type != R) {
           // Could still conflict with the mpi_request, unless either
           // synchronous, or a non pointer type.
@@ -2494,7 +2510,8 @@ llvm::Value *to_blas_fp_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
 llvm::Value *select_vec_dims(IRBuilder<> &B, llvm::Value *trans,
                              llvm::Value *dim1, llvm::Value *dim2, bool byRef,
                              bool cublas) {
-  Value *width = B.CreateSelect(is_normal(B, trans, byRef, cublas), dim1, dim2);
+  auto norm = is_normal(B, trans, byRef, cublas);
+  Value *width = B.CreateSelect(norm, dim1, dim2);
 
   return width;
 }
@@ -2511,8 +2528,6 @@ Value *is_uper(IRBuilder<> &B, Value *trans, bool byRef) {
     charTy = IntegerType::get(trans->getContext(), len);
   }
 
-  Value *trueVal = ConstantInt::getTrue(trans->getContext());
-
   Value *isUper =
       B.CreateOr(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'u')),
                  B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'U')));
@@ -2526,23 +2541,24 @@ llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef,
     isNormal = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 0));
     return isNormal;
   }
-  IntegerType *charTy;
+  // Explicitly support 'N' always, since we use in the rule infra
+  if (auto CI = dyn_cast<ConstantInt>(trans)) {
+    if (CI->getValue() == 'N' || CI->getValue() == 'n')
+      return ConstantInt::getTrue(
+          B.getContext()); //(Type::getInt1Ty(B.getContext()), true);
+  }
   if (byRef) {
     // can't inspect opaque ptr, so assume 8 (Julia)
-    charTy = IntegerType::get(trans->getContext(), 8);
+    IntegerType *charTy = IntegerType::get(trans->getContext(), 8);
     trans = B.CreateLoad(charTy, trans, "loaded.trans");
+
+    // fortran blas
+    return B.CreateOr(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'n')),
+                      B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'N')));
   } else {
     // we can inspect scalars
-    unsigned int len = trans->getType()->getScalarSizeInBits();
-    charTy = IntegerType::get(trans->getContext(), len);
+    return B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 111));
   }
-
-  Value *trueVal = ConstantInt::getTrue(trans->getContext());
-
-  Value *isNormal =
-      B.CreateOr(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'n')),
-                 B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'N')));
-  return isNormal;
 }
 
 // Ok. Here we are.
@@ -2553,18 +2569,15 @@ llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef,
 // enum CBLAS_TRANSPOSE {CblasNoTrans=111, CblasTrans=112, CblasConjTrans=113};
 llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
   llvm::Type *T = V->getType();
-  Value *out;
   if (cublas) {
-    out =
-        B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(T, 1)),
-                       ConstantInt::get(V->getType(), 0),
-                       B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(T, 0)),
-                                      ConstantInt::get(V->getType(), 1),
-                                      ConstantInt::get(V->getType(), 42)));
-    return out;
-  }
-  if (T->isIntegerTy(8)) {
-    out = B.CreateSelect(
+    return B.CreateSelect(
+        B.CreateICmpEQ(V, ConstantInt::get(T, 1)),
+        ConstantInt::get(V->getType(), 0),
+        B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(T, 0)),
+                       ConstantInt::get(V->getType(), 1),
+                       ConstantInt::get(V->getType(), 42)));
+  } else if (T->isIntegerTy(8)) {
+    return B.CreateSelect(
         B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'T')),
         ConstantInt::get(V->getType(), 'N'),
         B.CreateSelect(
@@ -2578,7 +2591,7 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
                     ConstantInt::get(V->getType(), 't'),
                     ConstantInt::get(V->getType(), 0)))));
   } else if (T->isIntegerTy(32)) {
-    out = B.CreateSelect(
+    return B.CreateSelect(
         B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 111)),
         ConstantInt::get(V->getType(), 112),
         B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 112)),
@@ -2594,13 +2607,13 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
     } else {
       EmitFailure("unknown trans blas value", nullptr, nullptr, ss.str());
     }
+    return V;
   }
-  return out;
 }
 
 // Implement the following logic to get the width of a matrix
 // if (cache_A) {
-//   ld_A = (arg_transa == 'N') ? arg_m : arg_k;
+//   ld_A = (arg_transa == 'N') ? arg_k : arg_m;
 // } else {
 //   ld_A = arg_lda;
 // }
@@ -2615,7 +2628,7 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
   assert(trans.size() == 1);
 
   llvm::Value *width =
-      CreateSelect(B, is_normal(B, trans[0], byRef, cublas), dim1, dim2);
+      CreateSelect(B, is_normal(B, trans[0], byRef, cublas), dim2, dim1);
 
   return width;
 }
@@ -2624,6 +2637,23 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                        bool cublas, llvm::IntegerType *julia_decl,
                        llvm::IRBuilder<> &entryBuilder,
                        const llvm::Twine &name) {
+
+  if (!byRef) {
+    // Explicitly support 'N' always, since we use in the rule infra
+    if (auto CI = dyn_cast<ConstantInt>(V)) {
+      if (CI->getValue() == 'N')
+        return ConstantInt::get(CI->getType(), 'T');
+      if (CI->getValue() == 'n')
+        return ConstantInt::get(CI->getType(), 't');
+    }
+
+    // cblas
+    if (!cublas)
+      return B.CreateSelect(
+          B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 111)),
+          ConstantInt::get(V->getType(), 112),
+          ConstantInt::get(V->getType(), 111));
+  }
 
   if (byRef) {
     auto charType = IntegerType::get(V->getContext(), 8);
@@ -2661,9 +2691,14 @@ SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
 
   Value *cond = nullptr;
   if (!cublas) {
-    cond = B.CreateOr(
-        B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N')),
-        B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n')));
+
+    if (!byRef) {
+      cond = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 111));
+    } else {
+      cond = B.CreateOr(
+          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N')),
+          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n')));
+    }
   } else {
     // CUBLAS_OP_N = 0, CUBLAS_OP_T = 1, CUBLAS_OP_C = 2
     // TODO: verify
@@ -2707,13 +2742,11 @@ CountTrackedPointers::CountTrackedPointers(Type *T) {
     all = false;
 }
 
-bool collectOffset(GetElementPtrInst *gep, const DataLayout &DL,
-                   unsigned BitWidth,
+bool collectOffset(GEPOperator *gep, const DataLayout &DL, unsigned BitWidth,
                    MapVector<Value *, APInt> &VariableOffsets,
                    APInt &ConstantOffset) {
 #if LLVM_VERSION_MAJOR >= 13
-  return cast<GEPOperator>(gep)->collectOffset(DL, BitWidth, VariableOffsets,
-                                               ConstantOffset);
+  return gep->collectOffset(DL, BitWidth, VariableOffsets, ConstantOffset);
 #else
   assert(BitWidth == DL.getIndexSizeInBits(gep->getPointerAddressSpace()) &&
          "The offset bit width does not match DL specification.");

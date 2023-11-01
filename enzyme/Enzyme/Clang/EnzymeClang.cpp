@@ -522,6 +522,103 @@ struct EnzymeNoFreeAttrInfo : public ParsedAttrInfo {
 
 static ParsedAttrInfoRegistry::Add<EnzymeNoFreeAttrInfo> X5("enzyme_nofree",
                                                             "");
+
+struct EnzymeSparseAccumulateAttrInfo : public ParsedAttrInfo {
+  EnzymeSparseAccumulateAttrInfo() {
+    OptArgs = 1;
+    // GNU-style __attribute__(("example")) and C++/C2x-style [[example]] and
+    // [[plugin::example]] supported.
+    static constexpr Spelling S[] = {
+      {ParsedAttr::AS_GNU, "enzyme_sparse_accumulate"},
+#if LLVM_VERSION_MAJOR > 17
+      {ParsedAttr::AS_C23, "enzyme_sparse_accumulate"},
+#else
+      {ParsedAttr::AS_C2x, "enzyme_sparse_accumulate"},
+#endif
+      {ParsedAttr::AS_CXX11, "enzyme_sparse_accumulate"},
+      {ParsedAttr::AS_CXX11, "enzyme::sparse_accumulate"}
+    };
+    Spellings = S;
+  }
+
+  bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr,
+                            const Decl *D) const override {
+    // This attribute appertains to functions only.
+    if (isa<FunctionDecl>(D))
+      return true;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
+        << Attr << "functions";
+    return false;
+  }
+
+  AttrHandling handleDeclAttribute(Sema &S, Decl *D,
+                                   const ParsedAttr &Attr) const override {
+    if (Attr.getNumArgs() != 0) {
+      unsigned ID = S.getDiagnostics().getCustomDiagID(
+          DiagnosticsEngine::Error,
+          "'enzyme_sparse_accumulate' attribute requires zero arguments");
+      S.Diag(Attr.getLoc(), ID);
+      return AttributeNotApplied;
+    }
+
+    auto &AST = S.getASTContext();
+    DeclContext *declCtx = D->getDeclContext();
+    auto loc = D->getLocation();
+    RecordDecl *RD;
+    if (S.getLangOpts().CPlusPlus)
+      RD = CXXRecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx,
+                                 loc, loc, nullptr); // rId);
+    else
+      RD = RecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx, loc,
+                              loc, nullptr); // rId);
+    RD->setAnonymousStructOrUnion(true);
+    RD->setImplicit();
+    RD->startDefinition();
+    auto T = cast<FunctionDecl>(D)->getType();
+    auto Name = cast<FunctionDecl>(D)->getNameAsString();
+    auto FT = AST.getPointerType(T);
+    auto &Id = AST.Idents.get(
+        (StringRef("__enzyme_sparse_accumulate") + "_autoreg_" + Name).str());
+    auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, FT, nullptr, SC_None);
+    V->setStorageClass(SC_PrivateExtern);
+    V->addAttr(clang::UsedAttr::CreateImplicit(AST));
+    TemplateArgumentListInfo *TemplateArgs = nullptr;
+    auto DR = DeclRefExpr::Create(
+        AST, NestedNameSpecifierLoc(), loc, cast<ValueDecl>(D), false, loc, T,
+        ExprValueKind::VK_LValue, cast<NamedDecl>(D), TemplateArgs);
+#if LLVM_VERSION_MAJOR >= 13
+    auto rval = ExprValueKind::VK_PRValue;
+#else
+    auto rval = ExprValueKind::VK_RValue;
+#endif
+    Expr *expr = nullptr;
+#if LLVM_VERSION_MAJOR >= 12
+    expr =
+        ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
+                                 DR, nullptr, rval, FPOptionsOverride());
+#else
+    expr = ImplicitCastExpr::Create(
+        AST, FT, CastKind::CK_FunctionToPointerDecay, DR, nullptr, rval);
+#endif
+
+    if (expr->isValueDependent()) {
+      unsigned ID = S.getDiagnostics().getCustomDiagID(
+          DiagnosticsEngine::Error,
+          "use of attribute 'enzyme_sparse_accumulate' "
+          "in a templated context not yet supported");
+      S.Diag(Attr.getLoc(), ID);
+      return AttributeNotApplied;
+    }
+    V->setInit(expr);
+    V->dump();
+    S.MarkVariableReferenced(loc, V);
+    S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
+    return AttributeApplied;
+  }
+};
+
+static ParsedAttrInfoRegistry::Add<EnzymeSparseAccumulateAttrInfo>
+    SparseX("enzyme_sparse_accumulate", "");
 } // namespace
 
 #endif

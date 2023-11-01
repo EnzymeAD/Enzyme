@@ -56,7 +56,7 @@ entry:
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
 ; CHECK-NEXT:   %cache.A = bitcast i8* %malloccall to double*
 ; CHECK-NEXT:   call void @cblas_dlacpy(i32 101, i8 0, i32 %N, i32 %N, double* %K, i32 %N, double* %cache.A, i32 %N)
-; CHECK-NEXT:   %1 = select i1 false, i32 %N, i32 %N
+; CHECK-NEXT:   %1 = select i1 true, i32 %N, i32 %N
 ; CHECK-NEXT:   %mallocsize1 = mul nuw nsw i32 %1, 8
 ; CHECK-NEXT:   %malloccall2 = tail call noalias nonnull i8* @malloc(i32 %mallocsize1)
 ; CHECK-NEXT:   %2 = load i8**, i8*** %malloccall2_cache, align 8, !dereferenceable !6, !invariant.group !2
@@ -105,11 +105,11 @@ entry:
 ; CHECK-NEXT:   %[[i20:.+]] = getelementptr inbounds i8*, i8** %[[i19]], i64 %[[i15]]
 ; CHECK-NEXT:   %[[i21:.+]] = load i8*, i8** %[[i20]], align 8, !invariant.group !8
 ; CHECK-NEXT:   %cache.A_unwrap = bitcast i8* %[[i21]] to double*
-; CHECK-DAG:   %[[r20:.+]] = select i1 false, double* %"v0'", double* %cache.x_unwrap
-; CHECK-DAG:   %[[r21:.+]] = select i1 false, double* %cache.x_unwrap, double* %"v0'"
+; CHECK-DAG:   %[[r20:.+]] = select i1 true, double* %"v0'", double* %cache.x_unwrap
+; CHECK-DAG:   %[[r21:.+]] = select i1 true, double* %cache.x_unwrap, double* %"v0'"
 ; CHECK-NEXT:   call void @cblas_dger(i32 101, i32 %N, i32 %N, double 1.000000e-03, double* %[[r20]], i32 1, double* %[[r21]], i32 1, double* %"K'", i32 %N)
 ; CHECK-NEXT:   call void @cblas_dgemv(i32 101, i32 112, i32 %N, i32 %N, double 1.000000e-03, double* %cache.A_unwrap, i32 %N, double* %"v0'", i32 1, double 1.000000e+00, double* %"x0'", i32 1)
-; CHECK-NEXT:   %[[i23:.+]] = select i1 false, i32 %N, i32 %N
+; CHECK-NEXT:   %[[i23:.+]] = select i1 true, i32 %N, i32 %N
 ; CHECK-NEXT:   call void @cblas_dscal(i32 %[[i23]], double 1.000000e+00, double* %"v0'", i32 1)
 ; CHECK-NEXT:   %[[i24:.+]] = bitcast double* %cache.A_unwrap to i8*
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %[[i24]])
