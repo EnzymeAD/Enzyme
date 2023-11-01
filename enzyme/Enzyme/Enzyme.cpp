@@ -692,6 +692,7 @@ public:
     DIFFE_TYPE retType;
     bool primalReturn;
     StringSet<> ActiveRandomVariables;
+    std::vector<bool> overwritten_args;
   };
 
 #if LLVM_VERSION_MAJOR > 16
@@ -734,6 +735,12 @@ public:
 
     bool sret = CI->hasStructRetAttr() ||
                 fn->hasParamAttribute(0, Attribute::StructRet);
+
+    std::vector<bool> overwritten_args;
+
+    for (auto &a : fn->args())
+      overwritten_args.push_back(
+          !(mode == DerivativeMode::ReverseModeCombined));
 
 #if LLVM_VERSION_MAJOR >= 14
     for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
@@ -852,9 +859,15 @@ public:
       Optional<DIFFE_TYPE> opt_ty;
 #endif
 
+      bool overwritten = !(mode == DerivativeMode::ReverseModeCombined);
+
+      bool skipArg = false;
+
       // handle metadata
-      if (metaString && metaString->startswith("enzyme_")) {
-        if (*metaString == "enzyme_byref") {
+      while (metaString && metaString->startswith("enzyme_")) {
+        if (*metaString == "enzyme_not_overwritten") {
+          overwritten = false;
+        } else if (*metaString == "enzyme_byref") {
           ++i;
           if (!isa<ConstantInt>(CI->getArgOperand(i))) {
             EmitFailure("IllegalAllocatedSize", CI->getDebugLoc(), CI,
@@ -864,9 +877,9 @@ public:
           }
           byRefSize = cast<ConstantInt>(CI->getArgOperand(i))->getZExtValue();
           assert(byRefSize > 0);
-          continue;
-        }
-        if (*metaString == "enzyme_dup") {
+          skipArg = true;
+          break;
+        } else if (*metaString == "enzyme_dup") {
           opt_ty = DIFFE_TYPE::DUP_ARG;
         } else if (*metaString == "enzyme_dupv") {
           opt_ty = DIFFE_TYPE::DUP_ARG;
@@ -902,7 +915,8 @@ public:
           opt_ty = DIFFE_TYPE::CONSTANT;
         } else if (*metaString == "enzyme_noret") {
           returnUsed = false;
-          continue;
+          skipArg = true;
+          break;
         } else if (*metaString == "enzyme_allocated") {
           assert(!sizeOnly);
           ++i;
@@ -914,55 +928,69 @@ public:
           }
           allocatedTapeSize =
               cast<ConstantInt>(CI->getArgOperand(i))->getZExtValue();
-          continue;
+          skipArg = true;
+          break;
         } else if (*metaString == "enzyme_tape") {
           assert(!sizeOnly);
           ++i;
           tape = CI->getArgOperand(i);
           tapeIsPointer = true;
-          continue;
+          skipArg = true;
+          break;
         } else if (*metaString == "enzyme_nofree") {
           assert(!sizeOnly);
           freeMemory = false;
-          continue;
+          skipArg = true;
+          break;
         } else if (*metaString == "enzyme_primal_return") {
           primalReturn = true;
-          continue;
+          skipArg = true;
+          break;
         } else if (*metaString == "enzyme_const_return") {
-          continue;
+          skipArg = true;
+          break;
         } else if (*metaString == "enzyme_active_return") {
-          continue;
+          skipArg = true;
+          break;
         } else if (*metaString == "enzyme_dup_return") {
-          continue;
+          skipArg = true;
+          break;
         } else if (*metaString == "enzyme_width") {
           ++i;
-          continue;
+          skipArg = true;
+          break;
         } else if (*metaString == "enzyme_interface") {
           ++i;
           dynamic_interface = CI->getArgOperand(i);
-          continue;
+          skipArg = true;
+          break;
         } else if (*metaString == "enzyme_trace") {
           trace = CI->getArgOperand(++i);
           opt_ty = DIFFE_TYPE::CONSTANT;
-          continue;
+          skipArg = true;
+          break;
         } else if (*metaString == "enzyme_duptrace") {
           trace = CI->getArgOperand(++i);
           diffeTrace = true;
           opt_ty = DIFFE_TYPE::CONSTANT;
-          continue;
+          skipArg = true;
+          break;
         } else if (*metaString == "enzyme_likelihood") {
           likelihood = CI->getArgOperand(++i);
           opt_ty = DIFFE_TYPE::CONSTANT;
-          continue;
+          skipArg = true;
+          break;
         } else if (*metaString == "enzyme_duplikelihood") {
           likelihood = CI->getArgOperand(++i);
           diffeLikelihood = CI->getArgOperand(++i);
           opt_ty = DIFFE_TYPE::DUP_ARG;
-          continue;
+          skipArg = true;
+          break;
         } else if (*metaString == "enzyme_observations") {
           observations = CI->getArgOperand(++i);
           opt_ty = DIFFE_TYPE::CONSTANT;
-          continue;
+          skipArg = true;
+          break;
         } else if (*metaString == "enzyme_active_rand_var") {
           Value *string = CI->getArgOperand(++i);
           StringRef const_string;
@@ -974,7 +1002,8 @@ public:
                 "active variable address must be a compile-time constant", *CI,
                 *metaString);
           }
-          continue;
+          skipArg = true;
+          break;
         } else {
           EmitFailure("IllegalDiffeType", CI->getDebugLoc(), CI,
                       "illegal enzyme metadata classification ", *CI,
@@ -985,11 +1014,21 @@ public:
           assert(opt_ty);
           constants.push_back(*opt_ty);
           truei++;
-          continue;
+          skipArg = true;
+          break;
         }
         ++i;
+        if (i == CI->arg_size()) {
+          EmitFailure("EnzymeCallingError", CI->getDebugLoc(), CI,
+                      "Too few arguments to Enzyme call ", *CI);
+          return {};
+        }
         res = CI->getArgOperand(i);
+        metaString = getMetadataName(res);
       }
+
+      if (skipArg)
+        continue;
 
       if (byRefSize) {
         Type *subTy = nullptr;
@@ -1081,6 +1120,7 @@ public:
         return {};
       }
       assert(truei < FT->getNumParams());
+      overwritten_args[truei] = overwritten;
 
       auto PTy = FT->getParamType(truei);
       DIFFE_TYPE ty = opt_ty ? *opt_ty : whatType(PTy, mode);
@@ -1229,17 +1269,14 @@ public:
     return Options({differet, tape, dynamic_interface, trace, observations,
                     likelihood, diffeLikelihood, width, allocatedTapeSize,
                     freeMemory, returnUsed, tapeIsPointer, differentialReturn,
-                    diffeTrace, retType, primalReturn, ActiveRandomVariables});
+                    diffeTrace, retType, primalReturn, ActiveRandomVariables,
+                    overwritten_args});
   }
 
-  static FnTypeInfo
-  populate_overwritten_args(TypeAnalysis &TA, llvm::Function *fn,
-                            DerivativeMode mode,
-                            std::vector<bool> &overwritten_args) {
+  static FnTypeInfo populate_type_args(TypeAnalysis &TA, llvm::Function *fn,
+                                       DerivativeMode mode) {
     FnTypeInfo type_args(fn);
     for (auto &a : type_args.Function->args()) {
-      overwritten_args.push_back(
-          !(mode == DerivativeMode::ReverseModeCombined));
       TypeTree dt;
       if (a.getType()->isFPOrFPVectorTy()) {
         dt = ConcreteType(a.getType()->getScalarType());
@@ -1476,6 +1513,7 @@ public:
     auto &tapeIsPointer = options.tapeIsPointer;
     auto &differentialReturn = options.differentialReturn;
     auto &retType = options.retType;
+    auto &overwritten_args = options.overwritten_args;
     auto primalReturn = options.primalReturn;
 
     auto Arch = Triple(CI->getModule()->getTargetTriple()).getArch();
@@ -1483,9 +1521,7 @@ public:
                      Arch == Triple::amdgcn;
 
     TypeAnalysis TA(Logic.PPC.FAM);
-    std::vector<bool> overwritten_args;
-    FnTypeInfo type_args =
-        populate_overwritten_args(TA, fn, mode, overwritten_args);
+    FnTypeInfo type_args = populate_type_args(TA, fn, mode);
 
     IRBuilder Builder(CI);
     RequestContext context(CI, &Builder);
@@ -1899,17 +1935,21 @@ public:
       dargs.push_back(likelihood);
       dargs.push_back(dlikelihood);
       constants.push_back(DIFFE_TYPE::DUP_ARG);
+      opt->overwritten_args.push_back(false);
     } else {
       constants.push_back(DIFFE_TYPE::CONSTANT);
+      opt->overwritten_args.push_back(false);
     }
 
     if (mode == ProbProgMode::Condition) {
+      opt->overwritten_args.push_back(false);
       args.push_back(observations);
       dargs.push_back(observations);
       constants.push_back(DIFFE_TYPE::CONSTANT);
     }
 
     if (mode == ProbProgMode::Trace || mode == ProbProgMode::Condition) {
+      opt->overwritten_args.push_back(false);
       args.push_back(trace);
       dargs.push_back(trace);
       constants.push_back(DIFFE_TYPE::CONSTANT);
