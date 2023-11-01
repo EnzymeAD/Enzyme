@@ -2999,7 +2999,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
                 Type *elTy = Type::getInt8Ty(call.getContext());
                 std::string name = "";
 #if LLVM_VERSION_MAJOR < 18
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
                 if (call.getContext().supportsTypedPointers()) {
 #endif
                   for (auto U : call.users()) {
@@ -3016,7 +3016,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
                       break;
                     }
                   }
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
                 }
 #endif
 #endif
@@ -3035,7 +3035,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
                         ->setAlignment(Align(Alignment));
                   }
 #if LLVM_VERSION_MAJOR < 18
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
                   if (call.getContext().supportsTypedPointers()) {
 #endif
                     if (anti->getType()->getPointerElementType() != elTy)
@@ -3043,7 +3043,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
                           replacement,
                           PointerType::getUnqual(
                               anti->getType()->getPointerElementType()));
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
                   }
 #endif
 #endif
@@ -3051,13 +3051,13 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
                                    ->getAddressSpace()) {
                     llvm::PointerType *PT;
 #if LLVM_VERSION_MAJOR < 18
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
                     if (call.getContext().supportsTypedPointers()) {
 #endif
                       PT = PointerType::get(
                           anti->getType()->getPointerElementType(), AS);
 #endif
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
 #if LLVM_VERSION_MAJOR < 18
                     } else {
 #endif
@@ -3239,7 +3239,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
         cast<AllocaInst>(replacement)->setAlignment(Align(Alignment));
       }
 #if LLVM_VERSION_MAJOR < 18
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
       if (call.getContext().supportsTypedPointers()) {
 #endif
         if (call.getType()->getPointerElementType() != elTy)
@@ -3247,19 +3247,19 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
               replacement,
               PointerType::getUnqual(call.getType()->getPointerElementType()));
 
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
       }
 #endif
 #endif
       if (int AS = cast<PointerType>(call.getType())->getAddressSpace()) {
         llvm::PointerType *PT;
 #if LLVM_VERSION_MAJOR < 18
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
         if (call.getContext().supportsTypedPointers()) {
 #endif
           PT = PointerType::get(call.getType()->getPointerElementType(), AS);
 #endif
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
 #if LLVM_VERSION_MAJOR < 18
         } else {
 #endif
@@ -3277,8 +3277,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
       gutils->erase(newCall);
     };
 
-    // Don't erase any store that needs to be preserved for a
-    // rematerialization
+    // Don't erase any allocation that is being rematerialized.
     {
       auto found = gutils->rematerializableAllocations.find(&call);
       if (found != gutils->rematerializableAllocations.end()) {
@@ -3287,10 +3286,20 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
         if (primalNeededInReverse && !cacheWholeAllocation) {
           assert(!unnecessaryValues.count(&call));
           // if rematerialize, don't ever cache and downgrade to stack
-          // allocation where possible.
+          // allocation where possible. Note that for allocations which are
+          // within a loop, we will create the rematerialized allocation in the
+          // rematerialied loop. Note that what matters here is whether the
+          // actual call itself here is inside the loop, not whether the
+          // rematerialization is loop level. This is because one can have a
+          // loop level cache, but a function level allocation (e.g. for stack
+          // allocas). If we deleted it here, we would have no allocation!
+          auto AllocationLoop = gutils->OrigLI.getLoopFor(call.getParent());
+          // An allocation within a loop, must definitionally be a loop level
+          // allocation (but not always the other way around.
+          if (AllocationLoop)
+            assert(found->second.LI);
           if (auto MD = hasMetadata(&call, "enzyme_fromstack")) {
-            if (Mode == DerivativeMode::ReverseModeGradient &&
-                found->second.LI) {
+            if (Mode == DerivativeMode::ReverseModeGradient && AllocationLoop) {
               gutils->rematerializedPrimalOrShadowAllocations.push_back(
                   newCall);
             } else {
@@ -3309,7 +3318,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
               funcName == "julia.gc_alloc_obj" ||
               funcName == "jl_gc_alloc_typed" ||
               funcName == "ijl_gc_alloc_typed") {
-            if (Mode == DerivativeMode::ReverseModeGradient && found->second.LI)
+            if (Mode == DerivativeMode::ReverseModeGradient && AllocationLoop)
               gutils->rematerializedPrimalOrShadowAllocations.push_back(
                   newCall);
             return true;
@@ -3324,8 +3333,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
             auto dbgLoc = gutils->getNewFromOriginal(call.getDebugLoc());
             freeKnownAllocation(Builder2, lookup(newCall, Builder2), funcName,
                                 dbgLoc, gutils->TLI, &call, gutils);
-            if (Mode == DerivativeMode::ReverseModeGradient &&
-                found->second.LI && found->second.LI->contains(&call))
+            if (Mode == DerivativeMode::ReverseModeGradient && AllocationLoop)
               gutils->rematerializedPrimalOrShadowAllocations.push_back(
                   newCall);
             return true;

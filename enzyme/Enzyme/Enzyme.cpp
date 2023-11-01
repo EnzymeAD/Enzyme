@@ -1282,7 +1282,7 @@ public:
         dt = ConcreteType(a.getType()->getScalarType());
       } else if (a.getType()->isPointerTy()) {
 #if LLVM_VERSION_MAJOR < 18
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
         if (a.getContext().supportsTypedPointers()) {
 #endif
           auto et = a.getType()->getPointerElementType();
@@ -1291,7 +1291,7 @@ public:
           } else if (et->isPointerTy()) {
             dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
           }
-#if LLVM_VERSION_MAJOR >= 15
+#if LLVM_VERSION_MAJOR >= 13
         }
 #endif
 #endif
