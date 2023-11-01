@@ -304,15 +304,23 @@ public:
 
     // For value-based AA, assume any active argument leads to an active
     // result.
-    // TODO: Could prune values based on the types of the operands (but would
-    // require type analysis for full robustness)
     ValueActivity joinedResult;
-    for (auto operand : operands) {
+    for (const ForwardValueActivity *operand : operands) {
       joinedResult = ValueActivity::merge(joinedResult, operand->getValue());
     }
 
-    for (auto result : results) {
-      propagateIfChanged(result, result->join(joinedResult));
+    // Only mark results as active data if the type can carry perturbations and
+    // has value semantics
+    for (ForwardValueActivity *result : results) {
+      if (joinedResult.isActiveVal()) {
+        if (isa<FloatType, ComplexType>(result->getPoint().getType())) {
+          propagateIfChanged(result, result->join(joinedResult));
+        } else {
+          propagateIfChanged(result,
+                             result->join(ValueActivity::getConstant()));
+        }
+      } else
+        propagateIfChanged(result, result->join(joinedResult));
     }
   }
 };
@@ -400,7 +408,8 @@ public:
 
   void visitOperation(Operation *op, const ForwardMemoryActivity &before,
                       ForwardMemoryActivity *after) override {
-    ChangeResult result = after->join(before);
+    join(after, before);
+    ChangeResult result = ChangeResult::NoChange;
     auto memory = dyn_cast<MemoryEffectOpInterface>(op);
     // If we can't reason about the memory effects, then conservatively assume
     // we can't deduce anything about activity via side-effects.
@@ -569,7 +578,8 @@ public:
       }
     }
 
-    ChangeResult result = before->meet(after);
+    meet(before, after);
+    ChangeResult result = ChangeResult::NoChange;
     auto memory = dyn_cast<MemoryEffectOpInterface>(op);
     // If we can't reason about the memory effects, then conservatively assume
     // we can't deduce anything about activity via side-effects.
