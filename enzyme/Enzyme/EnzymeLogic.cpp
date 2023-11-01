@@ -121,8 +121,10 @@ struct CacheAnalysis {
   TargetLibraryInfo &TLI;
   const SmallPtrSetImpl<BasicBlock *> &unnecessaryBlocks;
   const std::vector<bool> &overwritten_args;
+  const std::vector<bool> &nocache_args;
   DerivativeMode mode;
   std::map<Value *, bool> seen;
+  std::map<Value *, bool> nocache_seen;
   bool omp;
   CacheAnalysis(
       const ValueMap<const CallInst *, SmallPtrSet<const CallInst *, 1>>
@@ -132,12 +134,16 @@ struct CacheAnalysis {
       TypeResults &TR, AAResults &AA, Function *oldFunc, ScalarEvolution &SE,
       LoopInfo &OrigLI, DominatorTree &OrigDT, TargetLibraryInfo &TLI,
       const SmallPtrSetImpl<BasicBlock *> &unnecessaryBlocks,
-      const std::vector<bool> &overwritten_args, DerivativeMode mode, bool omp)
+      const std::vector<bool> &overwritten_args,
+      const std::vector<bool> &nocache_args,
+      DerivativeMode mode, bool omp)
       : allocationsWithGuaranteedFree(allocationsWithGuaranteedFree),
         rematerializableAllocations(rematerializableAllocations), TR(TR),
         AA(AA), oldFunc(oldFunc), SE(SE), OrigLI(OrigLI), OrigDT(OrigDT),
         TLI(TLI), unnecessaryBlocks(unnecessaryBlocks),
-        overwritten_args(overwritten_args), mode(mode), omp(omp) {}
+        overwritten_args(overwritten_args),
+        nocache_args(nocache_args),
+        mode(mode), omp(omp) {}
 
   bool is_value_mustcache_from_origin(Value *obj) {
     if (seen.find(obj) != seen.end())
@@ -241,6 +247,46 @@ struct CacheAnalysis {
     return seen[obj] = mustcache;
   }
 
+  // recursive floodfill-like function
+  // propagates enzyme_nocache from the arguments to specific values
+  bool compute_nocache(Value* obj, int depth = 0)
+  {
+    if (auto s = nocache_seen.find(obj); s != nocache_seen.end()) {
+      return s->second;
+    }
+
+    if (++depth > 5)
+        return false;
+
+    if (auto arg = dyn_cast<Argument>(obj))
+    {
+      return nocache_seen[obj] = !overwritten_args[arg->getArgNo()];
+    }
+    else if (auto pn = dyn_cast<PHINode>(obj))
+    {
+      for (auto &val : pn->incoming_values())
+        if (!compute_nocache(val, depth))
+          return nocache_seen[obj] = false;
+      return nocache_seen[obj] = true;
+    }
+    else if (auto ci = dyn_cast<CastInst>(obj))
+    {
+      return nocache_seen[obj] = compute_nocache(ci->getOperand(0), depth);
+    }
+    else if (auto li = dyn_cast<LoadInst>(obj))
+    {
+      return nocache_seen[obj] = compute_nocache(li->getOperand(0), depth);
+    }
+    else if (auto gep = dyn_cast<GetElementPtrInst>(obj))
+    {
+      return nocache_seen[obj] = compute_nocache(gep->getPointerOperand(), depth);
+    }
+    else
+    {
+      return nocache_seen[obj] = false;
+    }
+  }
+
   bool is_load_uncacheable(Instruction &li) {
     assert(li.getParent()->getParent() == oldFunc);
 
@@ -255,6 +301,12 @@ struct CacheAnalysis {
       if (auto PT = dyn_cast<PointerType>(li.getType()))
         if (PT->getAddressSpace() == 13)
           return false;
+
+    // Respect the enzyme_nocache arguments.
+    // optimization: If nocache_seen is empty, compute_nocache will always
+    //               return false, but it doesn't know this.
+    if (!nocache_seen.empty() && compute_nocache(&li))
+      return false;
 
     // Only use invariant load data if either, we are not using Julia
     // or we are in combined mode. The reason for this is that Julia
@@ -379,6 +431,23 @@ struct CacheAnalysis {
   //   A load is considered "uncacheable" if the data at the loaded memory
   //   location can be modified after the load instruction.
   std::map<Instruction *, bool> compute_uncacheable_load_map() {
+
+    // Initialize nocache_seen as specified by the enzyme_nocache option.
+    // These are the roots of the recursive compute_nocache function
+    nocache_seen.clear();
+    {
+      bool any_true = false;
+      auto arg = oldFunc->arg_begin();
+      size_t i = 0;
+      for(; i < nocache_args.size(); ++arg, ++i) {
+        any_true |= nocache_args[i];
+        nocache_seen[arg] = nocache_args[i];
+      }
+      // clear it for the optimization of the common case nocache_seen.empty()
+      if (!any_true)
+        nocache_seen.clear();
+    }
+
     std::map<Instruction *, bool> can_modref_map;
     for (auto &B : *oldFunc) {
       if (unnecessaryBlocks.count(&B))
@@ -1941,7 +2010,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     RequestContext context, Function *todiff, DIFFE_TYPE retType,
     ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA, bool returnUsed,
     bool shadowReturnUsed, const FnTypeInfo &oldTypeInfo_,
-    const std::vector<bool> _overwritten_args, bool forceAnonymousTape,
+    const std::vector<bool> _overwritten_args,
+    const std::vector<bool> _nocache_args, bool forceAnonymousTape,
     unsigned width, bool AtomicAdd, bool omp) {
   if (returnUsed)
     assert(!todiff->getReturnType()->isEmptyTy() &&
@@ -1956,7 +2026,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   assert(constant_args.size() == todiff->getFunctionType()->getNumParams());
   AugmentedCacheKey tup = {todiff,        retType,
-                           constant_args, _overwritten_args,
+                           constant_args, _overwritten_args, _nocache_args,
                            returnUsed,    shadowReturnUsed,
                            oldTypeInfo,   forceAnonymousTape,
                            AtomicAdd,     omp,
@@ -2021,7 +2091,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
       auto &aug = CreateAugmentedPrimal(
           context, todiff, retType, next_constant_args, TA, returnUsed,
-          shadowReturnUsed, oldTypeInfo_, _overwritten_args, forceAnonymousTape,
+          shadowReturnUsed, oldTypeInfo_, _overwritten_args, _nocache_args, forceAnonymousTape,
           width, AtomicAdd, omp);
 
       FunctionType *FTy =
@@ -2329,6 +2399,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   // Convert uncacheable args from the input function to the preprocessed
   // function
   std::vector<bool> _overwritten_argsPP = _overwritten_args;
+  std::vector<bool> _nocache_argsPP = _nocache_args;
 
   gutils->forceActiveDetection();
   gutils->computeGuaranteedFrees();
@@ -2338,7 +2409,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                    gutils->OrigAA, gutils->oldFunc,
                    PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
                    gutils->OrigLI, gutils->OrigDT, TLI, guaranteedUnreachable,
-                   _overwritten_argsPP, DerivativeMode::ReverseModePrimal, omp);
+                   _overwritten_argsPP, _nocache_argsPP, DerivativeMode::ReverseModePrimal, omp);
   const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
       CA.compute_overwritten_args_for_callsites();
   gutils->overwritten_args_map_ptr = &overwritten_args_map;
@@ -3599,7 +3670,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       auto &aug = CreateAugmentedPrimal(
           context, key.todiff, key.retType, key.constant_args, TA,
           key.returnUsed, key.shadowReturnUsed, key.typeInfo,
-          key.overwritten_args,
+          key.overwritten_args, key.nocache_args,
           /*forceAnonymousTape*/ false, key.width, key.AtomicAdd, omp);
 
       SmallVector<Value *, 4> fwdargs;
@@ -4001,6 +4072,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   // Convert uncacheable args from the input function to the preprocessed
   // function
   const std::vector<bool> &_overwritten_argsPP = key.overwritten_args;
+  const std::vector<bool> &_nocache_argsPP = key.nocache_args;
 
   gutils->forceActiveDetection();
 
@@ -4013,7 +4085,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                    gutils->OrigAA, gutils->oldFunc,
                    PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
                    gutils->OrigLI, gutils->OrigDT, TLI, guaranteedUnreachable,
-                   _overwritten_argsPP, key.mode, omp);
+                   _overwritten_argsPP, _nocache_argsPP, key.mode, omp);
   const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
       (augmenteddata) ? augmenteddata->overwritten_args_map
                       : CA.compute_overwritten_args_for_callsites();
@@ -4381,6 +4453,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     DerivativeMode mode, bool freeMemory, unsigned width,
     llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
     const std::vector<bool> _overwritten_args,
+    const std::vector<bool> _nocache_args,
     const AugmentedReturn *augmenteddata, bool omp) {
   assert(retType != DIFFE_TYPE::OUT_DIFF);
 
@@ -4395,7 +4468,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   if (mode != DerivativeMode::ForwardMode)
     assert(_overwritten_args.size() == todiff->arg_size());
 
-  ForwardCacheKey tup = {todiff,     retType, constant_args, _overwritten_args,
+  ForwardCacheKey tup = {todiff,     retType, constant_args, _overwritten_args, _nocache_args,
                          returnUsed, mode,    width,         additionalArg,
                          oldTypeInfo};
 
@@ -4643,6 +4716,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   std::unique_ptr<const std::map<Instruction *, bool>> can_modref_map;
   if (mode == DerivativeMode::ForwardModeSplit) {
     std::vector<bool> _overwritten_argsPP = _overwritten_args;
+    std::vector<bool> _nocache_argsPP = _nocache_args;
 
     gutils->computeGuaranteedFrees();
     CacheAnalysis CA(
@@ -4651,7 +4725,7 @@ Function *EnzymeLogic::CreateForwardDiff(
         gutils->oldFunc,
         PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
         gutils->OrigLI, gutils->OrigDT, TLI, guaranteedUnreachable,
-        _overwritten_argsPP, mode, omp);
+        _overwritten_argsPP, _nocache_argsPP, mode, omp);
     const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
         CA.compute_overwritten_args_for_callsites();
     gutils->overwritten_args_map_ptr = &overwritten_args_map;

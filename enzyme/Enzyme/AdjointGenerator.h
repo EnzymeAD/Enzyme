@@ -3903,11 +3903,12 @@ public:
     if (Mode == DerivativeMode::ReverseModePrimal ||
         Mode == DerivativeMode::ReverseModeCombined) {
       if (called) {
+        std::vector<bool> nocache_args(overwritten_args.size(), false);
         subdata = &gutils->Logic.CreateAugmentedPrimal(
             RequestContext(&call, &BuilderZ), cast<Function>(called),
             subretType, argsInverted, TR.analyzer.interprocedural,
             /*return is used*/ false,
-            /*shadowReturnUsed*/ false, nextTypeInfo, overwritten_args, false,
+            /*shadowReturnUsed*/ false, nextTypeInfo, overwritten_args, nocache_args, false,
             gutils->getWidth(),
             /*AtomicAdd*/ true,
             /*OpenMP*/ true);
@@ -4658,12 +4659,13 @@ public:
       FunctionType *FT = nullptr;
 
       if (called) {
+        std::vector<bool> nocache_args(overwritten_args.size(), false);
         newcalled = gutils->Logic.CreateForwardDiff(
             RequestContext(&call, &BuilderZ), cast<Function>(called),
             subretType, argsInverted, TR.analyzer.interprocedural,
             /*returnValue*/ subretused, Mode,
             ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->getWidth(),
-            tape ? tape->getType() : nullptr, nextTypeInfo, overwritten_args,
+            tape ? tape->getType() : nullptr, nextTypeInfo, overwritten_args, nocache_args,
             /*augmented*/ subdata);
         FT = cast<Function>(newcalled)->getFunctionType();
       } else {
@@ -5062,11 +5064,12 @@ public:
       } else {
         if (Mode == DerivativeMode::ReverseModePrimal ||
             Mode == DerivativeMode::ReverseModeCombined) {
+          std::vector<bool> nocache_args(overwritten_args.size(), false);
           subdata = &gutils->Logic.CreateAugmentedPrimal(
               RequestContext(&call, &BuilderZ), cast<Function>(called),
               subretType, argsInverted, TR.analyzer.interprocedural,
               /*return is used*/ subretused, shadowReturnUsed, nextTypeInfo,
-              overwritten_args, false, gutils->getWidth(), gutils->AtomicAdd);
+              overwritten_args, nocache_args, false, gutils->getWidth(), gutils->AtomicAdd);
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
             auto subaugmentations =

@@ -4545,7 +4545,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         isRealloc = true;
     }
   }
-  std::vector<bool> overwritten_args;
+  std::vector<bool> overwritten_args, nocache_args;
   FnTypeInfo type_args(fn);
   if (isRealloc) {
     llvm::errs() << "warning: assuming realloc only creates pointers\n";
@@ -4557,6 +4557,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   std::vector<DIFFE_TYPE> types;
   for (auto &a : fn->args()) {
     overwritten_args.push_back(!a.getType()->isFPOrFPVectorTy());
+    nocache_args.push_back(false);
     TypeTree TT;
     if (a.getType()->isFPOrFPVectorTy())
       TT.insert({-1}, ConcreteType(a.getType()->getScalarType()));
@@ -4606,7 +4607,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   case DerivativeMode::ForwardMode: {
     Constant *newf = Logic.CreateForwardDiff(
         context, fn, retType, types, TA, false, mode, /*freeMemory*/ true,
-        width, nullptr, type_args, overwritten_args, /*augmented*/ nullptr);
+        width, nullptr, type_args, overwritten_args, nocache_args,
+        /*augmented*/ nullptr);
 
     assert(newf);
 
@@ -4632,11 +4634,12 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         context, fn, retType, /*constant_args*/ types, TA,
         /*returnUsed*/ !fn->getReturnType()->isEmptyTy() &&
             !fn->getReturnType()->isVoidTy(),
-        /*shadowReturnUsed*/ false, type_args, overwritten_args,
+        /*shadowReturnUsed*/ false, type_args, overwritten_args, nocache_args,
         /*forceAnonymousTape*/ true, width, AtomicAdd);
     Constant *newf = Logic.CreateForwardDiff(
         context, fn, retType, types, TA, false, mode, /*freeMemory*/ true,
-        width, nullptr, type_args, overwritten_args, /*augmented*/ &augdata);
+        width, nullptr, type_args, overwritten_args, nocache_args,
+        /*augmented*/ &augdata);
 
     assert(newf);
 
@@ -4673,7 +4676,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                                            retType == DIFFE_TYPE::DUP_NONEED);
     auto &augdata = Logic.CreateAugmentedPrimal(
         context, fn, retType, /*constant_args*/ types, TA, returnUsed,
-        shadowReturnUsed, type_args, overwritten_args,
+        shadowReturnUsed, type_args, overwritten_args, nocache_args,
         /*forceAnonymousTape*/ true, width, AtomicAdd);
     Constant *newf = Logic.CreatePrimalAndGradient(
         context,

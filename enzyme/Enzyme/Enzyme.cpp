@@ -696,17 +696,15 @@ public:
 
 #if LLVM_VERSION_MAJOR > 16
   static std::optional<Options>
-  handleArguments(IRBuilder<> &Builder, CallInst *CI, Function *fn,
-                  DerivativeMode mode, bool sizeOnly,
-                  std::vector<DIFFE_TYPE> &constants,
-                  SmallVectorImpl<Value *> &args, std::map<int, Type *> &byVal)
 #else
   static Optional<Options>
+#endif
   handleArguments(IRBuilder<> &Builder, CallInst *CI, Function *fn,
                   DerivativeMode mode, bool sizeOnly,
                   std::vector<DIFFE_TYPE> &constants,
+                  std::vector<bool>& overwritten_args,
+                  std::vector<bool>& nocache_args,
                   SmallVectorImpl<Value *> &args, std::map<int, Type *> &byVal)
-#endif
   {
     FunctionType *FT = fn->getFunctionType();
 
@@ -726,6 +724,16 @@ public:
     unsigned byRefSize = 0;
     bool primalReturn = false;
     StringSet<> ActiveRandomVariables;
+    bool no_overwrite = false;
+    bool no_cache = false;
+    // set default values of overwritten_args and nocache_args
+    // these can be overridden with enzyme_noowr and and enzyme_nocache
+    overwritten_args.clear();
+    nocache_args.clear();
+    for (auto &a : fn->args()) {
+      overwritten_args.push_back(mode != DerivativeMode::ReverseModeCombined);
+      nocache_args.push_back(false);
+    }
 
     DIFFE_TYPE retType = whatType(fn->getReturnType(), mode);
 
@@ -865,6 +873,12 @@ public:
           byRefSize = cast<ConstantInt>(CI->getArgOperand(i))->getZExtValue();
           assert(byRefSize > 0);
           continue;
+        } else if (*metaString == "enzyme_noowr") {
+          no_overwrite = true;
+          continue;
+        } else if (*metaString == "enzyme_nocache") {
+          no_cache = true;
+          continue;
         }
         if (*metaString == "enzyme_dup") {
           opt_ty = DIFFE_TYPE::DUP_ARG;
@@ -984,6 +998,14 @@ public:
         if (sizeOnly) {
           assert(opt_ty);
           constants.push_back(*opt_ty);
+          if (no_overwrite)
+              overwritten_args.at(truei) = false;
+          no_overwrite = false;
+          if (no_cache) {
+              overwritten_args.at(truei) = false;
+              nocache_args.at(truei) = true;
+          }
+          no_cache = false;
           truei++;
           continue;
         }
@@ -1215,6 +1237,14 @@ public:
         args.push_back(res);
       }
 
+      if (no_overwrite)
+        overwritten_args.at(truei) = false;
+      no_overwrite = false;
+      if (no_cache) {
+        overwritten_args.at(truei) = false;
+        nocache_args.at(truei) = true;
+      }
+      no_cache = false;
       ++truei;
     }
     if (truei < FT->getNumParams()) {
@@ -1233,13 +1263,10 @@ public:
   }
 
   static FnTypeInfo
-  populate_overwritten_args(TypeAnalysis &TA, llvm::Function *fn,
-                            DerivativeMode mode,
-                            std::vector<bool> &overwritten_args) {
+  compute_type_args(TypeAnalysis &TA, llvm::Function *fn,
+                    DerivativeMode mode) {
     FnTypeInfo type_args(fn);
     for (auto &a : type_args.Function->args()) {
-      overwritten_args.push_back(
-          !(mode == DerivativeMode::ReverseModeCombined));
       TypeTree dt;
       if (a.getType()->isFPOrFPVectorTy()) {
         dt = ConcreteType(a.getType()->getScalarType());
@@ -1464,6 +1491,8 @@ public:
   bool HandleAutoDiff(Instruction *CI, CallingConv::ID CallingConv, Value *ret,
                       Type *retElemType, SmallVectorImpl<Value *> &args,
                       const std::map<int, Type *> &byVal,
+                      std::vector<bool>& overwritten_args,
+                      std::vector<bool>& nocache_args,
                       const std::vector<DIFFE_TYPE> &constants, Function *fn,
                       DerivativeMode mode, Options &options, bool sizeOnly,
                       SmallVectorImpl<CallInst *> &calls) {
@@ -1483,9 +1512,7 @@ public:
                      Arch == Triple::amdgcn;
 
     TypeAnalysis TA(Logic.PPC.FAM);
-    std::vector<bool> overwritten_args;
-    FnTypeInfo type_args =
-        populate_overwritten_args(TA, fn, mode, overwritten_args);
+    FnTypeInfo type_args = compute_type_args(TA, fn, mode);
 
     IRBuilder Builder(CI);
     RequestContext context(CI, &Builder);
@@ -1499,7 +1526,7 @@ public:
       newFunc = Logic.CreateForwardDiff(
           context, fn, retType, constants, TA,
           /*should return*/ primalReturn, mode, freeMemory, width,
-          /*addedType*/ nullptr, type_args, overwritten_args,
+          /*addedType*/ nullptr, type_args, overwritten_args, nocache_args,
           /*augmented*/ nullptr);
       break;
     case DerivativeMode::ForwardModeSplit: {
@@ -1507,7 +1534,8 @@ public:
       aug = &Logic.CreateAugmentedPrimal(
           context, fn, retType, constants, TA,
           /*returnUsed*/ false, /*shadowReturnUsed*/ false, type_args,
-          overwritten_args, forceAnonymousTape, width, /*atomicAdd*/ AtomicAdd);
+          overwritten_args, nocache_args,
+          forceAnonymousTape, width, /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -1543,7 +1571,7 @@ public:
       newFunc = Logic.CreateForwardDiff(
           context, fn, retType, constants, TA,
           /*should return*/ primalReturn, mode, freeMemory, width,
-          /*addedType*/ tapeType, type_args, overwritten_args, aug);
+          /*addedType*/ tapeType, type_args, overwritten_args, nocache_args, aug);
       break;
     }
     case DerivativeMode::ReverseModeCombined:
@@ -1577,7 +1605,7 @@ public:
                                              retType == DIFFE_TYPE::DUP_NONEED);
       aug = &Logic.CreateAugmentedPrimal(
           context, fn, retType, constants, TA, returnUsed, shadowReturnUsed,
-          type_args, overwritten_args, forceAnonymousTape, width,
+          type_args, overwritten_args, nocache_args, forceAnonymousTape, width,
           /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
@@ -1620,6 +1648,7 @@ public:
                               .retType = retType,
                               .constant_args = constants,
                               .overwritten_args = overwritten_args,
+                              .nocache_args = nocache_args,
                               .returnUsed = false,
                               .shadowReturnUsed = false,
                               .mode = mode,
@@ -1782,9 +1811,11 @@ public:
 
     std::map<int, Type *> byVal;
     std::vector<DIFFE_TYPE> constants;
+    std::vector<bool> overwritten_args, nocache_args;
     SmallVector<Value *, 2> args;
 
     auto options = handleArguments(Builder, CI, fn, mode, sizeOnly, constants,
+                                   overwritten_args, nocache_args,
                                    args, byVal);
 
     if (!options) {
@@ -1806,11 +1837,13 @@ public:
 
 #if LLVM_VERSION_MAJOR >= 16
     return HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, args,
-                          byVal, constants, fn, mode, options.value(), sizeOnly,
+                          byVal, overwritten_args, nocache_args,
+                          constants, fn, mode, options.value(), sizeOnly,
                           calls);
 #else
     return HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, args,
-                          byVal, constants, fn, mode, options.getValue(),
+                          byVal, overwritten_args, nocache_args,
+                          constants, fn, mode, options.getValue(),
                           sizeOnly, calls);
 #endif
   }
@@ -1825,12 +1858,14 @@ public:
     assert(F);
 
     std::vector<DIFFE_TYPE> constants;
+    std::vector<bool> overwritten_args, nocache_args;
     std::map<int, Type *> byVal;
     SmallVector<Value *, 4> args;
 
     auto diffeMode = DerivativeMode::ReverseModeCombined;
 
     auto opt = handleArguments(Builder, CI, F, diffeMode, false, constants,
+                               overwritten_args, nocache_args,
                                args, byVal);
 
     SmallVector<Value *, 6> dargs(args.begin(), args.end());
@@ -1941,11 +1976,13 @@ public:
 #if LLVM_VERSION_MAJOR >= 16
     bool status =
         HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, dargs, byVal,
+                       overwritten_args, nocache_args,
                        constants, newFunc, DerivativeMode::ReverseModeCombined,
                        opt.value(), false, calls);
 #else
     bool status =
         HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, dargs, byVal,
+                       overwritten_args, nocache_args,
                        constants, newFunc, DerivativeMode::ReverseModeCombined,
                        opt.getValue(), false, calls);
 #endif
