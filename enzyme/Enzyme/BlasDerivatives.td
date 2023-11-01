@@ -104,6 +104,11 @@ class use<string _name> {
 
 class FrobInnerProd<string _tmp>;
 
+// when use-lapack=1 is set and we are not on a gpu, 
+// calls out to lascl, otherwise we will loop over the rows and call scal.
+// If the matrix is continuous, we use a single scal as minor optimization.
+class ScaleMatrix<string _tmp>;
+
 class DiagUpdateSPMV<string _tmp>;
 
 // General note: If return is scalar, return it. If return is vec, update it.
@@ -245,7 +250,8 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                                                     (Concat adj<"C">, $A, (ld $A, $transa, $lda, $m, $k))),
                                                   Constant<"1.0">, adj<"B">),
                   /* beta  */ (FrobInnerProd<""> $m, $n, adj<"C">, input<"C">),
-                  /* C     */ (b<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, adj<"C">, Alloca<1>)
+                  /* C     */ (ScaleMatrix<""> $m, $n, $beta, adj<"C">)
+                  ///* C     */ (b<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, adj<"C">, Alloca<1>)
                   ]
                   >;
 
