@@ -1031,10 +1031,24 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
       origName = "inst";
       os << " {\n";
+      os << "#ifdef __clang__\n"
+         << "#pragma clang diagnostic push\n"
+         << "#pragma clang diagnostic ignored \"-Wunused-variable\"\n"
+         << "#pragma clang diagnostic ignored \"-Wunused-but-set-variable\"\n"
+         << "#else\n"
+         << "#pragma GCC diagnostic push\n"
+         << "#pragma GCC diagnostic ignored \"-Wunused-variable\"\n"
+         << "#pragma GCC diagnostic ignored \"-Wunused-but-set-variable\"\n"
+         << "#endif\n";
       os << "    auto mod = inst.getParent()->getParent()->getParent();\n";
       os << "    auto *const newCall = "
             "cast<llvm::Instruction>(gutils->getNewFromOriginal(&"
          << origName << "));\n";
+      os << "#ifdef __clang__\n"
+         << "#pragma clang diagnostic pop\n"
+         << "#else\n"
+         << "#pragma GCC diagnostic pop\n"
+         << "#endif\n";
       os << "    IRBuilder<> BuilderZ(newCall);\n";
       os << "    BuilderZ.setFastMathFlags(getFast());\n";
       break;
@@ -1056,10 +1070,24 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
       origName = "BO";
       os << " {\n";
+      os << "#ifdef __clang__\n"
+         << "#pragma clang diagnostic push\n"
+         << "#pragma clang diagnostic ignored \"-Wunused-variable\"\n"
+         << "#pragma clang diagnostic ignored \"-Wunused-but-set-variable\"\n"
+         << "#else\n"
+         << "#pragma GCC diagnostic push\n"
+         << "#pragma GCC diagnostic ignored \"-Wunused-variable\"\n"
+         << "#pragma GCC diagnostic ignored \"-Wunused-but-set-variable\"\n"
+         << "#endif\n";
       os << "    auto mod = BO.getParent()->getParent()->getParent();\n";
       os << "    auto *const newCall = "
             "cast<llvm::Instruction>(gutils->getNewFromOriginal(&"
          << origName << "));\n";
+      os << "#ifdef __clang__\n"
+         << "#pragma clang diagnostic pop\n"
+         << "#else\n"
+         << "#pragma GCC diagnostic pop\n"
+         << "#endif\n";
       os << "    IRBuilder<> BuilderZ(newCall);\n";
       os << "    BuilderZ.setFastMathFlags(getFast());\n";
       break;

@@ -19,10 +19,10 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
 
   os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == "
         "\"cublas_\";\n";
-  os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
+  if (lv23)
+    os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
   os << "  const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
         "\"cublas\";\n";
-  os << "  Value *cacheval = nullptr;\n\n";
   // lv 2 or 3 functions have an extra arg under the cblas_ abi
   os << "  const int offset = (";
   if (lv23) {

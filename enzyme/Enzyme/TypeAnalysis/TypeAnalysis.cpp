@@ -5484,12 +5484,20 @@ TypeResults TypeAnalysis::analyzeFunction(const FnTypeInfo &fn) {
 
     return TypeResults(analysis);
   }
+#ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wnull-dereference"
+#else
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wnull-dereference"
+#endif
   if (fn.Function->empty())
     return TypeResults(*(TypeAnalyzer *)nullptr);
+#ifdef __clang__
 #pragma clang diagnostic pop
-
+#else
+#pragma GCC diagnostic pop
+#endif
   auto res = analyzedFunctions.emplace(fn, new TypeAnalyzer(fn, *this));
   auto &analysis = *res.first->second;
 
