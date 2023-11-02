@@ -3223,7 +3223,15 @@ public:
       for (size_t i = start; i < size; ++i) {
         bool Legal = true;
         auto tmp = dt;
-        tmp.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+        auto next = vd[{(int)i}];
+        tmp.checkedOrIn(next, /*PointerIntSame*/ true, Legal);
+        // Prevent fusion of {Anything, Float} since anything is an int rule
+        // but float requires zeroing.
+        if ((dt == BaseType::Anything &&
+             (next != BaseType::Anything && next.isKnown())) ||
+            (next == BaseType::Anything &&
+             (dt != BaseType::Anything && dt.isKnown())))
+          Legal = false;
         if (!Legal) {
           if (Mode == DerivativeMode::ForwardMode) {
             // if both are floats (of any type), forward mode is the same.
