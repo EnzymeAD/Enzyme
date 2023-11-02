@@ -1681,6 +1681,14 @@ get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,
              llvm::ArrayRef<llvm::Value *> row,
              llvm::ArrayRef<llvm::Value *> col, bool byRef, bool cublas);
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-variable"
+#else
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#endif
+
 // Parameter attributes from the original function/call that
 // we should preserve on the primal of the derivative code.
 static inline llvm::Attribute::AttrKind PrimalParamAttrsToPreserve[] = {
@@ -1722,6 +1730,11 @@ static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
     llvm::Attribute::AttrKind::NoCapture,
     llvm::Attribute::AttrKind::ReadNone,
 };
+#ifdef __clang__
+#pragma clang diagnostic pop
+#else
+#pragma GCC diagnostic pop
+#endif
 
 static inline llvm::Type *getSubType(llvm::Type *T) { return T; }
 
@@ -1732,7 +1745,7 @@ static inline llvm::Type *getSubType(llvm::Type *T, Arg1 i, Args... args) {
   if (auto VT = llvm::dyn_cast<llvm::VectorType>(T))
     return getSubType(VT->getElementType(), args...);
   if (auto ST = llvm::dyn_cast<llvm::StructType>(T)) {
-    assert(i != -1);
+    assert((int)i != -1);
     return getSubType(ST->getElementType(i), args...);
   }
   llvm::errs() << *T << "\n";

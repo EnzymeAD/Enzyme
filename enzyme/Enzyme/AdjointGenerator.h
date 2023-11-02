@@ -3746,6 +3746,8 @@ public:
       return false;
     }
     }
+
+    return false;
   }
 
 // first one allows adding attributes to blas functions declared in the second

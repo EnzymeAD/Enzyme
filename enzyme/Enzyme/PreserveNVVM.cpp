@@ -302,7 +302,6 @@ bool preserveLinkage(bool Begin, Function &F) {
 bool preserveNVVM(bool Begin, Function &F) {
   bool changed = false;
 
-  auto name = getFuncName(&F);
   if (Begin) {
     changed |= attributeKnownFunctions(F);
   }

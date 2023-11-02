@@ -2628,7 +2628,6 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       for (size_t i = 0; i < I->getNumOperands(); i++) {
         if (auto I2 = dyn_cast<Instruction>(I->getOperand(i))) {
           Instruction *candidate = nullptr;
-          bool reverse = false;
           for (auto U : I2->users()) {
             candidate = dyn_cast<Instruction>(U);
             if (!candidate)
@@ -3324,7 +3323,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       Value *ops[2] = {nullptr, nullptr};
       bool legal = true;
       for (int i = 0; i < 2; i++) {
-        if (auto C = dyn_cast<ConstantFP>(SI->getOperand(1 + i))) {
+        if (isa<ConstantFP>(SI->getOperand(1 + i))) {
           ops[i] = nullptr;
           continue;
         }
@@ -3437,7 +3436,6 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           // sub 0, (mul nsw nuw constant, x) -> mul nsw nuw -constant, x
           if (zext->getOpcode() == Instruction::Mul &&
               zext->hasNoUnsignedWrap() && zext->hasNoSignedWrap()) {
-            bool done = true;
             for (int i = 0; i < 2; i++)
               if (auto CI = dyn_cast<ConstantInt>(zext->getOperand(i))) {
                 auto res = pushcse(B.CreateMul(
@@ -4336,7 +4334,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           bool legal = idx != PN;
           auto ph_idx = PN->getBasicBlockIndex(PH);
           for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
-            if (i == ph_idx)
+            if ((int)i == ph_idx)
               continue;
             auto v = PN->getIncomingValue(i);
             if (v != PN->getIncomingValue(1 - ph_idx)) {
@@ -5035,6 +5033,7 @@ return true;
       return std::make_shared<Constraints>(Type::Union, next);
     }
     }
+    return Constraints::none();
   }
   InnerTy orB(InnerTy rhs, ScalarEvolution &SE) const {
     return notB()->andB(rhs->notB(), SE)->notB();
@@ -5329,6 +5328,7 @@ return true;
     case Type::Intersect:
       return false;
     }
+    return false;
   }
 };
 
@@ -5361,6 +5361,7 @@ raw_ostream &operator<<(raw_ostream &os, const Constraints &c) {
     return os;
   }
   }
+  return os;
 }
 
 SmallVector<Value *, 1> Constraints::allSolutions(SCEVExpander &Exp,
@@ -5389,6 +5390,7 @@ SmallVector<Value *, 1> Constraints::allSolutions(SCEVExpander &Exp,
     llvm::errs() << *this << "\n";
     llvm_unreachable("Intersect not handled");
   }
+  return {};
 }
 
 void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
@@ -5520,7 +5522,6 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     // to sparse
     auto cond = br->getCondition();
     bool negated = br->getSuccessor(0) == blk;
-    auto S = SE.getSCEV(cond);
 
     bool legal = true;
     // Whether the i1 value does not contain any icmp's

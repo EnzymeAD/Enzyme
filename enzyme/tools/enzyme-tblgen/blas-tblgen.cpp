@@ -166,6 +166,15 @@ void emit_beginning(const TGPattern &pattern, raw_ostream &os) {
         "llvm::Type *fpType) "
         "{\n"
      << "  \n"
+     << "#ifdef __clang__\n"
+     << "#pragma clang diagnostic push\n"
+     << "#pragma clang diagnostic ignored \"-Wunused-variable\"\n"
+     << "#pragma clang diagnostic ignored \"-Wunused-but-set-variable\"\n"
+     << "#else\n"
+     << "#pragma GCC diagnostic push\n"
+     << "#pragma GCC diagnostic ignored \"-Wunused-variable\"\n"
+     << "#pragma GCC diagnostic ignored \"-Wunused-but-set-variable\"\n"
+     << "#endif\n"
      << "  using namespace llvm;\n"
      << "  CallInst *const newCall = "
         "cast<CallInst>(gutils->getNewFromOriginal(&call));\n"
@@ -228,6 +237,11 @@ void emit_free_and_ending(const TGPattern &pattern, raw_ostream &os) {
      << "    }\n"
      << "  }\n"
      << "  return true;\n"
+     << "#ifdef __clang__\n"
+     << "#pragma clang diagnostic pop\n"
+     << "#else\n"
+     << "#pragma GCC diagnostic pop\n"
+     << "#endif\n"
      << "}\n\n";
 }
 

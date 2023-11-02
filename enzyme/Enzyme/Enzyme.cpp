@@ -736,11 +736,9 @@ public:
     bool sret = CI->hasStructRetAttr() ||
                 fn->hasParamAttribute(0, Attribute::StructRet);
 
-    std::vector<bool> overwritten_args;
-
-    for (auto &a : fn->args())
-      overwritten_args.push_back(
-          !(mode == DerivativeMode::ReverseModeCombined));
+    std::vector<bool> overwritten_args(
+        fn->getFunctionType()->getNumParams(),
+        !(mode == DerivativeMode::ReverseModeCombined));
 
 #if LLVM_VERSION_MAJOR >= 14
     for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
@@ -3072,6 +3070,7 @@ AnalysisKey EnzymeNewPM::Key;
 #include "llvm/Transforms/Scalar/LoopFlatten.h"
 #include "llvm/Transforms/Scalar/MergedLoadStoreMotion.h"
 
+#if LLVM_VERSION_MAJOR >= 15
 #if LLVM_VERSION_MAJOR < 14
 static InlineParams
 getInlineParamsFromOptLevel(llvm::PassBuilder::OptimizationLevel Level)
@@ -3081,6 +3080,7 @@ static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level)
 {
   return getInlineParams(Level.getSpeedupLevel(), Level.getSizeLevel());
 }
+#endif
 
 #if LLVM_VERSION_MAJOR >= 12
 #include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"

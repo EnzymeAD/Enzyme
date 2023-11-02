@@ -102,9 +102,13 @@ class use<string _name> {
   string name = _name;
 }
 
-class FrobInnerProd<string _tmp>;
+class FrobInnerProd<string _tmp> {
+  string unused = _tmp;
+}
 
-class DiagUpdateSPMV<string _tmp>;
+class DiagUpdateSPMV<string _tmp> {
+  string unused = _tmp;
+}
 
 // General note: If return is scalar, return it. If return is vec, update it.
 
