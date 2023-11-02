@@ -1384,7 +1384,7 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
     }
   }
 
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
   if (tostore->getContext().supportsTypedPointers()) {
 #endif

@@ -5204,7 +5204,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       TypeTree ival(BaseType::Pointer);
       size_t objSize = 1;
 
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
       auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
       objSize = DL.getTypeSizeInBits(
                     call.getOperand(1)->getType()->getPointerElementType()) /

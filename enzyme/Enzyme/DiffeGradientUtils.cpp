@@ -181,7 +181,7 @@ AllocaInst *DiffeGradientUtils::getDifferential(Value *val) {
     ZeroMemory(entryBuilder, type, differentials[val],
                /*isTape*/ false);
   }
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 13
   if (val->getContext().supportsTypedPointers()) {
 #endif
@@ -519,7 +519,7 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
     return;
   }
   Value *tostore = getDifferential(val);
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 13
   if (toset->getContext().supportsTypedPointers()) {
 #endif
@@ -570,7 +570,7 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
   Value *metaforfree =
       unwrapM(storeInto, tbuild, antimap, UnwrapMode::LegalFullUnwrap);
   Type *T;
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
   if (metaforfree->getContext().supportsTypedPointers()) {
 #endif
@@ -641,7 +641,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   }
 
   bool needsCast = false;
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 13
   if (origptr->getContext().supportsTypedPointers()) {
 #endif
