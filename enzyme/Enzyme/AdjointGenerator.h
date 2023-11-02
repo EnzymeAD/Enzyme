@@ -4804,6 +4804,9 @@ public:
       }
     }
 
+    SmallVector<ValueType, 2> PreBundleTypes;
+    SmallVector<ValueType, 2> BundleTypes;
+
 #if LLVM_VERSION_MAJOR >= 14
     for (unsigned i = 0; i < call.arg_size(); ++i)
 #else
@@ -4861,12 +4864,17 @@ public:
       }
 
       Value *prearg = argi;
+
+      ValueType preType = ValueType::Primal;
+      ValueType revType = ValueType::Primal;
+
       // Keep the existing passed value if coming from outside.
       if (readNoneNoCapture ||
           (argTy == DIFFE_TYPE::DUP_NONEED &&
            (writeOnlyNoCapture ||
             !isa<Argument>(getBaseObject(call.getArgOperand(i)))))) {
         prearg = getUndefinedValueForType(argi->getType());
+        preType = ValueType::None;
       }
       pre_args.push_back(prearg);
 
@@ -4884,6 +4892,7 @@ public:
               (writeOnlyNoCapture ||
                !isa<Argument>(getBaseObject(call.getOperand(i))))))) {
           argi = getUndefinedValueForType(argi->getType());
+          revType = ValueType::None;
         }
         args.push_back(lookup(argi, Builder2));
       }
@@ -4891,6 +4900,8 @@ public:
       argsInverted.push_back(argTy);
 
       if (argTy == DIFFE_TYPE::CONSTANT) {
+        PreBundleTypes.push_back(preType);
+        BundleTypes.push_back(revType);
         continue;
       }
 
@@ -4950,11 +4961,15 @@ public:
             darg = getUndefinedValueForType(argi->getType());
           } else {
             darg = gutils->invertPointerM(call.getArgOperand(i), Builder2);
+            revType = (revType == ValueType::None) ? ValueType::Shadow
+                                                   : ValueType::Both;
           }
           args.push_back(lookup(darg, Builder2));
         }
         pre_args.push_back(
             gutils->invertPointerM(call.getArgOperand(i), BuilderZ));
+        preType =
+            (preType == ValueType::None) ? ValueType::Shadow : ValueType::Both;
 
         // Note sometimes whattype mistakenly says something should be
         // constant [because composed of integer pointers alone]
@@ -4966,13 +4981,9 @@ public:
         assert(whatType(argType, Mode) == DIFFE_TYPE::OUT_DIFF ||
                whatType(argType, Mode) == DIFFE_TYPE::CONSTANT);
       }
+      PreBundleTypes.push_back(preType);
+      BundleTypes.push_back(revType);
     }
-    SmallVector<ValueType, 2> BundleTypes;
-    for (auto A : argsInverted)
-      if (A == DIFFE_TYPE::CONSTANT)
-        BundleTypes.push_back(ValueType::Primal);
-      else
-        BundleTypes.push_back(ValueType::Both);
     if (called) {
 #if LLVM_VERSION_MAJOR >= 14
       if (call.arg_size() !=
@@ -5161,7 +5172,7 @@ public:
 
         augmentcall = BuilderZ.CreateCall(
             FT, newcalled, pre_args,
-            gutils->getInvertedBundles(&call, BundleTypes, BuilderZ,
+            gutils->getInvertedBundles(&call, PreBundleTypes, BuilderZ,
                                        /*lookup*/ false));
         augmentcall->setCallingConv(call.getCallingConv());
         augmentcall->setDebugLoc(
