@@ -1323,8 +1323,10 @@ void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
   }
   os << "        if (byRef) {\n"
      << "          ((DiffeGradientUtils *)gutils)"
-     << "->addToInvertedPtrDiffe(&call, nullptr, fpType, 0,"
-     << "(blas.is64 ? 8 : 4), orig_" << name << ", cubcall, " << bb << ");\n"
+     << "->addToInvertedPtrDiffe(&call, nullptr, fpType, 0, "
+     << "(called->getParent()->getDataLayout().getTypeSizeInBits(fpType)/8), "
+        "orig_"
+     << name << ", cubcall, " << bb << ");\n"
      << "        } else {\n"
      << "          addToDiffe(orig_" << name << ", cubcall, " << bb
      << ", fpType);\n"
