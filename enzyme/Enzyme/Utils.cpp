@@ -640,14 +640,15 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                            llvm::ArrayRef<llvm::Value *> args,
                            llvm::Type *copy_retty,
                            llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
-  Twine copy_name = Twine(blas.prefix) + blas.floatType + "copy" + blas.suffix;
+  auto copy_name =
+      std::string(blas.prefix) + blas.floatType + "copy" + blas.suffix;
 
   SmallVector<Type *, 1> tys;
   for (auto arg : args)
     tys.push_back(arg->getType());
 
   FunctionType *FT = FunctionType::get(copy_retty, tys, false);
-  auto fn = M.getOrInsertFunction(copy_name.str(), FT);
+  auto fn = M.getOrInsertFunction(copy_name, FT);
   Function *F = cast<Function>(fn.getCallee());
   attributeKnownFunctions(*F);
 
@@ -657,14 +658,15 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
                              BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
                              llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
-  Twine copy_name = Twine(blas.prefix) + blas.floatType + "lacpy" + blas.suffix;
+  auto copy_name =
+      std::string(blas.prefix) + blas.floatType + "lacpy" + blas.suffix;
 
   SmallVector<Type *, 1> tys;
   for (auto arg : args)
     tys.push_back(arg->getType());
 
   auto FT = FunctionType::get(Type::getVoidTy(M.getContext()), tys, false);
-  auto fn = M.getOrInsertFunction(copy_name.str(), FT);
+  auto fn = M.getOrInsertFunction(copy_name, FT);
   Function *F = cast<Function>(fn.getCallee());
   attributeKnownFunctions(*F);
 
