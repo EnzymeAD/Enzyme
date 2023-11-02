@@ -1050,15 +1050,29 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
 
     if (Def->isSubClassOf("MagicInst")) {
       if (Def->getName() == "Rows") {
+        os << "({";
+        for (size_t i = Dag->getNumArgs() - 1;; i--) {
+          os << "auto brow_" << i << " = ";
+          rev_call_arg(Dag, rule, actArg, i, os);
+          os << "; ";
+          if (i == 0)
+            break;
+        }
         os << "get_blas_row(Builder2, ";
         for (size_t i = 0; i < Dag->getNumArgs(); i++) {
-          rev_call_arg(Dag, rule, actArg, i, os);
+          os << "brow_" << i;
           os << ", ";
         }
-        os << "byRef, cublas)";
+        os << "byRef, cublas);})";
         return;
       }
       if (Def->getName() == "Concat") {
+        os << "({";
+        for (size_t i = 0; i < Dag->getNumArgs(); i++) {
+          os << "auto concat_" << i << " = ";
+          rev_call_arg(Dag, rule, actArg, i, os);
+          os << "; ";
+        }
         os << "concat_values<";
         for (size_t i = 0; i < Dag->getNumArgs(); i++) {
           if (i != 0)
@@ -1069,9 +1083,9 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
         for (size_t i = 0; i < Dag->getNumArgs(); i++) {
           if (i != 0)
             os << ", ";
-          rev_call_arg(Dag, rule, actArg, i, os);
+          os << "concat_" << i;
         }
-        os << ")";
+        os << "); })";
         return;
       }
       if (Def->getName() == "ld") {
