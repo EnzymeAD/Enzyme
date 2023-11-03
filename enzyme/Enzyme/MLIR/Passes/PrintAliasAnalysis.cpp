@@ -87,7 +87,7 @@ struct PrintAliasAnalysisPass
         for (auto arg : funcOp.getArguments()) {
           auto *state = solver.lookupState<enzyme::AliasClassLattice>(arg);
           if (state) {
-            for (auto aliasClass : state->aliasClasses)
+            for (auto aliasClass : state->getAliasClasses())
               funcOp.setArgAttr(arg.getArgNumber(), "enzyme.ac", aliasClass);
           }
         }
@@ -102,7 +102,7 @@ struct PrintAliasAnalysisPass
         for (OpResult result : op->getResults()) {
           auto *state = solver.lookupState<enzyme::AliasClassLattice>(result);
           if (state) {
-            for (auto aliasClass : state->aliasClasses) {
+            for (auto aliasClass : state->getAliasClasses()) {
               op->setAttr("ac", aliasClass);
             }
           }

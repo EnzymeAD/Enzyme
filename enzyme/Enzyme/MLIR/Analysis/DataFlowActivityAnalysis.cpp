@@ -386,7 +386,7 @@ void forEachAliasedAlloc(const AliasClassLattice *ptrAliasClass,
     // known allocations
     errs() << "unhandled unknown alias class\n";
   }
-  for (DistinctAttr alloc : ptrAliasClass->aliasClasses)
+  for (DistinctAttr alloc : ptrAliasClass->getAliasClasses())
     forEachFn(alloc);
 }
 
@@ -517,7 +517,8 @@ public:
               activity == enzyme::Activity::enzyme_dupnoneed) {
             auto *argAliasClasses =
                 getOrCreateFor<AliasClassLattice>(block, arg);
-            for (DistinctAttr argAliasClass : argAliasClasses->aliasClasses) {
+            for (DistinctAttr argAliasClass :
+                 argAliasClasses->getAliasClasses()) {
               propagateIfChanged(lattice, lattice->setActiveIn(argAliasClass));
             }
           }
@@ -553,7 +554,8 @@ public:
         if (argActivity == enzyme::Activity::enzyme_dup ||
             argActivity == enzyme::Activity::enzyme_dupnoneed) {
           auto *argAliasClasses = getOrCreateFor<AliasClassLattice>(op, arg);
-          for (DistinctAttr argAliasClass : argAliasClasses->aliasClasses) {
+          for (DistinctAttr argAliasClass :
+               argAliasClasses->getAliasClasses()) {
             propagateIfChanged(before, before->setActiveOut(argAliasClass));
           }
         }
@@ -563,7 +565,7 @@ public:
         if (isa<MemRefType, LLVM::LLVMPointerType>(operand.getType())) {
           auto *retAliasClasses =
               getOrCreateFor<AliasClassLattice>(op, operand);
-          for (DistinctAttr retAliasClass : retAliasClasses->aliasClasses)
+          for (DistinctAttr retAliasClass : retAliasClasses->getAliasClasses())
             propagateIfChanged(before, before->setActiveOut(retAliasClass));
         }
       }
@@ -706,10 +708,10 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
       // Traverse the points-to sets in a simple BFS
       std::deque<DistinctAttr> frontier;
       DenseSet<DistinctAttr> visited;
-      frontier.insert(frontier.end(), aliasClassLattice->aliasClasses.begin(),
-                      aliasClassLattice->aliasClasses.end());
-      visited.insert(aliasClassLattice->aliasClasses.begin(),
-                     aliasClassLattice->aliasClasses.end());
+      const DenseSet<DistinctAttr> &aliasClasses =
+          aliasClassLattice->getAliasClasses();
+      frontier.insert(frontier.end(), aliasClasses.begin(), aliasClasses.end());
+      visited.insert(aliasClasses.begin(), aliasClasses.end());
       while (!frontier.empty()) {
         DistinctAttr aliasClass = frontier.front();
         frontier.pop_front();
@@ -722,7 +724,7 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
 
         // Or if it points to a pointer that points to active data
         for (DistinctAttr neighbor :
-             pointsToSets->pointsTo.lookup(aliasClass)) {
+             pointsToSets->pointsTo.lookup(aliasClass).getAliasClasses()) {
           if (!visited.contains(neighbor)) {
             visited.insert(neighbor);
             frontier.push_back(neighbor);
