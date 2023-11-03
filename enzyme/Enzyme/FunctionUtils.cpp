@@ -4624,8 +4624,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                 if (fneg->getOperand(1) == PN)
                   legal = false;
                 if (cmpPredicate) {
-                  if (cmpPredicate.value() !=
-                      cast<CmpInst>(fneg)->getPredicate())
+                  if (*cmpPredicate != cast<CmpInst>(fneg)->getPredicate())
                     legal = false;
                 } else {
                   cmpPredicate = cast<CmpInst>(fneg)->getPredicate();
@@ -4727,7 +4726,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             break;
           case Instruction::FCmp:
           case Instruction::ICmp:
-            fneg = B.CreateCmp(cmpPredicate.value(), lhsPN, rhsPN);
+            fneg = B.CreateCmp(*cmpPredicate, lhsPN, rhsPN);
             break;
           case Instruction::UIToFP:
             fneg = B.CreateUIToFP(lhsPN, PN->getType());
