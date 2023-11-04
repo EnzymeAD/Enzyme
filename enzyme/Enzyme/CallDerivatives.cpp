@@ -35,7 +35,7 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
   using namespace llvm;
 
   assert(called);
-  assert(gutils->getWidth() == 1);
+  //assert(gutils->getWidth() == 1);
 
   IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
   BuilderZ.setFastMathFlags(getFast());
@@ -44,6 +44,7 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
   if (funcName == "PMPI_Isend" || funcName == "MPI_Isend" ||
       funcName == "PMPI_Irecv" || funcName == "MPI_Irecv") {
     if (!gutils->isConstantInstruction(&call)) {
+      // Isend / Irecv in ReverseMode (Primal or Combined):
       if (Mode == DerivativeMode::ReverseModePrimal ||
           Mode == DerivativeMode::ReverseModeCombined) {
         assert(!gutils->isConstantValue(call.getOperand(0)));
@@ -71,6 +72,7 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
             getMPIMemberPtr<MPI_Elem::Old>(BuilderZ, impialloc, impi));
         BuilderZ.CreateStore(impialloc, d_req);
 
+        // Isend only in ReverseMode (Primal or Combined):
         if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
           Value *tysize =
               MPI_TYPE_SIZE(gutils->getNewFromOriginal(call.getOperand(2)),
@@ -91,7 +93,7 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
           BuilderZ.CreateStore(firstallocation, getMPIMemberPtr<MPI_Elem::Buf>(
                                                     BuilderZ, impialloc, impi));
           BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call));
-        } else {
+        } else { // Irecv only in ReverseMode (Primal or Combined):
           Value *ibuf = gutils->invertPointerM(call.getOperand(0), BuilderZ);
           if (ibuf->getType()->isIntegerTy())
             ibuf = BuilderZ.CreateIntToPtr(
@@ -141,7 +143,9 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
                     : (int)MPI_CallType::IRECV),
             getMPIMemberPtr<MPI_Elem::Call>(BuilderZ, impialloc, impi));
         // TODO old
-      }
+      } // END OF Isend / Irecv in ReverseMode (Primal or Combined)
+
+      // Isend / Irecv in ReverseMode (Gradient or Combined):
       if (Mode == DerivativeMode::ReverseModeGradient ||
           Mode == DerivativeMode::ReverseModeCombined) {
         IRBuilder<> Builder2(&call);
@@ -267,6 +271,8 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
             Builder2.CreateZExtOrTrunc(tysize,
                                        Type::getInt64Ty(Builder2.getContext())),
             "", true, true);
+
+        // Irecv only in ReverseMode (Gradient or Combined):
         if (funcName == "MPI_Irecv" || funcName == "PMPI_Irecv") {
           auto val_arg =
               ConstantInt::get(Type::getInt8Ty(Builder2.getContext()), 0);
@@ -281,6 +287,7 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
                                         tys),
               nargs, BufferDefs));
           memset->addParamAttr(0, Attribute::NonNull);
+        // Isend only in ReverseMode (Gradient or Combined):
         } else if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
           assert(!gutils->isConstantValue(call.getOperand(0)));
           Value *shadow = lookup(
@@ -298,6 +305,7 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
 
         CreateDealloc(Builder2, helper);
       }
+      // Isend / Irecv in ForwardMode:
       if (Mode == DerivativeMode::ForwardMode) {
         IRBuilder<> Builder2(&call);
         getForwardBuilder(Builder2);
@@ -306,33 +314,39 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
         assert(!gutils->isConstantValue(call.getOperand(6)));
 
         Value *buf = gutils->invertPointerM(call.getOperand(0), Builder2);
+
         Value *count = gutils->getNewFromOriginal(call.getOperand(1));
         Value *datatype = gutils->getNewFromOriginal(call.getOperand(2));
         Value *source = gutils->getNewFromOriginal(call.getOperand(3));
         Value *tag = gutils->getNewFromOriginal(call.getOperand(4));
         Value *comm = gutils->getNewFromOriginal(call.getOperand(5));
+
         Value *request = gutils->invertPointerM(call.getOperand(6), Builder2);
+        applyChainRule(Builder2, [&](Value* buf, Value* request){
 
-        Value *args[] = {
-            /*buf*/ buf,
-            /*count*/ count,
-            /*datatype*/ datatype,
-            /*source*/ source,
-            /*tag*/ tag,
-            /*comm*/ comm,
-            /*request*/ request,
-        };
+          Value *args[] = {
+              /*buf*/ buf,
+              /*count*/ count,
+              /*datatype*/ datatype,
+              /*source*/ source,
+              /*tag*/ tag,
+              /*comm*/ comm,
+              /*request*/ request,
+          };
 
-        auto Defs = gutils->getInvertedBundles(
-            &call,
-            {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-             ValueType::Primal, ValueType::Primal, ValueType::Primal,
-             ValueType::Shadow},
-            Builder2, /*lookup*/ false);
+          auto Defs = gutils->getInvertedBundles(
+              &call,
+              {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+               ValueType::Primal, ValueType::Primal, ValueType::Primal,
+               ValueType::Shadow},
+              Builder2, /*lookup*/ false);
 
-        auto callval = call.getCalledOperand();
+          auto callval = call.getCalledOperand();
 
-        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+          Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+
+        }, buf, request);
+
         return;
       }
     }
@@ -340,10 +354,11 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
     return;
   }
-
+  // WAIT
   if (funcName == "MPI_Wait" || funcName == "PMPI_Wait") {
     Value *d_reqp = nullptr;
     auto impi = getMPIHelper(call.getContext());
+    // WAIT in ReverseMode (Primal or Combined)
     if (Mode == DerivativeMode::ReverseModePrimal ||
         Mode == DerivativeMode::ReverseModeCombined) {
       Value *req = gutils->getNewFromOriginal(call.getOperand(0));
@@ -381,7 +396,7 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
         gutils->TapesToPreventRecomputation.insert(I);
       d_reqp = gutils->cacheForReverse(BuilderZ, d_reqp,
                                        getIndex(&call, CacheType::Tape));
-    }
+    } // WAIT in ReverseMode (Gradient or Combined)
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined) {
       IRBuilder<> Builder2(&call);
@@ -454,7 +469,8 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
         vec.push_back(endBlock);
       }
       Builder2.SetInsertPoint(endBlock);
-    } else if (Mode == DerivativeMode::ForwardMode) {
+    } // WAIT in ForwardMode
+    else if (Mode == DerivativeMode::ForwardMode) {
       IRBuilder<> Builder2(&call);
       getForwardBuilder(Builder2);
 
@@ -463,29 +479,31 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
       Value *request = gutils->invertPointerM(call.getArgOperand(0), Builder2);
       Value *status = gutils->invertPointerM(call.getArgOperand(1), Builder2);
 
-      if (request->getType()->isIntegerTy()) {
-        request = Builder2.CreateIntToPtr(
-            request,
-            PointerType::getUnqual(Type::getInt8PtrTy(call.getContext())));
-      }
+      applyChainRule(Builder2, [&](Value* request, Value* status){
+        if (request->getType()->isIntegerTy()) {
+          request = Builder2.CreateIntToPtr(
+              request,
+              PointerType::getUnqual(Type::getInt8PtrTy(call.getContext())));
+        }
 
-      Value *args[] = {/*request*/ request,
-                       /*status*/ status};
+        Value *args[] = {/*request*/ request,
+                         /*status*/ status};
+        auto Defs = gutils->getInvertedBundles(
+            &call, {ValueType::Shadow, ValueType::Shadow}, Builder2,
+            /*lookup*/ false);
 
-      auto Defs = gutils->getInvertedBundles(
-          &call, {ValueType::Shadow, ValueType::Shadow}, Builder2,
-          /*lookup*/ false);
+        auto callval = call.getCalledOperand();
 
-      auto callval = call.getCalledOperand();
+        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
 
-      Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+      }, request, status);
       return;
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
     return;
   }
-
+  // WAITALL
   if (funcName == "MPI_Waitall" || funcName == "PMPI_Waitall") {
     Value *d_reqp = nullptr;
     auto impi = getMPIHelper(call.getContext());
