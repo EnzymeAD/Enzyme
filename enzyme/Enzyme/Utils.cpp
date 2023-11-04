@@ -1914,7 +1914,8 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
 
   if (auto LI = dyn_cast<LoadInst>(maybeReader)) {
     LoadBegin = SE.getSCEV(LI->getPointerOperand());
-    if (LoadBegin != SE.getCouldNotCompute()) {
+    if (LoadBegin != SE.getCouldNotCompute() &&
+        !LoadBegin->getType()->isIntegerTy()) {
       auto &DL = maybeWriter->getModule()->getDataLayout();
       auto width = cast<IntegerType>(DL.getIndexType(LoadBegin->getType()))
                        ->getBitWidth();
@@ -1930,7 +1931,8 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
   }
   if (auto SI = dyn_cast<StoreInst>(maybeWriter)) {
     StoreBegin = SE.getSCEV(SI->getPointerOperand());
-    if (StoreBegin != SE.getCouldNotCompute()) {
+    if (StoreBegin != SE.getCouldNotCompute() &&
+        !StoreBegin->getType()->isIntegerTy()) {
       auto &DL = maybeWriter->getModule()->getDataLayout();
       auto width = cast<IntegerType>(DL.getIndexType(StoreBegin->getType()))
                        ->getBitWidth();
@@ -1948,7 +1950,8 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
   }
   if (auto MS = dyn_cast<MemSetInst>(maybeWriter)) {
     StoreBegin = SE.getSCEV(MS->getArgOperand(0));
-    if (StoreBegin != SE.getCouldNotCompute()) {
+    if (StoreBegin != SE.getCouldNotCompute() &&
+        !StoreBegin->getType()->isIntegerTy()) {
       if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
         auto &DL = MS->getModule()->getDataLayout();
         auto width = cast<IntegerType>(DL.getIndexType(StoreBegin->getType()))
@@ -1961,7 +1964,8 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
   }
   if (auto MS = dyn_cast<MemTransferInst>(maybeWriter)) {
     StoreBegin = SE.getSCEV(MS->getArgOperand(0));
-    if (StoreBegin != SE.getCouldNotCompute()) {
+    if (StoreBegin != SE.getCouldNotCompute() &&
+        !StoreBegin->getType()->isIntegerTy()) {
       if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
         auto &DL = MS->getModule()->getDataLayout();
         auto width = cast<IntegerType>(DL.getIndexType(StoreBegin->getType()))
@@ -1974,7 +1978,8 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
   }
   if (auto MS = dyn_cast<MemTransferInst>(maybeReader)) {
     LoadBegin = SE.getSCEV(MS->getArgOperand(1));
-    if (LoadBegin != SE.getCouldNotCompute()) {
+    if (LoadBegin != SE.getCouldNotCompute() &&
+        !LoadBegin->getType()->isIntegerTy()) {
       if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
         auto &DL = MS->getModule()->getDataLayout();
         auto width = cast<IntegerType>(DL.getIndexType(LoadBegin->getType()))
