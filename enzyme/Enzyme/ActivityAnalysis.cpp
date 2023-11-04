@@ -109,6 +109,7 @@ const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_pointer"};
 
 const StringSet<> InactiveGlobals = {
+    "small_typeof",
     "ompi_request_null",
     "ompi_mpi_double",
     "ompi_mpi_comm_world",

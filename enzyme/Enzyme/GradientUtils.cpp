@@ -6910,7 +6910,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
                 ValueToValueMapTy available;
                 for (const auto &pair : originalToNewFn) {
-                  available[pair.first] = pair.second;
+                  if (pair.first->getType() == pair.second->getType())
+                    available[pair.first] = pair.second;
                 }
 
                 // Sort so that later instructions do not dominate earlier
@@ -6924,6 +6925,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   auto uw = cast<Instruction>(
                       unwrapM(a, v, available, UnwrapMode::AttemptSingleUnwrap,
                               /*scope*/ nullptr, /*cache*/ false));
+                  assert(uw->getType() == a->getType());
                   for (size_t i = 0; i < uw->getNumOperands(); i++) {
                     auto op = uw->getOperand(i);
                     if (auto arg = dyn_cast<Argument>(op))
@@ -6947,6 +6949,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                 available.clear();
                 for (auto I : llvm::reverse(InsertedInstructions)) {
                   assert(I->getNumUses() == 0);
+                  OrigSE.forgetValue(I);
                   I->eraseFromParent();
                 }
 #endif
