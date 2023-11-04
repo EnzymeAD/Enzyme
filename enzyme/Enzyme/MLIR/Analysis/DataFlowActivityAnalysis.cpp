@@ -746,7 +746,36 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
     return !isActiveData(value);
   };
 
-  auto isConstantInstruction = [&](Operation *op) {
+  function_ref<bool(Operation *)> isConstantInstruction = [&](Operation *op) {
+    if (isPure(op)) {
+      // If an operation doesn't have side effects, the only way it can
+      // propagate active data is through its results.
+      return llvm::none_of(op->getResults(), isActiveData);
+    }
+    // We need a special case because stores of active pointers don't fit the
+    // definition but are active instructions
+    if (auto storeOp = dyn_cast<LLVM::StoreOp>(op)) {
+      if (!isConstantValue(storeOp.getValue())) {
+        return false;
+      }
+    } else if (auto callOp = dyn_cast<CallOpInterface>(op)) {
+      // TODO: Should traverse bottom-up for performance (or cache intermediate
+      // results)
+      auto callable = cast<CallableOpInterface>(callOp.resolveCallable());
+      if (callable.getCallableRegion()) {
+        // If any of the instructions in the body are active instructions, the
+        // function is active.
+        WalkResult result = callable->walk([&](Operation *op) {
+          if (!isConstantInstruction(op)) {
+            return WalkResult::interrupt();
+          }
+          return WalkResult::advance();
+        });
+        return !result.wasInterrupted();
+      } else {
+        // fall back to seeing if any operand or result is active data
+      }
+    }
     return llvm::none_of(op->getOperands(), isActiveData) &&
            llvm::none_of(op->getResults(), isActiveData);
   };
