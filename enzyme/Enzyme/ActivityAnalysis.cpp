@@ -666,12 +666,13 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
   /// Overwrite activity using metadata
   if (hasMetadata(I, "enzyme_active") || hasMetadata(I, "enzyme_active_inst")) {
     if (EnzymePrintActivity)
-      llvm::errs() << "[mlir] forced instruction to be active: " << *I << "\n";
+      llvm::errs() << "[activity] forced instruction to be active: " << *I
+                   << "\n";
     return false;
   } else if (hasMetadata(I, "enzyme_inactive") ||
              hasMetadata(I, "enzyme_inactive_inst")) {
     if (EnzymePrintActivity)
-      llvm::errs() << "[mlir] forced value to be constant: " << *I << "\n";
+      llvm::errs() << "[activity] forced value to be constant: " << *I << "\n";
     return true;
   }
 
@@ -1061,17 +1062,19 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     return true;
   }
 
-  /// Overwrite activity using metadata
+  // Overwrite activity using metadata
   if (auto *I = dyn_cast<Instruction>(Val)) {
     if (hasMetadata(I, "enzyme_active") ||
         hasMetadata(I, "enzyme_active_val")) {
       if (EnzymePrintActivity)
-        llvm::errs() << "[mlir] forced value to be active: " << *Val << "\n";
+        llvm::errs() << "[activity] forced value to be active: " << *Val
+                     << "\n";
       return false;
     } else if (hasMetadata(I, "enzyme_inactive") ||
                hasMetadata(I, "enzyme_inactive_val")) {
       if (EnzymePrintActivity)
-        llvm::errs() << "[mlir] forced value to be constant: " << *Val << "\n";
+        llvm::errs() << "[activity] forced value to be constant: " << *Val
+                     << "\n";
       return true;
     }
   }
