@@ -272,10 +272,12 @@ void enzyme::AliasAnalysis::transfer(
   // For operations that don't touch memory, conservatively assume all results
   // alias all operands
   for (auto *resultLattice : results) {
-    // TODO: Not safe in general, we need type analysis to prove that integers
-    // aren't used as pointers.
-    if (isa<LLVM::LLVMPointerType, MemRefType>(
-            resultLattice->getPoint().getType()))
+    // Setting this flag to true will assume non-pointers don't alias, which is
+    // not true in general but can result in improved analysis speed. TODO: We
+    // need a type analysis for full correctness.
+    const bool prune_non_pointers = false;
+    if (!prune_non_pointers || isa<LLVM::LLVMPointerType, MemRefType>(
+                                   resultLattice->getPoint().getType()))
       for (const auto *operandLattice : operands)
         join(resultLattice, *operandLattice);
   }
