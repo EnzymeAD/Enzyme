@@ -321,6 +321,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
 
   Value *ptr = getDifferential(val);
 
+  Value *old;
   if (idxs.size() != 0) {
     SmallVector<Value *, 4> sv = {
         ConstantInt::get(Type::getInt32Ty(val->getContext()), 0)};
@@ -328,8 +329,12 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       sv.push_back(i);
     ptr = BuilderM.CreateGEP(getShadowType(val->getType()), ptr, sv);
     cast<GetElementPtrInst>(ptr)->setIsInBounds(true);
+    old = BuilderM.CreateLoad(
+        GetElementPtrInst::getIndexedType(getShadowType(val->getType()), sv),
+        ptr);
+  } else {
+    old = BuilderM.CreateLoad(getShadowType(val->getType()), ptr);
   }
-  Value *old = BuilderM.CreateLoad(dif->getType(), ptr);
 
   assert(dif->getType() == old->getType());
   Value *res = nullptr;
@@ -352,7 +357,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                            &TR.analyzer, nullptr, wrap(&BuilderM));
         return addedSelects;
       } else {
-        TR.dump();
+        TR.dump(ss);
         DebugLoc loc;
         if (auto inst = dyn_cast<Instruction>(val))
           EmitFailure("CannotDeduceType", inst->getDebugLoc(), inst, ss.str());
@@ -381,13 +386,15 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       llvm::raw_string_ostream ss(s);
       ss << "oldFunc: " << *oldFunc << "\n";
       ss << "Illegal intermediate when adding to: " << *val
-         << " with addingType: " << *addingType << "\n";
+         << " with addingType: " << *addingType << "\n"
+         << " old: " << *old << " dif: " << *dif << "\n"
+         << " oldBitSize: " << oldBitSize << " newBitSize: " << newBitSize
+         << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
                            &TR.analyzer, nullptr, wrap(&BuilderM));
         return addedSelects;
       } else {
-        TR.dump();
         DebugLoc loc;
         if (auto inst = dyn_cast<Instruction>(val))
           EmitFailure("CannotDeduceType", inst->getDebugLoc(), inst, ss.str());

@@ -76,15 +76,6 @@ entry:
 ; CHECK-NEXT:   %cache.y = bitcast i8* %malloccall2 to double*
 ; CHECK-NEXT:   store i64 1, i64* %byref.
 ; CHECK-NEXT:   call void @dcopy_64_(i8* %n_p, i8* %Y, i8* %incy_p, double* %cache.y, i64* %byref.)
-; CHECK-NEXT:   %[[i6:.+]] = bitcast i8* %n_p to i64*
-; CHECK-NEXT:   %[[i7:.+]] = load i64, i64* %[[i6]]
-; CHECK-NEXT:   %[[i8:.+]] = add i64 %[[i7]], 1
-; CHECK-NEXT:   %square_mat_size_y0 = mul i64 %[[i7]], %[[i8]]
-; CHECK-NEXT:   %size_y0 = udiv i64 %square_mat_size_y0, 2
-; CHECK-NEXT:   %mallocsize4 = mul nuw nsw i64 %size_y0, 8
-; CHECK-NEXT:   %malloccall5 = tail call noalias nonnull i8* @malloc(i64 %mallocsize4)
-; CHECK-NEXT:   %mat_y0 = bitcast i8* %malloccall5 to double*
-; CHECK-NEXT:   %[[i9:.+]] = bitcast double* %mat_y0 to i8*
 ; CHECK-NEXT:   call void @dspmv_64_(i8* %uplo, i8* %n_p, i8* %alpha, i8* %AP, i8* %X, i8* %incx_p, i8* %beta, i8* %Y, i8* %incy_p)
 ; CHECK-NEXT:   %"ptr'ipc" = bitcast i8* %"AP'" to double*
 ; CHECK-NEXT:   %ptr = bitcast i8* %AP to double*
@@ -98,6 +89,17 @@ entry:
 ; CHECK-NEXT:   %[[i12:.+]] = bitcast double* %cache.y to i8*
 ; CHECK-NEXT:   store i64 1, i64* %byref.int.one
 ; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
+
+; CHECK-NEXT:   %[[i6:.+]] = bitcast i8* %n_p to i64*
+; CHECK-NEXT:   %[[i7:.+]] = load i64, i64* %[[i6]]
+; CHECK-NEXT:   %[[i8:.+]] = add i64 %[[i7]], 1
+; CHECK-NEXT:   %square_mat_size_y0 = mul i64 %[[i7]], %[[i8]]
+; CHECK-NEXT:   %size_y0 = udiv i64 %square_mat_size_y0, 2
+; CHECK-NEXT:   %mallocsize4 = mul nuw nsw i64 %size_y0, 8
+; CHECK-NEXT:   %malloccall5 = tail call noalias nonnull i8* @malloc(i64 %mallocsize4)
+; CHECK-NEXT:   %[[mat_y0:.+]] = bitcast i8* %malloccall5 to double*
+; CHECK-NEXT:   %[[i9:.+]] = bitcast double* %[[mat_y0]] to i8*
+
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.0
 ; CHECK-NEXT:   %fpcast.constant.fp.1.0 = bitcast double* %byref.constant.fp.1.0 to i8*
 ; CHECK-NEXT:   store double 0.000000e+00, double* %byref.constant.fp.0.0
@@ -112,6 +114,8 @@ entry:
 ; CHECK-NEXT:   %[[i15:.+]] = load double, double* %[[i14]]
 ; CHECK-NEXT:   %[[i16:.+]] = fadd fast double %[[i15]], %[[i13]]
 ; CHECK-NEXT:   store double %[[i16]], double* %[[i14]]
+; CHECK-NEXT:   %[[forfree:.+]] = bitcast double* %[[mat_y0]] to i8* 
+; CHECK-NEXT:   tail call void @free(i8* nonnull %[[forfree]])
 ; CHECK-NEXT:   call void @dspr2_64_(i8* %uplo, i8* %n_p, i8* %alpha, i8* %X, i8* %incx_p, i8* %"Y'", i8* %incy_p, i8* %"AP'")
 ; CHECK:   %[[i17:.+]] = load i64, i64* %n
 ; CHECK-NEXT:   %[[i18:.+]] = load i64, i64* %incx

@@ -667,8 +667,8 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
 
   auto FT = FunctionType::get(Type::getVoidTy(M.getContext()), tys, false);
   auto fn = M.getOrInsertFunction(copy_name, FT);
-  Function *F = cast<Function>(fn.getCallee());
-  attributeKnownFunctions(*F);
+  if (auto F = GetFunctionFromValue(fn.getCallee()))
+    attributeKnownFunctions(*F);
 
   B.CreateCall(fn, args, bundles);
 }
@@ -884,9 +884,9 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   std::string dot_name = blas.prefix + blas.floatType + "dot" + blas.suffix;
   auto FDotT =
       FunctionType::get(fpTy, {BlasIT, BlasPT, BlasIT, BlasPT, BlasIT}, false);
-  Function *FDot =
-      cast<Function>(M.getOrInsertFunction(dot_name, FDotT).getCallee());
-  attributeKnownFunctions(*F);
+  auto FDot = M.getOrInsertFunction(dot_name, FDotT);
+  if (auto F = GetFunctionFromValue(FDot.getCallee()))
+    attributeKnownFunctions(*F);
 
   // now add the implementation for the inner_prod call
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
@@ -933,12 +933,19 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   {
     IRBuilder<> B1(entry);
     Value *blasOne = to_blas_callconv(B1, ConstantInt::get(IT, 1), byRef,
-                                      cublas, IT, B1, "constant.one");
+                                      cublas, nullptr, B1, "constant.one");
+
+    if (blasOne->getType() != BlasIT)
+      blasOne = B1.CreatePointerCast(blasOne, BlasIT, "intcast.constant.one");
+
     Value *m = load_if_ref(B1, IT, blasm, byRef);
     Value *n = load_if_ref(B1, IT, blasn, byRef);
     Value *size = B1.CreateNUWMul(m, n, "mat.size");
-    Value *blasSize =
-        to_blas_callconv(B1, size, byRef, cublas, IT, B1, "mat.size");
+    Value *blasSize = to_blas_callconv(
+        B1, size, byRef, cublas, julia_decl ? IT : nullptr, B1, "mat.size");
+
+    if (blasSize->getType() != BlasIT)
+      blasSize = B1.CreatePointerCast(blasSize, BlasIT, "intcast.mat.size");
     B1.CreateCondBr(B1.CreateICmpEQ(size, ConstantInt::get(IT, 0)), end, init);
 
     IRBuilder<> B2(init);

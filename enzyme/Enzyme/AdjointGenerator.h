@@ -1673,11 +1673,10 @@ public:
                         .getTypeSizeInBits(SVI.getOperand(opnum)->getType()) +
                     7) /
                    8;
+          Value *toadd = Builder2.CreateExtractElement(loaded, instidx);
           ((DiffeGradientUtils *)gutils)
-              ->addToDiffe(SVI.getOperand(opnum),
-                           Builder2.CreateExtractElement(loaded, instidx),
-                           Builder2, TR.addingType(size, SVI.getOperand(opnum)),
-                           sv);
+              ->addToDiffe(SVI.getOperand(opnum), toadd, Builder2,
+                           TR.addingType(size, SVI.getOperand(opnum)), sv);
         }
         ++instidx;
       }
