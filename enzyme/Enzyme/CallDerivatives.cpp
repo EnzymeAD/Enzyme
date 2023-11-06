@@ -836,8 +836,9 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
     return;
   }
-
+  // MPI_RECV
   if (funcName == "MPI_Recv" || funcName == "PMPI_Recv") {
+    // ReverseModeGradient, ReverseModeCombined, and ForwardMode
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined) {
       bool forwardMode = Mode == DerivativeMode::ForwardMode;
@@ -964,13 +965,6 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
         getReverseBuilder(Builder2);
       }
 
-      Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
-      if (!forwardMode)
-        shadow = lookup(shadow, Builder2);
-      if (shadow->getType()->isIntegerTy())
-        shadow = Builder2.CreateIntToPtr(shadow,
-                                         Type::getInt8PtrTy(call.getContext()));
-
       ConcreteType CT = TR.firstPointer(1, call.getOperand(0), &call);
       auto MPI_OP_type = Type::getInt8PtrTy(call.getContext());
       Type *MPI_OP_Ptr_type = PointerType::getUnqual(MPI_OP_type);
@@ -989,25 +983,35 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
       if (!forwardMode)
         comm = lookup(comm, Builder2);
 
-      if (forwardMode) {
-        Value *args[] = {
-            /*buffer*/ shadow,
-            /*count*/ count,
-            /*datatype*/ datatype,
-            /*root*/ root,
-            /*comm*/ comm,
-        };
+      Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
 
-        auto Defs = gutils->getInvertedBundles(
-            &call,
-            {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-             ValueType::Primal, ValueType::Primal},
-            Builder2, /*lookup*/ false);
+      applyChainRule(Builder2, [&](Value* shadow){
+        if (!forwardMode)
+          shadow = lookup(shadow, Builder2);
+        if (shadow->getType()->isIntegerTy())
+          shadow = Builder2.CreateIntToPtr(shadow,
+                                           Type::getInt8PtrTy(call.getContext()));
 
-        auto callval = call.getCalledOperand();
-        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
-        return;
-      }
+        if (forwardMode) {
+          Value *args[] = {
+              /*buffer*/ shadow,
+              /*count*/ count,
+              /*datatype*/ datatype,
+              /*root*/ root,
+              /*comm*/ comm,
+          };
+
+          auto Defs = gutils->getInvertedBundles(
+              &call,
+              {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+               ValueType::Primal, ValueType::Primal},
+              Builder2, /*lookup*/ false);
+
+          auto callval = call.getCalledOperand();
+          Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+          return;
+        }
+      //}, shadow);
 
       Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType());
       Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType());
@@ -1132,6 +1136,8 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
       Builder2.CreateBr(mergeBlock);
 
       Builder2.SetInsertPoint(mergeBlock);
+
+      }, shadow);
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
