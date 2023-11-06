@@ -16,7 +16,7 @@ extern "C" {
 #endif
 
 __attribute__((noinline))
-int xerbla_(const char *srname, integer *info)
+int xerbla_(const char *srname, integer *info, int len)
 {
     static char fmt_9999[] = "(\002 ** On entry to \002,a,\002 parameter num"
 	    "ber \002,i2,\002 had \002,\002an illegal value\002)";
@@ -28,7 +28,7 @@ int xerbla_(const char *srname, integer *info)
     return 0;
 }
 __attribute__((noinline))
-logical lsame_(const char *ca, const char *cb)
+logical lsame_(char *ca, char *cb, int, int)
 {
     /* System generated locals */
     logical ret_val;
@@ -216,7 +216,7 @@ logical disnan_(doublereal *din)
 
 __attribute__((noinline))
 
-/* Subroutine */ int dlacpy_(char *uplo, integer *m, integer *n, doublereal *
+/* Subroutine */ void dlacpy_(char *uplo, integer *m, integer *n, const doublereal *
 	a, integer *lda, doublereal *b, integer *ldb)
 {
     /* System generated locals */
@@ -289,7 +289,7 @@ __attribute__((noinline))
     b -= b_offset;
 
     /* Function Body */
-    if (lsame_(uplo, "U")) {
+    if (lsame_(uplo, (char*)"U", 1, 1)) {
 	i__1 = *n;
 	for (j = 1; j <= i__1; ++j) {
 	    i__2 = min(j,*m);
@@ -299,7 +299,7 @@ __attribute__((noinline))
 	    }
 /* L20: */
 	}
-    } else if (lsame_(uplo, "L")) {
+    } else if (lsame_(uplo, (char*)"L", 1, 1)) {
 	i__1 = *n;
 	for (j = 1; j <= i__1; ++j) {
 	    i__2 = *m;
@@ -320,7 +320,7 @@ __attribute__((noinline))
 /* L60: */
 	}
     }
-    return 0;
+    return;
 
 /*     End of DLACPY */
 
@@ -439,19 +439,19 @@ __attribute__((noinline))
     /* Function Body */
     *info = 0;
 
-    if (lsame_(type__, "G")) {
+    if (lsame_(type__, (char*)"G", 1, 1)) {
 	itype = 0;
-    } else if (lsame_(type__, "L")) {
+    } else if (lsame_(type__, (char*)"L", 1, 1)) {
 	itype = 1;
-    } else if (lsame_(type__, "U")) {
+    } else if (lsame_(type__, (char*)"U", 1, 1)) {
 	itype = 2;
-    } else if (lsame_(type__, "H")) {
+    } else if (lsame_(type__, (char*)"H", 1, 1)) {
 	itype = 3;
-    } else if (lsame_(type__, "B")) {
+    } else if (lsame_(type__, (char*)"B", 1, 1)) {
 	itype = 4;
-    } else if (lsame_(type__, "Q")) {
+    } else if (lsame_(type__, (char*)"Q", 1, 1)) {
 	itype = 5;
-    } else if (lsame_(type__, "Z")) {
+    } else if (lsame_(type__, (char*)"Z", 1, 1)) {
 	itype = 6;
     } else {
 	itype = -1;
@@ -489,7 +489,7 @@ __attribute__((noinline))
 
     if (*info != 0) {
 	i__1 = -(*info);
-	xerbla_("DLASCL", &i__1);
+	xerbla_("DLASCL", &i__1, 0);
 	return 0;
     }
 
@@ -764,9 +764,9 @@ L60:
 } /* ddot_ */
 
 __attribute__((noinline))
-/* Subroutine */ int dgemm_(char *transa, char *transb, integer *m, integer *
-	n, integer *k, doublereal *alpha, doublereal *a, integer *lda, 
-	doublereal *b, integer *ldb, doublereal *beta, doublereal *c, integer 
+/* Subroutine */ int dgemm_(const char *transa, const char *transb, const integer *m, const integer *
+	n, const integer *k, const doublereal *alpha, const doublereal *a, const integer *lda, 
+	const doublereal *b, const integer *ldb, const doublereal *beta, doublereal *c, const integer 
 	*ldc)
 {
 
@@ -949,8 +949,8 @@ __attribute__((noinline))
 #define B(I,J) b[(I)-1 + ((J)-1)* ( *ldb)]
 #define C(I,J) c[(I)-1 + ((J)-1)* ( *ldc)]
 
-    nota = lsame_(transa, "N");
-    notb = lsame_(transb, "N");
+    nota = lsame_((char*)transa, (char*)"N", 1, 1);
+    notb = lsame_((char*)transb, (char*)"N", 1, 1);
     if (nota) {
 	nrowa = *m;
 	ncola = *k;
@@ -967,10 +967,10 @@ __attribute__((noinline))
 /*     Test the input parameters. */
 
     info = 0;
-    if (! nota && ! lsame_(transa, "C") && ! lsame_(transa, "T")) {
+    if (! nota && ! lsame_((char*)transa, (char*)"C", 1, 1) && ! lsame_((char*)transa, (char*)"T", 1, 1)) {
 	info = 1;
-    } else if (! notb && ! lsame_(transb, "C") && ! lsame_(transb, 
-	    "T")) {
+    } else if (! notb && ! lsame_((char*)transb, (char*)"C", 1, 1) && ! lsame_((char*)transb, 
+	    (char*)"T", 1, 1)) {
 	info = 2;
     } else if (*m < 0) {
 	info = 3;
@@ -986,7 +986,7 @@ __attribute__((noinline))
 	info = 13;
     }
     if (info != 0) {
-	xerbla_("DGEMM ", &info);
+	xerbla_("DGEMM ", &info, 0);
 	return 0;
     }
 
@@ -1144,11 +1144,16 @@ __attribute__((noinline))
     }
 
     return 0;
-
+#undef A
+#undef B
+#undef C
 /*     End of DGEMM . */
 
 } /* dgemm_ */
 
+#undef max
+#undef min
+#undef abs
 #ifdef __cplusplus
 }
 #endif

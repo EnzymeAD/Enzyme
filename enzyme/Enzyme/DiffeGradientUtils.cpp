@@ -381,13 +381,14 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       llvm::raw_string_ostream ss(s);
       ss << "oldFunc: " << *oldFunc << "\n";
       ss << "Illegal intermediate when adding to: " << *val
-         << " with addingType: " << *addingType << "\n";
+         << " with addingType: " << *addingType << "\n"
+         << " oldBitSize: " << oldBitSize << " newBitSize: " << newBitSize
+         << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
                            &TR.analyzer, nullptr, wrap(&BuilderM));
         return addedSelects;
       } else {
-        TR.dump();
         DebugLoc loc;
         if (auto inst = dyn_cast<Instruction>(val))
           EmitFailure("CannotDeduceType", inst->getDebugLoc(), inst, ss.str());
