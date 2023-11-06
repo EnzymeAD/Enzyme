@@ -17,8 +17,8 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/CallInterfaces.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
 #include "llvm/ADT/TypeSwitch.h"
 
@@ -121,35 +121,35 @@ struct PrintActivityAnalysisPass
     if (annotate) {
       // Infer the activity attributes from the __enzyme_autodiff call
       Operation *autodiff_decl = moduleOp.lookupSymbol("__enzyme_autodiff");
+      if (!autodiff_decl)
+        autodiff_decl =
+            moduleOp.lookupSymbol("_Z17__enzyme_autodiffIdJPFddyEdyEET_DpT0_");
       if (!autodiff_decl) {
         moduleOp.emitError("Failed to find __enzyme_autodiff symbol");
         return signalPassFailure();
       }
       auto uses = SymbolTable::getSymbolUses(autodiff_decl, moduleOp);
       assert(uses && "failed to find symbol uses of autodiff decl");
-      if (std::distance(uses->begin(), uses->end()) != 1) {
-        autodiff_decl->emitError("Expected exactly 1 use of __enzyme_autodiff");
-        return signalPassFailure();
+
+      for (SymbolTable::SymbolUse use : *uses) {
+        auto autodiff_call = cast<CallOpInterface>(use.getUser());
+        FlatSymbolRefAttr calleeAttr =
+            cast<LLVM::AddressOfOp>(
+                autodiff_call.getArgOperands().front().getDefiningOp())
+                .getGlobalNameAttr();
+        auto callee =
+            cast<FunctionOpInterface>(moduleOp.lookupSymbol(calleeAttr));
+
+        SmallVector<enzyme::Activity> argActivities{callee.getNumArguments()},
+            resultActivities{callee.getNumResults()};
+
+        // Populate the argument activities based on either the type or the
+        // supplied annotation. First argument is the callee
+        inferArgActivitiesFromEnzymeAutodiff(callee, autodiff_call,
+                                             argActivities, resultActivities);
+        enzyme::runDataFlowActivityAnalysis(callee, argActivities,
+                                            /*print=*/true, verbose, annotate);
       }
-
-      auto autodiff_call = cast<CallOpInterface>(uses->begin()->getUser());
-
-      FlatSymbolRefAttr calleeAttr =
-          cast<LLVM::AddressOfOp>(
-              autodiff_call.getArgOperands().front().getDefiningOp())
-              .getGlobalNameAttr();
-      auto callee =
-          cast<FunctionOpInterface>(moduleOp.lookupSymbol(calleeAttr));
-
-      SmallVector<enzyme::Activity> argActivities{callee.getNumArguments()},
-          resultActivities{callee.getNumResults()};
-
-      // Populate the argument activities based on either the type or the
-      // supplied annotation. First argument is the callee
-      inferArgActivitiesFromEnzymeAutodiff(callee, autodiff_call, argActivities,
-                                           resultActivities);
-      enzyme::runDataFlowActivityAnalysis(callee, argActivities, /*print=*/true,
-                                          verbose, annotate);
       return;
     }
 
