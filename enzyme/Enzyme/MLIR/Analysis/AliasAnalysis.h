@@ -5,7 +5,6 @@
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include <optional>
 
 namespace mlir {
 
@@ -52,12 +51,22 @@ public:
 
   ChangeResult join(const AbstractDenseLattice &lattice) override;
 
-  ChangeResult insert(DistinctAttr dest, const AliasClassSet &values);
+  ChangeResult insert(const AliasClassSet &destClasses,
+                      const AliasClassSet &values);
   ChangeResult insertFresh(DistinctAttr dest, StringAttr debugLabel = nullptr);
+
+  /// For every alias class in `dest`, record that it may additionally be
+  /// pointing to the same as the classes in `src`.
+  ChangeResult addSetsFrom(const AliasClassSet &destClasses,
+                           const AliasClassSet &srcClasses);
+
+  /// For every alias class in `dest`, record that it is pointing to the _same_
+  /// new alias set.
+  ChangeResult setToFresh(const AliasClassSet &destClasses);
 
   /// Mark `dest` as pointing to "unknown" alias set, that is, any possible
   /// other pointer. This is partial pessimistic fixpoint.
-  ChangeResult markUnknown(DistinctAttr dest);
+  ChangeResult markUnknown(const AliasClassSet &destClasses);
 
   /// Mark the entire data structure as "unknown", that is, any pointer may be
   /// containing any other pointer. This is the full pessimistic fixpoint.

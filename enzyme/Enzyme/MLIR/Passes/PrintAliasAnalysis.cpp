@@ -93,10 +93,11 @@ struct PrintAliasAnalysisPass
         }
       } else if (op->hasTrait<OpTrait::ReturnLike>() &&
                  isa<FunctionOpInterface>(op->getParentOp())) {
-        auto *state = solver.lookupState<enzyme::PointsToSets>(op);
-        if (state) {
-          errs() << "points-to-pointer sets: " << *state << "\n";
-        }
+        errs() << "points-to-pointer sets for op @" << op->getLoc() << ":\n";
+        if (auto *state = solver.lookupState<enzyme::PointsToSets>(op))
+          errs() << *state << "\n";
+        else
+          errs() << "NOT computed\n";
       }
       if (op->hasAttr("tag")) {
         for (OpResult result : op->getResults()) {

@@ -10,7 +10,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 
-// The LLVM dialect is only used for the noalias attribute
+// The LLVM dialect is only used for attribute names.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
 using namespace mlir;
@@ -34,6 +34,9 @@ ChangeResult enzyme::AliasClassSet::join(const AliasClassSet &other) {
 
 ChangeResult
 enzyme::AliasClassSet::insert(const DenseSet<DistinctAttr> &classes) {
+  if (unknown)
+    return ChangeResult::NoChange;
+
   size_t oldSize = aliasClasses.size();
   aliasClasses.insert(classes.begin(), classes.end());
   return aliasClasses.size() == oldSize ? ChangeResult::NoChange
@@ -78,6 +81,16 @@ static ChangeResult mergeSets(DenseSet<T> &dest, const DenseSet<T> &src) {
 }
 
 void enzyme::PointsToSets::print(raw_ostream &os) const {
+  if (unknown) {
+    os << "<fully-unknown>\n";
+    return;
+  }
+
+  if (pointsTo.empty()) {
+    os << "<empty>\n";
+    return;
+  }
+
   for (const auto &[srcClass, destClasses] : pointsTo) {
     os << "  " << srcClass << " points to {";
     if (destClasses.isUnknown()) {
@@ -92,6 +105,14 @@ void enzyme::PointsToSets::print(raw_ostream &os) const {
 /// Union for every variable.
 ChangeResult enzyme::PointsToSets::join(const AbstractDenseLattice &lattice) {
   const auto &rhs = static_cast<const PointsToSets &>(lattice);
+  if (unknown)
+    return ChangeResult::NoChange;
+
+  if (rhs.unknown) {
+    unknown = true;
+    return ChangeResult::Change;
+  }
+
   ChangeResult result = ChangeResult::NoChange;
   for (const auto &[alloc, allocSet] : rhs.pointsTo)
     result |= pointsTo[alloc].join(allocSet);
@@ -99,20 +120,70 @@ ChangeResult enzyme::PointsToSets::join(const AbstractDenseLattice &lattice) {
 }
 
 /// Mark the pointer stored in `dest` as possibly pointing to any of `values`.
-ChangeResult enzyme::PointsToSets::insert(DistinctAttr dest,
+ChangeResult enzyme::PointsToSets::insert(const AliasClassSet &destClasses,
                                           const AliasClassSet &values) {
-  return pointsTo[dest].join(values);
+  if (unknown)
+    return ChangeResult::NoChange;
+
+  ChangeResult result = ChangeResult::NoChange;
+  for (auto destClass : destClasses.getAliasClasses())
+    result |= pointsTo[destClass].insert(values.getAliasClasses());
+  return result;
 }
 
 /// Mark the pointer stored in `dest` as possibly pointing to a fresh alias
 /// class of values.
 ChangeResult enzyme::PointsToSets::insertFresh(DistinctAttr dest,
                                                StringAttr debugLabel) {
+  // TODO(zinenko): do we need some sort of "exact/inexact" in addition to this?
+  // i.e. can we go back from full-unknown state to knowing that some pointers
+  // point to specific aliases classes, and other pointers (potentially not
+  // present in the list) may be pointing to anything?
+  if (unknown)
+    return ChangeResult::NoChange;
+
   return pointsTo[dest].insert({AliasClassLattice::getFresh(debugLabel)});
 }
 
-ChangeResult enzyme::PointsToSets::markUnknown(DistinctAttr dest) {
-  return pointsTo[dest].markUnknown();
+ChangeResult
+enzyme::PointsToSets::addSetsFrom(const AliasClassSet &destClasses,
+                                  const AliasClassSet &srcClasses) {
+  if (unknown)
+    return ChangeResult::NoChange;
+
+  ChangeResult result = ChangeResult::NoChange;
+  for (DistinctAttr destClass : destClasses.getAliasClasses()) {
+    for (DistinctAttr srcClass : srcClasses.getAliasClasses()) {
+      result |= pointsTo[destClass].join(pointsTo[srcClass]);
+    }
+  }
+  return result;
+}
+
+ChangeResult
+enzyme::PointsToSets::setToFresh(const AliasClassSet &destClasses) {
+  // TODO(zinenko): we may want to override this, for a specific pointer we know
+  // it points to fresh and all the other points are "unknown". Currently there
+  // is no way of expressing this.
+  if (unknown)
+    return ChangeResult::NoChange;
+
+  DistinctAttr fresh = AliasClassLattice::getFresh(StringAttr::get(
+      getPoint().getLoc()->getContext(), "function-result-noalias"));
+  ChangeResult result = ChangeResult::NoChange;
+  for (DistinctAttr destClass : destClasses.getAliasClasses()) {
+    result |= pointsTo[destClass].reset();
+    result |= pointsTo[destClass].insert({fresh});
+  }
+  return result;
+}
+
+ChangeResult
+enzyme::PointsToSets::markUnknown(const AliasClassSet &destClasses) {
+  ChangeResult result = ChangeResult::NoChange;
+  for (DistinctAttr destClass : destClasses.getAliasClasses())
+    result |= pointsTo[destClass].markUnknown();
+  return result;
 }
 
 ChangeResult enzyme::PointsToSets::markUnknown() {
@@ -142,14 +213,15 @@ void enzyme::PointsToPointerAnalysis::processCapturingStore(
     return;
   }
 
-  for (DistinctAttr destClass : destClasses->getAliasClasses()) {
-    // If the source class is unknown, note that any destination class may point
-    // to any pointer.
-    if (srcClasses->isUnknown())
-      propagateIfChanged(after, after->markUnknown(destClass));
-    else
-      propagateIfChanged(
-          after, after->insert(destClass, srcClasses->getAliasClassesObject()));
+  // If the source class is unknown, record that any destination class may
+  // point to any pointer.
+  if (srcClasses->isUnknown()) {
+    propagateIfChanged(
+        after, after->markUnknown(destClasses->getAliasClassesObject()));
+  } else {
+    propagateIfChanged(after,
+                       after->insert(destClasses->getAliasClassesObject(),
+                                     srcClasses->getAliasClassesObject()));
   }
 }
 
@@ -159,21 +231,48 @@ void enzyme::PointsToPointerAnalysis::visitOperation(Operation *op,
   using llvm::errs;
   join(after, before);
 
+  // If we know nothing about memory effects, record reaching the pessimistic
+  // fixpoint and bail.
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
+    after->markUnknown();
     return;
   }
 
   SmallVector<MemoryEffects::EffectInstance> effects;
   memory.getEffects(effects);
   for (const auto &effect : effects) {
-    Value value = effect.getValue();
-    if (!value)
-      return;
+    if (!isa<MemoryEffects::Write>(effect.getEffect()))
+      continue;
 
-    if (isa<MemoryEffects::Write>(effect.getEffect())) {
-      if (auto stored = getStored(op)) {
-        processCapturingStore(op, after, *stored, value);
+    SmallVector<Value> targetValues;
+    Value value = effect.getValue();
+    auto pointerLikeOperands =
+        llvm::make_filter_range(op->getOperands(), [](Value operand) {
+          return isPointerLike(operand.getType());
+        });
+
+    // If we don't know the value on which the effect happens, it can happen on
+    // any value.
+    if (value) {
+      targetValues.push_back(value);
+    } else {
+      llvm::append_range(targetValues, pointerLikeOperands);
+    }
+
+    // If we don't know which value is stored, it can be any value. For the
+    // purpose of this analysis, we only care about pointer-like values being
+    // stored.
+    SmallVector<Value> storedValues;
+    if (std::optional<Value> stored = getStored(op)) {
+      storedValues.push_back(*stored);
+    } else {
+      llvm::append_range(storedValues, pointerLikeOperands);
+    }
+
+    for (Value address : targetValues) {
+      for (Value stored : storedValues) {
+        processCapturingStore(op, after, stored, address);
       }
     }
   }
@@ -215,9 +314,12 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
   join(after, before);
 
   if (action == CallControlFlowAction::ExternalCallee) {
-    // TODO(zinenko): this will fail an assertion for indirect calls. We should
-    // be conservative here when we don't know the callee.
-    auto symbol = cast<SymbolRefAttr>(call.getCallableForCallee());
+    // When we don't know the callee, be conservative.
+    // TODO: eventually consider an additional "points-to" analysis for indirect
+    // calls.
+    auto symbol = dyn_cast<SymbolRefAttr>(call.getCallableForCallee());
+    if (!symbol)
+      return propagateIfChanged(after, after->markUnknown());
 
     // Functions with known behavior.
     if (symbol.getLeafReference().getValue() == "posix_memalign") {
@@ -233,6 +335,15 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
     }
 
     // Analyze the callee generically.
+    // A function call may be capturing (storing) any pointers it takes into
+    // any existing pointer, including those that are not directly passed as
+    // arguments. The presence of specific attributes restricts this behavior:
+    //   - a pointer argument marked nocapture is not stored anywhere;
+    //   - a pointer argument marked readonly is not stored into;
+    //   - a function marked memory(arg: readonly) doesn't store anything
+    //     into any argument pointer;
+    //   - a function marked memory(other: readonly) doesn't store anything
+    //     into pointers that are non-arguments.
     if (auto callee = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
             call, symbol.getLeafReference())) {
       auto memoryAttr =
@@ -242,21 +353,6 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
                      : std::nullopt;
       std::optional<LLVM::ModRefInfo> otherModRef =
           memoryAttr ? std::make_optional(memoryAttr.getOther()) : std::nullopt;
-
-      // A function call may be capturing (storing) any pointers it takes into
-      // any existing pointer, including those that are not directly passed as
-      // arguments. The presence of specific attributes disables this behavior:
-      //   - a pointer argument marked nocapture is not stored anywhere;
-      //   - a pointer argument marked readonly is not stored into;
-      //   - a function marked memory(arg: readonly) doesn't store anything
-      //     into any argument pointer;
-      //   - a function marked memory(other: readonly) doesn't store anything
-      //     into pointers that are non-arguments.
-      // TODO(zinenko): do we have a way to represent the conservative fixpoint,
-      // e.g. a pointer can point to any other pointer? A _specific_ pointer
-      // can point to any other pointer? How do we handle the case of "other
-      // pointer" that has not been added to the set yet?
-
       SmallVector<int> pointerLikeOperands;
       for (auto &&[i, operand] : llvm::enumerate(call.getArgOperands())) {
         if (isPointerLike(operand.getType()))
@@ -274,53 +370,126 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
       }
 
       // If the function may read from "other", it may be storing any pointer
-      // into the arguments.
+      // into the arguments. At this point, we know it shouldn't be also writing
+      // to "other".
       bool funcMayReadOther = modRefMayRef(otherModRef);
+      bool funcMayWriteToArgs = modRefMayMod(argModRef);
+      auto mayArgBeStoredInto = [&](int arg) {
+        auto [isReadOnly, isWriteOnly] =
+            isReadWriteOnly(callee, arg, argModRef);
+        return (!isReadOnly || isWriteOnly) && funcMayWriteToArgs;
+      };
+      unsigned numArguments = callee.getNumArguments();
       if (funcMayReadOther) {
         for (int pointerAsAddress : pointerLikeOperands) {
-          auto *destClasses = getOrCreateFor<AliasClassLattice>(
-              call, call.getArgOperands()[pointerAsAddress]);
-          // TODO: fold this into lattice method and have only one change
-          // result.
-          for (DistinctAttr destClass : destClasses->getAliasClasses())
-            propagateIfChanged(after, after->markUnknown(destClass));
-        }
-        return;
-      }
-
-      unsigned numArguments = callee.getNumArguments();
-      bool funcMayWriteToArgs = modRefMayMod(argModRef);
-      for (int pointerAsData : pointerLikeOperands) {
-        // If not captured, it cannot be stored in anything.
-        bool isCaptured =
-            (pointerAsData < numArguments &&
-             !callee.getArgAttr(pointerAsData,
-                                LLVM::LLVMDialect::getNoCaptureAttrName()));
-        if (!isCaptured)
-          continue;
-
-        for (int pointerAsAddress : pointerLikeOperands) {
-          // If cannot store into, nothing to do here.
-          auto [isReadOnly, isWriteOnly] =
-              isReadWriteOnly(callee, pointerAsAddress, argModRef);
-          bool isStoredInto =
-              (!isReadOnly || isWriteOnly) && funcMayWriteToArgs;
-          if (!isStoredInto)
+          if (!mayArgBeStoredInto(pointerAsAddress))
             continue;
 
-          processCapturingStore(call, after,
-                                call.getArgOperands()[pointerAsData],
-                                call.getArgOperands()[pointerAsAddress]);
+          auto *destClasses = getOrCreateFor<AliasClassLattice>(
+              call, call.getArgOperands()[pointerAsAddress]);
+          propagateIfChanged(
+              after, after->markUnknown(destClasses->getAliasClassesObject()));
+        }
+      } else {
+        for (int pointerAsData : pointerLikeOperands) {
+          // If not captured, it cannot be stored in anything. However, another
+          // pointer that may be stored in this pointer can be stored in another
+          // writable pointer.
+          bool isNoCapture =
+              (pointerAsData < numArguments &&
+               !!callee.getArgAttr(pointerAsData,
+                                   LLVM::LLVMDialect::getNoCaptureAttrName()));
+
+          for (int pointerAsAddress : pointerLikeOperands) {
+            if (!mayArgBeStoredInto(pointerAsAddress))
+              continue;
+
+            // In all cases, we want to record that "destination" may be
+            // pointing to same classes as "source".
+            const auto *srcClasses = getOrCreateFor<AliasClassLattice>(
+                call, call.getArgOperands()[pointerAsData]);
+            const auto *destClasses = getOrCreateFor<AliasClassLattice>(
+                call, call.getArgOperands()[pointerAsAddress]);
+            propagateIfChanged(
+                after, after->addSetsFrom(destClasses->getAliasClassesObject(),
+                                          srcClasses->getAliasClassesObject()));
+
+            // If "source" is also captured, then "destination" may additionally
+            // be pointing to the classes of "source" itself.
+            if (isNoCapture)
+              continue;
+            processCapturingStore(call, after,
+                                  call.getArgOperands()[pointerAsData],
+                                  call.getArgOperands()[pointerAsAddress]);
+          }
         }
       }
 
-      // TODO(zinenko): handle noalias and other things for results
+      // Pointer-typed results may be pointing to any other pointer. The
+      // presence of attributes restricts this behavior:
+      //   - If the function is marked memory(...) so that it doesn't read from
+      //     "other" memory, the return values may be pointing only to
+      //     same alias classes as arguments + arguments themselves + a new
+      //     alias class for a potential allocation.
+      //   - Additionally, if any of the arguments are annotated as writeonly,
+      //     the results should not point to alias classes those arguments are
+      //     pointing to.
+      //   - Additionally, if any of the arguments are annotated as nocapture,
+      //     the results should not point to those arguments themselves.
+      //   - If the function is marked as not reading from arguments, the
+      //     results should not point to any alias classes pointed to by the
+      //     arguments.
+      bool funcMayReadArgs = modRefMayRef(argModRef);
+      for (OpResult result : call->getResults()) {
+        if (!isPointerLike(result.getType()))
+          continue;
+
+        const auto *destClasses =
+            getOrCreateFor<AliasClassLattice>(call, result);
+
+        // If reading from other memory, the results may point to anything.
+        if (funcMayReadOther) {
+          propagateIfChanged(
+              after, after->markUnknown(destClasses->getAliasClassesObject()));
+          continue;
+        }
+
+        ChangeResult changed = ChangeResult::NoChange;
+        AliasClassSet commonReturnScope;
+        (void)commonReturnScope.markFresh(
+            StringAttr::get(call->getContext(), "function-return-common"));
+        for (int operandNo : pointerLikeOperands) {
+          const auto *srcClasses = getOrCreateFor<AliasClassLattice>(
+              call, call.getArgOperands()[operandNo]);
+          bool maybeRead =
+              funcMayReadArgs &&
+              (operandNo >= numArguments ||
+               !callee.getArgAttr(operandNo,
+                                  LLVM::LLVMDialect::getWriteOnlyAttrName()));
+          if (maybeRead) {
+            changed |= after->addSetsFrom(destClasses->getAliasClassesObject(),
+                                          srcClasses->getAliasClassesObject());
+          }
+
+          bool isNoCapture =
+              (operandNo < numArguments &&
+               !!callee.getArgAttr(operandNo,
+                                   LLVM::LLVMDialect::getNoCaptureAttrName()));
+          if (isNoCapture) {
+            changed |= after->insert(destClasses->getAliasClassesObject(),
+                                     srcClasses->getAliasClassesObject());
+          }
+          after->insert(destClasses->getAliasClassesObject(),
+                        commonReturnScope);
+        }
+        propagateIfChanged(after, changed);
+      }
 
       return;
     }
-    // TODO(zinenko): should we be more conservative here when we couldn't
-    // process the function? Looks related to "unimplemented unknown" and the
-    // absence of fixpoint status?
+
+    // Don't know how to handle, record pessimistic fixpoint.
+    return propagateIfChanged(after, after->markUnknown());
   }
 }
 
@@ -543,4 +712,16 @@ void enzyme::AliasAnalysis::visitExternalCall(
   SmallVector<MemoryEffects::EffectInstance> effects;
   getEffectsForExternalCall(call, effects);
   transfer(call, effects, operands, results);
+
+  // TODO: handle this case properly.
+  //   - If the results are marked "noalias", they may _only_ point to a
+  //     fresh alias scope as per the LLVM specification of "noalias" on
+  //     results.
+  // Noalias result is pointing to a fresh aliasing class.
+  // if (callee.getResultAttr(result.getResultNumber(),
+  //                          LLVM::LLVMDialect::getNoAliasAttrName())) {
+  //   propagateIfChanged(
+  //       after, after->setToFresh(destClasses->getAliasClassesObject()));
+  //   continue;
+  // }
 }
