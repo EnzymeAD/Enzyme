@@ -28,7 +28,7 @@ int xerbla_(const char *srname, integer *info, int len)
     return 0;
 }
 __attribute__((noinline))
-logical lsame_(char *ca, char *cb, int cs, int cb)
+logical lsame_(char *ca, char *cb, int ca_size, int cb_size)
 {
     /* System generated locals */
     logical ret_val;

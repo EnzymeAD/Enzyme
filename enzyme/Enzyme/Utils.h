@@ -441,6 +441,10 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
     if (!arg->getContext().supportsTypedPointers()) {
       return DIFFE_TYPE::DUP_ARG;
     }
+#elif LLVM_VERSION_MAJOR >= 13
+    if (arg->isOpaquePointerTy()) {
+      return DIFFE_TYPE::DUP_ARG;
+    }
 #endif
     switch (whatType(arg->getPointerElementType(), mode, integersAreConstant,
                      seen)) {

@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 13 ] ; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -instsimplify -jump-threading -adce -S | FileCheck %s; fi
-; RUN: if [ %llvmver -ge 13 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,early-cse,instsimplify,jump-threading,adce)" -enzyme-preopt=false -S | FileCheck %s ; fi
+; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 14 ] ; then %opt < %s %loadEnzyme -opaque-pointers -enzyme -enzyme-preopt=false -mem2reg -early-cse -instsimplify -jump-threading -adce -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 14 ]; then %opt < %s %newLoadEnzyme -opaque-pointers -passes="enzyme,function(mem2reg,early-cse,instsimplify,jump-threading,adce)" -enzyme-preopt=false -S | FileCheck %s ; fi
 
 ; ModuleID = '../examples/big/big_inlined_correctness.cpp'
 source_filename = "../examples/big/big_inlined_correctness.cpp"
