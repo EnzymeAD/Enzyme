@@ -5,7 +5,6 @@
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include <optional>
 
 namespace mlir {
 
@@ -13,12 +12,37 @@ class CallableOpInterface;
 
 namespace enzyme {
 
+/// A set of alias class identifiers to be treated as a single union. May be
+/// marked as "unknown", which is a conservative pessimistic state.
+struct AliasClassSet {
+  DenseSet<DistinctAttr> &getAliasClasses() {
+    assert(!unknown);
+    return aliasClasses;
+  }
+  const DenseSet<DistinctAttr> &getAliasClasses() const {
+    return const_cast<AliasClassSet *>(this)->getAliasClasses();
+  }
+
+  bool isUnknown() const { return unknown; }
+
+  ChangeResult join(const AliasClassSet &other);
+  ChangeResult insert(const DenseSet<DistinctAttr> &classes);
+  ChangeResult markUnknown();
+  ChangeResult markFresh(Attribute debugLabel);
+  ChangeResult reset();
+
+private:
+  DenseSet<DistinctAttr> aliasClasses;
+  bool unknown = false;
+};
+
 //===----------------------------------------------------------------------===//
 // PointsToAnalysis
 //
 // Specifically for pointers to pointers. This tracks alias information through
 // pointers stored/loaded through memory.
 //===----------------------------------------------------------------------===//
+
 class PointsToSets : public dataflow::AbstractDenseLattice {
 public:
   using AbstractDenseLattice::AbstractDenseLattice;
@@ -27,12 +51,31 @@ public:
 
   ChangeResult join(const AbstractDenseLattice &lattice) override;
 
-  ChangeResult insert(DistinctAttr dest, const DenseSet<DistinctAttr> &values);
+  ChangeResult insert(const AliasClassSet &destClasses,
+                      const AliasClassSet &values);
+  ChangeResult insertFresh(DistinctAttr dest, StringAttr debugLabel = nullptr);
 
-  // TODO: Encapsulation of this state
-  DenseMap<DistinctAttr, DenseSet<DistinctAttr>> pointsTo;
+  /// For every alias class in `dest`, record that it may additionally be
+  /// pointing to the same as the classes in `src`.
+  ChangeResult addSetsFrom(const AliasClassSet &destClasses,
+                           const AliasClassSet &srcClasses);
+
+  /// For every alias class in `dest`, record that it is pointing to the _same_
+  /// new alias set.
+  ChangeResult setToFresh(const AliasClassSet &destClasses);
+
+  /// Mark `dest` as pointing to "unknown" alias set, that is, any possible
+  /// other pointer. This is partial pessimistic fixpoint.
+  ChangeResult markUnknown(const AliasClassSet &destClasses);
+
+  /// Mark the entire data structure as "unknown", that is, any pointer may be
+  /// containing any other pointer. This is the full pessimistic fixpoint.
+  ChangeResult markUnknown();
+
+  DenseMap<DistinctAttr, AliasClassSet> pointsTo;
 
 private:
+  bool unknown = false;
 };
 
 class PointsToPointerAnalysis
@@ -49,6 +92,9 @@ public:
                                     dataflow::CallControlFlowAction action,
                                     const PointsToSets &before,
                                     PointsToSets *after) override;
+
+  void processCapturingStore(ProgramPoint dependent, PointsToSets *after,
+                             Value capturedValue, Value destinationAddress);
 };
 
 //===----------------------------------------------------------------------===//
@@ -65,26 +111,32 @@ public:
 
   ChangeResult join(const AbstractSparseLattice &other) override;
 
-  ChangeResult insert(const DenseSet<DistinctAttr> &classes);
+  ChangeResult insert(const DenseSet<DistinctAttr> &classes) {
+    return aliasClasses.insert(classes);
+  }
 
   ChangeResult markFresh(/*optional=*/Attribute debugLabel);
 
-  ChangeResult markUnknown();
+  ChangeResult markUnknown() { return aliasClasses.markUnknown(); }
 
-  ChangeResult reset();
+  ChangeResult reset() { return aliasClasses.reset(); }
 
   static DistinctAttr getFresh(Attribute debugLabel) {
     return DistinctAttr::create(debugLabel);
   }
 
-  DenseSet<DistinctAttr> aliasClasses;
-
   /// We don't know anything about the aliasing of this value. TODO: re-evaluate
   /// if we need this.
-  bool isUnknown() const { return unknown; }
+  bool isUnknown() const { return aliasClasses.isUnknown(); }
+
+  const DenseSet<DistinctAttr> &getAliasClasses() const {
+    return aliasClasses.getAliasClasses();
+  }
+
+  const AliasClassSet &getAliasClassesObject() const { return aliasClasses; }
 
 private:
-  bool unknown = false;
+  AliasClassSet aliasClasses;
 };
 
 //===----------------------------------------------------------------------===//
