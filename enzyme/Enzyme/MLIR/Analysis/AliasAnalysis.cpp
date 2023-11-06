@@ -4,8 +4,8 @@
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Analysis/DataFlowFramework.h"
-#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/CastInterfaces.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 
@@ -272,9 +272,12 @@ void enzyme::AliasAnalysis::transfer(
   // For operations that don't touch memory, conservatively assume all results
   // alias all operands
   for (auto *resultLattice : results) {
-    for (const auto *operandLattice : operands) {
-      join(resultLattice, *operandLattice);
-    }
+    // TODO: Not safe in general, we need type analysis to prove that integers
+    // aren't used as pointers.
+    if (isa<LLVM::LLVMPointerType, MemRefType>(
+            resultLattice->getPoint().getType()))
+      for (const auto *operandLattice : operands)
+        join(resultLattice, *operandLattice);
   }
 }
 
@@ -299,7 +302,8 @@ void getEffectsForExternalCall(
     SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
   if (auto symbol = dyn_cast<SymbolRefAttr>(call.getCallableForCallee())) {
     StringRef callableName = symbol.getLeafReference().getValue();
-    if (callableName == "malloc" || callableName == "_Znwm") {
+    if (callableName == "malloc" || callableName == "calloc" ||
+        callableName == "_Znwm") {
       assert(call->getNumResults() == 1);
       effects.push_back(MemoryEffects::EffectInstance(
           MemoryEffects::Allocate::get(), call->getResult(0)));
