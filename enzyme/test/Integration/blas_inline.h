@@ -28,7 +28,7 @@ int xerbla_(const char *srname, integer *info, int len)
     return 0;
 }
 __attribute__((noinline))
-logical lsame_(char *ca, char *cb, int, int)
+logical lsame_(char *ca, char *cb, int ca_size, int cb_size)
 {
     /* System generated locals */
     logical ret_val;
@@ -764,12 +764,17 @@ L60:
 } /* ddot_ */
 
 __attribute__((noinline))
-/* Subroutine */ int dgemm_(const char *transa, const char *transb, const integer *m, const integer *
+/* Subroutine */ int dgemm_(const char *transa_t, const char *transb_t, const integer *m, const integer *
 	n, const integer *k, const doublereal *alpha, const doublereal *a, const integer *lda, 
 	const doublereal *b, const integer *ldb, const doublereal *beta, doublereal *c, const integer 
 	*ldc)
 {
 
+    char transa_v = *transa_t;
+    char* transa = &transa_v;
+    
+    char transb_v = *transb_t;
+    char* transb = &transb_v;
 
     /* System generated locals */
     integer a_dim1, a_offset, b_dim1, b_offset, c_dim1, c_offset, i__1, i__2, 

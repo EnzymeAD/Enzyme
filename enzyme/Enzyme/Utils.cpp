@@ -1121,7 +1121,10 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
 #if LLVM_VERSION_MAJOR >= 15
   if (Mod.getContext().supportsTypedPointers()) {
 #endif
-    assert(PT->getPointerElementType() == elementType);
+#if LLVM_VERSION_MAJOR >= 13
+    if (!PT->isOpaquePointerTy())
+#endif
+      assert(PT->getPointerElementType() == elementType);
 #if LLVM_VERSION_MAJOR >= 15
   }
 #endif

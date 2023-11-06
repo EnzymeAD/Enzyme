@@ -114,8 +114,9 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
       }
     }
 
-    os << "    if (!shadow && need_" << argname << " && !cache_" << argname
-       << ")\n"
+    os << "    if (!shadow && need_" << argname
+       << " && ((cacheMode && overwritten_args_ptr) ? !cache_" << argname
+       << " : true ))\n"
        << "      return true;\n";
     os << "  }\n";
   }
