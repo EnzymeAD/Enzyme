@@ -680,7 +680,7 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
     return;
   }
-
+  // SEND AND RECV
   if (funcName == "MPI_Send" || funcName == "MPI_Ssend" ||
       funcName == "PMPI_Send" || funcName == "PMPI_Ssend") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
@@ -695,13 +695,6 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
       } else {
         getReverseBuilder(Builder2);
       }
-
-      Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
-      if (!forwardMode)
-        shadow = lookup(shadow, Builder2);
-      if (shadow->getType()->isIntegerTy())
-        shadow = Builder2.CreateIntToPtr(shadow,
-                                         Type::getInt8PtrTy(call.getContext()));
 
       Type *statusType = nullptr;
 #if LLVM_VERSION_MAJOR < 17
@@ -750,25 +743,44 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
       if (!forwardMode)
         comm = lookup(comm, Builder2);
 
+      Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
+
+        if (!forwardMode){
+          applyChainRule(Builder2, [&](Value* shadow){
+          shadow = lookup(shadow, Builder2);
+          }, shadow);
+        }
+
+      applyChainRule(Builder2, [&](Value* shadow){
+
+        if (shadow->getType()->isIntegerTy())
+          shadow = Builder2.CreateIntToPtr(shadow,
+                                          Type::getInt8PtrTy(call.getContext()));
+      }, shadow);
+
       if (forwardMode) {
-        Value *args[] = {
-            /*buf*/ shadow,
-            /*count*/ count,
-            /*datatype*/ datatype,
-            /*dest*/ src,
-            /*tag*/ tag,
-            /*comm*/ comm,
-        };
 
-        auto Defs = gutils->getInvertedBundles(
-            &call,
-            {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-             ValueType::Primal, ValueType::Primal, ValueType::Primal},
-            Builder2, /*lookup*/ false);
+        applyChainRule(Builder2, [&](Value* shadow){
+          Value *args[] = {
+              /*buf*/ shadow,
+              /*count*/ count,
+              /*datatype*/ datatype,
+              /*dest*/ src,
+              /*tag*/ tag,
+              /*comm*/ comm,
+          };
 
-        auto callval = call.getCalledOperand();
-        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
-        return;
+          auto Defs = gutils->getInvertedBundles(
+              &call,
+              {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+              ValueType::Primal, ValueType::Primal, ValueType::Primal},
+              Builder2, /*lookup*/ false);
+
+          auto callval = call.getCalledOperand();
+          Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+        }, shadow);
+        
+          return;
       }
 
       Value *args[] = {
@@ -838,13 +850,6 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
         getReverseBuilder(Builder2);
       }
 
-      Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
-      if (!forwardMode)
-        shadow = lookup(shadow, Builder2);
-      if (shadow->getType()->isIntegerTy())
-        shadow = Builder2.CreateIntToPtr(shadow,
-                                         Type::getInt8PtrTy(call.getContext()));
-
       Value *count = gutils->getNewFromOriginal(call.getOperand(1));
       if (!forwardMode)
         count = lookup(count, Builder2);
@@ -865,59 +870,74 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
       if (!forwardMode)
         comm = lookup(comm, Builder2);
 
-      Value *args[] = {
-          shadow, count, datatype, source, tag, comm,
-      };
+      Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
 
-      auto Defs = gutils->getInvertedBundles(
+      applyChainRule(Builder2, [&](Value* shadow){
+
+        if (!forwardMode)
+          shadow = lookup(shadow, Builder2);
+        if (shadow->getType()->isIntegerTy())
+          shadow = Builder2.CreateIntToPtr(shadow,
+                                          Type::getInt8PtrTy(call.getContext()));
+
+        Value *args[] = {
+          shadow, count, datatype, source, tag, comm,
+        };
+
+        auto Defs = gutils->getInvertedBundles(
           &call,
           {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
            ValueType::Primal, ValueType::Primal, ValueType::Primal,
            ValueType::None},
           Builder2, /*lookup*/ !forwardMode);
 
-      if (forwardMode) {
-        auto callval = call.getCalledOperand();
+        if (forwardMode) {
+          auto callval = call.getCalledOperand();
 
-        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
-        return;
-      }
+          Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+          return;
+        }
 
-      Type *types[sizeof(args) / sizeof(*args)];
-      for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
-        types[i] = args[i]->getType();
-      FunctionType *FT = FunctionType::get(call.getType(), types, false);
+        // Not sure if applyChainRule is needed for args since it includes shadow:
+        Type *types[sizeof(args) / sizeof(*args)];
+        for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
+          types[i] = args[i]->getType();
+        FunctionType *FT = FunctionType::get(call.getType(), types, false);
 
-      auto fcall = Builder2.CreateCall(
-          called->getParent()->getOrInsertFunction("MPI_Send", FT), args, Defs);
-      fcall->setCallingConv(call.getCallingConv());
+        auto fcall = Builder2.CreateCall(
+            called->getParent()->getOrInsertFunction("MPI_Send", FT), args, Defs);
+        fcall->setCallingConv(call.getCallingConv());
 
-      auto dst_arg = Builder2.CreateBitCast(
-          args[0], Type::getInt8PtrTy(call.getContext()));
-      auto val_arg = ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
-      auto len_arg = Builder2.CreateZExtOrTrunc(
-          args[1], Type::getInt64Ty(call.getContext()));
-      auto tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType());
-      len_arg =
-          Builder2.CreateMul(len_arg,
+        auto dst_arg = Builder2.CreateBitCast(
+            args[0], Type::getInt8PtrTy(call.getContext()));
+        auto val_arg = ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
+        auto len_arg = Builder2.CreateZExtOrTrunc(
+            args[1], Type::getInt64Ty(call.getContext()));
+        auto tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType());
+        len_arg =
+            Builder2.CreateMul(len_arg,
                              Builder2.CreateZExtOrTrunc(
                                  tysize, Type::getInt64Ty(call.getContext())),
                              "", true, true);
-      auto volatile_arg = ConstantInt::getFalse(call.getContext());
+        auto volatile_arg = ConstantInt::getFalse(call.getContext());
 
-      Value *nargs[] = {dst_arg, val_arg, len_arg, volatile_arg};
-      Type *tys[] = {dst_arg->getType(), len_arg->getType()};
+        Value *nargs[] = {dst_arg, val_arg, len_arg, volatile_arg};
+        Type *tys[] = {dst_arg->getType(), len_arg->getType()};
 
-      auto MemsetDefs = gutils->getInvertedBundles(
+        auto MemsetDefs = gutils->getInvertedBundles(
           &call,
           {ValueType::Shadow, ValueType::None, ValueType::None, ValueType::None,
            ValueType::None, ValueType::None, ValueType::None},
           Builder2, /*lookup*/ true);
-      auto memset = cast<CallInst>(Builder2.CreateCall(
+
+        auto memset = cast<CallInst>(Builder2.CreateCall(
           Intrinsic::getDeclaration(gutils->newFunc->getParent(),
                                     Intrinsic::memset, tys),
-          nargs));
-      memset->addParamAttr(0, Attribute::NonNull);
+                                    nargs));
+        
+        memset->addParamAttr(0, Attribute::NonNull);
+
+        }, shadow);
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
