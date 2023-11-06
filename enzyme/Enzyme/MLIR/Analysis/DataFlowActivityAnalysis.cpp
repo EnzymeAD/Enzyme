@@ -295,31 +295,36 @@ public:
       return;
 
     // Bail out if this op affects memory.
-    if (auto memory = dyn_cast<MemoryEffectOpInterface>(op)) {
-      SmallVector<MemoryEffects::EffectInstance> effects;
-      memory.getEffects(effects);
-      if (!effects.empty())
-        return;
-    }
+    if (!isPure(op))
+      return;
 
+    transfer(op, operands, results);
+  }
+
+  void visitExternalCall(CallOpInterface call,
+                         ArrayRef<const ForwardValueActivity *> operands,
+                         ArrayRef<ForwardValueActivity *> results) override {
+    transfer(call, operands, results);
+  }
+
+  void transfer(Operation *op, ArrayRef<const ForwardValueActivity *> operands,
+                ArrayRef<ForwardValueActivity *> results) {
     // For value-based AA, assume any active argument leads to an active
     // result.
     ValueActivity joinedResult;
-    for (const ForwardValueActivity *operand : operands) {
+    for (const ForwardValueActivity *operand : operands)
       joinedResult = ValueActivity::merge(joinedResult, operand->getValue());
-    }
 
     // Only mark results as active data if the type can carry perturbations and
     // has value semantics
     for (ForwardValueActivity *result : results) {
-      if (joinedResult.isActiveVal()) {
-        if (isa<FloatType, ComplexType>(result->getPoint().getType())) {
-          propagateIfChanged(result, result->join(joinedResult));
-        } else {
-          propagateIfChanged(result,
-                             result->join(ValueActivity::getConstant()));
-        }
-      } else
+      if (joinedResult.isActiveVal())
+        propagateIfChanged(result,
+                           result->join(isa<FloatType, ComplexType>(
+                                            result->getPoint().getType())
+                                            ? joinedResult
+                                            : ValueActivity::getConstant()));
+      else
         propagateIfChanged(result, result->join(joinedResult));
     }
   }
@@ -338,30 +343,30 @@ public:
 
   void visitCallOperand(OpOperand &operand) override {}
 
+  void transfer(Operation *op, ArrayRef<BackwardValueActivity *> operands,
+                ArrayRef<const BackwardValueActivity *> results) {
+    // Propagate all operands to all results
+    for (auto operand : operands)
+      for (auto result : results)
+        meet(operand, *result);
+  }
+
   void
   visitOperation(Operation *op, ArrayRef<BackwardValueActivity *> operands,
                  ArrayRef<const BackwardValueActivity *> results) override {
     // Bail out if the op propagates memory
-    if (auto memory = dyn_cast<MemoryEffectOpInterface>(op)) {
-      SmallVector<MemoryEffects::EffectInstance> effects;
-      memory.getEffects(effects);
-      if (!effects.empty())
-        return;
+    if (!isPure(op)) {
+      return;
     }
 
-    // Propagate all operands to all results
-    for (auto operand : operands) {
-      if (Operation *definingOp = operand->getPoint().getDefiningOp()) {
-        if (definingOp->hasTrait<OpTrait::ConstantLike>()) {
-          propagateIfChanged(operand,
-                             operand->meet(ValueActivity::getConstant()));
-          continue;
-        }
-      }
-      for (auto result : results) {
-        meet(operand, *result);
-      }
-    }
+    transfer(op, operands, results);
+  }
+
+  void
+  visitExternalCall(CallOpInterface call,
+                    ArrayRef<BackwardValueActivity *> operands,
+                    ArrayRef<const BackwardValueActivity *> results) override {
+    transfer(call, operands, results);
   }
 };
 
@@ -537,8 +542,8 @@ public:
 
 private:
   // A pointer to the entry block and argument activities of the top-level
-  // function being differentiated. This is used to set the entry state because
-  // we need access to the results of points-to analysis.
+  // function being differentiated. This is used to set the entry state
+  // because we need access to the results of points-to analysis.
   Block *entryBlock;
   ArrayRef<enzyme::Activity> argumentActivity;
 };
@@ -759,8 +764,8 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
         return false;
       }
     } else if (auto callOp = dyn_cast<CallOpInterface>(op)) {
-      // TODO: Should traverse bottom-up for performance (or cache intermediate
-      // results)
+      // TODO: Should traverse bottom-up for performance (or cache
+      // intermediate results)
       auto callable = cast<CallableOpInterface>(callOp.resolveCallable());
       if (callable.getCallableRegion()) {
         // If any of the instructions in the body are active instructions, the
