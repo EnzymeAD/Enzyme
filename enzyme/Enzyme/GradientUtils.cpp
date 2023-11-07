@@ -7774,7 +7774,7 @@ nofast:;
 
 void GradientUtils::computeMinCache() {
   if (EnzymeMinCutCache) {
-    SmallPtrSet<Value *, 4> Recomputes;
+    SetVector<Value *> Recomputes;
 
     std::map<UsageKey, bool> FullSeen;
     std::map<UsageKey, bool> OneLevelSeen;
@@ -7919,11 +7919,8 @@ void GradientUtils::computeMinCache() {
       }
     }
 
-    SmallPtrSet<Value *, 4> Intermediates;
-    SmallPtrSet<Value *, 4> Required;
-
-    Intermediates.clear();
-    Required.clear();
+    SetVector<Value *> Intermediates;
+    SetVector<Value *> Required;
     std::deque<Value *> todo(Recomputes.begin(), Recomputes.end());
 
     while (todo.size()) {
@@ -7970,7 +7967,7 @@ void GradientUtils::computeMinCache() {
       }
     }
 
-    SmallPtrSet<Value *, 5> MinReq;
+    SetVector<Value *> MinReq;
     DifferentialUseAnalysis::minCut(oldFunc->getParent()->getDataLayout(),
                                     OrigLI, Recomputes, Intermediates, Required,
                                     MinReq, rematerializableAllocations, TLI);
@@ -9200,6 +9197,10 @@ bool GradientUtils::needsCacheWholeAllocation(
 
     // If caching this user, it cannot be a gep/cast of original
     if (!found->second) {
+      llvm::errs() << " oldFunc: " << *oldFunc << "\n";
+      for (auto &pair : knownRecomputeHeuristic)
+        llvm::errs() << " krc[" << *pair.first << "] = " << pair.second << "\n";
+      llvm::errs() << " cur: " << *cur << "\n";
       assert(false && "caching potentially capturing/offset of allocation");
     } else {
       // if not caching this user, it is legal to recompute, consider its users
