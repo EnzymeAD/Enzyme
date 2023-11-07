@@ -764,9 +764,9 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
           return false;
 
         // Or if it points to a pointer that points to active data
-        const enzyme::AliasClassSet &neighbors =
-            pointsToSets->pointsTo.lookup(aliasClass);
-        for (DistinctAttr neighbor : neighbors.getAliasClasses()) {
+        const DenseSet<DistinctAttr> &neighbors =
+            pointsToSets->getPointsTo(aliasClass).getAliasClasses();
+        for (DistinctAttr neighbor : neighbors) {
           if (!visited.contains(neighbor)) {
             visited.insert(neighbor);
             frontier.push_back(neighbor);
