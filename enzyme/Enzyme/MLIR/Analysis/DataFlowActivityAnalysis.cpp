@@ -724,7 +724,7 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
 
         // Or if it points to a pointer that points to active data
         for (DistinctAttr neighbor :
-             pointsToSets->pointsTo.lookup(aliasClass).getAliasClasses()) {
+             pointsToSets->getPointsTo(aliasClass).getAliasClasses()) {
           if (!visited.contains(neighbor)) {
             visited.insert(neighbor);
             frontier.push_back(neighbor);
