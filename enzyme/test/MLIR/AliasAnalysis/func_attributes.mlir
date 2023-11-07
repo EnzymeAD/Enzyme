@@ -197,3 +197,68 @@ func.func @call_two_pointers_other_read_arg_rw(%sz: i64) {
   call @callee(%0, %1) : (!llvm.ptr, !llvm.ptr) -> ()
   return
 }
+
+// -----
+
+func.func private @callee() -> !llvm.ptr attributes {
+  memory = #llvm.memory_effects<other = read,
+                                argMem = readwrite,
+                                inaccessibleMem = none>
+}
+
+// CHECK: points-to-pointer sets
+// CHECK-NEXT: <fully-unknown>
+func.func @func_return_simple() -> !llvm.ptr {
+  %0 = call @callee() {tag = "func-return"} : () -> !llvm.ptr
+  return %0 : !llvm.ptr
+}
+
+// -----
+
+func.func private @callee() -> (!llvm.ptr {llvm.noalias}) attributes {
+  memory = #llvm.memory_effects<other = read,
+                                argMem = readwrite,
+                                inaccessibleMem = none>
+}
+
+// CHECK: points-to-pointer sets
+// CHECK-NEXT: distinct[{{.+}}]<"func-return"> points to {<unknown>}
+func.func @func_return_noalias() -> !llvm.ptr {
+  %0 = call @callee() {tag = "func-return"} : () -> !llvm.ptr
+  return %0 : !llvm.ptr
+}
+
+// -----
+
+// CHECK: tag "func-return" Unknown AC
+// CHECK: "func-return" and "func-return": MayAlias
+// CHECK: points-to-pointer sets
+// CHECK: <fully-unknown>
+func.func private @callee() -> (!llvm.ptr {llvm.noalias}, !llvm.ptr) attributes {
+  memory = #llvm.memory_effects<other = read,
+                                argMem = readwrite,
+                                inaccessibleMem = none>
+}
+
+func.func @caller() -> !llvm.ptr {
+  %0:2 = call @callee() {tag = "func-return"} : () -> (!llvm.ptr, !llvm.ptr)
+  return %0#0 : !llvm.ptr
+}
+
+// -----
+
+func.func private @callee() -> (!llvm.ptr {llvm.noalias}) attributes {
+  memory = #llvm.memory_effects<other = read,
+                                argMem = readwrite,
+                                inaccessibleMem = none>
+}
+
+// CHECK: "func-return-1" and "func-return-2": NoAlias
+// CHECK: points-to-pointer sets
+// CHECK-DAG: distinct[{{.+}}]<"func-return-1"> points to {<unknown>}
+// CHECK-DAG: distinct[{{.+}}]<"func-return-2"> points to {<unknown>}
+func.func @caller() -> !llvm.ptr {
+  %0 = call @callee() {tag = "func-return-1"} : () -> !llvm.ptr
+  %1 = call @callee() {tag = "func-return-2"} : () -> !llvm.ptr
+  return %0 : !llvm.ptr
+}

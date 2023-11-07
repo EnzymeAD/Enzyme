@@ -103,8 +103,13 @@ struct PrintAliasAnalysisPass
         for (OpResult result : op->getResults()) {
           auto *state = solver.lookupState<enzyme::AliasClassLattice>(result);
           if (state) {
-            for (auto aliasClass : state->getAliasClasses()) {
-              op->setAttr("ac", aliasClass);
+            if (state->isUnknown()) {
+              op->setAttr("ac",
+                          StringAttr::get(result.getContext(), "<unknown>"));
+            } else {
+              for (auto aliasClass : state->getAliasClasses()) {
+                op->setAttr("ac", aliasClass);
+              }
             }
           }
         }
