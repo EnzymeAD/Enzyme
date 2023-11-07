@@ -125,6 +125,9 @@ ChangeResult enzyme::PointsToSets::insert(const AliasClassSet &destClasses,
   if (unknown)
     return ChangeResult::NoChange;
 
+  if (destClasses.isUnknown())
+    return markUnknown();
+
   ChangeResult result = ChangeResult::NoChange;
   for (auto destClass : destClasses.getAliasClasses())
     result |= pointsTo[destClass].insert(values.getAliasClasses());
@@ -150,6 +153,9 @@ enzyme::PointsToSets::addSetsFrom(const AliasClassSet &destClasses,
                                   const AliasClassSet &srcClasses) {
   if (unknown)
     return ChangeResult::NoChange;
+
+  if (destClasses.isUnknown())
+    return markUnknown();
 
   ChangeResult result = ChangeResult::NoChange;
   for (DistinctAttr destClass : destClasses.getAliasClasses()) {
@@ -180,6 +186,9 @@ enzyme::PointsToSets::setToFresh(const AliasClassSet &destClasses) {
 
 ChangeResult
 enzyme::PointsToSets::markUnknown(const AliasClassSet &destClasses) {
+  if (destClasses.isUnknown())
+    return markUnknown();
+
   ChangeResult result = ChangeResult::NoChange;
   for (DistinctAttr destClass : destClasses.getAliasClasses())
     result |= pointsTo[destClass].markUnknown();
@@ -646,12 +655,12 @@ void populateConservativeCallEffects(
 }
 
 // TODO: Move this somewhere shared
-void getEffectsForExternalCall(
+LogicalResult getEffectsForExternalCall(
     CallOpInterface call,
     SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
   auto symbol = dyn_cast<SymbolRefAttr>(call.getCallableForCallee());
   if (!symbol)
-    return populateConservativeCallEffects(call, effects);
+    return failure();
 
   // Functions with known specific behavior.
   StringRef callableName = symbol.getLeafReference().getValue();
@@ -660,50 +669,31 @@ void getEffectsForExternalCall(
     assert(call->getNumResults() == 1);
     effects.push_back(MemoryEffects::EffectInstance(
         MemoryEffects::Allocate::get(), call->getResult(0)));
-    return;
+    return success();
   }
 
-  // Generic reasoning based on attributes.
-  auto callee = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
-      call, symbol.getLeafReference());
-  if (!callee)
-    return populateConservativeCallEffects(call, effects);
-
-  // A function by default has all possible effects on all pointer-like
-  // arguments. Presence of specific attributes removes those effects.
-  auto memoryAttr =
-      callee->getAttrOfType<LLVM::MemoryEffectsAttr>(kLLVMMemoryAttrName);
-  std::optional<LLVM::ModRefInfo> argMemMRI =
-      memoryAttr ? std::make_optional(memoryAttr.getArgMem()) : std::nullopt;
-
-  unsigned numArguments = callee.getNumArguments();
-  for (auto &&[i, argument] : llvm::enumerate(call.getArgOperands())) {
-    if (!isPointerLike(argument.getType()))
-      continue;
-
-    bool isReadNone =
-        (argMemMRI && *argMemMRI == LLVM::ModRefInfo::NoModRef) ||
-        (i < numArguments &&
-         !!callee.getArgAttr(i, LLVM::LLVMDialect::getReadnoneAttrName()));
-    auto [isReadOnly, isWriteOnly] = isReadWriteOnly(callee, i, argMemMRI);
-
-    if (!isReadNone && !isWriteOnly)
-      effects.emplace_back(MemoryEffects::Read::get(), argument);
-
-    if (!isReadOnly)
-      effects.emplace_back(MemoryEffects::Write::get(), argument);
-
-    // TODO: consider having a may-free effect.
-  }
+  return failure();
 }
 
 void enzyme::AliasAnalysis::visitOperation(
     Operation *op, ArrayRef<const AliasClassLattice *> operands,
     ArrayRef<AliasClassLattice *> results) {
-  SmallVector<MemoryEffects::EffectInstance> effects;
-  if (auto memory = dyn_cast<MemoryEffectOpInterface>(op))
-    memory.getEffects(effects);
 
+  // If we don't have memory effect information, don't assume anything about
+  // values.
+  auto memory = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!memory) {
+    for (OpResult result : op->getResults()) {
+      if (!isPointerLike(result.getType()))
+        continue;
+
+      results[result.getResultNumber()]->markUnknown();
+    }
+    return;
+  }
+
+  SmallVector<MemoryEffects::EffectInstance> effects;
+  memory.getEffects(effects);
   transfer(op, effects, operands, results);
   if (auto view = dyn_cast<OffsetSizeAndStrideOpInterface>(op)) {
     // TODO: special handling for offset size and stride op interface to prove
@@ -715,19 +705,71 @@ void enzyme::AliasAnalysis::visitOperation(
 void enzyme::AliasAnalysis::visitExternalCall(
     CallOpInterface call, ArrayRef<const AliasClassLattice *> operands,
     ArrayRef<AliasClassLattice *> results) {
+  // First, try effect-based reasoning for known functions.
   SmallVector<MemoryEffects::EffectInstance> effects;
-  getEffectsForExternalCall(call, effects);
-  transfer(call, effects, operands, results);
+  if (succeeded(getEffectsForExternalCall(call, effects)))
+    return transfer(call, effects, operands, results);
 
-  // TODO: handle this case properly.
-  //   - If the results are marked "noalias", they may _only_ point to a
-  //     fresh alias scope as per the LLVM specification of "noalias" on
-  //     results.
-  // Noalias result is pointing to a fresh aliasing class.
-  // if (callee.getResultAttr(result.getResultNumber(),
-  //                          LLVM::LLVMDialect::getNoAliasAttrName())) {
-  //   propagateIfChanged(
-  //       after, after->setToFresh(destClasses->getAliasClassesObject()));
-  //   continue;
-  // }
+  auto markResultsUnknown = [&] {
+    for (AliasClassLattice *resultLattice : results)
+      propagateIfChanged(resultLattice, resultLattice->markUnknown());
+  };
+
+  // If failed, try using function attributes. If results are marked noalias,
+  // they correspond to fresh allocations. Otherwise, they may alias anything.
+  // Even if a function is marked as not reading from memory or arguments, it
+  // may still create pointers "out of the thin air", e.g., by "ptrtoint" from a
+  // constant or an argument.
+  auto symbol = dyn_cast<SymbolRefAttr>(call.getCallableForCallee());
+  if (!symbol)
+    return markResultsUnknown();
+  auto callee = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
+      call, symbol.getLeafReference());
+  if (!callee)
+    return markResultsUnknown();
+
+  for (OpResult result : call->getResults()) {
+    AliasClassLattice *resultLattice = results[result.getResultNumber()];
+    if (callee.getResultAttr(result.getResultNumber(),
+                             LLVM::LLVMDialect::getNoAliasAttrName())) {
+      propagateIfChanged(
+          resultLattice,
+          resultLattice->markFresh(call->getAttrOfType<StringAttr>("tag")));
+    } else {
+      propagateIfChanged(resultLattice, resultLattice->markUnknown());
+    }
+  }
 }
+
+//  // Generic reasoning based on attributes.
+//   auto callee = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
+//       call, symbol.getLeafReference());
+//   if (!callee)
+//     return populateConservativeCallEffects(call, effects);
+
+//   // A function by default has all possible effects on all pointer-like
+//   // arguments. Presence of specific attributes removes those effects.
+//   auto memoryAttr =
+//       callee->getAttrOfType<LLVM::MemoryEffectsAttr>(kLLVMMemoryAttrName);
+//   std::optional<LLVM::ModRefInfo> argMemMRI =
+//       memoryAttr ? std::make_optional(memoryAttr.getArgMem()) : std::nullopt;
+
+//   unsigned numArguments = callee.getNumArguments();
+//   for (auto &&[i, argument] : llvm::enumerate(call.getArgOperands())) {
+//     if (!isPointerLike(argument.getType()))
+//       continue;
+
+//     bool isReadNone =
+//         !modRefMayRef(argMemMRI) ||
+//         (i < numArguments &&
+//          !!callee.getArgAttr(i, LLVM::LLVMDialect::getReadnoneAttrName()));
+//     auto [isReadOnly, isWriteOnly] = isReadWriteOnly(callee, i, argMemMRI);
+
+//     if (!isReadNone && !isWriteOnly)
+//       effects.emplace_back(MemoryEffects::Read::get(), argument);
+
+//     if (!isReadOnly)
+//       effects.emplace_back(MemoryEffects::Write::get(), argument);
+
+//     // TODO: consider having a may-free effect.
+//   }
