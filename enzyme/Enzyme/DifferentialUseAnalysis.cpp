@@ -682,7 +682,7 @@ void DifferentialUseAnalysis::dump(Graph &G) {
 /* Returns true if there is a path from source 's' to sink 't' in
   residual graph. Also fills parent[] to store the path */
 void DifferentialUseAnalysis::bfs(const Graph &G,
-                                  const SmallPtrSetImpl<Value *> &Recompute,
+                                  const SetVector<Value *> &Recompute,
                                   std::map<Node, Node> &parent) {
   std::deque<Node> q;
   for (auto V : Recompute) {
@@ -726,9 +726,9 @@ int DifferentialUseAnalysis::cmpLoopNest(Loop *prev, Loop *next) {
 
 void DifferentialUseAnalysis::minCut(
     const DataLayout &DL, LoopInfo &OrigLI,
-    const SmallPtrSetImpl<Value *> &Recomputes,
-    const SmallPtrSetImpl<Value *> &Intermediates,
-    SmallPtrSetImpl<Value *> &Required, SmallPtrSetImpl<Value *> &MinReq,
+    const SetVector<Value *> &Recomputes,
+    const SetVector<Value *> &Intermediates, SetVector<Value *> &Required,
+    SetVector<Value *> &MinReq,
     const ValueMap<Value *, GradientUtils::Rematerializer>
         &rematerializableAllocations,
     llvm::TargetLibraryInfo &TLI) {
@@ -810,6 +810,8 @@ void DifferentialUseAnalysis::minCut(
   std::map<Node, Node> parent;
   bfs(G, Recomputes, parent);
 
+  std::deque<Value *> todo;
+
   // Print all edges that are from a reachable vertex to
   // non-reachable vertex in the original graph
   for (auto &pair : Orig) {
@@ -819,13 +821,13 @@ void DifferentialUseAnalysis::minCut(
           assert(pair.first.outgoing == 0 && N.outgoing == 1);
           assert(pair.first.V == N.V);
           MinReq.insert(N.V);
+          todo.push_back(N.V);
         }
       }
   }
 
   // When ambiguous, push to cache the last value in a computation chain
   // This should be considered in a cost for the max flow
-  std::deque<Value *> todo(MinReq.begin(), MinReq.end());
   while (todo.size()) {
     auto V = todo.front();
     todo.pop_front();
@@ -889,7 +891,7 @@ void DifferentialUseAnalysis::minCut(
           (moreOuterLoop == 0 &&
            DL.getTypeSizeInBits(V->getType()) >=
                DL.getTypeSizeInBits((*found->second.begin()).V->getType()))) {
-        MinReq.erase(V);
+        MinReq.remove(V);
         MinReq.insert((*found->second.begin()).V);
         todo.push_back((*found->second.begin()).V);
       }

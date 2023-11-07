@@ -915,9 +915,16 @@ public:
 
     bool forceErase = false;
     if (Mode == DerivativeMode::ReverseModeGradient) {
+      // Since we won't redo the store in the reverse pass, do not
+      // force the write barrier.
+      forceErase = true;
       for (const auto &pair : gutils->rematerializableAllocations) {
-        if (pair.second.stores.count(&SI) && pair.second.LI) {
-          forceErase = true;
+        // However, if we are rematerailizing the allocationa and not
+        // inside the loop level rematerialization, we do still need the
+        // reverse passes ``fake primal'' store and therefore write barrier
+        if (pair.second.stores.count(&SI) &&
+            (!pair.second.LI || !pair.second.LI->contains(&SI))) {
+          forceErase = false;
         }
       }
     }

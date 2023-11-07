@@ -397,7 +397,7 @@ void dump(std::map<Node, std::set<Node>> &G);
 /* Returns true if there is a path from source 's' to sink 't' in
  residual graph. Also fills parent[] to store the path */
 void bfs(const std::map<Node, std::set<Node>> &G,
-         const llvm::SmallPtrSetImpl<llvm::Value *> &Recompute,
+         const llvm::SetVector<llvm::Value *> &Recompute,
          std::map<Node, Node> &parent);
 
 // Return 1 if next is better
@@ -406,10 +406,10 @@ void bfs(const std::map<Node, std::set<Node>> &G,
 int cmpLoopNest(llvm::Loop *prev, llvm::Loop *next);
 
 void minCut(const llvm::DataLayout &DL, llvm::LoopInfo &OrigLI,
-            const llvm::SmallPtrSetImpl<llvm::Value *> &Recomputes,
-            const llvm::SmallPtrSetImpl<llvm::Value *> &Intermediates,
-            llvm::SmallPtrSetImpl<llvm::Value *> &Required,
-            llvm::SmallPtrSetImpl<llvm::Value *> &MinReq,
+            const llvm::SetVector<llvm::Value *> &Recomputes,
+            const llvm::SetVector<llvm::Value *> &Intermediates,
+            llvm::SetVector<llvm::Value *> &Required,
+            llvm::SetVector<llvm::Value *> &MinReq,
             const llvm::ValueMap<llvm::Value *, GradientUtils::Rematerializer>
                 &rematerializableAllocations,
             llvm::TargetLibraryInfo &TLI);
