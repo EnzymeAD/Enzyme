@@ -1047,6 +1047,7 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
     B.SetInsertPoint(res);
 
     if (auto PT = dyn_cast<PointerType>(storePointer->getType())) {
+      (void)PT;
 #if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
       if (PT->getContext().supportsTypedPointers()) {
@@ -4659,7 +4660,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             legal = false;
           auto L = LI.getLoopFor(PN->getParent());
           if (legal && L && L->getLoopPreheader() &&
-              L->getCanonicalInductionVariable()) {
+              L->getCanonicalInductionVariable() &&
+              L->getHeader() == PN->getParent()) {
             auto ph_idx = PN->getBasicBlockIndex(L->getLoopPreheader());
             if (isa<ConstantInt>(PN->getIncomingValue(ph_idx))) {
               lhsOps[ph_idx] =
