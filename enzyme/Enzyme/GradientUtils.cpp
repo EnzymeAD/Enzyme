@@ -8547,9 +8547,14 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         frees.insert(CI);
         continue;
       }
+      // The allocation arg is the first arg of the write barrier.
+      //  The capturing store in subsequent args should be handled by forbidding
+      //  capturing stores
       if (funcName == "julia.write_barrier" ||
           funcName == "julia.write_barrier_binding") {
-        stores.insert(CI);
+        if (CI->getArgOperand(0) == prev) {
+          stores.insert(CI);
+        }
         continue;
       }
       if (funcName == "enzyme_zerotype") {
@@ -9201,6 +9206,7 @@ bool GradientUtils::needsCacheWholeAllocation(
       for (auto &pair : knownRecomputeHeuristic)
         llvm::errs() << " krc[" << *pair.first << "] = " << pair.second << "\n";
       llvm::errs() << " cur: " << *cur << "\n";
+      llvm::errs() << " origInst: " << *origInst << "\n";
       assert(false && "caching potentially capturing/offset of allocation");
     } else {
       // if not caching this user, it is legal to recompute, consider its users

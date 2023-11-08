@@ -184,9 +184,33 @@ inline bool is_value_needed_in_reverse(
     // Anything we may try to rematerialize requires its store operands for
     // the reverse pass.
     if (!OneLevel) {
-      if (isa<StoreInst>(user) || isa<MemTransferInst>(user) ||
-          isa<MemSetInst>(user)) {
+      bool isStored = false;
+      if (auto SI = dyn_cast<StoreInst>(user))
+        isStored = inst == SI->getValueOperand();
+      else if (auto MTI = dyn_cast<MemTransferInst>(user)) {
+        isStored = inst == MTI->getSource() || inst == MTI->getLength();
+      } else if (auto MS = dyn_cast<MemSetInst>(user)) {
+        isStored = inst == MS->getLength() || inst == MS->getValue();
+      } else if (auto CB = dyn_cast<CallBase>(user)) {
+        auto name = getFuncNameFromCall(CB);
+        if (name == "julia.write_barrier" ||
+            name == "julia.write_barrier_binding") {
+#if LLVM_VERSION_MAJOR >= 14
+          auto sz = CB->arg_size();
+#else
+          auto sz = CB->getNumArgOperands();
+#endif
+          // First pointer is the destination
+          for (size_t i = 1; i < sz; i++)
+            isStored |= inst == CB->getArgOperand(i);
+        }
+      }
+      if (isStored) {
         for (auto pair : gutils->rematerializableAllocations) {
+          // If already decided to cache the whole allocation, ignore
+          if (gutils->needsCacheWholeAllocation(pair.first))
+            continue;
+
           // If caching the outer allocation and have already set that this is
           // not needed return early. This is necessary to avoid unnecessarily
           // deciding stored values are needed if we have already decided to
