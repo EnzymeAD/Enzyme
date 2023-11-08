@@ -137,7 +137,7 @@ public:
     using namespace llvm;
 
     if (DT->getType()->isIntegerTy())
-      DT = B.CreateIntToPtr(DT, Type::getInt8PtrTy(DT->getContext()));
+      DT = B.CreateIntToPtr(DT, getInt8PtrTy(DT->getContext()));
 
     if (Constant *C = dyn_cast<Constant>(DT)) {
       while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
@@ -151,7 +151,7 @@ public:
         }
       }
     }
-    Type *pargs[] = {Type::getInt8PtrTy(DT->getContext()),
+    Type *pargs[] = {getInt8PtrTy(DT->getContext()),
                      PointerType::getUnqual(intType)};
     auto FT = FunctionType::get(intType, pargs, false);
     auto alloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(intType);
@@ -3375,8 +3375,8 @@ public:
         if (subsrcalign)
           salign = MaybeAlign(subsrcalign);
         if (ddst->getType()->isIntegerTy())
-          ddst = BuilderZ.CreateIntToPtr(
-              ddst, Type::getInt8PtrTy(ddst->getContext()));
+          ddst =
+              BuilderZ.CreateIntToPtr(ddst, getInt8PtrTy(ddst->getContext()));
         if (start != 0) {
           ddst = BuilderZ.CreateConstInBoundsGEP1_64(
               Type::getInt8Ty(ddst->getContext()), ddst, start);
@@ -3389,8 +3389,8 @@ public:
               length, salign, isVolatile);
         } else {
           if (dsrc->getType()->isIntegerTy())
-            dsrc = BuilderZ.CreateIntToPtr(
-                dsrc, Type::getInt8PtrTy(dsrc->getContext()));
+            dsrc =
+                BuilderZ.CreateIntToPtr(dsrc, getInt8PtrTy(dsrc->getContext()));
           if (start != 0) {
             dsrc = BuilderZ.CreateConstInBoundsGEP1_64(
                 Type::getInt8Ty(ddst->getContext()), dsrc, start);
@@ -4463,8 +4463,8 @@ public:
       if (auto secretty = dt.isFloat()) {
         auto offset = start;
         if (dsto->getType()->isIntegerTy())
-          dsto = Builder2.CreateIntToPtr(
-              dsto, Type::getInt8PtrTy(dsto->getContext()));
+          dsto =
+              Builder2.CreateIntToPtr(dsto, getInt8PtrTy(dsto->getContext()));
         unsigned dstaddr =
             cast<PointerType>(dsto->getType())->getAddressSpace();
         auto secretpt = PointerType::get(secretty, dstaddr);
@@ -4473,8 +4473,8 @@ public:
               Type::getInt8Ty(dsto->getContext()), dsto, offset);
         }
         if (srco->getType()->isIntegerTy())
-          srco = Builder2.CreateIntToPtr(
-              srco, Type::getInt8PtrTy(dsto->getContext()));
+          srco =
+              Builder2.CreateIntToPtr(srco, getInt8PtrTy(dsto->getContext()));
         unsigned srcaddr =
             cast<PointerType>(srco->getType())->getAddressSpace();
         secretpt = PointerType::get(secretty, srcaddr);
@@ -5562,7 +5562,7 @@ public:
       auto res =
           getDefaultFunctionTypeForGradient(ft, /*subretType*/ subretType);
       // TODO Note there is empty tape added here, replace with generic
-      res.first.push_back(Type::getInt8PtrTy(newcalled->getContext()));
+      res.first.push_back(getInt8PtrTy(newcalled->getContext()));
       FT = FunctionType::get(
           StructType::get(newcalled->getContext(), res.second), res.first,
           ft->isVarArg());

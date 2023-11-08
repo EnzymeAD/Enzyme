@@ -407,7 +407,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
   }
   if (!hasChar)
     os << "  Type* blasCharType = byRef ? "
-          "(Type*) Type::getInt8PtrTy(call.getContext()) : "
+          "(Type*) getInt8PtrTy(call.getContext()) : "
           "(Type*) Type::getInt8Ty(call.getContext());\n";
 
   for (auto name : enumerate(nameVec)) {

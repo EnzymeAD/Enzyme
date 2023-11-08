@@ -699,7 +699,7 @@ OldAllocationSize(Value *Ptr, CallInst *Loc, Function *NewF, IntegerType *T,
         allocName,
         FunctionType::get(
             IntegerType::get(NewF->getContext(), 8 * sizeof(size_t)),
-            {Type::getInt8PtrTy(NewF->getContext())}, /*isVarArg*/ false),
+            {getInt8PtrTy(NewF->getContext())}, /*isVarArg*/ false),
         list);
 
     B.SetInsertPoint(Loc);
@@ -884,7 +884,7 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
     Value *newsize = nextPowerOfTwo(B, req);
 
     Module *M = NewF->getParent();
-    Type *BPTy = Type::getInt8PtrTy(NewF->getContext());
+    Type *BPTy = getInt8PtrTy(NewF->getContext());
     auto MallocFunc =
         M->getOrInsertFunction("malloc", BPTy, newsize->getType());
     auto next = B.CreateCall(MallocFunc, newsize);
@@ -1677,8 +1677,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
           }
 
           Value *args[] = {
-              bb.CreateBitCast(antialloca, Type::getInt8PtrTy(g.getContext())),
-              bb.CreateBitCast(&g, Type::getInt8PtrTy(g.getContext())),
+              bb.CreateBitCast(antialloca, getInt8PtrTy(g.getContext())),
+              bb.CreateBitCast(&g, getInt8PtrTy(g.getContext())),
               ConstantInt::get(
                   Type::getInt64Ty(g.getContext()),
                   g.getParent()->getDataLayout().getTypeAllocSizeInBits(

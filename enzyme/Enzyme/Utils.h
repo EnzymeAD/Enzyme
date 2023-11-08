@@ -1001,18 +1001,23 @@ enum class MPI_Elem {
   Old = 7
 };
 
+static inline llvm::PointerType *getInt8PtrTy(llvm::LLVMContext &Context,
+                                              unsigned AddressSpace = 0) {
+  return llvm::PointerType::get(llvm::Type::getInt8Ty(Context), AddressSpace);
+}
+
 static inline llvm::StructType *getMPIHelper(llvm::LLVMContext &Context) {
   using namespace llvm;
   auto i64 = Type::getInt64Ty(Context);
   Type *types[] = {
-      /*buf      0 */ Type::getInt8PtrTy(Context),
+      /*buf      0 */ getInt8PtrTy(Context),
       /*count    1 */ i64,
-      /*datatype 2 */ Type::getInt8PtrTy(Context),
+      /*datatype 2 */ getInt8PtrTy(Context),
       /*src      3 */ i64,
       /*tag      4 */ i64,
-      /*comm     5 */ Type::getInt8PtrTy(Context),
+      /*comm     5 */ getInt8PtrTy(Context),
       /*fn       6 */ Type::getInt8Ty(Context),
-      /*old      7 */ Type::getInt8PtrTy(Context),
+      /*old      7 */ getInt8PtrTy(Context),
   };
   return StructType::get(Context, types, false);
 }

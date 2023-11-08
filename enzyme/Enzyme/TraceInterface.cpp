@@ -42,15 +42,13 @@ PointerType *traceType(LLVMContext &C) {
   return getDefaultAnonymousTapeType(C);
 }
 
-Type *addressType(LLVMContext &C) { return PointerType::getInt8PtrTy(C); }
+Type *addressType(LLVMContext &C) { return getInt8PtrTy(C); }
 
 IntegerType *TraceInterface::sizeType(LLVMContext &C) {
   return IntegerType::getInt64Ty(C);
 }
 
-Type *TraceInterface::stringType(LLVMContext &C) {
-  return IntegerType::getInt8PtrTy(C);
-}
+Type *TraceInterface::stringType(LLVMContext &C) { return getInt8PtrTy(C); }
 
 FunctionType *TraceInterface::getTraceTy() { return getTraceTy(C); }
 FunctionType *TraceInterface::getChoiceTy() { return getChoiceTy(C); }
@@ -82,70 +80,62 @@ FunctionType *TraceInterface::getChoiceTy(LLVMContext &C) {
 
 FunctionType *TraceInterface::insertCallTy(LLVMContext &C) {
   return FunctionType::get(Type::getVoidTy(C),
-                           {PointerType::getInt8PtrTy(C), stringType(C),
-                            PointerType::getInt8PtrTy(C)},
+                           {getInt8PtrTy(C), stringType(C), getInt8PtrTy(C)},
                            false);
 }
 
 FunctionType *TraceInterface::insertChoiceTy(LLVMContext &C) {
   return FunctionType::get(Type::getVoidTy(C),
-                           {PointerType::getInt8PtrTy(C), stringType(C),
-                            Type::getDoubleTy(C), PointerType::getInt8PtrTy(C),
-                            sizeType(C)},
+                           {getInt8PtrTy(C), stringType(C),
+                            Type::getDoubleTy(C), getInt8PtrTy(C), sizeType(C)},
                            false);
 }
 
 FunctionType *TraceInterface::insertArgumentTy(LLVMContext &C) {
-  return FunctionType::get(Type::getVoidTy(C),
-                           {PointerType::getInt8PtrTy(C), stringType(C),
-                            PointerType::getInt8PtrTy(C), sizeType(C)},
-                           false);
+  return FunctionType::get(
+      Type::getVoidTy(C),
+      {getInt8PtrTy(C), stringType(C), getInt8PtrTy(C), sizeType(C)}, false);
 }
 
 FunctionType *TraceInterface::insertReturnTy(LLVMContext &C) {
-  return FunctionType::get(
-      Type::getVoidTy(C),
-      {PointerType::getInt8PtrTy(C), PointerType::getInt8PtrTy(C), sizeType(C)},
-      false);
+  return FunctionType::get(Type::getVoidTy(C),
+                           {getInt8PtrTy(C), getInt8PtrTy(C), sizeType(C)},
+                           false);
 }
 
 FunctionType *TraceInterface::insertFunctionTy(LLVMContext &C) {
-  return FunctionType::get(
-      Type::getVoidTy(C),
-      {PointerType::getInt8PtrTy(C), PointerType::getInt8PtrTy(C)}, false);
+  return FunctionType::get(Type::getVoidTy(C),
+                           {getInt8PtrTy(C), getInt8PtrTy(C)}, false);
 }
 
 FunctionType *TraceInterface::insertChoiceGradientTy(LLVMContext &C) {
-  return FunctionType::get(Type::getVoidTy(C),
-                           {PointerType::getInt8PtrTy(C), stringType(C),
-                            PointerType::getInt8PtrTy(C), sizeType(C)},
-                           false);
+  return FunctionType::get(
+      Type::getVoidTy(C),
+      {getInt8PtrTy(C), stringType(C), getInt8PtrTy(C), sizeType(C)}, false);
 }
 
 FunctionType *TraceInterface::insertArgumentGradientTy(LLVMContext &C) {
-  return FunctionType::get(Type::getVoidTy(C),
-                           {PointerType::getInt8PtrTy(C), stringType(C),
-                            PointerType::getInt8PtrTy(C), sizeType(C)},
-                           false);
+  return FunctionType::get(
+      Type::getVoidTy(C),
+      {getInt8PtrTy(C), stringType(C), getInt8PtrTy(C), sizeType(C)}, false);
 }
 
 FunctionType *TraceInterface::newTraceTy(LLVMContext &C) {
-  return FunctionType::get(PointerType::getInt8PtrTy(C), {}, false);
+  return FunctionType::get(getInt8PtrTy(C), {}, false);
 }
 
 FunctionType *TraceInterface::freeTraceTy(LLVMContext &C) {
-  return FunctionType::get(Type::getVoidTy(C), {PointerType::getInt8PtrTy(C)},
-                           false);
+  return FunctionType::get(Type::getVoidTy(C), {getInt8PtrTy(C)}, false);
 }
 
 FunctionType *TraceInterface::hasCallTy(LLVMContext &C) {
-  return FunctionType::get(
-      Type::getInt1Ty(C), {PointerType::getInt8PtrTy(C), stringType(C)}, false);
+  return FunctionType::get(Type::getInt1Ty(C), {getInt8PtrTy(C), stringType(C)},
+                           false);
 }
 
 FunctionType *TraceInterface::hasChoiceTy(LLVMContext &C) {
-  return FunctionType::get(
-      Type::getInt1Ty(C), {PointerType::getInt8PtrTy(C), stringType(C)}, false);
+  return FunctionType::get(Type::getInt1Ty(C), {getInt8PtrTy(C), stringType(C)},
+                           false);
 }
 
 StaticTraceInterface::StaticTraceInterface(Module *M)

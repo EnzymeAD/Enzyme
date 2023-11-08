@@ -4688,8 +4688,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                           .width = width,
                           .freeMemory = true,
                           .AtomicAdd = AtomicAdd,
-                          .additionalType =
-                              Type::getInt8PtrTy(fn->getContext()),
+                          .additionalType = getInt8PtrTy(fn->getContext()),
                           .forceAnonymousTape = true,
                           .typeInfo = type_args},
         TA,
@@ -5239,7 +5238,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           nullptr, oval->getName() + "'ipa");
 
       auto dst_arg =
-          bb.CreateBitCast(antialloca, Type::getInt8PtrTy(oval->getContext()));
+          bb.CreateBitCast(antialloca, getInt8PtrTy(oval->getContext()));
       auto val_arg = ConstantInt::get(Type::getInt8Ty(oval->getContext()), 0);
       auto len_arg = ConstantInt::get(
           Type::getInt64Ty(oval->getContext()),
@@ -5318,8 +5317,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                 (const Value *)oval, InvertedPointerVH(this, antialloca)));
 
             auto rule2 = [&](Value *antialloca) {
-              auto dst_arg = bb.CreateBitCast(
-                  antialloca, Type::getInt8PtrTy(arg->getContext()));
+              auto dst_arg =
+                  bb.CreateBitCast(antialloca, getInt8PtrTy(arg->getContext()));
               auto val_arg =
                   ConstantInt::get(Type::getInt8Ty(arg->getContext()), 0);
               auto len_arg =
@@ -5859,7 +5858,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
     auto rule2 = [&](Value *antialloca) {
       auto dst_arg =
-          bb.CreateBitCast(antialloca, Type::getInt8PtrTy(oval->getContext()));
+          bb.CreateBitCast(antialloca, getInt8PtrTy(oval->getContext()));
       auto val_arg = ConstantInt::get(Type::getInt8Ty(oval->getContext()), 0);
       auto len_arg = bb.CreateMul(
           bb.CreateZExtOrTrunc(asize, Type::getInt64Ty(oval->getContext())),
@@ -7115,13 +7114,13 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
               auto dst_arg = v.CreateBitCast(
                   outer,
-                  Type::getInt8PtrTy(
+                  getInt8PtrTy(
                       inst->getContext(),
                       cast<PointerType>(outer->getType())->getAddressSpace()));
               scopeInstructions[cache].push_back(cast<Instruction>(dst_arg));
               auto src_arg = v.CreateBitCast(
                   start,
-                  Type::getInt8PtrTy(
+                  getInt8PtrTy(
                       inst->getContext(),
                       cast<PointerType>(start->getType())->getAddressSpace()));
               auto len_arg =
@@ -8339,8 +8338,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
               ConstantInt::getFalse(MTI->getContext())};
 
           if (args[0]->getType()->isIntegerTy())
-            args[0] = Builder2.CreateIntToPtr(
-                args[0], Type::getInt8PtrTy(MTI->getContext()));
+            args[0] = Builder2.CreateIntToPtr(args[0],
+                                              getInt8PtrTy(MTI->getContext()));
 
           Type *tys[] = {args[0]->getType(), args[2]->getType()};
           auto memsetIntr = Intrinsic::getDeclaration(
@@ -8360,8 +8359,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
                 ? shadow_dst
                 : gutils->lookupM(shadow_dst, Builder2);
         if (dsto->getType()->isIntegerTy())
-          dsto = Builder2.CreateIntToPtr(
-              dsto, Type::getInt8PtrTy(dsto->getContext()));
+          dsto =
+              Builder2.CreateIntToPtr(dsto, getInt8PtrTy(dsto->getContext()));
         unsigned dstaddr =
             cast<PointerType>(dsto->getType())->getAddressSpace();
         if (offset != 0) {
@@ -8376,8 +8375,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
           dsto = Builder2.CreatePointerCast(
               dsto, PointerType::get(secretty, dstaddr));
         if (srco->getType()->isIntegerTy())
-          srco = Builder2.CreateIntToPtr(
-              srco, Type::getInt8PtrTy(srco->getContext()));
+          srco =
+              Builder2.CreateIntToPtr(srco, getInt8PtrTy(srco->getContext()));
         unsigned srcaddr =
             cast<PointerType>(srco->getType())->getAddressSpace();
         if (offset != 0) {
@@ -8456,16 +8455,14 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
       // no need to update pointers, even if dst is active
       auto dsto = shadow_dst;
       if (dsto->getType()->isIntegerTy())
-        dsto = BuilderZ.CreateIntToPtr(dsto,
-                                       Type::getInt8PtrTy(MTI->getContext()));
+        dsto = BuilderZ.CreateIntToPtr(dsto, getInt8PtrTy(MTI->getContext()));
       if (offset != 0) {
         dsto = BuilderZ.CreateConstInBoundsGEP1_64(
             Type::getInt8Ty(dsto->getContext()), dsto, offset);
       }
       auto srco = shadow_src;
       if (srco->getType()->isIntegerTy())
-        srco = BuilderZ.CreateIntToPtr(srco,
-                                       Type::getInt8PtrTy(MTI->getContext()));
+        srco = BuilderZ.CreateIntToPtr(srco, getInt8PtrTy(MTI->getContext()));
       if (offset != 0) {
         srco = BuilderZ.CreateConstInBoundsGEP1_64(
             Type::getInt8Ty(srco->getContext()), srco, offset);
@@ -9076,7 +9073,7 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
 
   if (allocationfn == "swift_allocObject") {
     Type *VoidTy = Type::getVoidTy(tofree->getContext());
-    Type *IntPtrTy = Type::getInt8PtrTy(tofree->getContext());
+    Type *IntPtrTy = getInt8PtrTy(tofree->getContext());
 
     auto FT = FunctionType::get(VoidTy, ArrayRef<Type *>(IntPtrTy), false);
     Value *freevalue = builder.GetInsertBlock()
@@ -9106,8 +9103,7 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
   }
 
   if (tofree->getType()->isIntegerTy())
-    tofree = builder.CreateIntToPtr(tofree,
-                                    Type::getInt8PtrTy(tofree->getContext()));
+    tofree = builder.CreateIntToPtr(tofree, getInt8PtrTy(tofree->getContext()));
 
   llvm::LibFunc libfunc;
   if (allocationfn == "calloc" || allocationfn == "malloc") {
@@ -9182,7 +9178,7 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
   }
 
   Type *VoidTy = Type::getVoidTy(tofree->getContext());
-  Type *IntPtrTy = Type::getInt8PtrTy(tofree->getContext());
+  Type *IntPtrTy = getInt8PtrTy(tofree->getContext());
 
   auto FT = FunctionType::get(VoidTy, {IntPtrTy}, false);
   Value *freevalue = builder.GetInsertBlock()
