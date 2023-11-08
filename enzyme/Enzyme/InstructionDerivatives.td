@@ -265,7 +265,7 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $y, $x),
-                  ["atan2", "atan2f", "atan2l"],
+                  ["atan2", "atan2f", "atan2l", "__nv_atan2", "__nv_atan2f", "__nv_atan2l"],
                   [
                   (FDiv (FMul (DiffeRet), $x), (FAdd (FMul $x, $x), (FMul $y, $y))),
                   (FNeg (FDiv (FMul (DiffeRet), $y), (FAdd (FMul $x, $x), (FMul $y, $y))))
