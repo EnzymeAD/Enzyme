@@ -112,27 +112,18 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
             }
           }
         }
-
-        // Preserve any non-floating point values that are stored in an active
-        // backwards creation shadow.
-        if (!TR.query(const_cast<Value *>(SI->getValueOperand()))[{-1}]
-                 .isFloat())
-          for (auto pair : gutils->backwardsOnlyShadows)
-            if (pair.second.stores.count(SI)) {
-              if (EnzymePrintDiffUse)
-                llvm::errs()
-                    << " Need direct primal of " << *val
-                    << " in reverse from remat store " << *user << "\n";
-              return true;
-            }
       }
     } else {
       if (mode == DerivativeMode::ReverseModeGradient ||
           mode == DerivativeMode::ForwardModeSplit) {
 
+        // Preserve any non-floating point values that are stored in an active
+        // backwards creation shadow.
+
         bool rematerialized = false;
         for (auto pair : gutils->backwardsOnlyShadows)
-          if (pair.second.stores.count(SI)) {
+          if (pair.second.stores.count(SI) &&
+              !gutils->isConstantValue(pair.first)) {
             rematerialized = true;
             break;
           }
@@ -539,16 +530,44 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         return true;
       }
 
-    if (shadow) {
+    if (funcName == "julia.write_barrier" ||
+        funcName == "julia.write_barrier_binding") {
       // Use in a write barrier requires the shadow in the forward, even
       // though the instruction is active.
-      if (mode != DerivativeMode::ReverseModeGradient &&
-          (funcName == "julia.write_barrier" ||
-           funcName == "julia.write_barrier_binding")) {
+      if (shadow && (mode != DerivativeMode::ReverseModeGradient &&
+                     mode != DerivativeMode::ForwardModeSplit)) {
         if (EnzymePrintDiffUse)
           llvm::errs() << " Need: shadow of " << *val
-                       << " in reverse as shadow write_barrier " << *CI << "\n";
+                       << " in forward as shadow write_barrier " << *CI << "\n";
         return true;
+      }
+      if (shadow) {
+#if LLVM_VERSION_MAJOR >= 14
+        auto sz = CI->arg_size();
+#else
+        auto sz = CI->getNumArgOperands();
+#endif
+        bool isStored = false;
+        // First pointer is the destination
+        for (size_t i = 1; i < sz; i++)
+          isStored |= val == CI->getArgOperand(i);
+        bool rematerialized = false;
+        if (isStored)
+          for (auto pair : gutils->backwardsOnlyShadows)
+            if (pair.second.stores.count(CI) &&
+                !gutils->isConstantValue(pair.first)) {
+              rematerialized = true;
+              break;
+            }
+
+        if (rematerialized) {
+          if (EnzymePrintDiffUse)
+            llvm::errs()
+                << " Need: shadow of " << *val
+                << " in rematerialized reverse as shadow write_barrier " << *CI
+                << "\n";
+          return true;
+        }
       }
     }
 

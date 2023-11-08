@@ -2625,6 +2625,12 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
     if (called) {
       if (funcName == "julia.write_barrier" ||
           funcName == "julia.write_barrier_binding") {
+
+        std::map<UsageKey, bool> Seen;
+        for (auto pair : gutils->knownRecomputeHeuristic)
+          if (!pair.second)
+            Seen[UsageKey(pair.first, QueryType::Primal)] = false;
+
         bool backwardsShadow = false;
         bool forwardsShadow = true;
         for (auto pair : gutils->backwardsOnlyShadows) {
@@ -2667,17 +2673,34 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
 
         bool forceErase = false;
         if (Mode == DerivativeMode::ReverseModeGradient) {
+
           // Since we won't redo the store in the reverse pass, do not
           // force the write barrier.
           forceErase = true;
           for (const auto &pair : gutils->rematerializableAllocations) {
-            // However, if we are rematerailizing the allocationa and not
-            // inside the loop level rematerialization, we do still need the
-            // reverse passes ``fake primal'' store and therefore write barrier
-            if (pair.second.stores.count(&call) &&
-                (!pair.second.LI || !pair.second.LI->contains(&call))) {
-              forceErase = false;
+            if (!pair.second.stores.count(&call))
+              continue;
+            bool primalNeededInReverse =
+                Mode == DerivativeMode::ForwardMode
+                    ? false
+                    : DifferentialUseAnalysis::is_value_needed_in_reverse<
+                          QueryType::Primal>(gutils, pair.first, Mode, Seen,
+                                             oldUnreachable);
+
+            bool cacheWholeAllocation =
+                gutils->needsCacheWholeAllocation(pair.first);
+            if (cacheWholeAllocation) {
+              primalNeededInReverse = true;
             }
+
+            if (primalNeededInReverse && !cacheWholeAllocation)
+              // However, if we are rematerailizing the allocation and not
+              // inside the loop level rematerialization, we do still need the
+              // reverse passes ``fake primal'' store and therefore write
+              // barrier
+              if (!pair.second.LI || !pair.second.LI->contains(&call)) {
+                forceErase = false;
+              }
           }
         }
         if (forceErase)

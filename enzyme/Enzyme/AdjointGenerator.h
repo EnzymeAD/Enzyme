@@ -6058,11 +6058,19 @@ public:
                     QueryType::Primal>(gutils, &call, minCutMode, Seen,
                                        oldUnreachable);
           }
-          if (primalNeededInReverse)
+          if (primalNeededInReverse) {
             gutils->cacheForReverse(BuilderZ, newCall,
                                     getIndex(&call, CacheType::Self));
+            eraseIfUnused(call);
+            return;
+          }
         }
-        eraseIfUnused(call);
+        // Force erasure in reverse pass, since cached if needed
+        if (Mode == DerivativeMode::ReverseModeGradient ||
+            Mode == DerivativeMode::ForwardModeSplit)
+          eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+        else
+          eraseIfUnused(call);
         return;
       }
 
