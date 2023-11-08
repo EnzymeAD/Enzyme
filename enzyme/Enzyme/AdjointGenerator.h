@@ -1022,7 +1022,8 @@ public:
       if (!Legal) {
         std::string str;
         raw_string_ostream ss(str);
-        ss << "Cannot deduce single type of store " << I;
+        ss << "Cannot deduce single type of store " << I << vd.str()
+           << " size: " << storeSize;
         if (CustomErrorHandler) {
           CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
                              &TR.analyzer, nullptr, wrap(&BuilderZ));
