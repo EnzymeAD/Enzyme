@@ -9158,14 +9158,15 @@ bool GradientUtils::needsCacheWholeAllocation(
     return false;
   if (!found->second)
     return true;
-  SmallVector<std::pair<const Instruction *, size_t>, 1> todo;
+  // User, operand of input, whehter the input is the original allocation
+  SmallVector<std::tuple<const Instruction *, size_t, bool>, 1> todo;
   for (auto &use : origInst->uses())
-    todo.push_back(
-        std::make_pair(cast<Instruction>(use.getUser()), use.getOperandNo()));
-  SmallSet<std::pair<const Instruction *, size_t>, 1> seen;
+    todo.push_back(std::make_tuple(cast<Instruction>(use.getUser()),
+                                   use.getOperandNo(), true));
+  SmallSet<std::tuple<const Instruction *, size_t, bool>, 1> seen;
   while (todo.size()) {
     auto pair = todo.back();
-    auto [cur, idx] = pair;
+    auto [cur, idx, orig] = pair;
     todo.pop_back();
     if (seen.count(pair))
       continue;
@@ -9184,6 +9185,8 @@ bool GradientUtils::needsCacheWholeAllocation(
           II->getIntrinsicID() == Intrinsic::masked_load)
         continue;
 
+    bool returnedSameValue = false;
+
     if (auto CI = dyn_cast<CallInst>(cur)) {
 #if LLVM_VERSION_MAJOR >= 14
       if (idx < CI->arg_size())
@@ -9193,6 +9196,36 @@ bool GradientUtils::needsCacheWholeAllocation(
       {
         if (isNoCapture(CI, idx))
           continue;
+
+        if (auto F = CI->getCalledFunction())
+          if (F->getCallingConv() == CI->getCallingConv()) {
+            bool onlyReturnUses = true;
+            bool hasReturnUse = true;
+
+            for (auto u : F->getArg(idx)->users()) {
+              if (isa<ReturnInst>(u)) {
+                hasReturnUse = true;
+                continue;
+              }
+              onlyReturnUses = false;
+              continue;
+            }
+            // The arg itself has no use in the function
+            if (onlyReturnUses && !hasReturnUse)
+              continue;
+
+            // If this is the original allocation, we return it guaranteed, and
+            // cache the return, that's still fine
+            if (onlyReturnUses && orig) {
+              found = knownRecomputeHeuristic.find(cur);
+              if (found == knownRecomputeHeuristic.end())
+                continue;
+
+              if (!found->second)
+                continue;
+              returnedSameValue = true;
+            }
+          }
       }
     }
 
@@ -9202,6 +9235,7 @@ bool GradientUtils::needsCacheWholeAllocation(
 
     // If caching this user, it cannot be a gep/cast of original
     if (!found->second) {
+      llvm::errs() << " mod: " << *oldFunc->getParent() << "\n";
       llvm::errs() << " oldFunc: " << *oldFunc << "\n";
       for (auto &pair : knownRecomputeHeuristic)
         llvm::errs() << " krc[" << *pair.first << "] = " << pair.second << "\n";
@@ -9211,8 +9245,9 @@ bool GradientUtils::needsCacheWholeAllocation(
     } else {
       // if not caching this user, it is legal to recompute, consider its users
       for (auto &use : cur->uses()) {
-        todo.push_back(std::make_pair(cast<Instruction>(use.getUser()),
-                                      use.getOperandNo()));
+        todo.push_back(std::make_tuple(cast<Instruction>(use.getUser()),
+                                       use.getOperandNo(),
+                                       returnedSameValue && orig));
       }
     }
   }

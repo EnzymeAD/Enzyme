@@ -4329,56 +4329,58 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     }
     // phi (idx=0) ? b, a, a -> select (idx == 0), b, a
     if (auto L = LI.getLoopFor(PN->getParent()))
-      if (auto idx = L->getCanonicalInductionVariable())
-        if (auto PH = L->getLoopPreheader()) {
-          bool legal = idx != PN;
-          auto ph_idx = PN->getBasicBlockIndex(PH);
-          for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
-            if ((int)i == ph_idx)
-              continue;
-            auto v = PN->getIncomingValue(i);
-            if (v != PN->getIncomingValue(1 - ph_idx)) {
-              legal = false;
-              break;
+      if (L->getHeader() == PN->getParent())
+        if (auto idx = L->getCanonicalInductionVariable())
+          if (auto PH = L->getLoopPreheader()) {
+            bool legal = idx != PN;
+            auto ph_idx = PN->getBasicBlockIndex(PH);
+            assert(ph_idx >= 0);
+            for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
+              if ((int)i == ph_idx)
+                continue;
+              auto v = PN->getIncomingValue(i);
+              if (v != PN->getIncomingValue(1 - ph_idx)) {
+                legal = false;
+                break;
+              }
+              // The given var must dominate the loop
+              if (isa<Constant>(v))
+                continue;
+              if (isa<Argument>(v))
+                continue;
+              // exception for the induction itself, which we handle specially
+              if (v == idx)
+                continue;
+              auto I = cast<Instruction>(v);
+              if (!DT.dominates(I, PN)) {
+                legal = false;
+                break;
+              }
             }
-            // The given var must dominate the loop
-            if (isa<Constant>(v))
-              continue;
-            if (isa<Argument>(v))
-              continue;
-            // exception for the induction itself, which we handle specially
-            if (v == idx)
-              continue;
-            auto I = cast<Instruction>(v);
-            if (!DT.dominates(I, PN)) {
-              legal = false;
-              break;
-            }
-          }
-          if (legal) {
-            auto val = PN->getIncomingValue(1 - ph_idx);
-            push(val);
-            if (val == idx) {
+            if (legal) {
+              auto val = PN->getIncomingValue(1 - ph_idx);
+              push(val);
+              if (val == idx) {
+                val = pushcse(
+                    B.CreateSub(idx, ConstantInt::get(idx->getType(), 1)));
+              }
+
+              auto val2 = PN->getIncomingValue(ph_idx);
+              push(val2);
+
+              auto c0 = ConstantInt::get(idx->getType(), 0);
+              // if (val2 == c0 && PN->getIncomingValue(1 - ph_idx) == idx) {
+              //  val = B.CreateBinaryIntrinsic(Intrinsic::umax, c0, val);
+              //} else {
+              auto eq = pushcse(B.CreateICmpEQ(idx, c0));
               val = pushcse(
-                  B.CreateSub(idx, ConstantInt::get(idx->getType(), 1)));
+                  B.CreateSelect(eq, val2, val, "phisel." + cur->getName()));
+              //}
+
+              replaceAndErase(cur, val);
+              return "PhiLoop0Sel";
             }
-
-            auto val2 = PN->getIncomingValue(ph_idx);
-            push(val2);
-
-            auto c0 = ConstantInt::get(idx->getType(), 0);
-            // if (val2 == c0 && PN->getIncomingValue(1 - ph_idx) == idx) {
-            //  val = B.CreateBinaryIntrinsic(Intrinsic::umax, c0, val);
-            //} else {
-            auto eq = pushcse(B.CreateICmpEQ(idx, c0));
-            val = pushcse(
-                B.CreateSelect(eq, val2, val, "phisel." + cur->getName()));
-            //}
-
-            replaceAndErase(cur, val);
-            return "PhiLoop0Sel";
           }
-        }
     // phi (sitofp a), (sitofp b) -> sitofp (phi a, b)
     {
       SmallVector<Value *, 1> negOps;
