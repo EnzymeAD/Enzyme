@@ -5608,12 +5608,12 @@ ConcreteType TypeResults::intType(size_t num, Value *val, bool errIfNotFound,
   return dt;
 }
 
-Type *TypeResults::addingType(size_t num, Value *val) const {
+Type *TypeResults::addingType(size_t num, Value *val, size_t start) const {
   assert(val);
   assert(val->getType());
   auto q = query(val);
   Type *ty = q[{-1}].isFloat();
-  for (size_t i = 0; i < num; ++i) {
+  for (size_t i = start; i < num; ++i) {
     auto ty2 = q[{(int)i}].isFloat();
     if (ty) {
       if (ty2)

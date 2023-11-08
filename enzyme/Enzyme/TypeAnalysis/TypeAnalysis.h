@@ -161,7 +161,7 @@ public:
   TypeResults(TypeAnalyzer &analyzer);
   ConcreteType intType(size_t num, llvm::Value *val, bool errIfNotFound = true,
                        bool pointerIntSame = false) const;
-  llvm::Type *addingType(size_t num, llvm::Value *val) const;
+  llvm::Type *addingType(size_t num, llvm::Value *val, size_t start = 0) const;
 
   /// Returns whether in the first num bytes there is pointer, int, float, or
   /// none If pointerIntSame is set to true, then consider either as the same

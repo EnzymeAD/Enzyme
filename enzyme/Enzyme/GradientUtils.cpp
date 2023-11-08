@@ -3348,8 +3348,9 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                 }
               }
               auto align = SI->getAlign();
-              setPtrDiffe(SI, orig_ptr, valueop, NB, align, SI->isVolatile(),
-                          SI->getOrdering(), SI->getSyncScopeID(),
+              setPtrDiffe(SI, orig_ptr, valueop, NB, align, 0, storeSize,
+                          SI->isVolatile(), SI->getOrdering(),
+                          SI->getSyncScopeID(),
                           /*mask*/ nullptr, prevNoAlias, prevScopes);
             }
             // TODO shadow memtransfer
@@ -4749,7 +4750,8 @@ void GradientUtils::getForwardBuilder(IRBuilder<> &Builder2) {
 
 void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                                 IRBuilder<> &BuilderM, MaybeAlign align,
-                                bool isVolatile, AtomicOrdering ordering,
+                                unsigned start, unsigned size, bool isVolatile,
+                                AtomicOrdering ordering,
                                 SyncScope::ID syncScope, Value *mask,
                                 ArrayRef<Metadata *> noAlias,
                                 ArrayRef<Metadata *> scopes) {
@@ -4773,8 +4775,58 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
 
   size_t idx = 0;
 
+  auto &DL = oldFunc->getParent()->getDataLayout();
+
   auto rule = [&](Value *ptr, Value *newval) {
+    auto storeSize = (DL.getTypeSizeInBits(newval->getType()) + 7) / 8;
     if (!mask) {
+
+      if (size != storeSize) {
+        IRBuilder<> A(inversionAllocs);
+        Value *valptr = A.CreateAlloca(newval->getType());
+        BuilderM.CreateStore(newval, valptr);
+
+        auto i8 = Type::getInt8Ty(ptr->getContext());
+
+        if (start != 0) {
+          ptr = BuilderM.CreatePointerCast(
+              ptr,
+              PointerType::get(
+                  i8, cast<PointerType>(ptr->getType())->getAddressSpace()));
+          auto off =
+              ConstantInt::get(Type::getInt64Ty(ptr->getContext()), start);
+          ptr = BuilderM.CreateInBoundsGEP(i8, ptr, off);
+
+          valptr = BuilderM.CreatePointerCast(
+              valptr,
+              PointerType::get(
+                  i8, cast<PointerType>(valptr->getType())->getAddressSpace()));
+          valptr = BuilderM.CreateInBoundsGEP(i8, valptr, off);
+        }
+
+        Type *ty = nullptr;
+
+        if (size == 8)
+          ty = BuilderM.getInt64Ty();
+        else if (size % 8 == 0)
+          ty = ArrayType::get(BuilderM.getInt64Ty(), size);
+        else if (size == 4)
+          ty = BuilderM.getInt32Ty();
+        else if (size % 4 == 0)
+          ty = ArrayType::get(BuilderM.getInt32Ty(), size);
+        else
+          ty = ArrayType::get(i8, size);
+
+        ptr = BuilderM.CreatePointerCast(
+            ptr, PointerType::get(
+                     ty, cast<PointerType>(ptr->getType())->getAddressSpace()));
+        valptr = BuilderM.CreatePointerCast(
+            valptr,
+            PointerType::get(
+                ty, cast<PointerType>(valptr->getType())->getAddressSpace()));
+        newval = BuilderM.CreateLoad(ty, valptr);
+      }
+
       auto ts = BuilderM.CreateStore(newval, ptr);
       if (align)
         ts->setAlignment(*align);
@@ -4789,10 +4841,12 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
       auto scope = MDNode::get(ts->getContext(), scopeMD);
       ts->setMetadata(LLVMContext::MD_alias_scope, scope);
 
-      ts->setMetadata(LLVMContext::MD_tbaa,
-                      orig->getMetadata(LLVMContext::MD_tbaa));
-      ts->setMetadata(LLVMContext::MD_tbaa_struct,
-                      orig->getMetadata(LLVMContext::MD_tbaa_struct));
+      if (start == 0 && size == storeSize) {
+        ts->setMetadata(LLVMContext::MD_tbaa,
+                        orig->getMetadata(LLVMContext::MD_tbaa));
+        ts->setMetadata(LLVMContext::MD_tbaa_struct,
+                        orig->getMetadata(LLVMContext::MD_tbaa_struct));
+      }
       ts->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
 
       SmallVector<Metadata *, 1> MDs;
@@ -4807,6 +4861,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
         ts->setMetadata(LLVMContext::MD_noalias, noscope);
       }
     } else {
+      assert(start == 0 && size == storeSize);
       Type *tys[] = {newval->getType(), ptr->getType()};
       auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
                                          Intrinsic::masked_store, tys);

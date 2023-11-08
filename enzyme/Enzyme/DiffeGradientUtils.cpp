@@ -219,6 +219,52 @@ Value *DiffeGradientUtils::diffe(Value *val, IRBuilder<> &BuilderM) {
 
 SmallVector<SelectInst *, 4>
 DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
+                               Type *addingType, unsigned start, unsigned size,
+                               llvm::Value *mask) {
+  assert(addingType);
+  auto &DL = oldFunc->getParent()->getDataLayout();
+  auto storeSize = (DL.getTypeSizeInBits(val->getType()) + 7) / 8;
+  if (start == 0 && size == storeSize) {
+    return addToDiffe(val, dif, BuilderM, addingType, ArrayRef<Value *>(),
+                      mask);
+  }
+  if (auto ST = dyn_cast<StructType>(val->getType())) {
+    auto SL = DL.getStructLayout(ST);
+    size_t accumulated = 0;
+    auto left_idx = SL->getElementContainingOffset(start);
+    assert(SL->getElementOffset(left_idx) == start);
+    auto right_idx = ST->getNumElements();
+    if (storeSize != start + size) {
+      right_idx = SL->getElementContainingOffset(start + size);
+      assert(SL->getElementOffset(right_idx) == start + size);
+    }
+    SmallVector<SelectInst *, 4> res;
+    for (auto i = left_idx; i < right_idx; i++) {
+      if (getWidth() == 1) {
+        Value *lidxs[] = {
+            ConstantInt::get(Type::getInt32Ty(val->getContext()), i)};
+        for (auto v : addToDiffe(val, extractMeta(BuilderM, dif, i), BuilderM,
+                                 addingType, lidxs, mask))
+          res.push_back(v);
+      } else {
+        for (int j = 0; j < getWidth(); j++) {
+          Value *lidxs[] = {
+              ConstantInt::get(Type::getInt32Ty(val->getContext()), j),
+              ConstantInt::get(Type::getInt32Ty(val->getContext()), i)};
+          unsigned int idxs[] = {(unsigned int)j, (unsigned int)i};
+          for (auto v : addToDiffe(val, extractMeta(BuilderM, dif, idxs),
+                                   BuilderM, addingType, lidxs, mask))
+            res.push_back(v);
+        }
+      }
+    }
+    return res;
+  }
+  assert(0 && "unhandled accumulate with partial sizes");
+}
+
+SmallVector<SelectInst *, 4>
+DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                                Type *addingType, ArrayRef<Value *> idxs,
                                Value *mask) {
   assert(mode == DerivativeMode::ReverseModeGradient ||
@@ -462,6 +508,9 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     for (unsigned i = 0; i < st->getNumElements(); ++i) {
       // TODO pass in full type tree here and recurse into tree.
       if (st->getElementType(i)->isPointerTy())
+        continue;
+      if (st->getElementType(i)->isIntegerTy(8) ||
+          st->getElementType(i)->isIntegerTy(1))
         continue;
       Value *v = ConstantInt::get(Type::getInt32Ty(st->getContext()), i);
       SmallVector<Value *, 2> idx2(idxs.begin(), idxs.end());
