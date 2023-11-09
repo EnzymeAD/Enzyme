@@ -1215,6 +1215,8 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
         }
       }
 
+      // applyChainRule here:
+
       Value *shadow_recvbuf = gutils->invertPointerM(orig_recvbuf, Builder2);
       if (!forwardMode)
         shadow_recvbuf = lookup(shadow_recvbuf, Builder2);
@@ -1230,12 +1232,17 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
             shadow_sendbuf, Type::getInt8PtrTy(call.getContext()));
 
       // Need to preserve the shadow send/recv buffers.
+      // WHAT IS GOING ON HERE?? Pretty sure this automatically fails in ForwardMode,
+      // because lookup is just set to true
       auto BufferDefs = gutils->getInvertedBundles(
           &call,
           {ValueType::Shadow, ValueType::Shadow, ValueType::Primal,
            ValueType::Primal, ValueType::Primal, ValueType::Primal,
            ValueType::Primal},
-          Builder2, /*lookup*/ true);
+          Builder2, /*lookup*/ !forwardMode);
+
+      // lookup() gets the reverse pass copy of the thing, it should
+      // NEVER be called in forward mode
 
       Value *count = gutils->getNewFromOriginal(orig_count);
       if (!forwardMode)
@@ -1245,7 +1252,7 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
       if (!forwardMode)
         datatype = lookup(datatype, Builder2);
 
-      Value *op = lookup(gutils->getNewFromOriginal(orig_op), Builder2);
+      Value *op = gutils->getNewFromOriginal(orig_op);
       if (!forwardMode)
         op = lookup(op, Builder2);
 
@@ -1270,6 +1277,8 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
             /*comm*/ comm,
         };
 
+        // We take stuff from the forward pass (corresponding arguments to call, aka MPI_reduce), and
+        // see what we need for the reverse pass
         auto Defs = gutils->getInvertedBundles(
             &call,
             {ValueType::Shadow, ValueType::Shadow, ValueType::Primal,
