@@ -1381,6 +1381,9 @@ public:
             }
         }
         if (!FT) {
+          if (TR.query(orig_op0)[{-1}] == BaseType::Integer &&
+              TR.query(&I)[{-1}] == BaseType::Integer)
+            return;
           std::string str;
           raw_string_ostream ss(str);
           ss << "Cannot deduce adding type (cast) of " << I;
@@ -2730,7 +2733,12 @@ public:
       return;
     }
 
-    if (!gutils->isConstantValue(orig_op1)) {
+    bool activeValToSet = !gutils->isConstantValue(orig_op1);
+    if (activeValToSet)
+      if (auto CI = dyn_cast<ConstantInt>(orig_op1))
+        if (CI->isZero())
+          activeValToSet = false;
+    if (activeValToSet) {
       std::string s;
       llvm::raw_string_ostream ss(s);
       ss << "couldn't handle non constant inst in memset to "
@@ -3571,6 +3579,14 @@ public:
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
+#if LLVM_VERSION_MAJOR >= 12
+        if (ID == Intrinsic::umax || ID == Intrinsic::smax)
+          if (looseTypeAnalysis) {
+            EmitWarning("CannotDeduceType", I,
+                        "failed to deduce type of intrinsic ", I);
+            return false;
+          }
+#endif
         std::string s;
         llvm::raw_string_ostream ss(s);
         ss << *gutils->oldFunc << "\n";
@@ -3688,7 +3704,14 @@ public:
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
-
+#if LLVM_VERSION_MAJOR >= 12
+        if (ID == Intrinsic::umax || ID == Intrinsic::smax)
+          if (looseTypeAnalysis) {
+            EmitWarning("CannotDeduceType", I,
+                        "failed to deduce type of intrinsic ", I);
+            return false;
+          }
+#endif
         std::string s;
         llvm::raw_string_ostream ss(s);
         ss << *gutils->oldFunc << "\n";
