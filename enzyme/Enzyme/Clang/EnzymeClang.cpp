@@ -35,6 +35,20 @@
 
 using namespace clang;
 
+#if LLVM_VERSION_MAJOR >= 18
+constexpr auto StructKind = clang::TagTypeKind::Struct;
+#else
+constexpr auto StructKind = clang::TagTypeKind::TTK_Struct;
+#endif
+
+#if LLVM_VERSION_MAJOR >= 18
+constexpr auto stringkind = clang::StringLiteralKind::Ordinary;
+#elif LLVM_VERSION_MAJOR >= 15
+constexpr auto stringkind = clang::StringLiteral::StringKind::Ordinary;
+#else
+constexpr auto stringkind = clang::StringLiteral::StringKind::Ascii;
+#endif
+
 template <typename ConsumerType>
 class EnzymeAction final : public clang::PluginASTAction {
 protected:
@@ -217,11 +231,11 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
     auto loc = FD->getLocation();
     RecordDecl *RD;
     if (S.getLangOpts().CPlusPlus)
-      RD = CXXRecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx,
-                                 loc, loc, nullptr); // rId);
+      RD = CXXRecordDecl::Create(AST, StructKind, declCtx, loc, loc,
+                                 nullptr); // rId);
     else
-      RD = RecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx, loc,
-                              loc, nullptr); // rId);
+      RD = RecordDecl::Create(AST, StructKind, declCtx, loc, loc,
+                              nullptr); // rId);
     RD->setAnonymousStructOrUnion(true);
     RD->setImplicit();
     RD->startDefinition();
@@ -255,11 +269,6 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
     auto rval = ExprValueKind::VK_PRValue;
 #else
     auto rval = ExprValueKind::VK_RValue;
-#endif
-#if LLVM_VERSION_MAJOR >= 15
-    auto stringkind = clang::StringLiteral::StringKind::Ordinary;
-#else
-    auto stringkind = clang::StringLiteral::StringKind::Ascii;
 #endif
     StringRef cstr = Literal->getString();
     Expr *exprs[2] = {
@@ -351,11 +360,11 @@ struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
     auto loc = D->getLocation();
     RecordDecl *RD;
     if (S.getLangOpts().CPlusPlus)
-      RD = CXXRecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx,
-                                 loc, loc, nullptr); // rId);
+      RD = CXXRecordDecl::Create(AST, StructKind, declCtx, loc, loc,
+                                 nullptr); // rId);
     else
-      RD = RecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx, loc,
-                              loc, nullptr); // rId);
+      RD = RecordDecl::Create(AST, StructKind, declCtx, loc, loc,
+                              nullptr); // rId);
     RD->setAnonymousStructOrUnion(true);
     RD->setImplicit();
     RD->startDefinition();
@@ -461,11 +470,11 @@ struct EnzymeNoFreeAttrInfo : public ParsedAttrInfo {
     auto loc = D->getLocation();
     RecordDecl *RD;
     if (S.getLangOpts().CPlusPlus)
-      RD = CXXRecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx,
-                                 loc, loc, nullptr); // rId);
+      RD = CXXRecordDecl::Create(AST, StructKind, declCtx, loc, loc,
+                                 nullptr); // rId);
     else
-      RD = RecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx, loc,
-                              loc, nullptr); // rId);
+      RD = RecordDecl::Create(AST, StructKind, declCtx, loc, loc,
+                              nullptr); // rId);
     RD->setAnonymousStructOrUnion(true);
     RD->setImplicit();
     RD->startDefinition();
@@ -566,11 +575,11 @@ struct EnzymeSparseAccumulateAttrInfo : public ParsedAttrInfo {
     auto loc = D->getLocation();
     RecordDecl *RD;
     if (S.getLangOpts().CPlusPlus)
-      RD = CXXRecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx,
-                                 loc, loc, nullptr); // rId);
+      RD = CXXRecordDecl::Create(AST, StructKind, declCtx, loc, loc,
+                                 nullptr); // rId);
     else
-      RD = RecordDecl::Create(AST, clang::TagTypeKind::TTK_Struct, declCtx, loc,
-                              loc, nullptr); // rId);
+      RD = RecordDecl::Create(AST, StructKind, declCtx, loc, loc,
+                              nullptr); // rId);
     RD->setAnonymousStructOrUnion(true);
     RD->setImplicit();
     RD->startDefinition();
