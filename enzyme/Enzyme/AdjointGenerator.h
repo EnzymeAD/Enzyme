@@ -1105,12 +1105,12 @@ public:
       }
 
       MaybeAlign align;
-      if (prevalign)
+      if (prevalign) {
         if (start % prevalign->value() == 0)
           align = prevalign;
         else
           align = Align(1);
-
+      }
       //! Storing a floating point value
       if (Type *FT = dt.isFloat()) {
         //! Only need to update the reverse function
