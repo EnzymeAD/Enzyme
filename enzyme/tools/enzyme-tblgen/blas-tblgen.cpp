@@ -1207,6 +1207,7 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
       }
     } else if (Def->isSubClassOf("Alloca")) {
       auto val = Def->getValueAsInt("value");
+      (void)val;
       assert(val == 1);
       os << "{allocationBuilder.CreateAlloca(intType)}";
     } else if (Def->isSubClassOf("ConstantInt")) {
