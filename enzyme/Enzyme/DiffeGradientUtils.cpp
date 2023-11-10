@@ -230,7 +230,6 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
   }
   if (auto ST = dyn_cast<StructType>(val->getType())) {
     auto SL = DL.getStructLayout(ST);
-    size_t accumulated = 0;
     auto left_idx = SL->getElementContainingOffset(start);
     assert(SL->getElementOffset(left_idx) == start);
     auto right_idx = ST->getNumElements();
