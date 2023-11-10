@@ -1471,20 +1471,6 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
         }
       }
 
-      Value *shadow_recvbuf = gutils->invertPointerM(orig_recvbuf, Builder2);
-      if (!forwardMode)
-        shadow_recvbuf = lookup(shadow_recvbuf, Builder2);
-      if (shadow_recvbuf->getType()->isIntegerTy())
-        shadow_recvbuf = Builder2.CreateIntToPtr(
-            shadow_recvbuf, Type::getInt8PtrTy(call.getContext()));
-
-      Value *shadow_sendbuf = gutils->invertPointerM(orig_sendbuf, Builder2);
-      if (!forwardMode)
-        shadow_sendbuf = lookup(shadow_sendbuf, Builder2);
-      if (shadow_sendbuf->getType()->isIntegerTy())
-        shadow_sendbuf = Builder2.CreateIntToPtr(
-            shadow_sendbuf, Type::getInt8PtrTy(call.getContext()));
-
       // Need to preserve the shadow send/recv buffers.
       auto BufferDefs = gutils->getInvertedBundles(
           &call,
@@ -1508,22 +1494,6 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
       if (!forwardMode)
         op = lookup(op, Builder2);
 
-      if (forwardMode) {
-        Value *args[] = {
-            /*sendbuf*/ shadow_sendbuf,
-            /*recvbuf*/ shadow_recvbuf,
-            /*count*/ count,
-            /*datatype*/ datatype,
-            /*op*/ op,
-            /*comm*/ comm,
-        };
-
-        auto callval = call.getCalledOperand();
-        Builder2.CreateCall(call.getFunctionType(), callval, args, BufferDefs);
-
-        return;
-      }
-
       Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType());
 
       // Get the length for the allocation of the intermediate buffer
@@ -1540,17 +1510,51 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
           CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
                            len_arg, "mpireduce_malloccache");
 
+      // Use applyChainRule here:
+      Value *shadow_recvbuf = gutils->invertPointerM(orig_recvbuf, Builder2);
+      Value *shadow_sendbuf = gutils->invertPointerM(orig_sendbuf, Builder2);
+
+      applyChainRule(Builder2, [&](Value* shadow_recvbuf, Value* shadow_sendbuf){
+        if (!forwardMode)
+          shadow_recvbuf = lookup(shadow_recvbuf, Builder2);
+        if (shadow_recvbuf->getType()->isIntegerTy())
+          shadow_recvbuf = Builder2.CreateIntToPtr(
+              shadow_recvbuf, Type::getInt8PtrTy(call.getContext()));
+
+        if (!forwardMode)
+          shadow_sendbuf = lookup(shadow_sendbuf, Builder2);
+        if (shadow_sendbuf->getType()->isIntegerTy())
+          shadow_sendbuf = Builder2.CreateIntToPtr(
+              shadow_sendbuf, Type::getInt8PtrTy(call.getContext()));
+
+        if (forwardMode) {
+          Value *args[] = {
+              /*sendbuf*/ shadow_sendbuf,
+              /*recvbuf*/ shadow_recvbuf,
+              /*count*/ count,
+              /*datatype*/ datatype,
+              /*op*/ op,
+              /*comm*/ comm,
+          };
+
+          auto callval = call.getCalledOperand();
+          Builder2.CreateCall(call.getFunctionType(), callval, args, BufferDefs);
+
+          return;
+        }
+      }, shadow_recvbuf, shadow_sendbuf);
+      /*
       // 2. MPI_Allreduce (sum) of diff(recvbuffer) to intermediate
       {
         // int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count,
         //              MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
         Value *args[] = {
-            /*sendbuf*/ shadow_recvbuf,
-            /*recvbuf*/ buf,
-            /*count*/ count,
-            /*datatype*/ datatype,
-            /*op*/ op,
-            /*comm*/ comm,
+            shadow_recvbuf, //sendbuf
+            buf, //recvbuf
+            count, //count
+            datatype, //datatype
+            op, //op
+            comm, //comm
         };
         Type *types[sizeof(args) / sizeof(*args)];
         for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
@@ -1581,6 +1585,7 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
       if (shouldFree()) {
         CreateDealloc(Builder2, buf);
       }
+      */
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
