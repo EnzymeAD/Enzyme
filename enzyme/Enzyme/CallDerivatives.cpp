@@ -1305,8 +1305,7 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
           return;
         }
       }, shadow_recvbuf, shadow_sendbuf);
-      // Work required for ReverseMode is commented out for now, will be added back in later:
-      /*
+      
       // 1.5 if root, set intermediate = diff(recvbuffer)
       {
 
@@ -1397,7 +1396,7 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
       if (shouldFree()) {
         CreateDealloc(Builder2, buf);
       }
-    */
+    
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
