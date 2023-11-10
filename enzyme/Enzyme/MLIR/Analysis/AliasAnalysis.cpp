@@ -710,8 +710,10 @@ void enzyme::AliasAnalysis::transfer(
             if (srcPointsTo.isUnknown()) {
               propagateIfChanged(result, result->markUnknown());
             } else {
-              propagateIfChanged(result,
-                                 result->insert(srcPointsTo.getAliasClasses()));
+              // TODO: this looks potentially non-monotonous.
+              ChangeResult r = result->reset() |
+                               result->insert(srcPointsTo.getAliasClasses());
+              propagateIfChanged(result, r);
             }
           }
         }
