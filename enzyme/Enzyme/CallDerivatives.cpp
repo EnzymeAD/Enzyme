@@ -1543,49 +1543,50 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
           return;
         }
       }, shadow_recvbuf, shadow_sendbuf);
-      /*
-      // 2. MPI_Allreduce (sum) of diff(recvbuffer) to intermediate
-      {
-        // int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count,
-        //              MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
-        Value *args[] = {
-            shadow_recvbuf, //sendbuf
-            buf, //recvbuf
-            count, //count
-            datatype, //datatype
-            op, //op
-            comm, //comm
-        };
-        Type *types[sizeof(args) / sizeof(*args)];
-        for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
-          types[i] = args[i]->getType();
+      
+      if (!forwardMode) {
+        // 2. MPI_Allreduce (sum) of diff(recvbuffer) to intermediate
+        {
+          // int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count,
+          //              MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
+          Value *args[] = {
+              shadow_recvbuf, //sendbuf
+              buf, //recvbuf
+              count, //count
+              datatype, //datatype
+              op, //op
+              comm, //comm
+          };
+          Type *types[sizeof(args) / sizeof(*args)];
+          for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
+            types[i] = args[i]->getType();
 
-        FunctionType *FT = FunctionType::get(call.getType(), types, false);
-        Builder2.CreateCall(
-            called->getParent()->getOrInsertFunction("MPI_Allreduce", FT), args,
-            BufferDefs);
+          FunctionType *FT = FunctionType::get(call.getType(), types, false);
+          Builder2.CreateCall(
+              called->getParent()->getOrInsertFunction("MPI_Allreduce", FT), args,
+              BufferDefs);
+        }
+
+        // 3. Zero diff(recvbuffer) [memset to 0]
+        auto val_arg = ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
+        auto volatile_arg = ConstantInt::getFalse(call.getContext());
+        Value *args[] = {shadow_recvbuf, val_arg, len_arg, volatile_arg};
+        Type *tys[] = {args[0]->getType(), args[2]->getType()};
+        auto memset = cast<CallInst>(Builder2.CreateCall(
+            Intrinsic::getDeclaration(gutils->newFunc->getParent(),
+                                      Intrinsic::memset, tys),
+            args, BufferDefs));
+        memset->addParamAttr(0, Attribute::NonNull);
+
+        // 4. diff(sendbuffer) += intermediate buffer (diffmemcopy)
+        DifferentiableMemCopyFloats(call, orig_sendbuf, buf, shadow_sendbuf,
+                                    len_arg, Builder2, BufferDefs);
+
+        // Free up intermediate buffer
+        if (shouldFree()) {
+          CreateDealloc(Builder2, buf);
+        }
       }
-
-      // 3. Zero diff(recvbuffer) [memset to 0]
-      auto val_arg = ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
-      auto volatile_arg = ConstantInt::getFalse(call.getContext());
-      Value *args[] = {shadow_recvbuf, val_arg, len_arg, volatile_arg};
-      Type *tys[] = {args[0]->getType(), args[2]->getType()};
-      auto memset = cast<CallInst>(Builder2.CreateCall(
-          Intrinsic::getDeclaration(gutils->newFunc->getParent(),
-                                    Intrinsic::memset, tys),
-          args, BufferDefs));
-      memset->addParamAttr(0, Attribute::NonNull);
-
-      // 4. diff(sendbuffer) += intermediate buffer (diffmemcopy)
-      DifferentiableMemCopyFloats(call, orig_sendbuf, buf, shadow_sendbuf,
-                                  len_arg, Builder2, BufferDefs);
-
-      // Free up intermediate buffer
-      if (shouldFree()) {
-        CreateDealloc(Builder2, buf);
-      }
-      */
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
