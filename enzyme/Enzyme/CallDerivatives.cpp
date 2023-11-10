@@ -1215,35 +1215,8 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
         }
       }
 
-      // applyChainRule here:
-
-      Value *shadow_recvbuf = gutils->invertPointerM(orig_recvbuf, Builder2);
-      if (!forwardMode)
-        shadow_recvbuf = lookup(shadow_recvbuf, Builder2);
-      if (shadow_recvbuf->getType()->isIntegerTy())
-        shadow_recvbuf = Builder2.CreateIntToPtr(
-            shadow_recvbuf, Type::getInt8PtrTy(call.getContext()));
-
-      Value *shadow_sendbuf = gutils->invertPointerM(orig_sendbuf, Builder2);
-      if (!forwardMode)
-        shadow_sendbuf = lookup(shadow_sendbuf, Builder2);
-      if (shadow_sendbuf->getType()->isIntegerTy())
-        shadow_sendbuf = Builder2.CreateIntToPtr(
-            shadow_sendbuf, Type::getInt8PtrTy(call.getContext()));
-
-      // Need to preserve the shadow send/recv buffers.
-      // WHAT IS GOING ON HERE?? Pretty sure this automatically fails in ForwardMode,
-      // because lookup is just set to true
-      auto BufferDefs = gutils->getInvertedBundles(
-          &call,
-          {ValueType::Shadow, ValueType::Shadow, ValueType::Primal,
-           ValueType::Primal, ValueType::Primal, ValueType::Primal,
-           ValueType::Primal},
-          Builder2, /*lookup*/ !forwardMode);
-
       // lookup() gets the reverse pass copy of the thing, it should
       // NEVER be called in forward mode
-
       Value *count = gutils->getNewFromOriginal(orig_count);
       if (!forwardMode)
         count = lookup(count, Builder2);
@@ -1266,30 +1239,13 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
 
       Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType());
 
-      if (forwardMode) {
-        Value *args[] = {
-            /*sendbuf*/ shadow_sendbuf,
-            /*recvbuf*/ shadow_recvbuf,
-            /*count*/ count,
-            /*datatype*/ datatype,
-            /*op*/ op,
-            /*root*/ root,
-            /*comm*/ comm,
-        };
-
-        // We take stuff from the forward pass (corresponding arguments to call, aka MPI_reduce), and
-        // see what we need for the reverse pass
-        auto Defs = gutils->getInvertedBundles(
-            &call,
-            {ValueType::Shadow, ValueType::Shadow, ValueType::Primal,
-             ValueType::Primal, ValueType::Primal, ValueType::Primal,
-             ValueType::Primal},
-            Builder2, /*lookup*/ false);
-
-        auto callval = call.getCalledOperand();
-        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
-        return;
-      }
+      // Need to preserve the shadow send/recv buffers.
+      auto BufferDefs = gutils->getInvertedBundles(
+          &call,
+          {ValueType::Shadow, ValueType::Shadow, ValueType::Primal,
+           ValueType::Primal, ValueType::Primal, ValueType::Primal,
+           ValueType::Primal},
+          Builder2, /*lookup*/ !forwardMode);
 
       Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType());
 
@@ -1307,6 +1263,50 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
           CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
                            len_arg, "mpireduce_malloccache");
 
+      // applyChainRule HERE:
+      Value *shadow_recvbuf = gutils->invertPointerM(orig_recvbuf, Builder2);
+      Value *shadow_sendbuf = gutils->invertPointerM(orig_sendbuf, Builder2);
+
+      applyChainRule(Builder2, [&](Value* shadow_recvbuf, Value* shadow_sendbuf){
+        if (!forwardMode)
+          shadow_recvbuf = lookup(shadow_recvbuf, Builder2);
+        if (shadow_recvbuf->getType()->isIntegerTy())
+          shadow_recvbuf = Builder2.CreateIntToPtr(
+              shadow_recvbuf, Type::getInt8PtrTy(call.getContext()));
+
+        if (!forwardMode)
+          shadow_sendbuf = lookup(shadow_sendbuf, Builder2);
+        if (shadow_sendbuf->getType()->isIntegerTy())
+          shadow_sendbuf = Builder2.CreateIntToPtr(
+              shadow_sendbuf, Type::getInt8PtrTy(call.getContext()));
+
+        if (forwardMode) {
+          Value *args[] = {
+              /*sendbuf*/ shadow_sendbuf,
+              /*recvbuf*/ shadow_recvbuf,
+              /*count*/ count,
+              /*datatype*/ datatype,
+              /*op*/ op,
+              /*root*/ root,
+              /*comm*/ comm,
+          };
+
+          // We take stuff from the forward pass (corresponding arguments to call, aka MPI_reduce), and
+          // see what we need for the reverse pass
+          auto Defs = gutils->getInvertedBundles(
+              &call,
+              {ValueType::Shadow, ValueType::Shadow, ValueType::Primal,
+              ValueType::Primal, ValueType::Primal, ValueType::Primal,
+              ValueType::Primal},
+              Builder2, /*lookup*/ false);
+
+          auto callval = call.getCalledOperand();
+          Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+          return;
+        }
+      }, shadow_recvbuf, shadow_sendbuf);
+      // Work required for ReverseMode is commented out for now, will be added back in later:
+      /*
       // 1.5 if root, set intermediate = diff(recvbuffer)
       {
 
@@ -1346,11 +1346,11 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
         // root,
         //     MPI_Comm comm )
         Value *args[] = {
-            /*buf*/ buf,
-            /*count*/ count,
-            /*datatype*/ datatype,
-            /*int root*/ root,
-            /*comm*/ comm,
+            buf, //buf
+            count, //count
+            datatype, //datatype
+            root, //int root
+            comm, //comm
         };
         Type *types[sizeof(args) / sizeof(*args)];
         for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
@@ -1397,6 +1397,7 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
       if (shouldFree()) {
         CreateDealloc(Builder2, buf);
       }
+    */
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
