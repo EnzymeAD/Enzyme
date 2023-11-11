@@ -30,6 +30,14 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-variable"
+#else
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#endif
+
 using namespace llvm;
 
 bool MustExitScalarEvolution::loopIsFiniteByAssumption(const Loop *L) {
@@ -1281,4 +1289,11 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
 
   return ExitLimit(BECount, MaxBECount, MaxOrZero, Predicates);
 }
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#else
+#pragma GCC diagnostic pop
+#endif
+
 #endif
