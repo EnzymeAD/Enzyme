@@ -3549,38 +3549,39 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 #endif
 }
 
+void registerEnzyme(llvm::PassBuilder &PB) {
+#ifdef ENZYME_RUNPASS
+  augmentPassBuilder(PB);
+#endif
+  PB.registerPipelineParsingCallback(
+      [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
+         llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+        if (Name == "enzyme") {
+          MPM.addPass(EnzymeNewPM());
+          return true;
+        }
+        if (Name == "preserve-nvvm") {
+          MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+          return true;
+        }
+        if (Name == "print-type-analysis") {
+          MPM.addPass(TypeAnalysisPrinterNewPM());
+          return true;
+        }
+        return false;
+      });
+  PB.registerPipelineParsingCallback(
+      [](llvm::StringRef Name, llvm::FunctionPassManager &FPM,
+         llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+        if (Name == "print-activity-analysis") {
+          FPM.addPass(ActivityAnalysisPrinterNewPM());
+          return true;
+        }
+        return false;
+      });
+}
+
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
 llvmGetPassPluginInfo() {
-  return {LLVM_PLUGIN_API_VERSION, "EnzymeNewPM", "v0.1",
-          [](llvm::PassBuilder &PB) {
-#ifdef ENZYME_RUNPASS
-            augmentPassBuilder(PB);
-#endif
-            PB.registerPipelineParsingCallback(
-                [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
-                   llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
-                  if (Name == "enzyme") {
-                    MPM.addPass(EnzymeNewPM());
-                    return true;
-                  }
-                  if (Name == "preserve-nvvm") {
-                    MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
-                    return true;
-                  }
-                  if (Name == "print-type-analysis") {
-                    MPM.addPass(TypeAnalysisPrinterNewPM());
-                    return true;
-                  }
-                  return false;
-                });
-            PB.registerPipelineParsingCallback(
-                [](llvm::StringRef Name, llvm::FunctionPassManager &FPM,
-                   llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
-                  if (Name == "print-activity-analysis") {
-                    FPM.addPass(ActivityAnalysisPrinterNewPM());
-                    return true;
-                  }
-                  return false;
-                });
-          }};
+  return {LLVM_PLUGIN_API_VERSION, "EnzymeNewPM", "v0.1", registerEnzyme};
 }
