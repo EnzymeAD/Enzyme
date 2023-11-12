@@ -5639,9 +5639,18 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       continue;
 
     if (!solutions->canEvaluateSolutions()) {
+      llvm::errs() << "F: " << F << "\n";
+      llvm::errs() << " L: " << *L << " blk: " << *blk << "\n";
+      llvm::errs() << " cond: " << *cond << " negated: " << negated << "\n";
+
       llvm::errs() << " not sparse solvable " << *solutions << "\n";
       legal = false;
       continue;
+    }
+    if (solutions == Constraints::none()) {
+      llvm::errs() << "F: " << F << "\n";
+      llvm::errs() << " L: " << *L << " blk: " << *blk << "\n";
+      llvm::errs() << " cond: " << *cond << " negated: " << negated << "\n";
     }
     llvm::errs() << " found solvable solutions " << *solutions << "\n";
 
