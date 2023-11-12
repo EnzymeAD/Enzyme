@@ -137,7 +137,7 @@ public:
     using namespace llvm;
 
     if (DT->getType()->isIntegerTy())
-      DT = B.CreateIntToPtr(DT, Type::getInt8PtrTy(DT->getContext()));
+      DT = B.CreateIntToPtr(DT, getInt8PtrTy(DT->getContext()));
 
     if (Constant *C = dyn_cast<Constant>(DT)) {
       while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
@@ -151,7 +151,7 @@ public:
         }
       }
     }
-    Type *pargs[] = {Type::getInt8PtrTy(DT->getContext()),
+    Type *pargs[] = {getInt8PtrTy(DT->getContext()),
                      PointerType::getUnqual(intType)};
     auto FT = FunctionType::get(intType, pargs, false);
     auto alloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(intType);
@@ -935,7 +935,7 @@ public:
   }
 
   void visitCommonStore(llvm::Instruction &I, llvm::Value *orig_ptr,
-                        llvm::Value *orig_val, llvm::MaybeAlign align,
+                        llvm::Value *orig_val, llvm::MaybeAlign prevalign,
                         bool isVolatile, llvm::AtomicOrdering ordering,
                         llvm::SyncScope::ID syncScope, llvm::Value *mask) {
     using namespace llvm;
@@ -988,7 +988,7 @@ public:
 
     // TODO allow recognition of other types that could contain pointers [e.g.
     // {void*, void*} or <2 x i64> ]
-    auto storeSize = DL.getTypeSizeInBits(valType) / 8;
+    auto storeSize = (DL.getTypeSizeInBits(valType) + 7) / 8;
 
     auto vd = TR.query(orig_ptr).Lookup(storeSize, DL);
 
@@ -1015,25 +1015,26 @@ public:
     known:;
     }
 
-    auto dt = vd[{-1}];
-    for (size_t i = 0; i < storeSize; ++i) {
-      bool Legal = true;
-      dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
-      if (!Legal) {
-        std::string str;
-        raw_string_ostream ss(str);
-        ss << "Cannot deduce single type of store " << I;
-        if (CustomErrorHandler) {
-          CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                             &TR.analyzer, nullptr, wrap(&BuilderZ));
-        } else {
-          EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
-        }
-        return;
-      }
-    }
-
     if (Mode == DerivativeMode::ForwardMode) {
+
+      auto dt = vd[{-1}];
+      for (size_t i = 0; i < storeSize; ++i) {
+        bool Legal = true;
+        dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+        if (!Legal) {
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Cannot deduce single type of store " << I << vd.str()
+             << " size: " << storeSize;
+          if (CustomErrorHandler) {
+            CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
+                               &TR.analyzer, nullptr, wrap(&BuilderZ));
+          } else {
+            EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
+          }
+          return;
+        }
+      }
 
       Value *diff = nullptr;
       if (!EnzymeRuntimeActivityCheck && CustomErrorHandler && constantval) {
@@ -1065,187 +1066,236 @@ public:
               gutils->invertPointerM(orig_val, BuilderZ, /*nullShadow*/ true);
       }
 
-      gutils->setPtrDiffe(&I, orig_ptr, diff, BuilderZ, align, isVolatile,
-                          ordering, syncScope, mask, prevNoAlias, prevScopes);
+      gutils->setPtrDiffe(&I, orig_ptr, diff, BuilderZ, prevalign, 0, storeSize,
+                          isVolatile, ordering, syncScope, mask, prevNoAlias,
+                          prevScopes);
 
       return;
     }
 
-    //! Storing a floating point value
-    if (Type *FT = dt.isFloat()) {
-      //! Only need to update the reverse function
-      switch (Mode) {
-      case DerivativeMode::ReverseModePrimal:
-        break;
-      case DerivativeMode::ReverseModeGradient:
-      case DerivativeMode::ReverseModeCombined: {
-        IRBuilder<> Builder2(&I);
-        getReverseBuilder(Builder2);
+    unsigned start = 0;
+    unsigned size = storeSize;
 
-        if (constantval) {
-          gutils->setPtrDiffe(
-              &I, orig_ptr,
-              Constant::getNullValue(gutils->getShadowType(valType)), Builder2,
-              align, isVolatile, ordering, syncScope, mask, prevNoAlias,
-              prevScopes);
+    while (1) {
+      unsigned nextStart = size;
+
+      auto dt = vd[{-1}];
+      for (size_t i = start; i < size; ++i) {
+        bool Legal = true;
+        dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+        if (!Legal) {
+          nextStart = i;
+          break;
+        }
+      }
+      size = nextStart - start;
+      if (!dt.isKnown()) {
+
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Cannot deduce type of store " << I << vd.str()
+           << " size: " << storeSize;
+        if (CustomErrorHandler) {
+          CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
+                             &TR.analyzer, nullptr, wrap(&BuilderZ));
         } else {
-          Value *diff;
-          if (!mask) {
-            Value *dif1Ptr =
-                lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
+          EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
+        }
+        break;
+      }
 
-            size_t idx = 0;
-            auto rule = [&](Value *dif1Ptr) {
-              LoadInst *dif1 =
-                  Builder2.CreateLoad(valType, dif1Ptr, isVolatile);
-              if (align)
-                dif1->setAlignment(*align);
-              dif1->setOrdering(ordering);
-              dif1->setSyncScopeID(syncScope);
+      MaybeAlign align;
+      if (prevalign) {
+        if (start % prevalign->value() == 0)
+          align = prevalign;
+        else
+          align = Align(1);
+      }
+      //! Storing a floating point value
+      if (Type *FT = dt.isFloat()) {
+        //! Only need to update the reverse function
+        switch (Mode) {
+        case DerivativeMode::ReverseModePrimal:
+          break;
+        case DerivativeMode::ReverseModeGradient:
+        case DerivativeMode::ReverseModeCombined: {
+          IRBuilder<> Builder2(&I);
+          getReverseBuilder(Builder2);
 
-              SmallVector<Metadata *, 1> scopeMD = {
-                  gutils->getDerivativeAliasScope(orig_ptr, idx)};
-              for (auto M : prevScopes)
-                scopeMD.push_back(M);
-
-              SmallVector<Metadata *, 1> MDs;
-              for (ssize_t j = -1; j < gutils->getWidth(); j++) {
-                if (j != (ssize_t)idx)
-                  MDs.push_back(gutils->getDerivativeAliasScope(orig_ptr, j));
-              }
-              for (auto M : prevNoAlias)
-                MDs.push_back(M);
-
-              dif1->setMetadata(LLVMContext::MD_alias_scope,
-                                MDNode::get(I.getContext(), scopeMD));
-              dif1->setMetadata(LLVMContext::MD_noalias,
-                                MDNode::get(I.getContext(), MDs));
-              dif1->setMetadata(LLVMContext::MD_tbaa,
-                                I.getMetadata(LLVMContext::MD_tbaa));
-              dif1->setMetadata(LLVMContext::MD_tbaa_struct,
-                                I.getMetadata(LLVMContext::MD_tbaa_struct));
-              idx++;
-              return dif1;
-            };
-
-            diff = applyChainRule(valType, Builder2, rule, dif1Ptr);
+          if (constantval) {
+            gutils->setPtrDiffe(
+                &I, orig_ptr,
+                Constant::getNullValue(gutils->getShadowType(valType)),
+                Builder2, align, start, size, isVolatile, ordering, syncScope,
+                mask, prevNoAlias, prevScopes);
           } else {
-            mask = lookup(mask, Builder2);
-            Type *tys[] = {valType, orig_ptr->getType()};
-            auto F = Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
-                                               Intrinsic::masked_load, tys);
-            Value *alignv =
-                ConstantInt::get(Type::getInt32Ty(mask->getContext()),
-                                 align ? align->value() : 0);
-            Value *ip =
-                lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
+            Value *diff;
+            if (!mask) {
+              Value *dif1Ptr =
+                  lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
 
-            auto rule = [&](Value *ip) {
-              Value *args[] = {ip, alignv, mask,
-                               Constant::getNullValue(valType)};
-              diff = Builder2.CreateCall(F, args);
-              return diff;
-            };
+              size_t idx = 0;
+              auto rule = [&](Value *dif1Ptr) {
+                LoadInst *dif1 =
+                    Builder2.CreateLoad(valType, dif1Ptr, isVolatile);
+                if (align)
+                  dif1->setAlignment(*align);
+                dif1->setOrdering(ordering);
+                dif1->setSyncScopeID(syncScope);
 
-            diff = applyChainRule(valType, Builder2, rule, ip);
-          }
+                SmallVector<Metadata *, 1> scopeMD = {
+                    gutils->getDerivativeAliasScope(orig_ptr, idx)};
+                for (auto M : prevScopes)
+                  scopeMD.push_back(M);
 
-          gutils->setPtrDiffe(
-              &I, orig_ptr,
-              Constant::getNullValue(gutils->getShadowType(valType)), Builder2,
-              align, isVolatile, ordering, syncScope, mask, prevNoAlias,
-              prevScopes);
-          addToDiffe(orig_val, diff, Builder2, FT, mask);
-        }
-        break;
-      }
-      case DerivativeMode::ForwardModeSplit:
-      case DerivativeMode::ForwardMode: {
-        IRBuilder<> Builder2(&I);
-        getForwardBuilder(Builder2);
+                SmallVector<Metadata *, 1> MDs;
+                for (ssize_t j = -1; j < gutils->getWidth(); j++) {
+                  if (j != (ssize_t)idx)
+                    MDs.push_back(gutils->getDerivativeAliasScope(orig_ptr, j));
+                }
+                for (auto M : prevNoAlias)
+                  MDs.push_back(M);
 
-        Type *diffeTy = gutils->getShadowType(valType);
+                dif1->setMetadata(LLVMContext::MD_alias_scope,
+                                  MDNode::get(I.getContext(), scopeMD));
+                dif1->setMetadata(LLVMContext::MD_noalias,
+                                  MDNode::get(I.getContext(), MDs));
+                dif1->setMetadata(LLVMContext::MD_tbaa,
+                                  I.getMetadata(LLVMContext::MD_tbaa));
+                dif1->setMetadata(LLVMContext::MD_tbaa_struct,
+                                  I.getMetadata(LLVMContext::MD_tbaa_struct));
+                idx++;
+                return dif1;
+              };
 
-        Value *diff = constantval ? Constant::getNullValue(diffeTy)
-                                  : diffe(orig_val, Builder2);
-        gutils->setPtrDiffe(&I, orig_ptr, diff, Builder2, align, isVolatile,
-                            ordering, syncScope, mask, prevNoAlias, prevScopes);
+              diff = applyChainRule(valType, Builder2, rule, dif1Ptr);
+            } else {
+              mask = lookup(mask, Builder2);
+              Type *tys[] = {valType, orig_ptr->getType()};
+              auto F = Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
+                                                 Intrinsic::masked_load, tys);
+              Value *alignv =
+                  ConstantInt::get(Type::getInt32Ty(mask->getContext()),
+                                   align ? align->value() : 0);
+              Value *ip =
+                  lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
 
-        break;
-      }
-      }
+              auto rule = [&](Value *ip) {
+                Value *args[] = {ip, alignv, mask,
+                                 Constant::getNullValue(valType)};
+                diff = Builder2.CreateCall(F, args);
+                return diff;
+              };
 
-      //! Storing an integer or pointer
-    } else {
-      //! Only need to update the forward function
-
-      // Don't reproduce mpi null requests
-      if (constantval)
-        if (Constant *C = dyn_cast<Constant>(orig_val)) {
-          while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
-            C = CE->getOperand(0);
-          }
-          if (auto GV = dyn_cast<GlobalVariable>(C)) {
-            if (GV->getName() == "ompi_request_null") {
-              return;
+              diff = applyChainRule(valType, Builder2, rule, ip);
             }
+
+            gutils->setPtrDiffe(
+                &I, orig_ptr,
+                Constant::getNullValue(gutils->getShadowType(valType)),
+                Builder2, align, start, size, isVolatile, ordering, syncScope,
+                mask, prevNoAlias, prevScopes);
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(orig_val, diff, Builder2, FT, start, size, mask);
           }
+          break;
+        }
+        case DerivativeMode::ForwardModeSplit:
+        case DerivativeMode::ForwardMode: {
+          IRBuilder<> Builder2(&I);
+          getForwardBuilder(Builder2);
+
+          Type *diffeTy = gutils->getShadowType(valType);
+
+          Value *diff = constantval
+                            ? Constant::getNullValue(diffeTy)
+                            : gutils->invertPointerM(orig_val, Builder2,
+                                                     /*nullShadow*/ true);
+          gutils->setPtrDiffe(&I, orig_ptr, diff, Builder2, align, start, size,
+                              isVolatile, ordering, syncScope, mask,
+                              prevNoAlias, prevScopes);
+
+          break;
+        }
         }
 
-      bool backwardsShadow = false;
-      bool forwardsShadow = true;
-      for (auto pair : gutils->backwardsOnlyShadows) {
-        if (pair.second.stores.count(&I)) {
-          backwardsShadow = true;
-          forwardsShadow = pair.second.primalInitialize;
-          if (auto inst = dyn_cast<Instruction>(pair.first))
-            if (!forwardsShadow && pair.second.LI &&
-                pair.second.LI->contains(inst->getParent()))
-              backwardsShadow = false;
-        }
-      }
+        //! Storing an integer or pointer
+      } else {
+        //! Only need to update the forward function
 
-      if ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
-          (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
-          (Mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
-          (Mode == DerivativeMode::ReverseModeCombined &&
-           (forwardsShadow || backwardsShadow)) ||
-          Mode == DerivativeMode::ForwardMode) {
-
-        Value *valueop = nullptr;
-
-        if (constantval) {
-          if (!EnzymeRuntimeActivityCheck && CustomErrorHandler) {
-            if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
-              if (!isa<UndefValue>(orig_val) &&
-                  !isa<ConstantPointerNull>(orig_val)) {
-                std::string str;
-                raw_string_ostream ss(str);
-                ss << "Mismatched activity for: " << I
-                   << " const val: " << *orig_val;
-                valueop = unwrap(CustomErrorHandler(
-                    str.c_str(), wrap(&I), ErrorType::MixedActivityError,
-                    gutils, wrap(orig_val), wrap(&BuilderZ)));
+        // Don't reproduce mpi null requests
+        if (constantval)
+          if (Constant *C = dyn_cast<Constant>(orig_val)) {
+            while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
+              C = CE->getOperand(0);
+            }
+            if (auto GV = dyn_cast<GlobalVariable>(C)) {
+              if (GV->getName() == "ompi_request_null") {
+                continue;
               }
             }
           }
-          if (!valueop) {
-            valueop = val;
-            if (gutils->getWidth() > 1) {
-              Value *array =
-                  UndefValue::get(gutils->getShadowType(val->getType()));
-              for (unsigned i = 0; i < gutils->getWidth(); ++i) {
-                array = BuilderZ.CreateInsertValue(array, val, {i});
-              }
-              valueop = array;
-            }
+
+        bool backwardsShadow = false;
+        bool forwardsShadow = true;
+        for (auto pair : gutils->backwardsOnlyShadows) {
+          if (pair.second.stores.count(&I)) {
+            backwardsShadow = true;
+            forwardsShadow = pair.second.primalInitialize;
+            if (auto inst = dyn_cast<Instruction>(pair.first))
+              if (!forwardsShadow && pair.second.LI &&
+                  pair.second.LI->contains(inst->getParent()))
+                backwardsShadow = false;
           }
-        } else {
-          valueop = gutils->invertPointerM(orig_val, BuilderZ);
         }
-        gutils->setPtrDiffe(&I, orig_ptr, valueop, BuilderZ, align, isVolatile,
-                            ordering, syncScope, mask, prevNoAlias, prevScopes);
+
+        if ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
+            (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
+            (Mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
+            (Mode == DerivativeMode::ReverseModeCombined &&
+             (forwardsShadow || backwardsShadow)) ||
+            Mode == DerivativeMode::ForwardMode) {
+
+          Value *valueop = nullptr;
+
+          if (constantval) {
+            if (!EnzymeRuntimeActivityCheck && CustomErrorHandler) {
+              if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
+                if (!isa<UndefValue>(orig_val) &&
+                    !isa<ConstantPointerNull>(orig_val)) {
+                  std::string str;
+                  raw_string_ostream ss(str);
+                  ss << "Mismatched activity for: " << I
+                     << " const val: " << *orig_val;
+                  valueop = unwrap(CustomErrorHandler(
+                      str.c_str(), wrap(&I), ErrorType::MixedActivityError,
+                      gutils, wrap(orig_val), wrap(&BuilderZ)));
+                }
+              }
+            }
+            if (!valueop) {
+              valueop = val;
+              if (gutils->getWidth() > 1) {
+                Value *array =
+                    UndefValue::get(gutils->getShadowType(val->getType()));
+                for (unsigned i = 0; i < gutils->getWidth(); ++i) {
+                  array = BuilderZ.CreateInsertValue(array, val, {i});
+                }
+                valueop = array;
+              }
+            }
+          } else {
+            valueop = gutils->invertPointerM(orig_val, BuilderZ);
+          }
+          gutils->setPtrDiffe(&I, orig_ptr, valueop, BuilderZ, align, start,
+                              size, isVolatile, ordering, syncScope, mask,
+                              prevNoAlias, prevScopes);
+        }
       }
+
+      if (nextStart == size)
+        break;
+      start = nextStart;
     }
   }
 
@@ -1331,6 +1381,9 @@ public:
             }
         }
         if (!FT) {
+          if (TR.query(orig_op0)[{-1}] == BaseType::Integer &&
+              TR.query(&I)[{-1}] == BaseType::Integer)
+            return;
           std::string str;
           raw_string_ostream ss(str);
           ss << "Cannot deduce adding type (cast) of " << I;
@@ -2680,7 +2733,12 @@ public:
       return;
     }
 
-    if (!gutils->isConstantValue(orig_op1)) {
+    bool activeValToSet = !gutils->isConstantValue(orig_op1);
+    if (activeValToSet)
+      if (auto CI = dyn_cast<ConstantInt>(orig_op1))
+        if (CI->isZero())
+          activeValToSet = false;
+    if (activeValToSet) {
       std::string s;
       llvm::raw_string_ostream ss(s);
       ss << "couldn't handle non constant inst in memset to "
@@ -3325,8 +3383,8 @@ public:
         if (subsrcalign)
           salign = MaybeAlign(subsrcalign);
         if (ddst->getType()->isIntegerTy())
-          ddst = BuilderZ.CreateIntToPtr(
-              ddst, Type::getInt8PtrTy(ddst->getContext()));
+          ddst =
+              BuilderZ.CreateIntToPtr(ddst, getInt8PtrTy(ddst->getContext()));
         if (start != 0) {
           ddst = BuilderZ.CreateConstInBoundsGEP1_64(
               Type::getInt8Ty(ddst->getContext()), ddst, start);
@@ -3339,8 +3397,8 @@ public:
               length, salign, isVolatile);
         } else {
           if (dsrc->getType()->isIntegerTy())
-            dsrc = BuilderZ.CreateIntToPtr(
-                dsrc, Type::getInt8PtrTy(dsrc->getContext()));
+            dsrc =
+                BuilderZ.CreateIntToPtr(dsrc, getInt8PtrTy(dsrc->getContext()));
           if (start != 0) {
             dsrc = BuilderZ.CreateConstInBoundsGEP1_64(
                 Type::getInt8Ty(ddst->getContext()), dsrc, start);
@@ -3521,6 +3579,14 @@ public:
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
+#if LLVM_VERSION_MAJOR >= 12
+        if (ID == Intrinsic::umax || ID == Intrinsic::smax)
+          if (looseTypeAnalysis) {
+            EmitWarning("CannotDeduceType", I,
+                        "failed to deduce type of intrinsic ", I);
+            return false;
+          }
+#endif
         std::string s;
         llvm::raw_string_ostream ss(s);
         ss << *gutils->oldFunc << "\n";
@@ -3638,7 +3704,14 @@ public:
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
-
+#if LLVM_VERSION_MAJOR >= 12
+        if (ID == Intrinsic::umax || ID == Intrinsic::smax)
+          if (looseTypeAnalysis) {
+            EmitWarning("CannotDeduceType", I,
+                        "failed to deduce type of intrinsic ", I);
+            return false;
+          }
+#endif
         std::string s;
         llvm::raw_string_ostream ss(s);
         ss << *gutils->oldFunc << "\n";
@@ -4413,8 +4486,8 @@ public:
       if (auto secretty = dt.isFloat()) {
         auto offset = start;
         if (dsto->getType()->isIntegerTy())
-          dsto = Builder2.CreateIntToPtr(
-              dsto, Type::getInt8PtrTy(dsto->getContext()));
+          dsto =
+              Builder2.CreateIntToPtr(dsto, getInt8PtrTy(dsto->getContext()));
         unsigned dstaddr =
             cast<PointerType>(dsto->getType())->getAddressSpace();
         auto secretpt = PointerType::get(secretty, dstaddr);
@@ -4423,8 +4496,8 @@ public:
               Type::getInt8Ty(dsto->getContext()), dsto, offset);
         }
         if (srco->getType()->isIntegerTy())
-          srco = Builder2.CreateIntToPtr(
-              srco, Type::getInt8PtrTy(dsto->getContext()));
+          srco =
+              Builder2.CreateIntToPtr(srco, getInt8PtrTy(dsto->getContext()));
         unsigned srcaddr =
             cast<PointerType>(srco->getType())->getAddressSpace();
         secretpt = PointerType::get(secretty, srcaddr);
@@ -5512,7 +5585,7 @@ public:
       auto res =
           getDefaultFunctionTypeForGradient(ft, /*subretType*/ subretType);
       // TODO Note there is empty tape added here, replace with generic
-      res.first.push_back(Type::getInt8PtrTy(newcalled->getContext()));
+      res.first.push_back(getInt8PtrTy(newcalled->getContext()));
       FT = FunctionType::get(
           StructType::get(newcalled->getContext(), res.second), res.first,
           ft->isVarArg());

@@ -1188,7 +1188,7 @@ getDefaultFunctionTypeForAugmentation(FunctionType *called, bool returnUsed,
   auto ret = called->getReturnType();
   // TODO CONSIDER a.getType()->isIntegerTy() &&
   // cast<IntegerType>(a.getType())->getBitWidth() < 16
-  outs.push_back(Type::getInt8PtrTy(called->getContext()));
+  outs.push_back(getInt8PtrTy(called->getContext()));
   if (!ret->isVoidTy() && !ret->isEmptyTy()) {
     if (returnUsed) {
       outs.push_back(ret);

@@ -407,7 +407,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
   }
   if (!hasChar)
     os << "  Type* blasCharType = byRef ? "
-          "(Type*) Type::getInt8PtrTy(call.getContext()) : "
+          "(Type*) getInt8PtrTy(call.getContext()) : "
           "(Type*) Type::getInt8Ty(call.getContext());\n";
 
   for (auto name : enumerate(nameVec)) {
@@ -1207,6 +1207,7 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
       }
     } else if (Def->isSubClassOf("Alloca")) {
       auto val = Def->getValueAsInt("value");
+      (void)val;
       assert(val == 1);
       os << "{allocationBuilder.CreateAlloca(intType)}";
     } else if (Def->isSubClassOf("ConstantInt")) {

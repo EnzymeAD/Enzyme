@@ -1572,7 +1572,7 @@ public:
                       " bytes");
         }
       } else {
-        tapeType = PointerType::getInt8PtrTy(fn->getContext());
+        tapeType = getInt8PtrTy(fn->getContext());
       }
       newFunc = Logic.CreateForwardDiff(
           context, fn, retType, constants, TA,
@@ -1643,7 +1643,7 @@ public:
                       " bytes");
         }
       } else {
-        tapeType = PointerType::getInt8PtrTy(fn->getContext());
+        tapeType = getInt8PtrTy(fn->getContext());
       }
       if (mode == DerivativeMode::ReverseModePrimal)
         newFunc = aug->fn;

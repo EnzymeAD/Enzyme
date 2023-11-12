@@ -115,7 +115,7 @@ llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
 llvm::PointerType *getDefaultAnonymousTapeType(llvm::LLVMContext &C) {
   if (EnzymeDefaultTapeType)
     return cast<PointerType>(unwrap(EnzymeDefaultTapeType(wrap(&C))));
-  return Type::getInt8PtrTy(C);
+  return getInt8PtrTy(C);
 }
 
 Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
@@ -411,8 +411,8 @@ CallInst *CreateDealloc(llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
         unwrap(CustomDeallocator(wrap(&Builder), wrap(ToFree))));
   } else {
 
-    ToFree = Builder.CreatePointerCast(
-        ToFree, Type::getInt8PtrTy(ToFree->getContext()));
+    ToFree =
+        Builder.CreatePointerCast(ToFree, getInt8PtrTy(ToFree->getContext()));
 #if LLVM_VERSION_MAJOR > 17
     res = cast<CallInst>(Builder.CreateFree(ToFree));
 #else
@@ -483,9 +483,9 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
     count++;
   }
   FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                                       {Type::getInt8PtrTy(M.getContext()),
-                                        Type::getInt8PtrTy(M.getContext()),
-                                        Type::getInt8PtrTy(M.getContext())},
+                                       {getInt8PtrTy(M.getContext()),
+                                        getInt8PtrTy(M.getContext()),
+                                        getInt8PtrTy(M.getContext())},
                                        false);
 
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
@@ -517,7 +517,7 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
     } else {
       FunctionType *FT =
           FunctionType::get(Type::getInt32Ty(M.getContext()),
-                            {Type::getInt8PtrTy(M.getContext())}, false);
+                            {getInt8PtrTy(M.getContext())}, false);
 
       auto PutsF = M.getOrInsertFunction("puts", FT);
       EB.CreateCall(PutsF, msg);
@@ -536,10 +536,9 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
     EB.CreateRetVoid();
   }
 
-  Value *args[] = {
-      B.CreatePointerCast(primal, Type::getInt8PtrTy(M.getContext())),
-      B.CreatePointerCast(shadow, Type::getInt8PtrTy(M.getContext())),
-      getString(M, Message)};
+  Value *args[] = {B.CreatePointerCast(primal, getInt8PtrTy(M.getContext())),
+                   B.CreatePointerCast(shadow, getInt8PtrTy(M.getContext())),
+                   getString(M, Message)};
   auto call = B.CreateCall(F, args);
   call->setDebugLoc(loc);
 }
@@ -1434,12 +1433,12 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
   BasicBlock *irecv = BasicBlock::Create(M.getContext(), "invertIRecv", F);
 
 #if 0
-    /*0 */Type::getInt8PtrTy(call.getContext())
+    /*0 */getInt8PtrTy(call.getContext())
     /*1 */i64
-    /*2 */Type::getInt8PtrTy(call.getContext())
+    /*2 */getInt8PtrTy(call.getContext())
     /*3 */i64
     /*4 */i64
-    /*5 */Type::getInt8PtrTy(call.getContext())
+    /*5 */getInt8PtrTy(call.getContext())
     /*6 */Type::getInt8Ty(call.getContext())
 #endif
 
@@ -1599,7 +1598,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
     B.CreateRetVoid();
   }
 
-  llvm::Type *rtypes[] = {Type::getInt8PtrTy(M.getContext()), intType, OpPtr};
+  llvm::Type *rtypes[] = {getInt8PtrTy(M.getContext()), intType, OpPtr};
   FunctionType *RFT = FunctionType::get(intType, rtypes, false);
 
   Constant *RF = M.getNamedValue("MPI_Op_create");
@@ -2503,7 +2502,7 @@ llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
   B.CreateStore(V, allocV);
 
   if (julia_decl)
-    allocV = B.CreatePointerCast(allocV, Type::getInt8PtrTy(V->getContext()),
+    allocV = B.CreatePointerCast(allocV, getInt8PtrTy(V->getContext()),
                                  "intcast." + name);
 
   return allocV;

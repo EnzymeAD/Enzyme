@@ -1,6 +1,6 @@
-licenses(["notice"])
-
 load("@llvm-project//llvm:tblgen.bzl", "gentbl")
+
+licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
