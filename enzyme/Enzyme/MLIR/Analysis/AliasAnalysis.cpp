@@ -45,6 +45,7 @@ static bool isPointerLike(Type type) {
   return isa<MemRefType, LLVM::LLVMPointerType>(type);
 }
 
+const enzyme::AliasClassSet enzyme::AliasClassSet::emptySet = AliasClassSet();
 const enzyme::AliasClassSet enzyme::AliasClassSet::unknownSet =
     AliasClassSet(true);
 
@@ -225,9 +226,13 @@ ChangeResult enzyme::PointsToSets::update(const AliasClassSet &keysToUpdate,
   // Otherwise just set the result.
   if (replace) {
     return keysToUpdate.foreachClass([&](DistinctAttr dest) {
-      if (pointsTo[dest] == values)
+      auto it = pointsTo.find(dest);
+      if (it != pointsTo.end() && it->getSecond() == values)
         return ChangeResult::NoChange;
-      pointsTo[dest] = values;
+      if (it == pointsTo.end())
+        pointsTo.try_emplace(dest, values);
+      else
+        it->second = values;
       return ChangeResult::Change;
     });
   }
@@ -334,7 +339,7 @@ void enzyme::PointsToPointerAnalysis::visitOperation(Operation *op,
   // fixpoint and bail.
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
-    after->markAllPointToUnknown();
+    propagateIfChanged(after, after->markAllPointToUnknown());
     return;
   }
 
@@ -477,6 +482,11 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
         propagateIfChanged(after, after->markAllPointToUnknown());
 
         for (int pointerOperand : pointerLikeOperands) {
+          // TODO(zinenko): FIXME, even if the arg may be stored into, it
+          // doesn't mean we should pessimize it. Instead, it should be possible
+          // to join the before state for it with the alias classes the function
+          // may be storing into it.
+          // TODO(zinenko): consider monotonicity carefully.
           if (mayArgBeStoredInto(pointerOperand))
             continue;
 

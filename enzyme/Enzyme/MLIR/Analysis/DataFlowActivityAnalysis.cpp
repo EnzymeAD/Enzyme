@@ -297,6 +297,8 @@ public:
       os << value << ": in " << state.activeIn << " out " << state.activeOut
          << "\n";
     }
+    os << "other classes: in " << otherMemoryActivity.activeIn << " out "
+       << otherMemoryActivity.activeOut << "\n";
   }
 
   raw_ostream &operator<<(raw_ostream &os) const {
@@ -338,7 +340,7 @@ protected:
         updated.try_emplace(d, updatedActivity);
     }
     std::swap(updated, activityStates);
-    return updatedOther.merge(rhs.otherMemoryActivity) | result;
+    return otherMemoryActivity.merge(rhs.otherMemoryActivity) | result;
   }
 
 private:
@@ -731,7 +733,7 @@ public:
             auto *srcAliasClass =
                 getOrCreateFor<AliasClassLattice>(op, *copySource);
             forEachAliasedAlloc(srcAliasClass, [&](DistinctAttr srcAlloc) {
-              before->setActiveOut(srcAlloc);
+              result |= before->setActiveOut(srcAlloc);
             });
           } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
             if (after.activeDataFlowsOut(alloc)) {
@@ -840,7 +842,9 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
 
         // Or if it points to a pointer that points to active data.
         if (pointsToSets->getPointsTo(aliasClass).isUnknown()) {
-          // TODO(zinenko): FIXME handle unknown.
+          // TODO(zinenko): FIXME handle unknown. Conservative assumption here
+          // is to assume the value is active (or unknown if we can return
+          // that). Is there a less conservative option?
           continue;
         }
         const DenseSet<DistinctAttr> &neighbors =
