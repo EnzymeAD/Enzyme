@@ -38,6 +38,10 @@ struct AliasClassSet {
   /// unknown bit or the explicit list of classes, but not both.
   bool isCanonical() const;
 
+  /// Returns an empty instance of AliasClassSet. The instance is *not* a
+  /// classical singleton, there are other ways of obtaining it.
+  static const AliasClassSet &getEmpty() { return emptySet; }
+
   /// Returns an instance of AliasClassSet for the "unknown" class. The instance
   /// is *not* a classical singleton, there are other ways of obtaining an
   /// "unknown" alias set.
@@ -52,6 +56,7 @@ private:
   explicit AliasClassSet(bool unknown) : unknown(unknown) {}
 
   const static AliasClassSet unknownSet;
+  const static AliasClassSet emptySet;
 
   DenseSet<DistinctAttr> aliasClasses;
   bool unknown = false;
@@ -107,7 +112,8 @@ public:
   const AliasClassSet &getPointsTo(DistinctAttr id) const {
     auto it = pointsTo.find(id);
     if (it == pointsTo.end())
-      return AliasClassSet::getUnknown();
+      return otherPointToUnknown ? AliasClassSet::getUnknown()
+                                 : AliasClassSet::getEmpty();
     return it->getSecond();
   }
 
