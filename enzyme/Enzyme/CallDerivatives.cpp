@@ -1305,98 +1305,99 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
           return;
         }
       }, shadow_recvbuf, shadow_sendbuf);
-      
-      // 1.5 if root, set intermediate = diff(recvbuffer)
-      {
 
-        BasicBlock *currentBlock = Builder2.GetInsertBlock();
-        BasicBlock *rootBlock = gutils->addReverseBlock(
-            currentBlock, currentBlock->getName() + "_root", gutils->newFunc);
-        BasicBlock *mergeBlock = gutils->addReverseBlock(
-            rootBlock, currentBlock->getName() + "_post", gutils->newFunc);
-
-        Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, root), rootBlock,
-                              mergeBlock);
-
-        Builder2.SetInsertPoint(rootBlock);
-
+      if (!forwardMode) {
+        // 1.5 if root, set intermediate = diff(recvbuffer)
         {
-          auto volatile_arg = ConstantInt::getFalse(call.getContext());
-          Value *nargs[] = {buf, shadow_recvbuf, len_arg, volatile_arg};
 
-          Type *tys[] = {nargs[0]->getType(), nargs[1]->getType(),
-                         len_arg->getType()};
+          BasicBlock *currentBlock = Builder2.GetInsertBlock();
+          BasicBlock *rootBlock = gutils->addReverseBlock(
+              currentBlock, currentBlock->getName() + "_root", gutils->newFunc);
+          BasicBlock *mergeBlock = gutils->addReverseBlock(
+              rootBlock, currentBlock->getName() + "_post", gutils->newFunc);
 
-          auto memcpyF = Intrinsic::getDeclaration(gutils->newFunc->getParent(),
-                                                   Intrinsic::memcpy, tys);
+          Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, root), rootBlock,
+                                mergeBlock);
 
-          auto mem =
-              cast<CallInst>(Builder2.CreateCall(memcpyF, nargs, BufferDefs));
-          mem->setCallingConv(memcpyF->getCallingConv());
+          Builder2.SetInsertPoint(rootBlock);
+
+          {
+            auto volatile_arg = ConstantInt::getFalse(call.getContext());
+            Value *nargs[] = {buf, shadow_recvbuf, len_arg, volatile_arg};
+
+            Type *tys[] = {nargs[0]->getType(), nargs[1]->getType(),
+                          len_arg->getType()};
+
+            auto memcpyF = Intrinsic::getDeclaration(gutils->newFunc->getParent(),
+                                                    Intrinsic::memcpy, tys);
+
+            auto mem =
+                cast<CallInst>(Builder2.CreateCall(memcpyF, nargs, BufferDefs));
+            mem->setCallingConv(memcpyF->getCallingConv());
+          }
+
+          Builder2.CreateBr(mergeBlock);
+          Builder2.SetInsertPoint(mergeBlock);
         }
 
-        Builder2.CreateBr(mergeBlock);
-        Builder2.SetInsertPoint(mergeBlock);
+        // 2. MPI_Bcast intermediate to all
+        {
+          // int MPI_Bcast( void *buffer, int count, MPI_Datatype datatype, int
+          // root,
+          //     MPI_Comm comm )
+          Value *args[] = {
+              buf, //buf
+              count, //count
+              datatype, //datatype
+              root, //int root
+              comm, //comm
+          };
+          Type *types[sizeof(args) / sizeof(*args)];
+          for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
+            types[i] = args[i]->getType();
+
+          FunctionType *FT = FunctionType::get(call.getType(), types, false);
+          Builder2.CreateCall(
+              called->getParent()->getOrInsertFunction("MPI_Bcast", FT), args,
+              BufferDefs);
+        }
+
+        // 3. if root, Zero diff(recvbuffer) [memset to 0]
+        {
+          BasicBlock *currentBlock = Builder2.GetInsertBlock();
+          BasicBlock *rootBlock = gutils->addReverseBlock(
+              currentBlock, currentBlock->getName() + "_root", gutils->newFunc);
+          BasicBlock *mergeBlock = gutils->addReverseBlock(
+              rootBlock, currentBlock->getName() + "_post", gutils->newFunc);
+
+          Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, root), rootBlock,
+                                mergeBlock);
+
+          Builder2.SetInsertPoint(rootBlock);
+
+          auto val_arg = ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
+          auto volatile_arg = ConstantInt::getFalse(call.getContext());
+          Value *args[] = {shadow_recvbuf, val_arg, len_arg, volatile_arg};
+          Type *tys[] = {args[0]->getType(), args[2]->getType()};
+          auto memset = cast<CallInst>(Builder2.CreateCall(
+              Intrinsic::getDeclaration(gutils->newFunc->getParent(),
+                                        Intrinsic::memset, tys),
+              args, BufferDefs));
+          memset->addParamAttr(0, Attribute::NonNull);
+
+          Builder2.CreateBr(mergeBlock);
+          Builder2.SetInsertPoint(mergeBlock);
+        }
+
+        // 4. diff(sendbuffer) += intermediate buffer (diffmemcopy)
+        DifferentiableMemCopyFloats(call, orig_sendbuf, buf, shadow_sendbuf,
+                                    len_arg, Builder2, BufferDefs);
+
+        // Free up intermediate buffer
+        if (shouldFree()) {
+          CreateDealloc(Builder2, buf);
+        }
       }
-
-      // 2. MPI_Bcast intermediate to all
-      {
-        // int MPI_Bcast( void *buffer, int count, MPI_Datatype datatype, int
-        // root,
-        //     MPI_Comm comm )
-        Value *args[] = {
-            buf, //buf
-            count, //count
-            datatype, //datatype
-            root, //int root
-            comm, //comm
-        };
-        Type *types[sizeof(args) / sizeof(*args)];
-        for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
-          types[i] = args[i]->getType();
-
-        FunctionType *FT = FunctionType::get(call.getType(), types, false);
-        Builder2.CreateCall(
-            called->getParent()->getOrInsertFunction("MPI_Bcast", FT), args,
-            BufferDefs);
-      }
-
-      // 3. if root, Zero diff(recvbuffer) [memset to 0]
-      {
-        BasicBlock *currentBlock = Builder2.GetInsertBlock();
-        BasicBlock *rootBlock = gutils->addReverseBlock(
-            currentBlock, currentBlock->getName() + "_root", gutils->newFunc);
-        BasicBlock *mergeBlock = gutils->addReverseBlock(
-            rootBlock, currentBlock->getName() + "_post", gutils->newFunc);
-
-        Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, root), rootBlock,
-                              mergeBlock);
-
-        Builder2.SetInsertPoint(rootBlock);
-
-        auto val_arg = ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
-        auto volatile_arg = ConstantInt::getFalse(call.getContext());
-        Value *args[] = {shadow_recvbuf, val_arg, len_arg, volatile_arg};
-        Type *tys[] = {args[0]->getType(), args[2]->getType()};
-        auto memset = cast<CallInst>(Builder2.CreateCall(
-            Intrinsic::getDeclaration(gutils->newFunc->getParent(),
-                                      Intrinsic::memset, tys),
-            args, BufferDefs));
-        memset->addParamAttr(0, Attribute::NonNull);
-
-        Builder2.CreateBr(mergeBlock);
-        Builder2.SetInsertPoint(mergeBlock);
-      }
-
-      // 4. diff(sendbuffer) += intermediate buffer (diffmemcopy)
-      DifferentiableMemCopyFloats(call, orig_sendbuf, buf, shadow_sendbuf,
-                                  len_arg, Builder2, BufferDefs);
-
-      // Free up intermediate buffer
-      if (shouldFree()) {
-        CreateDealloc(Builder2, buf);
-      }
-    
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
