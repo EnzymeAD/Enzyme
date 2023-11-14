@@ -13,6 +13,9 @@
 // The LLVM dialect is only used for attribute names.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
+// TODO: remove this once aliasing interface is factored out.
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+
 using namespace mlir;
 using namespace mlir::dataflow;
 
@@ -700,14 +703,28 @@ void enzyme::AliasAnalysis::setToEntryState(AliasClassLattice *lattice) {
   }
 }
 
+/// Returns `true` if the alias transfer function of the operation is fully
+/// described by its memory effects.
+//
+// We could have an operation that has side effects and loads a pointer from
+// another pointer, but also has another result that aliases the operand, which
+// would need additional processing.
+//
+// TODO: turn this into an interface.
+static bool isAliasTransferFullyDescribedByMemoryEffects(Operation *op) {
+  return isa<memref::LoadOp, memref::StoreOp, LLVM::LoadOp, LLVM::StoreOp>(op);
+}
+
 void enzyme::AliasAnalysis::transfer(
     Operation *op, ArrayRef<MemoryEffects::EffectInstance> effects,
     ArrayRef<const AliasClassLattice *> operands,
     ArrayRef<AliasClassLattice *> results) {
+  bool globalRead = false;
   for (const auto &effect : effects) {
+    // If the effect is global read, record that.
     Value value = effect.getValue();
     if (!value) {
-      // TODO: we can't assume anything about entry states
+      globalRead |= isa<MemoryEffects::Read>(effect.getEffect());
       continue;
     }
 
@@ -746,18 +763,25 @@ void enzyme::AliasAnalysis::transfer(
     }
   }
 
-  // TODO(zinenko): this is sketchy. We could have an operation that has side
-  // effects and loads a pointer from another pointer, but also has another
-  // result that aliases the operand. So returning here is premature.
-  if (!effects.empty())
+  // If there was a global read effect, the operation may be reading from any
+  // pointer so we cannot say what the results are pointing to. Can safely exit
+  // here because all results are now in the fixpoint state.
+  if (globalRead) {
+    for (auto *resultLattice : results)
+      propagateIfChanged(resultLattice, resultLattice->markUnknown());
+    return;
+  }
+
+  // If it was enough to reason about effects, exit here.
+  if (!effects.empty() && isAliasTransferFullyDescribedByMemoryEffects(op))
     return;
 
-  // For operations that don't touch memory, conservatively assume all results
-  // alias all operands.
-  for (auto *resultLattice : results) {
-    for (const auto *operandLattice : operands) {
-      join(resultLattice, *operandLattice);
-    }
+  // Conservatively assume all results alias all operands.
+  for (AliasClassLattice *resultLattice : results) {
+    ChangeResult r = ChangeResult::NoChange;
+    for (const AliasClassLattice *operandLattice : operands)
+      r |= resultLattice->join(*operandLattice);
+    propagateIfChanged(resultLattice, r);
   }
 }
 
