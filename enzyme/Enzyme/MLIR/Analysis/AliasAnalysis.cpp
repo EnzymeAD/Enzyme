@@ -431,6 +431,51 @@ static bool mayWriteArg(FunctionOpInterface callee, unsigned argNo,
   return !hasReadOnlyAttr && !hasReadNoneAttr && funcMayWrite;
 }
 
+/// Returns information indicating whether the function may read or write into
+/// the memory pointed to by its arguments. When unknown, returns `nullopt`.
+static std::optional<LLVM::ModRefInfo>
+getFunctionArgModRef(FunctionOpInterface func) {
+  // First, handle some library functions with statically known behavior.
+  StringRef name = cast<SymbolOpInterface>(func.getOperation()).getName();
+  auto hardcoded = llvm::StringSwitch<std::optional<LLVM::ModRefInfo>>(name)
+                       // printf: only reads from arguments.
+                       .Case("printf", LLVM::ModRefInfo::Ref)
+                       // operator delete(void *) doesn't read from arguments.
+                       .Case("_ZdlPv", LLVM::ModRefInfo::NoModRef)
+                       .Default(std::nullopt);
+  if (hardcoded)
+    return hardcoded;
+
+  if (auto memoryAttr =
+          func->getAttrOfType<LLVM::MemoryEffectsAttr>(kLLVMMemoryAttrName))
+    return memoryAttr.getArgMem();
+  return std::nullopt;
+}
+
+/// Returns information indicating whether the function may read or write into
+/// the memory other than that pointed to by its arguments, though still
+/// accessible from (any) calling context. When unknown, returns `nullopt`.
+static std::optional<LLVM::ModRefInfo>
+getFunctionOtherModRef(FunctionOpInterface func) {
+  // First, handle some library functions with statically known behavior.
+  StringRef name = cast<SymbolOpInterface>(func.getOperation()).getName();
+  auto hardcoded =
+      llvm::StringSwitch<std::optional<LLVM::ModRefInfo>>(name)
+          // printf: doesn't access other (technically, stdout is pointer-like,
+          // but we cannot flow information through it since it is write-only.
+          .Case("printf", LLVM::ModRefInfo::NoModRef)
+          // operator delete(void *) doesn't access other.
+          .Case("_ZdlPv", LLVM::ModRefInfo::NoModRef)
+          .Default(std::nullopt);
+  if (hardcoded)
+    return hardcoded;
+
+  if (auto memoryAttr =
+          func->getAttrOfType<LLVM::MemoryEffectsAttr>(kLLVMMemoryAttrName))
+    return memoryAttr.getOther();
+  return std::nullopt;
+}
+
 void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
     CallOpInterface call, CallControlFlowAction action,
     const PointsToSets &before, PointsToSets *after) {
@@ -472,13 +517,10 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
     //     into pointers that are non-arguments.
     if (auto callee = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
             call, symbol.getLeafReference())) {
-      auto memoryAttr =
-          callee->getAttrOfType<LLVM::MemoryEffectsAttr>(kLLVMMemoryAttrName);
-      std::optional<LLVM::ModRefInfo> argModRef =
-          memoryAttr ? std::make_optional(memoryAttr.getArgMem())
-                     : std::nullopt;
+      std::optional<LLVM::ModRefInfo> argModRef = getFunctionArgModRef(callee);
       std::optional<LLVM::ModRefInfo> otherModRef =
-          memoryAttr ? std::make_optional(memoryAttr.getOther()) : std::nullopt;
+          getFunctionOtherModRef(callee);
+
       SmallVector<int> pointerLikeOperands;
       for (auto &&[i, operand] : llvm::enumerate(call.getArgOperands())) {
         if (isPointerLike(operand.getType()))

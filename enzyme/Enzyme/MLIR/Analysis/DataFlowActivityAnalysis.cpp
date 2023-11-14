@@ -261,7 +261,6 @@ public:
     return ChangeResult::Change;
   }
 
-  // TODO(zinenko): print other state
   void print(raw_ostream &os) const override {
     if (activityStates.empty()) {
       os << "<memory activity state was empty>"
@@ -754,6 +753,20 @@ void traverseCallGraph(FunctionOpInterface root,
   }
 }
 
+static const enzyme::AliasClassSet &
+getDefaultPointsTo(const enzyme::PointsToSets &pointsToSets) {
+  // Get the default points-to alias class set, which is where the
+  // "unknown" and any other unlisted class set points to.
+  const enzyme::AliasClassSet &defaultPointsTo =
+      pointsToSets.getPointsTo(nullptr);
+  // Unknown class can point to unknown or nothing, unless further
+  // refined.
+  assert((defaultPointsTo.isUnknown() ||
+          defaultPointsTo.getAliasClasses().empty()) &&
+         "new case introduced for AliasClassSet?");
+  return defaultPointsTo;
+}
+
 void printActivityAnalysisResults(const DataFlowSolver &solver,
                                   FunctionOpInterface callee,
                                   const SmallPtrSet<Operation *, 2> &returnOps,
@@ -775,19 +788,33 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
       auto *bma = solver.lookupState<BackwardMemoryActivity>(
           &callee.getFunctionBody().front().front());
 
-      auto *pointsToSets =
+      const enzyme::PointsToSets *pointsToSets =
           solver.lookupState<enzyme::PointsToSets>(*returnOps.begin());
       auto *aliasClassLattice = solver.lookupState<AliasClassLattice>(value);
       // Traverse the points-to sets in a simple BFS
       std::deque<DistinctAttr> frontier;
       DenseSet<DistinctAttr> visited;
-      // TODO(zinenko): FIXME, handle unknown...
-      if (!aliasClassLattice->isUnknown()) {
+      auto scheduleVisit = [&](auto range) {
+        for (DistinctAttr neighbor : range) {
+          if (!visited.contains(neighbor)) {
+            visited.insert(neighbor);
+            frontier.push_back(neighbor);
+          }
+        }
+      };
+
+      if (aliasClassLattice->isUnknown()) {
+        // If this pointer is in unknown alias class, it may point to active
+        // data if the unknown alias class is known to point to something and
+        // may not point to active data if the unknown alias class is known not
+        // to point to anything.
+        auto &defaultPointsTo = getDefaultPointsTo(*pointsToSets);
+        return !defaultPointsTo.isUnknown() &&
+               defaultPointsTo.getAliasClasses().empty();
+      } else {
         const DenseSet<DistinctAttr> &aliasClasses =
             aliasClassLattice->getAliasClasses();
-        frontier.insert(frontier.end(), aliasClasses.begin(),
-                        aliasClasses.end());
-        visited.insert(aliasClasses.begin(), aliasClasses.end());
+        scheduleVisit(aliasClasses);
       }
       while (!frontier.empty()) {
         DistinctAttr aliasClass = frontier.front();
@@ -801,18 +828,19 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
 
         // Or if it points to a pointer that points to active data.
         if (pointsToSets->getPointsTo(aliasClass).isUnknown()) {
-          // TODO(zinenko): FIXME handle unknown. Conservative assumption here
-          // is to assume the value is active (or unknown if we can return
-          // that). Is there a less conservative option?
+          // If a pointer points to an unknown alias set, query the default
+          // points-to alias set (which also applies to the unknown alias set).
+          auto &defaultPointsTo = getDefaultPointsTo(*pointsToSets);
+          // If it is in turn unknown, conservatively assume the pointer may be
+          // pointing to some active data.
+          if (defaultPointsTo.isUnknown())
+            return false;
+          // Otherwise look at classes pointed to by unknown (which can only be
+          // an empty set as of time of writing).
+          scheduleVisit(defaultPointsTo.getAliasClasses());
           continue;
         }
-        for (DistinctAttr neighbor :
-             pointsToSets->getPointsTo(aliasClass).getAliasClasses()) {
-          if (!visited.contains(neighbor)) {
-            visited.insert(neighbor);
-            frontier.push_back(neighbor);
-          }
-        }
+        scheduleVisit(pointsToSets->getPointsTo(aliasClass).getAliasClasses());
       }
       // Otherwise, it's constant
       return true;
