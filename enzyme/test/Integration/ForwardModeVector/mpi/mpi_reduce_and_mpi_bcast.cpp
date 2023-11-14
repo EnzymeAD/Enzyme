@@ -20,8 +20,6 @@ void twoNorm(double *x, double *norm, int n, int rank, int size){
     //
     // Send partial sums to process 0, then compute the square root, then zeros out the partial sums on other processes
     //
-    MPI_Status  status[1];
-    MPI_Request request[1];
 
     double tmp;
     // Using MPI_Reduce to reduce the partial sums into process 0, and take the square root
@@ -32,8 +30,6 @@ void twoNorm(double *x, double *norm, int n, int rank, int size){
     // Let's broadcast this norm from process 0 to all the other processes:
     // Note that this will make d_Norm equal on all processes, instead of zero everywhere but process 0
     MPI_Bcast(norm, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-
-    norm[0] = sqrt(norm[0]);
 }
 
 int dtwoNorm_forward(double *x, double **d_x, double *norm, double **d_norm, int n, int rank, int size){

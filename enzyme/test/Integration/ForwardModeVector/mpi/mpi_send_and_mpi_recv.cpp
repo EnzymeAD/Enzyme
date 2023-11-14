@@ -24,7 +24,6 @@ void twoNorm(double *x, double *norm, int n, int rank, int size){
     // Send partial sums to process 0, then compute the square root, then zeros out the partial sums on other processes
     //
     MPI_Status  status[1];
-    MPI_Request request[1];
 
     double tmp;
     if (rank == 0) {
