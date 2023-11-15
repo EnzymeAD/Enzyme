@@ -474,6 +474,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
           if (EnzymePrintDiffUse)
             llvm::errs() << " Need: shadow(" << to_string(qtype) << ") of "
                          << *val << " in reverse as shadow MPI " << *CI << "\n";
+          return true;
         }
       }
 
