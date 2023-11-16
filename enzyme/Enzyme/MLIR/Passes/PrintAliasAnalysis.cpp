@@ -22,7 +22,6 @@
 using namespace mlir;
 
 namespace {
-using llvm::errs;
 
 struct PrintAliasAnalysisPass
     : public enzyme::PrintAliasAnalysisPassBase<PrintAliasAnalysisPass> {
@@ -38,6 +37,7 @@ struct PrintAliasAnalysisPass
     if (failed(solver.initializeAndRun(getOperation()))) {
       return signalPassFailure();
     }
+    raw_ostream &os = llvm::outs();
 
     SmallVector<std::pair<Attribute, Value>> taggedPointers;
     getOperation()->walk([&](FunctionOpInterface funcOp) {
@@ -60,7 +60,7 @@ struct PrintAliasAnalysisPass
     for (const auto &[tag, value] : taggedPointers) {
       const auto *state = solver.lookupState<enzyme::AliasClassLattice>(value);
       if (state) {
-        errs() << "tag " << tag << " " << *state << "\n";
+        os << "tag " << tag << " " << *state << "\n";
       }
     }
 
@@ -78,11 +78,11 @@ struct PrintAliasAnalysisPass
         if (!(lhs && rhs))
           continue;
 
-        errs() << tagA << " and " << tagB << ": " << lhs->alias(*rhs) << "\n";
+        os << tagA << " and " << tagB << ": " << lhs->alias(*rhs) << "\n";
       }
     }
 
-    getOperation()->walk([&solver](Operation *op) {
+    getOperation()->walk([&solver, &os](Operation *op) {
       if (auto funcOp = dyn_cast<FunctionOpInterface>(op)) {
         for (auto arg : funcOp.getArguments()) {
           auto *state = solver.lookupState<enzyme::AliasClassLattice>(arg);
@@ -93,11 +93,11 @@ struct PrintAliasAnalysisPass
         }
       } else if (op->hasTrait<OpTrait::ReturnLike>() &&
                  isa<FunctionOpInterface>(op->getParentOp())) {
-        errs() << "points-to-pointer sets for op @" << op->getLoc() << ":\n";
+        os << "points-to-pointer sets for op @" << op->getLoc() << ":\n";
         if (auto *state = solver.lookupState<enzyme::PointsToSets>(op))
-          errs() << *state << "\n";
+          os << *state << "\n";
         else
-          errs() << "NOT computed\n";
+          os << "NOT computed\n";
       }
       if (op->hasAttr("tag")) {
         for (OpResult result : op->getResults()) {
