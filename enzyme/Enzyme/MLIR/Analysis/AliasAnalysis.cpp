@@ -73,21 +73,24 @@ void enzyme::PointsToPointerAnalysis::visitOperation(Operation *op,
     if (!value)
       return;
 
-    if (isa<MemoryEffects::Write>(effect.getEffect())) {
-      if (auto stored = getStored(op)) {
-        auto *srcClasses = getOrCreateFor<AliasClassLattice>(op, *stored);
-        auto *destClasses = getOrCreateFor<AliasClassLattice>(op, value);
-        if (srcClasses->isUnknown()) {
-          errs() << "unimplemented unknown\n";
-        }
-        if (destClasses->isUnknown()) {
-          errs() << "unimplemented unknown\n";
-        }
-        for (DistinctAttr destClass : destClasses->aliasClasses) {
-          propagateIfChanged(
-              after, after->insert(destClass, srcClasses->aliasClasses));
-        }
-      }
+    if (!isa<MemoryEffects::Write>(effect.getEffect())) {
+      continue;
+    }
+    auto stored = getStored(op);
+    if (!stored)
+      continue;
+
+    auto *srcClasses = getOrCreateFor<AliasClassLattice>(op, *stored);
+    auto *destClasses = getOrCreateFor<AliasClassLattice>(op, value);
+    if (srcClasses->isUnknown()) {
+      errs() << "unimplemented unknown\n";
+    }
+    if (destClasses->isUnknown()) {
+      errs() << "unimplemented unknown\n";
+    }
+    for (DistinctAttr destClass : destClasses->aliasClasses) {
+      propagateIfChanged(after,
+                         after->insert(destClass, srcClasses->aliasClasses));
     }
   }
 }
@@ -96,20 +99,22 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
     CallOpInterface call, CallControlFlowAction action,
     const PointsToSets &before, PointsToSets *after) {
   join(after, before);
-  if (action == CallControlFlowAction::ExternalCallee) {
-    auto symbol = cast<SymbolRefAttr>(call.getCallableForCallee());
-    if (symbol.getLeafReference().getValue() == "posix_memalign") {
-      // memalign deals with nested pointers and thus must be handled here
-      // memalign points to a value
-      OperandRange arguments = call.getArgOperands();
-      auto *memPtr = getOrCreateFor<AliasClassLattice>(call, arguments[0]);
-      for (DistinctAttr memPtrClass : memPtr->aliasClasses) {
-        auto debugLabel = StringAttr::get(call.getContext(), "memalign");
-        propagateIfChanged(
-            after, after->insert(memPtrClass,
-                                 {AliasClassLattice::getFresh(debugLabel)}));
-      }
-    }
+  if (action != CallControlFlowAction::ExternalCallee)
+    return;
+
+  auto symbol = cast<SymbolRefAttr>(call.getCallableForCallee());
+  if (symbol.getLeafReference().getValue() != "posix_memalign")
+    return;
+
+  // memalign deals with nested pointers and thus must be handled here
+  // memalign points to a value
+  OperandRange arguments = call.getArgOperands();
+  auto *memPtr = getOrCreateFor<AliasClassLattice>(call, arguments[0]);
+  for (DistinctAttr memPtrClass : memPtr->aliasClasses) {
+    auto debugLabel = StringAttr::get(call.getContext(), "memalign");
+    propagateIfChanged(
+        after,
+        after->insert(memPtrClass, {AliasClassLattice::getFresh(debugLabel)}));
   }
 }
 
@@ -216,23 +221,24 @@ ChangeResult enzyme::AliasClassLattice::reset() {
 //===----------------------------------------------------------------------===//
 
 void enzyme::AliasAnalysis::setToEntryState(AliasClassLattice *lattice) {
-  if (auto arg = dyn_cast<BlockArgument>(lattice->getPoint())) {
-    if (auto funcOp =
-            dyn_cast<FunctionOpInterface>(arg.getOwner()->getParentOp())) {
-      if (funcOp.getArgAttr(arg.getArgNumber(),
-                            LLVM::LLVMDialect::getNoAliasAttrName())) {
-        Attribute debugLabel =
-            funcOp.getArgAttr(arg.getArgNumber(), "enzyme.tag");
-        propagateIfChanged(lattice, lattice->markFresh(debugLabel));
-      } else {
-        // TODO: Not safe in general, integers can be a result of ptrtoint. We
-        // need a type analysis here I guess?
-        if (isa<LLVM::LLVMPointerType, MemRefType>(arg.getType()))
-          propagateIfChanged(lattice, lattice->insert({entryClass}));
-      }
-    }
-  } else {
+  auto arg = dyn_cast<BlockArgument>(lattice->getPoint());
+  if (!arg) {
     propagateIfChanged(lattice, lattice->reset());
+    return;
+  }
+
+  auto funcOp = dyn_cast<FunctionOpInterface>(
+      arg.getOwner()->getParentOp()) if (!funcOp) return;
+
+  if (funcOp.getArgAttr(arg.getArgNumber(),
+                        LLVM::LLVMDialect::getNoAliasAttrName())) {
+    Attribute debugLabel = funcOp.getArgAttr(arg.getArgNumber(), "enzyme.tag");
+    propagateIfChanged(lattice, lattice->markFresh(debugLabel));
+  } else {
+    // TODO: Not safe in general, integers can be a result of ptrtoint. We
+    // need a type analysis here I guess?
+    if (isa<LLVM::LLVMPointerType, MemRefType>(arg.getType()))
+      propagateIfChanged(lattice, lattice->insert({entryClass}));
   }
 }
 
@@ -297,14 +303,17 @@ void enzyme::AliasAnalysis::visitOperation(
 void getEffectsForExternalCall(
     CallOpInterface call,
     SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
-  if (auto symbol = dyn_cast<SymbolRefAttr>(call.getCallableForCallee())) {
-    StringRef callableName = symbol.getLeafReference().getValue();
-    if (callableName == "malloc" || callableName == "_Znwm") {
-      assert(call->getNumResults() == 1);
-      effects.push_back(MemoryEffects::EffectInstance(
-          MemoryEffects::Allocate::get(), call->getResult(0)));
-    }
-  }
+  auto symbol = dyn_cast<SymbolRefAttr>(call.getCallableForCallee());
+  if (!symbol)
+    return;
+
+  StringRef callableName = symbol.getLeafReference().getValue();
+  if (callableName != "malloc" && callableName != "_Znwm")
+    return;
+
+  assert(call->getNumResults() == 1);
+  effects.push_back(MemoryEffects::EffectInstance(
+      MemoryEffects::Allocate::get(), call->getResult(0)));
 }
 
 void enzyme::AliasAnalysis::visitExternalCall(
