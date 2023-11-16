@@ -2800,6 +2800,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     unsigned i = 0;
     for (auto v : gutils->getTapeValues()) {
       if (!isa<UndefValue>(v)) {
+        if (!isa<Instruction>(VMap[v])) {
+          llvm::errs() << " non constant for vmap[v=" << *v
+                       << " ]= " << *VMap[v] << "\n";
+        }
         auto inst = cast<Instruction>(VMap[v]);
         IRBuilder<> ib(inst->getNextNode());
         if (isa<PHINode>(inst))
