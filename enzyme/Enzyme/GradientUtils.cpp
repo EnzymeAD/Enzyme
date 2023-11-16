@@ -4320,9 +4320,7 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
       if (!orig->getType()->isFPOrFPVectorTy() &&
           TR.query(orig).Inner0().isPossiblePointer()) {
         if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-                QueryType::Shadow>(this, orig,
-                                   DerivativeMode::ReverseModePrimal,
-                                   notForAnalysis)) {
+                QueryType::Shadow>(this, orig, mode, notForAnalysis)) {
           subretType = DIFFE_TYPE::DUP_ARG;
           shadowReturnUsed = true;
         } else
@@ -9249,17 +9247,22 @@ bool GradientUtils::needsCacheWholeAllocation(
           continue;
 
         if (auto F = CI->getCalledFunction())
-          if (F->getCallingConv() == CI->getCallingConv()) {
+          if (F->getCallingConv() == CI->getCallingConv() && !F->empty()) {
             bool onlyReturnUses = true;
             bool hasReturnUse = true;
 
-            for (auto u : F->getArg(idx)->users()) {
-              if (isa<ReturnInst>(u)) {
-                hasReturnUse = true;
+            if (CI->getFunctionType() != F->getFunctionType() ||
+                idx >= F->getFunctionType()->getNumParams()) {
+              onlyReturnUses = false;
+            } else {
+              for (auto u : F->getArg(idx)->users()) {
+                if (isa<ReturnInst>(u)) {
+                  hasReturnUse = true;
+                  continue;
+                }
+                onlyReturnUses = false;
                 continue;
               }
-              onlyReturnUses = false;
-              continue;
             }
             // The arg itself has no use in the function
             if (onlyReturnUses && !hasReturnUse)

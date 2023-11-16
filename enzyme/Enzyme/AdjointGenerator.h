@@ -609,9 +609,12 @@ public:
           if (pair.first == &I)
             primalNeededInReverse = true;
         }
+      auto cacheMode = (Mode == DerivativeMode::ReverseModePrimal)
+                           ? DerivativeMode::ReverseModeGradient
+                           : Mode;
       primalNeededInReverse |=
           DifferentialUseAnalysis::is_value_needed_in_reverse<
-              QueryType::Primal>(gutils, &I, Mode, Seen, oldUnreachable);
+              QueryType::Primal>(gutils, &I, cacheMode, Seen, oldUnreachable);
       if (primalNeededInReverse) {
         inst = gutils->cacheForReverse(BuilderZ, newi,
                                        getIndex(&I, CacheType::Self));
