@@ -91,6 +91,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
   if (auto SI = dyn_cast<StoreInst>(user)) {
     if (!shadow) {
+
       // We don't need any of the input operands to compute the adjoint of a
       // store instance The one exception to this is stores to the loop bounds.
       if (SI->getValueOperand() == val) {
@@ -114,35 +115,49 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         }
       }
     } else {
-      if (mode == DerivativeMode::ReverseModeGradient ||
-          mode == DerivativeMode::ForwardModeSplit) {
+      bool backwardsShadow = false;
+      bool forwardsShadow = true;
+      for (auto pair : gutils->backwardsOnlyShadows) {
+        if (pair.second.stores.count(SI) &&
+            !gutils->isConstantValue(pair.first)) {
+          backwardsShadow = true;
+          forwardsShadow = pair.second.primalInitialize;
+        }
+      }
 
-        // Preserve any non-floating point values that are stored in an active
-        // backwards creation shadow.
+      // Preserve any non-floating point values that are stored in an active
+      // backwards creation shadow.
 
-        bool rematerialized = false;
-        for (auto pair : gutils->backwardsOnlyShadows)
-          if (pair.second.stores.count(SI) &&
-              !gutils->isConstantValue(pair.first)) {
-            rematerialized = true;
-            break;
-          }
+      if (SI->getValueOperand() == val) {
+        // storing an active pointer into a location
+        // doesn't require the shadow pointer for the
+        // reverse pass
+        // Unless the store is into a backwards store, which would
+        // would then be performed in the reverse if the stored value was
+        // a possible pointer.
 
-        if (SI->getValueOperand() == val) {
-          // storing an active pointer into a location
-          // doesn't require the shadow pointer for the
-          // reverse pass
-          // Unless the store is into a backwards store, which would
-          // would then be performed in the reverse if the stored value was
-          // a possible pointer.
-          if (!rematerialized)
-            return false;
-        } else {
-          // Likewise, if not rematerializing in reverse pass, you
-          // don't need to keep the pointer operand for known pointers
-          if (!rematerialized &&
-              TR.query(const_cast<Value *>(SI->getValueOperand()))[{-1}] ==
-                  BaseType::Pointer)
+        if (!((mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
+              (mode == DerivativeMode::ReverseModeGradient &&
+               backwardsShadow) ||
+              (mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
+              (mode == DerivativeMode::ReverseModeCombined &&
+               (forwardsShadow || backwardsShadow)) ||
+              mode == DerivativeMode::ForwardMode))
+          return false;
+      } else {
+        // Likewise, if not rematerializing in reverse pass, you
+        // don't need to keep the pointer operand for known pointers
+
+        auto ct = TR.query(const_cast<Value *>(SI->getValueOperand()))[{-1}];
+        if (ct == BaseType::Pointer || ct == BaseType::Integer) {
+
+          if (!((mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
+                (mode == DerivativeMode::ReverseModeGradient &&
+                 backwardsShadow) ||
+                (mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
+                (mode == DerivativeMode::ReverseModeCombined &&
+                 (forwardsShadow || backwardsShadow)) ||
+                mode == DerivativeMode::ForwardMode))
             return false;
         }
       }

@@ -26,7 +26,7 @@ jobs:
       run: |
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
           sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
-          sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev
+          sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libzstd-dev
           sudo python3 -m pip install --upgrade pip lit
           if [[ '${{ matrix.llvm }}' == '13' ]]; then
             sudo sed -i 's/add_executable(llvm-omp-device-info IMPORTED)//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
