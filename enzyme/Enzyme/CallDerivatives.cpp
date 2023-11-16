@@ -2289,6 +2289,10 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
   llvm_unreachable("Unhandled MPI FUNCTION");
 }
 
+//
+// END OF HANDLE_MPI HERE
+//
+
 template <class T>
 bool AdjointGenerator<T>::handleKnownCallDerivatives(
     CallInst &call, Function *called, StringRef funcName,
