@@ -1908,12 +1908,19 @@ public:
             8;
 
       if (!gutils->isConstantValue(orig_inserted)) {
-        auto it = TR.intType(size0, orig_inserted, /*errIfFalse*/ false);
+        auto TT = TR.query(orig_inserted);
+        auto it = TT[{-1}];
+        bool Legal = true;
+        for (size_t i = 0; i < size0; ++i) {
+          bool LegalOr = true;
+          it.checkedOrIn(TT[{(int)i}], /*pointerIntSame*/ true, LegalOr);
+          Legal &= LegalOr;
+        }
         Type *flt = it.isFloat();
-        if (!it.isKnown()) {
+        if (!it.isKnown() || !Legal) {
           bool found = false;
 
-          if (looseTypeAnalysis) {
+          if (looseTypeAnalysis && !Legal) {
             if (orig_inserted->getType()->isFPOrFPVectorTy()) {
               flt = orig_inserted->getType()->getScalarType();
               found = true;
@@ -1924,15 +1931,16 @@ public:
             }
           }
           if (!found) {
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Cannot deduce type of insertvalue " << IVI
+               << " size: " << size0 << " TT: " << TT.str();
             if (CustomErrorHandler) {
-              std::string str;
-              raw_string_ostream ss(str);
-              ss << "Cannot deduce type of insertvalue " << IVI;
               CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
                                  &TR.analyzer, nullptr, wrap(&Builder2));
             } else {
               EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
-                          "failed to deduce type of insertvalue ", IVI);
+                          ss.str());
             }
           }
         }
