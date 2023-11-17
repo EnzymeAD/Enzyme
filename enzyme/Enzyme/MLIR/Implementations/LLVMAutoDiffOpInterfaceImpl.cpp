@@ -29,8 +29,11 @@ struct LoadOpInterface
                                          MGradientUtils *gutils) const {
     auto loadOp = cast<LLVM::LoadOp>(op);
     if (!gutils->isConstantValue(loadOp)) {
+      Type shadowType =
+          cast<AutoDiffTypeInterface>(loadOp.getType()).getShadowType();
       mlir::Value res = builder.create<LLVM::LoadOp>(
-          loadOp.getLoc(), gutils->invertPointerM(loadOp.getAddr(), builder));
+          loadOp.getLoc(), shadowType,
+          gutils->invertPointerM(loadOp.getAddr(), builder));
       gutils->setDiffe(loadOp, res, builder);
     }
     gutils->eraseIfUnused(op);
@@ -75,7 +78,7 @@ class PointerTypeInterface
 public:
   mlir::Value createNullValue(mlir::Type self, OpBuilder &builder,
                               Location loc) const {
-    return builder.create<LLVM::NullOp>(loc, self);
+    return builder.create<LLVM::ZeroOp>(loc, self);
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,

@@ -145,9 +145,9 @@ private:
   bool isValueInactiveFromOrigin(MTypeResults const &TR, Value val);
   /// Is the operation guaranteed to be inactive because of how its operands are
   /// produced.
-  bool
-  isOperationInactiveFromOrigin(MTypeResults const &TR, Operation *op,
-                                llvm::Optional<unsigned> resultNo = llvm::None);
+  bool isOperationInactiveFromOrigin(
+      MTypeResults const &TR, Operation *op,
+      std::optional<unsigned> resultNo = std::nullopt);
 
 public:
   enum class UseActivity {
