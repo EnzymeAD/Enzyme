@@ -177,6 +177,10 @@ const StringSet<> KnownInactiveFunctionInsts = {
     "jl_ptr_to_array_1d"};
 
 const StringSet<> KnownInactiveFunctions = {
+    "__nv_isnand",
+    "__nv_isnanf",
+    "__nv_isinfd",
+    "__nv_isinff",
     "__nv_isfinitel",
     "__nv_isfinited",
     "cublasCreate_v2",
