@@ -1613,9 +1613,11 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             }
           }
         }
-        if (funcName == "jl_array_copy" || funcName == "ijl_array_copy") {
+        if (funcName == "jl_array_copy" || funcName == "ijl_array_copy" ||
+            funcName == "jl_idtable_rehash" ||
+            funcName == "ijl_idtable_rehash") {
           // This pointer is inactive if it is either not actively stored to
-          // and not actively loaded from.
+          // and not actively loaded from and the copied input is inactive.
           if (directions & DOWN && directions & UP) {
             if (UpHypothesis->isConstantValue(TR, op->getOperand(0))) {
               auto DownHypothesis = std::shared_ptr<ActivityAnalyzer>(
@@ -1756,7 +1758,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     //   an potentially active value is stored into the memory
     //   memory loaded from the value is used in an active way
     Instruction *potentiallyActiveStore = nullptr;
-    bool potentialStore = false;
+    Instruction *potentialStore = nullptr;
     Instruction *potentiallyActiveLoad = nullptr;
 
     // Assume the value (not instruction) is itself active
@@ -2039,20 +2041,22 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                        << "\n";
         if (auto SI = dyn_cast<StoreInst>(I)) {
           bool cop = !Hypothesis->isConstantValue(TR, SI->getValueOperand());
+          bool cop2 = !Hypothesis->isConstantValue(TR, SI->getPointerOperand());
           if (EnzymePrintActivity)
-            llvm::errs() << " -- store potential activity: " << (int)cop
+            llvm::errs() << " -- store potential activity: " << (int)cop << ","
+                         << (int)cop2 << ","
                          << " - " << *SI << " of "
                          << " Val=" << *Val << "\n";
-          potentialStore = true;
-          if (cop)
+          potentialStore = I;
+          if (cop && cop2)
             potentiallyActiveStore = SI;
         } else if (auto MTI = dyn_cast<MemTransferInst>(I)) {
           bool cop = !Hypothesis->isConstantValue(TR, MTI->getArgOperand(1));
-          potentialStore = true;
+          potentialStore = I;
           if (cop)
             potentiallyActiveStore = MTI;
         } else if (isa<MemSetInst>(I)) {
-          potentialStore = true;
+          potentialStore = I;
         } else {
           // Otherwise fallback and check if the instruction is active
           // TODO: note that this can be optimized (especially for function
@@ -2062,7 +2066,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             llvm::errs() << " -- unknown store potential activity: " << (int)cop
                          << " - " << *I << " of "
                          << " Val=" << *Val << "\n";
-          potentialStore = true;
+          potentialStore = I;
           if (cop)
             potentiallyActiveStore = I;
         }
@@ -2113,11 +2117,25 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     }
 
   activeLoadAndStore:;
-    if (EnzymePrintActivity)
+    if (EnzymePrintActivity) {
       llvm::errs() << " </MEMSEARCH" << (int)directions << ">" << *Val
-                   << " potentiallyActiveLoad=" << potentiallyActiveLoad
-                   << " potentiallyActiveStore=" << potentiallyActiveStore
-                   << " potentialStore=" << potentialStore << "\n";
+                   << " potentiallyActiveLoad=";
+      if (potentiallyActiveLoad)
+        llvm::errs() << *potentiallyActiveLoad;
+      else
+        llvm::errs() << potentiallyActiveLoad;
+      llvm::errs() << " potentiallyActiveStore=";
+      if (potentiallyActiveStore)
+        llvm::errs() << *potentiallyActiveStore;
+      else
+        llvm::errs() << potentiallyActiveStore;
+      llvm::errs() << " potentialStore=";
+      if (potentiallyActiveStore)
+        llvm::errs() << *potentialStore;
+      else
+        llvm::errs() << potentialStore;
+      llvm::errs() << "\n";
+    }
     if (potentiallyActiveLoad && potentiallyActiveStore) {
       ReEvaluateValueIfInactiveInst[potentiallyActiveLoad].insert(Val);
       ReEvaluateValueIfInactiveInst[potentiallyActiveStore].insert(Val);
