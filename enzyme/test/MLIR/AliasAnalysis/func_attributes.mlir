@@ -280,3 +280,62 @@ func.func @caller(%arg0: !llvm.ptr {enzyme.tag = "argument"}) {
   call @callee(%arg0) : (!llvm.ptr) -> ()
   return
 }
+
+// -----
+
+func.func private @callee() -> (!llvm.ptr {llvm.noalias}) attributes {
+  memory = #llvm.memory_effects<other = read,
+                                argMem = readwrite,
+                                inaccessibleMem = none>
+}
+
+// CHECK: points-to-pointer sets
+// CHECK-DAG: distinct[{{.+}}]<"alloca"> points to {distinct[{{.+}}]<"func-return">}
+// CHECK-DAG: distinct[{{.+}}]<"func-return"> points to {<unknown>}
+func.func @func_return_noalias_stored() -> !llvm.ptr {
+  %0 = call @callee() {tag = "func-return"} : () -> !llvm.ptr
+  %c1 = arith.constant 1 : i64
+  %1 = llvm.alloca %c1 x !llvm.ptr {tag = "alloca"}: (i64) -> !llvm.ptr
+  llvm.store %0, %1 : !llvm.ptr, !llvm.ptr
+  return %0 : !llvm.ptr
+}
+
+// -----
+
+func.func private @callee() -> (!llvm.ptr) attributes {
+  memory = #llvm.memory_effects<other = read,
+                                argMem = readwrite,
+                                inaccessibleMem = none>
+}
+
+// CHECK: points-to-pointer sets
+// CHECK: distinct[{{.+}}]<"alloca"> points to {<unknown>}
+func.func @func_return_stored() -> !llvm.ptr {
+  %0 = call @callee() {tag = "func-return"} : () -> !llvm.ptr
+  %c1 = arith.constant 1 : i64
+  %1 = llvm.alloca %c1 x !llvm.ptr {tag = "alloca"}: (i64) -> !llvm.ptr
+  llvm.store %0, %1 : !llvm.ptr, !llvm.ptr
+  return %0 : !llvm.ptr
+}
+
+// -----
+
+
+func.func private @callee() -> (!llvm.ptr, !llvm.ptr) attributes {
+  memory = #llvm.memory_effects<other = none,
+                                argMem = readwrite,
+                                inaccessibleMem = none>
+}
+
+// CHECK: points-to-pointer sets
+// CHECK-DAG: distinct[{{.+}}]<"alloca-1"> points to {<unknown>}
+// CHECK-DAG: distinct[{{.+}}]<"alloca-2"> points to {<unknown>}
+func.func @func_return_multiple() -> !llvm.ptr {
+  %0:2 = call @callee() {tag = "func-return"} : () -> (!llvm.ptr, !llvm.ptr)
+  %c1 = arith.constant 1 : i64
+  %1 = llvm.alloca %c1 x !llvm.ptr {tag = "alloca-1"}: (i64) -> !llvm.ptr
+  llvm.store %0#0, %1 : !llvm.ptr, !llvm.ptr
+  %2 = llvm.alloca %c1 x !llvm.ptr {tag = "alloca-2"}: (i64) -> !llvm.ptr
+  llvm.store %0#0, %2 : !llvm.ptr, !llvm.ptr
+  return %0 : !llvm.ptr
+}

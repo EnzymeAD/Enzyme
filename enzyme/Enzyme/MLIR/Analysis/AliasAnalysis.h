@@ -47,8 +47,6 @@ public:
   ChangeResult insert(const DenseSet<DistinctAttr> &classes);
   ChangeResult markUnknown();
 
-  static AliasClassSet getFresh(Attribute debugLabel);
-
   /// Returns true if this set is in the canonical form, i.e. either the state
   /// is `State::Defined` or the explicit list of classes is empty, but not
   /// both.
@@ -100,7 +98,57 @@ private:
 };
 
 //===----------------------------------------------------------------------===//
-// PointsToAnalysis
+// OriginalClasses
+//===----------------------------------------------------------------------===//
+
+/// Alias classes for freshly created, e.g., allocated values. These must
+/// be used instead of allocating a fresh distinct attribute every time.
+/// Allocation may only happen when the mapping is not already present here.
+class OriginalClasses {
+public:
+  DistinctAttr getOriginalClass(Value value, StringRef debugLabel) {
+    return getOriginalClass(value,
+                            StringAttr::get(value.getContext(), debugLabel));
+  }
+  DistinctAttr getOriginalClass(Value value, Attribute referenced = nullptr) {
+    DistinctAttr &aliasClass = originalClasses[value];
+    if (!aliasClass) {
+      if (!referenced)
+        referenced = UnitAttr::get(value.getContext());
+      aliasClass = DistinctAttr::create(referenced);
+    }
+    return aliasClass;
+  }
+
+  DistinctAttr getSameOriginalClass(ValueRange values, StringRef debugLabel) {
+    if (values.empty())
+      return nullptr;
+
+    auto label = StringAttr::get(values.front().getContext(), debugLabel);
+
+    DistinctAttr common = nullptr;
+    for (Value v : values) {
+      DistinctAttr &aliasClass = originalClasses[v];
+      if (!aliasClass) {
+        if (!common)
+          common = DistinctAttr::create(label);
+        aliasClass = common;
+      } else {
+        if (!common)
+          common = aliasClass;
+        else
+          assert(aliasClass == common && "original alias class mismatch");
+      }
+    }
+    return common;
+  }
+
+private:
+  DenseMap<Value, DistinctAttr> originalClasses;
+};
+
+//===----------------------------------------------------------------------===//
+// PointsToSets
 //
 // Specifically for pointers to pointers. This tracks alias information through
 // pointers stored/loaded through memory.
@@ -133,11 +181,6 @@ public:
   ChangeResult addSetsFrom(const AliasClassSet &destClasses,
                            const AliasClassSet &srcClasses);
 
-  /// For every alias class in `dest`, record that it is pointing to the _same_
-  /// new alias set.
-  ChangeResult setPointingToFresh(const AliasClassSet &destClasses,
-                                  StringAttr debugLabel);
-
   ChangeResult setPointingToEmpty(const AliasClassSet &destClasses);
 
   /// Mark `dest` as pointing to "unknown" alias set, that is, any possible
@@ -160,6 +203,18 @@ public:
   }
 
 private:
+  /// Update all alias classes in `keysToUpdate` to additionally point to alias
+  /// classes in `values`. Handle undefined keys optimistically (ignore) and
+  /// unknown keys pessimistically (update all existing keys). `replace` is a
+  /// debugging aid that indicates whether the update is intended to replace the
+  /// pre-existing state, it has no effect in NoAsserts build. Since we don't
+  /// want to forcefully reset pointsTo value as that is not guaranteed to make
+  /// monotonous progress on the lattice and therefore convergence to fixpoint,
+  /// replacement is only expected for a previously "unknown" value (absent from
+  /// the mapping) or for a value with itself. Replacement is therefore handled
+  /// as a regular update, i.e. join, with additional assertions. Note that
+  /// currently an update is possible to _any_ value that is >= the current one
+  /// in the lattice, not only the replacements described above.
   ChangeResult update(const AliasClassSet &keysToUpdate,
                       const AliasClassSet &values, bool replace);
 
@@ -182,10 +237,15 @@ private:
   DenseMap<DistinctAttr, AliasClassSet> pointsTo;
 };
 
+//===----------------------------------------------------------------------===//
+// PointsToPointerAnalysis
+//===----------------------------------------------------------------------===//
+
 class PointsToPointerAnalysis
     : public dataflow::DenseForwardDataFlowAnalysis<PointsToSets> {
 public:
-  using DenseForwardDataFlowAnalysis::DenseForwardDataFlowAnalysis;
+  PointsToPointerAnalysis(DataFlowSolver &solver)
+      : DenseForwardDataFlowAnalysis(solver) {}
 
   void setToEntryState(PointsToSets *lattice) override;
 
@@ -200,6 +260,13 @@ public:
   void processCapturingStore(ProgramPoint dependent, PointsToSets *after,
                              Value capturedValue, Value destinationAddress,
                              bool isMustStore = false);
+
+private:
+  /// Alias classes originally assigned to known-distinct values, e.g., fresh
+  /// allocations, by this analysis. This does NOT necessarily need to be shared
+  /// with the other analysis as they may assign different classes, e.g., for
+  /// results of the same call.
+  OriginalClasses originalClasses;
 };
 
 //===----------------------------------------------------------------------===//
@@ -220,10 +287,9 @@ public:
     return aliasClasses.insert(classes);
   }
 
-  static AliasClassLattice getFresh(Value point,
-                                    Attribute debugLabel = nullptr);
-
-  // ChangeResult markFresh(/*optional=*/Attribute debugLabel);
+  static AliasClassLattice single(Value point, DistinctAttr value) {
+    return AliasClassLattice(point, AliasClassSet(value));
+  }
 
   ChangeResult markUnknown() { return aliasClasses.markUnknown(); }
 
@@ -279,6 +345,12 @@ private:
 
   /// A special alias class to denote unannotated pointer arguments.
   const DistinctAttr entryClass;
+
+  /// Alias classes originally assigned to known-distinct values, e.g., fresh
+  /// allocations, by this analysis. This does NOT necessarily need to be shared
+  /// with the other analysis as they may assign different classes, e.g., for
+  /// results of the same call.
+  OriginalClasses originalClasses;
 };
 
 } // namespace enzyme

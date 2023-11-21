@@ -54,17 +54,6 @@ enzyme::AliasClassSet::insert(const DenseSet<DistinctAttr> &classes) {
   return updateStateToDefined() | result;
 }
 
-static DistinctAttr getFreshAttr(Attribute debugLabel) {
-  return DistinctAttr::create(debugLabel);
-}
-
-enzyme::AliasClassSet enzyme::AliasClassSet::getFresh(Attribute debugLabel) {
-  assert(debugLabel && "expected attribute");
-  AliasClassSet set(State::Defined);
-  set.aliasClasses.insert(getFreshAttr(debugLabel));
-  return set;
-}
-
 ChangeResult enzyme::AliasClassSet::markUnknown() {
   if (isUnknown())
     return ChangeResult::NoChange;
@@ -108,7 +97,7 @@ static ChangeResult mergeSets(DenseSet<T> &dest, const DenseSet<T> &src) {
 
 void enzyme::PointsToSets::print(raw_ostream &os) const {
   if (pointsTo.empty()) {
-    llvm::errs() << "<empty>\n";
+    os << "<empty>\n";
     return;
   }
   for (const auto &[srcClass, destClasses] : pointsTo) {
@@ -183,63 +172,35 @@ ChangeResult enzyme::PointsToSets::update(const AliasClassSet &keysToUpdate,
   if (keysToUpdate.isUndefined())
     return ChangeResult::NoChange;
 
-  // Otherwise just set the result.
-  // TODO(zinenko): this is still needed because a _new_ distinct attribute is
-  // created every time, so we must override here. This shouldn't be necessary
-  // after fixing district attribute generation to be the same for the same
-  // value/operation.
-  if (replace) {
-    return keysToUpdate.foreachClass(
-        [&](DistinctAttr dest, AliasClassSet::State state) {
-          assert(state == AliasClassSet::State::Defined &&
-                 "unknown must have been handled above");
-
-          auto it = pointsTo.find(dest);
-          if (it != pointsTo.end() && it->getSecond() == values)
-            return ChangeResult::NoChange;
-          if (it == pointsTo.end())
-            pointsTo.try_emplace(dest, values);
-          else
-            it->second = values;
-
-          return ChangeResult::Change;
-        });
-  }
-
   return keysToUpdate.foreachClass(
       [&](DistinctAttr dest, AliasClassSet::State state) {
         assert(state == AliasClassSet::State::Defined &&
                "unknown must have been handled above");
-        // TODO(zinenko): enable this after removing the code above.
-        // #ifndef NDEBUG
-        //         if (replace) {
-        //           auto it = pointsTo.find(dest);
-        //           if (it != pointsTo.end()) {
-        //             // Check that we are updating to a state that's >= in the
-        //             lattice. AliasClassSet valuesCopy(values);
-        //             valuesCopy.join(it->getSecond());
-        //             values.print(llvm::errs());
-        //             llvm::errs() << "\n";
-        //             it->getSecond().print(llvm::errs());
-        //             llvm::errs() << "\n";
-        //             valuesCopy.print(llvm::errs());
-        //             llvm::errs() << "\n\n";
-        //             assert(valuesCopy == values &&
-        //                    "attempting to replace a pointsTo entry with an
-        //                    alias class " "set that is ordered _before_ the
-        //                    existing one -> " "non-monotonous update ");
-        //           }
-        //         }
-        // #endif // NDEBUG
+#ifndef NDEBUG
+        if (replace) {
+          auto it = pointsTo.find(dest);
+          if (it != pointsTo.end()) {
+            // Check that we are updating to a state that's >= in the
+            // lattice.
+            // TODO: consider a stricter check that we only replace unknown
+            // values or a value with itself, currently blocked by memalign.
+            AliasClassSet valuesCopy(values);
+            valuesCopy.join(it->getSecond());
+            values.print(llvm::errs());
+            llvm::errs() << "\n";
+            it->getSecond().print(llvm::errs());
+            llvm::errs() << "\n";
+            valuesCopy.print(llvm::errs());
+            llvm::errs() << "\n";
+            assert(valuesCopy == values &&
+                   "attempting to replace a pointsTo entry with an alias class "
+                   "set that is ordered _before_ the existing one -> "
+                   "non-monotonous update ");
+          }
+        }
+#endif // NDEBUG
         return joinPotentiallyMissing(dest, values);
       });
-}
-
-ChangeResult
-enzyme::PointsToSets::setPointingToFresh(const AliasClassSet &destClasses,
-                                         StringAttr debugLabel) {
-  return update(destClasses, getFreshAttr(debugLabel),
-                /*replace=*/true);
 }
 
 ChangeResult
@@ -531,17 +492,15 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
       // memalign points to a value
       OperandRange arguments = call.getArgOperands();
       auto *memPtr = getOrCreateFor<AliasClassLattice>(call, arguments[0]);
-      // TODO(zinenko): update to using callback.
-      if (memPtr->isUndefined() || memPtr->isUnknown())
-        return;
-      for (DistinctAttr memPtrClass : memPtr->getAliasClasses()) {
-        // Note that this is a "must write" kind of situation, so we can
-        // directly set the classes pointed to, rather than inserting them.
-        auto debugLabel = StringAttr::get(call.getContext(), "memalign");
-        propagateIfChanged(after,
-                           after->setPointingToFresh(memPtrClass, debugLabel));
-      }
-      return;
+
+      // Note that this is a "must write" kind of situation, so we can
+      // directly set the classes pointed to, rather than inserting them.
+      auto single = AliasClassLattice::single(
+          arguments[0],
+          originalClasses.getOriginalClass(arguments[0], "memalign"));
+      return propagateIfChanged(
+          after, after->setPointingToClasses(memPtr->getAliasClassesObject(),
+                                             single.getAliasClassesObject()));
     }
 
     // Analyze the callee generically.
@@ -667,8 +626,6 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
           continue;
         }
 
-        AliasClassSet commonReturnScope = AliasClassSet::getFresh(
-            StringAttr::get(call->getContext(), "function-return-common"));
         for (int operandNo : pointerLikeOperands) {
           const auto *srcClasses = getOrCreateFor<AliasClassLattice>(
               call, call.getArgOperands()[operandNo]);
@@ -681,12 +638,10 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
               (operandNo < numArguments &&
                !!callee.getArgAttr(operandNo,
                                    LLVM::LLVMDialect::getNoCaptureAttrName()));
-          if (isNoCapture) {
-            changed |= after->insert(destClasses->getAliasClassesObject(),
-                                     srcClasses->getAliasClassesObject());
-          }
+          if (isNoCapture)
+            continue;
           changed |= after->insert(destClasses->getAliasClassesObject(),
-                                   commonReturnScope);
+                                   srcClasses->getAliasClassesObject());
         }
       }
       return propagateIfChanged(after, changed);
@@ -763,13 +718,6 @@ enzyme::AliasClassLattice::join(const AbstractSparseLattice &other) {
   return aliasClasses.join(otherAliasClass->aliasClasses);
 }
 
-enzyme::AliasClassLattice
-enzyme::AliasClassLattice::getFresh(Value point, Attribute debugLabel) {
-  if (!debugLabel)
-    debugLabel = UnitAttr::get(point.getContext());
-  return AliasClassLattice(point, AliasClassSet::getFresh(debugLabel));
-}
-
 //===----------------------------------------------------------------------===//
 // AliasAnalysis
 //===----------------------------------------------------------------------===//
@@ -788,9 +736,11 @@ void enzyme::AliasAnalysis::setToEntryState(AliasClassLattice *lattice) {
         // the undefined state (bottom).
         assert(lattice->isUndefined() && "resetting lattice point");
 
+        DistinctAttr noaliasClass =
+            originalClasses.getOriginalClass(lattice->getPoint(), debugLabel);
         return propagateIfChanged(lattice,
-                                  lattice->join(AliasClassLattice::getFresh(
-                                      lattice->getPoint(), debugLabel)));
+                                  lattice->join(AliasClassLattice::single(
+                                      lattice->getPoint(), noaliasClass)));
       }
       // TODO: Not safe in general, integers can be a result of ptrtoint. We
       // need a type analysis here I guess?
@@ -834,13 +784,9 @@ void enzyme::AliasAnalysis::transfer(
       for (AliasClassLattice *result : results) {
         if (result->getPoint() == value) {
           Attribute debugLabel = op->getAttr("tag");
-          // TODO(zinenko): here and other cases of `markFresh` are dangerous,
-          // if these are executed repeatedly, they will be associated with a
-          // _new_ fresh distinct attribute every time. This has always been
-          // the case with `markFresh`, we need to store a unique mapping
-          // somewhere.
-          auto fresh =
-              AliasClassLattice::getFresh(result->getPoint(), debugLabel);
+          auto fresh = AliasClassLattice::single(
+              result->getPoint(),
+              originalClasses.getOriginalClass(result->getPoint(), debugLabel));
           propagateIfChanged(result, result->join(fresh));
 
           // The pointer to freshly allocated memory is known not to point to
@@ -994,9 +940,15 @@ void enzyme::AliasAnalysis::visitExternalCall(
     if (callee.getResultAttr(result.getResultNumber(),
                              LLVM::LLVMDialect::getNoAliasAttrName())) {
       Attribute debugLabel = call->getAttrOfType<StringAttr>("tag");
-      propagateIfChanged(resultLattice,
-                         resultLattice->join(AliasClassLattice::getFresh(
-                             resultLattice->getPoint(), debugLabel)));
+      auto individualAlloc =
+          AliasClassLattice::single(resultLattice->getPoint(),
+                                    originalClasses.getOriginalClass(
+                                        resultLattice->getPoint(), debugLabel));
+      propagateIfChanged(resultLattice, resultLattice->join(individualAlloc));
+      // TODO(zinenko): if the function is known not to read other (or
+      // inaccessible mem), its results may only alias what we know it can read,
+      // e.g. other arguments (unless they are marked noalias) or anything
+      // stored in those arguments.
     } else {
       propagateIfChanged(resultLattice, resultLattice->markUnknown());
     }
