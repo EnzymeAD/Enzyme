@@ -29,6 +29,7 @@
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
+#include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 namespace mlir {
@@ -38,34 +39,60 @@ class CallableOpInterface;
 namespace enzyme {
 
 /// A set of alias class identifiers to be treated as a single union. May be
-/// marked as "unknown", which is a conservative pessimistic state.
-struct AliasClassSet {
-  AliasClassSet() = default;
-  AliasClassSet(DistinctAttr single) { aliasClasses.insert(single); }
+/// marked as "unknown", which is a conservative pessimistic state, or as
+/// "undefined", which is a "not-yet-analyzed" initial state. Undefined state is
+/// different from an empty alias set.
+class AliasClassSet {
+public:
+  enum class State {
+    Undefined, ///< Has not been analyzed yet (lattice bottom).
+    Defined,   ///< Has specific alias classes.
+    Unknown    ///< Analyzed and may point to any class (lattice top).
+  };
 
+  AliasClassSet() : state(State::Undefined) {}
+
+  AliasClassSet(DistinctAttr single) : state(State::Defined) {
+    aliasClasses.insert(single);
+  }
+
+  // TODO(zinenko): deprecate this and use a visitor instead.
   DenseSet<DistinctAttr> &getAliasClasses() {
-    assert(!unknown);
+    assert(state == State::Defined);
     return aliasClasses;
   }
   const DenseSet<DistinctAttr> &getAliasClasses() const {
     return const_cast<AliasClassSet *>(this)->getAliasClasses();
   }
 
-  bool isUnknown() const { return unknown; }
+  bool isUnknown() const { return state == State::Unknown; }
+  bool isUndefined() const { return state == State::Undefined; }
 
   ChangeResult join(const AliasClassSet &other);
   ChangeResult insert(const DenseSet<DistinctAttr> &classes);
   ChangeResult markUnknown();
-  ChangeResult markFresh(Attribute debugLabel);
-  ChangeResult reset();
 
-  /// Returns true if this set is in the canonical form, i.e. has either the
-  /// unknown bit or the explicit list of classes, but not both.
+  static AliasClassSet getFresh(Attribute debugLabel);
+
+  /// Returns true if this set is in the canonical form, i.e. either the state
+  /// is `State::Defined` or the explicit list of classes is empty, but not
+  /// both.
   bool isCanonical() const;
 
-  /// Returns an empty instance of AliasClassSet. The instance is *not* a
-  /// classical singleton, there are other ways of obtaining it.
-  static const AliasClassSet &getEmpty() { return emptySet; }
+  /// Returns an instance of AliasClassSet known not to alias with anything.
+  /// This is different from "undefined" and "unknown". The instance is *not* a
+  /// classical singleton.
+  static const AliasClassSet &getEmpty() {
+    static const AliasClassSet empty(State::Defined);
+    return empty;
+  }
+
+  /// Returns an instance of AliasClassSet in "undefined" state, i.e. without a
+  /// set of alias classes. This is different from empty alias set, which
+  /// indicates that the value is known not to alias with any alias class. The
+  /// instance is *not* a classical singleton, there are other ways of obtaining
+  /// it.
+  static const AliasClassSet &getUndefined() { return undefinedSet; }
 
   /// Returns an instance of AliasClassSet for the "unknown" class. The instance
   /// is *not* a classical singleton, there are other ways of obtaining an
@@ -74,17 +101,27 @@ struct AliasClassSet {
 
   bool operator==(const AliasClassSet &other) const;
 
+  void print(llvm::raw_ostream &os) const;
+
   ChangeResult
-  foreachClass(function_ref<ChangeResult(DistinctAttr)> callback) const;
+  foreachClass(function_ref<ChangeResult(DistinctAttr, State)> callback) const;
 
 private:
-  explicit AliasClassSet(bool unknown) : unknown(unknown) {}
+  explicit AliasClassSet(State state) : state(state) {}
+
+  ChangeResult updateStateToDefined() {
+    assert(state != State::Unknown && "cannot go back from unknown state");
+    ChangeResult result = state == State::Undefined ? ChangeResult::Change
+                                                    : ChangeResult::NoChange;
+    state = State::Defined;
+    return result;
+  }
 
   const static AliasClassSet unknownSet;
-  const static AliasClassSet emptySet;
+  const static AliasClassSet undefinedSet;
 
   DenseSet<DistinctAttr> aliasClasses;
-  bool unknown = false;
+  State state;
 };
 
 //===----------------------------------------------------------------------===//
@@ -126,6 +163,8 @@ public:
   ChangeResult setPointingToFresh(const AliasClassSet &destClasses,
                                   StringAttr debugLabel);
 
+  ChangeResult setPointingToEmpty(const AliasClassSet &destClasses);
+
   /// Mark `dest` as pointing to "unknown" alias set, that is, any possible
   /// other pointer. This is partial pessimistic fixpoint.
   ChangeResult markPointToUnknown(const AliasClassSet &destClasses);
@@ -141,8 +180,7 @@ public:
   const AliasClassSet &getPointsTo(DistinctAttr id) const {
     auto it = pointsTo.find(id);
     if (it == pointsTo.end())
-      return otherPointToUnknown ? AliasClassSet::getUnknown()
-                                 : AliasClassSet::getEmpty();
+      return AliasClassSet::getUndefined();
     return it->getSecond();
   }
 
@@ -150,11 +188,17 @@ private:
   ChangeResult update(const AliasClassSet &keysToUpdate,
                       const AliasClassSet &values, bool replace);
 
+  ChangeResult joinPotentiallyMissing(DistinctAttr key,
+                                      const AliasClassSet &value);
+
   /// Indicates that alias classes not listed as keys in `pointsTo` point to
   /// unknown alias set (when true) or an empty alias set (when false).
   // TODO: consider also differentiating between pointing to known-empty vs.
   // not-yet-computed.
-  bool otherPointToUnknown = false;
+  // bool otherPointToUnknown = false;
+
+  // missing from map always beings "undefined", "unknown"s are stored
+  // explicitly.
 
   /// Maps an identifier of an alias set to the set of alias sets its value may
   /// belong to. When an identifier is not present in this map, it is considered
@@ -201,19 +245,19 @@ public:
     return aliasClasses.insert(classes);
   }
 
-  ChangeResult markFresh(/*optional=*/Attribute debugLabel);
+  static AliasClassLattice getFresh(Value point,
+                                    Attribute debugLabel = nullptr);
+
+  // ChangeResult markFresh(/*optional=*/Attribute debugLabel);
 
   ChangeResult markUnknown() { return aliasClasses.markUnknown(); }
 
-  ChangeResult reset() { return aliasClasses.reset(); }
+  // ChangeResult reset() { return aliasClasses.reset(); }
 
-  static DistinctAttr getFresh(Attribute debugLabel) {
-    return DistinctAttr::create(debugLabel);
-  }
-
-  /// We don't know anything about the aliasing of this value. TODO: re-evaluate
-  /// if we need this.
+  /// We don't know anything about the aliasing of this value.
   bool isUnknown() const { return aliasClasses.isUnknown(); }
+
+  bool isUndefined() const { return aliasClasses.isUndefined(); }
 
   const DenseSet<DistinctAttr> &getAliasClasses() const {
     return aliasClasses.getAliasClasses();
@@ -222,6 +266,12 @@ public:
   const AliasClassSet &getAliasClassesObject() const { return aliasClasses; }
 
 private:
+  struct UndefinedState {};
+
+  AliasClassLattice(Value value, AliasClassSet &&classes)
+      : dataflow::AbstractSparseLattice(value),
+        aliasClasses(std::move(classes)) {}
+
   AliasClassSet aliasClasses;
 };
 
