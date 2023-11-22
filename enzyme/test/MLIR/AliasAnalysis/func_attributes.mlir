@@ -224,7 +224,7 @@ func.func private @callee() -> (!llvm.ptr {llvm.noalias}) attributes {
 }
 
 // CHECK: points-to-pointer sets
-// CHECK-NEXT: distinct[{{.+}}]<"func-return"> points to {<unknown>}
+// CHECK-NEXT: distinct[{{.+}}]<"func-return0"> points to {<unknown>}
 func.func @func_return_noalias() -> !llvm.ptr {
   %0 = call @callee() {tag = "func-return"} : () -> !llvm.ptr
   return %0 : !llvm.ptr
@@ -235,7 +235,7 @@ func.func @func_return_noalias() -> !llvm.ptr {
 // CHECK: tag "func-return" Unknown AC
 // CHECK: "func-return" and "func-return": MayAlias
 // CHECK: points-to-pointer sets
-// CHECK-NEXT: distinct[{{.*}}]<"func-return"> points to {<unknown>}
+// CHECK-NEXT: distinct[{{.*}}]<"func-return0"> points to {<unknown>}
 func.func private @callee() -> (!llvm.ptr {llvm.noalias}, !llvm.ptr) attributes {
   memory = #llvm.memory_effects<other = read,
                                 argMem = readwrite,
@@ -255,13 +255,13 @@ func.func private @callee() -> (!llvm.ptr {llvm.noalias}) attributes {
                                 inaccessibleMem = none>
 }
 
-// CHECK: "func-return-1" and "func-return-2": NoAlias
+// CHECK: "func-1-return" and "func-2-return": NoAlias
 // CHECK: points-to-pointer sets
-// CHECK-DAG: distinct[{{.+}}]<"func-return-1"> points to {<unknown>}
-// CHECK-DAG: distinct[{{.+}}]<"func-return-2"> points to {<unknown>}
+// CHECK-DAG: distinct[{{.+}}]<"func-1-return0"> points to {<unknown>}
+// CHECK-DAG: distinct[{{.+}}]<"func-2-return0"> points to {<unknown>}
 func.func @caller() -> !llvm.ptr {
-  %0 = call @callee() {tag = "func-return-1"} : () -> !llvm.ptr
-  %1 = call @callee() {tag = "func-return-2"} : () -> !llvm.ptr
+  %0 = call @callee() {tag = "func-1-return"} : () -> !llvm.ptr
+  %1 = call @callee() {tag = "func-2-return"} : () -> !llvm.ptr
   return %0 : !llvm.ptr
 }
 
@@ -290,8 +290,8 @@ func.func private @callee() -> (!llvm.ptr {llvm.noalias}) attributes {
 }
 
 // CHECK: points-to-pointer sets
-// CHECK-DAG: distinct[{{.+}}]<"alloca"> points to {distinct[{{.+}}]<"func-return">}
-// CHECK-DAG: distinct[{{.+}}]<"func-return"> points to {<unknown>}
+// CHECK-DAG: distinct[{{.+}}]<"alloca"> points to {distinct[{{.+}}]<"func-return0">}
+// CHECK-DAG: distinct[{{.+}}]<"func-return0"> points to {<unknown>}
 func.func @func_return_noalias_stored() -> !llvm.ptr {
   %0 = call @callee() {tag = "func-return"} : () -> !llvm.ptr
   %c1 = arith.constant 1 : i64
@@ -327,15 +327,136 @@ func.func private @callee() -> (!llvm.ptr, !llvm.ptr) attributes {
                                 inaccessibleMem = none>
 }
 
+// TODO: The two results may alias, but we can't really
+// differentiate them with current printing.
+// CHECK: "func-return" and "func-return": MayAlias
+
 // CHECK: points-to-pointer sets
-// CHECK-DAG: distinct[{{.+}}]<"alloca-1"> points to {<unknown>}
-// CHECK-DAG: distinct[{{.+}}]<"alloca-2"> points to {<unknown>}
+// CHECK-DAG: distinct[{{.+}}]<"alloca-1"> points to {distinct[{{.+}}]<"func-return-common">}
+// CHECK-DAG: distinct[{{.+}}]<"alloca-2"> points to {distinct[{{.+}}]<"func-return-common">}
 func.func @func_return_multiple() -> !llvm.ptr {
   %0:2 = call @callee() {tag = "func-return"} : () -> (!llvm.ptr, !llvm.ptr)
   %c1 = arith.constant 1 : i64
   %1 = llvm.alloca %c1 x !llvm.ptr {tag = "alloca-1"}: (i64) -> !llvm.ptr
   llvm.store %0#0, %1 : !llvm.ptr, !llvm.ptr
   %2 = llvm.alloca %c1 x !llvm.ptr {tag = "alloca-2"}: (i64) -> !llvm.ptr
-  llvm.store %0#0, %2 : !llvm.ptr, !llvm.ptr
+  llvm.store %0#1, %2 : !llvm.ptr, !llvm.ptr
   return %0 : !llvm.ptr
+}
+
+// -----
+
+func.func private @callee() -> (!llvm.ptr {llvm.noalias}, !llvm.ptr {llvm.noalias}) attributes {
+  memory = #llvm.memory_effects<other = none,
+                                argMem = readwrite,
+                                inaccessibleMem = none>
+}
+
+// TODO: The two results are known not to alias, but we can't really
+// differentiate them with current printing.
+// CHECK: "func-return" and "func-return": NoAlias
+
+// CHECK: points-to-pointer sets
+// CHECK-DAG: distinct[{{.+}}]<"alloca-1"> points to {distinct[{{.+}}]<"func-return0">}
+// CHECK-DAG: distinct[{{.+}}]<"alloca-2"> points to {distinct[{{.+}}]<"func-return1">}
+func.func @func_return_noalias() -> !llvm.ptr {
+  %0:2 = call @callee() {tag = "func-return"} : () -> (!llvm.ptr, !llvm.ptr)
+  %c1 = arith.constant 1 : i64
+  %1 = llvm.alloca %c1 x !llvm.ptr {tag = "alloca-1"}: (i64) -> !llvm.ptr
+  llvm.store %0#0, %1 : !llvm.ptr, !llvm.ptr
+  %2 = llvm.alloca %c1 x !llvm.ptr {tag = "alloca-2"}: (i64) -> !llvm.ptr
+  llvm.store %0#1, %2 : !llvm.ptr, !llvm.ptr
+  return %0 : !llvm.ptr
+}
+
+// -----
+
+
+func.func private @callee(!llvm.ptr, !llvm.ptr {llvm.nocapture}) -> (!llvm.ptr, !llvm.ptr) attributes {
+  memory = #llvm.memory_effects<other = none,
+                                argMem = read,
+                                inaccessibleMem = none>
+}
+
+// CHECK: "func-return" and "func-return": MayAlias
+
+// Returned value can only point to the classes of captured pointers, i.e. arg0.
+// However, returned value itself may alias with any argument, so pointers that
+// stored the return value may point to any of the arg0, arg1 and the returned
+// value itself.
+//
+// CHECK: points-to-pointer sets
+// CHECK-DAG: distinct[{{.*}}]<"func-return-common"> points to {distinct[{{.*}}]<"arg0">}
+// CHECK-DAG: distinct[{{.*}}]<"alloca-1"> points to {
+// CHECK-DAG: distinct[{{.*}}]<"func-return-common">
+// CHECK-DAG: distinct[{{.*}}]<"arg0">
+// CHECK-DAG: distinct[{{.*}}]<"arg1">
+func.func @multi_operand_result(%arg0: !llvm.ptr {enzyme.tag = "arg0", llvm.noalias},
+                               %arg1: !llvm.ptr {enzyme.tag = "arg1", llvm.nocapture, llvm.noalias}) -> !llvm.ptr {
+  %0:2 = call @callee(%arg0, %arg1) {tag = "func-return"} : (!llvm.ptr, !llvm.ptr) -> (!llvm.ptr, !llvm.ptr)
+  %c1 = arith.constant 1 : i64
+  %1 = llvm.alloca %c1 x !llvm.ptr {tag = "alloca-1"}: (i64) -> !llvm.ptr
+  llvm.store %0#0, %1 : !llvm.ptr, !llvm.ptr
+  %2 = llvm.alloca %c1 x !llvm.ptr {tag = "alloca-2"}: (i64) -> !llvm.ptr
+  llvm.store %0#1, %2 : !llvm.ptr, !llvm.ptr
+  return %0#0 : !llvm.ptr
+}
+
+// -----
+
+
+func.func private @callee(!llvm.ptr, !llvm.ptr {llvm.nocapture}) -> (!llvm.ptr {llvm.noalias}, !llvm.ptr {llvm.noalias}) attributes {
+  memory = #llvm.memory_effects<other = none,
+                                argMem = read,
+                                inaccessibleMem = none>
+}
+
+// Returned values can pointer to something that was captured, but belong to
+// diferent classes and don't alias operand pointers.
+//
+// CHECK: points-to-pointer sets
+// CHECK-DAG: distinct[{{.*}}]<"alloca-1"> points to {distinct[{{.*}}]<"func-return0">}
+// CHECK-DAG: distinct[{{.*}}]<"func-return1"> points to {distinct[{{.*}}]<"arg0">}
+// CHECK-DAG: distinct[{{.*}}]<"func-return0"> points to {distinct[{{.*}}]<"arg0">}
+// CHECK-DAG: distinct[{{.*}}]<"alloca-2"> points to {distinct[{{.*}}]<"func-return1">}
+func.func @multi_operand_result(%arg0: !llvm.ptr {enzyme.tag = "arg0", llvm.noalias},
+                                %arg1: !llvm.ptr {enzyme.tag = "arg1", llvm.nocapture, llvm.noalias}) -> !llvm.ptr {
+  %0:2 = call @callee(%arg0, %arg1) {tag = "func-return"} : (!llvm.ptr, !llvm.ptr) -> (!llvm.ptr, !llvm.ptr)
+  %c1 = arith.constant 1 : i64
+  %1 = llvm.alloca %c1 x !llvm.ptr {tag = "alloca-1"}: (i64) -> !llvm.ptr
+  llvm.store %0#0, %1 : !llvm.ptr, !llvm.ptr
+  %2 = llvm.alloca %c1 x !llvm.ptr {tag = "alloca-2"}: (i64) -> !llvm.ptr
+  llvm.store %0#1, %2 : !llvm.ptr, !llvm.ptr
+  return %0#0 : !llvm.ptr
+}
+
+// -----
+
+func.func private @callee(!llvm.ptr, !llvm.ptr {llvm.nocapture})
+    -> (!llvm.ptr, !llvm.ptr  {llvm.noalias}) attributes {
+  memory = #llvm.memory_effects<other = none,
+                                argMem = read,
+                                inaccessibleMem = none>
+}
+
+// Returned values can pointer to something that was captured, but belong to
+// diferent classes and don't alias operand pointers.
+//
+// CHECK: points-to-pointer sets
+// CHECK-DAG: distinct[{{.*}}]<"func-return-common"> points to {distinct[{{.*}}]<"arg0">}
+// CHECK-DAG: distinct[{{.*}}]<"func-return1"> points to {distinct[{{.*}}]<"arg0">}
+// CHECK-DAG: distinct[{{.*}}]<"alloca-1"> points to
+// TODO: the current way of checking is fundamentally broken because of printing
+// in hashmap order, we'd need a nested CHECK-DAG for this.
+// CHECK-DAG: distinct[{{.*}}]<"alloca-2"> points to {distinct[{{.*}}]<"func-return1">}
+// CHECK: #distinct
+func.func @multi_operand_result(%arg0: !llvm.ptr {enzyme.tag = "arg0", llvm.noalias},
+                                %arg1: !llvm.ptr {enzyme.tag = "arg1", llvm.nocapture, llvm.noalias}) -> !llvm.ptr {
+  %0:2 = call @callee(%arg0, %arg1) {tag = "func-return"} : (!llvm.ptr, !llvm.ptr) -> (!llvm.ptr, !llvm.ptr)
+  %c1 = arith.constant 1 : i64
+  %1 = llvm.alloca %c1 x !llvm.ptr {tag = "alloca-1"}: (i64) -> !llvm.ptr
+  llvm.store %0#0, %1 : !llvm.ptr, !llvm.ptr
+  %2 = llvm.alloca %c1 x !llvm.ptr {tag = "alloca-2"}: (i64) -> !llvm.ptr
+  llvm.store %0#1, %2 : !llvm.ptr, !llvm.ptr
+  return %0#0 : !llvm.ptr
 }
