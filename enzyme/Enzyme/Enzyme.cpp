@@ -334,7 +334,7 @@ castToDiffeFunctionArgType(IRBuilder<> &Builder, llvm::CallInst *CI,
   if (auto ptr = dyn_cast<PointerType>(res->getType())) {
     if (auto PT = dyn_cast<PointerType>(destType)) {
       if (ptr->getAddressSpace() != PT->getAddressSpace()) {
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
         if (CI->getContext().supportsTypedPointers()) {
 #endif
@@ -736,11 +736,9 @@ public:
     bool sret = CI->hasStructRetAttr() ||
                 fn->hasParamAttribute(0, Attribute::StructRet);
 
-    std::vector<bool> overwritten_args;
-
-    for (auto &a : fn->args())
-      overwritten_args.push_back(
-          !(mode == DerivativeMode::ReverseModeCombined));
+    std::vector<bool> overwritten_args(
+        fn->getFunctionType()->getNumParams(),
+        !(mode == DerivativeMode::ReverseModeCombined));
 
 #if LLVM_VERSION_MAJOR >= 14
     for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
@@ -1133,7 +1131,7 @@ public:
         if (auto ptr = dyn_cast<PointerType>(res->getType())) {
           if (auto PT = dyn_cast<PointerType>(PTy)) {
             if (ptr->getAddressSpace() != PT->getAddressSpace()) {
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
               if (CI->getContext().supportsTypedPointers()) {
 #endif
@@ -1281,7 +1279,7 @@ public:
       if (a.getType()->isFPOrFPVectorTy()) {
         dt = ConcreteType(a.getType()->getScalarType());
       } else if (a.getType()->isPointerTy()) {
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 13
         if (a.getContext().supportsTypedPointers()) {
 #endif
@@ -1574,7 +1572,7 @@ public:
                       " bytes");
         }
       } else {
-        tapeType = PointerType::getInt8PtrTy(fn->getContext());
+        tapeType = getInt8PtrTy(fn->getContext());
       }
       newFunc = Logic.CreateForwardDiff(
           context, fn, retType, constants, TA,
@@ -1645,7 +1643,7 @@ public:
                       " bytes");
         }
       } else {
-        tapeType = PointerType::getInt8PtrTy(fn->getContext());
+        tapeType = getInt8PtrTy(fn->getContext());
       }
       if (mode == DerivativeMode::ReverseModePrimal)
         newFunc = aug->fn;
@@ -2640,7 +2638,7 @@ public:
         &AANoAlias::ID,
         &AADereferenceable::ID,
         &AAAlign::ID,
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
         &AAReturnedValues::ID,
 #endif
         &AANoFree::ID,
@@ -3072,6 +3070,7 @@ AnalysisKey EnzymeNewPM::Key;
 #include "llvm/Transforms/Scalar/LoopFlatten.h"
 #include "llvm/Transforms/Scalar/MergedLoadStoreMotion.h"
 
+#if LLVM_VERSION_MAJOR >= 15
 #if LLVM_VERSION_MAJOR < 14
 static InlineParams
 getInlineParamsFromOptLevel(llvm::PassBuilder::OptimizationLevel Level)
@@ -3081,6 +3080,7 @@ static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level)
 {
   return getInlineParams(Level.getSpeedupLevel(), Level.getSizeLevel());
 }
+#endif
 
 #if LLVM_VERSION_MAJOR >= 12
 #include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"

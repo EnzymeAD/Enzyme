@@ -81,7 +81,7 @@ entry:
 ; CHECK-NEXT:   %byref.constant.int.0 = alloca i64, align 8
 ; CHECK-NEXT:   %byref.constant.int.033 = alloca i64, align 8
 ; CHECK-NEXT:   %byref.constant.fp.1.035 = alloca double, align 8
-; CHECK-NEXT:   %[[tmp:.+]] = alloca i8
+; CHECK-NEXT:   %[[tmp:.+]] = alloca i64
 ; CHECK-NEXT:   %transa = alloca i8, align 1
 ; CHECK-NEXT:   %transb = alloca i8, align 1
 ; CHECK-NEXT:   %n = alloca i64, align 16
@@ -295,7 +295,7 @@ entry:
 ; CHECK-NEXT:   %intcast.constant.int.034 = bitcast i64* %byref.constant.int.033 to i8*
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.035, align 8
 ; CHECK-NEXT:   %fpcast.constant.fp.1.036 = bitcast double* %byref.constant.fp.1.035 to i8*
-; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i8* %intcast.constant.int.0, i8* %intcast.constant.int.034, i8* %fpcast.constant.fp.1.036, i8* %cast.beta, i8* %[[r37]], i8* %n_p_unwrap, i8* %"C'", i8* %cast.ldc, i8* %[[tmp]], i64 1)
+; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i8* %intcast.constant.int.0, i8* %intcast.constant.int.034, i8* %fpcast.constant.fp.1.036, i8* %cast.beta, i8* %[[r37]], i8* %n_p_unwrap, i8* %"C'", i8* %cast.ldc, i64* %[[tmp]], i64 1)
 ; CHECK-NEXT:   %[[r77:.+]] = bitcast double* %cache.A_unwrap to i8*
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %[[r77]])
 ; CHECK-NEXT:   call void @free(i8* %[[r37]])

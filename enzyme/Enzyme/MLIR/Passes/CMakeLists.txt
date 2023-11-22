@@ -8,7 +8,6 @@ add_mlir_dialect_library(MLIREnzymeTransforms
     PrintActivityAnalysis.cpp
     PrintAliasAnalysis.cpp
     EnzymeToMemRef.cpp
-    LowerToLLVMEnzyme.cpp
     ShadowedGradientToCache.cpp
     AddToOpToIndexAndLoad.cpp
     AddToOpToSplit.cpp

@@ -23,7 +23,8 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   os << "    return;\n";
   os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == "
         "\"cublas_\";\n";
-  os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
+  if (lv23)
+    os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
   os << "  const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
         "\"cublas\";\n";
   os << "#if LLVM_VERSION_MAJOR >= 16\n"

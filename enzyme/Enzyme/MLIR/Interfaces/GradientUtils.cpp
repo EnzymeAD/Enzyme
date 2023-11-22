@@ -12,9 +12,9 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/CloneFunction.h"
 
-#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
 // TODO: this shouldn't depend on specific dialects except Enzyme.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -240,8 +240,8 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
       for (auto res : inst->getResults()) {
         if (!isConstantValue(res)) {
           mlir::Type antiTy = getShadowType(res.getType());
-          auto anti = BuilderZ.create<enzyme::PlaceholderOp>(res.getLoc(),
-                                                             res.getType());
+          auto anti =
+              BuilderZ.create<enzyme::PlaceholderOp>(res.getLoc(), antiTy);
           invertedPointers.map(res, anti);
         }
       }

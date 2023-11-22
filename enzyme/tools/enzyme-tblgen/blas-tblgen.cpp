@@ -166,6 +166,15 @@ void emit_beginning(const TGPattern &pattern, raw_ostream &os) {
         "llvm::Type *fpType) "
         "{\n"
      << "  \n"
+     << "#ifdef __clang__\n"
+     << "#pragma clang diagnostic push\n"
+     << "#pragma clang diagnostic ignored \"-Wunused-variable\"\n"
+     << "#pragma clang diagnostic ignored \"-Wunused-but-set-variable\"\n"
+     << "#else\n"
+     << "#pragma GCC diagnostic push\n"
+     << "#pragma GCC diagnostic ignored \"-Wunused-variable\"\n"
+     << "#pragma GCC diagnostic ignored \"-Wunused-but-set-variable\"\n"
+     << "#endif\n"
      << "  using namespace llvm;\n"
      << "  CallInst *const newCall = "
         "cast<CallInst>(gutils->getNewFromOriginal(&call));\n"
@@ -228,6 +237,11 @@ void emit_free_and_ending(const TGPattern &pattern, raw_ostream &os) {
      << "    }\n"
      << "  }\n"
      << "  return true;\n"
+     << "#ifdef __clang__\n"
+     << "#pragma clang diagnostic pop\n"
+     << "#else\n"
+     << "#pragma GCC diagnostic pop\n"
+     << "#endif\n"
      << "}\n\n";
 }
 
@@ -393,7 +407,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
   }
   if (!hasChar)
     os << "  Type* blasCharType = byRef ? "
-          "(Type*) Type::getInt8PtrTy(call.getContext()) : "
+          "(Type*) getInt8PtrTy(call.getContext()) : "
           "(Type*) Type::getInt8Ty(call.getContext());\n";
 
   for (auto name : enumerate(nameVec)) {
@@ -926,7 +940,17 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
   os << "  }\n";
 }
 
-void emit_tmp_creation(Record *Def, raw_ostream &os) {
+void emit_tmp_free(Record *Def, raw_ostream &os, StringRef builder) {
+  const auto args = Def->getValueAsListOfStrings("args");
+  // allocating tmp variables is optional, return if not required
+  if (args.size() == 0)
+    return;
+  const auto matName = args[0];
+  const auto allocName = "mat_" + matName;
+  os << "    CreateDealloc(" << builder << ", true_" << allocName << ");\n";
+}
+
+void emit_tmp_creation(Record *Def, raw_ostream &os, StringRef builder) {
   const auto args = Def->getValueAsListOfStrings("args");
   // allocating tmp variables is optional, return if not required
   if (args.size() == 0)
@@ -941,51 +965,53 @@ void emit_tmp_creation(Record *Def, raw_ostream &os) {
     const auto matName = args[0];
     const auto dim1 = "arg_" + args[2];
     const auto dim2 = "arg_" + args[3];
-    os << "    Value *len1 = load_if_ref(BuilderZ, intType," << dim1
+    os << "    Value *len1 = load_if_ref(" << builder << ", intType," << dim1
        << ", byRef);\n"
-       << "    Value *len2 = load_if_ref(BuilderZ, intType," << dim2
+       << "    Value *len2 = load_if_ref(" << builder << ", intType," << dim2
        << ", byRef);\n"
-       << "    Value *size_" << matName
-       << " = BuilderZ.CreateNUWMul(len1, len2, \"size_" << matName << "\");\n";
+       << "    Value *size_" << matName << " = " << builder
+       << ".CreateNUWMul(len1, len2, \"size_" << matName << "\");\n";
   } else if (action == "is_normal") {
     assert(args.size() == 5);
     const auto vecName = args[0];
     const auto trans = "arg_" + args[2];
     const auto dim1 = "arg_" + args[3];
     const auto dim2 = "arg_" + args[4];
-    os << "    Value *len1 = load_if_ref(BuilderZ, intType," << dim1
+    os << "    Value *len1 = load_if_ref(" << builder << ", intType," << dim1
        << ", byRef);\n"
-       << "    Value *len2 = load_if_ref(BuilderZ, intType," << dim2
+       << "    Value *len2 = load_if_ref(" << builder << ", intType," << dim2
        << ", byRef);\n";
-    os << "    Value *size_" << vecName
-       << " = BuilderZ.CreateSelect(is_normal(BuilderZ, " << trans
+    os << "    Value *size_" << vecName << " = " << builder
+       << ".CreateSelect(is_normal(" << builder << ", " << trans
        << ", byRef, cublas), len1, len2);\n";
   } else if (action == "triangular") {
     assert(args.size() == 3);
     const auto vecName = args[0];
     const auto dim1 = "arg_" + args[2];
-    os << "    Value *len = load_if_ref(BuilderZ, intType," << dim1
+    os << "    Value *len = load_if_ref(" << builder << ", intType," << dim1
        << ", byRef);\n";
     //  Size has to be (at least)
     //  ( ( n*( n + 1 ) )/2 )
-    os << "    Value *size_" << vecName
-       << " = BuilderZ.CreateMul(len, BuilderZ.CreateAdd(len, "
+    os << "    Value *size_" << vecName << " = " << builder
+       << ".CreateMul(len, " << builder
+       << ".CreateAdd(len, "
           "ConstantInt::get(intType, 1)), \"square_mat_size_"
        << vecName << "\");\n"
-       << "    size_" << vecName << " = BuilderZ.CreateUDiv(size_" << vecName
-       << ", ConstantInt::get(intType, 2), \"size_" << vecName << "\");\n";
+       << "    size_" << vecName << " = " << builder << ".CreateUDiv(size_"
+       << vecName << ", ConstantInt::get(intType, 2), \"size_" << vecName
+       << "\");\n";
   }
   const auto matName = args[0];
   const auto allocName = "mat_" + matName;
-  os << "    Value *" << allocName
-     << " = CreateAllocation(BuilderZ, fpType, size_" << matName << ", \""
-     << allocName << "\");\n"
+  os << "    Value * true_" << allocName << " = CreateAllocation(" << builder
+     << ", fpType, size_" << matName << ", \"" << allocName << "\");\n"
+     << "    Value * " << allocName << " = true_" << allocName << ";\n"
      << "    if (type_vec_like->isIntegerTy()) {\n"
-     << "      " << allocName << " = BuilderZ.CreatePtrToInt(" << allocName
-     << ", type_vec_like);\n"
+     << "      " << allocName << " = " << builder << ".CreatePtrToInt("
+     << allocName << ", type_vec_like);\n"
      << "    } else if (" << allocName << "->getType() != type_vec_like){\n"
-     << "      " << allocName << " = BuilderZ.CreatePointerCast(" << allocName
-     << ", type_vec_like);\n"
+     << "      " << allocName << " = " << builder << ".CreatePointerCast("
+     << allocName << ", type_vec_like);\n"
      << "    }\n";
 }
 
@@ -1050,15 +1076,29 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
 
     if (Def->isSubClassOf("MagicInst")) {
       if (Def->getName() == "Rows") {
+        os << "({";
+        for (size_t i = Dag->getNumArgs() - 1;; i--) {
+          os << "auto brow_" << i << " = ";
+          rev_call_arg(Dag, rule, actArg, i, os);
+          os << "; ";
+          if (i == 0)
+            break;
+        }
         os << "get_blas_row(Builder2, ";
         for (size_t i = 0; i < Dag->getNumArgs(); i++) {
-          rev_call_arg(Dag, rule, actArg, i, os);
+          os << "brow_" << i;
           os << ", ";
         }
-        os << "byRef, cublas)";
+        os << "byRef, cublas);})";
         return;
       }
       if (Def->getName() == "Concat") {
+        os << "({";
+        for (size_t i = 0; i < Dag->getNumArgs(); i++) {
+          os << "auto concat_" << i << " = ";
+          rev_call_arg(Dag, rule, actArg, i, os);
+          os << "; ";
+        }
         os << "concat_values<";
         for (size_t i = 0; i < Dag->getNumArgs(); i++) {
           if (i != 0)
@@ -1069,9 +1109,9 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
         for (size_t i = 0; i < Dag->getNumArgs(); i++) {
           if (i != 0)
             os << ", ";
-          rev_call_arg(Dag, rule, actArg, i, os);
+          os << "concat_" << i;
         }
-        os << ")";
+        os << "); })";
         return;
       }
       if (Def->getName() == "ld") {
@@ -1167,9 +1207,9 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
       }
     } else if (Def->isSubClassOf("Alloca")) {
       auto val = Def->getValueAsInt("value");
-      os << "{allocationBuilder.CreateAlloca(Type::getIntNTy(allocationBuilder."
-            "getContext(), "
-         << (8 * val) << "))}";
+      (void)val;
+      assert(val == 1);
+      os << "{allocationBuilder.CreateAlloca(intType)}";
     } else if (Def->isSubClassOf("ConstantInt")) {
       auto val = Def->getValueAsInt("value");
       os << "{to_blas_callconv(Builder2, ConstantInt::get(intType, " << val
@@ -1323,8 +1363,10 @@ void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
   }
   os << "        if (byRef) {\n"
      << "          ((DiffeGradientUtils *)gutils)"
-     << "->addToInvertedPtrDiffe(&call, nullptr, fpType, 0,"
-     << "(blas.is64 ? 8 : 4), orig_" << name << ", cubcall, " << bb << ");\n"
+     << "->addToInvertedPtrDiffe(&call, nullptr, fpType, 0, "
+     << "(called->getParent()->getDataLayout().getTypeSizeInBits(fpType)/8), "
+        "orig_"
+     << name << ", cubcall, " << bb << ");\n"
      << "        } else {\n"
      << "          addToDiffe(orig_" << name << ", cubcall, " << bb
      << ", fpType);\n"
@@ -1615,7 +1657,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       emit_runtime_condition(ruleDag, name, "        ", "Builder2", true, os);
 
       // We might need to create a tmp vec or matrix
-      emit_tmp_creation(Def, os);
+      emit_tmp_creation(Def, os, "Builder2");
 
       os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
@@ -1679,6 +1721,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
           }
         }
       }
+      emit_tmp_free(Def, os, "Builder2");
       emit_runtime_continue(ruleDag, name, "        ", "Builder2", true, os);
       os << "      }\n";
     } else {

@@ -372,6 +372,8 @@ bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(
   return false;
 }
 
+// TODO: better support for known function calls. Ideally, they should become
+// operations, but we also need parity with LLVM-enzyme.
 /// Call the function propagateFromOperand on all operands of CI
 /// that could impact the activity of the call instruction
 // static inline void propagateArgumentInformation(
@@ -973,6 +975,7 @@ static SmallVector<Value> getPotentialIncomingValues(BlockArgument arg) {
                        potentialSources);
     for (Region &childRegion : parent->getRegions())
       isRegionSucessorOf(iface, parentRegion, childRegion, potentialSources);
+
   } else {
     // Conservatively assume any op operand and any terminator operand of
     // any region can flow into any block argument.
@@ -1165,7 +1168,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
   // }
 
   if (Operation *definingOp = Val.getDefiningOp()) {
-    // Undef & non-global constants are inactive.
+    // Undef and non-global constants are inactive.
     if (isa<LLVM::UndefOp, LLVM::ConstantOp>(definingOp)) {
       return true;
     }
@@ -2475,6 +2478,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromOrigin(
                            potentialSources);
         for (Region &region : parent->getRegions())
           isRegionSucessorOf(iface, parentRegion, region, potentialSources);
+
       } else {
         // Conservatively assume any op operand and any terminator operand of
         // any region can flow into any block argument.

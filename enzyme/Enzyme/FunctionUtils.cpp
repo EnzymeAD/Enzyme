@@ -306,7 +306,7 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       IRBuilder<> B(CI);
       auto nCI = cast<CastInst>(B.CreateCast(
           CI->getOpcode(), rep,
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
           PointerType::get(CI->getType()->getPointerElementType(),
                            cast<PointerType>(rep->getType())->getAddressSpace())
 #else
@@ -699,7 +699,7 @@ OldAllocationSize(Value *Ptr, CallInst *Loc, Function *NewF, IntegerType *T,
         allocName,
         FunctionType::get(
             IntegerType::get(NewF->getContext(), 8 * sizeof(size_t)),
-            {Type::getInt8PtrTy(NewF->getContext())}, /*isVarArg*/ false),
+            {getInt8PtrTy(NewF->getContext())}, /*isVarArg*/ false),
         list);
 
     B.SetInsertPoint(Loc);
@@ -810,7 +810,7 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
       T0 = CI->getOperand(0);
     auto AI = cast<AllocaInst>(T0);
     llvm::Value *AIV = AI;
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
     if (AIV->getType()->getPointerElementType() !=
         T->getType()->getPointerElementType()) {
       IRBuilder<> B(AI->getNextNode());
@@ -884,7 +884,7 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
     Value *newsize = nextPowerOfTwo(B, req);
 
     Module *M = NewF->getParent();
-    Type *BPTy = Type::getInt8PtrTy(NewF->getContext());
+    Type *BPTy = getInt8PtrTy(NewF->getContext());
     auto MallocFunc =
         M->getOrInsertFunction("malloc", BPTy, newsize->getType());
     auto next = B.CreateCall(MallocFunc, newsize);
@@ -1047,7 +1047,8 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
     B.SetInsertPoint(res);
 
     if (auto PT = dyn_cast<PointerType>(storePointer->getType())) {
-#if LLVM_VERSION_MAJOR < 18
+      (void)PT;
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
       if (PT->getContext().supportsTypedPointers()) {
 #endif
@@ -1676,8 +1677,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
           }
 
           Value *args[] = {
-              bb.CreateBitCast(antialloca, Type::getInt8PtrTy(g.getContext())),
-              bb.CreateBitCast(&g, Type::getInt8PtrTy(g.getContext())),
+              bb.CreateBitCast(antialloca, getInt8PtrTy(g.getContext())),
+              bb.CreateBitCast(&g, getInt8PtrTy(g.getContext())),
               ConstantInt::get(
                   Type::getInt64Ty(g.getContext()),
                   g.getParent()->getDataLayout().getTypeAllocSizeInBits(
@@ -2628,7 +2629,6 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       for (size_t i = 0; i < I->getNumOperands(); i++) {
         if (auto I2 = dyn_cast<Instruction>(I->getOperand(i))) {
           Instruction *candidate = nullptr;
-          bool reverse = false;
           for (auto U : I2->users()) {
             candidate = dyn_cast<Instruction>(U);
             if (!candidate)
@@ -3324,7 +3324,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       Value *ops[2] = {nullptr, nullptr};
       bool legal = true;
       for (int i = 0; i < 2; i++) {
-        if (auto C = dyn_cast<ConstantFP>(SI->getOperand(1 + i))) {
+        if (isa<ConstantFP>(SI->getOperand(1 + i))) {
           ops[i] = nullptr;
           continue;
         }
@@ -3437,7 +3437,6 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           // sub 0, (mul nsw nuw constant, x) -> mul nsw nuw -constant, x
           if (zext->getOpcode() == Instruction::Mul &&
               zext->hasNoUnsignedWrap() && zext->hasNoSignedWrap()) {
-            bool done = true;
             for (int i = 0; i < 2; i++)
               if (auto CI = dyn_cast<ConstantInt>(zext->getOperand(i))) {
                 auto res = pushcse(B.CreateMul(
@@ -4331,56 +4330,58 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     }
     // phi (idx=0) ? b, a, a -> select (idx == 0), b, a
     if (auto L = LI.getLoopFor(PN->getParent()))
-      if (auto idx = L->getCanonicalInductionVariable())
-        if (auto PH = L->getLoopPreheader()) {
-          bool legal = idx != PN;
-          auto ph_idx = PN->getBasicBlockIndex(PH);
-          for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
-            if (i == ph_idx)
-              continue;
-            auto v = PN->getIncomingValue(i);
-            if (v != PN->getIncomingValue(1 - ph_idx)) {
-              legal = false;
-              break;
+      if (L->getHeader() == PN->getParent())
+        if (auto idx = L->getCanonicalInductionVariable())
+          if (auto PH = L->getLoopPreheader()) {
+            bool legal = idx != PN;
+            auto ph_idx = PN->getBasicBlockIndex(PH);
+            assert(ph_idx >= 0);
+            for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
+              if ((int)i == ph_idx)
+                continue;
+              auto v = PN->getIncomingValue(i);
+              if (v != PN->getIncomingValue(1 - ph_idx)) {
+                legal = false;
+                break;
+              }
+              // The given var must dominate the loop
+              if (isa<Constant>(v))
+                continue;
+              if (isa<Argument>(v))
+                continue;
+              // exception for the induction itself, which we handle specially
+              if (v == idx)
+                continue;
+              auto I = cast<Instruction>(v);
+              if (!DT.dominates(I, PN)) {
+                legal = false;
+                break;
+              }
             }
-            // The given var must dominate the loop
-            if (isa<Constant>(v))
-              continue;
-            if (isa<Argument>(v))
-              continue;
-            // exception for the induction itself, which we handle specially
-            if (v == idx)
-              continue;
-            auto I = cast<Instruction>(v);
-            if (!DT.dominates(I, PN)) {
-              legal = false;
-              break;
-            }
-          }
-          if (legal) {
-            auto val = PN->getIncomingValue(1 - ph_idx);
-            push(val);
-            if (val == idx) {
+            if (legal) {
+              auto val = PN->getIncomingValue(1 - ph_idx);
+              push(val);
+              if (val == idx) {
+                val = pushcse(
+                    B.CreateSub(idx, ConstantInt::get(idx->getType(), 1)));
+              }
+
+              auto val2 = PN->getIncomingValue(ph_idx);
+              push(val2);
+
+              auto c0 = ConstantInt::get(idx->getType(), 0);
+              // if (val2 == c0 && PN->getIncomingValue(1 - ph_idx) == idx) {
+              //  val = B.CreateBinaryIntrinsic(Intrinsic::umax, c0, val);
+              //} else {
+              auto eq = pushcse(B.CreateICmpEQ(idx, c0));
               val = pushcse(
-                  B.CreateSub(idx, ConstantInt::get(idx->getType(), 1)));
+                  B.CreateSelect(eq, val2, val, "phisel." + cur->getName()));
+              //}
+
+              replaceAndErase(cur, val);
+              return "PhiLoop0Sel";
             }
-
-            auto val2 = PN->getIncomingValue(ph_idx);
-            push(val2);
-
-            auto c0 = ConstantInt::get(idx->getType(), 0);
-            // if (val2 == c0 && PN->getIncomingValue(1 - ph_idx) == idx) {
-            //  val = B.CreateBinaryIntrinsic(Intrinsic::umax, c0, val);
-            //} else {
-            auto eq = pushcse(B.CreateICmpEQ(idx, c0));
-            val = pushcse(
-                B.CreateSelect(eq, val2, val, "phisel." + cur->getName()));
-            //}
-
-            replaceAndErase(cur, val);
-            return "PhiLoop0Sel";
           }
-        }
     // phi (sitofp a), (sitofp b) -> sitofp (phi a, b)
     {
       SmallVector<Value *, 1> negOps;
@@ -4626,8 +4627,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                 if (fneg->getOperand(1) == PN)
                   legal = false;
                 if (cmpPredicate) {
-                  if (cmpPredicate.value() !=
-                      cast<CmpInst>(fneg)->getPredicate())
+                  if (*cmpPredicate != cast<CmpInst>(fneg)->getPredicate())
                     legal = false;
                 } else {
                   cmpPredicate = cast<CmpInst>(fneg)->getPredicate();
@@ -4660,7 +4660,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             legal = false;
           auto L = LI.getLoopFor(PN->getParent());
           if (legal && L && L->getLoopPreheader() &&
-              L->getCanonicalInductionVariable()) {
+              L->getCanonicalInductionVariable() &&
+              L->getHeader() == PN->getParent()) {
             auto ph_idx = PN->getBasicBlockIndex(L->getLoopPreheader());
             if (isa<ConstantInt>(PN->getIncomingValue(ph_idx))) {
               lhsOps[ph_idx] =
@@ -4729,7 +4730,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             break;
           case Instruction::FCmp:
           case Instruction::ICmp:
-            fneg = B.CreateCmp(cmpPredicate.value(), lhsPN, rhsPN);
+            fneg = B.CreateCmp(*cmpPredicate, lhsPN, rhsPN);
             break;
           case Instruction::UIToFP:
             fneg = B.CreateUIToFP(lhsPN, PN->getType());
@@ -5035,6 +5036,7 @@ return true;
       return std::make_shared<Constraints>(Type::Union, next);
     }
     }
+    return Constraints::none();
   }
   InnerTy orB(InnerTy rhs, ScalarEvolution &SE) const {
     return notB()->andB(rhs->notB(), SE)->notB();
@@ -5329,6 +5331,7 @@ return true;
     case Type::Intersect:
       return false;
     }
+    return false;
   }
 };
 
@@ -5361,6 +5364,7 @@ raw_ostream &operator<<(raw_ostream &os, const Constraints &c) {
     return os;
   }
   }
+  return os;
 }
 
 SmallVector<Value *, 1> Constraints::allSolutions(SCEVExpander &Exp,
@@ -5389,6 +5393,7 @@ SmallVector<Value *, 1> Constraints::allSolutions(SCEVExpander &Exp,
     llvm::errs() << *this << "\n";
     llvm_unreachable("Intersect not handled");
   }
+  return {};
 }
 
 void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
@@ -5520,7 +5525,6 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     // to sparse
     auto cond = br->getCondition();
     bool negated = br->getSuccessor(0) == blk;
-    auto S = SE.getSCEV(cond);
 
     bool legal = true;
     // Whether the i1 value does not contain any icmp's
@@ -5880,7 +5884,7 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
     auto toInt = [&](IRBuilder<> &B, llvm::Value *V) {
       if (auto PT = dyn_cast<PointerType>(V->getType())) {
         if (PT->getAddressSpace() != 0) {
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
           if (CI->getContext().supportsTypedPointers()) {
 #endif

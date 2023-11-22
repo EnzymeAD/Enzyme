@@ -265,7 +265,7 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $y, $x),
-                  ["atan2", "atan2f", "atan2l"],
+                  ["atan2", "atan2f", "atan2l", "__nv_atan2", "__nv_atan2f", "__nv_atan2l"],
                   [
                   (FDiv (FMul (DiffeRet), $x), (FAdd (FMul $x, $x), (FMul $y, $y))),
                   (FNeg (FDiv (FMul (DiffeRet), $y), (FAdd (FMul $x, $x), (FMul $y, $y))))
@@ -352,13 +352,13 @@ def : CallPattern<(Op $x, $y),
                   [ReadNone, NoUnwind]
                   >;
 def : CallPattern<(Op $x),
-                  ["asin", "asinf", "asinl"],
+                  ["asin", "asinf", "asinl", "__nv_asin", "__nv_asinf", "__nv_asinl"],
                   [(FDiv (DiffeRet), (Intrinsic<"sqrt"> (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x)))  )] ,
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]              
                   >;
 def : CallPattern<(Op $x),
-                  ["acos", "acosf", "acosl"],
+                  ["acos", "acosf", "acosl", "__nv_acos", "__nv_acosf", "__nv_acosl"],
                   [(FNeg (FDiv (DiffeRet), (Intrinsic<"sqrt"> (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x)))  ))],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]

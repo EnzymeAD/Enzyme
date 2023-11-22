@@ -181,7 +181,7 @@ AllocaInst *DiffeGradientUtils::getDifferential(Value *val) {
     ZeroMemory(entryBuilder, type, differentials[val],
                /*isTape*/ false);
   }
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 13
   if (val->getContext().supportsTypedPointers()) {
 #endif
@@ -215,6 +215,51 @@ Value *DiffeGradientUtils::diffe(Value *val, IRBuilder<> &BuilderM) {
   assert(!val->getType()->isVoidTy());
   Type *ty = getShadowType(val->getType());
   return BuilderM.CreateLoad(ty, getDifferential(val));
+}
+
+SmallVector<SelectInst *, 4>
+DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
+                               Type *addingType, unsigned start, unsigned size,
+                               llvm::Value *mask) {
+  assert(addingType);
+  auto &DL = oldFunc->getParent()->getDataLayout();
+  auto storeSize = (DL.getTypeSizeInBits(val->getType()) + 7) / 8;
+  if (start == 0 && size == storeSize) {
+    return addToDiffe(val, dif, BuilderM, addingType, ArrayRef<Value *>(),
+                      mask);
+  }
+  if (auto ST = dyn_cast<StructType>(val->getType())) {
+    auto SL = DL.getStructLayout(ST);
+    auto left_idx = SL->getElementContainingOffset(start);
+    assert(SL->getElementOffset(left_idx) == start);
+    auto right_idx = ST->getNumElements();
+    if (storeSize != start + size) {
+      right_idx = SL->getElementContainingOffset(start + size);
+      assert(SL->getElementOffset(right_idx) == start + size);
+    }
+    SmallVector<SelectInst *, 4> res;
+    for (auto i = left_idx; i < right_idx; i++) {
+      if (getWidth() == 1) {
+        Value *lidxs[] = {
+            ConstantInt::get(Type::getInt32Ty(val->getContext()), i)};
+        for (auto v : addToDiffe(val, extractMeta(BuilderM, dif, i), BuilderM,
+                                 addingType, lidxs, mask))
+          res.push_back(v);
+      } else {
+        for (int j = 0; j < getWidth(); j++) {
+          Value *lidxs[] = {
+              ConstantInt::get(Type::getInt32Ty(val->getContext()), j),
+              ConstantInt::get(Type::getInt32Ty(val->getContext()), i)};
+          unsigned int idxs[] = {(unsigned int)j, (unsigned int)i};
+          for (auto v : addToDiffe(val, extractMeta(BuilderM, dif, idxs),
+                                   BuilderM, addingType, lidxs, mask))
+            res.push_back(v);
+        }
+      }
+    }
+    return res;
+  }
+  assert(0 && "unhandled accumulate with partial sizes");
 }
 
 SmallVector<SelectInst *, 4>
@@ -321,6 +366,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
 
   Value *ptr = getDifferential(val);
 
+  Value *old;
   if (idxs.size() != 0) {
     SmallVector<Value *, 4> sv = {
         ConstantInt::get(Type::getInt32Ty(val->getContext()), 0)};
@@ -328,8 +374,12 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       sv.push_back(i);
     ptr = BuilderM.CreateGEP(getShadowType(val->getType()), ptr, sv);
     cast<GetElementPtrInst>(ptr)->setIsInBounds(true);
+    old = BuilderM.CreateLoad(
+        GetElementPtrInst::getIndexedType(getShadowType(val->getType()), sv),
+        ptr);
+  } else {
+    old = BuilderM.CreateLoad(getShadowType(val->getType()), ptr);
   }
-  Value *old = BuilderM.CreateLoad(dif->getType(), ptr);
 
   assert(dif->getType() == old->getType());
   Value *res = nullptr;
@@ -352,7 +402,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                            &TR.analyzer, nullptr, wrap(&BuilderM));
         return addedSelects;
       } else {
-        TR.dump();
+        TR.dump(ss);
         DebugLoc loc;
         if (auto inst = dyn_cast<Instruction>(val))
           EmitFailure("CannotDeduceType", inst->getDebugLoc(), inst, ss.str());
@@ -381,13 +431,15 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       llvm::raw_string_ostream ss(s);
       ss << "oldFunc: " << *oldFunc << "\n";
       ss << "Illegal intermediate when adding to: " << *val
-         << " with addingType: " << *addingType << "\n";
+         << " with addingType: " << *addingType << "\n"
+         << " old: " << *old << " dif: " << *dif << "\n"
+         << " oldBitSize: " << oldBitSize << " newBitSize: " << newBitSize
+         << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
                            &TR.analyzer, nullptr, wrap(&BuilderM));
         return addedSelects;
       } else {
-        TR.dump();
         DebugLoc loc;
         if (auto inst = dyn_cast<Instruction>(val))
           EmitFailure("CannotDeduceType", inst->getDebugLoc(), inst, ss.str());
@@ -456,6 +508,9 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       // TODO pass in full type tree here and recurse into tree.
       if (st->getElementType(i)->isPointerTy())
         continue;
+      if (st->getElementType(i)->isIntegerTy(8) ||
+          st->getElementType(i)->isIntegerTy(1))
+        continue;
       Value *v = ConstantInt::get(Type::getInt32Ty(st->getContext()), i);
       SmallVector<Value *, 2> idx2(idxs.begin(), idxs.end());
       idx2.push_back(v);
@@ -519,7 +574,7 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
     return;
   }
   Value *tostore = getDifferential(val);
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 13
   if (toset->getContext().supportsTypedPointers()) {
 #endif
@@ -570,7 +625,7 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
   Value *metaforfree =
       unwrapM(storeInto, tbuild, antimap, UnwrapMode::LegalFullUnwrap);
   Type *T;
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
   if (metaforfree->getContext().supportsTypedPointers()) {
 #endif
@@ -641,7 +696,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   }
 
   bool needsCast = false;
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 13
   if (origptr->getContext().supportsTypedPointers()) {
 #endif

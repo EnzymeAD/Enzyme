@@ -1,7 +1,7 @@
 #pragma once
 
-#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
 #include "../../TypeAnalysis/TypeAnalysis.h"
 #include "../../Utils.h"

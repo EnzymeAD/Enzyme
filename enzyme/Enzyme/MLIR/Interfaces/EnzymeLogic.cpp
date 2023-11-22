@@ -239,7 +239,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
 
   // gutils->eraseFictiousPHIs();
 
-  mlir::Block *entry = &gutils->newFunc.getFunctionBody().front();
+  // mlir::Block *entry = &gutils->newFunc.getFunctionBody().front();
 
   // cleanupInversionAllocs(gutils, entry);
   // clearFunctionAttributes(gutils->newFunc);

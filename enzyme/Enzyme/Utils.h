@@ -441,6 +441,10 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
     if (!arg->getContext().supportsTypedPointers()) {
       return DIFFE_TYPE::DUP_ARG;
     }
+#elif LLVM_VERSION_MAJOR >= 13
+    if (arg->isOpaquePointerTy()) {
+      return DIFFE_TYPE::DUP_ARG;
+    }
 #endif
     switch (whatType(arg->getPointerElementType(), mode, integersAreConstant,
                      seen)) {
@@ -997,18 +1001,23 @@ enum class MPI_Elem {
   Old = 7
 };
 
+static inline llvm::PointerType *getInt8PtrTy(llvm::LLVMContext &Context,
+                                              unsigned AddressSpace = 0) {
+  return llvm::PointerType::get(llvm::Type::getInt8Ty(Context), AddressSpace);
+}
+
 static inline llvm::StructType *getMPIHelper(llvm::LLVMContext &Context) {
   using namespace llvm;
   auto i64 = Type::getInt64Ty(Context);
   Type *types[] = {
-      /*buf      0 */ Type::getInt8PtrTy(Context),
+      /*buf      0 */ getInt8PtrTy(Context),
       /*count    1 */ i64,
-      /*datatype 2 */ Type::getInt8PtrTy(Context),
+      /*datatype 2 */ getInt8PtrTy(Context),
       /*src      3 */ i64,
       /*tag      4 */ i64,
-      /*comm     5 */ Type::getInt8PtrTy(Context),
+      /*comm     5 */ getInt8PtrTy(Context),
       /*fn       6 */ Type::getInt8Ty(Context),
-      /*old      7 */ Type::getInt8PtrTy(Context),
+      /*old      7 */ getInt8PtrTy(Context),
   };
   return StructType::get(Context, types, false);
 }
@@ -1681,6 +1690,14 @@ get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,
              llvm::ArrayRef<llvm::Value *> row,
              llvm::ArrayRef<llvm::Value *> col, bool byRef, bool cublas);
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-variable"
+#else
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#endif
+
 // Parameter attributes from the original function/call that
 // we should preserve on the primal of the derivative code.
 static inline llvm::Attribute::AttrKind PrimalParamAttrsToPreserve[] = {
@@ -1722,6 +1739,11 @@ static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
     llvm::Attribute::AttrKind::NoCapture,
     llvm::Attribute::AttrKind::ReadNone,
 };
+#ifdef __clang__
+#pragma clang diagnostic pop
+#else
+#pragma GCC diagnostic pop
+#endif
 
 static inline llvm::Type *getSubType(llvm::Type *T) { return T; }
 
@@ -1732,7 +1754,7 @@ static inline llvm::Type *getSubType(llvm::Type *T, Arg1 i, Args... args) {
   if (auto VT = llvm::dyn_cast<llvm::VectorType>(T))
     return getSubType(VT->getElementType(), args...);
   if (auto ST = llvm::dyn_cast<llvm::StructType>(T)) {
-    assert(i != -1);
+    assert((int)i != -1);
     return getSubType(ST->getElementType(i), args...);
   }
   llvm::errs() << *T << "\n";

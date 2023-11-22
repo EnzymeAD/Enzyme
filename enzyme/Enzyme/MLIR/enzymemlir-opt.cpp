@@ -94,7 +94,6 @@ int main(int argc, char **argv) {
         PtrElementModel<LLVM::LLVMPointerType>>(*ctx);
     LLVM::LLVMArrayType::attachInterface<PtrElementModel<LLVM::LLVMArrayType>>(
         *ctx);
-    // enzyme::CacheType::attachInterface<MemRefInsider>(*ctx);
   });
 
   // Register the autodiff interface implementations for upstream dialects.

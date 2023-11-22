@@ -93,9 +93,16 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"sin", Intrinsic::sin},
     {"tan", Intrinsic::not_intrinsic},
     {"acos", Intrinsic::not_intrinsic},
+    {"__nv_isnand", Intrinsic::not_intrinsic},
+    {"__nv_isnanf", Intrinsic::not_intrinsic},
+    {"__nv_isinfd", Intrinsic::not_intrinsic},
+    {"__nv_isinff", Intrinsic::not_intrinsic},
+    {"__nv_acos", Intrinsic::not_intrinsic},
     {"asin", Intrinsic::not_intrinsic},
+    {"__nv_asin", Intrinsic::not_intrinsic},
     {"atan", Intrinsic::not_intrinsic},
     {"atan2", Intrinsic::not_intrinsic},
+    {"__nv_atan2", Intrinsic::not_intrinsic},
     {"cosh", Intrinsic::not_intrinsic},
     {"sinh", Intrinsic::not_intrinsic},
     {"tanh", Intrinsic::not_intrinsic},
@@ -5204,7 +5211,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       TypeTree ival(BaseType::Pointer);
       size_t objSize = 1;
 
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
       auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
       objSize = DL.getTypeSizeInBits(
                     call.getOperand(1)->getType()->getPointerElementType()) /
@@ -5484,12 +5491,20 @@ TypeResults TypeAnalysis::analyzeFunction(const FnTypeInfo &fn) {
 
     return TypeResults(analysis);
   }
+#ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wnull-dereference"
+#else
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wnull-dereference"
+#endif
   if (fn.Function->empty())
     return TypeResults(*(TypeAnalyzer *)nullptr);
+#ifdef __clang__
 #pragma clang diagnostic pop
-
+#else
+#pragma GCC diagnostic pop
+#endif
   auto res = analyzedFunctions.emplace(fn, new TypeAnalyzer(fn, *this));
   auto &analysis = *res.first->second;
 
@@ -5599,12 +5614,12 @@ ConcreteType TypeResults::intType(size_t num, Value *val, bool errIfNotFound,
   return dt;
 }
 
-Type *TypeResults::addingType(size_t num, Value *val) const {
+Type *TypeResults::addingType(size_t num, Value *val, size_t start) const {
   assert(val);
   assert(val->getType());
   auto q = query(val);
   Type *ty = q[{-1}].isFloat();
-  for (size_t i = 0; i < num; ++i) {
+  for (size_t i = start; i < num; ++i) {
     auto ty2 = q[{(int)i}].isFloat();
     if (ty) {
       if (ty2)

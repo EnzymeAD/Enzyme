@@ -91,6 +91,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
   if (auto SI = dyn_cast<StoreInst>(user)) {
     if (!shadow) {
+
       // We don't need any of the input operands to compute the adjoint of a
       // store instance The one exception to this is stores to the loop bounds.
       if (SI->getValueOperand() == val) {
@@ -112,46 +113,51 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
             }
           }
         }
-
-        // Preserve any non-floating point values that are stored in an active
-        // backwards creation shadow.
-        if (!TR.query(const_cast<Value *>(SI->getValueOperand()))[{-1}]
-                 .isFloat())
-          for (auto pair : gutils->backwardsOnlyShadows)
-            if (pair.second.stores.count(SI)) {
-              if (EnzymePrintDiffUse)
-                llvm::errs()
-                    << " Need direct primal of " << *val
-                    << " in reverse from remat store " << *user << "\n";
-              return true;
-            }
       }
     } else {
-      if (mode == DerivativeMode::ReverseModeGradient ||
-          mode == DerivativeMode::ForwardModeSplit) {
+      bool backwardsShadow = false;
+      bool forwardsShadow = true;
+      for (auto pair : gutils->backwardsOnlyShadows) {
+        if (pair.second.stores.count(SI) &&
+            !gutils->isConstantValue(pair.first)) {
+          backwardsShadow = true;
+          forwardsShadow = pair.second.primalInitialize;
+        }
+      }
 
-        bool rematerialized = false;
-        for (auto pair : gutils->backwardsOnlyShadows)
-          if (pair.second.stores.count(SI)) {
-            rematerialized = true;
-            break;
-          }
+      // Preserve any non-floating point values that are stored in an active
+      // backwards creation shadow.
 
-        if (SI->getValueOperand() == val) {
-          // storing an active pointer into a location
-          // doesn't require the shadow pointer for the
-          // reverse pass
-          // Unless the store is into a backwards store, which would
-          // would then be performed in the reverse if the stored value was
-          // a possible pointer.
-          if (!rematerialized)
-            return false;
-        } else {
-          // Likewise, if not rematerializing in reverse pass, you
-          // don't need to keep the pointer operand for known pointers
-          if (!rematerialized &&
-              TR.query(const_cast<Value *>(SI->getValueOperand()))[{-1}] ==
-                  BaseType::Pointer)
+      if (SI->getValueOperand() == val) {
+        // storing an active pointer into a location
+        // doesn't require the shadow pointer for the
+        // reverse pass
+        // Unless the store is into a backwards store, which would
+        // would then be performed in the reverse if the stored value was
+        // a possible pointer.
+
+        if (!((mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
+              (mode == DerivativeMode::ReverseModeGradient &&
+               backwardsShadow) ||
+              (mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
+              (mode == DerivativeMode::ReverseModeCombined &&
+               (forwardsShadow || backwardsShadow)) ||
+              mode == DerivativeMode::ForwardMode))
+          return false;
+      } else {
+        // Likewise, if not rematerializing in reverse pass, you
+        // don't need to keep the pointer operand for known pointers
+
+        auto ct = TR.query(const_cast<Value *>(SI->getValueOperand()))[{-1}];
+        if (ct == BaseType::Pointer || ct == BaseType::Integer) {
+
+          if (!((mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
+                (mode == DerivativeMode::ReverseModeGradient &&
+                 backwardsShadow) ||
+                (mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
+                (mode == DerivativeMode::ReverseModeCombined &&
+                 (forwardsShadow || backwardsShadow)) ||
+                mode == DerivativeMode::ForwardMode))
             return false;
         }
       }
@@ -483,6 +489,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
           if (EnzymePrintDiffUse)
             llvm::errs() << " Need: shadow(" << to_string(qtype) << ") of "
                          << *val << " in reverse as shadow MPI " << *CI << "\n";
+          return true;
         }
       }
 
@@ -539,16 +546,44 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         return true;
       }
 
-    if (shadow) {
+    if (funcName == "julia.write_barrier" ||
+        funcName == "julia.write_barrier_binding") {
       // Use in a write barrier requires the shadow in the forward, even
       // though the instruction is active.
-      if (mode != DerivativeMode::ReverseModeGradient &&
-          (funcName == "julia.write_barrier" ||
-           funcName == "julia.write_barrier_binding")) {
+      if (shadow && (mode != DerivativeMode::ReverseModeGradient &&
+                     mode != DerivativeMode::ForwardModeSplit)) {
         if (EnzymePrintDiffUse)
           llvm::errs() << " Need: shadow of " << *val
-                       << " in reverse as shadow write_barrier " << *CI << "\n";
+                       << " in forward as shadow write_barrier " << *CI << "\n";
         return true;
+      }
+      if (shadow) {
+#if LLVM_VERSION_MAJOR >= 14
+        auto sz = CI->arg_size();
+#else
+        auto sz = CI->getNumArgOperands();
+#endif
+        bool isStored = false;
+        // First pointer is the destination
+        for (size_t i = 1; i < sz; i++)
+          isStored |= val == CI->getArgOperand(i);
+        bool rematerialized = false;
+        if (isStored)
+          for (auto pair : gutils->backwardsOnlyShadows)
+            if (pair.second.stores.count(CI) &&
+                !gutils->isConstantValue(pair.first)) {
+              rematerialized = true;
+              break;
+            }
+
+        if (rematerialized) {
+          if (EnzymePrintDiffUse)
+            llvm::errs()
+                << " Need: shadow of " << *val
+                << " in rematerialized reverse as shadow write_barrier " << *CI
+                << "\n";
+          return true;
+        }
       }
     }
 
@@ -682,7 +717,7 @@ void DifferentialUseAnalysis::dump(Graph &G) {
 /* Returns true if there is a path from source 's' to sink 't' in
   residual graph. Also fills parent[] to store the path */
 void DifferentialUseAnalysis::bfs(const Graph &G,
-                                  const SmallPtrSetImpl<Value *> &Recompute,
+                                  const SetVector<Value *> &Recompute,
                                   std::map<Node, Node> &parent) {
   std::deque<Node> q;
   for (auto V : Recompute) {
@@ -726,9 +761,9 @@ int DifferentialUseAnalysis::cmpLoopNest(Loop *prev, Loop *next) {
 
 void DifferentialUseAnalysis::minCut(
     const DataLayout &DL, LoopInfo &OrigLI,
-    const SmallPtrSetImpl<Value *> &Recomputes,
-    const SmallPtrSetImpl<Value *> &Intermediates,
-    SmallPtrSetImpl<Value *> &Required, SmallPtrSetImpl<Value *> &MinReq,
+    const SetVector<Value *> &Recomputes,
+    const SetVector<Value *> &Intermediates, SetVector<Value *> &Required,
+    SetVector<Value *> &MinReq,
     const ValueMap<Value *, GradientUtils::Rematerializer>
         &rematerializableAllocations,
     llvm::TargetLibraryInfo &TLI) {
@@ -810,6 +845,8 @@ void DifferentialUseAnalysis::minCut(
   std::map<Node, Node> parent;
   bfs(G, Recomputes, parent);
 
+  std::deque<Value *> todo;
+
   // Print all edges that are from a reachable vertex to
   // non-reachable vertex in the original graph
   for (auto &pair : Orig) {
@@ -819,13 +856,13 @@ void DifferentialUseAnalysis::minCut(
           assert(pair.first.outgoing == 0 && N.outgoing == 1);
           assert(pair.first.V == N.V);
           MinReq.insert(N.V);
+          todo.push_back(N.V);
         }
       }
   }
 
   // When ambiguous, push to cache the last value in a computation chain
   // This should be considered in a cost for the max flow
-  std::deque<Value *> todo(MinReq.begin(), MinReq.end());
   while (todo.size()) {
     auto V = todo.front();
     todo.pop_front();
@@ -889,7 +926,7 @@ void DifferentialUseAnalysis::minCut(
           (moreOuterLoop == 0 &&
            DL.getTypeSizeInBits(V->getType()) >=
                DL.getTypeSizeInBits((*found->second.begin()).V->getType()))) {
-        MinReq.erase(V);
+        MinReq.remove(V);
         MinReq.insert((*found->second.begin()).V);
         todo.push_back((*found->second.begin()).V);
       }

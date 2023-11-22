@@ -218,13 +218,11 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
   Value *dst_arg = toZero;
 
   if (dst_arg->getType()->isIntegerTy())
-    dst_arg =
-        bb.CreateIntToPtr(dst_arg, Type::getInt8PtrTy(toZero->getContext()));
+    dst_arg = bb.CreateIntToPtr(dst_arg, getInt8PtrTy(toZero->getContext()));
   else
     dst_arg = bb.CreateBitCast(
-        dst_arg,
-        Type::getInt8PtrTy(toZero->getContext(),
-                           toZero->getType()->getPointerAddressSpace()));
+        dst_arg, getInt8PtrTy(toZero->getContext(),
+                              toZero->getType()->getPointerAddressSpace()));
 
   auto val_arg = ConstantInt::get(Type::getInt8Ty(toZero->getContext()), 0);
   auto len_arg =

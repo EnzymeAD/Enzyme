@@ -450,6 +450,7 @@ Instruction *TraceUtils::SampleOrCondition(IRBuilder<> &Builder,
     return phi;
   }
   }
+  llvm_unreachable("Invalid sample_or_condition");
 }
 
 CallInst *TraceUtils::CreateOutlinedFunction(

@@ -115,7 +115,7 @@ llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
 llvm::PointerType *getDefaultAnonymousTapeType(llvm::LLVMContext &C) {
   if (EnzymeDefaultTapeType)
     return cast<PointerType>(unwrap(EnzymeDefaultTapeType(wrap(&C))));
-  return Type::getInt8PtrTy(C);
+  return getInt8PtrTy(C);
 }
 
 Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
@@ -378,7 +378,7 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
     Value *tozero = malloccall;
 
     bool needsCast = false;
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
     if (PT->getContext().supportsTypedPointers()) {
 #endif
@@ -411,8 +411,8 @@ CallInst *CreateDealloc(llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
         unwrap(CustomDeallocator(wrap(&Builder), wrap(ToFree))));
   } else {
 
-    ToFree = Builder.CreatePointerCast(
-        ToFree, Type::getInt8PtrTy(ToFree->getContext()));
+    ToFree =
+        Builder.CreatePointerCast(ToFree, getInt8PtrTy(ToFree->getContext()));
 #if LLVM_VERSION_MAJOR > 17
     res = cast<CallInst>(Builder.CreateFree(ToFree));
 #else
@@ -483,9 +483,9 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
     count++;
   }
   FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                                       {Type::getInt8PtrTy(M.getContext()),
-                                        Type::getInt8PtrTy(M.getContext()),
-                                        Type::getInt8PtrTy(M.getContext())},
+                                       {getInt8PtrTy(M.getContext()),
+                                        getInt8PtrTy(M.getContext()),
+                                        getInt8PtrTy(M.getContext())},
                                        false);
 
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
@@ -517,7 +517,7 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
     } else {
       FunctionType *FT =
           FunctionType::get(Type::getInt32Ty(M.getContext()),
-                            {Type::getInt8PtrTy(M.getContext())}, false);
+                            {getInt8PtrTy(M.getContext())}, false);
 
       auto PutsF = M.getOrInsertFunction("puts", FT);
       EB.CreateCall(PutsF, msg);
@@ -536,10 +536,9 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
     EB.CreateRetVoid();
   }
 
-  Value *args[] = {
-      B.CreatePointerCast(primal, Type::getInt8PtrTy(M.getContext())),
-      B.CreatePointerCast(shadow, Type::getInt8PtrTy(M.getContext())),
-      getString(M, Message)};
+  Value *args[] = {B.CreatePointerCast(primal, getInt8PtrTy(M.getContext())),
+                   B.CreatePointerCast(shadow, getInt8PtrTy(M.getContext())),
+                   getString(M, Message)};
   auto call = B.CreateCall(F, args);
   call->setDebugLoc(loc);
 }
@@ -640,14 +639,15 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                            llvm::ArrayRef<llvm::Value *> args,
                            llvm::Type *copy_retty,
                            llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
-  Twine copy_name = Twine(blas.prefix) + blas.floatType + "copy" + blas.suffix;
+  auto copy_name =
+      std::string(blas.prefix) + blas.floatType + "copy" + blas.suffix;
 
   SmallVector<Type *, 1> tys;
   for (auto arg : args)
     tys.push_back(arg->getType());
 
   FunctionType *FT = FunctionType::get(copy_retty, tys, false);
-  auto fn = M.getOrInsertFunction(copy_name.str(), FT);
+  auto fn = M.getOrInsertFunction(copy_name, FT);
   Function *F = cast<Function>(fn.getCallee());
   attributeKnownFunctions(*F);
 
@@ -657,16 +657,17 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
                              BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
                              llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
-  Twine copy_name = Twine(blas.prefix) + blas.floatType + "lacpy" + blas.suffix;
+  auto copy_name =
+      std::string(blas.prefix) + blas.floatType + "lacpy" + blas.suffix;
 
   SmallVector<Type *, 1> tys;
   for (auto arg : args)
     tys.push_back(arg->getType());
 
   auto FT = FunctionType::get(Type::getVoidTy(M.getContext()), tys, false);
-  auto fn = M.getOrInsertFunction(copy_name.str(), FT);
-  Function *F = cast<Function>(fn.getCallee());
-  attributeKnownFunctions(*F);
+  auto fn = M.getOrInsertFunction(copy_name, FT);
+  if (auto F = GetFunctionFromValue(fn.getCallee()))
+    attributeKnownFunctions(*F);
 
   B.CreateCall(fn, args, bundles);
 }
@@ -882,9 +883,9 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   std::string dot_name = blas.prefix + blas.floatType + "dot" + blas.suffix;
   auto FDotT =
       FunctionType::get(fpTy, {BlasIT, BlasPT, BlasIT, BlasPT, BlasIT}, false);
-  Function *FDot =
-      cast<Function>(M.getOrInsertFunction(dot_name, FDotT).getCallee());
-  attributeKnownFunctions(*F);
+  auto FDot = M.getOrInsertFunction(dot_name, FDotT);
+  if (auto F = GetFunctionFromValue(FDot.getCallee()))
+    attributeKnownFunctions(*F);
 
   // now add the implementation for the inner_prod call
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
@@ -931,12 +932,19 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   {
     IRBuilder<> B1(entry);
     Value *blasOne = to_blas_callconv(B1, ConstantInt::get(IT, 1), byRef,
-                                      cublas, IT, B1, "constant.one");
+                                      cublas, nullptr, B1, "constant.one");
+
+    if (blasOne->getType() != BlasIT)
+      blasOne = B1.CreatePointerCast(blasOne, BlasIT, "intcast.constant.one");
+
     Value *m = load_if_ref(B1, IT, blasm, byRef);
     Value *n = load_if_ref(B1, IT, blasn, byRef);
     Value *size = B1.CreateNUWMul(m, n, "mat.size");
-    Value *blasSize =
-        to_blas_callconv(B1, size, byRef, cublas, IT, B1, "mat.size");
+    Value *blasSize = to_blas_callconv(
+        B1, size, byRef, cublas, julia_decl ? IT : nullptr, B1, "mat.size");
+
+    if (blasSize->getType() != BlasIT)
+      blasSize = B1.CreatePointerCast(blasSize, BlasIT, "intcast.mat.size");
     B1.CreateCondBr(B1.CreateICmpEQ(size, ConstantInt::get(IT, 0)), end, init);
 
     IRBuilder<> B2(init);
@@ -1108,11 +1116,14 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
                                IntegerType *IT, unsigned dstalign,
                                unsigned srcalign) {
   assert(elementType->isFloatingPointTy());
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
   if (Mod.getContext().supportsTypedPointers()) {
 #endif
-    assert(PT->getPointerElementType() == elementType);
+#if LLVM_VERSION_MAJOR >= 13
+    if (!PT->isOpaquePointerTy())
+#endif
+      assert(PT->getPointerElementType() == elementType);
 #if LLVM_VERSION_MAJOR >= 15
   }
 #endif
@@ -1422,12 +1433,12 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
   BasicBlock *irecv = BasicBlock::Create(M.getContext(), "invertIRecv", F);
 
 #if 0
-    /*0 */Type::getInt8PtrTy(call.getContext())
+    /*0 */getInt8PtrTy(call.getContext())
     /*1 */i64
-    /*2 */Type::getInt8PtrTy(call.getContext())
+    /*2 */getInt8PtrTy(call.getContext())
     /*3 */i64
     /*4 */i64
-    /*5 */Type::getInt8PtrTy(call.getContext())
+    /*5 */getInt8PtrTy(call.getContext())
     /*6 */Type::getInt8Ty(call.getContext())
 #endif
 
@@ -1587,7 +1598,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
     B.CreateRetVoid();
   }
 
-  llvm::Type *rtypes[] = {Type::getInt8PtrTy(M.getContext()), intType, OpPtr};
+  llvm::Type *rtypes[] = {getInt8PtrTy(M.getContext()), intType, OpPtr};
   FunctionType *RFT = FunctionType::get(intType, rtypes, false);
 
   Constant *RF = M.getNamedValue("MPI_Op_create");
@@ -1912,7 +1923,8 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
 
   if (auto LI = dyn_cast<LoadInst>(maybeReader)) {
     LoadBegin = SE.getSCEV(LI->getPointerOperand());
-    if (LoadBegin != SE.getCouldNotCompute()) {
+    if (LoadBegin != SE.getCouldNotCompute() &&
+        !LoadBegin->getType()->isIntegerTy()) {
       auto &DL = maybeWriter->getModule()->getDataLayout();
       auto width = cast<IntegerType>(DL.getIndexType(LoadBegin->getType()))
                        ->getBitWidth();
@@ -1928,7 +1940,8 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
   }
   if (auto SI = dyn_cast<StoreInst>(maybeWriter)) {
     StoreBegin = SE.getSCEV(SI->getPointerOperand());
-    if (StoreBegin != SE.getCouldNotCompute()) {
+    if (StoreBegin != SE.getCouldNotCompute() &&
+        !StoreBegin->getType()->isIntegerTy()) {
       auto &DL = maybeWriter->getModule()->getDataLayout();
       auto width = cast<IntegerType>(DL.getIndexType(StoreBegin->getType()))
                        ->getBitWidth();
@@ -1946,7 +1959,8 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
   }
   if (auto MS = dyn_cast<MemSetInst>(maybeWriter)) {
     StoreBegin = SE.getSCEV(MS->getArgOperand(0));
-    if (StoreBegin != SE.getCouldNotCompute()) {
+    if (StoreBegin != SE.getCouldNotCompute() &&
+        !StoreBegin->getType()->isIntegerTy()) {
       if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
         auto &DL = MS->getModule()->getDataLayout();
         auto width = cast<IntegerType>(DL.getIndexType(StoreBegin->getType()))
@@ -1959,7 +1973,8 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
   }
   if (auto MS = dyn_cast<MemTransferInst>(maybeWriter)) {
     StoreBegin = SE.getSCEV(MS->getArgOperand(0));
-    if (StoreBegin != SE.getCouldNotCompute()) {
+    if (StoreBegin != SE.getCouldNotCompute() &&
+        !StoreBegin->getType()->isIntegerTy()) {
       if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
         auto &DL = MS->getModule()->getDataLayout();
         auto width = cast<IntegerType>(DL.getIndexType(StoreBegin->getType()))
@@ -1972,7 +1987,8 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
   }
   if (auto MS = dyn_cast<MemTransferInst>(maybeReader)) {
     LoadBegin = SE.getSCEV(MS->getArgOperand(1));
-    if (LoadBegin != SE.getCouldNotCompute()) {
+    if (LoadBegin != SE.getCouldNotCompute() &&
+        !LoadBegin->getType()->isIntegerTy()) {
       if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
         auto &DL = MS->getModule()->getDataLayout();
         auto width = cast<IntegerType>(DL.getIndexType(LoadBegin->getType()))
@@ -2015,6 +2031,9 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
       return false;
     }
     if (funcName == "jl_array_copy" || funcName == "ijl_array_copy")
+      return false;
+
+    if (funcName == "jl_idtable_rehash" || funcName == "ijl_idtable_rehash")
       return false;
 
     // Isend only writes to inaccessible mem only
@@ -2169,6 +2188,9 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
       return false;
     }
     if (funcName == "jl_array_copy" || funcName == "ijl_array_copy")
+      return false;
+
+    if (funcName == "jl_idtable_rehash" || funcName == "ijl_idtable_rehash")
       return false;
 
     if (auto iasm = dyn_cast<InlineAsm>(call->getCalledOperand())) {
@@ -2455,7 +2477,7 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
   }
   if (!cache_arg)
     return;
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
   auto PT = cast<PointerType>(arg->getType());
 #if LLVM_VERSION_MAJOR <= 14
   if (PT->getElementType() != ty)
@@ -2486,7 +2508,7 @@ llvm::Value *to_blas_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
   B.CreateStore(V, allocV);
 
   if (julia_decl)
-    allocV = B.CreatePointerCast(allocV, Type::getInt8PtrTy(V->getContext()),
+    allocV = B.CreatePointerCast(allocV, getInt8PtrTy(V->getContext()),
                                  "intcast." + name);
 
   return allocV;
@@ -2552,9 +2574,10 @@ llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef,
     IntegerType *charTy = IntegerType::get(trans->getContext(), 8);
     trans = B.CreateLoad(charTy, trans, "loaded.trans");
 
+    auto isN = B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'N'));
+    auto isn = B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'n'));
     // fortran blas
-    return B.CreateOr(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'n')),
-                      B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'N')));
+    return B.CreateOr(isn, isN);
   } else {
     // we can inspect scalars
     return B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 111));
@@ -2570,33 +2593,32 @@ llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef,
 llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
   llvm::Type *T = V->getType();
   if (cublas) {
-    return B.CreateSelect(
-        B.CreateICmpEQ(V, ConstantInt::get(T, 1)),
-        ConstantInt::get(V->getType(), 0),
-        B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(T, 0)),
-                       ConstantInt::get(V->getType(), 1),
-                       ConstantInt::get(V->getType(), 42)));
+    auto isT1 = B.CreateICmpEQ(V, ConstantInt::get(T, 1));
+    auto isT0 = B.CreateICmpEQ(V, ConstantInt::get(T, 0));
+    return B.CreateSelect(isT1, ConstantInt::get(V->getType(), 0),
+                          B.CreateSelect(isT0,
+                                         ConstantInt::get(V->getType(), 1),
+                                         ConstantInt::get(V->getType(), 42)));
   } else if (T->isIntegerTy(8)) {
-    return B.CreateSelect(
-        B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'T')),
-        ConstantInt::get(V->getType(), 'N'),
-        B.CreateSelect(
-            B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 't')),
-            ConstantInt::get(V->getType(), 'n'),
-            B.CreateSelect(
-                B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'N')),
-                ConstantInt::get(V->getType(), 'T'),
-                B.CreateSelect(
-                    B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'n')),
-                    ConstantInt::get(V->getType(), 't'),
-                    ConstantInt::get(V->getType(), 0)))));
+    auto isn = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'n'));
+    auto sel1 = B.CreateSelect(isn, ConstantInt::get(V->getType(), 't'),
+                               ConstantInt::get(V->getType(), 0));
+
+    auto isN = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'N'));
+    auto sel2 = B.CreateSelect(isN, ConstantInt::get(V->getType(), 'T'), sel1);
+
+    auto ist = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 't'));
+    auto sel3 = B.CreateSelect(ist, ConstantInt::get(V->getType(), 'n'), sel2);
+
+    auto isT = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'T'));
+    return B.CreateSelect(isT, ConstantInt::get(V->getType(), 'N'), sel3);
+
   } else if (T->isIntegerTy(32)) {
-    return B.CreateSelect(
-        B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 111)),
-        ConstantInt::get(V->getType(), 112),
-        B.CreateSelect(B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 112)),
-                       ConstantInt::get(V->getType(), 111),
-                       ConstantInt::get(V->getType(), 0)));
+    auto is111 = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 111));
+    auto sel1 = B.CreateSelect(
+        B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 112)),
+        ConstantInt::get(V->getType(), 111), ConstantInt::get(V->getType(), 0));
+    return B.CreateSelect(is111, ConstantInt::get(V->getType(), 112), sel1);
   } else {
     std::string s;
     llvm::raw_string_ostream ss(s);
@@ -2695,9 +2717,9 @@ SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
     if (!byRef) {
       cond = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 111));
     } else {
-      cond = B.CreateOr(
-          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N')),
-          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n')));
+      auto isn = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'));
+      auto isN = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N'));
+      cond = B.CreateOr(isN, isn);
     }
   } else {
     // CUBLAS_OP_N = 0, CUBLAS_OP_T = 1, CUBLAS_OP_C = 2

@@ -29,8 +29,11 @@ struct LoadOpInterface
                                          MGradientUtils *gutils) const {
     auto loadOp = cast<LLVM::LoadOp>(op);
     if (!gutils->isConstantValue(loadOp)) {
+      Type shadowType =
+          cast<AutoDiffTypeInterface>(loadOp.getType()).getShadowType();
       mlir::Value res = builder.create<LLVM::LoadOp>(
-          loadOp.getLoc(), gutils->invertPointerM(loadOp.getAddr(), builder));
+          loadOp.getLoc(), shadowType,
+          gutils->invertPointerM(loadOp.getAddr(), builder));
       gutils->setDiffe(loadOp, res, builder);
     }
     gutils->eraseIfUnused(op);

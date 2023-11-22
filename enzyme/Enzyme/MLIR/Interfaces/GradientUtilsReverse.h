@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
 #include "CloneFunction.h"
 #include "EnzymeLogic.h"

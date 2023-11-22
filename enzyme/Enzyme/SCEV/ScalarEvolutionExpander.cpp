@@ -26,10 +26,5 @@
 
 #if LLVM_VERSION_MAJOR < 12
 #include "SCEV/ScalarEvolutionExpander.h"
-#endif
-
-#if LLVM_VERSION_MAJOR >= 12
-//#include "ScalarEvolutionExpander12.cpp"
-#else
 #include "ScalarEvolutionExpander11.cpp"
 #endif

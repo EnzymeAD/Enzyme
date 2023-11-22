@@ -101,9 +101,4 @@ def SimplifyMemrefCachePass : Pass<"simplify-memref-cache"> {
   let constructor = "mlir::enzyme::createSimplifyMemrefCachePass()";
 }
 
-def LowerToLLVMEnzymePass : Pass<"lower-to-llvm-enzyme"> {
-  let summary = "Lower enzyme.diff ops to LLVM Enzyme-compatible calls";
-  let constructor = "mlir::enzyme::createLowerToLLVMEnzymePass()";
-}
-
 #endif // ENZYME_PASSES

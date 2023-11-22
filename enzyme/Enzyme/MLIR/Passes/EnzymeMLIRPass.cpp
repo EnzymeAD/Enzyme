@@ -16,9 +16,9 @@
 #include "PassDetails.h"
 #include "Passes/Passes.h"
 #include "mlir/IR/Builders.h"
-#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 
@@ -74,6 +74,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
     std::vector<bool> volatile_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
+      (void)a;
       volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
     }
 
@@ -134,6 +135,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
     std::vector<bool> volatile_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
+      (void)a;
       volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
     }
 

@@ -1188,7 +1188,7 @@ getDefaultFunctionTypeForAugmentation(FunctionType *called, bool returnUsed,
   auto ret = called->getReturnType();
   // TODO CONSIDER a.getType()->isIntegerTy() &&
   // cast<IntegerType>(a.getType())->getBitWidth() < 16
-  outs.push_back(Type::getInt8PtrTy(called->getContext()));
+  outs.push_back(getInt8PtrTy(called->getContext()));
   if (!ret->isVoidTy() && !ret->isEmptyTy()) {
     if (returnUsed) {
       outs.push_back(ret);
@@ -2800,6 +2800,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     unsigned i = 0;
     for (auto v : gutils->getTapeValues()) {
       if (!isa<UndefValue>(v)) {
+        if (!isa<Instruction>(VMap[v])) {
+          llvm::errs() << " non constant for vmap[v=" << *v
+                       << " ]= " << *VMap[v] << "\n";
+        }
         auto inst = cast<Instruction>(VMap[v]);
         IRBuilder<> ib(inst->getNextNode());
         if (isa<PHINode>(inst))

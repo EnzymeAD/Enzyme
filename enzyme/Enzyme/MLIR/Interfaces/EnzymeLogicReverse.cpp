@@ -1,9 +1,9 @@
 #include "Dialect/Ops.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
-#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
 // TODO: this shouldn't depend on specific dialects except Enzyme.
 #include "mlir/Dialect/Arith/IR/Arith.h"
