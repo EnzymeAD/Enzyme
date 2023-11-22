@@ -13,6 +13,9 @@ include "mlir/Pass/PassBase.td"
 
 def DifferentiatePass : Pass<"enzyme"> {
   let summary = "Differentiate Passes";
+  let dependentDialects = [
+    "cf::ControlFlowDialect"
+  ];
   let constructor = "mlir::enzyme::createDifferentiatePass()";
 }
 
@@ -50,11 +53,6 @@ def RemoveUnusedEnzymeOpsPass : Pass<"remove-unnecessary-enzyme-ops"> {
 def SimplifyMemrefCachePass : Pass<"simplify-memref-cache"> {
   let summary = "Rewrite all cache<memref<cache<...>>> to cache<memref<...>> if possible";
   let constructor = "mlir::enzyme::createSimplifyMemrefCachePass()";
-}
-
-def LowerToLLVMEnzymePass : Pass<"lower-to-llvm-enzyme"> {
-  let summary = "Lower enzyme.diff ops to LLVM Enzyme-compatible calls";
-  let constructor = "mlir::enzyme::createLowerToLLVMEnzymePass()";
 }
 
 #endif // ENZYME_PASSES
