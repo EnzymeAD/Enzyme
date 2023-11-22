@@ -8,6 +8,7 @@
 //
 // This file implements a pass to print the results of running activity
 // analysis.
+//
 //===----------------------------------------------------------------------===//
 #include "Analysis/DataFlowActivityAnalysis.h"
 #include "Dialect/Ops.h"
