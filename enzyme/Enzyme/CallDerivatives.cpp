@@ -1844,20 +1844,6 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
       Value *orig_root = call.getOperand(6);
       Value *orig_comm = call.getOperand(7);
 
-      Value *shadow_recvbuf = gutils->invertPointerM(orig_recvbuf, Builder2);
-      if (!forwardMode)
-        shadow_recvbuf = lookup(shadow_recvbuf, Builder2);
-      if (shadow_recvbuf->getType()->isIntegerTy())
-        shadow_recvbuf = Builder2.CreateIntToPtr(
-            shadow_recvbuf, Type::getInt8PtrTy(call.getContext()));
-
-      Value *shadow_sendbuf = gutils->invertPointerM(orig_sendbuf, Builder2);
-      if (!forwardMode)
-        shadow_sendbuf = lookup(shadow_sendbuf, Builder2);
-      if (shadow_sendbuf->getType()->isIntegerTy())
-        shadow_sendbuf = Builder2.CreateIntToPtr(
-            shadow_sendbuf, Type::getInt8PtrTy(call.getContext()));
-
       Value *recvcount = gutils->getNewFromOriginal(orig_recvcount);
       if (!forwardMode)
         recvcount = lookup(recvcount, Builder2);
@@ -1885,159 +1871,179 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
       Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType());
       Value *tysize = MPI_TYPE_SIZE(sendtype, Builder2, call.getType());
 
-      if (forwardMode) {
-        Value *args[] = {
-            /*sendbuf*/ shadow_sendbuf,
-            /*sendcount*/ sendcount,
-            /*sendtype*/ sendtype,
-            /*recvbuf*/ shadow_recvbuf,
-            /*recvcount*/ recvcount,
-            /*recvtype*/ recvtype,
-            /*root*/ root,
-            /*comm*/ comm,
-        };
+      Value *shadow_recvbuf = gutils->invertPointerM(orig_recvbuf, Builder2);
+      Value *shadow_sendbuf = gutils->invertPointerM(orig_sendbuf, Builder2);
 
-        auto Defs = gutils->getInvertedBundles(
+      // applyChainRule HERE:
+      applyChainRule(Builder2, [&](Value* shadow_recvbuf, Value* shadow_sendbuf){
+        if (!forwardMode){
+          shadow_recvbuf = lookup(shadow_recvbuf, Builder2);
+          shadow_sendbuf = lookup(shadow_sendbuf, Builder2);
+        }
+        if (shadow_recvbuf->getType()->isIntegerTy())
+          shadow_recvbuf = Builder2.CreateIntToPtr(
+              shadow_recvbuf, Type::getInt8PtrTy(call.getContext()));
+        if (shadow_sendbuf->getType()->isIntegerTy())
+          shadow_sendbuf = Builder2.CreateIntToPtr(
+              shadow_sendbuf, Type::getInt8PtrTy(call.getContext()));
+
+        if (forwardMode) {
+          Value *args[] = {
+              /*sendbuf*/ shadow_sendbuf,
+              /*sendcount*/ sendcount,
+              /*sendtype*/ sendtype,
+              /*recvbuf*/ shadow_recvbuf,
+              /*recvcount*/ recvcount,
+              /*recvtype*/ recvtype,
+              /*root*/ root,
+              /*comm*/ comm,
+          };
+
+          auto Defs = gutils->getInvertedBundles(
+              &call,
+              {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+              ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+              ValueType::Primal, ValueType::Primal},
+              Builder2, /*lookup*/ false);
+
+          auto callval = call.getCalledOperand();
+          Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+          return;
+        }
+      }, shadow_recvbuf, shadow_sendbuf);
+
+      if (!forwardMode) {
+        // Get the length for the allocation of the intermediate buffer
+        auto recvlen_arg = Builder2.CreateZExtOrTrunc(
+            recvcount, Type::getInt64Ty(call.getContext()));
+        recvlen_arg =
+            Builder2.CreateMul(recvlen_arg,
+                              Builder2.CreateZExtOrTrunc(
+                                  tysize, Type::getInt64Ty(call.getContext())),
+                              "", true, true);
+
+        // Need to preserve the shadow send/recv buffers.
+        auto BufferDefs = gutils->getInvertedBundles(
             &call,
             {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-             ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-             ValueType::Primal, ValueType::Primal},
-            Builder2, /*lookup*/ false);
+            ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+            ValueType::Primal, ValueType::Primal},
+            Builder2, /*lookup*/ true);
 
-        auto callval = call.getCalledOperand();
-        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
-        return;
-      }
-      // Get the length for the allocation of the intermediate buffer
-      auto recvlen_arg = Builder2.CreateZExtOrTrunc(
-          recvcount, Type::getInt64Ty(call.getContext()));
-      recvlen_arg =
-          Builder2.CreateMul(recvlen_arg,
-                             Builder2.CreateZExtOrTrunc(
-                                 tysize, Type::getInt64Ty(call.getContext())),
-                             "", true, true);
+        // 1. if root, malloc intermediate buffer, else undef
+        PHINode *buf;
+        PHINode *sendlen_phi;
 
-      // Need to preserve the shadow send/recv buffers.
-      auto BufferDefs = gutils->getInvertedBundles(
-          &call,
-          {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-           ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-           ValueType::Primal, ValueType::Primal},
-          Builder2, /*lookup*/ true);
+        {
+          BasicBlock *currentBlock = Builder2.GetInsertBlock();
+          BasicBlock *rootBlock = gutils->addReverseBlock(
+              currentBlock, currentBlock->getName() + "_root", gutils->newFunc);
+          BasicBlock *mergeBlock = gutils->addReverseBlock(
+              rootBlock, currentBlock->getName() + "_post", gutils->newFunc);
 
-      // 1. if root, malloc intermediate buffer, else undef
-      PHINode *buf;
-      PHINode *sendlen_phi;
+          Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, root), rootBlock,
+                                mergeBlock);
 
-      {
-        BasicBlock *currentBlock = Builder2.GetInsertBlock();
-        BasicBlock *rootBlock = gutils->addReverseBlock(
-            currentBlock, currentBlock->getName() + "_root", gutils->newFunc);
-        BasicBlock *mergeBlock = gutils->addReverseBlock(
-            rootBlock, currentBlock->getName() + "_post", gutils->newFunc);
+          Builder2.SetInsertPoint(rootBlock);
 
-        Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, root), rootBlock,
-                              mergeBlock);
+          auto sendlen_arg = Builder2.CreateZExtOrTrunc(
+              sendcount, Type::getInt64Ty(call.getContext()));
+          sendlen_arg =
+              Builder2.CreateMul(sendlen_arg,
+                                Builder2.CreateZExtOrTrunc(
+                                    tysize, Type::getInt64Ty(call.getContext())),
+                                "", true, true);
+          sendlen_arg = Builder2.CreateMul(
+              sendlen_arg,
+              Builder2.CreateZExtOrTrunc(
+                  MPI_COMM_SIZE(comm, Builder2, root->getType()),
+                  Type::getInt64Ty(call.getContext())),
+              "", true, true);
 
-        Builder2.SetInsertPoint(rootBlock);
+          Value *rootbuf =
+              CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
+                              sendlen_arg, "mpireduce_malloccache");
 
-        auto sendlen_arg = Builder2.CreateZExtOrTrunc(
-            sendcount, Type::getInt64Ty(call.getContext()));
-        sendlen_arg =
-            Builder2.CreateMul(sendlen_arg,
-                               Builder2.CreateZExtOrTrunc(
-                                   tysize, Type::getInt64Ty(call.getContext())),
-                               "", true, true);
-        sendlen_arg = Builder2.CreateMul(
-            sendlen_arg,
-            Builder2.CreateZExtOrTrunc(
-                MPI_COMM_SIZE(comm, Builder2, root->getType()),
-                Type::getInt64Ty(call.getContext())),
-            "", true, true);
+          Builder2.CreateBr(mergeBlock);
 
-        Value *rootbuf =
-            CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
-                             sendlen_arg, "mpireduce_malloccache");
+          Builder2.SetInsertPoint(mergeBlock);
 
-        Builder2.CreateBr(mergeBlock);
+          buf = Builder2.CreatePHI(rootbuf->getType(), 2);
+          buf->addIncoming(rootbuf, rootBlock);
+          buf->addIncoming(UndefValue::get(buf->getType()), currentBlock);
 
-        Builder2.SetInsertPoint(mergeBlock);
-
-        buf = Builder2.CreatePHI(rootbuf->getType(), 2);
-        buf->addIncoming(rootbuf, rootBlock);
-        buf->addIncoming(UndefValue::get(buf->getType()), currentBlock);
-
-        sendlen_phi = Builder2.CreatePHI(sendlen_arg->getType(), 2);
-        sendlen_phi->addIncoming(sendlen_arg, rootBlock);
-        sendlen_phi->addIncoming(UndefValue::get(sendlen_arg->getType()),
-                                 currentBlock);
-      }
-
-      // 2. Gather diff(recvbuffer) to intermediate buffer
-      {
-        // int MPI_Gather(const void *sendbuf, int sendcount, MPI_Datatype
-        // sendtype,
-        //     void *recvbuf, int recvcount, MPI_Datatype recvtype,
-        //     int root, MPI_Comm comm)
-        Value *args[] = {
-            /*sendbuf*/ shadow_recvbuf,
-            /*sendcount*/ recvcount,
-            /*sendtype*/ recvtype,
-            /*recvbuf*/ buf,
-            /*recvcount*/ sendcount,
-            /*recvtype*/ sendtype,
-            /*root*/ root,
-            /*comm*/ comm,
-        };
-        Type *types[sizeof(args) / sizeof(*args)];
-        for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
-          types[i] = args[i]->getType();
-
-        FunctionType *FT = FunctionType::get(call.getType(), types, false);
-        Builder2.CreateCall(
-            called->getParent()->getOrInsertFunction("MPI_Gather", FT), args,
-            BufferDefs);
-      }
-
-      // 3. Zero diff(recvbuffer) [memset to 0]
-      {
-        auto val_arg = ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
-        auto volatile_arg = ConstantInt::getFalse(call.getContext());
-        Value *args[] = {shadow_recvbuf, val_arg, recvlen_arg, volatile_arg};
-        Type *tys[] = {args[0]->getType(), args[2]->getType()};
-        auto memset = cast<CallInst>(Builder2.CreateCall(
-            Intrinsic::getDeclaration(gutils->newFunc->getParent(),
-                                      Intrinsic::memset, tys),
-            args, BufferDefs));
-        memset->addParamAttr(0, Attribute::NonNull);
-      }
-
-      // 4. if root, diff(sendbuffer) += intermediate buffer (diffmemcopy)
-      // 5. if root, free intermediate buffer
-
-      {
-        BasicBlock *currentBlock = Builder2.GetInsertBlock();
-        BasicBlock *rootBlock = gutils->addReverseBlock(
-            currentBlock, currentBlock->getName() + "_root", gutils->newFunc);
-        BasicBlock *mergeBlock = gutils->addReverseBlock(
-            rootBlock, currentBlock->getName() + "_post", gutils->newFunc);
-
-        Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, root), rootBlock,
-                              mergeBlock);
-
-        Builder2.SetInsertPoint(rootBlock);
-
-        // 4. diff(sendbuffer) += intermediate buffer (diffmemcopy)
-        DifferentiableMemCopyFloats(call, orig_sendbuf, buf, shadow_sendbuf,
-                                    sendlen_phi, Builder2, BufferDefs);
-
-        // Free up intermediate buffer
-        if (shouldFree()) {
-          CreateDealloc(Builder2, buf);
+          sendlen_phi = Builder2.CreatePHI(sendlen_arg->getType(), 2);
+          sendlen_phi->addIncoming(sendlen_arg, rootBlock);
+          sendlen_phi->addIncoming(UndefValue::get(sendlen_arg->getType()),
+                                  currentBlock);
         }
 
-        Builder2.CreateBr(mergeBlock);
-        Builder2.SetInsertPoint(mergeBlock);
+        // 2. Gather diff(recvbuffer) to intermediate buffer
+        {
+          // int MPI_Gather(const void *sendbuf, int sendcount, MPI_Datatype
+          // sendtype,
+          //     void *recvbuf, int recvcount, MPI_Datatype recvtype,
+          //     int root, MPI_Comm comm)
+          Value *args[] = {
+              /*sendbuf*/ shadow_recvbuf,
+              /*sendcount*/ recvcount,
+              /*sendtype*/ recvtype,
+              /*recvbuf*/ buf,
+              /*recvcount*/ sendcount,
+              /*recvtype*/ sendtype,
+              /*root*/ root,
+              /*comm*/ comm,
+          };
+          Type *types[sizeof(args) / sizeof(*args)];
+          for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
+            types[i] = args[i]->getType();
+
+          FunctionType *FT = FunctionType::get(call.getType(), types, false);
+          Builder2.CreateCall(
+              called->getParent()->getOrInsertFunction("MPI_Gather", FT), args,
+              BufferDefs);
+        }
+
+        // 3. Zero diff(recvbuffer) [memset to 0]
+        {
+          auto val_arg = ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
+          auto volatile_arg = ConstantInt::getFalse(call.getContext());
+          Value *args[] = {shadow_recvbuf, val_arg, recvlen_arg, volatile_arg};
+          Type *tys[] = {args[0]->getType(), args[2]->getType()};
+          auto memset = cast<CallInst>(Builder2.CreateCall(
+              Intrinsic::getDeclaration(gutils->newFunc->getParent(),
+                                        Intrinsic::memset, tys),
+              args, BufferDefs));
+          memset->addParamAttr(0, Attribute::NonNull);
+        }
+
+        // 4. if root, diff(sendbuffer) += intermediate buffer (diffmemcopy)
+        // 5. if root, free intermediate buffer
+
+        {
+          BasicBlock *currentBlock = Builder2.GetInsertBlock();
+          BasicBlock *rootBlock = gutils->addReverseBlock(
+              currentBlock, currentBlock->getName() + "_root", gutils->newFunc);
+          BasicBlock *mergeBlock = gutils->addReverseBlock(
+              rootBlock, currentBlock->getName() + "_post", gutils->newFunc);
+
+          Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, root), rootBlock,
+                                mergeBlock);
+
+          Builder2.SetInsertPoint(rootBlock);
+
+          // 4. diff(sendbuffer) += intermediate buffer (diffmemcopy)
+          DifferentiableMemCopyFloats(call, orig_sendbuf, buf, shadow_sendbuf,
+                                      sendlen_phi, Builder2, BufferDefs);
+
+          // Free up intermediate buffer
+          if (shouldFree()) {
+            CreateDealloc(Builder2, buf);
+          }
+
+          Builder2.CreateBr(mergeBlock);
+          Builder2.SetInsertPoint(mergeBlock);
+        }
       }
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
