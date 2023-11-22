@@ -276,6 +276,9 @@ private:
 class AliasClassLattice : public dataflow::AbstractSparseLattice {
 public:
   using AbstractSparseLattice::AbstractSparseLattice;
+  AliasClassLattice(Value value, AliasClassSet &&classes)
+      : dataflow::AbstractSparseLattice(value),
+        aliasClasses(std::move(classes)) {}
 
   void print(raw_ostream &os) const override;
 
@@ -307,12 +310,6 @@ public:
   const AliasClassSet &getAliasClassesObject() const { return aliasClasses; }
 
 private:
-  struct UndefinedState {};
-
-  AliasClassLattice(Value value, AliasClassSet &&classes)
-      : dataflow::AbstractSparseLattice(value),
-        aliasClasses(std::move(classes)) {}
-
   AliasClassSet aliasClasses;
 };
 
