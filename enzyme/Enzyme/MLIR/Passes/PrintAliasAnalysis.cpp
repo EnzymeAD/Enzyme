@@ -122,6 +122,9 @@ struct PrintAliasAnalysisPass
             if (state->isUnknown()) {
               op->setAttr("ac",
                           StringAttr::get(result.getContext(), "<unknown>"));
+            } else if (state->isUndefined()) {
+              op->setAttr("ac",
+                          StringAttr::get(result.getContext(), "<undefined>"));
             } else {
               for (auto aliasClass : state->getAliasClasses()) {
                 op->setAttr("ac", aliasClass);
