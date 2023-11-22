@@ -148,6 +148,16 @@ def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   ]
                   >;
 
+def axpby : CallBlasPattern<(Op $n, $alpha, $x, $incx, $beta, $y, $incy),
+                  ["y"],[len, fp, vinc<["n"]>, fp, vinc<["n"]>],
+                  [
+                  (b<"dot"> $n, adj<"y">, $x),
+                  (b<"axpy"> $n, $alpha, adj<"y">, adj<"x">),
+                  (b<"dot"> $n, adj<"x">, $y),
+                  (b<"scal"> $n, $beta, adj<"y">) // y = alpha*x + beta*y
+                  ]
+                  >;
+
 def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   [],[len, vinc<["n"]>, vinc<["n"]>],
                   [
