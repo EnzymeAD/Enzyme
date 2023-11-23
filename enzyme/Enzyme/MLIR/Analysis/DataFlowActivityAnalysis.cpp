@@ -572,7 +572,7 @@ private:
   // function being differentiated. This is used to set the entry state
   // because we need access to the results of points-to analysis.
   Block *entryBlock;
-  ArrayRef<enzyme::Activity> argumentActivity;
+  SmallVector<enzyme::Activity> argumentActivity;
 };
 
 class DenseBackwardActivityAnalysis
@@ -697,7 +697,7 @@ public:
 
 private:
   FunctionOpInterface parentOp;
-  ArrayRef<enzyme::Activity> argumentActivity;
+  SmallVector<enzyme::Activity> argumentActivity;
 };
 
 void traverseCallGraph(FunctionOpInterface root,
@@ -780,7 +780,7 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
     return !isActiveData(value);
   };
 
-  function_ref<bool(Operation *)> isConstantInstruction = [&](Operation *op) {
+  std::function<bool(Operation *)> isConstantInstruction = [&](Operation *op) {
     if (isPure(op)) {
       // If an operation doesn't have side effects, the only way it can
       // propagate active data is through its results.
