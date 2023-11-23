@@ -341,6 +341,19 @@ void enzyme::PointsToPointerAnalysis::visitOperation(Operation *op,
 
   SmallVector<MemoryEffects::EffectInstance> effects;
   memory.getEffects(effects);
+
+  // If the operation allocates fresh memory and doesn't write into it, that
+  // memory is known not to point to any known alias class.
+  if (effects.size() == 1 &&
+      isa<MemoryEffects::Allocate>(effects.front().getEffect()) &&
+      effects.front().getValue()) {
+    const auto *destClasses =
+        getOrCreateFor<AliasClassLattice>(op, effects.front().getValue());
+    propagateIfChanged(
+        after, after->setPointingToEmpty(destClasses->getAliasClassesObject()));
+    return;
+  }
+
   for (const auto &effect : effects) {
     if (!isa<MemoryEffects::Write>(effect.getEffect()))
       continue;
@@ -834,14 +847,6 @@ void enzyme::AliasAnalysis::transfer(
               result->getPoint(),
               originalClasses.getOriginalClass(result->getPoint(), debugLabel));
           propagateIfChanged(result, result->join(fresh));
-
-          // The pointer to freshly allocated memory is known not to point to
-          // anything.
-          // TODO(zinenko): this is a bit strange to update _another_ lattice
-          // here.
-          auto *pointsTo = getOrCreate<PointsToSets>(op);
-          propagateIfChanged(pointsTo, pointsTo->setPointingToEmpty(
-                                           fresh.getAliasClassesObject()));
         }
       }
     } else if (isa<MemoryEffects::Read>(effect.getEffect())) {
