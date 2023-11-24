@@ -5,6 +5,7 @@
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Analysis/DataFlowFramework.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 namespace mlir {
@@ -106,6 +107,10 @@ private:
 /// Allocation may only happen when the mapping is not already present here.
 class OriginalClasses {
 public:
+  DistinctAttr getFixedOriginalClass(Value value) const {
+    return originalClasses.lookup(value);
+  }
+
   DistinctAttr getOriginalClass(Value value, StringRef debugLabel) {
     return getOriginalClass(value,
                             StringAttr::get(value.getContext(), debugLabel));
@@ -343,6 +348,8 @@ private:
   /// A special alias class to denote unannotated pointer arguments.
   const DistinctAttr entryClass;
 
+  // TODO(zinenko): original classes can be a sparse lattice itself?
+public:
   /// Alias classes originally assigned to known-distinct values, e.g., fresh
   /// allocations, by this analysis. This does NOT necessarily need to be shared
   /// with the other analysis as they may assign different classes, e.g., for
