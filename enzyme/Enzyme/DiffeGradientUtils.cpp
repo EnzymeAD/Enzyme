@@ -47,6 +47,7 @@
 #include "llvm/Support/ErrorHandling.h"
 
 #include "LibraryFuncs.h"
+#include "Utils.h"
 
 using namespace llvm;
 
@@ -220,42 +221,58 @@ Value *DiffeGradientUtils::diffe(Value *val, IRBuilder<> &BuilderM) {
 SmallVector<SelectInst *, 4>
 DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                                Type *addingType, unsigned start, unsigned size,
+                               llvm::ArrayRef<llvm::Value *> idxs,
                                llvm::Value *mask) {
   assert(addingType);
   auto &DL = oldFunc->getParent()->getDataLayout();
-  auto storeSize = (DL.getTypeSizeInBits(val->getType()) + 7) / 8;
-  if (start == 0 && size == storeSize) {
-    return addToDiffe(val, dif, BuilderM, addingType, ArrayRef<Value *>(),
-                      mask);
+  Type *VT = val->getType();
+  for (auto cv : idxs) {
+    auto i = dyn_cast<ConstantInt>(cv)->getSExtValue();
+    if (auto ST = dyn_cast<StructType>(VT)) {
+      VT = ST->getElementType(i);
+      continue;
+    }
+    if (auto AT = dyn_cast<ArrayType>(VT)) {
+      assert(i < AT->getNumElements());
+      VT = AT->getElementType();
+      continue;
+    }
+    assert(0 && "illegal indexing type");
   }
-  if (auto ST = dyn_cast<StructType>(val->getType())) {
+  auto storeSize = (DL.getTypeSizeInBits(VT) + 7) / 8;
+  if (start == 0 && size == storeSize) {
+    if (getWidth() == 1) {
+      return addToDiffe(val, dif, BuilderM, addingType, idxs, mask);
+    } else {
+
+      SmallVector<SelectInst *, 4> res;
+      for (int j = 0; j < getWidth(); j++) {
+        SmallVector<Value *, 1> lidxs;
+        lidxs.push_back(
+            ConstantInt::get(Type::getInt32Ty(val->getContext()), j));
+        for (auto idx : idxs)
+          lidxs.push_back(idx);
+        for (auto v : addToDiffe(val, dif, BuilderM, addingType, lidxs, mask))
+          res.push_back(v);
+      }
+      return res;
+    }
+  }
+  if (auto ST = dyn_cast<StructType>(VT)) {
     auto SL = DL.getStructLayout(ST);
     auto left_idx = SL->getElementContainingOffset(start);
     assert(SL->getElementOffset(left_idx) == start);
     auto right_idx = ST->getNumElements();
-    if (storeSize != start + size) {
-      right_idx = SL->getElementContainingOffset(start + size);
-      assert(SL->getElementOffset(right_idx) == start + size);
-    }
     SmallVector<SelectInst *, 4> res;
     for (auto i = left_idx; i < right_idx; i++) {
-      if (getWidth() == 1) {
-        Value *lidxs[] = {
-            ConstantInt::get(Type::getInt32Ty(val->getContext()), i)};
-        for (auto v : addToDiffe(val, extractMeta(BuilderM, dif, i), BuilderM,
-                                 addingType, lidxs, mask))
-          res.push_back(v);
-      } else {
-        for (int j = 0; j < getWidth(); j++) {
-          Value *lidxs[] = {
-              ConstantInt::get(Type::getInt32Ty(val->getContext()), j),
-              ConstantInt::get(Type::getInt32Ty(val->getContext()), i)};
-          unsigned int idxs[] = {(unsigned int)j, (unsigned int)i};
-          for (auto v : addToDiffe(val, extractMeta(BuilderM, dif, idxs),
-                                   BuilderM, addingType, lidxs, mask))
-            res.push_back(v);
-        }
-      }
+      SmallVector<Value *, 1> lidxs(idxs.begin(), idxs.end());
+      lidxs.push_back(ConstantInt::get(Type::getInt32Ty(val->getContext()), i));
+      auto sub_start = max(start, (unsigned)SL->getElementOffset(i));
+      auto sub_end = min(start + size, (unsigned)SL->getElementOffset(i + 1));
+      for (auto v :
+           addToDiffe(val, extractMeta(BuilderM, dif, i), BuilderM, addingType,
+                      sub_start, sub_end - sub_start, lidxs, mask))
+        res.push_back(v);
     }
     return res;
   }

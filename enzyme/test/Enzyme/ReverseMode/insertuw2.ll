@@ -89,7 +89,6 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NEXT:   %[[i9:.+]] = fadd fast double %[[i8]], %[[i2]]
 ; CHECK-NEXT:   store double %[[i9]], double* %[[i7]]
 ; CHECK-NEXT:   %[[i10:.+]] = load { double, double, double* }, { double, double, double* }* %"out2'de"
-; CHECK-NEXT:   %[[i12:.+]] = load { double, double, double* }, { double, double, double* }* %"out1'de"
 ; CHECK-NEXT:   %[[i13:.+]] = extractvalue { double, double, double* } %[[i10]], 0
 ; CHECK-NEXT:   %[[i14:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"out1'de", i32 0, i32 0
 ; CHECK-NEXT:   %[[i15:.+]] = load double, double* %[[i14]]
