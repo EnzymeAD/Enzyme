@@ -1909,49 +1909,70 @@ public:
 
       if (!gutils->isConstantValue(orig_inserted)) {
         auto TT = TR.query(orig_inserted);
-        auto it = TT[{-1}];
-        bool Legal = true;
-        for (size_t i = 0; i < size0; ++i) {
-          bool LegalOr = true;
-          it.checkedOrIn(TT[{(int)i}], /*pointerIntSame*/ true, LegalOr);
-          Legal &= LegalOr;
-        }
-        Type *flt = it.isFloat();
-        if (!it.isKnown() || !Legal) {
-          bool found = false;
 
-          if (looseTypeAnalysis && !Legal) {
-            if (orig_inserted->getType()->isFPOrFPVectorTy()) {
-              flt = orig_inserted->getType()->getScalarType();
-              found = true;
-            } else if (orig_inserted->getType()->isIntOrIntVectorTy() ||
-                       orig_inserted->getType()->isPointerTy()) {
-              flt = nullptr;
-              found = true;
+        unsigned start = 0;
+
+        while (1) {
+          unsigned nextStart = size0;
+
+          auto dt = TT[{-1}];
+          for (size_t i = start; i < size0; ++i) {
+            bool Legal = true;
+            dt.checkedOrIn(TT[{(int)i}], /*PointerIntSame*/ true, Legal);
+            if (!Legal) {
+              nextStart = i;
+              break;
             }
           }
-          if (!found) {
-            std::string str;
-            raw_string_ostream ss(str);
-            ss << "Cannot deduce type of insertvalue " << IVI
-               << " size: " << size0 << " TT: " << TT.str();
-            if (CustomErrorHandler) {
-              CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
-                                 &TR.analyzer, nullptr, wrap(&Builder2));
-            } else {
-              EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
-                          ss.str());
+          Type *flt = dt.isFloat();
+          if (!dt.isKnown()) {
+
+            bool found = false;
+            if (looseTypeAnalysis) {
+              if (orig_inserted->getType()->isFPOrFPVectorTy()) {
+                flt = orig_inserted->getType()->getScalarType();
+                found = true;
+              } else if (orig_inserted->getType()->isIntOrIntVectorTy() ||
+                         orig_inserted->getType()->isPointerTy()) {
+                flt = nullptr;
+                found = true;
+              }
+            }
+            if (!found) {
+              std::string str;
+              raw_string_ostream ss(str);
+              ss << "Cannot deduce type of insertvalue " << IVI
+                 << " size: " << size0 << " TT: " << TT.str();
+              if (CustomErrorHandler) {
+                CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
+                                   &TR.analyzer, nullptr, wrap(&Builder2));
+              } else {
+                EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
+                            ss.str());
+              }
             }
           }
-        }
-        if (flt) {
-          auto rule = [&](Value *prediff) {
-            return Builder2.CreateExtractValue(prediff, IVI.getIndices());
-          };
-          auto prediff = diffe(&IVI, Builder2);
-          auto dindex =
-              applyChainRule(orig_inserted->getType(), Builder2, rule, prediff);
-          addToDiffe(orig_inserted, dindex, Builder2, flt);
+          assert(dt.isKnown());
+
+          if (flt) {
+            auto rule = [&](Value *prediff) {
+              return Builder2.CreateExtractValue(prediff, IVI.getIndices());
+            };
+            auto prediff = diffe(&IVI, Builder2);
+            auto dindex = applyChainRule(orig_inserted->getType(), Builder2,
+                                         rule, prediff);
+
+            auto TT = TR.query(orig_inserted);
+
+            unsigned start = 0;
+
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(orig_inserted, dindex, Builder2, flt, start,
+                             nextStart - start);
+          }
+          if (nextStart == size0)
+            break;
+          start = nextStart;
         }
       }
 
@@ -1974,7 +1995,10 @@ public:
         auto prediff = diffe(&IVI, Builder2);
         auto dindex =
             applyChainRule(orig_agg->getType(), Builder2, rule, prediff);
-        addToDiffe(orig_agg, dindex, Builder2, TR.addingType(size1, orig_agg));
+
+        ((DiffeGradientUtils *)gutils)
+            ->addToDiffe(orig_agg, dindex, Builder2,
+                         TR.addingType(size1, orig_agg));
       }
 
       setDiffe(&IVI,
