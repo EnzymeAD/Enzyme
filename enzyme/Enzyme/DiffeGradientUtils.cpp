@@ -244,7 +244,9 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
   assert(start < storeSize);
   assert(start + size <= storeSize);
 
-  if (start == 0 && size == storeSize) {
+  // If VT is a struct type the addToDiffe algorithm will lose type information
+  // so we do the recurrence here, with full type information.
+  if (start == 0 && size == storeSize && !isa<StructType>(VT)) {
     if (getWidth() == 1) {
       SmallVector<unsigned, 1> eidxs;
       for (auto idx : idxs) {
@@ -444,6 +446,10 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       llvm::raw_string_ostream ss(s);
       ss << "oldFunc: " << *oldFunc << "\n";
       ss << "Cannot deduce adding type of: " << *val << "\n";
+      ss << " + idxs {";
+      for (auto idx : idxs)
+        ss << *idx << ",";
+      ss << "}\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
                            &TR.analyzer, nullptr, wrap(&BuilderM));
@@ -498,20 +504,38 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       }
     }
 
-    Value *bcold = BuilderM.CreateBitCast(old, addingType);
-    Value *bcdif = BuilderM.CreateBitCast(dif, addingType);
+    Value *bcold = old;
+    Value *bcdif = dif;
+    Type *intTy = nullptr;
+    if (old->getType()->isPointerTy()) {
+      auto &DL = oldFunc->getParent()->getDataLayout();
+      intTy = Type::getIntNTy(old->getContext(), DL.getPointerSizeInBits());
+      bcold = BuilderM.CreatePtrToInt(bcold, intTy);
+      bcdif = BuilderM.CreatePtrToInt(bcdif, intTy);
+    } else {
+      intTy = old->getType();
+    }
+
+    bcold = BuilderM.CreateBitCast(bcold, addingType);
+    bcdif = BuilderM.CreateBitCast(bcdif, addingType);
 
     res = faddForSelect(bcold, bcdif);
     if (SelectInst *select = dyn_cast<SelectInst>(res)) {
       assert(addedSelects.back() == select);
       addedSelects.erase(addedSelects.end() - 1);
-      res = BuilderM.CreateSelect(
-          select->getCondition(),
-          BuilderM.CreateBitCast(select->getTrueValue(), old->getType()),
-          BuilderM.CreateBitCast(select->getFalseValue(), old->getType()));
+
+      Value *tval = BuilderM.CreateBitCast(select->getTrueValue(), intTy);
+      Value *fval = BuilderM.CreateBitCast(select->getFalseValue(), intTy);
+      if (old->getType()->isPointerTy()) {
+        tval = BuilderM.CreateIntToPtr(tval, old->getType());
+        fval = BuilderM.CreateIntToPtr(fval, old->getType());
+      }
+      res = BuilderM.CreateSelect(select->getCondition(), tval, fval);
       assert(select->getNumUses() == 0);
     } else {
-      res = BuilderM.CreateBitCast(res, old->getType());
+      res = BuilderM.CreateBitCast(res, intTy);
+      if (old->getType()->isPointerTy())
+        res = BuilderM.CreateIntToPtr(res, old->getType());
     }
     if (!mask) {
       BuilderM.CreateStore(res, ptr);
