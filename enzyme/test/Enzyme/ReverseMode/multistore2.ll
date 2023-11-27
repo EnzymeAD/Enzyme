@@ -21,6 +21,7 @@ entry:
 
 ; CHECK: define internal { double } @diffef({ double, i1 }* %y, { double, i1 }* %"y'", double %x, i1 %z)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %0 = alloca { double, i1 }, align 8
 ; CHECK-NEXT:   %"ins2'de" = alloca { double, i1 }, align 8
 ; CHECK-NEXT:   store { double, i1 } zeroinitializer, { double, i1 }* %"ins2'de", align 8
 ; CHECK-NEXT:   %"ins'de" = alloca { double, i1 }, align 8
@@ -28,26 +29,30 @@ entry:
 ; CHECK-NEXT:   %ins = insertvalue { double, i1 } undef, double %x, 0
 ; CHECK-NEXT:   %ins2 = insertvalue { double, i1 } %ins, i1 %z, 1
 ; CHECK-NEXT:   store { double, i1 } %ins2, { double, i1 }* %y, align 8
-; CHECK-NEXT:   %0 = load { double, i1 }, { double, i1 }* %"y'", align 8
-; CHECK-NEXT:   store { double, i1 } zeroinitializer, { double, i1 }* %"y'", align 8
-; CHECK-NEXT:   %1 = load { double, i1 }, { double, i1 }* %"ins2'de", align 8
-; CHECK-NEXT:   %2 = extractvalue { double, i1 } %0, 0
-; CHECK-NEXT:   %3 = getelementptr inbounds { double, i1 }, { double, i1 }* %"ins2'de", i32 0, i32 0
-; CHECK-NEXT:   %4 = load double, double* %3, align 8
-; CHECK-NEXT:   %5 = fadd fast double %4, %2
-; CHECK-NEXT:   store double %5, double* %3, align 8
-; CHECK-NEXT:   %6 = load { double, i1 }, { double, i1 }* %"ins2'de", align 8
-; CHECK-NEXT:   %7 = load { double, i1 }, { double, i1 }* %"ins'de", align 8
-; CHECK-NEXT:   %8 = extractvalue { double, i1 } %6, 0
-; CHECK-NEXT:   %9 = getelementptr inbounds { double, i1 }, { double, i1 }* %"ins'de", i32 0, i32 0
-; CHECK-NEXT:   %10 = load double, double* %9, align 8
-; CHECK-NEXT:   %11 = fadd fast double %10, %8
-; CHECK-NEXT:   store double %11, double* %9, align 8
+; CHECK-NEXT:   %[[i0:.+]] = load { double, i1 }, { double, i1 }* %"y'", align 8
+; CHECK-NEXT:   store { double, i1 } zeroinitializer, { double, i1 }* %0, align 8
+
+; CHECK-NEXT:   %2 = bitcast { double, i1 }* %"y'" to i64*
+; CHECK-NEXT:   %3 = bitcast { double, i1 }* %0 to i64*
+; CHECK-NEXT:   %4 = load i64, i64* %3, align 4
+; CHECK-NEXT:   store i64 %4, i64* %2, align 8
+
+; CHECK-NEXT:   %[[i2:.+]] = extractvalue { double, i1 } %[[i0]], 0
+; CHECK-NEXT:   %[[i3:.+]] = getelementptr inbounds { double, i1 }, { double, i1 }* %"ins2'de", i32 0, i32 0
+; CHECK-NEXT:   %[[i4:.+]] = load double, double* %[[i3]], align 8
+; CHECK-NEXT:   %[[i5:.+]] = fadd fast double %[[i4]], %[[i2]]
+; CHECK-NEXT:   store double %[[i5]], double* %[[i3]], align 8
+; CHECK-NEXT:   %[[i6:.+]] = load { double, i1 }, { double, i1 }* %"ins2'de", align 8
+; CHECK-NEXT:   %[[i8:.+]] = extractvalue { double, i1 } %[[i6]], 0
+; CHECK-NEXT:   %[[i9:.+]] = getelementptr inbounds { double, i1 }, { double, i1 }* %"ins'de", i32 0, i32 0
+; CHECK-NEXT:   %[[i10:.+]] = load double, double* %[[i9]], align 8
+; CHECK-NEXT:   %[[i11:.+]] = fadd fast double %[[i10]], %[[i8]]
+; CHECK-NEXT:   store double %[[i11]], double* %[[i9]], align 8
 ; CHECK-NEXT:   store { double, i1 } zeroinitializer, { double, i1 }* %"ins2'de", align 8
-; CHECK-NEXT:   %12 = load { double, i1 }, { double, i1 }* %"ins'de", align 8
-; CHECK-NEXT:   %13 = extractvalue { double, i1 } %12, 0
-; CHECK-NEXT:   %14 = fadd fast double 0.000000e+00, %13
+; CHECK-NEXT:   %[[i12:.+]] = load { double, i1 }, { double, i1 }* %"ins'de", align 8
+; CHECK-NEXT:   %[[i13:.+]] = extractvalue { double, i1 } %[[i12]], 0
+; CHECK-NEXT:   %[[i14:.+]] = fadd fast double 0.000000e+00, %[[i13]]
 ; CHECK-NEXT:   store { double, i1 } zeroinitializer, { double, i1 }* %"ins'de", align 8
-; CHECK-NEXT:   %15 = insertvalue { double } undef, double %14, 0
-; CHECK-NEXT:   ret { double } %15
+; CHECK-NEXT:   %[[i15:.+]] = insertvalue { double } undef, double %[[i14]], 0
+; CHECK-NEXT:   ret { double } %[[i15]]
 ; CHECK-NEXT: }

@@ -301,6 +301,35 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     }
     return res;
   }
+
+  if (auto AT = dyn_cast<ArrayType>(VT)) {
+    auto subType = AT->getElementType();
+    auto subTypeSize = (DL.getTypeSizeInBits(subType) + 7) / 8;
+    auto left_idx = start / subTypeSize;
+    auto right_idx = AT->getNumElements();
+    if (storeSize != start + size) {
+      right_idx = (start + size) / subTypeSize;
+      // If this doesn't cleanly end the window, make sure we do a partial
+      // accumulate for the remaining part in right_idx.
+      if (right_idx * subTypeSize != start + size)
+        right_idx++;
+    }
+    SmallVector<SelectInst *, 4> res;
+    for (auto i = left_idx; i < right_idx; i++) {
+      SmallVector<Value *, 1> lidxs(idxs.begin(), idxs.end());
+      lidxs.push_back(ConstantInt::get(Type::getInt32Ty(val->getContext()), i));
+      auto sub_start = (i == left_idx) ? (start - (i * subTypeSize)) : 0;
+      auto sub_end = (i == right_idx - 1)
+                         ? min(start + size - (unsigned)(i * subTypeSize),
+                               (unsigned)subTypeSize)
+                         : subTypeSize;
+      for (auto v : addToDiffe(val, dif, BuilderM, addingType, sub_start,
+                               sub_end - sub_start, lidxs, mask))
+        res.push_back(v);
+    }
+    return res;
+  }
+
   llvm::errs() << " VT: " << *VT << " idxs:{";
   for (auto idx : idxs)
     llvm::errs() << *idx << ",";
