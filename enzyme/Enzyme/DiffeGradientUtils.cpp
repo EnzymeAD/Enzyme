@@ -240,25 +240,31 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     assert(0 && "illegal indexing type");
   }
   auto storeSize = (DL.getTypeSizeInBits(VT) + 7) / 8;
+
+  assert(start < storeSize);
+  assert(start + size <= storeSize);
+
   if (start == 0 && size == storeSize) {
     if (getWidth() == 1) {
       SmallVector<unsigned, 1> eidxs;
       for (auto idx : idxs) {
         eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
       }
-      return addToDiffe(val, extractMeta(BuilderM, dif, eidxs), BuilderM, addingType, idxs, mask);
+      return addToDiffe(val, extractMeta(BuilderM, dif, eidxs), BuilderM,
+                        addingType, idxs, mask);
     } else {
       SmallVector<SelectInst *, 4> res;
       for (unsigned j = 0; j < getWidth(); j++) {
         SmallVector<Value *, 1> lidxs;
-        SmallVector<unsigned, 1> eidxs = { (unsigned)j };
+        SmallVector<unsigned, 1> eidxs = {(unsigned)j};
         lidxs.push_back(
             ConstantInt::get(Type::getInt32Ty(val->getContext()), j));
         for (auto idx : idxs) {
           eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
           lidxs.push_back(idx);
         }
-        for (auto v : addToDiffe(val, extractMeta(BuilderM, dif, eidxs), BuilderM, addingType, lidxs, mask))
+        for (auto v : addToDiffe(val, extractMeta(BuilderM, dif, eidxs),
+                                 BuilderM, addingType, lidxs, mask))
           res.push_back(v);
       }
       return res;
@@ -268,25 +274,34 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     auto SL = DL.getStructLayout(ST);
     auto left_idx = SL->getElementContainingOffset(start);
     auto right_idx = ST->getNumElements();
-    if (storeSize != start + size)
+    if (storeSize != start + size) {
       right_idx = SL->getElementContainingOffset(start + size);
+      // If this doesn't cleanly end the window, make sure we do a partial
+      // accumulate for the remaining part in right_idx.
+      if (SL->getElementOffset(right_idx) != start + size)
+        right_idx++;
+    }
     SmallVector<SelectInst *, 4> res;
     for (auto i = left_idx; i < right_idx; i++) {
       auto subType = ST->getElementType(i);
       SmallVector<Value *, 1> lidxs(idxs.begin(), idxs.end());
       lidxs.push_back(ConstantInt::get(Type::getInt32Ty(val->getContext()), i));
-      auto sub_start = (i == left_idx) ? (start - (unsigned)SL->getElementOffset(i)) : 0;
-      auto sub_size = (i == right_idx) ? (start + size - (unsigned)SL->getElementOffset(i)) : (DL.getTypeSizeInBits(subType) + 7)/8;
-      for (auto v :
-           addToDiffe(val, dif, BuilderM, addingType,
-                      sub_start, sub_size, lidxs, mask))
+      auto sub_start =
+          (i == left_idx) ? (start - (unsigned)SL->getElementOffset(i)) : 0;
+      auto sub_end = (i == right_idx - 1)
+                         ? (start + size - (unsigned)SL->getElementOffset(i))
+                         : (DL.getTypeSizeInBits(subType) + 7) / 8;
+      for (auto v : addToDiffe(val, dif, BuilderM, addingType, sub_start,
+                               sub_end - sub_start, lidxs, mask))
         res.push_back(v);
     }
     return res;
   }
-  llvm::errs() << " VT: " << *VT <<" idxs:{";
-  for (auto idx : idxs) llvm::errs() << *idx << ",";
-  llvm::errs() << "} start=" << start << " size=" << size << " storeSize=" << storeSize << " val=" << *val << "\n";
+  llvm::errs() << " VT: " << *VT << " idxs:{";
+  for (auto idx : idxs)
+    llvm::errs() << *idx << ",";
+  llvm::errs() << "} start=" << start << " size=" << size
+               << " storeSize=" << storeSize << " val=" << *val << "\n";
   assert(0 && "unhandled accumulate with partial sizes");
 }
 
@@ -409,12 +424,13 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     old = BuilderM.CreateLoad(getShadowType(val->getType()), ptr);
   }
   if (dif->getType() != old->getType()) {
-    llvm::errs() <<" val: " << *val << " dif: " << *dif << " old: " << *old << "\n";
+    llvm::errs() << " val: " << *val << " dif: " << *dif << " old: " << *old
+                 << "\n";
   }
 
   assert(dif->getType() == old->getType());
   Value *res = nullptr;
-  if (old->getType()->isIntOrIntVectorTy()) {
+  if (old->getType()->isIntOrIntVectorTy() || old->getType()->isPointerTy()) {
     if (!addingType) {
       if (looseTypeAnalysis) {
         if (old->getType()->isIntegerTy(64))
@@ -572,6 +588,14 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     }
     return addedSelects;
   } else {
+    llvm::errs() << " idx: {";
+    for (auto i : idxs)
+      llvm::errs() << *i << ", ";
+    llvm::errs() << "}\n";
+    if (addingType)
+      llvm::errs() << " addingType: " << *addingType << "\n";
+    else
+      llvm::errs() << " addingType: null\n";
     llvm::errs() << " oldType:" << *old->getType() << " old:" << *old << "\n";
     llvm_unreachable("unknown type to add to diffe");
     exit(1);

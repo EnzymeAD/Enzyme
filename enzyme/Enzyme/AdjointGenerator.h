@@ -1199,7 +1199,8 @@ public:
                 Builder2, align, start, size, isVolatile, ordering, syncScope,
                 mask, prevNoAlias, prevScopes);
             ((DiffeGradientUtils *)gutils)
-                ->addToDiffe(orig_val, diff, Builder2, FT, start, size, {}, mask);
+                ->addToDiffe(orig_val, diff, Builder2, FT, start, size, {},
+                             mask);
           }
           break;
         }
