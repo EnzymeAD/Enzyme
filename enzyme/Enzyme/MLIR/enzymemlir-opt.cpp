@@ -15,6 +15,7 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Async/IR/Async.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -50,12 +51,13 @@ int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
 
   // Register MLIR stuff
-  registry.insert<mlir::AffineDialect>();
+  registry.insert<mlir::affine::AffineDialect>();
   registry.insert<mlir::LLVM::LLVMDialect>();
   registry.insert<mlir::memref::MemRefDialect>();
   registry.insert<mlir::async::AsyncDialect>();
   registry.insert<mlir::func::FuncDialect>();
   registry.insert<mlir::arith::ArithDialect>();
+  registry.insert<mlir::cf::ControlFlowDialect>();
   registry.insert<mlir::scf::SCFDialect>();
   registry.insert<mlir::gpu::GPUDialect>();
   registry.insert<mlir::NVVM::NVVMDialect>();
@@ -77,7 +79,7 @@ int main(int argc, char **argv) {
   mlir::registerSymbolDCEPass();
   mlir::registerLoopInvariantCodeMotionPass();
   mlir::registerConvertSCFToOpenMPPass();
-  mlir::registerAffinePasses();
+  mlir::affine::registerAffinePasses();
   mlir::registerReconcileUnrealizedCasts();
 
   registry.addExtension(+[](MLIRContext *ctx, LLVM::LLVMDialect *dialect) {
@@ -92,7 +94,6 @@ int main(int argc, char **argv) {
         PtrElementModel<LLVM::LLVMPointerType>>(*ctx);
     LLVM::LLVMArrayType::attachInterface<PtrElementModel<LLVM::LLVMArrayType>>(
         *ctx);
-    enzyme::CacheType::attachInterface<MemRefInsider>(*ctx);
   });
 
   // Register the autodiff interface implementations for upstream dialects.
@@ -103,7 +104,6 @@ int main(int argc, char **argv) {
   enzyme::registerSCFDialectAutoDiffInterface(registry);
   enzyme::registerLinalgDialectAutoDiffInterface(registry);
 
-  return mlir::failed(
-      mlir::MlirOptMain(argc, argv, "Enzyme modular optimizer driver", registry,
-                        /*preloadDialectsInContext=*/true));
+  return mlir::asMainReturnCode(mlir::MlirOptMain(
+      argc, argv, "Enzyme modular optimizer driver", registry));
 }

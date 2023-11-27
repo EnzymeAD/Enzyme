@@ -45,6 +45,7 @@
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/InstVisitor.h"
+#include "llvm/IR/ModuleSlotTracker.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 
@@ -160,7 +161,7 @@ public:
   TypeResults(TypeAnalyzer &analyzer);
   ConcreteType intType(size_t num, llvm::Value *val, bool errIfNotFound = true,
                        bool pointerIntSame = false) const;
-  llvm::Type *addingType(size_t num, llvm::Value *val) const;
+  llvm::Type *addingType(size_t num, llvm::Value *val, size_t start = 0) const;
 
   /// Returns whether in the first num bytes there is pointer, int, float, or
   /// none If pointerIntSame is set to true, then consider either as the same
@@ -179,12 +180,12 @@ public:
   TypeTree getReturnAnalysis() const;
 
   /// Prints all known information
-  void dump() const;
+  void dump(llvm::raw_ostream &ss = llvm::errs()) const;
 
   /// The set of values val will take on during this program
   std::set<int64_t> knownIntegralValues(llvm::Value *val) const;
 
-  FnTypeInfo getCallInfo(llvm::CallInst &CI, llvm::Function &fn) const;
+  FnTypeInfo getCallInfo(llvm::CallBase &CI, llvm::Function &fn) const;
 
   llvm::Function *getFunction() const;
 };
@@ -192,6 +193,10 @@ public:
 /// Helper class that computes the fixed-point type results of a given function
 class TypeAnalyzer : public llvm::InstVisitor<TypeAnalyzer> {
 public:
+  /// Cache of metadata indices, for faster printing.
+  /// Only initialized if EnzymePrintType is true
+  std::shared_ptr<llvm::ModuleSlotTracker> MST;
+
   /// List of value's which should be re-analyzed now with new information
   llvm::SetVector<llvm::Value *, std::deque<llvm::Value *>> workList;
 
@@ -240,7 +245,7 @@ public:
   llvm::LoopInfo &LI;
   llvm::ScalarEvolution &SE;
 
-  FnTypeInfo getCallInfo(llvm::CallInst &CI, llvm::Function &fn);
+  FnTypeInfo getCallInfo(llvm::CallBase &CI, llvm::Function &fn);
 
   TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
                uint8_t direction = BOTH);
@@ -289,6 +294,8 @@ public:
   void visitStoreInst(llvm::StoreInst &I);
 
   void visitGetElementPtrInst(llvm::GetElementPtrInst &gep);
+
+  void visitGEPOperator(llvm::GEPOperator &gep);
 
   void visitPHINode(llvm::PHINode &phi);
 
@@ -339,15 +346,15 @@ public:
   void visitBinaryOperator(llvm::BinaryOperator &I);
   void visitBinaryOperation(const llvm::DataLayout &DL, llvm::Type *T,
                             llvm::Instruction::BinaryOps, llvm::Value *Args[2],
-                            TypeTree &Ret, TypeTree &LHS, TypeTree &RHS);
+                            TypeTree &Ret, TypeTree &LHS, TypeTree &RHS,
+                            llvm::Instruction *I);
 
-  void visitIPOCall(llvm::CallInst &call, llvm::Function &fn);
+  void visitIPOCall(llvm::CallBase &call, llvm::Function &fn);
 
-  void visitInvokeInst(llvm::InvokeInst &call);
-  void visitCallInst(llvm::CallInst &call);
+  void visitCallBase(llvm::CallBase &call);
 
   void visitMemTransferInst(llvm::MemTransferInst &MTI);
-  void visitMemTransferCommon(llvm::CallInst &MTI);
+  void visitMemTransferCommon(llvm::CallBase &MTI);
 
   void visitIntrinsicInst(llvm::IntrinsicInst &II);
 
@@ -370,7 +377,7 @@ public:
       std::function<bool(int /*direction*/, TypeTree & /*returnTree*/,
                          llvm::ArrayRef<TypeTree> /*argTrees*/,
                          llvm::ArrayRef<std::set<int64_t>> /*knownValues*/,
-                         llvm::CallInst * /*call*/, TypeAnalyzer *)>>
+                         llvm::CallBase * /*call*/, TypeAnalyzer *)>>
       CustomRules;
 
   /// Map of possible query states to TypeAnalyzer intermediate results

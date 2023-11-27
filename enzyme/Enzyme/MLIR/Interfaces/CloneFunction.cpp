@@ -62,7 +62,7 @@ mlir::FunctionType getFunctionTypeForClone(
   if (returnValue == ReturnType::TapeAndTwoReturns ||
       returnValue == ReturnType::TapeAndReturn) {
     RetTypes.insert(RetTypes.begin(),
-                    LLVM::LLVMPointerType::get(builder.getIntegerType(8)));
+                    LLVM::LLVMPointerType::get(FTy.getContext()));
   } else if (returnValue == ReturnType::Tape) {
     for (auto I : FTy.getInputs()) {
       RetTypes.push_back(I);
@@ -93,8 +93,9 @@ Operation *clone(Operation *src, IRMapping &mapper,
 
   // Create the new operation.
   auto *newOp =
-      src->create(src->getLoc(), src->getName(), src->getResultTypes(),
-                  operands, src->getAttrs(), successors, src->getNumRegions());
+      Operation::create(src->getLoc(), src->getName(), src->getResultTypes(),
+                        operands, src->getAttrs(), OpaqueProperties(nullptr),
+                        successors, src->getNumRegions());
 
   // Clone the regions.
   if (options.shouldCloneRegions()) {
@@ -257,7 +258,7 @@ FunctionOpInterface CloneFunctionWithReturns(
     if (diffeReturnArg) {
       auto location = blk.getArgument(blk.getNumArguments() - 1).getLoc();
       auto val = F.getFunctionType().cast<mlir::FunctionType>().getResult(0);
-      mlir::Value dval = blk.addArgument(val, location);
+      blk.addArgument(val, location);
     }
   }
 

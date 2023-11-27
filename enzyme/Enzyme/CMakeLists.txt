@@ -98,7 +98,7 @@ if (${Clang_FOUND})
         DEPENDS
         intrinsics_gen
         PLUGIN_TOOL
-        opt
+        clang
     )
 target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
 endif()
@@ -156,8 +156,6 @@ set_target_properties(LLDEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
         LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
 endif()
 
-
-if (${LLVM_VERSION_MAJOR} GREATER 10)
 add_library(LLDEnzymeFlags INTERFACE)
 target_compile_options(LLDEnzymeFlags INTERFACE -flto)
 target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -fuse-ld=lld")
@@ -172,12 +170,23 @@ if (${LLVM_VERSION_MAJOR} GREATER 14)
     target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,--load-pass-plugin=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
 endif()
 
+add_library(LLDEnzymeLooseTypeFlags INTERFACE)
+target_link_options(LLDEnzymeLooseTypeFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-loose-types=1")
+
+add_library(LLDEnzymePrintTypeFlags INTERFACE)
+target_link_options(LLDEnzymePrintTypeFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-print-type=1")
+
+add_library(LLDEnzymePrintFlags INTERFACE)
+target_link_options(LLDEnzymePrintFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-print=1")
+
+add_library(LLDEnzymeNoStrictAliasingFlags INTERFACE)
+target_link_options(LLDEnzymeNoStrictAliasingFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-strict-aliasing=0")
+
 # this custom target exists to prevent CMake from incorrectly assuming that 
 # targets that link depend on LLDEnzyme-XX can be built at the same time or 
 # before LLDEnzyme-XX has finished.
 add_custom_target(LLDEnzymeDummy "" DEPENDS LLDEnzyme-${LLVM_VERSION_MAJOR})
 add_dependencies(LLDEnzymeFlags LLDEnzymeDummy)
-endif()
 
 add_library(ClangEnzymeFlags INTERFACE)
 target_compile_options(ClangEnzymeFlags INTERFACE "-fplugin=$<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
@@ -188,9 +197,7 @@ target_compile_options(ClangEnzymeFlags INTERFACE "-fplugin=$<TARGET_FILE:ClangE
 add_custom_target(ClangEnzymeDummy "" DEPENDS ClangEnzyme-${LLVM_VERSION_MAJOR})
 add_dependencies(ClangEnzymeFlags ClangEnzymeDummy)
 
-if (${LLVM_VERSION_MAJOR} GREATER 10)
 install(TARGETS LLDEnzymeFlags EXPORT EnzymeTargets)
-endif()
 install(TARGETS ClangEnzymeFlags EXPORT EnzymeTargets)
 
 install(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}

@@ -4,10 +4,6 @@
 
 #include <stdio.h>
 
-int enzyme_dup;
-int enzyme_out;
-int enzyme_const;
-
 template < typename return_type, typename ... T >
 extern return_type __enzyme_fwddiff(void*, T ... );
 

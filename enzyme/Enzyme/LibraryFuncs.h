@@ -23,12 +23,14 @@
 #ifndef LIBRARYFUNCS_H_
 #define LIBRARYFUNCS_H_
 
-#include "llvm/ADT/StringMap.h"
-#include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/TargetLibraryInfo.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/InlineAsm.h"
-#include "llvm/IR/Instructions.h"
+#include <llvm/ADT/StringMap.h>
+#include <llvm/Analysis/AliasAnalysis.h>
+#include <llvm/Analysis/TargetLibraryInfo.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/InlineAsm.h>
+#include <llvm/IR/Instructions.h>
+
+#include "Utils.h"
 
 class GradientUtils;
 extern llvm::StringMap<std::function<llvm::Value *(
@@ -216,13 +218,11 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
   Value *dst_arg = toZero;
 
   if (dst_arg->getType()->isIntegerTy())
-    dst_arg =
-        bb.CreateIntToPtr(dst_arg, Type::getInt8PtrTy(toZero->getContext()));
+    dst_arg = bb.CreateIntToPtr(dst_arg, getInt8PtrTy(toZero->getContext()));
   else
     dst_arg = bb.CreateBitCast(
-        dst_arg,
-        Type::getInt8PtrTy(toZero->getContext(),
-                           toZero->getType()->getPointerAddressSpace()));
+        dst_arg, getInt8PtrTy(toZero->getContext(),
+                              toZero->getType()->getPointerAddressSpace()));
 
   auto val_arg = ConstantInt::get(Type::getInt8Ty(toZero->getContext()), 0);
   auto len_arg =

@@ -2,6 +2,7 @@ add_subdirectory(ForwardMode)
 add_subdirectory(ForwardModeVector)
 add_subdirectory(ReverseMode)
 add_subdirectory(BatchMode)
+add_subdirectory(Sparse)
 
 # Run regression and unit tests
 add_lit_testsuite(check-enzyme-integration "Running enzyme integration tests"

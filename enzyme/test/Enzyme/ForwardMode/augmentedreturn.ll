@@ -34,8 +34,8 @@ entry:
 ; CHECK-NEXT:   %0 = call { { i8*, double }, { i8*, double } } @fwddiffeaugsquare(double %x, double %"x'")
 ; CHECK-NEXT:   %1 = extractvalue { { i8*, double }, { i8*, double } } %0, 0
 ; CHECK-NEXT:   %2 = extractvalue { { i8*, double }, { i8*, double } } %0, 1
-; CHECK-NEXT:   %[[i3:.+]] = extractvalue { i8*, double } %2, 1
 ; CHECK-NEXT:   %o = extractvalue { i8*, double } %1, 1
+; CHECK-NEXT:   %[[i3:.+]] = extractvalue { i8*, double } %2, 1
 ; CHECK-NEXT:   %[[i4:.+]] = fmul fast double %[[i3]], %o
 ; CHECK-NEXT:   %[[i5:.+]] = fmul fast double %[[i3]], %o
 ; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %[[i4]], %[[i5]]

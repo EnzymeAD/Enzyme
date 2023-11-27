@@ -48,16 +48,45 @@ extern "C" {
 extern llvm::cl::opt<bool> EnzymePrintDiffUse;
 }
 
+/// Classification of what type of use is requested
+enum class QueryType {
+  // The original value is needed for the derivative
+  Primal = 0,
+  // The shadow value is needed for the derivative
+  Shadow = 1,
+  // The primal value is needed to stand in for the shadow
+  // value and compute the derivative of an instruction
+  ShadowByConstPrimal = 2
+};
+
+static inline std::string to_string(QueryType mode) {
+  switch (mode) {
+  case QueryType::Primal:
+    return "Primal";
+  case QueryType::Shadow:
+    return "Shadow";
+  case QueryType::ShadowByConstPrimal:
+    return "ShadowByConstPrimal";
+  }
+  llvm_unreachable("illegal QueryType");
+}
+
+typedef std::pair<const llvm::Value *, QueryType> UsageKey;
+
 namespace DifferentialUseAnalysis {
 
 /// Determine if a value is needed directly to compute the adjoint
-/// of the given instruction user
+/// of the given instruction user. `shadow` denotes whether we are considering
+/// the shadow of the value (shadow=true) or the primal of the value
+/// (shadow=false).
+/// Recursive use is only usable in shadow mode.
 bool is_use_directly_needed_in_reverse(
-    const GradientUtils *gutils, const llvm::Value *val,
+    const GradientUtils *gutils, const llvm::Value *val, DerivativeMode mode,
     const llvm::Instruction *user,
-    const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable);
+    const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable,
+    QueryType shadow, bool *recursiveUse = nullptr);
 
-template <ValueType VT, bool OneLevel = false>
+template <QueryType VT, bool OneLevel = false>
 inline bool is_value_needed_in_reverse(
     const GradientUtils *gutils, const llvm::Value *inst, DerivativeMode mode,
     std::map<UsageKey, bool> &seen,
@@ -65,7 +94,8 @@ inline bool is_value_needed_in_reverse(
   using namespace llvm;
 
   TypeResults const &TR = gutils->TR;
-  static_assert(VT == ValueType::Primal || VT == ValueType::Shadow);
+  static_assert(VT == QueryType::Primal || VT == QueryType::Shadow ||
+                VT == QueryType::ShadowByConstPrimal);
   auto idx = UsageKey(inst, VT);
   if (seen.find(idx) != seen.end())
     return seen[idx];
@@ -76,7 +106,7 @@ inline bool is_value_needed_in_reverse(
   // Inductively claim we aren't needed (and try to find contradiction)
   seen[idx] = false;
 
-  if (VT != ValueType::Shadow) {
+  if (VT == QueryType::Primal) {
     if (auto op = dyn_cast<BinaryOperator>(inst)) {
       if (op->getOpcode() == Instruction::FDiv) {
         if (!gutils->isConstantValue(const_cast<Value *>(inst)) &&
@@ -109,295 +139,38 @@ inline bool is_value_needed_in_reverse(
     // is used in an active instruction.
     // If inst is a constant value, the primal may be used in its place and
     // thus required.
-    if (VT == ValueType::Shadow || inst_cv) {
-
-      // Floating point numbers cannot be used as a shadow pointer/etc
-      if (inst_cv || (mode != DerivativeMode::ForwardMode &&
-                      mode != DerivativeMode::ForwardModeSplit))
-        if (TR.query(const_cast<Value *>(inst))[{-1}].isFloat())
-          goto endShadow;
-
-      if (!user) {
-        if (EnzymePrintDiffUse)
-          llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                       << " in reverse as unknown user " << *use << "\n";
+    if (VT == QueryType::Shadow || VT == QueryType::ShadowByConstPrimal ||
+        inst_cv) {
+      bool recursiveUse = false;
+      if (is_use_directly_needed_in_reverse(
+              gutils, inst, mode, user, oldUnreachable,
+              (VT == QueryType::Shadow) ? QueryType::Shadow
+                                        : QueryType::ShadowByConstPrimal,
+              &recursiveUse)) {
         return seen[idx] = true;
       }
 
-      if (auto SI = dyn_cast<StoreInst>(user)) {
-        if (mode == DerivativeMode::ReverseModeGradient ||
-            mode == DerivativeMode::ForwardModeSplit) {
-
-          bool rematerialized = false;
-          for (auto pair : gutils->backwardsOnlyShadows)
-            if (pair.second.stores.count(SI)) {
-              rematerialized = true;
-              break;
-            }
-
-          if (SI->getValueOperand() == inst) {
-            // storing an active pointer into a location
-            // doesn't require the shadow pointer for the
-            // reverse pass
-            // Unless the store is into a backwards store, which would
-            // would then be performed in the reverse if the stored value was
-            // a possible pointer.
-            if (!rematerialized)
-              goto endShadow;
-          } else {
-            // Likewise, if not rematerializing in reverse pass, you
-            // don't need to keep the pointer operand for known pointers
-            if (!rematerialized &&
-                TR.query(const_cast<Value *>(SI->getValueOperand()))[{-1}] ==
-                    BaseType::Pointer)
-              goto endShadow;
-          }
-        }
-
-        if (!gutils->isConstantValue(
-                const_cast<Value *>(SI->getPointerOperand()))) {
+      if (recursiveUse && !OneLevel) {
+        bool val;
+        if (VT == QueryType::Shadow)
+          val = is_value_needed_in_reverse<QueryType::Shadow>(
+              gutils, user, mode, seen, oldUnreachable);
+        else
+          val = is_value_needed_in_reverse<QueryType::ShadowByConstPrimal>(
+              gutils, user, mode, seen, oldUnreachable);
+        if (val) {
           if (EnzymePrintDiffUse)
             llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                         << " in reverse as shadow store  " << *SI << "\n";
-          return seen[idx] = true;
-        } else
-          goto endShadow;
-      }
-
-      if (auto MTI = dyn_cast<MemTransferInst>(user)) {
-        if (MTI->getArgOperand(0) != inst && MTI->getArgOperand(1) != inst)
-          goto endShadow;
-
-        if (!gutils->isConstantValue(
-                const_cast<Value *>(MTI->getArgOperand(0)))) {
-          if (EnzymePrintDiffUse)
-            llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                         << " in reverse as shadow MTI  " << *MTI << "\n";
-          return seen[idx] = true;
-        } else
-          goto endShadow;
-      }
-
-      if (auto MS = dyn_cast<MemSetInst>(user)) {
-        if (MS->getArgOperand(0) != inst)
-          goto endShadow;
-
-        if (!gutils->isConstantValue(
-                const_cast<Value *>(MS->getArgOperand(0)))) {
-          if (EnzymePrintDiffUse)
-            llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                         << " in reverse as shadow MS  " << *MS << "\n";
-          return seen[idx] = true;
-        } else
-          goto endShadow;
-      }
-
-      if (auto CI = dyn_cast<CallInst>(user)) {
-        {
-          SmallVector<OperandBundleDef, 2> OrigDefs;
-          CI->getOperandBundlesAsDefs(OrigDefs);
-          SmallVector<OperandBundleDef, 2> Defs;
-          for (auto bund : OrigDefs) {
-            for (auto inp : bund.inputs()) {
-              if (inp == inst)
-                return seen[idx] = true;
-            }
-          }
-        }
-        StringRef funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
-
-        // Don't need shadow inputs for alloc function
-        if (isAllocationFunction(funcName, gutils->TLI))
-          goto endShadow;
-
-        // Even though inactive, keep the shadow pointer around in forward mode
-        // to perform the same memory free behavior on the shadow.
-        if (mode == DerivativeMode::ForwardMode &&
-            isDeallocationFunction(funcName, gutils->TLI)) {
-          if (EnzymePrintDiffUse)
-            llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                         << " in reverse as shadow free " << *CI << "\n";
-          return seen[idx] = true;
-        }
-
-        // Only need shadow request for reverse
-        if (funcName == "MPI_Irecv" || funcName == "PMPI_Irecv") {
-          if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
-            goto endShadow;
-          // Need shadow request
-          if (inst == CI->getArgOperand(6)) {
-            if (EnzymePrintDiffUse)
-              llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                           << " in reverse as shadow MPI " << *CI << "\n";
-            return seen[idx] = true;
-          }
-          // Need shadow buffer in forward pass
-          if (mode != DerivativeMode::ReverseModeGradient)
-            if (inst == CI->getArgOperand(0)) {
-              if (EnzymePrintDiffUse)
-                llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                             << " in reverse as shadow MPI " << *CI << "\n";
-              return seen[idx] = true;
-            }
-          goto endShadow;
-        }
-        if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
-          if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
-            goto endShadow;
-          // Need shadow request
-          if (inst == CI->getArgOperand(6)) {
-            if (EnzymePrintDiffUse)
-              llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                           << " in reverse as shadow MPI " << *CI << "\n";
-            return seen[idx] = true;
-          }
-          // Need shadow buffer in reverse pass or forward mode
-          if (inst == CI->getArgOperand(0)) {
-            if (EnzymePrintDiffUse)
-              llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                           << " in reverse as shadow MPI " << *CI << "\n";
-            return seen[idx] = true;
-          }
-          goto endShadow;
-        }
-
-        // Don't need shadow of anything (all via cache for reverse),
-        // but need shadow of request for primal.
-        if (funcName == "MPI_Wait" || funcName == "PMPI_Wait") {
-          if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
-            goto endShadow;
-          // Need shadow request in forward pass only
-          if (mode != DerivativeMode::ReverseModeGradient)
-            if (inst == CI->getArgOperand(0)) {
-              if (EnzymePrintDiffUse)
-                llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                             << " in reverse as shadow MPI " << *CI << "\n";
-              return seen[idx] = true;
-            }
-          goto endShadow;
-        }
-
-        // Don't need shadow of anything (all via cache for reverse),
-        // but need shadow of request for primal.
-        if (funcName == "MPI_Waitall" || funcName == "PMPI_Waitall") {
-          if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
-            goto endShadow;
-          // Need shadow request in forward pass
-          if (mode != DerivativeMode::ReverseModeGradient)
-            if (inst == CI->getArgOperand(1)) {
-              if (EnzymePrintDiffUse)
-                llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                             << " in reverse as shadow MPI " << *CI << "\n";
-              return seen[idx] = true;
-            }
-          goto endShadow;
-        }
-
-        // Use in a write barrier requires the shadow in the forward, even
-        // though the instruction is active.
-        if (mode != DerivativeMode::ReverseModeGradient &&
-            funcName == "julia.write_barrier") {
-          if (EnzymePrintDiffUse)
-            llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                         << " in reverse as shadow write_barrier " << *CI
-                         << "\n";
-          return seen[idx] = true;
-        }
-
-        bool writeOnlyNoCapture = true;
-#if LLVM_VERSION_MAJOR >= 14
-        for (size_t i = 0; i < CI->arg_size(); i++)
-#else
-        for (size_t i = 0; i < CI->getNumArgOperands(); i++)
-#endif
-        {
-          if (inst == CI->getArgOperand(i)) {
-            if (!isNoCapture(CI, i)) {
-              writeOnlyNoCapture = false;
-              break;
-            }
-            if (!isWriteOnly(CI, i)) {
-              writeOnlyNoCapture = false;
-              break;
-            }
-          }
-        }
-        // Don't need the shadow argument if it is a pointer to pointers, which
-        // is only written since the shadow pointer store will have been
-        // completed in the forward pass.
-        if (writeOnlyNoCapture &&
-            TR.query(const_cast<Value *>(inst))[{-1, -1}] ==
-                BaseType::Pointer &&
-            mode == DerivativeMode::ReverseModeGradient)
-          return false;
-
-        const Value *FV = CI->getCalledOperand();
-        if (FV == inst) {
-          if (!gutils->isConstantInstruction(const_cast<Instruction *>(user)) ||
-              !gutils->isConstantValue(const_cast<Value *>((Value *)user))) {
-            if (EnzymePrintDiffUse)
-              llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                           << " in reverse as shadow call " << *CI << "\n";
-            return seen[idx] = true;
-          }
-        }
-      }
-
-      if (isa<ReturnInst>(user)) {
-        if ((gutils->ATA->ActiveReturns == DIFFE_TYPE::DUP_ARG ||
-             gutils->ATA->ActiveReturns == DIFFE_TYPE::DUP_NONEED) &&
-            ((inst_cv && VT == ValueType::Primal) ||
-             (!inst_cv && VT == ValueType::Shadow))) {
-          if (EnzymePrintDiffUse)
-            llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                         << " in reverse as shadow return " << *user << "\n";
-          return seen[idx] = true;
-        } else
-          goto endShadow;
-      }
-
-      // With certain exceptions, assume active instructions require the
-      // shadow of the operand.
-      if (mode == DerivativeMode::ForwardMode ||
-          mode == DerivativeMode::ForwardModeSplit ||
-          (!isa<ExtractValueInst>(user) && !isa<ExtractElementInst>(user) &&
-           !isa<InsertValueInst>(user) && !isa<InsertElementInst>(user) &&
-           !isPointerArithmeticInst(user, /*includephi*/ false,
-                                    /*includebin*/ false))) {
-        if (!inst_cv &&
-            !gutils->isConstantInstruction(const_cast<Instruction *>(user))) {
-          if (EnzymePrintDiffUse)
-            llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                         << " in reverse as shadow inst " << *user << "\n";
+                         << " in reverse as shadow sub-need " << *user << "\n";
           return seen[idx] = true;
         }
       }
 
-      // Now the remaining instructions are inactive, however note that
-      // a constant instruction may still require the use of the shadow
-      // in the forward pass, for example double* x = load double** y
-      // is a constant instruction, but needed in the forward
-      if (user->getType()->isVoidTy())
-        goto endShadow;
-
-      if (!TR.query(const_cast<Instruction *>(user))[{-1}]
-               .isPossiblePointer()) {
-        goto endShadow;
-      }
-
-      if (!OneLevel && is_value_needed_in_reverse<ValueType::Shadow>(
-                           gutils, user, mode, seen, oldUnreachable)) {
-        if (EnzymePrintDiffUse)
-          llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                       << " in reverse as shadow sub-need " << *user << "\n";
-        return seen[idx] = true;
-      }
-    endShadow:
-      if (VT != ValueType::Primal)
+      if (VT != QueryType::Primal)
         continue;
     }
 
-    assert(VT == ValueType::Primal);
+    assert(VT == QueryType::Primal);
 
     // If a sub user needs, we need
     if (!OneLevel && is_value_needed_in_reverse<VT>(gutils, user, mode, seen,
@@ -411,14 +184,38 @@ inline bool is_value_needed_in_reverse(
     // Anything we may try to rematerialize requires its store operands for
     // the reverse pass.
     if (!OneLevel) {
-      if (isa<StoreInst>(user) || isa<MemTransferInst>(user) ||
-          isa<MemSetInst>(user)) {
+      bool isStored = false;
+      if (auto SI = dyn_cast<StoreInst>(user))
+        isStored = inst == SI->getValueOperand();
+      else if (auto MTI = dyn_cast<MemTransferInst>(user)) {
+        isStored = inst == MTI->getSource() || inst == MTI->getLength();
+      } else if (auto MS = dyn_cast<MemSetInst>(user)) {
+        isStored = inst == MS->getLength() || inst == MS->getValue();
+      } else if (auto CB = dyn_cast<CallBase>(user)) {
+        auto name = getFuncNameFromCall(CB);
+        if (name == "julia.write_barrier" ||
+            name == "julia.write_barrier_binding") {
+#if LLVM_VERSION_MAJOR >= 14
+          auto sz = CB->arg_size();
+#else
+          auto sz = CB->getNumArgOperands();
+#endif
+          // First pointer is the destination
+          for (size_t i = 1; i < sz; i++)
+            isStored |= inst == CB->getArgOperand(i);
+        }
+      }
+      if (isStored) {
         for (auto pair : gutils->rematerializableAllocations) {
+          // If already decided to cache the whole allocation, ignore
+          if (gutils->needsCacheWholeAllocation(pair.first))
+            continue;
+
           // If caching the outer allocation and have already set that this is
           // not needed return early. This is necessary to avoid unnecessarily
           // deciding stored values are needed if we have already decided to
           // cache the whole allocation.
-          auto found = seen.find(std::make_pair(pair.first, ValueType::Primal));
+          auto found = seen.find(std::make_pair(pair.first, QueryType::Primal));
           if (found != seen.end() && !found->second)
             continue;
 
@@ -438,7 +235,8 @@ inline bool is_value_needed_in_reverse(
               }
             for (auto &pair : pair.second.loadLikeCalls)
               if (is_use_directly_needed_in_reverse(
-                      gutils, pair.operand, pair.loadCall, oldUnreachable) ||
+                      gutils, pair.operand, mode, pair.loadCall, oldUnreachable,
+                      QueryType::Primal) ||
                   is_value_needed_in_reverse<VT>(gutils, pair.loadCall, mode,
                                                  seen, oldUnreachable)) {
                 if (EnzymePrintDiffUse)
@@ -564,7 +362,7 @@ inline bool is_value_needed_in_reverse(
           TR.query(const_cast<Instruction *>(user))
               .Inner0()
               .isPossiblePointer()) {
-        if (is_value_needed_in_reverse<ValueType::Shadow>(
+        if (is_value_needed_in_reverse<QueryType::Shadow>(
                 gutils, user, mode, seen, oldUnreachable)) {
           if (EnzymePrintDiffUse)
             llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
@@ -574,8 +372,8 @@ inline bool is_value_needed_in_reverse(
         }
       }
 
-    bool direct =
-        is_use_directly_needed_in_reverse(gutils, inst, user, oldUnreachable);
+    bool direct = is_use_directly_needed_in_reverse(
+        gutils, inst, mode, user, oldUnreachable, QueryType::Primal);
     if (!direct)
       continue;
 
@@ -589,11 +387,11 @@ inline bool is_value_needed_in_reverse(
   return false;
 }
 
-template <ValueType VT>
+template <QueryType VT>
 static inline bool is_value_needed_in_reverse(
     const GradientUtils *gutils, const llvm::Value *inst, DerivativeMode mode,
     const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable) {
-  static_assert(VT == ValueType::Primal || VT == ValueType::Shadow);
+  static_assert(VT == QueryType::Primal || VT == QueryType::Shadow);
   std::map<UsageKey, bool> seen;
   return is_value_needed_in_reverse<VT>(gutils, inst, mode, seen,
                                         oldUnreachable);
@@ -623,7 +421,7 @@ void dump(std::map<Node, std::set<Node>> &G);
 /* Returns true if there is a path from source 's' to sink 't' in
  residual graph. Also fills parent[] to store the path */
 void bfs(const std::map<Node, std::set<Node>> &G,
-         const llvm::SmallPtrSetImpl<llvm::Value *> &Recompute,
+         const llvm::SetVector<llvm::Value *> &Recompute,
          std::map<Node, Node> &parent);
 
 // Return 1 if next is better
@@ -632,10 +430,10 @@ void bfs(const std::map<Node, std::set<Node>> &G,
 int cmpLoopNest(llvm::Loop *prev, llvm::Loop *next);
 
 void minCut(const llvm::DataLayout &DL, llvm::LoopInfo &OrigLI,
-            const llvm::SmallPtrSetImpl<llvm::Value *> &Recomputes,
-            const llvm::SmallPtrSetImpl<llvm::Value *> &Intermediates,
-            llvm::SmallPtrSetImpl<llvm::Value *> &Required,
-            llvm::SmallPtrSetImpl<llvm::Value *> &MinReq,
+            const llvm::SetVector<llvm::Value *> &Recomputes,
+            const llvm::SetVector<llvm::Value *> &Intermediates,
+            llvm::SetVector<llvm::Value *> &Required,
+            llvm::SetVector<llvm::Value *> &MinReq,
             const llvm::ValueMap<llvm::Value *, GradientUtils::Rematerializer>
                 &rematerializableAllocations,
             llvm::TargetLibraryInfo &TLI);

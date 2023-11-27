@@ -96,7 +96,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
 
         SmallSet<size_t, 1> byref;
 
-        if (Mode == DerivativeMode::ReverseModeGradient) {
+        if constexpr (Mode == DerivativeMode::ReverseModeGradient) {
           assert(numargs >= 3);
           for (size_t i = numargs; i < CA->getNumOperands(); i++) {
             Value *V = CA->getOperand(i);
@@ -168,7 +168,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
                   else {
                     // TODO in opaque pointers
                     Type *subTy = nullptr;
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
                     subTy = arg.getType()->getPointerElementType();
 #endif
                     assert(subTy);
@@ -301,6 +301,11 @@ bool preserveLinkage(bool Begin, Function &F) {
 
 bool preserveNVVM(bool Begin, Function &F) {
   bool changed = false;
+
+  if (Begin) {
+    changed |= attributeKnownFunctions(F);
+  }
+
   StringMap<std::pair<std::string, std::string>> Implements;
   for (std::string T : {"", "f"}) {
     // sincos, sinpi, cospi, sincospi, cyl_bessel_i1
@@ -359,7 +364,9 @@ bool preserveNVVM(bool Begin, Function &F) {
     if (g.getName().contains(gradient_handler_name) ||
         g.getName().contains(derivative_handler_name) ||
         g.getName().contains(splitderivative_handler_name) ||
+        g.getName().contains("__enzyme_nofree") ||
         g.getName().contains("__enzyme_inactivefn") ||
+        g.getName().contains("__enzyme_sparse_accumulate") ||
         g.getName().contains("__enzyme_function_like") ||
         g.getName().contains("__enzyme_allocation_like")) {
       if (g.hasInitializer()) {
@@ -423,7 +430,7 @@ bool preserveNVVM(bool Begin, Function &F) {
                           "global variable"
                        << g << "\n"
                        << *V << "\n";
-          llvm_unreachable("__enzyme_inactivefn");
+          llvm_unreachable("__enzyme_inactive_global");
         }
       }
     }
@@ -441,6 +448,8 @@ bool preserveNVVM(bool Begin, Function &F) {
           }
           break;
         }
+        if (V != &F)
+          continue;
         if (auto F = cast<Function>(V)) {
           F->addAttribute(AttributeList::FunctionIndex,
                           Attribute::get(g.getContext(), "enzyme_inactive"));
@@ -452,6 +461,67 @@ bool preserveNVVM(bool Begin, Function &F) {
                        << g << "\n"
                        << *V << "\n";
           llvm_unreachable("__enzyme_inactivefn");
+        }
+      }
+    }
+    if (g.getName().contains("__enzyme_sparse_accumulate")) {
+      if (g.hasInitializer()) {
+        Value *V = g.getInitializer();
+        while (1) {
+          if (auto CE = dyn_cast<ConstantExpr>(V)) {
+            V = CE->getOperand(0);
+            continue;
+          }
+          if (auto CA = dyn_cast<ConstantAggregate>(V)) {
+            V = CA->getOperand(0);
+            continue;
+          }
+          break;
+        }
+        if (V != &F)
+          continue;
+        if (auto F = cast<Function>(V)) {
+          F->addAttribute(
+              AttributeList::FunctionIndex,
+              Attribute::get(g.getContext(), "enzyme_sparse_accumulate"));
+          toErase.push_back(&g);
+          changed = true;
+        } else {
+          llvm::errs() << "Param of __enzyme_sparse_accumulate must be a "
+                          "constant function"
+                       << g << "\n"
+                       << *V << "\n";
+          llvm_unreachable("__enzyme_sparse_accumulate");
+        }
+      }
+    }
+    if (g.getName().contains("__enzyme_nofree")) {
+      if (g.hasInitializer()) {
+        Value *V = g.getInitializer();
+        while (1) {
+          if (auto CE = dyn_cast<ConstantExpr>(V)) {
+            V = CE->getOperand(0);
+            continue;
+          }
+          if (auto CA = dyn_cast<ConstantAggregate>(V)) {
+            V = CA->getOperand(0);
+            continue;
+          }
+          break;
+        }
+        if (V != &F)
+          continue;
+        if (auto F = cast<Function>(V)) {
+          F->addAttribute(AttributeList::FunctionIndex,
+                          Attribute::get(g.getContext(), Attribute::NoFree));
+          toErase.push_back(&g);
+          changed = true;
+        } else {
+          llvm::errs() << "Param of __enzyme_nofree must be a "
+                          "constant function"
+                       << g << "\n"
+                       << *V << "\n";
+          llvm_unreachable("__enzyme_nofree");
         }
       }
     }
@@ -471,6 +541,8 @@ bool preserveNVVM(bool Begin, Function &F) {
         while (auto CE = dyn_cast<ConstantExpr>(V)) {
           V = CE->getOperand(0);
         }
+        if (V != &F)
+          continue;
         while (auto CE = dyn_cast<ConstantExpr>(name)) {
           name = CE->getOperand(0);
         }
@@ -502,7 +574,7 @@ bool preserveNVVM(bool Begin, Function &F) {
                           "constant function"
                        << g << "\n"
                        << *V << "\n";
-          llvm_unreachable("__enzyme_inactivefn");
+          llvm_unreachable("__enzyme_function_like");
         }
       }
     }

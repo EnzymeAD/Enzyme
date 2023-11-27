@@ -146,7 +146,7 @@ public:
 
   /// Return if changed
   bool insert(const std::vector<int> Seq, ConcreteType CT,
-              bool intsAreLegalSubPointer = false) {
+              bool PointerIntSame = false) {
     size_t SeqSize = Seq.size();
     if (SeqSize > EnzymeMaxTypeDepth) {
       if (EnzymeTypeWarning) {
@@ -188,83 +188,98 @@ public:
     }
 
     bool changed = false;
-
-    // if this is a ending -1, remove other elems if no more info
-    for (size_t suffixSize = 1; suffixSize <= SeqSize; suffixSize++) {
-      if (Seq[SeqSize - suffixSize] != -1)
-        break;
+    // Check if there is an existing match, e.g. [-1, -1, -1] and inserting
+    // [-1, 8, -1]
+    {
       std::set<std::vector<int>> toremove;
       for (const auto &pair : mapping) {
-        if (pair.first.size() != SeqSize)
-          continue;
-        bool matches = true;
-        for (unsigned i = 0; i < SeqSize - suffixSize; ++i) {
-          if (pair.first[i] != Seq[i]) {
-            matches = false;
-            break;
+        if (pair.first.size() == SeqSize) {
+          // Whether the the inserted val (e.g. [-1, 0] or [0, 0]) is at least
+          // as general as the existing map val (e.g. [0, 0]).
+          bool newMoreGeneralThanOld = true;
+          // Whether the the existing val (e.g. [-1, 0] or [0, 0]) is at least
+          // as general as the inserted map val (e.g. [0, 0]).
+          bool oldMoreGeneralThanNew = true;
+          for (unsigned i = 0; i < SeqSize; i++) {
+            if (pair.first[i] == Seq[i])
+              continue;
+            if (Seq[i] == -1) {
+              oldMoreGeneralThanNew = false;
+            } else if (pair.first[i] == -1) {
+              newMoreGeneralThanOld = false;
+            } else {
+              oldMoreGeneralThanNew = false;
+              newMoreGeneralThanOld = false;
+              break;
+            }
           }
-        }
-        if (!matches)
-          continue;
 
-        if (intsAreLegalSubPointer && pair.second == BaseType::Integer &&
-            CT == BaseType::Pointer) {
-          toremove.insert(pair.first);
-        } else {
-          if (CT == pair.second) {
-            // previous equivalent values or values overwritten by
-            // an anything are removed
-            toremove.insert(pair.first);
-          } else if (pair.second != BaseType::Anything) {
+          if (oldMoreGeneralThanNew) {
+            // Inserting an existing or less general version
+            if (CT == pair.second)
+              return false;
+
+            // Inserting an existing or less general version (with pointer-int
+            // equivalence)
+            if (PointerIntSame)
+              if ((CT == BaseType::Pointer &&
+                   pair.second == BaseType::Integer) ||
+                  (CT == BaseType::Integer && pair.second == BaseType::Pointer))
+                return false;
+
+            // Inserting into an anything. Since from above we know this is not
+            // an anything, the inserted value contains no new information
+            if (pair.second == BaseType::Anything)
+              return false;
+
+            // Inserting say a [0]:anything into a [-1]:Float
+            if (CT == BaseType::Anything)
+              continue;
+
+            // Otherwise, inserting a non-equivalent pair into a more general
+            // slot. This is invalid.
+            llvm::errs() << "inserting into : " << str() << " with "
+                         << to_string(Seq) << " of " << CT.str() << "\n";
+            llvm_unreachable("illegal insertion");
+          } else if (newMoreGeneralThanOld) {
+            // This new is strictly more general than the old. If they were
+            // equivalent, the case above would have been hit.
+
+            if (CT == BaseType::Anything || CT == pair.second) {
+              // previous equivalent values or values overwritten by
+              // an anything are removed
+              toremove.insert(pair.first);
+              continue;
+            }
+
+            // Inserting an existing or less general version (with pointer-int
+            // equivalence)
+            if (PointerIntSame)
+              if ((CT == BaseType::Pointer &&
+                   pair.second == BaseType::Integer) ||
+                  (CT == BaseType::Integer &&
+                   pair.second == BaseType::Pointer)) {
+                toremove.insert(pair.first);
+                continue;
+              }
+
+            // Keep lingering anythings if not being overwritten, even if this
+            // (e.g. Float) applies to more locations. Therefore it is legal to
+            // have [-1]:Float, [8]:Anything
+            if (CT != BaseType::Anything && pair.second == BaseType::Anything)
+              continue;
+
+            // Otherwise, inserting a more general non-equivalent pair. This is
+            // invalid.
             llvm::errs() << "inserting into : " << str() << " with "
                          << to_string(Seq) << " of " << CT.str() << "\n";
             llvm_unreachable("illegal insertion");
           }
         }
       }
-
       for (const auto &val : toremove) {
-        mapping.erase(val);
         changed = true;
-      }
-    }
-
-    // if this is a starting -1, remove other -1's
-    for (size_t prefixSize = 1; prefixSize <= SeqSize; prefixSize++) {
-      if (Seq[prefixSize - 1] != -1)
-        break;
-      std::set<std::vector<int>> toremove;
-      for (const auto &pair : mapping) {
-        if (pair.first.size() != SeqSize)
-          continue;
-        bool matches = true;
-        for (unsigned i = prefixSize; i < SeqSize; ++i) {
-          if (pair.first[i] != Seq[i]) {
-            matches = false;
-            break;
-          }
-        }
-        if (!matches)
-          continue;
-        if (intsAreLegalSubPointer && pair.second == BaseType::Integer &&
-            CT == BaseType::Pointer) {
-          toremove.insert(pair.first);
-        } else {
-          if (CT == pair.second) {
-            // previous equivalent values or values overwritten by
-            // an anything are removed
-            toremove.insert(pair.first);
-          } else if (pair.second != BaseType::Anything) {
-            llvm::errs() << "inserting into : " << str() << " with "
-                         << to_string(Seq) << " of " << CT.str() << "\n";
-            llvm_unreachable("illegal insertion");
-          }
-        }
-      }
-
-      for (const auto &val : toremove) {
         mapping.erase(val);
-        changed = true;
       }
     }
 
@@ -537,7 +552,7 @@ public:
         if (!legalCombine) {
           size_t chunk = 1;
           // Implicit pointer
-          if (set.size() > 0) {
+          if (pnext.size() > 0) {
             chunk = dl.getPointerSizeInBits() / 8;
           } else {
             if (auto flt = dt.isFloat()) {
@@ -920,72 +935,98 @@ public:
         }
       }
 
-      // if this is a ending -1, remove other elems if no more info
-      for (size_t suffixSize = 1; suffixSize <= SeqSize; suffixSize++) {
-        if (Seq[SeqSize - suffixSize] != -1)
-          break;
+      // Check if there is an existing match, e.g. [-1, -1, -1] and inserting
+      // [-1, 8, -1]
+      {
         std::set<std::vector<int>> toremove;
         for (const auto &pair : mapping) {
           if (pair.first.size() == SeqSize) {
-            bool matches = true;
-            for (unsigned i = 0; i < SeqSize - suffixSize; ++i) {
-              if (pair.first[i] != Seq[i]) {
-                matches = false;
+            // Whether the the inserted val (e.g. [-1, 0] or [0, 0]) is at least
+            // as general as the existing map val (e.g. [0, 0]).
+            bool newMoreGeneralThanOld = true;
+            // Whether the the existing val (e.g. [-1, 0] or [0, 0]) is at least
+            // as general as the inserted map val (e.g. [0, 0]).
+            bool oldMoreGeneralThanNew = true;
+            for (unsigned i = 0; i < SeqSize; i++) {
+              if (pair.first[i] == Seq[i])
+                continue;
+              if (Seq[i] == -1) {
+                oldMoreGeneralThanNew = false;
+              } else if (pair.first[i] == -1) {
+                newMoreGeneralThanOld = false;
+              } else {
+                oldMoreGeneralThanNew = false;
+                newMoreGeneralThanOld = false;
                 break;
               }
             }
-            if (!matches)
-              continue;
 
-            if (CT == BaseType::Anything || CT == pair.second) {
-              // previous equivalent values or values overwritten by
-              // an anything are removed
-              toremove.insert(pair.first);
-            } else if (CT != BaseType::Anything &&
-                       pair.second == BaseType::Anything) {
-              // keep lingering anythings if not being overwritten
-            } else {
+            if (oldMoreGeneralThanNew) {
+              // Inserting an existing or less general version
+              if (CT == pair.second)
+                return false;
+
+              // Inserting an existing or less general version (with pointer-int
+              // equivalence)
+              if (PointerIntSame)
+                if ((CT == BaseType::Pointer &&
+                     pair.second == BaseType::Integer) ||
+                    (CT == BaseType::Integer &&
+                     pair.second == BaseType::Pointer))
+                  return false;
+
+              // Inserting into an anything. Since from above we know this is
+              // not an anything, the inserted value contains no new information
+              if (pair.second == BaseType::Anything)
+                return false;
+
+              // Inserting say a [0]:anything into a [-1]:Float
+              if (CT == BaseType::Anything) {
+                // If both at same index, remove old index
+                if (newMoreGeneralThanOld)
+                  toremove.insert(pair.first);
+                continue;
+              }
+
+              // Otherwise, inserting a non-equivalent pair into a more general
+              // slot. This is invalid.
+              LegalOr = false;
+              return false;
+            } else if (newMoreGeneralThanOld) {
+              // This new is strictly more general than the old. If they were
+              // equivalent, the case above would have been hit.
+
+              if (CT == BaseType::Anything || CT == pair.second) {
+                // previous equivalent values or values overwritten by
+                // an anything are removed
+                toremove.insert(pair.first);
+                continue;
+              }
+
+              // Inserting an existing or less general version (with pointer-int
+              // equivalence)
+              if (PointerIntSame)
+                if ((CT == BaseType::Pointer &&
+                     pair.second == BaseType::Integer) ||
+                    (CT == BaseType::Integer &&
+                     pair.second == BaseType::Pointer)) {
+                  toremove.insert(pair.first);
+                  continue;
+                }
+
+              // Keep lingering anythings if not being overwritten, even if this
+              // (e.g. Float) applies to more locations. Therefore it is legal
+              // to have [-1]:Float, [8]:Anything
+              if (CT != BaseType::Anything && pair.second == BaseType::Anything)
+                continue;
+
+              // Otherwise, inserting a more general non-equivalent pair. This
+              // is invalid.
               LegalOr = false;
               return false;
             }
           }
         }
-        for (const auto &val : toremove) {
-          mapping.erase(val);
-        }
-      }
-
-      // if this is a starting -1, remove other -1's
-      for (size_t prefixSize = 1; prefixSize <= SeqSize; prefixSize++) {
-        if (Seq[prefixSize - 1] != -1)
-          break;
-        std::set<std::vector<int>> toremove;
-        for (const auto &pair : mapping) {
-          if (pair.first.size() == SeqSize) {
-            bool matches = true;
-            for (unsigned i = prefixSize; i < SeqSize; ++i) {
-              if (pair.first[i] != Seq[i]) {
-                matches = false;
-                break;
-              }
-            }
-            if (!matches)
-              continue;
-
-            if (CT == BaseType::Anything || CT == pair.second) {
-              // previous equivalent values or values overwritten by
-              // an anything are removed
-              toremove.insert(pair.first);
-            } else if (CT != BaseType::Anything &&
-                       pair.second == BaseType::Anything) {
-              // keep lingering anythings if not being overwritten
-            } else {
-              LegalOr = false;
-              return false;
-            }
-          }
-        }
-
         for (const auto &val : toremove) {
           mapping.erase(val);
         }
@@ -1019,7 +1060,7 @@ public:
   /// Set this to the logical or of itself and RHS, returning whether this value
   /// changed Setting `PointerIntSame` considers pointers and integers as
   /// equivalent This function will error if doing an illegal Operation
-  bool orIn(const TypeTree RHS, bool PointerIntSame) {
+  bool orIn(const TypeTree &RHS, bool PointerIntSame) {
     bool Legal = true;
     bool Result = checkedOrIn(RHS, PointerIntSame, Legal);
     if (!Legal) {
@@ -1165,6 +1206,52 @@ public:
     }
     out += "}";
     return out;
+  }
+
+  llvm::MDNode *toMD(llvm::LLVMContext &ctx) {
+    llvm::SmallVector<llvm::Metadata *, 1> subMD;
+    std::map<int, TypeTree> todo;
+    ConcreteType base(BaseType::Unknown);
+    for (auto &pair : mapping) {
+      if (pair.first.size() == 0) {
+        base = pair.second;
+        continue;
+      }
+      auto next(pair.first);
+      next.erase(next.begin());
+      todo[pair.first[0]].mapping.insert(std::make_pair(next, pair.second));
+    }
+    subMD.push_back(llvm::MDString::get(ctx, base.str()));
+    for (auto pair : todo) {
+      subMD.push_back(llvm::ConstantAsMetadata::get(
+          llvm::ConstantInt::get(llvm::IntegerType::get(ctx, 32), pair.first)));
+      subMD.push_back(pair.second.toMD(ctx));
+    }
+    return llvm::MDNode::get(ctx, subMD);
+  };
+
+  void insertFromMD(llvm::MDNode *md, const std::vector<int> &prev = {}) {
+    ConcreteType base(
+        llvm::cast<llvm::MDString>(md->getOperand(0))->getString(),
+        md->getContext());
+    if (base != BaseType::Unknown)
+      mapping.insert(std::make_pair(prev, base));
+    for (size_t i = 1; i < md->getNumOperands(); i += 2) {
+      auto off = llvm::cast<llvm::ConstantInt>(
+                     llvm::cast<llvm::ConstantAsMetadata>(md->getOperand(i))
+                         ->getValue())
+                     ->getSExtValue();
+      auto next(prev);
+      next.push_back((int)off);
+      insertFromMD(llvm::cast<llvm::MDNode>(md->getOperand(i + 1)), next);
+    }
+  }
+
+  static TypeTree fromMD(llvm::MDNode *md) {
+    TypeTree ret;
+    std::vector<int> off;
+    ret.insertFromMD(md, off);
+    return ret;
   }
 };
 

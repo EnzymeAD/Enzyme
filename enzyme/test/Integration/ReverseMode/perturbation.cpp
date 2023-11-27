@@ -18,8 +18,6 @@ static double f(double x, double y) {
     return x * y;
 }
 
-extern int enzyme_const;
-
 static double df(double x) {
     return x * __enzyme_autodiff1((void*)f, enzyme_const, x, 3.0);
 }

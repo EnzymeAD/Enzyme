@@ -24,7 +24,6 @@ bb:
 ; CHECK: define internal { { double*, i64 }, double } @fwddiffez0({ double*, i64 } %const, double %act, double %"act'")
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %"res'ipiv" = insertvalue { { double*, i64 }, double } zeroinitializer, { double*, i64 } %const, 0
-; CHECK-NEXT:   %res = insertvalue { { double*, i64 }, double } undef, { double*, i64 } %const, 0
 ; CHECK-NEXT:   %"res2'ipiv" = insertvalue { { double*, i64 }, double } %"res'ipiv", double %"act'", 1
 ; CHECK-NEXT:   ret { { double*, i64 }, double } %"res2'ipiv"
 ; CHECK-NEXT: }

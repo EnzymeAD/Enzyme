@@ -28,6 +28,8 @@
 #include <deque>
 #include <set>
 
+#include <llvm/Config/llvm-config.h>
+
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -173,6 +175,8 @@ getLatches(const llvm::Loop *L,
 static inline llvm::SmallPtrSet<llvm::BasicBlock *, 4>
 getGuaranteedUnreachable(llvm::Function *F) {
   llvm::SmallPtrSet<llvm::BasicBlock *, 4> knownUnreachables;
+  if (F->empty())
+    return knownUnreachables;
   std::deque<llvm::BasicBlock *> todo;
   for (auto &BB : *F) {
     todo.push_back(&BB);

@@ -69,7 +69,8 @@ TraceUtils::FromClone(ProbProgMode mode,
     params.push_back(orig_FTy->getParamType(i));
   }
 
-  Type *likelihood_acc_type = PointerType::getDoublePtrTy(Context);
+  Type *likelihood_acc_type =
+      PointerType::getUnqual(Type::getDoubleTy(Context));
   params.push_back(likelihood_acc_type);
 
   if (mode == ProbProgMode::Trace || mode == ProbProgMode::Condition) {
@@ -113,14 +114,21 @@ TraceUtils::FromClone(ProbProgMode mode,
   }
 
   SmallVector<ReturnInst *, 4> Returns;
+  if (!oldFunc->empty()) {
 #if LLVM_VERSION_MAJOR >= 13
-  CloneFunctionInto(newFunc, oldFunc, originalToNewFn,
-                    CloneFunctionChangeType::LocalChangesOnly, Returns, "",
-                    nullptr);
+    CloneFunctionInto(newFunc, oldFunc, originalToNewFn,
+                      CloneFunctionChangeType::LocalChangesOnly, Returns, "",
+                      nullptr);
 #else
-  CloneFunctionInto(newFunc, oldFunc, originalToNewFn, true, Returns, "",
-                    nullptr);
+    CloneFunctionInto(newFunc, oldFunc, originalToNewFn, true, Returns, "",
+                      nullptr);
 #endif
+  }
+  if (newFunc->empty()) {
+    auto entry = BasicBlock::Create(newFunc->getContext(), "entry", newFunc);
+    IRBuilder<> B(entry);
+    B.CreateUnreachable();
+  }
 
   newFunc->setLinkage(Function::LinkageTypes::InternalLinkage);
 
@@ -442,6 +450,7 @@ Instruction *TraceUtils::SampleOrCondition(IRBuilder<> &Builder,
     return phi;
   }
   }
+  llvm_unreachable("Invalid sample_or_condition");
 }
 
 CallInst *TraceUtils::CreateOutlinedFunction(
