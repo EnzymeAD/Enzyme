@@ -34,7 +34,6 @@ entry:
 
 ; CHECK: define internal double @fwddiffetest(double %x, double %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %exp = alloca i32, align 4
 ; CHECK-NEXT:   %0 = bitcast double %x to i64
 ; CHECK-NEXT:   %1 = and i64 9218868437227405312, %0
 ; CHECK-NEXT:   %2 = bitcast i64 %1 to double
@@ -45,7 +44,6 @@ entry:
 
 ; CHECK: define internal float @fwddiffetestf(float %x, float %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %exp = alloca i32, align 4
 ; CHECK-NEXT:   %0 = bitcast float %x to i32
 ; CHECK-NEXT:   %1 = and i32 2139095040, %0
 ; CHECK-NEXT:   %2 = bitcast i32 %1 to float

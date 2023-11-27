@@ -459,7 +459,7 @@ llvm::AllocaInst *CacheUtility::getDynamicLoopLimit(llvm::Loop *L,
     auto Limit = B.CreatePHI(found.var->getType(), 1);
 
     for (BasicBlock *Pred : predecessors(ExitBlock)) {
-      if (LI.getLoopFor(Pred) == L) {
+      if (L->contains(Pred)) {
         Limit->addIncoming(found.var, Pred);
       } else {
         Limit->addIncoming(UndefValue::get(found.var->getType()), Pred);
@@ -1384,7 +1384,7 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
     }
   }
 
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
   if (tostore->getContext().supportsTypedPointers()) {
 #endif

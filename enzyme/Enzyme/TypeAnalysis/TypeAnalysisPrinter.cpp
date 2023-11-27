@@ -81,7 +81,7 @@ bool printTypeAnalyses(llvm::Function &F) {
     if (a.getType()->isFPOrFPVectorTy()) {
       dt = ConcreteType(a.getType()->getScalarType());
     } else if (a.getType()->isPointerTy()) {
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
       auto et = cast<PointerType>(a.getType())->getPointerElementType();
       if (et->isFPOrFPVectorTy()) {
         dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
@@ -105,7 +105,7 @@ bool printTypeAnalyses(llvm::Function &F) {
   if (F.getReturnType()->isFPOrFPVectorTy()) {
     dt = ConcreteType(F.getReturnType()->getScalarType());
   } else if (F.getReturnType()->isPointerTy()) {
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
     auto et = cast<PointerType>(F.getReturnType())->getPointerElementType();
     if (et->isFPOrFPVectorTy()) {
       dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);

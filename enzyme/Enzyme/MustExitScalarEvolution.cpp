@@ -30,6 +30,14 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-variable"
+#else
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#endif
+
 using namespace llvm;
 
 bool MustExitScalarEvolution::loopIsFiniteByAssumption(const Loop *L) {
@@ -109,6 +117,31 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimit(
     return computeExitLimitFromSingleExitSwitch(L, SI, Exit,
                                                 /*ControlsExit=*/IsOnlyExit);
   }
+
+  return getCouldNotCompute();
+}
+
+ScalarEvolution::ExitLimit
+MustExitScalarEvolution::computeExitLimitFromSingleExitSwitch(
+    const Loop *L, SwitchInst *Switch, BasicBlock *ExitingBlock,
+    bool ControlsOnlyExit) {
+  assert(!L->contains(ExitingBlock) && "Not an exiting block!");
+
+  // Give up if the exit is the default dest of a switch.
+  if (Switch->getDefaultDest() == ExitingBlock)
+    return getCouldNotCompute();
+
+  ///! If we're guaranteed unreachable, the default dest does not matter.
+  if (!GuaranteedUnreachable.count(Switch->getDefaultDest()))
+    assert(L->contains(Switch->getDefaultDest()) &&
+           "Default case must not exit the loop!");
+  const SCEV *LHS = getSCEVAtScope(Switch->getCondition(), L);
+  const SCEV *RHS = getConstant(Switch->findCaseDest(ExitingBlock));
+
+  // while (X != Y) --> while (X-Y != 0)
+  ExitLimit EL = howFarToZero(getMinusSCEV(LHS, RHS), L, ControlsOnlyExit);
+  if (EL.hasAnyInfo())
+    return EL;
 
   return getCouldNotCompute();
 }
@@ -1256,4 +1289,11 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
 
   return ExitLimit(BECount, MaxBECount, MaxOrZero, Predicates);
 }
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#else
+#pragma GCC diagnostic pop
+#endif
+
 #endif
