@@ -29,7 +29,7 @@ entry:
 ; CHECK-NEXT: entry
 ; CHECK-NEXT:   %ld = load i64, i64* %p, align 8, !tbaa !2: {[-1]:Float@double}
 ; CHECK-NEXT:   %iv1 = insertvalue { i32, i64 } undef, i64 %ld, 1: {[0]:Anything, [1]:Anything, [2]:Anything, [3]:Anything, [4]:Anything, [5]:Anything, [6]:Anything, [7]:Anything, [8]:Float@double}
-; CHECK-NEXT:   %iv2 = insertvalue { i32, i64 } %iv1, i32 4, 0: {[0]:Integer, [1]:Integer, [2]:Integer, [3]:Integer, [4]:Anything, [5]:Anything, [6]:Anything, [7]:Anything, [8]:Float@double}
+; CHECK-NEXT:   %iv2 = insertvalue { i32, i64 } %iv1, i32 4, 0: {[0]:Integer, [1]:Integer, [2]:Integer, [3]:Integer, [4]:Integer, [5]:Integer, [6]:Integer, [7]:Integer, [8]:Float@double}
 ; CHECK-NEXT:   %ev1 = extractvalue { i32, i64 } %iv2, 0: {[-1]:Integer}
 ; CHECK-NEXT:   %ev2 = extractvalue { i32, i64 } %iv2, 1: {[-1]:Float@double}
 ; CHECK-NEXT:   ret void: {}

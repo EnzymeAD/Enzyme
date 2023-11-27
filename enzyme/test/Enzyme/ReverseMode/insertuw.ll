@@ -85,7 +85,7 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NEXT:   %[[i9:.+]] = fadd fast double %[[i8]], %[[i2]]
 ; CHECK-NEXT:   store double %[[i9]], double* %[[i7]]
 ; CHECK-NEXT:   %[[i10:.+]] = load { double, double, double* }, { double, double, double* }* %"out1'de"
-; CHECK-NEXT:   %[[i12:.+]] = load { double, double, double* }, { double, double, double* }* %"x1'de"
+
 ; CHECK-NEXT:   %[[i13:.+]] = extractvalue { double, double, double* } %[[i10]], 0
 ; CHECK-NEXT:   %[[i14:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x1'de", i32 0, i32 0
 ; CHECK-NEXT:   %[[i15:.+]] = load double, double* %[[i14]]
@@ -97,20 +97,17 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NEXT:   %[[i20:.+]] = fadd fast double %[[i19]], %[[i17]]
 ; CHECK-NEXT:   store double %[[i20]], double* %[[i18]]
 ; CHECK-NEXT:   store { double, double, double* } zeroinitializer, { double, double, double* }* %"out1'de"
+
 ; CHECK-NEXT:   %[[i21:.+]] = load { double, double, double* }, { double, double, double* }* %"x1'de"
 ; CHECK-NEXT:   %[[i22:.+]] = extractvalue { double, double, double* } %[[i21]], 1
 ; CHECK-NEXT:   %[[i23:.+]] = fadd fast double 0.000000e+00, %[[i22]]
 ; CHECK-NEXT:   %[[i24:.+]] = load { double, double, double* }, { double, double, double* }* %"x1'de"
-; CHECK-NEXT:   %[[i26:.+]] = load { double, double, double* }, { double, double, double* }* %"x0'de"
+
 ; CHECK-NEXT:   %[[i27:.+]] = extractvalue { double, double, double* } %[[i24]], 0
 ; CHECK-NEXT:   %[[i28:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x0'de", i32 0, i32 0
 ; CHECK-NEXT:   %[[i29:.+]] = load double, double* %[[i28]]
 ; CHECK-NEXT:   %[[i30:.+]] = fadd fast double %[[i29]], %[[i27]]
 ; CHECK-NEXT:   store double %[[i30]], double* %[[i28]]
-; CHECK-NEXT:   %[[i31:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x0'de", i32 0, i32 1
-; CHECK-NEXT:   %[[i32:.+]] = load double, double* %[[i31]]
-; CHECK-NEXT:   %[[i33:.+]] = fadd fast double %[[i32]], 0.000000e+00
-; CHECK-NEXT:   store double %[[i33]], double* %[[i31]]
 ; CHECK-NEXT:   store { double, double, double* } zeroinitializer, { double, double, double* }* %"x1'de"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"in1'"
 ; CHECK-NEXT:   %[[i34:.+]] = load double, double* %"in1'"
