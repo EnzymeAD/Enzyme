@@ -2604,22 +2604,56 @@ void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
   auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
   APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
   g2->accumulateConstantOffset(dl, ai);
+  delete g2;
   // Using destructor rather than eraseFromParent
   //   as g2 has no parent
+
+  // Compute the offset at the next logical element [e.g. adding 1 to the last
+  // index, carrying the value on overflow]
+  for (ssize_t i = vec.size() - 1; i >= 0; i--) {
+    auto CI = cast<ConstantInt>(vec[i]);
+    auto val = CI->getZExtValue();
+    if (i == 0) {
+      vec[i] = ConstantInt::get(CI->getType(), val + 1);
+      break;
+    }
+    auto subTy = GetElementPtrInst::getIndexedType(
+        I.getOperand(0)->getType(), ArrayRef<Value *>(vec).slice(0, i));
+    if (auto ST = dyn_cast<StructType>(subTy)) {
+      if (val + 1 == ST->getNumElements()) {
+        vec.erase(vec.begin() + i, vec.end());
+        continue;
+      }
+      vec[i] = ConstantInt::get(CI->getType(), val + 1);
+      break;
+    } else {
+      auto AT = cast<ArrayType>(subTy);
+      if (val + 1 == AT->getNumElements()) {
+        vec.erase(vec.begin() + i, vec.end());
+        continue;
+      }
+      vec[i] = ConstantInt::get(CI->getType(), val + 1);
+      break;
+    }
+  }
+  g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
+  APInt aiend(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
+  g2->accumulateConstantOffset(dl, aiend);
   delete g2;
 
   int off = (int)ai.getLimitedValue();
 
-  int agg_size = dl.getTypeSizeInBits(I.getType()) / 8;
-  int ins_size =
-      dl.getTypeSizeInBits(I.getInsertedValueOperand()->getType()) / 8;
+  int agg_size = (dl.getTypeSizeInBits(I.getType()) + 7) / 8;
+  int ins_size = (int)(aiend - ai).getLimitedValue();
+  int ins2_size =
+      (dl.getTypeSizeInBits(I.getInsertedValueOperand()->getType()) + 7) / 8;
 
   if (direction & UP)
     updateAnalysis(I.getAggregateOperand(),
                    getAnalysis(&I).Clear(off, off + ins_size, agg_size), &I);
   if (direction & UP)
     updateAnalysis(I.getInsertedValueOperand(),
-                   getAnalysis(&I).ShiftIndices(dl, off, ins_size, 0), &I);
+                   getAnalysis(&I).ShiftIndices(dl, off, ins2_size, 0), &I);
   auto new_res =
       getAnalysis(I.getAggregateOperand()).Clear(off, off + ins_size, agg_size);
   auto shifted = getAnalysis(I.getInsertedValueOperand())

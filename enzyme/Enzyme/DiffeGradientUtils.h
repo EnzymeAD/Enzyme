@@ -97,6 +97,7 @@ public:
   llvm::SmallVector<llvm::SelectInst *, 4>
   addToDiffe(llvm::Value *val, llvm::Value *dif, llvm::IRBuilder<> &BuilderM,
              llvm::Type *addingType, unsigned start, unsigned size,
+             llvm::ArrayRef<llvm::Value *> idxs = {},
              llvm::Value *mask = nullptr);
 
   void setDiffe(llvm::Value *val, llvm::Value *toset,
