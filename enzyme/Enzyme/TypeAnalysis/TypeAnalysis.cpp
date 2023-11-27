@@ -2621,7 +2621,7 @@ void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
         I.getOperand(0)->getType(), ArrayRef<Value *>(vec).slice(0, i));
     if (auto ST = dyn_cast<StructType>(subTy)) {
       if (val + 1 == ST->getNumElements()) {
-        vec[i] = ConstantInt::get(CI->getType(), 0);
+        vec.erase(vec.begin() + i, vec.end());
         continue;
       }
       vec[i] = ConstantInt::get(CI->getType(), val + 1);
@@ -2629,7 +2629,7 @@ void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
     } else {
       auto AT = cast<ArrayType>(subTy);
       if (val + 1 == AT->getNumElements()) {
-        vec[i] = ConstantInt::get(CI->getType(), 0);
+        vec.erase(vec.begin() + i, vec.end());
         continue;
       }
       vec[i] = ConstantInt::get(CI->getType(), val + 1);
