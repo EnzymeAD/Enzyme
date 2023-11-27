@@ -290,9 +290,11 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       lidxs.push_back(ConstantInt::get(Type::getInt32Ty(val->getContext()), i));
       auto sub_start =
           (i == left_idx) ? (start - (unsigned)SL->getElementOffset(i)) : 0;
+      auto subTypeSize = (DL.getTypeSizeInBits(subType) + 7) / 8;
       auto sub_end = (i == right_idx - 1)
-                         ? (start + size - (unsigned)SL->getElementOffset(i))
-                         : (DL.getTypeSizeInBits(subType) + 7) / 8;
+                         ? min(start + size - (unsigned)SL->getElementOffset(i),
+                               (unsigned)subTypeSize)
+                         : subTypeSize;
       for (auto v : addToDiffe(val, dif, BuilderM, addingType, sub_start,
                                sub_end - sub_start, lidxs, mask))
         res.push_back(v);

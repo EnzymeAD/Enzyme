@@ -100,7 +100,6 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NEXT:   store double %[[i19]], double* %[[i17]]
 ; CHECK-NEXT:   store { double, double, double* } zeroinitializer, { double, double, double* }* %"out2'de"
 ; CHECK-NEXT:   %[[i20:.+]] = load { double, double, double* }, { double, double, double* }* %"out1'de"
-; CHECK-NEXT:   %[[i22:.+]] = load { double, double, double* }, { double, double, double* }* %"x1'de"
 ; CHECK-NEXT:   %[[i23:.+]] = extractvalue { double, double, double* } %[[i20]], 0
 ; CHECK-NEXT:   %[[i24:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x1'de", i32 0, i32 0
 ; CHECK-NEXT:   %[[i25:.+]] = load double, double* %[[i24]]
@@ -111,12 +110,21 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NEXT:   %[[i29:.+]] = load double, double* %[[i28]]
 ; CHECK-NEXT:   %[[i30:.+]] = fadd fast double %[[i29]], %[[i27]]
 ; CHECK-NEXT:   store double %[[i30]], double* %[[i28]]
+
+; CHECK-NEXT:   %[[r21:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x1'de", i32 0, i32 2
+; CHECK-NEXT:   %[[r22:.+]] = load double*, double** %[[r21]], align 8
+; CHECK-NEXT:   %[[r23:.+]] = ptrtoint double* %[[r22]] to i64
+; CHECK-NEXT:   %[[r24:.+]] = bitcast i64 %[[r23]] to double
+; CHECK-NEXT:   %[[r25:.+]] = fadd fast double %[[r24]], 0.000000e+00
+; CHECK-NEXT:   %[[r26:.+]] = bitcast double %[[r25]] to i64
+; CHECK-NEXT:   %[[r27:.+]] = inttoptr i64 %[[r26]] to double*
+; CHECK-NEXT:   store double* %[[r27]], double** %[[r21]], align 8
+
 ; CHECK-NEXT:   store { double, double, double* } zeroinitializer, { double, double, double* }* %"out1'de"
 ; CHECK-NEXT:   %[[i31:.+]] = load { double, double, double* }, { double, double, double* }* %"x1'de"
 ; CHECK-NEXT:   %[[i32:.+]] = extractvalue { double, double, double* } %[[i31]], 1
 ; CHECK-NEXT:   %[[i33:.+]] = fadd fast double 0.000000e+00, %[[i32]]
 ; CHECK-NEXT:   %[[i34:.+]] = load { double, double, double* }, { double, double, double* }* %"x1'de"
-; CHECK-NEXT:   %[[i36:.+]] = load { double, double, double* }, { double, double, double* }* %"x0'de"
 ; CHECK-NEXT:   %[[i37:.+]] = extractvalue { double, double, double* } %[[i34]], 0
 ; CHECK-NEXT:   %[[i38:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x0'de", i32 0, i32 0
 ; CHECK-NEXT:   %[[i39:.+]] = load double, double* %[[i38]]
@@ -126,6 +134,19 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NEXT:   %[[i42:.+]] = load double, double* %[[i41]]
 ; CHECK-NEXT:   %[[i43:.+]] = fadd fast double %[[i42]], 0.000000e+00
 ; CHECK-NEXT:   store double %[[i43]], double* %[[i41]]
+
+; CHECK-NEXT:   %[[r39:.+]] = extractvalue { double, double, double* } %[[i34]], 2
+; CHECK-NEXT:   %[[r40:.+]] = getelementptr inbounds { double, double, double* }, { double, double, double* }* %"x0'de", i32 0, i32 2
+; CHECK-NEXT:   %[[r41:.+]] = load double*, double** %[[r40]], align 8
+; CHECK-NEXT:   %[[r42:.+]] = ptrtoint double* %[[r41]] to i64
+; CHECK-NEXT:   %[[r43:.+]] = ptrtoint double* %[[r39]] to i64
+; CHECK-NEXT:   %[[r44:.+]] = bitcast i64 %[[r42]] to double
+; CHECK-NEXT:   %[[r45:.+]] = bitcast i64 %[[r43]] to double
+; CHECK-NEXT:   %[[r46:.+]] = fadd fast double %[[r44]], %[[r45]]
+; CHECK-NEXT:   %[[r47:.+]] = bitcast double %[[r46]] to i64
+; CHECK-NEXT:   %[[r48:.+]] = inttoptr i64 %[[r47]] to double*
+; CHECK-NEXT:   store double* %[[r48]], double** %[[r40]], align 8
+
 ; CHECK-NEXT:   store { double, double, double* } zeroinitializer, { double, double, double* }* %"x1'de"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"in1'"
 ; CHECK-NEXT:   %[[i44:.+]] = load double, double* %"in1'"
