@@ -886,11 +886,16 @@ public:
     if (CustomErrorHandler) {
       CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoDerivative,
                          gutils, nullptr, wrap(&BuilderZ));
-      return;
     } else {
       EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-      return;
     }
+    if (!gutils->isConstantValue(&I)) {
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeSplit)
+        setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
+                 BuilderZ);
+    }
+    return;
   }
 
   void visitStoreInst(llvm::StoreInst &SI) {
