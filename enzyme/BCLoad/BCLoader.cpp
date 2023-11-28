@@ -59,9 +59,6 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions = {}) {
     todo.insert(todo.begin(), __data_fblas32);
   if (seen64)
     todo.insert(todo.begin(), __data_fblas64);
-  if (seenGemm) {
-    todo.push_back(__data_xerbla);
-  }
   bool changed = false;
   for (auto mod : todo) {
     SMDiagnostic Err;
