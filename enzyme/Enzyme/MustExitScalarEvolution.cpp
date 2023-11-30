@@ -427,6 +427,8 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     bool IsSigned = Pred == ICmpInst::ICMP_SLT || Pred == ICmpInst::ICMP_SLE;
 
     if (Pred == ICmpInst::ICMP_SLE || Pred == ICmpInst::ICMP_ULE) {
+      if (!isa<IntegerType>(RHS->getType()))
+        break;
       SmallVector<const SCEV *, 2> sv = {
           RHS,
           getConstant(ConstantInt::get(cast<IntegerType>(RHS->getType()), 1))};
@@ -449,6 +451,8 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
   case ICmpInst::ICMP_UGE: { // while (X > Y)
     bool IsSigned = Pred == ICmpInst::ICMP_SGT || Pred == ICmpInst::ICMP_SLE;
     if (Pred == ICmpInst::ICMP_SGE || Pred == ICmpInst::ICMP_UGE) {
+      if (!isa<IntegerType>(RHS->getType()))
+        break;
       SmallVector<const SCEV *, 2> sv = {
           RHS,
           getConstant(ConstantInt::get(cast<IntegerType>(RHS->getType()), -1))};
