@@ -35,8 +35,8 @@ jobs:
 
     - uses: actions/checkout@v3
       with:
-        repository: 'llvm/llvm-project'
-        ref: 'ccd923e3cbbb62be565fbe7c401fa9e3eba566f8'
+        repository: 'pengmai/llvm-project'
+        ref: '39a95e631b350dafd4e78138564c930930c8e433'
         path: 'llvm-project'
 
     - name: Get MLIR commit hash
