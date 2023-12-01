@@ -40,6 +40,9 @@ namespace enzyme {
 /// A set of alias class identifiers to be treated as a single union. May be
 /// marked as "unknown", which is a conservative pessimistic state.
 struct AliasClassSet {
+  AliasClassSet() = default;
+  AliasClassSet(DistinctAttr single) { aliasClasses.insert(single); }
+
   DenseSet<DistinctAttr> &getAliasClasses() {
     assert(!unknown);
     return aliasClasses;
@@ -56,7 +59,30 @@ struct AliasClassSet {
   ChangeResult markFresh(Attribute debugLabel);
   ChangeResult reset();
 
+  /// Returns true if this set is in the canonical form, i.e. has either the
+  /// unknown bit or the explicit list of classes, but not both.
+  bool isCanonical() const;
+
+  /// Returns an empty instance of AliasClassSet. The instance is *not* a
+  /// classical singleton, there are other ways of obtaining it.
+  static const AliasClassSet &getEmpty() { return emptySet; }
+
+  /// Returns an instance of AliasClassSet for the "unknown" class. The instance
+  /// is *not* a classical singleton, there are other ways of obtaining an
+  /// "unknown" alias set.
+  static const AliasClassSet &getUnknown() { return unknownSet; }
+
+  bool operator==(const AliasClassSet &other) const;
+
+  ChangeResult
+  foreachClass(function_ref<ChangeResult(DistinctAttr)> callback) const;
+
 private:
+  explicit AliasClassSet(bool unknown) : unknown(unknown) {}
+
+  const static AliasClassSet unknownSet;
+  const static AliasClassSet emptySet;
+
   DenseSet<DistinctAttr> aliasClasses;
   bool unknown = false;
 };
@@ -76,9 +102,19 @@ public:
 
   ChangeResult join(const AbstractDenseLattice &lattice) override;
 
+  /// Mark the pointer stored in `dest` as possibly pointing to any of `values`,
+  /// instead of the values it may be currently pointing to.
+  ChangeResult setPointingToClasses(const AliasClassSet &destClasses,
+                                    const AliasClassSet &values) {
+    return update(destClasses, values, /*replace=*/true);
+  }
+
+  /// Mark the pointer stored in `dest` as possibly pointing to any of `values`,
+  /// in addition to the values it may already point to.
   ChangeResult insert(const AliasClassSet &destClasses,
-                      const AliasClassSet &values);
-  ChangeResult insertFresh(DistinctAttr dest, StringAttr debugLabel = nullptr);
+                      const AliasClassSet &values) {
+    return update(destClasses, values, /*replace=*/false);
+  };
 
   /// For every alias class in `dest`, record that it may additionally be
   /// pointing to the same as the classes in `src`.
@@ -87,20 +123,44 @@ public:
 
   /// For every alias class in `dest`, record that it is pointing to the _same_
   /// new alias set.
-  ChangeResult setToFresh(const AliasClassSet &destClasses);
+  ChangeResult setPointingToFresh(const AliasClassSet &destClasses,
+                                  StringAttr debugLabel);
 
   /// Mark `dest` as pointing to "unknown" alias set, that is, any possible
   /// other pointer. This is partial pessimistic fixpoint.
-  ChangeResult markUnknown(const AliasClassSet &destClasses);
+  ChangeResult markPointToUnknown(const AliasClassSet &destClasses);
 
   /// Mark the entire data structure as "unknown", that is, any pointer may be
   /// containing any other pointer. This is the full pessimistic fixpoint.
-  ChangeResult markUnknown();
+  ChangeResult markAllPointToUnknown();
 
-  DenseMap<DistinctAttr, AliasClassSet> pointsTo;
+  /// Mark all alias classes except the given ones to point to the "unknown"
+  /// alias set.
+  ChangeResult markAllExceptPointToUnknown(const AliasClassSet &destClasses);
+
+  const AliasClassSet &getPointsTo(DistinctAttr id) const {
+    auto it = pointsTo.find(id);
+    if (it == pointsTo.end())
+      return otherPointToUnknown ? AliasClassSet::getUnknown()
+                                 : AliasClassSet::getEmpty();
+    return it->getSecond();
+  }
 
 private:
-  bool unknown = false;
+  ChangeResult update(const AliasClassSet &keysToUpdate,
+                      const AliasClassSet &values, bool replace);
+
+  /// Indicates that alias classes not listed as keys in `pointsTo` point to
+  /// unknown alias set (when true) or an empty alias set (when false).
+  // TODO: consider also differentiating between pointing to known-empty vs.
+  // not-yet-computed.
+  bool otherPointToUnknown = false;
+
+  /// Maps an identifier of an alias set to the set of alias sets its value may
+  /// belong to. When an identifier is not present in this map, it is considered
+  /// to point to either the unknown set or nothing, based on the value of
+  /// `otherPointToUnknown`.
+  DenseMap<DistinctAttr, AliasClassSet> pointsTo;
 };
 
 class PointsToPointerAnalysis
@@ -119,7 +179,8 @@ public:
                                     PointsToSets *after) override;
 
   void processCapturingStore(ProgramPoint dependent, PointsToSets *after,
-                             Value capturedValue, Value destinationAddress);
+                             Value capturedValue, Value destinationAddress,
+                             bool isMustStore = false);
 };
 
 //===----------------------------------------------------------------------===//
