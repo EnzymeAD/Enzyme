@@ -5,6 +5,8 @@ add_mlir_doc(Passes EnzymePasses ./ -gen-pass-doc)
 
 add_mlir_dialect_library(MLIREnzymeTransforms
     EnzymeMLIRPass.cpp
+    PrintActivityAnalysis.cpp
+    PrintAliasAnalysis.cpp
     EnzymeToMemRef.cpp
     ShadowedGradientToCache.cpp
     AddToOpToIndexAndLoad.cpp

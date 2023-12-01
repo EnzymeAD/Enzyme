@@ -19,9 +19,6 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/ModRef.h"
 
-using namespace mlir;
-using namespace mlir::enzyme;
-
 const char *KnownInactiveFunctionsStartingWith[] = {
     "f90io",
     "$ss5print",
