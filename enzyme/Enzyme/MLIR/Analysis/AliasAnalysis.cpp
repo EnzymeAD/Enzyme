@@ -846,8 +846,10 @@ void enzyme::AliasAnalysis::transfer(
   // Conservatively assume all results alias all operands.
   for (AliasClassLattice *resultLattice : results) {
     ChangeResult r = ChangeResult::NoChange;
-    for (const AliasClassLattice *operandLattice : operands)
-      r |= resultLattice->join(*operandLattice);
+    constexpr bool pruneNonPointers = false;
+    if (!pruneNonPointers || isPointerLike(resultLattice->getPoint().getType()))
+      for (const AliasClassLattice *operandLattice : operands)
+        r |= resultLattice->join(*operandLattice);
     propagateIfChanged(resultLattice, r);
   }
 }
