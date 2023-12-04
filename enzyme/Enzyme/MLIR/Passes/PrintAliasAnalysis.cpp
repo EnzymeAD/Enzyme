@@ -87,10 +87,25 @@ struct PrintAliasAnalysisPass
       if (auto funcOp = dyn_cast<FunctionOpInterface>(op)) {
         for (auto arg : funcOp.getArguments()) {
           auto *state = solver.lookupState<enzyme::AliasClassLattice>(arg);
-          if (state) {
-            for (auto aliasClass : state->getAliasClasses())
-              funcOp.setArgAttr(arg.getArgNumber(), "enzyme.ac", aliasClass);
-          }
+          if (!state)
+            continue;
+          // TODO(zinenko): this has been overriding the argument...
+          // Use an array attr instead (will break syntactic tests).
+          state->getAliasClassesObject().foreachClass(
+              [&](DistinctAttr aliasClass, enzyme::AliasClassSet::State state) {
+                if (state == enzyme::AliasClassSet::State::Undefined)
+                  funcOp.setArgAttr(
+                      arg.getArgNumber(), "enzyme.ac",
+                      StringAttr::get(arg.getContext(), "undefined"));
+                else if (state == enzyme::AliasClassSet::State::Unknown)
+                  funcOp.setArgAttr(
+                      arg.getArgNumber(), "enzyme.ac",
+                      StringAttr::get(arg.getContext(), "unknown"));
+                else
+                  funcOp.setArgAttr(arg.getArgNumber(), "enzyme.ac",
+                                    aliasClass);
+                return ChangeResult::NoChange;
+              });
         }
       } else if (op->hasTrait<OpTrait::ReturnLike>() &&
                  isa<FunctionOpInterface>(op->getParentOp())) {
@@ -107,6 +122,9 @@ struct PrintAliasAnalysisPass
             if (state->isUnknown()) {
               op->setAttr("ac",
                           StringAttr::get(result.getContext(), "<unknown>"));
+            } else if (state->isUndefined()) {
+              op->setAttr("ac",
+                          StringAttr::get(result.getContext(), "<undefined>"));
             } else {
               for (auto aliasClass : state->getAliasClasses()) {
                 op->setAttr("ac", aliasClass);
