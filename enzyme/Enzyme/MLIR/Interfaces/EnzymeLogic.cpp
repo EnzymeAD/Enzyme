@@ -208,13 +208,10 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
       auto newBB = gutils->getNewFromOriginal(&oBB);
 
-      SmallVector<Operation *, 4> toerase;
-      for (auto &I : oBB) {
-        toerase.push_back(&I);
+      for (auto &I : make_early_inc_range(reverse(oBB))) {
+        gutils->eraseIfUnused(&I, /*erase*/ true, /*check*/ false);
       }
-      for (auto I : llvm::reverse(toerase)) {
-        gutils->eraseIfUnused(I, /*erase*/ true, /*check*/ false);
-      }
+
       OpBuilder builder(gutils->oldFunc.getContext());
       builder.setInsertionPointToEnd(newBB);
       builder.create<LLVM::UnreachableOp>(gutils->oldFunc.getLoc());

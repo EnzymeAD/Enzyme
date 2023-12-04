@@ -723,15 +723,14 @@ void PreProcessCache::AlwaysInline(Function *NewF) {
   PA.preserve<TargetLibraryAnalysis>();
   FAM.invalidate(*NewF, PA);
   SmallVector<CallInst *, 2> ToInline;
-  SmallVector<Instruction *, 2> ToErase;
   // TODO this logic should be combined with the dynamic loop emission
   // to minimize the number of branches if the realloc is used for multiple
   // values with the same bound.
   for (auto &BB : *NewF) {
-    for (auto &I : BB) {
+    for (auto &I : make_early_inc_range(BB)) {
       if (hasMetadata(&I, "enzyme_zerostack")) {
         if (isa<AllocaInst>(getBaseObject(I.getOperand(0)))) {
-          ToErase.push_back(&I);
+          I.eraseFromParent();
           continue;
         }
       }
@@ -743,9 +742,7 @@ void PreProcessCache::AlwaysInline(Function *NewF) {
       }
     }
   }
-  for (auto I : ToErase) {
-    I->eraseFromParent();
-  }
+
   for (auto CI : ToInline) {
     InlineFunctionInfo IFI;
     InlineFunction(*CI, IFI);
@@ -1819,22 +1816,19 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   }
 
   {
-    SmallVector<Instruction *, 4> ToErase;
     for (auto &BB : *NewF) {
-      for (auto &I : BB) {
+      for (auto &I : make_early_inc_range(BB)) {
         if (auto MTI = dyn_cast<MemTransferInst>(&I)) {
 
           if (auto CI = dyn_cast<ConstantInt>(MTI->getOperand(2))) {
             if (CI->getValue() == 0) {
-              ToErase.push_back(MTI);
+              MTI->eraseFromParent();
             }
           }
         }
       }
     }
-    for (auto E : ToErase) {
-      E->eraseFromParent();
-    }
+
     PreservedAnalyses PA;
     PA.preserve<AssumptionAnalysis>();
     PA.preserve<TargetLibraryAnalysis>();

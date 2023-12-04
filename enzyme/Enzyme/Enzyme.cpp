@@ -2681,9 +2681,8 @@ public:
       attributeKnownFunctions(F);
       if (F.empty())
         continue;
-      SmallVector<Instruction *, 4> toErase;
       for (BasicBlock &BB : F) {
-        for (Instruction &I : BB) {
+        for (Instruction &I : make_early_inc_range(BB)) {
           if (auto CI = dyn_cast<CallInst>(&I)) {
             Function *F = CI->getCalledFunction();
             if (auto castinst =
@@ -2694,7 +2693,6 @@ public:
                 }
             }
             if (F && F->getName() == "f90_mzero8") {
-              toErase.push_back(CI);
               IRBuilder<> B(CI);
 
               SmallVector<Value *, 4> args;
@@ -2710,12 +2708,11 @@ public:
               auto memsetIntr =
                   Intrinsic::getDeclaration(&M, Intrinsic::memset, tys);
               B.CreateCall(memsetIntr, args);
+
+              CI->eraseFromParent();
             }
           }
         }
-      }
-      for (Instruction *I : toErase) {
-        I->eraseFromParent();
       }
     }
 
@@ -2739,13 +2736,12 @@ public:
       changed |= lowerEnzymeCalls(F, done);
     }
 
-    SmallVector<CallInst *, 4> toErase;
     for (Function &F : M) {
       if (F.empty())
         continue;
 
       for (BasicBlock &BB : F) {
-        for (Instruction &I : BB) {
+        for (Instruction &I : make_early_inc_range(BB)) {
           if (auto CI = dyn_cast<CallInst>(&I)) {
             Function *F = CI->getCalledFunction();
             if (auto castinst =
@@ -2760,20 +2756,18 @@ public:
                   F->getName().contains("__enzyme_double") ||
                   F->getName().contains("__enzyme_integer") ||
                   F->getName().contains("__enzyme_pointer")) {
-                toErase.push_back(CI);
+                CI->eraseFromParent();
+                changed = true;
               }
               if (F->getName() == "__enzyme_iter") {
                 CI->replaceAllUsesWith(CI->getArgOperand(0));
-                toErase.push_back(CI);
+                CI->eraseFromParent();
+                changed = true;
               }
             }
           }
         }
       }
-    }
-    for (auto I : toErase) {
-      I->eraseFromParent();
-      changed = true;
     }
 
     SmallPtrSet<CallInst *, 16> sample_calls;
