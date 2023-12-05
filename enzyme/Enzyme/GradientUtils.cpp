@@ -102,6 +102,10 @@ llvm::cl::opt<bool>
                                cl::Hidden,
                                cl::desc("Perform runtime activity checks"));
 
+llvm::cl::opt<bool> EnzymePrintActiveInstructions(
+    "enzyme-print-active-instructions", cl::init(false), cl::Hidden,
+    cl::desc("Print the # of active instructions"));
+
 llvm::cl::opt<bool>
     EnzymeSharedForward("enzyme-shared-forward", cl::init(false), cl::Hidden,
                         cl::desc("Forward Shared Memory from definitions"));
@@ -249,6 +253,22 @@ GradientUtils::GradientUtils(
     }
     if (legal)
       BlocksDominatingAllReturns.insert(&BB);
+  }
+
+  if (EnzymePrintActiveInstructions) {
+    size_t totalInstructions = 0;
+    size_t constantInstructions = 0;
+    for (BasicBlock &BB : *oldFunc) {
+      for (Instruction &I : BB) {
+        if (isConstantInstruction(&I)) {
+          constantInstructions++;
+        }
+        totalInstructions++;
+      }
+    }
+    llvm::errs() << "function: " << oldFunc->getName()
+                 << " total instructions: " << totalInstructions
+                 << " constant instructions: " << constantInstructions << "\n";
   }
 }
 
