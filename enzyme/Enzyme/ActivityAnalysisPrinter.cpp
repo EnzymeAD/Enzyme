@@ -59,6 +59,8 @@
 #include "TypeAnalysis/TypeAnalysis.h"
 #include "Utils.h"
 
+#include <sstream>
+
 using namespace llvm;
 #ifdef DEBUG_TYPE
 #undef DEBUG_TYPE
@@ -69,6 +71,10 @@ using namespace llvm;
 static llvm::cl::opt<std::string>
     FunctionToAnalyze("activity-analysis-func", cl::init(""), cl::Hidden,
                       cl::desc("Which function to analyze/print"));
+
+static llvm::cl::opt<std::string>
+    ActiveArguments("activity-analysis-arg-indices", cl::init(""), cl::Hidden,
+                    cl::desc("Comma-separated indices of active arguments"));
 
 static llvm::cl::opt<bool>
     InactiveArgs("activity-analysis-inactive-args", cl::init(false), cl::Hidden,
@@ -131,15 +137,32 @@ bool printActivityAnalysis(llvm::Function &F, TargetLibraryInfo &TLI) {
   TypeAnalysis TA(PPC.FAM);
   TypeResults TR = TA.analyzeFunction(type_args);
 
+  SmallDenseSet<int> activeArgIndices;
+  if (ActiveArguments.size()) {
+    std::istringstream sstream(ActiveArguments);
+    std::string token;
+    while (std::getline(sstream, token, ',')) {
+      activeArgIndices.insert(std::stoi(token));
+    }
+  }
+
   llvm::SmallPtrSet<llvm::Value *, 4> ConstantValues;
   llvm::SmallPtrSet<llvm::Value *, 4> ActiveValues;
-  for (auto &a : type_args.Function->args()) {
-    if (InactiveArgs) {
-      ConstantValues.insert(&a);
-    } else if (a.getType()->isIntOrIntVectorTy()) {
-      ConstantValues.insert(&a);
+  for (auto &&a : llvm::enumerate(type_args.Function->args())) {
+    if (ActiveArguments.size()) {
+      if (activeArgIndices.contains(a.index())) {
+        ActiveValues.insert(&a.value());
+      } else {
+        ConstantValues.insert(&a.value());
+      }
     } else {
-      ActiveValues.insert(&a);
+      if (InactiveArgs) {
+        ConstantValues.insert(&a.value());
+      } else if (a.value().getType()->isIntOrIntVectorTy()) {
+        ConstantValues.insert(&a.value());
+      } else {
+        ActiveValues.insert(&a.value());
+      }
     }
   }
 
