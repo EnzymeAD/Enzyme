@@ -854,6 +854,16 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
         });
       };
 
+      if (isa_and_present<LLVM::PoisonOp, LLVM::ZeroOp>(
+              value.getDefiningOp())) {
+        // Alias classes aren't computed for poison ops, but they are
+        // definitionally constant.
+        // TODO: These should be added to alias analysis.
+        return true;
+      }
+      if (aliasClassLattice->isUndefined()) {
+        errs() << "ac for " << value << " was undefined\n";
+      }
       // If this triggers, investigate why the alias classes weren't computed.
       // If they weren't computed legitimately, treat the value as
       // conservatively non-constant or change the return type to be tri-state.
@@ -880,6 +890,11 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
 
         // If this triggers, investigate why points-to sets couldn't be
         // computed. Treat conservatively as "unknown" if necessary.
+        if (pointsToSets->getPointsTo(aliasClass).isUndefined()) {
+          llvm::errs() << "Warning: points to set was undefined for ac "
+                       << aliasClass << "\n";
+          return true;
+        }
         assert(!pointsToSets->getPointsTo(aliasClass).isUndefined() &&
                "couldn't compute points-to sets");
 
