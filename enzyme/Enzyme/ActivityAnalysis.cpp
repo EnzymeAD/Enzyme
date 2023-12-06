@@ -1102,23 +1102,6 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       }
     }
 
-    // Overwrite activity using metadata
-    if (auto *I = dyn_cast<Instruction>(Val)) {
-      if (hasMetadata(I, "enzyme_active") ||
-          hasMetadata(I, "enzyme_active_val")) {
-        if (EnzymePrintActivity)
-          llvm::errs() << "[activity] forced value to be active: " << *Val
-                       << "\n";
-        return false;
-      } else if (hasMetadata(I, "enzyme_inactive") ||
-                 hasMetadata(I, "enzyme_inactive_val")) {
-        if (EnzymePrintActivity)
-          llvm::errs() << "[activity] forced value to be constant: " << *Val
-                       << "\n";
-        return true;
-      }
-    }
-
 #if 0
   // This value is certainly a pointer to an integer (and only and integer, not
   // a pointer or float). Therefore its value is constant
