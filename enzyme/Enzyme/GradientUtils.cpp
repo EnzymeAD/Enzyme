@@ -269,6 +269,8 @@ GradientUtils::GradientUtils(
     llvm::errs() << "function: " << oldFunc->getName()
                  << " total instructions: " << totalInstructions
                  << " constant instructions: " << constantInstructions << "\n";
+    fprintf(stderr, "Percentage: %.2f\n",
+            static_cast<double>(constantInstructions) / totalInstructions);
   }
 }
 
