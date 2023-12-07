@@ -360,6 +360,12 @@ void enzyme::PointsToPointerAnalysis::visitOperation(Operation *op,
   // fixpoint and bail.
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
+    // This op doesn't implement the MemoryEffectOpInterface but we don't want
+    // to throw out previous results.
+    if (isa<LLVM::NoAliasScopeDeclOp, LLVM::UnreachableOp,
+            LLVM::LifetimeStartOp, LLVM::LifetimeEndOp>(op)) {
+      return;
+    }
     propagateIfChanged(after, after->markAllPointToUnknown());
     return;
   }
