@@ -57,6 +57,10 @@
 
 //;
 
+extern "C" {
+extern llvm::cl::opt<bool> EnzymeAlwaysInlineDiff;
+}
+
 class PreProcessCache {
 public:
   PreProcessCache();
