@@ -159,7 +159,7 @@ cl::opt<int> EnzymePostOptLevel(
     cl::desc("Post optimization level within Enzyme differentiated function"));
 
 cl::opt<bool> EnzymeAlwaysInlineDiff(
-    "enzyme-always-inline", cl::init(true), cl::Hidden,
+    "enzyme-always-inline", cl::init(false), cl::Hidden,
     cl::desc("Mark generated functions as always-inline"));
 }
 
