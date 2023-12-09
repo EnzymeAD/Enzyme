@@ -6173,7 +6173,15 @@ public:
       return;
 
     if (gutils->isConstantInstruction(&call) &&
-        gutils->isConstantValue(&call)) {
+        (gutils->isConstantValue(&call) || !shadowReturnUsed)) {
+      if (!gutils->isConstantValue(&call)) {
+        auto found = gutils->invertedPointers.find(&call);
+        if (found != gutils->invertedPointers.end()) {
+          PHINode *placeholder = cast<PHINode>(&*found->second);
+          gutils->invertedPointers.erase(found);
+          gutils->erase(placeholder);
+        }
+      }
       bool noFree = Mode == DerivativeMode::ForwardMode;
       noFree |= call.hasFnAttr(Attribute::NoFree);
       if (!noFree && called) {
