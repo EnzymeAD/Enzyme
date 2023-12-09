@@ -157,6 +157,10 @@ cl::opt<bool> EnzymeAutoSparsity("enzyme-auto-sparsity", cl::init(false),
 cl::opt<int> EnzymePostOptLevel(
     "enzyme-post-opt-level", cl::init(0), cl::Hidden,
     cl::desc("Post optimization level within Enzyme differentiated function"));
+
+cl::opt<bool> EnzymeAlwaysInlineDiff(
+    "enzyme-always-inline", cl::init(true), cl::Hidden,
+    cl::desc("Mark generated functions as always-inline"));
 }
 
 /// Is the use of value val as an argument of call CI potentially captured
@@ -2319,6 +2323,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
 #endif
   }
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
+  if (EnzymeAlwaysInlineDiff)
+    NewF->addFnAttr(Attribute::AlwaysInline);
   assert(NewF->hasLocalLinkage());
 
   return NewF;
