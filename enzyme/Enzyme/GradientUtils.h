@@ -381,6 +381,10 @@ public:
   DIFFE_TYPE getDiffeType(llvm::Value *v, bool foreignFunction) const;
 
   DIFFE_TYPE getReturnDiffeType(llvm::Value *orig, bool *primalReturnUsedP,
+                                bool *shadowReturnUsedP,
+                                DerivativeMode cmode) const;
+
+  DIFFE_TYPE getReturnDiffeType(llvm::Value *orig, bool *primalReturnUsedP,
                                 bool *shadowReturnUsedP) const;
 
   static GradientUtils *
