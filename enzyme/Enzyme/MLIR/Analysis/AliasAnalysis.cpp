@@ -191,7 +191,7 @@ ChangeResult enzyme::PointsToSets::join(const AbstractDenseLattice &lattice) {
   // If RHS has other pointers pointing to unknown, only join the pointers that
   // are present in both simultaneously. Drop LHS pointers that are not present
   // in RHS (they would explicitly point to unknown on individual join but this
-  // is implied by the otherPointsToUnknown flag). Set RHS to also indicate
+  // is implied by the otherPointsToUnknown flag). Set LHS to also indicate
   // other pointers pointing to unknown.
   assert(!otherPointToUnknown && rhs.otherPointToUnknown);
   otherPointToUnknown = true;
@@ -199,7 +199,7 @@ ChangeResult enzyme::PointsToSets::join(const AbstractDenseLattice &lattice) {
        llvm::to_vector(llvm::make_first_range(pointsTo))) {
     auto it = rhs.pointsTo.find(pointer);
     if (it != rhs.pointsTo.end())
-      pointsTo[pointer].join(rhs.getPointsTo(pointer));
+      pointsTo[pointer].join(it->getSecond());
     else
       pointsTo.erase(pointer);
   }
