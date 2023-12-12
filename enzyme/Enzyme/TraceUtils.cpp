@@ -177,7 +177,8 @@ TraceUtils::ValueToVoidPtrAndSize(IRBuilder<> &Builder, Value *val,
   auto valsize = val->getType()->getPrimitiveSizeInBits();
 
   if (val->getType()->isPointerTy()) {
-    Value *retval = Builder.CreatePointerCast(val, Builder.getInt8PtrTy());
+    Value *retval =
+        Builder.CreatePointerCast(val, getInt8PtrTy(val->getContext()));
     return {retval, ConstantInt::get(size_type, valsize / 8)};
   }
 
@@ -191,7 +192,8 @@ TraceUtils::ValueToVoidPtrAndSize(IRBuilder<> &Builder, Value *val,
     if (valsize != pointersize)
       cast = Builder.CreateZExt(cast, Builder.getIntPtrTy(DL));
 
-    Value *retval = Builder.CreateIntToPtr(cast, Builder.getInt8PtrTy());
+    Value *retval =
+        Builder.CreateIntToPtr(cast, getInt8PtrTy(cast->getContext()));
     return {retval, ConstantInt::get(size_type, valsize / 8)};
   } else {
     auto insertPoint = Builder.GetInsertBlock()
@@ -298,7 +300,8 @@ CallInst *TraceUtils::InsertReturn(IRBuilder<> &Builder, Value *val) {
 
 CallInst *TraceUtils::InsertFunction(IRBuilder<> &Builder, Function *function) {
   assert(!function->isIntrinsic());
-  auto FunctionPtr = Builder.CreateBitCast(function, Builder.getInt8PtrTy());
+  auto FunctionPtr =
+      Builder.CreateBitCast(function, getInt8PtrTy(function->getContext()));
 
   Value *args[] = {trace, FunctionPtr};
 
@@ -364,10 +367,10 @@ Instruction *TraceUtils::GetChoice(IRBuilder<> &Builder, Value *address,
   auto preallocated_size = choiceType->getPrimitiveSizeInBits() / 8;
   Type *size_type = interface->getChoiceTy()->getParamType(3);
 
-  Value *args[] = {
-      observations, address,
-      Builder.CreatePointerCast(store_dest, Builder.getInt8PtrTy()),
-      ConstantInt::get(size_type, preallocated_size)};
+  Value *args[] = {observations, address,
+                   Builder.CreatePointerCast(
+                       store_dest, getInt8PtrTy(store_dest->getContext())),
+                   ConstantInt::get(size_type, preallocated_size)};
 
   auto call =
       Builder.CreateCall(interface->getChoiceTy(),
