@@ -5955,8 +5955,11 @@ public:
 
     bool subretused = false;
     bool shadowReturnUsed = false;
-    DIFFE_TYPE subretType =
-        gutils->getReturnDiffeType(&call, &subretused, &shadowReturnUsed);
+    auto smode = Mode;
+    if (smode == DerivativeMode::ReverseModeGradient)
+      smode = DerivativeMode::ReverseModePrimal;
+    DIFFE_TYPE subretType = gutils->getReturnDiffeType(
+        &call, &subretused, &shadowReturnUsed, smode);
 
     if (Mode == DerivativeMode::ForwardMode) {
       auto found = customFwdCallHandlers.find(funcName);
