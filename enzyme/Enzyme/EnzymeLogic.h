@@ -510,6 +510,11 @@ public:
                               llvm::ArrayRef<BATCH_TYPE> arg_types,
                               BATCH_TYPE ret_type);
 
+  using TruncateCacheKey = std::tuple<llvm::Function *, unsigned, unsigned>;
+  std::map<TruncateCacheKey, llvm::Function *> TruncateCachedFunctions;
+  llvm::Function *CreateTruncate(RequestContext context, llvm::Function *tobatch,
+                              unsigned fromwidth, unsigned towidth);
+
   /// Create a traced version of a function
   ///  \p context the instruction which requested this trace (or null).
   ///  \p totrace is the function to trace

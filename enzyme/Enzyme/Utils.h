@@ -83,6 +83,7 @@ enum class ErrorType {
   MixedActivityError = 7,
   IllegalReplaceFicticiousPHIs = 8,
   GetIndexError = 9,
+  NoTruncate = 10,
 };
 
 extern "C" {
