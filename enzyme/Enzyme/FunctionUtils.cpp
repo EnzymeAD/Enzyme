@@ -6072,9 +6072,19 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
         auto diff = toInt(B, replacements[SI->getPointerOperand()]);
         SmallVector<Value *, 2> args;
         args.push_back(SI->getValueOperand());
-        if (args[0]->getType() != store_fn->getFunctionType()->getParamType(0))
-          args[0] = B.CreateBitCast(
-              args[0], store_fn->getFunctionType()->getParamType(0));
+        auto sty = store_fn->getFunctionType()->getParamType(0);
+        if (args[0]->getType() !=
+            store_fn->getFunctionType()->getParamType(0)) {
+          if (CastInst::castIsValid(Instruction::BitCast, args[0], sty))
+            args[0] = B.CreateBitCast(args[0], sty);
+          else {
+            auto args0ty = args[0]->getType();
+            EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
+                        " first argument of store function must be the type of "
+                        "the store found fn arg type ",
+                        sty, " expected ", args0ty);
+          }
+        }
         args.push_back(diff);
         for (size_t i = argstart; i < num_args; i++)
           args.push_back(CI->getArgOperand(i));
