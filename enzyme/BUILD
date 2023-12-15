@@ -193,12 +193,23 @@ cc_library(
     ],
 )
 
-sh_test(
-    name = "placeholder_test",
-    size = "small",
-    srcs = ["placeholdertest.sh"],
+cc_binary(
+    name = "enzyme-clang",
+    srcs = [],
+    copts = [
+        "-Wno-implicit-fallthrough",
+        "-Wno-error=frame-larger-than=",
+    ],
     deps = [
         ":EnzymeStatic",
-        "//testing/shbase",
+        "@llvm-project//clang:clang-driver",
     ],
+)
+
+genrule(
+    name = "gen_enzyme-clang++",
+    srcs = [":enzyme-clang"],
+    outs = ["enzyme-clang++"],
+    cmd = "cp $< $@",
+    output_to_bindir = 1,
 )
