@@ -95,10 +95,14 @@ public:
     CodeGenOptions &CGOpts = CI.getCodeGenOpts();
     auto PluginName = "ClangEnzyme-" + std::to_string(LLVM_VERSION_MAJOR);
     bool contains = false;
-    StringRef pluginPath;
+#if LLVM_VERSION_MAJOR < 18
+    std::string pluginPath;
+#endif
     for (auto P : Opts.Plugins)
       if (llvm::sys::path::stem(P).endswith(PluginName)) {
+#if LLVM_VERSION_MAJOR < 18
         pluginPath = P;
+#endif
         for (auto passPlugin : CGOpts.PassPlugins) {
           if (llvm::sys::path::stem(passPlugin).endswith(PluginName)) {
             contains = true;
