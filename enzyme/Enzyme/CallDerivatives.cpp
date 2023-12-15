@@ -29,7 +29,7 @@
 using namespace llvm;
 
 extern "C" {
-void (*EnzymeShadowAllocRewrite)(LLVMValueRef) = nullptr;
+void (*EnzymeShadowAllocRewrite)(LLVMValueRef, void *) = nullptr;
 }
 
 template <class T>
@@ -2987,7 +2987,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
                     funcName == "jl_gc_alloc_typed" ||
                     funcName == "ijl_gc_alloc_typed") {
                   if (EnzymeShadowAllocRewrite)
-                    EnzymeShadowAllocRewrite(wrap(anti));
+                    EnzymeShadowAllocRewrite(wrap(anti), gutils);
                 }
                 if (Mode == DerivativeMode::ReverseModeCombined ||
                     (Mode == DerivativeMode::ReverseModePrimal &&
