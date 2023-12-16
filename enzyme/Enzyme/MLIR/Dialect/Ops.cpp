@@ -13,7 +13,6 @@
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Builders.h"
-#include "mlir/IR/OpImplementation.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
@@ -57,8 +56,8 @@ ForwardDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 LogicalResult AutoDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // TODO: Verify that the result type is same as the type of the referenced
   // func.func op.
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  auto global = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+      *this, getFnAttr());
   if (!global)
     return emitOpError("'")
            << getFn() << "' does not reference a valid global funcOp";

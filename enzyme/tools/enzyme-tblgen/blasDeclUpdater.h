@@ -3,6 +3,8 @@
 void emit_attributeBLASCaller(ArrayRef<TGPattern> blasPatterns,
                               raw_ostream &os) {
   os << "void attributeBLAS(BlasInfo blas, llvm::Function *F) {             \n";
+  os << "  if (!F->empty())\n";
+  os << "    return;\n";
   for (auto &&pattern : blasPatterns) {
     auto name = pattern.getName();
     os << "  if (blas.function == \"" << name << "\") {                   \n"
@@ -16,8 +18,16 @@ void emit_attributeBLASCaller(ArrayRef<TGPattern> blasPatterns,
 void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
   bool lv23 = pattern.isBLASLevel2or3();
-  os << "void attribute_" << name << "(BlasInfo blas, llvm::Function *F) {\n"
-     << "#if LLVM_VERSION_MAJOR >= 16\n"
+  os << "void attribute_" << name << "(BlasInfo blas, llvm::Function *F) {\n";
+  os << "  if (!F->empty())\n";
+  os << "    return;\n";
+  os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == "
+        "\"cublas_\";\n";
+  if (lv23)
+    os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
+  os << "  const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
+        "\"cublas\";\n";
+  os << "#if LLVM_VERSION_MAJOR >= 16\n"
      << "  F->setOnlyAccessesArgMemory();\n"
      << "#else\n"
      << "  F->addFnAttr(llvm::Attribute::ArgMemOnly);\n"
@@ -40,21 +50,33 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   DenseSet<size_t> mutableArgs = pattern.getMutableArgs();
 
   if (mutableArgs.size() == 0) {
+    // under cublas, these functions have an extra write-only return ptr
+    // argument
+    if (has_active_return(name)) {
+      os << "  if (!cublas) {\n";
+    }
     os << "#if LLVM_VERSION_MAJOR >= 16\n";
     os << "  F->setOnlyReadsMemory();\n";
     os << "#else\n";
+    os << "  F->removeFnAttr(llvm::Attribute::ReadNone);\n";
     os << "  F->addFnAttr(llvm::Attribute::ReadOnly);\n";
     os << "#endif\n";
+    if (has_active_return(name)) {
+      os << "  }\n";
+    }
   }
 
-  os << "const bool byRef = blas.prefix == \"\";\n";
-  if (lv23)
-    os << "const int offset = (byRef ? 0 : 1);\n";
+  os << "  const int offset = (";
+  if (lv23) {
+    os << "(cblas || cublas)";
+  } else {
+    os << "cublas";
+  }
+  os << " ? 1 : 0);\n";
 
   for (size_t i = 0; i < argTypeMap.size(); i++) {
     std::string floatPtrPos = std::to_string(lv23 ? (i - 1) : i);
-    if (lv23)
-      floatPtrPos += " + offset";
+    floatPtrPos += " + offset";
 
     auto ty = argTypeMap.lookup(i);
     if (ty == ArgType::vincData || ty == ArgType::mldData) {
@@ -68,17 +90,33 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
     }
   }
 
-  os << "  if (byRef) {\n";
-  for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {
+  size_t numArgs = argTypeMap.size();
+
+  for (size_t argPos = 0; argPos < numArgs; argPos++) {
     const auto typeOfArg = argTypeMap.lookup(argPos);
     size_t i = (lv23 ? argPos - 1 : argPos);
-    if (typeOfArg == ArgType::len || typeOfArg == ArgType::vincInc ||
-        typeOfArg == ArgType::fp || typeOfArg == ArgType::trans ||
-        typeOfArg == ArgType::mldLD || typeOfArg == ArgType::uplo ||
-        typeOfArg == ArgType::diag || typeOfArg == ArgType::side) {
-      os << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+
+    if (is_char_arg(typeOfArg) || typeOfArg == ArgType::len ||
+        typeOfArg == ArgType::vincInc || typeOfArg == ArgType::mldLD) {
+      os << "  F->addParamAttr(" << i << " + offset"
+         << ", llvm::Attribute::get(F->getContext(), \"enzyme_inactive\"));\n";
+    }
+  }
+
+  os << "  if (byRef) {\n";
+
+  for (size_t argPos = 0; argPos < numArgs; argPos++) {
+    const auto typeOfArg = argTypeMap.lookup(argPos);
+    size_t i = (lv23 ? argPos - 1 : argPos);
+
+    if (is_char_arg(typeOfArg) || typeOfArg == ArgType::len ||
+        typeOfArg == ArgType::vincInc || typeOfArg == ArgType::fp ||
+        typeOfArg == ArgType::mldLD) {
+      os << "      F->removeParamAttr(" << i << " + offset"
+         << ", llvm::Attribute::ReadNone);\n"
+         << "      F->addParamAttr(" << i << " + offset"
          << ", llvm::Attribute::ReadOnly);\n"
-         << "      F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+         << "      F->addParamAttr(" << i << " + offset"
          << ", llvm::Attribute::NoCapture);\n";
     }
   }
@@ -87,15 +125,17 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
      << "  // Julia declares double* pointers as Int64,\n"
      << "  //  so LLVM won't let us add these Attributes.\n"
      << "  if (!julia_decl) {\n";
-  for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {
+  for (size_t argPos = 0; argPos < numArgs; argPos++) {
     auto typeOfArg = argTypeMap.lookup(argPos);
     size_t i = (lv23 ? argPos - 1 : argPos);
     if (typeOfArg == ArgType::vincData || typeOfArg == ArgType::mldData) {
-      os << "    F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+      os << "    F->addParamAttr(" << i << " + offset"
          << ", llvm::Attribute::NoCapture);\n";
       if (mutableArgs.count(argPos) == 0) {
         // Only emit ReadOnly if the arg isn't mutable
-        os << "    F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+        os << "    F->removeParamAttr(" << i << " + offset"
+           << ", llvm::Attribute::ReadNone);\n"
+           << "    F->addParamAttr(" << i << " + offset"
            << ", llvm::Attribute::ReadOnly);\n";
       }
     }
@@ -105,18 +145,31 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
     auto typeOfArg = argTypeMap.lookup(argPos);
     size_t i = (lv23 ? argPos - 1 : argPos);
     if (typeOfArg == ArgType::vincData || typeOfArg == ArgType::mldData) {
-      os << "    F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+      os << "    F->addParamAttr(" << i << " + offset"
          << ", llvm::Attribute::get(F->getContext(), \"enzyme_NoCapture\"));\n";
       if (mutableArgs.count(argPos) == 0) {
         // Only emit ReadOnly if the arg isn't mutable
-        os << "    F->addParamAttr(" << i << (lv23 ? " + offset" : "")
+        os << "    F->addParamAttr(" << i << " + offset"
            << ", llvm::Attribute::get(F->getContext(), "
               "\"enzyme_ReadOnly\"));\n";
       }
     }
   }
-  os << "  }\n"
-     << "}\n";
+  os << "  }\n";
+
+  if (has_active_return(name)) {
+    // under cublas, these functions have an extra return ptr argument
+    size_t ptrRetArg = argTypeMap.size();
+    os << "  if (cublas) {\n"
+       << "      F->removeParamAttr(" << ptrRetArg << " + offset"
+       << ", llvm::Attribute::ReadNone);\n"
+       << "      F->addParamAttr(" << ptrRetArg << " + offset"
+       << ", llvm::Attribute::WriteOnly);\n"
+       << "      F->addParamAttr(" << ptrRetArg << " + offset"
+       << ", llvm::Attribute::NoCapture);\n"
+       << "  }\n";
+  }
+  os << "}\n";
 }
 
 void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
@@ -138,15 +191,20 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
   }
   emit_attributeBLASCaller(newBlasPatterns, os);
 
-  os << "void attributeTablegen(llvm::Function &F) {\n";
+  os << "bool attributeTablegen(llvm::Function &F) {\n";
   os << "  auto name = getFuncName(&F);\n";
+  os << "  auto changed = false;\n";
   os << "  auto blasMetaData = extractBLAS(name);\n";
   os << "  #if LLVM_VERSION_MAJOR >= 16\n";
-  os << "    if (blasMetaData.has_value())\n";
+  os << "    if (F.empty() && blasMetaData.has_value()) {\n";
   os << "      attributeBLAS(blasMetaData.value(), &F);\n";
+  os << "      changed = true;\n";
+  os << "    }\n";
   os << "  #else\n";
-  os << "    if (blasMetaData.hasValue())\n";
+  os << "    if (F.empty() && blasMetaData.hasValue()) {\n";
   os << "      attributeBLAS(blasMetaData.getValue(), &F);\n";
+  os << "      changed = true;\n";
+  os << "    }\n";
   os << "  #endif\n";
   {
     const auto &patterns = RK.getAllDerivedDefinitions("CallPattern");
@@ -161,7 +219,9 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
         prev = true;
       }
       os << ") && F.getFunctionType()->getNumParams() == " << tree->getNumArgs()
-         << " ){\n";
+         << " ){\n"
+         << "    changed = true;\n";
+
       for (auto attr : *pattern->getValueAsListInit("FnAttrs")) {
         auto attrDef = cast<DefInit>(attr)->getDef();
         auto attrName = attrDef->getValueAsString("name");
@@ -185,9 +245,24 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
            << attrName << "));\n";
         os << "  #endif \n";
       }
+      ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
+      for (auto argOpEn : enumerate(*argOps)) {
+        if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+          auto opName = resultRoot->getOperator()->getAsString();
+          auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
+          if (opName == "InactiveArgSpec" ||
+              Def->isSubClassOf("InactiveArgSpec")) {
+            if (!Def->getValueAsBit("asserting"))
+              os << "    F.addParamAttr(" << argOpEn.index()
+                 << ", llvm::Attribute::get(F.getContext(), "
+                    "\"enzyme_inactive\"));\n";
+            continue;
+          }
+        }
+      }
       os << "  }\n";
     }
   }
-
+  os << "  return changed;\n";
   os << "}\n";
 }

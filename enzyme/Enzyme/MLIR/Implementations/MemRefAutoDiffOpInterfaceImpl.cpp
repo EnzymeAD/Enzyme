@@ -122,9 +122,9 @@ struct LoadOpInterfaceReverse
 
   void createShadowValues(Operation *op, OpBuilder &builder,
                           MGradientUtilsReverse *gutils) const {
-    auto loadOp = cast<memref::LoadOp>(op);
-    Value memref = loadOp.getMemref();
-    Value shadow = gutils->getShadowValue(memref);
+    // auto loadOp = cast<memref::LoadOp>(op);
+    // Value memref = loadOp.getMemref();
+    // Value shadow = gutils->getShadowValue(memref);
     // Do nothing yet. In the future support memref<memref<...>>
   }
 };
@@ -138,7 +138,7 @@ struct StoreOpInterfaceReverse
     auto storeOp = cast<memref::StoreOp>(op);
     Value val = storeOp.getValue();
     Value memref = storeOp.getMemref();
-    ValueRange indices = storeOp.getIndices();
+    // ValueRange indices = storeOp.getIndices();
 
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType())) {
       if (gutils->hasInvertPointer(memref)) {
@@ -188,9 +188,9 @@ struct StoreOpInterfaceReverse
 
   void createShadowValues(Operation *op, OpBuilder &builder,
                           MGradientUtilsReverse *gutils) const {
-    auto storeOp = cast<memref::StoreOp>(op);
-    Value memref = storeOp.getMemref();
-    Value shadow = gutils->getShadowValue(memref);
+    // auto storeOp = cast<memref::StoreOp>(op);
+    // Value memref = storeOp.getMemref();
+    // Value shadow = gutils->getShadowValue(memref);
     // Do nothing yet. In the future support memref<memref<...>>
   }
 };

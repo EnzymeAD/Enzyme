@@ -67,12 +67,11 @@ bb:
 ; CHECK-NEXT:   store i1 %i6, i1* %7
 ; CHECK-NEXT:   store i64 %i2, i64* %5
 ; CHECK-NEXT:   call void @augmented_a25(double* %a5, double* %"a5'", i64* nocapture readonly %5, i1 %i6)
-; CHECK-NEXT:   %8 = insertvalue { i8*, double*, double* } undef, double* %a5, 1
-; CHECK-NEXT:   %9 = getelementptr inbounds { i8*, double*, double* }, { i8*, double*, double* }* %0, i32 0, i32 1
-; CHECK-NEXT:   store double* %a5, double** %9
-; CHECK-NEXT:   %10 = getelementptr inbounds { i8*, double*, double* }, { i8*, double*, double* }* %0, i32 0, i32 2
-; CHECK-NEXT:   store double* %"a5'", double** %10
-; CHECK-NEXT:   %11 = load { i8*, double*, double* }, { i8*, double*, double* }* %0
-; CHECK-NEXT:   ret { i8*, double*, double* } %11
+; CHECK-NEXT:   %[[i9:.+]] = getelementptr inbounds { i8*, double*, double* }, { i8*, double*, double* }* %0, i32 0, i32 1
+; CHECK-NEXT:   store double* %a5, double** %[[i9]]
+; CHECK-NEXT:   %[[i10:.+]] = getelementptr inbounds { i8*, double*, double* }, { i8*, double*, double* }* %0, i32 0, i32 2
+; CHECK-NEXT:   store double* %"a5'", double** %[[i10]]
+; CHECK-NEXT:   %[[i11:.+]] = load { i8*, double*, double* }, { i8*, double*, double* }* %0
+; CHECK-NEXT:   ret { i8*, double*, double* } %[[i11]]
 ; CHECK-NEXT: }
 

@@ -381,6 +381,10 @@ public:
   DIFFE_TYPE getDiffeType(llvm::Value *v, bool foreignFunction) const;
 
   DIFFE_TYPE getReturnDiffeType(llvm::Value *orig, bool *primalReturnUsedP,
+                                bool *shadowReturnUsedP,
+                                DerivativeMode cmode) const;
+
+  DIFFE_TYPE getReturnDiffeType(llvm::Value *orig, bool *primalReturnUsedP,
                                 bool *shadowReturnUsedP) const;
 
   static GradientUtils *
@@ -400,9 +404,10 @@ public:
 
   void setPtrDiffe(llvm::Instruction *orig, llvm::Value *ptr,
                    llvm::Value *newval, llvm::IRBuilder<> &BuilderM,
-                   llvm::MaybeAlign align, bool isVolatile,
-                   llvm::AtomicOrdering ordering, llvm::SyncScope::ID syncScope,
-                   llvm::Value *mask, llvm::ArrayRef<llvm::Metadata *> noAlias,
+                   llvm::MaybeAlign align, unsigned start, unsigned size,
+                   bool isVolatile, llvm::AtomicOrdering ordering,
+                   llvm::SyncScope::ID syncScope, llvm::Value *mask,
+                   llvm::ArrayRef<llvm::Metadata *> noAlias,
                    llvm::ArrayRef<llvm::Metadata *> scopes);
 
 private:
@@ -417,11 +422,20 @@ public:
       newBlocksForLoop_cache;
 
   //! This cache stores a rematerialized forward pass in the loop
-  //! specified
-  std::map<llvm::Loop *, llvm::BasicBlock *> rematerializedLoops_cache;
+  //! specified. The key is the loop header.
+  std::map<const llvm::BasicBlock *, llvm::BasicBlock *>
+      rematerializedLoops_cache;
   llvm::BasicBlock *getReverseOrLatchMerge(llvm::BasicBlock *BB,
                                            llvm::BasicBlock *branchingBlock);
 
+private:
+  //! Given a loop `lc`, create the rematerialization blocks for the reverse
+  //! pass, if required, caching if already created. This function will return
+  //! the new block for the rematerialized loop entry to branch to, if created.
+  //! Otherwise it will return nullptr.
+  llvm::BasicBlock *prepRematerializedLoopEntry(LoopContext &lc);
+
+public:
   void forceContexts();
 
   void computeMinCache();
@@ -476,13 +490,17 @@ public:
   llvm::Value *invertPointerM(llvm::Value *val, llvm::IRBuilder<> &BuilderM,
                               bool nullShadow = false);
 
-  static llvm::Constant *GetOrCreateShadowConstant(
-      EnzymeLogic &Logic, llvm::TargetLibraryInfo &TLI, TypeAnalysis &TA,
-      llvm::Constant *F, DerivativeMode mode, unsigned width, bool AtomicAdd);
+  static llvm::Constant *
+  GetOrCreateShadowConstant(RequestContext context, EnzymeLogic &Logic,
+                            llvm::TargetLibraryInfo &TLI, TypeAnalysis &TA,
+                            llvm::Constant *F, DerivativeMode mode,
+                            unsigned width, bool AtomicAdd);
 
-  static llvm::Constant *GetOrCreateShadowFunction(
-      EnzymeLogic &Logic, llvm::TargetLibraryInfo &TLI, TypeAnalysis &TA,
-      llvm::Function *F, DerivativeMode mode, unsigned width, bool AtomicAdd);
+  static llvm::Constant *
+  GetOrCreateShadowFunction(RequestContext context, EnzymeLogic &Logic,
+                            llvm::TargetLibraryInfo &TLI, TypeAnalysis &TA,
+                            llvm::Function *F, DerivativeMode mode,
+                            unsigned width, bool AtomicAdd);
 
   void branchToCorrespondingTarget(
       llvm::BasicBlock *ctx, llvm::IRBuilder<> &BuilderM,
@@ -501,11 +519,20 @@ public:
 
   llvm::Type *getShadowType(llvm::Type *ty);
 
+  //! Helper routine to extract a nested element from a struct/array. This is
+  //  a one dimensional special case of the multi-dim extractMeta below.
   static llvm::Value *extractMeta(llvm::IRBuilder<> &Builder, llvm::Value *Agg,
                                   unsigned off, const llvm::Twine &name = "");
+
+  //! Helper routine to extract a nested element from a struct/array. Unlike the
+  //  LLVM instruction, this will attempt to re-use the inserted value, if it
+  //  exists, rather than always creating a new instruction. If fallback is
+  //  true (the default), it will create an instruction if it fails to find an
+  //  appropriate existing value, otherwise it returns nullptr.
   static llvm::Value *extractMeta(llvm::IRBuilder<> &Builder, llvm::Value *Agg,
                                   llvm::ArrayRef<unsigned> off,
-                                  const llvm::Twine &name = "");
+                                  const llvm::Twine &name = "",
+                                  bool fallback = true);
 
   static llvm::Value *recursiveFAdd(llvm::IRBuilder<> &B, llvm::Value *lhs,
                                     llvm::Value *rhs,

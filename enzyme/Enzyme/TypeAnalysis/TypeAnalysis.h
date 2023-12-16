@@ -45,6 +45,7 @@
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/InstVisitor.h"
+#include "llvm/IR/ModuleSlotTracker.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 
@@ -160,7 +161,7 @@ public:
   TypeResults(TypeAnalyzer &analyzer);
   ConcreteType intType(size_t num, llvm::Value *val, bool errIfNotFound = true,
                        bool pointerIntSame = false) const;
-  llvm::Type *addingType(size_t num, llvm::Value *val) const;
+  llvm::Type *addingType(size_t num, llvm::Value *val, size_t start = 0) const;
 
   /// Returns whether in the first num bytes there is pointer, int, float, or
   /// none If pointerIntSame is set to true, then consider either as the same
@@ -179,7 +180,7 @@ public:
   TypeTree getReturnAnalysis() const;
 
   /// Prints all known information
-  void dump() const;
+  void dump(llvm::raw_ostream &ss = llvm::errs()) const;
 
   /// The set of values val will take on during this program
   std::set<int64_t> knownIntegralValues(llvm::Value *val) const;
@@ -192,6 +193,10 @@ public:
 /// Helper class that computes the fixed-point type results of a given function
 class TypeAnalyzer : public llvm::InstVisitor<TypeAnalyzer> {
 public:
+  /// Cache of metadata indices, for faster printing.
+  /// Only initialized if EnzymePrintType is true
+  std::shared_ptr<llvm::ModuleSlotTracker> MST;
+
   /// List of value's which should be re-analyzed now with new information
   llvm::SetVector<llvm::Value *, std::deque<llvm::Value *>> workList;
 
@@ -289,6 +294,8 @@ public:
   void visitStoreInst(llvm::StoreInst &I);
 
   void visitGetElementPtrInst(llvm::GetElementPtrInst &gep);
+
+  void visitGEPOperator(llvm::GEPOperator &gep);
 
   void visitPHINode(llvm::PHINode &phi);
 

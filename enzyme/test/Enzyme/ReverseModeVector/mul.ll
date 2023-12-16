@@ -28,7 +28,6 @@ entry:
 ; CHECK-NEXT:   store [2 x double] zeroinitializer, [2 x double]* %"y'de"
 ; CHECK-NEXT:   %0 = extractvalue [2 x double] %differeturn, 0
 ; CHECK-NEXT:   %[[m0diffex:.+]] = fmul fast double %0, %y
-; CHECK-NEXT:   %[[i1:.+]] = insertvalue [2 x double] undef, double %[[m0diffex]], 0
 ; CHECK-NEXT:   %[[i2:.+]] = extractvalue [2 x double] %differeturn, 1
 ; CHECK-NEXT:   %[[m0diffex1:.+]] = fmul fast double %[[i2]], %y
 ; CHECK-NEXT:   %[[i6:.+]] = getelementptr inbounds [2 x double], [2 x double]* %"x'de", i32 0, i32 0
@@ -40,7 +39,6 @@ entry:
 ; CHECK-NEXT:   %[[i11:.+]] = fadd fast double %[[i10]], %[[m0diffex1]]
 ; CHECK-NEXT:   store double %[[i11]], double* %[[i9]]
 ; CHECK-NEXT:   %[[m1diffey:.+]] = fmul fast double %0, %x
-; CHECK-NEXT:   %[[i4:.+]] = insertvalue [2 x double] undef, double %[[m1diffey]], 0
 ; CHECK-NEXT:   %[[m1diffey2:.+]] = fmul fast double %[[i2]], %x
 ; CHECK-NEXT:   %[[i12:.+]] = getelementptr inbounds [2 x double], [2 x double]* %"y'de", i32 0, i32 0
 ; CHECK-NEXT:   %[[i13:.+]] = load double, double* %[[i12]]

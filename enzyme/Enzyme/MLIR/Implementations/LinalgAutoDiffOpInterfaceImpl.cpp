@@ -108,13 +108,13 @@ struct GenericOpInterfaceReverse
         dims.push_back(dim);
       }
     }
-    for (OpOperand *output : newOp.getDpsInitOperands()) {
-      auto shape = cast<MemRefType>(output->get().getType()).getShape();
+    for (Value output : newOp.getDpsInits()) {
+      auto shape = cast<MemRefType>(output.getType()).getShape();
       for (unsigned i = 0; i < shape.size(); i++) {
         auto dimI =
             cacheBuilder.create<arith::ConstantIndexOp>(op->getLoc(), i);
-        auto dim = cacheBuilder.create<memref::DimOp>(op->getLoc(),
-                                                      output->get(), dimI);
+        auto dim =
+            cacheBuilder.create<memref::DimOp>(op->getLoc(), output, dimI);
         dims.push_back(dim);
       }
     }
@@ -123,8 +123,8 @@ struct GenericOpInterfaceReverse
     SmallVector<int64_t> shapes;
     for (unsigned int i = 0; i < aMap.getNumResults(); i++) {
       AffineMap subMap = aMap.getSubMap({i});
-      Value domain = cacheBuilder.create<AffineApplyOp>(op->getLoc(), subMap,
-                                                        ValueRange(dims));
+      Value domain = cacheBuilder.create<affine::AffineApplyOp>(
+          op->getLoc(), subMap, ValueRange(dims));
       iterationDomains.push_back(domain);
       shapes.push_back(ShapedType::kDynamic);
     }
@@ -135,12 +135,12 @@ struct GenericOpInterfaceReverse
     SmallVector<utils::IteratorType> iteratorTypes{
         linalgOp.getNumLoops(), utils::IteratorType::parallel};
 
-    for (OpOperand *output : linalgOp.getDpsInitOperands()) {
-      if (!gutils->hasInvertPointer(output->get())) {
+    for (OpOperand &output : linalgOp.getDpsInitsMutable()) {
+      if (!gutils->hasInvertPointer(output.get())) {
         continue;
       }
-      indexingMaps.push_back(linalgOp.getMatchingIndexingMap(output));
-      Value out = gutils->invertPointerM(output->get(), builder);
+      indexingMaps.push_back(linalgOp.getMatchingIndexingMap(&output));
+      Value out = gutils->invertPointerM(output.get(), builder);
       Value view = invertMemref(out, builder, op->getLoc());
       outputs.push_back(view);
     }
@@ -168,16 +168,14 @@ struct GenericOpInterfaceReverse
         StringAttr());
 
     int numInputs = inputs.size();
-    auto buildFuncReturnOp = [numInputs, indexingMaps, &newOp, &adjoint,
-                              &inputs](OpBuilder &builder, Location loc,
-                                       SmallVector<Value> retargs) {
+    auto buildFuncReturnOp = [numInputs](OpBuilder &builder, Location loc,
+                                         SmallVector<Value> retargs) {
       builder.create<enzyme::AddToOp>(
           loc, ValueRange{retargs}.take_front(numInputs));
       return;
     };
 
     Region *newOpRegion = newOp.getBlock()->getParent();
-    int numInputsNewOp = cast<linalg::GenericOp>(newOp).getInputs().size();
     Region *adjointRegion = &adjoint.getRegion();
     int numInputsAdjoint = adjoint.getInputs().size();
     Location loc = op->getLoc();
@@ -185,8 +183,7 @@ struct GenericOpInterfaceReverse
     SmallVector<Value> pushCaches;
 
     auto hook = [newOpRegion, adjointRegion, loc, &numCaches = numCaches,
-                 numInputsNewOp, numInputsAdjoint,
-                 &pushCaches = pushCaches](Type t) {
+                 numInputsAdjoint, &pushCaches = pushCaches](Type t) {
       OpBuilder builder(newOpRegion);
       Value pushCache = builder.create<enzyme::InitOp>(loc, t);
       pushCaches.push_back(pushCache);
@@ -227,9 +224,9 @@ struct GenericOpInterfaceReverse
           op->getLoc(), type, ValueRange(iterationDomains));
       Value cache = gutils->initAndPushCache(alloc, cacheBuilder);
       // TODO use higher level API
-      alloc->setAttr(
-          alloc.getOperandSegmentSizesAttrName(),
-          cacheBuilder.getDenseI32ArrayAttr({iterationDomains.size(), 0}));
+      alloc->setAttr(alloc.getOperandSegmentSizesAttrName(),
+                     cacheBuilder.getDenseI32ArrayAttr(
+                         {static_cast<int32_t>(iterationDomains.size()), 0}));
 
       cast<linalg::GenericOp>(newOp).getOutputsMutable().append(
           ValueRange({alloc}));

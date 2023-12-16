@@ -13,7 +13,7 @@ add_definitions(-DENZYME_VERSION_MAJOR=${ENZYME_MAJOR_VERSION})
 add_definitions(-DENZYME_VERSION_MINOR=${ENZYME_MINOR_VERSION})
 add_definitions(-DENZYME_VERSION_PATCH=${ENZYME_PATCH_VERSION})
 
-SET(CMAKE_CXX_FLAGS "-Wall -fPIC -fno-rtti ${CMAKE_CXX_FLAGS}")
+SET(CMAKE_CXX_FLAGS "-Wall -fPIC -fno-rtti ${CMAKE_CXX_FLAGS} -Werror=unused-variable -Werror=dangling-else")
 SET(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g -ggdb")
 SET(CMAKE_CXX_FLAGS_RELEASE "-O2")
 
@@ -308,10 +308,16 @@ endif()
 export(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 
-if (${LLVM_VERSION_MAJOR} GREATER 10)
 export(TARGETS LLDEnzymeFlags
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
-endif()
+export(TARGETS LLDEnzymeLooseTypeFlags
+    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+export(TARGETS LLDEnzymePrintTypeFlags
+    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+export(TARGETS LLDEnzymePrintFlags
+    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+export(TARGETS LLDEnzymeNoStrictAliasingFlags
+    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 
 export(PACKAGE Enzyme)
 

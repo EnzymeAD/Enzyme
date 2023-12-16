@@ -459,7 +459,7 @@ llvm::AllocaInst *CacheUtility::getDynamicLoopLimit(llvm::Loop *L,
     auto Limit = B.CreatePHI(found.var->getType(), 1);
 
     for (BasicBlock *Pred : predecessors(ExitBlock)) {
-      if (LI.getLoopFor(Pred) == L) {
+      if (L->contains(Pred)) {
         Limit->addIncoming(found.var, Pred);
       } else {
         Limit->addIncoming(UndefValue::get(found.var->getType()), Pred);
@@ -802,11 +802,9 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
                                                      &malloccall, &Zero)
                                         ->getType());
       malloctypes.push_back(cast<PointerType>(malloccall->getType()));
-      SmallVector<Instruction *, 2> toErase;
-      for (auto &I : *BB)
-        toErase.push_back(&I);
-      for (auto I : llvm::reverse(toErase))
-        I->eraseFromParent();
+      for (auto &I : make_early_inc_range(reverse(*BB)))
+        I.eraseFromParent();
+
       BB->eraseFromParent();
     }
     types.push_back(allocType);
@@ -1384,7 +1382,7 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
     }
   }
 
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
   if (tostore->getContext().supportsTypedPointers()) {
 #endif
@@ -1491,11 +1489,9 @@ Value *CacheUtility::getCachePointer(llvm::Type *T, bool inForwardPass,
                                                      "tmpfortypecalc",
                                                      &malloccall, &Zero)
                                         ->getType());
-      SmallVector<Instruction *, 2> toErase;
-      for (auto &I : *BB)
-        toErase.push_back(&I);
-      for (auto I : llvm::reverse(toErase))
-        I->eraseFromParent();
+      for (auto &I : make_early_inc_range(reverse(*BB)))
+        I.eraseFromParent();
+
       BB->eraseFromParent();
     }
     types.push_back(allocType);

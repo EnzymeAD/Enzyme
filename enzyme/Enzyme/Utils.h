@@ -25,6 +25,7 @@
 #ifndef ENZYME_UTILS_H
 #define ENZYME_UTILS_H
 
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
@@ -276,6 +277,10 @@ static inline llvm::MDNode *hasMetadata(const llvm::Instruction *O,
                                         llvm::StringRef kind) {
   return O->getMetadata(kind);
 }
+static inline llvm::MDNode *hasMetadata(const llvm::Instruction *O,
+                                        unsigned kind) {
+  return O->getMetadata(kind);
+}
 
 /// Potential return type of generated functions
 enum class ReturnType {
@@ -353,8 +358,6 @@ static inline std::string to_string(ValueType mode) {
   }
   llvm_unreachable("illegal valuetype");
 }
-
-typedef std::pair<const llvm::Value *, ValueType> UsageKey;
 
 static inline std::string to_string(DerivativeMode mode) {
   switch (mode) {
@@ -436,6 +439,10 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
 #else
 #if LLVM_VERSION_MAJOR >= 15
     if (!arg->getContext().supportsTypedPointers()) {
+      return DIFFE_TYPE::DUP_ARG;
+    }
+#elif LLVM_VERSION_MAJOR >= 13
+    if (arg->isOpaquePointerTy()) {
       return DIFFE_TYPE::DUP_ARG;
     }
 #endif
@@ -605,10 +612,11 @@ static inline bool isCertainPrint(const llvm::StringRef name) {
 }
 
 struct BlasInfo {
-  llvm::StringRef floatType;
-  llvm::StringRef prefix;
-  llvm::StringRef suffix;
-  llvm::StringRef function;
+  std::string floatType;
+  std::string prefix;
+  std::string suffix;
+  std::string function;
+  bool is64;
 };
 
 #if LLVM_VERSION_MAJOR >= 16
@@ -626,6 +634,7 @@ llvm::Function *getOrInsertDifferentialFloatMemcpy(
 /// Create function for type that performs memcpy with a stride using blas copy
 void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                            llvm::ArrayRef<llvm::Value *> args,
+                           llvm::Type *cublas_retty,
                            llvm::ArrayRef<llvm::OperandBundleDef> bundles);
 
 /// Create function for type that performs memcpy using lapack copy
@@ -647,7 +656,7 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                      llvm::Type *BlasIT, llvm::Type *fpTy,
                      llvm::ArrayRef<llvm::Value *> args,
                      const llvm::ArrayRef<llvm::OperandBundleDef> bundles,
-                     bool byRef, bool julia_decl);
+                     bool byRef, bool cublas, bool julia_decl);
 
 /// Create function for type that performs memcpy with a stride
 llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M,
@@ -992,18 +1001,23 @@ enum class MPI_Elem {
   Old = 7
 };
 
+static inline llvm::PointerType *getInt8PtrTy(llvm::LLVMContext &Context,
+                                              unsigned AddressSpace = 0) {
+  return llvm::PointerType::get(llvm::Type::getInt8Ty(Context), AddressSpace);
+}
+
 static inline llvm::StructType *getMPIHelper(llvm::LLVMContext &Context) {
   using namespace llvm;
   auto i64 = Type::getInt64Ty(Context);
   Type *types[] = {
-      /*buf      0 */ Type::getInt8PtrTy(Context),
+      /*buf      0 */ getInt8PtrTy(Context),
       /*count    1 */ i64,
-      /*datatype 2 */ Type::getInt8PtrTy(Context),
+      /*datatype 2 */ getInt8PtrTy(Context),
       /*src      3 */ i64,
       /*tag      4 */ i64,
-      /*comm     5 */ Type::getInt8PtrTy(Context),
+      /*comm     5 */ getInt8PtrTy(Context),
       /*fn       6 */ Type::getInt8Ty(Context),
-      /*old      7 */ Type::getInt8PtrTy(Context),
+      /*old      7 */ getInt8PtrTy(Context),
   };
   return StructType::get(Context, types, false);
 }
@@ -1495,7 +1509,7 @@ static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
   return false;
 }
 
-void attributeKnownFunctions(llvm::Function &F);
+bool attributeKnownFunctions(llvm::Function &F);
 
 llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero = false);
 
@@ -1629,7 +1643,7 @@ llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::IntegerType *intType,
 // julia_decl null means not julia decl, otherwise it is the integer type needed
 // to cast to
 llvm::Value *to_blas_callconv(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
-                              llvm::IntegerType *julia_decl,
+                              bool cublas, llvm::IntegerType *julia_decl,
                               llvm::IRBuilder<> &entryBuilder,
                               llvm::Twine const & = "");
 llvm::Value *to_blas_fp_callconv(llvm::IRBuilder<> &B, llvm::Value *V,
@@ -1637,22 +1651,52 @@ llvm::Value *to_blas_fp_callconv(llvm::IRBuilder<> &B, llvm::Value *V,
                                  llvm::IRBuilder<> &entryBuilder,
                                  llvm::Twine const & = "");
 
-llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B, llvm::Value *trans,
+llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
+                                  llvm::ArrayRef<llvm::Value *> trans,
                                   llvm::Value *arg_ld, llvm::Value *dim_1,
-                                  llvm::Value *dim_2, bool cacheMat,
-                                  bool byRef);
-llvm::Value *is_normal(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef);
+                                  llvm::Value *dim_2, bool cacheMat, bool byRef,
+                                  bool cublas);
+
+template <typename T>
+static inline void append(llvm::SmallVectorImpl<T> &vec) {}
+template <typename T, typename... T2>
+static inline void append(llvm::SmallVectorImpl<T> &vec, llvm::ArrayRef<T> vals,
+                          T2 &&...ts) {
+  vec.append(vals.begin(), vals.end());
+  append(vec, std::forward<T2>(ts)...);
+}
+template <typename... T>
+static inline llvm::SmallVector<llvm::Value *, 1> concat_values(T &&...t) {
+  llvm::SmallVector<llvm::Value *, 1> res;
+  append(res, std::forward<T>(t)...);
+  return res;
+}
+
+llvm::Value *is_normal(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef,
+                       bool cublas);
 llvm::Value *is_uper(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef);
 llvm::Value *select_vec_dims(llvm::IRBuilder<> &B, llvm::Value *trans,
-                             llvm::Value *dim1, llvm::Value *dim2, bool byRef);
+                             llvm::Value *dim1, llvm::Value *dim2, bool byRef,
+                             bool cublas);
 // first one assume V is an Integer
-llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V);
+llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool cublas);
 // secon one assume V is an Integer or a ptr to an int (depends on byRef)
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
-                       llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder,
+                       bool cublas, llvm::IntegerType *IT,
+                       llvm::IRBuilder<> &entryBuilder,
                        const llvm::Twine &name);
-llvm::Value *get_blas_row(llvm::IRBuilder<> &B, llvm::Value *trans,
-                          llvm::Value *row, llvm::Value *col, bool byRef);
+llvm::SmallVector<llvm::Value *, 1>
+get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,
+             llvm::ArrayRef<llvm::Value *> row,
+             llvm::ArrayRef<llvm::Value *> col, bool byRef, bool cublas);
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-variable"
+#else
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#endif
 
 // Parameter attributes from the original function/call that
 // we should preserve on the primal of the derivative code.
@@ -1695,6 +1739,11 @@ static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
     llvm::Attribute::AttrKind::NoCapture,
     llvm::Attribute::AttrKind::ReadNone,
 };
+#ifdef __clang__
+#pragma clang diagnostic pop
+#else
+#pragma GCC diagnostic pop
+#endif
 
 static inline llvm::Type *getSubType(llvm::Type *T) { return T; }
 
@@ -1705,7 +1754,7 @@ static inline llvm::Type *getSubType(llvm::Type *T, Arg1 i, Args... args) {
   if (auto VT = llvm::dyn_cast<llvm::VectorType>(T))
     return getSubType(VT->getElementType(), args...);
   if (auto ST = llvm::dyn_cast<llvm::StructType>(T)) {
-    assert(i != -1);
+    assert((int)i != -1);
     return getSubType(ST->getElementType(i), args...);
   }
   llvm::errs() << *T << "\n";
@@ -1735,4 +1784,8 @@ static inline bool isSpecialPtr(llvm::Type *Ty) {
   return AddressSpace::FirstSpecial <= AS && AS <= AddressSpace::LastSpecial;
 }
 
+bool collectOffset(llvm::GEPOperator *gep, const llvm::DataLayout &DL,
+                   unsigned BitWidth,
+                   llvm::MapVector<llvm::Value *, llvm::APInt> &VariableOffsets,
+                   llvm::APInt &ConstantOffset);
 #endif

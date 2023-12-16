@@ -46,18 +46,20 @@ class InstPattern<dag patternToMatch, string funcName, int minVer_, int maxVer_,
   dag ArgDuals = forwardOps;
 }
 
-class Inst<string mnemonic> {
+class Operation<bit usesPrimal_, bit usesShadow_, bit usesCustom_=0> {
+  bit usesPrimal = usesPrimal_;
+  bit usesShadow = usesShadow_;
+  bit usesCustom = usesCustom_;
+}
+class Inst<string mnemonic>  : Operation</*primal*/1, /*shadow*/0> {
   string name = mnemonic;
 }
 
-def TypeOf {
+def TypeOf : Operation</*primal*/0, /*shadow*/0> {
 }
-def VectorSize {
+def VectorSize : Operation</*primal*/0, /*shadow*/0> {
 }
-
-
-
-def SelectIfActive {
+def SelectIfActive : Operation</*primal*/0, /*shadow*/0, /*custom*/1> {
   
 }
 
@@ -103,7 +105,7 @@ class Intrinsic<string name_, list<int> types_ = [0]> : Inst<"Intrinsic"> {
 def Op {
 }
 
-class SubRoutine<dag patternToMatch, dag insts_> {
+class SubRoutine<dag patternToMatch, dag insts_> : Operation</*primal*/1,/*shadow*/0> {
   dag PatternToMatch = patternToMatch;
   dag insts = insts_;
 }
@@ -120,7 +122,7 @@ class InsertValue<list<int> indices_> : Inst<"InsertValue"> {
   list<int> indices = indices_;
 }
 
-class MultiReturn {
+class MultiReturn : Operation</*primal*/1,/*shadow*/0> {
   bit struct;
 }
 def StructRet : MultiReturn {
@@ -166,8 +168,6 @@ def CFExp : SubRoutine<(Op (Op $re, $im):$z),
       (FMul $exp, (FSin $im))
     )>;
 
-def DifR : Inst<"DifR">;
-
 // Same function as the one being called
 def SameFunc {
 }
@@ -189,7 +189,7 @@ class PrependArgTypesFunc<string name_, list<string> pretys_> {
 // Specify that a given argument is inactive, aka not differentiable
 // By default this argument tells Enzyme that it must always be inactive
 // from the function semantics.
-// One can alternatively pass the asserting=true flag, causing an assertion
+// One can alternatively pass the asserting=1 flag, causing an assertion
 // error to be thrown if the value is actually active.
 class InactiveArgSpec {
   bit asserting;
@@ -201,10 +201,10 @@ def AssertingInactiveArg : InactiveArgSpec {
   bit asserting = 1;
 }
 
-class GlobalExpr<string val> {
+class GlobalExpr<bit uses_primal, bit uses_shadow, string val> : Operation<uses_primal, uses_shadow>{
   string value = val;
 }
-def MantissaMaskOfReturn : GlobalExpr<"({\n"
+def MantissaMaskOfReturn : GlobalExpr</*primal*/0, /*shadow*/0, "({\n"
 "    auto ty = call.getType();\n"
 "    unsigned low = 0;\n"
 "    unsigned high = 0;\n"
@@ -233,20 +233,20 @@ def MantissaMaskOfReturn : GlobalExpr<"({\n"
 "    ConstantInt::get(ity, eval);\n"
 "  })">;
 
-class ConstantFP<string val> {
+class ConstantFP<string val> : Operation</*primal*/0, /*shadow*/0> {
   string value = val;
 }
-def Zero {
+def Zero : Operation</*primal*/0, /*shadow*/0> {
 }
-class ConstantCFP<string rval, string ival> {
+class ConstantCFP<string rval, string ival> : Operation</*primal*/0, /*shadow*/0> {
   string rvalue = rval;
   string ivalue = ival;
 }
-class ConstantInt<int value_, int bitwidth_=0> {
+class ConstantInt<int value_, int bitwidth_=0> : Operation</*primal*/0, /*shadow*/0> {
   int value = value_;
   int bitwidth=bitwidth_;
 }
-class Undef {
+class Undef : Operation</*primal*/0, /*shadow*/0> {
 }
 
 class DiffeRetIndex<list<int> indices_> {
@@ -254,7 +254,7 @@ class DiffeRetIndex<list<int> indices_> {
 }
 def DiffeRet : DiffeRetIndex<[-1]>;
 
-def Shadow {
+def Shadow : Operation</*primal*/0, /*shadow*/1> {
 }
 
 def : CallPattern<(Op $x),
@@ -265,7 +265,7 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $y, $x),
-                  ["atan2", "atan2f", "atan2l"],
+                  ["atan2", "atan2f", "atan2l", "__nv_atan2", "__nv_atan2f", "__nv_atan2l"],
                   [
                   (FDiv (FMul (DiffeRet), $x), (FAdd (FMul $x, $x), (FMul $y, $y))),
                   (FNeg (FDiv (FMul (DiffeRet), $y), (FAdd (FMul $x, $x), (FMul $y, $y))))
@@ -352,13 +352,13 @@ def : CallPattern<(Op $x, $y),
                   [ReadNone, NoUnwind]
                   >;
 def : CallPattern<(Op $x),
-                  ["asin", "asinf", "asinl"],
+                  ["asin", "asinf", "asinl", "__nv_asin", "__nv_asinf", "__nv_asinl"],
                   [(FDiv (DiffeRet), (Intrinsic<"sqrt"> (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x)))  )] ,
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]              
                   >;
 def : CallPattern<(Op $x),
-                  ["acos", "acosf", "acosl"],
+                  ["acos", "acosf", "acosl", "__nv_acos", "__nv_acosf", "__nv_acosl"],
                   [(FNeg (FDiv (DiffeRet), (Intrinsic<"sqrt"> (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x)))  ))],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
@@ -370,7 +370,7 @@ def : CallPattern<(Op $x),
                   [ReadNone, NoUnwind]
                   >;
 def : CallPattern<(Op $x),
-                  ["expm1"],
+                  ["expm1", "expm1f", "expm1l"],
                   [(FMul (Intrinsic<"exp"> $x), (DiffeRet))],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
@@ -550,7 +550,7 @@ def : CallPattern<(Op $x, $tbd),
                   ["Faddeeva_erf"],
                   [
                     (ToStruct2 (CFMul (DiffeRet), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x)))))),
-                    (AssertingInactiveArg)
+                    (InactiveArg) // relerr
                   ],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
@@ -560,7 +560,7 @@ def : CallPattern<(Op $x, $tbd),
                   ["Faddeeva_erfi"],
                   [
                     (ToStruct2 (CFMul (DiffeRet), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFMul $x, $x))))),
-                    (AssertingInactiveArg)
+                    (InactiveArg) // relerr
                   ],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
@@ -570,7 +570,7 @@ def : CallPattern<(Op $x, $tbd),
                   ["Faddeeva_erfc"],
                   [
                     (ToStruct2 (CFMul (DiffeRet), (CFMul (ConstantCFP<"-1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x)))))),
-                    (AssertingInactiveArg)
+                    (InactiveArg) // relerr
                   ],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
@@ -777,7 +777,7 @@ def : IntrPattern<(Op $x, $y),
                   >;
 
 def : IntrPattern<(Op $x, $y),
-                  [["minnum"], ["nvvm_fmin_f"], ["nvvm_fmin_d"], ["nvvm_fmin_ftz_f"], ["x86_sse_min_ss", "", "9"], ["x86_sse_min_ps", "", "9"], ["minimum", "15", ""]],
+                  [["minnum"], ["nvvm_fmin_f"], ["nvvm_fmin_d"], ["nvvm_fmin_ftz_f"], ["x86_sse_min_ss", "", "9"], ["x86_sse_min_ps", "", "9"], ["x86_sse2_min_pd", "", ""], ["minimum", "11", ""]],
                   [
                     (Select (FCmpOLT $x, $y), (DiffeRet), (ConstantFP<"0"> $x)),
                     (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $x), (DiffeRet))
@@ -786,7 +786,7 @@ def : IntrPattern<(Op $x, $y),
                   >;
 
 def : IntrPattern<(Op $x, $y),
-                  [["maxnum"], ["nvvm_fmax_f"], ["nvvm_fmax_d"], ["nvvm_fmax_ftz_f"], ["x86_sse_max_ss", "", "9"], ["x86_sse_max_ps", "", "9"], ["maximum", "15", ""]],
+                  [["maxnum"], ["nvvm_fmax_f"], ["nvvm_fmax_d"], ["nvvm_fmax_ftz_f"], ["x86_sse_max_ss", "", "9"], ["x86_sse_max_ps", "", "9"], ["x86_sse2_max_pd", "", ""], ["maximum", "11", ""]],
                   [
                     (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $x), (DiffeRet)),
                     (Select (FCmpOLT $x, $y), (DiffeRet), (ConstantFP<"0"> $x))
@@ -822,7 +822,7 @@ def : IntrPattern<(Op $x, $y),
                   [["powi"]],
                   [
                     (Select 
-                      (Or (ICmpEQ $y, (ConstantInt<0> $y) ), (And (GlobalExpr<"ConstantInt::get(Type::getInt1Ty(gutils->newFunc->getContext()), EnzymeStrongZero)">), (FCmpOEQ (DiffeRet), (ConstantFP<"0"> $x) ) ) ),
+                      (Or (ICmpEQ $y, (ConstantInt<0> $y) ), (And (GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "ConstantInt::get(Type::getInt1Ty(gutils->newFunc->getContext()), EnzymeStrongZero)">), (FCmpOEQ (DiffeRet), (ConstantFP<"0"> $x) ) ) ),
                       (ConstantFP<"0"> $x),
                       (FMul (DiffeRet),
                         (FMul (SIToFP $y, (TypeOf $x)), (Call<(SameFunc)> $x, (ISub $y, (ConstantInt<1> $y))))

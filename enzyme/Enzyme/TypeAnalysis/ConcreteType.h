@@ -65,9 +65,9 @@ public:
   /// Construct a ConcreteType from a string
   ///  A Concrete Type's string representation is given by the string of the
   ///  enum If it is a floating point it is given by Float@<specific_type>
-  ConcreteType(std::string Str, llvm::LLVMContext &C) {
+  ConcreteType(llvm::StringRef Str, llvm::LLVMContext &C) {
     auto Sep = Str.find('@');
-    if (Sep != std::string::npos) {
+    if (Sep != llvm::StringRef::npos) {
       SubTypeEnum = BaseType::Float;
       assert(Str.substr(0, Sep) == "Float");
       auto SubName = Str.substr(Sep + 1);
@@ -196,7 +196,6 @@ public:
   /// changed Setting `PointerIntSame` considers pointers and integers as
   /// equivalent If this is an illegal operation, `LegalOr` will be set to false
   bool checkedOrIn(const ConcreteType CT, bool PointerIntSame, bool &LegalOr) {
-    LegalOr = true;
     if (SubTypeEnum == BaseType::Anything) {
       return false;
     }
@@ -456,6 +455,7 @@ public:
           }
           break;
         }
+        LLVM_FALLTHROUGH;
       case BinaryOperator::Add:
       case BinaryOperator::Mul:
         if (SubTypeEnum != BaseType::Pointer) {

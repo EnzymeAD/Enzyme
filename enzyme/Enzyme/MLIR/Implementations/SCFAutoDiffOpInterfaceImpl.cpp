@@ -32,7 +32,7 @@ struct ForOpInterface
                                          MGradientUtils *gutils) const {
     auto forOp = cast<scf::ForOp>(op);
     auto nFor = cast<scf::ForOp>(gutils->getNewFromOriginal(op));
-    SmallVector<mlir::Type> nTypes;
+    SmallVector<Type> nTypes;
     for (auto r : forOp->getResults()) {
       // TODO only if used
       nTypes.push_back(r.getType());
@@ -43,13 +43,13 @@ struct ForOpInterface
         nTypes.push_back(adTypeIface.getShadowType());
       }
     }
-    SmallVector<mlir::Value> nArgs;
-    for (auto r :
-         llvm::zip(forOp.getIterOperands(), forOp.getRegionIterArgs())) {
+    SmallVector<Value> nArgs;
+    for (const auto &[initVal, iterArg] :
+         llvm::zip(forOp.getInitArgs(), forOp.getRegionIterArgs())) {
       // TODO only if used
-      nArgs.push_back(gutils->getNewFromOriginal(std::get<0>(r)));
-      if (!gutils->isConstantValue(std::get<1>(r)))
-        nArgs.push_back(gutils->invertPointerM(std::get<0>(r), builder));
+      nArgs.push_back(gutils->getNewFromOriginal(initVal));
+      if (!gutils->isConstantValue(iterArg))
+        nArgs.push_back(gutils->invertPointerM(initVal, builder));
     }
     auto repFor = builder.create<scf::ForOp>(
         forOp.getLoc(), gutils->getNewFromOriginal(forOp.getLowerBound()),
@@ -57,9 +57,9 @@ struct ForOpInterface
         gutils->getNewFromOriginal(forOp.getStep()), nArgs);
     repFor.getRegion().takeBody(nFor.getRegion());
 
-    SmallVector<mlir::Value> reps;
+    SmallVector<Value> reps;
     size_t idx = 0;
-    for (auto r : forOp.getResults()) {
+    for (Value r : forOp.getResults()) {
       // TODO only if used
       reps.push_back(repFor.getResult(idx));
       idx++;
@@ -74,25 +74,24 @@ struct ForOpInterface
     }
     nFor.replaceAllUsesWith(reps);
     gutils->erase(nFor);
-    for (auto &o :
+    for (Operation &o :
          llvm::make_early_inc_range(forOp.getBody()->without_terminator())) {
       if (failed(gutils->visitChild(&o)))
         return failure();
     }
-    auto oldYield = repFor.getBody()->getTerminator();
+    Operation *oldYield = repFor.getBody()->getTerminator();
     builder.setInsertionPointToEnd(repFor.getBody());
-    SmallVector<mlir::Value> nYields;
-    for (auto r : llvm::zip(forOp.getResults(),
-                            forOp.getBody()->getTerminator()->getOperands())) {
+    SmallVector<Value> nYields;
+    for (const auto &[result, yieldOperand] :
+         llvm::zip(forOp.getResults(),
+                   forOp.getBody()->getTerminator()->getOperands())) {
       // TODO only if used
-      nYields.push_back(gutils->getNewFromOriginal(std::get<1>(r)));
-      if (!gutils->isConstantValue(std::get<0>(r)))
-        nYields.push_back(gutils->invertPointerM(std::get<1>(r), builder));
+      nYields.push_back(gutils->getNewFromOriginal(yieldOperand));
+      if (!gutils->isConstantValue(result))
+        nYields.push_back(gutils->invertPointerM(yieldOperand, builder));
     }
-    repFor.getBody()->push_back(
-        oldYield->create(oldYield->getLoc(), oldYield->getName(), TypeRange(),
-                         nYields, oldYield->getAttrs(),
-                         oldYield->getSuccessors(), oldYield->getNumRegions()));
+    Operation *newYield = builder.clone(*oldYield);
+    newYield->setOperands(nYields);
     gutils->erase(oldYield);
     return success();
   }
@@ -105,11 +104,10 @@ struct ForOpInterfaceReverse
                                 MGradientUtilsReverse *gutils,
                                 SmallVector<Value> caches) const {
     auto forOp = cast<scf::ForOp>(op);
-    auto newForOp = cast<scf::ForOp>(gutils->getNewFromOriginal(op));
 
     SmallVector<Value> nArgs;
     for (Value v : forOp.getResults()) {
-      if (auto iface = v.getType().dyn_cast<AutoDiffTypeInterface>()) {
+      if (auto iface = dyn_cast<AutoDiffTypeInterface>(v.getType())) {
         if (gutils->hasInvertPointer(v)) {
           nArgs.push_back(gutils->invertPointerM(v, builder));
         } else {
@@ -135,12 +133,11 @@ struct ForOpInterfaceReverse
                                 nullptr);
 
     // Insert the index which is carried by the scf for op.
-    Type indexType = mlir::IndexType::get(
-        gutils->initializationBlock->begin()->getContext());
+    Type indexType = IndexType::get(builder.getContext());
     repFor.getRegion().insertArgument((unsigned)0, indexType, forOp.getLoc());
 
     for (const auto &[iterOperand, adjResult] :
-         llvm::zip(forOp.getIterOperands(), repFor.getResults())) {
+         llvm::zip(forOp.getInitArgs(), repFor.getResults())) {
       if (gutils->hasInvertPointer(iterOperand)) {
         auto autoDiffType = cast<AutoDiffTypeInterface>(iterOperand.getType());
         Value before = gutils->invertPointerM(iterOperand, builder);
@@ -176,7 +173,7 @@ struct ForOpInterfaceReverse
 
   void createShadowValues(Operation *op, OpBuilder &builder,
                           MGradientUtilsReverse *gutils) const {
-    auto forOp = cast<scf::ForOp>(op);
+    // auto forOp = cast<scf::ForOp>(op);
   }
 };
 

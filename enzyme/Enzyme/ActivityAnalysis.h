@@ -59,6 +59,7 @@ extern llvm::cl::opt<bool> EnzymePrintActivity;
 extern llvm::cl::opt<bool> EnzymeNonmarkedGlobalsInactive;
 extern llvm::cl::opt<bool> EnzymeGlobalActivity;
 extern llvm::cl::opt<bool> EnzymeEmptyFnInactive;
+extern llvm::cl::opt<bool> EnzymeEnableRecursiveHypotheses;
 }
 
 class PreProcessCache;
@@ -186,7 +187,7 @@ private:
     insertConstantsFrom(TR, Hypothesis);
     for (auto I : Hypothesis.ActiveInstructions) {
       bool inserted = ActiveInstructions.insert(I).second;
-      if (inserted && directions == 3) {
+      if (inserted && directions == 3 && EnzymeEnableRecursiveHypotheses) {
         ReEvaluateInstIfInactiveValue[Orig].insert(I);
         if (Orig2 && Orig2 != Orig)
           ReEvaluateInstIfInactiveValue[Orig2].insert(I);
@@ -194,7 +195,7 @@ private:
     }
     for (auto V : Hypothesis.ActiveValues) {
       bool inserted = ActiveValues.insert(V).second;
-      if (inserted && directions == 3) {
+      if (inserted && directions == 3 && EnzymeEnableRecursiveHypotheses) {
         ReEvaluateValueIfInactiveValue[Orig].insert(V);
         if (Orig2 && Orig2 != Orig)
           ReEvaluateValueIfInactiveValue[Orig2].insert(V);

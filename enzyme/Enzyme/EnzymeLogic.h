@@ -240,6 +240,18 @@ struct ReverseCacheKey {
   }
 };
 
+// Holder class to represent a context in which a derivative
+// or batch is being requested. This contains the instruction
+// (or null) that led to the request, and a builder (or null)
+// of the insertion point for code.
+struct RequestContext {
+  llvm::Instruction *req;
+  llvm::IRBuilder<> *ip;
+  RequestContext(llvm::Instruction *req = nullptr,
+                 llvm::IRBuilder<> *ip = nullptr)
+      : req(req), ip(ip) {}
+};
+
 class EnzymeLogic {
 public:
   PreProcessCache PPC;
@@ -333,12 +345,13 @@ public:
   };
 
   std::map<llvm::Function *, llvm::Function *> NoFreeCachedFunctions;
-  llvm::Function *CreateNoFree(llvm::Function *todiff);
-  llvm::Value *CreateNoFree(llvm::Value *todiff);
+  llvm::Function *CreateNoFree(RequestContext context, llvm::Function *todiff);
+  llvm::Value *CreateNoFree(RequestContext context, llvm::Value *todiff);
 
   std::map<AugmentedCacheKey, AugmentedReturn> AugmentedCachedFunctions;
 
   /// Create an augmented forward pass.
+  ///  \p context the instruction which requested this derivative (or null).
   ///  \p todiff is the function to differentiate
   ///  \p retType is the activity info of the return
   ///  \p constant_args is the activity info of the arguments
@@ -350,7 +363,7 @@ public:
   ///  structure \p AtomicAdd is whether to perform all adjoint updates to
   ///  memory in an atomic way
   const AugmentedReturn &CreateAugmentedPrimal(
-      llvm::Function *todiff, DIFFE_TYPE retType,
+      RequestContext context, llvm::Function *todiff, DIFFE_TYPE retType,
       llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
       bool returnUsed, bool shadowReturnUsed, const FnTypeInfo &typeInfo,
       const std::vector<bool> _overwritten_args, bool forceAnonymousTape,
@@ -437,40 +450,77 @@ public:
       std::tuple<llvm::Function *, ProbProgMode, bool, TraceInterface *>;
   std::map<TraceCacheKey, llvm::Function *> TraceCachedFunctions;
 
-  /// Create the derivative function itself.
+  /// Create the reverse pass, or combined forward+reverse derivative function.
+  ///  \p context the instruction which requested this derivative (or null).
   ///  \p todiff is the function to differentiate
   ///  \p retType is the activity info of the return
   ///  \p constant_args is the activity info of the arguments
   ///  \p returnValue is whether the primal's return should also be returned
   ///  \p dretUsed is whether the shadow return value should also be returned
   ///  \p additionalArg is the type (or null) of an additional type in the
-  ///  signature to hold the tape. \p typeInfo is the type info information
-  ///  about the calling context \p _overwritten_args marks whether an argument
-  ///  may be rewritten before loads in the generated function (and thus cannot
-  ///  be cached). \p augmented is the data structure created by prior call to
-  ///  an augmented forward pass \p AtomicAdd is whether to perform all adjoint
+  ///  signature to hold the tape.
+  ///  \p typeInfo is the type info information about the calling context
+  ///  \p _overwritten_args marks whether an argument may be rewritten
+  ///  before loads in the generated function (and thus cannot be cached).
+  ///  \p augmented is the data structure created by prior call to an
+  ///   augmented forward pass
+  ///  \p AtomicAdd is whether to perform all adjoint
   ///  updates to memory in an atomic way
-  llvm::Function *CreatePrimalAndGradient(const ReverseCacheKey &&key,
+  llvm::Function *CreatePrimalAndGradient(RequestContext context,
+                                          const ReverseCacheKey &&key,
                                           TypeAnalysis &TA,
                                           const AugmentedReturn *augmented,
                                           bool omp = false);
 
-  llvm::Function *CreateForwardDiff(llvm::Function *todiff, DIFFE_TYPE retType,
-                                    llvm::ArrayRef<DIFFE_TYPE> constant_args,
-                                    TypeAnalysis &TA, bool returnValue,
-                                    DerivativeMode mode, bool freeMemory,
-                                    unsigned width, llvm::Type *additionalArg,
-                                    const FnTypeInfo &typeInfo,
-                                    const std::vector<bool> _overwritten_args,
-                                    const AugmentedReturn *augmented,
-                                    bool omp = false);
+  /// Create the forward (or forward split) mode derivative function.
+  ///  \p context the instruction which requested this derivative (or null).
+  ///  \p todiff is the function to differentiate
+  ///  \p retType is the activity info of the return
+  ///  \p constant_args is the activity info of the arguments
+  ///  \p TA is the type analysis results
+  ///  \p returnValue is whether the primal's return should also be returned
+  ///  \p mode is the requested derivative mode
+  ///  \p is whether we should free memory allocated here (and could be
+  ///  accessed externally).
+  ///  \p width is the vector width requested.
+  ///  \p additionalArg is the type (or null) of an additional type in the
+  ///  signature to hold the tape.
+  ///  \p FnTypeInfo is the known types of the argument and returns
+  ///  \p _overwritten_args marks whether an argument may be rewritten
+  ///  before loads in the generated function (and thus cannot be cached).
+  ///  \p augmented is the data structure created by prior call to an
+  ///   augmented forward pass
+  ///  \p omp is whether this function is an OpenMP closure body.
+  llvm::Function *CreateForwardDiff(
+      RequestContext context, llvm::Function *todiff, DIFFE_TYPE retType,
+      llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
+      bool returnValue, DerivativeMode mode, bool freeMemory, unsigned width,
+      llvm::Type *additionalArg, const FnTypeInfo &typeInfo,
+      const std::vector<bool> _overwritten_args,
+      const AugmentedReturn *augmented, bool omp = false);
 
-  llvm::Function *CreateBatch(llvm::Function *tobatch, unsigned width,
+  /// Create a function batched in its inputs.
+  ///  \p context the instruction which requested this batch (or null).
+  ///  \p tobatch is the function to batch
+  ///  \p width is the vector width requested.
+  ///  \p arg_types denotes which arguments are batched.
+  ///  \p ret_type denotes whether to batch the return.
+  llvm::Function *CreateBatch(RequestContext context, llvm::Function *tobatch,
+                              unsigned width,
                               llvm::ArrayRef<BATCH_TYPE> arg_types,
                               BATCH_TYPE ret_type);
 
+  /// Create a traced version of a function
+  ///  \p context the instruction which requested this trace (or null).
+  ///  \p totrace is the function to trace
+  ///  \p sampleFunctions is a set of the functions to sample
+  ///  \p observeFunctions is a set of the functions to observe
+  ///  \p ActiveRandomVariables is a set of which variables are active
+  ///  \p mode is the mode to use
+  ///  \p autodiff is whether to also differentiate
+  ///  \p interface specifies the ABI to use.
   llvm::Function *
-  CreateTrace(llvm::Function *totrace,
+  CreateTrace(RequestContext context, llvm::Function *totrace,
               const llvm::SmallPtrSetImpl<llvm::Function *> &sampleFunctions,
               const llvm::SmallPtrSetImpl<llvm::Function *> &observeFunctions,
               const llvm::StringSet<> &ActiveRandomVariables, ProbProgMode mode,

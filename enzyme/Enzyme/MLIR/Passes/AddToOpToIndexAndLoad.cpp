@@ -42,7 +42,7 @@ SmallVector<Value> applyAffineMap(AffineMap aMap, SmallVector<Value> indices,
   for (unsigned int i = 0; i < aMap.getNumResults(); i++) {
     AffineMap subMap = aMap.getSubMap({i});
     auto mapApplied =
-        builder.create<AffineApplyOp>(loc, subMap, ValueRange(indices));
+        builder.create<affine::AffineApplyOp>(loc, subMap, ValueRange(indices));
     appliedAffineMap.push_back(mapApplied);
   }
   return appliedAffineMap;
@@ -100,8 +100,8 @@ struct AddToOpToIndexAndLoadPass
                                                         mapAppliedIndices);
         auto added = cast<enzyme::AutoDiffTypeInterface>(load.getType())
                          .createAddOp(cacheBuilder, loc, load, retargs[i]);
-        auto store = cacheBuilder.create<memref::StoreOp>(loc, added, outs[i],
-                                                          mapAppliedIndices);
+        cacheBuilder.create<memref::StoreOp>(loc, added, outs[i],
+                                             mapAppliedIndices);
       }
 
       for (int i = 0; i < retargs.size(); i++) {

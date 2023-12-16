@@ -19,9 +19,6 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/ModRef.h"
 
-using namespace mlir;
-using namespace mlir::enzyme;
-
 const char *KnownInactiveFunctionsStartingWith[] = {
     "f90io",
     "$ss5print",
@@ -225,7 +222,7 @@ const static unsigned constantIntrinsics[] = {
     llvm::Intrinsic::stackrestore,
     llvm::Intrinsic::lifetime_start,
     llvm::Intrinsic::lifetime_end,
-    llvm::Intrinsic::dbg_addr,
+    // llvm::Intrinsic::dbg_addr,
     llvm::Intrinsic::dbg_declare,
     llvm::Intrinsic::dbg_value,
     llvm::Intrinsic::invariant_start,
@@ -375,82 +372,85 @@ bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(
   return false;
 }
 
+// TODO: better support for known function calls. Ideally, they should become
+// operations, but we also need parity with LLVM-enzyme.
 /// Call the function propagateFromOperand on all operands of CI
 /// that could impact the activity of the call instruction
-static inline void propagateArgumentInformation(
-    /*TargetLibraryInfo &TLI,*/ CallOpInterface CI,
-    std::function<bool(Value)> propagateFromOperand) {
+// static inline void propagateArgumentInformation(
+//     /*TargetLibraryInfo &TLI,*/ CallOpInterface CI,
+//     std::function<bool(Value)> propagateFromOperand) {
 
-  if (Operation *F = getFunctionFromCall(CI)) {
-    // These functions are known to only have the first argument impact
-    // the activity of the call instruction
-    StringRef Name = cast<SymbolOpInterface>(F).getName();
-    if (Name == "lgamma" || Name == "lgammaf" || Name == "lgammal" ||
-        Name == "lgamma_r" || Name == "lgammaf_r" || Name == "lgammal_r" ||
-        Name == "__lgamma_r_finite" || Name == "__lgammaf_r_finite" ||
-        Name == "__lgammal_r_finite") {
+//   if (Operation *F = getFunctionFromCall(CI)) {
+//     // These functions are known to only have the first argument impact
+//     // the activity of the call instruction
+//     StringRef Name = cast<SymbolOpInterface>(F).getName();
+//     if (Name == "lgamma" || Name == "lgammaf" || Name == "lgammal" ||
+//         Name == "lgamma_r" || Name == "lgammaf_r" || Name == "lgammal_r" ||
+//         Name == "__lgamma_r_finite" || Name == "__lgammaf_r_finite" ||
+//         Name == "__lgammal_r_finite") {
 
-      propagateFromOperand(CI.getArgOperands()[0]);
-      return;
-    }
+//       propagateFromOperand(CI.getArgOperands()[0]);
+//       return;
+//     }
 
-    // Allocations, deallocations, and c++ guards are fully inactive
-    // if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI)
-    // ||
-    //     Name == "__cxa_guard_acquire" || Name == "__cxa_guard_release" ||
-    //     Name == "__cxa_guard_abort")
-    //   return;
+//     // Allocations, deallocations, and c++ guards are fully inactive
+//     // if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name,
+//     TLI)
+//     // ||
+//     //     Name == "__cxa_guard_acquire" || Name == "__cxa_guard_release" ||
+//     //     Name == "__cxa_guard_abort")
+//     //   return;
 
-    /// Only the first argument (magnitude) of copysign is active
-    if (Name == llvm::Intrinsic::getName(llvm::Intrinsic::copysign)) {
-      propagateFromOperand(CI.getArgOperands()[0]);
-      return;
-    }
+//     /// Only the first argument (magnitude) of copysign is active
+//     if (Name == llvm::Intrinsic::getName(llvm::Intrinsic::copysign)) {
+//       propagateFromOperand(CI.getArgOperands()[0]);
+//       return;
+//     }
 
-    // Certain intrinsics are inactive by definition
-    // and have nothing to propagate.
-    for (unsigned intrinsicID : constantIntrinsics) {
-      if (Name.startswith(llvm::Intrinsic::getBaseName(intrinsicID)))
-        return;
-    }
+//     // Certain intrinsics are inactive by definition
+//     // and have nothing to propagate.
+//     for (unsigned intrinsicID : constantIntrinsics) {
+//       if (Name.startswith(llvm::Intrinsic::getBaseName(intrinsicID)))
+//         return;
+//     }
 
-    if (Name.startswith(
-            llvm::Intrinsic::getBaseName(llvm::Intrinsic::memcpy)) ||
-        Name.startswith(
-            llvm::Intrinsic::getBaseName(llvm::Intrinsic::memmove))) {
-      propagateFromOperand(CI.getArgOperands()[0]);
-      propagateFromOperand(CI.getArgOperands()[1]);
-      return;
-    }
+//     if (Name.startswith(
+//             llvm::Intrinsic::getBaseName(llvm::Intrinsic::memcpy)) ||
+//         Name.startswith(
+//             llvm::Intrinsic::getBaseName(llvm::Intrinsic::memmove))) {
+//       propagateFromOperand(CI.getArgOperands()[0]);
+//       propagateFromOperand(CI.getArgOperands()[1]);
+//       return;
+//     }
 
-    if (Name == "frexp" || Name == "frexpf" || Name == "frexpl") {
-      propagateFromOperand(CI.getArgOperands()[0]);
-      return;
-    }
-    if (Name == "Faddeeva_erf" || Name == "Faddeeva_erfc" ||
-        Name == "Faddeeva_erfcx" || Name == "Faddeeva_erfi" ||
-        Name == "Faddeeva_dawson") {
-      for (size_t i = 0; i < CI.getArgOperands().size() - 1; i++) {
-        propagateFromOperand(CI.getArgOperands()[i]);
-      }
-      return;
-    }
+//     if (Name == "frexp" || Name == "frexpf" || Name == "frexpl") {
+//       propagateFromOperand(CI.getArgOperands()[0]);
+//       return;
+//     }
+//     if (Name == "Faddeeva_erf" || Name == "Faddeeva_erfc" ||
+//         Name == "Faddeeva_erfcx" || Name == "Faddeeva_erfi" ||
+//         Name == "Faddeeva_dawson") {
+//       for (size_t i = 0; i < CI.getArgOperands().size() - 1; i++) {
+//         propagateFromOperand(CI.getArgOperands()[i]);
+//       }
+//       return;
+//     }
 
-    if (Name == "julia.call" || Name == "julia.call2") {
-      for (size_t i = 1; i < CI.getArgOperands().size(); i++) {
-        propagateFromOperand(CI.getArgOperands()[i]);
-      }
-      return;
-    }
-  }
+//     if (Name == "julia.call" || Name == "julia.call2") {
+//       for (size_t i = 1; i < CI.getArgOperands().size(); i++) {
+//         propagateFromOperand(CI.getArgOperands()[i]);
+//       }
+//       return;
+//     }
+//   }
 
-  // For other calls, check all operands of the operation
-  // as conservatively they may impact the activity of the call
-  for (Value a : CI->getOperands()) {
-    if (propagateFromOperand(a))
-      break;
-  }
-}
+//   // For other calls, check all operands of the operation
+//   // as conservatively they may impact the activity of the call
+//   for (Value a : CI->getOperands()) {
+//     if (propagateFromOperand(a))
+//       break;
+//   }
+// }
 
 /// Return whether this operation is known not to propagate adjoints
 /// Note that operation could return an active pointer, but
@@ -890,7 +890,7 @@ static FunctionOpInterface getFunctionIfArgument(Value value) {
 }
 
 // TODO: move the extraction based on dataflow here.
-static std::vector<Value> getPotentialIncomingValues(BlockArgument arg) {
+static SmallVector<Value> getPotentialIncomingValues(BlockArgument arg) {
   SetVector<Value> potentialSources;
 
   if (!arg.getOwner()->isEntryBlock()) {
@@ -919,7 +919,7 @@ static std::vector<Value> getPotentialIncomingValues(BlockArgument arg) {
   if (auto iface = dyn_cast<RegionBranchOpInterface>(parent)) {
     auto isRegionSucessorOf = [arg](RegionBranchOpInterface iface,
                                     Region *region,
-                                    Optional<unsigned> predecessor,
+                                    RegionBranchPoint predecessor,
                                     SetVector<Value> &potentialSources) {
       SmallVector<RegionSuccessor> successors;
       iface.getSuccessorRegions(predecessor, successors);
@@ -939,28 +939,28 @@ static std::vector<Value> getPotentialIncomingValues(BlockArgument arg) {
 
         // Find the values that are forwarded to entry block arguments of
         // the current region.
-        if (!predecessor) {
+        if (predecessor.isParent()) {
           // XXX: this assumes a contiguous slice of operands is mapped 1-1
           // without swaps to a contiguous slice of entry block arguments.
-          assert(iface.getSuccessorEntryOperands(region->getRegionNumber())
-                     .size() == successor.getSuccessorInputs().size());
-          potentialSources.insert(iface.getSuccessorEntryOperands(
-              region->getRegionNumber())[operandOffset]);
+          assert(iface.getEntrySuccessorOperands(region).size() ==
+                 successor.getSuccessorInputs().size());
+          potentialSources.insert(
+              iface.getEntrySuccessorOperands(region)[operandOffset]);
         } else {
           // Find all block terminators in the predecessor region that
           // may be branching to this region, and get the operands they
           // forward.
-          for (Block &block : iface->getRegion(*predecessor)) {
+          for (Block &block : *predecessor.getRegionOrNull()) {
             // TODO: MLIR block without terminator
             if (auto terminator = dyn_cast<RegionBranchTerminatorOpInterface>(
                     block.getTerminator())) {
               // XXX: this assumes a contiguous slice of operands is mapped
               // 1-1 without swaps to a contiguous slice of entry block
               // arguments.
-              assert(terminator.getSuccessorOperands(region->getRegionNumber())
-                         .size() == successor.getSuccessorInputs().size());
-              potentialSources.insert(terminator.getSuccessorOperands(
-                  region->getRegionNumber())[operandOffset]);
+              assert(terminator.getSuccessorOperands(region).size() ==
+                     successor.getSuccessorInputs().size());
+              potentialSources.insert(
+                  terminator.getSuccessorOperands(region)[operandOffset]);
             } else {
               for (Value v : block.getTerminator()->getOperands())
                 potentialSources.insert(v);
@@ -971,9 +971,10 @@ static std::vector<Value> getPotentialIncomingValues(BlockArgument arg) {
     };
 
     // Find all possible source regions for the current region.
-    isRegionSucessorOf(iface, parentRegion, llvm::None, potentialSources);
-    for (unsigned i = 0, e = parent->getNumRegions(); i < e; ++i)
-      isRegionSucessorOf(iface, parentRegion, i, potentialSources);
+    isRegionSucessorOf(iface, parentRegion, RegionBranchPoint::parent(),
+                       potentialSources);
+    for (Region &childRegion : parent->getRegions())
+      isRegionSucessorOf(iface, parentRegion, childRegion, potentialSources);
 
   } else {
     // Conservatively assume any op operand and any terminator operand of
@@ -1014,11 +1015,11 @@ static void allFollowersOf(Operation *op,
   // `RegionBranchOpInterface` when `op` implements it and assume all regions
   // may be successors otherwise.
   auto addEntryBlocksOfSuccessorRegions =
-      [](Operation *op, llvm::Optional<unsigned> regionNumber,
+      [](Operation *op, RegionBranchPoint regionBranchPoint,
          std::deque<Block *> &todo) {
         if (auto iface = dyn_cast<RegionBranchOpInterface>(op)) {
           SmallVector<RegionSuccessor> regionSuccessors;
-          iface.getSuccessorRegions(regionNumber, regionSuccessors);
+          iface.getSuccessorRegions(regionBranchPoint, regionSuccessors);
           for (const RegionSuccessor &rs : regionSuccessors) {
             if (!rs.isParent() && !rs.getSuccessor()->empty())
               todo.push_back(&rs.getSuccessor()->front());
@@ -1039,7 +1040,7 @@ static void allFollowersOf(Operation *op,
                                     bool skipNested) {
     // 1. If op has regions, consider control flow into those.
     if (op->getNumRegions() != 0 && !skipNested)
-      addEntryBlocksOfSuccessorRegions(op, llvm::None, todo);
+      addEntryBlocksOfSuccessorRegions(op, RegionBranchPoint::parent(), todo);
 
     // 2. If op is a terminator, consider control flow from it.
     if (!op->mightHaveTrait<OpTrait::IsTerminator>() ||
@@ -1061,12 +1062,11 @@ static void allFollowersOf(Operation *op,
 
     // Do nothing when we hit a function (AD unit) or the end of the region
     // structure.
-    unsigned regionNumber = current->getParent()->getRegionNumber();
     Operation *parentOp = current->getParentOp();
     if (!parentOp || isa<FunctionOpInterface>(parentOp))
       return;
 
-    addEntryBlocksOfSuccessorRegions(parentOp, regionNumber, todo);
+    addEntryBlocksOfSuccessorRegions(parentOp, current->getParent(), todo);
   };
 
   std::deque<Block *> todo;
@@ -1168,8 +1168,8 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
   // }
 
   if (Operation *definingOp = Val.getDefiningOp()) {
-    // Undef, metadata, non-global constants are inactive.
-    if (isa<LLVM::UndefOp, LLVM::MetadataOp, LLVM::ConstantOp>(definingOp)) {
+    // Undef and non-global constants are inactive.
+    if (isa<LLVM::UndefOp, LLVM::ConstantOp>(definingOp)) {
       return true;
     }
 
@@ -2211,9 +2211,9 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
       // UpHypothesis.ConstantValues.insert(val);
       if (DeducingPointers.size() == 0)
         UpHypothesis->insertConstantsFrom(TR, *Hypothesis);
-      for (auto V : DeducingPointers) {
-        // UpHypothesis->InsertConstantValue(TR, V);
-      }
+      // for (auto V : DeducingPointers) {
+      //   UpHypothesis->InsertConstantValue(TR, V);
+      // }
       assert(directions & UP);
       bool ActiveUp = !getFunctionIfArgument(Val) &&
                       !UpHypothesis->isValueInactiveFromOrigin(TR, Val);
@@ -2420,7 +2420,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromOrigin(
       if (auto iface = dyn_cast<RegionBranchOpInterface>(parent)) {
         auto isRegionSucessorOf = [arg](RegionBranchOpInterface iface,
                                         Region *region,
-                                        Optional<unsigned> predecessor,
+                                        RegionBranchPoint predecessor,
                                         SetVector<Value> &potentialSources) {
           SmallVector<RegionSuccessor> successors;
           iface.getSuccessorRegions(predecessor, successors);
@@ -2441,18 +2441,18 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromOrigin(
 
             // Find the values that are forwarded to entry block arguments of
             // the current region.
-            if (!predecessor) {
+            if (predecessor.isParent()) {
               // XXX: this assumes a contiguous slice of operands is mapped 1-1
               // without swaps to a contiguous slice of entry block arguments.
-              assert(iface.getSuccessorEntryOperands(region->getRegionNumber())
-                         .size() == successor.getSuccessorInputs().size());
-              potentialSources.insert(iface.getSuccessorEntryOperands(
-                  region->getRegionNumber())[operandOffset]);
+              assert(iface.getEntrySuccessorOperands(region).size() ==
+                     successor.getSuccessorInputs().size());
+              potentialSources.insert(
+                  iface.getEntrySuccessorOperands(region)[operandOffset]);
             } else {
               // Find all block terminators in the predecessor region that
               // may be branching to this region, and get the operands they
               // forward.
-              for (Block &block : iface->getRegion(*predecessor)) {
+              for (Block &block : *predecessor.getRegionOrNull()) {
                 // TODO: MLIR block without terminator
                 if (auto terminator =
                         dyn_cast<RegionBranchTerminatorOpInterface>(
@@ -2460,11 +2460,10 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromOrigin(
                   // XXX: this assumes a contiguous slice of operands is mapped
                   // 1-1 without swaps to a contiguous slice of entry block
                   // arguments.
-                  assert(
-                      terminator.getSuccessorOperands(region->getRegionNumber())
-                          .size() == successor.getSuccessorInputs().size());
-                  potentialSources.insert(terminator.getSuccessorOperands(
-                      region->getRegionNumber())[operandOffset]);
+                  assert(terminator.getSuccessorOperands(region).size() ==
+                         successor.getSuccessorInputs().size());
+                  potentialSources.insert(
+                      terminator.getSuccessorOperands(region)[operandOffset]);
                 } else {
                   for (Value v : block.getTerminator()->getOperands())
                     potentialSources.insert(v);
@@ -2475,9 +2474,10 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromOrigin(
         };
 
         // Find all possible source regions for the current region.
-        isRegionSucessorOf(iface, parentRegion, llvm::None, potentialSources);
-        for (unsigned i = 0, e = parent->getNumRegions(); i < e; ++i)
-          isRegionSucessorOf(iface, parentRegion, i, potentialSources);
+        isRegionSucessorOf(iface, parentRegion, RegionBranchPoint::parent(),
+                           potentialSources);
+        for (Region &region : parent->getRegions())
+          isRegionSucessorOf(iface, parentRegion, region, potentialSources);
 
       } else {
         // Conservatively assume any op operand and any terminator operand of
@@ -2525,7 +2525,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromOrigin(
 }
 
 bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
-    MTypeResults const &TR, Operation *op, llvm::Optional<unsigned> resultNo) {
+    MTypeResults const &TR, Operation *op, std::optional<unsigned> resultNo) {
   // Must be an analyzer only searching up
   assert(directions == UP);
 
@@ -2789,8 +2789,8 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
                   block.getTerminator())) {
             // TODO: the interface may also tell us which regions are allowed to
             // yield parent op results, and which only branch to other regions.
-            auto successorOperands =
-                llvm::to_vector(iface.getSuccessorOperands(llvm::None));
+            auto successorOperands = llvm::to_vector(
+                iface.getSuccessorOperands(RegionBranchPoint::parent()));
             // TODO: understand/document the assumption of how operands flow.
             assert(successorOperands.size() == op->getNumResults() &&
                    "expected all results to be populated with yielded "
@@ -3246,7 +3246,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
             if (matchPattern(a, m_ConstantInt(&intValue)))
               continue;
 
-            Value ptr = a;
+            // Value ptr = a;
             bool subValue = false;
             // while (ptr) {
             //   auto TmpOrig2 = getUnderlyingObject(ptr, 100);

@@ -114,39 +114,8 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   br i1 %cmp, label %for.body, label %for.end8, !llvm.loop !6
 
 ; CHECK: for.end8:                                         ; preds = %for.end
-; CHECK-NEXT:   br i1 %cmp3, label %invertfor.cond.for.end8_crit_edge, label %invertentry
+; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:   
 ; CHECK-NEXT:   %0 = insertvalue { double } undef, double %differeturn, 0
 ; CHECK-NEXT:   ret { double } %0
-
-; CHECK: incinvertfor.body:  
-; CHECK-NEXT:   %[[i2:.+]] = add nsw i64 %"iv'ac.0", -1
-; CHECK-NEXT:   br label %remat_enter
-
-; CHECK: invertfor.cond.for.end8_crit_edge:                ; preds = %for.end8
-; CHECK-NEXT:   %_unwrap = add i64 %numReg, -1
-; CHECK-NEXT:   br label %remat_enter
-
-; CHECK: remat_enter:                                      ; preds = %invertfor.cond.for.end8_crit_edge, %incinvertfor.body
-; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %_unwrap, %invertfor.cond.for.end8_crit_edge ], [ %[[i2]], %incinvertfor.body ]
-; CHECK-NEXT:   %remat_call = call noalias align 16 i8* @calloc(i64 8, i64 1000000)
-; CHECK-NEXT:   %i4_unwrap = bitcast i8* %remat_call to double*
-; CHECK-NEXT:   store double 1.000000e+00, double* %i4_unwrap, align 8
-; CHECK-NEXT:   br label %remat_for.body_for.body3
-
-; CHECK: remat_for.body_for.body3:                         ; preds = %remat_for.body_for.body3, %remat_enter
-; CHECK-NEXT:   %i10_unwrap = phi double [ %mul_unwrap, %remat_for.body_for.body3 ], [ 1.000000e+00, %remat_enter ]
-; CHECK-NEXT:   %fiv = phi i64 [ %[[i9:.+]], %remat_for.body_for.body3 ], [ 0, %remat_enter ]
-; CHECK-NEXT:   %[[i9]] = add i64 %fiv, 1
-; CHECK-DAG:    %arrayidx5_unwrap = getelementptr inbounds double, double* %i4_unwrap, i64 %[[i9]]
-; CHECK-DAG:    %mul_unwrap = fmul double %i10_unwrap, %rho0
-; CHECK-NEXT:   store double %mul_unwrap, double* %arrayidx5_unwrap, align 8
-; CHECK-NEXT:   %inc_unwrap = add i64 %[[i9]], 1
-; CHECK-NEXT:   %cmp2_unwrap = icmp ult i64 %inc_unwrap, 1000000
-; CHECK-NEXT:   br i1 %cmp2_unwrap, label %remat_for.body_for.body3, label %remat_for.body_for.end
-
-; CHECK: remat_for.body_for.end:                           ; preds = %remat_for.body_for.body3
-; CHECK-NEXT:   call void @free(i8* %remat_call)
-; CHECK-NEXT:   %[[i3:.+]] = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   br i1 %[[i3]], label %invertentry, label %incinvertfor.body
