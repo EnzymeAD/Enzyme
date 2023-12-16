@@ -4306,21 +4306,28 @@ GradientUtils *GradientUtils::CreateFromClone(
 DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
                                              bool *primalReturnUsedP,
                                              bool *shadowReturnUsedP) const {
+  return getReturnDiffeType(orig, primalReturnUsedP, shadowReturnUsedP, mode);
+}
+
+DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
+                                             bool *primalReturnUsedP,
+                                             bool *shadowReturnUsedP,
+                                             DerivativeMode cmode) const {
   bool shadowReturnUsed = false;
 
   DIFFE_TYPE subretType;
   if (isConstantValue(orig)) {
     subretType = DIFFE_TYPE::CONSTANT;
   } else {
-    if (mode == DerivativeMode::ForwardMode ||
-        mode == DerivativeMode::ForwardModeSplit) {
+    if (cmode == DerivativeMode::ForwardMode ||
+        cmode == DerivativeMode::ForwardModeSplit) {
       subretType = DIFFE_TYPE::DUP_ARG;
       shadowReturnUsed = true;
     } else {
       if (!orig->getType()->isFPOrFPVectorTy() &&
           TR.query(orig).Inner0().isPossiblePointer()) {
         if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-                QueryType::Shadow>(this, orig, mode, notForAnalysis)) {
+                QueryType::Shadow>(this, orig, cmode, notForAnalysis)) {
           subretType = DIFFE_TYPE::DUP_ARG;
           shadowReturnUsed = true;
         } else

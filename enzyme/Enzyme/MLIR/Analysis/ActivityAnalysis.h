@@ -7,6 +7,7 @@
 namespace mlir {
 
 class CallOpInterface;
+class FunctionOpInterface;
 
 namespace enzyme {
 

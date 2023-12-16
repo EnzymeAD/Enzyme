@@ -168,9 +168,8 @@ struct GenericOpInterfaceReverse
         StringAttr());
 
     int numInputs = inputs.size();
-    auto buildFuncReturnOp = [numInputs,
-                              indexingMaps](OpBuilder &builder, Location loc,
-                                            SmallVector<Value> retargs) {
+    auto buildFuncReturnOp = [numInputs](OpBuilder &builder, Location loc,
+                                         SmallVector<Value> retargs) {
       builder.create<enzyme::AddToOp>(
           loc, ValueRange{retargs}.take_front(numInputs));
       return;

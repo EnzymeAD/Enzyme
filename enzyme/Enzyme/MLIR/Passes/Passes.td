@@ -19,6 +19,52 @@ def DifferentiatePass : Pass<"enzyme"> {
   let constructor = "mlir::enzyme::createDifferentiatePass()";
 }
 
+def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
+  let summary = "Print the results of activity analysis";
+  let constructor = "mlir::enzyme::createPrintActivityAnalysisPass()";
+  let options = [
+    ListOption<
+      /*C++ variable name=*/"funcsToAnalyze",
+      /*CLI argument=*/"funcs",
+      /*type=*/"std::string",
+      /*description=*/"The names of the functions to perform activity analysis on"
+    >,
+    Option<
+      /*C++ variable name=*/"verbose",
+      /*CLI argument=*/"verbose",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Print detailed activity information"
+    >,
+    Option<
+      /*C++ variable name=*/"annotate",
+      /*CLI argument=*/"annotate",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Annotate every operation and value with its activity"
+    >,
+    Option<
+      /*C++ variable name=*/"inactiveArgs",
+      /*CLI argument=*/"inactive-args",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Whether all arguments are assumed to be inactive"
+    >,
+    Option<
+      /*C++ variable name=*/"duplicatedRet",
+      /*CLI argument=*/"duplicated-ret",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Whether the return is duplicated"
+    >,
+  ];
+}
+
+def PrintAliasAnalysisPass : Pass<"test-print-alias-analysis"> {
+  let summary = "Print the results of alias analysis";
+  let constructor = "mlir::enzyme::createPrintAliasAnalysisPass()";
+}
+
 def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
   let summary = "Lower custom Enzyme ops to the MemRef dialect";
   let dependentDialects = [

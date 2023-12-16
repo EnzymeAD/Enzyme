@@ -28,6 +28,10 @@
 
 using namespace llvm;
 
+extern "C" {
+void (*EnzymeShadowAllocRewrite)(LLVMValueRef, void *) = nullptr;
+}
+
 template <class T>
 void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
                                     llvm::Function *called,
@@ -2978,6 +2982,12 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
                                       Attribute::NonNull);
 #endif
                   }
+                }
+                if (funcName == "julia.gc_alloc_obj" ||
+                    funcName == "jl_gc_alloc_typed" ||
+                    funcName == "ijl_gc_alloc_typed") {
+                  if (EnzymeShadowAllocRewrite)
+                    EnzymeShadowAllocRewrite(wrap(anti), gutils);
                 }
                 if (Mode == DerivativeMode::ReverseModeCombined ||
                     (Mode == DerivativeMode::ReverseModePrimal &&

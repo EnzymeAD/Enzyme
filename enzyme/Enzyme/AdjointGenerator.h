@@ -886,11 +886,16 @@ public:
     if (CustomErrorHandler) {
       CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoDerivative,
                          gutils, nullptr, wrap(&BuilderZ));
-      return;
     } else {
       EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-      return;
     }
+    if (!gutils->isConstantValue(&I)) {
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeSplit)
+        setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
+                 BuilderZ);
+    }
+    return;
   }
 
   void visitStoreInst(llvm::StoreInst &SI) {
@@ -1021,23 +1026,26 @@ public:
     if (Mode == DerivativeMode::ForwardMode) {
 
       auto dt = vd[{-1}];
-      for (size_t i = 0; i < storeSize; ++i) {
-        bool Legal = true;
-        dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
-        if (!Legal) {
-          std::string str;
-          raw_string_ostream ss(str);
-          ss << "Cannot deduce single type of store " << I << vd.str()
-             << " size: " << storeSize;
-          if (CustomErrorHandler) {
-            CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                               &TR.analyzer, nullptr, wrap(&BuilderZ));
-          } else {
-            EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
+      // Only need the full type in forward mode, if storing a constant
+      // and therefore may need to zero some floats.
+      if (constantval)
+        for (size_t i = 0; i < storeSize; ++i) {
+          bool Legal = true;
+          dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+          if (!Legal) {
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Cannot deduce single type of store " << I << vd.str()
+               << " size: " << storeSize;
+            if (CustomErrorHandler) {
+              CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
+                                 &TR.analyzer, nullptr, wrap(&BuilderZ));
+            } else {
+              EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
+            }
+            return;
           }
-          return;
         }
-      }
 
       Value *diff = nullptr;
       if (!EnzymeRuntimeActivityCheck && CustomErrorHandler && constantval) {
@@ -5947,8 +5955,11 @@ public:
 
     bool subretused = false;
     bool shadowReturnUsed = false;
-    DIFFE_TYPE subretType =
-        gutils->getReturnDiffeType(&call, &subretused, &shadowReturnUsed);
+    auto smode = Mode;
+    if (smode == DerivativeMode::ReverseModeGradient)
+      smode = DerivativeMode::ReverseModePrimal;
+    DIFFE_TYPE subretType = gutils->getReturnDiffeType(
+        &call, &subretused, &shadowReturnUsed, smode);
 
     if (Mode == DerivativeMode::ForwardMode) {
       auto found = customFwdCallHandlers.find(funcName);
@@ -6165,7 +6176,15 @@ public:
       return;
 
     if (gutils->isConstantInstruction(&call) &&
-        gutils->isConstantValue(&call)) {
+        (gutils->isConstantValue(&call) || !shadowReturnUsed)) {
+      if (!gutils->isConstantValue(&call)) {
+        auto found = gutils->invertedPointers.find(&call);
+        if (found != gutils->invertedPointers.end()) {
+          PHINode *placeholder = cast<PHINode>(&*found->second);
+          gutils->invertedPointers.erase(found);
+          gutils->erase(placeholder);
+        }
+      }
       bool noFree = Mode == DerivativeMode::ForwardMode;
       noFree |= call.hasFnAttr(Attribute::NoFree);
       if (!noFree && called) {
