@@ -170,6 +170,9 @@ if (${LLVM_VERSION_MAJOR} GREATER 14)
     target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,--load-pass-plugin=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
 endif()
 
+add_library(LLDEnzymeAssumeUnknownNoFree INTERFACE)
+target_link_options(LLDEnzymeAssumeUnknownNoFree INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-assume-unknown-nofree=1")
+
 add_library(LLDEnzymeLooseTypeFlags INTERFACE)
 target_link_options(LLDEnzymeLooseTypeFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-loose-types=1")
 

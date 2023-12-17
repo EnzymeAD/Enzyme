@@ -12,6 +12,7 @@ set(Enzyme_TABLEGEN_EXE "@Enzyme_CONFIG_TABLEGEN_EXE@")
 
 # Our library dependencies (contains definitions for IMPORTED targets)
 if(NOT TARGET ClangEnzymeFlags AND NOT TARGET LLDEnzymeFlags 
+    AND NOT TARGET LLDEnzymeAssumeUnknownNoFree
     AND NOT TARGET LLDEnzymeLooseTypeFlags
     AND NOT TARGET LLDEnzymePrintTypeFlags
     AND NOT TARGET LLDEnzymePrintFlags
@@ -20,6 +21,7 @@ if(NOT TARGET ClangEnzymeFlags AND NOT TARGET LLDEnzymeFlags
     include("${Enzyme_CMAKE_DIR}/EnzymeTargets.cmake")
     # These are IMPORTED targets created by EnzymeTargets.cmake
     set(Enzyme_LIBRARIES ClangEnzymeFlags LLDEnzymeFlags
+        LLDEnzymeAssumeUnknownNoFree
         LLDEnzymeLooseTypeFlags
         LLDEnzymePrintTypeFlags
         LLDEnzymePrintFlags
