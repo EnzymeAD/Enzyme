@@ -4484,6 +4484,11 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
+    if (funcName == "jl_get_binding_or_error" ||
+        funcName == "ijl_get_binding_or_error") {
+      updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
 
     /// MPI
     if (funcName.startswith("PMPI_"))

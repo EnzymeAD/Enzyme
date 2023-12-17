@@ -1697,7 +1697,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
                 }
                 if (outinds.size() > 1)
                   out = B.CreateInBoundsGEP(sretTy, out, outinds);
-                B.CreateStore(ConstantPointerNull::get(PT), out);
+                B.CreateStore(getUndefinedValueForType(PT), out);
               }
               return;
             }
