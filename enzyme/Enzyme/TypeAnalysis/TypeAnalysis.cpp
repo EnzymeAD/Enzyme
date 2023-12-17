@@ -5514,6 +5514,15 @@ FnTypeInfo TypeAnalyzer::getCallInfo(CallBase &call, Function &fn) {
 
   int argnum = 0;
   for (auto &arg : fn.args()) {
+    if (argnum >= call.arg_size()) {
+      typeInfo.Arguments.insert(
+          std::pair<Argument *, TypeTree>(&arg, TypeTree()));
+      std::set<int64_t> bounded;
+      typeInfo.KnownValues.insert(
+          std::pair<Argument *, std::set<int64_t>>(&arg, bounded));
+      ++argnum;
+      continue;
+    }
     auto dt = getAnalysis(call.getArgOperand(argnum));
     if (arg.getType()->isIntOrIntVectorTy() &&
         dt.Inner0() == BaseType::Anything) {
