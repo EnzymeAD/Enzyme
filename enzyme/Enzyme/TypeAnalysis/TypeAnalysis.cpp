@@ -2071,12 +2071,57 @@ void TypeAnalyzer::visitPHINode(PHINode &phi) {
             if (BO->getOperand(0) == &phi) {
               set = true;
               PhiTypes = otherData;
-              PhiTypes.binopIn(getAnalysis(BO->getOperand(1)), BO->getOpcode());
+              bool Legal = true;
+              PhiTypes.binopIn(Legal, getAnalysis(BO->getOperand(1)),
+                               BO->getOpcode());
+              if (!Legal) {
+                std::string str;
+                raw_string_ostream ss(str);
+                if (!CustomErrorHandler) {
+                  llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
+                  llvm::errs() << *fntypeinfo.Function << "\n";
+                  dump(ss);
+                }
+                ss << "Illegal updateBinop Analysis " << *BO << "\n";
+                ss << "Illegal binopIn(0): " << *BO
+                   << " lhs: " << PhiTypes.str()
+                   << " rhs: " << getAnalysis(BO->getOperand(0)).str() << "\n";
+                if (CustomErrorHandler) {
+                  CustomErrorHandler(str.c_str(), wrap(BO),
+                                     ErrorType::IllegalTypeAnalysis,
+                                     (void *)this, wrap(BO), nullptr);
+                }
+                EmitFailure("IllegalUpdateAnalysis", BO->getDebugLoc(), BO,
+                            ss.str());
+                report_fatal_error("Performed illegal updateAnalysis");
+              }
               break;
             } else if (BO->getOperand(1) == &phi) {
               set = true;
               PhiTypes = getAnalysis(BO->getOperand(0));
-              PhiTypes.binopIn(otherData, BO->getOpcode());
+              bool Legal = true;
+              PhiTypes.binopIn(Legal, otherData, BO->getOpcode());
+              if (!Legal) {
+                std::string str;
+                raw_string_ostream ss(str);
+                if (!CustomErrorHandler) {
+                  llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
+                  llvm::errs() << *fntypeinfo.Function << "\n";
+                  dump(ss);
+                }
+                ss << "Illegal updateBinop Analysis " << *BO << "\n";
+                ss << "Illegal binopIn(1): " << *BO
+                   << " lhs: " << PhiTypes.str() << " rhs: " << otherData.str()
+                   << "\n";
+                if (CustomErrorHandler) {
+                  CustomErrorHandler(str.c_str(), wrap(BO),
+                                     ErrorType::IllegalTypeAnalysis,
+                                     (void *)this, wrap(BO), nullptr);
+                }
+                EmitFailure("IllegalUpdateAnalysis", BO->getDebugLoc(), BO,
+                            ss.str());
+                report_fatal_error("Performed illegal updateAnalysis");
+              }
               break;
             }
           } else if (BO->getOpcode() == BinaryOperator::Sub) {
@@ -2124,7 +2169,27 @@ void TypeAnalyzer::visitPHINode(PHINode &phi) {
       TypeTree vd2 = isa<Constant>(bo->getOperand(1))
                          ? getAnalysis(bo->getOperand(1)).Data0()
                          : PhiTypes.Data0();
-      vd1.binopIn(vd2, bo->getOpcode());
+      bool Legal = true;
+      vd1.binopIn(Legal, vd2, bo->getOpcode());
+      if (!Legal) {
+        std::string str;
+        raw_string_ostream ss(str);
+        if (!CustomErrorHandler) {
+          llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
+          llvm::errs() << *fntypeinfo.Function << "\n";
+          dump(ss);
+        }
+        ss << "Illegal updateBinop Analysis " << *bo << "\n";
+        ss << "Illegal binopIn(consts): " << *bo << " lhs: " << vd1.str()
+           << " rhs: " << vd2.str() << "\n";
+        if (CustomErrorHandler) {
+          CustomErrorHandler(str.c_str(), wrap(bo),
+                             ErrorType::IllegalTypeAnalysis, (void *)this,
+                             wrap(bo), nullptr);
+        }
+        EmitFailure("IllegalUpdateAnalysis", bo->getDebugLoc(), bo, ss.str());
+        report_fatal_error("Performed illegal updateAnalysis");
+      }
       PhiTypes &= vd1.Only(bo->getType()->isIntegerTy() ? -1 : 0, &phi);
     }
 
@@ -2999,8 +3064,28 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
 
     if (direction & DOWN) {
       TypeTree Result = AnalysisLHS;
-      Result.binopIn(AnalysisRHS, Opcode);
-
+      bool Legal = true;
+      Result.binopIn(Legal, AnalysisRHS, Opcode);
+      if (!Legal) {
+        std::string str;
+        raw_string_ostream ss(str);
+        if (!CustomErrorHandler) {
+          llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
+          llvm::errs() << *fntypeinfo.Function << "\n";
+          dump(ss);
+        }
+        ss << "Illegal updateBinop Analysis " << *origin << "\n";
+        ss << "Illegal binopIn(down): " << Opcode << " lhs: " << Result.str()
+           << " rhs: " << AnalysisRHS.str() << "\n";
+        if (CustomErrorHandler) {
+          CustomErrorHandler(str.c_str(), wrap(origin),
+                             ErrorType::IllegalTypeAnalysis, (void *)this,
+                             wrap(origin), nullptr);
+        }
+        EmitFailure("IllegalUpdateAnalysis", origin->getDebugLoc(), origin,
+                    ss.str());
+        report_fatal_error("Performed illegal updateAnalysis");
+      }
       if (Opcode == BinaryOperator::And) {
         for (int i = 0; i < 2; ++i) {
           if (Args[i])
@@ -3821,8 +3906,27 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
       updateAnalysis(I.getOperand(1), analysis.Only(-1, &I), &I);
 
     TypeTree vd = getAnalysis(I.getOperand(0)).Data0();
-    vd.binopIn(getAnalysis(I.getOperand(1)).Data0(), opcode);
-
+    bool Legal = true;
+    vd.binopIn(Legal, getAnalysis(I.getOperand(1)).Data0(), opcode);
+    if (!Legal) {
+      std::string str;
+      raw_string_ostream ss(str);
+      if (!CustomErrorHandler) {
+        llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
+        llvm::errs() << *fntypeinfo.Function << "\n";
+        dump(ss);
+      }
+      ss << "Illegal updateBinopIntr Analysis " << I << "\n";
+      ss << "Illegal binopIn(intr): " << I << " lhs: " << vd.str()
+         << " rhs: " << getAnalysis(I.getOperand(1)).str() << "\n";
+      if (CustomErrorHandler) {
+        CustomErrorHandler(str.c_str(), wrap(&I),
+                           ErrorType::IllegalTypeAnalysis, (void *)this,
+                           wrap(&I), nullptr);
+      }
+      EmitFailure("IllegalUpdateAnalysis", I.getDebugLoc(), &I, ss.str());
+      report_fatal_error("Performed illegal updateAnalysis");
+    }
     auto &dl = I.getParent()->getParent()->getParent()->getDataLayout();
     int sz = (dl.getTypeSizeInBits(I.getOperand(0)->getType()) + 7) / 8;
     TypeTree overall = vd.Only(-1, &I).ShiftIndices(dl, 0, sz, 0);

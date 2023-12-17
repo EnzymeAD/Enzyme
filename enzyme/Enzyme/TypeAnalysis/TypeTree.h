@@ -1112,7 +1112,8 @@ public:
   /// Set this to the logical `binop` of itself and RHS, using the Binop Op,
   /// returning true if this was changed.
   /// This function will error on an invalid type combination
-  bool binopIn(const TypeTree &RHS, llvm::BinaryOperator::BinaryOps Op) {
+  bool binopIn(bool &Legal, const TypeTree &RHS,
+               llvm::BinaryOperator::BinaryOps Op) {
     bool changed = false;
 
     for (auto &pair : llvm::make_early_inc_range(mapping)) {
@@ -1134,7 +1135,12 @@ public:
         RightCT = found->second;
       }
 
-      changed |= CT.binopIn(RightCT, Op);
+      bool SubLegal = true;
+      changed |= CT.binopIn(SubLegal, RightCT, Op);
+      if (!SubLegal) {
+        Legal = false;
+        return changed;
+      }
       if (CT == BaseType::Unknown) {
         mapping.erase(pair.first);
       } else {
@@ -1154,7 +1160,12 @@ public:
 
       if (mapping.find(pair.first) == RHS.mapping.end()) {
         ConcreteType CT = BaseType::Unknown;
-        changed |= CT.binopIn(pair.second, Op);
+        bool SubLegal = true;
+        changed |= CT.binopIn(SubLegal, pair.second, Op);
+        if (!SubLegal) {
+          Legal = false;
+          return changed;
+        }
         if (CT != BaseType::Unknown) {
           mapping.insert(std::make_pair(pair.first, CT));
         }
