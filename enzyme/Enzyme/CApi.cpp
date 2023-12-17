@@ -1787,8 +1787,6 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     }
 
     for (auto ptr : sret_vals) {
-      copyNonJLValue(Types[sretCount], sret, ptr, {}, ST ? sretCount : -1,
-                     Types[sretCount], false);
       auto gep =
           ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount) : sret;
       auto ld = B.CreateLoad(Types[sretCount], gep);
