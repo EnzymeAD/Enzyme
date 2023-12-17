@@ -58,7 +58,8 @@ private:
   llvm::ArrayRef<DIFFE_TYPE> constant_args;
   DIFFE_TYPE retType;
   TypeResults &TR = gutils->TR;
-  std::function<unsigned(llvm::Instruction *, CacheType)> getIndex;
+  std::function<unsigned(llvm::Instruction *, CacheType, llvm::IRBuilder<> &)>
+      getIndex;
   const std::map<llvm::CallInst *, const std::vector<bool>>
       overwritten_args_map;
   const llvm::SmallPtrSetImpl<llvm::Instruction *> *returnuses;
@@ -76,7 +77,9 @@ public:
   AdjointGenerator(
       DerivativeMode Mode, GradientUtils *gutils,
       llvm::ArrayRef<DIFFE_TYPE> constant_args, DIFFE_TYPE retType,
-      std::function<unsigned(llvm::Instruction *, CacheType)> getIndex,
+      std::function<unsigned(llvm::Instruction *, CacheType,
+                             llvm::IRBuilder<> &)>
+          getIndex,
       const std::map<llvm::CallInst *, const std::vector<bool>>
           overwritten_args_map,
       const llvm::SmallPtrSetImpl<llvm::Instruction *> *returnuses,
@@ -477,7 +480,8 @@ public:
         if (can_modref) {
           if (vd[{-1}].isPossiblePointer()) {
             Value *newip = gutils->cacheForReverse(
-                BuilderZ, placeholder, getIndex(&I, CacheType::Shadow));
+                BuilderZ, placeholder,
+                getIndex(&I, CacheType::Shadow, BuilderZ));
             assert(newip->getType() == type);
             gutils->invertedPointers.insert(std::make_pair(
                 (const Value *)&I, InvertedPointerVH(gutils, newip)));
@@ -543,8 +547,8 @@ public:
                       QueryType::Shadow>(gutils, &I,
                                          DerivativeMode::ReverseModeGradient,
                                          oldUnreachable)) {
-                gutils->cacheForReverse(BuilderZ, newip,
-                                        getIndex(&I, CacheType::Shadow));
+                gutils->cacheForReverse(
+                    BuilderZ, newip, getIndex(&I, CacheType::Shadow, BuilderZ));
               }
               placeholder->replaceAllUsesWith(newip);
               gutils->erase(placeholder);
@@ -565,7 +569,8 @@ public:
               // only make shadow where caching needed
               if (can_modref) {
                 newip = gutils->cacheForReverse(
-                    BuilderZ, placeholder, getIndex(&I, CacheType::Shadow));
+                    BuilderZ, placeholder,
+                    getIndex(&I, CacheType::Shadow, BuilderZ));
                 assert(newip->getType() == type);
                 gutils->invertedPointers.insert(std::make_pair(
                     (const Value *)&I, InvertedPointerVH(gutils, newip)));
@@ -617,7 +622,7 @@ public:
               QueryType::Primal>(gutils, &I, cacheMode, Seen, oldUnreachable);
       if (primalNeededInReverse) {
         inst = gutils->cacheForReverse(BuilderZ, newi,
-                                       getIndex(&I, CacheType::Self));
+                                       getIndex(&I, CacheType::Self, BuilderZ));
         assert(inst->getType() == type);
 
         if (Mode == DerivativeMode::ReverseModeGradient ||
@@ -3619,7 +3624,7 @@ public:
         BuilderZ.setFastMathFlags(getFast());
 
         gutils->cacheForReverse(BuilderZ, newCall,
-                                getIndex(&II, CacheType::Self));
+                                getIndex(&II, CacheType::Self, BuilderZ));
       }
     }
     eraseIfUnused(II);
@@ -4233,7 +4238,7 @@ public:
           pre_args.push_back(alloc);
           assert(tape);
           gutils->cacheForReverse(BuilderZ, tape,
-                                  getIndex(&call, CacheType::Tape));
+                                  getIndex(&call, CacheType::Tape, BuilderZ));
         }
 
         auto numargs = ConstantInt::get(Type::getInt32Ty(call.getContext()),
@@ -4287,8 +4292,8 @@ public:
           if (Mode == DerivativeMode::ReverseModeGradient) {
             if (tape == nullptr)
               tape = BuilderZ.CreatePHI(subdata->tapeType, 0, "tapeArg");
-            tape = gutils->cacheForReverse(BuilderZ, tape,
-                                           getIndex(&call, CacheType::Tape));
+            tape = gutils->cacheForReverse(
+                BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
           }
           tape = lookup(tape, Builder2);
           auto alloc = IRBuilder<>(gutils->inversionAllocs)
@@ -4852,8 +4857,8 @@ public:
 
         assert(!tape->getType()->isEmptyTy());
         gutils->TapesToPreventRecomputation.insert(cast<Instruction>(tape));
-        tape = gutils->cacheForReverse(BuilderZ, tape,
-                                       getIndex(&call, CacheType::Tape));
+        tape = gutils->cacheForReverse(
+            BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
         args.push_back(tape);
       }
 
@@ -5408,8 +5413,8 @@ public:
           } else {
             gutils->TapesToPreventRecomputation.insert(cast<Instruction>(tape));
           }
-          tape = gutils->cacheForReverse(BuilderZ, tape,
-                                         getIndex(&call, CacheType::Tape));
+          tape = gutils->cacheForReverse(
+              BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
         }
 
         if (subretused) {
@@ -5472,8 +5477,8 @@ public:
                                          oldUnreachable);
             }
             if (primalNeededInReverse)
-              gutils->cacheForReverse(BuilderZ, dcall,
-                                      getIndex(&call, CacheType::Self));
+              gutils->cacheForReverse(
+                  BuilderZ, dcall, getIndex(&call, CacheType::Self, BuilderZ));
           }
           BuilderZ.SetInsertPoint(newCall->getNextNode());
           gutils->erase(newCall);
@@ -5504,8 +5509,8 @@ public:
                                       ->getElementType(tval),
                 1, "tapeArg");
           }
-          tape = gutils->cacheForReverse(BuilderZ, tape,
-                                         getIndex(&call, CacheType::Tape));
+          tape = gutils->cacheForReverse(
+              BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
         }
 
         if (subretused) {
@@ -5515,7 +5520,8 @@ public:
             cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
                                               call.getName() + "_tmpcacheB");
             cachereplace = gutils->cacheForReverse(
-                BuilderZ, cachereplace, getIndex(&call, CacheType::Self));
+                BuilderZ, cachereplace,
+                getIndex(&call, CacheType::Self, BuilderZ));
           } else {
             auto pn = BuilderZ.CreatePHI(
                 call.getType(), 1, (call.getName() + "_replacementE").str());
@@ -5575,8 +5581,8 @@ public:
             newip = placeholder;
           }
 
-          newip = gutils->cacheForReverse(BuilderZ, newip,
-                                          getIndex(&call, CacheType::Shadow));
+          newip = gutils->cacheForReverse(
+              BuilderZ, newip, getIndex(&call, CacheType::Shadow, BuilderZ));
 
           gutils->invertedPointers.insert(std::make_pair(
               (const Value *)&call, InvertedPointerVH(gutils, newip)));
@@ -5623,7 +5629,8 @@ public:
           cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
                                             call.getName() + "_cachereplace2");
           cachereplace = gutils->cacheForReverse(
-              BuilderZ, cachereplace, getIndex(&call, CacheType::Self));
+              BuilderZ, cachereplace,
+              getIndex(&call, CacheType::Self, BuilderZ));
         } else {
           auto pn = BuilderZ.CreatePHI(call.getType(), 1,
                                        call.getName() + "_replacementC");
@@ -6053,7 +6060,7 @@ public:
           if (tape) {
             tapeType = tape->getType();
             gutils->cacheForReverse(BuilderZ, tape,
-                                    getIndex(&call, CacheType::Tape));
+                                    getIndex(&call, CacheType::Tape, BuilderZ));
           }
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
@@ -6085,9 +6092,9 @@ public:
             tapeType = (llvm::Type *)fd->second;
 
             tape = BuilderZ.CreatePHI(tapeType, 0);
-            tape = gutils->cacheForReverse(BuilderZ, tape,
-                                           getIndex(&call, CacheType::Tape),
-                                           /*ignoreType*/ true);
+            tape = gutils->cacheForReverse(
+                BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ),
+                /*ignoreType*/ true);
           }
           if (tape)
             tape = gutils->lookupM(tape, Builder2);
@@ -6120,7 +6127,8 @@ public:
               invertedReturn = placeholder;
 
             invertedReturn = gutils->cacheForReverse(
-                BuilderZ, invertedReturn, getIndex(&call, CacheType::Shadow));
+                BuilderZ, invertedReturn,
+                getIndex(&call, CacheType::Shadow, BuilderZ));
 
             gutils->invertedPointers.insert(
                 std::make_pair((const Value *)&call,
@@ -6149,7 +6157,8 @@ public:
             gutils->erase(newCall);
           }
           normalReturn = gutils->cacheForReverse(
-              BuilderZ, normalReturn, getIndex(&call, CacheType::Self));
+              BuilderZ, normalReturn,
+              getIndex(&call, CacheType::Self, BuilderZ));
         } else {
           if (normalReturn && normalReturn != newCall) {
             assert(normalReturn->getType() == newCall->getType());
@@ -6220,7 +6229,7 @@ public:
           gutils->knownRecomputeHeuristic.end()) {
         if (!gutils->knownRecomputeHeuristic[&call]) {
           gutils->cacheForReverse(BuilderZ, newCall,
-                                  getIndex(&call, CacheType::Self));
+                                  getIndex(&call, CacheType::Self, BuilderZ));
           eraseIfUnused(call);
           return;
         }
@@ -6258,7 +6267,7 @@ public:
           }
           if (primalNeededInReverse) {
             gutils->cacheForReverse(BuilderZ, newCall,
-                                    getIndex(&call, CacheType::Self));
+                                    getIndex(&call, CacheType::Self, BuilderZ));
             eraseIfUnused(call);
             return;
           }

@@ -2368,10 +2368,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                                    overwritten_args_map, can_modref_map,
                                    constant_args));
 
-  auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
+  auto getIndex = [&](Instruction *I, CacheType u, IRBuilder<> &B) -> unsigned {
     return gutils->getIndex(
         std::make_pair(I, u),
-        AugmentedCachedFunctions.find(tup)->second.tapeIndices);
+        AugmentedCachedFunctions.find(tup)->second.tapeIndices, B);
   };
 
   //! Explicitly handle all returns first to ensure that all instructions know
@@ -2473,7 +2473,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                   cast<Instruction>(newi)->getParent()->getFirstNonPHI());
             }
             gutils->cacheForReverse(BuilderZ, newi,
-                                    getIndex(&I, CacheType::Self));
+                                    getIndex(&I, CacheType::Self, BuilderZ));
           }
         }
       }
@@ -4034,8 +4034,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   if (augmenteddata)
     mapping = augmenteddata->tapeIndices;
 
-  auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
-    return gutils->getIndex(std::make_pair(I, u), mapping);
+  auto getIndex = [&](Instruction *I, CacheType u, IRBuilder<> &B) -> unsigned {
+    return gutils->getIndex(std::make_pair(I, u), mapping, B);
   };
 
   // requires is_value_needed_in_reverse, that needs unnecessaryValues
@@ -4667,9 +4667,11 @@ Function *EnzymeLogic::CreateForwardDiff(
 
     gutils->computeMinCache();
 
-    auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
+    auto getIndex = [&](Instruction *I, CacheType u,
+                        IRBuilder<> &B) -> unsigned {
       assert(augmenteddata);
-      return gutils->getIndex(std::make_pair(I, u), augmenteddata->tapeIndices);
+      return gutils->getIndex(std::make_pair(I, u), augmenteddata->tapeIndices,
+                              B);
     };
 
     calculateUnusedValuesInFunction(

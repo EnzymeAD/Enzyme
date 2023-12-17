@@ -81,7 +81,8 @@ enum class ErrorType {
   InternalError = 5,
   TypeDepthExceeded = 6,
   MixedActivityError = 7,
-  IllegalReplaceFicticiousPHIs = 8
+  IllegalReplaceFicticiousPHIs = 8,
+  GetIndexError = 9,
 };
 
 extern "C" {

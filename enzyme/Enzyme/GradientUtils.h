@@ -337,11 +337,13 @@ public:
 
   int getIndex(
       std::pair<llvm::Instruction *, CacheType> idx,
-      const std::map<std::pair<llvm::Instruction *, CacheType>, int> &mapping);
+      const std::map<std::pair<llvm::Instruction *, CacheType>, int> &mapping,
+      llvm::IRBuilder<> &);
 
   int getIndex(
       std::pair<llvm::Instruction *, CacheType> idx,
-      std::map<std::pair<llvm::Instruction *, CacheType>, int> &mapping);
+      std::map<std::pair<llvm::Instruction *, CacheType>, int> &mapping,
+      llvm::IRBuilder<> &);
 
   llvm::Value *cacheForReverse(llvm::IRBuilder<> &BuilderQ, llvm::Value *malloc,
                                int idx, bool replace = true);
