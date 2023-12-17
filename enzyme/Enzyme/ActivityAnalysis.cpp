@@ -181,6 +181,7 @@ const StringSet<> KnownInactiveFunctionInsts = {
     "jl_ptr_to_array_1d"};
 
 const StringSet<> KnownInactiveFunctions = {
+    "mpfr_greater_p",
     "__nv_isnand",
     "__nv_isnanf",
     "__nv_isinfd",
