@@ -6123,12 +6123,21 @@ public:
                      gutils->getShadowType(call.getType()));
               placeholder->replaceAllUsesWith(invertedReturn);
               gutils->erase(placeholder);
-            } else
-              invertedReturn = placeholder;
-
-            invertedReturn = gutils->cacheForReverse(
-                BuilderZ, invertedReturn,
-                getIndex(&call, CacheType::Shadow, BuilderZ));
+              invertedReturn = gutils->cacheForReverse(
+                  BuilderZ, invertedReturn,
+                  getIndex(&call, CacheType::Shadow, BuilderZ));
+            } else {
+              auto idx = getIndex(&call, CacheType::Shadow, BuilderZ);
+              invertedReturn =
+                  gutils->cacheForReverse(BuilderZ, placeholder, idx);
+              if (idx == -2) {
+                if (placeholder->getType() != invertedReturn->getType())
+                  llvm::errs() << " place: " << *placeholder
+                               << "  invRet: " << *invertedReturn;
+                placeholder->replaceAllUsesWith(invertedReturn);
+                gutils->erase(placeholder);
+              }
+            }
 
             gutils->invertedPointers.insert(
                 std::make_pair((const Value *)&call,
