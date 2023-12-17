@@ -2549,6 +2549,10 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
   }
 
   if (tape) {
+    if (idx == -2) {
+      assert(malloc);
+      return UndefValue::get(malloc->getType());
+    }
     if (idx >= 0 && !tape->getType()->isStructTy()) {
       llvm::errs() << "cacheForReverse incorrect tape type: " << *tape
                    << " idx: " << idx << "\n";
@@ -8938,32 +8942,43 @@ void GradientUtils::dumpPointers() {
 
 int GradientUtils::getIndex(
     std::pair<Instruction *, CacheType> idx,
-    const std::map<std::pair<Instruction *, CacheType>, int> &mapping) {
+    const std::map<std::pair<Instruction *, CacheType>, int> &mapping,
+    IRBuilder<> &B) {
   assert(tape);
   auto found = mapping.find(idx);
   if (found == mapping.end()) {
-    errs() << "oldFunc: " << *oldFunc << "\n";
-    errs() << "newFunc: " << *newFunc << "\n";
-    errs() << " <mapping>\n";
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << *oldFunc << "\n";
+    ss << *newFunc << "\n";
+    ss << " <mapping>\n";
     for (auto &p : mapping) {
-      errs() << "   idx: " << *p.first.first << ", " << p.first.second
-             << " pos=" << p.second << "\n";
+      ss << "   idx: " << *p.first.first << ", " << p.first.second
+         << " pos=" << p.second << "\n";
     }
-    errs() << " </mapping>\n";
-
-    errs() << "idx: " << *idx.first << ", " << idx.second << "\n";
-    assert(0 && "could not find index in mapping");
+    ss << " </mapping>\n";
+    ss << "idx: " << *idx.first << ", " << idx.second << "\n";
+    ss << " could not find index in mapping\n";
+    if (CustomErrorHandler) {
+      CustomErrorHandler(ss.str().c_str(), wrap(idx.first),
+                         ErrorType::GetIndexError, this, nullptr, wrap(&B));
+    } else {
+      EmitFailure("GetIndexError", idx.first->getDebugLoc(), idx.first,
+                  ss.str());
+    }
+    return -2;
   }
   return found->second;
 }
 
 int GradientUtils::getIndex(
     std::pair<Instruction *, CacheType> idx,
-    std::map<std::pair<Instruction *, CacheType>, int> &mapping) {
+    std::map<std::pair<Instruction *, CacheType>, int> &mapping,
+    IRBuilder<> &B) {
   if (tape) {
     return getIndex(
         idx,
-        (const std::map<std::pair<Instruction *, CacheType>, int> &)mapping);
+        (const std::map<std::pair<Instruction *, CacheType>, int> &)mapping, B);
   } else {
     if (mapping.find(idx) != mapping.end()) {
       return mapping[idx];

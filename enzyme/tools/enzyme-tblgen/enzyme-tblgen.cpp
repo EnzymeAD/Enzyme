@@ -1140,7 +1140,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "          gutils->cacheForReverse(BuilderZ, newCall,\n";
       os << "                                  getIndex(&" << origName
          << ", "
-            "CacheType::Self));\n";
+            "CacheType::Self, BuilderZ));\n";
       os << "        }\n";
       os << "    }\n";
     }
