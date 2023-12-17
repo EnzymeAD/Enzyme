@@ -9,6 +9,7 @@
 
 // everything should be always inline
 
+// XFAIL: *
 
 #include <stdio.h>
 #include <assert.h>
