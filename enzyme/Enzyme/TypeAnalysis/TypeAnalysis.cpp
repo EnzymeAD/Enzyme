@@ -1104,6 +1104,8 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
     }
     if (auto I = dyn_cast<Instruction>(Val)) {
       EmitFailure("IllegalUpdateAnalysis", I->getDebugLoc(), I, ss.str());
+    } else if (auto I = dyn_cast_or_null<Instruction>(Origin)) {
+      EmitFailure("IllegalUpdateAnalysis", I->getDebugLoc(), I, ss.str());
     } else {
       llvm::errs() << ss.str() << "\n";
     }
