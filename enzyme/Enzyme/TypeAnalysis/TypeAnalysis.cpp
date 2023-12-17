@@ -3254,16 +3254,27 @@ void TypeAnalyzer::visitMemTransferCommon(llvm::CallBase &MTI) {
   bool Legal = true;
   res.checkedOrIn(res2, /*PointerIntSame*/ false, Legal);
   if (!Legal) {
-    dump();
-    llvm::errs() << MTI << "\n";
-    llvm::errs() << "Illegal orIn: " << res.str() << " right: " << res2.str()
-                 << "\n";
-    llvm::errs() << *MTI.getArgOperand(0) << " "
-                 << getAnalysis(MTI.getArgOperand(0)).str() << "\n";
-    llvm::errs() << *MTI.getArgOperand(1) << " "
-                 << getAnalysis(MTI.getArgOperand(1)).str() << "\n";
-    assert(0 && "Performed illegal visitMemTransferInst::orIn");
-    llvm_unreachable("Performed illegal visitMemTransferInst::orIn");
+    std::string str;
+    raw_string_ostream ss(str);
+    if (!CustomErrorHandler) {
+      llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
+      llvm::errs() << *fntypeinfo.Function << "\n";
+      dump(ss);
+    }
+    ss << "Illegal updateMemTransfer Analysis " << MTI << "\n";
+    ss << "Illegal orIn: " << res.str() << " right: " << res2.str() << "\n";
+    ss << *MTI.getArgOperand(0) << " "
+       << getAnalysis(MTI.getArgOperand(0)).str() << "\n";
+    ss << *MTI.getArgOperand(1) << " "
+       << getAnalysis(MTI.getArgOperand(1)).str() << "\n";
+
+    if (CustomErrorHandler) {
+      CustomErrorHandler(str.c_str(), wrap(&MTI),
+                         ErrorType::IllegalTypeAnalysis, (void *)this,
+                         wrap(&MTI), nullptr);
+    }
+    EmitFailure("IllegalUpdateAnalysis", MTI.getDebugLoc(), &MTI, ss.str());
+    report_fatal_error("Performed illegal updateAnalysis");
   }
   res.insert({}, BaseType::Pointer);
   res = res.Only(-1, &MTI);
