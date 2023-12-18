@@ -30,6 +30,22 @@
 
 using namespace llvm;
 
+static inline bool startsWith(llvm::StringRef string, llvm::StringRef prefix) {
+#if LLVM_VERSION_MAJOR >= 18
+  return string.starts_with(prefix);
+#else
+  return string.startswith(prefix);
+#endif // LLVM_VERSION_MAJOR
+}
+
+static inline bool endsWith(llvm::StringRef string, llvm::StringRef suffix) {
+#if LLVM_VERSION_MAJOR >= 18
+  return string.ends_with(suffix);
+#else
+  return string.endswith(suffix);
+#endif // LLVM_VERSION_MAJOR
+}
+
 static cl::opt<ActionType>
     action(cl::desc("Action to perform:"),
            cl::values(clEnumValN(GenBlasDerivatives, "gen-blas-derivatives",
@@ -198,14 +214,14 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
     if (isa<UnsetInit>(args) && names) {
       auto [ord, vecValue] =
           nameToOrdinal.lookup(names->getValue(), pattern, resultRoot);
-      if (!vecValue && !StringRef(ord).startswith("local")) {
+      if (!vecValue && !startsWith(ord, "local")) {
         if (lookup)
           os << "lookup(";
         if (newFromOriginal)
           os << "gutils->getNewFromOriginal(";
       }
       os << ord;
-      if (!vecValue && !StringRef(ord).startswith("local")) {
+      if (!vecValue && !startsWith(ord, "local")) {
         if (newFromOriginal)
           os << ")";
         if (lookup)
@@ -1621,16 +1637,16 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
 
               if (name.size()) {
                 if (foundPrimalUse2.size() &&
-                    !(StringRef(foundPrimalUse).startswith(foundPrimalUse2) ||
-                      StringRef(foundPrimalUse).endswith(foundPrimalUse2))) {
+                    !(startsWith(foundPrimalUse, foundPrimalUse2) ||
+                      endsWith(foundPrimalUse, foundPrimalUse2))) {
                   if (foundPrimalUse.size() == 0)
                     foundPrimalUse = foundPrimalUse2;
                   else
                     foundPrimalUse += " || " + foundPrimalUse2;
                 }
                 if (foundShadowUse2.size() &&
-                    !(StringRef(foundShadowUse).startswith(foundShadowUse2) ||
-                      StringRef(foundShadowUse).endswith(foundShadowUse2))) {
+                    !(startsWith(foundShadowUse, foundShadowUse2) ||
+                      endsWith(foundShadowUse, foundShadowUse2))) {
                   if (foundShadowUse.size() == 0)
                     foundShadowUse = foundShadowUse2;
                   else
@@ -1669,16 +1685,16 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
                 }
                 if (usesPrimal) {
                   if (foundPrimalUse2.size() &&
-                      !(StringRef(foundPrimalUse).startswith(foundPrimalUse2) ||
-                        StringRef(foundPrimalUse).endswith(foundPrimalUse2))) {
+                      !(startsWith(foundPrimalUse, foundPrimalUse2) ||
+                        endsWith(foundPrimalUse, foundPrimalUse2))) {
                     if (foundPrimalUse.size() == 0)
                       foundPrimalUse = foundPrimalUse2;
                     else
                       foundPrimalUse += " || " + foundPrimalUse2;
                   }
                   if (foundShadowUse2.size() &&
-                      !(StringRef(foundShadowUse).startswith(foundShadowUse2) ||
-                        StringRef(foundShadowUse).endswith(foundShadowUse2))) {
+                      !(startsWith(foundShadowUse, foundShadowUse2) ||
+                        endsWith(foundShadowUse, foundShadowUse2))) {
                     if (foundShadowUse.size() == 0)
                       foundShadowUse = foundShadowUse2;
                     else
@@ -1688,8 +1704,8 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
                 }
                 if (usesShadow) {
                   if (foundPrimalUse2.size() &&
-                      !(StringRef(foundShadowUse).startswith(foundPrimalUse2) ||
-                        StringRef(foundShadowUse).endswith(foundPrimalUse2))) {
+                      !(startsWith(foundShadowUse, foundPrimalUse2) ||
+                        endsWith(foundShadowUse, foundPrimalUse2))) {
                     if (foundShadowUse.size() == 0)
                       foundShadowUse = foundPrimalUse2;
                     else

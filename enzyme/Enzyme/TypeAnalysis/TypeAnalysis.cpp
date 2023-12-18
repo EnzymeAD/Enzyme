@@ -199,7 +199,7 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
 
 static bool isItaniumEncoding(StringRef S) {
   // Itanium encoding requires 1 or 3 leading underscores, followed by 'Z'.
-  return S.startswith("_Z") || S.startswith("___Z");
+  return startsWith(S, "_Z") || startsWith(S, "___Z");
 }
 
 bool dontAnalyze(StringRef str) {
@@ -4319,7 +4319,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     // not fully understood by LLVM. One of the results of this is that the
     // visitor dispatches to visitCallBase, rather than visitIntrinsicInst, when
     // presented with the intrinsic - hence why we are handling it here.
-    if (funcName.startswith("llvm.intel.subscript")) {
+    if (startsWith(funcName, "llvm.intel.subscript")) {
       assert(isa<IntrinsicInst>(call));
       analyzeIntelSubscriptIntrinsic(cast<IntrinsicInst>(call), *this);
       return;
@@ -4376,8 +4376,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     // All these are always valid => no direction check
     // CONSIDER(malloc)
     // TODO consider handling other allocation functions integer inputs
-    if (funcName.startswith("_ZN3std2io5stdio6_print") ||
-        funcName.startswith("_ZN4core3fmt")) {
+    if (startsWith(funcName, "_ZN3std2io5stdio6_print") ||
+        startsWith(funcName, "_ZN4core3fmt")) {
       return;
     }
     /// GEMM
@@ -4507,13 +4507,13 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
 
-    if (funcName.startswith("_ZNKSt3__14hash")) {
+    if (startsWith(funcName, "_ZNKSt3__14hash")) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
 
-    if (funcName.startswith("_ZNKSt3__112basic_stringIcNS_11char_traitsIcEENS_"
-                            "9allocatorIcEEE13__get_pointer")) {
+    if (startsWith(funcName, "_ZNKSt3__112basic_stringIcNS_11char_traitsIcEENS_"
+                             "9allocatorIcEEE13__get_pointer")) {
       return;
     }
 
@@ -4616,7 +4616,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
 
     /// MPI
-    if (funcName.startswith("PMPI_"))
+    if (startsWith(funcName, "PMPI_"))
       funcName = funcName.substr(1);
     if (funcName == "MPI_Init") {
       TypeTree ptrint;

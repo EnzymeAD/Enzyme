@@ -448,7 +448,8 @@ struct CacheAnalysis {
       return {};
     }
 
-    if (funcName.startswith("MPI_") || funcName.startswith("enzyme_wrapmpi$$"))
+    if (startsWith(funcName, "MPI_") ||
+        startsWith(funcName, "enzyme_wrapmpi$$"))
       return {};
 
     if (funcName == "__kmpc_for_static_init_4" ||
@@ -615,7 +616,7 @@ struct CacheAnalysis {
           // We do not need uncacheable args for intrinsic functions. So skip
           // such callsites.
           if (auto II = dyn_cast<IntrinsicInst>(&inst)) {
-            if (!II->getCalledFunction()->getName().startswith("llvm.julia"))
+            if (!startsWith(II->getCalledFunction()->getName(), "llvm.julia"))
               continue;
           }
 
@@ -5314,7 +5315,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "MPI_Allreduce",
   };
 
-  if (F->getName().startswith("_ZNSolsE") || NoFrees.count(F->getName()))
+  if (startsWith(F->getName(), "_ZNSolsE") || NoFrees.count(F->getName()))
     return F;
 
   switch (F->getIntrinsicID()) {

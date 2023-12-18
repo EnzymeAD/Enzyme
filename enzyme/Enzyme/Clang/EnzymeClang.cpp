@@ -33,6 +33,8 @@
 #include "clang/Sema/Sema.h"
 #include "clang/Sema/SemaDiagnostic.h"
 
+#include "../Utils.h"
+
 using namespace clang;
 
 #if LLVM_VERSION_MAJOR >= 18
@@ -99,12 +101,12 @@ public:
     std::string pluginPath;
 #endif
     for (auto P : Opts.Plugins)
-      if (llvm::sys::path::stem(P).endswith(PluginName)) {
+      if (endsWith(llvm::sys::path::stem(P), PluginName)) {
 #if LLVM_VERSION_MAJOR < 18
         pluginPath = P;
 #endif
         for (auto passPlugin : CGOpts.PassPlugins) {
-          if (llvm::sys::path::stem(passPlugin).endswith(PluginName)) {
+          if (endsWith(llvm::sys::path::stem(passPlugin), PluginName)) {
             contains = true;
             break;
           }

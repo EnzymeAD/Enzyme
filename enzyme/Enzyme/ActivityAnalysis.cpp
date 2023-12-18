@@ -465,20 +465,20 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   std::string demangledName = llvm::demangle(Name.str());
   auto dName = StringRef(demangledName);
   for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
-    if (dName.startswith(FuncName)) {
+    if (startsWith(dName, FuncName)) {
       return true;
     }
   }
   if (demangledName == Name.str()) {
     // Either demangeling failed
     // or they are equal but matching failed
-    // if (!Name.startswith("llvm."))
+    // if (!startsWith(Name, "llvm."))
     //  llvm::errs() << "matching failed: " << Name.str() << " "
     //               << demangledName << "\n";
   }
 
   for (auto FuncName : KnownInactiveFunctionsStartingWith) {
-    if (Name.startswith(FuncName)) {
+    if (startsWith(Name, FuncName)) {
       return true;
     }
   }
@@ -1560,7 +1560,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
         auto dName = demangle(funcName.str());
         for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
-          if (StringRef(dName).startswith(FuncName)) {
+          if (startsWith(dName, FuncName)) {
             InsertConstantValue(TR, Val);
             insertConstantsFrom(TR, *UpHypothesis);
             return true;
@@ -1568,7 +1568,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         }
 
         for (auto FuncName : KnownInactiveFunctionsStartingWith) {
-          if (funcName.startswith(FuncName)) {
+          if (startsWith(funcName, FuncName)) {
             InsertConstantValue(TR, Val);
             insertConstantsFrom(TR, *UpHypothesis);
             return true;
@@ -1886,13 +1886,13 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
         auto dName = demangle(funcName.str());
         for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
-          if (StringRef(dName).startswith(FuncName)) {
+          if (startsWith(dName, FuncName)) {
             return false;
           }
         }
 
         for (auto FuncName : KnownInactiveFunctionsStartingWith) {
-          if (funcName.startswith(FuncName)) {
+          if (startsWith(funcName, FuncName)) {
             return false;
           }
         }
@@ -2553,13 +2553,13 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
 
     auto dName = demangle(funcName.str());
     for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
-      if (StringRef(dName).startswith(FuncName)) {
+      if (startsWith(dName, FuncName)) {
         return true;
       }
     }
 
     for (auto FuncName : KnownInactiveFunctionsStartingWith) {
-      if (funcName.startswith(FuncName)) {
+      if (startsWith(funcName, FuncName)) {
         return true;
       }
     }

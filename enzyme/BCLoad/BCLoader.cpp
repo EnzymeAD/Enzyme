@@ -16,6 +16,14 @@ using namespace llvm;
 #include "blas_headers.h"
 #undef DATA
 
+static inline bool endsWith(llvm::StringRef string, llvm::StringRef suffix) {
+#if LLVM_VERSION_MAJOR >= 18
+  return string.ends_with(suffix);
+#else
+  return string.endswith(suffix);
+#endif // LLVM_VERSION_MAJOR
+}
+
 bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions = {}) {
   std::vector<StringRef> todo;
   bool seen32 = false;
@@ -30,7 +38,7 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions = {}) {
       if (strlen(postfix) == 0) {
         str = F.getName().str();
         if (ignoreFunctions.count(str)) continue;
-      } else if (F.getName().endswith(postfix)) {
+      } else if (endsWith(F.getName(), postfix)) {
         auto blasName =
             F.getName().substr(0, F.getName().size() - strlen(postfix)).str();
         if (ignoreFunctions.count(blasName)) continue;
@@ -44,8 +52,7 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions = {}) {
           seen32 = true;
         if (index == 2)
           seen64 = true;
-        if (StringRef(str).endswith("gemm"))
-          seenGemm = true;
+        if (endsWith(str, "gemm")) seenGemm = true;
         break;
       }
       index++;
