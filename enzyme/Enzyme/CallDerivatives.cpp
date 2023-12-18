@@ -2244,7 +2244,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
     }
   }
 
-  if ((funcName.startswith("MPI_") || funcName.startswith("PMPI_")) &&
+  if ((startsWith(funcName, "MPI_") || startsWith(funcName, "PMPI_")) &&
       (!gutils->isConstantInstruction(&call) || funcName == "MPI_Barrier" ||
        funcName == "MPI_Comm_free" || funcName == "MPI_Comm_disconnect" ||
        MPIInactiveCommAllocators.find(funcName) !=
@@ -2263,8 +2263,8 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
   }
 
   if (funcName == "printf" || funcName == "puts" ||
-      funcName.startswith("_ZN3std2io5stdio6_print") ||
-      funcName.startswith("_ZN4core3fmt")) {
+      startsWith(funcName, "_ZN3std2io5stdio6_print") ||
+      startsWith(funcName, "_ZN4core3fmt")) {
     if (Mode == DerivativeMode::ReverseModeGradient) {
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
     }
@@ -2353,7 +2353,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
       return true;
     }
 
-    if (funcName.startswith("__kmpc") &&
+    if (startsWith(funcName, "__kmpc") &&
         funcName != "__kmpc_global_thread_num") {
       llvm::errs() << *gutils->oldFunc << "\n";
       llvm::errs() << call << "\n";

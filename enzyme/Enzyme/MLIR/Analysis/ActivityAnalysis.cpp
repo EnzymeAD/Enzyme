@@ -282,20 +282,20 @@ bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(
   std::string demangledName = llvm::demangle(Name.str());
   auto dName = StringRef(demangledName);
   for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
-    if (dName.startswith(FuncName)) {
+    if (startsWith(dName, FuncName)) {
       return true;
     }
   }
   if (demangledName == Name.str()) {
     // Either demangeling failed
     // or they are equal but matching failed
-    // if (!Name.startswith("llvm."))
+    // if (!startsWith(Name, "llvm."))
     //  llvm::errs() << "matching failed: " << Name.str() << " "
     //               << demangledName << "\n";
   }
 
   for (auto FuncName : KnownInactiveFunctionsStartingWith) {
-    if (Name.startswith(FuncName)) {
+    if (startsWith(Name, FuncName)) {
       return true;
     }
   }
@@ -315,7 +315,7 @@ bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(
   }
 
   for (unsigned intrinsicID : constantIntrinsics) {
-    if (Name.startswith(llvm::Intrinsic::getBaseName(intrinsicID)))
+    if (startsWith(Name, llvm::Intrinsic::getBaseName(intrinsicID)))
       return true;
   }
 
@@ -410,13 +410,13 @@ bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(
 //     // Certain intrinsics are inactive by definition
 //     // and have nothing to propagate.
 //     for (unsigned intrinsicID : constantIntrinsics) {
-//       if (Name.startswith(llvm::Intrinsic::getBaseName(intrinsicID)))
+//       if (startsWith(Name, llvm::Intrinsic::getBaseName(intrinsicID)))
 //         return;
 //     }
 
-//     if (Name.startswith(
+//     if (startsWith(Name,
 //             llvm::Intrinsic::getBaseName(llvm::Intrinsic::memcpy)) ||
-//         Name.startswith(
+//        startsWith(Name,
 //             llvm::Intrinsic::getBaseName(llvm::Intrinsic::memmove))) {
 //       propagateFromOperand(CI.getArgOperands()[0]);
 //       propagateFromOperand(CI.getArgOperands()[1]);
@@ -1586,7 +1586,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
 
         auto dName = llvm::demangle(funcName.str());
         for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
-          if (StringRef(dName).startswith(FuncName)) {
+          if (startsWith(dName, FuncName)) {
             InsertConstantValue(TR, Val);
             insertConstantsFrom(TR, *UpHypothesis);
             return true;
@@ -1594,7 +1594,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
         }
 
         for (auto FuncName : KnownInactiveFunctionsStartingWith) {
-          if (funcName.startswith(FuncName)) {
+          if (startsWith(funcName, FuncName)) {
             InsertConstantValue(TR, Val);
             insertConstantsFrom(TR, *UpHypothesis);
             return true;
@@ -1868,13 +1868,13 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
 
         auto dName = llvm::demangle(funcName.str());
         for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
-          if (StringRef(dName).startswith(FuncName)) {
+          if (startsWith(dName, FuncName)) {
             return false;
           }
         }
 
         for (auto FuncName : KnownInactiveFunctionsStartingWith) {
-          if (funcName.startswith(FuncName)) {
+          if (startsWith(funcName, FuncName)) {
             return false;
           }
         }
@@ -2594,13 +2594,13 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
 
     auto dName = llvm::demangle(funcName.str());
     for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
-      if (StringRef(dName).startswith(FuncName)) {
+      if (startsWith(dName, FuncName)) {
         return true;
       }
     }
 
     for (auto FuncName : KnownInactiveFunctionsStartingWith) {
-      if (funcName.startswith(FuncName)) {
+      if (startsWith(funcName, FuncName)) {
         return true;
       }
     }

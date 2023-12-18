@@ -695,7 +695,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
   }
 
   std::pair<Value *, BasicBlock *> idx = std::make_pair(val, scope);
-  // assert(!val->getName().startswith("$tapeload"));
+  // assert(!startsWith(val->getName(), "$tapeload"));
   if (permitCache) {
     auto found0 = unwrap_cache.find(BuilderM.GetInsertBlock());
     if (found0 != unwrap_cache.end()) {
@@ -4010,7 +4010,7 @@ bool GradientUtils::legalRecompute(const Value *val,
         n == "lgammal_r" || n == "__lgamma_r_finite" ||
         n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
         n == "tanhf" || n == "__pow_finite" ||
-        n == "julia.pointer_from_objref" || n.startswith("enzyme_wrapmpi$$") ||
+        n == "julia.pointer_from_objref" || startsWith(n, "enzyme_wrapmpi$$") ||
         n == "omp_get_thread_num" || n == "omp_get_max_threads") {
       return true;
     }
@@ -4160,7 +4160,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
         n == "lgammal_r" || n == "__lgamma_r_finite" ||
         n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
         n == "tanhf" || n == "__pow_finite" ||
-        n == "julia.pointer_from_objref" || n.startswith("enzyme_wrapmpi$$") ||
+        n == "julia.pointer_from_objref" || startsWith(n, "enzyme_wrapmpi$$") ||
         n == "omp_get_thread_num" || n == "omp_get_max_threads") {
       return true;
     }
@@ -4451,7 +4451,7 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
     if (arg->getName() == "_ZTVN10__cxxabiv120__si_class_type_infoE" ||
         arg->getName() == "_ZTVN10__cxxabiv117__class_type_infoE" ||
         arg->getName() == "_ZTVN10__cxxabiv121__vmi_class_type_infoE" ||
-        arg->getName().startswith("??_R")) // any of the MS RTTI manglings
+        startsWith(arg->getName(), "??_R")) // any of the MS RTTI manglings
       return arg;
 
     if (hasMetadata(arg, "enzyme_shadow")) {

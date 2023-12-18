@@ -5932,7 +5932,7 @@ public:
     // not fully understood by LLVM. One of the results of this is that the
     // visitor dispatches to visitCallInst, rather than visitIntrinsicInst, when
     // presented with the intrinsic - hence why we are handling it here.
-    if (getFuncNameFromCall(&call).startswith("llvm.intel.subscript")) {
+    if (startsWith(getFuncNameFromCall(&call), ("llvm.intel.subscript"))) {
       assert(isa<IntrinsicInst>(call));
       visitIntrinsicInst(cast<IntrinsicInst>(call));
       return;

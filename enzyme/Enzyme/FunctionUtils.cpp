@@ -1131,12 +1131,13 @@ static void ForceRecursiveInlining(Function *NewF, size_t Limit) {
             continue;
           if (CI->getCalledFunction()->empty())
             continue;
-          if (CI->getCalledFunction()->getName().startswith(
-                  "_ZN3std2io5stdio6_print"))
+          if (startsWith(CI->getCalledFunction()->getName(),
+                         "_ZN3std2io5stdio6_print"))
             continue;
-          if (CI->getCalledFunction()->getName().startswith("_ZN4core3fmt"))
+          if (startsWith(CI->getCalledFunction()->getName(), "_ZN4core3fmt"))
             continue;
-          if (CI->getCalledFunction()->getName().startswith("enzyme_wrapmpi$$"))
+          if (startsWith(CI->getCalledFunction()->getName(),
+                         "enzyme_wrapmpi$$"))
             continue;
           if (CI->getCalledFunction()->hasFnAttribute(
                   Attribute::ReturnsTwice) ||
@@ -1539,7 +1540,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
           if (F && F->getName().contains("__enzyme_double")) {
             continue;
           }
-          if (F && (F->getName().startswith("f90io") ||
+          if (F && (startsWith(F->getName(), "f90io") ||
                     F->getName() == "ftnio_fmt_write64" ||
                     F->getName() == "__mth_i_ipowi" ||
                     F->getName() == "f90_pausea")) {
@@ -1599,7 +1600,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
                 if (F && F->getName().contains("__enzyme_double")) {
                   continue;
                 }
-                if (F && (F->getName().startswith("f90io") ||
+                if (F && (startsWith(F->getName(), "f90io") ||
                           F->getName() == "ftnio_fmt_write64" ||
                           F->getName() == "__mth_i_ipowi" ||
                           F->getName() == "f90_pausea")) {

@@ -749,7 +749,7 @@ public:
       Value *res = CI->getArgOperand(i);
       auto metaString = getMetadataName(res);
       // handle metadata
-      if (metaString && metaString->startswith("enzyme_")) {
+      if (metaString && startsWith(*metaString, "enzyme_")) {
         if (*metaString == "enzyme_const_return") {
           retType = DIFFE_TYPE::CONSTANT;
           continue;
@@ -862,7 +862,7 @@ public:
       bool skipArg = false;
 
       // handle metadata
-      while (metaString && metaString->startswith("enzyme_")) {
+      while (metaString && startsWith(*metaString, "enzyme_")) {
         if (*metaString == "enzyme_not_overwritten") {
           overwritten = false;
         } else if (*metaString == "enzyme_byref") {
@@ -1368,7 +1368,7 @@ public:
       auto metaString = getMetadataName(res);
 
       // handle metadata
-      if (metaString && metaString->startswith("enzyme_")) {
+      if (metaString && startsWith(*metaString, "enzyme_")) {
         if (*metaString == "enzyme_scalar") {
           ty = BATCH_TYPE::SCALAR;
         } else if (*metaString == "enzyme_vector") {
