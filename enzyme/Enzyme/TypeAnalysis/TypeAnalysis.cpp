@@ -708,7 +708,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
 
     // Values of size < 16 (half size) are considered integral
     // since they cannot possibly represent a float or pointer
-    if (ci->getType()->getBitWidth() < 16) {
+    if (cast<IntegerType>(ci->getType())->getBitWidth() < 16) {
       analysis[Val].insert({-1}, BaseType::Integer);
       return;
     }
