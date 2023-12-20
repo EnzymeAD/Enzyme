@@ -103,6 +103,10 @@ cl::opt<bool> EnzymeJuliaAddrLoad(
     "enzyme-julia-addr-load", cl::init(false), cl::Hidden,
     cl::desc("Mark all loads resulting in an addr(13)* to be legal to redo"));
 
+cl::opt<bool> EnzymeAssumeUnknownNoFree(
+    "enzyme-assume-unknown-nofree", cl::init(false), cl::Hidden,
+    cl::desc("Assume unknown instructions are nofree as needed"));
+
 LLVMValueRef (*EnzymeFixupReturn)(LLVMBuilderRef, LLVMValueRef) = nullptr;
 }
 
@@ -5218,6 +5222,10 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
     CustomErrorHandler(ss.str().c_str(), wrap(context.req),
                        ErrorType::NoDerivative, nullptr, wrap(todiff),
                        wrap(context.ip));
+    return todiff;
+  }
+
+  if (EnzymeAssumeUnknownNoFree) {
     return todiff;
   }
 
