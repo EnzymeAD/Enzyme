@@ -4817,18 +4817,21 @@ Function *EnzymeLogic::CreateForwardDiff(
 
 class TruncateGenerator : public llvm::InstVisitor<TruncateGenerator> {
 private:
-ValueToValueMapTy &originalToNewFn;
-unsigned fromwidth;
-unsigned towidth;
-Function* oldFunc;
-Function* newFunc;
-AllocaInst* tmpBlock;
-EnzymeLogic &Logic;
+  ValueToValueMapTy &originalToNewFn;
+  unsigned fromwidth;
+  unsigned towidth;
+  Function *oldFunc;
+  Function *newFunc;
+  AllocaInst *tmpBlock;
+  EnzymeLogic &Logic;
 
 public:
-TruncateGenerator(ValueToValueMapTy &originalToNewFn, unsigned fromwidth, unsigned towidth, Function* oldFunc, Function* newFunc, EnzymeLogic& Logic) :
-  originalToNewFn(originalToNewFn), fromwidth(fromwidth), towidth(towidth), oldFunc(oldFunc), newFunc(newFunc), Logic(Logic) {
-    IRBuilder <> B(&newFunc->getEntryBlock().front());
+  TruncateGenerator(ValueToValueMapTy &originalToNewFn, unsigned fromwidth,
+                    unsigned towidth, Function *oldFunc, Function *newFunc,
+                    EnzymeLogic &Logic)
+      : originalToNewFn(originalToNewFn), fromwidth(fromwidth),
+        towidth(towidth), oldFunc(oldFunc), newFunc(newFunc), Logic(Logic) {
+    IRBuilder<> B(&newFunc->getEntryBlock().front());
     tmpBlock = B.CreateAlloca(getTypeForWidth(fromwidth));
   }
 
@@ -4839,7 +4842,7 @@ TruncateGenerator(ValueToValueMapTy &originalToNewFn, unsigned fromwidth, unsign
     // below
 
     switch (inst.getOpcode()) {
-//#include "InstructionDerivatives.inc"
+      //#include "InstructionDerivatives.inc"
     default:
       break;
     }
@@ -4847,29 +4850,41 @@ TruncateGenerator(ValueToValueMapTy &originalToNewFn, unsigned fromwidth, unsign
     todo(inst);
   }
 
-  Type* getTypeForWidth(unsigned width) {
-    switch(width){
-      default: 
-        return llvm::Type::getIntNTy(oldFunc->getContext(), width);
-      case 64:
-        return llvm::Type::getDoubleTy(oldFunc->getContext());
-      case 32:
-        return llvm::Type::getFloatTy(oldFunc->getContext());
-      case 16:
-        return llvm::Type::getHalfTy(oldFunc->getContext());
+  Type *getTypeForWidth(unsigned width) {
+    switch (width) {
+    default:
+      return llvm::Type::getIntNTy(oldFunc->getContext(), width);
+    case 64:
+      return llvm::Type::getDoubleTy(oldFunc->getContext());
+    case 32:
+      return llvm::Type::getFloatTy(oldFunc->getContext());
+    case 16:
+      return llvm::Type::getHalfTy(oldFunc->getContext());
     }
   }
-  Value *truncate(IRBuilder<> &B, Value* v) {
-    Type* nextType = getTypeForWidth(towidth);
-    B.CreateStore(v, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(v->getType())));
-    return B.CreateLoad(nextType, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(nextType)));
+
+  Type *getFromType() { return getTypeForWidth(fromwidth); }
+
+  Type *getToType() { return getTypeForWidth(towidth); }
+
+  Value *truncate(IRBuilder<> &B, Value *v) {
+    Type *nextType = getTypeForWidth(towidth);
+    B.CreateStore(
+        v, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(v->getType())));
+    return B.CreateLoad(
+        nextType,
+        B.CreatePointerCast(tmpBlock, PointerType::getUnqual(nextType)));
   }
 
-  Value *expand(IRBuilder<> &B, Value* v, Type* origT) {
-    auto c0 = Constant::getNullValue(llvm::Type::getIntNTy(oldFunc->getContext(), fromwidth));
-    B.CreateStore(c0, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(c0->getType())));
-    B.CreateStore(v, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(v->getType())));
-    return B.CreateLoad(origT, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(origT)));
+  Value *expand(IRBuilder<> &B, Value *v, Type *origT) {
+    auto c0 = Constant::getNullValue(
+        llvm::Type::getIntNTy(oldFunc->getContext(), fromwidth));
+    B.CreateStore(c0, B.CreatePointerCast(
+                          tmpBlock, PointerType::getUnqual(c0->getType())));
+    B.CreateStore(
+        v, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(v->getType())));
+    return B.CreateLoad(
+        origT, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(origT)));
   }
 
   void todo(llvm::Instruction &I) {
@@ -4887,14 +4902,18 @@ TruncateGenerator(ValueToValueMapTy &originalToNewFn, unsigned fromwidth, unsign
     }
   }
 
-  void visitAllocaInst(llvm::AllocaInst &I) {
-    return;
-  }
-  void visitICmpInst(llvm::ICmpInst &I) {
-    return;
-  }
-  void visitFCmpInst(llvm::FCmpInst &I) {
-    todo(I);
+  void visitAllocaInst(llvm::AllocaInst &I) { return; }
+  void visitICmpInst(llvm::ICmpInst &I) { return; }
+  void visitFCmpInst(llvm::FCmpInst &CI) {
+    auto newI = getNewFromOriginal(&CI);
+    IRBuilder<> B(newI);
+    auto nres = cast<FCmpInst>(B.CreateFCmp(
+        CI.getPredicate(), truncate(B, getNewFromOriginal(CI.getOperand(0))),
+        truncate(B, getNewFromOriginal(CI.getOperand(1)))));
+    nres->takeName(newI);
+    nres->copyIRFlags(newI);
+    newI->replaceAllUsesWith(expand(B, nres, CI.getType()));
+    newI->eraseFromParent();
     return;
   }
   void visitLoadInst(llvm::LoadInst &LI) {
@@ -4907,116 +4926,123 @@ TruncateGenerator(ValueToValueMapTy &originalToNewFn, unsigned fromwidth, unsign
                      SI.isVolatile(), SI.getOrdering(), SI.getSyncScopeID(),
                      /*mask=*/nullptr);
   }
-  void visitGetElementPtrInst(llvm::GetElementPtrInst &gep) {
-    return;
-  }
-  void visitPHINode(llvm::PHINode &phi) {
-    return;
-  }
-  void visitCastInst(llvm::CastInst &phi) {
-    todo(phi);
+  void visitGetElementPtrInst(llvm::GetElementPtrInst &gep) { return; }
+  void visitPHINode(llvm::PHINode &phi) { return; }
+  void visitCastInst(llvm::CastInst &CI) {
+    Value *newCI = nullptr;
+    auto newI = getNewFromOriginal(&CI);
+    std::string oldName = CI.getName().str();
+    newI->setName("");
+    if (CI.getSrcTy() == getFromType()) {
+      IRBuilder<> B(newI);
+      newCI = B.CreateCast(CI.getOpcode(), getNewFromOriginal(CI.getOperand(0)),
+                           CI.getDestTy(), oldName);
+    }
+    if (CI.getDestTy() == getToType()) {
+      auto newI = getNewFromOriginal(&CI);
+      IRBuilder<> B(newI);
+      newCI = B.CreateCast(CI.getOpcode(), getNewFromOriginal(CI.getOperand(0)),
+                           CI.getDestTy(), oldName);
+    }
+    if (newCI) {
+      newI->replaceAllUsesWith(newCI);
+      newI->eraseFromParent();
+    }
     return;
   }
   void visitSelectInst(llvm::SelectInst &SI) {
     todo(SI);
     return;
   }
-  void visitExtractElementInst(llvm::ExtractElementInst &EEI) {
-    return;
-  }
-  void visitInsertElementInst(llvm::InsertElementInst &EEI) {
-    return;
-  }
-  void visitShuffleVectorInst(llvm::ShuffleVectorInst &EEI) {
-    return;
-  }
-  void visitExtractValueInst(llvm::ExtractValueInst &EEI) {
-    return;
-  }
-  void visitInsertValueInst(llvm::InsertValueInst &EEI) {
-    return;
-  }
+  void visitExtractElementInst(llvm::ExtractElementInst &EEI) { return; }
+  void visitInsertElementInst(llvm::InsertElementInst &EEI) { return; }
+  void visitShuffleVectorInst(llvm::ShuffleVectorInst &EEI) { return; }
+  void visitExtractValueInst(llvm::ExtractValueInst &EEI) { return; }
+  void visitInsertValueInst(llvm::InsertValueInst &EEI) { return; }
   void visitBinaryOperator(llvm::BinaryOperator &BO) {
 
-    switch(BO.getOpcode()) {
-      default: break;
-      case BinaryOperator::Add:
-      case BinaryOperator::Sub:
-      case BinaryOperator::Mul:
-      case BinaryOperator::UDiv:
-      case BinaryOperator::SDiv:
-      case BinaryOperator::URem:
-      case BinaryOperator::SRem:
-      case BinaryOperator::AShr:
-      case BinaryOperator::LShr:
-      case BinaryOperator::Shl:
-      case BinaryOperator::And:
-      case BinaryOperator::Or:
-      case BinaryOperator::Xor:
-        return;
+    switch (BO.getOpcode()) {
+    default:
+      break;
+    case BinaryOperator::Add:
+    case BinaryOperator::Sub:
+    case BinaryOperator::Mul:
+    case BinaryOperator::UDiv:
+    case BinaryOperator::SDiv:
+    case BinaryOperator::URem:
+    case BinaryOperator::SRem:
+    case BinaryOperator::AShr:
+    case BinaryOperator::LShr:
+    case BinaryOperator::Shl:
+    case BinaryOperator::And:
+    case BinaryOperator::Or:
+    case BinaryOperator::Xor:
+      return;
     }
 
     if (towidth == 32 || towidth == 16 || towidth == 64) {
       auto newI = getNewFromOriginal(&BO);
       IRBuilder<> B(newI);
-    switch(BO.getOpcode()) {
-      default: break;
-      case BinaryOperator::FMul:
-        {
-        auto nres = cast<BinaryOperator>(B.CreateFMul(truncate(B, getNewFromOriginal(BO.getOperand(0))), truncate(B, getNewFromOriginal(BO.getOperand(1)))));
+      switch (BO.getOpcode()) {
+      default:
+        break;
+      case BinaryOperator::FMul: {
+        auto nres = cast<BinaryOperator>(
+            B.CreateFMul(truncate(B, getNewFromOriginal(BO.getOperand(0))),
+                         truncate(B, getNewFromOriginal(BO.getOperand(1)))));
         nres->takeName(newI);
         nres->copyIRFlags(newI);
         newI->replaceAllUsesWith(expand(B, nres, BO.getType()));
         newI->eraseFromParent();
-        }
+      }
         return;
-      case BinaryOperator::FAdd:
-        {
-        auto nres = cast<BinaryOperator>(B.CreateFAdd(truncate(B, getNewFromOriginal(BO.getOperand(0))), truncate(B, getNewFromOriginal(BO.getOperand(1)))));
+      case BinaryOperator::FAdd: {
+        auto nres = cast<BinaryOperator>(
+            B.CreateFAdd(truncate(B, getNewFromOriginal(BO.getOperand(0))),
+                         truncate(B, getNewFromOriginal(BO.getOperand(1)))));
         nres->takeName(newI);
         nres->copyIRFlags(newI);
         newI->replaceAllUsesWith(expand(B, nres, BO.getType()));
         newI->eraseFromParent();
-        }
+      }
         return;
-      case BinaryOperator::FSub:
-        {
-        auto nres = cast<BinaryOperator>(B.CreateFSub(truncate(B, getNewFromOriginal(BO.getOperand(0))), truncate(B, getNewFromOriginal(BO.getOperand(1)))));
+      case BinaryOperator::FSub: {
+        auto nres = cast<BinaryOperator>(
+            B.CreateFSub(truncate(B, getNewFromOriginal(BO.getOperand(0))),
+                         truncate(B, getNewFromOriginal(BO.getOperand(1)))));
         nres->takeName(newI);
         nres->copyIRFlags(newI);
         newI->replaceAllUsesWith(expand(B, nres, BO.getType()));
         newI->eraseFromParent();
-        }
+      }
         return;
-      case BinaryOperator::FDiv:
-        {
-        auto nres = cast<BinaryOperator>(B.CreateFDiv(truncate(B, getNewFromOriginal(BO.getOperand(0))), truncate(B, getNewFromOriginal(BO.getOperand(1)))));
+      case BinaryOperator::FDiv: {
+        auto nres = cast<BinaryOperator>(
+            B.CreateFDiv(truncate(B, getNewFromOriginal(BO.getOperand(0))),
+                         truncate(B, getNewFromOriginal(BO.getOperand(1)))));
         nres->takeName(newI);
         nres->copyIRFlags(newI);
         newI->replaceAllUsesWith(expand(B, nres, BO.getType()));
         newI->eraseFromParent();
-        }
+      }
         return;
-      case BinaryOperator::FRem:
-        {
-        auto nres = cast<BinaryOperator>(B.CreateFRem(truncate(B, getNewFromOriginal(BO.getOperand(0))), truncate(B, getNewFromOriginal(BO.getOperand(1)))));
+      case BinaryOperator::FRem: {
+        auto nres = cast<BinaryOperator>(
+            B.CreateFRem(truncate(B, getNewFromOriginal(BO.getOperand(0))),
+                         truncate(B, getNewFromOriginal(BO.getOperand(1)))));
         nres->takeName(newI);
         nres->copyIRFlags(newI);
         newI->replaceAllUsesWith(expand(B, nres, BO.getType()));
         newI->eraseFromParent();
-        }
+      }
         return;
-    }
+      }
     }
     todo(BO);
     return;
   }
-  void visitMemSetInst(llvm::MemSetInst &MS) {
-    visitMemSetCommon(MS);
-  }
-  void visitMemSetCommon(llvm::CallInst &MS) {
-    return;
-  }
+  void visitMemSetInst(llvm::MemSetInst &MS) { visitMemSetCommon(MS); }
+  void visitMemSetCommon(llvm::CallInst &MS) { return; }
   void visitMemTransferInst(llvm::MemTransferInst &MTI) {
     using namespace llvm;
     Value *isVolatile = getNewFromOriginal(MTI.getOperand(3));
@@ -5024,8 +5050,7 @@ TruncateGenerator(ValueToValueMapTy &originalToNewFn, unsigned fromwidth, unsign
     auto dstAlign = MTI.getDestAlign();
     visitMemTransferCommon(MTI.getIntrinsicID(), srcAlign, dstAlign, MTI,
                            MTI.getOperand(0), MTI.getOperand(1),
-                           getNewFromOriginal(MTI.getOperand(2)),
-                           isVolatile);
+                           getNewFromOriginal(MTI.getOperand(2)), isVolatile);
   }
   void visitMemTransferCommon(llvm::Intrinsic::ID ID, llvm::MaybeAlign srcAlign,
                               llvm::MaybeAlign dstAlign, llvm::CallInst &MTI,
@@ -5033,9 +5058,7 @@ TruncateGenerator(ValueToValueMapTy &originalToNewFn, unsigned fromwidth, unsign
                               llvm::Value *new_size, llvm::Value *isVolatile) {
     return;
   }
-  void visitFenceInst(llvm::FenceInst &FI) {
-    return;
-  }
+  void visitFenceInst(llvm::FenceInst &FI) { return; }
   void visitIntrinsicInst(llvm::IntrinsicInst &II) {
     SmallVector<Value *, 2> orig_ops(II.getNumOperands());
     for (unsigned i = 0; i < II.getNumOperands(); ++i) {
@@ -5047,19 +5070,11 @@ TruncateGenerator(ValueToValueMapTy &originalToNewFn, unsigned fromwidth, unsign
     return;
   }
 
-  void visitReturnInst(llvm::ReturnInst &I) {
-    return;
-  }
+  void visitReturnInst(llvm::ReturnInst &I) { return; }
 
-  void visitBranchInst(llvm::BranchInst &I) {
-    return;
-  }
-  void visitSwitchInst(llvm::SwitchInst &I) {
-    return;
-  }
-  void visitUnreachableInst(llvm::UnreachableInst &I) {
-    return;
-  }
+  void visitBranchInst(llvm::BranchInst &I) { return; }
+  void visitSwitchInst(llvm::SwitchInst &I) { return; }
+  void visitUnreachableInst(llvm::UnreachableInst &I) { return; }
   void visitLoadLike(llvm::Instruction &I, llvm::MaybeAlign alignment,
                      llvm::Value *mask = nullptr,
                      llvm::Value *orig_maskInit = nullptr) {
@@ -5070,14 +5085,13 @@ TruncateGenerator(ValueToValueMapTy &originalToNewFn, unsigned fromwidth, unsign
                         llvm::Value *orig_val, llvm::MaybeAlign prevalign,
                         bool isVolatile, llvm::AtomicOrdering ordering,
                         llvm::SyncScope::ID syncScope, llvm::Value *mask) {
-                          return;
-                        }
+    return;
+  }
 
   bool
   handleAdjointForIntrinsic(llvm::Intrinsic::ID ID, llvm::Instruction &I,
                             llvm::SmallVectorImpl<llvm::Value *> &orig_ops) {
     using namespace llvm;
-
 
     switch (ID) {
     case Intrinsic::nvvm_ldu_global_i:
@@ -5116,60 +5130,60 @@ TruncateGenerator(ValueToValueMapTy &originalToNewFn, unsigned fromwidth, unsign
     auto called = cast<CallInst>(&I)->getCalledFunction();
     (void)called;
     switch (ID) {
-//#include "IntrinsicDerivatives.inc"
+      //#include "IntrinsicDerivatives.inc"
     default:
       break;
     }
 
-      switch (ID) {
-      case Intrinsic::nvvm_barrier0:
-      case Intrinsic::nvvm_barrier0_popc:
-      case Intrinsic::nvvm_barrier0_and:
-      case Intrinsic::nvvm_barrier0_or:
-      case Intrinsic::nvvm_membar_cta:
-      case Intrinsic::nvvm_membar_gl:
-      case Intrinsic::nvvm_membar_sys:
-      case Intrinsic::amdgcn_s_barrier:
-        return false;
-      default: break;
-      }
-      return true;
+    switch (ID) {
+    case Intrinsic::nvvm_barrier0:
+    case Intrinsic::nvvm_barrier0_popc:
+    case Intrinsic::nvvm_barrier0_and:
+    case Intrinsic::nvvm_barrier0_or:
+    case Intrinsic::nvvm_membar_cta:
+    case Intrinsic::nvvm_membar_gl:
+    case Intrinsic::nvvm_membar_sys:
+    case Intrinsic::amdgcn_s_barrier:
+      return false;
+    default:
+      break;
+    }
+    return true;
   }
 
-  llvm::Value *getNewFromOriginal(llvm::Value* v) {
+  llvm::Value *getNewFromOriginal(llvm::Value *v) {
     auto found = originalToNewFn.find(v);
     assert(found != originalToNewFn.end());
     return found->second;
   }
 
-  llvm::Instruction *getNewFromOriginal(llvm::Instruction* v) {
-    return cast<Instruction>(getNewFromOriginal((llvm::Value*)v));
+  llvm::Instruction *getNewFromOriginal(llvm::Instruction *v) {
+    return cast<Instruction>(getNewFromOriginal((llvm::Value *)v));
   }
 
   bool handleKnownCalls(llvm::CallInst &call, llvm::Function *called,
-                                  llvm::StringRef funcName,
-                                  llvm::CallInst *const newCall) {
-                              return false;
-                                  }
+                        llvm::StringRef funcName,
+                        llvm::CallInst *const newCall) {
+    return false;
+  }
 
-  Value* GetShadow(RequestContext &ctx, Value* v) {
+  Value *GetShadow(RequestContext &ctx, Value *v) {
     if (auto F = dyn_cast<Function>(v))
       return Logic.CreateTruncate(ctx, F, fromwidth, towidth);
     llvm::errs() << " unknown get truncated func: " << *v << "\n";
     llvm_unreachable("unknown get truncated func");
     return v;
   }
-    // Return
+  // Return
   void visitCallInst(llvm::CallInst &call) {
     using namespace llvm;
 
     CallInst *const newCall = cast<CallInst>(getNewFromOriginal(&call));
     IRBuilder<> BuilderZ(newCall);
 
-  if (auto called = call.getCalledFunction())
-    if (handleKnownCalls(call, called, getFuncNameFromCall(&call),
-                                   newCall))
-      return;
+    if (auto called = call.getCalledFunction())
+      if (handleKnownCalls(call, called, getFuncNameFromCall(&call), newCall))
+        return;
 
     RequestContext ctx(&call, &BuilderZ);
     auto val = GetShadow(ctx, getNewFromOriginal(call.getCalledOperand()));
@@ -5178,10 +5192,13 @@ TruncateGenerator(ValueToValueMapTy &originalToNewFn, unsigned fromwidth, unsign
   }
 };
 
-llvm::Function *EnzymeLogic::CreateTruncate(RequestContext context, llvm::Function *totrunc,
-                                            unsigned fromwidth, unsigned towidth){
-  if (fromwidth == towidth) return totrunc;
-  
+llvm::Function *EnzymeLogic::CreateTruncate(RequestContext context,
+                                            llvm::Function *totrunc,
+                                            unsigned fromwidth,
+                                            unsigned towidth) {
+  if (fromwidth == towidth)
+    return totrunc;
+
   TruncateCacheKey tup(totrunc, fromwidth, towidth);
   if (TruncateCachedFunctions.find(tup) != TruncateCachedFunctions.end()) {
     return TruncateCachedFunctions.find(tup)->second;
@@ -5199,7 +5216,9 @@ llvm::Function *EnzymeLogic::CreateTruncate(RequestContext context, llvm::Functi
   FunctionType *FTy = FunctionType::get(NewTy, params, totrunc->isVarArg());
   Function *NewF =
       Function::Create(FTy, totrunc->getLinkage(),
-                       "trunc_" + std::to_string(fromwidth) + "_" + std::to_string(towidth) + totrunc->getName(), totrunc->getParent());
+                       "trunc_" + std::to_string(fromwidth) + "_" +
+                           std::to_string(towidth) + totrunc->getName(),
+                       totrunc->getParent());
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
@@ -5259,10 +5278,10 @@ llvm::Function *EnzymeLogic::CreateTruncate(RequestContext context, llvm::Functi
     llvm_unreachable("attempting to truncate function without definition");
   }
 
-
   ValueToValueMapTy originalToNewFn;
 
-  for (auto i = totrunc->arg_begin(), j = NewF->arg_begin(); i != totrunc->arg_end();) {
+  for (auto i = totrunc->arg_begin(), j = NewF->arg_begin();
+       i != totrunc->arg_end();) {
     originalToNewFn[i] = j;
     j->setName(i->getName());
     ++j;
@@ -5280,7 +5299,8 @@ llvm::Function *EnzymeLogic::CreateTruncate(RequestContext context, llvm::Functi
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
-  TruncateGenerator handle(originalToNewFn, fromwidth, towidth, totrunc, NewF, *this);
+  TruncateGenerator handle(originalToNewFn, fromwidth, towidth, totrunc, NewF,
+                           *this);
   for (auto &BB : *totrunc)
     for (auto &I : BB)
       handle.visit(&I);
