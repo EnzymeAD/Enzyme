@@ -512,8 +512,9 @@ public:
 
   using TruncateCacheKey = std::tuple<llvm::Function *, unsigned, unsigned>;
   std::map<TruncateCacheKey, llvm::Function *> TruncateCachedFunctions;
-  llvm::Function *CreateTruncate(RequestContext context, llvm::Function *tobatch,
-                              unsigned fromwidth, unsigned towidth);
+  llvm::Function *CreateTruncate(RequestContext context,
+                                 llvm::Function *tobatch, unsigned fromwidth,
+                                 unsigned towidth);
 
   /// Create a traced version of a function
   ///  \p context the instruction which requested this trace (or null).

@@ -1321,17 +1321,19 @@ public:
     if (!F)
       return false;
     if (CI->arg_size() != 3) {
-        EmitFailure("TooManyArgs", CI->getDebugLoc(), CI,
-                    "Had incorrect number of args to __enzyme_truncate", *CI,
-                    " - expected 3");
-                    return false;
+      EmitFailure("TooManyArgs", CI->getDebugLoc(), CI,
+                  "Had incorrect number of args to __enzyme_truncate", *CI,
+                  " - expected 3");
+      return false;
     }
     auto Cfrom = cast<ConstantInt>(CI->getArgOperand(1));
     assert(Cfrom);
     auto Cto = cast<ConstantInt>(CI->getArgOperand(2));
     assert(Cto);
     RequestContext context(CI, &Builder);
-    llvm::Value* res = Logic.CreateTruncate(context, F, (unsigned)Cfrom->getValue().getZExtValue(), (unsigned)Cto->getValue().getZExtValue() );
+    llvm::Value *res = Logic.CreateTruncate(
+        context, F, (unsigned)Cfrom->getValue().getZExtValue(),
+        (unsigned)Cto->getValue().getZExtValue());
     if (!res)
       return false;
     res = Builder.CreatePointerCast(res, CI->getType());

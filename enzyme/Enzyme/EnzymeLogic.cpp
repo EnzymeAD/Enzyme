@@ -4842,7 +4842,7 @@ public:
     // below
 
     switch (inst.getOpcode()) {
-      //#include "InstructionDerivatives.inc"
+      // #include "InstructionDerivatives.inc"
     default:
       break;
     }
@@ -5139,7 +5139,7 @@ public:
     auto called = cast<CallInst>(&I)->getCalledFunction();
     (void)called;
     switch (ID) {
-      //#include "IntrinsicDerivatives.inc"
+      // #include "IntrinsicDerivatives.inc"
     default:
       break;
     }
