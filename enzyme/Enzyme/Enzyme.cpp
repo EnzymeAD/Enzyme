@@ -1,4 +1,3 @@
-
 //===- Enzyme.cpp - Automatic Differentiation Transformation Pass  -------===//
 //
 //                             Enzyme Project
