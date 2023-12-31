@@ -4912,7 +4912,7 @@ public:
         truncate(B, getNewFromOriginal(CI.getOperand(1)))));
     nres->takeName(newI);
     nres->copyIRFlags(newI);
-    newI->replaceAllUsesWith(expand(B, nres, CI.getType()));
+    newI->replaceAllUsesWith(nres);
     newI->eraseFromParent();
     return;
   }
