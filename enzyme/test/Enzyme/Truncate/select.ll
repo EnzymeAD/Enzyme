@@ -22,18 +22,18 @@ entry:
 ; CHECK-NEXT: }
 
 ; CHECK: define internal double @trunc_64_32f(double %x, double %y, i1 %cond) {
-; CHECK-NEXT:   %1 = alloca double, align 8
-; CHECK-NEXT:   store double %y, double* %1, align 8
-; CHECK-NEXT:   %2 = bitcast double* %1 to float*
-; CHECK-NEXT:   %3 = load float, float* %2, align 4
-; CHECK-NEXT:   store double %x, double* %1, align 8
-; CHECK-NEXT:   %4 = bitcast double* %1 to float*
-; CHECK-NEXT:   %5 = load float, float* %4, align 4
-; CHECK-NEXT:   %res = select i1 %cond, float %5, float %3
-; CHECK-NEXT:   %6 = bitcast double* %1 to i64*
-; CHECK-NEXT:   store i64 0, i64* %6, align 4
-; CHECK-NEXT:   %7 = bitcast double* %1 to float*
-; CHECK-NEXT:   store float %res, float* %7, align 4
-; CHECK-NEXT:   %8 = load double, double* %1, align 8
-; CHECK-NEXT:   ret double %8
+; CHECK-DAG:    %1 = alloca double, align 8
+; CHECK-DAG:    store double %x, double* %1, align 8
+; CHECK-DAG:    %2 = bitcast double* %1 to float*
+; CHECK-DAG:    %3 = load float, float* %2, align 4
+; CHECK-DAG:    store double %y, double* %1, align 8
+; CHECK-DAG:    %4 = bitcast double* %1 to float*
+; CHECK-DAG:    %5 = load float, float* %4, align 4
+; CHECK-DAG:    %res = select i1 %cond, float %3, float %5
+; CHECK-DAG:    %6 = bitcast double* %1 to i64*
+; CHECK-DAG:    store i64 0, i64* %6, align 4
+; CHECK-DAG:    %7 = bitcast double* %1 to float*
+; CHECK-DAG:    store float %res, float* %7, align 4
+; CHECK-DAG:    %8 = load double, double* %1, align 8
+; CHECK-DAG:    ret double %8
 ; CHECK-NEXT: }

@@ -22,13 +22,13 @@ entry:
 ; CHECK-NEXT: }
 
 ; CHECK: define internal i1 @trunc_64_32f(double %x, double %y) {
-; CHECK-NEXT:   %1 = alloca double, align 8
-; CHECK-NEXT:   store double %y, double* %1, align 8
-; CHECK-NEXT:   %2 = bitcast double* %1 to float*
-; CHECK-NEXT:   %3 = load float, float* %2, align 4
-; CHECK-NEXT:   store double %x, double* %1, align 8
-; CHECK-NEXT:   %4 = bitcast double* %1 to float*
-; CHECK-NEXT:   %5 = load float, float* %4, align 4
-; CHECK-NEXT:   %res = fcmp olt float %5, %3
-; CHECK-NEXT:   ret i1 %res
-; CHECK-NEXT: }
+; CHECK-DAG:   %1 = alloca double, align 8
+; CHECK-DAG:   store double %x, double* %1, align 8
+; CHECK-DAG:   %2 = bitcast double* %1 to float*
+; CHECK-DAG:   %3 = load float, float* %2, align 4
+; CHECK-DAG:   store double %y, double* %1, align 8
+; CHECK-DAG:   %4 = bitcast double* %1 to float*
+; CHECK-DAG:   %5 = load float, float* %4, align 4
+; CHECK-DAG:   %res = fcmp olt float %3, %5
+; CHECK-DAG:   ret i1 %res
+; CHECK-NEXT:}

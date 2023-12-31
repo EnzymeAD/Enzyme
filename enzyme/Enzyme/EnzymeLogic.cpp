@@ -4907,9 +4907,10 @@ public:
   void visitFCmpInst(llvm::FCmpInst &CI) {
     auto newI = getNewFromOriginal(&CI);
     IRBuilder<> B(newI);
-    auto nres = cast<FCmpInst>(B.CreateFCmp(
-        CI.getPredicate(), truncate(B, getNewFromOriginal(CI.getOperand(0))),
-        truncate(B, getNewFromOriginal(CI.getOperand(1)))));
+    auto truncLHS = truncate(B, getNewFromOriginal(CI.getOperand(0)));
+    auto truncRHS = truncate(B, getNewFromOriginal(CI.getOperand(1)));
+    auto nres =
+        cast<FCmpInst>(B.CreateFCmp(CI.getPredicate(), truncLHS, truncRHS));
     nres->takeName(newI);
     nres->copyIRFlags(newI);
     newI->replaceAllUsesWith(nres);
@@ -4953,10 +4954,10 @@ public:
   void visitSelectInst(llvm::SelectInst &SI) {
     auto newI = getNewFromOriginal(&SI);
     IRBuilder<> B(newI);
+    auto newT = truncate(B, getNewFromOriginal(SI.getTrueValue()));
+    auto newF = truncate(B, getNewFromOriginal(SI.getFalseValue()));
     auto nres = cast<SelectInst>(
-        B.CreateSelect(getNewFromOriginal(SI.getCondition()),
-                       truncate(B, getNewFromOriginal(SI.getTrueValue())),
-                       truncate(B, getNewFromOriginal(SI.getFalseValue()))));
+        B.CreateSelect(getNewFromOriginal(SI.getCondition()), newT, newF));
     nres->takeName(newI);
     nres->copyIRFlags(newI);
     newI->replaceAllUsesWith(expand(B, nres, SI.getType()));
@@ -4992,13 +4993,13 @@ public:
     if (towidth == 32 || towidth == 16 || towidth == 64) {
       auto newI = getNewFromOriginal(&BO);
       IRBuilder<> B(newI);
+      auto newLHS = truncate(B, getNewFromOriginal(BO.getOperand(0)));
+      auto newRHS = truncate(B, getNewFromOriginal(BO.getOperand(1)));
       switch (BO.getOpcode()) {
       default:
         break;
       case BinaryOperator::FMul: {
-        auto nres = cast<BinaryOperator>(
-            B.CreateFMul(truncate(B, getNewFromOriginal(BO.getOperand(0))),
-                         truncate(B, getNewFromOriginal(BO.getOperand(1)))));
+        auto nres = cast<BinaryOperator>(B.CreateFMul(newLHS, newRHS));
         nres->takeName(newI);
         nres->copyIRFlags(newI);
         newI->replaceAllUsesWith(expand(B, nres, BO.getType()));
@@ -5006,9 +5007,7 @@ public:
       }
         return;
       case BinaryOperator::FAdd: {
-        auto nres = cast<BinaryOperator>(
-            B.CreateFAdd(truncate(B, getNewFromOriginal(BO.getOperand(0))),
-                         truncate(B, getNewFromOriginal(BO.getOperand(1)))));
+        auto nres = cast<BinaryOperator>(B.CreateFAdd(newLHS, newRHS));
         nres->takeName(newI);
         nres->copyIRFlags(newI);
         newI->replaceAllUsesWith(expand(B, nres, BO.getType()));
@@ -5016,9 +5015,7 @@ public:
       }
         return;
       case BinaryOperator::FSub: {
-        auto nres = cast<BinaryOperator>(
-            B.CreateFSub(truncate(B, getNewFromOriginal(BO.getOperand(0))),
-                         truncate(B, getNewFromOriginal(BO.getOperand(1)))));
+        auto nres = cast<BinaryOperator>(B.CreateFSub(newLHS, newRHS));
         nres->takeName(newI);
         nres->copyIRFlags(newI);
         newI->replaceAllUsesWith(expand(B, nres, BO.getType()));
@@ -5026,9 +5023,7 @@ public:
       }
         return;
       case BinaryOperator::FDiv: {
-        auto nres = cast<BinaryOperator>(
-            B.CreateFDiv(truncate(B, getNewFromOriginal(BO.getOperand(0))),
-                         truncate(B, getNewFromOriginal(BO.getOperand(1)))));
+        auto nres = cast<BinaryOperator>(B.CreateFDiv(newLHS, newRHS));
         nres->takeName(newI);
         nres->copyIRFlags(newI);
         newI->replaceAllUsesWith(expand(B, nres, BO.getType()));
@@ -5036,9 +5031,7 @@ public:
       }
         return;
       case BinaryOperator::FRem: {
-        auto nres = cast<BinaryOperator>(
-            B.CreateFRem(truncate(B, getNewFromOriginal(BO.getOperand(0))),
-                         truncate(B, getNewFromOriginal(BO.getOperand(1)))));
+        auto nres = cast<BinaryOperator>(B.CreateFRem(newLHS, newRHS));
         nres->takeName(newI);
         nres->copyIRFlags(newI);
         newI->replaceAllUsesWith(expand(B, nres, BO.getType()));
