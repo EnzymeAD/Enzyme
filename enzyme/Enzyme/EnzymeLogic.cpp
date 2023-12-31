@@ -4951,7 +4951,16 @@ public:
     return;
   }
   void visitSelectInst(llvm::SelectInst &SI) {
-    todo(SI);
+    auto newI = getNewFromOriginal(&SI);
+    IRBuilder<> B(newI);
+    auto nres = cast<SelectInst>(
+        B.CreateSelect(getNewFromOriginal(SI.getCondition()),
+                       truncate(B, getNewFromOriginal(SI.getTrueValue())),
+                       truncate(B, getNewFromOriginal(SI.getFalseValue()))));
+    nres->takeName(newI);
+    nres->copyIRFlags(newI);
+    newI->replaceAllUsesWith(expand(B, nres, SI.getType()));
+    newI->eraseFromParent();
     return;
   }
   void visitExtractElementInst(llvm::ExtractElementInst &EEI) { return; }
