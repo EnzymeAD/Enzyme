@@ -287,7 +287,10 @@ const StringSet<> KnownInactiveFunctions = {
     "cuMemPoolGetAttribute",
     "cuMemGetInfo_v2",
     "cuDeviceGetAttribute",
-    "cuDevicePrimaryCtxRetain"
+    "cuDevicePrimaryCtxRetain",
+    "floor",
+    "floorf",
+    "floorl"
 };
 
 const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
