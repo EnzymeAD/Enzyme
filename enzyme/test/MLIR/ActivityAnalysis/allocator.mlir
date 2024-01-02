@@ -1,6 +1,17 @@
 // RUN: %eopt --print-activity-analysis=funcs=_Z10reduce_maxPdi %s 2>&1 | FileCheck %s
 
-module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<f16, dense<16> : vector<2xi32>>, #dlti.dl_entry<i64, dense<[32, 64]> : vector<2xi32>>, #dlti.dl_entry<i32, dense<32> : vector<2xi32>>, #dlti.dl_entry<f128, dense<128> : vector<2xi32>>, #dlti.dl_entry<f64, dense<64> : vector<2xi32>>, #dlti.dl_entry<!llvm.ptr, dense<64> : vector<4xi32>>, #dlti.dl_entry<i16, dense<16> : vector<2xi32>>, #dlti.dl_entry<i8, dense<8> : vector<2xi32>>, #dlti.dl_entry<i1, dense<8> : vector<2xi32>>, #dlti.dl_entry<"dlti.endianness", "little">>} {
+module attributes {
+    dlti.dl_spec = #dlti.dl_spec<
+      #dlti.dl_entry<f16, dense<16> : vector<2xi64>>,
+      #dlti.dl_entry<i64, dense<[32, 64]> : vector<2xi64>>,
+      #dlti.dl_entry<i32, dense<32> : vector<2xi64>>,
+      #dlti.dl_entry<f128, dense<128> : vector<2xi64>>,
+      #dlti.dl_entry<f64, dense<64> : vector<2xi64>>,
+      #dlti.dl_entry<!llvm.ptr, dense<64> : vector<4xi64>>,
+      #dlti.dl_entry<i16, dense<16> : vector<2xi64>>,
+      #dlti.dl_entry<i8, dense<8> : vector<2xi64>>,
+      #dlti.dl_entry<i1, dense<8> : vector<2xi64>>,
+      #dlti.dl_entry<"dlti.endianness", "little">>} {
   llvm.mlir.global private unnamed_addr constant @".str.1"("d_reduce_max(%i)=%f\0A\00") {addr_space = 0 : i32, alignment = 1 : i64, dso_local}
   func.func private @_ZNSt16allocator_traitsISaIdEE8allocateERS0_m(%arg0: i64) -> !llvm.ptr {
     %0 = llvm.mlir.constant(3 : i64) : i64
