@@ -45,6 +45,10 @@ static bool isPointerLike(Type type) {
   return isa<MemRefType, LLVM::LLVMPointerType>(type);
 }
 
+const enzyme::AliasClassSet enzyme::AliasClassSet::emptySet = AliasClassSet();
+const enzyme::AliasClassSet enzyme::AliasClassSet::unknownSet =
+    AliasClassSet(true);
+
 ChangeResult enzyme::AliasClassSet::join(const AliasClassSet &other) {
   if (unknown) {
     return ChangeResult::NoChange;
@@ -94,6 +98,25 @@ ChangeResult enzyme::AliasClassSet::reset() {
   return ChangeResult::Change;
 }
 
+bool enzyme::AliasClassSet::isCanonical() const {
+  return !unknown || aliasClasses.empty();
+}
+
+bool enzyme::AliasClassSet::operator==(
+    const enzyme::AliasClassSet &other) const {
+  assert(isCanonical() && other.isCanonical());
+  return unknown == other.unknown &&
+         llvm::equal(aliasClasses, other.aliasClasses);
+}
+
+ChangeResult enzyme::AliasClassSet::foreachClass(
+    function_ref<ChangeResult(DistinctAttr)> callback) const {
+  ChangeResult result = ChangeResult::NoChange;
+  for (DistinctAttr attr : aliasClasses)
+    result |= callback(attr);
+  return result;
+}
+
 //===----------------------------------------------------------------------===//
 // PointsToAnalysis
 //===----------------------------------------------------------------------===//
@@ -106,16 +129,6 @@ static ChangeResult mergeSets(DenseSet<T> &dest, const DenseSet<T> &src) {
 }
 
 void enzyme::PointsToSets::print(raw_ostream &os) const {
-  if (unknown) {
-    os << "<fully-unknown>\n";
-    return;
-  }
-
-  if (pointsTo.empty()) {
-    os << "<empty>\n";
-    return;
-  }
-
   for (const auto &[srcClass, destClasses] : pointsTo) {
     os << "  " << srcClass << " points to {";
     if (destClasses.isUnknown()) {
@@ -125,106 +138,150 @@ void enzyme::PointsToSets::print(raw_ostream &os) const {
     }
     os << "}\n";
   }
+  os << "other points to unknown: " << otherPointToUnknown << "\n";
 }
 
 /// Union for every variable.
 ChangeResult enzyme::PointsToSets::join(const AbstractDenseLattice &lattice) {
   const auto &rhs = static_cast<const PointsToSets &>(lattice);
-  if (unknown)
-    return ChangeResult::NoChange;
 
-  if (rhs.unknown) {
-    unknown = true;
-    return ChangeResult::Change;
+  // Both are exact, just join and carry over pointer classes from RHS.
+  if (!otherPointToUnknown && !rhs.otherPointToUnknown) {
+    ChangeResult result = ChangeResult::NoChange;
+    for (const auto &[otherPointer, otherPointee] : rhs.pointsTo) {
+      result |= pointsTo[otherPointer].join(otherPointee);
+    }
+    return result;
   }
 
-  ChangeResult result = ChangeResult::NoChange;
-  for (const auto &[alloc, allocSet] : rhs.pointsTo)
-    result |= pointsTo[alloc].join(allocSet);
-  return result;
+  // If this has other pointers pointing to unknown, only join in the RHS
+  // pointers that are known on the LHS. If some LHS pointers are not present in
+  // RHS, keep them as is because RHS is "exact".
+  if (otherPointToUnknown && !rhs.otherPointToUnknown) {
+    ChangeResult result = ChangeResult::NoChange;
+    for (DistinctAttr pointer : llvm::make_first_range(pointsTo)) {
+      auto it = rhs.pointsTo.find(pointer);
+      if (it != rhs.pointsTo.end())
+        result |= pointsTo[pointer].join(it->getSecond());
+    }
+    return result;
+  }
+
+  // If both have other pointers pointing to unknown, only join the pointers
+  // that are present simultaneously in LHS and RHS. Drop LHS pointers that
+  // are not present in RHS from the list (they would explicitly point to
+  // unknown on individual join, but this is implied by the otherPointsToUnknown
+  // flag). Create a temporary vector for iteration as we will be erasing from
+  // the map in the loop.
+  if (otherPointToUnknown && rhs.otherPointToUnknown) {
+    ChangeResult result = ChangeResult::NoChange;
+    for (DistinctAttr pointer :
+         llvm::to_vector(llvm::make_first_range(pointsTo))) {
+      auto it = rhs.pointsTo.find(pointer);
+      if (it != rhs.pointsTo.end()) {
+        result |= pointsTo[pointer].join(it->getSecond());
+      } else {
+        pointsTo.erase(pointer);
+        result = ChangeResult::Change;
+      }
+    }
+    return result;
+  }
+
+  // If RHS has other pointers pointing to unknown, only join the pointers that
+  // are present in both simultaneously. Drop LHS pointers that are not present
+  // in RHS (they would explicitly point to unknown on individual join but this
+  // is implied by the otherPointsToUnknown flag). Set LHS to also indicate
+  // other pointers pointing to unknown.
+  assert(!otherPointToUnknown && rhs.otherPointToUnknown);
+  otherPointToUnknown = true;
+  for (DistinctAttr pointer :
+       llvm::to_vector(llvm::make_first_range(pointsTo))) {
+    auto it = rhs.pointsTo.find(pointer);
+    if (it != rhs.pointsTo.end())
+      pointsTo[pointer].join(it->getSecond());
+    else
+      pointsTo.erase(pointer);
+  }
+  return ChangeResult::Change;
 }
 
-/// Mark the pointer stored in `dest` as possibly pointing to any of `values`.
-ChangeResult enzyme::PointsToSets::insert(const AliasClassSet &destClasses,
-                                          const AliasClassSet &values) {
-  if (unknown)
-    return ChangeResult::NoChange;
+ChangeResult enzyme::PointsToSets::update(const AliasClassSet &keysToUpdate,
+                                          const AliasClassSet &values,
+                                          bool replace) {
+  // If updating the unknown alias class to point to something, we have reached
+  // the pessimistic fixpoint.
+  if (keysToUpdate.isUnknown())
+    return markAllPointToUnknown();
 
-  if (destClasses.isUnknown())
-    return markUnknown();
+  // If updating to point to unknown, and we already know others are pointing to
+  // unknown, just erase the known information.
+  if (values.isUnknown() && otherPointToUnknown) {
+    return keysToUpdate.foreachClass([&](DistinctAttr dest) {
+      return pointsTo.erase(dest) ? ChangeResult::Change
+                                  : ChangeResult::NoChange;
+    });
+  }
 
-  ChangeResult result = ChangeResult::NoChange;
-  for (auto destClass : destClasses.getAliasClasses())
-    result |= pointsTo[destClass].insert(values.getAliasClasses());
-  return result;
+  // Otherwise just set the result.
+  if (replace) {
+    return keysToUpdate.foreachClass([&](DistinctAttr dest) {
+      auto it = pointsTo.find(dest);
+      if (it != pointsTo.end() && it->getSecond() == values)
+        return ChangeResult::NoChange;
+      if (it == pointsTo.end())
+        pointsTo.try_emplace(dest, values);
+      else
+        it->second = values;
+      return ChangeResult::Change;
+    });
+  }
+
+  return keysToUpdate.foreachClass([&](DistinctAttr dest) {
+    // If pointers stored in "other" are pointing to unknown alias class, don't
+    // override that.
+    if (otherPointToUnknown && !pointsTo.count(dest))
+      return ChangeResult::NoChange;
+
+    if (values.isUnknown())
+      return pointsTo[dest].markUnknown();
+    return pointsTo[dest].insert(values.getAliasClasses());
+  });
 }
 
-/// Mark the pointer stored in `dest` as possibly pointing to a fresh alias
-/// class of values.
-ChangeResult enzyme::PointsToSets::insertFresh(DistinctAttr dest,
-                                               StringAttr debugLabel) {
-  // TODO(zinenko): do we need some sort of "exact/inexact" in addition to this?
-  // i.e. can we go back from full-unknown state to knowing that some pointers
-  // point to specific aliases classes, and other pointers (potentially not
-  // present in the list) may be pointing to anything?
-  if (unknown)
-    return ChangeResult::NoChange;
-
-  return pointsTo[dest].insert({AliasClassLattice::getFresh(debugLabel)});
+ChangeResult
+enzyme::PointsToSets::setPointingToFresh(const AliasClassSet &destClasses,
+                                         StringAttr debugLabel) {
+  return update(destClasses, AliasClassLattice::getFresh(debugLabel),
+                /*replace=*/true);
 }
 
 ChangeResult
 enzyme::PointsToSets::addSetsFrom(const AliasClassSet &destClasses,
                                   const AliasClassSet &srcClasses) {
-  if (unknown)
-    return ChangeResult::NoChange;
-
   if (destClasses.isUnknown())
-    return markUnknown();
+    return markAllPointToUnknown();
 
-  ChangeResult result = ChangeResult::NoChange;
-  for (DistinctAttr destClass : destClasses.getAliasClasses()) {
-    for (DistinctAttr srcClass : srcClasses.getAliasClasses()) {
-      result |= pointsTo[destClass].join(pointsTo[srcClass]);
-    }
-  }
-  return result;
+  return destClasses.foreachClass([&](DistinctAttr dest) {
+    return srcClasses.foreachClass(
+        [&](DistinctAttr src) { return pointsTo[dest].join(pointsTo[src]); });
+  });
 }
 
 ChangeResult
-enzyme::PointsToSets::setToFresh(const AliasClassSet &destClasses) {
-  // TODO(zinenko): we may want to override this, for a specific pointer we know
-  // it points to fresh and all the other points are "unknown". Currently there
-  // is no way of expressing this.
-  if (unknown)
-    return ChangeResult::NoChange;
-
-  DistinctAttr fresh = AliasClassLattice::getFresh(StringAttr::get(
-      getPoint().getLoc()->getContext(), "function-result-noalias"));
-  ChangeResult result = ChangeResult::NoChange;
-  for (DistinctAttr destClass : destClasses.getAliasClasses()) {
-    result |= pointsTo[destClass].reset();
-    result |= pointsTo[destClass].insert({fresh});
-  }
-  return result;
-}
-
-ChangeResult
-enzyme::PointsToSets::markUnknown(const AliasClassSet &destClasses) {
+enzyme::PointsToSets::markPointToUnknown(const AliasClassSet &destClasses) {
   if (destClasses.isUnknown())
-    return markUnknown();
+    return markAllPointToUnknown();
 
-  ChangeResult result = ChangeResult::NoChange;
-  for (DistinctAttr destClass : destClasses.getAliasClasses())
-    result |= pointsTo[destClass].markUnknown();
-  return result;
+  return destClasses.foreachClass(
+      [&](DistinctAttr dest) { return pointsTo[dest].markUnknown(); });
 }
 
-ChangeResult enzyme::PointsToSets::markUnknown() {
-  if (unknown)
+ChangeResult enzyme::PointsToSets::markAllPointToUnknown() {
+  if (otherPointToUnknown && pointsTo.empty())
     return ChangeResult::NoChange;
 
-  unknown = true;
+  otherPointToUnknown = true;
   pointsTo.clear();
   return ChangeResult::Change;
 }
@@ -234,7 +291,7 @@ std::optional<Value> getStored(Operation *op);
 
 void enzyme::PointsToPointerAnalysis::processCapturingStore(
     ProgramPoint dependent, PointsToSets *after, Value capturedValue,
-    Value destinationAddress) {
+    Value destinationAddress, bool isMustStore) {
   auto *srcClasses =
       getOrCreateFor<AliasClassLattice>(dependent, capturedValue);
   auto *destClasses =
@@ -243,7 +300,7 @@ void enzyme::PointsToPointerAnalysis::processCapturingStore(
   // If the destination class is unknown, i.e. all possible pointers, then we
   // have reached the pessimistic fixpoint and don't know anything. Bail.
   if (destClasses->isUnknown()) {
-    propagateIfChanged(after, after->markUnknown());
+    propagateIfChanged(after, after->markAllPointToUnknown());
     return;
   }
 
@@ -251,12 +308,25 @@ void enzyme::PointsToPointerAnalysis::processCapturingStore(
   // point to any pointer.
   if (srcClasses->isUnknown()) {
     propagateIfChanged(
-        after, after->markUnknown(destClasses->getAliasClassesObject()));
+        after, after->markPointToUnknown(destClasses->getAliasClassesObject()));
   } else {
-    propagateIfChanged(after,
-                       after->insert(destClasses->getAliasClassesObject(),
-                                     srcClasses->getAliasClassesObject()));
+    // Treat all stores as may-store because we don't know better.
+    if (isMustStore) {
+      propagateIfChanged(after, after->setPointingToClasses(
+                                    destClasses->getAliasClassesObject(),
+                                    srcClasses->getAliasClassesObject()));
+    } else {
+      propagateIfChanged(after,
+                         after->insert(destClasses->getAliasClassesObject(),
+                                       srcClasses->getAliasClassesObject()));
+    }
   }
+}
+
+// TODO: this should become an interface or be integrated into side effects so
+// it doesn't depend on the dialect.
+static bool isMustStore(Operation *op, Value pointer) {
+  return isa<LLVM::StoreOp>(op);
 }
 
 void enzyme::PointsToPointerAnalysis::visitOperation(Operation *op,
@@ -269,7 +339,7 @@ void enzyme::PointsToPointerAnalysis::visitOperation(Operation *op,
   // fixpoint and bail.
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
-    after->markUnknown();
+    propagateIfChanged(after, after->markAllPointToUnknown());
     return;
   }
 
@@ -306,7 +376,8 @@ void enzyme::PointsToPointerAnalysis::visitOperation(Operation *op,
 
     for (Value address : targetValues) {
       for (Value stored : storedValues) {
-        processCapturingStore(op, after, stored, address);
+        processCapturingStore(op, after, stored, address,
+                              isMustStore(op, address));
       }
     }
   }
@@ -353,7 +424,7 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
     // calls.
     auto symbol = dyn_cast<SymbolRefAttr>(call.getCallableForCallee());
     if (!symbol)
-      return propagateIfChanged(after, after->markUnknown());
+      return propagateIfChanged(after, after->markAllPointToUnknown());
 
     // Functions with known behavior.
     if (symbol.getLeafReference().getValue() == "posix_memalign") {
@@ -362,8 +433,11 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
       OperandRange arguments = call.getArgOperands();
       auto *memPtr = getOrCreateFor<AliasClassLattice>(call, arguments[0]);
       for (DistinctAttr memPtrClass : memPtr->getAliasClasses()) {
+        // Note that this is a "must write" kind of situation, so we can
+        // directly set the classes pointed to, rather than inserting them.
         auto debugLabel = StringAttr::get(call.getContext(), "memalign");
-        propagateIfChanged(after, after->insertFresh(memPtrClass, debugLabel));
+        propagateIfChanged(after,
+                           after->setPointingToFresh(memPtrClass, debugLabel));
       }
       return;
     }
@@ -394,12 +468,39 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
       }
 
       // If the function may write to "other", that is any potential other
-      // pointer, we can't reason anymore.
-      // TODO(zinenko): is it possible to somehow say "other" may point to a
-      // certain set of alias sets, or are we fully pessimistic here?
+      // pointer, record that.
+      // However, if some argument pointers cannot be written into due to other
+      // attributes, keep the classes for them from the "before" lattice.
       bool funcMayWriteToOther = modRefMayMod(otherModRef);
+      bool funcMayWriteToArgs = modRefMayMod(argModRef);
+      auto mayArgBeStoredInto = [&](int arg) {
+        auto [isReadOnly, isWriteOnly] =
+            isReadWriteOnly(callee, arg, argModRef);
+        return (!isReadOnly || isWriteOnly) && funcMayWriteToArgs;
+      };
       if (funcMayWriteToOther) {
-        propagateIfChanged(after, after->markUnknown());
+        propagateIfChanged(after, after->markAllPointToUnknown());
+
+        for (int pointerOperand : pointerLikeOperands) {
+          // TODO(zinenko): FIXME, even if the arg may be stored into, it
+          // doesn't mean we should pessimize it. Instead, it should be possible
+          // to join the before state for it with the alias classes the function
+          // may be storing into it.
+          // TODO(zinenko): consider monotonicity carefully.
+          if (mayArgBeStoredInto(pointerOperand))
+            continue;
+
+          auto *destClasses = getOrCreateFor<AliasClassLattice>(
+              call, call.getArgOperands()[pointerOperand]);
+
+          ChangeResult result =
+              destClasses->getAliasClassesObject().foreachClass(
+                  [&](DistinctAttr dest) {
+                    return after->setPointingToClasses(
+                        dest, before.getPointsTo(dest));
+                  });
+          propagateIfChanged(after, result);
+        }
         return;
       }
 
@@ -407,12 +508,6 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
       // into the arguments. At this point, we know it shouldn't be also writing
       // to "other".
       bool funcMayReadOther = modRefMayRef(otherModRef);
-      bool funcMayWriteToArgs = modRefMayMod(argModRef);
-      auto mayArgBeStoredInto = [&](int arg) {
-        auto [isReadOnly, isWriteOnly] =
-            isReadWriteOnly(callee, arg, argModRef);
-        return (!isReadOnly || isWriteOnly) && funcMayWriteToArgs;
-      };
       unsigned numArguments = callee.getNumArguments();
       if (funcMayReadOther) {
         for (int pointerAsAddress : pointerLikeOperands) {
@@ -421,8 +516,8 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
 
           auto *destClasses = getOrCreateFor<AliasClassLattice>(
               call, call.getArgOperands()[pointerAsAddress]);
-          propagateIfChanged(
-              after, after->markUnknown(destClasses->getAliasClassesObject()));
+          propagateIfChanged(after, after->markPointToUnknown(
+                                        destClasses->getAliasClassesObject()));
         }
       } else {
         for (int pointerAsData : pointerLikeOperands) {
@@ -483,8 +578,8 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
 
         // If reading from other memory, the results may point to anything.
         if (funcMayReadOther) {
-          propagateIfChanged(
-              after, after->markUnknown(destClasses->getAliasClassesObject()));
+          propagateIfChanged(after, after->markPointToUnknown(
+                                        destClasses->getAliasClassesObject()));
           continue;
         }
 
@@ -523,7 +618,7 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
     }
 
     // Don't know how to handle, record pessimistic fixpoint.
-    return propagateIfChanged(after, after->markUnknown());
+    return propagateIfChanged(after, after->markAllPointToUnknown());
   }
 }
 
@@ -636,11 +731,26 @@ void enzyme::AliasAnalysis::transfer(
       }
     } else if (isa<MemoryEffects::Read>(effect.getEffect())) {
       auto *pointsToSets = getOrCreateFor<PointsToSets>(op, op);
-      for (auto srcClass : getLatticeElement(value)->getAliasClasses()) {
-        const auto &srcPointsTo = pointsToSets->pointsTo.lookup(srcClass);
+      AliasClassLattice *latticeElement = getLatticeElement(value);
+      if (latticeElement->isUnknown()) {
         for (AliasClassLattice *result : results) {
-          propagateIfChanged(result,
-                             result->insert(srcPointsTo.getAliasClasses()));
+          propagateIfChanged(result, result->markUnknown());
+        }
+      } else {
+        for (auto srcClass : latticeElement->getAliasClasses()) {
+          const auto &srcPointsTo = pointsToSets->getPointsTo(srcClass);
+          for (AliasClassLattice *result : results) {
+            // TODO: consider some sort of "point join" or better insert that
+            // doesn't require a conditional here.
+            if (srcPointsTo.isUnknown()) {
+              propagateIfChanged(result, result->markUnknown());
+            } else {
+              // TODO: this looks potentially non-monotonous.
+              ChangeResult r = result->reset() |
+                               result->insert(srcPointsTo.getAliasClasses());
+              propagateIfChanged(result, r);
+            }
+          }
         }
       }
     }

@@ -200,6 +200,14 @@ struct MemoryActivityState {
     return !(*this == other);
   }
 
+  ChangeResult reset() {
+    if (!activeIn && !activeOut)
+      return ChangeResult::NoChange;
+    activeIn = false;
+    activeOut = false;
+    return ChangeResult::Change;
+  }
+
   ChangeResult merge(const MemoryActivityState &other) {
     if (*this == other) {
       return ChangeResult::NoChange;
@@ -218,36 +226,65 @@ public:
   /// Clear all modifications.
   ChangeResult reset() {
     if (activityStates.empty())
-      return ChangeResult::NoChange;
+      return otherMemoryActivity.reset();
     activityStates.clear();
-    return ChangeResult::Change;
+    return otherMemoryActivity.reset();
   }
 
   bool hasActiveData(DistinctAttr aliasClass) const {
-    const auto &state = activityStates.lookup(aliasClass);
-    return state.activeIn;
+    if (!aliasClass)
+      return otherMemoryActivity.activeIn;
+    auto it = activityStates.find(aliasClass);
+    if (it != activityStates.end())
+      return it->getSecond().activeIn;
+    return otherMemoryActivity.activeIn;
   }
 
   bool activeDataFlowsOut(DistinctAttr aliasClass) const {
-    const auto &state = activityStates.lookup(aliasClass);
-    return state.activeOut;
+    if (!aliasClass)
+      return otherMemoryActivity.activeOut;
+
+    auto it = activityStates.find(aliasClass);
+    if (it != activityStates.end())
+      return it->getSecond().activeOut;
+    return otherMemoryActivity.activeOut;
   }
 
-  /// Set the internal activity state.
+  /// Set the internal activity state. Accepts null attribute to indicate "other
+  /// classes".
   ChangeResult setActiveIn(DistinctAttr aliasClass) {
+    if (!aliasClass)
+      return setActiveIn();
+
     auto &state = activityStates[aliasClass];
     ChangeResult result =
         state.activeIn ? ChangeResult::NoChange : ChangeResult::Change;
     state.activeIn = true;
     return result;
   }
-
+  ChangeResult setActiveIn() {
+    if (otherMemoryActivity.activeIn && activityStates.empty())
+      return ChangeResult::NoChange;
+    otherMemoryActivity.activeIn = true;
+    activityStates.clear();
+    return ChangeResult::Change;
+  }
   ChangeResult setActiveOut(DistinctAttr aliasClass) {
+    if (!aliasClass)
+      return setActiveOut();
+
     auto &state = activityStates[aliasClass];
     ChangeResult result =
         state.activeOut ? ChangeResult::NoChange : ChangeResult::Change;
     state.activeOut = true;
     return result;
+  }
+  ChangeResult setActiveOut() {
+    if (otherMemoryActivity.activeOut && activityStates.empty())
+      return ChangeResult::NoChange;
+    otherMemoryActivity.activeOut = true;
+    activityStates.clear();
+    return ChangeResult::Change;
   }
 
   void print(raw_ostream &os) const override {
@@ -259,6 +296,8 @@ public:
       os << value << ": in " << state.activeIn << " out " << state.activeOut
          << "\n";
     }
+    os << "other classes: in " << otherMemoryActivity.activeIn << " out "
+       << otherMemoryActivity.activeOut << "\n";
   }
 
   raw_ostream &operator<<(raw_ostream &os) const {
@@ -267,7 +306,45 @@ public:
   }
 
 protected:
+  ChangeResult merge(const AbstractDenseLattice &lattice) {
+    const auto &rhs = static_cast<const MemoryActivity &>(lattice);
+    ChangeResult result = ChangeResult::NoChange;
+    DenseSet<DistinctAttr> known;
+    auto lhsRange = llvm::make_first_range(activityStates);
+    auto rhsRange = llvm::make_first_range(rhs.activityStates);
+    known.insert(lhsRange.begin(), lhsRange.end());
+    known.insert(rhsRange.begin(), rhsRange.end());
+
+    MemoryActivityState updatedOther(otherMemoryActivity);
+    result |= updatedOther.merge(rhs.otherMemoryActivity);
+    DenseMap<DistinctAttr, MemoryActivityState> updated;
+    for (DistinctAttr d : known) {
+      auto lhsIt = activityStates.find(d);
+      auto rhsIt = rhs.activityStates.find(d);
+      bool isKnownInLHS = lhsIt != activityStates.end();
+      bool isKnownInRHS = rhsIt != rhs.activityStates.end();
+      const MemoryActivityState *lhsActivity =
+          isKnownInLHS ? &lhsIt->getSecond() : &otherMemoryActivity;
+      const MemoryActivityState *rhsActivity =
+          isKnownInRHS ? &rhsIt->getSecond() : &rhs.otherMemoryActivity;
+      MemoryActivityState updatedActivity(*lhsActivity);
+      updatedActivity.merge(*rhsActivity);
+      if ((lhsIt != activityStates.end() &&
+           updatedActivity != lhsIt->getSecond()) ||
+          (lhsIt == activityStates.end() &&
+           updatedActivity != otherMemoryActivity)) {
+        result |= ChangeResult::Change;
+      }
+      if (updatedActivity != updatedOther)
+        updated.try_emplace(d, updatedActivity);
+    }
+    std::swap(updated, activityStates);
+    return otherMemoryActivity.merge(rhs.otherMemoryActivity) | result;
+  }
+
+private:
   DenseMap<DistinctAttr, MemoryActivityState> activityStates;
+  MemoryActivityState otherMemoryActivity;
 };
 
 class ForwardMemoryActivity : public MemoryActivity {
@@ -276,13 +353,7 @@ public:
 
   /// Join the activity states.
   ChangeResult join(const AbstractDenseLattice &lattice) {
-    const auto &rhs = static_cast<const ForwardMemoryActivity &>(lattice);
-    ChangeResult result = ChangeResult::NoChange;
-    for (const auto &[value, rhsState] : rhs.activityStates) {
-      auto &lhsState = activityStates[value];
-      result |= lhsState.merge(rhsState);
-    }
-    return result;
+    return merge(lattice);
   }
 };
 
@@ -291,13 +362,7 @@ public:
   using MemoryActivity::MemoryActivity;
 
   ChangeResult meet(const AbstractDenseLattice &lattice) override {
-    const auto &rhs = static_cast<const BackwardMemoryActivity &>(lattice);
-    ChangeResult result = ChangeResult::NoChange;
-    for (const auto &[value, rhsState] : rhs.activityStates) {
-      auto &lhsState = activityStates[value];
-      result |= lhsState.merge(rhsState);
-    }
-    return result;
+    return merge(lattice);
   }
 };
 
@@ -418,12 +483,14 @@ std::optional<Value> getCopySource(Operation *op) {
 
 /// The dense analyses operate using a pointer's "canonical allocation", the
 /// Value corresponding to its allocation.
+/// The callback may receive null allocation when the class alias set is
+/// unknown.
 void forEachAliasedAlloc(const AliasClassLattice *ptrAliasClass,
                          function_ref<void(DistinctAttr alloc)> forEachFn) {
   if (ptrAliasClass->isUnknown()) {
     // Unknown pointers alias with the unknown entry arguments and all
     // known allocations
-    errs() << "unhandled unknown alias class\n";
+    return forEachFn(nullptr);
   }
   for (DistinctAttr alloc : ptrAliasClass->getAliasClasses())
     forEachFn(alloc);
@@ -605,8 +672,13 @@ public:
         if (isa<MemRefType, LLVM::LLVMPointerType>(operand.getType())) {
           auto *retAliasClasses =
               getOrCreateFor<AliasClassLattice>(op, operand);
-          for (DistinctAttr retAliasClass : retAliasClasses->getAliasClasses())
-            propagateIfChanged(before, before->setActiveOut(retAliasClass));
+          if (retAliasClasses->isUnknown()) {
+            propagateIfChanged(before, before->setActiveOut());
+          } else {
+            for (DistinctAttr retAliasClass :
+                 retAliasClasses->getAliasClasses())
+              propagateIfChanged(before, before->setActiveOut(retAliasClass));
+          }
         }
       }
     }
@@ -660,7 +732,7 @@ public:
             auto *srcAliasClass =
                 getOrCreateFor<AliasClassLattice>(op, *copySource);
             forEachAliasedAlloc(srcAliasClass, [&](DistinctAttr srcAlloc) {
-              before->setActiveOut(srcAlloc);
+              result |= before->setActiveOut(srcAlloc);
             });
           } else if (auto linalgOp = dyn_cast<linalg::LinalgOp>(op)) {
             if (after.activeDataFlowsOut(alloc)) {
@@ -749,10 +821,14 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
       // Traverse the points-to sets in a simple BFS
       std::deque<DistinctAttr> frontier;
       DenseSet<DistinctAttr> visited;
-      const DenseSet<DistinctAttr> &aliasClasses =
-          aliasClassLattice->getAliasClasses();
-      frontier.insert(frontier.end(), aliasClasses.begin(), aliasClasses.end());
-      visited.insert(aliasClasses.begin(), aliasClasses.end());
+      // TODO(zinenko): FIXME, handle unknown...
+      if (!aliasClassLattice->isUnknown()) {
+        const DenseSet<DistinctAttr> &aliasClasses =
+            aliasClassLattice->getAliasClasses();
+        frontier.insert(frontier.end(), aliasClasses.begin(),
+                        aliasClasses.end());
+        visited.insert(aliasClasses.begin(), aliasClasses.end());
+      }
       while (!frontier.empty()) {
         DistinctAttr aliasClass = frontier.front();
         frontier.pop_front();
@@ -763,10 +839,16 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
             bma->activeDataFlowsOut(aliasClass))
           return false;
 
-        // Or if it points to a pointer that points to active data
-        const enzyme::AliasClassSet &neighbors =
-            pointsToSets->pointsTo.lookup(aliasClass);
-        for (DistinctAttr neighbor : neighbors.getAliasClasses()) {
+        // Or if it points to a pointer that points to active data.
+        if (pointsToSets->getPointsTo(aliasClass).isUnknown()) {
+          // TODO(zinenko): FIXME handle unknown. Conservative assumption here
+          // is to assume the value is active (or unknown if we can return
+          // that). Is there a less conservative option?
+          continue;
+        }
+        const DenseSet<DistinctAttr> &neighbors =
+            pointsToSets->getPointsTo(aliasClass).getAliasClasses();
+        for (DistinctAttr neighbor : neighbors) {
           if (!visited.contains(neighbor)) {
             visited.insert(neighbor);
             frontier.push_back(neighbor);
