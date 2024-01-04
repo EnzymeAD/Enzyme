@@ -548,18 +548,7 @@ public:
             chunk = dl.getPointerSizeInBits() / 8;
           } else {
             if (auto flt = dt.isFloat()) {
-              if (flt->isFloatTy()) {
-                chunk = 4;
-              } else if (flt->isDoubleTy()) {
-                chunk = 8;
-              } else if (flt->isHalfTy()) {
-                chunk = 2;
-              } else if (flt->isX86_FP80Ty()) {
-                chunk = 10;
-              } else {
-                llvm::errs() << *flt << "\n";
-                assert(0 && "unhandled float type");
-              }
+              chunk = dl.getTypeSizeInBits(flt) / 8;
             } else if (dt == BaseType::Pointer) {
               chunk = dl.getPointerSizeInBits() / 8;
             }
@@ -646,18 +635,7 @@ public:
             chunk = dl.getPointerSizeInBits() / 8;
           } else {
             if (auto flt = dt.isFloat()) {
-              if (flt->isFloatTy()) {
-                chunk = 4;
-              } else if (flt->isDoubleTy()) {
-                chunk = 8;
-              } else if (flt->isHalfTy()) {
-                chunk = 2;
-              } else if (flt->isX86_FP80Ty()) {
-                chunk = 10;
-              } else {
-                llvm::errs() << *flt << "\n";
-                assert(0 && "unhandled float type");
-              }
+              chunk = dl.getTypeSizeInBits(flt) / 8;
             } else if (dt == BaseType::Pointer) {
               chunk = dl.getPointerSizeInBits() / 8;
             }
@@ -808,18 +786,7 @@ public:
       size_t chunk = 1;
       auto op = operator[]({pair.first[0]});
       if (auto flt = op.isFloat()) {
-        if (flt->isFloatTy()) {
-          chunk = 4;
-        } else if (flt->isDoubleTy()) {
-          chunk = 8;
-        } else if (flt->isHalfTy()) {
-          chunk = 2;
-        } else if (flt->isX86_FP80Ty()) {
-          chunk = 10;
-        } else {
-          llvm::errs() << *flt << "\n";
-          assert(0 && "unhandled float type");
-        }
+        chunk = dl.getTypeSizeInBits(flt) / 8;
       } else if (op == BaseType::Pointer) {
         chunk = dl.getPointerSizeInBits() / 8;
       }

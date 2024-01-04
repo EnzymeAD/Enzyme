@@ -5174,19 +5174,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
               ptr = bb.CreatePointerCast(ptr, PointerType::getUnqual(flt));
               bb.CreateStore(Constant::getNullValue(flt), ptr);
-              size_t chunk = 0;
-              if (flt->isFloatTy()) {
-                chunk = 4;
-              } else if (flt->isDoubleTy()) {
-                chunk = 8;
-              } else if (flt->isHalfTy()) {
-                chunk = 2;
-              } else if (flt->isX86_FP80Ty()) {
-                chunk = 10;
-              } else {
-                llvm::errs() << *flt << "\n";
-                assert(0 && "unhandled float type");
-              }
+              size_t chunk = dl.getTypeSizeInBits(flt) / 8;
               i += chunk;
             } else if (CT2 != BaseType::Integer) {
               auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
