@@ -32,53 +32,44 @@ using namespace llvm;
 class ActivityToMetadataTranslation : public LLVMTranslationDialectInterface {
   using LLVMTranslationDialectInterface::LLVMTranslationDialectInterface;
 
-  void annotateActivity(Operation *op, StringRef key,
-                        LLVM::ModuleTranslation &moduleTranslation) const {
-    LLVMContext &llvmCtx = moduleTranslation.getLLVMContext();
+  void annotateActivity(StringRef key,
+                        ArrayRef<llvm::Instruction *> instructions, ) const {
+    if (instructions.empty())
+      return;
+
+    LLVMContext &llvmCtx = instructions.front()->getContext();
     MDNode *md = MDNode::get(llvmCtx, {});
-
-    if (op->getNumResults() == 1) {
-      llvm::Value *val = moduleTranslation.lookupValue(op->getResult(0));
-      if (auto *inst = dyn_cast<llvm::Instruction>(val)) {
-        inst->setMetadata(key, md);
-      }
-    } else if (op->getNumResults() == 0) {
-      llvm::Instruction *inst = moduleTranslation.lookupOperation(op);
-      if (!inst)
-        return;
-
+    for (llvm::Instruction *inst : instructions) {
       inst->setMetadata(key, md);
     }
   }
 
   LogicalResult
-  amendOperation(Operation *op, NamedAttribute attribute,
+  amendOperation(Operation *op, ArrayRef<llvm::Instruction *> instructions,
+                 NamedAttribute attribute,
                  LLVM::ModuleTranslation &moduleTranslation) const override {
-    if (auto funcOp = dyn_cast<FunctionOpInterface>(op)) {
-      // auto *fn = moduleTranslation.lookupFunction(funcOp.getName());
-      // errs() << "[translation] fn: " << *fn << "\n";
+    if (auto funcOp = dyn_cast<FunctionOpInterface>(op))
       return success();
-    }
 
     auto iciAttr = op->getAttrOfType<BoolAttr>("enzyme.ici");
     auto icvAttr = op->getAttrOfType<BoolAttr>("enzyme.icv");
 
-    // Op was already processed
+    // Op was already processed.
     if (!(iciAttr && icvAttr))
       return success();
 
-    // Convert the attributes to the appropriate metadata
-    if (iciAttr.getValue() && icvAttr.getValue())
-      annotateActivity(op, "enzyme_inactive", moduleTranslation);
-    else if (!iciAttr.getValue() && !icvAttr.getValue())
-      annotateActivity(op, "enzyme_active", moduleTranslation);
-    else {
+    // Convert the attributes to the appropriate metadata.
+    if (iciAttr.getValue() && icvAttr.getValue()) {
+      annotateActivity("enzyme_inactive", instructions);
+    } else if (!iciAttr.getValue() && !icvAttr.getValue()) {
+      annotateActivity("enzyme_active", instructions);
+    } else {
       StringRef instActivity =
           iciAttr.getValue() ? "enzyme_inactive_inst" : "enzyme_active_inst";
       StringRef valActivity =
           icvAttr.getValue() ? "enzyme_inactive_val" : "enzyme_active_val";
-      annotateActivity(op, instActivity, moduleTranslation);
-      annotateActivity(op, valActivity, moduleTranslation);
+      annotateActivity(instActivity, instructions);
+      annotateActivity(valActivity, instructions);
     }
 
     op->removeAttr("enzyme.ici");
