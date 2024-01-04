@@ -2192,7 +2192,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       else
         llvm::errs() << potentiallyActiveStore;
       llvm::errs() << " potentialStore=";
-      if (potentiallyActiveStore)
+      if (potentialStore)
         llvm::errs() << *potentialStore;
       else
         llvm::errs() << potentialStore;
