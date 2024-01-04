@@ -33,7 +33,7 @@ class ActivityToMetadataTranslation : public LLVMTranslationDialectInterface {
   using LLVMTranslationDialectInterface::LLVMTranslationDialectInterface;
 
   void annotateActivity(StringRef key,
-                        ArrayRef<llvm::Instruction *> instructions, ) const {
+                        ArrayRef<llvm::Instruction *> instructions) const {
     if (instructions.empty())
       return;
 
