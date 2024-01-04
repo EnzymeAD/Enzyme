@@ -287,7 +287,10 @@ const StringSet<> KnownInactiveFunctions = {
     "cuMemPoolGetAttribute",
     "cuMemGetInfo_v2",
     "cuDeviceGetAttribute",
-    "cuDevicePrimaryCtxRetain"
+    "cuDevicePrimaryCtxRetain",
+    "floor",
+    "floorf",
+    "floorl"
 };
 
 const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
@@ -2192,7 +2195,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       else
         llvm::errs() << potentiallyActiveStore;
       llvm::errs() << " potentialStore=";
-      if (potentiallyActiveStore)
+      if (potentialStore)
         llvm::errs() << *potentialStore;
       else
         llvm::errs() << potentialStore;
