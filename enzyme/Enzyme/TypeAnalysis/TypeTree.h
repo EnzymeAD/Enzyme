@@ -554,6 +554,8 @@ public:
                 chunk = 8;
               } else if (flt->isHalfTy()) {
                 chunk = 2;
+              } else if (flt->isX86_FP80Ty()) {
+                chunk = 10;
               } else {
                 llvm::errs() << *flt << "\n";
                 assert(0 && "unhandled float type");
@@ -650,6 +652,8 @@ public:
                 chunk = 8;
               } else if (flt->isHalfTy()) {
                 chunk = 2;
+              } else if (flt->isX86_FP80Ty()) {
+                chunk = 10;
               } else {
                 llvm::errs() << *flt << "\n";
                 assert(0 && "unhandled float type");
@@ -731,6 +735,8 @@ public:
         chunk = 8;
       } else if (flt->isHalfTy()) {
         chunk = 2;
+      } else if (flt->isX86_FP80Ty()) {
+        chunk = 10;
       } else {
         llvm::errs() << *flt << "\n";
         assert(0 && "unhandled float type");
