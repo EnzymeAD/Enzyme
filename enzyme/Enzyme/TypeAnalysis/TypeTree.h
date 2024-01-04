@@ -548,16 +548,7 @@ public:
             chunk = dl.getPointerSizeInBits() / 8;
           } else {
             if (auto flt = dt.isFloat()) {
-              if (flt->isFloatTy()) {
-                chunk = 4;
-              } else if (flt->isDoubleTy()) {
-                chunk = 8;
-              } else if (flt->isHalfTy()) {
-                chunk = 2;
-              } else {
-                llvm::errs() << *flt << "\n";
-                assert(0 && "unhandled float type");
-              }
+              chunk = dl.getTypeSizeInBits(flt) / 8;
             } else if (dt == BaseType::Pointer) {
               chunk = dl.getPointerSizeInBits() / 8;
             }
@@ -644,16 +635,7 @@ public:
             chunk = dl.getPointerSizeInBits() / 8;
           } else {
             if (auto flt = dt.isFloat()) {
-              if (flt->isFloatTy()) {
-                chunk = 4;
-              } else if (flt->isDoubleTy()) {
-                chunk = 8;
-              } else if (flt->isHalfTy()) {
-                chunk = 2;
-              } else {
-                llvm::errs() << *flt << "\n";
-                assert(0 && "unhandled float type");
-              }
+              chunk = dl.getTypeSizeInBits(flt) / 8;
             } else if (dt == BaseType::Pointer) {
               chunk = dl.getPointerSizeInBits() / 8;
             }
@@ -716,7 +698,7 @@ public:
     return dat;
   }
 
-  llvm::Type *IsAllFloat(const size_t size) const {
+  llvm::Type *IsAllFloat(const size_t size, const llvm::DataLayout &dl) const {
     auto m1 = TypeTree::operator[]({-1});
     if (auto FT = m1.isFloat())
       return FT;
@@ -724,17 +706,7 @@ public:
     auto m0 = TypeTree::operator[]({0});
 
     if (auto flt = m0.isFloat()) {
-      size_t chunk;
-      if (flt->isFloatTy()) {
-        chunk = 4;
-      } else if (flt->isDoubleTy()) {
-        chunk = 8;
-      } else if (flt->isHalfTy()) {
-        chunk = 2;
-      } else {
-        llvm::errs() << *flt << "\n";
-        assert(0 && "unhandled float type");
-      }
+      size_t chunk = dl.getTypeSizeInBits(flt) / 8;
       for (size_t i = chunk; i < size; i += chunk) {
         auto mx = TypeTree::operator[]({(int)i});
         if (auto f2 = mx.isFloat()) {
@@ -802,18 +774,7 @@ public:
       size_t chunk = 1;
       auto op = operator[]({pair.first[0]});
       if (auto flt = op.isFloat()) {
-        if (flt->isFloatTy()) {
-          chunk = 4;
-        } else if (flt->isDoubleTy()) {
-          chunk = 8;
-        } else if (flt->isHalfTy()) {
-          chunk = 2;
-        } else if (flt->isX86_FP80Ty()) {
-          chunk = 10;
-        } else {
-          llvm::errs() << *flt << "\n";
-          assert(0 && "unhandled float type");
-        }
+        chunk = dl.getTypeSizeInBits(flt) / 8;
       } else if (op == BaseType::Pointer) {
         chunk = dl.getPointerSizeInBits() / 8;
       }
