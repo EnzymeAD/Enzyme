@@ -13,7 +13,56 @@ include "mlir/Pass/PassBase.td"
 
 def DifferentiatePass : Pass<"enzyme"> {
   let summary = "Differentiate Passes";
+  let dependentDialects = [
+    "cf::ControlFlowDialect"
+  ];
   let constructor = "mlir::enzyme::createDifferentiatePass()";
+}
+
+def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
+  let summary = "Print the results of activity analysis";
+  let constructor = "mlir::enzyme::createPrintActivityAnalysisPass()";
+  let options = [
+    ListOption<
+      /*C++ variable name=*/"funcsToAnalyze",
+      /*CLI argument=*/"funcs",
+      /*type=*/"std::string",
+      /*description=*/"The names of the functions to perform activity analysis on"
+    >,
+    Option<
+      /*C++ variable name=*/"verbose",
+      /*CLI argument=*/"verbose",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Print detailed activity information"
+    >,
+    Option<
+      /*C++ variable name=*/"annotate",
+      /*CLI argument=*/"annotate",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Annotate every operation and value with its activity"
+    >,
+    Option<
+      /*C++ variable name=*/"inactiveArgs",
+      /*CLI argument=*/"inactive-args",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Whether all arguments are assumed to be inactive"
+    >,
+    Option<
+      /*C++ variable name=*/"duplicatedRet",
+      /*CLI argument=*/"duplicated-ret",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Whether the return is duplicated"
+    >,
+  ];
+}
+
+def PrintAliasAnalysisPass : Pass<"test-print-alias-analysis"> {
+  let summary = "Print the results of alias analysis";
+  let constructor = "mlir::enzyme::createPrintAliasAnalysisPass()";
 }
 
 def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
@@ -50,11 +99,6 @@ def RemoveUnusedEnzymeOpsPass : Pass<"remove-unnecessary-enzyme-ops"> {
 def SimplifyMemrefCachePass : Pass<"simplify-memref-cache"> {
   let summary = "Rewrite all cache<memref<cache<...>>> to cache<memref<...>> if possible";
   let constructor = "mlir::enzyme::createSimplifyMemrefCachePass()";
-}
-
-def LowerToLLVMEnzymePass : Pass<"lower-to-llvm-enzyme"> {
-  let summary = "Lower enzyme.diff ops to LLVM Enzyme-compatible calls";
-  let constructor = "mlir::enzyme::createLowerToLLVMEnzymePass()";
 }
 
 #endif // ENZYME_PASSES

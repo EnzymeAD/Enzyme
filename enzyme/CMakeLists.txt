@@ -310,6 +310,8 @@ export(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
 
 export(TARGETS LLDEnzymeFlags
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+export(TARGETS LLDEnzymeAssumeUnknownNoFree
+    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 export(TARGETS LLDEnzymeLooseTypeFlags
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 export(TARGETS LLDEnzymePrintTypeFlags

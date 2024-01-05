@@ -69,19 +69,19 @@ void CacheUtility::erase(Instruction *I) {
   SE.eraseValueFromMap(I);
 
   if (!I->use_empty()) {
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << "Erased value with a use:\n";
+    ss << *newFunc->getParent() << "\n";
+    ss << *newFunc << "\n";
+    ss << *I << "\n";
     if (CustomErrorHandler) {
-      std::string str;
-      raw_string_ostream ss(str);
-      ss << "Erased value with a use:\n";
-      ss << *newFunc->getParent() << "\n";
-      ss << *newFunc << "\n";
-      ss << *I << "\n";
       CustomErrorHandler(str.c_str(), wrap(I), ErrorType::InternalError,
                          nullptr, nullptr, nullptr);
+    } else {
+      EmitFailure("GetIndexError", I->getDebugLoc(), I, ss.str());
     }
-    llvm::errs() << *newFunc->getParent() << "\n";
-    llvm::errs() << *newFunc << "\n";
-    llvm::errs() << *I << "\n";
+    I->replaceAllUsesWith(UndefValue::get(I->getType()));
   }
   assert(I->use_empty());
   I->eraseFromParent();
@@ -802,11 +802,9 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
                                                      &malloccall, &Zero)
                                         ->getType());
       malloctypes.push_back(cast<PointerType>(malloccall->getType()));
-      SmallVector<Instruction *, 2> toErase;
-      for (auto &I : *BB)
-        toErase.push_back(&I);
-      for (auto I : llvm::reverse(toErase))
-        I->eraseFromParent();
+      for (auto &I : make_early_inc_range(reverse(*BB)))
+        I.eraseFromParent();
+
       BB->eraseFromParent();
     }
     types.push_back(allocType);
@@ -1491,11 +1489,9 @@ Value *CacheUtility::getCachePointer(llvm::Type *T, bool inForwardPass,
                                                      "tmpfortypecalc",
                                                      &malloccall, &Zero)
                                         ->getType());
-      SmallVector<Instruction *, 2> toErase;
-      for (auto &I : *BB)
-        toErase.push_back(&I);
-      for (auto I : llvm::reverse(toErase))
-        I->eraseFromParent();
+      for (auto &I : make_early_inc_range(reverse(*BB)))
+        I.eraseFromParent();
+
       BB->eraseFromParent();
     }
     types.push_back(allocType);

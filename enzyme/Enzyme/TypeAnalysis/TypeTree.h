@@ -191,8 +191,7 @@ public:
     // Check if there is an existing match, e.g. [-1, -1, -1] and inserting
     // [-1, 8, -1]
     {
-      std::set<std::vector<int>> toremove;
-      for (const auto &pair : mapping) {
+      for (const auto &pair : llvm::make_early_inc_range(mapping)) {
         if (pair.first.size() == SeqSize) {
           // Whether the the inserted val (e.g. [-1, 0] or [0, 0]) is at least
           // as general as the existing map val (e.g. [0, 0]).
@@ -248,7 +247,8 @@ public:
             if (CT == BaseType::Anything || CT == pair.second) {
               // previous equivalent values or values overwritten by
               // an anything are removed
-              toremove.insert(pair.first);
+              changed = true;
+              mapping.erase(pair.first);
               continue;
             }
 
@@ -259,7 +259,8 @@ public:
                    pair.second == BaseType::Integer) ||
                   (CT == BaseType::Integer &&
                    pair.second == BaseType::Pointer)) {
-                toremove.insert(pair.first);
+                changed = true;
+                mapping.erase(pair.first);
                 continue;
               }
 
@@ -276,10 +277,6 @@ public:
             llvm_unreachable("illegal insertion");
           }
         }
-      }
-      for (const auto &val : toremove) {
-        changed = true;
-        mapping.erase(val);
       }
     }
 
@@ -301,8 +298,7 @@ public:
     }
 
     if (possibleDeletion) {
-      std::vector<std::vector<int>> toErase;
-      for (const auto &pair : mapping) {
+      for (const auto &pair : llvm::make_early_inc_range(mapping)) {
         size_t i = 0;
         bool mustKeep = false;
         bool considerErase = false;
@@ -317,13 +313,9 @@ public:
           ++i;
         }
         if (!mustKeep && considerErase) {
-          toErase.push_back(pair.first);
+          mapping.erase(pair.first);
+          changed = true;
         }
-      }
-
-      for (auto vec : toErase) {
-        mapping.erase(vec);
-        changed = true;
       }
     }
 
@@ -556,16 +548,7 @@ public:
             chunk = dl.getPointerSizeInBits() / 8;
           } else {
             if (auto flt = dt.isFloat()) {
-              if (flt->isFloatTy()) {
-                chunk = 4;
-              } else if (flt->isDoubleTy()) {
-                chunk = 8;
-              } else if (flt->isHalfTy()) {
-                chunk = 2;
-              } else {
-                llvm::errs() << *flt << "\n";
-                assert(0 && "unhandled float type");
-              }
+              chunk = dl.getTypeSizeInBits(flt) / 8;
             } else if (dt == BaseType::Pointer) {
               chunk = dl.getPointerSizeInBits() / 8;
             }
@@ -652,16 +635,7 @@ public:
             chunk = dl.getPointerSizeInBits() / 8;
           } else {
             if (auto flt = dt.isFloat()) {
-              if (flt->isFloatTy()) {
-                chunk = 4;
-              } else if (flt->isDoubleTy()) {
-                chunk = 8;
-              } else if (flt->isHalfTy()) {
-                chunk = 2;
-              } else {
-                llvm::errs() << *flt << "\n";
-                assert(0 && "unhandled float type");
-              }
+              chunk = dl.getTypeSizeInBits(flt) / 8;
             } else if (dt == BaseType::Pointer) {
               chunk = dl.getPointerSizeInBits() / 8;
             }
@@ -724,7 +698,7 @@ public:
     return dat;
   }
 
-  llvm::Type *IsAllFloat(const size_t size) const {
+  llvm::Type *IsAllFloat(const size_t size, const llvm::DataLayout &dl) const {
     auto m1 = TypeTree::operator[]({-1});
     if (auto FT = m1.isFloat())
       return FT;
@@ -732,17 +706,7 @@ public:
     auto m0 = TypeTree::operator[]({0});
 
     if (auto flt = m0.isFloat()) {
-      size_t chunk;
-      if (flt->isFloatTy()) {
-        chunk = 4;
-      } else if (flt->isDoubleTy()) {
-        chunk = 8;
-      } else if (flt->isHalfTy()) {
-        chunk = 2;
-      } else {
-        llvm::errs() << *flt << "\n";
-        assert(0 && "unhandled float type");
-      }
+      size_t chunk = dl.getTypeSizeInBits(flt) / 8;
       for (size_t i = chunk; i < size; i += chunk) {
         auto mx = TypeTree::operator[]({(int)i});
         if (auto f2 = mx.isFloat()) {
@@ -810,18 +774,7 @@ public:
       size_t chunk = 1;
       auto op = operator[]({pair.first[0]});
       if (auto flt = op.isFloat()) {
-        if (flt->isFloatTy()) {
-          chunk = 4;
-        } else if (flt->isDoubleTy()) {
-          chunk = 8;
-        } else if (flt->isHalfTy()) {
-          chunk = 2;
-        } else if (flt->isX86_FP80Ty()) {
-          chunk = 10;
-        } else {
-          llvm::errs() << *flt << "\n";
-          assert(0 && "unhandled float type");
-        }
+        chunk = dl.getTypeSizeInBits(flt) / 8;
       } else if (op == BaseType::Pointer) {
         chunk = dl.getPointerSizeInBits() / 8;
       }
@@ -938,8 +891,7 @@ public:
       // Check if there is an existing match, e.g. [-1, -1, -1] and inserting
       // [-1, 8, -1]
       {
-        std::set<std::vector<int>> toremove;
-        for (const auto &pair : mapping) {
+        for (const auto &pair : llvm::make_early_inc_range(mapping)) {
           if (pair.first.size() == SeqSize) {
             // Whether the the inserted val (e.g. [-1, 0] or [0, 0]) is at least
             // as general as the existing map val (e.g. [0, 0]).
@@ -984,7 +936,7 @@ public:
               if (CT == BaseType::Anything) {
                 // If both at same index, remove old index
                 if (newMoreGeneralThanOld)
-                  toremove.insert(pair.first);
+                  mapping.erase(pair.first);
                 continue;
               }
 
@@ -999,7 +951,7 @@ public:
               if (CT == BaseType::Anything || CT == pair.second) {
                 // previous equivalent values or values overwritten by
                 // an anything are removed
-                toremove.insert(pair.first);
+                mapping.erase(pair.first);
                 continue;
               }
 
@@ -1010,7 +962,7 @@ public:
                      pair.second == BaseType::Integer) ||
                     (CT == BaseType::Integer &&
                      pair.second == BaseType::Pointer)) {
-                  toremove.insert(pair.first);
+                  mapping.erase(pair.first);
                   continue;
                 }
 
@@ -1026,9 +978,6 @@ public:
               return false;
             }
           }
-        }
-        for (const auto &val : toremove) {
-          mapping.erase(val);
         }
       }
     }
@@ -1101,8 +1050,7 @@ public:
   bool andIn(const TypeTree &RHS) {
     bool changed = false;
 
-    std::vector<std::vector<int>> keystodelete;
-    for (auto &pair : mapping) {
+    for (auto &pair : llvm::make_early_inc_range(mapping)) {
       ConcreteType other = BaseType::Unknown;
       auto fd = RHS.mapping.find(pair.first);
       if (fd != RHS.mapping.end()) {
@@ -1110,12 +1058,8 @@ public:
       }
       changed = (pair.second &= other);
       if (pair.second == BaseType::Unknown) {
-        keystodelete.push_back(pair.first);
+        mapping.erase(pair.first);
       }
-    }
-
-    for (auto &key : keystodelete) {
-      mapping.erase(key);
     }
 
     return changed;
@@ -1129,18 +1073,17 @@ public:
   /// Set this to the logical `binop` of itself and RHS, using the Binop Op,
   /// returning true if this was changed.
   /// This function will error on an invalid type combination
-  bool binopIn(const TypeTree &RHS, llvm::BinaryOperator::BinaryOps Op) {
+  bool binopIn(bool &Legal, const TypeTree &RHS,
+               llvm::BinaryOperator::BinaryOps Op) {
     bool changed = false;
 
-    std::vector<std::vector<int>> toErase;
-
-    for (auto &pair : mapping) {
+    for (auto &pair : llvm::make_early_inc_range(mapping)) {
       // TODO propagate non-first level operands:
       // Special handling is necessary here because a pointer to an int
       // binop with something should not apply the binop rules to the
       // underlying data but instead a different rule
       if (pair.first.size() > 0) {
-        toErase.push_back(pair.first);
+        mapping.erase(pair.first);
         continue;
       }
 
@@ -1153,9 +1096,14 @@ public:
         RightCT = found->second;
       }
 
-      changed |= CT.binopIn(RightCT, Op);
+      bool SubLegal = true;
+      changed |= CT.binopIn(SubLegal, RightCT, Op);
+      if (!SubLegal) {
+        Legal = false;
+        return changed;
+      }
       if (CT == BaseType::Unknown) {
-        toErase.push_back(pair.first);
+        mapping.erase(pair.first);
       } else {
         pair.second = CT;
       }
@@ -1173,15 +1121,16 @@ public:
 
       if (mapping.find(pair.first) == RHS.mapping.end()) {
         ConcreteType CT = BaseType::Unknown;
-        changed |= CT.binopIn(pair.second, Op);
+        bool SubLegal = true;
+        changed |= CT.binopIn(SubLegal, pair.second, Op);
+        if (!SubLegal) {
+          Legal = false;
+          return changed;
+        }
         if (CT != BaseType::Unknown) {
           mapping.insert(std::make_pair(pair.first, CT));
         }
       }
-    }
-
-    for (auto vec : toErase) {
-      mapping.erase(vec);
     }
 
     return changed;

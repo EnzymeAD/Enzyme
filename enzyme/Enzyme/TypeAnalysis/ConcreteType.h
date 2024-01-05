@@ -292,7 +292,8 @@ public:
   /// Set this to the logical `binop` of itself and RHS, using the Binop Op,
   /// returning true if this was changed.
   /// This function will error on an invalid type combination
-  bool binopIn(const ConcreteType RHS, llvm::BinaryOperator::BinaryOps Op) {
+  bool binopIn(bool &Legal, const ConcreteType RHS,
+               llvm::BinaryOperator::BinaryOps Op) {
     bool Changed = false;
     using namespace llvm;
 
@@ -366,7 +367,8 @@ public:
         // No change since we retain data from LHS
         break;
       default:
-        llvm_unreachable("unknown binary operator");
+        Legal = false;
+        return Changed;
       }
       return Changed;
     }
@@ -404,10 +406,9 @@ public:
       case BinaryOperator::Shl:
       case BinaryOperator::AShr:
       case BinaryOperator::LShr:
-        llvm_unreachable("illegal pointer/pointer operation");
-        break;
       default:
-        llvm_unreachable("unknown binary operator");
+        Legal = false;
+        return Changed;
       }
       return Changed;
     }
@@ -468,7 +469,8 @@ public:
       case BinaryOperator::URem:
       case BinaryOperator::SRem:
         if (RHS.SubTypeEnum == BaseType::Pointer) {
-          llvm_unreachable("cannot divide integer by pointer");
+          Legal = false;
+          return Changed;
         } else if (SubTypeEnum != BaseType::Unknown) {
           SubTypeEnum = BaseType::Unknown;
           Changed = true;
@@ -486,14 +488,14 @@ public:
         }
         break;
       default:
-        llvm_unreachable("unknown binary operator");
+        Legal = false;
+        return Changed;
       }
       return Changed;
     }
 
-    llvm::errs() << "self: " << str() << " RHS: " << RHS.str() << " Op: " << Op
-                 << "\n";
-    llvm_unreachable("Unknown ConcreteType::binopIn");
+    Legal = false;
+    return Changed;
   }
 
   /// Compare concrete types for use in map's

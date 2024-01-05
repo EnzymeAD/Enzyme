@@ -2033,6 +2033,9 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     if (funcName == "jl_array_copy" || funcName == "ijl_array_copy")
       return false;
 
+    if (funcName == "jl_idtable_rehash" || funcName == "ijl_idtable_rehash")
+      return false;
+
     // Isend only writes to inaccessible mem only
     if (funcName == "MPI_Send" || funcName == "PMPI_Send") {
       return false;
@@ -2185,6 +2188,9 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
       return false;
     }
     if (funcName == "jl_array_copy" || funcName == "ijl_array_copy")
+      return false;
+
+    if (funcName == "jl_idtable_rehash" || funcName == "ijl_idtable_rehash")
       return false;
 
     if (auto iasm = dyn_cast<InlineAsm>(call->getCalledOperand())) {

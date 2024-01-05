@@ -14,6 +14,6 @@ bb:
 
 ; CHECK: a0 - {} |
 ; CHECK-NEXT: bb
-; CHECK-NEXT:   %i = insertvalue { { i1, i1, i1 }, i8 } {{(undef|poison)}}, i1 false, 0, 0: {[-1]:Anything}
-; CHECK-NEXT:   %i2 = insertvalue { { i1, i1, i1 }, i8 } %i, i8 3, 1: {[0]:Anything, [1]:Anything, [2]:Anything, [3]:Integer}
+; CHECK-NEXT:   %i = insertvalue { { i1, i1, i1 }, i8 } {{(undef|poison)}}, i1 false, 0, 0: {[0]:Integer, [1]:Anything, [2]:Anything, [3]:Anything}
+; CHECK-NEXT:   %i2 = insertvalue { { i1, i1, i1 }, i8 } %i, i8 3, 1: {[0]:Integer, [1]:Anything, [2]:Anything, [3]:Integer}
 ; CHECK-NEXT:   ret void: {}

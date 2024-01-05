@@ -18,9 +18,11 @@ class DominanceInfo;
 namespace enzyme {
 std::unique_ptr<Pass> createDifferentiatePass();
 
-std::unique_ptr<Pass> createEnzymeToMemRefPass();
+std::unique_ptr<Pass> createPrintActivityAnalysisPass();
 
-std::unique_ptr<Pass> createLowerToLLVMEnzymePass();
+std::unique_ptr<Pass> createPrintAliasAnalysisPass();
+
+std::unique_ptr<Pass> createEnzymeToMemRefPass();
 
 std::unique_ptr<Pass> createShadowedGradientToCachePass();
 

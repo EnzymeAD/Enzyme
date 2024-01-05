@@ -96,6 +96,8 @@ ConcreteType eunwrap(CConcreteType CDT, llvm::LLVMContext &ctx) {
     return ConcreteType(llvm::Type::getFloatTy(ctx));
   case DT_Double:
     return ConcreteType(llvm::Type::getDoubleTy(ctx));
+  case DT_X86_FP80:
+    return ConcreteType(llvm::Type::getX86_FP80Ty(ctx));
   case DT_Unknown:
     return BaseType::Unknown;
   }
@@ -126,6 +128,8 @@ CConcreteType ewrap(const ConcreteType &CT) {
       return DT_Float;
     if (flt->isDoubleTy())
       return DT_Double;
+    if (flt->isX86_FP80Ty())
+      return DT_X86_FP80;
   } else {
     switch (CT.SubTypeEnum) {
     case BaseType::Integer:
@@ -398,11 +402,12 @@ EnzymeGradientUtilsGetDiffeType(GradientUtils *G, LLVMValueRef oval,
 CDIFFE_TYPE
 EnzymeGradientUtilsGetReturnDiffeType(GradientUtils *G, LLVMValueRef oval,
                                       uint8_t *needsPrimal,
-                                      uint8_t *needsShadow) {
+                                      uint8_t *needsShadow,
+                                      CDerivativeMode mode) {
   bool needsPrimalB;
   bool needsShadowB;
-  auto res = (CDIFFE_TYPE)(G->getReturnDiffeType(unwrap(oval), &needsPrimalB,
-                                                 &needsShadowB));
+  auto res = (CDIFFE_TYPE)(G->getReturnDiffeType(
+      unwrap(oval), &needsPrimalB, &needsShadowB, (DerivativeMode)mode));
   if (needsPrimal)
     *needsPrimal = needsPrimalB;
   if (needsShadow)
@@ -1677,11 +1682,27 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       sretCount++;
     }
 
-    std::function<void(Type *, Value *, Value *, ArrayRef<int>, int, Type *)>
+    std::function<void(Type *, Value *, Value *, ArrayRef<int>, int, Type *,
+                       bool)>
         copyNonJLValue = [&](Type *curType, Value *out, Value *in,
-                             ArrayRef<int> inds, int sretCount, Type *ptrTy) {
+                             ArrayRef<int> inds, int outPrefix, Type *ptrTy,
+                             bool shouldZero) {
           if (auto PT = dyn_cast<PointerType>(curType)) {
             if (PT->getAddressSpace() == 10) {
+              if (shouldZero) {
+                SmallVector<Value *, 1> outinds;
+                auto c0 = ConstantInt::get(B.getInt64Ty(), 0);
+                outinds.push_back(c0);
+                if (outPrefix >= 0)
+                  outinds.push_back(
+                      ConstantInt::get(B.getInt32Ty(), outPrefix));
+                for (auto v : inds) {
+                  outinds.push_back(ConstantInt::get(B.getInt32Ty(), v));
+                }
+                if (outinds.size() > 1)
+                  out = B.CreateInBoundsGEP(sretTy, out, outinds);
+                B.CreateStore(getUndefinedValueForType(PT), out);
+              }
               return;
             }
           }
@@ -1690,8 +1711,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
             for (size_t i = 0; i < AT->getNumElements(); i++) {
               SmallVector<int, 1> next(inds.begin(), inds.end());
               next.push_back(i);
-              copyNonJLValue(AT->getElementType(), out, in, next, sretCount,
-                             ptrTy);
+              copyNonJLValue(AT->getElementType(), out, in, next, outPrefix,
+                             ptrTy, shouldZero);
             }
             return;
           }
@@ -1699,8 +1720,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
             for (size_t i = 0; i < ST->getNumElements(); i++) {
               SmallVector<int, 1> next(inds.begin(), inds.end());
               next.push_back(i);
-              copyNonJLValue(ST->getElementType(i), out, in, next, sretCount,
-                             ptrTy);
+              copyNonJLValue(ST->getElementType(i), out, in, next, outPrefix,
+                             ptrTy, shouldZero);
             }
             return;
           }
@@ -1710,8 +1731,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
           auto c0 = ConstantInt::get(B.getInt64Ty(), 0);
           ininds.push_back(c0);
           outinds.push_back(c0);
-          if (sretCount >= 0)
-            outinds.push_back(ConstantInt::get(B.getInt32Ty(), sretCount));
+          if (outPrefix >= 0)
+            outinds.push_back(ConstantInt::get(B.getInt32Ty(), outPrefix));
           for (auto v : inds) {
             ininds.push_back(ConstantInt::get(B.getInt32Ty(), v));
             outinds.push_back(ConstantInt::get(B.getInt32Ty(), v));
@@ -1728,7 +1749,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
 
     for (Value *ptr : sret_vals) {
       copyNonJLValue(Types[sretCount], sret, ptr, {}, ST ? sretCount : -1,
-                     Types[sretCount]);
+                     Types[sretCount], true);
       sretCount++;
     }
     for (Value *ptr_v : sretv_vals) {
@@ -1736,7 +1757,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       for (size_t j = 0; j < AT->getNumElements(); j++) {
         auto ptr = GradientUtils::extractMeta(B, ptr_v, j);
         copyNonJLValue(Types[sretCount], sret, ptr, {},
-                       ST ? (sretCount + j) : -1, Types[sretCount]);
+                       ST ? (sretCount + j) : -1, Types[sretCount], true);
       }
       sretCount += AT->getNumElements();
     }

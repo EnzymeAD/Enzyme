@@ -47,6 +47,7 @@
 #include "llvm/Support/ErrorHandling.h"
 
 #include "LibraryFuncs.h"
+#include "Utils.h"
 
 using namespace llvm;
 
@@ -220,45 +221,120 @@ Value *DiffeGradientUtils::diffe(Value *val, IRBuilder<> &BuilderM) {
 SmallVector<SelectInst *, 4>
 DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                                Type *addingType, unsigned start, unsigned size,
+                               llvm::ArrayRef<llvm::Value *> idxs,
                                llvm::Value *mask) {
   assert(addingType);
   auto &DL = oldFunc->getParent()->getDataLayout();
-  auto storeSize = (DL.getTypeSizeInBits(val->getType()) + 7) / 8;
-  if (start == 0 && size == storeSize) {
-    return addToDiffe(val, dif, BuilderM, addingType, ArrayRef<Value *>(),
-                      mask);
+  Type *VT = val->getType();
+  for (auto cv : idxs) {
+    auto i = dyn_cast<ConstantInt>(cv)->getSExtValue();
+    if (auto ST = dyn_cast<StructType>(VT)) {
+      VT = ST->getElementType(i);
+      continue;
+    }
+    if (auto AT = dyn_cast<ArrayType>(VT)) {
+      assert(i < AT->getNumElements());
+      VT = AT->getElementType();
+      continue;
+    }
+    assert(0 && "illegal indexing type");
   }
-  if (auto ST = dyn_cast<StructType>(val->getType())) {
+  auto storeSize = (DL.getTypeSizeInBits(VT) + 7) / 8;
+
+  assert(start < storeSize);
+  assert(start + size <= storeSize);
+
+  // If VT is a struct type the addToDiffe algorithm will lose type information
+  // so we do the recurrence here, with full type information.
+  if (start == 0 && size == storeSize && !isa<StructType>(VT)) {
+    if (getWidth() == 1) {
+      SmallVector<unsigned, 1> eidxs;
+      for (auto idx : idxs) {
+        eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
+      }
+      return addToDiffe(val, extractMeta(BuilderM, dif, eidxs), BuilderM,
+                        addingType, idxs, mask);
+    } else {
+      SmallVector<SelectInst *, 4> res;
+      for (unsigned j = 0; j < getWidth(); j++) {
+        SmallVector<Value *, 1> lidxs;
+        SmallVector<unsigned, 1> eidxs = {(unsigned)j};
+        lidxs.push_back(
+            ConstantInt::get(Type::getInt32Ty(val->getContext()), j));
+        for (auto idx : idxs) {
+          eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
+          lidxs.push_back(idx);
+        }
+        for (auto v : addToDiffe(val, extractMeta(BuilderM, dif, eidxs),
+                                 BuilderM, addingType, lidxs, mask))
+          res.push_back(v);
+      }
+      return res;
+    }
+  }
+  if (auto ST = dyn_cast<StructType>(VT)) {
     auto SL = DL.getStructLayout(ST);
     auto left_idx = SL->getElementContainingOffset(start);
-    assert(SL->getElementOffset(left_idx) == start);
     auto right_idx = ST->getNumElements();
     if (storeSize != start + size) {
       right_idx = SL->getElementContainingOffset(start + size);
-      assert(SL->getElementOffset(right_idx) == start + size);
+      // If this doesn't cleanly end the window, make sure we do a partial
+      // accumulate for the remaining part in right_idx.
+      if (SL->getElementOffset(right_idx) != start + size)
+        right_idx++;
     }
     SmallVector<SelectInst *, 4> res;
     for (auto i = left_idx; i < right_idx; i++) {
-      if (getWidth() == 1) {
-        Value *lidxs[] = {
-            ConstantInt::get(Type::getInt32Ty(val->getContext()), i)};
-        for (auto v : addToDiffe(val, extractMeta(BuilderM, dif, i), BuilderM,
-                                 addingType, lidxs, mask))
-          res.push_back(v);
-      } else {
-        for (int j = 0; j < getWidth(); j++) {
-          Value *lidxs[] = {
-              ConstantInt::get(Type::getInt32Ty(val->getContext()), j),
-              ConstantInt::get(Type::getInt32Ty(val->getContext()), i)};
-          unsigned int idxs[] = {(unsigned int)j, (unsigned int)i};
-          for (auto v : addToDiffe(val, extractMeta(BuilderM, dif, idxs),
-                                   BuilderM, addingType, lidxs, mask))
-            res.push_back(v);
-        }
-      }
+      auto subType = ST->getElementType(i);
+      SmallVector<Value *, 1> lidxs(idxs.begin(), idxs.end());
+      lidxs.push_back(ConstantInt::get(Type::getInt32Ty(val->getContext()), i));
+      auto sub_start =
+          (i == left_idx) ? (start - (unsigned)SL->getElementOffset(i)) : 0;
+      auto subTypeSize = (DL.getTypeSizeInBits(subType) + 7) / 8;
+      auto sub_end = (i == right_idx - 1)
+                         ? min(start + size - (unsigned)SL->getElementOffset(i),
+                               (unsigned)subTypeSize)
+                         : subTypeSize;
+      for (auto v : addToDiffe(val, dif, BuilderM, addingType, sub_start,
+                               sub_end - sub_start, lidxs, mask))
+        res.push_back(v);
     }
     return res;
   }
+
+  if (auto AT = dyn_cast<ArrayType>(VT)) {
+    auto subType = AT->getElementType();
+    auto subTypeSize = (DL.getTypeSizeInBits(subType) + 7) / 8;
+    auto left_idx = start / subTypeSize;
+    auto right_idx = AT->getNumElements();
+    if (storeSize != start + size) {
+      right_idx = (start + size) / subTypeSize;
+      // If this doesn't cleanly end the window, make sure we do a partial
+      // accumulate for the remaining part in right_idx.
+      if (right_idx * subTypeSize != start + size)
+        right_idx++;
+    }
+    SmallVector<SelectInst *, 4> res;
+    for (auto i = left_idx; i < right_idx; i++) {
+      SmallVector<Value *, 1> lidxs(idxs.begin(), idxs.end());
+      lidxs.push_back(ConstantInt::get(Type::getInt32Ty(val->getContext()), i));
+      auto sub_start = (i == left_idx) ? (start - (i * subTypeSize)) : 0;
+      auto sub_end = (i == right_idx - 1)
+                         ? min(start + size - (unsigned)(i * subTypeSize),
+                               (unsigned)subTypeSize)
+                         : subTypeSize;
+      for (auto v : addToDiffe(val, dif, BuilderM, addingType, sub_start,
+                               sub_end - sub_start, lidxs, mask))
+        res.push_back(v);
+    }
+    return res;
+  }
+
+  llvm::errs() << " VT: " << *VT << " idxs:{";
+  for (auto idx : idxs)
+    llvm::errs() << *idx << ",";
+  llvm::errs() << "} start=" << start << " size=" << size
+               << " storeSize=" << storeSize << " val=" << *val << "\n";
   assert(0 && "unhandled accumulate with partial sizes");
 }
 
@@ -380,10 +456,14 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
   } else {
     old = BuilderM.CreateLoad(getShadowType(val->getType()), ptr);
   }
+  if (dif->getType() != old->getType()) {
+    llvm::errs() << " val: " << *val << " dif: " << *dif << " old: " << *old
+                 << "\n";
+  }
 
   assert(dif->getType() == old->getType());
   Value *res = nullptr;
-  if (old->getType()->isIntOrIntVectorTy()) {
+  if (old->getType()->isIntOrIntVectorTy() || old->getType()->isPointerTy()) {
     if (!addingType) {
       if (looseTypeAnalysis) {
         if (old->getType()->isIntegerTy(64))
@@ -397,6 +477,10 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       llvm::raw_string_ostream ss(s);
       ss << "oldFunc: " << *oldFunc << "\n";
       ss << "Cannot deduce adding type of: " << *val << "\n";
+      ss << " + idxs {";
+      for (auto idx : idxs)
+        ss << *idx << ",";
+      ss << "}\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
                            &TR.analyzer, nullptr, wrap(&BuilderM));
@@ -451,20 +535,38 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       }
     }
 
-    Value *bcold = BuilderM.CreateBitCast(old, addingType);
-    Value *bcdif = BuilderM.CreateBitCast(dif, addingType);
+    Value *bcold = old;
+    Value *bcdif = dif;
+    Type *intTy = nullptr;
+    if (old->getType()->isPointerTy()) {
+      auto &DL = oldFunc->getParent()->getDataLayout();
+      intTy = Type::getIntNTy(old->getContext(), DL.getPointerSizeInBits());
+      bcold = BuilderM.CreatePtrToInt(bcold, intTy);
+      bcdif = BuilderM.CreatePtrToInt(bcdif, intTy);
+    } else {
+      intTy = old->getType();
+    }
+
+    bcold = BuilderM.CreateBitCast(bcold, addingType);
+    bcdif = BuilderM.CreateBitCast(bcdif, addingType);
 
     res = faddForSelect(bcold, bcdif);
     if (SelectInst *select = dyn_cast<SelectInst>(res)) {
       assert(addedSelects.back() == select);
       addedSelects.erase(addedSelects.end() - 1);
-      res = BuilderM.CreateSelect(
-          select->getCondition(),
-          BuilderM.CreateBitCast(select->getTrueValue(), old->getType()),
-          BuilderM.CreateBitCast(select->getFalseValue(), old->getType()));
+
+      Value *tval = BuilderM.CreateBitCast(select->getTrueValue(), intTy);
+      Value *fval = BuilderM.CreateBitCast(select->getFalseValue(), intTy);
+      if (old->getType()->isPointerTy()) {
+        tval = BuilderM.CreateIntToPtr(tval, old->getType());
+        fval = BuilderM.CreateIntToPtr(fval, old->getType());
+      }
+      res = BuilderM.CreateSelect(select->getCondition(), tval, fval);
       assert(select->getNumUses() == 0);
     } else {
-      res = BuilderM.CreateBitCast(res, old->getType());
+      res = BuilderM.CreateBitCast(res, intTy);
+      if (old->getType()->isPointerTy())
+        res = BuilderM.CreateIntToPtr(res, old->getType());
     }
     if (!mask) {
       BuilderM.CreateStore(res, ptr);
@@ -541,6 +643,15 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     }
     return addedSelects;
   } else {
+    llvm::errs() << " idx: {";
+    for (auto i : idxs)
+      llvm::errs() << *i << ", ";
+    llvm::errs() << "}\n";
+    if (addingType)
+      llvm::errs() << " addingType: " << *addingType << "\n";
+    else
+      llvm::errs() << " addingType: null\n";
+    llvm::errs() << " oldType:" << *old->getType() << " old:" << *old << "\n";
     llvm_unreachable("unknown type to add to diffe");
     exit(1);
   }

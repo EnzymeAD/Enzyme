@@ -81,7 +81,8 @@ enum class ErrorType {
   InternalError = 5,
   TypeDepthExceeded = 6,
   MixedActivityError = 7,
-  IllegalReplaceFicticiousPHIs = 8
+  IllegalReplaceFicticiousPHIs = 8,
+  GetIndexError = 9,
 };
 
 extern "C" {
@@ -552,6 +553,8 @@ static inline llvm::Type *FloatToIntTy(llvm::Type *T) {
     return llvm::IntegerType::get(T->getContext(), 32);
   if (T->isDoubleTy())
     return llvm::IntegerType::get(T->getContext(), 64);
+  if (T->isX86_FP80Ty())
+    return llvm::IntegerType::get(T->getContext(), 80);
   assert(0 && "unknown floating point type");
   return nullptr;
 }
@@ -597,15 +600,32 @@ static inline bool isDebugFunction(llvm::Function *called) {
   return false;
 }
 
+static inline bool startsWith(llvm::StringRef string, llvm::StringRef prefix) {
+#if LLVM_VERSION_MAJOR >= 18
+  return string.starts_with(prefix);
+#else
+  return string.startswith(prefix);
+#endif // LLVM_VERSION_MAJOR
+}
+
+static inline bool endsWith(llvm::StringRef string, llvm::StringRef suffix) {
+#if LLVM_VERSION_MAJOR >= 18
+  return string.ends_with(suffix);
+#else
+  return string.endswith(suffix);
+#endif // LLVM_VERSION_MAJOR
+}
+
 static inline bool isCertainPrint(const llvm::StringRef name) {
   if (name == "printf" || name == "puts" || name == "fprintf" ||
       name == "putchar" ||
-      name.startswith("_ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_") ||
-      name.startswith("_ZNSolsE") || name.startswith("_ZNSo9_M_insert") ||
-      name.startswith("_ZSt16__ostream_insert") ||
-      name.startswith("_ZNSo3put") || name.startswith("_ZSt4endl") ||
-      name.startswith("_ZN3std2io5stdio6_print") ||
-      name.startswith("_ZNSo5flushEv") || name.startswith("_ZN4core3fmt") ||
+      startsWith(name,
+                 "_ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_") ||
+      startsWith(name, "_ZNSolsE") || startsWith(name, "_ZNSo9_M_insert") ||
+      startsWith(name, "_ZSt16__ostream_insert") ||
+      startsWith(name, "_ZNSo3put") || startsWith(name, "_ZSt4endl") ||
+      startsWith(name, "_ZN3std2io5stdio6_print") ||
+      startsWith(name, "_ZNSo5flushEv") || startsWith(name, "_ZN4core3fmt") ||
       name == "vprintf")
     return true;
   return false;
@@ -1231,7 +1251,7 @@ static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
 }
 
 static inline bool isIntelSubscriptIntrinsic(const llvm::IntrinsicInst &II) {
-  return getFuncNameFromCall(&II).startswith("llvm.intel.subscript");
+  return startsWith(getFuncNameFromCall(&II), "llvm.intel.subscript");
 }
 
 static inline bool isIntelSubscriptIntrinsic(const llvm::Value *val) {
@@ -1788,4 +1808,4 @@ bool collectOffset(llvm::GEPOperator *gep, const llvm::DataLayout &DL,
                    unsigned BitWidth,
                    llvm::MapVector<llvm::Value *, llvm::APInt> &VariableOffsets,
                    llvm::APInt &ConstantOffset);
-#endif
+#endif // ENZYME_UTILS_H

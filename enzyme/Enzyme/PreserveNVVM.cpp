@@ -116,7 +116,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
                         CA->isCString()) {
 
                       auto str = CA->getAsCString();
-                      bool legal = str.startswith("byref_");
+                      bool legal = startsWith(str, "byref_");
                       size_t argnum = 0;
                       if (legal) {
                         for (size_t i = str.size() - 1, len = strlen("byref_");

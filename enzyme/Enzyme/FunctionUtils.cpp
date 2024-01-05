@@ -157,6 +157,10 @@ cl::opt<bool> EnzymeAutoSparsity("enzyme-auto-sparsity", cl::init(false),
 cl::opt<int> EnzymePostOptLevel(
     "enzyme-post-opt-level", cl::init(0), cl::Hidden,
     cl::desc("Post optimization level within Enzyme differentiated function"));
+
+cl::opt<bool> EnzymeAlwaysInlineDiff(
+    "enzyme-always-inline", cl::init(false), cl::Hidden,
+    cl::desc("Mark generated functions as always-inline"));
 }
 
 /// Is the use of value val as an argument of call CI potentially captured
@@ -719,15 +723,14 @@ void PreProcessCache::AlwaysInline(Function *NewF) {
   PA.preserve<TargetLibraryAnalysis>();
   FAM.invalidate(*NewF, PA);
   SmallVector<CallInst *, 2> ToInline;
-  SmallVector<Instruction *, 2> ToErase;
   // TODO this logic should be combined with the dynamic loop emission
   // to minimize the number of branches if the realloc is used for multiple
   // values with the same bound.
   for (auto &BB : *NewF) {
-    for (auto &I : BB) {
+    for (auto &I : make_early_inc_range(BB)) {
       if (hasMetadata(&I, "enzyme_zerostack")) {
         if (isa<AllocaInst>(getBaseObject(I.getOperand(0)))) {
-          ToErase.push_back(&I);
+          I.eraseFromParent();
           continue;
         }
       }
@@ -739,9 +742,7 @@ void PreProcessCache::AlwaysInline(Function *NewF) {
       }
     }
   }
-  for (auto I : ToErase) {
-    I->eraseFromParent();
-  }
+
   for (auto CI : ToInline) {
     InlineFunctionInfo IFI;
     InlineFunction(*CI, IFI);
@@ -1130,12 +1131,13 @@ static void ForceRecursiveInlining(Function *NewF, size_t Limit) {
             continue;
           if (CI->getCalledFunction()->empty())
             continue;
-          if (CI->getCalledFunction()->getName().startswith(
-                  "_ZN3std2io5stdio6_print"))
+          if (startsWith(CI->getCalledFunction()->getName(),
+                         "_ZN3std2io5stdio6_print"))
             continue;
-          if (CI->getCalledFunction()->getName().startswith("_ZN4core3fmt"))
+          if (startsWith(CI->getCalledFunction()->getName(), "_ZN4core3fmt"))
             continue;
-          if (CI->getCalledFunction()->getName().startswith("enzyme_wrapmpi$$"))
+          if (startsWith(CI->getCalledFunction()->getName(),
+                         "enzyme_wrapmpi$$"))
             continue;
           if (CI->getCalledFunction()->hasFnAttribute(
                   Attribute::ReturnsTwice) ||
@@ -1538,7 +1540,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
           if (F && F->getName().contains("__enzyme_double")) {
             continue;
           }
-          if (F && (F->getName().startswith("f90io") ||
+          if (F && (startsWith(F->getName(), "f90io") ||
                     F->getName() == "ftnio_fmt_write64" ||
                     F->getName() == "__mth_i_ipowi" ||
                     F->getName() == "f90_pausea")) {
@@ -1598,7 +1600,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
                 if (F && F->getName().contains("__enzyme_double")) {
                   continue;
                 }
-                if (F && (F->getName().startswith("f90io") ||
+                if (F && (startsWith(F->getName(), "f90io") ||
                           F->getName() == "ftnio_fmt_write64" ||
                           F->getName() == "__mth_i_ipowi" ||
                           F->getName() == "f90_pausea")) {
@@ -1815,22 +1817,19 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   }
 
   {
-    SmallVector<Instruction *, 4> ToErase;
     for (auto &BB : *NewF) {
-      for (auto &I : BB) {
+      for (auto &I : make_early_inc_range(BB)) {
         if (auto MTI = dyn_cast<MemTransferInst>(&I)) {
 
           if (auto CI = dyn_cast<ConstantInt>(MTI->getOperand(2))) {
             if (CI->getValue() == 0) {
-              ToErase.push_back(MTI);
+              MTI->eraseFromParent();
             }
           }
         }
       }
     }
-    for (auto E : ToErase) {
-      E->eraseFromParent();
-    }
+
     PreservedAnalyses PA;
     PA.preserve<AssumptionAnalysis>();
     PA.preserve<TargetLibraryAnalysis>();
@@ -2319,6 +2318,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
 #endif
   }
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
+  if (EnzymeAlwaysInlineDiff)
+    NewF->addFnAttr(Attribute::AlwaysInline);
   assert(NewF->hasLocalLinkage());
 
   return NewF;
@@ -5639,9 +5640,18 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       continue;
 
     if (!solutions->canEvaluateSolutions()) {
+      llvm::errs() << "F: " << F << "\n";
+      llvm::errs() << " L: " << *L << " blk: " << *blk << "\n";
+      llvm::errs() << " cond: " << *cond << " negated: " << negated << "\n";
+
       llvm::errs() << " not sparse solvable " << *solutions << "\n";
       legal = false;
       continue;
+    }
+    if (solutions == Constraints::none()) {
+      llvm::errs() << "F: " << F << "\n";
+      llvm::errs() << " L: " << *L << " blk: " << *blk << "\n";
+      llvm::errs() << " cond: " << *cond << " negated: " << negated << "\n";
     }
     llvm::errs() << " found solvable solutions " << *solutions << "\n";
 
@@ -6072,9 +6082,19 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
         auto diff = toInt(B, replacements[SI->getPointerOperand()]);
         SmallVector<Value *, 2> args;
         args.push_back(SI->getValueOperand());
-        if (args[0]->getType() != store_fn->getFunctionType()->getParamType(0))
-          args[0] = B.CreateBitCast(
-              args[0], store_fn->getFunctionType()->getParamType(0));
+        auto sty = store_fn->getFunctionType()->getParamType(0);
+        if (args[0]->getType() !=
+            store_fn->getFunctionType()->getParamType(0)) {
+          if (CastInst::castIsValid(Instruction::BitCast, args[0], sty))
+            args[0] = B.CreateBitCast(args[0], sty);
+          else {
+            auto args0ty = args[0]->getType();
+            EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
+                        " first argument of store function must be the type of "
+                        "the store found fn arg type ",
+                        sty, " expected ", args0ty);
+          }
+        }
         args.push_back(diff);
         for (size_t i = argstart; i < num_args; i++)
           args.push_back(CI->getArgOperand(i));

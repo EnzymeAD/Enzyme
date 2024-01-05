@@ -103,6 +103,10 @@ cl::opt<bool> EnzymeJuliaAddrLoad(
     "enzyme-julia-addr-load", cl::init(false), cl::Hidden,
     cl::desc("Mark all loads resulting in an addr(13)* to be legal to redo"));
 
+cl::opt<bool> EnzymeAssumeUnknownNoFree(
+    "enzyme-assume-unknown-nofree", cl::init(false), cl::Hidden,
+    cl::desc("Assume unknown instructions are nofree as needed"));
+
 LLVMValueRef (*EnzymeFixupReturn)(LLVMBuilderRef, LLVMValueRef) = nullptr;
 }
 
@@ -448,7 +452,8 @@ struct CacheAnalysis {
       return {};
     }
 
-    if (funcName.startswith("MPI_") || funcName.startswith("enzyme_wrapmpi$$"))
+    if (startsWith(funcName, "MPI_") ||
+        startsWith(funcName, "enzyme_wrapmpi$$"))
       return {};
 
     if (funcName == "__kmpc_for_static_init_4" ||
@@ -615,7 +620,7 @@ struct CacheAnalysis {
           // We do not need uncacheable args for intrinsic functions. So skip
           // such callsites.
           if (auto II = dyn_cast<IntrinsicInst>(&inst)) {
-            if (!II->getCalledFunction()->getName().startswith("llvm.julia"))
+            if (!startsWith(II->getCalledFunction()->getName(), "llvm.julia"))
               continue;
           }
 
@@ -2368,10 +2373,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                                    overwritten_args_map, can_modref_map,
                                    constant_args));
 
-  auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
+  auto getIndex = [&](Instruction *I, CacheType u, IRBuilder<> &B) -> unsigned {
     return gutils->getIndex(
         std::make_pair(I, u),
-        AugmentedCachedFunctions.find(tup)->second.tapeIndices);
+        AugmentedCachedFunctions.find(tup)->second.tapeIndices, B);
   };
 
   //! Explicitly handle all returns first to ensure that all instructions know
@@ -2473,7 +2478,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                   cast<Instruction>(newi)->getParent()->getFirstNonPHI());
             }
             gutils->cacheForReverse(BuilderZ, newi,
-                                    getIndex(&I, CacheType::Self));
+                                    getIndex(&I, CacheType::Self, BuilderZ));
           }
         }
       }
@@ -2800,6 +2805,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     unsigned i = 0;
     for (auto v : gutils->getTapeValues()) {
       if (!isa<UndefValue>(v)) {
+        if (!isa<Instruction>(VMap[v])) {
+          llvm::errs() << " non constant for vmap[v=" << *v
+                       << " ]= " << *VMap[v] << "\n";
+        }
         auto inst = cast<Instruction>(VMap[v]);
         IRBuilder<> ib(inst->getNextNode());
         if (isa<PHINode>(inst))
@@ -4030,8 +4039,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   if (augmenteddata)
     mapping = augmenteddata->tapeIndices;
 
-  auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
-    return gutils->getIndex(std::make_pair(I, u), mapping);
+  auto getIndex = [&](Instruction *I, CacheType u, IRBuilder<> &B) -> unsigned {
+    return gutils->getIndex(std::make_pair(I, u), mapping, B);
   };
 
   // requires is_value_needed_in_reverse, that needs unnecessaryValues
@@ -4663,9 +4672,11 @@ Function *EnzymeLogic::CreateForwardDiff(
 
     gutils->computeMinCache();
 
-    auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
+    auto getIndex = [&](Instruction *I, CacheType u,
+                        IRBuilder<> &B) -> unsigned {
       assert(augmenteddata);
-      return gutils->getIndex(std::make_pair(I, u), augmenteddata->tapeIndices);
+      return gutils->getIndex(std::make_pair(I, u), augmenteddata->tapeIndices,
+                              B);
     };
 
     calculateUnusedValuesInFunction(
@@ -5214,6 +5225,10 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
     return todiff;
   }
 
+  if (EnzymeAssumeUnknownNoFree) {
+    return todiff;
+  }
+
   if (context.req) {
     EmitFailure("IllegalNoFree", context.req->getDebugLoc(), context.req,
                 "Cannot create nofree of instruction-created value: ", *todiff);
@@ -5245,6 +5260,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
     return F;
 
   StringSet<> NoFrees = {
+      "mpfr_greater_p",
       "memchr",
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEC1EPKcRKS3_",
       "_ZSt16__ostream_insertIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_"
@@ -5307,7 +5323,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "MPI_Allreduce",
   };
 
-  if (F->getName().startswith("_ZNSolsE") || NoFrees.count(F->getName()))
+  if (startsWith(F->getName(), "_ZNSolsE") || NoFrees.count(F->getName()))
     return F;
 
   switch (F->getIntrinsicID()) {

@@ -13,22 +13,22 @@ jobs:
   build-linux:
     name: MLIR ${{ matrix.build }} ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    
+
     strategy:
       fail-fast: false
       matrix:
         build: ["Release", "Debug"] # "RelWithDebInfo"
         llbuild: ["Release"]
         os: [openstack22]
-  
+
     timeout-minutes: 500
 
     steps:
-    - name: Install dependencies 
+    - name: Install dependencies
       run: |
           sudo apt-get update
-          sudo apt-get install -y binutils ninja-build cmake gcc g++ python3 python3-dev 
-    
+          sudo apt-get install -y binutils ninja-build cmake gcc g++ python3 python3-dev
+
     - uses: actions/checkout@v3
       with:
         path: 'Enzyme'
@@ -36,7 +36,7 @@ jobs:
     - uses: actions/checkout@v3
       with:
         repository: 'llvm/llvm-project'
-        ref: 'release/16.x'
+        ref: '5ed11e767c0c39a3bc8e035588e7a383849d46a8'
         path: 'llvm-project'
 
     - name: Get MLIR commit hash
@@ -50,7 +50,7 @@ jobs:
       with:
         path: llvm-project/mlir-build
         key: ${{ matrix.llbuild }}-${{ matrix.os }}-mlir-${{ steps.mlir-commit.outputs.sha_short }}
-    
+
     - name: MLIR build
       if: steps.cache-mlir.outputs.cache-hit != 'true'
       working-directory: 'llvm-project'
@@ -66,11 +66,11 @@ jobs:
     - name: Enzyme build
       working-directory: 'Enzyme'
       run: |
-          mkdir enzyme-build && cd enzyme-build 
+          mkdir enzyme-build && cd enzyme-build
           cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=${{ github.workspace }}/llvm-project/mlir-build -DENZYME_MLIR=ON
           ninja
-    
+
     - name: Check enzyme-mlir
       working-directory: 'Enzyme/enzyme-build'
       run: ninja check-enzymemlir
-  
+

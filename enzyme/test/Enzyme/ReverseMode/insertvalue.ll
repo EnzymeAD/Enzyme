@@ -39,14 +39,6 @@ declare double @__enzyme_autodiff(double (double)*, ...)
 ; CHECK-NEXT:   %[[i9:.+]] = load double, double* %[[i8]]
 ; CHECK-NEXT:   %[[i10:.+]] = fadd fast double %[[i9]], %[[i7]]
 ; CHECK-NEXT:   store double %[[i10]], double* %[[i8]]
-; CHECK-NEXT:   %[[i11:.+]] = getelementptr inbounds [3 x double], [3 x double]* %"agg1'de", i32 0, i32 1
-; CHECK-NEXT:   %[[i12:.+]] = load double, double* %[[i11]]
-; CHECK-NEXT:   store double %[[i12]], double* %[[i11]]
-; CHECK-NEXT:   %[[i13:.+]] = extractvalue [3 x double] %[[i5]], 2
-; CHECK-NEXT:   %[[i14:.+]] = getelementptr inbounds [3 x double], [3 x double]* %"agg1'de", i32 0, i32 2
-; CHECK-NEXT:   %[[i15:.+]] = load double, double* %[[i14]]
-; CHECK-NEXT:   %[[i16:.+]] = fadd fast double %[[i15]], %[[i13]]
-; CHECK-NEXT:   store double %[[i16]], double* %[[i14]]
 ; CHECK-NEXT:   store [3 x double] zeroinitializer, [3 x double]* %"agg2'de"
 ; CHECK-NEXT:   %[[m0diffex:.+]] = fmul fast double %4, %x
 ; CHECK-NEXT:   %[[m1diffex:.+]] = fmul fast double %4, %x

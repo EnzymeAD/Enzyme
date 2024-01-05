@@ -58,7 +58,8 @@ private:
   llvm::ArrayRef<DIFFE_TYPE> constant_args;
   DIFFE_TYPE retType;
   TypeResults &TR = gutils->TR;
-  std::function<unsigned(llvm::Instruction *, CacheType)> getIndex;
+  std::function<unsigned(llvm::Instruction *, CacheType, llvm::IRBuilder<> &)>
+      getIndex;
   const std::map<llvm::CallInst *, const std::vector<bool>>
       overwritten_args_map;
   const llvm::SmallPtrSetImpl<llvm::Instruction *> *returnuses;
@@ -76,7 +77,9 @@ public:
   AdjointGenerator(
       DerivativeMode Mode, GradientUtils *gutils,
       llvm::ArrayRef<DIFFE_TYPE> constant_args, DIFFE_TYPE retType,
-      std::function<unsigned(llvm::Instruction *, CacheType)> getIndex,
+      std::function<unsigned(llvm::Instruction *, CacheType,
+                             llvm::IRBuilder<> &)>
+          getIndex,
       const std::map<llvm::CallInst *, const std::vector<bool>>
           overwritten_args_map,
       const llvm::SmallPtrSetImpl<llvm::Instruction *> *returnuses,
@@ -477,7 +480,8 @@ public:
         if (can_modref) {
           if (vd[{-1}].isPossiblePointer()) {
             Value *newip = gutils->cacheForReverse(
-                BuilderZ, placeholder, getIndex(&I, CacheType::Shadow));
+                BuilderZ, placeholder,
+                getIndex(&I, CacheType::Shadow, BuilderZ));
             assert(newip->getType() == type);
             gutils->invertedPointers.insert(std::make_pair(
                 (const Value *)&I, InvertedPointerVH(gutils, newip)));
@@ -543,8 +547,8 @@ public:
                       QueryType::Shadow>(gutils, &I,
                                          DerivativeMode::ReverseModeGradient,
                                          oldUnreachable)) {
-                gutils->cacheForReverse(BuilderZ, newip,
-                                        getIndex(&I, CacheType::Shadow));
+                gutils->cacheForReverse(
+                    BuilderZ, newip, getIndex(&I, CacheType::Shadow, BuilderZ));
               }
               placeholder->replaceAllUsesWith(newip);
               gutils->erase(placeholder);
@@ -565,7 +569,8 @@ public:
               // only make shadow where caching needed
               if (can_modref) {
                 newip = gutils->cacheForReverse(
-                    BuilderZ, placeholder, getIndex(&I, CacheType::Shadow));
+                    BuilderZ, placeholder,
+                    getIndex(&I, CacheType::Shadow, BuilderZ));
                 assert(newip->getType() == type);
                 gutils->invertedPointers.insert(std::make_pair(
                     (const Value *)&I, InvertedPointerVH(gutils, newip)));
@@ -609,12 +614,15 @@ public:
           if (pair.first == &I)
             primalNeededInReverse = true;
         }
+      auto cacheMode = (Mode == DerivativeMode::ReverseModePrimal)
+                           ? DerivativeMode::ReverseModeGradient
+                           : Mode;
       primalNeededInReverse |=
           DifferentialUseAnalysis::is_value_needed_in_reverse<
-              QueryType::Primal>(gutils, &I, Mode, Seen, oldUnreachable);
+              QueryType::Primal>(gutils, &I, cacheMode, Seen, oldUnreachable);
       if (primalNeededInReverse) {
         inst = gutils->cacheForReverse(BuilderZ, newi,
-                                       getIndex(&I, CacheType::Self));
+                                       getIndex(&I, CacheType::Self, BuilderZ));
         assert(inst->getType() == type);
 
         if (Mode == DerivativeMode::ReverseModeGradient ||
@@ -883,11 +891,16 @@ public:
     if (CustomErrorHandler) {
       CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoDerivative,
                          gutils, nullptr, wrap(&BuilderZ));
-      return;
     } else {
       EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-      return;
     }
+    if (!gutils->isConstantValue(&I)) {
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeSplit)
+        setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
+                 BuilderZ);
+    }
+    return;
   }
 
   void visitStoreInst(llvm::StoreInst &SI) {
@@ -1018,23 +1031,26 @@ public:
     if (Mode == DerivativeMode::ForwardMode) {
 
       auto dt = vd[{-1}];
-      for (size_t i = 0; i < storeSize; ++i) {
-        bool Legal = true;
-        dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
-        if (!Legal) {
-          std::string str;
-          raw_string_ostream ss(str);
-          ss << "Cannot deduce single type of store " << I << vd.str()
-             << " size: " << storeSize;
-          if (CustomErrorHandler) {
-            CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                               &TR.analyzer, nullptr, wrap(&BuilderZ));
-          } else {
-            EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
+      // Only need the full type in forward mode, if storing a constant
+      // and therefore may need to zero some floats.
+      if (constantval)
+        for (size_t i = 0; i < storeSize; ++i) {
+          bool Legal = true;
+          dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+          if (!Legal) {
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Cannot deduce single type of store " << I << vd.str()
+               << " size: " << storeSize;
+            if (CustomErrorHandler) {
+              CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
+                                 &TR.analyzer, nullptr, wrap(&BuilderZ));
+            } else {
+              EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
+            }
+            return;
           }
-          return;
         }
-      }
 
       Value *diff = nullptr;
       if (!EnzymeRuntimeActivityCheck && CustomErrorHandler && constantval) {
@@ -1081,8 +1097,14 @@ public:
 
       auto dt = vd[{-1}];
       for (size_t i = start; i < size; ++i) {
+        auto nex = vd[{(int)i}];
+        if ((nex == BaseType::Anything && dt.isFloat()) ||
+            (dt == BaseType::Anything && nex.isFloat())) {
+          nextStart = i;
+          break;
+        }
         bool Legal = true;
-        dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+        dt.checkedOrIn(nex, /*PointerIntSame*/ true, Legal);
         if (!Legal) {
           nextStart = i;
           break;
@@ -1196,7 +1218,8 @@ public:
                 Builder2, align, start, size, isVolatile, ordering, syncScope,
                 mask, prevNoAlias, prevScopes);
             ((DiffeGradientUtils *)gutils)
-                ->addToDiffe(orig_val, diff, Builder2, FT, start, size, mask);
+                ->addToDiffe(orig_val, diff, Builder2, FT, start, size, {},
+                             mask);
           }
           break;
         }
@@ -1905,49 +1928,81 @@ public:
             8;
 
       if (!gutils->isConstantValue(orig_inserted)) {
-        auto it = TR.intType(size0, orig_inserted, /*errIfFalse*/ false);
-        Type *flt = it.isFloat();
-        if (!it.isKnown()) {
-          bool found = false;
+        auto TT = TR.query(orig_inserted);
 
-          if (looseTypeAnalysis) {
-            if (orig_inserted->getType()->isFPOrFPVectorTy()) {
-              flt = orig_inserted->getType()->getScalarType();
-              found = true;
-            } else if (orig_inserted->getType()->isIntOrIntVectorTy() ||
-                       orig_inserted->getType()->isPointerTy()) {
-              flt = nullptr;
-              found = true;
+        unsigned start = 0;
+        Value *dindex = nullptr;
+
+        while (1) {
+          unsigned nextStart = size0;
+
+          auto dt = TT[{-1}];
+          for (size_t i = start; i < size0; ++i) {
+            auto nex = TT[{(int)i}];
+            if ((nex == BaseType::Anything && dt.isFloat()) ||
+                (dt == BaseType::Anything && nex.isFloat())) {
+              nextStart = i;
+              break;
+            }
+            bool Legal = true;
+            dt.checkedOrIn(nex, /*PointerIntSame*/ true, Legal);
+            if (!Legal) {
+              nextStart = i;
+              break;
             }
           }
-          if (!found) {
-            if (CustomErrorHandler) {
+          Type *flt = dt.isFloat();
+          if (!dt.isKnown()) {
+            bool found = false;
+            if (looseTypeAnalysis) {
+              if (orig_inserted->getType()->isFPOrFPVectorTy()) {
+                flt = orig_inserted->getType()->getScalarType();
+                found = true;
+              } else if (orig_inserted->getType()->isIntOrIntVectorTy() ||
+                         orig_inserted->getType()->isPointerTy()) {
+                flt = nullptr;
+                found = true;
+              }
+            }
+            if (!found) {
               std::string str;
               raw_string_ostream ss(str);
-              ss << "Cannot deduce type of insertvalue " << IVI;
-              CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
-                                 &TR.analyzer, nullptr, wrap(&Builder2));
-            } else {
-              EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
-                          "failed to deduce type of insertvalue ", IVI);
+              ss << "Cannot deduce type of insertvalue ins " << IVI
+                 << " size: " << size0 << " TT: " << TT.str();
+              if (CustomErrorHandler) {
+                CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
+                                   &TR.analyzer, nullptr, wrap(&Builder2));
+              } else {
+                EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
+                            ss.str());
+              }
             }
           }
-        }
-        if (flt) {
-          auto rule = [&](Value *prediff) {
-            return Builder2.CreateExtractValue(prediff, IVI.getIndices());
-          };
-          auto prediff = diffe(&IVI, Builder2);
-          auto dindex =
-              applyChainRule(orig_inserted->getType(), Builder2, rule, prediff);
-          addToDiffe(orig_inserted, dindex, Builder2, flt);
+
+          if (flt) {
+            if (!dindex) {
+              auto rule = [&](Value *prediff) {
+                return Builder2.CreateExtractValue(prediff, IVI.getIndices());
+              };
+              auto prediff = diffe(&IVI, Builder2);
+              dindex = applyChainRule(orig_inserted->getType(), Builder2, rule,
+                                      prediff);
+            }
+
+            auto TT = TR.query(orig_inserted);
+
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(orig_inserted, dindex, Builder2, flt, start,
+                             nextStart - start);
+          }
+          if (nextStart == size0)
+            break;
+          start = nextStart;
         }
       }
 
       size_t size1 = 1;
-      if (orig_agg->getType()->isSized() &&
-          (orig_agg->getType()->isIntOrIntVectorTy() ||
-           orig_agg->getType()->isFPOrFPVectorTy()))
+      if (orig_agg->getType()->isSized())
         size1 =
             (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
                  orig_agg->getType()) +
@@ -1955,15 +2010,79 @@ public:
             8;
 
       if (!gutils->isConstantValue(orig_agg)) {
-        auto rule = [&](Value *prediff) {
-          return Builder2.CreateInsertValue(
-              prediff, Constant::getNullValue(orig_inserted->getType()),
-              IVI.getIndices());
-        };
-        auto prediff = diffe(&IVI, Builder2);
-        auto dindex =
-            applyChainRule(orig_agg->getType(), Builder2, rule, prediff);
-        addToDiffe(orig_agg, dindex, Builder2, TR.addingType(size1, orig_agg));
+
+        auto TT = TR.query(orig_agg);
+
+        unsigned start = 0;
+
+        Value *dindex = nullptr;
+
+        while (1) {
+          unsigned nextStart = size1;
+
+          auto dt = TT[{-1}];
+          for (size_t i = start; i < size1; ++i) {
+            auto nex = TT[{(int)i}];
+            if ((nex == BaseType::Anything && dt.isFloat()) ||
+                (dt == BaseType::Anything && nex.isFloat())) {
+              nextStart = i;
+              break;
+            }
+            bool Legal = true;
+            dt.checkedOrIn(nex, /*PointerIntSame*/ true, Legal);
+            if (!Legal) {
+              nextStart = i;
+              break;
+            }
+          }
+          Type *flt = dt.isFloat();
+          if (!dt.isKnown()) {
+            bool found = false;
+            if (looseTypeAnalysis) {
+              if (orig_agg->getType()->isFPOrFPVectorTy()) {
+                flt = orig_agg->getType()->getScalarType();
+                found = true;
+              } else if (orig_agg->getType()->isIntOrIntVectorTy() ||
+                         orig_agg->getType()->isPointerTy()) {
+                flt = nullptr;
+                found = true;
+              }
+            }
+            if (!found) {
+              std::string str;
+              raw_string_ostream ss(str);
+              ss << "Cannot deduce type of insertvalue agg " << IVI
+                 << " start: " << start << " size: " << size1
+                 << " TT: " << TT.str();
+              if (CustomErrorHandler) {
+                CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
+                                   &TR.analyzer, nullptr, wrap(&Builder2));
+              } else {
+                EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
+                            ss.str());
+              }
+            }
+          }
+
+          if (flt) {
+            if (!dindex) {
+              auto rule = [&](Value *prediff) {
+                return Builder2.CreateInsertValue(
+                    prediff, Constant::getNullValue(orig_inserted->getType()),
+                    IVI.getIndices());
+              };
+              auto prediff = diffe(&IVI, Builder2);
+              dindex =
+                  applyChainRule(orig_agg->getType(), Builder2, rule, prediff);
+            }
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(orig_agg, dindex, Builder2, flt, start,
+                             nextStart - start);
+          }
+          if (nextStart == size1)
+            break;
+          start = nextStart;
+        }
       }
 
       setDiffe(&IVI,
@@ -2239,7 +2358,7 @@ public:
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
       auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
-      auto FT = TR.query(&BO).IsAllFloat(size);
+      auto FT = TR.query(&BO).IsAllFloat(size, dl);
       auto eFT = FT;
       if (FT)
         for (int i = 0; i < 2; ++i) {
@@ -2269,7 +2388,7 @@ public:
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
       auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
-      auto FT = TR.query(&BO).IsAllFloat(size);
+      auto FT = TR.query(&BO).IsAllFloat(size, dl);
       auto eFT = FT;
       // If ^ against 0b10000000000 and a float the result is a float
       if (FT)
@@ -2307,7 +2426,7 @@ public:
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
       auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
-      auto FT = TR.query(&BO).IsAllFloat(size);
+      auto FT = TR.query(&BO).IsAllFloat(size, dl);
       auto eFT = FT;
       // If & against 0b10000000000 and a float the result is a float
       if (FT)
@@ -2484,7 +2603,7 @@ public:
       auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
       Type *diffTy = gutils->getShadowType(BO.getType());
 
-      auto FT = TR.query(&BO).IsAllFloat(size);
+      auto FT = TR.query(&BO).IsAllFloat(size, dl);
       auto eFT = FT;
       if (FT)
         for (int i = 0; i < 2; ++i) {
@@ -2512,7 +2631,7 @@ public:
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
       auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
-      auto FT = TR.query(&BO).IsAllFloat(size);
+      auto FT = TR.query(&BO).IsAllFloat(size, dl);
       auto eFT = FT;
 
       Value *dif[2] = {constantval0 ? nullptr : diffe(orig_op0, Builder2),
@@ -2553,7 +2672,7 @@ public:
       Value *dif[2] = {constantval0 ? nullptr : diffe(orig_op0, Builder2),
                        constantval1 ? nullptr : diffe(orig_op1, Builder2)};
 
-      auto FT = TR.query(&BO).IsAllFloat(size);
+      auto FT = TR.query(&BO).IsAllFloat(size, dl);
       auto eFT = FT;
       // If & against 0b10000000000 and a float the result is a float
       if (FT)
@@ -3505,7 +3624,7 @@ public:
         BuilderZ.setFastMathFlags(getFast());
 
         gutils->cacheForReverse(BuilderZ, newCall,
-                                getIndex(&II, CacheType::Self));
+                                getIndex(&II, CacheType::Self, BuilderZ));
       }
     }
     eraseIfUnused(II);
@@ -4119,7 +4238,7 @@ public:
           pre_args.push_back(alloc);
           assert(tape);
           gutils->cacheForReverse(BuilderZ, tape,
-                                  getIndex(&call, CacheType::Tape));
+                                  getIndex(&call, CacheType::Tape, BuilderZ));
         }
 
         auto numargs = ConstantInt::get(Type::getInt32Ty(call.getContext()),
@@ -4173,8 +4292,8 @@ public:
           if (Mode == DerivativeMode::ReverseModeGradient) {
             if (tape == nullptr)
               tape = BuilderZ.CreatePHI(subdata->tapeType, 0, "tapeArg");
-            tape = gutils->cacheForReverse(BuilderZ, tape,
-                                           getIndex(&call, CacheType::Tape));
+            tape = gutils->cacheForReverse(
+                BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
           }
           tape = lookup(tape, Builder2);
           auto alloc = IRBuilder<>(gutils->inversionAllocs)
@@ -4738,8 +4857,8 @@ public:
 
         assert(!tape->getType()->isEmptyTy());
         gutils->TapesToPreventRecomputation.insert(cast<Instruction>(tape));
-        tape = gutils->cacheForReverse(BuilderZ, tape,
-                                       getIndex(&call, CacheType::Tape));
+        tape = gutils->cacheForReverse(
+            BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
         args.push_back(tape);
       }
 
@@ -5294,8 +5413,8 @@ public:
           } else {
             gutils->TapesToPreventRecomputation.insert(cast<Instruction>(tape));
           }
-          tape = gutils->cacheForReverse(BuilderZ, tape,
-                                         getIndex(&call, CacheType::Tape));
+          tape = gutils->cacheForReverse(
+              BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
         }
 
         if (subretused) {
@@ -5358,8 +5477,8 @@ public:
                                          oldUnreachable);
             }
             if (primalNeededInReverse)
-              gutils->cacheForReverse(BuilderZ, dcall,
-                                      getIndex(&call, CacheType::Self));
+              gutils->cacheForReverse(
+                  BuilderZ, dcall, getIndex(&call, CacheType::Self, BuilderZ));
           }
           BuilderZ.SetInsertPoint(newCall->getNextNode());
           gutils->erase(newCall);
@@ -5390,8 +5509,8 @@ public:
                                       ->getElementType(tval),
                 1, "tapeArg");
           }
-          tape = gutils->cacheForReverse(BuilderZ, tape,
-                                         getIndex(&call, CacheType::Tape));
+          tape = gutils->cacheForReverse(
+              BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
         }
 
         if (subretused) {
@@ -5401,7 +5520,8 @@ public:
             cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
                                               call.getName() + "_tmpcacheB");
             cachereplace = gutils->cacheForReverse(
-                BuilderZ, cachereplace, getIndex(&call, CacheType::Self));
+                BuilderZ, cachereplace,
+                getIndex(&call, CacheType::Self, BuilderZ));
           } else {
             auto pn = BuilderZ.CreatePHI(
                 call.getType(), 1, (call.getName() + "_replacementE").str());
@@ -5461,8 +5581,8 @@ public:
             newip = placeholder;
           }
 
-          newip = gutils->cacheForReverse(BuilderZ, newip,
-                                          getIndex(&call, CacheType::Shadow));
+          newip = gutils->cacheForReverse(
+              BuilderZ, newip, getIndex(&call, CacheType::Shadow, BuilderZ));
 
           gutils->invertedPointers.insert(std::make_pair(
               (const Value *)&call, InvertedPointerVH(gutils, newip)));
@@ -5509,7 +5629,8 @@ public:
           cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
                                             call.getName() + "_cachereplace2");
           cachereplace = gutils->cacheForReverse(
-              BuilderZ, cachereplace, getIndex(&call, CacheType::Self));
+              BuilderZ, cachereplace,
+              getIndex(&call, CacheType::Self, BuilderZ));
         } else {
           auto pn = BuilderZ.CreatePHI(call.getType(), 1,
                                        call.getName() + "_replacementC");
@@ -5811,7 +5932,7 @@ public:
     // not fully understood by LLVM. One of the results of this is that the
     // visitor dispatches to visitCallInst, rather than visitIntrinsicInst, when
     // presented with the intrinsic - hence why we are handling it here.
-    if (getFuncNameFromCall(&call).startswith("llvm.intel.subscript")) {
+    if (startsWith(getFuncNameFromCall(&call), ("llvm.intel.subscript"))) {
       assert(isa<IntrinsicInst>(call));
       visitIntrinsicInst(cast<IntrinsicInst>(call));
       return;
@@ -5841,8 +5962,11 @@ public:
 
     bool subretused = false;
     bool shadowReturnUsed = false;
-    DIFFE_TYPE subretType =
-        gutils->getReturnDiffeType(&call, &subretused, &shadowReturnUsed);
+    auto smode = Mode;
+    if (smode == DerivativeMode::ReverseModeGradient)
+      smode = DerivativeMode::ReverseModePrimal;
+    DIFFE_TYPE subretType = gutils->getReturnDiffeType(
+        &call, &subretused, &shadowReturnUsed, smode);
 
     if (Mode == DerivativeMode::ForwardMode) {
       auto found = customFwdCallHandlers.find(funcName);
@@ -5936,7 +6060,7 @@ public:
           if (tape) {
             tapeType = tape->getType();
             gutils->cacheForReverse(BuilderZ, tape,
-                                    getIndex(&call, CacheType::Tape));
+                                    getIndex(&call, CacheType::Tape, BuilderZ));
           }
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
@@ -5968,9 +6092,9 @@ public:
             tapeType = (llvm::Type *)fd->second;
 
             tape = BuilderZ.CreatePHI(tapeType, 0);
-            tape = gutils->cacheForReverse(BuilderZ, tape,
-                                           getIndex(&call, CacheType::Tape),
-                                           /*ignoreType*/ true);
+            tape = gutils->cacheForReverse(
+                BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ),
+                /*ignoreType*/ true);
           }
           if (tape)
             tape = gutils->lookupM(tape, Builder2);
@@ -5999,11 +6123,21 @@ public:
                      gutils->getShadowType(call.getType()));
               placeholder->replaceAllUsesWith(invertedReturn);
               gutils->erase(placeholder);
-            } else
-              invertedReturn = placeholder;
-
-            invertedReturn = gutils->cacheForReverse(
-                BuilderZ, invertedReturn, getIndex(&call, CacheType::Shadow));
+              invertedReturn = gutils->cacheForReverse(
+                  BuilderZ, invertedReturn,
+                  getIndex(&call, CacheType::Shadow, BuilderZ));
+            } else {
+              auto idx = getIndex(&call, CacheType::Shadow, BuilderZ);
+              invertedReturn =
+                  gutils->cacheForReverse(BuilderZ, placeholder, idx);
+              if (idx == -2) {
+                if (placeholder->getType() != invertedReturn->getType())
+                  llvm::errs() << " place: " << *placeholder
+                               << "  invRet: " << *invertedReturn;
+                placeholder->replaceAllUsesWith(invertedReturn);
+                gutils->erase(placeholder);
+              }
+            }
 
             gutils->invertedPointers.insert(
                 std::make_pair((const Value *)&call,
@@ -6032,7 +6166,8 @@ public:
             gutils->erase(newCall);
           }
           normalReturn = gutils->cacheForReverse(
-              BuilderZ, normalReturn, getIndex(&call, CacheType::Self));
+              BuilderZ, normalReturn,
+              getIndex(&call, CacheType::Self, BuilderZ));
         } else {
           if (normalReturn && normalReturn != newCall) {
             assert(normalReturn->getType() == newCall->getType());
@@ -6059,7 +6194,15 @@ public:
       return;
 
     if (gutils->isConstantInstruction(&call) &&
-        gutils->isConstantValue(&call)) {
+        (gutils->isConstantValue(&call) || !shadowReturnUsed)) {
+      if (!gutils->isConstantValue(&call)) {
+        auto found = gutils->invertedPointers.find(&call);
+        if (found != gutils->invertedPointers.end()) {
+          PHINode *placeholder = cast<PHINode>(&*found->second);
+          gutils->invertedPointers.erase(found);
+          gutils->erase(placeholder);
+        }
+      }
       bool noFree = Mode == DerivativeMode::ForwardMode;
       noFree |= call.hasFnAttr(Attribute::NoFree);
       if (!noFree && called) {
@@ -6095,7 +6238,7 @@ public:
           gutils->knownRecomputeHeuristic.end()) {
         if (!gutils->knownRecomputeHeuristic[&call]) {
           gutils->cacheForReverse(BuilderZ, newCall,
-                                  getIndex(&call, CacheType::Self));
+                                  getIndex(&call, CacheType::Self, BuilderZ));
           eraseIfUnused(call);
           return;
         }
@@ -6133,7 +6276,7 @@ public:
           }
           if (primalNeededInReverse) {
             gutils->cacheForReverse(BuilderZ, newCall,
-                                    getIndex(&call, CacheType::Self));
+                                    getIndex(&call, CacheType::Self, BuilderZ));
             eraseIfUnused(call);
             return;
           }

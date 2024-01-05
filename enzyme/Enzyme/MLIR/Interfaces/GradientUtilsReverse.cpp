@@ -11,9 +11,9 @@
 #include "Dialect/Ops.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
-#include "mlir/IR/FunctionInterfaces.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
 // TODO: this shouldn't depend on specific dialects except Enzyme.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -36,10 +36,10 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     ArrayRef<DIFFE_TYPE> ArgDiffeTypes_, IRMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode_, unsigned width, SymbolTableCollection &symbolTable_)
-    : newFunc(newFunc_), Logic(Logic), mode(mode_), oldFunc(oldFunc_), TA(TA_),
-      width(width), ArgDiffeTypes(ArgDiffeTypes_),
+    : newFunc(newFunc_), oldFunc(oldFunc_), Logic(Logic), mode(mode_),
       originalToNewFn(originalToNewFn_),
-      originalToNewFnOps(originalToNewFnOps_), symbolTable(symbolTable_) {
+      originalToNewFnOps(originalToNewFnOps_), TA(TA_), width(width),
+      ArgDiffeTypes(ArgDiffeTypes_), symbolTable(symbolTable_) {
 
   initInitializationBlock(invertedPointers_, ArgDiffeTypes_);
 }
@@ -98,7 +98,7 @@ std::pair<Value, Value> MGradientUtilsReverse::getNewCache(Type t) {
 // cache is (might be) "pop only"
 Value MGradientUtilsReverse::initAndPushCache(Value v, OpBuilder &builder) {
   auto [pushCache, popCache] = getNewCache(getCacheType(v.getType()));
-  auto pushOp = builder.create<enzyme::PushOp>(v.getLoc(), pushCache, v);
+  builder.create<enzyme::PushOp>(v.getLoc(), pushCache, v);
   return popCache;
 }
 

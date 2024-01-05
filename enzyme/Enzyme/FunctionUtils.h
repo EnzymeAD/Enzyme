@@ -57,6 +57,10 @@
 
 //;
 
+extern "C" {
+extern llvm::cl::opt<bool> EnzymeAlwaysInlineDiff;
+}
+
 class PreProcessCache {
 public:
   PreProcessCache();
@@ -340,7 +344,7 @@ static inline void calculateUnusedValues(
     }
   }
 
-  if (false && oldFunc.getName().endswith("subfn")) {
+  if (false && endsWith(oldFunc.getName(), "subfn")) {
     llvm::errs() << "Prepping values for: " << oldFunc.getName()
                  << " returnValue: " << returnValue << "\n";
     for (auto v : unnecessaryInstructions) {
