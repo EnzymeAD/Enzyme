@@ -204,7 +204,9 @@ def AssertingInactiveArg : InactiveArgSpec {
 class GlobalExpr<bit uses_primal, bit uses_shadow, string val> : Operation<uses_primal, uses_shadow>{
   string value = val;
 }
-def MantissaMaskOfReturn : GlobalExpr</*primal*/0, /*shadow*/0, "({\n"
+// Create a bit-mask whose bitwise "and" with a floating-point number gives
+// the largest power of two not larger than that number (in terms of absolute values).
+def MantissaMaskOfReturnForFrexp : GlobalExpr</*primal*/0, /*shadow*/0, "({\n"
 "    auto ty = call.getType();\n"
 "    unsigned low = 0;\n"
 "    unsigned high = 0;\n"
@@ -224,7 +226,10 @@ def MantissaMaskOfReturn : GlobalExpr</*primal*/0, /*shadow*/0, "({\n"
 "    } else if (ty->isX86_FP80Ty()) {\n"
 "      tsize = 80;\n"
 "      high = tsize - 1;\n"
-"      low = high - 15;\n"
+"      low = high - 16;\n"
+       // x86_fp80 has only 15 exponent bits, but we must also
+       // retain the most-significant bit of the mantissa as
+       // there is no implicit leading 1.
 "    } else if (ty->isFP128Ty()) {\n"
 "      tsize = 128;\n"
 "      high = tsize - 1;\n"
@@ -709,7 +714,7 @@ def : CallPattern<(Op $x, $expout),
                       (DiffeRet),
                       (FMul
                         (BitCast
-                          (And (MantissaMaskOfReturn):$mask, (BitCast $x, (TypeOf $mask)) ),
+                          (And (MantissaMaskOfReturnForFrexp):$mask, (BitCast $x, (TypeOf $mask)) ),
                           (TypeOf $x)
                         ),
                         (ConstantFP<"2"> $x)
