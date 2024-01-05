@@ -271,3 +271,20 @@ func.func @caller() -> !llvm.ptr {
   %1 = call @callee() {tag = "func-return-2"} : () -> !llvm.ptr
   return %0 : !llvm.ptr
 }
+
+
+// -----
+
+// CHECK: points-to-pointer sets
+// CHECK-NOT: points to {<unknown>}
+// CHECK: other points to unknown: 0
+func.func private @callee(!llvm.ptr {llvm.readnone}) attributes {
+    memory = #llvm.memory_effects<other = read,
+                                  argMem = readwrite,
+                                  inaccessibleMem = none>
+}
+
+func.func @caller(%arg0: !llvm.ptr {enzyme.tag = "argument"}) {
+  call @callee(%arg0) : (!llvm.ptr) -> ()
+  return
+}
