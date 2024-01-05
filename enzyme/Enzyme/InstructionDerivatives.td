@@ -311,10 +311,15 @@ def : CallPattern<(Op $x),
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
                   >;
-
 def : CallPattern<(Op $x),
                   ["tanhf"],
                   [(FDiv (DiffeRet), (FMul(Call<(SameTypesFunc<"coshf">), [ReadNone,NoUnwind]> $x):$c, $c))],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+def : CallPattern<(Op $x),
+                  ["tanhl"],
+                  [(FDiv (DiffeRet), (FMul(Call<(SameTypesFunc<"coshl">), [ReadNone,NoUnwind]> $x):$c, $c))],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
                   >;
@@ -331,6 +336,12 @@ def : CallPattern<(Op $x),
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
                   >;
+def : CallPattern<(Op $x),
+                  ["coshl"],
+                  [(FMul (DiffeRet), (Call<(SameTypesFunc<"sinhl">), [ReadNone,NoUnwind]> $x))],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
 
 def : CallPattern<(Op $x),
                   ["sinh"],
@@ -341,6 +352,12 @@ def : CallPattern<(Op $x),
 def : CallPattern<(Op $x),
                   ["sinhf"],
                   [(FMul (DiffeRet), (Call<(SameTypesFunc<"coshf">), [ReadNone,NoUnwind]> $x))],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+def : CallPattern<(Op $x),
+                  ["sinhl"],
+                  [(FMul (DiffeRet), (Call<(SameTypesFunc<"coshl">), [ReadNone,NoUnwind]> $x))],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
                   >;
