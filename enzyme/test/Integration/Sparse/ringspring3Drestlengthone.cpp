@@ -8,8 +8,6 @@
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
 
 // everything should be always inline
-// XFAIL: *
-
 
 #include <stdio.h>
 #include <assert.h>

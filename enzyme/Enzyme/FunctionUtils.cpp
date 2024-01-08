@@ -2921,6 +2921,12 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             fval == SI->getFalseValue())
           return val;
         push(I);
+        if (auto CI = dyn_cast<ConstantInt>(cond)) {
+          if (CI->isOne())
+            return tval;
+          else
+            return fval;
+        }
         return pushcse(B.CreateSelect(cond, tval, fval, "sel." + I->getName()));
       }
     }
@@ -4114,6 +4120,82 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       Value *prelhs = cur->getOperand(i);
       Value *b = cur->getOperand(1 - i);
 
+      // fmul (fmul x:constant, y):z, b:constant .
+      if (auto C = dyn_cast<Constant>(b))
+      if (auto z = dyn_cast<BinaryOperator>(prelhs)) {
+        if (z->getOpcode() == Instruction::FMul) {
+          for (int j = 0; j < 2; j++) {
+            auto x = z->getOperand(i);
+            if (!isa<Constant>(x)) continue;
+            auto y = z->getOperand(1-i);
+            Value *inner_fmul = pushcse(B.CreateFMulFMF(x, b, cur));
+            Value *outer_fmul = pushcse(B.CreateFMulFMF(inner_fmul, y, z));
+            replaceAndErase(cur, outer_fmul);
+            return "FMulFMulConstantReorder";
+          }
+        }
+      }
+
+      auto directlySparse = [](Value* z) {
+        if (isa<UIToFPInst>(z)) return true;
+        if (isa<SIToFPInst>(z)) return true;
+        if (isa<ZExtInst>(z)) return true;
+        if (isa<SExtInst>(z)) return true;
+        if (auto SI = dyn_cast<SelectInst>(z)) {
+          if (auto CI = dyn_cast<ConstantInt>(SI->getTrueValue()))
+            if (CI->isZero()) return true;
+          if (auto CI = dyn_cast<ConstantInt>(SI->getFalseValue()))
+            if (CI->isZero()) return true;
+        }
+        return false;
+      };
+
+      auto integralFloat = [](Value* z) {
+        if (auto C = dyn_cast<ConstantFP>(z)) {
+        APSInt Tmp(64);
+        bool isExact = false;
+        C->getValue().convertToInteger(Tmp, llvm::RoundingMode::TowardZero,
+                                       &isExact);
+        if (isExact || C->isZero()) {
+          return true;
+        }
+        }
+        return false;
+      };
+
+      // fmul (fmul x:sparse, y):z, b .
+      //.  1) If x and y are both sparse, do nothing and let the inner fmul be simplified
+      //.     into a single sparse instruction
+      //.  Thus, we may assume y is not sparse.
+      //.  2) if b is sparse, swap it to be fmul (fmul x, b), y. so the inner sparsity can be
+      //.     simplified
+      //.  3) otherwise b is not sparse and we should push the sparsity to be the outermost value
+      if (auto z = dyn_cast<BinaryOperator>(prelhs)) {
+        if (z->getOpcode() == Instruction::FMul) {
+          for (int j = 0; j < 2; j++) {
+            auto x = z->getOperand(i);
+            if (!directlySparse(x)) continue;
+            auto y = z->getOperand(1-i);
+            if (directlySparse(y)) continue;
+
+            if (directlySparse(b) || integralFloat(b)) {
+                push(z);
+                Value *inner_fmul = pushcse(B.CreateFMulFMF(x, b, cur, "mulisr." + cur->getName()));
+                Value *outer_fmul = pushcse(B.CreateFMulFMF(inner_fmul, y, z, "mulisr." + z->getName()));
+                replaceAndErase(cur, outer_fmul);
+                return "FMulFMulSparseReorder";
+            } else {
+                push(z);
+                Value *inner_fmul = pushcse(B.CreateFMulFMF(y, b, cur, "mulisp." + cur->getName()));
+                Value *outer_fmul = pushcse(B.CreateFMulFMF(inner_fmul, x, z, "mulisp." + z->getName()));
+                replaceAndErase(cur, outer_fmul);
+                return "FMulFMulSparsePush";
+            }
+          }
+        }
+      }
+
+      /*
       auto contains = [](MDNode *MD, Value *V) {
         if (!MD)
           return false;
@@ -4126,7 +4208,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       };
 
       // fmul (sitofp a), b -> select (a == 0), 0 [noprop fmul ( sitofp a), b]
-      if (!contains(hasMetadata(cur, "enzyme_fmulnoprop"), prelhs))
+      if (true || !contains(hasMetadata(cur, "enzyme_fmulnoprop"), prelhs))
         if (auto ext = dyn_cast<CastInst>(prelhs)) {
           if (ext->getOpcode() == Instruction::UIToFP ||
               ext->getOpcode() == Instruction::SIToFP) {
@@ -4158,6 +4240,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             return "FMulSIToFPProp";
           }
         }
+      */
 
       // fmul (select c, 0, a), b -> select c, 0 (fmul a, b)
       if (auto SI = dyn_cast<SelectInst>(prelhs)) {
@@ -5421,16 +5504,15 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
           Q.insert(&I);
   }
 
-  // llvm::errs() << " pre fix inner: " << F << "\n";
+  llvm::errs() << " pre fix inner: " << F << "\n";
 
   // Full simplification
   while (!Q.empty()) {
     auto cur = Q.pop_back_val();
     SetVector<Instruction *> prev(Q.begin(), Q.end());
-    // llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
+    llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
     auto changed = fixSparse_inner(cur, F, Q, DT, SE, LI, DL);
     (void)changed;
-    /*
     if (changed) {
     llvm::errs() << "changed: " << *changed << "\n";
 
@@ -5439,7 +5521,6 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
         llvm::errs() << " + " << *I << "\n";
     llvm::errs() << F << "\n\n";
     }
-    */
   }
 
   SmallVector<std::pair<BasicBlock *, BranchInst *>, 1> sparseBlocks;
