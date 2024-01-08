@@ -5605,37 +5605,26 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
                 auto L = LI.getLoopFor(blk);
                 if (!L) {
                   legalToSparse = false;
-                  llvm::errs() << " F: " << F << "\n";
-                  llvm::errs()
-                      << " Sparsification disabled, could not find loop for : "
-                      << *blk << "\n";
+                  EmitFailure("NoSparsification", br->getDebugLoc(), br, "F: ", F, "\nCould not find loop for: ", *blk);
                   break;
                 }
                 auto idx = L->getCanonicalInductionVariable();
                 if (!idx) {
                   legalToSparse = false;
-                  llvm::errs() << " F: " << F << "\n";
-                  llvm::errs() << " L: " << *L << "\n";
-                  llvm::errs()
-                      << " Sparsification disabled, could not find loop index "
-                      << *L->getHeader() << "\n";
+                  EmitFailure("NoSparsification", br->getDebugLoc(), br, "F: ", F, "\nL:", *L, "\nCould not find loop index: ", *L->getHeader());
                   break;
                 }
                 assert(idx);
                 auto preheader = L->getLoopPreheader();
                 if (!preheader) {
                   legalToSparse = false;
-                  llvm::errs() << " F: " << F << "\n";
-                  llvm::errs() << " L: " << *L << "\n";
-                  llvm::errs() << " Sparsification disabled, could not find "
-                                  "loop preheader\n";
+                  EmitFailure("NoSparsification", br->getDebugLoc(), br, "F: ", F, "\nL:", *L, "\nCould not find loop preheader");
                   break;
                 }
                 sparseBlocks.emplace_back(blk, br);
               }
 
   if (!legalToSparse) {
-    llvm::errs() << " was found not legal to sparsify\n";
     return;
   }
 
@@ -5646,6 +5635,8 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
                                            std::shared_ptr<const Constraints>>,
                                  1>>>
       forSparsification;
+
+  bool sawError = false;
 
   for (auto [blk, br] : sparseBlocks) {
     auto L = LI.getLoopFor(blk);
@@ -5676,7 +5667,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
         return true;
       if (isa<ICmpInst>(I))
         return false;
-      llvm::errs() << " bad datadependent values check " << *val << "\n";
+      EmitFailure("NoSparsification", I->getDebugLoc(), I, " No sparsification: bad datadepedent values check: ", *I);
       legal = false;
       return true;
     };
@@ -5688,25 +5679,25 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
 
     //
     std::function<std::shared_ptr<const Constraints>(
-        Value *, std::shared_ptr<const Constraints>)>
+        Value *, std::shared_ptr<const Constraints>, Instruction* scope)>
         getSparseConditions =
-            [&](Value *val, std::shared_ptr<const Constraints> defaultFloat)
+            [&](Value *val, std::shared_ptr<const Constraints> defaultFloat, Instruction* scope)
         -> std::shared_ptr<const Constraints> {
       if (auto I = dyn_cast<Instruction>(val)) {
         // Binary `and` is a bit-wise `umin`.
         if (I->getOpcode() == Instruction::And) {
-          auto res = getSparseConditions(I->getOperand(0), Constraints::all())
+          auto res = getSparseConditions(I->getOperand(0), Constraints::all(), I)
                          ->andB(getSparseConditions(I->getOperand(1),
-                                                    Constraints::all()),
+                                                    Constraints::all(), I),
                                 SE);
           return res;
         }
 
         // Binary `or` is a bit-wise `umax`.
         if (I->getOpcode() == Instruction::Or) {
-          auto res = getSparseConditions(I->getOperand(0), Constraints::none())
+          auto res = getSparseConditions(I->getOperand(0), Constraints::none(), I)
                          ->orB(getSparseConditions(I->getOperand(1),
-                                                   Constraints::none()),
+                                                   Constraints::none(), I),
                                SE);
           return res;
         }
@@ -5741,7 +5732,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
                 }
               }
             }
-            llvm::errs() << " not sparse solvable " << *sub1 << "\n";
+            EmitFailure("NoSparsification", I->getDebugLoc(), I, " No sparsification: not sparse solvable(icmp): ", *sub1);
             legal = false;
           }
         }
@@ -5760,31 +5751,29 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
         }
       }
 
-      llvm::errs() << " not sparse solvable " << *val << "\n";
+      EmitFailure("NoSparsification", scope->getDebugLoc(), scope, " No sparsification: not sparse solvable: ", *val);
       legal = false;
       return Constraints::all();
     };
 
+    Instruction * context = isa<Instruction>(cond) ? cast<Instruction>(cond) : idx;
     auto solutions = getSparseConditions(cond, negated ? Constraints::all()
-                                                       : Constraints::none());
+                                                       : Constraints::none(), context);
     if (!negated)
       solutions = solutions->notB();
-    if (!legal)
+    if (!legal) {
+      sawError = true;
       continue;
+    }
 
     if (!solutions->canEvaluateSolutions()) {
-      llvm::errs() << "F: " << F << "\n";
-      llvm::errs() << " L: " << *L << " blk: " << *blk << "\n";
-      llvm::errs() << " cond: " << *cond << " negated: " << negated << "\n";
-
-      llvm::errs() << " not sparse solvable " << *solutions << "\n";
-      legal = false;
+      EmitFailure("NoSparsification", context->getDebugLoc(), context, "F: ", F, "\nL: ", *L, "\ncond: ", *cond, " negated:", negated, "\n No sparsification: not sparse solvable(solneval): solutions:",*solutions);
+      sawError = true;
       continue;
     }
     if (solutions == Constraints::none()) {
-      llvm::errs() << "F: " << F << "\n";
-      llvm::errs() << " L: " << *L << " blk: " << *blk << "\n";
-      llvm::errs() << " cond: " << *cond << " negated: " << negated << "\n";
+      EmitFailure("NoSparsification", context->getDebugLoc(), context, "F: ", F, "\nL: ", *L, "\ncond: ", *cond, " negated:", negated, "\n No sparsification: not sparse solvable(nosoltn): solutions:",*solutions);
+      sawError = true;
     }
     llvm::errs() << " found solvable solutions " << *solutions << "\n";
 
@@ -5829,8 +5818,11 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     forSparsification[L].second.emplace_back(blk, solutions);
   }
 
+  if (sawError) return;
+
   if (forSparsification.size() == 0) {
     llvm::errs() << " found no stores for sparsification\n";
+    assert(0);
     return;
   }
 
