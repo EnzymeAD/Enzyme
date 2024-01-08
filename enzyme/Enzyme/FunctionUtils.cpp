@@ -2604,8 +2604,26 @@ static bool isNot(Value *a, Value *b) {
   return false;
 }
 
+struct compare_insts {
+public:
+  bool operator()(Instruction * A, Instruction *B) const {
+  if (A->getParent() != B->getParent())
+    return A < B;
+  return A->comesBefore(B);
+}
+};
+
+class DominatorOrderSet : public std::set<Instruction*, compare_insts> {
+public:
+  DominatorOrderSet() : std::set<Instruction*, compare_insts>(compare_insts{}) {}
+  DominatorOrderSet(std::set<Instruction*, compare_insts>::iterator begin, std::set<Instruction*, compare_insts>::iterator end) : std::set<Instruction*, compare_insts>(begin, end, compare_insts{}) {}
+};
+
+typedef llvm::SetVector<Instruction *, llvm::SmallVector<Instruction *, 1>,
+        DominatorOrderSet> QueueType;
+
 std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
-                                           llvm::SetVector<Instruction *> &Q,
+                                           QueueType &Q,
                                            DominatorTree &DT,
                                            ScalarEvolution &SE, LoopInfo &LI,
                                            const DataLayout &DL) {
@@ -2956,28 +2974,6 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                       replaceAndErase(cur, n2);
                       return "MulMulConstConst";
                     }
-
-  // mul (mul a, const), b -> mul (mul a, b), const
-  //   note we avoid the case where b = (mul a, const) since otherwise
-  //   we create an infinite recursion
-  if (cur->getOpcode() == Instruction::FMul)
-    if (cur->isFast() && cur->getOperand(0) != cur->getOperand(1))
-      for (auto ic = 0; ic < 2; ic++)
-        if (auto mul = dyn_cast<Instruction>(cur->getOperand(ic)))
-          if (mul->getOpcode() == Instruction::FMul && mul->isFast())
-            if (!isa<Constant>(cur->getOperand(1 - ic))) {
-
-              for (int i = 0; i < 2; i++)
-                if (auto C = dyn_cast<Constant>(mul->getOperand(i))) {
-                  auto n0 = pushcse(B.CreateFMulFMF(
-                      mul->getOperand(1 - i), cur->getOperand(1 - ic), mul));
-                  auto n1 = pushcse(B.CreateFMulFMF(n0, C, cur));
-                  push(mul);
-
-                  replaceAndErase(cur, n1);
-                  return "MulMulConst";
-                }
-            }
 
   if (auto fcmp = dyn_cast<FCmpInst>(cur)) {
     if (fcmp->getPredicate() == FCmpInst::FCMP_OEQ) {
@@ -3938,8 +3934,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         rhs = ConstantInt::get(Ty, Tmp);
         switch (cur->getOpcode()) {
         case Instruction::FAdd:
-          minval *= Tmp;
-          maxval *= Tmp;
+          minval += Tmp;
+          maxval += Tmp;
           break;
         case Instruction::FSub:
         case Instruction::FNeg:
@@ -3947,8 +3943,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           maxval -= Tmp;
           break;
         case Instruction::FMul:
-          minval -= Tmp;
-          maxval -= Tmp;
+          minval *= Tmp;
+          maxval *= Tmp;
           break;
         default:
           llvm_unreachable("Illegal opcode");
@@ -4022,6 +4018,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       }
     }
 
+    llvm::errs() << " CHECKEDSPARSED cur: " << *cur << " lhs: " << lhs << " rhs: " << rhs << " prelhs: " << *prelhs << " prerhs: " << *prerhs << "\n";
+
     if (lhs && rhs) {
       Value *res = nullptr;
       switch (cur->getOpcode()) {
@@ -4062,6 +4060,29 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         I->eraseFromParent();
     }
   }
+
+
+  // mul (mul a, const), b -> mul (mul a, b), const
+  //   note we avoid the case where b = (mul a, const) since otherwise
+  //   we create an infinite recursion
+  if (cur->getOpcode() == Instruction::FMul)
+    if (cur->isFast() && cur->getOperand(0) != cur->getOperand(1))
+      for (auto ic = 0; ic < 2; ic++)
+        if (auto mul = dyn_cast<Instruction>(cur->getOperand(ic)))
+          if (mul->getOpcode() == Instruction::FMul && mul->isFast())
+            if (!isa<Constant>(cur->getOperand(1 - ic))) {
+
+              for (int i = 0; i < 2; i++)
+                if (auto C = dyn_cast<Constant>(mul->getOperand(i))) {
+                  auto n0 = pushcse(B.CreateFMulFMF(
+                      mul->getOperand(1 - i), cur->getOperand(1 - ic), mul));
+                  auto n1 = pushcse(B.CreateFMulFMF(n0, C, cur));
+                  push(mul);
+
+                  replaceAndErase(cur, n1);
+                  return "MulMulConst";
+                }
+            }
 
   if (cur->getOpcode() == Instruction::FDiv) {
     Value *prelhs = cur->getOperand(0);
@@ -4173,9 +4194,9 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       if (auto z = dyn_cast<BinaryOperator>(prelhs)) {
         if (z->getOpcode() == Instruction::FMul) {
           for (int j = 0; j < 2; j++) {
-            auto x = z->getOperand(i);
+            auto x = z->getOperand(j);
             if (!directlySparse(x)) continue;
-            auto y = z->getOperand(1-i);
+            auto y = z->getOperand(1-j);
             if (directlySparse(y)) continue;
 
             if (directlySparse(b) || integralFloat(b)) {
@@ -5488,7 +5509,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
   auto &LI = FAM.getResult<LoopAnalysis>(F);
   auto &DL = F.getParent()->getDataLayout();
 
-  llvm::SetVector<Instruction *> Q;
+  QueueType Q;
   {
     llvm::SetVector<BasicBlock *> todoBlocks;
     for (auto b : toDenseBlocks) {
@@ -5509,7 +5530,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
   // Full simplification
   while (!Q.empty()) {
     auto cur = Q.pop_back_val();
-    SetVector<Instruction *> prev(Q.begin(), Q.end());
+    QueueType prev(Q.begin(), Q.end());
     llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
     auto changed = fixSparse_inner(cur, F, Q, DT, SE, LI, DL);
     (void)changed;
