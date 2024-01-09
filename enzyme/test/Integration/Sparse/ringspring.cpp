@@ -66,7 +66,9 @@ static void ident_store(double , int64_t idx, size_t i) {
 __attribute__((always_inline))
 double ident_load(int64_t idx, size_t i, size_t N) {
     idx /= sizeof(double);
-    return (double)(idx % N == i % N);// ? 1.0 : 0.0;
+    // return (double)( ( (idx == N) ? 0 : idx) == i);
+    return (double)((idx != N && idx == i) || (idx == N && 0 == i));
+    // return (double)( idx % N == i);
 }
 
 __attribute__((enzyme_sparse_accumulate))
