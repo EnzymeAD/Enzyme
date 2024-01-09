@@ -2609,31 +2609,51 @@ public:
   DominatorTree &DT;
   LoopInfo &LI;
   compare_insts(DominatorTree &DT, LoopInfo &LI) : DT(DT), LI(LI) {} 
-  // return true if B appears later than A.
+
+  // return true if A appears later than B.
   bool operator()(Instruction * A, Instruction *B) const {
+    llvm::errs() << " comparing " << *A << " and " << *B << "\n";
+    if (A == B) {
+      llvm::errs() << " - false\n";
+      return false;
+    }
   if (A->getParent() == B->getParent()) {
     return !A->comesBefore(B);
   }
   auto AB = A->getParent();
   auto BB = B->getParent();
   assert(AB->getParent() == BB->getParent());
+
   if (DT.dominates(AB, BB))
     return false;
   if (!DT.dominates(BB, AB))
     return true;
+
   for (auto prev = BB->getPrevNode(); prev; prev = prev->getPrevNode()) {
     if (prev == AB)
-      return true;
+      return false;
   }
-  return false;
+  return true;
 }
 };
 
 class DominatorOrderSet : public std::set<Instruction*, compare_insts> {
 public:
   DominatorOrderSet(DominatorTree &DT, LoopInfo &LI) : std::set<Instruction*, compare_insts>(compare_insts(DT, LI)) {}
-  bool contains(Instruction* I) const { return count(I) != 0; }
-  void remove(Instruction* I) { erase(I); }
+  bool contains(Instruction* I) const { 
+    llvm::errs() << " contains(" << *I << ")\n";
+    auto v = count(I);
+    llvm::errs() << "   count -> " << v << "\n";
+    return v != 0;
+  }
+  void remove(Instruction* I) {
+    llvm::errs() << "pre remove(" << *I << ")\n";
+    auto __i = find(I);
+    assert (__i != end());
+    erase(__i);
+    llvm::errs() << "post remove(" << *I << ")\n";
+    assert(count(I) == 0);
+  }
   Instruction* pop_back_val() {
     auto back = end();
     back--;
@@ -2711,13 +2731,16 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     }
     if (Q.contains(I)) {
         Q.remove(I);
+        llvm::errs() << " removed from queue\n";
     }
     for (auto q : Q)
         llvm::errs() << " -- q: " << *q << "\n";
+    assert(!Q.contains(I));
     llvm::errs() << "erasing I: " << *I << "\n";
     I->eraseFromParent();
     for (auto op : operands)
       if (op->getNumUses() == 0) {
+        if (Q.contains(I))
         Q.remove(op);
         op->eraseFromParent();
       }
@@ -2758,6 +2781,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           }
           if (candidate) {
             if (reverse) {
+              if (Q.contains(candidate))
               Q.remove(candidate);
               auto tmp = candidate;
               candidate = cur;
@@ -4091,6 +4115,28 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     }
   }
 
+  // select(cond, const1, b) ?= const2 -> select(cond, const1 ?= const2, b ?= const2) 
+  llvm::errs() <<" pre nottriggered:" << *cur << "\n";
+  if (auto fcmp = dyn_cast<FCmpInst>(cur)) {
+    llvm::errs() << " outermost nottriggered: " << *fcmp << "\n";
+    for (int i=0; i<2; i++)
+      if (auto const2 = dyn_cast<Constant>(fcmp->getOperand(i))) {
+        if (auto sel = dyn_cast<SelectInst>(fcmp->getOperand(1-i))) {
+          if (isa<Constant>(sel->getTrueValue()) || isa<Constant>(sel->getFalseValue())) {
+            auto tval = pushcse(B.CreateFCmp(fcmp->getPredicate(), sel->getTrueValue(), const2));
+            auto fval = pushcse(B.CreateFCmp(fcmp->getPredicate(), sel->getFalseValue(), const2));
+            auto res = pushcse(B.CreateSelect(sel->getCondition(), tval, fval));
+            replaceAndErase(cur, res);
+            return "FCmpSelectConst";
+          } else
+           llvm::errs() << " nottriggered(2): " << *fcmp <<  " " << *sel << "\n";
+          } else {
+            llvm::errs() << " nottriggered(1): " << *fcmp <<  " " << *fcmp->getOperand(1-i) << "\n";
+          } 
+        } else {
+          llvm::errs() << " nottriggered(0): " << *fcmp <<  " " << *fcmp->getOperand(1-i) << "\n";
+        }
+  }
 
   // mul (mul a, const), b -> mul (mul a, b), const
   //   note we avoid the case where b = (mul a, const) since otherwise
@@ -5551,15 +5597,29 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     }
     for (auto BB : todoBlocks)
       for (auto &I : *BB)
-        if (!I.getType()->isVoidTy())
+        if (!I.getType()->isVoidTy()) {
           Q.insert(&I);
+          assert(Q.contains(&I));
+        }
   }
 
   llvm::errs() << " pre fix inner: " << F << "\n";
 
+  llvm::errs() << "<QUEUE>\n";
+  for (auto a : Q) {
+    llvm::errs() << " - " << *a << "\n";
+  }
+  llvm::errs() << "</QUEUE>\n";
+  
   // Full simplification
   while (!Q.empty()) {
     auto cur = Q.pop_back_val();
+
+    llvm::errs() << "<QUEUE POST POP>\n";
+    for (auto a : Q) {
+      llvm::errs() << " - " << *a << "\n";
+    }
+    llvm::errs() << "</QUEUE POST POP>\n";
     std::set<Instruction*> prev;
     for (auto v : Q) prev.insert(v);
     llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
