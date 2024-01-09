@@ -40,8 +40,8 @@ extern void __enzyme_fwddiff(void *, ...);
 extern double* __enzyme_todense(void *, ...) noexcept;
 
 
-/// Compute energy
-double f(size_t N, double* input) {
+__attribute__((always_inline))
+static double f(size_t N, double* input) {
     double out = 0;
     // __builtin_assume(!((N-1) == 0));
     for (size_t i=0; i<N; i++) {
@@ -53,13 +53,13 @@ double f(size_t N, double* input) {
     return out;
 }
 
-/// Perform dinput += gradient(f)
-void grad_f(size_t N, double* input, double* dinput) {
+__attribute__((always_inline))
+static void grad_f(size_t N, double* input, double* dinput) {
     __enzyme_autodiff((void*)f, enzyme_const, N, enzyme_dup, input, dinput);
 }
 
-
-void ident_store(double , int64_t idx, size_t i) {
+__attribute__((always_inline))
+static void ident_store(double , int64_t idx, size_t i) {
     assert(0 && "should never load");
 }
 
