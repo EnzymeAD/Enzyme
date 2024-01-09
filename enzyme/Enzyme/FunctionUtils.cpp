@@ -3029,8 +3029,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             }
   
   // mul (mul a, const1), const2 -> mul a, (mul const1, const2)
-  if (cur->getOpcode() == Instruction::FMul | cur->getOpcode() == Instruction::Mul)
-    if (cur->isFast())
+  if ((cur->getOpcode() == Instruction::FMul && cur->isFast()) || cur->getOpcode() == Instruction::Mul)
       for (auto i1 = 0; i1 < 2; i1++)
       if (auto mul1 = dyn_cast<Instruction>(cur->getOperand(i1)))
         if (((mul1->getOpcode() == Instruction::FMul && mul1->isFast())) || mul1->getOpcode() == Instruction::FMul)
@@ -5907,9 +5906,13 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
                 }
               }
             }
+            EmitFailure("NoSparsification", I->getDebugLoc(), I, " No sparsification: not sparse solvable(scev): ", *sub1);
+            legal = false;
+            return Constraints::all();
+          }
             EmitFailure("NoSparsification", I->getDebugLoc(), I, " No sparsification: not sparse solvable(icmp): ", *sub1);
             legal = false;
-          }
+            return Constraints::all();
         }
 
         // cmp x, 1.0 ->   false/true
