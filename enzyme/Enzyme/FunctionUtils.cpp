@@ -2630,7 +2630,7 @@ public:
 }
 };
 
-class DominatorOrderSet : public llvm::SmallSet<Instruction*, 1, compare_insts> {
+class DominatorOrderSet : public std::set<Instruction*, compare_insts> {
 public:
   DominatorOrderSet(DominatorTree &DT, LoopInfo &LI) : std::set<Instruction*, compare_insts>(compare_insts(DT, LI)) {}
   bool contains(Instruction* I) const { 
@@ -3709,7 +3709,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       return "OrReplaceLHS";
     }
     auto rhs = replace(cur->getOperand(1), cur->getOperand(0),
-                       ConstantInt::getFale(cur->getContext()));
+                       ConstantInt::getFalse(cur->getContext()));
     if (rhs != cur->getOperand(1)) {
       auto res = pushcse(B.CreateOr(cur->getOperand(0), rhs, "postor." + cur->getName()));
       replaceAndErase(cur, res);
@@ -4210,6 +4210,43 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     }
   }
 
+      auto directlySparse = [](Value* z) {
+        if (isa<UIToFPInst>(z)) return true;
+        if (isa<SIToFPInst>(z)) return true;
+        if (isa<ZExtInst>(z)) return true;
+        if (isa<SExtInst>(z)) return true;
+        if (auto SI = dyn_cast<SelectInst>(z)) {
+          if (auto CI = dyn_cast<ConstantInt>(SI->getTrueValue()))
+            if (CI->isZero()) return true;
+          if (auto CI = dyn_cast<ConstantInt>(SI->getFalseValue()))
+            if (CI->isZero()) return true;
+        }
+        return false;
+      };
+
+  // div (mul a:not_sparse, b:is_sparse), c -> mul (div, a, c), b:is_sparse
+  if (cur->getOpcode() == Instruction::FDiv) {
+      auto c = cur->getOperand(1);
+      if (auto z = dyn_cast<BinaryOperator>(cur->getOperand(0))) {
+        if (z->getOpcode() == Instruction::FMul) {
+    for (int i = 0; i < 2; i++) {
+
+      Value *a = z->getOperand(i);
+      Value *b = z->getOperand(1 - i);
+      llvm::errs() << " divmul, " << *cur << " a: " << *a << " b: " << *b << " d(a): " << directlySparse(a) << " d(b): " << directlySparse(b) << "\n";
+      if (directlySparse(a)) continue;
+      if (!directlySparse(b)) continue;
+            
+        Value *inner_fdiv = pushcse(B.CreateFDivFMF(a, c, cur));
+            Value *outer_fmul = pushcse(B.CreateFMulFMF(inner_fdiv, c, z));
+            replaceAndErase(cur, outer_fmul);
+            return "FDivFMulSparseProp";
+
+    }
+        }
+      }
+  }
+  
   if (cur->getOpcode() == Instruction::FMul)
     for (int i = 0; i < 2; i++) {
 
@@ -4231,20 +4268,6 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           }
         }
       }
-
-      auto directlySparse = [](Value* z) {
-        if (isa<UIToFPInst>(z)) return true;
-        if (isa<SIToFPInst>(z)) return true;
-        if (isa<ZExtInst>(z)) return true;
-        if (isa<SExtInst>(z)) return true;
-        if (auto SI = dyn_cast<SelectInst>(z)) {
-          if (auto CI = dyn_cast<ConstantInt>(SI->getTrueValue()))
-            if (CI->isZero()) return true;
-          if (auto CI = dyn_cast<ConstantInt>(SI->getFalseValue()))
-            if (CI->isZero()) return true;
-        }
-        return false;
-      };
 
       auto integralFloat = [](Value* z) {
         if (auto C = dyn_cast<ConstantFP>(z)) {
