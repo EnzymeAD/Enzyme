@@ -2995,7 +2995,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       if (auto mul1 = dyn_cast<Instruction>(cur->getOperand(0)))
         if (mul1->getOpcode() == Instruction::FMul && mul1->isFast())
           if (auto mul2 = dyn_cast<Instruction>(cur->getOperand(1)))
-            if (mul2->getOpcode() == Instruction::FMul && mul2->isFast())
+            if (mul2->getOpcode() == Instruction::FMul && mul2->isFast()) {
+                llvm::errs() << " mulmulconstconst check: " << *cur << " mul1: " << *mul1 << " mul2: " << *mul2 << "\n";
               for (auto i1 = 0; i1 < 2; i1++)
                 for (auto i2 = 0; i2 < 2; i2++)
                   if (isa<Constant>(mul1->getOperand(i1)))
@@ -3011,6 +3012,25 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                       push(mul2);
                       replaceAndErase(cur, n2);
                       return "MulMulConstConst";
+                    }
+            }
+  
+  // mul (mul a, const1), const2 -> mul a, (mul const1, const2)
+  if (cur->getOpcode() == Instruction::FMul)
+    if (cur->isFast())
+      for (auto i1 = 0; i1 < 2; i1++)
+      if (auto mul1 = dyn_cast<Instruction>(cur->getOperand(i1)))
+        if (mul1->getOpcode() == Instruction::FMul && mul1->isFast())
+          if (auto const2 = dyn_cast<Constant>(cur->getOperand(1-i1)))
+            for (auto i2 = 0; i2 < 2; i2++)
+            if (auto const1 = dyn_cast<Constant>(mul1->getOperand(i2))) {
+                      auto const3 = pushcse(
+                          B.CreateFMulFMF(const1, const2, mul1));
+                      auto res = pushcse(B.CreateFMulFMF(
+                          mul1->getOperand(1-i2), const3, cur));
+                      push(mul1);
+                      replaceAndErase(cur, res);
+                      return "MulConstConst";
                     }
 
   if (auto fcmp = dyn_cast<FCmpInst>(cur)) {
@@ -4233,7 +4253,6 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
 
       Value *a = z->getOperand(i);
       Value *b = z->getOperand(1 - i);
-      llvm::errs() << " divmul, " << *cur << " a: " << *a << " b: " << *b << " d(a): " << directlySparse(a) << " d(b): " << directlySparse(b) << "\n";
       if (directlySparse(a)) continue;
       if (!directlySparse(b)) continue;
             
