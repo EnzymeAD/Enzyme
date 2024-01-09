@@ -4206,6 +4206,39 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       }
     }
 
+  // (mul c, a) +/- (mul c, b) -> mul c, (a +/- b)
+  if (cur->getOpcode() == Instruction::FAdd || cur->getOpcode() == Instruction::FSub){
+    if (auto mul1 = dyn_cast<BinaryOperator>(cur->getOperand(0))) {
+      if (mul1->getOpcode() == Instruction::FMul && mul1->isFast()) {
+        if (auto mul2 = dyn_cast<BinaryOperator>(cur->getOperand(1))) {
+          if (mul2->getOpcode() == Instruction::FMul && mul2->isFast()) {
+            for(int i=0; i<2; i++) {
+              for(int j=0; j<2; j++) {
+                if (mul1->getOperand(i) == mul2->getOperand(j)) {
+                  auto c = mul1->getOperand(i);
+                  auto a = mul1->getOperand(1 - i);
+                  auto b = mul2->getOperand(1 - j);
+                  Value *intermediate = nullptr;
+
+                  if (cur->getOpcode() == Instruction::FAdd)
+                    intermediate = pushcse(B.CreateFAddFMF(a, b, cur));
+                  else
+                    intermediate = pushcse(B.CreateFSubFMF(a, b, cur));
+
+                  auto res = pushcse(B.CreateFMulFMF(c, intermediate, cur));
+                  push(mul1);
+                  push(mul2);
+                  replaceAndErase(cur, res);
+                  return "FAddMulConstMulConst";
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  
     // fdiv (select c, 0, a), b -> select c, 0 (fdiv a, b)
     if (auto SI = dyn_cast<SelectInst>(prelhs)) {
       auto tvalC = dyn_cast<ConstantFP>(SI->getTrueValue());
