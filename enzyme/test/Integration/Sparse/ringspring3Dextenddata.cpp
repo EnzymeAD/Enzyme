@@ -131,8 +131,8 @@ std::vector<triple> hess_f2(size_t N, double* input) {
     hess_f(N, input);
 }
 */
-
-int __attribute__((always_inline)) main(int argc, char** argv) {
+// int argc, char** argv
+int __attribute__((always_inline)) main() {
     std::mt19937 generator(0); // Seed the random number generator
     std::uniform_real_distribution<double> normal(0, 0.05);
 
@@ -142,8 +142,8 @@ int __attribute__((always_inline)) main(int argc, char** argv) {
         return 1;
     }
 
-    size_t N = atoi(argv[1]);
-    // size_t N = 16;
+    // size_t N = atoi(argv[1]);
+    size_t N = 30;
 
     double x[3 * N + 3];
     for (int i = 0; i < N; ++i) {
