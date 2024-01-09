@@ -2630,7 +2630,7 @@ public:
 }
 };
 
-class DominatorOrderSet : public std::set<Instruction*, compare_insts> {
+class DominatorOrderSet : public llvm::SmallSet<Instruction*, 1, compare_insts> {
 public:
   DominatorOrderSet(DominatorTree &DT, LoopInfo &LI) : std::set<Instruction*, compare_insts>(compare_insts(DT, LI)) {}
   bool contains(Instruction* I) const { 
@@ -3685,15 +3685,39 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
   if (cur->getOpcode() == Instruction::And) {
     auto lhs = replace(cur->getOperand(0), cur->getOperand(1),
                        ConstantInt::getTrue(cur->getContext()));
+    if (lhs != cur->getOperand(0)) {
+      auto res = pushcse(B.CreateAnd(lhs, cur->getOperand(1), "postand." + cur->getName()));
+      replaceAndErase(cur, res);
+      return "AndReplaceLHS";
+    }
     auto rhs = replace(cur->getOperand(1), cur->getOperand(0),
                        ConstantInt::getTrue(cur->getContext()));
-    if (lhs != cur->getOperand(0) || rhs != cur->getOperand(1)) {
-      auto res = pushcse(B.CreateAnd(lhs, rhs, "postand." + cur->getName()));
+    if (rhs != cur->getOperand(1)) {
+      auto res = pushcse(B.CreateAnd(cur->getOperand(0), rhs, "postand." + cur->getName()));
       replaceAndErase(cur, res);
-      return "AndReplace";
+      return "AndReplaceRHS";
     }
   }
 
+  // or a, b -> or a b[with a false]
+  if (cur->getOpcode() == Instruction::Or) {
+    auto lhs = replace(cur->getOperand(0), cur->getOperand(1),
+                       ConstantInt::getFalse(cur->getContext()));
+    if (lhs != cur->getOperand(0)) {
+      auto res = pushcse(B.CreateOr(lhs, cur->getOperand(1), "postor." + cur->getName()));
+      replaceAndErase(cur, res);
+      return "OrReplaceLHS";
+    }
+    auto rhs = replace(cur->getOperand(1), cur->getOperand(0),
+                       ConstantInt::getFale(cur->getContext()));
+    if (rhs != cur->getOperand(1)) {
+      auto res = pushcse(B.CreateOr(cur->getOperand(0), rhs, "postor." + cur->getName()));
+      replaceAndErase(cur, res);
+      return "OrReplaceRHS";
+    }
+  }
+
+  /*
   // and (i == c), (i != d) -> and (i == c) && (c != d)
   if (cur->getOpcode() == Instruction::And) {
     auto lhs = replace(cur->getOperand(0), cur->getOperand(1),
@@ -3703,9 +3727,10 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     if (lhs != cur->getOperand(0) || rhs != cur->getOperand(1)) {
       auto res = pushcse(B.CreateAnd(lhs, rhs, "postand." + cur->getName()));
       replaceAndErase(cur, res);
-      return "AndReplace";
+      return "AndReplace2";
     }
   }
+  */
 
   // and a, (or q, (not a)) -> and a q
   if (cur->getOpcode() == Instruction::And) {
