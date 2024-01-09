@@ -4177,35 +4177,6 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                 }
             }
 
-  if (cur->getOpcode() == Instruction::FDiv) {
-    Value *prelhs = cur->getOperand(0);
-    Value *b = cur->getOperand(1);
-
-    // fdiv (sitofp a), b -> select (a == 0), 0 [ (fdiv 1 / b) * sitofp a]
-    if (auto ext = dyn_cast<CastInst>(prelhs)) {
-      if (ext->getOpcode() == Instruction::UIToFP ||
-          ext->getOpcode() == Instruction::SIToFP) {
-        push(ext);
-
-        Value *condition = pushcse(
-            B.CreateICmpEQ(ext->getOperand(0),
-                           ConstantInt::get(ext->getOperand(0)->getType(), 0),
-                           "sdivcmp." + cur->getName()));
-
-        Value *fdiv = pushcse(
-            B.CreateFMulFMF(pushcse(B.CreateFDivFMF(
-                                ConstantFP::get(cur->getType(), 1.0), b, cur)),
-                            ext, cur));
-
-        Value *sel = pushcse(
-            B.CreateSelect(condition, ConstantFP::get(cur->getType(), 0.0),
-                           fdiv, "sfdiv." + cur->getName()));
-
-        replaceAndErase(cur, sel);
-        return "FDivSIToFPProp";
-      }
-    }
-
   // (mul c, a) +/- (mul c, b) -> mul c, (a +/- b)
   if (cur->getOpcode() == Instruction::FAdd || cur->getOpcode() == Instruction::FSub){
     if (auto mul1 = dyn_cast<BinaryOperator>(cur->getOperand(0))) {
@@ -4239,6 +4210,34 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     }
   }
   
+  if (cur->getOpcode() == Instruction::FDiv) {
+    Value *prelhs = cur->getOperand(0);
+    Value *b = cur->getOperand(1);
+
+    // fdiv (sitofp a), b -> select (a == 0), 0 [ (fdiv 1 / b) * sitofp a]
+    if (auto ext = dyn_cast<CastInst>(prelhs)) {
+      if (ext->getOpcode() == Instruction::UIToFP ||
+          ext->getOpcode() == Instruction::SIToFP) {
+        push(ext);
+
+        Value *condition = pushcse(
+            B.CreateICmpEQ(ext->getOperand(0),
+                           ConstantInt::get(ext->getOperand(0)->getType(), 0),
+                           "sdivcmp." + cur->getName()));
+
+        Value *fdiv = pushcse(
+            B.CreateFMulFMF(pushcse(B.CreateFDivFMF(
+                                ConstantFP::get(cur->getType(), 1.0), b, cur)),
+                            ext, cur));
+
+        Value *sel = pushcse(
+            B.CreateSelect(condition, ConstantFP::get(cur->getType(), 0.0),
+                           fdiv, "sfdiv." + cur->getName()));
+
+        replaceAndErase(cur, sel);
+        return "FDivSIToFPProp";
+      }
+    }
     // fdiv (select c, 0, a), b -> select c, 0 (fdiv a, b)
     if (auto SI = dyn_cast<SelectInst>(prelhs)) {
       auto tvalC = dyn_cast<ConstantFP>(SI->getTrueValue());
