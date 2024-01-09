@@ -135,10 +135,10 @@ int __attribute__((always_inline)) main() {
     std::uniform_real_distribution<double> normal(0, 0.05);
 
 
-    if (argc != 2) {
-        printf("Usage: %s <size>\n", argv[0]);
-        return 1;
-    }
+    // if (argc != 2) {
+    //     printf("Usage: %s <size>\n", argv[0]);
+    //     return 1;
+    // }
 
     // size_t N = atoi(argv[1]);
     size_t N = 16;
