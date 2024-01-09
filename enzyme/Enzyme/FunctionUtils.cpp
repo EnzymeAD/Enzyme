@@ -2651,6 +2651,20 @@ public:
   }
 };
 
+bool directlySparse(Value* z) {
+        if (isa<UIToFPInst>(z)) return true;
+        if (isa<SIToFPInst>(z)) return true;
+        if (isa<ZExtInst>(z)) return true;
+        if (isa<SExtInst>(z)) return true;
+        if (auto SI = dyn_cast<SelectInst>(z)) {
+          if (auto CI = dyn_cast<ConstantInt>(SI->getTrueValue()))
+            if (CI->isZero()) return true;
+          if (auto CI = dyn_cast<ConstantInt>(SI->getFalseValue()))
+            if (CI->isZero()) return true;
+        }
+        return false;
+}
+
 typedef DominatorOrderSet QueueType;
 
 std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
@@ -4159,26 +4173,30 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             return "FCmpSelectConst";
         }
 
-  // mul (mul a, const), b -> mul (mul a, b), const
+  // mul (mul a, const), b:not_sparse_or_const -> mul (mul a, b), const
   //   note we avoid the case where b = (mul a, const) since otherwise
   //   we create an infinite recursion
+  //   and also we make sure b isn't sparse, since sparse is the first precedence for pushing, 
+  //   then constant, then others
   if (cur->getOpcode() == Instruction::FMul)
     if (cur->isFast() && cur->getOperand(0) != cur->getOperand(1))
       for (auto ic = 0; ic < 2; ic++)
         if (auto mul = dyn_cast<Instruction>(cur->getOperand(ic)))
-          if (mul->getOpcode() == Instruction::FMul && mul->isFast())
-            if (!isa<Constant>(cur->getOperand(1 - ic))) {
+          if (mul->getOpcode() == Instruction::FMul && mul->isFast()) {
+              auto b = cur->getOperand(1 - ic);
+            if (!isa<Constant>(b) && !directlySparse(b)) {
 
               for (int i = 0; i < 2; i++)
                 if (auto C = dyn_cast<Constant>(mul->getOperand(i))) {
                   auto n0 = pushcse(B.CreateFMulFMF(
-                      mul->getOperand(1 - i), cur->getOperand(1 - ic), mul));
+                      mul->getOperand(1 - i), b, mul));
                   auto n1 = pushcse(B.CreateFMulFMF(n0, C, cur));
                   push(mul);
 
                   replaceAndErase(cur, n1);
                   return "MulMulConst";
                 }
+            }
             }
 
   // (mul c, a) +/- (mul c, b) -> mul c, (a +/- b)
@@ -4213,7 +4231,31 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       }
     }
   }
+
+  // fmul a, (sitofp (imul c:const, b)) -> fmul (fmul (a, (sitofp c))), (sitofp b)
   
+  if (cur->getOpcode() == Instruction::FMul && cur->isFast()) { 
+    for (int i=0; i<2; i++)
+      if (auto z = dyn_cast<Instruction>(cur->getOperand(i)))
+        if (isa<SIToFPInst>(z) || isa<UIToFPInst>(z)) 
+          if (auto imul = dyn_cast<BinaryOperator>(z->getOperand(0)))
+            if (imul->getOpcode() == Instruction::Mul)
+              for (int j=0; j<2; j++)
+                if (auto c = dyn_cast<Constant>(imul->getOperand(j))) {
+                    auto b = imul->getOperand(1-j);
+                    auto a = cur->getOperand(1-i);
+        
+                    auto c_fp = pushcse(B.CreateSIToFP(c, cur->getType()));
+                    auto b_fp = pushcse(B.CreateSIToFP(b, cur->getType()));
+                    auto n_mul = pushcse(B.CreateFMulFMF(a, c_fp, cur));
+                    auto res = pushcse(B.CreateFMulFMF(n_mul, b_fp, cur, cur->getName()));
+                    push(imul);
+                    push(z);
+        replaceAndErase(cur, res);
+        return "FMulIMulConstRotate";
+    }
+  }
+
   if (cur->getOpcode() == Instruction::FDiv) {
     Value *prelhs = cur->getOperand(0);
     Value *b = cur->getOperand(1);
@@ -4263,20 +4305,6 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       }
     }
   }
-
-      auto directlySparse = [](Value* z) {
-        if (isa<UIToFPInst>(z)) return true;
-        if (isa<SIToFPInst>(z)) return true;
-        if (isa<ZExtInst>(z)) return true;
-        if (isa<SExtInst>(z)) return true;
-        if (auto SI = dyn_cast<SelectInst>(z)) {
-          if (auto CI = dyn_cast<ConstantInt>(SI->getTrueValue()))
-            if (CI->isZero()) return true;
-          if (auto CI = dyn_cast<ConstantInt>(SI->getFalseValue()))
-            if (CI->isZero()) return true;
-        }
-        return false;
-      };
 
   // div (mul a:not_sparse, b:is_sparse), c -> mul (div, a, c), b:is_sparse
   if (cur->getOpcode() == Instruction::FDiv) {
