@@ -5201,7 +5201,16 @@ return true;
     return Constraints::none();
   }
   InnerTy orB(InnerTy rhs, ScalarEvolution &SE) const {
-    return notB()->andB(rhs->notB(), SE)->notB();
+    auto notLHS = notB();
+    auto notRHS = rhs->notB();
+    auto andV = notLHS->andB(notRHS, SE);
+    auto res = andV->notB();
+    llvm::errs() << " or(lhs=" << *this << ", rhs=" << *rhs << ") = res:" << *res << "\n";
+    llvm::errs() << " + notLHS:" << *notLHS << "\n";
+    llvm::errs() << " + notRHS:" << *notRHS << "\n";
+    llvm::errs() << " + andV:" << *andV << "\n";
+    llvm::errs() << " + res:" << *res << "\n";
+    return res;
     /*
             if (*rhs == *this) return shared_from_this();
             if (rhs->isNone()) return shared_from_this();
@@ -5387,15 +5396,19 @@ return true;
     if (ty == Type::Intersect && rhs->ty == Type::Union) {
       SetTy unionVals = rhs->values;
       bool changed = false;
+      llvm::errs() << " intersect(intersect, union):\n";
       for (const auto &iv : values) {
+          llvm::errs() << " + iv: " << *iv << "\n";
         SetTy nextunionVals;
         for (auto &uv : unionVals) {
-
+        
+          llvm::errs() << "   * uv: " << *uv << "\n";
           auto tmp = iv->andB(uv, SE);
+          llvm::errs() << "   --> tmp: " << *tmp << "\n";
           switch (tmp->ty) {
+          case Type::None:
           case Type::Compare:
           case Type::Union:
-          case Type::None:
             insert(nextunionVals, tmp);
             changed = true;
             break;
@@ -5409,9 +5422,8 @@ return true;
         unionVals = nextunionVals;
       }
 
-      auto cur = rhs;
       if (changed) {
-        cur = Constraints::all();
+        auto cur = Constraints::none();
         for (auto uv : unionVals)
           cur = cur->orB(uv, SE);
 
@@ -5419,7 +5431,7 @@ return true;
       }
 
       SetTy vals = values;
-      insert(vals, cur);
+      insert(vals, rhs);
       return std::make_shared<Constraints>(Type::Intersect, vals);
     }
     // Handled above via symmetry
@@ -5713,20 +5725,22 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       if (auto I = dyn_cast<Instruction>(val)) {
         // Binary `and` is a bit-wise `umin`.
         if (I->getOpcode() == Instruction::And) {
-          auto res = getSparseConditions(I->getOperand(0), Constraints::all(), I)
-                         ->andB(getSparseConditions(I->getOperand(1),
-                                                    Constraints::all(), I),
-                                SE);
+          auto lhs = getSparseConditions(I->getOperand(0), Constraints::all(), I);
+          auto rhs = getSparseConditions(I->getOperand(1), Constraints::all(), I);
+          auto res = lhs->andB(rhs, SE);
+          llvm::errs() << " getSparse(and, " << *I << "), lhs(" << *I->getOperand(0) << ") = " << *lhs << "\n";
+          llvm::errs() << " getSparse(and, " << *I << "), rhs(" << *I->getOperand(1) << ") = " << *rhs << "\n";
           llvm::errs() << " getSparse(and, " << *I << ") = " << *res << "\n";
           return res;
         }
 
         // Binary `or` is a bit-wise `umax`.
         if (I->getOpcode() == Instruction::Or) {
-          auto res = getSparseConditions(I->getOperand(0), Constraints::none(), I)
-                         ->orB(getSparseConditions(I->getOperand(1),
-                                                   Constraints::none(), I),
-                               SE);
+          auto lhs = getSparseConditions(I->getOperand(0), Constraints::none(), I);
+          auto rhs = getSparseConditions(I->getOperand(1), Constraints::none(), I);
+          auto res = lhs->orB(rhs, SE);
+          llvm::errs() << " getSparse(or, " << *I << "), lhs(" << *I->getOperand(0) << ") = " << *lhs << "\n";
+          llvm::errs() << " getSparse(or, " << *I << "), rhs(" << *I->getOperand(1) << ") = " << *rhs << "\n";
           llvm::errs() << " getSparse(or, " << *I << ") = " << *res << "\n";
           return res;
         }
@@ -5737,7 +5751,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
               if (C->isOne()) {
                 auto pres = getSparseConditions(I->getOperand(1-i), defaultFloat->notB(), scope);
                 auto res = pres->notB();
-                llvm::errs() << " negate: " << *I << " pre: " << *pres << " negated: " << *res << "\n";
+                llvm::errs() << " getSparse(not, " << *I << "), prev (" << *I->getOperand(0) << ") = " << *pres << "\n";
                 llvm::errs() << " getSparse(not, " << *I << ") = " << *res << "\n";
                 return res;
               }
