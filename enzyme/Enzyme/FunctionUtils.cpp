@@ -3015,22 +3015,26 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             }
   
   // mul (mul a, const1), const2 -> mul a, (mul const1, const2)
-  if (cur->getOpcode() == Instruction::FMul)
+  if (cur->getOpcode() == Instruction::FMul | cur->getOpcode() == Instruction::Mul)
     if (cur->isFast())
       for (auto i1 = 0; i1 < 2; i1++)
       if (auto mul1 = dyn_cast<Instruction>(cur->getOperand(i1)))
-        if (mul1->getOpcode() == Instruction::FMul && mul1->isFast())
+        if (((mul1->getOpcode() == Instruction::FMul && mul1->isFast())) || mul1->getOpcode() == Instruction::FMul)
           if (auto const2 = dyn_cast<Constant>(cur->getOperand(1-i1)))
             for (auto i2 = 0; i2 < 2; i2++)
-            if (auto const1 = dyn_cast<Constant>(mul1->getOperand(i2))) {
-                      auto const3 = pushcse(
-                          B.CreateFMulFMF(const1, const2, mul1));
-                      auto res = pushcse(B.CreateFMulFMF(
-                          mul1->getOperand(1-i2), const3, cur));
-                      push(mul1);
-                      replaceAndErase(cur, res);
-                      return "MulConstConst";
-                    }
+              if (auto const1 = dyn_cast<Constant>(mul1->getOperand(i2))) {
+                Value* res = nullptr;
+                if (cur->getOpcode() == Instruction::FMul){
+                  auto const3 = pushcse(B.CreateFMulFMF(const1, const2, mul1));
+                  res = pushcse(B.CreateFMulFMF(mul1->getOperand(1-i2), const3, cur));
+                } else{
+                  auto const3 = pushcse(B.CreateMul(const1, const2));
+                  res = pushcse(B.CreateMul(mul1->getOperand(1-i2), const3));
+                }
+                push(mul1);
+                replaceAndErase(cur, res);
+                return "MulConstConst";
+              }
 
   if (auto fcmp = dyn_cast<FCmpInst>(cur)) {
     if (fcmp->getPredicate() == FCmpInst::FCMP_OEQ) {
