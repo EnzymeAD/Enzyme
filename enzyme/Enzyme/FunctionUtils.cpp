@@ -5205,11 +5205,6 @@ return true;
     auto notRHS = rhs->notB();
     auto andV = notLHS->andB(notRHS, SE);
     auto res = andV->notB();
-    llvm::errs() << " or(lhs=" << *this << ", rhs=" << *rhs << ") = res:" << *res << "\n";
-    llvm::errs() << " + notLHS:" << *notLHS << "\n";
-    llvm::errs() << " + notRHS:" << *notRHS << "\n";
-    llvm::errs() << " + andV:" << *andV << "\n";
-    llvm::errs() << " + res:" << *res << "\n";
     return res;
     /*
             if (*rhs == *this) return shared_from_this();
@@ -5396,15 +5391,10 @@ return true;
     if (ty == Type::Intersect && rhs->ty == Type::Union) {
       SetTy unionVals = rhs->values;
       bool changed = false;
-      llvm::errs() << " intersect(intersect, union):\n";
       for (const auto &iv : values) {
-          llvm::errs() << " + iv: " << *iv << "\n";
         SetTy nextunionVals;
-        for (auto &uv : unionVals) {
-        
-          llvm::errs() << "   * uv: " << *uv << "\n";
+        for (auto &uv : unionVals) { 
           auto tmp = iv->andB(uv, SE);
-          llvm::errs() << "   --> tmp: " << *tmp << "\n";
           switch (tmp->ty) {
           case Type::None:
           case Type::Compare:
@@ -5457,8 +5447,6 @@ return true;
       insert(vals, shared_from_this());
       insert(vals, rhs);
       auto res = std::make_shared<Constraints>(Type::Intersect, vals);
-      llvm::errs() << " res: " << *res << "lhs: " << *this << " rhs " << *rhs
-                   << " eq " << (*this == *rhs) << "\n";
       return res;
     }
     llvm_unreachable("Illegal predicate state");
