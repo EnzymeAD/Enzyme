@@ -2996,7 +2996,6 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (mul1->getOpcode() == Instruction::FMul && mul1->isFast())
           if (auto mul2 = dyn_cast<Instruction>(cur->getOperand(1)))
             if (mul2->getOpcode() == Instruction::FMul && mul2->isFast()) {
-                llvm::errs() << " mulmulconstconst check: " << *cur << " mul1: " << *mul1 << " mul2: " << *mul2 << "\n";
               for (auto i1 = 0; i1 < 2; i1++)
                 for (auto i2 = 0; i2 < 2; i2++)
                   if (isa<Constant>(mul1->getOperand(i1)))
@@ -4101,8 +4100,6 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       }
     }
 
-    llvm::errs() << " CHECKEDSPARSED cur: " << *cur << " lhs: " << lhs << " rhs: " << rhs << " prelhs: " << *prelhs << " prerhs: " << *prerhs << "\n";
-
     if (lhs && rhs) {
       Value *res = nullptr;
       switch (cur->getOpcode()) {
@@ -4119,6 +4116,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       default:
         llvm_unreachable("Illegal opcode");
       }
+      res = pushcse(res);
       for (auto I : temporaries)
         push(I);
       for (auto I : precasts)
@@ -4257,7 +4255,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       if (!directlySparse(b)) continue;
             
         Value *inner_fdiv = pushcse(B.CreateFDivFMF(a, c, cur));
-            Value *outer_fmul = pushcse(B.CreateFMulFMF(inner_fdiv, c, z));
+            Value *outer_fmul = pushcse(B.CreateFMulFMF(inner_fdiv, b, z));
+            push(z);
             replaceAndErase(cur, outer_fmul);
             return "FDivFMulSparseProp";
 
@@ -4282,6 +4281,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             auto y = z->getOperand(1-i);
             Value *inner_fmul = pushcse(B.CreateFMulFMF(x, b, cur));
             Value *outer_fmul = pushcse(B.CreateFMulFMF(inner_fmul, y, z));
+            push(z);
             replaceAndErase(cur, outer_fmul);
             return "FMulFMulConstantReorder";
           }
