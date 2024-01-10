@@ -5813,9 +5813,10 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     std::set<Instruction *> prev;
     for (auto v : Q)
       prev.insert(v);
-    llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
+    // llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
     auto changed = fixSparse_inner(cur, F, Q, DT, SE, LI, DL);
     (void)changed;
+    /*
     if (changed) {
       llvm::errs() << "changed: " << *changed << "\n";
 
@@ -5824,6 +5825,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
           llvm::errs() << " + " << *I << "\n";
       llvm::errs() << F << "\n\n";
     }
+    */
   }
 
   SmallVector<std::pair<BasicBlock *, BranchInst *>, 1> sparseBlocks;
