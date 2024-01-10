@@ -5199,6 +5199,29 @@ bool cannotDependOnLoopIV(const SCEV *S, const Loop *L) {
   return false;
 }
 
+const SCEV *evaluateAtLoopIter(const SCEV *V, ScalarEvolution &SE,
+                               const Loop *find, const SCEV *replace) {
+  assert(find);
+  if (cannotDependOnLoopIV(V, find))
+    return V;
+  if (auto addrec = dyn_cast<SCEVAddRecExpr>(V)) {
+    if (addrec->getLoop() == find) {
+      auto V2 = addrec->evaluateAtIteration(replace, SE);
+      return evaluateAtLoopIter(V2, SE, find, replace);
+    }
+  }
+  if (auto div = dyn_cast<SCEVUDivExpr>(V)) {
+    auto lhs = evaluateAtLoopIter(div->getLHS(), SE, find, replace);
+    if (!lhs)
+      return nullptr;
+    auto rhs = evaluateAtLoopIter(div->getRHS(), SE, find, replace);
+    if (!rhs)
+      return nullptr;
+    return SE.getUDivExpr(lhs, rhs);
+  }
+  return nullptr;
+}
+
 class Constraints : public std::enable_shared_from_this<Constraints> {
 public:
   const enum class Type {
@@ -5568,13 +5591,12 @@ return true;
       }
 
       if (isEqual) {
-        if (auto addrec = dyn_cast<SCEVAddRecExpr>(rhs->node)) {
-          if (addrec->isAffine() && addrec->getLoop() == Loop) {
-            auto node2 = addrec->evaluateAtIteration(node, ctx.SE);
-            auto newrhs = make_compare(node2, rhs->isEqual, rhs->Loop, ctx);
+        if (auto rep = evaluateAtLoopIter(rhs->node, ctx.SE, Loop, node))
+          if (rep != rhs->node) {
+            auto newrhs = make_compare(rep, rhs->isEqual, rhs->Loop, ctx);
             return andB(newrhs, ctx);
           }
-        }
+
         // not loop -> node == 0
         if (!Loop) {
           for (auto sub1 : {ctx.SE.getMinusSCEV(node, rhs->node),
@@ -5592,13 +5614,12 @@ return true;
       }
 
       if (rhs->isEqual) {
-        if (auto addrec = dyn_cast<SCEVAddRecExpr>(node)) {
-          if (addrec->isAffine() && addrec->getLoop() == rhs->Loop) {
-            auto node2 = addrec->evaluateAtIteration(rhs->node, ctx.SE);
-            auto newlhs = make_compare(node2, isEqual, Loop, ctx);
+        if (auto rep = evaluateAtLoopIter(node, ctx.SE, rhs->Loop, rhs->node))
+          if (rep != node) {
+            auto newlhs = make_compare(rep, isEqual, Loop, ctx);
             return newlhs->andB(rhs, ctx);
           }
-        }
+
         // not loop -> node == 0
         if (!rhs->Loop) {
           for (auto sub1 : {ctx.SE.getMinusSCEV(node, rhs->node),
@@ -5768,6 +5789,9 @@ return true;
     // (m or a or b or d) and (m or a or c or e ...) -> m or a or ( (b or d) and
     // (c or e))
     if (ty == Type::Union && rhs->ty == Type::Union) {
+      if (*this == *rhs->notB(ctx)) {
+        return Constraints::none();
+      }
       SetTy intersection = intersect(values, rhs->values);
       if (intersection.size() != 0) {
         InnerTy other_lhs = remove(intersection);

@@ -43,12 +43,13 @@ extern double* __enzyme_todense(void *, ...) noexcept;
 __attribute__((always_inline))
 static double f(size_t N, double* pos) {
     double e = 0.;
-    for (size_t i = 0; i < N; i += 2) {
-        double vx = pos[i];
-        double vy = pos[i + 1];
+    for (size_t i = 0; i < N; i ++) {
+        __builtin_assume(i < 1000000000);
+        double vx = pos[2 * i];
+        double vy = pos[2 * i + 1];
 
-        double wx = pos[i + 2];
-        double wy = pos[i + 3];
+        double wx = pos[2 * i + 2];
+        double wy = pos[2 * i + 3];
         e += (wx - vx) * (wx - vx) + (wy - vy) * (wy - vy);
     }
     return e;
@@ -66,7 +67,7 @@ void ident_store(double , int64_t idx, size_t i) {
 }
 
 __attribute__((always_inline))
-double ident_load(int64_t idx, size_t i, size_t N) {
+double ident_load(size_t idx, size_t i, size_t N) {
     idx /= sizeof(double);
     return (double)(idx == i);// ? 1.0 : 0.0;
 }
