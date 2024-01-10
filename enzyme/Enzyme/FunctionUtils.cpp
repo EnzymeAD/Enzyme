@@ -5160,7 +5160,9 @@ raw_ostream &operator<<(raw_ostream &os, const Constraints &c);
 struct ConstraintContext {
 ScalarEvolution &SE;
 const Loop* loopToSolve;
-ConstraintContext(ScalarEvolution &SE, const Loop* loopToSolve) : SE(SE), loopToSolve(loopToSolve) {
+const SmallVectorImpl<Instruction*> &Assumptions;
+DominatorTree &DT;
+ConstraintContext(ScalarEvolution &SE, const Loop* loopToSolve, const SmallVectorImpl<Instruction*> &Assumptions, DominatorTree &DT) : SE(SE), loopToSolve(loopToSolve), Assumptions(Assumptions), DT(DT) {
     assert(loopToSolve);
 }
 };
@@ -5258,8 +5260,13 @@ public:
       : ty(Type::Union), values(), node(nullptr), isEqual(false),
         Loop(nullptr) {}
 
-  Constraints(const SCEV *v, bool isEqual, const llvm::Loop *Loop)
+private:
+  Constraints(const SCEV *v, bool isEqual, const llvm::Loop *Loop, bool)
       : ty(Type::Compare), values(), node(v), isEqual(isEqual), Loop(Loop) {}
+
+public:
+  static InnerTy make_compare(const SCEV *v, bool isEqual, const llvm::Loop *Loop, ConstraintContext ctx);
+  
   Constraints(Type t)
       : ty(t), values(), node(nullptr), isEqual(false), Loop(nullptr) {
     assert(t == Type::All || t == Type::None);
@@ -5404,19 +5411,19 @@ return true;
   void dump() const {
       llvm::errs() << *this << "\n";
   }
-  InnerTy notB() const {
+  InnerTy notB(ConstraintContext &ctx) const {
     switch (ty) {
     case Type::None:
       return Constraints::all();
     case Type::All:
       return Constraints::none();
     case Type::Compare:
-      return std::make_shared<Constraints>(node, !isEqual, Loop);
+      return make_compare(node, !isEqual, Loop, ctx);
     case Type::Union: {
       // not of or's is and of not's
       SetTy next;
       for (const auto &v : values)
-        insert(next, v->notB());
+        insert(next, v->notB(ctx));
       if (next.size() == 1)
         llvm::errs() << " uold : " << *this << "\n";
       return std::make_shared<Constraints>(Type::Intersect, next);
@@ -5425,7 +5432,7 @@ return true;
       // not of and's is or of not's
       SetTy next;
       for (const auto &v : values)
-        insert(next, v->notB());
+        insert(next, v->notB(ctx));
       if (next.size() == 1)
         llvm::errs() << " old : " << *this << "\n";
       return std::make_shared<Constraints>(Type::Union, next);
@@ -5434,10 +5441,10 @@ return true;
     return Constraints::none();
   }
   InnerTy orB(InnerTy rhs, ConstraintContext &ctx) const {
-    auto notLHS = notB();
-    auto notRHS = rhs->notB();
+    auto notLHS = notB(ctx);
+    auto notRHS = rhs->notB(ctx);
     auto andV = notLHS->andB(notRHS, ctx);
-    auto res = andV->notB();
+    auto res = andV->notB(ctx);
     return res;
   }
   InnerTy andB(const InnerTy rhs, ConstraintContext &ctx) const {
@@ -5514,16 +5521,16 @@ return true;
                 // in case of inexact division, check that these exactly equal for replacement
                 
                   if (div == div_e) {
-                    auto res = std::make_shared<Constraints>(
-                        div, /*isEqual*/true, addrec->getLoop());
+                    auto res = make_compare(
+                        div, /*isEqual*/true, addrec->getLoop(), ctx);
                     llvm::errs() << " simplified rhs to: " << *res << "\n";
                     return andB(res, ctx);
                   }
                 }
               }
             if (rhs->Loop && cannotDependOnLoopIV(sub, ctx.loopToSolve)) {
-                    auto res = std::make_shared<Constraints>(
-                        sub, /*isEqual*/true, /*loop*/nullptr);
+                    auto res = make_compare(
+                        sub, /*isEqual*/true, /*loop*/nullptr, ctx);
                     llvm::errs() << " simplified(noloop) rhs from " << *rhs << " to: " << *res << "\n";
                     return andB(res, ctx);
             }
@@ -5536,7 +5543,7 @@ return true;
       if (auto addrec = dyn_cast<SCEVAddRecExpr>(rhs->node)) {
         if (addrec->isAffine() && addrec->getLoop() == Loop) {
           auto node2 = addrec->evaluateAtIteration(node, ctx.SE);
-          auto newrhs = std::make_shared<Constraints>(node2, rhs->isEqual, rhs->Loop);
+          auto newrhs = make_compare(node2, rhs->isEqual, rhs->Loop, ctx);
           return andB(newrhs, ctx);
         }
       }
@@ -5544,7 +5551,7 @@ return true;
       if (!Loop) {
         for (auto sub1 : {ctx.SE.getMinusSCEV(node, rhs->node), ctx.SE.getMinusSCEV(rhs->node, node)}) {
             llvm::errs() << " maybe replace lhs: " << *this << " rhs: " << *rhs << " sub1: " << *sub1 << "\n";
-          auto newrhs = std::make_shared<Constraints>(sub1, rhs->isEqual, rhs->Loop);
+          auto newrhs = make_compare(sub1, rhs->isEqual, rhs->Loop, ctx);
           if (*newrhs == *this) return shared_from_this();
         if (!isa<SCEVConstant>(rhs->node) && isa<SCEVConstant>(sub1)) {
           return andB(newrhs, ctx);
@@ -5557,7 +5564,7 @@ return true;
       if (auto addrec = dyn_cast<SCEVAddRecExpr>(node)) {
         if (addrec->isAffine() && addrec->getLoop() == rhs->Loop) {
           auto node2 = addrec->evaluateAtIteration(rhs->node, ctx.SE);
-          auto newlhs = std::make_shared<Constraints>(node2, isEqual, Loop);
+          auto newlhs = make_compare(node2, isEqual, Loop, ctx);
           return newlhs->andB(rhs, ctx);
         }
       }
@@ -5565,7 +5572,7 @@ return true;
       if (!rhs->Loop) {
         for (auto sub1 : {ctx.SE.getMinusSCEV(node, rhs->node), ctx.SE.getMinusSCEV(rhs->node, node)}) {
             llvm::errs() << " maybe replace lhs2: " << *this << " rhs: " << *rhs << " sub1: " << *sub1 << "\n";
-          auto newlhs = std::make_shared<Constraints>(sub1, isEqual, Loop);
+          auto newlhs = make_compare(sub1, isEqual, Loop, ctx);
           if (*newlhs == *this) return shared_from_this();
         if (!isa<SCEVConstant>(node) && isa<SCEVConstant>(sub1)) {
           return newlhs->andB(rhs, ctx);
@@ -5881,6 +5888,166 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
   return {};
 }
 
+std::shared_ptr<const Constraints> getSparseConditions(bool &legal, Value *val, std::shared_ptr<const Constraints> defaultFloat,
+                                Instruction *scope, ConstraintContext &ctx) {
+      if (auto I = dyn_cast<Instruction>(val)) {
+        // Binary `and` is a bit-wise `umin`.
+        if (I->getOpcode() == Instruction::And) {
+          auto lhs =
+              getSparseConditions(legal, I->getOperand(0), Constraints::all(), I, ctx);
+          auto rhs =
+              getSparseConditions(legal, I->getOperand(1), Constraints::all(), I, ctx);
+          auto res = lhs->andB(rhs, ctx);
+          llvm::errs() << " getSparse(and, " << *I << "), lhs("
+                       << *I->getOperand(0) << ") = " << *lhs << "\n";
+          llvm::errs() << " getSparse(and, " << *I << "), rhs("
+                       << *I->getOperand(1) << ") = " << *rhs << "\n";
+          llvm::errs() << " getSparse(and, " << *I << ") = " << *res << "\n";
+          return res;
+        }
+
+        // Binary `or` is a bit-wise `umax`.
+        if (I->getOpcode() == Instruction::Or) {
+          auto lhs =
+              getSparseConditions(legal, I->getOperand(0), Constraints::none(), I, ctx);
+          auto rhs =
+              getSparseConditions(legal, I->getOperand(1), Constraints::none(), I, ctx);
+          auto res = lhs->orB(rhs, ctx);
+          llvm::errs() << " getSparse(or, " << *I << "), lhs("
+                       << *I->getOperand(0) << ") = " << *lhs << "\n";
+          llvm::errs() << " getSparse(or, " << *I << "), rhs("
+                       << *I->getOperand(1) << ") = " << *rhs << "\n";
+          llvm::errs() << " getSparse(or, " << *I << ") = " << *res << "\n";
+          return res;
+        }
+
+        if (I->getOpcode() == Instruction::Xor) {
+          for (int i = 0; i < 2; i++) {
+            if (auto C = dyn_cast<ConstantInt>(I->getOperand(i)))
+              if (C->isOne()) {
+                auto pres = getSparseConditions(legal, I->getOperand(1 - i),
+                                                defaultFloat->notB(ctx), scope, ctx);
+                auto res = pres->notB(ctx);
+                llvm::errs() << " getSparse(not, " << *I << "), prev ("
+                             << *I->getOperand(0) << ") = " << *pres << "\n";
+                llvm::errs()
+                    << " getSparse(not, " << *I << ") = " << *res << "\n";
+                return res;
+              }
+          }
+        }
+
+        if (auto icmp = dyn_cast<ICmpInst>(I)) {
+          auto L = ctx.loopToSolve;
+          auto lhs = ctx.SE.getSCEVAtScope(icmp->getOperand(0), L);
+          auto rhs = ctx.SE.getSCEVAtScope(icmp->getOperand(1), L);
+          llvm::errs() << " lhs: " << *lhs << "\n";
+          llvm::errs() << " rhs: " << *rhs << "\n";
+
+          auto sub1 = ctx.SE.getMinusSCEV(lhs, rhs);
+
+          if (icmp->getPredicate() == ICmpInst::ICMP_EQ ||
+              icmp->getPredicate() == ICmpInst::ICMP_NE) {
+            if (cannotDependOnLoopIV(sub1, ctx.loopToSolve)) {
+                auto res = Constraints::make_compare(
+                        sub1, icmp->getPredicate() == ICmpInst::ICMP_EQ,
+                        nullptr, ctx);
+                llvm::errs()
+                        << " getSparse(icmp_noloop, " << *I << ") = " << *res << "\n";
+                return res;
+            } 
+            if (auto add = dyn_cast<SCEVAddRecExpr>(sub1)) {
+              if (add->isAffine()) {
+                // 0 === A + B * inc -> -A / B = inc
+                auto A = add->getStart();
+                if (auto B =
+                        dyn_cast<SCEVConstant>(add->getStepRecurrence(ctx.SE))) {
+
+                  auto MA = A;
+                  if (B->getAPInt().isNegative())
+                    B = cast<SCEVConstant>(ctx.SE.getNegativeSCEV(B));
+                  else
+                    MA = ctx.SE.getNegativeSCEV(A);
+                  auto div = ctx.SE.getUDivExpr(MA, B);
+                  auto div_e = ctx.SE.getUDivExactExpr(MA, B);
+                  if (div == div_e) {
+                    auto res = Constraints::make_compare(
+                        div, icmp->getPredicate() == ICmpInst::ICMP_EQ,
+                        add->getLoop(), ctx);
+                    llvm::errs()
+                        << " getSparse(icmp, " << *I << ") = " << *res << "\n";
+                    return res;
+                  }
+                }
+              }
+              if (scope) {
+              EmitFailure(
+                  "NoSparsification", I->getDebugLoc(), I,
+                  " No sparsification: not sparse solvable(scev): ", *sub1);
+              }
+              legal = false;
+              return defaultFloat;
+            }
+          }
+          if (scope)
+          EmitFailure("NoSparsification", I->getDebugLoc(), I,
+                      " No sparsification: not sparse solvable(icmp): ", *sub1);
+          legal = false;
+          return defaultFloat;
+        }
+
+        // cmp x, 1.0 ->   false/true
+        if (auto fcmp = dyn_cast<FCmpInst>(I)) {
+          auto res = defaultFloat;
+          llvm::errs() << " getSparse(fcmp, " << *I << ") = " << *res << "\n";
+          return res;
+
+          if (fcmp->getPredicate() == CmpInst::FCMP_OEQ ||
+              fcmp->getPredicate() == CmpInst::FCMP_UEQ) {
+            return Constraints::all();
+          } else if (fcmp->getPredicate() == CmpInst::FCMP_ONE ||
+                     fcmp->getPredicate() == CmpInst::FCMP_UNE) {
+            return Constraints::none();
+          }
+        }
+      }
+
+      if (scope) {
+      EmitFailure("NoSparsification", scope->getDebugLoc(), scope,
+                  " No sparsification: not sparse solvable: ", *val);
+      }
+      legal = false;
+      return defaultFloat;
+    }
+  
+Constraints::InnerTy Constraints::make_compare(const SCEV *v, bool isEqual, const llvm::Loop *Loop, ConstraintContext ctx) {
+    if (!Loop) {
+        llvm::errs() << " considering compare " << *v << " iseq=" << isEqual << " loop=nullptr\n";
+        SmallVector<Instruction*, 1> noassumption;
+        ConstraintContext ctx2(ctx.SE, ctx.loopToSolve, noassumption, ctx.DT);
+        for (auto I : ctx.Assumptions) {
+            bool legal = true;
+            auto parsedCond = getSparseConditions(legal, I->getOperand(0), Constraints::none(), nullptr, ctx2);
+            bool dominates = ctx.DT.dominates(I, ctx.loopToSolve->getHeader());
+            if (legal && dominates) {
+              llvm::errs() << " + " << *I << " legal=" << legal << " dom=" << dominates << " cond=" << *parsedCond << "\n";
+              if (parsedCond->ty == Type::Compare && !parsedCond->Loop) {
+                  if (parsedCond->node == v || parsedCond->node == ctx.SE.getNegativeSCEV(v)) {
+                      InnerTy res;
+                      if (parsedCond->isEqual == isEqual)
+                          res = Constraints::all();
+                      else
+                          res = Constraints::none();
+                      llvm::errs() << " +++++ found match of " << *res << " pieq=" << parsedCond->isEqual << " ieq=" << isEqual << "\n";
+                      return res;
+                  }
+              }
+            }
+        }
+    }
+    return InnerTy(new Constraints(v, isEqual, Loop, false));
+}
+
 void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
                       SetVector<BasicBlock *> &toDenseBlocks) {
 
@@ -5994,6 +6161,13 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
                                  1>>>
       forSparsification;
 
+  SmallVector<Instruction*, 1> Assumptions;
+  for (auto &BB : F)
+      for (auto &I : BB)
+          if (auto II = dyn_cast<IntrinsicInst>(&I))
+              if (II->getIntrinsicID() == Intrinsic::assume)
+                  Assumptions.push_back(II);
+
   bool sawError = false;
 
   for (auto [blk, br] : sparseBlocks) {
@@ -6037,136 +6211,18 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     // result may become more true
 
     //
-    std::function<std::shared_ptr<const Constraints>(
-        Value *, std::shared_ptr<const Constraints>, Instruction * scope)>
-        getSparseConditions =
-            [&](Value *val, std::shared_ptr<const Constraints> defaultFloat,
-                Instruction *scope) -> std::shared_ptr<const Constraints> {
-      ConstraintContext ctx(SE, L);
-      if (auto I = dyn_cast<Instruction>(val)) {
-        // Binary `and` is a bit-wise `umin`.
-        if (I->getOpcode() == Instruction::And) {
-          auto lhs =
-              getSparseConditions(I->getOperand(0), Constraints::all(), I);
-          auto rhs =
-              getSparseConditions(I->getOperand(1), Constraints::all(), I);
-          auto res = lhs->andB(rhs, ctx);
-          llvm::errs() << " getSparse(and, " << *I << "), lhs("
-                       << *I->getOperand(0) << ") = " << *lhs << "\n";
-          llvm::errs() << " getSparse(and, " << *I << "), rhs("
-                       << *I->getOperand(1) << ") = " << *rhs << "\n";
-          llvm::errs() << " getSparse(and, " << *I << ") = " << *res << "\n";
-          return res;
-        }
-
-        // Binary `or` is a bit-wise `umax`.
-        if (I->getOpcode() == Instruction::Or) {
-          auto lhs =
-              getSparseConditions(I->getOperand(0), Constraints::none(), I);
-          auto rhs =
-              getSparseConditions(I->getOperand(1), Constraints::none(), I);
-          auto res = lhs->orB(rhs, ctx);
-          llvm::errs() << " getSparse(or, " << *I << "), lhs("
-                       << *I->getOperand(0) << ") = " << *lhs << "\n";
-          llvm::errs() << " getSparse(or, " << *I << "), rhs("
-                       << *I->getOperand(1) << ") = " << *rhs << "\n";
-          llvm::errs() << " getSparse(or, " << *I << ") = " << *res << "\n";
-          return res;
-        }
-
-        if (I->getOpcode() == Instruction::Xor) {
-          for (int i = 0; i < 2; i++) {
-            if (auto C = dyn_cast<ConstantInt>(I->getOperand(i)))
-              if (C->isOne()) {
-                auto pres = getSparseConditions(I->getOperand(1 - i),
-                                                defaultFloat->notB(), scope);
-                auto res = pres->notB();
-                llvm::errs() << " getSparse(not, " << *I << "), prev ("
-                             << *I->getOperand(0) << ") = " << *pres << "\n";
-                llvm::errs()
-                    << " getSparse(not, " << *I << ") = " << *res << "\n";
-                return res;
-              }
-          }
-        }
-
-        if (auto icmp = dyn_cast<ICmpInst>(I)) {
-          auto lhs = ctx.SE.getSCEVAtScope(icmp->getOperand(0), L);
-          auto rhs = ctx.SE.getSCEVAtScope(icmp->getOperand(1), L);
-          llvm::errs() << " lhs: " << *lhs << "\n";
-          llvm::errs() << " rhs: " << *rhs << "\n";
-
-          auto sub1 = ctx.SE.getMinusSCEV(lhs, rhs);
-
-          if (icmp->getPredicate() == ICmpInst::ICMP_EQ ||
-              icmp->getPredicate() == ICmpInst::ICMP_NE)
-            if (auto add = dyn_cast<SCEVAddRecExpr>(sub1)) {
-              if (add->isAffine()) {
-                // 0 === A + B * inc -> -A / B = inc
-                auto A = add->getStart();
-                if (auto B =
-                        dyn_cast<SCEVConstant>(add->getStepRecurrence(ctx.SE))) {
-
-                  auto MA = A;
-                  if (B->getAPInt().isNegative())
-                    B = cast<SCEVConstant>(ctx.SE.getNegativeSCEV(B));
-                  else
-                    ctx.SE.getNegativeSCEV(A);
-                  auto div = ctx.SE.getUDivExpr(MA, B);
-                  auto div_e = ctx.SE.getUDivExactExpr(MA, B);
-                  if (div == div_e) {
-                    auto res = std::make_shared<Constraints>(
-                        div, icmp->getPredicate() == ICmpInst::ICMP_EQ,
-                        add->getLoop());
-                    llvm::errs()
-                        << " getSparse(icmp, " << *I << ") = " << *res << "\n";
-                    return res;
-                  }
-                }
-              }
-              EmitFailure(
-                  "NoSparsification", I->getDebugLoc(), I,
-                  " No sparsification: not sparse solvable(scev): ", *sub1);
-              legal = false;
-              return Constraints::all();
-            }
-          EmitFailure("NoSparsification", I->getDebugLoc(), I,
-                      " No sparsification: not sparse solvable(icmp): ", *sub1);
-          legal = false;
-          return Constraints::all();
-        }
-
-        // cmp x, 1.0 ->   false/true
-        if (auto fcmp = dyn_cast<FCmpInst>(I)) {
-          auto res = defaultFloat;
-          llvm::errs() << " getSparse(fcmp, " << *I << ") = " << *res << "\n";
-          return res;
-
-          if (fcmp->getPredicate() == CmpInst::FCMP_OEQ ||
-              fcmp->getPredicate() == CmpInst::FCMP_UEQ) {
-            return Constraints::all();
-          } else if (fcmp->getPredicate() == CmpInst::FCMP_ONE ||
-                     fcmp->getPredicate() == CmpInst::FCMP_UNE) {
-            return Constraints::none();
-          }
-        }
-      }
-
-      EmitFailure("NoSparsification", scope->getDebugLoc(), scope,
-                  " No sparsification: not sparse solvable: ", *val);
-      legal = false;
-      return Constraints::all();
-    };
 
     // default is condition avoids sparse, negated is condition goes
     // to sparse
     Instruction *context =
         isa<Instruction>(cond) ? cast<Instruction>(cond) : idx;
-    auto solutions = getSparseConditions(
-        cond, negated ? Constraints::all() : Constraints::none(), context);
+    ConstraintContext cctx(SE, L, Assumptions, DT);
+    auto solutions = getSparseConditions(legal, 
+        cond, negated ? Constraints::all() : Constraints::none(), context, cctx);
     llvm::errs() << " solutions pre negate: " << *solutions << "\n";
-    if (!negated)
-      solutions = solutions->notB();
+    if (!negated) {
+      solutions = solutions->notB(cctx);
+    }
     llvm::errs() << " solutions post negate: " << *solutions << "\n";
     if (!legal) {
       sawError = true;

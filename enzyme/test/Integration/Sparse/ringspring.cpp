@@ -106,6 +106,7 @@ std::vector<triple> hess_f(size_t N, double* input) {
     std::vector<triple> triplets;
     input = __enzyme_todense((void*)mod_load, (void*)never_store, input, N);
     __builtin_assume(N > 0);
+    __builtin_assume(N != 1);
     for (size_t i=0; i<N; i++) {
         __builtin_assume(i < 100000000);
         double* d_input = __enzyme_todense((void*)ident_load, (void*)ident_store, i, N);
