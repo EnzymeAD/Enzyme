@@ -3009,6 +3009,25 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     return val;
   };
 
+  // fmuladd a b c -> fadd (fmul a, b), c
+  if (auto II = dyn_cast<IntrinsicInst>(cur)) {
+    if (II->getIntrinsicID() == Intrinsic::fma || II->getIntrinsicID() == Intrinsic::fmuladd){
+      auto a = II->getOperand(0);
+      auto b = II->getOperand(1);
+      auto c = II->getOperand(2);
+      auto ab_I = cast<BinaryOperator>(B.CreateFMul(a, b));
+      ab_I->setFast(true);
+      auto ab = pushcse(ab_I);
+      auto res_I = cast<BinaryOperator>(B.CreateFAdd(ab, c));
+      res_I->setFast(true);
+      auto res = pushcse(res_I);
+      push(ab);
+      push(res);
+      replaceAndErase(cur, res);
+      return "FMulAddLower";
+    }
+  }
+
   // mul (mul a, const1), (mul b, const2) -> mul (mul a, b), (const1, const2)
   if (cur->getOpcode() == Instruction::FMul)
     if (cur->isFast())
