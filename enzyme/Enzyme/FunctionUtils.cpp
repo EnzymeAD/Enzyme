@@ -5575,11 +5575,8 @@ return true;
       }
 
       if (!Loop && !rhs->Loop && isEqual == rhs->isEqual) {
-        for (auto sub1 : {ctx.SE.getMinusSCEV(node, rhs->node), ctx.SE.getMinusSCEV(rhs->node, node)}) {
-          if (auto C = dyn_cast<SCEVConstant>(sub1))
-              if (C->isZero())
-                  return shared_from_this();
-        }
+        if (node == ctx.SE.getNegativeSCEV(rhs->node))
+          return shared_from_this();
       }
 
 
