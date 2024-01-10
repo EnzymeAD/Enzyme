@@ -5499,13 +5499,13 @@ return true;
               return shared_from_this();
             }
           }
-        } else if (isEqual && rhs->isEqual) {
+        } else if (isEqual || rhs->isEqual) {
             llvm::errs() << " + botheq\n";
-          // eq(i, a) & eq(i, b) -> eq(i, a) & eq(a, b)
+          // eq(i, a) & i ?= b -> eq(i, a) & (a ?= b)
           if (auto addrec = dyn_cast<SCEVAddRecExpr>(sub)) {
-              // we want a == b, but we can only represent loopvar ?= something
-              // so suppose a-b is of the form X + Y * lv  then a-b = 0 is
-              //   X + Y * lv == 0 -> lv = - X / Y
+              // we want a ?= b, but we can only represent loopvar ?= something
+              // so suppose a-b is of the form X + Y * lv  then a-b ?= 0 is
+              //   X + Y * lv ?= 0 -> lv ?= - X / Y
               if (addrec->isAffine()) {
                 auto X = addrec->getStart();
                 auto Y = addrec->getStepRecurrence(ctx.SE);
@@ -5521,18 +5521,32 @@ return true;
                 // in case of inexact division, check that these exactly equal for replacement
                 
                   if (div == div_e) {
+                    if (isEqual) {
                     auto res = make_compare(
-                        div, /*isEqual*/true, addrec->getLoop(), ctx);
+                        div, /*isEqual*/rhs->isEqual, addrec->getLoop(), ctx);
                     llvm::errs() << " simplified rhs to: " << *res << "\n";
                     return andB(res, ctx);
+                    } else {
+                        assert(rhs->isEqual);
+                    auto res = make_compare(
+                        div, /*isEqual*/isEqual, addrec->getLoop(), ctx);
+                    llvm::errs() << " simplified lhs to: " << *res << "\n";
+                    return rhs->andB(res, ctx);
+                    }
                   }
                 }
               }
-            if (rhs->Loop && cannotDependOnLoopIV(sub, ctx.loopToSolve)) {
+            if (isEqual && rhs->Loop && cannotDependOnLoopIV(sub, ctx.loopToSolve)) {
                     auto res = make_compare(
-                        sub, /*isEqual*/true, /*loop*/nullptr, ctx);
+                        sub, /*isEqual*/rhs->isEqual, /*loop*/nullptr, ctx);
                     llvm::errs() << " simplified(noloop) rhs from " << *rhs << " to: " << *res << "\n";
                     return andB(res, ctx);
+            }
+            if (rhs->isEqual && Loop && cannotDependOnLoopIV(sub, ctx.loopToSolve)) {
+                    auto res = make_compare(
+                        sub, /*isEqual*/isEqual, /*loop*/nullptr, ctx);
+                    llvm::errs() << " simplified(noloop) lhs from " << *rhs << " to: " << *res << "\n";
+                    return rhs->andB(res, ctx);
             }
 
           llvm::errs() << " warning: potential but unhandled simplification of equalities: " << *this << " and " << *rhs << " sub: " << *sub << "\n";
@@ -5713,7 +5727,8 @@ return true;
         for (auto uv : unionVals)
           cur = cur->orB(uv, ctx);
 
-        return andB(cur, ctx);
+        if (*cur != *rhs)
+          return andB(cur, ctx);
       }
 
       SetTy vals = ivVals;
@@ -5831,7 +5846,8 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
       Value *ivVal = Exp.expandCodeFor(node, T, IP);
       Value *iv = nullptr;
       if (Loop) {
-          iv = Loop->getInductionVariable(SE);
+          iv = Loop->getCanonicalInductionVariable();
+          assert(iv);
       } else {
           iv = ConstantInt::getNullValue(ivVal->getType());
       }
@@ -5869,11 +5885,12 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
             llvm::errs() << " + sol: " << *s.first << " " << *s.second << "\n";
             else
             llvm::errs() << " + sol: " << s.first << " " << *s.second << "\n";
+        llvm::errs() << " v: " << *v << " this: " << *this << "\n";
         llvm_unreachable("Intersect not handled (solsize>1)");
       }
       auto sol = sols[0];
       if (sol.first) {
-        if (solVal == nullptr) {
+        if (solVal != nullptr) {
           llvm::errs() << *this << "\n";
           llvm::errs() << " prevsolVal: " << *solVal << "\n";
           llvm_unreachable("Intersect not handled (prevsolval)");
@@ -6045,6 +6062,15 @@ Constraints::InnerTy Constraints::make_compare(const SCEV *v, bool isEqual, cons
             }
         }
     }
+    // cannot have negative loop canonical induction var
+    if (Loop)
+        if (auto C = dyn_cast<SCEVConstant>(v))
+            if (C->getAPInt().isNegative()) {
+                if (isEqual)
+                  return Constraints::none();
+                else
+                  return Constraints::all();
+            }
     return InnerTy(new Constraints(v, isEqual, Loop, false));
 }
 
@@ -6396,13 +6422,13 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     for (auto en : llvm::enumerate(pair.second.second)) {
       auto off = en.index();
       auto &solutions = en.value().second;
-      for (auto [sol, condition] :
-           solutions->allSolutions(Exp, idxty, phterm, L, B, SE)) {
+      auto sols = solutions->allSolutions(Exp, idxty, phterm, L, B, SE);
+      for (auto [sol, condition] : sols) {
         SmallVector<Value *, 1> args(Inputs.begin(), Inputs.end());
         args[off_idx] = ConstantInt::get(idxty, off);
         args[induct_idx] = sol;
         auto BB = B.GetInsertBlock();
-        auto B2 = BB->splitBasicBlock(BB->getTerminator(), "poststore");
+        auto B2 = BB->splitBasicBlock(B.GetInsertPoint(), "poststore");
         B2->moveAfter(BB);
         BB->getTerminator()->eraseFromParent();
         B.SetInsertPoint(BB);
@@ -6412,7 +6438,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
         B.SetInsertPoint(callB);
         B.CreateCall(F2, args);
         B.CreateBr(B2);
-        B.SetInsertPoint(B2);
+        B.SetInsertPoint(B2->getTerminator());
       }
       auto blk = en.value().first;
       auto term = blk->getTerminator();
