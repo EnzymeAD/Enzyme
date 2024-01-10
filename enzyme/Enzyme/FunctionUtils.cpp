@@ -5156,6 +5156,39 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
 
 class Constraints;
 raw_ostream &operator<<(raw_ostream &os, const Constraints &c);
+
+struct ConstraintContext {
+ScalarEvolution &SE;
+const Loop* loopToSolve;
+ConstraintContext(ScalarEvolution &SE, const Loop* loopToSolve) : SE(SE), loopToSolve(loopToSolve) {
+    assert(loopToSolve);
+}
+};
+
+bool cannotDependOnLoopIV(const SCEV* S, const Loop* L) {
+    assert(L);
+    if (isa<SCEVConstant>(S)) return true;
+    if (auto M = dyn_cast<SCEVAddExpr>(S)) {
+        for (auto o : M->operands())
+            if (!cannotDependOnLoopIV(o, L)) return false;
+        return true;
+    }
+    if (auto M = dyn_cast<SCEVMulExpr>(S)) {
+        for (auto o : M->operands())
+            if (!cannotDependOnLoopIV(o, L)) return false;
+        return true;
+    }
+    if (auto UV = dyn_cast<SCEVUnknown>(S)) {
+        auto U = UV->getValue();
+        if (isa<Argument>(U)) return true;
+        if (isa<Constant>(U)) return true;
+        auto I = cast<Instruction>(U);
+        return !L->contains(I->getParent());
+    }
+    llvm::errs() << " cannot tell if depends on loop iv: " << *S << "\n";
+    return false;
+}
+
 class Constraints : public std::enable_shared_from_this<Constraints> {
 public:
   const enum class Type {
@@ -5367,6 +5400,10 @@ return true;
     }
 */
   }
+  __attribute__((noinline))
+  void dump() const {
+      llvm::errs() << *this << "\n";
+  }
   InnerTy notB() const {
     switch (ty) {
     case Type::None:
@@ -5396,100 +5433,14 @@ return true;
     }
     return Constraints::none();
   }
-  InnerTy orB(InnerTy rhs, ScalarEvolution &SE) const {
+  InnerTy orB(InnerTy rhs, ConstraintContext &ctx) const {
     auto notLHS = notB();
     auto notRHS = rhs->notB();
-    auto andV = notLHS->andB(notRHS, SE);
+    auto andV = notLHS->andB(notRHS, ctx);
     auto res = andV->notB();
     return res;
-    /*
-            if (*rhs == *this) return shared_from_this();
-            if (rhs->isNone()) return shared_from_this();
-            if (rhs->isAll()) return rhs;
-            if (isNone()) return rhs;
-            if (isAll()) return shared_from_this();
-
-            if (ty == Type::Compare && rhs->ty == Type::Compare) {
-                auto sub = SE.getMinusSCEV(node, rhs->node);
-                if (auto cst = dyn_cast<SCEVConstant>(sub)) {
-                    // the two solves are equivalent to each other
-                    if (cst->getAPInt().isZero()) {
-                        // iv = a or iv = a
-                        //   also iv != a or iv != a
-                        if (isEqual == rhs->isEqual)
-                            return shared_from_this();
-                        else {
-                            // iv = a or iv != a
-                            return Constraints::all();
-                        }
-                    } else {
-                        // the two solves are guaranteed to be distinct
-                        // iv == 0 or iv == 1
-                        if (isEqual && rhs->isEqual) {
-                            SetTy vals;
-                            insert(vals, shared_from_this());
-                            insert(vals, rhs);
-                            return std::make_shared<Constraints>(Type::Union,
-       vals); } else if (!isEqual && !rhs->isEqual) {
-                            // iv != 0 or iv != 1
-                            return Constraints::all();
-                        } else if (!isEqual) {
-                            assert(rhs->isEqual);
-                            // iv != 0 or iv == 1
-                            return shared_from_this();
-                        } else {
-                            assert(isEqual);
-                            assert(!rhs->isEqual);
-                            return rhs;
-                        }
-                    }
-                }
-                SetTy vals;
-                insert(vals, shared_from_this());
-                insert(vals, rhs);
-                return std::make_shared<Constraints>(Type::Union, vals);
-            }
-            if (ty == Type::Union && rhs->ty == Type::Union) {
-                SetTy vals = values;
-                for (const auto &v : rhs->values)
-                    insert(vals, v);
-                return std::make_shared<Constraints>(Type::Union, vals);
-            }
-            if (rhs->ty == Type::Union) {
-                SetTy vals = rhs->values;
-                insert(vals, shared_from_this());
-                return std::make_shared<Constraints>(Type::Union, vals);
-            }
-            if (ty == Type::Union) {
-                SetTy vals = values;
-                insert(vals, rhs);
-                return std::make_shared<Constraints>(Type::Union, vals);
-            }
-            // (m and a and b and d) or (m and a and c and e ...) -> m and a and
-       ( (b and d) or (c and e)) if (ty == Type::Intersect && rhs->ty ==
-       Type::Intersect) { SetTy intersection = values;
-                set_subtract(intersection, rhs->values);
-                if (intersection.size() != 0) {
-                    InnerTy other_lhs = remove(intersection);
-                    InnerTy other_rhs = rhs->remove(intersection);
-                    InnerTy remainder;
-                    if (intersection.size() == 1)
-                        remainder = intersection[0];
-                    else {
-                        remainder =
-       std::make_shared<Constraints>(Type::Intersect, intersection);
-                    }
-                    return remainder->andB(other_lhs->orB(other_rhs, SE), SE);
-                }
-                SetTy vals;
-                insert(vals, shared_from_this());
-                insert(vals, rhs);
-                return std::make_shared<Constraints>(Type::Union, vals);
-            }
-            llvm_unreachable("Illegal predicate state");
-    */
   }
-  InnerTy andB(const InnerTy rhs, ScalarEvolution &SE) const {
+  InnerTy andB(const InnerTy rhs, ConstraintContext &ctx) const {
     if (*rhs == *this)
       return shared_from_this();
     if (rhs->isNone())
@@ -5501,9 +5452,11 @@ return true;
     if (isAll())
       return rhs;
 
+    llvm::errs() << " anding: " << *this << " with " << *rhs << "\n";
     if (ty == Type::Compare && rhs->ty == Type::Compare) {
-      auto sub = SE.getMinusSCEV(node, rhs->node);
-      if (Loop == rhs->Loop)
+      auto sub = ctx.SE.getMinusSCEV(node, rhs->node);
+      if (Loop == rhs->Loop) {
+          llvm::errs() << " + sameloop, sub=" << *sub << "\n";
         if (auto cst = dyn_cast<SCEVConstant>(sub)) {
           // the two solves are equivalent to each other
           if (cst->getValue()->isZero()) {
@@ -5539,7 +5492,94 @@ return true;
               return shared_from_this();
             }
           }
+        } else if (isEqual && rhs->isEqual) {
+            llvm::errs() << " + botheq\n";
+          // eq(i, a) & eq(i, b) -> eq(i, a) & eq(a, b)
+          if (auto addrec = dyn_cast<SCEVAddRecExpr>(sub)) {
+              // we want a == b, but we can only represent loopvar ?= something
+              // so suppose a-b is of the form X + Y * lv  then a-b = 0 is
+              //   X + Y * lv == 0 -> lv = - X / Y
+              if (addrec->isAffine()) {
+                auto X = addrec->getStart();
+                auto Y = addrec->getStepRecurrence(ctx.SE);
+                auto MinusX = X;
+
+                if (isa<SCEVConstant>(Y) && cast<SCEVConstant>(Y)->getAPInt().isNegative())
+                    Y = ctx.SE.getNegativeSCEV(Y);
+                else
+                    MinusX = ctx.SE.getNegativeSCEV(X);
+
+                auto div = ctx.SE.getUDivExpr(MinusX, Y);
+                auto div_e = ctx.SE.getUDivExactExpr(MinusX, Y);
+                // in case of inexact division, check that these exactly equal for replacement
+                
+                  if (div == div_e) {
+                    auto res = std::make_shared<Constraints>(
+                        div, /*isEqual*/true, addrec->getLoop());
+                    llvm::errs() << " simplified rhs to: " << *res << "\n";
+                    return andB(res, ctx);
+                  }
+                }
+              }
+            if (rhs->Loop && cannotDependOnLoopIV(sub, ctx.loopToSolve)) {
+                    auto res = std::make_shared<Constraints>(
+                        sub, /*isEqual*/true, /*loop*/nullptr);
+                    llvm::errs() << " simplified(noloop) rhs from " << *rhs << " to: " << *res << "\n";
+                    return andB(res, ctx);
+            }
+
+          llvm::errs() << " warning: potential but unhandled simplification of equalities: " << *this << " and " << *rhs << " sub: " << *sub << "\n";
+          }
+      }
+
+      if (isEqual) {
+      if (auto addrec = dyn_cast<SCEVAddRecExpr>(rhs->node)) {
+        if (addrec->isAffine() && addrec->getLoop() == Loop) {
+          auto node2 = addrec->evaluateAtIteration(node, ctx.SE);
+          auto newrhs = std::make_shared<Constraints>(node2, rhs->isEqual, rhs->Loop);
+          return andB(newrhs, ctx);
         }
+      }
+      // not loop -> node == 0
+      if (!Loop) {
+        for (auto sub1 : {ctx.SE.getMinusSCEV(node, rhs->node), ctx.SE.getMinusSCEV(rhs->node, node)}) {
+            llvm::errs() << " maybe replace lhs: " << *this << " rhs: " << *rhs << " sub1: " << *sub1 << "\n";
+          auto newrhs = std::make_shared<Constraints>(sub1, rhs->isEqual, rhs->Loop);
+          if (*newrhs == *this) return shared_from_this();
+        if (!isa<SCEVConstant>(rhs->node) && isa<SCEVConstant>(sub1)) {
+          return andB(newrhs, ctx);
+        }
+        }
+      }
+      }
+
+      if (rhs->isEqual) {
+      if (auto addrec = dyn_cast<SCEVAddRecExpr>(node)) {
+        if (addrec->isAffine() && addrec->getLoop() == rhs->Loop) {
+          auto node2 = addrec->evaluateAtIteration(rhs->node, ctx.SE);
+          auto newlhs = std::make_shared<Constraints>(node2, isEqual, Loop);
+          return newlhs->andB(rhs, ctx);
+        }
+      }
+      // not loop -> node == 0
+      if (!rhs->Loop) {
+        for (auto sub1 : {ctx.SE.getMinusSCEV(node, rhs->node), ctx.SE.getMinusSCEV(rhs->node, node)}) {
+            llvm::errs() << " maybe replace lhs2: " << *this << " rhs: " << *rhs << " sub1: " << *sub1 << "\n";
+          auto newlhs = std::make_shared<Constraints>(sub1, isEqual, Loop);
+          if (*newlhs == *this) return shared_from_this();
+        if (!isa<SCEVConstant>(node) && isa<SCEVConstant>(sub1)) {
+          return newlhs->andB(rhs, ctx);
+        }
+        }
+      }
+      }
+
+      if (!Loop && !rhs->Loop && isEqual == rhs->isEqual) {
+        if (node == ctx.SE.getNegativeSCEV(rhs->node))
+          return shared_from_this();
+      }
+
+
       SetTy vals;
       insert(vals, shared_from_this());
       insert(vals, rhs);
@@ -5549,25 +5589,28 @@ return true;
       return std::make_shared<Constraints>(Type::Intersect, vals);
     }
     if (ty == Type::Intersect && rhs->ty == Type::Intersect) {
-      SetTy vals = values;
+      auto tmp = shared_from_this();
       for (const auto &v : rhs->values)
-        insert(vals, v);
-      return std::make_shared<Constraints>(Type::Intersect, vals);
+        tmp = tmp->andB(v, ctx);
+      return tmp;
     }
     if (ty == Type::Intersect && rhs->ty == Type::Compare) {
       SetTy vals;
       // Force internal merging to do individual compares
       bool foldedIn = false;
-      for (const auto &v : values) {
+      for (auto en : llvm::enumerate(values)) {
+          auto i = en.index();
+          auto v = en.value();
         assert(v->ty != Type::Intersect);
         assert(v->ty != Type::All);
         assert(v->ty != Type::None);
+        assert(v->ty == Type::Compare || v->ty == Type::Union);
         if (foldedIn) {
           insert(vals, v);
           continue;
         }
         // this is either a compare or a union
-        auto tmp = rhs->andB(v, SE);
+        auto tmp = rhs->andB(v, ctx);
         switch (tmp->ty) {
         case Type::Union:
         case Type::All:
@@ -5580,6 +5623,26 @@ return true;
           break;
         // if intersected, these two were not foldable, try folding into later
         case Type::Intersect: {
+            SetTy fuse;
+            insert(fuse, rhs);
+            insert(fuse, v);
+
+            Constraints trivialFuse(Type::Intersect, fuse);
+          
+            // If this is not just making an intersect of the two operands, remerge.
+            if (trivialFuse != *tmp) {
+            llvm::errs() << " intersect with compare recur: " << *this << " - " << *rhs << "\n";
+            llvm::errs() << "  + trivialFuse: " << trivialFuse << " tmp: " << *tmp << " v: " << *v << "\n";
+            InnerTy newlhs = Constraints::all();
+            for (auto en2 : llvm::enumerate(values)) {
+          auto i2 = en2.index();
+          auto v2 = en2.value();
+                if (i2 == i) continue;
+                newlhs = newlhs->andB(v2, ctx);
+            }
+            llvm::errs() << "  + newlhs: " << *newlhs << "\n";
+            return newlhs->andB(tmp, ctx);
+          }
           insert(vals, v);
         }
         }
@@ -5601,7 +5664,7 @@ return true;
       for (const auto &iv : ivVals) {
         SetTy nextunionVals;
         for (auto &uv : unionVals) {
-          auto tmp = iv->andB(uv, SE);
+          auto tmp = iv->andB(uv, ctx);
           switch (tmp->ty) {
           case Type::None:
           case Type::Compare:
@@ -5609,9 +5672,28 @@ return true;
             insert(nextunionVals, tmp);
             changed |= tmp != uv;
             break;
-          case Type::Intersect:
+          case Type::Intersect: {
+            SetTy fuse;
+            if (uv->ty == Type::Intersect)
+                fuse = uv->values;
+            else {
+                assert(uv->ty == Type::Compare);
+                insert(fuse, uv);
+            }
+            insert(fuse, iv);
+
+            Constraints trivialFuse(Type::Intersect, fuse);
+            if (trivialFuse != *tmp) {
+                llvm::errs() << " iunion with compare recur: " << *this << " - " << *rhs << "\n";
+                llvm::errs() << "  * trivialFuse: " << trivialFuse << " tmp: " << *tmp << " iv: " << *iv << " uv: " << *uv << "\n";
+                insert(nextunionVals, tmp);
+                changed = true;
+                break;
+            }
+            
             insert(nextunionVals, uv);
             break;
+          }
           case Type::All:
             llvm_unreachable("Impossible");
           }
@@ -5622,9 +5704,9 @@ return true;
       if (changed) {
         auto cur = Constraints::none();
         for (auto uv : unionVals)
-          cur = cur->orB(uv, SE);
+          cur = cur->orB(uv, ctx);
 
-        return andB(cur, SE);
+        return andB(cur, ctx);
       }
 
       SetTy vals = ivVals;
@@ -5633,7 +5715,7 @@ return true;
     }
     // Handled above via symmetry
     if (rhs->ty == Type::Intersect || rhs->ty == Type::Compare) {
-      return rhs->andB(shared_from_this(), SE);
+      return rhs->andB(shared_from_this(), ctx);
     }
     // (m or a or b or d) and (m or a or c or e ...) -> m or a or ( (b or d) and
     // (c or e))
@@ -5648,7 +5730,7 @@ return true;
         else {
           remainder = std::make_shared<Constraints>(Type::Union, intersection);
         }
-        return remainder->orB(other_lhs->andB(other_rhs, SE), SE);
+        return remainder->orB(other_lhs->andB(other_rhs, ctx), ctx);
       }
       SetTy vals;
       insert(vals, shared_from_this());
@@ -5661,8 +5743,7 @@ return true;
   }
   // what this would be like when removing the following list of constraints
   InnerTy remove(const SetTy &sub) const {
-    assert(ty == Type::Union);
-    assert(ty == Type::Intersect);
+    assert(ty == Type::Union || ty == Type::Intersect);
     SetTy res = values;
     set_subtract(res, sub);
     // res.set_subtract(sub);
@@ -5682,6 +5763,13 @@ return true;
                const llvm::Loop *ivToSolve, IRBuilder<> &B,
                ScalarEvolution &SE) const;
 };
+
+void dump(const Constraints &c) {
+  c.dump();
+}
+void dump(std::shared_ptr<const Constraints> c) {
+  c->dump();
+}
 
 raw_ostream &operator<<(raw_ostream &os, const Constraints &c) {
   switch (c.ty) {
@@ -5704,14 +5792,16 @@ raw_ostream &operator<<(raw_ostream &os, const Constraints &c) {
     return os;
   }
   case Constraints::Type::Compare: {
-    if (c.isEqual) {
-      os << "(eq " << *c.node << ", L=" << c.Loop->getHeader()->getName()
-         << ")";
-    } else {
-      os << "(ne " << *c.node << ", L=" << c.Loop->getHeader()->getName()
-         << ")";
-    }
-    return os;
+    if (c.isEqual)
+      os << "(eq ";
+    else 
+      os << "(ne ";
+    os << *c.node << ", L=";
+    if (c.Loop)
+        os << c.Loop->getHeader()->getName();
+    else
+        os << "nullptr";
+    return os << ")";
   }
   }
   return os;
@@ -5732,10 +5822,16 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
     if (ivToSolve != Loop) {
       assert(ivToSolve);
       Value *ivVal = Exp.expandCodeFor(node, T, IP);
+      Value *iv = nullptr;
+      if (Loop) {
+          iv = Loop->getInductionVariable(SE);
+      } else {
+          iv = ConstantInt::getNullValue(ivVal->getType());
+      }
       if (isEqual)
-        cond = B.CreateICmpEQ(ivVal, Loop->getInductionVariable(SE));
+        cond = B.CreateICmpEQ(ivVal, iv);
       else
-        cond = B.CreateICmpNE(ivVal, Loop->getInductionVariable(SE));
+        cond = B.CreateICmpNE(ivVal, iv);
       return {std::make_pair((Value *)nullptr, cond)};
     }
     if (isEqual) {
@@ -5761,13 +5857,19 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
       auto sols = v->allSolutions(Exp, T, IP, ivToSolve, B, SE);
       if (sols.size() != 1) {
         llvm::errs() << *this << "\n";
-        llvm_unreachable("Intersect not handled");
+        for (auto s : sols)
+            if (s.first)
+            llvm::errs() << " + sol: " << *s.first << " " << *s.second << "\n";
+            else
+            llvm::errs() << " + sol: " << s.first << " " << *s.second << "\n";
+        llvm_unreachable("Intersect not handled (solsize>1)");
       }
       auto sol = sols[0];
       if (sol.first) {
         if (solVal == nullptr) {
           llvm::errs() << *this << "\n";
-          llvm_unreachable("Intersect not handled");
+          llvm::errs() << " prevsolVal: " << *solVal << "\n";
+          llvm_unreachable("Intersect not handled (prevsolval)");
         }
         assert(solVal == nullptr);
         solVal = sol.first;
@@ -5942,6 +6044,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
         getSparseConditions =
             [&](Value *val, std::shared_ptr<const Constraints> defaultFloat,
                 Instruction *scope) -> std::shared_ptr<const Constraints> {
+      ConstraintContext ctx(SE, L);
       if (auto I = dyn_cast<Instruction>(val)) {
         // Binary `and` is a bit-wise `umin`.
         if (I->getOpcode() == Instruction::And) {
@@ -5949,7 +6052,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
               getSparseConditions(I->getOperand(0), Constraints::all(), I);
           auto rhs =
               getSparseConditions(I->getOperand(1), Constraints::all(), I);
-          auto res = lhs->andB(rhs, SE);
+          auto res = lhs->andB(rhs, ctx);
           llvm::errs() << " getSparse(and, " << *I << "), lhs("
                        << *I->getOperand(0) << ") = " << *lhs << "\n";
           llvm::errs() << " getSparse(and, " << *I << "), rhs("
@@ -5964,7 +6067,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
               getSparseConditions(I->getOperand(0), Constraints::none(), I);
           auto rhs =
               getSparseConditions(I->getOperand(1), Constraints::none(), I);
-          auto res = lhs->orB(rhs, SE);
+          auto res = lhs->orB(rhs, ctx);
           llvm::errs() << " getSparse(or, " << *I << "), lhs("
                        << *I->getOperand(0) << ") = " << *lhs << "\n";
           llvm::errs() << " getSparse(or, " << *I << "), rhs("
@@ -5990,12 +6093,12 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
         }
 
         if (auto icmp = dyn_cast<ICmpInst>(I)) {
-          auto lhs = SE.getSCEVAtScope(icmp->getOperand(0), L);
-          auto rhs = SE.getSCEVAtScope(icmp->getOperand(1), L);
+          auto lhs = ctx.SE.getSCEVAtScope(icmp->getOperand(0), L);
+          auto rhs = ctx.SE.getSCEVAtScope(icmp->getOperand(1), L);
           llvm::errs() << " lhs: " << *lhs << "\n";
           llvm::errs() << " rhs: " << *rhs << "\n";
 
-          auto sub1 = SE.getMinusSCEV(lhs, rhs);
+          auto sub1 = ctx.SE.getMinusSCEV(lhs, rhs);
 
           if (icmp->getPredicate() == ICmpInst::ICMP_EQ ||
               icmp->getPredicate() == ICmpInst::ICMP_NE)
@@ -6004,15 +6107,15 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
                 // 0 === A + B * inc -> -A / B = inc
                 auto A = add->getStart();
                 if (auto B =
-                        dyn_cast<SCEVConstant>(add->getStepRecurrence(SE))) {
+                        dyn_cast<SCEVConstant>(add->getStepRecurrence(ctx.SE))) {
 
                   auto MA = A;
                   if (B->getAPInt().isNegative())
-                    B = cast<SCEVConstant>(SE.getNegativeSCEV(B));
+                    B = cast<SCEVConstant>(ctx.SE.getNegativeSCEV(B));
                   else
-                    SE.getNegativeSCEV(A);
-                  auto div = SE.getUDivExpr(MA, B);
-                  auto div_e = SE.getUDivExactExpr(MA, B);
+                    ctx.SE.getNegativeSCEV(A);
+                  auto div = ctx.SE.getUDivExpr(MA, B);
+                  auto div_e = ctx.SE.getUDivExactExpr(MA, B);
                   if (div == div_e) {
                     auto res = std::make_shared<Constraints>(
                         div, icmp->getPredicate() == ICmpInst::ICMP_EQ,
