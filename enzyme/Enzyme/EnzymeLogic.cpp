@@ -29,6 +29,7 @@
 //===----------------------------------------------------------------------===//
 #include "ActivityAnalysis.h"
 #include "AdjointGenerator.h"
+#include "llvm/IR/Intrinsics.h"
 
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
@@ -4876,7 +4877,8 @@ public:
         B.CreatePointerCast(tmpBlock, PointerType::getUnqual(nextType)));
   }
 
-  Value *expand(IRBuilder<> &B, Value *v, Type *origT) {
+  Value *expand(IRBuilder<> &B, Value *v) {
+    Type *origT = getFromType();
     auto c0 = Constant::getNullValue(
         llvm::Type::getIntNTy(oldFunc->getContext(), fromwidth));
     B.CreateStore(c0, B.CreatePointerCast(
@@ -4960,7 +4962,7 @@ public:
         B.CreateSelect(getNewFromOriginal(SI.getCondition()), newT, newF));
     nres->takeName(newI);
     nres->copyIRFlags(newI);
-    newI->replaceAllUsesWith(expand(B, nres, SI.getType()));
+    newI->replaceAllUsesWith(expand(B, nres));
     newI->eraseFromParent();
     return;
   }
@@ -5002,7 +5004,7 @@ public:
         auto nres = cast<BinaryOperator>(B.CreateFMul(newLHS, newRHS));
         nres->takeName(newI);
         nres->copyIRFlags(newI);
-        newI->replaceAllUsesWith(expand(B, nres, BO.getType()));
+        newI->replaceAllUsesWith(expand(B, nres));
         newI->eraseFromParent();
       }
         return;
@@ -5010,7 +5012,7 @@ public:
         auto nres = cast<BinaryOperator>(B.CreateFAdd(newLHS, newRHS));
         nres->takeName(newI);
         nres->copyIRFlags(newI);
-        newI->replaceAllUsesWith(expand(B, nres, BO.getType()));
+        newI->replaceAllUsesWith(expand(B, nres));
         newI->eraseFromParent();
       }
         return;
@@ -5018,7 +5020,7 @@ public:
         auto nres = cast<BinaryOperator>(B.CreateFSub(newLHS, newRHS));
         nres->takeName(newI);
         nres->copyIRFlags(newI);
-        newI->replaceAllUsesWith(expand(B, nres, BO.getType()));
+        newI->replaceAllUsesWith(expand(B, nres));
         newI->eraseFromParent();
       }
         return;
@@ -5026,7 +5028,7 @@ public:
         auto nres = cast<BinaryOperator>(B.CreateFDiv(newLHS, newRHS));
         nres->takeName(newI);
         nres->copyIRFlags(newI);
-        newI->replaceAllUsesWith(expand(B, nres, BO.getType()));
+        newI->replaceAllUsesWith(expand(B, nres));
         newI->eraseFromParent();
       }
         return;
@@ -5034,7 +5036,7 @@ public:
         auto nres = cast<BinaryOperator>(B.CreateFRem(newLHS, newRHS));
         nres->takeName(newI);
         nres->copyIRFlags(newI);
-        newI->replaceAllUsesWith(expand(B, nres, BO.getType()));
+        newI->replaceAllUsesWith(expand(B, nres));
         newI->eraseFromParent();
       }
         return;
@@ -5062,13 +5064,44 @@ public:
   }
   void visitFenceInst(llvm::FenceInst &FI) { return; }
   void visitIntrinsicInst(llvm::IntrinsicInst &II) {
-    SmallVector<Value *, 2> orig_ops(II.getNumOperands());
-    for (unsigned i = 0; i < II.getNumOperands(); ++i) {
+    SmallVector<Value *, 2> orig_ops(II.arg_size());
+    for (unsigned i = 0; i < II.arg_size(); ++i)
       orig_ops[i] = II.getOperand(i);
-    }
     if (handleAdjointForIntrinsic(II.getIntrinsicID(), II, orig_ops))
       return;
-    todo(II);
+
+    bool hasFromType = false;
+    auto newI = cast<llvm::IntrinsicInst>(getNewFromOriginal(&II));
+    IRBuilder<> B(newI);
+    SmallVector<Value *, 2> new_ops(II.arg_size());
+    for (unsigned i = 0; i < II.arg_size(); ++i) {
+      if (orig_ops[i]->getType() == getFromType()) {
+        new_ops[i] = truncate(B, getNewFromOriginal(orig_ops[i]));
+        hasFromType = true;
+      } else {
+        new_ops[i] = getNewFromOriginal(orig_ops[i]);
+      }
+    }
+    Type *retTy = II.getType();
+    if (II.getType() == getFromType()) {
+      hasFromType = true;
+      retTy = getToType();
+    }
+
+    if (!hasFromType)
+      return;
+
+    // TODO check that the intrinsic is overloaded
+
+    CallInst *intr;
+    Value *nres = intr = B.CreateIntrinsic(retTy, II.getIntrinsicID(), new_ops,
+                                           &II, II.getName());
+    if (II.getType() == getFromType())
+      nres = expand(B, nres);
+    intr->copyIRFlags(newI);
+    newI->replaceAllUsesWith(nres);
+    newI->eraseFromParent();
+
     return;
   }
 
@@ -5104,7 +5137,7 @@ public:
     case Intrinsic::nvvm_ldg_global_f: {
       auto CI = cast<ConstantInt>(I.getOperand(1));
       visitLoadLike(I, /*Align*/ MaybeAlign(CI->getZExtValue()));
-      return false;
+      return true;
     }
     default:
       break;
@@ -5118,7 +5151,7 @@ public:
                        /*isVolatile*/ false, llvm::AtomicOrdering::NotAtomic,
                        SyncScope::SingleThread,
                        /*mask*/ getNewFromOriginal(I.getOperand(3)));
-      return false;
+      return true;
     }
     if (ID == Intrinsic::masked_load) {
       auto align0 = cast<ConstantInt>(I.getOperand(1))->getZExtValue();
@@ -5126,31 +5159,10 @@ public:
       visitLoadLike(I, align,
                     /*mask*/ getNewFromOriginal(I.getOperand(2)),
                     /*orig_maskInit*/ I.getOperand(3));
-      return false;
+      return true;
     }
 
-    auto called = cast<CallInst>(&I)->getCalledFunction();
-    (void)called;
-    switch (ID) {
-      // #include "IntrinsicDerivatives.inc"
-    default:
-      break;
-    }
-
-    switch (ID) {
-    case Intrinsic::nvvm_barrier0:
-    case Intrinsic::nvvm_barrier0_popc:
-    case Intrinsic::nvvm_barrier0_and:
-    case Intrinsic::nvvm_barrier0_or:
-    case Intrinsic::nvvm_membar_cta:
-    case Intrinsic::nvvm_membar_gl:
-    case Intrinsic::nvvm_membar_sys:
-    case Intrinsic::amdgcn_s_barrier:
-      return false;
-    default:
-      break;
-    }
-    return true;
+    return false;
   }
 
   llvm::Value *getNewFromOriginal(llvm::Value *v) {
