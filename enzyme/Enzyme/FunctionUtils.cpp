@@ -5215,6 +5215,13 @@ bool cannotDependOnLoopIV(const SCEV *S, const Loop *L) {
     auto I = cast<Instruction>(U);
     return !L->contains(I->getParent());
   }
+  if (auto addrec = dyn_cast<SCEVAddRecExpr>(S)) {
+    if (addrec->getLoop() == L) return false;
+    for (auto o : addrec->operands())
+      if (!cannotDependOnLoopIV(o, L))
+        return false;
+    return true;
+  }
   llvm::errs() << " cannot tell if depends on loop iv: " << *S << "\n";
   return false;
 }
@@ -5934,8 +5941,7 @@ return true;
   }
   SmallVector<std::pair<Value *, Value *>, 1>
   allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
-               const llvm::Loop *ivToSolve, IRBuilder<> &B,
-               ScalarEvolution &SE) const;
+               const ConstraintContext &ctx, IRBuilder<> &B) const;
 };
 
 void dump(const Constraints &c) { c.dump(); }
@@ -5983,8 +5989,7 @@ raw_ostream &operator<<(raw_ostream &os, const Constraints &c) {
 
 SmallVector<std::pair<Value *, Value *>, 1>
 Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
-                          const llvm::Loop *ivToSolve, IRBuilder<> &B,
-                          ScalarEvolution &SE) const {
+                          const ConstraintContext &ctx, IRBuilder<> &B) const {
   switch (ty) {
   case Type::None:
     return {};
@@ -5993,8 +5998,8 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
     llvm_unreachable("All not handled");
   case Type::Compare: {
     Value *cond = ConstantInt::getTrue(T->getContext());
-    if (ivToSolve != Loop) {
-      assert(ivToSolve);
+    if (ctx.loopToSolve != Loop) {
+      assert(ctx.loopToSolve);
       Value *ivVal = Exp.expandCodeFor(node, T, IP);
       Value *iv = nullptr;
       if (Loop) {
@@ -6021,15 +6026,31 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
   case Type::Union: {
     SmallVector<std::pair<Value *, Value *>, 1> vals;
     for (auto v : values)
-      for (auto sol : v->allSolutions(Exp, T, IP, ivToSolve, B, SE))
+      for (auto sol : v->allSolutions(Exp, T, IP, ctx, B))
         vals.push_back(sol);
     return vals;
   }
-  case Type::Intersect:
+  case Type::Intersect:{
+    SmallVector<InnerTy, 1> vals(values.begin(), values.end());
+    for (int i=0; i<vals.size(); i++) {
+        if (vals[i]->ty == Type::Union) { 
+            auto others = Constraints::all();
+            for (int j=0; j<vals.size(); j++)
+                if (i != j)
+                    others = others->andB(vals[j], ctx);
+            SmallVector<std::pair<Value *, Value *>, 1> resvals;
+            for (auto &v : vals[i]->values) {
+                auto tmp = v->andB(others, ctx);
+                for (const auto& sol : tmp->allSolutions(Exp, T, IP, ctx, B))
+                    resvals.push_back(sol);
+            }
+            return resvals;
+        }
+    }
     Value *solVal = nullptr;
     Value *cond = ConstantInt::getTrue(T->getContext());
     for (auto v : values) {
-      auto sols = v->allSolutions(Exp, T, IP, ivToSolve, B, SE);
+      auto sols = v->allSolutions(Exp, T, IP, ctx, B);
       if (sols.size() != 1) {
         llvm::errs() << *this << "\n";
         for (auto s : sols)
@@ -6053,6 +6074,7 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
       cond = B.CreateAnd(cond, sol.second);
     }
     return {std::make_pair(solVal, cond)};
+  }
   }
   return {};
 }
@@ -6121,13 +6143,6 @@ getSparseConditions(bool &legal, Value *val,
 
       if (icmp->getPredicate() == ICmpInst::ICMP_EQ ||
           icmp->getPredicate() == ICmpInst::ICMP_NE) {
-        if (cannotDependOnLoopIV(sub1, ctx.loopToSolve)) {
-          auto res = Constraints::make_compare(
-              sub1, icmp->getPredicate() == ICmpInst::ICMP_EQ, nullptr, ctx);
-          llvm::errs() << " getSparse(icmp_noloop, " << *I << ") = " << *res
-                       << "\n";
-          return res;
-        }
         if (auto add = dyn_cast<SCEVAddRecExpr>(sub1)) {
           if (add->isAffine()) {
             // 0 === A + B * inc -> -A / B = inc
@@ -6152,13 +6167,13 @@ getSparseConditions(bool &legal, Value *val,
               }
             }
           }
-          if (scope) {
-            EmitFailure(
-                "NoSparsification", I->getDebugLoc(), I,
-                " No sparsification: not sparse solvable(scev): ", *sub1);
-          }
-          legal = false;
-          return defaultFloat;
+        }
+        if (cannotDependOnLoopIV(sub1, ctx.loopToSolve)) {
+          auto res = Constraints::make_compare(
+              sub1, icmp->getPredicate() == ICmpInst::ICMP_EQ, nullptr, ctx);
+          llvm::errs() << " getSparse(icmp_noloop, " << *I << ") = " << *res
+                       << "\n";
+          return res;
         }
       }
       if (scope)
@@ -6198,6 +6213,7 @@ Constraints::InnerTy Constraints::make_compare(const SCEV *v, bool isEqual,
   if (!Loop) {
     llvm::errs() << " considering compare " << *v << " iseq=" << isEqual
                  << " loop=nullptr\n";
+    assert(!isa<SCEVAddRecExpr>(v));
     SmallVector<Instruction *, 1> noassumption;
     ConstraintContext ctx2(ctx.SE, ctx.loopToSolve, noassumption, ctx.DT);
     for (auto I : ctx.Assumptions) {
@@ -6590,7 +6606,8 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     for (auto en : llvm::enumerate(pair.second.second)) {
       auto off = en.index();
       auto &solutions = en.value().second;
-      auto sols = solutions->allSolutions(Exp, idxty, phterm, L, B, SE);
+      ConstraintContext ctx(SE, L, Assumptions, DT);
+      auto sols = solutions->allSolutions(Exp, idxty, phterm, ctx, B);
       for (auto [sol, condition] : sols) {
         SmallVector<Value *, 1> args(Inputs.begin(), Inputs.end());
         args[off_idx] = ConstantInt::get(idxty, off);
