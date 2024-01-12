@@ -5157,16 +5157,36 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
 class Constraints;
 raw_ostream &operator<<(raw_ostream &os, const Constraints &c);
 
+struct ConstraintComparator {
+    bool operator()(std::shared_ptr<const Constraints> lhs, std::shared_ptr<const Constraints> rhs) const;
+};
+
 struct ConstraintContext {
   ScalarEvolution &SE;
   const Loop *loopToSolve;
   const SmallVectorImpl<Instruction *> &Assumptions;
   DominatorTree &DT;
+  using InnerTy = std::shared_ptr<const Constraints>;
+  using SetTy = std::set<InnerTy, ConstraintComparator>;
+  SetTy seen;
   ConstraintContext(ScalarEvolution &SE, const Loop *loopToSolve,
                     const SmallVectorImpl<Instruction *> &Assumptions,
                     DominatorTree &DT)
       : SE(SE), loopToSolve(loopToSolve), Assumptions(Assumptions), DT(DT) {
     assert(loopToSolve);
+  }
+  ConstraintContext(const ConstraintContext&) = delete;
+  ConstraintContext(const ConstraintContext& ctx, InnerTy lhs) :
+      SE(ctx.SE), loopToSolve(ctx.loopToSolve), Assumptions(ctx.Assumptions), DT(ctx.DT), seen(ctx.seen) {
+      seen.insert(lhs);
+  }
+  ConstraintContext(const ConstraintContext& ctx, InnerTy lhs, InnerTy rhs) :
+      SE(ctx.SE), loopToSolve(ctx.loopToSolve), Assumptions(ctx.Assumptions), DT(ctx.DT), seen(ctx.seen) {
+      seen.insert(lhs);
+      seen.insert(rhs);
+  }
+  bool contains(InnerTy x) const {
+      return seen.count(x) != 0;
   }
 };
 
@@ -5234,46 +5254,6 @@ public:
 
   using InnerTy = std::shared_ptr<const Constraints>;
 
-  struct ConstraintComparator {
-    bool operator()(InnerTy lhs, InnerTy rhs) const {
-      if (lhs->ty < rhs->ty)
-        return true;
-      else if (lhs->ty > rhs->ty)
-        return false;
-
-      if (lhs->node < rhs->node)
-        return true;
-      else if (lhs->node > rhs->node)
-        return false;
-
-      if (lhs->isEqual < rhs->isEqual)
-        return true;
-      else if (lhs->isEqual > rhs->isEqual)
-        return false;
-
-      if (lhs->Loop < rhs->Loop)
-        return true;
-      else if (lhs->Loop > rhs->Loop)
-        return false;
-
-      return lhs->values < rhs->values;
-      /*
-      auto lhss = lhs->values.size();
-      auto rhss = rhs->values.size();
-      if (lhss < rhss)
-              return true;
-      else if (lhss > rhss)
-              return false;
-      for (int i=0; i<lhss; i++) {
-              if (this->operator()(lhs->values[i], rhs->values[i]))
-                      return true;
-              if (this->operator()(rhs->values[i], lhs->values[i]))
-                      return false;
-      }
-      return false;
-      */
-    }
-  };
   using SetTy = std::set<InnerTy, ConstraintComparator>;
 
   const SetTy values;
@@ -5297,23 +5277,40 @@ private:
 
 public:
   static InnerTy make_compare(const SCEV *v, bool isEqual,
-                              const llvm::Loop *Loop, ConstraintContext ctx);
+                              const llvm::Loop *Loop, const ConstraintContext& ctx);
 
   Constraints(Type t)
       : ty(t), values(), node(nullptr), isEqual(false), Loop(nullptr) {
     assert(t == Type::All || t == Type::None);
   }
-  Constraints(Type t, const SetTy &c)
+  Constraints(Type t, const SetTy &c, bool check=true)
       : ty(t), values(c), node(nullptr), isEqual(false), Loop(nullptr) {
     assert(t != Type::All);
     assert(t != Type::None);
     assert(c.size() != 0);
     assert(c.size() != 1);
-    /*
-                    for (int i=0; i<c.size(); i++)
+     SmallVector<InnerTy, 1> tmp(c.begin(), c.end());
+                    for (int i=0; i<tmp.size(); i++)
                             for (int j=0; j<i; j++)
-                                    assert(*c[i] != *c[j]);
-    */
+                                    assert(*tmp[i] != *tmp[j]);
+    if (t == Type::Intersect) {
+        for (auto & v : c) {
+            assert(v->ty != Type::Intersect);
+        }
+    }
+    if (t == Type::Union) {
+        for (auto & v : c) {
+            assert(v->ty != Type::Union);
+        }
+    }
+    if (t == Type::Intersect && check) {
+        for (int i=0; i<tmp.size(); i++)
+            if (tmp[i]->ty == Type::Compare && tmp[i]->isEqual && tmp[i]->Loop)
+                for (int j=0; j<tmp.size(); j++)
+                    if (tmp[j]->ty == Type::Compare)
+                        if (auto s = dyn_cast<SCEVAddRecExpr>(tmp[j]->node))
+                                assert(s->getLoop() != tmp[i]->Loop);
+    }
   }
 
   bool operator==(const Constraints &rhs) const {
@@ -5382,13 +5379,7 @@ return true;
       if (*std::get<0>(pair) > *std::get<1>(pair))
         return false;
     }
-    return true;
-    //) && !(rhs.values < values)
-    /*
-for (size_t i=0; i<values.size(); i++)
-if (*values[i] != *rhs.values[i]) return false;
-return true;
-    */
+    return false;
   }
   unsigned hash() const {
     unsigned res = 5 * (unsigned)ty +
@@ -5411,6 +5402,11 @@ return true;
   bool isAll() const { return ty == Type::All; }
   static void insert(SetTy &set, InnerTy ty) {
     set.insert(ty);
+    int mcount = 0;
+    for (auto &v : set)
+        if (*v == *ty)
+            mcount++;
+    assert(mcount == 1);
     /*
                     for (auto &v : set)
                             if (*v == *ty)
@@ -5440,7 +5436,7 @@ return true;
 */
   }
   __attribute__((noinline)) void dump() const { llvm::errs() << *this << "\n"; }
-  InnerTy notB(ConstraintContext &ctx) const {
+  InnerTy notB(const ConstraintContext &ctx) const {
     switch (ty) {
     case Type::None:
       return Constraints::all();
@@ -5469,14 +5465,18 @@ return true;
     }
     return Constraints::none();
   }
-  InnerTy orB(InnerTy rhs, ConstraintContext &ctx) const {
+  InnerTy orB(InnerTy rhs, const ConstraintContext &ctx) const {
     auto notLHS = notB(ctx);
+    if (!notLHS) return nullptr;
     auto notRHS = rhs->notB(ctx);
+    if (!notRHS) return nullptr;
     auto andV = notLHS->andB(notRHS, ctx);
+    if (!andV) return nullptr;
     auto res = andV->notB(ctx);
     return res;
   }
-  InnerTy andB(const InnerTy rhs, ConstraintContext &ctx) const {
+  InnerTy andB(const InnerTy rhs, const ConstraintContext &ctx) const {
+    assert(rhs);
     if (*rhs == *this)
       return shared_from_this();
     if (rhs->isNone())
@@ -5489,6 +5489,10 @@ return true;
       return rhs;
 
     llvm::errs() << " anding: " << *this << " with " << *rhs << "\n";
+    if (ctx.contains(shared_from_this()) || ctx.contains(rhs)) {
+        llvm::errs() << " %%% stopping recursion\n";
+        return nullptr;
+    }
     if (ty == Type::Compare && rhs->ty == Type::Compare) {
       auto sub = ctx.SE.getMinusSCEV(node, rhs->node);
       if (Loop == rhs->Loop) {
@@ -5647,12 +5651,17 @@ return true;
       if (vals.size() == 1) {
         llvm::errs() << "this: " << *this << " rhs: " << *rhs << "\n";
       }
-      return std::make_shared<Constraints>(Type::Intersect, vals);
+      auto res = std::make_shared<Constraints>(Type::Intersect, vals);
+      llvm::errs() << " naiive comp merge: " << *res << "\n";
+      return res;
     }
     if (ty == Type::Intersect && rhs->ty == Type::Intersect) {
       auto tmp = shared_from_this();
-      for (const auto &v : rhs->values)
-        tmp = tmp->andB(v, ctx);
+      for (const auto &v : rhs->values) {
+        auto tmp2 = tmp->andB(v, ctx);
+        if (!tmp2) return nullptr;
+        tmp = std::move(tmp2);
+      }
       return tmp;
     }
     if (ty == Type::Intersect && rhs->ty == Type::Compare) {
@@ -5672,6 +5681,7 @@ return true;
         }
         // this is either a compare or a union
         auto tmp = rhs->andB(v, ctx);
+        if (!tmp) return nullptr;
         switch (tmp->ty) {
         case Type::Union:
         case Type::All:
@@ -5688,7 +5698,7 @@ return true;
           insert(fuse, rhs);
           insert(fuse, v);
 
-          Constraints trivialFuse(Type::Intersect, fuse);
+          Constraints trivialFuse(Type::Intersect, fuse, false);
 
           // If this is not just making an intersect of the two operands,
           // remerge.
@@ -5698,23 +5708,40 @@ return true;
             llvm::errs() << "  + trivialFuse: " << trivialFuse
                          << " tmp: " << *tmp << " v: " << *v << "\n";
             InnerTy newlhs = Constraints::all();
+            bool legal = true;
             for (auto en2 : llvm::enumerate(values)) {
               auto i2 = en2.index();
               auto v2 = en2.value();
               if (i2 == i)
                 continue;
-              newlhs = newlhs->andB(v2, ctx);
+              auto newlhs2 = newlhs->andB(v2, ctx);
+              if (!newlhs2) {
+                  legal = false;
+                  break;
+              }
+              newlhs = std::move(newlhs2);
             }
-            llvm::errs() << "  + newlhs: " << *newlhs << "\n";
-            return newlhs->andB(tmp, ctx);
+            if (legal) {
+              llvm::errs() << "  + newlhs: " << *newlhs << "\n";
+              return newlhs->andB(tmp, ctx);
+            }
           }
           insert(vals, v);
         }
         }
       }
-      if (!foldedIn)
+      if (!foldedIn) {
         insert(vals, rhs);
-      return std::make_shared<Constraints>(Type::Intersect, vals);
+        return std::make_shared<Constraints>(Type::Intersect, vals);
+      } else {
+        auto cur = Constraints::all();
+        for (auto &iv : vals) {
+            auto cur2 = cur->andB(iv, ctx);
+            if (!cur2) return nullptr;
+            cur = std::move(cur2);
+        }
+        return cur;
+      }
     }
     if ((ty == Type::Intersect || ty == Type::Compare) &&
         rhs->ty == Type::Union) {
@@ -5728,8 +5755,14 @@ return true;
 
       for (const auto &iv : ivVals) {
         SetTy nextunionVals;
+        bool midchanged = false;
         for (auto &uv : unionVals) {
           auto tmp = iv->andB(uv, ctx);
+          if (!tmp) {
+              midchanged = false;
+              nextunionVals = unionVals;
+              break;
+          }
           switch (tmp->ty) {
           case Type::None:
           case Type::Compare:
@@ -5747,7 +5780,7 @@ return true;
             }
             insert(fuse, iv);
 
-            Constraints trivialFuse(Type::Intersect, fuse);
+            Constraints trivialFuse(Type::Intersect, fuse, false);
             if (trivialFuse != *tmp) {
               llvm::errs() << " iunion with compare recur: " << *this << " - "
                            << *rhs << "\n";
@@ -5755,7 +5788,7 @@ return true;
                            << " tmp: " << *tmp << " iv: " << *iv
                            << " uv: " << *uv << "\n";
               insert(nextunionVals, tmp);
-              changed = true;
+              midchanged = true;
               break;
             }
 
@@ -5766,7 +5799,10 @@ return true;
             llvm_unreachable("Impossible");
           }
         }
-        unionVals = nextunionVals;
+        if (midchanged) {
+          unionVals = nextunionVals;
+          changed = true;
+        }
       }
 
       if (changed) {
@@ -5804,6 +5840,72 @@ return true;
         }
         return remainder->orB(other_lhs->andB(other_rhs, ctx), ctx);
       }
+      
+      bool changed = false;
+      SetTy lhsVals = values;
+      SetTy rhsVals = rhs->values;
+    
+      ConstraintContext ctxd(ctx, shared_from_this(), rhs);
+
+      SetTy distributedVals;
+      for (const auto &l1 : lhsVals) {
+        bool subchanged = false;
+        SetTy subDistributedVals;
+        for (auto &r1 : rhsVals) {
+          auto tmp = l1->andB(r1, ctxd);
+          if (!tmp) {
+              subchanged = false;
+              break;
+          }
+
+          if (l1->ty == Type::Intersect || r1->ty == Type::Intersect) {
+              subchanged = true;
+            insert(subDistributedVals, tmp);
+          } else {
+            
+          SetTy fuse;
+          insert(fuse, l1);
+          insert(fuse, r1);
+          assert(fuse.size() == 2);
+          Constraints trivialFuse(Type::Intersect, fuse);
+          if ((trivialFuse != *tmp) || distributedVals.count(tmp)) {
+              llvm::errs() << " *distributed fix: " << *tmp << " vs " << trivialFuse << "\n";
+              subchanged = true;
+          }
+          insert(subDistributedVals, tmp);
+          }
+        }
+        if (subchanged) {
+            for (auto sub : subDistributedVals)
+                insert(distributedVals, sub);
+            changed = true;
+        } else {
+            auto midand = l1->andB(rhs, ctxd);
+            if (!midand) {
+                changed = false;
+                break;
+            }
+            insert(distributedVals, midand);
+        }
+      }
+
+      if (changed) {
+        auto cur = Constraints::none();
+        bool legal = true;
+        for (auto &uv : distributedVals) {
+          auto cur2 = cur->orB(uv, ctxd);
+          if (!cur2) {
+              legal = false;
+              break;
+            }
+          cur = std::move(cur2);
+        }
+        if (legal) {
+        llvm::errs() <<" chose distributed when & of " << *this << " & " << *rhs << " resulting in " << *cur << "\n";
+        return cur;
+        }
+      }
+
       SetTy vals;
       insert(vals, shared_from_this());
       insert(vals, rhs);
@@ -5838,6 +5940,10 @@ return true;
 
 void dump(const Constraints &c) { c.dump(); }
 void dump(std::shared_ptr<const Constraints> c) { c->dump(); }
+
+bool ConstraintComparator::operator()(std::shared_ptr<const Constraints> lhs, std::shared_ptr<const Constraints> rhs) const {
+      return *lhs < *rhs;
+}
 
 raw_ostream &operator<<(raw_ostream &os, const Constraints &c) {
   switch (c.ty) {
@@ -5954,7 +6060,7 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
 std::shared_ptr<const Constraints>
 getSparseConditions(bool &legal, Value *val,
                     std::shared_ptr<const Constraints> defaultFloat,
-                    Instruction *scope, ConstraintContext &ctx) {
+                    Instruction *scope, const ConstraintContext &ctx) {
   if (auto I = dyn_cast<Instruction>(val)) {
     // Binary `and` is a bit-wise `umin`.
     if (I->getOpcode() == Instruction::And) {
@@ -5963,6 +6069,8 @@ getSparseConditions(bool &legal, Value *val,
       auto rhs = getSparseConditions(legal, I->getOperand(1),
                                      Constraints::all(), I, ctx);
       auto res = lhs->andB(rhs, ctx);
+      assert(res);
+      assert(ctx.seen.size() == 0);
       llvm::errs() << " getSparse(and, " << *I << "), lhs(" << *I->getOperand(0)
                    << ") = " << *lhs << "\n";
       llvm::errs() << " getSparse(and, " << *I << "), rhs(" << *I->getOperand(1)
@@ -6086,7 +6194,7 @@ getSparseConditions(bool &legal, Value *val,
 
 Constraints::InnerTy Constraints::make_compare(const SCEV *v, bool isEqual,
                                                const llvm::Loop *Loop,
-                                               ConstraintContext ctx) {
+                                               const ConstraintContext &ctx) {
   if (!Loop) {
     llvm::errs() << " considering compare " << *v << " iseq=" << isEqual
                  << " loop=nullptr\n";
@@ -6160,12 +6268,15 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
   // Full simplification
   while (!Q.empty()) {
     auto cur = Q.pop_back_val();
+    /*
     std::set<Instruction *> prev;
     for (auto v : Q)
       prev.insert(v);
     llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
+    */
     auto changed = fixSparse_inner(cur, F, Q, DT, SE, LI, DL);
     (void)changed;
+    /*
     if (changed) {
       llvm::errs() << "changed: " << *changed << "\n";
 
@@ -6174,6 +6285,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
           llvm::errs() << " + " << *I << "\n";
       llvm::errs() << F << "\n\n";
     }
+    */
   }
 
   SmallVector<std::pair<BasicBlock *, BranchInst *>, 1> sparseBlocks;
