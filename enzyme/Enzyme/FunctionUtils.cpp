@@ -6608,10 +6608,14 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       auto &solutions = en.value().second;
       ConstraintContext ctx(SE, L, Assumptions, DT);
       auto sols = solutions->allSolutions(Exp, idxty, phterm, ctx, B);
+      SmallVector<Value*, 1> prevSols;
       for (auto [sol, condition] : sols) {
         SmallVector<Value *, 1> args(Inputs.begin(), Inputs.end());
         args[off_idx] = ConstantInt::get(idxty, off);
         args[induct_idx] = sol;
+        for (auto sol2 : prevSols)
+          condition = B.CreateAnd(condition, B.CreateICmpNE(sol, sol2));
+        prevSols.push_back(sol);
         auto BB = B.GetInsertBlock();
         auto B2 = BB->splitBasicBlock(B.GetInsertPoint(), "poststore");
         B2->moveAfter(BB);
