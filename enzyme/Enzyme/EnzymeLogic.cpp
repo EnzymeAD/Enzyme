@@ -5094,29 +5094,8 @@ public:
     // TODO check that the intrinsic is overloaded
 
     CallInst *intr;
-#if LLVM_VERSION_MAJOR >= 16
-    Value *nres = intr = B.CreateIntrinsic(retTy, II.getIntrinsicID(), new_ops,
-                                           &II, II.getName());
-#else
-    // Older version do not automatically mangle the intrinsic for us - we need
-    // to provide the types to mangle with
-    SmallVector<Intrinsic::IITDescriptor, 8> Table;
-    getIntrinsicInfoTableEntries(II.getIntrinsicID(), Table);
-    ArrayRef<Intrinsic::IITDescriptor> TableRef = Table;
-    SmallVector<Type *, 2> ArgTys;
-    Intrinsic::MatchIntrinsicTypesResult Res =
-        Intrinsic::matchIntrinsicSignature(II.getFunctionType(), TableRef,
-                                           ArgTys);
-    assert(Res != Intrinsic::MatchIntrinsicTypes_NoMatchRet &&
-           "Intrinsic has incorrect return type!");
-    assert(Res != Intrinsic::MatchIntrinsicTypes_NoMatchArg &&
-           "Intrinsic has incorrect argument type!");
-    for (unsigned i = 0; i < ArgTys.size(); i++)
-      if (ArgTys[i] == getFromType())
-        ArgTys[i] = getToType();
-    Value *nres = intr = B.CreateIntrinsic(II.getIntrinsicID(), ArgTys, new_ops,
-                                           &II, II.getName());
-#endif
+    Value *nres = intr = createIntrinsicCall(B, II.getIntrinsicID(), retTy,
+                                             new_ops, &II, II.getName());
     if (II.getType() == getFromType())
       nres = expand(B, nres);
     intr->copyIRFlags(newI);

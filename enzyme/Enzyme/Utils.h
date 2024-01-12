@@ -1807,4 +1807,10 @@ bool collectOffset(llvm::GEPOperator *gep, const llvm::DataLayout &DL,
                    unsigned BitWidth,
                    llvm::MapVector<llvm::Value *, llvm::APInt> &VariableOffsets,
                    llvm::APInt &ConstantOffset);
+
+llvm::CallInst *createIntrinsicCall(llvm::IRBuilderBase &B,
+                                    llvm::Intrinsic::ID ID, llvm::Type *RetTy,
+                                    llvm::ArrayRef<llvm::Value *> Args,
+                                    llvm::Instruction *FMFSource = nullptr,
+                                    const llvm::Twine &Name = "");
 #endif // ENZYME_UTILS_H
