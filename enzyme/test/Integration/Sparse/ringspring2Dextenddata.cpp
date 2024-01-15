@@ -12,7 +12,6 @@
 #include <stdio.h>
 #include <assert.h>
 #include <vector>
-#include <random>
 
 
 #include<math.h>
@@ -25,8 +24,6 @@ struct triple {
     triple(size_t row, size_t col, double val) : row(row), col(col), val(val) {}
 };
 
-
-size_t N;
 
 extern int enzyme_dup;
 extern int enzyme_dupnoneed;
@@ -73,7 +70,7 @@ double ident_load(size_t idx, size_t i, size_t N) {
 }
 
 __attribute__((enzyme_sparse_accumulate))
-void inner_store(int64_t row, int64_t col, double val, std::vector<triple> &triplets) {
+void inner_store(int64_t row, int64_t col, size_t N, double val, std::vector<triple> &triplets) {
     printf("row=%d col=%d val=%f\n", row, col % N, val);
     // assert(abs(val) > 0.00001);
     triplets.emplace_back(row % N, col % N, val);
@@ -83,7 +80,7 @@ __attribute__((always_inline))
 void sparse_store(double val, int64_t idx, size_t i, size_t N, std::vector<triple> &triplets) {
     if (val == 0.0) return;
     idx /= sizeof(double);
-    inner_store(i, idx, val, triplets);
+    inner_store(i, idx, N, val, triplets);
 }
 
 __attribute__((always_inline))
@@ -132,8 +129,6 @@ std::vector<triple> hess_f2(size_t N, double* input) {
 */
 // int argc, char** argv
 int __attribute__((always_inline)) main() {
-    std::mt19937 generator(0); // Seed the random number generator
-    std::uniform_real_distribution<double> normal(0, 0.05);
 
 
     // if (argc != 2) {
@@ -147,8 +142,8 @@ int __attribute__((always_inline)) main() {
     double x[2 * N + 2];
     for (int i = 0; i < N; ++i) {
         double angle = 2 * M_PI * i / N;
-        x[2 * i] = cos(angle) + normal(generator);
-        x[2 * i + 1] = sin(angle) + normal(generator);
+        x[2 * i] = cos(angle) ;//+ normal(generator);
+        x[2 * i + 1] = sin(angle) ;//+ normal(generator);
     }
     x[2 * N] = x[0];
     x[2 * N + 1] = x[1];

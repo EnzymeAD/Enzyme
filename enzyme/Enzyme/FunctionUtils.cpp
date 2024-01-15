@@ -2818,7 +2818,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           return "OrZero";
         }
         // or a, 1 -> 1
-        if (C->isOne()) {
+        if (C->isOne() && cur->getType()->isIntegerTy(1)) {
           replaceAndErase(cur, C);
           return "OrOne";
         }
@@ -2829,7 +2829,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     for (int i = 0; i < 2; i++) {
       if (auto C = dyn_cast<ConstantInt>(cur->getOperand(i))) {
         // and a, 1 -> a
-        if (C->isOne()) {
+        if (C->isOne() && cur->getType()->isIntegerTy(1)) {
           replaceAndErase(cur, cur->getOperand(1 - i));
           return "AndOne";
         }
@@ -3008,6 +3008,41 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     }
     return val;
   };
+  
+  if (auto II = dyn_cast<IntrinsicInst>(cur))
+      if (II->getIntrinsicID() == Intrinsic::fmuladd || II->getIntrinsicID() == Intrinsic::fma) {
+          B.setFastMathFlags(getFast());
+          auto mul = pushcse(B.CreateFMul(II->getOperand(0), II->getOperand(1)));
+          auto add = pushcse(B.CreateFAdd(mul, II->getOperand(2)));
+          replaceAndErase(cur, add);
+          return "FMulAddExpand";
+      }
+  
+  //  (lshr exact (mul a, C1), C2), C -> mul a, (lhsr exact C1, C2) if C2 divides C1
+  if ((cur->getOpcode() == Instruction::LShr || cur->getOpcode() == Instruction::SDiv || cur->getOpcode() == Instruction::UDiv) && cur->isExact()) 
+    if (auto C2 = dyn_cast<ConstantInt>(cur->getOperand(1)))
+      if (auto mul = dyn_cast<BinaryOperator>(cur->getOperand(0)))
+        if (mul->getOpcode() == Instruction::Mul)
+    for (int i0=0; i0<2; i0++)
+      if (auto C1 = dyn_cast<ConstantInt>(mul->getOperand(i0))) {
+          auto lhs = C1->getValue();
+          APInt rhs = C2->getValue();
+          if (cur->getOpcode() == Instruction::LShr) {
+             rhs = APInt(rhs.getBitWidth(), 1) << rhs;
+          }
+
+          APInt div, rem;
+          if (cur->getOpcode() == Instruction::LShr || cur->getOpcode() == Instruction::UDiv)
+            APInt::udivrem(lhs, rhs, div, rem);
+          else
+            APInt::sdivrem(lhs, rhs, div, rem);
+          if (rem.isZero()) {
+            auto res = B.CreateMul( mul->getOperand(1-i0), ConstantInt::get(cur->getType(), div), "mdiv." + cur->getName(), mul->hasNoUnsignedWrap(), mul->hasNoSignedWrap());
+            push(mul);
+            replaceAndErase(cur, res);
+            return "IMulDivConst";
+          }
+        }
 
   // mul (mul a, const1), (mul b, const2) -> mul (mul a, b), (const1, const2)
   if (cur->getOpcode() == Instruction::FMul)
@@ -3915,7 +3950,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
 
   // (a | b) == 0 -> a == 0 & b == 0
   if (auto icmp = dyn_cast<ICmpInst>(cur))
-    if (icmp->getPredicate() == ICmpInst::ICMP_EQ)
+    if (icmp->getPredicate() == ICmpInst::ICMP_EQ && cur->getType()->isIntegerTy(1))
       for (int i = 0; i < 2; i++)
         if (auto C = dyn_cast<ConstantInt>(icmp->getOperand(i)))
           if (C->isZero())
@@ -3995,7 +4030,9 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     SmallVector<Instruction *, 1> precasts;
     Value *lhs = nullptr;
 
-    Value *prelhs = cur->getOperand(0);
+    Value *prelhs = (cur->getOpcode() == Instruction::FNeg) ?
+                        ConstantFP::get(cur->getType(), 0.0) :
+                        cur->getOperand(0);
     Value *prerhs = (cur->getOpcode() == Instruction::FNeg)
                         ? cur->getOperand(0)
                         : cur->getOperand(1);
@@ -4328,11 +4365,20 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         push(SI);
         auto ntval = (tvalC && tvalC->isZero())
                          ? tvalC
-                         : pushcse(B.CreateFDivFMF(SI->getTrueValue(), b, cur));
+                         : pushcse(B.CreateFDivFMF(SI->getTrueValue(), b, cur, "sfdiv2_t." + cur->getName()));
         auto nfval =
             (fvalC && fvalC->isZero())
                 ? fvalC
-                : pushcse(B.CreateFDivFMF(SI->getFalseValue(), b, cur));
+                : pushcse(B.CreateFDivFMF(SI->getFalseValue(), b, cur, "sfdiv2_f." + cur->getName()));
+
+        // Work around bad fdivfmf, fixed in LLVM 16+
+        // https://github.com/llvm/llvm-project/commit/4f3b1c6dd6ef6c7b5bb79f058e3b7ba4bcdf4566
+#if LLVM_VERSION_MAJOR < 16
+        for (auto v : {ntval, nfval})
+          if (auto I = dyn_cast<Instruction>(v))
+            I->setFastMathFlags(cur->getFastMathFlags());
+#endif
+
         auto res = pushcse(B.CreateSelect(SI->getCondition(), ntval, nfval,
                                           "sfdiv2." + cur->getName()));
 
@@ -5206,6 +5252,12 @@ bool cannotDependOnLoopIV(const SCEV *S, const Loop *L) {
         return false;
     return true;
   }
+  if (auto M = dyn_cast<SCEVUDivExpr>(S)) {
+    for (auto o : M->operands())
+      if (!cannotDependOnLoopIV(o, L))
+        return false;
+    return true;
+  }
   if (auto UV = dyn_cast<SCEVUnknown>(S)) {
     auto U = UV->getValue();
     if (isa<Argument>(U))
@@ -5602,6 +5654,7 @@ return true;
       }
 
       if (isEqual) {
+        if (Loop)
         if (auto rep = evaluateAtLoopIter(rhs->node, ctx.SE, Loop, node))
           if (rep != rhs->node) {
             auto newrhs = make_compare(rep, rhs->isEqual, rhs->Loop, ctx);
@@ -5625,6 +5678,7 @@ return true;
       }
 
       if (rhs->isEqual) {
+        if (rhs->Loop)
         if (auto rep = evaluateAtLoopIter(node, ctx.SE, rhs->Loop, rhs->node))
           if (rep != node) {
             auto newlhs = make_compare(rep, isEqual, Loop, ctx);
@@ -5760,11 +5814,13 @@ return true;
       else
         insert(ivVals, shared_from_this());
 
+      ConstraintContext ctxd(ctx, shared_from_this(), rhs);
+
       for (const auto &iv : ivVals) {
         SetTy nextunionVals;
         bool midchanged = false;
         for (auto &uv : unionVals) {
-          auto tmp = iv->andB(uv, ctx);
+          auto tmp = iv->andB(uv, ctxd);
           if (!tmp) {
               midchanged = false;
               nextunionVals = unionVals;
@@ -5814,8 +5870,10 @@ return true;
 
       if (changed) {
         auto cur = Constraints::none();
-        for (auto uv : unionVals)
-          cur = cur->orB(uv, ctx);
+        for (auto uv : unionVals) {
+          cur = cur->orB(uv, ctxd);
+          if (!cur) break;
+        }
 
         if (*cur != *rhs)
           return andB(cur, ctx);
@@ -6017,11 +6075,9 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
     if (isEqual) {
       return {std::make_pair(Exp.expandCodeFor(node, T, IP), cond)};
     }
-    llvm::errs() << *this << "\n";
-    llvm_unreachable("Constraint ne not handled");
-    // EmitFailure("NoSparsification", context->getDebugLoc(), context, "F: ",
-    // F, "\nL: ", *L, "\ncond: ", *cond, " negated:", negated, "\n No
-    // sparsification: not sparse solvable(nosoltn): solutions:",*solutions);
+    EmitFailure("NoSparsification", IP->getDebugLoc(), IP, "Negated solution not handled: ", *this);
+    assert(0);
+    return {};
   }
   case Type::Union: {
     SmallVector<std::pair<Value *, Value *>, 1> vals;
@@ -6031,21 +6087,36 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
     return vals;
   }
   case Type::Intersect:{
+    {
     SmallVector<InnerTy, 1> vals(values.begin(), values.end());
+    ssize_t unionidx = -1;
     for (int i=0; i<vals.size(); i++) {
         if (vals[i]->ty == Type::Union) { 
+            unionidx = i;
+            bool allne = true;
+            for (auto &v : vals[i]->values) {
+                if (v->ty != Type::Compare ||
+                        v->isEqual) {
+                    allne = false;
+                break;
+            }
+            }
+            if (allne) break;
+        }
+    }
+    if (unionidx != -1) {
             auto others = Constraints::all();
             for (int j=0; j<vals.size(); j++)
-                if (i != j)
+                if (unionidx != j)
                     others = others->andB(vals[j], ctx);
             SmallVector<std::pair<Value *, Value *>, 1> resvals;
-            for (auto &v : vals[i]->values) {
+            for (auto &v : vals[unionidx]->values) {
                 auto tmp = v->andB(others, ctx);
                 for (const auto& sol : tmp->allSolutions(Exp, T, IP, ctx, B))
                     resvals.push_back(sol);
             }
             return resvals;
-        }
+    }
     }
     Value *solVal = nullptr;
     Value *cond = ConstantInt::getTrue(T->getContext());
@@ -6284,15 +6355,13 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
   // Full simplification
   while (!Q.empty()) {
     auto cur = Q.pop_back_val();
-    /*
     std::set<Instruction *> prev;
     for (auto v : Q)
       prev.insert(v);
     llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
-    */
     auto changed = fixSparse_inner(cur, F, Q, DT, SE, LI, DL);
     (void)changed;
-    /*
+    
     if (changed) {
       llvm::errs() << "changed: " << *changed << "\n";
 
@@ -6301,8 +6370,9 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
           llvm::errs() << " + " << *I << "\n";
       llvm::errs() << F << "\n\n";
     }
-    */
   }
+
+  llvm::errs() << " post fix inner " << F << "\n";
 
   SmallVector<std::pair<BasicBlock *, BranchInst *>, 1> sparseBlocks;
   bool legalToSparse = true;
@@ -6490,8 +6560,19 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     forSparsification[L].second.emplace_back(blk, solutions);
   }
 
-  if (sawError)
+  if (sawError) {
+    for (auto & pair : forSparsification) {
+      for (auto PN : {pair.second.first.first, pair.second.first.second}) {
+        PN->replaceAllUsesWith(UndefValue::get(PN->getType()));
+        PN->eraseFromParent();
+      }
+    }
+    if (llvm::verifyFunction(F, &llvm::errs())) {
+      llvm::errs() << F << "\n";
+      report_fatal_error("function failed verification (6)");
+    }
     return;
+  }
 
   if (forSparsification.size() == 0) {
     llvm::errs() << " found no stores for sparsification\n";
