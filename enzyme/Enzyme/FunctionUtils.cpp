@@ -3447,12 +3447,12 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       if (auto op = dyn_cast<SelectInst>(v)) {
         if (auto tc = dyn_cast<ConstantFP>(op->getTrueValue()))
           if (tc->isZero()) {
-            conditions.emplace_back(op->getCondition(), false);
+            conditions.emplace_back(op->getCondition(), true);
             continue;
           }
         if (auto tc = dyn_cast<ConstantFP>(op->getFalseValue()))
           if (tc->isZero()) {
-            conditions.emplace_back(op->getCondition(), true);
+            conditions.emplace_back(op->getCondition(), false);
             continue;
           }
       }
@@ -3470,7 +3470,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       if (count == conditions.size() && count > 1) {
         condition = conditions[i].first;
         if (conditions[i].second)
-          condition = pushcse(B.CreateNot(condition));
+          condition = pushcse(B.CreateNot(condition, "sumpnot"));
         break;
       }
     }
@@ -7091,20 +7091,17 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
         }
   }
 
-  // llvm::errs() << " pre fix inner: " << F << "\n";
+  llvm::errs() << " pre fix inner: " << F << "\n";
 
   // Full simplification
   while (!Q.empty()) {
     auto cur = Q.pop_back_val();
-    /*
     std::set<Instruction *> prev;
     for (auto v : Q)
       prev.insert(v);
     llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
-    */
     auto changed = fixSparse_inner(cur, F, Q, DT, SE, LI, DL);
     (void)changed;
-    /*
     if (changed) {
       llvm::errs() << "changed: " << *changed << "\n";
 
@@ -7113,10 +7110,9 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
           llvm::errs() << " + " << *I << "\n";
       llvm::errs() << F << "\n\n";
     }
-    */
   }
 
-  // llvm::errs() << " post fix inner " << F << "\n";
+  llvm::errs() << " post fix inner " << F << "\n";
 
   SmallVector<std::pair<BasicBlock *, BranchInst *>, 1> sparseBlocks;
   bool legalToSparse = true;
@@ -7426,12 +7422,18 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
 
     auto phterm = ph->getTerminator();
     IRBuilder<> B(phterm);
-    SCEVExpander Exp(SE, DL, "sparseenzyme");
+
+    // We extracted code, reset analyses.
+    /*
+    DT.reset();
+    SE.forgetAllLoops();
+    */
 
     for (auto en : llvm::enumerate(pair.second.second)) {
       auto off = en.index();
       auto &solutions = en.value().second;
       ConstraintContext ctx(SE, L, Assumptions, DT);
+      SCEVExpander Exp(SE, DL, "sparseenzyme", /*preservelcssa*/false);
       auto sols = solutions->allSolutions(Exp, idxty, phterm, ctx, B);
       SmallVector<Value *, 1> prevSols;
       for (auto [sol, condition] : sols) {
@@ -7462,7 +7464,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     }
 
     PN->eraseFromParent();
-
+    
     for (auto &I : *L2Header) {
       auto boundsCheck = dyn_cast<CallInst>(&I);
       if (!boundsCheck)
@@ -7813,6 +7815,7 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
     PB.registerCGSCCAnalyses(CGAM);
     PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
+    SimplifyCFGPass(SimplifyCFGOptions()).run(*F, FAM);
     InstCombinePass().run(*F, FAM);
     // required to make preheaders
     LoopSimplifyPass().run(*F, FAM);
