@@ -3293,6 +3293,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     std::optional<APFloat> constval;
     bool changed = false;
     for (auto &v : callOperands(P))
+
     {
       if (auto P2 = isProduct(v)) {
         for (auto &v2 : callOperands(P2)) {
@@ -6006,9 +6007,6 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         }
         if (br->getSuccessor(0) != PN->getParent()) {
           continue;
-          
-          
-
         }
         if (br->getSuccessor(1) != PN->getIncomingBlock(1 - i)) {
           continue;
@@ -6199,7 +6197,6 @@ public:
       : ty(t), values(), node(nullptr), isEqual(false), Loop(nullptr) {
     assert(t == Type::All || t == Type::None);
   }
-
   Constraints(Type t, const SetTy &c, bool check = true)
       : ty(t), values(c), node(nullptr), isEqual(false), Loop(nullptr) {
     assert(t != Type::All);
@@ -6561,55 +6558,13 @@ return true;
               return newlhs->andB(rhs, ctx);
             }
           }
-      }
-
-      if (isEqual) {
-      if (auto addrec = dyn_cast<SCEVAddRecExpr>(rhs->node)) {
-        if (addrec->isAffine() && addrec->getLoop() == Loop) {
-          auto node2 = addrec->evaluateAtIteration(node, ctx.SE);
-          auto newrhs = std::make_shared<Constraints>(node2, rhs->isEqual, rhs->Loop);
-          return andB(newrhs, ctx);
         }
-      }
-      // not loop -> node == 0
-      if (!Loop) {
-        for (auto sub1 : {ctx.SE.getMinusSCEV(node, rhs->node), ctx.SE.getMinusSCEV(rhs->node, node)}) {
-            llvm::errs() << " maybe replace lhs: " << *this << " rhs: " << *rhs << " sub1: " << *sub1 << "\n";
-          auto newrhs = std::make_shared<Constraints>(sub1, rhs->isEqual, rhs->Loop);
-          if (*newrhs == *this) return shared_from_this();
-        if (!isa<SCEVConstant>(rhs->node) && isa<SCEVConstant>(sub1)) {
-          return andB(newrhs, ctx);
-        }
-        }
-      }
-      }
-
-      if (rhs->isEqual) {
-      if (auto addrec = dyn_cast<SCEVAddRecExpr>(node)) {
-        if (addrec->isAffine() && addrec->getLoop() == rhs->Loop) {
-          auto node2 = addrec->evaluateAtIteration(rhs->node, ctx.SE);
-          auto newlhs = std::make_shared<Constraints>(node2, isEqual, Loop);
-          return newlhs->andB(rhs, ctx);
-        }
-      }
-      // not loop -> node == 0
-      if (!rhs->Loop) {
-        for (auto sub1 : {ctx.SE.getMinusSCEV(node, rhs->node), ctx.SE.getMinusSCEV(rhs->node, node)}) {
-            llvm::errs() << " maybe replace lhs2: " << *this << " rhs: " << *rhs << " sub1: " << *sub1 << "\n";
-          auto newlhs = std::make_shared<Constraints>(sub1, isEqual, Loop);
-          if (*newlhs == *this) return shared_from_this();
-        if (!isa<SCEVConstant>(node) && isa<SCEVConstant>(sub1)) {
-          return newlhs->andB(rhs, ctx);
-        }
-        }
-      }
       }
 
       if (!Loop && !rhs->Loop && isEqual == rhs->isEqual) {
         if (node == ctx.SE.getNegativeSCEV(rhs->node))
           return shared_from_this();
       }
-
 
       SetTy vals;
       insert(vals, shared_from_this());
@@ -6688,6 +6643,35 @@ return true;
             if (legal) {
               return newlhs->andB(tmp, ctx);
             }
+          }
+          insert(vals, v);
+        }
+        }
+      }
+      if (!foldedIn) {
+        insert(vals, rhs);
+        return std::make_shared<Constraints>(Type::Intersect, vals);
+      } else {
+        auto cur = Constraints::all();
+        for (auto &iv : vals) {
+          auto cur2 = cur->andB(iv, ctx);
+          if (!cur2)
+            return nullptr;
+          cur = std::move(cur2);
+        }
+        return cur;
+      }
+    }
+    if ((ty == Type::Intersect || ty == Type::Compare) &&
+        rhs->ty == Type::Union) {
+      SetTy unionVals = rhs->values;
+      bool changed = false;
+      SetTy ivVals;
+      if (ty == Type::Intersect)
+        ivVals = values;
+      else
+        insert(ivVals, shared_from_this());
+
       ConstraintContext ctxd(ctx, shared_from_this(), rhs);
 
       for (const auto &iv : ivVals) {
@@ -7351,6 +7335,9 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     // actual store (if not negated) or to the store (if negated)
     // if! negated the result may become more false if negated the
     // result may become more true
+
+    //
+
     // default is condition avoids sparse, negated is condition goes
     // to sparse
     Instruction *context =

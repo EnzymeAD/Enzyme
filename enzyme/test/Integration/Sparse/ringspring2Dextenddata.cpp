@@ -25,8 +25,6 @@ struct triple {
 };
 
 
-size_t N;
-
 extern int enzyme_dup;
 extern int enzyme_dupnoneed;
 extern int enzyme_out;

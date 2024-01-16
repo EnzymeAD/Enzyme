@@ -25,6 +25,7 @@ struct triple {
     triple(size_t row, size_t col, double val) : row(row), col(col), val(val) {}
 };
 
+
 size_t N = 8;
 
 extern int enzyme_dup;
@@ -46,8 +47,8 @@ static double f(size_t N, double* input) {
     for (size_t i=0; i<N; i++) {
         //double sub = input[i] - input[i+1]; 
         // out += sub * sub;
-        double sub = input[(i + 1) % N] - input[i % N]; 
-        out += (sqrt(sub) + 1)*(sqrt(sub) + 1);
+        double sub = (input[i+1] - input[i]) * (input[i+1] - input[i]);
+        out += (sqrt(sub) - 1)*(sqrt(sub) - 1);
     }
     return out;
 }
