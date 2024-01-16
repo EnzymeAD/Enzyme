@@ -17,6 +17,53 @@
 
 #include "matrix.h"
 
+
+template<typename T>
+__attribute__((always_inline))
+static T face_load(unsigned long long offset, T* x, const int* faces) {
+    offset /= sizeof(T);
+    return x[faces[offset]];
+}
+
+template<typename T>
+__attribute__((always_inline))
+static void face_store(unsigned long long offset, T* x, const int* faces) {
+    assert(0 && "store is not legal");
+}
+
+
+template<typename T>
+__attribute__((always_inline))
+static T area_load(unsigned long long offset, T* pos0, const int* faces) {
+    offset /= sizeof(T);
+
+    int idx = offset / 9;
+
+    int inc = offset % 9;
+
+    int i = faces[3*idx];
+    int j = faces[3*idx+1];
+    int k = faces[3*idx+2];
+
+    /// pos_data[0:3] -> pos[3*faces[i]:3*faces[i]+3]
+    /// pos_data[3:6] -> pos[3*faces[j]:3*faces[j]+3]
+    /// pos_data[6:9] -> pos[3*faces[k]:3*faces[k]+3]
+
+    if (inc < 3) {
+        return pos0[3*i+inc];
+    } else if (inc < 6) {
+        return pos0[3*j+inc-3];
+    } else {
+        return pos0[3*k+inc-6];
+    }
+}
+
+template<typename T>
+__attribute__((always_inline))
+static void area_store(unsigned long long offset, T* pos0, const int* faces) {
+    assert(0 && "store is not legal");
+}
+
 template<typename T>
 __attribute__((always_inline))
 static T eigenstuffM(const T *__restrict__ x, size_t n, const int *__restrict__ faces, const T *__restrict__ pos0) {
@@ -26,8 +73,26 @@ static T eigenstuffM(const T *__restrict__ x, size_t n, const int *__restrict__ 
         int i = faces[3*idx];
         int j = faces[3*idx+1];
         int k = faces[3*idx+2];
-        T tri_area = area(&pos0[3*i], &pos0[3*j], &pos0[3*k]);
-        sum += (x[i] * x[i] + x[j] * x[j] + x[k] * x[k]) * (1.0 / 3.0) * tri_area;  // barycentric mass lumping
+
+/*
+        T xi = x[i];
+        T xj = x[j];
+        T xk = x[k];
+        */
+
+        T xi = x[3 * idx];  /// x[i] -> real_x[faces[i]] 
+        T xj = x[3 * idx + 1];
+        T xk = x[3 * idx + 2];
+
+        const T* pos_data = &pos0[9 * idx];
+        /// 
+        /// pos_data[0:3] -> pos[3*faces[i]:3*faces[i]+3]
+        /// pos_data[3:6] -> pos[3*faces[j]:3*faces[j]+3]
+        /// pos_data[6:9] -> pos[3*faces[k]:3*faces[k]+3]
+
+        T tri_area = area(&pos_data[0], &pos_data[3], &pos_data[6]);
+
+        sum += (xi * xi + xj * xj + xk * xk) * (1.0 / 3.0) * tri_area;  // barycentric mass lumping
     }
     return sum;
 }
@@ -123,20 +188,39 @@ static void csr_store(T val, unsigned long long offset, size_t i, std::vector<Tr
 template<typename T>
 __attribute__((noinline))
 std::vector<Triple<T>> hessian(const T* x, size_t num_faces, const int* faces, const T* pos, size_t num_verts)
-{
+{    
+    float* x2 = __enzyme_post_sparse_todense<float*>(face_load<float>, face_store<float>, x, faces);
 
+    /*
+    float* x3 = (float*)malloc(sizeof(float)*9*num_faces);
+    for (size_t idx=0; idx<num_faces; idx++) {
+        int i = faces[3*idx];
+        int j = faces[3*idx+1];
+        int k = faces[3*idx+2];
+        x3[idx * 9 + 0] = pos[3*i+0];
+        x3[idx * 9 + 1] = pos[3*i+1];
+        x3[idx * 9 + 2] = pos[3*i+2];
+        x3[idx * 9 + 3] = pos[3*j+0];
+        x3[idx * 9 + 4] = pos[3*j+1];
+        x3[idx * 9 + 5] = pos[3*j+2];
+        x3[idx * 9 + 6] = pos[3*k+0];
+        x3[idx * 9 + 7] = pos[3*k+1];
+        x3[idx * 9 + 8] = pos[3*k+2];
+    }
+    */
+
+    float* pos2 = __enzyme_post_sparse_todense<float*>(area_load<float>, area_store<float>, pos, faces);
     std::vector<Triple<T>> hess;
     __builtin_assume(num_verts != 0);
     for (size_t i=0; i<3*num_verts; i++)
         __enzyme_fwddiff<void>((void *)gradient_ip<T>,
-                                enzyme_const, x,
+                                enzyme_const, x2,
                                 enzyme_const, num_faces,
                                 enzyme_const, faces,
-                                enzyme_dup, pos, __enzyme_todense<T*>(ident_load<T>, err_store<T>, i),
+                                enzyme_dup, pos2, __enzyme_todense<T*>(ident_load<T>, err_store<T>, i),
                                 enzyme_dupnoneed, nullptr, __enzyme_todense<T*>(zero_load<T>, csr_store<T>, i, &hess));
     return hess;
 }
-
 
 int main() {
     const size_t num_elts_data = 3;

@@ -25,6 +25,9 @@ extern T __enzyme_fwddiff(void *, Tys...);
 template <typename T, typename... Tys>
 extern T __enzyme_todense(Tys...);
 
+template <typename T, typename... Tys>
+extern T __enzyme_post_sparse_todense(Tys...);
+
 template<typename T, size_t n>
 __attribute__((always_inline))
 static void elementwise_difference(T (&out)[n], const T x[n], const T y[n]) {
@@ -156,6 +159,25 @@ static void get_pos(
         out[i][0] = pos[m * idx[i]];
         out[i][1] = pos[m * idx[i] + 1];
         out[i][2] = pos[m * idx[i] + 2];
+    }
+}
+
+
+// m is 2 n is 3
+template<typename T, int n, int m>
+__attribute__((always_inline))
+static void get_pos_affine(
+    T (&__restrict__ out)[n][m],
+    const float *__restrict__ pos) {
+
+    static_assert(m == 3, "Only Vector3 is supported");
+
+    // extract the 3d points at idx[0], idx[1], idx[2], idx[3]
+    #pragma clang loop unroll(full)
+    for (int i = 0; i < n; ++i) {
+        out[i][0] = pos[m * i];
+        out[i][1] = pos[m * i + 1];
+        out[i][2] = pos[m * i + 2];
     }
 }
 
