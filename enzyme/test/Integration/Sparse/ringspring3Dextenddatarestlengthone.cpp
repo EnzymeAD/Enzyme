@@ -1,15 +1,15 @@
 // This should work on LLVM 7, 8, 9, however in CI the version of clang installed on Ubuntu 18.04 cannot load
 // a clang plugin properly without segfaulting on exit. This is fine on Ubuntu 20.04 or later LLVM versions...
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1  | %lli - ; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
+// This should work on LLVM 7, 8, 9, however in CI the version of clang installed on Ubuntu 18.04 cannot load
+// a clang plugin properly without segfaulting on exit. This is fine on Ubuntu 20.04 or later LLVM versions...
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -mllvm -enable-load-pre=0 -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -mllvm -enable-load-pre=0 -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1  | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -mllvm -enable-load-pre=0 -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -mllvm -enable-load-pre=0  -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -mllvm -enable-load-pre=0  -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -mllvm -enable-load-pre=0  -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
 
 // everything should be always inline
-// XFAIL: *
-
 
 #include <stdio.h>
 #include <assert.h>
@@ -28,8 +28,6 @@ struct triple {
 };
 
 
-size_t N;
-
 extern int enzyme_dup;
 extern int enzyme_dupnoneed;
 extern int enzyme_out;
@@ -42,8 +40,8 @@ extern void __enzyme_fwddiff(void *, ...);
 extern double* __enzyme_todense(void *, ...) noexcept;
 
 
-/// Compute energy
-double f(size_t N, double* pos) {
+__attribute__((always_inline))
+static double f(size_t N, double* pos) {
     double e = 0.;
     for (size_t i = 0; i < N; i += 3) {
         double vx = pos[i];
@@ -61,48 +59,49 @@ double f(size_t N, double* pos) {
 }
 
 
-/// Perform dinput += gradient(f)
-void grad_f(size_t N, double* input, double* dinput) {
+__attribute__((always_inline))
+static void grad_f(size_t N, double* input, double* dinput) {
     __enzyme_autodiff((void*)f, enzyme_const, N, enzyme_dup, input, dinput);
 }
 
 
-void ident_store(double , int64_t idx, size_t i) {
+__attribute__((always_inline))
+static void ident_store(double , int64_t idx, size_t i) {
     assert(0 && "should never load");
 }
 
 __attribute__((always_inline))
-double ident_load(int64_t idx, size_t i, size_t N) {
+static double ident_load(int64_t idx, size_t i, size_t N) {
     idx /= sizeof(double);
     return (double)(idx == i);// ? 1.0 : 0.0;
 }
 
 __attribute__((enzyme_sparse_accumulate))
-void inner_store(int64_t row, int64_t col, double val, std::vector<triple> &triplets) {
+static void inner_store(int64_t row, int64_t col, size_t N, double val, std::vector<triple> &triplets) {
     printf("row=%d col=%d val=%f\n", row, col % N, val);
     // assert(abs(val) > 0.00001);
     triplets.emplace_back(row % N, col % N, val);
 }
 
 __attribute__((always_inline))
-void sparse_store(double val, int64_t idx, size_t i, size_t N, std::vector<triple> &triplets) {
+static void sparse_store(double val, int64_t idx, size_t i, size_t N, std::vector<triple> &triplets) {
     if (val == 0.0) return;
     idx /= sizeof(double);
-    inner_store(i, idx, val, triplets);
+    inner_store(i, idx, N, val, triplets);
 }
 
 __attribute__((always_inline))
-double sparse_load(int64_t idx, size_t i, size_t N, std::vector<triple> &triplets) {
+static double sparse_load(int64_t idx, size_t i, size_t N, std::vector<triple> &triplets) {
     return 0.0;
 }
 
 __attribute__((always_inline))
-void never_store(double val, int64_t idx, double* input, size_t N) {
+static void never_store(double val, int64_t idx, double* input, size_t N) {
     assert(0 && "this is a read only input, why are you storing here...");
 }
 
 __attribute__((always_inline))
-double mod_load(int64_t idx, double* input, size_t N) {
+static double mod_load(int64_t idx, double* input, size_t N) {
     idx /= sizeof(double);
     return input[idx % N];
 }
@@ -136,25 +135,26 @@ std::vector<triple> hess_f2(size_t N, double* input) {
 }
 */
 
-int __attribute__((always_inline)) main(int argc, char** argv) {
-    std::mt19937 generator(0); // Seed the random number generator
-    std::uniform_real_distribution<double> normal(0, 0.05);
+// int argc, char** argv
+int __attribute__((always_inline)) main() {
+    //std::mt19937 generator(0); // Seed the random number generator
+    //std::uniform_real_distribution<double> normal(0, 0.05);
 
 
-    if (argc != 2) {
-        printf("Usage: %s <size>\n", argv[0]);
-        return 1;
-    }
+    // if (argc != 2) {
+    //     printf("Usage: %s <size>\n", argv[0]);
+    //     return 1;
+    // }
 
-    size_t N = atoi(argv[1]);
-    // size_t N = 16;
+    // size_t N = atoi(argv[1]);
+    size_t N = 30;
 
     double x[3 * N + 3];
     for (int i = 0; i < N; ++i) {
         double angle = 2 * M_PI * i / N;
-        x[3 * i] = cos(angle) + normal(generator);
-        x[3 * i + 1] = sin(angle) + normal(generator);
-        x[3 * i + 2] = normal(generator);
+        x[3 * i] = cos(angle) ;//+ normal(generator);
+        x[3 * i + 1] = sin(angle) ;//+ normal(generator);
+        x[3 * i + 2] = 0;//normal(generator);
     }
     x[3 * N] = x[0];
     x[3 * N + 1] = x[1];

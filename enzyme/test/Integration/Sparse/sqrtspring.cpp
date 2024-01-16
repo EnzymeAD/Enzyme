@@ -1,12 +1,14 @@
 // This should work on LLVM 7, 8, 9, however in CI the version of clang installed on Ubuntu 18.04 cannot load
 // a clang plugin properly without segfaulting on exit. This is fine on Ubuntu 20.04 or later LLVM versions...
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1  | %lli - ; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -mllvm -enable-load-pre=0 -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -mllvm -enable-load-pre=0 -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1  | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -mllvm -enable-load-pre=0 -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -mllvm -enable-load-pre=0  -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -mllvm -enable-load-pre=0  -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -mllvm -enable-load-pre=0  -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
 
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <assert.h>
 #include <vector>
@@ -33,8 +35,8 @@ extern void __enzyme_fwddiff(void *, ...);
 extern double* __enzyme_todense(void *, ...) noexcept;
 
 
-/// Compute energy
-double f(size_t N, double* input) {
+__attribute__((always_inline))
+static double f(size_t N, double* input) {
     double out = 0;
     __builtin_assume(!((N-1) == 0));
     for (size_t i=0; i<N-1; i++) {
@@ -46,38 +48,39 @@ double f(size_t N, double* input) {
     return out;
 }
 
-/// Perform dinput += gradient(f)
-void grad_f(size_t N, double* input, double* dinput) {
+__attribute__((always_inline))
+static void grad_f(size_t N, double* input, double* dinput) {
     __enzyme_autodiff((void*)f, enzyme_const, N, enzyme_dup, input, dinput);
 }
 
 
-void ident_store(double , int64_t idx, size_t i) {
+__attribute__((always_inline))
+static void ident_store(double , int64_t idx, size_t i) {
     assert(0 && "should never load");
 }
 
 __attribute__((always_inline))
-double ident_load(int64_t idx, size_t i, size_t N) {
+static double ident_load(int64_t idx, size_t i, size_t N) {
     idx /= sizeof(double);
     return (double)(idx == i);// ? 1.0 : 0.0;
 }
 
 __attribute__((enzyme_sparse_accumulate))
-void inner_store(int64_t row, int64_t col, double val, std::vector<triple> &triplets) {
+static void inner_store(int64_t row, int64_t col, double val, std::vector<triple> &triplets) {
     printf("row=%d col=%d val=%f\n", row, col, val);
     assert(abs(val) > 0.00001);
     triplets.emplace_back(row, col, val);
 }
 
 __attribute__((always_inline))
-void sparse_store(double val, int64_t idx, size_t i, size_t N, std::vector<triple> &triplets) {
+static void sparse_store(double val, int64_t idx, size_t i, size_t N, std::vector<triple> &triplets) {
     if (val == 0.0) return;
     idx /= sizeof(double);
     inner_store(i, idx, val, triplets);
 }
 
 __attribute__((always_inline))
-double sparse_load(int64_t idx, size_t i, size_t N, std::vector<triple> &triplets) {
+static double sparse_load(int64_t idx, size_t i, size_t N, std::vector<triple> &triplets) {
     return 0.0;
 }
 
