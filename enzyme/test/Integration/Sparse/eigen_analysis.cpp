@@ -7,9 +7,7 @@
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -mllvm -enable-load-pre=0  -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -mllvm -enable-load-pre=0  -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
 
-#include <iostream>
 #include <vector>
-#include <cmath>
 #include <assert.h>
 #include <tuple>
 #include <stdio.h>
@@ -18,120 +16,13 @@
 #include <string.h>
 #include <time.h>
 
-int enzyme_width;
-int enzyme_dup;
-int enzyme_dupv;
-int enzyme_const;
-int enzyme_dupnoneed;
-template <typename T>
-extern T __enzyme_autodiff(void *, ...);
-template <typename T>
-extern T __enzyme_fwddiff(void *, ...);
-template <typename T>
-T __enzyme_todense(...);
-
-
-template<typename T, size_t n>
-__attribute__((always_inline))
-static T dot_product(const T a[n], const T b[n]) {
-    T result = 0.0;
-    #pragma clang loop unroll(full)
-    for (size_t i = 0; i < n; ++i) {
-        result += a[i] * b[i];
-    }
-    return result;
-}
-
-
-__attribute__((always_inline))
-static float norm(const float *__restrict__ v, const size_t n) {
-    float sum_squares = 0.0;
-    #pragma clang loop unroll(full)
-    for (size_t i=0; i<n; i++) {
-        float val = v[i];
-        sum_squares += val * val;
-    }
-    return std::sqrt(sum_squares);
-}
-
-
-__attribute__((always_inline))
-static float area(const float *__restrict__ u, const float *__restrict__ v, const float *__restrict__ w) {
-    float cross_product[] = {
-        (v[1] - u[1]) * (w[2] - u[2]) - (v[2] - u[2]) * (w[1] - u[1]),
-        (v[2] - u[2]) * (w[0] - u[0]) - (v[0] - u[0]) * (w[2] - u[2]),
-        (v[0] - u[0]) * (w[1] - u[1]) - (v[1] - u[1]) * (w[0] - u[0])
-    };
-
-    return 0.5 * norm(cross_product, sizeof(cross_product)/sizeof(*cross_product));
-}
-
-
-template<typename T, size_t m, size_t n>
-__attribute__((always_inline))
-static void transposeMatrix(T (&out)[n][m], const T matrix[m][n]) {
-    #pragma clang loop unroll(full)
-    for (int i = 0; i < m; ++i) {
-    #pragma clang loop unroll(full)
-        for (int j = 0; j < n; ++j) {
-            out[j][i] = matrix[i][j];
-        }
-    }
-}
-
-
-template<typename T, size_t m, size_t n, size_t k>
-__attribute__((always_inline))
-static void matrixMultiply(T (&result)[m][k], const T matrix1[m][n], const T matrix2[n][k]) {
-    #pragma clang loop unroll(full)
-    for (int i = 0; i < m; ++i) {
-        #pragma clang loop unroll(full)
-        for (int j = 0; j < k; ++j) {
-            result[i][j] = 0.0;
-            #pragma clang loop unroll(full)
-            for (int z = 0; z < n; ++z) {
-                result[i][j] += matrix1[i][z] * matrix2[z][j];
-            }
-        }
-    }
-}
-
-
-template<typename T>
-__attribute__((always_inline))
-static void invertMatrix(T (&invertedMatrix)[2][2], const T matrix[2][2]) {
-    float determinant = matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0];
-
-    if (determinant == 0) {
-        std::cerr << "Matrix is not invertible (determinant is zero)." << std::endl;
-        return;
-    }
-
-    float invDeterminant = 1.0 / determinant;
-    invertedMatrix[0][0] = matrix[1][1] * invDeterminant;
-    invertedMatrix[0][1] = -matrix[0][1] * invDeterminant;
-    invertedMatrix[1][0] = -matrix[1][0] * invDeterminant;
-    invertedMatrix[1][1] = matrix[0][0] * invDeterminant;
-}
-
-
-template<typename T, size_t m, size_t n>
-__attribute__((always_inline))
-static void pseudo_inverse(T (&matTsqrinv)[n][m], const T mat[m][n]) {
-    T matT[n][m];
-    transposeMatrix(matT, mat);
-    T matmatT[m][m];
-    matrixMultiply(matmatT, mat, matT);
-    T sqrinv[m][m];
-    invertMatrix(sqrinv, matmatT);
-    matrixMultiply(matTsqrinv, matT, sqrinv);
-}
+#include "matrix.h"
 
 
 __attribute__((always_inline))
 static float eigenstuffM(const float *__restrict__ x, size_t n, const int *__restrict__ faces, const float *__restrict__ pos0) {
     float sum = 0;
-    #pragma clang loop unroll(full)
+    __builtin_assume(n != 0);
     for (size_t idx=0; idx<n; idx++) {
         int i = faces[3*idx];
         int j = faces[3*idx+1];
@@ -147,13 +38,16 @@ static float eigenstuffM(const float *__restrict__ x, size_t n, const int *__res
 __attribute__((always_inline))
 static float eigenstuffL(const float *__restrict__ x, size_t num_faces, const int *__restrict__ faces, const float *__restrict__ verts) {
     float sum = 0;
+    __builtin_assume(num_faces != 0);
     for (size_t idx=0; idx<num_faces; idx++) {
         int i = faces[3*idx];
         int j = faces[3*idx+1];
         int k = faces[3*idx+2];
 
         float X[2][3] = {
-            {verts[3*j+0] - verts[3*i+0], verts[3*j+1] - verts[3*i+1], verts[3*j+2] - verts[3*i+2]},
+            {   verts[3*j+0] - verts[3*i+0],
+                verts[3*j+1] - verts[3*i+1],
+                verts[3*j+2] - verts[3*i+2]},
             {verts[3*k+0] - verts[3*i+0], verts[3*k+1] - verts[3*i+1], verts[3*k+2] - verts[3*i+2]}
         };
 
@@ -231,6 +125,7 @@ std::vector<std::tuple<size_t, size_t, float>> hessian(const float* x, size_t nu
 {
 
     std::vector<std::tuple<size_t, size_t, float>> hess;
+    __builtin_assume(num_verts != 0);
     for (size_t i=0; i<3*num_verts; i++)
         __enzyme_fwddiff<void>((void *)gradient_ip,
                                 enzyme_const, x,
@@ -255,11 +150,11 @@ int main() {
 
     // Call eigenstuffM_simple
     const float resultM = eigenstuffM(x, num_faces, faces, verts);
-    std::cout << "Result for eigenstuffM_simple: " << resultM << std::endl;
+    printf("Result for eigenstuffM_simple: %f\n", resultM);
 
     // Call eigenstuffL_simple
     const float resultL = eigenstuffL(x, num_faces, faces, verts);
-    std::cout << "Result for eigenstuffL_simple: " << resultL << std::endl;
+    printf("Result for eigenstuffL_simple: %f\n", resultL);
 
     float dverts[sizeof(verts)/sizeof(verts[0])];
     for (size_t i=0; i<sizeof(dverts)/sizeof(dverts[0]); i++)
@@ -267,14 +162,14 @@ int main() {
     gradient_ip(x, num_faces, faces, verts, dverts);
 
     for (size_t i=0; i<sizeof(dverts)/sizeof(dverts[0]); i++)
-        std::cout << "eigenstuffM grad_vert[" << i << "]=" << dverts[i] << "\n";
+        printf("eigenstuffM grad_vert[%zu]=%f\n", i, dverts[i]);
     
     size_t num_elts = sizeof(verts)/sizeof(verts[0]) * sizeof(verts)/sizeof(verts[0]);
 
     auto hess_verts = hessian(x, num_faces, faces, verts, num_verts);
 
     for (auto hess : hess_verts) {
-        std::cout << "i=" << std::get<0>(hess) << ", j=" << std::get<1>(hess) << " val=" << std::get<2>(hess) << "\n";
+        printf("i=%lu, j=%lu, val=%f", std::get<0>(hess), std::get<1>(hess), std::get<2>(hess));
     }
 
     return 0;

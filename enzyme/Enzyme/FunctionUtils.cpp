@@ -7426,8 +7426,9 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
   }
 
   if (forSparsification.size() == 0) {
-    llvm::errs() << " found no stores for sparsification\n";
-    assert(0);
+    auto context = &F.getEntryBlock().front();
+    EmitFailure("NoSparsification", context->getDebugLoc(), context, "F: ", F,
+                "\n Found no stores for sparsification");
     return;
   }
 
