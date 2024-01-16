@@ -170,7 +170,7 @@ int main() {
     auto hess_verts = hessian(x, num_faces, faces, verts, num_verts);
 
     for (auto &hess : hess_verts) {
-        printf("i=%lu, j=%lu, val=%f", hess.row, hess.col, hess.val);
+        printf("i=%lu, j=%lu, val=%f\n", hess.row, hess.col, hess.val);
     }
 
     return 0;
