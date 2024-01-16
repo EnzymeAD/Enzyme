@@ -14,6 +14,7 @@
 #include <assert.h>
 #include <vector>
 
+
 #include<math.h>
 
 struct triple {
@@ -25,11 +26,17 @@ struct triple {
 };
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 
 size_t N = 8;
 
 =======
 >>>>>>> b7718647 (Ring of springs integration test using modulo)
+=======
+
+size_t N = 8;
+
+>>>>>>> 70e52719 (new bugs)
 extern int enzyme_dup;
 extern int enzyme_dupnoneed;
 extern int enzyme_out;
@@ -56,13 +63,18 @@ static double f(size_t N, double* input) {
 /// Compute energy
 double f(size_t N, double* input) {
     double out = 0;
-    __builtin_assume(!((N-1) == 0));
+    // __builtin_assume(!((N-1) == 0));
     for (size_t i=0; i<N; i++) {
         //double sub = input[i] - input[i+1]; 
         // out += sub * sub;
+<<<<<<< HEAD
         double sub = input[(i + 1) % N] - input[i % N]; 
         out += (sqrt(sub) + 1)*(sqrt(sub) + 1);
 >>>>>>> b7718647 (Ring of springs integration test using modulo)
+=======
+        double sub = (input[i+1] - input[i]) * (input[i+1] - input[i]);
+        out += (sqrt(sub) - 1)*(sqrt(sub) - 1);
+>>>>>>> 70e52719 (new bugs)
     }
     return out;
 }
@@ -80,14 +92,14 @@ static void ident_store(double , int64_t idx, size_t i) {
 __attribute__((always_inline))
 double ident_load(int64_t idx, size_t i, size_t N) {
     idx /= sizeof(double);
-    return (double)(idx == i);// ? 1.0 : 0.0;
+    return (double)(idx % N == i % N);// ? 1.0 : 0.0;
 }
 
 __attribute__((enzyme_sparse_accumulate))
 void inner_store(int64_t row, int64_t col, double val, std::vector<triple> &triplets) {
-    printf("row=%d col=%d val=%f\n", row, col, val);
-    assert(abs(val) > 0.00001);
-    triplets.emplace_back(row, col, val);
+    printf("row=%d col=%d val=%f\n", row, col % N, val);
+    // assert(abs(val) > 0.00001);
+    triplets.emplace_back(row % N, col % N, val);
 }
 
 __attribute__((always_inline))
@@ -102,9 +114,21 @@ double sparse_load(int64_t idx, size_t i, size_t N, std::vector<triple> &triplet
     return 0.0;
 }
 
+__attribute__((always_inline))
+void never_store(double val, int64_t idx, double* input, size_t N) {
+    assert(0 && "this is a read only input, why are you storing here...");
+}
+
+__attribute__((always_inline))
+double mod_load(int64_t idx, double* input, size_t N) {
+    idx /= sizeof(double);
+    return input[idx % N];
+}
+
 __attribute__((noinline))
 std::vector<triple> hess_f(size_t N, double* input) {
     std::vector<triple> triplets;
+    input = __enzyme_todense((void*)mod_load, (void*)never_store, input, N);
     __builtin_assume(N > 0);
     for (size_t i=0; i<N; i++) {
         __builtin_assume(i < 100000000);
@@ -120,8 +144,9 @@ std::vector<triple> hess_f(size_t N, double* input) {
     return triplets;
 }
 
+
 int main() {
-  size_t N = 8;
+  // size_t N = 8;
   double x[N];
   for (int i=0; i<N; i++) x[i] = (i + 1) * (i + 1);
 
