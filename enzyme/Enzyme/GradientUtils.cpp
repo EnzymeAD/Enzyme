@@ -9259,22 +9259,17 @@ bool GradientUtils::needsCacheWholeAllocation(
           continue;
 
         if (auto F = CI->getCalledFunction())
-          if (F->getCallingConv() == CI->getCallingConv() && !F->empty()) {
+          if (F->getCallingConv() == CI->getCallingConv()) {
             bool onlyReturnUses = true;
             bool hasReturnUse = true;
 
-            if (CI->getFunctionType() != F->getFunctionType() ||
-                idx >= F->getFunctionType()->getNumParams()) {
-              onlyReturnUses = false;
-            } else {
-              for (auto u : F->getArg(idx)->users()) {
-                if (isa<ReturnInst>(u)) {
-                  hasReturnUse = true;
-                  continue;
-                }
-                onlyReturnUses = false;
+            for (auto u : F->getArg(idx)->users()) {
+              if (isa<ReturnInst>(u)) {
+                hasReturnUse = true;
                 continue;
               }
+              onlyReturnUses = false;
+              continue;
             }
             // The arg itself has no use in the function
             if (onlyReturnUses && !hasReturnUse)
