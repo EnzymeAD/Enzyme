@@ -1,18 +1,17 @@
 // This should work on LLVM 7, 8, 9, however in CI the version of clang installed on Ubuntu 18.04 cannot load
 // a clang plugin properly without segfaulting on exit. This is fine on Ubuntu 20.04 or later LLVM versions...
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -mllvm -enable-pre=0 -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -mllvm -enable-pre=0 -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1  | %lli - ; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -mllvm -enable-pre=0 -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1  | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions-ffast-math  -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions-ffast-math  -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions-ffast-math  -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
 
 // everything should be always inline
 
 #include <stdio.h>
 #include <assert.h>
 #include <vector>
-#include <random>
 
 
 #include<math.h>
@@ -43,12 +42,13 @@ extern double* __enzyme_todense(void *, ...) noexcept;
 __attribute__((always_inline))
 static double f(size_t N, double* pos) {
     double e = 0.;
-    for (size_t i = 0; i < N; i += 2) {
-        double vx = pos[i];
-        double vy = pos[i + 1];
+    for (size_t i = 0; i < N; i ++) {
+        __builtin_assume(i < 1000000000);
+        double vx = pos[2 * i];
+        double vy = pos[2 * i + 1];
 
-        double wx = pos[i + 2];
-        double wy = pos[i + 3];
+        double wx = pos[2 * i + 2];
+        double wy = pos[2 * i + 3];
         e += (wx - vx) * (wx - vx) + (wy - vy) * (wy - vy);
     }
     return e;
@@ -66,13 +66,13 @@ void ident_store(double , int64_t idx, size_t i) {
 }
 
 __attribute__((always_inline))
-double ident_load(int64_t idx, size_t i, size_t N) {
+double ident_load(size_t idx, size_t i, size_t N) {
     idx /= sizeof(double);
     return (double)(idx == i);// ? 1.0 : 0.0;
 }
 
 __attribute__((enzyme_sparse_accumulate))
-void inner_store(int64_t row, int64_t col, double val, std::vector<triple> &triplets) {
+void inner_store(int64_t row, int64_t col, size_t N, double val, std::vector<triple> &triplets) {
     printf("row=%d col=%d val=%f\n", row, col % N, val);
     // assert(abs(val) > 0.00001);
     triplets.emplace_back(row % N, col % N, val);
@@ -82,7 +82,7 @@ __attribute__((always_inline))
 void sparse_store(double val, int64_t idx, size_t i, size_t N, std::vector<triple> &triplets) {
     if (val == 0.0) return;
     idx /= sizeof(double);
-    inner_store(i, idx, val, triplets);
+    inner_store(i, idx, N, val, triplets);
 }
 
 __attribute__((always_inline))
@@ -131,8 +131,6 @@ std::vector<triple> hess_f2(size_t N, double* input) {
 */
 // int argc, char** argv
 int __attribute__((always_inline)) main() {
-    std::mt19937 generator(0); // Seed the random number generator
-    std::uniform_real_distribution<double> normal(0, 0.05);
 
 
     // if (argc != 2) {
@@ -146,8 +144,8 @@ int __attribute__((always_inline)) main() {
     double x[2 * N + 2];
     for (int i = 0; i < N; ++i) {
         double angle = 2 * M_PI * i / N;
-        x[2 * i] = cos(angle) + normal(generator);
-        x[2 * i + 1] = sin(angle) + normal(generator);
+        x[2 * i] = cos(angle) ;//+ normal(generator);
+        x[2 * i + 1] = sin(angle) ;//+ normal(generator);
     }
     x[2 * N] = x[0];
     x[2 * N + 1] = x[1];

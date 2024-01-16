@@ -1,11 +1,11 @@
 // This should work on LLVM 7, 8, 9, however in CI the version of clang installed on Ubuntu 18.04 cannot load
 // a clang plugin properly without segfaulting on exit. This is fine on Ubuntu 20.04 or later LLVM versions...
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -mllvm -enable-pre=0 -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -mllvm -enable-pre=0 -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1  | %lli - ; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -mllvm -enable-pre=0 -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -mllvm -enable-load-pre=0 | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1  -mllvm -enable-load-pre=0 | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-auto-sparsity=1 -mllvm -enable-load-pre=0 | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math  -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math  -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math  -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
 
 // everything should be always inline
 
@@ -26,8 +26,6 @@ struct triple {
 };
 
 
-size_t N;
-
 extern int enzyme_dup;
 extern int enzyme_dupnoneed;
 extern int enzyme_out;
@@ -43,7 +41,9 @@ extern double* __enzyme_todense(void *, ...) noexcept;
 __attribute__((always_inline))
 static double f(size_t N, double* pos) {
     double e = 0.;
-    for (size_t i = 0; i < N; i += 3) {
+    __builtin_assume(N != 0);
+    for (size_t i = 0; i < N; i+=3) {
+        __builtin_assume(i < 1000000000);
         double vx = pos[i];
         double vy = pos[i + 1];
         double vz = pos[i + 2];
@@ -74,7 +74,7 @@ static double ident_load(int64_t idx, size_t i, size_t N) {
 }
 
 __attribute__((enzyme_sparse_accumulate))
-static void inner_store(int64_t row, int64_t col, double val, std::vector<triple> &triplets) {
+static void inner_store(int64_t row, int64_t col, size_t N, double val, std::vector<triple> &triplets) {
     printf("row=%d col=%d val=%f\n", row, col % N, val);
     // assert(abs(val) > 0.00001);
     triplets.emplace_back(row % N, col % N, val);
@@ -84,7 +84,7 @@ __attribute__((always_inline))
 static void sparse_store(double val, int64_t idx, size_t i, size_t N, std::vector<triple> &triplets) {
     if (val == 0.0) return;
     idx /= sizeof(double);
-    inner_store(i, idx, val, triplets);
+    inner_store(i, idx, N, val, triplets);
 }
 
 __attribute__((always_inline))
@@ -108,6 +108,7 @@ std::vector<triple> hess_f(size_t N, double* input) {
     std::vector<triple> triplets;
     // input = __enzyme_todense((void*)mod_load, (void*)never_store, input, N);
     __builtin_assume(N > 0);
+    __builtin_assume(N < 10000000000);
     for (size_t i=0; i<N; i++) {
         __builtin_assume(i < 100000000);
         double* d_input = __enzyme_todense((void*)ident_load, (void*)ident_store, i, N);
