@@ -7198,17 +7198,20 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
         }
   }
 
-  llvm::errs() << " pre fix inner: " << F << "\n";
+  // llvm::errs() << " pre fix inner: " << F << "\n";
 
   // Full simplification
   while (!Q.empty()) {
     auto cur = Q.pop_back_val();
+    /*
     std::set<Instruction *> prev;
     for (auto v : Q)
       prev.insert(v);
     llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
+    */
     auto changed = fixSparse_inner(cur, F, Q, DT, SE, LI, DL);
     (void)changed;
+    /*
     if (changed) {
       llvm::errs() << "changed: " << *changed << "\n";
 
@@ -7217,9 +7220,10 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
           llvm::errs() << " + " << *I << "\n";
       llvm::errs() << F << "\n\n";
     }
+    */
   }
 
-  llvm::errs() << " post fix inner " << F << "\n";
+  // llvm::errs() << " post fix inner " << F << "\n";
 
   SmallVector<std::pair<BasicBlock *, BranchInst *>, 1> sparseBlocks;
   bool legalToSparse = true;

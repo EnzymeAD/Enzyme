@@ -10,8 +10,6 @@
 #include <iostream>
 #include <vector>
 #include <cmath>
-#include <functional>
-// #include <Eigen/Dense>
 #include <assert.h>
 #include <tuple>
 #include <stdio.h>
@@ -37,6 +35,7 @@ template<typename T, size_t n>
 __attribute__((always_inline))
 static T dot_product(const T a[n], const T b[n]) {
     T result = 0.0;
+    #pragma clang loop unroll(full)
     for (size_t i = 0; i < n; ++i) {
         result += a[i] * b[i];
     }
@@ -47,6 +46,7 @@ static T dot_product(const T a[n], const T b[n]) {
 __attribute__((always_inline))
 static float norm(const float *__restrict__ v, const size_t n) {
     float sum_squares = 0.0;
+    #pragma clang loop unroll(full)
     for (size_t i=0; i<n; i++) {
         float val = v[i];
         sum_squares += val * val;
@@ -70,7 +70,9 @@ static float area(const float *__restrict__ u, const float *__restrict__ v, cons
 template<typename T, size_t m, size_t n>
 __attribute__((always_inline))
 static void transposeMatrix(T (&out)[n][m], const T matrix[m][n]) {
+    #pragma clang loop unroll(full)
     for (int i = 0; i < m; ++i) {
+    #pragma clang loop unroll(full)
         for (int j = 0; j < n; ++j) {
             out[j][i] = matrix[i][j];
         }
@@ -81,9 +83,12 @@ static void transposeMatrix(T (&out)[n][m], const T matrix[m][n]) {
 template<typename T, size_t m, size_t n, size_t k>
 __attribute__((always_inline))
 static void matrixMultiply(T (&result)[m][k], const T matrix1[m][n], const T matrix2[n][k]) {
+    #pragma clang loop unroll(full)
     for (int i = 0; i < m; ++i) {
+        #pragma clang loop unroll(full)
         for (int j = 0; j < k; ++j) {
             result[i][j] = 0.0;
+            #pragma clang loop unroll(full)
             for (int z = 0; z < n; ++z) {
                 result[i][j] += matrix1[i][z] * matrix2[z][j];
             }
@@ -126,6 +131,7 @@ static void pseudo_inverse(T (&matTsqrinv)[n][m], const T mat[m][n]) {
 __attribute__((always_inline))
 static float eigenstuffM(const float *__restrict__ x, size_t n, const int *__restrict__ faces, const float *__restrict__ pos0) {
     float sum = 0;
+    #pragma clang loop unroll(full)
     for (size_t idx=0; idx<n; idx++) {
         int i = faces[3*idx];
         int j = faces[3*idx+1];
@@ -157,8 +163,10 @@ static float eigenstuffL(const float *__restrict__ x, size_t num_faces, const in
         float diffs[] = {x[j] - x[i], x[k] - x[i]};
 
         float g[3];
+        #pragma clang loop unroll(full)
         for (int i = 0; i < 3; ++i) {
             float sum = 0.0f;
+            #pragma clang loop unroll(full)
             for (int j = 0; j < 2; ++j) {
                 sum += pInvX[i][j] * diffs[j];
             }
