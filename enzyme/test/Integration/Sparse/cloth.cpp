@@ -11,6 +11,7 @@
 #include <array>
 #include <cmath>
 #include <cassert>
+#include <tuple>
 
 #include "matrix.h"
 
@@ -209,20 +210,20 @@ static void err_store(T val, unsigned long long offset, size_t i) {
 
 template<typename T>
 __attribute__((always_inline))
-static T zero_load(unsigned long long offset, size_t i, std::vector<std::tuple<size_t, size_t, float>> &hess) {
+static T zero_load(unsigned long long offset, size_t i, std::vector<Triple<T>> &hess) {
     return T(0);
 }
 
 
 __attribute__((enzyme_sparse_accumulate))
-void inner_store(size_t offset, size_t i, float val, std::vector<std::tuple<size_t, size_t, float>> &hess) {
-    hess.push_back(std::tuple<size_t, size_t, float>(offset, i, val));
+void inner_store(size_t offset, size_t i, float val, std::vector<Triple<float>> &hess) {
+    hess.push_back(Triple<float>(offset, i, val));
 }
 
 
 template<typename T>
 __attribute__((always_inline))
-static void csr_store(T val, unsigned long long offset, size_t i, std::vector<std::tuple<size_t, size_t, T>> &hess) {
+static void csr_store(T val, unsigned long long offset, size_t i, std::vector<Triple<T>> &hess) {
     if (val == 0.0) return;
     offset /= sizeof(T);
     inner_store(offset, i, val, hess);
@@ -230,7 +231,7 @@ static void csr_store(T val, unsigned long long offset, size_t i, std::vector<st
 
 template<typename T>
 __attribute__((noinline))
-std::vector<std::tuple<size_t, size_t, T>> hessian(
+std::vector<Triple<T>> hessian(
     const T *__restrict__ pos0,
     const int *__restrict__ edges,
     const int num_edges,
@@ -244,7 +245,7 @@ std::vector<std::tuple<size_t, size_t, T>> hessian(
     const T *__restrict__  pos,
     const size_t num_verts)
 {
-    std::vector<std::tuple<size_t, size_t, T>> hess;
+    std::vector<Triple<T>> hess;
     __builtin_assume(num_verts != 0);
     for (size_t i=0; i<3*num_verts; i++)
         __enzyme_fwddiff<void>((void *)gradient_ip<T>,
@@ -309,8 +310,8 @@ int main() {
     const size_t num_verts = 4;
     auto hess_verts = hessian(pos0, edges, num_edges, faces, num_faces, flaps, num_flaps, edge_coefficient, face_coefficient, bending_stiffness, pos, num_verts);
 
-    for (auto hess : hess_verts) {
-        printf("i=%lu, j=%lu, val=%f", std::get<0>(hess), std::get<1>(hess), std::get<2>(hess));
+    for (auto &hess : hess_verts) {
+        printf("i=%lu, j=%lu, val=%f", hess.row, hess.col, hess.val);
     }
 
     return 0;
