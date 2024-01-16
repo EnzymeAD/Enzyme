@@ -304,16 +304,16 @@ int main() {
         dpos[i] = 0;
     gradient_ip(pos0, edges, num_edges, faces, num_faces, flaps, num_flaps, edge_coefficient, face_coefficient, bending_stiffness, pos, dpos);
 
-    // for (size_t i=0; i<sizeof(dpos)/sizeof(dpos[0]); i++)
-    //     printf("grad_vert[%zu] = %f\n", i, dpos[i]);
+    for (size_t i=0; i<sizeof(dpos)/sizeof(dpos[0]); i++)
+        printf("grad_vert[%zu] = %f\n", i, dpos[i]);
 
     // Hessian
     const size_t num_verts = 4;
     auto hess_verts = hessian(pos0, edges, num_edges, faces, num_faces, flaps, num_flaps, edge_coefficient, face_coefficient, bending_stiffness, pos, num_verts);
 
-    // for (auto hess : hess_verts) {
-    //     printf("i=%lu, j=%lu, val=%f", std::get<0>(hess), std::get<1>(hess), std::get<2>(hess));
-    // }
+    for (auto &hess : hess_verts) {
+        printf("i=%lu, j=%lu, val=%f\n", hess.row, hess.col, hess.val);
+    }
 
     return 0;
 }
