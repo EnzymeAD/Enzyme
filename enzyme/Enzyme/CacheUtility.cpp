@@ -262,14 +262,14 @@ void RemoveRedundantIVs(
     // until this PR in llvm is merged:
     //    https://github.com/llvm/llvm-project/pull/78199
     if (auto addrec = dyn_cast<SCEVAddRecExpr>(S)) {
-        if (addrec->getLoop()->getHeader() == Header) {
-            if (auto add_or_mul = dyn_cast<BinaryOperator>(NewIV)) {
-                if (addrec->getNoWrapFlags(llvm::SCEV::FlagNUW))
-                    add_or_mul->setHasNoUnsignedWrap(true);
-                if (addrec->getNoWrapFlags(llvm::SCEV::FlagNSW))
-                    add_or_mul->setHasNoSignedWrap(true);
-            }
+      if (addrec->getLoop()->getHeader() == Header) {
+        if (auto add_or_mul = dyn_cast<BinaryOperator>(NewIV)) {
+          if (addrec->getNoWrapFlags(llvm::SCEV::FlagNUW))
+            add_or_mul->setHasNoUnsignedWrap(true);
+          if (addrec->getNoWrapFlags(llvm::SCEV::FlagNSW))
+            add_or_mul->setHasNoSignedWrap(true);
         }
+      }
     }
     replacer(Tmp, NewIV);
     eraser(Tmp);

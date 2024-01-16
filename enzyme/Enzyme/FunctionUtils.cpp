@@ -111,6 +111,13 @@
 
 #include "CacheUtility.h"
 
+#if LLVM_VERSION_MAJOR >= 14
+#define addAttribute addAttributeAtIndex
+#define removeAttribute removeAttributeAtIndex
+#define getAttribute getAttributeAtIndex
+#define hasAttribute hasAttributeAtIndex
+#endif
+
 #define DEBUG_TYPE "enzyme"
 using namespace llvm;
 
@@ -2688,12 +2695,17 @@ Function *getProductIntrinsic(llvm::Module &M, llvm::Type *T) {
     assert(0);
   auto FT = llvm::FunctionType::get(T, {}, true);
   AttributeList AL;
-  AL = AL.addFnAttribute(T->getContext(), Attribute::ReadNone);
-  AL = AL.addFnAttribute(T->getContext(), Attribute::NoUnwind);
+  AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
+                       Attribute::ReadNone);
+  AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
+                       Attribute::NoUnwind);
 #if LLVM_VERSION_MAJOR >= 14
-  AL = AL.addFnAttribute(T->getContext(), Attribute::NoFree);
-  AL = AL.addFnAttribute(T->getContext(), Attribute::NoSync);
-  AL = AL.addFnAttribute(T->getContext(), Attribute::WillReturn);
+  AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
+                       Attribute::NoFree);
+  AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
+                       Attribute::NoSync);
+  AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
+                       Attribute::WillReturn);
 #endif
   return cast<Function>(M.getOrInsertFunction(name, FT, AL).getCallee());
 }
@@ -2710,12 +2722,17 @@ Function *getSumIntrinsic(llvm::Module &M, llvm::Type *T) {
     assert(0);
   auto FT = llvm::FunctionType::get(T, {}, true);
   AttributeList AL;
-  AL = AL.addFnAttribute(T->getContext(), Attribute::ReadNone);
-  AL = AL.addFnAttribute(T->getContext(), Attribute::NoUnwind);
+  AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
+                       Attribute::ReadNone);
+  AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
+                       Attribute::NoUnwind);
 #if LLVM_VERSION_MAJOR >= 14
-  AL = AL.addFnAttribute(T->getContext(), Attribute::NoFree);
-  AL = AL.addFnAttribute(T->getContext(), Attribute::NoSync);
-  AL = AL.addFnAttribute(T->getContext(), Attribute::WillReturn);
+  AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
+                       Attribute::NoFree);
+  AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
+                       Attribute::NoSync);
+  AL = AL.addAttribute(T->getContext(), AttributeList::FunctionIndex,
+                       Attribute::WillReturn);
 #endif
   return cast<Function>(M.getOrInsertFunction(name, FT, AL).getCallee());
 }
@@ -3231,7 +3248,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
   }
 
   if (auto P = isProduct(cur)) {
-    SmallVector<Value *> operands;
+    SmallVector<Value *, 1> operands;
     std::optional<APFloat> constval;
     bool changed = false;
     for (auto &v : callOperands(P))
@@ -3322,7 +3339,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       replaceAndErase(cur, ConstantFP::get(cur->getType(), 0.0));
       return "EmptySum";
     }
-    SmallVector<Value *> args;
+    SmallVector<Value *, 1> args;
     for (auto &pair : operands) {
       if (pair.second == 1) {
         args.push_back(pair.first);
@@ -3735,7 +3752,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                 APInt::udivrem(lhs, rhs, div, rem);
               else
                 APInt::sdivrem(lhs, rhs, div, rem);
-              if (rem.isZero()) {
+              if (rem == 0) {
                 auto res = B.CreateMul(mul->getOperand(1 - i0),
                                        ConstantInt::get(cur->getType(), div),
                                        "mdiv." + cur->getName(),
@@ -5971,7 +5988,7 @@ bool cannotDependOnLoopIV(const SCEV *S, const Loop *L) {
     return true;
   }
   if (auto M = dyn_cast<SCEVUDivExpr>(S)) {
-    for (auto o : M->operands())
+    for (auto o : {M->getLHS(), M->getRHS()})
       if (!cannotDependOnLoopIV(o, L))
         return false;
     return true;
@@ -6069,8 +6086,8 @@ public:
     assert(c.size() != 0);
     assert(c.size() != 1);
     SmallVector<InnerTy, 1> tmp(c.begin(), c.end());
-    for (int i = 0; i < tmp.size(); i++)
-      for (int j = 0; j < i; j++)
+    for (unsigned i = 0; i < tmp.size(); i++)
+      for (unsigned j = 0; j < i; j++)
         assert(*tmp[i] != *tmp[j]);
     if (t == Type::Intersect) {
       for (auto &v : c) {
@@ -6270,15 +6287,15 @@ return true;
     if (isAll())
       return rhs;
 
-    llvm::errs() << " anding: " << *this << " with " << *rhs << "\n";
+    // llvm::errs() << " anding: " << *this << " with " << *rhs << "\n";
     if (ctx.contains(shared_from_this()) || ctx.contains(rhs)) {
-      llvm::errs() << " %%% stopping recursion\n";
+      // llvm::errs() << " %%% stopping recursion\n";
       return nullptr;
     }
     if (ty == Type::Compare && rhs->ty == Type::Compare) {
       auto sub = ctx.SE.getMinusSCEV(node, rhs->node);
       if (Loop == rhs->Loop) {
-        llvm::errs() << " + sameloop, sub=" << *sub << "\n";
+        // llvm::errs() << " + sameloop, sub=" << *sub << "\n";
         if (auto cst = dyn_cast<SCEVConstant>(sub)) {
           // the two solves are equivalent to each other
           if (cst->getValue()->isZero()) {
@@ -6315,7 +6332,7 @@ return true;
             }
           }
         } else if (isEqual || rhs->isEqual) {
-          llvm::errs() << " + botheq\n";
+          // llvm::errs() << " + botheq\n";
           // eq(i, a) & i ?= b -> eq(i, a) & (a ?= b)
           if (auto addrec = dyn_cast<SCEVAddRecExpr>(sub)) {
             // we want a ?= b, but we can only represent loopvar ?= something
@@ -6341,13 +6358,13 @@ return true;
                 if (isEqual) {
                   auto res = make_compare(div, /*isEqual*/ rhs->isEqual,
                                           addrec->getLoop(), ctx);
-                  llvm::errs() << " simplified rhs to: " << *res << "\n";
+                  // llvm::errs() << " simplified rhs to: " << *res << "\n";
                   return andB(res, ctx);
                 } else {
                   assert(rhs->isEqual);
                   auto res = make_compare(div, /*isEqual*/ isEqual,
                                           addrec->getLoop(), ctx);
-                  llvm::errs() << " simplified lhs to: " << *res << "\n";
+                  // llvm::errs() << " simplified lhs to: " << *res << "\n";
                   return rhs->andB(res, ctx);
                 }
               }
@@ -6357,16 +6374,16 @@ return true;
               cannotDependOnLoopIV(sub, ctx.loopToSolve)) {
             auto res = make_compare(sub, /*isEqual*/ rhs->isEqual,
                                     /*loop*/ nullptr, ctx);
-            llvm::errs() << " simplified(noloop) rhs from " << *rhs
-                         << " to: " << *res << "\n";
+            // llvm::errs() << " simplified(noloop) rhs from " << *rhs
+            //             << " to: " << *res << "\n";
             return andB(res, ctx);
           }
           if (rhs->isEqual && Loop &&
               cannotDependOnLoopIV(sub, ctx.loopToSolve)) {
             auto res =
                 make_compare(sub, /*isEqual*/ isEqual, /*loop*/ nullptr, ctx);
-            llvm::errs() << " simplified(noloop) lhs from " << *rhs
-                         << " to: " << *res << "\n";
+            // llvm::errs() << " simplified(noloop) lhs from " << *rhs
+            //             << " to: " << *res << "\n";
             return rhs->andB(res, ctx);
           }
 
@@ -6388,8 +6405,9 @@ return true;
         if (!Loop) {
           for (auto sub1 : {ctx.SE.getMinusSCEV(node, rhs->node),
                             ctx.SE.getMinusSCEV(rhs->node, node)}) {
-            llvm::errs() << " maybe replace lhs: " << *this << " rhs: " << *rhs
-                         << " sub1: " << *sub1 << "\n";
+            // llvm::errs() << " maybe replace lhs: " << *this << " rhs: " <<
+            // *rhs
+            //             << " sub1: " << *sub1 << "\n";
             auto newrhs = make_compare(sub1, rhs->isEqual, rhs->Loop, ctx);
             if (*newrhs == *this)
               return shared_from_this();
@@ -6412,8 +6430,9 @@ return true;
         if (!rhs->Loop) {
           for (auto sub1 : {ctx.SE.getMinusSCEV(node, rhs->node),
                             ctx.SE.getMinusSCEV(rhs->node, node)}) {
-            llvm::errs() << " maybe replace lhs2: " << *this << " rhs: " << *rhs
-                         << " sub1: " << *sub1 << "\n";
+            // llvm::errs() << " maybe replace lhs2: " << *this << " rhs: " <<
+            // *rhs
+            //             << " sub1: " << *sub1 << "\n";
             auto newlhs = make_compare(sub1, isEqual, Loop, ctx);
             if (*newlhs == *this)
               return shared_from_this();
@@ -6436,7 +6455,7 @@ return true;
         llvm::errs() << "this: " << *this << " rhs: " << *rhs << "\n";
       }
       auto res = std::make_shared<Constraints>(Type::Intersect, vals);
-      llvm::errs() << " naiive comp merge: " << *res << "\n";
+      // llvm::errs() << " naiive comp merge: " << *res << "\n";
       return res;
     }
     if (ty == Type::Intersect && rhs->ty == Type::Intersect) {
@@ -6489,10 +6508,6 @@ return true;
           // If this is not just making an intersect of the two operands,
           // remerge.
           if (trivialFuse != *tmp) {
-            llvm::errs() << " intersect with compare recur: " << *this << " - "
-                         << *rhs << "\n";
-            llvm::errs() << "  + trivialFuse: " << trivialFuse
-                         << " tmp: " << *tmp << " v: " << *v << "\n";
             InnerTy newlhs = Constraints::all();
             bool legal = true;
             for (auto en2 : llvm::enumerate(values)) {
@@ -6508,7 +6523,6 @@ return true;
               newlhs = std::move(newlhs2);
             }
             if (legal) {
-              llvm::errs() << "  + newlhs: " << *newlhs << "\n";
               return newlhs->andB(tmp, ctx);
             }
           }
@@ -6571,11 +6585,6 @@ return true;
 
             Constraints trivialFuse(Type::Intersect, fuse, false);
             if (trivialFuse != *tmp) {
-              llvm::errs() << " iunion with compare recur: " << *this << " - "
-                           << *rhs << "\n";
-              llvm::errs() << "  * trivialFuse: " << trivialFuse
-                           << " tmp: " << *tmp << " iv: " << *iv
-                           << " uv: " << *uv << "\n";
               insert(nextunionVals, tmp);
               midchanged = true;
               break;
@@ -6661,8 +6670,6 @@ return true;
             assert(fuse.size() == 2);
             Constraints trivialFuse(Type::Intersect, fuse);
             if ((trivialFuse != *tmp) || distributedVals.count(tmp)) {
-              llvm::errs() << " *distributed fix: " << *tmp << " vs "
-                           << trivialFuse << "\n";
               subchanged = true;
             }
             insert(subDistributedVals, tmp);
@@ -6694,8 +6701,6 @@ return true;
           cur = std::move(cur2);
         }
         if (legal) {
-          llvm::errs() << " chose distributed when & of " << *this << " & "
-                       << *rhs << " resulting in " << *cur << "\n";
           return cur;
         }
       }
@@ -6838,7 +6843,7 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
       }
       if (unionidx != -1) {
         auto others = Constraints::all();
-        for (int j = 0; j < vals.size(); j++)
+        for (unsigned j = 0; j < vals.size(); j++)
           if (unionidx != j)
             others = others->andB(vals[j], ctx);
         SmallVector<std::pair<Value *, Value *>, 1> resvals;
@@ -6896,11 +6901,13 @@ getSparseConditions(bool &legal, Value *val,
       auto res = lhs->andB(rhs, ctx);
       assert(res);
       assert(ctx.seen.size() == 0);
-      llvm::errs() << " getSparse(and, " << *I << "), lhs(" << *I->getOperand(0)
-                   << ") = " << *lhs << "\n";
-      llvm::errs() << " getSparse(and, " << *I << "), rhs(" << *I->getOperand(1)
-                   << ") = " << *rhs << "\n";
-      llvm::errs() << " getSparse(and, " << *I << ") = " << *res << "\n";
+      // llvm::errs() << " getSparse(and, " << *I << "), lhs(" <<
+      // *I->getOperand(0)
+      //              << ") = " << *lhs << "\n";
+      // llvm::errs() << " getSparse(and, " << *I << "), rhs(" <<
+      // *I->getOperand(1)
+      //              << ") = " << *rhs << "\n";
+      // llvm::errs() << " getSparse(and, " << *I << ") = " << *res << "\n";
       return res;
     }
 
@@ -6911,11 +6918,13 @@ getSparseConditions(bool &legal, Value *val,
       auto rhs = getSparseConditions(legal, I->getOperand(1),
                                      Constraints::none(), I, ctx);
       auto res = lhs->orB(rhs, ctx);
-      llvm::errs() << " getSparse(or, " << *I << "), lhs(" << *I->getOperand(0)
-                   << ") = " << *lhs << "\n";
-      llvm::errs() << " getSparse(or, " << *I << "), rhs(" << *I->getOperand(1)
-                   << ") = " << *rhs << "\n";
-      llvm::errs() << " getSparse(or, " << *I << ") = " << *res << "\n";
+      // llvm::errs() << " getSparse(or, " << *I << "), lhs(" <<
+      // *I->getOperand(0)
+      //              << ") = " << *lhs << "\n";
+      // llvm::errs() << " getSparse(or, " << *I << "), rhs(" <<
+      // *I->getOperand(1)
+      //              << ") = " << *rhs << "\n";
+      // llvm::errs() << " getSparse(or, " << *I << ") = " << *res << "\n";
       return res;
     }
 
@@ -6927,9 +6936,10 @@ getSparseConditions(bool &legal, Value *val,
                 getSparseConditions(legal, I->getOperand(1 - i),
                                     defaultFloat->notB(ctx), scope, ctx);
             auto res = pres->notB(ctx);
-            llvm::errs() << " getSparse(not, " << *I << "), prev ("
-                         << *I->getOperand(0) << ") = " << *pres << "\n";
-            llvm::errs() << " getSparse(not, " << *I << ") = " << *res << "\n";
+            // llvm::errs() << " getSparse(not, " << *I << "), prev ("
+            //              << *I->getOperand(0) << ") = " << *pres << "\n";
+            // llvm::errs() << " getSparse(not, " << *I << ") = " << *res <<
+            // "\n";
             return res;
           }
       }
@@ -6939,8 +6949,8 @@ getSparseConditions(bool &legal, Value *val,
       auto L = ctx.loopToSolve;
       auto lhs = ctx.SE.getSCEVAtScope(icmp->getOperand(0), L);
       auto rhs = ctx.SE.getSCEVAtScope(icmp->getOperand(1), L);
-      llvm::errs() << " lhs: " << *lhs << "\n";
-      llvm::errs() << " rhs: " << *rhs << "\n";
+      // llvm::errs() << " lhs: " << *lhs << "\n";
+      // llvm::errs() << " rhs: " << *rhs << "\n";
 
       auto sub1 = ctx.SE.getMinusSCEV(lhs, rhs);
 
@@ -6964,8 +6974,8 @@ getSparseConditions(bool &legal, Value *val,
                 auto res = Constraints::make_compare(
                     div, icmp->getPredicate() == ICmpInst::ICMP_EQ,
                     add->getLoop(), ctx);
-                llvm::errs()
-                    << " getSparse(icmp, " << *I << ") = " << *res << "\n";
+                // llvm::errs()
+                //    << " getSparse(icmp, " << *I << ") = " << *res << "\n";
                 return res;
               }
             }
@@ -6974,8 +6984,8 @@ getSparseConditions(bool &legal, Value *val,
         if (cannotDependOnLoopIV(sub1, ctx.loopToSolve)) {
           auto res = Constraints::make_compare(
               sub1, icmp->getPredicate() == ICmpInst::ICMP_EQ, nullptr, ctx);
-          llvm::errs() << " getSparse(icmp_noloop, " << *I << ") = " << *res
-                       << "\n";
+          // llvm::errs() << " getSparse(icmp_noloop, " << *I << ") = " << *res
+          //             << "\n";
           return res;
         }
       }
@@ -6989,7 +6999,7 @@ getSparseConditions(bool &legal, Value *val,
     // cmp x, 1.0 ->   false/true
     if (auto fcmp = dyn_cast<FCmpInst>(I)) {
       auto res = defaultFloat;
-      llvm::errs() << " getSparse(fcmp, " << *I << ") = " << *res << "\n";
+      // llvm::errs() << " getSparse(fcmp, " << *I << ") = " << *res << "\n";
       return res;
 
       if (fcmp->getPredicate() == CmpInst::FCMP_OEQ ||
@@ -7014,8 +7024,6 @@ Constraints::InnerTy Constraints::make_compare(const SCEV *v, bool isEqual,
                                                const llvm::Loop *Loop,
                                                const ConstraintContext &ctx) {
   if (!Loop) {
-    llvm::errs() << " considering compare " << *v << " iseq=" << isEqual
-                 << " loop=nullptr\n";
     assert(!isa<SCEVAddRecExpr>(v));
     SmallVector<Instruction *, 1> noassumption;
     ConstraintContext ctx2(ctx.SE, ctx.loopToSolve, noassumption, ctx.DT);
@@ -7025,8 +7033,6 @@ Constraints::InnerTy Constraints::make_compare(const SCEV *v, bool isEqual,
                                             Constraints::none(), nullptr, ctx2);
       bool dominates = ctx.DT.dominates(I, ctx.loopToSolve->getHeader());
       if (legal && dominates) {
-        llvm::errs() << " + " << *I << " legal=" << legal
-                     << " dom=" << dominates << " cond=" << *parsedCond << "\n";
         if (parsedCond->ty == Type::Compare && !parsedCond->Loop) {
           if (parsedCond->node == v ||
               parsedCond->node == ctx.SE.getNegativeSCEV(v)) {
@@ -7035,9 +7041,6 @@ Constraints::InnerTy Constraints::make_compare(const SCEV *v, bool isEqual,
               res = Constraints::all();
             else
               res = Constraints::none();
-            llvm::errs() << " +++++ found match of " << *res
-                         << " pieq=" << parsedCond->isEqual
-                         << " ieq=" << isEqual << "\n";
             return res;
           }
         }
@@ -7082,18 +7085,20 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
         }
   }
 
-  llvm::errs() << " pre fix inner: " << F << "\n";
+  // llvm::errs() << " pre fix inner: " << F << "\n";
 
   // Full simplification
   while (!Q.empty()) {
     auto cur = Q.pop_back_val();
+    /*
     std::set<Instruction *> prev;
     for (auto v : Q)
       prev.insert(v);
     llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
+    */
     auto changed = fixSparse_inner(cur, F, Q, DT, SE, LI, DL);
     (void)changed;
-
+    /*
     if (changed) {
       llvm::errs() << "changed: " << *changed << "\n";
 
@@ -7102,9 +7107,10 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
           llvm::errs() << " + " << *I << "\n";
       llvm::errs() << F << "\n\n";
     }
+    */
   }
 
-  llvm::errs() << " post fix inner " << F << "\n";
+  // llvm::errs() << " post fix inner " << F << "\n";
 
   SmallVector<std::pair<BasicBlock *, BranchInst *>, 1> sparseBlocks;
   bool legalToSparse = true;
@@ -7231,11 +7237,11 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     auto solutions = getSparseConditions(
         legal, cond, negated ? Constraints::all() : Constraints::none(),
         context, cctx);
-    llvm::errs() << " solutions pre negate: " << *solutions << "\n";
+    // llvm::errs() << " solutions pre negate: " << *solutions << "\n";
     if (!negated) {
       solutions = solutions->notB(cctx);
     }
-    llvm::errs() << " solutions post negate: " << *solutions << "\n";
+    // llvm::errs() << " solutions post negate: " << *solutions << "\n";
     if (!legal) {
       sawError = true;
       continue;
@@ -7249,7 +7255,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
           *solutions);
       sawError = true;
     }
-    llvm::errs() << " found solvable solutions " << *solutions << "\n";
+    // llvm::errs() << " found solvable solutions " << *solutions << "\n";
 
     if (forSparsification.count(L) == 0) {
       {
@@ -7451,9 +7457,6 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
 
     PN->eraseFromParent();
 
-    // B.CreateCondBr(ConstantInt::getTrue(B.getContext()), L->getExitBlock(),
-    // L->getHeader()); phterm->eraseFromParent();
-
     for (auto &I : *L2Header) {
       auto boundsCheck = dyn_cast<CallInst>(&I);
       if (!boundsCheck)
@@ -7489,7 +7492,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
 
   for (auto &F2 : F.getParent()->functions()) {
     if (startsWith(F2.getName(), "__enzyme_product")) {
-      for (auto I : make_early_inc_range(F2.users())) {
+      for (llvm::User* I : make_early_inc_range(F2.users())) {
         auto CB = cast<CallBase>(I);
         IRBuilder<> B(CB);
         B.setFastMathFlags(getFast());
@@ -7505,7 +7508,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
         CB->eraseFromParent();
       }
     } else if (startsWith(F2.getName(), "__enzyme_sum")) {
-      for (auto I : make_early_inc_range(F2.users())) {
+      for (llvm::User* I : make_early_inc_range(F2.users())) {
         auto CB = cast<CallBase>(I);
         IRBuilder<> B(CB);
         B.setFastMathFlags(getFast());
@@ -7802,7 +7805,6 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
     // required to make preheaders
     LoopSimplifyPass().run(*F, FAM);
     fixSparseIndices(*F, FAM, toDenseBlocks);
-    llvm::errs() << " post ind: " << *F << "\n";
   }
   return changed;
 }
