@@ -2762,6 +2762,41 @@ SmallVector<Value *, 1> callOperands(llvm::CallBase *CB) {
 #endif
 }
 
+bool guaranteedDataDependent(Value *z) {
+  if (isa<LoadInst>(z))
+    return true;
+  if (isa<Constant>(z))
+    return true;
+  if (auto BO = dyn_cast<BinaryOperator>(z))
+    return guaranteedDataDependent(BO->getOperand(0)) &&
+           guaranteedDataDependent(BO->getOperand(1));
+  if (auto C = dyn_cast<CastInst>(z))
+    return guaranteedDataDependent(C->getOperand(0));
+  if (auto S = isSum(z)) {
+    for (auto op : callOperands(S))
+      if (guaranteedDataDependent(op))
+        return true;
+    return false;
+  }
+  if (auto S = isProduct(z)) {
+    for (auto op : callOperands(S))
+      if (!guaranteedDataDependent(op))
+        return false;
+    return true;
+  }
+  if (auto II = dyn_cast<IntrinsicInst>(z)) {
+    switch (II->getIntrinsicID()) {
+    case Intrinsic::sqrt:
+    case Intrinsic::sin:
+    case Intrinsic::cos:
+      return guaranteedDataDependent(II->getArgOperand(0));
+    default:
+      break;
+    }
+  }
+  return false;
+}
+
 std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                                            QueueType &Q, DominatorTree &DT,
                                            ScalarEvolution &SE, LoopInfo &LI,
@@ -3585,10 +3620,43 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     }
   }
 
+  /*
+  // add (ext (x  == expr )), ( ext (x == expr + 1)) ->  -expr == c2 ) and c1 !=
+  c2  -> false if (cur->getOpcode() == Instruction::Add) for (int j=0; j<2; j++)
+    if (auto c0 = dyn_cast<ZExtInst>(cur->getOperand(j)))
+        if (auto cmp0 = dyn_cast<ICmpInst>(c0->getOperand(0)))
+    if (auto c1 = dyn_cast<CastInst>(cur->getOperand(1-j)))
+        if (auto cmp1 = dyn_cast<ICmpInst>(c0->getOperand(0)))
+            if (cmp0->getPredicate() == ICmpInst::ICMP_EQ &&
+                cmp1->getPredicate() == ICmpInst::ICMP_EQ)
+            {
+          for (size_t i0 = 0; i0 < 2; i0++)
+            for (size_t i1 = 0; i1 < 2; i1++)
+              if (cmp0->getOperand(1 - i0) == cmp1->getOperand(1 - i1))
+                auto e0 = SE.getSCEV(cmp0->getOperand(i0));
+                auto e1 = SE.getSCEV(cmp1->getOperand(i1));
+                auto m = SE.getMinusSCEV(e0, e1, SCEV::NoWrapMask);
+                if (auto C = dyn_cast<SCEVConstant>(m)) {
+                  // if c1 == c2 don't need the and they are equivalent
+                  if (C->getValue()->isZero()) {
+                  } else {
+                      auto sel0 = pushcse(B.CreateSelect(cmp0,
+  ConstantInt::get(cur->getType(), isa<ZExtInst>(cmp0) ? 1 : -1),
+  ConstantInt::get(cur->getType(), 0));
+                    // if non one constant they must be distinct.
+                    replaceAndErase(cur,
+                                    ConstantInt::getFalse(cur->getContext()));
+                    return "AndNEExpr";
+                  }
+                }
+              }
+  }
+  */
+
   if (auto fcmp = dyn_cast<FCmpInst>(cur)) {
     auto predicate = fcmp->getPredicate();
-
-    if (predicate == FCmpInst::FCMP_OEQ || predicate == FCmpInst::FCMP_UNE) {
+    if (predicate == FCmpInst::FCMP_OEQ || predicate == FCmpInst::FCMP_UEQ ||
+        predicate == FCmpInst::FCMP_UNE || predicate == FCmpInst::FCMP_ONE) {
       for (int i = 0; i < 2; i++)
         if (auto C = dyn_cast<ConstantFP>(fcmp->getOperand(i))) {
           if (C->isZero()) {
@@ -3685,6 +3753,50 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                 auto fcmp = pushcse(B.CreateCmp(predicate, fprod, C));
                 replaceAndErase(cur, fcmp);
                 return "CmpSumFactor";
+              }
+            }
+          }
+        }
+    }
+  }
+
+  if (auto fcmp = dyn_cast<FCmpInst>(cur)) {
+    auto predicate = fcmp->getPredicate();
+    if (predicate == FCmpInst::FCMP_OEQ || predicate == FCmpInst::FCMP_UEQ ||
+        predicate == FCmpInst::FCMP_UNE || predicate == FCmpInst::FCMP_ONE) {
+      for (int i = 0; i < 2; i++)
+        if (auto C = dyn_cast<ConstantFP>(fcmp->getOperand(i))) {
+          if (C->isZero()) {
+            // a + b == 0 -> ( (a == 0 & b == 0) || a == -b)
+            if (auto S = isSum(fcmp->getOperand(1 - i))) {
+              auto allOps = callOperands(S);
+              if (!llvm::any_of(allOps, guaranteedDataDependent)) {
+                auto eq_predicate = predicate;
+                if (predicate == FCmpInst::FCMP_UNE ||
+                    predicate == FCmpInst::FCMP_ONE)
+                  eq_predicate = fcmp->getInversePredicate();
+
+                Value *op_checks = nullptr;
+                for (auto a : allOps) {
+                  auto a_e0 = pushcse(B.CreateFCmp(eq_predicate, a, C));
+                  if (op_checks == nullptr)
+                    op_checks = a_e0;
+                  else
+                    op_checks = pushcse(B.CreateAnd(op_checks, a_e0));
+                }
+                SmallVector<Value *, 1> slice;
+                for (size_t i = 1; i < allOps.size(); i++)
+                  slice.push_back(allOps[i]);
+                auto ane = pushcse(B.CreateFCmp(
+                    eq_predicate, pushcse(B.CreateFNeg(allOps[0])),
+                    pushcse(B.CreateCall(getFunctionFromCall(S), slice))));
+                auto ori = pushcse(B.CreateOr(op_checks, ane));
+                if (predicate == FCmpInst::FCMP_UNE ||
+                    predicate == FCmpInst::FCMP_ONE) {
+                  ori = pushcse(B.CreateNot(ori));
+                }
+                replaceAndErase(cur, ori);
+                return "Sum2ZeroSplit";
               }
             }
           }
@@ -6907,13 +7019,11 @@ getSparseConditions(bool &legal, Value *val,
       auto res = lhs->andB(rhs, ctx);
       assert(res);
       assert(ctx.seen.size() == 0);
-      // llvm::errs() << " getSparse(and, " << *I << "), lhs(" <<
-      // *I->getOperand(0)
-      //              << ") = " << *lhs << "\n";
-      // llvm::errs() << " getSparse(and, " << *I << "), rhs(" <<
-      // *I->getOperand(1)
-      //              << ") = " << *rhs << "\n";
-      // llvm::errs() << " getSparse(and, " << *I << ") = " << *res << "\n";
+      llvm::errs() << " getSparse(and, " << *I << "), lhs(" << *I->getOperand(0)
+                   << ") = " << *lhs << "\n";
+      llvm::errs() << " getSparse(and, " << *I << "), rhs(" << *I->getOperand(1)
+                   << ") = " << *rhs << "\n";
+      llvm::errs() << " getSparse(and, " << *I << ") = " << *res << "\n";
       return res;
     }
 
@@ -6924,13 +7034,11 @@ getSparseConditions(bool &legal, Value *val,
       auto rhs = getSparseConditions(legal, I->getOperand(1),
                                      Constraints::none(), I, ctx);
       auto res = lhs->orB(rhs, ctx);
-      // llvm::errs() << " getSparse(or, " << *I << "), lhs(" <<
-      // *I->getOperand(0)
-      //              << ") = " << *lhs << "\n";
-      // llvm::errs() << " getSparse(or, " << *I << "), rhs(" <<
-      // *I->getOperand(1)
-      //              << ") = " << *rhs << "\n";
-      // llvm::errs() << " getSparse(or, " << *I << ") = " << *res << "\n";
+      llvm::errs() << " getSparse(or, " << *I << "), lhs(" << *I->getOperand(0)
+                   << ") = " << *lhs << "\n";
+      llvm::errs() << " getSparse(or, " << *I << "), rhs(" << *I->getOperand(1)
+                   << ") = " << *rhs << "\n";
+      llvm::errs() << " getSparse(or, " << *I << ") = " << *res << "\n";
       return res;
     }
 
@@ -6942,10 +7050,9 @@ getSparseConditions(bool &legal, Value *val,
                 getSparseConditions(legal, I->getOperand(1 - i),
                                     defaultFloat->notB(ctx), scope, ctx);
             auto res = pres->notB(ctx);
-            // llvm::errs() << " getSparse(not, " << *I << "), prev ("
-            //              << *I->getOperand(0) << ") = " << *pres << "\n";
-            // llvm::errs() << " getSparse(not, " << *I << ") = " << *res <<
-            // "\n";
+            llvm::errs() << " getSparse(not, " << *I << "), prev ("
+                         << *I->getOperand(0) << ") = " << *pres << "\n";
+            llvm::errs() << " getSparse(not, " << *I << ") = " << *res << "\n";
             return res;
           }
       }
@@ -6955,8 +7062,8 @@ getSparseConditions(bool &legal, Value *val,
       auto L = ctx.loopToSolve;
       auto lhs = ctx.SE.getSCEVAtScope(icmp->getOperand(0), L);
       auto rhs = ctx.SE.getSCEVAtScope(icmp->getOperand(1), L);
-      // llvm::errs() << " lhs: " << *lhs << "\n";
-      // llvm::errs() << " rhs: " << *rhs << "\n";
+      llvm::errs() << " lhs: " << *lhs << "\n";
+      llvm::errs() << " rhs: " << *rhs << "\n";
 
       auto sub1 = ctx.SE.getMinusSCEV(lhs, rhs);
 
@@ -6980,8 +7087,8 @@ getSparseConditions(bool &legal, Value *val,
                 auto res = Constraints::make_compare(
                     div, icmp->getPredicate() == ICmpInst::ICMP_EQ,
                     add->getLoop(), ctx);
-                // llvm::errs()
-                //    << " getSparse(icmp, " << *I << ") = " << *res << "\n";
+                llvm::errs()
+                    << " getSparse(icmp, " << *I << ") = " << *res << "\n";
                 return res;
               }
             }
@@ -6990,8 +7097,8 @@ getSparseConditions(bool &legal, Value *val,
         if (cannotDependOnLoopIV(sub1, ctx.loopToSolve)) {
           auto res = Constraints::make_compare(
               sub1, icmp->getPredicate() == ICmpInst::ICMP_EQ, nullptr, ctx);
-          // llvm::errs() << " getSparse(icmp_noloop, " << *I << ") = " << *res
-          //             << "\n";
+          llvm::errs() << " getSparse(icmp_noloop, " << *I << ") = " << *res
+                       << "\n";
           return res;
         }
       }
@@ -7005,7 +7112,7 @@ getSparseConditions(bool &legal, Value *val,
     // cmp x, 1.0 ->   false/true
     if (auto fcmp = dyn_cast<FCmpInst>(I)) {
       auto res = defaultFloat;
-      // llvm::errs() << " getSparse(fcmp, " << *I << ") = " << *res << "\n";
+      llvm::errs() << " getSparse(fcmp, " << *I << ") = " << *res << "\n";
       return res;
 
       if (fcmp->getPredicate() == CmpInst::FCMP_OEQ ||
@@ -7433,7 +7540,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       auto off = en.index();
       auto &solutions = en.value().second;
       ConstraintContext ctx(SE, L, Assumptions, DT);
-      SCEVExpander Exp(SE, DL, "sparseenzyme", /*preservelcssa*/false);
+      SCEVExpander Exp(SE, DL, "sparseenzyme", /*preservelcssa*/ false);
       auto sols = solutions->allSolutions(Exp, idxty, phterm, ctx, B);
       SmallVector<Value *, 1> prevSols;
       for (auto [sol, condition] : sols) {
@@ -7464,7 +7571,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     }
 
     PN->eraseFromParent();
-    
+
     for (auto &I : *L2Header) {
       auto boundsCheck = dyn_cast<CallInst>(&I);
       if (!boundsCheck)
