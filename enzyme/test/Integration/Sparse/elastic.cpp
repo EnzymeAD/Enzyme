@@ -202,14 +202,14 @@ int main() {
     gradient_ip(pos0, tets, n, youngs_modulus, poisson_ratio, pos, dpos);
 
     for (size_t i=0; i<sizeof(dpos)/sizeof(dpos[0]); i++)
-        printf("grad_vert[%d] = %f\n", i, dpos[i]);
+        printf("grad_vert[%zu] = %f\n", i, dpos[i]);
 
     // Hessian
     const size_t num_tets = 1;
     auto hess_verts = hessian(pos0, tets, n, youngs_modulus, poisson_ratio, pos, num_tets);
 
     for (auto hess : hess_verts) {
-        printf("i=%d, j=%d, val=%f", std::get<0>(hess), std::get<1>(hess), std::get<2>(hess));
+        printf("i=%lu, j=%lu, val=%f", std::get<0>(hess), std::get<1>(hess), std::get<2>(hess));
     }
 
     return 0;
