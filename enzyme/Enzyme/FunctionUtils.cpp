@@ -40,7 +40,6 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Passes/PassBuilder.h"
 
-#include <set>
 #include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/SetOperations.h"
@@ -54,6 +53,7 @@
 #include "llvm/Analysis/MemoryDependenceAnalysis.h"
 #include "llvm/Analysis/MemorySSA.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
+#include <set>
 
 #if LLVM_VERSION_MAJOR < 16
 #include "llvm/Analysis/CFLSteensAliasAnalysis.h"
@@ -2676,71 +2676,72 @@ bool directlySparse(Value *z) {
 
 typedef DominatorOrderSet QueueType;
 
-Function* getProductIntrinsic(llvm::Module &M, llvm::Type *T) {
-    std::string name = "__enzyme_product.";
-    if (T->isFloatTy())
-        name += "f32";
-    else if (T->isDoubleTy())
-        name += "f64";
-    else if (T->isIntegerTy())
-        name += "i" + std::to_string(cast<IntegerType>(T)->getBitWidth());
-    else
-        assert(0);
-    auto FT = llvm::FunctionType::get(T, {}, true);
-    AttributeList AL;
-    AL = AL.addFnAttribute(T->getContext(), Attribute::ReadNone);
-    AL = AL.addFnAttribute(T->getContext(), Attribute::NoUnwind);
+Function *getProductIntrinsic(llvm::Module &M, llvm::Type *T) {
+  std::string name = "__enzyme_product.";
+  if (T->isFloatTy())
+    name += "f32";
+  else if (T->isDoubleTy())
+    name += "f64";
+  else if (T->isIntegerTy())
+    name += "i" + std::to_string(cast<IntegerType>(T)->getBitWidth());
+  else
+    assert(0);
+  auto FT = llvm::FunctionType::get(T, {}, true);
+  AttributeList AL;
+  AL = AL.addFnAttribute(T->getContext(), Attribute::ReadNone);
+  AL = AL.addFnAttribute(T->getContext(), Attribute::NoUnwind);
 #if LLVM_VERSION_MAJOR >= 14
-    AL = AL.addFnAttribute(T->getContext(), Attribute::NoFree);
-    AL = AL.addFnAttribute(T->getContext(), Attribute::NoSync);
-    AL = AL.addFnAttribute(T->getContext(), Attribute::WillReturn);
+  AL = AL.addFnAttribute(T->getContext(), Attribute::NoFree);
+  AL = AL.addFnAttribute(T->getContext(), Attribute::NoSync);
+  AL = AL.addFnAttribute(T->getContext(), Attribute::WillReturn);
 #endif
-    return cast<Function>(M.getOrInsertFunction(name, FT, AL).getCallee());
+  return cast<Function>(M.getOrInsertFunction(name, FT, AL).getCallee());
 }
 
-Function* getSumIntrinsic(llvm::Module &M, llvm::Type *T) {
-    std::string name = "__enzyme_sum.";
-    if (T->isFloatTy())
-        name += "f32";
-    else if (T->isDoubleTy())
-        name += "f64";
-    else if (T->isIntegerTy())
-        name += "i" + std::to_string(cast<IntegerType>(T)->getBitWidth());
-    else
-        assert(0);
-    auto FT = llvm::FunctionType::get(T, {}, true);
-    AttributeList AL;
-    AL = AL.addFnAttribute(T->getContext(), Attribute::ReadNone);
-    AL = AL.addFnAttribute(T->getContext(), Attribute::NoUnwind);
+Function *getSumIntrinsic(llvm::Module &M, llvm::Type *T) {
+  std::string name = "__enzyme_sum.";
+  if (T->isFloatTy())
+    name += "f32";
+  else if (T->isDoubleTy())
+    name += "f64";
+  else if (T->isIntegerTy())
+    name += "i" + std::to_string(cast<IntegerType>(T)->getBitWidth());
+  else
+    assert(0);
+  auto FT = llvm::FunctionType::get(T, {}, true);
+  AttributeList AL;
+  AL = AL.addFnAttribute(T->getContext(), Attribute::ReadNone);
+  AL = AL.addFnAttribute(T->getContext(), Attribute::NoUnwind);
 #if LLVM_VERSION_MAJOR >= 14
-    AL = AL.addFnAttribute(T->getContext(), Attribute::NoFree);
-    AL = AL.addFnAttribute(T->getContext(), Attribute::NoSync);
-    AL = AL.addFnAttribute(T->getContext(), Attribute::WillReturn);
+  AL = AL.addFnAttribute(T->getContext(), Attribute::NoFree);
+  AL = AL.addFnAttribute(T->getContext(), Attribute::NoSync);
+  AL = AL.addFnAttribute(T->getContext(), Attribute::WillReturn);
 #endif
-    return cast<Function>(M.getOrInsertFunction(name, FT, AL).getCallee());
+  return cast<Function>(M.getOrInsertFunction(name, FT, AL).getCallee());
 }
 
-CallInst* isProduct(llvm::Value* v) {
+CallInst *isProduct(llvm::Value *v) {
   if (auto prod = dyn_cast<CallInst>(v))
-      if (auto F = getFunctionFromCall(prod))
-          if (startsWith(F->getName(), "__enzyme_product"))
-              return prod;
+    if (auto F = getFunctionFromCall(prod))
+      if (startsWith(F->getName(), "__enzyme_product"))
+        return prod;
   return nullptr;
 }
 
-CallInst* isSum(llvm::Value* v) {
+CallInst *isSum(llvm::Value *v) {
   if (auto prod = dyn_cast<CallInst>(v))
-      if (auto F = getFunctionFromCall(prod))
-          if (startsWith(F->getName(), "__enzyme_sum"))
-              return prod;
+    if (auto F = getFunctionFromCall(prod))
+      if (startsWith(F->getName(), "__enzyme_sum"))
+        return prod;
   return nullptr;
 }
 
-SmallVector<Value*, 1> callOperands(llvm::CallBase* CB) {
+SmallVector<Value *, 1> callOperands(llvm::CallBase *CB) {
 #if LLVM_VERSION_MAJOR >= 14
-    return SmallVector<Value*, 1>(CB->args().begin(), CB->args().end());
+  return SmallVector<Value *, 1>(CB->args().begin(), CB->args().end());
 #else
-    return SmallVector<Value*, 1>(CB->arg_operands().begin(), CB->arg_operands().end());
+  return SmallVector<Value *, 1>(CB->arg_operands().begin(),
+                                 CB->arg_operands().end());
 #endif
 }
 
@@ -2779,26 +2780,26 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             }
             bool isSame = candidate->isIdenticalTo(I);
             if (!isSame) {
-            if (auto P1 = isProduct(I))
-            if (auto P2 = isProduct(I2)) {
-                            std::multiset<llvm::Value*> s1;
-                            std::multiset<llvm::Value*> s2;
-                          for (auto &v : callOperands(P1))
-                              s1.insert(v);
-                          for (auto &v : callOperands(P2))
-                              s2.insert(v);
-                          isSame = s1 == s2;
-                        }
-            if (auto P1 = isSum(I))
-            if (auto P2 = isSum(I2)) {
-                            std::multiset<llvm::Value*> s1;
-                            std::multiset<llvm::Value*> s2;
-                          for (auto &v : callOperands(P1))
-                              s1.insert(v);
-                          for (auto &v : callOperands(P2))
-                              s2.insert(v);
-                          isSame = s1 == s2;
-                        }
+              if (auto P1 = isProduct(I))
+                if (auto P2 = isProduct(I2)) {
+                  std::multiset<llvm::Value *> s1;
+                  std::multiset<llvm::Value *> s2;
+                  for (auto &v : callOperands(P1))
+                    s1.insert(v);
+                  for (auto &v : callOperands(P2))
+                    s2.insert(v);
+                  isSame = s1 == s2;
+                }
+              if (auto P1 = isSum(I))
+                if (auto P2 = isSum(I2)) {
+                  std::multiset<llvm::Value *> s1;
+                  std::multiset<llvm::Value *> s2;
+                  for (auto &v : callOperands(P1))
+                    s1.insert(v);
+                  for (auto &v : callOperands(P2))
+                    s2.insert(v);
+                  isSame = s1 == s2;
+                }
             }
             if (!isSame) {
               candidate = nullptr;
@@ -2873,26 +2874,26 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             }
             bool isSame = candidate->isIdenticalTo(cur);
             if (!isSame) {
-            if (auto P1 = isProduct(candidate))
-            if (auto P2 = isProduct(cur)) {
-                            std::multiset<llvm::Value*> s1;
-                            std::multiset<llvm::Value*> s2;
-                          for (auto &v : callOperands(P1))
-                              s1.insert(v);
-                          for (auto &v : callOperands(P2))
-                              s2.insert(v);
-                          isSame = s1 == s2;
-                        }
-            if (auto P1 = isSum(candidate))
-            if (auto P2 = isSum(cur)) {
-                            std::multiset<llvm::Value*> s1;
-                            std::multiset<llvm::Value*> s2;
-                          for (auto &v : callOperands(P1))
-                              s1.insert(v);
-                          for (auto &v : callOperands(P2))
-                              s2.insert(v);
-                          isSame = s1 == s2;
-                        }
+              if (auto P1 = isProduct(candidate))
+                if (auto P2 = isProduct(cur)) {
+                  std::multiset<llvm::Value *> s1;
+                  std::multiset<llvm::Value *> s2;
+                  for (auto &v : callOperands(P1))
+                    s1.insert(v);
+                  for (auto &v : callOperands(P2))
+                    s2.insert(v);
+                  isSame = s1 == s2;
+                }
+              if (auto P1 = isSum(candidate))
+                if (auto P2 = isSum(cur)) {
+                  std::multiset<llvm::Value *> s1;
+                  std::multiset<llvm::Value *> s2;
+                  for (auto &v : callOperands(P1))
+                    s1.insert(v);
+                  for (auto &v : callOperands(P2))
+                    s2.insert(v);
+                  isSame = s1 == s2;
+                }
             }
 
             if (!isSame) {
@@ -3132,413 +3133,434 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       }
 
       if (isProduct(I) || isSum(I)) {
-          auto C = cast<CallBase>(I);
-          auto ops = callOperands(C);
-          bool changed = false;
-          for (auto &op : ops) {
-              auto next = replace(op, orig, with);
-              if (next != op) {
-                  changed = true;
-                  op = next;
-                }
+        auto C = cast<CallBase>(I);
+        auto ops = callOperands(C);
+        bool changed = false;
+        for (auto &op : ops) {
+          auto next = replace(op, orig, with);
+          if (next != op) {
+            changed = true;
+            op = next;
           }
-          if (!changed) return (Value*)I;
-          push(I);
-          pushcse(B.CreateCall(getFunctionFromCall(C), ops, "sel." + I->getName()));
+        }
+        if (!changed)
+          return (Value *)I;
+        push(I);
+        pushcse(
+            B.CreateCall(getFunctionFromCall(C), ops, "sel." + I->getName()));
       }
     }
     return val;
   };
-  
+
   if (auto II = dyn_cast<IntrinsicInst>(cur))
-      if (II->getIntrinsicID() == Intrinsic::fmuladd || II->getIntrinsicID() == Intrinsic::fma) {
-          B.setFastMathFlags(getFast());
-          auto mul = pushcse(B.CreateFMul(II->getOperand(0), II->getOperand(1)));
-          auto add = pushcse(B.CreateFAdd(mul, II->getOperand(2)));
-          replaceAndErase(cur, add);
-          return "FMulAddExpand";
-      }
-  
+    if (II->getIntrinsicID() == Intrinsic::fmuladd ||
+        II->getIntrinsicID() == Intrinsic::fma) {
+      B.setFastMathFlags(getFast());
+      auto mul = pushcse(B.CreateFMul(II->getOperand(0), II->getOperand(1)));
+      auto add = pushcse(B.CreateFAdd(mul, II->getOperand(2)));
+      replaceAndErase(cur, add);
+      return "FMulAddExpand";
+    }
+
   if (auto BO = dyn_cast<BinaryOperator>(cur)) {
-      if (BO->getOpcode() == Instruction::FMul && BO->isFast()) {
-          Value* args[2] = {BO->getOperand(0), BO->getOperand(1)};
-          auto mul = pushcse(B.CreateCall(getProductIntrinsic(*F.getParent(), BO->getType()), args, cur->getName()));
-          replaceAndErase(cur, mul);
-          return "FMulToProduct";
+    if (BO->getOpcode() == Instruction::FMul && BO->isFast()) {
+      Value *args[2] = {BO->getOperand(0), BO->getOperand(1)};
+      auto mul = pushcse(
+          B.CreateCall(getProductIntrinsic(*F.getParent(), BO->getType()), args,
+                       cur->getName()));
+      replaceAndErase(cur, mul);
+      return "FMulToProduct";
+    }
+    if (BO->getOpcode() == Instruction::FDiv && BO->isFast()) {
+      auto c0 = dyn_cast<ConstantFP>(BO->getOperand(0));
+      if (!c0 || !c0->isExactlyValue(1.0)) {
+        B.setFastMathFlags(getFast());
+        auto div = pushcse(B.CreateFDivFMF(ConstantFP::get(BO->getType(), 1.0),
+                                           BO->getOperand(1), BO));
+        auto mul = pushcse(
+            B.CreateFMulFMF(BO->getOperand(0), div, BO, cur->getName()));
+        replaceAndErase(cur, mul);
+        return "FDivToFMul";
       }
-      if (BO->getOpcode() == Instruction::FDiv && BO->isFast()) {
-          auto c0 = dyn_cast<ConstantFP>(BO->getOperand(0));
-          if (!c0 || !c0->isExactlyValue(1.0)) {
-            B.setFastMathFlags(getFast());
-            auto div = pushcse(B.CreateFDivFMF(ConstantFP::get(BO->getType(), 1.0), BO->getOperand(1), BO));
-            auto mul = pushcse(B.CreateFMulFMF(BO->getOperand(0), div, BO, cur->getName()));
-            replaceAndErase(cur, mul);
-            return "FDivToFMul";
-          }
-      }
-      if (BO->getOpcode() == Instruction::FAdd && BO->isFast()) {
-          Value* args[2] = {BO->getOperand(0), BO->getOperand(1)};
-          auto mul = pushcse(B.CreateCall(getSumIntrinsic(*F.getParent(), BO->getType()), args));
-          replaceAndErase(cur, mul);
-          return "FAddToSum";
-      }
-      if (BO->getOpcode() == Instruction::FSub && BO->isFast()) {
-          B.setFastMathFlags(getFast());
-          Value* args[2] = {BO->getOperand(0), pushcse(B.CreateFNeg(BO->getOperand(1)))};
-          auto mul = pushcse(B.CreateCall(getSumIntrinsic(*F.getParent(), BO->getType()), args, cur->getName()));
-          replaceAndErase(cur, mul);
-          return "FAddToSum";
-      }
+    }
+    if (BO->getOpcode() == Instruction::FAdd && BO->isFast()) {
+      Value *args[2] = {BO->getOperand(0), BO->getOperand(1)};
+      auto mul = pushcse(
+          B.CreateCall(getSumIntrinsic(*F.getParent(), BO->getType()), args));
+      replaceAndErase(cur, mul);
+      return "FAddToSum";
+    }
+    if (BO->getOpcode() == Instruction::FSub && BO->isFast()) {
+      B.setFastMathFlags(getFast());
+      Value *args[2] = {BO->getOperand(0),
+                        pushcse(B.CreateFNeg(BO->getOperand(1)))};
+      auto mul =
+          pushcse(B.CreateCall(getSumIntrinsic(*F.getParent(), BO->getType()),
+                               args, cur->getName()));
+      replaceAndErase(cur, mul);
+      return "FAddToSum";
+    }
   }
   if (cur->getOpcode() == Instruction::FNeg) {
     B.setFastMathFlags(getFast());
-    auto mul = pushcse(B.CreateFMulFMF(ConstantFP::get(cur->getType(), -1.0), cur->getOperand(0), cur, cur->getName()));
+    auto mul =
+        pushcse(B.CreateFMulFMF(ConstantFP::get(cur->getType(), -1.0),
+                                cur->getOperand(0), cur, cur->getName()));
     replaceAndErase(cur, mul);
     return "FNegToMul";
   }
 
   if (auto SI = dyn_cast<SelectInst>(cur)) {
-       if (auto tc = dyn_cast<ConstantFP>(SI->getTrueValue()))
-        if (auto fc = dyn_cast<ConstantFP>(SI->getFalseValue()))
-            if (fc->isZero()) {
-                if (tc->isExactlyValue(1.0)) {
-                    auto res = pushcse(B.CreateUIToFP(SI->getCondition(), tc->getType()));
-                    replaceAndErase(cur, res);
-                    return "SelToUIFP";
-                }
-                if (tc->isExactlyValue(-1.0)) {
-                    auto res = pushcse(B.CreateSIToFP(SI->getCondition(), tc->getType()));
-                    replaceAndErase(cur, res);
-                    return "SelToSIFP";
-                }
-            }
+    if (auto tc = dyn_cast<ConstantFP>(SI->getTrueValue()))
+      if (auto fc = dyn_cast<ConstantFP>(SI->getFalseValue()))
+        if (fc->isZero()) {
+          if (tc->isExactlyValue(1.0)) {
+            auto res =
+                pushcse(B.CreateUIToFP(SI->getCondition(), tc->getType()));
+            replaceAndErase(cur, res);
+            return "SelToUIFP";
+          }
+          if (tc->isExactlyValue(-1.0)) {
+            auto res =
+                pushcse(B.CreateSIToFP(SI->getCondition(), tc->getType()));
+            replaceAndErase(cur, res);
+            return "SelToSIFP";
+          }
+        }
   }
 
-
   if (auto P = isProduct(cur)) {
-    SmallVector<Value*> operands;
+    SmallVector<Value *> operands;
     std::optional<APFloat> constval;
     bool changed = false;
     for (auto &v : callOperands(P))
 
     {
-        if (auto P2 = isProduct(v)) {
-        for (auto &v2 : callOperands(P2))
-        {
-            push(v2);
-            operands.push_back(v2);
+      if (auto P2 = isProduct(v)) {
+        for (auto &v2 : callOperands(P2)) {
+          push(v2);
+          operands.push_back(v2);
         }
-                push(P2);
+        push(P2);
         changed = true;
         continue;
+      }
+      if (auto C = dyn_cast<ConstantFP>(v)) {
+        if (C->isExactlyValue(1.0)) {
+          changed = true;
+          continue;
         }
-        if (auto C = dyn_cast<ConstantFP>(v)) {
-            if (C->isExactlyValue(1.0)) {
-                changed = true;
-                continue;
-            }
-            if (C->isZero()) {
-                replaceAndErase(cur, C);
-                return "ZeroProduct";
-            }
-            if (!constval) {
-                constval = C->getValue();
-                continue;
-            }
-            constval = (*constval) * C->getValue();
-            changed = true;
-            continue;
+        if (C->isZero()) {
+          replaceAndErase(cur, C);
+          return "ZeroProduct";
         }
-        operands.push_back(v);
+        if (!constval) {
+          constval = C->getValue();
+          continue;
+        }
+        constval = (*constval) * C->getValue();
+        changed = true;
+        continue;
+      }
+      operands.push_back(v);
     }
     if (constval)
-        operands.push_back(ConstantFP::get(cur->getType(), *constval));
-    
+      operands.push_back(ConstantFP::get(cur->getType(), *constval));
+
     if (operands.size() == 0) {
-        replaceAndErase(cur, ConstantFP::get(cur->getType(), 1.0));
-        return "EmptyProduct";
+      replaceAndErase(cur, ConstantFP::get(cur->getType(), 1.0));
+      return "EmptyProduct";
     }
     if (operands.size() == 1) {
-        replaceAndErase(cur, operands[0]);
-        return "SingleProduct";
+      replaceAndErase(cur, operands[0]);
+      return "SingleProduct";
     }
     if (changed) {
-        auto mul = pushcse(B.CreateCall(getProductIntrinsic(*F.getParent(), cur->getType()), operands, cur->getName()));
-        replaceAndErase(cur, mul);
-        return "ProductSimplification";
+      auto mul = pushcse(
+          B.CreateCall(getProductIntrinsic(*F.getParent(), cur->getType()),
+                       operands, cur->getName()));
+      replaceAndErase(cur, mul);
+      return "ProductSimplification";
     }
   }
-  
+
   if (auto P = isSum(cur)) {
     // map from operand, to number of counts
-    std::map<Value*, unsigned> operands;
+    std::map<Value *, unsigned> operands;
     std::optional<APFloat> constval;
     bool changed = false;
-    for (auto &v : callOperands(P))
-    {
-        if (auto P2 = isSum(v)) {
-        for (auto &v2 : callOperands(P2))
-        {
-            push(v2);
-            operands[v2]++;
+    for (auto &v : callOperands(P)) {
+      if (auto P2 = isSum(v)) {
+        for (auto &v2 : callOperands(P2)) {
+          push(v2);
+          operands[v2]++;
         }
-                push(P2);
+        push(P2);
         changed = true;
         continue;
+      }
+      if (auto C = dyn_cast<ConstantFP>(v)) {
+        if (C->isExactlyValue(0.0)) {
+          changed = true;
+          continue;
         }
-        if (auto C = dyn_cast<ConstantFP>(v)) {
-            if (C->isExactlyValue(0.0)) {
-                changed = true;
-                continue;
-            }
-            if (!constval) {
-                constval = C->getValue();
-                continue;
-            }
-            constval = (*constval) + C->getValue();
-            changed = true;
-            continue;
+        if (!constval) {
+          constval = C->getValue();
+          continue;
         }
-        operands[v]++;
+        constval = (*constval) + C->getValue();
+        changed = true;
+        continue;
+      }
+      operands[v]++;
     }
     if (constval)
-        operands[ConstantFP::get(cur->getType(), *constval)]++;
-    
+      operands[ConstantFP::get(cur->getType(), *constval)]++;
+
     if (operands.size() == 0) {
-        replaceAndErase(cur, ConstantFP::get(cur->getType(), 0.0));
-        return "EmptySum";
+      replaceAndErase(cur, ConstantFP::get(cur->getType(), 0.0));
+      return "EmptySum";
     }
-    SmallVector<Value*> args;
+    SmallVector<Value *> args;
     for (auto &pair : operands) {
-        if (pair.second == 1) {
-            args.push_back(pair.first);
-            continue;
-        }
-        changed = true;
-        Value* sargs[] = {pair.first, ConstantFP::get(cur->getType(), (double)pair.second)};
-        args.push_back(pushcse(B.CreateCall(getProductIntrinsic(*F.getParent(), cur->getType()), sargs)));
+      if (pair.second == 1) {
+        args.push_back(pair.first);
+        continue;
+      }
+      changed = true;
+      Value *sargs[] = {pair.first,
+                        ConstantFP::get(cur->getType(), (double)pair.second)};
+      args.push_back(pushcse(B.CreateCall(
+          getProductIntrinsic(*F.getParent(), cur->getType()), sargs)));
     }
     if (args.size() == 1) {
-        replaceAndErase(cur, args[0]);
-        return "SingleSum";
+      replaceAndErase(cur, args[0]);
+      return "SingleSum";
     }
     if (changed) {
-        auto sum = pushcse(B.CreateCall(getSumIntrinsic(*F.getParent(), cur->getType()), args, cur->getName()));
-        replaceAndErase(cur, sum);
-        return "SumSimplification";
+      auto sum =
+          pushcse(B.CreateCall(getSumIntrinsic(*F.getParent(), cur->getType()),
+                               args, cur->getName()));
+      replaceAndErase(cur, sum);
+      return "SumSimplification";
     }
   }
 
   if (auto P = isProduct(cur)) {
-    SmallVector<Value*, 1> operands;
-    SmallVector<Value*, 1> conditions;
-    for (auto &v : callOperands(P))
-    {
-        // z = uitofp i1 c to float -> select c, (prod withot z), 0
-        if (auto op = dyn_cast<UIToFPInst>(v)) {
-            if (op->getOperand(0)->getType()->isIntegerTy(1)) {
-                conditions.push_back(op->getOperand(0));
-                continue;
-            }
+    SmallVector<Value *, 1> operands;
+    SmallVector<Value *, 1> conditions;
+    for (auto &v : callOperands(P)) {
+      // z = uitofp i1 c to float -> select c, (prod withot z), 0
+      if (auto op = dyn_cast<UIToFPInst>(v)) {
+        if (op->getOperand(0)->getType()->isIntegerTy(1)) {
+          conditions.push_back(op->getOperand(0));
+          continue;
         }
-        // z = sitofp i1 c to float -> select c, (-prod withot z), 0
-        if (auto op = dyn_cast<SIToFPInst>(v)) {
-            if (op->getOperand(0)->getType()->isIntegerTy(1)) {
-                conditions.push_back(op->getOperand(0));
-                operands.push_back(ConstantFP::get(cur->getType(), -1.0));
-                continue;
-            }
+      }
+      // z = sitofp i1 c to float -> select c, (-prod withot z), 0
+      if (auto op = dyn_cast<SIToFPInst>(v)) {
+        if (op->getOperand(0)->getType()->isIntegerTy(1)) {
+          conditions.push_back(op->getOperand(0));
+          operands.push_back(ConstantFP::get(cur->getType(), -1.0));
+          continue;
         }
-        if (auto op = dyn_cast<SelectInst>(v)) {
-            if (auto tc = dyn_cast<ConstantFP>(op->getTrueValue()))
-                if (tc->isZero()) {
-                    conditions.push_back(pushcse(B.CreateNot(op->getCondition())));
-                    operands.push_back(op->getFalseValue());
-                    continue;
-                }
-            if (auto tc = dyn_cast<ConstantFP>(op->getFalseValue()))
-                if (tc->isZero()) {
-                    conditions.push_back(op->getCondition());
-                    operands.push_back(op->getTrueValue());
-                    continue;
-                }
-        }
-        operands.push_back(v);
+      }
+      if (auto op = dyn_cast<SelectInst>(v)) {
+        if (auto tc = dyn_cast<ConstantFP>(op->getTrueValue()))
+          if (tc->isZero()) {
+            conditions.push_back(pushcse(B.CreateNot(op->getCondition())));
+            operands.push_back(op->getFalseValue());
+            continue;
+          }
+        if (auto tc = dyn_cast<ConstantFP>(op->getFalseValue()))
+          if (tc->isZero()) {
+            conditions.push_back(op->getCondition());
+            operands.push_back(op->getTrueValue());
+            continue;
+          }
+      }
+      operands.push_back(v);
     }
 
     if (conditions.size()) {
-        auto mul = pushcse(B.CreateCall(getProductIntrinsic(*F.getParent(), cur->getType()), operands));
-        Value *condition = nullptr;
-        for (auto v : conditions) {
-            assert(v->getType()->isIntegerTy(1));
-          if (condition == nullptr) {
-                  condition = v;
-                  continue;
-                }
-          condition = pushcse(B.CreateAnd(condition, v));
+      auto mul = pushcse(B.CreateCall(
+          getProductIntrinsic(*F.getParent(), cur->getType()), operands));
+      Value *condition = nullptr;
+      for (auto v : conditions) {
+        assert(v->getType()->isIntegerTy(1));
+        if (condition == nullptr) {
+          condition = v;
+          continue;
         }
-        auto zero = ConstantFP::get(cur->getType(), 0.0);
-        auto sel = pushcse(B.CreateSelect(condition, mul, zero, cur->getName()));
-        replaceAndErase(cur, sel);
-        return "ProductSelect";
+        condition = pushcse(B.CreateAnd(condition, v));
+      }
+      auto zero = ConstantFP::get(cur->getType(), 0.0);
+      auto sel = pushcse(B.CreateSelect(condition, mul, zero, cur->getName()));
+      replaceAndErase(cur, sel);
+      return "ProductSelect";
     }
   }
-  
+
   // TODO
   if (auto P = isSum(cur)) {
-      // whether negated
-    SmallVector<std::pair<Value*, bool>, 1> conditions;
-    for (auto &v : callOperands(P))
-    {
-        // z = uitofp i1 c to float -> select c, (prod withot z), 0
-        if (auto op = dyn_cast<UIToFPInst>(v)) {
-            if (op->getOperand(0)->getType()->isIntegerTy(1)) {
-                conditions.emplace_back(op->getOperand(0), false);
-                continue;
-            }
+    // whether negated
+    SmallVector<std::pair<Value *, bool>, 1> conditions;
+    for (auto &v : callOperands(P)) {
+      // z = uitofp i1 c to float -> select c, (prod withot z), 0
+      if (auto op = dyn_cast<UIToFPInst>(v)) {
+        if (op->getOperand(0)->getType()->isIntegerTy(1)) {
+          conditions.emplace_back(op->getOperand(0), false);
+          continue;
         }
-        // z = sitofp i1 c to float -> select c, (-prod withot z), 0
-        if (auto op = dyn_cast<SIToFPInst>(v)) {
-            if (op->getOperand(0)->getType()->isIntegerTy(1)) {
-                conditions.emplace_back(op->getOperand(0), false);
-                continue;
-            }
+      }
+      // z = sitofp i1 c to float -> select c, (-prod withot z), 0
+      if (auto op = dyn_cast<SIToFPInst>(v)) {
+        if (op->getOperand(0)->getType()->isIntegerTy(1)) {
+          conditions.emplace_back(op->getOperand(0), false);
+          continue;
         }
-        if (auto op = dyn_cast<SelectInst>(v)) {
-            if (auto tc = dyn_cast<ConstantFP>(op->getTrueValue()))
-                if (tc->isZero()) {
-                    conditions.emplace_back(op->getCondition(), false);
-                    continue;
-                }
-            if (auto tc = dyn_cast<ConstantFP>(op->getFalseValue()))
-                if (tc->isZero()) {
-                    conditions.emplace_back(op->getCondition(), true);
-                    continue;
-                }
-        }
+      }
+      if (auto op = dyn_cast<SelectInst>(v)) {
+        if (auto tc = dyn_cast<ConstantFP>(op->getTrueValue()))
+          if (tc->isZero()) {
+            conditions.emplace_back(op->getCondition(), false);
+            continue;
+          }
+        if (auto tc = dyn_cast<ConstantFP>(op->getFalseValue()))
+          if (tc->isZero()) {
+            conditions.emplace_back(op->getCondition(), true);
+            continue;
+          }
+      }
     }
-    Value* condition = nullptr;
-    for (size_t i=0; i<conditions.size(); i++) {
-        size_t count=0;
-      for (size_t j=0; j<conditions.size(); j++) {
-        if ( ((conditions[i].first == conditions[j].first) && (conditions[i].second == conditions[i].second))
-                ||
-             ((isNot(conditions[i].first, conditions[j].first) && (conditions[i].second != conditions[i].second)) ) )
-            count++;
+    Value *condition = nullptr;
+    for (size_t i = 0; i < conditions.size(); i++) {
+      size_t count = 0;
+      for (size_t j = 0; j < conditions.size(); j++) {
+        if (((conditions[i].first == conditions[j].first) &&
+             (conditions[i].second == conditions[i].second)) ||
+            ((isNot(conditions[i].first, conditions[j].first) &&
+              (conditions[i].second != conditions[i].second))))
+          count++;
       }
       if (count == conditions.size() && count > 1) {
-          condition = conditions[i].first;
-          if (conditions[i].second) condition = pushcse(B.CreateNot(condition));
-          break;
+        condition = conditions[i].first;
+        if (conditions[i].second)
+          condition = pushcse(B.CreateNot(condition));
+        break;
       }
     }
 
     if (condition) {
 
-    SmallVector<Value*, 1> operands;
-    for (auto &v : callOperands(P))
-    {
+      SmallVector<Value *, 1> operands;
+      for (auto &v : callOperands(P)) {
         // z = uitofp i1 c to float -> select c, (prod withot z), 0
         if (auto op = dyn_cast<UIToFPInst>(v)) {
-            if (op->getOperand(0)->getType()->isIntegerTy(1)) {
-                operands.push_back(ConstantFP::get(cur->getType(), 1.0));
-                continue;
-            }
+          if (op->getOperand(0)->getType()->isIntegerTy(1)) {
+            operands.push_back(ConstantFP::get(cur->getType(), 1.0));
+            continue;
+          }
         }
         // z = sitofp i1 c to float -> select c, (-prod withot z), 0
         if (auto op = dyn_cast<SIToFPInst>(v)) {
-            if (op->getOperand(0)->getType()->isIntegerTy(1)) {
-                operands.push_back(ConstantFP::get(cur->getType(), -1.0));
-                continue;
-            }
+          if (op->getOperand(0)->getType()->isIntegerTy(1)) {
+            operands.push_back(ConstantFP::get(cur->getType(), -1.0));
+            continue;
+          }
         }
         if (auto op = dyn_cast<SelectInst>(v)) {
-            if (auto tc = dyn_cast<ConstantFP>(op->getTrueValue()))
-                if (tc->isZero()) {
-                    operands.push_back(op->getFalseValue());
-                    continue;
-                }
-            if (auto tc = dyn_cast<ConstantFP>(op->getFalseValue()))
-                if (tc->isZero()) {
-                    operands.push_back(op->getTrueValue());
-                    continue;
-                }
+          if (auto tc = dyn_cast<ConstantFP>(op->getTrueValue()))
+            if (tc->isZero()) {
+              operands.push_back(op->getFalseValue());
+              continue;
+            }
+          if (auto tc = dyn_cast<ConstantFP>(op->getFalseValue()))
+            if (tc->isZero()) {
+              operands.push_back(op->getTrueValue());
+              continue;
+            }
         }
         assert(0);
-    }
+      }
 
-    if (conditions.size()) {
-        auto sum = pushcse(B.CreateCall(getSumIntrinsic(*F.getParent(), cur->getType()), operands));
+      if (conditions.size()) {
+        auto sum = pushcse(B.CreateCall(
+            getSumIntrinsic(*F.getParent(), cur->getType()), operands));
         auto zero = ConstantFP::get(cur->getType(), 0.0);
-        auto sel = pushcse(B.CreateSelect(condition, sum, zero, cur->getName()));
+        auto sel =
+            pushcse(B.CreateSelect(condition, sum, zero, cur->getName()));
         replaceAndErase(cur, sel);
         return "SumSelect";
-    }
+      }
     }
   }
-            // (a1*b1) + (a1*c1) + (a1*d1 ) + ... -> a1 * (b1 + c1 + d1 + ...)
-            if (auto S = isSum(cur)) {
-                SmallVector<Value*, 1> allOps;
-                auto combine = [](const SmallVector<Value*, 1> &lhs, SmallVector<Value*, 1> rhs) {
-                    SmallVector<Value*, 1> out;
-                    for (auto v : lhs) {
-                        bool seen = false;
-                        for (auto &v2 : rhs) {
-                            if (v == v2) {
-                                v2 = nullptr;
-                                seen = true;
-                                break;
-                            }
-                        }
-                        if (seen) {
-                            out.push_back(v);
-                        }
-                    }
-                    return out;
-                };
-                auto subtract = [](SmallVector<Value*, 1> lhs, const SmallVector<Value*, 1> &rhs) {
-                    for (auto v : rhs) {
-                        auto found = find(lhs, v);
-                        assert(found != lhs.end());
-                        lhs.erase(found);
-                    }
-                    return lhs;
-                };
-                bool seen = false;
-                bool legal = true;
-                for (auto op : callOperands(S)) {
-                    auto P = isProduct(op);
-                    if (!P) {
-                        legal = false;
-                        break;
-                    }
-                    if (!seen) {
-                        allOps = callOperands(P);
-                        seen = true;
-                        continue;
-                    }
-                    allOps = combine(allOps, callOperands(P));
-                }
-                
-                if (legal && allOps.size() > 0) {
-                    SmallVector<Value*, 1> operands;
-                    for (auto op : callOperands(S)) {
-                        auto P = isProduct(op);
-                        push(op);
-                        auto sub = subtract(callOperands(P), allOps);
-                        auto newprod = pushcse(B.CreateCall(
-                                    getProductIntrinsic(*F.getParent(), S->getType()), sub));
-                        operands.push_back(newprod);
-                    }
-                    auto newsum = pushcse(B.CreateCall(
-                                    getSumIntrinsic(*F.getParent(), S->getType()), operands));
-                    allOps.push_back(newsum);
-                    auto fprod = pushcse(B.CreateCall(
-                                    getProductIntrinsic(*F.getParent(), S->getType()), allOps));
-                    replaceAndErase(cur, fprod);
-                    return "SumFactor";
-                }
-            }
+  // (a1*b1) + (a1*c1) + (a1*d1 ) + ... -> a1 * (b1 + c1 + d1 + ...)
+  if (auto S = isSum(cur)) {
+    SmallVector<Value *, 1> allOps;
+    auto combine = [](const SmallVector<Value *, 1> &lhs,
+                      SmallVector<Value *, 1> rhs) {
+      SmallVector<Value *, 1> out;
+      for (auto v : lhs) {
+        bool seen = false;
+        for (auto &v2 : rhs) {
+          if (v == v2) {
+            v2 = nullptr;
+            seen = true;
+            break;
+          }
+        }
+        if (seen) {
+          out.push_back(v);
+        }
+      }
+      return out;
+    };
+    auto subtract = [](SmallVector<Value *, 1> lhs,
+                       const SmallVector<Value *, 1> &rhs) {
+      for (auto v : rhs) {
+        auto found = find(lhs, v);
+        assert(found != lhs.end());
+        lhs.erase(found);
+      }
+      return lhs;
+    };
+    bool seen = false;
+    bool legal = true;
+    for (auto op : callOperands(S)) {
+      auto P = isProduct(op);
+      if (!P) {
+        legal = false;
+        break;
+      }
+      if (!seen) {
+        allOps = callOperands(P);
+        seen = true;
+        continue;
+      }
+      allOps = combine(allOps, callOperands(P));
+    }
+
+    if (legal && allOps.size() > 0) {
+      SmallVector<Value *, 1> operands;
+      for (auto op : callOperands(S)) {
+        auto P = isProduct(op);
+        push(op);
+        auto sub = subtract(callOperands(P), allOps);
+        auto newprod = pushcse(B.CreateCall(
+            getProductIntrinsic(*F.getParent(), S->getType()), sub));
+        operands.push_back(newprod);
+      }
+      auto newsum = pushcse(B.CreateCall(
+          getSumIntrinsic(*F.getParent(), S->getType()), operands));
+      allOps.push_back(newsum);
+      auto fprod = pushcse(B.CreateCall(
+          getProductIntrinsic(*F.getParent(), S->getType()), allOps));
+      replaceAndErase(cur, fprod);
+      return "SumFactor";
+    }
+  }
 
   if (auto fcmp = dyn_cast<FCmpInst>(cur)) {
     auto predicate = fcmp->getPredicate();
@@ -3548,97 +3570,99 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (auto C = dyn_cast<ConstantFP>(fcmp->getOperand(i))) {
           if (C->isZero()) {
             // (a1*a2*...an) == 0 -> (a1 == 0) || (a2 == 0) || ... (a2 == 0)
-            // (a1*a2*...an) != 0 -> ![ (a1 == 0) || (a2 == 0) || ... (a2 == 0) ]
-            if (auto P = isProduct(fcmp->getOperand(1-i))) {
-                Value* res = nullptr;
+            // (a1*a2*...an) != 0 -> ![ (a1 == 0) || (a2 == 0) || ... (a2 == 0)
+            // ]
+            if (auto P = isProduct(fcmp->getOperand(1 - i))) {
+              Value *res = nullptr;
 
-                auto eq_predicate = predicate;
-                if ( predicate == FCmpInst::FCMP_UNE || predicate == FCmpInst::FCMP_ONE)
-                    eq_predicate = fcmp->getInversePredicate();
+              auto eq_predicate = predicate;
+              if (predicate == FCmpInst::FCMP_UNE ||
+                  predicate == FCmpInst::FCMP_ONE)
+                eq_predicate = fcmp->getInversePredicate();
 
-    for (auto &v : callOperands(P))
-    {
-                auto ncmp1 = pushcse(
-                    B.CreateFCmp(eq_predicate, v,  C));
+              for (auto &v : callOperands(P)) {
+                auto ncmp1 = pushcse(B.CreateFCmp(eq_predicate, v, C));
                 if (!res)
-                    res = ncmp1;
+                  res = ncmp1;
                 else
-                    res = pushcse(B.CreateOr(res, ncmp1));
-                
-    }
+                  res = pushcse(B.CreateOr(res, ncmp1));
+              }
 
-                if ( predicate == FCmpInst::FCMP_UNE || predicate == FCmpInst::FCMP_ONE) {
-                  res = pushcse(B.CreateNot(res));
-                }
+              if (predicate == FCmpInst::FCMP_UNE ||
+                  predicate == FCmpInst::FCMP_ONE) {
+                res = pushcse(B.CreateNot(res));
+              }
 
-                replaceAndErase(cur, res);
-                return "CmpProductSplit";
+              replaceAndErase(cur, res);
+              return "CmpProductSplit";
             }
-            
-            // (a1*b1) + (a1*c1) + (a1*d1 ) + ... ?= 0 -> a1 * (b1 + c1 + d1 + ...) ?= 0
-            if (auto S = isSum(fcmp->getOperand(1-i))) {
-                SmallVector<Value*, 1> allOps;
-                auto combine = [](const SmallVector<Value*, 1> &lhs, SmallVector<Value*, 1> rhs) {
-                    SmallVector<Value*, 1> out;
-                    for (auto v : lhs) {
-                        bool seen = false;
-                        for (auto &v2 : rhs) {
-                            if (v == v2) {
-                                v2 = nullptr;
-                                seen = true;
-                                break;
-                            }
-                        }
-                        if (seen) {
-                            out.push_back(v);
-                        }
-                    }
-                    return out;
-                };
-                auto subtract = [](SmallVector<Value*, 1> lhs, const SmallVector<Value*, 1> &rhs) {
-                    for (auto v : rhs) {
-                        auto found = find(lhs, v);
-                        assert(found != lhs.end());
-                        lhs.erase(found);
-                    }
-                    return lhs;
-                };
-                bool seen = false;
-                bool legal = true;
-                for (auto op : callOperands(S)) {
-                    auto P = isProduct(op);
-                    if (!P) {
-                        legal = false;
-                        break;
-                    }
-                    if (!seen) {
-                        allOps = callOperands(P);
-                        seen = true;
-                        continue;
-                    }
-                    allOps = combine(allOps, callOperands(P));
-                }
-                
-                if (legal && allOps.size() > 0) {
-                    SmallVector<Value*, 1> operands;
-                    for (auto op : callOperands(S)) {
-                        auto P = isProduct(op);
-                        push(op);
-                        auto sub = subtract(callOperands(P), allOps);
-                        auto newprod = pushcse(B.CreateCall(
-                                    getProductIntrinsic(*F.getParent(), C->getType()), sub));
-                        operands.push_back(newprod);
-                    }
-                    auto newsum = pushcse(B.CreateCall(
-                                    getSumIntrinsic(*F.getParent(), C->getType()), operands));
-                    allOps.push_back(newsum);
-                    auto fprod = pushcse(B.CreateCall(
-                                    getProductIntrinsic(*F.getParent(), C->getType()), allOps));
-                    auto fcmp = pushcse(B.CreateCmp(predicate, fprod, C));
-                    replaceAndErase(cur, fcmp);
-                    return "CmpSumFactor";
-                }
 
+            // (a1*b1) + (a1*c1) + (a1*d1 ) + ... ?= 0 -> a1 * (b1 + c1 + d1 +
+            // ...) ?= 0
+            if (auto S = isSum(fcmp->getOperand(1 - i))) {
+              SmallVector<Value *, 1> allOps;
+              auto combine = [](const SmallVector<Value *, 1> &lhs,
+                                SmallVector<Value *, 1> rhs) {
+                SmallVector<Value *, 1> out;
+                for (auto v : lhs) {
+                  bool seen = false;
+                  for (auto &v2 : rhs) {
+                    if (v == v2) {
+                      v2 = nullptr;
+                      seen = true;
+                      break;
+                    }
+                  }
+                  if (seen) {
+                    out.push_back(v);
+                  }
+                }
+                return out;
+              };
+              auto subtract = [](SmallVector<Value *, 1> lhs,
+                                 const SmallVector<Value *, 1> &rhs) {
+                for (auto v : rhs) {
+                  auto found = find(lhs, v);
+                  assert(found != lhs.end());
+                  lhs.erase(found);
+                }
+                return lhs;
+              };
+              bool seen = false;
+              bool legal = true;
+              for (auto op : callOperands(S)) {
+                auto P = isProduct(op);
+                if (!P) {
+                  legal = false;
+                  break;
+                }
+                if (!seen) {
+                  allOps = callOperands(P);
+                  seen = true;
+                  continue;
+                }
+                allOps = combine(allOps, callOperands(P));
+              }
+
+              if (legal && allOps.size() > 0) {
+                SmallVector<Value *, 1> operands;
+                for (auto op : callOperands(S)) {
+                  auto P = isProduct(op);
+                  push(op);
+                  auto sub = subtract(callOperands(P), allOps);
+                  auto newprod = pushcse(B.CreateCall(
+                      getProductIntrinsic(*F.getParent(), C->getType()), sub));
+                  operands.push_back(newprod);
+                }
+                auto newsum = pushcse(B.CreateCall(
+                    getSumIntrinsic(*F.getParent(), C->getType()), operands));
+                allOps.push_back(newsum);
+                auto fprod = pushcse(B.CreateCall(
+                    getProductIntrinsic(*F.getParent(), C->getType()), allOps));
+                auto fcmp = pushcse(B.CreateCmp(predicate, fprod, C));
+                replaceAndErase(cur, fcmp);
+                return "CmpSumFactor";
+              }
             }
           }
         }
@@ -3649,71 +3673,79 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
   if (auto icmp = dyn_cast<CmpInst>(cur)) {
     if (icmp->getPredicate() == CmpInst::ICMP_EQ ||
         icmp->getPredicate() == CmpInst::ICMP_NE) {
-        for (int i=0; i<2; i++)
-            if (auto C = dyn_cast<ConstantInt>(icmp->getOperand(i)))
-                if (C->isZero())
-                    if (auto add = dyn_cast<BinaryOperator>(icmp->getOperand(1-i)))
-                        if (add->getOpcode() == Instruction::Add)
-                        if (auto a0 = dyn_cast<CastInst>(add->getOperand(0)))
-                        if (auto a1 = dyn_cast<CastInst>(add->getOperand(1)))
-                            if (a0->getOperand(0)->getType() == a1->getOperand(0)->getType() && (isa<ZExtInst>(a0) || isa<SExtInst>(a0)))
-                            {
-                    auto cmp2 = pushcse(B.CreateCmp(icmp->getPredicate(), a0,pushcse(B.CreateNeg(a1))));
-                    replaceAndErase(cur, cmp2);
-                    return "CmpExt0Shuffle";
-                            }
+      for (int i = 0; i < 2; i++)
+        if (auto C = dyn_cast<ConstantInt>(icmp->getOperand(i)))
+          if (C->isZero())
+            if (auto add = dyn_cast<BinaryOperator>(icmp->getOperand(1 - i)))
+              if (add->getOpcode() == Instruction::Add)
+                if (auto a0 = dyn_cast<CastInst>(add->getOperand(0)))
+                  if (auto a1 = dyn_cast<CastInst>(add->getOperand(1)))
+                    if (a0->getOperand(0)->getType() ==
+                            a1->getOperand(0)->getType() &&
+                        (isa<ZExtInst>(a0) || isa<SExtInst>(a0))) {
+                      auto cmp2 = pushcse(B.CreateCmp(
+                          icmp->getPredicate(), a0, pushcse(B.CreateNeg(a1))));
+                      replaceAndErase(cur, cmp2);
+                      return "CmpExt0Shuffle";
+                    }
     }
   }
 
   // sub 0, (zext i1 to N) -> sext i1 to N
   // sub 0, (sext i1 to N) -> zext i1 to N
   if (auto sub = dyn_cast<BinaryOperator>(cur))
-      if (sub->getOpcode() == Instruction::Sub)
-            if (auto C = dyn_cast<ConstantInt>(sub->getOperand(0)))
-                if (C->isZero())
-                        if (auto a0 = dyn_cast<CastInst>(sub->getOperand(1)))
-                            if (a0->getOperand(0)->getType()->isIntegerTy(1))
-                            {
+    if (sub->getOpcode() == Instruction::Sub)
+      if (auto C = dyn_cast<ConstantInt>(sub->getOperand(0)))
+        if (C->isZero())
+          if (auto a0 = dyn_cast<CastInst>(sub->getOperand(1)))
+            if (a0->getOperand(0)->getType()->isIntegerTy(1)) {
 
-                    Value *tmp =nullptr;
-                    if (isa<ZExtInst>(a0))
-                        tmp = B.CreateSExt(a0->getOperand(0), a0->getType());
-                    else if (isa<SExtInst>(a0))
-                        tmp = B.CreateZExt(a0->getOperand(0), a0->getType());
-                    else
-                        assert(0);
-                    tmp = pushcse(tmp);
-                    replaceAndErase(cur, tmp);
-                    return "NegSZExtI1";
-                            }
+              Value *tmp = nullptr;
+              if (isa<ZExtInst>(a0))
+                tmp = B.CreateSExt(a0->getOperand(0), a0->getType());
+              else if (isa<SExtInst>(a0))
+                tmp = B.CreateZExt(a0->getOperand(0), a0->getType());
+              else
+                assert(0);
+              tmp = pushcse(tmp);
+              replaceAndErase(cur, tmp);
+              return "NegSZExtI1";
+            }
 
-
-
-  //  (lshr exact (mul a, C1), C2), C -> mul a, (lhsr exact C1, C2) if C2 divides C1
-  if ((cur->getOpcode() == Instruction::LShr || cur->getOpcode() == Instruction::SDiv || cur->getOpcode() == Instruction::UDiv) && cur->isExact()) 
+  //  (lshr exact (mul a, C1), C2), C -> mul a, (lhsr exact C1, C2) if C2
+  //  divides C1
+  if ((cur->getOpcode() == Instruction::LShr ||
+       cur->getOpcode() == Instruction::SDiv ||
+       cur->getOpcode() == Instruction::UDiv) &&
+      cur->isExact())
     if (auto C2 = dyn_cast<ConstantInt>(cur->getOperand(1)))
       if (auto mul = dyn_cast<BinaryOperator>(cur->getOperand(0)))
         if (mul->getOpcode() == Instruction::Mul)
-    for (int i0=0; i0<2; i0++)
-      if (auto C1 = dyn_cast<ConstantInt>(mul->getOperand(i0))) {
-          auto lhs = C1->getValue();
-          APInt rhs = C2->getValue();
-          if (cur->getOpcode() == Instruction::LShr) {
-             rhs = APInt(rhs.getBitWidth(), 1) << rhs;
-          }
+          for (int i0 = 0; i0 < 2; i0++)
+            if (auto C1 = dyn_cast<ConstantInt>(mul->getOperand(i0))) {
+              auto lhs = C1->getValue();
+              APInt rhs = C2->getValue();
+              if (cur->getOpcode() == Instruction::LShr) {
+                rhs = APInt(rhs.getBitWidth(), 1) << rhs;
+              }
 
-          APInt div, rem;
-          if (cur->getOpcode() == Instruction::LShr || cur->getOpcode() == Instruction::UDiv)
-            APInt::udivrem(lhs, rhs, div, rem);
-          else
-            APInt::sdivrem(lhs, rhs, div, rem);
-          if (rem.isZero()) {
-            auto res = B.CreateMul( mul->getOperand(1-i0), ConstantInt::get(cur->getType(), div), "mdiv." + cur->getName(), mul->hasNoUnsignedWrap(), mul->hasNoSignedWrap());
-            push(mul);
-            replaceAndErase(cur, res);
-            return "IMulDivConst";
-          }
-        }
+              APInt div, rem;
+              if (cur->getOpcode() == Instruction::LShr ||
+                  cur->getOpcode() == Instruction::UDiv)
+                APInt::udivrem(lhs, rhs, div, rem);
+              else
+                APInt::sdivrem(lhs, rhs, div, rem);
+              if (rem.isZero()) {
+                auto res = B.CreateMul(mul->getOperand(1 - i0),
+                                       ConstantInt::get(cur->getType(), div),
+                                       "mdiv." + cur->getName(),
+                                       mul->hasNoUnsignedWrap(),
+                                       mul->hasNoSignedWrap());
+                push(mul);
+                replaceAndErase(cur, res);
+                return "IMulDivConst";
+              }
+            }
 
   // mul (mul a, const1), (mul b, const2) -> mul (mul a, b), (const1, const2)
   if (cur->getOpcode() == Instruction::FMul)
@@ -4621,7 +4653,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
 
   // (a | b) == 0 -> a == 0 & b == 0
   if (auto icmp = dyn_cast<ICmpInst>(cur))
-    if (icmp->getPredicate() == ICmpInst::ICMP_EQ && cur->getType()->isIntegerTy(1))
+    if (icmp->getPredicate() == ICmpInst::ICMP_EQ &&
+        cur->getType()->isIntegerTy(1))
       for (int i = 0; i < 2; i++)
         if (auto C = dyn_cast<ConstantInt>(icmp->getOperand(i)))
           if (C->isZero())
@@ -4695,18 +4728,19 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
   if (cur->getOpcode() == Instruction::FSub ||
       cur->getOpcode() == Instruction::FAdd ||
       cur->getOpcode() == Instruction::FMul ||
-      cur->getOpcode() == Instruction::FNeg || 
+      cur->getOpcode() == Instruction::FNeg ||
       (isSum(cur) && callOperands(cast<CallBase>(cur)).size() == 2)) {
-      auto opcode = cur->getOpcode();
-      if (isSum(cur)) opcode = Instruction::FAdd;
+    auto opcode = cur->getOpcode();
+    if (isSum(cur))
+      opcode = Instruction::FAdd;
     auto Ty = B.getInt64Ty();
     SmallVector<Instruction *, 1> temporaries;
     SmallVector<Instruction *, 1> precasts;
     Value *lhs = nullptr;
 
-    Value *prelhs = (cur->getOpcode() == Instruction::FNeg) ?
-                        ConstantFP::get(cur->getType(), 0.0) :
-                        cur->getOperand(0);
+    Value *prelhs = (cur->getOpcode() == Instruction::FNeg)
+                        ? ConstantFP::get(cur->getType(), 0.0)
+                        : cur->getOperand(0);
     Value *prerhs = (cur->getOpcode() == Instruction::FNeg)
                         ? cur->getOperand(0)
                         : cur->getOperand(1);
@@ -4757,9 +4791,9 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           lhs = ext->getOperand(0);
         else if (ity->getBitWidth() < Ty->getBitWidth()) {
           if (ext->getOpcode() == Instruction::UIToFP)
-          lhs = B.CreateZExt(ext->getOperand(0), Ty);
+            lhs = B.CreateZExt(ext->getOperand(0), Ty);
           else
-          lhs = B.CreateSExt(ext->getOperand(0), Ty);
+            lhs = B.CreateSExt(ext->getOperand(0), Ty);
           if (auto I = dyn_cast<Instruction>(lhs))
             temporaries.push_back(I);
         }
@@ -4855,9 +4889,9 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           rhs = ext->getOperand(0);
         else if (ity->getBitWidth() < Ty->getBitWidth()) {
           if (ext->getOpcode() == Instruction::UIToFP)
-          rhs = B.CreateZExt(ext->getOperand(0), Ty);
+            rhs = B.CreateZExt(ext->getOperand(0), Ty);
           else
-          rhs = B.CreateSExt(ext->getOperand(0), Ty);
+            rhs = B.CreateSExt(ext->getOperand(0), Ty);
           if (auto I = dyn_cast<Instruction>(rhs))
             temporaries.push_back(I);
         }
@@ -5043,13 +5077,16 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       auto fvalC = dyn_cast<ConstantFP>(SI->getFalseValue());
       if ((tvalC && tvalC->isZero()) || (fvalC && fvalC->isZero())) {
         push(SI);
-        auto ntval = (tvalC && tvalC->isZero())
-                         ? tvalC
-                         : pushcse(B.CreateFDivFMF(SI->getTrueValue(), b, cur, "sfdiv2_t." + cur->getName()));
+        auto ntval =
+            (tvalC && tvalC->isZero())
+                ? tvalC
+                : pushcse(B.CreateFDivFMF(SI->getTrueValue(), b, cur,
+                                          "sfdiv2_t." + cur->getName()));
         auto nfval =
             (fvalC && fvalC->isZero())
                 ? fvalC
-                : pushcse(B.CreateFDivFMF(SI->getFalseValue(), b, cur, "sfdiv2_f." + cur->getName()));
+                : pushcse(B.CreateFDivFMF(SI->getFalseValue(), b, cur,
+                                          "sfdiv2_f." + cur->getName()));
 
         // Work around bad fdivfmf, fixed in LLVM 16+
         // https://github.com/llvm/llvm-project/commit/4f3b1c6dd6ef6c7b5bb79f058e3b7ba4bcdf4566
@@ -5884,7 +5921,8 @@ class Constraints;
 raw_ostream &operator<<(raw_ostream &os, const Constraints &c);
 
 struct ConstraintComparator {
-    bool operator()(std::shared_ptr<const Constraints> lhs, std::shared_ptr<const Constraints> rhs) const;
+  bool operator()(std::shared_ptr<const Constraints> lhs,
+                  std::shared_ptr<const Constraints> rhs) const;
 };
 
 struct ConstraintContext {
@@ -5901,19 +5939,19 @@ struct ConstraintContext {
       : SE(SE), loopToSolve(loopToSolve), Assumptions(Assumptions), DT(DT) {
     assert(loopToSolve);
   }
-  ConstraintContext(const ConstraintContext&) = delete;
-  ConstraintContext(const ConstraintContext& ctx, InnerTy lhs) :
-      SE(ctx.SE), loopToSolve(ctx.loopToSolve), Assumptions(ctx.Assumptions), DT(ctx.DT), seen(ctx.seen) {
-      seen.insert(lhs);
+  ConstraintContext(const ConstraintContext &) = delete;
+  ConstraintContext(const ConstraintContext &ctx, InnerTy lhs)
+      : SE(ctx.SE), loopToSolve(ctx.loopToSolve), Assumptions(ctx.Assumptions),
+        DT(ctx.DT), seen(ctx.seen) {
+    seen.insert(lhs);
   }
-  ConstraintContext(const ConstraintContext& ctx, InnerTy lhs, InnerTy rhs) :
-      SE(ctx.SE), loopToSolve(ctx.loopToSolve), Assumptions(ctx.Assumptions), DT(ctx.DT), seen(ctx.seen) {
-      seen.insert(lhs);
-      seen.insert(rhs);
+  ConstraintContext(const ConstraintContext &ctx, InnerTy lhs, InnerTy rhs)
+      : SE(ctx.SE), loopToSolve(ctx.loopToSolve), Assumptions(ctx.Assumptions),
+        DT(ctx.DT), seen(ctx.seen) {
+    seen.insert(lhs);
+    seen.insert(rhs);
   }
-  bool contains(InnerTy x) const {
-      return seen.count(x) != 0;
-  }
+  bool contains(InnerTy x) const { return seen.count(x) != 0; }
 };
 
 bool cannotDependOnLoopIV(const SCEV *S, const Loop *L) {
@@ -5948,7 +5986,8 @@ bool cannotDependOnLoopIV(const SCEV *S, const Loop *L) {
     return !L->contains(I->getParent());
   }
   if (auto addrec = dyn_cast<SCEVAddRecExpr>(S)) {
-    if (addrec->getLoop() == L) return false;
+    if (addrec->getLoop() == L)
+      return false;
     for (auto o : addrec->operands())
       if (!cannotDependOnLoopIV(o, L))
         return false;
@@ -6016,39 +6055,40 @@ private:
 
 public:
   static InnerTy make_compare(const SCEV *v, bool isEqual,
-                              const llvm::Loop *Loop, const ConstraintContext& ctx);
+                              const llvm::Loop *Loop,
+                              const ConstraintContext &ctx);
 
   Constraints(Type t)
       : ty(t), values(), node(nullptr), isEqual(false), Loop(nullptr) {
     assert(t == Type::All || t == Type::None);
   }
-  Constraints(Type t, const SetTy &c, bool check=true)
+  Constraints(Type t, const SetTy &c, bool check = true)
       : ty(t), values(c), node(nullptr), isEqual(false), Loop(nullptr) {
     assert(t != Type::All);
     assert(t != Type::None);
     assert(c.size() != 0);
     assert(c.size() != 1);
-     SmallVector<InnerTy, 1> tmp(c.begin(), c.end());
-                    for (int i=0; i<tmp.size(); i++)
-                            for (int j=0; j<i; j++)
-                                    assert(*tmp[i] != *tmp[j]);
+    SmallVector<InnerTy, 1> tmp(c.begin(), c.end());
+    for (int i = 0; i < tmp.size(); i++)
+      for (int j = 0; j < i; j++)
+        assert(*tmp[i] != *tmp[j]);
     if (t == Type::Intersect) {
-        for (auto & v : c) {
-            assert(v->ty != Type::Intersect);
-        }
+      for (auto &v : c) {
+        assert(v->ty != Type::Intersect);
+      }
     }
     if (t == Type::Union) {
-        for (auto & v : c) {
-            assert(v->ty != Type::Union);
-        }
+      for (auto &v : c) {
+        assert(v->ty != Type::Union);
+      }
     }
     if (t == Type::Intersect && check) {
-        for (unsigned i=0; i<tmp.size(); i++)
-            if (tmp[i]->ty == Type::Compare && tmp[i]->isEqual && tmp[i]->Loop)
-                for (unsigned j=0; j<tmp.size(); j++)
-                    if (tmp[j]->ty == Type::Compare)
-                        if (auto s = dyn_cast<SCEVAddRecExpr>(tmp[j]->node))
-                                assert(s->getLoop() != tmp[i]->Loop);
+      for (unsigned i = 0; i < tmp.size(); i++)
+        if (tmp[i]->ty == Type::Compare && tmp[i]->isEqual && tmp[i]->Loop)
+          for (unsigned j = 0; j < tmp.size(); j++)
+            if (tmp[j]->ty == Type::Compare)
+              if (auto s = dyn_cast<SCEVAddRecExpr>(tmp[j]->node))
+                assert(s->getLoop() != tmp[i]->Loop);
     }
   }
 
@@ -6143,8 +6183,8 @@ return true;
     set.insert(ty);
     int mcount = 0;
     for (auto &v : set)
-        if (*v == *ty)
-            mcount++;
+      if (*v == *ty)
+        mcount++;
     assert(mcount == 1);
     /*
                     for (auto &v : set)
@@ -6206,11 +6246,14 @@ return true;
   }
   InnerTy orB(InnerTy rhs, const ConstraintContext &ctx) const {
     auto notLHS = notB(ctx);
-    if (!notLHS) return nullptr;
+    if (!notLHS)
+      return nullptr;
     auto notRHS = rhs->notB(ctx);
-    if (!notRHS) return nullptr;
+    if (!notRHS)
+      return nullptr;
     auto andV = notLHS->andB(notRHS, ctx);
-    if (!andV) return nullptr;
+    if (!andV)
+      return nullptr;
     auto res = andV->notB(ctx);
     return res;
   }
@@ -6229,8 +6272,8 @@ return true;
 
     llvm::errs() << " anding: " << *this << " with " << *rhs << "\n";
     if (ctx.contains(shared_from_this()) || ctx.contains(rhs)) {
-        llvm::errs() << " %%% stopping recursion\n";
-        return nullptr;
+      llvm::errs() << " %%% stopping recursion\n";
+      return nullptr;
     }
     if (ty == Type::Compare && rhs->ty == Type::Compare) {
       auto sub = ctx.SE.getMinusSCEV(node, rhs->node);
@@ -6335,11 +6378,11 @@ return true;
 
       if (isEqual) {
         if (Loop)
-        if (auto rep = evaluateAtLoopIter(rhs->node, ctx.SE, Loop, node))
-          if (rep != rhs->node) {
-            auto newrhs = make_compare(rep, rhs->isEqual, rhs->Loop, ctx);
-            return andB(newrhs, ctx);
-          }
+          if (auto rep = evaluateAtLoopIter(rhs->node, ctx.SE, Loop, node))
+            if (rep != rhs->node) {
+              auto newrhs = make_compare(rep, rhs->isEqual, rhs->Loop, ctx);
+              return andB(newrhs, ctx);
+            }
 
         // not loop -> node == 0
         if (!Loop) {
@@ -6359,11 +6402,11 @@ return true;
 
       if (rhs->isEqual) {
         if (rhs->Loop)
-        if (auto rep = evaluateAtLoopIter(node, ctx.SE, rhs->Loop, rhs->node))
-          if (rep != node) {
-            auto newlhs = make_compare(rep, isEqual, Loop, ctx);
-            return newlhs->andB(rhs, ctx);
-          }
+          if (auto rep = evaluateAtLoopIter(node, ctx.SE, rhs->Loop, rhs->node))
+            if (rep != node) {
+              auto newlhs = make_compare(rep, isEqual, Loop, ctx);
+              return newlhs->andB(rhs, ctx);
+            }
 
         // not loop -> node == 0
         if (!rhs->Loop) {
@@ -6400,7 +6443,8 @@ return true;
       auto tmp = shared_from_this();
       for (const auto &v : rhs->values) {
         auto tmp2 = tmp->andB(v, ctx);
-        if (!tmp2) return nullptr;
+        if (!tmp2)
+          return nullptr;
         tmp = std::move(tmp2);
       }
       return tmp;
@@ -6422,7 +6466,8 @@ return true;
         }
         // this is either a compare or a union
         auto tmp = rhs->andB(v, ctx);
-        if (!tmp) return nullptr;
+        if (!tmp)
+          return nullptr;
         switch (tmp->ty) {
         case Type::Union:
         case Type::All:
@@ -6457,8 +6502,8 @@ return true;
                 continue;
               auto newlhs2 = newlhs->andB(v2, ctx);
               if (!newlhs2) {
-                  legal = false;
-                  break;
+                legal = false;
+                break;
               }
               newlhs = std::move(newlhs2);
             }
@@ -6477,9 +6522,10 @@ return true;
       } else {
         auto cur = Constraints::all();
         for (auto &iv : vals) {
-            auto cur2 = cur->andB(iv, ctx);
-            if (!cur2) return nullptr;
-            cur = std::move(cur2);
+          auto cur2 = cur->andB(iv, ctx);
+          if (!cur2)
+            return nullptr;
+          cur = std::move(cur2);
         }
         return cur;
       }
@@ -6502,9 +6548,9 @@ return true;
         for (auto &uv : unionVals) {
           auto tmp = iv->andB(uv, ctxd);
           if (!tmp) {
-              midchanged = false;
-              nextunionVals = unionVals;
-              break;
+            midchanged = false;
+            nextunionVals = unionVals;
+            break;
           }
           switch (tmp->ty) {
           case Type::None:
@@ -6552,7 +6598,8 @@ return true;
         auto cur = Constraints::none();
         for (auto uv : unionVals) {
           cur = cur->orB(uv, ctxd);
-          if (!cur) break;
+          if (!cur)
+            break;
         }
 
         if (*cur != *rhs)
@@ -6585,11 +6632,11 @@ return true;
         }
         return remainder->orB(other_lhs->andB(other_rhs, ctx), ctx);
       }
-      
+
       bool changed = false;
       SetTy lhsVals = values;
       SetTy rhsVals = rhs->values;
-    
+
       ConstraintContext ctxd(ctx, shared_from_this(), rhs);
 
       SetTy distributedVals;
@@ -6599,38 +6646,39 @@ return true;
         for (auto &r1 : rhsVals) {
           auto tmp = l1->andB(r1, ctxd);
           if (!tmp) {
-              subchanged = false;
-              break;
+            subchanged = false;
+            break;
           }
 
           if (l1->ty == Type::Intersect || r1->ty == Type::Intersect) {
-              subchanged = true;
+            subchanged = true;
             insert(subDistributedVals, tmp);
           } else {
-            
-          SetTy fuse;
-          insert(fuse, l1);
-          insert(fuse, r1);
-          assert(fuse.size() == 2);
-          Constraints trivialFuse(Type::Intersect, fuse);
-          if ((trivialFuse != *tmp) || distributedVals.count(tmp)) {
-              llvm::errs() << " *distributed fix: " << *tmp << " vs " << trivialFuse << "\n";
+
+            SetTy fuse;
+            insert(fuse, l1);
+            insert(fuse, r1);
+            assert(fuse.size() == 2);
+            Constraints trivialFuse(Type::Intersect, fuse);
+            if ((trivialFuse != *tmp) || distributedVals.count(tmp)) {
+              llvm::errs() << " *distributed fix: " << *tmp << " vs "
+                           << trivialFuse << "\n";
               subchanged = true;
-          }
-          insert(subDistributedVals, tmp);
+            }
+            insert(subDistributedVals, tmp);
           }
         }
         if (subchanged) {
-            for (auto sub : subDistributedVals)
-                insert(distributedVals, sub);
-            changed = true;
+          for (auto sub : subDistributedVals)
+            insert(distributedVals, sub);
+          changed = true;
         } else {
-            auto midand = l1->andB(rhs, ctxd);
-            if (!midand) {
-                changed = false;
-                break;
-            }
-            insert(distributedVals, midand);
+          auto midand = l1->andB(rhs, ctxd);
+          if (!midand) {
+            changed = false;
+            break;
+          }
+          insert(distributedVals, midand);
         }
       }
 
@@ -6640,14 +6688,15 @@ return true;
         for (auto &uv : distributedVals) {
           auto cur2 = cur->orB(uv, ctxd);
           if (!cur2) {
-              legal = false;
-              break;
-            }
+            legal = false;
+            break;
+          }
           cur = std::move(cur2);
         }
         if (legal) {
-        llvm::errs() <<" chose distributed when & of " << *this << " & " << *rhs << " resulting in " << *cur << "\n";
-        return cur;
+          llvm::errs() << " chose distributed when & of " << *this << " & "
+                       << *rhs << " resulting in " << *cur << "\n";
+          return cur;
         }
       }
 
@@ -6685,8 +6734,10 @@ return true;
 void dump(const Constraints &c) { c.dump(); }
 void dump(std::shared_ptr<const Constraints> c) { c->dump(); }
 
-bool ConstraintComparator::operator()(std::shared_ptr<const Constraints> lhs, std::shared_ptr<const Constraints> rhs) const {
-      return *lhs < *rhs;
+bool ConstraintComparator::operator()(
+    std::shared_ptr<const Constraints> lhs,
+    std::shared_ptr<const Constraints> rhs) const {
+  return *lhs < *rhs;
 }
 
 raw_ostream &operator<<(raw_ostream &os, const Constraints &c) {
@@ -6755,7 +6806,8 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
     if (isEqual) {
       return {std::make_pair(Exp.expandCodeFor(node, T, IP), cond)};
     }
-    EmitFailure("NoSparsification", IP->getDebugLoc(), IP, "Negated solution not handled: ", *this);
+    EmitFailure("NoSparsification", IP->getDebugLoc(), IP,
+                "Negated solution not handled: ", *this);
     assert(0);
     return {};
   }
@@ -6766,37 +6818,37 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
         vals.push_back(sol);
     return vals;
   }
-  case Type::Intersect:{
+  case Type::Intersect: {
     {
-    SmallVector<InnerTy, 1> vals(values.begin(), values.end());
-    ssize_t unionidx = -1;
-    for (unsigned i=0; i<vals.size(); i++) {
-        if (vals[i]->ty == Type::Union) { 
-            unionidx = i;
-            bool allne = true;
-            for (auto &v : vals[i]->values) {
-                if (v->ty != Type::Compare ||
-                        v->isEqual) {
-                    allne = false;
-                break;
+      SmallVector<InnerTy, 1> vals(values.begin(), values.end());
+      ssize_t unionidx = -1;
+      for (unsigned i = 0; i < vals.size(); i++) {
+        if (vals[i]->ty == Type::Union) {
+          unionidx = i;
+          bool allne = true;
+          for (auto &v : vals[i]->values) {
+            if (v->ty != Type::Compare || v->isEqual) {
+              allne = false;
+              break;
             }
-            }
-            if (allne) break;
+          }
+          if (allne)
+            break;
         }
-    }
-    if (unionidx != -1) {
-            auto others = Constraints::all();
-            for (int j=0; j<vals.size(); j++)
-                if (unionidx != j)
-                    others = others->andB(vals[j], ctx);
-            SmallVector<std::pair<Value *, Value *>, 1> resvals;
-            for (auto &v : vals[unionidx]->values) {
-                auto tmp = v->andB(others, ctx);
-                for (const auto& sol : tmp->allSolutions(Exp, T, IP, ctx, B))
-                    resvals.push_back(sol);
-            }
-            return resvals;
-    }
+      }
+      if (unionidx != -1) {
+        auto others = Constraints::all();
+        for (int j = 0; j < vals.size(); j++)
+          if (unionidx != j)
+            others = others->andB(vals[j], ctx);
+        SmallVector<std::pair<Value *, Value *>, 1> resvals;
+        for (auto &v : vals[unionidx]->values) {
+          auto tmp = v->andB(others, ctx);
+          for (const auto &sol : tmp->allSolutions(Exp, T, IP, ctx, B))
+            resvals.push_back(sol);
+        }
+        return resvals;
+      }
     }
     Value *solVal = nullptr;
     Value *cond = ConstantInt::getTrue(T->getContext());
@@ -7041,7 +7093,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
     auto changed = fixSparse_inner(cur, F, Q, DT, SE, LI, DL);
     (void)changed;
-    
+
     if (changed) {
       llvm::errs() << "changed: " << *changed << "\n";
 
@@ -7241,7 +7293,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
   }
 
   if (sawError) {
-    for (auto & pair : forSparsification) {
+    for (auto &pair : forSparsification) {
       for (auto PN : {pair.second.first.first, pair.second.first.second}) {
         PN->replaceAllUsesWith(UndefValue::get(PN->getType()));
         PN->eraseFromParent();
@@ -7369,7 +7421,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       auto &solutions = en.value().second;
       ConstraintContext ctx(SE, L, Assumptions, DT);
       auto sols = solutions->allSolutions(Exp, idxty, phterm, ctx, B);
-      SmallVector<Value*, 1> prevSols;
+      SmallVector<Value *, 1> prevSols;
       for (auto [sol, condition] : sols) {
         SmallVector<Value *, 1> args(Inputs.begin(), Inputs.end());
         args[off_idx] = ConstantInt::get(idxty, off);
@@ -7436,39 +7488,39 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
   }
 
   for (auto &F2 : F.getParent()->functions()) {
-      if (startsWith(F2.getName(), "__enzyme_product")) {
-          for (auto I : make_early_inc_range(F2.users())) {
-              auto CB = cast<CallBase>(I);
-              IRBuilder<> B(CB);
-              B.setFastMathFlags(getFast());
-              Value *res = nullptr;
-              for (auto v : callOperands(CB)) {
-                  if (res == nullptr)
-                      res = v;
-                  else {
-                      res = B.CreateFMul(res, v);
-                  }
-              }
-              CB->replaceAllUsesWith(res);
-              CB->eraseFromParent();
+    if (startsWith(F2.getName(), "__enzyme_product")) {
+      for (auto I : make_early_inc_range(F2.users())) {
+        auto CB = cast<CallBase>(I);
+        IRBuilder<> B(CB);
+        B.setFastMathFlags(getFast());
+        Value *res = nullptr;
+        for (auto v : callOperands(CB)) {
+          if (res == nullptr)
+            res = v;
+          else {
+            res = B.CreateFMul(res, v);
           }
-      } else if (startsWith(F2.getName(), "__enzyme_sum")) {
-          for (auto I : make_early_inc_range(F2.users())) {
-              auto CB = cast<CallBase>(I);
-              IRBuilder<> B(CB);
-              B.setFastMathFlags(getFast());
-              Value *res = nullptr;
-              for (auto v : callOperands(CB)) {
-                  if (res == nullptr)
-                      res = v;
-                  else {
-                      res = B.CreateFAdd(res, v);
-                  }
-              }
-              CB->replaceAllUsesWith(res);
-              CB->eraseFromParent();
-          }
+        }
+        CB->replaceAllUsesWith(res);
+        CB->eraseFromParent();
       }
+    } else if (startsWith(F2.getName(), "__enzyme_sum")) {
+      for (auto I : make_early_inc_range(F2.users())) {
+        auto CB = cast<CallBase>(I);
+        IRBuilder<> B(CB);
+        B.setFastMathFlags(getFast());
+        Value *res = nullptr;
+        for (auto v : callOperands(CB)) {
+          if (res == nullptr)
+            res = v;
+          else {
+            res = B.CreateFAdd(res, v);
+          }
+        }
+        CB->replaceAllUsesWith(res);
+        CB->eraseFromParent();
+      }
+    }
   }
 }
 
