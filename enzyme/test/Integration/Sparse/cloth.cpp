@@ -64,9 +64,12 @@ static float edge_energy(const T *__restrict__ pos, const T *__restrict__ pos0, 
     float l = length<T, 3>(pos_i[0], pos_i[1]);
 
     Vector pos0_i[2];
-    get_pos(pos0_i, pos, idxs);
+    get_pos(pos0_i, pos0, idxs);
+    printf("i0=%d, i1=%d\n", i0, i1);
+    printf("pos0_i[0][0]=%f, pos0_i[0][1]=%f, pos0_i[0][2]=%f, pos0_i[1][0]=%f, pos0_i[1][1]=%f, pos0_i[1][2]=%f \n", pos_i[0][0], pos_i[0][1], pos_i[0][2], pos_i[1][0], pos_i[1][1], pos_i[1][2]);
 
     float l0 = length<T, 3>(pos0_i[0], pos0_i[1]);
+    printf("l0=%f\n", l0);
 
     float diff = 1 - l / l0;
     return diff * diff * l0 * edge_coefficient;
@@ -145,7 +148,10 @@ static T discrete_shell_simple(
     T total_energy = 0;
     __builtin_assume(num_edges != 0);
     for (int i = 0; i < num_edges; i++) {
+
         total_energy += edge_energy(pos, pos0, edges[2 * i], edges[2 * i + 1], edge_coefficient);
+        printf("edges[2i]=%d, edges[2i+1]=%d\n", edges[2 * i], edges[2 * i + 1]);
+        printf("edge_energy=%f\n\n", edge_energy(pos, pos0, edges[2 * i], edges[2 * i + 1], edge_coefficient));
     }
 
     __builtin_assume(num_faces != 0);
@@ -295,7 +301,7 @@ int main() {
 
     float result = discrete_shell_simple(pos0, edges, num_edges, faces, num_faces, flaps, num_flaps, edge_coefficient, face_coefficient, bending_stiffness, pos);
 
-    printf("Result: %f\n", result);
+    // printf("Result: %f\n", result);
 
     // Derivative
     float dpos[sizeof(pos)/sizeof(pos[0])];
@@ -303,16 +309,16 @@ int main() {
         dpos[i] = 0;
     gradient_ip(pos0, edges, num_edges, faces, num_faces, flaps, num_flaps, edge_coefficient, face_coefficient, bending_stiffness, pos, dpos);
 
-    for (size_t i=0; i<sizeof(dpos)/sizeof(dpos[0]); i++)
-        printf("grad_vert[%zu] = %f\n", i, dpos[i]);
+    // for (size_t i=0; i<sizeof(dpos)/sizeof(dpos[0]); i++)
+    //     printf("grad_vert[%zu] = %f\n", i, dpos[i]);
 
     // Hessian
     const size_t num_verts = 4;
     auto hess_verts = hessian(pos0, edges, num_edges, faces, num_faces, flaps, num_flaps, edge_coefficient, face_coefficient, bending_stiffness, pos, num_verts);
 
-    for (auto &hess : hess_verts) {
-        printf("i=%lu, j=%lu, val=%f", hess.row, hess.col, hess.val);
-    }
+    // for (auto hess : hess_verts) {
+    //     printf("i=%lu, j=%lu, val=%f", std::get<0>(hess), std::get<1>(hess), std::get<2>(hess));
+    // }
 
     return 0;
 }

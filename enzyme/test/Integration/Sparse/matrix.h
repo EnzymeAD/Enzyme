@@ -140,6 +140,7 @@ static void pseudo_inverse(T (&matTsqrinv)[n][m], const T mat[m][n]) {
     matrix_multiply(matTsqrinv, matT, sqrinv);
 }
 
+// m is 2 n is 3
 template<typename T, int n, int m>
 __attribute__((always_inline))
 static void get_pos(
@@ -147,13 +148,14 @@ static void get_pos(
     const float *__restrict__ pos,
     const int idx[n]) {
 
+    static_assert(m == 3, "Only Vector3 is supported");
+
     // extract the 3d points at idx[0], idx[1], idx[2], idx[3]
     #pragma clang loop unroll(full)
     for (int i = 0; i < n; ++i) {
-        #pragma clang loop unroll(full)
-        for (int j = 0; j < m; ++j) {
-            out[i][j] = pos[m * idx[i] + i];
-        }
+        out[i][0] = pos[m * idx[i]];
+        out[i][1] = pos[m * idx[i] + 1];
+        out[i][2] = pos[m * idx[i] + 2];
     }
 }
 
