@@ -145,7 +145,7 @@ attributes #1 = { argmemonly }
 ; CHECK: omp.inner.for.body:                               ; preds = %omp.precond.then, %omp.inner.for.body
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %omp.inner.for.body ], [ 0, %omp.precond.then ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
-; CHECK-NEXT:   %[[true1iv:.+]] = add i64 
+; CHECK-NEXT:   %[[true1iv:.+]] = add nuw i64 
 ;                            %[[lb]], %iv
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %tmp, i64 %[[true1iv]]
 ; CHECK-NEXT:   %[[ld:.+]] = load double, double* %arrayidx, align 8, !tbaa !9
@@ -204,7 +204,7 @@ attributes #1 = { argmemonly }
 ; CHECK: invertomp.inner.for.body: 
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %[[_unwrap88:.+]], %invertomp.loop.exit.loopexit ], [ %[[i19:.+]], %incinvertomp.inner.for.body ] 
 ; CHECK-NEXT:   %_unwrap2 = load i64, i64* %.omp.lb_smpl
-; CHECK-NEXT:   %_unwrap3 = add i64 %_unwrap2, %"iv'ac.0"
+; CHECK-NEXT:   %_unwrap3 = add nuw i64 %_unwrap2, %"iv'ac.0"
 ; CHECK-NEXT:   %"arrayidx'ipg_unwrap" = getelementptr inbounds double, double* %"tmp'", i64 %_unwrap3
 ; CHECK-NEXT:   %[[i8:.+]] = load double, double* %"arrayidx'ipg_unwrap", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx'ipg_unwrap", align 8

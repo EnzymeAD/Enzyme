@@ -134,6 +134,10 @@ public:
   /// containing any other pointer. This is the full pessimistic fixpoint.
   ChangeResult markAllPointToUnknown();
 
+  /// Mark all alias classes except the given ones to point to the "unknown"
+  /// alias set.
+  ChangeResult markAllExceptPointToUnknown(const AliasClassSet &destClasses);
+
   const AliasClassSet &getPointsTo(DistinctAttr id) const {
     auto it = pointsTo.find(id);
     if (it == pointsTo.end())
