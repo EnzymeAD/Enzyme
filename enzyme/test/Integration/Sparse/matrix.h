@@ -1,4 +1,14 @@
 #include <cmath>
+#include <stdio.h>
+
+template<typename T>
+struct Triple {
+    size_t row;
+    size_t col;
+    T val;
+    Triple(Triple&&) = default;
+    Triple(size_t row, size_t col, T val) : row(row), col(col), val(val) {}
+};
 
 extern int enzyme_width;
 extern int enzyme_dup;

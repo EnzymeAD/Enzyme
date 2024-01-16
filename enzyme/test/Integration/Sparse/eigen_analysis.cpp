@@ -9,7 +9,6 @@
 
 #include <vector>
 #include <assert.h>
-#include <tuple>
 #include <stdio.h>
 #include <stdint.h>
 #include <math.h>
@@ -18,16 +17,16 @@
 
 #include "matrix.h"
 
-
+template<typename T>
 __attribute__((always_inline))
-static float eigenstuffM(const float *__restrict__ x, size_t n, const int *__restrict__ faces, const float *__restrict__ pos0) {
-    float sum = 0;
+static T eigenstuffM(const T *__restrict__ x, size_t n, const int *__restrict__ faces, const T *__restrict__ pos0) {
+    T sum = 0;
     __builtin_assume(n != 0);
     for (size_t idx=0; idx<n; idx++) {
         int i = faces[3*idx];
         int j = faces[3*idx+1];
         int k = faces[3*idx+2];
-        float tri_area = area(&pos0[3*i], &pos0[3*j], &pos0[3*k]);
+        T tri_area = area(&pos0[3*i], &pos0[3*j], &pos0[3*k]);
         sum += (x[i] * x[i] + x[j] * x[j] + x[k] * x[k]) * (1.0 / 3.0) * tri_area;  // barycentric mass lumping
     }
     return sum;
@@ -35,31 +34,32 @@ static float eigenstuffM(const float *__restrict__ x, size_t n, const int *__res
 
 
 // Calculate total energy for all faces in 3D
+template<typename T>
 __attribute__((always_inline))
-static float eigenstuffL(const float *__restrict__ x, size_t num_faces, const int *__restrict__ faces, const float *__restrict__ verts) {
-    float sum = 0;
+static T eigenstuffL(const T *__restrict__ x, size_t num_faces, const int *__restrict__ faces, const T *__restrict__ verts) {
+    T sum = 0;
     __builtin_assume(num_faces != 0);
     for (size_t idx=0; idx<num_faces; idx++) {
         int i = faces[3*idx];
         int j = faces[3*idx+1];
         int k = faces[3*idx+2];
 
-        float X[2][3] = {
+        T X[2][3] = {
             {   verts[3*j+0] - verts[3*i+0],
                 verts[3*j+1] - verts[3*i+1],
                 verts[3*j+2] - verts[3*i+2]},
             {verts[3*k+0] - verts[3*i+0], verts[3*k+1] - verts[3*i+1], verts[3*k+2] - verts[3*i+2]}
         };
 
-        float pInvX[3][2];
+        T pInvX[3][2];
         pseudo_inverse(pInvX, X);
        
-        float diffs[] = {x[j] - x[i], x[k] - x[i]};
+        T diffs[] = {x[j] - x[i], x[k] - x[i]};
 
-        float g[3];
+        T g[3];
         #pragma clang loop unroll(full)
         for (int i = 0; i < 3; ++i) {
-            float sum = 0.0f;
+            T sum = 0.0f;
             #pragma clang loop unroll(full)
             for (int j = 0; j < 2; ++j) {
                 sum += pInvX[i][j] * diffs[j];
@@ -67,18 +67,18 @@ static float eigenstuffL(const float *__restrict__ x, size_t num_faces, const in
             g[i] = sum;
         }
 
-        sum += dot_product<float, 3>(g, g) * area(&verts[3*i], &verts[3*j], &verts[3*k]);
+        sum += dot_product<T, 3>(g, g) * area(&verts[3*i], &verts[3*j], &verts[3*k]);
     }
 
     return sum;
 }
 
 
-
+template<typename T>
 __attribute__((always_inline))
-static void gradient_ip(const float *__restrict__ x, const size_t num_faces, const int* faces, const float *__restrict__ pos, float *__restrict__ out)
+static void gradient_ip(const T *__restrict__ x, const size_t num_faces, const int* faces, const T *__restrict__ pos, T *__restrict__ out)
 {
-    __enzyme_autodiff<void>((void *)eigenstuffM,
+    __enzyme_autodiff<void>((void *)eigenstuffM<T>,
                             enzyme_const, x,
                             enzyme_const, num_faces,
                             enzyme_const, faces,
@@ -102,37 +102,38 @@ static void err_store(T val, unsigned long long offset, size_t i) {
 
 template<typename T>
 __attribute__((always_inline))
-static T zero_load(unsigned long long offset, size_t i, std::vector<std::tuple<size_t, size_t, float>> &hess) {
+static T zero_load(unsigned long long offset, size_t i, std::vector<Triple<T>> &hess) {
     return T(0);
 }
 
 
 __attribute__((enzyme_sparse_accumulate))
-void inner_store(size_t offset, size_t i, float val, std::vector<std::tuple<size_t, size_t, float>> &hess) {
-    hess.push_back(std::tuple<size_t, size_t, float>(offset, i, val));
+void inner_store(size_t offset, size_t i, float val, std::vector<Triple<float>> &hess) {
+    hess.push_back(Triple<float>(offset, i, val));
 }
 
 template<typename T>
 __attribute__((always_inline))
-static void csr_store(T val, unsigned long long offset, size_t i, std::vector<std::tuple<size_t, size_t, T>> &hess) {
+static void csr_store(T val, unsigned long long offset, size_t i, std::vector<Triple<T>> &hess) {
     if (val == 0.0) return;
     offset /= sizeof(T);
     inner_store(offset, i, val, hess);
 }
 
+template<typename T>
 __attribute__((noinline))
-std::vector<std::tuple<size_t, size_t, float>> hessian(const float* x, size_t num_faces, const int* faces, const float* pos, size_t num_verts)
+std::vector<Triple<T>> hessian(const T* x, size_t num_faces, const int* faces, const T* pos, size_t num_verts)
 {
 
-    std::vector<std::tuple<size_t, size_t, float>> hess;
+    std::vector<Triple<T>> hess;
     __builtin_assume(num_verts != 0);
     for (size_t i=0; i<3*num_verts; i++)
-        __enzyme_fwddiff<void>((void *)gradient_ip,
+        __enzyme_fwddiff<void>((void *)gradient_ip<T>,
                                 enzyme_const, x,
                                 enzyme_const, num_faces,
                                 enzyme_const, faces,
-                                enzyme_dup, pos, __enzyme_todense<float*>(ident_load<float>, err_store<float>, i),
-                                enzyme_dupnoneed, nullptr, __enzyme_todense<float*>(zero_load<float>, csr_store<float>, i, &hess));
+                                enzyme_dup, pos, __enzyme_todense<T*>(ident_load<T>, err_store<T>, i),
+                                enzyme_dupnoneed, nullptr, __enzyme_todense<T*>(zero_load<T>, csr_store<T>, i, &hess));
     return hess;
 }
 
@@ -168,8 +169,8 @@ int main() {
 
     auto hess_verts = hessian(x, num_faces, faces, verts, num_verts);
 
-    for (auto hess : hess_verts) {
-        printf("i=%lu, j=%lu, val=%f", std::get<0>(hess), std::get<1>(hess), std::get<2>(hess));
+    for (auto &hess : hess_verts) {
+        printf("i=%lu, j=%lu, val=%f", hess.row, hess.col, hess.val);
     }
 
     return 0;
