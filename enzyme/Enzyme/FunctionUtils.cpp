@@ -7492,7 +7492,8 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
 
   for (auto &F2 : F.getParent()->functions()) {
     if (startsWith(F2.getName(), "__enzyme_product")) {
-      for (llvm::User* I : make_early_inc_range(F2.users())) {
+      SmallVector<Instruction *, 1> toErase;
+      for (llvm::User *I : F2.users()) {
         auto CB = cast<CallBase>(I);
         IRBuilder<> B(CB);
         B.setFastMathFlags(getFast());
@@ -7505,10 +7506,13 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
           }
         }
         CB->replaceAllUsesWith(res);
-        CB->eraseFromParent();
+        toErase.push_back(CB);
       }
+      for (auto CB : toErase)
+        CB->eraseFromParent();
     } else if (startsWith(F2.getName(), "__enzyme_sum")) {
-      for (llvm::User* I : make_early_inc_range(F2.users())) {
+      SmallVector<Instruction *, 1> toErase;
+      for (llvm::User *I : F2.users()) {
         auto CB = cast<CallBase>(I);
         IRBuilder<> B(CB);
         B.setFastMathFlags(getFast());
@@ -7521,8 +7525,9 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
           }
         }
         CB->replaceAllUsesWith(res);
-        CB->eraseFromParent();
       }
+      for (auto CB : toErase)
+        CB->eraseFromParent();
     }
   }
 }
