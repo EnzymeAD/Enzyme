@@ -2986,6 +2986,12 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
   }
 
   IRBuilder<> B(cur);
+  if (auto CI = dyn_cast<CastInst>(cur))
+    if (auto C = dyn_cast<Constant>(CI->getOperand(0))) {
+      replaceAndErase(
+          cur, cast<Constant>(B.CreateCast(CI->getOpcode(), C, CI->getType())));
+      return "CastConstProp";
+    }
   std::function<Value *(Value *, Value *, Value *)> replace = [&](Value *val,
                                                                   Value *orig,
                                                                   Value *with) {
@@ -7525,6 +7531,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
           }
         }
         CB->replaceAllUsesWith(res);
+        toErase.push_back(CB);
       }
       for (auto CB : toErase)
         CB->eraseFromParent();
