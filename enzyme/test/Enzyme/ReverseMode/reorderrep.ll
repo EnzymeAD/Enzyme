@@ -96,7 +96,7 @@ attributes #3 = { nounwind }
 ; CHECK: bb377:                                            ; preds = %bb381, %bexit
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %bb381 ], [ 0, %bexit ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
-; CHECK-NEXT:   %[[a4:.+]] = add i64 {{(%iv, %.020|%.020, %iv)}}
+; CHECK-NEXT:   %[[a4:.+]] = add nsw i64 {{(%iv, %.020|%.020, %iv)}}
 ; CHECK-NEXT:   %tmp378 = icmp slt i64 %[[a4]], 10
 ; CHECK-NEXT:   br i1 %tmp378, label %bb381, label %bb450
 
