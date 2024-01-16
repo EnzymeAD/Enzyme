@@ -117,7 +117,7 @@ attributes #0 = { readnone speculatable }
 ; CHECK: for.body59:                                       ; preds = %for.body59, %for.body
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %for.body59 ], [ 0, %for.body ]
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
-; CHECK-NEXT:   %[[a4:.+]] = mul i64 {{(%iv1, %step|%step, %iv1)}}
+; CHECK-NEXT:   %[[a4:.+]] = mul {{(nuw )?}}{{(nsw )?}}i64 {{(%iv1, %step|%step, %iv1)}}
 ; CHECK-NEXT:   %add61 = add nuw nsw i64 %[[a4]], %step
 ; CHECK-NEXT:   %cmp57 = icmp slt i64 %add61, 100
 ; CHECK-NEXT:   br i1 %cmp57, label %for.body59, label %for.cond.loopexit

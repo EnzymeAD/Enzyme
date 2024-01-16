@@ -7540,7 +7540,11 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       auto off = en.index();
       auto &solutions = en.value().second;
       ConstraintContext ctx(SE, L, Assumptions, DT);
+#if LLVM_VERSION_MAJOR >= 12
       SCEVExpander Exp(SE, DL, "sparseenzyme", /*preservelcssa*/ false);
+#else
+      SCEVExpander Exp(SE, DL, "sparseenzyme");
+#endif
       auto sols = solutions->allSolutions(Exp, idxty, phterm, ctx, B);
       SmallVector<Value *, 1> prevSols;
       for (auto [sol, condition] : sols) {
