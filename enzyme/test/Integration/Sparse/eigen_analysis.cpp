@@ -66,7 +66,7 @@ static void area_store(unsigned long long offset, T* pos0, const int* faces) {
 
 template<typename T>
 __attribute__((always_inline))
-static T eigenstuffM(const T *__restrict__ x, size_t n, const int *__restrict__ faces, const T *__restrict__ pos0) {
+static T eigenstuffM(const T *__restrict__ pos0, size_t n, const int *__restrict__ faces, const T *__restrict__ x) {
     T sum = 0;
     __builtin_assume(n != 0);
     for (size_t idx=0; idx<n; idx++) {
@@ -101,7 +101,7 @@ static T eigenstuffM(const T *__restrict__ x, size_t n, const int *__restrict__ 
 // Calculate total energy for all faces in 3D
 template<typename T>
 __attribute__((always_inline))
-static T eigenstuffL(const T *__restrict__ x, size_t num_faces, const int *__restrict__ faces, const T *__restrict__ verts) {
+static T eigenstuffL(const T *__restrict__ x, size_t num_faces, const int *__restrict__ faces, const T *__restrict__ pos0) {
     T sum = 0;
     __builtin_assume(num_faces != 0);
     for (size_t idx=0; idx<num_faces; idx++) {
@@ -110,10 +110,10 @@ static T eigenstuffL(const T *__restrict__ x, size_t num_faces, const int *__res
         int k = faces[3*idx+2];
 
         T X[2][3] = {
-            {   verts[3*j+0] - verts[3*i+0],
-                verts[3*j+1] - verts[3*i+1],
-                verts[3*j+2] - verts[3*i+2]},
-            {verts[3*k+0] - verts[3*i+0], verts[3*k+1] - verts[3*i+1], verts[3*k+2] - verts[3*i+2]}
+            {   pos0[3*j+0] - pos0[3*i+0],
+                pos0[3*j+1] - pos0[3*i+1],
+                pos0[3*j+2] - pos0[3*i+2]},
+            {pos0[3*k+0] - pos0[3*i+0], pos0[3*k+1] - pos0[3*i+1], pos0[3*k+2] - pos0[3*i+2]}
         };
 
         T pInvX[3][2];
@@ -132,7 +132,7 @@ static T eigenstuffL(const T *__restrict__ x, size_t num_faces, const int *__res
             g[i] = sum;
         }
 
-        sum += dot_product<T, 3>(g, g) * area(&verts[3*i], &verts[3*j], &verts[3*k]);
+        sum += dot_product<T, 3>(g, g) * area(&pos0[3*i], &pos0[3*j], &pos0[3*k]);
     }
 
     return sum;
@@ -141,13 +141,13 @@ static T eigenstuffL(const T *__restrict__ x, size_t num_faces, const int *__res
 
 template<typename T>
 __attribute__((always_inline))
-static void gradient_ip(const T *__restrict__ x, const size_t num_faces, const int* faces, const T *__restrict__ pos, T *__restrict__ out)
+static void gradient_ip(const T *__restrict__ pos0, const size_t num_faces, const int* faces, const T *__restrict__ x, T *__restrict__ out)
 {
     __enzyme_autodiff<void>((void *)eigenstuffM<T>,
-                            enzyme_const, x,
+                            enzyme_const, pos0,
                             enzyme_const, num_faces,
                             enzyme_const, faces,
-                            enzyme_dup, pos, out);
+                            enzyme_dup, x, out);
 }
 
 
@@ -187,7 +187,7 @@ static void csr_store(T val, unsigned long long offset, size_t i, std::vector<Tr
 
 template<typename T>
 __attribute__((noinline))
-std::vector<Triple<T>> hessian(const T* x, size_t num_faces, const int* faces, const T* pos, size_t num_verts)
+std::vector<Triple<T>> hessian(const T*__restrict__ pos0, size_t num_faces, const int* faces, const T*__restrict__ x, size_t x_pts)
 {    
     float* x2 = __enzyme_post_sparse_todense<float*>(face_load<float>, face_store<float>, x, faces);
 
@@ -209,51 +209,50 @@ std::vector<Triple<T>> hessian(const T* x, size_t num_faces, const int* faces, c
     }
     */
 
-    float* pos2 = __enzyme_post_sparse_todense<float*>(area_load<float>, area_store<float>, pos, faces);
+    float* pos02 = __enzyme_post_sparse_todense<float*>(area_load<float>, area_store<float>, pos0, faces);
     std::vector<Triple<T>> hess;
-    __builtin_assume(num_verts != 0);
-    for (size_t i=0; i<3*num_verts; i++)
+    __builtin_assume(x_pts != 0);
+    for (size_t i=0; i<3*x_pts; i++)
         __enzyme_fwddiff<void>((void *)gradient_ip<T>,
-                                enzyme_const, x2,
+                                enzyme_const, pos02,
                                 enzyme_const, num_faces,
                                 enzyme_const, faces,
-                                enzyme_dup, pos2, __enzyme_todense<T*>(ident_load<T>, err_store<T>, i),
+                                enzyme_dup, x2, __enzyme_todense<T*>(ident_load<T>, err_store<T>, i),
                                 enzyme_dupnoneed, nullptr, __enzyme_todense<T*>(zero_load<T>, csr_store<T>, i, &hess));
     return hess;
 }
 
 int main() {
-    const size_t num_elts_data = 3;
+    const size_t x_pts = 1;
     const float x[] = {0.0, 1.0, 0.0};
 
 
     const size_t num_faces = 1;
     const int faces[] = {0, 1, 2};
 
-    const size_t num_verts = 3;
-    const float verts[] = {1.0, 2.0, 3.0, 4.0, 3.0, 2.0, 3.0, 1.0, 3.0};
+    const float pos0[] = {1.0, 2.0, 3.0, 4.0, 3.0, 2.0, 3.0, 1.0, 3.0};
 
     // Call eigenstuffM_simple
-    const float resultM = eigenstuffM(x, num_faces, faces, verts);
+    const float resultM = eigenstuffM(pos0, num_faces, faces, x);
     printf("Result for eigenstuffM_simple: %f\n", resultM);
 
     // Call eigenstuffL_simple
-    const float resultL = eigenstuffL(x, num_faces, faces, verts);
+    const float resultL = eigenstuffL(pos0, num_faces, faces, x);
     printf("Result for eigenstuffL_simple: %f\n", resultL);
 
-    float dverts[sizeof(verts)/sizeof(verts[0])];
-    for (size_t i=0; i<sizeof(dverts)/sizeof(dverts[0]); i++)
-        dverts[i] = 0;
-    gradient_ip(x, num_faces, faces, verts, dverts);
+    float dx[sizeof(x)/sizeof(x[0])];
+    for (size_t i=0; i<sizeof(dx)/sizeof(x[0]); i++)
+        dx[i] = 0;
+    gradient_ip(pos0, num_faces, faces, x, dx);
 
-    for (size_t i=0; i<sizeof(dverts)/sizeof(dverts[0]); i++)
-        printf("eigenstuffM grad_vert[%zu]=%f\n", i, dverts[i]);
+    for (size_t i=0; i<sizeof(dx)/sizeof(dx[0]); i++)
+        printf("eigenstuffM grad_vert[%zu]=%f\n", i, dx[i]);
     
-    size_t num_elts = sizeof(verts)/sizeof(verts[0]) * sizeof(verts)/sizeof(verts[0]);
+    size_t num_elts = sizeof(x)/sizeof(x[0]) * sizeof(x)/sizeof(x[0]);
 
-    auto hess_verts = hessian(x, num_faces, faces, verts, num_verts);
+    auto hess_x = hessian(pos0, num_faces, faces, x, x_pts);
 
-    for (auto &hess : hess_verts) {
+    for (auto &hess : hess_x) {
         printf("i=%lu, j=%lu, val=%f\n", hess.row, hess.col, hess.val);
     }
 
