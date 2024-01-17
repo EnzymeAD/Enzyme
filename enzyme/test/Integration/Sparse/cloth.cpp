@@ -54,6 +54,53 @@ std::tuple<T, T> dihedral_angle(const T (&v1)[n], const T (&v2)[n], const T (&v3
 
 template<typename T>
 __attribute__((always_inline))
+std::tuple<T, T> dihedral_angle3(const T* __restrict__ v1, const T* __restrict__ v2, const T* __restrict__ v3, const T* __restrict__ v4) {
+    const int n = 3;
+    T diff13[n];
+    elementwise_difference(diff13, v1, v3);
+    T diff23[n];
+    elementwise_difference(diff23, v2, v3);
+    T diff14[n];
+    elementwise_difference(diff14, v1, v4);
+    T diff24[n];
+    elementwise_difference(diff24, v2, v4);
+    T n1[n];
+    cross<T>(n1, diff13, diff23);
+    T n2[n];
+    cross<T>(n2, diff14, diff24);
+    T a1 = norm<T, n>(n1);
+    T a2 = norm<T, n>(n2);
+    T ev[n];
+    elementwise_difference(ev, v2, v1);
+    T l2 = dot_product<T, n>(ev, ev);
+    T diff_n1_n2[n];
+    elementwise_difference(diff_n1_n2, n1, n2);
+    T sum_n1_n2[n];
+    elementwise_sum(sum_n1_n2, n1, n2);
+    T theta = M_PI - 2 * std::atan2(norm<T, n>(diff_n1_n2), norm<T, n>(sum_n1_n2));
+    T w = 3 * l2 / (a1 + a2);
+    return std::make_tuple(theta, w);
+}
+
+template<typename T>
+__attribute__((always_inline))
+static T pos_load(unsigned long long offset, T* pos, const int* edges) {
+    offset /= sizeof(T);
+
+    int idx = offset / 3;
+
+    int inc = offset % 3;
+
+    int idx0 = edges[3*idx];
+
+    /// pos_data[0:3] -> pos[3*edges[i]:3*edges[i]+3]
+
+    return pos[3*idx0+inc];
+}
+
+/*
+template<typename T>
+__attribute__((always_inline))
 static float edge_energy(const T *__restrict__ pos, const T *__restrict__ pos0, const int i0, const int i1, const T edge_coefficient) {
     using Vector = T[3];
 
@@ -126,6 +173,100 @@ static T flap_energy(
     T diff = theta - theta0;
     return diff * diff * w0 * bending_stiffness;
 }
+*/
+
+
+template<typename T>
+__attribute__((always_inline))
+static float edge_energy(const T *__restrict__ pos, const T *__restrict__ pos0, const int i0, const int i1, const T edge_coefficient) {
+    using Vector = T[3];
+
+    const int idxs[2] = {i0, i1};
+
+    //Vector pos_i[2];
+    //get_pos(pos_i, pos, idxs);
+
+    const T* pos_data0 = &pos[3 * i0];
+    const T* pos_data1 = &pos[3 * i1];
+
+    float l = length<T, 3>(pos_data0, pos_data1);
+
+    Vector pos0_i[2];
+    get_pos(pos0_i, pos0, idxs);
+
+    float l0 = length<T, 3>(pos0_i[0], pos0_i[1]);
+
+    float diff = 1 - l / l0;
+    return diff * diff * l0 * edge_coefficient;
+}
+
+template<typename T>
+__attribute__((always_inline))
+static T face_energy(
+    const T * __restrict__ pos,
+    const T *__restrict__ pos0,
+    const int i0,
+    const int i1,
+    const int i2,
+    const T face_coefficient,
+    const int num_edges
+) {
+    using Vector = T[3];
+    const int idxs[3] = {i0, i1, i2};
+
+    //Vector pos_i[3];
+    //get_pos(pos_i, pos, idxs);
+    //const int base_offset = 3 * num_edges;
+    const T* pos_data0 = &pos[i0];
+    const T* pos_data1 = &pos[i1];
+    const T* pos_data2 = &pos[i2];
+
+    T a = area(pos_data0, pos_data1, pos_data2);
+
+    Vector pos0_i[3];
+    get_pos(pos0_i, pos0, idxs);
+
+    T a0 = area(pos0_i[0], pos0_i[1], pos0_i[2]);
+    T diff = 1 - a / a0;
+    return diff * diff * a0 * face_coefficient;
+}
+
+template<typename T>
+__attribute__((always_inline))
+static T flap_energy(
+    const T *__restrict__ pos,
+    const T *__restrict__ pos0,
+    const int i0,
+    const int i1,
+    const int i2,
+    const int i3,
+    const T bending_stiffness,
+    const int num_edges,
+    const int num_faces
+) {
+    using Vector = T[3];
+    const int idxs[4] = {i0, i1, i2, i3};
+
+    //Vector pos_i[4];
+    //get_pos(pos_i, pos, idxs);
+
+    //const int base_offset = 3 * num_edges + 3 * num_faces;
+    const T* pos_data0 = &pos[i0];
+    const T* pos_data1 = &pos[i1];
+    const T* pos_data2 = &pos[i2];
+    const T* pos_data3 = &pos[i3];
+
+    T theta, w;
+    std::tie(theta, w) = dihedral_angle3(pos_data0, pos_data1, pos_data2, pos_data3);
+
+    Vector pos0_i[4];
+    get_pos(pos0_i, pos0, idxs);
+
+    T theta0, w0;
+    std::tie(theta0, w0) = dihedral_angle(pos0_i[0], pos0_i[1], pos0_i[2], pos0_i[3]);
+    T diff = theta - theta0;
+    return diff * diff * w0 * bending_stiffness;
+}
 
 template<typename T>
 __attribute__((always_inline))
@@ -151,12 +292,12 @@ static T discrete_shell_simple(
 
     __builtin_assume(num_faces != 0);
     for (int i = 0; i < num_faces; i++) {
-        total_energy += face_energy(pos, pos0, faces[3 * i], faces[3 * i + 1], faces[3 * i + 2], face_coefficient);
+        total_energy += face_energy(pos, pos0, faces[3 * i], faces[3 * i + 1], faces[3 * i + 2], face_coefficient, num_edges);
     }
 
     __builtin_assume(num_flaps != 0);
     for (int i = 0; i < num_flaps; i++) {
-        total_energy += flap_energy(pos, pos0, flaps[4 * i], flaps[4 * i + 1], flaps[4 * i + 2], flaps[4 * i + 3], bending_stiffness);
+        total_energy += flap_energy(pos, pos0, flaps[4 * i], flaps[4 * i + 1], flaps[4 * i + 2], flaps[4 * i + 3], bending_stiffness, num_edges, num_faces);
     }
 
     return total_energy;
@@ -247,6 +388,9 @@ std::vector<Triple<T>> hessian(
     const size_t num_verts)
 {
     std::vector<Triple<T>> hess;
+
+    T* pos2 = __enzyme_post_sparse_todense<T*>(pos_load<T>, err_store<T>, pos);
+
     __builtin_assume(num_verts != 0);
     for (size_t i=0; i<3*num_verts; i++)
         __enzyme_fwddiff<void>((void *)gradient_ip<T>,
@@ -260,7 +404,7 @@ std::vector<Triple<T>> hessian(
                                enzyme_const, edge_coefficient,
                                enzyme_const, face_coefficient,
                                enzyme_const, bending_stiffness,
-                               enzyme_dup, pos, __enzyme_todense<T*>(ident_load<T>,   err_store<T>, i),
+                               enzyme_dup, pos2, __enzyme_todense<T*>(ident_load<T>,   err_store<T>, i),
                                enzyme_dupnoneed, nullptr, __enzyme_todense<T*>(zero_load<T>,   csr_store<T>, i, &hess));
     return hess;
 }
