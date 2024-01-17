@@ -4821,6 +4821,8 @@ private:
   ValueToValueMapTy &originalToNewFn;
   unsigned fromwidth;
   unsigned towidth;
+  Type *fromType;
+  Type *toType;
   Function *oldFunc;
   Function *newFunc;
   AllocaInst *tmpBlock;
@@ -4834,6 +4836,9 @@ public:
         towidth(towidth), oldFunc(oldFunc), newFunc(newFunc), Logic(Logic) {
     IRBuilder<> B(&newFunc->getEntryBlock().front());
     tmpBlock = B.CreateAlloca(getTypeForWidth(fromwidth));
+
+    fromType = getTypeForWidth(fromwidth);
+    toType = getTypeForWidth(towidth);
   }
 
   void visitInstruction(llvm::Instruction &inst) {
@@ -4864,9 +4869,9 @@ public:
     }
   }
 
-  Type *getFromType() { return getTypeForWidth(fromwidth); }
+  Type *getFromType() { return fromType; }
 
-  Type *getToType() { return getTypeForWidth(towidth); }
+  Type *getToType() { return toType; }
 
   Value *truncate(IRBuilder<> &B, Value *v) {
     Type *nextType = getTypeForWidth(towidth);
