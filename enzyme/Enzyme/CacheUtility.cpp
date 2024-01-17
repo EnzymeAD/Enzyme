@@ -268,6 +268,14 @@ void RemoveRedundantIVs(
             add_or_mul->setHasNoUnsignedWrap(true);
           if (addrec->getNoWrapFlags(llvm::SCEV::FlagNSW))
             add_or_mul->setHasNoSignedWrap(true);
+          for (int i=0; i<2; i++) {
+              if (auto mul = dyn_cast<BinaryOperator>(add_or_mul->getOperand(i))) {
+          if (addrec->getNoWrapFlags(llvm::SCEV::FlagNUW))
+            mul->setHasNoUnsignedWrap(true);
+          if (addrec->getNoWrapFlags(llvm::SCEV::FlagNSW))
+            mul->setHasNoSignedWrap(true);
+              }
+          }
         }
       }
     }

@@ -69,10 +69,9 @@ __attribute__((always_inline))
 static T eigenstuffM(const T *__restrict__ pos0, size_t n, const int *__restrict__ faces, const T *__restrict__ x) {
     T sum = 0;
     __builtin_assume(n != 0);
+    __builtin_assume(n > 0);
     for (size_t idx=0; idx<n; idx++) {
-        int i = faces[3*idx];
-        int j = faces[3*idx+1];
-        int k = faces[3*idx+2];
+        __builtin_assume(idx < 100000000);
 
 /*
         T xi = x[i];
@@ -104,6 +103,7 @@ __attribute__((always_inline))
 static T eigenstuffL(const T *__restrict__ x, size_t num_faces, const int *__restrict__ faces, const T *__restrict__ pos0) {
     T sum = 0;
     __builtin_assume(num_faces != 0);
+    __builtin_assume(num_faces > 0);
     for (size_t idx=0; idx<num_faces; idx++) {
         int i = faces[3*idx];
         int j = faces[3*idx+1];
