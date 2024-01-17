@@ -631,7 +631,6 @@ struct EnzymeSparseAccumulateAttrInfo : public ParsedAttrInfo {
       return AttributeNotApplied;
     }
     V->setInit(expr);
-    V->dump();
     S.MarkVariableReferenced(loc, V);
     S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
     return AttributeApplied;
