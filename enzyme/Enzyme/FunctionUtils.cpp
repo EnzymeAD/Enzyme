@@ -7657,10 +7657,253 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
   }
 }
 
+void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
+                    const llvm::DataLayout &DL) {
+  auto load_fn = cast<Function>(getBaseObject(CI->getArgOperand(0)));
+  auto store_fn = cast<Function>(getBaseObject(CI->getArgOperand(1)));
+  size_t argstart = 2;
+#if LLVM_VERSION_MAJOR >= 14
+  size_t num_args = CI->arg_size();
+#else
+  size_t num_args = CI->getNumArgOperands();
+#endif
+  SmallVector<std::pair<Instruction *, Value *>, 1> users;
+
+  for (auto U : CI->users()) {
+    users.push_back(std::make_pair(cast<Instruction>(U), CI));
+  }
+  IntegerType *intTy = IntegerType::get(CI->getContext(), 64);
+  auto toInt = [&](IRBuilder<> &B, llvm::Value *V) {
+    if (auto PT = dyn_cast<PointerType>(V->getType())) {
+      if (PT->getAddressSpace() != 0) {
+#if LLVM_VERSION_MAJOR < 17
+#if LLVM_VERSION_MAJOR >= 15
+        if (CI->getContext().supportsTypedPointers()) {
+#endif
+          V = B.CreateAddrSpaceCast(
+              V, PointerType::getUnqual(PT->getPointerElementType()));
+#if LLVM_VERSION_MAJOR >= 15
+        } else {
+          V = B.CreateAddrSpaceCast(V,
+                                    PointerType::getUnqual(PT->getContext()));
+        }
+#endif
+#else
+        V = B.CreateAddrSpaceCast(V, PointerType::getUnqual(PT->getContext()));
+#endif
+      }
+      return B.CreatePtrToInt(V, intTy);
+    }
+    auto IT = cast<IntegerType>(V->getType());
+    if (IT == intTy)
+      return V;
+    return B.CreateZExtOrTrunc(V, intTy);
+  };
+  SmallVector<Instruction *, 1> toErase;
+
+  ValueToValueMapTy replacements;
+  replacements[CI] = Constant::getNullValue(CI->getType());
+  Instruction *remaining = nullptr;
+  while (users.size()) {
+    auto pair = users.back();
+    users.pop_back();
+    auto U = pair.first;
+    auto val = pair.second;
+    if (replacements.count(U))
+      continue;
+
+    IRBuilder B(U);
+    if (auto CI = dyn_cast<CastInst>(U)) {
+      for (auto U : CI->users()) {
+        users.push_back(std::make_pair(cast<Instruction>(U), CI));
+      }
+      auto rep =
+          B.CreateCast(CI->getOpcode(), replacements[val], CI->getDestTy());
+      if (auto I = dyn_cast<Instruction>(rep))
+        I->setDebugLoc(CI->getDebugLoc());
+      replacements[CI] = rep;
+      continue;
+    }
+    if (auto SI = dyn_cast<SelectInst>(U)) {
+      for (auto U : SI->users()) {
+        users.push_back(std::make_pair(cast<Instruction>(U), SI));
+      }
+      auto tval = SI->getTrueValue();
+      auto fval = SI->getFalseValue();
+      auto rep = B.CreateSelect(
+          SI->getCondition(),
+          replacements.count(tval) ? (Value *)replacements[tval] : tval,
+          replacements.count(fval) ? (Value *)replacements[fval] : fval);
+      if (auto I = dyn_cast<Instruction>(rep))
+        I->setDebugLoc(SI->getDebugLoc());
+      replacements[SI] = rep;
+      continue;
+    }
+    /*
+    if (auto CI = dyn_cast<PHINode>(U)) {
+      for (auto U : CI->users()) {
+        users.push_back(std::make_pair(cast<Instruction>(U), CI));
+      }
+      continue;
+    }
+    */
+    if (auto CI = dyn_cast<CallInst>(U)) {
+      auto funcName = getFuncNameFromCall(CI);
+      if (funcName == "julia.pointer_from_objref") {
+        for (auto U : CI->users()) {
+          users.push_back(std::make_pair(cast<Instruction>(U), CI));
+        }
+        auto *F = CI->getCalledOperand();
+
+        SmallVector<Value *, 1> args;
+#if LLVM_VERSION_MAJOR >= 14
+        for (auto &arg : CI->args())
+#else
+        for (auto &arg : CI->arg_operands())
+#endif
+          args.push_back(replacements[arg]);
+
+        auto FT = CI->getFunctionType();
+
+        auto cal = cast<CallInst>(B.CreateCall(FT, F, args));
+        cal->setCallingConv(CI->getCallingConv());
+        cal->setDebugLoc(CI->getDebugLoc());
+        replacements[CI] = cal;
+        continue;
+      }
+    }
+    if (auto CI = dyn_cast<GetElementPtrInst>(U)) {
+      for (auto U : CI->users()) {
+        users.push_back(std::make_pair(cast<Instruction>(U), CI));
+      }
+      SmallVector<Value *, 1> inds;
+      bool allconst = true;
+      for (auto &ind : CI->indices()) {
+        if (!isa<ConstantInt>(ind)) {
+          allconst = false;
+        }
+        inds.push_back(ind);
+      }
+      Value *gep;
+
+      if (inds.size() == 1) {
+        gep = ConstantInt::get(
+            intTy, (DL.getTypeSizeInBits(CI->getSourceElementType()) + 7) / 8);
+        gep = B.CreateMul(intTy == inds[0]->getType()
+                              ? inds[0]
+                              : B.CreateZExtOrTrunc(inds[0], intTy),
+                          gep, "", true, true);
+        gep = B.CreateAdd(B.CreatePtrToInt(replacements[val], intTy), gep);
+        gep = B.CreateIntToPtr(gep, CI->getType());
+      } else if (!allconst) {
+        gep = B.CreateGEP(CI->getSourceElementType(), replacements[val], inds);
+        if (auto ge = cast<GetElementPtrInst>(gep))
+          ge->setIsInBounds(CI->isInBounds());
+      } else {
+        APInt ai(64, 0);
+        CI->accumulateConstantOffset(DL, ai);
+        gep = B.CreateIntToPtr(ConstantInt::get(intTy, ai), CI->getType());
+      }
+      if (auto I = dyn_cast<Instruction>(gep))
+        I->setDebugLoc(CI->getDebugLoc());
+      replacements[CI] = gep;
+      continue;
+    }
+    if (auto LI = dyn_cast<LoadInst>(U)) {
+      auto diff = toInt(B, replacements[LI->getPointerOperand()]);
+      SmallVector<Value *, 2> args;
+      args.push_back(diff);
+      for (size_t i = argstart; i < num_args; i++)
+        args.push_back(CI->getArgOperand(i));
+      if (load_fn->getFunctionType()->getNumParams() != args.size()) {
+        auto fnName = load_fn->getName();
+        auto found_numargs = load_fn->getFunctionType()->getNumParams();
+        auto expected_numargs = args.size();
+        EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
+                    " incorrect number of arguments to loader function ",
+                    fnName, " expected ", expected_numargs, " found ",
+                    found_numargs, " - ", *load_fn->getFunctionType());
+        continue;
+      } else {
+        bool tocontinue = false;
+        for (size_t i = 0; i < args.size(); i++) {
+          if (load_fn->getFunctionType()->getParamType(i) !=
+              args[i]->getType()) {
+            auto fnName = load_fn->getName();
+            EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
+                        " incorrect type of argument ", i,
+                        " to loader function ", fnName, " expected ",
+                        *args[i]->getType(), " found ",
+                        load_fn->getFunctionType()->params()[i]);
+            tocontinue = true;
+            break;
+          }
+        }
+        if (tocontinue)
+          continue;
+      }
+      CallInst *call = B.CreateCall(load_fn, args);
+      call->setDebugLoc(LI->getDebugLoc());
+      Value *tmp = call;
+      if (tmp->getType() != LI->getType())
+        tmp = B.CreateBitCast(tmp, LI->getType());
+      LI->replaceAllUsesWith(tmp);
+
+      if (load_fn->hasFnAttribute(Attribute::AlwaysInline)) {
+        InlineFunctionInfo IFI;
+        InlineFunction(*call, IFI);
+      }
+      toErase.push_back(LI);
+      continue;
+    }
+    if (auto SI = dyn_cast<StoreInst>(U)) {
+      assert(SI->getValueOperand() != val);
+      auto diff = toInt(B, replacements[SI->getPointerOperand()]);
+      SmallVector<Value *, 2> args;
+      args.push_back(SI->getValueOperand());
+      auto sty = store_fn->getFunctionType()->getParamType(0);
+      if (args[0]->getType() != store_fn->getFunctionType()->getParamType(0)) {
+        if (CastInst::castIsValid(Instruction::BitCast, args[0], sty))
+          args[0] = B.CreateBitCast(args[0], sty);
+        else {
+          auto args0ty = args[0]->getType();
+          EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
+                      " first argument of store function must be the type of "
+                      "the store found fn arg type ",
+                      sty, " expected ", args0ty);
+        }
+      }
+      args.push_back(diff);
+      for (size_t i = argstart; i < num_args; i++)
+        args.push_back(CI->getArgOperand(i));
+      auto call = B.CreateCall(store_fn, args);
+      call->setDebugLoc(SI->getDebugLoc());
+      if (load_fn->hasFnAttribute(Attribute::AlwaysInline)) {
+        InlineFunctionInfo IFI;
+        InlineFunction(*call, IFI);
+      }
+      toErase.push_back(SI);
+      continue;
+    }
+    remaining = U;
+  }
+  for (auto U : toErase)
+    U->eraseFromParent();
+
+  if (!remaining) {
+    CI->replaceAllUsesWith(Constant::getNullValue(CI->getType()));
+    CI->eraseFromParent();
+  } else if (replaceAll) {
+    EmitFailure("IllegalSparse", remaining->getDebugLoc(), remaining,
+                " Illegal remaining use (", *remaining, ") of todense (", *CI,
+                ") in function ", *F);
+  }
+}
+
 bool LowerSparsification(llvm::Function *F, bool replaceAll) {
   auto &DL = F->getParent()->getDataLayout();
   bool changed = false;
-  SmallVector<CallInst *, 1> todo;
+  SmallVector<CallBase *, 1> todo;
   SetVector<BasicBlock *> toDenseBlocks;
   for (auto &BB : *F) {
     for (auto &I : BB) {
@@ -7674,250 +7917,9 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
   }
   for (auto CI : todo) {
     changed = true;
-    auto load_fn = cast<Function>(getBaseObject(CI->getArgOperand(0)));
-    auto store_fn = cast<Function>(getBaseObject(CI->getArgOperand(1)));
-    size_t argstart = 2;
-#if LLVM_VERSION_MAJOR >= 14
-    size_t num_args = CI->arg_size();
-#else
-    size_t num_args = CI->getNumArgOperands();
-#endif
-    SmallVector<std::pair<Instruction *, Value *>, 1> users;
-
-    for (auto U : CI->users()) {
-      users.push_back(std::make_pair(cast<Instruction>(U), CI));
-    }
-    IntegerType *intTy = IntegerType::get(CI->getContext(), 64);
-    auto toInt = [&](IRBuilder<> &B, llvm::Value *V) {
-      if (auto PT = dyn_cast<PointerType>(V->getType())) {
-        if (PT->getAddressSpace() != 0) {
-#if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 15
-          if (CI->getContext().supportsTypedPointers()) {
-#endif
-            V = B.CreateAddrSpaceCast(
-                V, PointerType::getUnqual(PT->getPointerElementType()));
-#if LLVM_VERSION_MAJOR >= 15
-          } else {
-            V = B.CreateAddrSpaceCast(V,
-                                      PointerType::getUnqual(PT->getContext()));
-          }
-#endif
-#else
-          V = B.CreateAddrSpaceCast(V,
-                                    PointerType::getUnqual(PT->getContext()));
-#endif
-        }
-        return B.CreatePtrToInt(V, intTy);
-      }
-      auto IT = cast<IntegerType>(V->getType());
-      if (IT == intTy)
-        return V;
-      return B.CreateZExtOrTrunc(V, intTy);
-    };
-    SmallVector<Instruction *, 1> toErase;
-
-    ValueToValueMapTy replacements;
-    replacements[CI] = Constant::getNullValue(CI->getType());
-    Instruction *remaining = nullptr;
-    while (users.size()) {
-      auto pair = users.back();
-      users.pop_back();
-      auto U = pair.first;
-      auto val = pair.second;
-      if (replacements.count(U))
-        continue;
-
-      IRBuilder B(U);
-      if (auto CI = dyn_cast<CastInst>(U)) {
-        for (auto U : CI->users()) {
-          users.push_back(std::make_pair(cast<Instruction>(U), CI));
-        }
-        auto rep =
-            B.CreateCast(CI->getOpcode(), replacements[val], CI->getDestTy());
-        if (auto I = dyn_cast<Instruction>(rep))
-          I->setDebugLoc(CI->getDebugLoc());
-        replacements[CI] = rep;
-        continue;
-      }
-      if (auto SI = dyn_cast<SelectInst>(U)) {
-        for (auto U : SI->users()) {
-          users.push_back(std::make_pair(cast<Instruction>(U), SI));
-        }
-        auto tval = SI->getTrueValue();
-        auto fval = SI->getFalseValue();
-        auto rep = B.CreateSelect(
-            SI->getCondition(),
-            replacements.count(tval) ? (Value *)replacements[tval] : tval,
-            replacements.count(fval) ? (Value *)replacements[fval] : fval);
-        if (auto I = dyn_cast<Instruction>(rep))
-          I->setDebugLoc(SI->getDebugLoc());
-        replacements[SI] = rep;
-        continue;
-      }
-      /*
-      if (auto CI = dyn_cast<PHINode>(U)) {
-        for (auto U : CI->users()) {
-          users.push_back(std::make_pair(cast<Instruction>(U), CI));
-        }
-        continue;
-      }
-      */
-      if (auto CI = dyn_cast<CallInst>(U)) {
-        auto funcName = getFuncNameFromCall(CI);
-        if (funcName == "julia.pointer_from_objref") {
-          for (auto U : CI->users()) {
-            users.push_back(std::make_pair(cast<Instruction>(U), CI));
-          }
-          auto *F = CI->getCalledOperand();
-
-          SmallVector<Value *, 1> args;
-#if LLVM_VERSION_MAJOR >= 14
-          for (auto &arg : CI->args())
-#else
-          for (auto &arg : CI->arg_operands())
-#endif
-            args.push_back(replacements[arg]);
-
-          auto FT = CI->getFunctionType();
-
-          auto cal = cast<CallInst>(B.CreateCall(FT, F, args));
-          cal->setCallingConv(CI->getCallingConv());
-          cal->setDebugLoc(CI->getDebugLoc());
-          replacements[CI] = cal;
-          continue;
-        }
-      }
-      if (auto CI = dyn_cast<GetElementPtrInst>(U)) {
-        for (auto U : CI->users()) {
-          users.push_back(std::make_pair(cast<Instruction>(U), CI));
-        }
-        SmallVector<Value *, 1> inds;
-        bool allconst = true;
-        for (auto &ind : CI->indices()) {
-          if (!isa<ConstantInt>(ind)) {
-            allconst = false;
-          }
-          inds.push_back(ind);
-        }
-        Value *gep;
-
-        if (inds.size() == 1) {
-          gep = ConstantInt::get(
-              intTy,
-              (DL.getTypeSizeInBits(CI->getSourceElementType()) + 7) / 8);
-          gep = B.CreateMul(intTy == inds[0]->getType()
-                                ? inds[0]
-                                : B.CreateZExtOrTrunc(inds[0], intTy),
-                            gep, "", true, true);
-          gep = B.CreateAdd(B.CreatePtrToInt(replacements[val], intTy), gep);
-          gep = B.CreateIntToPtr(gep, CI->getType());
-        } else if (!allconst) {
-          gep =
-              B.CreateGEP(CI->getSourceElementType(), replacements[val], inds);
-          if (auto ge = cast<GetElementPtrInst>(gep))
-            ge->setIsInBounds(CI->isInBounds());
-        } else {
-          APInt ai(64, 0);
-          CI->accumulateConstantOffset(DL, ai);
-          gep = B.CreateIntToPtr(ConstantInt::get(intTy, ai), CI->getType());
-        }
-        if (auto I = dyn_cast<Instruction>(gep))
-          I->setDebugLoc(CI->getDebugLoc());
-        replacements[CI] = gep;
-        continue;
-      }
-      if (auto LI = dyn_cast<LoadInst>(U)) {
-        auto diff = toInt(B, replacements[LI->getPointerOperand()]);
-        SmallVector<Value *, 2> args;
-        args.push_back(diff);
-        for (size_t i = argstart; i < num_args; i++)
-          args.push_back(CI->getArgOperand(i));
-        if (load_fn->getFunctionType()->getNumParams() != args.size()) {
-          auto fnName = load_fn->getName();
-          auto found_numargs = load_fn->getFunctionType()->getNumParams();
-          auto expected_numargs = args.size();
-          EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
-                      " incorrect number of arguments to loader function ",
-                      fnName, " expected ", expected_numargs, " found ",
-                      found_numargs, " - ", *load_fn->getFunctionType());
-          continue;
-        } else {
-          bool tocontinue = false;
-          for (size_t i = 0; i < args.size(); i++) {
-            if (load_fn->getFunctionType()->getParamType(i) !=
-                args[i]->getType()) {
-              auto fnName = load_fn->getName();
-              EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
-                          " incorrect type of argument ", i,
-                          " to loader function ", fnName, " expected ",
-                          *args[i]->getType(), " found ",
-                          load_fn->getFunctionType()->params()[i]);
-              tocontinue = true;
-              break;
-            }
-          }
-          if (tocontinue)
-            continue;
-        }
-        CallInst *call = B.CreateCall(load_fn, args);
-        call->setDebugLoc(LI->getDebugLoc());
-        Value *tmp = call;
-        if (tmp->getType() != LI->getType())
-          tmp = B.CreateBitCast(tmp, LI->getType());
-        LI->replaceAllUsesWith(tmp);
-
-        if (load_fn->hasFnAttribute(Attribute::AlwaysInline)) {
-          InlineFunctionInfo IFI;
-          InlineFunction(*call, IFI);
-        }
-        toErase.push_back(LI);
-        continue;
-      }
-      if (auto SI = dyn_cast<StoreInst>(U)) {
-        assert(SI->getValueOperand() != val);
-        auto diff = toInt(B, replacements[SI->getPointerOperand()]);
-        SmallVector<Value *, 2> args;
-        args.push_back(SI->getValueOperand());
-        auto sty = store_fn->getFunctionType()->getParamType(0);
-        if (args[0]->getType() !=
-            store_fn->getFunctionType()->getParamType(0)) {
-          if (CastInst::castIsValid(Instruction::BitCast, args[0], sty))
-            args[0] = B.CreateBitCast(args[0], sty);
-          else {
-            auto args0ty = args[0]->getType();
-            EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
-                        " first argument of store function must be the type of "
-                        "the store found fn arg type ",
-                        sty, " expected ", args0ty);
-          }
-        }
-        args.push_back(diff);
-        for (size_t i = argstart; i < num_args; i++)
-          args.push_back(CI->getArgOperand(i));
-        auto call = B.CreateCall(store_fn, args);
-        call->setDebugLoc(SI->getDebugLoc());
-        if (load_fn->hasFnAttribute(Attribute::AlwaysInline)) {
-          InlineFunctionInfo IFI;
-          InlineFunction(*call, IFI);
-        }
-        toErase.push_back(SI);
-        continue;
-      }
-      remaining = U;
-    }
-    for (auto U : toErase)
-      U->eraseFromParent();
-
-    if (!remaining) {
-      CI->replaceAllUsesWith(Constant::getNullValue(CI->getType()));
-      CI->eraseFromParent();
-    } else if (replaceAll) {
-      EmitFailure("IllegalSparse", remaining->getDebugLoc(), remaining,
-                  " Illegal remaining use (", *remaining, ") of todense (", *CI,
-                  ") in function ", *F);
-    }
+    replaceToDense(CI, replaceAll, F, DL);
   }
+  todo.clear();
 
   if (changed && EnzymeAutoSparsity) {
     PassBuilder PB;
@@ -7936,6 +7938,20 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
     // required to make preheaders
     LoopSimplifyPass().run(*F, FAM);
     fixSparseIndices(*F, FAM, toDenseBlocks);
+  }
+
+  for (auto &BB : *F) {
+    for (auto &I : BB) {
+      if (auto CI = dyn_cast<CallInst>(&I)) {
+        if (getFuncNameFromCall(CI).contains("__enzyme_post_sparse_todense")) {
+          todo.push_back(CI);
+        }
+      }
+    }
+  }
+  for (auto CI : todo) {
+    changed = true;
+    replaceToDense(CI, replaceAll, F, DL);
   }
   return changed;
 }
