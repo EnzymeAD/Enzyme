@@ -834,14 +834,6 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
       // Traverse the points-to sets in a simple BFS
       std::deque<DistinctAttr> frontier;
       DenseSet<DistinctAttr> visited;
-      // auto scheduleVisit = [&](auto range) {
-      //   for (DistinctAttr neighbor : range) {
-      //     if (!visited.contains(neighbor)) {
-      //       visited.insert(neighbor);
-      //       frontier.push_back(neighbor);
-      //     }
-      //   }
-      // };
       auto scheduleVisit = [&](const enzyme::AliasClassSet &aliasClasses) {
         aliasClasses.foreachClass([&](DistinctAttr neighbor,
                                       enzyme::AliasClassSet::State state) {
