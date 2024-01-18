@@ -485,15 +485,15 @@ std::optional<Value> getCopySource(Operation *op) {
 /// Value corresponding to its allocation.
 /// The callback may receive null allocation when the class alias set is
 /// unknown.
+/// If the classes are undefined, the callback will not be called at all.
 void forEachAliasedAlloc(const AliasClassLattice *ptrAliasClass,
-                         function_ref<void(DistinctAttr alloc)> forEachFn) {
-  if (ptrAliasClass->isUnknown()) {
-    // Unknown pointers alias with the unknown entry arguments and all
-    // known allocations
-    return forEachFn(nullptr);
-  }
-  for (DistinctAttr alloc : ptrAliasClass->getAliasClasses())
-    forEachFn(alloc);
+                         function_ref<void(DistinctAttr)> forEachFn) {
+  ptrAliasClass->getAliasClassesObject().foreachClass(
+      [&](DistinctAttr alloc, enzyme::AliasClassSet::State state) {
+        if (state != enzyme::AliasClassSet::State::Undefined)
+          forEachFn(alloc);
+        return ChangeResult::NoChange;
+      });
 }
 
 class DenseForwardActivityAnalysis
@@ -616,20 +616,23 @@ public:
 
   /// Initialize the entry block with the supplied argument activities.
   void setToEntryState(ForwardMemoryActivity *lattice) override {
-    if (auto *block = dyn_cast_if_present<Block *>(lattice->getPoint())) {
-      if (block == entryBlock) {
-        for (const auto &[arg, activity] :
-             llvm::zip(block->getArguments(), argumentActivity)) {
-          if (activity == enzyme::Activity::enzyme_dup ||
-              activity == enzyme::Activity::enzyme_dupnoneed) {
-            auto *argAliasClasses =
-                getOrCreateFor<AliasClassLattice>(block, arg);
-            for (DistinctAttr argAliasClass :
-                 argAliasClasses->getAliasClasses()) {
-              propagateIfChanged(lattice, lattice->setActiveIn(argAliasClass));
-            }
-          }
-        }
+    if (auto *block = dyn_cast_if_present<Block *>(lattice->getPoint());
+        block && block == entryBlock) {
+      for (const auto &[arg, activity] :
+           llvm::zip(block->getArguments(), argumentActivity)) {
+        if (activity != enzyme::Activity::enzyme_dup &&
+            activity != enzyme::Activity::enzyme_dupnoneed)
+          continue;
+        auto *argAliasClasses = getOrCreateFor<AliasClassLattice>(block, arg);
+        ChangeResult changed =
+            argAliasClasses->getAliasClassesObject().foreachClass(
+                [lattice](DistinctAttr argAliasClass,
+                          enzyme::AliasClassSet::State state) {
+                  if (state == enzyme::AliasClassSet::State::Undefined)
+                    return ChangeResult::NoChange;
+                  return lattice->setActiveIn(argAliasClass);
+                });
+        propagateIfChanged(lattice, changed);
       }
     }
   }
@@ -656,29 +659,39 @@ public:
                       BackwardMemoryActivity *before) override {
     // Initialize the return activity of arguments.
     if (op->hasTrait<OpTrait::ReturnLike>() && op->getParentOp() == parentOp) {
-      for (const auto &[arg, argActivity] : llvm::zip(
-               parentOp->getRegions().front().getArguments(), argumentActivity))
-        if (argActivity == enzyme::Activity::enzyme_dup ||
-            argActivity == enzyme::Activity::enzyme_dupnoneed) {
-          auto *argAliasClasses = getOrCreateFor<AliasClassLattice>(op, arg);
-          for (DistinctAttr argAliasClass :
-               argAliasClasses->getAliasClasses()) {
-            propagateIfChanged(before, before->setActiveOut(argAliasClass));
-          }
+      for (const auto &[arg, argActivity] :
+           llvm::zip(parentOp->getRegions().front().getArguments(),
+                     argumentActivity)) {
+        if (argActivity != enzyme::Activity::enzyme_dup &&
+            argActivity != enzyme::Activity::enzyme_dupnoneed) {
+          continue;
         }
+        auto *argAliasClasses = getOrCreateFor<AliasClassLattice>(op, arg);
+        ChangeResult changed =
+            argAliasClasses->getAliasClassesObject().foreachClass(
+                [before](DistinctAttr argAliasClass,
+                         enzyme::AliasClassSet::State state) {
+                  if (state == enzyme::AliasClassSet::State::Undefined)
+                    return ChangeResult::NoChange;
+                  return before->setActiveOut(argAliasClass);
+                });
+        propagateIfChanged(before, changed);
+      }
 
       // Initialize the return activity of the operands
       for (Value operand : op->getOperands()) {
         if (isa<MemRefType, LLVM::LLVMPointerType>(operand.getType())) {
           auto *retAliasClasses =
               getOrCreateFor<AliasClassLattice>(op, operand);
-          if (retAliasClasses->isUnknown()) {
-            propagateIfChanged(before, before->setActiveOut());
-          } else {
-            for (DistinctAttr retAliasClass :
-                 retAliasClasses->getAliasClasses())
-              propagateIfChanged(before, before->setActiveOut(retAliasClass));
-          }
+          ChangeResult changed =
+              retAliasClasses->getAliasClassesObject().foreachClass(
+                  [before](DistinctAttr retAliasClass,
+                           enzyme::AliasClassSet::State state) {
+                    if (state == enzyme::AliasClassSet::State::Undefined)
+                      return ChangeResult::NoChange;
+                    return before->setActiveOut(retAliasClass);
+                  });
+          propagateIfChanged(before, changed);
         }
       }
     }
@@ -794,20 +807,6 @@ void traverseCallGraph(FunctionOpInterface root,
   }
 }
 
-static const enzyme::AliasClassSet &
-getDefaultPointsTo(const enzyme::PointsToSets &pointsToSets) {
-  // Get the default points-to alias class set, which is where the
-  // "unknown" and any other unlisted class set points to.
-  const enzyme::AliasClassSet &defaultPointsTo =
-      pointsToSets.getPointsTo(nullptr);
-  // Unknown class can point to unknown or nothing, unless further
-  // refined.
-  assert((defaultPointsTo.isUnknown() ||
-          defaultPointsTo.getAliasClasses().empty()) &&
-         "new case introduced for AliasClassSet?");
-  return defaultPointsTo;
-}
-
 void printActivityAnalysisResults(const DataFlowSolver &solver,
                                   FunctionOpInterface callee,
                                   const SmallPtrSet<Operation *, 2> &returnOps,
@@ -835,27 +834,31 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
       // Traverse the points-to sets in a simple BFS
       std::deque<DistinctAttr> frontier;
       DenseSet<DistinctAttr> visited;
-      auto scheduleVisit = [&](auto range) {
-        for (DistinctAttr neighbor : range) {
+      auto scheduleVisit = [&](const enzyme::AliasClassSet &aliasClasses) {
+        aliasClasses.foreachClass([&](DistinctAttr neighbor,
+                                      enzyme::AliasClassSet::State state) {
+          assert(neighbor && "unhandled undefined/unknown case before visit");
           if (!visited.contains(neighbor)) {
             visited.insert(neighbor);
             frontier.push_back(neighbor);
           }
-        }
+          return ChangeResult::NoChange;
+        });
       };
 
+      // If this triggers, investigate why the alias classes weren't computed.
+      // If they weren't computed legitimately, treat the value as
+      // conservatively non-constant or change the return type to be tri-state.
+      assert(!aliasClassLattice->isUndefined() &&
+             "didn't compute alias classes");
+
       if (aliasClassLattice->isUnknown()) {
-        // If this pointer is in unknown alias class, it may point to active
-        // data if the unknown alias class is known to point to something and
-        // may not point to active data if the unknown alias class is known not
-        // to point to anything.
-        auto &defaultPointsTo = getDefaultPointsTo(*pointsToSets);
-        return !defaultPointsTo.isUnknown() &&
-               defaultPointsTo.getAliasClasses().empty();
+        // Pointers of unknown class may point to active data.
+        // TODO: is this overly conservative? Should we rather check
+        // if listed classes may point to non-constants?
+        return false;
       } else {
-        const DenseSet<DistinctAttr> &aliasClasses =
-            aliasClassLattice->getAliasClasses();
-        scheduleVisit(aliasClasses);
+        scheduleVisit(aliasClassLattice->getAliasClassesObject());
       }
       while (!frontier.empty()) {
         DistinctAttr aliasClass = frontier.front();
@@ -867,21 +870,16 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
             bma->activeDataFlowsOut(aliasClass))
           return false;
 
-        // Or if it points to a pointer that points to active data.
-        if (pointsToSets->getPointsTo(aliasClass).isUnknown()) {
-          // If a pointer points to an unknown alias set, query the default
-          // points-to alias set (which also applies to the unknown alias set).
-          auto &defaultPointsTo = getDefaultPointsTo(*pointsToSets);
-          // If it is in turn unknown, conservatively assume the pointer may be
-          // pointing to some active data.
-          if (defaultPointsTo.isUnknown())
-            return false;
-          // Otherwise look at classes pointed to by unknown (which can only be
-          // an empty set as of time of writing).
-          scheduleVisit(defaultPointsTo.getAliasClasses());
-          continue;
-        }
-        scheduleVisit(pointsToSets->getPointsTo(aliasClass).getAliasClasses());
+        // If this triggers, investigate why points-to sets couldn't be
+        // computed. Treat conservatively as "unknown" if necessary.
+        assert(!pointsToSets->getPointsTo(aliasClass).isUndefined() &&
+               "couldn't compute points-to sets");
+
+        // Pointers to unknown classes may (transitively) point to active data.
+        if (pointsToSets->getPointsTo(aliasClass).isUnknown())
+          return false;
+
+        scheduleVisit(pointsToSets->getPointsTo(aliasClass));
       }
       // Otherwise, it's constant
       return true;
