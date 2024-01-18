@@ -1,6 +1,11 @@
 #include <cmath>
 #include <stdio.h>
 
+#include <sys/time.h>
+float tdiff(struct timeval *start, struct timeval *end) {
+  return (end->tv_sec-start->tv_sec) + 1e-6*(end->tv_usec-start->tv_usec);
+}
+
 template<typename T>
 struct Triple {
     size_t row;
@@ -10,6 +15,53 @@ struct Triple {
     Triple(size_t row, size_t col, T val) : row(row), col(col), val(val) {}
 };
 
+__attribute__((enzyme_sparse_accumulate))
+static void inner_store(int64_t row, int64_t col, size_t N, float val, std::vector<Triple<float>> &triplets) {
+#ifdef BENCHMARK
+    if (val == 0.0) return;
+#else
+#warning "Compiling for debug/verfication, performance may be slowed"
+#endif
+    triplets.emplace_back(row % N, col % N, val);
+}
+
+__attribute__((enzyme_sparse_accumulate))
+static void inner_store(int64_t row, int64_t col, size_t N, double val, std::vector<Triple<double>> &triplets) {
+#ifdef BENCHMARK
+    if (val == 0.0) return;
+#else
+#warning "Compiling for debug/verfication, performance may be slowed"
+#endif
+    triplets.emplace_back(row % N, col % N, val);
+}
+
+template<typename T>
+__attribute__((always_inline))
+static void sparse_store(double val, int64_t idx, size_t i, size_t N, std::vector<Triple<T>> &triplets) {
+    if (val == 0.0) return;
+    idx /= sizeof(T);
+    inner_store(i, idx, N, val, triplets);
+}
+
+template<typename T>
+__attribute__((always_inline))
+static double sparse_load(int64_t idx, size_t i, size_t N, std::vector<Triple<T>> &triplets) {
+    return 0.0;
+}
+
+template<typename T>
+__attribute__((always_inline))
+static void ident_store(T, int64_t idx, size_t i) {
+    assert(0 && "should never load");
+}
+
+template<typename T>
+__attribute__((always_inline))
+static double ident_load(int64_t idx, size_t i, size_t N) {
+    idx /= sizeof(T);
+    return (T)(idx == i);// ? 1.0 : 0.0;
+}
+
 extern int enzyme_width;
 extern int enzyme_dup;
 extern int enzyme_dupv;
@@ -17,16 +69,16 @@ extern int enzyme_const;
 extern int enzyme_dupnoneed;
 
 template <typename T, typename... Tys>
-extern T __enzyme_autodiff(void*, Tys...);
+extern T __enzyme_autodiff(void*, Tys...) noexcept;
 
 template <typename T, typename... Tys>
-extern T __enzyme_fwddiff(void *, Tys...);
+extern T __enzyme_fwddiff(void *, Tys...) noexcept;
 
 template <typename T, typename... Tys>
-extern T __enzyme_todense(Tys...);
+extern T __enzyme_todense(Tys...) noexcept;
 
 template <typename T, typename... Tys>
-extern T __enzyme_post_sparse_todense(Tys...);
+extern T __enzyme_post_sparse_todense(Tys...) noexcept;
 
 template<typename T, size_t n>
 __attribute__((always_inline))

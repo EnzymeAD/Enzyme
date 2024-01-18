@@ -150,41 +150,6 @@ static void gradient_ip(const T *__restrict__ pos0, const size_t num_faces, cons
                             enzyme_dup, x, out);
 }
 
-
-template<typename T>
-__attribute__((always_inline))
-static T ident_load(unsigned long long offset, size_t i) {
-    return (offset / sizeof(T) == i) ? T(1) : T(0); 
-}
-
-
-template<typename T>
-__attribute__((always_inline))
-static void err_store(T val, unsigned long long offset, size_t i) {
-    assert(0 && "store is not legal");
-}
-
-
-template<typename T>
-__attribute__((always_inline))
-static T zero_load(unsigned long long offset, size_t i, std::vector<Triple<T>> &hess) {
-    return T(0);
-}
-
-
-__attribute__((enzyme_sparse_accumulate))
-void inner_store(size_t offset, size_t i, float val, std::vector<Triple<float>> &hess) {
-    hess.push_back(Triple<float>(offset, i, val));
-}
-
-template<typename T>
-__attribute__((always_inline))
-static void csr_store(T val, unsigned long long offset, size_t i, std::vector<Triple<T>> &hess) {
-    if (val == 0.0) return;
-    offset /= sizeof(T);
-    inner_store(offset, i, val, hess);
-}
-
 template<typename T>
 __attribute__((noinline))
 std::vector<Triple<T>> hessian(const T*__restrict__ pos0, size_t num_faces, const int* faces, const T*__restrict__ x, size_t x_pts)
@@ -217,13 +182,20 @@ std::vector<Triple<T>> hessian(const T*__restrict__ pos0, size_t num_faces, cons
                                 enzyme_const, pos02,
                                 enzyme_const, num_faces,
                                 enzyme_const, faces,
-                                enzyme_dup, x2, __enzyme_todense<T*>(ident_load<T>, err_store<T>, i),
-                                enzyme_dupnoneed, nullptr, __enzyme_todense<T*>(zero_load<T>, csr_store<T>, i, &hess));
+                                enzyme_dup, x2, __enzyme_todense<T*>(ident_load<T>, ident_store<T>, i),
+                                enzyme_dupnoneed, nullptr, __enzyme_todense<T*>(sparse_load<T>, sparse_store<T>, i, &hess));
     return hess;
 }
 
-int main() {
-    const size_t x_pts = 1;
+int main(int argc, char** argv) {
+    size_t x_pts = 8;
+
+    if (argc >= 2) {
+         x_pts = atoi(argv[1]);
+    }
+
+    // TODO generate data for more inputs
+    assert(x_ptrs == 1);
     const float x[] = {0.0, 1.0, 0.0};
 
 
@@ -233,25 +205,37 @@ int main() {
     const float pos0[] = {1.0, 2.0, 3.0, 4.0, 3.0, 2.0, 3.0, 1.0, 3.0};
 
     // Call eigenstuffM_simple
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
     const float resultM = eigenstuffM(pos0, num_faces, faces, x);
-    printf("Result for eigenstuffM_simple: %f\n", resultM);
+    gettimeofday(&end, NULL);
+    printf("Result for eigenstuffM_simple: %f, runtime:%f\n", resultM, tdiff(end, start));
 
     // Call eigenstuffL_simple
+    gettimeofday(&start, NULL);
     const float resultL = eigenstuffL(pos0, num_faces, faces, x);
-    printf("Result for eigenstuffL_simple: %f\n", resultL);
+    gettimeofday(&end, NULL);
+    printf("Result for eigenstuffL_simple: %f, runtime:%f\n", resultL, tdiff(end, start));
 
     float dx[sizeof(x)/sizeof(x[0])];
     for (size_t i=0; i<sizeof(dx)/sizeof(x[0]); i++)
         dx[i] = 0;
     gradient_ip(pos0, num_faces, faces, x, dx);
 
+    if (x_pts < 30) {
     for (size_t i=0; i<sizeof(dx)/sizeof(dx[0]); i++)
         printf("eigenstuffM grad_vert[%zu]=%f\n", i, dx[i]);
-    
-    size_t num_elts = sizeof(x)/sizeof(x[0]) * sizeof(x)/sizeof(x[0]);
+    }
 
+    gettimeofday(&start, NULL);
     auto hess_x = hessian(pos0, num_faces, faces, x, x_pts);
+    gettimeofday(&end, NULL);
 
+    printf("Number of elements %ld\n", hess_x.size());
+  
+    printf("Runtime %0.6f\n", tdiff(&start, &end));
+
+    if (x_pts < 30)
     for (auto &hess : hess_x) {
         printf("i=%lu, j=%lu, val=%f\n", hess.row, hess.col, hess.val);
     }
