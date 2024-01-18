@@ -2867,6 +2867,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             I->eraseFromParent();
             return candidate;
           }
+          break;
         }
       }
       return push(I);
@@ -2972,6 +2973,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             replaceAndErase(cur, candidate);
             return "CSE";
           }
+          break;
         }
       }
     }
@@ -3034,7 +3036,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       return with;
     }
     if (isNot(val, orig)) {
-      return B.CreateNot(with);
+      return pushcse(B.CreateNot(with));
     }
     if (isa<PHINode>(val))
       return val;
@@ -3092,7 +3094,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
           return val;
         push(I);
-        return push(B.CreateOr(lhs, rhs, "sel." + I->getName()));
+        return pushcse(B.CreateOr(lhs, rhs, "sel." + I->getName()));
       }
 
       if (I->getOpcode() == Instruction::Xor) {
@@ -3321,6 +3323,24 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         changed = true;
         continue;
       }
+      if (auto op = dyn_cast<SelectInst>(v)) {
+        if (auto tc = dyn_cast<ConstantFP>(op->getTrueValue()))
+          if (tc->isZero()) {
+            operands.push_back(pushcse(B.CreateUIToFP(
+                pushcse(B.CreateNot(op->getCondition())), op->getType())));
+            operands.push_back(op->getFalseValue());
+            changed = true;
+            continue;
+          }
+        if (auto tc = dyn_cast<ConstantFP>(op->getFalseValue()))
+          if (tc->isZero()) {
+            operands.push_back(
+                pushcse(B.CreateUIToFP(op->getCondition(), op->getType())));
+            operands.push_back(op->getTrueValue());
+            changed = true;
+            continue;
+          }
+      }
       operands.push_back(v);
     }
     if (constval)
@@ -3464,6 +3484,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
   if (auto P = isSum(cur)) {
     // whether negated
     SmallVector<std::pair<Value *, bool>, 1> conditions;
+    bool legal = true;
     for (auto &v : callOperands(P)) {
       // z = uitofp i1 c to float -> select c, (prod withot z), 0
       if (auto op = dyn_cast<UIToFPInst>(v)) {
@@ -3491,24 +3512,27 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             continue;
           }
       }
+      legal = false;
+      break;
     }
     Value *condition = nullptr;
-    for (size_t i = 0; i < conditions.size(); i++) {
-      size_t count = 0;
-      for (size_t j = 0; j < conditions.size(); j++) {
-        if (((conditions[i].first == conditions[j].first) &&
-             (conditions[i].second == conditions[i].second)) ||
-            ((isNot(conditions[i].first, conditions[j].first) &&
-              (conditions[i].second != conditions[i].second))))
-          count++;
+    if (legal)
+      for (size_t i = 0; i < conditions.size(); i++) {
+        size_t count = 0;
+        for (size_t j = 0; j < conditions.size(); j++) {
+          if (((conditions[i].first == conditions[j].first) &&
+               (conditions[i].second == conditions[i].second)) ||
+              ((isNot(conditions[i].first, conditions[j].first) &&
+                (conditions[i].second != conditions[i].second))))
+            count++;
+        }
+        if (count == conditions.size() && count > 1) {
+          condition = conditions[i].first;
+          if (conditions[i].second)
+            condition = pushcse(B.CreateNot(condition, "sumpnot"));
+          break;
+        }
       }
-      if (count == conditions.size() && count > 1) {
-        condition = conditions[i].first;
-        if (conditions[i].second)
-          condition = pushcse(B.CreateNot(condition, "sumpnot"));
-        break;
-      }
-    }
 
     if (condition) {
 
@@ -3540,6 +3564,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
               continue;
             }
         }
+        llvm::errs() << " unhandled call op sumselect: " << *v << "\n";
         assert(0);
       }
 
@@ -3837,24 +3862,23 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
 
               Value *tmp = nullptr;
               if (isa<ZExtInst>(a0))
-                tmp = B.CreateSExt(a0->getOperand(0), a0->getType());
+                tmp = pushcse(B.CreateSExt(a0->getOperand(0), a0->getType()));
               else if (isa<SExtInst>(a0))
-                tmp = B.CreateZExt(a0->getOperand(0), a0->getType());
+                tmp = pushcse(B.CreateZExt(a0->getOperand(0), a0->getType()));
               else
                 assert(0);
-              tmp = pushcse(tmp);
               replaceAndErase(cur, tmp);
               return "NegSZExtI1";
             }
 
-  //  (lshr exact (mul a, C1), C2), C -> mul a, (lhsr exact C1, C2) if C2
-  //  divides C1
   if ((cur->getOpcode() == Instruction::LShr ||
        cur->getOpcode() == Instruction::SDiv ||
        cur->getOpcode() == Instruction::UDiv) &&
       cur->isExact())
     if (auto C2 = dyn_cast<ConstantInt>(cur->getOperand(1)))
-      if (auto mul = dyn_cast<BinaryOperator>(cur->getOperand(0)))
+      if (auto mul = dyn_cast<BinaryOperator>(cur->getOperand(0))) {
+        //  (lshr exact (mul a, C1), C2), C -> mul a, (lhsr exact C1, C2) if C2
+        //  divides C1
         if (mul->getOpcode() == Instruction::Mul)
           for (int i0 = 0; i0 < 2; i0++)
             if (auto C1 = dyn_cast<ConstantInt>(mul->getOperand(i0))) {
@@ -3871,16 +3895,49 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
               else
                 APInt::sdivrem(lhs, rhs, div, rem);
               if (rem == 0) {
-                auto res = B.CreateMul(mul->getOperand(1 - i0),
-                                       ConstantInt::get(cur->getType(), div),
-                                       "mdiv." + cur->getName(),
-                                       mul->hasNoUnsignedWrap(),
-                                       mul->hasNoSignedWrap());
+                auto res = pushcse(B.CreateMul(
+                    mul->getOperand(1 - i0),
+                    ConstantInt::get(cur->getType(), div),
+                    "mdiv." + cur->getName(), mul->hasNoUnsignedWrap(),
+                    mul->hasNoSignedWrap()));
                 push(mul);
                 replaceAndErase(cur, res);
                 return "IMulDivConst";
               }
             }
+        //  (lshr exact (add a, C1), C2), C -> add a, (lhsr exact C1, C2) if C2
+        if (mul->getOpcode() == Instruction::Add)
+          for (int i0 = 0; i0 < 2; i0++)
+            if (auto C1 = dyn_cast<ConstantInt>(mul->getOperand(i0))) {
+              auto lhs = C1->getValue();
+              APInt rhs = C2->getValue();
+              if (cur->getOpcode() == Instruction::LShr) {
+                rhs = APInt(rhs.getBitWidth(), 1) << rhs;
+              }
+
+              APInt div, rem;
+              if (cur->getOpcode() == Instruction::LShr ||
+                  cur->getOpcode() == Instruction::UDiv)
+                APInt::udivrem(lhs, rhs, div, rem);
+              else
+                APInt::sdivrem(lhs, rhs, div, rem);
+              if (rem == 0 && ((mul->hasNoUnsignedWrap() &&
+                                (cur->getOpcode() == Instruction::LShr ||
+                                 cur->getOpcode() == Instruction::UDiv)) ||
+                               (mul->hasNoSignedWrap() &&
+                                (cur->getOpcode() == Instruction::AShr ||
+                                 cur->getOpcode() == Instruction::SDiv)))) {
+                auto res = pushcse(B.CreateAdd(
+                    mul->getOperand(1 - i0),
+                    ConstantInt::get(cur->getType(), div),
+                    "madd." + cur->getName(), mul->hasNoUnsignedWrap(),
+                    mul->hasNoSignedWrap()));
+                push(mul);
+                replaceAndErase(cur, res);
+                return "IAddDivConst";
+              }
+            }
+      }
 
   // mul (mul a, const1), (mul b, const2) -> mul (mul a, b), (const1, const2)
   if (cur->getOpcode() == Instruction::FMul)
@@ -4599,46 +4656,6 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       }
   }
 
-  // and a, b -> and a b[with a true]
-  if (cur->getOpcode() == Instruction::And) {
-    auto lhs = replace(cur->getOperand(0), cur->getOperand(1),
-                       ConstantInt::getTrue(cur->getContext()));
-    if (lhs != cur->getOperand(0)) {
-      auto res = pushcse(
-          B.CreateAnd(lhs, cur->getOperand(1), "postand." + cur->getName()));
-      replaceAndErase(cur, res);
-      return "AndReplaceLHS";
-    }
-    auto rhs = replace(cur->getOperand(1), cur->getOperand(0),
-                       ConstantInt::getTrue(cur->getContext()));
-    if (rhs != cur->getOperand(1)) {
-      auto res = pushcse(
-          B.CreateAnd(cur->getOperand(0), rhs, "postand." + cur->getName()));
-      replaceAndErase(cur, res);
-      return "AndReplaceRHS";
-    }
-  }
-
-  // or a, b -> or a b[with a false]
-  if (cur->getOpcode() == Instruction::Or) {
-    auto lhs = replace(cur->getOperand(0), cur->getOperand(1),
-                       ConstantInt::getFalse(cur->getContext()));
-    if (lhs != cur->getOperand(0)) {
-      auto res = pushcse(
-          B.CreateOr(lhs, cur->getOperand(1), "postor." + cur->getName()));
-      replaceAndErase(cur, res);
-      return "OrReplaceLHS";
-    }
-    auto rhs = replace(cur->getOperand(1), cur->getOperand(0),
-                       ConstantInt::getFalse(cur->getContext()));
-    if (rhs != cur->getOperand(1)) {
-      auto res = pushcse(
-          B.CreateOr(cur->getOperand(0), rhs, "postor." + cur->getName()));
-      replaceAndErase(cur, res);
-      return "OrReplaceRHS";
-    }
-  }
-
   /*
   // and (i == c), (i != d) -> and (i == c) && (c != d)
   if (cur->getOpcode() == Instruction::And) {
@@ -4869,7 +4886,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     if (isSum(cur))
       opcode = Instruction::FAdd;
     auto Ty = B.getInt64Ty();
-    SmallVector<Instruction *, 1> temporaries;
+    SmallPtrSet<Instruction *, 1> temporaries;
     SmallVector<Instruction *, 1> precasts;
     Value *lhs = nullptr;
 
@@ -4930,7 +4947,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           else
             lhs = B.CreateSExt(ext->getOperand(0), Ty);
           if (auto I = dyn_cast<Instruction>(lhs))
-            temporaries.push_back(I);
+            if (I != ext->getOperand(0))
+              temporaries.insert(I);
         }
       }
     }
@@ -5028,13 +5046,18 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           else
             rhs = B.CreateSExt(ext->getOperand(0), Ty);
           if (auto I = dyn_cast<Instruction>(rhs))
-            temporaries.push_back(I);
+            if (I != ext->getOperand(0))
+              temporaries.insert(I);
         }
       }
     }
 
     if (lhs && rhs) {
       Value *res = nullptr;
+      if (temporaries.count(dyn_cast<Instruction>(lhs)))
+        lhs = pushcse(lhs);
+      if (temporaries.count(dyn_cast<Instruction>(rhs)))
+        rhs = pushcse(rhs);
       switch (opcode) {
       case Instruction::FAdd:
         res = B.CreateAdd(lhs, rhs, "", false, true);
@@ -5050,8 +5073,6 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         llvm_unreachable("Illegal opcode");
       }
       res = pushcse(res);
-      for (auto I : temporaries)
-        push(I);
       for (auto I : precasts)
         push(I);
       /*
@@ -5065,7 +5086,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                        MDNode::get(I->getContext(), vals));
       }
       */
-      auto ext = B.CreateSIToFP(res, cur->getType());
+      auto ext = pushcse(B.CreateSIToFP(res, cur->getType()));
       replaceAndErase(cur, ext);
       return "BinopExtToExtBinop";
 
@@ -5429,19 +5450,6 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     }
   }
 
-  if (auto SI = dyn_cast<SelectInst>(cur)) {
-    auto tval = replace(SI->getTrueValue(), SI->getCondition(),
-                        ConstantInt::getTrue(SI->getContext()));
-    auto fval = replace(SI->getFalseValue(), SI->getCondition(),
-                        ConstantInt::getFalse(SI->getContext()));
-    if (tval != SI->getTrueValue() || fval != SI->getFalseValue()) {
-      auto res = pushcse(B.CreateSelect(SI->getCondition(), tval, fval,
-                                        "postsel." + SI->getName()));
-      replaceAndErase(cur, res);
-      return "SelectReplace";
-    }
-  }
-
   // select cmp, (ext tval), (ext fval) ->  (cmp & tval) | (!cmp & fval)
   if (auto SI = dyn_cast<SelectInst>(cur)) {
 
@@ -5492,6 +5500,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       replaceAndErase(cur, ext);
       return "SelectI1";
     }
+
   if (auto PN = dyn_cast<PHINode>(cur)) {
     B.SetInsertPoint(PN->getParent()->getFirstNonPHI());
     if (SE.isSCEVable(PN->getType())) {
@@ -5519,7 +5528,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           push(U);
         }
         auto point = PN->getParent()->getFirstNonPHI();
-        auto tmp = B.CreatePHI(cur->getType(), 1);
+        auto tmp = cast<PHINode>(pushcse(B.CreatePHI(cur->getType(), 1)));
         cur->replaceAllUsesWith(tmp);
         cur->eraseFromParent();
 
@@ -5640,15 +5649,15 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         legal = false;
       }
       if (legal) {
-        auto PN2 = B.CreatePHI(B.getInt64Ty(), PN->getNumIncomingValues());
+        auto PN2 = cast<PHINode>(
+            pushcse(B.CreatePHI(B.getInt64Ty(), PN->getNumIncomingValues())));
         PN2->takeName(PN);
         for (auto val : llvm::enumerate(negOps))
           PN2->addIncoming(val.value(), PN->getIncomingBlock(val.index()));
 
         push(PN2);
 
-        auto fneg = B.CreateSIToFP(PN2, PN->getType());
-        push(fneg);
+        auto fneg = pushcse(B.CreateSIToFP(PN2, PN->getType()));
 
         for (auto I : prevNegOps)
           push(I);
@@ -5665,7 +5674,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
         auto v = PN->getIncomingValue(i);
         if (auto C = dyn_cast<ConstantFP>(v)) {
-          negOps.push_back(C->isZero() ? C : B.CreateFNeg(C));
+          negOps.push_back(C->isZero() ? C : pushcse(B.CreateFNeg(C)));
           continue;
         }
         if (auto fneg = dyn_cast<Instruction>(v)) {
@@ -5683,8 +5692,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
 
         push(PN);
 
-        auto fneg = B.CreateFNeg(PN);
-        push(fneg);
+        auto fneg = pushcse(B.CreateFNeg(PN));
 
         for (auto &U : cur->uses()) {
           if (U.getUser() == fneg)
@@ -5706,7 +5714,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
         auto v = PN->getIncomingValue(i);
         if (auto C = dyn_cast<ConstantInt>(v)) {
-          negOps.push_back(B.CreateNeg(C));
+          negOps.push_back(pushcse(B.CreateNeg(C)));
           continue;
         }
         if (auto fneg = dyn_cast<BinaryOperator>(v)) {
@@ -5726,8 +5734,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
 
         push(PN);
 
-        auto fneg = B.CreateNeg(PN);
-        push(fneg);
+        auto fneg = pushcse(B.CreateNeg(PN));
 
         for (auto &U : cur->uses()) {
           if (U.getUser() == fneg)
@@ -5909,23 +5916,20 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         }
 
         if (legal && changed) {
-          auto lhsPN =
-              B.CreatePHI(lhsOps[0]->getType(), PN->getNumIncomingValues());
+          auto lhsPN = cast<PHINode>(pushcse(
+              B.CreatePHI(lhsOps[0]->getType(), PN->getNumIncomingValues())));
           PHINode *rhsPN = nullptr;
           if (numOps == 2)
-            rhsPN =
-                B.CreatePHI(rhsOps[0]->getType(), PN->getNumIncomingValues());
+            rhsPN = cast<PHINode>(pushcse(
+                B.CreatePHI(rhsOps[0]->getType(), PN->getNumIncomingValues())));
 
           for (auto val : llvm::enumerate(lhsOps))
             lhsPN->addIncoming(val.value(), PN->getIncomingBlock(val.index()));
-
-          push(lhsPN);
 
           if (numOps == 2) {
             for (auto val : llvm::enumerate(rhsOps))
               rhsPN->addIncoming(val.value(),
                                  PN->getIncomingBlock(val.index()));
-            push(rhsPN);
           }
 
           Value *fneg = nullptr;
@@ -6039,14 +6043,67 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
              iter++) {
           (*iter)->moveBefore(br);
         }
-        auto sel = B.CreateSelect(
+        auto sel = pushcse(B.CreateSelect(
             br->getCondition(), PN->getIncomingValueForBlock(prev),
             PN->getIncomingValueForBlock(br->getSuccessor(1)),
-            "tphisel." + cur->getName());
+            "tphisel." + cur->getName()));
 
         replaceAndErase(cur, sel);
         return "TPhiSel";
       }
+    }
+  }
+
+  if (auto SI = dyn_cast<SelectInst>(cur)) {
+    auto tval = replace(SI->getTrueValue(), SI->getCondition(),
+                        ConstantInt::getTrue(SI->getContext()));
+    auto fval = replace(SI->getFalseValue(), SI->getCondition(),
+                        ConstantInt::getFalse(SI->getContext()));
+    if (tval != SI->getTrueValue() || fval != SI->getFalseValue()) {
+      auto res = pushcse(B.CreateSelect(SI->getCondition(), tval, fval,
+                                        "postsel." + SI->getName()));
+      replaceAndErase(cur, res);
+      return "SelectReplace";
+    }
+  }
+
+  // and a, b -> and a b[with a true]
+  if (cur->getOpcode() == Instruction::And) {
+    auto lhs = replace(cur->getOperand(0), cur->getOperand(1),
+                       ConstantInt::getTrue(cur->getContext()));
+    if (lhs != cur->getOperand(0)) {
+      auto res = pushcse(
+          B.CreateAnd(lhs, cur->getOperand(1), "postand." + cur->getName()));
+      replaceAndErase(cur, res);
+      return "AndReplaceLHS";
+    }
+    auto rhs = replace(cur->getOperand(1), cur->getOperand(0),
+                       ConstantInt::getTrue(cur->getContext()));
+    if (rhs != cur->getOperand(1)) {
+      auto res = pushcse(
+          B.CreateAnd(cur->getOperand(0), rhs, "postand." + cur->getName()));
+      replaceAndErase(cur, res);
+      return "AndReplaceRHS";
+    }
+  }
+
+  // or a, b -> or a b[with a false]
+  if (cur->getOpcode() == Instruction::Or) {
+    auto lhs = replace(cur->getOperand(0), cur->getOperand(1),
+                       ConstantInt::getFalse(cur->getContext()));
+    if (lhs != cur->getOperand(0)) {
+      auto res = pushcse(
+          B.CreateOr(lhs, cur->getOperand(1), "postor." + cur->getName()));
+      replaceAndErase(cur, res);
+      return "OrReplaceLHS";
+    }
+    auto rhs = replace(cur->getOperand(1), cur->getOperand(0),
+                       ConstantInt::getFalse(cur->getContext()));
+    if (rhs != cur->getOperand(1)) {
+      auto res = pushcse(
+          B.CreateOr(cur->getOperand(0), rhs, "postor." + cur->getName()));
+      replaceAndErase(cur, res);
+      return "OrReplaceRHS";
     }
   }
   return {};
@@ -6121,6 +6178,7 @@ bool cannotDependOnLoopIV(const SCEV *S, const Loop *L) {
     return !L->contains(I->getParent());
   }
   if (auto addrec = dyn_cast<SCEVAddRecExpr>(S)) {
+    return false;
     if (addrec->getLoop() == L)
       return false;
     for (auto o : addrec->operands())
@@ -7104,7 +7162,9 @@ getSparseConditions(bool &legal, Value *val,
       }
       if (scope)
         EmitFailure("NoSparsification", I->getDebugLoc(), I,
-                    " No sparsification: not sparse solvable(icmp): ", *sub1);
+                    "F: ", *I->getParent()->getParent(), "\n",
+                    " No sparsification: not sparse solvable(icmp): ", *I,
+                    " via ", *sub1);
       legal = false;
       return defaultFloat;
     }
@@ -7198,7 +7258,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
         }
   }
 
-  llvm::errs() << " pre fix inner: " << F << "\n";
+  // llvm::errs() << " pre fix inner: " << F << "\n";
 
   // Full simplification
   while (!Q.empty()) {
@@ -7206,7 +7266,8 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     std::set<Instruction *> prev;
     for (auto v : Q)
       prev.insert(v);
-    llvm::errs() << "\n\n\n\n" << F << "\ncur: " << *cur << "\n";
+    // llvm::errs() << "\n\n\n\n" << F << "\n";
+    llvm::errs() << "cur: " << *cur << "\n";
     auto changed = fixSparse_inner(cur, F, Q, DT, SE, LI, DL);
     (void)changed;
     if (changed) {
@@ -7215,11 +7276,11 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       for (auto I : Q)
         if (!prev.count(I))
           llvm::errs() << " + " << *I << "\n";
-      llvm::errs() << F << "\n\n";
+      // llvm::errs() << F << "\n\n";
     }
   }
 
-  llvm::errs() << " post fix inner " << F << "\n";
+  // llvm::errs() << " post fix inner " << F << "\n";
 
   SmallVector<std::pair<BasicBlock *, BranchInst *>, 1> sparseBlocks;
   bool legalToSparse = true;
@@ -7422,8 +7483,9 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
   }
 
   if (forSparsification.size() == 0) {
-    llvm::errs() << " found no stores for sparsification\n";
-    assert(0);
+    auto context = &F.getEntryBlock().front();
+    EmitFailure("NoSparsification", context->getDebugLoc(), context, "F: ", F,
+                "\n Found no stores for sparsification");
     return;
   }
 
@@ -7652,10 +7714,253 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
   }
 }
 
+void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
+                    const llvm::DataLayout &DL) {
+  auto load_fn = cast<Function>(getBaseObject(CI->getArgOperand(0)));
+  auto store_fn = cast<Function>(getBaseObject(CI->getArgOperand(1)));
+  size_t argstart = 2;
+#if LLVM_VERSION_MAJOR >= 14
+  size_t num_args = CI->arg_size();
+#else
+  size_t num_args = CI->getNumArgOperands();
+#endif
+  SmallVector<std::pair<Instruction *, Value *>, 1> users;
+
+  for (auto U : CI->users()) {
+    users.push_back(std::make_pair(cast<Instruction>(U), CI));
+  }
+  IntegerType *intTy = IntegerType::get(CI->getContext(), 64);
+  auto toInt = [&](IRBuilder<> &B, llvm::Value *V) {
+    if (auto PT = dyn_cast<PointerType>(V->getType())) {
+      if (PT->getAddressSpace() != 0) {
+#if LLVM_VERSION_MAJOR < 17
+#if LLVM_VERSION_MAJOR >= 15
+        if (CI->getContext().supportsTypedPointers()) {
+#endif
+          V = B.CreateAddrSpaceCast(
+              V, PointerType::getUnqual(PT->getPointerElementType()));
+#if LLVM_VERSION_MAJOR >= 15
+        } else {
+          V = B.CreateAddrSpaceCast(V,
+                                    PointerType::getUnqual(PT->getContext()));
+        }
+#endif
+#else
+        V = B.CreateAddrSpaceCast(V, PointerType::getUnqual(PT->getContext()));
+#endif
+      }
+      return B.CreatePtrToInt(V, intTy);
+    }
+    auto IT = cast<IntegerType>(V->getType());
+    if (IT == intTy)
+      return V;
+    return B.CreateZExtOrTrunc(V, intTy);
+  };
+  SmallVector<Instruction *, 1> toErase;
+
+  ValueToValueMapTy replacements;
+  replacements[CI] = Constant::getNullValue(CI->getType());
+  Instruction *remaining = nullptr;
+  while (users.size()) {
+    auto pair = users.back();
+    users.pop_back();
+    auto U = pair.first;
+    auto val = pair.second;
+    if (replacements.count(U))
+      continue;
+
+    IRBuilder B(U);
+    if (auto CI = dyn_cast<CastInst>(U)) {
+      for (auto U : CI->users()) {
+        users.push_back(std::make_pair(cast<Instruction>(U), CI));
+      }
+      auto rep =
+          B.CreateCast(CI->getOpcode(), replacements[val], CI->getDestTy());
+      if (auto I = dyn_cast<Instruction>(rep))
+        I->setDebugLoc(CI->getDebugLoc());
+      replacements[CI] = rep;
+      continue;
+    }
+    if (auto SI = dyn_cast<SelectInst>(U)) {
+      for (auto U : SI->users()) {
+        users.push_back(std::make_pair(cast<Instruction>(U), SI));
+      }
+      auto tval = SI->getTrueValue();
+      auto fval = SI->getFalseValue();
+      auto rep = B.CreateSelect(
+          SI->getCondition(),
+          replacements.count(tval) ? (Value *)replacements[tval] : tval,
+          replacements.count(fval) ? (Value *)replacements[fval] : fval);
+      if (auto I = dyn_cast<Instruction>(rep))
+        I->setDebugLoc(SI->getDebugLoc());
+      replacements[SI] = rep;
+      continue;
+    }
+    /*
+    if (auto CI = dyn_cast<PHINode>(U)) {
+      for (auto U : CI->users()) {
+        users.push_back(std::make_pair(cast<Instruction>(U), CI));
+      }
+      continue;
+    }
+    */
+    if (auto CI = dyn_cast<CallInst>(U)) {
+      auto funcName = getFuncNameFromCall(CI);
+      if (funcName == "julia.pointer_from_objref") {
+        for (auto U : CI->users()) {
+          users.push_back(std::make_pair(cast<Instruction>(U), CI));
+        }
+        auto *F = CI->getCalledOperand();
+
+        SmallVector<Value *, 1> args;
+#if LLVM_VERSION_MAJOR >= 14
+        for (auto &arg : CI->args())
+#else
+        for (auto &arg : CI->arg_operands())
+#endif
+          args.push_back(replacements[arg]);
+
+        auto FT = CI->getFunctionType();
+
+        auto cal = cast<CallInst>(B.CreateCall(FT, F, args));
+        cal->setCallingConv(CI->getCallingConv());
+        cal->setDebugLoc(CI->getDebugLoc());
+        replacements[CI] = cal;
+        continue;
+      }
+    }
+    if (auto CI = dyn_cast<GetElementPtrInst>(U)) {
+      for (auto U : CI->users()) {
+        users.push_back(std::make_pair(cast<Instruction>(U), CI));
+      }
+      SmallVector<Value *, 1> inds;
+      bool allconst = true;
+      for (auto &ind : CI->indices()) {
+        if (!isa<ConstantInt>(ind)) {
+          allconst = false;
+        }
+        inds.push_back(ind);
+      }
+      Value *gep;
+
+      if (inds.size() == 1) {
+        gep = ConstantInt::get(
+            intTy, (DL.getTypeSizeInBits(CI->getSourceElementType()) + 7) / 8);
+        gep = B.CreateMul(intTy == inds[0]->getType()
+                              ? inds[0]
+                              : B.CreateZExtOrTrunc(inds[0], intTy),
+                          gep, "", true, true);
+        gep = B.CreateAdd(B.CreatePtrToInt(replacements[val], intTy), gep);
+        gep = B.CreateIntToPtr(gep, CI->getType());
+      } else if (!allconst) {
+        gep = B.CreateGEP(CI->getSourceElementType(), replacements[val], inds);
+        if (auto ge = cast<GetElementPtrInst>(gep))
+          ge->setIsInBounds(CI->isInBounds());
+      } else {
+        APInt ai(64, 0);
+        CI->accumulateConstantOffset(DL, ai);
+        gep = B.CreateIntToPtr(ConstantInt::get(intTy, ai), CI->getType());
+      }
+      if (auto I = dyn_cast<Instruction>(gep))
+        I->setDebugLoc(CI->getDebugLoc());
+      replacements[CI] = gep;
+      continue;
+    }
+    if (auto LI = dyn_cast<LoadInst>(U)) {
+      auto diff = toInt(B, replacements[LI->getPointerOperand()]);
+      SmallVector<Value *, 2> args;
+      args.push_back(diff);
+      for (size_t i = argstart; i < num_args; i++)
+        args.push_back(CI->getArgOperand(i));
+      if (load_fn->getFunctionType()->getNumParams() != args.size()) {
+        auto fnName = load_fn->getName();
+        auto found_numargs = load_fn->getFunctionType()->getNumParams();
+        auto expected_numargs = args.size();
+        EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
+                    " incorrect number of arguments to loader function ",
+                    fnName, " expected ", expected_numargs, " found ",
+                    found_numargs, " - ", *load_fn->getFunctionType());
+        continue;
+      } else {
+        bool tocontinue = false;
+        for (size_t i = 0; i < args.size(); i++) {
+          if (load_fn->getFunctionType()->getParamType(i) !=
+              args[i]->getType()) {
+            auto fnName = load_fn->getName();
+            EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
+                        " incorrect type of argument ", i,
+                        " to loader function ", fnName, " expected ",
+                        *args[i]->getType(), " found ",
+                        load_fn->getFunctionType()->params()[i]);
+            tocontinue = true;
+            break;
+          }
+        }
+        if (tocontinue)
+          continue;
+      }
+      CallInst *call = B.CreateCall(load_fn, args);
+      call->setDebugLoc(LI->getDebugLoc());
+      Value *tmp = call;
+      if (tmp->getType() != LI->getType())
+        tmp = B.CreateBitCast(tmp, LI->getType());
+      LI->replaceAllUsesWith(tmp);
+
+      if (load_fn->hasFnAttribute(Attribute::AlwaysInline)) {
+        InlineFunctionInfo IFI;
+        InlineFunction(*call, IFI);
+      }
+      toErase.push_back(LI);
+      continue;
+    }
+    if (auto SI = dyn_cast<StoreInst>(U)) {
+      assert(SI->getValueOperand() != val);
+      auto diff = toInt(B, replacements[SI->getPointerOperand()]);
+      SmallVector<Value *, 2> args;
+      args.push_back(SI->getValueOperand());
+      auto sty = store_fn->getFunctionType()->getParamType(0);
+      if (args[0]->getType() != store_fn->getFunctionType()->getParamType(0)) {
+        if (CastInst::castIsValid(Instruction::BitCast, args[0], sty))
+          args[0] = B.CreateBitCast(args[0], sty);
+        else {
+          auto args0ty = args[0]->getType();
+          EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
+                      " first argument of store function must be the type of "
+                      "the store found fn arg type ",
+                      sty, " expected ", args0ty);
+        }
+      }
+      args.push_back(diff);
+      for (size_t i = argstart; i < num_args; i++)
+        args.push_back(CI->getArgOperand(i));
+      auto call = B.CreateCall(store_fn, args);
+      call->setDebugLoc(SI->getDebugLoc());
+      if (load_fn->hasFnAttribute(Attribute::AlwaysInline)) {
+        InlineFunctionInfo IFI;
+        InlineFunction(*call, IFI);
+      }
+      toErase.push_back(SI);
+      continue;
+    }
+    remaining = U;
+  }
+  for (auto U : toErase)
+    U->eraseFromParent();
+
+  if (!remaining) {
+    CI->replaceAllUsesWith(Constant::getNullValue(CI->getType()));
+    CI->eraseFromParent();
+  } else if (replaceAll) {
+    EmitFailure("IllegalSparse", remaining->getDebugLoc(), remaining,
+                " Illegal remaining use (", *remaining, ") of todense (", *CI,
+                ") in function ", *F);
+  }
+}
+
 bool LowerSparsification(llvm::Function *F, bool replaceAll) {
   auto &DL = F->getParent()->getDataLayout();
   bool changed = false;
-  SmallVector<CallInst *, 1> todo;
+  SmallVector<CallBase *, 1> todo;
   SetVector<BasicBlock *> toDenseBlocks;
   for (auto &BB : *F) {
     for (auto &I : BB) {
@@ -7669,250 +7974,9 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
   }
   for (auto CI : todo) {
     changed = true;
-    auto load_fn = cast<Function>(getBaseObject(CI->getArgOperand(0)));
-    auto store_fn = cast<Function>(getBaseObject(CI->getArgOperand(1)));
-    size_t argstart = 2;
-#if LLVM_VERSION_MAJOR >= 14
-    size_t num_args = CI->arg_size();
-#else
-    size_t num_args = CI->getNumArgOperands();
-#endif
-    SmallVector<std::pair<Instruction *, Value *>, 1> users;
-
-    for (auto U : CI->users()) {
-      users.push_back(std::make_pair(cast<Instruction>(U), CI));
-    }
-    IntegerType *intTy = IntegerType::get(CI->getContext(), 64);
-    auto toInt = [&](IRBuilder<> &B, llvm::Value *V) {
-      if (auto PT = dyn_cast<PointerType>(V->getType())) {
-        if (PT->getAddressSpace() != 0) {
-#if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 15
-          if (CI->getContext().supportsTypedPointers()) {
-#endif
-            V = B.CreateAddrSpaceCast(
-                V, PointerType::getUnqual(PT->getPointerElementType()));
-#if LLVM_VERSION_MAJOR >= 15
-          } else {
-            V = B.CreateAddrSpaceCast(V,
-                                      PointerType::getUnqual(PT->getContext()));
-          }
-#endif
-#else
-          V = B.CreateAddrSpaceCast(V,
-                                    PointerType::getUnqual(PT->getContext()));
-#endif
-        }
-        return B.CreatePtrToInt(V, intTy);
-      }
-      auto IT = cast<IntegerType>(V->getType());
-      if (IT == intTy)
-        return V;
-      return B.CreateZExtOrTrunc(V, intTy);
-    };
-    SmallVector<Instruction *, 1> toErase;
-
-    ValueToValueMapTy replacements;
-    replacements[CI] = Constant::getNullValue(CI->getType());
-    Instruction *remaining = nullptr;
-    while (users.size()) {
-      auto pair = users.back();
-      users.pop_back();
-      auto U = pair.first;
-      auto val = pair.second;
-      if (replacements.count(U))
-        continue;
-
-      IRBuilder B(U);
-      if (auto CI = dyn_cast<CastInst>(U)) {
-        for (auto U : CI->users()) {
-          users.push_back(std::make_pair(cast<Instruction>(U), CI));
-        }
-        auto rep =
-            B.CreateCast(CI->getOpcode(), replacements[val], CI->getDestTy());
-        if (auto I = dyn_cast<Instruction>(rep))
-          I->setDebugLoc(CI->getDebugLoc());
-        replacements[CI] = rep;
-        continue;
-      }
-      if (auto SI = dyn_cast<SelectInst>(U)) {
-        for (auto U : SI->users()) {
-          users.push_back(std::make_pair(cast<Instruction>(U), SI));
-        }
-        auto tval = SI->getTrueValue();
-        auto fval = SI->getFalseValue();
-        auto rep = B.CreateSelect(
-            SI->getCondition(),
-            replacements.count(tval) ? (Value *)replacements[tval] : tval,
-            replacements.count(fval) ? (Value *)replacements[fval] : fval);
-        if (auto I = dyn_cast<Instruction>(rep))
-          I->setDebugLoc(SI->getDebugLoc());
-        replacements[SI] = rep;
-        continue;
-      }
-      /*
-      if (auto CI = dyn_cast<PHINode>(U)) {
-        for (auto U : CI->users()) {
-          users.push_back(std::make_pair(cast<Instruction>(U), CI));
-        }
-        continue;
-      }
-      */
-      if (auto CI = dyn_cast<CallInst>(U)) {
-        auto funcName = getFuncNameFromCall(CI);
-        if (funcName == "julia.pointer_from_objref") {
-          for (auto U : CI->users()) {
-            users.push_back(std::make_pair(cast<Instruction>(U), CI));
-          }
-          auto *F = CI->getCalledOperand();
-
-          SmallVector<Value *, 1> args;
-#if LLVM_VERSION_MAJOR >= 14
-          for (auto &arg : CI->args())
-#else
-          for (auto &arg : CI->arg_operands())
-#endif
-            args.push_back(replacements[arg]);
-
-          auto FT = CI->getFunctionType();
-
-          auto cal = cast<CallInst>(B.CreateCall(FT, F, args));
-          cal->setCallingConv(CI->getCallingConv());
-          cal->setDebugLoc(CI->getDebugLoc());
-          replacements[CI] = cal;
-          continue;
-        }
-      }
-      if (auto CI = dyn_cast<GetElementPtrInst>(U)) {
-        for (auto U : CI->users()) {
-          users.push_back(std::make_pair(cast<Instruction>(U), CI));
-        }
-        SmallVector<Value *, 1> inds;
-        bool allconst = true;
-        for (auto &ind : CI->indices()) {
-          if (!isa<ConstantInt>(ind)) {
-            allconst = false;
-          }
-          inds.push_back(ind);
-        }
-        Value *gep;
-
-        if (inds.size() == 1) {
-          gep = ConstantInt::get(
-              intTy,
-              (DL.getTypeSizeInBits(CI->getSourceElementType()) + 7) / 8);
-          gep = B.CreateMul(intTy == inds[0]->getType()
-                                ? inds[0]
-                                : B.CreateZExtOrTrunc(inds[0], intTy),
-                            gep, "", true, true);
-          gep = B.CreateAdd(B.CreatePtrToInt(replacements[val], intTy), gep);
-          gep = B.CreateIntToPtr(gep, CI->getType());
-        } else if (!allconst) {
-          gep =
-              B.CreateGEP(CI->getSourceElementType(), replacements[val], inds);
-          if (auto ge = cast<GetElementPtrInst>(gep))
-            ge->setIsInBounds(CI->isInBounds());
-        } else {
-          APInt ai(64, 0);
-          CI->accumulateConstantOffset(DL, ai);
-          gep = B.CreateIntToPtr(ConstantInt::get(intTy, ai), CI->getType());
-        }
-        if (auto I = dyn_cast<Instruction>(gep))
-          I->setDebugLoc(CI->getDebugLoc());
-        replacements[CI] = gep;
-        continue;
-      }
-      if (auto LI = dyn_cast<LoadInst>(U)) {
-        auto diff = toInt(B, replacements[LI->getPointerOperand()]);
-        SmallVector<Value *, 2> args;
-        args.push_back(diff);
-        for (size_t i = argstart; i < num_args; i++)
-          args.push_back(CI->getArgOperand(i));
-        if (load_fn->getFunctionType()->getNumParams() != args.size()) {
-          auto fnName = load_fn->getName();
-          auto found_numargs = load_fn->getFunctionType()->getNumParams();
-          auto expected_numargs = args.size();
-          EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
-                      " incorrect number of arguments to loader function ",
-                      fnName, " expected ", expected_numargs, " found ",
-                      found_numargs, " - ", *load_fn->getFunctionType());
-          continue;
-        } else {
-          bool tocontinue = false;
-          for (size_t i = 0; i < args.size(); i++) {
-            if (load_fn->getFunctionType()->getParamType(i) !=
-                args[i]->getType()) {
-              auto fnName = load_fn->getName();
-              EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
-                          " incorrect type of argument ", i,
-                          " to loader function ", fnName, " expected ",
-                          *args[i]->getType(), " found ",
-                          load_fn->getFunctionType()->params()[i]);
-              tocontinue = true;
-              break;
-            }
-          }
-          if (tocontinue)
-            continue;
-        }
-        CallInst *call = B.CreateCall(load_fn, args);
-        call->setDebugLoc(LI->getDebugLoc());
-        Value *tmp = call;
-        if (tmp->getType() != LI->getType())
-          tmp = B.CreateBitCast(tmp, LI->getType());
-        LI->replaceAllUsesWith(tmp);
-
-        if (load_fn->hasFnAttribute(Attribute::AlwaysInline)) {
-          InlineFunctionInfo IFI;
-          InlineFunction(*call, IFI);
-        }
-        toErase.push_back(LI);
-        continue;
-      }
-      if (auto SI = dyn_cast<StoreInst>(U)) {
-        assert(SI->getValueOperand() != val);
-        auto diff = toInt(B, replacements[SI->getPointerOperand()]);
-        SmallVector<Value *, 2> args;
-        args.push_back(SI->getValueOperand());
-        auto sty = store_fn->getFunctionType()->getParamType(0);
-        if (args[0]->getType() !=
-            store_fn->getFunctionType()->getParamType(0)) {
-          if (CastInst::castIsValid(Instruction::BitCast, args[0], sty))
-            args[0] = B.CreateBitCast(args[0], sty);
-          else {
-            auto args0ty = args[0]->getType();
-            EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
-                        " first argument of store function must be the type of "
-                        "the store found fn arg type ",
-                        sty, " expected ", args0ty);
-          }
-        }
-        args.push_back(diff);
-        for (size_t i = argstart; i < num_args; i++)
-          args.push_back(CI->getArgOperand(i));
-        auto call = B.CreateCall(store_fn, args);
-        call->setDebugLoc(SI->getDebugLoc());
-        if (load_fn->hasFnAttribute(Attribute::AlwaysInline)) {
-          InlineFunctionInfo IFI;
-          InlineFunction(*call, IFI);
-        }
-        toErase.push_back(SI);
-        continue;
-      }
-      remaining = U;
-    }
-    for (auto U : toErase)
-      U->eraseFromParent();
-
-    if (!remaining) {
-      CI->replaceAllUsesWith(Constant::getNullValue(CI->getType()));
-      CI->eraseFromParent();
-    } else if (replaceAll) {
-      EmitFailure("IllegalSparse", remaining->getDebugLoc(), remaining,
-                  " Illegal remaining use (", *remaining, ") of todense (", *CI,
-                  ") in function ", *F);
-    }
+    replaceToDense(CI, replaceAll, F, DL);
   }
+  todo.clear();
 
   if (changed && EnzymeAutoSparsity) {
     PassBuilder PB;
@@ -7931,6 +7995,20 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
     // required to make preheaders
     LoopSimplifyPass().run(*F, FAM);
     fixSparseIndices(*F, FAM, toDenseBlocks);
+  }
+
+  for (auto &BB : *F) {
+    for (auto &I : BB) {
+      if (auto CI = dyn_cast<CallInst>(&I)) {
+        if (getFuncNameFromCall(CI).contains("__enzyme_post_sparse_todense")) {
+          todo.push_back(CI);
+        }
+      }
+    }
+  }
+  for (auto CI : todo) {
+    changed = true;
+    replaceToDense(CI, replaceAll, F, DL);
   }
   return changed;
 }
