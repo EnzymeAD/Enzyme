@@ -195,7 +195,7 @@ int main(int argc, char** argv) {
     }
 
     // TODO generate data for more inputs
-    assert(x_ptrs == 1);
+    assert(x_pts == 8);
     const float x[] = {0.0, 1.0, 0.0};
 
 
@@ -209,13 +209,13 @@ int main(int argc, char** argv) {
     gettimeofday(&start, NULL);
     const float resultM = eigenstuffM(pos0, num_faces, faces, x);
     gettimeofday(&end, NULL);
-    printf("Result for eigenstuffM_simple: %f, runtime:%f\n", resultM, tdiff(end, start));
+    printf("Result for eigenstuffM_simple: %f, runtime:%f\n", resultM, tdiff(&start, &end));
 
     // Call eigenstuffL_simple
     gettimeofday(&start, NULL);
     const float resultL = eigenstuffL(pos0, num_faces, faces, x);
     gettimeofday(&end, NULL);
-    printf("Result for eigenstuffL_simple: %f, runtime:%f\n", resultL, tdiff(end, start));
+    printf("Result for eigenstuffL_simple: %f, runtime:%f\n", resultL, tdiff(&start, &end));
 
     float dx[sizeof(x)/sizeof(x[0])];
     for (size_t i=0; i<sizeof(dx)/sizeof(x[0]); i++)
@@ -235,7 +235,7 @@ int main(int argc, char** argv) {
   
     printf("Runtime %0.6f\n", tdiff(&start, &end));
 
-    if (x_pts < 30)
+    if (x_pts <= 8)
     for (auto &hess : hess_x) {
         printf("i=%lu, j=%lu, val=%f\n", hess.row, hess.col, hess.val);
     }

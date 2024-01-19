@@ -7872,6 +7872,7 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
       args.push_back(diff);
       for (size_t i = argstart; i < num_args; i++)
         args.push_back(CI->getArgOperand(i));
+
       if (load_fn->getFunctionType()->getNumParams() != args.size()) {
         auto fnName = load_fn->getName();
         auto found_numargs = load_fn->getFunctionType()->getNumParams();
@@ -7893,7 +7894,7 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
                         *args[i]->getType(), " found ",
                         load_fn->getFunctionType()->params()[i]);
             tocontinue = true;
-            break;
+            args[i] = UndefValue::get(args[i]->getType());
           }
         }
         if (tocontinue)
@@ -7902,8 +7903,18 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
       CallInst *call = B.CreateCall(load_fn, args);
       call->setDebugLoc(LI->getDebugLoc());
       Value *tmp = call;
-      if (tmp->getType() != LI->getType())
-        tmp = B.CreateBitCast(tmp, LI->getType());
+      if (tmp->getType() != LI->getType()) {
+        if (CastInst::castIsValid(Instruction::BitCast, tmp, LI->getType()))
+          tmp = B.CreateBitCast(tmp, LI->getType());
+        else {
+          auto fnName = load_fn->getName();
+          EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
+                      " incorrect return type of loader function ", fnName,
+                      " expected ", *LI->getType(), " found ",
+                      *call->getType());
+          tmp = UndefValue::get(LI->getType());
+        }
+      }
       LI->replaceAllUsesWith(tmp);
 
       if (load_fn->hasFnAttribute(Attribute::AlwaysInline)) {
@@ -7927,15 +7938,44 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
           EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
                       " first argument of store function must be the type of "
                       "the store found fn arg type ",
-                      sty, " expected ", args0ty);
+                      *sty, " expected ", *args0ty);
+          args[0] = UndefValue::get(sty);
         }
       }
       args.push_back(diff);
       for (size_t i = argstart; i < num_args; i++)
         args.push_back(CI->getArgOperand(i));
+
+      if (store_fn->getFunctionType()->getNumParams() != args.size()) {
+        auto fnName = store_fn->getName();
+        auto found_numargs = store_fn->getFunctionType()->getNumParams();
+        auto expected_numargs = args.size();
+        EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
+                    " incorrect number of arguments to store function ", fnName,
+                    " expected ", expected_numargs, " found ", found_numargs,
+                    " - ", *store_fn->getFunctionType());
+        continue;
+      } else {
+        bool tocontinue = false;
+        for (size_t i = 0; i < args.size(); i++) {
+          if (store_fn->getFunctionType()->getParamType(i) !=
+              args[i]->getType()) {
+            auto fnName = store_fn->getName();
+            EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
+                        " incorrect type of argument ", i,
+                        " to storeer function ", fnName, " expected ",
+                        *args[i]->getType(), " found ",
+                        store_fn->getFunctionType()->params()[i]);
+            tocontinue = true;
+            args[i] = UndefValue::get(args[i]->getType());
+          }
+        }
+        if (tocontinue)
+          continue;
+      }
       auto call = B.CreateCall(store_fn, args);
       call->setDebugLoc(SI->getDebugLoc());
-      if (load_fn->hasFnAttribute(Attribute::AlwaysInline)) {
+      if (store_fn->hasFnAttribute(Attribute::AlwaysInline)) {
         InlineFunctionInfo IFI;
         InlineFunction(*call, IFI);
       }

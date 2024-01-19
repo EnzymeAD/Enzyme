@@ -49,7 +49,7 @@ double ringident_load(int64_t idx, size_t i, size_t N) {
 }
 template<typename T>
 __attribute__((always_inline))
-void never_store(double val, int64_t idx, double* input, size_t N) {
+void never_store(T val, int64_t idx, T* input, size_t N) {
     assert(0 && "this is a read only input, why are you storing here...");
 }
 
@@ -69,8 +69,8 @@ std::vector<Triple<T>> hess_f(size_t N, T* input) {
     __builtin_assume(N != 1);
     for (size_t i=0; i<N; i++) {
         __builtin_assume(i < 100000000);
-        T* d_input = __enzyme_todense<T*>((void*)ringident_load<T>, (void*)ident_store<T>, i, N);
-        T* d_dinput = __enzyme_todense<T*>((void*)sparse_load<T>, (void*)sparse_store<T>, i, N, &triplets);
+        T* d_input = __enzyme_todense<T*>((void*)ringident_load<T>, (void*)never_store<T>, i, N);
+        T* d_dinput = __enzyme_todense<T*>((void*)sparse_load<T>, (void*)sparse_store<T>, i, &triplets);
 
        __enzyme_fwddiff<void>((void*)grad_f<T>, 
                             enzyme_const, N,

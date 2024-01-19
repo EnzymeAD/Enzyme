@@ -57,14 +57,14 @@ static double mod_load(int64_t idx, double* input, size_t N) {
 
 template<typename T>
 __attribute__((noinline))
-std::vector<Triple<double>> hess_f(size_t N, T* input) {
-    std::vector<Triple<double>> triplets;
+std::vector<Triple<T>> hess_f(size_t N, T* input) {
+    std::vector<Triple<T>> triplets;
     // input = __enzyme_todense((void*)mod_load, (void*)never_store, input, N);
     __builtin_assume(N > 0);
     for (size_t i=0; i<N; i++) {
         __builtin_assume(i < 100000000);
-        T* d_input = __enzyme_todense<T*>((void*)ident_load<T>, (void*)ident_store<T>, i, N);
-        T* d_dinput = __enzyme_todense<T*>((void*)sparse_load<T>, (void*)sparse_store<T>, i, N, &triplets);
+        T* d_input = __enzyme_todense<T*>((void*)ident_load<T>, (void*)ident_store<T>, i);
+        T* d_dinput = __enzyme_todense<T*>((void*)sparse_load<T>, (void*)sparse_store<T>, i, &triplets);
 
        __enzyme_fwddiff<void>((void*)grad_f<T>, 
                             enzyme_const, N,

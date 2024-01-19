@@ -16,36 +16,39 @@ struct Triple {
 };
 
 __attribute__((enzyme_sparse_accumulate))
-static void inner_store(int64_t row, int64_t col, size_t N, float val, std::vector<Triple<float>> &triplets) {
+static void inner_storeflt(int64_t row, int64_t col, float val, std::vector<Triple<float>> &triplets) {
 #ifdef BENCHMARK
     if (val == 0.0) return;
 #else
 #warning "Compiling for debug/verfication, performance may be slowed"
 #endif
-    triplets.emplace_back(row % N, col % N, val);
+    triplets.emplace_back(row, col, val);
 }
 
 __attribute__((enzyme_sparse_accumulate))
-static void inner_store(int64_t row, int64_t col, size_t N, double val, std::vector<Triple<double>> &triplets) {
+static void inner_storedbl(int64_t row, int64_t col, double val, std::vector<Triple<double>> &triplets) {
 #ifdef BENCHMARK
     if (val == 0.0) return;
 #else
 #warning "Compiling for debug/verfication, performance may be slowed"
 #endif
-    triplets.emplace_back(row % N, col % N, val);
+    triplets.emplace_back(row, col, val);
 }
 
 template<typename T>
 __attribute__((always_inline))
-static void sparse_store(double val, int64_t idx, size_t i, size_t N, std::vector<Triple<T>> &triplets) {
+static void sparse_store(T val, int64_t idx, size_t i, std::vector<Triple<T>> &triplets) {
     if (val == 0.0) return;
     idx /= sizeof(T);
-    inner_store(i, idx, N, val, triplets);
+    if constexpr (sizeof(T) == 4)
+      inner_storeflt(i, idx, val, triplets);
+    else
+      inner_storedbl(i, idx, val, triplets);
 }
 
 template<typename T>
 __attribute__((always_inline))
-static double sparse_load(int64_t idx, size_t i, size_t N, std::vector<Triple<T>> &triplets) {
+static T sparse_load(int64_t idx, size_t i, std::vector<Triple<T>> &triplets) {
     return 0.0;
 }
 
@@ -57,7 +60,7 @@ static void ident_store(T, int64_t idx, size_t i) {
 
 template<typename T>
 __attribute__((always_inline))
-static double ident_load(int64_t idx, size_t i, size_t N) {
+static T ident_load(int64_t idx, size_t i) {
     idx /= sizeof(T);
     return (T)(idx == i);// ? 1.0 : 0.0;
 }
