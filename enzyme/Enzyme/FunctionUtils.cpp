@@ -7063,6 +7063,7 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
   return {};
 }
 
+constexpr bool SparseDebug = false;
 std::shared_ptr<const Constraints>
 getSparseConditions(bool &legal, Value *val,
                     std::shared_ptr<const Constraints> defaultFloat,
@@ -7077,11 +7078,13 @@ getSparseConditions(bool &legal, Value *val,
       auto res = lhs->andB(rhs, ctx);
       assert(res);
       assert(ctx.seen.size() == 0);
-      llvm::errs() << " getSparse(and, " << *I << "), lhs(" << *I->getOperand(0)
-                   << ") = " << *lhs << "\n";
-      llvm::errs() << " getSparse(and, " << *I << "), rhs(" << *I->getOperand(1)
-                   << ") = " << *rhs << "\n";
-      llvm::errs() << " getSparse(and, " << *I << ") = " << *res << "\n";
+      if (SparseDebug) {
+        llvm::errs() << " getSparse(and, " << *I << "), lhs("
+                     << *I->getOperand(0) << ") = " << *lhs << "\n";
+        llvm::errs() << " getSparse(and, " << *I << "), rhs("
+                     << *I->getOperand(1) << ") = " << *rhs << "\n";
+        llvm::errs() << " getSparse(and, " << *I << ") = " << *res << "\n";
+      }
       return res;
     }
 
@@ -7092,11 +7095,13 @@ getSparseConditions(bool &legal, Value *val,
       auto rhs = getSparseConditions(legal, I->getOperand(1),
                                      Constraints::none(), I, ctx);
       auto res = lhs->orB(rhs, ctx);
-      llvm::errs() << " getSparse(or, " << *I << "), lhs(" << *I->getOperand(0)
-                   << ") = " << *lhs << "\n";
-      llvm::errs() << " getSparse(or, " << *I << "), rhs(" << *I->getOperand(1)
-                   << ") = " << *rhs << "\n";
-      llvm::errs() << " getSparse(or, " << *I << ") = " << *res << "\n";
+      if (SparseDebug) {
+        llvm::errs() << " getSparse(or, " << *I << "), lhs("
+                     << *I->getOperand(0) << ") = " << *lhs << "\n";
+        llvm::errs() << " getSparse(or, " << *I << "), rhs("
+                     << *I->getOperand(1) << ") = " << *rhs << "\n";
+        llvm::errs() << " getSparse(or, " << *I << ") = " << *res << "\n";
+      }
       return res;
     }
 
@@ -7108,9 +7113,12 @@ getSparseConditions(bool &legal, Value *val,
                 getSparseConditions(legal, I->getOperand(1 - i),
                                     defaultFloat->notB(ctx), scope, ctx);
             auto res = pres->notB(ctx);
-            llvm::errs() << " getSparse(not, " << *I << "), prev ("
-                         << *I->getOperand(0) << ") = " << *pres << "\n";
-            llvm::errs() << " getSparse(not, " << *I << ") = " << *res << "\n";
+            if (SparseDebug) {
+              llvm::errs() << " getSparse(not, " << *I << "), prev ("
+                           << *I->getOperand(0) << ") = " << *pres << "\n";
+              llvm::errs() << " getSparse(not, " << *I << ") = " << *res
+                           << "\n";
+            }
             return res;
           }
       }
@@ -7120,8 +7128,10 @@ getSparseConditions(bool &legal, Value *val,
       auto L = ctx.loopToSolve;
       auto lhs = ctx.SE.getSCEVAtScope(icmp->getOperand(0), L);
       auto rhs = ctx.SE.getSCEVAtScope(icmp->getOperand(1), L);
-      llvm::errs() << " lhs: " << *lhs << "\n";
-      llvm::errs() << " rhs: " << *rhs << "\n";
+      if (SparseDebug) {
+        llvm::errs() << " lhs: " << *lhs << "\n";
+        llvm::errs() << " rhs: " << *rhs << "\n";
+      }
 
       auto sub1 = ctx.SE.getMinusSCEV(lhs, rhs);
 
@@ -7145,8 +7155,10 @@ getSparseConditions(bool &legal, Value *val,
                 auto res = Constraints::make_compare(
                     div, icmp->getPredicate() == ICmpInst::ICMP_EQ,
                     add->getLoop(), ctx);
-                llvm::errs()
-                    << " getSparse(icmp, " << *I << ") = " << *res << "\n";
+                if (SparseDebug) {
+                  llvm::errs()
+                      << " getSparse(icmp, " << *I << ") = " << *res << "\n";
+                }
                 return res;
               }
             }
@@ -7172,7 +7184,9 @@ getSparseConditions(bool &legal, Value *val,
     // cmp x, 1.0 ->   false/true
     if (auto fcmp = dyn_cast<FCmpInst>(I)) {
       auto res = defaultFloat;
-      llvm::errs() << " getSparse(fcmp, " << *I << ") = " << *res << "\n";
+      if (SparseDebug) {
+        llvm::errs() << " getSparse(fcmp, " << *I << ") = " << *res << "\n";
+      }
       return res;
 
       if (fcmp->getPredicate() == CmpInst::FCMP_OEQ ||
@@ -7263,13 +7277,16 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
   // Full simplification
   while (!Q.empty()) {
     auto cur = Q.pop_back_val();
+    /*
     std::set<Instruction *> prev;
     for (auto v : Q)
       prev.insert(v);
     // llvm::errs() << "\n\n\n\n" << F << "\n";
     llvm::errs() << "cur: " << *cur << "\n";
+    */
     auto changed = fixSparse_inner(cur, F, Q, DT, SE, LI, DL);
     (void)changed;
+    /*
     if (changed) {
       llvm::errs() << "changed: " << *changed << "\n";
 
@@ -7278,6 +7295,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
           llvm::errs() << " + " << *I << "\n";
       // llvm::errs() << F << "\n\n";
     }
+    */
   }
 
   // llvm::errs() << " post fix inner " << F << "\n";
