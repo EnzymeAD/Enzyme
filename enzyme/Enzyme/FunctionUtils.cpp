@@ -7063,6 +7063,7 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
   return {};
 }
 
+constexpr bool SparseDebug = false;
 std::shared_ptr<const Constraints>
 getSparseConditions(bool &legal, Value *val,
                     std::shared_ptr<const Constraints> defaultFloat,
@@ -7077,11 +7078,13 @@ getSparseConditions(bool &legal, Value *val,
       auto res = lhs->andB(rhs, ctx);
       assert(res);
       assert(ctx.seen.size() == 0);
-      llvm::errs() << " getSparse(and, " << *I << "), lhs(" << *I->getOperand(0)
-                   << ") = " << *lhs << "\n";
-      llvm::errs() << " getSparse(and, " << *I << "), rhs(" << *I->getOperand(1)
-                   << ") = " << *rhs << "\n";
-      llvm::errs() << " getSparse(and, " << *I << ") = " << *res << "\n";
+      if (SparseDebug) {
+        llvm::errs() << " getSparse(and, " << *I << "), lhs("
+                     << *I->getOperand(0) << ") = " << *lhs << "\n";
+        llvm::errs() << " getSparse(and, " << *I << "), rhs("
+                     << *I->getOperand(1) << ") = " << *rhs << "\n";
+        llvm::errs() << " getSparse(and, " << *I << ") = " << *res << "\n";
+      }
       return res;
     }
 
@@ -7092,11 +7095,13 @@ getSparseConditions(bool &legal, Value *val,
       auto rhs = getSparseConditions(legal, I->getOperand(1),
                                      Constraints::none(), I, ctx);
       auto res = lhs->orB(rhs, ctx);
-      llvm::errs() << " getSparse(or, " << *I << "), lhs(" << *I->getOperand(0)
-                   << ") = " << *lhs << "\n";
-      llvm::errs() << " getSparse(or, " << *I << "), rhs(" << *I->getOperand(1)
-                   << ") = " << *rhs << "\n";
-      llvm::errs() << " getSparse(or, " << *I << ") = " << *res << "\n";
+      if (SparseDebug) {
+        llvm::errs() << " getSparse(or, " << *I << "), lhs("
+                     << *I->getOperand(0) << ") = " << *lhs << "\n";
+        llvm::errs() << " getSparse(or, " << *I << "), rhs("
+                     << *I->getOperand(1) << ") = " << *rhs << "\n";
+        llvm::errs() << " getSparse(or, " << *I << ") = " << *res << "\n";
+      }
       return res;
     }
 
@@ -7108,9 +7113,12 @@ getSparseConditions(bool &legal, Value *val,
                 getSparseConditions(legal, I->getOperand(1 - i),
                                     defaultFloat->notB(ctx), scope, ctx);
             auto res = pres->notB(ctx);
-            llvm::errs() << " getSparse(not, " << *I << "), prev ("
-                         << *I->getOperand(0) << ") = " << *pres << "\n";
-            llvm::errs() << " getSparse(not, " << *I << ") = " << *res << "\n";
+            if (SparseDebug) {
+              llvm::errs() << " getSparse(not, " << *I << "), prev ("
+                           << *I->getOperand(0) << ") = " << *pres << "\n";
+              llvm::errs() << " getSparse(not, " << *I << ") = " << *res
+                           << "\n";
+            }
             return res;
           }
       }
@@ -7120,8 +7128,10 @@ getSparseConditions(bool &legal, Value *val,
       auto L = ctx.loopToSolve;
       auto lhs = ctx.SE.getSCEVAtScope(icmp->getOperand(0), L);
       auto rhs = ctx.SE.getSCEVAtScope(icmp->getOperand(1), L);
-      llvm::errs() << " lhs: " << *lhs << "\n";
-      llvm::errs() << " rhs: " << *rhs << "\n";
+      if (SparseDebug) {
+        llvm::errs() << " lhs: " << *lhs << "\n";
+        llvm::errs() << " rhs: " << *rhs << "\n";
+      }
 
       auto sub1 = ctx.SE.getMinusSCEV(lhs, rhs);
 
@@ -7145,8 +7155,10 @@ getSparseConditions(bool &legal, Value *val,
                 auto res = Constraints::make_compare(
                     div, icmp->getPredicate() == ICmpInst::ICMP_EQ,
                     add->getLoop(), ctx);
-                llvm::errs()
-                    << " getSparse(icmp, " << *I << ") = " << *res << "\n";
+                if (SparseDebug) {
+                  llvm::errs()
+                      << " getSparse(icmp, " << *I << ") = " << *res << "\n";
+                }
                 return res;
               }
             }
@@ -7172,7 +7184,9 @@ getSparseConditions(bool &legal, Value *val,
     // cmp x, 1.0 ->   false/true
     if (auto fcmp = dyn_cast<FCmpInst>(I)) {
       auto res = defaultFloat;
-      llvm::errs() << " getSparse(fcmp, " << *I << ") = " << *res << "\n";
+      if (SparseDebug) {
+        llvm::errs() << " getSparse(fcmp, " << *I << ") = " << *res << "\n";
+      }
       return res;
 
       if (fcmp->getPredicate() == CmpInst::FCMP_OEQ ||
@@ -7263,13 +7277,16 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
   // Full simplification
   while (!Q.empty()) {
     auto cur = Q.pop_back_val();
+    /*
     std::set<Instruction *> prev;
     for (auto v : Q)
       prev.insert(v);
     // llvm::errs() << "\n\n\n\n" << F << "\n";
     llvm::errs() << "cur: " << *cur << "\n";
+    */
     auto changed = fixSparse_inner(cur, F, Q, DT, SE, LI, DL);
     (void)changed;
+    /*
     if (changed) {
       llvm::errs() << "changed: " << *changed << "\n";
 
@@ -7278,6 +7295,7 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
           llvm::errs() << " + " << *I << "\n";
       // llvm::errs() << F << "\n\n";
     }
+    */
   }
 
   // llvm::errs() << " post fix inner " << F << "\n";
@@ -7872,6 +7890,7 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
       args.push_back(diff);
       for (size_t i = argstart; i < num_args; i++)
         args.push_back(CI->getArgOperand(i));
+
       if (load_fn->getFunctionType()->getNumParams() != args.size()) {
         auto fnName = load_fn->getName();
         auto found_numargs = load_fn->getFunctionType()->getNumParams();
@@ -7893,7 +7912,7 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
                         *args[i]->getType(), " found ",
                         load_fn->getFunctionType()->params()[i]);
             tocontinue = true;
-            break;
+            args[i] = UndefValue::get(args[i]->getType());
           }
         }
         if (tocontinue)
@@ -7902,8 +7921,18 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
       CallInst *call = B.CreateCall(load_fn, args);
       call->setDebugLoc(LI->getDebugLoc());
       Value *tmp = call;
-      if (tmp->getType() != LI->getType())
-        tmp = B.CreateBitCast(tmp, LI->getType());
+      if (tmp->getType() != LI->getType()) {
+        if (CastInst::castIsValid(Instruction::BitCast, tmp, LI->getType()))
+          tmp = B.CreateBitCast(tmp, LI->getType());
+        else {
+          auto fnName = load_fn->getName();
+          EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
+                      " incorrect return type of loader function ", fnName,
+                      " expected ", *LI->getType(), " found ",
+                      *call->getType());
+          tmp = UndefValue::get(LI->getType());
+        }
+      }
       LI->replaceAllUsesWith(tmp);
 
       if (load_fn->hasFnAttribute(Attribute::AlwaysInline)) {
@@ -7927,15 +7956,44 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
           EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
                       " first argument of store function must be the type of "
                       "the store found fn arg type ",
-                      sty, " expected ", args0ty);
+                      *sty, " expected ", *args0ty);
+          args[0] = UndefValue::get(sty);
         }
       }
       args.push_back(diff);
       for (size_t i = argstart; i < num_args; i++)
         args.push_back(CI->getArgOperand(i));
+
+      if (store_fn->getFunctionType()->getNumParams() != args.size()) {
+        auto fnName = store_fn->getName();
+        auto found_numargs = store_fn->getFunctionType()->getNumParams();
+        auto expected_numargs = args.size();
+        EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
+                    " incorrect number of arguments to store function ", fnName,
+                    " expected ", expected_numargs, " found ", found_numargs,
+                    " - ", *store_fn->getFunctionType());
+        continue;
+      } else {
+        bool tocontinue = false;
+        for (size_t i = 0; i < args.size(); i++) {
+          if (store_fn->getFunctionType()->getParamType(i) !=
+              args[i]->getType()) {
+            auto fnName = store_fn->getName();
+            EmitFailure("IllegalSparse", CI->getDebugLoc(), CI,
+                        " incorrect type of argument ", i,
+                        " to storeer function ", fnName, " expected ",
+                        *args[i]->getType(), " found ",
+                        store_fn->getFunctionType()->params()[i]);
+            tocontinue = true;
+            args[i] = UndefValue::get(args[i]->getType());
+          }
+        }
+        if (tocontinue)
+          continue;
+      }
       auto call = B.CreateCall(store_fn, args);
       call->setDebugLoc(SI->getDebugLoc());
-      if (load_fn->hasFnAttribute(Attribute::AlwaysInline)) {
+      if (store_fn->hasFnAttribute(Attribute::AlwaysInline)) {
         InlineFunctionInfo IFI;
         InlineFunction(*call, IFI);
       }

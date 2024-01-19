@@ -15,105 +15,73 @@
 
 #include<math.h>
 
-struct triple {
-    size_t row;
-    size_t col;
-    double val;
-    triple(triple&&) = default;
-    triple(size_t row, size_t col, double val) : row(row), col(col), val(val) {}
-};
+#include "matrix.h"
 
-extern int enzyme_dup;
-extern int enzyme_dupnoneed;
-extern int enzyme_out;
-extern int enzyme_const;
-
-extern void __enzyme_autodiff(void *, ...);
-
-extern void __enzyme_fwddiff(void *, ...);
-
-extern double* __enzyme_todense(void *, ...) noexcept;
-
-
+template<typename T>
 __attribute__((always_inline))
-static double f(size_t N, double* input) {
-    double out = 0;
+static T f(size_t N, T* input) {
+    T out = 0;
     __builtin_assume(!((N-1) == 0));
     for (size_t i=0; i<N-1; i++) {
         //double sub = input[i] - input[i+1]; 
         // out += sub * sub;
-        double sub = input[i+1] - input[i]; 
+        T sub = input[i+1] - input[i]; 
         out += (sqrt(sub) + 1)*(sqrt(sub) + 1);
     }
     return out;
 }
 
+template<typename T>
 __attribute__((always_inline))
-static void grad_f(size_t N, double* input, double* dinput) {
-    __enzyme_autodiff((void*)f, enzyme_const, N, enzyme_dup, input, dinput);
+static void grad_f(size_t N, T* input, T* dinput) {
+    __enzyme_autodiff<void>((void*)f<T>, enzyme_const, N, enzyme_dup, input, dinput);
 }
 
-
-__attribute__((always_inline))
-static void ident_store(double , int64_t idx, size_t i) {
-    assert(0 && "should never load");
-}
-
-__attribute__((always_inline))
-static double ident_load(int64_t idx, size_t i, size_t N) {
-    idx /= sizeof(double);
-    return (double)(idx == i);// ? 1.0 : 0.0;
-}
-
-__attribute__((enzyme_sparse_accumulate))
-static void inner_store(int64_t row, int64_t col, double val, std::vector<triple> &triplets) {
-    printf("row=%d col=%d val=%f\n", row, col, val);
-    assert(abs(val) > 0.00001);
-    triplets.emplace_back(row, col, val);
-}
-
-__attribute__((always_inline))
-static void sparse_store(double val, int64_t idx, size_t i, size_t N, std::vector<triple> &triplets) {
-    if (val == 0.0) return;
-    idx /= sizeof(double);
-    inner_store(i, idx, val, triplets);
-}
-
-__attribute__((always_inline))
-static double sparse_load(int64_t idx, size_t i, size_t N, std::vector<triple> &triplets) {
-    return 0.0;
-}
-
+template<typename T>
 __attribute__((noinline))
-std::vector<triple> hess_f(size_t N, double* input) {
-    std::vector<triple> triplets;
+std::vector<Triple<T>> hess_f(size_t N, T* input) {
+    std::vector<Triple<T>> triplets;
     __builtin_assume(N > 0);
     for (size_t i=0; i<N; i++) {
         __builtin_assume(i < 100000000);
-        double* d_input = __enzyme_todense((void*)ident_load, (void*)ident_store, i, N);
-        double* d_dinput = __enzyme_todense((void*)sparse_load, (void*)sparse_store, i, N, &triplets);
+        T* d_input = __enzyme_todense<T*>((void*)ident_load<T>, (void*)ident_store<T>, i);
+        T* d_dinput = __enzyme_todense<T*>((void*)sparse_load<T>, (void*)sparse_store<T>, i, &triplets);
 
-       __enzyme_fwddiff((void*)grad_f, 
+       __enzyme_fwddiff<void>((void*)grad_f<T>, 
                             enzyme_const, N,
                             enzyme_dup, input, d_input,
-                            enzyme_dupnoneed, (double*)0x1, d_dinput);
-
+                            enzyme_dupnoneed, (T*)0x1, d_dinput);
     }
     return triplets;
 }
 
-int main() {
-  size_t N = 8;
-  double x[N];
-  for (int i=0; i<N; i++) x[i] = (i + 1) * (i + 1);
+int main(int argc, char** argv) {
+  
+    size_t N = 8;
 
-  auto res = hess_f(N, &x[0]);
+    if (argc >= 2) {
+         N = atoi(argv[1]);
+    }
+
+    double *x = (double*)malloc(sizeof(double) * N);
+    for (int i=0; i<N; i++) x[i] = (i + 1) * (i + 1);
 
 
-  printf("%ld\n", res.size());
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+  
+  auto res = hess_f(N, x);
 
+  gettimeofday(&end, NULL);
+    
+  printf("Number of elements %ld\n", res.size());
+  
+  printf("Runtime %0.6f\n", tdiff(&start, &end));
+
+  if (N <= 30) {
   for (auto & tup : res)
       printf("%ld, %ld = %f\n", tup.row, tup.col, tup.val);
+  }
 
   return 0;
 }
