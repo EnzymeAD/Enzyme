@@ -35,4 +35,5 @@ jobs:
     - name: cmake
       run: |
           cd enzyme
-          bazel build :EnzymeStatic 
+          bazel build :EnzymeStatic :enzymemlir-opt
+          bazel test ...
