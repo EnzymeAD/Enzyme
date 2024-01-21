@@ -73,7 +73,7 @@ struct GenericOpInterfaceReverse
                                 MGradientUtilsReverse *gutils,
                                 SmallVector<Value> caches) const {
     auto linalgOp = cast<linalg::LinalgOp>(op);
-    assert(linalgOp.hasBufferSemantics() &&
+    assert(linalgOp.hasPureBufferSemantics() &&
            "Linalg op with tensor semantics not yet supported");
 
     linalg::LinalgOp newOp =
