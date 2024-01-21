@@ -25,26 +25,14 @@ jobs:
   
     timeout-minutes: 500 
     steps:
-    - name: add llvm 
-      run: |
-          sudo rm -f /etc/apt/sources.list.d/*llvm*.list
-          sudo apt-get update
-          sudo apt-get install -y ninja-build git autoconf cmake gcc g++ libtool python3 python3-dev 
-          which bazel
+    
     - uses: actions/checkout@v4
     - uses: actions/checkout@v4
       with:
         repository: 'llvm/llvm-project'
         path: 'llvm-project'
 
-    - name: Install bazelisk
-      run: |
-        curl -LO "https://github.com/bazelbuild/bazelisk/releases/download/v1.1.0/bazelisk-linux-amd64"
-        mkdir -p "${GITHUB_WORKSPACE}/bin/"
-        mv bazelisk-linux-amd64 "${GITHUB_WORKSPACE}/bin/bazel"
-        chmod +x "${GITHUB_WORKSPACE}/bin/bazel"
-    
     - name: cmake
       run: |
           cd enzyme
-          "${GITHUB_WORKSPACE}/bin/bazel" build :EnzymeStatic 
+          bazel build :EnzymeStatic 
