@@ -1,16 +1,18 @@
 // This should work on LLVM 7, 8, 9, however in CI the version of clang installed on Ubuntu 18.04 cannot load
 // a clang plugin properly without segfaulting on exit. This is fine on Ubuntu 20.04 or later LLVM versions...
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -mllvm -enable-load-pre=0 -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -mllvm -enable-load-pre=0 -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1  | %lli - ; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -mllvm -enable-load-pre=0 -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -mllvm -enable-load-pre=0  -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -mllvm -enable-load-pre=0  -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -mllvm -enable-load-pre=0  -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1  | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions-ffast-math  -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions-ffast-math  -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions-ffast-math  -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
+
+// everything should be always inline
 
 #include <stdio.h>
 #include <assert.h>
 #include <vector>
-#include <random>
+
 
 #include<math.h>
 
@@ -18,21 +20,16 @@
 
 template<typename T>
 __attribute__((always_inline))
-static double f(size_t N, T* __restrict__ pos) {
+static double f(size_t N, double* pos) {
     double e = 0.;
-    __builtin_assume(N != 0);
-    for (size_t j = 0; j < N/3; j ++) {
-        size_t i = 3 * j;
-        T vx = pos[i];
-        T vy = pos[i + 1];
-        T vz = pos[i + 2];
-        
-        T wx = pos[i + 3];
-        T wy = pos[i + 4];
-        T wz = pos[i + 5];
-        T distance = (wx - vx) * (wx - vx) + (wy - vy) * (wy - vy) + (wz - vz) * (wz - vz);
-        T rest_len_one_dist = (sqrt(distance) - 1) * (sqrt(distance) - 1);
-        e += rest_len_one_dist;
+    for (size_t i = 0; i < N; i ++) {
+        __builtin_assume(i < 1000000000);
+        double vx = pos[2 * i];
+        double vy = pos[2 * i + 1];
+
+        double wx = pos[2 * i + 2];
+        double wy = pos[2 * i + 3];
+        e += (wx - vx) * (wx - vx) + (wy - vy) * (wy - vy);
     }
     return e;
 }
@@ -82,16 +79,14 @@ int main(int argc, char** argv) {
          N = atoi(argv[1]);
     }
 
-    double *x = (double*)malloc(sizeof(double) * (3 * N + 3));
+    double *x = (double*)malloc(sizeof(double) * (2 * N + 2));
     for (int i = 0; i < N; ++i) {
         double angle = 2 * M_PI * i / N;
-        x[3 * i] = cos(angle) ;//+ normal(generator);
-        x[3 * i + 1] = sin(angle) ;//+ normal(generator);
-        x[3 * i + 2] = 0;//normal(generator);
+        x[2 * i] = cos(angle) ;//+ normal(generator);
+        x[2 * i + 1] = sin(angle) ;//+ normal(generator);
     }
-    x[3 * N] = x[0];
-    x[3 * N + 1] = x[1];
-    x[3 * N + 2] = x[2];
+    x[2 * N] = x[0];
+    x[2 * N + 1] = x[1];
 
 
   struct timeval start, end;
@@ -112,4 +107,3 @@ int main(int argc, char** argv) {
 
   return 0;
 }
-
