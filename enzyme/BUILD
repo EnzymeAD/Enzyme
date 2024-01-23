@@ -468,5 +468,5 @@ expand_template(
 			":enzymemlir-opt"
         ] + glob(["test/**/*.h"])
     )
-    for src in glob(["test/**/*.mlir", "test/**/*.c", "test/**/.cpp"])
+    for src in glob(["test/**/*.mlir"])
 ]
