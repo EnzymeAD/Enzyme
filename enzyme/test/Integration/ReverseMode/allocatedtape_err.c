@@ -8,7 +8,7 @@
 // RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -g -O3 %s -S -emit-llvm -o -  %newLoadClangEnzyme -Xclang -verify; fi
 
 #include <math.h>
-#include "test_utils.h"
+#include "../test_utils.h"
 
 void __enzyme_reverse(void*, ...);
 

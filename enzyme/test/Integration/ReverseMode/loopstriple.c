@@ -11,7 +11,7 @@
 #include <math.h>
 #include <assert.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 #define __builtin_autodiff __enzyme_autodiff
 double __enzyme_autodiff(void*, ...);

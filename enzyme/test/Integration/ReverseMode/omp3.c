@@ -11,7 +11,7 @@
 
 # include <stdlib.h>
 # include <stdio.h>
-#include "test_utils.h"
+#include "../test_utils.h"
 
 void msg(double* in, int *len, unsigned int slen) {
     if (slen != 0) {

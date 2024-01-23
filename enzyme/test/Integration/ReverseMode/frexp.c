@@ -11,7 +11,7 @@
 #include <math.h>
 #include <stdio.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 double f(double x) {
   int exp;

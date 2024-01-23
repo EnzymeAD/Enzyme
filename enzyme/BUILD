@@ -194,6 +194,7 @@ cc_library(
         "@llvm-project//llvm:TransformUtils",
         "@llvm-project//llvm:config",
     ],
+    alwayslink = 1
 )
 
 cc_binary(
@@ -459,8 +460,13 @@ expand_template(
         	"@llvm-project//llvm:FileCheck",
         	"@llvm-project//llvm:count",
         	"@llvm-project//llvm:not",
+        	"@llvm-project//llvm:lli",
+        	"@llvm-project//llvm:opt",
+            "@llvm-project//clang:builtin_headers_gen",
+            ":enzyme-clang",
+            ":enzyme-clang++",
 			":enzymemlir-opt"
-        ],
+        ] + glob(["test/**/*.h"])
     )
-    for src in glob(["test/**/*.mlir"])
+    for src in glob(["test/**/*.mlir", "test/**/*.c", "test/**/.cpp"])
 ]
