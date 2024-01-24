@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 extern void __enzyme_autodiff(void*, ...);
 void square(double** p_delv, double** p_e, int ** idx, int numReg, int numElemReg) {

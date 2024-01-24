@@ -13,7 +13,7 @@
 #include <assert.h>
 #include <stdlib.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 int posix_memalign(void **memptr, size_t alignment, size_t size);
 

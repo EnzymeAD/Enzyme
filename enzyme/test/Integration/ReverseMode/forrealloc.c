@@ -12,7 +12,7 @@
 #include <math.h>
 #include <assert.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 
 float __enzyme_autodiff(void*, float, int);

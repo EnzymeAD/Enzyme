@@ -26,13 +26,21 @@ jobs:
     timeout-minutes: 500 
     steps:
     
+    - name: Prep
+      run: |
+          python -m pip install lit
+    
     - uses: actions/checkout@v4
     - uses: actions/checkout@v4
       with:
         repository: 'llvm/llvm-project'
         path: 'llvm-project'
 
-    - name: cmake
+    - name: Build
       run: |
           cd enzyme
-          bazel build :EnzymeStatic 
+          bazel build :EnzymeStatic :enzymemlir-opt
+    - name: Test
+      run: |
+          cd enzyme
+          bazel test --test_output=errors ...

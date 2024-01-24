@@ -8,7 +8,7 @@
 // RUN: %clang -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli -
 // RUN: %clang -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli -
 
-#include "test_utils.h"
+#include "../test_utils.h"
 #include <stdio.h>
 
 struct Vector {

@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 extern void __enzyme_autodiff(void*, ...);
 void square(double* __restrict__ delv, double* __restrict__ e, unsigned long long numReg) {

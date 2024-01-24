@@ -12,7 +12,7 @@
 #include <vector>
 #include <assert.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 extern void __enzyme_autodiff(void*, std::vector<double>*, std::vector<double>*);
 /*double max(double x, double y) {
