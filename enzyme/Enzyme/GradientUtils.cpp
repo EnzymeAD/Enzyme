@@ -5505,6 +5505,26 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return shadow;
   } else if (auto arg = dyn_cast<ConstantExpr>(oval)) {
     IRBuilder<> bb(inversionAllocs);
+    if (arg->getOpcode() == Instruction::Add) {
+      if (isa<ConstantInt>(arg->getOperand(0))) {
+        auto rule = [&bb, &arg](Value *ip) {
+          Constant *invops[2] = {arg->getOperand(0), cast<Constant>(ip)};
+          return arg->getWithOperands(invops);
+        };
+
+        auto ip = invertPointerM(arg->getOperand(1), bb, nullShadow);
+        return applyChainRule(arg->getType(), bb, rule, ip);
+      }
+      if (isa<ConstantInt>(arg->getOperand(1))) {
+        auto rule = [&bb, &arg](Value *ip) {
+          Constant *invops[2] = {cast<Constant>(ip), arg->getOperand(1)};
+          return arg->getWithOperands(invops);
+        };
+
+        auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
+        return applyChainRule(arg->getType(), bb, rule, ip);
+      }
+    }
     auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
 
     if (arg->isCast()) {
