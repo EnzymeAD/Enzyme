@@ -66,8 +66,13 @@ public:
     // TODO
   }
   bool isConstantValue(mlir::Value v) const;
+  bool isConstantInstruction(mlir::Operation *v) const;
   bool hasInvertPointer(mlir::Value v);
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &builder);
+  mlir::Value diffe(mlir::Value v, OpBuilder &builder);
+
+  void addToDiffe(mlir::Value oldGradient, mlir::Value addedGradient,
+                  OpBuilder &builder);
   void mapInvertPointer(mlir::Value v, mlir::Value invertValue,
                         OpBuilder &builder);
 

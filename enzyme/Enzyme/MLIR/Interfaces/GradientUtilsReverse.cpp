@@ -182,6 +182,11 @@ mlir::enzyme::MGradientUtilsReverse::cloneWithNewOperands(OpBuilder &B,
   return B.clone(*op, map);
 }
 
+bool mlir::enzyme::MGradientUtilsReverse::isConstantInstruction(
+    Operation *op) const {
+  return false;
+}
+
 bool mlir::enzyme::MGradientUtilsReverse::isConstantValue(Value v) const {
   if (isa<mlir::IntegerType>(v.getType()))
     return true;
@@ -200,6 +205,24 @@ bool mlir::enzyme::MGradientUtilsReverse::requiresShadow(Type t) {
     return iface.requiresShadow();
   }
   return false;
+}
+
+void mlir::enzyme::MGradientUtilsReverse::addToDiffe(Value oldGradient,
+                                                     Value addedGradient,
+                                                     OpBuilder &builder) {
+  // TODO
+  Value gradient = addedGradient;
+  if (hasInvertPointer(oldGradient)) {
+    Value operandGradient = invertPointerM(oldGradient, builder);
+    auto iface = cast<AutoDiffTypeInterface>(addedGradient.getType());
+    gradient = iface.createAddOp(builder, oldGradient.getLoc(), operandGradient,
+                                 addedGradient);
+  }
+  mapInvertPointer(oldGradient, gradient, builder);
+}
+
+Value mlir::enzyme::MGradientUtilsReverse::diffe(Value v, OpBuilder &builder) {
+  return invertPointerM(v, builder);
 }
 
 /*

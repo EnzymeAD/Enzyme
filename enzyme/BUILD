@@ -375,6 +375,20 @@ gentbl_cc_library(
     deps = [":EnzymeDialectTdFiles"],
 )
 
+gentbl(
+    name = "arith-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/ArithDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/ArithDerivatives.td",
+    td_srcs = ["Enzyme/MLIR/Implementations/ArithDerivatives.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
 cc_library(
     name = "EnzymeMLIR",
     srcs = glob([
@@ -396,6 +410,7 @@ cc_library(
     includes = ["Enzyme/MLIR", "Enzyme"],
     visibility = ["//visibility:public"],
     deps = [
+        ":arith-derivatives",
         ":EnzymeOpsIncGen",
         ":EnzymePassesIncGen",
 		":EnzymeTypesIncGen",
