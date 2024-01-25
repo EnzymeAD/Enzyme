@@ -742,10 +742,10 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
         InsertConstantInstruction(TR, I);
         return true;
       }
-      if (KnownInactiveFunctionInsts.count(called->getName())) {
-        InsertConstantInstruction(TR, I);
-        return true;
-      }
+    }
+    if (KnownInactiveFunctionInsts.count(getFuncNameFromCall(CI))) {
+      InsertConstantInstruction(TR, I);
+      return true;
     }
   }
 
