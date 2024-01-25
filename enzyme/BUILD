@@ -149,7 +149,7 @@ cc_library(
         "Enzyme/*.cpp",
         "Enzyme/TypeAnalysis/*.cpp",
         "Enzyme/Clang/EnzymeClang.cpp",
-    ]),
+    ], exclude=["Enzyme/eopt.cpp"]),
     hdrs = glob([
         "Enzyme/*.h",
         "Enzyme/TypeAnalysis/*.h",
@@ -216,6 +216,15 @@ genrule(
     outs = ["enzyme-clang++"],
     cmd = "cp $< $@",
     output_to_bindir = 1,
+)
+
+cc_binary(
+    name = "enzyme-opt",
+    srcs = ["Enzyme/eopt.cpp"],
+    deps = [
+        ":EnzymeStatic",
+        "@llvm-project//llvm:opt-driver",
+    ],
 )
 
 td_library(
@@ -476,12 +485,12 @@ expand_template(
         	"@llvm-project//llvm:count",
         	"@llvm-project//llvm:not",
         	"@llvm-project//llvm:lli",
-        	"@llvm-project//llvm:opt",
+        	":enzyme-opt",
             "@llvm-project//clang:builtin_headers_gen",
             ":enzyme-clang",
             ":enzyme-clang++",
 			":enzymemlir-opt"
         ] + glob(["test/**/*.h"])
     )
-    for src in glob(["test/**/*.mlir"])
+    for src in glob(["test/**/*.mlir", "test/Integration/**/*.c", "test/Integration/**/.cpp"], exclude=["test/**/*omp*.c"])
 ]
