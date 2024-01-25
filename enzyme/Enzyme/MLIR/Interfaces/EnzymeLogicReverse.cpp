@@ -276,8 +276,7 @@ void MEnzymeLogic::handlePredecessors(
         oBB->getPredecessors().end()) {
       // If there is only one block we can directly create a branch for
       // simplicity sake
-      auto bop =
-          revBuilder.create<cf::BranchOp>(loc, defaultBlock, defaultArguments);
+      revBuilder.create<cf::BranchOp>(loc, defaultBlock, defaultArguments);
     } else {
       Value cache = gutils->insertInit(gutils->getIndexCacheType());
       Value flag =
@@ -286,7 +285,7 @@ void MEnzymeLogic::handlePredecessors(
       SmallVector<ValueRange> argumentRanges;
       for (const auto &a : arguments)
         argumentRanges.emplace_back(a);
-      auto bop = revBuilder.create<cf::SwitchOp>(
+      revBuilder.create<cf::SwitchOp>(
           loc, flag, defaultBlock, defaultArguments, ArrayRef<APInt>(indices),
           ArrayRef<Block *>(blocks), argumentRanges);
 
