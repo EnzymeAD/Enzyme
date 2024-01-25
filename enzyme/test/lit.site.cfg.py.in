@@ -43,11 +43,16 @@ config.excludes = ['Inputs']
 config.substitutions.append(('%shlibext', config.llvm_shlib_ext))
 config.substitutions.append(('%lli', config.llvm_tools_dir + "/lli" + (" --jit-kind=mcjit" if int(config.llvm_ver) >= 13 else "")
 ))
-config.substitutions.append(('%opt', config.llvm_tools_dir + "/opt"))
 
-eopt = config.enzyme_obj_root + "/Enzyme/MLIR/enzymemlir-opt"
+opt = config.llvm_tools_dir + "/opt"
 if len("@ENZYME_BINARY_DIR@") == 0:
-  eopt = os.path.dirname(os.path.abspath(__file__)) + "/../enzymemlir-opt"
+  opt = os.path.dirname(os.path.abspath(__file__)) + "/../enzyme-opt"
+
+config.substitutions.append(('%opt', opt))
+
+emopt = config.enzyme_obj_root + "/Enzyme/MLIR/enzymemlir-opt"
+if len("@ENZYME_BINARY_DIR@") == 0:
+  emopt = os.path.dirname(os.path.abspath(__file__)) + "/../enzymemlir-opt"
 
 eclang = config.llvm_tools_dir + "/clang"
 if len("@ENZYME_BINARY_DIR@") == 0:
@@ -56,7 +61,7 @@ if len("@ENZYME_BINARY_DIR@") == 0:
   eclang += " -resource-dir " + resource + " "
   eclang += "-I " + os.path.dirname(os.path.abspath(__file__)) + "/Integration" 
 
-config.substitutions.append(('%eopt', eopt))
+config.substitutions.append(('%eopt', emopt))
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
 config.substitutions.append(('%clang', eclang))
