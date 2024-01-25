@@ -3252,22 +3252,18 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
       }
     }
     if (!PNfloatType) {
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "Cannot deduce type of phi " << *orig;
       if (CustomErrorHandler) {
-        std::string str;
-        raw_string_ostream ss(str);
-        ss << "Cannot deduce type of phi " << *orig;
         CustomErrorHandler(str.c_str(), wrap(orig), ErrorType::NoType,
                            &gutils->TR.analyzer, nullptr, wrap(&Builder));
         continue;
       } else {
-        llvm::errs() << *gutils->oldFunc->getParent() << "\n";
-        llvm::errs() << *gutils->oldFunc << "\n";
-        llvm::errs()
-            << " for orig " << *orig << " saw "
-            << gutils->TR.intType(size, orig, /*necessary*/ false).str()
-            << " - "
-            << "\n";
-        gutils->TR.intType(size, orig, /*necessary*/ true);
+        ss << "\n";
+        gutils->TR.dump(ss);
+        EmitFailure("CannotDeduceType", orig->getDebugLoc(), orig, ss.str());
+        continue;
       }
     }
 

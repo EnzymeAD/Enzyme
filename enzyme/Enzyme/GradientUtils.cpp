@@ -5423,14 +5423,20 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         return shadow;
       }
 
-      llvm::errs() << *oldFunc->getParent() << "\n";
-      llvm::errs() << *oldFunc << "\n";
-      llvm::errs() << *newFunc << "\n";
-      llvm::errs() << *arg << "\n";
-      assert(0 && "cannot compute with global variable that doesn't have "
-                  "marked shadow global");
-      report_fatal_error("cannot compute with global variable that doesn't "
-                         "have marked shadow global");
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "cannot compute with global variable that doesn't have marked "
+            "shadow global\n";
+      ss << *arg << "\n";
+      if (CustomErrorHandler) {
+        return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
+                                         ErrorType::NoShadow, this, nullptr,
+                                         wrap(&BuilderM)));
+      } else {
+        EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
+                    ss.str());
+      }
+      return UndefValue::get(getShadowType(arg->getType()));
     }
     auto md = arg->getMetadata("enzyme_shadow");
     if (!isa<MDTuple>(md)) {

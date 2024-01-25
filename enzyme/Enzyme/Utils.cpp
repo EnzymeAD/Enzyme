@@ -439,8 +439,12 @@ CallInst *CreateDealloc(llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
 EnzymeFailure::EnzymeFailure(const llvm::Twine &RemarkName,
                              const llvm::DiagnosticLocation &Loc,
                              const llvm::Instruction *CodeRegion)
-    : DiagnosticInfoUnsupported(*CodeRegion->getParent()->getParent(),
-                                RemarkName, Loc) {}
+    : EnzymeFailure(RemarkName, Loc, CodeRegion->getParent()->getParent()) {}
+
+EnzymeFailure::EnzymeFailure(const llvm::Twine &RemarkName,
+                             const llvm::DiagnosticLocation &Loc,
+                             const llvm::Function *CodeRegion)
+    : DiagnosticInfoUnsupported(*CodeRegion, RemarkName, Loc) {}
 
 /// Convert a floating type to a string
 static inline std::string tofltstr(Type *T) {
@@ -2627,7 +2631,8 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
       CustomErrorHandler(ss.str().c_str(), nullptr, ErrorType::NoDerivative,
                          nullptr, nullptr, nullptr);
     } else {
-      EmitFailure("unknown trans blas value", nullptr, nullptr, ss.str());
+      EmitFailure("unknown trans blas value", B.getCurrentDebugLocation(),
+                  B.GetInsertBlock()->getParent(), ss.str());
     }
     return V;
   }
