@@ -5846,6 +5846,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   }
 
   if (F->empty()) {
+    if (EnzymeAssumeUnknownNoFree) {
+      return F;
+    }
     if (EnzymeEmptyFnInactive) {
       return F;
     }

@@ -409,7 +409,8 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::__1::discard_block_engine",
     "std::__1::independent_bits_engine",
     "std::__1::shuffle_order_engine",
-  
+    "std::__1::basic_streambuf",
+    "std::__1::basic_stringbuf",
 
     "std::__detail::_Prime_rehash_policy",
     "std::__detail::_Hash_code_base",
