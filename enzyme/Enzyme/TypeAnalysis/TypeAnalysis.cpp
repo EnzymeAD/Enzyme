@@ -3861,6 +3861,18 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
         &I);
     return;
 
+  case Intrinsic::smax:
+  case Intrinsic::smin:
+  case Intrinsic::umax:
+  case Intrinsic::umin:
+    // No direction check as always valid
+    updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1, &I), &I);
+    // No direction check as always valid
+    updateAnalysis(I.getOperand(0), TypeTree(BaseType::Integer).Only(-1, &I), &I);
+    // No direction check as always valid
+    updateAnalysis(I.getOperand(1), TypeTree(BaseType::Integer).Only(-1, &I), &I);
+    return;
+
   case Intrinsic::umul_with_overflow:
   case Intrinsic::smul_with_overflow:
   case Intrinsic::ssub_with_overflow:
