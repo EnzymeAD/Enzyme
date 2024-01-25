@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=smax -o /dev/null | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=smax -S -o /dev/null | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -opaque-pointers -print-type-analysis -type-analysis-func=smax -o /dev/null | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -opaque-pointers -passes="print-type-analysis" -type-analysis-func=smax -S -o /dev/null | FileCheck %s
 
 define void @smax(ptr %inp) {
 entry:
