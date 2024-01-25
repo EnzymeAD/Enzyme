@@ -82,12 +82,18 @@ bool printTypeAnalyses(llvm::Function &F) {
       dt = ConcreteType(a.getType()->getScalarType());
     } else if (a.getType()->isPointerTy()) {
 #if LLVM_VERSION_MAJOR < 17
-      auto et = cast<PointerType>(a.getType())->getPointerElementType();
-      if (et->isFPOrFPVectorTy()) {
-        dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
-      } else if (et->isPointerTy()) {
-        dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
+#if LLVM_VERSION_MAJOR >= 15
+      if (F.getContext().supportsTypedPointers()) {
+#endif
+        auto et = cast<PointerType>(a.getType())->getPointerElementType();
+        if (et->isFPOrFPVectorTy()) {
+          dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
+        } else if (et->isPointerTy()) {
+          dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
+        }
+#if LLVM_VERSION_MAJOR >= 15
       }
+#endif
 #endif
       dt.insert({}, BaseType::Pointer);
     } else if (a.getType()->isIntOrIntVectorTy()) {
@@ -106,12 +112,18 @@ bool printTypeAnalyses(llvm::Function &F) {
     dt = ConcreteType(F.getReturnType()->getScalarType());
   } else if (F.getReturnType()->isPointerTy()) {
 #if LLVM_VERSION_MAJOR < 17
-    auto et = cast<PointerType>(F.getReturnType())->getPointerElementType();
-    if (et->isFPOrFPVectorTy()) {
-      dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
-    } else if (et->isPointerTy()) {
-      dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
+#if LLVM_VERSION_MAJOR >= 15
+    if (F.getContext().supportsTypedPointers()) {
+#endif
+      auto et = cast<PointerType>(F.getReturnType())->getPointerElementType();
+      if (et->isFPOrFPVectorTy()) {
+        dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
+      } else if (et->isPointerTy()) {
+        dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
+      }
+#if LLVM_VERSION_MAJOR >= 15
     }
+#endif
 #endif
     dt.insert({}, BaseType::Pointer);
   } else if (F.getReturnType()->isIntOrIntVectorTy()) {
