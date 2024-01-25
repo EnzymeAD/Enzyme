@@ -3234,7 +3234,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
       for (size_t i = 1; i < size; i++) {
         if (!PNtypeT[{(int)i}].isFloat())
           continue;
-        PNtypeT[{(int)i}].checkedOrIn(PNtype, /*pointerIntSame*/ true, legal);
+        PNtype.checkedOrIn(PNtypeT[{(int)i}], /*pointerIntSame*/ true, legal);
         if (!legal) {
           break;
         }
@@ -3254,7 +3254,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     if (!PNfloatType) {
       std::string str;
       raw_string_ostream ss(str);
-      ss << "Cannot deduce type of phi " << *orig;
+      ss << "Cannot deduce type of phi " << *orig << PNtypeT.str()
+         << " sz: " << size << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(str.c_str(), wrap(orig), ErrorType::NoType,
                            &gutils->TR.analyzer, nullptr, wrap(&Builder));
