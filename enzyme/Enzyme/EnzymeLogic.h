@@ -51,6 +51,7 @@
 
 extern "C" {
 extern llvm::cl::opt<bool> EnzymePrint;
+extern llvm::cl::opt<bool> EnzymeJuliaAddrLoad;
 }
 
 enum class AugmentedStruct { Tape, Return, DifferentialReturn };
