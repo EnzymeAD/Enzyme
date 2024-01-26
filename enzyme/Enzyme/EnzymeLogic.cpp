@@ -29,6 +29,7 @@
 //===----------------------------------------------------------------------===//
 #include "ActivityAnalysis.h"
 #include "AdjointGenerator.h"
+#include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Intrinsics.h"
 
 #if LLVM_VERSION_MAJOR >= 16
@@ -5206,18 +5207,59 @@ public:
     return v;
   }
   // Return
-  void visitCallInst(llvm::CallInst &call) {
-    using namespace llvm;
+  void visitCallInst(llvm::CallInst &CI) {
+    Intrinsic::ID ID;
+    StringRef funcName = getFuncNameFromCall(const_cast<CallInst *>(&CI));
+    if (isMemFreeLibMFunction(funcName, &ID)) {
+      SmallVector<Value *, 2> orig_ops(CI.arg_size());
+      for (unsigned i = 0; i < CI.arg_size(); ++i)
+        orig_ops[i] = CI.getOperand(i);
 
-    CallInst *const newCall = cast<CallInst>(getNewFromOriginal(&call));
-    IRBuilder<> BuilderZ(newCall);
+      bool hasFromType = false;
+      auto newI = cast<llvm::CallInst>(getNewFromOriginal(&CI));
+      IRBuilder<> B(newI);
+      SmallVector<Value *, 2> new_ops(CI.arg_size());
+      for (unsigned i = 0; i < CI.arg_size(); ++i) {
+        if (orig_ops[i]->getType() == getFromType()) {
+          new_ops[i] = truncate(B, getNewFromOriginal(orig_ops[i]));
+          hasFromType = true;
+        } else {
+          new_ops[i] = getNewFromOriginal(orig_ops[i]);
+        }
+      }
+      Type *retTy = CI.getType();
+      if (CI.getType() == getFromType()) {
+        hasFromType = true;
+        retTy = getToType();
+      }
 
-    if (auto called = call.getCalledFunction())
-      if (handleKnownCalls(call, called, getFuncNameFromCall(&call), newCall))
+      if (!hasFromType)
         return;
 
-    RequestContext ctx(&call, &BuilderZ);
-    auto val = GetShadow(ctx, getNewFromOriginal(call.getCalledOperand()));
+      // TODO check that the intrinsic is overloaded
+
+      CallInst *intr;
+      Value *nres = intr =
+          createIntrinsicCall(B, ID, retTy, new_ops, &CI, CI.getName());
+      if (CI.getType() == getFromType())
+        nres = expand(B, nres);
+      intr->copyIRFlags(newI);
+      newI->replaceAllUsesWith(nres);
+      newI->eraseFromParent();
+      return;
+    }
+
+    using namespace llvm;
+
+    CallInst *const newCall = cast<CallInst>(getNewFromOriginal(&CI));
+    IRBuilder<> BuilderZ(newCall);
+
+    if (auto called = CI.getCalledFunction())
+      if (handleKnownCalls(CI, called, getFuncNameFromCall(&CI), newCall))
+        return;
+
+    RequestContext ctx(&CI, &BuilderZ);
+    auto val = GetShadow(ctx, getNewFromOriginal(CI.getCalledOperand()));
     newCall->setCalledOperand(val);
     return;
   }
