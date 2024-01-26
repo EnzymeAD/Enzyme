@@ -3865,13 +3865,19 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::smin:
   case Intrinsic::umax:
   case Intrinsic::umin:
+    BaseType type;
+    if (isa<PointerType>(I.getOperand(0)->getType()) && isa<PointerType>(I.getOperand(1)->getType()) ) {
+      type = BaseType::Pointer;
+    } else {
+      type = BaseType::Integer;
+    }
     // No direction check as always valid
-    updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1, &I), &I);
+    updateAnalysis(&I, TypeTree(type).Only(-1, &I), &I);
     // No direction check as always valid
-    updateAnalysis(I.getOperand(0), TypeTree(BaseType::Integer).Only(-1, &I),
+    updateAnalysis(I.getOperand(0), TypeTree(type).Only(-1, &I),
                    &I);
     // No direction check as always valid
-    updateAnalysis(I.getOperand(1), TypeTree(BaseType::Integer).Only(-1, &I),
+    updateAnalysis(I.getOperand(1), TypeTree(type).Only(-1, &I),
                    &I);
     return;
 #endif
