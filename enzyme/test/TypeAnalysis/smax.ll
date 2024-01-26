@@ -13,11 +13,11 @@ entry:
 declare i32 @llvm.smax.i32(i32, i32)
 
 
-; CHECK: smax - smax - {[-1]:Integer} |{[-1]:Integer}:{} {[-1]:Integer}:{} 
+; CHECK: smax - {[-1]:Integer} |{[-1]:Integer}:{} {[-1]:Integer}:{}
 ; CHECK-NEXT: i32 %a: {[-1]:Integer}
 ; CHECK_NEXT: i32 %b: {[-1]:Integer}
 ; CHECK-NEXT: entry
-; CHECK-NEXT:   %0 = call i32 @llvm.smax.i32(i32 %a, i32 %b): {}
+; CHECK-NEXT:   %0 = call i32 @llvm.smax.i32(i32 %a, i32 %b): {[-1]:Integer}
 ; CHECK-NEXT:   %1 = add i32 %a, 1: {[-1]:Integer}
 ; CHECK-NEXT:   %2 = add i32 %b, 2: {[-1]:Integer}
 ; CHECK-NEXT:   %3 = call i32 @llvm.smax.i32(i32 %1, i32 %2): {[-1]:Integer}
