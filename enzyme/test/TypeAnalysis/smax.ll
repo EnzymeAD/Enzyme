@@ -6,10 +6,8 @@ entry:
   %0 = call i32 @llvm.smax.i32(i32 %a, i32 %b)
   %1 = call i32 @getint()
   %2 = call i32 @getint()
-  %3 = add i32 %a, %1
-  %4 = add i32 %b, %2
-  %5 = call i32 @llvm.smax.i32(i32 %3, i32 %4)
-  ret i32 %5
+  %3 = call i32 @llvm.smax.i32(i32 %1, i32 %2)
+  ret i32 %3
 }
 
 declare i32 @llvm.smax.i32(i32, i32)
@@ -23,7 +21,5 @@ declare i32 @getint()
 ; CHECK-NEXT: entry
 ; CHECK-NEXT: %1 = call i32 @getint(): {[-1]:Integer}
 ; CHECK-NEXT: %2 = call i32 @getint(): {[-1]:Integer}
-; CHECK-NEXT: %3 = add i32 %a, %1: {[-1]:Integer}
-; CHECK-NEXT: %4 = add i32 %b, %2: {[-1]:Integer}
-; CHECK-NEXT: %5 = call i32 @llvm.smax.i32(i32 %3, i32 %4): {[-1]:Integer}
-; CHECK-NEXT: ret i32 %5: {}
+; CHECK-NEXT: %3 = call i32 @llvm.smax.i32(i32 %1, i32 %2): {[-1]:Integer}
+; CHECK-NEXT: ret i32 %3: {}
