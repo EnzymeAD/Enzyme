@@ -9325,6 +9325,13 @@ bool GradientUtils::needsCacheWholeAllocation(
     if (found == knownRecomputeHeuristic.end())
       continue;
 
+    // If caching a julia base object, this is fine as
+    // GC will deal with any issues with.
+    if (auto PT = dyn_cast<PointerType>(cur->getType()))
+      if (PT->getAddressSpace() == 10)
+        if (EnzymeJuliaAddrLoad)
+          continue;
+
     // If caching this user, it cannot be a gep/cast of original
     if (!found->second) {
       llvm::errs() << " mod: " << *oldFunc->getParent() << "\n";
