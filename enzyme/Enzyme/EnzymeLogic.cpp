@@ -5081,18 +5081,17 @@ public:
     return;
   }
   void visitFenceInst(llvm::FenceInst &FI) { return; }
-  void visitIntrinsicInst(llvm::IntrinsicInst &II) {
-    SmallVector<Value *, 2> orig_ops(II.arg_size());
-    for (unsigned i = 0; i < II.arg_size(); ++i)
-      orig_ops[i] = II.getOperand(i);
-    if (handleAdjointForIntrinsic(II.getIntrinsicID(), II, orig_ops))
-      return;
+
+  bool handleIntrinsic(llvm::CallInst &CI, Intrinsic::ID ID) {
+    SmallVector<Value *, 2> orig_ops(CI.arg_size());
+    for (unsigned i = 0; i < CI.arg_size(); ++i)
+      orig_ops[i] = CI.getOperand(i);
 
     bool hasFromType = false;
-    auto newI = cast<llvm::IntrinsicInst>(getNewFromOriginal(&II));
+    auto newI = cast<llvm::CallInst>(getNewFromOriginal(&CI));
     IRBuilder<> B(newI);
-    SmallVector<Value *, 2> new_ops(II.arg_size());
-    for (unsigned i = 0; i < II.arg_size(); ++i) {
+    SmallVector<Value *, 2> new_ops(CI.arg_size());
+    for (unsigned i = 0; i < CI.arg_size(); ++i) {
       if (orig_ops[i]->getType() == getFromType()) {
         new_ops[i] = truncate(B, getNewFromOriginal(orig_ops[i]));
         hasFromType = true;
@@ -5100,27 +5099,29 @@ public:
         new_ops[i] = getNewFromOriginal(orig_ops[i]);
       }
     }
-    Type *retTy = II.getType();
-    if (II.getType() == getFromType()) {
+    Type *retTy = CI.getType();
+    if (CI.getType() == getFromType()) {
       hasFromType = true;
       retTy = getToType();
     }
 
     if (!hasFromType)
-      return;
+      return false;
 
     // TODO check that the intrinsic is overloaded
 
     CallInst *intr;
-    Value *nres = intr = createIntrinsicCall(B, II.getIntrinsicID(), retTy,
-                                             new_ops, &II, II.getName());
-    if (II.getType() == getFromType())
+    Value *nres = intr =
+      createIntrinsicCall(B, ID, retTy, new_ops, &CI, CI.getName());
+    if (CI.getType() == getFromType())
       nres = expand(B, nres);
     intr->copyIRFlags(newI);
     newI->replaceAllUsesWith(nres);
     newI->eraseFromParent();
-
-    return;
+    return true;
+  }
+  void visitIntrinsicInst(llvm::IntrinsicInst &II) {
+    handleIntrinsic(II, II.getIntrinsicID());
   }
 
   void visitReturnInst(llvm::ReturnInst &I) { return; }
@@ -5210,44 +5211,9 @@ public:
   void visitCallInst(llvm::CallInst &CI) {
     Intrinsic::ID ID;
     StringRef funcName = getFuncNameFromCall(const_cast<CallInst *>(&CI));
-    if (isMemFreeLibMFunction(funcName, &ID)) {
-      SmallVector<Value *, 2> orig_ops(CI.arg_size());
-      for (unsigned i = 0; i < CI.arg_size(); ++i)
-        orig_ops[i] = CI.getOperand(i);
-
-      bool hasFromType = false;
-      auto newI = cast<llvm::CallInst>(getNewFromOriginal(&CI));
-      IRBuilder<> B(newI);
-      SmallVector<Value *, 2> new_ops(CI.arg_size());
-      for (unsigned i = 0; i < CI.arg_size(); ++i) {
-        if (orig_ops[i]->getType() == getFromType()) {
-          new_ops[i] = truncate(B, getNewFromOriginal(orig_ops[i]));
-          hasFromType = true;
-        } else {
-          new_ops[i] = getNewFromOriginal(orig_ops[i]);
-        }
-      }
-      Type *retTy = CI.getType();
-      if (CI.getType() == getFromType()) {
-        hasFromType = true;
-        retTy = getToType();
-      }
-
-      if (!hasFromType)
+    if (isMemFreeLibMFunction(funcName, &ID))
+      if (handleIntrinsic(CI, ID))
         return;
-
-      // TODO check that the intrinsic is overloaded
-
-      CallInst *intr;
-      Value *nres = intr =
-          createIntrinsicCall(B, ID, retTy, new_ops, &CI, CI.getName());
-      if (CI.getType() == getFromType())
-        nres = expand(B, nres);
-      intr->copyIRFlags(newI);
-      newI->replaceAllUsesWith(nres);
-      newI->eraseFromParent();
-      return;
-    }
 
     using namespace llvm;
 
