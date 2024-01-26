@@ -40,7 +40,7 @@ ExternalProject_Add(gsl64
     BUILD_IN_SOURCE 1
     INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/gsl64/install
     CONFIGURE_COMMAND sh -c ${CMAKE_CURRENT_SOURCE_DIR}/fixgsl64.sh
-    BUILD_COMMAND  sh -c "$<TARGET_FILE:clang> cblas/*.c ${BC_LOAD_FLAGS2} -I . -I .. -S -emit-llvm -O1"
+    BUILD_COMMAND  sh -c "rm cblas/xerbla.c && $<TARGET_FILE:clang> cblas/*.c ${BC_LOAD_FLAGS2} -I . -I .. -S -emit-llvm -O1"
     INSTALL_COMMAND ""
     UPDATE_COMMAND ""
     TEST_COMMAND      ""
