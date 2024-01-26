@@ -13,11 +13,11 @@ define double @f(double %x, double %y) {
   ret double %res
 }
 
-declare double (double, double)* @__enzyme_truncate(...)
+declare double (double, double)* @__enzyme_truncate_func(...)
 
 define double @tester(double %x, double %y) {
 entry:
-  %ptr = call double (double, double)* (...) @__enzyme_truncate(double (double, double)* @f, i64 64, i64 32)
+  %ptr = call double (double, double)* (...) @__enzyme_truncate_func(double (double, double)* @f, i64 64, i64 32)
   %res = call double %ptr(double %x, double %y)
   ret double %res
 }

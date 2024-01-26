@@ -1314,14 +1314,14 @@ public:
     return type_args;
   }
 
-  bool HandleTruncate(CallInst *CI) {
+  bool HandleTruncateFunc(CallInst *CI) {
     IRBuilder<> Builder(CI);
     Function *F = parseFunctionParameter(CI);
     if (!F)
       return false;
     if (CI->arg_size() != 3) {
       EmitFailure("TooManyArgs", CI->getDebugLoc(), CI,
-                  "Had incorrect number of args to __enzyme_truncate", *CI,
+                  "Had incorrect number of args to __enzyme_truncate_func", *CI,
                   " - expected 3");
       return false;
     }
@@ -1330,7 +1330,7 @@ public:
     auto Cto = cast<ConstantInt>(CI->getArgOperand(2));
     assert(Cto);
     RequestContext context(CI, &Builder);
-    llvm::Value *res = Logic.CreateTruncate(
+    llvm::Value *res = Logic.CreateTruncateFunc(
         context, F, (unsigned)Cfrom->getValue().getZExtValue(),
         (unsigned)Cto->getValue().getZExtValue());
     if (!res)
@@ -1338,6 +1338,28 @@ public:
     res = Builder.CreatePointerCast(res, CI->getType());
     CI->replaceAllUsesWith(res);
     CI->eraseFromParent();
+    return true;
+  }
+
+  bool HandleTruncateValue(CallInst *CI, bool isTruncate) {
+    IRBuilder<> Builder(CI);
+    if (CI->arg_size() != 3) {
+      EmitFailure("TooManyArgs", CI->getDebugLoc(), CI,
+                  "Had incorrect number of args to __enzyme_truncate_value",
+                  *CI, " - expected 3");
+      return false;
+    }
+    auto Cfrom = cast<ConstantInt>(CI->getArgOperand(1));
+    assert(Cfrom);
+    auto Cto = cast<ConstantInt>(CI->getArgOperand(2));
+    assert(Cto);
+    auto Addr = CI->getArgOperand(0);
+    RequestContext context(CI, &Builder);
+    bool res = Logic.CreateTruncateValue(
+        context, Addr, (unsigned)Cfrom->getValue().getZExtValue(),
+        (unsigned)Cto->getValue().getZExtValue(), isTruncate);
+    if (!res)
+      return false;
     return true;
   }
 
@@ -2088,7 +2110,9 @@ public:
     MapVector<CallInst *, DerivativeMode> toVirtual;
     MapVector<CallInst *, DerivativeMode> toSize;
     SmallVector<CallInst *, 4> toBatch;
-    SmallVector<CallInst *, 4> toTruncate;
+    SmallVector<CallInst *, 4> toTruncateFunc;
+    SmallVector<CallInst *, 4> toTruncateValue;
+    SmallVector<CallInst *, 4> toExpandValue;
     MapVector<CallInst *, ProbProgMode> toProbProg;
     SetVector<CallInst *> InactiveCalls;
     SetVector<CallInst *> IterCalls;
@@ -2398,7 +2422,9 @@ public:
         bool virtualCall = false;
         bool sizeOnly = false;
         bool batch = false;
-        bool truncate = false;
+        bool truncateFunc = false;
+        bool truncateValue = false;
+        bool expandValue = false;
         bool probProg = false;
         DerivativeMode derivativeMode;
         ProbProgMode probProgMode;
@@ -2428,9 +2454,15 @@ public:
         } else if (Fn->getName().contains("__enzyme_batch")) {
           enableEnzyme = true;
           batch = true;
-        } else if (Fn->getName().contains("__enzyme_truncate")) {
+        } else if (Fn->getName().contains("__enzyme_truncate_func")) {
           enableEnzyme = true;
-          truncate = true;
+          truncateFunc = true;
+        } else if (Fn->getName().contains("__enzyme_truncate_value")) {
+          enableEnzyme = true;
+          truncateValue = true;
+        } else if (Fn->getName().contains("__enzyme_expand_value")) {
+          enableEnzyme = true;
+          expandValue = true;
         } else if (Fn->getName().contains("__enzyme_likelihood")) {
           enableEnzyme = true;
           probProgMode = ProbProgMode::Likelihood;
@@ -2488,8 +2520,12 @@ public:
             toSize[CI] = derivativeMode;
           else if (batch)
             toBatch.push_back(CI);
-          else if (truncate)
-            toTruncate.push_back(CI);
+          else if (truncateFunc)
+            toTruncateFunc.push_back(CI);
+          else if (truncateValue)
+            toTruncateValue.push_back(CI);
+          else if (expandValue)
+            toExpandValue.push_back(CI);
           else if (probProg) {
             toProbProg[CI] = probProgMode;
           } else
@@ -2583,8 +2619,14 @@ public:
     for (auto call : toBatch) {
       HandleBatch(call);
     }
-    for (auto call : toTruncate) {
-      HandleTruncate(call);
+    for (auto call : toTruncateFunc) {
+      HandleTruncateFunc(call);
+    }
+    for (auto call : toTruncateValue) {
+      HandleTruncateValue(call, true);
+    }
+    for (auto call : toExpandValue) {
+      HandleTruncateValue(call, false);
     }
 
     for (auto &&[call, mode] : toProbProg) {

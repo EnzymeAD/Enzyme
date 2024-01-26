@@ -8,11 +8,11 @@ define void @f(double* %x) {
   ret void
 }
 
-declare void (double*)* @__enzyme_truncate(...)
+declare void (double*)* @__enzyme_truncate_func(...)
 
 define void @tester(double* %data) {
 entry:
-  %ptr = call void (double*)* (...) @__enzyme_truncate(void (double*)* @f, i64 64, i64 32)
+  %ptr = call void (double*)* (...) @__enzyme_truncate_func(void (double*)* @f, i64 64, i64 32)
   call void %ptr(double* %data)
   ret void
 }

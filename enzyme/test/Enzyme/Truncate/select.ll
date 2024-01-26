@@ -6,11 +6,11 @@ define double @f(double %x, double %y, i1 %cond) {
   ret double %res
 }
 
-declare double (double, double, i1)* @__enzyme_truncate(...)
+declare double (double, double, i1)* @__enzyme_truncate_func(...)
 
 define double @tester(double %x, double %y, i1 %cond) {
 entry:
-  %ptr = call double (double, double, i1)* (...) @__enzyme_truncate(double (double, double, i1)* @f, i64 64, i64 32)
+  %ptr = call double (double, double, i1)* (...) @__enzyme_truncate_func(double (double, double, i1)* @f, i64 64, i64 32)
   %res = call double %ptr(double %x, double %y, i1 %cond)
   ret double %res
 }
