@@ -6,6 +6,7 @@ def create_all_f(out_path, n_funcs, n_lines):
     f_out = open(out_path, 'w+')
     f_out.write('#include <vector>\n')
     f_out.write('#include <cstdlib>\n')
+    f_out.write('#include <iostream>\n')
     f_out.write('using std::vector;\n\n')
     f_out.close()
     for i in range(n_funcs):
@@ -47,6 +48,8 @@ def create_main(file_mono, n_funcs, n_lines):
         f_out.write('    vec[{}] = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);\n'.format(i))
     
     f_out.write('    __enzyme_autodiff((void*)f, vec, dvec);\n')
+    f_out.write('    for (int i = 0; i < 2500; i++)\n')
+    f_out.write('      std::cout << vec[i] << std::endl;\n')
 
     f_out.write('    return 0;\n')
     f_out.write('}\n')
