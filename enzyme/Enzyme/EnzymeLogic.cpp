@@ -5224,6 +5224,12 @@ public:
     newCall->setCalledOperand(val);
     return;
   }
+  void visitFPTruncInst(FPTruncInst &I) { return; }
+  void visitFPExtInst(FPExtInst &I) { return; }
+  void visitFPToUIInst(FPToUIInst &I) { return; }
+  void visitFPToSIInst(FPToSIInst &I) { return; }
+  void visitUIToFPInst(UIToFPInst &I) { return; }
+  void visitSIToFPInst(SIToFPInst &I) { return; }
 };
 
 bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
