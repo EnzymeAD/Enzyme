@@ -71,7 +71,7 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions = {}) {
 
 #if LLVM_VERSION_MAJOR >= 16
     auto BC = llvm::parseIR(buf, Err, M.getContext(), [&](StringRef, StringRef) {
-      return Optional<std::string>(M.getDataLayout().getStringRepresentation());
+      return std::optional<std::string>(M.getDataLayout().getStringRepresentation());
     });
 #else
     auto BC = llvm::parseIR(buf, Err, M.getContext(), [&](StringRef) {
