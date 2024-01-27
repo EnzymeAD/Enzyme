@@ -70,9 +70,11 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions = {}) {
     MemoryBufferRef buf(mod, StringRef("bcloader"));
 
 #if LLVM_VERSION_MAJOR >= 16
-    auto BC = llvm::parseIR(buf, Err, M.getContext(), [&](StringRef, StringRef) {
-      return std::optional<std::string>(M.getDataLayout().getStringRepresentation());
-    });
+    auto BC = llvm::parseIR(buf, Err, M.getContext(),
+                            llvm::ParserCallbacks([&](StringRef, StringRef) {
+                              return std::optional<std::string>(
+                                  M.getDataLayout().getStringRepresentation());
+                            }));
 #else
     auto BC = llvm::parseIR(buf, Err, M.getContext(), [&](StringRef) {
       return Optional<std::string>(M.getDataLayout().getStringRepresentation());
