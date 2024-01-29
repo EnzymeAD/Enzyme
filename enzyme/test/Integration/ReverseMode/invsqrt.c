@@ -23,7 +23,7 @@
 #include <stdio.h>
 #include <stdint.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 // Fast inverse sqrt
 // Code taken from https://en.wikipedia.org/wiki/Fast_inverse_square_root

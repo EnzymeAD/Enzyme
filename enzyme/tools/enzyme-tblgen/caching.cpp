@@ -360,7 +360,7 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
 << "        cacheval = BuilderZ.CreateInsertValue(cacheval, tup.value(), tup.index());\n"
 << "    }\n"
 << "    gutils->cacheForReverse(BuilderZ, cacheval,\n"
-<< "                            getIndex(&call, CacheType::Tape));\n"
+<< "                            getIndex(&call, CacheType::Tape, BuilderZ));\n"
 << "  }\n"
 << "  unsigned cacheidx = 0;\n";
 

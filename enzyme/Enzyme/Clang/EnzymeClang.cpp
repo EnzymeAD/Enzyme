@@ -33,6 +33,8 @@
 #include "clang/Sema/Sema.h"
 #include "clang/Sema/SemaDiagnostic.h"
 
+#include "../Utils.h"
+
 using namespace clang;
 
 #if LLVM_VERSION_MAJOR >= 18
@@ -81,9 +83,9 @@ struct Visitor : public RecursiveASTVisitor<Visitor> {
   }
 };
 
-const char *enzyme_utils_file[] = {
-
-};
+#if LLVM_VERSION_MAJOR >= 18
+void registerEnzyme(llvm::PassBuilder &PB);
+#endif
 
 class EnzymePlugin final : public clang::ASTConsumer {
   clang::CompilerInstance &CI;
@@ -94,20 +96,30 @@ public:
     FrontendOptions &Opts = CI.getFrontendOpts();
     CodeGenOptions &CGOpts = CI.getCodeGenOpts();
     auto PluginName = "ClangEnzyme-" + std::to_string(LLVM_VERSION_MAJOR);
+    bool contains = false;
+#if LLVM_VERSION_MAJOR < 18
+    std::string pluginPath;
+#endif
     for (auto P : Opts.Plugins)
-      if (llvm::sys::path::stem(P).endswith(PluginName)) {
-        bool contains = false;
+      if (endsWith(llvm::sys::path::stem(P), PluginName)) {
+#if LLVM_VERSION_MAJOR < 18
+        pluginPath = P;
+#endif
         for (auto passPlugin : CGOpts.PassPlugins) {
-          if (llvm::sys::path::stem(passPlugin).endswith(PluginName)) {
+          if (endsWith(llvm::sys::path::stem(passPlugin), PluginName)) {
             contains = true;
             break;
           }
         }
-        if (!contains) {
-          CGOpts.PassPlugins.push_back(P);
-          break;
-        }
       }
+
+    if (!contains) {
+#if LLVM_VERSION_MAJOR >= 18
+      CGOpts.PassBuilderCallbacks.push_back(registerEnzyme);
+#else
+      CGOpts.PassPlugins.push_back(pluginPath);
+#endif
+    }
     CI.getPreprocessorOpts().Includes.push_back("/enzyme/enzyme/version");
 
     std::string PredefineBuffer;
@@ -228,6 +240,11 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
     // if (FD->isLateTemplateParsed()) return;
     auto &AST = S.getASTContext();
     DeclContext *declCtx = FD->getDeclContext();
+    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
+      if (tmpCtx->isRecord()) {
+        declCtx = tmpCtx->getParent();
+      }
+    }
     auto loc = FD->getLocation();
     RecordDecl *RD;
     if (S.getLangOpts().CPlusPlus)
@@ -357,6 +374,11 @@ struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
 
     auto &AST = S.getASTContext();
     DeclContext *declCtx = D->getDeclContext();
+    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
+      if (tmpCtx->isRecord()) {
+        declCtx = tmpCtx->getParent();
+      }
+    }
     auto loc = D->getLocation();
     RecordDecl *RD;
     if (S.getLangOpts().CPlusPlus)
@@ -413,7 +435,6 @@ struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
       return AttributeNotApplied;
     }
     V->setInit(expr);
-    V->dump();
     S.MarkVariableReferenced(loc, V);
     S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
     return AttributeApplied;
@@ -467,6 +488,11 @@ struct EnzymeNoFreeAttrInfo : public ParsedAttrInfo {
 
     auto &AST = S.getASTContext();
     DeclContext *declCtx = D->getDeclContext();
+    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
+      if (tmpCtx->isRecord()) {
+        declCtx = tmpCtx->getParent();
+      }
+    }
     auto loc = D->getLocation();
     RecordDecl *RD;
     if (S.getLangOpts().CPlusPlus)
@@ -522,7 +548,6 @@ struct EnzymeNoFreeAttrInfo : public ParsedAttrInfo {
       return AttributeNotApplied;
     }
     V->setInit(expr);
-    V->dump();
     S.MarkVariableReferenced(loc, V);
     S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
     return AttributeApplied;
@@ -572,6 +597,11 @@ struct EnzymeSparseAccumulateAttrInfo : public ParsedAttrInfo {
 
     auto &AST = S.getASTContext();
     DeclContext *declCtx = D->getDeclContext();
+    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
+      if (tmpCtx->isRecord()) {
+        declCtx = tmpCtx->getParent();
+      }
+    }
     auto loc = D->getLocation();
     RecordDecl *RD;
     if (S.getLangOpts().CPlusPlus)
@@ -619,7 +649,6 @@ struct EnzymeSparseAccumulateAttrInfo : public ParsedAttrInfo {
       return AttributeNotApplied;
     }
     V->setInit(expr);
-    V->dump();
     S.MarkVariableReferenced(loc, V);
     S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
     return AttributeApplied;

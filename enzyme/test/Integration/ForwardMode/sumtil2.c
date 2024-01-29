@@ -11,7 +11,7 @@
 #include <math.h>
 #include <assert.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 extern double __enzyme_fwddiff(void*, double*, double*, int);
 

@@ -181,6 +181,7 @@ const StringSet<> KnownInactiveFunctionInsts = {
     "jl_ptr_to_array_1d"};
 
 const StringSet<> KnownInactiveFunctions = {
+    "mpfr_greater_p",
     "__nv_isnand",
     "__nv_isnanf",
     "__nv_isinfd",
@@ -286,7 +287,10 @@ const StringSet<> KnownInactiveFunctions = {
     "cuMemPoolGetAttribute",
     "cuMemGetInfo_v2",
     "cuDeviceGetAttribute",
-    "cuDevicePrimaryCtxRetain"
+    "cuDevicePrimaryCtxRetain",
+    "floor",
+    "floorf",
+    "floorl"
 };
 
 const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
@@ -405,7 +409,8 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::__1::discard_block_engine",
     "std::__1::independent_bits_engine",
     "std::__1::shuffle_order_engine",
-  
+    "std::__1::basic_streambuf",
+    "std::__1::basic_stringbuf",
 
     "std::__detail::_Prime_rehash_policy",
     "std::__detail::_Hash_code_base",
@@ -464,20 +469,20 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   std::string demangledName = llvm::demangle(Name.str());
   auto dName = StringRef(demangledName);
   for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
-    if (dName.startswith(FuncName)) {
+    if (startsWith(dName, FuncName)) {
       return true;
     }
   }
   if (demangledName == Name.str()) {
     // Either demangeling failed
     // or they are equal but matching failed
-    // if (!Name.startswith("llvm."))
+    // if (!startsWith(Name, "llvm."))
     //  llvm::errs() << "matching failed: " << Name.str() << " "
     //               << demangledName << "\n";
   }
 
   for (auto FuncName : KnownInactiveFunctionsStartingWith) {
-    if (Name.startswith(FuncName)) {
+    if (startsWith(Name, FuncName)) {
       return true;
     }
   }
@@ -691,6 +696,19 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
     return true;
   }
 
+  /// Overwrite activity using metadata
+  if (hasMetadata(I, "enzyme_active") || hasMetadata(I, "enzyme_active_inst")) {
+    if (EnzymePrintActivity)
+      llvm::errs() << "[activity] forced instruction to be active: " << *I
+                   << "\n";
+    return false;
+  } else if (hasMetadata(I, "enzyme_inactive") ||
+             hasMetadata(I, "enzyme_inactive_inst")) {
+    if (EnzymePrintActivity)
+      llvm::errs() << "[activity] forced value to be constant: " << *I << "\n";
+    return true;
+  }
+
   if (notForAnalysis.count(I->getParent())) {
     if (EnzymePrintActivity)
       llvm::errs() << " constant instruction as dominates unreachable " << *I
@@ -737,10 +755,10 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
         InsertConstantInstruction(TR, I);
         return true;
       }
-      if (KnownInactiveFunctionInsts.count(called->getName())) {
-        InsertConstantInstruction(TR, I);
-        return true;
-      }
+    }
+    if (KnownInactiveFunctionInsts.count(getFuncNameFromCall(CI))) {
+      InsertConstantInstruction(TR, I);
+      return true;
     }
   }
 
@@ -1332,9 +1350,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       if (BO->getOpcode() == Instruction::And) {
         auto &DL = BO->getParent()->getParent()->getParent()->getDataLayout();
         for (int i = 0; i < 2; ++i) {
-          auto FT =
-              TR.query(BO->getOperand(1 - i))
-                  .IsAllFloat((DL.getTypeSizeInBits(BO->getType()) + 7) / 8);
+          auto FT = TR.query(BO->getOperand(1 - i))
+                        .IsAllFloat(
+                            (DL.getTypeSizeInBits(BO->getType()) + 7) / 8, DL);
           // If ^ against 0b10000000000 and a float the result is a float
           if (FT)
             if (containsOnlyAtMostTopBit(BO->getOperand(i), FT, DL)) {
@@ -1542,7 +1560,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
         auto dName = demangle(funcName.str());
         for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
-          if (StringRef(dName).startswith(FuncName)) {
+          if (startsWith(dName, FuncName)) {
             InsertConstantValue(TR, Val);
             insertConstantsFrom(TR, *UpHypothesis);
             return true;
@@ -1550,7 +1568,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         }
 
         for (auto FuncName : KnownInactiveFunctionsStartingWith) {
-          if (funcName.startswith(FuncName)) {
+          if (startsWith(funcName, FuncName)) {
             InsertConstantValue(TR, Val);
             insertConstantsFrom(TR, *UpHypothesis);
             return true;
@@ -1868,13 +1886,13 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
         auto dName = demangle(funcName.str());
         for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
-          if (StringRef(dName).startswith(FuncName)) {
+          if (startsWith(dName, FuncName)) {
             return false;
           }
         }
 
         for (auto FuncName : KnownInactiveFunctionsStartingWith) {
-          if (funcName.startswith(FuncName)) {
+          if (startsWith(funcName, FuncName)) {
             return false;
           }
         }
@@ -2174,7 +2192,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       else
         llvm::errs() << potentiallyActiveStore;
       llvm::errs() << " potentialStore=";
-      if (potentiallyActiveStore)
+      if (potentialStore)
         llvm::errs() << *potentialStore;
       else
         llvm::errs() << potentialStore;
@@ -2535,13 +2553,13 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
 
     auto dName = demangle(funcName.str());
     for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
-      if (StringRef(dName).startswith(FuncName)) {
+      if (startsWith(dName, FuncName)) {
         return true;
       }
     }
 
     for (auto FuncName : KnownInactiveFunctionsStartingWith) {
-      if (funcName.startswith(FuncName)) {
+      if (startsWith(funcName, FuncName)) {
         return true;
       }
     }

@@ -321,14 +321,14 @@ protected:
     for (DistinctAttr d : known) {
       auto lhsIt = activityStates.find(d);
       auto rhsIt = rhs.activityStates.find(d);
-      const MemoryActivityState *lhsActivty = lhsIt != activityStates.end()
-                                                  ? &lhsIt->getSecond()
-                                                  : &otherMemoryActivity;
-      const MemoryActivityState *rhsActivty = rhsIt != rhs.activityStates.end()
-                                                  ? &rhsIt->getSecond()
-                                                  : &rhs.otherMemoryActivity;
-      MemoryActivityState updatedActivity(*lhsActivty);
-      updatedActivity.merge(*rhsActivty);
+      bool isKnownInLHS = lhsIt != activityStates.end();
+      bool isKnownInRHS = rhsIt != rhs.activityStates.end();
+      const MemoryActivityState *lhsActivity =
+          isKnownInLHS ? &lhsIt->getSecond() : &otherMemoryActivity;
+      const MemoryActivityState *rhsActivity =
+          isKnownInRHS ? &rhsIt->getSecond() : &rhs.otherMemoryActivity;
+      MemoryActivityState updatedActivity(*lhsActivity);
+      updatedActivity.merge(*rhsActivity);
       if ((lhsIt != activityStates.end() &&
            updatedActivity != lhsIt->getSecond()) ||
           (lhsIt == activityStates.end() &&

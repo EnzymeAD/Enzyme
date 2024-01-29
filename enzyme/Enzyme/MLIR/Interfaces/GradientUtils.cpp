@@ -140,6 +140,9 @@ Operation *mlir::enzyme::MGradientUtils::cloneWithNewOperands(OpBuilder &B,
   return B.clone(*op, map);
 }
 
+bool mlir::enzyme::MGradientUtils::isConstantInstruction(Operation *op) const {
+  return activityAnalyzer->isConstantOperation(TR, op);
+}
 bool mlir::enzyme::MGradientUtils::isConstantValue(Value v) const {
   return activityAnalyzer->isConstantValue(TR, v);
 }

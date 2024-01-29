@@ -221,6 +221,10 @@ def MantissaMaskOfReturn : GlobalExpr</*primal*/0, /*shadow*/0, "({\n"
 "      tsize = 64;\n"
 "      high = tsize - 1;\n"
 "      low = high - 11;\n"
+"    } else if (ty->isX86_FP80Ty()) {\n"
+"      tsize = 80;\n"
+"      high = tsize - 1;\n"
+"      low = high - 15;\n"
 "    } else if (ty->isFP128Ty()) {\n"
 "      tsize = 128;\n"
 "      high = tsize - 1;\n"
@@ -256,6 +260,17 @@ def DiffeRet : DiffeRetIndex<[-1]>;
 
 def Shadow : Operation</*primal*/0, /*shadow*/1> {
 }
+
+//  1 / y -> -1/y^2 dy
+def : CallPattern<(Op $y),
+                  ["__nv_frcp_rd", "__nv_frcp_rn", "__nv_frcp_ru", "__nv_frcp_rz",
+                   "__nv_drcp_rd", "__nv_drcp_rn", "__nv_drcp_ru", "__nv_drcp_rz"],
+                    [
+                      (FNeg (CheckedDiv (DiffeRet), (FMul $y, $y)))
+                    ],
+                    (ForwardFromSummedReverse),
+                    [ReadNone, NoUnwind]
+                  >;
 
 def : CallPattern<(Op $x),
                   ["atan", "atanf", "atanl", "__fd_atan_1"],
@@ -777,7 +792,7 @@ def : IntrPattern<(Op $x, $y),
                   >;
 
 def : IntrPattern<(Op $x, $y),
-                  [["minnum"], ["nvvm_fmin_f"], ["nvvm_fmin_d"], ["nvvm_fmin_ftz_f"], ["x86_sse_min_ss", "", "9"], ["x86_sse_min_ps", "", "9"], ["x86_sse2_min_pd", "", ""], ["minimum", "15", ""]],
+                  [["minnum"], ["nvvm_fmin_f"], ["nvvm_fmin_d"], ["nvvm_fmin_ftz_f"], ["x86_sse_min_ss", "", "9"], ["x86_sse_min_ps", "", "9"], ["x86_sse2_min_pd", "", ""], ["minimum", "11", ""]],
                   [
                     (Select (FCmpOLT $x, $y), (DiffeRet), (ConstantFP<"0"> $x)),
                     (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $x), (DiffeRet))
@@ -786,7 +801,7 @@ def : IntrPattern<(Op $x, $y),
                   >;
 
 def : IntrPattern<(Op $x, $y),
-                  [["maxnum"], ["nvvm_fmax_f"], ["nvvm_fmax_d"], ["nvvm_fmax_ftz_f"], ["x86_sse_max_ss", "", "9"], ["x86_sse_max_ps", "", "9"], ["x86_sse2_max_pd", "", ""], ["maximum", "15", ""]],
+                  [["maxnum"], ["nvvm_fmax_f"], ["nvvm_fmax_d"], ["nvvm_fmax_ftz_f"], ["x86_sse_max_ss", "", "9"], ["x86_sse_max_ps", "", "9"], ["x86_sse2_max_pd", "", ""], ["maximum", "11", ""]],
                   [
                     (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $x), (DiffeRet)),
                     (Select (FCmpOLT $x, $y), (DiffeRet), (ConstantFP<"0"> $x))

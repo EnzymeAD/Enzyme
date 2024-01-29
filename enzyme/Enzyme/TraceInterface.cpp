@@ -363,9 +363,11 @@ DynamicTraceInterface::DynamicTraceInterface(Value *dynamicInterface,
 Function *DynamicTraceInterface::MaterializeInterfaceFunction(
     IRBuilder<> &Builder, Value *dynamicInterface, FunctionType *FTy,
     unsigned index, Module &M, const Twine &Name) {
-  auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface,
-                                       Builder.getInt32(index));
-  auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
+  auto ptr =
+      Builder.CreateInBoundsGEP(getInt8PtrTy(dynamicInterface->getContext()),
+                                dynamicInterface, Builder.getInt32(index));
+  auto load =
+      Builder.CreateLoad(getInt8PtrTy(dynamicInterface->getContext()), ptr);
   auto pty = PointerType::get(FTy, load->getPointerAddressSpace());
   auto cast = Builder.CreatePointerCast(load, pty);
 

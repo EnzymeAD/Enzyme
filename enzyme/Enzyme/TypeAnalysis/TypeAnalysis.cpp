@@ -93,6 +93,14 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"sin", Intrinsic::sin},
     {"tan", Intrinsic::not_intrinsic},
     {"acos", Intrinsic::not_intrinsic},
+    {"__nv_frcp_rd", Intrinsic::not_intrinsic},
+    {"__nv_frcp_rn", Intrinsic::not_intrinsic},
+    {"__nv_frcp_ru", Intrinsic::not_intrinsic},
+    {"__nv_frcp_rz", Intrinsic::not_intrinsic},
+    {"__nv_drcp_rd", Intrinsic::not_intrinsic},
+    {"__nv_drcp_rn", Intrinsic::not_intrinsic},
+    {"__nv_drcp_ru", Intrinsic::not_intrinsic},
+    {"__nv_drcp_rz", Intrinsic::not_intrinsic},
     {"__nv_isnand", Intrinsic::not_intrinsic},
     {"__nv_isnanf", Intrinsic::not_intrinsic},
     {"__nv_isinfd", Intrinsic::not_intrinsic},
@@ -160,6 +168,7 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"tgamma", Intrinsic::not_intrinsic},
     {"lgamma", Intrinsic::not_intrinsic},
     {"ceil", Intrinsic::ceil},
+    {"__nv_ceil", Intrinsic::ceil},
     {"floor", Intrinsic::floor},
     {"fmod", Intrinsic::not_intrinsic},
     {"trunc", Intrinsic::trunc},
@@ -191,7 +200,7 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
 
 static bool isItaniumEncoding(StringRef S) {
   // Itanium encoding requires 1 or 3 leading underscores, followed by 'Z'.
-  return S.startswith("_Z") || S.startswith("___Z");
+  return startsWith(S, "_Z") || startsWith(S, "___Z");
 }
 
 bool dontAnalyze(StringRef str) {
@@ -700,7 +709,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
 
     // Values of size < 16 (half size) are considered integral
     // since they cannot possibly represent a float or pointer
-    if (ci->getType()->getBitWidth() < 16) {
+    if (cast<IntegerType>(ci->getType())->getBitWidth() < 16) {
       analysis[Val].insert({-1}, BaseType::Integer);
       return;
     }
@@ -1095,6 +1104,8 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
                          (void *)this, wrap(Origin), nullptr);
     }
     if (auto I = dyn_cast<Instruction>(Val)) {
+      EmitFailure("IllegalUpdateAnalysis", I->getDebugLoc(), I, ss.str());
+    } else if (auto I = dyn_cast_or_null<Instruction>(Origin)) {
       EmitFailure("IllegalUpdateAnalysis", I->getDebugLoc(), I, ss.str());
     } else {
       llvm::errs() << ss.str() << "\n";
@@ -2063,12 +2074,57 @@ void TypeAnalyzer::visitPHINode(PHINode &phi) {
             if (BO->getOperand(0) == &phi) {
               set = true;
               PhiTypes = otherData;
-              PhiTypes.binopIn(getAnalysis(BO->getOperand(1)), BO->getOpcode());
+              bool Legal = true;
+              PhiTypes.binopIn(Legal, getAnalysis(BO->getOperand(1)),
+                               BO->getOpcode());
+              if (!Legal) {
+                std::string str;
+                raw_string_ostream ss(str);
+                if (!CustomErrorHandler) {
+                  llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
+                  llvm::errs() << *fntypeinfo.Function << "\n";
+                  dump(ss);
+                }
+                ss << "Illegal updateBinop Analysis " << *BO << "\n";
+                ss << "Illegal binopIn(0): " << *BO
+                   << " lhs: " << PhiTypes.str()
+                   << " rhs: " << getAnalysis(BO->getOperand(0)).str() << "\n";
+                if (CustomErrorHandler) {
+                  CustomErrorHandler(str.c_str(), wrap(BO),
+                                     ErrorType::IllegalTypeAnalysis,
+                                     (void *)this, wrap(BO), nullptr);
+                }
+                EmitFailure("IllegalUpdateAnalysis", BO->getDebugLoc(), BO,
+                            ss.str());
+                report_fatal_error("Performed illegal updateAnalysis");
+              }
               break;
             } else if (BO->getOperand(1) == &phi) {
               set = true;
               PhiTypes = getAnalysis(BO->getOperand(0));
-              PhiTypes.binopIn(otherData, BO->getOpcode());
+              bool Legal = true;
+              PhiTypes.binopIn(Legal, otherData, BO->getOpcode());
+              if (!Legal) {
+                std::string str;
+                raw_string_ostream ss(str);
+                if (!CustomErrorHandler) {
+                  llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
+                  llvm::errs() << *fntypeinfo.Function << "\n";
+                  dump(ss);
+                }
+                ss << "Illegal updateBinop Analysis " << *BO << "\n";
+                ss << "Illegal binopIn(1): " << *BO
+                   << " lhs: " << PhiTypes.str() << " rhs: " << otherData.str()
+                   << "\n";
+                if (CustomErrorHandler) {
+                  CustomErrorHandler(str.c_str(), wrap(BO),
+                                     ErrorType::IllegalTypeAnalysis,
+                                     (void *)this, wrap(BO), nullptr);
+                }
+                EmitFailure("IllegalUpdateAnalysis", BO->getDebugLoc(), BO,
+                            ss.str());
+                report_fatal_error("Performed illegal updateAnalysis");
+              }
               break;
             }
           } else if (BO->getOpcode() == BinaryOperator::Sub) {
@@ -2116,7 +2172,27 @@ void TypeAnalyzer::visitPHINode(PHINode &phi) {
       TypeTree vd2 = isa<Constant>(bo->getOperand(1))
                          ? getAnalysis(bo->getOperand(1)).Data0()
                          : PhiTypes.Data0();
-      vd1.binopIn(vd2, bo->getOpcode());
+      bool Legal = true;
+      vd1.binopIn(Legal, vd2, bo->getOpcode());
+      if (!Legal) {
+        std::string str;
+        raw_string_ostream ss(str);
+        if (!CustomErrorHandler) {
+          llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
+          llvm::errs() << *fntypeinfo.Function << "\n";
+          dump(ss);
+        }
+        ss << "Illegal updateBinop Analysis " << *bo << "\n";
+        ss << "Illegal binopIn(consts): " << *bo << " lhs: " << vd1.str()
+           << " rhs: " << vd2.str() << "\n";
+        if (CustomErrorHandler) {
+          CustomErrorHandler(str.c_str(), wrap(bo),
+                             ErrorType::IllegalTypeAnalysis, (void *)this,
+                             wrap(bo), nullptr);
+        }
+        EmitFailure("IllegalUpdateAnalysis", bo->getDebugLoc(), bo, ss.str());
+        report_fatal_error("Performed illegal updateAnalysis");
+      }
       PhiTypes &= vd1.Only(bo->getType()->isIntegerTy() ? -1 : 0, &phi);
     }
 
@@ -2851,7 +2927,7 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       if (direction & UP)
         for (int i = 0; i < 2; ++i) {
           Type *FT = nullptr;
-          if (!(FT = Ret.IsAllFloat(size)))
+          if (!(FT = Ret.IsAllFloat(size, dl)))
             continue;
           // If ^ against 0b10000000000, the result is a float
           bool validXor = containsOnlyAtMostTopBit(Args[i], FT, dl);
@@ -2863,7 +2939,7 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
     case BinaryOperator::Or:
       for (int i = 0; i < 2; ++i) {
         Type *FT = nullptr;
-        if (!(FT = Ret.IsAllFloat(size)))
+        if (!(FT = Ret.IsAllFloat(size, dl)))
           continue;
         // If | against a number only or'ing the exponent, the result is a float
         bool validXor = false;
@@ -2991,8 +3067,28 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
 
     if (direction & DOWN) {
       TypeTree Result = AnalysisLHS;
-      Result.binopIn(AnalysisRHS, Opcode);
-
+      bool Legal = true;
+      Result.binopIn(Legal, AnalysisRHS, Opcode);
+      if (!Legal) {
+        std::string str;
+        raw_string_ostream ss(str);
+        if (!CustomErrorHandler) {
+          llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
+          llvm::errs() << *fntypeinfo.Function << "\n";
+          dump(ss);
+        }
+        ss << "Illegal updateBinop Analysis " << *origin << "\n";
+        ss << "Illegal binopIn(down): " << Opcode << " lhs: " << Result.str()
+           << " rhs: " << AnalysisRHS.str() << "\n";
+        if (CustomErrorHandler) {
+          CustomErrorHandler(str.c_str(), wrap(origin),
+                             ErrorType::IllegalTypeAnalysis, (void *)this,
+                             wrap(origin), nullptr);
+        }
+        EmitFailure("IllegalUpdateAnalysis", origin->getDebugLoc(), origin,
+                    ss.str());
+        report_fatal_error("Performed illegal updateAnalysis");
+      }
       if (Opcode == BinaryOperator::And) {
         for (int i = 0; i < 2; ++i) {
           if (Args[i])
@@ -3048,7 +3144,7 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       } else if (Opcode == BinaryOperator::Xor) {
         for (int i = 0; i < 2; ++i) {
           Type *FT;
-          if (!(FT = (i == 0 ? RHS : LHS).IsAllFloat(size)))
+          if (!(FT = (i == 0 ? RHS : LHS).IsAllFloat(size, dl)))
             continue;
           // If ^ against 0b10000000000, the result is a float
           bool validXor = containsOnlyAtMostTopBit(Args[i], FT, dl);
@@ -3059,7 +3155,7 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       } else if (Opcode == BinaryOperator::Or) {
         for (int i = 0; i < 2; ++i) {
           Type *FT;
-          if (!(FT = (i == 0 ? RHS : LHS).IsAllFloat(size)))
+          if (!(FT = (i == 0 ? RHS : LHS).IsAllFloat(size, dl)))
             continue;
           // If & against 0b10000000000, the result is a float
           bool validXor = false;
@@ -3246,16 +3342,27 @@ void TypeAnalyzer::visitMemTransferCommon(llvm::CallBase &MTI) {
   bool Legal = true;
   res.checkedOrIn(res2, /*PointerIntSame*/ false, Legal);
   if (!Legal) {
-    dump();
-    llvm::errs() << MTI << "\n";
-    llvm::errs() << "Illegal orIn: " << res.str() << " right: " << res2.str()
-                 << "\n";
-    llvm::errs() << *MTI.getArgOperand(0) << " "
-                 << getAnalysis(MTI.getArgOperand(0)).str() << "\n";
-    llvm::errs() << *MTI.getArgOperand(1) << " "
-                 << getAnalysis(MTI.getArgOperand(1)).str() << "\n";
-    assert(0 && "Performed illegal visitMemTransferInst::orIn");
-    llvm_unreachable("Performed illegal visitMemTransferInst::orIn");
+    std::string str;
+    raw_string_ostream ss(str);
+    if (!CustomErrorHandler) {
+      llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
+      llvm::errs() << *fntypeinfo.Function << "\n";
+      dump(ss);
+    }
+    ss << "Illegal updateMemTransfer Analysis " << MTI << "\n";
+    ss << "Illegal orIn: " << res.str() << " right: " << res2.str() << "\n";
+    ss << *MTI.getArgOperand(0) << " "
+       << getAnalysis(MTI.getArgOperand(0)).str() << "\n";
+    ss << *MTI.getArgOperand(1) << " "
+       << getAnalysis(MTI.getArgOperand(1)).str() << "\n";
+
+    if (CustomErrorHandler) {
+      CustomErrorHandler(str.c_str(), wrap(&MTI),
+                         ErrorType::IllegalTypeAnalysis, (void *)this,
+                         wrap(&MTI), nullptr);
+    }
+    EmitFailure("IllegalUpdateAnalysis", MTI.getDebugLoc(), &MTI, ss.str());
+    report_fatal_error("Performed illegal updateAnalysis");
   }
   res.insert({}, BaseType::Pointer);
   res = res.Only(-1, &MTI);
@@ -3802,8 +3909,27 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
       updateAnalysis(I.getOperand(1), analysis.Only(-1, &I), &I);
 
     TypeTree vd = getAnalysis(I.getOperand(0)).Data0();
-    vd.binopIn(getAnalysis(I.getOperand(1)).Data0(), opcode);
-
+    bool Legal = true;
+    vd.binopIn(Legal, getAnalysis(I.getOperand(1)).Data0(), opcode);
+    if (!Legal) {
+      std::string str;
+      raw_string_ostream ss(str);
+      if (!CustomErrorHandler) {
+        llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
+        llvm::errs() << *fntypeinfo.Function << "\n";
+        dump(ss);
+      }
+      ss << "Illegal updateBinopIntr Analysis " << I << "\n";
+      ss << "Illegal binopIn(intr): " << I << " lhs: " << vd.str()
+         << " rhs: " << getAnalysis(I.getOperand(1)).str() << "\n";
+      if (CustomErrorHandler) {
+        CustomErrorHandler(str.c_str(), wrap(&I),
+                           ErrorType::IllegalTypeAnalysis, (void *)this,
+                           wrap(&I), nullptr);
+      }
+      EmitFailure("IllegalUpdateAnalysis", I.getDebugLoc(), &I, ss.str());
+      report_fatal_error("Performed illegal updateAnalysis");
+    }
     auto &dl = I.getParent()->getParent()->getParent()->getDataLayout();
     int sz = (dl.getTypeSizeInBits(I.getOperand(0)->getType()) + 7) / 8;
     TypeTree overall = vd.Only(-1, &I).ShiftIndices(dl, 0, sz, 0);
@@ -4194,7 +4320,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     // not fully understood by LLVM. One of the results of this is that the
     // visitor dispatches to visitCallBase, rather than visitIntrinsicInst, when
     // presented with the intrinsic - hence why we are handling it here.
-    if (funcName.startswith("llvm.intel.subscript")) {
+    if (startsWith(funcName, "llvm.intel.subscript")) {
       assert(isa<IntrinsicInst>(call));
       analyzeIntelSubscriptIntrinsic(cast<IntrinsicInst>(call), *this);
       return;
@@ -4251,8 +4377,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     // All these are always valid => no direction check
     // CONSIDER(malloc)
     // TODO consider handling other allocation functions integer inputs
-    if (funcName.startswith("_ZN3std2io5stdio6_print") ||
-        funcName.startswith("_ZN4core3fmt")) {
+    if (startsWith(funcName, "_ZN3std2io5stdio6_print") ||
+        startsWith(funcName, "_ZN4core3fmt")) {
       return;
     }
     /// GEMM
@@ -4382,13 +4508,13 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
 
-    if (funcName.startswith("_ZNKSt3__14hash")) {
+    if (startsWith(funcName, "_ZNKSt3__14hash")) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
 
-    if (funcName.startswith("_ZNKSt3__112basic_stringIcNS_11char_traitsIcEENS_"
-                            "9allocatorIcEEE13__get_pointer")) {
+    if (startsWith(funcName, "_ZNKSt3__112basic_stringIcNS_11char_traitsIcEENS_"
+                             "9allocatorIcEEE13__get_pointer")) {
       return;
     }
 
@@ -4484,9 +4610,14 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
+    if (funcName == "jl_get_binding_or_error" ||
+        funcName == "ijl_get_binding_or_error") {
+      updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
 
     /// MPI
-    if (funcName.startswith("PMPI_"))
+    if (startsWith(funcName, "PMPI_"))
       funcName = funcName.substr(1);
     if (funcName == "MPI_Init") {
       TypeTree ptrint;
@@ -5386,6 +5517,15 @@ FnTypeInfo TypeAnalyzer::getCallInfo(CallBase &call, Function &fn) {
 
   int argnum = 0;
   for (auto &arg : fn.args()) {
+    if (argnum >= call.arg_size()) {
+      typeInfo.Arguments.insert(
+          std::pair<Argument *, TypeTree>(&arg, TypeTree()));
+      std::set<int64_t> bounded;
+      typeInfo.KnownValues.insert(
+          std::pair<Argument *, std::set<int64_t>>(&arg, bounded));
+      ++argnum;
+      continue;
+    }
     auto dt = getAnalysis(call.getArgOperand(argnum));
     if (arg.getType()->isIntOrIntVectorTy() &&
         dt.Inner0() == BaseType::Anything) {

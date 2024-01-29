@@ -51,6 +51,7 @@
 
 extern "C" {
 extern llvm::cl::opt<bool> EnzymePrint;
+extern llvm::cl::opt<bool> EnzymeJuliaAddrLoad;
 }
 
 enum class AugmentedStruct { Tape, Return, DifferentialReturn };
@@ -509,6 +510,15 @@ public:
                               unsigned width,
                               llvm::ArrayRef<BATCH_TYPE> arg_types,
                               BATCH_TYPE ret_type);
+
+  using TruncateCacheKey = std::tuple<llvm::Function *, unsigned, unsigned>;
+  std::map<TruncateCacheKey, llvm::Function *> TruncateCachedFunctions;
+  llvm::Function *CreateTruncateFunc(RequestContext context,
+                                     llvm::Function *tobatch,
+                                     unsigned fromwidth, unsigned towidth);
+  bool CreateTruncateValue(RequestContext context, llvm::Value *addr,
+                           unsigned fromwidth, unsigned towidth,
+                           bool isTruncate);
 
   /// Create a traced version of a function
   ///  \p context the instruction which requested this trace (or null).

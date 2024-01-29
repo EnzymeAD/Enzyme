@@ -29,6 +29,7 @@
 //===----------------------------------------------------------------------===//
 #include "ActivityAnalysis.h"
 #include "AdjointGenerator.h"
+#include "llvm/IR/Intrinsics.h"
 
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
@@ -102,6 +103,10 @@ cl::opt<bool> nonmarkedglobals_inactiveloads(
 cl::opt<bool> EnzymeJuliaAddrLoad(
     "enzyme-julia-addr-load", cl::init(false), cl::Hidden,
     cl::desc("Mark all loads resulting in an addr(13)* to be legal to redo"));
+
+cl::opt<bool> EnzymeAssumeUnknownNoFree(
+    "enzyme-assume-unknown-nofree", cl::init(false), cl::Hidden,
+    cl::desc("Assume unknown instructions are nofree as needed"));
 
 LLVMValueRef (*EnzymeFixupReturn)(LLVMBuilderRef, LLVMValueRef) = nullptr;
 }
@@ -448,7 +453,8 @@ struct CacheAnalysis {
       return {};
     }
 
-    if (funcName.startswith("MPI_") || funcName.startswith("enzyme_wrapmpi$$"))
+    if (startsWith(funcName, "MPI_") ||
+        startsWith(funcName, "enzyme_wrapmpi$$"))
       return {};
 
     if (funcName == "__kmpc_for_static_init_4" ||
@@ -615,7 +621,7 @@ struct CacheAnalysis {
           // We do not need uncacheable args for intrinsic functions. So skip
           // such callsites.
           if (auto II = dyn_cast<IntrinsicInst>(&inst)) {
-            if (!II->getCalledFunction()->getName().startswith("llvm.julia"))
+            if (!startsWith(II->getCalledFunction()->getName(), "llvm.julia"))
               continue;
           }
 
@@ -2368,10 +2374,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                                    overwritten_args_map, can_modref_map,
                                    constant_args));
 
-  auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
+  auto getIndex = [&](Instruction *I, CacheType u, IRBuilder<> &B) -> unsigned {
     return gutils->getIndex(
         std::make_pair(I, u),
-        AugmentedCachedFunctions.find(tup)->second.tapeIndices);
+        AugmentedCachedFunctions.find(tup)->second.tapeIndices, B);
   };
 
   //! Explicitly handle all returns first to ensure that all instructions know
@@ -2473,7 +2479,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                   cast<Instruction>(newi)->getParent()->getFirstNonPHI());
             }
             gutils->cacheForReverse(BuilderZ, newi,
-                                    getIndex(&I, CacheType::Self));
+                                    getIndex(&I, CacheType::Self, BuilderZ));
           }
         }
       }
@@ -3228,7 +3234,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
       for (size_t i = 1; i < size; i++) {
         if (!PNtypeT[{(int)i}].isFloat())
           continue;
-        PNtypeT[{(int)i}].checkedOrIn(PNtype, /*pointerIntSame*/ true, legal);
+        PNtype.checkedOrIn(PNtypeT[{(int)i}], /*pointerIntSame*/ true, legal);
         if (!legal) {
           break;
         }
@@ -3246,22 +3252,19 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
       }
     }
     if (!PNfloatType) {
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "Cannot deduce type of phi " << *orig << PNtypeT.str()
+         << " sz: " << size << "\n";
       if (CustomErrorHandler) {
-        std::string str;
-        raw_string_ostream ss(str);
-        ss << "Cannot deduce type of phi " << *orig;
         CustomErrorHandler(str.c_str(), wrap(orig), ErrorType::NoType,
                            &gutils->TR.analyzer, nullptr, wrap(&Builder));
         continue;
       } else {
-        llvm::errs() << *gutils->oldFunc->getParent() << "\n";
-        llvm::errs() << *gutils->oldFunc << "\n";
-        llvm::errs()
-            << " for orig " << *orig << " saw "
-            << gutils->TR.intType(size, orig, /*necessary*/ false).str()
-            << " - "
-            << "\n";
-        gutils->TR.intType(size, orig, /*necessary*/ true);
+        ss << "\n";
+        gutils->TR.dump(ss);
+        EmitFailure("CannotDeduceType", orig->getDebugLoc(), orig, ss.str());
+        continue;
       }
     }
 
@@ -4034,8 +4037,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   if (augmenteddata)
     mapping = augmenteddata->tapeIndices;
 
-  auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
-    return gutils->getIndex(std::make_pair(I, u), mapping);
+  auto getIndex = [&](Instruction *I, CacheType u, IRBuilder<> &B) -> unsigned {
+    return gutils->getIndex(std::make_pair(I, u), mapping, B);
   };
 
   // requires is_value_needed_in_reverse, that needs unnecessaryValues
@@ -4667,9 +4670,11 @@ Function *EnzymeLogic::CreateForwardDiff(
 
     gutils->computeMinCache();
 
-    auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
+    auto getIndex = [&](Instruction *I, CacheType u,
+                        IRBuilder<> &B) -> unsigned {
       assert(augmenteddata);
-      return gutils->getIndex(std::make_pair(I, u), augmenteddata->tapeIndices);
+      return gutils->getIndex(std::make_pair(I, u), augmenteddata->tapeIndices,
+                              B);
     };
 
     calculateUnusedValuesInFunction(
@@ -4806,6 +4811,580 @@ Function *EnzymeLogic::CreateForwardDiff(
     llvm::errs() << *nf << "\n";
   }
   return nf;
+}
+
+static Type *getTypeForWidth(LLVMContext &ctx, unsigned width) {
+  switch (width) {
+  default:
+    return llvm::Type::getIntNTy(ctx, width);
+  case 64:
+    return llvm::Type::getDoubleTy(ctx);
+  case 32:
+    return llvm::Type::getFloatTy(ctx);
+  case 16:
+    return llvm::Type::getHalfTy(ctx);
+  }
+}
+
+static Value *floatTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
+                            unsigned fromwidth, unsigned towidth) {
+  Type *fromTy = getTypeForWidth(B.getContext(), fromwidth);
+  Type *toTy = getTypeForWidth(B.getContext(), towidth);
+  if (!tmpBlock)
+    tmpBlock = B.CreateAlloca(fromTy);
+  B.CreateStore(
+      v, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(v->getType())));
+  return B.CreateLoad(
+      toTy, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(toTy)));
+}
+
+static Value *floatExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
+                          unsigned fromwidth, unsigned towidth) {
+  Type *fromTy = getTypeForWidth(B.getContext(), fromwidth);
+  if (!tmpBlock)
+    tmpBlock = B.CreateAlloca(fromTy);
+  auto c0 =
+      Constant::getNullValue(llvm::Type::getIntNTy(B.getContext(), fromwidth));
+  B.CreateStore(
+      c0, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(c0->getType())));
+  B.CreateStore(
+      v, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(v->getType())));
+  return B.CreateLoad(
+      fromTy, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(fromTy)));
+}
+
+class TruncateGenerator : public llvm::InstVisitor<TruncateGenerator> {
+private:
+  ValueToValueMapTy &originalToNewFn;
+  unsigned fromwidth;
+  unsigned towidth;
+  Type *fromType;
+  Type *toType;
+  Function *oldFunc;
+  Function *newFunc;
+  AllocaInst *tmpBlock;
+  EnzymeLogic &Logic;
+
+public:
+  TruncateGenerator(ValueToValueMapTy &originalToNewFn, unsigned fromwidth,
+                    unsigned towidth, Function *oldFunc, Function *newFunc,
+                    EnzymeLogic &Logic)
+      : originalToNewFn(originalToNewFn), fromwidth(fromwidth),
+        towidth(towidth), oldFunc(oldFunc), newFunc(newFunc), Logic(Logic) {
+    IRBuilder<> B(&newFunc->getEntryBlock().front());
+
+    fromType = getTypeForWidth(B.getContext(), fromwidth);
+    toType = getTypeForWidth(B.getContext(), towidth);
+
+    tmpBlock = B.CreateAlloca(fromType);
+  }
+
+  void visitInstruction(llvm::Instruction &inst) {
+    using namespace llvm;
+
+    // TODO explicitly handle all instructions rather than using the catch all
+    // below
+
+    switch (inst.getOpcode()) {
+      // #include "InstructionDerivatives.inc"
+    default:
+      break;
+    }
+
+    todo(inst);
+  }
+
+  Type *getFromType() { return fromType; }
+
+  Type *getToType() { return toType; }
+
+  Value *truncate(IRBuilder<> &B, Value *v) {
+    return floatTruncate(B, v, tmpBlock, fromwidth, towidth);
+  }
+
+  Value *expand(IRBuilder<> &B, Value *v) {
+    return floatExpand(B, v, tmpBlock, fromwidth, towidth);
+  }
+
+  void todo(llvm::Instruction &I) {
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "cannot handle unknown instruction\n" << I;
+    if (CustomErrorHandler) {
+      IRBuilder<> Builder2(getNewFromOriginal(&I));
+      CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoTruncate,
+                         this, nullptr, wrap(&Builder2));
+      return;
+    } else {
+      EmitFailure("NoTruncate", I.getDebugLoc(), &I, ss.str());
+      return;
+    }
+  }
+
+  void visitAllocaInst(llvm::AllocaInst &I) { return; }
+  void visitICmpInst(llvm::ICmpInst &I) { return; }
+  void visitFCmpInst(llvm::FCmpInst &CI) {
+    auto newI = getNewFromOriginal(&CI);
+    IRBuilder<> B(newI);
+    auto truncLHS = truncate(B, getNewFromOriginal(CI.getOperand(0)));
+    auto truncRHS = truncate(B, getNewFromOriginal(CI.getOperand(1)));
+    auto nres =
+        cast<FCmpInst>(B.CreateFCmp(CI.getPredicate(), truncLHS, truncRHS));
+    nres->takeName(newI);
+    nres->copyIRFlags(newI);
+    newI->replaceAllUsesWith(nres);
+    newI->eraseFromParent();
+    return;
+  }
+  void visitLoadInst(llvm::LoadInst &LI) {
+    auto alignment = LI.getAlign();
+    visitLoadLike(LI, alignment);
+  }
+  void visitStoreInst(llvm::StoreInst &SI) {
+    auto align = SI.getAlign();
+    visitCommonStore(SI, SI.getPointerOperand(), SI.getValueOperand(), align,
+                     SI.isVolatile(), SI.getOrdering(), SI.getSyncScopeID(),
+                     /*mask=*/nullptr);
+  }
+  void visitGetElementPtrInst(llvm::GetElementPtrInst &gep) { return; }
+  void visitPHINode(llvm::PHINode &phi) { return; }
+  void visitCastInst(llvm::CastInst &CI) {
+    Value *newCI = nullptr;
+    auto newI = getNewFromOriginal(&CI);
+    std::string oldName = CI.getName().str();
+    newI->setName("");
+    if (CI.getSrcTy() == getFromType()) {
+      IRBuilder<> B(newI);
+      newCI = B.CreateCast(CI.getOpcode(), getNewFromOriginal(CI.getOperand(0)),
+                           CI.getDestTy(), oldName);
+    }
+    if (CI.getDestTy() == getToType()) {
+      auto newI = getNewFromOriginal(&CI);
+      IRBuilder<> B(newI);
+      newCI = B.CreateCast(CI.getOpcode(), getNewFromOriginal(CI.getOperand(0)),
+                           CI.getDestTy(), oldName);
+    }
+    if (newCI) {
+      newI->replaceAllUsesWith(newCI);
+      newI->eraseFromParent();
+    }
+    return;
+  }
+  void visitSelectInst(llvm::SelectInst &SI) {
+    auto newI = getNewFromOriginal(&SI);
+    IRBuilder<> B(newI);
+    auto newT = truncate(B, getNewFromOriginal(SI.getTrueValue()));
+    auto newF = truncate(B, getNewFromOriginal(SI.getFalseValue()));
+    auto nres = cast<SelectInst>(
+        B.CreateSelect(getNewFromOriginal(SI.getCondition()), newT, newF));
+    nres->takeName(newI);
+    nres->copyIRFlags(newI);
+    newI->replaceAllUsesWith(expand(B, nres));
+    newI->eraseFromParent();
+    return;
+  }
+  void visitExtractElementInst(llvm::ExtractElementInst &EEI) { return; }
+  void visitInsertElementInst(llvm::InsertElementInst &EEI) { return; }
+  void visitShuffleVectorInst(llvm::ShuffleVectorInst &EEI) { return; }
+  void visitExtractValueInst(llvm::ExtractValueInst &EEI) { return; }
+  void visitInsertValueInst(llvm::InsertValueInst &EEI) { return; }
+  void visitBinaryOperator(llvm::BinaryOperator &BO) {
+
+    switch (BO.getOpcode()) {
+    default:
+      break;
+    case BinaryOperator::Add:
+    case BinaryOperator::Sub:
+    case BinaryOperator::Mul:
+    case BinaryOperator::UDiv:
+    case BinaryOperator::SDiv:
+    case BinaryOperator::URem:
+    case BinaryOperator::SRem:
+    case BinaryOperator::AShr:
+    case BinaryOperator::LShr:
+    case BinaryOperator::Shl:
+    case BinaryOperator::And:
+    case BinaryOperator::Or:
+    case BinaryOperator::Xor:
+      return;
+    }
+
+    if (towidth == 32 || towidth == 16 || towidth == 64) {
+      auto newI = getNewFromOriginal(&BO);
+      IRBuilder<> B(newI);
+      auto newLHS = truncate(B, getNewFromOriginal(BO.getOperand(0)));
+      auto newRHS = truncate(B, getNewFromOriginal(BO.getOperand(1)));
+      switch (BO.getOpcode()) {
+      default:
+        break;
+      case BinaryOperator::FMul: {
+        auto nres = cast<BinaryOperator>(B.CreateFMul(newLHS, newRHS));
+        nres->takeName(newI);
+        nres->copyIRFlags(newI);
+        newI->replaceAllUsesWith(expand(B, nres));
+        newI->eraseFromParent();
+      }
+        return;
+      case BinaryOperator::FAdd: {
+        auto nres = cast<BinaryOperator>(B.CreateFAdd(newLHS, newRHS));
+        nres->takeName(newI);
+        nres->copyIRFlags(newI);
+        newI->replaceAllUsesWith(expand(B, nres));
+        newI->eraseFromParent();
+      }
+        return;
+      case BinaryOperator::FSub: {
+        auto nres = cast<BinaryOperator>(B.CreateFSub(newLHS, newRHS));
+        nres->takeName(newI);
+        nres->copyIRFlags(newI);
+        newI->replaceAllUsesWith(expand(B, nres));
+        newI->eraseFromParent();
+      }
+        return;
+      case BinaryOperator::FDiv: {
+        auto nres = cast<BinaryOperator>(B.CreateFDiv(newLHS, newRHS));
+        nres->takeName(newI);
+        nres->copyIRFlags(newI);
+        newI->replaceAllUsesWith(expand(B, nres));
+        newI->eraseFromParent();
+      }
+        return;
+      case BinaryOperator::FRem: {
+        auto nres = cast<BinaryOperator>(B.CreateFRem(newLHS, newRHS));
+        nres->takeName(newI);
+        nres->copyIRFlags(newI);
+        newI->replaceAllUsesWith(expand(B, nres));
+        newI->eraseFromParent();
+      }
+        return;
+      }
+    }
+    todo(BO);
+    return;
+  }
+  void visitMemSetInst(llvm::MemSetInst &MS) { visitMemSetCommon(MS); }
+  void visitMemSetCommon(llvm::CallInst &MS) { return; }
+  void visitMemTransferInst(llvm::MemTransferInst &MTI) {
+    using namespace llvm;
+    Value *isVolatile = getNewFromOriginal(MTI.getOperand(3));
+    auto srcAlign = MTI.getSourceAlign();
+    auto dstAlign = MTI.getDestAlign();
+    visitMemTransferCommon(MTI.getIntrinsicID(), srcAlign, dstAlign, MTI,
+                           MTI.getOperand(0), MTI.getOperand(1),
+                           getNewFromOriginal(MTI.getOperand(2)), isVolatile);
+  }
+  void visitMemTransferCommon(llvm::Intrinsic::ID ID, llvm::MaybeAlign srcAlign,
+                              llvm::MaybeAlign dstAlign, llvm::CallInst &MTI,
+                              llvm::Value *orig_dst, llvm::Value *orig_src,
+                              llvm::Value *new_size, llvm::Value *isVolatile) {
+    return;
+  }
+  void visitFenceInst(llvm::FenceInst &FI) { return; }
+  void visitIntrinsicInst(llvm::IntrinsicInst &II) {
+    SmallVector<Value *, 2> orig_ops(II.arg_size());
+    for (unsigned i = 0; i < II.arg_size(); ++i)
+      orig_ops[i] = II.getOperand(i);
+    if (handleAdjointForIntrinsic(II.getIntrinsicID(), II, orig_ops))
+      return;
+
+    bool hasFromType = false;
+    auto newI = cast<llvm::IntrinsicInst>(getNewFromOriginal(&II));
+    IRBuilder<> B(newI);
+    SmallVector<Value *, 2> new_ops(II.arg_size());
+    for (unsigned i = 0; i < II.arg_size(); ++i) {
+      if (orig_ops[i]->getType() == getFromType()) {
+        new_ops[i] = truncate(B, getNewFromOriginal(orig_ops[i]));
+        hasFromType = true;
+      } else {
+        new_ops[i] = getNewFromOriginal(orig_ops[i]);
+      }
+    }
+    Type *retTy = II.getType();
+    if (II.getType() == getFromType()) {
+      hasFromType = true;
+      retTy = getToType();
+    }
+
+    if (!hasFromType)
+      return;
+
+    // TODO check that the intrinsic is overloaded
+
+    CallInst *intr;
+    Value *nres = intr = createIntrinsicCall(B, II.getIntrinsicID(), retTy,
+                                             new_ops, &II, II.getName());
+    if (II.getType() == getFromType())
+      nres = expand(B, nres);
+    intr->copyIRFlags(newI);
+    newI->replaceAllUsesWith(nres);
+    newI->eraseFromParent();
+
+    return;
+  }
+
+  void visitReturnInst(llvm::ReturnInst &I) { return; }
+
+  void visitBranchInst(llvm::BranchInst &I) { return; }
+  void visitSwitchInst(llvm::SwitchInst &I) { return; }
+  void visitUnreachableInst(llvm::UnreachableInst &I) { return; }
+  void visitLoadLike(llvm::Instruction &I, llvm::MaybeAlign alignment,
+                     llvm::Value *mask = nullptr,
+                     llvm::Value *orig_maskInit = nullptr) {
+    return;
+  }
+
+  void visitCommonStore(llvm::Instruction &I, llvm::Value *orig_ptr,
+                        llvm::Value *orig_val, llvm::MaybeAlign prevalign,
+                        bool isVolatile, llvm::AtomicOrdering ordering,
+                        llvm::SyncScope::ID syncScope, llvm::Value *mask) {
+    return;
+  }
+
+  bool
+  handleAdjointForIntrinsic(llvm::Intrinsic::ID ID, llvm::Instruction &I,
+                            llvm::SmallVectorImpl<llvm::Value *> &orig_ops) {
+    using namespace llvm;
+
+    switch (ID) {
+    case Intrinsic::nvvm_ldu_global_i:
+    case Intrinsic::nvvm_ldu_global_p:
+    case Intrinsic::nvvm_ldu_global_f:
+    case Intrinsic::nvvm_ldg_global_i:
+    case Intrinsic::nvvm_ldg_global_p:
+    case Intrinsic::nvvm_ldg_global_f: {
+      auto CI = cast<ConstantInt>(I.getOperand(1));
+      visitLoadLike(I, /*Align*/ MaybeAlign(CI->getZExtValue()));
+      return true;
+    }
+    default:
+      break;
+    }
+
+    if (ID == Intrinsic::masked_store) {
+      auto align0 = cast<ConstantInt>(I.getOperand(2))->getZExtValue();
+      auto align = MaybeAlign(align0);
+      visitCommonStore(I, /*orig_ptr*/ I.getOperand(1),
+                       /*orig_val*/ I.getOperand(0), align,
+                       /*isVolatile*/ false, llvm::AtomicOrdering::NotAtomic,
+                       SyncScope::SingleThread,
+                       /*mask*/ getNewFromOriginal(I.getOperand(3)));
+      return true;
+    }
+    if (ID == Intrinsic::masked_load) {
+      auto align0 = cast<ConstantInt>(I.getOperand(1))->getZExtValue();
+      auto align = MaybeAlign(align0);
+      visitLoadLike(I, align,
+                    /*mask*/ getNewFromOriginal(I.getOperand(2)),
+                    /*orig_maskInit*/ I.getOperand(3));
+      return true;
+    }
+
+    return false;
+  }
+
+  llvm::Value *getNewFromOriginal(llvm::Value *v) {
+    auto found = originalToNewFn.find(v);
+    assert(found != originalToNewFn.end());
+    return found->second;
+  }
+
+  llvm::Instruction *getNewFromOriginal(llvm::Instruction *v) {
+    return cast<Instruction>(getNewFromOriginal((llvm::Value *)v));
+  }
+
+  bool handleKnownCalls(llvm::CallInst &call, llvm::Function *called,
+                        llvm::StringRef funcName,
+                        llvm::CallInst *const newCall) {
+    return false;
+  }
+
+  Value *GetShadow(RequestContext &ctx, Value *v) {
+    if (auto F = dyn_cast<Function>(v))
+      return Logic.CreateTruncateFunc(ctx, F, fromwidth, towidth);
+    llvm::errs() << " unknown get truncated func: " << *v << "\n";
+    llvm_unreachable("unknown get truncated func");
+    return v;
+  }
+  // Return
+  void visitCallInst(llvm::CallInst &call) {
+    using namespace llvm;
+
+    CallInst *const newCall = cast<CallInst>(getNewFromOriginal(&call));
+    IRBuilder<> BuilderZ(newCall);
+
+    if (auto called = call.getCalledFunction())
+      if (handleKnownCalls(call, called, getFuncNameFromCall(&call), newCall))
+        return;
+
+    RequestContext ctx(&call, &BuilderZ);
+    auto val = GetShadow(ctx, getNewFromOriginal(call.getCalledOperand()));
+    newCall->setCalledOperand(val);
+    return;
+  }
+};
+
+bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
+                                      unsigned fromwidth, unsigned towidth,
+                                      bool isTruncate) {
+  assert(context.req && context.ip);
+
+  if (fromwidth == towidth) {
+    context.req->eraseFromParent();
+    return true;
+  }
+
+  if (fromwidth < towidth) {
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "Cannot truncate into a large width\n";
+    if (context.req) {
+      ss << " at context: " << *context.req;
+      EmitFailure("NoTruncate", context.req->getDebugLoc(), context.req,
+                  ss.str());
+      return false;
+    }
+    llvm_unreachable("failed to truncate value");
+  }
+
+  IRBuilderBase &B = *context.ip;
+  Type *fromTy = getTypeForWidth(B.getContext(), fromwidth);
+  Type *toTy = getTypeForWidth(B.getContext(), towidth);
+
+  Value *converted = nullptr;
+  if (isTruncate)
+    converted =
+        floatExpand(B, B.CreateFPTrunc(v, toTy), nullptr, fromwidth, towidth);
+  else
+    converted =
+        B.CreateFPExt(floatTruncate(B, v, nullptr, fromwidth, towidth), fromTy);
+  assert(converted);
+
+  context.req->replaceAllUsesWith(converted);
+  context.req->eraseFromParent();
+
+  return true;
+}
+
+llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
+                                                llvm::Function *totrunc,
+                                                unsigned fromwidth,
+                                                unsigned towidth) {
+  if (fromwidth == towidth)
+    return totrunc;
+
+  TruncateCacheKey tup(totrunc, fromwidth, towidth);
+  if (TruncateCachedFunctions.find(tup) != TruncateCachedFunctions.end()) {
+    return TruncateCachedFunctions.find(tup)->second;
+  }
+
+  FunctionType *orig_FTy = totrunc->getFunctionType();
+  SmallVector<Type *, 4> params;
+
+  for (unsigned i = 0; i < orig_FTy->getNumParams(); ++i) {
+    params.push_back(orig_FTy->getParamType(i));
+  }
+
+  Type *NewTy = totrunc->getReturnType();
+
+  FunctionType *FTy = FunctionType::get(NewTy, params, totrunc->isVarArg());
+  Function *NewF =
+      Function::Create(FTy, totrunc->getLinkage(),
+                       "trunc_" + std::to_string(fromwidth) + "_" +
+                           std::to_string(towidth) + totrunc->getName(),
+                       totrunc->getParent());
+
+  NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
+
+  TruncateCachedFunctions[tup] = NewF;
+
+  if (totrunc->empty()) {
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "No truncate mode found for " + totrunc->getName() << "\n";
+    llvm::Value *toshow = totrunc;
+    if (context.req) {
+      toshow = context.req;
+      ss << " at context: " << *context.req;
+    } else {
+      ss << *totrunc << "\n";
+    }
+    if (CustomErrorHandler) {
+      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
+                         ErrorType::NoDerivative, nullptr, wrap(totrunc),
+                         wrap(context.ip));
+      return NewF;
+    }
+    if (context.req) {
+      EmitFailure("NoTruncate", context.req->getDebugLoc(), context.req,
+                  ss.str());
+      return NewF;
+    }
+    llvm::errs() << "mod: " << *totrunc->getParent() << "\n";
+    llvm::errs() << *totrunc << "\n";
+    llvm_unreachable("attempting to truncate function without definition");
+  }
+
+  if (fromwidth < towidth) {
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "Cannot truncate into a large width\n";
+    llvm::Value *toshow = totrunc;
+    if (context.req) {
+      toshow = context.req;
+      ss << " at context: " << *context.req;
+    } else {
+      ss << *totrunc << "\n";
+    }
+    if (CustomErrorHandler) {
+      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
+                         ErrorType::NoDerivative, nullptr, wrap(totrunc),
+                         wrap(context.ip));
+      return NewF;
+    }
+    if (context.req) {
+      EmitFailure("NoTruncate", context.req->getDebugLoc(), context.req,
+                  ss.str());
+      return NewF;
+    }
+    llvm::errs() << "mod: " << *totrunc->getParent() << "\n";
+    llvm::errs() << *totrunc << "\n";
+    llvm_unreachable("attempting to truncate function without definition");
+  }
+
+  ValueToValueMapTy originalToNewFn;
+
+  for (auto i = totrunc->arg_begin(), j = NewF->arg_begin();
+       i != totrunc->arg_end();) {
+    originalToNewFn[i] = j;
+    j->setName(i->getName());
+    ++j;
+    ++i;
+  }
+
+  SmallVector<ReturnInst *, 4> Returns;
+#if LLVM_VERSION_MAJOR >= 13
+  CloneFunctionInto(NewF, totrunc, originalToNewFn,
+                    CloneFunctionChangeType::LocalChangesOnly, Returns, "",
+                    nullptr);
+#else
+  CloneFunctionInto(NewF, totrunc, originalToNewFn, true, Returns, "", nullptr);
+#endif
+
+  NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
+
+  TruncateGenerator handle(originalToNewFn, fromwidth, towidth, totrunc, NewF,
+                           *this);
+  for (auto &BB : *totrunc)
+    for (auto &I : BB)
+      handle.visit(&I);
+
+  if (llvm::verifyFunction(*NewF, &llvm::errs())) {
+    llvm::errs() << *totrunc << "\n";
+    llvm::errs() << *NewF << "\n";
+    report_fatal_error("function failed verification (5)");
+  }
+
+  return NewF;
 }
 
 llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
@@ -5218,6 +5797,10 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
     return todiff;
   }
 
+  if (EnzymeAssumeUnknownNoFree) {
+    return todiff;
+  }
+
   if (context.req) {
     EmitFailure("IllegalNoFree", context.req->getDebugLoc(), context.req,
                 "Cannot create nofree of instruction-created value: ", *todiff);
@@ -5249,6 +5832,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
     return F;
 
   StringSet<> NoFrees = {
+      "mpfr_greater_p",
       "memchr",
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEC1EPKcRKS3_",
       "_ZSt16__ostream_insertIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_"
@@ -5311,7 +5895,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "MPI_Allreduce",
   };
 
-  if (F->getName().startswith("_ZNSolsE") || NoFrees.count(F->getName()))
+  if (startsWith(F->getName(), "_ZNSolsE") || NoFrees.count(F->getName()))
     return F;
 
   switch (F->getIntrinsicID()) {
@@ -5325,6 +5909,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   }
 
   if (F->empty()) {
+    if (EnzymeAssumeUnknownNoFree) {
+      return F;
+    }
     if (EnzymeEmptyFnInactive) {
       return F;
     }

@@ -58,7 +58,8 @@ private:
   llvm::ArrayRef<DIFFE_TYPE> constant_args;
   DIFFE_TYPE retType;
   TypeResults &TR = gutils->TR;
-  std::function<unsigned(llvm::Instruction *, CacheType)> getIndex;
+  std::function<unsigned(llvm::Instruction *, CacheType, llvm::IRBuilder<> &)>
+      getIndex;
   const std::map<llvm::CallInst *, const std::vector<bool>>
       overwritten_args_map;
   const llvm::SmallPtrSetImpl<llvm::Instruction *> *returnuses;
@@ -76,7 +77,9 @@ public:
   AdjointGenerator(
       DerivativeMode Mode, GradientUtils *gutils,
       llvm::ArrayRef<DIFFE_TYPE> constant_args, DIFFE_TYPE retType,
-      std::function<unsigned(llvm::Instruction *, CacheType)> getIndex,
+      std::function<unsigned(llvm::Instruction *, CacheType,
+                             llvm::IRBuilder<> &)>
+          getIndex,
       const std::map<llvm::CallInst *, const std::vector<bool>>
           overwritten_args_map,
       const llvm::SmallPtrSetImpl<llvm::Instruction *> *returnuses,
@@ -477,7 +480,8 @@ public:
         if (can_modref) {
           if (vd[{-1}].isPossiblePointer()) {
             Value *newip = gutils->cacheForReverse(
-                BuilderZ, placeholder, getIndex(&I, CacheType::Shadow));
+                BuilderZ, placeholder,
+                getIndex(&I, CacheType::Shadow, BuilderZ));
             assert(newip->getType() == type);
             gutils->invertedPointers.insert(std::make_pair(
                 (const Value *)&I, InvertedPointerVH(gutils, newip)));
@@ -543,8 +547,8 @@ public:
                       QueryType::Shadow>(gutils, &I,
                                          DerivativeMode::ReverseModeGradient,
                                          oldUnreachable)) {
-                gutils->cacheForReverse(BuilderZ, newip,
-                                        getIndex(&I, CacheType::Shadow));
+                gutils->cacheForReverse(
+                    BuilderZ, newip, getIndex(&I, CacheType::Shadow, BuilderZ));
               }
               placeholder->replaceAllUsesWith(newip);
               gutils->erase(placeholder);
@@ -565,7 +569,8 @@ public:
               // only make shadow where caching needed
               if (can_modref) {
                 newip = gutils->cacheForReverse(
-                    BuilderZ, placeholder, getIndex(&I, CacheType::Shadow));
+                    BuilderZ, placeholder,
+                    getIndex(&I, CacheType::Shadow, BuilderZ));
                 assert(newip->getType() == type);
                 gutils->invertedPointers.insert(std::make_pair(
                     (const Value *)&I, InvertedPointerVH(gutils, newip)));
@@ -617,7 +622,7 @@ public:
               QueryType::Primal>(gutils, &I, cacheMode, Seen, oldUnreachable);
       if (primalNeededInReverse) {
         inst = gutils->cacheForReverse(BuilderZ, newi,
-                                       getIndex(&I, CacheType::Self));
+                                       getIndex(&I, CacheType::Self, BuilderZ));
         assert(inst->getType() == type);
 
         if (Mode == DerivativeMode::ReverseModeGradient ||
@@ -2353,7 +2358,7 @@ public:
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
       auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
-      auto FT = TR.query(&BO).IsAllFloat(size);
+      auto FT = TR.query(&BO).IsAllFloat(size, dl);
       auto eFT = FT;
       if (FT)
         for (int i = 0; i < 2; ++i) {
@@ -2383,7 +2388,7 @@ public:
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
       auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
-      auto FT = TR.query(&BO).IsAllFloat(size);
+      auto FT = TR.query(&BO).IsAllFloat(size, dl);
       auto eFT = FT;
       // If ^ against 0b10000000000 and a float the result is a float
       if (FT)
@@ -2421,7 +2426,7 @@ public:
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
       auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
-      auto FT = TR.query(&BO).IsAllFloat(size);
+      auto FT = TR.query(&BO).IsAllFloat(size, dl);
       auto eFT = FT;
       // If & against 0b10000000000 and a float the result is a float
       if (FT)
@@ -2598,7 +2603,7 @@ public:
       auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
       Type *diffTy = gutils->getShadowType(BO.getType());
 
-      auto FT = TR.query(&BO).IsAllFloat(size);
+      auto FT = TR.query(&BO).IsAllFloat(size, dl);
       auto eFT = FT;
       if (FT)
         for (int i = 0; i < 2; ++i) {
@@ -2626,7 +2631,7 @@ public:
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
       auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
-      auto FT = TR.query(&BO).IsAllFloat(size);
+      auto FT = TR.query(&BO).IsAllFloat(size, dl);
       auto eFT = FT;
 
       Value *dif[2] = {constantval0 ? nullptr : diffe(orig_op0, Builder2),
@@ -2667,7 +2672,7 @@ public:
       Value *dif[2] = {constantval0 ? nullptr : diffe(orig_op0, Builder2),
                        constantval1 ? nullptr : diffe(orig_op1, Builder2)};
 
-      auto FT = TR.query(&BO).IsAllFloat(size);
+      auto FT = TR.query(&BO).IsAllFloat(size, dl);
       auto eFT = FT;
       // If & against 0b10000000000 and a float the result is a float
       if (FT)
@@ -3619,7 +3624,7 @@ public:
         BuilderZ.setFastMathFlags(getFast());
 
         gutils->cacheForReverse(BuilderZ, newCall,
-                                getIndex(&II, CacheType::Self));
+                                getIndex(&II, CacheType::Self, BuilderZ));
       }
     }
     eraseIfUnused(II);
@@ -4233,7 +4238,7 @@ public:
           pre_args.push_back(alloc);
           assert(tape);
           gutils->cacheForReverse(BuilderZ, tape,
-                                  getIndex(&call, CacheType::Tape));
+                                  getIndex(&call, CacheType::Tape, BuilderZ));
         }
 
         auto numargs = ConstantInt::get(Type::getInt32Ty(call.getContext()),
@@ -4287,8 +4292,8 @@ public:
           if (Mode == DerivativeMode::ReverseModeGradient) {
             if (tape == nullptr)
               tape = BuilderZ.CreatePHI(subdata->tapeType, 0, "tapeArg");
-            tape = gutils->cacheForReverse(BuilderZ, tape,
-                                           getIndex(&call, CacheType::Tape));
+            tape = gutils->cacheForReverse(
+                BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
           }
           tape = lookup(tape, Builder2);
           auto alloc = IRBuilder<>(gutils->inversionAllocs)
@@ -4852,8 +4857,8 @@ public:
 
         assert(!tape->getType()->isEmptyTy());
         gutils->TapesToPreventRecomputation.insert(cast<Instruction>(tape));
-        tape = gutils->cacheForReverse(BuilderZ, tape,
-                                       getIndex(&call, CacheType::Tape));
+        tape = gutils->cacheForReverse(
+            BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
         args.push_back(tape);
       }
 
@@ -5408,8 +5413,8 @@ public:
           } else {
             gutils->TapesToPreventRecomputation.insert(cast<Instruction>(tape));
           }
-          tape = gutils->cacheForReverse(BuilderZ, tape,
-                                         getIndex(&call, CacheType::Tape));
+          tape = gutils->cacheForReverse(
+              BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
         }
 
         if (subretused) {
@@ -5472,8 +5477,8 @@ public:
                                          oldUnreachable);
             }
             if (primalNeededInReverse)
-              gutils->cacheForReverse(BuilderZ, dcall,
-                                      getIndex(&call, CacheType::Self));
+              gutils->cacheForReverse(
+                  BuilderZ, dcall, getIndex(&call, CacheType::Self, BuilderZ));
           }
           BuilderZ.SetInsertPoint(newCall->getNextNode());
           gutils->erase(newCall);
@@ -5504,8 +5509,8 @@ public:
                                       ->getElementType(tval),
                 1, "tapeArg");
           }
-          tape = gutils->cacheForReverse(BuilderZ, tape,
-                                         getIndex(&call, CacheType::Tape));
+          tape = gutils->cacheForReverse(
+              BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
         }
 
         if (subretused) {
@@ -5515,7 +5520,8 @@ public:
             cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
                                               call.getName() + "_tmpcacheB");
             cachereplace = gutils->cacheForReverse(
-                BuilderZ, cachereplace, getIndex(&call, CacheType::Self));
+                BuilderZ, cachereplace,
+                getIndex(&call, CacheType::Self, BuilderZ));
           } else {
             auto pn = BuilderZ.CreatePHI(
                 call.getType(), 1, (call.getName() + "_replacementE").str());
@@ -5575,8 +5581,8 @@ public:
             newip = placeholder;
           }
 
-          newip = gutils->cacheForReverse(BuilderZ, newip,
-                                          getIndex(&call, CacheType::Shadow));
+          newip = gutils->cacheForReverse(
+              BuilderZ, newip, getIndex(&call, CacheType::Shadow, BuilderZ));
 
           gutils->invertedPointers.insert(std::make_pair(
               (const Value *)&call, InvertedPointerVH(gutils, newip)));
@@ -5623,7 +5629,8 @@ public:
           cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
                                             call.getName() + "_cachereplace2");
           cachereplace = gutils->cacheForReverse(
-              BuilderZ, cachereplace, getIndex(&call, CacheType::Self));
+              BuilderZ, cachereplace,
+              getIndex(&call, CacheType::Self, BuilderZ));
         } else {
           auto pn = BuilderZ.CreatePHI(call.getType(), 1,
                                        call.getName() + "_replacementC");
@@ -5688,11 +5695,29 @@ public:
       auto callval = call.getCalledOperand();
 
       if (gutils->isConstantValue(callval)) {
-        llvm::errs() << *gutils->newFunc->getParent() << "\n";
-        llvm::errs() << " orig: " << call << " callval: " << *callval << "\n";
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << *gutils->oldFunc << "\n";
+        ss << "in Mode: " << to_string(Mode) << "\n";
+        ss << " orig: " << call << " callval: " << *callval << "\n";
+        ss << " constant function being called, but active call instruction\n";
+        if (CustomErrorHandler) {
+          auto val = unwrap(CustomErrorHandler(ss.str().c_str(), wrap(&call),
+                                               ErrorType::NoDerivative, gutils,
+                                               nullptr, wrap(&Builder2)));
+          if (val)
+            newcalled = val;
+          else
+            newcalled =
+                UndefValue::get(gutils->getShadowType(callval->getType()));
+        } else {
+          EmitFailure("NoDerivative", call.getDebugLoc(), &call, ss.str());
+          newcalled =
+              UndefValue::get(gutils->getShadowType(callval->getType()));
+        }
+      } else {
+        newcalled = lookup(gutils->invertPointerM(callval, Builder2), Builder2);
       }
-      assert(!gutils->isConstantValue(callval));
-      newcalled = lookup(gutils->invertPointerM(callval, Builder2), Builder2);
 
       auto ft = call.getFunctionType();
 
@@ -5925,7 +5950,7 @@ public:
     // not fully understood by LLVM. One of the results of this is that the
     // visitor dispatches to visitCallInst, rather than visitIntrinsicInst, when
     // presented with the intrinsic - hence why we are handling it here.
-    if (getFuncNameFromCall(&call).startswith("llvm.intel.subscript")) {
+    if (startsWith(getFuncNameFromCall(&call), ("llvm.intel.subscript"))) {
       assert(isa<IntrinsicInst>(call));
       visitIntrinsicInst(cast<IntrinsicInst>(call));
       return;
@@ -5955,8 +5980,11 @@ public:
 
     bool subretused = false;
     bool shadowReturnUsed = false;
-    DIFFE_TYPE subretType =
-        gutils->getReturnDiffeType(&call, &subretused, &shadowReturnUsed);
+    auto smode = Mode;
+    if (smode == DerivativeMode::ReverseModeGradient)
+      smode = DerivativeMode::ReverseModePrimal;
+    DIFFE_TYPE subretType = gutils->getReturnDiffeType(
+        &call, &subretused, &shadowReturnUsed, smode);
 
     if (Mode == DerivativeMode::ForwardMode) {
       auto found = customFwdCallHandlers.find(funcName);
@@ -6050,7 +6078,7 @@ public:
           if (tape) {
             tapeType = tape->getType();
             gutils->cacheForReverse(BuilderZ, tape,
-                                    getIndex(&call, CacheType::Tape));
+                                    getIndex(&call, CacheType::Tape, BuilderZ));
           }
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
@@ -6082,9 +6110,9 @@ public:
             tapeType = (llvm::Type *)fd->second;
 
             tape = BuilderZ.CreatePHI(tapeType, 0);
-            tape = gutils->cacheForReverse(BuilderZ, tape,
-                                           getIndex(&call, CacheType::Tape),
-                                           /*ignoreType*/ true);
+            tape = gutils->cacheForReverse(
+                BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ),
+                /*ignoreType*/ true);
           }
           if (tape)
             tape = gutils->lookupM(tape, Builder2);
@@ -6113,11 +6141,21 @@ public:
                      gutils->getShadowType(call.getType()));
               placeholder->replaceAllUsesWith(invertedReturn);
               gutils->erase(placeholder);
-            } else
-              invertedReturn = placeholder;
-
-            invertedReturn = gutils->cacheForReverse(
-                BuilderZ, invertedReturn, getIndex(&call, CacheType::Shadow));
+              invertedReturn = gutils->cacheForReverse(
+                  BuilderZ, invertedReturn,
+                  getIndex(&call, CacheType::Shadow, BuilderZ));
+            } else {
+              auto idx = getIndex(&call, CacheType::Shadow, BuilderZ);
+              invertedReturn =
+                  gutils->cacheForReverse(BuilderZ, placeholder, idx);
+              if (idx == -2) {
+                if (placeholder->getType() != invertedReturn->getType())
+                  llvm::errs() << " place: " << *placeholder
+                               << "  invRet: " << *invertedReturn;
+                placeholder->replaceAllUsesWith(invertedReturn);
+                gutils->erase(placeholder);
+              }
+            }
 
             gutils->invertedPointers.insert(
                 std::make_pair((const Value *)&call,
@@ -6146,7 +6184,8 @@ public:
             gutils->erase(newCall);
           }
           normalReturn = gutils->cacheForReverse(
-              BuilderZ, normalReturn, getIndex(&call, CacheType::Self));
+              BuilderZ, normalReturn,
+              getIndex(&call, CacheType::Self, BuilderZ));
         } else {
           if (normalReturn && normalReturn != newCall) {
             assert(normalReturn->getType() == newCall->getType());
@@ -6173,7 +6212,15 @@ public:
       return;
 
     if (gutils->isConstantInstruction(&call) &&
-        gutils->isConstantValue(&call)) {
+        (gutils->isConstantValue(&call) || !shadowReturnUsed)) {
+      if (!gutils->isConstantValue(&call)) {
+        auto found = gutils->invertedPointers.find(&call);
+        if (found != gutils->invertedPointers.end()) {
+          PHINode *placeholder = cast<PHINode>(&*found->second);
+          gutils->invertedPointers.erase(found);
+          gutils->erase(placeholder);
+        }
+      }
       bool noFree = Mode == DerivativeMode::ForwardMode;
       noFree |= call.hasFnAttr(Attribute::NoFree);
       if (!noFree && called) {
@@ -6209,7 +6256,7 @@ public:
           gutils->knownRecomputeHeuristic.end()) {
         if (!gutils->knownRecomputeHeuristic[&call]) {
           gutils->cacheForReverse(BuilderZ, newCall,
-                                  getIndex(&call, CacheType::Self));
+                                  getIndex(&call, CacheType::Self, BuilderZ));
           eraseIfUnused(call);
           return;
         }
@@ -6247,7 +6294,7 @@ public:
           }
           if (primalNeededInReverse) {
             gutils->cacheForReverse(BuilderZ, newCall,
-                                    getIndex(&call, CacheType::Self));
+                                    getIndex(&call, CacheType::Self, BuilderZ));
             eraseIfUnused(call);
             return;
           }

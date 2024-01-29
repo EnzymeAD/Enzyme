@@ -886,6 +886,14 @@ void enzyme::AliasAnalysis::transfer(
               result->getPoint(),
               originalClasses.getOriginalClass(result->getPoint(), debugLabel));
           propagateIfChanged(result, result->join(fresh));
+
+          // The pointer to freshly allocated memory is known not to point to
+          // anything.
+          // TODO(zinenko): this is a bit strange to update _another_ lattice
+          // here.
+          auto *pointsTo = getOrCreate<PointsToSets>(op);
+          propagateIfChanged(pointsTo, pointsTo->setPointingToEmpty(
+                                           fresh.getAliasClassesObject()));
         }
       }
     } else if (isa<MemoryEffects::Read>(effect.getEffect())) {
@@ -932,11 +940,16 @@ void enzyme::AliasAnalysis::transfer(
 
   // Conservatively assume all results alias all operands.
   for (AliasClassLattice *resultLattice : results) {
-    ChangeResult r = ChangeResult::NoChange;
+    // TODO: Setting this flag to true will assume non-pointers don't alias,
+    // which is not true in general but can result in improved analysis speed.
+    // We need a type analysis for full correctness.
     constexpr bool pruneNonPointers = false;
-    if (!pruneNonPointers || isPointerLike(resultLattice->getPoint().getType()))
-      for (const AliasClassLattice *operandLattice : operands)
-        r |= resultLattice->join(*operandLattice);
+    if (pruneNonPointers && !isPointerLike(resultLattice->getPoint().getType()))
+      continue;
+
+    ChangeResult r = ChangeResult::NoChange;
+    for (const AliasClassLattice *operandLattice : operands)
+      r |= resultLattice->join(*operandLattice);
     propagateIfChanged(resultLattice, r);
   }
 }

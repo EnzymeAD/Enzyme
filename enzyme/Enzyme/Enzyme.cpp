@@ -749,7 +749,7 @@ public:
       Value *res = CI->getArgOperand(i);
       auto metaString = getMetadataName(res);
       // handle metadata
-      if (metaString && metaString->startswith("enzyme_")) {
+      if (metaString && startsWith(*metaString, "enzyme_")) {
         if (*metaString == "enzyme_const_return") {
           retType = DIFFE_TYPE::CONSTANT;
           continue;
@@ -862,7 +862,7 @@ public:
       bool skipArg = false;
 
       // handle metadata
-      while (metaString && metaString->startswith("enzyme_")) {
+      while (metaString && startsWith(*metaString, "enzyme_")) {
         if (*metaString == "enzyme_not_overwritten") {
           overwritten = false;
         } else if (*metaString == "enzyme_byref") {
@@ -1314,6 +1314,55 @@ public:
     return type_args;
   }
 
+  bool HandleTruncateFunc(CallInst *CI) {
+    IRBuilder<> Builder(CI);
+    Function *F = parseFunctionParameter(CI);
+    if (!F)
+      return false;
+    if (CI->arg_size() != 3) {
+      EmitFailure("TooManyArgs", CI->getDebugLoc(), CI,
+                  "Had incorrect number of args to __enzyme_truncate_func", *CI,
+                  " - expected 3");
+      return false;
+    }
+    auto Cfrom = cast<ConstantInt>(CI->getArgOperand(1));
+    assert(Cfrom);
+    auto Cto = cast<ConstantInt>(CI->getArgOperand(2));
+    assert(Cto);
+    RequestContext context(CI, &Builder);
+    llvm::Value *res = Logic.CreateTruncateFunc(
+        context, F, (unsigned)Cfrom->getValue().getZExtValue(),
+        (unsigned)Cto->getValue().getZExtValue());
+    if (!res)
+      return false;
+    res = Builder.CreatePointerCast(res, CI->getType());
+    CI->replaceAllUsesWith(res);
+    CI->eraseFromParent();
+    return true;
+  }
+
+  bool HandleTruncateValue(CallInst *CI, bool isTruncate) {
+    IRBuilder<> Builder(CI);
+    if (CI->arg_size() != 3) {
+      EmitFailure("TooManyArgs", CI->getDebugLoc(), CI,
+                  "Had incorrect number of args to __enzyme_truncate_value",
+                  *CI, " - expected 3");
+      return false;
+    }
+    auto Cfrom = cast<ConstantInt>(CI->getArgOperand(1));
+    assert(Cfrom);
+    auto Cto = cast<ConstantInt>(CI->getArgOperand(2));
+    assert(Cto);
+    auto Addr = CI->getArgOperand(0);
+    RequestContext context(CI, &Builder);
+    bool res = Logic.CreateTruncateValue(
+        context, Addr, (unsigned)Cfrom->getValue().getZExtValue(),
+        (unsigned)Cto->getValue().getZExtValue(), isTruncate);
+    if (!res)
+      return false;
+    return true;
+  }
+
   bool HandleBatch(CallInst *CI) {
     unsigned width = 1;
     unsigned truei = 0;
@@ -1368,7 +1417,7 @@ public:
       auto metaString = getMetadataName(res);
 
       // handle metadata
-      if (metaString && metaString->startswith("enzyme_")) {
+      if (metaString && startsWith(*metaString, "enzyme_")) {
         if (*metaString == "enzyme_scalar") {
           ty = BATCH_TYPE::SCALAR;
         } else if (*metaString == "enzyme_vector") {
@@ -2028,6 +2077,7 @@ public:
               Fn->getName().contains("__enzyme_augmentfwd") ||
               Fn->getName().contains("__enzyme_augmentsize") ||
               Fn->getName().contains("__enzyme_reverse") ||
+              Fn->getName().contains("__enzyme_truncate") ||
               Fn->getName().contains("__enzyme_batch") ||
               Fn->getName().contains("__enzyme_trace") ||
               Fn->getName().contains("__enzyme_condition")))
@@ -2060,6 +2110,9 @@ public:
     MapVector<CallInst *, DerivativeMode> toVirtual;
     MapVector<CallInst *, DerivativeMode> toSize;
     SmallVector<CallInst *, 4> toBatch;
+    SmallVector<CallInst *, 4> toTruncateFunc;
+    SmallVector<CallInst *, 4> toTruncateValue;
+    SmallVector<CallInst *, 4> toExpandValue;
     MapVector<CallInst *, ProbProgMode> toProbProg;
     SetVector<CallInst *> InactiveCalls;
     SetVector<CallInst *> IterCalls;
@@ -2369,6 +2422,9 @@ public:
         bool virtualCall = false;
         bool sizeOnly = false;
         bool batch = false;
+        bool truncateFunc = false;
+        bool truncateValue = false;
+        bool expandValue = false;
         bool probProg = false;
         DerivativeMode derivativeMode;
         ProbProgMode probProgMode;
@@ -2398,6 +2454,15 @@ public:
         } else if (Fn->getName().contains("__enzyme_batch")) {
           enableEnzyme = true;
           batch = true;
+        } else if (Fn->getName().contains("__enzyme_truncate_func")) {
+          enableEnzyme = true;
+          truncateFunc = true;
+        } else if (Fn->getName().contains("__enzyme_truncate_value")) {
+          enableEnzyme = true;
+          truncateValue = true;
+        } else if (Fn->getName().contains("__enzyme_expand_value")) {
+          enableEnzyme = true;
+          expandValue = true;
         } else if (Fn->getName().contains("__enzyme_likelihood")) {
           enableEnzyme = true;
           probProgMode = ProbProgMode::Likelihood;
@@ -2455,6 +2520,12 @@ public:
             toSize[CI] = derivativeMode;
           else if (batch)
             toBatch.push_back(CI);
+          else if (truncateFunc)
+            toTruncateFunc.push_back(CI);
+          else if (truncateValue)
+            toTruncateValue.push_back(CI);
+          else if (expandValue)
+            toExpandValue.push_back(CI);
           else if (probProg) {
             toProbProg[CI] = probProgMode;
           } else
@@ -2547,6 +2618,15 @@ public:
 
     for (auto call : toBatch) {
       HandleBatch(call);
+    }
+    for (auto call : toTruncateFunc) {
+      HandleTruncateFunc(call);
+    }
+    for (auto call : toTruncateValue) {
+      HandleTruncateValue(call, true);
+    }
+    for (auto call : toExpandValue) {
+      HandleTruncateValue(call, false);
     }
 
     for (auto &&[call, mode] : toProbProg) {
@@ -2681,9 +2761,8 @@ public:
       attributeKnownFunctions(F);
       if (F.empty())
         continue;
-      SmallVector<Instruction *, 4> toErase;
       for (BasicBlock &BB : F) {
-        for (Instruction &I : BB) {
+        for (Instruction &I : make_early_inc_range(BB)) {
           if (auto CI = dyn_cast<CallInst>(&I)) {
             Function *F = CI->getCalledFunction();
             if (auto castinst =
@@ -2694,7 +2773,6 @@ public:
                 }
             }
             if (F && F->getName() == "f90_mzero8") {
-              toErase.push_back(CI);
               IRBuilder<> B(CI);
 
               SmallVector<Value *, 4> args;
@@ -2710,12 +2788,11 @@ public:
               auto memsetIntr =
                   Intrinsic::getDeclaration(&M, Intrinsic::memset, tys);
               B.CreateCall(memsetIntr, args);
+
+              CI->eraseFromParent();
             }
           }
         }
-      }
-      for (Instruction *I : toErase) {
-        I->eraseFromParent();
       }
     }
 
@@ -2739,13 +2816,12 @@ public:
       changed |= lowerEnzymeCalls(F, done);
     }
 
-    SmallVector<CallInst *, 4> toErase;
     for (Function &F : M) {
       if (F.empty())
         continue;
 
       for (BasicBlock &BB : F) {
-        for (Instruction &I : BB) {
+        for (Instruction &I : make_early_inc_range(BB)) {
           if (auto CI = dyn_cast<CallInst>(&I)) {
             Function *F = CI->getCalledFunction();
             if (auto castinst =
@@ -2760,20 +2836,18 @@ public:
                   F->getName().contains("__enzyme_double") ||
                   F->getName().contains("__enzyme_integer") ||
                   F->getName().contains("__enzyme_pointer")) {
-                toErase.push_back(CI);
+                CI->eraseFromParent();
+                changed = true;
               }
               if (F->getName() == "__enzyme_iter") {
                 CI->replaceAllUsesWith(CI->getArgOperand(0));
-                toErase.push_back(CI);
+                CI->eraseFromParent();
+                changed = true;
               }
             }
           }
         }
       }
-    }
-    for (auto I : toErase) {
-      I->eraseFromParent();
-      changed = true;
     }
 
     SmallPtrSet<CallInst *, 16> sample_calls;
@@ -3555,38 +3629,39 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 #endif
 }
 
+void registerEnzyme(llvm::PassBuilder &PB) {
+#ifdef ENZYME_RUNPASS
+  augmentPassBuilder(PB);
+#endif
+  PB.registerPipelineParsingCallback(
+      [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
+         llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+        if (Name == "enzyme") {
+          MPM.addPass(EnzymeNewPM());
+          return true;
+        }
+        if (Name == "preserve-nvvm") {
+          MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+          return true;
+        }
+        if (Name == "print-type-analysis") {
+          MPM.addPass(TypeAnalysisPrinterNewPM());
+          return true;
+        }
+        return false;
+      });
+  PB.registerPipelineParsingCallback(
+      [](llvm::StringRef Name, llvm::FunctionPassManager &FPM,
+         llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+        if (Name == "print-activity-analysis") {
+          FPM.addPass(ActivityAnalysisPrinterNewPM());
+          return true;
+        }
+        return false;
+      });
+}
+
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
 llvmGetPassPluginInfo() {
-  return {LLVM_PLUGIN_API_VERSION, "EnzymeNewPM", "v0.1",
-          [](llvm::PassBuilder &PB) {
-#ifdef ENZYME_RUNPASS
-            augmentPassBuilder(PB);
-#endif
-            PB.registerPipelineParsingCallback(
-                [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
-                   llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
-                  if (Name == "enzyme") {
-                    MPM.addPass(EnzymeNewPM());
-                    return true;
-                  }
-                  if (Name == "preserve-nvvm") {
-                    MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
-                    return true;
-                  }
-                  if (Name == "print-type-analysis") {
-                    MPM.addPass(TypeAnalysisPrinterNewPM());
-                    return true;
-                  }
-                  return false;
-                });
-            PB.registerPipelineParsingCallback(
-                [](llvm::StringRef Name, llvm::FunctionPassManager &FPM,
-                   llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
-                  if (Name == "print-activity-analysis") {
-                    FPM.addPass(ActivityAnalysisPrinterNewPM());
-                    return true;
-                  }
-                  return false;
-                });
-          }};
+  return {LLVM_PLUGIN_API_VERSION, "EnzymeNewPM", "v0.1", registerEnzyme};
 }

@@ -10,7 +10,7 @@
 // RUN: if [ %llvmver -lt 16 ]; then %clang++ -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions %O0TBAA %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - ; fi
 
 #include <eigen3/Eigen/Dense>
-#include "test_utils.h"
+#include "../test_utils.h"
 
 using Eigen::MatrixXd;
 using Eigen::VectorXd;

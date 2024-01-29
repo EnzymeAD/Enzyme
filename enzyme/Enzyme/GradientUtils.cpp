@@ -730,7 +730,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
   }
 
   std::pair<Value *, BasicBlock *> idx = std::make_pair(val, scope);
-  // assert(!val->getName().startswith("$tapeload"));
+  // assert(!startsWith(val->getName(), "$tapeload"));
   if (permitCache) {
     auto found0 = unwrap_cache.find(BuilderM.GetInsertBlock());
     if (found0 != unwrap_cache.end()) {
@@ -2584,6 +2584,10 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
   }
 
   if (tape) {
+    if (idx == -2) {
+      assert(malloc);
+      return UndefValue::get(malloc->getType());
+    }
     if (idx >= 0 && !tape->getType()->isStructTy()) {
       llvm::errs() << "cacheForReverse incorrect tape type: " << *tape
                    << " idx: " << idx << "\n";
@@ -4041,7 +4045,7 @@ bool GradientUtils::legalRecompute(const Value *val,
         n == "lgammal_r" || n == "__lgamma_r_finite" ||
         n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
         n == "tanhf" || n == "__pow_finite" ||
-        n == "julia.pointer_from_objref" || n.startswith("enzyme_wrapmpi$$") ||
+        n == "julia.pointer_from_objref" || startsWith(n, "enzyme_wrapmpi$$") ||
         n == "omp_get_thread_num" || n == "omp_get_max_threads") {
       return true;
     }
@@ -4191,7 +4195,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
         n == "lgammal_r" || n == "__lgamma_r_finite" ||
         n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
         n == "tanhf" || n == "__pow_finite" ||
-        n == "julia.pointer_from_objref" || n.startswith("enzyme_wrapmpi$$") ||
+        n == "julia.pointer_from_objref" || startsWith(n, "enzyme_wrapmpi$$") ||
         n == "omp_get_thread_num" || n == "omp_get_max_threads") {
       return true;
     }
@@ -4341,21 +4345,28 @@ GradientUtils *GradientUtils::CreateFromClone(
 DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
                                              bool *primalReturnUsedP,
                                              bool *shadowReturnUsedP) const {
+  return getReturnDiffeType(orig, primalReturnUsedP, shadowReturnUsedP, mode);
+}
+
+DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
+                                             bool *primalReturnUsedP,
+                                             bool *shadowReturnUsedP,
+                                             DerivativeMode cmode) const {
   bool shadowReturnUsed = false;
 
   DIFFE_TYPE subretType;
   if (isConstantValue(orig)) {
     subretType = DIFFE_TYPE::CONSTANT;
   } else {
-    if (mode == DerivativeMode::ForwardMode ||
-        mode == DerivativeMode::ForwardModeSplit) {
+    if (cmode == DerivativeMode::ForwardMode ||
+        cmode == DerivativeMode::ForwardModeSplit) {
       subretType = DIFFE_TYPE::DUP_ARG;
       shadowReturnUsed = true;
     } else {
       if (!orig->getType()->isFPOrFPVectorTy() &&
           TR.query(orig).Inner0().isPossiblePointer()) {
         if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-                QueryType::Shadow>(this, orig, mode, notForAnalysis)) {
+                QueryType::Shadow>(this, orig, cmode, notForAnalysis)) {
           subretType = DIFFE_TYPE::DUP_ARG;
           shadowReturnUsed = true;
         } else
@@ -4475,7 +4486,7 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
     if (arg->getName() == "_ZTVN10__cxxabiv120__si_class_type_infoE" ||
         arg->getName() == "_ZTVN10__cxxabiv117__class_type_infoE" ||
         arg->getName() == "_ZTVN10__cxxabiv121__vmi_class_type_infoE" ||
-        arg->getName().startswith("??_R")) // any of the MS RTTI manglings
+        startsWith(arg->getName(), "??_R")) // any of the MS RTTI manglings
       return arg;
 
     if (hasMetadata(arg, "enzyme_shadow")) {
@@ -5198,17 +5209,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
               ptr = bb.CreatePointerCast(ptr, PointerType::getUnqual(flt));
               bb.CreateStore(Constant::getNullValue(flt), ptr);
-              size_t chunk = 0;
-              if (flt->isFloatTy()) {
-                chunk = 4;
-              } else if (flt->isDoubleTy()) {
-                chunk = 8;
-              } else if (flt->isHalfTy()) {
-                chunk = 2;
-              } else {
-                llvm::errs() << *flt << "\n";
-                assert(0 && "unhandled float type");
-              }
+              size_t chunk = dl.getTypeSizeInBits(flt) / 8;
               i += chunk;
             } else if (CT2 != BaseType::Integer) {
               auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
@@ -5457,14 +5458,20 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         return shadow;
       }
 
-      llvm::errs() << *oldFunc->getParent() << "\n";
-      llvm::errs() << *oldFunc << "\n";
-      llvm::errs() << *newFunc << "\n";
-      llvm::errs() << *arg << "\n";
-      assert(0 && "cannot compute with global variable that doesn't have "
-                  "marked shadow global");
-      report_fatal_error("cannot compute with global variable that doesn't "
-                         "have marked shadow global");
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "cannot compute with global variable that doesn't have marked "
+            "shadow global\n";
+      ss << *arg << "\n";
+      if (CustomErrorHandler) {
+        return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
+                                         ErrorType::NoShadow, this, nullptr,
+                                         wrap(&BuilderM)));
+      } else {
+        EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
+                    ss.str());
+      }
+      return UndefValue::get(getShadowType(arg->getType()));
     }
     auto md = arg->getMetadata("enzyme_shadow");
     if (!isa<MDTuple>(md)) {
@@ -5533,6 +5540,26 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return shadow;
   } else if (auto arg = dyn_cast<ConstantExpr>(oval)) {
     IRBuilder<> bb(inversionAllocs);
+    if (arg->getOpcode() == Instruction::Add) {
+      if (isa<ConstantInt>(arg->getOperand(0))) {
+        auto rule = [&bb, &arg](Value *ip) {
+          Constant *invops[2] = {arg->getOperand(0), cast<Constant>(ip)};
+          return arg->getWithOperands(invops);
+        };
+
+        auto ip = invertPointerM(arg->getOperand(1), bb, nullShadow);
+        return applyChainRule(arg->getType(), bb, rule, ip);
+      }
+      if (isa<ConstantInt>(arg->getOperand(1))) {
+        auto rule = [&bb, &arg](Value *ip) {
+          Constant *invops[2] = {cast<Constant>(ip), arg->getOperand(1)};
+          return arg->getWithOperands(invops);
+        };
+
+        auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
+        return applyChainRule(arg->getType(), bb, rule, ip);
+      }
+    }
     auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
 
     if (arg->isCast()) {
@@ -8966,32 +8993,43 @@ void GradientUtils::dumpPointers() {
 
 int GradientUtils::getIndex(
     std::pair<Instruction *, CacheType> idx,
-    const std::map<std::pair<Instruction *, CacheType>, int> &mapping) {
+    const std::map<std::pair<Instruction *, CacheType>, int> &mapping,
+    IRBuilder<> &B) {
   assert(tape);
   auto found = mapping.find(idx);
   if (found == mapping.end()) {
-    errs() << "oldFunc: " << *oldFunc << "\n";
-    errs() << "newFunc: " << *newFunc << "\n";
-    errs() << " <mapping>\n";
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << *oldFunc << "\n";
+    ss << *newFunc << "\n";
+    ss << " <mapping>\n";
     for (auto &p : mapping) {
-      errs() << "   idx: " << *p.first.first << ", " << p.first.second
-             << " pos=" << p.second << "\n";
+      ss << "   idx: " << *p.first.first << ", " << p.first.second
+         << " pos=" << p.second << "\n";
     }
-    errs() << " </mapping>\n";
-
-    errs() << "idx: " << *idx.first << ", " << idx.second << "\n";
-    assert(0 && "could not find index in mapping");
+    ss << " </mapping>\n";
+    ss << "idx: " << *idx.first << ", " << idx.second << "\n";
+    ss << " could not find index in mapping\n";
+    if (CustomErrorHandler) {
+      CustomErrorHandler(ss.str().c_str(), wrap(idx.first),
+                         ErrorType::GetIndexError, this, nullptr, wrap(&B));
+    } else {
+      EmitFailure("GetIndexError", idx.first->getDebugLoc(), idx.first,
+                  ss.str());
+    }
+    return -2;
   }
   return found->second;
 }
 
 int GradientUtils::getIndex(
     std::pair<Instruction *, CacheType> idx,
-    std::map<std::pair<Instruction *, CacheType>, int> &mapping) {
+    std::map<std::pair<Instruction *, CacheType>, int> &mapping,
+    IRBuilder<> &B) {
   if (tape) {
     return getIndex(
         idx,
-        (const std::map<std::pair<Instruction *, CacheType>, int> &)mapping);
+        (const std::map<std::pair<Instruction *, CacheType>, int> &)mapping, B);
   } else {
     if (mapping.find(idx) != mapping.end()) {
       return mapping[idx];
@@ -9321,6 +9359,13 @@ bool GradientUtils::needsCacheWholeAllocation(
     found = knownRecomputeHeuristic.find(cur);
     if (found == knownRecomputeHeuristic.end())
       continue;
+
+    // If caching a julia base object, this is fine as
+    // GC will deal with any issues with.
+    if (auto PT = dyn_cast<PointerType>(cur->getType()))
+      if (PT->getAddressSpace() == 10)
+        if (EnzymeJuliaAddrLoad)
+          continue;
 
     // If caching this user, it cannot be a gep/cast of original
     if (!found->second) {
