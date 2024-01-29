@@ -76,4 +76,25 @@ def ReverseAutoDiffOpInterface : OpInterface<"ReverseAutoDiffOpInterface"> {
   ];
 }
 
+def ActivityOpInterface
+    : OpInterface<"ActivityOpInterface"> {
+  let cppNamespace = "::mlir::enzyme";
+  
+  let methods = [
+    InterfaceMethod<
+    /*desc=*/[{
+    }],
+    /*retTy=*/"bool",
+    /*methodName=*/"isInactive"
+    >,
+    InterfaceMethod<
+    /*desc=*/[{
+    }],
+    /*retTy=*/"bool",
+    /*methodName=*/"isArgInactive",
+    /*args=*/(ins "::mlir::Value":$val)
+    >
+  ];
+}
+
 #endif // ENZYME_MLIR_INTERFACES_AUTODIFFOPINTERFACES

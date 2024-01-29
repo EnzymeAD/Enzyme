@@ -19,6 +19,8 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/ModRef.h"
 
+#include "Interfaces/AutoDiffOpInterface.h"
+
 const char *KnownInactiveFunctionsStartingWith[] = {
     "f90io",
     "$ss5print",
@@ -1494,6 +1496,17 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
         }
       }
 
+      if (auto op = TmpOrig.getDefiningOp())
+        if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(op)) {
+          if (ifaceOp.isInactive()) {
+            InsertConstantValue(TR, Val);
+            if (TmpOrig != Val) {
+              InsertConstantValue(TR, TmpOrig);
+            }
+            return true;
+          }
+        }
+
       UpHypothesis = std::shared_ptr<mlir::enzyme::ActivityAnalyzer>(
           new mlir::enzyme::ActivityAnalyzer(*this, UP));
       UpHypothesis->ConstantValues.insert(Val);
@@ -1827,6 +1840,13 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
     auto checkActivity = [&](Operation *op) {
       if (notForAnalysis.count(op->getBlock()))
         return false;
+
+      if (auto op = TmpOrig.getDefiningOp())
+        if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(op)) {
+          if (ifaceOp.isInactive()) {
+            return false;
+          }
+        }
 
       if (auto iasm = dyn_cast<LLVM::InlineAsmOp>(op)) {
         if (iasm.getAsmString().contains("exit") ||
@@ -2537,6 +2557,12 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
     return false;
   }
 
+  if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(op)) {
+    if (ifaceOp.isInactive()) {
+      return true;
+    }
+  }
+
   // if (EnzymePrintActivity)
   //   llvm::errs() << " < UPSEARCH" << (int)directions << ">" << *inst <<
   //   "\n";
@@ -2869,6 +2895,13 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
       //   if (!TR.query(LI)[{-1}].isPossiblePointer())
       //     continue;
       // }
+    }
+
+    if (UA != UseActivity::AllStores) {
+      if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(a)) {
+        if (ifaceOp.isArgInactive(parent))
+          return true;
+      }
     }
 
     // if (EnzymePrintActivity)
@@ -3449,6 +3482,11 @@ bool mlir::enzyme::ActivityAnalyzer::isValueActivelyStoredOrReturned(
     // Loading a value prevents its pointer from being captured
     if (isa<LLVM::LoadOp>(a)) {
       continue;
+    }
+
+    if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(a)) {
+      if (ifaceOp.isArgInactive(val))
+        return true;
     }
 
     if (isa<LLVM::ReturnOp>(a)) {
