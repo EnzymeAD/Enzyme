@@ -256,21 +256,34 @@ GradientUtils::GradientUtils(
   }
 
   if (EnzymePrintActiveInstructions) {
-    size_t totalInstructions = 0;
-    size_t constantInstructions = 0;
-    for (BasicBlock &BB : *oldFunc) {
-      for (Instruction &I : BB) {
-        if (isConstantInstruction(&I)) {
-          constantInstructions++;
+    // static DenseSet<Function *> visitedFuncs;
+    static size_t overallTotal;
+    static size_t overallConst;
+    static std::unordered_map<std::string, int> visitedFuncs;
+    std::string funcName = oldFunc->getName().str();
+    if (visitedFuncs.find(funcName) == visitedFuncs.end()) {
+      size_t totalInstructions = 0;
+      size_t constantInstructions = 0;
+      for (BasicBlock &BB : *oldFunc) {
+        for (Instruction &I : BB) {
+          if (isConstantInstruction(&I)) {
+            constantInstructions++;
+          }
+          totalInstructions++;
         }
-        totalInstructions++;
       }
+      llvm::errs() << "function: " << oldFunc->getName()
+                   << " total instructions: " << totalInstructions
+                   << " constant instructions: " << constantInstructions
+                   << "\n";
+      overallTotal += totalInstructions;
+      overallConst += constantInstructions;
+      fprintf(stderr, "Percentage: %.2f\n",
+              static_cast<double>(constantInstructions) / totalInstructions);
+      fprintf(stderr, "Running totals: %lu out of %lu (%.3f)\n", overallConst,
+              overallTotal, static_cast<double>(overallConst) / overallTotal);
+      visitedFuncs.try_emplace(funcName, 0);
     }
-    llvm::errs() << "function: " << oldFunc->getName()
-                 << " total instructions: " << totalInstructions
-                 << " constant instructions: " << constantInstructions << "\n";
-    fprintf(stderr, "Percentage: %.2f\n",
-            static_cast<double>(constantInstructions) / totalInstructions);
   }
 }
 
