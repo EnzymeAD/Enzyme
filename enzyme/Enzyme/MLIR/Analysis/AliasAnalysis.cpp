@@ -826,11 +826,19 @@ void enzyme::AliasAnalysis::setToEntryState(AliasClassLattice *lattice) {
         // the undefined state (bottom).
         assert(lattice->isUndefined() && "resetting lattice point");
 
-        DistinctAttr noaliasClass =
-            originalClasses.getOriginalClass(lattice->getPoint(), debugLabel);
-        return propagateIfChanged(lattice,
-                                  lattice->join(AliasClassLattice::single(
-                                      lattice->getPoint(), noaliasClass)));
+        auto noaliasClass = AliasClassLattice::single(
+            lattice->getPoint(),
+            originalClasses.getOriginalClass(lattice->getPoint(), debugLabel));
+
+        // A pointer marked `noalias` may point to the entry class.
+        // auto *entryPointsToSets =
+        //     getOrCreate<PointsToSets>(&funcOp.getFunctionBody().front());
+        // // TODO: Should the entry alias class set be a singleton?
+        // propagateIfChanged(entryPointsToSets,
+        //                    entryPointsToSets->setPointingToClasses(
+        //                        noaliasClass.getAliasClassesObject(),
+        //                        AliasClassSet(entryClass)));
+        return propagateIfChanged(lattice, lattice->join(noaliasClass));
       }
       // TODO: Not safe in general, integers can be a result of ptrtoint. We
       // need a type analysis here I guess?
