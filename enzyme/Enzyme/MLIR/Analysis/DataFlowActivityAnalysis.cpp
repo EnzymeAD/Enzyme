@@ -468,6 +468,8 @@ std::optional<Value> getStored(Operation *op) {
     return storeOp.getValue();
   } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
     return storeOp.getValue();
+  } else if (auto memsetOp = dyn_cast<LLVM::MemsetOp>(op)) {
+    return memsetOp.getVal();
   }
   return std::nullopt;
 }
@@ -862,6 +864,8 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
         return true;
       }
       if (aliasClassLattice->isUndefined()) {
+        // TODO: We're seeing a case where we load from calloc which is
+        // defined to be zero.
         errs() << "ac for " << value << " was undefined\n";
       }
       // If this triggers, investigate why the alias classes weren't computed.
