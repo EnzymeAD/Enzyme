@@ -43,6 +43,8 @@
 
 #include "mlir/Analysis/AliasAnalysis/LocalAliasAnalysis.h"
 
+#include "Interfaces/AutoDiffOpInterface.h"
+
 using namespace mlir;
 using namespace mlir::dataflow;
 using enzyme::AliasClassLattice;
