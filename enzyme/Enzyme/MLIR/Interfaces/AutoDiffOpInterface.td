@@ -40,6 +40,22 @@ def AutoDiffOpInterface : OpInterface<"AutoDiffOpInterface"> {
   ];
 }
 
+def ControlFlowAutoDiffOpInterface 
+    : OpInterface<"ControlFlowAutoDiffOpInterface"> {
+  let cppNamespace = "::mlir::enzyme";
+  let methods = [
+    InterfaceMethod<
+      /*desc=*/[{}],
+      /*retTy=*/"::mlir::Operation *",
+      /*methodName=*/"createWithShadows",
+      /*args=*/(ins "::mlir::OpBuilder &":$builder,
+                    "::mlir::enzyme::MGradientUtils *":$gutils,
+                    "::mlir::Operation *":$original, 
+                    "::mlir::ValueRange":$remappedOperands)
+    >
+  ];
+}
+
 def ReverseAutoDiffOpInterface : OpInterface<"ReverseAutoDiffOpInterface"> {
   let description = [{
     A differentiable MLIR operation that is able to emit reverse mode adjoints for itself.

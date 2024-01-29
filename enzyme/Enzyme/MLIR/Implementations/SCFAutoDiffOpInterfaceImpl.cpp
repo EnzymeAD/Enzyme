@@ -19,97 +19,197 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/Types.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include <functional>
 
 using namespace mlir;
 using namespace mlir::enzyme;
 
-namespace {
-struct ForOpInterface
-    : public AutoDiffOpInterface::ExternalModel<ForOpInterface, scf::ForOp> {
-  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
-                                         MGradientUtils *gutils) const {
-    auto forOp = cast<scf::ForOp>(op);
-    auto nFor = cast<scf::ForOp>(gutils->getNewFromOriginal(op));
-    // Get a list of all the return types, which is the original return types
-    // alongside any shadow return types
-    SmallVector<Type> nTypes;
-    for (auto r : forOp->getResults()) {
-      // TODO only if used
-      nTypes.push_back(r.getType());
-      if (!gutils->isConstantValue(r)) {
-        auto adTypeIface = r.getType().dyn_cast<AutoDiffTypeInterface>();
-        if (!adTypeIface)
-          return failure();
-        nTypes.push_back(adTypeIface.getShadowType());
+LogicalResult mlir::enzyme::controlFlowForwardHandler(Operation *op, OpBuilder &builder, MGradientUtils *gutils) {
+    // For all active results, add shadow types.
+    // For now, assuming all results are relevant.
+    Operation *newOp = gutils->getNewFromOriginal(op);
+    SmallVector<Type> newOpResultTypes;
+    newOpResultTypes.reserve(op->getNumResults() * 2);
+    for (Value result : op->getResults()) {
+      // TODO only if used (can we DCE the primal after having done the
+      // derivative).
+      newOpResultTypes.push_back(result.getType());
+      if (gutils->isConstantValue(result))
+        continue;
+      auto typeIface = dyn_cast<AutoDiffTypeInterface>(result.getType());
+      if (!typeIface)
+        return failure();
+      newOpResultTypes.push_back(typeIface.getShadowType());
+    }
+
+    // For all operands that are forwarded to the body, if they are active, also
+    // add the shadow as operand.
+    auto regionBranchOp = dyn_cast<RegionBranchOpInterface>(op);
+    if (!regionBranchOp)
+      return failure();
+
+    SmallVector<RegionSuccessor> successors;
+    // TODO: consider getEntrySuccessorRegions variation that cares about
+    // activity and stuff.
+    // TODO: we may need to record, for every successor, which of its inputs
+    // need a shadow to recreate the body correctly.
+    // TODO: support region-to-region control flow as opposed to
+    // entry-to-region-to-exit (e.g., scf.while).
+    llvm::SmallDenseSet<unsigned> operandPositionsToShadow;
+    regionBranchOp.getSuccessorRegions(RegionBranchPoint::parent(), successors);
+    for (const RegionSuccessor &successor : successors) {
+      if (!successor.isParent() && successor.getSuccessor()->empty())
+        continue;
+
+      OperandRange operandRange =
+          regionBranchOp.getEntrySuccessorOperands(successor);
+
+      // Need to know which of the arguments are being forwarded to from
+      // operands.
+      for (auto &&[i, regionValue, operand] :
+           llvm::enumerate(successor.getSuccessorInputs(), operandRange)) {
+        if (gutils->isConstantValue(regionValue))
+          continue;
+        operandPositionsToShadow.insert(operandRange.getBeginOperandIndex() +
+                                        i);
       }
     }
-
-    // Get a list of all args, which is original args, and any shadows
-    SmallVector<Value> nArgs;
-    for (const auto &[initVal, iterArg] :
-         llvm::zip(forOp.getInitArgs(), forOp.getRegionIterArgs())) {
-      // TODO only if used
-      nArgs.push_back(gutils->getNewFromOriginal(initVal));
-      if (!gutils->isConstantValue(iterArg))
-        nArgs.push_back(gutils->invertPointerM(initVal, builder));
+    SmallVector<Value> newOperands;
+    newOperands.reserve(op->getNumOperands() + operandPositionsToShadow.size());
+    for (OpOperand &operand : op->getOpOperands()) {
+      newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
+      if (operandPositionsToShadow.contains(operand.getOperandNumber()))
+        newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
     }
+    // We are assuming the op can forward additional operands, listed
+    // immediately after the original operands, to the same regions.
+    // ^^
+    // Our interface guarantees this.
+    // We also assume that the region-holding op returns all of the values
+    // yielded by terminators, and only those values.
 
-    // Create the new modified for loop
-    auto repFor = builder.create<scf::ForOp>(
-        forOp.getLoc(), gutils->getNewFromOriginal(forOp.getLowerBound()),
-        gutils->getNewFromOriginal(forOp.getUpperBound()),
-        gutils->getNewFromOriginal(forOp.getStep()), nArgs);
-    repFor.getRegion().takeBody(nFor.getRegion());
+    auto iface = dyn_cast<ControlFlowAutoDiffOpInterface>(op);
+    if (!iface)
+      return failure();
+    Operation *replacement =
+        iface.createWithShadows(builder, gutils, op, newOperands);
+    for (auto &&[region, replacementRegion] :
+         llvm::zip(newOp->getRegions(), replacement->getRegions())) {
+      replacementRegion.takeBody(region);
+    }
 
     // Inject the mapping for the new results into GradientUtil's shadow
     // table
     SmallVector<Value> reps;
     size_t idx = 0;
-    for (Value r : forOp.getResults()) {
+    for (Value r : op->getResults()) {
       // TODO only if used
-      reps.push_back(repFor.getResult(idx));
+      reps.push_back(replacement->getResult(idx));
       idx++;
       if (!gutils->isConstantValue(r)) {
         auto inverted = gutils->invertedPointers.lookupOrNull(r);
         assert(inverted);
-        gutils->invertedPointers.map(r, repFor.getResult(idx));
-        inverted.replaceAllUsesWith(repFor.getResult(idx));
+        gutils->invertedPointers.map(r, replacement->getResult(idx));
+        inverted.replaceAllUsesWith(replacement->getResult(idx));
         gutils->erase(inverted.getDefiningOp());
         idx++;
       }
     }
 
-    // Replace all uses of original results
-    nFor.replaceAllUsesWith(reps);
-    gutils->erase(nFor);
-
     // differentiate body
-    for (Operation &o :
-         llvm::make_early_inc_range(forOp.getBody()->without_terminator())) {
+    for (auto &origRegion : op->getRegions()) {
+
+      for (auto &origBlock : origRegion) {
+        auto origTerm = origBlock.getTerminator();
+        if (isa<RegionBranchTerminatorOpInterface>(origTerm))
+        for (Operation &o : origBlock.without_terminator()) {
       if (failed(gutils->visitChild(&o)))
         return failure();
+        }
+        else
+            for (Operation &o : origBlock.without_terminator()) {
+      if (failed(gutils->visitChild(&o)))
+        return failure();
+        }
+      }
     }
 
-    // Fix terminator (yield) operations
-    Operation *oldYield = repFor.getBody()->getTerminator();
-    builder.setInsertionPointToEnd(repFor.getBody());
-    SmallVector<Value> nYields;
-    for (const auto &[result, yieldOperand] :
-         llvm::zip(forOp.getResults(),
-                   forOp.getBody()->getTerminator()->getOperands())) {
-      // TODO only if used
-      nYields.push_back(gutils->getNewFromOriginal(yieldOperand));
-      if (!gutils->isConstantValue(result))
-        nYields.push_back(gutils->invertPointerM(yieldOperand, builder));
-    }
-    Operation *newYield = builder.clone(*oldYield);
-    newYield->setOperands(nYields);
-    gutils->erase(oldYield);
+    for (auto &&[origRegion, replRegion] :
+         llvm::zip(op->getRegions(), replacement->getRegions())) {
+      for (auto &&[origBlock, replBlock] : llvm::zip(origRegion, replRegion)) {
+        Operation *origTerminator = origBlock.getTerminator();
+        auto termIface =
+            dyn_cast<RegionBranchTerminatorOpInterface>(origTerminator);
+        if (!termIface)
+          continue;
 
-    // Done
+        SmallVector<RegionSuccessor> successors;
+        termIface.getSuccessorRegions({}, successors);
+
+        llvm::SmallDenseSet<unsigned> operandsToShadow;
+        for (auto &successor : successors) {
+          OperandRange operandRange = termIface.getSuccessorOperands(successor);
+          ValueRange targetValues = successor.isParent()
+                                        ? op->getResults()
+                                        : successor.getSuccessorInputs();
+          assert(operandRange.size() == targetValues.size());
+          for (auto &&[i, target] : llvm::enumerate(targetValues)) {
+            if (!gutils->isConstantValue(target))
+              operandsToShadow.insert(operandRange.getBeginOperandIndex() + i);
+          }
+        }
+        SmallVector<Value> newOperands;
+        newOperands.reserve(termIface->getNumOperands() +
+                            operandsToShadow.size());
+        for (OpOperand &operand : termIface->getOpOperands()) {
+          newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
+          if (operandsToShadow.contains(operand.getOperandNumber()))
+            newOperands.push_back(
+                gutils->invertPointerM(operand.get(), builder));
+        }
+
+        // Assuming shadows following the originals are fine.
+        // TODO: consider extending to have a ShadowableTerminatorOpInterface
+        Operation *replTerminator = replBlock.getTerminator();
+        builder.setInsertionPointToEnd(&replBlock);
+        Operation *newTerminator = builder.clone(*replTerminator);
+        newTerminator->setOperands(newOperands);
+        gutils->erase(replTerminator);
+      }
+    }
+    
+    // Replace all uses of original results
+    newOp->replaceAllUsesWith(reps);
+    gutils->erase(newOp);
+
     return success();
+}
+
+namespace {
+struct ForOpInterfaceCF
+    : public ControlFlowAutoDiffOpInterface::ExternalModel<ForOpInterfaceCF,
+                                                           scf::ForOp> {
+  Operation *createWithShadows(Operation *op, OpBuilder &builder,
+                               MGradientUtils *gutils, Operation *original,
+                               ValueRange remappedOperands) const {
+    scf::ForOpAdaptor adaptor(remappedOperands);
+    auto repFor = builder.create<scf::ForOp>(
+        op->getLoc(), adaptor.getLowerBound(), adaptor.getUpperBound(),
+        adaptor.getStep(), adaptor.getInitArgs());
+    return repFor;
+  }
+};
+
+struct ForOpInterface
+    : public AutoDiffOpInterface::ExternalModel<ForOpInterface, scf::ForOp> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    return controlFlowForwardHandler(op, builder, gutils);
   }
 };
 
@@ -201,5 +301,6 @@ void mlir::enzyme::registerSCFDialectAutoDiffInterface(
     scf::ForOp::attachInterface<ForOpInterface>(*context);
 
     scf::ForOp::attachInterface<ForOpInterfaceReverse>(*context);
+    scf::ForOp::attachInterface<ForOpInterfaceCF>(*context);
   });
 }
