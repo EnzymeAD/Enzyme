@@ -1,25 +1,5 @@
-class MLIRDerivative<string dialect_, string opName_, dag patternToMatch, list<dag> resultOps> {
-  string dialect = dialect_;
-  string opName = opName_;
-  dag PatternToMatch = patternToMatch;
-  list<dag> ArgDerivatives = resultOps;
-}
+include "Common.td"
 
-class Operation<bit usesPrimal_, bit usesShadow_, bit usesCustom_=0> {
-  bit usesPrimal = usesPrimal_;
-  bit usesShadow = usesShadow_;
-  bit usesCustom = usesCustom_;
-}
-
-class DiffeRetIndex<list<int> indices_> {
-  list<int> indices = indices_;
-}
-def DiffeRet : DiffeRetIndex<[-1]>;
-
-class Inst<string mnemonic, string dialect_>  : Operation</*primal*/1, /*shadow*/0> {
-  string name = mnemonic;
-  string dialect = dialect_;
-}
 class ArithInst<string m> : Inst<m, "arith">;
 
 def AddF : ArithInst<"arith::AddFOp">;
@@ -31,9 +11,6 @@ def RemF : ArithInst<"arith::RemFOp">;
 
 def CheckedMulF : ArithInst<"arith::MulFOp">;
 def CheckedDivF : ArithInst<"arith::DivFOp">;
-
-def Op {
-}
 
 def : MLIRDerivative<"arith", "AddFOp", (Op $x, $y),
                     [

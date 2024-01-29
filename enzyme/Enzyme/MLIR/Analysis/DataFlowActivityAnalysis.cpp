@@ -511,13 +511,13 @@ public:
     join(after, before);
     ChangeResult result = ChangeResult::NoChange;
 
-    // If we know this is inactive by definition
-    if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(op)) {
-      if (ifaceOp.isInactive()) {
-        propagateIfChanged(after, result);
-        return;
-      }
-    }
+    // TODO If we know this is inactive by definition
+    // if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(op)) {
+    //   if (ifaceOp.isInactive()) {
+    //     propagateIfChanged(after, result);
+    //     return;
+    //   }
+    // }
 
     auto memory = dyn_cast<MemoryEffectOpInterface>(op);
     // If we can't reason about the memory effects, then conservatively assume
@@ -669,12 +669,12 @@ public:
   void visitOperation(Operation *op, const BackwardMemoryActivity &after,
                       BackwardMemoryActivity *before) override {
 
-    // If we know this is inactive by definition
-    if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(op)) {
-      if (ifaceOp.isInactive()) {
-        return;
-      }
-    }
+    // TODO: If we know this is inactive by definition
+    // if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(op)) {
+    //   if (ifaceOp.isInactive()) {
+    //     return;
+    //   }
+    // }
 
     // Initialize the return activity of arguments.
     if (op->hasTrait<OpTrait::ReturnLike>() && op->getParentOp() == parentOp) {

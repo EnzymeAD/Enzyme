@@ -1875,6 +1875,19 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
   }
 
   if (intrinsic == MLIRDerivatives) {
+    const auto &actpatterns =
+        recordKeeper.getAllDerivedDefinitions("InactiveOp");
+    for (auto &pattern : actpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "struct " << opName << "Activity : \n";
+      os << "			public ActivityOpInterface::ExternalModel<"
+         << opName << "Activity, " << dialect << "::" << opName << "> {\n";
+      os << "  bool isInactive(mlir::Operation*) const { return true; }\n";
+      os << "  bool isArgInactive(mlir::Operation*, mlir::Value) const { "
+            "return true; }\n";
+      os << "};\n";
+    }
     os << "void registerInterfaces(MLIRContext* context) {\n";
     for (Record *pattern : patterns) {
       auto opName = pattern->getValueAsString("opName");
@@ -1883,6 +1896,12 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << "FwdDerivative>(*context);\n";
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
          << "RevDerivative>(*context);\n";
+    }
+    for (Record *pattern : actpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
+         << "Activity>(*context);\n";
     }
     os << "}\n";
   }

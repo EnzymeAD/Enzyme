@@ -3,7 +3,6 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
-#include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Matchers.h"
@@ -468,16 +467,15 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
   // during adjoint generation)
   if (isa<func::ReturnOp>(I))
     return true;
-        
-  if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(op)) {
-          if (ifaceOp.isInactive()) {
-            return true;
-          }
-        }
+
+  if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(I)) {
+    if (ifaceOp.isInactive()) {
+      return true;
+    }
+  }
 
   // Branch, unreachable, and previously computed constants are inactive
-  if (/*|| isa<cf::BranchOp>(I)*/ ||
-      ConstantOperations.contains(I)) {
+  if (/*|| isa<cf::BranchOp>(I)*/ ConstantOperations.contains(I)) {
     return true;
   }
 
@@ -599,10 +597,6 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
   //   llvm::errs() << "checking if is constant[" << (int)directions << "] " <<
   //   *I
   //                << "\n";
-
-  if (isa<NVVM::Barrier0Op>(I)) {
-    InsertConstantOperation(TR, I);
-  }
 
   //   if (auto II = dyn_cast<IntrinsicInst>(I)) {
   //     switch (II->getIntrinsicID()) {
@@ -1127,13 +1121,6 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
   if (Val.getType().isa<LLVM::LLVMTokenType>())
     return true;
 
-  // All function pointers are considered active in case an augmented primal
-  // or reverse is needed
-  if (Val.getDefiningOp() &&
-      isa<func::ConstantOp, LLVM::InlineAsmOp>(Val.getDefiningOp())) {
-    return false;
-  }
-
   /// If we've already shown this value to be inactive
   if (ConstantValues.find(Val) != ConstantValues.end()) {
     return true;
@@ -1150,10 +1137,10 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
 
   if (Operation *definingOp = Val.getDefiningOp()) {
     if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(definingOp)) {
-          if (ifaceOp.isInactive()) {
-            return true;
-          }
-        }
+      if (ifaceOp.isInactive()) {
+        return true;
+      }
+    }
   }
 
   if (auto arg = Val.dyn_cast<BlockArgument>()) {
@@ -1818,17 +1805,6 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
             return false;
           }
         }
-
-      if (auto iasm = dyn_cast<LLVM::InlineAsmOp>(op)) {
-        if (iasm.getAsmString().contains("exit") ||
-            iasm.getAsmString().contains("cpuid"))
-          return false;
-      }
-      if (isa<NVVM::Barrier0Op, LLVM::AssumeOp, LLVM::StackSaveOp,
-              LLVM::StackRestoreOp, LLVM::LifetimeStartOp, LLVM::LifetimeEndOp,
-              LLVM::Prefetch>(op)) {
-        return true;
-      }
 
       // If this is a malloc or free, this doesn't impact the activity
       if (auto CI = dyn_cast<CallOpInterface>(op)) {
@@ -2538,17 +2514,6 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
   //   llvm::errs() << " < UPSEARCH" << (int)directions << ">" << *inst <<
   //   "\n";
 
-  // cpuid is explicitly an inactive instruction
-  if (auto iasm = dyn_cast<LLVM::InlineAsmOp>(op)) {
-    if (iasm.getAsmString().contains("cpuid")) {
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << " constant instruction from known cpuid instruction
-      //   "
-      //                << *inst << "\n";
-      return true;
-    }
-  }
-
   if (auto store = dyn_cast<LLVM::StoreOp>(op)) {
     if (isConstantValue(TR, store.getValue()) ||
         isConstantValue(TR, store.getAddr())) {
@@ -2639,13 +2604,6 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
       //                << *inst << " - " << *callVal << "\n";
       return true;
     }
-  }
-  // Intrinsics known always to be inactive
-  if (isa<NVVM::Barrier0Op>(op)) {
-    // if (EnzymePrintActivity)
-    //   llvm::errs() << "constant(" << (int)directions << ") up-intrinsic "
-    //                << *inst << "\n";
-    return true;
   }
 
   if (auto gep = dyn_cast<LLVM::GEPOp>(op)) {
@@ -3355,10 +3313,6 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
             LLVM::SExtOp,
             LLVM::ZExtOp,
             LLVM::TruncOp,
-            LLVM::SIToFPOp,
-            LLVM::UIToFPOp,
-            LLVM::FPToSIOp,
-            LLVM::FPToUIOp,
             LLVM::FPExtOp,
             LLVM::FPTruncOp
                   // clang-format on
@@ -3502,19 +3456,6 @@ bool mlir::enzyme::ActivityAnalyzer::isValueActivelyStoredOrReturned(
     // TODO: in MLIR, users are always operations
     //
     if (Operation *inst = a) {
-      auto mayWriteToMemory = [](Operation *op) {
-        auto iface = dyn_cast<MemoryEffectOpInterface>(op);
-        if (!iface)
-          return true;
-
-        SmallVector<MemoryEffects::EffectInstance> effects;
-        iface.getEffects(effects);
-        return llvm::any_of(
-            effects, [](const MemoryEffects::EffectInstance &effect) {
-              return isa<MemoryEffects::Write>(effect.getEffect());
-            });
-      };
-
       if (!mayWriteToMemory(inst) /*||
           (isa<CallInst>(inst) && AA.onlyReadsMemory(cast<CallInst>(inst)))*/) {
         // // if not written to memory and returning a known constant, this

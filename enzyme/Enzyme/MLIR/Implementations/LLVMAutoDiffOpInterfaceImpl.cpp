@@ -27,6 +27,19 @@ namespace {
 } // namespace
 
 namespace {
+struct InlineAsmActivityInterface
+    : public ActivityOpInterface::ExternalModel<InlineAsmActivityInterface,
+                                                LLVM::InlineAsmOp> {
+  bool isInactive(Operation *op) const {
+    auto asmOp = cast<LLVM::InlineAsmOp>(op);
+    auto str = asmOp.getAsmString();
+    return str.contains("cpuid") || str.contains("exit");
+  }
+  bool isArgInactive(Operation *op, mlir::Value) const {
+    return isInactive(op);
+  }
+};
+
 struct LoadOpInterface
     : public AutoDiffOpInterface::ExternalModel<LoadOpInterface, LLVM::LoadOp> {
   LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
