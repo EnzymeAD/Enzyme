@@ -3,6 +3,12 @@ class InactiveOp<string dialect_, string opName_> {
   string opName = opName_;
 }
 
+class ControlFlowOp<string dialect_, string opName_, string impl_> {
+  string dialect = dialect_;
+  string opName = opName_;
+  string impl = impl_;
+}
+
 class MLIRDerivative<string dialect_, string opName_, dag patternToMatch, list<dag> resultOps> {
   string dialect = dialect_;
   string opName = opName_;

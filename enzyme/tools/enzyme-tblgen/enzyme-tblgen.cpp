@@ -1888,6 +1888,25 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
             "return true; }\n";
       os << "};\n";
     }
+    const auto &cfpatterns =
+        recordKeeper.getAllDerivedDefinitions("ControlFlowOp");
+    for (auto &pattern : cfpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      auto impl = pattern->getValueAsString("impl");
+      os << "struct " << opName << "CF : \n";
+      os << "			public ControlFlowAutoDiffOpInterface::ExternalModel<"
+         << opName << "CF, " << dialect << "::" << opName << "> {\n";
+      os << impl << "\n";
+      os << "};\n";
+      os << "struct " << opName << "FwdDerivative : \n";
+      os << "			public AutoDiffOpInterface::ExternalModel<"
+         << opName << "FwdDerivative, " << dialect << "::" << opName << "> {\n";
+      os << "  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder, MGradientUtils *gutils) const {\n";
+      os << "    return controlFlowForwardHandler(op, builder, gutils);\n";
+      os << "  }\n";
+      os << "};\n";
+    }
     os << "void registerInterfaces(MLIRContext* context) {\n";
     for (Record *pattern : patterns) {
       auto opName = pattern->getValueAsString("opName");
@@ -1902,6 +1921,14 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       auto dialect = pattern->getValueAsString("dialect");
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
          << "Activity>(*context);\n";
+    }
+    for (Record *pattern : cfpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
+         << "CF>(*context);\n";
+      os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
+         << "FwdDerivative>(*context);\n";
     }
     os << "}\n";
   }

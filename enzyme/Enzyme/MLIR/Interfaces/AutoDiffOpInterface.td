@@ -51,7 +51,9 @@ def ControlFlowAutoDiffOpInterface
       /*args=*/(ins "::mlir::OpBuilder &":$builder,
                     "::mlir::enzyme::MGradientUtils *":$gutils,
                     "::mlir::Operation *":$original, 
-                    "::mlir::ValueRange":$remappedOperands)
+                    "::mlir::ValueRange":$remappedOperands,
+                    "::mlir::ArrayRef<mlir::Type>":$returnTypes
+                    )
     >
   ];
 }

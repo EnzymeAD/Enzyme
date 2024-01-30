@@ -97,7 +97,7 @@ LogicalResult mlir::enzyme::controlFlowForwardHandler(Operation *op, OpBuilder &
     if (!iface)
       return failure();
     Operation *replacement =
-        iface.createWithShadows(builder, gutils, op, newOperands);
+        iface.createWithShadows(builder, gutils, op, newOperands, newOpResultTypes);
     for (auto &&[region, replacementRegion] :
          llvm::zip(newOp->getRegions(), replacement->getRegions())) {
       replacementRegion.takeBody(region);
@@ -191,27 +191,7 @@ LogicalResult mlir::enzyme::controlFlowForwardHandler(Operation *op, OpBuilder &
 }
 
 namespace {
-struct ForOpInterfaceCF
-    : public ControlFlowAutoDiffOpInterface::ExternalModel<ForOpInterfaceCF,
-                                                           scf::ForOp> {
-  Operation *createWithShadows(Operation *op, OpBuilder &builder,
-                               MGradientUtils *gutils, Operation *original,
-                               ValueRange remappedOperands) const {
-    scf::ForOpAdaptor adaptor(remappedOperands);
-    auto repFor = builder.create<scf::ForOp>(
-        op->getLoc(), adaptor.getLowerBound(), adaptor.getUpperBound(),
-        adaptor.getStep(), adaptor.getInitArgs());
-    return repFor;
-  }
-};
-
-struct ForOpInterface
-    : public AutoDiffOpInterface::ExternalModel<ForOpInterface, scf::ForOp> {
-  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
-                                         MGradientUtils *gutils) const {
-    return controlFlowForwardHandler(op, builder, gutils);
-  }
-};
+#include "Implementations/SCFDerivatives.inc"
 
 struct ForOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<ForOpInterfaceReverse,
@@ -298,9 +278,7 @@ struct ForOpInterfaceReverse
 void mlir::enzyme::registerSCFDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, scf::SCFDialect *) {
-    scf::ForOp::attachInterface<ForOpInterface>(*context);
-
+    registerInterfaces(context);
     scf::ForOp::attachInterface<ForOpInterfaceReverse>(*context);
-    scf::ForOp::attachInterface<ForOpInterfaceCF>(*context);
   });
 }
