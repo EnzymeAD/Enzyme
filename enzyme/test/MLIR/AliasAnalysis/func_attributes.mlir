@@ -115,7 +115,7 @@ func.func private @callee(%ptr : !llvm.ptr {llvm.readonly}) attributes {
 }
 
 // CHECK: points-to-pointer sets
-// CHECK-NEXT: <empty>
+// CHECK: <empty>
 // CHECK-LABEL @call_other_none_arg_rw_readonly
 func.func @call_other_none_arg_rw_readonly(%input: !llvm.ptr {enzyme.tag = "input"}) {
   call @callee(%input) : (!llvm.ptr) -> ()

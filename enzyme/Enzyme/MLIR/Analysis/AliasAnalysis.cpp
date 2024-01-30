@@ -886,14 +886,6 @@ void enzyme::AliasAnalysis::transfer(
               result->getPoint(),
               originalClasses.getOriginalClass(result->getPoint(), debugLabel));
           propagateIfChanged(result, result->join(fresh));
-
-          // The pointer to freshly allocated memory is known not to point to
-          // anything.
-          // TODO(zinenko): this is a bit strange to update _another_ lattice
-          // here.
-          auto *pointsTo = getOrCreate<PointsToSets>(op);
-          propagateIfChanged(pointsTo, pointsTo->setPointingToEmpty(
-                                           fresh.getAliasClassesObject()));
         }
       }
     } else if (isa<MemoryEffects::Read>(effect.getEffect())) {
