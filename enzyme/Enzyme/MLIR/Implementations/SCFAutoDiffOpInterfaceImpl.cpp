@@ -32,6 +32,8 @@ struct ForOpInterface
                                          MGradientUtils *gutils) const {
     auto forOp = cast<scf::ForOp>(op);
     auto nFor = cast<scf::ForOp>(gutils->getNewFromOriginal(op));
+    // Get a list of all the return types, which is the original return types
+    // alongside any shadow return types
     SmallVector<Type> nTypes;
     for (auto r : forOp->getResults()) {
       // TODO only if used
@@ -43,6 +45,8 @@ struct ForOpInterface
         nTypes.push_back(adTypeIface.getShadowType());
       }
     }
+
+    // Get a list of all args, which is original args, and any shadows
     SmallVector<Value> nArgs;
     for (const auto &[initVal, iterArg] :
          llvm::zip(forOp.getInitArgs(), forOp.getRegionIterArgs())) {
@@ -51,12 +55,16 @@ struct ForOpInterface
       if (!gutils->isConstantValue(iterArg))
         nArgs.push_back(gutils->invertPointerM(initVal, builder));
     }
+
+    // Create the new modified for loop
     auto repFor = builder.create<scf::ForOp>(
         forOp.getLoc(), gutils->getNewFromOriginal(forOp.getLowerBound()),
         gutils->getNewFromOriginal(forOp.getUpperBound()),
         gutils->getNewFromOriginal(forOp.getStep()), nArgs);
     repFor.getRegion().takeBody(nFor.getRegion());
 
+    // Inject the mapping for the new results into GradientUtil's shadow
+    // table
     SmallVector<Value> reps;
     size_t idx = 0;
     for (Value r : forOp.getResults()) {
@@ -72,13 +80,19 @@ struct ForOpInterface
         idx++;
       }
     }
+
+    // Replace all uses of original results
     nFor.replaceAllUsesWith(reps);
     gutils->erase(nFor);
+
+    // differentiate body
     for (Operation &o :
          llvm::make_early_inc_range(forOp.getBody()->without_terminator())) {
       if (failed(gutils->visitChild(&o)))
         return failure();
     }
+
+    // Fix terminator (yield) operations
     Operation *oldYield = repFor.getBody()->getTerminator();
     builder.setInsertionPointToEnd(repFor.getBody());
     SmallVector<Value> nYields;
@@ -93,6 +107,8 @@ struct ForOpInterface
     Operation *newYield = builder.clone(*oldYield);
     newYield->setOperands(nYields);
     gutils->erase(oldYield);
+
+    // Done
     return success();
   }
 };

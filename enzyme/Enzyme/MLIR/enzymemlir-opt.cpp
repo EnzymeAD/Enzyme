@@ -100,6 +100,7 @@ int main(int argc, char **argv) {
   enzyme::registerArithDialectAutoDiffInterface(registry);
   enzyme::registerBuiltinDialectAutoDiffInterface(registry);
   enzyme::registerLLVMDialectAutoDiffInterface(registry);
+  enzyme::registerNVVMDialectAutoDiffInterface(registry);
   enzyme::registerMemRefDialectAutoDiffInterface(registry);
   enzyme::registerSCFDialectAutoDiffInterface(registry);
   enzyme::registerLinalgDialectAutoDiffInterface(registry);

@@ -392,7 +392,35 @@ gentbl(
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/MLIR/Implementations/ArithDerivatives.td",
-    td_srcs = ["Enzyme/MLIR/Implementations/ArithDerivatives.td"],
+    td_srcs = ["Enzyme/MLIR/Implementations/ArithDerivatives.td", "Enzyme/MLIR/Implementations/Common.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+gentbl(
+    name = "llvm-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/LLVMDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/LLVMDerivatives.td",
+    td_srcs = ["Enzyme/MLIR/Implementations/LLVMDerivatives.td", "Enzyme/MLIR/Implementations/Common.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+gentbl(
+    name = "nvvm-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/NVVMDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/NVVMDerivatives.td",
+    td_srcs = ["Enzyme/MLIR/Implementations/NVVMDerivatives.td", "Enzyme/MLIR/Implementations/Common.td"],
     deps = [
         ":enzyme-tblgen",
     ],
@@ -420,6 +448,8 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":arith-derivatives",
+        ":llvm-derivatives",
+        ":nvvm-derivatives",
         ":EnzymeOpsIncGen",
         ":EnzymePassesIncGen",
 		":EnzymeTypesIncGen",

@@ -23,6 +23,23 @@ using namespace mlir;
 using namespace mlir::enzyme;
 
 namespace {
+#include "Implementations/LLVMDerivatives.inc"
+} // namespace
+
+namespace {
+struct InlineAsmActivityInterface
+    : public ActivityOpInterface::ExternalModel<InlineAsmActivityInterface,
+                                                LLVM::InlineAsmOp> {
+  bool isInactive(Operation *op) const {
+    auto asmOp = cast<LLVM::InlineAsmOp>(op);
+    auto str = asmOp.getAsmString();
+    return str.contains("cpuid") || str.contains("exit");
+  }
+  bool isArgInactive(Operation *op, mlir::Value) const {
+    return isInactive(op);
+  }
+};
+
 struct LoadOpInterface
     : public AutoDiffOpInterface::ExternalModel<LoadOpInterface, LLVM::LoadOp> {
   LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
@@ -102,5 +119,6 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::StoreOp::attachInterface<StoreOpInterface>(*context);
     LLVM::AllocaOp::attachInterface<AllocaOpInterface>(*context);
     LLVM::LLVMPointerType::attachInterface<PointerTypeInterface>(*context);
+    registerInterfaces(context);
   });
 }
