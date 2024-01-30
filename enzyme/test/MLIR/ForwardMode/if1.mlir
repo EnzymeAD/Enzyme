@@ -20,16 +20,22 @@ module {
   }
 }
 
-// CHECK:   func.func private @fwddiffesquare(%[[arg0:.+]]: f64, %[[arg1:.+]]: f64) -> f64 {
-// CHECK-DAG:     %[[cst:.+]] = arith.constant 0.000000e+00 : f64
-// CHECK-DAG:     %[[cst_0:.+]] = arith.constant 1.000000e+01 : f64
-// CHECK-DAG:     %[[c0:.+]] = arith.constant 0 : index
-// CHECK-DAG:     %[[c1:.+]] = arith.constant 1 : index
-// CHECK-DAG:     %[[c10:.+]] = arith.constant 10 : index
-// CHECK-NEXT:     %[[i0:.+]]:2 = scf.for %[[arg2:.+]] = %[[c0]] to %[[c10]] step %[[c1]] iter_args(%[[arg3:.+]] = %[[cst_0]], %[[arg4:.+]] = %[[cst]]) -> (f64, f64) {
-// CHECK-NEXT:       %[[i1:.+]] = arith.addf %[[arg4]], %[[arg1]] : f64
-// CHECK-NEXT:       %[[i2:.+]] = arith.addf %[[arg3]], %[[arg0]] : f64
-// CHECK-NEXT:       scf.yield %[[i2]], %[[i1]] : f64, f64
-// CHECK-NEXT:     }
-// CHECK-NEXT:     return %[[i0]]#1 : f64
-// CHECK-NEXT:   }
+
+// CHECK:  func.func private @fwddiffesquare(%[[arg0:.+]]: f64, %[[arg1:.+]]: f64, %[[arg2:.+]]: i1) -> f64 {
+// CHECK-DAG:    %[[cst2:.+]] = arith.constant 2.000000e+00 : f64
+// CHECK-DAG:    %[[cst10:.+]] = arith.constant 1.000000e+01 : f64
+// CHECK-NEXT:    %[[r0:.+]]:3 = scf.if %[[arg2]] -> (f64, f64, f64) {
+// CHECK-NEXT:      %[[t3:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
+// CHECK-NEXT:      %[[t4:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
+// CHECK-NEXT:      %[[t5:.+]] = arith.addf %[[t3]], %[[t4]] : f64
+// CHECK-NEXT:      %[[t6:.+]] = arith.mulf %[[arg0]], %[[arg0]] : f64
+// CHECK-NEXT:      scf.yield %[[t6]], %[[t5]], %[[cst2]] : f64, f64, f64
+// CHECK-NEXT:    } else {
+// CHECK-NEXT:      %[[e3:.+]] = arith.addf %arg1, %arg1 : f64
+// CHECK-NEXT:      %[[e4:.+]] = arith.addf %arg0, %arg0 : f64
+// CHECK-NEXT:      scf.yield %[[e4]], %[[e3]], %[[cst10]] : f64, f64, f64
+// CHECK-NEXT:    }
+// CHECK-NEXT:    %[[r1:.+]] = arith.mulf %[[r0]]#1, %[[r0]]#2 : f64
+// CHECK-NEXT:    %[[r2:.+]] = arith.mulf %[[r0]]#0, %[[r0]]#2 : f64
+// CHECK-NEXT:    return %[[r1]] : f64
+// CHECK-NEXT:  }

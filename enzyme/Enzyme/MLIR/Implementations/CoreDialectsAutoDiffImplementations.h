@@ -21,7 +21,8 @@ class OpBuilder;
 
 namespace enzyme {
 class MGradientUtils;
-LogicalResult controlFlowForwardHandler(Operation *op, OpBuilder &builder, MGradientUtils *gutils);
+LogicalResult controlFlowForwardHandler(Operation *op, OpBuilder &builder,
+                                        MGradientUtils *gutils);
 void registerArithDialectAutoDiffInterface(DialectRegistry &registry);
 void registerBuiltinDialectAutoDiffInterface(DialectRegistry &registry);
 void registerLLVMDialectAutoDiffInterface(DialectRegistry &registry);

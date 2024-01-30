@@ -1895,14 +1895,16 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       auto dialect = pattern->getValueAsString("dialect");
       auto impl = pattern->getValueAsString("impl");
       os << "struct " << opName << "CF : \n";
-      os << "			public ControlFlowAutoDiffOpInterface::ExternalModel<"
+      os << "			public "
+            "ControlFlowAutoDiffOpInterface::ExternalModel<"
          << opName << "CF, " << dialect << "::" << opName << "> {\n";
       os << impl << "\n";
       os << "};\n";
       os << "struct " << opName << "FwdDerivative : \n";
       os << "			public AutoDiffOpInterface::ExternalModel<"
          << opName << "FwdDerivative, " << dialect << "::" << opName << "> {\n";
-      os << "  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder, MGradientUtils *gutils) const {\n";
+      os << "  LogicalResult createForwardModeTangent(Operation *op, OpBuilder "
+            "&builder, MGradientUtils *gutils) const {\n";
       os << "    return controlFlowForwardHandler(op, builder, gutils);\n";
       os << "  }\n";
       os << "};\n";

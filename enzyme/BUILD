@@ -426,6 +426,20 @@ gentbl(
     ],
 )
 
+gentbl(
+    name = "scf-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/SCFDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/SCFDerivatives.td",
+    td_srcs = ["Enzyme/MLIR/Implementations/SCFDerivatives.td", "Enzyme/MLIR/Implementations/Common.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
 cc_library(
     name = "EnzymeMLIR",
     srcs = glob([
@@ -450,6 +464,7 @@ cc_library(
         ":arith-derivatives",
         ":llvm-derivatives",
         ":nvvm-derivatives",
+        ":scf-derivatives",
         ":EnzymeOpsIncGen",
         ":EnzymePassesIncGen",
 		":EnzymeTypesIncGen",
