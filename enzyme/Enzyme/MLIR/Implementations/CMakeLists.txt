@@ -17,6 +17,7 @@ add_public_tablegen_target(SCFDerivativesIncGen)
 
 add_mlir_library(MLIREnzymeImplementations
   ArithAutoDiffOpInterfaceImpl.cpp
+  CoreDialectsAutoDiffImplementations.cpp
   LLVMAutoDiffOpInterfaceImpl.cpp
   NVVMAutoDiffOpInterfaceImpl.cpp
   MemRefAutoDiffOpInterfaceImpl.cpp

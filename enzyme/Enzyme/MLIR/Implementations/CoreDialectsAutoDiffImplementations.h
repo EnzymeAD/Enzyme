@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Interfaces/AutoDiffOpInterface.h"
 #include "mlir/Support/LogicalResult.h"
 
 namespace mlir {
@@ -21,8 +22,35 @@ class OpBuilder;
 
 namespace enzyme {
 class MGradientUtils;
+
+namespace detail {
+// Non-template implementation of
+// AutoDiffUsingControlFlow::createForwardModeTangent.
 LogicalResult controlFlowForwardHandler(Operation *op, OpBuilder &builder,
                                         MGradientUtils *gutils);
+
+// Implements the forward autodiff interface for operations whose derivatives
+// are can be inferred by analyzing their control flow and differentiating the
+// nested operations.
+template <typename OpTy>
+class AutoDiffUsingControlFlow
+    : public AutoDiffOpInterface::ExternalModel<AutoDiffUsingControlFlow<OpTy>,
+                                                OpTy> {
+public:
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    return controlFlowForwardHandler(op, builder, gutils);
+  }
+};
+} // namespace detail
+
+// Registers AutoDiffUsingControlFlow for the given op.
+template <typename OpTy>
+void registerAutoDiffUsingControlFlowInterface(MLIRContext &context) {
+  OpTy::template attachInterface<detail::AutoDiffUsingControlFlow<OpTy>>(
+      context);
+}
+
 void registerArithDialectAutoDiffInterface(DialectRegistry &registry);
 void registerBuiltinDialectAutoDiffInterface(DialectRegistry &registry);
 void registerLLVMDialectAutoDiffInterface(DialectRegistry &registry);
