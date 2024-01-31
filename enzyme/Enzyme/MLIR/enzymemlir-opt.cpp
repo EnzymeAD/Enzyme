@@ -104,6 +104,7 @@ int main(int argc, char **argv) {
   enzyme::registerNVVMDialectAutoDiffInterface(registry);
   enzyme::registerMemRefDialectAutoDiffInterface(registry);
   enzyme::registerSCFDialectAutoDiffInterface(registry);
+  enzyme::registerCFDialectAutoDiffInterface(registry);
   enzyme::registerLinalgDialectAutoDiffInterface(registry);
 
   return mlir::asMainReturnCode(mlir::MlirOptMain(

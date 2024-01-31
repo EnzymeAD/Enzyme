@@ -20,3 +20,5 @@ def : ControlFlowOp<"affine", "AffineIfOp", [{
                                      remappedOperands, rettys);
   }
 }]>;
+
+def : RegionTerminatorOp<"affine", "AffineYieldOp">;

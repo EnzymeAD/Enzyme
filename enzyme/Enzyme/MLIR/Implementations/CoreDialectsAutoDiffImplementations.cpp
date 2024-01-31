@@ -19,6 +19,108 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 
+void mlir::enzyme::detail::branchingForwardHandler(
+    Operation *inst, OpBuilder &builder, MGradientUtils *gutils) {
+  auto newInst = gutils->getNewFromOriginal(inst);
+
+  auto binst = cast<BranchOpInterface>(inst);
+
+    // TODO generalize to cloneWithNewBlockArgs interface
+    SmallVector<Value> newVals;
+
+    SmallVector<int32_t> segSizes;
+    // Keep non-differentiated, non-forwarded operands
+    size_t non_forwarded = 0;
+    for (size_t i = 0; i < newInst->getNumSuccessors(); i++) {
+      auto ops = binst.getSuccessorOperands(i).getForwardedOperands();
+      if (ops.empty()) continue;
+      non_forwarded = ops.getBeginOperandIndex();
+      break;
+    }
+
+    for (size_t i = 0; i < non_forwarded; i++)
+      newVals.push_back(gutils->getNewFromOriginal(binst->getOperand(i)));
+
+    segSizes.push_back(newVals.size());
+    for (size_t i = 0; i < newInst->getNumSuccessors(); i++) {
+      size_t cur = newVals.size();
+      auto ops = binst.getSuccessorOperands(i).getForwardedOperands();
+      for (auto &&[idx, op] : llvm::enumerate(ops)) {
+        auto arg = *binst.getSuccessorBlockArgument(ops.getBeginOperandIndex() + idx);
+        newVals.push_back(gutils->getNewFromOriginal(op));
+        if (!gutils->isConstantValue(arg)) {
+        if (!gutils->isConstantValue(op)) {
+          newVals.push_back(gutils->invertPointerM(op, builder));
+        } else {
+          Type retTy = arg.getType().cast<AutoDiffTypeInterface>().getShadowType();
+          auto toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(builder,
+                                                                  op.getLoc());
+          newVals.push_back(toret);
+        }
+        }
+      }
+      cur = newVals.size() - cur;
+      llvm::errs() <<" cur: " << cur << " inst: " << *inst << "\n";
+      segSizes.push_back(cur);
+    }
+
+    SmallVector<NamedAttribute> attrs(newInst->getAttrs());
+    for (auto &attr : attrs) {
+      if (attr.getName() == "operandSegmentSizes") {
+          llvm::errs() <<" prev value: " << attr.getValue() << "\n";
+        attr.setValue(builder.getDenseI32ArrayAttr(segSizes));
+          llvm::errs() <<" post value: " << attr.getValue() << "\n";
+      }
+    }
+
+    gutils->getNewFromOriginal(inst->getBlock())->push_back(
+        newInst->create(newInst->getLoc(), newInst->getName(), TypeRange(),
+                        newVals, attrs, OpaqueProperties(nullptr),
+                        newInst->getSuccessors(), newInst->getNumRegions()));
+    gutils->erase(newInst);
+    return;
+}
+
+void mlir::enzyme::detail::regionTerminatorForwardHandler(
+    Operation *origTerminator, OpBuilder &builder, MGradientUtils *gutils) {
+      auto termIface =
+          cast<RegionBranchTerminatorOpInterface>(origTerminator);
+      auto parentOp = termIface->getParentOp();
+
+      SmallVector<RegionSuccessor> successors;
+      termIface.getSuccessorRegions(
+          SmallVector<Attribute>(termIface->getNumOperands(), Attribute()),
+          successors);
+
+      llvm::SmallDenseSet<unsigned> operandsToShadow;
+      for (auto &successor : successors) {
+        OperandRange operandRange = termIface.getSuccessorOperands(successor);
+        ValueRange targetValues = successor.isParent()
+                                      ? parentOp->getResults()
+                                      : successor.getSuccessorInputs();
+        assert(operandRange.size() == targetValues.size());
+        for (auto &&[i, target] : llvm::enumerate(targetValues)) {
+          if (!gutils->isConstantValue(target))
+            operandsToShadow.insert(operandRange.getBeginOperandIndex() + i);
+        }
+      }
+      SmallVector<Value> newOperands;
+      newOperands.reserve(termIface->getNumOperands() +
+                          operandsToShadow.size());
+      for (OpOperand &operand : termIface->getOpOperands()) {
+        newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
+        if (operandsToShadow.contains(operand.getOperandNumber()))
+          newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
+      }
+
+      // Assuming shadows following the originals are fine.
+      // TODO: consider extending to have a ShadowableTerminatorOpInterface
+      Operation *replTerminator = gutils->getNewFromOriginal(origTerminator);
+      Operation *newTerminator = builder.clone(*replTerminator);
+      newTerminator->setOperands(newOperands);
+      gutils->erase(replTerminator);
+}
+
 LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
     Operation *op, OpBuilder &builder, MGradientUtils *gutils) {
   // For all active results, add shadow types.
@@ -111,55 +213,10 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   // Differentiate body.
   for (auto &origRegion : op->getRegions()) {
     for (auto &origBlock : origRegion) {
-      for (Operation &o : origBlock.without_terminator()) {
+      for (Operation &o : origBlock) {
         if (failed(gutils->visitChild(&o)))
           return failure();
       }
-    }
-  }
-
-  for (auto &&[origRegion, replRegion] :
-       llvm::zip(op->getRegions(), replacement->getRegions())) {
-    for (auto &&[origBlock, replBlock] : llvm::zip(origRegion, replRegion)) {
-      Operation *origTerminator = origBlock.getTerminator();
-      auto termIface =
-          dyn_cast<RegionBranchTerminatorOpInterface>(origTerminator);
-      if (!termIface)
-        continue;
-
-      SmallVector<RegionSuccessor> successors;
-      termIface.getSuccessorRegions(
-          SmallVector<Attribute>(termIface->getNumOperands(), Attribute()),
-          successors);
-
-      llvm::SmallDenseSet<unsigned> operandsToShadow;
-      for (auto &successor : successors) {
-        OperandRange operandRange = termIface.getSuccessorOperands(successor);
-        ValueRange targetValues = successor.isParent()
-                                      ? op->getResults()
-                                      : successor.getSuccessorInputs();
-        assert(operandRange.size() == targetValues.size());
-        for (auto &&[i, target] : llvm::enumerate(targetValues)) {
-          if (!gutils->isConstantValue(target))
-            operandsToShadow.insert(operandRange.getBeginOperandIndex() + i);
-        }
-      }
-      SmallVector<Value> newOperands;
-      newOperands.reserve(termIface->getNumOperands() +
-                          operandsToShadow.size());
-      for (OpOperand &operand : termIface->getOpOperands()) {
-        newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
-        if (operandsToShadow.contains(operand.getOperandNumber()))
-          newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
-      }
-
-      // Assuming shadows following the originals are fine.
-      // TODO: consider extending to have a ShadowableTerminatorOpInterface
-      Operation *replTerminator = replBlock.getTerminator();
-      builder.setInsertionPointToEnd(&replBlock);
-      Operation *newTerminator = builder.clone(*replTerminator);
-      newTerminator->setOperands(newOperands);
-      gutils->erase(replTerminator);
     }
   }
 
