@@ -19,106 +19,124 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 
-void mlir::enzyme::detail::branchingForwardHandler(
-    Operation *inst, OpBuilder &builder, MGradientUtils *gutils) {
+void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
+                                                   OpBuilder &builder,
+                                                   MGradientUtils *gutils) {
   auto newInst = gutils->getNewFromOriginal(inst);
 
   auto binst = cast<BranchOpInterface>(inst);
 
-    // TODO generalize to cloneWithNewBlockArgs interface
-    SmallVector<Value> newVals;
+  // TODO generalize to cloneWithNewBlockArgs interface
+  SmallVector<Value> newVals;
 
-    SmallVector<int32_t> segSizes;
-    // Keep non-differentiated, non-forwarded operands
-    size_t non_forwarded = 0;
-    for (size_t i = 0; i < newInst->getNumSuccessors(); i++) {
-      auto ops = binst.getSuccessorOperands(i).getForwardedOperands();
-      if (ops.empty()) continue;
-      non_forwarded = ops.getBeginOperandIndex();
-      break;
-    }
+  SmallVector<int32_t> segSizes;
+  // Keep non-differentiated, non-forwarded operands
+  size_t non_forwarded = 0;
+  for (size_t i = 0; i < newInst->getNumSuccessors(); i++) {
+    auto ops = binst.getSuccessorOperands(i).getForwardedOperands();
+    if (ops.empty())
+      continue;
+    non_forwarded = ops.getBeginOperandIndex();
+    break;
+  }
 
-    for (size_t i = 0; i < non_forwarded; i++)
-      newVals.push_back(gutils->getNewFromOriginal(binst->getOperand(i)));
+  for (size_t i = 0; i < non_forwarded; i++)
+    newVals.push_back(gutils->getNewFromOriginal(binst->getOperand(i)));
 
-    segSizes.push_back(newVals.size());
-    for (size_t i = 0; i < newInst->getNumSuccessors(); i++) {
-      size_t cur = newVals.size();
-      auto ops = binst.getSuccessorOperands(i).getForwardedOperands();
-      for (auto &&[idx, op] : llvm::enumerate(ops)) {
-        auto arg = *binst.getSuccessorBlockArgument(ops.getBeginOperandIndex() + idx);
-        newVals.push_back(gutils->getNewFromOriginal(op));
-        if (!gutils->isConstantValue(arg)) {
+  segSizes.push_back(newVals.size());
+  for (size_t i = 0; i < newInst->getNumSuccessors(); i++) {
+    size_t cur = newVals.size();
+    auto ops = binst.getSuccessorOperands(i).getForwardedOperands();
+    for (auto &&[idx, op] : llvm::enumerate(ops)) {
+      auto arg =
+          *binst.getSuccessorBlockArgument(ops.getBeginOperandIndex() + idx);
+      newVals.push_back(gutils->getNewFromOriginal(op));
+      if (!gutils->isConstantValue(arg)) {
         if (!gutils->isConstantValue(op)) {
           newVals.push_back(gutils->invertPointerM(op, builder));
         } else {
-          Type retTy = arg.getType().cast<AutoDiffTypeInterface>().getShadowType();
-          auto toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(builder,
-                                                                  op.getLoc());
+          Type retTy =
+              arg.getType().cast<AutoDiffTypeInterface>().getShadowType();
+          auto toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
+              builder, op.getLoc());
           newVals.push_back(toret);
         }
-        }
       }
-      cur = newVals.size() - cur;
-      llvm::errs() <<" cur: " << cur << " inst: " << *inst << "\n";
-      segSizes.push_back(cur);
     }
+    cur = newVals.size() - cur;
+    segSizes.push_back(cur);
+  }
 
-    SmallVector<NamedAttribute> attrs(newInst->getAttrs());
-    for (auto &attr : attrs) {
-      if (attr.getName() == "operandSegmentSizes") {
-          llvm::errs() <<" prev value: " << attr.getValue() << "\n";
+  SmallVector<NamedAttribute> attrs(newInst->getAttrs());
+  bool has_cases = false;
+  for (auto &attr : attrs) {
+    if (attr.getName() == "case_operand_segments") {
+      has_cases = true;
+    }
+  }
+  for (auto &attr : attrs) {
+    if (attr.getName() == "operandSegmentSizes") {
+      if (!has_cases) {
         attr.setValue(builder.getDenseI32ArrayAttr(segSizes));
-          llvm::errs() <<" post value: " << attr.getValue() << "\n";
+      } else {
+        SmallVector<int32_t> segSlices2(segSizes.begin(), segSizes.begin() + 2);
+        segSlices2.push_back(0);
+        for (size_t i = 2; i < segSizes.size(); i++)
+          segSlices2[2] += segSizes[i];
+        attr.setValue(builder.getDenseI32ArrayAttr(segSlices2));
       }
     }
+    if (attr.getName() == "case_operand_segments") {
+      SmallVector<int32_t> segSlices2(segSizes.begin() + 2, segSizes.end());
+      attr.setValue(builder.getDenseI32ArrayAttr(segSlices2));
+    }
+  }
 
-    gutils->getNewFromOriginal(inst->getBlock())->push_back(
-        newInst->create(newInst->getLoc(), newInst->getName(), TypeRange(),
-                        newVals, attrs, OpaqueProperties(nullptr),
-                        newInst->getSuccessors(), newInst->getNumRegions()));
-    gutils->erase(newInst);
-    return;
+  gutils->getNewFromOriginal(inst->getBlock())
+      ->push_back(
+          newInst->create(newInst->getLoc(), newInst->getName(), TypeRange(),
+                          newVals, attrs, OpaqueProperties(nullptr),
+                          newInst->getSuccessors(), newInst->getNumRegions()));
+  gutils->erase(newInst);
+  return;
 }
 
 void mlir::enzyme::detail::regionTerminatorForwardHandler(
     Operation *origTerminator, OpBuilder &builder, MGradientUtils *gutils) {
-      auto termIface =
-          cast<RegionBranchTerminatorOpInterface>(origTerminator);
-      auto parentOp = termIface->getParentOp();
+  auto termIface = cast<RegionBranchTerminatorOpInterface>(origTerminator);
+  auto parentOp = termIface->getParentOp();
 
-      SmallVector<RegionSuccessor> successors;
-      termIface.getSuccessorRegions(
-          SmallVector<Attribute>(termIface->getNumOperands(), Attribute()),
-          successors);
+  SmallVector<RegionSuccessor> successors;
+  termIface.getSuccessorRegions(
+      SmallVector<Attribute>(termIface->getNumOperands(), Attribute()),
+      successors);
 
-      llvm::SmallDenseSet<unsigned> operandsToShadow;
-      for (auto &successor : successors) {
-        OperandRange operandRange = termIface.getSuccessorOperands(successor);
-        ValueRange targetValues = successor.isParent()
-                                      ? parentOp->getResults()
-                                      : successor.getSuccessorInputs();
-        assert(operandRange.size() == targetValues.size());
-        for (auto &&[i, target] : llvm::enumerate(targetValues)) {
-          if (!gutils->isConstantValue(target))
-            operandsToShadow.insert(operandRange.getBeginOperandIndex() + i);
-        }
-      }
-      SmallVector<Value> newOperands;
-      newOperands.reserve(termIface->getNumOperands() +
-                          operandsToShadow.size());
-      for (OpOperand &operand : termIface->getOpOperands()) {
-        newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
-        if (operandsToShadow.contains(operand.getOperandNumber()))
-          newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
-      }
+  llvm::SmallDenseSet<unsigned> operandsToShadow;
+  for (auto &successor : successors) {
+    OperandRange operandRange = termIface.getSuccessorOperands(successor);
+    ValueRange targetValues = successor.isParent()
+                                  ? parentOp->getResults()
+                                  : successor.getSuccessorInputs();
+    assert(operandRange.size() == targetValues.size());
+    for (auto &&[i, target] : llvm::enumerate(targetValues)) {
+      if (!gutils->isConstantValue(target))
+        operandsToShadow.insert(operandRange.getBeginOperandIndex() + i);
+    }
+  }
+  SmallVector<Value> newOperands;
+  newOperands.reserve(termIface->getNumOperands() + operandsToShadow.size());
+  for (OpOperand &operand : termIface->getOpOperands()) {
+    newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
+    if (operandsToShadow.contains(operand.getOperandNumber()))
+      newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
+  }
 
-      // Assuming shadows following the originals are fine.
-      // TODO: consider extending to have a ShadowableTerminatorOpInterface
-      Operation *replTerminator = gutils->getNewFromOriginal(origTerminator);
-      Operation *newTerminator = builder.clone(*replTerminator);
-      newTerminator->setOperands(newOperands);
-      gutils->erase(replTerminator);
+  // Assuming shadows following the originals are fine.
+  // TODO: consider extending to have a ShadowableTerminatorOpInterface
+  Operation *replTerminator = gutils->getNewFromOriginal(origTerminator);
+  Operation *newTerminator = builder.clone(*replTerminator);
+  newTerminator->setOperands(newOperands);
+  gutils->erase(replTerminator);
 }
 
 LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(

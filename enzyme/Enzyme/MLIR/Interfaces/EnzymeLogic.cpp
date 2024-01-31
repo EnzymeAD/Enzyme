@@ -1,4 +1,5 @@
 #include "Dialect/Ops.h"
+#include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
@@ -6,7 +7,6 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
-#include "Implementations/CoreDialectsAutoDiffImplementations.h"
 
 // TODO: this shouldn't depend on specific dialects except Enzyme.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -224,7 +224,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
   // if (PostOpt)
   //  PPC.optimizeIntermediate(nf);
   // if (EnzymePrint) {
-    llvm::errs() << nf << "\n";
+  //  llvm::errs() << nf << "\n";
   //}
   return nf;
 }

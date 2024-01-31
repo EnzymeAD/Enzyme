@@ -37,7 +37,7 @@ void branchingForwardHandler(Operation *op, OpBuilder &builder,
 // Implements forward-mode differentiation of region-terminator operations.
 // Assumes that successive shadows are legal
 void regionTerminatorForwardHandler(Operation *op, OpBuilder &builder,
-                             MGradientUtils *gutils);
+                                    MGradientUtils *gutils);
 
 // Implements the forward autodiff interface for operations whose derivatives
 // are can be inferred by analyzing their control flow and differentiating the
@@ -71,8 +71,8 @@ public:
 // are can be inferred by analyzing their region terminator properties.
 template <typename OpTy>
 class AutoDiffUsingRegionTerminator
-    : public AutoDiffOpInterface::ExternalModel<AutoDiffUsingRegionTerminator<OpTy>,
-                                                OpTy> {
+    : public AutoDiffOpInterface::ExternalModel<
+          AutoDiffUsingRegionTerminator<OpTy>, OpTy> {
 public:
   LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
                                          MGradientUtils *gutils) const {
@@ -91,8 +91,7 @@ void registerAutoDiffUsingControlFlowInterface(MLIRContext &context) {
 // Registers AutoDiffUsingBranch for the given op.
 template <typename OpTy>
 void registerAutoDiffUsingBranchInterface(MLIRContext &context) {
-  OpTy::template attachInterface<detail::AutoDiffUsingBranch<OpTy>>(
-      context);
+  OpTy::template attachInterface<detail::AutoDiffUsingBranch<OpTy>>(context);
 }
 // Registers AutoDiffUsingRegionTerminator for the given op.
 template <typename OpTy>
@@ -100,7 +99,6 @@ void registerAutoDiffUsingRegionTerminatorInterface(MLIRContext &context) {
   OpTy::template attachInterface<detail::AutoDiffUsingRegionTerminator<OpTy>>(
       context);
 }
-
 
 // Interface registration hooks for individual upstream dialects.
 void registerAffineDialectAutoDiffInterface(DialectRegistry &registry);

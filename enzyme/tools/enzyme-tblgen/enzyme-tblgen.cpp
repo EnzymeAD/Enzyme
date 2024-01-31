@@ -1901,10 +1901,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << impl << "\n";
       os << "};\n";
     }
-    
-    const auto &brpatterns =
-        recordKeeper.getAllDerivedDefinitions("BranchOp");
-    
+
+    const auto &brpatterns = recordKeeper.getAllDerivedDefinitions("BranchOp");
+
     const auto &regtpatterns =
         recordKeeper.getAllDerivedDefinitions("RegionTerminatorOp");
 
