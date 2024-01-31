@@ -4877,7 +4877,10 @@ public:
     fromType = from.getBuiltinType(B.getContext());
     toType = to.getType(B.getContext());
 
-    tmpBlock = B.CreateAlloca(fromType);
+    if (mode == TruncMem)
+      tmpBlock = B.CreateAlloca(fromType);
+    else
+      tmpBlock = nullptr;
   }
 
   void checkHandled(llvm::Instruction &inst) {

@@ -14,10 +14,17 @@ define double @f(double %x, double %y) {
 }
 
 declare double (double, double)* @__enzyme_truncate_mem_func(...)
+declare double (double, double)* @__enzyme_truncate_op_func(...)
 
 define double @tester(double %x, double %y) {
 entry:
   %ptr = call double (double, double)* (...) @__enzyme_truncate_mem_func(double (double, double)* @f, i64 64, i64 32)
+  %res = call double %ptr(double %x, double %y)
+  ret double %res
+}
+define double @tester2(double %x, double %y) {
+entry:
+  %ptr = call double (double, double)* (...) @__enzyme_truncate_op_func(double (double, double)* @f, i64 64, i64 32)
   %res = call double %ptr(double %x, double %y)
   ret double %res
 }
@@ -59,4 +66,18 @@ entry:
 ; CHECK-NEXT:   %20 = load double, double* %1, align 8
 ; CHECK-NEXT:   call void @llvm.nvvm.barrier0()
 ; CHECK-NEXT:   ret double %20
-; CHECK-NEXT: }
+
+; CHECK: define internal double @__enzyme_done_truncate_op_func_64_52_32_23_f(double %x, double %y) {
+; CHECK-DAG:   %enzyme_trunc = fptrunc double %x to float
+; CHECK-DAG:   %enzyme_trunc1 = fptrunc double %y to float
+; CHECK-DAG:   %res12 = call float @llvm.pow.f32(float %enzyme_trunc, float %enzyme_trunc1)
+; CHECK-DAG:   %enzyme_exp = fpext float %res12 to double
+; CHECK-DAG:   %enzyme_trunc3 = fptrunc double %x to float
+; CHECK-DAG:   %res24 = call float @llvm.powi.f32.i16(float %enzyme_trunc3, i16 2)
+; CHECK-DAG:   %enzyme_exp5 = fpext float %res24 to double
+; CHECK-DAG:   %enzyme_trunc6 = fptrunc double %enzyme_exp to float
+; CHECK-DAG:   %enzyme_trunc7 = fptrunc double %enzyme_exp5 to float
+; CHECK-DAG:   %res = fadd float %enzyme_trunc6, %enzyme_trunc7
+; CHECK-DAG:   %enzyme_exp8 = fpext float %res to double
+; CHECK-DAG:   call void @llvm.nvvm.barrier0()
+; CHECK-DAG:   ret double %enzyme_exp8
