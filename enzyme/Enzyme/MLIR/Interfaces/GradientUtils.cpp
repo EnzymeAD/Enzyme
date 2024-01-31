@@ -306,7 +306,9 @@ LogicalResult MGradientUtils::visitChild(Operation *op) {
     // In absence of a proper activity analysis, approximate it by treating any
     // side effect-free operation producing constants as inactive.
     // if (auto iface = dyn_cast<MemoryEffectOpInterface>(op)) {
-    if (llvm::all_of(op->getResults(),
+    if (!isa<BranchOpInterface>(op) &&
+        !isa<RegionBranchTerminatorOpInterface>(op) &&
+        llvm::all_of(op->getResults(),
                      [this](Value v) { return isConstantValue(v); }) &&
         /*iface.hasNoEffect()*/ activityAnalyzer->isConstantOperation(TR, op)) {
       return success();

@@ -54,6 +54,14 @@ public:
                  std::map<Operation *, Operation *> &originalToNewFnOps_,
                  DerivativeMode mode, unsigned width, bool omp);
   void erase(Operation *op) { op->erase(); }
+  void replaceOrigOpWith(Operation *op, ValueRange vals) {
+    for (auto &&[res, rep] : llvm::zip(op->getResults(), vals)) {
+      originalToNewFn.map(res, rep);
+    }
+    auto newOp = getNewFromOriginal(op);
+    newOp->replaceAllUsesWith(vals);
+    originalToNewFnOps.erase(op);
+  }
   void eraseIfUnused(Operation *op, bool erase = true, bool check = true) {
     // TODO
   }

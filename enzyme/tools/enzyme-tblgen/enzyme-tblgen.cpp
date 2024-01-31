@@ -1888,6 +1888,25 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
             "return true; }\n";
       os << "};\n";
     }
+    const auto &cfpatterns =
+        recordKeeper.getAllDerivedDefinitions("ControlFlowOp");
+    for (auto &pattern : cfpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      auto impl = pattern->getValueAsString("impl");
+      os << "struct " << opName << "CF : \n";
+      os << "			public "
+            "ControlFlowAutoDiffOpInterface::ExternalModel<"
+         << opName << "CF, " << dialect << "::" << opName << "> {\n";
+      os << impl << "\n";
+      os << "};\n";
+    }
+
+    const auto &brpatterns = recordKeeper.getAllDerivedDefinitions("BranchOp");
+
+    const auto &regtpatterns =
+        recordKeeper.getAllDerivedDefinitions("RegionTerminatorOp");
+
     os << "void registerInterfaces(MLIRContext* context) {\n";
     for (Record *pattern : patterns) {
       auto opName = pattern->getValueAsString("opName");
@@ -1902,6 +1921,26 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       auto dialect = pattern->getValueAsString("dialect");
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
          << "Activity>(*context);\n";
+    }
+    for (Record *pattern : cfpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
+         << "CF>(*context);\n";
+      os << "  registerAutoDiffUsingControlFlowInterface<" << dialect
+         << "::" << opName << ">(*context);\n";
+    }
+    for (Record *pattern : brpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "  registerAutoDiffUsingBranchInterface<" << dialect
+         << "::" << opName << ">(*context);\n";
+    }
+    for (Record *pattern : regtpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "  registerAutoDiffUsingRegionTerminatorInterface<" << dialect
+         << "::" << opName << ">(*context);\n";
     }
     os << "}\n";
   }

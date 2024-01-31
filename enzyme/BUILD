@@ -385,6 +385,22 @@ gentbl_cc_library(
 )
 
 gentbl(
+    name = "affine-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/AffineDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/AffineDerivatives.td",
+    td_srcs = [
+        "Enzyme/MLIR/Implementations/AffineDerivatives.td",
+        "Enzyme/MLIR/Implementations/Common.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+gentbl(
     name = "arith-derivatives",
     tbl_outs = [(
         "-gen-mlir-derivatives",
@@ -426,6 +442,20 @@ gentbl(
     ],
 )
 
+gentbl(
+    name = "scf-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/SCFDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/SCFDerivatives.td",
+    td_srcs = ["Enzyme/MLIR/Implementations/SCFDerivatives.td", "Enzyme/MLIR/Implementations/Common.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
 cc_library(
     name = "EnzymeMLIR",
     srcs = glob([
@@ -447,9 +477,11 @@ cc_library(
     includes = ["Enzyme/MLIR", "Enzyme"],
     visibility = ["//visibility:public"],
     deps = [
+        ":affine-derivatives",
         ":arith-derivatives",
         ":llvm-derivatives",
         ":nvvm-derivatives",
+        ":scf-derivatives",
         ":EnzymeOpsIncGen",
         ":EnzymePassesIncGen",
 		":EnzymeTypesIncGen",
