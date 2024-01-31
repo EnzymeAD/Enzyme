@@ -51,6 +51,8 @@ void registerAutoDiffUsingControlFlowInterface(MLIRContext &context) {
       context);
 }
 
+// Interface registration hooks for individual upstream dialects.
+void registerAffineDialectAutoDiffInterface(DialectRegistry &registry);
 void registerArithDialectAutoDiffInterface(DialectRegistry &registry);
 void registerBuiltinDialectAutoDiffInterface(DialectRegistry &registry);
 void registerLLVMDialectAutoDiffInterface(DialectRegistry &registry);
