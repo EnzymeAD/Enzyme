@@ -74,14 +74,14 @@ public:
                       FunctionOpInterface oldFunc_, MTypeAnalysis &TA,
                       MTypeResults TR, IRMapping &invertedPointers_,
                       const SmallPtrSetImpl<mlir::Value> &constantvalues_,
-                      const SmallPtrSetImpl<mlir::Value> &returnvals_,
+                      const SmallPtrSetImpl<mlir::Value> &activevals_,
                       DIFFE_TYPE ActiveReturn,
                       ArrayRef<DIFFE_TYPE> constant_values,
                       IRMapping &origToNew_,
                       std::map<Operation *, Operation *> &origToNewOps_,
                       DerivativeMode mode, unsigned width, bool omp)
       : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
-                       constantvalues_, returnvals_, ActiveReturn,
+                       constantvalues_, activevals_, ActiveReturn,
                        constant_values, origToNew_, origToNewOps_, mode, width,
                        omp) {}
 
