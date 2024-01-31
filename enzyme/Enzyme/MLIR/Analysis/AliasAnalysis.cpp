@@ -482,6 +482,9 @@ getFunctionArgModRef(FunctionOpInterface func) {
   auto hardcoded = llvm::StringSwitch<std::optional<LLVM::ModRefInfo>>(name)
                        // printf: only reads from arguments.
                        .Case("printf", LLVM::ModRefInfo::Ref)
+                       .Case("puts", LLVM::ModRefInfo::Ref)
+                       .Case("free", LLVM::ModRefInfo::Ref)
+                       .Case("memset_pattern16", LLVM::ModRefInfo::Ref)
                        // operator delete(void *) doesn't read from arguments.
                        .Case("_ZdlPv", LLVM::ModRefInfo::NoModRef)
                        .Default(std::nullopt);
@@ -506,8 +509,12 @@ getFunctionOtherModRef(FunctionOpInterface func) {
           // printf: doesn't access other (technically, stdout is pointer-like,
           // but we cannot flow information through it since it is write-only.
           .Case("printf", LLVM::ModRefInfo::NoModRef)
+          .Case("puts", LLVM::ModRefInfo::NoModRef)
+          .Case("gettimeofday", LLVM::ModRefInfo::Ref)
           // operator delete(void *) doesn't access other.
           .Case("_ZdlPv", LLVM::ModRefInfo::NoModRef)
+          .Case("free", LLVM::ModRefInfo::NoModRef)
+          .Case("memset_pattern16", LLVM::ModRefInfo::NoModRef)
           .Default(std::nullopt);
   if (hardcoded)
     return hardcoded;
