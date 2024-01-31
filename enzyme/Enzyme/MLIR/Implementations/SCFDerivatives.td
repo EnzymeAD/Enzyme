@@ -24,3 +24,13 @@ def : ControlFlowOp<"scf", "IfOp", [{
     return repIf;
   }
 }]>;
+
+def : ControlFlowOp<"scf", "WhileOp", [{
+  Operation *createWithShadows(Operation *op, OpBuilder &builder,
+                               MGradientUtils *gutils, Operation *original,
+                               ValueRange remappedOperands,
+                               TypeRange rettys) const {
+    return builder.create<scf::WhileOp>(original->getLoc(), rettys,
+                                        remappedOperands, original->getAttrs());
+  }
+}]>;

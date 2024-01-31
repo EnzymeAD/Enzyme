@@ -45,14 +45,11 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
     return failure();
 
   SmallVector<RegionSuccessor> successors;
-  // TODO: consider getEntrySuccessorRegions variation that cares about
-  // activity and stuff.
   // TODO: we may need to record, for every successor, which of its inputs
   // need a shadow to recreate the body correctly.
-  // TODO: support region-to-region control flow as opposed to
-  // entry-to-region-to-exit (e.g., scf.while).
   llvm::SmallDenseSet<unsigned> operandPositionsToShadow;
-  regionBranchOp.getSuccessorRegions(RegionBranchPoint::parent(), successors);
+  regionBranchOp.getEntrySuccessorRegions(
+      SmallVector<Attribute>(op->getNumOperands(), Attribute()), successors);
   for (const RegionSuccessor &successor : successors) {
     if (!successor.isParent() && successor.getSuccessor()->empty())
       continue;
@@ -131,7 +128,9 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
         continue;
 
       SmallVector<RegionSuccessor> successors;
-      termIface.getSuccessorRegions({}, successors);
+      termIface.getSuccessorRegions(
+          SmallVector<Attribute>(termIface->getNumOperands(), Attribute()),
+          successors);
 
       llvm::SmallDenseSet<unsigned> operandsToShadow;
       for (auto &successor : successors) {
