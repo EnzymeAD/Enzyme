@@ -253,6 +253,70 @@ struct RequestContext {
       : req(req), ip(ip) {}
 };
 
+[[maybe_unused]] static llvm::Type *
+getTypeForWidth(llvm::LLVMContext &ctx, unsigned width, bool builtinFloat) {
+  switch (width) {
+  default:
+    if (builtinFloat)
+      llvm::report_fatal_error("Invalid float width requested");
+    else
+      llvm::report_fatal_error(
+          "Truncation to non builtin float width unsupported");
+  case 64:
+    return llvm::Type::getDoubleTy(ctx);
+  case 32:
+    return llvm::Type::getFloatTy(ctx);
+  case 16:
+    return llvm::Type::getHalfTy(ctx);
+  }
+}
+
+enum TruncateMode { TruncMem, TruncOp };
+
+struct FloatRepresentation {
+  // |_|__________|_________________|
+  //  ^         ^         ^
+  //  sign bit  exponent  significand
+  //
+  //  value = (sign) * significand * 2 ^ exponent
+  unsigned exponentWidth;
+  unsigned significandWidth;
+
+  unsigned getTypeWidth() const { return 1 + exponentWidth + significandWidth; }
+
+  bool canBeBuiltin() const {
+    unsigned w = getTypeWidth();
+    return (w == 16 && significandWidth == 10) ||
+           (w == 32 && significandWidth == 23) ||
+           (w == 64 && significandWidth == 52);
+  }
+
+  llvm::Type *getBuiltinType(llvm::LLVMContext &ctx) const {
+    if (!canBeBuiltin())
+      return nullptr;
+    return getTypeForWidth(ctx, getTypeWidth(), /*builtinFloat=*/true);
+  }
+
+  llvm::Type *getType(llvm::LLVMContext &ctx) const {
+    llvm::Type *builtinType = getBuiltinType(ctx);
+    if (builtinType)
+      return builtinType;
+    llvm_unreachable("TODO MPFR");
+  }
+
+  bool operator==(const FloatRepresentation &other) const {
+    return other.exponentWidth == exponentWidth &&
+           other.significandWidth == significandWidth;
+  }
+  bool operator<(const FloatRepresentation &other) const {
+    return std::tuple(exponentWidth, significandWidth) <
+           std::tuple(other.exponentWidth, other.significandWidth);
+  }
+  std::string to_string() const {
+    return std::to_string(getTypeWidth()) + std::to_string(significandWidth);
+  }
+};
+
 class EnzymeLogic {
 public:
   PreProcessCache PPC;
@@ -511,13 +575,15 @@ public:
                               llvm::ArrayRef<BATCH_TYPE> arg_types,
                               BATCH_TYPE ret_type);
 
-  using TruncateCacheKey = std::tuple<llvm::Function *, unsigned, unsigned>;
+  using TruncateCacheKey =
+      std::tuple<llvm::Function *, FloatRepresentation, FloatRepresentation>;
   std::map<TruncateCacheKey, llvm::Function *> TruncateCachedFunctions;
   llvm::Function *CreateTruncateFunc(RequestContext context,
                                      llvm::Function *tobatch,
-                                     unsigned fromwidth, unsigned towidth);
+                                     FloatRepresentation from,
+                                     FloatRepresentation to, TruncateMode mode);
   bool CreateTruncateValue(RequestContext context, llvm::Value *addr,
-                           unsigned fromwidth, unsigned towidth,
+                           FloatRepresentation from, FloatRepresentation to,
                            bool isTruncate);
 
   /// Create a traced version of a function

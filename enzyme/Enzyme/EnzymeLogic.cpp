@@ -27,8 +27,10 @@
 // primal pass.
 //
 //===----------------------------------------------------------------------===//
+#include "EnzymeLogic.h"
 #include "ActivityAnalysis.h"
 #include "AdjointGenerator.h"
+#include "EnzymeLogic.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Intrinsics.h"
 
@@ -4809,64 +4811,24 @@ Function *EnzymeLogic::CreateForwardDiff(
   return nf;
 }
 
-static Type *getTypeForWidth(LLVMContext &ctx, unsigned width,
-                             bool builtinFloat) {
-  switch (width) {
-  default:
-    if (builtinFloat)
-      report_fatal_error("Invalid float width requested");
-    else
-      report_fatal_error("Truncation to non builtin float width unsupported");
-  case 64:
-    return llvm::Type::getDoubleTy(ctx);
-  case 32:
-    return llvm::Type::getFloatTy(ctx);
-  case 16:
-    return llvm::Type::getHalfTy(ctx);
-  }
-}
-
-struct FloatRepresentation {
-  // |_|__________|_________________|
-  //  ^         ^         ^
-  //  sign bit  exponent  significand
-  //
-  //  value = (sign) * significand * 2 ^ exponent
-  unsigned exponentWidth;
-  unsigned significandWidth;
-
-  unsigned getTypeWidth() const { return 1 + exponentWidth + significandWidth; }
-
-  bool canBeBuiltin() const {
-    unsigned w = getTypeWidth();
-    return w == 16 || w == 32 || w == 64;
-  }
-
-  Type *getBuiltinType(LLVMContext &ctx) const {
-    if (!canBeBuiltin())
-      return nullptr;
-    return getTypeForWidth(ctx, getTypeWidth(), /*builtinFloat=*/true);
-  }
-};
-
 static Value *floatValTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
-                               unsigned fromwidth, unsigned towidth) {
-  Type *toTy = getTypeForWidth(B.getContext(), towidth, /*builtinFloat=*/false);
+                               FloatRepresentation from,
+                               FloatRepresentation to) {
+  Type *toTy = to.getType(B.getContext());
   return B.CreateFPTrunc(v, toTy, "enzyme_trunc");
 }
 
 static Value *floatValExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
-                             unsigned fromwidth, unsigned towidth) {
-  Type *fromTy =
-      getTypeForWidth(B.getContext(), fromwidth, /*builtinFloat=*/true);
+                             FloatRepresentation from, FloatRepresentation to) {
+  Type *fromTy = from.getBuiltinType(B.getContext());
   return B.CreateFPExt(v, fromTy, "enzyme_exp");
 }
 
 static Value *floatMemTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
-                               unsigned fromwidth, unsigned towidth) {
-  Type *fromTy =
-      getTypeForWidth(B.getContext(), fromwidth, /*builtinFloat=*/true);
-  Type *toTy = getTypeForWidth(B.getContext(), towidth, /*builtinFloat=*/false);
+                               FloatRepresentation from,
+                               FloatRepresentation to) {
+  Type *fromTy = from.getBuiltinType(B.getContext());
+  Type *toTy = to.getType(B.getContext());
   if (!tmpBlock)
     tmpBlock = B.CreateAlloca(fromTy);
   B.CreateStore(
@@ -4876,13 +4838,12 @@ static Value *floatMemTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
 }
 
 static Value *floatMemExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
-                             unsigned fromwidth, unsigned towidth) {
-  Type *fromTy =
-      getTypeForWidth(B.getContext(), fromwidth, /*builtinFloat=*/true);
+                             FloatRepresentation from, FloatRepresentation to) {
+  Type *fromTy = from.getBuiltinType(B.getContext());
   if (!tmpBlock)
     tmpBlock = B.CreateAlloca(fromTy);
-  auto c0 =
-      Constant::getNullValue(llvm::Type::getIntNTy(B.getContext(), fromwidth));
+  auto c0 = Constant::getNullValue(
+      llvm::Type::getIntNTy(B.getContext(), from.getTypeWidth()));
   B.CreateStore(
       c0, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(c0->getType())));
   B.CreateStore(
@@ -4892,41 +4853,37 @@ static Value *floatMemExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
 }
 
 class TruncateGenerator : public llvm::InstVisitor<TruncateGenerator> {
-public:
-  enum Mode { TruncMem, TruncOp };
-
 private:
   ValueToValueMapTy &originalToNewFn;
-  unsigned fromwidth;
-  unsigned towidth;
+  FloatRepresentation from;
+  FloatRepresentation to;
   Type *fromType;
   Type *toType;
   Function *oldFunc;
   Function *newFunc;
   AllocaInst *tmpBlock;
-  Mode mode;
+  TruncateMode mode;
   EnzymeLogic &Logic;
 
 public:
-  TruncateGenerator(ValueToValueMapTy &originalToNewFn, unsigned fromwidth,
-                    unsigned towidth, Function *oldFunc, Function *newFunc,
-                    Mode mode, EnzymeLogic &Logic)
-      : originalToNewFn(originalToNewFn), fromwidth(fromwidth),
-        towidth(towidth), oldFunc(oldFunc), newFunc(newFunc), mode(mode),
-        Logic(Logic) {
+  TruncateGenerator(ValueToValueMapTy &originalToNewFn,
+                    FloatRepresentation from, FloatRepresentation to,
+                    Function *oldFunc, Function *newFunc, TruncateMode mode,
+                    EnzymeLogic &Logic)
+      : originalToNewFn(originalToNewFn), from(from), to(to), oldFunc(oldFunc),
+        newFunc(newFunc), mode(mode), Logic(Logic) {
     IRBuilder<> B(&newFunc->getEntryBlock().front());
 
-    fromType =
-        getTypeForWidth(B.getContext(), fromwidth, /*builtinFloat=*/true);
-    toType = getTypeForWidth(B.getContext(), towidth, /*builtinFloat=*/false);
+    fromType = from.getBuiltinType(B.getContext());
+    toType = to.getType(B.getContext());
 
     tmpBlock = B.CreateAlloca(fromType);
   }
 
   void checkHandled(llvm::Instruction &inst) {
-    if (all_of(inst.getOperandList(),
-               [&](Use *use) { return use->get()->getType() == fromType; }))
-      todo(inst);
+    // if (all_of(inst.getOperandList(),
+    //            [&](Use *use) { return use->get()->getType() == fromType; }))
+    //   todo(inst);
   }
 
   void visitInstruction(llvm::Instruction &inst) {
@@ -4951,9 +4908,9 @@ public:
   Value *truncate(IRBuilder<> &B, Value *v) {
     switch (mode) {
     case TruncMem:
-      return floatMemTruncate(B, v, tmpBlock, fromwidth, towidth);
+      return floatMemTruncate(B, v, tmpBlock, from, to);
     case TruncOp:
-      return floatValTruncate(B, v, tmpBlock, fromwidth, towidth);
+      return floatValTruncate(B, v, tmpBlock, from, to);
     default:
       llvm_unreachable("Unknown trunc mode");
     }
@@ -4962,9 +4919,9 @@ public:
   Value *expand(IRBuilder<> &B, Value *v) {
     switch (mode) {
     case TruncMem:
-      return floatMemExpand(B, v, tmpBlock, fromwidth, towidth);
+      return floatMemExpand(B, v, tmpBlock, from, to);
     case TruncOp:
-      return floatValExpand(B, v, tmpBlock, fromwidth, towidth);
+      return floatValExpand(B, v, tmpBlock, from, to);
     default:
       llvm_unreachable("Unknown trunc mode");
     }
@@ -5081,7 +5038,7 @@ public:
       return;
     }
 
-    if (towidth == 32 || towidth == 16 || towidth == 64) {
+    if (to.getBuiltinType(BO.getContext())) {
       auto newI = getNewFromOriginal(&BO);
       IRBuilder<> B(newI);
       auto newLHS = truncate(B, getNewFromOriginal(BO.getOperand(0)));
@@ -5273,7 +5230,7 @@ public:
 
   Value *GetShadow(RequestContext &ctx, Value *v) {
     if (auto F = dyn_cast<Function>(v))
-      return Logic.CreateTruncateFunc(ctx, F, fromwidth, towidth);
+      return Logic.CreateTruncateFunc(ctx, F, from, to, mode);
     llvm::errs() << " unknown get truncated func: " << *v << "\n";
     llvm_unreachable("unknown get truncated func");
     return v;
@@ -5309,16 +5266,16 @@ public:
 };
 
 bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
-                                      unsigned fromwidth, unsigned towidth,
-                                      bool isTruncate) {
+                                      FloatRepresentation from,
+                                      FloatRepresentation to, bool isTruncate) {
   assert(context.req && context.ip);
 
-  if (fromwidth == towidth) {
+  if (from == to) {
     context.req->eraseFromParent();
     return true;
   }
 
-  if (fromwidth < towidth) {
+  if (from < to) {
     std::string s;
     llvm::raw_string_ostream ss(s);
     ss << "Cannot truncate into a large width\n";
@@ -5332,17 +5289,15 @@ bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
   }
 
   IRBuilderBase &B = *context.ip;
-  Type *fromTy =
-      getTypeForWidth(B.getContext(), fromwidth, /*builtinFloat=*/true);
-  Type *toTy = getTypeForWidth(B.getContext(), towidth, /*builtinFloat=*/false);
+  Type *fromTy = from.getBuiltinType(B.getContext());
+  Type *toTy = to.getType(B.getContext());
 
   Value *converted = nullptr;
   if (isTruncate)
-    converted = floatMemExpand(B, B.CreateFPTrunc(v, toTy), nullptr, fromwidth,
-                               towidth);
+    converted = floatMemExpand(B, B.CreateFPTrunc(v, toTy), nullptr, from, to);
   else
-    converted = B.CreateFPExt(
-        floatMemTruncate(B, v, nullptr, fromwidth, towidth), fromTy);
+    converted =
+        B.CreateFPExt(floatMemTruncate(B, v, nullptr, from, to), fromTy);
   assert(converted);
 
   context.req->replaceAllUsesWith(converted);
@@ -5353,12 +5308,13 @@ bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
 
 llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
                                                 llvm::Function *totrunc,
-                                                unsigned fromwidth,
-                                                unsigned towidth) {
-  if (fromwidth == towidth)
+                                                FloatRepresentation from,
+                                                FloatRepresentation to,
+                                                TruncateMode mode) {
+  if (from == to)
     return totrunc;
 
-  TruncateCacheKey tup(totrunc, fromwidth, towidth);
+  TruncateCacheKey tup(totrunc, from, to);
   if (TruncateCachedFunctions.find(tup) != TruncateCachedFunctions.end()) {
     return TruncateCachedFunctions.find(tup)->second;
   }
@@ -5373,11 +5329,10 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
   Type *NewTy = totrunc->getReturnType();
 
   FunctionType *FTy = FunctionType::get(NewTy, params, totrunc->isVarArg());
-  Function *NewF =
-      Function::Create(FTy, totrunc->getLinkage(),
-                       "trunc_" + std::to_string(fromwidth) + "_" +
-                           std::to_string(towidth) + totrunc->getName(),
-                       totrunc->getParent());
+  Function *NewF = Function::Create(FTy, totrunc->getLinkage(),
+                                    "trunc_" + from.to_string() + "_" +
+                                        to.to_string() + totrunc->getName(),
+                                    totrunc->getParent());
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
@@ -5410,32 +5365,29 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
     llvm_unreachable("attempting to truncate function without definition");
   }
 
-  if (fromwidth < towidth) {
-    std::string s;
-    llvm::raw_string_ostream ss(s);
-    ss << "Cannot truncate into a large width\n";
-    llvm::Value *toshow = totrunc;
-    if (context.req) {
-      toshow = context.req;
-      ss << " at context: " << *context.req;
-    } else {
-      ss << *totrunc << "\n";
-    }
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                         ErrorType::NoDerivative, nullptr, wrap(totrunc),
-                         wrap(context.ip));
-      return NewF;
-    }
-    if (context.req) {
-      EmitFailure("NoTruncate", context.req->getDebugLoc(), context.req,
-                  ss.str());
-      return NewF;
-    }
-    llvm::errs() << "mod: " << *totrunc->getParent() << "\n";
-    llvm::errs() << *totrunc << "\n";
-    llvm_unreachable("attempting to truncate function without definition");
+  std::string s;
+  llvm::raw_string_ostream ss(s);
+  ss << "Cannot truncate into a large width\n";
+  llvm::Value *toshow = totrunc;
+  if (context.req) {
+    toshow = context.req;
+    ss << " at context: " << *context.req;
+  } else {
+    ss << *totrunc << "\n";
   }
+  if (CustomErrorHandler) {
+    CustomErrorHandler(ss.str().c_str(), wrap(toshow), ErrorType::NoDerivative,
+                       nullptr, wrap(totrunc), wrap(context.ip));
+    return NewF;
+  }
+  if (context.req) {
+    EmitFailure("NoTruncate", context.req->getDebugLoc(), context.req,
+                ss.str());
+    return NewF;
+  }
+  llvm::errs() << "mod: " << *totrunc->getParent() << "\n";
+  llvm::errs() << *totrunc << "\n";
+  llvm_unreachable("attempting to truncate function without definition");
 
   ValueToValueMapTy originalToNewFn;
 
@@ -5458,7 +5410,7 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
-  TruncateGenerator handle(originalToNewFn, fromwidth, towidth, totrunc, NewF,
+  TruncateGenerator handle(originalToNewFn, from, to, totrunc, NewF, mode,
                            *this);
   for (auto &BB : *totrunc)
     for (auto &I : BB)
