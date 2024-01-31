@@ -5271,6 +5271,7 @@ bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
   assert(context.req && context.ip);
 
   if (from == to) {
+    context.req->replaceAllUsesWith(context.req->getOperand(0));
     context.req->eraseFromParent();
     return true;
   }
@@ -5314,7 +5315,7 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
   if (from == to)
     return totrunc;
 
-  TruncateCacheKey tup(totrunc, from, to);
+  TruncateCacheKey tup(totrunc, from, to, mode);
   if (TruncateCachedFunctions.find(tup) != TruncateCachedFunctions.end()) {
     return TruncateCachedFunctions.find(tup)->second;
   }
@@ -5329,9 +5330,11 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
   Type *NewTy = totrunc->getReturnType();
 
   FunctionType *FTy = FunctionType::get(NewTy, params, totrunc->isVarArg());
-  Function *NewF = Function::Create(FTy, totrunc->getLinkage(),
-                                    "trunc_" + from.to_string() + "_" +
-                                        to.to_string() + totrunc->getName(),
+  std::string truncName = std::string("__enzyme_done_truncate_") +
+                          (mode == TruncMem ? "mem" : "op") + "_func_" +
+                          from.to_string() + "_" + to.to_string() + "_" +
+                          totrunc->getName().str();
+  Function *NewF = Function::Create(FTy, totrunc->getLinkage(), truncName,
                                     totrunc->getParent());
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
@@ -5365,29 +5368,32 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
     llvm_unreachable("attempting to truncate function without definition");
   }
 
-  std::string s;
-  llvm::raw_string_ostream ss(s);
-  ss << "Cannot truncate into a large width\n";
-  llvm::Value *toshow = totrunc;
-  if (context.req) {
-    toshow = context.req;
-    ss << " at context: " << *context.req;
-  } else {
-    ss << *totrunc << "\n";
+  if (from < to) {
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "Cannot truncate into a large width\n";
+    llvm::Value *toshow = totrunc;
+    if (context.req) {
+      toshow = context.req;
+      ss << " at context: " << *context.req;
+    } else {
+      ss << *totrunc << "\n";
+    }
+    if (CustomErrorHandler) {
+      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
+                         ErrorType::NoDerivative, nullptr, wrap(totrunc),
+                         wrap(context.ip));
+      return NewF;
+    }
+    if (context.req) {
+      EmitFailure("NoTruncate", context.req->getDebugLoc(), context.req,
+                  ss.str());
+      return NewF;
+    }
+    llvm::errs() << "mod: " << *totrunc->getParent() << "\n";
+    llvm::errs() << *totrunc << "\n";
+    llvm_unreachable("attempting to truncate function without definition");
   }
-  if (CustomErrorHandler) {
-    CustomErrorHandler(ss.str().c_str(), wrap(toshow), ErrorType::NoDerivative,
-                       nullptr, wrap(totrunc), wrap(context.ip));
-    return NewF;
-  }
-  if (context.req) {
-    EmitFailure("NoTruncate", context.req->getDebugLoc(), context.req,
-                ss.str());
-    return NewF;
-  }
-  llvm::errs() << "mod: " << *totrunc->getParent() << "\n";
-  llvm::errs() << *totrunc << "\n";
-  llvm_unreachable("attempting to truncate function without definition");
 
   ValueToValueMapTy originalToNewFn;
 

@@ -13,16 +13,16 @@ define double @f(double %x, double %y) {
   ret double %res
 }
 
-declare double (double, double)* @__enzyme_truncate_func(...)
+declare double (double, double)* @__enzyme_truncate_mem_func(...)
 
 define double @tester(double %x, double %y) {
 entry:
-  %ptr = call double (double, double)* (...) @__enzyme_truncate_func(double (double, double)* @f, i64 64, i64 32)
+  %ptr = call double (double, double)* (...) @__enzyme_truncate_mem_func(double (double, double)* @f, i64 64, i64 32)
   %res = call double %ptr(double %x, double %y)
   ret double %res
 }
 
-; CHECK: define internal double @trunc_64_32f(double %x, double %y) {
+; CHECK: define internal double @__enzyme_done_truncate_mem_func_64_52_32_23_f(double %x, double %y) {
 ; CHECK-NEXT:   %1 = alloca double, align 8
 ; CHECK-NEXT:   store double %x, double* %1, align 8
 ; CHECK-NEXT:   %2 = bitcast double* %1 to float*

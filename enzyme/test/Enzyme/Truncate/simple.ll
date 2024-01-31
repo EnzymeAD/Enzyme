@@ -8,22 +8,22 @@ define void @f(double* %x) {
   ret void
 }
 
-declare void (double*)* @__enzyme_truncate_func(...)
+declare void (double*)* @__enzyme_truncate_mem_func(...)
 
 define void @tester(double* %data) {
 entry:
-  %ptr = call void (double*)* (...) @__enzyme_truncate_func(void (double*)* @f, i64 64, i64 32)
+  %ptr = call void (double*)* (...) @__enzyme_truncate_mem_func(void (double*)* @f, i64 64, i64 32)
   call void %ptr(double* %data)
   ret void
 }
 
 ; CHECK: define void @tester(double* %data)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   call void @trunc_64_32f(double* %data)
+; CHECK-NEXT:   call void @__enzyme_done_truncate_mem_func_64_52_32_23_f(double* %data)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @trunc_64_32f(double* %x)
+; CHECK: define internal void @__enzyme_done_truncate_mem_func_64_52_32_23_f(double* %x)
 ; CHECK-DAG:   %1 = alloca double, align 8
 ; CHECK-DAG:   %y = load double, double* %x, align 8
 ; CHECK-DAG:   store double %y, double* %1, align 8

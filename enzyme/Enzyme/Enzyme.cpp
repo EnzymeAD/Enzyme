@@ -1320,12 +1320,17 @@ public:
     case 16:
       repr.exponentWidth = 5;
       repr.significandWidth = 10;
+      break;
     case 32:
       repr.exponentWidth = 8;
       repr.significandWidth = 23;
+      break;
     case 64:
       repr.exponentWidth = 11;
       repr.significandWidth = 52;
+      break;
+    default:
+      llvm_unreachable("Invalid float width");
     }
     return repr;
   };

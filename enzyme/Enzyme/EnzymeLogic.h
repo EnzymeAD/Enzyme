@@ -313,7 +313,8 @@ struct FloatRepresentation {
            std::tuple(other.exponentWidth, other.significandWidth);
   }
   std::string to_string() const {
-    return std::to_string(getTypeWidth()) + std::to_string(significandWidth);
+    return std::to_string(getTypeWidth()) + "_" +
+           std::to_string(significandWidth);
   }
 };
 
@@ -575,8 +576,8 @@ public:
                               llvm::ArrayRef<BATCH_TYPE> arg_types,
                               BATCH_TYPE ret_type);
 
-  using TruncateCacheKey =
-      std::tuple<llvm::Function *, FloatRepresentation, FloatRepresentation>;
+  using TruncateCacheKey = std::tuple<llvm::Function *, FloatRepresentation,
+                                      FloatRepresentation, unsigned>;
   std::map<TruncateCacheKey, llvm::Function *> TruncateCachedFunctions;
   llvm::Function *CreateTruncateFunc(RequestContext context,
                                      llvm::Function *tobatch,
