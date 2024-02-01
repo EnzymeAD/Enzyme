@@ -282,6 +282,9 @@ struct FloatRepresentation {
   unsigned exponentWidth;
   unsigned significandWidth;
 
+  FloatRepresentation(unsigned e, unsigned s)
+      : exponentWidth(e), significandWidth(s) {}
+
   unsigned getTypeWidth() const { return 1 + exponentWidth + significandWidth; }
 
   bool canBeBuiltin() const {

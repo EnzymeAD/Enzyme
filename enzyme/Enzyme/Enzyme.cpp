@@ -1315,24 +1315,16 @@ public:
   }
 
   static FloatRepresentation getDefaultFloatRepr(unsigned width) {
-    FloatRepresentation repr;
     switch (width) {
     case 16:
-      repr.exponentWidth = 5;
-      repr.significandWidth = 10;
-      break;
+      return FloatRepresentation(5, 10);
     case 32:
-      repr.exponentWidth = 8;
-      repr.significandWidth = 23;
-      break;
+      return FloatRepresentation(8, 23);
     case 64:
-      repr.exponentWidth = 11;
-      repr.significandWidth = 52;
-      break;
+      return FloatRepresentation(11, 52);
     default:
       llvm_unreachable("Invalid float width");
     }
-    return repr;
   };
 
   bool HandleTruncateFunc(CallInst *CI, TruncateMode mode) {
