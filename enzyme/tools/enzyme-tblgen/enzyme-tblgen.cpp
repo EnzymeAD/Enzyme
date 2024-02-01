@@ -1884,12 +1884,16 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "			public ActivityOpInterface::ExternalModel<"
          << opName << "Activity, " << dialect << "::" << opName << "> {\n";
       os << "  bool isInactive(mlir::Operation*) const { return true; }\n";
-      os << "  bool isArgInactive(mlir::Operation*, mlir::Value) const { "
+      os << "  bool isArgInactive(mlir::Operation*, size_t) const { "
             "return true; }\n";
       os << "};\n";
     }
     const auto &cfpatterns =
         recordKeeper.getAllDerivedDefinitions("ControlFlowOp");
+
+    const auto &ropatterns =
+        recordKeeper.getAllDerivedDefinitions("ReadOnlyIdentityOp");
+
     for (auto &pattern : cfpatterns) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
@@ -1899,6 +1903,26 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
             "ControlFlowAutoDiffOpInterface::ExternalModel<"
          << opName << "CF, " << dialect << "::" << opName << "> {\n";
       os << impl << "\n";
+      os << "};\n";
+    }
+
+    for (auto &pattern : ropatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      auto diffargs = pattern->getValueAsListOfInts("diffargs");
+      os << "struct " << opName << "ROActivity : \n";
+      os << "     public ActivityOpInterface::ExternalModel<" << opName
+         << "ROActivity, " << dialect << "::" << opName << "> {\n";
+      os << "  bool isInactive(mlir::Operation* op) const {\n";
+      os << "    for (size_t i=0, len=op->getNumOperands(); i<len; i++)\n";
+      os << "      if (!isArgInactive(op, i)) return false;\n";
+      os << "    return true;\n";
+      os << "  };\n";
+      os << "  bool isArgInactive(mlir::Operation*, size_t idx) const {\n";
+      for (auto diffarg : diffargs) {
+        os << "    if (idx == " << diffarg << ") return false;\n";
+      }
+      os << "    return true;\n  }\n";
       os << "};\n";
     }
 
@@ -1928,6 +1952,14 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
          << "CF>(*context);\n";
       os << "  registerAutoDiffUsingControlFlowInterface<" << dialect
+         << "::" << opName << ">(*context);\n";
+    }
+    for (Record *pattern : ropatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
+         << "ROActivity>(*context);\n";
+      os << "  registerAutoDiffUsingReadOnlyIdentityInterface<" << dialect
          << "::" << opName << ">(*context);\n";
     }
     for (Record *pattern : brpatterns) {

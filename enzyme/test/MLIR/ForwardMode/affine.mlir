@@ -70,7 +70,7 @@ module {
       %mul = arith.mulf %x, %x : f64
       memref.store %mul, %mem[%c0] : memref<1xf64>
     }
-    %r = memref.load %mem[%c0] : memref<1xf64>
+    %r = affine.load %mem[0] : memref<1xf64>
     %res = arith.mulf %c2, %r : f64
     return %res : f64
   }
@@ -96,8 +96,8 @@ module {
   // CHECK:   memref.store %[[v6]], %[[alloc]][%[[c0]]] : memref<1xf64>
   // CHECK:   memref.store %[[v7]], %[[alloc_2]][%[[c0]]] : memref<1xf64>
   // CHECK: }
-  // CHECK: %[[v0:.+]] = memref.load %[[alloc]][%[[c0]]] : memref<1xf64>
-  // CHECK: %[[v1:.+]] = memref.load %[[alloc_2]][%[[c0]]] : memref<1xf64>
+  // CHECK: %[[v0:.+]] = affine.load %[[alloc]][0] : memref<1xf64>
+  // CHECK: %[[v1:.+]] = affine.load %[[alloc_2]][0] : memref<1xf64>
   // CHECK: %[[v2:.+]] = arith.mulf %[[v0]], %[[cst_0]] : f64
   // CHECK: %[[v3:.+]] = arith.mulf %[[cst_0]], %[[v1]] : f64
   // CHECK: return %[[v2]] : f64

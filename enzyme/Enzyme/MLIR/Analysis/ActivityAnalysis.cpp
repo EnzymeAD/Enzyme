@@ -2820,8 +2820,16 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
 
     if (UA != UseActivity::AllStores) {
       if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(a)) {
-        if (ifaceOp.isArgInactive(parent))
-          return true;
+        bool allInactive = true;
+        for (OpOperand &operand : a->getOpOperands()) {
+          if (parent == operand.get() &&
+              !ifaceOp.isArgInactive(operand.getOperandNumber())) {
+            allInactive = false;
+            break;
+          }
+        }
+        if (allInactive)
+          continue;
       }
     }
 
@@ -3394,8 +3402,16 @@ bool mlir::enzyme::ActivityAnalyzer::isValueActivelyStoredOrReturned(
     }
 
     if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(a)) {
-      if (ifaceOp.isArgInactive(val))
-        return true;
+      bool allInactive = true;
+      for (OpOperand &operand : a->getOpOperands()) {
+        if (operand.get() == val &&
+            !ifaceOp.isArgInactive(operand.getOperandNumber())) {
+          allInactive = false;
+          break;
+        }
+      }
+      if (allInactive)
+        continue;
     }
 
     if (isa<LLVM::ReturnOp>(a)) {

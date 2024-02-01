@@ -128,7 +128,7 @@ def ActivityOpInterface
     }],
     /*retTy=*/"bool",
     /*methodName=*/"isArgInactive",
-    /*args=*/(ins "::mlir::Value":$val)
+    /*args=*/(ins "size_t":$opidx)
     >
   ];
 }
