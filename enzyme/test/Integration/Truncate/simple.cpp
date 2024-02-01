@@ -1,7 +1,7 @@
-// COM: %clang -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
-// RUN: %clang -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
-// COM: %clang -O2 -ffast-math %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
-// COM: %clang -O1 -g %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
+// RUN: %clang             -DTRUNC_OP -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
+// RUN: %clang -DTRUNC_MEM -DTRUNC_OP -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
+// RUN: %clang             -DTRUNC_OP -O2 -ffast-math %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
+// RUN: %clang                        -O1 -g %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
 
 #include <math.h>
 
@@ -21,7 +21,8 @@ double constt(double a, double b) {
 }
 double compute(double *A, double *B, double *C, int n) {
   for (int i = 0; i < n; i++) {
-      C[i] = A[i] * 2;
+    C[i] = A[i] * 2;
+    // C[i]  A=[i] * 2 + B[i] * sqrt(A[i]) ;
   }
   return C[0];
 }
@@ -45,6 +46,7 @@ extern double __enzyme_expand_mem_value(...);
 
 int main() {
 
+    #ifdef TRUNC_MEM
     {
         double a = 1;
         APPROX_EQ(
@@ -71,6 +73,7 @@ int main() {
         double trunc = __enzyme_expand_mem_value(__enzyme_truncate_mem_func(intrinsics, FROM, TO)(a, b), FROM, TO);
         APPROX_EQ(trunc, truth, 1e-5);
     }
+    #endif
     // {
     //     double a = 2;
     //     double b = 3;
@@ -81,33 +84,36 @@ int main() {
     //     APPROX_EQ(trunc, truth, 1e-5);
     // }
 
-    double A[N];
-    double B[N];
-    double C[N];
-    double D[N];
+    #ifdef TRUNC_OP
+    {
+        double A[N];
+        double B[N];
+        double C[N];
+        double D[N];
 
 
-    for (int i = 0; i < N; i++) {
-        A[i] = 1 + i % 5;
-        B[i] = 1 + i % 3;
+        for (int i = 0; i < N; i++) {
+            A[i] = 1 + i % 5;
+            B[i] = 1 + i % 3;
+        }
+
+        compute(A, B, D, N);
+
+        // for (int i = 0; i < N; i++) {
+        //     A[i] = __enzyme_truncate_mem_value(A[i], 64, 32);
+        //     B[i] = __enzyme_truncate_mem_value(B[i], 64, 32);
+        // }
+
+        __enzyme_truncate_op_func_2(compute, 64, 32)(A, B, C, N);
+
+        // for (int i = 0; i < N; i++) {
+        //     C[i] = __enzyme_expand_mem_value(C[i], 64, 32);
+        // }
+
+        for (int i = 0; i < N; i++) {
+            APPROX_EQ(D[i], C[i], 1e-5);
+        }
     }
-
-    compute(A, B, D, N);
-
-    // for (int i = 0; i < N; i++) {
-    //     A[i] = __enzyme_truncate_mem_value(A[i], 64, 32);
-    //     B[i] = __enzyme_truncate_mem_value(B[i], 64, 32);
-    // }
-
-    __enzyme_truncate_op_func_2(compute, 64, 32)(A, B, C, N);
-
-    // for (int i = 0; i < N; i++) {
-    //     C[i] = __enzyme_expand_mem_value(C[i], 64, 32);
-    // }
-
-    for (int i = 0; i < N; i++) {
-        printf("%d\n", i);
-        APPROX_EQ(D[i], C[i], 1e-5);
-    }
+    #endif
 
 }
