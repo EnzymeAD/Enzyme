@@ -101,6 +101,37 @@ void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
   return;
 }
 
+LogicalResult mlir::enzyme::detail::readOnlyIdentityForwardHandler(
+    Operation *orig, OpBuilder &builder, MGradientUtils *gutils) {
+
+  auto iface = cast<ActivityOpInterface>(orig);
+
+  SmallVector<Value> newOperands;
+  newOperands.reserve(orig->getNumOperands());
+  for (OpOperand &operand : orig->getOpOperands()) {
+    if (iface.isArgInactive(operand.getOperandNumber())) {
+      newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
+    } else {
+      if (gutils->isConstantValue(operand.get()))
+        return failure();
+      newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
+    }
+  }
+
+  // Assuming shadows following the originals are fine.
+  // TODO: consider extending to have a ShadowableTerminatorOpInterface
+  Operation *primal = gutils->getNewFromOriginal(orig);
+  Operation *shadow = builder.clone(*primal);
+  shadow->setOperands(newOperands);
+  for (auto &&[oval, sval] :
+       llvm::zip(orig->getResults(), shadow->getResults())) {
+    gutils->setDiffe(oval, sval, builder);
+  }
+  llvm::errs() << " shadow load: " << *shadow << "\n";
+
+  return success();
+}
+
 void mlir::enzyme::detail::regionTerminatorForwardHandler(
     Operation *origTerminator, OpBuilder &builder, MGradientUtils *gutils) {
   auto termIface = cast<RegionBranchTerminatorOpInterface>(origTerminator);

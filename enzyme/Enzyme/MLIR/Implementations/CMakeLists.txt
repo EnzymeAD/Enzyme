@@ -22,6 +22,10 @@ set(LLVM_TARGET_DEFINITIONS CFDerivatives.td)
 enzyme_tablegen(CFDerivatives.inc -gen-mlir-derivatives)
 add_public_tablegen_target(CFDerivativesIncGen)
 
+set(LLVM_TARGET_DEFINITIONS MemRefDerivatives.td)
+enzyme_tablegen(MemRefDerivatives.inc -gen-mlir-derivatives)
+add_public_tablegen_target(MemRefDerivativesIncGen)
+
 add_mlir_library(MLIREnzymeImplementations
   AffineAutoDiffOpInterfaceImpl.cpp
   ArithAutoDiffOpInterfaceImpl.cpp
@@ -42,6 +46,7 @@ add_mlir_library(MLIREnzymeImplementations
   NVVMDerivativesIncGen
   SCFDerivativesIncGen
   CFDerivativesIncGen
+  MemRefDerivativesIncGen
 
   LINK_LIBS PUBLIC
   MLIRArithDialect

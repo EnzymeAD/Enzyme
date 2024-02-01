@@ -35,27 +35,7 @@ struct InlineAsmActivityInterface
     auto str = asmOp.getAsmString();
     return str.contains("cpuid") || str.contains("exit");
   }
-  bool isArgInactive(Operation *op, mlir::Value) const {
-    return isInactive(op);
-  }
-};
-
-struct LoadOpInterface
-    : public AutoDiffOpInterface::ExternalModel<LoadOpInterface, LLVM::LoadOp> {
-  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
-                                         MGradientUtils *gutils) const {
-    auto loadOp = cast<LLVM::LoadOp>(op);
-    if (!gutils->isConstantValue(loadOp)) {
-      Type shadowType =
-          cast<AutoDiffTypeInterface>(loadOp.getType()).getShadowType();
-      mlir::Value res = builder.create<LLVM::LoadOp>(
-          loadOp.getLoc(), shadowType,
-          gutils->invertPointerM(loadOp.getAddr(), builder));
-      gutils->setDiffe(loadOp, res, builder);
-    }
-    gutils->eraseIfUnused(op);
-    return success();
-  }
+  bool isArgInactive(Operation *op, size_t) const { return isInactive(op); }
 };
 
 struct StoreOpInterface
@@ -115,7 +95,6 @@ public:
 void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, LLVM::LLVMDialect *) {
-    LLVM::LoadOp::attachInterface<LoadOpInterface>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterface>(*context);
     LLVM::AllocaOp::attachInterface<AllocaOpInterface>(*context);
     LLVM::LLVMPointerType::attachInterface<PointerTypeInterface>(*context);

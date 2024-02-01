@@ -39,6 +39,11 @@ void branchingForwardHandler(Operation *op, OpBuilder &builder,
 void regionTerminatorForwardHandler(Operation *op, OpBuilder &builder,
                                     MGradientUtils *gutils);
 
+// Implements forward-mode differentiation of read-only (including read-none)
+// operations which do not perform computatoin
+LogicalResult readOnlyIdentityForwardHandler(Operation *op, OpBuilder &builder,
+                                             MGradientUtils *gutils);
+
 // Implements the forward autodiff interface for operations whose derivatives
 // are can be inferred by analyzing their control flow and differentiating the
 // nested operations.
@@ -80,6 +85,19 @@ public:
     return success();
   }
 };
+
+// Implements the forward autodiff interface for operations which are
+// read only and identity like (aka not computing sin of mem read).
+template <typename OpTy>
+class AutoDiffUsingReadOnlyIdentity
+    : public AutoDiffOpInterface::ExternalModel<
+          AutoDiffUsingReadOnlyIdentity<OpTy>, OpTy> {
+public:
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    return readOnlyIdentityForwardHandler(op, builder, gutils);
+  }
+};
 } // namespace detail
 
 // Registers AutoDiffUsingControlFlow for the given op.
@@ -97,6 +115,12 @@ void registerAutoDiffUsingBranchInterface(MLIRContext &context) {
 template <typename OpTy>
 void registerAutoDiffUsingRegionTerminatorInterface(MLIRContext &context) {
   OpTy::template attachInterface<detail::AutoDiffUsingRegionTerminator<OpTy>>(
+      context);
+}
+// Registers AutoDiffUsingRegionTerminator for the given op.
+template <typename OpTy>
+void registerAutoDiffUsingReadOnlyIdentityInterface(MLIRContext &context) {
+  OpTy::template attachInterface<detail::AutoDiffUsingReadOnlyIdentity<OpTy>>(
       context);
 }
 

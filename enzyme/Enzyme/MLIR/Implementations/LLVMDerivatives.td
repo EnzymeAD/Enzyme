@@ -15,3 +15,11 @@ def : InactiveOp<"LLVM", "MemsetOp">;
 def : InactiveOp<"LLVM", "UndefOp">;
 def : InactiveOp<"LLVM", "ConstantOp">;
 def : InactiveOp<"LLVM", "UnreachableOp">;
+
+
+def : ReadOnlyIdentityOp<"LLVM", "LoadOp", [0]>;
+def : ReadOnlyIdentityOp<"LLVM", "AddrSpaceCastOp", [0]>;
+def : ReadOnlyIdentityOp<"LLVM", "BitcastOp", [0]>;
+def : ReadOnlyIdentityOp<"LLVM", "GEPOp", [0]>;
+def : ReadOnlyIdentityOp<"LLVM", "PtrToIntOp", [0]>;
+def : ReadOnlyIdentityOp<"LLVM", "IntToPtrOp", [0]>;
