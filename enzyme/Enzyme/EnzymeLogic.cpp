@@ -4815,18 +4815,25 @@ static Value *floatValTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
                                FloatRepresentation from,
                                FloatRepresentation to) {
   Type *toTy = to.getType(B.getContext());
+  if (auto vty = dyn_cast<VectorType>(v->getType()))
+    toTy = VectorType::get(toTy, vty->getElementCount());
   return B.CreateFPTrunc(v, toTy, "enzyme_trunc");
 }
 
 static Value *floatValExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
                              FloatRepresentation from, FloatRepresentation to) {
   Type *fromTy = from.getBuiltinType(B.getContext());
+  if (auto vty = dyn_cast<VectorType>(v->getType()))
+    fromTy = VectorType::get(fromTy, vty->getElementCount());
   return B.CreateFPExt(v, fromTy, "enzyme_exp");
 }
 
 static Value *floatMemTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
                                FloatRepresentation from,
                                FloatRepresentation to) {
+  if (isa<VectorType>(v->getType()))
+    report_fatal_error("vector operations not allowed in mem trunc mode");
+
   Type *fromTy = from.getBuiltinType(B.getContext());
   Type *toTy = to.getType(B.getContext());
   if (!tmpBlock)
@@ -4839,6 +4846,9 @@ static Value *floatMemTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
 
 static Value *floatMemExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
                              FloatRepresentation from, FloatRepresentation to) {
+  if (isa<VectorType>(v->getType()))
+    report_fatal_error("vector operations not allowed in mem trunc mode");
+
   Type *fromTy = from.getBuiltinType(B.getContext());
   if (!tmpBlock)
     tmpBlock = B.CreateAlloca(fromTy);
