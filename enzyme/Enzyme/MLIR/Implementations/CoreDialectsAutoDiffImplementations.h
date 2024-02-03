@@ -41,8 +41,9 @@ void regionTerminatorForwardHandler(Operation *op, OpBuilder &builder,
 
 // Implements forward-mode differentiation of read-only (including read-none)
 // operations which do not perform computatoin
-LogicalResult readOnlyIdentityForwardHandler(Operation *op, OpBuilder &builder,
-                                             MGradientUtils *gutils);
+LogicalResult memoryIdentityForwardHandler(Operation *op, OpBuilder &builder,
+                                           MGradientUtils *gutils,
+                                           ArrayRef<int> storedVals);
 
 // Implements the forward autodiff interface for operations whose derivatives
 // are can be inferred by analyzing their control flow and differentiating the
@@ -88,14 +89,16 @@ public:
 
 // Implements the forward autodiff interface for operations which are
 // read only and identity like (aka not computing sin of mem read).
-template <typename OpTy>
-class AutoDiffUsingReadOnlyIdentity
+template <typename OpTy, int... storedvals>
+class AutoDiffUsingMemoryIdentity
     : public AutoDiffOpInterface::ExternalModel<
-          AutoDiffUsingReadOnlyIdentity<OpTy>, OpTy> {
+          AutoDiffUsingMemoryIdentity<OpTy, storedvals...>, OpTy> {
 public:
   LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
                                          MGradientUtils *gutils) const {
-    return readOnlyIdentityForwardHandler(op, builder, gutils);
+
+    return memoryIdentityForwardHandler(
+        op, builder, gutils, std::initializer_list<int>{storedvals...});
   }
 };
 } // namespace detail
@@ -118,10 +121,10 @@ void registerAutoDiffUsingRegionTerminatorInterface(MLIRContext &context) {
       context);
 }
 // Registers AutoDiffUsingRegionTerminator for the given op.
-template <typename OpTy>
-void registerAutoDiffUsingReadOnlyIdentityInterface(MLIRContext &context) {
-  OpTy::template attachInterface<detail::AutoDiffUsingReadOnlyIdentity<OpTy>>(
-      context);
+template <typename OpTy, int... storedvals>
+void registerAutoDiffUsingMemoryIdentityInterface(MLIRContext &context) {
+  OpTy::template attachInterface<
+      detail::AutoDiffUsingMemoryIdentity<OpTy, storedvals...>>(context);
 }
 
 // Interface registration hooks for individual upstream dialects.

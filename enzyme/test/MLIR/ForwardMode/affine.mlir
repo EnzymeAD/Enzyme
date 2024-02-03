@@ -61,14 +61,13 @@ module {
   // CHECK: return %[[v1]] : f64
 
   func.func @if_then(%x : f64, %c : i1) -> f64 {
-    %c0 = arith.constant 0 : index
     %c2 = arith.constant 2.000000e+00 : f64
     %c10 = arith.constant 10.000000e+00 : f64
     %mem = memref.alloc() : memref<1xf64>
-    memref.store %c2, %mem[%c0] : memref<1xf64>
+    affine.store %c2, %mem[0] : memref<1xf64>
     scf.if %c {
       %mul = arith.mulf %x, %x : f64
-      memref.store %mul, %mem[%c0] : memref<1xf64>
+      affine.store %mul, %mem[0] : memref<1xf64>
     }
     %r = affine.load %mem[0] : memref<1xf64>
     %res = arith.mulf %c2, %r : f64
@@ -80,25 +79,24 @@ module {
   }
   // CHECK: @fwddiffeif_then
   // CHECK: (%[[arg0:.+]]: f64, %[[arg1:.+]]: f64, %[[arg2:.+]]: i1) -> f64 {
-  // CHECK: %[[c0:.+]] = arith.constant 0 : index
-  // CHECK: %[[cst:.+]] = arith.constant 0.000000e+00 : f64
-  // CHECK: %[[cst_0:.+]] = arith.constant 2.000000e+00 : f64
-  // CHECK: %[[cst_1:.+]] = arith.constant 1.000000e+01 : f64
+  // CHECK-DAG: %[[cst2:.+]] = arith.constant 2.000000e+00 : f64
+  // CHECK-DAG: %[[cst1:.+]] = arith.constant 1.000000e+01 : f64
   // CHECK: %[[alloc:.+]] = memref.alloc() : memref<1xf64>
   // CHECK: %[[alloc_2:.+]] = memref.alloc() : memref<1xf64>
-  // CHECK: memref.store %[[cst]], %[[alloc]][%[[c0]]] : memref<1xf64>
-  // CHECK: memref.store %[[cst_0]], %[[alloc_2]][%[[c0]]] : memref<1xf64>
+  // CHECK-DAG: %[[cst0:.+]] = arith.constant 0.000000e+00 : f64
+  // CHECK: affine.store %[[cst0]], %[[alloc]][0] : memref<1xf64>
+  // CHECK: affine.store %[[cst2]], %[[alloc_2]][0] : memref<1xf64>
   // CHECK: scf.if %[[arg2]] {
   // CHECK:   %[[v4:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
   // CHECK:   %[[v5:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
   // CHECK:   %[[v6:.+]] = arith.addf %[[v4]], %[[v5]] : f64
   // CHECK:   %[[v7:.+]] = arith.mulf %[[arg0]], %[[arg0]] : f64
-  // CHECK:   memref.store %[[v6]], %[[alloc]][%[[c0]]] : memref<1xf64>
-  // CHECK:   memref.store %[[v7]], %[[alloc_2]][%[[c0]]] : memref<1xf64>
+  // CHECK:   affine.store %[[v6]], %[[alloc]][0] : memref<1xf64>
+  // CHECK:   affine.store %[[v7]], %[[alloc_2]][0] : memref<1xf64>
   // CHECK: }
   // CHECK: %[[v0:.+]] = affine.load %[[alloc]][0] : memref<1xf64>
   // CHECK: %[[v1:.+]] = affine.load %[[alloc_2]][0] : memref<1xf64>
-  // CHECK: %[[v2:.+]] = arith.mulf %[[v0]], %[[cst_0]] : f64
-  // CHECK: %[[v3:.+]] = arith.mulf %[[cst_0]], %[[v1]] : f64
+  // CHECK: %[[v2:.+]] = arith.mulf %[[v0]], %[[cst2]] : f64
+  // CHECK: %[[v3:.+]] = arith.mulf %[[cst2]], %[[v1]] : f64
   // CHECK: return %[[v2]] : f64
 }

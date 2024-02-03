@@ -101,9 +101,18 @@ void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
   return;
 }
 
-LogicalResult mlir::enzyme::detail::readOnlyIdentityForwardHandler(
-    Operation *orig, OpBuilder &builder, MGradientUtils *gutils) {
+static bool contains(ArrayRef<int> ar, int v) {
+  for (auto a : ar) {
+    if (a == v) {
+      return true;
+    }
+  }
+  return false;
+}
 
+LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
+    Operation *orig, OpBuilder &builder, MGradientUtils *gutils,
+    ArrayRef<int> storedVals) {
   auto iface = cast<ActivityOpInterface>(orig);
 
   SmallVector<Value> newOperands;
@@ -112,8 +121,25 @@ LogicalResult mlir::enzyme::detail::readOnlyIdentityForwardHandler(
     if (iface.isArgInactive(operand.getOperandNumber())) {
       newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
     } else {
-      if (gutils->isConstantValue(operand.get()))
-        return failure();
+      if (gutils->isConstantValue(operand.get())) {
+        if (contains(storedVals, operand.getOperandNumber())) {
+          // TODO only do if mutable
+          Type retTy = operand.get()
+                           .getType()
+                           .cast<AutoDiffTypeInterface>()
+                           .getShadowType();
+          auto toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
+              builder, operand.get().getLoc());
+          newOperands.push_back(toret);
+          continue;
+        } else {
+          llvm::errs() << "Unsupported constant arg to memory identity forward "
+                          "handler(opidx="
+                       << operand.getOperandNumber() << ", op=" << operand.get()
+                       << ")\n";
+          return failure();
+        }
+      }
       newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
     }
   }
@@ -127,7 +153,6 @@ LogicalResult mlir::enzyme::detail::readOnlyIdentityForwardHandler(
        llvm::zip(orig->getResults(), shadow->getResults())) {
     gutils->setDiffe(oval, sval, builder);
   }
-  llvm::errs() << " shadow load: " << *shadow << "\n";
 
   return success();
 }

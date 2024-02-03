@@ -1,5 +1,6 @@
 include "Common.td"
 
+def : MemoryIdentityOp<"memref", "StoreOp", [1], [0]>;
 def : ReadOnlyIdentityOp<"memref", "LoadOp", [0]>;
 def : ReadOnlyIdentityOp<"memref", "CastOp", [0]>;
 def : ReadOnlyIdentityOp<"memref", "CollapseShapeOp", [0]>;

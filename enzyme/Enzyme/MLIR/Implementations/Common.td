@@ -9,11 +9,14 @@ class ControlFlowOp<string dialect_, string opName_, string impl_> {
   string impl = impl_;
 }
 
-class ReadOnlyIdentityOp<string dialect_, string opName_, list<int> diffargs_> {
+class MemoryIdentityOp<string dialect_, string opName_, list<int> ptrargs_, list<int> storedargs_ = []> {
   string dialect = dialect_;
   string opName = opName_;
-  list<int> diffargs = diffargs_;
+  list<int> ptrargs = ptrargs_;
+  list<int> storedargs = storedargs_;
 }
+
+class ReadOnlyIdentityOp<string dialect_, string opName_, list<int> ptrargs_> : MemoryIdentityOp<dialect_, opName_, ptrargs_>;
 
 class BranchOp<string dialect_, string opName_> {
   string dialect = dialect_;

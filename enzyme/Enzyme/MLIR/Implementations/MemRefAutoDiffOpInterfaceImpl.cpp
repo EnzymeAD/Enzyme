@@ -30,25 +30,6 @@ using namespace mlir::enzyme;
 namespace {
 #include "Implementations/MemRefDerivatives.inc"
 
-struct StoreOpInterface
-    : public AutoDiffOpInterface::ExternalModel<StoreOpInterface,
-                                                memref::StoreOp> {
-  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
-                                         MGradientUtils *gutils) const {
-    auto storeOp = cast<memref::StoreOp>(op);
-    if (!gutils->isConstantValue(storeOp.getMemref())) {
-      SmallVector<mlir::Value> inds;
-      for (auto ind : storeOp.getIndices())
-        inds.push_back(gutils->getNewFromOriginal(ind));
-      builder.create<memref::StoreOp>(
-          storeOp.getLoc(), gutils->invertPointerM(storeOp.getValue(), builder),
-          gutils->invertPointerM(storeOp.getMemref(), builder), inds);
-    }
-    gutils->eraseIfUnused(op);
-    return success();
-  }
-};
-
 struct LoadOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<LoadOpInterfaceReverse,
                                                        memref::LoadOp> {
@@ -278,7 +259,6 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, memref::MemRefDialect *) {
     registerInterfaces(context);
-    memref::StoreOp::attachInterface<StoreOpInterface>(*context);
     memref::AllocOp::attachInterface<AllocOpInterface>(*context);
     MemRefType::attachInterface<MemRefTypeInterface>(*context);
 
