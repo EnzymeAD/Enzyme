@@ -1934,6 +1934,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     const auto &regtpatterns =
         recordKeeper.getAllDerivedDefinitions("RegionTerminatorOp");
+    
+    const auto &allocpatterns =
+        recordKeeper.getAllDerivedDefinitions("AllocationOp");
 
     os << "void registerInterfaces(MLIRContext* context) {\n";
     for (Record *pattern : patterns) {
@@ -1979,6 +1982,12 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  registerAutoDiffUsingRegionTerminatorInterface<" << dialect
+         << "::" << opName << ">(*context);\n";
+    }
+    for (Record *pattern : allocpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "  registerAutoDiffUsingAllocationInterface<" << dialect
          << "::" << opName << ">(*context);\n";
     }
     os << "}\n";

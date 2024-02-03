@@ -133,7 +133,7 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
           newOperands.push_back(toret);
           continue;
         } else {
-          llvm::errs() << "Unsupported constant arg to memory identity forward "
+          orig->emitWarnning() << "Unsupported constant arg to memory identity forward "
                           "handler(opidx="
                        << operand.getOperandNumber() << ", op=" << operand.get()
                        << ")\n";
@@ -156,6 +156,31 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
 
   return success();
 }
+
+LogicalResult mlir::enzyme::detail::allocationForwardHandler(
+    Operation *orig, OpBuilder &builder, MGradientUtils *gutils,
+    bool zero) {
+  
+  Operation *primal = gutils->getNewFromOriginal(orig);
+  Operation *shadow = builder.clone(*primal);
+
+  Value shadowRes = shadow->getResult(0);
+
+    // Fill with zeros
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(
+            shadowRes.getType().getElementType())) {
+      Value zero = iface.createNullValue(builder, orig->getLoc());
+      builder.create<linalg::FillOp>(orig->getLoc(), zero, shadow);
+    } else {
+      orig->emitWarning() << "memref.alloc element type does not implement "
+                           "AutoDiffTypeInterface";
+      return failure();
+    }
+    gutils->mapShadowValue(orig->getResult(0), shadowRes, builder);
+    gutils->eraseIfUnused(op);
+    return success();
+}
+
 
 void mlir::enzyme::detail::regionTerminatorForwardHandler(
     Operation *origTerminator, OpBuilder &builder, MGradientUtils *gutils) {

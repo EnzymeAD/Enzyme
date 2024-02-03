@@ -12,3 +12,5 @@ def : ReadOnlyIdentityOp<"memref", "ViewOp", [0]>;
 def : ReadOnlyIdentityOp<"memref", "SubViewOp", [0]>;
 
 def : InactiveOp<"memref", "DimOp">;
+def : AllocationOp<"memref", "AllocOp">;
+def : AllocationOp<"memref", "AllocaOp">;

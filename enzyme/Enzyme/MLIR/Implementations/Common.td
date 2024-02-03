@@ -3,6 +3,11 @@ class InactiveOp<string dialect_, string opName_> {
   string opName = opName_;
 }
 
+class AllocationOp<string dialect_, string opName_> {
+  string dialect = dialect_;
+  string opName = opName_;
+}
+
 class ControlFlowOp<string dialect_, string opName_, string impl_> {
   string dialect = dialect_;
   string opName = opName_;

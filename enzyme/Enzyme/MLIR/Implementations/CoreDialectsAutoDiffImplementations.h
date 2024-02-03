@@ -40,10 +40,14 @@ void regionTerminatorForwardHandler(Operation *op, OpBuilder &builder,
                                     MGradientUtils *gutils);
 
 // Implements forward-mode differentiation of read-only (including read-none)
-// operations which do not perform computatoin
+// operations which do not perform computation
 LogicalResult memoryIdentityForwardHandler(Operation *op, OpBuilder &builder,
                                            MGradientUtils *gutils,
                                            ArrayRef<int> storedVals);
+
+// Implements shadow initialization differentiation of allocation
+LogicalResult allocationForwardHandler(Operation *op, OpBuilder &builder,
+                                           MGradientUtils *gutils, bool zero);
 
 // Implements the forward autodiff interface for operations whose derivatives
 // are can be inferred by analyzing their control flow and differentiating the
@@ -101,6 +105,44 @@ public:
         op, builder, gutils, std::initializer_list<int>{storedvals...});
   }
 };
+
+// Implements the forward autodiff interface for operations which are
+// allocation like
+template <typename OpTy>
+class AutoDiffUsingAllocationFwd
+    : public AutoDiffOpInterface::ExternalModel<
+          AutoDiffUsingAllocationFwd<OpTy>, OpTy> {
+public:
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+
+    return allocationForwardHandler(
+        op, builder, gutils, /*zero*/false);
+  }
+};
+
+// Implements the reverse autodiff interface for operations which are
+// allocation like
+template <typename OpTy>
+class AutoDiffUsingAllocationRev
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          AutoDiffUsingAllocationRev<OpTy>, OpTy> {
+public:
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                MGradientUtilsReverse *gutils,
+                                SmallVector<Value> caches) const {}
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
+    return allocationForwardHandler(
+        op, builder, gutils, /*zero*/true);
+  }
+};
 } // namespace detail
 
 // Registers AutoDiffUsingControlFlow for the given op.
@@ -120,11 +162,19 @@ void registerAutoDiffUsingRegionTerminatorInterface(MLIRContext &context) {
   OpTy::template attachInterface<detail::AutoDiffUsingRegionTerminator<OpTy>>(
       context);
 }
-// Registers AutoDiffUsingRegionTerminator for the given op.
+// Registers AutoDiffUsingMemoryIdentity for the given op.
 template <typename OpTy, int... storedvals>
 void registerAutoDiffUsingMemoryIdentityInterface(MLIRContext &context) {
   OpTy::template attachInterface<
       detail::AutoDiffUsingMemoryIdentity<OpTy, storedvals...>>(context);
+}
+// Registers AutoDiffUsingAllocation for the given op.
+template <typename OpTy>
+void registerAutoDiffUsingAllocationInterface(MLIRContext &context) {
+  OpTy::template attachInterface<
+      detail::AutoDiffUsingAllocationFwd<OpTy>>(context);
+  OpTy::template attachInterface<
+      detail::AutoDiffUsingAllocationRev<OpTy>>(context);
 }
 
 // Interface registration hooks for individual upstream dialects.
