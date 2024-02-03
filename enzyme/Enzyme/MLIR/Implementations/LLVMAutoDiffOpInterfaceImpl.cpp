@@ -24,9 +24,7 @@ using namespace mlir::enzyme;
 
 namespace {
 #include "Implementations/LLVMDerivatives.inc"
-} // namespace
 
-namespace {
 struct InlineAsmActivityInterface
     : public ActivityOpInterface::ExternalModel<InlineAsmActivityInterface,
                                                 LLVM::InlineAsmOp> {
@@ -36,37 +34,6 @@ struct InlineAsmActivityInterface
     return str.contains("cpuid") || str.contains("exit");
   }
   bool isArgInactive(Operation *op, size_t) const { return isInactive(op); }
-};
-
-struct StoreOpInterface
-    : public AutoDiffOpInterface::ExternalModel<StoreOpInterface,
-                                                LLVM::StoreOp> {
-  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
-                                         MGradientUtils *gutils) const {
-    auto storeOp = cast<LLVM::StoreOp>(op);
-    if (!gutils->isConstantValue(storeOp.getAddr())) {
-      builder.create<LLVM::StoreOp>(
-          storeOp.getLoc(), gutils->invertPointerM(storeOp.getValue(), builder),
-          gutils->invertPointerM(storeOp.getAddr(), builder));
-    }
-    gutils->eraseIfUnused(op);
-    return success();
-  }
-};
-
-struct AllocaOpInterface
-    : public AutoDiffOpInterface::ExternalModel<AllocaOpInterface,
-                                                LLVM::AllocaOp> {
-  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
-                                         MGradientUtils *gutils) const {
-    auto allocOp = cast<LLVM::AllocaOp>(op);
-    if (!gutils->isConstantValue(allocOp)) {
-      Operation *nop = gutils->cloneWithNewOperands(builder, op);
-      gutils->setDiffe(allocOp, nop->getResult(0), builder);
-    }
-    gutils->eraseIfUnused(op);
-    return success();
-  }
 };
 
 class PointerTypeInterface
@@ -89,14 +56,18 @@ public:
   }
 
   bool requiresShadow(Type self) const { return true; }
+
+  LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
+                            Value val) const {
+    // TODO inspect val and memset corresponding size
+    return failure();
+  }
 };
 } // namespace
 
 void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, LLVM::LLVMDialect *) {
-    LLVM::StoreOp::attachInterface<StoreOpInterface>(*context);
-    LLVM::AllocaOp::attachInterface<AllocaOpInterface>(*context);
     LLVM::LLVMPointerType::attachInterface<PointerTypeInterface>(*context);
     registerInterfaces(context);
   });

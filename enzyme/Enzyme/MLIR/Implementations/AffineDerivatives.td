@@ -24,3 +24,5 @@ def : ControlFlowOp<"affine", "AffineIfOp", [{
 def : RegionTerminatorOp<"affine", "AffineYieldOp">;
 def : ReadOnlyIdentityOp<"affine", "AffineLoadOp", [0]>;
 def : ReadOnlyIdentityOp<"affine", "AffineVectorLoadOp", [0]>;
+def : MemoryIdentityOp<"affine", "AffineStoreOp", [1], [0]>;
+def : MemoryIdentityOp<"affine", "AffineVectorStoreOp", [1], [0]>;

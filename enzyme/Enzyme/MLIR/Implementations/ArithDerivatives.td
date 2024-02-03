@@ -1,17 +1,5 @@
 include "Common.td"
 
-class ArithInst<string m> : Inst<m, "arith">;
-
-def AddF : ArithInst<"arith::AddFOp">;
-def SubF : ArithInst<"arith::SubFOp">;
-def NegF : ArithInst<"arith::NegFOp">;
-def MulF : ArithInst<"arith::MulFOp">;
-def DivF : ArithInst<"arith::DivFOp">;
-def RemF : ArithInst<"arith::RemFOp">;
-
-def CheckedMulF : ArithInst<"arith::MulFOp">;
-def CheckedDivF : ArithInst<"arith::DivFOp">;
-
 def : MLIRDerivative<"arith", "AddFOp", (Op $x, $y),
                     [
                       (DiffeRet),

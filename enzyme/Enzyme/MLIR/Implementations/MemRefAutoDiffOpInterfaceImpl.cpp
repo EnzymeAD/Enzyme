@@ -17,37 +17,19 @@
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
 
-// TODO: We need a way to zero out a memref (which linalg.fill does), but
-// ideally we wouldn't depend on the linalg dialect.
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
+
+// TODO: We need a way to zero out a memref (which linalg.fill does), but
+// ideally we wouldn't depend on the linalg dialect.
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
 
 namespace {
 #include "Implementations/MemRefDerivatives.inc"
-
-struct StoreOpInterface
-    : public AutoDiffOpInterface::ExternalModel<StoreOpInterface,
-                                                memref::StoreOp> {
-  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
-                                         MGradientUtils *gutils) const {
-    auto storeOp = cast<memref::StoreOp>(op);
-    if (!gutils->isConstantValue(storeOp.getMemref())) {
-      SmallVector<mlir::Value> inds;
-      for (auto ind : storeOp.getIndices())
-        inds.push_back(gutils->getNewFromOriginal(ind));
-      builder.create<memref::StoreOp>(
-          storeOp.getLoc(), gutils->invertPointerM(storeOp.getValue(), builder),
-          gutils->invertPointerM(storeOp.getMemref(), builder), inds);
-    }
-    gutils->eraseIfUnused(op);
-    return success();
-  }
-};
 
 struct LoadOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<LoadOpInterfaceReverse,
@@ -177,38 +159,6 @@ struct StoreOpInterfaceReverse
   }
 };
 
-struct AllocOpInterfaceReverse
-    : public ReverseAutoDiffOpInterface::ExternalModel<AllocOpInterfaceReverse,
-                                                       memref::AllocOp> {
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
-                                MGradientUtilsReverse *gutils,
-                                SmallVector<Value> caches) const {}
-
-  SmallVector<Value> cacheValues(Operation *op,
-                                 MGradientUtilsReverse *gutils) const {
-    return SmallVector<Value>();
-  }
-
-  void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
-    auto allocOp = cast<memref::AllocOp>(op);
-    auto newAllocOp = cast<memref::AllocOp>(gutils->getNewFromOriginal(op));
-
-    Value shadow = builder.create<memref::AllocOp>(
-        op->getLoc(), newAllocOp.getType(), newAllocOp.getDynamicSizes());
-    // Fill with zeros
-    if (auto iface = dyn_cast<AutoDiffTypeInterface>(
-            allocOp.getType().getElementType())) {
-      Value zero = iface.createNullValue(builder, op->getLoc());
-      builder.create<linalg::FillOp>(op->getLoc(), zero, shadow);
-    } else {
-      op->emitWarning() << "memref.alloc element type does not implement "
-                           "AutoDiffTypeInterface";
-    }
-    gutils->mapShadowValue(allocOp, shadow, builder);
-  }
-};
-
 struct SubViewOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<
           SubViewOpInterfaceReverse, memref::SubViewOp> {
@@ -236,21 +186,6 @@ struct SubViewOpInterfaceReverse
   }
 };
 
-struct AllocOpInterface
-    : public AutoDiffOpInterface::ExternalModel<AllocOpInterface,
-                                                memref::AllocOp> {
-  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
-                                         MGradientUtils *gutils) const {
-    auto allocOp = cast<memref::AllocOp>(op);
-    if (!gutils->isConstantValue(allocOp)) {
-      Operation *nop = gutils->cloneWithNewOperands(builder, op);
-      gutils->setDiffe(allocOp, nop->getResult(0), builder);
-    }
-    gutils->eraseIfUnused(op);
-    return success();
-  }
-};
-
 class MemRefTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<MemRefTypeInterface,
                                                   MemRefType> {
@@ -271,6 +206,20 @@ public:
   }
 
   bool requiresShadow(Type self) const { return true; }
+
+  LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
+                            Value val) const {
+    auto MT = cast<MemRefType>(self);
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(MT.getElementType())) {
+      if (!iface.requiresShadow()) {
+        Value zero = iface.createNullValue(builder, loc);
+        builder.create<linalg::FillOp>(loc, zero, val);
+      }
+    } else {
+      return failure();
+    }
+    return success();
+  }
 };
 } // namespace
 
@@ -278,13 +227,10 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, memref::MemRefDialect *) {
     registerInterfaces(context);
-    memref::StoreOp::attachInterface<StoreOpInterface>(*context);
-    memref::AllocOp::attachInterface<AllocOpInterface>(*context);
     MemRefType::attachInterface<MemRefTypeInterface>(*context);
 
     memref::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
-    memref::AllocOp::attachInterface<AllocOpInterfaceReverse>(*context);
     memref::SubViewOp::attachInterface<SubViewOpInterfaceReverse>(*context);
   });
 }

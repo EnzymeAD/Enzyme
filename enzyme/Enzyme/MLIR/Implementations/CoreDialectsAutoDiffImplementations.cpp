@@ -101,9 +101,18 @@ void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
   return;
 }
 
-LogicalResult mlir::enzyme::detail::readOnlyIdentityForwardHandler(
-    Operation *orig, OpBuilder &builder, MGradientUtils *gutils) {
+static bool contains(ArrayRef<int> ar, int v) {
+  for (auto a : ar) {
+    if (a == v) {
+      return true;
+    }
+  }
+  return false;
+}
 
+LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
+    Operation *orig, OpBuilder &builder, MGradientUtils *gutils,
+    ArrayRef<int> storedVals) {
   auto iface = cast<ActivityOpInterface>(orig);
 
   SmallVector<Value> newOperands;
@@ -112,8 +121,27 @@ LogicalResult mlir::enzyme::detail::readOnlyIdentityForwardHandler(
     if (iface.isArgInactive(operand.getOperandNumber())) {
       newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
     } else {
-      if (gutils->isConstantValue(operand.get()))
+      if (gutils->isConstantValue(operand.get())) {
+
+        if (contains(storedVals, operand.getOperandNumber())) {
+          if (auto iface =
+                  dyn_cast<AutoDiffTypeInterface>(operand.get().getType())) {
+            if (!iface.requiresShadow()) {
+              // TODO only do if mutable
+              Type retTy = iface.getShadowType();
+              auto toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
+                  builder, operand.get().getLoc());
+              newOperands.push_back(toret);
+              continue;
+            }
+          }
+        }
+        orig->emitWarning()
+            << "Unsupported constant arg to memory identity forward "
+               "handler(opidx="
+            << operand.getOperandNumber() << ", op=" << operand.get() << ")\n";
         return failure();
+      }
       newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
     }
   }
@@ -127,8 +155,31 @@ LogicalResult mlir::enzyme::detail::readOnlyIdentityForwardHandler(
        llvm::zip(orig->getResults(), shadow->getResults())) {
     gutils->setDiffe(oval, sval, builder);
   }
-  llvm::errs() << " shadow load: " << *shadow << "\n";
 
+  return success();
+}
+
+LogicalResult mlir::enzyme::detail::allocationForwardHandler(
+    Operation *orig, OpBuilder &builder, MGradientUtils *gutils, bool zero) {
+
+  Operation *primal = gutils->getNewFromOriginal(orig);
+  Operation *shadow = builder.clone(*primal);
+
+  Value shadowRes = shadow->getResult(0);
+
+  gutils->setDiffe(orig->getResult(0), shadowRes, builder);
+  gutils->eraseIfUnused(orig);
+
+  if (zero) {
+    // Fill with zeros
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(shadowRes.getType())) {
+      return iface.zeroInPlace(builder, orig->getLoc(), shadowRes);
+    } else {
+      orig->emitWarning() << "memref.alloc element type does not implement "
+                             "AutoDiffTypeInterface";
+      return failure();
+    }
+  }
   return success();
 }
 
