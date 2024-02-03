@@ -58,3 +58,21 @@ class Inst<string mnemonic, string dialect_>  : Operation</*primal*/1, /*shadow*
 
 def Op {
 }
+
+class ArithInst<string m> : Inst<m, "arith">;
+class MathInst<string m> : Inst<m, "math">;
+
+def AddF : ArithInst<"arith::AddFOp">;
+def SubF : ArithInst<"arith::SubFOp">;
+def NegF : ArithInst<"arith::NegFOp">;
+def MulF : ArithInst<"arith::MulFOp">;
+def DivF : ArithInst<"arith::DivFOp">;
+def RemF : ArithInst<"arith::RemFOp">;
+
+def CheckedMulF : ArithInst<"arith::MulFOp">;
+def CheckedDivF : ArithInst<"arith::DivFOp">;
+
+def CosF : MathInst<"math::CosOp">;
+def SinF : MathInst<"math::SinOp">;
+def ExpF : MathInst<"math::ExpOp">;
+def SqrtF : MathInst<"math::SqrtOp">;

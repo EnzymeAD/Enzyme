@@ -1,5 +1,6 @@
 include "Common.td"
 
+def : MemoryIdentityOp<"LLVM", "StoreOp", [1], [0]>;
 def : InactiveOp<"LLVM", "SIToFPOp">;
 def : InactiveOp<"LLVM", "UIToFPOp">;
 def : InactiveOp<"LLVM", "FPToSIOp">;
@@ -23,3 +24,5 @@ def : ReadOnlyIdentityOp<"LLVM", "BitcastOp", [0]>;
 def : ReadOnlyIdentityOp<"LLVM", "GEPOp", [0]>;
 def : ReadOnlyIdentityOp<"LLVM", "PtrToIntOp", [0]>;
 def : ReadOnlyIdentityOp<"LLVM", "IntToPtrOp", [0]>;
+
+def : AllocationOp<"LLVM", "AllocaOp">;

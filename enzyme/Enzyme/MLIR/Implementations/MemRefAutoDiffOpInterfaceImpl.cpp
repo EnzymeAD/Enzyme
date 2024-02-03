@@ -17,12 +17,13 @@
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
 
-// TODO: We need a way to zero out a memref (which linalg.fill does), but
-// ideally we wouldn't depend on the linalg dialect.
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
+
+// TODO: We need a way to zero out a memref (which linalg.fill does), but
+// ideally we wouldn't depend on the linalg dialect.
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -205,6 +206,20 @@ public:
   }
 
   bool requiresShadow(Type self) const { return true; }
+
+  LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
+                            Value val) const {
+    auto MT = cast<MemRefType>(self);
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(MT.getElementType())) {
+      if (!iface.requiresShadow()) {
+        Value zero = iface.createNullValue(builder, loc);
+        builder.create<linalg::FillOp>(loc, zero, val);
+      }
+    } else {
+      return failure();
+    }
+    return success();
+  }
 };
 } // namespace
 

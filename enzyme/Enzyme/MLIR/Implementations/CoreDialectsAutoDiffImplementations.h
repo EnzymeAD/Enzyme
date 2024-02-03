@@ -22,6 +22,7 @@ class OpBuilder;
 
 namespace enzyme {
 class MGradientUtils;
+class MGradientUtilsReverse;
 
 namespace detail {
 // Non-template implementation of
@@ -47,7 +48,7 @@ LogicalResult memoryIdentityForwardHandler(Operation *op, OpBuilder &builder,
 
 // Implements shadow initialization differentiation of allocation
 LogicalResult allocationForwardHandler(Operation *op, OpBuilder &builder,
-                                           MGradientUtils *gutils, bool zero);
+                                       MGradientUtils *gutils, bool zero);
 
 // Implements the forward autodiff interface for operations whose derivatives
 // are can be inferred by analyzing their control flow and differentiating the
@@ -109,15 +110,13 @@ public:
 // Implements the forward autodiff interface for operations which are
 // allocation like
 template <typename OpTy>
-class AutoDiffUsingAllocationFwd
-    : public AutoDiffOpInterface::ExternalModel<
-          AutoDiffUsingAllocationFwd<OpTy>, OpTy> {
+class AutoDiffUsingAllocationFwd : public AutoDiffOpInterface::ExternalModel<
+                                       AutoDiffUsingAllocationFwd<OpTy>, OpTy> {
 public:
   LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
                                          MGradientUtils *gutils) const {
 
-    return allocationForwardHandler(
-        op, builder, gutils, /*zero*/false);
+    return allocationForwardHandler(op, builder, gutils, /*zero*/ false);
   }
 };
 
@@ -139,8 +138,8 @@ public:
 
   void createShadowValues(Operation *op, OpBuilder &builder,
                           MGradientUtilsReverse *gutils) const {
-    return allocationForwardHandler(
-        op, builder, gutils, /*zero*/true);
+    (void)allocationForwardHandler(op, builder, (MGradientUtils *)gutils,
+                                   /*zero*/ true);
   }
 };
 } // namespace detail
@@ -171,10 +170,10 @@ void registerAutoDiffUsingMemoryIdentityInterface(MLIRContext &context) {
 // Registers AutoDiffUsingAllocation for the given op.
 template <typename OpTy>
 void registerAutoDiffUsingAllocationInterface(MLIRContext &context) {
-  OpTy::template attachInterface<
-      detail::AutoDiffUsingAllocationFwd<OpTy>>(context);
-  OpTy::template attachInterface<
-      detail::AutoDiffUsingAllocationRev<OpTy>>(context);
+  OpTy::template attachInterface<detail::AutoDiffUsingAllocationFwd<OpTy>>(
+      context);
+  OpTy::template attachInterface<detail::AutoDiffUsingAllocationRev<OpTy>>(
+      context);
 }
 
 // Interface registration hooks for individual upstream dialects.
@@ -187,5 +186,6 @@ void registerMemRefDialectAutoDiffInterface(DialectRegistry &registry);
 void registerSCFDialectAutoDiffInterface(DialectRegistry &registry);
 void registerCFDialectAutoDiffInterface(DialectRegistry &registry);
 void registerLinalgDialectAutoDiffInterface(DialectRegistry &registry);
+void registerMathDialectAutoDiffInterface(DialectRegistry &registry);
 } // namespace enzyme
 } // namespace mlir

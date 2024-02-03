@@ -1398,8 +1398,11 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
               insert(dg, next);
 
             if (ptree->getArgNameStr(i).size()) {
-              auto op =
-                  (origName + ".getOperand(" + Twine(next[0]) + ")").str();
+              std::string op;
+              if (intrinsic != MLIRDerivatives)
+                op = (origName + ".getOperand(" + Twine(next[0]) + ")").str();
+              else
+                op = (origName + "->getOperand(" + Twine(next[0]) + ")").str();
               if (prev.size() > 0) {
                 op = "gutils->extractMeta(Builder2, " + op +
                      ", ArrayRef<unsigned>({";
@@ -1934,7 +1937,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     const auto &regtpatterns =
         recordKeeper.getAllDerivedDefinitions("RegionTerminatorOp");
-    
+
     const auto &allocpatterns =
         recordKeeper.getAllDerivedDefinitions("AllocationOp");
 

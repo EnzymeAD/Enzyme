@@ -45,6 +45,37 @@ public:
   }
 
   bool requiresShadow(Type self) const { return false; }
+  LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
+                            Value val) const {
+    return failure();
+  }
+};
+
+class TensorTypeInterface
+    : public AutoDiffTypeInterface::ExternalModel<TensorTypeInterface,
+                                                  TensorType> {
+public:
+  Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
+    auto tenType = self.cast<TensorType>();
+    auto attr = DenseElementsAttr::get(tenType, 0);
+    return builder.create<arith::ConstantOp>(loc, tenType, attr);
+  }
+
+  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
+                    Value b) const {
+    return builder.create<arith::AddFOp>(loc, a, b);
+  }
+
+  Type getShadowType(Type self, unsigned width) const {
+    assert(width == 1 && "unsupported width != 1");
+    return self;
+  }
+
+  bool requiresShadow(Type self) const { return false; }
+  LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
+                            Value val) const {
+    return failure();
+  }
 };
 
 template <typename T>
@@ -69,6 +100,10 @@ public:
   }
 
   bool requiresShadow(Type self) const { return false; }
+  LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
+                            Value val) const {
+    return failure();
+  }
 };
 } // namespace
 
@@ -81,5 +116,7 @@ void mlir::enzyme::registerBuiltinDialectAutoDiffInterface(
     Float64Type::attachInterface<FloatTypeInterface>(*context);
     IntegerType::attachInterface<IntegerTypeInterface<IntegerType>>(*context);
     IndexType::attachInterface<IntegerTypeInterface<IndexType>>(*context);
+    UnrankedTensorType::attachInterface<TensorTypeInterface>(*context);
+    RankedTensorType::attachInterface<TensorTypeInterface>(*context);
   });
 }
