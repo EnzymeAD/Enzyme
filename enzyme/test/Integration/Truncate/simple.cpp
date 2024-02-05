@@ -1,7 +1,7 @@
-// RUN: %clang             -DTRUNC_OP -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
-// RUN: %clang -DTRUNC_MEM -DTRUNC_OP -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
-// RUN: %clang             -DTRUNC_OP -O2 -ffast-math %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
-// RUN: %clang                        -O1 -g %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
+// RUN: %clang             -DTRUNC_OP -O0                %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
+// RUN: %clang -DTRUNC_MEM -DTRUNC_OP -O2                %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
+// RUN: %clang             -DTRUNC_OP -O2    -ffast-math %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
+// RUN: %clang                        -O1 -g             %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
 
 #include <math.h>
 
