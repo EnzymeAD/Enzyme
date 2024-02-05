@@ -5423,14 +5423,20 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         return shadow;
       }
 
-      llvm::errs() << *oldFunc->getParent() << "\n";
-      llvm::errs() << *oldFunc << "\n";
-      llvm::errs() << *newFunc << "\n";
-      llvm::errs() << *arg << "\n";
-      assert(0 && "cannot compute with global variable that doesn't have "
-                  "marked shadow global");
-      report_fatal_error("cannot compute with global variable that doesn't "
-                         "have marked shadow global");
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "cannot compute with global variable that doesn't have marked "
+            "shadow global\n";
+      ss << *arg << "\n";
+      if (CustomErrorHandler) {
+        return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
+                                         ErrorType::NoShadow, this, nullptr,
+                                         wrap(&BuilderM)));
+      } else {
+        EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
+                    ss.str());
+      }
+      return UndefValue::get(getShadowType(arg->getType()));
     }
     auto md = arg->getMetadata("enzyme_shadow");
     if (!isa<MDTuple>(md)) {
@@ -5499,6 +5505,26 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return shadow;
   } else if (auto arg = dyn_cast<ConstantExpr>(oval)) {
     IRBuilder<> bb(inversionAllocs);
+    if (arg->getOpcode() == Instruction::Add) {
+      if (isa<ConstantInt>(arg->getOperand(0))) {
+        auto rule = [&bb, &arg](Value *ip) {
+          Constant *invops[2] = {arg->getOperand(0), cast<Constant>(ip)};
+          return arg->getWithOperands(invops);
+        };
+
+        auto ip = invertPointerM(arg->getOperand(1), bb, nullShadow);
+        return applyChainRule(arg->getType(), bb, rule, ip);
+      }
+      if (isa<ConstantInt>(arg->getOperand(1))) {
+        auto rule = [&bb, &arg](Value *ip) {
+          Constant *invops[2] = {cast<Constant>(ip), arg->getOperand(1)};
+          return arg->getWithOperands(invops);
+        };
+
+        auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
+        return applyChainRule(arg->getType(), bb, rule, ip);
+      }
+    }
     auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
 
     if (arg->isCast()) {
@@ -9298,6 +9324,13 @@ bool GradientUtils::needsCacheWholeAllocation(
     found = knownRecomputeHeuristic.find(cur);
     if (found == knownRecomputeHeuristic.end())
       continue;
+
+    // If caching a julia base object, this is fine as
+    // GC will deal with any issues with.
+    if (auto PT = dyn_cast<PointerType>(cur->getType()))
+      if (PT->getAddressSpace() == 10)
+        if (EnzymeJuliaAddrLoad)
+          continue;
 
     // If caching this user, it cannot be a gep/cast of original
     if (!found->second) {

@@ -6,11 +6,11 @@ define i1 @f(double %x, double %y) {
   ret i1 %res
 }
 
-declare i1 (double, double)* @__enzyme_truncate(...)
+declare i1 (double, double)* @__enzyme_truncate_func(...)
 
 define i1 @tester(double %x, double %y) {
 entry:
-  %ptr = call i1 (double, double)* (...) @__enzyme_truncate(i1 (double, double)* @f, i64 64, i64 32)
+  %ptr = call i1 (double, double)* (...) @__enzyme_truncate_func(i1 (double, double)* @f, i64 64, i64 32)
   %res = call i1 %ptr(double %x, double %y)
   ret i1 %res
 }

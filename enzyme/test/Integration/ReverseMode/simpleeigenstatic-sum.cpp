@@ -8,7 +8,7 @@
 // RUN: %clang++ -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
 
 #include <eigen3/Eigen/Dense>
-#include "test_utils.h"
+#include "../test_utils.h"
 
 using Eigen::MatrixXd;
 

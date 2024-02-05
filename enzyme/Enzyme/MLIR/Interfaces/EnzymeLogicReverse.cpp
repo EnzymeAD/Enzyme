@@ -222,11 +222,12 @@ void MEnzymeLogic::handlePredecessors(
   } else {
     SmallVector<Block *> blocks;
     SmallVector<APInt> indices;
-    SmallVector<ValueRange> arguments;
+    SmallVector<SmallVector<Value>> arguments;
     SmallVector<Value> defaultArguments;
-    Block *defaultBlock;
-    int i = 1;
-    for (Block *predecessor : oBB->getPredecessors()) {
+    Block *defaultBlock = nullptr;
+    for (auto pair : llvm::enumerate(oBB->getPredecessors())) {
+      auto predecessor = pair.value();
+      auto idx = pair.index();
       Block *predecessorRevMode =
           gutils->mapReverseModeBlocks.lookupOrNull(predecessor);
 
@@ -250,10 +251,10 @@ void MEnzymeLogic::handlePredecessors(
           }
         }
       }
-      if (predecessor != *(oBB->getPredecessors().begin())) {
+      if (idx != 0) {
         blocks.push_back(predecessorRevMode);
-        indices.push_back(APInt(32, i++));
-        arguments.push_back(operands);
+        indices.push_back(APInt(32, idx - 1));
+        arguments.emplace_back(std::move(operands));
       } else {
         defaultBlock = predecessorRevMode;
         defaultArguments = operands;
@@ -281,9 +282,12 @@ void MEnzymeLogic::handlePredecessors(
       Value flag =
           revBuilder.create<enzyme::PopOp>(loc, gutils->getIndexType(), cache);
 
+      SmallVector<ValueRange> argumentRanges;
+      for (const auto &a : arguments)
+        argumentRanges.emplace_back(a);
       revBuilder.create<cf::SwitchOp>(
           loc, flag, defaultBlock, defaultArguments, ArrayRef<APInt>(indices),
-          ArrayRef<Block *>(blocks), ArrayRef<ValueRange>(arguments));
+          ArrayRef<Block *>(blocks), argumentRanges);
 
       Value origin = newBB->addArgument(gutils->getIndexType(), loc);
 
@@ -356,7 +360,6 @@ void MEnzymeLogic::differentiate(
     Block *oBB = *it;
     Block *newBB = gutils->getNewFromOriginal(oBB);
     Block *reverseBB = gutils->mapReverseModeBlocks.lookupOrNull(oBB);
-
     mapInvertArguments(oBB, reverseBB, gutils);
     handleReturns(oBB, newBB, reverseBB, gutils, parentRegion);
     visitChildren(oBB, reverseBB, gutils);

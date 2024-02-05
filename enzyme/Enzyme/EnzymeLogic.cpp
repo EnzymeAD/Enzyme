@@ -3234,7 +3234,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
       for (size_t i = 1; i < size; i++) {
         if (!PNtypeT[{(int)i}].isFloat())
           continue;
-        PNtypeT[{(int)i}].checkedOrIn(PNtype, /*pointerIntSame*/ true, legal);
+        PNtype.checkedOrIn(PNtypeT[{(int)i}], /*pointerIntSame*/ true, legal);
         if (!legal) {
           break;
         }
@@ -3252,22 +3252,19 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
       }
     }
     if (!PNfloatType) {
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "Cannot deduce type of phi " << *orig << PNtypeT.str()
+         << " sz: " << size << "\n";
       if (CustomErrorHandler) {
-        std::string str;
-        raw_string_ostream ss(str);
-        ss << "Cannot deduce type of phi " << *orig;
         CustomErrorHandler(str.c_str(), wrap(orig), ErrorType::NoType,
                            &gutils->TR.analyzer, nullptr, wrap(&Builder));
         continue;
       } else {
-        llvm::errs() << *gutils->oldFunc->getParent() << "\n";
-        llvm::errs() << *gutils->oldFunc << "\n";
-        llvm::errs()
-            << " for orig " << *orig << " saw "
-            << gutils->TR.intType(size, orig, /*necessary*/ false).str()
-            << " - "
-            << "\n";
-        gutils->TR.intType(size, orig, /*necessary*/ true);
+        ss << "\n";
+        gutils->TR.dump(ss);
+        EmitFailure("CannotDeduceType", orig->getDebugLoc(), orig, ss.str());
+        continue;
       }
     }
 
@@ -4816,11 +4813,53 @@ Function *EnzymeLogic::CreateForwardDiff(
   return nf;
 }
 
+static Type *getTypeForWidth(LLVMContext &ctx, unsigned width) {
+  switch (width) {
+  default:
+    return llvm::Type::getIntNTy(ctx, width);
+  case 64:
+    return llvm::Type::getDoubleTy(ctx);
+  case 32:
+    return llvm::Type::getFloatTy(ctx);
+  case 16:
+    return llvm::Type::getHalfTy(ctx);
+  }
+}
+
+static Value *floatTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
+                            unsigned fromwidth, unsigned towidth) {
+  Type *fromTy = getTypeForWidth(B.getContext(), fromwidth);
+  Type *toTy = getTypeForWidth(B.getContext(), towidth);
+  if (!tmpBlock)
+    tmpBlock = B.CreateAlloca(fromTy);
+  B.CreateStore(
+      v, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(v->getType())));
+  return B.CreateLoad(
+      toTy, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(toTy)));
+}
+
+static Value *floatExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
+                          unsigned fromwidth, unsigned towidth) {
+  Type *fromTy = getTypeForWidth(B.getContext(), fromwidth);
+  if (!tmpBlock)
+    tmpBlock = B.CreateAlloca(fromTy);
+  auto c0 =
+      Constant::getNullValue(llvm::Type::getIntNTy(B.getContext(), fromwidth));
+  B.CreateStore(
+      c0, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(c0->getType())));
+  B.CreateStore(
+      v, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(v->getType())));
+  return B.CreateLoad(
+      fromTy, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(fromTy)));
+}
+
 class TruncateGenerator : public llvm::InstVisitor<TruncateGenerator> {
 private:
   ValueToValueMapTy &originalToNewFn;
   unsigned fromwidth;
   unsigned towidth;
+  Type *fromType;
+  Type *toType;
   Function *oldFunc;
   Function *newFunc;
   AllocaInst *tmpBlock;
@@ -4833,7 +4872,11 @@ public:
       : originalToNewFn(originalToNewFn), fromwidth(fromwidth),
         towidth(towidth), oldFunc(oldFunc), newFunc(newFunc), Logic(Logic) {
     IRBuilder<> B(&newFunc->getEntryBlock().front());
-    tmpBlock = B.CreateAlloca(getTypeForWidth(fromwidth));
+
+    fromType = getTypeForWidth(B.getContext(), fromwidth);
+    toType = getTypeForWidth(B.getContext(), towidth);
+
+    tmpBlock = B.CreateAlloca(fromType);
   }
 
   void visitInstruction(llvm::Instruction &inst) {
@@ -4851,42 +4894,16 @@ public:
     todo(inst);
   }
 
-  Type *getTypeForWidth(unsigned width) {
-    switch (width) {
-    default:
-      return llvm::Type::getIntNTy(oldFunc->getContext(), width);
-    case 64:
-      return llvm::Type::getDoubleTy(oldFunc->getContext());
-    case 32:
-      return llvm::Type::getFloatTy(oldFunc->getContext());
-    case 16:
-      return llvm::Type::getHalfTy(oldFunc->getContext());
-    }
-  }
+  Type *getFromType() { return fromType; }
 
-  Type *getFromType() { return getTypeForWidth(fromwidth); }
-
-  Type *getToType() { return getTypeForWidth(towidth); }
+  Type *getToType() { return toType; }
 
   Value *truncate(IRBuilder<> &B, Value *v) {
-    Type *nextType = getTypeForWidth(towidth);
-    B.CreateStore(
-        v, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(v->getType())));
-    return B.CreateLoad(
-        nextType,
-        B.CreatePointerCast(tmpBlock, PointerType::getUnqual(nextType)));
+    return floatTruncate(B, v, tmpBlock, fromwidth, towidth);
   }
 
   Value *expand(IRBuilder<> &B, Value *v) {
-    Type *origT = getFromType();
-    auto c0 = Constant::getNullValue(
-        llvm::Type::getIntNTy(oldFunc->getContext(), fromwidth));
-    B.CreateStore(c0, B.CreatePointerCast(
-                          tmpBlock, PointerType::getUnqual(c0->getType())));
-    B.CreateStore(
-        v, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(v->getType())));
-    return B.CreateLoad(
-        origT, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(origT)));
+    return floatExpand(B, v, tmpBlock, fromwidth, towidth);
   }
 
   void todo(llvm::Instruction &I) {
@@ -5183,7 +5200,7 @@ public:
 
   Value *GetShadow(RequestContext &ctx, Value *v) {
     if (auto F = dyn_cast<Function>(v))
-      return Logic.CreateTruncate(ctx, F, fromwidth, towidth);
+      return Logic.CreateTruncateFunc(ctx, F, fromwidth, towidth);
     llvm::errs() << " unknown get truncated func: " << *v << "\n";
     llvm_unreachable("unknown get truncated func");
     return v;
@@ -5206,10 +5223,52 @@ public:
   }
 };
 
-llvm::Function *EnzymeLogic::CreateTruncate(RequestContext context,
-                                            llvm::Function *totrunc,
-                                            unsigned fromwidth,
-                                            unsigned towidth) {
+bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
+                                      unsigned fromwidth, unsigned towidth,
+                                      bool isTruncate) {
+  assert(context.req && context.ip);
+
+  if (fromwidth == towidth) {
+    context.req->eraseFromParent();
+    return true;
+  }
+
+  if (fromwidth < towidth) {
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "Cannot truncate into a large width\n";
+    if (context.req) {
+      ss << " at context: " << *context.req;
+      EmitFailure("NoTruncate", context.req->getDebugLoc(), context.req,
+                  ss.str());
+      return false;
+    }
+    llvm_unreachable("failed to truncate value");
+  }
+
+  IRBuilderBase &B = *context.ip;
+  Type *fromTy = getTypeForWidth(B.getContext(), fromwidth);
+  Type *toTy = getTypeForWidth(B.getContext(), towidth);
+
+  Value *converted = nullptr;
+  if (isTruncate)
+    converted =
+        floatExpand(B, B.CreateFPTrunc(v, toTy), nullptr, fromwidth, towidth);
+  else
+    converted =
+        B.CreateFPExt(floatTruncate(B, v, nullptr, fromwidth, towidth), fromTy);
+  assert(converted);
+
+  context.req->replaceAllUsesWith(converted);
+  context.req->eraseFromParent();
+
+  return true;
+}
+
+llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
+                                                llvm::Function *totrunc,
+                                                unsigned fromwidth,
+                                                unsigned towidth) {
   if (fromwidth == towidth)
     return totrunc;
 
@@ -5850,6 +5909,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   }
 
   if (F->empty()) {
+    if (EnzymeAssumeUnknownNoFree) {
+      return F;
+    }
     if (EnzymeEmptyFnInactive) {
       return F;
     }
