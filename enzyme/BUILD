@@ -385,6 +385,22 @@ gentbl_cc_library(
 )
 
 gentbl(
+    name = "affine-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/AffineDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/AffineDerivatives.td",
+    td_srcs = [
+        "Enzyme/MLIR/Implementations/AffineDerivatives.td",
+        "Enzyme/MLIR/Implementations/Common.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+gentbl(
     name = "arith-derivatives",
     tbl_outs = [(
         "-gen-mlir-derivatives",
@@ -392,7 +408,91 @@ gentbl(
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/MLIR/Implementations/ArithDerivatives.td",
-    td_srcs = ["Enzyme/MLIR/Implementations/ArithDerivatives.td"],
+    td_srcs = ["Enzyme/MLIR/Implementations/ArithDerivatives.td", "Enzyme/MLIR/Implementations/Common.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+gentbl(
+    name = "llvm-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/LLVMDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/LLVMDerivatives.td",
+    td_srcs = ["Enzyme/MLIR/Implementations/LLVMDerivatives.td", "Enzyme/MLIR/Implementations/Common.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+gentbl(
+    name = "nvvm-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/NVVMDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/NVVMDerivatives.td",
+    td_srcs = ["Enzyme/MLIR/Implementations/NVVMDerivatives.td", "Enzyme/MLIR/Implementations/Common.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+gentbl(
+    name = "scf-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/SCFDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/SCFDerivatives.td",
+    td_srcs = ["Enzyme/MLIR/Implementations/SCFDerivatives.td", "Enzyme/MLIR/Implementations/Common.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+gentbl(
+    name = "cf-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/CFDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/CFDerivatives.td",
+    td_srcs = ["Enzyme/MLIR/Implementations/CFDerivatives.td", "Enzyme/MLIR/Implementations/Common.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+gentbl(
+    name = "memref-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/MemRefDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/MemRefDerivatives.td",
+    td_srcs = ["Enzyme/MLIR/Implementations/MemRefDerivatives.td", "Enzyme/MLIR/Implementations/Common.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+gentbl(
+    name = "math-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/MathDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/MathDerivatives.td",
+    td_srcs = ["Enzyme/MLIR/Implementations/MathDerivatives.td", "Enzyme/MLIR/Implementations/Common.td"],
     deps = [
         ":enzyme-tblgen",
     ],
@@ -419,7 +519,14 @@ cc_library(
     includes = ["Enzyme/MLIR", "Enzyme"],
     visibility = ["//visibility:public"],
     deps = [
+        ":affine-derivatives",
         ":arith-derivatives",
+        ":llvm-derivatives",
+        ":nvvm-derivatives",
+        ":scf-derivatives",
+        ":cf-derivatives",
+        ":memref-derivatives",
+        ":math-derivatives",
         ":EnzymeOpsIncGen",
         ":EnzymePassesIncGen",
 		":EnzymeTypesIncGen",

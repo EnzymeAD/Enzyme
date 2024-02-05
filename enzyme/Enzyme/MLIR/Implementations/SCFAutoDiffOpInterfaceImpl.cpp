@@ -19,83 +19,18 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/Types.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include <functional>
 
 using namespace mlir;
 using namespace mlir::enzyme;
 
 namespace {
-struct ForOpInterface
-    : public AutoDiffOpInterface::ExternalModel<ForOpInterface, scf::ForOp> {
-  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
-                                         MGradientUtils *gutils) const {
-    auto forOp = cast<scf::ForOp>(op);
-    auto nFor = cast<scf::ForOp>(gutils->getNewFromOriginal(op));
-    SmallVector<Type> nTypes;
-    for (auto r : forOp->getResults()) {
-      // TODO only if used
-      nTypes.push_back(r.getType());
-      if (!gutils->isConstantValue(r)) {
-        auto adTypeIface = r.getType().dyn_cast<AutoDiffTypeInterface>();
-        if (!adTypeIface)
-          return failure();
-        nTypes.push_back(adTypeIface.getShadowType());
-      }
-    }
-    SmallVector<Value> nArgs;
-    for (const auto &[initVal, iterArg] :
-         llvm::zip(forOp.getInitArgs(), forOp.getRegionIterArgs())) {
-      // TODO only if used
-      nArgs.push_back(gutils->getNewFromOriginal(initVal));
-      if (!gutils->isConstantValue(iterArg))
-        nArgs.push_back(gutils->invertPointerM(initVal, builder));
-    }
-    auto repFor = builder.create<scf::ForOp>(
-        forOp.getLoc(), gutils->getNewFromOriginal(forOp.getLowerBound()),
-        gutils->getNewFromOriginal(forOp.getUpperBound()),
-        gutils->getNewFromOriginal(forOp.getStep()), nArgs);
-    repFor.getRegion().takeBody(nFor.getRegion());
-
-    SmallVector<Value> reps;
-    size_t idx = 0;
-    for (Value r : forOp.getResults()) {
-      // TODO only if used
-      reps.push_back(repFor.getResult(idx));
-      idx++;
-      if (!gutils->isConstantValue(r)) {
-        auto inverted = gutils->invertedPointers.lookupOrNull(r);
-        assert(inverted);
-        gutils->invertedPointers.map(r, repFor.getResult(idx));
-        inverted.replaceAllUsesWith(repFor.getResult(idx));
-        gutils->erase(inverted.getDefiningOp());
-        idx++;
-      }
-    }
-    nFor.replaceAllUsesWith(reps);
-    gutils->erase(nFor);
-    for (Operation &o :
-         llvm::make_early_inc_range(forOp.getBody()->without_terminator())) {
-      if (failed(gutils->visitChild(&o)))
-        return failure();
-    }
-    Operation *oldYield = repFor.getBody()->getTerminator();
-    builder.setInsertionPointToEnd(repFor.getBody());
-    SmallVector<Value> nYields;
-    for (const auto &[result, yieldOperand] :
-         llvm::zip(forOp.getResults(),
-                   forOp.getBody()->getTerminator()->getOperands())) {
-      // TODO only if used
-      nYields.push_back(gutils->getNewFromOriginal(yieldOperand));
-      if (!gutils->isConstantValue(result))
-        nYields.push_back(gutils->invertPointerM(yieldOperand, builder));
-    }
-    Operation *newYield = builder.clone(*oldYield);
-    newYield->setOperands(nYields);
-    gutils->erase(oldYield);
-    return success();
-  }
-};
+#include "Implementations/SCFDerivatives.inc"
 
 struct ForOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<ForOpInterfaceReverse,
@@ -182,8 +117,7 @@ struct ForOpInterfaceReverse
 void mlir::enzyme::registerSCFDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, scf::SCFDialect *) {
-    scf::ForOp::attachInterface<ForOpInterface>(*context);
-
+    registerInterfaces(context);
     scf::ForOp::attachInterface<ForOpInterfaceReverse>(*context);
   });
 }

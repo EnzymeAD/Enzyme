@@ -43,6 +43,8 @@
 
 #include "mlir/Analysis/AliasAnalysis/LocalAliasAnalysis.h"
 
+#include "Interfaces/AutoDiffOpInterface.h"
+
 using namespace mlir;
 using namespace mlir::dataflow;
 using enzyme::AliasClassLattice;
@@ -508,6 +510,15 @@ public:
                       ForwardMemoryActivity *after) override {
     join(after, before);
     ChangeResult result = ChangeResult::NoChange;
+
+    // TODO If we know this is inactive by definition
+    // if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(op)) {
+    //   if (ifaceOp.isInactive()) {
+    //     propagateIfChanged(after, result);
+    //     return;
+    //   }
+    // }
+
     auto memory = dyn_cast<MemoryEffectOpInterface>(op);
     // If we can't reason about the memory effects, then conservatively assume
     // we can't deduce anything about activity via side-effects.
@@ -657,6 +668,14 @@ public:
 
   void visitOperation(Operation *op, const BackwardMemoryActivity &after,
                       BackwardMemoryActivity *before) override {
+
+    // TODO: If we know this is inactive by definition
+    // if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(op)) {
+    //   if (ifaceOp.isInactive()) {
+    //     return;
+    //   }
+    // }
+
     // Initialize the return activity of arguments.
     if (op->hasTrait<OpTrait::ReturnLike>() && op->getParentOp() == parentOp) {
       for (const auto &[arg, argActivity] :

@@ -1398,8 +1398,11 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
               insert(dg, next);
 
             if (ptree->getArgNameStr(i).size()) {
-              auto op =
-                  (origName + ".getOperand(" + Twine(next[0]) + ")").str();
+              std::string op;
+              if (intrinsic != MLIRDerivatives)
+                op = (origName + ".getOperand(" + Twine(next[0]) + ")").str();
+              else
+                op = (origName + "->getOperand(" + Twine(next[0]) + ")").str();
               if (prev.size() > 0) {
                 op = "gutils->extractMeta(Builder2, " + op +
                      ", ArrayRef<unsigned>({";
@@ -1875,6 +1878,69 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
   }
 
   if (intrinsic == MLIRDerivatives) {
+    const auto &actpatterns =
+        recordKeeper.getAllDerivedDefinitions("InactiveOp");
+    for (auto &pattern : actpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "struct " << opName << "Activity : \n";
+      os << "			public ActivityOpInterface::ExternalModel<"
+         << opName << "Activity, " << dialect << "::" << opName << "> {\n";
+      os << "  bool isInactive(mlir::Operation*) const { return true; }\n";
+      os << "  bool isArgInactive(mlir::Operation*, size_t) const { "
+            "return true; }\n";
+      os << "};\n";
+    }
+    const auto &cfpatterns =
+        recordKeeper.getAllDerivedDefinitions("ControlFlowOp");
+
+    const auto &mempatterns =
+        recordKeeper.getAllDerivedDefinitions("MemoryIdentityOp");
+
+    for (auto &pattern : cfpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      auto impl = pattern->getValueAsString("impl");
+      os << "struct " << opName << "CF : \n";
+      os << "			public "
+            "ControlFlowAutoDiffOpInterface::ExternalModel<"
+         << opName << "CF, " << dialect << "::" << opName << "> {\n";
+      os << impl << "\n";
+      os << "};\n";
+    }
+
+    for (auto &pattern : mempatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      auto diffargs = pattern->getValueAsListOfInts("ptrargs");
+      auto storedargs = pattern->getValueAsListOfInts("storedargs");
+      os << "struct " << opName << "MemActivity : \n";
+      os << "     public ActivityOpInterface::ExternalModel<" << opName
+         << "MemActivity, " << dialect << "::" << opName << "> {\n";
+      os << "  bool isInactive(mlir::Operation* op) const {\n";
+      os << "    for (size_t i=0, len=op->getNumOperands(); i<len; i++)\n";
+      os << "      if (!isArgInactive(op, i)) return false;\n";
+      os << "    return true;\n";
+      os << "  };\n";
+      os << "  bool isArgInactive(mlir::Operation*, size_t idx) const {\n";
+      for (auto diffarg : diffargs) {
+        os << "    if (idx == " << diffarg << ") return false;\n";
+      }
+      for (auto diffarg : storedargs) {
+        os << "    if (idx == " << diffarg << ") return false;\n";
+      }
+      os << "    return true;\n  }\n";
+      os << "};\n";
+    }
+
+    const auto &brpatterns = recordKeeper.getAllDerivedDefinitions("BranchOp");
+
+    const auto &regtpatterns =
+        recordKeeper.getAllDerivedDefinitions("RegionTerminatorOp");
+
+    const auto &allocpatterns =
+        recordKeeper.getAllDerivedDefinitions("AllocationOp");
+
     os << "void registerInterfaces(MLIRContext* context) {\n";
     for (Record *pattern : patterns) {
       auto opName = pattern->getValueAsString("opName");
@@ -1883,6 +1949,49 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << "FwdDerivative>(*context);\n";
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
          << "RevDerivative>(*context);\n";
+    }
+    for (Record *pattern : actpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
+         << "Activity>(*context);\n";
+    }
+    for (Record *pattern : cfpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
+         << "CF>(*context);\n";
+      os << "  registerAutoDiffUsingControlFlowInterface<" << dialect
+         << "::" << opName << ">(*context);\n";
+    }
+    for (Record *pattern : mempatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
+         << "MemActivity>(*context);\n";
+      os << "  registerAutoDiffUsingMemoryIdentityInterface<" << dialect
+         << "::" << opName;
+      for (auto storedarg : pattern->getValueAsListOfInts("storedargs"))
+        os << ", " << storedarg;
+      os << ">(*context);\n";
+    }
+    for (Record *pattern : brpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "  registerAutoDiffUsingBranchInterface<" << dialect
+         << "::" << opName << ">(*context);\n";
+    }
+    for (Record *pattern : regtpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "  registerAutoDiffUsingRegionTerminatorInterface<" << dialect
+         << "::" << opName << ">(*context);\n";
+    }
+    for (Record *pattern : allocpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "  registerAutoDiffUsingAllocationInterface<" << dialect
+         << "::" << opName << ">(*context);\n";
     }
     os << "}\n";
   }

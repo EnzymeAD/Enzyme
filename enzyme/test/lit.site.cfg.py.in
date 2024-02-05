@@ -82,7 +82,7 @@ if len("@ENZYME_BINARY_DIR@") == 0:
 
 oldPMOP = oldPM
 newPMOP = newPM
-if int(config.llvm_ver) >= 16:
+if int(config.llvm_ver) == 16:
   newPM += " -opaque-pointers=0"
   oldPM += " -opaque-pointers=0"
 

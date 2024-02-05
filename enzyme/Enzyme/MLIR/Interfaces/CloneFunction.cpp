@@ -4,7 +4,10 @@ using namespace mlir;
 using namespace mlir::enzyme;
 
 Type getShadowType(Type type, unsigned width) {
-  return type.cast<AutoDiffTypeInterface>().getShadowType(width);
+  if (auto iface = type.dyn_cast<AutoDiffTypeInterface>())
+    return iface.getShadowType(width);
+  llvm::errs() << " type does not have autodifftypeinterface: " << type << "\n";
+  exit(1);
 }
 
 mlir::FunctionType getFunctionTypeForClone(

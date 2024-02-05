@@ -1,4 +1,5 @@
 #include "Dialect/Ops.h"
+#include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
@@ -21,7 +22,7 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 
-void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
+void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
                       DIFFE_TYPE retType, ReturnType retVal) {
   auto inst = oBB->getTerminator();
 
@@ -33,39 +34,7 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
   nBuilder.setInsertionPointToEnd(nBB);
 
   if (auto binst = dyn_cast<BranchOpInterface>(inst)) {
-    // TODO generalize to cloneWithNewBlockArgs interface
-    SmallVector<Value> newVals;
-
-    SmallVector<int32_t> segSizes;
-    for (size_t i = 0, len = binst.getSuccessorOperands(0)
-                                 .getForwardedOperands()
-                                 .getBeginOperandIndex();
-         i < len; i++)
-      newVals.push_back(gutils->getNewFromOriginal(binst->getOperand(i)));
-    segSizes.push_back(newVals.size());
-    for (size_t i = 0; i < newInst->getNumSuccessors(); i++) {
-      size_t cur = newVals.size();
-      for (auto op : binst.getSuccessorOperands(i).getForwardedOperands()) {
-        newVals.push_back(gutils->getNewFromOriginal(op));
-        if (!gutils->isConstantValue(op)) {
-          newVals.push_back(gutils->invertPointerM(op, nBuilder));
-        }
-      }
-      cur = newVals.size() - cur;
-      segSizes.push_back(cur);
-    }
-
-    SmallVector<NamedAttribute> attrs(newInst->getAttrs());
-    for (auto &attr : attrs) {
-      if (attr.getName() == "operandSegmentSizes")
-        attr.setValue(nBuilder.getDenseI32ArrayAttr(segSizes));
-    }
-
-    nBB->push_back(
-        newInst->create(newInst->getLoc(), newInst->getName(), TypeRange(),
-                        newVals, attrs, OpaqueProperties(nullptr),
-                        newInst->getSuccessors(), newInst->getNumRegions()));
-    gutils->erase(newInst);
+    mlir::enzyme::detail::branchingForwardHandler(inst, nBuilder, gutils);
     return;
   }
 

@@ -15,10 +15,12 @@
 
 #include <functional>
 
+#include "GradientUtils.h"
+
 namespace mlir {
 namespace enzyme {
 
-class MGradientUtilsReverse {
+class MGradientUtilsReverse : public MDiffeGradientUtils {
 public:
   MGradientUtilsReverse(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                         FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
@@ -32,13 +34,6 @@ public:
                         DerivativeMode mode_, unsigned width,
                         SymbolTableCollection &symbolTable_);
 
-  // From CacheUtility
-  FunctionOpInterface newFunc;
-  FunctionOpInterface oldFunc;
-
-  MEnzymeLogic &Logic;
-  bool AtomicAdd;
-  DerivativeMode mode;
   IRMapping invertedPointersGlobal;
   IRMapping invertedPointersShadow;
   IRMapping shadowValues;
@@ -47,26 +42,8 @@ public:
   IRMapping mapReverseModeBlocks;
   DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments;
 
-  IRMapping originalToNewFn;
-  std::map<Operation *, Operation *> originalToNewFnOps;
-
-  MTypeAnalysis &TA;
-
-  unsigned width;
-  ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
-
   SymbolTableCollection &symbolTable;
 
-  mlir::Value getNewFromOriginal(const mlir::Value originst) const;
-  mlir::Block *getNewFromOriginal(mlir::Block *originst) const;
-  Operation *getNewFromOriginal(Operation *originst) const;
-
-  void erase(Operation *op) { op->erase(); }
-  void eraseIfUnused(Operation *op, bool erase = true, bool check = true) {
-    // TODO
-  }
-  bool isConstantValue(mlir::Value v) const;
-  bool isConstantInstruction(mlir::Operation *v) const;
   bool hasInvertPointer(mlir::Value v);
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &builder);
   mlir::Value diffe(mlir::Value v, OpBuilder &builder);
