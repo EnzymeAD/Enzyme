@@ -102,4 +102,4 @@ define void @nested(ptr %0, ptr %1, ptr %2) {
   ret void
 }
 
-; CHECK: 2.0
+; CHECK: 2.000000
