@@ -167,6 +167,7 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"yn", Intrinsic::not_intrinsic},
     {"tgamma", Intrinsic::not_intrinsic},
     {"lgamma", Intrinsic::not_intrinsic},
+    {"logabsgamma", Intrinsic::not_intrinsic},
     {"ceil", Intrinsic::ceil},
     {"__nv_ceil", Intrinsic::ceil},
     {"floor", Intrinsic::floor},

@@ -119,6 +119,21 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
          << ")->getCallingConv();\n";
       return;
     }
+    if (opName == "ArgAsRetTypesFunc" ||
+        Def->isSubClassOf("ArgAsRetTypesFunc")) {
+      os << curIndent << "auto " << FT << "_old = cast<CallInst>(&" << origName
+         << ")->getFunctionType();\n";
+      os << curIndent << "auto " << FT << " = FunctionType::get(" << FT
+         << "_old->params()[0], " << FT << "_old->params(), " << FT
+         << "_old->isVarArg());\n";
+      os << curIndent << "auto " << callval
+         << " = gutils->oldFunc->getParent()->getOrInsertFunction(";
+      os << Def->getValueInit("name")->getAsString();
+      os << ", " << FT << ", called->getAttributes()).getCallee();\n";
+      os << curIndent << "auto " << cconv << " = cast<CallInst>(&" << origName
+         << ")->getCallingConv();\n";
+      return;
+    }
   }
   assert(0 && "Unhandled function");
 }
@@ -954,6 +969,13 @@ void handleUse(
     foundDiffRet = true;
     return;
   }
+  if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
+    return;
+  }
+  if (!Def->isSubClassOf("Operation")) {
+    errs() << *resultTree << "\n";
+    errs() << opName << " " << *Def << "\n";
+  }
   assert(Def->isSubClassOf("Operation"));
   bool usesPrimal = Def->getValueAsBit("usesPrimal");
   bool usesShadow = Def->getValueAsBit("usesShadow");
@@ -1527,6 +1549,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                   }
                   return;
                 }
+                if (Def->isSubClassOf("InactiveArgSpec")) {
+                  return;
+                }
                 os << curIndent << INDENT << "{\n";
                 if (intrinsic == MLIRDerivatives)
                   os << curIndent << INDENT << INDENT << "mlir::Value itmp = ";
@@ -1762,6 +1787,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                 revres(argIdx, next, r);
                 i++;
               }
+              return;
+            }
+            if (Def->isSubClassOf("InactiveArgSpec")) {
               return;
             }
             const char *curIndent = "          ";
