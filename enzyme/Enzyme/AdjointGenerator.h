@@ -5695,11 +5695,29 @@ public:
       auto callval = call.getCalledOperand();
 
       if (gutils->isConstantValue(callval)) {
-        llvm::errs() << *gutils->newFunc->getParent() << "\n";
-        llvm::errs() << " orig: " << call << " callval: " << *callval << "\n";
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << *gutils->oldFunc << "\n";
+        ss << "in Mode: " << to_string(Mode) << "\n";
+        ss << " orig: " << call << " callval: " << *callval << "\n";
+        ss << " constant function being called, but active call instruction\n";
+        if (CustomErrorHandler) {
+          auto val = unwrap(CustomErrorHandler(ss.str().c_str(), wrap(&call),
+                                               ErrorType::NoDerivative, gutils,
+                                               nullptr, wrap(&Builder2)));
+          if (val)
+            newcalled = val;
+          else
+            newcalled =
+                UndefValue::get(gutils->getShadowType(callval->getType()));
+        } else {
+          EmitFailure("NoDerivative", call.getDebugLoc(), &call, ss.str());
+          newcalled =
+              UndefValue::get(gutils->getShadowType(callval->getType()));
+        }
+      } else {
+        newcalled = lookup(gutils->invertPointerM(callval, Builder2), Builder2);
       }
-      assert(!gutils->isConstantValue(callval));
-      newcalled = lookup(gutils->invertPointerM(callval, Builder2), Builder2);
 
       auto ft = call.getFunctionType();
 

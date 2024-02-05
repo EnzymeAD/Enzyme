@@ -1,4 +1,4 @@
-// RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O0 %s -S -emit-llvm -o - %loadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then ls && %clang -std=c11 -O0 %s -S -emit-llvm -o - %loadClangEnzyme | %lli - ; fi
 // RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme | %lli - ; fi
 // RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme | %lli - ; fi
 // RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme | %lli - ; fi
@@ -19,7 +19,7 @@
 #include <stdint.h>
 #include <math.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 __attribute__((noinline))
 uint64_t factorial(uint64_t x) {

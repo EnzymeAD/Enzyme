@@ -15,7 +15,7 @@ extern int omp_get_max_threads();
 #include <math.h>
 #include <assert.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 double __enzyme_autodiff(void*, ...);
 

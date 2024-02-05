@@ -168,12 +168,25 @@ class EnzymeFailure final : public llvm::DiagnosticInfoUnsupported {
 public:
   EnzymeFailure(const llvm::Twine &Msg, const llvm::DiagnosticLocation &Loc,
                 const llvm::Instruction *CodeRegion);
+  EnzymeFailure(const llvm::Twine &Msg, const llvm::DiagnosticLocation &Loc,
+                const llvm::Function *CodeRegion);
 };
 
 template <typename... Args>
 void EmitFailure(llvm::StringRef RemarkName,
                  const llvm::DiagnosticLocation &Loc,
                  const llvm::Instruction *CodeRegion, Args &...args) {
+  std::string *str = new std::string();
+  llvm::raw_string_ostream ss(*str);
+  (ss << ... << args);
+  CodeRegion->getContext().diagnose(
+      (EnzymeFailure("Enzyme: " + ss.str(), Loc, CodeRegion)));
+}
+
+template <typename... Args>
+void EmitFailure(llvm::StringRef RemarkName,
+                 const llvm::DiagnosticLocation &Loc,
+                 const llvm::Function *CodeRegion, Args &...args) {
   std::string *str = new std::string();
   llvm::raw_string_ostream ss(*str);
   (ss << ... << args);

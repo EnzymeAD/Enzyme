@@ -1,6 +1,6 @@
 // RUN: if [ %llvmver -ge 10 ]; then %clang -g -O0 %s -S -emit-llvm -o -  %loadClangEnzyme -Xclang -verify; fi
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 #include <stdio.h>
 

@@ -9,7 +9,7 @@
 
 //#include <math.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 #include <stdio.h>
 #include <stdlib.h>

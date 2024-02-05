@@ -15,6 +15,7 @@
 #include <llvm/TableGen/Record.h>
 
 enum ActionType {
+  MLIRDerivatives,
   CallDerivatives,
   InstDerivatives,
   BinopDerivatives,

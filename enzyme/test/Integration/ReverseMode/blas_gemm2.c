@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include "test_utils.h"
+#include "../test_utils.h"
 #include "../blas_inline.h"
 
 extern int enzyme_dup;

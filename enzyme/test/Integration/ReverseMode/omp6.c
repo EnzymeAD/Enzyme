@@ -13,7 +13,7 @@
 # include <stdlib.h>
 #include <math.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 __attribute__((noinline))
 void set(double *a, double x){
