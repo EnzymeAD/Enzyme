@@ -293,6 +293,47 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
       return false;
     }
 
+  if (shadow) {
+    if (auto IVI = dyn_cast<Instruction>(user))
+      if (isa<InsertValueInst>(IVI) || isa<InsertElementInst>(IVI)) {
+        if (IVI->getOperand(1) == val) {
+          SmallVector<const Instruction *, 1> todo;
+          todo.push_back(IVI);
+          SmallVector<std::pair<const Instruction *, const Instruction *>, 1>
+              done;
+          while (todo.size()) {
+            auto cur = todo.pop_back_val();
+            for (auto u : cur->users()) {
+              if (auto IVI2 = dyn_cast<InsertValueInst>(u)) {
+                todo.push_back(IVI2);
+                continue;
+              }
+              if (auto IVI2 = dyn_cast<InsertElementInst>(u)) {
+                todo.push_back(IVI2);
+                continue;
+              }
+              done.emplace_back(cast<Instruction>(u), cur);
+            }
+          }
+          for (auto &pair : done) {
+
+            bool direct = is_use_directly_needed_in_reverse(
+                gutils, pair.second, mode, pair.first, oldUnreachable,
+                QueryType::Shadow, recursiveUse);
+            if (direct) {
+
+              if (EnzymePrintDiffUse)
+                llvm::errs()
+                    << " Need (partial) direct " << to_string(qtype) << " of "
+                    << *val << " in reverse from insertelem " << *user
+                    << " via " << *pair.second << " in " << *pair.first << "\n";
+              return true;
+            }
+          }
+        }
+      }
+  }
+
   if (!shadow)
     if (auto IEI = dyn_cast<InsertElementInst>(user)) {
       // Only need the index in the reverse, so if the value is not
