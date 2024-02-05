@@ -44,6 +44,7 @@ config.substitutions.append(('%eopt', config.enzyme_obj_root + "/Enzyme/MLIR/enz
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
 config.substitutions.append(('%clang', config.llvm_tools_dir + "/clang"))
+config.substitutions.append(('%llc', config.llvm_tools_dir + "/llc"))
 config.substitutions.append(('%O0TBAA', "-O1 -Xclang -disable-llvm-passes"))
 
 oldPM = ((" --enable-new-pm=0" if int(config.llvm_ver) >= 13 else "")

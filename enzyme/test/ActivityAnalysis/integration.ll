@@ -1,5 +1,5 @@
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -S | llc -filetype=obj -o %t.o
-; RUN: %clang %t.o -o %t && %run ./ %t | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -S | %llc -filetype=obj -o output.o && %clang -no-pie output.o -o output && ./output | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -S | %llc -filetype=obj -o output.o && %clang -no-pie output.o -o output && ./output | FileCheck %s
 
 ; ModuleID = 'LLVMDialectModule'
 source_filename = "LLVMDialectModule"
@@ -101,3 +101,5 @@ define void @nested(ptr %0, ptr %1, ptr %2) {
 
   ret void
 }
+
+; CHECK: 2.0
