@@ -14,7 +14,6 @@
 
 #define BOOST_MATH_NO_LONG_DOUBLE_MATH_FUNCTIONS
 #define BOOST_NO_EXCEPTIONS
-#include <iostream>
 #include <boost/array.hpp>
 
 #include <boost/numeric/odeint.hpp>

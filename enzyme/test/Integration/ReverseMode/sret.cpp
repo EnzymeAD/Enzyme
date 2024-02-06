@@ -8,9 +8,6 @@
 // RUN: %clang++ -std=c++11 -fno-exceptions -ffast-math -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S
 
 #include "../test_utils.h"
-#include <iostream>
-#include <sstream>
-#include <utility>
 
 typedef struct {
     double df[3];
