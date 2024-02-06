@@ -4304,17 +4304,10 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     StringRef funcName = getFuncNameFromCall(&call);
 
     auto blasMetaData = extractBLAS(funcName);
-#if LLVM_VERSION_MAJOR >= 16
-    if (blasMetaData.has_value()) {
-      BlasInfo blas = blasMetaData.value();
+    if (blasMetaData) {
+      BlasInfo blas = *blasMetaData;
 #include "BlasTA.inc"
     }
-#else
-    if (blasMetaData.hasValue()) {
-      BlasInfo blas = blasMetaData.getValue();
-#include "BlasTA.inc"
-    }
-#endif
 
     // When compiling Enzyme against standard LLVM, and not Intel's
     // modified version of LLVM, the intrinsic `llvm.intel.subscript` is
