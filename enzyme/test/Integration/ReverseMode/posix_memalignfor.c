@@ -7,15 +7,9 @@
 // RUN: %clang -std=c11 -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
 // RUN: %clang -std=c11 -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-#include <assert.h>
-#include <stdlib.h>
-
 #include "../test_utils.h"
 
-int posix_memalign(void **memptr, size_t alignment, size_t size);
+int posix_memalign(void **memptr, unsigned long alignment, unsigned long size);
 
 float __enzyme_autodiff(void*, float, int);
 

@@ -7,11 +7,9 @@
 // RUN: %clang -std=c11 -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme --enzyme-inline=1 -S | %lli - 
 // RUN: %clang -std=c11 -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme --enzyme-inline=1 -S | %lli - 
 
-#include <stdint.h>
-#include <math.h>
-#include <stdio.h>
-
 #include "../test_utils.h"
+
+extern double      frexp ( double num, int* exp );
 
 double f(double x) {
   int exp;

@@ -32,7 +32,7 @@ void* augment_square_(const double* src, const double *d_src, double* dest, doub
     // intentionally incorrect for debugging
     *dest = 7.0;
     *d_dest = 11.0;
-    return NULL;
+    return (void*)0;
 }
 
 int gradient = 0;
