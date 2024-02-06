@@ -480,6 +480,18 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x),
+                  ["logabsgammaf"],
+                  [
+                  (
+                   ArrayRet (FMul (Call<(ArgAsRetTypesFunc<"digammaf">), [ReadNone,NoUnwind]> $x), (DiffeRet) ),
+                            (InactiveArg)
+                  )
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
                   ["sinpi", "sinpif", "sinpil", "cospi", "cospif", "cospil"],
                   [
                   (
