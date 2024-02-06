@@ -104,7 +104,7 @@ cl::opt<bool> EnzymeEnableRecursiveHypotheses(
 #include <unordered_map>
 
 // clang-format off
-const char *KnownInactiveFunctionsStartingWith[] = {
+static const char *KnownInactiveFunctionsStartingWith[] = {
     "f90io",
     "$ss5print",
     "_ZTv0_n24_NSoD", //"1Ev, 0Ev
@@ -113,11 +113,11 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZNSaIcEC1Ev",
 };
 
-const char *KnownInactiveFunctionsContains[] = {
+static const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_float", "__enzyme_double", "__enzyme_integer",
     "__enzyme_pointer"};
 
-const StringSet<> InactiveGlobals = {
+static const StringSet<> InactiveGlobals = {
     "small_typeof",
     "ompi_request_null",
     "ompi_mpi_double",
@@ -171,7 +171,7 @@ const llvm::StringMap<size_t> MPIInactiveCommAllocators = {
 
 // Instructions which themselves are inactive
 // the returned value, however, may still be active
-const StringSet<> KnownInactiveFunctionInsts = {
+static const StringSet<> KnownInactiveFunctionInsts = {
     "__dynamic_cast",
     "_ZSt18_Rb_tree_decrementPKSt18_Rb_tree_node_base",
     "_ZSt18_Rb_tree_incrementPKSt18_Rb_tree_node_base",
@@ -180,7 +180,7 @@ const StringSet<> KnownInactiveFunctionInsts = {
     "jl_ptr_to_array",
     "jl_ptr_to_array_1d"};
 
-const StringSet<> KnownInactiveFunctions = {
+static const StringSet<> KnownInactiveFunctions = {
     "mpfr_greater_p",
     "__nv_isnand",
     "__nv_isnanf",
@@ -293,7 +293,7 @@ const StringSet<> KnownInactiveFunctions = {
     "floorl"
 };
 
-const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
+static const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
 #if LLVM_VERSION_MAJOR >= 12
     Intrinsic::experimental_noalias_scope_decl,
 #endif
@@ -342,7 +342,7 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::is_constant,
     Intrinsic::memset};
 
-const char *DemangledKnownInactiveFunctionsStartingWith[] = {
+static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     // TODO this returns allocated memory and thus can be an active value
     // "std::allocator",
     "std::chrono::_V2::steady_clock::now",
