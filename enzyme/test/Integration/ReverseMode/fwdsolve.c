@@ -7,11 +7,6 @@
 // RUN: %clang -std=c11 -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
 // RUN: %clang -std=c11 -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-#include <assert.h>
-
 #include "../test_utils.h"
 
 
@@ -25,10 +20,10 @@ void forward_sub(int N, double* __restrict__ L, double * __restrict__ b, double 
        b must be a vector of the same leading dimension as L
     """
     */
-    for (size_t i=0; i<N; i++) {
+    for (unsigned long i=0; i<N; i++) {
         double tmp = b[i];
         if (i > 1)
-        for (size_t j=0; j<i-1; j++) {
+        for (unsigned long j=0; j<i-1; j++) {
             tmp -= L[i*N+j] * out[j];
         }
         out[i] = tmp;

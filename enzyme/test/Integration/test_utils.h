@@ -1,7 +1,22 @@
-#include <stdlib.h> 
-#include <stdio.h> 
-#include <stdbool.h>
-#include <math.h> 
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct _IO_FILE;
+extern struct _IO_FILE* stderr;
+extern int fprintf(struct _IO_FILE *, const char*, ...);
+extern int fflush(struct _IO_FILE *stream);
+extern int printf(const char*, ...);
+extern void abort();
+extern void free(void *);
+extern void* malloc(unsigned long);
+extern void *realloc( void *ptr, unsigned long new_size );
+extern void* memcpy( void* dest, const void* src, unsigned long count );
+extern void* memset( void* dest, int, unsigned long count );
+#ifdef __cplusplus
+}
+#endif
 
 extern
 #ifdef __cplusplus

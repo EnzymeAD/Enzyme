@@ -7,8 +7,6 @@
 // RUN: %clang -std=c11 -ffast-math -O2 %s -S -emit-llvm -o - -g | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
 // RUN: %clang -std=c11 -ffast-math -O3 %s -S -emit-llvm -o - -g | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
 
-//#include <math.h>
-
 #include "../test_utils.h"
 
 #define __builtin_autodiff __enzyme_autodiff

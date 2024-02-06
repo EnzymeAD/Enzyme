@@ -1,11 +1,11 @@
-// RUN: %eopt --enzyme %s | FileCheck %s
+// RUN: %eopt --enzyme %s -allow-unregistered-dialect | FileCheck %s
 
 module {
   func.func @inactive(%x : f64) -> f64 {
-    // We don't have an interface implementation for "func",
+    // We don't have an interface implementation for "foo",
     // but we can see it's inactive from its lack of operands
     // and results.
-    func.func private @foo()
+    "test.foo"() : () -> ()
     return %x : f64
   }
   func.func @diff(%x : f64, %dx : f64) -> f64 {
@@ -17,4 +17,4 @@ module {
 // Just check that we didn't trigger the error on there not being an interface
 // implementation.
 // CHECK-LABEL: func private @fwddiffeinactive
-// CHECK: func private @foo
+// CHECK: "test.foo"()
