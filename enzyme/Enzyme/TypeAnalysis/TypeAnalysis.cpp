@@ -3877,12 +3877,15 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     if (direction & DOWN) {
       auto opType0 = getAnalysis(I.getOperand(0))[{-1}];
       auto opType1 = getAnalysis(I.getOperand(1))[{-1}];
-      if (opType0 == BaseType::Integer || opType0 == BaseType::Pointer) {
-        updateAnalysis(I.getOperand(1), TypeTree(opType0).Only(-1, &I), &I);
+      if (opType0 == opType1 &&
+          (opType0 == BaseType::Integer || opType0 == BaseType::Pointer)) {
         updateAnalysis(&I, TypeTree(opType0).Only(-1, &I), &I);
-      } else if (opType1 == BaseType::Integer || opType1 == BaseType::Pointer) {
-        updateAnalysis(I.getOperand(0), TypeTree(opType1).Only(-1, &I), &I);
-        updateAnalysis(&I, TypeTree(opType1).Only(-1, &I), &I);
+      } else if (opType0 == BaseType::Integer &&
+                 opType1 == BaseType::Anything) {
+        updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1, &I), &I);
+      } else if (opType1 == BaseType::Integer &&
+                 opType0 == BaseType::Anything) {
+        updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1, &I), &I);
       }
     }
     return;
