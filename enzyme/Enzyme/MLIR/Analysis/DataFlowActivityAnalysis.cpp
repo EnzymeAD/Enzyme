@@ -34,6 +34,7 @@
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Analysis/DataFlowFramework.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 // TODO: Don't depend on specific dialects
@@ -856,7 +857,7 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
         });
       };
 
-      if (isa_and_present<LLVM::PoisonOp, LLVM::ZeroOp>(
+      if (isa_and_present<LLVM::PoisonOp, LLVM::ZeroOp, LLVM::AddressOfOp>(
               value.getDefiningOp())) {
         // Alias classes aren't computed for poison ops, but they are
         // definitionally constant.
@@ -867,6 +868,7 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
         // TODO: We're seeing a case where we load from calloc which is
         // defined to be zero.
         errs() << "ac for " << value << " was undefined\n";
+        return true;
       }
       // If this triggers, investigate why the alias classes weren't computed.
       // If they weren't computed legitimately, treat the value as
