@@ -5306,23 +5306,38 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       } else if (T->isVoidTy()) {
       } else if (auto ST = dyn_cast<StructType>(T)) {
         assert(ST->getNumElements() >= 1);
+        TypeTree TT;
+        auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+        size_t Offset = 0;
         for (size_t i = 1; i < ST->getNumElements(); ++i) {
-          assert(ST->getTypeAtIndex((unsigned)0) == ST->getTypeAtIndex(i));
+          auto T = ST->getTypeAtIndex(i);
+          ConcreteType CT(BaseType::Unknown);
+
+          Value *vec[2] = {
+              ConstantInt::get(Type::getInt64Ty(call.getContext()), 0),
+              ConstantInt::get(Type::getInt32Ty(call.getContext()), i)};
+          auto ud = UndefValue::get(PointerType::getUnqual(ST));
+          auto g2 = GetElementPtrInst::Create(ST, ud, vec);
+          APInt ai(DL.getIndexSizeInBits(0), 0);
+          g2->accumulateConstantOffset(DL, ai);
+          size_t ObjSize = ai.getZExtValue() - Offset;
+
+          if (T->isFloatingPointTy()) {
+            CT = T;
+          } else if (T->isIntegerTy()) {
+            CT = BaseType::Integer;
+          }
+          if (CT != BaseType::Unknown) {
+            TypeTree mid = TypeTree(CT).Only(-1, &call);
+            TT |= mid.ShiftIndices(DL, /*init offset*/ 0,
+                                   /*maxSize*/ ObjSize,
+                                   /*addOffset*/ Offset);
+          }
+          Offset = ai.getZExtValue();
         }
-        if (ST->getTypeAtIndex((unsigned)0)->isFloatingPointTy())
-          updateAnalysis(
-              &call,
-              TypeTree(ConcreteType(
-                           ST->getTypeAtIndex((unsigned)0)->getScalarType()))
-                  .Only(-1, &call),
-              &call);
-        else if (ST->getTypeAtIndex((unsigned)0)->isIntegerTy()) {
-          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
-                         &call);
-        } else {
-          llvm::errs() << *T << " - " << call << "\n";
-          llvm_unreachable("Unknown type for libm");
-        }
+        auto Size = DL.getTypeSizeInBits(ST);
+        TT.CanonicalizeInPlace(Size, DL);
+        updateAnalysis(&call, TT, &call);
       } else if (auto AT = dyn_cast<ArrayType>(T)) {
         assert(AT->getNumElements() >= 1);
         if (AT->getElementType()->isFloatingPointTy())
