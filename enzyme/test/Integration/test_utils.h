@@ -1,8 +1,10 @@
 
 
 #ifdef __cplusplus
-extern "C" {
-#endif
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#else
 struct _IO_FILE;
 extern struct _IO_FILE* stderr;
 extern int fprintf(struct _IO_FILE *, const char*, ...);
@@ -14,8 +16,6 @@ extern void* malloc(unsigned long);
 extern void *realloc( void *ptr, unsigned long new_size );
 extern void* memcpy( void* dest, const void* src, unsigned long count );
 extern void* memset( void* dest, int, unsigned long count );
-#ifdef __cplusplus
-}
 #endif
 
 extern
