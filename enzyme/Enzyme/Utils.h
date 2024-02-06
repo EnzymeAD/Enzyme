@@ -318,11 +318,14 @@ enum class ReturnType {
 
 /// Potential differentiable argument classifications
 enum class DIFFE_TYPE {
-  OUT_DIFF = 0,  // add differential to an output struct
-  DUP_ARG = 1,   // duplicate the argument and store differential inside
-  CONSTANT = 2,  // no differential
+  OUT_DIFF = 0, // add differential to an output struct. Only for scalar values
+                // in ReverseMode variants.
+  DUP_ARG = 1,  // duplicate the argument and store differential inside. For
+                // references or pointers in ReverseMode variants. For all types
+                // in ForwardMode variants.
+  CONSTANT = 2, // no differential. Usable everywhere.
   DUP_NONEED = 3 // duplicate this argument and store differential inside, but
-                 // don't need the forward
+                 // don't need the forward. For references or pointers.
 };
 
 enum class BATCH_TYPE {
