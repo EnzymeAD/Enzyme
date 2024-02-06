@@ -3353,6 +3353,29 @@ public:
             }
           }
         }
+        // If the type is known, but outside of the known range
+        // (but the memcpy size is a variable), attempt to use
+        // the first type out of range as the memcpy type.
+        if (size == 1 && !isa<ConstantInt>(new_size)) {
+          for (auto ptr : {orig_dst, orig_src}) {
+            vd = TR.query(ptr).Data0().ShiftIndices(DL, 0, -1, 0);
+            if (vd.isKnownPastPointer()) {
+              ConcreteType mv(BaseType::Unknown);
+              size_t minInt = 0xFFFFFFFF;
+              for (const auto &pair : vd.getMapping()) {
+                if (pair.first.size() != 1)
+                  continue;
+                if (minInt < (size_t)pair.first[0])
+                  continue;
+                minInt = pair.first[0];
+                mv = pair.second;
+              }
+              assert(mv != BaseType::Unknown);
+              vd.insert({0}, mv);
+              goto known;
+            }
+          }
+        }
         if (errorIfNoType)
           EmitWarning("CannotDeduceType", MTI, "failed to deduce type of copy ",
                       MTI);
@@ -3368,6 +3391,7 @@ public:
                              &TR.analyzer, nullptr, wrap(&BuilderZ));
         } else {
           ss << "\n";
+          ss << *gutils->oldFunc << "\n";
           TR.dump(ss);
           EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI, ss.str());
         }
@@ -4835,18 +4859,9 @@ public:
         }
       }
       Value *tape = nullptr;
-#if LLVM_VERSION_MAJOR >= 16
-      if (tapeIdx.has_value())
-#else
-      if (tapeIdx.hasValue())
-#endif
-      {
+      if (tapeIdx) {
 
-#if LLVM_VERSION_MAJOR >= 16
-        auto idx = tapeIdx.value();
-#else
-        auto idx = tapeIdx.getValue();
-#endif
+        auto idx = *tapeIdx;
         FunctionType *FT = subdata->fn->getFunctionType();
 
         tape = BuilderZ.CreatePHI(
@@ -5392,17 +5407,8 @@ public:
         if (!augmentcall->getType()->isVoidTy())
           augmentcall->setName(call.getName() + "_augmented");
 
-#if LLVM_VERSION_MAJOR >= 16
-        if (tapeIdx.has_value())
-#else
-        if (tapeIdx.hasValue())
-#endif
-        {
-#if LLVM_VERSION_MAJOR >= 16
-          auto tval = tapeIdx.value();
-#else
-          auto tval = tapeIdx.getValue();
-#endif
+        if (tapeIdx) {
+          auto tval = *tapeIdx;
           tape = (tval == -1) ? augmentcall
                               : BuilderZ.CreateExtractValue(
                                     augmentcall, {(unsigned)tval}, "subcache");
@@ -5421,11 +5427,7 @@ public:
           Value *dcall = nullptr;
           assert(returnIdx);
           assert(augmentcall);
-#if LLVM_VERSION_MAJOR >= 16
-          auto rval = returnIdx.value();
-#else
-          auto rval = returnIdx.getValue();
-#endif
+          auto rval = *returnIdx;
           dcall = (rval < 0) ? augmentcall
                              : BuilderZ.CreateExtractValue(augmentcall,
                                                            {(unsigned)rval});
@@ -5496,13 +5498,8 @@ public:
           // assert(!tape);
           // assert(subdata);
           if (!tape) {
-#if LLVM_VERSION_MAJOR >= 16
-            assert(tapeIdx.has_value());
-            auto tval = tapeIdx.value();
-#else
-            assert(tapeIdx.hasValue());
-            auto tval = tapeIdx.getValue();
-#endif
+            assert(tapeIdx);
+            auto tval = *tapeIdx;
             tape = BuilderZ.CreatePHI(
                 (tapeIdx == -1) ? FT->getReturnType()
                                 : cast<StructType>(FT->getReturnType())
@@ -5561,11 +5558,7 @@ public:
           if (Mode == DerivativeMode::ReverseModeCombined ||
               Mode == DerivativeMode::ReverseModePrimal) {
 
-#if LLVM_VERSION_MAJOR >= 16
-            auto drval = differetIdx.value();
-#else
-            auto drval = differetIdx.getValue();
-#endif
+            auto drval = *differetIdx;
             newip = (drval < 0)
                         ? augmentcall
                         : BuilderZ.CreateExtractValue(augmentcall,

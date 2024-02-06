@@ -119,6 +119,21 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
          << ")->getCallingConv();\n";
       return;
     }
+    if (opName == "ArgAsRetTypesFunc" ||
+        Def->isSubClassOf("ArgAsRetTypesFunc")) {
+      os << curIndent << "auto " << FT << "_old = cast<CallInst>(&" << origName
+         << ")->getFunctionType();\n";
+      os << curIndent << "auto " << FT << " = FunctionType::get(" << FT
+         << "_old->params()[0], " << FT << "_old->params(), " << FT
+         << "_old->isVarArg());\n";
+      os << curIndent << "auto " << callval
+         << " = gutils->oldFunc->getParent()->getOrInsertFunction(";
+      os << Def->getValueInit("name")->getAsString();
+      os << ", " << FT << ", called->getAttributes()).getCallee();\n";
+      os << curIndent << "auto " << cconv << " = cast<CallInst>(&" << origName
+         << ")->getCallingConv();\n";
+      return;
+    }
   }
   assert(0 && "Unhandled function");
 }
@@ -954,6 +969,13 @@ void handleUse(
     foundDiffRet = true;
     return;
   }
+  if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
+    return;
+  }
+  if (!Def->isSubClassOf("Operation")) {
+    errs() << *resultTree << "\n";
+    errs() << opName << " " << *Def << "\n";
+  }
   assert(Def->isSubClassOf("Operation"));
   bool usesPrimal = Def->getValueAsBit("usesPrimal");
   bool usesShadow = Def->getValueAsBit("usesShadow");
@@ -1527,6 +1549,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                   }
                   return;
                 }
+                if (Def->isSubClassOf("InactiveArgSpec")) {
+                  return;
+                }
                 os << curIndent << INDENT << "{\n";
                 if (intrinsic == MLIRDerivatives)
                   os << curIndent << INDENT << INDENT << "mlir::Value itmp = ";
@@ -1764,6 +1789,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
               }
               return;
             }
+            if (Def->isSubClassOf("InactiveArgSpec")) {
+              return;
+            }
             const char *curIndent = "          ";
             os << curIndent << "{\n";
             if (intrinsic == MLIRDerivatives)
@@ -1859,10 +1887,24 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     }
 
     if (intrinsic != MLIRDerivatives) {
+      os << "        auto found = gutils->invertedPointers.find(&(" << origName
+         << "));\n";
+      os << "        if (found != gutils->invertedPointers.end()) {\n";
+      os << "          PHINode* PN = cast<PHINode>(&*found->second);\n";
+      os << "          gutils->invertedPointers.erase(found);\n";
+      os << "          gutils->erase(PN);\n";
+      os << "        }\n";
       os << "        break;\n";
       os << "      }\n";
 
       os << "      case DerivativeMode::ReverseModePrimal:{\n";
+      os << "        auto found = gutils->invertedPointers.find(&(" << origName
+         << "));\n";
+      os << "        if (found != gutils->invertedPointers.end()) {\n";
+      os << "          PHINode* PN = cast<PHINode>(&*found->second);\n";
+      os << "          gutils->invertedPointers.erase(found);\n";
+      os << "          gutils->erase(PN);\n";
+      os << "        }\n";
       // TODO
       os << "        break;\n";
       os << "      }\n";

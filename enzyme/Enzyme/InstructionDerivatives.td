@@ -186,6 +186,12 @@ class PrependArgTypesFunc<string name_, list<string> pretys_> {
   list<string> pretys = pretys_;
 }
 
+// Set return to arg[0]
+// Same argument types
+class ArgAsRetTypesFunc<string name_> {
+  string name = name_;
+}
+
 // Specify that a given argument is inactive, aka not differentiable
 // By default this argument tells Enzyme that it must always be inactive
 // from the function semantics.
@@ -455,6 +461,30 @@ def : CallPattern<(Op $x),
                   (
                    ArrayRet (FMul (ConstantFP<"3.1415926535897962684626433"> $x), (FMul (ExtractValue<[1]> (Call<(SameFunc), [ReadNone,NoUnwind]> $x):$callset), (DiffeRet) ) ),
                             (FMul (ConstantFP<"3.1415926535897962684626433"> $x),  (FNeg (FMul (ExtractValue<[0]> $callset), (DiffeRet) ) ) )
+                  )
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["logabsgamma"],
+                  [
+                  (
+                   ArrayRet (FMul (Call<(ArgAsRetTypesFunc<"digamma">), [ReadNone,NoUnwind]> $x), (DiffeRet) ),
+                            (InactiveArg)
+                  )
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["logabsgammaf"],
+                  [
+                  (
+                   ArrayRet (FMul (Call<(ArgAsRetTypesFunc<"digammaf">), [ReadNone,NoUnwind]> $x), (DiffeRet) ),
+                            (InactiveArg)
                   )
                   ],
                   (ForwardFromSummedReverse),

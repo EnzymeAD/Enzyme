@@ -36,14 +36,12 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
     ArrayRef<DIFFE_TYPE> ArgDiffeTypes_, IRMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode, unsigned width, bool omp)
-    : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_), TA(TA_),
-      TR(TR_), omp(omp), blocksNotForAnalysis(),
+    : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_),
+      invertedPointers(invertedPointers_), originalToNewFn(originalToNewFn_),
+      originalToNewFnOps(originalToNewFnOps_), blocksNotForAnalysis(),
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
           blocksNotForAnalysis, constantvalues_, activevals_, ReturnActivity)),
-      width(width), ArgDiffeTypes(ArgDiffeTypes_),
-      originalToNewFn(originalToNewFn_),
-      originalToNewFnOps(originalToNewFnOps_),
-      invertedPointers(invertedPointers_) {
+      TA(TA_), TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_) {
 
   /*
   for (BasicBlock &BB : *oldFunc) {

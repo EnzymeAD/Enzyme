@@ -1,19 +1,13 @@
-// RUN: %clang -std=c11 -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - 
-// RUN: %clang -std=c11 -O1 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - 
-// RUN: %clang -std=c11 -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - 
-// RUN: %clang -std=c11 -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - 
-// RUN: %clang -std=c11 -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
-// RUN: %clang -std=c11 -O1 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
-// RUN: %clang -std=c11 -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
-// RUN: %clang -std=c11 -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-#include <assert.h>
+// RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O0 %loadClangEnzyme %s -S -emit-llvm -o - | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O1 %loadClangEnzyme %s -S -emit-llvm -o - | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O2 %loadClangEnzyme %s -S -emit-llvm -o - -mllvm -enzyme-loose-types | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O3 %loadClangEnzyme %s -S -emit-llvm -o - -mllvm -enzyme-loose-types | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O0 %loadClangEnzyme %s -S -emit-llvm -o - -mllvm -enzyme-inline=1 | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O1 %loadClangEnzyme %s -S -emit-llvm -o - -mllvm -enzyme-inline=1 | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O2 %loadClangEnzyme %s -S -emit-llvm -o - -mllvm -enzyme-inline=1 -mllvm -enzyme-loose-types | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O3 %loadClangEnzyme %s -S -emit-llvm -o - -mllvm -enzyme-inline=1 -mllvm -enzyme-loose-types | %lli - ; fi
 
 #include "../test_utils.h"
-
 
 float __enzyme_autodiff(void*, float, int);
 
