@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -S | %llc -filetype=obj -o output.o && %clang -no-pie output.o -o output && ./output | FileCheck %s
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -S | %llc -filetype=obj -o output.o && %clang -no-pie output.o -o output && ./output | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-activity-analysis -activity-analysis-func=f.preprocess -o /dev/null | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=f.preprocess-S | FileCheck %s
 
 ; ModuleID = 'LLVMDialectModule'
 source_filename = "LLVMDialectModule"
@@ -102,4 +102,32 @@ define void @nested(ptr %0, ptr %1, ptr %2) {
   ret void
 }
 
-; CHECK: 2.0
+; CHECK: ptr %0: icv:0
+; CHECK-NEXT: i64 %1: icv:1
+; CHECK-NEXT: ptr %2: icv:0
+
+; CHECK:   %buffer1 = call ptr @malloc(i64 %1): icv:0 ici:1
+; CHECK-NEXT:   %tmp = call ptr @malloc(i64 72): icv:1 ici:1
+; CHECK-NEXT:   %4 = ptrtoint ptr %tmp to i64: icv:1 ici:1
+; CHECK-NEXT:   %5 = and i64 %4, -64: icv:1 ici:1
+; CHECK-NEXT:   %6 = inttoptr i64 %5 to ptr: icv:1 ici:1
+; CHECK-NEXT:   %7 = load double, ptr %0, align 8: icv:0 ici:0
+; CHECK-NEXT:   %8 = fmul double %7, 4.000000e+00: icv:0 ici:0
+; CHECK-NEXT:   store double %8, ptr %6, align 8: icv:1 ici:1
+; CHECK-NEXT:   call void @free(ptr %tmp): icv:1 ici:1
+; CHECK-NEXT:   store double %8, ptr %buffer1, align 8: icv:1 ici:0
+; CHECK-NEXT:   %arg0 = alloca { ptr, ptr, i64 }, align 8: icv:0 ici:1
+; CHECK-NEXT:   %arg0_aligned = getelementptr inbounds { ptr, ptr, i64 }, ptr %arg0, i64 0, i32 1: icv:0 ici:1
+; CHECK-NEXT:   store ptr %0, ptr %arg0_aligned, align 8: icv:1 ici:0
+; CHECK-NEXT:   %arg1 = alloca { ptr, ptr, i64, [1 x i64], [1 x i64] }, align 8: icv:0 ici:1
+; CHECK-NEXT:   %arg1_aligned = getelementptr inbounds { ptr, ptr, i64, [1 x i64], [1 x i64] }, ptr %arg1, i64 0, i32 1: icv:0 ici:1
+; CHECK-NEXT:   store ptr %buffer1, ptr %arg1_aligned, align 8: icv:1 ici:0
+; CHECK-NEXT:   %arg2 = alloca { ptr, ptr, i64 }, align 8: icv:0 ici:1
+; CHECK-NEXT:   %arg2_aligned = getelementptr inbounds { ptr, ptr, i64 }, ptr %arg2, i64 0, i32 1: icv:0 ici:1
+; CHECK-NEXT:   %buffer2 = call ptr @malloc(i64 8): icv:0 ici:1
+; CHECK-NEXT:   store ptr %buffer2, ptr %arg2_aligned, align 8: icv:1 ici:0
+; CHECK-NEXT:   call void @nested(ptr %arg0, ptr %arg1, ptr %arg2): icv:1 ici:0
+; CHECK-NEXT:   %x = load double, ptr %0, align 8: icv:0 ici:0
+; CHECK-NEXT:   %y = fmul double %x, 2.000000e+00: icv:0 ici:0
+; CHECK-NEXT:   store double %y, ptr %2, align 8: icv:1 ici:0
+; CHECK-NEXT:   ret void: icv:1 ici:1
