@@ -7,10 +7,6 @@
 // RUN: %clang -std=c11 -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme --enzyme-inline=1 -S | %lli - 
 // RUN: %clang -std=c11 -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme --enzyme-inline=1 -S | %lli - 
 
-#include <stdio.h>
-#include <math.h>
-#include <assert.h>
-
 #include "../test_utils.h"
 
 void __enzyme_autodiff(void*, ...);
@@ -19,7 +15,7 @@ void call(double* __restrict__  a, long** data) {
   long* segment = data[0];
   long size = segment[1] - segment[0];
   printf("seg[1]=%d seg[0]=%d\n", segment[1], segment[0]);
-  for (size_t i=0; i<size; i++)
+  for (unsigned long i=0; i<size; i++)
     a[i] *= 2;
   data[0] = 0;
 }

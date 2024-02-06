@@ -7,13 +7,7 @@
 // RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O2 %loadClangEnzyme %s -S -emit-llvm -o - -mllvm -enzyme-inline=1 -mllvm -enzyme-loose-types | %lli - ; fi
 // RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O3 %loadClangEnzyme %s -S -emit-llvm -o - -mllvm -enzyme-inline=1 -mllvm -enzyme-loose-types | %lli - ; fi
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-#include <assert.h>
-
 #include "../test_utils.h"
-
 
 float __enzyme_autodiff(void*, float, int);
 
