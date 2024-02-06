@@ -1887,10 +1887,24 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     }
 
     if (intrinsic != MLIRDerivatives) {
+      os << "        auto found = gutils->invertedPointers.find(&(" << origName
+         << "));\n";
+      os << "        if (found != gutils->invertedPointers.end()) {\n";
+      os << "          PHINode* PN = cast<PHINode>(&*found->second);\n";
+      os << "          gutils->invertedPointers.erase(found);\n";
+      os << "          gutils->erase(PN);\n";
+      os << "        }\n";
       os << "        break;\n";
       os << "      }\n";
 
       os << "      case DerivativeMode::ReverseModePrimal:{\n";
+      os << "        auto found = gutils->invertedPointers.find(&(" << origName
+         << "));\n";
+      os << "        if (found != gutils->invertedPointers.end()) {\n";
+      os << "          PHINode* PN = cast<PHINode>(&*found->second);\n";
+      os << "          gutils->invertedPointers.erase(found);\n";
+      os << "          gutils->erase(PN);\n";
+      os << "        }\n";
       // TODO
       os << "        break;\n";
       os << "      }\n";

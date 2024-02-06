@@ -5308,8 +5308,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
         assert(ST->getNumElements() >= 1);
         TypeTree TT;
         auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
-        size_t Offset = 0;
-        for (size_t i = 1; i < ST->getNumElements(); ++i) {
+        for (size_t i = 0; i < ST->getNumElements(); ++i) {
           auto T = ST->getTypeAtIndex(i);
           ConcreteType CT(BaseType::Unknown);
 
@@ -5320,7 +5319,23 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
           auto g2 = GetElementPtrInst::Create(ST, ud, vec);
           APInt ai(DL.getIndexSizeInBits(0), 0);
           g2->accumulateConstantOffset(DL, ai);
-          size_t ObjSize = ai.getZExtValue() - Offset;
+          delete g2;
+          size_t Offset = ai.getZExtValue();
+
+          size_t nextOffset;
+          if (i + 1 == ST->getNumElements())
+            nextOffset = (DL.getTypeSizeInBits(ST) + 7) / 8;
+          else {
+            Value *vec[2] = {
+                ConstantInt::get(Type::getInt64Ty(call.getContext()), 0),
+                ConstantInt::get(Type::getInt32Ty(call.getContext()), i + 1)};
+            auto ud = UndefValue::get(PointerType::getUnqual(ST));
+            auto g2 = GetElementPtrInst::Create(ST, ud, vec);
+            APInt ai(DL.getIndexSizeInBits(0), 0);
+            g2->accumulateConstantOffset(DL, ai);
+            delete g2;
+            nextOffset = ai.getZExtValue();
+          }
 
           if (T->isFloatingPointTy()) {
             CT = T;
@@ -5330,12 +5345,11 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
           if (CT != BaseType::Unknown) {
             TypeTree mid = TypeTree(CT).Only(-1, &call);
             TT |= mid.ShiftIndices(DL, /*init offset*/ 0,
-                                   /*maxSize*/ ObjSize,
+                                   /*maxSize*/ nextOffset - Offset,
                                    /*addOffset*/ Offset);
           }
-          Offset = ai.getZExtValue();
         }
-        auto Size = DL.getTypeSizeInBits(ST);
+        auto Size = (DL.getTypeSizeInBits(ST) + 7) / 8;
         TT.CanonicalizeInPlace(Size, DL);
         updateAnalysis(&call, TT, &call);
       } else if (auto AT = dyn_cast<ArrayType>(T)) {
