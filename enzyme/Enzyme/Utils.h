@@ -325,7 +325,7 @@ enum class DIFFE_TYPE {
                 // in ForwardMode variants.
   CONSTANT = 2, // no differential. Usable everywhere.
   DUP_NONEED = 3 // duplicate this argument and store differential inside, but
-                 // don't need the forward. For references or pointers.
+                 // don't need the forward. Same as DUP_ARG otherwise.
 };
 
 enum class BATCH_TYPE {

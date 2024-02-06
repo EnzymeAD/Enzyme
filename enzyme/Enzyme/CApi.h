@@ -112,12 +112,16 @@ struct CFnTypeInfo {
   struct IntList *KnownValues;
 };
 
+// OUT_DIFF is only allowed in ReverseMode variants on scalar values.
 typedef enum {
-  DFT_OUT_DIFF = 0,  // add differential to an output struct
-  DFT_DUP_ARG = 1,   // duplicate the argument and store differential inside
-  DFT_CONSTANT = 2,  // no differential
+  DFT_OUT_DIFF = 0, // add differential to an output struct. Only for scalar
+                    // values in ReverseMode variants.
+  DFT_DUP_ARG = 1,  // duplicate the argument and store differential inside. For
+                    // references or pointers in ReverseMode variants. For
+                    // all types in ForwardMode variants.
+  DFT_CONSTANT = 2, // no differential. Usable everywhere.
   DFT_DUP_NONEED = 3 // duplicate this argument and store differential inside,
-                     // but don't need the forward
+                     // but don't need the forward. Same as DUP_ARG otherwise.
 } CDIFFE_TYPE;
 
 typedef enum { BT_SCALAR = 0, BT_VECTOR = 1 } CBATCH_TYPE;
