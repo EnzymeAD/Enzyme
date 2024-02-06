@@ -1887,15 +1887,9 @@ public:
 #endif
     }
 
-#if LLVM_VERSION_MAJOR >= 16
     return HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, args,
-                          byVal, constants, fn, mode, options.value(), sizeOnly,
+                          byVal, constants, fn, mode, *options, sizeOnly,
                           calls);
-#else
-    return HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, args,
-                          byVal, constants, fn, mode, options.getValue(),
-                          sizeOnly, calls);
-#endif
   }
 
   bool HandleProbProg(CallInst *CI, ProbProgMode mode,
@@ -2025,17 +2019,9 @@ public:
 #endif
     }
 
-#if LLVM_VERSION_MAJOR >= 16
-    bool status =
-        HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, dargs, byVal,
-                       constants, newFunc, DerivativeMode::ReverseModeCombined,
-                       opt.value(), false, calls);
-#else
-    bool status =
-        HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, dargs, byVal,
-                       constants, newFunc, DerivativeMode::ReverseModeCombined,
-                       opt.getValue(), false, calls);
-#endif
+    bool status = HandleAutoDiff(
+        CI, CI->getCallingConv(), ret, retElemType, dargs, byVal, constants,
+        newFunc, DerivativeMode::ReverseModeCombined, *opt, false, calls);
 
     delete interface;
 
