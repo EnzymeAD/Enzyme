@@ -3353,6 +3353,29 @@ public:
             }
           }
         }
+        // If the type is known, but outside of the known range
+        // (but the memcpy size is a variable), attempt to use
+        // the first type out of range as the memcpy type.
+        if (size == 1 && !isa<ConstantInt>(new_size)) {
+          for (auto ptr : {orig_dst, orig_src}) {
+            vd = TR.query(ptr).Data0().ShiftIndices(DL, 0, -1, 0);
+            if (vd.isKnownPastPointer()) {
+              ConcreteType mv(BaseType::Unknown);
+              size_t minInt = 0xFFFFFFFF;
+              for (const auto &pair : vd.getMapping()) {
+                if (pair.first.size() != 1)
+                  continue;
+                if (minInt < (size_t)pair.first[0])
+                  continue;
+                minInt = pair.first[0];
+                mv = pair.second;
+              }
+              assert(mv != BaseType::Unknown);
+              vd.insert({0}, mv);
+              goto known;
+            }
+          }
+        }
         if (errorIfNoType)
           EmitWarning("CannotDeduceType", MTI, "failed to deduce type of copy ",
                       MTI);
@@ -3368,6 +3391,7 @@ public:
                              &TR.analyzer, nullptr, wrap(&BuilderZ));
         } else {
           ss << "\n";
+          ss << *gutils->oldFunc << "\n";
           TR.dump(ss);
           EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI, ss.str());
         }
