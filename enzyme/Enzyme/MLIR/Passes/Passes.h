@@ -8,15 +8,21 @@
 #ifndef ENZYME_PASSES_H
 #define ENZYME_PASSES_H
 
+#include "../../Utils.h"
 #include "mlir/Conversion/LLVMCommon/LoweringOptions.h"
 #include "mlir/Pass/Pass.h"
 #include <memory>
+
+#include "Enzyme/MLIR/Dialect/Dialect.h"
+
 namespace mlir {
 class PatternRewriter;
 class RewritePatternSet;
 class DominanceInfo;
 namespace enzyme {
 std::unique_ptr<Pass> createDifferentiatePass();
+
+std::unique_ptr<Pass> createDifferentiateWrapperPass();
 
 std::unique_ptr<Pass> createPrintActivityAnalysisPass();
 
