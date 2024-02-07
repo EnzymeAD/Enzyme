@@ -13,7 +13,7 @@
 #include "mlir/Pass/Pass.h"
 #include <memory>
 
-#include "Enzyme/MLIR/Dialect/Dialect.h"
+#include "Dialect/Dialect.h"
 
 namespace mlir {
 class PatternRewriter;
