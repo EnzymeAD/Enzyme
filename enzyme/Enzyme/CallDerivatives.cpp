@@ -4152,10 +4152,3 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
   return false;
 }
-
-bool AdjointGenerator::handleKnownCallDerivatives(
-    CallInst &call, Function *called, StringRef funcName,
-    const std::vector<bool> &overwritten_args, CallInst *const newCall);
-
-void AdjointGenerator::handleMPI(CallInst &call, Function *called,
-                                 StringRef funcName);
