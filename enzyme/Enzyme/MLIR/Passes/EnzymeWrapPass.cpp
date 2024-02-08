@@ -64,8 +64,11 @@ struct DifferentiateWrapperPass
         constants.push_back(DIFFE_TYPE::DUP_NONEED);
       else if (str == "enzyme_out")
         constants.push_back(DIFFE_TYPE::OUT_DIFF);
-      else
+      else {
+        llvm::errs() << "unknown argument activity to parse, found: '" << str
+                     << "'\n";
         assert(0 && " unknown constant");
+      }
     }
 
     DIFFE_TYPE retType = retTy.getValue();
