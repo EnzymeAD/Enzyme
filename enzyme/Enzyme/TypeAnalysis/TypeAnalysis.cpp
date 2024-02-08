@@ -4937,11 +4937,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
     if (auto opidx = getAllocationIndexFromCall(&call)) {
       auto ptr = TypeTree(BaseType::Pointer);
-#if LLVM_VERSION_MAJOR >= 15
-      unsigned index = (size_t)opidx.value();
-#else
-      unsigned index = (size_t)opidx.getValue();
-#endif
+      unsigned index = (size_t)*opidx;
       if (auto CI = dyn_cast<ConstantInt>(call.getOperand(index))) {
         auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
         auto LoadSize = CI->getZExtValue();
