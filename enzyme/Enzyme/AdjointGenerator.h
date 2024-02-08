@@ -47,9 +47,7 @@
 #define DEBUG_TYPE "enzyme"
 
 // Helper instruction visitor that generates adjoints
-template <class AugmentedReturnType = AugmentedReturn *>
-class AdjointGenerator
-    : public llvm::InstVisitor<AdjointGenerator<AugmentedReturnType>> {
+class AdjointGenerator : public llvm::InstVisitor<AdjointGenerator> {
 private:
   // Type of code being generated (forward, reverse, or both)
   const DerivativeMode Mode;
@@ -63,7 +61,7 @@ private:
   const std::map<llvm::CallInst *, const std::vector<bool>>
       overwritten_args_map;
   const llvm::SmallPtrSetImpl<llvm::Instruction *> *returnuses;
-  AugmentedReturnType augmentedReturn;
+  const AugmentedReturn *augmentedReturn;
   const std::map<llvm::ReturnInst *, llvm::StoreInst *> *replacedReturns;
 
   const llvm::SmallPtrSetImpl<const llvm::Value *> &unnecessaryValues;
@@ -83,7 +81,7 @@ public:
       const std::map<llvm::CallInst *, const std::vector<bool>>
           overwritten_args_map,
       const llvm::SmallPtrSetImpl<llvm::Instruction *> *returnuses,
-      AugmentedReturnType augmentedReturn,
+      const AugmentedReturn *augmentedReturn,
       const std::map<llvm::ReturnInst *, llvm::StoreInst *> *replacedReturns,
       const llvm::SmallPtrSetImpl<const llvm::Value *> &unnecessaryValues,
       const llvm::SmallPtrSetImpl<const llvm::Instruction *>
@@ -3040,8 +3038,8 @@ public:
     }
     if (!vd.isKnownPastPointer()) {
       if (looseTypeAnalysis) {
-        if (auto CI = dyn_cast<CastInst>(MS.getOperand(0))) {
 #if LLVM_VERSION_MAJOR < 17
+        if (auto CI = dyn_cast<CastInst>(MS.getOperand(0))) {
           if (auto PT = dyn_cast<PointerType>(CI->getSrcTy())) {
             auto ET = PT->getPointerElementType();
             while (1) {
@@ -3070,8 +3068,8 @@ public:
               goto known;
             }
           }
-#endif
         }
+#endif
         if (auto gep = dyn_cast<GetElementPtrInst>(MS.getOperand(0))) {
           if (auto AT = dyn_cast<ArrayType>(gep->getSourceElementType())) {
             if (AT->getElementType()->isIntegerTy()) {
@@ -3312,8 +3310,8 @@ public:
     if (!vd.isKnownPastPointer()) {
       if (looseTypeAnalysis) {
         for (auto val : {orig_dst, orig_src}) {
-          if (auto CI = dyn_cast<CastInst>(val)) {
 #if LLVM_VERSION_MAJOR < 17
+          if (auto CI = dyn_cast<CastInst>(val)) {
             if (auto PT = dyn_cast<PointerType>(CI->getSrcTy())) {
               auto ET = PT->getPointerElementType();
               while (1) {
@@ -3342,8 +3340,8 @@ public:
                 goto known;
               }
             }
-#endif
           }
+#endif
           if (auto gep = dyn_cast<GetElementPtrInst>(val)) {
             if (auto AT = dyn_cast<ArrayType>(gep->getSourceElementType())) {
               if (AT->getElementType()->isIntegerTy()) {
