@@ -16,6 +16,7 @@
 
 #include "../test_utils.h"
 
+#include <stdint.h>
 
 void memcpy(float* __restrict dst, float* __restrict src, size_t count) {
     for(size_t i=0; i<count/sizeof(float); i++) {

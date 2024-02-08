@@ -87,6 +87,9 @@ llvm::cl::opt<bool>
     EnzymeStrongZero("enzyme-strong-zero", cl::init(false), cl::Hidden,
                      cl::desc("Use additional checks to ensure correct "
                               "behavior when handling functions with inf"));
+llvm::cl::opt<bool> EnzymeMemmoveWarning(
+    "enzyme-memmove-warning", cl::init(true), cl::Hidden,
+    cl::desc("Warn if using memmove implementation as a fallback for memmove"));
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
@@ -1240,8 +1243,10 @@ Function *
 getOrInsertDifferentialFloatMemmove(Module &M, Type *T, unsigned dstalign,
                                     unsigned srcalign, unsigned dstaddr,
                                     unsigned srcaddr, unsigned bitwidth) {
-  llvm::errs() << "warning: didn't implement memmove, using memcpy as fallback "
-                  "which can result in errors\n";
+  if (EnzymeMemmoveWarning)
+    llvm::errs()
+        << "warning: didn't implement memmove, using memcpy as fallback "
+           "which can result in errors\n";
   return getOrInsertDifferentialFloatMemcpy(M, T, dstalign, srcalign, dstaddr,
                                             srcaddr, bitwidth);
 }

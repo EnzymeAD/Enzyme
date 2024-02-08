@@ -8,10 +8,6 @@
 // RUN: %clang -std=c11 -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
 
 #include "../test_utils.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-#include <assert.h>
 
 #define __builtin_autodiff __enzyme_autodiff
 

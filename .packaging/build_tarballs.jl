@@ -28,7 +28,7 @@ platforms = expand_cxxstring_abis(supported_platforms(; experimental=true))
 script = raw"""
 cd Enzyme
 
-if [[ "${bb_full_target}" == x86_64-apple-darwin*llvm_version+15.asserts* ]]; then
+if [[ "${bb_full_target}" == x86_64-apple-darwin*llvm_version+15.asserts* ]] || [[ "${bb_full_target}" == x86_64-apple-darwin*llvm_version+16.asserts* ]] || [[ "${bb_full_target}" == x86_64-apple-darwin*llvm_version+17.asserts* ]]; then
     # LLVM 15 requires macOS SDK 10.14.
     pushd $WORKSPACE/srcdir/MacOSX10.*.sdk
     rm -rf /opt/${target}/${target}/sys-root/System
@@ -117,11 +117,12 @@ for llvm_version in llvm_versions, llvm_assertions in (false, true)
     for platform in platforms
         augmented_platform = deepcopy(platform)
         augmented_platform[LLVM.platform_name] = LLVM.platform(llvm_version, llvm_assertions)
-
+        gcc_version = llvm_version > v"15" ? v"10" : v"8"
         should_build_platform(triplet(augmented_platform)) || continue
         push!(builds, (;
             dependencies, products,
             platforms=[augmented_platform],
+            gcc_version,
         ))
     end
 end
@@ -137,6 +138,6 @@ for (i,build) in enumerate(builds)
     build_tarballs(i == lastindex(builds) ? non_platform_ARGS : non_reg_ARGS,
                    name, version, sources, script,
                    build.platforms, build.products, build.dependencies;
-                   preferred_gcc_version=v"8", julia_compat="1.6",
+                   preferred_gcc_version=build.gcc_version, julia_compat="1.6",
                    augment_platform_block, lazy_artifacts=true) # drop when julia_compat >= 1.7
 end

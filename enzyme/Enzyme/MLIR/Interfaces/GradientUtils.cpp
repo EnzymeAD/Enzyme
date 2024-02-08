@@ -36,14 +36,12 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
     ArrayRef<DIFFE_TYPE> ArgDiffeTypes_, IRMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode, unsigned width, bool omp)
-    : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_), TA(TA_),
-      TR(TR_), omp(omp), blocksNotForAnalysis(),
+    : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_),
+      invertedPointers(invertedPointers_), originalToNewFn(originalToNewFn_),
+      originalToNewFnOps(originalToNewFnOps_), blocksNotForAnalysis(),
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
           blocksNotForAnalysis, constantvalues_, activevals_, ReturnActivity)),
-      width(width), ArgDiffeTypes(ArgDiffeTypes_),
-      originalToNewFn(originalToNewFn_),
-      originalToNewFnOps(originalToNewFnOps_),
-      invertedPointers(invertedPointers_) {
+      TA(TA_), TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_) {
 
   /*
   for (BasicBlock &BB : *oldFunc) {
@@ -306,7 +304,9 @@ LogicalResult MGradientUtils::visitChild(Operation *op) {
     // In absence of a proper activity analysis, approximate it by treating any
     // side effect-free operation producing constants as inactive.
     // if (auto iface = dyn_cast<MemoryEffectOpInterface>(op)) {
-    if (llvm::all_of(op->getResults(),
+    if (!isa<BranchOpInterface>(op) &&
+        !isa<RegionBranchTerminatorOpInterface>(op) &&
+        llvm::all_of(op->getResults(),
                      [this](Value v) { return isConstantValue(v); }) &&
         /*iface.hasNoEffect()*/ activityAnalyzer->isConstantOperation(TR, op)) {
       return success();

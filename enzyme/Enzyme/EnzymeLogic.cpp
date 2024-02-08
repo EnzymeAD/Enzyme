@@ -4283,13 +4283,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         }
         auto store = entryBuilder.CreateStore(
             Constant::getNullValue(g.getValueType()), &g);
-#if LLVM_VERSION_MAJOR >= 16
         if (g.getAlign())
-          store->setAlignment(g.getAlign().value());
-#else
-        if (g.getAlign())
-          store->setAlignment(g.getAlign().getValue());
-#endif
+          store->setAlignment(*g.getAlign());
       }
     }
     if (sharedBlock) {

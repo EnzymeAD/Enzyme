@@ -167,7 +167,9 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"yn", Intrinsic::not_intrinsic},
     {"tgamma", Intrinsic::not_intrinsic},
     {"lgamma", Intrinsic::not_intrinsic},
+    {"logabsgamma", Intrinsic::not_intrinsic},
     {"ceil", Intrinsic::ceil},
+    {"__nv_ceil", Intrinsic::ceil},
     {"floor", Intrinsic::floor},
     {"fmod", Intrinsic::not_intrinsic},
     {"trunc", Intrinsic::trunc},
@@ -4302,17 +4304,10 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     StringRef funcName = getFuncNameFromCall(&call);
 
     auto blasMetaData = extractBLAS(funcName);
-#if LLVM_VERSION_MAJOR >= 16
-    if (blasMetaData.has_value()) {
-      BlasInfo blas = blasMetaData.value();
+    if (blasMetaData) {
+      BlasInfo blas = *blasMetaData;
 #include "BlasTA.inc"
     }
-#else
-    if (blasMetaData.hasValue()) {
-      BlasInfo blas = blasMetaData.getValue();
-#include "BlasTA.inc"
-    }
-#endif
 
     // When compiling Enzyme against standard LLVM, and not Intel's
     // modified version of LLVM, the intrinsic `llvm.intel.subscript` is
@@ -4942,11 +4937,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
     if (auto opidx = getAllocationIndexFromCall(&call)) {
       auto ptr = TypeTree(BaseType::Pointer);
-#if LLVM_VERSION_MAJOR >= 15
-      unsigned index = (size_t)opidx.value();
-#else
-      unsigned index = (size_t)opidx.getValue();
-#endif
+      unsigned index = (size_t)*opidx;
       if (auto CI = dyn_cast<ConstantInt>(call.getOperand(index))) {
         auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
         auto LoadSize = CI->getZExtValue();
@@ -5304,23 +5295,52 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       } else if (T->isVoidTy()) {
       } else if (auto ST = dyn_cast<StructType>(T)) {
         assert(ST->getNumElements() >= 1);
-        for (size_t i = 1; i < ST->getNumElements(); ++i) {
-          assert(ST->getTypeAtIndex((unsigned)0) == ST->getTypeAtIndex(i));
+        TypeTree TT;
+        auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+        for (size_t i = 0; i < ST->getNumElements(); ++i) {
+          auto T = ST->getTypeAtIndex(i);
+          ConcreteType CT(BaseType::Unknown);
+
+          Value *vec[2] = {
+              ConstantInt::get(Type::getInt64Ty(call.getContext()), 0),
+              ConstantInt::get(Type::getInt32Ty(call.getContext()), i)};
+          auto ud = UndefValue::get(PointerType::getUnqual(ST));
+          auto g2 = GetElementPtrInst::Create(ST, ud, vec);
+          APInt ai(DL.getIndexSizeInBits(0), 0);
+          g2->accumulateConstantOffset(DL, ai);
+          delete g2;
+          size_t Offset = ai.getZExtValue();
+
+          size_t nextOffset;
+          if (i + 1 == ST->getNumElements())
+            nextOffset = (DL.getTypeSizeInBits(ST) + 7) / 8;
+          else {
+            Value *vec[2] = {
+                ConstantInt::get(Type::getInt64Ty(call.getContext()), 0),
+                ConstantInt::get(Type::getInt32Ty(call.getContext()), i + 1)};
+            auto ud = UndefValue::get(PointerType::getUnqual(ST));
+            auto g2 = GetElementPtrInst::Create(ST, ud, vec);
+            APInt ai(DL.getIndexSizeInBits(0), 0);
+            g2->accumulateConstantOffset(DL, ai);
+            delete g2;
+            nextOffset = ai.getZExtValue();
+          }
+
+          if (T->isFloatingPointTy()) {
+            CT = T;
+          } else if (T->isIntegerTy()) {
+            CT = BaseType::Integer;
+          }
+          if (CT != BaseType::Unknown) {
+            TypeTree mid = TypeTree(CT).Only(-1, &call);
+            TT |= mid.ShiftIndices(DL, /*init offset*/ 0,
+                                   /*maxSize*/ nextOffset - Offset,
+                                   /*addOffset*/ Offset);
+          }
         }
-        if (ST->getTypeAtIndex((unsigned)0)->isFloatingPointTy())
-          updateAnalysis(
-              &call,
-              TypeTree(ConcreteType(
-                           ST->getTypeAtIndex((unsigned)0)->getScalarType()))
-                  .Only(-1, &call),
-              &call);
-        else if (ST->getTypeAtIndex((unsigned)0)->isIntegerTy()) {
-          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
-                         &call);
-        } else {
-          llvm::errs() << *T << " - " << call << "\n";
-          llvm_unreachable("Unknown type for libm");
-        }
+        auto Size = (DL.getTypeSizeInBits(ST) + 7) / 8;
+        TT.CanonicalizeInPlace(Size, DL);
+        updateAnalysis(&call, TT, &call);
       } else if (auto AT = dyn_cast<ArrayType>(T)) {
         assert(AT->getNumElements() >= 1);
         if (AT->getElementType()->isFloatingPointTy())
