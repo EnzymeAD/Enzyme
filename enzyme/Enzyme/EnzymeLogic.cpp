@@ -5112,7 +5112,7 @@ public:
 
     CallInst *intr;
     Value *nres = intr =
-      createIntrinsicCall(B, ID, retTy, new_ops, &CI, CI.getName());
+        createIntrinsicCall(B, ID, retTy, new_ops, &CI, CI.getName());
     if (CI.getType() == getFromType())
       nres = expand(B, nres);
     intr->copyIRFlags(newI);
