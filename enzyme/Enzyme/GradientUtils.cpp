@@ -5435,10 +5435,21 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     if (!isa<MDTuple>(md)) {
       llvm::errs() << *arg << "\n";
       llvm::errs() << *md << "\n";
-      assert(0 && "cannot compute with global variable that doesn't have "
-                  "marked shadow global");
-      report_fatal_error("cannot compute with global variable that doesn't "
-                         "have marked shadow global (metadata incorrect type)");
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "cannot compute with global variable that doesn't have marked "
+            "shadow global as mdtuple\n";
+      ss << *arg << "\n";
+      ss << " md: " << *md << "\n";
+      if (CustomErrorHandler) {
+        return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
+                                         ErrorType::NoShadow, this, nullptr,
+                                         wrap(&BuilderM)));
+      } else {
+        EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
+                    ss.str());
+      }
+      return UndefValue::get(getShadowType(arg->getType()));
     }
     auto md2 = cast<MDTuple>(md);
     assert(md2->getNumOperands() == 1);
