@@ -211,7 +211,7 @@ ChangeResult enzyme::PointsToSets::update(const AliasClassSet &keysToUpdate,
             // TODO: consider a stricter check that we only replace unknown
             // values or a value with itself, currently blocked by memalign.
             AliasClassSet valuesCopy(values);
-            valuesCopy.join(it->getSecond());
+            (void)valuesCopy.join(it->getSecond());
             values.print(llvm::errs());
             llvm::errs() << "\n";
             it->getSecond().print(llvm::errs());
@@ -572,7 +572,7 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
       if (funcMayReadOther) {
         // If a function may read from other, it may be storing pointers from
         // unknown alias sets into any writable pointer.
-        functionMayCapture.markUnknown();
+        (void)functionMayCapture.markUnknown();
       } else {
         for (int pointerAsData : pointerLikeOperands) {
           // If not captured, it cannot be stored in anything.
@@ -583,7 +583,7 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
 
           const auto *srcClasses = getOrCreateFor<AliasClassLattice>(
               call, call.getArgOperands()[pointerAsData]);
-          functionMayCapture.join(srcClasses->getAliasClassesObject());
+          (void)functionMayCapture.join(srcClasses->getAliasClassesObject());
         }
       }
 
@@ -598,16 +598,17 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
 
         // If the argument cannot be stored into, just preserve it as is.
         if (!mayWriteArg(callee, pointerOperand, argModRef)) {
-          nonWritableOperandClasses.join(destClasses->getAliasClassesObject());
+          (void)nonWritableOperandClasses.join(
+              destClasses->getAliasClassesObject());
           continue;
         }
-        writableClasses.join(destClasses->getAliasClassesObject());
+        (void)writableClasses.join(destClasses->getAliasClassesObject());
 
         // If the destination class is unknown, mark all known classes
         // pessimistic (alias classes that have not beed analyzed and thus are
         // absent from pointsTo are treated as "undefined" at this point).
         if (destClasses->isUnknown()) {
-          writableClasses.markUnknown();
+          (void)writableClasses.markUnknown();
           changed |= after->markAllPointToUnknown();
           break;
         }
@@ -675,15 +676,15 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
         AliasClassSet resultWithoutNonWritableOperands =
             AliasClassSet::getUndefined();
         if (destClasses->isUnknown() || nonWritableOperandClasses.isUnknown()) {
-          resultWithoutNonWritableOperands.markUnknown();
+          (void)resultWithoutNonWritableOperands.markUnknown();
         } else if (!destClasses->isUndefined() &&
                    !nonWritableOperandClasses.isUndefined()) {
           DenseSet<DistinctAttr> nonOperandClasses =
               llvm::set_difference(destClasses->getAliasClasses(),
                                    nonWritableOperandClasses.getAliasClasses());
-          resultWithoutNonWritableOperands.insert(nonOperandClasses);
+          (void)resultWithoutNonWritableOperands.insert(nonOperandClasses);
         } else {
-          resultWithoutNonWritableOperands.join(
+          (void)resultWithoutNonWritableOperands.join(
               destClasses->getAliasClassesObject());
         }
 
@@ -973,7 +974,7 @@ void enzyme::AliasAnalysis::visitOperation(
       if (!isPointerLike(result.getType()))
         continue;
 
-      results[result.getResultNumber()]->markUnknown();
+      (void)results[result.getResultNumber()]->markUnknown();
     }
     return;
   }
@@ -1027,7 +1028,7 @@ void enzyme::AliasAnalysis::visitExternalCall(
       continue;
 
     const AliasClassLattice *srcClasses = operands[operandNo];
-    operandAliasClasses.join(srcClasses->getAliasClassesObject());
+    (void)operandAliasClasses.join(srcClasses->getAliasClassesObject());
 
     if (!mayReadArg(callee, operandNo, argModRef))
       continue;
@@ -1035,13 +1036,14 @@ void enzyme::AliasAnalysis::visitExternalCall(
     // If can read from argument, collect the alias classes that can this
     // argument may be pointing to.
     const auto *pointsToLattice = getOrCreateFor<PointsToSets>(call, call);
-    srcClasses->getAliasClassesObject().foreachClass(
+    (void)srcClasses->getAliasClassesObject().foreachClass(
         [&](DistinctAttr srcClass, AliasClassSet::State state) {
           // Nothing to do in top/bottom case. In the top case, we have already
           // set `operandAliasClasses` to top above.
           if (srcClass == nullptr)
             return ChangeResult::NoChange;
-          operandAliasClasses.join(pointsToLattice->getPointsTo(srcClass));
+          (void)operandAliasClasses.join(
+              pointsToLattice->getPointsTo(srcClass));
           return ChangeResult::NoChange;
         });
   }

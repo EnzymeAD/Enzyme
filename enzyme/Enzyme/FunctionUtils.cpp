@@ -2495,19 +2495,23 @@ void ReplaceFunctionImplementation(Module &M) {
 }
 
 void PreProcessCache::optimizeIntermediate(Function *F) {
-  PromotePass().run(*F, FAM);
+  PreservedAnalyses PA;
+  PA = PromotePass().run(*F, FAM);
+  FAM.invalidate(*F, PA);
 #if LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
-  GVNPass().run(*F, FAM);
+  PA = GVNPass().run(*F, FAM);
 #else
-  GVN().run(*F, FAM);
+  PA = GVN().run(*F, FAM);
 #endif
+  FAM.invalidate(*F, PA);
 #if LLVM_VERSION_MAJOR >= 16 && !defined(FLANG)
-  SROAPass(llvm::SROAOptions::PreserveCFG).run(*F, FAM);
+  PA = SROAPass(llvm::SROAOptions::PreserveCFG).run(*F, FAM);
 #elif LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
-  SROAPass().run(*F, FAM);
+  PA = SROAPass().run(*F, FAM);
 #else
-  SROA().run(*F, FAM);
+  PA = SROA().run(*F, FAM);
 #endif
+  FAM.invalidate(*F, PA);
 
   if (EnzymeSelectOpt) {
 #if LLVM_VERSION_MAJOR >= 12
@@ -2518,8 +2522,10 @@ void PreProcessCache::optimizeIntermediate(Function *F) {
         /*bool SwitchToLookup=*/false, /*bool CanonicalLoops=*/true,
         /*bool SinkCommon=*/true, /*AssumptionCache *AssumpCache=*/nullptr);
 #endif
-    SimplifyCFGPass(scfgo).run(*F, FAM);
-    CorrelatedValuePropagationPass().run(*F, FAM);
+    PA = SimplifyCFGPass(scfgo).run(*F, FAM);
+    FAM.invalidate(*F, PA);
+    PA = CorrelatedValuePropagationPass().run(*F, FAM);
+    FAM.invalidate(*F, PA);
     SelectOptimization(F);
   }
   // EarlyCSEPass(/*memoryssa*/ true).run(*F, FAM);
@@ -2529,8 +2535,10 @@ void PreProcessCache::optimizeIntermediate(Function *F) {
 
   ReplaceFunctionImplementation(*F->getParent());
 
-  PreservedAnalyses PA;
-  FAM.invalidate(*F, PA);
+  {
+    PreservedAnalyses PA;
+    FAM.invalidate(*F, PA);
+  }
 
 #if LLVM_VERSION_MAJOR < 14
   using OptimizationLevel = llvm::PassBuilder::OptimizationLevel;

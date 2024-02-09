@@ -20,7 +20,7 @@
 
 #include "Interfaces/AutoDiffOpInterface.h"
 
-const char *KnownInactiveFunctionsStartingWith[] = {
+static const char *KnownInactiveFunctionsStartingWith[] = {
     "f90io",
     "$ss5print",
     "_ZTv0_n24_NSoD", //"1Ev, 0Ev
@@ -29,11 +29,11 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZNSaIcEC1Ev",
 };
 
-const char *KnownInactiveFunctionsContains[] = {
+static const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_float", "__enzyme_double", "__enzyme_integer",
     "__enzyme_pointer"};
 
-const std::set<std::string> InactiveGlobals = {
+static const std::set<std::string> InactiveGlobals = {
     "ompi_request_null", "ompi_mpi_double", "ompi_mpi_comm_world", "stderr",
     "stdout", "stdin", "_ZSt3cin", "_ZSt4cout", "_ZSt5wcout", "_ZSt4cerr",
     "_ZTVNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEEE",
@@ -57,7 +57,7 @@ const std::set<std::string> InactiveGlobals = {
     "_ZTVN10__cxxabiv117__class_type_infoE",
     "_ZTVN10__cxxabiv121__vmi_class_type_infoE"};
 
-const std::map<std::string, size_t> MPIInactiveCommAllocators = {
+static const std::map<std::string, size_t> MPIInactiveCommAllocators = {
     {"MPI_Graph_create", 5},
     {"MPI_Comm_split", 2},
     {"MPI_Intercomm_create", 6},
@@ -75,7 +75,7 @@ const std::map<std::string, size_t> MPIInactiveCommAllocators = {
 
 // Instructions which themselves are inactive
 // the returned value, however, may still be active
-const std::set<std::string> KnownInactiveFunctionInsts = {
+static const std::set<std::string> KnownInactiveFunctionInsts = {
     "__dynamic_cast",
     "_ZSt18_Rb_tree_decrementPKSt18_Rb_tree_node_base",
     "_ZSt18_Rb_tree_incrementPKSt18_Rb_tree_node_base",
@@ -84,7 +84,7 @@ const std::set<std::string> KnownInactiveFunctionInsts = {
     "jl_ptr_to_array",
     "jl_ptr_to_array_1d"};
 
-const std::set<std::string> KnownInactiveFunctions = {
+static const std::set<std::string> KnownInactiveFunctions = {
     "abort",
     "time",
     "memcmp",
@@ -165,7 +165,7 @@ const std::set<std::string> KnownInactiveFunctions = {
     "logbl",
 };
 
-const char *DemangledKnownInactiveFunctionsStartingWith[] = {
+static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     // TODO this returns allocated memory and thus can be an active value
     // "std::allocator",
     "std::string",

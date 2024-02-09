@@ -182,11 +182,7 @@ void emitBlasDiffUse(const RecordKeeper &RK, llvm::raw_ostream &os) {
   emitDiffUse(RK, os, CallDerivatives);
 
   os << "    auto blasMetaData = extractBLAS(funcName);\n";
-  os << "    #if LLVM_VERSION_MAJOR >= 16\n";
-  os << "    if (blasMetaData.has_value())\n";
-  os << "    #else\n";
-  os << "    if (blasMetaData.hasValue())\n";
-  os << "    #endif\n";
+  os << "    if (blasMetaData)\n";
   os << "    {\n";
   os << "      auto Mode = gutils->mode;\n";
   os << "      const bool cacheMode = (Mode != DerivativeMode::ForwardMode);\n";
@@ -198,11 +194,7 @@ void emitBlasDiffUse(const RecordKeeper &RK, llvm::raw_ostream &os) {
   os << "        assert(found != gutils->overwritten_args_map_ptr->end());\n";
   os << "        overwritten_args_ptr = &found->second;\n";
   os << "      }\n";
-  os << "      #if LLVM_VERSION_MAJOR >= 16\n";
-  os << "      BlasInfo blas = blasMetaData.value();\n";
-  os << "      #else\n";
-  os << "      BlasInfo blas = blasMetaData.getValue();\n";
-  os << "      #endif\n";
+  os << "      BlasInfo blas = *blasMetaData;\n";
   for (auto &&newPattern : newBlasPatterns) {
     emit_BLASDiffUse(newPattern, os);
   }
