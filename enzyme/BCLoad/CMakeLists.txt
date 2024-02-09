@@ -94,7 +94,7 @@ else()
 if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
     add_llvm_library( BCPass-${LLVM_VERSION_MAJOR}
         BCLoader.cpp ClangBCLoader.cpp
-        MODULE
+        SHARED
         DEPENDS
         intrinsics_gen
 	LINK_COMPONENTS
@@ -104,7 +104,7 @@ if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
 else()
     add_llvm_library( BCPass-${LLVM_VERSION_MAJOR}
         BCLoader.cpp ClangBCLoader.cpp
-        MODULE
+        SHARED
         DEPENDS
         intrinsics_gen
         PLUGIN_TOOL

@@ -56,7 +56,7 @@ if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
     add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC}
         PARTIAL_SOURCES_INTENDED
-        MODULE
+        SHARED
         DEPENDS
         intrinsics_gen
 	LINK_COMPONENTS
@@ -67,7 +67,7 @@ if (${Clang_FOUND})
         ${ENZYME_SRC} Clang/EnzymeClang.cpp
         Clang/EnzymePassLoader.cpp
         PARTIAL_SOURCES_INTENDED
-        MODULE
+        SHARED
         DEPENDS
         intrinsics_gen
 	LINK_COMPONENTS
@@ -78,7 +78,7 @@ endif()
         add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
         PARTIAL_SOURCES_INTENDED
-        MODULE
+        SHARED
         DEPENDS
         intrinsics_gen
 	LINK_COMPONENTS
@@ -89,7 +89,7 @@ else()
     add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC}
         PARTIAL_SOURCES_INTENDED
-        MODULE
+        SHARED
         DEPENDS
         intrinsics_gen
         PLUGIN_TOOL
@@ -100,7 +100,7 @@ if (${Clang_FOUND})
         ${ENZYME_SRC} Clang/EnzymeClang.cpp
         Clang/EnzymePassLoader.cpp
         PARTIAL_SOURCES_INTENDED
-        MODULE
+        SHARED
         DEPENDS
         intrinsics_gen
         PLUGIN_TOOL
@@ -111,7 +111,7 @@ endif()
     add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
         PARTIAL_SOURCES_INTENDED
-        MODULE
+        SHARED
         DEPENDS
         intrinsics_gen
         PLUGIN_TOOL
