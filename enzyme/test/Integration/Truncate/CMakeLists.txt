@@ -1,5 +1,4 @@
-# Run regression and unit tests
-add_lit_testsuite(check-enzyme-integration-truncate "Running enzyme batch mode integration tests"
+add_lit_testsuite(check-enzyme-integration-truncate "Running enzyme fp truncation integration tests"
     ${CMAKE_CURRENT_BINARY_DIR}
     DEPENDS ${ENZYME_TEST_DEPS}
     ARGS -v
