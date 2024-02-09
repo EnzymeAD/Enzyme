@@ -143,7 +143,7 @@ public:
 ///  \p additionalArg is the type (or null) of an additional type in the
 ///  signature to hold the tape.
 ///  \p typeInfo is the type info information about the calling context
-///  \p _overwritten_args marks whether an argument may be rewritten
+///  \p _overwritten_args marks whether an argument may be overwritten 
 ///  before loads in the generated function (and thus cannot be cached).
 ///  \p AtomicAdd is whether to perform all adjoint
 ///  updates to memory in an atomic way
