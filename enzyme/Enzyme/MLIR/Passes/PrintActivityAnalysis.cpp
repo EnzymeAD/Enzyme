@@ -10,6 +10,7 @@
 // analysis.
 //
 //===----------------------------------------------------------------------===//
+#include "Analysis/ActivityAnnotations.h"
 #include "Analysis/DataFlowActivityAnalysis.h"
 #include "Dialect/Ops.h"
 #include "Passes/PassDetails.h"
@@ -141,15 +142,20 @@ struct PrintActivityAnalysisPass
         auto callee =
             cast<FunctionOpInterface>(moduleOp.lookupSymbol(calleeAttr));
 
-        SmallVector<enzyme::Activity> argActivities{callee.getNumArguments()},
-            resultActivities{callee.getNumResults()};
+        if (useAnnotations) {
+          enzyme::runActivityAnnotations(callee);
+        } else {
+          SmallVector<enzyme::Activity> argActivities{callee.getNumArguments()},
+              resultActivities{callee.getNumResults()};
 
-        // Populate the argument activities based on either the type or the
-        // supplied annotation. First argument is the callee
-        inferArgActivitiesFromEnzymeAutodiff(callee, autodiff_call,
-                                             argActivities, resultActivities);
-        enzyme::runDataFlowActivityAnalysis(callee, argActivities,
-                                            /*print=*/true, verbose, annotate);
+          // Populate the argument activities based on either the type or the
+          // supplied annotation. First argument is the callee
+          inferArgActivitiesFromEnzymeAutodiff(callee, autodiff_call,
+                                               argActivities, resultActivities);
+          enzyme::runDataFlowActivityAnalysis(callee, argActivities,
+                                              /*print=*/true, verbose,
+                                              annotate);
+        }
       }
       return;
     }
@@ -159,12 +165,19 @@ struct PrintActivityAnalysisPass
         if (callee.isExternal() || callee.isPrivate())
           return;
 
-        SmallVector<enzyme::Activity> argActivities{callee.getNumArguments()},
-            resultActivities{callee.getNumResults()};
-        initializeArgAndResActivities(callee, argActivities, resultActivities);
+        if (useAnnotations) {
+          enzyme::runActivityAnnotations(callee);
+        } else {
 
-        enzyme::runDataFlowActivityAnalysis(callee, argActivities,
-                                            /*print=*/true, verbose, annotate);
+          SmallVector<enzyme::Activity> argActivities{callee.getNumArguments()},
+              resultActivities{callee.getNumResults()};
+          initializeArgAndResActivities(callee, argActivities,
+                                        resultActivities);
+
+          enzyme::runDataFlowActivityAnalysis(callee, argActivities,
+                                              /*print=*/true, verbose,
+                                              annotate);
+        }
       });
       return;
     }

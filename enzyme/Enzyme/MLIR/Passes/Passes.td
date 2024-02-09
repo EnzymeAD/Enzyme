@@ -102,6 +102,13 @@ def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
       /*description=*/"Annotate every operation and value with its activity"
     >,
     Option<
+      /*C++ variable name=*/"useAnnotations",
+      /*CLI argument=*/"use-annotations",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Use bottom-up activity annotations"
+    >,
+    Option<
       /*C++ variable name=*/"inactiveArgs",
       /*CLI argument=*/"inactive-args",
       /*type=*/"bool",

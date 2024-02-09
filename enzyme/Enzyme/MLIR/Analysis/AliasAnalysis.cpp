@@ -121,6 +121,87 @@ static ChangeResult mergeSets(DenseSet<T> &dest, const DenseSet<T> &src) {
   return dest.size() == oldSize ? ChangeResult::NoChange : ChangeResult::Change;
 }
 
+Attribute enzyme::PointsToSets::serialize(MLIRContext *ctx) const {
+  if (pointsTo.empty()) {
+    return StringAttr::get(ctx, "<empty>");
+  }
+
+  SmallVector<Attribute> pointsToArray;
+  for (const auto &[srcClass, destClasses] : pointsTo) {
+    SmallVector<Attribute, 2> pair = {srcClass};
+    SmallVector<Attribute, 5> aliasClasses;
+    if (destClasses.isUnknown()) {
+      aliasClasses.push_back(StringAttr::get(ctx, "unknown"));
+    } else if (destClasses.isUndefined()) {
+      aliasClasses.push_back(StringAttr::get(ctx, "undefined"));
+    } else {
+      for (const DistinctAttr &destClass : destClasses.getAliasClasses()) {
+        aliasClasses.push_back(destClass);
+      }
+      llvm::sort(aliasClasses, [](Attribute a, Attribute b) {
+        auto distinctA = dyn_cast<DistinctAttr>(a);
+        auto distinctB = dyn_cast<DistinctAttr>(b);
+        if (distinctA && distinctB) {
+          auto strA =
+              dyn_cast_if_present<StringAttr>(distinctA.getReferencedAttr());
+          auto strB =
+              dyn_cast_if_present<StringAttr>(distinctB.getReferencedAttr());
+          if (strA && strB)
+            return strA.strref() < strB.strref();
+        }
+        // If there's no string to compare, sort them arbitrarily.
+        return &a < &b;
+      });
+    }
+    pair.push_back(ArrayAttr::get(ctx, aliasClasses));
+    pointsToArray.push_back(ArrayAttr::get(ctx, pair));
+  }
+  llvm::sort(pointsToArray, [](Attribute a, Attribute b) {
+    auto arrA = cast<ArrayAttr>(a);
+    auto arrB = cast<ArrayAttr>(b);
+    auto keyA = dyn_cast_if_present<StringAttr>(
+        cast<DistinctAttr>(arrA[0]).getReferencedAttr());
+    auto keyB = dyn_cast_if_present<StringAttr>(
+        cast<DistinctAttr>(arrB[0]).getReferencedAttr());
+    if (keyA && keyB)
+      return keyA.strref() < keyB.strref();
+
+    return &a < &b;
+  });
+  return ArrayAttr::get(ctx, pointsToArray);
+}
+
+// TODO: a bit easier to prototype with a dense map directly, evaluate
+// if it'd be better to change the PointsToSets data structure to
+// support this
+static void
+deserializePointsTo(ArrayAttr summaryAttr,
+                    DenseMap<DistinctAttr, enzyme::AliasClassSet> &summaryMap) {
+  for (auto pair : summaryAttr.getAsRange<ArrayAttr>()) {
+    assert(pair.size() == 2 &&
+           "Expected summary to be in [[key, value]] format");
+    auto pointer = cast<DistinctAttr>(pair[0]);
+    auto pointsToSet = enzyme::AliasClassSet::getUndefined();
+    if (auto strAttr = dyn_cast<StringAttr>(pair[1])) {
+      if (strAttr.getValue() == "unknown") {
+        (void)pointsToSet.markUnknown();
+      } else {
+        assert(strAttr.getValue() == "undefined" &&
+               "unrecognized points-to destination");
+      }
+    } else {
+      auto pointsTo = cast<ArrayAttr>(pair[1]).getAsRange<DistinctAttr>();
+      // TODO: see if there's a nice way to convert the
+      // AliasClassSet::insert method to accept this iterator rather than
+      // constructing a DenseSet
+      (void)pointsToSet.insert(
+          DenseSet<DistinctAttr>(pointsTo.begin(), pointsTo.end()));
+    }
+
+    summaryMap.insert({pointer, pointsToSet});
+  }
+}
+
 void enzyme::PointsToSets::print(raw_ostream &os) const {
   if (pointsTo.empty()) {
     os << "<empty>\n";
@@ -306,6 +387,7 @@ ChangeResult enzyme::PointsToSets::markAllExceptPointToUnknown(
 
 // TODO: Reduce code duplication with activity analysis
 std::optional<Value> getStored(Operation *op);
+std::optional<Value> getCopySource(Operation *op);
 
 void enzyme::PointsToPointerAnalysis::processCapturingStore(
     ProgramPoint dependent, PointsToSets *after, Value capturedValue,
@@ -360,6 +442,10 @@ void enzyme::PointsToPointerAnalysis::visitOperation(Operation *op,
   // fixpoint and bail.
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
+    if (isa<LLVM::NoAliasScopeDeclOp>(op)) {
+      // Treat this as a no-op
+      return;
+    }
     propagateIfChanged(after, after->markAllPointToUnknown());
     return;
   }
@@ -391,6 +477,8 @@ void enzyme::PointsToPointerAnalysis::visitOperation(Operation *op,
     SmallVector<Value> storedValues;
     if (std::optional<Value> stored = getStored(op)) {
       storedValues.push_back(*stored);
+    } else if (std::optional<Value> stored = getCopySource(op)) {
+      // TODO: implement capturing via copy ops
     } else {
       llvm::append_range(storedValues, pointerLikeOperands);
     }
@@ -510,6 +598,54 @@ getFunctionInaccessibleModRef(FunctionOpInterface func) {
   return std::nullopt;
 }
 
+void enzyme::PointsToPointerAnalysis::processCallToSummarizedFunc(
+    CallOpInterface call,
+    DenseMap<DistinctAttr, enzyme::AliasClassSet> &summary,
+    PointsToSets *after) {
+  StringRef calleeName = cast<SymbolRefAttr>(call.getCallableForCallee())
+                             .getLeafReference()
+                             .getValue();
+  auto lookup = [&](StringRef key) -> std::optional<AliasClassSet> {
+    for (const auto &[attr, aliasClassSet] : summary) {
+      if (auto strAttr =
+              dyn_cast_if_present<StringAttr>(attr.getReferencedAttr())) {
+        if (strAttr.getValue() == key) {
+          return aliasClassSet;
+        }
+      }
+    }
+    return std::nullopt;
+  };
+
+  ChangeResult changed = ChangeResult::NoChange;
+  // Unify the points-to summary with the actual lattices of function arguments
+  for (auto &&[i, argOperand] : llvm::enumerate(call.getArgOperands())) {
+    auto *arg = getOrCreateFor<AliasClassLattice>(call, argOperand);
+
+    std::string key = ("arg-" + calleeName + "-" + std::to_string(i)).str();
+    std::optional<AliasClassSet> aliasClasses = lookup(key);
+    // If the argument class isn't in the summary, it hasn't changed what
+    // it points to during the function.
+    if (!aliasClasses)
+      continue;
+
+    for (DistinctAttr ac : aliasClasses->getAliasClasses()) {
+      if (auto strAttr =
+              dyn_cast_if_present<StringAttr>(ac.getReferencedAttr())) {
+        // Fresh classes go in directly
+        if (strAttr.getValue().starts_with("fresh")) {
+          changed |=
+              after->insert(arg->getAliasClassesObject(), AliasClassSet(ac));
+        } else {
+          // TODO: need to handle unifying implicitly de-referenced classes
+        }
+      }
+    }
+  }
+
+  propagateIfChanged(after, changed);
+}
+
 void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
     CallOpInterface call, CallControlFlowAction action,
     const PointsToSets &before, PointsToSets *after) {
@@ -552,6 +688,12 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
     //     into pointers that are non-arguments.
     if (auto callee = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
             call, symbol.getLeafReference())) {
+      if (auto summaryAttr = callee->getAttrOfType<ArrayAttr>("p2psummary")) {
+        DenseMap<DistinctAttr, AliasClassSet> summary;
+        deserializePointsTo(summaryAttr, summary);
+        return processCallToSummarizedFunc(call, summary, after);
+      }
+
       std::optional<LLVM::ModRefInfo> argModRef = getFunctionArgModRef(callee);
       std::optional<LLVM::ModRefInfo> otherModRef =
           getFunctionOtherModRef(callee);
@@ -798,26 +940,36 @@ void enzyme::AliasAnalysis::setToEntryState(AliasClassLattice *lattice) {
   if (auto arg = dyn_cast<BlockArgument>(lattice->getPoint())) {
     if (auto funcOp =
             dyn_cast<FunctionOpInterface>(arg.getOwner()->getParentOp())) {
-      if (funcOp.getArgAttr(arg.getArgNumber(),
-                            LLVM::LLVMDialect::getNoAliasAttrName())) {
-        Attribute debugLabel =
-            funcOp.getArgAttr(arg.getArgNumber(), "enzyme.tag");
-        // TODO: this may currently be failing because `setToEntryState`
-        // is used by the framework to set the pessimistic fixpoint (top), which
-        // isn't correct for pessimistic analysis for which `setToEntryState` is
-        // the undefined state (bottom).
-        assert(lattice->isUndefined() && "resetting lattice point");
-
-        DistinctAttr noaliasClass =
-            originalClasses.getOriginalClass(lattice->getPoint(), debugLabel);
-        return propagateIfChanged(lattice,
-                                  lattice->join(AliasClassLattice::single(
-                                      lattice->getPoint(), noaliasClass)));
-      }
       // TODO: Not safe in general, integers can be a result of ptrtoint. We
       // need a type analysis here I guess?
-      if (isPointerLike(arg.getType()))
-        return propagateIfChanged(lattice, lattice->insert({entryClass}));
+      if (isPointerLike(arg.getType())) {
+        if (relative ||
+            funcOp.getArgAttr(arg.getArgNumber(),
+                              LLVM::LLVMDialect::getNoAliasAttrName())) {
+          // Create a distinct attribute for each function argument. This does
+          // _not_ mean assuming arguments do not alias, merely that we defer
+          // reasoning about arguments aliasing each other until analyzing
+          // callers. These distinct attributes may be unified (copied over?)
+          // depending on the calling contexts of this function.
+          StringAttr debugLabel = funcOp.getArgAttrOfType<StringAttr>(
+              arg.getArgNumber(), "enzyme.tag");
+          if (relative) {
+            debugLabel = StringAttr::get(
+                funcOp.getContext(), "arg-" + funcOp.getName() + "-" +
+                                         std::to_string(arg.getArgNumber()));
+          }
+          DistinctAttr argClass =
+              originalClasses.getOriginalClass(lattice->getPoint(), debugLabel);
+          funcOp.setArgAttr(arg.getArgNumber(), "enzyme.origin", argClass);
+          return propagateIfChanged(lattice,
+                                    lattice->join(AliasClassLattice::single(
+                                        lattice->getPoint(), argClass)));
+        } else {
+          return propagateIfChanged(lattice,
+                                    lattice->join(AliasClassLattice::single(
+                                        lattice->getPoint(), entryClass)));
+        }
+      }
     }
   }
   if (!lattice->isUndefined())
@@ -835,6 +987,13 @@ void enzyme::AliasAnalysis::setToEntryState(AliasClassLattice *lattice) {
 //
 // TODO: turn this into an interface.
 static bool isAliasTransferFullyDescribedByMemoryEffects(Operation *op) {
+  if (auto call = dyn_cast<CallOpInterface>(op)) {
+    if (auto symbol = dyn_cast<SymbolRefAttr>(call.getCallableForCallee())) {
+      if (symbol.getLeafReference().getValue() == "malloc") {
+        return true;
+      }
+    }
+  }
   return isa<memref::LoadOp, memref::StoreOp, LLVM::LoadOp, LLVM::StoreOp>(op);
 }
 
@@ -855,7 +1014,18 @@ void enzyme::AliasAnalysis::transfer(
       // Mark the result of the allocation as a fresh memory location.
       for (AliasClassLattice *result : results) {
         if (result->getPoint() == value) {
-          Attribute debugLabel = op->getAttr("tag");
+          std::string debugLabel;
+          llvm::raw_string_ostream sstream(debugLabel);
+          if (relative)
+            sstream << "fresh-";
+
+          if (op->hasAttr("tag")) {
+            if (auto stringTag = dyn_cast<StringAttr>(op->getAttr("tag"))) {
+              sstream << stringTag.getValue();
+            } else {
+              op->getAttr("tag").print(sstream);
+            }
+          }
           auto fresh = AliasClassLattice::single(
               result->getPoint(),
               originalClasses.getOriginalClass(result->getPoint(), debugLabel));
@@ -883,12 +1053,17 @@ void enzyme::AliasAnalysis::transfer(
         for (auto srcClass : latticeElement->getAliasClasses()) {
           const auto &srcPointsTo = pointsToSets->getPointsTo(srcClass);
           for (AliasClassLattice *result : results) {
+            if (!isPointerLike(result->getPoint().getType()))
+              continue;
+
             // TODO: consider some sort of "point join" or better insert that
             // doesn't require a conditional here.
             if (srcPointsTo.isUnknown()) {
               propagateIfChanged(result, result->markUnknown());
             } else if (srcPointsTo.isUndefined()) {
-              continue;
+              if (relative)
+                createImplicitArgDereference(op, latticeElement, srcClass,
+                                             result);
             } else {
               propagateIfChanged(result,
                                  result->insert(srcPointsTo.getAliasClasses()));
@@ -925,6 +1100,44 @@ void enzyme::AliasAnalysis::transfer(
     for (const AliasClassLattice *operandLattice : operands)
       r |= resultLattice->join(*operandLattice);
     propagateIfChanged(resultLattice, r);
+  }
+}
+
+void enzyme::AliasAnalysis::createImplicitArgDereference(
+    Operation *op, AliasClassLattice *source, DistinctAttr srcClass,
+    AliasClassLattice *result) {
+  assert(relative && "only valid to create implicit argument dereferences when "
+                     "operating in relative mode");
+
+  Value readResult = result->getPoint();
+  auto parent = op->getParentOfType<FunctionOpInterface>();
+  assert(parent && "failed to find function parent");
+  auto *entryPointsToSets =
+      getOrCreateFor<PointsToSets>(op, &parent.getCallableRegion()->front());
+  if (!entryPointsToSets->getPointsTo(srcClass).isUndefined()) {
+    // Only create the pseudo class if another load hasn't already created the
+    // implicitly dereferenced pseudo class.
+    return;
+  }
+  if (auto debugLabel =
+          dyn_cast_if_present<StringAttr>(srcClass.getReferencedAttr())) {
+    // TODO(jacob): make a custom attribute to encode the pseudo argument alias
+    // classes and their implicit dereferences
+    if (debugLabel.strref().starts_with("arg")) {
+      auto derefLabel = StringAttr::get(debugLabel.getContext(),
+                                        debugLabel.strref() + "-deref");
+      DistinctAttr derefClass =
+          originalClasses.getOriginalClass(readResult, derefLabel);
+      op->setAttr("implicit-deref", derefClass);
+      propagateIfChanged(result, result->join(AliasClassLattice::single(
+                                     readResult, derefClass)));
+      // The read source points to the dereferenced class
+      auto *pointsToState =
+          getOrCreate<PointsToSets>(&parent.getCallableRegion()->front());
+      propagateIfChanged(pointsToState,
+                         pointsToState->insert(source->getAliasClassesObject(),
+                                               AliasClassSet(derefClass)));
+    }
   }
 }
 
