@@ -27,8 +27,10 @@
 // primal pass.
 //
 //===----------------------------------------------------------------------===//
+#include "EnzymeLogic.h"
 #include "ActivityAnalysis.h"
 #include "AdjointGenerator.h"
+#include "EnzymeLogic.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Intrinsics.h"
 
@@ -4809,23 +4811,31 @@ Function *EnzymeLogic::CreateForwardDiff(
   return nf;
 }
 
-static Type *getTypeForWidth(LLVMContext &ctx, unsigned width) {
-  switch (width) {
-  default:
-    return llvm::Type::getIntNTy(ctx, width);
-  case 64:
-    return llvm::Type::getDoubleTy(ctx);
-  case 32:
-    return llvm::Type::getFloatTy(ctx);
-  case 16:
-    return llvm::Type::getHalfTy(ctx);
-  }
+static Value *floatValTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
+                               FloatRepresentation from,
+                               FloatRepresentation to) {
+  Type *toTy = to.getType(B.getContext());
+  if (auto vty = dyn_cast<VectorType>(v->getType()))
+    toTy = VectorType::get(toTy, vty->getElementCount());
+  return B.CreateFPTrunc(v, toTy, "enzyme_trunc");
 }
 
-static Value *floatTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
-                            unsigned fromwidth, unsigned towidth) {
-  Type *fromTy = getTypeForWidth(B.getContext(), fromwidth);
-  Type *toTy = getTypeForWidth(B.getContext(), towidth);
+static Value *floatValExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
+                             FloatRepresentation from, FloatRepresentation to) {
+  Type *fromTy = from.getBuiltinType(B.getContext());
+  if (auto vty = dyn_cast<VectorType>(v->getType()))
+    fromTy = VectorType::get(fromTy, vty->getElementCount());
+  return B.CreateFPExt(v, fromTy, "enzyme_exp");
+}
+
+static Value *floatMemTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
+                               FloatRepresentation from,
+                               FloatRepresentation to) {
+  if (isa<VectorType>(v->getType()))
+    report_fatal_error("vector operations not allowed in mem trunc mode");
+
+  Type *fromTy = from.getBuiltinType(B.getContext());
+  Type *toTy = to.getType(B.getContext());
   if (!tmpBlock)
     tmpBlock = B.CreateAlloca(fromTy);
   B.CreateStore(
@@ -4834,13 +4844,16 @@ static Value *floatTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
       toTy, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(toTy)));
 }
 
-static Value *floatExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
-                          unsigned fromwidth, unsigned towidth) {
-  Type *fromTy = getTypeForWidth(B.getContext(), fromwidth);
+static Value *floatMemExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
+                             FloatRepresentation from, FloatRepresentation to) {
+  if (isa<VectorType>(v->getType()))
+    report_fatal_error("vector operations not allowed in mem trunc mode");
+
+  Type *fromTy = from.getBuiltinType(B.getContext());
   if (!tmpBlock)
     tmpBlock = B.CreateAlloca(fromTy);
-  auto c0 =
-      Constant::getNullValue(llvm::Type::getIntNTy(B.getContext(), fromwidth));
+  auto c0 = Constant::getNullValue(
+      llvm::Type::getIntNTy(B.getContext(), from.getTypeWidth()));
   B.CreateStore(
       c0, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(c0->getType())));
   B.CreateStore(
@@ -4852,27 +4865,38 @@ static Value *floatExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
 class TruncateGenerator : public llvm::InstVisitor<TruncateGenerator> {
 private:
   ValueToValueMapTy &originalToNewFn;
-  unsigned fromwidth;
-  unsigned towidth;
+  FloatRepresentation from;
+  FloatRepresentation to;
   Type *fromType;
   Type *toType;
   Function *oldFunc;
   Function *newFunc;
   AllocaInst *tmpBlock;
+  TruncateMode mode;
   EnzymeLogic &Logic;
 
 public:
-  TruncateGenerator(ValueToValueMapTy &originalToNewFn, unsigned fromwidth,
-                    unsigned towidth, Function *oldFunc, Function *newFunc,
+  TruncateGenerator(ValueToValueMapTy &originalToNewFn,
+                    FloatRepresentation from, FloatRepresentation to,
+                    Function *oldFunc, Function *newFunc, TruncateMode mode,
                     EnzymeLogic &Logic)
-      : originalToNewFn(originalToNewFn), fromwidth(fromwidth),
-        towidth(towidth), oldFunc(oldFunc), newFunc(newFunc), Logic(Logic) {
+      : originalToNewFn(originalToNewFn), from(from), to(to), oldFunc(oldFunc),
+        newFunc(newFunc), mode(mode), Logic(Logic) {
     IRBuilder<> B(&newFunc->getEntryBlock().front());
 
-    fromType = getTypeForWidth(B.getContext(), fromwidth);
-    toType = getTypeForWidth(B.getContext(), towidth);
+    fromType = from.getBuiltinType(B.getContext());
+    toType = to.getType(B.getContext());
 
-    tmpBlock = B.CreateAlloca(fromType);
+    if (mode == TruncMem)
+      tmpBlock = B.CreateAlloca(fromType);
+    else
+      tmpBlock = nullptr;
+  }
+
+  void checkHandled(llvm::Instruction &inst) {
+    // if (all_of(inst.getOperandList(),
+    //            [&](Use *use) { return use->get()->getType() == fromType; }))
+    //   todo(inst);
   }
 
   void visitInstruction(llvm::Instruction &inst) {
@@ -4887,7 +4911,7 @@ public:
       break;
     }
 
-    todo(inst);
+    checkHandled(inst);
   }
 
   Type *getFromType() { return fromType; }
@@ -4895,11 +4919,25 @@ public:
   Type *getToType() { return toType; }
 
   Value *truncate(IRBuilder<> &B, Value *v) {
-    return floatTruncate(B, v, tmpBlock, fromwidth, towidth);
+    switch (mode) {
+    case TruncMem:
+      return floatMemTruncate(B, v, tmpBlock, from, to);
+    case TruncOp:
+      return floatValTruncate(B, v, tmpBlock, from, to);
+    default:
+      llvm_unreachable("Unknown trunc mode");
+    }
   }
 
   Value *expand(IRBuilder<> &B, Value *v) {
-    return floatExpand(B, v, tmpBlock, fromwidth, towidth);
+    switch (mode) {
+    case TruncMem:
+      return floatMemExpand(B, v, tmpBlock, from, to);
+    case TruncOp:
+      return floatValExpand(B, v, tmpBlock, from, to);
+    default:
+      llvm_unreachable("Unknown trunc mode");
+    }
   }
 
   void todo(llvm::Instruction &I) {
@@ -4967,17 +5005,25 @@ public:
     return;
   }
   void visitSelectInst(llvm::SelectInst &SI) {
-    auto newI = getNewFromOriginal(&SI);
-    IRBuilder<> B(newI);
-    auto newT = truncate(B, getNewFromOriginal(SI.getTrueValue()));
-    auto newF = truncate(B, getNewFromOriginal(SI.getFalseValue()));
-    auto nres = cast<SelectInst>(
-        B.CreateSelect(getNewFromOriginal(SI.getCondition()), newT, newF));
-    nres->takeName(newI);
-    nres->copyIRFlags(newI);
-    newI->replaceAllUsesWith(expand(B, nres));
-    newI->eraseFromParent();
-    return;
+    switch (mode) {
+    case TruncMem: {
+      auto newI = getNewFromOriginal(&SI);
+      IRBuilder<> B(newI);
+      auto newT = truncate(B, getNewFromOriginal(SI.getTrueValue()));
+      auto newF = truncate(B, getNewFromOriginal(SI.getFalseValue()));
+      auto nres = cast<SelectInst>(
+          B.CreateSelect(getNewFromOriginal(SI.getCondition()), newT, newF));
+      nres->takeName(newI);
+      nres->copyIRFlags(newI);
+      newI->replaceAllUsesWith(expand(B, nres));
+      newI->eraseFromParent();
+      return;
+    }
+    case TruncOp:
+      return;
+    default:
+      llvm_unreachable("");
+    }
   }
   void visitExtractElementInst(llvm::ExtractElementInst &EEI) { return; }
   void visitInsertElementInst(llvm::InsertElementInst &EEI) { return; }
@@ -5005,7 +5051,7 @@ public:
       return;
     }
 
-    if (towidth == 32 || towidth == 16 || towidth == 64) {
+    if (to.getBuiltinType(BO.getContext())) {
       auto newI = getNewFromOriginal(&BO);
       IRBuilder<> B(newI);
       auto newLHS = truncate(B, getNewFromOriginal(BO.getOperand(0)));
@@ -5197,7 +5243,7 @@ public:
 
   Value *GetShadow(RequestContext &ctx, Value *v) {
     if (auto F = dyn_cast<Function>(v))
-      return Logic.CreateTruncateFunc(ctx, F, fromwidth, towidth);
+      return Logic.CreateTruncateFunc(ctx, F, from, to, mode);
     llvm::errs() << " unknown get truncated func: " << *v << "\n";
     llvm_unreachable("unknown get truncated func");
     return v;
@@ -5224,19 +5270,26 @@ public:
     newCall->setCalledOperand(val);
     return;
   }
+  void visitFPTruncInst(FPTruncInst &I) { return; }
+  void visitFPExtInst(FPExtInst &I) { return; }
+  void visitFPToUIInst(FPToUIInst &I) { return; }
+  void visitFPToSIInst(FPToSIInst &I) { return; }
+  void visitUIToFPInst(UIToFPInst &I) { return; }
+  void visitSIToFPInst(SIToFPInst &I) { return; }
 };
 
 bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
-                                      unsigned fromwidth, unsigned towidth,
-                                      bool isTruncate) {
+                                      FloatRepresentation from,
+                                      FloatRepresentation to, bool isTruncate) {
   assert(context.req && context.ip);
 
-  if (fromwidth == towidth) {
+  if (from == to) {
+    context.req->replaceAllUsesWith(context.req->getOperand(0));
     context.req->eraseFromParent();
     return true;
   }
 
-  if (fromwidth < towidth) {
+  if (from < to) {
     std::string s;
     llvm::raw_string_ostream ss(s);
     ss << "Cannot truncate into a large width\n";
@@ -5250,16 +5303,15 @@ bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
   }
 
   IRBuilderBase &B = *context.ip;
-  Type *fromTy = getTypeForWidth(B.getContext(), fromwidth);
-  Type *toTy = getTypeForWidth(B.getContext(), towidth);
+  Type *fromTy = from.getBuiltinType(B.getContext());
+  Type *toTy = to.getType(B.getContext());
 
   Value *converted = nullptr;
   if (isTruncate)
-    converted =
-        floatExpand(B, B.CreateFPTrunc(v, toTy), nullptr, fromwidth, towidth);
+    converted = floatMemExpand(B, B.CreateFPTrunc(v, toTy), nullptr, from, to);
   else
     converted =
-        B.CreateFPExt(floatTruncate(B, v, nullptr, fromwidth, towidth), fromTy);
+        B.CreateFPExt(floatMemTruncate(B, v, nullptr, from, to), fromTy);
   assert(converted);
 
   context.req->replaceAllUsesWith(converted);
@@ -5270,12 +5322,13 @@ bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
 
 llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
                                                 llvm::Function *totrunc,
-                                                unsigned fromwidth,
-                                                unsigned towidth) {
-  if (fromwidth == towidth)
+                                                FloatRepresentation from,
+                                                FloatRepresentation to,
+                                                TruncateMode mode) {
+  if (from == to)
     return totrunc;
 
-  TruncateCacheKey tup(totrunc, fromwidth, towidth);
+  TruncateCacheKey tup(totrunc, from, to, mode);
   if (TruncateCachedFunctions.find(tup) != TruncateCachedFunctions.end()) {
     return TruncateCachedFunctions.find(tup)->second;
   }
@@ -5290,11 +5343,12 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
   Type *NewTy = totrunc->getReturnType();
 
   FunctionType *FTy = FunctionType::get(NewTy, params, totrunc->isVarArg());
-  Function *NewF =
-      Function::Create(FTy, totrunc->getLinkage(),
-                       "trunc_" + std::to_string(fromwidth) + "_" +
-                           std::to_string(towidth) + totrunc->getName(),
-                       totrunc->getParent());
+  std::string truncName = std::string("__enzyme_done_truncate_") +
+                          (mode == TruncMem ? "mem" : "op") + "_func_" +
+                          from.to_string() + "_" + to.to_string() + "_" +
+                          totrunc->getName().str();
+  Function *NewF = Function::Create(FTy, totrunc->getLinkage(), truncName,
+                                    totrunc->getParent());
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
@@ -5327,7 +5381,7 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
     llvm_unreachable("attempting to truncate function without definition");
   }
 
-  if (fromwidth < towidth) {
+  if (from < to) {
     std::string s;
     llvm::raw_string_ostream ss(s);
     ss << "Cannot truncate into a large width\n";
@@ -5375,7 +5429,7 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
-  TruncateGenerator handle(originalToNewFn, fromwidth, towidth, totrunc, NewF,
+  TruncateGenerator handle(originalToNewFn, from, to, totrunc, NewF, mode,
                            *this);
   for (auto &BB : *totrunc)
     for (auto &I : BB)
