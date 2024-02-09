@@ -2416,12 +2416,12 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     }
   }
 
-  AdjointGenerator<AugmentedReturn *> maker(
-      DerivativeMode::ReverseModePrimal, gutils, constant_args, retType,
-      getIndex, overwritten_args_map, &returnuses,
-      &AugmentedCachedFunctions.find(tup)->second, nullptr, unnecessaryValues,
-      unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
-      nullptr);
+  AdjointGenerator maker(DerivativeMode::ReverseModePrimal, gutils,
+                         constant_args, retType, getIndex, overwritten_args_map,
+                         &returnuses,
+                         &AugmentedCachedFunctions.find(tup)->second, nullptr,
+                         unnecessaryValues, unnecessaryInstructions,
+                         unnecessaryStores, guaranteedUnreachable, nullptr);
 
   for (BasicBlock &oBB : *gutils->oldFunc) {
     auto term = oBB.getTerminator();
@@ -4174,12 +4174,12 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     }
   }
 
-  AdjointGenerator<const AugmentedReturn *> maker(
-      key.mode, gutils, key.constant_args, key.retType, getIndex,
-      overwritten_args_map,
-      /*returnuses*/ nullptr, augmenteddata, &replacedReturns,
-      unnecessaryValues, unnecessaryInstructions, unnecessaryStores,
-      guaranteedUnreachable, dretAlloca);
+  AdjointGenerator maker(key.mode, gutils, key.constant_args, key.retType,
+                         getIndex, overwritten_args_map,
+                         /*returnuses*/ nullptr, augmenteddata,
+                         &replacedReturns, unnecessaryValues,
+                         unnecessaryInstructions, unnecessaryStores,
+                         guaranteedUnreachable, dretAlloca);
 
   for (BasicBlock &oBB : *gutils->oldFunc) {
     // Don't create derivatives for code that results in termination
@@ -4643,7 +4643,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;
 
-  AdjointGenerator<const AugmentedReturn *> *maker;
+  AdjointGenerator *maker;
 
   std::unique_ptr<const std::map<Instruction *, bool>> can_modref_map;
   if (mode == DerivativeMode::ForwardModeSplit) {
@@ -4683,7 +4683,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
                                     unnecessaryInstructions, gutils, TLI);
 
-    maker = new AdjointGenerator<const AugmentedReturn *>(
+    maker = new AdjointGenerator(
         mode, gutils, constant_args, retType, getIndex, overwritten_args_map,
         /*returnuses*/ nullptr, augmenteddata, nullptr, unnecessaryValues,
         unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
@@ -4736,11 +4736,11 @@ Function *EnzymeLogic::CreateForwardDiff(
 
     calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
                                     unnecessaryInstructions, gutils, TLI);
-    maker = new AdjointGenerator<const AugmentedReturn *>(
-        mode, gutils, constant_args, retType, nullptr, {},
-        /*returnuses*/ nullptr, nullptr, nullptr, unnecessaryValues,
-        unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
-        nullptr);
+    maker =
+        new AdjointGenerator(mode, gutils, constant_args, retType, nullptr, {},
+                             /*returnuses*/ nullptr, nullptr, nullptr,
+                             unnecessaryValues, unnecessaryInstructions,
+                             unnecessaryStores, guaranteedUnreachable, nullptr);
   }
 
   for (BasicBlock &oBB : *gutils->oldFunc) {

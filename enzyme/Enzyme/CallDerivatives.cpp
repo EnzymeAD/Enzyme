@@ -32,10 +32,8 @@ extern "C" {
 void (*EnzymeShadowAllocRewrite)(LLVMValueRef, void *) = nullptr;
 }
 
-template <class T>
-void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
-                                    llvm::Function *called,
-                                    llvm::StringRef funcName) {
+void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
+                                 llvm::StringRef funcName) {
   using namespace llvm;
 
   assert(called);
@@ -2214,8 +2212,7 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
   llvm_unreachable("Unhandled MPI FUNCTION");
 }
 
-template <class T>
-bool AdjointGenerator<T>::handleKnownCallDerivatives(
+bool AdjointGenerator::handleKnownCallDerivatives(
     CallInst &call, Function *called, StringRef funcName,
     const std::vector<bool> &overwritten_args, CallInst *const newCall) {
   bool subretused = false;
@@ -3231,7 +3228,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
         llvm_unreachable("Unknown allocation to upgrade");
       Size = gutils->getNewFromOriginal(Size);
 
-      if (auto CI = dyn_cast<ConstantInt>(Size)) {
+      if (isa<ConstantInt>(Size)) {
         B.SetInsertPoint(gutils->inversionAllocs);
       }
       Type *elTy = Type::getInt8Ty(call.getContext());
@@ -4155,17 +4152,3 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
 
   return false;
 }
-
-template bool AdjointGenerator<AugmentedReturn *>::handleKnownCallDerivatives(
-    CallInst &call, Function *called, StringRef funcName,
-    const std::vector<bool> &overwritten_args, CallInst *const newCall);
-template bool
-AdjointGenerator<const AugmentedReturn *>::handleKnownCallDerivatives(
-    CallInst &call, Function *called, StringRef funcName,
-    const std::vector<bool> &overwritten_args, CallInst *const newCall);
-
-template void
-AdjointGenerator<AugmentedReturn *>::handleMPI(CallInst &call, Function *called,
-                                               StringRef funcName);
-template void AdjointGenerator<const AugmentedReturn *>::handleMPI(
-    CallInst &call, Function *called, StringRef funcName);
