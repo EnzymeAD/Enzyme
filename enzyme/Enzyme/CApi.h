@@ -113,11 +113,11 @@ struct CFnTypeInfo {
 };
 
 typedef enum {
-  DFT_OUT_DIFF = 0, // add differential to an output struct. Only for scalar
-                    // values in ReverseMode variants.
-  DFT_DUP_ARG = 1,  // duplicate the argument and store differential inside.
-                    // For references, pointers, or integers in ReverseMode
-                   // variants. For all types in ForwardMode variants.
+  DFT_OUT_DIFF = 0,  // add differential to an output struct. Only for scalar
+                     // values in ReverseMode variants.
+  DFT_DUP_ARG = 1,   // duplicate the argument and store differential inside.
+                     // For references, pointers, or integers in ReverseMode
+                     // variants. For all types in ForwardMode variants.
   DFT_CONSTANT = 2,  // no differential. Usable everywhere.
   DFT_DUP_NONEED = 3 // duplicate this argument and store differential inside,
                      // but don't need the forward. Same as DUP_ARG otherwise.
