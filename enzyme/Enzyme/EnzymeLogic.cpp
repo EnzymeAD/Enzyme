@@ -5899,7 +5899,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::basic_filebuf<char, std::char_traits<char>>::basic_filebuf()",
       "std::basic_filebuf<char, std::char_traits<char>>::close()",
 
-      "std::basic_ios<char, std::char_traits<char> >::clear(std::_Ios_Iostate)",
+      "std::basic_ios<char, std::char_traits<char>>::clear(std::_Ios_Iostate)",
       "std::__detail::_Prime_rehash_policy::_M_need_rehash(unsigned long, unsigned long, unsigned long) const",
 
       "std::basic_streambuf<char, std::char_traits<char> >::xsputn(char const*, long)",
@@ -5913,11 +5913,12 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::allocator<char>::allocator()",
       "std::allocator<char>::~allocator()",
 
+
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::basic_string(char const*, std::allocator<char> const&)",
-      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::basic_string(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&&)",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::basic_string(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>&&)",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_construct(unsigned long, char)",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_append(char const*, unsigned long)",
-      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_assign(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_assign(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&)",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_replace(unsigned long, unsigned long, char const*, unsigned long)",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_replace_aux(unsigned long, unsigned long, unsigned long, char)",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::length() const",
@@ -5925,7 +5926,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::size() const",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::~basic_string()",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::compare(char const*) const",
-      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::compare(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) const",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::compare(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&) const",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::reserve(unsigned long)",
 
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::~basic_string()",
@@ -5936,22 +5937,22 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
 
       "std::__basic_file<char>::~__basic_file()",
 
-      "std::basic_ostream<char, std::char_traits<char> >::flush()",
-      "std::basic_streambuf<char, std::char_traits<char> >::xsgetn(char*, long)",
+      "std::basic_ostream<char, std::char_traits<char>>::flush()",
+      "std::basic_streambuf<char, std::char_traits<char>>::xsgetn(char*, long)",
 
       "std::locale::~locale()",
       "std::ios_base::ios_base()",
-      "std::basic_ostream<char, std::char_traits<char> >& "
+      "std::basic_ostream<char, std::char_traits<char>>& "
       "std::basic_ostream<char, std::char_traits<char> "
       ">::_M_insert<double>(double)",
 
       // libc++
-      "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::basic_string(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> > const&)",
+      "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::basic_string(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
       "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::~basic_string()",
       "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::__init(char const*, unsigned long)",
       "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::append(char const*, unsigned long)",
       "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::data() const",
-      "std::__1::basic_ostream<char, std::__1::char_traits<char>>::sentry::sentry(std::__1::basic_ostream<char, std::__1::char_traits<char> >&)",
+      "std::__1::basic_ostream<char, std::__1::char_traits<char>>::sentry::sentry(std::__1::basic_ostream<char, std::__1::char_traits<char>>&)",
       "std::__1::basic_ostream<char, std::__1::char_traits<char>>::sentry::~sentry()",
       "std::__1::ios_base::__set_badbit_and_consider_rethrow()",
       "char* std::__1::addressof<char>(char&)",
@@ -5976,6 +5977,11 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
     return F;
 
   std::string demangledName = llvm::demangle(F->getName().str());
+  // replace all '> >' with '>>'
+  size_t start = 0;
+  while ((start = demangledName.find("> >", start)) != std::string::npos) {
+    demangledName.replace(start, 3, ">>");
+  }
   if (NoFreeDemangles.count(demangledName))
     return F;
 
