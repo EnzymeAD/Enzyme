@@ -60,6 +60,8 @@
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
 
+#include "llvm/Demangle/Demangle.h"
+
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
@@ -5888,71 +5890,99 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   if (isAllocationFunction(F->getName(), TLI))
     return F;
 
+  // clang-format off
+  StringSet<> NoFreeDemangles = {
+      "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char> >(std::basic_ostream<char, std::char_traits<char> >&)",
+      "std::basic_ostream<char, std::char_traits<char>>::put(char)",
+
+      "std::basic_filebuf<char, std::char_traits<char>>::open(char const*, std::_Ios_Openmode)",
+      "std::basic_filebuf<char, std::char_traits<char>>::basic_filebuf()",
+      "std::basic_filebuf<char, std::char_traits<char>>::close()",
+
+      "std::basic_ios<char, std::char_traits<char>>::clear(std::_Ios_Iostate)",
+      "std::__detail::_Prime_rehash_policy::_M_need_rehash(unsigned long, unsigned long, unsigned long) const",
+
+      "std::basic_streambuf<char, std::char_traits<char> >::xsputn(char const*, long)",
+
+      "std::basic_ios<char, std::char_traits<char> >::init(std::basic_streambuf<char, std::char_traits<char> >*)",
+
+      "std::_Hash_bytes(void const*, unsigned long, unsigned long)",
+      "unsigned long std::__1::__do_string_hash<char const*>(char const*, char const*)",
+      "std::__1::hash<char const*>::operator()(char const*) const",
+
+      "std::allocator<char>::allocator()",
+      "std::allocator<char>::~allocator()",
+
+
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::basic_string(char const*, std::allocator<char> const&)",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::basic_string(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>&&)",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_construct(unsigned long, char)",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_append(char const*, unsigned long)",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_assign(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&)",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_replace(unsigned long, unsigned long, char const*, unsigned long)",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_replace_aux(unsigned long, unsigned long, unsigned long, char)",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::length() const",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::data() const",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::size() const",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::~basic_string()",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::compare(char const*) const",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::compare(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&) const",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::reserve(unsigned long)",
+
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::~basic_string()",
+      "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::overflow(int)",
+      "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::pbackfail(int)",
+      "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::underflow()",
+      "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::_M_sync(char*, unsigned long, unsigned long)",
+
+      "std::__basic_file<char>::~__basic_file()",
+
+      "std::basic_ostream<char, std::char_traits<char>>::flush()",
+      "std::basic_streambuf<char, std::char_traits<char>>::xsgetn(char*, long)",
+
+      "std::locale::~locale()",
+      "std::ios_base::ios_base()",
+      "std::basic_ostream<char, std::char_traits<char>>& "
+      "std::basic_ostream<char, std::char_traits<char> "
+      ">::_M_insert<double>(double)",
+
+      // libc++
+      "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::basic_string(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
+      "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::~basic_string()",
+      "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::__init(char const*, unsigned long)",
+      "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::append(char const*, unsigned long)",
+      "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::data() const",
+      "std::__1::basic_ostream<char, std::__1::char_traits<char>>::sentry::sentry(std::__1::basic_ostream<char, std::__1::char_traits<char>>&)",
+      "std::__1::basic_ostream<char, std::__1::char_traits<char>>::sentry::~sentry()",
+      "std::__1::ios_base::__set_badbit_and_consider_rethrow()",
+      "char* std::__1::addressof<char>(char&)",
+      "char const* std::__1::addressof<char const>(char const&)",
+      "std::__1::random_device::operator()()",
+
+      "std::__1::locale::~locale()",
+      "std::__1::locale::use_facet(std::__1::locale::id&) const",
+      "std::__1::ios_base::ios_base()",
+      "std::__1::ios_base::getloc() const",
+      "std::__1::ios_base::clear(unsigned int)",
+  };
+  // clang-format on
+
   StringSet<> NoFrees = {
-      "mpfr_greater_p",
-      "memchr",
-      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEC1EPKcRKS3_",
-      "_ZSt16__ostream_insertIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_"
-      "PKS3_l",
-      "_ZNSo3putEc",
-      "_ZNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEE7_M_syncEPcmm",
-      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE10_M_"
-      "replaceEmmPKcm",
-      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_appendEPKcm",
-      "_ZNSt13basic_filebufIcSt11char_traitsIcEE4openEPKcSt13_Ios_Openmode",
-      "_ZNSt9basic_iosIcSt11char_traitsIcEE5clearESt12_Ios_Iostate",
-      "_ZNSt13basic_filebufIcSt11char_traitsIcEE5closeEv",
-      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE14_M_replace_"
-      "auxEmmmc",
-      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE12_M_constructEmc",
-      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE7reserveEm",
-      "time",
-      "strlen",
-      "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE7compareERKS4_",
-      "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEmmm",
-      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEC1EOS4_",
-      "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE6lengthEv",
-      "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE4dataEv",
-      "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE4sizeEv",
-      "_ZNKSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE4dataEv"
-      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEED1Ev",
-      "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEED1Ev",
-      "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6__"
-      "initEPKcm",
-      "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC1ERKS5_",
-      "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_"
-      "9allocatorIcEEE6appendEPKcm",
-      "_ZNSt12__basic_fileIcED1Ev",
-      "__cxa_begin_catch",
-      "__cxa_end_catch",
-      "_ZNSo5flushEv",
-      "compress2",
-      "_ZNSt6localeD1Ev",
-      "_ZNSt8ios_baseC2Ev",
-      "_ZNSo9_M_insertIdEERSoT_",
-      "malloc_usable_size",
-      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEED1Ev",
-      "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE7compareEPKc",
-      "_ZNSt13basic_filebufIcSt11char_traitsIcEEC1Ev",
-      "_ZNSt15basic_streambufIcSt11char_traitsIcEE6xsputnEPKcl",
-      "_ZNSt9basic_iosIcSt11char_traitsIcEE4initEPSt15basic_streambufIcS1_E",
-      "_ZNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEE8overflowEi",
-      "_ZNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEE9pbackfailEi",
-      "_ZNSt15basic_streambufIcSt11char_traitsIcEE6xsgetnEPcl",
-      "_ZNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEE9underflowEv",
-      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_assignERKS4_",
-      "_ZNSaIcED1Ev",
-      "_ZNSaIcEC1Ev",
-      "_ZSt11_Hash_bytesPKvmm",
-      "_ZNSt3__116__do_string_hashIPKcEEmT_S3_",
-      "_ZNKSt3__14hashIPKcEclES2_",
-      "_ZNSt3__19addressofIcEEPT_RS1_",
-      "_ZNSt3__19addressofIKcEEPT_RS2_",
-      "_ZNSt3__113random_deviceclEv",
+      "mpfr_greater_p",    "memchr",          "time",      "strlen",
+      "__cxa_begin_catch", "__cxa_end_catch", "compress2", "malloc_usable_size",
       "MPI_Allreduce",
   };
 
   if (startsWith(F->getName(), "_ZNSolsE") || NoFrees.count(F->getName()))
+    return F;
+
+  std::string demangledName = llvm::demangle(F->getName().str());
+  // replace all '> >' with '>>'
+  size_t start = 0;
+  while ((start = demangledName.find("> >", start)) != std::string::npos) {
+    demangledName.replace(start, 3, ">>");
+  }
+  if (NoFreeDemangles.count(demangledName))
     return F;
 
   switch (F->getIntrinsicID()) {
@@ -5972,23 +6002,23 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
     if (EnzymeEmptyFnInactive) {
       return F;
     }
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "No create nofree of empty function (" << demangledName << ") "
+       << F->getName() << ")\n";
+    if (context.req) {
+      ss << " at context: " << *context.req;
+    } else {
+      ss << *F << "\n";
+    }
     if (CustomErrorHandler) {
-      std::string s;
-      llvm::raw_string_ostream ss(s);
-      ss << "No create nofree of empty function " << F->getName() << "\n";
-      if (context.req) {
-        ss << " at context: " << *context.req;
-      } else {
-        ss << *F << "\n";
-      }
       CustomErrorHandler(ss.str().c_str(), wrap(context.req),
                          ErrorType::NoDerivative, nullptr, wrap(F),
                          wrap(context.ip));
       return F;
     }
     if (context.req) {
-      EmitFailure("IllegalNoFree", context.req->getDebugLoc(), context.req,
-                  "Cannot create nofree of empty function: ", *F);
+      EmitFailure("IllegalNoFree", context.req->getDebugLoc(), context.req, s);
       return F;
     }
     llvm::errs() << " unhandled, create no free of empty function: " << *F

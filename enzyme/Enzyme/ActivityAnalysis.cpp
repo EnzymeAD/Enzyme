@@ -395,6 +395,8 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
   
   
     // libc++
+    "std::__1::locale",
+    "std::__1::ios_base",
     "std::__1::basic_string",
     "std::__1::__do_string_hash",
     "std::__1::hash",
