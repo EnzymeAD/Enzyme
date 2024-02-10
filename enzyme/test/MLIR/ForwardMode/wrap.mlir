@@ -1,4 +1,4 @@
-// RUN: %eopt --enzyme-wrap="infn=square outfn=dsq retTy=enzyme_dup argTys=enzyme_dup, mode=ForwardMode" %s | FileCheck %s
+// RUN: %eopt --enzyme-wrap="infn=square outfn=dsq retTy=enzyme_dup argTys=enzyme_dup mode=ForwardMode" %s | FileCheck %s
 
 module {
   func.func @square(%x : f64) -> f64{
