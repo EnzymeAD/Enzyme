@@ -132,6 +132,21 @@ public:
         isComplete(false) {}
 };
 
+///  \p todiff is the function to differentiate
+///  \p retType is the activity info of the return.
+///  Only allowed to be DUP_ARG or CONSTANT. DUP_NONEED is not allowed,
+///  set returnValue to false instead.
+///  \p constant_args is the activity info of the arguments
+///  \p returnValue is whether the primal's return should also be returned.
+///  \p dretUsed is whether the shadow return value should also be returned.
+///  Only allowed to be true if retType is CDIFFE_TYPE::DUP_ARG.
+///  \p additionalArg is the type (or null) of an additional type in the
+///  signature to hold the tape.
+///  \p typeInfo is the type info information about the calling context
+///  \p _overwritten_args marks whether an argument may be overwritten
+///  before loads in the generated function (and thus cannot be cached).
+///  \p AtomicAdd is whether to perform all adjoint
+///  updates to memory in an atomic way
 struct ReverseCacheKey {
   llvm::Function *todiff;
   DIFFE_TYPE retType;
@@ -427,9 +442,10 @@ public:
   ///  \p returnUsed is whether the primal's return should also be returned
   ///  \p typeInfo is the type info information about the calling context
   ///  \p _overwritten_args marks whether an argument may be rewritten before
-  ///  loads in the generated function (and thus cannot be cached). \p
-  ///  forceAnonymousTape forces the tape to be an i8* rather than the true tape
-  ///  structure \p AtomicAdd is whether to perform all adjoint updates to
+  ///  loads in the generated function (and thus cannot be cached).
+  ///  \p forceAnonymousTape forces the tape to be an i8* rather than the true
+  ///  tape structure
+  ///  \p AtomicAdd is whether to perform all adjoint updates to
   ///  memory in an atomic way
   const AugmentedReturn &CreateAugmentedPrimal(
       RequestContext context, llvm::Function *todiff, DIFFE_TYPE retType,
@@ -521,20 +537,8 @@ public:
 
   /// Create the reverse pass, or combined forward+reverse derivative function.
   ///  \p context the instruction which requested this derivative (or null).
-  ///  \p todiff is the function to differentiate
-  ///  \p retType is the activity info of the return
-  ///  \p constant_args is the activity info of the arguments
-  ///  \p returnValue is whether the primal's return should also be returned
-  ///  \p dretUsed is whether the shadow return value should also be returned
-  ///  \p additionalArg is the type (or null) of an additional type in the
-  ///  signature to hold the tape.
-  ///  \p typeInfo is the type info information about the calling context
-  ///  \p _overwritten_args marks whether an argument may be rewritten
-  ///  before loads in the generated function (and thus cannot be cached).
   ///  \p augmented is the data structure created by prior call to an
   ///   augmented forward pass
-  ///  \p AtomicAdd is whether to perform all adjoint
-  ///  updates to memory in an atomic way
   llvm::Function *CreatePrimalAndGradient(RequestContext context,
                                           const ReverseCacheKey &&key,
                                           TypeAnalysis &TA,
