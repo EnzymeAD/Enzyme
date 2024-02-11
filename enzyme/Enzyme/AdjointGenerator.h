@@ -756,7 +756,7 @@ public:
     auto alignment = LI.getAlign();
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
 
-    bool constantval = parseTBAA(LI, DL, nullptr).Inner0().isIntegral();
+    bool constantval = parseTBAA(LI, DL, nullptr)[{-1}].isIntegral();
     visitLoadLike(LI, alignment, constantval);
     eraseIfUnused(LI);
   }
@@ -992,7 +992,7 @@ public:
     NewI->setMetadata(LLVMContext::MD_noalias, noscope);
 
     bool constantval = gutils->isConstantValue(orig_val) ||
-                       parseTBAA(I, DL, nullptr).Inner0().isIntegral();
+                       parseTBAA(I, DL, nullptr)[{-1}].isIntegral();
 
     IRBuilder<> BuilderZ(NewI);
     BuilderZ.setFastMathFlags(getFast());
@@ -3272,7 +3272,7 @@ public:
     // copying into nullptr is invalid (not sure why it exists here), but we
     // shouldn't do it in reverse pass or shadow
     if (isa<ConstantPointerNull>(orig_dst) ||
-        TR.query(orig_dst).Inner0() == BaseType::Anything) {
+        TR.query(orig_dst)[{-1}] == BaseType::Anything) {
       eraseIfUnused(MTI);
       return;
     }
@@ -3689,7 +3689,7 @@ public:
       auto align0 = cast<ConstantInt>(I.getOperand(1))->getZExtValue();
       auto align = MaybeAlign(align0);
       auto &DL = gutils->newFunc->getParent()->getDataLayout();
-      bool constantval = parseTBAA(I, DL, nullptr).Inner0().isIntegral();
+      bool constantval = parseTBAA(I, DL, nullptr)[{-1}].isIntegral();
       visitLoadLike(I, align, constantval,
                     /*mask*/ gutils->getNewFromOriginal(I.getOperand(2)),
                     /*orig_maskInit*/ I.getOperand(3));
@@ -4068,7 +4068,7 @@ public:
         assert(whatType(argType, Mode) == DIFFE_TYPE::DUP_ARG ||
                whatType(argType, Mode) == DIFFE_TYPE::CONSTANT);
       } else {
-        assert(TR.query(call.getArgOperand(i)).Inner0().isFloat());
+        assert(TR.query(call.getArgOperand(i))[{-1}].isFloat());
         OutTypes.push_back(call.getArgOperand(i));
         OutFPTypes.push_back(argType);
         assert(whatType(argType, Mode) == DIFFE_TYPE::OUT_DIFF ||
@@ -5437,8 +5437,7 @@ public:
           assert(dcall);
 
           if (!gutils->isConstantValue(&call)) {
-            if (!call.getType()->isFPOrFPVectorTy() &&
-                TR.query(&call).Inner0().isPossiblePointer()) {
+            if (!call.getType()->isFPOrFPVectorTy() && TR.anyPointer(&call)) {
             } else if (Mode != DerivativeMode::ReverseModePrimal) {
               ((DiffeGradientUtils *)gutils)->differentials[dcall] =
                   ((DiffeGradientUtils *)gutils)->differentials[newCall];
@@ -5898,8 +5897,7 @@ public:
           gutils->originalToNewFn[&call] = dcall;
           gutils->newToOriginalFn.erase(newCall);
           gutils->newToOriginalFn[dcall] = &call;
-          if (!call.getType()->isFPOrFPVectorTy() &&
-              TR.query(&call).Inner0().isPossiblePointer()) {
+          if (!call.getType()->isFPOrFPVectorTy() && TR.anyPointer(&call)) {
           } else {
             ((DiffeGradientUtils *)gutils)->differentials[dcall] =
                 ((DiffeGradientUtils *)gutils)->differentials[newCall];
