@@ -5883,37 +5883,40 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
           cast<llvm::Constant>(CreateNoFree(context, castinst->getOperand(0)))};
       return castinst->getWithOperands(reps);
     }
+  if (EnzymeAssumeUnknownNoFree) {
+    return todiff;
+  }
+
+  std::string s;
+  llvm::raw_string_ostream ss(s);
+  ss << "No create nofree of unknown value\n";
+  ss << *todiff << "\n";
+  if (context.req) {
+    ss << " at context: " << *context.req;
+  }
+  if (auto I = dyn_cast<Instruction>(todiff)) {
+    auto fname = I->getParent()->getParent()->getName();
+    std::string demangledName = llvm::demangle(fname.str());
+    ss << " within func " << fname << " (" << demangledName << ")\n";
+  }
   if (CustomErrorHandler) {
-    std::string s;
-    llvm::raw_string_ostream ss(s);
-    ss << "No create nofree of unknown value\n";
-    ss << *todiff << "\n";
-    if (context.req) {
-      ss << " at context: " << *context.req;
-    }
     CustomErrorHandler(ss.str().c_str(), wrap(context.req),
                        ErrorType::NoDerivative, nullptr, wrap(todiff),
                        wrap(context.ip));
     return todiff;
   }
 
-  if (EnzymeAssumeUnknownNoFree) {
-    return todiff;
-  }
-
   if (context.req) {
-    EmitFailure("IllegalNoFree", context.req->getDebugLoc(), context.req,
-                "Cannot create nofree of instruction-created value: ", *todiff);
+    EmitFailure("IllegalNoFree", context.req->getDebugLoc(), context.req, s);
     return todiff;
   }
   if (auto arg = dyn_cast<Instruction>(todiff)) {
     auto loc = arg->getDebugLoc();
-    EmitFailure("IllegalNoFree", loc, arg,
-                "Cannot create nofree of instruction-created value: ", *todiff);
+    EmitFailure("IllegalNoFree", loc, arg, s);
     return todiff;
   }
 
-  llvm::errs() << " unhandled, create no free of: " << *todiff << "\n";
+  llvm::errs() << s;
   llvm_unreachable("unhandled, create no free");
 }
 
@@ -5995,6 +5998,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::data() const",
       "std::__1::basic_ostream<char, std::__1::char_traits<char>>::sentry::sentry(std::__1::basic_ostream<char, std::__1::char_traits<char>>&)",
       "std::__1::basic_ostream<char, std::__1::char_traits<char>>::sentry::~sentry()",
+      "std::__1::basic_ostream<char, std::__1::char_traits<char>>::flush()",
       "std::__1::ios_base::__set_badbit_and_consider_rethrow()",
       "char* std::__1::addressof<char>(char&)",
       "char const* std::__1::addressof<char const>(char const&)",
@@ -6005,6 +6009,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__1::ios_base::ios_base()",
       "std::__1::ios_base::getloc() const",
       "std::__1::ios_base::clear(unsigned int)",
+  };
+  const char* NoFreeDemanglesStartsWith[] = {
+      "std::__1::basic_ostream<char, std::__1::char_traits<char>>::operator<<",
   };
   // clang-format on
 
@@ -6025,6 +6032,10 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   }
   if (NoFreeDemangles.count(demangledName))
     return F;
+
+  for (auto Name : NoFreeDemanglesStartsWith)
+    if (startsWith(demangledName, Name))
+      return F;
 
   switch (F->getIntrinsicID()) {
   case Intrinsic::lifetime_start:

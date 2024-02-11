@@ -118,6 +118,7 @@ static const StringSet<> InactiveGlobals = {
     "_ZNSt3__113basic_ostreamIcNS_11char_traitsIcEEE6sentryC1ERS3_",
     "_ZSt5wcout",
     "_ZSt4cerr",
+    "_ZNSt3__14cerrE",
     "_ZTVNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEEE",
     "_ZTVSt15basic_streambufIcSt11char_traitsIcEE",
     "_ZTVSt9basic_iosIcSt11char_traitsIcEE",

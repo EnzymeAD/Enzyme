@@ -4394,7 +4394,6 @@ public:
               }
             }
           }
-          size_t freeCount = 0;
           for (auto LI : geps) {
             CallInst *freeCall = nullptr;
             for (auto LU : LI->users()) {
@@ -4422,7 +4421,6 @@ public:
             }
             if (freeCall) {
               freeCall->eraseFromParent();
-              freeCount++;
             }
           }
         }
@@ -4593,7 +4591,7 @@ public:
       EmitFailure("CannotDeduceType", call.getDebugLoc(), &call,
                   "failed to deduce type of copy ", call);
     }
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
   knownF:
 #endif
     unsigned start = 0;
