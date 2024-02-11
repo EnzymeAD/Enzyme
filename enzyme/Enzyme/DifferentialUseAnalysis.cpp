@@ -770,7 +770,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
   for (auto V : Intermediates) {
     G[Node(V, false)].insert(Node(V, true));
     forEachDifferentialUser(
-        [&](Instruction *U) {
+        [&](Value *U) {
           if (Intermediates.count(U)) {
             if (V != U)
               G[Node(V, true)].insert(Node(U, false));

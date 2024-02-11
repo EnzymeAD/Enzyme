@@ -510,7 +510,7 @@ forEachDirectInsertUser(llvm::function_ref<void(llvm::Instruction *)> f,
 }
 
 __attribute__((always_inline)) static inline void
-forEachDifferentialUser(llvm::function_ref<void(llvm::Instruction *)> f,
+forEachDifferentialUser(llvm::function_ref<void(llvm::Value *)> f,
                         const GradientUtils *gutils, llvm::Value *V,
                         bool useCheck = false) {
   for (auto V2 : V->users()) {

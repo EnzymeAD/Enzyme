@@ -8050,7 +8050,7 @@ void GradientUtils::computeMinCache() {
         Required.insert(V);
       } else {
         DifferentialUseAnalysis::forEachDifferentialUser(
-            [&](Instruction *V2) { todo.push_back(V2); }, this, V);
+            [&](Value *V2) { todo.push_back(V2); }, this, V);
       }
     }
 
