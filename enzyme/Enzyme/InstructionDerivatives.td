@@ -434,7 +434,7 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x, $y),
-                  ["fmod", "fmodf", "fmodl"],
+                  ["fmod", "fmodf", "fmodl", "__nv_fmod", "__nv_fmodf", "__nv_fmodl"],
                   [
                   (DiffeRet),
                   (CheckedMul (DiffeRet), (FNeg (Intrinsic<"copysign"> (Intrinsic<"floor"> (Intrinsic<"fabs"> (FDiv $x, $y):$div)), $div)))
