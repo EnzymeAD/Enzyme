@@ -5773,6 +5773,62 @@ TypeTree TypeResults::query(Value *val) const {
   return analyzer.getAnalysis(val);
 }
 
+bool TypeResults::anyFloat(Value *val) const {
+  assert(val);
+  assert(val->getType());
+  auto q = query(val);
+  auto dt = q[{-1}];
+  if (dt != BaseType::Anything && dt != BaseType::Unknown)
+    return dt.isFloat();
+
+  size_t ObjSize = 1;
+  auto &dl = analyzer.fntypeinfo.Function->getParent()->getDataLayout();
+  if (val->getType()->isSized())
+    ObjSize = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
+
+  for (size_t i = 0; i < ObjSize;) {
+    dt = q[{(int)i}];
+    if (dt == BaseType::Integer) {
+      i++;
+      continue;
+    }
+    if (dt == BaseType::Pointer) {
+      i += dl.getPointerSize(0);
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+bool TypeResults::anyPointer(Value *val) const {
+  assert(val);
+  assert(val->getType());
+  auto q = query(val);
+  auto dt = q[{-1}];
+  if (dt != BaseType::Anything && dt != BaseType::Unknown)
+    return dt == BaseType::Pointer;
+
+  size_t ObjSize = 1;
+  auto &dl = analyzer.fntypeinfo.Function->getParent()->getDataLayout();
+  if (val->getType()->isSized())
+    ObjSize = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
+
+  for (size_t i = 0; i < ObjSize;) {
+    dt = q[{(int)i}];
+    if (dt == BaseType::Integer) {
+      i++;
+      continue;
+    }
+    if (auto FT = dt.isFloat()) {
+      i += (dl.getTypeSizeInBits(FT) + 7) / 8;
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
 void TypeResults::dump(llvm::raw_ostream &ss) const { analyzer.dump(ss); }
 
 ConcreteType TypeResults::intType(size_t num, Value *val, bool errIfNotFound,

@@ -3280,7 +3280,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
             auto &DL = newFunc->getParent()->getDataLayout();
 
             bool constantval = isConstantValue(orig_val) ||
-                               parseTBAA(I, DL, nullptr).Inner0().isIntegral();
+                               parseTBAA(I, DL, nullptr)[{-1}].isIntegral();
 
             // TODO allow recognition of other types that could contain
             // pointers [e.g. {void*, void*} or <2 x i64> ]
@@ -4321,8 +4321,7 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
       subretType = DIFFE_TYPE::DUP_ARG;
       shadowReturnUsed = true;
     } else {
-      if (!orig->getType()->isFPOrFPVectorTy() &&
-          TR.query(orig).Inner0().isPossiblePointer()) {
+      if (!orig->getType()->isFPOrFPVectorTy() && TR.anyPointer(orig)) {
         if (DifferentialUseAnalysis::is_value_needed_in_reverse<
                 QueryType::Shadow>(this, orig, cmode, notForAnalysis)) {
           subretType = DIFFE_TYPE::DUP_ARG;
@@ -4359,8 +4358,7 @@ DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
 
   auto argType = v->getType();
 
-  if (!argType->isFPOrFPVectorTy() &&
-      (TR.query(v).Inner0().isPossiblePointer() || foreignFunction)) {
+  if (!argType->isFPOrFPVectorTy() && (TR.anyPointer(v) || foreignFunction)) {
     if (argType->isPointerTy()) {
       auto at = getBaseObject(v);
       if (auto arg = dyn_cast<Argument>(at)) {
@@ -5105,9 +5103,21 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return applyChainRule(oval->getType(), BuilderM, rule);
   }
 
-  if (isConstantValue(oval) && !isa<InsertValueInst>(oval) &&
-      !isa<ExtractValueInst>(oval) && !isa<InsertElementInst>(oval) &&
-      !isa<ExtractElementInst>(oval)) {
+  bool shouldNullShadow = isConstantValue(oval);
+  if (shouldNullShadow) {
+    if (isa<InsertValueInst>(oval) || isa<ExtractValueInst>(oval) ||
+        isa<InsertElementInst>(oval) || isa<ExtractElementInst>(oval)) {
+      shouldNullShadow = false;
+      auto orig = cast<Instruction>(oval);
+      if (knownRecomputeHeuristic.count(orig)) {
+        if (!knownRecomputeHeuristic[orig]) {
+          shouldNullShadow = true;
+        }
+      }
+    }
+  }
+
+  if (shouldNullShadow) {
     // NOTE, this is legal and the correct resolution, however, our activity
     // analysis honeypot no longer exists
 
@@ -8011,9 +8021,9 @@ void GradientUtils::computeMinCache() {
       todo.pop_front();
       if (Intermediates.count(V))
         continue;
-      if (!DifferentialUseAnalysis::is_value_needed_in_reverse<
-              QueryType::Primal>(this, V, minCutMode, FullSeen,
-                                 notForAnalysis)) {
+      bool multiLevel = DifferentialUseAnalysis::is_value_needed_in_reverse<
+          QueryType::Primal>(this, V, minCutMode, FullSeen, notForAnalysis);
+      if (!multiLevel) {
         continue;
       }
       if (!Recomputes.count(V)) {
@@ -8033,27 +8043,21 @@ void GradientUtils::computeMinCache() {
         }
       }
       Intermediates.insert(V);
-      if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-              QueryType::Primal, /*OneLevel*/ true>(
-              this, V, minCutMode, OneLevelSeen, notForAnalysis)) {
+      bool singleLevel = DifferentialUseAnalysis::is_value_needed_in_reverse<
+          QueryType::Primal, /*OneLevel*/ true>(this, V, minCutMode,
+                                                OneLevelSeen, notForAnalysis);
+      if (singleLevel) {
         Required.insert(V);
       } else {
-        for (auto V2 : V->users()) {
-          if (auto Inst = dyn_cast<Instruction>(V2))
-            for (auto pair : rematerializableAllocations) {
-              if (pair.second.stores.count(Inst)) {
-                todo.push_back(pair.first);
-              }
-            }
-          todo.push_back(V2);
-        }
+        DifferentialUseAnalysis::forEachDifferentialUser(
+            [&](Instruction *V2) { todo.push_back(V2); }, this, V);
       }
     }
 
     SetVector<Value *> MinReq;
     DifferentialUseAnalysis::minCut(oldFunc->getParent()->getDataLayout(),
                                     OrigLI, Recomputes, Intermediates, Required,
-                                    MinReq, rematerializableAllocations, TLI);
+                                    MinReq, this, TLI);
     SmallPtrSet<Value *, 5> NeedGraph;
     for (Value *V : MinReq)
       NeedGraph.insert(V);
