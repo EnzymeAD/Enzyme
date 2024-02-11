@@ -1961,17 +1961,58 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     assert(!todiff->getReturnType()->isEmptyTy() &&
            !todiff->getReturnType()->isVoidTy());
 
-  assert(_overwritten_args.size() == todiff->arg_size());
-
   FnTypeInfo oldTypeInfo = preventTypeAnalysisLoops(oldTypeInfo_, todiff);
-
-  assert(constant_args.size() == todiff->getFunctionType()->getNumParams());
   AugmentedCacheKey tup = {todiff,        retType,
                            constant_args, _overwritten_args,
                            returnUsed,    shadowReturnUsed,
                            oldTypeInfo,   forceAnonymousTape,
                            AtomicAdd,     omp,
                            width};
+
+  if (_overwritten_args.size() != todiff->arg_size()) {
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << " overwritten_args.size() [" << _overwritten_args.size()
+       << "] != todiff->arg_size()\n";
+    ss << "todiff: " << *todiff << "\n";
+    llvm::Value *toshow = todiff;
+    if (context.req) {
+      toshow = context.req;
+      ss << " at context: " << *context.req;
+    } else {
+      ss << *todiff << "\n";
+    }
+    if (CustomErrorHandler) {
+      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
+                         ErrorType::NoDerivative, nullptr, wrap(todiff),
+                         wrap(context.ip));
+      auto newFunc = todiff;
+      std::map<AugmentedStruct, int> returnMapping;
+      return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
+                 AugmentedCachedFunctions, tup,
+                 AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
+                                 constant_args))
+          ->second;
+    }
+    if (context.req) {
+      EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
+                  ss.str());
+      auto newFunc = todiff;
+      std::map<AugmentedStruct, int> returnMapping;
+      return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
+                 AugmentedCachedFunctions, tup,
+                 AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
+                                 constant_args))
+          ->second;
+    }
+    llvm::errs() << "mod: " << *todiff->getParent() << "\n";
+    llvm::errs() << *todiff << "\n";
+    llvm_unreachable(
+        "attempting to differentiate function with wrong overwritten count");
+  }
+
+  assert(_overwritten_args.size() == todiff->arg_size());
+  assert(constant_args.size() == todiff->getFunctionType()->getNumParams());
 
   auto found = AugmentedCachedFunctions.find(tup);
   if (found != AugmentedCachedFunctions.end()) {
