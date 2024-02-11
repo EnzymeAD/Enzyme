@@ -4507,8 +4507,10 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
 
-    if (startsWith(funcName, "_ZNKSt3__112basic_stringIcNS_11char_traitsIcEENS_"
-                             "9allocatorIcEEE13__get_pointer")) {
+    if (startsWith(funcName, "_ZNKSt3__112basic_string") ||
+        startsWith(funcName, "_ZNSt3__112basic_string") ||
+        startsWith(funcName, "_ZNSt3__112__hash_table") ||
+        startsWith(funcName, "_ZNKSt3__115basic_stringbuf")) {
       return;
     }
 

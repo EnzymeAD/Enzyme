@@ -15,11 +15,9 @@
 // RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli - ; fi
 // RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli - ; fi
 
-#include <stdio.h>
-#include <stdint.h>
-#include <math.h>
-
 #include "../test_utils.h"
+
+double pow(double, double);
 
 __attribute__((noinline))
 uint64_t factorial(uint64_t x) {
