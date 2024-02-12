@@ -4490,7 +4490,29 @@ Function *EnzymeLogic::CreateForwardDiff(
           "unknown derivative for function -- metadata incorrect");
     }
     auto md2 = cast<MDTuple>(md);
+    assert(md2);
     assert(md2->getNumOperands() == 1);
+    if (!md2->getOperand(0)) {
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "Failed to use custom forward mode derivative for "
+         << todiff->getName() << "\n";
+      ss << " found metadata (but null op0) " << *md2 << "\n";
+      EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
+                  ss.str());
+      return ForwardCachedFunctions[tup] = nullptr;
+    }
+    if (!isa<ConstantAsMetadata>(md2->getOperand(0))) {
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "Failed to use custom forward mode derivative for "
+         << todiff->getName() << "\n";
+      ss << " found metadata (but not constantasmetadata) "
+         << *md2->getOperand(0) << "\n";
+      EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
+                  ss.str());
+      return ForwardCachedFunctions[tup] = nullptr;
+    }
     auto gvemd = cast<ConstantAsMetadata>(md2->getOperand(0));
     auto foundcalled = cast<Function>(gvemd->getValue());
 
