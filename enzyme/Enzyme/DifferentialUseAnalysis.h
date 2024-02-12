@@ -166,6 +166,60 @@ inline bool is_value_needed_in_reverse(
         }
       }
 
+      if (!TR.anyFloat(const_cast<Value *>(inst)))
+        if (auto IVI = dyn_cast<Instruction>(user)) {
+          bool inserted = false;
+          if (auto II = dyn_cast<InsertValueInst>(IVI))
+            inserted = II->getInsertedValueOperand() == inst ||
+                       II->getAggregateOperand() == inst;
+          if (auto II = dyn_cast<ExtractValueInst>(IVI))
+            inserted = II->getAggregateOperand() == inst;
+          if (auto II = dyn_cast<InsertElementInst>(IVI))
+            inserted = II->getOperand(1) == inst || II->getOperand(0) == inst;
+          if (auto II = dyn_cast<ExtractElementInst>(IVI))
+            inserted = II->getOperand(0) == inst;
+          if (inserted) {
+            SmallVector<const Instruction *, 1> todo;
+            todo.push_back(IVI);
+            while (todo.size()) {
+              auto cur = todo.pop_back_val();
+              for (auto u : cur->users()) {
+                if (auto IVI2 = dyn_cast<InsertValueInst>(u)) {
+                  todo.push_back(IVI2);
+                  continue;
+                }
+                if (auto IVI2 = dyn_cast<ExtractValueInst>(u)) {
+                  todo.push_back(IVI2);
+                  continue;
+                }
+                if (auto IVI2 = dyn_cast<InsertElementInst>(u)) {
+                  todo.push_back(IVI2);
+                  continue;
+                }
+                if (auto IVI2 = dyn_cast<ExtractElementInst>(u)) {
+                  todo.push_back(IVI2);
+                  continue;
+                }
+
+                bool partial = false;
+                if (!gutils->isConstantValue(const_cast<Instruction *>(cur))) {
+                  partial = is_value_needed_in_reverse<QueryType::Shadow>(
+                      gutils, user, mode, seen, oldUnreachable);
+                }
+                if (partial) {
+
+                  if (EnzymePrintDiffUse)
+                    llvm::errs()
+                        << " Need (partial) direct " << to_string(VT) << " of "
+                        << *inst << " in reverse from insertelem " << *user
+                        << " via " << *cur << " in " << *u << "\n";
+                  return seen[idx] = true;
+                }
+              }
+            }
+          }
+        }
+
       if (VT != QueryType::Primal)
         continue;
     }
@@ -332,36 +386,14 @@ inline bool is_value_needed_in_reverse(
           primalUsedInShadowPointer = false;
       }
     }
-    if (auto IVI = dyn_cast<InsertValueInst>(user)) {
-      bool valueIsIndex = false;
-      for (unsigned i = 2; i < IVI->getNumOperands(); ++i) {
-        if (IVI->getOperand(i) == inst) {
-          if (inst == IVI->getInsertedValueOperand() &&
-              TR.query(
-                    const_cast<Value *>(IVI->getInsertedValueOperand()))[{-1}]
-                  .isFloat()) {
-            continue;
-          }
-          valueIsIndex = true;
-        }
-      }
-      primalUsedInShadowPointer = valueIsIndex;
-    }
-    if (auto EVI = dyn_cast<ExtractValueInst>(user)) {
-      bool valueIsIndex = false;
-      for (unsigned i = 1; i < EVI->getNumOperands(); ++i) {
-        if (EVI->getOperand(i) == inst) {
-          valueIsIndex = true;
-        }
-      }
-      primalUsedInShadowPointer = valueIsIndex;
-    }
+    // No need for insert/extractvalue since indices are unsigned
+    //  not llvm runtime values
+    if (isa<InsertValueInst>(user) || isa<ExtractValueInst>(user))
+      primalUsedInShadowPointer = false;
 
     if (primalUsedInShadowPointer)
       if (!user->getType()->isVoidTy() &&
-          TR.query(const_cast<Instruction *>(user))
-              .Inner0()
-              .isPossiblePointer()) {
+          TR.anyPointer(const_cast<Instruction *>(user))) {
         if (is_value_needed_in_reverse<QueryType::Shadow>(
                 gutils, user, mode, seen, oldUnreachable)) {
           if (EnzymePrintDiffUse)
@@ -433,11 +465,66 @@ void minCut(const llvm::DataLayout &DL, llvm::LoopInfo &OrigLI,
             const llvm::SetVector<llvm::Value *> &Recomputes,
             const llvm::SetVector<llvm::Value *> &Intermediates,
             llvm::SetVector<llvm::Value *> &Required,
-            llvm::SetVector<llvm::Value *> &MinReq,
-            const llvm::ValueMap<llvm::Value *, GradientUtils::Rematerializer>
-                &rematerializableAllocations,
+            llvm::SetVector<llvm::Value *> &MinReq, const GradientUtils *gutils,
             llvm::TargetLibraryInfo &TLI);
 
+__attribute__((always_inline)) static inline void
+forEachDirectInsertUser(llvm::function_ref<void(llvm::Instruction *)> f,
+                        const GradientUtils *gutils, llvm::Instruction *IVI,
+                        llvm::Value *val, bool useCheck) {
+  using namespace llvm;
+  if (!gutils->isConstantValue(IVI))
+    return;
+  bool inserted = false;
+  if (auto II = dyn_cast<InsertValueInst>(IVI))
+    inserted = II->getInsertedValueOperand() == val ||
+               II->getAggregateOperand() == val;
+  if (auto II = dyn_cast<ExtractValueInst>(IVI))
+    inserted = II->getAggregateOperand() == val;
+  if (auto II = dyn_cast<InsertElementInst>(IVI))
+    inserted = II->getOperand(1) == val || II->getOperand(0) == val;
+  if (auto II = dyn_cast<ExtractElementInst>(IVI))
+    inserted = II->getOperand(0) == val;
+  if (inserted) {
+    SmallVector<Instruction *, 1> todo;
+    todo.push_back(IVI);
+    while (todo.size()) {
+      auto cur = todo.pop_back_val();
+      for (auto u : cur->users()) {
+        if (isa<InsertValueInst>(u) || isa<InsertElementInst>(u) ||
+            isa<ExtractValueInst>(u) || isa<ExtractElementInst>(u)) {
+          auto I2 = cast<Instruction>(u);
+          bool subCheck = useCheck;
+          if (!subCheck) {
+            subCheck = is_value_needed_in_reverse<QueryType::Shadow>(
+                gutils, I2, gutils->mode, gutils->notForAnalysis);
+          }
+          if (subCheck)
+            f(I2);
+          todo.push_back(I2);
+          continue;
+        }
+      }
+    }
+  }
+}
+
+__attribute__((always_inline)) static inline void
+forEachDifferentialUser(llvm::function_ref<void(llvm::Value *)> f,
+                        const GradientUtils *gutils, llvm::Value *V,
+                        bool useCheck = false) {
+  for (auto V2 : V->users()) {
+    if (auto Inst = llvm::dyn_cast<llvm::Instruction>(V2)) {
+      for (const auto &pair : gutils->rematerializableAllocations) {
+        if (pair.second.stores.count(Inst)) {
+          f(llvm::cast<llvm::Instruction>(pair.first));
+        }
+      }
+      f(Inst);
+      forEachDirectInsertUser(f, gutils, Inst, V, useCheck);
+    }
+  }
+}
 }; // namespace DifferentialUseAnalysis
 
 #endif

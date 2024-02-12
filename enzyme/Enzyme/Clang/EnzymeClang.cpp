@@ -240,6 +240,11 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
     // if (FD->isLateTemplateParsed()) return;
     auto &AST = S.getASTContext();
     DeclContext *declCtx = FD->getDeclContext();
+    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
+      if (tmpCtx->isRecord()) {
+        declCtx = tmpCtx->getParent();
+      }
+    }
     auto loc = FD->getLocation();
     RecordDecl *RD;
     if (S.getLangOpts().CPlusPlus)
@@ -369,6 +374,11 @@ struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
 
     auto &AST = S.getASTContext();
     DeclContext *declCtx = D->getDeclContext();
+    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
+      if (tmpCtx->isRecord()) {
+        declCtx = tmpCtx->getParent();
+      }
+    }
     auto loc = D->getLocation();
     RecordDecl *RD;
     if (S.getLangOpts().CPlusPlus)
@@ -425,7 +435,6 @@ struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
       return AttributeNotApplied;
     }
     V->setInit(expr);
-    V->dump();
     S.MarkVariableReferenced(loc, V);
     S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
     return AttributeApplied;
@@ -479,6 +488,11 @@ struct EnzymeNoFreeAttrInfo : public ParsedAttrInfo {
 
     auto &AST = S.getASTContext();
     DeclContext *declCtx = D->getDeclContext();
+    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
+      if (tmpCtx->isRecord()) {
+        declCtx = tmpCtx->getParent();
+      }
+    }
     auto loc = D->getLocation();
     RecordDecl *RD;
     if (S.getLangOpts().CPlusPlus)
@@ -534,7 +548,6 @@ struct EnzymeNoFreeAttrInfo : public ParsedAttrInfo {
       return AttributeNotApplied;
     }
     V->setInit(expr);
-    V->dump();
     S.MarkVariableReferenced(loc, V);
     S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
     return AttributeApplied;
@@ -584,6 +597,11 @@ struct EnzymeSparseAccumulateAttrInfo : public ParsedAttrInfo {
 
     auto &AST = S.getASTContext();
     DeclContext *declCtx = D->getDeclContext();
+    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
+      if (tmpCtx->isRecord()) {
+        declCtx = tmpCtx->getParent();
+      }
+    }
     auto loc = D->getLocation();
     RecordDecl *RD;
     if (S.getLangOpts().CPlusPlus)
@@ -631,7 +649,6 @@ struct EnzymeSparseAccumulateAttrInfo : public ParsedAttrInfo {
       return AttributeNotApplied;
     }
     V->setInit(expr);
-    V->dump();
     S.MarkVariableReferenced(loc, V);
     S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
     return AttributeApplied;

@@ -226,8 +226,8 @@ static void gemvTests() {
 
 			assert(foundCalls.size() > 2);
 			auto A_cache = (double*)foundCalls[0].pout_arg1;
-			cblas_dlacpy(layout, '\0', M, N, A, lda, A_cache, N);
-			inputs[4] = BlasInfo(A_cache, layout, M, N, N);
+			cblas_dlacpy(layout, '\0', M, N, A, lda, A_cache, M);
+			inputs[4] = BlasInfo(A_cache, layout, M, N, M);
 			auto B_cache = (double*)foundCalls[1].pout_arg1;
 			cblas_dcopy(trans ? M : N, B, incB, B_cache, 1);
 			inputs[5] = BlasInfo(B_cache, trans ? M : N, 1);
@@ -244,7 +244,7 @@ static void gemvTests() {
 							lda);
 
             // dB = alpha * trans(A) * dC + dB
-            cblas_dgemv(layout, (char)transpose(transA), M, N, alpha, A_cache, N, dC, incC, 1.0, dB, incB); 
+            cblas_dgemv(layout, (char)transpose(transA), M, N, alpha, A_cache, M, dC, incC, 1.0, dB, incB); 
 
             // dY = beta * dY
             cblas_dscal(trans ? N : M, beta, dC, incC);

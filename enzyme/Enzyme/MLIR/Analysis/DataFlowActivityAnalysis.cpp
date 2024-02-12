@@ -43,6 +43,8 @@
 
 #include "mlir/Analysis/AliasAnalysis/LocalAliasAnalysis.h"
 
+#include "Interfaces/AutoDiffOpInterface.h"
+
 using namespace mlir;
 using namespace mlir::dataflow;
 using enzyme::AliasClassLattice;
@@ -328,7 +330,7 @@ protected:
       const MemoryActivityState *rhsActivity =
           isKnownInRHS ? &rhsIt->getSecond() : &rhs.otherMemoryActivity;
       MemoryActivityState updatedActivity(*lhsActivity);
-      updatedActivity.merge(*rhsActivity);
+      (void)updatedActivity.merge(*rhsActivity);
       if ((lhsIt != activityStates.end() &&
            updatedActivity != lhsIt->getSecond()) ||
           (lhsIt == activityStates.end() &&
@@ -485,15 +487,15 @@ std::optional<Value> getCopySource(Operation *op) {
 /// Value corresponding to its allocation.
 /// The callback may receive null allocation when the class alias set is
 /// unknown.
+/// If the classes are undefined, the callback will not be called at all.
 void forEachAliasedAlloc(const AliasClassLattice *ptrAliasClass,
-                         function_ref<void(DistinctAttr alloc)> forEachFn) {
-  if (ptrAliasClass->isUnknown()) {
-    // Unknown pointers alias with the unknown entry arguments and all
-    // known allocations
-    return forEachFn(nullptr);
-  }
-  for (DistinctAttr alloc : ptrAliasClass->getAliasClasses())
-    forEachFn(alloc);
+                         function_ref<void(DistinctAttr)> forEachFn) {
+  (void)ptrAliasClass->getAliasClassesObject().foreachClass(
+      [&](DistinctAttr alloc, enzyme::AliasClassSet::State state) {
+        if (state != enzyme::AliasClassSet::State::Undefined)
+          forEachFn(alloc);
+        return ChangeResult::NoChange;
+      });
 }
 
 class DenseForwardActivityAnalysis
@@ -508,6 +510,15 @@ public:
                       ForwardMemoryActivity *after) override {
     join(after, before);
     ChangeResult result = ChangeResult::NoChange;
+
+    // TODO If we know this is inactive by definition
+    // if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(op)) {
+    //   if (ifaceOp.isInactive()) {
+    //     propagateIfChanged(after, result);
+    //     return;
+    //   }
+    // }
+
     auto memory = dyn_cast<MemoryEffectOpInterface>(op);
     // If we can't reason about the memory effects, then conservatively assume
     // we can't deduce anything about activity via side-effects.
@@ -616,20 +627,23 @@ public:
 
   /// Initialize the entry block with the supplied argument activities.
   void setToEntryState(ForwardMemoryActivity *lattice) override {
-    if (auto *block = dyn_cast_if_present<Block *>(lattice->getPoint())) {
-      if (block == entryBlock) {
-        for (const auto &[arg, activity] :
-             llvm::zip(block->getArguments(), argumentActivity)) {
-          if (activity == enzyme::Activity::enzyme_dup ||
-              activity == enzyme::Activity::enzyme_dupnoneed) {
-            auto *argAliasClasses =
-                getOrCreateFor<AliasClassLattice>(block, arg);
-            for (DistinctAttr argAliasClass :
-                 argAliasClasses->getAliasClasses()) {
-              propagateIfChanged(lattice, lattice->setActiveIn(argAliasClass));
-            }
-          }
-        }
+    if (auto *block = dyn_cast_if_present<Block *>(lattice->getPoint());
+        block && block == entryBlock) {
+      for (const auto &[arg, activity] :
+           llvm::zip(block->getArguments(), argumentActivity)) {
+        if (activity != enzyme::Activity::enzyme_dup &&
+            activity != enzyme::Activity::enzyme_dupnoneed)
+          continue;
+        auto *argAliasClasses = getOrCreateFor<AliasClassLattice>(block, arg);
+        ChangeResult changed =
+            argAliasClasses->getAliasClassesObject().foreachClass(
+                [lattice](DistinctAttr argAliasClass,
+                          enzyme::AliasClassSet::State state) {
+                  if (state == enzyme::AliasClassSet::State::Undefined)
+                    return ChangeResult::NoChange;
+                  return lattice->setActiveIn(argAliasClass);
+                });
+        propagateIfChanged(lattice, changed);
       }
     }
   }
@@ -654,31 +668,49 @@ public:
 
   void visitOperation(Operation *op, const BackwardMemoryActivity &after,
                       BackwardMemoryActivity *before) override {
+
+    // TODO: If we know this is inactive by definition
+    // if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(op)) {
+    //   if (ifaceOp.isInactive()) {
+    //     return;
+    //   }
+    // }
+
     // Initialize the return activity of arguments.
     if (op->hasTrait<OpTrait::ReturnLike>() && op->getParentOp() == parentOp) {
-      for (const auto &[arg, argActivity] : llvm::zip(
-               parentOp->getRegions().front().getArguments(), argumentActivity))
-        if (argActivity == enzyme::Activity::enzyme_dup ||
-            argActivity == enzyme::Activity::enzyme_dupnoneed) {
-          auto *argAliasClasses = getOrCreateFor<AliasClassLattice>(op, arg);
-          for (DistinctAttr argAliasClass :
-               argAliasClasses->getAliasClasses()) {
-            propagateIfChanged(before, before->setActiveOut(argAliasClass));
-          }
+      for (const auto &[arg, argActivity] :
+           llvm::zip(parentOp->getRegions().front().getArguments(),
+                     argumentActivity)) {
+        if (argActivity != enzyme::Activity::enzyme_dup &&
+            argActivity != enzyme::Activity::enzyme_dupnoneed) {
+          continue;
         }
+        auto *argAliasClasses = getOrCreateFor<AliasClassLattice>(op, arg);
+        ChangeResult changed =
+            argAliasClasses->getAliasClassesObject().foreachClass(
+                [before](DistinctAttr argAliasClass,
+                         enzyme::AliasClassSet::State state) {
+                  if (state == enzyme::AliasClassSet::State::Undefined)
+                    return ChangeResult::NoChange;
+                  return before->setActiveOut(argAliasClass);
+                });
+        propagateIfChanged(before, changed);
+      }
 
       // Initialize the return activity of the operands
       for (Value operand : op->getOperands()) {
         if (isa<MemRefType, LLVM::LLVMPointerType>(operand.getType())) {
           auto *retAliasClasses =
               getOrCreateFor<AliasClassLattice>(op, operand);
-          if (retAliasClasses->isUnknown()) {
-            propagateIfChanged(before, before->setActiveOut());
-          } else {
-            for (DistinctAttr retAliasClass :
-                 retAliasClasses->getAliasClasses())
-              propagateIfChanged(before, before->setActiveOut(retAliasClass));
-          }
+          ChangeResult changed =
+              retAliasClasses->getAliasClassesObject().foreachClass(
+                  [before](DistinctAttr retAliasClass,
+                           enzyme::AliasClassSet::State state) {
+                    if (state == enzyme::AliasClassSet::State::Undefined)
+                      return ChangeResult::NoChange;
+                    return before->setActiveOut(retAliasClass);
+                  });
+          propagateIfChanged(before, changed);
         }
       }
     }
@@ -815,19 +847,38 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
       auto *bma = solver.lookupState<BackwardMemoryActivity>(
           &callee.getFunctionBody().front().front());
 
-      auto *pointsToSets =
+      const enzyme::PointsToSets *pointsToSets =
           solver.lookupState<enzyme::PointsToSets>(*returnOps.begin());
       auto *aliasClassLattice = solver.lookupState<AliasClassLattice>(value);
       // Traverse the points-to sets in a simple BFS
       std::deque<DistinctAttr> frontier;
       DenseSet<DistinctAttr> visited;
-      // TODO(zinenko): FIXME, handle unknown...
-      if (!aliasClassLattice->isUnknown()) {
-        const DenseSet<DistinctAttr> &aliasClasses =
-            aliasClassLattice->getAliasClasses();
-        frontier.insert(frontier.end(), aliasClasses.begin(),
-                        aliasClasses.end());
-        visited.insert(aliasClasses.begin(), aliasClasses.end());
+      auto scheduleVisit = [&](const enzyme::AliasClassSet &aliasClasses) {
+        (void)aliasClasses.foreachClass(
+            [&](DistinctAttr neighbor, enzyme::AliasClassSet::State state) {
+              assert(neighbor &&
+                     "unhandled undefined/unknown case before visit");
+              if (!visited.contains(neighbor)) {
+                visited.insert(neighbor);
+                frontier.push_back(neighbor);
+              }
+              return ChangeResult::NoChange;
+            });
+      };
+
+      // If this triggers, investigate why the alias classes weren't computed.
+      // If they weren't computed legitimately, treat the value as
+      // conservatively non-constant or change the return type to be tri-state.
+      assert(!aliasClassLattice->isUndefined() &&
+             "didn't compute alias classes");
+
+      if (aliasClassLattice->isUnknown()) {
+        // Pointers of unknown class may point to active data.
+        // TODO: is this overly conservative? Should we rather check
+        // if listed classes may point to non-constants?
+        return false;
+      } else {
+        scheduleVisit(aliasClassLattice->getAliasClassesObject());
       }
       while (!frontier.empty()) {
         DistinctAttr aliasClass = frontier.front();
@@ -839,21 +890,16 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
             bma->activeDataFlowsOut(aliasClass))
           return false;
 
-        // Or if it points to a pointer that points to active data.
-        if (pointsToSets->getPointsTo(aliasClass).isUnknown()) {
-          // TODO(zinenko): FIXME handle unknown. Conservative assumption here
-          // is to assume the value is active (or unknown if we can return
-          // that). Is there a less conservative option?
-          continue;
-        }
-        const DenseSet<DistinctAttr> &neighbors =
-            pointsToSets->getPointsTo(aliasClass).getAliasClasses();
-        for (DistinctAttr neighbor : neighbors) {
-          if (!visited.contains(neighbor)) {
-            visited.insert(neighbor);
-            frontier.push_back(neighbor);
-          }
-        }
+        // If this triggers, investigate why points-to sets couldn't be
+        // computed. Treat conservatively as "unknown" if necessary.
+        assert(!pointsToSets->getPointsTo(aliasClass).isUndefined() &&
+               "couldn't compute points-to sets");
+
+        // Pointers to unknown classes may (transitively) point to active data.
+        if (pointsToSets->getPointsTo(aliasClass).isUnknown())
+          return false;
+
+        scheduleVisit(pointsToSets->getPointsTo(aliasClass));
       }
       // Otherwise, it's constant
       return true;
@@ -1026,7 +1072,7 @@ void enzyme::runDataFlowActivityAnalysis(
     // analyses, enzyme_const is the default.
     if (activity == enzyme::Activity::enzyme_out) {
       auto *argLattice = solver.getOrCreateState<ForwardValueActivity>(arg);
-      argLattice->join(ValueActivity::getActiveVal());
+      (void)argLattice->join(ValueActivity::getActiveVal());
     }
   }
 
@@ -1041,7 +1087,7 @@ void enzyme::runDataFlowActivityAnalysis(
             solver.getOrCreateState<BackwardValueActivity>(operand);
         // Very basic type inference of the type
         if (isa<FloatType, ComplexType>(operand.getType())) {
-          returnLattice->meet(ValueActivity::getActiveVal());
+          (void)returnLattice->meet(ValueActivity::getActiveVal());
         }
       }
     }
