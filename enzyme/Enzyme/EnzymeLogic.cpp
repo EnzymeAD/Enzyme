@@ -2548,7 +2548,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           IRBuilder<> BuilderZ(newri);
           Value *invertri = nullptr;
           if (gutils->isConstantValue(orig_oldval)) {
-            if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+            if (!EnzymeRuntimeActivityCheck &&
                 gutils->TR.query(orig_oldval)[{-1}].isPossiblePointer()) {
               if (!isa<UndefValue>(orig_oldval) &&
                   !isa<ConstantPointerNull>(orig_oldval)) {
@@ -2556,9 +2556,12 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                 raw_string_ostream ss(str);
                 ss << "Mismatched activity for: " << *ri
                    << " const val: " << *orig_oldval;
-                invertri = unwrap(CustomErrorHandler(
-                    str.c_str(), wrap(ri), ErrorType::MixedActivityError,
-                    gutils, wrap(orig_oldval), wrap(&BuilderZ)));
+                if (CustomErrorHandler)
+                  invertri = unwrap(CustomErrorHandler(
+                      str.c_str(), wrap(ri), ErrorType::MixedActivityError,
+                      gutils, wrap(orig_oldval), wrap(&BuilderZ)));
+                else
+                  EmitWarning("MixedActivityError", *ri, ss.str());
               }
             }
           }
@@ -3083,16 +3086,19 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
     if (!ret->getType()->isFPOrFPVectorTy() &&
         TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
       if (gutils->isConstantValue(ret)) {
-        if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+        if (!EnzymeRuntimeActivityCheck &&
             TR.query(ret)[{-1}].isPossiblePointer()) {
           if (!isa<UndefValue>(ret) && !isa<ConstantPointerNull>(ret)) {
             std::string str;
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *inst
                << " const val: " << *ret;
-            invertedPtr = unwrap(CustomErrorHandler(
-                str.c_str(), wrap(inst), ErrorType::MixedActivityError, gutils,
-                wrap(ret), wrap(&nBuilder)));
+            if (CustomErrorHandler)
+              invertedPtr = unwrap(CustomErrorHandler(
+                  str.c_str(), wrap(inst), ErrorType::MixedActivityError,
+                  gutils, wrap(ret), wrap(&nBuilder)));
+            else
+              EmitWarning("MixedActivityError", *inst, ss.str());
           }
         }
       }

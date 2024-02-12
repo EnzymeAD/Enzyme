@@ -5695,15 +5695,18 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *itval = nullptr;
     {
       auto tval = arg->getTrueValue();
-      if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+      if (!EnzymeRuntimeActivityCheck &&
           TR.query(arg)[{-1}].isPossiblePointer() && !isa<UndefValue>(tval) &&
           !isa<ConstantPointerNull>(tval) && isConstantValue(tval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
-        itval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
-                                          ErrorType::MixedActivityError, this,
-                                          wrap(tval), wrap(&bb)));
+        if (CustomErrorHandler)
+          itval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
+                                            ErrorType::MixedActivityError, this,
+                                            wrap(tval), wrap(&bb)));
+        else
+          EmitWarning("MixedActivityError", *arg, ss.str());
       }
       if (!itval) {
         itval = invertPointerM(tval, bb, nullShadow);
@@ -5712,15 +5715,18 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *ifval = nullptr;
     {
       auto fval = arg->getFalseValue();
-      if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+      if (!EnzymeRuntimeActivityCheck &&
           TR.query(arg)[{-1}].isPossiblePointer() && !isa<UndefValue>(fval) &&
           !isa<ConstantPointerNull>(fval) && isConstantValue(fval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
-        ifval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
-                                          ErrorType::MixedActivityError, this,
-                                          wrap(fval), wrap(&bb)));
+        if (CustomErrorHandler)
+          ifval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
+                                            ErrorType::MixedActivityError, this,
+                                            wrap(fval), wrap(&bb)));
+        else
+          EmitWarning("MixedActivityError", *arg, ss.str());
       }
       if (!ifval) {
         ifval = invertPointerM(fval, bb, nullShadow);
@@ -6064,7 +6070,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           Value *preval = phi->getIncomingValue(j);
 
           Value *val = nullptr;
-          if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+          if (!EnzymeRuntimeActivityCheck &&
               TR.query(phi)[{-1}].isPossiblePointer() &&
               !isa<UndefValue>(preval) && !isa<ConstantPointerNull>(preval) &&
               isConstantValue(preval)) {
@@ -6072,9 +6078,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *phi
                << " const val: " << *preval;
-            val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
-                                            ErrorType::MixedActivityError, this,
-                                            wrap(preval), wrap(&pre)));
+            if (CustomErrorHandler)
+              val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
+                                              ErrorType::MixedActivityError,
+                                              this, wrap(preval), wrap(&pre)));
+            else
+              EmitWarning("MixedActivityError", *phi, ss.str());
           }
           if (!val) {
             val = invertPointerM(preval, pre, nullShadow);
@@ -6124,7 +6133,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           Value *preval = phi->getIncomingValue(i);
 
           Value *val = nullptr;
-          if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+          if (!EnzymeRuntimeActivityCheck &&
               TR.query(phi)[{-1}].isPossiblePointer() &&
               !isa<UndefValue>(preval) && !isa<ConstantPointerNull>(preval) &&
               isConstantValue(preval)) {
@@ -6132,9 +6141,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *phi
                << " const val: " << *preval;
-            val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
-                                            ErrorType::MixedActivityError, this,
-                                            wrap(preval), wrap(&pre)));
+            if (CustomErrorHandler)
+              val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
+                                              ErrorType::MixedActivityError,
+                                              this, wrap(preval), wrap(&pre)));
+            else
+              EmitWarning("MixedActivityError", *phi, ss.str());
           }
           if (!val) {
             val = invertPointerM(preval, pre, nullShadow);
