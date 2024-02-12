@@ -8,7 +8,7 @@
 // RUN: %clang++ -std=c++14 -fno-exceptions -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli -
 
 #include <cmath>
-#include "test_utils.h"
+#include "../test_utils.h"
 
 template <typename T, int... n>
 struct tensor;

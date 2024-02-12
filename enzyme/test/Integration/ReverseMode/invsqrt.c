@@ -17,13 +17,8 @@
 // RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli - ; fi
 // RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli - ; fi
 
-#include <stdio.h>
-#include <math.h>
-#include <assert.h>
-#include <stdio.h>
+#include "../test_utils.h"
 #include <stdint.h>
-
-#include "test_utils.h"
 
 // Fast inverse sqrt
 // Code taken from https://en.wikipedia.org/wiki/Fast_inverse_square_root
@@ -74,10 +69,8 @@ int main(int argc, char *argv[]) {
   double *A = (double*)malloc(sizeof(double) * n);
   for(int i=0; i<n; i++)
    A[i] = (i+1);
-  assert(A != 0);
 
   double *grad_A = (double*)malloc(sizeof(double) * n);
-  assert(grad_A != 0);
   for(int i=0; i<n; i++)
    grad_A[i] = 0;
  

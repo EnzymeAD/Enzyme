@@ -534,17 +534,10 @@ DebugLoc GradientUtils::getNewFromOriginal(const DebugLoc L) const {
     return L;
   assert(originalToNewFn.hasMD());
   auto opt = originalToNewFn.getMappedMD(L.getAsMDNode());
-#if LLVM_VERSION_MAJOR >= 16
-  if (!opt.has_value())
+  if (!opt)
     return L;
-  assert(opt.has_value());
-  return DebugLoc(cast<MDNode>(opt.value()));
-#else
-  if (!opt.hasValue())
-    return L;
-  assert(opt.hasValue());
-  return DebugLoc(cast<MDNode>(*opt.getPointer()));
-#endif
+  assert(opt);
+  return DebugLoc(cast<MDNode>(*opt));
 }
 
 Value *GradientUtils::getNewFromOriginal(const Value *originst) const {
@@ -3287,7 +3280,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
             auto &DL = newFunc->getParent()->getDataLayout();
 
             bool constantval = isConstantValue(orig_val) ||
-                               parseTBAA(I, DL, nullptr).Inner0().isIntegral();
+                               parseTBAA(I, DL, nullptr)[{-1}].isIntegral();
 
             // TODO allow recognition of other types that could contain
             // pointers [e.g. {void*, void*} or <2 x i64> ]
@@ -4328,8 +4321,7 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
       subretType = DIFFE_TYPE::DUP_ARG;
       shadowReturnUsed = true;
     } else {
-      if (!orig->getType()->isFPOrFPVectorTy() &&
-          TR.query(orig).Inner0().isPossiblePointer()) {
+      if (!orig->getType()->isFPOrFPVectorTy() && TR.anyPointer(orig)) {
         if (DifferentialUseAnalysis::is_value_needed_in_reverse<
                 QueryType::Shadow>(this, orig, cmode, notForAnalysis)) {
           subretType = DIFFE_TYPE::DUP_ARG;
@@ -4366,8 +4358,7 @@ DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
 
   auto argType = v->getType();
 
-  if (!argType->isFPOrFPVectorTy() &&
-      (TR.query(v).Inner0().isPossiblePointer() || foreignFunction)) {
+  if (!argType->isFPOrFPVectorTy() && (TR.anyPointer(v) || foreignFunction)) {
     if (argType->isPointerTy()) {
       auto at = getBaseObject(v);
       if (auto arg = dyn_cast<Argument>(at)) {
@@ -5112,9 +5103,21 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return applyChainRule(oval->getType(), BuilderM, rule);
   }
 
-  if (isConstantValue(oval) && !isa<InsertValueInst>(oval) &&
-      !isa<ExtractValueInst>(oval) && !isa<InsertElementInst>(oval) &&
-      !isa<ExtractElementInst>(oval)) {
+  bool shouldNullShadow = isConstantValue(oval);
+  if (shouldNullShadow) {
+    if (isa<InsertValueInst>(oval) || isa<ExtractValueInst>(oval) ||
+        isa<InsertElementInst>(oval) || isa<ExtractElementInst>(oval)) {
+      shouldNullShadow = false;
+      auto orig = cast<Instruction>(oval);
+      if (knownRecomputeHeuristic.count(orig)) {
+        if (!knownRecomputeHeuristic[orig]) {
+          shouldNullShadow = true;
+        }
+      }
+    }
+  }
+
+  if (shouldNullShadow) {
     // NOTE, this is legal and the correct resolution, however, our activity
     // analysis honeypot no longer exists
 
@@ -5423,23 +5426,40 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         return shadow;
       }
 
-      llvm::errs() << *oldFunc->getParent() << "\n";
-      llvm::errs() << *oldFunc << "\n";
-      llvm::errs() << *newFunc << "\n";
-      llvm::errs() << *arg << "\n";
-      assert(0 && "cannot compute with global variable that doesn't have "
-                  "marked shadow global");
-      report_fatal_error("cannot compute with global variable that doesn't "
-                         "have marked shadow global");
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "cannot compute with global variable that doesn't have marked "
+            "shadow global\n";
+      ss << *arg << "\n";
+      if (CustomErrorHandler) {
+        return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
+                                         ErrorType::NoShadow, this, nullptr,
+                                         wrap(&BuilderM)));
+      } else {
+        EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
+                    ss.str());
+      }
+      return UndefValue::get(getShadowType(arg->getType()));
     }
     auto md = arg->getMetadata("enzyme_shadow");
     if (!isa<MDTuple>(md)) {
       llvm::errs() << *arg << "\n";
       llvm::errs() << *md << "\n";
-      assert(0 && "cannot compute with global variable that doesn't have "
-                  "marked shadow global");
-      report_fatal_error("cannot compute with global variable that doesn't "
-                         "have marked shadow global (metadata incorrect type)");
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "cannot compute with global variable that doesn't have marked "
+            "shadow global as mdtuple\n";
+      ss << *arg << "\n";
+      ss << " md: " << *md << "\n";
+      if (CustomErrorHandler) {
+        return unwrap(CustomErrorHandler(ss.str().c_str(), wrap(arg),
+                                         ErrorType::NoShadow, this, nullptr,
+                                         wrap(&BuilderM)));
+      } else {
+        EmitFailure("InvertGlobal", BuilderM.getCurrentDebugLocation(), oldFunc,
+                    ss.str());
+      }
+      return UndefValue::get(getShadowType(arg->getType()));
     }
     auto md2 = cast<MDTuple>(md);
     assert(md2->getNumOperands() == 1);
@@ -5499,6 +5519,26 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return shadow;
   } else if (auto arg = dyn_cast<ConstantExpr>(oval)) {
     IRBuilder<> bb(inversionAllocs);
+    if (arg->getOpcode() == Instruction::Add) {
+      if (isa<ConstantInt>(arg->getOperand(0))) {
+        auto rule = [&bb, &arg](Value *ip) {
+          Constant *invops[2] = {arg->getOperand(0), cast<Constant>(ip)};
+          return arg->getWithOperands(invops);
+        };
+
+        auto ip = invertPointerM(arg->getOperand(1), bb, nullShadow);
+        return applyChainRule(arg->getType(), bb, rule, ip);
+      }
+      if (isa<ConstantInt>(arg->getOperand(1))) {
+        auto rule = [&bb, &arg](Value *ip) {
+          Constant *invops[2] = {cast<Constant>(ip), arg->getOperand(1)};
+          return arg->getWithOperands(invops);
+        };
+
+        auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
+        return applyChainRule(arg->getType(), bb, rule, ip);
+      }
+    }
     auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
 
     if (arg->isCast()) {
@@ -5655,15 +5695,18 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *itval = nullptr;
     {
       auto tval = arg->getTrueValue();
-      if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+      if (!EnzymeRuntimeActivityCheck &&
           TR.query(arg)[{-1}].isPossiblePointer() && !isa<UndefValue>(tval) &&
           !isa<ConstantPointerNull>(tval) && isConstantValue(tval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
-        itval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
-                                          ErrorType::MixedActivityError, this,
-                                          wrap(tval), wrap(&bb)));
+        if (CustomErrorHandler)
+          itval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
+                                            ErrorType::MixedActivityError, this,
+                                            wrap(tval), wrap(&bb)));
+        else
+          EmitWarning("MixedActivityError", *arg, ss.str());
       }
       if (!itval) {
         itval = invertPointerM(tval, bb, nullShadow);
@@ -5672,15 +5715,18 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *ifval = nullptr;
     {
       auto fval = arg->getFalseValue();
-      if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+      if (!EnzymeRuntimeActivityCheck &&
           TR.query(arg)[{-1}].isPossiblePointer() && !isa<UndefValue>(fval) &&
           !isa<ConstantPointerNull>(fval) && isConstantValue(fval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
-        ifval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
-                                          ErrorType::MixedActivityError, this,
-                                          wrap(fval), wrap(&bb)));
+        if (CustomErrorHandler)
+          ifval = unwrap(CustomErrorHandler(str.c_str(), wrap(arg),
+                                            ErrorType::MixedActivityError, this,
+                                            wrap(fval), wrap(&bb)));
+        else
+          EmitWarning("MixedActivityError", *arg, ss.str());
       }
       if (!ifval) {
         ifval = invertPointerM(fval, bb, nullShadow);
@@ -6024,7 +6070,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           Value *preval = phi->getIncomingValue(j);
 
           Value *val = nullptr;
-          if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+          if (!EnzymeRuntimeActivityCheck &&
               TR.query(phi)[{-1}].isPossiblePointer() &&
               !isa<UndefValue>(preval) && !isa<ConstantPointerNull>(preval) &&
               isConstantValue(preval)) {
@@ -6032,9 +6078,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *phi
                << " const val: " << *preval;
-            val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
-                                            ErrorType::MixedActivityError, this,
-                                            wrap(preval), wrap(&pre)));
+            if (CustomErrorHandler)
+              val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
+                                              ErrorType::MixedActivityError,
+                                              this, wrap(preval), wrap(&pre)));
+            else
+              EmitWarning("MixedActivityError", *phi, ss.str());
           }
           if (!val) {
             val = invertPointerM(preval, pre, nullShadow);
@@ -6084,7 +6133,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           Value *preval = phi->getIncomingValue(i);
 
           Value *val = nullptr;
-          if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+          if (!EnzymeRuntimeActivityCheck &&
               TR.query(phi)[{-1}].isPossiblePointer() &&
               !isa<UndefValue>(preval) && !isa<ConstantPointerNull>(preval) &&
               isConstantValue(preval)) {
@@ -6092,9 +6141,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *phi
                << " const val: " << *preval;
-            val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
-                                            ErrorType::MixedActivityError, this,
-                                            wrap(preval), wrap(&pre)));
+            if (CustomErrorHandler)
+              val = unwrap(CustomErrorHandler(str.c_str(), wrap(phi),
+                                              ErrorType::MixedActivityError,
+                                              this, wrap(preval), wrap(&pre)));
+            else
+              EmitWarning("MixedActivityError", *phi, ss.str());
           }
           if (!val) {
             val = invertPointerM(preval, pre, nullShadow);
@@ -7981,9 +8033,9 @@ void GradientUtils::computeMinCache() {
       todo.pop_front();
       if (Intermediates.count(V))
         continue;
-      if (!DifferentialUseAnalysis::is_value_needed_in_reverse<
-              QueryType::Primal>(this, V, minCutMode, FullSeen,
-                                 notForAnalysis)) {
+      bool multiLevel = DifferentialUseAnalysis::is_value_needed_in_reverse<
+          QueryType::Primal>(this, V, minCutMode, FullSeen, notForAnalysis);
+      if (!multiLevel) {
         continue;
       }
       if (!Recomputes.count(V)) {
@@ -8003,27 +8055,21 @@ void GradientUtils::computeMinCache() {
         }
       }
       Intermediates.insert(V);
-      if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-              QueryType::Primal, /*OneLevel*/ true>(
-              this, V, minCutMode, OneLevelSeen, notForAnalysis)) {
+      bool singleLevel = DifferentialUseAnalysis::is_value_needed_in_reverse<
+          QueryType::Primal, /*OneLevel*/ true>(this, V, minCutMode,
+                                                OneLevelSeen, notForAnalysis);
+      if (singleLevel) {
         Required.insert(V);
       } else {
-        for (auto V2 : V->users()) {
-          if (auto Inst = dyn_cast<Instruction>(V2))
-            for (auto pair : rematerializableAllocations) {
-              if (pair.second.stores.count(Inst)) {
-                todo.push_back(pair.first);
-              }
-            }
-          todo.push_back(V2);
-        }
+        DifferentialUseAnalysis::forEachDifferentialUser(
+            [&](Value *V2) { todo.push_back(V2); }, this, V);
       }
     }
 
     SetVector<Value *> MinReq;
     DifferentialUseAnalysis::minCut(oldFunc->getParent()->getDataLayout(),
                                     OrigLI, Recomputes, Intermediates, Required,
-                                    MinReq, rematerializableAllocations, TLI);
+                                    MinReq, this, TLI);
     SmallPtrSet<Value *, 5> NeedGraph;
     for (Value *V : MinReq)
       NeedGraph.insert(V);
@@ -9116,7 +9162,8 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
     tofree = builder.CreateIntToPtr(tofree, getInt8PtrTy(tofree->getContext()));
 
   llvm::LibFunc libfunc;
-  if (allocationfn == "calloc" || allocationfn == "malloc") {
+  if (allocationfn == "calloc" || allocationfn == "malloc" ||
+      allocationfn == "_mlir_memref_to_llvm_alloc") {
     libfunc = LibFunc_malloc;
   } else {
     bool res = TLI.getLibFunc(allocationfn, libfunc);
@@ -9186,6 +9233,8 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
     if (freename != "free")
       llvm_unreachable("illegal free");
   }
+  if (allocationfn == "_mlir_memref_to_llvm_alloc")
+    freename = "_mlir_memref_to_llvm_free";
 
   Type *VoidTy = Type::getVoidTy(tofree->getContext());
   Type *IntPtrTy = getInt8PtrTy(tofree->getContext());
@@ -9298,6 +9347,13 @@ bool GradientUtils::needsCacheWholeAllocation(
     found = knownRecomputeHeuristic.find(cur);
     if (found == knownRecomputeHeuristic.end())
       continue;
+
+    // If caching a julia base object, this is fine as
+    // GC will deal with any issues with.
+    if (auto PT = dyn_cast<PointerType>(cur->getType()))
+      if (PT->getAddressSpace() == 10)
+        if (EnzymeJuliaAddrLoad)
+          continue;
 
     // If caching this user, it cannot be a gep/cast of original
     if (!found->second) {

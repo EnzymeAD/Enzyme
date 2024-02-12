@@ -28,7 +28,6 @@
 
 #include "mlir/Dialect/Linalg/IR/LinalgInterfaces.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
-#include "mlir/Dialect/Shape/IR/ShapeOpsTypes.h.inc"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/DialectConversion.h"
 
@@ -73,7 +72,7 @@ struct GenericOpInterfaceReverse
                                 MGradientUtilsReverse *gutils,
                                 SmallVector<Value> caches) const {
     auto linalgOp = cast<linalg::LinalgOp>(op);
-    assert(linalgOp.hasBufferSemantics() &&
+    assert(linalgOp.hasPureBufferSemantics() &&
            "Linalg op with tensor semantics not yet supported");
 
     linalg::LinalgOp newOp =

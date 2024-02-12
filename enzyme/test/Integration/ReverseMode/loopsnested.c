@@ -7,7 +7,7 @@
 // RUN: %clang -std=c11 -ffast-math -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
 // RUN: %clang -std=c11 -ffast-math -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli -
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 __attribute__((always_inline))
 inline void doA(double x[2])

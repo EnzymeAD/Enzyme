@@ -8,7 +8,7 @@
 // RUN: %clang++ -std=c++11 -fno-exceptions -ffast-math -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli -
 
 #include <stdio.h>
-#include "test_utils.h"
+#include "../test_utils.h"
 
 struct S {
    double (*fn)(double);

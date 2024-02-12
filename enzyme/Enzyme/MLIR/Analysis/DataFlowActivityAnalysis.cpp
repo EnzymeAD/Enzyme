@@ -43,6 +43,8 @@
 
 #include "mlir/Analysis/AliasAnalysis/LocalAliasAnalysis.h"
 
+#include "Interfaces/AutoDiffOpInterface.h"
+
 using namespace mlir;
 using namespace mlir::dataflow;
 using enzyme::AliasClassLattice;
@@ -328,7 +330,7 @@ protected:
       const MemoryActivityState *rhsActivity =
           isKnownInRHS ? &rhsIt->getSecond() : &rhs.otherMemoryActivity;
       MemoryActivityState updatedActivity(*lhsActivity);
-      updatedActivity.merge(*rhsActivity);
+      (void)updatedActivity.merge(*rhsActivity);
       if ((lhsIt != activityStates.end() &&
            updatedActivity != lhsIt->getSecond()) ||
           (lhsIt == activityStates.end() &&
@@ -488,7 +490,7 @@ std::optional<Value> getCopySource(Operation *op) {
 /// If the classes are undefined, the callback will not be called at all.
 void forEachAliasedAlloc(const AliasClassLattice *ptrAliasClass,
                          function_ref<void(DistinctAttr)> forEachFn) {
-  ptrAliasClass->getAliasClassesObject().foreachClass(
+  (void)ptrAliasClass->getAliasClassesObject().foreachClass(
       [&](DistinctAttr alloc, enzyme::AliasClassSet::State state) {
         if (state != enzyme::AliasClassSet::State::Undefined)
           forEachFn(alloc);
@@ -508,6 +510,15 @@ public:
                       ForwardMemoryActivity *after) override {
     join(after, before);
     ChangeResult result = ChangeResult::NoChange;
+
+    // TODO If we know this is inactive by definition
+    // if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(op)) {
+    //   if (ifaceOp.isInactive()) {
+    //     propagateIfChanged(after, result);
+    //     return;
+    //   }
+    // }
+
     auto memory = dyn_cast<MemoryEffectOpInterface>(op);
     // If we can't reason about the memory effects, then conservatively assume
     // we can't deduce anything about activity via side-effects.
@@ -657,6 +668,14 @@ public:
 
   void visitOperation(Operation *op, const BackwardMemoryActivity &after,
                       BackwardMemoryActivity *before) override {
+
+    // TODO: If we know this is inactive by definition
+    // if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(op)) {
+    //   if (ifaceOp.isInactive()) {
+    //     return;
+    //   }
+    // }
+
     // Initialize the return activity of arguments.
     if (op->hasTrait<OpTrait::ReturnLike>() && op->getParentOp() == parentOp) {
       for (const auto &[arg, argActivity] :
@@ -835,15 +854,16 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
       std::deque<DistinctAttr> frontier;
       DenseSet<DistinctAttr> visited;
       auto scheduleVisit = [&](const enzyme::AliasClassSet &aliasClasses) {
-        aliasClasses.foreachClass([&](DistinctAttr neighbor,
-                                      enzyme::AliasClassSet::State state) {
-          assert(neighbor && "unhandled undefined/unknown case before visit");
-          if (!visited.contains(neighbor)) {
-            visited.insert(neighbor);
-            frontier.push_back(neighbor);
-          }
-          return ChangeResult::NoChange;
-        });
+        (void)aliasClasses.foreachClass(
+            [&](DistinctAttr neighbor, enzyme::AliasClassSet::State state) {
+              assert(neighbor &&
+                     "unhandled undefined/unknown case before visit");
+              if (!visited.contains(neighbor)) {
+                visited.insert(neighbor);
+                frontier.push_back(neighbor);
+              }
+              return ChangeResult::NoChange;
+            });
       };
 
       // If this triggers, investigate why the alias classes weren't computed.
@@ -1052,7 +1072,7 @@ void enzyme::runDataFlowActivityAnalysis(
     // analyses, enzyme_const is the default.
     if (activity == enzyme::Activity::enzyme_out) {
       auto *argLattice = solver.getOrCreateState<ForwardValueActivity>(arg);
-      argLattice->join(ValueActivity::getActiveVal());
+      (void)argLattice->join(ValueActivity::getActiveVal());
     }
   }
 
@@ -1067,7 +1087,7 @@ void enzyme::runDataFlowActivityAnalysis(
             solver.getOrCreateState<BackwardValueActivity>(operand);
         // Very basic type inference of the type
         if (isa<FloatType, ComplexType>(operand.getType())) {
-          returnLattice->meet(ValueActivity::getActiveVal());
+          (void)returnLattice->meet(ValueActivity::getActiveVal());
         }
       }
     }

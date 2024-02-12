@@ -7,7 +7,7 @@
 // RUN: %clang++ -std=c++11 -fno-exceptions -ffast-math -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S
 // RUN: %clang++ -std=c++11 -fno-exceptions -ffast-math -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S
 
-#include "test_utils.h"
+#include "../test_utils.h"
 #include <fstream>
 #include <iostream>
 #include <sstream>
