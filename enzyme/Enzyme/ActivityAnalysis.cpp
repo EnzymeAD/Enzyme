@@ -465,7 +465,7 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
       return true;
     }
 
-  if (KnownInactiveIntrinsics.count(ID)) {
+  if (KnownInactiveIntrinsics.count(F->getIntrinsicID())) {
     return true;
   }
   // Copies of size 1 are inactive [cannot move differentiable data in one byte]
