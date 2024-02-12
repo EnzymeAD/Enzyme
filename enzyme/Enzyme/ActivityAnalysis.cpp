@@ -900,9 +900,8 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
       if (isMemFreeLibMFunction(funcName)) {
         noActiveWrite = true;
       } else if (funcName == "frexp" || funcName == "frexpf" ||
-                 funcName == "frexpl" ||
-                 funcName == "modf" || funcName == "modff" ||
-                 funcName == "modfl" ) {
+                 funcName == "frexpl" || funcName == "modf" ||
+                 funcName == "modff" || funcName == "modfl") {
         noActiveWrite = true;
       }
     }
