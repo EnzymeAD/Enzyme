@@ -459,6 +459,16 @@ def : CallPattern<(Op $x, $y),
                   [ReadNone, NoUnwind]
                   >;
 
+def : CallPattern<(Op $x, $integral_part_ptr),
+                  ["modf", "modff", "modfl"],
+                  [
+                    (DiffeRet),
+                    (InactiveArg)
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadOnly, NoUnwind]
+                  >;
+
 def : CallPattern<(Op $x),
                   ["__fd_sincos_1", "__fd_sincos_1f", "__fd_sincos_1l"],
                   [
