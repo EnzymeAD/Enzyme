@@ -883,7 +883,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
           continue;
       }
       // If an allocation call, we cannot cache any "capturing" users
-      if (isAllocationCall(V, TLI)) {
+      if (isAllocationCall(V, TLI) || isa<AllocaInst>(V)) {
         auto next = (*mp.begin()).V;
         bool noncapture = false;
         if (isa<LoadInst>(next)) {
