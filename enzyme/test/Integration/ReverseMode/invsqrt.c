@@ -69,7 +69,6 @@ int main(int argc, char *argv[]) {
   double *A = (double*)malloc(sizeof(double) * n);
   for(int i=0; i<n; i++)
    A[i] = (i+1);
-  assert(A != 0);
 
   double *grad_A = (double*)malloc(sizeof(double) * n);
   assert(grad_A != 0);
