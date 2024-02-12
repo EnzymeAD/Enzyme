@@ -9150,7 +9150,8 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
     tofree = builder.CreateIntToPtr(tofree, getInt8PtrTy(tofree->getContext()));
 
   llvm::LibFunc libfunc;
-  if (allocationfn == "calloc" || allocationfn == "malloc") {
+  if (allocationfn == "calloc" || allocationfn == "malloc" ||
+      allocationfn == "_mlir_memref_to_llvm_alloc") {
     libfunc = LibFunc_malloc;
   } else {
     bool res = TLI.getLibFunc(allocationfn, libfunc);
@@ -9220,6 +9221,8 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
     if (freename != "free")
       llvm_unreachable("illegal free");
   }
+  if (allocationfn == "_mlir_memref_to_llvm_alloc")
+    freename = "_mlir_memref_to_llvm_free";
 
   Type *VoidTy = Type::getVoidTy(tofree->getContext());
   Type *IntPtrTy = getInt8PtrTy(tofree->getContext());
