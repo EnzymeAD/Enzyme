@@ -9304,6 +9304,16 @@ bool GradientUtils::needsCacheWholeAllocation(
       if (idx < CI->getNumArgOperands())
 #endif
       {
+
+        // Calling a non-empty function with a julia base object, this is fine.
+        // as GC will deal with any issues with.
+        if (auto PT = dyn_cast<PointerType>(CI->getArgOperand(idx)->getType()))
+          if (PT->getAddressSpace() == 10)
+            if (EnzymeJuliaAddrLoad)
+              if (auto F = getFunctionFromCall(CI))
+                if (!F->empty())
+                  continue;
+
         if (isNoCapture(CI, idx))
           continue;
 
