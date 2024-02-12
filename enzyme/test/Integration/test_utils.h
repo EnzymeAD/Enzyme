@@ -1,9 +1,11 @@
 
 
-#ifdef __cplusplus
+#if defined(__cplusplus) || defined(__APPLE__)
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
+#include <assert.h>
 #else
 struct _IO_FILE;
 extern struct _IO_FILE* stderr;

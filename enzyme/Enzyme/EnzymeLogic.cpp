@@ -2336,7 +2336,18 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   if (todiff->empty()) {
     std::string s;
     llvm::raw_string_ostream ss(s);
-    ss << "No augmented forward pass found for " + todiff->getName() << "\n";
+    ss << "No augmented forward pass found for " + todiff->getName();
+    {
+      std::string demangledName = llvm::demangle(todiff->getName().str());
+      // replace all '> >' with '>>'
+      size_t start = 0;
+      while ((start = demangledName.find("> >", start)) != std::string::npos) {
+        demangledName.replace(start, 3, ">>");
+      }
+      if (demangledName != todiff->getName())
+        ss << "(" << demangledName << ")";
+    }
+    ss << "\n";
     llvm::Value *toshow = todiff;
     if (context.req) {
       toshow = context.req;
@@ -5889,37 +5900,47 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
           cast<llvm::Constant>(CreateNoFree(context, castinst->getOperand(0)))};
       return castinst->getWithOperands(reps);
     }
-  if (CustomErrorHandler) {
-    std::string s;
-    llvm::raw_string_ostream ss(s);
-    ss << "No create nofree of unknown value\n";
-    ss << *todiff << "\n";
-    if (context.req) {
-      ss << " at context: " << *context.req;
+  if (EnzymeAssumeUnknownNoFree) {
+    return todiff;
+  }
+
+  std::string s;
+  llvm::raw_string_ostream ss(s);
+  ss << "No create nofree of unknown value\n";
+  ss << *todiff << "\n";
+  if (context.req) {
+    ss << " at context: " << *context.req;
+  }
+  if (auto I = dyn_cast<Instruction>(todiff)) {
+    auto fname = I->getParent()->getParent()->getName();
+    if (startsWith(fname, "nofree_"))
+      fname = fname.substr(7);
+    std::string demangledName = llvm::demangle(fname.str());
+    // replace all '> >' with '>>'
+    size_t start = 0;
+    while ((start = demangledName.find("> >", start)) != std::string::npos) {
+      demangledName.replace(start, 3, ">>");
     }
+    ss << " within func " << fname << " (" << demangledName << ")\n";
+  }
+  if (CustomErrorHandler) {
     CustomErrorHandler(ss.str().c_str(), wrap(context.req),
                        ErrorType::NoDerivative, nullptr, wrap(todiff),
                        wrap(context.ip));
     return todiff;
   }
 
-  if (EnzymeAssumeUnknownNoFree) {
-    return todiff;
-  }
-
   if (context.req) {
-    EmitFailure("IllegalNoFree", context.req->getDebugLoc(), context.req,
-                "Cannot create nofree of instruction-created value: ", *todiff);
+    EmitFailure("IllegalNoFree", context.req->getDebugLoc(), context.req, s);
     return todiff;
   }
   if (auto arg = dyn_cast<Instruction>(todiff)) {
     auto loc = arg->getDebugLoc();
-    EmitFailure("IllegalNoFree", loc, arg,
-                "Cannot create nofree of instruction-created value: ", *todiff);
+    EmitFailure("IllegalNoFree", loc, arg, s);
     return todiff;
   }
 
-  llvm::errs() << " unhandled, create no free of: " << *todiff << "\n";
+  llvm::errs() << s;
   llvm_unreachable("unhandled, create no free");
 }
 
@@ -6001,6 +6022,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::data() const",
       "std::__1::basic_ostream<char, std::__1::char_traits<char>>::sentry::sentry(std::__1::basic_ostream<char, std::__1::char_traits<char>>&)",
       "std::__1::basic_ostream<char, std::__1::char_traits<char>>::sentry::~sentry()",
+      "std::__1::basic_ostream<char, std::__1::char_traits<char>>::flush()",
       "std::__1::ios_base::__set_badbit_and_consider_rethrow()",
       "char* std::__1::addressof<char>(char&)",
       "char const* std::__1::addressof<char const>(char const&)",
@@ -6011,6 +6033,40 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__1::ios_base::ios_base()",
       "std::__1::ios_base::getloc() const",
       "std::__1::ios_base::clear(unsigned int)",
+      "std::__1::basic_iostream<char, std::__1::char_traits<char>>::~basic_iostream()",
+      "std::__1::basic_ios<char, std::__1::char_traits<char>>::~basic_ios()",
+      "std::__1::basic_streambuf<char, std::__1::char_traits<char>>::basic_streambuf()",
+      "std::__1::basic_streambuf<char, std::__1::char_traits<char>>::~basic_streambuf()",
+      "std::__1::basic_streambuf<char, std::__1::char_traits<char>>::imbue(std::__1::locale const&)",
+      "std::__1::basic_streambuf<char, std::__1::char_traits<char>>::setbuf(char*, long)",
+      "std::__1::basic_streambuf<char, std::__1::char_traits<char>>::sync()",
+      "std::__1::basic_streambuf<char, std::__1::char_traits<char>>::showmanyc()",
+      "std::__1::basic_streambuf<char, std::__1::char_traits<char>>::xsgetn(char*, long)",
+      "std::__1::basic_streambuf<char, std::__1::char_traits<char>>::uflow()",
+      "std::__1::basic_filebuf<char, std::__1::char_traits<char>>::basic_filebuf()",
+      "std::__1::basic_filebuf<char, std::__1::char_traits<char>>::~basic_filebuf()",
+      "std::__1::basic_filebuf<char, std::__1::char_traits<char>>::open(char const*, unsigned int)",
+      "std::__1::basic_filebuf<char, std::__1::char_traits<char>>::close()",
+      "std::__1::basic_filebuf<char, std::__1::char_traits<char>>::sync()",
+      "std::__1::basic_istream<char, std::__1::char_traits<char>>::~basic_istream()",
+      "virtual thunk to std::__1::basic_istream<char, std::__1::char_traits<char>>::~basic_istream()",
+      "virtual thunk to std::__1::basic_ostream<char, std::__1::char_traits<char>>::~basic_ostream()",
+      "std::__1::basic_ifstream<char, std::__1::char_traits<char>>::~basic_ifstream()",
+      "std::__1::ios_base::init(void*)",
+      "std::__1::basic_istream<char, std::__1::char_traits<char>>::read(char*, long)",
+      "std::__1::basic_ostream<char, std::__1::char_traits<char>>::~basic_ostream()",
+      "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::__init(unsigned long, char)",
+      "std::__1::basic_ostream<char, std::__1::char_traits<char>>::write(char const*, long)",
+  };
+  const char* NoFreeDemanglesStartsWith[] = {
+      "std::__1::basic_ostream<char, std::__1::char_traits<char>>::operator<<",
+      "std::__1::ios_base::imbue",
+      "std::__1::basic_streambuf<wchar_t, std::__1::char_traits<wchar_t>>::pubimbue",
+      "std::__1::basic_stringbuf<char, std::__1::char_traits<char>, std::__1::allocator<char>>::__init_buf_ptrs",
+      "std::__1::basic_stringbuf<char, std::__1::char_traits<char>, std::__1::allocator<char>>::basic_stringbuf",
+      "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::operator=",
+      "std::__1::ctype<char>::widen",
+      "std::__1::basic_streambuf<char, std::__1::char_traits<char>>::sputn",
   };
   // clang-format on
 
@@ -6031,6 +6087,10 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   }
   if (NoFreeDemangles.count(demangledName))
     return F;
+
+  for (auto Name : NoFreeDemanglesStartsWith)
+    if (startsWith(demangledName, Name))
+      return F;
 
   switch (F->getIntrinsicID()) {
   case Intrinsic::lifetime_start:
@@ -6055,6 +6115,17 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
        << F->getName() << ")\n";
     if (context.req) {
       ss << " at context: " << *context.req;
+      if (auto CB = dyn_cast<CallBase>(context.req)) {
+        if (auto F = CB->getCalledFunction()) {
+          std::string demangleF = llvm::demangle(F->getName().str());
+          // replace all '> >' with '>>'
+          size_t start = 0;
+          while ((start = demangleF.find("> >", start)) != std::string::npos) {
+            demangleF.replace(start, 3, ">>");
+          }
+          ss << " (" << demangleF << ")";
+        }
+      }
     } else {
       ss << *F << "\n";
     }

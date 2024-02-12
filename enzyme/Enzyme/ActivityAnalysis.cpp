@@ -115,9 +115,11 @@ static const StringSet<> InactiveGlobals = {
     "_ZSt3cin",
     "_ZSt4cout",
     "_ZNSt3__14coutE",
+    "_ZNSt3__15wcoutE",
     "_ZNSt3__113basic_ostreamIcNS_11char_traitsIcEEE6sentryC1ERS3_",
     "_ZSt5wcout",
     "_ZSt4cerr",
+    "_ZNSt3__14cerrE",
     "_ZTVNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEEE",
     "_ZTVSt15basic_streambufIcSt11char_traitsIcEE",
     "_ZTVSt9basic_iosIcSt11char_traitsIcEE",
@@ -284,13 +286,17 @@ const StringSet<> KnownInactiveFunctions = {
     "cuDevicePrimaryCtxRetain",
     "floor",
     "floorf",
-    "floorl"
+    "floorl",
+    "\01_fopen",
+    "fopen",
+    "fclose",
 };
 
 const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
 #if LLVM_VERSION_MAJOR >= 12
     Intrinsic::experimental_noalias_scope_decl,
 #endif
+    Intrinsic::objectsize,
     Intrinsic::floor,
     Intrinsic::ceil,
     Intrinsic::trunc,
@@ -407,9 +413,16 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::__1::shuffle_order_engine",
     "std::__1::basic_streambuf",
     "std::__1::basic_stringbuf",
+    "std::__1::basic_istream",
+    "std::__1::basic_filebuf",
+    "std::__1::basic_iostream",
+    "std::__1::basic_ios",
+    "virtual thunk to std::__1::basic_istream",
+    "virtual thunk to std::__1::basic_ostream",
 
     "std::__detail::_Prime_rehash_policy",
     "std::__detail::_Hash_code_base",
+
 };
   // clang-format on
 
