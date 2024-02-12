@@ -871,6 +871,16 @@ def : IntrPattern<(Op $x, $y),
                   (Select (FCmpOLT $x, $y), (SelectIfActive $y, (Shadow $y), (Zero $y)), (SelectIfActive $x, (Shadow $x), (Zero $x)))
                   >;
 
+def : CallPattern<(Op $x, $y),
+                  ["fdim", "fdimf", "fdiml"],
+                  [
+                    (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $x), (DiffeRet)),
+                    (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $y), (FNeg (DiffeRet)))
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
 def : IntrPattern<(Op $x),
                   [["fabs"]],
                   [
