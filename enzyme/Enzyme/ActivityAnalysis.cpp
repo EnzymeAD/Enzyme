@@ -468,6 +468,13 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
   if (KnownInactiveIntrinsics.count(F->getIntrinsicID())) {
     return true;
   }
+  // Copies of size 1 are inactive [cannot move differentiable data in one byte]
+  if (auto MTI = dyn_cast<MemTransferInst>(&CI)) {
+    if (auto sz = dyn_cast<ConstantInt>(MTI->getOperand(2))) {
+      if (sz->getValue() == 1)
+        return true;
+    }
+  }
 
   return false;
 }
