@@ -5230,6 +5230,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     CONSIDER(frexpl)
     CONSIDER2(ldexp, double, double, int)
     CONSIDER2(modf, double, double, double *)
+    CONSIDER(modff)
+    CONSIDER(modfl)
 
     CONSIDER2(remquo, double, double, double, int *)
     CONSIDER(remquof)
