@@ -1051,7 +1051,7 @@ public:
         }
 
       Value *diff = nullptr;
-      if (!EnzymeRuntimeActivityCheck && CustomErrorHandler && constantval) {
+      if (!EnzymeRuntimeActivityCheck && constantval) {
         if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
           if (!isa<UndefValue>(orig_val) &&
               !isa<ConstantPointerNull>(orig_val)) {
@@ -1059,9 +1059,12 @@ public:
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << I
                << " const val: " << *orig_val;
-            diff = unwrap(CustomErrorHandler(
-                str.c_str(), wrap(&I), ErrorType::MixedActivityError, gutils,
-                wrap(orig_val), wrap(&BuilderZ)));
+            if (CustomErrorHandler)
+              diff = unwrap(CustomErrorHandler(
+                  str.c_str(), wrap(&I), ErrorType::MixedActivityError, gutils,
+                  wrap(orig_val), wrap(&BuilderZ)));
+            else
+              EmitWarning("MixedActivityError", I, ss.str());
           }
         }
       }
@@ -1280,7 +1283,7 @@ public:
           Value *valueop = nullptr;
 
           if (constantval) {
-            if (!EnzymeRuntimeActivityCheck && CustomErrorHandler) {
+            if (!EnzymeRuntimeActivityCheck) {
               if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
                 if (!isa<UndefValue>(orig_val) &&
                     !isa<ConstantPointerNull>(orig_val)) {
@@ -1288,9 +1291,12 @@ public:
                   raw_string_ostream ss(str);
                   ss << "Mismatched activity for: " << I
                      << " const val: " << *orig_val;
-                  valueop = unwrap(CustomErrorHandler(
-                      str.c_str(), wrap(&I), ErrorType::MixedActivityError,
-                      gutils, wrap(orig_val), wrap(&BuilderZ)));
+                  if (CustomErrorHandler)
+                    valueop = unwrap(CustomErrorHandler(
+                        str.c_str(), wrap(&I), ErrorType::MixedActivityError,
+                        gutils, wrap(orig_val), wrap(&BuilderZ)));
+                  else
+                    EmitWarning("MixedActivityError", I, ss.str());
                 }
               }
             }
