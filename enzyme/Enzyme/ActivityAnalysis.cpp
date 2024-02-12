@@ -432,16 +432,16 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
   if (auto iasm = dyn_cast<InlineAsm>(CI.getCalledOperand())) {
     if (StringRef(iasm->getAsmString()).contains("exit") ||
         StringRef(iasm->getAsmString()).contains("cpuid"))
-      return false;
+      return true;
   }
 
-  auto F = getFunctionFromCall(&CI);
-
-  if (F == nullptr)
-    return false;
-
-  if (F->hasFnAttribute("enzyme_inactive")) {
-    return true;
+  if (auto F = getFunctionFromCall(&CI)) {
+    if (F->hasFnAttribute("enzyme_inactive")) {
+      return true;
+    }
+    if (KnownInactiveIntrinsics.count(F->getIntrinsicID())) {
+      return true;
+    }
   }
 
   auto Name = getFuncNameFromCall(&CI);
@@ -478,9 +478,6 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
       return true;
     }
 
-  if (KnownInactiveIntrinsics.count(F->getIntrinsicID())) {
-    return true;
-  }
   // Copies of size 1 are inactive [cannot move differentiable data in one byte]
   if (auto MTI = dyn_cast<MemTransferInst>(&CI)) {
     if (auto sz = dyn_cast<ConstantInt>(MTI->getOperand(2))) {

@@ -3275,6 +3275,14 @@ public:
       return;
     }
 
+    // memcpy of size 1 cannot move differentiable data [single byte copy]
+    if (auto ci = dyn_cast<ConstantInt>(new_size)) {
+      if (ci->getValue() == 1) {
+        eraseIfUnused(MTI);
+        return;
+      }
+    }
+
     // copying into nullptr is invalid (not sure why it exists here), but we
     // shouldn't do it in reverse pass or shadow
     if (isa<ConstantPointerNull>(orig_dst) ||
