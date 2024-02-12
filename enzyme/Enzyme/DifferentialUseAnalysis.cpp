@@ -849,7 +849,9 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
           assert(pair.first.outgoing == 0 && N.outgoing == 1);
           assert(pair.first.V == N.V);
           MinReq.insert(N.V);
-          todo.push_back(N.V);
+          if (Orig.find(Node(N.V, true)) != Orig.end()) {
+            todo.push_back(N.V);
+          }
         }
       }
   }
@@ -860,20 +862,20 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
     auto V = todo.front();
     todo.pop_front();
     auto found = Orig.find(Node(V, true));
-    if (found->second.size() == 1 && !Required.count(V)) {
+    assert(found != Orig.end());
+    const auto &mp = found->second;
+    if (mp.size() == 1 && !Required.count(V)) {
       bool potentiallyRecursive =
-          isa<PHINode>((*found->second.begin()).V) &&
-          OrigLI.isLoopHeader(
-              cast<PHINode>((*found->second.begin()).V)->getParent());
+          isa<PHINode>((*mp.begin()).V) &&
+          OrigLI.isLoopHeader(cast<PHINode>((*mp.begin()).V)->getParent());
       int moreOuterLoop = cmpLoopNest(
           OrigLI.getLoopFor(cast<Instruction>(V)->getParent()),
-          OrigLI.getLoopFor(
-              cast<Instruction>(((*found->second.begin()).V))->getParent()));
+          OrigLI.getLoopFor(cast<Instruction>(((*mp.begin()).V))->getParent()));
       if (potentiallyRecursive)
         continue;
       if (moreOuterLoop == -1)
         continue;
-      if (auto ASC = dyn_cast<AddrSpaceCastInst>((*found->second.begin()).V)) {
+      if (auto ASC = dyn_cast<AddrSpaceCastInst>((*mp.begin()).V)) {
         if (ASC->getDestAddressSpace() == 11 ||
             ASC->getDestAddressSpace() == 13)
           continue;
@@ -882,7 +884,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
       }
       // If an allocation call, we cannot cache any "capturing" users
       if (isAllocationCall(V, TLI)) {
-        auto next = (*found->second.begin()).V;
+        auto next = (*mp.begin()).V;
         bool noncapture = false;
         if (isa<LoadInst>(next)) {
           noncapture = true;
@@ -918,10 +920,12 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
       if (moreOuterLoop == 1 ||
           (moreOuterLoop == 0 &&
            DL.getTypeSizeInBits(V->getType()) >=
-               DL.getTypeSizeInBits((*found->second.begin()).V->getType()))) {
+               DL.getTypeSizeInBits((*mp.begin()).V->getType()))) {
         MinReq.remove(V);
-        MinReq.insert((*found->second.begin()).V);
-        todo.push_back((*found->second.begin()).V);
+        auto nnode = (*mp.begin()).V;
+        MinReq.insert(nnode);
+        if (Orig.find(Node(nnode, true)) != Orig.end())
+          todo.push_back(nnode);
       }
     }
   }

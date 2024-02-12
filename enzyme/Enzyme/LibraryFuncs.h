@@ -49,6 +49,8 @@ static inline bool isAllocationFunction(const llvm::StringRef name,
     return true;
   if (name == "calloc" || name == "malloc")
     return true;
+  if (name == "_mlir_memref_to_llvm_alloc")
+    return true;
   if (name == "swift_allocObject")
     return true;
   if (name == "__rust_alloc" || name == "__rust_alloc_zeroed")
@@ -122,6 +124,8 @@ static inline bool isDeallocationFunction(const llvm::StringRef name,
   llvm::LibFunc libfunc;
   if (!TLI.getLibFunc(name, libfunc)) {
     if (name == "free")
+      return true;
+    if (name == "_mlir_memref_to_llvm_free")
       return true;
     if (name == "__rust_dealloc")
       return true;
