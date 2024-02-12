@@ -3,11 +3,7 @@
 // RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - ; fi
 // RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - ; fi
 
-// test.c
-#include <stdio.h>
-#include <stdlib.h>
-
-#include "test_utils.h"
+#include "../test_utils.h"
 
 extern void __enzyme_autodiff(void*, ...);
 void square(double* __restrict__ delv, double* __restrict__ e, unsigned long long numReg) {

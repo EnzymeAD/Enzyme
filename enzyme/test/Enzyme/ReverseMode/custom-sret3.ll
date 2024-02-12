@@ -118,7 +118,7 @@ attributes #4 = { nounwind }
 !10 = !{!11, !11, i64 0}
 !11 = !{!"int", !5, i64 0}
 
-; CHECK: define internal void @fixbyval_myblas_cdot_rev(%struct.complex* %arg0, %struct.complex* %arg1, %struct.complex* %arg2, %struct.complex* %arg3, i32 %arg4, i32 %arg5, %struct.complex %arg6, i8* %arg7)
+; CHECK: define dso_local void @fixbyval_myblas_cdot_rev(%struct.complex* %arg0, %struct.complex* %arg1, %struct.complex* %arg2, %struct.complex* %arg3, i32 %arg4, i32 %arg5, %struct.complex %arg6, i8* %arg7)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = alloca %struct.complex
 ; CHECK-NEXT:   store %struct.complex %arg6, %struct.complex* %0

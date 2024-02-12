@@ -87,6 +87,9 @@ llvm::cl::opt<bool>
     EnzymeStrongZero("enzyme-strong-zero", cl::init(false), cl::Hidden,
                      cl::desc("Use additional checks to ensure correct "
                               "behavior when handling functions with inf"));
+llvm::cl::opt<bool> EnzymeMemmoveWarning(
+    "enzyme-memmove-warning", cl::init(true), cl::Hidden,
+    cl::desc("Warn if using memmove implementation as a fallback for memmove"));
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
@@ -439,8 +442,12 @@ CallInst *CreateDealloc(llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
 EnzymeFailure::EnzymeFailure(const llvm::Twine &RemarkName,
                              const llvm::DiagnosticLocation &Loc,
                              const llvm::Instruction *CodeRegion)
-    : DiagnosticInfoUnsupported(*CodeRegion->getParent()->getParent(),
-                                RemarkName, Loc) {}
+    : EnzymeFailure(RemarkName, Loc, CodeRegion->getParent()->getParent()) {}
+
+EnzymeFailure::EnzymeFailure(const llvm::Twine &RemarkName,
+                             const llvm::DiagnosticLocation &Loc,
+                             const llvm::Function *CodeRegion)
+    : DiagnosticInfoUnsupported(*CodeRegion, RemarkName, Loc) {}
 
 /// Convert a floating type to a string
 static inline std::string tofltstr(Type *T) {
@@ -1236,8 +1243,10 @@ Function *
 getOrInsertDifferentialFloatMemmove(Module &M, Type *T, unsigned dstalign,
                                     unsigned srcalign, unsigned dstaddr,
                                     unsigned srcaddr, unsigned bitwidth) {
-  llvm::errs() << "warning: didn't implement memmove, using memcpy as fallback "
-                  "which can result in errors\n";
+  if (EnzymeMemmoveWarning)
+    llvm::errs()
+        << "warning: didn't implement memmove, using memcpy as fallback "
+           "which can result in errors\n";
   return getOrInsertDifferentialFloatMemcpy(M, T, dstalign, srcalign, dstaddr,
                                             srcaddr, bitwidth);
 }
@@ -2627,7 +2636,8 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
       CustomErrorHandler(ss.str().c_str(), nullptr, ErrorType::NoDerivative,
                          nullptr, nullptr, nullptr);
     } else {
-      EmitFailure("unknown trans blas value", nullptr, nullptr, ss.str());
+      EmitFailure("unknown trans blas value", B.getCurrentDebugLocation(),
+                  B.GetInsertBlock()->getParent(), ss.str());
     }
     return V;
   }
@@ -2824,4 +2834,36 @@ bool collectOffset(GEPOperator *gep, const DataLayout &DL, unsigned BitWidth,
   }
   return true;
 #endif
+}
+
+llvm::CallInst *createIntrinsicCall(llvm::IRBuilderBase &B,
+                                    llvm::Intrinsic::ID ID, llvm::Type *RetTy,
+                                    llvm::ArrayRef<llvm::Value *> Args,
+                                    llvm::Instruction *FMFSource,
+                                    const llvm::Twine &Name) {
+#if LLVM_VERSION_MAJOR >= 16
+  llvm::CallInst *nres = B.CreateIntrinsic(RetTy, ID, Args, FMFSource, Name);
+#else
+  SmallVector<Intrinsic::IITDescriptor, 1> Table;
+  Intrinsic::getIntrinsicInfoTableEntries(ID, Table);
+  ArrayRef<Intrinsic::IITDescriptor> TableRef(Table);
+
+  SmallVector<Type *, 2> ArgTys;
+  ArgTys.reserve(Args.size());
+  for (auto &I : Args)
+    ArgTys.push_back(I->getType());
+  FunctionType *FTy = FunctionType::get(RetTy, ArgTys, false);
+  SmallVector<Type *, 2> OverloadTys;
+  Intrinsic::MatchIntrinsicTypesResult Res =
+      matchIntrinsicSignature(FTy, TableRef, OverloadTys);
+  (void)Res;
+  assert(Res == Intrinsic::MatchIntrinsicTypes_Match && TableRef.empty() &&
+         "Wrong types for intrinsic!");
+  Function *Fn = Intrinsic::getDeclaration(B.GetInsertPoint()->getModule(), ID,
+                                           OverloadTys);
+  CallInst *nres = B.CreateCall(Fn, Args, {}, Name);
+  if (FMFSource)
+    nres->copyFastMathFlags(FMFSource);
+#endif
+  return nres;
 }

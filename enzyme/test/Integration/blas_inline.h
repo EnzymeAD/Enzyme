@@ -1,5 +1,8 @@
 #include <stdio.h>
 #include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
 
 typedef int32_t integer;
 typedef double doublereal;

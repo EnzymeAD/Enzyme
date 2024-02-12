@@ -150,7 +150,7 @@ attributes #1 = { argmemonly }
 ; CHECK: invertomp.inner.for.body:                         ; preds = %invertomp.loop.exit.loopexit, %incinvertomp.inner.for.body
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %[[_unwrap7:.+]], %invertomp.loop.exit.loopexit ], [ %9, %incinvertomp.inner.for.body ]
 ; CHECK-NEXT:   %_unwrap2 = load i64, i64* %.omp.lb_smpl
-; CHECK-NEXT:   %_unwrap3 = add i64 {{((%_unwrap2, %"iv'ac.0")|%"iv'ac.0", %_unwrap2)}}
+; CHECK-NEXT:   %_unwrap3 = add nuw i64 {{((%_unwrap2, %"iv'ac.0")|%"iv'ac.0", %_unwrap2)}}
 ; CHECK-NEXT:   %"outidx'ipg_unwrap" = getelementptr inbounds double, double* %"out'", i64 %_unwrap3
 ; CHECK-NEXT:   %1 = load double, double* %"outidx'ipg_unwrap", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"outidx'ipg_unwrap", align 8

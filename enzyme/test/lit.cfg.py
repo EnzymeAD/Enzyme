@@ -45,6 +45,7 @@ config.environment['LD_LIBRARY_PATH'] = path
 #llvm_config.add_tool_substitutions(tools, config.llvm_tools_dir)
 
 # opt knows whether it is compiled with -DNDEBUG.
+"""
 import subprocess
 try:
     opt_cmd = subprocess.Popen([os.path.join(config.llvm_tools_dir, 'opt'), '-version'],
@@ -68,3 +69,4 @@ try:
 except OSError:
     print("Could not find llvm-config in " + config.llvm_tools_dir)
     exit(42)
+"""

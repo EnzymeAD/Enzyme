@@ -749,7 +749,7 @@ public:
       Value *res = CI->getArgOperand(i);
       auto metaString = getMetadataName(res);
       // handle metadata
-      if (metaString && metaString->startswith("enzyme_")) {
+      if (metaString && startsWith(*metaString, "enzyme_")) {
         if (*metaString == "enzyme_const_return") {
           retType = DIFFE_TYPE::CONSTANT;
           continue;
@@ -862,7 +862,7 @@ public:
       bool skipArg = false;
 
       // handle metadata
-      while (metaString && metaString->startswith("enzyme_")) {
+      while (metaString && startsWith(*metaString, "enzyme_")) {
         if (*metaString == "enzyme_not_overwritten") {
           overwritten = false;
         } else if (*metaString == "enzyme_byref") {
@@ -1314,6 +1314,71 @@ public:
     return type_args;
   }
 
+  static FloatRepresentation getDefaultFloatRepr(unsigned width) {
+    switch (width) {
+    case 16:
+      return FloatRepresentation(5, 10);
+    case 32:
+      return FloatRepresentation(8, 23);
+    case 64:
+      return FloatRepresentation(11, 52);
+    default:
+      llvm_unreachable("Invalid float width");
+    }
+  };
+
+  bool HandleTruncateFunc(CallInst *CI, TruncateMode mode) {
+    IRBuilder<> Builder(CI);
+    Function *F = parseFunctionParameter(CI);
+    if (!F)
+      return false;
+    if (CI->arg_size() != 3) {
+      EmitFailure("TooManyArgs", CI->getDebugLoc(), CI,
+                  "Had incorrect number of args to __enzyme_truncate_func", *CI,
+                  " - expected 3");
+      return false;
+    }
+    auto Cfrom = cast<ConstantInt>(CI->getArgOperand(1));
+    assert(Cfrom);
+    auto Cto = cast<ConstantInt>(CI->getArgOperand(2));
+    assert(Cto);
+    RequestContext context(CI, &Builder);
+    llvm::Value *res = Logic.CreateTruncateFunc(
+        context, F,
+        getDefaultFloatRepr((unsigned)Cfrom->getValue().getZExtValue()),
+        getDefaultFloatRepr((unsigned)Cto->getValue().getZExtValue()), mode);
+    if (!res)
+      return false;
+    res = Builder.CreatePointerCast(res, CI->getType());
+    CI->replaceAllUsesWith(res);
+    CI->eraseFromParent();
+    return true;
+  }
+
+  bool HandleTruncateValue(CallInst *CI, bool isTruncate) {
+    IRBuilder<> Builder(CI);
+    if (CI->arg_size() != 3) {
+      EmitFailure("TooManyArgs", CI->getDebugLoc(), CI,
+                  "Had incorrect number of args to __enzyme_truncate_value",
+                  *CI, " - expected 3");
+      return false;
+    }
+    auto Cfrom = cast<ConstantInt>(CI->getArgOperand(1));
+    assert(Cfrom);
+    auto Cto = cast<ConstantInt>(CI->getArgOperand(2));
+    assert(Cto);
+    auto Addr = CI->getArgOperand(0);
+    RequestContext context(CI, &Builder);
+    bool res = Logic.CreateTruncateValue(
+        context, Addr,
+        getDefaultFloatRepr((unsigned)Cfrom->getValue().getZExtValue()),
+        getDefaultFloatRepr((unsigned)Cto->getValue().getZExtValue()),
+        isTruncate);
+    if (!res)
+      return false;
+    return true;
+  }
+
   bool HandleBatch(CallInst *CI) {
     unsigned width = 1;
     unsigned truei = 0;
@@ -1368,7 +1433,7 @@ public:
       auto metaString = getMetadataName(res);
 
       // handle metadata
-      if (metaString && metaString->startswith("enzyme_")) {
+      if (metaString && startsWith(*metaString, "enzyme_")) {
         if (*metaString == "enzyme_scalar") {
           ty = BATCH_TYPE::SCALAR;
         } else if (*metaString == "enzyme_vector") {
@@ -1838,15 +1903,9 @@ public:
 #endif
     }
 
-#if LLVM_VERSION_MAJOR >= 16
     return HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, args,
-                          byVal, constants, fn, mode, options.value(), sizeOnly,
+                          byVal, constants, fn, mode, *options, sizeOnly,
                           calls);
-#else
-    return HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, args,
-                          byVal, constants, fn, mode, options.getValue(),
-                          sizeOnly, calls);
-#endif
   }
 
   bool HandleProbProg(CallInst *CI, ProbProgMode mode,
@@ -1976,17 +2035,9 @@ public:
 #endif
     }
 
-#if LLVM_VERSION_MAJOR >= 16
-    bool status =
-        HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, dargs, byVal,
-                       constants, newFunc, DerivativeMode::ReverseModeCombined,
-                       opt.value(), false, calls);
-#else
-    bool status =
-        HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, dargs, byVal,
-                       constants, newFunc, DerivativeMode::ReverseModeCombined,
-                       opt.getValue(), false, calls);
-#endif
+    bool status = HandleAutoDiff(
+        CI, CI->getCallingConv(), ret, retElemType, dargs, byVal, constants,
+        newFunc, DerivativeMode::ReverseModeCombined, *opt, false, calls);
 
     delete interface;
 
@@ -2028,6 +2079,7 @@ public:
               Fn->getName().contains("__enzyme_augmentfwd") ||
               Fn->getName().contains("__enzyme_augmentsize") ||
               Fn->getName().contains("__enzyme_reverse") ||
+              Fn->getName().contains("__enzyme_truncate") ||
               Fn->getName().contains("__enzyme_batch") ||
               Fn->getName().contains("__enzyme_trace") ||
               Fn->getName().contains("__enzyme_condition")))
@@ -2060,6 +2112,10 @@ public:
     MapVector<CallInst *, DerivativeMode> toVirtual;
     MapVector<CallInst *, DerivativeMode> toSize;
     SmallVector<CallInst *, 4> toBatch;
+    SmallVector<CallInst *, 4> toTruncateFuncMem;
+    SmallVector<CallInst *, 4> toTruncateFuncOp;
+    SmallVector<CallInst *, 4> toTruncateValue;
+    SmallVector<CallInst *, 4> toExpandValue;
     MapVector<CallInst *, ProbProgMode> toProbProg;
     SetVector<CallInst *> InactiveCalls;
     SetVector<CallInst *> IterCalls;
@@ -2369,6 +2425,10 @@ public:
         bool virtualCall = false;
         bool sizeOnly = false;
         bool batch = false;
+        bool truncateFuncOp = false;
+        bool truncateFuncMem = false;
+        bool truncateValue = false;
+        bool expandValue = false;
         bool probProg = false;
         DerivativeMode derivativeMode;
         ProbProgMode probProgMode;
@@ -2398,6 +2458,18 @@ public:
         } else if (Fn->getName().contains("__enzyme_batch")) {
           enableEnzyme = true;
           batch = true;
+        } else if (Fn->getName().contains("__enzyme_truncate_mem_func")) {
+          enableEnzyme = true;
+          truncateFuncMem = true;
+        } else if (Fn->getName().contains("__enzyme_truncate_op_func")) {
+          enableEnzyme = true;
+          truncateFuncOp = true;
+        } else if (Fn->getName().contains("__enzyme_truncate_mem_value")) {
+          enableEnzyme = true;
+          truncateValue = true;
+        } else if (Fn->getName().contains("__enzyme_expand_mem_value")) {
+          enableEnzyme = true;
+          expandValue = true;
         } else if (Fn->getName().contains("__enzyme_likelihood")) {
           enableEnzyme = true;
           probProgMode = ProbProgMode::Likelihood;
@@ -2455,6 +2527,14 @@ public:
             toSize[CI] = derivativeMode;
           else if (batch)
             toBatch.push_back(CI);
+          else if (truncateFuncOp)
+            toTruncateFuncOp.push_back(CI);
+          else if (truncateFuncMem)
+            toTruncateFuncMem.push_back(CI);
+          else if (truncateValue)
+            toTruncateValue.push_back(CI);
+          else if (expandValue)
+            toExpandValue.push_back(CI);
           else if (probProg) {
             toProbProg[CI] = probProgMode;
           } else
@@ -2547,6 +2627,18 @@ public:
 
     for (auto call : toBatch) {
       HandleBatch(call);
+    }
+    for (auto call : toTruncateFuncMem) {
+      HandleTruncateFunc(call, TruncMem);
+    }
+    for (auto call : toTruncateFuncOp) {
+      HandleTruncateFunc(call, TruncOp);
+    }
+    for (auto call : toTruncateValue) {
+      HandleTruncateValue(call, true);
+    }
+    for (auto call : toExpandValue) {
+      HandleTruncateValue(call, false);
     }
 
     for (auto &&[call, mode] : toProbProg) {

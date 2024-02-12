@@ -548,16 +548,7 @@ public:
             chunk = dl.getPointerSizeInBits() / 8;
           } else {
             if (auto flt = dt.isFloat()) {
-              if (flt->isFloatTy()) {
-                chunk = 4;
-              } else if (flt->isDoubleTy()) {
-                chunk = 8;
-              } else if (flt->isHalfTy()) {
-                chunk = 2;
-              } else {
-                llvm::errs() << *flt << "\n";
-                assert(0 && "unhandled float type");
-              }
+              chunk = dl.getTypeSizeInBits(flt) / 8;
             } else if (dt == BaseType::Pointer) {
               chunk = dl.getPointerSizeInBits() / 8;
             }
@@ -644,16 +635,7 @@ public:
             chunk = dl.getPointerSizeInBits() / 8;
           } else {
             if (auto flt = dt.isFloat()) {
-              if (flt->isFloatTy()) {
-                chunk = 4;
-              } else if (flt->isDoubleTy()) {
-                chunk = 8;
-              } else if (flt->isHalfTy()) {
-                chunk = 2;
-              } else {
-                llvm::errs() << *flt << "\n";
-                assert(0 && "unhandled float type");
-              }
+              chunk = dl.getTypeSizeInBits(flt) / 8;
             } else if (dt == BaseType::Pointer) {
               chunk = dl.getPointerSizeInBits() / 8;
             }
@@ -716,7 +698,7 @@ public:
     return dat;
   }
 
-  llvm::Type *IsAllFloat(const size_t size) const {
+  llvm::Type *IsAllFloat(const size_t size, const llvm::DataLayout &dl) const {
     auto m1 = TypeTree::operator[]({-1});
     if (auto FT = m1.isFloat())
       return FT;
@@ -724,17 +706,7 @@ public:
     auto m0 = TypeTree::operator[]({0});
 
     if (auto flt = m0.isFloat()) {
-      size_t chunk;
-      if (flt->isFloatTy()) {
-        chunk = 4;
-      } else if (flt->isDoubleTy()) {
-        chunk = 8;
-      } else if (flt->isHalfTy()) {
-        chunk = 2;
-      } else {
-        llvm::errs() << *flt << "\n";
-        assert(0 && "unhandled float type");
-      }
+      size_t chunk = dl.getTypeSizeInBits(flt) / 8;
       for (size_t i = chunk; i < size; i += chunk) {
         auto mx = TypeTree::operator[]({(int)i});
         if (auto f2 = mx.isFloat()) {
@@ -802,18 +774,7 @@ public:
       size_t chunk = 1;
       auto op = operator[]({pair.first[0]});
       if (auto flt = op.isFloat()) {
-        if (flt->isFloatTy()) {
-          chunk = 4;
-        } else if (flt->isDoubleTy()) {
-          chunk = 8;
-        } else if (flt->isHalfTy()) {
-          chunk = 2;
-        } else if (flt->isX86_FP80Ty()) {
-          chunk = 10;
-        } else {
-          llvm::errs() << *flt << "\n";
-          assert(0 && "unhandled float type");
-        }
+        chunk = dl.getTypeSizeInBits(flt) / 8;
       } else if (op == BaseType::Pointer) {
         chunk = dl.getPointerSizeInBits() / 8;
       }
@@ -1112,7 +1073,8 @@ public:
   /// Set this to the logical `binop` of itself and RHS, using the Binop Op,
   /// returning true if this was changed.
   /// This function will error on an invalid type combination
-  bool binopIn(const TypeTree &RHS, llvm::BinaryOperator::BinaryOps Op) {
+  bool binopIn(bool &Legal, const TypeTree &RHS,
+               llvm::BinaryOperator::BinaryOps Op) {
     bool changed = false;
 
     for (auto &pair : llvm::make_early_inc_range(mapping)) {
@@ -1134,7 +1096,12 @@ public:
         RightCT = found->second;
       }
 
-      changed |= CT.binopIn(RightCT, Op);
+      bool SubLegal = true;
+      changed |= CT.binopIn(SubLegal, RightCT, Op);
+      if (!SubLegal) {
+        Legal = false;
+        return changed;
+      }
       if (CT == BaseType::Unknown) {
         mapping.erase(pair.first);
       } else {
@@ -1154,7 +1121,12 @@ public:
 
       if (mapping.find(pair.first) == RHS.mapping.end()) {
         ConcreteType CT = BaseType::Unknown;
-        changed |= CT.binopIn(pair.second, Op);
+        bool SubLegal = true;
+        changed |= CT.binopIn(SubLegal, pair.second, Op);
+        if (!SubLegal) {
+          Legal = false;
+          return changed;
+        }
         if (CT != BaseType::Unknown) {
           mapping.insert(std::make_pair(pair.first, CT));
         }

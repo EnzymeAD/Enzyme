@@ -10,10 +10,7 @@
 // RUN:  %clang++ -ffast-math -O2 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
 // RUN:  %clang++ -ffast-math -O3 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
 
-#include <stdio.h>
-#include <math.h>
-
-#include "test_utils.h"
+#include "../test_utils.h"
 
 extern void __enzyme_autodiff(void*, double*, double*, int);
 /*double max(double x, double y) {
@@ -21,7 +18,7 @@ extern void __enzyme_autodiff(void*, double*, double*, int);
 }*/
 
 double reduce_max(double* vec, int size) {
-  double ret = -INFINITY;
+  double ret = -10000000;
   double *maxes = (double*)malloc(sizeof(double)*size);
   int count = 0;
   for (int i = 0; i < size; i++) {

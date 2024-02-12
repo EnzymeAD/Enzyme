@@ -186,6 +186,12 @@ class PrependArgTypesFunc<string name_, list<string> pretys_> {
   list<string> pretys = pretys_;
 }
 
+// Set return to arg[0]
+// Same argument types
+class ArgAsRetTypesFunc<string name_> {
+  string name = name_;
+}
+
 // Specify that a given argument is inactive, aka not differentiable
 // By default this argument tells Enzyme that it must always be inactive
 // from the function semantics.
@@ -221,6 +227,10 @@ def MantissaMaskOfReturn : GlobalExpr</*primal*/0, /*shadow*/0, "({\n"
 "      tsize = 64;\n"
 "      high = tsize - 1;\n"
 "      low = high - 11;\n"
+"    } else if (ty->isX86_FP80Ty()) {\n"
+"      tsize = 80;\n"
+"      high = tsize - 1;\n"
+"      low = high - 15;\n"
 "    } else if (ty->isFP128Ty()) {\n"
 "      tsize = 128;\n"
 "      high = tsize - 1;\n"
@@ -256,6 +266,17 @@ def DiffeRet : DiffeRetIndex<[-1]>;
 
 def Shadow : Operation</*primal*/0, /*shadow*/1> {
 }
+
+//  1 / y -> -1/y^2 dy
+def : CallPattern<(Op $y),
+                  ["__nv_frcp_rd", "__nv_frcp_rn", "__nv_frcp_ru", "__nv_frcp_rz",
+                   "__nv_drcp_rd", "__nv_drcp_rn", "__nv_drcp_ru", "__nv_drcp_rz"],
+                    [
+                      (FNeg (CheckedDiv (DiffeRet), (FMul $y, $y)))
+                    ],
+                    (ForwardFromSummedReverse),
+                    [ReadNone, NoUnwind]
+                  >;
 
 def : CallPattern<(Op $x),
                   ["atan", "atanf", "atanl", "__fd_atan_1"],
@@ -413,7 +434,7 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x, $y),
-                  ["fmod", "fmodf", "fmodl"],
+                  ["fmod", "fmodf", "fmodl", "__nv_fmod", "__nv_fmodf", "__nv_fmodl"],
                   [
                   (DiffeRet),
                   (CheckedMul (DiffeRet), (FNeg (Intrinsic<"copysign"> (Intrinsic<"floor"> (Intrinsic<"fabs"> (FDiv $x, $y):$div)), $div)))
@@ -440,6 +461,30 @@ def : CallPattern<(Op $x),
                   (
                    ArrayRet (FMul (ConstantFP<"3.1415926535897962684626433"> $x), (FMul (ExtractValue<[1]> (Call<(SameFunc), [ReadNone,NoUnwind]> $x):$callset), (DiffeRet) ) ),
                             (FMul (ConstantFP<"3.1415926535897962684626433"> $x),  (FNeg (FMul (ExtractValue<[0]> $callset), (DiffeRet) ) ) )
+                  )
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["logabsgamma"],
+                  [
+                  (
+                   ArrayRet (FMul (Call<(ArgAsRetTypesFunc<"digamma">), [ReadNone,NoUnwind]> $x), (DiffeRet) ),
+                            (InactiveArg)
+                  )
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["logabsgammaf"],
+                  [
+                  (
+                   ArrayRet (FMul (Call<(ArgAsRetTypesFunc<"digammaf">), [ReadNone,NoUnwind]> $x), (DiffeRet) ),
+                            (InactiveArg)
                   )
                   ],
                   (ForwardFromSummedReverse),

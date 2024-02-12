@@ -928,11 +928,20 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           applyChainRule(PointerType::get(addingType, 1), BuilderM, rule, ptr);
     }
 
-    assert(!mask);
     if (mask) {
-      llvm::errs() << "unhandled masked atomic fadd on llvm version " << *ptr
-                   << " " << *dif << " mask: " << *mask << "\n";
-      llvm_unreachable("unhandled masked atomic fadd");
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "Unimplemented masked atomic fadd for ptr:" << *ptr
+         << " dif:" << *dif << " mask: " << *mask << " orig: " << *orig << "\n";
+      if (CustomErrorHandler) {
+        CustomErrorHandler(ss.str().c_str(), wrap(orig),
+                           ErrorType::NoDerivative, this, nullptr,
+                           wrap(&BuilderM));
+        return;
+      } else {
+        EmitFailure("NoDerivative", orig->getDebugLoc(), orig, ss.str());
+        return;
+      }
     }
 
     /*
@@ -966,14 +975,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           if (alignv) {
             if (start != 0) {
               // todo make better alignment calculation
-#if LLVM_VERSION_MAJOR >= 16
-              assert(alignv.value().value() != 0);
-              if (start % alignv.value().value() != 0)
-#else
-              assert(alignv.getValue().value() != 0);
-              if (start % alignv.getValue().value() != 0)
-#endif
-              {
+              assert((*alignv).value() != 0);
+              if (start % (*alignv).value() != 0) {
                 alignv = Align(1);
               }
             }
@@ -1007,13 +1010,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         if (alignv) {
           if (start != 0) {
             // todo make better alignment calculation
-#if LLVM_VERSION_MAJOR >= 16
-            assert(alignv.value().value() != 0);
-            if (start % alignv.value().value() != 0) {
-#else
-            assert(alignv.getValue().value() != 0);
-            if (start % alignv.getValue().value() != 0) {
-#endif
+            assert((*alignv).value() != 0);
+            if (start % (*alignv).value() != 0) {
               alignv = Align(1);
             }
           }
@@ -1093,11 +1091,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       st->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
 
       if (align) {
-#if LLVM_VERSION_MAJOR >= 16
-        auto alignv = align ? align.value().value() : 0;
-#else
-        auto alignv = align ? align.getValue().value() : 0;
-#endif
+        auto alignv = align ? (*align).value() : 0;
         if (alignv != 0) {
           if (start != 0) {
             // todo make better alignment calculation

@@ -1,9 +1,13 @@
 @LIT_SITE_CFG_IN_HEADER@
 
+import os
+
 #config.llvm_src_root = "@LLVM_SOURCE_DIR@"
 config.llvm_ver = "@LLVM_VERSION_MAJOR@"
 config.llvm_obj_root = "@LLVM_BINARY_DIR@"
 config.llvm_tools_dir = "@LLVM_TOOLS_BINARY_DIR@"
+if len("@ENZYME_BINARY_DIR@") == 0:
+  config.llvm_tools_dir = os.getcwd() + "/" + config.llvm_tools_dir
 config.llvm_libs_dir = "@LLVM_LIBS_DIR@"
 config.enzyme_obj_root = "@ENZYME_BINARY_DIR@"
 config.target_triple = "@TARGET_TRIPLE@"
@@ -39,11 +43,28 @@ config.excludes = ['Inputs']
 config.substitutions.append(('%shlibext', config.llvm_shlib_ext))
 config.substitutions.append(('%lli', config.llvm_tools_dir + "/lli" + (" --jit-kind=mcjit" if int(config.llvm_ver) >= 13 else "")
 ))
-config.substitutions.append(('%opt', config.llvm_tools_dir + "/opt"))
-config.substitutions.append(('%eopt', config.enzyme_obj_root + "/Enzyme/MLIR/enzymemlir-opt"))
+
+opt = config.llvm_tools_dir + "/opt"
+if len("@ENZYME_BINARY_DIR@") == 0:
+  opt = os.path.dirname(os.path.abspath(__file__)) + "/../enzyme-opt"
+
+config.substitutions.append(('%opt', opt))
+
+emopt = config.enzyme_obj_root + "/Enzyme/MLIR/enzymemlir-opt"
+if len("@ENZYME_BINARY_DIR@") == 0:
+  emopt = os.path.dirname(os.path.abspath(__file__)) + "/../enzymemlir-opt"
+
+eclang = config.llvm_tools_dir + "/clang"
+if len("@ENZYME_BINARY_DIR@") == 0:
+  eclang = os.path.dirname(os.path.abspath(__file__)) + "/../enzyme-clang"
+  resource = config.llvm_tools_dir + "/../clang/staging"
+  eclang += " -resource-dir " + resource + " "
+  eclang += "-I " + os.path.dirname(os.path.abspath(__file__)) + "/Integration" 
+
+config.substitutions.append(('%eopt', emopt))
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
-config.substitutions.append(('%clang', config.llvm_tools_dir + "/clang"))
+config.substitutions.append(('%clang', eclang))
 config.substitutions.append(('%O0TBAA', "-O1 -Xclang -disable-llvm-passes"))
 
 oldPM = ((" --enable-new-pm=0" if int(config.llvm_ver) >= 13 else "")
@@ -53,9 +74,15 @@ newPM = ((" --enable-new-pm=1" if int(config.llvm_ver) in (12,13) else "")
                                  + ' -load-pass-plugin=@ENZYME_BINARY_DIR@/Enzyme/LLVMEnzyme-' + config.llvm_ver + config.llvm_shlib_ext 
                                  + ' -load=@ENZYME_BINARY_DIR@/Enzyme/LLVMEnzyme-' + config.llvm_ver + config.llvm_shlib_ext 
                                  + (" --enzyme-attributor=0" if int(config.llvm_ver) >= 13 else ""))
+if len("@ENZYME_BINARY_DIR@") == 0:
+  oldPM = ((" --enable-new-pm=0" if int(config.llvm_ver) >= 13 else "")
+                                 + (" --enzyme-attributor=0" if int(config.llvm_ver) >= 13 else ""))
+  newPM = ((" --enable-new-pm=1" if int(config.llvm_ver) in (12,13) else "")
+                                 + (" --enzyme-attributor=0" if int(config.llvm_ver) >= 13 else ""))
+
 oldPMOP = oldPM
 newPMOP = newPM
-if int(config.llvm_ver) >= 16:
+if int(config.llvm_ver) == 16:
   newPM += " -opaque-pointers=0"
   oldPM += " -opaque-pointers=0"
 
@@ -77,8 +104,16 @@ oldPM = (((" -fno-experimental-new-pass-manager" if int(config.llvm_ver) < 14 el
 newPM = ((" -fexperimental-new-pass-manager" if int(config.llvm_ver) < 13 else "")
           + ' -fpass-plugin=@ENZYME_BINARY_DIR@/Enzyme/ClangEnzyme-' + config.llvm_ver + config.llvm_shlib_ext
           + ' -Xclang -load -Xclang @ENZYME_BINARY_DIR@/Enzyme/ClangEnzyme-' + config.llvm_ver + config.llvm_shlib_ext)
+
+if len("@ENZYME_BINARY_DIR@") == 0:
+  oldPM = ((" -fno-experimental-new-pass-manager" if int(config.llvm_ver) < 14 else "-flegacy-pass-manager") if int(config.llvm_ver) >= 13 else "")
+  newPM = (" -fexperimental-new-pass-manager" if int(config.llvm_ver) < 13 else "")
+
 config.substitutions.append(('%loadClangEnzyme', oldPM if int(config.llvm_ver) < 15 else newPM))
 config.substitutions.append(('%newLoadClangEnzyme', newPM))
 
 # Let the main config do the real work.
-lit_config.load_config(config, "@ENZYME_SOURCE_DIR@/test/lit.cfg.py")
+cfgfile = "@ENZYME_SOURCE_DIR@/test/lit.cfg.py"
+if len("@ENZYME_SOURCE_DIR@") == 0:
+  cfgfile = os.path.dirname(os.path.abspath(__file__)) + "/lit.cfg.py"
+lit_config.load_config(config, cfgfile)

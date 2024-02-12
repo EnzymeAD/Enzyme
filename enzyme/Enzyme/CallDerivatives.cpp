@@ -32,10 +32,8 @@ extern "C" {
 void (*EnzymeShadowAllocRewrite)(LLVMValueRef, void *) = nullptr;
 }
 
-template <class T>
-void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
-                                    llvm::Function *called,
-                                    llvm::StringRef funcName) {
+void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
+                                 llvm::StringRef funcName) {
   using namespace llvm;
 
   assert(called);
@@ -380,8 +378,8 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
                          Constant::getNullValue(d_reqp->getType()), d_reqp);
       if (auto I = dyn_cast<Instruction>(d_reqp))
         gutils->TapesToPreventRecomputation.insert(I);
-      d_reqp = gutils->cacheForReverse(BuilderZ, d_reqp,
-                                       getIndex(&call, CacheType::Tape));
+      d_reqp = gutils->cacheForReverse(
+          BuilderZ, d_reqp, getIndex(&call, CacheType::Tape, BuilderZ));
     }
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined) {
@@ -394,8 +392,8 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
 
       if (Mode != DerivativeMode::ReverseModeCombined) {
         d_reqp = BuilderZ.CreatePHI(PointerType::getUnqual(impi), 0);
-        d_reqp = gutils->cacheForReverse(BuilderZ, d_reqp,
-                                         getIndex(&call, CacheType::Tape));
+        d_reqp = gutils->cacheForReverse(
+            BuilderZ, d_reqp, getIndex(&call, CacheType::Tape, BuilderZ));
       } else
         assert(d_reqp);
       d_reqp = lookup(d_reqp, Builder2);
@@ -514,8 +512,8 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
       cast<CallInst>(d_reqp)->setCallingConv(dsave->getCallingConv());
       cast<CallInst>(d_reqp)->setDebugLoc(
           gutils->getNewFromOriginal(call.getDebugLoc()));
-      d_reqp = gutils->cacheForReverse(BuilderZ, d_reqp,
-                                       getIndex(&call, CacheType::Tape));
+      d_reqp = gutils->cacheForReverse(
+          BuilderZ, d_reqp, getIndex(&call, CacheType::Tape, BuilderZ));
     }
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined) {
@@ -530,8 +528,8 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
 
       if (Mode != DerivativeMode::ReverseModeCombined) {
         d_reqp = BuilderZ.CreatePHI(PointerType::getUnqual(reqType), 0);
-        d_reqp = gutils->cacheForReverse(BuilderZ, d_reqp,
-                                         getIndex(&call, CacheType::Tape));
+        d_reqp = gutils->cacheForReverse(
+            BuilderZ, d_reqp, getIndex(&call, CacheType::Tape, BuilderZ));
       }
 
       d_reqp = lookup(d_reqp, Builder2);
@@ -2214,8 +2212,7 @@ void AdjointGenerator<T>::handleMPI(llvm::CallInst &call,
   llvm_unreachable("Unhandled MPI FUNCTION");
 }
 
-template <class T>
-bool AdjointGenerator<T>::handleKnownCallDerivatives(
+bool AdjointGenerator::handleKnownCallDerivatives(
     CallInst &call, Function *called, StringRef funcName,
     const std::vector<bool> &overwritten_args, CallInst *const newCall) {
   bool subretused = false;
@@ -2244,7 +2241,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
     }
   }
 
-  if ((funcName.startswith("MPI_") || funcName.startswith("PMPI_")) &&
+  if ((startsWith(funcName, "MPI_") || startsWith(funcName, "PMPI_")) &&
       (!gutils->isConstantInstruction(&call) || funcName == "MPI_Barrier" ||
        funcName == "MPI_Comm_free" || funcName == "MPI_Comm_disconnect" ||
        MPIInactiveCommAllocators.find(funcName) !=
@@ -2254,17 +2251,13 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
   }
 
   if (auto blas = extractBLAS(funcName)) {
-#if LLVM_VERSION_MAJOR >= 16
-    if (handleBLAS(call, called, blas.value(), overwritten_args))
-#else
-    if (handleBLAS(call, called, blas.getValue(), overwritten_args))
-#endif
+    if (handleBLAS(call, called, *blas, overwritten_args))
       return true;
   }
 
   if (funcName == "printf" || funcName == "puts" ||
-      funcName.startswith("_ZN3std2io5stdio6_print") ||
-      funcName.startswith("_ZN4core3fmt")) {
+      startsWith(funcName, "_ZN3std2io5stdio6_print") ||
+      startsWith(funcName, "_ZN4core3fmt")) {
     if (Mode == DerivativeMode::ReverseModeGradient) {
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
     }
@@ -2353,7 +2346,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
       return true;
     }
 
-    if (funcName.startswith("__kmpc") &&
+    if (startsWith(funcName, "__kmpc") &&
         funcName != "__kmpc_global_thread_num") {
       llvm::errs() << *gutils->oldFunc << "\n";
       llvm::errs() << call << "\n";
@@ -2577,7 +2570,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
           if (!lrc && (Mode == DerivativeMode::ReverseModePrimal ||
                        Mode == DerivativeMode::ReverseModeGradient)) {
             shadow = gutils->cacheForReverse(
-                BuilderZ, shadow, getIndex(&call, CacheType::Shadow));
+                BuilderZ, shadow, getIndex(&call, CacheType::Shadow, BuilderZ));
             if (Mode == DerivativeMode::ReverseModeGradient)
               needsReplacement = false;
           }
@@ -2614,7 +2607,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
       if (shouldCache) {
         BuilderZ.SetInsertPoint(newCall->getNextNode());
         gutils->cacheForReverse(BuilderZ, newCall,
-                                getIndex(&call, CacheType::Self));
+                                getIndex(&call, CacheType::Self, BuilderZ));
       }
       eraseIfUnused(call);
       assert(gutils->isConstantInstruction(&call));
@@ -2717,8 +2710,9 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
           if (gutils->knownRecomputeHeuristic.find(&call) !=
               gutils->knownRecomputeHeuristic.end()) {
             if (!gutils->knownRecomputeHeuristic[&call]) {
-              gutils->cacheForReverse(BuilderZ, newCall,
-                                      getIndex(&call, CacheType::Self));
+              gutils->cacheForReverse(
+                  BuilderZ, newCall,
+                  getIndex(&call, CacheType::Self, BuilderZ));
             }
           }
           eraseIfUnused(call);
@@ -2735,8 +2729,9 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
             if (gutils->knownRecomputeHeuristic.find(&call) !=
                 gutils->knownRecomputeHeuristic.end()) {
               if (!gutils->knownRecomputeHeuristic[&call]) {
-                gutils->cacheForReverse(BuilderZ, newCall,
-                                        getIndex(&call, CacheType::Self));
+                gutils->cacheForReverse(
+                    BuilderZ, newCall,
+                    getIndex(&call, CacheType::Self, BuilderZ));
               }
             }
           }
@@ -2755,7 +2750,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
             gutils->knownRecomputeHeuristic.end()) {
           if (!gutils->knownRecomputeHeuristic[&call]) {
             gutils->cacheForReverse(BuilderZ, newCall,
-                                    getIndex(&call, CacheType::Self));
+                                    getIndex(&call, CacheType::Self, BuilderZ));
           }
         }
         eraseIfUnused(call);
@@ -2771,7 +2766,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
           gutils->knownRecomputeHeuristic.end()) {
         if (!gutils->knownRecomputeHeuristic[&call]) {
           gutils->cacheForReverse(BuilderZ, newCall,
-                                  getIndex(&call, CacheType::Self));
+                                  getIndex(&call, CacheType::Self, BuilderZ));
         }
       }
       eraseIfUnused(call);
@@ -2917,7 +2912,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
 
             if (!backwardsShadow)
               anti = gutils->cacheForReverse(
-                  bb, anti, getIndex(&call, CacheType::Shadow));
+                  bb, anti, getIndex(&call, CacheType::Shadow, BuilderZ));
           } else {
             bool zeroed = false;
             auto rule = [&]() {
@@ -3016,7 +3011,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
 
             if (!backwardsShadow)
               anti = gutils->cacheForReverse(
-                  bb, anti, getIndex(&call, CacheType::Shadow));
+                  bb, anti, getIndex(&call, CacheType::Shadow, BuilderZ));
             else {
               if (auto MD = hasMetadata(&call, "enzyme_fromstack")) {
                 isAlloca = true;
@@ -3233,7 +3228,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
         llvm_unreachable("Unknown allocation to upgrade");
       Size = gutils->getNewFromOriginal(Size);
 
-      if (auto CI = dyn_cast<ConstantInt>(Size)) {
+      if (isa<ConstantInt>(Size)) {
         B.SetInsertPoint(gutils->inversionAllocs);
       }
       Type *elTy = Type::getInt8Ty(call.getContext());
@@ -3438,7 +3433,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
         }
       } else if (Mode != DerivativeMode::ReverseModeCombined) {
         gutils->cacheForReverse(BuilderZ, newCall,
-                                getIndex(&call, CacheType::Self));
+                                getIndex(&call, CacheType::Self, BuilderZ));
       }
       return true;
     }
@@ -3452,8 +3447,8 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
     if ((primalNeededInReverse &&
          !gutils->unnecessaryIntermediates.count(&call)) ||
         hasPDFree) {
-      Value *nop = gutils->cacheForReverse(BuilderZ, newCall,
-                                           getIndex(&call, CacheType::Self));
+      Value *nop = gutils->cacheForReverse(
+          BuilderZ, newCall, getIndex(&call, CacheType::Self, BuilderZ));
       if (hasPDFree &&
           ((Mode == DerivativeMode::ReverseModeGradient && shouldFree()) ||
            Mode == DerivativeMode::ReverseModeCombined ||
@@ -3577,7 +3572,8 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
                            ConstantInt::getFalse(call.getContext()));
     return true;
   }
-  if (funcName == "memset" || funcName == "memset_pattern16") {
+  if (funcName == "memset" || funcName == "memset_pattern16" ||
+      funcName == "__memset_chk") {
     visitMemSetCommon(call);
     return true;
   }
@@ -3648,13 +3644,13 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
         val = BuilderZ.CreateIntToPtr(val, PointerType::getUnqual(PT));
       val = BuilderZ.CreateLoad(PT, val);
       val = gutils->cacheForReverse(BuilderZ, val,
-                                    getIndex(&call, CacheType::Tape));
+                                    getIndex(&call, CacheType::Tape, BuilderZ));
 
     } else if (Mode == DerivativeMode::ReverseModeGradient) {
       PHINode *toReplace =
           BuilderZ.CreatePHI(PT, 1, call.getName() + "_psxtmp");
       val = gutils->cacheForReverse(BuilderZ, toReplace,
-                                    getIndex(&call, CacheType::Tape));
+                                    getIndex(&call, CacheType::Tape, BuilderZ));
     }
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined) {
@@ -3820,13 +3816,13 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
             ptrshadow);
 
         if (Mode != DerivativeMode::ForwardMode)
-          val = gutils->cacheForReverse(BuilderZ, val,
-                                        getIndex(&call, CacheType::Tape));
+          val = gutils->cacheForReverse(
+              BuilderZ, val, getIndex(&call, CacheType::Tape, BuilderZ));
       } else if (Mode == DerivativeMode::ReverseModeGradient) {
         PHINode *toReplace = BuilderZ.CreatePHI(gutils->getShadowType(PT), 1,
                                                 call.getName() + "_psxtmp");
-        val = gutils->cacheForReverse(BuilderZ, toReplace,
-                                      getIndex(&call, CacheType::Tape));
+        val = gutils->cacheForReverse(
+            BuilderZ, toReplace, getIndex(&call, CacheType::Tape, BuilderZ));
       }
 
       if (Mode == DerivativeMode::ReverseModeCombined ||
@@ -3898,7 +3894,7 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
       //        {
 
       //  gutils->cacheForReverse(BuilderZ, newCall,
-      //                          getIndex(orig, CacheType::Self));
+      //                          getIndex(orig, CacheType::Self, BuilderZ));
       //} else if (Mode != DerivativeMode::Forward) {
       // Note that here we cannot simply replace with null as users who try
       // to find the shadow pointer will use the shadow of null rather than
@@ -4157,17 +4153,3 @@ bool AdjointGenerator<T>::handleKnownCallDerivatives(
 
   return false;
 }
-
-template bool AdjointGenerator<AugmentedReturn *>::handleKnownCallDerivatives(
-    CallInst &call, Function *called, StringRef funcName,
-    const std::vector<bool> &overwritten_args, CallInst *const newCall);
-template bool
-AdjointGenerator<const AugmentedReturn *>::handleKnownCallDerivatives(
-    CallInst &call, Function *called, StringRef funcName,
-    const std::vector<bool> &overwritten_args, CallInst *const newCall);
-
-template void
-AdjointGenerator<AugmentedReturn *>::handleMPI(CallInst &call, Function *called,
-                                               StringRef funcName);
-template void AdjointGenerator<const AugmentedReturn *>::handleMPI(
-    CallInst &call, Function *called, StringRef funcName);

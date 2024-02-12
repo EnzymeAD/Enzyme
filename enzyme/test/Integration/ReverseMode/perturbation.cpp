@@ -9,7 +9,7 @@
 
 //#include <math.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 double __enzyme_autodiff1(void*, int, double, double);
 double __enzyme_autodiff2(void*, double);

@@ -7,7 +7,7 @@ new_local_repository(
 
 load("@llvm-raw//utils/bazel:configure.bzl", "llvm_configure")
 
-llvm_configure(name = "llvm-project", targets = ["X86"])
+llvm_configure(name = "llvm-project", targets = ["X86", "NVPTX"])
 
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 load("@bazel_tools//tools/build_defs/repo:utils.bzl", "maybe")
@@ -44,3 +44,19 @@ maybe(
         "https://github.com/facebook/zstd/releases/download/v1.5.2/zstd-1.5.2.tar.gz"
     ],
 )
+
+PYRULES_COMMIT = "fe33a4582c37499f3caeb49a07a78fc7948a8949"
+PYRULES_SHA256 = "cfa6957832ae0e0c7ee2ccf455a888a291e8419ed8faf45f4420dd7414d5dd96"
+
+http_archive(
+    name = "rules_python",
+    sha256 = PYRULES_SHA256,
+    strip_prefix = "rules_python-" + PYRULES_COMMIT,
+    urls = ["https://github.com/bazelbuild/rules_python/archive/{commit}.tar.gz".format(commit = PYRULES_COMMIT)]
+)
+
+
+load("@rules_python//python:repositories.bzl", "py_repositories")
+
+py_repositories()
+

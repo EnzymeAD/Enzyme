@@ -14,8 +14,9 @@
 #define EIGEN_UNROLLING_LIMIT 0
 #define EIGEN_DONT_VECTORIZE 1
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
+#include <stdint.h>
 
 void memcpy(float* __restrict dst, float* __restrict src, size_t count) {
     for(size_t i=0; i<count/sizeof(float); i++) {

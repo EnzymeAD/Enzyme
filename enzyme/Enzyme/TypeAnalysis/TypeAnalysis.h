@@ -53,17 +53,18 @@
 #include "llvm/Analysis/PostDominators.h"
 #include "llvm/IR/Dominators.h"
 
+#include "../Utils.h"
 #include "TypeTree.h"
 
 extern const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS;
 
 static inline bool isMemFreeLibMFunction(llvm::StringRef str,
                                          llvm::Intrinsic::ID *ID = nullptr) {
-  if (str.startswith("__") && str.endswith("_finite")) {
+  if (startsWith(str, "__") && endsWith(str, "_finite")) {
     str = str.substr(2, str.size() - 2 - 7);
-  } else if (str.startswith("__fd_") && str.endswith("_1")) {
+  } else if (startsWith(str, "__fd_") && endsWith(str, "_1")) {
     str = str.substr(5, str.size() - 5 - 2);
-  } else if (str.startswith("__nv_")) {
+  } else if (startsWith(str, "__nv_")) {
     str = str.substr(5, str.size() - 5);
   }
   if (LIBM_FUNCTIONS.find(str.str()) != LIBM_FUNCTIONS.end()) {
@@ -71,7 +72,7 @@ static inline bool isMemFreeLibMFunction(llvm::StringRef str,
       *ID = LIBM_FUNCTIONS.find(str.str())->second;
     return true;
   }
-  if (str.endswith("f") || str.endswith("l")) {
+  if (endsWith(str, "f") || endsWith(str, "l")) {
     if (LIBM_FUNCTIONS.find(str.substr(0, str.size() - 1).str()) !=
         LIBM_FUNCTIONS.end()) {
       if (ID)
@@ -172,6 +173,16 @@ public:
 
   /// The TypeTree of a particular Value
   TypeTree query(llvm::Value *val) const;
+
+  /// Whether any part of the top level register can contain a float
+  ///   e.g. { i64, float } can contain a  float, but { i64, i8* } would not.
+  //    Of course, here we compute with type analysis rather than llvm type
+  bool anyFloat(llvm::Value *val) const;
+
+  /// Whether any part of the top level register can contain a pointer
+  ///   e.g. { i64, i8* } can contain a pointer, but { i64, float } would not.
+  //    Of course, here we compute with type analysis rather than llvm type
+  bool anyPointer(llvm::Value *val) const;
 
   /// The TypeInfo calling convention
   FnTypeInfo getAnalyzedTypeInfo() const;

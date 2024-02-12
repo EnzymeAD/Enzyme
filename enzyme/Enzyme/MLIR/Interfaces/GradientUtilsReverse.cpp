@@ -36,10 +36,11 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     ArrayRef<DIFFE_TYPE> ArgDiffeTypes_, IRMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode_, unsigned width, SymbolTableCollection &symbolTable_)
-    : newFunc(newFunc_), oldFunc(oldFunc_), Logic(Logic), mode(mode_),
-      originalToNewFn(originalToNewFn_),
-      originalToNewFnOps(originalToNewFnOps_), TA(TA_), width(width),
-      ArgDiffeTypes(ArgDiffeTypes_), symbolTable(symbolTable_) {
+    : MDiffeGradientUtils(Logic, newFunc_, oldFunc_, TA_, /*MTypeResults*/ {},
+                          invertedPointers_, constantvalues_, activevals_,
+                          ReturnActivity, ArgDiffeTypes_, originalToNewFn_,
+                          originalToNewFnOps_, mode_, width, /*omp*/ false),
+      symbolTable(symbolTable_) {
 
   initInitializationBlock(invertedPointers_, ArgDiffeTypes_);
 }
@@ -136,43 +137,6 @@ Value mlir::enzyme::MGradientUtilsReverse::insertInitShadowedGradient(
   return gradient;
 }
 
-Value mlir::enzyme::MGradientUtilsReverse::getNewFromOriginal(
-    const mlir::Value originst) const {
-  if (!originalToNewFn.contains(originst)) {
-    llvm::errs() << oldFunc << "\n";
-    llvm::errs() << newFunc << "\n";
-    llvm::errs() << originst << "\n";
-    llvm_unreachable("Could not get new val from original");
-  }
-  return originalToNewFn.lookupOrNull(originst);
-}
-
-Block *mlir::enzyme::MGradientUtilsReverse::getNewFromOriginal(
-    mlir::Block *originst) const {
-  if (!originalToNewFn.contains(originst)) {
-    llvm::errs() << oldFunc << "\n";
-    llvm::errs() << newFunc << "\n";
-    llvm::errs() << originst << "\n";
-    llvm_unreachable("Could not get new blk from original");
-  }
-  return originalToNewFn.lookupOrNull(originst);
-}
-
-Operation *mlir::enzyme::MGradientUtilsReverse::getNewFromOriginal(
-    Operation *originst) const {
-  auto found = originalToNewFnOps.find(originst);
-  if (found == originalToNewFnOps.end()) {
-    llvm::errs() << oldFunc << "\n";
-    llvm::errs() << newFunc << "\n";
-    for (auto &pair : originalToNewFnOps) {
-      llvm::errs() << " map[" << pair.first << "] = " << pair.second << "\n";
-    }
-    llvm::errs() << originst << " - " << *originst << "\n";
-    llvm_unreachable("Could not get new op from original");
-  }
-  return found->second;
-}
-
 Operation *
 mlir::enzyme::MGradientUtilsReverse::cloneWithNewOperands(OpBuilder &B,
                                                           Operation *op) {
@@ -182,24 +146,29 @@ mlir::enzyme::MGradientUtilsReverse::cloneWithNewOperands(OpBuilder &B,
   return B.clone(*op, map);
 }
 
-bool mlir::enzyme::MGradientUtilsReverse::isConstantValue(Value v) const {
-  if (isa<mlir::IntegerType>(v.getType()))
-    return true;
-  if (isa<mlir::IndexType>(v.getType()))
-    return true;
-
-  if (matchPattern(v, m_Constant()))
-    return true;
-
-  // TODO
-  return false;
-}
-
 bool mlir::enzyme::MGradientUtilsReverse::requiresShadow(Type t) {
   if (auto iface = dyn_cast<AutoDiffTypeInterface>(t)) {
     return iface.requiresShadow();
   }
   return false;
+}
+
+void mlir::enzyme::MGradientUtilsReverse::addToDiffe(Value oldGradient,
+                                                     Value addedGradient,
+                                                     OpBuilder &builder) {
+  // TODO
+  Value gradient = addedGradient;
+  if (hasInvertPointer(oldGradient)) {
+    Value operandGradient = invertPointerM(oldGradient, builder);
+    auto iface = cast<AutoDiffTypeInterface>(addedGradient.getType());
+    gradient = iface.createAddOp(builder, oldGradient.getLoc(), operandGradient,
+                                 addedGradient);
+  }
+  mapInvertPointer(oldGradient, gradient, builder);
+}
+
+Value mlir::enzyme::MGradientUtilsReverse::diffe(Value v, OpBuilder &builder) {
+  return invertPointerM(v, builder);
 }
 
 /*

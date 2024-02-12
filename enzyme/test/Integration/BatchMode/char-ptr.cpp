@@ -10,7 +10,7 @@
 
 #include <stdio.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 extern void __enzyme_batch(void *, int, int, char *, char *, char *, char *);
 extern int enzyme_dup;

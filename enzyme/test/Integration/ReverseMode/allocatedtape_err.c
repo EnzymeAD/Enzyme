@@ -7,8 +7,9 @@
 // RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -g -O2 %s -S -emit-llvm -o -  %newLoadClangEnzyme -Xclang -verify; fi
 // RUN: if [ %llvmver -ge 12 ]; then %clang -std=c11 -g -O3 %s -S -emit-llvm -o -  %newLoadClangEnzyme -Xclang -verify; fi
 
-#include <math.h>
-#include "test_utils.h"
+extern int enzyme_allocated;
+extern int enzyme_tape;
+double sin(double);
 
 void __enzyme_reverse(void*, ...);
 

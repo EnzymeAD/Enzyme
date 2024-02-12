@@ -44,6 +44,7 @@ set(LLVM_LINK_COMPONENTS Demangle)
 file(GLOB ENZYME_SRC CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     "*.cpp"
 )
+list(REMOVE_ITEM ENZYME_SRC "eopt.cpp")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -54,6 +55,7 @@ list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp T
 if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
     add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC}
+        PARTIAL_SOURCES_INTENDED
         MODULE
         DEPENDS
         intrinsics_gen
@@ -64,6 +66,7 @@ if (${Clang_FOUND})
     add_llvm_library( ClangEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymeClang.cpp
         Clang/EnzymePassLoader.cpp
+        PARTIAL_SOURCES_INTENDED
         MODULE
         DEPENDS
         intrinsics_gen
@@ -74,6 +77,7 @@ target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPA
 endif()
         add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
+        PARTIAL_SOURCES_INTENDED
         MODULE
         DEPENDS
         intrinsics_gen
@@ -84,6 +88,7 @@ target_compile_definitions(LLDEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS
 else()
     add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC}
+        PARTIAL_SOURCES_INTENDED
         MODULE
         DEPENDS
         intrinsics_gen
@@ -94,6 +99,7 @@ if (${Clang_FOUND})
     add_llvm_library( ClangEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymeClang.cpp
         Clang/EnzymePassLoader.cpp
+        PARTIAL_SOURCES_INTENDED
         MODULE
         DEPENDS
         intrinsics_gen
@@ -104,6 +110,7 @@ target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPA
 endif()
     add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
+        PARTIAL_SOURCES_INTENDED
         MODULE
         DEPENDS
         intrinsics_gen
@@ -116,6 +123,7 @@ endif()
 if (${ENZYME_STATIC_LIB})
     add_llvm_library( EnzymeStatic-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC}
+        PARTIAL_SOURCES_INTENDED
         STATIC
         DEPENDS
         intrinsics_gen
@@ -169,6 +177,9 @@ target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-load=$<TARG
 if (${LLVM_VERSION_MAJOR} GREATER 14)
     target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,--load-pass-plugin=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
 endif()
+
+add_library(LLDEnzymeAssumeUnknownNoFree INTERFACE)
+target_link_options(LLDEnzymeAssumeUnknownNoFree INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-assume-unknown-nofree=1")
 
 add_library(LLDEnzymeLooseTypeFlags INTERFACE)
 target_link_options(LLDEnzymeLooseTypeFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-loose-types=1")

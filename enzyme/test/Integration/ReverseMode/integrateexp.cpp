@@ -12,7 +12,7 @@
 // RUN: %clang++ -fno-use-cxa-atexit -ffast-math -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions -O1 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
 // TODO: %clang++ -fno-use-cxa-atexit -ffast-math -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 #define BOOST_MATH_NO_LONG_DOUBLE_MATH_FUNCTIONS
 #define BOOST_NO_EXCEPTIONS

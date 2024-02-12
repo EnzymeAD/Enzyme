@@ -10,7 +10,18 @@
 #tbaa_type_desc4 = #llvm.tbaa_type_desc<id = "_ZTSNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE", members = {<#tbaa_type_desc3, 0>, <#tbaa_type_desc2, 8>, <#tbaa_type_desc, 16>}>
 #tbaa_tag2 = #llvm.tbaa_tag<base_type = #tbaa_type_desc4, access_type = #tbaa_type_desc2, offset = 8>
 #tbaa_tag3 = #llvm.tbaa_tag<base_type = #tbaa_type_desc4, access_type = #tbaa_type_desc1, offset = 0>
-module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<!llvm.ptr, dense<64> : vector<4xi32>>, #dlti.dl_entry<i8, dense<8> : vector<2xi32>>, #dlti.dl_entry<i16, dense<16> : vector<2xi32>>, #dlti.dl_entry<i1, dense<8> : vector<2xi32>>, #dlti.dl_entry<f16, dense<16> : vector<2xi32>>, #dlti.dl_entry<i64, dense<[32, 64]> : vector<2xi32>>, #dlti.dl_entry<i32, dense<32> : vector<2xi32>>, #dlti.dl_entry<f128, dense<128> : vector<2xi32>>, #dlti.dl_entry<f64, dense<64> : vector<2xi32>>, #dlti.dl_entry<"dlti.endianness", "little">>} {
+module attributes {
+  dlti.dl_spec = #dlti.dl_spec<
+    #dlti.dl_entry<!llvm.ptr, dense<64> : vector<4xi64>>,
+    #dlti.dl_entry<i8, dense<8> : vector<2xi64>>,
+    #dlti.dl_entry<i16, dense<16> : vector<2xi64>>,
+    #dlti.dl_entry<i1, dense<8> : vector<2xi64>>,
+    #dlti.dl_entry<f16, dense<16> : vector<2xi64>>,
+    #dlti.dl_entry<i64, dense<[32, 64]> : vector<2xi64>>,
+    #dlti.dl_entry<i32, dense<32> : vector<2xi64>>,
+    #dlti.dl_entry<f128, dense<128> : vector<2xi64>>,
+    #dlti.dl_entry<f64, dense<64> : vector<2xi64>>,
+    #dlti.dl_entry<"dlti.endianness", "little">>} {
   llvm.mlir.global private unnamed_addr constant @".str"("test string\00") {addr_space = 0 : i32, alignment = 1 : i64, dso_local}
   llvm.mlir.global private unnamed_addr constant @".str.2"("%f\0A\00") {addr_space = 0 : i32, alignment = 1 : i64, dso_local}
   llvm.mlir.global private unnamed_addr constant @str("Home\00") {addr_space = 0 : i32, alignment = 1 : i64, dso_local}

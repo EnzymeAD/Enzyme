@@ -293,7 +293,7 @@ os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
 os << "      if (EnzymeLapackCopy) {\n"
 << "        Value *uplo = llvm::ConstantInt::get(charTy, 0);\n" // garbage data, just should not match U or L
 << "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, cublas, nullptr, allocationBuilder, \"copy.garbage\");\n"
-<< "        SmallVector<Value *, 7> args = {uplo, M, N, arg_" << matName << ", arg_" << ldName << ", malins, N};\n"
+<< "        SmallVector<Value *, 7> args = {uplo, M, N, arg_" << matName << ", arg_" << ldName << ", malins, M};\n"
 << "        if (!byRef) {\n"
 << "           args.insert(args.begin(), arg_layout); valueTypes.insert(valueTypes.begin(), ValueType::Primal); }\n"
 << "        callMemcpyStridedLapack(BuilderZ, *gutils->oldFunc->getParent(), blas, args, gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
@@ -360,7 +360,7 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
 << "        cacheval = BuilderZ.CreateInsertValue(cacheval, tup.value(), tup.index());\n"
 << "    }\n"
 << "    gutils->cacheForReverse(BuilderZ, cacheval,\n"
-<< "                            getIndex(&call, CacheType::Tape));\n"
+<< "                            getIndex(&call, CacheType::Tape, BuilderZ));\n"
 << "  }\n"
 << "  unsigned cacheidx = 0;\n";
 

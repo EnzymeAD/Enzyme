@@ -1,6 +1,15 @@
 // RUN: %eopt --print-activity-analysis=funcs=memalgn %s 2>&1 | FileCheck %s
 
-module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<i1, dense<8> : vector<2xi32>>, #dlti.dl_entry<i8, dense<8> : vector<2xi32>>, #dlti.dl_entry<i16, dense<16> : vector<2xi32>>, #dlti.dl_entry<i32, dense<32> : vector<2xi32>>, #dlti.dl_entry<i64, dense<[32, 64]> : vector<2xi32>>, #dlti.dl_entry<f16, dense<16> : vector<2xi32>>, #dlti.dl_entry<f32, dense<64> : vector<2xi32>>, #dlti.dl_entry<f128, dense<128> : vector<2xi32>>>} {
+module attributes {
+  dlti.dl_spec = #dlti.dl_spec<
+    #dlti.dl_entry<i1, dense<8> : vector<2xi64>>,
+    #dlti.dl_entry<i8, dense<8> : vector<2xi64>>,
+    #dlti.dl_entry<i16, dense<16> : vector<2xi64>>,
+    #dlti.dl_entry<i32, dense<32> : vector<2xi64>>,
+    #dlti.dl_entry<i64, dense<[32, 64]> : vector<2xi64>>,
+    #dlti.dl_entry<f16, dense<16> : vector<2xi64>>,
+    #dlti.dl_entry<f32, dense<64> : vector<2xi64>>,
+    #dlti.dl_entry<f128, dense<128> : vector<2xi64>>>} {
   // Test aliasing of dense analysis (%5, which is stored to, aliases with %6, which is loaded from)
   // CHECK-LABEL: @memalgn:
   // CHECK:         "arg0": Active
