@@ -747,6 +747,9 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       delete g2;
 
       int Off = (int)ai.getLimitedValue();
+      if (auto VT = dyn_cast<VectorType>(Val->getType()))
+        if (VT->getElementType()->isIntegerTy(1))
+          Off = i / 8;
 
       getConstantAnalysis(Op, TA, analysis);
       auto mid = analysis[Op];
