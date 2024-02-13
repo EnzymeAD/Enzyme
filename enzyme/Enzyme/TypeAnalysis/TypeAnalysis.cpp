@@ -175,6 +175,7 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"trunc", Intrinsic::trunc},
     {"round", Intrinsic::round},
     {"rint", Intrinsic::rint},
+    {"nearbyint", Intrinsic::nearbyint},
     {"remainder", Intrinsic::not_intrinsic},
     {"copysign", Intrinsic::copysign},
     {"nextafter", Intrinsic::not_intrinsic},
@@ -5226,6 +5227,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     CONSIDER(frexpl)
     CONSIDER2(ldexp, double, double, int)
     CONSIDER2(modf, double, double, double *)
+    CONSIDER(modff)
+    CONSIDER(modfl)
 
     CONSIDER2(remquo, double, double, double, int *)
     CONSIDER(remquof)
