@@ -617,7 +617,7 @@ def : CallPattern<(Op $n, $x),
                   >;
 
 def : CallPattern<(Op $x),
-                  ["erf"],
+                  ["erf","erff","erfl"],
                   [
                     (FMul (DiffeRet), (FMul (ConstantFP<"1.1283791670955125738961589031215451716881012586580"> $x), (Intrinsic<"exp"> (FNeg (FMul $x, $x)))))
                   ],
@@ -633,7 +633,7 @@ def : CallPattern<(Op $x),
                   [ReadNone, NoUnwind]
                   >;
 def : CallPattern<(Op $x),
-                  ["erfc"],
+                  ["erfc","erfcf","erfcl"],
                   [
                     (FMul (DiffeRet), (FMul (ConstantFP<"-1.1283791670955125738961589031215451716881012586580"> $x), (Intrinsic<"exp"> (FNeg (FMul $x, $x)))))
                   ],
