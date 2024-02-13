@@ -855,7 +855,7 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
     if (ty == ArgType::fp) {
       const auto name = nameVec[inputType.first];
       os << "    Value *d_" << name
-         << " = llvm::ConstantFP::get(fpType, 0.0);\n";
+         << " = Constant::getNullValue(gutils->getShadowType(fpType));\n";
     }
   }
 
