@@ -7197,11 +7197,13 @@ getSparseConditions(bool &legal, Value *val,
         }
       }
       if (scope)
-        EmitFailure("NoSparsification", I->getDebugLoc(), I,
-                    "F: ", *I->getParent()->getParent(), "\n",
+        EmitWarning("NoSparsification", *I,
                     " No sparsification: not sparse solvable(icmp): ", *I,
                     " via ", *sub1);
-      legal = false;
+      if (SparseDebug) {
+        llvm::errs() << " getSparse(icmp_dflt, " << *I
+                     << ") = " << *defaultFloat << "\n";
+      }
       return defaultFloat;
     }
 
