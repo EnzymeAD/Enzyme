@@ -31,16 +31,16 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions = {}) {
   for (auto &F : M) {
     if (!F.empty())
       continue;
+    if (ignoreFunctions.count(F.getName().str()))
+      continue;
     int index = 0;
     for (auto postfix : {"", "_", "_64_"}) {
       std::string str;
       if (strlen(postfix) == 0) {
         str = F.getName().str();
-        if (ignoreFunctions.count(str)) continue;
       } else if (endsWith(F.getName(), postfix)) {
         auto blasName =
             F.getName().substr(0, F.getName().size() - strlen(postfix)).str();
-        if (ignoreFunctions.count(blasName)) continue;
         str = "cblas_" + blasName;
       }
 
