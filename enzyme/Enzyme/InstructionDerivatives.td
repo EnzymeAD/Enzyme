@@ -823,6 +823,15 @@ def : CallPattern<(Op (Op $x, $y):$z),
                   [ReadNone, NoUnwind]
                   >;
 
+def : CallPattern<(Op (Op $x, $y):$z),
+                  ["cmplx_inv"],
+                  [
+                    (CFDiv (CFNeg (DiffeRet)), (CFMul $z, $z)),
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
 def : IntrPattern<(Op $x),
                   [["sin"]],
                   [(FMul (DiffeRet), (Intrinsic<"cos"> $x))]  ,

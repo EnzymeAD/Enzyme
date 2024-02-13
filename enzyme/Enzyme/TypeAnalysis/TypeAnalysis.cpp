@@ -157,6 +157,7 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
 
     {"__fd_sincos_1", Intrinsic::not_intrinsic},
     {"sincospi", Intrinsic::not_intrinsic},
+    {"cmplx_inv", Intrinsic::not_intrinsic},
 
     // bessel functions
     {"j0", Intrinsic::not_intrinsic},
@@ -2937,7 +2938,32 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           // If ^ against 0b10000000000, the result is a float
           bool validXor = containsOnlyAtMostTopBit(Args[i], FT, dl);
           if (validXor) {
-            ((i == 0) ? RHS : LHS) |= TypeTree(FT).Only(-1, nullptr);
+            bool Legal = true;
+            ((i == 0) ? RHS : LHS)
+                .checkedOrIn(TypeTree(FT).Only(-1, nullptr),
+                             /*pointerintsame*/ false, Legal);
+
+            if (!Legal) {
+              std::string str;
+              raw_string_ostream ss(str);
+              if (!CustomErrorHandler) {
+                llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
+                llvm::errs() << *fntypeinfo.Function << "\n";
+                dump(ss);
+              }
+              ss << "Illegal updateBinop (xor up) Analysis " << *origin << "\n";
+              ss << " (i=" << i << ") " << (i == 0 ? "RHS" : "LHS") << " "
+                 << ((i == 0) ? RHS : LHS).str() << " FT from ret: " << *FT
+                 << "\n";
+              if (CustomErrorHandler) {
+                CustomErrorHandler(str.c_str(), wrap(origin),
+                                   ErrorType::IllegalTypeAnalysis, (void *)this,
+                                   wrap(origin), nullptr);
+              }
+              EmitFailure("IllegalUpdateAnalysis", origin->getDebugLoc(),
+                          origin, ss.str());
+              report_fatal_error("Performed illegal updateAnalysis");
+            }
           }
         }
       break;
