@@ -374,6 +374,27 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x),
+                  ["asinh", "asinhf", "asinhl", "__nv_asinh", "__nv_asinhf"],
+                  [(FDiv (DiffeRet), (Intrinsic<"sqrt"> (FAdd (FMul $x, $x), (ConstantFP<"1.0"> $x)))  )] ,
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["acosh", "acoshf", "acoshl", "__nv_acosh", "__nv_acoshf"],
+                  [(FDiv (DiffeRet), (Intrinsic<"sqrt"> (FSub (FMul $x, $x), (ConstantFP<"1.0"> $x)))  )] ,
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["atanh", "atanhf", "atanhl", "__nv_atanh", "__nv_atanhf"],
+                  [(FDiv (DiffeRet), (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x))  )] ,
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
                   ["exp10"],
                   [(FMul (FMul (DiffeRet), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (ConstantFP<"2.30258509299404568401799145468"> $x))],
                   (ForwardFromSummedReverse),
