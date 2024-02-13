@@ -93,6 +93,7 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions,
       if (F.empty())
         continue;
       if (ignoreFunctions.count(F.getName().str())) {
+        F.dropAllReferences();
 #if LLVM_VERSION_MAJOR >= 16
         F.erase(F.begin(), F.end());
 #else
