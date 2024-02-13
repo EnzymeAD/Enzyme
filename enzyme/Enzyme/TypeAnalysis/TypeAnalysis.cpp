@@ -175,6 +175,7 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"trunc", Intrinsic::trunc},
     {"round", Intrinsic::round},
     {"rint", Intrinsic::rint},
+    {"nearbyint", Intrinsic::nearbyint},
     {"remainder", Intrinsic::not_intrinsic},
     {"copysign", Intrinsic::copysign},
     {"nextafter", Intrinsic::not_intrinsic},
