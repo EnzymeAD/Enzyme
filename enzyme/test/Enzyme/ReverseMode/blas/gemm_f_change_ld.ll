@@ -135,12 +135,12 @@ entry:
 ; CHECK-DAG:   %[[r16:.+]] = icmp eq i8 %loaded.trans1, 78
 ; CHECK-DAG:   %[[r17:.+]] = icmp eq i8 %loaded.trans1, 110
 ; CHECK-NEXT:   %[[r18:.+]] = or i1 %[[r17]], %[[r16]]
-; CHECK-NEXT:   %[[r19:.+]] = select i1 %[[r18]], i8* %n_p, i8* %k_p
+; CHECK-NEXT:   %[[r19:.+]] = select i1 %[[r18]], i8* %k_p, i8* %n_p
 ; CHECK-NEXT:   %loaded.trans2 = load i8, i8* %transb, align 1
 ; CHECK-NEXT:   %[[a38:.+]] = icmp eq i8 %loaded.trans2, 78
 ; CHECK-NEXT:   %[[a39:.+]] = icmp eq i8 %loaded.trans2, 110
 ; CHECK-NEXT:   %[[a40:.+]] = or i1 %[[a39]], %[[a38]]
-; CHECK-NEXT:   %[[a41:.+]] = select i1 %[[a40]], i8* %n_p, i8* %k_p
+; CHECK-NEXT:   %[[a41:.+]] = select i1 %[[a40]], i8* %k_p, i8* %n_p
 ; CHECK-NEXT:   %ld.row.trans3 = load i8, i8* %transa, align 1
 ; CHECK-NEXT:   %[[a42:.+]] = icmp eq i8 %ld.row.trans3, 110
 ; CHECK-NEXT:   %[[a43:.+]] = icmp eq i8 %ld.row.trans3, 78

@@ -239,12 +239,12 @@ entry:
 ; CHECK-NEXT:   %[[r55:.+]] = icmp eq i8 %loaded.trans, 78
 ; CHECK-NEXT:   %[[r56:.+]] = icmp eq i8 %loaded.trans, 110
 ; CHECK-NEXT:   %[[r57:.+]] = or i1 %[[r56]], %[[r55]]
-; CHECK-NEXT:   %[[r58:.+]] = select i1 %[[r57]], i8* %k_p, i8* %m_p
+; CHECK-NEXT:   %[[r58:.+]] = select i1 %[[r57]], i8* %m_p, i8* %k_p
 ; CHECK-NEXT:   %[[trans5:.+]] = load i8, i8* %malloccall, align 1
 ; CHECK-NEXT:   %[[r59:.+]] = icmp eq i8 %[[trans5]], 78
 ; CHECK-NEXT:   %[[r60:.+]] = icmp eq i8 %[[trans5]], 110
 ; CHECK-NEXT:   %[[r61:.+]] = or i1 %[[r60]], %[[r59]]
-; CHECK-NEXT:   %[[r62:.+]] = select i1 %[[r61]], i8* %k_p, i8* %m_p
+; CHECK-NEXT:   %[[r62:.+]] = select i1 %[[r61]], i8* %m_p, i8* %k_p
 ; CHECK-NEXT:   %[[trans6:.+]] = load i8, i8* %malloccall1, align 1
 ; CHECK-NEXT:   %[[r63:.+]] = icmp eq i8 %[[trans6]], 110
 ; CHECK-NEXT:   %[[r64:.+]] = icmp eq i8 %[[trans6]], 78
