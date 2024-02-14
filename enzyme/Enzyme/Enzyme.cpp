@@ -2105,8 +2105,8 @@ public:
                                    Truncation.second, TruncOpFullModuleMode);
 
       ValueToValueMapTy Mapping;
-      for (auto&& [Arg, TArgs] : llvm::zip(F.args(), TruncatedFunc->args()))
-        Mapping[Targ] = Arg;
+      for (auto &&[Arg, TArg] : llvm::zip(F.args(), TruncatedFunc->args()))
+        Mapping[&TArg] = &Arg;
 
       // Move the truncated body into the original function
       F.deleteBody();
