@@ -15,7 +15,7 @@ declare i32 @getint()
 
 ; CHECK: smax0 - {[-1]:Integer} |{[-1]:Integer}:{} {[-1]:Integer}:{}
 ; CHECK-NEXT: i32 %a: {[-1]:Integer}
-; CHECK_NEXT: i32 %b: {[-1]:Integer}
+; CHECK-NEXT: i32 %b: {[-1]:Integer}
 ; CHECK-NEXT: entry
 ; CHECK-NEXT: %0 = call i32 @llvm.smax.i32(i32 %a, i32 0): {[-1]:Integer}
 ; CHECK-NEXT: %1 = call i32 @getint(): {[-1]:Integer}
