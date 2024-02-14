@@ -286,7 +286,7 @@ getTypeForWidth(llvm::LLVMContext &ctx, unsigned width, bool builtinFloat) {
   }
 }
 
-enum TruncateMode { TruncMem, TruncOp };
+enum TruncateMode { TruncMemMode, TruncOpMode, TruncOpFullModuleMode };
 
 struct FloatRepresentation {
   // |_|__________|_________________|

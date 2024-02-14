@@ -2044,6 +2044,80 @@ public:
     return status;
   }
 
+  bool handleFullModuleTrunc(Function &F) {
+    typedef std::vector<std::pair<FloatRepresentation, FloatRepresentation>>
+        TruncationsTy;
+    static TruncationsTy FullModuleTruncs = []() -> TruncationsTy {
+      const char *EnvVarName = "ENZYME_TRUNCATE_ALL";
+      char *ConfigCStr;
+      if (!(ConfigCStr = getenv(EnvVarName)))
+        return {};
+      StringRef ConfigStr(ConfigCStr);
+      auto Invalid = [=]() {
+        // TODO emit better diagnostic
+        llvm::errs() << "error: invalid format for " << EnvVarName << "\n";
+        abort();
+      };
+
+      // "64" or "11-52"
+      auto parseFloatRepr = [&]() -> std::optional<FloatRepresentation> {
+        unsigned Tmp = 0;
+        if (ConfigStr.consumeInteger(10, Tmp))
+          return {};
+        if (ConfigStr.consume_front("-")) {
+          unsigned Tmp2 = 0;
+          if (ConfigStr.consumeInteger(10, Tmp2))
+            Invalid();
+          return FloatRepresentation(Tmp, Tmp2);
+        }
+        return getDefaultFloatRepr(Tmp);
+      };
+
+      // Parse "64to32;32to16;5-10to4-9"
+      TruncationsTy Tmp;
+      while (true) {
+        auto From = parseFloatRepr();
+        if (!From && !ConfigStr.empty())
+          Invalid();
+        if (!From)
+          break;
+        if (!ConfigStr.consume_front("to"))
+          Invalid();
+        auto To = parseFloatRepr();
+        if (!To)
+          Invalid();
+        Tmp.push_back({*From, *To});
+        ConfigStr.consume_front(";");
+      }
+      return Tmp;
+    }();
+
+    if (FullModuleTruncs.empty())
+      return false;
+
+    // TODO sort truncations (64to32, then 32to16 will make everything 16)
+    for (auto Truncation : FullModuleTruncs) {
+      IRBuilder<> Builder(F.getContext());
+      RequestContext context(&*F.getEntryBlock().begin(), &Builder);
+      llvm::Function *TruncatedFunc =
+          Logic.CreateTruncateFunc(context, &F, Truncation.first,
+                                   Truncation.second, TruncOpFullModuleMode);
+
+      ValueToValueMapTy Mapping;
+      for (auto Args : llvm::zip(F.args(), TruncatedFunc->args()))
+        Mapping[&std::get<1>(Args)] = &std::get<0>(Args);
+
+      // Move the truncated body into the original function
+      F.deleteBody();
+      F.getBasicBlockList().splice(F.begin(),
+                                   TruncatedFunc->getBasicBlockList());
+      RemapFunction(F, Mapping,
+                    RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
+      TruncatedFunc->deleteBody();
+    }
+    return true;
+  }
+
   bool lowerEnzymeCalls(Function &F, std::set<Function *> &done) {
     if (done.count(&F))
       return false;
@@ -2051,6 +2125,9 @@ public:
 
     if (F.empty())
       return false;
+
+    if (handleFullModuleTrunc(F))
+      return true;
 
     bool Changed = false;
 
@@ -2629,10 +2706,10 @@ public:
       HandleBatch(call);
     }
     for (auto call : toTruncateFuncMem) {
-      HandleTruncateFunc(call, TruncMem);
+      HandleTruncateFunc(call, TruncMemMode);
     }
     for (auto call : toTruncateFuncOp) {
-      HandleTruncateFunc(call, TruncOp);
+      HandleTruncateFunc(call, TruncOpMode);
     }
     for (auto call : toTruncateValue) {
       HandleTruncateValue(call, true);
