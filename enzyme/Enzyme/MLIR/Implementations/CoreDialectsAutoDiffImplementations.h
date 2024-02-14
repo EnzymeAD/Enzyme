@@ -187,5 +187,7 @@ void registerSCFDialectAutoDiffInterface(DialectRegistry &registry);
 void registerCFDialectAutoDiffInterface(DialectRegistry &registry);
 void registerLinalgDialectAutoDiffInterface(DialectRegistry &registry);
 void registerMathDialectAutoDiffInterface(DialectRegistry &registry);
+
+void registerCoreDialectAutodiffInterfaces(DialectRegistry &registry);
 } // namespace enzyme
 } // namespace mlir
