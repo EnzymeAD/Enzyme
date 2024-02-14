@@ -1,68 +1,28 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-activity-analysis -activity-analysis-func=f.preprocess -o /dev/null | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=f.preprocess-S | FileCheck %s
-
-; ModuleID = 'LLVMDialectModule'
-source_filename = "LLVMDialectModule"
-
-@enzyme_dupnoneed = linkonce constant i8 0
-@enzyme_const = linkonce constant i8 0
-
-@.str = private unnamed_addr constant [3 x i8] c"%f\00"
-
-declare i32 @printf(ptr, ...)
-
-declare void @__enzyme_autodiff0(...)
+; RUN: if [ %llvmver -gt 16 ]; %opt < %s %newLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=f.preprocess-S | FileCheck %s
 
 declare void @free(ptr)
 
 declare ptr @malloc(i64)
 
-define i32 @main() {
-
-  ; prep arguments & shadows
-  %input = call ptr @malloc(i64 64)
-  store double 0.2, ptr %input
-  %in_shadow = call ptr @malloc(i64 8)
-  store i64 0, ptr %in_shadow
-
-  %output = call ptr @malloc(i64 8)
-  %out_shadow = call ptr @malloc(i64 8)
-  store double 1.000000e+00, ptr %out_shadow
-
-  ; autodiff call
-  call void (...) @__enzyme_autodiff0(ptr @f.preprocess, ptr %input, ptr %in_shadow, i64 1, ptr %output, ptr %out_shadow)
-
-  ; print result
-  %grad = load double, ptr %in_shadow
-  call i32 (ptr, ...) @printf(ptr @.str, double %grad)
-
-  call void @free(ptr %input)
-  call void @free(ptr %in_shadow)
-  call void @free(ptr %output)
-  call void @free(ptr %out_shadow)
-
-  ret i32 0
-}
-
 ; This function just returns 2*input, its derivate should be 2.0.
-define void @f.preprocess(ptr %0, i64 %1, ptr %2) {
+define void @f.preprocess(ptr %param, i64 %mallocsize, ptr %res) {
 
   ; arithmetic block, changing anything here makes the bug go away
-  %buffer1 = call ptr @malloc(i64 %1)
+  %buffer1 = call ptr @malloc(i64 %mallocsize)
   %tmp = call ptr @malloc(i64 72)
-  %4 = ptrtoint ptr %tmp to i64
-  %5 = and i64 %4, -64
-  %6 = inttoptr i64 %5 to ptr
-  %7 = load double, ptr %0
-  %8 = fmul double %7, 4.000000e+00
-  store double %8, ptr %6
+  %ptrtoint = ptrtoint ptr %tmp to i64
+  %and = and i64 %ptrtoint, -64
+  %inttoptr = inttoptr i64 %and to ptr
+  %loadarg = load double, ptr %param
+  %storedargmul = fmul double %loadarg, 4.000000e+00
+  store double %storedargmul, ptr %inttoptr
   call void @free(ptr %tmp)
-  store double %8, ptr %buffer1
+  store double %storedargmul, ptr %buffer1
 
   ; prep arg 0 by setting the aligned pointer to the input
   %arg0 = alloca { ptr, ptr, i64 }
   %arg0_aligned = getelementptr inbounds { ptr, ptr, i64 }, ptr %arg0, i64 0, i32 1
-  store ptr %0, ptr %arg0_aligned
+  store ptr %param, ptr %arg0_aligned
 
   ; prep arg 1 by setting the aligned pointer to buffer1
   %arg1 = alloca { ptr, ptr, i64, [1 x i64], [1 x i64] }
@@ -79,55 +39,55 @@ define void @f.preprocess(ptr %0, i64 %1, ptr %2) {
   call void @nested(ptr %arg0, ptr %arg1, ptr %arg2)
 
   ; return a result from this function, needs to be positioned after arithmetic block for bug
-  %x = load double, ptr %0
+  %x = load double, ptr %param
   %y = fmul double %x, 2.0
-  store double %y, ptr %2
+  store double %y, ptr %res
 
   ret void
 }
 
-; Identity function, 2nd argument required for bug
-define void @nested(ptr %0, ptr %1, ptr %2) {
+; Identity function, 2nd argument required for bug (but not used)
+define void @nested(ptr %arg0, ptr %arg1, ptr %arg2) {
 
-  ; load aligned pointer from %0 & load argument value
-  %4 = load { ptr, ptr, i64 }, ptr %0
-  %5 = extractvalue { ptr, ptr, i64 } %4, 1
-  %6 = load double, ptr %5
+  ; load aligned pointer from %arg0 & load argument value
+  %loadarg = load { ptr, ptr, i64 }, ptr %arg0
+  %extractarg = extractvalue { ptr, ptr, i64 } %loadarg, 1
+  %loadextractarg = load double, ptr %extractarg
 
-  ; load aligned pointer from %2 & store result value
-  %7 = load { ptr, ptr, i64 }, ptr %2
-  %8 = extractvalue { ptr, ptr, i64 } %7, 1
-  store double %6, ptr %8
+  ; load aligned pointer from %arg2 & store result value
+  %loadarg2 = load { ptr, ptr, i64 }, ptr %arg2
+  %extractarg2 = extractvalue { ptr, ptr, i64 } %loadarg2, 1
+  store double %loadextractarg, ptr %extractarg2
 
   ret void
 }
 
-; CHECK: ptr %0: icv:0
-; CHECK-NEXT: i64 %1: icv:1
-; CHECK-NEXT: ptr %2: icv:0
+; CHECK: ptr %param: icv:0
+; CHECK-NEXT: i64 %mallocsize: icv:1
+; CHECK-NEXT: ptr %res: icv:0
 
-; CHECK:   %buffer1 = call ptr @malloc(i64 %1): icv:0 ici:1
-; CHECK-NEXT:   %tmp = call ptr @malloc(i64 72): icv:1 ici:1
-; CHECK-NEXT:   %4 = ptrtoint ptr %tmp to i64: icv:1 ici:1
-; CHECK-NEXT:   %5 = and i64 %4, -64: icv:1 ici:1
-; CHECK-NEXT:   %6 = inttoptr i64 %5 to ptr: icv:1 ici:1
-; CHECK-NEXT:   %7 = load double, ptr %0, align 8: icv:0 ici:0
-; CHECK-NEXT:   %8 = fmul double %7, 4.000000e+00: icv:0 ici:0
-; CHECK-NEXT:   store double %8, ptr %6, align 8: icv:1 ici:1
-; CHECK-NEXT:   call void @free(ptr %tmp): icv:1 ici:1
-; CHECK-NEXT:   store double %8, ptr %buffer1, align 8: icv:1 ici:0
-; CHECK-NEXT:   %arg0 = alloca { ptr, ptr, i64 }, align 8: icv:0 ici:1
-; CHECK-NEXT:   %arg0_aligned = getelementptr inbounds { ptr, ptr, i64 }, ptr %arg0, i64 0, i32 1: icv:0 ici:1
-; CHECK-NEXT:   store ptr %0, ptr %arg0_aligned, align 8: icv:1 ici:0
-; CHECK-NEXT:   %arg1 = alloca { ptr, ptr, i64, [1 x i64], [1 x i64] }, align 8: icv:0 ici:1
-; CHECK-NEXT:   %arg1_aligned = getelementptr inbounds { ptr, ptr, i64, [1 x i64], [1 x i64] }, ptr %arg1, i64 0, i32 1: icv:0 ici:1
-; CHECK-NEXT:   store ptr %buffer1, ptr %arg1_aligned, align 8: icv:1 ici:0
-; CHECK-NEXT:   %arg2 = alloca { ptr, ptr, i64 }, align 8: icv:0 ici:1
-; CHECK-NEXT:   %arg2_aligned = getelementptr inbounds { ptr, ptr, i64 }, ptr %arg2, i64 0, i32 1: icv:0 ici:1
-; CHECK-NEXT:   %buffer2 = call ptr @malloc(i64 8): icv:0 ici:1
-; CHECK-NEXT:   store ptr %buffer2, ptr %arg2_aligned, align 8: icv:1 ici:0
-; CHECK-NEXT:   call void @nested(ptr %arg0, ptr %arg1, ptr %arg2): icv:1 ici:0
-; CHECK-NEXT:   %x = load double, ptr %0, align 8: icv:0 ici:0
-; CHECK-NEXT:   %y = fmul double %x, 2.000000e+00: icv:0 ici:0
-; CHECK-NEXT:   store double %y, ptr %2, align 8: icv:1 ici:0
-; CHECK-NEXT:   ret void: icv:1 ici:1
+; CHECK: %buffer1 = call ptr @malloc(i64 %mallocsize): icv:0 ici:1
+; CHECK-NEXT: %tmp = call ptr @malloc(i64 72): icv:1 ici:1
+; CHECK-NEXT: %ptrtoint = ptrtoint ptr %tmp to i64: icv:1 ici:1
+; CHECK-NEXT: %and = and i64 %ptrtoint, -64: icv:1 ici:1
+; CHECK-NEXT: %inttoptr = inttoptr i64 %and to ptr: icv:1 ici:1
+; CHECK-NEXT: %loadarg = load double, ptr %param, align 8: icv:0 ici:0
+; CHECK-NEXT: %storedargmul = fmul double %loadarg, 4.000000e+00: icv:0 ici:0
+; CHECK-NEXT: store double %storedargmul, ptr %inttoptr, align 8: icv:1 ici:1
+; CHECK-NEXT: call void @free(ptr %tmp): icv:1 ici:1
+; CHECK-NEXT: store double %storedargmul, ptr %buffer1, align 8: icv:1 ici:0
+; CHECK-NEXT: %arg0 = alloca { ptr, ptr, i64 }, align 8: icv:0 ici:1
+; CHECK-NEXT: %arg0_aligned = getelementptr inbounds { ptr, ptr, i64 }, ptr %arg0, i64 0, i32 1: icv:0 ici:1
+; CHECK-NEXT: store ptr %param, ptr %arg0_aligned, align 8: icv:1 ici:0
+; CHECK-NEXT: %arg1 = alloca { ptr, ptr, i64, [1 x i64], [1 x i64] }, align 8: icv:0 ici:1
+; CHECK-NEXT: %arg1_aligned = getelementptr inbounds { ptr, ptr, i64, [1 x i64], [1 x i64] }, ptr %arg1, i64 0, i32 1: icv:0 ici:1
+; CHECK-NEXT: store ptr %buffer1, ptr %arg1_aligned, align 8: icv:1 ici:0
+; CHECK-NEXT: %arg2 = alloca { ptr, ptr, i64 }, align 8: icv:0 ici:1
+; CHECK-NEXT: %arg2_aligned = getelementptr inbounds { ptr, ptr, i64 }, ptr %arg2, i64 0, i32 1: icv:0 ici:1
+; CHECK-NEXT: %buffer2 = call ptr @malloc(i64 8): icv:0 ici:1
+; CHECK-NEXT: store ptr %buffer2, ptr %arg2_aligned, align 8: icv:1 ici:0
+; CHECK-NEXT: call void @nested(ptr %arg0, ptr %arg1, ptr %arg2): icv:1 ici:0
+; CHECK-NEXT: %x = load double, ptr %param, align 8: icv:0 ici:0
+; CHECK-NEXT: %y = fmul double %x, 2.000000e+00: icv:0 ici:0
+; CHECK-NEXT: store double %y, ptr %res, align 8: icv:1 ici:0
+; CHECK-NEXT: ret void: icv:1 ici:1
