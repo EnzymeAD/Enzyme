@@ -238,6 +238,8 @@ FunctionOpInterface CloneFunctionWithReturns(
 
   {
     auto &blk = NewF.getFunctionBody().front();
+    assert(F.getFunctionBody().front().getNumArguments() ==
+           constant_args.size());
     for (ssize_t i = constant_args.size() - 1; i >= 0; i--) {
       mlir::Value oval = F.getFunctionBody().front().getArgument(i);
       if (constant_args[i] == DIFFE_TYPE::CONSTANT)

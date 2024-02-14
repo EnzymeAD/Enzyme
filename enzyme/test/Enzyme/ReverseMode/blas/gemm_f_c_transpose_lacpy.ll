@@ -105,7 +105,7 @@ entry:
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   %cache.A = bitcast i8* %malloccall to double*
 ; CHECK-NEXT:   store i8 0, i8* %[[byrefgarbage]]
-; CHECK-NEXT:   call void @dlacpy_64_(i8* %[[byrefgarbage]], i8* %[[i3]], i8* %[[i4]], i8* %A, i8* %lda_p, double* %cache.A, i8* %[[i4]])
+; CHECK-NEXT:   call void @dlacpy_64_(i8* %[[byrefgarbage]], i8* %[[i3]], i8* %[[i4]], i8* %A, i8* %lda_p, double* %cache.A, i8* %[[i3]])
 ; CHECK-NEXT:   %loaded.trans1 = load i8, i8* %transb
 ; CHECK-DAG:   %[[i10:.+]] = icmp eq i8 %loaded.trans1, 78
 ; CHECK-DAG:   %[[i11:.+]] = icmp eq i8 %loaded.trans1, 110
@@ -121,7 +121,7 @@ entry:
 ; CHECK-NEXT:   %[[malloccall2:.+]] = tail call noalias nonnull i8* @malloc(i64 %[[mallocsize1]])
 ; CHECK-NEXT:   %cache.B = bitcast i8* %[[malloccall2]] to double*
 ; CHECK-NEXT:   store i8 0, i8* %byref.copy.garbage4
-; CHECK-NEXT:   call void @dlacpy_64_(i8* %[[byrefgarbage2]], i8* %[[i13]], i8* %[[i14]], i8* %B, i8* %ldb_p, double* %cache.B, i8* %[[i14]])
+; CHECK-NEXT:   call void @dlacpy_64_(i8* %[[byrefgarbage2]], i8* %[[i13]], i8* %[[i14]], i8* %B, i8* %ldb_p, double* %cache.B, i8* %[[i13]])
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %transb, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %C, i8* %ldc_p, i64 1, i64 1)
 ; CHECK-NEXT:   %"ptr'ipc" = bitcast i8* %"A'" to double*
 ; CHECK-NEXT:   %ptr = bitcast i8* %A to double*
@@ -156,12 +156,12 @@ entry:
 ; CHECK-DAG:   %[[i40:.+]] = icmp eq i8 %loaded.trans5, 78
 ; CHECK-DAG:   %[[i41:.+]] = icmp eq i8 %loaded.trans5, 110
 ; CHECK-NEXT:   %[[i42:.+]] = or i1 %[[i41]], %[[i40]]
-; CHECK-NEXT:   %[[i43:.+]] = select i1 %[[i42]], i8* %n_p, i8* %k_p
+; CHECK-NEXT:   %[[i43:.+]] = select i1 %[[i42]], i8* %k_p, i8* %n_p
 ; CHECK-NEXT:   %loaded.trans6 = load i8, i8* %transb, align 1
 ; CHECK-NEXT:   %[[a49:.+]] = icmp eq i8 %loaded.trans6, 78
 ; CHECK-NEXT:   %[[a50:.+]] = icmp eq i8 %loaded.trans6, 110
 ; CHECK-NEXT:   %[[a51:.+]] = or i1 %[[a50]], %[[a49]]
-; CHECK-NEXT:   %[[a52:.+]] = select i1 %[[a51]], i8* %n_p, i8* %k_p
+; CHECK-NEXT:   %[[a52:.+]] = select i1 %[[a51]], i8* %k_p, i8* %n_p
 ; CHECK-NEXT:   %ld.row.trans7 = load i8, i8* %transa, align 1
 ; CHECK-NEXT:   %[[a53:.+]] = icmp eq i8 %ld.row.trans7, 110
 ; CHECK-NEXT:   %[[a54:.+]] = icmp eq i8 %ld.row.trans7, 78
@@ -195,12 +195,12 @@ entry:
 ; CHECK-DAG:   %[[i54:.+]] = icmp eq i8 %[[cachedtrans2]], 78
 ; CHECK-DAG:   %[[i55:.+]] = icmp eq i8 %[[cachedtrans2]], 110
 ; CHECK-NEXT:   %[[i56:.+]] = or i1 %[[i55]], %[[i54]]
-; CHECK-NEXT:   %[[i57:.+]] = select i1 %[[i56]], i8* %k_p, i8* %m_p
+; CHECK-NEXT:   %[[i57:.+]] = select i1 %[[i56]], i8* %m_p, i8* %k_p
 ; CHECK-NEXT:   %[[loaded_trans12:.+]] = load i8, i8* %transa, align 1
 ; CHECK-NEXT:   %[[a71:.+]] = icmp eq i8 %[[loaded_trans12]], 78
 ; CHECK-NEXT:   %[[a72:.+]] = icmp eq i8 %[[loaded_trans12]], 110
 ; CHECK-NEXT:   %[[a73:.+]] = or i1 %[[a72]], %[[a71]]
-; CHECK-NEXT:   %[[a74:.+]] = select i1 %[[a73]], i8* %k_p, i8* %m_p
+; CHECK-NEXT:   %[[a74:.+]] = select i1 %[[a73]], i8* %m_p, i8* %k_p
 ; CHECK-NEXT:   %[[ld_row_trans13:.+]] = load i8, i8* %transb, align 1
 ; CHECK-NEXT:   %[[a75:.+]] = icmp eq i8 %[[ld_row_trans13]], 110
 ; CHECK-NEXT:   %[[a76:.+]] = icmp eq i8 %[[ld_row_trans13]], 78

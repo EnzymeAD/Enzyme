@@ -157,6 +157,7 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
 
     {"__fd_sincos_1", Intrinsic::not_intrinsic},
     {"sincospi", Intrinsic::not_intrinsic},
+    {"cmplx_inv", Intrinsic::not_intrinsic},
 
     // bessel functions
     {"j0", Intrinsic::not_intrinsic},
@@ -175,6 +176,7 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"trunc", Intrinsic::trunc},
     {"round", Intrinsic::round},
     {"rint", Intrinsic::rint},
+    {"nearbyint", Intrinsic::nearbyint},
     {"remainder", Intrinsic::not_intrinsic},
     {"copysign", Intrinsic::copysign},
     {"nextafter", Intrinsic::not_intrinsic},
@@ -747,6 +749,9 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       delete g2;
 
       int Off = (int)ai.getLimitedValue();
+      if (auto VT = dyn_cast<VectorType>(Val->getType()))
+        if (VT->getElementType()->isIntegerTy(1))
+          Off = i / 8;
 
       getConstantAnalysis(Op, TA, analysis);
       auto mid = analysis[Op];
@@ -2933,7 +2938,32 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           // If ^ against 0b10000000000, the result is a float
           bool validXor = containsOnlyAtMostTopBit(Args[i], FT, dl);
           if (validXor) {
-            ((i == 0) ? RHS : LHS) |= TypeTree(FT).Only(-1, nullptr);
+            bool Legal = true;
+            ((i == 0) ? RHS : LHS)
+                .checkedOrIn(TypeTree(FT).Only(-1, nullptr),
+                             /*pointerintsame*/ false, Legal);
+
+            if (!Legal) {
+              std::string str;
+              raw_string_ostream ss(str);
+              if (!CustomErrorHandler) {
+                llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
+                llvm::errs() << *fntypeinfo.Function << "\n";
+                dump(ss);
+              }
+              ss << "Illegal updateBinop (xor up) Analysis " << *origin << "\n";
+              ss << " (i=" << i << ") " << (i == 0 ? "RHS" : "LHS") << " "
+                 << ((i == 0) ? RHS : LHS).str() << " FT from ret: " << *FT
+                 << "\n";
+              if (CustomErrorHandler) {
+                CustomErrorHandler(str.c_str(), wrap(origin),
+                                   ErrorType::IllegalTypeAnalysis, (void *)this,
+                                   wrap(origin), nullptr);
+              }
+              EmitFailure("IllegalUpdateAnalysis", origin->getDebugLoc(),
+                          origin, ss.str());
+              report_fatal_error("Performed illegal updateAnalysis");
+            }
           }
         }
       break;
@@ -4507,8 +4537,10 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
 
-    if (startsWith(funcName, "_ZNKSt3__112basic_stringIcNS_11char_traitsIcEENS_"
-                             "9allocatorIcEEE13__get_pointer")) {
+    if (startsWith(funcName, "_ZNKSt3__112basic_string") ||
+        startsWith(funcName, "_ZNSt3__112basic_string") ||
+        startsWith(funcName, "_ZNSt3__112__hash_table") ||
+        startsWith(funcName, "_ZNKSt3__115basic_stringbuf")) {
       return;
     }
 
@@ -4937,11 +4969,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
     if (auto opidx = getAllocationIndexFromCall(&call)) {
       auto ptr = TypeTree(BaseType::Pointer);
-#if LLVM_VERSION_MAJOR >= 15
-      unsigned index = (size_t)opidx.value();
-#else
-      unsigned index = (size_t)opidx.getValue();
-#endif
+      unsigned index = (size_t)*opidx;
       if (auto CI = dyn_cast<ConstantInt>(call.getOperand(index))) {
         auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
         auto LoadSize = CI->getZExtValue();
@@ -5225,6 +5253,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     CONSIDER(frexpl)
     CONSIDER2(ldexp, double, double, int)
     CONSIDER2(modf, double, double, double *)
+    CONSIDER(modff)
+    CONSIDER(modfl)
 
     CONSIDER2(remquo, double, double, double, int *)
     CONSIDER(remquof)
@@ -5775,6 +5805,62 @@ TypeTree TypeResults::query(Value *val) const {
     assert(arg->getParent() == analyzer.fntypeinfo.Function);
   }
   return analyzer.getAnalysis(val);
+}
+
+bool TypeResults::anyFloat(Value *val) const {
+  assert(val);
+  assert(val->getType());
+  auto q = query(val);
+  auto dt = q[{-1}];
+  if (dt != BaseType::Anything && dt != BaseType::Unknown)
+    return dt.isFloat();
+
+  size_t ObjSize = 1;
+  auto &dl = analyzer.fntypeinfo.Function->getParent()->getDataLayout();
+  if (val->getType()->isSized())
+    ObjSize = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
+
+  for (size_t i = 0; i < ObjSize;) {
+    dt = q[{(int)i}];
+    if (dt == BaseType::Integer) {
+      i++;
+      continue;
+    }
+    if (dt == BaseType::Pointer) {
+      i += dl.getPointerSize(0);
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+bool TypeResults::anyPointer(Value *val) const {
+  assert(val);
+  assert(val->getType());
+  auto q = query(val);
+  auto dt = q[{-1}];
+  if (dt != BaseType::Anything && dt != BaseType::Unknown)
+    return dt == BaseType::Pointer;
+
+  size_t ObjSize = 1;
+  auto &dl = analyzer.fntypeinfo.Function->getParent()->getDataLayout();
+  if (val->getType()->isSized())
+    ObjSize = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
+
+  for (size_t i = 0; i < ObjSize;) {
+    dt = q[{(int)i}];
+    if (dt == BaseType::Integer) {
+      i++;
+      continue;
+    }
+    if (auto FT = dt.isFloat()) {
+      i += (dl.getTypeSizeInBits(FT) + 7) / 8;
+      continue;
+    }
+    return true;
+  }
+  return false;
 }
 
 void TypeResults::dump(llvm::raw_ostream &ss) const { analyzer.dump(ss); }

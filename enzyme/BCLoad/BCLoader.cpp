@@ -24,28 +24,30 @@ static inline bool endsWith(llvm::StringRef string, llvm::StringRef suffix) {
 #endif // LLVM_VERSION_MAJOR
 }
 
-bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions = {}) {
+bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions,
+                        std::vector<std::string> &replaced) {
   std::vector<StringRef> todo;
   bool seen32 = false;
   bool seen64 = false;
   for (auto &F : M) {
     if (!F.empty())
       continue;
+    if (ignoreFunctions.count(F.getName().str()))
+      continue;
     int index = 0;
     for (auto postfix : {"", "_", "_64_"}) {
       std::string str;
       if (strlen(postfix) == 0) {
         str = F.getName().str();
-        if (ignoreFunctions.count(str)) continue;
       } else if (endsWith(F.getName(), postfix)) {
         auto blasName =
             F.getName().substr(0, F.getName().size() - strlen(postfix)).str();
-        if (ignoreFunctions.count(blasName)) continue;
         str = "cblas_" + blasName;
       }
 
       auto found = EnzymeBlasBC.find(str);
       if (found != EnzymeBlasBC.end()) {
+        replaced.push_back(F.getName().str());
         todo.push_back(found->second);
         if (index == 1)
           seen32 = true;
@@ -81,13 +83,24 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions = {}) {
     });
 #endif
 
-    if (!BC)
+    if (!BC) {
       Err.print("bcloader", llvm::errs());
+      continue;
+    }
     assert(BC);
     SmallVector<std::string, 1> toReplace;
     for (auto &F : *BC) {
       if (F.empty())
         continue;
+      if (ignoreFunctions.count(F.getName().str())) {
+        F.dropAllReferences();
+#if LLVM_VERSION_MAJOR >= 16
+        F.erase(F.begin(), F.end());
+#else
+        F.getBasicBlockList().erase(F.begin(), F.end());
+#endif
+        continue;
+      }
       toReplace.push_back(F.getName().str());
     }
     BC->setTargetTriple("");
@@ -106,12 +119,29 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions = {}) {
 
 extern "C" {
 uint8_t EnzymeBitcodeReplacement(LLVMModuleRef M, char **FncsNamesToIgnore,
-                                 size_t numFncNames) {
+                                 size_t numFncNames, const char ***foundP,
+                                 size_t *foundLen) {
   std::set<std::string> ignoreFunctions = {};
   for (size_t i = 0; i < numFncNames; i++) {
     ignoreFunctions.insert(std::string(FncsNamesToIgnore[i]));
   }
-  return provideDefinitions(*unwrap(M), ignoreFunctions);
+  std::vector<std::string> replaced;
+  auto res = provideDefinitions(*unwrap(M), ignoreFunctions, replaced);
+
+  const char **found = nullptr;
+  if (replaced.size()) {
+    found = (const char **)malloc(replaced.size() * sizeof(const char **));
+    for (size_t i = 0; i < replaced.size(); i++) {
+      char *data = (char *)malloc(replaced[i].size() + 1);
+      memcpy(data, replaced[i].data(), replaced[i].size());
+      data[replaced[i].size()] = 0;
+      found[i] = data;
+    }
+  }
+  *foundP = found;
+  *foundLen = replaced.size();
+
+  return res;
 }
 }
 
@@ -121,7 +151,10 @@ public:
   static char ID;
   BCLoader() : ModulePass(ID) {}
 
-  bool runOnModule(Module &M) override { return provideDefinitions(M, {}); }
+  bool runOnModule(Module &M) override {
+    std::vector<std::string> replaced;
+    return provideDefinitions(M, {}, replaced);
+  }
 };
 } // namespace
 

@@ -8,22 +8,34 @@ define void @f(double* %x) {
   ret void
 }
 
-declare void (double*)* @__enzyme_truncate_func(...)
+declare void (double*)* @__enzyme_truncate_mem_func(...)
+declare void (double*)* @__enzyme_truncate_op_func(...)
 
 define void @tester(double* %data) {
 entry:
-  %ptr = call void (double*)* (...) @__enzyme_truncate_func(void (double*)* @f, i64 64, i64 32)
+  %ptr = call void (double*)* (...) @__enzyme_truncate_mem_func(void (double*)* @f, i64 64, i64 32)
+  call void %ptr(double* %data)
+  ret void
+}
+
+define void @tester2(double* %data) {
+entry:
+  %ptr = call void (double*)* (...) @__enzyme_truncate_op_func(void (double*)* @f, i64 64, i64 32)
   call void %ptr(double* %data)
   ret void
 }
 
 ; CHECK: define void @tester(double* %data)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   call void @trunc_64_32f(double* %data)
+; CHECK-NEXT:   call void @__enzyme_done_truncate_mem_func_64_52_32_23_f(double* %data)
 ; CHECK-NEXT:   ret void
-; CHECK-NEXT: }
 
-; CHECK: define internal void @trunc_64_32f(double* %x)
+; CHECK: define void @tester2(double* %data) {
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   call void @__enzyme_done_truncate_op_func_64_52_32_23_f(double* %data)
+; CHECK-NEXT:   ret void
+
+; CHECK: define internal void @__enzyme_done_truncate_mem_func_64_52_32_23_f(double* %x)
 ; CHECK-DAG:   %1 = alloca double, align 8
 ; CHECK-DAG:   %y = load double, double* %x, align 8
 ; CHECK-DAG:   store double %y, double* %1, align 8
@@ -39,4 +51,13 @@ entry:
 ; CHECK-DAG:   store float %m, float* %7, align 4
 ; CHECK-DAG:   %8 = load double, double* %1, align 8
 ; CHECK-DAG:   store double %8, double* %x, align 8
+; CHECK-DAG:   ret void
+
+; CHECK: define internal void @__enzyme_done_truncate_op_func_64_52_32_23_f(double* %x) {
+; CHECK-DAG:   %y = load double, double* %x, align 8
+; CHECK-DAG:   %enzyme_trunc = fptrunc double %y to float
+; CHECK-DAG:   %enzyme_trunc1 = fptrunc double %y to float
+; CHECK-DAG:   %m = fmul float %enzyme_trunc, %enzyme_trunc1
+; CHECK-DAG:   %enzyme_exp = fpext float %m to double
+; CHECK-DAG:   store double %enzyme_exp, double* %x, align 8
 ; CHECK-DAG:   ret void

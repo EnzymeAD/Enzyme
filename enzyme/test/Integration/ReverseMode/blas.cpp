@@ -42,6 +42,11 @@ void my_dgemm(char layout, char transA, char transB, int M, int N, int K, double
     inDerivative = true;
 }
 
+void ow_dgemm(char layout, char transA, char transB, int M, int N, int K, double alpha, double* A, int lda, double* B, int ldb, double beta, double* C, int ldc) {
+    cblas_dgemm(layout, transA, transB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+    inDerivative = true;
+}
+
 
 static void dotTests() {
 
@@ -226,8 +231,8 @@ static void gemvTests() {
 
 			assert(foundCalls.size() > 2);
 			auto A_cache = (double*)foundCalls[0].pout_arg1;
-			cblas_dlacpy(layout, '\0', M, N, A, lda, A_cache, N);
-			inputs[4] = BlasInfo(A_cache, layout, M, N, N);
+			cblas_dlacpy(layout, '\0', M, N, A, lda, A_cache, M);
+			inputs[4] = BlasInfo(A_cache, layout, M, N, M);
 			auto B_cache = (double*)foundCalls[1].pout_arg1;
 			cblas_dcopy(trans ? M : N, B, incB, B_cache, 1);
 			inputs[5] = BlasInfo(B_cache, trans ? M : N, 1);
@@ -244,7 +249,7 @@ static void gemvTests() {
 							lda);
 
             // dB = alpha * trans(A) * dC + dB
-            cblas_dgemv(layout, (char)transpose(transA), M, N, alpha, A_cache, N, dC, incC, 1.0, dB, incB); 
+            cblas_dgemv(layout, (char)transpose(transA), M, N, alpha, A_cache, M, dC, incC, 1.0, dB, incB); 
 
             // dY = beta * dY
             cblas_dscal(trans ? N : M, beta, dC, incC);
@@ -374,6 +379,78 @@ static void gemmTests() {
         // should be the same).
         checkMemoryTrace(inputs, "Found " + Test, foundCalls);
         
+
+        Test = "GEMM overwrite";
+
+    init();
+    __enzyme_autodiff((void*) ow_dgemm,
+                            enzyme_const, layout,
+                            enzyme_const, transA,
+                            enzyme_const, transB,
+                            enzyme_const, M,
+                            enzyme_const, N,
+                            enzyme_const, K,
+                            enzyme_const, alpha,
+                            enzyme_dup, A, dA,
+                            enzyme_const, lda,
+                            enzyme_dup, B, dB,
+                            enzyme_const, incB,
+                            enzyme_const, beta,
+                            enzyme_dup, C, dC,
+                            enzyme_const, incC);
+        foundCalls = calls;
+        init();
+
+			assert(foundCalls.size() > 2);
+			auto A_cache = (double*)foundCalls[0].pout_arg1;
+			cblas_dlacpy(layout, '\0', (!transA_bool) ? M : K, (!transA_bool) ? K : M, A, lda, A_cache, (!transA_bool) ? M : K);
+			inputs[4] = BlasInfo(A_cache, layout, (!transA_bool) ? M : K, (!transA_bool) ? K : M, (!transA_bool) ? M : K);
+			auto B_cache = (double*)foundCalls[1].pout_arg1;
+			cblas_dlacpy(layout, '\0', (!transB_bool) ? K : N, (!transB_bool) ? N : K, B, incB, B_cache, (!transB_bool) ? K : N);
+			inputs[5] = BlasInfo(B_cache, layout, (!transB_bool) ? K : N, (!transB_bool) ? N : K, (!transB_bool) ? K : N);
+
+        ow_dgemm(layout, (char)transA, (char)transB, M, N, K, alpha, A, lda, B, incB, beta, C, incC);
+
+        inDerivative = true;
+
+        // dA = 
+        my_dgemm(layout,
+                    transA_bool ? (char)transB : (char)CBLAS_TRANSPOSE::CblasNoTrans,
+                    transA_bool ? (char)CBLAS_TRANSPOSE::CblasTrans : (char)transpose(transB),
+                    transA_bool ? K : M,
+                    transA_bool ? M : K,
+                    N,
+                    alpha,
+                    transA_bool ? B_cache : dC,
+                    transA_bool ? ( (!transB_bool) ? K : N )  : incC,
+                    transA_bool ? dC : B_cache,
+                    transA_bool ? incC : ( (!transB_bool) ? K : N),
+                    1.0, dA, lda);
+        
+        // dB = 
+        my_dgemm(layout,
+                    transB_bool ? (char)CBLAS_TRANSPOSE::CblasTrans : (char)transpose(transA),
+                    transB_bool ? (char)transA : (char)CBLAS_TRANSPOSE::CblasNoTrans, //transB,
+                    transB_bool ? N : K,
+                    transB_bool ? K : N,
+                    M,
+                    alpha,
+                    transB_bool ? dC : A_cache,
+                    transB_bool ? incC : ( (!transA_bool) ? M : K),
+                    transB_bool ? A_cache : dC,
+                    transB_bool ? ( (!transA_bool) ? M : K) : incC,
+                    1.0, dB, incB);
+       
+        cblas_dlascl(layout, 'G', 0, 0, 1.0, beta, M, N, dC, incC, 0 );
+		
+        checkTest(Test);
+    
+        // Check memory of primal of expected derivative
+        checkMemoryTrace(inputs, "Expected " + Test, calls);
+        
+        // Check memory of primal of our derivative (if equal above, it
+        // should be the same).
+        checkMemoryTrace(inputs, "Found " + Test, foundCalls);
     }
 
 

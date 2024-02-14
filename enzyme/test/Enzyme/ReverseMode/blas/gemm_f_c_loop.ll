@@ -271,12 +271,12 @@ entry:
 ; CHECK-NEXT:   %[[r62:.+]] = icmp eq i8 %loaded.trans30, 78
 ; CHECK-NEXT:   %[[r63:.+]] = icmp eq i8 %loaded.trans30, 110
 ; CHECK-NEXT:   %[[r64:.+]] = or i1 %[[r63]], %[[r62]]
-; CHECK-NEXT:   %[[r65:.+]] = select i1 %[[r64]], i8* %cast.k, i8* %[[r37]]
+; CHECK-NEXT:   %[[r65:.+]] = select i1 %[[r64]], i8* %[[r37]], i8* %cast.k
 ; CHECK-NEXT:   %loaded.trans31 = load i8, i8* %byref.transa, align 1
 ; CHECK-NEXT:   %[[r66:.+]] = icmp eq i8 %loaded.trans31, 78
 ; CHECK-NEXT:   %[[r67:.+]] = icmp eq i8 %loaded.trans31, 110
 ; CHECK-NEXT:   %[[r68:.+]] = or i1 %[[r67]], %[[r66]]
-; CHECK-NEXT:   %[[r69:.+]] = select i1 %[[r68]], i8* %cast.k, i8* %[[r37]]
+; CHECK-NEXT:   %[[r69:.+]] = select i1 %[[r68]], i8* %[[r37]], i8* %cast.k 
 ; CHECK-NEXT:   %ld.row.trans32 = load i8, i8* %byref.transb, align 1
 ; CHECK-NEXT:   %[[r70:.+]] = icmp eq i8 %ld.row.trans32, 110
 ; CHECK-NEXT:   %[[r71:.+]] = icmp eq i8 %ld.row.trans32, 78
