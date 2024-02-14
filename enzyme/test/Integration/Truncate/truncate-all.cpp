@@ -1,9 +1,9 @@
 // Baseline
-// RUN: export ENZYME_TRUNCATE_ALL=""; if [ %llvmver -ge 12 ]; then [ "$(%clang -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -S | %lli -)" == "900000000.560000" ] ; fi
+// RUN: if [ %llvmver -ge 12 ]; then [ "$(%clang -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -S -mllvm --enzyme-truncate-all="" | %lli -)" == "900000000.560000" ] ; fi
 
 // Truncated
-// RUN: export ENZYME_TRUNCATE_ALL="64to32"; if [ %llvmver -ge 12 ]; then [ "$(%clang -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -S | %lli -)" == "900000000.000000" ] ; fi
-// RUN: export ENZYME_TRUNCATE_ALL="11-52to8-23"; if [ %llvmver -ge 12 ]; then [ "$(%clang -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -S | %lli -)" == "900000000.000000" ] ; fi
+// RUN: if [ %llvmver -ge 12 ]; then [ "$(%clang -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -S -mllvm --enzyme-truncate-all="64to32" | %lli -)" == "900000000.000000" ] ; fi
+// RUN: if [ %llvmver -ge 12 ]; then [ "$(%clang -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -S -mllvm --enzyme-truncate-all="11-52to8-23" | %lli -)" == "900000000.000000" ] ; fi
 
 #include <math.h>
 

@@ -112,6 +112,12 @@ llvm::cl::opt<bool> EnzymeAttributor("enzyme-attributor", cl::init(false),
 llvm::cl::opt<bool> EnzymeOMPOpt("enzyme-omp-opt", cl::init(false), cl::Hidden,
                                  cl::desc("Whether to enable openmp opt"));
 
+llvm::cl::opt<std::string> EnzymeTruncateAll(
+    "enzyme-truncate-all", cl::init(""), cl::Hidden,
+    cl::desc(
+        "Truncate all floating point operations. "
+        "E.g. \"64to32\" or \"64to<exponent_width>-<significand_width>\"."));
+
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
 #define getAttribute getAttributeAtIndex
@@ -2047,14 +2053,10 @@ public:
     typedef std::vector<std::pair<FloatRepresentation, FloatRepresentation>>
         TruncationsTy;
     static TruncationsTy FullModuleTruncs = []() -> TruncationsTy {
-      const char *EnvVarName = "ENZYME_TRUNCATE_ALL";
-      char *ConfigCStr;
-      if (!(ConfigCStr = getenv(EnvVarName)))
-        return {};
-      StringRef ConfigStr(ConfigCStr);
+      StringRef ConfigStr(EnzymeTruncateAll);
       auto Invalid = [=]() {
         // TODO emit better diagnostic
-        llvm::errs() << "error: invalid format for " << EnvVarName << "\n";
+        llvm::errs() << "error: invalid format for truncation config\n";
         abort();
       };
 
