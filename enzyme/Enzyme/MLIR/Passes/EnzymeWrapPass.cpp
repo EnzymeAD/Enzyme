@@ -86,11 +86,14 @@ struct DifferentiateWrapperPass
 
     FunctionOpInterface newFunc = Logic.CreateForwardDiff(
         fn, retType, constants, TA,
-        /*should return*/ false, mode, freeMemory, width,
+        /*should return*/ (retType == DIFFE_TYPE::DUP_ARG), mode, freeMemory,
+        width,
         /*addedType*/ nullptr, type_args, volatile_args,
         /*augmented*/ nullptr);
     if (outfn == "") {
       fn->erase();
+      SymbolTable::setSymbolName(cast<FunctionOpInterface>(newFunc),
+                                 (std::string)infn);
     } else {
       SymbolTable::setSymbolName(cast<FunctionOpInterface>(newFunc),
                                  (std::string)outfn);
