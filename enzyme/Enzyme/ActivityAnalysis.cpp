@@ -1432,6 +1432,12 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
   if (containsPointer && !isValuePotentiallyUsedAsPointer(Val)) {
     containsPointer = false;
+    if (auto Arg = dyn_cast<Argument>(Val)) {
+      assert(Arg->hasByValAttr());
+      (void)Arg;
+      InsertConstantValue(TR, Val);
+      return true;
+    }
   }
 
   // We do this pointer dance here to ensure that any derived pointers from
