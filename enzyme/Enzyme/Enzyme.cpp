@@ -37,10 +37,9 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
+#include <optional>
 #if LLVM_VERSION_MAJOR <= 16
 #include "llvm/ADT/Optional.h"
-#else
-#include <optional>
 #endif
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
