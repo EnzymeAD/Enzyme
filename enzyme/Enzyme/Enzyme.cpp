@@ -2098,13 +2098,13 @@ public:
     for (auto Truncation : FullModuleTruncs) {
       IRBuilder<> Builder(F.getContext());
       RequestContext context(&*F.getEntryBlock().begin(), &Builder);
-      llvm::Function *TruncatedFunc =
+      Function *TruncatedFunc =
           Logic.CreateTruncateFunc(context, &F, Truncation.first,
                                    Truncation.second, TruncOpFullModuleMode);
 
       ValueToValueMapTy Mapping;
-      for (auto Args : llvm::zip(F.args(), TruncatedFunc->args()))
-        Mapping[&std::get<1>(Args)] = &std::get<0>(Args);
+      for (auto&& [Arg, TArgs] : llvm::zip(F.args(), TruncatedFunc->args()))
+        Mapping[Targ] = Arg;
 
       // Move the truncated body into the original function
       F.deleteBody();
