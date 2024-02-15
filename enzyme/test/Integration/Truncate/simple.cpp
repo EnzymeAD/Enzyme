@@ -15,14 +15,13 @@ double simple_add(double a, double b) {
 double intrinsics(double a, double b) {
     return sqrt(a) * pow(b, 2);
 }
-// TODO
+// TODO trunc mem mode
 double constt(double a, double b) {
     return 2;
 }
 double compute(double *A, double *B, double *C, int n) {
   for (int i = 0; i < n; i++) {
-    C[i] = A[i] * 2;
-    // C[i]  A=[i] * 2 + B[i] * sqrt(A[i]) ;
+    C[i] = A[i] * 2 + B[i] * sqrt(A[i]);
   }
   return C[0];
 }
