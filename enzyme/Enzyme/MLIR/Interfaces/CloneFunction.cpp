@@ -1,3 +1,5 @@
+#include "llvm/ADT/APSInt.h"
+
 #include "CloneFunction.h"
 
 using namespace mlir;
@@ -264,6 +266,94 @@ FunctionOpInterface CloneFunctionWithReturns(
       auto location = blk.getArgument(blk.getNumArguments() - 1).getLoc();
       auto val = F.getFunctionType().cast<mlir::FunctionType>().getResult(0);
       blk.addArgument(val, location);
+    }
+  }
+
+  std::string ToClone[] = {
+      "bufferization.writable",
+      "mhlo.sharding",
+      "mhlo.layout_mode",
+      "xla_framework.input_mapping",
+      "xla_framework.result_mapping",
+  };
+  size_t newxlacnt = 0;
+  {
+    size_t oldi = 0;
+    size_t newi = 0;
+    while (oldi < F.getNumResults()) {
+      for (auto attrName : ToClone) {
+        auto attrNameS = StringAttr::get(F->getContext(), attrName);
+        NewF.removeResultAttr(newi, attrNameS);
+        if (auto attr = F.getResultAttr(oldi, attrName)) {
+          if (attrName == "xla_framework.result_mapping") {
+            auto iattr = cast<IntegerAttr>(attr);
+            APSInt nc(iattr.getValue());
+            nc = newxlacnt;
+            attr = IntegerAttr::get(F->getContext(), nc);
+            newxlacnt++;
+          }
+          NewF.setResultAttr(newi, attrNameS, attr);
+        }
+      }
+      newi++;
+      if (ReturnType == DIFFE_TYPE::DUP_ARG ||
+          ReturnType == DIFFE_TYPE::DUP_NONEED) {
+        for (auto attrName : ToClone) {
+          auto attrNameS = StringAttr::get(F->getContext(), attrName);
+          NewF.removeResultAttr(newi, attrNameS);
+          if (auto attr = F.getResultAttr(oldi, attrName)) {
+            if (attrName == "xla_framework.result_mapping") {
+              auto iattr = cast<IntegerAttr>(attr);
+              APSInt nc(iattr.getValue());
+              nc = newxlacnt;
+              attr = IntegerAttr::get(F->getContext(), nc);
+              newxlacnt++;
+            }
+            NewF.setResultAttr(newi, attrNameS, attr);
+          }
+        }
+        newi++;
+      }
+    }
+  }
+  {
+    size_t oldi = 0;
+    size_t newi = 0;
+    while (oldi < F.getNumArguments()) {
+      for (auto attrName : ToClone) {
+        NewF.removeArgAttr(newi, attrName);
+        if (auto attr = F.getArgAttr(oldi, attrName)) {
+          if (attrName == "xla_framework.input_mapping") {
+            auto iattr = cast<IntegerAttr>(attr);
+            APSInt nc(iattr.getValue());
+            nc = newxlacnt;
+            attr = IntegerAttr::get(F->getContext(), nc);
+            newxlacnt++;
+          }
+          NewF.setArgAttr(newi, attrName, attr);
+        }
+      }
+
+      newi++;
+      if (constant_args[oldi] == DIFFE_TYPE::DUP_ARG ||
+          constant_args[oldi] == DIFFE_TYPE::DUP_NONEED) {
+
+        for (auto attrName : ToClone) {
+          NewF.removeArgAttr(newi, attrName);
+          if (auto attr = F.getArgAttr(oldi, attrName)) {
+            if (attrName == "xla_framework.input_mapping") {
+              auto iattr = cast<IntegerAttr>(attr);
+              APSInt nc(iattr.getValue());
+              nc = newxlacnt;
+              attr = IntegerAttr::get(F->getContext(), nc);
+              newxlacnt++;
+            }
+            NewF.setArgAttr(newi, attrName, attr);
+          }
+        }
+        newi++;
+      }
+      oldi++;
     }
   }
 
