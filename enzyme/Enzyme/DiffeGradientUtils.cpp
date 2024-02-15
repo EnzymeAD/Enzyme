@@ -928,11 +928,20 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           applyChainRule(PointerType::get(addingType, 1), BuilderM, rule, ptr);
     }
 
-    assert(!mask);
     if (mask) {
-      llvm::errs() << "unhandled masked atomic fadd on llvm version " << *ptr
-                   << " " << *dif << " mask: " << *mask << "\n";
-      llvm_unreachable("unhandled masked atomic fadd");
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "Unimplemented masked atomic fadd for ptr:" << *ptr
+         << " dif:" << *dif << " mask: " << *mask << " orig: " << *orig << "\n";
+      if (CustomErrorHandler) {
+        CustomErrorHandler(ss.str().c_str(), wrap(orig),
+                           ErrorType::NoDerivative, this, nullptr,
+                           wrap(&BuilderM));
+        return;
+      } else {
+        EmitFailure("NoDerivative", orig->getDebugLoc(), orig, ss.str());
+        return;
+      }
     }
 
     /*

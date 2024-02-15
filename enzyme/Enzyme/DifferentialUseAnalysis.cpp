@@ -293,47 +293,6 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
       return false;
     }
 
-  if (shadow) {
-    if (auto IVI = dyn_cast<Instruction>(user))
-      if (isa<InsertValueInst>(IVI) || isa<InsertElementInst>(IVI)) {
-        if (IVI->getOperand(1) == val) {
-          SmallVector<const Instruction *, 1> todo;
-          todo.push_back(IVI);
-          SmallVector<std::pair<const Instruction *, const Instruction *>, 1>
-              done;
-          while (todo.size()) {
-            auto cur = todo.pop_back_val();
-            for (auto u : cur->users()) {
-              if (auto IVI2 = dyn_cast<InsertValueInst>(u)) {
-                todo.push_back(IVI2);
-                continue;
-              }
-              if (auto IVI2 = dyn_cast<InsertElementInst>(u)) {
-                todo.push_back(IVI2);
-                continue;
-              }
-              done.emplace_back(cast<Instruction>(u), cur);
-            }
-          }
-          for (auto &pair : done) {
-
-            bool direct = is_use_directly_needed_in_reverse(
-                gutils, pair.second, mode, pair.first, oldUnreachable,
-                QueryType::Shadow, recursiveUse);
-            if (direct) {
-
-              if (EnzymePrintDiffUse)
-                llvm::errs()
-                    << " Need (partial) direct " << to_string(qtype) << " of "
-                    << *val << " in reverse from insertelem " << *user
-                    << " via " << *pair.second << " in " << *pair.first << "\n";
-              return true;
-            }
-          }
-        }
-      }
-  }
-
   if (!shadow)
     if (auto IEI = dyn_cast<InsertElementInst>(user)) {
       // Only need the index in the reverse, so if the value is not
@@ -800,33 +759,26 @@ int DifferentialUseAnalysis::cmpLoopNest(Loop *prev, Loop *next) {
   return -1;
 }
 
-void DifferentialUseAnalysis::minCut(
-    const DataLayout &DL, LoopInfo &OrigLI,
-    const SetVector<Value *> &Recomputes,
-    const SetVector<Value *> &Intermediates, SetVector<Value *> &Required,
-    SetVector<Value *> &MinReq,
-    const ValueMap<Value *, GradientUtils::Rematerializer>
-        &rematerializableAllocations,
-    llvm::TargetLibraryInfo &TLI) {
+void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
+                                     const SetVector<Value *> &Recomputes,
+                                     const SetVector<Value *> &Intermediates,
+                                     SetVector<Value *> &Required,
+                                     SetVector<Value *> &MinReq,
+                                     const GradientUtils *gutils,
+                                     llvm::TargetLibraryInfo &TLI) {
   Graph G;
   for (auto V : Intermediates) {
     G[Node(V, false)].insert(Node(V, true));
-    for (auto U : V->users()) {
-      if (auto I = dyn_cast<Instruction>(U)) {
-        for (auto pair : rematerializableAllocations) {
-          if (Intermediates.count(pair.first) && pair.second.stores.count(I)) {
-            if (V != pair.first)
-              G[Node(V, true)].insert(Node(pair.first, false));
+    forEachDifferentialUser(
+        [&](Value *U) {
+          if (Intermediates.count(U)) {
+            if (V != U)
+              G[Node(V, true)].insert(Node(U, false));
           }
-        }
-      }
-      if (Intermediates.count(U)) {
-        if (V != U)
-          G[Node(V, true)].insert(Node(U, false));
-      }
-    }
+        },
+        gutils, V);
   }
-  for (auto pair : rematerializableAllocations) {
+  for (auto pair : gutils->rematerializableAllocations) {
     if (Intermediates.count(pair.first)) {
       for (LoadInst *L : pair.second.loads) {
         if (Intermediates.count(L)) {
@@ -897,7 +849,9 @@ void DifferentialUseAnalysis::minCut(
           assert(pair.first.outgoing == 0 && N.outgoing == 1);
           assert(pair.first.V == N.V);
           MinReq.insert(N.V);
-          todo.push_back(N.V);
+          if (Orig.find(Node(N.V, true)) != Orig.end()) {
+            todo.push_back(N.V);
+          }
         }
       }
   }
@@ -908,20 +862,20 @@ void DifferentialUseAnalysis::minCut(
     auto V = todo.front();
     todo.pop_front();
     auto found = Orig.find(Node(V, true));
-    if (found->second.size() == 1 && !Required.count(V)) {
+    assert(found != Orig.end());
+    const auto &mp = found->second;
+    if (mp.size() == 1 && !Required.count(V)) {
       bool potentiallyRecursive =
-          isa<PHINode>((*found->second.begin()).V) &&
-          OrigLI.isLoopHeader(
-              cast<PHINode>((*found->second.begin()).V)->getParent());
+          isa<PHINode>((*mp.begin()).V) &&
+          OrigLI.isLoopHeader(cast<PHINode>((*mp.begin()).V)->getParent());
       int moreOuterLoop = cmpLoopNest(
           OrigLI.getLoopFor(cast<Instruction>(V)->getParent()),
-          OrigLI.getLoopFor(
-              cast<Instruction>(((*found->second.begin()).V))->getParent()));
+          OrigLI.getLoopFor(cast<Instruction>(((*mp.begin()).V))->getParent()));
       if (potentiallyRecursive)
         continue;
       if (moreOuterLoop == -1)
         continue;
-      if (auto ASC = dyn_cast<AddrSpaceCastInst>((*found->second.begin()).V)) {
+      if (auto ASC = dyn_cast<AddrSpaceCastInst>((*mp.begin()).V)) {
         if (ASC->getDestAddressSpace() == 11 ||
             ASC->getDestAddressSpace() == 13)
           continue;
@@ -929,8 +883,8 @@ void DifferentialUseAnalysis::minCut(
           continue;
       }
       // If an allocation call, we cannot cache any "capturing" users
-      if (isAllocationCall(V, TLI)) {
-        auto next = (*found->second.begin()).V;
+      if (isAllocationCall(V, TLI) || isa<AllocaInst>(V)) {
+        auto next = (*mp.begin()).V;
         bool noncapture = false;
         if (isa<LoadInst>(next)) {
           noncapture = true;
@@ -966,10 +920,12 @@ void DifferentialUseAnalysis::minCut(
       if (moreOuterLoop == 1 ||
           (moreOuterLoop == 0 &&
            DL.getTypeSizeInBits(V->getType()) >=
-               DL.getTypeSizeInBits((*found->second.begin()).V->getType()))) {
+               DL.getTypeSizeInBits((*mp.begin()).V->getType()))) {
         MinReq.remove(V);
-        MinReq.insert((*found->second.begin()).V);
-        todo.push_back((*found->second.begin()).V);
+        auto nnode = (*mp.begin()).V;
+        MinReq.insert(nnode);
+        if (Orig.find(Node(nnode, true)) != Orig.end())
+          todo.push_back(nnode);
       }
     }
   }

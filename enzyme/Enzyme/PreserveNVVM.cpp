@@ -56,6 +56,25 @@ using namespace llvm;
 #define addAttribute addAttributeAtIndex
 #endif
 
+//! Returns whether changed.
+bool preserveLinkage(bool Begin, Function &F, bool Inlining = true) {
+  if (Begin && !F.hasFnAttribute("prev_fixup")) {
+    F.addFnAttr("prev_fixup");
+    if (Inlining) {
+      if (F.hasFnAttribute(Attribute::AlwaysInline))
+        F.addFnAttr("prev_always_inline");
+      F.removeFnAttr(Attribute::AlwaysInline);
+      if (F.hasFnAttribute(Attribute::NoInline))
+        F.addFnAttr("prev_no_inline");
+      F.addFnAttr(Attribute::NoInline);
+    }
+    F.addFnAttr("prev_linkage", std::to_string(F.getLinkage()));
+    F.setLinkage(Function::LinkageTypes::ExternalLinkage);
+    return true;
+  }
+  return false;
+}
+
 template <const char *handlername, DerivativeMode Mode, int numargs>
 static void
 handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
@@ -237,26 +256,31 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
               Fs[fn] = NewF;
             }
 
+          preserveLinkage(true, *Fs[1], false);
           Fs[0]->setMetadata(
               "enzyme_augment",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[1])}));
+          preserveLinkage(true, *Fs[2], false);
           Fs[0]->setMetadata(
               "enzyme_gradient",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[2])}));
         } else if (Mode == DerivativeMode::ForwardMode) {
           assert(numargs == 2);
+          preserveLinkage(true, *Fs[1], false);
           Fs[0]->setMetadata(
               "enzyme_derivative",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[1])}));
         } else if (Mode == DerivativeMode::ForwardModeSplit) {
           assert(numargs == 3);
+          preserveLinkage(true, *Fs[1], false);
           Fs[0]->setMetadata(
               "enzyme_augment",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[1])}));
+          preserveLinkage(true, *Fs[2], false);
           Fs[0]->setMetadata(
               "enzyme_splitderivative",
               llvm::MDTuple::get(Fs[0]->getContext(),
@@ -281,22 +305,6 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
     llvm_unreachable(handlername);
   }
   globalsToErase.push_back(&g);
-}
-//! Returns whether changed.
-bool preserveLinkage(bool Begin, Function &F) {
-  if (Begin && !F.hasFnAttribute("prev_fixup")) {
-    F.addFnAttr("prev_fixup");
-    if (F.hasFnAttribute(Attribute::AlwaysInline))
-      F.addFnAttr("prev_always_inline");
-    if (F.hasFnAttribute(Attribute::NoInline))
-      F.addFnAttr("prev_no_inline");
-    F.addFnAttr("prev_linkage", std::to_string(F.getLinkage()));
-    F.setLinkage(Function::LinkageTypes::ExternalLinkage);
-    F.addFnAttr(Attribute::NoInline);
-    F.removeFnAttr(Attribute::AlwaysInline);
-    return true;
-  }
-  return false;
 }
 
 bool preserveNVVM(bool Begin, Function &F) {

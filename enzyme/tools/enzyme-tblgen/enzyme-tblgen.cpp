@@ -510,6 +510,13 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
             "{(llvm::Constant*)ConstantFP::get(ST->getElementType(0), \""
          << rvalue->getValue()
          << "\"), (llvm::Constant*)ConstantFP::get(ST->getElementType(1), \""
+         << ivalue->getValue() << "\")});\n"
+         << "} else if (auto AT = dyn_cast<ArrayType>(ty)) {\n"
+         << curIndent << INDENT << INDENT
+         << "ret = ConstantArray::get(AT, "
+            "{(llvm::Constant*)ConstantFP::get(AT->getElementType(), \""
+         << rvalue->getValue()
+         << "\"), (llvm::Constant*)ConstantFP::get(AT->getElementType(), \""
          << ivalue->getValue() << "\")});\n";
       os << curIndent << INDENT << "} else assert(0 && \"unhandled cfp\");\n";
       os << curIndent << INDENT << "ret;\n";
@@ -2115,14 +2122,20 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
         StringRef name = cast<StringInit>(lst->getValues()[0])->getValue();
         if (lst->size() >= 2) {
           auto min = cast<StringInit>(lst->getValues()[1])->getValue();
-          int min_int;
-          min.getAsInteger(10, min_int);
+          int min_int = 0;
+          if (min.size() != 0 && min.getAsInteger(10, min_int)) {
+            PrintFatalError(pattern->getLoc(),
+                            "Could not parse min llvm version as int");
+          }
           if (min.size() != 0 && LLVM_VERSION_MAJOR < min_int)
             continue;
           if (lst->size() >= 3) {
             auto max = cast<StringInit>(lst->getValues()[2])->getValue();
-            int max_int;
-            max.getAsInteger(10, max_int);
+            int max_int = 0;
+            if (max.size() != 0 && max.getAsInteger(10, max_int)) {
+              PrintFatalError(pattern->getLoc(),
+                              "Could not parse max llvm version as int");
+            }
             if (max.size() != 0 && LLVM_VERSION_MAJOR > max_int)
               continue;
           }

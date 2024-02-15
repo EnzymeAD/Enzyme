@@ -326,3 +326,17 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
 
   return success();
 }
+
+void mlir::enzyme::registerCoreDialectAutodiffInterfaces(
+    DialectRegistry &registry) {
+  enzyme::registerAffineDialectAutoDiffInterface(registry);
+  enzyme::registerArithDialectAutoDiffInterface(registry);
+  enzyme::registerBuiltinDialectAutoDiffInterface(registry);
+  enzyme::registerLLVMDialectAutoDiffInterface(registry);
+  enzyme::registerNVVMDialectAutoDiffInterface(registry);
+  enzyme::registerMathDialectAutoDiffInterface(registry);
+  enzyme::registerMemRefDialectAutoDiffInterface(registry);
+  enzyme::registerSCFDialectAutoDiffInterface(registry);
+  enzyme::registerCFDialectAutoDiffInterface(registry);
+  enzyme::registerLinalgDialectAutoDiffInterface(registry);
+}

@@ -7,7 +7,7 @@ licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//:__subpackages__"],
+    default_visibility = ["//visibility:public"],
 )
 
 cc_library(
@@ -29,6 +29,7 @@ cc_binary(
         "@llvm-project//llvm:TableGen",
         "@llvm-project//llvm:config",
     ],
+    visibility = ["//visibility:public"],
 )
 
 gentbl(

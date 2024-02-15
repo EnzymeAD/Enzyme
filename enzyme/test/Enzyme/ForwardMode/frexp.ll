@@ -1,10 +1,11 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
 
-declare double @frexp(double, i32*)
 declare double @__enzyme_fwddiff(i8*, ...)
 declare float @__enzyme_fwddifff(i8*, ...)
+declare x86_fp80 @__enzyme_fwddiffl(i8*, ...)
 
+declare double @frexp(double, i32*)
 define double @test(double %x) {
 entry:
   %exp = alloca i32, align 4
@@ -32,6 +33,20 @@ entry:
   ret float %call
 }
 
+declare x86_fp80 @frexpl(x86_fp80, i32*)
+define x86_fp80 @testl(x86_fp80 %x) {
+entry:
+  %exp = alloca i32, align 4
+  %call = call x86_fp80 @frexpl(x86_fp80 %x, i32* %exp)
+  ret x86_fp80 %call
+}
+
+define x86_fp80 @dtestl(x86_fp80 %x, x86_fp80 %dx) {
+entry:
+  %call = call x86_fp80 (i8*, ...) @__enzyme_fwddiffl(i8* bitcast (x86_fp80 (x86_fp80)* @testl to i8*), x86_fp80 %x, x86_fp80 %dx)
+  ret x86_fp80 %call
+}
+
 ; CHECK: define internal double @fwddiffetest(double %x, double %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast double %x to i64
@@ -50,4 +65,14 @@ entry:
 ; CHECK-NEXT:   %3 = fmul fast float %2, 2.000000e+00
 ; CHECK-NEXT:   %4 = fdiv fast float %"x'", %3
 ; CHECK-NEXT:   ret float %4
+; CHECK-NEXT: }
+
+; CHECK: define internal x86_fp80 @fwddiffetestl(x86_fp80 %x, x86_fp80 %"x'")
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %0 = bitcast x86_fp80 %x to i80
+; CHECK-NEXT:   %1 = and i80 604453686435277732577280, %0
+; CHECK-NEXT:   %2 = bitcast i80 %1 to x86_fp80
+; CHECK-NEXT:   %3 = fmul fast x86_fp80 %2, 0xK40008000000000000000
+; CHECK-NEXT:   %4 = fdiv fast x86_fp80 %"x'", %3
+; CHECK-NEXT:   ret x86_fp80 %4
 ; CHECK-NEXT: }

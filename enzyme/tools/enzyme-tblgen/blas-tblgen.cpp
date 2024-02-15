@@ -146,14 +146,22 @@ void emit_handleBLAS(ArrayRef<TGPattern> blasPatterns, raw_ostream &os) {
      << "      llvm::errs() << \" fallback?\\n\";                           \n"
      << "      return false;                                                \n"
      << "    }                                                              \n"
-     << "  }                                                                \n"
-     << "                                                                   \n"
-     << "  if (Mode == DerivativeMode::ReverseModeGradient) {               \n"
-     << "    eraseIfUnused(call, /*erase*/ true, /*check*/ false);          \n"
      << "  } else {                                                         \n"
-     << "    eraseIfUnused(call);                                           \n"
-     << "  }                                                                \n"
-     << "                                                                   \n"
+     << "    if (Mode == DerivativeMode::ReverseModeGradient) {             \n"
+     << "      eraseIfUnused(call, /*erase*/ true, /*check*/ false);        \n"
+     << "    } else {                                                       \n"
+     << "      eraseIfUnused(call);                                         \n"
+     << "    }                                                              \n"
+     << "    if (gutils->knownRecomputeHeuristic.find(&call) !=\n"
+     << "      gutils->knownRecomputeHeuristic.end()) {\n"
+     << "      if (!gutils->knownRecomputeHeuristic[&call]) {\n"
+     << "       auto newCall = gutils->getNewFromOriginal(&call);\n"
+     << "       llvm::IRBuilder<> BuilderZ(newCall);\n"
+     << "       gutils->cacheForReverse(BuilderZ, newCall,\n"
+     << "       getIndex(&call, CacheType::Self, BuilderZ));\n"
+     << "      }\n"
+     << "    }\n"
+     << "  }\n"
      << "  return result;                                                   \n"
      << "}                                                                  \n";
 }
@@ -229,10 +237,16 @@ void emit_free_and_ending(const TGPattern &pattern, raw_ostream &os) {
 
   os << "    }\n"
      << "  }\n"
+     << "                                                                   \n"
+     << "  if (Mode == DerivativeMode::ReverseModeGradient) {               \n"
+     << "    eraseIfUnused(call, /*erase*/ true, /*check*/ false);          \n"
+     << "  } else {                                                         \n"
+     << "    eraseIfUnused(call);                                           \n"
+     << "  }                                                                \n"
      << "  if (gutils->knownRecomputeHeuristic.find(&call) !=\n"
      << "    gutils->knownRecomputeHeuristic.end()) {\n"
      << "    if (!gutils->knownRecomputeHeuristic[&call]) {\n"
-     << "    gutils->cacheForReverse(BuilderZ, newCall,\n"
+     << "     auto cv = gutils->cacheForReverse(BuilderZ, newCall,\n"
      << "     getIndex(&call, CacheType::Self, BuilderZ));\n"
      << "    }\n"
      << "  }\n"
@@ -855,7 +869,7 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
     if (ty == ArgType::fp) {
       const auto name = nameVec[inputType.first];
       os << "    Value *d_" << name
-         << " = llvm::ConstantFP::get(fpType, 0.0);\n";
+         << " = Constant::getNullValue(gutils->getShadowType(fpType));\n";
     }
   }
 
