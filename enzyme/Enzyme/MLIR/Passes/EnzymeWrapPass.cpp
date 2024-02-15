@@ -92,7 +92,8 @@ struct DifferentiateWrapperPass
         /*augmented*/ nullptr);
     if (outfn == "") {
       fn->erase();
-      SymbolTable::setSymbolVisibility(newFunc, SymbolTable::Visibility::Private);
+      SymbolTable::setSymbolVisibility(newFunc,
+                                       SymbolTable::Visibility::Public);
       SymbolTable::setSymbolName(cast<FunctionOpInterface>(newFunc),
                                  (std::string)infn);
     } else {
