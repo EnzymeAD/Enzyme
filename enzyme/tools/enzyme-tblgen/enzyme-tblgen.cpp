@@ -855,7 +855,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       } else if (opName == "CheckedDiv") {
         os << "checkedDiv(" << builder << ", ";
       } else if (intrinsic == MLIRDerivatives) {
-        os << builder << ".create<" << opName << ">(op.getLoc(), ";
+        auto dialect = Def->getValueAsString("dialect");
+        os << builder << ".create<" << dialect << "::" << opName
+           << ">(op.getLoc(), ";
       } else {
         os << builder << ".Create" << opName << "(";
       }
