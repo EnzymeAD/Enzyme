@@ -389,6 +389,13 @@ gentbl_cc_library(
     deps = [":EnzymeDialectTdFiles"],
 )
 
+td_library(
+    name = "ImplementationsCommonTdFiles",
+    srcs = [
+        "Enzyme/MLIR/Implementations/Common.td",
+    ],
+)
+
 gentbl(
     name = "affine-derivatives",
     tbl_outs = [(
