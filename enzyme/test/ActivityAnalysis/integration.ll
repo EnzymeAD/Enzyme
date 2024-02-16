@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -gt 16 ]; then %opt < %s %newLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=f.preprocess-S | FileCheck %s; fi
+; RUN: if [ %llvmver -gt 15 ]; then %opt < %s %newLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=f.preprocess-S | FileCheck %s; fi
 
 declare void @free(ptr)
 
