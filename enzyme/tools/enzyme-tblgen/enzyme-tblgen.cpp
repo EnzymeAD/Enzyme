@@ -449,17 +449,30 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         PrintFatalError(pattern->getLoc(), Twine("'value' not defined in ") +
                                                resultTree->getAsString());
 
-      os << "ConstantFP::get(";
-      if (resultRoot->getArgName(0)) {
+      if (intrinsic == MLIRDerivatives) {
+        os << builder << ".create<"
+           << cast<StringInit>(Def->getValueInit("dialect"))->getValue()
+           << "::" << cast<StringInit>(Def->getValueInit("opName"))->getValue()
+           << ">(op.getLoc(), ";
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
         auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
         assert(!isVec);
-        os << ord;
-      } else
-        PrintFatalError(pattern->getLoc(),
-                        Twine("unknown named operand in constantfp") +
-                            resultTree->getAsString());
-      os << "->getType(), \"" << value->getValue() << "\")";
+        os << ord << ".getType(), getTensorAttr(" << ord << ".getType(), ";
+        os << "\"" << value->getValue() << "\"))";
+      } else {
+
+        os << "ConstantFP::get(";
+        if (resultRoot->getArgName(0)) {
+          auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+          auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
+          assert(!isVec);
+          os << ord;
+        } else
+          PrintFatalError(pattern->getLoc(),
+                          Twine("unknown named operand in constantfp") +
+                              resultTree->getAsString());
+        os << "->getType(), \"" << value->getValue() << "\")";
+      }
       return false;
     } else if (opName == "Zero" || Def->isSubClassOf("Zero")) {
       if (resultRoot->getNumArgs() != 1)
