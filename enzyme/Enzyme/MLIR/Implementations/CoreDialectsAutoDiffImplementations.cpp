@@ -136,7 +136,7 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
             }
           }
         }
-        orig->emitWarning()
+        orig->emitError()
             << "Unsupported constant arg to memory identity forward "
                "handler(opidx="
             << operand.getOperandNumber() << ", op=" << operand.get() << ")\n";
@@ -175,8 +175,9 @@ LogicalResult mlir::enzyme::detail::allocationForwardHandler(
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(shadowRes.getType())) {
       return iface.zeroInPlace(builder, orig->getLoc(), shadowRes);
     } else {
-      orig->emitWarning() << "memref.alloc element type does not implement "
-                             "AutoDiffTypeInterface";
+      orig->emitError() << "Type " << shadowRes.getType()
+                        << " does not implement "
+                           "AutoDiffTypeInterface";
       return failure();
     }
   }
@@ -235,16 +236,22 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
     if (gutils->isConstantValue(result))
       continue;
     auto typeIface = dyn_cast<AutoDiffTypeInterface>(result.getType());
-    if (!typeIface)
+    if (!typeIface) {
+      op->emitError() << " AutoDiffTypeInterface not implemented for "
+                      << result.getType() << "\n";
       return failure();
+    }
     newOpResultTypes.push_back(typeIface.getShadowType());
   }
 
   // For all operands that are forwarded to the body, if they are active, also
   // add the shadow as operand.
   auto regionBranchOp = dyn_cast<RegionBranchOpInterface>(op);
-  if (!regionBranchOp)
+  if (!regionBranchOp) {
+    op->emitError() << " RegionBranchOpInterface not implemented for " << *op
+                    << "\n";
     return failure();
+  }
 
   SmallVector<RegionSuccessor> successors;
   // TODO: we may need to record, for every successor, which of its inputs
@@ -283,8 +290,11 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   // yielded by terminators, and only those values.
 
   auto iface = dyn_cast<ControlFlowAutoDiffOpInterface>(op);
-  if (!iface)
+  if (!iface) {
+    op->emitError() << " ControlFlowAutoDiffOpInterface not implemented for "
+                    << *op << "\n";
     return failure();
+  }
   Operation *replacement = iface.createWithShadows(
       builder, gutils, op, newOperands, newOpResultTypes);
   for (auto &&[region, replacementRegion] :
@@ -314,8 +324,9 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   for (auto &origRegion : op->getRegions()) {
     for (auto &origBlock : origRegion) {
       for (Operation &o : origBlock) {
-        if (failed(gutils->visitChild(&o)))
+        if (failed(gutils->visitChild(&o))) {
           return failure();
+        }
       }
     }
   }

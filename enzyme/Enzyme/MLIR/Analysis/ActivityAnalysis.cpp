@@ -2598,12 +2598,13 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
     //   return true;
     // }
     Value callVal = call.getCallableForCallee().dyn_cast<Value>();
-    if (isConstantValue(TR, callVal)) {
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << "constant(" << (int)directions << ") up-constfn "
-      //                << *inst << " - " << *callVal << "\n";
-      return true;
-    }
+    if (callVal)
+      if (isConstantValue(TR, callVal)) {
+        // if (EnzymePrintActivity)
+        //   llvm::errs() << "constant(" << (int)directions << ") up-constfn "
+        //                << *inst << " - " << *callVal << "\n";
+        return true;
+      }
   }
 
   if (auto gep = dyn_cast<LLVM::GEPOp>(op)) {

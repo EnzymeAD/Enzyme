@@ -1,3 +1,6 @@
+#ifndef ENZYME_MLIR_IMPLEMENTATIONS_COMMON
+#define ENZYME_MLIR_IMPLEMENTATIONS_COMMON
+
 class InactiveOp<string dialect_, string opName_> {
   string dialect = dialect_;
   string opName = opName_;
@@ -76,3 +79,5 @@ def CosF : MathInst<"CosOp">;
 def SinF : MathInst<"SinOp">;
 def ExpF : MathInst<"ExpOp">;
 def SqrtF : MathInst<"SqrtOp">;
+
+#endif // ENZYME_MLIR_IMPLEMENTATIONS_COMMON

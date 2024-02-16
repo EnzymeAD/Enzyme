@@ -19,22 +19,26 @@ mlir::FunctionType getFunctionTypeForClone(
   SmallVector<mlir::Type, 4> RetTypes;
   if (returnValue == ReturnType::ArgsWithReturn ||
       returnValue == ReturnType::Return) {
-    assert(FTy.getNumResults() == 1);
-    if (ReturnType != DIFFE_TYPE::CONSTANT &&
-        ReturnType != DIFFE_TYPE::OUT_DIFF) {
-      RetTypes.push_back(getShadowType(FTy.getResult(0), width));
-    } else {
-      RetTypes.push_back(FTy.getResult(0));
+    assert(FTy.getNumResults() >= 1);
+    for (size_t i = 0; i < FTy.getNumResults(); i++) {
+      if (ReturnType != DIFFE_TYPE::CONSTANT &&
+          ReturnType != DIFFE_TYPE::OUT_DIFF) {
+        RetTypes.push_back(getShadowType(FTy.getResult(i), width));
+      } else {
+        RetTypes.push_back(FTy.getResult(i));
+      }
     }
   } else if (returnValue == ReturnType::ArgsWithTwoReturns ||
              returnValue == ReturnType::TwoReturns) {
-    assert(FTy.getNumResults() == 1);
-    RetTypes.push_back(FTy.getResult(0));
-    if (ReturnType != DIFFE_TYPE::CONSTANT &&
-        ReturnType != DIFFE_TYPE::OUT_DIFF) {
-      RetTypes.push_back(getShadowType(FTy.getResult(0), width));
-    } else {
-      RetTypes.push_back(FTy.getResult(0));
+    assert(FTy.getNumResults() >= 1);
+    for (size_t i = 0; i < FTy.getNumResults(); i++) {
+      RetTypes.push_back(FTy.getResult(i));
+      if (ReturnType != DIFFE_TYPE::CONSTANT &&
+          ReturnType != DIFFE_TYPE::OUT_DIFF) {
+        RetTypes.push_back(getShadowType(FTy.getResult(i), width));
+      } else {
+        RetTypes.push_back(FTy.getResult(i));
+      }
     }
   }
 
