@@ -454,9 +454,15 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
            << cast<StringInit>(Def->getValueInit("dialect"))->getValue()
            << "::" << cast<StringInit>(Def->getValueInit("opName"))->getValue()
            << ">(op.getLoc(), ";
-        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
-        assert(!isVec);
+        std::string ord;
+        if (resultRoot->getNumArgs() == 0) {
+          ord = "op->getResult(0)";
+        } else {
+          auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+          auto [ord1, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
+          assert(!isVec);
+          ord = ord1;
+        }
         os << ord << ".getType(), getTensorAttr(" << ord << ".getType(), ";
         os << "\"" << value->getValue() << "\"))";
       } else {
@@ -1636,7 +1642,11 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       }
     } else {
 
-      os << "            Value *res = ";
+      if (intrinsic == MLIRDerivatives) {
+        os << "     mlir::Value res = nullptr;\n";
+      } else {
+        os << "            Value *res = ";
+      }
       ArrayRef<unsigned> retidx{};
       bool vectorValued =
           handle("            ", "fwdnsrarg", os, pattern, duals, "Builder2",
