@@ -97,6 +97,10 @@ struct DifferentiateWrapperPass
         width,
         /*addedType*/ nullptr, type_args, volatile_args,
         /*augmented*/ nullptr);
+    if (!newFunc) {
+      signalPassFailure();
+      return;
+    }
     if (outfn == "") {
       fn->erase();
       SymbolTable::setSymbolVisibility(newFunc,
