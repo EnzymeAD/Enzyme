@@ -46,44 +46,52 @@ void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
 
   switch (retVal) {
   case ReturnType::Return: {
-    auto ret = inst->getOperand(0);
+    for (size_t i = 0; i < inst->getNumOperands(); i++) {
+      auto ret = inst->getOperand(i);
 
-    mlir::Value toret;
-    if (retType == DIFFE_TYPE::CONSTANT) {
-      toret = gutils->getNewFromOriginal(ret);
-    } else if (!isa<mlir::FloatType>(ret.getType()) && true /*type analysis*/) {
-      toret = gutils->invertPointerM(ret, nBuilder);
-    } else if (!gutils->isConstantValue(ret)) {
-      toret = gutils->invertPointerM(ret, nBuilder);
-    } else {
-      Type retTy = ret.getType().cast<AutoDiffTypeInterface>().getShadowType();
-      toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(nBuilder,
-                                                                  ret.getLoc());
+      mlir::Value toret;
+      if (retType == DIFFE_TYPE::CONSTANT) {
+        toret = gutils->getNewFromOriginal(ret);
+      } else if (!isa<mlir::FloatType>(ret.getType()) &&
+                 true /*type analysis*/) {
+        toret = gutils->invertPointerM(ret, nBuilder);
+      } else if (!gutils->isConstantValue(ret)) {
+        toret = gutils->invertPointerM(ret, nBuilder);
+      } else {
+        Type retTy =
+            ret.getType().cast<AutoDiffTypeInterface>().getShadowType();
+        toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
+            nBuilder, ret.getLoc());
+      }
+      retargs.push_back(toret);
     }
-    retargs.push_back(toret);
 
     break;
   }
   case ReturnType::TwoReturns: {
     if (retType == DIFFE_TYPE::CONSTANT)
       assert(false && "Invalid return type");
-    auto ret = inst->getOperand(0);
+    for (size_t i = 0; i < inst->getNumOperands(); i++) {
+      auto ret = inst->getOperand(i);
 
-    retargs.push_back(gutils->getNewFromOriginal(ret));
+      retargs.push_back(gutils->getNewFromOriginal(ret));
 
-    mlir::Value toret;
-    if (retType == DIFFE_TYPE::CONSTANT) {
-      toret = gutils->getNewFromOriginal(ret);
-    } else if (!isa<mlir::FloatType>(ret.getType()) && true /*type analysis*/) {
-      toret = gutils->invertPointerM(ret, nBuilder);
-    } else if (!gutils->isConstantValue(ret)) {
-      toret = gutils->invertPointerM(ret, nBuilder);
-    } else {
-      Type retTy = ret.getType().cast<AutoDiffTypeInterface>().getShadowType();
-      toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(nBuilder,
-                                                                  ret.getLoc());
+      mlir::Value toret;
+      if (retType == DIFFE_TYPE::CONSTANT) {
+        toret = gutils->getNewFromOriginal(ret);
+      } else if (!isa<mlir::FloatType>(ret.getType()) &&
+                 true /*type analysis*/) {
+        toret = gutils->invertPointerM(ret, nBuilder);
+      } else if (!gutils->isConstantValue(ret)) {
+        toret = gutils->invertPointerM(ret, nBuilder);
+      } else {
+        Type retTy =
+            ret.getType().cast<AutoDiffTypeInterface>().getShadowType();
+        toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
+            nBuilder, ret.getLoc());
+      }
+      retargs.push_back(toret);
     }
-    retargs.push_back(toret);
     break;
   }
   case ReturnType::Void: {
