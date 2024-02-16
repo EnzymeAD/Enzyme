@@ -35,7 +35,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
   void runOnOperation() override;
 
   template <typename T>
-  void HandleAutoDiff(SymbolTableCollection &symbolTable, T CI) {
+  LogicalResult HandleAutoDiff(SymbolTableCollection &symbolTable, T CI) {
     std::vector<DIFFE_TYPE> constants;
     SmallVector<mlir::Value, 2> args;
 
@@ -83,16 +83,20 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
         /*should return*/ false, mode, freeMemory, width,
         /*addedType*/ nullptr, type_args, volatile_args,
         /*augmented*/ nullptr);
+    if (!newFunc)
+      return failure();
 
     OpBuilder builder(CI);
     auto dCI = builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
                                             newFunc.getResultTypes(), args);
     CI.replaceAllUsesWith(dCI);
     CI->erase();
+    return success();
   }
 
   template <typename T>
-  void HandleAutoDiffReverse(SymbolTableCollection &symbolTable, T CI) {
+  LogicalResult HandleAutoDiffReverse(SymbolTableCollection &symbolTable,
+                                      T CI) {
     std::vector<DIFFE_TYPE> constants;
     SmallVector<mlir::Value, 2> args;
 
@@ -144,12 +148,15 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
         /*should return*/ false, mode, freeMemory, width,
         /*addedType*/ nullptr, type_args, volatile_args,
         /*augmented*/ nullptr, symbolTable);
+    if (!newFunc)
+      return failure();
 
     OpBuilder builder(CI);
     auto dCI = builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
                                             newFunc.getResultTypes(), args);
     CI.replaceAllUsesWith(dCI);
     CI->erase();
+    return success();
   }
 
   void lowerEnzymeCalls(SymbolTableCollection &symbolTable,
@@ -167,7 +174,11 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
       for (auto T : toLower) {
         if (auto F = dyn_cast<enzyme::ForwardDiffOp>(T)) {
-          HandleAutoDiff(symbolTable, F);
+          auto res = HandleAutoDiff(symbolTable, F);
+          if (!res.succeeded()) {
+            signalPassFailure();
+            return;
+          }
         } else {
           llvm_unreachable("Illegal type");
         }
@@ -187,7 +198,11 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
       for (auto T : toLower) {
         if (auto F = dyn_cast<enzyme::AutoDiffOp>(T)) {
-          HandleAutoDiffReverse(symbolTable, F);
+          auto res = HandleAutoDiffReverse(symbolTable, F);
+          if (!res.succeeded()) {
+            signalPassFailure();
+            return;
+          }
         } else {
           llvm_unreachable("Illegal type");
         }
@@ -201,7 +216,6 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 namespace mlir {
 namespace enzyme {
 std::unique_ptr<Pass> createDifferentiatePass() {
-  new DifferentiatePass();
   return std::make_unique<DifferentiatePass>();
 }
 } // namespace enzyme
