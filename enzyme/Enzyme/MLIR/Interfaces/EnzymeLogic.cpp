@@ -183,6 +183,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
                                   unnecessaryInstructions, gutils, TLI);
                                   */
 
+  bool valid = true;
   for (Block &oBB : gutils->oldFunc.getFunctionBody().getBlocks()) {
     // Don't create derivatives for code that results in termination
     if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
@@ -205,7 +206,8 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     auto last = oBB.empty() ? oBB.end() : std::prev(oBB.end());
     for (auto it = first; it != last; ++it) {
       // TODO: propagate errors.
-      (void)gutils->visitChild(&*it);
+      auto res = gutils->visitChild(&*it);
+      valid &= res.succeeded();
     }
 
     createTerminator(gutils, &oBB, retType, returnValue);
@@ -231,6 +233,9 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
 
   auto nf = gutils->newFunc;
   delete gutils;
+
+  if (!valid)
+    return nullptr;
 
   // if (PostOpt)
   //  PPC.optimizeIntermediate(nf);
