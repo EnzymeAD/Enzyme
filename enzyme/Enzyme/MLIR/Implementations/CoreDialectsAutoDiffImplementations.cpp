@@ -224,6 +224,46 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
 
 LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
     Operation *op, OpBuilder &builder, MGradientUtils *gutils) {
+
+  // For all operands that are forwarded to the body, if they are active, also
+  // add the shadow as operand.
+  auto regionBranchOp = dyn_cast<RegionBranchOpInterface>(op);
+  if (!regionBranchOp) {
+    op->emitError() << " RegionBranchOpInterface not implemented for " << *op
+                    << "\n";
+    return failure();
+  }
+
+  SmallVector<RegionSuccessor> successors;
+  regionBranchOp.getEntrySuccessorRegions(
+      SmallVector<Attribute>(op->getNumOperands(), Attribute()), successors);
+
+  // TODO: we may need to record, for every successor, which of its inputs
+  // need a shadow to recreate the body correctly.
+  llvm::SmallDenseSet<unsigned> operandPositionsToShadow;
+  for (const RegionSuccessor &successor : successors) {
+    if (!successor.isParent() && successor.getSuccessor()->empty())
+      continue;
+
+    OperandRange operandRange =
+        regionBranchOp.getEntrySuccessorOperands(successor);
+
+    // Need to know which of the arguments are being forwarded to from
+    // operands.
+    for (auto &&[i, regionValue, operand] :
+         llvm::enumerate(successor.getSuccessorInputs(), operandRange)) {
+      if (gutils->isConstantValue(regionValue))
+        continue;
+      operandPositionsToShadow.insert(operandRange.getBeginOperandIndex() + i);
+    }
+  }
+  return controlFlowForwardHandler(op, builder, gutils,
+                                   operandPositionsToShadow);
+}
+
+LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
+    Operation *op, OpBuilder &builder, MGradientUtils *gutils,
+    const llvm::SmallDenseSet<unsigned> &operandPositionsToShadow) {
   // For all active results, add shadow types.
   // For now, assuming all results are relevant.
   Operation *newOp = gutils->getNewFromOriginal(op);
@@ -244,37 +284,6 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
     newOpResultTypes.push_back(typeIface.getShadowType());
   }
 
-  // For all operands that are forwarded to the body, if they are active, also
-  // add the shadow as operand.
-  auto regionBranchOp = dyn_cast<RegionBranchOpInterface>(op);
-  if (!regionBranchOp) {
-    op->emitError() << " RegionBranchOpInterface not implemented for " << *op
-                    << "\n";
-    return failure();
-  }
-
-  SmallVector<RegionSuccessor> successors;
-  // TODO: we may need to record, for every successor, which of its inputs
-  // need a shadow to recreate the body correctly.
-  llvm::SmallDenseSet<unsigned> operandPositionsToShadow;
-  regionBranchOp.getEntrySuccessorRegions(
-      SmallVector<Attribute>(op->getNumOperands(), Attribute()), successors);
-  for (const RegionSuccessor &successor : successors) {
-    if (!successor.isParent() && successor.getSuccessor()->empty())
-      continue;
-
-    OperandRange operandRange =
-        regionBranchOp.getEntrySuccessorOperands(successor);
-
-    // Need to know which of the arguments are being forwarded to from
-    // operands.
-    for (auto &&[i, regionValue, operand] :
-         llvm::enumerate(successor.getSuccessorInputs(), operandRange)) {
-      if (gutils->isConstantValue(regionValue))
-        continue;
-      operandPositionsToShadow.insert(operandRange.getBeginOperandIndex() + i);
-    }
-  }
   SmallVector<Value> newOperands;
   newOperands.reserve(op->getNumOperands() + operandPositionsToShadow.size());
   for (OpOperand &operand : op->getOpOperands()) {
