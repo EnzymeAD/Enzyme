@@ -24,6 +24,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "AliasAnalysis.h"
+#include "Dialect/Ops.h"
 
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
@@ -123,6 +124,29 @@ static ChangeResult mergeSets(DenseSet<T> &dest, const DenseSet<T> &src) {
 
 Attribute enzyme::PointsToSets::serialize(MLIRContext *ctx) const {
   SmallVector<Attribute> pointsToArray;
+  auto sortKeys = [&](Attribute a, Attribute b) {
+    auto distinctA = dyn_cast<DistinctAttr>(a);
+    auto distinctB = dyn_cast<DistinctAttr>(b);
+    // If not distinct attributes, sort them arbitrarily.
+    if (!(distinctA && distinctB))
+      return &a < &b;
+
+    auto pseudoA = dyn_cast_if_present<PseudoAliasClassAttr>(
+        distinctA.getReferencedAttr());
+    auto pseudoB = dyn_cast_if_present<PseudoAliasClassAttr>(
+        distinctB.getReferencedAttr());
+    auto strA = dyn_cast_if_present<StringAttr>(distinctA.getReferencedAttr());
+    auto strB = dyn_cast_if_present<StringAttr>(distinctB.getReferencedAttr());
+    if (pseudoA && pseudoB) {
+      return std::make_pair(pseudoA.getArgNumber(), pseudoA.getDepth()) <
+             std::make_pair(pseudoB.getArgNumber(), pseudoB.getDepth());
+    } else if (strA && strB) {
+      return strA.strref() < strB.strref();
+    }
+    // Order pseudo classes before fresh classes
+    return pseudoA && !pseudoB;
+  };
+
   for (const auto &[srcClass, destClasses] : pointsTo) {
     SmallVector<Attribute, 2> pair = {srcClass};
     SmallVector<Attribute, 5> aliasClasses;
@@ -134,35 +158,15 @@ Attribute enzyme::PointsToSets::serialize(MLIRContext *ctx) const {
       for (const DistinctAttr &destClass : destClasses.getAliasClasses()) {
         aliasClasses.push_back(destClass);
       }
-      llvm::sort(aliasClasses, [](Attribute a, Attribute b) {
-        auto distinctA = dyn_cast<DistinctAttr>(a);
-        auto distinctB = dyn_cast<DistinctAttr>(b);
-        if (distinctA && distinctB) {
-          auto strA =
-              dyn_cast_if_present<StringAttr>(distinctA.getReferencedAttr());
-          auto strB =
-              dyn_cast_if_present<StringAttr>(distinctB.getReferencedAttr());
-          if (strA && strB)
-            return strA.strref() < strB.strref();
-        }
-        // If there's no string to compare, sort them arbitrarily.
-        return &a < &b;
-      });
+      llvm::sort(aliasClasses, sortKeys);
     }
     pair.push_back(ArrayAttr::get(ctx, aliasClasses));
     pointsToArray.push_back(ArrayAttr::get(ctx, pair));
   }
-  llvm::sort(pointsToArray, [](Attribute a, Attribute b) {
+  llvm::sort(pointsToArray, [&](Attribute a, Attribute b) {
     auto arrA = cast<ArrayAttr>(a);
     auto arrB = cast<ArrayAttr>(b);
-    auto keyA = dyn_cast_if_present<StringAttr>(
-        cast<DistinctAttr>(arrA[0]).getReferencedAttr());
-    auto keyB = dyn_cast_if_present<StringAttr>(
-        cast<DistinctAttr>(arrB[0]).getReferencedAttr());
-    if (keyA && keyB)
-      return keyA.strref() < keyB.strref();
-
-    return &a < &b;
+    return sortKeys(arrA[0], arrB[0]);
   });
   return ArrayAttr::get(ctx, pointsToArray);
 }
@@ -601,11 +605,14 @@ void enzyme::PointsToPointerAnalysis::processCallToSummarizedFunc(
   StringRef calleeName = cast<SymbolRefAttr>(call.getCallableForCallee())
                              .getLeafReference()
                              .getValue();
-  auto lookup = [&](StringRef key) -> std::optional<AliasClassSet> {
+  auto lookup = [&](unsigned argNumber,
+                    unsigned depth) -> std::optional<AliasClassSet> {
     for (const auto &[attr, aliasClassSet] : summary) {
-      if (auto strAttr =
-              dyn_cast_if_present<StringAttr>(attr.getReferencedAttr())) {
-        if (strAttr.getValue() == key) {
+      if (auto pseudoClass = dyn_cast_if_present<PseudoAliasClassAttr>(
+              attr.getReferencedAttr())) {
+        if (pseudoClass.getFunction().getValue() == calleeName &&
+            pseudoClass.getArgNumber() == argNumber &&
+            pseudoClass.getDepth() == depth) {
           return aliasClassSet;
         }
       }
@@ -618,23 +625,19 @@ void enzyme::PointsToPointerAnalysis::processCallToSummarizedFunc(
   for (auto &&[i, argOperand] : llvm::enumerate(call.getArgOperands())) {
     auto *arg = getOrCreateFor<AliasClassLattice>(call, argOperand);
 
-    std::string key = ("arg-" + calleeName + "-" + std::to_string(i)).str();
-    std::optional<AliasClassSet> aliasClasses = lookup(key);
+    std::optional<AliasClassSet> aliasClasses = lookup(i, /*depth=*/0);
     // If the argument class isn't in the summary, it hasn't changed what
     // it points to during the function.
     if (!aliasClasses)
       continue;
 
     for (DistinctAttr ac : aliasClasses->getAliasClasses()) {
-      if (auto strAttr =
-              dyn_cast_if_present<StringAttr>(ac.getReferencedAttr())) {
+      if (!isa<PseudoAliasClassAttr>(ac.getReferencedAttr())) {
         // Fresh classes go in directly
-        if (strAttr.getValue().starts_with("fresh")) {
-          changed |=
-              after->insert(arg->getAliasClassesObject(), AliasClassSet(ac));
-        } else {
-          // TODO: need to handle unifying implicitly de-referenced classes
-        }
+        changed |=
+            after->insert(arg->getAliasClassesObject(), AliasClassSet(ac));
+      } else {
+        // TODO: need to handle unifying implicitly de-referenced classes
       }
     }
   }
@@ -947,12 +950,12 @@ void enzyme::AliasAnalysis::setToEntryState(AliasClassLattice *lattice) {
           // reasoning about arguments aliasing each other until analyzing
           // callers. These distinct attributes may be unified (copied over?)
           // depending on the calling contexts of this function.
-          StringAttr debugLabel = funcOp.getArgAttrOfType<StringAttr>(
+          Attribute debugLabel = funcOp.getArgAttrOfType<StringAttr>(
               arg.getArgNumber(), "enzyme.tag");
           if (relative) {
-            debugLabel = StringAttr::get(
-                funcOp.getContext(), "arg-" + funcOp.getName() + "-" +
-                                         std::to_string(arg.getArgNumber()));
+            debugLabel =
+                PseudoAliasClassAttr::get(FlatSymbolRefAttr::get(funcOp),
+                                          arg.getArgNumber(), /*depth=*/0);
           }
           DistinctAttr argClass =
               originalClasses.getOriginalClass(lattice->getPoint(), debugLabel);
@@ -1115,25 +1118,21 @@ void enzyme::AliasAnalysis::createImplicitArgDereference(
     // implicitly dereferenced pseudo class.
     return;
   }
-  if (auto debugLabel =
-          dyn_cast_if_present<StringAttr>(srcClass.getReferencedAttr())) {
-    // TODO(jacob): make a custom attribute to encode the pseudo argument alias
-    // classes and their implicit dereferences
-    if (debugLabel.strref().starts_with("arg")) {
-      auto derefLabel = StringAttr::get(debugLabel.getContext(),
-                                        debugLabel.strref() + "-deref");
-      DistinctAttr derefClass =
-          originalClasses.getOriginalClass(readResult, derefLabel);
-      op->setAttr("implicit-deref", derefClass);
-      propagateIfChanged(result, result->join(AliasClassLattice::single(
-                                     readResult, derefClass)));
-      // The read source points to the dereferenced class
-      auto *pointsToState =
-          getOrCreate<PointsToSets>(&parent.getCallableRegion()->front());
-      propagateIfChanged(pointsToState,
-                         pointsToState->insert(source->getAliasClassesObject(),
-                                               AliasClassSet(derefClass)));
-    }
+  if (auto pseudoClass = dyn_cast_if_present<PseudoAliasClassAttr>(
+          srcClass.getReferencedAttr())) {
+    auto pseudoDeref = PseudoAliasClassAttr::get(pseudoClass.getFunction(),
+                                                 pseudoClass.getArgNumber(),
+                                                 pseudoClass.getDepth() + 1);
+    DistinctAttr derefClass =
+        originalClasses.getOriginalClass(readResult, pseudoDeref);
+    propagateIfChanged(result, result->join(AliasClassLattice::single(
+                                   readResult, derefClass)));
+    // The read source points to the dereferenced class
+    auto *pointsToState =
+        getOrCreate<PointsToSets>(&parent.getCallableRegion()->front());
+    propagateIfChanged(pointsToState,
+                       pointsToState->insert(source->getAliasClassesObject(),
+                                             AliasClassSet(derefClass)));
   }
 }
 

@@ -80,6 +80,9 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
 def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
   let summary = "Print the results of activity analysis";
   let constructor = "mlir::enzyme::createPrintActivityAnalysisPass()";
+  let dependentDialects = [
+    "enzyme::EnzymeDialect"
+  ];
   let options = [
     ListOption<
       /*C++ variable name=*/"funcsToAnalyze",
