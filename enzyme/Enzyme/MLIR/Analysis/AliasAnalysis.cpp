@@ -122,10 +122,6 @@ static ChangeResult mergeSets(DenseSet<T> &dest, const DenseSet<T> &src) {
 }
 
 Attribute enzyme::PointsToSets::serialize(MLIRContext *ctx) const {
-  if (pointsTo.empty()) {
-    return StringAttr::get(ctx, "<empty>");
-  }
-
   SmallVector<Attribute> pointsToArray;
   for (const auto &[srcClass, destClasses] : pointsTo) {
     SmallVector<Attribute, 2> pair = {srcClass};
