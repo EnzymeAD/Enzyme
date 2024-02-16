@@ -3892,7 +3892,34 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
             .Only(-1, &I),
         &I);
     return;
-
+#if LLVM_VERSION_MAJOR >= 12
+  case Intrinsic::smax:
+  case Intrinsic::smin:
+  case Intrinsic::umax:
+  case Intrinsic::umin:
+    if (direction & UP) {
+      auto returnType = getAnalysis(&I)[{-1}];
+      if (returnType == BaseType::Integer || returnType == BaseType::Pointer) {
+        updateAnalysis(I.getOperand(0), TypeTree(returnType).Only(-1, &I), &I);
+        updateAnalysis(I.getOperand(1), TypeTree(returnType).Only(-1, &I), &I);
+      }
+    }
+    if (direction & DOWN) {
+      auto opType0 = getAnalysis(I.getOperand(0))[{-1}];
+      auto opType1 = getAnalysis(I.getOperand(1))[{-1}];
+      if (opType0 == opType1 &&
+          (opType0 == BaseType::Integer || opType0 == BaseType::Pointer)) {
+        updateAnalysis(&I, TypeTree(opType0).Only(-1, &I), &I);
+      } else if (opType0 == BaseType::Integer &&
+                 opType1 == BaseType::Anything) {
+        updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1, &I), &I);
+      } else if (opType1 == BaseType::Integer &&
+                 opType0 == BaseType::Anything) {
+        updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1, &I), &I);
+      }
+    }
+    return;
+#endif
   case Intrinsic::umul_with_overflow:
   case Intrinsic::smul_with_overflow:
   case Intrinsic::ssub_with_overflow:
