@@ -126,6 +126,9 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     llvm::errs() << fn << "\n";
     llvm_unreachable("Differentiating empty function");
   }
+  assert(fn.getFunctionBody().front().getNumArguments() == constants.size());
+  assert(fn.getFunctionBody().front().getNumArguments() ==
+         volatile_args.size());
 
   MForwardCacheKey tup = {
       fn, retType, constants,
