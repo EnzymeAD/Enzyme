@@ -71,6 +71,13 @@ struct DifferentiateWrapperPass
       }
     }
 
+    if (constants.size() != fn.getFunctionBody().front().getNumArguments()) {
+      fn->emitError()
+          << "Incorrect number of arg activity states for function, found "
+          << split;
+      return;
+    }
+
     DIFFE_TYPE retType = retTy.getValue();
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
@@ -108,7 +115,6 @@ struct DifferentiateWrapperPass
 namespace mlir {
 namespace enzyme {
 std::unique_ptr<Pass> createDifferentiateWrapperPass() {
-  new DifferentiateWrapperPass();
   return std::make_unique<DifferentiateWrapperPass>();
 }
 } // namespace enzyme
