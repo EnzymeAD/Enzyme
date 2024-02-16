@@ -4969,7 +4969,7 @@ public:
     fromType = from.getBuiltinType(B.getContext());
     toType = to.getType(B.getContext());
 
-    if (mode == TruncMem)
+    if (mode == TruncMemMode)
       tmpBlock = B.CreateAlloca(fromType);
     else
       tmpBlock = nullptr;
@@ -5002,9 +5002,10 @@ public:
 
   Value *truncate(IRBuilder<> &B, Value *v) {
     switch (mode) {
-    case TruncMem:
+    case TruncMemMode:
       return floatMemTruncate(B, v, tmpBlock, from, to);
-    case TruncOp:
+    case TruncOpMode:
+    case TruncOpFullModuleMode:
       return floatValTruncate(B, v, tmpBlock, from, to);
     default:
       llvm_unreachable("Unknown trunc mode");
@@ -5013,9 +5014,10 @@ public:
 
   Value *expand(IRBuilder<> &B, Value *v) {
     switch (mode) {
-    case TruncMem:
+    case TruncMemMode:
       return floatMemExpand(B, v, tmpBlock, from, to);
-    case TruncOp:
+    case TruncOpMode:
+    case TruncOpFullModuleMode:
       return floatValExpand(B, v, tmpBlock, from, to);
     default:
       llvm_unreachable("Unknown trunc mode");
@@ -5088,7 +5090,7 @@ public:
   }
   void visitSelectInst(llvm::SelectInst &SI) {
     switch (mode) {
-    case TruncMem: {
+    case TruncMemMode: {
       auto newI = getNewFromOriginal(&SI);
       IRBuilder<> B(newI);
       auto newT = truncate(B, getNewFromOriginal(SI.getTrueValue()));
@@ -5101,7 +5103,8 @@ public:
       newI->eraseFromParent();
       return;
     }
-    case TruncOp:
+    case TruncOpMode:
+    case TruncOpFullModuleMode:
       return;
     default:
       llvm_unreachable("");
@@ -5347,9 +5350,11 @@ public:
       if (handleKnownCalls(CI, called, getFuncNameFromCall(&CI), newCall))
         return;
 
-    RequestContext ctx(&CI, &BuilderZ);
-    auto val = GetShadow(ctx, getNewFromOriginal(CI.getCalledOperand()));
-    newCall->setCalledOperand(val);
+    if (mode != TruncOpFullModuleMode) {
+      RequestContext ctx(&CI, &BuilderZ);
+      auto val = GetShadow(ctx, getNewFromOriginal(CI.getCalledOperand()));
+      newCall->setCalledOperand(val);
+    }
     return;
   }
   void visitFPTruncInst(FPTruncInst &I) { return; }
@@ -5426,7 +5431,7 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
 
   FunctionType *FTy = FunctionType::get(NewTy, params, totrunc->isVarArg());
   std::string truncName = std::string("__enzyme_done_truncate_") +
-                          (mode == TruncMem ? "mem" : "op") + "_func_" +
+                          (mode == TruncMemMode ? "mem" : "op") + "_func_" +
                           from.to_string() + "_" + to.to_string() + "_" +
                           totrunc->getName().str();
   Function *NewF = Function::Create(FTy, totrunc->getLinkage(), truncName,
@@ -5463,6 +5468,7 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
     llvm_unreachable("attempting to truncate function without definition");
   }
 
+  // TODO This is overloaded an doesnt do what it should do here
   if (from < to) {
     std::string s;
     llvm::raw_string_ostream ss(s);
