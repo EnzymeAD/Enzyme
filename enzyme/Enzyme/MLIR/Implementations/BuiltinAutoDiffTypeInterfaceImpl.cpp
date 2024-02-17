@@ -57,7 +57,13 @@ class TensorTypeInterface
 public:
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
     auto tenType = self.cast<TensorType>();
-    auto attr = DenseElementsAttr::get(tenType, 0);
+    auto ET = tenType.getElementType();
+    size_t num = 1;
+    for (auto sz : tenType.getShape())
+      num *= sz;
+    APFloat apvalue(ET.cast<FloatType>().getFloatSemantics(), 0);
+    SmallVector<APFloat> supportedValues(num, apvalue);
+    auto attr = DenseElementsAttr::get(tenType, supportedValues);
     return builder.create<arith::ConstantOp>(loc, tenType, attr);
   }
 
