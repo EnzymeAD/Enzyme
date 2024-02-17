@@ -23,6 +23,7 @@
 // the function passed as the first argument.
 //
 //===----------------------------------------------------------------------===//
+#include "llvm/Support/ErrorHandling.h"
 #include <llvm/Config/llvm-config.h>
 
 #if LLVM_VERSION_MAJOR >= 16
@@ -2058,8 +2059,7 @@ public:
       StringRef ConfigStr(EnzymeTruncateAll);
       auto Invalid = [=]() {
         // TODO emit better diagnostic
-        llvm::errs() << "error: invalid format for truncation config\n";
-        abort();
+        llvm::report_fatal_error("error: invalid format for truncation config")
       };
 
       // "64" or "11-52"
