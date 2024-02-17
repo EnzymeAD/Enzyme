@@ -183,6 +183,9 @@ class PointsToSets : public dataflow::AbstractDenseLattice {
 public:
   using AbstractDenseLattice::AbstractDenseLattice;
 
+  // Serialize the points-to information of this state into an attribute.
+  Attribute serialize(MLIRContext *ctx) const;
+
   void print(raw_ostream &os) const override;
 
   ChangeResult join(const AbstractDenseLattice &lattice) override;
@@ -286,6 +289,11 @@ public:
                              Value capturedValue, Value destinationAddress,
                              bool isMustStore = false);
 
+  void
+  processCallToSummarizedFunc(CallOpInterface call,
+                              DenseMap<DistinctAttr, AliasClassSet> &summary,
+                              PointsToSets *after);
+
 private:
   /// Alias classes originally assigned to known-distinct values, e.g., fresh
   /// allocations, by this analysis. This does NOT necessarily need to be shared
@@ -346,9 +354,13 @@ private:
 class AliasAnalysis
     : public dataflow::SparseForwardDataFlowAnalysis<AliasClassLattice> {
 public:
-  AliasAnalysis(DataFlowSolver &solver, MLIRContext *ctx)
+  AliasAnalysis(DataFlowSolver &solver, MLIRContext *ctx, bool relative = false)
       : SparseForwardDataFlowAnalysis(solver),
-        entryClass(DistinctAttr::create(StringAttr::get(ctx, "entry"))) {}
+        entryClass(DistinctAttr::create(StringAttr::get(ctx, "entry"))),
+        relative(relative) {
+    if (relative)
+      assert(!solver.getConfig().isInterprocedural());
+  }
 
   void setToEntryState(AliasClassLattice *lattice) override;
 
@@ -365,8 +377,20 @@ private:
                 ArrayRef<const AliasClassLattice *> operands,
                 ArrayRef<AliasClassLattice *> results);
 
+  // Create a pseudo alias class when loading from a function argument where we
+  // don't know what it points to. The pseudo class indicates that it points to
+  // _something_ and is expected to be unified with a concrete alias class when
+  // the function summaries are used at this function's call sites.
+  void createImplicitArgDereference(Operation *op, AliasClassLattice *source,
+                                    DistinctAttr srcClass,
+                                    AliasClassLattice *result);
+
   /// A special alias class to denote unannotated pointer arguments.
   const DistinctAttr entryClass;
+
+  /// If true, the analysis will operate in a relative intraprocedural way
+  /// assuming it is called bottom-up on the function call graph.
+  const bool relative;
 
   /// Alias classes originally assigned to known-distinct values, e.g., fresh
   /// allocations, by this analysis. This does NOT necessarily need to be shared
