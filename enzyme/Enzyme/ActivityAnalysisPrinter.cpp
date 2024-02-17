@@ -91,7 +91,7 @@ bool printActivityAnalysis(llvm::Function &F, TargetLibraryInfo &TLI) {
     } else if (a.getType()->isPointerTy()) {
 #if LLVM_VERSION_MAJOR >= 17
 #else
-      if (!a.getType().isOpaquePointerTy()) {
+      if (!a.getType()->isOpaquePointerTy()) {
         auto et = a.getType()->getPointerElementType();
         if (et->isFPOrFPVectorTy()) {
           dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
@@ -117,7 +117,7 @@ bool printActivityAnalysis(llvm::Function &F, TargetLibraryInfo &TLI) {
   } else if (F.getReturnType()->isPointerTy()) {
 #if LLVM_VERSION_MAJOR >= 17
 #else
-    if (!F.getReturnType().isOpaquePointerTy()) {
+    if (!F.getReturnType()->isOpaquePointerTy()) {
       auto et = F.getReturnType()->getPointerElementType();
       if (et->isFPOrFPVectorTy()) {
         dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
