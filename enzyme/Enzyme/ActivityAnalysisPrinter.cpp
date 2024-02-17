@@ -89,13 +89,9 @@ bool printActivityAnalysis(llvm::Function &F, TargetLibraryInfo &TLI) {
     if (a.getType()->isFPOrFPVectorTy()) {
       dt = ConcreteType(a.getType()->getScalarType());
     } else if (a.getType()->isPointerTy()) {
-      bool opaque = false;
 #if LLVM_VERSION_MAJOR >= 17
-      opaque = true;
 #elif LLVM_VERSION_MAJOR >= 13
-      opaque = a.getType()->isOpaquePointerTy();
-#endif
-      if (!opaque) {
+      if (!a.getType()->isOpaquePointerTy()) {
         auto et = a.getType()->getPointerElementType();
         if (et->isFPOrFPVectorTy()) {
           dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
@@ -103,6 +99,14 @@ bool printActivityAnalysis(llvm::Function &F, TargetLibraryInfo &TLI) {
           dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
         }
       }
+#else
+      auto et = a.getType()->getPointerElementType();
+      if (et->isFPOrFPVectorTy()) {
+        dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
+      } else if (et->isPointerTy()) {
+        dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
+      }
+#endif
     } else if (a.getType()->isIntOrIntVectorTy()) {
       dt = ConcreteType(BaseType::Integer);
     }
@@ -118,13 +122,9 @@ bool printActivityAnalysis(llvm::Function &F, TargetLibraryInfo &TLI) {
   if (F.getReturnType()->isFPOrFPVectorTy()) {
     dt = ConcreteType(F.getReturnType()->getScalarType());
   } else if (F.getReturnType()->isPointerTy()) {
-    bool opaque = false;
 #if LLVM_VERSION_MAJOR >= 17
-    opaque = true;
 #elif LLVM_VERSION_MAJOR >= 13
-    opaque = F.getType()->isOpaquePointerTy();
-#endif
-    if (!opaque) {
+    if (!F.getType()->isOpaquePointerTy()) {
       auto et = F.getReturnType()->getPointerElementType();
       if (et->isFPOrFPVectorTy()) {
         dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
@@ -132,6 +132,14 @@ bool printActivityAnalysis(llvm::Function &F, TargetLibraryInfo &TLI) {
         dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
       }
     }
+#else
+    auto et = F.getReturnType()->getPointerElementType();
+    if (et->isFPOrFPVectorTy()) {
+      dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
+    } else if (et->isPointerTy()) {
+      dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
+    }
+#endif
   } else if (F.getReturnType()->isIntOrIntVectorTy()) {
     dt = ConcreteType(BaseType::Integer);
   }
