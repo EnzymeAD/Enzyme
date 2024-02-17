@@ -318,5 +318,6 @@ LogicalResult MGradientUtils::visitChild(Operation *op) {
       return iface.createForwardModeTangent(builder, this);
     }
   }
-  return op->emitError() << "could not compute the adjoint for this operation";
+  return op->emitError() << "could not compute the adjoint for this operation "
+                         << *op;
 }

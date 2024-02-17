@@ -37,10 +37,9 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
+#include <optional>
 #if LLVM_VERSION_MAJOR <= 16
 #include "llvm/ADT/Optional.h"
-#else
-#include <optional>
 #endif
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
@@ -112,6 +111,12 @@ llvm::cl::opt<bool> EnzymeAttributor("enzyme-attributor", cl::init(false),
 
 llvm::cl::opt<bool> EnzymeOMPOpt("enzyme-omp-opt", cl::init(false), cl::Hidden,
                                  cl::desc("Whether to enable openmp opt"));
+
+llvm::cl::opt<std::string> EnzymeTruncateAll(
+    "enzyme-truncate-all", cl::init(""), cl::Hidden,
+    cl::desc(
+        "Truncate all floating point operations. "
+        "E.g. \"64to32\" or \"64to<exponent_width>-<significand_width>\"."));
 
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
@@ -2044,6 +2049,76 @@ public:
     return status;
   }
 
+  bool handleFullModuleTrunc(Function &F) {
+    typedef std::vector<std::pair<FloatRepresentation, FloatRepresentation>>
+        TruncationsTy;
+    static TruncationsTy FullModuleTruncs = []() -> TruncationsTy {
+      StringRef ConfigStr(EnzymeTruncateAll);
+      auto Invalid = [=]() {
+        // TODO emit better diagnostic
+        llvm::errs() << "error: invalid format for truncation config\n";
+        abort();
+      };
+
+      // "64" or "11-52"
+      auto parseFloatRepr = [&]() -> std::optional<FloatRepresentation> {
+        unsigned Tmp = 0;
+        if (ConfigStr.consumeInteger(10, Tmp))
+          return {};
+        if (ConfigStr.consume_front("-")) {
+          unsigned Tmp2 = 0;
+          if (ConfigStr.consumeInteger(10, Tmp2))
+            Invalid();
+          return FloatRepresentation(Tmp, Tmp2);
+        }
+        return getDefaultFloatRepr(Tmp);
+      };
+
+      // Parse "64to32;32to16;5-10to4-9"
+      TruncationsTy Tmp;
+      while (true) {
+        auto From = parseFloatRepr();
+        if (!From && !ConfigStr.empty())
+          Invalid();
+        if (!From)
+          break;
+        if (!ConfigStr.consume_front("to"))
+          Invalid();
+        auto To = parseFloatRepr();
+        if (!To)
+          Invalid();
+        Tmp.push_back({*From, *To});
+        ConfigStr.consume_front(";");
+      }
+      return Tmp;
+    }();
+
+    if (FullModuleTruncs.empty())
+      return false;
+
+    // TODO sort truncations (64to32, then 32to16 will make everything 16)
+    for (auto Truncation : FullModuleTruncs) {
+      IRBuilder<> Builder(F.getContext());
+      RequestContext context(&*F.getEntryBlock().begin(), &Builder);
+      Function *TruncatedFunc =
+          Logic.CreateTruncateFunc(context, &F, Truncation.first,
+                                   Truncation.second, TruncOpFullModuleMode);
+
+      ValueToValueMapTy Mapping;
+      for (auto &&[Arg, TArg] : llvm::zip(F.args(), TruncatedFunc->args()))
+        Mapping[&TArg] = &Arg;
+
+      // Move the truncated body into the original function
+      F.deleteBody();
+      F.getBasicBlockList().splice(F.begin(),
+                                   TruncatedFunc->getBasicBlockList());
+      RemapFunction(F, Mapping,
+                    RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
+      TruncatedFunc->deleteBody();
+    }
+    return true;
+  }
+
   bool lowerEnzymeCalls(Function &F, std::set<Function *> &done) {
     if (done.count(&F))
       return false;
@@ -2051,6 +2126,9 @@ public:
 
     if (F.empty())
       return false;
+
+    if (handleFullModuleTrunc(F))
+      return true;
 
     bool Changed = false;
 
@@ -2629,10 +2707,10 @@ public:
       HandleBatch(call);
     }
     for (auto call : toTruncateFuncMem) {
-      HandleTruncateFunc(call, TruncMem);
+      HandleTruncateFunc(call, TruncMemMode);
     }
     for (auto call : toTruncateFuncOp) {
-      HandleTruncateFunc(call, TruncOp);
+      HandleTruncateFunc(call, TruncOpMode);
     }
     for (auto call : toTruncateValue) {
       HandleTruncateValue(call, true);

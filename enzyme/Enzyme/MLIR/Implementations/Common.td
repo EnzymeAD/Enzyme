@@ -1,3 +1,6 @@
+#ifndef ENZYME_MLIR_IMPLEMENTATIONS_COMMON
+#define ENZYME_MLIR_IMPLEMENTATIONS_COMMON
+
 class InactiveOp<string dialect_, string opName_> {
   string dialect = dialect_;
   string opName = opName_;
@@ -62,17 +65,19 @@ def Op {
 class ArithInst<string m> : Inst<m, "arith">;
 class MathInst<string m> : Inst<m, "math">;
 
-def AddF : ArithInst<"arith::AddFOp">;
-def SubF : ArithInst<"arith::SubFOp">;
-def NegF : ArithInst<"arith::NegFOp">;
-def MulF : ArithInst<"arith::MulFOp">;
-def DivF : ArithInst<"arith::DivFOp">;
-def RemF : ArithInst<"arith::RemFOp">;
+def AddF : ArithInst<"AddFOp">;
+def SubF : ArithInst<"SubFOp">;
+def NegF : ArithInst<"NegFOp">;
+def MulF : ArithInst<"MulFOp">;
+def DivF : ArithInst<"DivFOp">;
+def RemF : ArithInst<"RemFOp">;
 
-def CheckedMulF : ArithInst<"arith::MulFOp">;
-def CheckedDivF : ArithInst<"arith::DivFOp">;
+def CheckedMulF : ArithInst<"MulFOp">;
+def CheckedDivF : ArithInst<"DivFOp">;
 
-def CosF : MathInst<"math::CosOp">;
-def SinF : MathInst<"math::SinOp">;
-def ExpF : MathInst<"math::ExpOp">;
-def SqrtF : MathInst<"math::SqrtOp">;
+def CosF : MathInst<"CosOp">;
+def SinF : MathInst<"SinOp">;
+def ExpF : MathInst<"ExpOp">;
+def SqrtF : MathInst<"SqrtOp">;
+
+#endif // ENZYME_MLIR_IMPLEMENTATIONS_COMMON
