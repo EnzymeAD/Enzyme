@@ -15,10 +15,13 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "mlir/Support/LogicalResult.h"
 
+#include "llvm/ADT/DenseSet.h"
+
 namespace mlir {
 class DialectRegistry;
 class Operation;
 class OpBuilder;
+class RegionSuccessor;
 
 namespace enzyme {
 class MGradientUtils;
@@ -27,8 +30,14 @@ class MGradientUtilsReverse;
 namespace detail {
 // Non-template implementation of
 // AutoDiffUsingControlFlow::createForwardModeTangent.
+
 LogicalResult controlFlowForwardHandler(Operation *op, OpBuilder &builder,
                                         MGradientUtils *gutils);
+
+LogicalResult controlFlowForwardHandler(
+    Operation *op, OpBuilder &builder, MGradientUtils *gutils,
+    const llvm::SmallDenseSet<unsigned> &operandPositionsToShadow,
+    const llvm::SmallDenseSet<unsigned> &resultPositionsToShadow);
 
 // Implements forward-mode differentiation of branching operations.
 // Assumes that successive shadows are legal

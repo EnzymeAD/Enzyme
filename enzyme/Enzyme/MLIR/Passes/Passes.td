@@ -102,6 +102,13 @@ def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
       /*description=*/"Annotate every operation and value with its activity"
     >,
     Option<
+      /*C++ variable name=*/"dataflow",
+      /*CLI argument=*/"dataflow",
+      /*type=*/"bool",
+      /*default=*/"true",
+      /*description=*/"Whether to use the new Dataflow activity analysis"
+    >,
+    Option<
       /*C++ variable name=*/"inactiveArgs",
       /*CLI argument=*/"inactive-args",
       /*type=*/"bool",

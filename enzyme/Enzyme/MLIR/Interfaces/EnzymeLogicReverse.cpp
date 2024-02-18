@@ -165,6 +165,11 @@ Create reverse mode adjoint for an operation.
 */
 void MEnzymeLogic::visitChild(Operation *op, OpBuilder &builder,
                               MGradientUtilsReverse *gutils) {
+  if (llvm::all_of(op->getResults(),
+                   [gutils](Value v) { return gutils->isConstantValue(v); }) &&
+      gutils->isConstantInstruction(op)) {
+    return;
+  }
   if (auto ifaceOp = dyn_cast<ReverseAutoDiffOpInterface>(op)) {
     SmallVector<Value> caches = ifaceOp.cacheValues(gutils);
     ifaceOp.createReverseModeAdjoint(builder, gutils, caches);
@@ -175,6 +180,7 @@ void MEnzymeLogic::visitChild(Operation *op, OpBuilder &builder,
       gutils->clearValue(result, builder);
     }
   }
+  op->emitError() << "could not compute the adjoint for this operation " << *op;
 }
 
 void MEnzymeLogic::visitChildren(Block *oBB, Block *reverseBB,
