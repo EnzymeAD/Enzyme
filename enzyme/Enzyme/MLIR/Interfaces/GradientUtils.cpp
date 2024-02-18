@@ -306,11 +306,7 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
 
 LogicalResult MGradientUtils::visitChild(Operation *op) {
   if (mode == DerivativeMode::ForwardMode) {
-    // In absence of a proper activity analysis, approximate it by treating any
-    // side effect-free operation producing constants as inactive.
-    // if (auto iface = dyn_cast<MemoryEffectOpInterface>(op)) {
-    if (!isa<BranchOpInterface>(op) &&
-        !isa<RegionBranchTerminatorOpInterface>(op) &&
+    if ((op->getBlock()->getTerminator() != op) &&
         llvm::all_of(op->getResults(),
                      [this](Value v) { return isConstantValue(v); }) &&
         /*iface.hasNoEffect()*/ activityAnalyzer->isConstantOperation(TR, op)) {
