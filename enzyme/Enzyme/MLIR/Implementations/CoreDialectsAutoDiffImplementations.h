@@ -12,6 +12,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#ifndef ENZYMEMLIR_CORE_IMPL_H_
+#define ENZYMEMLIR_CORE_IMPL_H_
+
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "mlir/Support/LogicalResult.h"
 
@@ -198,5 +201,9 @@ void registerLinalgDialectAutoDiffInterface(DialectRegistry &registry);
 void registerMathDialectAutoDiffInterface(DialectRegistry &registry);
 
 void registerCoreDialectAutodiffInterfaces(DialectRegistry &registry);
+
+mlir::TypedAttr getConstantAttr(mlir::Type type, llvm::StringRef value);
 } // namespace enzyme
 } // namespace mlir
+
+#endif

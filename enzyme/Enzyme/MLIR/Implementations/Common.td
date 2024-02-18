@@ -61,12 +61,19 @@ class DiffeRetIndex<list<int> indices_> {
 }
 def DiffeRet : DiffeRetIndex<[-1]>;
 
+def Shadow : Operation</*primal*/0, /*shadow*/1> {
+}
+
 class Inst<string mnemonic, string dialect_>  : Operation</*primal*/1, /*shadow*/0> {
   string name = mnemonic;
   string dialect = dialect_;
 }
 
 def Op {
+}
+
+def SelectIfActive : Operation</*primal*/0, /*shadow*/0, /*custom*/1> {
+
 }
 
 class ConstantFP<string val, string dialect_, string op_> : Operation</*primal*/0, /*shadow*/0> {

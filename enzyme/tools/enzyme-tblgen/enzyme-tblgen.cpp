@@ -465,7 +465,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
           assert(!isVec);
           ord = ord1;
         }
-        os << ord << ".getType(), getTensorAttr(" << ord << ".getType(), ";
+        os << ord << ".getType(), mlir::enzyme::getConstantAttr(" << ord
+           << ".getType(), ";
         os << "\"" << value->getValue() << "\"))";
       } else {
         if (resultRoot->getNumArgs() != 1)
