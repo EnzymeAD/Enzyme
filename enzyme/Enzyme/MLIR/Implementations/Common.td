@@ -76,10 +76,11 @@ def SelectIfActive : Operation</*primal*/0, /*shadow*/0, /*custom*/1> {
 
 }
 
-class ConstantFP<string val, string dialect_, string op_> : Operation</*primal*/0, /*shadow*/0> {
+class ConstantFP<string val, string dialect_, string op_, string type_=""> : Operation</*primal*/0, /*shadow*/0> {
   string value = val;
   string dialect = dialect_;
   string opName = op_;
+  string type = type_;
 }
 
 class ArithInst<string m> : Inst<m, "arith">;

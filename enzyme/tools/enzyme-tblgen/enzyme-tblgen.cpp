@@ -465,8 +465,12 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
           assert(!isVec);
           ord = ord1;
         }
-        os << ord << ".getType(), mlir::enzyme::getConstantAttr(" << ord
-           << ".getType(), ";
+        os << ord << ".getType(), ";
+        auto typeCast =
+            dyn_cast<StringInit>(Def->getValueInit("type"))->getValue();
+        if (typeCast != "")
+          os << "(" << typeCast << ")";
+        os << "mlir::enzyme::getConstantAttr(" << ord << ".getType(), ";
         os << "\"" << value->getValue() << "\"))";
       } else {
         if (resultRoot->getNumArgs() != 1)
