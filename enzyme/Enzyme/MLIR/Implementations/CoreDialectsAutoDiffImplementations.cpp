@@ -186,29 +186,39 @@ LogicalResult mlir::enzyme::detail::allocationForwardHandler(
 
 void mlir::enzyme::detail::regionTerminatorForwardHandler(
     Operation *origTerminator, OpBuilder &builder, MGradientUtils *gutils) {
-  auto termIface = cast<RegionBranchTerminatorOpInterface>(origTerminator);
-  auto parentOp = termIface->getParentOp();
-
-  SmallVector<RegionSuccessor> successors;
-  termIface.getSuccessorRegions(
-      SmallVector<Attribute>(termIface->getNumOperands(), Attribute()),
-      successors);
+  auto parentOp = origTerminator->getParentOp();
 
   llvm::SmallDenseSet<unsigned> operandsToShadow;
-  for (auto &successor : successors) {
-    OperandRange operandRange = termIface.getSuccessorOperands(successor);
-    ValueRange targetValues = successor.isParent()
-                                  ? parentOp->getResults()
-                                  : successor.getSuccessorInputs();
-    assert(operandRange.size() == targetValues.size());
-    for (auto &&[i, target] : llvm::enumerate(targetValues)) {
-      if (!gutils->isConstantValue(target))
-        operandsToShadow.insert(operandRange.getBeginOperandIndex() + i);
+  if (auto termIface =
+          dyn_cast<RegionBranchTerminatorOpInterface>(origTerminator)) {
+    SmallVector<RegionSuccessor> successors;
+    termIface.getSuccessorRegions(
+        SmallVector<Attribute>(origTerminator->getNumOperands(), Attribute()),
+        successors);
+
+    for (auto &successor : successors) {
+      OperandRange operandRange = termIface.getSuccessorOperands(successor);
+      ValueRange targetValues = successor.isParent()
+                                    ? parentOp->getResults()
+                                    : successor.getSuccessorInputs();
+      assert(operandRange.size() == targetValues.size());
+      for (auto &&[i, target] : llvm::enumerate(targetValues)) {
+        if (!gutils->isConstantValue(target))
+          operandsToShadow.insert(operandRange.getBeginOperandIndex() + i);
+      }
+    }
+  } else {
+    assert(parentOp->getNumResults() == origTerminator->getNumOperands());
+    for (auto res : parentOp->getResults()) {
+      if (!gutils->isConstantValue(res))
+        operandsToShadow.insert(res.getResultNumber());
     }
   }
+
   SmallVector<Value> newOperands;
-  newOperands.reserve(termIface->getNumOperands() + operandsToShadow.size());
-  for (OpOperand &operand : termIface->getOpOperands()) {
+  newOperands.reserve(origTerminator->getNumOperands() +
+                      operandsToShadow.size());
+  for (OpOperand &operand : origTerminator->getOpOperands()) {
     newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
     if (operandsToShadow.contains(operand.getOperandNumber()))
       newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
