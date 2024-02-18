@@ -385,7 +385,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       os << "({\n";
       os << curIndent << INDENT << "// Computing SelectIfActive\n";
-      os << curIndent << INDENT << "Value *imVal = nullptr;\n";
+      if (intrinsic == MLIRDerivatives)
+        os << curIndent << INDENT << "mlir::Value imVal = nullptr;\n";
+      else
+        os << curIndent << INDENT << "llvm::Value *imVal = nullptr;\n";
 
       os << curIndent << INDENT << "if (!gutils->isConstantValue(";
 
@@ -415,7 +418,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                           retidx, origName, newFromOriginal, intrinsic);
         os << ";\n";
 
-        if (!vector) {
+        if (!vector && intrinsic != MLIRDerivatives) {
           os << curIndent << INDENT << INDENT
              << "llvm::Value* vec_imVal = gutils->getWidth() == 1 ? imVal : "
                 "UndefValue::get(gutils->getShadowType(imVal"
@@ -440,16 +443,15 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << curIndent << "})";
       return true;
     } else if (opName == "ConstantFP" || Def->isSubClassOf("ConstantFP")) {
-      if (resultRoot->getNumArgs() != 1)
-        PrintFatalError(pattern->getLoc(),
-                        "only single op constantfp supported");
-
       auto value = dyn_cast<StringInit>(Def->getValueInit("value"));
       if (!value)
         PrintFatalError(pattern->getLoc(), Twine("'value' not defined in ") +
                                                resultTree->getAsString());
 
       if (intrinsic == MLIRDerivatives) {
+        if (resultRoot->getNumArgs() > 1)
+          PrintFatalError(pattern->getLoc(),
+                          "only zero or single op constantfp supported");
         os << builder << ".create<"
            << cast<StringInit>(Def->getValueInit("dialect"))->getValue()
            << "::" << cast<StringInit>(Def->getValueInit("opName"))->getValue()
@@ -466,6 +468,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << ord << ".getType(), getTensorAttr(" << ord << ".getType(), ";
         os << "\"" << value->getValue() << "\"))";
       } else {
+        if (resultRoot->getNumArgs() != 1)
+          PrintFatalError(pattern->getLoc(),
+                          "only single op constantfp supported");
 
         os << "ConstantFP::get(";
         if (resultRoot->getArgName(0)) {
@@ -1269,9 +1274,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
   for (Record *pattern : patterns) {
     DagInit *tree = pattern->getValueAsDag("PatternToMatch");
 
-    DagInit *duals = nullptr;
-    if (intrinsic != MLIRDerivatives)
-      duals = pattern->getValueAsDag("ArgDuals");
+    DagInit *duals = pattern->getValueAsDag("ArgDuals");
+    assert(duals);
 
     // Emit RewritePattern for Pattern.
     ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
@@ -1514,8 +1518,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     }
     // TODO
 
-    if (!duals ||
-        duals->getOperator()->getAsString() ==
+    if (duals->getOperator()->getAsString() ==
             "ForwardFromSummedReverseInternal" ||
         cast<DefInit>(duals->getOperator())
             ->getDef()
@@ -1649,7 +1652,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       }
       ArrayRef<unsigned> retidx{};
       bool vectorValued =
-          handle("            ", "fwdnsrarg", os, pattern, duals, "Builder2",
+          handle("            ", "fwdnsrarg", os, pattern, duals,
+                 (intrinsic == MLIRDerivatives) ? "builder" : "Builder2",
                  nameToOrdinal, /*lookup*/ false, retidx, origName,
                  /*newFromOriginal*/ true, intrinsic);
       (void)vectorValued;
