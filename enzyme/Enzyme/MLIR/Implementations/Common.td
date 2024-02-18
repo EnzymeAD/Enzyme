@@ -62,6 +62,12 @@ class Inst<string mnemonic, string dialect_>  : Operation</*primal*/1, /*shadow*
 def Op {
 }
 
+class ConstantFP<string val, string dialect_, string op_> : Operation</*primal*/0, /*shadow*/0> {
+  string value = val;
+  string dialect = dialect_;
+  string opName = op_;
+}
+
 class ArithInst<string m> : Inst<m, "arith">;
 class MathInst<string m> : Inst<m, "math">;
 
