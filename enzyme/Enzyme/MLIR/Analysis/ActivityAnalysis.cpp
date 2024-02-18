@@ -248,7 +248,7 @@ static Operation *getFunctionFromCall(CallOpInterface iface) {
   return SymbolTable::lookupNearestSymbolFrom(iface.getOperation(), symbol);
 }
 
-constexpr bool EnzymePrintActivity = true;
+constexpr bool EnzymePrintActivity = false;
 
 /// Is the use of value val as an argument of call CI known to be inactive
 /// This tool can only be used when in DOWN mode
