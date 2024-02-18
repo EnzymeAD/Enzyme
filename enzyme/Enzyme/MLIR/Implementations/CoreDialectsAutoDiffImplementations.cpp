@@ -19,6 +19,23 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 
+mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
+                                              llvm::StringRef value) {
+  using namespace mlir;
+  if (auto T = dyn_cast<TensorType>(type)) {
+    size_t num = 1;
+    for (auto sz : T.getShape())
+      num *= sz;
+    APFloat apvalue(T.getElementType().cast<FloatType>().getFloatSemantics(),
+                    value);
+    SmallVector<APFloat> supportedValues(num, apvalue);
+    return DenseFPElementsAttr::get(type.cast<ShapedType>(), supportedValues);
+  }
+  auto T = cast<FloatType>(type);
+  APFloat apvalue(T.getFloatSemantics(), value);
+  return FloatAttr::get(T, apvalue);
+}
+
 void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
                                                    OpBuilder &builder,
                                                    MGradientUtils *gutils) {
