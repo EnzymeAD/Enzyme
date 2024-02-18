@@ -1651,7 +1651,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     } else {
 
       if (intrinsic == MLIRDerivatives) {
-        os << "     mlir::Value res = nullptr;\n";
+        os << "            mlir::Value res = ";
       } else {
         os << "            Value *res = ";
       }
