@@ -1,5 +1,6 @@
 #include "ActivityAnnotations.h"
 #include "AliasAnalysis.h"
+#include "Dialect/Ops.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -44,12 +45,10 @@ void enzyme::ForwardActivityAnnotationAnalysis::setToEntryState(
   }
 
   auto funcOp = cast<FunctionOpInterface>(arg.getOwner()->getParentOp());
-
-  auto debugLabel = StringAttr::get(funcOp.getContext(),
-                                    "origin-" + funcOp.getName() + "-" +
-                                        std::to_string(arg.getArgNumber()));
+  auto origin = ArgumentOriginAttr::get(FlatSymbolRefAttr::get(funcOp),
+                                        arg.getArgNumber());
   DistinctAttr argClass =
-      originalClasses.getOriginalClass(lattice->getPoint(), debugLabel);
+      originalClasses.getOriginalClass(lattice->getPoint(), origin);
   return propagateIfChanged(lattice, lattice->join(ValueOriginsLattice::single(
                                          lattice->getPoint(), argClass)));
 }
@@ -226,10 +225,9 @@ void enzyme::DenseActivityAnnotationAnalysis::setToEntryState(
   ChangeResult changed = ChangeResult::NoChange;
   for (BlockArgument arg : funcOp.getArguments()) {
     auto *argClass = getOrCreateFor<AliasClassLattice>(block, arg);
-    auto debugLabel = StringAttr::get(funcOp.getContext(),
-                                      "mem-origin-" + funcOp.getName() + "-" +
-                                          std::to_string(arg.getArgNumber()));
-    DistinctAttr argOrigin = originalClasses.getOriginalClass(arg, debugLabel);
+    auto origin = ArgumentOriginAttr::get(FlatSymbolRefAttr::get(funcOp),
+                                          arg.getArgNumber());
+    DistinctAttr argOrigin = originalClasses.getOriginalClass(arg, origin);
     changed |= lattice->insert(argClass->getAliasClassesObject(),
                                AliasClassSet(argOrigin));
   }
@@ -359,8 +357,7 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
     node->setAttr("p2psummary", p2sets.serialize(node.getContext()));
     os << "[ata] p2p summary:\n";
     for (ArrayAttr pair :
-         node->getAttrOfType<ArrayAttr>("p2psummary").getAsRange<ArrayAttr>())
-         {
+         node->getAttrOfType<ArrayAttr>("p2psummary").getAsRange<ArrayAttr>()) {
       os << "     " << pair[0] << " -> " << pair[1] << "\n";
     }
 

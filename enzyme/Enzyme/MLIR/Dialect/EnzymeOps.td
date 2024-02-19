@@ -51,6 +51,24 @@ def PseudoAliasClassAttr : Enzyme_Attr<"PseudoAliasClass", "pseudoclass"> {
   let assemblyFormat = "`<` $function `(` $argNumber `,` $depth `)` `>`";
 }
 
+def ArgumentOriginAttr : Enzyme_Attr<"ArgumentOrigin", "argorigin"> {
+  let summary = "An argument origin is a unique way of referring to a function argument.";
+
+  let parameters = (ins
+    "FlatSymbolRefAttr":$function,
+    "unsigned":$argNumber
+  );
+
+  let builders = [
+    AttrBuilderWithInferredContext<(ins "FlatSymbolRefAttr":$function,
+                                        "unsigned":$argNumber), [{
+      return $_get(function.getContext(), function, argNumber);
+    }]>
+  ];
+
+  let assemblyFormat = "`<` $function `(` $argNumber `)` `>`";
+}
+
 def Activity : I32EnumAttr<"Activity",
     "Possible activity states for variables",
     [
