@@ -408,6 +408,7 @@ public:
     constantval |= gutils->isConstantValue(&I);
 
     Type *type = gutils->getShadowType(I.getType());
+    (void)type;
 
     auto *newi = dyn_cast<Instruction>(gutils->getNewFromOriginal(&I));
 
@@ -621,6 +622,7 @@ public:
       if (primalNeededInReverse) {
         inst = gutils->cacheForReverse(BuilderZ, newi,
                                        getIndex(&I, CacheType::Self, BuilderZ));
+        (void)inst;
         assert(inst->getType() == type);
 
         if (Mode == DerivativeMode::ReverseModeGradient ||
@@ -3777,6 +3779,7 @@ public:
         setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
                  Builder2);
       }
+      (void)vdiff;
 
       switch (ID) {
 
@@ -5201,6 +5204,7 @@ public:
 
         // Note sometimes whattype mistakenly says something should be
         // constant [because composed of integer pointers alone]
+        (void)argType;
         assert(whatType(argType, Mode) == DIFFE_TYPE::DUP_ARG ||
                whatType(argType, Mode) == DIFFE_TYPE::CONSTANT);
       } else {

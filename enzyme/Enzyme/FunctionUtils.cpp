@@ -6295,6 +6295,7 @@ public:
     assert(t != Type::None);
     assert(c.size() != 0);
     assert(c.size() != 1);
+#ifndef NDEBUG
     SmallVector<InnerTy, 1> tmp(c.begin(), c.end());
     for (unsigned i = 0; i < tmp.size(); i++)
       for (unsigned j = 0; j < i; j++)
@@ -6317,6 +6318,7 @@ public:
               if (auto s = dyn_cast<SCEVAddRecExpr>(tmp[j]->node))
                 assert(s->getLoop() != tmp[i]->Loop);
     }
+#endif
   }
 
   bool operator==(const Constraints &rhs) const {

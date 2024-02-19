@@ -607,12 +607,14 @@ BasicBlock *GradientUtils::getOriginalFromNew(const BasicBlock *newinst) const {
 Value *GradientUtils::isOriginal(const Value *newinst) const {
   if (isa<Constant>(newinst) || isa<UndefValue>(newinst))
     return const_cast<Value *>(newinst);
+#ifndef NDEBUG
   if (auto arg = dyn_cast<Argument>(newinst)) {
     assert(arg->getParent() == newFunc);
   }
   if (auto inst = dyn_cast<Instruction>(newinst)) {
     assert(inst->getParent()->getParent() == newFunc);
   }
+#endif
   auto found = newToOriginalFn.find(newinst);
   if (found == newToOriginalFn.end())
     return nullptr;
@@ -2519,11 +2521,13 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
     return malloc;
   }
 
+#ifndef NDEBUG
   if (auto CI = dyn_cast<CallInst>(malloc)) {
     if (auto F = CI->getCalledFunction()) {
       assert(F->getName() != "omp_get_thread_num");
     }
   }
+#endif
 
   if (malloc->getType()->isTokenTy()) {
     llvm::errs() << " oldFunc: " << *oldFunc << "\n";
@@ -3425,8 +3429,9 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                 lctx, placeholder->getType(), placeholder->getName(),
                 /*shouldFree*/ true);
             assert(cache);
+            Value *placeholder_tmp = placeholder;
             found = insert_or_assign(
-                scopeMap, (Value *&)placeholder,
+                scopeMap, placeholder_tmp,
                 std::pair<AssertingVH<AllocaInst>, LimitContext>(cache, lctx));
           }
           auto cache = found->second.first;
@@ -4754,12 +4759,14 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                                 SyncScope::ID syncScope, Value *mask,
                                 ArrayRef<Metadata *> noAlias,
                                 ArrayRef<Metadata *> scopes) {
+#ifndef NDEBUG
   if (auto inst = dyn_cast<Instruction>(ptr)) {
     assert(inst->getParent()->getParent() == oldFunc);
   }
   if (auto arg = dyn_cast<Argument>(ptr)) {
     assert(arg->getParent() == oldFunc);
   }
+#endif
 
   Value *origptr = ptr;
 
@@ -5034,12 +5041,14 @@ llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                                      bool nullShadow) {
   assert(oval);
+#ifndef NDEBUG
   if (auto inst = dyn_cast<Instruction>(oval)) {
     assert(inst->getParent()->getParent() == oldFunc);
   }
   if (auto arg = dyn_cast<Argument>(oval)) {
     assert(arg->getParent() == oldFunc);
   }
+#endif
 
   if (isa<ConstantPointerNull>(oval)) {
     return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
@@ -6830,7 +6839,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
                   Instruction *origTerm = origPH->getTerminator();
                   if (!origTerm)
-                    llvm::errs() << *origTerm << "\n";
+                    llvm::errs() << *origPH << "\n";
                   assert(origTerm);
                   IRBuilder<> OB(origTerm);
                   LoadInst *tmpload = OB.CreateLoad(AT, orig_liobj, "'tmpload");
@@ -7031,6 +7040,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       unwrapM(a, v, available, UnwrapMode::AttemptSingleUnwrap,
                               /*scope*/ nullptr, /*cache*/ false));
                   assert(uw->getType() == a->getType());
+#ifndef NDEBUG
                   for (size_t i = 0; i < uw->getNumOperands(); i++) {
                     auto op = uw->getOperand(i);
                     if (auto arg = dyn_cast<Argument>(op))
@@ -7038,6 +7048,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                     else if (auto inst = dyn_cast<Instruction>(op))
                       assert(inst->getParent()->getParent() == newFunc);
                   }
+#endif
                   available[a] = uw;
                   unwrappedLoads.erase(cast<Instruction>(uw));
                 }
@@ -7259,7 +7270,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               AllocaInst *cache = createCacheForScope(
                   lctx, inst->getType(), inst->getName(), /*shouldFree*/ true);
               assert(cache);
-              insert_or_assign(scopeMap, (Value *&)inst,
+              Value *inst_tmp = inst;
+              insert_or_assign(scopeMap, inst_tmp,
                                std::pair<AssertingVH<AllocaInst>, LimitContext>(
                                    cache, lctx));
             }
@@ -7333,9 +7345,11 @@ void GradientUtils::branchToCorrespondingTarget(
     if (replacePHIs->size() == 0)
       return;
 
+#ifndef NDEBUG
     for (auto x : *replacePHIs) {
       assert(targetToPreds.find(x.first) != targetToPreds.end());
     }
+#endif
   }
 
   if (targetToPreds.size() == 1) {
@@ -8177,11 +8191,13 @@ void GradientUtils::forceActiveDetection() {
 
 bool GradientUtils::isConstantValue(Value *val) const {
   if (auto inst = dyn_cast<Instruction>(val)) {
+    (void)inst;
     assert(inst->getParent()->getParent() == oldFunc);
     return ATA->isConstantValue(TR, val);
   }
 
   if (auto arg = dyn_cast<Argument>(val)) {
+    (void)arg;
     assert(arg->getParent() == oldFunc);
     return ATA->isConstantValue(TR, val);
   }
@@ -8892,6 +8908,7 @@ void GradientUtils::replaceAWithB(Value *A, Value *B, bool storeInCache) {
 
   // Check that the replacement doesn't already exist in the mapping
   // thereby resulting in a conflict.
+#ifndef NDEBUG
   {
     auto found = newToOriginalFn.find(A);
     if (found != newToOriginalFn.end()) {
@@ -8899,6 +8916,7 @@ void GradientUtils::replaceAWithB(Value *A, Value *B, bool storeInCache) {
       assert(foundB == newToOriginalFn.end());
     }
   }
+#endif
 
   CacheUtility::replaceAWithB(A, B, storeInCache);
 }
@@ -9167,6 +9185,7 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
     libfunc = LibFunc_malloc;
   } else {
     bool res = TLI.getLibFunc(allocationfn, libfunc);
+    (void)res;
     assert(res && "ought find known allocation fn");
   }
 

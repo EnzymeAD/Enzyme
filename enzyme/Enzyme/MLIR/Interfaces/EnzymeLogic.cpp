@@ -199,8 +199,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
       continue;
     }
 
-    auto term = oBB.getTerminator();
-    assert(term);
+    assert(oBB.getTerminator());
 
     auto first = oBB.begin();
     auto last = oBB.empty() ? oBB.end() : std::prev(oBB.end());
