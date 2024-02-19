@@ -64,6 +64,10 @@ def DiffeRet : DiffeRetIndex<[-1]>;
 def Shadow : Operation</*primal*/0, /*shadow*/1> {
 }
 
+class GlobalExpr<bit uses_primal, bit uses_shadow, string val> : Operation<uses_primal, uses_shadow>{
+  string value = val;
+}
+
 class Inst<string mnemonic, string dialect_>  : Operation</*primal*/1, /*shadow*/0> {
   string name = mnemonic;
   string dialect = dialect_;
