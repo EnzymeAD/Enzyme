@@ -49,7 +49,7 @@ llvm.func local_unnamed_addr @free(!llvm.ptr {llvm.allocptr, llvm.nocapture, llv
 
 llvm.func @euler_angles_to_rotation_matrix(!llvm.ptr, !llvm.ptr) attributes {
   p2psummary = [
-    [distinct[30]<"arg-euler_angles_to_rotation_matrix-1">, [distinct[31]<"arg-euler_angles_to_rotation_matrix-1-deref">, distinct[32]<"fresh-euler_angles_malloc">]],
+    [distinct[30]<#enzyme.pseudoclass<@euler_angles_to_rotation_matrix(1, 0)>>, [distinct[31]<#enzyme.pseudoclass<@euler_angles_to_rotation_matrix(1, 1)>>, distinct[32]<"fresh-euler_angles_malloc">]],
     [distinct[32]<"fresh-euler_angles_malloc">, []],
     [distinct[33]<"fresh-malloc_RX">, []],
     [distinct[34]<"fresh-malloc_RY">, []],
@@ -59,13 +59,13 @@ llvm.func @euler_angles_to_rotation_matrix(!llvm.ptr, !llvm.ptr) attributes {
 }
 
 llvm.func @angle_axis_to_rotation_matrix(!llvm.ptr, !llvm.ptr) attributes {
-  p2psummary = [[distinct[40]<"arg-angle_axis_to_rotation_matrix-1">, [distinct[41]<"arg-angle_axis_to_rotation_matrix-1-deref">]]]
+  p2psummary = [[distinct[40]<#enzyme.pseudoclass<@angle_axis_to_rotation_matrix(1, 0)>>, [distinct[41]<#enzyme.pseudoclass<@angle_axis_to_rotation_matrix(1, 1)>>]]]
 }
 
 llvm.func @relatives_to_absolutes(i32, !llvm.ptr, !llvm.ptr, !llvm.ptr) attributes {
   p2psummary = [
-    [distinct[50]<"arg-relatives_to_absolutes-1">, [distinct[51]<"arg-relatives_to_absolutes-1-deref">]],
-    [distinct[52]<"arg-relatives_to_absolutes-3">, [distinct[53]<"arg-relatives_to_absolutes-3-deref">, distinct[54]<"fresh-rta1">, distinct[55]<"fresh-rta2">]],
+    [distinct[50]<#enzyme.pseudoclass<@relatives_to_absolutes(1, 0)>>, [distinct[51]<#enzyme.pseudoclass<@relatives_to_absolutes(1, 1)>>]],
+    [distinct[52]<#enzyme.pseudoclass<@relatives_to_absolutes(3, 0)>>, [distinct[53]<#enzyme.pseudoclass<@relatives_to_absolutes(3, 1)>>, distinct[54]<"fresh-rta1">, distinct[55]<"fresh-rta2">]],
     [distinct[54]<"fresh-rta1">, []],
     [distinct[55]<"fresh-rta2">, []]
   ]
@@ -73,16 +73,16 @@ llvm.func @relatives_to_absolutes(i32, !llvm.ptr, !llvm.ptr, !llvm.ptr) attribut
 
 llvm.func @to_pose_params(i32, !llvm.ptr, !llvm.ptr, !llvm.ptr) attributes {
   p2psummary = [
-    [distinct[60]<"arg-to_pose_params-3">, [distinct[61]<"arg-to_pose_params-3-deref">, distinct[62]<"fresh-pose_params_data">]],
+    [distinct[60]<#enzyme.pseudoclass<@to_pose_params(3, 0)>>, [distinct[61]<#enzyme.pseudoclass<@to_pose_params(3, 1)>>, distinct[62]<"fresh-pose_params_data">]],
     [distinct[62]<"fresh-pose_params_data">, []]
   ]
 }
 
 // CHECK-LABEL: processing function @get_posed_relatives
 // CHECK: p2p summary:
-// CHECK-NEXT:    distinct[0]<"arg-get_posed_relatives-1"> -> [distinct[0]<"arg-get_posed_relatives-1-deref">]
-// CHECK-NEXT:    distinct[0]<"arg-get_posed_relatives-2"> -> [distinct[0]<"arg-get_posed_relatives-2-deref">]
-// CHECK-NEXT:    distinct[0]<"arg-get_posed_relatives-3"> -> [distinct[0]<"arg-get_posed_relatives-3-deref">, distinct[1]<"fresh-malloc4">]
+// CHECK-NEXT:    distinct[0]<#enzyme.pseudoclass<@get_posed_relatives(1, 0)>> -> [distinct[0]<#enzyme.pseudoclass<@get_posed_relatives(1, 1)>>]
+// CHECK-NEXT:    distinct[0]<#enzyme.pseudoclass<@get_posed_relatives(2, 0)>> -> [distinct[0]<#enzyme.pseudoclass<@get_posed_relatives(2, 1)>>]
+// CHECK-NEXT:    distinct[0]<#enzyme.pseudoclass<@get_posed_relatives(3, 0)>> -> [distinct[0]<#enzyme.pseudoclass<@get_posed_relatives(3, 1)>>, distinct[1]<"fresh-malloc4">]
 // CHECK-NEXT:    distinct[0]<"fresh-malloc1"> -> []
 // CHECK-NEXT:    distinct[0]<"fresh-malloc2"> -> [distinct[0]<"fresh-euler_angles_malloc">, distinct[1]<"fresh-malloc3">]
 // CHECK-NEXT:    distinct[0]<"fresh-malloc3"> -> []
@@ -276,8 +276,8 @@ llvm.func local_unnamed_addr @get_posed_relatives(%arg0: i32 {llvm.noundef}, %ar
 
 // CHECK-LABEL: processing function @apply_global_transform
 // CHECK: p2p summary:
-// CHECK-NEXT:    distinct[0]<"arg-apply_global_transform-0"> -> [distinct[0]<"arg-apply_global_transform-0-deref">]
-// CHECK-NEXT:    distinct[0]<"arg-apply_global_transform-1"> -> [distinct[0]<"arg-apply_global_transform-1-deref">]
+// CHECK-NEXT:    distinct[0]<#enzyme.pseudoclass<@apply_global_transform(0, 0)>> -> [distinct[0]<#enzyme.pseudoclass<@apply_global_transform(0, 1)>>]
+// CHECK-NEXT:    distinct[0]<#enzyme.pseudoclass<@apply_global_transform(1, 0)>> -> [distinct[0]<#enzyme.pseudoclass<@apply_global_transform(1, 1)>>]
 // CHECK-NEXT:    distinct[0]<"fresh-agt_tmp"> -> []
 // CHECK-NEXT:    distinct[0]<"fresh-rmat"> -> [distinct[0]<"fresh-rmat_data">]
 // CHECK-NEXT:    distinct[0]<"fresh-rmat_data"> -> []
@@ -438,10 +438,10 @@ llvm.func local_unnamed_addr @apply_global_transform(%arg0: !llvm.ptr {llvm.noca
 
 // CHECK-LABEL: processing function @get_skinned_vertex_positions
 // CHECK: p2p summary:
-// CHECK-NEXT:    distinct[0]<"arg-get_skinned_vertex_positions-3"> -> [distinct[0]<"arg-get_skinned_vertex_positions-3-deref">]
-// CHECK-NEXT:    distinct[0]<"arg-get_skinned_vertex_positions-4"> -> [distinct[0]<"arg-get_skinned_vertex_positions-4-deref">]
-// CHECK-NEXT:    distinct[0]<"arg-get_skinned_vertex_positions-5"> -> [distinct[0]<"arg-get_skinned_vertex_positions-5-deref">]
-// CHECK-NEXT:    distinct[0]<"arg-get_skinned_vertex_positions-8"> -> [distinct[0]<"arg-get_skinned_vertex_positions-8-deref">, distinct[1]<"fresh-positions_data">]
+// CHECK-NEXT:    distinct[0]<#enzyme.pseudoclass<@get_skinned_vertex_positions(3, 0)>> -> [distinct[0]<#enzyme.pseudoclass<@get_skinned_vertex_positions(3, 1)>>]
+// CHECK-NEXT:    distinct[0]<#enzyme.pseudoclass<@get_skinned_vertex_positions(4, 0)>> -> [distinct[0]<#enzyme.pseudoclass<@get_skinned_vertex_positions(4, 1)>>]
+// CHECK-NEXT:    distinct[0]<#enzyme.pseudoclass<@get_skinned_vertex_positions(5, 0)>> -> [distinct[0]<#enzyme.pseudoclass<@get_skinned_vertex_positions(5, 1)>>]
+// CHECK-NEXT:    distinct[0]<#enzyme.pseudoclass<@get_skinned_vertex_positions(8, 0)>> -> [distinct[0]<#enzyme.pseudoclass<@get_skinned_vertex_positions(8, 1)>>, distinct[1]<"fresh-positions_data">]
 // CHECK-NEXT:    distinct[0]<"fresh-absolutes"> -> [distinct[0]<"fresh-rta1">, distinct[1]<"fresh-rta2">]
 // CHECK-NEXT:    distinct[0]<"fresh-absolutes_empty"> -> [distinct[0]<"fresh-rta1">, distinct[1]<"fresh-rta2">]
 // CHECK-NEXT:    distinct[0]<"fresh-curr_pos"> -> [distinct[0]<"fresh-curr_pos_data">, distinct[1]<"fresh-curr_pos_resize">]
@@ -855,7 +855,7 @@ llvm.func local_unnamed_addr @get_skinned_vertex_positions(%arg0: i32 {llvm.noun
 
 // CHECK-LABEL: processing function @hand_objective
 // CHECK: p2p summary:
-// CHECK-NEXT:    distinct[0]<"arg-hand_objective-12"> -> [distinct[0]<"arg-hand_objective-12-deref">]
+// CHECK-NEXT:    distinct[0]<#enzyme.pseudoclass<@hand_objective(12, 0)>> -> [distinct[0]<#enzyme.pseudoclass<@hand_objective(12, 1)>>]
 // CHECK-NEXT:    distinct[0]<"fresh-pose_params"> -> [distinct[0]<"fresh-pose_params_data">]
 // CHECK-NEXT:    distinct[0]<"fresh-vertex_positions"> -> [distinct[0]<"fresh-positions_data">]
 llvm.func @hand_objective(%arg0: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, %arg1: i32 {llvm.noundef}, %arg2: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.readnone}, %arg3: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, %arg4: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, %arg5: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, %arg6: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, %arg7: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, %arg8: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.readnone}, %arg9: i32 {llvm.noundef}, %arg10: i32 {llvm.noundef}, %arg11: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, %arg12: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, %arg13: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.writeonly}) attributes {frame_pointer = #llvm.framePointerKind<"non-leaf">, passthrough = ["nounwind", "ssp", ["uwtable", "1"], ["approx-func-fp-math", "true"], ["no-infs-fp-math", "true"], ["no-nans-fp-math", "true"], ["no-signed-zeros-fp-math", "true"], ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "apple-m1"], ["unsafe-fp-math", "true"]], target_cpu = "apple-m1", target_features = #llvm.target_features<["+aes", "+complxnum", "+crc", "+dotprod", "+fp-armv8", "+fp16fml", "+fullfp16", "+jsconv", "+lse", "+neon", "+ras", "+rcpc", "+rdm", "+sha2", "+sha3", "+v8.1a", "+v8.2a", "+v8.3a", "+v8.4a", "+v8.5a", "+v8a", "+zcm", "+zcz"]>} {

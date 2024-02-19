@@ -339,7 +339,7 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
     // Create the overall summary by joining sets at all return sites.
     enzyme::PointsToSets p2sets(nullptr);
     enzyme::ValueOriginsMap voMap(nullptr);
-    raw_ostream &os = llvm::errs();
+    raw_ostream &os = llvm::outs();
     for (Operation &op : node.getCallableRegion()->getOps()) {
       if (op.hasTrait<OpTrait::ReturnLike>()) {
         (void)p2sets.join(*solver.lookupState<enzyme::PointsToSets>(&op));
