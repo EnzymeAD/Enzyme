@@ -5745,20 +5745,10 @@ TypeResults TypeAnalysis::analyzeFunction(const FnTypeInfo &fn) {
 
     return TypeResults(analysis);
   }
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wnull-dereference"
-#else
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wnull-dereference"
-#endif
+
   if (fn.Function->empty())
-    return TypeResults(*(TypeAnalyzer *)nullptr);
-#ifdef __clang__
-#pragma clang diagnostic pop
-#else
-#pragma GCC diagnostic pop
-#endif
+    return TypeResults(nullptr);
+
   auto res = analyzedFunctions.emplace(fn, new TypeAnalyzer(fn, *this));
   auto &analysis = *res.first->second;
 
@@ -5808,30 +5798,31 @@ TypeResults TypeAnalysis::analyzeFunction(const FnTypeInfo &fn) {
   return TypeResults(analysis);
 }
 
-TypeResults::TypeResults(TypeAnalyzer &analyzer) : analyzer(analyzer) {}
+TypeResults::TypeResults(TypeAnalyzer &analyzer) : analyzer(&analyzer) {}
+TypeResults::TypeResults(std::nullptr_t) : analyzer(nullptr) {}
 
 FnTypeInfo TypeResults::getAnalyzedTypeInfo() const {
-  FnTypeInfo res(analyzer.fntypeinfo.Function);
-  for (auto &arg : analyzer.fntypeinfo.Function->args()) {
+  FnTypeInfo res(analyzer->fntypeinfo.Function);
+  for (auto &arg : analyzer->fntypeinfo.Function->args()) {
     res.Arguments.insert(std::pair<Argument *, TypeTree>(&arg, query(&arg)));
   }
   res.Return = getReturnAnalysis();
-  res.KnownValues = analyzer.fntypeinfo.KnownValues;
+  res.KnownValues = analyzer->fntypeinfo.KnownValues;
   return res;
 }
 
 FnTypeInfo TypeResults::getCallInfo(CallBase &CI, Function &fn) const {
-  return analyzer.getCallInfo(CI, fn);
+  return analyzer->getCallInfo(CI, fn);
 }
 
 TypeTree TypeResults::query(Value *val) const {
   if (auto inst = dyn_cast<Instruction>(val)) {
-    assert(inst->getParent()->getParent() == analyzer.fntypeinfo.Function);
+    assert(inst->getParent()->getParent() == analyzer->fntypeinfo.Function);
   }
   if (auto arg = dyn_cast<Argument>(val)) {
-    assert(arg->getParent() == analyzer.fntypeinfo.Function);
+    assert(arg->getParent() == analyzer->fntypeinfo.Function);
   }
-  return analyzer.getAnalysis(val);
+  return analyzer->getAnalysis(val);
 }
 
 bool TypeResults::anyFloat(Value *val) const {
@@ -5843,7 +5834,7 @@ bool TypeResults::anyFloat(Value *val) const {
     return dt.isFloat();
 
   size_t ObjSize = 1;
-  auto &dl = analyzer.fntypeinfo.Function->getParent()->getDataLayout();
+  auto &dl = analyzer->fntypeinfo.Function->getParent()->getDataLayout();
   if (val->getType()->isSized())
     ObjSize = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
 
@@ -5871,7 +5862,7 @@ bool TypeResults::anyPointer(Value *val) const {
     return dt == BaseType::Pointer;
 
   size_t ObjSize = 1;
-  auto &dl = analyzer.fntypeinfo.Function->getParent()->getDataLayout();
+  auto &dl = analyzer->fntypeinfo.Function->getParent()->getDataLayout();
   if (val->getType()->isSized())
     ObjSize = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
 
@@ -5890,7 +5881,7 @@ bool TypeResults::anyPointer(Value *val) const {
   return false;
 }
 
-void TypeResults::dump(llvm::raw_ostream &ss) const { analyzer.dump(ss); }
+void TypeResults::dump(llvm::raw_ostream &ss) const { analyzer->dump(ss); }
 
 ConcreteType TypeResults::intType(size_t num, Value *val, bool errIfNotFound,
                                   bool pointerIntSame) const {
@@ -5913,7 +5904,7 @@ ConcreteType TypeResults::intType(size_t num, Value *val, bool errIfNotFound,
     if (auto inst = dyn_cast<Instruction>(val)) {
       llvm::errs() << *inst->getParent()->getParent()->getParent() << "\n";
       llvm::errs() << *inst->getParent()->getParent() << "\n";
-      for (auto &pair : analyzer.analysis) {
+      for (auto &pair : analyzer->analysis) {
         llvm::errs() << "val: " << *pair.first << " - " << pair.second.str()
                      << "\n";
       }
@@ -5948,7 +5939,7 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
   assert(val->getType());
   auto q = query(val).Data0();
   if (!(val->getType()->isPointerTy() || q[{}] == BaseType::Pointer)) {
-    llvm::errs() << *analyzer.fntypeinfo.Function << "\n";
+    llvm::errs() << *analyzer->fntypeinfo.Function << "\n";
     dump();
     llvm::errs() << "val: " << *val << "\n";
   }
@@ -5973,7 +5964,7 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
   }
 
   if (errIfNotFound && (!dt.isKnown() || dt == BaseType::Anything)) {
-    auto &res = analyzer;
+    auto &res = *analyzer;
     if (auto inst = dyn_cast<Instruction>(val)) {
       llvm::errs() << *inst->getParent()->getParent()->getParent() << "\n";
       llvm::errs() << *inst->getParent()->getParent() << "\n";
@@ -6006,15 +5997,15 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
                      << "\n";
       }
     }
-    llvm::errs() << "fn: " << *analyzer.fntypeinfo.Function << "\n";
+    llvm::errs() << "fn: " << *analyzer->fntypeinfo.Function << "\n";
     dump();
     llvm::errs() << "could not deduce type of integer " << *val
                  << " num:" << num << " q:" << q.str() << " \n";
 
     llvm::DiagnosticLocation loc =
-        analyzer.fntypeinfo.Function->getSubprogram();
+        analyzer->fntypeinfo.Function->getSubprogram();
     Instruction *codeLoc =
-        &*analyzer.fntypeinfo.Function->getEntryBlock().begin();
+        &*analyzer->fntypeinfo.Function->getEntryBlock().begin();
     if (auto inst = dyn_cast<Instruction>(val)) {
       loc = inst->getDebugLoc();
       codeLoc = inst;
@@ -6117,15 +6108,15 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
 }
 
 Function *TypeResults::getFunction() const {
-  return analyzer.fntypeinfo.Function;
+  return analyzer->fntypeinfo.Function;
 }
 
 TypeTree TypeResults::getReturnAnalysis() const {
-  return analyzer.getReturnAnalysis();
+  return analyzer->getReturnAnalysis();
 }
 
 std::set<int64_t> TypeResults::knownIntegralValues(Value *val) const {
-  return analyzer.knownIntegralValues(val);
+  return analyzer->knownIntegralValues(val);
 }
 
 std::set<int64_t> TypeAnalyzer::knownIntegralValues(Value *val) {

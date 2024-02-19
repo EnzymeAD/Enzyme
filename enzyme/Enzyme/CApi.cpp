@@ -297,7 +297,7 @@ void FreeTypeAnalysis(EnzymeTypeAnalysisRef TAR) {
 void *EnzymeAnalyzeTypes(EnzymeTypeAnalysisRef TAR, CFnTypeInfo CTI,
                          LLVMValueRef F) {
   FnTypeInfo FTI(eunwrap(CTI, cast<Function>(unwrap(F))));
-  return (void *)&((TypeAnalysis *)TAR)->analyzeFunction(FTI).analyzer;
+  return (void *)((TypeAnalysis *)TAR)->analyzeFunction(FTI).analyzer;
 }
 
 void *EnzymeGradientUtilsTypeAnalyzer(GradientUtils *G) {
