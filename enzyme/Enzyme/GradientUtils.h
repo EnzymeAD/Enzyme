@@ -601,11 +601,13 @@ public:
                               llvm::ArrayRef<llvm::Constant *> diffs,
                               llvm::IRBuilder<> &Builder, Func rule) {
     if (width > 1) {
+#ifndef NDEBUG
       for (auto diff : diffs) {
         assert(diff);
         assert(llvm::cast<llvm::ArrayType>(diff->getType())->getNumElements() ==
                width);
       }
+#endif
       llvm::Type *wrappedType = llvm::ArrayType::get(diffType, width);
       llvm::Value *res = llvm::UndefValue::get(wrappedType);
       for (unsigned int i = 0; i < getWidth(); ++i) {

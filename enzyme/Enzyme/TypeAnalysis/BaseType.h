@@ -57,6 +57,7 @@ static inline std::string to_string(BaseType t) {
     return "Unknown";
   }
   assert(0 && "unknown inttype");
+  return "<Invalid IntType>";
 }
 
 /// Convert string to BaseType
@@ -72,5 +73,6 @@ static inline BaseType parseBaseType(llvm::StringRef str) {
   if (str == "Unknown")
     return BaseType::Unknown;
   assert(0 && "Unknown BaseType string");
+  return BaseType::Unknown;
 }
 #endif

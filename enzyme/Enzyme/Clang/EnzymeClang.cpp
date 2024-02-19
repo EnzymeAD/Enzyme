@@ -141,10 +141,10 @@ public:
     using namespace clang;
     DeclGroupRef::iterator it;
 
-    Visitor v(CI);
+    // Visitor v(CI);
     // Forcibly require emission of all libdevice
     for (it = dg.begin(); it != dg.end(); ++it) {
-      v.TraverseDecl(*it);
+      // v.TraverseDecl(*it);
       if (auto FD = dyn_cast<FunctionDecl>(*it)) {
         if (!FD->hasAttr<clang::CUDADeviceAttr>())
           continue;

@@ -1860,6 +1860,7 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
   MapVector<Value *, APInt> VariableOffsets;
   bool legalOffset =
       collectOffset(&gep, DL, BitWidth, VariableOffsets, constOffset);
+  (void)legalOffset;
   assert(legalOffset);
 
   SmallVector<std::set<int>, 4> idnext;
@@ -5816,12 +5817,14 @@ FnTypeInfo TypeResults::getCallInfo(CallBase &CI, Function &fn) const {
 }
 
 TypeTree TypeResults::query(Value *val) const {
+#ifndef NDEBUG
   if (auto inst = dyn_cast<Instruction>(val)) {
     assert(inst->getParent()->getParent() == analyzer->fntypeinfo.Function);
   }
   if (auto arg = dyn_cast<Argument>(val)) {
     assert(arg->getParent() == analyzer->fntypeinfo.Function);
   }
+#endif
   return analyzer->getAnalysis(val);
 }
 
@@ -5989,8 +5992,10 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
     if (auto arg = dyn_cast<Argument>(val)) {
       llvm::errs() << *arg->getParent() << "\n";
       for (auto &pair : res.analysis) {
+#ifndef NDEBUG
         if (auto in = dyn_cast<Instruction>(pair.first))
           assert(in->getParent()->getParent() == arg->getParent());
+#endif
         llvm::errs() << "val: " << *pair.first << " - " << pair.second.str()
                      << " int: " +
                             to_string(res.knownIntegralValues(pair.first))

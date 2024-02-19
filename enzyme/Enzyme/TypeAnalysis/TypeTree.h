@@ -343,11 +343,13 @@ public:
 
   /// Whether this TypeTree contains any information
   bool isKnown() const {
+#ifndef NDEBUG
     for (const auto &pair : mapping) {
       // we should assert here as we shouldn't keep any unknown maps for
       // efficiency
       assert(pair.second.isKnown());
     }
+#endif
     return mapping.size() != 0;
   }
 

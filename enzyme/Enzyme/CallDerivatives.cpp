@@ -4047,6 +4047,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             return true;
           }
           assert(!unnecessaryValues.count(rmat.first));
+          (void)primalNeededInReverse;
           assert(primalNeededInReverse);
         }
       }

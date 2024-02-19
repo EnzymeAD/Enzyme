@@ -3632,6 +3632,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
   if (hasMetadata(key.todiff, "enzyme_gradient")) {
     std::set<llvm::Type *> seen;
+#ifndef NDEBUG
     DIFFE_TYPE subretType = whatType(key.todiff->getReturnType(),
                                      DerivativeMode::ReverseModeGradient,
                                      /*intAreConstant*/ false, seen);
@@ -3639,6 +3640,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         key.todiff->getReturnType()->isEmptyTy())
       subretType = DIFFE_TYPE::CONSTANT;
     assert(subretType == key.retType);
+#endif
 
     if (key.mode == DerivativeMode::ReverseModeCombined) {
       auto res = getDefaultFunctionTypeForGradient(

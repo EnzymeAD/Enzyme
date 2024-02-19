@@ -54,9 +54,11 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     const SmallPtrSetImpl<BasicBlock *> &oldUnreachable, QueryType qtype,
     bool *recursiveUse) {
   TypeResults const &TR = gutils->TR;
+#ifndef NDEBUG
   if (auto ainst = dyn_cast<Instruction>(val)) {
     assert(ainst->getParent()->getParent() == gutils->oldFunc);
   }
+#endif
 
   bool shadow =
       qtype == QueryType::Shadow || qtype == QueryType::ShadowByConstPrimal;
@@ -79,8 +81,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
   if (!user) {
     if (EnzymePrintDiffUse)
-      llvm::errs() << " Need: of " << *val << " in reverse as unknown user "
-                   << *user << "\n";
+      llvm::errs() << " Need: of " << *val << " in reverse as nullptr user\n";
     return true;
   }
 
@@ -794,12 +795,14 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
       }
     }
   }
+#ifndef NDEBUG
   for (auto R : Required) {
     assert(Intermediates.count(R));
   }
   for (auto R : Recomputes) {
     assert(Intermediates.count(R));
   }
+#endif
 
   Graph Orig = G;
 
