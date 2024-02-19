@@ -194,7 +194,7 @@ int main(const int argc, const char* argv[]) {
     struct LSTMInput input;
 
     // Read instance
-    read_lstm_instance("data/" + path, &input.l, &input.c, &input.b, input.main_params, input.extra_params, input.state,
+    read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b, input.main_params, input.extra_params, input.state,
                        input.sequence);
 
     for(unsigned i=0; i<5; i++) {
@@ -230,7 +230,7 @@ int main(const int argc, const char* argv[]) {
     struct LSTMInput input = {};
 
     // Read instance
-    read_lstm_instance("data/" + path, &input.l, &input.c, &input.b, input.main_params, input.extra_params, input.state,
+    read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b, input.main_params, input.extra_params, input.state,
                        input.sequence);
 
     std::vector<double> state = std::vector<double>(input.state.size());
@@ -263,7 +263,7 @@ int main(const int argc, const char* argv[]) {
     struct LSTMInput input = {};
 
     // Read instance
-    read_lstm_instance("data/" + path, &input.l, &input.c, &input.b, input.main_params, input.extra_params, input.state,
+    read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b, input.main_params, input.extra_params, input.state,
                        input.sequence);
 
     std::vector<double> state = std::vector<double>(input.state.size());

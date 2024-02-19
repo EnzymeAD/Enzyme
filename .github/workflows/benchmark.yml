@@ -24,7 +24,7 @@ jobs:
         llvm: ["13", "14", "15", "16"]
         build: ["Release", "Debug"] # "RelWithDebInfo"
         os: [openstack18]
-    timeout-minutes: 120 
+    timeout-minutes: 300 
     steps:
     - name: add llvm 
       run: |

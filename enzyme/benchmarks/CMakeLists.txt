@@ -1,7 +1,7 @@
 include(ExternalProject)
 ExternalProject_Add(adept2
     GIT_REPOSITORY https://github.com/rjhogan/Adept-2
-    GIT_TAG 4dc3d72c25d120a80745c44599dc8602a4f8fdeb
+    GIT_TAG 9e79d151de315fd176c6963db2b7cefba12e0a47
     PREFIX adept2
     BUILD_IN_SOURCE 1
     INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/adept2/install
@@ -46,3 +46,5 @@ add_lit_testsuite(bench-enzyme "Running enzyme benchmarks tests"
 set_target_properties(bench-enzyme PROPERTIES FOLDER "bench Tests")
 
 add_subdirectory(ReverseMode)
+add_subdirectory(ForwardMode)
+
