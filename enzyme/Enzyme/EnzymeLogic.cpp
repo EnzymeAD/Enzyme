@@ -981,7 +981,7 @@ void calculateUnusedValuesInFunction(
           if (newMemory) {
             bool foundStore = false;
             allInstructionsBetween(
-                gutils->OrigLI, cast<Instruction>(at),
+                *gutils->OrigLI, cast<Instruction>(at),
                 const_cast<MemTransferInst *>(mti),
                 [&](Instruction *I) -> bool {
                   if (!I->mayWriteToMemory())
@@ -994,7 +994,7 @@ void calculateUnusedValuesInFunction(
                   }
 
                   if (writesToMemoryReadBy(
-                          gutils->OrigAA, TLI,
+                          *gutils->OrigAA, TLI,
                           /*maybeReader*/ const_cast<MemTransferInst *>(mti),
                           /*maybeWriter*/ I)) {
                     foundStore = true;
@@ -1143,7 +1143,7 @@ void calculateUnusedStoresInFunction(
       if (newMemory) {
         bool foundStore = false;
         allInstructionsBetween(
-            gutils->OrigLI, cast<Instruction>(at),
+            *gutils->OrigLI, cast<Instruction>(at),
             const_cast<MemTransferInst *>(mti), [&](Instruction *I) -> bool {
               if (!I->mayWriteToMemory())
                 return /*earlyBreak*/ false;
@@ -1152,7 +1152,7 @@ void calculateUnusedStoresInFunction(
 
               // if (I == &MTI) return;
               if (writesToMemoryReadBy(
-                      gutils->OrigAA, TLI,
+                      *gutils->OrigAA, TLI,
                       /*maybeReader*/ const_cast<MemTransferInst *>(mti),
                       /*maybeWriter*/ I)) {
                 foundStore = true;
@@ -1552,7 +1552,7 @@ bool legalCombinedForwardReverse(
       auto consider = [&](Instruction *user) {
         if (!user->mayReadFromMemory())
           return false;
-        if (writesToMemoryReadBy(gutils->OrigAA, gutils->TLI,
+        if (writesToMemoryReadBy(*gutils->OrigAA, gutils->TLI,
                                  /*maybeReader*/ user,
                                  /*maybeWriter*/ inst)) {
 
@@ -1585,7 +1585,7 @@ bool legalCombinedForwardReverse(
       if (!post->mayWriteToMemory())
         return false;
 
-      if (writesToMemoryReadBy(gutils->OrigAA, gutils->TLI,
+      if (writesToMemoryReadBy(*gutils->OrigAA, gutils->TLI,
                                /*maybeReader*/ inst,
                                /*maybeWriter*/ post)) {
         if (EnzymePrintPerf) {
@@ -2398,9 +2398,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   CacheAnalysis CA(gutils->allocationsWithGuaranteedFree,
                    gutils->rematerializableAllocations, gutils->TR,
-                   gutils->OrigAA, gutils->oldFunc,
+                   *gutils->OrigAA, gutils->oldFunc,
                    PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
-                   gutils->OrigLI, gutils->OrigDT, TLI, guaranteedUnreachable,
+                   *gutils->OrigLI, *gutils->OrigDT, TLI, guaranteedUnreachable,
                    _overwritten_argsPP, DerivativeMode::ReverseModePrimal, omp);
   const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
       CA.compute_overwritten_args_for_callsites();
@@ -3346,7 +3346,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
         gutils->getNewFromOriginal(orig->getParent()) == loopContext.header &&
         loopContext.exitBlocks.size() == 1) {
       SmallVector<BasicBlock *, 1> Latches;
-      gutils->OrigLI.getLoopFor(orig->getParent())->getLoopLatches(Latches);
+      gutils->OrigLI->getLoopFor(orig->getParent())->getLoopLatches(Latches);
       bool allIncoming = true;
       for (auto Latch : Latches) {
         if (activeUses[0] != orig->getIncomingValueForBlock(Latch)) {
@@ -4080,9 +4080,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   gutils->computeGuaranteedFrees();
   CacheAnalysis CA(gutils->allocationsWithGuaranteedFree,
                    gutils->rematerializableAllocations, gutils->TR,
-                   gutils->OrigAA, gutils->oldFunc,
+                   *gutils->OrigAA, gutils->oldFunc,
                    PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
-                   gutils->OrigLI, gutils->OrigDT, TLI, guaranteedUnreachable,
+                   *gutils->OrigLI, *gutils->OrigDT, TLI, guaranteedUnreachable,
                    _overwritten_argsPP, key.mode, omp);
   const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
       (augmenteddata) ? augmenteddata->overwritten_args_map
@@ -4734,10 +4734,10 @@ Function *EnzymeLogic::CreateForwardDiff(
     gutils->computeGuaranteedFrees();
     CacheAnalysis CA(
         gutils->allocationsWithGuaranteedFree,
-        gutils->rematerializableAllocations, gutils->TR, gutils->OrigAA,
+        gutils->rematerializableAllocations, gutils->TR, *gutils->OrigAA,
         gutils->oldFunc,
         PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
-        gutils->OrigLI, gutils->OrigDT, TLI, guaranteedUnreachable,
+        *gutils->OrigLI, *gutils->OrigDT, TLI, guaranteedUnreachable,
         _overwritten_argsPP, mode, omp);
     const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
         CA.compute_overwritten_args_for_callsites();
