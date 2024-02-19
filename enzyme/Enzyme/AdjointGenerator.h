@@ -1542,7 +1542,7 @@ public:
                                lc) &&
             gutils->getNewFromOriginal(P0->getParent()) == lc.header) {
           SmallVector<BasicBlock *, 1> Latches;
-          gutils->OrigLI.getLoopFor(P0->getParent())->getLoopLatches(Latches);
+          gutils->OrigLI->getLoopFor(P0->getParent())->getLoopLatches(Latches);
           bool allIncoming = true;
           for (auto Latch : Latches) {
             if (&SI != P0->getIncomingValueForBlock(Latch)) {
@@ -2206,7 +2206,7 @@ public:
                                lc) &&
             gutils->getNewFromOriginal(P0->getParent()) == lc.header) {
           SmallVector<BasicBlock *, 1> Latches;
-          gutils->OrigLI.getLoopFor(P0->getParent())->getLoopLatches(Latches);
+          gutils->OrigLI->getLoopFor(P0->getParent())->getLoopLatches(Latches);
           bool allIncoming = true;
           for (auto Latch : Latches) {
             if (&BO != P0->getIncomingValueForBlock(Latch)) {

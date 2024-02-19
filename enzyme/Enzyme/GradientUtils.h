@@ -128,10 +128,10 @@ public:
   DerivativeMode mode;
   llvm::Function *oldFunc;
   llvm::ValueMap<const llvm::Value *, InvertedPointerVH> invertedPointers;
-  llvm::DominatorTree &OrigDT;
-  llvm::PostDominatorTree &OrigPDT;
-  llvm::LoopInfo &OrigLI;
-  llvm::ScalarEvolution &OrigSE;
+  llvm::DominatorTree *OrigDT;
+  llvm::PostDominatorTree *OrigPDT;
+  llvm::LoopInfo *OrigLI;
+  llvm::ScalarEvolution *OrigSE;
 
   /// (Original) Blocks which dominate all returns
   llvm::SmallPtrSet<llvm::BasicBlock *, 4> BlocksDominatingAllReturns;
@@ -353,7 +353,7 @@ public:
   }
 
 public:
-  llvm::AAResults &OrigAA;
+  llvm::AAResults *OrigAA;
   TypeAnalysis &TA;
   TypeResults TR;
   bool omp;
