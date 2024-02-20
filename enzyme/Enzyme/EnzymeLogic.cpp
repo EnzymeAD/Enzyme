@@ -82,6 +82,7 @@
 
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
+#define getAttribute getAttributeAtIndex
 #define removeAttribute removeAttributeAtIndex
 #endif
 
@@ -2784,7 +2785,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       NewF->addParamAttr(attrIndex, Attribute::NoAlias);
     }
     for (auto name : {"enzyme_sret", "enzyme_sret_v", "enzymejl_returnRoots",
-                      "enzymejl_returnRoots_v"})
+                      "enzymejl_returnRoots_v", "enzymejl_parmtype",
+                      "enzymejl_parmtype_ref", "enzyme_type"})
       if (nf->getAttributes().hasParamAttr(attrIndex, name)) {
         NewF->addParamAttr(attrIndex,
                            nf->getAttributes().getParamAttr(attrIndex, name));
@@ -2795,6 +2797,38 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     ++i;
     ++attrIndex;
   }
+
+#if LLVM_VERSION_MAJOR >= 14
+  for (auto attr : {"enzyme_ta_norecur"})
+    if (nf->getAttributes().hasAttributeAtIndex(AttributeList::FunctionIndex,
+                                                attr)) {
+      NewF->addFnAttr(
+          nf->getAttributes().getAttribute(AttributeList::FunctionIndex, attr));
+    }
+
+  for (auto attr :
+       {"enzyme_type", "enzymejl_parmtype", "enzymejl_parmtype_ref"})
+    if (nf->getAttributes().hasAttributeAtIndex(AttributeList::ReturnIndex,
+                                                attr)) {
+      NewF->addAttribute(
+          AttributeList::ReturnIndex,
+          nf->getAttributes().getAttribute(AttributeList::ReturnIndex, attr));
+    }
+#else
+  for (auto attr : {"enzyme_ta_norecur"})
+    if (nf->getAttributes().hasAttribute(AttributeList::FunctionIndex, attr)) {
+      NewF->addFnAttr(
+          nf->getAttributes().getAttribute(AttributeList::FunctionIndex, attr));
+    }
+
+  for (auto attr :
+       {"enzyme_type", "enzymejl_parmtype", "enzymejl_parmtype_ref"})
+    if (nf->getAttributes().hasAttribute(AttributeList::ReturnIndex, attr)) {
+      NewF->addAttribute(
+          AttributeList::ReturnIndex,
+          nf->getAttributes().getAttribute(AttributeList::ReturnIndex, attr));
+    }
+#endif
 
   SmallVector<ReturnInst *, 4> Returns;
 #if LLVM_VERSION_MAJOR >= 13

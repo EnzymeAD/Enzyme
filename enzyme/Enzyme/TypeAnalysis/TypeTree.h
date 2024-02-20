@@ -83,6 +83,92 @@ public:
     }
   }
 
+  static TypeTree parse(llvm::StringRef str, llvm::LLVMContext &ctx) {
+    using namespace llvm;
+    assert(str[0] == '{');
+    str = str.substr(1);
+
+    TypeTree Result;
+    while (true) {
+      while (str[0] == ' ')
+        str = str.substr(1);
+      if (str[0] == '}')
+        break;
+
+      assert(str[0] == '[');
+      str = str.substr(1);
+
+      std::vector<int> idxs;
+      while (true) {
+        while (str[0] == ' ')
+          str = str.substr(1);
+        if (str[0] == ']') {
+          str = str.substr(1);
+          break;
+        }
+
+        int idx;
+        bool failed = str.consumeInteger(10, idx);
+        (void)failed;
+        assert(!failed);
+        idxs.push_back(idx);
+
+        while (str[0] == ' ')
+          str = str.substr(1);
+
+        if (str[0] == ',') {
+          str = str.substr(1);
+        }
+      }
+
+      while (str[0] == ' ')
+        str = str.substr(1);
+
+      assert(str[0] == ':');
+      str = str.substr(1);
+
+      while (str[0] == ' ')
+        str = str.substr(1);
+
+      auto endval = str.find(',');
+      auto endval2 = str.find('}');
+      auto endval3 = str.find(' ');
+
+      if (endval2 != StringRef::npos &&
+          (endval == StringRef::npos || endval2 < endval))
+        endval = endval2;
+      if (endval3 != StringRef::npos &&
+          (endval == StringRef::npos || endval3 < endval))
+        endval = endval3;
+      assert(endval != StringRef::npos);
+
+      auto tystr = str.substr(0, endval);
+      str = str.substr(endval);
+
+      ConcreteType CT(tystr, ctx);
+      Result.mapping.emplace(idxs, CT);
+      if (Result.minIndices.size() < idxs.size()) {
+        for (size_t i = Result.minIndices.size(), end = idxs.size(); i < end;
+             ++i) {
+          Result.minIndices.push_back(idxs[i]);
+        }
+      }
+      for (size_t i = 0, end = idxs.size(); i < end; ++i) {
+        if (idxs[i] < Result.minIndices[i])
+          Result.minIndices[i] = idxs[i];
+      }
+
+      while (str[0] == ' ')
+        str = str.substr(1);
+
+      if (str[0] == ',') {
+        str = str.substr(1);
+      }
+    }
+
+    return Result;
+  }
+
   /// Utility helper to lookup the mapping
   const ConcreteTypeMapType &getMapping() const { return mapping; }
 
@@ -1228,7 +1314,6 @@ public:
       if (found != RHS.mapping.end()) {
         RightCT = found->second;
       }
-
       bool SubLegal = true;
       changed |= CT.binopIn(SubLegal, RightCT, Op);
       if (!SubLegal) {
