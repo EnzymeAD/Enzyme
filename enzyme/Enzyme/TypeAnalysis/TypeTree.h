@@ -721,75 +721,6 @@ public:
     }
   }
 
-  TypeTree ShiftIndicesSlow(const llvm::DataLayout &dl, const int offset,
-                            const int maxSize, size_t addOffset = 0) const {
-    TypeTree Result;
-
-    for (const auto &pair : mapping) {
-      if (pair.first.size() == 0) {
-        if (pair.second == BaseType::Pointer ||
-            pair.second == BaseType::Anything) {
-          Result.insert(pair.first, pair.second);
-          continue;
-        }
-
-        llvm::errs() << "could not unmerge " << str() << "\n";
-        assert(0 && "ShiftIndices called on a nonpointer/anything");
-        llvm_unreachable("ShiftIndices called on a nonpointer/anything");
-      }
-
-      std::vector<int> next(pair.first);
-
-      if (next[0] == -1) {
-        if (maxSize == -1) {
-          // Max size does not clip the next index
-
-          // If we have a follow up offset add, we lose the -1 since we only
-          // represent [0, inf) with -1 not the [addOffset, inf) required here
-          if (addOffset != 0) {
-            next[0] = addOffset;
-          }
-
-        } else {
-          // This needs to become 0...maxSize as seen below
-        }
-      } else {
-        // Too small for range
-        if (next[0] < offset) {
-          continue;
-        }
-        next[0] -= offset;
-
-        if (maxSize != -1) {
-          if (next[0] >= maxSize)
-            continue;
-        }
-
-        next[0] += addOffset;
-      }
-
-      size_t chunk = 1;
-      auto op = operator[]({pair.first[0]});
-      if (auto flt = op.isFloat()) {
-        chunk = dl.getTypeSizeInBits(flt) / 8;
-      } else if (op == BaseType::Pointer) {
-        chunk = dl.getPointerSizeInBits() / 8;
-      }
-
-      if (next[0] == -1 && maxSize != -1) {
-        auto offincr = (chunk - offset % chunk) % chunk;
-        for (int i = offincr; i < maxSize; i += chunk) {
-          next[0] = i + addOffset;
-          Result.orIn(next, pair.second);
-        }
-      } else {
-        Result.orIn(next, pair.second);
-      }
-    }
-
-    return Result;
-  }
-
   /// Replace mappings in the range in [offset, offset+maxSize] with those in
   // [addOffset, addOffset + maxSize]. In other words, select all mappings in
   // [offset, offset+maxSize] then add `addOffset`
@@ -990,21 +921,6 @@ public:
     // Resize minIndices down if we dropped any higher-depth indices for being
     // out of scope.
     Result.minIndices.resize(maxInsertedDepth);
-
-    auto Res2 = ShiftIndicesSlow(dl, offset, maxSize, addOffset);
-    if (Result.minIndices != Res2.minIndices || !(Result == Res2)) {
-      llvm::errs() << " off: " << offset << " maxSize: " << maxSize
-                   << " addOffset: " << addOffset << "\n";
-      llvm::errs() << "inp: " << str() << "\n";
-      llvm::errs() << "result: " << Result.str() << "\n";
-      llvm::errs() << "res: " << Res2.str() << "\n";
-      llvm::errs() << " result minidx : " << to_string(Result.minIndices)
-                   << "\n";
-      llvm::errs() << " res2 minidx : " << to_string(Res2.minIndices) << "\n";
-    }
-    assert(Result == Res2);
-    assert(Result.minIndices == Res2.minIndices);
-
     return Result;
   }
 
