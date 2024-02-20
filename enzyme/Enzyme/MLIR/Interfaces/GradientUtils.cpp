@@ -115,14 +115,14 @@ mlir::enzyme::MGradientUtils::getNewFromOriginal(mlir::Block *originst) const {
 
 Operation *
 mlir::enzyme::MGradientUtils::getNewFromOriginal(Operation *originst) const {
+  assert(originst);
   auto found = originalToNewFnOps.find(originst);
   if (found == originalToNewFnOps.end()) {
     llvm::errs() << oldFunc << "\n";
     llvm::errs() << newFunc << "\n";
     for (auto &pair : originalToNewFnOps) {
       llvm::errs() << " map[" << pair.first << "] = " << pair.second << "\n";
-      // llvm::errs() << " map[" << pair.first << "] = " << pair.second << "
-      // -- " << *pair.first << " " << *pair.second << "\n";
+      llvm::errs() << " map[" << *pair.first << "] = " << *pair.second << "\n";
     }
     llvm::errs() << originst << " - " << *originst << "\n";
     llvm_unreachable("Could not get new op from original");
@@ -154,7 +154,12 @@ mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
   if (isConstantValue(v)) {
     if (auto iface = v.getType().dyn_cast<AutoDiffTypeInterface>()) {
       OpBuilder::InsertionGuard guard(Builder2);
-      Builder2.setInsertionPoint(getNewFromOriginal(v.getDefiningOp()));
+      if (auto op = v.getDefiningOp())
+        Builder2.setInsertionPoint(getNewFromOriginal(op));
+      else {
+        auto ba = cast<BlockArgument>(v);
+        Builder2.setInsertionPointToStart(getNewFromOriginal(ba.getOwner()));
+      }
       Value dv = iface.createNullValue(Builder2, v.getLoc());
       invertedPointers.map(v, dv);
       return dv;
@@ -301,11 +306,7 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
 
 LogicalResult MGradientUtils::visitChild(Operation *op) {
   if (mode == DerivativeMode::ForwardMode) {
-    // In absence of a proper activity analysis, approximate it by treating any
-    // side effect-free operation producing constants as inactive.
-    // if (auto iface = dyn_cast<MemoryEffectOpInterface>(op)) {
-    if (!isa<BranchOpInterface>(op) &&
-        !isa<RegionBranchTerminatorOpInterface>(op) &&
+    if ((op->getBlock()->getTerminator() != op) &&
         llvm::all_of(op->getResults(),
                      [this](Value v) { return isConstantValue(v); }) &&
         /*iface.hasNoEffect()*/ activityAnalyzer->isConstantOperation(TR, op)) {

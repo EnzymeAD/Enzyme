@@ -10,8 +10,10 @@
 // analysis.
 //
 //===----------------------------------------------------------------------===//
+#include "Analysis/ActivityAnalysis.h"
 #include "Analysis/DataFlowActivityAnalysis.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/EnzymeLogic.h"
 #include "Passes/PassDetails.h"
 #include "Passes/Passes.h"
 
@@ -116,10 +118,79 @@ struct PrintActivityAnalysisPass
     }
   }
 
+  void runActivityAnalysis(bool dataflow, FunctionOpInterface callee,
+                           ArrayRef<enzyme::Activity> argActivities,
+                           ArrayRef<enzyme::Activity> resultActivities,
+                           bool print, bool verbose, bool annotate) {
+    if (dataflow) {
+      enzyme::runDataFlowActivityAnalysis(callee, argActivities,
+                                          /*print=*/true, verbose, annotate);
+    } else {
+
+      SmallPtrSet<Block *, 4> blocksNotForAnalysis;
+
+      mlir::enzyme::MTypeResults TR; // TODO
+      SmallPtrSet<mlir::Value, 1> constant_values;
+      SmallPtrSet<mlir::Value, 1> activevals_;
+      for (auto &&[arg, act] :
+           llvm::zip(callee.getFunctionBody().getArguments(), argActivities)) {
+        if (act == enzyme::Activity::enzyme_const)
+          constant_values.insert(arg);
+        else
+          activevals_.insert(arg);
+      }
+      auto ReturnActivity = DIFFE_TYPE::CONSTANT;
+      for (auto act : resultActivities)
+        if (act != enzyme::Activity::enzyme_const)
+          ReturnActivity = DIFFE_TYPE::DUP_ARG;
+
+      enzyme::ActivityAnalyzer activityAnalyzer(
+          blocksNotForAnalysis, constant_values, activevals_, ReturnActivity);
+
+      callee.walk([&](Operation *op) {
+
+      });
+      MLIRContext *ctx = callee.getContext();
+      callee.walk([&](Operation *op) {
+        if (print)
+          llvm::outs() << " Operation: " << *op << "\n";
+        for (auto &reg : op->getRegions()) {
+          for (auto &blk : reg.getBlocks()) {
+            for (auto &arg : blk.getArguments()) {
+              bool icv = activityAnalyzer.isConstantValue(TR, arg);
+              if (annotate)
+                op->setAttr("enzyme.arg_icv" +
+                                std::to_string(arg.getArgNumber()),
+                            BoolAttr::get(ctx, icv));
+              if (print)
+                llvm::outs() << " arg: " << arg << " icv=" << icv << "\n";
+            }
+          }
+        }
+
+        bool ici = activityAnalyzer.isConstantOperation(TR, op);
+        if (annotate)
+          op->setAttr("enzyme.ici", BoolAttr::get(ctx, ici));
+        if (print)
+          llvm::outs() << " op ici=" << ici << "\n";
+
+        for (auto res : op->getResults()) {
+          bool icv = activityAnalyzer.isConstantValue(TR, res);
+          if (annotate)
+            op->setAttr("enzyme.res_icv" +
+                            std::to_string(res.getResultNumber()),
+                        BoolAttr::get(ctx, icv));
+          if (print)
+            llvm::outs() << " res: " << res << " icv=" << icv << "\n";
+        }
+      });
+    }
+  }
+
   void runOnOperation() override {
     auto moduleOp = cast<ModuleOp>(getOperation());
 
-    if (annotate) {
+    if (annotate && dataflow) {
       // Infer the activity attributes from the __enzyme_autodiff call
       Operation *autodiff_decl = moduleOp.lookupSymbol("__enzyme_autodiff");
       if (!autodiff_decl)
@@ -148,8 +219,8 @@ struct PrintActivityAnalysisPass
         // supplied annotation. First argument is the callee
         inferArgActivitiesFromEnzymeAutodiff(callee, autodiff_call,
                                              argActivities, resultActivities);
-        enzyme::runDataFlowActivityAnalysis(callee, argActivities,
-                                            /*print=*/true, verbose, annotate);
+        runActivityAnalysis(dataflow, callee, argActivities, resultActivities,
+                            /*print=*/true, verbose, annotate);
       }
       return;
     }
@@ -163,8 +234,8 @@ struct PrintActivityAnalysisPass
             resultActivities{callee.getNumResults()};
         initializeArgAndResActivities(callee, argActivities, resultActivities);
 
-        enzyme::runDataFlowActivityAnalysis(callee, argActivities,
-                                            /*print=*/true, verbose, annotate);
+        runActivityAnalysis(dataflow, callee, argActivities, resultActivities,
+                            /*print=*/true, verbose, annotate);
       });
       return;
     }
@@ -186,8 +257,8 @@ struct PrintActivityAnalysisPass
           resultActivities{callee.getNumResults()};
       initializeArgAndResActivities(callee, argActivities, resultActivities);
 
-      enzyme::runDataFlowActivityAnalysis(callee, argActivities,
-                                          /*print=*/true, verbose, annotate);
+      runActivityAnalysis(dataflow, callee, argActivities, resultActivities,
+                          /*print=*/true, verbose, annotate);
     }
   }
 };

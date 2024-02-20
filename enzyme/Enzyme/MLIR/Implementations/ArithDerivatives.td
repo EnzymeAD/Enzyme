@@ -28,6 +28,6 @@ def : MLIRDerivative<"arith", "DivFOp", (Op $x, $y),
                     [
                       (CheckedDivF (DiffeRet), $y),
                       (NegF (MulF (CheckedDivF (DiffeRet), $y), (DivF $x, $y)))
-                    ]
-                    // (CheckedDiv (FSub (SelectIfActive $x, (FMul (Shadow $x), $y), (Zero $x)), (SelectIfActive $y, (FMul (Shadow $y), $x), (Zero $y))), (FMul $y, $y))
+                    ],
+                    (CheckedDivF (SubF (SelectIfActive $x, (MulF (Shadow $x), $y), (ConstantFP<"0","arith", "ConstantOp"> $x)), (SelectIfActive $y, (MulF (Shadow $y), $x), (ConstantFP<"0","arith","ConstantOp"> $y))), (MulF $y, $y))
                   >;

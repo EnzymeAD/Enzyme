@@ -143,12 +143,18 @@ private:
   bool isFunctionArgumentConstant(mlir::CallOpInterface CI, Value val);
 
   /// Is the value guaranteed to be inactive because of how it's produced.
-  bool isValueInactiveFromOrigin(MTypeResults const &TR, Value val);
+  /// If active and inactArg is non-null, store any values which may allow this
+  /// to succeed in the future
+  bool isValueInactiveFromOrigin(
+      MTypeResults const &TR, Value val,
+      llvm::SmallPtrSetImpl<mlir::Value> *inactArg = nullptr);
+
   /// Is the operation guaranteed to be inactive because of how its operands are
   /// produced.
   bool isOperationInactiveFromOrigin(
       MTypeResults const &TR, Operation *op,
-      std::optional<unsigned> resultNo = std::nullopt);
+      std::optional<unsigned> resultNo = std::nullopt,
+      llvm::SmallPtrSetImpl<mlir::Value> *inactArg = nullptr);
 
 public:
   enum class UseActivity {

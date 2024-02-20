@@ -3323,7 +3323,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           // rematerialization is loop level. This is because one can have a
           // loop level cache, but a function level allocation (e.g. for stack
           // allocas). If we deleted it here, we would have no allocation!
-          auto AllocationLoop = gutils->OrigLI.getLoopFor(call.getParent());
+          auto AllocationLoop = gutils->OrigLI->getLoopFor(call.getParent());
           // An allocation within a loop, must definitionally be a loop level
           // allocation (but not always the other way around.
           if (AllocationLoop)
@@ -4047,6 +4047,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             return true;
           }
           assert(!unnecessaryValues.count(rmat.first));
+          (void)primalNeededInReverse;
           assert(primalNeededInReverse);
         }
       }

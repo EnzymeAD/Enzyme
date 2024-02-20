@@ -1158,6 +1158,7 @@ static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op)
     bool b = AttrList.getAttribute("enzyme_allocator")
                  .getValueAsString()
                  .getAsInteger(10, res);
+    (void)b;
     assert(!b);
 #if LLVM_VERSION_MAJOR >= 16
     return std::optional<size_t>(res);
@@ -1172,6 +1173,7 @@ static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op)
       bool b = called->getFnAttribute("enzyme_allocator")
                    .getValueAsString()
                    .getAsInteger(10, res);
+      (void)b;
       assert(!b);
 #if LLVM_VERSION_MAJOR >= 16
       return std::optional<size_t>(res);
@@ -1228,6 +1230,7 @@ static inline std::vector<ssize_t> getDeallocationIndicesFromCall(T *op) {
   for (auto ind : inds) {
     ssize_t Result;
     bool b = ind.getAsInteger(10, Result);
+    (void)b;
     assert(!b);
     vinds.push_back(Result);
   }
@@ -1355,10 +1358,11 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
       auto AttrList = Call->getAttributes().getAttributes(
           llvm::AttributeList::FunctionIndex);
       if (AttrList.hasAttribute("enzyme_pointermath")) {
-        size_t res;
+        size_t res = 0;
         bool failed = AttrList.getAttribute("enzyme_pointermath")
                           .getValueAsString()
                           .getAsInteger(10, res);
+        (void)failed;
         assert(!failed);
         V = Call->getArgOperand(res);
         continue;
@@ -1386,10 +1390,11 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
         auto AttrList = fn->getAttributes().getAttributes(
             llvm::AttributeList::FunctionIndex);
         if (AttrList.hasAttribute("enzyme_pointermath")) {
-          size_t res;
+          size_t res = 0;
           bool failed = AttrList.getAttribute("enzyme_pointermath")
                             .getValueAsString()
                             .getAsInteger(10, res);
+          (void)failed;
           assert(!failed);
           V = Call->getArgOperand(res);
           continue;

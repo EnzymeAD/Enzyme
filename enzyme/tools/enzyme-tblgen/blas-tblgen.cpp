@@ -444,6 +444,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
       break;
     }
   }
+  (void)hasInt;
   assert(hasInt);
 
   os << "  Type* cublas_retty = nullptr;\n"
@@ -482,6 +483,7 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
       break;
     }
   }
+  (void)foundInt;
   assert(foundInt && "no int type found in blas call");
 
   os << "  // fpType already given by blas type (s, d, c, z) \n"

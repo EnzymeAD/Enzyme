@@ -128,10 +128,10 @@ public:
   DerivativeMode mode;
   llvm::Function *oldFunc;
   llvm::ValueMap<const llvm::Value *, InvertedPointerVH> invertedPointers;
-  llvm::DominatorTree &OrigDT;
-  llvm::PostDominatorTree &OrigPDT;
-  llvm::LoopInfo &OrigLI;
-  llvm::ScalarEvolution &OrigSE;
+  llvm::DominatorTree *OrigDT;
+  llvm::PostDominatorTree *OrigPDT;
+  llvm::LoopInfo *OrigLI;
+  llvm::ScalarEvolution *OrigSE;
 
   /// (Original) Blocks which dominate all returns
   llvm::SmallPtrSet<llvm::BasicBlock *, 4> BlocksDominatingAllReturns;
@@ -353,7 +353,7 @@ public:
   }
 
 public:
-  llvm::AAResults &OrigAA;
+  llvm::AAResults *OrigAA;
   TypeAnalysis &TA;
   TypeResults TR;
   bool omp;
@@ -601,11 +601,13 @@ public:
                               llvm::ArrayRef<llvm::Constant *> diffs,
                               llvm::IRBuilder<> &Builder, Func rule) {
     if (width > 1) {
+#ifndef NDEBUG
       for (auto diff : diffs) {
         assert(diff);
         assert(llvm::cast<llvm::ArrayType>(diff->getType())->getNumElements() ==
                width);
       }
+#endif
       llvm::Type *wrappedType = llvm::ArrayType::get(diffType, width);
       llvm::Value *res = llvm::UndefValue::get(wrappedType);
       for (unsigned int i = 0; i < getWidth(); ++i) {

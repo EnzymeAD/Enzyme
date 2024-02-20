@@ -297,7 +297,7 @@ void FreeTypeAnalysis(EnzymeTypeAnalysisRef TAR) {
 void *EnzymeAnalyzeTypes(EnzymeTypeAnalysisRef TAR, CFnTypeInfo CTI,
                          LLVMValueRef F) {
   FnTypeInfo FTI(eunwrap(CTI, cast<Function>(unwrap(F))));
-  return (void *)&((TypeAnalysis *)TAR)->analyzeFunction(FTI).analyzer;
+  return (void *)((TypeAnalysis *)TAR)->analyzeFunction(FTI).analyzer;
 }
 
 void *EnzymeGradientUtilsTypeAnalyzer(GradientUtils *G) {
@@ -1184,6 +1184,7 @@ LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
       for (auto s : sub) {
         uint64_t ival;
         bool b = s.getAsInteger(10, ival);
+        (void)b;
         assert(!b);
         previdx.push_back(ival);
       }
@@ -1241,6 +1242,7 @@ LLVMValueRef EnzymeComputeByteOffsetOfGEP(LLVMBuilderRef B_r, LLVMValueRef V_r,
   APInt Offset(width, 0);
   bool success =
       collectOffset(cast<GEPOperator>(gep), DL, width, VariableOffsets, Offset);
+  (void)success;
   assert(success);
   Value *start = ConstantInt::get(T, Offset);
   for (auto &pair : VariableOffsets)

@@ -169,19 +169,19 @@ GradientUtils::GradientUtils(
     : CacheUtility(TLI_, newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_),
       invertedPointers(),
       OrigDT(oldFunc_->empty()
-                 ? *((DominatorTree *)nullptr)
-                 : Logic.PPC.FAM.getResult<llvm::DominatorTreeAnalysis>(
+                 ? ((DominatorTree *)nullptr)
+                 : &Logic.PPC.FAM.getResult<llvm::DominatorTreeAnalysis>(
                        *oldFunc_)),
       OrigPDT(oldFunc_->empty()
-                  ? *((PostDominatorTree *)nullptr)
-                  : Logic.PPC.FAM.getResult<llvm::PostDominatorTreeAnalysis>(
+                  ? ((PostDominatorTree *)nullptr)
+                  : &Logic.PPC.FAM.getResult<llvm::PostDominatorTreeAnalysis>(
                         *oldFunc_)),
       OrigLI(oldFunc_->empty()
-                 ? *((LoopInfo *)nullptr)
-                 : Logic.PPC.FAM.getResult<llvm::LoopAnalysis>(*oldFunc_)),
+                 ? ((LoopInfo *)nullptr)
+                 : &Logic.PPC.FAM.getResult<llvm::LoopAnalysis>(*oldFunc_)),
       OrigSE(oldFunc_->empty()
-                 ? *((ScalarEvolution *)nullptr)
-                 : Logic.PPC.FAM.getResult<llvm::ScalarEvolutionAnalysis>(
+                 ? ((ScalarEvolution *)nullptr)
+                 : &Logic.PPC.FAM.getResult<llvm::ScalarEvolutionAnalysis>(
                        *oldFunc_)),
       notForAnalysis(getGuaranteedUnreachable(oldFunc_)),
       ATA(oldFunc_->empty()
@@ -191,8 +191,8 @@ GradientUtils::GradientUtils(
                     notForAnalysis, TLI_, constantvalues_, activevals_,
                     ReturnActivity)),
       overwritten_args_map_ptr(nullptr), tid(nullptr), numThreads(nullptr),
-      OrigAA(oldFunc_->empty() ? *((AAResults *)nullptr)
-                               : Logic.PPC.getAAResultsFromFunction(oldFunc_)),
+      OrigAA(oldFunc_->empty() ? ((AAResults *)nullptr)
+                               : &Logic.PPC.getAAResultsFromFunction(oldFunc_)),
       TA(TA_), TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_) {
   if (oldFunc_->empty())
     return;
@@ -242,7 +242,7 @@ GradientUtils::GradientUtils(
   for (BasicBlock &BB : *oldFunc) {
     bool legal = true;
     for (auto BRet : ReturningBlocks) {
-      if (!(BRet == &BB || OrigDT.dominates(&BB, BRet))) {
+      if (!(BRet == &BB || OrigDT->dominates(&BB, BRet))) {
         legal = false;
         break;
       }
@@ -508,7 +508,7 @@ Value *GradientUtils::getOrInsertConditionalIndex(Value *val, LoopContext &lc,
 bool GradientUtils::assumeDynamicLoopOfSizeOne(Loop *L) const {
   if (!EnzymeInactiveDynamic)
     return false;
-  auto OL = OrigLI.getLoopFor(isOriginal(L->getHeader()));
+  auto OL = OrigLI->getLoopFor(isOriginal(L->getHeader()));
   assert(OL);
   for (auto OB : OL->getBlocks()) {
     for (auto &OI : *OB) {
@@ -607,12 +607,14 @@ BasicBlock *GradientUtils::getOriginalFromNew(const BasicBlock *newinst) const {
 Value *GradientUtils::isOriginal(const Value *newinst) const {
   if (isa<Constant>(newinst) || isa<UndefValue>(newinst))
     return const_cast<Value *>(newinst);
+#ifndef NDEBUG
   if (auto arg = dyn_cast<Argument>(newinst)) {
     assert(arg->getParent() == newFunc);
   }
   if (auto inst = dyn_cast<Instruction>(newinst)) {
     assert(inst->getParent()->getParent() == newFunc);
   }
+#endif
   auto found = newToOriginalFn.find(newinst);
   if (found == newToOriginalFn.end())
     return nullptr;
@@ -2519,11 +2521,13 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
     return malloc;
   }
 
+#ifndef NDEBUG
   if (auto CI = dyn_cast<CallInst>(malloc)) {
     if (auto F = CI->getCalledFunction()) {
       assert(F->getName() != "omp_get_thread_num");
     }
   }
+#endif
 
   if (malloc->getType()->isTokenTy()) {
     llvm::errs() << " oldFunc: " << *oldFunc << "\n";
@@ -3425,8 +3429,9 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                 lctx, placeholder->getType(), placeholder->getName(),
                 /*shouldFree*/ true);
             assert(cache);
+            Value *placeholder_tmp = placeholder;
             found = insert_or_assign(
-                scopeMap, (Value *&)placeholder,
+                scopeMap, placeholder_tmp,
                 std::pair<AssertingVH<AllocaInst>, LimitContext>(cache, lctx));
           }
           auto cache = found->second.first;
@@ -3788,7 +3793,7 @@ bool GradientUtils::legalRecompute(const Value *val,
     struct {
       Function *func;
       const LoopInfo &FLI;
-    } options[2] = {{newFunc, LI}, {oldFunc, OrigLI}};
+    } options[2] = {{newFunc, LI}, {oldFunc, *OrigLI}};
     for (const auto &tup : options) {
       if (parent->getParent() == tup.func) {
         for (auto &val : phi->incoming_values()) {
@@ -3928,7 +3933,7 @@ bool GradientUtils::legalRecompute(const Value *val,
                 const_cast<Instruction *>(orig), [&](Instruction *I) -> bool {
                   if (I->mayWriteToMemory() &&
                       writesToMemoryReadBy(
-                          OrigAA, TLI,
+                          *OrigAA, TLI,
                           /*maybeReader*/ const_cast<Instruction *>(orig),
                           /*maybeWriter*/ I)) {
                     failed = true;
@@ -3951,7 +3956,7 @@ bool GradientUtils::legalRecompute(const Value *val,
               }
               origStart = origStart->getNextNode();
             } while (true);
-            if (OrigDT.dominates(origStart, const_cast<Instruction *>(orig))) {
+            if (OrigDT->dominates(origStart, const_cast<Instruction *>(orig))) {
               bool failed = false;
 
               allInstructionsBetween(
@@ -3959,7 +3964,7 @@ bool GradientUtils::legalRecompute(const Value *val,
                   const_cast<Instruction *>(orig), [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
                         writesToMemoryReadBy(
-                            OrigAA, TLI,
+                            *OrigAA, TLI,
                             /*maybeReader*/ const_cast<Instruction *>(orig),
                             /*maybeWriter*/ I)) {
                       failed = true;
@@ -4754,12 +4759,14 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                                 SyncScope::ID syncScope, Value *mask,
                                 ArrayRef<Metadata *> noAlias,
                                 ArrayRef<Metadata *> scopes) {
+#ifndef NDEBUG
   if (auto inst = dyn_cast<Instruction>(ptr)) {
     assert(inst->getParent()->getParent() == oldFunc);
   }
   if (auto arg = dyn_cast<Argument>(ptr)) {
     assert(arg->getParent() == oldFunc);
   }
+#endif
 
   Value *origptr = ptr;
 
@@ -5034,12 +5041,14 @@ llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                                      bool nullShadow) {
   assert(oval);
+#ifndef NDEBUG
   if (auto inst = dyn_cast<Instruction>(oval)) {
     assert(inst->getParent()->getParent() == oldFunc);
   }
   if (auto arg = dyn_cast<Argument>(oval)) {
     assert(arg->getParent() == oldFunc);
   }
+#endif
 
   if (isa<ConstantPointerNull>(oval)) {
     return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
@@ -5290,7 +5299,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               if (F && isMemFreeLibMFunction(F->getName())) {
                 continue;
               }
-              if (llvm::isModOrRefSet(OrigAA.getModRefInfo(CI, Loc))) {
+              if (llvm::isModOrRefSet(OrigAA->getModRefInfo(CI, Loc))) {
                 seen = true;
                 llvm::errs() << " cannot shadow-inline global " << *oval
                              << " due to " << *CI << "\n";
@@ -6336,9 +6345,9 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
         //   + or because the loop nests share no ancestry
 
         bool loopLegal = true;
-        for (Loop *idx = OrigLI.getLoopFor(orig); idx != nullptr;
+        for (Loop *idx = OrigLI->getLoopFor(orig); idx != nullptr;
              idx = idx->getParentLoop()) {
-          for (Loop *fdx = OrigLI.getLoopFor(forwardBlock); fdx != nullptr;
+          for (Loop *fdx = OrigLI->getLoopFor(forwardBlock); fdx != nullptr;
                fdx = fdx->getParentLoop()) {
             if (idx == fdx) {
               loopLegal = false;
@@ -6542,9 +6551,9 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               //             << "\n";
 
               allInstructionsBetween(
-                  OrigLI, orig2, origInst, [&](Instruction *I) -> bool {
+                  *OrigLI, orig2, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
-                        writesToMemoryReadBy(OrigAA, TLI,
+                        writesToMemoryReadBy(*OrigAA, TLI,
                                              /*maybeReader*/ origInst,
                                              /*maybeWriter*/ I)) {
                       failed = true;
@@ -6558,12 +6567,12 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
               if (auto ar1 = dyn_cast<SCEVAddRecExpr>(scev1)) {
                 if (auto ar2 = dyn_cast<SCEVAddRecExpr>(scev2)) {
-                  if (ar1->getStart() != OrigSE.getCouldNotCompute() &&
+                  if (ar1->getStart() != OrigSE->getCouldNotCompute() &&
                       ar1->getStart() == ar2->getStart() &&
-                      ar1->getStepRecurrence(OrigSE) !=
-                          OrigSE.getCouldNotCompute() &&
-                      ar1->getStepRecurrence(OrigSE) ==
-                          ar2->getStepRecurrence(OrigSE)) {
+                      ar1->getStepRecurrence(*OrigSE) !=
+                          OrigSE->getCouldNotCompute() &&
+                      ar1->getStepRecurrence(*OrigSE) ==
+                          ar2->getStepRecurrence(*OrigSE)) {
 
                     LoopContext l1;
                     getContext(ar1->getLoop()->getHeader(), l1);
@@ -6591,7 +6600,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
           }
         }
 
-        auto scev1 = OrigSE.getSCEV(origInst->getPointerOperand());
+        auto scev1 = OrigSE->getSCEV(origInst->getPointerOperand());
 
         auto Arch =
             llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
@@ -6599,7 +6608,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
             Arch == Triple::amdgcn
                 ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
                 : 3;
-        if (EnzymeSharedForward && scev1 != OrigSE.getCouldNotCompute() &&
+        if (EnzymeSharedForward && scev1 != OrigSE->getCouldNotCompute() &&
             cast<PointerType>(orig_liobj->getType())->getAddressSpace() ==
                 SharedAddrSpace) {
           Value *resultValue = nullptr;
@@ -6608,7 +6617,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
             assert(pair.first->getType() == pair.second->getType());
             newavail[pair.first] = pair.second;
           }
-          allDomPredecessorsOf(origInst, OrigDT, [&](Instruction *pred) {
+          allDomPredecessorsOf(origInst, *OrigDT, [&](Instruction *pred) {
             if (auto SI = dyn_cast<StoreInst>(pred)) {
               // auto NewSI = cast<StoreInst>(getNewFromOriginal(SI));
               auto si2obj = getBaseObject(SI->getPointerOperand());
@@ -6619,10 +6628,10 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               bool lastStore = true;
               bool interveningSync = false;
               allInstructionsBetween(
-                  OrigLI, SI, origInst, [&](Instruction *potentialAlias) {
+                  *OrigLI, SI, origInst, [&](Instruction *potentialAlias) {
                     if (!potentialAlias->mayWriteToMemory())
                       return false;
-                    if (!writesToMemoryReadBy(OrigAA, TLI, origInst,
+                    if (!writesToMemoryReadBy(*OrigAA, TLI, origInst,
                                               potentialAlias))
                       return false;
 
@@ -6640,7 +6649,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                               if (mid == SI)
                                 return false;
 
-                              if (!writesToMemoryReadBy(OrigAA, TLI, origInst,
+                              if (!writesToMemoryReadBy(*OrigAA, TLI, origInst,
                                                         mid)) {
                                 return false;
                               }
@@ -6667,16 +6676,16 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               if (!lastStore)
                 return false;
 
-              auto scev2 = OrigSE.getSCEV(SI->getPointerOperand());
+              auto scev2 = OrigSE->getSCEV(SI->getPointerOperand());
               bool legal = scev1 == scev2;
               if (auto ar2 = dyn_cast<SCEVAddRecExpr>(scev2)) {
                 if (auto ar1 = dyn_cast<SCEVAddRecExpr>(scev1)) {
-                  if (ar2->getStart() != OrigSE.getCouldNotCompute() &&
+                  if (ar2->getStart() != OrigSE->getCouldNotCompute() &&
                       ar1->getStart() == ar2->getStart() &&
-                      ar2->getStepRecurrence(OrigSE) !=
-                          OrigSE.getCouldNotCompute() &&
-                      ar1->getStepRecurrence(OrigSE) ==
-                          ar2->getStepRecurrence(OrigSE)) {
+                      ar2->getStepRecurrence(*OrigSE) !=
+                          OrigSE->getCouldNotCompute() &&
+                      ar1->getStepRecurrence(*OrigSE) ==
+                          ar2->getStepRecurrence(*OrigSE)) {
 
                     LoopContext l1;
                     getContext(getNewFromOriginal(ar1->getLoop()->getHeader()),
@@ -6729,15 +6738,15 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       ValueToValueMapTy ThreadLookup;
                       bool legal = true;
                       for (size_t i = 0; i < svals.size(); i++) {
-                        auto ss = OrigSE.getSCEV(svals[i]);
-                        auto ls = OrigSE.getSCEV(lvals[i]);
+                        auto ss = OrigSE->getSCEV(svals[i]);
+                        auto ls = OrigSE->getSCEV(lvals[i]);
                         if (cast<IntegerType>(ss->getType())->getBitWidth() >
                             cast<IntegerType>(ls->getType())->getBitWidth()) {
-                          ls = OrigSE.getZeroExtendExpr(ls, ss->getType());
+                          ls = OrigSE->getZeroExtendExpr(ls, ss->getType());
                         }
                         if (cast<IntegerType>(ss->getType())->getBitWidth() <
                             cast<IntegerType>(ls->getType())->getBitWidth()) {
-                          ls = OrigSE.getTruncateExpr(ls, ss->getType());
+                          ls = OrigSE->getTruncateExpr(ls, ss->getType());
                         }
                         if (ls != ss) {
                           if (auto II = dyn_cast<IntrinsicInst>(svals[i])) {
@@ -6824,23 +6833,23 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
                   auto origPH = cast_or_null<BasicBlock>(isOriginal(ctx));
                   assert(origPH);
-                  if (OrigPDT.dominates(origPH, origInst->getParent())) {
+                  if (OrigPDT->dominates(origPH, origInst->getParent())) {
                     goto noSpeedCache;
                   }
 
                   Instruction *origTerm = origPH->getTerminator();
                   if (!origTerm)
-                    llvm::errs() << *origTerm << "\n";
+                    llvm::errs() << *origPH << "\n";
                   assert(origTerm);
                   IRBuilder<> OB(origTerm);
                   LoadInst *tmpload = OB.CreateLoad(AT, orig_liobj, "'tmpload");
 
                   bool failed = false;
                   allInstructionsBetween(
-                      OrigLI, &*origTerm, origInst,
+                      *OrigLI, &*origTerm, origInst,
                       [&](Instruction *I) -> bool {
                         if (I->mayWriteToMemory() &&
-                            writesToMemoryReadBy(OrigAA, TLI,
+                            writesToMemoryReadBy(*OrigAA, TLI,
                                                  /*maybeReader*/ tmpload,
                                                  /*maybeWriter*/ I)) {
                           failed = true;
@@ -6858,15 +6867,15 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                     bool failed = false;
                     auto origPH = cast_or_null<BasicBlock>(isOriginal(nctx));
                     assert(origPH);
-                    if (OrigPDT.dominates(origPH, origInst->getParent())) {
+                    if (OrigPDT->dominates(origPH, origInst->getParent())) {
                       break;
                     }
                     Instruction *origTerm = origPH->getTerminator();
                     allInstructionsBetween(
-                        OrigLI, &*origTerm, origInst,
+                        *OrigLI, &*origTerm, origInst,
                         [&](Instruction *I) -> bool {
                           if (I->mayWriteToMemory() &&
-                              writesToMemoryReadBy(OrigAA, TLI,
+                              writesToMemoryReadBy(*OrigAA, TLI,
                                                    /*maybeReader*/ tmpload,
                                                    /*maybeWriter*/ I)) {
                             failed = true;
@@ -6958,7 +6967,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               }
           }
 
-          auto scev1 = OrigSE.getSCEV(origInst->getPointerOperand());
+          auto scev1 = OrigSE->getSCEV(origInst->getPointerOperand());
           // Store in memcpy opt
           Value *lim = nullptr;
           BasicBlock *ctx = nullptr;
@@ -6966,7 +6975,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
           Value *offset = nullptr;
           if (auto ar1 = dyn_cast<SCEVAddRecExpr>(scev1)) {
             if (auto step =
-                    dyn_cast<SCEVConstant>(ar1->getStepRecurrence(OrigSE))) {
+                    dyn_cast<SCEVConstant>(ar1->getStepRecurrence(*OrigSE))) {
               if (step->getAPInt() != loadSize)
                 goto noSpeedCache;
 
@@ -6983,7 +6992,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
               auto origPH = cast_or_null<BasicBlock>(isOriginal(ctx));
               assert(origPH);
-              if (OrigPDT.dominates(origPH, origInst->getParent())) {
+              if (OrigPDT->dominates(origPH, origInst->getParent())) {
                 goto noSpeedCache;
               }
 
@@ -7002,7 +7011,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                 SmallVector<Instruction *, 32> InsertedInstructions;
                 {
                   SCEVExpander OrigExp(
-                      OrigSE, ctx->getParent()->getParent()->getDataLayout(),
+                      *OrigSE, ctx->getParent()->getParent()->getDataLayout(),
                       "enzyme");
 
                   OrigExp.setInsertPoint(
@@ -7023,7 +7032,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                 // instructions.
                 llvm::stable_sort(InsertedInstructions,
                                   [this](Instruction *A, Instruction *B) {
-                                    return OrigDT.dominates(A, B);
+                                    return OrigDT->dominates(A, B);
                                   });
                 for (auto a : InsertedInstructions) {
                   assert(!isa<PHINode>(a));
@@ -7031,6 +7040,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       unwrapM(a, v, available, UnwrapMode::AttemptSingleUnwrap,
                               /*scope*/ nullptr, /*cache*/ false));
                   assert(uw->getType() == a->getType());
+#ifndef NDEBUG
                   for (size_t i = 0; i < uw->getNumOperands(); i++) {
                     auto op = uw->getOperand(i);
                     if (auto arg = dyn_cast<Argument>(op))
@@ -7038,6 +7048,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                     else if (auto inst = dyn_cast<Instruction>(op))
                       assert(inst->getParent()->getParent() == newFunc);
                   }
+#endif
                   available[a] = uw;
                   unwrappedLoads.erase(cast<Instruction>(uw));
                 }
@@ -7054,7 +7065,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                 available.clear();
                 for (auto I : llvm::reverse(InsertedInstructions)) {
                   assert(I->getNumUses() == 0);
-                  OrigSE.forgetValue(I);
+                  OrigSE->forgetValue(I);
                   I->eraseFromParent();
                 }
 #endif
@@ -7067,9 +7078,9 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
               bool failed = false;
               allInstructionsBetween(
-                  OrigLI, &*origTerm, origInst, [&](Instruction *I) -> bool {
+                  *OrigLI, &*origTerm, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
-                        writesToMemoryReadBy(OrigAA, TLI,
+                        writesToMemoryReadBy(*OrigAA, TLI,
                                              /*maybeReader*/ origInst,
                                              /*maybeWriter*/ I)) {
                       failed = true;
@@ -7091,14 +7102,14 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               bool failed = false;
               auto origPH = cast_or_null<BasicBlock>(isOriginal(nctx));
               assert(origPH);
-              if (OrigPDT.dominates(origPH, origInst->getParent())) {
+              if (OrigPDT->dominates(origPH, origInst->getParent())) {
                 break;
               }
               Instruction *origTerm = origPH->getTerminator();
               allInstructionsBetween(
-                  OrigLI, &*origTerm, origInst, [&](Instruction *I) -> bool {
+                  *OrigLI, &*origTerm, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
-                        writesToMemoryReadBy(OrigAA, TLI,
+                        writesToMemoryReadBy(*OrigAA, TLI,
                                              /*maybeReader*/ origInst,
                                              /*maybeWriter*/ I)) {
                       failed = true;
@@ -7259,7 +7270,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               AllocaInst *cache = createCacheForScope(
                   lctx, inst->getType(), inst->getName(), /*shouldFree*/ true);
               assert(cache);
-              insert_or_assign(scopeMap, (Value *&)inst,
+              Value *inst_tmp = inst;
+              insert_or_assign(scopeMap, inst_tmp,
                                std::pair<AssertingVH<AllocaInst>, LimitContext>(
                                    cache, lctx));
             }
@@ -7333,9 +7345,11 @@ void GradientUtils::branchToCorrespondingTarget(
     if (replacePHIs->size() == 0)
       return;
 
+#ifndef NDEBUG
     for (auto x : *replacePHIs) {
       assert(targetToPreds.find(x.first) != targetToPreds.end());
     }
+#endif
   }
 
   if (targetToPreds.size() == 1) {
@@ -7891,7 +7905,7 @@ void GradientUtils::computeMinCache() {
     for (BasicBlock &BB : *oldFunc) {
       if (notForAnalysis.count(&BB))
         continue;
-      auto L = OrigLI.getLoopFor(&BB);
+      auto L = OrigLI->getLoopFor(&BB);
 
       auto invariant = [&](Value *V) {
         if (isa<Constant>(V))
@@ -7899,20 +7913,20 @@ void GradientUtils::computeMinCache() {
         if (isa<Argument>(V))
           return true;
         if (auto I = dyn_cast<Instruction>(V)) {
-          if (!L->contains(OrigLI.getLoopFor(I->getParent())))
+          if (!L->contains(OrigLI->getLoopFor(I->getParent())))
             return true;
         }
         return false;
       };
       for (Instruction &I : BB) {
         if (auto PN = dyn_cast<PHINode>(&I)) {
-          if (!OrigLI.isLoopHeader(&BB))
+          if (!OrigLI->isLoopHeader(&BB))
             continue;
           if (PN->getType()->isIntegerTy()) {
             bool legal = true;
             SmallPtrSet<Instruction *, 4> Increment;
             for (auto B : PN->blocks()) {
-              if (OrigLI.getLoopFor(B) == L) {
+              if (OrigLI->getLoopFor(B) == L) {
                 if (auto BO = dyn_cast<BinaryOperator>(
                         PN->getIncomingValueForBlock(B))) {
                   if (BO->getOpcode() == BinaryOperator::Add) {
@@ -8000,7 +8014,7 @@ void GradientUtils::computeMinCache() {
       ValueToValueMapTy Available2;
       for (auto a : Available)
         Available2[a.first] = a.second;
-      for (Loop *L = OrigLI.getLoopFor(&BB); L != nullptr;
+      for (Loop *L = OrigLI->getLoopFor(&BB); L != nullptr;
            L = L->getParentLoop()) {
         for (auto v : LoopAvail[L]) {
           Available2[v] = v;
@@ -8042,7 +8056,7 @@ void GradientUtils::computeMinCache() {
         ValueToValueMapTy Available2;
         for (auto a : Available)
           Available2[a.first] = a.second;
-        for (Loop *L = OrigLI.getLoopFor(cast<Instruction>(V)->getParent());
+        for (Loop *L = OrigLI->getLoopFor(cast<Instruction>(V)->getParent());
              L != nullptr; L = L->getParentLoop()) {
           for (auto v : LoopAvail[L]) {
             Available2[v] = v;
@@ -8068,8 +8082,8 @@ void GradientUtils::computeMinCache() {
 
     SetVector<Value *> MinReq;
     DifferentialUseAnalysis::minCut(oldFunc->getParent()->getDataLayout(),
-                                    OrigLI, Recomputes, Intermediates, Required,
-                                    MinReq, this, TLI);
+                                    *OrigLI, Recomputes, Intermediates,
+                                    Required, MinReq, this, TLI);
     SmallPtrSet<Value *, 5> NeedGraph;
     for (Value *V : MinReq)
       NeedGraph.insert(V);
@@ -8098,7 +8112,7 @@ void GradientUtils::computeMinCache() {
         ValueToValueMapTy Available2;
         for (auto a : Available)
           Available2[a.first] = a.second;
-        for (Loop *L = OrigLI.getLoopFor(cast<Instruction>(V)->getParent());
+        for (Loop *L = OrigLI->getLoopFor(cast<Instruction>(V)->getParent());
              L != nullptr; L = L->getParentLoop()) {
           for (auto v : LoopAvail[L]) {
             Available2[v] = v;
@@ -8177,11 +8191,13 @@ void GradientUtils::forceActiveDetection() {
 
 bool GradientUtils::isConstantValue(Value *val) const {
   if (auto inst = dyn_cast<Instruction>(val)) {
+    (void)inst;
     assert(inst->getParent()->getParent() == oldFunc);
     return ATA->isConstantValue(TR, val);
   }
 
   if (auto arg = dyn_cast<Argument>(val)) {
+    (void)arg;
     assert(arg->getParent() == oldFunc);
     return ATA->isConstantValue(TR, val);
   }
@@ -8746,13 +8762,13 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
   }
 
   // Find the outermost loop of all stores, and the allocation/lifetime
-  Loop *outer = OrigLI.getLoopFor(V->getParent());
+  Loop *outer = OrigLI->getLoopFor(V->getParent());
   if (LifetimeStarts.size() == 1) {
-    outer = OrigLI.getLoopFor((*LifetimeStarts.begin())->getParent());
+    outer = OrigLI->getLoopFor((*LifetimeStarts.begin())->getParent());
   }
 
   for (auto S : stores) {
-    outer = getAncestor(outer, OrigLI.getLoopFor(S->getParent()));
+    outer = getAncestor(outer, OrigLI->getLoopFor(S->getParent()));
   }
 
   // May now read pointers for storing into other pointers. Therefore we
@@ -8766,8 +8782,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       SmallVector<Instruction *, 2> results;
       mayExecuteAfter(results, LI, storingOps, outer);
       for (auto res : results) {
-        if (overwritesToMemoryReadBy(OrigAA, TLI, SE, OrigLI, OrigDT, LI, res,
-                                     outer)) {
+        if (overwritesToMemoryReadBy(*OrigAA, TLI, SE, *OrigLI, *OrigDT, LI,
+                                     res, outer)) {
           EmitWarning("NotPromotable", *LI,
                       " Could not promote shadow allocation ", *V,
                       " due to pointer load ", *LI,
@@ -8821,7 +8837,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     SmallVector<Instruction *, 2> results;
     mayExecuteAfter(results, LI, storingOps, outer);
     for (auto res : results) {
-      if (overwritesToMemoryReadBy(OrigAA, TLI, SE, OrigLI, OrigDT, LI, res,
+      if (overwritesToMemoryReadBy(*OrigAA, TLI, SE, *OrigLI, *OrigDT, LI, res,
                                    outer)) {
         EmitWarning("NotPromotable", *LI, " Could not promote allocation ", *V,
                     " due to load ", *LI,
@@ -8837,8 +8853,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     SmallVector<Instruction *, 2> results;
     mayExecuteAfter(results, LI.loadCall, storingOps, outer);
     for (auto res : results) {
-      if (overwritesToMemoryReadBy(OrigAA, TLI, SE, OrigLI, OrigDT, LI.loadCall,
-                                   res, outer)) {
+      if (overwritesToMemoryReadBy(*OrigAA, TLI, SE, *OrigLI, *OrigDT,
+                                   LI.loadCall, res, outer)) {
         EmitWarning("NotPromotable", *LI.loadCall,
                     " Could not promote allocation ", *V,
                     " due to load-like call ", *LI.loadCall,
@@ -8892,6 +8908,7 @@ void GradientUtils::replaceAWithB(Value *A, Value *B, bool storeInCache) {
 
   // Check that the replacement doesn't already exist in the mapping
   // thereby resulting in a conflict.
+#ifndef NDEBUG
   {
     auto found = newToOriginalFn.find(A);
     if (found != newToOriginalFn.end()) {
@@ -8899,6 +8916,7 @@ void GradientUtils::replaceAWithB(Value *A, Value *B, bool storeInCache) {
       assert(foundB == newToOriginalFn.end());
     }
   }
+#endif
 
   CacheUtility::replaceAWithB(A, B, storeInCache);
 }
@@ -9049,7 +9067,7 @@ void GradientUtils::computeGuaranteedFrees() {
 
             bool hasPDFree = false;
             if (dc->getParent() == CI->getParent() ||
-                OrigPDT.dominates(CI->getParent(), dc->getParent())) {
+                OrigPDT->dominates(CI->getParent(), dc->getParent())) {
               hasPDFree = true;
             }
 
@@ -9167,6 +9185,7 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
     libfunc = LibFunc_malloc;
   } else {
     bool res = TLI.getLibFunc(allocationfn, libfunc);
+    (void)res;
     assert(res && "ought find known allocation fn");
   }
 

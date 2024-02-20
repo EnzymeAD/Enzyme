@@ -156,9 +156,10 @@ class TypeAnalysis;
 /// on a given function
 class TypeResults {
 public:
-  TypeAnalyzer &analyzer;
+  TypeAnalyzer *analyzer;
 
 public:
+  TypeResults(std::nullptr_t);
   TypeResults(TypeAnalyzer &analyzer);
   ConcreteType intType(size_t num, llvm::Value *val, bool errIfNotFound = true,
                        bool pointerIntSame = false) const;
@@ -257,6 +258,8 @@ public:
   llvm::ScalarEvolution &SE;
 
   FnTypeInfo getCallInfo(llvm::CallBase &CI, llvm::Function &fn);
+
+  TypeAnalyzer(TypeAnalysis &TA);
 
   TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
                uint8_t direction = BOTH);
