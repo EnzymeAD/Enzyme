@@ -965,6 +965,7 @@ public:
           chunk = dl.getPointerSizeInBits() / 8;
         }
         auto offincr = (chunk - offset % chunk) % chunk;
+        bool inserted = false;
         for (int i = offincr; i < maxSize; i += chunk) {
           next[0] = i + addOffset;
           ConcreteType prev(pair.second);
@@ -980,8 +981,9 @@ public:
           } else {
             Result.mapping.emplace(next, pair.second);
           }
+          inserted = true;
         }
-        if (next.size() > maxInsertedDepth)
+        if (inserted && next.size() > maxInsertedDepth)
           maxInsertedDepth = next.size();
       }
 
