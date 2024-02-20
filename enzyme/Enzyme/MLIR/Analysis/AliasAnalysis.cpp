@@ -625,18 +625,19 @@ void enzyme::PointsToPointerAnalysis::processCallToSummarizedFunc(
   for (auto &&[i, argOperand] : llvm::enumerate(call.getArgOperands())) {
     auto *arg = getOrCreateFor<AliasClassLattice>(call, argOperand);
 
-    std::optional<AliasClassSet> aliasClasses = lookup(i, /*depth=*/0);
+    std::optional<AliasClassSet> calleePointsTo = lookup(i, /*depth=*/0);
     // If the argument class isn't in the summary, it hasn't changed what
     // it points to during the function.
-    if (!aliasClasses)
+    if (!calleePointsTo)
       continue;
 
-    for (DistinctAttr ac : aliasClasses->getAliasClasses()) {
+    for (DistinctAttr ac : calleePointsTo->getAliasClasses()) {
       if (!isa<PseudoAliasClassAttr>(ac.getReferencedAttr())) {
         // Fresh classes go in directly
         changed |=
             after->insert(arg->getAliasClassesObject(), AliasClassSet(ac));
       } else {
+        // auto pseudoClass = cast<PseudoAliasClassAttr>(ac.getReferencedAttr());
         // TODO: need to handle unifying implicitly de-referenced classes
       }
     }

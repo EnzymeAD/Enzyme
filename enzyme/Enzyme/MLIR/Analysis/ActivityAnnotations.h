@@ -85,6 +85,8 @@ public:
 
   void print(raw_ostream &os) const override;
 
+  Attribute serialize(MLIRContext *ctx) const;
+
   ChangeResult join(const AbstractDenseLattice &other) override;
 
   /// Mark the pointer stored in `dest` as originating from all of `origins`.
@@ -131,6 +133,14 @@ public:
                                     ValueOriginsMap *after) override;
 
 private:
+  void processCallToSummarizedFunc(
+      CallOpInterface call,
+      const DenseMap<DistinctAttr, AliasClassSet> &summary,
+      const ValueOriginsMap &before, ValueOriginsMap *after);
+
+  void processCopy(Operation *op, Value copySource, Value copyDest,
+                   const ValueOriginsMap &before, ValueOriginsMap *after);
+
   OriginalClasses originalClasses;
 };
 

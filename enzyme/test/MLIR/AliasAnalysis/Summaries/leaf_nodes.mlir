@@ -50,6 +50,8 @@ llvm.func local_unnamed_addr @free(!llvm.ptr {llvm.allocptr, llvm.nocapture, llv
 // CHECK: p2p summary:
 // CHECK-NEXT:    distinct[0]<#enzyme.pseudoclass<@to_pose_params(3, 0)>> -> [distinct[0]<#enzyme.pseudoclass<@to_pose_params(3, 1)>>, distinct[1]<"fresh-pose_params_malloc">]
 // CHECK-NEXT:    distinct[0]<"fresh-pose_params_malloc"> -> []
+// CHECK: value origin summary:
+// CHECK:      distinct[0]<#enzyme.pseudoclass<@to_pose_params(3, 1)>> originates from [distinct[0]<#enzyme.argorigin<@to_pose_params(1)>>, distinct[1]<#enzyme.argorigin<@to_pose_params(3)>>]
 llvm.func local_unnamed_addr @to_pose_params(
   %arg0: i32 {llvm.noundef},
   %arg1: !llvm.ptr {llvm.nocapture, llvm.noundef, llvm.readonly},
@@ -172,6 +174,8 @@ llvm.func local_unnamed_addr @to_pose_params(
 // CHECK-NEXT:    distinct[0]<"fresh-malloc_RY"> -> []
 // CHECK-NEXT:    distinct[0]<"fresh-malloc_RZ"> -> []
 // CHECK-NEXT:    distinct[0]<"fresh-malloc_tmp"> -> []
+// CHECK: value origin summary:
+// CHECK:      distinct[0]<#enzyme.pseudoclass<@euler_angles_to_rotation_matrix(1, 1)>> originates from [distinct[0]<#enzyme.argorigin<@euler_angles_to_rotation_matrix(0)>>, distinct[1]<#enzyme.argorigin<@euler_angles_to_rotation_matrix(1)>>]
 llvm.func local_unnamed_addr @euler_angles_to_rotation_matrix(%arg0: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, %arg1: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef}) attributes {frame_pointer = #llvm.framePointerKind<"non-leaf">, passthrough = ["nounwind", "ssp", ["uwtable", "1"], ["approx-func-fp-math", "true"], ["no-infs-fp-math", "true"], ["no-nans-fp-math", "true"], ["no-signed-zeros-fp-math", "true"], ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "apple-m1"], ["unsafe-fp-math", "true"]], target_cpu = "apple-m1", target_features = #llvm.target_features<["+aes", "+complxnum", "+crc", "+dotprod", "+fp-armv8", "+fp16fml", "+fullfp16", "+jsconv", "+lse", "+neon", "+ras", "+rcpc", "+rdm", "+sha2", "+sha3", "+v8.1a", "+v8.2a", "+v8.3a", "+v8.4a", "+v8.5a", "+v8a", "+zcm", "+zcz"]>} {
   %0 = llvm.mlir.constant(2 : i64) : i64
   %1 = llvm.mlir.constant(1 : i64) : i64
@@ -390,6 +394,8 @@ llvm.func local_unnamed_addr @euler_angles_to_rotation_matrix(%arg0: !llvm.ptr {
 // CHECK-NEXT:    distinct[0]<#enzyme.pseudoclass<@relatives_to_absolutes(3, 0)>> -> [distinct[0]<#enzyme.pseudoclass<@relatives_to_absolutes(3, 1)>>, distinct[1]<"fresh-rta1">, distinct[2]<"fresh-rta2">]
 // CHECK-NEXT:    distinct[0]<"fresh-rta1"> -> []
 // CHECK-NEXT:    distinct[0]<"fresh-rta2"> -> []
+// CHECK: value origin summary:
+// CHECK:      distinct[0]<#enzyme.pseudoclass<@relatives_to_absolutes(3, 0)>> originates from [distinct[0]<#enzyme.argorigin<@relatives_to_absolutes(1)>>, distinct[1]<#enzyme.argorigin<@relatives_to_absolutes(3)>>]
 llvm.func local_unnamed_addr @relatives_to_absolutes(%arg0: i32 {llvm.noundef}, %arg1: !llvm.ptr {llvm.nocapture, llvm.noundef, llvm.readonly}, %arg2: !llvm.ptr {llvm.nocapture, llvm.noundef, llvm.readonly}, %arg3: !llvm.ptr {llvm.nocapture, llvm.noundef}) attributes {frame_pointer = #llvm.framePointerKind<"non-leaf">, passthrough = ["nounwind", "ssp", ["uwtable", "1"], ["approx-func-fp-math", "true"], ["no-infs-fp-math", "true"], ["no-nans-fp-math", "true"], ["no-signed-zeros-fp-math", "true"], ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "apple-m1"], ["unsafe-fp-math", "true"]], target_cpu = "apple-m1", target_features = #llvm.target_features<["+aes", "+complxnum", "+crc", "+dotprod", "+fp-armv8", "+fp16fml", "+fullfp16", "+jsconv", "+lse", "+neon", "+ras", "+rcpc", "+rdm", "+sha2", "+sha3", "+v8.1a", "+v8.2a", "+v8.3a", "+v8.4a", "+v8.5a", "+v8a", "+zcm", "+zcz"]>} {
   %0 = llvm.mlir.constant(0 : i32) : i32
   %1 = llvm.mlir.constant(0 : i64) : i64
@@ -552,6 +558,8 @@ llvm.func local_unnamed_addr @relatives_to_absolutes(%arg0: i32 {llvm.noundef}, 
 // CHECK-LABEL: processing function @angle_axis_to_rotation_matrix
 // CHECK: p2p summary:
 // CHECK-NEXT:    distinct[0]<#enzyme.pseudoclass<@angle_axis_to_rotation_matrix(1, 0)>> -> [distinct[0]<#enzyme.pseudoclass<@angle_axis_to_rotation_matrix(1, 1)>>]
+// CHECK: value origin summary:
+// CHECK:     distinct[0]<#enzyme.pseudoclass<@angle_axis_to_rotation_matrix(1, 1)>> originates from [distinct[0]<#enzyme.argorigin<@angle_axis_to_rotation_matrix(0)>>, distinct[1]<#enzyme.argorigin<@angle_axis_to_rotation_matrix(1)>>]
 llvm.func local_unnamed_addr @angle_axis_to_rotation_matrix(%arg0: !llvm.ptr {llvm.nocapture, llvm.noundef, llvm.readonly}, %arg1: !llvm.ptr {llvm.nocapture, llvm.noundef, llvm.readonly}) attributes {frame_pointer = #llvm.framePointerKind<"non-leaf">, memory = #llvm.memory_effects<other = write, argMem = readwrite, inaccessibleMem = none>, passthrough = ["nofree", "norecurse", "nosync", "nounwind", "ssp", ["uwtable", "1"], ["approx-func-fp-math", "true"], ["no-infs-fp-math", "true"], ["no-nans-fp-math", "true"], ["no-signed-zeros-fp-math", "true"], ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "apple-m1"], ["unsafe-fp-math", "true"]], target_cpu = "apple-m1", target_features = #llvm.target_features<["+aes", "+complxnum", "+crc", "+dotprod", "+fp-armv8", "+fp16fml", "+fullfp16", "+jsconv", "+lse", "+neon", "+ras", "+rcpc", "+rdm", "+sha2", "+sha3", "+v8.1a", "+v8.2a", "+v8.3a", "+v8.4a", "+v8.5a", "+v8a", "+zcm", "+zcz"]>} {
   %0 = llvm.mlir.constant(1 : i64) : i64
   %1 = llvm.mlir.constant(3 : i64) : i64

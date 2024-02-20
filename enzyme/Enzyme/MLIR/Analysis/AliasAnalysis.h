@@ -99,6 +99,9 @@ public:
 
   bool operator==(const AliasClassSet &other) const;
 
+  friend raw_ostream &operator<<(raw_ostream &os,
+                                 const AliasClassSet &aliasClassSet);
+
   void print(llvm::raw_ostream &os) const;
 
   ChangeResult
