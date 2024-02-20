@@ -164,10 +164,12 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
 
 AllocaInst *DiffeGradientUtils::getDifferential(Value *val) {
   assert(val);
+#ifndef NDEBUG
   if (auto arg = dyn_cast<Argument>(val))
     assert(arg->getParent() == oldFunc);
   if (auto inst = dyn_cast<Instruction>(val))
     assert(inst->getParent()->getParent() == oldFunc);
+#endif
   assert(inversionAllocs);
 
   Type *type = getShadowType(val->getType());
@@ -195,10 +197,12 @@ AllocaInst *DiffeGradientUtils::getDifferential(Value *val) {
 }
 
 Value *DiffeGradientUtils::diffe(Value *val, IRBuilder<> &BuilderM) {
+#ifndef NDEBUG
   if (auto arg = dyn_cast<Argument>(val))
     assert(arg->getParent() == oldFunc);
   if (auto inst = dyn_cast<Instruction>(val))
     assert(inst->getParent()->getParent() == oldFunc);
+#endif
 
   if (isConstantValue(val)) {
     llvm::errs() << *newFunc << "\n";
@@ -336,6 +340,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
   llvm::errs() << "} start=" << start << " size=" << size
                << " storeSize=" << storeSize << " val=" << *val << "\n";
   assert(0 && "unhandled accumulate with partial sizes");
+  return {};
 }
 
 SmallVector<SelectInst *, 4>
@@ -345,10 +350,12 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
   assert(mode == DerivativeMode::ReverseModeGradient ||
          mode == DerivativeMode::ReverseModeCombined);
 
+#ifndef NDEBUG
   if (auto arg = dyn_cast<Argument>(val))
     assert(arg->getParent() == oldFunc);
   if (auto inst = dyn_cast<Instruction>(val))
     assert(inst->getParent()->getParent() == oldFunc);
+#endif
 
   SmallVector<SelectInst *, 4> addedSelects;
 
@@ -659,6 +666,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
 
 void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
                                   IRBuilder<> &BuilderM) {
+#ifndef NDEBUG
   if (auto arg = dyn_cast<Argument>(val))
     assert(arg->getParent() == oldFunc);
   if (auto inst = dyn_cast<Instruction>(val))
@@ -668,6 +676,7 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
     llvm::errs() << *val << "\n";
   }
   assert(!isConstantValue(val));
+#endif
   toset = SanitizeDerivatives(val, toset, BuilderM);
   if (mode == DerivativeMode::ForwardMode ||
       mode == DerivativeMode::ForwardModeSplit) {

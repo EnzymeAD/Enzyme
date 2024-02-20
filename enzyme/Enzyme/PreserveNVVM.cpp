@@ -60,12 +60,12 @@ using namespace llvm;
 bool preserveLinkage(bool Begin, Function &F, bool Inlining = true) {
   if (Begin && !F.hasFnAttribute("prev_fixup")) {
     F.addFnAttr("prev_fixup");
+    if (F.hasFnAttribute(Attribute::AlwaysInline))
+      F.addFnAttr("prev_always_inline");
+    if (F.hasFnAttribute(Attribute::NoInline))
+      F.addFnAttr("prev_no_inline");
     if (Inlining) {
-      if (F.hasFnAttribute(Attribute::AlwaysInline))
-        F.addFnAttr("prev_always_inline");
       F.removeFnAttr(Attribute::AlwaysInline);
-      if (F.hasFnAttribute(Attribute::NoInline))
-        F.addFnAttr("prev_no_inline");
       F.addFnAttr(Attribute::NoInline);
     }
     F.addFnAttr("prev_linkage", std::to_string(F.getLinkage()));

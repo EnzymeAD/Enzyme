@@ -248,6 +248,8 @@ static Operation *getFunctionFromCall(CallOpInterface iface) {
   return SymbolTable::lookupNearestSymbolFrom(iface.getOperation(), symbol);
 }
 
+constexpr bool EnzymePrintActivity = false;
+
 /// Is the use of value val as an argument of call CI known to be inactive
 /// This tool can only be used when in DOWN mode
 bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(
@@ -465,7 +467,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
 
   // The return instruction doesn't impact activity (handled specifically
   // during adjoint generation)
-  if (isa<func::ReturnOp>(I))
+  if (I->hasTrait<OpTrait::ReturnLike>())
     return true;
 
   if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(I)) {
@@ -485,9 +487,9 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
   }
 
   if (notForAnalysis.count(I->getBlock())) {
-    // if (EnzymePrintActivity)
-    //   llvm::errs() << " constant instruction as dominates unreachable " << *I
-    //                << "\n";
+    if (EnzymePrintActivity)
+      llvm::errs() << " constant instruction as dominates unreachable " << *I
+                   << "\n";
     InsertConstantOperation(TR, I);
     return true;
   }
@@ -495,14 +497,14 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
   if (auto CI = dyn_cast<CallOpInterface>(I)) {
     // TODO(PR #904): This needs to be put into the enzyme dialect
     if (CI->hasAttr("enzyme_active")) {
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << "forced active " << *I << "\n";
+      if (EnzymePrintActivity)
+        llvm::errs() << "forced active " << *I << "\n";
       ActiveOperations.insert(I);
       return false;
     }
     if (CI->hasAttr("enzyme_inactive")) {
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << "forced inactive " << *I << "\n";
+      if (EnzymePrintActivity)
+        llvm::errs() << "forced inactive " << *I << "\n";
       InsertConstantOperation(TR, I);
       return true;
     }
@@ -510,14 +512,14 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
 
     if (called) {
       if (called->hasAttr("enzyme_active")) {
-        // if (EnzymePrintActivity)
-        //   llvm::errs() << "forced active " << *I << "\n";
+        if (EnzymePrintActivity)
+          llvm::errs() << "forced active " << *I << "\n";
         ActiveOperations.insert(I);
         return false;
       }
       if (called->hasAttr("enzyme_inactive")) {
-        // if (EnzymePrintActivity)
-        //   llvm::errs() << "forced inactive " << *I << "\n";
+        if (EnzymePrintActivity)
+          llvm::errs() << "forced inactive " << *I << "\n";
         InsertConstantOperation(TR, I);
         return true;
       }
@@ -683,11 +685,10 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
     // If all returned values constant otherwise, the operation is inactive
     if (llvm::all_of(I->getResults(),
                      [&](Value v) { return isConstantValue(TR, v); })) {
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << " constant instruction from known constant
-      //   non-writing "
-      //                   "instruction "
-      //                << *I << "\n";
+      if (EnzymePrintActivity)
+        llvm::errs() << " constant instruction from known constant non-writing "
+                        "instruction "
+                     << *I << "\n";
       InsertConstantOperation(TR, I);
       return true;
     }
@@ -710,9 +711,9 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
         if (llvm::all_of(I->getResults(), [&](Value val) {
               return isValueInactiveFromUsers(TR, val, UseActivity::None);
             })) {
-          // if (EnzymePrintActivity)
-          //   llvm::errs() << " constant instruction[" << (int)directions
-          //                << "] from users instruction " << *I << "\n";
+          if (EnzymePrintActivity)
+            llvm::errs() << " constant instruction[" << (int)directions
+                         << "] from users instruction " << *I << "\n";
           InsertConstantOperation(TR, I);
           return true;
         }
@@ -724,9 +725,9 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
               return DownHypothesis->isValueInactiveFromUsers(
                   TR, val, UseActivity::None);
             })) {
-          // if (EnzymePrintActivity)
-          //   llvm::errs() << " constant instruction[" << (int)directions
-          //                << "] from users instruction " << *I << "\n";
+          if (EnzymePrintActivity)
+            llvm::errs() << " constant instruction[" << (int)directions
+                         << "] from users instruction " << *I << "\n";
           InsertConstantOperation(TR, I);
           insertConstantsFrom(TR, *DownHypothesis);
           return true;
@@ -748,63 +749,40 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
         new mlir::enzyme::ActivityAnalyzer(*this, UP));
     UpHypothesis->ConstantOperations.insert(I);
     assert(directions & UP);
-    if (UpHypothesis->isOperationInactiveFromOrigin(TR, I)) {
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << " constant instruction from origin "
-      //                   "instruction "
-      //                << *I << "\n";
+    SmallPtrSet<Value, 4> toredo;
+    if (UpHypothesis->isOperationInactiveFromOrigin(TR, I, std::nullopt,
+                                                    &toredo)) {
+      if (EnzymePrintActivity)
+        llvm::errs() << " constant instruction from origin "
+                        "instruction "
+                     << *I << "\n";
       InsertConstantOperation(TR, I);
       insertConstantsFrom(TR, *UpHypothesis);
       if (DownHypothesis)
         insertConstantsFrom(TR, *DownHypothesis);
       return true;
     } else if (directions == (UP | DOWN)) {
-      // TODO: what does this mean for interfaces?
-      if (isa<
-              // clang-format off
-          LLVM::LoadOp,
-          LLVM::StoreOp,
-          // Integer binary ops.
-          LLVM::AddOp,
-          LLVM::SubOp,
-          LLVM::MulOp,
-          LLVM::UDivOp,
-          LLVM::SDivOp,
-          LLVM::URemOp,
-          LLVM::SRemOp,
-          LLVM::AndOp,
-          LLVM::OrOp,
-          LLVM::XOrOp,
-          LLVM::ShlOp,
-          LLVM::LShrOp,
-          LLVM::AShrOp,
-          // Float binary ops.
-          LLVM::FAddOp,
-          LLVM::FSubOp,
-          LLVM::FMulOp,
-          LLVM::FDivOp,
-          LLVM::FRemOp,
-          LLVM::FNegOp
-              // clang-format on
-              >(I)) {
-        for (Value operand : I->getOperands()) {
-          if (!UpHypothesis->isConstantValue(TR, operand)) {
-            ReEvaluateOpIfInactiveValue[operand].insert(I);
-          }
-        }
+      for (Value operand : toredo) {
+        ReEvaluateOpIfInactiveValue[operand].insert(I);
       }
     }
   }
 
   // Otherwise we must fall back and assume this instruction to be active.
   ActiveOperations.insert(I);
-  // if (EnzymePrintActivity)
-  //   llvm::errs() << "couldnt decide fallback as nonconstant instruction("
-  //                << (int)directions << "):" << *I << "\n";
+  if (EnzymePrintActivity)
+    llvm::errs() << "couldnt decide fallback as nonconstant instruction("
+                 << (int)directions << "):" << *I << "\n";
   if (noActiveWrite && (directions == (UP | DOWN)))
     for (Value result : I->getResults())
       ReEvaluateOpIfInactiveValue[result].insert(I);
   return false;
+}
+
+static bool isFunctionReturn(Operation *op) {
+  if (!op->hasTrait<OpTrait::ReturnLike>())
+    return false;
+  return dyn_cast<FunctionOpInterface>(op->getParentOp());
 }
 
 static bool isValuePotentiallyUsedAsPointer(Value val) {
@@ -817,7 +795,39 @@ static bool isValuePotentiallyUsedAsPointer(Value val) {
       continue;
     seen.insert(cur);
     for (Operation *user : cur.getUsers()) {
-      if (isa<func::ReturnOp>(user))
+      if (isa<RegionBranchOpInterface>(user->getParentOp()))
+        if (auto termIface =
+                dyn_cast<RegionBranchTerminatorOpInterface>(user)) {
+          SmallVector<RegionSuccessor> successors;
+          termIface.getSuccessorRegions(
+              SmallVector<Attribute>(termIface->getNumOperands(), Attribute()),
+              successors);
+
+          auto parentOp = termIface->getParentOp();
+          for (auto &successor : successors) {
+            OperandRange operandRange =
+                termIface.getSuccessorOperands(successor);
+            ValueRange targetValues = successor.isParent()
+                                          ? parentOp->getResults()
+                                          : successor.getSuccessorInputs();
+            assert(operandRange.size() == targetValues.size());
+            for (auto &&[prev, post] : llvm::zip(operandRange, targetValues)) {
+              if (prev == cur) {
+                todo.push_back(post);
+              }
+            }
+          }
+          continue;
+        }
+      if (auto iface = dyn_cast<BranchOpInterface>(user)) {
+        for (auto &op : user->getOpOperands())
+          if (op.get() == cur)
+            if (auto blk =
+                    iface.getSuccessorBlockArgument(op.getOperandNumber()))
+              todo.push_back(*blk);
+        continue;
+      }
+      if (isFunctionReturn(user))
         return true;
       // The operation is known not to read or write memory.
       if (isa<MemoryEffectOpInterface>(user) &&
@@ -828,10 +838,9 @@ static bool isValuePotentiallyUsedAsPointer(Value val) {
         }
         continue;
       }
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << " VALUE potentially used as pointer " << *val << " by
-      //   "
-      //                << *u << "\n";
+      if (EnzymePrintActivity)
+        llvm::errs() << " VALUE potentially used as pointer " << val << " by "
+                     << *user << "\n";
       return true;
     }
   }
@@ -889,7 +898,134 @@ static FunctionOpInterface getFunctionIfArgument(Value value) {
   return dyn_cast<FunctionOpInterface>(block->getParentOp());
 }
 
-// TODO: move the extraction based on dataflow here.
+// For a given instruction, determine whether it is a terminator which
+// controls dataflow out, and if so return all users either in results
+// or blockarguments
+static std::optional<SmallVector<Value>>
+getPotentialTerminatorUsers(Operation *op, Value parent) {
+  auto block = op->getBlock();
+
+  if (block->getTerminator() != op)
+    return {};
+  if (isFunctionReturn(op))
+    return {};
+
+  SmallVector<Value> results;
+
+  if (isa<RegionBranchOpInterface>(op->getParentOp()))
+    if (auto termIface = dyn_cast<RegionBranchTerminatorOpInterface>(op)) {
+      SmallVector<RegionSuccessor> successors;
+      termIface.getSuccessorRegions(
+          SmallVector<Attribute>(termIface->getNumOperands(), Attribute()),
+          successors);
+
+      auto parentOp = termIface->getParentOp();
+      SmallVector<Value> results;
+      for (auto &successor : successors) {
+        OperandRange operandRange = termIface.getSuccessorOperands(successor);
+        ValueRange targetValues = successor.isParent()
+                                      ? parentOp->getResults()
+                                      : successor.getSuccessorInputs();
+        assert(operandRange.size() == targetValues.size());
+        for (auto &&[prev, post] : llvm::zip(operandRange, targetValues)) {
+          if (prev == parent) {
+            results.push_back(post);
+          }
+        }
+      }
+      return std::move(results);
+    }
+  if (auto iface = dyn_cast<BranchOpInterface>(op)) {
+    for (auto &operand : op->getOpOperands())
+      if (operand.get() == parent)
+        if (auto blk =
+                iface.getSuccessorBlockArgument(operand.getOperandNumber())) {
+          results.push_back(*blk);
+          return std::move(results);
+        }
+  }
+
+  // assume all terminator operands potentially flow into all op results
+  for (auto res : op->getParentOp()->getResults())
+    results.push_back(res);
+
+  // assume all terminator operands potentially flow into all blockArgs in
+  // region
+  for (auto &blk : *block->getParent())
+    for (auto arg : blk.getArguments())
+      results.push_back(arg);
+
+  // assume all terminator operands potentially flow into all other region
+  // entries
+  for (auto &reg : op->getParentOp()->getRegions())
+    for (auto arg : reg.front().getArguments())
+      results.push_back(arg);
+
+  return std::move(results);
+}
+
+// For a result of an op, find all values which could flow into this result
+static SmallVector<Value> getPotentialIncomingValues(OpResult res) {
+  Operation *owner = res.getOwner();
+  SmallVector<Value> potentialSources;
+
+  auto resultNo = res.getResultNumber();
+
+  if (auto iface = dyn_cast<RegionBranchOpInterface>(owner)) {
+    SmallVector<RegionSuccessor> successors;
+    iface.getSuccessorRegions(RegionBranchPoint::parent(), successors);
+    for (auto &succ : successors) {
+      if (!succ.isParent())
+        continue;
+      auto successorOperands =
+          llvm::to_vector(iface.getEntrySuccessorOperands(succ));
+
+      if (successorOperands.size() != owner->getNumResults()) {
+        llvm::errs() << *owner << "\n";
+      }
+      assert(successorOperands.size() == owner->getNumResults() &&
+             "expected all results to be populated with incoming operands");
+
+      potentialSources.push_back(successorOperands[resultNo]);
+    }
+  } else {
+    // assume all inputs potentially flow into all op results
+    for (auto operand : owner->getOperands()) {
+      potentialSources.push_back(operand);
+    }
+  }
+
+  for (Region &region : owner->getRegions()) {
+    for (Block &block : region) {
+      // TODO: MLIR blocks without terminator?
+      if (auto iface = dyn_cast<RegionBranchTerminatorOpInterface>(
+              block.getTerminator())) {
+        // TODO: the interface may also tell us which regions are allowed to
+        // yield parent op results, and which only branch to other regions.
+        auto successorOperands = llvm::to_vector(
+            iface.getSuccessorOperands(RegionBranchPoint::parent()));
+        // TODO: understand/document the assumption of how operands flow.
+
+        if (successorOperands.size() != owner->getNumResults()) {
+          llvm::errs() << *owner << "\n";
+        }
+        assert(successorOperands.size() == owner->getNumResults() &&
+               "expected all results to be populated with yielded "
+               "terminator operands");
+        potentialSources.push_back(successorOperands[resultNo]);
+      } else {
+        // assume all terminator operands  potentially flow into op results
+        for (Value v : block.getTerminator()->getOperands())
+          potentialSources.push_back(v);
+      }
+    }
+  }
+
+  return potentialSources;
+}
+
+// For a blockargument, find all non-operand values which could flow into
+// this result
 static SmallVector<Value> getPotentialIncomingValues(BlockArgument arg) {
   SetVector<Value> potentialSources;
 
@@ -986,6 +1122,10 @@ static SmallVector<Value> getPotentialIncomingValues(BlockArgument arg) {
           potentialSources.insert(v);
       }
     }
+
+    // and also any operand to the parent
+    for (auto op : parent->getOperands())
+      potentialSources.insert(op);
   }
 
   return potentialSources.takeVector();
@@ -1144,8 +1284,16 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
   }
 
   if (auto arg = Val.dyn_cast<BlockArgument>()) {
-    auto funcIface = dyn_cast_or_null<FunctionOpInterface>(
-        arg.getParentBlock()->getParentOp());
+    // All arguments must be marked constant/nonconstant ahead of time
+    if (auto funcIface = dyn_cast_or_null<FunctionOpInterface>(
+            arg.getParentBlock()->getParentOp()))
+      if (funcIface && arg.getOwner()->isEntryBlock() &&
+          !funcIface.getArgAttr(arg.getArgNumber(),
+                                LLVM::LLVMDialect::getByValAttrName())) {
+        llvm::errs() << funcIface << "\n";
+        llvm::errs() << Val << "\n";
+        assert(0 && "must've put arguments in constant/nonconstant");
+      }
     // if (!funcIface || !arg.getOwner()->isEntryBlock()) {
     // TODO: we want a more advanced analysis based on MLIR interfaces here
     // For now, conservatively assume all block arguments are active
@@ -1174,25 +1322,15 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
     //   }
     // }
     // }
-
-    // All arguments must be marked constant/nonconstant ahead of time
-    if (funcIface && arg.getOwner()->isEntryBlock() &&
-        !funcIface.getArgAttr(arg.getArgNumber(),
-                              LLVM::LLVMDialect::getByValAttrName())) {
-      llvm::errs() << funcIface << "\n";
-      llvm::errs() << Val << "\n";
-      assert(0 && "must've put arguments in constant/nonconstant");
-    }
   }
 
   // This value is certainly an integer (and only and integer, not a pointer or
   // float). Therefore its value is constant
   if (TR.intType(1, Val, /*errIfNotFound*/ false).isIntegral()) {
-    //   if (EnzymePrintActivity)
-    //     llvm::errs() << " Value const as integral " << (int)directions << " "
-    //                  << *Val << " "
-    //                  << TR.intType(1, Val, /*errIfNotFound*/ false).str() <<
-    //                  "\n";
+    if (EnzymePrintActivity)
+      llvm::errs() << " Value const as integral " << (int)directions << " "
+                   << Val << " "
+                   << TR.intType(1, Val, /*errIfNotFound*/ false).str() << "\n";
     InsertConstantValue(TR, Val);
     return true;
   }
@@ -1368,28 +1506,28 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
   if (auto CI = Val.getDefiningOp<CallOpInterface>()) {
 
     if (CI->hasAttr("enzyme_active")) {
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << "forced active val " << *Val << "\n";
+      if (EnzymePrintActivity)
+        llvm::errs() << "forced active val " << Val << "\n";
       ActiveValues.insert(Val);
       return false;
     }
     if (CI->hasAttr("enzyme_inactive")) {
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << "forced inactive val " << *Val << "\n";
+      if (EnzymePrintActivity)
+        llvm::errs() << "forced inactive val " << Val << "\n";
       InsertConstantValue(TR, Val);
       return true;
     }
     Operation *called = getFunctionFromCall(CI);
     if (called) {
       if (called->hasAttr("enzyme_active")) {
-        // if (EnzymePrintActivity)
-        //   llvm::errs() << "forced active val " << *Val << "\n";
+        if (EnzymePrintActivity)
+          llvm::errs() << "forced active val " << Val << "\n";
         ActiveValues.insert(Val);
         return false;
       }
       if (called->hasAttr("enzyme_inactive")) {
-        // if (EnzymePrintActivity)
-        //   llvm::errs() << "forced inactive val " << *Val << "\n";
+        if (EnzymePrintActivity)
+          llvm::errs() << "forced inactive val " << Val << "\n";
         InsertConstantValue(TR, Val);
         return true;
       }
@@ -1440,14 +1578,14 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
                              LLVM::LLVMDialect::getByValAttrName())) {
           bool res = isConstantValue(TR, TmpOrig);
           if (res) {
-            // if (EnzymePrintActivity)
-            //   llvm::errs() << " arg const from orig val=" << *Val
-            //                << " orig=" << *TmpOrig << "\n";
+            if (EnzymePrintActivity)
+              llvm::errs() << " arg const from orig val=" << Val
+                           << " orig=" << TmpOrig << "\n";
             InsertConstantValue(TR, Val);
           } else {
-            // if (EnzymePrintActivity)
-            //   llvm::errs() << " arg active from orig val=" << *Val
-            //                << " orig=" << *TmpOrig << "\n";
+            if (EnzymePrintActivity)
+              llvm::errs() << " arg active from orig val=" << Val
+                           << " orig=" << TmpOrig << "\n";
             ActiveValues.insert(Val);
           }
           return res;
@@ -1722,10 +1860,10 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
       // argument
       if (TmpOrig != Val) {
         if (isConstantValue(TR, TmpOrig)) {
-          // if (EnzymePrintActivity)
-          //   llvm::errs() << " Potential Pointer(" << (int)directions << ") "
-          //                << *Val << " inactive from inactive origin "
-          //                << *TmpOrig << "\n";
+          if (EnzymePrintActivity)
+            llvm::errs() << " Potential Pointer(" << (int)directions << ") "
+                         << Val << " inactive from inactive origin " << TmpOrig
+                         << "\n";
           InsertConstantValue(TR, Val);
           return true;
         }
@@ -1737,11 +1875,17 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
         if (!op || (!mayReadFromMemory(op) && !mayAllocateMemory(op))) {
           if (directions == UP && !Val.isa<BlockArgument>()) {
             if (isValueInactiveFromOrigin(TR, Val)) {
+              if (EnzymePrintActivity)
+                llvm::errs() << " Non-function value inactive from origin("
+                             << (int)directions << ") " << Val << "\n";
               InsertConstantValue(TR, Val);
               return true;
             }
           } else {
             if (UpHypothesis->isValueInactiveFromOrigin(TR, Val)) {
+              if (EnzymePrintActivity)
+                llvm::errs() << " Non-function value_v2 inactive from origin("
+                             << (int)directions << ") " << Val << "\n";
               InsertConstantValue(TR, Val);
               insertConstantsFrom(TR, *UpHypothesis);
               return true;
@@ -1755,9 +1899,9 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
     // can be loaded/stored cannot be assesed and therefore we default to assume
     // it to be active
     if (directions != (UP | DOWN)) {
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << " <Potential Pointer assumed active at "
-      //                << (int)directions << ">" << *Val << "\n";
+      if (EnzymePrintActivity)
+        llvm::errs() << " <Potential Pointer assumed active at "
+                     << (int)directions << ">" << Val << "\n";
       ActiveValues.insert(Val);
       return false;
     }
@@ -1785,13 +1929,12 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
       }
       if (UpHypothesis->isValueInactiveFromOrigin(TR, Val)) {
         Hypothesis->DeducingPointers.insert(Val);
-        // if (EnzymePrintActivity)
-        //   llvm::errs() << " constant instruction hypothesis: " << *VI <<
-        //   "\n";
+        if (EnzymePrintActivity)
+          llvm::errs() << " constant instruction hypothesis: " << Val << "\n";
       } else {
-        // if (EnzymePrintActivity)
-        //   llvm::errs() << " cannot show constant instruction hypothesis: "
-        //                << *VI << "\n";
+        if (EnzymePrintActivity)
+          llvm::errs() << " cannot show constant instruction hypothesis: "
+                       << Val << "\n";
       }
     }
 
@@ -1920,8 +2063,8 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
       // If we haven't already shown a potentially active load
       // check if this loads the given value and is active
       if (!potentiallyActiveLoad && isRefSet(modRef)) {
-        // if (EnzymePrintActivity)
-        //   llvm::errs() << "potential active load: " << *I << "\n";
+        if (EnzymePrintActivity)
+          llvm::errs() << "potential active load: " << *op << "\n";
         if (isa<memref::LoadOp, LLVM::LoadOp>(op)) {
           // TODO: this assumption should be built into the MLIR interface
           // verifier, or alternatively we should relax it.
@@ -1945,12 +2088,11 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
                     for (Operation *user : V.getUsers()) {
                       if (mayWriteToMemory(user)) {
                         if (!Hypothesis->isConstantOperation(TR, user)) {
-                          // if (EnzymePrintActivity)
-                          //   llvm::errs()
-                          //       << "potential active store via "
-                          //          "pointer in load: "
-                          //       << *I << " of " << *Val << " via " << *U <<
-                          //       "\n";
+                          if (EnzymePrintActivity)
+                            llvm::errs() << "potential active store via "
+                                            "pointer in load: "
+                                         << *op << " of " << Val << " via "
+                                         << *user << "\n";
                           potentiallyActiveStore = true;
                           return true;
                         }
@@ -2031,10 +2173,10 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
                            !Hypothesis->isConstantValue(TR, V) &&
                            TR.query(V)[{-1}].isPossiblePointer();
                   })) {
-                // if (EnzymePrintActivity)
-                //   llvm::errs() << "potential active store via pointer in "
-                //                   "unknown inst: "
-                //                << *I << " of " << *Val << "\n";
+                if (EnzymePrintActivity)
+                  llvm::errs() << "potential active store via pointer in "
+                                  "unknown inst: "
+                               << *op << " of " << Val << "\n";
                 potentiallyActiveStore = true;
               }
             }
@@ -2042,25 +2184,25 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
         }
       }
       if ((!potentiallyActiveStore || !potentialStore) && isModSet(modRef)) {
-        // if (EnzymePrintActivity)
-        //   llvm::errs() << "potential active store: " << *I << " Val=" << *Val
-        //                << "\n";
+        if (EnzymePrintActivity)
+          llvm::errs() << "potential active store: " << *op << " Val=" << Val
+                       << "\n";
         if (auto SI = dyn_cast<LLVM::StoreOp>(op)) {
           bool cop = !Hypothesis->isConstantValue(TR, SI.getValue());
-          // if (EnzymePrintActivity)
-          //   llvm::errs() << " -- store potential activity: " << (int)cop
-          //                << " - " << *SI << " of "
-          //                << " Val=" << *Val << "\n";
+          if (EnzymePrintActivity)
+            llvm::errs() << " -- store potential activity: " << (int)cop
+                         << " - " << *SI << " of "
+                         << " Val=" << Val << "\n";
           potentialStore = true;
           if (cop)
             potentiallyActiveStore = true;
         } else if (auto SI = dyn_cast<memref::StoreOp>(op)) {
           // FIXME: this is a copy-pasta form above to work with MLIR memrefs.
           bool cop = !Hypothesis->isConstantValue(TR, SI.getValueToStore());
-          // if (EnzymePrintActivity)
-          //   llvm::errs() << " -- store potential activity: " << (int)cop
-          //                << " - " << *SI << " of "
-          //                << " Val=" << *Val << "\n";
+          if (EnzymePrintActivity)
+            llvm::errs() << " -- store potential activity: " << (int)cop
+                         << " - " << *SI << " of "
+                         << " Val=" << Val << "\n";
           potentialStore = true;
           if (cop)
             potentiallyActiveStore = true;
@@ -2077,11 +2219,10 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
           // TODO: note that this can be optimized (especially for function
           // calls)
           auto cop = !Hypothesis->isConstantOperation(TR, op);
-          // if (EnzymePrintActivity)
-          //   llvm::errs() << " -- unknown store potential activity: " <<
-          //   (int)cop
-          //                << " - " << *I << " of "
-          //                << " Val=" << *Val << "\n";
+          if (EnzymePrintActivity)
+            llvm::errs() << " -- unknown store potential activity: " << (int)cop
+                         << " - " << *op << " of "
+                         << " Val=" << Val << "\n";
           potentialStore = true;
           if (cop)
             potentiallyActiveStore = true;
@@ -2146,11 +2287,11 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
     }
 
   activeLoadAndStore:;
-    // if (EnzymePrintActivity)
-    //   llvm::errs() << " </MEMSEARCH" << (int)directions << ">" << *Val
-    //                << " potentiallyActiveLoad=" << potentiallyActiveLoad
-    //                << " potentiallyActiveStore=" << potentiallyActiveStore
-    //                << " potentialStore=" << potentialStore << "\n";
+    if (EnzymePrintActivity)
+      llvm::errs() << " </MEMSEARCH" << (int)directions << ">" << Val
+                   << " potentiallyActiveLoad=" << potentiallyActiveLoad
+                   << " potentiallyActiveStore=" << potentiallyActiveStore
+                   << " potentialStore=" << potentialStore << "\n";
     if (potentiallyActiveLoad && potentiallyActiveStore) {
       insertAllFrom(TR, *Hypothesis, Val);
       // TODO have insertall dependence on this
@@ -2212,15 +2353,14 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
                   new mlir::enzyme::ActivityAnalyzer(*DownHypothesis, DOWN));
           DownHypothesis2->ConstantValues.insert(TmpOrig);
           if (DownHypothesis2->isValueActivelyStoredOrReturned(TR, TmpOrig)) {
-            // if (EnzymePrintActivity)
-            //   llvm::errs() << " active from ivasor: " << *TmpOrig << "\n";
+            if (EnzymePrintActivity)
+              llvm::errs() << " active from ivasor: " << TmpOrig << "\n";
             ActiveDown = true;
           }
         } else {
           // unknown origin that could've been stored/returned/etc
-          // if (EnzymePrintActivity)
-          //   llvm::errs() << " active from unknown origin: " << *TmpOrig <<
-          //   "\n";
+          if (EnzymePrintActivity)
+            llvm::errs() << " active from unknown origin: " << TmpOrig << "\n";
           ActiveDown = true;
         }
       }
@@ -2257,13 +2397,12 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
       // If we go to an active return and only load it, however, that doesnt
       // transfer derivatives and we can say this memory is inactive
 
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << " @@MEMSEARCH" << (int)directions << ">" << *Val
-      //                << " potentiallyActiveLoad=" << potentiallyActiveLoad
-      //                << " potentialStore=" << potentialStore
-      //                << " ActiveUp=" << ActiveUp << " ActiveDown=" <<
-      //                ActiveDown
-      //                << " ActiveMemory=" << ActiveMemory << "\n";
+      if (EnzymePrintActivity)
+        llvm::errs() << " @@MEMSEARCH" << (int)directions << ">" << Val
+                     << " potentiallyActiveLoad=" << potentiallyActiveLoad
+                     << " potentialStore=" << potentialStore
+                     << " ActiveUp=" << ActiveUp << " ActiveDown=" << ActiveDown
+                     << " ActiveMemory=" << ActiveMemory << "\n";
 
       if (ActiveMemory) {
         ActiveValues.insert(Val);
@@ -2293,39 +2432,21 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
   // this value is inactive, we are inactive Since we won't look at uses to
   // prove, we can inductively assume this is inactive
   if (directions & UP) {
-    if (directions == UP && !Val.isa<BlockArgument>()) {
-      if (isValueInactiveFromOrigin(TR, Val)) {
-        InsertConstantValue(TR, Val);
-        return true;
-      } else if (Operation *op = Val.getDefiningOp()) {
-        if (directions == (UP | DOWN)) {
-          for (Value operand : op->getOperands()) {
-            if (!UpHypothesis->isConstantValue(TR, operand)) {
-              for (Value result : op->getResults()) {
-                ReEvaluateValueIfInactiveValue[operand].insert(result);
-              }
-            }
-          }
-        }
-      }
+    UpHypothesis = std::shared_ptr<mlir::enzyme::ActivityAnalyzer>(
+        new mlir::enzyme::ActivityAnalyzer(*this, UP));
+    UpHypothesis->ConstantValues.insert(Val);
+    SmallPtrSet<Value, 4> toredo;
+    if (UpHypothesis->isValueInactiveFromOrigin(TR, Val, &toredo)) {
+      insertConstantsFrom(TR, *UpHypothesis);
+      InsertConstantValue(TR, Val);
+      if (EnzymePrintActivity)
+        llvm::errs() << " Value constant from origin [" << (int)directions
+                     << "]" << Val << "\n";
+      return true;
     } else {
-      UpHypothesis = std::shared_ptr<mlir::enzyme::ActivityAnalyzer>(
-          new mlir::enzyme::ActivityAnalyzer(*this, UP));
-      UpHypothesis->ConstantValues.insert(Val);
-      if (UpHypothesis->isValueInactiveFromOrigin(TR, Val)) {
-        insertConstantsFrom(TR, *UpHypothesis);
-        InsertConstantValue(TR, Val);
-        return true;
-      } else if (Operation *op = Val.getDefiningOp()) {
-        if (directions == (UP | DOWN)) {
-          for (Value operand : op->getOperands()) {
-            if (!UpHypothesis->isConstantValue(TR, operand)) {
-              for (Value result : op->getResults()) {
-                ReEvaluateValueIfInactiveValue[operand].insert(result);
-              }
-            }
-          }
-        }
+      for (Value result : toredo) {
+        if (result != Val)
+          ReEvaluateValueIfInactiveValue[result].insert(Val);
       }
     }
   }
@@ -2335,164 +2456,54 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
     // If all users are inactive, this is therefore inactive.
     // Since we won't look at origins to prove, we can inductively assume this
     // is inactive
-
-    // As an optimization if we are going down already
-    // and we won't use ourselves (done by PHI's), we
-    // dont need to inductively assume we're true
-    // and can instead use this object!
-    if (directions == DOWN && !Val.isa<BlockArgument>()) {
-      if (isValueInactiveFromUsers(TR, Val, UseActivity::None)) {
-        if (UpHypothesis)
-          insertConstantsFrom(TR, *UpHypothesis);
-        InsertConstantValue(TR, Val);
-        return true;
-      }
-    } else {
-      auto DownHypothesis = std::shared_ptr<mlir::enzyme::ActivityAnalyzer>(
-          new mlir::enzyme::ActivityAnalyzer(*this, DOWN));
-      DownHypothesis->ConstantValues.insert(Val);
-      if (DownHypothesis->isValueInactiveFromUsers(TR, Val,
-                                                   UseActivity::None)) {
-        insertConstantsFrom(TR, *DownHypothesis);
-        if (UpHypothesis)
-          insertConstantsFrom(TR, *UpHypothesis);
-        InsertConstantValue(TR, Val);
-        return true;
-      }
+    auto DownHypothesis = std::shared_ptr<mlir::enzyme::ActivityAnalyzer>(
+        new mlir::enzyme::ActivityAnalyzer(*this, DOWN));
+    DownHypothesis->ConstantValues.insert(Val);
+    if (DownHypothesis->isValueInactiveFromUsers(TR, Val, UseActivity::None)) {
+      insertConstantsFrom(TR, *DownHypothesis);
+      if (UpHypothesis)
+        insertConstantsFrom(TR, *UpHypothesis);
+      InsertConstantValue(TR, Val);
+      return true;
     }
   }
 
-  // if (EnzymePrintActivity)
-  //   llvm::errs() << " Value nonconstant (couldn't disprove)[" <<
-  //   (int)directions
-  //                << "]" << *Val << "\n";
+  if (EnzymePrintActivity)
+    llvm::errs() << " Value nonconstant (couldn't disprove)[" << (int)directions
+                 << "]" << Val << "\n";
   ActiveValues.insert(Val);
   return false;
 }
 
 /// Is the value guaranteed to be inactive because of how it's produced.
 bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromOrigin(
-    MTypeResults const &TR, Value val) {
+    MTypeResults const &TR, Value val, SmallPtrSetImpl<Value> *inactArg) {
   // Must be an analyzer only searching up
   assert(directions == UP);
 
-  // TODO: use getPotentialIncomingValues here to avoid duplciation.
-
   if (auto arg = val.dyn_cast<BlockArgument>()) {
-    if (arg.getOwner()->isEntryBlock()) {
-      Operation *parent = arg.getOwner()->getParentOp();
-      Region *parentRegion = arg.getOwner()->getParent();
-      SetVector<Value> potentialSources;
-      // Use region interface to find the values flowing into the entry block.
-      if (auto iface = dyn_cast<RegionBranchOpInterface>(parent)) {
-        auto isRegionSucessorOf = [arg](RegionBranchOpInterface iface,
-                                        Region *region,
-                                        RegionBranchPoint predecessor,
-                                        SetVector<Value> &potentialSources) {
-          SmallVector<RegionSuccessor> successors;
-          iface.getSuccessorRegions(predecessor, successors);
-          for (const RegionSuccessor &successor : successors) {
-            if (successor.getSuccessor() != region)
-              continue;
-
-            unsigned operandOffset = static_cast<unsigned>(-1);
-            for (const auto &en :
-                 llvm::enumerate(successor.getSuccessorInputs())) {
-              if (en.value() != arg)
-                continue;
-              operandOffset = en.index();
-            }
-            assert(operandOffset != static_cast<unsigned>(-1) &&
-                   "could not locate the position of the argument in the "
-                   "successor input list");
-
-            // Find the values that are forwarded to entry block arguments of
-            // the current region.
-            if (predecessor.isParent()) {
-              // XXX: this assumes a contiguous slice of operands is mapped 1-1
-              // without swaps to a contiguous slice of entry block arguments.
-              assert(iface.getEntrySuccessorOperands(region).size() ==
-                     successor.getSuccessorInputs().size());
-              potentialSources.insert(
-                  iface.getEntrySuccessorOperands(region)[operandOffset]);
-            } else {
-              // Find all block terminators in the predecessor region that
-              // may be branching to this region, and get the operands they
-              // forward.
-              for (Block &block : *predecessor.getRegionOrNull()) {
-                // TODO: MLIR block without terminator
-                if (auto terminator =
-                        dyn_cast<RegionBranchTerminatorOpInterface>(
-                            block.getTerminator())) {
-                  // XXX: this assumes a contiguous slice of operands is mapped
-                  // 1-1 without swaps to a contiguous slice of entry block
-                  // arguments.
-                  assert(terminator.getSuccessorOperands(region).size() ==
-                         successor.getSuccessorInputs().size());
-                  potentialSources.insert(
-                      terminator.getSuccessorOperands(region)[operandOffset]);
-                } else {
-                  for (Value v : block.getTerminator()->getOperands())
-                    potentialSources.insert(v);
-                }
-              }
-            }
-          }
-        };
-
-        // Find all possible source regions for the current region.
-        isRegionSucessorOf(iface, parentRegion, RegionBranchPoint::parent(),
-                           potentialSources);
-        for (Region &region : parent->getRegions())
-          isRegionSucessorOf(iface, parentRegion, region, potentialSources);
-
-      } else {
-        // Conservatively assume any op operand and any terminator operand of
-        // any region can flow into any block argument.
-        for (Region &region : parent->getRegions()) {
-          for (Block &block : region) {
-            // TODO: MLIR blocks without terminator?
-            for (Value v : block.getTerminator()->getOperands())
-              potentialSources.insert(v);
-          }
+    for (auto v : getPotentialIncomingValues(arg)) {
+      if (!isConstantValue(TR, v)) {
+        if (EnzymePrintActivity) {
+          llvm::errs() << " blockarg: " << arg
+                       << " may be active due to inflow from " << v << "\n";
         }
-      }
-
-      return llvm::all_of(potentialSources, [&](Value value) {
-        return isConstantValue(TR, value);
-      });
-    }
-
-    // Look at values flowing into block arguments.
-    for (Block *predecessor : arg.getOwner()->getPredecessors()) {
-      Operation *terminator = predecessor->getTerminator();
-      if (auto iface = dyn_cast<BranchOpInterface>(terminator)) {
-        for (const auto &en : llvm::enumerate(predecessor->getSuccessors())) {
-          if (en.value() != arg.getOwner())
-            continue;
-
-          Value inflow = iface.getSuccessorOperands(en.index())
-                             .getForwardedOperands()[arg.getArgNumber()];
-          if (!isConstantValue(TR, inflow))
-            return false;
-        }
-      } else {
-        for (Value operand : terminator->getOperands()) {
-          if (!isConstantValue(TR, operand))
-            return false;
-        }
+        if (inactArg)
+          inactArg->insert(v);
+        return false;
       }
     }
-
     return true;
   }
 
   return isOperationInactiveFromOrigin(TR, val.getDefiningOp(),
-                                       val.cast<OpResult>().getResultNumber());
+                                       val.cast<OpResult>().getResultNumber(),
+                                       inactArg);
 }
 
 bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
-    MTypeResults const &TR, Operation *op, std::optional<unsigned> resultNo) {
+    MTypeResults const &TR, Operation *op, std::optional<unsigned> resultNo,
+    SmallPtrSetImpl<Value> *inactArg) {
   // Must be an analyzer only searching up
   assert(directions == UP);
 
@@ -2510,19 +2521,22 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
     }
   }
 
-  // if (EnzymePrintActivity)
-  //   llvm::errs() << " < UPSEARCH" << (int)directions << ">" << *inst <<
-  //   "\n";
+  if (EnzymePrintActivity)
+    llvm::errs() << " < UPSEARCH" << (int)directions << ">" << *op << "\n";
 
   if (auto store = dyn_cast<LLVM::StoreOp>(op)) {
     if (isConstantValue(TR, store.getValue()) ||
         isConstantValue(TR, store.getAddr())) {
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << " constant instruction as store operand is inactive
-      //   "
-      //                << *inst << "\n";
+      if (EnzymePrintActivity)
+        llvm::errs() << " constant instruction as store operand is inactive"
+                     << *op << "\n";
       return true;
     }
+    if (inactArg) {
+      inactArg->insert(store.getValue());
+      inactArg->insert(store.getAddr());
+    }
+    return false;
   }
 
   if (isa<LLVM::MemcpyOp, LLVM::MemmoveOp>(op)) {
@@ -2530,11 +2544,15 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
     // values and thus the store is inactive
     if (isConstantValue(TR, op->getOperand(0)) ||
         isConstantValue(TR, op->getOperand(1))) {
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << " constant instruction as memtransfer " << *inst
-      //                << "\n";
+      if (EnzymePrintActivity)
+        llvm::errs() << " constant instruction as memtransfer " << *op << "\n";
       return true;
     }
+    if (inactArg) {
+      inactArg->insert(op->getOperand(0));
+      inactArg->insert(op->getOperand(1));
+    }
+    return false;
   }
 
   if (auto call = dyn_cast<CallOpInterface>(op)) {
@@ -2576,9 +2594,9 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
     if (KnownInactiveFunctions.count(funcName.str()) ||
         MPIInactiveCommAllocators.find(funcName.str()) !=
             MPIInactiveCommAllocators.end()) {
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << "constant(" << (int)directions
-      //                << ") up-knowninactivecall " << *inst << "\n";
+      if (EnzymePrintActivity)
+        llvm::errs() << "constant(" << (int)directions
+                     << ") up-knowninactivecall " << *op << "\n";
       return true;
     }
 
@@ -2600,9 +2618,9 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
     Value callVal = call.getCallableForCallee().dyn_cast<Value>();
     if (callVal)
       if (isConstantValue(TR, callVal)) {
-        // if (EnzymePrintActivity)
-        //   llvm::errs() << "constant(" << (int)directions << ") up-constfn "
-        //                << *inst << " - " << *callVal << "\n";
+        if (EnzymePrintActivity)
+          llvm::errs() << "constant(" << (int)directions << ") up-constfn "
+                       << *op << " - " << callVal << "\n";
         return true;
       }
   }
@@ -2610,11 +2628,13 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
   if (auto gep = dyn_cast<LLVM::GEPOp>(op)) {
     // A gep's only args that could make it active is the pointer operand
     if (isConstantValue(TR, gep.getBase())) {
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << "constant(" << (int)directions << ") up-gep " <<
-      //   *inst
-      //                << "\n";
+      if (EnzymePrintActivity)
+        llvm::errs() << "constant(" << (int)directions << ") up-gep " << *op
+                     << "\n";
       return true;
+    }
+    if (inactArg) {
+      inactArg->insert(gep.getBase());
     }
     return false;
   }
@@ -2676,97 +2696,79 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
     if (isConstantValue(TR, si.getTrueValue()) &&
         isConstantValue(TR, si.getFalseValue())) {
 
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << "constant(" << (int)directions << ") up-sel:" <<
-      //   *inst
-      //                << "\n";
+      if (EnzymePrintActivity)
+        llvm::errs() << "constant(" << (int)directions << ") up-sel:" << *op
+                     << "\n";
       return true;
+    }
+    if (inactArg) {
+      inactArg->insert(si.getTrueValue());
+      inactArg->insert(si.getFalseValue());
     }
     return false;
   }
 
-  {
-    bool seenuse = false;
-    //! TODO does not consider reading from global memory that is active and not
-    //! an argument
+  if (!resultNo) {
     for (Value a : op->getOperands()) {
       bool hypval = isConstantValue(TR, a);
       if (!hypval) {
-        // if (EnzymePrintActivity)
-        //   llvm::errs() << "nonconstant(" << (int)directions << ")  up-inst "
-        //                << *inst << " op " << *a << "\n";
-        seenuse = true;
-        break;
+        if (EnzymePrintActivity)
+          llvm::errs() << "nonconstant(" << (int)directions << ")  up-inst "
+                       << *op << " op " << a << "\n";
+        if (inactArg) {
+          inactArg->insert(a);
+        }
+        return false;
       }
     }
-    if (!resultNo) {
-      // Conservatively check all top-level operations nested in the region,
-      // there is recursion there.
-      for (Region &region : op->getRegions()) {
-        for (Block &block : region) {
-          // XXX: We think that we don't need to check block arguments here
-          // because values flow into them either from operands of the parent op
-          // or from the op itself.
-          if (llvm::any_of(block, [&](Operation &nested) {
-                // No need to check the results, even if they may be active,
-                // because in absence of resultNo, we are checking for the
-                // entire op being inactive not individual values.
-                //
-                // // The loop _operation_ is inactive, but the result is, just
-                // // like the GEP inside it.
-                // %r = scf.for %i.. {
-                //    // The GEP operation is not active, but the result is.
-                //    %active_r = llvm.gep ... %active_operand
-                //    scf.yield %active_r
-                // }
-                return !isConstantOperation(TR, &nested);
-              })) {
-            seenuse = true;
-            break;
-          }
-        }
-        if (seenuse)
-          break;
-      }
-    } else {
-      SetVector<Value> potentialSources;
-      for (Region &region : op->getRegions()) {
-        for (Block &block : region) {
-          // TODO: MLIR blocks without terminator?
-          if (auto iface = dyn_cast<RegionBranchTerminatorOpInterface>(
-                  block.getTerminator())) {
-            // TODO: the interface may also tell us which regions are allowed to
-            // yield parent op results, and which only branch to other regions.
-            auto successorOperands = llvm::to_vector(
-                iface.getSuccessorOperands(RegionBranchPoint::parent()));
-            // TODO: understand/document the assumption of how operands flow.
-            assert(successorOperands.size() == op->getNumResults() &&
-                   "expected all results to be populated with yielded "
-                   "terminator operands");
-            potentialSources.insert(successorOperands[*resultNo]);
-          } else {
-            // assume all terminator operands  potentially flow into op results
-            for (Value v : block.getTerminator()->getOperands())
-              potentialSources.insert(v);
+    // Conservatively check all top-level operations nested in the region,
+    // there is recursion there.
+    for (Region &region : op->getRegions()) {
+      for (Block &block : region) {
+        // XXX: We think that we don't need to check block arguments here
+        // because values flow into them either from operands of the parent op
+        // or from the op itself.
+        for (Operation &nested : block) {
+          // No need to check the results, even if they may be active,
+          // because in absence of resultNo, we are checking for the
+          // entire op being inactive not individual values.
+          //
+          // // The loop _operation_ is inactive, but the result is, just
+          // // like the GEP inside it.
+          // %r = scf.for %i.. {
+          //    // The GEP operation is not active, but the result is.
+          //    %active_r = llvm.gep ... %active_operand
+          //    scf.yield %active_r
+          // }
+          if (!isConstantOperation(TR, &nested)) {
+            // TODO set inactArg here, except with constant operand.
+            // assert(!inactArg);
+            if (EnzymePrintActivity)
+              llvm::errs() << "nonconstant(" << (int)directions
+                           << ")  up-inst-op " << *op << " sub-op " << nested
+                           << "\n";
+            return false;
           }
         }
       }
-      if (llvm::any_of(potentialSources, [&](Value value) {
-            return !isConstantValue(TR, value);
-          })) {
-        seenuse = true;
+    }
+  } else {
+    for (auto value : getPotentialIncomingValues(op->getResult(*resultNo))) {
+      if (!isConstantValue(TR, value)) {
+        if (EnzymePrintActivity)
+          llvm::errs() << "nonconstant(" << (int)directions << ")  up-inst "
+                       << *op << " value " << value << "\n";
+        if (inactArg)
+          inactArg->insert(value);
+        return false;
       }
     }
-
-    if (!seenuse) {
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << "constant(" << (int)directions << ")  up-inst:" <<
-      //   *inst
-      //                << "\n";
-      return true;
-    }
-    return false;
   }
+
+  if (EnzymePrintActivity)
+    llvm::errs() << "constant(" << (int)directions << ")  up-inst:" << *op
+                 << "\n";
+  return true;
 }
 
 /// Is the value free of any active uses
@@ -2778,9 +2780,9 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
 
   // To ensure we can call down
 
-  // if (EnzymePrintActivity)
-  //   llvm::errs() << " <Value USESEARCH" << (int)directions << ">" << *val
-  //                << " UA=" << (int)PUA << "\n";
+  if (EnzymePrintActivity)
+    llvm::errs() << " <Value USESEARCH" << (int)directions << ">" << val
+                 << " UA=" << (int)PUA << "\n";
 
   bool seenuse = false;
   // user, predecessor
@@ -2834,9 +2836,8 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
       }
     }
 
-    // if (EnzymePrintActivity)
-    //   llvm::errs() << "      considering use of " << *val << " - " << *a
-    //                << "\n";
+    if (EnzymePrintActivity)
+      llvm::errs() << "      considering use of " << val << " - " << *a << "\n";
 
     // Only ignore stores to the operand, not storing the operand
     // somewhere
@@ -2915,25 +2916,23 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
             //   vtodo.push_back(TmpOrig_2);
             //   continue;
             // }
-            // if (EnzymePrintActivity)
-            //   llvm::errs() << "      -- cannot continuing indirect store from
-            //   "
-            //                << *val << " due to " << *TmpOrig << "\n";
+            if (EnzymePrintActivity)
+              llvm::errs() << "      -- cannot continuing indirect store from"
+                           << val << " due to " << TmpOrig << "\n";
             shouldContinue = false;
             break;
           }
           if (shouldContinue) {
-            // if (EnzymePrintActivity)
-            //   llvm::errs() << "      -- continuing indirect store from " <<
-            //   *val
-            //                << " into:\n";
+            if (EnzymePrintActivity)
+              llvm::errs() << "      -- continuing indirect store from " << val
+                           << " into:\n";
             done.insert(std::make_tuple(SI.getOperation(), SI.getValue(), UA));
             for (Value TmpOrig : newAllocaSet) {
 
               for (Operation *a : TmpOrig.getUsers()) {
                 todo.push_back(std::make_tuple(a, TmpOrig, UA));
-                // if (EnzymePrintActivity)
-                //   llvm::errs() << "         ** " << *a << "\n";
+                if (EnzymePrintActivity)
+                  llvm::errs() << "         ** " << *a << "\n";
               }
               AllocaSet.insert(TmpOrig);
               shouldContinue = true;
@@ -2993,10 +2992,9 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
           break;
         }
         if (shouldContinue) {
-          // if (EnzymePrintActivity)
-          //   llvm::errs() << "      -- continuing indirect store2 from " <<
-          //   *val
-          //                << " via " << *TmpOrig << "\n";
+          if (EnzymePrintActivity)
+            llvm::errs() << "      -- continuing indirect store2 from " << val
+                         << " via " << TmpOrig << "\n";
           continue;
         }
       }
@@ -3034,10 +3032,9 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
     // }
 
     if (isa<LLVM::AllocaOp>(a)) {
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << "found constant(" << (int)directions
-      //                << ")  allocainst use:" << *val << " user " << *a <<
-      //                "\n";
+      if (EnzymePrintActivity)
+        llvm::errs() << "found constant(" << (int)directions
+                     << ")  allocainst use:" << val << " user " << *a << "\n";
       continue;
     }
 
@@ -3066,12 +3063,21 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
     //   continue;
 
     // This use is only active if specified
-    if (isa<LLVM::ReturnOp>(a)) {
-      if (ActiveReturns == DIFFE_TYPE::CONSTANT &&
-          UA != UseActivity::AllStores) {
+    if (UA != UseActivity::AllStores) {
+      if (auto termUsers = getPotentialTerminatorUsers(a, parent)) {
+        for (auto post : *termUsers) {
+          for (Operation *postUser : post.getUsers()) {
+            todo.push_back(std::make_tuple(postUser, post, UA));
+          }
+        }
         continue;
-      } else {
-        return false;
+      }
+      if (isFunctionReturn(a)) {
+        if (ActiveReturns == DIFFE_TYPE::CONSTANT) {
+          continue;
+        } else {
+          return false;
+        }
       }
     }
 
@@ -3166,10 +3172,10 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
     if (auto call = dyn_cast<CallOpInterface>(a)) {
       bool ConstantArg = isFunctionArgumentConstant(call, parent);
       if (ConstantArg && UA != UseActivity::AllStores) {
-        // if (EnzymePrintActivity) {
-        //   llvm::errs() << "Value found constant callinst use:" << *val
-        //                << " user " << *call << "\n";
-        // }
+        if (EnzymePrintActivity) {
+          llvm::errs() << "Value found constant callinst use:" << val
+                       << " user " << *call << "\n";
+        }
         continue;
       }
 
@@ -3190,10 +3196,8 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
         if (operand.getDefiningOp<LLVM::LoadOp>()) {
           bool legal = true;
 
-          for (unsigned i = 0; i < call.getArgOperands().size() + 1; ++i) {
-            // FIXME: this is based on an assumption that the callee operand
-            // precedes arg operands.
-            Value a = call->getOperand(i);
+          for (unsigned i = 0; i < call.getArgOperands().size(); ++i) {
+            Value a = call.getArgOperands()[i];
 
             // FIXME: yet another ingrained assumption that integers cannot be
             // active.
@@ -3267,11 +3271,10 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
     if (Operation *I = a) {
       if (notForAnalysis.count(I->getBlock())) {
         // TODO(PR #904): replace the "EnzymePrintActivity" flag with LLVM_DEBUG
-        // if (EnzymePrintActivity) {
-        //   llvm::errs() << "Value found constant unreachable inst use:" <<
-        //   *val
-        //                << " user " << *I << "\n";
-        // }
+        if (EnzymePrintActivity) {
+          llvm::errs() << "Value found constant unreachable inst use:" << val
+                       << " user " << *I << "\n";
+        }
         continue;
       }
       if (UA != UseActivity::AllStores && ConstantOperations.count(I)) {
@@ -3280,11 +3283,10 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
                          .isa<LLVM::LLVMVoidType, LLVM::LLVMTokenType>() ||
                      ConstantValues.count(val);
             })) {
-          // if (EnzymePrintActivity) {
-          //   llvm::errs() << "Value found constant inst use:" << *val << "
-          //   user "
-          //                << *I << "\n";
-          // }
+          if (EnzymePrintActivity) {
+            llvm::errs() << "Value found constant inst use:" << val << " user "
+                         << *I << "\n";
+          }
           continue;
         }
         UseActivity NU = UA;
@@ -3359,17 +3361,16 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
         *FoundInst = I;
     }
 
-    // if (EnzymePrintActivity)
-    //   llvm::errs() << "Value nonconstant inst (uses):" << *val << " user " <<
-    //   *a
-    //                << "\n";
+    if (EnzymePrintActivity)
+      llvm::errs() << "Value nonconstant inst (uses):" << val << " user " << *a
+                   << "\n";
     seenuse = true;
     break;
   }
 
-  // if (EnzymePrintActivity)
-  //   llvm::errs() << " </Value USESEARCH" << (int)directions
-  //                << " const=" << (!seenuse) << ">" << *val << "\n";
+  if (EnzymePrintActivity)
+    llvm::errs() << " </Value USESEARCH" << (int)directions
+                 << " const=" << (!seenuse) << ">" << val << "\n";
   return !seenuse;
 }
 
@@ -3386,10 +3387,10 @@ bool mlir::enzyme::ActivityAnalyzer::isValueActivelyStoredOrReturned(
     return StoredOrReturnedCache[key];
   }
 
-  // if (EnzymePrintActivity)
-  //   llvm::errs() << " <ASOR" << (int)directions
-  //                << " ignoreStoresinto=" << ignoreStoresInto << ">" << *val
-  //                << "\n";
+  if (EnzymePrintActivity)
+    llvm::errs() << " <ASOR" << (int)directions
+                 << " ignoreStoresinto=" << ignoreStoresInto << ">" << val
+                 << "\n";
 
   StoredOrReturnedCache[key] = false;
 
@@ -3415,14 +3416,21 @@ bool mlir::enzyme::ActivityAnalyzer::isValueActivelyStoredOrReturned(
         continue;
     }
 
-    if (isa<LLVM::ReturnOp>(a)) {
+    if (auto termUsers = getPotentialTerminatorUsers(a, val)) {
+      for (auto post : *termUsers)
+        if (isValueActivelyStoredOrReturned(TR, post, outside)) {
+          return StoredOrReturnedCache[key] = true;
+        }
+      return false;
+    }
+    if (isFunctionReturn(a)) {
       if (ActiveReturns == DIFFE_TYPE::CONSTANT)
         continue;
 
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << " </ASOR" << (int)directions
-      //                << " ignoreStoresInto=" << ignoreStoresInto << ">"
-      //                << " active from-ret>" << *val << "\n";
+      if (EnzymePrintActivity)
+        llvm::errs() << " </ASOR" << (int)directions
+                     << " ignoreStoresInto=" << ignoreStoresInto << ">"
+                     << " active from-ret>" << val << "\n";
       StoredOrReturnedCache[key] = true;
       return true;
     }
@@ -3445,11 +3453,11 @@ bool mlir::enzyme::ActivityAnalyzer::isValueActivelyStoredOrReturned(
           // Storing into active value, return true
           if (!isConstantValue(TR, SI.getValue())) {
             StoredOrReturnedCache[key] = true;
-            // if (EnzymePrintActivity)
-            //   llvm::errs() << " </ASOR" << (int)directions
-            //                << " ignoreStoresInto=" << ignoreStoresInto
-            //                << " active from-store>" << *val
-            //                << " store into=" << *SI << "\n";
+            if (EnzymePrintActivity)
+              llvm::errs() << " </ASOR" << (int)directions
+                           << " ignoreStoresInto=" << ignoreStoresInto
+                           << " active from-store>" << val
+                           << " store into=" << *SI << "\n";
             return true;
           }
         }
@@ -3458,11 +3466,11 @@ bool mlir::enzyme::ActivityAnalyzer::isValueActivelyStoredOrReturned(
         // Storing into active memory, return true
         if (!isConstantValue(TR, SI.getAddr())) {
           StoredOrReturnedCache[key] = true;
-          // if (EnzymePrintActivity)
-          //   llvm::errs() << " </ASOR" << (int)directions
-          //                << " ignoreStoresInto=" << ignoreStoresInto
-          //                << " active from-store>" << *val << " store=" << *SI
-          //                << "\n";
+          if (EnzymePrintActivity)
+            llvm::errs() << " </ASOR" << (int)directions
+                         << " ignoreStoresInto=" << ignoreStoresInto
+                         << " active from-store>" << val << " store=" << *SI
+                         << "\n";
           return true;
         }
         continue;
@@ -3513,18 +3521,17 @@ bool mlir::enzyme::ActivityAnalyzer::isValueActivelyStoredOrReturned(
     // it is written to active memory
     // TODO handle more memory instructions above to be less conservative
 
-    // if (EnzymePrintActivity)
-    //   llvm::errs() << " </ASOR" << (int)directions
-    //                << " ignoreStoresInto=" << ignoreStoresInto
-    //                << " active from-unknown>" << *val << " - use=" << *a
-    //                << "\n";
+    if (EnzymePrintActivity)
+      llvm::errs() << " </ASOR" << (int)directions
+                   << " ignoreStoresInto=" << ignoreStoresInto
+                   << " active from-unknown>" << val << " - use=" << *a << "\n";
     return StoredOrReturnedCache[key] = true;
   }
 
-  // if (EnzymePrintActivity)
-  //   llvm::errs() << " </ASOR" << (int)directions
-  //                << " ignoreStoresInto=" << ignoreStoresInto << " inactive>"
-  //                << *val << "\n";
+  if (EnzymePrintActivity)
+    llvm::errs() << " </ASOR" << (int)directions
+                 << " ignoreStoresInto=" << ignoreStoresInto << " inactive>"
+                 << val << "\n";
   return false;
 }
 
@@ -3540,9 +3547,9 @@ void mlir::enzyme::ActivityAnalyzer::InsertConstantOperation(
     if (!ActiveValues.count(toeval))
       continue;
     ActiveValues.erase(toeval);
-    // if (EnzymePrintActivity)
-    //   llvm::errs() << " re-evaluating activity of val " << *toeval
-    //                << " due to inst " << *I << "\n";
+    if (EnzymePrintActivity)
+      llvm::errs() << " re-evaluating activity of val " << toeval
+                   << " due to inst " << *I << "\n";
     isConstantValue(TR, toeval);
   }
 }
@@ -3558,9 +3565,9 @@ void mlir::enzyme::ActivityAnalyzer::InsertConstantValue(MTypeResults const &TR,
       if (!ActiveValues.count(toeval))
         continue;
       ActiveValues.erase(toeval);
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << " re-evaluating activity of val " << *toeval
-      //                << " due to value " << *V << "\n";
+      if (EnzymePrintActivity)
+        llvm::errs() << " re-evaluating activity of val " << toeval
+                     << " due to value " << V << "\n";
       isConstantValue(TR, toeval);
     }
   }
@@ -3572,9 +3579,9 @@ void mlir::enzyme::ActivityAnalyzer::InsertConstantValue(MTypeResults const &TR,
       if (!ActiveOperations.count(toeval))
         continue;
       ActiveOperations.erase(toeval);
-      // if (EnzymePrintActivity)
-      //   llvm::errs() << " re-evaluating activity of inst " << *toeval
-      //                << " due to value " << *V << "\n";
+      if (EnzymePrintActivity)
+        llvm::errs() << " re-evaluating activity of inst " << *toeval
+                     << " due to value " << V << "\n";
       isConstantOperation(TR, toeval);
     }
   }

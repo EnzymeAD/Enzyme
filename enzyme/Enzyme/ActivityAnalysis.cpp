@@ -1049,9 +1049,11 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     }
     assert(TR.getFunction() == I->getParent()->getParent());
   }
+#ifndef NDEBUG
   if (auto Arg = dyn_cast<Argument>(Val)) {
     assert(TR.getFunction() == Arg->getParent());
   }
+#endif
 
   // Void values are definitionally inactive
   if (Val->getType()->isVoidTy())
@@ -2305,6 +2307,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   // this value is inactive, we are inactive Since we won't look at uses to
   // prove, we can inductively assume this is inactive
   if (directions & UP) {
+    if (!UpHypothesis)
+      UpHypothesis =
+          std::shared_ptr<ActivityAnalyzer>(new ActivityAnalyzer(*this, UP));
     if (directions == UP && !isa<PHINode>(Val)) {
       if (isInstructionInactiveFromOrigin(TR, Val, true)) {
         InsertConstantValue(TR, Val);
@@ -2320,8 +2325,6 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         }
       }
     } else {
-      UpHypothesis =
-          std::shared_ptr<ActivityAnalyzer>(new ActivityAnalyzer(*this, UP));
       UpHypothesis->ConstantValues.insert(Val);
       if (UpHypothesis->isInstructionInactiveFromOrigin(TR, Val, true)) {
         insertConstantsFrom(TR, *UpHypothesis);

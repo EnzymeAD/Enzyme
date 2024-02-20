@@ -100,7 +100,7 @@ public:
     using namespace llvm;
 
     assert(TR.getFunction() == gutils->oldFunc);
-    for (auto &pair : TR.analyzer.analysis) {
+    for (auto &pair : TR.analyzer->analysis) {
       if (auto in = dyn_cast<Instruction>(pair.first)) {
         if (in->getParent()->getParent() != gutils->oldFunc) {
           llvm::errs() << "inf: " << *in->getParent()->getParent() << "\n";
@@ -408,6 +408,7 @@ public:
     constantval |= gutils->isConstantValue(&I);
 
     Type *type = gutils->getShadowType(I.getType());
+    (void)type;
 
     auto *newi = dyn_cast<Instruction>(gutils->getNewFromOriginal(&I));
 
@@ -621,6 +622,7 @@ public:
       if (primalNeededInReverse) {
         inst = gutils->cacheForReverse(BuilderZ, newi,
                                        getIndex(&I, CacheType::Self, BuilderZ));
+        (void)inst;
         assert(inst->getType() == type);
 
         if (Mode == DerivativeMode::ReverseModeGradient ||
@@ -1542,7 +1544,7 @@ public:
                                lc) &&
             gutils->getNewFromOriginal(P0->getParent()) == lc.header) {
           SmallVector<BasicBlock *, 1> Latches;
-          gutils->OrigLI.getLoopFor(P0->getParent())->getLoopLatches(Latches);
+          gutils->OrigLI->getLoopFor(P0->getParent())->getLoopLatches(Latches);
           bool allIncoming = true;
           for (auto Latch : Latches) {
             if (&SI != P0->getIncomingValueForBlock(Latch)) {
@@ -2206,7 +2208,7 @@ public:
                                lc) &&
             gutils->getNewFromOriginal(P0->getParent()) == lc.header) {
           SmallVector<BasicBlock *, 1> Latches;
-          gutils->OrigLI.getLoopFor(P0->getParent())->getLoopLatches(Latches);
+          gutils->OrigLI->getLoopFor(P0->getParent())->getLoopLatches(Latches);
           bool allIncoming = true;
           for (auto Latch : Latches) {
             if (&BO != P0->getIncomingValueForBlock(Latch)) {
@@ -3777,6 +3779,7 @@ public:
         setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
                  Builder2);
       }
+      (void)vdiff;
 
       switch (ID) {
 
@@ -4152,7 +4155,7 @@ public:
       if (called) {
         subdata = &gutils->Logic.CreateAugmentedPrimal(
             RequestContext(&call, &BuilderZ), cast<Function>(called),
-            subretType, argsInverted, TR.analyzer.interprocedural,
+            subretType, argsInverted, TR.analyzer->interprocedural,
             /*return is used*/ false,
             /*shadowReturnUsed*/ false, nextTypeInfo, overwritten_args, false,
             gutils->getWidth(),
@@ -4368,7 +4371,7 @@ public:
                                        : nullptr,
                               .forceAnonymousTape = false,
                               .typeInfo = nextTypeInfo},
-            TR.analyzer.interprocedural, subdata,
+            TR.analyzer->interprocedural, subdata,
             /*omp*/ true);
 
         if (subdata->returns.find(AugmentedStruct::Tape) !=
@@ -4896,7 +4899,7 @@ public:
       if (called) {
         newcalled = gutils->Logic.CreateForwardDiff(
             RequestContext(&call, &BuilderZ), cast<Function>(called),
-            subretType, argsInverted, TR.analyzer.interprocedural,
+            subretType, argsInverted, TR.analyzer->interprocedural,
             /*returnValue*/ subretused, Mode,
             ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->getWidth(),
             tape ? tape->getType() : nullptr, nextTypeInfo, overwritten_args,
@@ -5201,6 +5204,7 @@ public:
 
         // Note sometimes whattype mistakenly says something should be
         // constant [because composed of integer pointers alone]
+        (void)argType;
         assert(whatType(argType, Mode) == DIFFE_TYPE::DUP_ARG ||
                whatType(argType, Mode) == DIFFE_TYPE::CONSTANT);
       } else {
@@ -5311,7 +5315,7 @@ public:
             Mode == DerivativeMode::ReverseModeCombined) {
           subdata = &gutils->Logic.CreateAugmentedPrimal(
               RequestContext(&call, &BuilderZ), cast<Function>(called),
-              subretType, argsInverted, TR.analyzer.interprocedural,
+              subretType, argsInverted, TR.analyzer->interprocedural,
               /*return is used*/ subretused, shadowReturnUsed, nextTypeInfo,
               overwritten_args, false, gutils->getWidth(), gutils->AtomicAdd);
           if (Mode == DerivativeMode::ReverseModePrimal) {
@@ -5689,7 +5693,7 @@ public:
                             .additionalType = tape ? tape->getType() : nullptr,
                             .forceAnonymousTape = false,
                             .typeInfo = nextTypeInfo},
-          TR.analyzer.interprocedural, subdata);
+          TR.analyzer->interprocedural, subdata);
       if (!newcalled)
         return;
       FT = cast<Function>(newcalled)->getFunctionType();

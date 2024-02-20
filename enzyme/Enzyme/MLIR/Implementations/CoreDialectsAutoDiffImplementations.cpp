@@ -19,6 +19,23 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 
+mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
+                                              llvm::StringRef value) {
+  using namespace mlir;
+  if (auto T = dyn_cast<TensorType>(type)) {
+    size_t num = 1;
+    for (auto sz : T.getShape())
+      num *= sz;
+    APFloat apvalue(T.getElementType().cast<FloatType>().getFloatSemantics(),
+                    value);
+    SmallVector<APFloat> supportedValues(num, apvalue);
+    return DenseFPElementsAttr::get(type.cast<ShapedType>(), supportedValues);
+  }
+  auto T = cast<FloatType>(type);
+  APFloat apvalue(T.getFloatSemantics(), value);
+  return FloatAttr::get(T, apvalue);
+}
+
 void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
                                                    OpBuilder &builder,
                                                    MGradientUtils *gutils) {
@@ -186,29 +203,39 @@ LogicalResult mlir::enzyme::detail::allocationForwardHandler(
 
 void mlir::enzyme::detail::regionTerminatorForwardHandler(
     Operation *origTerminator, OpBuilder &builder, MGradientUtils *gutils) {
-  auto termIface = cast<RegionBranchTerminatorOpInterface>(origTerminator);
-  auto parentOp = termIface->getParentOp();
-
-  SmallVector<RegionSuccessor> successors;
-  termIface.getSuccessorRegions(
-      SmallVector<Attribute>(termIface->getNumOperands(), Attribute()),
-      successors);
+  auto parentOp = origTerminator->getParentOp();
 
   llvm::SmallDenseSet<unsigned> operandsToShadow;
-  for (auto &successor : successors) {
-    OperandRange operandRange = termIface.getSuccessorOperands(successor);
-    ValueRange targetValues = successor.isParent()
-                                  ? parentOp->getResults()
-                                  : successor.getSuccessorInputs();
-    assert(operandRange.size() == targetValues.size());
-    for (auto &&[i, target] : llvm::enumerate(targetValues)) {
-      if (!gutils->isConstantValue(target))
-        operandsToShadow.insert(operandRange.getBeginOperandIndex() + i);
+  if (auto termIface =
+          dyn_cast<RegionBranchTerminatorOpInterface>(origTerminator)) {
+    SmallVector<RegionSuccessor> successors;
+    termIface.getSuccessorRegions(
+        SmallVector<Attribute>(origTerminator->getNumOperands(), Attribute()),
+        successors);
+
+    for (auto &successor : successors) {
+      OperandRange operandRange = termIface.getSuccessorOperands(successor);
+      ValueRange targetValues = successor.isParent()
+                                    ? parentOp->getResults()
+                                    : successor.getSuccessorInputs();
+      assert(operandRange.size() == targetValues.size());
+      for (auto &&[i, target] : llvm::enumerate(targetValues)) {
+        if (!gutils->isConstantValue(target))
+          operandsToShadow.insert(operandRange.getBeginOperandIndex() + i);
+      }
+    }
+  } else {
+    assert(parentOp->getNumResults() == origTerminator->getNumOperands());
+    for (auto res : parentOp->getResults()) {
+      if (!gutils->isConstantValue(res))
+        operandsToShadow.insert(res.getResultNumber());
     }
   }
+
   SmallVector<Value> newOperands;
-  newOperands.reserve(termIface->getNumOperands() + operandsToShadow.size());
-  for (OpOperand &operand : termIface->getOpOperands()) {
+  newOperands.reserve(origTerminator->getNumOperands() +
+                      operandsToShadow.size());
+  for (OpOperand &operand : origTerminator->getOpOperands()) {
     newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
     if (operandsToShadow.contains(operand.getOperandNumber()))
       newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
@@ -217,32 +244,11 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
   // Assuming shadows following the originals are fine.
   // TODO: consider extending to have a ShadowableTerminatorOpInterface
   Operation *replTerminator = gutils->getNewFromOriginal(origTerminator);
-  Operation *newTerminator = builder.clone(*replTerminator);
-  newTerminator->setOperands(newOperands);
-  gutils->erase(replTerminator);
+  replTerminator->setOperands(newOperands);
 }
 
 LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
     Operation *op, OpBuilder &builder, MGradientUtils *gutils) {
-  // For all active results, add shadow types.
-  // For now, assuming all results are relevant.
-  Operation *newOp = gutils->getNewFromOriginal(op);
-  SmallVector<Type> newOpResultTypes;
-  newOpResultTypes.reserve(op->getNumResults() * 2);
-  for (Value result : op->getResults()) {
-    // TODO only if used (can we DCE the primal after having done the
-    // derivative).
-    newOpResultTypes.push_back(result.getType());
-    if (gutils->isConstantValue(result))
-      continue;
-    auto typeIface = dyn_cast<AutoDiffTypeInterface>(result.getType());
-    if (!typeIface) {
-      op->emitError() << " AutoDiffTypeInterface not implemented for "
-                      << result.getType() << "\n";
-      return failure();
-    }
-    newOpResultTypes.push_back(typeIface.getShadowType());
-  }
 
   // For all operands that are forwarded to the body, if they are active, also
   // add the shadow as operand.
@@ -253,28 +259,72 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
     return failure();
   }
 
-  SmallVector<RegionSuccessor> successors;
   // TODO: we may need to record, for every successor, which of its inputs
   // need a shadow to recreate the body correctly.
   llvm::SmallDenseSet<unsigned> operandPositionsToShadow;
+  llvm::SmallDenseSet<unsigned> resultPositionsToShadow;
+
+  SmallVector<RegionSuccessor> entrySuccessors;
   regionBranchOp.getEntrySuccessorRegions(
-      SmallVector<Attribute>(op->getNumOperands(), Attribute()), successors);
-  for (const RegionSuccessor &successor : successors) {
-    if (!successor.isParent() && successor.getSuccessor()->empty())
-      continue;
+      SmallVector<Attribute>(op->getNumOperands(), Attribute()),
+      entrySuccessors);
+
+  for (const RegionSuccessor &successor : entrySuccessors) {
 
     OperandRange operandRange =
         regionBranchOp.getEntrySuccessorOperands(successor);
 
+    ValueRange targetValues = successor.isParent()
+                                  ? op->getResults()
+                                  : successor.getSuccessorInputs();
+
     // Need to know which of the arguments are being forwarded to from
     // operands.
     for (auto &&[i, regionValue, operand] :
-         llvm::enumerate(successor.getSuccessorInputs(), operandRange)) {
+         llvm::enumerate(targetValues, operandRange)) {
       if (gutils->isConstantValue(regionValue))
         continue;
       operandPositionsToShadow.insert(operandRange.getBeginOperandIndex() + i);
+      if (successor.isParent())
+        resultPositionsToShadow.insert(i);
     }
   }
+
+  for (auto res : op->getResults())
+    if (!gutils->isConstantValue(res))
+      resultPositionsToShadow.insert(res.getResultNumber());
+
+  return controlFlowForwardHandler(
+      op, builder, gutils, operandPositionsToShadow, resultPositionsToShadow);
+}
+
+LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
+    Operation *op, OpBuilder &builder, MGradientUtils *gutils,
+    const llvm::SmallDenseSet<unsigned> &operandPositionsToShadow,
+    const llvm::SmallDenseSet<unsigned> &resultPositionsToShadow) {
+  // For all active results, add shadow types.
+  // For now, assuming all results are relevant.
+  Operation *newOp = gutils->getNewFromOriginal(op);
+  SmallVector<Type> newOpResultTypes;
+  newOpResultTypes.reserve(op->getNumResults() * 2);
+  for (auto result : op->getResults()) {
+    // TODO only if used (can we DCE the primal after having done the
+    // derivative).
+    newOpResultTypes.push_back(result.getType());
+    if (!gutils->isConstantValue(result)) {
+      assert(resultPositionsToShadow.count(result.getResultNumber()));
+    }
+    if (!resultPositionsToShadow.count(result.getResultNumber()))
+      continue;
+    auto typeIface = dyn_cast<AutoDiffTypeInterface>(result.getType());
+    if (!typeIface) {
+      op->emitError() << " AutoDiffTypeInterface not implemented for "
+                      << result.getType() << "\n";
+      return failure();
+    }
+    newOpResultTypes.push_back(typeIface.getShadowType());
+  }
+
   SmallVector<Value> newOperands;
   newOperands.reserve(op->getNumOperands() + operandPositionsToShadow.size());
   for (OpOperand &operand : op->getOpOperands()) {
@@ -297,6 +347,7 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   }
   Operation *replacement = iface.createWithShadows(
       builder, gutils, op, newOperands, newOpResultTypes);
+  assert(replacement->getNumResults() == newOpResultTypes.size());
   for (auto &&[region, replacementRegion] :
        llvm::zip(newOp->getRegions(), replacement->getRegions())) {
     replacementRegion.takeBody(region);

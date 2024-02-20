@@ -200,6 +200,7 @@ std::pair<PHINode *, Instruction *> FindCanonicalIV(Loop *L, Type *Ty) {
   }
   llvm::errs() << *Header << "\n";
   assert(0 && "Could not find canonical IV");
+  return std::pair<PHINode *, Instruction *>(nullptr, nullptr);
 }
 
 // Attempt to rewrite all phinode's in the loop in terms of the
@@ -1330,8 +1331,10 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
                                            IRBuilder<> &BuilderM, Value *val,
                                            AllocaInst *cache, MDNode *TBAA) {
   assert(BuilderM.GetInsertBlock()->getParent() == newFunc);
+#ifndef NDEBUG
   if (auto inst = dyn_cast<Instruction>(val))
     assert(inst->getParent()->getParent() == newFunc);
+#endif
   IRBuilder<> v(BuilderM.GetInsertBlock());
   v.SetInsertPoint(BuilderM.GetInsertBlock(), BuilderM.GetInsertPoint());
   v.setFastMathFlags(getFast());
