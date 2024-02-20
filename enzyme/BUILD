@@ -161,6 +161,8 @@ cc_library(
         "-DENZYME_VERSION_MAJOR=0",
         "-DENZYME_VERSION_MINOR=0",
         "-DENZYME_VERSION_PATCH=79",
+        "-Wno-unused-variable",
+        "-Wno-return-type",
     ],
     data = ["@llvm-project//clang:builtin_headers_gen"],
     visibility = ["//visibility:public"],
