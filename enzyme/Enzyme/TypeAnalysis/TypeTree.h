@@ -991,6 +991,16 @@ public:
 
     auto Res2 = ShiftIndicesSlow(dl, offset, maxSize, addOffset);
     assert(Result == Res2);
+    if (Result.minIndices != Res2.minIndices) {
+      llvm::errs() << " off: " << offset << " maxSize: " << maxSize
+                   << " addOffset: " << addOffset << "\n";
+      llvm::errs() << "inp: " << str() << "\n";
+      llvm::errs() << "result: " << Result.str() << "\n";
+      llvm::errs() << "res: " << Res2.str() << "\n";
+      llvm::errs() << " result minidx : " << to_string(Result.minIndices)
+                   << "\n";
+      llvm::errs() << " res2 minidx : " << to_string(Res2.minIndices) << "\n";
+    }
     assert(Result.minIndices == Res2.minIndices);
 
     return Result;
