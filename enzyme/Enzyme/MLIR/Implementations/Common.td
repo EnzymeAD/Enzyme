@@ -87,6 +87,8 @@ class ConstantFP<string val, string dialect_, string op_, string type_=""> : Ope
   string type = type_;
 }
 
+def ResultTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "op->getResultTypes()">;
+
 class ArithInst<string m> : Inst<m, "arith">;
 class MathInst<string m> : Inst<m, "math">;
 
