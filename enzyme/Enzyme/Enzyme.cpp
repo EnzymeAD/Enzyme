@@ -2110,8 +2110,7 @@ public:
 
       // Move the truncated body into the original function
       F.deleteBody();
-      F.getBasicBlockList().splice(F.begin(),
-                                   TruncatedFunc->getBasicBlockList());
+      F.splice(F.begin(), TruncatedFunc);
       RemapFunction(F, Mapping,
                     RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
       TruncatedFunc->deleteBody();
