@@ -5229,11 +5229,11 @@ public:
     std::string MangledName =
         std::string("__enzyme_mpfr_") + truncation.mangleFrom() + "_" + Name;
     auto F = newFunc->getParent()->getFunction(MangledName);
-    SmallVector<Value *> Args(ArgsIn.begin(), ArgsIn.end());
+    SmallVector<Value *, 4> Args(ArgsIn.begin(), ArgsIn.end());
     Args.push_back(B.getInt64(truncation.getTo().exponentWidth));
     Args.push_back(B.getInt64(truncation.getTo().significandWidth));
     if (!F) {
-      SmallVector<Type *> ArgTypes;
+      SmallVector<Type *, 4> ArgTypes;
       for (auto Arg : Args)
         ArgTypes.push_back(Arg->getType());
       FunctionType *FnTy =
@@ -5277,7 +5277,7 @@ public:
     auto newRHS = truncate(B, getNewFromOriginal(oldRHS));
     Instruction *nres = nullptr;
     if (truncation.isToMPFR()) {
-      SmallVector<Value *> Args({newLHS, newRHS});
+      SmallVector<Value *, 2> Args({newLHS, newRHS});
       nres = createMPFRCall(B, BO, truncation.getToType(ctx), Args);
     } else {
       nres = cast<Instruction>(B.CreateBinOp(BO.getOpcode(), newLHS, newRHS));

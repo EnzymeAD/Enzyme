@@ -23,7 +23,6 @@
 // the function passed as the first argument.
 //
 //===----------------------------------------------------------------------===//
-#include "llvm/Support/ErrorHandling.h"
 #include <llvm/Config/llvm-config.h>
 
 #if LLVM_VERSION_MAJOR >= 16
@@ -59,6 +58,7 @@
 
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Transforms/Scalar.h"
 
 #include "llvm/Analysis/BasicAliasAnalysis.h"
