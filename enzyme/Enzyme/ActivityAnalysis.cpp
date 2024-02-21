@@ -2073,14 +2073,14 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                        << "\n";
         if (auto SI = dyn_cast<StoreInst>(I)) {
           bool cop = !Hypothesis->isConstantValue(TR, SI->getValueOperand());
-          bool cop2 = !Hypothesis->isConstantValue(TR, SI->getPointerOperand());
+          // bool cop2 = !Hypothesis->isConstantValue(TR,
+          // SI->getPointerOperand());
           if (EnzymePrintActivity)
-            llvm::errs() << " -- store potential activity: " << (int)cop << ","
-                         << (int)cop2 << ","
+            llvm::errs() << " -- store potential activity: " << (int)cop
                          << " - " << *SI << " of "
                          << " Val=" << *Val << "\n";
           potentialStore = I;
-          if (cop && cop2)
+          if (cop) // && cop2)
             potentiallyActiveStore = SI;
         } else if (auto MTI = dyn_cast<MemTransferInst>(I)) {
           bool cop = !Hypothesis->isConstantValue(TR, MTI->getArgOperand(1));
