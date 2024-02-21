@@ -1,4 +1,4 @@
-//===- EnzymeMPFR.h - Implementation of forward and reverse pass generation==//
+//===- EnzymeMPFR.h - MPFR wrappers ---------------------------------------===//
 //
 //                             Enzyme Project
 //
