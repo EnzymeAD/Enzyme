@@ -1249,7 +1249,15 @@ public:
           newval = true;
           break;
         }
-        if (found->second != pair.second) {
+        bool SubLegalOr = true;
+        auto cur = found->second;
+        bool SubChanged =
+            cur.checkedOrIn(pair.second, PointerIntSame, SubLegalOr);
+        if (!SubLegalOr) {
+          LegalOr = false;
+          return false;
+        }
+        if (!SubChanged) {
           newval = true;
           break;
         }
