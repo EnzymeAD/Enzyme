@@ -2180,8 +2180,24 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     VMapO->getMDMap() = VMap.getMDMap();
   }
 
+  for (auto attr : {"enzyme_ta_norecur"})
+    if (F->getAttributes().hasAttribute(AttributeList::FunctionIndex, attr)) {
+      NewF->addAttribute(
+          AttributeList::FunctionIndex,
+          F->getAttributes().getAttribute(AttributeList::FunctionIndex, attr));
+    }
+
+  for (auto attr :
+       {"enzyme_type", "enzymejl_parmtype", "enzymejl_parmtype_ref"})
+    if (F->getAttributes().hasAttribute(AttributeList::ReturnIndex, attr)) {
+      NewF->addAttribute(
+          AttributeList::ReturnIndex,
+          F->getAttributes().getAttribute(AttributeList::ReturnIndex, attr));
+    }
+
   bool hasPtrInput = false;
   unsigned ii = 0, jj = 0;
+
   for (auto i = F->arg_begin(), j = NewF->arg_begin(); i != F->arg_end();) {
     if (F->hasParamAttribute(ii, Attribute::StructRet)) {
       NewF->addParamAttr(jj, Attribute::get(F->getContext(), "enzyme_sret"));
@@ -2204,7 +2220,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       // Attribute::ElementType));
 #endif
     }
-    for (auto attr : {"enzymejl_parmtype", "enzymejl_parmtype_ref"})
+    for (auto attr :
+         {"enzymejl_parmtype", "enzymejl_parmtype_ref", "enzyme_type"})
       if (F->getAttributes().hasParamAttr(ii, attr)) {
         NewF->addParamAttr(jj, F->getAttributes().getParamAttr(ii, attr));
         for (auto ty : PrimalParamAttrsToPreserve)
@@ -2250,7 +2267,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
             NewF->addParamAttr(jj + 1, attr);
           }
 
-      for (auto attr : {"enzymejl_parmtype", "enzymejl_parmtype_ref"})
+      for (auto attr :
+           {"enzymejl_parmtype", "enzymejl_parmtype_ref", "enzyme_type"})
         if (F->getAttributes().hasParamAttr(ii, attr)) {
           if (width == 1)
             NewF->addParamAttr(jj + 1,

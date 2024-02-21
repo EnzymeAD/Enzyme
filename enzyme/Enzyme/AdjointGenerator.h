@@ -4757,10 +4757,11 @@ public:
           //     call.getParamAttr(i, Attribute::StructRet).getValueAsType()));
 #endif
         }
-        if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
-          structAttrs[args.size()].push_back(
-              call.getParamAttr(i, "enzymejl_returnRoots"));
-        }
+        for (auto attr : {"enzymejl_returnRoots", "enzymejl_parmtype",
+                          "enzymejl_parmtype_ref", "enzyme_type"})
+          if (call.getAttributes().hasParamAttr(i, attr)) {
+            structAttrs[args.size()].push_back(call.getParamAttr(i, attr));
+          }
         for (auto ty : PrimalParamAttrsToPreserve)
           if (call.getAttributes().hasParamAttr(i, ty)) {
             auto attr = call.getAttributes().getParamAttr(i, ty);
@@ -4815,15 +4816,16 @@ public:
               structAttrs[args.size()].push_back(attr);
             }
 
-        if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
-          if (gutils->getWidth() == 1) {
-            structAttrs[args.size()].push_back(
-                call.getParamAttr(i, "enzymejl_returnRoots"));
-          } else {
-            structAttrs[args.size()].push_back(
-                Attribute::get(call.getContext(), "enzyme_sret_v"));
+        for (auto attr : {"enzymejl_returnRoots", "enzymejl_parmtype",
+                          "enzymejl_parmtype_ref", "enzyme_type"})
+          if (call.getAttributes().hasParamAttr(i, attr)) {
+            if (gutils->getWidth() == 1) {
+              structAttrs[args.size()].push_back(call.getParamAttr(i, attr));
+            } else if (attr == "enzymejl_returnRoots") {
+              structAttrs[args.size()].push_back(
+                  Attribute::get(call.getContext(), "enzymejl_returnRoots_v"));
+            }
           }
-        }
         if (call.paramHasAttr(i, Attribute::StructRet)) {
           if (gutils->getWidth() == 1) {
             structAttrs[args.size()].push_back(
@@ -5050,10 +5052,11 @@ public:
       if (call.isByValArgument(i)) {
         preByVal[pre_args.size()] = call.getParamByValType(i);
       }
-      if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
-        structAttrs[pre_args.size()].push_back(
-            call.getParamAttr(i, "enzymejl_returnRoots"));
-      }
+      for (auto attr : {"enzymejl_returnRoots", "enzymejl_parmtype",
+                        "enzymejl_parmtype_ref", "enzyme_type"})
+        if (call.getAttributes().hasParamAttr(i, attr)) {
+          structAttrs[pre_args.size()].push_back(call.getParamAttr(i, attr));
+        }
       if (call.paramHasAttr(i, Attribute::StructRet)) {
         structAttrs[pre_args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
@@ -5146,15 +5149,17 @@ public:
               structAttrs[pre_args.size()].push_back(attr);
             }
 
-        if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
-          if (gutils->getWidth() == 1) {
-            structAttrs[pre_args.size()].push_back(
-                call.getParamAttr(i, "enzymejl_returnRoots"));
-          } else {
-            structAttrs[pre_args.size()].push_back(
-                Attribute::get(call.getContext(), "enzymejl_returnRoots_v"));
+        for (auto attr : {"enzymejl_returnRoots", "enzymejl_parmtype",
+                          "enzymejl_parmtype_ref", "enzyme_type"})
+          if (call.getAttributes().hasParamAttr(i, attr)) {
+            if (gutils->getWidth() == 1) {
+              structAttrs[pre_args.size()].push_back(
+                  call.getParamAttr(i, attr));
+            } else if (attr == "enzymejl_returnRoots") {
+              structAttrs[pre_args.size()].push_back(
+                  Attribute::get(call.getContext(), "enzymejl_returnRoots_v"));
+            }
           }
-        }
         if (call.paramHasAttr(i, Attribute::StructRet)) {
           if (gutils->getWidth() == 1) {
             structAttrs[pre_args.size()].push_back(

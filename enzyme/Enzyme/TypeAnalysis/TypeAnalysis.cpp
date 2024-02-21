@@ -61,6 +61,12 @@
 
 #include <math.h>
 
+#if LLVM_VERSION_MAJOR >= 14
+#define getAttribute getAttributeAtIndex
+#define hasAttribute hasAttributeAtIndex
+#define addAttribute addAttributeAtIndex
+#endif
+
 using namespace llvm;
 
 extern "C" {
@@ -1207,18 +1213,57 @@ void TypeAnalyzer::considerTBAA() {
       }
 
       if (CallBase *call = dyn_cast<CallBase>(&I)) {
+#if LLVM_VERSION_MAJOR >= 14
+        size_t num_args = call->arg_size();
+#else
+        size_t num_args = call->getNumArgOperands();
+#endif
+
+        if (call->getAttributes().hasAttribute(AttributeList::ReturnIndex,
+                                               "enzyme_type")) {
+          auto attr = call->getAttributes().getAttribute(
+              AttributeList::ReturnIndex, "enzyme_type");
+          auto TT =
+              TypeTree::parse(attr.getValueAsString(), call->getContext());
+          updateAnalysis(call, TT, call);
+        }
+        for (size_t i = 0; i < num_args; i++) {
+          if (call->getAttributes().hasParamAttr(i, "enzyme_type")) {
+            auto attr = call->getAttributes().getParamAttr(i, "enzyme_type");
+            auto TT =
+                TypeTree::parse(attr.getValueAsString(), call->getContext());
+            updateAnalysis(call->getArgOperand(i), TT, call);
+          }
+        }
+
         Function *F = call->getCalledFunction();
+
+        if (F) {
+          if (F->getAttributes().hasAttribute(AttributeList::ReturnIndex,
+                                              "enzyme_type")) {
+            auto attr = F->getAttributes().getAttribute(
+                AttributeList::ReturnIndex, "enzyme_type");
+            auto TT =
+                TypeTree::parse(attr.getValueAsString(), call->getContext());
+            updateAnalysis(call, TT, call);
+          }
+          size_t f_num_args = F->arg_size();
+          for (size_t i = 0; i < f_num_args; i++) {
+            if (F->getAttributes().hasParamAttr(i, "enzyme_type")) {
+              auto attr = F->getAttributes().getParamAttr(i, "enzyme_type");
+              auto TT =
+                  TypeTree::parse(attr.getValueAsString(), call->getContext());
+              updateAnalysis(call->getArgOperand(i), TT, call);
+            }
+          }
+        }
+
         if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledOperand())) {
           if (castinst->isCast())
             if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
               F = fn;
             }
         }
-#if LLVM_VERSION_MAJOR >= 14
-        size_t num_args = call->arg_size();
-#else
-        size_t num_args = call->getNumArgOperands();
-#endif
         if (F && F->getName().contains("__enzyme_float")) {
           assert(num_args == 1 || num_args == 2);
           assert(call->getArgOperand(0)->getType()->isPointerTy());
@@ -4356,9 +4401,16 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
   }
 
+  if (call.hasFnAttr("enzyme_ta_norecur"))
+    return;
+
   Function *ci = getFunctionFromCall(&call);
 
   if (ci) {
+    if (ci->getAttributes().hasAttribute(AttributeList::FunctionIndex,
+                                         "enzyme_ta_norecur"))
+      return;
+
     StringRef funcName = getFuncNameFromCall(&call);
 
     auto blasMetaData = extractBLAS(funcName);
@@ -4366,6 +4418,9 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       BlasInfo blas = *blasMetaData;
 #include "BlasTA.inc"
     }
+
+    // Manual TT specification is non-interprocedural and already handled once
+    // at the start.
 
     // When compiling Enzyme against standard LLVM, and not Intel's
     // modified version of LLVM, the intrinsic `llvm.intel.subscript` is
@@ -5596,7 +5651,7 @@ bool TypeAnalyzer::mustRemainInteger(Value *val, bool *returned) {
 FnTypeInfo TypeAnalyzer::getCallInfo(CallBase &call, Function &fn) {
   FnTypeInfo typeInfo(&fn);
 
-  int argnum = 0;
+  size_t argnum = 0;
   for (auto &arg : fn.args()) {
     if (argnum >= call.arg_size()) {
       typeInfo.Arguments.insert(
