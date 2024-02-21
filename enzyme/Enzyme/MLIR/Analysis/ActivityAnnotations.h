@@ -72,6 +72,9 @@ public:
                          ArrayRef<ValueOriginsLattice *> results) override;
 
 private:
+  void processMemoryRead(Operation *op, Value address,
+                         ArrayRef<ValueOriginsLattice *> results);
+
   OriginalClasses originalClasses;
 };
 

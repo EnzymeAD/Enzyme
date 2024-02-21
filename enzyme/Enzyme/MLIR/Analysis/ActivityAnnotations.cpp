@@ -79,7 +79,8 @@ void enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
   if (isPure(op))
     return;
 
-  if (isa<LLVM::NoAliasScopeDeclOp>(op))
+  if (isa<LLVM::NoAliasScopeDeclOp, LLVM::LifetimeStartOp, LLVM::LifetimeEndOp>(
+          op))
     return;
 
   auto markResultsUnknown = [&]() {
@@ -100,31 +101,40 @@ void enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
       continue;
 
     Value value = effect.getValue();
-    if (!value)
-      markResultsUnknown();
-
-    // we need to know if what this pointer points to has a value origin
-    // dependency
-    auto *srcClasses = getOrCreateFor<AliasClassLattice>(op, value);
-    auto *originsMap = getOrCreateFor<ValueOriginsMap>(op, op);
-    if (srcClasses->isUndefined())
-      continue;
-    if (srcClasses->isUnknown()) {
+    if (!value) {
       markResultsUnknown();
       continue;
     }
+    processMemoryRead(op, value, results);
+  }
+}
 
-    // Look up the alias class and see what its origins are, then propagate
-    // those origins to the read results.
-    for (DistinctAttr srcClass : srcClasses->getAliasClasses()) {
-      const AliasClassSet &origins = originsMap->getOrigins(srcClass);
-      for (ValueOriginsLattice *result : results) {
-        if (origins.isUnknown())
-          propagateIfChanged(result, result->markUnknown());
-        if (origins.isUndefined())
-          continue;
-        propagateIfChanged(result, result->insert(origins.getAliasClasses()));
-      }
+void enzyme::ForwardActivityAnnotationAnalysis::processMemoryRead(
+    Operation *op, Value address, ArrayRef<ValueOriginsLattice *> results) {
+  auto markResultsUnknown = [&]() {
+    for (ValueOriginsLattice *result : results) {
+      propagateIfChanged(result, result->markUnknown());
+    }
+  };
+
+  auto *srcClasses = getOrCreateFor<AliasClassLattice>(op, address);
+  auto *originsMap = getOrCreateFor<ValueOriginsMap>(op, op);
+  if (srcClasses->isUndefined())
+    return;
+  if (srcClasses->isUnknown())
+    return markResultsUnknown();
+
+  // Look up the alias class and see what its origins are, then propagate
+  // those origins to the read results.
+  for (DistinctAttr srcClass : srcClasses->getAliasClasses()) {
+    const AliasClassSet &origins = originsMap->getOrigins(srcClass);
+    if (origins.isUndefined())
+      continue;
+    if (origins.isUnknown())
+      return markResultsUnknown();
+
+    for (ValueOriginsLattice *result : results) {
+      propagateIfChanged(result, result->insert(origins.getAliasClasses()));
     }
   }
 }
@@ -303,7 +313,8 @@ void enzyme::DenseActivityAnnotationAnalysis::visitOperation(
     Operation *op, const ValueOriginsMap &before, ValueOriginsMap *after) {
   join(after, before);
 
-  if (isa<LLVM::NoAliasScopeDeclOp>(op))
+  if (isa<LLVM::NoAliasScopeDeclOp, LLVM::LifetimeStartOp, LLVM::LifetimeEndOp>(
+          op))
     return;
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
@@ -576,7 +587,9 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
     for (Operation &op : node.getCallableRegion()->getOps()) {
       if (op.hasTrait<OpTrait::ReturnLike>()) {
         (void)p2sets.join(*solver.lookupState<enzyme::PointsToSets>(&op));
-        (void)voMap.join(*solver.lookupState<enzyme::ValueOriginsMap>(&op));
+        auto *returnOrigins = solver.lookupState<enzyme::ValueOriginsMap>(&op);
+        if (returnOrigins)
+          (void)voMap.join(*returnOrigins);
 
         for (OpOperand &operand : op.getOpOperands()) {
           os << "[aaa] return at idx " << operand.getOperandNumber()
@@ -589,6 +602,9 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
 
     node->setAttr("p2psummary", p2sets.serialize(node.getContext()));
     os << "[ata] p2p summary:\n";
+    if (node->getAttrOfType<ArrayAttr>("p2psummary").size() == 0) {
+      os << "     <empty>\n";
+    }
     for (ArrayAttr pair :
          node->getAttrOfType<ArrayAttr>("p2psummary").getAsRange<ArrayAttr>()) {
       os << "     " << pair[0] << " -> " << pair[1] << "\n";

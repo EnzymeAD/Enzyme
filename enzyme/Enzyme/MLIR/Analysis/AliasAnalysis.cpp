@@ -442,7 +442,8 @@ void enzyme::PointsToPointerAnalysis::visitOperation(Operation *op,
   // fixpoint and bail.
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
-    if (isa<LLVM::NoAliasScopeDeclOp>(op)) {
+    if (isa<LLVM::NoAliasScopeDeclOp, LLVM::LifetimeStartOp,
+            LLVM::LifetimeEndOp>(op)) {
       // Treat this as a no-op
       return;
     }
@@ -637,7 +638,8 @@ void enzyme::PointsToPointerAnalysis::processCallToSummarizedFunc(
         changed |=
             after->insert(arg->getAliasClassesObject(), AliasClassSet(ac));
       } else {
-        // auto pseudoClass = cast<PseudoAliasClassAttr>(ac.getReferencedAttr());
+        // auto pseudoClass =
+        // cast<PseudoAliasClassAttr>(ac.getReferencedAttr());
         // TODO: need to handle unifying implicitly de-referenced classes
       }
     }
