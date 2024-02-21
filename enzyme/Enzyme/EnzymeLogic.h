@@ -297,6 +297,7 @@ enum TruncateMode { TruncMemMode, TruncOpMode, TruncOpFullModuleMode };
   case TruncOpFullModuleMode:
     return "op_full_module";
   }
+  llvm_unreachable("Invalid truncation mode");
 }
 
 struct FloatRepresentation {
@@ -366,6 +367,7 @@ public:
       llvm::report_fatal_error(
           "Float truncation `from` and `to` type must not be the same.");
   }
+  FloatRepresentation getTo() { return to;}
   unsigned getFromTypeWidth() { return from.getTypeWidth(); }
   unsigned getToTypeWidth() { return to.getTypeWidth(); }
   llvm::Type *getFromType(llvm::LLVMContext &ctx) {
@@ -388,8 +390,11 @@ public:
   bool operator<(const FloatTruncation &other) const {
     return std::tuple(from, to) < std::tuple(other.from, other.to);
   }
-  std::string mangleString() const {
+  std::string mangleTruncation() const {
     return from.to_string() + "to" + to.to_string();
+  }
+  std::string mangleFrom() const {
+    return from.to_string();
   }
 };
 

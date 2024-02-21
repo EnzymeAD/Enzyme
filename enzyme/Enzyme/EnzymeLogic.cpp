@@ -5204,7 +5204,7 @@ public:
   void visitExtractValueInst(llvm::ExtractValueInst &EEI) { return; }
   void visitInsertValueInst(llvm::InsertValueInst &EEI) { return; }
   CallInst *createMPFRCall(llvm::IRBuilder<> &B, llvm::Instruction &I,
-                           llvm::Type *RetTy, SmallVectorImpl<Value *> &Args) {
+                           llvm::Type *RetTy, SmallVectorImpl<Value *> &ArgsIn) {
     std::string Name;
     if (auto BO = dyn_cast<BinaryOperator>(&I)) {
       Name = "binop_" + std::string(BO->getOpcodeName());
@@ -5226,8 +5226,11 @@ public:
     }
 
     std::string MangledName =
-        std::string("__enzyme_mpfr_") + truncation.mangleString() + "_" + Name;
+        std::string("__enzyme_mpfr_") + truncation.mangleFrom() + "_" + Name;
     auto F = newFunc->getParent()->getFunction(MangledName);
+    SmallVector<Value *> Args(ArgsIn.begin(), ArgsIn.end());
+    Args.push_back(B.getInt64(truncation.getTo().exponentWidth));
+    Args.push_back(B.getInt64(truncation.getTo().significandWidth));
     if (!F) {
       SmallVector<Type *> ArgTypes;
       for (auto Arg : Args)
@@ -5529,7 +5532,7 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
   FunctionType *FTy = FunctionType::get(NewTy, params, totrunc->isVarArg());
   std::string truncName =
       std::string("__enzyme_done_truncate_") + truncateModeStr(mode) +
-      "_func_" + truncation.mangleString() + "_" + totrunc->getName().str();
+      "_func_" + truncation.mangleTruncation() + "_" + totrunc->getName().str();
   Function *NewF = Function::Create(FTy, totrunc->getLinkage(), truncName,
                                     totrunc->getParent());
 
