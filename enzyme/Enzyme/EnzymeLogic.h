@@ -367,7 +367,7 @@ public:
       llvm::report_fatal_error(
           "Float truncation `from` and `to` type must not be the same.");
   }
-  FloatRepresentation getTo() { return to;}
+  FloatRepresentation getTo() { return to; }
   unsigned getFromTypeWidth() { return from.getTypeWidth(); }
   unsigned getToTypeWidth() { return to.getTypeWidth(); }
   llvm::Type *getFromType(llvm::LLVMContext &ctx) {
@@ -393,9 +393,7 @@ public:
   std::string mangleTruncation() const {
     return from.to_string() + "to" + to.to_string();
   }
-  std::string mangleFrom() const {
-    return from.to_string();
-  }
+  std::string mangleFrom() const { return from.to_string(); }
 };
 
 class EnzymeLogic {

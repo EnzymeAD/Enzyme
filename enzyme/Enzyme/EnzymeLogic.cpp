@@ -5204,7 +5204,8 @@ public:
   void visitExtractValueInst(llvm::ExtractValueInst &EEI) { return; }
   void visitInsertValueInst(llvm::InsertValueInst &EEI) { return; }
   CallInst *createMPFRCall(llvm::IRBuilder<> &B, llvm::Instruction &I,
-                           llvm::Type *RetTy, SmallVectorImpl<Value *> &ArgsIn) {
+                           llvm::Type *RetTy,
+                           SmallVectorImpl<Value *> &ArgsIn) {
     std::string Name;
     if (auto BO = dyn_cast<BinaryOperator>(&I)) {
       Name = "binop_" + std::string(BO->getOpcodeName());
