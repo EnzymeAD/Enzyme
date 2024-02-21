@@ -1353,8 +1353,10 @@ public:
     RequestContext context(CI, &Builder);
     llvm::Value *res = Logic.CreateTruncateFunc(
         context, F,
-        getDefaultFloatRepr((unsigned)Cfrom->getValue().getZExtValue()),
-        getDefaultFloatRepr((unsigned)Cto->getValue().getZExtValue()), mode);
+        FloatTruncation(
+            getDefaultFloatRepr((unsigned)Cfrom->getValue().getZExtValue()),
+            getDefaultFloatRepr((unsigned)Cto->getValue().getZExtValue())),
+        mode);
     if (!res)
       return false;
     res = Builder.CreatePointerCast(res, CI->getType());
@@ -2053,13 +2055,12 @@ public:
   }
 
   bool handleFullModuleTrunc(Function &F) {
-    typedef std::vector<std::pair<FloatRepresentation, FloatRepresentation>>
-        TruncationsTy;
+    typedef std::vector<FloatTruncation> TruncationsTy;
     static TruncationsTy FullModuleTruncs = []() -> TruncationsTy {
       StringRef ConfigStr(EnzymeTruncateAll);
       auto Invalid = [=]() {
         // TODO emit better diagnostic
-        llvm::report_fatal_error("error: invalid format for truncation config")
+        llvm::report_fatal_error("error: invalid format for truncation config");
       };
 
       // "64" or "11-52"
@@ -2102,9 +2103,8 @@ public:
     for (auto Truncation : FullModuleTruncs) {
       IRBuilder<> Builder(F.getContext());
       RequestContext context(&*F.getEntryBlock().begin(), &Builder);
-      Function *TruncatedFunc =
-          Logic.CreateTruncateFunc(context, &F, Truncation.first,
-                                   Truncation.second, TruncOpFullModuleMode);
+      Function *TruncatedFunc = Logic.CreateTruncateFunc(
+          context, &F, Truncation, TruncOpFullModuleMode);
 
       ValueToValueMapTy Mapping;
       for (auto &&[Arg, TArg] : llvm::zip(F.args(), TruncatedFunc->args()))

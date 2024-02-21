@@ -51,21 +51,19 @@
 #include "Utils.h"
 
 extern "C" {
-ext #include "llvm/Support/ErrorHandling.h" ern llvm::cl::opt<bool> EnzymePrint;
+extern llvm::cl::opt<bool> EnzymePrint;
 extern llvm::cl::opt<bool> EnzymeJuliaAddrLoad;
 }
 
 enum class AugmentedStruct { Tape, Return, DifferentialReturn };
 
-static inline std::string str(A #include
-                              "llvm/Support/ErrorHandling.h" ugmentedStruct c) {
+static inline std::string str(AugmentedStruct c) {
   switch (c) {
   case AugmentedStruct::Tape:
     return "tape";
   case AugmentedStruct::Return:
     return "return";
-  case AugmentedStr #include
-      "llvm/Support/ErrorHandling.h" uct::DifferentialReturn:
+  case AugmentedStruct::DifferentialReturn:
     return "DifferentialReturn";
   default:
     llvm_unreachable("unknown cache type");
@@ -368,6 +366,8 @@ public:
       llvm::report_fatal_error(
           "Float truncation `from` and `to` type must not be the same.");
   }
+  unsigned getFromTypeWidth() { return from.getTypeWidth(); }
+  unsigned getToTypeWidth() { return to.getTypeWidth(); }
   llvm::Type *getFromType(llvm::LLVMContext &ctx) {
     return from.getBuiltinType(ctx);
   }
@@ -640,13 +640,13 @@ public:
                               llvm::ArrayRef<BATCH_TYPE> arg_types,
                               BATCH_TYPE ret_type);
 
-  using TruncateCacheKey = std::tuple<llvm::Function *, FloatRepresentation,
-                                      FloatRepresentation, unsigned>;
+  using TruncateCacheKey =
+      std::tuple<llvm::Function *, FloatTruncation, unsigned>;
   std::map<TruncateCacheKey, llvm::Function *> TruncateCachedFunctions;
   llvm::Function *CreateTruncateFunc(RequestContext context,
                                      llvm::Function *tobatch,
-                                     FloatRepresentation from,
-                                     FloatRepresentation to, TruncateMode mode);
+                                     FloatTruncation truncation,
+                                     TruncateMode mode);
   bool CreateTruncateValue(RequestContext context, llvm::Value *addr,
                            FloatRepresentation from, FloatRepresentation to,
                            bool isTruncate);
