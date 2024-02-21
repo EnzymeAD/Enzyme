@@ -673,89 +673,6 @@ public:
 
   /// Given that this tree represents something of at most size len,
   /// canonicalize this, creating -1's where possible
-  void CanonicalizeInPlaceOld(size_t len, const llvm::DataLayout &dl) {
-    bool canonicalized = true;
-    for (const auto &pair : mapping) {
-      assert(pair.first.size() != 0);
-      if (pair.first[0] != -1) {
-        canonicalized = false;
-        break;
-      }
-    }
-    if (canonicalized)
-      return;
-
-    // Map of indices[1:] => ( End => possible Index[0] )
-    std::map<const std::vector<int>, std::map<ConcreteType, std::set<int>>>
-        staging;
-
-    for (const auto &pair : mapping) {
-
-      std::vector<int> next(pair.first.begin() + 1, pair.first.end());
-      if (pair.first[0] != -1) {
-        if ((size_t)pair.first[0] >= len) {
-          llvm::errs() << str() << "\n";
-          llvm::errs() << " canonicalizing " << len << "\n";
-        }
-        assert((size_t)pair.first[0] < len);
-      }
-      staging[next][pair.second].insert(pair.first[0]);
-    }
-
-    mapping.clear();
-
-    for (auto &pair : staging) {
-      auto &pnext = pair.first;
-      for (auto &pair2 : pair.second) {
-        auto dt = pair2.first;
-        const auto &set = pair2.second;
-
-        // llvm::errs() << " - set: {";
-        // for(auto s : set) llvm::errs() << s << ", ";
-        // llvm::errs() << "} len=" << len << "\n";
-
-        bool legalCombine = set.count(-1);
-
-        // See if we can canonicalize the outermost index into a -1
-        if (!legalCombine) {
-          size_t chunk = 1;
-          if (pnext.size() > 0) {
-            chunk = dl.getPointerSizeInBits() / 8;
-          } else {
-            if (auto flt = dt.isFloat()) {
-              chunk = dl.getTypeSizeInBits(flt) / 8;
-            } else if (dt == BaseType::Pointer) {
-              chunk = dl.getPointerSizeInBits() / 8;
-            }
-          }
-
-          legalCombine = true;
-          for (size_t i = 0; i < len; i += chunk) {
-            if (!set.count(i)) {
-              legalCombine = false;
-              break;
-            }
-          }
-        }
-
-        std::vector<int> next;
-        next.reserve(pnext.size() + 1);
-        next.push_back(-1);
-        for (auto v : pnext)
-          next.push_back(v);
-
-        if (legalCombine) {
-          insert(next, dt, /*intsAreLegalPointerSub*/ true);
-        } else {
-          for (auto e : set) {
-            next[0] = e;
-            insert(next, dt);
-          }
-        }
-      }
-    }
-  }
-
   void CanonicalizeInPlace(size_t len, const llvm::DataLayout &dl) {
     bool canonicalized = true;
     for (const auto &pair : mapping) {
@@ -767,9 +684,6 @@ public:
     }
     if (canonicalized)
       return;
-
-    auto Old = *this;
-    Old.CanonicalizeInPlaceOld(len, dl);
 
     // Map of indices[1:] => ( End => possible Index[0] )
     std::map<const std::vector<int>, std::map<ConcreteType, std::set<int>>>
@@ -844,8 +758,6 @@ public:
     // If we combined nothing, just return since there are no
     // changes.
     if (combinedToAdd.size() == 0) {
-      assert(*this == Old);
-      assert(this->minIndices == Old.minIndices);
       return;
     }
 
@@ -863,9 +775,6 @@ public:
     for (const auto &pair : combinedToAdd) {
       insert(pair.first, pair.second);
     }
-
-    assert(*this == Old);
-    assert(this->minIndices == Old.minIndices);
 
     return;
   }
