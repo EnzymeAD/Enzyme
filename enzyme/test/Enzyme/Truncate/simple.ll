@@ -17,23 +17,18 @@ entry:
   call void %ptr(double* %data)
   ret void
 }
-
-define void @tester2(double* %data) {
+define void @tester_op(double* %data) {
 entry:
   %ptr = call void (double*)* (...) @__enzyme_truncate_op_func(void (double*)* @f, i64 64, i64 32)
   call void %ptr(double* %data)
   ret void
 }
-
-; CHECK: define void @tester(double* %data)
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   call void @__enzyme_done_truncate_mem_func_64_52_32_23_f(double* %data)
-; CHECK-NEXT:   ret void
-
-; CHECK: define void @tester2(double* %data) {
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   call void @__enzyme_done_truncate_op_func_64_52_32_23_f(double* %data)
-; CHECK-NEXT:   ret void
+define void @tester_op_mpfr(double* %data) {
+entry:
+  %ptr = call void (double*)* (...) @__enzyme_truncate_op_func(void (double*)* @f, i64 64, i64 3, i64 7)
+  call void %ptr(double* %data)
+  ret void
+}
 
 ; CHECK: define internal void @__enzyme_done_truncate_mem_func_64_52_32_23_f(double* %x)
 ; CHECK-DAG:   %1 = alloca double, align 8
@@ -60,4 +55,10 @@ entry:
 ; CHECK-DAG:   %m = fmul float %enzyme_trunc, %enzyme_trunc1
 ; CHECK-DAG:   %enzyme_exp = fpext float %m to double
 ; CHECK-DAG:   store double %enzyme_exp, double* %x, align 8
+; CHECK-DAG:   ret void
+_
+; CHECK: define internal void @__enzyme_done_truncate_op_func_64_52to11_7_f(double* %x) {
+; CHECK-DAG:   %y = load double, double* %x, align 8
+; CHECK-DAG:   %m = call double @__enzyme_mpfr_64_52to11_7_fmul(double %y, double %y)
+; CHECK-DAG:   store double %m, double* %x, align 8
 ; CHECK-DAG:   ret void

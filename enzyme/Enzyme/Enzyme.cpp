@@ -1340,23 +1340,40 @@ public:
     Function *F = parseFunctionParameter(CI);
     if (!F)
       return false;
-    if (CI->arg_size() != 3) {
+    unsigned ArgSize = CI->arg_size();
+    if (ArgSize != 4 && ArgSize != 3) {
       EmitFailure("TooManyArgs", CI->getDebugLoc(), CI,
                   "Had incorrect number of args to __enzyme_truncate_func", *CI,
-                  " - expected 3");
+                  " - expected 3 or 4");
       return false;
     }
-    auto Cfrom = cast<ConstantInt>(CI->getArgOperand(1));
-    assert(Cfrom);
-    auto Cto = cast<ConstantInt>(CI->getArgOperand(2));
-    assert(Cto);
-    RequestContext context(CI, &Builder);
-    llvm::Value *res = Logic.CreateTruncateFunc(
-        context, F,
-        FloatTruncation(
+    FloatTruncation truncation = [&]() -> FloatTruncation {
+      if (ArgSize == 3) {
+        auto Cfrom = cast<ConstantInt>(CI->getArgOperand(1));
+        assert(Cfrom);
+        auto Cto = cast<ConstantInt>(CI->getArgOperand(2));
+        assert(Cto);
+        return FloatTruncation(
             getDefaultFloatRepr((unsigned)Cfrom->getValue().getZExtValue()),
-            getDefaultFloatRepr((unsigned)Cto->getValue().getZExtValue())),
-        mode);
+            getDefaultFloatRepr((unsigned)Cto->getValue().getZExtValue()));
+      } else if (ArgSize == 4) {
+        auto Cfrom = cast<ConstantInt>(CI->getArgOperand(1));
+        assert(Cfrom);
+        auto Cto_exponent = cast<ConstantInt>(CI->getArgOperand(2));
+        assert(Cto_exponent);
+        auto Cto_significand = cast<ConstantInt>(CI->getArgOperand(3));
+        assert(Cto_significand);
+        return FloatTruncation(
+            getDefaultFloatRepr((unsigned)Cfrom->getValue().getZExtValue()),
+            FloatRepresentation(
+                (unsigned)Cto_exponent->getValue().getZExtValue(),
+                (unsigned)Cto_significand->getValue().getZExtValue()));
+      }
+      llvm_unreachable("??");
+    }();
+
+    RequestContext context(CI, &Builder);
+    llvm::Value *res = Logic.CreateTruncateFunc(context, F, truncation, mode);
     if (!res)
       return false;
     res = Builder.CreatePointerCast(res, CI->getType());

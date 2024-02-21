@@ -288,14 +288,14 @@ getTypeForWidth(llvm::LLVMContext &ctx, unsigned width, bool builtinFloat) {
 }
 
 enum TruncateMode { TruncMemMode, TruncOpMode, TruncOpFullModuleMode };
-static const char *truncateModeStr(TruncateMode mode) {
+[[maybe_unused]] static const char *truncateModeStr(TruncateMode mode) {
   switch (mode) {
   case TruncMemMode:
-    return "trunc_mem";
+    return "mem";
   case TruncOpMode:
-    return "trunc_op";
+    return "op";
   case TruncOpFullModuleMode:
-    return "trunc_op_full_module";
+    return "op_full_module";
   }
 }
 

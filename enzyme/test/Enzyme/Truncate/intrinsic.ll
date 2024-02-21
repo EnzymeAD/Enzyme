@@ -1,11 +1,13 @@
 ; RUN: if [ %llvmver -gt 12 ]; then if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -S | FileCheck %s; fi; fi
 ; RUN: if [ %llvmver -gt 12 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -S | FileCheck %s; fi
 
+declare double @pow(double %Val, double %Power)
 declare double @llvm.pow.f64(double %Val, double %Power)
 declare double @llvm.powi.f64.i16(double %Val, i16 %power)
 declare void @llvm.nvvm.barrier0()
 
 define double @f(double %x, double %y) {
+  %res0 = call double @pow(double %x, double %y)
   %res1 = call double @llvm.pow.f64(double %x, double %y)
   %res2 = call double @llvm.powi.f64.i16(double %x, i16 2)
   %res = fadd double %res1, %res2
@@ -22,9 +24,15 @@ entry:
   %res = call double %ptr(double %x, double %y)
   ret double %res
 }
-define double @tester2(double %x, double %y) {
+define double @tester_op(double %x, double %y) {
 entry:
   %ptr = call double (double, double)* (...) @__enzyme_truncate_op_func(double (double, double)* @f, i64 64, i64 32)
+  %res = call double %ptr(double %x, double %y)
+  ret double %res
+}
+define double @tester_op_mpfr(double %x, double %y) {
+entry:
+  %ptr = call double (double, double)* (...) @__enzyme_truncate_op_func(double (double, double)* @f, i64 64, i64 3, i64 7)
   %res = call double %ptr(double %x, double %y)
   ret double %res
 }
@@ -81,3 +89,12 @@ entry:
 ; CHECK-DAG:   %enzyme_exp8 = fpext float %res to double
 ; CHECK-DAG:   call void @llvm.nvvm.barrier0()
 ; CHECK-DAG:   ret double %enzyme_exp8
+
+; CHECK: define internal double @__enzyme_done_truncate_op_func_64_52to11_7_f(double %x, double %y) {
+; CHECK-DAG:   %1 = call double @__enzyme_mpfr_64_52to11_7_func_pow(double %x, double %y)
+; CHECK-DAG:   %2 = call double @__enzyme_mpfr_64_52to11_7_intr_llvm_pow_f64(double %x, double %y)
+; CHECK-DAG:   %3 = call double @__enzyme_mpfr_64_52to11_7_intr_llvm_powi_f64_i16(double %x, i16 2)
+; CHECK-DAG:   %res = call double @__enzyme_mpfr_64_52to11_7_binop_fadd(double %2, double %3)
+; CHECK-DAG:   call void @llvm.nvvm.barrier0()
+; CHECK-DAG:   ret double %res
+; CHECK-DAG: }

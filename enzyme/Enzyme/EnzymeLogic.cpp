@@ -34,6 +34,7 @@
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -5206,10 +5207,17 @@ public:
                            llvm::Type *RetTy, SmallVectorImpl<Value *> &Args) {
     std::string Name;
     if (auto BO = dyn_cast<BinaryOperator>(&I)) {
-      Name = BO->getOpcodeName();
+      Name = "binop_" + std::string(BO->getOpcodeName());
+    } else if (auto II = dyn_cast<IntrinsicInst>(&I)) {
+      auto FOp = II->getCalledFunction();
+      assert(FOp);
+      Name = "intr_" + std::string(FOp->getName());
+      for (auto &C : Name)
+        if (C == '.')
+          C = '_';
     } else if (auto CI = dyn_cast<CallInst>(&I)) {
-      if (auto F = CI->getFunction())
-        Name = F->getName();
+      if (auto F = CI->getCalledFunction())
+        Name = "func_" + std::string(F->getName());
       else
         llvm_unreachable(
             "Unexpected indirect call inst for conversion to MPFR");
