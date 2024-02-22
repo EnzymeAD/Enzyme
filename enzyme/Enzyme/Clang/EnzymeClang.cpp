@@ -137,7 +137,7 @@ public:
                         std::to_string(ENZYME_VERSION_PATCH));
     CI.getPreprocessor().setPredefines(Predefines.str());
 
-    auto baseFS = CI.getFileManager().getVirtualFileSystemPtr();
+    auto baseFS = &CI.getFileManager().getVirtualFileSystem();
     llvm::vfs::OverlayFileSystem *fuseFS(
         new llvm::vfs::OverlayFileSystem(baseFS));
     IntrusiveRefCntPtr<llvm::vfs::InMemoryFileSystem> fs(
