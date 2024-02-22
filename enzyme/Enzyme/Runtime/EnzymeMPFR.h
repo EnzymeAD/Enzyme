@@ -39,6 +39,10 @@ extern "C" {
 // `mpfr_set_emax`. (This means we can also play with whether the range is
 // centered around 0 (1?) or somewhere else)
 //
+// (also these need to be mutex'ed as the exponent change is global in mpfr and
+// not float-specific) ... (mpfr seems to have thread safe mode - check if it is
+// enabled or if it is enabled by default)
+//
 // For that we need to do this check:
 //   If the user changes the exponent range, it is her/his responsibility to
 //   check that all current floating-point variables are in the new allowed
