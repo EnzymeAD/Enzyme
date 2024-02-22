@@ -2110,7 +2110,12 @@ public:
 
       // Move the truncated body into the original function
       F.deleteBody();
+#if LLVM_VERSION_MAJOR >= 16
       F.splice(F.begin(), TruncatedFunc);
+#else
+      F.getBasicBlockList().splice(F.begin(),
+                                   TruncatedFunc->getBasicBlockList());
+#endif
       RemapFunction(F, Mapping,
                     RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
       TruncatedFunc->deleteBody();
@@ -2793,31 +2798,22 @@ public:
                                  /* CGSCC */ nullptr);
 
       DenseSet<const char *> Allowed = {
-        &AAHeapToStack::ID,
-        &AANoCapture::ID,
+          &AAHeapToStack::ID,     &AANoCapture::ID,
 
-        &AAMemoryBehavior::ID,
-        &AAMemoryLocation::ID,
-        &AANoUnwind::ID,
-        &AANoSync::ID,
-        &AANoRecurse::ID,
-        &AAWillReturn::ID,
-        &AANoReturn::ID,
-        &AANonNull::ID,
-        &AANoAlias::ID,
-        &AADereferenceable::ID,
-        &AAAlign::ID,
+          &AAMemoryBehavior::ID,  &AAMemoryLocation::ID, &AANoUnwind::ID,
+          &AANoSync::ID,          &AANoRecurse::ID,      &AAWillReturn::ID,
+          &AANoReturn::ID,        &AANonNull::ID,        &AANoAlias::ID,
+          &AADereferenceable::ID, &AAAlign::ID,
 #if LLVM_VERSION_MAJOR < 17
-        &AAReturnedValues::ID,
+          &AAReturnedValues::ID,
 #endif
-        &AANoFree::ID,
-        &AANoUndef::ID,
+          &AANoFree::ID,          &AANoUndef::ID,
 
-        //&AAValueSimplify::ID,
-        //&AAReachability::ID,
-        //&AAValueConstantRange::ID,
-        //&AAUndefinedBehavior::ID,
-        //&AAPotentialValues::ID,
+          //&AAValueSimplify::ID,
+          //&AAReachability::ID,
+          //&AAValueConstantRange::ID,
+          //&AAUndefinedBehavior::ID,
+          //&AAPotentialValues::ID,
       };
 
 #if LLVM_VERSION_MAJOR >= 15
