@@ -35,6 +35,8 @@
 
 #include "../Utils.h"
 
+#include "IncludeUtils.inc"
+
 using namespace clang;
 
 #if LLVM_VERSION_MAJOR >= 18
@@ -134,6 +136,39 @@ public:
     Builder.defineMacro("ENZYME_VERSION_PATCH",
                         std::to_string(ENZYME_VERSION_PATCH));
     CI.getPreprocessor().setPredefines(Predefines.str());
+
+    auto baseFS = CI.getFileManager().getVirtualFileSystemPtr();
+    llvm::vfs::OverlayFileSystem *fuseFS(
+        new llvm::vfs::OverlayFileSystem(baseFS));
+    IntrusiveRefCntPtr<llvm::vfs::InMemoryFileSystem> fs(
+        new llvm::vfs::InMemoryFileSystem());
+
+    struct tm y2k = {};
+
+    y2k.tm_hour = 0;
+    y2k.tm_min = 0;
+    y2k.tm_sec = 0;
+    y2k.tm_year = 100;
+    y2k.tm_mon = 0;
+    y2k.tm_mday = 1;
+    time_t timer = mktime(&y2k);
+    for (const auto &pair : include_headers) {
+      fs->addFile(StringRef(pair[0]), timer,
+                  llvm::MemoryBuffer::getMemBuffer(
+                      StringRef(pair[1]), StringRef(pair[0]),
+                      /*RequiresNullTerminator*/ true));
+    }
+
+    fuseFS->pushOverlay(fs);
+    fuseFS->pushOverlay(baseFS);
+    CI.getFileManager().setVirtualFileSystem(fuseFS);
+
+    auto DE = CI.getFileManager().getDirectoryRef("/enzymeroot");
+    assert(DE);
+    auto DL = DirectoryLookup(*DE, SrcMgr::C_User,
+                              /*isFramework=*/false);
+    CI.getPreprocessor().getHeaderSearchInfo().AddSearchPath(DL,
+                                                             /*isAngled=*/true);
   }
   ~EnzymePlugin() {}
   void HandleTranslationUnit(ASTContext &context) override {}

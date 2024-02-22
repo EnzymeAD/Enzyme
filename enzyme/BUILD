@@ -142,6 +142,20 @@ gentbl(
     ],
 )
 
+gentbl(
+    name = "include-utils",
+    tbl_outs = [(
+        "-gen-header-strings",
+        "IncludeUtils.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/Clang/include_utils.td",
+    td_srcs = ["Enzyme/Clang/include_utils.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
 cc_library(
     name = "EnzymeStatic",
     srcs = glob(
@@ -167,6 +181,7 @@ cc_library(
     data = ["@llvm-project//clang:builtin_headers_gen"],
     visibility = ["//visibility:public"],
     deps = [
+        "include-utils",
         ":binop-derivatives",
         ":blas-attributor",
         ":blas-derivatives",
