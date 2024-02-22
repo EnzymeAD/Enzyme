@@ -25,10 +25,10 @@ entry:
 
 ; CHECK: define double @tester(double %x, double %y, i1 %cond) {
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %res = call double @__enzyme_done_truncate_mem_func_64_52_32_23_f(double %x, double %y, i1 %cond)
+; CHECK-NEXT:   %res = call double @__enzyme_done_truncate_mem_func_64_52to32_23_f(double %x, double %y, i1 %cond)
 ; CHECK-NEXT:   ret double %res
 
-; CHECK: define internal double @__enzyme_done_truncate_mem_func_64_52_32_23_f(double %x, double %y, i1 %cond) {
+; CHECK: define internal double @__enzyme_done_truncate_mem_func_64_52to32_23_f(double %x, double %y, i1 %cond) {
 ; CHECK-DAG:    %1 = alloca double, align 8
 ; CHECK-DAG:    store double %x, double* %1, align 8
 ; CHECK-DAG:    %2 = bitcast double* %1 to float*
@@ -44,6 +44,6 @@ entry:
 ; CHECK-DAG:    %8 = load double, double* %1, align 8
 ; CHECK-DAG:    ret double %8
 
-; CHECK: define internal double @__enzyme_done_truncate_op_func_64_52_32_23_f(double %x, double %y, i1 %cond) {
+; CHECK: define internal double @__enzyme_done_truncate_op_func_64_52to32_23_f(double %x, double %y, i1 %cond) {
 ; CHECK-DAG:   %res = select i1 %cond, double %x, double %y
 ; CHECK-DAG:   ret double %res
