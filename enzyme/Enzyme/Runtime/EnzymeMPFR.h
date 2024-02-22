@@ -31,10 +31,11 @@
 extern "C" {
 #endif
 
-#define __ENZYME_MPFR_BINOP(LLVM_OP_NAME, MPFR_FUNC_NAME, FROM_TYPE, RET,      \
-                            MPFR_GET, ARG1, MPFR_SET_ARG1, ARG2,               \
+#define __ENZYME_MPFR_BINOP(OP_TYPE, LLVM_OP_NAME, MPFR_FUNC_NAME, FROM_TYPE,  \
+                            RET, MPFR_GET, ARG1, MPFR_SET_ARG1, ARG2,          \
                             MPFR_SET_ARG2, ROUNDING_MODE)                      \
-  __attribute__((weak)) RET __enzyme_mpfr_##FROM_TYPE_binop_##LLVM_OP_NAME(    \
+  __attribute__((weak))                                                        \
+  RET __enzyme_mpfr_##FROM_TYPE_##OP_TYPE_##LLVM_OP_NAME(                      \
       ARG1 a, ARG2 b, int64_t exponent, int64_t significand) {                 \
     mpfr_t ma, mb, mc;                                                         \
     mpfr_init2(ma, significand);                                               \
@@ -54,8 +55,9 @@ extern "C" {
 #define __ENZYME_MPFR_DBL_MANGLE 64_52
 #define __ENZYME_MPFR_DOUBLE_BINOP(LLVM_OP_NAME, MPFR_FUNC_NAME,               \
                                    ROUNDING_MODE)                              \
-  __ENZYME_MPFR_BINOP(LLVM_OP_NAME, MPFR_FUNC_NAME, __ENZYME_MPFR_DBL_MANGLE,  \
-                      double, d, double, d, double, d, ROUNDING_MODE)
+  __ENZYME_MPFR_BINOP(binop, LLVM_OP_NAME, MPFR_FUNC_NAME,                     \
+                      __ENZYME_MPFR_DBL_MANGLE, double, d, double, d, double,  \
+                      d, ROUNDING_MODE)
 #define __ENZYME_MPFR_DOUBLE_BINOP_DEFAULT_ROUNDING(LLVM_OP_NAME,              \
                                                     MPFR_FUNC_NAME)            \
   __ENZYME_MPFR_DOUBLE_BINOP(LLVM_OP_NAME, MPFR_FUNC_NAME,                     \
