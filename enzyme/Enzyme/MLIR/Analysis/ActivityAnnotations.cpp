@@ -1,6 +1,7 @@
 #include "ActivityAnnotations.h"
 #include "AliasAnalysis.h"
 #include "Dialect/Ops.h"
+#include "Lattice.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -28,8 +29,8 @@ void enzyme::ValueOriginsLattice::print(raw_ostream &os) const {
   } else if (isUndefined()) {
     os << "Undefined VO";
   } else {
-    os << "size: " << origins.getAliasClasses().size() << ":\n";
-    for (auto aliasClass : origins.getAliasClasses()) {
+    os << "size: " << origins.getElements().size() << ":\n";
+    for (auto aliasClass : origins.getElements()) {
       os << "  " << aliasClass << "\n";
     }
   }
@@ -53,10 +54,8 @@ void enzyme::ForwardActivityAnnotationAnalysis::setToEntryState(
   auto funcOp = cast<FunctionOpInterface>(arg.getOwner()->getParentOp());
   auto origin = ArgumentOriginAttr::get(FlatSymbolRefAttr::get(funcOp),
                                         arg.getArgNumber());
-  DistinctAttr argClass =
-      originalClasses.getOriginalClass(lattice->getPoint(), origin);
   return propagateIfChanged(lattice, lattice->join(ValueOriginsLattice::single(
-                                         lattice->getPoint(), argClass)));
+                                         lattice->getPoint(), origin)));
 }
 
 void enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
@@ -128,14 +127,14 @@ void enzyme::ForwardActivityAnnotationAnalysis::processMemoryRead(
   // Look up the alias class and see what its origins are, then propagate
   // those origins to the read results.
   for (DistinctAttr srcClass : srcClasses->getAliasClasses()) {
-    const AliasClassSet &origins = originsMap->getOrigins(srcClass);
+    const ValueOriginSet &origins = originsMap->getOrigins(srcClass);
     if (origins.isUndefined())
       continue;
     if (origins.isUnknown())
       return markResultsUnknown();
 
     for (ValueOriginsLattice *result : results) {
-      propagateIfChanged(result, result->insert(origins.getAliasClasses()));
+      propagateIfChanged(result, result->insert(origins.getElements()));
     }
   }
 }
@@ -156,13 +155,18 @@ void enzyme::ValueOriginsMap::print(raw_ostream &os) const {
     } else if (origins.isUndefined()) {
       os << "<undefined>";
     } else {
-      llvm::interleaveComma(origins.getAliasClasses(), os);
+      llvm::interleaveComma(origins.getElements(), os);
     }
     os << "}\n";
   }
 }
 
 static bool sortKeys(Attribute a, Attribute b) {
+  auto originA = dyn_cast<enzyme::ArgumentOriginAttr>(a);
+  auto originB = dyn_cast<enzyme::ArgumentOriginAttr>(b);
+  if (originA && originB)
+    return originA.getArgNumber() < originB.getArgNumber();
+
   auto distinctA = dyn_cast<DistinctAttr>(a);
   auto distinctB = dyn_cast<DistinctAttr>(b);
   // If not distinct attributes, sort them arbitrarily.
@@ -173,17 +177,11 @@ static bool sortKeys(Attribute a, Attribute b) {
       distinctA.getReferencedAttr());
   auto pseudoB = dyn_cast_if_present<enzyme::PseudoAliasClassAttr>(
       distinctB.getReferencedAttr());
-  auto originA = dyn_cast_if_present<enzyme::ArgumentOriginAttr>(
-      distinctA.getReferencedAttr());
-  auto originB = dyn_cast_if_present<enzyme::ArgumentOriginAttr>(
-      distinctB.getReferencedAttr());
   auto strA = dyn_cast_if_present<StringAttr>(distinctA.getReferencedAttr());
   auto strB = dyn_cast_if_present<StringAttr>(distinctB.getReferencedAttr());
   if (pseudoA && pseudoB) {
     return std::make_pair(pseudoA.getArgNumber(), pseudoA.getDepth()) <
            std::make_pair(pseudoB.getArgNumber(), pseudoB.getDepth());
-  } else if (originA && originB) {
-    return originA.getArgNumber() < originB.getArgNumber();
   } else if (strA && strB) {
     return strA.strref() < strB.strref();
   }
@@ -203,7 +201,7 @@ Attribute enzyme::ValueOriginsMap::serialize(MLIRContext *ctx) const {
     } else if (destClasses.isUndefined()) {
       aliasClasses.push_back(StringAttr::get(ctx, "undefined"));
     } else {
-      for (const DistinctAttr &destClass : destClasses.getAliasClasses()) {
+      for (const ArgumentOriginAttr &destClass : destClasses.getElements()) {
         aliasClasses.push_back(destClass);
       }
       llvm::sort(aliasClasses, sortKeys);
@@ -251,7 +249,7 @@ ChangeResult enzyme::ValueOriginsMap::join(const AbstractDenseLattice &other) {
 }
 
 ChangeResult enzyme::ValueOriginsMap::insert(const AliasClassSet &keysToUpdate,
-                                             const AliasClassSet &origins) {
+                                             const ValueOriginSet &origins) {
   if (keysToUpdate.isUnknown())
     return markAllOriginsUnknown();
 
@@ -269,13 +267,13 @@ ChangeResult enzyme::ValueOriginsMap::insert(const AliasClassSet &keysToUpdate,
 ChangeResult enzyme::ValueOriginsMap::markAllOriginsUnknown() {
   ChangeResult result = ChangeResult::NoChange;
   for (auto &it : valueOrigins)
-    result |= it.getSecond().join(AliasClassSet::getUnknown());
+    result |= it.getSecond().join(ValueOriginSet::getUnknown());
   return result;
 }
 
 ChangeResult
 enzyme::ValueOriginsMap::joinPotentiallyMissing(DistinctAttr key,
-                                                const AliasClassSet &value) {
+                                                const ValueOriginSet &value) {
   // Don't store explicitly undefined values in the mapping, keys absent from
   // the mapping are treated as implicitly undefined.
   if (value.isUndefined())
@@ -301,9 +299,8 @@ void enzyme::DenseActivityAnnotationAnalysis::setToEntryState(
     auto *argClass = getOrCreateFor<AliasClassLattice>(block, arg);
     auto origin = ArgumentOriginAttr::get(FlatSymbolRefAttr::get(funcOp),
                                           arg.getArgNumber());
-    DistinctAttr argOrigin = originalClasses.getOriginalClass(arg, origin);
     changed |= lattice->insert(argClass->getAliasClassesObject(),
-                               AliasClassSet(argOrigin));
+                               ValueOriginSet(origin));
   }
   propagateIfChanged(lattice, changed);
 }
@@ -347,7 +344,7 @@ void enzyme::DenseActivityAnnotationAnalysis::visitOperation(
       if (srcClasses->isUnknown()) {
         propagateIfChanged(after,
                            after->insert(destClasses->getAliasClassesObject(),
-                                         AliasClassSet::getUnknown()));
+                                         ValueOriginSet::getUnknown()));
         continue;
       }
 
@@ -376,7 +373,7 @@ void enzyme::DenseActivityAnnotationAnalysis::processCopy(
     Operation *op, Value copySource, Value copyDest,
     const ValueOriginsMap &before, ValueOriginsMap *after) {
   auto *src = getOrCreateFor<AliasClassLattice>(op, copySource);
-  AliasClassSet srcOrigins;
+  ValueOriginSet srcOrigins;
   if (src->isUndefined())
     return;
   if (src->isUnknown())
@@ -390,15 +387,15 @@ void enzyme::DenseActivityAnnotationAnalysis::processCopy(
                      after->insert(dest->getAliasClassesObject(), srcOrigins));
 }
 
-static void
-deserializePointsTo(ArrayAttr summaryAttr,
-                    DenseMap<DistinctAttr, enzyme::AliasClassSet> &summaryMap) {
+static void deserializePointsTo(
+    ArrayAttr summaryAttr,
+    DenseMap<DistinctAttr, enzyme::ValueOriginSet> &summaryMap) {
   // TODO: investigate better encodings for the value origin summary
   for (auto pair : summaryAttr.getAsRange<ArrayAttr>()) {
     assert(pair.size() == 2 &&
            "Expected summary to be in [[key, value]] format");
     auto pointer = cast<DistinctAttr>(pair[0]);
-    auto pointsToSet = enzyme::AliasClassSet::getUndefined();
+    auto pointsToSet = enzyme::ValueOriginSet::getUndefined();
     if (auto strAttr = dyn_cast<StringAttr>(pair[1])) {
       if (strAttr.getValue() == "unknown") {
         (void)pointsToSet.markUnknown();
@@ -407,12 +404,13 @@ deserializePointsTo(ArrayAttr summaryAttr,
                "unrecognized points-to destination");
       }
     } else {
-      auto pointsTo = cast<ArrayAttr>(pair[1]).getAsRange<DistinctAttr>();
+      auto pointsTo =
+          cast<ArrayAttr>(pair[1]).getAsRange<enzyme::ArgumentOriginAttr>();
       // TODO: see if there's a nice way to convert the
       // AliasClassSet::insert method to accept this iterator rather than
       // constructing a DenseSet
-      (void)pointsToSet.insert(
-          DenseSet<DistinctAttr>(pointsTo.begin(), pointsTo.end()));
+      (void)pointsToSet.insert(DenseSet<enzyme::ArgumentOriginAttr>(
+          pointsTo.begin(), pointsTo.end()));
     }
 
     summaryMap.insert({pointer, pointsToSet});
@@ -431,7 +429,7 @@ void enzyme::DenseActivityAnnotationAnalysis::visitCallControlFlowTransfer(
     if (auto callee = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
             call, symbol.getLeafReference())) {
       if (auto summaryAttr = callee->getAttrOfType<ArrayAttr>("activedeps")) {
-        DenseMap<DistinctAttr, AliasClassSet> summary;
+        DenseMap<DistinctAttr, ValueOriginSet> summary;
         deserializePointsTo(summaryAttr, summary);
         return processCallToSummarizedFunc(call, summary, before, after);
       }
@@ -440,7 +438,7 @@ void enzyme::DenseActivityAnnotationAnalysis::visitCallControlFlowTransfer(
 }
 
 void enzyme::DenseActivityAnnotationAnalysis::processCallToSummarizedFunc(
-    CallOpInterface call, const DenseMap<DistinctAttr, AliasClassSet> &summary,
+    CallOpInterface call, const DenseMap<DistinctAttr, ValueOriginSet> &summary,
     const ValueOriginsMap &before, ValueOriginsMap *after) {
   // StringRef calleeName = cast<SymbolRefAttr>(call.getCallableForCallee())
   //                            .getLeafReference()
@@ -452,11 +450,11 @@ void enzyme::DenseActivityAnnotationAnalysis::processCallToSummarizedFunc(
   // Collect the origins of the function arguments, then collect the alias
   // classes of the destinations
   auto *p2sets = getOrCreateFor<PointsToSets>(call, call);
-  SmallVector<AliasClassSet> argumentOrigins;
+  SmallVector<ValueOriginSet> argumentOrigins;
   SmallVector<AliasClassSet> argumentClasses;
   for (auto &&[i, argOperand] : llvm::enumerate(call.getArgOperands())) {
     // Value origin might be sparse, might be dense
-    AliasClassSet argOrigins;
+    ValueOriginSet argOrigins;
     auto *argClasses = getOrCreateFor<AliasClassLattice>(call, argOperand);
     if (argClasses->isUndefined()) {
       // Not a pointer, use the sparse lattice state
@@ -483,11 +481,9 @@ void enzyme::DenseActivityAnnotationAnalysis::processCallToSummarizedFunc(
 
   // TODO: Does the traversal order matter here?
   for (const auto &[destClass, sourceOrigins] : summary) {
-    AliasClassSet callerOrigins;
-    for (DistinctAttr sourceOrigin : sourceOrigins.getAliasClasses()) {
-      unsigned argNumber =
-          cast<ArgumentOriginAttr>(sourceOrigin.getReferencedAttr())
-              .getArgNumber();
+    ValueOriginSet callerOrigins;
+    for (ArgumentOriginAttr sourceOrigin : sourceOrigins.getElements()) {
+      unsigned argNumber = sourceOrigin.getArgNumber();
       (void)callerOrigins.join(argumentOrigins[argNumber]);
     }
 

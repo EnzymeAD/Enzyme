@@ -2,6 +2,8 @@
 #define ENZYME_MLIR_ANALYSIS_ACTIVITYANNOTATIONS_H
 
 #include "AliasAnalysis.h"
+#include "Dialect/Ops.h"
+#include "Lattice.h"
 
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
@@ -12,6 +14,8 @@ class FunctionOpInterface;
 
 namespace enzyme {
 
+using ValueOriginSet = SetLattice<ArgumentOriginAttr>;
+
 //===----------------------------------------------------------------------===//
 // ValueOriginsLattice
 //===----------------------------------------------------------------------===//
@@ -19,18 +23,18 @@ namespace enzyme {
 class ValueOriginsLattice : public dataflow::AbstractSparseLattice {
 public:
   using AbstractSparseLattice::AbstractSparseLattice;
-  ValueOriginsLattice(Value value, AliasClassSet &&origins)
+  ValueOriginsLattice(Value value, ValueOriginSet &&origins)
       : dataflow::AbstractSparseLattice(value), origins(std::move(origins)) {}
 
-  static AliasClassLattice single(Value point, DistinctAttr value) {
-    return AliasClassLattice(point, AliasClassSet(value));
+  static ValueOriginsLattice single(Value point, ArgumentOriginAttr value) {
+    return ValueOriginsLattice(point, ValueOriginSet(value));
   }
 
   void print(raw_ostream &os) const override;
 
   ChangeResult join(const AbstractSparseLattice &other) override;
 
-  ChangeResult insert(const DenseSet<DistinctAttr> &classes) {
+  ChangeResult insert(const DenseSet<ArgumentOriginAttr> &classes) {
     return origins.insert(classes);
   }
 
@@ -40,16 +44,19 @@ public:
 
   bool isUndefined() const { return origins.isUndefined(); }
 
-  const DenseSet<DistinctAttr> &getOrigins() const {
-    return origins.getAliasClasses();
+  const DenseSet<ArgumentOriginAttr> &getOrigins() const {
+    return origins.getElements();
   }
 
-  const AliasClassSet &getOriginsObject() const { return origins; }
+  const SetLattice<ArgumentOriginAttr> &getOriginsObject() const {
+    return origins;
+  }
 
 private:
   // TODO: The AliasClassSet data structure is exactly what we want here, the
   // distinct attributes represent value origins instead of alias classes.
-  AliasClassSet origins;
+  // AliasClassSet origins;
+  SetLattice<ArgumentOriginAttr> origins;
 };
 
 // TODO: do we need a backwards activity annotation analysis?
@@ -94,17 +101,17 @@ public:
 
   /// Mark the pointer stored in `dest` as originating from all of `origins`.
   ChangeResult insert(const AliasClassSet &destClasses,
-                      const AliasClassSet &origins);
+                      const ValueOriginSet &origins);
 
   ChangeResult markAllOriginsUnknown();
 
   ChangeResult joinPotentiallyMissing(DistinctAttr key,
-                                      const AliasClassSet &value);
+                                      const ValueOriginSet &value);
 
-  const AliasClassSet &getOrigins(DistinctAttr id) const {
+  const ValueOriginSet &getOrigins(DistinctAttr id) const {
     auto it = valueOrigins.find(id);
     if (it == valueOrigins.end())
-      return AliasClassSet::getUndefined();
+      return ValueOriginSet::getUndefined();
     return it->getSecond();
   }
 
@@ -113,7 +120,7 @@ private:
   // this value"
   // TODO: Don't get confused because they're both distinct attributes, the keys
   // are exclusively alias classes and the values are sets of value origins
-  DenseMap<DistinctAttr, AliasClassSet> valueOrigins;
+  DenseMap<DistinctAttr, ValueOriginSet> valueOrigins;
 };
 
 //===----------------------------------------------------------------------===//
@@ -138,7 +145,7 @@ public:
 private:
   void processCallToSummarizedFunc(
       CallOpInterface call,
-      const DenseMap<DistinctAttr, AliasClassSet> &summary,
+      const DenseMap<DistinctAttr, ValueOriginSet> &summary,
       const ValueOriginsMap &before, ValueOriginsMap *after);
 
   void processCopy(Operation *op, Value copySource, Value copyDest,

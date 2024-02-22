@@ -2,7 +2,7 @@
 
 // CHECK-LABEL: processing function @load_nested
 // CHECK: value origin summary:
-// CHECK:      distinct[0]<#enzyme.pseudoclass<@load_nested(1, 0)>> originates from [distinct[0]<#enzyme.argorigin<@load_nested(0)>>, distinct[1]<#enzyme.argorigin<@load_nested(1)>>]
+// CHECK:      distinct[0]<#enzyme.pseudoclass<@load_nested(1, 0)>> originates from [#enzyme.argorigin<@load_nested(0)>, #enzyme.argorigin<@load_nested(1)>]
 func.func @load_nested(%arg0: !llvm.ptr, %arg1: !llvm.ptr) {
   %data = llvm.load %arg0 : !llvm.ptr -> !llvm.ptr
   %val = llvm.load %data : !llvm.ptr -> f64
@@ -15,7 +15,7 @@ func.func @load_nested(%arg0: !llvm.ptr, %arg1: !llvm.ptr) {
 // (%inner in this case)
 // CHECK-LABEL: processing function @pass_pointer_to
 // CHECK: value origin summary:
-// CHECK:      distinct[0]<#enzyme.pseudoclass<@pass_pointer_to(2, 0)>> originates from [distinct[0]<#enzyme.argorigin<@pass_pointer_to(0)>>, distinct[1]<#enzyme.argorigin<@pass_pointer_to(1)>>, distinct[2]<#enzyme.argorigin<@pass_pointer_to(2)>>]
+// CHECK:      distinct[0]<#enzyme.pseudoclass<@pass_pointer_to(2, 0)>> originates from [#enzyme.argorigin<@pass_pointer_to(0)>, #enzyme.argorigin<@pass_pointer_to(1)>, #enzyme.argorigin<@pass_pointer_to(2)>]
 func.func @pass_pointer_to(%arg0: f64, %alloc: !llvm.ptr, %out: !llvm.ptr) {
   %one = llvm.mlir.constant (1) : i64
   %inner = llvm.load %alloc : !llvm.ptr -> !llvm.ptr
