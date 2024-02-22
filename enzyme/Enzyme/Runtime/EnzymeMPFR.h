@@ -31,6 +31,32 @@
 extern "C" {
 #endif
 
+// TODO s
+//
+// (for MPFR ver. 2.1)
+//
+// We need to set the range of the allowed exponent using `mpfr_set_emin` and
+// `mpfr_set_emax`. (This means we can also play with whether the range is
+// centered around 0 (1?) or somewhere else)
+//
+// For that we need to do this check:
+//   If the user changes the exponent range, it is her/his responsibility to
+//   check that all current floating-point variables are in the new allowed
+//   range (for example using mpfr_check_range), otherwise the subsequent
+//   behavior will be undefined, in the sense of the ISO C standard.
+//
+// MPFR docs state the following:
+//   Note: Overflow handling is still experimental and currently implemented
+//   partially. If an overflow occurs internally at the wrong place, anything
+//   can happen (crash, wrong results, etc).
+//
+// Which we would like to avoid somehow.
+//
+// MPFR also has this limitation that we need to address for accurate
+// simulation:
+//   [...] subnormal numbers are not implemented.
+//
+
 #define __ENZYME_MPFR_BINOP(OP_TYPE, LLVM_OP_NAME, MPFR_FUNC_NAME, FROM_TYPE,  \
                             RET, MPFR_GET, ARG1, MPFR_SET_ARG1, ARG2,          \
                             MPFR_SET_ARG2, ROUNDING_MODE)                      \
