@@ -65,7 +65,8 @@ void enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
   // TODO: Differential dependency/activity interface
   if (isa<LLVM::FMulOp, LLVM::FAddOp, LLVM::FDivOp, LLVM::FSubOp, LLVM::FNegOp,
           LLVM::FAbsOp, LLVM::SqrtOp, LLVM::SinOp, LLVM::CosOp, LLVM::Exp2Op,
-          LLVM::ExpOp>(op)) {
+          LLVM::ExpOp, LLVM::InsertValueOp, LLVM::ExtractValueOp,
+          LLVM::BitcastOp>(op)) {
     // All results differentially depend on all operands
     for (ValueOriginsLattice *result : results) {
       for (const ValueOriginsLattice *operand : operands) {
@@ -161,37 +162,38 @@ void enzyme::ValueOriginsMap::print(raw_ostream &os) const {
   }
 }
 
+static bool sortKeys(Attribute a, Attribute b) {
+  auto distinctA = dyn_cast<DistinctAttr>(a);
+  auto distinctB = dyn_cast<DistinctAttr>(b);
+  // If not distinct attributes, sort them arbitrarily.
+  if (!(distinctA && distinctB))
+    return &a < &b;
+
+  auto pseudoA = dyn_cast_if_present<enzyme::PseudoAliasClassAttr>(
+      distinctA.getReferencedAttr());
+  auto pseudoB = dyn_cast_if_present<enzyme::PseudoAliasClassAttr>(
+      distinctB.getReferencedAttr());
+  auto originA = dyn_cast_if_present<enzyme::ArgumentOriginAttr>(
+      distinctA.getReferencedAttr());
+  auto originB = dyn_cast_if_present<enzyme::ArgumentOriginAttr>(
+      distinctB.getReferencedAttr());
+  auto strA = dyn_cast_if_present<StringAttr>(distinctA.getReferencedAttr());
+  auto strB = dyn_cast_if_present<StringAttr>(distinctB.getReferencedAttr());
+  if (pseudoA && pseudoB) {
+    return std::make_pair(pseudoA.getArgNumber(), pseudoA.getDepth()) <
+           std::make_pair(pseudoB.getArgNumber(), pseudoB.getDepth());
+  } else if (originA && originB) {
+    return originA.getArgNumber() < originB.getArgNumber();
+  } else if (strA && strB) {
+    return strA.strref() < strB.strref();
+  }
+  // Order pseudo/origin classes before fresh classes
+  return (pseudoA || originA) && !(pseudoB || originB);
+}
+
 // TODO(jacob): reduce code duplication (again)
 Attribute enzyme::ValueOriginsMap::serialize(MLIRContext *ctx) const {
   SmallVector<Attribute> pointsToArray;
-  auto sortKeys = [&](Attribute a, Attribute b) {
-    auto distinctA = dyn_cast<DistinctAttr>(a);
-    auto distinctB = dyn_cast<DistinctAttr>(b);
-    // If not distinct attributes, sort them arbitrarily.
-    if (!(distinctA && distinctB))
-      return &a < &b;
-
-    auto pseudoA = dyn_cast_if_present<PseudoAliasClassAttr>(
-        distinctA.getReferencedAttr());
-    auto pseudoB = dyn_cast_if_present<PseudoAliasClassAttr>(
-        distinctB.getReferencedAttr());
-    auto originA =
-        dyn_cast_if_present<ArgumentOriginAttr>(distinctA.getReferencedAttr());
-    auto originB =
-        dyn_cast_if_present<ArgumentOriginAttr>(distinctB.getReferencedAttr());
-    auto strA = dyn_cast_if_present<StringAttr>(distinctA.getReferencedAttr());
-    auto strB = dyn_cast_if_present<StringAttr>(distinctB.getReferencedAttr());
-    if (pseudoA && pseudoB) {
-      return std::make_pair(pseudoA.getArgNumber(), pseudoA.getDepth()) <
-             std::make_pair(pseudoB.getArgNumber(), pseudoB.getDepth());
-    } else if (originA && originB) {
-      return originA.getArgNumber() < originB.getArgNumber();
-    } else if (strA && strB) {
-      return strA.strref() < strB.strref();
-    }
-    // Order pseudo/origin classes before fresh classes
-    return (pseudoA || originA) && !(pseudoB || originB);
-  };
 
   for (const auto &[srcClass, destClasses] : valueOrigins) {
     SmallVector<Attribute, 2> pair = {srcClass};
@@ -583,6 +585,12 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
     // Create the overall summary by joining sets at all return sites.
     enzyme::PointsToSets p2sets(nullptr);
     enzyme::ValueOriginsMap voMap(nullptr);
+    size_t numResults = node.getResultTypes().size();
+    SmallVector<enzyme::ValueOriginsLattice> returnOperandOrigins(
+        numResults, ValueOriginsLattice(nullptr));
+    SmallVector<enzyme::AliasClassLattice> returnAliasClasses(
+        numResults, AliasClassLattice(nullptr));
+
     raw_ostream &os = llvm::outs();
     for (Operation &op : node.getCallableRegion()->getOps()) {
       if (op.hasTrait<OpTrait::ReturnLike>()) {
@@ -592,12 +600,16 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
           (void)voMap.join(*returnOrigins);
 
         for (OpOperand &operand : op.getOpOperands()) {
-          os << "[aaa] return at idx " << operand.getOperandNumber()
-             << " has value origin "
-             << *solver.lookupState<enzyme::ValueOriginsLattice>(operand.get())
-             << "\n";
+          (void)returnAliasClasses[operand.getOperandNumber()].join(
+              *solver.lookupState<enzyme::AliasClassLattice>(operand.get()));
+          (void)returnOperandOrigins[operand.getOperandNumber()].join(
+              *solver.lookupState<enzyme::ValueOriginsLattice>(operand.get()));
         }
       }
+    }
+
+    for (auto lattice : returnAliasClasses) {
+      os << "[debug] return alias class: " << lattice << "\n";
     }
 
     node->setAttr("p2psummary", p2sets.serialize(node.getContext()));
@@ -616,5 +628,26 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
          node->getAttrOfType<ArrayAttr>("activedeps").getAsRange<ArrayAttr>()) {
       os << "     " << pair[0] << " originates from " << pair[1] << "\n";
     }
+
+    // Serialize return origins
+    MLIRContext *ctx = node.getContext();
+    SmallVector<Attribute> serializedReturnOperandOrigins(
+        returnOperandOrigins.size());
+    llvm::transform(
+        returnOperandOrigins, serializedReturnOperandOrigins.begin(),
+        [ctx](enzyme::ValueOriginsLattice lattice) -> Attribute {
+          if (lattice.isUndefined())
+            return StringAttr::get(ctx, "<undefined>");
+          if (lattice.isUnknown())
+            return StringAttr::get(ctx, "<unknown>");
+          SmallVector<Attribute> originsVector(lattice.getOrigins().begin(),
+                                               lattice.getOrigins().end());
+          llvm::sort(originsVector, sortKeys);
+          return ArrayAttr::get(ctx, originsVector);
+        });
+    node->setAttr(
+        "returnorigins",
+        ArrayAttr::get(node.getContext(), serializedReturnOperandOrigins));
+    os << "[ata] return origins: " << node->getAttr("returnorigins") << "\n";
   }
 }
