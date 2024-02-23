@@ -14,7 +14,7 @@ class FunctionOpInterface;
 
 namespace enzyme {
 
-using ValueOriginSet = SetLattice<ArgumentOriginAttr>;
+using ValueOriginSet = SetLattice<Attribute>;
 
 //===----------------------------------------------------------------------===//
 // ValueOriginsLattice
@@ -26,7 +26,7 @@ public:
   ValueOriginsLattice(Value value, ValueOriginSet &&origins)
       : dataflow::AbstractSparseLattice(value), origins(std::move(origins)) {}
 
-  static ValueOriginsLattice single(Value point, ArgumentOriginAttr value) {
+  static ValueOriginsLattice single(Value point, Attribute value) {
     return ValueOriginsLattice(point, ValueOriginSet(value));
   }
 
@@ -34,7 +34,9 @@ public:
 
   ChangeResult join(const AbstractSparseLattice &other) override;
 
-  ChangeResult insert(const DenseSet<ArgumentOriginAttr> &classes) {
+  ChangeResult join(const ValueOriginSet &other) { return origins.join(other); }
+
+  ChangeResult insert(const DenseSet<Attribute> &classes) {
     return origins.insert(classes);
   }
 
@@ -44,22 +46,27 @@ public:
 
   bool isUndefined() const { return origins.isUndefined(); }
 
-  const DenseSet<ArgumentOriginAttr> &getOrigins() const {
+  const DenseSet<Attribute> &getOrigins() const {
     return origins.getElements();
   }
 
-  const SetLattice<ArgumentOriginAttr> &getOriginsObject() const {
-    return origins;
-  }
+  const ValueOriginSet &getOriginsObject() const { return origins; }
 
 private:
-  // TODO: The AliasClassSet data structure is exactly what we want here, the
-  // distinct attributes represent value origins instead of alias classes.
-  // AliasClassSet origins;
-  SetLattice<ArgumentOriginAttr> origins;
+  ValueOriginSet origins;
 };
 
-// TODO: do we need a backwards activity annotation analysis?
+// TODO: create a common inherited class?
+class BackwardOriginsLattice : public ValueOriginsLattice {
+public:
+  using ValueOriginsLattice::ValueOriginsLattice;
+
+  ChangeResult meet(const AbstractSparseLattice &other) override {
+    // MLIR framework again misusing terminology
+    return join(other);
+  }
+};
+
 class ForwardActivityAnnotationAnalysis
     : public dataflow::SparseForwardDataFlowAnalysis<ValueOriginsLattice> {
 public:
@@ -83,6 +90,31 @@ private:
                          ArrayRef<ValueOriginsLattice *> results);
 
   OriginalClasses originalClasses;
+};
+
+class BackwardActivityAnnotationAnalysis
+    : public dataflow::SparseBackwardDataFlowAnalysis<BackwardOriginsLattice> {
+public:
+  BackwardActivityAnnotationAnalysis(DataFlowSolver &solver,
+                                     SymbolTableCollection &symbolTable)
+      : SparseBackwardDataFlowAnalysis(solver, symbolTable) {
+    assert(!solver.getConfig().isInterprocedural());
+  }
+
+  void visitBranchOperand(OpOperand &operand) override {}
+
+  void visitCallOperand(OpOperand &operand) override {}
+
+  void setToExitState(BackwardOriginsLattice *lattice) override;
+
+  void
+  visitOperation(Operation *op, ArrayRef<BackwardOriginsLattice *> operands,
+                 ArrayRef<const BackwardOriginsLattice *> results) override;
+
+  void
+  visitExternalCall(CallOpInterface call,
+                    ArrayRef<BackwardOriginsLattice *> operands,
+                    ArrayRef<const BackwardOriginsLattice *> results) override;
 };
 
 //===----------------------------------------------------------------------===//
@@ -123,6 +155,16 @@ private:
   DenseMap<DistinctAttr, ValueOriginSet> valueOrigins;
 };
 
+// TODO: reconcile the origins vs origin in the naming
+class BackwardValueOriginMap : public ValueOriginsMap {
+public:
+  using ValueOriginsMap::ValueOriginsMap;
+
+  ChangeResult meet(const AbstractDenseLattice &other) override {
+    return join(other);
+  }
+};
+
 //===----------------------------------------------------------------------===//
 // DenseActivityAnnotationAnalysis
 //===----------------------------------------------------------------------===//
@@ -152,6 +194,22 @@ private:
                    const ValueOriginsMap &before, ValueOriginsMap *after);
 
   OriginalClasses originalClasses;
+};
+
+class DenseBackwardActivityAnnotationAnalysis
+    : public dataflow::DenseBackwardDataFlowAnalysis<BackwardValueOriginMap> {
+public:
+  using DenseBackwardDataFlowAnalysis::DenseBackwardDataFlowAnalysis;
+
+  void visitOperation(Operation *op, const BackwardValueOriginMap &after,
+                      BackwardValueOriginMap *before) override;
+
+  void visitCallControlFlowTransfer(CallOpInterface call,
+                                    dataflow::CallControlFlowAction action,
+                                    const BackwardValueOriginMap &after,
+                                    BackwardValueOriginMap *before) override;
+
+  void setToExitState(BackwardValueOriginMap *lattice) override;
 };
 
 void runActivityAnnotations(FunctionOpInterface callee);
