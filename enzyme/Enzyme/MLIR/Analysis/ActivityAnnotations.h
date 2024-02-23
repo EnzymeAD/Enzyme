@@ -17,77 +17,74 @@ namespace enzyme {
 using ValueOriginSet = SetLattice<OriginAttr>;
 
 //===----------------------------------------------------------------------===//
-// ValueOriginsLattice
+// ForwardOriginsLattice
 //===----------------------------------------------------------------------===//
 
-class ValueOriginsLattice : public dataflow::AbstractSparseLattice {
+// TODO: specialize this to only arguments
+class ForwardOriginsLattice : public SparseSetLattice<OriginAttr> {
 public:
-  using AbstractSparseLattice::AbstractSparseLattice;
-  ValueOriginsLattice(Value value, ValueOriginSet &&origins)
-      : dataflow::AbstractSparseLattice(value), origins(std::move(origins)) {}
+  using SparseSetLattice::SparseSetLattice;
 
-  static ValueOriginsLattice single(Value point, OriginAttr value) {
-    return ValueOriginsLattice(point, ValueOriginSet(value));
+  static ForwardOriginsLattice single(Value point, OriginAttr value) {
+    return ForwardOriginsLattice(point, SetLattice<OriginAttr>(value));
   }
 
   void print(raw_ostream &os) const override;
 
   ChangeResult join(const AbstractSparseLattice &other) override;
 
-  ChangeResult join(const ValueOriginSet &other) { return origins.join(other); }
-
-  ChangeResult insert(const DenseSet<OriginAttr> &classes) {
-    return origins.insert(classes);
-  }
-
-  ChangeResult markUnknown() { return origins.markUnknown(); }
-
-  bool isUnknown() const { return origins.isUnknown(); }
-
-  bool isUndefined() const { return origins.isUndefined(); }
-
   const DenseSet<OriginAttr> &getOrigins() const {
-    return origins.getElements();
+    return elements.getElements();
   }
 
-  const ValueOriginSet &getOriginsObject() const { return origins; }
-
-private:
-  ValueOriginSet origins;
+  const SetLattice<OriginAttr> &getOriginsObject() const { return elements; }
 };
 
-// TODO: create a common inherited class?
-class BackwardOriginsLattice : public ValueOriginsLattice {
+class BackwardOriginsLattice : public SparseSetLattice<OriginAttr> {
 public:
-  using ValueOriginsLattice::ValueOriginsLattice;
+  using SparseSetLattice::SparseSetLattice;
+
+  static BackwardOriginsLattice single(Value point, OriginAttr value) {
+    return BackwardOriginsLattice(point, SetLattice<OriginAttr>(value));
+  }
+
+  void print(raw_ostream &os) const override;
 
   ChangeResult meet(const AbstractSparseLattice &other) override {
     // MLIR framework again misusing terminology
-    return join(other);
+    const auto *otherValueOrigins =
+        static_cast<const BackwardOriginsLattice *>(&other);
+    return elements.join(otherValueOrigins->elements);
   }
+
+  const DenseSet<OriginAttr> &getOrigins() const {
+    return elements.getElements();
+  }
+
+  const SetLattice<OriginAttr> &getOriginsObject() const { return elements; }
 };
 
 class ForwardActivityAnnotationAnalysis
-    : public dataflow::SparseForwardDataFlowAnalysis<ValueOriginsLattice> {
+    : public dataflow::SparseForwardDataFlowAnalysis<ForwardOriginsLattice> {
 public:
   ForwardActivityAnnotationAnalysis(DataFlowSolver &solver)
       : SparseForwardDataFlowAnalysis(solver) {
     assert(!solver.getConfig().isInterprocedural());
   }
 
-  void setToEntryState(ValueOriginsLattice *lattice) override;
+  void setToEntryState(ForwardOriginsLattice *lattice) override;
 
   void visitOperation(Operation *op,
-                      ArrayRef<const ValueOriginsLattice *> operands,
-                      ArrayRef<ValueOriginsLattice *> results) override;
+                      ArrayRef<const ForwardOriginsLattice *> operands,
+                      ArrayRef<ForwardOriginsLattice *> results) override;
 
   void visitExternalCall(CallOpInterface call,
-                         ArrayRef<const ValueOriginsLattice *> operands,
-                         ArrayRef<ValueOriginsLattice *> results) override;
+                         ArrayRef<const ForwardOriginsLattice *> operands,
+                         ArrayRef<ForwardOriginsLattice *> results) override;
 
 private:
   void processMemoryRead(Operation *op, Value address,
-                         ArrayRef<ValueOriginsLattice *> results);
+                         ArrayRef<ForwardOriginsLattice *> results);
 
   OriginalClasses originalClasses;
 };
@@ -118,47 +115,29 @@ public:
 };
 
 //===----------------------------------------------------------------------===//
-// ValueOriginsMap
+// ForwardOriginsMap
 //===----------------------------------------------------------------------===//
 
-class ValueOriginsMap : public dataflow::AbstractDenseLattice {
+class ForwardOriginsMap : public MapOfSetsLattice<DistinctAttr, OriginAttr> {
 public:
-  using AbstractDenseLattice::AbstractDenseLattice;
+  using MapOfSetsLattice::MapOfSetsLattice;
 
   void print(raw_ostream &os) const override;
 
-  Attribute serialize(MLIRContext *ctx) const;
+  ChangeResult markAllOriginsUnknown() { return markAllUnknown(); }
 
-  ChangeResult join(const AbstractDenseLattice &other) override;
-
-  /// Mark the pointer stored in `dest` as originating from all of `origins`.
-  ChangeResult insert(const AliasClassSet &destClasses,
-                      const ValueOriginSet &origins);
-
-  ChangeResult markAllOriginsUnknown();
-
-  ChangeResult joinPotentiallyMissing(DistinctAttr key,
-                                      const ValueOriginSet &value);
-
-  const ValueOriginSet &getOrigins(DistinctAttr id) const {
-    auto it = valueOrigins.find(id);
-    if (it == valueOrigins.end())
-      return ValueOriginSet::getUndefined();
-    return it->getSecond();
-  }
-
-private:
-  // Represents "this alias class has a differential dependency originating from
-  // this value"
-  // TODO: Don't get confused because they're both distinct attributes, the keys
-  // are exclusively alias classes and the values are sets of value origins
-  DenseMap<DistinctAttr, ValueOriginSet> valueOrigins;
+  const ValueOriginSet &getOrigins(DistinctAttr id) const { return lookup(id); }
 };
 
-// TODO: reconcile the origins vs origin in the naming
-class BackwardValueOriginMap : public ValueOriginsMap {
+class BackwardOriginsMap : public MapOfSetsLattice<DistinctAttr, OriginAttr> {
 public:
-  using ValueOriginsMap::ValueOriginsMap;
+  using MapOfSetsLattice::MapOfSetsLattice;
+
+  void print(raw_ostream &os) const override;
+
+  ChangeResult markAllOriginsUnknown() { return markAllUnknown(); }
+
+  const ValueOriginSet &getOrigins(DistinctAttr id) const { return lookup(id); }
 
   ChangeResult meet(const AbstractDenseLattice &other) override {
     return join(other);
@@ -170,46 +149,46 @@ public:
 //===----------------------------------------------------------------------===//
 
 class DenseActivityAnnotationAnalysis
-    : public dataflow::DenseForwardDataFlowAnalysis<ValueOriginsMap> {
+    : public dataflow::DenseForwardDataFlowAnalysis<ForwardOriginsMap> {
 public:
   using DenseForwardDataFlowAnalysis::DenseForwardDataFlowAnalysis;
 
-  void setToEntryState(ValueOriginsMap *lattice) override;
+  void setToEntryState(ForwardOriginsMap *lattice) override;
 
-  void visitOperation(Operation *op, const ValueOriginsMap &before,
-                      ValueOriginsMap *after) override;
+  void visitOperation(Operation *op, const ForwardOriginsMap &before,
+                      ForwardOriginsMap *after) override;
 
   void visitCallControlFlowTransfer(CallOpInterface call,
                                     dataflow::CallControlFlowAction action,
-                                    const ValueOriginsMap &before,
-                                    ValueOriginsMap *after) override;
+                                    const ForwardOriginsMap &before,
+                                    ForwardOriginsMap *after) override;
 
 private:
   void processCallToSummarizedFunc(
       CallOpInterface call,
       const DenseMap<DistinctAttr, ValueOriginSet> &summary,
-      const ValueOriginsMap &before, ValueOriginsMap *after);
+      const ForwardOriginsMap &before, ForwardOriginsMap *after);
 
   void processCopy(Operation *op, Value copySource, Value copyDest,
-                   const ValueOriginsMap &before, ValueOriginsMap *after);
+                   const ForwardOriginsMap &before, ForwardOriginsMap *after);
 
   OriginalClasses originalClasses;
 };
 
 class DenseBackwardActivityAnnotationAnalysis
-    : public dataflow::DenseBackwardDataFlowAnalysis<BackwardValueOriginMap> {
+    : public dataflow::DenseBackwardDataFlowAnalysis<BackwardOriginsMap> {
 public:
   using DenseBackwardDataFlowAnalysis::DenseBackwardDataFlowAnalysis;
 
-  void visitOperation(Operation *op, const BackwardValueOriginMap &after,
-                      BackwardValueOriginMap *before) override;
+  void visitOperation(Operation *op, const BackwardOriginsMap &after,
+                      BackwardOriginsMap *before) override;
 
   void visitCallControlFlowTransfer(CallOpInterface call,
                                     dataflow::CallControlFlowAction action,
-                                    const BackwardValueOriginMap &after,
-                                    BackwardValueOriginMap *before) override;
+                                    const BackwardOriginsMap &after,
+                                    BackwardOriginsMap *before) override;
 
-  void setToExitState(BackwardValueOriginMap *lattice) override;
+  void setToExitState(BackwardOriginsMap *lattice) override;
 };
 
 void runActivityAnnotations(FunctionOpInterface callee);

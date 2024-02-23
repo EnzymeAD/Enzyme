@@ -23,28 +23,38 @@ raw_ostream &enzyme::operator<<(raw_ostream &os,
   return os;
 }
 
-void enzyme::ValueOriginsLattice::print(raw_ostream &os) const {
-  if (isUnknown()) {
-    os << "Unknown VO";
-  } else if (isUndefined()) {
-    os << "Undefined VO";
+template <typename ValueT>
+void printSetLattice(const enzyme::SparseSetLattice<ValueT> &setLattice,
+                     raw_ostream &os) {
+  if (setLattice.isUnknown()) {
+    os << "Unknown Origin";
+  } else if (setLattice.isUndefined()) {
+    os << "Undefined Origin";
   } else {
-    os << "size: " << origins.getElements().size() << ":\n";
-    for (auto aliasClass : origins.getElements()) {
-      os << "  " << aliasClass << "\n";
+    os << "size: " << setLattice.getElements().size() << ":\n";
+    for (auto element : setLattice.getElements()) {
+      os << "  " << element << "\n";
     }
   }
 }
 
+void enzyme::ForwardOriginsLattice::print(raw_ostream &os) const {
+  printSetLattice(*this, os);
+}
+
+void enzyme::BackwardOriginsLattice::print(raw_ostream &os) const {
+  printSetLattice(*this, os);
+}
+
 ChangeResult
-enzyme::ValueOriginsLattice::join(const AbstractSparseLattice &other) {
+enzyme::ForwardOriginsLattice::join(const AbstractSparseLattice &other) {
   const auto *otherValueOrigins =
-      static_cast<const ValueOriginsLattice *>(&other);
-  return origins.join(otherValueOrigins->origins);
+      static_cast<const ForwardOriginsLattice *>(&other);
+  return elements.join(otherValueOrigins->elements);
 }
 
 void enzyme::ForwardActivityAnnotationAnalysis::setToEntryState(
-    ValueOriginsLattice *lattice) {
+    ForwardOriginsLattice *lattice) {
   auto arg = dyn_cast<BlockArgument>(lattice->getPoint());
   if (!arg) {
     assert(lattice->isUndefined());
@@ -54,8 +64,9 @@ void enzyme::ForwardActivityAnnotationAnalysis::setToEntryState(
   auto funcOp = cast<FunctionOpInterface>(arg.getOwner()->getParentOp());
   auto origin = ArgumentOriginAttr::get(FlatSymbolRefAttr::get(funcOp),
                                         arg.getArgNumber());
-  return propagateIfChanged(lattice, lattice->join(ValueOriginsLattice::single(
-                                         lattice->getPoint(), origin)));
+  return propagateIfChanged(
+      lattice, lattice->join(
+                   ForwardOriginsLattice::single(lattice->getPoint(), origin)));
 }
 
 /// True iff all results differentially depend on all operands
@@ -73,11 +84,11 @@ static bool isNoOp(Operation *op) {
 }
 
 void enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
-    Operation *op, ArrayRef<const ValueOriginsLattice *> operands,
-    ArrayRef<ValueOriginsLattice *> results) {
+    Operation *op, ArrayRef<const ForwardOriginsLattice *> operands,
+    ArrayRef<ForwardOriginsLattice *> results) {
   if (isFullyActive(op)) {
-    for (ValueOriginsLattice *result : results) {
-      for (const ValueOriginsLattice *operand : operands) {
+    for (ForwardOriginsLattice *result : results) {
+      for (const ForwardOriginsLattice *operand : operands) {
         join(result, *operand);
       }
     }
@@ -89,7 +100,7 @@ void enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
     return;
 
   auto markResultsUnknown = [&]() {
-    for (ValueOriginsLattice *result : results) {
+    for (ForwardOriginsLattice *result : results) {
       propagateIfChanged(result, result->markUnknown());
     }
   };
@@ -115,15 +126,15 @@ void enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
 }
 
 void enzyme::ForwardActivityAnnotationAnalysis::processMemoryRead(
-    Operation *op, Value address, ArrayRef<ValueOriginsLattice *> results) {
+    Operation *op, Value address, ArrayRef<ForwardOriginsLattice *> results) {
   auto markResultsUnknown = [&]() {
-    for (ValueOriginsLattice *result : results) {
+    for (ForwardOriginsLattice *result : results) {
       propagateIfChanged(result, result->markUnknown());
     }
   };
 
   auto *srcClasses = getOrCreateFor<AliasClassLattice>(op, address);
-  auto *originsMap = getOrCreateFor<ValueOriginsMap>(op, op);
+  auto *originsMap = getOrCreateFor<ForwardOriginsMap>(op, op);
   if (srcClasses->isUndefined())
     return;
   if (srcClasses->isUnknown())
@@ -132,16 +143,16 @@ void enzyme::ForwardActivityAnnotationAnalysis::processMemoryRead(
   // Look up the alias class and see what its origins are, then propagate
   // those origins to the read results.
   for (DistinctAttr srcClass : srcClasses->getAliasClasses()) {
-    for (ValueOriginsLattice *result : results) {
+    for (ForwardOriginsLattice *result : results) {
       propagateIfChanged(result,
-                         result->join(originsMap->getOrigins(srcClass)));
+                         result->merge(originsMap->getOrigins(srcClass)));
     }
   }
 }
 
 void enzyme::ForwardActivityAnnotationAnalysis::visitExternalCall(
-    CallOpInterface call, ArrayRef<const ValueOriginsLattice *> operands,
-    ArrayRef<ValueOriginsLattice *> results) {}
+    CallOpInterface call, ArrayRef<const ForwardOriginsLattice *> operands,
+    ArrayRef<ForwardOriginsLattice *> results) {}
 
 void enzyme::BackwardActivityAnnotationAnalysis::setToExitState(
     BackwardOriginsLattice *lattice) {
@@ -185,7 +196,7 @@ void enzyme::BackwardActivityAnnotationAnalysis::visitOperation(
     }
 
     auto *srcClasses = getOrCreateFor<AliasClassLattice>(op, value);
-    auto *originsMap = getOrCreate<BackwardValueOriginMap>(op);
+    auto *originsMap = getOrCreate<BackwardOriginsMap>(op);
 
     ChangeResult changed = ChangeResult::NoChange;
     for (const BackwardOriginsLattice *result : results)
@@ -199,12 +210,14 @@ void enzyme::BackwardActivityAnnotationAnalysis::visitExternalCall(
     CallOpInterface call, ArrayRef<BackwardOriginsLattice *> operands,
     ArrayRef<const BackwardOriginsLattice *> results) {}
 
-void enzyme::ValueOriginsMap::print(raw_ostream &os) const {
-  if (valueOrigins.empty()) {
+template <typename KeyT, typename ElementT>
+void printMapOfSetsLattice(
+    const DenseMap<KeyT, enzyme::SetLattice<ElementT>> map, raw_ostream &os) {
+  if (map.empty()) {
     os << "<empty>\n";
     return;
   }
-  for (const auto &[aliasClass, origins] : valueOrigins) {
+  for (const auto &[aliasClass, origins] : map) {
     os << "  " << aliasClass << " originates from {";
     if (origins.isUnknown()) {
       os << "<unknown>";
@@ -217,7 +230,15 @@ void enzyme::ValueOriginsMap::print(raw_ostream &os) const {
   }
 }
 
-static bool sortKeys(Attribute a, Attribute b) {
+void enzyme::ForwardOriginsMap::print(raw_ostream &os) const {
+  printMapOfSetsLattice(this->map, os);
+}
+
+void enzyme::BackwardOriginsMap::print(raw_ostream &os) const {
+  printMapOfSetsLattice(this->map, os);
+}
+
+bool enzyme::sortAttributes(Attribute a, Attribute b) {
   auto originA = dyn_cast<enzyme::ArgumentOriginAttr>(a);
   auto originB = dyn_cast<enzyme::ArgumentOriginAttr>(b);
   if (originA && originB)
@@ -245,106 +266,8 @@ static bool sortKeys(Attribute a, Attribute b) {
   return (pseudoA || originA) && !(pseudoB || originB);
 }
 
-// TODO(jacob): reduce code duplication (again)
-Attribute enzyme::ValueOriginsMap::serialize(MLIRContext *ctx) const {
-  SmallVector<Attribute> pointsToArray;
-
-  for (const auto &[srcClass, destClasses] : valueOrigins) {
-    SmallVector<Attribute, 2> pair = {srcClass};
-    SmallVector<Attribute, 5> aliasClasses;
-    if (destClasses.isUnknown()) {
-      aliasClasses.push_back(StringAttr::get(ctx, "unknown"));
-    } else if (destClasses.isUndefined()) {
-      aliasClasses.push_back(StringAttr::get(ctx, "undefined"));
-    } else {
-      for (const Attribute &destClass : destClasses.getElements()) {
-        aliasClasses.push_back(destClass);
-      }
-      llvm::sort(aliasClasses, sortKeys);
-    }
-    pair.push_back(ArrayAttr::get(ctx, aliasClasses));
-    pointsToArray.push_back(ArrayAttr::get(ctx, pair));
-  }
-  llvm::sort(pointsToArray, [&](Attribute a, Attribute b) {
-    auto arrA = cast<ArrayAttr>(a);
-    auto arrB = cast<ArrayAttr>(b);
-    return sortKeys(arrA[0], arrB[0]);
-  });
-  return ArrayAttr::get(ctx, pointsToArray);
-}
-
-ChangeResult enzyme::ValueOriginsMap::join(const AbstractDenseLattice &other) {
-  const auto &rhs = static_cast<const ValueOriginsMap &>(other);
-  llvm::SmallDenseSet<DistinctAttr> keys;
-  auto lhsRange = llvm::make_first_range(valueOrigins);
-  auto rhsRange = llvm::make_first_range(rhs.valueOrigins);
-  keys.insert(lhsRange.begin(), lhsRange.end());
-  keys.insert(rhsRange.begin(), rhsRange.end());
-
-  ChangeResult result = ChangeResult::NoChange;
-  for (DistinctAttr key : keys) {
-    auto lhsIt = valueOrigins.find(key);
-    auto rhsIt = rhs.valueOrigins.find(key);
-    assert(lhsIt != valueOrigins.end() || rhsIt != rhs.valueOrigins.end());
-
-    // If present in both, join.
-    if (lhsIt != valueOrigins.end() && rhsIt != rhs.valueOrigins.end()) {
-      result |= lhsIt->getSecond().join(rhsIt->getSecond());
-      continue;
-    }
-
-    // Copy from RHS if available only there.
-    if (lhsIt == valueOrigins.end()) {
-      valueOrigins.try_emplace(rhsIt->getFirst(), rhsIt->getSecond());
-      result = ChangeResult::Change;
-    }
-
-    // Do nothing if available only in LHS.
-  }
-  return result;
-}
-
-ChangeResult enzyme::ValueOriginsMap::insert(const AliasClassSet &keysToUpdate,
-                                             const ValueOriginSet &origins) {
-  if (keysToUpdate.isUnknown())
-    return markAllOriginsUnknown();
-
-  if (keysToUpdate.isUndefined())
-    return ChangeResult::NoChange;
-
-  return keysToUpdate.foreachClass(
-      [&](DistinctAttr key, AliasClassSet::State state) {
-        assert(state == AliasClassSet::State::Defined &&
-               "unknown must have been handled above");
-        return joinPotentiallyMissing(key, origins);
-      });
-}
-
-ChangeResult enzyme::ValueOriginsMap::markAllOriginsUnknown() {
-  ChangeResult result = ChangeResult::NoChange;
-  for (auto &it : valueOrigins)
-    result |= it.getSecond().join(ValueOriginSet::getUnknown());
-  return result;
-}
-
-ChangeResult
-enzyme::ValueOriginsMap::joinPotentiallyMissing(DistinctAttr key,
-                                                const ValueOriginSet &value) {
-  // Don't store explicitly undefined values in the mapping, keys absent from
-  // the mapping are treated as implicitly undefined.
-  if (value.isUndefined())
-    return ChangeResult::NoChange;
-
-  bool inserted;
-  decltype(valueOrigins.begin()) iterator;
-  std::tie(iterator, inserted) = valueOrigins.try_emplace(key, value);
-  if (!inserted)
-    return iterator->second.join(value);
-  return ChangeResult::Change;
-}
-
 void enzyme::DenseActivityAnnotationAnalysis::setToEntryState(
-    ValueOriginsMap *lattice) {
+    ForwardOriginsMap *lattice) {
   auto *block = dyn_cast<Block *>(lattice->getPoint());
   if (!block)
     return;
@@ -365,7 +288,7 @@ std::optional<Value> getStored(Operation *op);
 std::optional<Value> getCopySource(Operation *op);
 
 void enzyme::DenseActivityAnnotationAnalysis::visitOperation(
-    Operation *op, const ValueOriginsMap &before, ValueOriginsMap *after) {
+    Operation *op, const ForwardOriginsMap &before, ForwardOriginsMap *after) {
   join(after, before);
 
   if (isNoOp(op))
@@ -411,7 +334,7 @@ void enzyme::DenseActivityAnnotationAnalysis::visitOperation(
       propagateIfChanged(after, changed);
     } else if (isa<MemoryEffects::Write>(effect.getEffect())) {
       if (std::optional<Value> stored = getStored(op)) {
-        auto *origins = getOrCreateFor<ValueOriginsLattice>(op, *stored);
+        auto *origins = getOrCreateFor<ForwardOriginsLattice>(op, *stored);
         auto *dest = getOrCreateFor<AliasClassLattice>(op, value);
         propagateIfChanged(after, after->insert(dest->getAliasClassesObject(),
                                                 origins->getOriginsObject()));
@@ -426,7 +349,7 @@ void enzyme::DenseActivityAnnotationAnalysis::visitOperation(
 
 void enzyme::DenseActivityAnnotationAnalysis::processCopy(
     Operation *op, Value copySource, Value copyDest,
-    const ValueOriginsMap &before, ValueOriginsMap *after) {
+    const ForwardOriginsMap &before, ForwardOriginsMap *after) {
   auto *src = getOrCreateFor<AliasClassLattice>(op, copySource);
   ValueOriginSet srcOrigins;
   if (src->isUndefined())
@@ -471,7 +394,7 @@ static void deserializePointsTo(
 
 void enzyme::DenseActivityAnnotationAnalysis::visitCallControlFlowTransfer(
     CallOpInterface call, dataflow::CallControlFlowAction action,
-    const ValueOriginsMap &before, ValueOriginsMap *after) {
+    const ForwardOriginsMap &before, ForwardOriginsMap *after) {
   join(after, before);
   if (action == dataflow::CallControlFlowAction::ExternalCallee) {
     auto symbol = dyn_cast<SymbolRefAttr>(call.getCallableForCallee());
@@ -509,7 +432,7 @@ static void traversePointsToSets(const enzyme::AliasClassSet &start,
 
 void enzyme::DenseActivityAnnotationAnalysis::processCallToSummarizedFunc(
     CallOpInterface call, const DenseMap<DistinctAttr, ValueOriginSet> &summary,
-    const ValueOriginsMap &before, ValueOriginsMap *after) {
+    const ForwardOriginsMap &before, ForwardOriginsMap *after) {
   // StringRef calleeName = cast<SymbolRefAttr>(call.getCallableForCallee())
   //                            .getLeafReference()
   //                            .getValue();
@@ -529,7 +452,7 @@ void enzyme::DenseActivityAnnotationAnalysis::processCallToSummarizedFunc(
     if (argClasses->isUndefined()) {
       // Not a pointer, use the sparse lattice state
       auto *sparseOrigins =
-          getOrCreateFor<ValueOriginsLattice>(call, argOperand);
+          getOrCreateFor<ForwardOriginsLattice>(call, argOperand);
       (void)argOrigins.join(sparseOrigins->getOriginsObject());
     } else {
       // Unify all the origins
@@ -590,8 +513,8 @@ void enzyme::DenseActivityAnnotationAnalysis::processCallToSummarizedFunc(
 void enzyme::DenseBackwardActivityAnnotationAnalysis::
     visitCallControlFlowTransfer(CallOpInterface call,
                                  dataflow::CallControlFlowAction action,
-                                 const BackwardValueOriginMap &after,
-                                 BackwardValueOriginMap *before) {
+                                 const BackwardOriginsMap &after,
+                                 BackwardOriginsMap *before) {
   meet(before, after);
   if (action == dataflow::CallControlFlowAction::ExternalCallee) {
     // TODO: deserialize state, infer transfer
@@ -599,7 +522,7 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::
 }
 
 void enzyme::DenseBackwardActivityAnnotationAnalysis::setToExitState(
-    BackwardValueOriginMap *lattice) {
+    BackwardOriginsMap *lattice) {
   auto *block = dyn_cast<Block *>(lattice->getPoint());
   if (!block)
     return;
@@ -625,8 +548,8 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::setToExitState(
 }
 
 void enzyme::DenseBackwardActivityAnnotationAnalysis::visitOperation(
-    Operation *op, const BackwardValueOriginMap &after,
-    BackwardValueOriginMap *before) {
+    Operation *op, const BackwardOriginsMap &after,
+    BackwardOriginsMap *before) {
   meet(before, after);
 
   if (isNoOp(op))
@@ -665,7 +588,7 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::visitOperation(
                   if (state == AliasClassSet::State::Unknown) {
                     return storedOrigins->markUnknown();
                   }
-                  return storedOrigins->join(after.getOrigins(alloc));
+                  return storedOrigins->merge(after.getOrigins(alloc));
                 }));
       } else if (storedClasses->isUnknown()) {
         propagateIfChanged(before, before->markAllOriginsUnknown());
@@ -758,17 +681,18 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
 
     // Create the overall summary by joining sets at all return sites.
     enzyme::PointsToSets p2sets(nullptr);
-    enzyme::ValueOriginsMap voMap(nullptr);
+    enzyme::ForwardOriginsMap voMap(nullptr);
     size_t numResults = node.getResultTypes().size();
-    SmallVector<enzyme::ValueOriginsLattice> returnOperandOrigins(
-        numResults, ValueOriginsLattice(nullptr));
+    SmallVector<enzyme::ForwardOriginsLattice> returnOperandOrigins(
+        numResults, ForwardOriginsLattice(nullptr));
     SmallVector<enzyme::AliasClassLattice> returnAliasClasses(
         numResults, AliasClassLattice(nullptr));
 
     for (Operation &op : node.getCallableRegion()->getOps()) {
       if (op.hasTrait<OpTrait::ReturnLike>()) {
         (void)p2sets.join(*solver.lookupState<enzyme::PointsToSets>(&op));
-        auto *returnOrigins = solver.lookupState<enzyme::ValueOriginsMap>(&op);
+        auto *returnOrigins =
+            solver.lookupState<enzyme::ForwardOriginsMap>(&op);
         if (returnOrigins)
           (void)voMap.join(*returnOrigins);
 
@@ -776,13 +700,14 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
           (void)returnAliasClasses[operand.getOperandNumber()].join(
               *solver.lookupState<enzyme::AliasClassLattice>(operand.get()));
           (void)returnOperandOrigins[operand.getOperandNumber()].join(
-              *solver.lookupState<enzyme::ValueOriginsLattice>(operand.get()));
+              *solver.lookupState<enzyme::ForwardOriginsLattice>(
+                  operand.get()));
         }
       }
     }
 
     auto *backwardDenseState =
-        solver.getOrCreateState<enzyme::BackwardValueOriginMap>(
+        solver.getOrCreateState<enzyme::BackwardOriginsMap>(
             &node.getCallableRegion()->front().front());
     os << "[debug] backward dense state:\n" << *backwardDenseState << "\n";
 
@@ -820,14 +745,14 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
         returnOperandOrigins.size());
     llvm::transform(
         returnOperandOrigins, serializedReturnOperandOrigins.begin(),
-        [ctx](enzyme::ValueOriginsLattice lattice) -> Attribute {
+        [ctx](enzyme::ForwardOriginsLattice lattice) -> Attribute {
           if (lattice.isUndefined())
             return StringAttr::get(ctx, "<undefined>");
           if (lattice.isUnknown())
             return StringAttr::get(ctx, "<unknown>");
           SmallVector<Attribute> originsVector(lattice.getOrigins().begin(),
                                                lattice.getOrigins().end());
-          llvm::sort(originsVector, sortKeys);
+          llvm::sort(originsVector, enzyme::sortAttributes);
           return ArrayAttr::get(ctx, originsVector);
         });
     node->setAttr(

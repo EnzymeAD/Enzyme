@@ -6,6 +6,13 @@
 namespace mlir {
 namespace enzyme {
 
+//===----------------------------------------------------------------------===//
+// SetLattice
+//
+// A data structure representing a set of elements with additional undefined
+// and unknown states.
+//===----------------------------------------------------------------------===//
+
 template <typename ValueT> class SetLattice {
 public:
   enum class State {
@@ -134,6 +141,180 @@ const SetLattice<ValueT> SetLattice<ValueT>::unknownSet =
 template <typename ValueT>
 const SetLattice<ValueT> SetLattice<ValueT>::undefinedSet =
     SetLattice<ValueT>(SetLattice<ValueT>::State::Undefined);
+
+//===----------------------------------------------------------------------===//
+// SparseSetLattice
+//===----------------------------------------------------------------------===//
+
+template <typename ValueT>
+class SparseSetLattice : public dataflow::AbstractSparseLattice {
+public:
+  using AbstractSparseLattice::AbstractSparseLattice;
+  SparseSetLattice(Value value, SetLattice<ValueT> &&elements)
+      : dataflow::AbstractSparseLattice(value), elements(std::move(elements)) {}
+
+  ChangeResult merge(const SetLattice<ValueT> &other) {
+    return elements.join(other);
+  }
+
+  ChangeResult insert(const DenseSet<ValueT> &newElements) {
+    return elements.insert(newElements);
+  }
+
+  ChangeResult markUnknown() { return elements.markUnknown(); }
+
+  bool isUnknown() const { return elements.isUnknown(); }
+
+  bool isUndefined() const { return elements.isUndefined(); }
+
+  const DenseSet<ValueT> &getElements() const { return elements.getElements(); }
+
+protected:
+  SetLattice<ValueT> elements;
+};
+
+//===----------------------------------------------------------------------===//
+// MapOfSetsLattice
+//===----------------------------------------------------------------------===//
+
+/// Used when serializing to ensure a consistent order.
+bool sortAttributes(Attribute a, Attribute b);
+
+template <typename KeyT, typename ElementT>
+class MapOfSetsLattice : public dataflow::AbstractDenseLattice {
+public:
+  using AbstractDenseLattice::AbstractDenseLattice;
+
+  Attribute serialize(MLIRContext *ctx) const {
+    return serializeMapOfSetsNaive(ctx);
+  }
+
+  ChangeResult join(const AbstractDenseLattice &other) {
+    const auto &rhs =
+        static_cast<const MapOfSetsLattice<KeyT, ElementT> &>(other);
+    llvm::SmallDenseSet<DistinctAttr> keys;
+    auto lhsRange = llvm::make_first_range(map);
+    auto rhsRange = llvm::make_first_range(rhs.map);
+    keys.insert(lhsRange.begin(), lhsRange.end());
+    keys.insert(rhsRange.begin(), rhsRange.end());
+
+    ChangeResult result = ChangeResult::NoChange;
+    for (DistinctAttr key : keys) {
+      auto lhsIt = map.find(key);
+      auto rhsIt = rhs.map.find(key);
+      assert(lhsIt != map.end() || rhsIt != rhs.map.end());
+
+      // If present in both, join.
+      if (lhsIt != map.end() && rhsIt != rhs.map.end()) {
+        result |= lhsIt->getSecond().join(rhsIt->getSecond());
+        continue;
+      }
+
+      // Copy from RHS if available only there.
+      if (lhsIt == map.end()) {
+        map.try_emplace(rhsIt->getFirst(), rhsIt->getSecond());
+        result = ChangeResult::Change;
+      }
+
+      // Do nothing if available only in LHS.
+    }
+    return result;
+  }
+
+  // TODO(jacob): switch over the alias class lattices to using these
+  /// Map all keys to all values.
+  //   ChangeResult insert(const SetLattice<KeyT> &keysToUpdate,
+  //                       const SetLattice<ElementT> &values) {
+  //     if (keysToUpdate.isUnknown())
+  //       return markAllUnknown();
+
+  //     if (keysToUpdate.isUndefined())
+  //       return ChangeResult::NoChange;
+
+  //     return keysToUpdate.foreachClass(
+  //         [&](DistinctAttr key, typename SetLattice<KeyT>::State state) {
+  //           assert(state == SetLattice<KeyT>::State::Defined &&
+  //                  "unknown must have been handled above");
+  //           return joinPotentiallyMissing(key, values);
+  //         });
+  //   }
+
+  ChangeResult insert(const AliasClassSet &keysToUpdate,
+                      const SetLattice<ElementT> &values) {
+    if (keysToUpdate.isUnknown())
+      return markAllUnknown();
+
+    if (keysToUpdate.isUndefined())
+      return ChangeResult::NoChange;
+
+    return keysToUpdate.foreachClass(
+        [&](DistinctAttr key, typename AliasClassSet::State state) {
+          assert(state == AliasClassSet::State::Defined &&
+                 "unknown must have been handled above");
+          return joinPotentiallyMissing(key, values);
+        });
+  }
+
+  ChangeResult markAllUnknown() {
+    ChangeResult result = ChangeResult::NoChange;
+    for (auto &it : map)
+      result |= it.getSecond().join(SetLattice<ElementT>::getUnknown());
+    return result;
+  }
+
+  ChangeResult joinPotentiallyMissing(KeyT key,
+                                      const SetLattice<ElementT> &value) {
+    // Don't store explicitly undefined values in the mapping, keys absent from
+    // the mapping are treated as implicitly undefined.
+    if (value.isUndefined())
+      return ChangeResult::NoChange;
+
+    bool inserted;
+    decltype(map.begin()) iterator;
+    std::tie(iterator, inserted) = map.try_emplace(key, value);
+    if (!inserted)
+      return iterator->second.join(value);
+    return ChangeResult::Change;
+  }
+
+  const SetLattice<ElementT> &lookup(KeyT key) const {
+    auto it = map.find(key);
+    if (it == map.end())
+      return SetLattice<ElementT>::getUndefined();
+    return it->getSecond();
+  }
+
+protected:
+  DenseMap<KeyT, SetLattice<ElementT>> map;
+
+private:
+  Attribute serializeMapOfSetsNaive(MLIRContext *ctx) const {
+    SmallVector<Attribute> pointsToArray;
+
+    for (const auto &[srcClass, destClasses] : map) {
+      SmallVector<Attribute, 2> pair = {srcClass};
+      SmallVector<Attribute, 5> aliasClasses;
+      if (destClasses.isUnknown()) {
+        aliasClasses.push_back(StringAttr::get(ctx, "unknown"));
+      } else if (destClasses.isUndefined()) {
+        aliasClasses.push_back(StringAttr::get(ctx, "undefined"));
+      } else {
+        for (const Attribute &destClass : destClasses.getElements()) {
+          aliasClasses.push_back(destClass);
+        }
+        llvm::sort(aliasClasses, sortAttributes);
+      }
+      pair.push_back(ArrayAttr::get(ctx, aliasClasses));
+      pointsToArray.push_back(ArrayAttr::get(ctx, pair));
+    }
+    llvm::sort(pointsToArray, [&](Attribute a, Attribute b) {
+      auto arrA = cast<ArrayAttr>(a);
+      auto arrB = cast<ArrayAttr>(b);
+      return sortAttributes(arrA[0], arrB[0]);
+    });
+    return ArrayAttr::get(ctx, pointsToArray);
+  }
+};
 
 } // namespace enzyme
 } // namespace mlir
