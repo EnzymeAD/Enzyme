@@ -67,6 +67,11 @@ static bool isFullyActive(Operation *op) {
              LLVM::ExtractValueOp, LLVM::BitcastOp>(op);
 }
 
+static bool isNoOp(Operation *op) {
+  return isa<LLVM::NoAliasScopeDeclOp, LLVM::LifetimeStartOp,
+             LLVM::LifetimeEndOp>(op);
+}
+
 void enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
     Operation *op, ArrayRef<const ValueOriginsLattice *> operands,
     ArrayRef<ValueOriginsLattice *> results) {
@@ -80,11 +85,7 @@ void enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
   }
 
   // Expected to be handled through the diff dependency interface
-  if (isPure(op))
-    return;
-
-  if (isa<LLVM::NoAliasScopeDeclOp, LLVM::LifetimeStartOp, LLVM::LifetimeEndOp>(
-          op))
+  if (isPure(op) || isNoOp(op))
     return;
 
   auto markResultsUnknown = [&]() {
@@ -157,7 +158,7 @@ void enzyme::BackwardActivityAnnotationAnalysis::visitOperation(
   }
 
   // Expected to be handled through the diff dependency interface
-  if (isPure(op))
+  if (isPure(op) || isNoOp(op))
     return;
 
   auto markOperandsUnknown = [&]() {
@@ -167,6 +168,10 @@ void enzyme::BackwardActivityAnnotationAnalysis::visitOperation(
   };
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!memory) {
+    return markOperandsUnknown();
+  }
+
   SmallVector<MemoryEffects::EffectInstance> effects;
   memory.getEffects(effects);
   for (const auto &effect : effects) {
@@ -363,8 +368,7 @@ void enzyme::DenseActivityAnnotationAnalysis::visitOperation(
     Operation *op, const ValueOriginsMap &before, ValueOriginsMap *after) {
   join(after, before);
 
-  if (isa<LLVM::NoAliasScopeDeclOp, LLVM::LifetimeStartOp, LLVM::LifetimeEndOp>(
-          op))
+  if (isNoOp(op))
     return;
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
@@ -487,6 +491,24 @@ void enzyme::DenseActivityAnnotationAnalysis::visitCallControlFlowTransfer(
   }
 }
 
+/// Visit everything transitively pointed-to by any pointer in start.
+static void traversePointsToSets(const enzyme::AliasClassSet &start,
+                                 const enzyme::PointsToSets &pointsToSets,
+                                 function_ref<void(DistinctAttr)> visit) {
+  using enzyme::AliasClassSet;
+  AliasClassSet current(start);
+  while (!current.isUndefined()) {
+    AliasClassSet next;
+
+    assert(!current.isUnknown() && "Unhandled traversal of unknown");
+    for (DistinctAttr currentClass : current.getAliasClasses()) {
+      visit(currentClass);
+      (void)next.join(pointsToSets.getPointsTo(currentClass));
+    }
+    std::swap(current, next);
+  }
+}
+
 void enzyme::DenseActivityAnnotationAnalysis::processCallToSummarizedFunc(
     CallOpInterface call, const DenseMap<DistinctAttr, ValueOriginSet> &summary,
     const ValueOriginsMap &before, ValueOriginsMap *after) {
@@ -515,15 +537,11 @@ void enzyme::DenseActivityAnnotationAnalysis::processCallToSummarizedFunc(
       // Unify all the origins
       // Since we're not keeping track of argument depth, we need to union the
       // arg origins with everything it points to.
-      AliasClassSet current = argClasses->getAliasClassesObject();
-      while (!current.isUndefined()) {
-        AliasClassSet next;
-        for (DistinctAttr currentClass : current.getAliasClasses()) {
-          (void)argOrigins.join(before.getOrigins(currentClass));
-          (void)next.join(p2sets->getPointsTo(currentClass));
-        }
-        std::swap(current, next);
-      }
+      traversePointsToSets(argClasses->getAliasClassesObject(), *p2sets,
+                           [&](DistinctAttr aliasClass) {
+                             (void)argOrigins.join(
+                                 before.getOrigins(aliasClass));
+                           });
     }
     argumentClasses.push_back(argClasses->getAliasClassesObject());
     argumentOrigins.push_back(argOrigins);
@@ -575,7 +593,12 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::
     visitCallControlFlowTransfer(CallOpInterface call,
                                  dataflow::CallControlFlowAction action,
                                  const BackwardValueOriginMap &after,
-                                 BackwardValueOriginMap *before) {}
+                                 BackwardValueOriginMap *before) {
+  meet(before, after);
+  if (action == dataflow::CallControlFlowAction::ExternalCallee) {
+    // TODO: deserialize state, infer transfer
+  }
+}
 
 void enzyme::DenseBackwardActivityAnnotationAnalysis::setToExitState(
     BackwardValueOriginMap *lattice) {
@@ -586,11 +609,19 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::setToExitState(
   auto funcOp = cast<FunctionOpInterface>(block->getParentOp());
   ChangeResult changed = ChangeResult::NoChange;
   for (BlockArgument arg : funcOp.getArguments()) {
+    auto *pointsToSets = getOrCreateFor<PointsToSets>(block, &funcOp.front());
     auto *argClass = getOrCreateFor<AliasClassLattice>(block, arg);
     auto origin = ArgumentOriginAttr::get(FlatSymbolRefAttr::get(funcOp),
                                           arg.getArgNumber());
-    changed |= lattice->insert(argClass->getAliasClassesObject(),
-                               ValueOriginSet(origin));
+
+    // Every pseudo alias class, including implicitly dereferenced classes,
+    // originates from that pointer argument.
+    traversePointsToSets(argClass->getAliasClassesObject(), *pointsToSets,
+                         [&](DistinctAttr currentClass) {
+                           changed |=
+                               lattice->insert(AliasClassSet(currentClass),
+                                               ValueOriginSet(origin));
+                         });
   }
   propagateIfChanged(lattice, changed);
 }
@@ -599,6 +630,9 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::visitOperation(
     Operation *op, const BackwardValueOriginMap &after,
     BackwardValueOriginMap *before) {
   meet(before, after);
+
+  if (isNoOp(op))
+    return;
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
@@ -734,14 +768,6 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
         numResults, AliasClassLattice(nullptr));
 
     for (Operation &op : node.getCallableRegion()->getOps()) {
-      if (op.hasAttr("debugme")) {
-        auto *fva =
-            solver.lookupState<enzyme::ValueOriginsLattice>(op.getResult(0));
-        auto *bva =
-            solver.lookupState<enzyme::BackwardOriginsLattice>(op.getResult(0));
-
-        os << "[debugme] fva: " << *fva << " bva: " << *bva << "\n";
-      }
       if (op.hasTrait<OpTrait::ReturnLike>()) {
         (void)p2sets.join(*solver.lookupState<enzyme::PointsToSets>(&op));
         auto *returnOrigins = solver.lookupState<enzyme::ValueOriginsMap>(&op);
@@ -758,16 +784,16 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
     }
 
     auto *backwardDenseState =
-        solver.lookupState<enzyme::BackwardValueOriginMap>(
+        solver.getOrCreateState<enzyme::BackwardValueOriginMap>(
             &node.getCallableRegion()->front().front());
     os << "[debug] backward dense state:\n" << *backwardDenseState << "\n";
 
-    for (BlockArgument arg : node.getCallableRegion()->getArguments()) {
-      auto *backwardState =
-          solver.getOrCreateState<enzyme::BackwardOriginsLattice>(arg);
-      os << "[debug] backward state for arg " << arg.getArgNumber() << ": "
-         << *backwardState << "\n";
-    }
+    // for (BlockArgument arg : node.getCallableRegion()->getArguments()) {
+    //   auto *backwardState =
+    //       solver.getOrCreateState<enzyme::BackwardOriginsLattice>(arg);
+    //   os << "[debug] backward state for arg " << arg.getArgNumber() << ": "
+    //      << *backwardState << "\n";
+    // }
 
     for (auto lattice : returnAliasClasses) {
       os << "[debug] return alias class: " << lattice << "\n";
