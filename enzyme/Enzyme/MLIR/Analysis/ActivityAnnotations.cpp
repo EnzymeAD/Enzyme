@@ -442,6 +442,7 @@ void enzyme::DenseActivityAnnotationAnalysis::processCopy(
                      after->insert(dest->getAliasClassesObject(), srcOrigins));
 }
 
+// TODO: rename from pointsto
 static void deserializePointsTo(
     ArrayAttr summaryAttr,
     DenseMap<DistinctAttr, enzyme::ValueOriginSet> &summaryMap) {
@@ -459,12 +460,9 @@ static void deserializePointsTo(
                "unrecognized points-to destination");
       }
     } else {
-      auto pointsTo = cast<ArrayAttr>(pair[1]).getAsRange<Attribute>();
-      // TODO: see if there's a nice way to convert the
-      // AliasClassSet::insert method to accept this iterator rather than
-      // constructing a DenseSet
+      auto pointsTo = cast<ArrayAttr>(pair[1]).getAsRange<enzyme::OriginAttr>();
       (void)pointsToSet.insert(
-          DenseSet<Attribute>(pointsTo.begin(), pointsTo.end()));
+          DenseSet<enzyme::OriginAttr>(pointsTo.begin(), pointsTo.end()));
     }
 
     summaryMap.insert({pointer, pointsToSet});

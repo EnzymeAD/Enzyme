@@ -14,7 +14,7 @@ class FunctionOpInterface;
 
 namespace enzyme {
 
-using ValueOriginSet = SetLattice<Attribute>;
+using ValueOriginSet = SetLattice<OriginAttr>;
 
 //===----------------------------------------------------------------------===//
 // ValueOriginsLattice
@@ -26,7 +26,7 @@ public:
   ValueOriginsLattice(Value value, ValueOriginSet &&origins)
       : dataflow::AbstractSparseLattice(value), origins(std::move(origins)) {}
 
-  static ValueOriginsLattice single(Value point, Attribute value) {
+  static ValueOriginsLattice single(Value point, OriginAttr value) {
     return ValueOriginsLattice(point, ValueOriginSet(value));
   }
 
@@ -36,7 +36,7 @@ public:
 
   ChangeResult join(const ValueOriginSet &other) { return origins.join(other); }
 
-  ChangeResult insert(const DenseSet<Attribute> &classes) {
+  ChangeResult insert(const DenseSet<OriginAttr> &classes) {
     return origins.insert(classes);
   }
 
@@ -46,7 +46,7 @@ public:
 
   bool isUndefined() const { return origins.isUndefined(); }
 
-  const DenseSet<Attribute> &getOrigins() const {
+  const DenseSet<OriginAttr> &getOrigins() const {
     return origins.getElements();
   }
 

@@ -51,7 +51,11 @@ def PseudoAliasClassAttr : Enzyme_Attr<"PseudoAliasClass", "pseudoclass"> {
   let assemblyFormat = "`<` $function `(` $argNumber `,` $depth `)` `>`";
 }
 
-def ArgumentOriginAttr : Enzyme_Attr<"ArgumentOrigin", "argorigin"> {
+def OriginAttrInterface : AttrInterface<"OriginAttr"> {
+  let cppNamespace = "::mlir::enzyme";
+}
+
+def ArgumentOriginAttr : Enzyme_Attr<"ArgumentOrigin", "argorigin", [OriginAttrInterface]> {
   let summary = "An argument origin is a unique way of referring to a function argument.";
 
   let parameters = (ins
@@ -69,7 +73,7 @@ def ArgumentOriginAttr : Enzyme_Attr<"ArgumentOrigin", "argorigin"> {
   let assemblyFormat = "`<` $function `(` $argNumber `)` `>`";
 }
 
-def ReturnOriginAttr : Enzyme_Attr<"ReturnOrigin", "retorigin"> {
+def ReturnOriginAttr : Enzyme_Attr<"ReturnOrigin", "retorigin", [OriginAttrInterface]> {
   let summary = "A return origin is a unique way of referring to a return value.";
 
   let parameters = (ins
