@@ -1,5 +1,5 @@
 // available ubuntu versions: [20, 22]
-// available llvm versions: [9, 10, 11, 12, 13, 14, 15]
+// available llvm versions: [11, 12, 13, 14, 15, 16, 17, 18]
 {
     "name": "Enzyme",
     "image": "ghcr.io/enzymead/enzyme-dev-docker/ubuntu-22-llvm-16:latest",
@@ -14,7 +14,9 @@
     "customizations": {
         "vscode": {
             "extensions": [
-                "ms-vscode.cpptools-extension-pack"
+                "llvm-vs-code-extensions.vscode-clangd",
+                "BazelBuild.vscode-bazel",
+                "twxs.cmake"
             ]
         }
     }
