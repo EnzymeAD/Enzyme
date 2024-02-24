@@ -17,12 +17,6 @@
 
 using namespace mlir;
 
-raw_ostream &enzyme::operator<<(raw_ostream &os,
-                                const enzyme::AliasClassSet &aliasClassSet) {
-  aliasClassSet.print(os);
-  return os;
-}
-
 template <typename ValueT>
 void printSetLattice(const enzyme::SparseSetLattice<ValueT> &setLattice,
                      raw_ostream &os) {
@@ -422,7 +416,7 @@ static void traversePointsToSets(const enzyme::AliasClassSet &start,
     AliasClassSet next;
 
     assert(!current.isUnknown() && "Unhandled traversal of unknown");
-    for (DistinctAttr currentClass : current.getAliasClasses()) {
+    for (DistinctAttr currentClass : current.getElements()) {
       visit(currentClass);
       (void)next.join(pointsToSets.getPointsTo(currentClass));
     }
@@ -495,7 +489,7 @@ void enzyme::DenseActivityAnnotationAnalysis::processCallToSummarizedFunc(
           // signifies reading from uninitialized memory.
           return;
         }
-        for (DistinctAttr currentClass : current.getAliasClasses())
+        for (DistinctAttr currentClass : current.getElements())
           (void)next.join(p2sets->getPointsTo(currentClass));
         std::swap(current, next);
         depth--;
@@ -580,7 +574,7 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::visitOperation(
         auto *storedOrigins = getOrCreate<BackwardOriginsLattice>(*stored);
         propagateIfChanged(
             storedOrigins,
-            addressClasses->getAliasClassesObject().foreachClass(
+            addressClasses->getAliasClassesObject().foreachElement(
                 [&](DistinctAttr alloc, AliasClassSet::State state) {
                   if (state == AliasClassSet::State::Undefined) {
                     return ChangeResult::NoChange;

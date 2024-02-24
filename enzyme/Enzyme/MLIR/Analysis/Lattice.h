@@ -1,6 +1,32 @@
+//===- Lattice.h - Declaration of common dataflow lattices ----------------===//
+//
+//                             Enzyme Project
+//
+// Part of the Enzyme Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+// If using this code in an academic setting, please cite the following:
+// @incollection{enzymeNeurips,
+// title = {Instead of Rewriting Foreign Code for Machine Learning,
+//          Automatically Synthesize Fast Gradients},
+// author = {Moses, William S. and Churavy, Valentin},
+// booktitle = {Advances in Neural Information Processing Systems 33},
+// year = {2020},
+// note = {To appear in},
+// }
+//
+//===----------------------------------------------------------------------===//
+//
+// This file contains the declaration of reusable lattices in dataflow analyses.
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef ENZYME_MLIR_ANALYSIS_DATAFLOW_LATTICE_H
 #define ENZYME_MLIR_ANALYSIS_DATAFLOW_LATTICE_H
 
+#include "mlir/Analysis/DataFlow/DenseAnalysis.h"
+#include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Analysis/DataFlowFramework.h"
 
 namespace mlir {
@@ -9,8 +35,9 @@ namespace enzyme {
 //===----------------------------------------------------------------------===//
 // SetLattice
 //
-// A data structure representing a set of elements with additional undefined
-// and unknown states.
+// A data structure representing a set of elements. It may be undefined, meaning
+// the analysis has no information about it, or unknown, meaning the analysis
+// has conservatively assumed it could contain anything.
 //===----------------------------------------------------------------------===//
 
 template <typename ValueT> class SetLattice {
@@ -18,7 +45,7 @@ public:
   enum class State {
     Undefined, ///< Has not been analyzed yet (lattice bottom).
     Defined,   ///< Has specific elements.
-    Unknown    ///< Analyzed and may point to any class (lattice top).
+    Unknown    ///< Analyzed and may contain anything (lattice top).
   };
 
   SetLattice() : state(State::Undefined) {}
@@ -75,9 +102,11 @@ public:
   /// Returns true if this set is in the canonical form, i.e. either the state
   /// is `State::Defined` or the explicit list of classes is empty, but not
   /// both.
-  bool isCanonical() const;
+  bool isCanonical() const {
+    return state == State::Defined || elements.empty();
+  }
 
-  /// Returns an instance of SetLattice known not to have no elements.
+  /// Returns an instance of SetLattice known not to have any elements.
   /// This is different from "undefined" and "unknown". The instance is *not* a
   /// classical singleton.
   static const SetLattice<ValueT> &getEmpty() {
@@ -85,11 +114,10 @@ public:
     return empty;
   }
 
-  /// Returns an instance of SetLattice in "undefined" state, i.e. without a
-  /// set of elements. This is different from empty alias set, which
-  /// indicates that the value is known not to alias with any alias class. The
-  /// instance is *not* a classical singleton, there are other ways of obtaining
-  /// it.
+  /// Returns an instance of SetLattice in "undefined" state, i.e. without a set
+  /// of elements. This is different from empty set, which indicates that the
+  /// set is known not to contain any elements. The instance is *not* a
+  /// classical singleton, there are other ways of obtaining it.
   static const SetLattice<ValueT> &getUndefined() { return undefinedSet; }
 
   /// Returns an instance of SetLattice for the "unknown" class. The instance
@@ -97,10 +125,10 @@ public:
   /// "unknown" alias set.
   static const SetLattice<ValueT> &getUnknown() { return unknownSet; }
 
-  bool operator==(const SetLattice<ValueT> &other) const;
-
-  friend raw_ostream &operator<<(raw_ostream &os,
-                                 const SetLattice<ValueT> &setLattice);
+  bool operator==(const SetLattice<ValueT> &other) const {
+    assert(isCanonical() && other.isCanonical());
+    return state == other.state && llvm::equal(elements, other.elements);
+  }
 
   void print(llvm::raw_ostream &os) const {
     if (isUnknown()) {
@@ -113,8 +141,16 @@ public:
     }
   }
 
-  ChangeResult foreach (
-      function_ref<ChangeResult(ValueT, State)> callback) const;
+  ChangeResult
+  foreachElement(function_ref<ChangeResult(ValueT, State)> callback) const {
+    if (state != State::Defined)
+      return callback(nullptr, state);
+
+    ChangeResult result = ChangeResult::NoChange;
+    for (ValueT element : elements)
+      result |= callback(element, state);
+    return result;
+  }
 
 private:
   explicit SetLattice(State state) : state(state) {}
@@ -144,6 +180,8 @@ const SetLattice<ValueT> SetLattice<ValueT>::undefinedSet =
 
 //===----------------------------------------------------------------------===//
 // SparseSetLattice
+//
+// An abstract lattice for sparse analyses that wraps a set lattice.
 //===----------------------------------------------------------------------===//
 
 template <typename ValueT>
@@ -223,23 +261,7 @@ public:
 
   // TODO(jacob): switch over the alias class lattices to using these
   /// Map all keys to all values.
-  //   ChangeResult insert(const SetLattice<KeyT> &keysToUpdate,
-  //                       const SetLattice<ElementT> &values) {
-  //     if (keysToUpdate.isUnknown())
-  //       return markAllUnknown();
-
-  //     if (keysToUpdate.isUndefined())
-  //       return ChangeResult::NoChange;
-
-  //     return keysToUpdate.foreachClass(
-  //         [&](DistinctAttr key, typename SetLattice<KeyT>::State state) {
-  //           assert(state == SetLattice<KeyT>::State::Defined &&
-  //                  "unknown must have been handled above");
-  //           return joinPotentiallyMissing(key, values);
-  //         });
-  //   }
-
-  ChangeResult insert(const AliasClassSet &keysToUpdate,
+  ChangeResult insert(const SetLattice<KeyT> &keysToUpdate,
                       const SetLattice<ElementT> &values) {
     if (keysToUpdate.isUnknown())
       return markAllUnknown();
@@ -247,9 +269,9 @@ public:
     if (keysToUpdate.isUndefined())
       return ChangeResult::NoChange;
 
-    return keysToUpdate.foreachClass(
-        [&](DistinctAttr key, typename AliasClassSet::State state) {
-          assert(state == AliasClassSet::State::Defined &&
+    return keysToUpdate.foreachElement(
+        [&](DistinctAttr key, typename SetLattice<KeyT>::State state) {
+          assert(state == SetLattice<KeyT>::State::Defined &&
                  "unknown must have been handled above");
           return joinPotentiallyMissing(key, values);
         });
@@ -319,4 +341,4 @@ private:
 } // namespace enzyme
 } // namespace mlir
 
-#endif
+#endif // ENZYME_MLIR_ANALYSIS_DATAFLOW_LATTICE_H

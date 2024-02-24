@@ -26,6 +26,8 @@
 #ifndef ENZYME_MLIR_ANALYSIS_DATAFLOW_ALIASANALYSIS_H
 #define ENZYME_MLIR_ANALYSIS_DATAFLOW_ALIASANALYSIS_H
 
+#include "Lattice.h"
+
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
@@ -42,88 +44,7 @@ namespace enzyme {
 /// marked as "unknown", which is a conservative pessimistic state, or as
 /// "undefined", which is a "not-yet-analyzed" initial state. Undefined state is
 /// different from an empty alias set.
-class AliasClassSet {
-public:
-  enum class State {
-    Undefined, ///< Has not been analyzed yet (lattice bottom).
-    Defined,   ///< Has specific alias classes.
-    Unknown    ///< Analyzed and may point to any class (lattice top).
-  };
-
-  AliasClassSet() : state(State::Undefined) {}
-
-  AliasClassSet(DistinctAttr single) : state(State::Defined) {
-    aliasClasses.insert(single);
-  }
-
-  // TODO(zinenko): deprecate this and use a visitor instead.
-  DenseSet<DistinctAttr> &getAliasClasses() {
-    assert(state == State::Defined);
-    return aliasClasses;
-  }
-  const DenseSet<DistinctAttr> &getAliasClasses() const {
-    return const_cast<AliasClassSet *>(this)->getAliasClasses();
-  }
-
-  bool isUnknown() const { return state == State::Unknown; }
-  bool isUndefined() const { return state == State::Undefined; }
-
-  ChangeResult join(const AliasClassSet &other);
-  ChangeResult insert(const DenseSet<DistinctAttr> &classes);
-  ChangeResult markUnknown();
-
-  /// Returns true if this set is in the canonical form, i.e. either the state
-  /// is `State::Defined` or the explicit list of classes is empty, but not
-  /// both.
-  bool isCanonical() const;
-
-  /// Returns an instance of AliasClassSet known not to alias with anything.
-  /// This is different from "undefined" and "unknown". The instance is *not* a
-  /// classical singleton.
-  static const AliasClassSet &getEmpty() {
-    static const AliasClassSet empty(State::Defined);
-    return empty;
-  }
-
-  /// Returns an instance of AliasClassSet in "undefined" state, i.e. without a
-  /// set of alias classes. This is different from empty alias set, which
-  /// indicates that the value is known not to alias with any alias class. The
-  /// instance is *not* a classical singleton, there are other ways of obtaining
-  /// it.
-  static const AliasClassSet &getUndefined() { return undefinedSet; }
-
-  /// Returns an instance of AliasClassSet for the "unknown" class. The instance
-  /// is *not* a classical singleton, there are other ways of obtaining an
-  /// "unknown" alias set.
-  static const AliasClassSet &getUnknown() { return unknownSet; }
-
-  bool operator==(const AliasClassSet &other) const;
-
-  friend raw_ostream &operator<<(raw_ostream &os,
-                                 const AliasClassSet &aliasClassSet);
-
-  void print(llvm::raw_ostream &os) const;
-
-  ChangeResult
-  foreachClass(function_ref<ChangeResult(DistinctAttr, State)> callback) const;
-
-private:
-  explicit AliasClassSet(State state) : state(state) {}
-
-  ChangeResult updateStateToDefined() {
-    assert(state != State::Unknown && "cannot go back from unknown state");
-    ChangeResult result = state == State::Undefined ? ChangeResult::Change
-                                                    : ChangeResult::NoChange;
-    state = State::Defined;
-    return result;
-  }
-
-  const static AliasClassSet unknownSet;
-  const static AliasClassSet undefinedSet;
-
-  DenseSet<DistinctAttr> aliasClasses;
-  State state;
-};
+using AliasClassSet = SetLattice<DistinctAttr>;
 
 //===----------------------------------------------------------------------===//
 // OriginalClasses
@@ -309,12 +230,9 @@ private:
 // AliasClassLattice
 //===----------------------------------------------------------------------===//
 
-class AliasClassLattice : public dataflow::AbstractSparseLattice {
+class AliasClassLattice : public SparseSetLattice<DistinctAttr> {
 public:
-  using AbstractSparseLattice::AbstractSparseLattice;
-  AliasClassLattice(Value value, AliasClassSet &&classes)
-      : dataflow::AbstractSparseLattice(value),
-        aliasClasses(std::move(classes)) {}
+  using SparseSetLattice::SparseSetLattice;
 
   void print(raw_ostream &os) const override;
 
@@ -322,31 +240,15 @@ public:
 
   ChangeResult join(const AbstractSparseLattice &other) override;
 
-  ChangeResult insert(const DenseSet<DistinctAttr> &classes) {
-    return aliasClasses.insert(classes);
-  }
-
   static AliasClassLattice single(Value point, DistinctAttr value) {
     return AliasClassLattice(point, AliasClassSet(value));
   }
 
-  ChangeResult markUnknown() { return aliasClasses.markUnknown(); }
-
-  // ChangeResult reset() { return aliasClasses.reset(); }
-
-  /// We don't know anything about the aliasing of this value.
-  bool isUnknown() const { return aliasClasses.isUnknown(); }
-
-  bool isUndefined() const { return aliasClasses.isUndefined(); }
-
   const DenseSet<DistinctAttr> &getAliasClasses() const {
-    return aliasClasses.getAliasClasses();
+    return elements.getElements();
   }
 
-  const AliasClassSet &getAliasClassesObject() const { return aliasClasses; }
-
-private:
-  AliasClassSet aliasClasses;
+  const AliasClassSet &getAliasClassesObject() const { return elements; }
 };
 
 //===----------------------------------------------------------------------===//

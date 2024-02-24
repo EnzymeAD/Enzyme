@@ -492,7 +492,7 @@ std::optional<Value> getCopySource(Operation *op) {
 /// If the classes are undefined, the callback will not be called at all.
 void forEachAliasedAlloc(const AliasClassLattice *ptrAliasClass,
                          function_ref<void(DistinctAttr)> forEachFn) {
-  (void)ptrAliasClass->getAliasClassesObject().foreachClass(
+  (void)ptrAliasClass->getAliasClassesObject().foreachElement(
       [&](DistinctAttr alloc, enzyme::AliasClassSet::State state) {
         if (state != enzyme::AliasClassSet::State::Undefined)
           forEachFn(alloc);
@@ -638,7 +638,7 @@ public:
           continue;
         auto *argAliasClasses = getOrCreateFor<AliasClassLattice>(block, arg);
         ChangeResult changed =
-            argAliasClasses->getAliasClassesObject().foreachClass(
+            argAliasClasses->getAliasClassesObject().foreachElement(
                 [lattice](DistinctAttr argAliasClass,
                           enzyme::AliasClassSet::State state) {
                   if (state == enzyme::AliasClassSet::State::Undefined)
@@ -689,7 +689,7 @@ public:
         }
         auto *argAliasClasses = getOrCreateFor<AliasClassLattice>(op, arg);
         ChangeResult changed =
-            argAliasClasses->getAliasClassesObject().foreachClass(
+            argAliasClasses->getAliasClassesObject().foreachElement(
                 [before](DistinctAttr argAliasClass,
                          enzyme::AliasClassSet::State state) {
                   if (state == enzyme::AliasClassSet::State::Undefined)
@@ -705,7 +705,7 @@ public:
           auto *retAliasClasses =
               getOrCreateFor<AliasClassLattice>(op, operand);
           ChangeResult changed =
-              retAliasClasses->getAliasClassesObject().foreachClass(
+              retAliasClasses->getAliasClassesObject().foreachElement(
                   [before](DistinctAttr retAliasClass,
                            enzyme::AliasClassSet::State state) {
                     if (state == enzyme::AliasClassSet::State::Undefined)
@@ -856,7 +856,7 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
       std::deque<DistinctAttr> frontier;
       DenseSet<DistinctAttr> visited;
       auto scheduleVisit = [&](const enzyme::AliasClassSet &aliasClasses) {
-        (void)aliasClasses.foreachClass(
+        (void)aliasClasses.foreachElement(
             [&](DistinctAttr neighbor, enzyme::AliasClassSet::State state) {
               assert(neighbor &&
                      "unhandled undefined/unknown case before visit");
