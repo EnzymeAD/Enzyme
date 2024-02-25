@@ -1,7 +1,7 @@
 // RUN: %eopt --print-activity-analysis='use-annotations' --split-input-file %s | FileCheck %s
 
 // CHECK-LABEL: processing function @load_nested
-// CHECK: value origin summary:
+// CHECK: forward value origins:
 // CHECK:      distinct[0]<#enzyme.pseudoclass<@load_nested(1, 0)>> originates from [#enzyme.argorigin<@load_nested(0)>, #enzyme.argorigin<@load_nested(1)>]
 func.func @load_nested(%arg0: !llvm.ptr, %arg1: !llvm.ptr) {
   %data = llvm.load %arg0 : !llvm.ptr -> !llvm.ptr
@@ -14,7 +14,7 @@ func.func @load_nested(%arg0: !llvm.ptr, %arg1: !llvm.ptr) {
 // means we need to union the origins of %alloc with everything %alloc points to
 // (%inner in this case)
 // CHECK-LABEL: processing function @pass_pointer_to
-// CHECK: value origin summary:
+// CHECK: forward value origins:
 // CHECK:      distinct[0]<#enzyme.pseudoclass<@pass_pointer_to(2, 0)>> originates from [#enzyme.argorigin<@pass_pointer_to(0)>, #enzyme.argorigin<@pass_pointer_to(1)>, #enzyme.argorigin<@pass_pointer_to(2)>]
 func.func @pass_pointer_to(%arg0: f64, %alloc: !llvm.ptr, %out: !llvm.ptr) {
   %one = llvm.mlir.constant (1) : i64

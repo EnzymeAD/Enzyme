@@ -17,6 +17,8 @@
 
 using namespace mlir;
 
+static StringRef getActivityAnnotationAttrName() { return "activedeps"; }
+
 template <typename ValueT>
 void printSetLattice(const enzyme::SparseSetLattice<ValueT> &setLattice,
                      raw_ostream &os) {
@@ -397,7 +399,8 @@ void enzyme::DenseActivityAnnotationAnalysis::visitCallControlFlowTransfer(
 
     if (auto callee = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
             call, symbol.getLeafReference())) {
-      if (auto summaryAttr = callee->getAttrOfType<ArrayAttr>("activedeps")) {
+      if (auto summaryAttr = callee->getAttrOfType<ArrayAttr>(
+              getActivityAnnotationAttrName())) {
         DenseMap<DistinctAttr, ValueOriginSet> summary;
         deserializePointsTo(summaryAttr, summary);
         return processCallToSummarizedFunc(call, summary, before, after);
@@ -524,13 +527,14 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::setToExitState(
   auto funcOp = cast<FunctionOpInterface>(block->getParentOp());
   ChangeResult changed = ChangeResult::NoChange;
   for (BlockArgument arg : funcOp.getArguments()) {
-    auto *pointsToSets = getOrCreateFor<PointsToSets>(block, &funcOp.front());
+    auto *pointsToSets =
+        getOrCreateFor<PointsToSets>(block, block->getTerminator());
     auto *argClass = getOrCreateFor<AliasClassLattice>(block, arg);
     auto origin = ArgumentOriginAttr::get(FlatSymbolRefAttr::get(funcOp),
                                           arg.getArgNumber());
 
-    // Every pseudo alias class, including implicitly dereferenced classes,
-    // originates from that pointer argument.
+    // Everything that a pointer argument may point to originates from that
+    // pointer argument.
     traversePointsToSets(argClass->getAliasClassesObject(), *pointsToSets,
                          [&](DistinctAttr currentClass) {
                            changed |=
@@ -551,7 +555,6 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::visitOperation(
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
-    // TODO: handle known no-op ops (noalias scope, lifetime)
     return propagateIfChanged(before, before->markAllOriginsUnknown());
   }
 
@@ -586,6 +589,9 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::visitOperation(
                 }));
       } else if (storedClasses->isUnknown()) {
         propagateIfChanged(before, before->markAllOriginsUnknown());
+      } else {
+        // Capturing stores are handled via the points-to relationship in
+        // setToExitState.
       }
     }
   }
@@ -700,11 +706,6 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
       }
     }
 
-    auto *backwardDenseState =
-        solver.getOrCreateState<enzyme::BackwardOriginsMap>(
-            &node.getCallableRegion()->front().front());
-    os << "[debug] backward dense state:\n" << *backwardDenseState << "\n";
-
     // for (BlockArgument arg : node.getCallableRegion()->getArguments()) {
     //   auto *backwardState =
     //       solver.getOrCreateState<enzyme::BackwardOriginsLattice>(arg);
@@ -726,11 +727,23 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
       os << "     " << pair[0] << " -> " << pair[1] << "\n";
     }
 
-    node->setAttr("activedeps", voMap.serialize(node.getContext()));
-    os << "[ata] value origin summary:\n";
+    node->setAttr(getActivityAnnotationAttrName(),
+                  voMap.serialize(node.getContext()));
+    os << "[ata] forward value origins:\n";
     for (ArrayAttr pair :
-         node->getAttrOfType<ArrayAttr>("activedeps").getAsRange<ArrayAttr>()) {
+         node->getAttrOfType<ArrayAttr>(getActivityAnnotationAttrName())
+             .getAsRange<ArrayAttr>()) {
       os << "     " << pair[0] << " originates from " << pair[1] << "\n";
+    }
+
+    auto *backwardOriginMap =
+        solver.getOrCreateState<enzyme::BackwardOriginsMap>(
+            &node.getCallableRegion()->front().front());
+    Attribute backwardOrigins = backwardOriginMap->serialize(node.getContext());
+    os << "[ata] backward value origins:\n";
+    for (ArrayAttr pair :
+         cast<ArrayAttr>(backwardOrigins).getAsRange<ArrayAttr>()) {
+      os << "     " << pair[0] << " goes to " << pair[1] << "\n";
     }
 
     // Serialize return origins
