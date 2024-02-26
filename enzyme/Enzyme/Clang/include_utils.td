@@ -117,7 +117,7 @@ namespace enzyme {
         template <class return_type, class Tuple, std::size_t... I>
         __attribute__((always_inline))
         constexpr decltype(auto) apply_impl(void* f, Tuple&& t, std::index_sequence<I...>) {
-            return __enzyme_autodiff<return_type>(f, enzyme::get<I>(std::forward<Tuple>(t))...);
+            return __enzyme_autodiff<return_type>(f, enzyme::get<I>(impl::forward<Tuple>(t))...);
         }
     }  // namespace detail 
 
@@ -125,14 +125,14 @@ namespace enzyme {
     __attribute__((always_inline))
     auto autodiff_impl(function && f, enzyme::tuple< enz_arg_types ... > && arg_tup) {
       using Tuple = enzyme::tuple< enz_arg_types ... >;
-      return detail::apply_impl<return_type>((void*)f, std::forward<Tuple>(arg_tup), std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{});
+      return detail::apply_impl<return_type>((void*)f, impl::forward<Tuple>(arg_tup), std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{});
     }
 
     template < typename function, typename ... arg_types>
     __attribute__((always_inline))
     auto autodiff(function && f, arg_types && ... args) {
         using return_type = typename autodiff_return<arg_types...>::type;
-        return autodiff_impl<return_type, function>(std::forward<function>(f), enzyme::tuple_cat(expand_args(args)...));
+        return autodiff_impl<return_type, function>(impl::forward<function>(f), enzyme::tuple_cat(expand_args(args)...));
     }
 }
 }]>;
@@ -157,6 +157,30 @@ struct remove_cvref {
 
 template < typename T >
 using remove_cvref_t = typename remove_cvref<T>::type;
+
+namespace impl {
+  template<typename _Tp>
+    __attribute__((always_inline))
+    constexpr _Tp&&
+    forward(typename std::remove_reference<_Tp>::type& __t) noexcept
+    { return static_cast<_Tp&&>(__t); }
+
+  /**
+   *  @brief  Forward an rvalue.
+   *  @return The parameter cast to the specified type.
+   *
+   *  This function is used to implement "perfect forwarding".
+   */
+  template<typename _Tp>
+    __attribute__((always_inline))
+    constexpr _Tp&&
+    forward(typename std::remove_reference<_Tp>::type&& __t) noexcept
+    {
+      static_assert(!std::is_lvalue_reference<_Tp>::value,
+	  "enzyme::impl::forward must not be used to convert an rvalue to an lvalue");
+      return static_cast<_Tp&&>(__t);
+    }
+}
 
 }
 }]>;
@@ -209,6 +233,7 @@ template <typename... T>
 struct tuple : public tuple_base<std::make_integer_sequence<int, sizeof...(T)>, T...> {};
 
 template <typename... T>
+__attribute__((always_inline))
 tuple(T ...) -> tuple<T...>;
 
 template < int i, typename Tuple >
@@ -267,7 +292,7 @@ struct make_tuple_from_fwd_tuple<std::index_sequence<indices...>> {
   template <typename FWD_TUPLE>
   __attribute__((always_inline))
   static constexpr auto f(FWD_TUPLE&& fwd) {
-    return tuple{get<indices>(forward<FWD_TUPLE>(fwd))...};
+    return tuple{get<indices>(impl::forward<FWD_TUPLE>(fwd))...};
   }
 };
 
@@ -282,20 +307,20 @@ struct concat_with_fwd_tuple<std::index_sequence<fwd_indices...>, std::index_seq
   template <typename FWD_TUPLE, typename TUPLE>
   __attribute__((always_inline))
   static constexpr auto f(FWD_TUPLE&& fwd, TUPLE&& t) {
-    return forward_as_tuple(get<fwd_indices>(forward<FWD_TUPLE>(fwd))..., get<indices>(std::forward<TUPLE>(t))...);
+    return forward_as_tuple(get<fwd_indices>(impl::forward<FWD_TUPLE>(fwd))..., get<indices>(impl::forward<TUPLE>(t))...);
   }
 };
 
 template <typename Tuple>
 __attribute__((always_inline))
 static constexpr auto tuple_cat(Tuple&& ret) {
-  return make_tuple_from_fwd_tuple< iseq< Tuple > >::f(forward< Tuple >(ret));
+  return make_tuple_from_fwd_tuple< iseq< Tuple > >::f(impl::forward< Tuple >(ret));
 }
 
 template <typename FWD_TUPLE, typename first, typename... rest>
 __attribute__((always_inline))
 static constexpr auto tuple_cat(FWD_TUPLE&& fwd, first&& t, rest&&... ts) {
-  return tuple_cat(concat_with_fwd_tuple< iseq<FWD_TUPLE>, iseq<first> >::f(forward<FWD_TUPLE>(fwd), std::forward<first>(t)), std::forward<rest>(ts)...);
+  return tuple_cat(concat_with_fwd_tuple< iseq<FWD_TUPLE>, iseq<first> >::f(impl::forward<FWD_TUPLE>(fwd), impl::forward<first>(t)), impl::forward<rest>(ts)...);
 }
 
 }  // namespace impl
@@ -303,7 +328,7 @@ static constexpr auto tuple_cat(FWD_TUPLE&& fwd, first&& t, rest&&... ts) {
 template <typename... Tuples>
 __attribute__((always_inline))
 constexpr auto tuple_cat(Tuples&&... tuples) {
-  return impl::tuple_cat(std::forward<Tuples>(tuples)...);
+  return impl::tuple_cat(impl::forward<Tuples>(tuples)...);
 }
 
 } // namespace enzyme

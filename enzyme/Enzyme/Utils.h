@@ -1248,6 +1248,8 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
 
 llvm::Function *GetFunctionFromValue(llvm::Value *fn);
 
+llvm::Value *simplifyLoad(llvm::Value *LI, size_t valSz = 0);
+
 static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
   auto F = getFunctionFromCall(CI);
   auto funcName = getFuncNameFromCall(CI);
