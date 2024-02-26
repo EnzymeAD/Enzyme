@@ -890,7 +890,6 @@ void enzyme::AliasAnalysis::setToEntryState(AliasClassLattice *lattice) {
           }
           DistinctAttr argClass =
               originalClasses.getOriginalClass(lattice->getPoint(), debugLabel);
-          funcOp.setArgAttr(arg.getArgNumber(), "enzyme.origin", argClass);
           return propagateIfChanged(lattice,
                                     lattice->join(AliasClassLattice::single(
                                         lattice->getPoint(), argClass)));

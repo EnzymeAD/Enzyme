@@ -178,6 +178,9 @@ template <typename ValueT>
 const SetLattice<ValueT> SetLattice<ValueT>::undefinedSet =
     SetLattice<ValueT>(SetLattice<ValueT>::State::Undefined);
 
+/// Used when serializing to ensure a consistent order.
+bool sortAttributes(Attribute a, Attribute b);
+
 //===----------------------------------------------------------------------===//
 // SparseSetLattice
 //
@@ -190,6 +193,8 @@ public:
   using AbstractSparseLattice::AbstractSparseLattice;
   SparseSetLattice(Value value, SetLattice<ValueT> &&elements)
       : dataflow::AbstractSparseLattice(value), elements(std::move(elements)) {}
+
+  Attribute serialize(MLIRContext *ctx) { return serializeSetNaive(ctx); }
 
   ChangeResult merge(const SetLattice<ValueT> &other) {
     return elements.join(other);
@@ -209,14 +214,25 @@ public:
 
 protected:
   SetLattice<ValueT> elements;
+
+private:
+  Attribute serializeSetNaive(MLIRContext *ctx) {
+    if (elements.isUndefined())
+      return StringAttr::get(ctx, "<undefined>");
+    if (elements.isUnknown())
+      return StringAttr::get(ctx, "<unknown>");
+    SmallVector<Attribute> elementsVec;
+    for (Attribute element : elements.getElements()) {
+      elementsVec.push_back(element);
+    }
+    llvm::sort(elementsVec, sortAttributes);
+    return ArrayAttr::get(ctx, elementsVec);
+  }
 };
 
 //===----------------------------------------------------------------------===//
 // MapOfSetsLattice
 //===----------------------------------------------------------------------===//
-
-/// Used when serializing to ensure a consistent order.
-bool sortAttributes(Attribute a, Attribute b);
 
 template <typename KeyT, typename ElementT>
 class MapOfSetsLattice : public dataflow::AbstractDenseLattice {

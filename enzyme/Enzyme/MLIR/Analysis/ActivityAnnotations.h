@@ -189,6 +189,15 @@ public:
                                     BackwardOriginsMap *before) override;
 
   void setToExitState(BackwardOriginsMap *lattice) override;
+
+private:
+  void processCallToSummarizedFunc(
+      CallOpInterface call,
+      const DenseMap<DistinctAttr, ValueOriginSet> &summary,
+      const BackwardOriginsMap &after, BackwardOriginsMap *before);
+
+  void processCopy(Operation *op, Value copySource, Value copyDest,
+                   const BackwardOriginsMap &after, BackwardOriginsMap *before);
 };
 
 void runActivityAnnotations(FunctionOpInterface callee);
