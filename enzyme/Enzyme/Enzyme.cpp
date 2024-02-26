@@ -2848,6 +2848,7 @@ public:
   }
 
   bool run(Module &M) {
+      llvm::errs() << M << "\n";
     Logic.clear();
 
     bool changed = false;
