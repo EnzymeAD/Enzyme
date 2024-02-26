@@ -61,11 +61,28 @@ extern "C" {
 //   [...] subnormal numbers are not implemented.
 //
 
+#define __ENZYME_MPFR_SINGOP(OP_TYPE, LLVM_OP_NAME, MPFR_FUNC_NAME, FROM_TYPE, \
+                             RET, MPFR_GET, ARG1, MPFR_SET_ARG1,               \
+                             ROUNDING_MODE)                                    \
+  __attribute__((weak))                                                        \
+  RET __enzyme_mpfr_##FROM_TYPE##_##OP_TYPE##_##LLVM_OP_NAME(                  \
+      ARG1 a, int64_t exponent, int64_t significand) {                         \
+    mpfr_t ma, mc;                                                             \
+    mpfr_init2(ma, significand);                                               \
+    mpfr_init2(mc, significand);                                               \
+    mpfr_set_##MPFR_SET_ARG1(ma, a, ROUNDING_MODE);                            \
+    mpfr_##MPFR_FUNC_NAME(mc, ma, ROUNDING_MODE);                              \
+    RET c = mpfr_get_##MPFR_GET(mc, ROUNDING_MODE);                            \
+    mpfr_clear(ma);                                                            \
+    mpfr_clear(mc);                                                            \
+    return c;                                                                  \
+  }
+
 #define __ENZYME_MPFR_BINOP(OP_TYPE, LLVM_OP_NAME, MPFR_FUNC_NAME, FROM_TYPE,  \
                             RET, MPFR_GET, ARG1, MPFR_SET_ARG1, ARG2,          \
                             MPFR_SET_ARG2, ROUNDING_MODE)                      \
   __attribute__((weak))                                                        \
-  RET __enzyme_mpfr_##FROM_TYPE_##OP_TYPE_##LLVM_OP_NAME(                      \
+  RET __enzyme_mpfr_##FROM_TYPE##_##OP_TYPE##_##LLVM_OP_NAME(                  \
       ARG1 a, ARG2 b, int64_t exponent, int64_t significand) {                 \
     mpfr_t ma, mb, mc;                                                         \
     mpfr_init2(ma, significand);                                               \
@@ -82,12 +99,10 @@ extern "C" {
   }
 
 #define __ENZYME_MPFR_DEFAULT_ROUNDING_MODE GMP_RNDN
-#define __ENZYME_MPFR_DBL_MANGLE 64_52
 #define __ENZYME_MPFR_DOUBLE_BINOP(LLVM_OP_NAME, MPFR_FUNC_NAME,               \
                                    ROUNDING_MODE)                              \
-  __ENZYME_MPFR_BINOP(binop, LLVM_OP_NAME, MPFR_FUNC_NAME,                     \
-                      __ENZYME_MPFR_DBL_MANGLE, double, d, double, d, double,  \
-                      d, ROUNDING_MODE)
+  __ENZYME_MPFR_BINOP(binop, LLVM_OP_NAME, MPFR_FUNC_NAME, 64_52, double, d,   \
+                      double, d, double, d, ROUNDING_MODE)
 #define __ENZYME_MPFR_DOUBLE_BINOP_DEFAULT_ROUNDING(LLVM_OP_NAME,              \
                                                     MPFR_FUNC_NAME)            \
   __ENZYME_MPFR_DOUBLE_BINOP(LLVM_OP_NAME, MPFR_FUNC_NAME,                     \
@@ -96,6 +111,9 @@ extern "C" {
 __ENZYME_MPFR_DOUBLE_BINOP_DEFAULT_ROUNDING(fmul, mul)
 __ENZYME_MPFR_DOUBLE_BINOP_DEFAULT_ROUNDING(fadd, add)
 __ENZYME_MPFR_DOUBLE_BINOP_DEFAULT_ROUNDING(fdiv, div)
+
+__ENZYME_MPFR_SINGOP(func, sqrt, sqrt, 64_52, double, d, double, d,
+                     __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)
 
 #ifdef __cplusplus
 }
