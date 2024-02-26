@@ -86,7 +86,11 @@ private:
   void processMemoryRead(Operation *op, Value address,
                          ArrayRef<ForwardOriginsLattice *> results);
 
-  OriginalClasses originalClasses;
+  void
+  processCallToSummarizedFunc(CallOpInterface call,
+                              ArrayRef<ValueOriginSet> summary,
+                              ArrayRef<const ForwardOriginsLattice *> operands,
+                              ArrayRef<ForwardOriginsLattice *> results);
 };
 
 class BackwardActivityAnnotationAnalysis
@@ -112,6 +116,13 @@ public:
   visitExternalCall(CallOpInterface call,
                     ArrayRef<BackwardOriginsLattice *> operands,
                     ArrayRef<const BackwardOriginsLattice *> results) override;
+
+private:
+  void
+  processCallToSummarizedFunc(CallOpInterface call,
+                              ArrayRef<ValueOriginSet> summary,
+                              ArrayRef<BackwardOriginsLattice *> operands,
+                              ArrayRef<const BackwardOriginsLattice *> results);
 };
 
 //===----------------------------------------------------------------------===//

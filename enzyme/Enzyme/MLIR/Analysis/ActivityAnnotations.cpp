@@ -19,6 +19,7 @@ using namespace mlir;
 
 static StringRef getActivityAnnotationAttrName() { return "activedeps"; }
 static StringRef getPointerSummaryAttrName() { return "p2psummary"; }
+static StringRef getReturnOriginsAttrName() { return "returnorigins"; }
 
 template <typename ValueT>
 void printSetLattice(const enzyme::SparseSetLattice<ValueT> &setLattice,
@@ -147,9 +148,77 @@ void enzyme::ForwardActivityAnnotationAnalysis::processMemoryRead(
   }
 }
 
+void deserializeReturnOrigins(ArrayAttr returnOrigins,
+                              SmallVectorImpl<enzyme::ValueOriginSet> &out) {
+  for (auto &&[resultIdx, argOrigins] : llvm::enumerate(returnOrigins)) {
+    enzyme::ValueOriginSet origins;
+    if (auto strAttr = dyn_cast<StringAttr>(argOrigins)) {
+      if (strAttr.getValue() == "<unknown>") {
+        (void)origins.markUnknown();
+      } else {
+        // Leave origins undefined
+      }
+    } else {
+      for (enzyme::ArgumentOriginAttr originAttr :
+           cast<ArrayAttr>(argOrigins)
+               .getAsRange<enzyme::ArgumentOriginAttr>()) {
+        (void)origins.insert({originAttr});
+      }
+    }
+
+    out.push_back(origins);
+  }
+}
+
 void enzyme::ForwardActivityAnnotationAnalysis::visitExternalCall(
     CallOpInterface call, ArrayRef<const ForwardOriginsLattice *> operands,
-    ArrayRef<ForwardOriginsLattice *> results) {}
+    ArrayRef<ForwardOriginsLattice *> results) {
+  auto symbol = dyn_cast<SymbolRefAttr>(call.getCallableForCallee());
+  auto markAllResultsUnknown = [&]() {
+    for (ForwardOriginsLattice *result : results) {
+      propagateIfChanged(result, result->markUnknown());
+    }
+  };
+  if (!symbol)
+    return markAllResultsUnknown();
+
+  if (auto callee = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
+          call, symbol.getLeafReference())) {
+    if (auto returnOriginsAttr =
+            callee->getAttrOfType<ArrayAttr>(getReturnOriginsAttrName())) {
+      SmallVector<ValueOriginSet> returnOrigins;
+      deserializeReturnOrigins(returnOriginsAttr, returnOrigins);
+      return processCallToSummarizedFunc(call, returnOrigins, operands,
+                                         results);
+    }
+  }
+}
+
+void enzyme::ForwardActivityAnnotationAnalysis::processCallToSummarizedFunc(
+    CallOpInterface call, ArrayRef<ValueOriginSet> summary,
+    ArrayRef<const ForwardOriginsLattice *> operands,
+    ArrayRef<ForwardOriginsLattice *> results) {
+  for (const auto &[result, returnOrigin] : llvm::zip(results, summary)) {
+    // Convert the origins relative to the callee to relative to the caller
+    ValueOriginSet callerOrigins;
+    if (returnOrigin.isUndefined())
+      continue;
+
+    if (returnOrigin.isUnknown()) {
+      (void)callerOrigins.markUnknown();
+    } else {
+      (void)returnOrigin.foreachElement(
+          [&](OriginAttr calleeOrigin, ValueOriginSet::State state) {
+            assert(state == ValueOriginSet::State::Defined &&
+                   "undefined and unknown must have been handled above");
+            auto calleeArgOrigin = cast<ArgumentOriginAttr>(calleeOrigin);
+            return callerOrigins.join(
+                operands[calleeArgOrigin.getArgNumber()]->getOriginsObject());
+          });
+    }
+    propagateIfChanged(result, result->merge(callerOrigins));
+  }
+}
 
 void enzyme::BackwardActivityAnnotationAnalysis::setToExitState(
     BackwardOriginsLattice *lattice) {
@@ -205,7 +274,51 @@ void enzyme::BackwardActivityAnnotationAnalysis::visitOperation(
 
 void enzyme::BackwardActivityAnnotationAnalysis::visitExternalCall(
     CallOpInterface call, ArrayRef<BackwardOriginsLattice *> operands,
-    ArrayRef<const BackwardOriginsLattice *> results) {}
+    ArrayRef<const BackwardOriginsLattice *> results) {
+  auto symbol = dyn_cast<SymbolRefAttr>(call.getCallableForCallee());
+  auto markAllOperandsUnknown = [&]() {
+    for (BackwardOriginsLattice *operand : operands) {
+      propagateIfChanged(operand, operand->markUnknown());
+    }
+  };
+  if (!symbol)
+    return markAllOperandsUnknown();
+
+  if (auto callee = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
+          call, symbol.getLeafReference())) {
+    if (auto returnOriginsAttr =
+            callee->getAttrOfType<ArrayAttr>(getReturnOriginsAttrName())) {
+      SmallVector<ValueOriginSet> returnOrigins;
+      deserializeReturnOrigins(returnOriginsAttr, returnOrigins);
+      return processCallToSummarizedFunc(call, returnOrigins, operands,
+                                         results);
+    }
+  }
+}
+
+void enzyme::BackwardActivityAnnotationAnalysis::processCallToSummarizedFunc(
+    CallOpInterface call, ArrayRef<ValueOriginSet> summary,
+    ArrayRef<BackwardOriginsLattice *> operands,
+    ArrayRef<const BackwardOriginsLattice *> results) {
+  // collect the result origins, propagate them to the operands.
+  for (const auto &[result, calleeOrigins] : llvm::zip(results, summary)) {
+    ValueOriginSet resultOrigins = result->getOriginsObject();
+    if (calleeOrigins.isUndefined())
+      continue;
+    if (calleeOrigins.isUnknown())
+      (void)resultOrigins.markUnknown();
+    else {
+      (void)calleeOrigins.foreachElement(
+          [&](OriginAttr calleeOrigin, ValueOriginSet::State state) {
+            auto calleeArgOrigin = cast<ArgumentOriginAttr>(calleeOrigin);
+            BackwardOriginsLattice *operand =
+                operands[calleeArgOrigin.getArgNumber()];
+            propagateIfChanged(operand, operand->merge(resultOrigins));
+            return ChangeResult::NoChange;
+          });
+    }
+  }
+}
 
 template <typename KeyT, typename ElementT>
 void printMapOfSetsLattice(
@@ -300,7 +413,6 @@ void enzyme::DenseActivityAnnotationAnalysis::visitOperation(
   memory.getEffects(effects);
   for (const auto &effect : effects) {
     Value value = effect.getValue();
-    // TODO: may be too pessimistic
     if (!value)
       return propagateIfChanged(after, after->markAllOriginsUnknown());
 
@@ -628,17 +740,6 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::
   }
 
   for (const auto &[destClass, sourceOrigins] : summary) {
-    // Get the source alias classes
-    AliasClassSet callerSourceClasses;
-    for (Attribute sourceOrigin : sourceOrigins.getElements()) {
-      unsigned argNumber =
-          cast<ArgumentOriginAttr>(sourceOrigin).getArgNumber();
-      traversePointsToSets(argumentClasses[argNumber], *p2sets,
-                           [&](DistinctAttr aliasClass) {
-                             (void)callerSourceClasses.insert({aliasClass});
-                           });
-    }
-
     // Get the destination origins
     ValueOriginSet destOrigins;
     if (auto pseudoClass = dyn_cast_if_present<PseudoAliasClassAttr>(
@@ -648,6 +749,37 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::
                              (void)destOrigins.join(
                                  after.getOrigins(aliasClass));
                            });
+    }
+
+    if (destOrigins.isUndefined())
+      continue;
+
+    // Get the source alias classes
+    AliasClassSet callerSourceClasses;
+    for (Attribute sourceOrigin : sourceOrigins.getElements()) {
+      unsigned argNumber =
+          cast<ArgumentOriginAttr>(sourceOrigin).getArgNumber();
+
+      if (argumentClasses[argNumber].isUndefined()) {
+        // Not a pointer, do a sparse update
+        raw_ostream &os = llvm::outs();
+        os << "sparse update dest origins: ";
+        destOrigins.print(os);
+        os << "\n";
+        auto *backwardLattice = getOrCreate<BackwardOriginsLattice>(
+            call.getArgOperands()[argNumber]);
+        if (destOrigins.isUnknown()) {
+          propagateIfChanged(backwardLattice, backwardLattice->markUnknown());
+          continue;
+        }
+        propagateIfChanged(backwardLattice,
+                           backwardLattice->insert(destOrigins.getElements()));
+      } else {
+        traversePointsToSets(argumentClasses[argNumber], *p2sets,
+                             [&](DistinctAttr aliasClass) {
+                               (void)callerSourceClasses.insert({aliasClass});
+                             });
+      }
     }
     changed |= before->insert(callerSourceClasses, destOrigins);
   }
@@ -715,8 +847,7 @@ void initializeSparseBackwardActivityAnnotations(FunctionOpInterface func,
           solver.getOrCreateState<BackwardOriginsLattice>(returnOperand.get());
       auto origin = ReturnOriginAttr::get(FlatSymbolRefAttr::get(func),
                                           returnOperand.getOperandNumber());
-      (void)lattice->join(
-          BackwardOriginsLattice::single(returnOperand.get(), origin));
+      (void)lattice->insert({origin});
     }
   }
 }
@@ -834,8 +965,24 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
                       return lattice.serialize(ctx);
                     });
     node->setAttr(
-        "returnorigins",
+        getReturnOriginsAttrName(),
         ArrayAttr::get(node.getContext(), serializedReturnOperandOrigins));
-    os << "[ata] return origins: " << node->getAttr("returnorigins") << "\n";
+    os << "[ata] return origins: " << node->getAttr(getReturnOriginsAttrName())
+       << "\n";
+
+    node.getCallableRegion()->walk([&](Operation *op) {
+      if (op->hasAttr("tag")) {
+        for (OpResult result : op->getResults()) {
+          auto *sources =
+              solver.getOrCreateState<enzyme::ForwardOriginsLattice>(result);
+          auto *sinks =
+              solver.getOrCreateState<enzyme::BackwardOriginsLattice>(result);
+          os << op->getAttr("tag") << "(#" << result.getResultNumber()
+             << ") sources:\n"
+             << *sources << "sinks:\n"
+             << *sinks << "\n";
+        }
+      }
+    });
   }
 }

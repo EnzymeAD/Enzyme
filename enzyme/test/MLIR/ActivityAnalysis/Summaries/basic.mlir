@@ -1,5 +1,62 @@
 // RUN: %eopt --print-activity-analysis='use-annotations' --split-input-file %s | FileCheck %s
 
+// CHECK-LABEL: processing function @sparse_callee
+// CHECK: "fadd"(#0) sources:
+// CHECK: size: 1:
+// CHECK:   #enzyme.argorigin<@sparse_callee(0)>
+// CHECK: sinks:
+// CHECK: size: 1:
+// CHECK:   #enzyme.retorigin<@sparse_callee(1)>
+func.func @sparse_callee(%arg0: f64) -> (f64, f64) {
+  %zero = llvm.mlir.constant (0.0) : f64
+  %0 = llvm.fadd %arg0, %arg0 {tag = "fadd"} : f64
+  return %zero, %0 : f64, f64
+}
+
+// CHECK-LABEL: processing function @sparse_caller
+// CHECK: "fmul"(#0) sources:
+// CHECK: size: 1:
+// CHECK:   #enzyme.argorigin<@sparse_caller(1)>
+// CHECK: sinks:
+// CHECK: size: 1:
+// CHECK:   #enzyme.retorigin<@sparse_caller(0)>
+func.func @sparse_caller(%unused: i64, %arg0: f64) -> f64 {
+  %0 = llvm.fmul %arg0, %arg0 {tag = "fmul"} : f64
+  %zero, %1 = call @sparse_callee(%0) : (f64) -> (f64, f64)
+  return %1 : f64
+}
+
+// -----
+
+func.func @aliased_callee(%arg0: !llvm.ptr) -> !llvm.ptr {
+  %c0 = llvm.mlir.constant (0) : i64
+  %0 = llvm.getelementptr inbounds %arg0[%c0] : (!llvm.ptr, i64) -> !llvm.ptr, f64
+  return %arg0 : !llvm.ptr
+}
+
+// Test propagation of aliasing through function calls
+func.func @loadstore(%arg0: f64) -> f64 {
+  %c1 = llvm.mlir.constant (1) : i64
+  %ptr = llvm.alloca %c1 x f64 : (i64) -> !llvm.ptr
+  %ptr2 = call @aliased_callee(%ptr) : (!llvm.ptr) -> !llvm.ptr
+  llvm.store %arg0, %ptr2 : f64, !llvm.ptr
+  %0 = llvm.load %ptr : !llvm.ptr -> f64
+  return %0 : f64
+}
+
+// -----
+
+llvm.func local_unnamed_addr @malloc(i64 {llvm.noundef}) -> (!llvm.ptr {llvm.noalias, llvm.noundef}) attributes {frame_pointer = #llvm.framePointerKind<"non-leaf">, memory = #llvm.memory_effects<other = none, argMem = none, inaccessibleMem = readwrite>, passthrough = ["mustprogress", "nofree", "nounwind", "willreturn", ["allockind", "9"], ["allocsize", "4294967295"], ["alloc-family", "malloc"], ["approx-func-fp-math", "true"], ["no-infs-fp-math", "true"], ["no-nans-fp-math", "true"], ["no-signed-zeros-fp-math", "true"], ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "apple-m1"], ["unsafe-fp-math", "true"]], sym_visibility = "private", target_cpu = "apple-m1", target_features = #llvm.target_features<["+aes", "+complxnum", "+crc", "+dotprod", "+fp-armv8", "+fp16fml", "+fullfp16", "+jsconv", "+lse", "+neon", "+ras", "+rcpc", "+rdm", "+sha2", "+sha3", "+v8.1a", "+v8.2a", "+v8.3a", "+v8.4a", "+v8.5a", "+v8a", "+zcm", "+zcz"]>}
+
+func.func @returnptr(%arg0: f64) -> !llvm.ptr {
+  %c8 = llvm.mlir.constant (8) : i64
+  %ptr = llvm.call @malloc(%c8) {tag = "malloc"} : (i64) -> !llvm.ptr
+  llvm.store %arg0, %ptr : f64, !llvm.ptr
+  return %ptr : !llvm.ptr
+}
+
+// -----
+
 // CHECK-LABEL: processing function @load_nested
 // CHECK: forward value origins:
 // CHECK:      distinct[0]<#enzyme.pseudoclass<@load_nested(1, 0)>> originates from [#enzyme.argorigin<@load_nested(0)>, #enzyme.argorigin<@load_nested(1)>]
@@ -21,6 +78,19 @@ func.func @pass_pointer_to(%arg0: f64, %alloc: !llvm.ptr, %out: !llvm.ptr) {
   %inner = llvm.load %alloc : !llvm.ptr -> !llvm.ptr
   llvm.store %arg0, %inner : f64, !llvm.ptr
   func.call @load_nested(%alloc, %out) : (!llvm.ptr, !llvm.ptr) -> ()
+  return
+}
+
+// -----
+
+func.func @callee(%val: f64, %out: !llvm.ptr) {
+  llvm.store %val, %out : f64, !llvm.ptr
+  return
+}
+
+// Test backward summary propagation to scalar arguments
+func.func @caller(%unused: i32, %val: f64, %out: !llvm.ptr) {
+  call @callee(%val, %out) : (f64, !llvm.ptr) -> ()
   return
 }
 
