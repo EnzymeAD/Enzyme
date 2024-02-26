@@ -40,7 +40,7 @@ jobs:
         sudo apt-get update && sudo apt-get install -y intel-oneapi-compiler-fortran-${{ matrix.ifx }} intel-oneapi-mpi-${{ matrix.mpi }} intel-oneapi-mpi-devel-${{ matrix.mpi }}
         source /opt/intel/oneapi/setvars.sh
         printenv >> $GITHUB_ENV
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: generate build system
       run: |
         rm -rf build && mkdir build && cd build

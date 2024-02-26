@@ -17,12 +17,12 @@ jobs:
         private_key: ${{ secrets.APP_PRIVATE_KEY }}
         repository: JuliaPackaging/Yggdrasil
 
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
           repository: 'JuliaPackaging/Yggdrasil'
           path: ygg
 
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         path: enz
     - name: replace
