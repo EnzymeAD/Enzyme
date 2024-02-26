@@ -4,6 +4,7 @@
 // Truncated
 // RUN: if [ %llvmver -ge 12 ]; then [ "$(%clang -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -S -mllvm --enzyme-truncate-all="64to32" | %lli -)" == "900000000.000000" ] ; fi
 // RUN: if [ %llvmver -ge 12 ]; then [ "$(%clang -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -S -mllvm --enzyme-truncate-all="11-52to8-23" | %lli -)" == "900000000.000000" ] ; fi
+// RUN: if [ %llvmver -ge 12 ]; then [ "$(%clang -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -S -mllvm --enzyme-truncate-all="11-52to3-7" | %lli -)" == "897581056.000000" ] ; fi
 
 #include <math.h>
 
