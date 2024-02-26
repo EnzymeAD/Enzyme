@@ -2421,6 +2421,12 @@ SmallVector<Value *, 1> getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset,
       }
     }
 
+    if (auto II = dyn_cast<IntrinsicInst>(U)) {
+      if (II->getIntrinsicID() == Intrinsic::lifetime_start ||
+          II->getIntrinsicID() == Intrinsic::lifetime_end)
+        continue;
+    }
+
     // If we copy into the ptr at a location that includes the offset, consider
     // all sub uses
     if (auto MTI = dyn_cast<MemTransferInst>(U)) {

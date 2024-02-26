@@ -3197,6 +3197,7 @@ AnalysisKey EnzymeNewPM::Key;
 #include "PreserveNVVM.h"
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Transforms/IPO/AlwaysInliner.h"
 #if LLVM_VERSION_MAJOR >= 15
 #include "llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h"
 #include "llvm/Transforms/IPO/CalledValuePropagation.h"
@@ -3427,6 +3428,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 #else
     prePass(MPM);
 #endif
+    MPM.addPass(llvm::AlwaysInlinerPass());
     FunctionPassManager OptimizerPM;
     FunctionPassManager OptimizerPM2;
 #if LLVM_VERSION_MAJOR >= 16
