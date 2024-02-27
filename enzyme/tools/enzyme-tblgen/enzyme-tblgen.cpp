@@ -1285,8 +1285,14 @@ static void emitHeaderIncludes(const RecordKeeper &recordKeeper,
                         Twine("Could not read file ") + filename_in);
       auto &contents = contents_or_err.get();
 #else
-      auto buf = llvm::SrcMgr.AddIncludeFile(
-          filename_in, pattern->getFieldLoc("filename_in"), included_file);
+      auto buf =
+          llvm::SrcMgr.AddIncludeFile(filename_in,
+#if LLVM_VERSION_MAJOR >= 12
+                                      pattern->getFieldLoc("filename_in"),
+#else
+                                      pattern->getLoc()[1],
+#endif
+                                      included_file);
       if (!buf)
         PrintFatalError(pattern->getLoc(),
                         Twine("Could not read file ") + filename_in);
