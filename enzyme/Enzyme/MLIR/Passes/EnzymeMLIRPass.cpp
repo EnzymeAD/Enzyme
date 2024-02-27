@@ -11,16 +11,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Ops.h"
-#include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/IRMapping.h"
-#include "mlir/Interfaces/ControlFlowInterfaces.h"
-#include "mlir/Interfaces/FunctionInterfaces.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
 #define DEBUG_TYPE "enzyme"
 
@@ -221,13 +218,9 @@ std::unique_ptr<Pass> createDifferentiatePass() {
 } // namespace enzyme
 } // namespace mlir
 
-#include "mlir/IR/PatternMatch.h"
-#include "mlir/Transforms/DialectConversion.h"
-
 void DifferentiatePass::runOnOperation() {
   SymbolTableCollection symbolTable;
   symbolTable.getSymbolTable(getOperation());
-  ConversionPatternRewriter B(getOperation()->getContext());
   getOperation()->walk(
       [&](FunctionOpInterface op) { lowerEnzymeCalls(symbolTable, op); });
 }
