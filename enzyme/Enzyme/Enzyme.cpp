@@ -470,8 +470,6 @@ Optional<StringRef> getMetadataName(llvm::Value *res)
     return recursePhiReads(cast<PHINode>(res));
   }
 
-  llvm::errs() << " failed to simplify: " << *res << "\n";
-
   return {};
 }
 
@@ -2848,7 +2846,6 @@ public:
   }
 
   bool run(Module &M) {
-      llvm::errs() << M << "\n";
     Logic.clear();
 
     bool changed = false;
