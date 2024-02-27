@@ -2110,8 +2110,12 @@ public:
 
       // Move the truncated body into the original function
       F.deleteBody();
+#if LLVM_VERSION_MAJOR >= 16
+      F.splice(F.begin(), TruncatedFunc);
+#else
       F.getBasicBlockList().splice(F.begin(),
                                    TruncatedFunc->getBasicBlockList());
+#endif
       RemapFunction(F, Mapping,
                     RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
       TruncatedFunc->deleteBody();
