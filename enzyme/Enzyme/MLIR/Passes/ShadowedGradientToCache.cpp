@@ -11,18 +11,11 @@
 // procedure to the MemRef dialect.
 //===----------------------------------------------------------------------===//
 
-#include "Dialect/Dialect.h"
 #include "Dialect/Ops.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Transforms/DialectConversion.h"
-
-#include "mlir/Rewrite/PatternApplicator.h"
 
 #include "llvm/Support/raw_ostream.h"
 
@@ -34,9 +27,6 @@ struct ShadowedGradientToCachePass
     : public enzyme::ShadowedGradientToCachePassBase<
           ShadowedGradientToCachePass> {
   void runOnOperation() override {
-    MLIRContext *context = &getContext();
-    ConversionPatternRewriter rewriter(context);
-
     getOperation()->walk([&](Operation *op) {
       if (auto initOp = dyn_cast<enzyme::InitOp>(op)) {
         if (auto type =

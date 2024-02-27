@@ -105,9 +105,6 @@ void processGenericDuplication(Operation *op, OpBuilder &builder, Location loc,
 struct AddToOpToSplitPass
     : public enzyme::AddToOpToSplitPassBase<AddToOpToSplitPass> {
   void runOnOperation() override {
-    MLIRContext *context = &getContext();
-    ConversionPatternRewriter rewriter(context);
-
     getOperation()->walk([&](Operation *op) {
       auto enzymeAdjoint = dyn_cast<enzyme::GenericAdjointOp>(op);
       auto loc = op->getLoc();

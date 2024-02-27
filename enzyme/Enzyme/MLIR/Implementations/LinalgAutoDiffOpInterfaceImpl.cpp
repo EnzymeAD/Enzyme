@@ -79,9 +79,7 @@ struct GenericOpInterfaceReverse
         cast<linalg::LinalgOp>(gutils->getNewFromOriginal(linalgOp));
 
     // Replace the op by a linalg.generic op if necessary
-    // TODO : IRRewriter rewriter(builder.getContext()/*,
-    // builder.getListener()*/);
-    ConversionPatternRewriter rewriter(builder.getContext());
+    IRRewriter rewriter(builder.getContext(), builder.getListener());
     auto failiureOrLinalgOp = generalizeNamedOp(rewriter, newOp);
     if (!failed(failiureOrLinalgOp)) {
       linalg::GenericOp replacement = failiureOrLinalgOp.value();
