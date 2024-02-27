@@ -1277,13 +1277,23 @@ static void emitHeaderIncludes(const RecordKeeper &recordKeeper,
       auto filename_out = pattern->getValueAsString("filename_out");
       std::string filename_in = pattern->getValueAsString("filename_in").str();
       std::string included_file;
-      auto contents = llvm::SrcMgr.OpenIncludeFile(filename_in, included_file);
-      // llvm::MemoryBuffer::getFile(filename_in, /*IsText=*/true);
-      if (!contents)
+#if LLVM_VERSION_MAJOR >= 15
+      auto contents_or_err =
+          llvm::SrcMgr.OpenIncludeFile(filename_in, included_file);
+      if (!contents_or_err)
         PrintFatalError(pattern->getLoc(),
                         Twine("Could not read file ") + filename_in);
+      auto &contents = contents_or_err.get();
+#else
+      auto buf = llvm::SrcMgr.AddIncludeFile(
+          filename_in, pattern->getFieldLoc("filename_in"), included_file);
+      if (!buf)
+        PrintFatalError(pattern->getLoc(),
+                        Twine("Could not read file ") + filename_in);
+      auto contents = llvm::SrcMgr.getMemoryBuffer(buf);
+#endif
       os << "{\"" << filename_out << "\"\n,";
-      os << "R\"(" << contents.get()->getBuffer() << ")\"\n";
+      os << "R\"(" << contents->getBuffer() << ")\"\n";
       os << "}";
       seen = true;
     }
