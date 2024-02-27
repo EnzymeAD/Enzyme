@@ -780,6 +780,7 @@ extern "C" void AddPreserveNVVMPass(LLVMPassManagerRef PM, uint8_t Begin) {
 
 PreserveNVVMNewPM::Result
 PreserveNVVMNewPM::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
+    llvm::errs() << " PNPM: " << M << "\n";
   bool changed = false;
   for (auto &F : M)
     changed |= preserveNVVM(Begin, F);
