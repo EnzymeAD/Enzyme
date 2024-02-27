@@ -1,4 +1,4 @@
-// RUN: %eopt --print-activity-analysis='use-annotations' --split-input-file %s | FileCheck %s
+// RUN: %eopt --print-activity-analysis='relative verbose' --split-input-file %s | FileCheck %s
 
 // CHECK-LABEL: processing function @sparse_callee
 // CHECK: "fadd"(#0)

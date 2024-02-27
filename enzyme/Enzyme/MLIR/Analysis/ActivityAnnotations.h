@@ -211,7 +211,22 @@ private:
                    const BackwardOriginsMap &after, BackwardOriginsMap *before);
 };
 
-void runActivityAnnotations(FunctionOpInterface callee);
+class ActivityPrinterConfig {
+public:
+  ActivityPrinterConfig() = default;
+
+  /// Output extra information for debugging
+  bool verbose = false;
+  /// Annotate the IR with activity information for every operation. Currently
+  /// only supports the LLVM dialect.
+  bool annotate = false;
+  /// Infer the starting argument state from an __enzyme_autodiff call.
+  bool inferFromAutodiff = false;
+};
+
+void runActivityAnnotations(
+    FunctionOpInterface callee,
+    const ActivityPrinterConfig &config = ActivityPrinterConfig());
 
 } // namespace enzyme
 } // namespace mlir

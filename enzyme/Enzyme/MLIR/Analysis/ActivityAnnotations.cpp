@@ -850,7 +850,8 @@ void initializeSparseBackwardActivityAnnotations(FunctionOpInterface func,
 }
 } // namespace
 
-void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
+void enzyme::runActivityAnnotations(
+    FunctionOpInterface callee, const ActivityPrinterConfig &activityConfig) {
   SymbolTableCollection symbolTable;
   SmallVector<CallableOpInterface> sorted;
   reverseToposortCallgraph(callee, &symbolTable, sorted);
@@ -862,9 +863,9 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
       continue;
     auto funcOp = cast<FunctionOpInterface>(node.getOperation());
     os << "[ata] processing function @" << funcOp.getName() << "\n";
-    DataFlowConfig config;
-    config.setInterprocedural(false);
-    DataFlowSolver solver(config);
+    DataFlowConfig dataFlowConfig;
+    dataFlowConfig.setInterprocedural(false);
+    DataFlowSolver solver(dataFlowConfig);
     SymbolTableCollection symbolTable;
 
     solver.load<dataflow::SparseConstantPropagation>();
@@ -910,12 +911,7 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
       }
     }
 
-    // for (BlockArgument arg : node.getCallableRegion()->getArguments()) {
-    //   auto *backwardState =
-    //       solver.getOrCreateState<enzyme::BackwardOriginsLattice>(arg);
-    //   os << "[debug] backward state for arg " << arg.getArgNumber() << ": "
-    //      << *backwardState << "\n";
-    // }
+    // Sparse alias annotations
     SmallVector<Attribute> aliasAttributes(returnAliasClasses.size());
     llvm::transform(returnAliasClasses, aliasAttributes.begin(),
                     [&](enzyme::AliasClassLattice lattice) {
@@ -924,24 +920,29 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
     node->setAttr(EnzymeDialect::getAliasSummaryAttrName(),
                   ArrayAttr::get(node.getContext(), aliasAttributes));
 
+    // Points-to-pointer annotations
     node->setAttr(pointerSummaryName, p2sets.serialize(node.getContext()));
-    os << "[ata] p2p summary:\n";
-    if (node->getAttrOfType<ArrayAttr>(pointerSummaryName).size() == 0) {
-      os << "     <empty>\n";
-    }
-    for (ArrayAttr pair : node->getAttrOfType<ArrayAttr>(pointerSummaryName)
-                              .getAsRange<ArrayAttr>()) {
-      os << "     " << pair[0] << " -> " << pair[1] << "\n";
+    if (activityConfig.verbose) {
+      os << "[ata] p2p summary:\n";
+      if (node->getAttrOfType<ArrayAttr>(pointerSummaryName).size() == 0) {
+        os << "     <empty>\n";
+      }
+      for (ArrayAttr pair : node->getAttrOfType<ArrayAttr>(pointerSummaryName)
+                                .getAsRange<ArrayAttr>()) {
+        os << "     " << pair[0] << " -> " << pair[1] << "\n";
+      }
     }
 
     node->setAttr(EnzymeDialect::getDenseActivityAnnotationAttrName(),
                   forwardOriginsMap.serialize(node.getContext()));
-    os << "[ata] forward value origins:\n";
-    for (ArrayAttr pair :
-         node->getAttrOfType<ArrayAttr>(
-                 EnzymeDialect::getDenseActivityAnnotationAttrName())
-             .getAsRange<ArrayAttr>()) {
-      os << "     " << pair[0] << " originates from " << pair[1] << "\n";
+    if (activityConfig.verbose) {
+      os << "[ata] forward value origins:\n";
+      for (ArrayAttr pair :
+           node->getAttrOfType<ArrayAttr>(
+                   EnzymeDialect::getDenseActivityAnnotationAttrName())
+               .getAsRange<ArrayAttr>()) {
+        os << "     " << pair[0] << " originates from " << pair[1] << "\n";
+      }
     }
 
     auto *backwardOriginsMap =
@@ -949,10 +950,12 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
             &node.getCallableRegion()->front().front());
     Attribute backwardOrigins =
         backwardOriginsMap->serialize(node.getContext());
-    os << "[ata] backward value origins:\n";
-    for (ArrayAttr pair :
-         cast<ArrayAttr>(backwardOrigins).getAsRange<ArrayAttr>()) {
-      os << "     " << pair[0] << " goes to " << pair[1] << "\n";
+    if (activityConfig.verbose) {
+      os << "[ata] backward value origins:\n";
+      for (ArrayAttr pair :
+           cast<ArrayAttr>(backwardOrigins).getAsRange<ArrayAttr>()) {
+        os << "     " << pair[0] << " goes to " << pair[1] << "\n";
+      }
     }
 
     // Serialize return origins
@@ -967,39 +970,138 @@ void enzyme::runActivityAnnotations(FunctionOpInterface callee) {
     node->setAttr(
         EnzymeDialect::getSparseActivityAnnotationAttrName(),
         ArrayAttr::get(node.getContext(), serializedReturnOperandOrigins));
-    os << "[ata] return origins: "
-       << node->getAttr(EnzymeDialect::getSparseActivityAnnotationAttrName())
-       << "\n";
+    if (activityConfig.verbose) {
+      os << "[ata] return origins: "
+         << node->getAttr(EnzymeDialect::getSparseActivityAnnotationAttrName())
+         << "\n";
+    }
 
-    node.getCallableRegion()->walk([&](Operation *op) {
-      if (op->hasAttr("tag")) {
-        for (OpResult result : op->getResults()) {
+    auto joinActiveDataState =
+        [&](Value value,
+            std::pair<ForwardOriginsLattice, BackwardOriginsLattice> &out) {
+          auto *sources = solver.getOrCreateState<ForwardOriginsLattice>(value);
+          auto *sinks = solver.getOrCreateState<BackwardOriginsLattice>(value);
+          (void)out.first.join(*sources);
+          (void)out.second.meet(*sinks);
+        };
+
+    auto joinActivePointerState =
+        [&](const AliasClassSet &aliasClasses,
+            std::pair<ForwardOriginsLattice, BackwardOriginsLattice> &out) {
+          traversePointsToSets(
+              aliasClasses, p2sets, [&](DistinctAttr aliasClass) {
+                (void)out.first.merge(forwardOriginsMap.getOrigins(aliasClass));
+                (void)out.second.merge(
+                    backwardOriginsMap->getOrigins(aliasClass));
+              });
+        };
+
+    auto joinActiveValueState =
+        [&](Value value,
+            std::pair<ForwardOriginsLattice, BackwardOriginsLattice> &out) {
           auto *aliasClasses =
-              solver.getOrCreateState<enzyme::AliasClassLattice>(result);
+              solver.getOrCreateState<AliasClassLattice>(value);
           if (aliasClasses->isUndefined()) {
             // Not a pointer, check the sources and sinks from the sparse state
-            auto *sources =
-                solver.getOrCreateState<enzyme::ForwardOriginsLattice>(result);
-            auto *sinks =
-                solver.getOrCreateState<enzyme::BackwardOriginsLattice>(result);
-            os << op->getAttr("tag") << "(#" << result.getResultNumber()
-               << ")\n"
-               << "  sources: " << sources->serialize(ctx) << "\n"
-               << "  sinks:   " << sinks->serialize(ctx) << "\n";
+            joinActiveDataState(value, out);
           } else {
             // Is a pointer, see the origins of whatever it points to
-            ForwardOriginsLattice sources(result, ValueOriginSet());
-            BackwardOriginsLattice sinks(result, ValueOriginSet());
-            traversePointsToSets(
-                aliasClasses->getAliasClassesObject(), p2sets,
-                [&](DistinctAttr aliasClass) {
-                  (void)sources.merge(forwardOriginsMap.getOrigins(aliasClass));
-                  (void)sinks.merge(backwardOriginsMap->getOrigins(aliasClass));
-                });
+            joinActivePointerState(aliasClasses->getAliasClassesObject(), out);
+          }
+        };
+
+    auto annotateActivity = [&](Operation *op) {
+      assert(op->getNumResults() < 2 && op->getNumRegions() == 0 &&
+             "annotation only supports the LLVM dialect");
+      auto unitAttr = UnitAttr::get(ctx);
+      // Check activity of values
+      for (OpResult result : op->getResults()) {
+        std::pair<ForwardOriginsLattice, BackwardOriginsLattice>
+            activityAttributes({result, ValueOriginSet()},
+                               {result, ValueOriginSet()});
+        joinActiveValueState(result, activityAttributes);
+        const auto &sources = activityAttributes.first;
+        const auto &sinks = activityAttributes.second;
+        // Possible states: if either source or sink is undefined or empty, the
+        // value is always constant.
+        if (sources.isUnknown() || sinks.isUnknown()) {
+          // Always active
+          op->setAttr("enzyme.activeval", unitAttr);
+        } else if (sources.isUndefined() || sinks.isUndefined()) {
+          // Always constant
+          op->setAttr("enzyme.constantval", unitAttr);
+        } else {
+          // Conditionally active depending on the activity of sources and sinks
+          op->setAttr("enzyme.valsrc", sources.serialize(ctx));
+          op->setAttr("enzyme.valsink", sinks.serialize(ctx));
+        }
+      }
+      // Check activity of operation
+      StringRef opSourceAttrName = "enzyme.opsrc";
+      StringRef opSinkAttrName = "enzyme.opsink";
+      std::pair<ForwardOriginsLattice, BackwardOriginsLattice> opAttributes(
+          {nullptr, ValueOriginSet()}, {nullptr, ValueOriginSet()});
+      if (isPure(op)) {
+        // A pure operation can only propagate data via its results
+        std::pair<ForwardOriginsLattice, BackwardOriginsLattice> opAttributes(
+            {nullptr, ValueOriginSet()}, {nullptr, ValueOriginSet()});
+        for (OpResult result : op->getResults()) {
+          joinActiveDataState(result, opAttributes);
+        }
+      } else {
+        // We need a special case because stores of active pointers don't fit
+        // the definition but are active instructions
+        if (auto storeOp = dyn_cast<LLVM::StoreOp>(op)) {
+          auto *storedClass =
+              solver.getOrCreateState<AliasClassLattice>(storeOp.getValue());
+          joinActivePointerState(storedClass->getAliasClassesObject(),
+                                 opAttributes);
+        } else if (auto callOp = dyn_cast<CallOpInterface>(op)) {
+          // TODO: can we just use the summary?
+          // If a call op receives or returns any active pointers or data,
+          // consider it active.
+          for (Value operand : callOp.getArgOperands())
+            joinActiveValueState(operand, opAttributes);
+          for (OpResult result : callOp->getResults())
+            joinActiveValueState(result, opAttributes);
+        }
+
+        // Default: the op is active iff any of its operands or results are
+        // active data.
+        for (Value operand : op->getOperands())
+          joinActiveDataState(operand, opAttributes);
+        for (OpResult result : op->getResults())
+          joinActiveDataState(result, opAttributes);
+      }
+
+      const auto &opSources = opAttributes.first;
+      const auto &opSinks = opAttributes.second;
+      if (opSources.isUnknown() || opSinks.isUnknown()) {
+        op->setAttr("enzyme.activeop", unitAttr);
+      } else if (opSources.isUndefined() || opSinks.isUndefined()) {
+        op->setAttr("enzyme.constantop", unitAttr);
+      } else {
+        op->setAttr(opSourceAttrName, opAttributes.first.serialize(ctx));
+        op->setAttr(opSinkAttrName, opAttributes.second.serialize(ctx));
+      }
+    };
+
+    node.getCallableRegion()->walk([&](Operation *op) {
+      if (activityConfig.annotate)
+        annotateActivity(op);
+      if (activityConfig.verbose) {
+        if (op->hasAttr("tag")) {
+          for (OpResult result : op->getResults()) {
+            std::pair<ForwardOriginsLattice, BackwardOriginsLattice>
+                activityAttributes({result, ValueOriginSet()},
+                                   {result, ValueOriginSet()});
+            joinActiveValueState(result, activityAttributes);
             os << op->getAttr("tag") << "(#" << result.getResultNumber()
                << ")\n"
-               << "  sources: " << sources.serialize(ctx) << "\n"
-               << "  sinks:   " << sinks.serialize(ctx) << "\n";
+               << "  sources: " << activityAttributes.first.serialize(ctx)
+               << "\n"
+               << "  sinks:   " << activityAttributes.second.serialize(ctx)
+               << "\n";
           }
         }
       }

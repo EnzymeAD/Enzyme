@@ -197,7 +197,7 @@ public:
   SparseSetLattice(Value value, SetLattice<ValueT> &&elements)
       : dataflow::AbstractSparseLattice(value), elements(std::move(elements)) {}
 
-  Attribute serialize(MLIRContext *ctx) { return serializeSetNaive(ctx); }
+  Attribute serialize(MLIRContext *ctx) const { return serializeSetNaive(ctx); }
 
   ChangeResult merge(const SetLattice<ValueT> &other) {
     return elements.join(other);
@@ -219,7 +219,7 @@ protected:
   SetLattice<ValueT> elements;
 
 private:
-  Attribute serializeSetNaive(MLIRContext *ctx) {
+  Attribute serializeSetNaive(MLIRContext *ctx) const {
     if (elements.isUndefined())
       return StringAttr::get(ctx, "<undefined>");
     if (elements.isUnknown())
@@ -235,6 +235,9 @@ private:
 
 //===----------------------------------------------------------------------===//
 // MapOfSetsLattice
+//
+// A lattice for use in dense analyses that maps keys (usually static memory
+// locations) to sets of values.
 //===----------------------------------------------------------------------===//
 
 template <typename KeyT, typename ElementT>

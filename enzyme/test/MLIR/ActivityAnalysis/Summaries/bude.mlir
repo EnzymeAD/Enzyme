@@ -1,4 +1,4 @@
-// RUN: %eopt --print-activity-analysis='use-annotations' --split-input-file %s | FileCheck %s
+// RUN: %eopt --print-activity-analysis='relative verbose' --split-input-file %s | FileCheck %s
 
 #alias_scope_domain = #llvm.alias_scope_domain<id = distinct[0]<>, description = "wrap">
 #loop_unroll = #llvm.loop_unroll<disable = true>

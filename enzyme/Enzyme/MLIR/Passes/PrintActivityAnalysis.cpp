@@ -29,7 +29,6 @@
 using namespace mlir;
 
 namespace {
-using llvm::errs;
 
 struct PrintActivityAnalysisPass
     : public enzyme::PrintActivityAnalysisPassBase<PrintActivityAnalysisPass> {
@@ -118,6 +117,11 @@ struct PrintActivityAnalysisPass
   }
 
   void runOnOperation() override {
+    enzyme::ActivityPrinterConfig config;
+    config.annotate = annotate;
+    config.inferFromAutodiff = false;
+    config.verbose = verbose;
+
     auto moduleOp = cast<ModuleOp>(getOperation());
 
     if (annotate) {
@@ -142,8 +146,8 @@ struct PrintActivityAnalysisPass
         auto callee =
             cast<FunctionOpInterface>(moduleOp.lookupSymbol(calleeAttr));
 
-        if (useAnnotations) {
-          enzyme::runActivityAnnotations(callee);
+        if (relative) {
+          enzyme::runActivityAnnotations(callee, config);
         } else {
           SmallVector<enzyme::Activity> argActivities{callee.getNumArguments()},
               resultActivities{callee.getNumResults()};
@@ -161,12 +165,12 @@ struct PrintActivityAnalysisPass
     }
 
     if (funcsToAnalyze.empty()) {
-      moduleOp.walk([this](FunctionOpInterface callee) {
+      moduleOp.walk([this, &config](FunctionOpInterface callee) {
         if (callee.isExternal() || callee.isPrivate())
           return;
 
-        if (useAnnotations) {
-          enzyme::runActivityAnnotations(callee);
+        if (relative) {
+          enzyme::runActivityAnnotations(callee, config);
         } else {
 
           SmallVector<enzyme::Activity> argActivities{callee.getNumArguments()},
