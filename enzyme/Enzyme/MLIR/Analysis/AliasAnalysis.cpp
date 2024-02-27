@@ -24,6 +24,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "AliasAnalysis.h"
+#include "Dialect/Dialect.h"
 #include "Dialect/Ops.h"
 
 #include "mlir/Analysis/AliasAnalysis.h"
@@ -629,7 +630,8 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
     //     into pointers that are non-arguments.
     if (auto callee = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
             call, symbol.getLeafReference())) {
-      if (auto summaryAttr = callee->getAttrOfType<ArrayAttr>("p2psummary")) {
+      if (auto summaryAttr = callee->getAttrOfType<ArrayAttr>(
+              EnzymeDialect::getPointerSummaryAttrName())) {
         DenseMap<DistinctAttr, AliasClassSet> summary;
         deserializePointsTo(summaryAttr, summary);
         return processCallToSummarizedFunc(call, summary, after);
@@ -1127,6 +1129,28 @@ void enzyme::AliasAnalysis::visitOperation(
   }
 }
 
+static void
+deserializeAliasSummary(ArrayAttr summary,
+                        SmallVectorImpl<enzyme::AliasClassSet> &out) {
+  for (Attribute element : summary) {
+    if (auto strAttr = dyn_cast<StringAttr>(element)) {
+      if (strAttr.getValue() == "<unknown>") {
+        out.push_back(enzyme::AliasClassSet::getUnknown());
+      } else {
+        assert(strAttr.getValue() == "<undefined>");
+        out.push_back(enzyme::AliasClassSet::getUndefined());
+      }
+    } else {
+      enzyme::AliasClassSet aliasClasses;
+      for (DistinctAttr aliasClass :
+           cast<ArrayAttr>(element).getAsRange<DistinctAttr>()) {
+        (void)aliasClasses.insert({aliasClass});
+      }
+      out.push_back(aliasClasses);
+    }
+  }
+}
+
 void enzyme::AliasAnalysis::visitExternalCall(
     CallOpInterface call, ArrayRef<const AliasClassLattice *> operands,
     ArrayRef<AliasClassLattice *> results) {
@@ -1154,6 +1178,42 @@ void enzyme::AliasAnalysis::visitExternalCall(
       call, symbol.getLeafReference());
   if (!callee)
     return markResultsUnknown();
+
+  if (auto aliasSummaryAttr = callee->getAttrOfType<ArrayAttr>(
+          EnzymeDialect::getAliasSummaryAttrName())) {
+    // The summary tells us what operands may alias with what results
+    SmallVector<AliasClassSet> aliasSummary;
+    deserializeAliasSummary(aliasSummaryAttr, aliasSummary);
+
+    assert(results.size() == aliasSummary.size());
+    for (auto &&[i, resultSummary] : llvm::enumerate(aliasSummary)) {
+      // Would be nice to zip over results and aliasSummary, but requires
+      // capture of structured binding (may require a newer clang version)
+      AliasClassLattice *result = results[i];
+      ChangeResult changed = ChangeResult::NoChange;
+      if (resultSummary.isUndefined())
+        continue;
+      if (resultSummary.isUnknown())
+        changed |= result->markUnknown();
+      else {
+        changed |= resultSummary.foreachElement(
+            [&](DistinctAttr aliasClass, AliasClassSet::State state) {
+              assert(state == AliasClassSet::State::Defined);
+              if (auto pseudoClass = dyn_cast<PseudoAliasClassAttr>(
+                      aliasClass.getReferencedAttr())) {
+                assert(
+                    pseudoClass.getDepth() == 0 &&
+                    "sparse alias summaries for depth > 0 not yet implemented");
+                return result->join(*operands[pseudoClass.getArgNumber()]);
+              } else {
+                return result->insert({aliasClass});
+              }
+            });
+      }
+      propagateIfChanged(result, changed);
+    }
+    return;
+  }
 
   // Collect alias classes that can be read through the arguments.
   std::optional<LLVM::ModRefInfo> argModRef = getFunctionArgModRef(callee);

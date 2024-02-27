@@ -48,7 +48,7 @@ llvm.func local_unnamed_addr @calloc(i64 {llvm.noundef}, i64 {llvm.noundef}) -> 
 llvm.func local_unnamed_addr @free(!llvm.ptr {llvm.allocptr, llvm.nocapture, llvm.noundef}) attributes {frame_pointer = #llvm.framePointerKind<"non-leaf">, memory = #llvm.memory_effects<other = none, argMem = readwrite, inaccessibleMem = readwrite>, passthrough = ["mustprogress", "nounwind", "willreturn", ["allockind", "4"], ["alloc-family", "malloc"], ["approx-func-fp-math", "true"], ["no-infs-fp-math", "true"], ["no-nans-fp-math", "true"], ["no-signed-zeros-fp-math", "true"], ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "apple-m1"], ["unsafe-fp-math", "true"]], sym_visibility = "private", target_cpu = "apple-m1", target_features = #llvm.target_features<["+aes", "+complxnum", "+crc", "+dotprod", "+fp-armv8", "+fp16fml", "+fullfp16", "+jsconv", "+lse", "+neon", "+ras", "+rcpc", "+rdm", "+sha2", "+sha3", "+v8.1a", "+v8.2a", "+v8.3a", "+v8.4a", "+v8.5a", "+v8a", "+zcm", "+zcz"]>}
 
 llvm.func @euler_angles_to_rotation_matrix(!llvm.ptr, !llvm.ptr) attributes {
-  p2psummary = [
+  enzyme.p2p = [
     [distinct[30]<#enzyme.pseudoclass<@euler_angles_to_rotation_matrix(1, 0)>>, [distinct[31]<#enzyme.pseudoclass<@euler_angles_to_rotation_matrix(1, 1)>>, distinct[32]<"fresh-euler_angles_malloc">]],
     [distinct[32]<"fresh-euler_angles_malloc">, []],
     [distinct[33]<"fresh-malloc_RX">, []],
@@ -56,32 +56,32 @@ llvm.func @euler_angles_to_rotation_matrix(!llvm.ptr, !llvm.ptr) attributes {
     [distinct[35]<"fresh-malloc_RZ">, []],
     [distinct[36]<"fresh-malloc_tmp">, []]
   ],
-  activedeps = [
+  enzyme.denseactive = [
     [distinct[31]<#enzyme.pseudoclass<@euler_angles_to_rotation_matrix(1, 1)>>, [#enzyme.argorigin<@euler_angles_to_rotation_matrix(0)>, #enzyme.argorigin<@euler_angles_to_rotation_matrix(1)>]]
   ]
 }
 
 llvm.func @angle_axis_to_rotation_matrix(!llvm.ptr, !llvm.ptr) attributes {
-  p2psummary = [[distinct[40]<#enzyme.pseudoclass<@angle_axis_to_rotation_matrix(1, 0)>>, [distinct[41]<#enzyme.pseudoclass<@angle_axis_to_rotation_matrix(1, 1)>>]]],
-  activedeps = [[distinct[41]<#enzyme.pseudoclass<@angle_axis_to_rotation_matrix(1, 1)>>, [#enzyme.argorigin<@angle_axis_to_rotation_matrix(0)>, #enzyme.argorigin<@angle_axis_to_rotation_matrix(1)>]]]
+  enzyme.p2p = [[distinct[40]<#enzyme.pseudoclass<@angle_axis_to_rotation_matrix(1, 0)>>, [distinct[41]<#enzyme.pseudoclass<@angle_axis_to_rotation_matrix(1, 1)>>]]],
+  enzyme.denseactive = [[distinct[41]<#enzyme.pseudoclass<@angle_axis_to_rotation_matrix(1, 1)>>, [#enzyme.argorigin<@angle_axis_to_rotation_matrix(0)>, #enzyme.argorigin<@angle_axis_to_rotation_matrix(1)>]]]
 }
 
 llvm.func @relatives_to_absolutes(i32, !llvm.ptr, !llvm.ptr, !llvm.ptr) attributes {
-  p2psummary = [
+  enzyme.p2p = [
     [distinct[50]<#enzyme.pseudoclass<@relatives_to_absolutes(1, 0)>>, [distinct[51]<#enzyme.pseudoclass<@relatives_to_absolutes(1, 1)>>]],
     [distinct[52]<#enzyme.pseudoclass<@relatives_to_absolutes(3, 0)>>, [distinct[53]<#enzyme.pseudoclass<@relatives_to_absolutes(3, 1)>>, distinct[54]<"fresh-rta1">, distinct[55]<"fresh-rta2">]],
     [distinct[54]<"fresh-rta1">, []],
     [distinct[55]<"fresh-rta2">, []]
   ],
-  activedeps = [[distinct[53]<#enzyme.pseudoclass<@relatives_to_absolutes(3, 1)>>, [#enzyme.argorigin<@relatives_to_absolutes(1)>, #enzyme.argorigin<@relatives_to_absolutes(3)>]]]
+  enzyme.denseactive = [[distinct[53]<#enzyme.pseudoclass<@relatives_to_absolutes(3, 1)>>, [#enzyme.argorigin<@relatives_to_absolutes(1)>, #enzyme.argorigin<@relatives_to_absolutes(3)>]]]
 }
 
 llvm.func @to_pose_params(i32, !llvm.ptr, !llvm.ptr, !llvm.ptr) attributes {
-  p2psummary = [
+  enzyme.p2p = [
     [distinct[60]<#enzyme.pseudoclass<@to_pose_params(3, 0)>>, [distinct[61]<#enzyme.pseudoclass<@to_pose_params(3, 1)>>, distinct[62]<"fresh-pose_params_data">]],
     [distinct[62]<"fresh-pose_params_data">, []]
   ],
-  activedeps = [
+  enzyme.denseactive = [
     [distinct[61]<#enzyme.pseudoclass<@to_pose_params(3, 1)>>, [#enzyme.argorigin<@to_pose_params(1)>, #enzyme.argorigin<@to_pose_params(3)>]]
   ]
 }

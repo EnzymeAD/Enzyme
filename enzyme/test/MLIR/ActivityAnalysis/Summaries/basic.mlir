@@ -1,12 +1,9 @@
 // RUN: %eopt --print-activity-analysis='use-annotations' --split-input-file %s | FileCheck %s
 
 // CHECK-LABEL: processing function @sparse_callee
-// CHECK: "fadd"(#0) sources:
-// CHECK: size: 1:
-// CHECK:   #enzyme.argorigin<@sparse_callee(0)>
-// CHECK: sinks:
-// CHECK: size: 1:
-// CHECK:   #enzyme.retorigin<@sparse_callee(1)>
+// CHECK: "fadd"(#0)
+// CHECK:   sources: [#enzyme.argorigin<@sparse_callee(0)>]
+// CHECK:   sinks:   [#enzyme.retorigin<@sparse_callee(1)>]
 func.func @sparse_callee(%arg0: f64) -> (f64, f64) {
   %zero = llvm.mlir.constant (0.0) : f64
   %0 = llvm.fadd %arg0, %arg0 {tag = "fadd"} : f64
@@ -14,12 +11,9 @@ func.func @sparse_callee(%arg0: f64) -> (f64, f64) {
 }
 
 // CHECK-LABEL: processing function @sparse_caller
-// CHECK: "fmul"(#0) sources:
-// CHECK: size: 1:
-// CHECK:   #enzyme.argorigin<@sparse_caller(1)>
-// CHECK: sinks:
-// CHECK: size: 1:
-// CHECK:   #enzyme.retorigin<@sparse_caller(0)>
+// CHECK: "fmul"(#0)
+// CHECK:   sources: [#enzyme.argorigin<@sparse_caller(1)>]
+// CHECK:   sinks:   [#enzyme.retorigin<@sparse_caller(0)>]
 func.func @sparse_caller(%unused: i64, %arg0: f64) -> f64 {
   %0 = llvm.fmul %arg0, %arg0 {tag = "fmul"} : f64
   %zero, %1 = call @sparse_callee(%0) : (f64) -> (f64, f64)
@@ -31,13 +25,17 @@ func.func @sparse_caller(%unused: i64, %arg0: f64) -> f64 {
 func.func @aliased_callee(%arg0: !llvm.ptr) -> !llvm.ptr {
   %c0 = llvm.mlir.constant (0) : i64
   %0 = llvm.getelementptr inbounds %arg0[%c0] : (!llvm.ptr, i64) -> !llvm.ptr, f64
-  return %arg0 : !llvm.ptr
+  return %0 : !llvm.ptr
 }
 
 // Test propagation of aliasing through function calls
+// CHECK-LABEL: processing function @loadstore
+// CHECK: "alloca"(#0)
+// CHECK:   sources: [#enzyme.argorigin<@loadstore(0)>]
+// CHECK:   sinks:   [#enzyme.retorigin<@loadstore(0)>]
 func.func @loadstore(%arg0: f64) -> f64 {
   %c1 = llvm.mlir.constant (1) : i64
-  %ptr = llvm.alloca %c1 x f64 : (i64) -> !llvm.ptr
+  %ptr = llvm.alloca %c1 x f64 {tag = "alloca"} : (i64) -> !llvm.ptr
   %ptr2 = call @aliased_callee(%ptr) : (!llvm.ptr) -> !llvm.ptr
   llvm.store %arg0, %ptr2 : f64, !llvm.ptr
   %0 = llvm.load %ptr : !llvm.ptr -> f64
@@ -53,6 +51,16 @@ func.func @returnptr(%arg0: f64) -> !llvm.ptr {
   %ptr = llvm.call @malloc(%c8) {tag = "malloc"} : (i64) -> !llvm.ptr
   llvm.store %arg0, %ptr : f64, !llvm.ptr
   return %ptr : !llvm.ptr
+}
+
+// CHECK-LABEL: processing function @loadstore
+// CHECK: "loaded"(#0)
+// CHECK:   sources: [#enzyme.argorigin<@loadstore(0)>]
+// CHECK:   sinks:   [#enzyme.retorigin<@loadstore(0)>]
+func.func @loadstore(%arg0: f64) -> f64 {
+  %ptr = call @returnptr(%arg0) : (f64) -> !llvm.ptr
+  %val = llvm.load %ptr {tag = "loaded"} : !llvm.ptr -> f64
+  return %val : f64
 }
 
 // -----
@@ -71,12 +79,17 @@ func.func @load_nested(%arg0: !llvm.ptr, %arg1: !llvm.ptr) {
 // means we need to union the origins of %alloc with everything %alloc points to
 // (%inner in this case)
 // CHECK-LABEL: processing function @pass_pointer_to
-// CHECK: forward value origins:
-// CHECK:      distinct[0]<#enzyme.pseudoclass<@pass_pointer_to(2, 0)>> originates from [#enzyme.argorigin<@pass_pointer_to(0)>, #enzyme.argorigin<@pass_pointer_to(1)>, #enzyme.argorigin<@pass_pointer_to(2)>]
+// CHECK: "val"(#0)
+// CHECK:   sources: [#enzyme.argorigin<@pass_pointer_to(0)>]
+// CHECK:   sinks:   [#enzyme.argorigin<@pass_pointer_to(1)>, #enzyme.argorigin<@pass_pointer_to(2)>]
+// CHECK: "inner"(#0)
+// CHECK:   sources: [#enzyme.argorigin<@pass_pointer_to(0)>, #enzyme.argorigin<@pass_pointer_to(1)>]
+// CHECK:   sinks:   [#enzyme.argorigin<@pass_pointer_to(1)>, #enzyme.argorigin<@pass_pointer_to(2)>]
 func.func @pass_pointer_to(%arg0: f64, %alloc: !llvm.ptr, %out: !llvm.ptr) {
   %one = llvm.mlir.constant (1) : i64
-  %inner = llvm.load %alloc : !llvm.ptr -> !llvm.ptr
-  llvm.store %arg0, %inner : f64, !llvm.ptr
+  %val = llvm.fmul %arg0, %arg0 {tag = "val"} : f64
+  %inner = llvm.load %alloc {tag = "inner"} : !llvm.ptr -> !llvm.ptr
+  llvm.store %val, %inner : f64, !llvm.ptr
   func.call @load_nested(%alloc, %out) : (!llvm.ptr, !llvm.ptr) -> ()
   return
 }
@@ -88,9 +101,13 @@ func.func @callee(%val: f64, %out: !llvm.ptr) {
   return
 }
 
-// Test backward summary propagation to scalar arguments
+// CHECK-LABEL: processing function @caller
+// CHECK: "square"(#0)
+// CHECK:   sources: [#enzyme.argorigin<@caller(1)>]
+// CHECK:   sinks:   [#enzyme.argorigin<@caller(2)>]
 func.func @caller(%unused: i32, %val: f64, %out: !llvm.ptr) {
-  call @callee(%val, %out) : (f64, !llvm.ptr) -> ()
+  %square = llvm.fmul %val, %val {tag = "square"} : f64
+  call @callee(%square, %out) : (f64, !llvm.ptr) -> ()
   return
 }
 
