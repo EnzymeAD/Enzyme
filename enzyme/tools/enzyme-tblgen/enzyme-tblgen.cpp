@@ -1256,7 +1256,8 @@ static void emitHeaderIncludes(const RecordKeeper &recordKeeper,
   os << "const char* include_headers[][2] = {\n";
   bool seen = false;
   {
-    const auto &patterns = recordKeeper.getAllDerivedDefinitions("InlineHeader");
+    const auto &patterns =
+        recordKeeper.getAllDerivedDefinitions("InlineHeader");
     for (Record *pattern : patterns) {
       if (seen)
         os << ",\n";
@@ -1277,9 +1278,10 @@ static void emitHeaderIncludes(const RecordKeeper &recordKeeper,
       std::string filename_in = pattern->getValueAsString("filename_in").str();
       std::string included_file;
       auto contents = llvm::SrcMgr.OpenIncludeFile(filename_in, included_file);
-        //llvm::MemoryBuffer::getFile(filename_in, /*IsText=*/true);
+      // llvm::MemoryBuffer::getFile(filename_in, /*IsText=*/true);
       if (!contents)
-        PrintFatalError(pattern->getLoc(), Twine("Could not read file ") + filename_in);
+        PrintFatalError(pattern->getLoc(),
+                        Twine("Could not read file ") + filename_in);
       os << "{\"" << filename_out << "\"\n,";
       os << "R\"(" << contents.get()->getBuffer() << ")\"\n";
       os << "}";
