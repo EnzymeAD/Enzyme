@@ -62,55 +62,6 @@ static ChangeResult mergeSets(DenseSet<T> &dest, const DenseSet<T> &src) {
   return dest.size() == oldSize ? ChangeResult::NoChange : ChangeResult::Change;
 }
 
-Attribute enzyme::PointsToSets::serialize(MLIRContext *ctx) const {
-  SmallVector<Attribute> pointsToArray;
-  auto sortKeys = [&](Attribute a, Attribute b) {
-    auto distinctA = dyn_cast<DistinctAttr>(a);
-    auto distinctB = dyn_cast<DistinctAttr>(b);
-    // If not distinct attributes, sort them arbitrarily.
-    if (!(distinctA && distinctB))
-      return &a < &b;
-
-    auto pseudoA = dyn_cast_if_present<PseudoAliasClassAttr>(
-        distinctA.getReferencedAttr());
-    auto pseudoB = dyn_cast_if_present<PseudoAliasClassAttr>(
-        distinctB.getReferencedAttr());
-    auto strA = dyn_cast_if_present<StringAttr>(distinctA.getReferencedAttr());
-    auto strB = dyn_cast_if_present<StringAttr>(distinctB.getReferencedAttr());
-    if (pseudoA && pseudoB) {
-      return std::make_pair(pseudoA.getArgNumber(), pseudoA.getDepth()) <
-             std::make_pair(pseudoB.getArgNumber(), pseudoB.getDepth());
-    } else if (strA && strB) {
-      return strA.strref() < strB.strref();
-    }
-    // Order pseudo classes before fresh classes
-    return pseudoA && !pseudoB;
-  };
-
-  for (const auto &[srcClass, destClasses] : pointsTo) {
-    SmallVector<Attribute, 2> pair = {srcClass};
-    SmallVector<Attribute, 5> aliasClasses;
-    if (destClasses.isUnknown()) {
-      aliasClasses.push_back(StringAttr::get(ctx, "unknown"));
-    } else if (destClasses.isUndefined()) {
-      aliasClasses.push_back(StringAttr::get(ctx, "undefined"));
-    } else {
-      for (const DistinctAttr &destClass : destClasses.getElements()) {
-        aliasClasses.push_back(destClass);
-      }
-      llvm::sort(aliasClasses, sortKeys);
-    }
-    pair.push_back(ArrayAttr::get(ctx, aliasClasses));
-    pointsToArray.push_back(ArrayAttr::get(ctx, pair));
-  }
-  llvm::sort(pointsToArray, [&](Attribute a, Attribute b) {
-    auto arrA = cast<ArrayAttr>(a);
-    auto arrB = cast<ArrayAttr>(b);
-    return sortKeys(arrA[0], arrB[0]);
-  });
-  return ArrayAttr::get(ctx, pointsToArray);
-}
-
 // TODO: a bit easier to prototype with a dense map directly, evaluate
 // if it'd be better to change the PointsToSets data structure to
 // support this
@@ -143,11 +94,11 @@ deserializePointsTo(ArrayAttr summaryAttr,
 }
 
 void enzyme::PointsToSets::print(raw_ostream &os) const {
-  if (pointsTo.empty()) {
+  if (map.empty()) {
     os << "<empty>\n";
     return;
   }
-  for (const auto &[srcClass, destClasses] : pointsTo) {
+  for (const auto &[srcClass, destClasses] : map) {
     os << "  " << srcClass << " points to {";
     if (destClasses.isUnknown()) {
       os << "<unknown>";
@@ -158,55 +109,6 @@ void enzyme::PointsToSets::print(raw_ostream &os) const {
     }
     os << "}\n";
   }
-  // os << "other points to unknown: " << otherPointToUnknown << "\n";
-}
-
-/// Union for every variable.
-ChangeResult enzyme::PointsToSets::join(const AbstractDenseLattice &lattice) {
-  const auto &rhs = static_cast<const PointsToSets &>(lattice);
-  llvm::SmallDenseSet<DistinctAttr> keys;
-  auto lhsRange = llvm::make_first_range(pointsTo);
-  auto rhsRange = llvm::make_first_range(rhs.pointsTo);
-  keys.insert(lhsRange.begin(), lhsRange.end());
-  keys.insert(rhsRange.begin(), rhsRange.end());
-
-  ChangeResult result = ChangeResult::NoChange;
-  for (DistinctAttr key : keys) {
-    auto lhsIt = pointsTo.find(key);
-    auto rhsIt = rhs.pointsTo.find(key);
-    assert(lhsIt != pointsTo.end() || rhsIt != rhs.pointsTo.end());
-
-    // If present in both, join.
-    if (lhsIt != pointsTo.end() && rhsIt != rhs.pointsTo.end()) {
-      result |= lhsIt->getSecond().join(rhsIt->getSecond());
-      continue;
-    }
-
-    // Copy from RHS if available only there.
-    if (lhsIt == pointsTo.end()) {
-      pointsTo.try_emplace(rhsIt->getFirst(), rhsIt->getSecond());
-      result = ChangeResult::Change;
-    }
-
-    // Do nothing if available only in LHS.
-  }
-  return result;
-}
-
-ChangeResult
-enzyme::PointsToSets::joinPotentiallyMissing(DistinctAttr key,
-                                             const AliasClassSet &value) {
-  // Don't store explicitly undefined values in the mapping, keys absent from
-  // the mapping are treated as implicitly undefined.
-  if (value.isUndefined())
-    return ChangeResult::NoChange;
-
-  bool inserted;
-  decltype(pointsTo.begin()) iterator;
-  std::tie(iterator, inserted) = pointsTo.try_emplace(key, value);
-  if (!inserted)
-    return iterator->second.join(value);
-  return ChangeResult::Change;
 }
 
 ChangeResult enzyme::PointsToSets::update(const AliasClassSet &keysToUpdate,
@@ -225,8 +127,8 @@ ChangeResult enzyme::PointsToSets::update(const AliasClassSet &keysToUpdate,
                "unknown must have been handled above");
 #ifndef NDEBUG
         if (replace) {
-          auto it = pointsTo.find(dest);
-          if (it != pointsTo.end()) {
+          auto it = map.find(dest);
+          if (it != map.end()) {
             // Check that we are updating to a state that's >= in the
             // lattice.
             // TODO: consider a stricter check that we only replace unknown
@@ -272,8 +174,8 @@ enzyme::PointsToSets::addSetsFrom(const AliasClassSet &destClasses,
               if (srcState == AliasClassSet::State::Unknown)
                 srcClasses = &AliasClassSet::getUnknown();
               else if (srcState == AliasClassSet::State::Defined) {
-                auto it = pointsTo.find(src);
-                if (it != pointsTo.end())
+                auto it = map.find(src);
+                if (it != map.end())
                   srcClasses = &it->getSecond();
               }
               return joinPotentiallyMissing(dest, *srcClasses);
@@ -294,20 +196,13 @@ enzyme::PointsToSets::markPointToUnknown(const AliasClassSet &destClasses) {
       });
 }
 
-ChangeResult enzyme::PointsToSets::markAllPointToUnknown() {
-  ChangeResult result = ChangeResult::NoChange;
-  for (auto &it : pointsTo)
-    result |= it.getSecond().join(AliasClassSet::getUnknown());
-  return result;
-}
-
 ChangeResult enzyme::PointsToSets::markAllExceptPointToUnknown(
     const AliasClassSet &destClasses) {
   if (destClasses.isUndefined())
     return ChangeResult::NoChange;
 
   ChangeResult result = ChangeResult::NoChange;
-  for (auto &[key, value] : pointsTo) {
+  for (auto &[key, value] : map) {
     if (destClasses.isUnknown() || !destClasses.getElements().contains(key)) {
       result |= value.markUnknown();
     }
@@ -317,7 +212,7 @@ ChangeResult enzyme::PointsToSets::markAllExceptPointToUnknown(
   (void)destClasses.foreachElement(
       [&](DistinctAttr dest, AliasClassSet::State state) {
         if (state == AliasClassSet::State::Defined)
-          assert(pointsTo.contains(dest) && "unknown dest cannot be preserved");
+          assert(map.contains(dest) && "unknown dest cannot be preserved");
         return ChangeResult::NoChange;
       });
 #endif // NDEBUG

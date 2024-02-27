@@ -103,16 +103,11 @@ private:
 // pointers stored/loaded through memory.
 //===----------------------------------------------------------------------===//
 
-class PointsToSets : public dataflow::AbstractDenseLattice {
+class PointsToSets : public MapOfSetsLattice<DistinctAttr, DistinctAttr> {
 public:
-  using AbstractDenseLattice::AbstractDenseLattice;
-
-  // Serialize the points-to information of this state into an attribute.
-  Attribute serialize(MLIRContext *ctx) const;
+  using MapOfSetsLattice::MapOfSetsLattice;
 
   void print(raw_ostream &os) const override;
-
-  ChangeResult join(const AbstractDenseLattice &lattice) override;
 
   /// Mark the pointer stored in `dest` as possibly pointing to any of `values`,
   /// instead of the values it may be currently pointing to.
@@ -141,18 +136,13 @@ public:
 
   /// Mark the entire data structure as "unknown", that is, any pointer may be
   /// containing any other pointer. This is the full pessimistic fixpoint.
-  ChangeResult markAllPointToUnknown();
+  ChangeResult markAllPointToUnknown() { return markAllUnknown(); }
 
   /// Mark all alias classes except the given ones to point to the "unknown"
   /// alias set.
   ChangeResult markAllExceptPointToUnknown(const AliasClassSet &destClasses);
 
-  const AliasClassSet &getPointsTo(DistinctAttr id) const {
-    auto it = pointsTo.find(id);
-    if (it == pointsTo.end())
-      return AliasClassSet::getUndefined();
-    return it->getSecond();
-  }
+  const AliasClassSet &getPointsTo(DistinctAttr id) const { return lookup(id); }
 
 private:
   /// Update all alias classes in `keysToUpdate` to additionally point to alias
@@ -169,24 +159,6 @@ private:
   /// in the lattice, not only the replacements described above.
   ChangeResult update(const AliasClassSet &keysToUpdate,
                       const AliasClassSet &values, bool replace);
-
-  ChangeResult joinPotentiallyMissing(DistinctAttr key,
-                                      const AliasClassSet &value);
-
-  /// Indicates that alias classes not listed as keys in `pointsTo` point to
-  /// unknown alias set (when true) or an empty alias set (when false).
-  // TODO: consider also differentiating between pointing to known-empty vs.
-  // not-yet-computed.
-  // bool otherPointToUnknown = false;
-
-  // missing from map always beings "undefined", "unknown"s are stored
-  // explicitly.
-
-  /// Maps an identifier of an alias set to the set of alias sets its value may
-  /// belong to. When an identifier is not present in this map, it is considered
-  /// to point to either the unknown set or nothing, based on the value of
-  /// `otherPointToUnknown`.
-  DenseMap<DistinctAttr, AliasClassSet> pointsTo;
 };
 
 //===----------------------------------------------------------------------===//

@@ -7,13 +7,16 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 // If using this code in an academic setting, please cite the following:
-// @incollection{enzymeNeurips,
-// title = {Instead of Rewriting Foreign Code for Machine Learning,
-//          Automatically Synthesize Fast Gradients},
-// author = {Moses, William S. and Churavy, Valentin},
-// booktitle = {Advances in Neural Information Processing Systems 33},
-// year = {2020},
-// note = {To appear in},
+// @inproceedings{NEURIPS2020_9332c513,
+// author = {Moses, William and Churavy, Valentin},
+// booktitle = {Advances in Neural Information Processing Systems},
+// editor = {H. Larochelle and M. Ranzato and R. Hadsell and M. F. Balcan and H.
+// Lin}, pages = {12472--12485}, publisher = {Curran Associates, Inc.}, title =
+// {Instead of Rewriting Foreign Code for Machine Learning, Automatically
+// Synthesize Fast Gradients}, url =
+// {https://proceedings.neurips.cc/paper/2020/file/9332c513ef44b682e9347822c2e457ac-Paper.pdf},
+// volume = {33},
+// year = {2020}
 // }
 //
 //===----------------------------------------------------------------------===//
@@ -275,7 +278,6 @@ public:
     return result;
   }
 
-  // TODO(jacob): switch over the alias class lattices to using these
   /// Map all keys to all values.
   ChangeResult insert(const SetLattice<KeyT> &keysToUpdate,
                       const SetLattice<ElementT> &values) {
@@ -300,6 +302,14 @@ public:
     return result;
   }
 
+  const SetLattice<ElementT> &lookup(KeyT key) const {
+    auto it = map.find(key);
+    if (it == map.end())
+      return SetLattice<ElementT>::getUndefined();
+    return it->getSecond();
+  }
+
+protected:
   ChangeResult joinPotentiallyMissing(KeyT key,
                                       const SetLattice<ElementT> &value) {
     // Don't store explicitly undefined values in the mapping, keys absent from
@@ -315,14 +325,8 @@ public:
     return ChangeResult::Change;
   }
 
-  const SetLattice<ElementT> &lookup(KeyT key) const {
-    auto it = map.find(key);
-    if (it == map.end())
-      return SetLattice<ElementT>::getUndefined();
-    return it->getSecond();
-  }
-
-protected:
+  /// Maps a key to a set of values. When a key is not present in this map, it
+  /// is considered to map to an uninitialized set.
   DenseMap<KeyT, SetLattice<ElementT>> map;
 
 private:
