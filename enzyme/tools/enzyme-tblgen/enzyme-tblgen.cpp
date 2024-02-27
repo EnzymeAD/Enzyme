@@ -65,7 +65,9 @@ static cl::opt<ActionType>
            cl::values(clEnumValN(MLIRDerivatives, "gen-mlir-derivatives",
                                  "Generate MLIR derivative")),
            cl::values(clEnumValN(CallDerivatives, "gen-call-derivatives",
-                                 "Generate call derivative")));
+                                 "Generate call derivative")),
+           cl::values(clEnumValN(GenHeaderVariables, "gen-header-strings",
+                                 "Generate header strings")));
 
 void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
                  StringRef FT, StringRef cconv, Init *func,
@@ -1248,6 +1250,24 @@ void printDiffUse(
   }
 }
 
+static void emitHeaderIncludes(const RecordKeeper &recordKeeper,
+                               raw_ostream &os) {
+  const auto &patterns = recordKeeper.getAllDerivedDefinitions("Headers");
+  os << "const char* include_headers[][2] = {\n";
+  bool seen = false;
+  for (Record *pattern : patterns) {
+    if (seen)
+      os << ",\n";
+    auto filename = pattern->getValueAsString("filename");
+    auto contents = pattern->getValueAsString("contents");
+    os << "{\"" << filename << "\"\n,";
+    os << "R\"(" << contents << ")\"\n";
+    os << "}";
+    seen = true;
+  }
+  os << "};\n";
+}
+
 static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                             ActionType intrinsic) {
   emitSourceFileHeader("Rewriters", os);
@@ -1268,6 +1288,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
   case BinopDerivatives:
     patternNames = "BinopPattern";
     break;
+  case GenHeaderVariables:
   case GenBlasDerivatives:
   case UpdateBlasDecl:
   case UpdateBlasTA:
@@ -1299,6 +1320,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     case UpdateBlasDecl:
     case UpdateBlasTA:
     case GenBlasDiffUse:
+    case GenHeaderVariables:
       llvm_unreachable("Cannot use blas updaters inside emitDerivatives");
     case MLIRDerivatives: {
       auto opName = pattern->getValueAsString("opName");
@@ -2089,6 +2111,7 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
   case UpdateBlasDecl:
   case UpdateBlasTA:
   case GenBlasDiffUse:
+  case GenHeaderVariables:
     llvm_unreachable("Cannot use blas updaters inside emitDiffUse");
   case CallDerivatives:
     patternNames = "CallPattern";
@@ -2127,6 +2150,7 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
     case UpdateBlasDecl:
     case UpdateBlasTA:
     case GenBlasDiffUse:
+    case GenHeaderVariables:
       llvm_unreachable("Cannot use blas updaters inside emitDerivatives");
     case CallDerivatives: {
       os << "  if ((";
@@ -2282,6 +2306,9 @@ static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
     return false;
   case UpdateBlasTA:
     emitBlasTAUpdater(records, os);
+    return false;
+  case GenHeaderVariables:
+    emitHeaderIncludes(records, os);
     return false;
 
   default:
