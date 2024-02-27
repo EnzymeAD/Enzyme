@@ -85,7 +85,7 @@ struct AddToOpToIndexAndLoadPass
         // auto load = cacheBuilder.create<AffineLoadOp>(loc, inputs[i], map[i],
         // indices); auto store = cacheBuilder.create<AffineStoreOp>(loc, load,
         // inputs[i], map[i], indices);
-        ValueRange mapAppliedIndices =
+        SmallVector<Value> mapAppliedIndices =
             applyAffineMap(map[num_ins + i], indices, cacheBuilder, loc);
         auto load = cacheBuilder.create<memref::LoadOp>(loc, outs[i],
                                                         mapAppliedIndices);
@@ -96,7 +96,7 @@ struct AddToOpToIndexAndLoadPass
       }
 
       for (int i = 0; i < retargs.size(); i++) {
-        ValueRange mapAppliedIndices =
+        SmallVector<Value> mapAppliedIndices =
             applyAffineMap(map[num_ins + i], indices, cacheBuilder, loc);
         auto load = cacheBuilder.create<memref::LoadOp>(loc, outs[i],
                                                         mapAppliedIndices);
