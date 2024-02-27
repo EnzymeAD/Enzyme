@@ -16,6 +16,7 @@
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/TableGen/Error.h"
@@ -1252,18 +1253,38 @@ void printDiffUse(
 
 static void emitHeaderIncludes(const RecordKeeper &recordKeeper,
                                raw_ostream &os) {
-  const auto &patterns = recordKeeper.getAllDerivedDefinitions("Headers");
   os << "const char* include_headers[][2] = {\n";
   bool seen = false;
-  for (Record *pattern : patterns) {
-    if (seen)
-      os << ",\n";
-    auto filename = pattern->getValueAsString("filename");
-    auto contents = pattern->getValueAsString("contents");
-    os << "{\"" << filename << "\"\n,";
-    os << "R\"(" << contents << ")\"\n";
-    os << "}";
-    seen = true;
+  {
+    const auto &patterns = recordKeeper.getAllDerivedDefinitions("InlineHeader");
+    for (Record *pattern : patterns) {
+      if (seen)
+        os << ",\n";
+      auto filename = pattern->getValueAsString("filename");
+      auto contents = pattern->getValueAsString("contents");
+      os << "{\"" << filename << "\"\n,";
+      os << "R\"(" << contents << ")\"\n";
+      os << "}";
+      seen = true;
+    }
+  }
+  {
+    const auto &patterns = recordKeeper.getAllDerivedDefinitions("FileHeader");
+    for (Record *pattern : patterns) {
+      if (seen)
+        os << ",\n";
+      auto filename_out = pattern->getValueAsString("filename_out");
+      std::string filename_in = pattern->getValueAsString("filename_in").str();
+      std::string included_file;
+      auto contents = llvm::SrcMgr.OpenIncludeFile(filename_in, included_file);
+        //llvm::MemoryBuffer::getFile(filename_in, /*IsText=*/true);
+      if (!contents)
+        PrintFatalError(pattern->getLoc(), Twine("Could not read file ") + filename_in);
+      os << "{\"" << filename_out << "\"\n,";
+      os << "R\"(" << contents.get()->getBuffer() << ")\"\n";
+      os << "}";
+      seen = true;
+    }
   }
   os << "};\n";
 }

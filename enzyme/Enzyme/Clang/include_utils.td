@@ -1,9 +1,14 @@
-class Headers<string filename_, string contents_> {
+class InlineHeader<string filename_, string contents_> {
   string filename = filename_;
   string contents = contents_;
 }
 
-def : Headers<"/enzymeroot/enzyme/utils", [{
+class FileHeader<string filename_out_, string filename_in_> {
+  string filename_out = filename_out_;
+  string filename_in = filename_in_;
+}
+
+def : InlineHeader<"/enzymeroot/enzyme/utils", [{
 #pragma once
 
 extern int enzyme_dup;
@@ -263,7 +268,7 @@ namespace enzyme {
 }
 }]>;
 
-def : Headers<"/enzymeroot/enzyme/type_traits", [{
+def : InlineHeader<"/enzymeroot/enzyme/type_traits", [{
 #pragma once
 
 #include <type_traits>
@@ -312,7 +317,7 @@ namespace impl {
 }
 }]>;
 
-def : Headers<"/enzymeroot/enzyme/tuple", [{
+def : InlineHeader<"/enzymeroot/enzyme/tuple", [{
 #pragma once
 
 /////////////
@@ -449,10 +454,12 @@ constexpr auto tuple_cat(Tuples&&... tuples) {
 #undef _NOEXCEPT
 }]>;
 
-def : Headers<"/enzymeroot/enzyme/enzyme", [{
+def : InlineHeader<"/enzymeroot/enzyme/enzyme", [{
 #ifdef __cplusplus
 #include "enzyme/utils"
 #else
 #warning "Enzyme wrapper templates only available in C++"
 #endif
 }]>;
+
+def : FileHeader<"/enzymeroot/enzyme/mpfr", "Runtime/MPFR.cpp">;
