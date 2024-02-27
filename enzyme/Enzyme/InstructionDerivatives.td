@@ -162,11 +162,19 @@ def CFNeg : SubRoutine<(Op (Op $re, $im):$z),
       (FNeg $re),
       (FNeg $im)
     )>;
+
+def Conj : SubRoutine<(Op (Op $re, $im):$z),
+    (ArrayRet
+      $re,
+      (FNeg $im)
+    )>;
+
 def CFExp : SubRoutine<(Op (Op $re, $im):$z),
     (ArrayRet
       (FMul (FExp $re):$exp, (FCos $im)),
       (FMul $exp, (FSin $im))
     )>;
+
 
 // Same function as the one being called
 def SameFunc {
@@ -184,6 +192,12 @@ class SameTypesFunc<string name_> {
 class PrependArgTypesFunc<string name_, list<string> pretys_> {
   string name = name_;
   list<string> pretys = pretys_;
+}
+
+// Set return to arg[0]
+// Same argument types
+class ArgAsRetTypesFunc<string name_> {
+  string name = name_;
 }
 
 // Specify that a given argument is inactive, aka not differentiable
@@ -204,7 +218,9 @@ def AssertingInactiveArg : InactiveArgSpec {
 class GlobalExpr<bit uses_primal, bit uses_shadow, string val> : Operation<uses_primal, uses_shadow>{
   string value = val;
 }
-def MantissaMaskOfReturn : GlobalExpr</*primal*/0, /*shadow*/0, "({\n"
+// Create a bit-mask whose bitwise "and" with a floating-point number gives
+// the largest power of two not larger than that number (in terms of absolute values).
+def MantissaMaskOfReturnForFrexp : GlobalExpr</*primal*/0, /*shadow*/0, "({\n"
 "    auto ty = call.getType();\n"
 "    unsigned low = 0;\n"
 "    unsigned high = 0;\n"
@@ -224,7 +240,10 @@ def MantissaMaskOfReturn : GlobalExpr</*primal*/0, /*shadow*/0, "({\n"
 "    } else if (ty->isX86_FP80Ty()) {\n"
 "      tsize = 80;\n"
 "      high = tsize - 1;\n"
-"      low = high - 15;\n"
+"      low = high - 16;\n"
+       // x86_fp80 has only 15 exponent bits, but we must also
+       // retain the most-significant bit of the mantissa as
+       // there is no implicit leading 1.
 "    } else if (ty->isFP128Ty()) {\n"
 "      tsize = 128;\n"
 "      high = tsize - 1;\n"
@@ -311,10 +330,15 @@ def : CallPattern<(Op $x),
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
                   >;
-
 def : CallPattern<(Op $x),
                   ["tanhf"],
                   [(FDiv (DiffeRet), (FMul(Call<(SameTypesFunc<"coshf">), [ReadNone,NoUnwind]> $x):$c, $c))],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+def : CallPattern<(Op $x),
+                  ["tanhl"],
+                  [(FDiv (DiffeRet), (FMul(Call<(SameTypesFunc<"coshl">), [ReadNone,NoUnwind]> $x):$c, $c))],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
                   >;
@@ -331,6 +355,12 @@ def : CallPattern<(Op $x),
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
                   >;
+def : CallPattern<(Op $x),
+                  ["coshl"],
+                  [(FMul (DiffeRet), (Call<(SameTypesFunc<"sinhl">), [ReadNone,NoUnwind]> $x))],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
 
 def : CallPattern<(Op $x),
                   ["sinh"],
@@ -341,6 +371,33 @@ def : CallPattern<(Op $x),
 def : CallPattern<(Op $x),
                   ["sinhf"],
                   [(FMul (DiffeRet), (Call<(SameTypesFunc<"coshf">), [ReadNone,NoUnwind]> $x))],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+def : CallPattern<(Op $x),
+                  ["sinhl"],
+                  [(FMul (DiffeRet), (Call<(SameTypesFunc<"coshl">), [ReadNone,NoUnwind]> $x))],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["asinh", "asinhf", "asinhl", "__nv_asinh", "__nv_asinhf"],
+                  [(FDiv (DiffeRet), (Intrinsic<"sqrt"> (FAdd (FMul $x, $x), (ConstantFP<"1.0"> $x)))  )] ,
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["acosh", "acoshf", "acoshl", "__nv_acosh", "__nv_acoshf"],
+                  [(FDiv (DiffeRet), (Intrinsic<"sqrt"> (FSub (FMul $x, $x), (ConstantFP<"1.0"> $x)))  )] ,
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["atanh", "atanhf", "atanhl", "__nv_atanh", "__nv_atanhf"],
+                  [(FDiv (DiffeRet), (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x))  )] ,
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
                   >;
@@ -428,13 +485,23 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x, $y),
-                  ["fmod", "fmodf", "fmodl"],
+                  ["fmod", "fmodf", "fmodl", "__nv_fmod", "__nv_fmodf", "__nv_fmodl"],
                   [
                   (DiffeRet),
                   (CheckedMul (DiffeRet), (FNeg (Intrinsic<"copysign"> (Intrinsic<"floor"> (Intrinsic<"fabs"> (FDiv $x, $y):$div)), $div)))
                   ],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x, $integral_part_ptr),
+                  ["modf", "modff", "modfl"],
+                  [
+                    (DiffeRet),
+                    (InactiveArg)
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadOnly, NoUnwind]
                   >;
 
 def : CallPattern<(Op $x),
@@ -455,6 +522,30 @@ def : CallPattern<(Op $x),
                   (
                    ArrayRet (FMul (ConstantFP<"3.1415926535897962684626433"> $x), (FMul (ExtractValue<[1]> (Call<(SameFunc), [ReadNone,NoUnwind]> $x):$callset), (DiffeRet) ) ),
                             (FMul (ConstantFP<"3.1415926535897962684626433"> $x),  (FNeg (FMul (ExtractValue<[0]> $callset), (DiffeRet) ) ) )
+                  )
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["logabsgamma"],
+                  [
+                  (
+                   ArrayRet (FMul (Call<(ArgAsRetTypesFunc<"digamma">), [ReadNone,NoUnwind]> $x), (DiffeRet) ),
+                            (InactiveArg)
+                  )
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["logabsgammaf"],
+                  [
+                  (
+                   ArrayRet (FMul (Call<(ArgAsRetTypesFunc<"digammaf">), [ReadNone,NoUnwind]> $x), (DiffeRet) ),
+                            (InactiveArg)
                   )
                   ],
                   (ForwardFromSummedReverse),
@@ -534,7 +625,7 @@ def : CallPattern<(Op $n, $x),
                   >;
 
 def : CallPattern<(Op $x),
-                  ["erf"],
+                  ["erf","erff","erfl"],
                   [
                     (FMul (DiffeRet), (FMul (ConstantFP<"1.1283791670955125738961589031215451716881012586580"> $x), (Intrinsic<"exp"> (FNeg (FMul $x, $x)))))
                   ],
@@ -550,7 +641,7 @@ def : CallPattern<(Op $x),
                   [ReadNone, NoUnwind]
                   >;
 def : CallPattern<(Op $x),
-                  ["erfc"],
+                  ["erfc","erfcf","erfcl"],
                   [
                     (FMul (DiffeRet), (FMul (ConstantFP<"-1.1283791670955125738961589031215451716881012586580"> $x), (Intrinsic<"exp"> (FNeg (FMul $x, $x)))))
                   ],
@@ -692,7 +783,7 @@ def : CallPattern<(Op $x, $expout),
                       (DiffeRet),
                       (FMul
                         (BitCast
-                          (And (MantissaMaskOfReturn):$mask, (BitCast $x, (TypeOf $mask)) ),
+                          (And (MantissaMaskOfReturnForFrexp):$mask, (BitCast $x, (TypeOf $mask)) ),
                           (TypeOf $x)
                         ),
                         (ConstantFP<"2"> $x)
@@ -737,6 +828,16 @@ def : CallPattern<(Op (Op $x, $y):$z),
                     ),
                     (Call<(SameFunc), [ReadNone,NoUnwind]> $z)
                   ),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op (Op $x, $y):$z),
+                  ["cmplx_inv"],
+                  [
+					// Reverse mode needs to return the conjugate
+                    (Conj (CFDiv (CFNeg (Conj (DiffeRet))), (CFMul $z, $z))),
+                  ],
+                  (CFDiv (CFNeg (Shadow $z)), (CFMul $z, $z)),
                   [ReadNone, NoUnwind]
                   >;
 
@@ -807,6 +908,16 @@ def : IntrPattern<(Op $x, $y),
                     (Select (FCmpOLT $x, $y), (DiffeRet), (ConstantFP<"0"> $x))
                   ],
                   (Select (FCmpOLT $x, $y), (SelectIfActive $y, (Shadow $y), (Zero $y)), (SelectIfActive $x, (Shadow $x), (Zero $x)))
+                  >;
+
+def : CallPattern<(Op $x, $y),
+                  ["fdim", "fdimf", "fdiml"],
+                  [
+                    (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $x), (DiffeRet)),
+                    (Select (FCmpOLT $x, $y), (ConstantFP<"0"> $y), (FNeg (DiffeRet)))
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
                   >;
 
 def : IntrPattern<(Op $x),

@@ -200,6 +200,7 @@ std::pair<PHINode *, Instruction *> FindCanonicalIV(Loop *L, Type *Ty) {
   }
   llvm::errs() << *Header << "\n";
   assert(0 && "Could not find canonical IV");
+  return std::pair<PHINode *, Instruction *>(nullptr, nullptr);
 }
 
 // Attempt to rewrite all phinode's in the loop in terms of the
@@ -257,6 +258,20 @@ void RemoveRedundantIVs(
     // and must thus be expanded after all phi's
     Value *NewIV =
         Exp.expandCodeFor(S, Tmp->getType(), Header->getFirstNonPHI());
+
+    // Explicity preserve wrap behavior from original iv. This is necessary
+    // until this PR in llvm is merged:
+    //    https://github.com/llvm/llvm-project/pull/78199
+    if (auto addrec = dyn_cast<SCEVAddRecExpr>(S)) {
+      if (addrec->getLoop()->getHeader() == Header) {
+        if (auto add_or_mul = dyn_cast<BinaryOperator>(NewIV)) {
+          if (addrec->getNoWrapFlags(llvm::SCEV::FlagNUW))
+            add_or_mul->setHasNoUnsignedWrap(true);
+          if (addrec->getNoWrapFlags(llvm::SCEV::FlagNSW))
+            add_or_mul->setHasNoSignedWrap(true);
+        }
+      }
+    }
     replacer(Tmp, NewIV);
     eraser(Tmp);
   }
@@ -1316,8 +1331,10 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
                                            IRBuilder<> &BuilderM, Value *val,
                                            AllocaInst *cache, MDNode *TBAA) {
   assert(BuilderM.GetInsertBlock()->getParent() == newFunc);
+#ifndef NDEBUG
   if (auto inst = dyn_cast<Instruction>(val))
     assert(inst->getParent()->getParent() == newFunc);
+#endif
   IRBuilder<> v(BuilderM.GetInsertBlock());
   v.SetInsertPoint(BuilderM.GetInsertBlock(), BuilderM.GetInsertPoint());
   v.setFastMathFlags(getFast());

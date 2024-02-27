@@ -47,9 +47,7 @@
 #define DEBUG_TYPE "enzyme"
 
 // Helper instruction visitor that generates adjoints
-template <class AugmentedReturnType = AugmentedReturn *>
-class AdjointGenerator
-    : public llvm::InstVisitor<AdjointGenerator<AugmentedReturnType>> {
+class AdjointGenerator : public llvm::InstVisitor<AdjointGenerator> {
 private:
   // Type of code being generated (forward, reverse, or both)
   const DerivativeMode Mode;
@@ -63,7 +61,7 @@ private:
   const std::map<llvm::CallInst *, const std::vector<bool>>
       overwritten_args_map;
   const llvm::SmallPtrSetImpl<llvm::Instruction *> *returnuses;
-  AugmentedReturnType augmentedReturn;
+  const AugmentedReturn *augmentedReturn;
   const std::map<llvm::ReturnInst *, llvm::StoreInst *> *replacedReturns;
 
   const llvm::SmallPtrSetImpl<const llvm::Value *> &unnecessaryValues;
@@ -83,7 +81,7 @@ public:
       const std::map<llvm::CallInst *, const std::vector<bool>>
           overwritten_args_map,
       const llvm::SmallPtrSetImpl<llvm::Instruction *> *returnuses,
-      AugmentedReturnType augmentedReturn,
+      const AugmentedReturn *augmentedReturn,
       const std::map<llvm::ReturnInst *, llvm::StoreInst *> *replacedReturns,
       const llvm::SmallPtrSetImpl<const llvm::Value *> &unnecessaryValues,
       const llvm::SmallPtrSetImpl<const llvm::Instruction *>
@@ -102,7 +100,7 @@ public:
     using namespace llvm;
 
     assert(TR.getFunction() == gutils->oldFunc);
-    for (auto &pair : TR.analyzer.analysis) {
+    for (auto &pair : TR.analyzer->analysis) {
       if (auto in = dyn_cast<Instruction>(pair.first)) {
         if (in->getParent()->getParent() != gutils->oldFunc) {
           llvm::errs() << "inf: " << *in->getParent()->getParent() << "\n";
@@ -410,6 +408,7 @@ public:
     constantval |= gutils->isConstantValue(&I);
 
     Type *type = gutils->getShadowType(I.getType());
+    (void)type;
 
     auto *newi = dyn_cast<Instruction>(gutils->getNewFromOriginal(&I));
 
@@ -623,6 +622,7 @@ public:
       if (primalNeededInReverse) {
         inst = gutils->cacheForReverse(BuilderZ, newi,
                                        getIndex(&I, CacheType::Self, BuilderZ));
+        (void)inst;
         assert(inst->getType() == type);
 
         if (Mode == DerivativeMode::ReverseModeGradient ||
@@ -758,7 +758,7 @@ public:
     auto alignment = LI.getAlign();
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
 
-    bool constantval = parseTBAA(LI, DL, nullptr).Inner0().isIntegral();
+    bool constantval = parseTBAA(LI, DL, nullptr)[{-1}].isIntegral();
     visitLoadLike(LI, alignment, constantval);
     eraseIfUnused(LI);
   }
@@ -900,6 +900,9 @@ public:
         setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
                  BuilderZ);
     }
+    gutils->replaceAWithB(gutils->getNewFromOriginal(&I),
+                          UndefValue::get(I.getType()));
+    eraseIfUnused(I, /*erase*/ true, /*check*/ false);
     return;
   }
 
@@ -994,7 +997,7 @@ public:
     NewI->setMetadata(LLVMContext::MD_noalias, noscope);
 
     bool constantval = gutils->isConstantValue(orig_val) ||
-                       parseTBAA(I, DL, nullptr).Inner0().isIntegral();
+                       parseTBAA(I, DL, nullptr)[{-1}].isIntegral();
 
     IRBuilder<> BuilderZ(NewI);
     BuilderZ.setFastMathFlags(getFast());
@@ -1053,7 +1056,7 @@ public:
         }
 
       Value *diff = nullptr;
-      if (!EnzymeRuntimeActivityCheck && CustomErrorHandler && constantval) {
+      if (!EnzymeRuntimeActivityCheck && constantval) {
         if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
           if (!isa<UndefValue>(orig_val) &&
               !isa<ConstantPointerNull>(orig_val)) {
@@ -1061,9 +1064,12 @@ public:
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << I
                << " const val: " << *orig_val;
-            diff = unwrap(CustomErrorHandler(
-                str.c_str(), wrap(&I), ErrorType::MixedActivityError, gutils,
-                wrap(orig_val), wrap(&BuilderZ)));
+            if (CustomErrorHandler)
+              diff = unwrap(CustomErrorHandler(
+                  str.c_str(), wrap(&I), ErrorType::MixedActivityError, gutils,
+                  wrap(orig_val), wrap(&BuilderZ)));
+            else
+              EmitWarning("MixedActivityError", I, ss.str());
           }
         }
       }
@@ -1282,7 +1288,7 @@ public:
           Value *valueop = nullptr;
 
           if (constantval) {
-            if (!EnzymeRuntimeActivityCheck && CustomErrorHandler) {
+            if (!EnzymeRuntimeActivityCheck) {
               if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
                 if (!isa<UndefValue>(orig_val) &&
                     !isa<ConstantPointerNull>(orig_val)) {
@@ -1290,9 +1296,12 @@ public:
                   raw_string_ostream ss(str);
                   ss << "Mismatched activity for: " << I
                      << " const val: " << *orig_val;
-                  valueop = unwrap(CustomErrorHandler(
-                      str.c_str(), wrap(&I), ErrorType::MixedActivityError,
-                      gutils, wrap(orig_val), wrap(&BuilderZ)));
+                  if (CustomErrorHandler)
+                    valueop = unwrap(CustomErrorHandler(
+                        str.c_str(), wrap(&I), ErrorType::MixedActivityError,
+                        gutils, wrap(orig_val), wrap(&BuilderZ)));
+                  else
+                    EmitWarning("MixedActivityError", I, ss.str());
                 }
               }
             }
@@ -1535,7 +1544,7 @@ public:
                                lc) &&
             gutils->getNewFromOriginal(P0->getParent()) == lc.header) {
           SmallVector<BasicBlock *, 1> Latches;
-          gutils->OrigLI.getLoopFor(P0->getParent())->getLoopLatches(Latches);
+          gutils->OrigLI->getLoopFor(P0->getParent())->getLoopLatches(Latches);
           bool allIncoming = true;
           for (auto Latch : Latches) {
             if (&SI != P0->getIncomingValueForBlock(Latch)) {
@@ -2199,7 +2208,7 @@ public:
                                lc) &&
             gutils->getNewFromOriginal(P0->getParent()) == lc.header) {
           SmallVector<BasicBlock *, 1> Latches;
-          gutils->OrigLI.getLoopFor(P0->getParent())->getLoopLatches(Latches);
+          gutils->OrigLI->getLoopFor(P0->getParent())->getLoopLatches(Latches);
           bool allIncoming = true;
           for (auto Latch : Latches) {
             if (&BO != P0->getIncomingValueForBlock(Latch)) {
@@ -3040,8 +3049,8 @@ public:
     }
     if (!vd.isKnownPastPointer()) {
       if (looseTypeAnalysis) {
-        if (auto CI = dyn_cast<CastInst>(MS.getOperand(0))) {
 #if LLVM_VERSION_MAJOR < 17
+        if (auto CI = dyn_cast<CastInst>(MS.getOperand(0))) {
           if (auto PT = dyn_cast<PointerType>(CI->getSrcTy())) {
             auto ET = PT->getPointerElementType();
             while (1) {
@@ -3070,8 +3079,8 @@ public:
               goto known;
             }
           }
-#endif
         }
+#endif
         if (auto gep = dyn_cast<GetElementPtrInst>(MS.getOperand(0))) {
           if (auto AT = dyn_cast<ArrayType>(gep->getSourceElementType())) {
             if (AT->getElementType()->isIntegerTy()) {
@@ -3271,10 +3280,18 @@ public:
       return;
     }
 
+    // memcpy of size 1 cannot move differentiable data [single byte copy]
+    if (auto ci = dyn_cast<ConstantInt>(new_size)) {
+      if (ci->getValue() == 1) {
+        eraseIfUnused(MTI);
+        return;
+      }
+    }
+
     // copying into nullptr is invalid (not sure why it exists here), but we
     // shouldn't do it in reverse pass or shadow
     if (isa<ConstantPointerNull>(orig_dst) ||
-        TR.query(orig_dst).Inner0() == BaseType::Anything) {
+        TR.query(orig_dst)[{-1}] == BaseType::Anything) {
       eraseIfUnused(MTI);
       return;
     }
@@ -3312,8 +3329,8 @@ public:
     if (!vd.isKnownPastPointer()) {
       if (looseTypeAnalysis) {
         for (auto val : {orig_dst, orig_src}) {
-          if (auto CI = dyn_cast<CastInst>(val)) {
 #if LLVM_VERSION_MAJOR < 17
+          if (auto CI = dyn_cast<CastInst>(val)) {
             if (auto PT = dyn_cast<PointerType>(CI->getSrcTy())) {
               auto ET = PT->getPointerElementType();
               while (1) {
@@ -3342,14 +3359,37 @@ public:
                 goto known;
               }
             }
-#endif
           }
+#endif
           if (auto gep = dyn_cast<GetElementPtrInst>(val)) {
             if (auto AT = dyn_cast<ArrayType>(gep->getSourceElementType())) {
               if (AT->getElementType()->isIntegerTy()) {
                 vd = TypeTree(BaseType::Integer).Only(0, &MTI);
                 goto known;
               }
+            }
+          }
+        }
+        // If the type is known, but outside of the known range
+        // (but the memcpy size is a variable), attempt to use
+        // the first type out of range as the memcpy type.
+        if (size == 1 && !isa<ConstantInt>(new_size)) {
+          for (auto ptr : {orig_dst, orig_src}) {
+            vd = TR.query(ptr).Data0().ShiftIndices(DL, 0, -1, 0);
+            if (vd.isKnownPastPointer()) {
+              ConcreteType mv(BaseType::Unknown);
+              size_t minInt = 0xFFFFFFFF;
+              for (const auto &pair : vd.getMapping()) {
+                if (pair.first.size() != 1)
+                  continue;
+                if (minInt < (size_t)pair.first[0])
+                  continue;
+                minInt = pair.first[0];
+                mv = pair.second;
+              }
+              assert(mv != BaseType::Unknown);
+              vd.insert({0}, mv);
+              goto known;
             }
           }
         }
@@ -3368,6 +3408,7 @@ public:
                              &TR.analyzer, nullptr, wrap(&BuilderZ));
         } else {
           ss << "\n";
+          ss << *gutils->oldFunc << "\n";
           TR.dump(ss);
           EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI, ss.str());
         }
@@ -3667,7 +3708,7 @@ public:
       auto align0 = cast<ConstantInt>(I.getOperand(1))->getZExtValue();
       auto align = MaybeAlign(align0);
       auto &DL = gutils->newFunc->getParent()->getDataLayout();
-      bool constantval = parseTBAA(I, DL, nullptr).Inner0().isIntegral();
+      bool constantval = parseTBAA(I, DL, nullptr)[{-1}].isIntegral();
       visitLoadLike(I, align, constantval,
                     /*mask*/ gutils->getNewFromOriginal(I.getOperand(2)),
                     /*orig_maskInit*/ I.getOperand(3));
@@ -3738,6 +3779,7 @@ public:
         setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
                  Builder2);
       }
+      (void)vdiff;
 
       switch (ID) {
 
@@ -4046,7 +4088,7 @@ public:
         assert(whatType(argType, Mode) == DIFFE_TYPE::DUP_ARG ||
                whatType(argType, Mode) == DIFFE_TYPE::CONSTANT);
       } else {
-        assert(TR.query(call.getArgOperand(i)).Inner0().isFloat());
+        assert(TR.query(call.getArgOperand(i))[{-1}].isFloat());
         OutTypes.push_back(call.getArgOperand(i));
         OutFPTypes.push_back(argType);
         assert(whatType(argType, Mode) == DIFFE_TYPE::OUT_DIFF ||
@@ -4113,7 +4155,7 @@ public:
       if (called) {
         subdata = &gutils->Logic.CreateAugmentedPrimal(
             RequestContext(&call, &BuilderZ), cast<Function>(called),
-            subretType, argsInverted, TR.analyzer.interprocedural,
+            subretType, argsInverted, TR.analyzer->interprocedural,
             /*return is used*/ false,
             /*shadowReturnUsed*/ false, nextTypeInfo, overwritten_args, false,
             gutils->getWidth(),
@@ -4329,7 +4371,7 @@ public:
                                        : nullptr,
                               .forceAnonymousTape = false,
                               .typeInfo = nextTypeInfo},
-            TR.analyzer.interprocedural, subdata,
+            TR.analyzer->interprocedural, subdata,
             /*omp*/ true);
 
         if (subdata->returns.find(AugmentedStruct::Tape) !=
@@ -4372,7 +4414,6 @@ public:
               }
             }
           }
-          size_t freeCount = 0;
           for (auto LI : geps) {
             CallInst *freeCall = nullptr;
             for (auto LU : LI->users()) {
@@ -4400,7 +4441,6 @@ public:
             }
             if (freeCall) {
               freeCall->eraseFromParent();
-              freeCount++;
             }
           }
         }
@@ -4571,7 +4611,7 @@ public:
       EmitFailure("CannotDeduceType", call.getDebugLoc(), &call,
                   "failed to deduce type of copy ", call);
     }
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
   knownF:
 #endif
     unsigned start = 0;
@@ -4717,10 +4757,11 @@ public:
           //     call.getParamAttr(i, Attribute::StructRet).getValueAsType()));
 #endif
         }
-        if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
-          structAttrs[args.size()].push_back(
-              call.getParamAttr(i, "enzymejl_returnRoots"));
-        }
+        for (auto attr : {"enzymejl_returnRoots", "enzymejl_parmtype",
+                          "enzymejl_parmtype_ref", "enzyme_type"})
+          if (call.getAttributes().hasParamAttr(i, attr)) {
+            structAttrs[args.size()].push_back(call.getParamAttr(i, attr));
+          }
         for (auto ty : PrimalParamAttrsToPreserve)
           if (call.getAttributes().hasParamAttr(i, ty)) {
             auto attr = call.getAttributes().getParamAttr(i, ty);
@@ -4775,15 +4816,16 @@ public:
               structAttrs[args.size()].push_back(attr);
             }
 
-        if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
-          if (gutils->getWidth() == 1) {
-            structAttrs[args.size()].push_back(
-                call.getParamAttr(i, "enzymejl_returnRoots"));
-          } else {
-            structAttrs[args.size()].push_back(
-                Attribute::get(call.getContext(), "enzyme_sret_v"));
+        for (auto attr : {"enzymejl_returnRoots", "enzymejl_parmtype",
+                          "enzymejl_parmtype_ref", "enzyme_type"})
+          if (call.getAttributes().hasParamAttr(i, attr)) {
+            if (gutils->getWidth() == 1) {
+              structAttrs[args.size()].push_back(call.getParamAttr(i, attr));
+            } else if (attr == std::string("enzymejl_returnRoots")) {
+              structAttrs[args.size()].push_back(
+                  Attribute::get(call.getContext(), "enzymejl_returnRoots_v"));
+            }
           }
-        }
         if (call.paramHasAttr(i, Attribute::StructRet)) {
           if (gutils->getWidth() == 1) {
             structAttrs[args.size()].push_back(
@@ -4835,18 +4877,9 @@ public:
         }
       }
       Value *tape = nullptr;
-#if LLVM_VERSION_MAJOR >= 16
-      if (tapeIdx.has_value())
-#else
-      if (tapeIdx.hasValue())
-#endif
-      {
+      if (tapeIdx) {
 
-#if LLVM_VERSION_MAJOR >= 16
-        auto idx = tapeIdx.value();
-#else
-        auto idx = tapeIdx.getValue();
-#endif
+        auto idx = *tapeIdx;
         FunctionType *FT = subdata->fn->getFunctionType();
 
         tape = BuilderZ.CreatePHI(
@@ -4868,7 +4901,7 @@ public:
       if (called) {
         newcalled = gutils->Logic.CreateForwardDiff(
             RequestContext(&call, &BuilderZ), cast<Function>(called),
-            subretType, argsInverted, TR.analyzer.interprocedural,
+            subretType, argsInverted, TR.analyzer->interprocedural,
             /*returnValue*/ subretused, Mode,
             ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->getWidth(),
             tape ? tape->getType() : nullptr, nextTypeInfo, overwritten_args,
@@ -5019,10 +5052,11 @@ public:
       if (call.isByValArgument(i)) {
         preByVal[pre_args.size()] = call.getParamByValType(i);
       }
-      if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
-        structAttrs[pre_args.size()].push_back(
-            call.getParamAttr(i, "enzymejl_returnRoots"));
-      }
+      for (auto attr : {"enzymejl_returnRoots", "enzymejl_parmtype",
+                        "enzymejl_parmtype_ref", "enzyme_type"})
+        if (call.getAttributes().hasParamAttr(i, attr)) {
+          structAttrs[pre_args.size()].push_back(call.getParamAttr(i, attr));
+        }
       if (call.paramHasAttr(i, Attribute::StructRet)) {
         structAttrs[pre_args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
@@ -5115,15 +5149,17 @@ public:
               structAttrs[pre_args.size()].push_back(attr);
             }
 
-        if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
-          if (gutils->getWidth() == 1) {
-            structAttrs[pre_args.size()].push_back(
-                call.getParamAttr(i, "enzymejl_returnRoots"));
-          } else {
-            structAttrs[pre_args.size()].push_back(
-                Attribute::get(call.getContext(), "enzymejl_returnRoots_v"));
+        for (auto attr : {"enzymejl_returnRoots", "enzymejl_parmtype",
+                          "enzymejl_parmtype_ref", "enzyme_type"})
+          if (call.getAttributes().hasParamAttr(i, attr)) {
+            if (gutils->getWidth() == 1) {
+              structAttrs[pre_args.size()].push_back(
+                  call.getParamAttr(i, attr));
+            } else if (attr == std::string("enzymejl_returnRoots")) {
+              structAttrs[pre_args.size()].push_back(
+                  Attribute::get(call.getContext(), "enzymejl_returnRoots_v"));
+            }
           }
-        }
         if (call.paramHasAttr(i, Attribute::StructRet)) {
           if (gutils->getWidth() == 1) {
             structAttrs[pre_args.size()].push_back(
@@ -5173,6 +5209,7 @@ public:
 
         // Note sometimes whattype mistakenly says something should be
         // constant [because composed of integer pointers alone]
+        (void)argType;
         assert(whatType(argType, Mode) == DIFFE_TYPE::DUP_ARG ||
                whatType(argType, Mode) == DIFFE_TYPE::CONSTANT);
       } else {
@@ -5283,7 +5320,7 @@ public:
             Mode == DerivativeMode::ReverseModeCombined) {
           subdata = &gutils->Logic.CreateAugmentedPrimal(
               RequestContext(&call, &BuilderZ), cast<Function>(called),
-              subretType, argsInverted, TR.analyzer.interprocedural,
+              subretType, argsInverted, TR.analyzer->interprocedural,
               /*return is used*/ subretused, shadowReturnUsed, nextTypeInfo,
               overwritten_args, false, gutils->getWidth(), gutils->AtomicAdd);
           if (Mode == DerivativeMode::ReverseModePrimal) {
@@ -5392,17 +5429,8 @@ public:
         if (!augmentcall->getType()->isVoidTy())
           augmentcall->setName(call.getName() + "_augmented");
 
-#if LLVM_VERSION_MAJOR >= 16
-        if (tapeIdx.has_value())
-#else
-        if (tapeIdx.hasValue())
-#endif
-        {
-#if LLVM_VERSION_MAJOR >= 16
-          auto tval = tapeIdx.value();
-#else
-          auto tval = tapeIdx.getValue();
-#endif
+        if (tapeIdx) {
+          auto tval = *tapeIdx;
           tape = (tval == -1) ? augmentcall
                               : BuilderZ.CreateExtractValue(
                                     augmentcall, {(unsigned)tval}, "subcache");
@@ -5421,11 +5449,7 @@ public:
           Value *dcall = nullptr;
           assert(returnIdx);
           assert(augmentcall);
-#if LLVM_VERSION_MAJOR >= 16
-          auto rval = returnIdx.value();
-#else
-          auto rval = returnIdx.getValue();
-#endif
+          auto rval = *returnIdx;
           dcall = (rval < 0) ? augmentcall
                              : BuilderZ.CreateExtractValue(augmentcall,
                                                            {(unsigned)rval});
@@ -5437,8 +5461,7 @@ public:
           assert(dcall);
 
           if (!gutils->isConstantValue(&call)) {
-            if (!call.getType()->isFPOrFPVectorTy() &&
-                TR.query(&call).Inner0().isPossiblePointer()) {
+            if (!call.getType()->isFPOrFPVectorTy() && TR.anyPointer(&call)) {
             } else if (Mode != DerivativeMode::ReverseModePrimal) {
               ((DiffeGradientUtils *)gutils)->differentials[dcall] =
                   ((DiffeGradientUtils *)gutils)->differentials[newCall];
@@ -5496,13 +5519,8 @@ public:
           // assert(!tape);
           // assert(subdata);
           if (!tape) {
-#if LLVM_VERSION_MAJOR >= 16
-            assert(tapeIdx.has_value());
-            auto tval = tapeIdx.value();
-#else
-            assert(tapeIdx.hasValue());
-            auto tval = tapeIdx.getValue();
-#endif
+            assert(tapeIdx);
+            auto tval = *tapeIdx;
             tape = BuilderZ.CreatePHI(
                 (tapeIdx == -1) ? FT->getReturnType()
                                 : cast<StructType>(FT->getReturnType())
@@ -5561,11 +5579,7 @@ public:
           if (Mode == DerivativeMode::ReverseModeCombined ||
               Mode == DerivativeMode::ReverseModePrimal) {
 
-#if LLVM_VERSION_MAJOR >= 16
-            auto drval = differetIdx.value();
-#else
-            auto drval = differetIdx.getValue();
-#endif
+            auto drval = *differetIdx;
             newip = (drval < 0)
                         ? augmentcall
                         : BuilderZ.CreateExtractValue(augmentcall,
@@ -5684,7 +5698,7 @@ public:
                             .additionalType = tape ? tape->getType() : nullptr,
                             .forceAnonymousTape = false,
                             .typeInfo = nextTypeInfo},
-          TR.analyzer.interprocedural, subdata);
+          TR.analyzer->interprocedural, subdata);
       if (!newcalled)
         return;
       FT = cast<Function>(newcalled)->getFunctionType();
@@ -5695,11 +5709,29 @@ public:
       auto callval = call.getCalledOperand();
 
       if (gutils->isConstantValue(callval)) {
-        llvm::errs() << *gutils->newFunc->getParent() << "\n";
-        llvm::errs() << " orig: " << call << " callval: " << *callval << "\n";
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << *gutils->oldFunc << "\n";
+        ss << "in Mode: " << to_string(Mode) << "\n";
+        ss << " orig: " << call << " callval: " << *callval << "\n";
+        ss << " constant function being called, but active call instruction\n";
+        if (CustomErrorHandler) {
+          auto val = unwrap(CustomErrorHandler(ss.str().c_str(), wrap(&call),
+                                               ErrorType::NoDerivative, gutils,
+                                               nullptr, wrap(&Builder2)));
+          if (val)
+            newcalled = val;
+          else
+            newcalled =
+                UndefValue::get(gutils->getShadowType(callval->getType()));
+        } else {
+          EmitFailure("NoDerivative", call.getDebugLoc(), &call, ss.str());
+          newcalled =
+              UndefValue::get(gutils->getShadowType(callval->getType()));
+        }
+      } else {
+        newcalled = lookup(gutils->invertPointerM(callval, Builder2), Builder2);
       }
-      assert(!gutils->isConstantValue(callval));
-      newcalled = lookup(gutils->invertPointerM(callval, Builder2), Builder2);
 
       auto ft = call.getFunctionType();
 
@@ -5889,8 +5921,7 @@ public:
           gutils->originalToNewFn[&call] = dcall;
           gutils->newToOriginalFn.erase(newCall);
           gutils->newToOriginalFn[dcall] = &call;
-          if (!call.getType()->isFPOrFPVectorTy() &&
-              TR.query(&call).Inner0().isPossiblePointer()) {
+          if (!call.getType()->isFPOrFPVectorTy() && TR.anyPointer(&call)) {
           } else {
             ((DiffeGradientUtils *)gutils)->differentials[dcall] =
                 ((DiffeGradientUtils *)gutils)->differentials[newCall];

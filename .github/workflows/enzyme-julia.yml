@@ -28,8 +28,8 @@ jobs:
           - x64
     timeout-minutes: 60 
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
       with:
         repository: 'wsmoses/Enzyme.jl'
         path: ./jl

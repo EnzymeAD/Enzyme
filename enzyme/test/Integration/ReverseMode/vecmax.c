@@ -7,7 +7,7 @@
 #include <math.h>
 #include <assert.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 extern void __enzyme_autodiff(void*, double*, double*, int);
 /*double max(double x, double y) {

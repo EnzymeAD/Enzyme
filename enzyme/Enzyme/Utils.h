@@ -83,6 +83,7 @@ enum class ErrorType {
   MixedActivityError = 7,
   IllegalReplaceFicticiousPHIs = 8,
   GetIndexError = 9,
+  NoTruncate = 10,
 };
 
 extern "C" {
@@ -167,12 +168,25 @@ class EnzymeFailure final : public llvm::DiagnosticInfoUnsupported {
 public:
   EnzymeFailure(const llvm::Twine &Msg, const llvm::DiagnosticLocation &Loc,
                 const llvm::Instruction *CodeRegion);
+  EnzymeFailure(const llvm::Twine &Msg, const llvm::DiagnosticLocation &Loc,
+                const llvm::Function *CodeRegion);
 };
 
 template <typename... Args>
 void EmitFailure(llvm::StringRef RemarkName,
                  const llvm::DiagnosticLocation &Loc,
                  const llvm::Instruction *CodeRegion, Args &...args) {
+  std::string *str = new std::string();
+  llvm::raw_string_ostream ss(*str);
+  (ss << ... << args);
+  CodeRegion->getContext().diagnose(
+      (EnzymeFailure("Enzyme: " + ss.str(), Loc, CodeRegion)));
+}
+
+template <typename... Args>
+void EmitFailure(llvm::StringRef RemarkName,
+                 const llvm::DiagnosticLocation &Loc,
+                 const llvm::Function *CodeRegion, Args &...args) {
   std::string *str = new std::string();
   llvm::raw_string_ostream ss(*str);
   (ss << ... << args);
@@ -304,11 +318,14 @@ enum class ReturnType {
 
 /// Potential differentiable argument classifications
 enum class DIFFE_TYPE {
-  OUT_DIFF = 0,  // add differential to an output struct
-  DUP_ARG = 1,   // duplicate the argument and store differential inside
-  CONSTANT = 2,  // no differential
+  OUT_DIFF = 0, // add differential to an output struct. Only for scalar values
+                // in ReverseMode variants.
+  DUP_ARG = 1,  // duplicate the argument and store differential inside.
+               // For references, pointers, or integers in ReverseMode variants.
+               // For all types in ForwardMode variants.
+  CONSTANT = 2,  // no differential. Usable everywhere.
   DUP_NONEED = 3 // duplicate this argument and store differential inside, but
-                 // don't need the forward
+                 // don't need the forward. Same as DUP_ARG otherwise.
 };
 
 enum class BATCH_TYPE {
@@ -1141,6 +1158,7 @@ static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op)
     bool b = AttrList.getAttribute("enzyme_allocator")
                  .getValueAsString()
                  .getAsInteger(10, res);
+    (void)b;
     assert(!b);
 #if LLVM_VERSION_MAJOR >= 16
     return std::optional<size_t>(res);
@@ -1155,6 +1173,7 @@ static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op)
       bool b = called->getFnAttribute("enzyme_allocator")
                    .getValueAsString()
                    .getAsInteger(10, res);
+      (void)b;
       assert(!b);
 #if LLVM_VERSION_MAJOR >= 16
       return std::optional<size_t>(res);
@@ -1211,6 +1230,7 @@ static inline std::vector<ssize_t> getDeallocationIndicesFromCall(T *op) {
   for (auto ind : inds) {
     ssize_t Result;
     bool b = ind.getAsInteger(10, Result);
+    (void)b;
     assert(!b);
     vinds.push_back(Result);
   }
@@ -1227,6 +1247,8 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
                             llvm::DebugLoc &&loc, llvm::Instruction *orig);
 
 llvm::Function *GetFunctionFromValue(llvm::Value *fn);
+
+llvm::Value *simplifyLoad(llvm::Value *LI, size_t valSz = 0);
 
 static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
   auto F = getFunctionFromCall(CI);
@@ -1338,10 +1360,11 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
       auto AttrList = Call->getAttributes().getAttributes(
           llvm::AttributeList::FunctionIndex);
       if (AttrList.hasAttribute("enzyme_pointermath")) {
-        size_t res;
+        size_t res = 0;
         bool failed = AttrList.getAttribute("enzyme_pointermath")
                           .getValueAsString()
                           .getAsInteger(10, res);
+        (void)failed;
         assert(!failed);
         V = Call->getArgOperand(res);
         continue;
@@ -1369,10 +1392,11 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
         auto AttrList = fn->getAttributes().getAttributes(
             llvm::AttributeList::FunctionIndex);
         if (AttrList.hasAttribute("enzyme_pointermath")) {
-          size_t res;
+          size_t res = 0;
           bool failed = AttrList.getAttribute("enzyme_pointermath")
                             .getValueAsString()
                             .getAsInteger(10, res);
+          (void)failed;
           assert(!failed);
           V = Call->getArgOperand(res);
           continue;
@@ -1808,4 +1832,10 @@ bool collectOffset(llvm::GEPOperator *gep, const llvm::DataLayout &DL,
                    unsigned BitWidth,
                    llvm::MapVector<llvm::Value *, llvm::APInt> &VariableOffsets,
                    llvm::APInt &ConstantOffset);
+
+llvm::CallInst *createIntrinsicCall(llvm::IRBuilderBase &B,
+                                    llvm::Intrinsic::ID ID, llvm::Type *RetTy,
+                                    llvm::ArrayRef<llvm::Value *> Args,
+                                    llvm::Instruction *FMFSource = nullptr,
+                                    const llvm::Twine &Name = "");
 #endif // ENZYME_UTILS_H

@@ -1,4 +1,5 @@
 add_subdirectory(Sparse)
+add_subdirectory(Truncate)
 add_subdirectory(ReverseMode)
 add_subdirectory(ReverseModeVector)
 add_subdirectory(ForwardMode)

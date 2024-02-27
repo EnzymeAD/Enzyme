@@ -51,6 +51,7 @@
 
 extern "C" {
 extern llvm::cl::opt<bool> EnzymePrint;
+extern llvm::cl::opt<bool> EnzymeJuliaAddrLoad;
 }
 
 enum class AugmentedStruct { Tape, Return, DifferentialReturn };
@@ -131,6 +132,21 @@ public:
         isComplete(false) {}
 };
 
+///  \p todiff is the function to differentiate
+///  \p retType is the activity info of the return.
+///  Only allowed to be DUP_ARG or CONSTANT. DUP_NONEED is not allowed,
+///  set returnValue to false instead.
+///  \p constant_args is the activity info of the arguments
+///  \p returnValue is whether the primal's return should also be returned.
+///  \p dretUsed is whether the shadow return value should also be returned.
+///  Only allowed to be true if retType is CDIFFE_TYPE::DUP_ARG.
+///  \p additionalArg is the type (or null) of an additional type in the
+///  signature to hold the tape.
+///  \p typeInfo is the type info information about the calling context
+///  \p _overwritten_args marks whether an argument may be overwritten
+///  before loads in the generated function (and thus cannot be cached).
+///  \p AtomicAdd is whether to perform all adjoint
+///  updates to memory in an atomic way
 struct ReverseCacheKey {
   llvm::Function *todiff;
   DIFFE_TYPE retType;
@@ -252,6 +268,74 @@ struct RequestContext {
       : req(req), ip(ip) {}
 };
 
+[[maybe_unused]] static llvm::Type *
+getTypeForWidth(llvm::LLVMContext &ctx, unsigned width, bool builtinFloat) {
+  switch (width) {
+  default:
+    if (builtinFloat)
+      llvm::report_fatal_error("Invalid float width requested");
+    else
+      llvm::report_fatal_error(
+          "Truncation to non builtin float width unsupported");
+  case 64:
+    return llvm::Type::getDoubleTy(ctx);
+  case 32:
+    return llvm::Type::getFloatTy(ctx);
+  case 16:
+    return llvm::Type::getHalfTy(ctx);
+  }
+}
+
+enum TruncateMode { TruncMemMode, TruncOpMode, TruncOpFullModuleMode };
+
+struct FloatRepresentation {
+  // |_|__________|_________________|
+  //  ^         ^         ^
+  //  sign bit  exponent  significand
+  //
+  //  value = (sign) * significand * 2 ^ exponent
+  unsigned exponentWidth;
+  unsigned significandWidth;
+
+  FloatRepresentation(unsigned e, unsigned s)
+      : exponentWidth(e), significandWidth(s) {}
+
+  unsigned getTypeWidth() const { return 1 + exponentWidth + significandWidth; }
+
+  bool canBeBuiltin() const {
+    unsigned w = getTypeWidth();
+    return (w == 16 && significandWidth == 10) ||
+           (w == 32 && significandWidth == 23) ||
+           (w == 64 && significandWidth == 52);
+  }
+
+  llvm::Type *getBuiltinType(llvm::LLVMContext &ctx) const {
+    if (!canBeBuiltin())
+      return nullptr;
+    return getTypeForWidth(ctx, getTypeWidth(), /*builtinFloat=*/true);
+  }
+
+  llvm::Type *getType(llvm::LLVMContext &ctx) const {
+    llvm::Type *builtinType = getBuiltinType(ctx);
+    if (builtinType)
+      return builtinType;
+    llvm_unreachable("TODO MPFR");
+  }
+
+  bool operator==(const FloatRepresentation &other) const {
+    return other.exponentWidth == exponentWidth &&
+           other.significandWidth == significandWidth;
+  }
+  bool operator<(const FloatRepresentation &other) const {
+    return std::tuple(exponentWidth, significandWidth) <
+           std::tuple(other.exponentWidth, other.significandWidth);
+  }
+  std::string to_string() const {
+    return std::to_string(getTypeWidth()) + "_" +
+           std::to_string(significandWidth);
+  }
+};
+
 class EnzymeLogic {
 public:
   PreProcessCache PPC;
@@ -358,9 +442,10 @@ public:
   ///  \p returnUsed is whether the primal's return should also be returned
   ///  \p typeInfo is the type info information about the calling context
   ///  \p _overwritten_args marks whether an argument may be rewritten before
-  ///  loads in the generated function (and thus cannot be cached). \p
-  ///  forceAnonymousTape forces the tape to be an i8* rather than the true tape
-  ///  structure \p AtomicAdd is whether to perform all adjoint updates to
+  ///  loads in the generated function (and thus cannot be cached).
+  ///  \p forceAnonymousTape forces the tape to be an i8* rather than the true
+  ///  tape structure
+  ///  \p AtomicAdd is whether to perform all adjoint updates to
   ///  memory in an atomic way
   const AugmentedReturn &CreateAugmentedPrimal(
       RequestContext context, llvm::Function *todiff, DIFFE_TYPE retType,
@@ -452,20 +537,8 @@ public:
 
   /// Create the reverse pass, or combined forward+reverse derivative function.
   ///  \p context the instruction which requested this derivative (or null).
-  ///  \p todiff is the function to differentiate
-  ///  \p retType is the activity info of the return
-  ///  \p constant_args is the activity info of the arguments
-  ///  \p returnValue is whether the primal's return should also be returned
-  ///  \p dretUsed is whether the shadow return value should also be returned
-  ///  \p additionalArg is the type (or null) of an additional type in the
-  ///  signature to hold the tape.
-  ///  \p typeInfo is the type info information about the calling context
-  ///  \p _overwritten_args marks whether an argument may be rewritten
-  ///  before loads in the generated function (and thus cannot be cached).
   ///  \p augmented is the data structure created by prior call to an
   ///   augmented forward pass
-  ///  \p AtomicAdd is whether to perform all adjoint
-  ///  updates to memory in an atomic way
   llvm::Function *CreatePrimalAndGradient(RequestContext context,
                                           const ReverseCacheKey &&key,
                                           TypeAnalysis &TA,
@@ -509,6 +582,17 @@ public:
                               unsigned width,
                               llvm::ArrayRef<BATCH_TYPE> arg_types,
                               BATCH_TYPE ret_type);
+
+  using TruncateCacheKey = std::tuple<llvm::Function *, FloatRepresentation,
+                                      FloatRepresentation, unsigned>;
+  std::map<TruncateCacheKey, llvm::Function *> TruncateCachedFunctions;
+  llvm::Function *CreateTruncateFunc(RequestContext context,
+                                     llvm::Function *tobatch,
+                                     FloatRepresentation from,
+                                     FloatRepresentation to, TruncateMode mode);
+  bool CreateTruncateValue(RequestContext context, llvm::Value *addr,
+                           FloatRepresentation from, FloatRepresentation to,
+                           bool isTruncate);
 
   /// Create a traced version of a function
   ///  \p context the instruction which requested this trace (or null).

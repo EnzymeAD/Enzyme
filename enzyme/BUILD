@@ -1,10 +1,11 @@
 load("@llvm-project//llvm:tblgen.bzl", "gentbl")
+load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 
 licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//:__subpackages__"],
+    default_visibility = ["//visibility:public"],
 )
 
 cc_library(
@@ -26,6 +27,7 @@ cc_binary(
         "@llvm-project//llvm:TableGen",
         "@llvm-project//llvm:config",
     ],
+    visibility = ["//visibility:public"],
 )
 
 gentbl(
@@ -140,13 +142,30 @@ gentbl(
     ],
 )
 
+gentbl(
+    name = "include-utils",
+    tbl_outs = [(
+        "-gen-header-strings",
+        "IncludeUtils.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/Clang/include_utils.td",
+    td_srcs = ["Enzyme/Clang/include_utils.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
 cc_library(
     name = "EnzymeStatic",
-    srcs = glob([
-        "Enzyme/*.cpp",
-        "Enzyme/TypeAnalysis/*.cpp",
-        "Enzyme/Clang/EnzymeClang.cpp",
-    ]),
+    srcs = glob(
+        [
+            "Enzyme/*.cpp",
+            "Enzyme/TypeAnalysis/*.cpp",
+            "Enzyme/Clang/EnzymeClang.cpp",
+        ],
+        exclude = ["Enzyme/eopt.cpp"],
+    ),
     hdrs = glob([
         "Enzyme/*.h",
         "Enzyme/TypeAnalysis/*.h",
@@ -156,10 +175,13 @@ cc_library(
         "-DENZYME_VERSION_MAJOR=0",
         "-DENZYME_VERSION_MINOR=0",
         "-DENZYME_VERSION_PATCH=79",
+        "-Wno-unused-variable",
+        "-Wno-return-type",
     ],
     data = ["@llvm-project//clang:builtin_headers_gen"],
     visibility = ["//visibility:public"],
     deps = [
+        "include-utils",
         ":binop-derivatives",
         ":blas-attributor",
         ":blas-derivatives",
@@ -191,6 +213,7 @@ cc_library(
         "@llvm-project//llvm:TransformUtils",
         "@llvm-project//llvm:config",
     ],
+    alwayslink = 1,
 )
 
 cc_binary(
@@ -213,3 +236,424 @@ genrule(
     cmd = "cp $< $@",
     output_to_bindir = 1,
 )
+
+cc_binary(
+    name = "enzyme-opt",
+    srcs = ["Enzyme/eopt.cpp"],
+    deps = [
+        ":EnzymeStatic",
+        "@llvm-project//llvm:Passes",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:opt-driver",
+    ],
+)
+
+td_library(
+    name = "EnzymeDialectTdFiles",
+    srcs = [
+        "Enzyme/MLIR/Dialect/Dialect.td",
+    ],
+    deps = [
+        "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
+        "@llvm-project//mlir:FunctionInterfacesTdFiles",
+        "@llvm-project//mlir:LoopLikeInterfaceTdFiles",
+        "@llvm-project//mlir:OpBaseTdFiles",
+        "@llvm-project//mlir:SideEffectInterfacesTdFiles",
+        "@llvm-project//mlir:ViewLikeInterfaceTdFiles",
+    ],
+)
+
+gentbl_cc_library(
+    name = "EnzymeOpsIncGen",
+    tbl_outs = [
+        (
+            ["-gen-op-decls"],
+            "Enzyme/MLIR/Dialect/EnzymeOps.h.inc",
+        ),
+        (
+            ["-gen-op-defs"],
+            "Enzyme/MLIR/Dialect/EnzymeOps.cpp.inc",
+        ),
+        (
+            [
+                "-gen-dialect-decls",
+                "-dialect=enzyme",
+            ],
+            "Enzyme/MLIR/Dialect/EnzymeOpsDialect.h.inc",
+        ),
+        (
+            [
+                "-gen-dialect-defs",
+                "-dialect=enzyme",
+            ],
+            "Enzyme/MLIR/Dialect/EnzymeOpsDialect.cpp.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Dialect/EnzymeOps.td",
+    deps = [":EnzymeDialectTdFiles"],
+)
+
+td_library(
+    name = "EnzymePassesTdFiles",
+    srcs = [
+    ],
+    deps = [
+        "@llvm-project//mlir:PassBaseTdFiles",
+    ],
+)
+
+gentbl_cc_library(
+    name = "EnzymePassesIncGen",
+    tbl_outs = [
+        (
+            [
+                "-gen-pass-decls",
+                "-name=enzyme",
+            ],
+            "Enzyme/MLIR/Passes/Passes.h.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Passes/Passes.td",
+    deps = [":EnzymePassesTdFiles"],
+)
+
+gentbl_cc_library(
+    name = "EnzymeTypesIncGen",
+    tbl_outs = [
+        (
+            ["-gen-typedef-decls"],
+            "Enzyme/MLIR/Dialect/EnzymeOpsTypes.h.inc",
+        ),
+        (
+            ["-gen-typedef-defs"],
+            "Enzyme/MLIR/Dialect/EnzymeOpsTypes.cpp.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Dialect/EnzymeOps.td",
+    deps = [":EnzymeDialectTdFiles"],
+)
+
+gentbl_cc_library(
+    name = "EnzymeEnumsIncGen",
+    tbl_outs = [
+        (
+            ["-gen-enum-decls"],
+            "Enzyme/MLIR/Dialect/EnzymeEnums.h.inc",
+        ),
+        (
+            ["-gen-enum-defs"],
+            "Enzyme/MLIR/Dialect/EnzymeEnums.cpp.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Dialect/EnzymeOps.td",
+    deps = [":EnzymeDialectTdFiles"],
+)
+
+gentbl_cc_library(
+    name = "EnzymeAttributesIncGen",
+    tbl_outs = [
+        (
+            ["-gen-attrdef-decls"],
+            "Enzyme/MLIR/Dialect/EnzymeAttributes.h.inc",
+        ),
+        (
+            ["-gen-attrdef-defs"],
+            "Enzyme/MLIR/Dialect/EnzymeAttributes.cpp.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Dialect/EnzymeOps.td",
+    deps = [":EnzymeDialectTdFiles"],
+)
+
+gentbl_cc_library(
+    name = "EnzymeTypeInterfacesIncGen",
+    tbl_outs = [
+        (
+            ["--gen-type-interface-decls"],
+            "Enzyme/MLIR/Interfaces/AutoDiffTypeInterface.h.inc",
+        ),
+        (
+            ["--gen-type-interface-defs"],
+            "Enzyme/MLIR/Interfaces/AutoDiffTypeInterface.cpp.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Interfaces/AutoDiffTypeInterface.td",
+    deps = [":EnzymeDialectTdFiles"],
+)
+
+gentbl_cc_library(
+    name = "EnzymeOpInterfacesIncGen",
+    tbl_outs = [
+        (
+            ["--gen-op-interface-decls"],
+            "Enzyme/MLIR/Interfaces/AutoDiffOpInterface.h.inc",
+        ),
+        (
+            ["--gen-op-interface-defs"],
+            "Enzyme/MLIR/Interfaces/AutoDiffOpInterface.cpp.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Interfaces/AutoDiffOpInterface.td",
+    deps = [":EnzymeDialectTdFiles"],
+)
+
+td_library(
+    name = "ImplementationsCommonTdFiles",
+    srcs = [
+        "Enzyme/MLIR/Implementations/Common.td",
+    ],
+)
+
+gentbl(
+    name = "affine-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/AffineDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/AffineDerivatives.td",
+    td_srcs = [
+        "Enzyme/MLIR/Implementations/AffineDerivatives.td",
+        "Enzyme/MLIR/Implementations/Common.td",
+    ],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+gentbl(
+    name = "arith-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/ArithDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/ArithDerivatives.td",
+    td_srcs = [
+        "Enzyme/MLIR/Implementations/ArithDerivatives.td",
+        "Enzyme/MLIR/Implementations/Common.td",
+    ],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+gentbl(
+    name = "llvm-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/LLVMDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/LLVMDerivatives.td",
+    td_srcs = [
+        "Enzyme/MLIR/Implementations/LLVMDerivatives.td",
+        "Enzyme/MLIR/Implementations/Common.td",
+    ],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+gentbl(
+    name = "nvvm-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/NVVMDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/NVVMDerivatives.td",
+    td_srcs = [
+        "Enzyme/MLIR/Implementations/NVVMDerivatives.td",
+        "Enzyme/MLIR/Implementations/Common.td",
+    ],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+gentbl(
+    name = "scf-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/SCFDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/SCFDerivatives.td",
+    td_srcs = [
+        "Enzyme/MLIR/Implementations/SCFDerivatives.td",
+        "Enzyme/MLIR/Implementations/Common.td",
+    ],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+gentbl(
+    name = "cf-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/CFDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/CFDerivatives.td",
+    td_srcs = [
+        "Enzyme/MLIR/Implementations/CFDerivatives.td",
+        "Enzyme/MLIR/Implementations/Common.td",
+    ],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+gentbl(
+    name = "memref-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/MemRefDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/MemRefDerivatives.td",
+    td_srcs = [
+        "Enzyme/MLIR/Implementations/MemRefDerivatives.td",
+        "Enzyme/MLIR/Implementations/Common.td",
+    ],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+gentbl(
+    name = "math-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/MathDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/MathDerivatives.td",
+    td_srcs = [
+        "Enzyme/MLIR/Implementations/MathDerivatives.td",
+        "Enzyme/MLIR/Implementations/Common.td",
+    ],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+
+cc_library(
+    name = "EnzymeMLIR",
+    srcs = glob([
+        "Enzyme/MLIR/Dialect/*.cpp",
+        "Enzyme/MLIR/Passes/*.cpp",
+        "Enzyme/MLIR/Interfaces/*.cpp",
+        "Enzyme/MLIR/Analysis/*.cpp",
+        "Enzyme/MLIR/Implementations/*.cpp",
+    ]),
+    hdrs = glob([
+        "Enzyme/MLIR/Dialect/*.h",
+        "Enzyme/MLIR/Passes/*.h",
+        "Enzyme/MLIR/Interfaces/*.h",
+        "Enzyme/MLIR/Analysis/*.h",
+        "Enzyme/MLIR/Implementations/*.h",
+        "Enzyme/Utils.h",
+        "Enzyme/TypeAnalysis/*.h",
+    ]),
+    includes = [
+        "Enzyme",
+        "Enzyme/MLIR",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":EnzymeAttributesIncGen",
+        ":EnzymeEnumsIncGen",
+        ":EnzymeOpInterfacesIncGen",
+        ":EnzymeOpsIncGen",
+        ":EnzymePassesIncGen",
+        ":EnzymeTypeInterfacesIncGen",
+        ":EnzymeTypesIncGen",
+        ":affine-derivatives",
+        ":arith-derivatives",
+        ":cf-derivatives",
+        ":llvm-derivatives",
+        ":math-derivatives",
+        ":memref-derivatives",
+        ":nvvm-derivatives",
+        ":scf-derivatives",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Demangle",
+        "@llvm-project//llvm:Passes",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:config",
+        "@llvm-project//mlir:AffineDialect",
+        "@llvm-project//mlir:Analysis",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:ArithUtils",
+        "@llvm-project//mlir:AsyncDialect",
+        "@llvm-project//mlir:CastInterfaces",
+        "@llvm-project//mlir:ControlFlowDialect",
+        "@llvm-project//mlir:ControlFlowInterfaces",
+        "@llvm-project//mlir:ConversionPasses",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:FuncExtensions",
+        "@llvm-project//mlir:FunctionInterfaces",
+        "@llvm-project//mlir:GPUDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LLVMCommonConversion",
+        "@llvm-project//mlir:LLVMDialect",
+        "@llvm-project//mlir:LinalgDialect",
+        "@llvm-project//mlir:LinalgStructuredOpsIncGen",
+        "@llvm-project//mlir:LinalgTransforms",
+        "@llvm-project//mlir:MathDialect",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:NVVMDialect",
+        "@llvm-project//mlir:OpenMPDialect",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Rewrite",
+        "@llvm-project//mlir:SCFDialect",
+        "@llvm-project//mlir:ShapeDialect",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:Transforms",
+        "@llvm-project//mlir:ViewLikeInterface",
+    ],
+)
+
+cc_binary(
+    name = "enzymemlir-opt",
+    srcs = ["Enzyme/MLIR/enzymemlir-opt.cpp"],
+    includes = ["Enzyme/MLIR"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":EnzymeMLIR",
+        "@llvm-project//mlir:AffineDialect",
+        "@llvm-project//mlir:AllPassesAndDialects",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:AsyncDialect",
+        "@llvm-project//mlir:ControlFlowDialect",
+        "@llvm-project//mlir:ConversionPasses",
+        "@llvm-project//mlir:DLTIDialect",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:GPUDialect",
+        "@llvm-project//mlir:LLVMDialect",
+        "@llvm-project//mlir:LinalgDialect",
+        "@llvm-project//mlir:MathDialect",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:MlirOptLib",
+        "@llvm-project//mlir:NVVMDialect",
+        "@llvm-project//mlir:OpenMPDialect",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:SCFDialect",
+        "@llvm-project//mlir:Transforms",
+    ],
+)
+
+exports_files(["run_lit.sh"])
+

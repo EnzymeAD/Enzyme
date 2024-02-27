@@ -15,6 +15,7 @@
 #include <llvm/TableGen/Record.h>
 
 enum ActionType {
+  MLIRDerivatives,
   CallDerivatives,
   InstDerivatives,
   BinopDerivatives,
@@ -23,6 +24,7 @@ enum ActionType {
   UpdateBlasDecl,
   UpdateBlasTA,
   GenBlasDiffUse,
+  GenHeaderVariables,
 };
 
 void emitDiffUse(const llvm::RecordKeeper &recordKeeper, llvm::raw_ostream &os,

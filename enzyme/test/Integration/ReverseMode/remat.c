@@ -7,11 +7,7 @@
 // RUN: %clang -std=c11 -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme --enzyme-inline=1 -S | %lli - 
 // RUN: %clang -std=c11 -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme --enzyme-inline=1 -S | %lli - 
 
-// test.c
-#include <stdio.h>
-#include <stdlib.h>
-
-#include "test_utils.h"
+#include "../test_utils.h"
 
 extern void __enzyme_autodiff(void*, ...);
 void square(double** p_delv, double** p_e, int ** idx, int numReg, int numElemReg) {

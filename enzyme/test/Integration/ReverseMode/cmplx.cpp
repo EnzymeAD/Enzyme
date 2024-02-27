@@ -9,12 +9,8 @@
 
 //#include <math.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
-#include <math.h>
 #include <complex>      // std::complex, std::abs, std::arg
 
 void __enzyme_autodiff(...);

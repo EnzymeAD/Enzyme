@@ -87,6 +87,9 @@ llvm::cl::opt<bool>
     EnzymeStrongZero("enzyme-strong-zero", cl::init(false), cl::Hidden,
                      cl::desc("Use additional checks to ensure correct "
                               "behavior when handling functions with inf"));
+llvm::cl::opt<bool> EnzymeMemmoveWarning(
+    "enzyme-memmove-warning", cl::init(true), cl::Hidden,
+    cl::desc("Warn if using memmove implementation as a fallback for memmove"));
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
@@ -439,8 +442,12 @@ CallInst *CreateDealloc(llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
 EnzymeFailure::EnzymeFailure(const llvm::Twine &RemarkName,
                              const llvm::DiagnosticLocation &Loc,
                              const llvm::Instruction *CodeRegion)
-    : DiagnosticInfoUnsupported(*CodeRegion->getParent()->getParent(),
-                                RemarkName, Loc) {}
+    : EnzymeFailure(RemarkName, Loc, CodeRegion->getParent()->getParent()) {}
+
+EnzymeFailure::EnzymeFailure(const llvm::Twine &RemarkName,
+                             const llvm::DiagnosticLocation &Loc,
+                             const llvm::Function *CodeRegion)
+    : DiagnosticInfoUnsupported(*CodeRegion, RemarkName, Loc) {}
 
 /// Convert a floating type to a string
 static inline std::string tofltstr(Type *T) {
@@ -1236,8 +1243,10 @@ Function *
 getOrInsertDifferentialFloatMemmove(Module &M, Type *T, unsigned dstalign,
                                     unsigned srcalign, unsigned dstaddr,
                                     unsigned srcaddr, unsigned bitwidth) {
-  llvm::errs() << "warning: didn't implement memmove, using memcpy as fallback "
-                  "which can result in errors\n";
+  if (EnzymeMemmoveWarning)
+    llvm::errs()
+        << "warning: didn't implement memmove, using memcpy as fallback "
+           "which can result in errors\n";
   return getOrInsertDifferentialFloatMemcpy(M, T, dstalign, srcalign, dstaddr,
                                             srcaddr, bitwidth);
 }
@@ -2255,7 +2264,258 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
   llvm_unreachable("unknown inst2");
 }
 
-Function *GetFunctionFromValue(Value *fn) {
+// Find the base pointer of ptr and the offset in bytes from the start of
+// the returned base pointer to this value.
+AllocaInst *getBaseAndOffset(Value *ptr, size_t &offset) {
+  offset = 0;
+  while (true) {
+    if (auto CI = dyn_cast<CastInst>(ptr)) {
+      ptr = CI->getOperand(0);
+      continue;
+    }
+    if (auto CI = dyn_cast<GetElementPtrInst>(ptr)) {
+      auto &DL = CI->getParent()->getParent()->getParent()->getDataLayout();
+      MapVector<Value *, APInt> VariableOffsets;
+      auto width = sizeof(size_t) * 8;
+      APInt Offset(width, 0);
+      bool success = collectOffset(cast<GEPOperator>(CI), DL, width,
+                                   VariableOffsets, Offset);
+      if (!success || VariableOffsets.size() != 0 || Offset.isNegative()) {
+        return nullptr;
+      }
+      offset += Offset.getZExtValue();
+      ptr = CI->getOperand(0);
+      continue;
+    }
+    if (isa<AllocaInst>(ptr)) {
+      break;
+    }
+    if (auto LI = dyn_cast<LoadInst>(ptr)) {
+      if (auto S = simplifyLoad(LI)) {
+        ptr = S;
+        continue;
+      }
+    }
+    return nullptr;
+  }
+  return cast<AllocaInst>(ptr);
+}
+
+// Find all user instructions of AI, returning tuples of <instruction, value,
+// byte offet from AI> Unlike a simple get users, this will recurse through any
+// constant gep offsets and casts
+SmallVector<std::tuple<Instruction *, Value *, size_t>, 1>
+findAllUsersOf(Value *AI) {
+  SmallVector<std::pair<Value *, size_t>, 1> todo;
+  todo.emplace_back(AI, 0);
+
+  SmallVector<std::tuple<Instruction *, Value *, size_t>, 1> users;
+  while (todo.size()) {
+    auto pair = todo.pop_back_val();
+    Value *ptr = pair.first;
+    size_t suboff = pair.second;
+
+    for (auto U : ptr->users()) {
+      if (auto CI = dyn_cast<CastInst>(U)) {
+        todo.emplace_back(CI, suboff);
+        continue;
+      }
+      if (auto CI = dyn_cast<GetElementPtrInst>(U)) {
+        auto &DL = CI->getParent()->getParent()->getParent()->getDataLayout();
+        MapVector<Value *, APInt> VariableOffsets;
+        auto width = sizeof(size_t) * 8;
+        APInt Offset(width, 0);
+        bool success = collectOffset(cast<GEPOperator>(CI), DL, width,
+                                     VariableOffsets, Offset);
+
+        if (!success || VariableOffsets.size() != 0 || Offset.isNegative()) {
+          users.emplace_back(cast<Instruction>(U), ptr, suboff);
+          continue;
+        }
+        todo.emplace_back(CI, suboff + Offset.getZExtValue());
+        continue;
+      }
+      users.emplace_back(cast<Instruction>(U), ptr, suboff);
+      continue;
+    }
+  }
+  return users;
+}
+
+// Given a pointer, find all values of size `valSz` which could be loaded from
+// that pointer when indexed at offset. If it is impossible to guarantee that
+// the set contains all such values, set legal to false
+SmallVector<Value *, 1> getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset,
+                                               size_t valSz, bool &legal) {
+  SmallVector<Value *, 1> options;
+
+  auto todo = findAllUsersOf(ptr0);
+  std::set<std::tuple<Instruction *, Value *, size_t>> seen;
+
+  while (todo.size()) {
+    auto pair = todo.pop_back_val();
+    if (seen.count(pair))
+      continue;
+    seen.insert(pair);
+    Instruction *U = std::get<0>(pair);
+    Value *ptr = std::get<1>(pair);
+    size_t suboff = std::get<2>(pair);
+
+    // Read only users do not set the memory inside of ptr
+    if (isa<LoadInst>(U)) {
+      continue;
+    }
+    if (auto MTI = dyn_cast<MemTransferInst>(U))
+      if (MTI->getOperand(0) != ptr) {
+        continue;
+      }
+    if (auto I = dyn_cast<Instruction>(U)) {
+      if (!I->mayWriteToMemory() && I->getType()->isVoidTy())
+        continue;
+    }
+
+    if (auto SI = dyn_cast<StoreInst>(U)) {
+      auto &DL = SI->getParent()->getParent()->getParent()->getDataLayout();
+
+      // We are storing into the ptr
+      if (SI->getPointerOperand() == ptr) {
+        auto storeSz =
+            (DL.getTypeStoreSizeInBits(SI->getValueOperand()->getType()) + 7) /
+            8;
+        // If store is before the load would start
+        if (storeSz + suboff <= offset)
+          continue;
+        // if store starts after load would start
+        if (offset + valSz <= suboff)
+          continue;
+
+        if (valSz == storeSz) {
+          options.push_back(SI->getValueOperand());
+          continue;
+        }
+      }
+
+      // We capture our pointer of interest, if it is stored into an alloca,
+      // all loads of said alloca would potentially store into.
+      if (SI->getValueOperand() == ptr) {
+        if (suboff == 0) {
+          size_t mid_offset = 0;
+          if (auto AI2 =
+                  getBaseAndOffset(SI->getPointerOperand(), mid_offset)) {
+            bool sublegal = true;
+            auto ptrSz = (DL.getTypeStoreSizeInBits(ptr->getType()) + 7) / 8;
+            auto subPtrs =
+                getAllLoadedValuesFrom(AI2, mid_offset, ptrSz, sublegal);
+            if (!sublegal) {
+              legal = false;
+              return options;
+            }
+            for (auto subPtr : subPtrs) {
+              for (const auto &pair3 : findAllUsersOf(subPtr)) {
+                todo.emplace_back(pair3);
+              }
+            }
+            continue;
+          }
+        }
+      }
+    }
+
+    if (auto II = dyn_cast<IntrinsicInst>(U)) {
+      if (II->getIntrinsicID() == Intrinsic::lifetime_start ||
+          II->getIntrinsicID() == Intrinsic::lifetime_end)
+        continue;
+    }
+
+    // If we copy into the ptr at a location that includes the offset, consider
+    // all sub uses
+    if (auto MTI = dyn_cast<MemTransferInst>(U)) {
+      if (auto CI = dyn_cast<ConstantInt>(MTI->getLength())) {
+        if (MTI->getOperand(0) == ptr && suboff == 0 &&
+            CI->getValue().uge(offset + valSz)) {
+          size_t midoffset = 0;
+          auto AI2 = getBaseAndOffset(MTI->getOperand(1), midoffset);
+          if (!AI2) {
+            legal = false;
+            return options;
+          }
+          if (midoffset != 0) {
+            legal = false;
+            return options;
+          }
+          for (const auto &pair3 : findAllUsersOf(AI2)) {
+            todo.emplace_back(pair3);
+          }
+          continue;
+        }
+      }
+    }
+
+    legal = false;
+    return options;
+  }
+
+  return options;
+}
+
+// Perform mem2reg/sroa to identify the innermost value being represented.
+Value *simplifyLoad(Value *V, size_t valSz) {
+  if (auto LI = dyn_cast<LoadInst>(V)) {
+    if (valSz == 0) {
+      auto &DL = LI->getParent()->getParent()->getParent()->getDataLayout();
+      valSz = (DL.getTypeStoreSizeInBits(LI->getType()) + 7) / 8;
+    }
+
+    Value *ptr = LI->getPointerOperand();
+    size_t offset = 0;
+
+    if (auto ptr2 = simplifyLoad(ptr)) {
+      ptr = ptr2;
+    }
+    auto AI = getBaseAndOffset(ptr, offset);
+    if (!AI) {
+      return nullptr;
+    }
+
+    bool legal = true;
+    auto opts = getAllLoadedValuesFrom(AI, offset, valSz, legal);
+
+    if (!legal) {
+      return nullptr;
+    }
+    std::set<Value *> res;
+    for (auto opt : opts) {
+      Value *v2 = simplifyLoad(opt, valSz);
+      if (v2)
+        res.insert(v2);
+      else
+        res.insert(opt);
+    }
+    if (res.size() != 1) {
+      return nullptr;
+    }
+    Value *retval = *res.begin();
+    return retval;
+  }
+  if (auto EVI = dyn_cast<ExtractValueInst>(V)) {
+    bool allZero = true;
+    for (auto idx : EVI->getIndices()) {
+      if (idx != 0)
+        allZero = false;
+    }
+    if (valSz == 0) {
+      auto &DL = EVI->getParent()->getParent()->getParent()->getDataLayout();
+      valSz = (DL.getTypeStoreSizeInBits(EVI->getType()) + 7) / 8;
+    }
+    if (allZero)
+      if (auto LI = dyn_cast<LoadInst>(EVI->getAggregateOperand())) {
+        return simplifyLoad(LI, valSz);
+      }
+  }
+  return nullptr;
+}
+
+Value *GetFunctionValFromValue(Value *fn) {
   while (!isa<Function>(fn)) {
     if (auto ci = dyn_cast<CastInst>(fn)) {
       fn = ci->getOperand(0);
@@ -2285,6 +2545,7 @@ Function *GetFunctionFromValue(Value *fn) {
         }
         if (ret.size() == 1) {
           auto val = *ret.begin();
+          val = GetFunctionValFromValue(val);
           if (isa<Constant>(val)) {
             fn = val;
             continue;
@@ -2306,6 +2567,14 @@ Function *GetFunctionFromValue(Value *fn) {
         }
         if (ret.size() == 1) {
           auto val = *ret.begin();
+          while (isa<LoadInst>(val)) {
+            auto v2 = simplifyLoad(val);
+            if (v2) {
+              val = v2;
+              continue;
+            }
+            break;
+          }
           if (isa<Constant>(val)) {
             fn = val;
             continue;
@@ -2317,73 +2586,18 @@ Function *GetFunctionFromValue(Value *fn) {
         }
       }
     }
-    if (auto LI = dyn_cast<LoadInst>(fn)) {
-      auto obj = getBaseObject(LI->getPointerOperand());
-      if (isa<AllocaInst>(obj)) {
-        std::set<std::pair<Instruction *, Value *>> done;
-        SmallVector<std::pair<Instruction *, Value *>, 1> todo;
-        Value *stored = nullptr;
-        bool legal = true;
-        for (auto U : obj->users()) {
-          if (auto I = dyn_cast<Instruction>(U))
-            todo.push_back(std::make_pair(I, obj));
-          else {
-            legal = false;
-            break;
-          }
-        }
-        while (legal && todo.size()) {
-          auto tup = todo.pop_back_val();
-          if (done.count(tup))
-            continue;
-          done.insert(tup);
-          auto cur = tup.first;
-          auto prev = tup.second;
-          if (auto SI = dyn_cast<StoreInst>(cur))
-            if (SI->getPointerOperand() == prev) {
-              if (stored == SI->getValueOperand())
-                continue;
-              else if (stored == nullptr) {
-                stored = SI->getValueOperand();
-                continue;
-              } else {
-                legal = false;
-                break;
-              }
-            }
-
-          if (isPointerArithmeticInst(cur, /*includephi*/ true)) {
-            for (auto U : cur->users()) {
-              if (auto I = dyn_cast<Instruction>(U))
-                todo.push_back(std::make_pair(I, cur));
-              else {
-                legal = false;
-                break;
-              }
-            }
-            continue;
-          }
-
-          if (isa<LoadInst>(cur))
-            continue;
-
-          if (!cur->mayWriteToMemory() && cur->getType()->isVoidTy())
-            continue;
-
-          legal = false;
-          break;
-        }
-
-        if (legal && stored) {
-          fn = stored;
-          continue;
-        }
-      }
+    if (auto S = simplifyLoad(fn)) {
+      fn = S;
+      continue;
     }
     break;
   }
 
-  return dyn_cast<Function>(fn);
+  return fn;
+}
+
+Function *GetFunctionFromValue(Value *fn) {
+  return dyn_cast<Function>(GetFunctionValFromValue(fn));
 }
 
 #if LLVM_VERSION_MAJOR >= 16
@@ -2627,7 +2841,8 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
       CustomErrorHandler(ss.str().c_str(), nullptr, ErrorType::NoDerivative,
                          nullptr, nullptr, nullptr);
     } else {
-      EmitFailure("unknown trans blas value", nullptr, nullptr, ss.str());
+      EmitFailure("unknown trans blas value", B.getCurrentDebugLocation(),
+                  B.GetInsertBlock()->getParent(), ss.str());
     }
     return V;
   }
@@ -2824,4 +3039,36 @@ bool collectOffset(GEPOperator *gep, const DataLayout &DL, unsigned BitWidth,
   }
   return true;
 #endif
+}
+
+llvm::CallInst *createIntrinsicCall(llvm::IRBuilderBase &B,
+                                    llvm::Intrinsic::ID ID, llvm::Type *RetTy,
+                                    llvm::ArrayRef<llvm::Value *> Args,
+                                    llvm::Instruction *FMFSource,
+                                    const llvm::Twine &Name) {
+#if LLVM_VERSION_MAJOR >= 16
+  llvm::CallInst *nres = B.CreateIntrinsic(RetTy, ID, Args, FMFSource, Name);
+#else
+  SmallVector<Intrinsic::IITDescriptor, 1> Table;
+  Intrinsic::getIntrinsicInfoTableEntries(ID, Table);
+  ArrayRef<Intrinsic::IITDescriptor> TableRef(Table);
+
+  SmallVector<Type *, 2> ArgTys;
+  ArgTys.reserve(Args.size());
+  for (auto &I : Args)
+    ArgTys.push_back(I->getType());
+  FunctionType *FTy = FunctionType::get(RetTy, ArgTys, false);
+  SmallVector<Type *, 2> OverloadTys;
+  Intrinsic::MatchIntrinsicTypesResult Res =
+      matchIntrinsicSignature(FTy, TableRef, OverloadTys);
+  (void)Res;
+  assert(Res == Intrinsic::MatchIntrinsicTypes_Match && TableRef.empty() &&
+         "Wrong types for intrinsic!");
+  Function *Fn = Intrinsic::getDeclaration(B.GetInsertPoint()->getModule(), ID,
+                                           OverloadTys);
+  CallInst *nres = B.CreateCall(Fn, Args, {}, Name);
+  if (FMFSource)
+    nres->copyFastMathFlags(FMFSource);
+#endif
+  return nres;
 }

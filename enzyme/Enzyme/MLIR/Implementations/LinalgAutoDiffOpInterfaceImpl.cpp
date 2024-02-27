@@ -28,7 +28,6 @@
 
 #include "mlir/Dialect/Linalg/IR/LinalgInterfaces.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
-#include "mlir/Dialect/Shape/IR/ShapeOpsTypes.h.inc"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/DialectConversion.h"
 
@@ -73,16 +72,14 @@ struct GenericOpInterfaceReverse
                                 MGradientUtilsReverse *gutils,
                                 SmallVector<Value> caches) const {
     auto linalgOp = cast<linalg::LinalgOp>(op);
-    assert(linalgOp.hasBufferSemantics() &&
+    assert(linalgOp.hasPureBufferSemantics() &&
            "Linalg op with tensor semantics not yet supported");
 
     linalg::LinalgOp newOp =
         cast<linalg::LinalgOp>(gutils->getNewFromOriginal(linalgOp));
 
     // Replace the op by a linalg.generic op if necessary
-    // TODO : IRRewriter rewriter(builder.getContext()/*,
-    // builder.getListener()*/);
-    ConversionPatternRewriter rewriter(builder.getContext());
+    IRRewriter rewriter(builder.getContext(), builder.getListener());
     auto failiureOrLinalgOp = generalizeNamedOp(rewriter, newOp);
     if (!failed(failiureOrLinalgOp)) {
       linalg::GenericOp replacement = failiureOrLinalgOp.value();

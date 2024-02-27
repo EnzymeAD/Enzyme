@@ -36,14 +36,12 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
     ArrayRef<DIFFE_TYPE> ArgDiffeTypes_, IRMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode, unsigned width, bool omp)
-    : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_), TA(TA_),
-      TR(TR_), omp(omp), blocksNotForAnalysis(),
+    : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_),
+      invertedPointers(invertedPointers_), originalToNewFn(originalToNewFn_),
+      originalToNewFnOps(originalToNewFnOps_), blocksNotForAnalysis(),
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
           blocksNotForAnalysis, constantvalues_, activevals_, ReturnActivity)),
-      width(width), ArgDiffeTypes(ArgDiffeTypes_),
-      originalToNewFn(originalToNewFn_),
-      originalToNewFnOps(originalToNewFnOps_),
-      invertedPointers(invertedPointers_) {
+      TA(TA_), TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_) {
 
   /*
   for (BasicBlock &BB : *oldFunc) {
@@ -117,14 +115,14 @@ mlir::enzyme::MGradientUtils::getNewFromOriginal(mlir::Block *originst) const {
 
 Operation *
 mlir::enzyme::MGradientUtils::getNewFromOriginal(Operation *originst) const {
+  assert(originst);
   auto found = originalToNewFnOps.find(originst);
   if (found == originalToNewFnOps.end()) {
     llvm::errs() << oldFunc << "\n";
     llvm::errs() << newFunc << "\n";
     for (auto &pair : originalToNewFnOps) {
       llvm::errs() << " map[" << pair.first << "] = " << pair.second << "\n";
-      // llvm::errs() << " map[" << pair.first << "] = " << pair.second << "
-      // -- " << *pair.first << " " << *pair.second << "\n";
+      llvm::errs() << " map[" << *pair.first << "] = " << *pair.second << "\n";
     }
     llvm::errs() << originst << " - " << *originst << "\n";
     llvm_unreachable("Could not get new op from original");
@@ -140,6 +138,9 @@ Operation *mlir::enzyme::MGradientUtils::cloneWithNewOperands(OpBuilder &B,
   return B.clone(*op, map);
 }
 
+bool mlir::enzyme::MGradientUtils::isConstantInstruction(Operation *op) const {
+  return activityAnalyzer->isConstantOperation(TR, op);
+}
 bool mlir::enzyme::MGradientUtils::isConstantValue(Value v) const {
   return activityAnalyzer->isConstantValue(TR, v);
 }
@@ -153,7 +154,12 @@ mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
   if (isConstantValue(v)) {
     if (auto iface = v.getType().dyn_cast<AutoDiffTypeInterface>()) {
       OpBuilder::InsertionGuard guard(Builder2);
-      Builder2.setInsertionPoint(getNewFromOriginal(v.getDefiningOp()));
+      if (auto op = v.getDefiningOp())
+        Builder2.setInsertionPoint(getNewFromOriginal(op));
+      else {
+        auto ba = cast<BlockArgument>(v);
+        Builder2.setInsertionPointToStart(getNewFromOriginal(ba.getOwner()));
+      }
       Value dv = iface.createNullValue(Builder2, v.getLoc());
       invertedPointers.map(v, dv);
       return dv;
@@ -300,10 +306,8 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
 
 LogicalResult MGradientUtils::visitChild(Operation *op) {
   if (mode == DerivativeMode::ForwardMode) {
-    // In absence of a proper activity analysis, approximate it by treating any
-    // side effect-free operation producing constants as inactive.
-    // if (auto iface = dyn_cast<MemoryEffectOpInterface>(op)) {
-    if (llvm::all_of(op->getResults(),
+    if ((op->getBlock()->getTerminator() != op) &&
+        llvm::all_of(op->getResults(),
                      [this](Value v) { return isConstantValue(v); }) &&
         /*iface.hasNoEffect()*/ activityAnalyzer->isConstantOperation(TR, op)) {
       return success();
@@ -315,5 +319,6 @@ LogicalResult MGradientUtils::visitChild(Operation *op) {
       return iface.createForwardModeTangent(builder, this);
     }
   }
-  return op->emitError() << "could not compute the adjoint for this operation";
+  return op->emitError() << "could not compute the adjoint for this operation "
+                         << *op;
 }

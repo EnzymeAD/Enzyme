@@ -7,10 +7,7 @@
 // RUN: %clang -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli -
 // RUN: %clang -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli -
 
-#include <math.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include "../test_utils.h"
 
 /*
 #ifdef __cplusplus
@@ -27,18 +24,6 @@ threshold) { if (fabs(f1-f2) > threshold) return false; return true;
 }
 #endif
 */
-
-#define APPROX_EQ(LHS, RHS, THRES)                                             \
-  {                                                                            \
-    if (__builtin_fabs(LHS - RHS) > THRES) {                                   \
-      fprintf(stderr,                                                          \
-              "Assertion Failed: fabs( [%s = %g] - [%s = %g] ) > %g at %s:%d " \
-              "(%s)\n",                                                        \
-              #LHS, LHS, #RHS, RHS, THRES, __FILE__, __LINE__,                 \
-              __PRETTY_FUNCTION__);                                            \
-      abort();                                                                 \
-    }                                                                          \
-  };
 
 
 typedef struct {

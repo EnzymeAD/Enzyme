@@ -37,6 +37,10 @@ add_public_tablegen_target(BlasDeclarationsIncGen)
 add_public_tablegen_target(BlasTAIncGen)
 add_public_tablegen_target(BlasDiffUseIncGen)
 
+set(LLVM_TARGET_DEFINITIONS Clang/include_utils.td)
+enzyme_tablegen(IncludeUtils.inc -gen-header-strings)
+add_public_tablegen_target(IncludeUtilsIncGen)
+
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 set(LLVM_LINK_COMPONENTS Demangle)
@@ -44,6 +48,7 @@ set(LLVM_LINK_COMPONENTS Demangle)
 file(GLOB ENZYME_SRC CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     "*.cpp"
 )
+list(REMOVE_ITEM ENZYME_SRC "eopt.cpp")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -54,6 +59,7 @@ list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp T
 if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
     add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC}
+        PARTIAL_SOURCES_INTENDED
         MODULE
         DEPENDS
         intrinsics_gen
@@ -64,6 +70,7 @@ if (${Clang_FOUND})
     add_llvm_library( ClangEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymeClang.cpp
         Clang/EnzymePassLoader.cpp
+        PARTIAL_SOURCES_INTENDED
         MODULE
         DEPENDS
         intrinsics_gen
@@ -71,9 +78,11 @@ if (${Clang_FOUND})
 	LLVM
     )
 target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
+add_dependencies(ClangEnzyme-${LLVM_VERSION_MAJOR} IncludeUtilsIncGen)
 endif()
         add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
+        PARTIAL_SOURCES_INTENDED
         MODULE
         DEPENDS
         intrinsics_gen
@@ -84,6 +93,7 @@ target_compile_definitions(LLDEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS
 else()
     add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC}
+        PARTIAL_SOURCES_INTENDED
         MODULE
         DEPENDS
         intrinsics_gen
@@ -94,6 +104,7 @@ if (${Clang_FOUND})
     add_llvm_library( ClangEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymeClang.cpp
         Clang/EnzymePassLoader.cpp
+        PARTIAL_SOURCES_INTENDED
         MODULE
         DEPENDS
         intrinsics_gen
@@ -101,9 +112,11 @@ if (${Clang_FOUND})
         clang
     )
 target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
+add_dependencies(ClangEnzyme-${LLVM_VERSION_MAJOR} IncludeUtilsIncGen)
 endif()
     add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
+        PARTIAL_SOURCES_INTENDED
         MODULE
         DEPENDS
         intrinsics_gen
@@ -116,6 +129,7 @@ endif()
 if (${ENZYME_STATIC_LIB})
     add_llvm_library( EnzymeStatic-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC}
+        PARTIAL_SOURCES_INTENDED
         STATIC
         DEPENDS
         intrinsics_gen

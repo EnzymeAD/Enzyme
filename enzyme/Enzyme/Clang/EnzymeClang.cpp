@@ -25,15 +25,19 @@
 #include "clang/AST/Attr.h"
 #include "clang/AST/DeclGroup.h"
 #include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/Basic/FileManager.h"
 #include "clang/Basic/MacroBuilder.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
+#include "clang/Lex/HeaderSearch.h"
 #include "clang/Lex/PreprocessorOptions.h"
 #include "clang/Sema/Sema.h"
 #include "clang/Sema/SemaDiagnostic.h"
 
 #include "../Utils.h"
+
+#include "IncludeUtils.inc"
 
 using namespace clang;
 
@@ -134,6 +138,39 @@ public:
     Builder.defineMacro("ENZYME_VERSION_PATCH",
                         std::to_string(ENZYME_VERSION_PATCH));
     CI.getPreprocessor().setPredefines(Predefines.str());
+
+    auto baseFS = &CI.getFileManager().getVirtualFileSystem();
+    llvm::vfs::OverlayFileSystem *fuseFS(
+        new llvm::vfs::OverlayFileSystem(baseFS));
+    IntrusiveRefCntPtr<llvm::vfs::InMemoryFileSystem> fs(
+        new llvm::vfs::InMemoryFileSystem());
+
+    struct tm y2k = {};
+
+    y2k.tm_hour = 0;
+    y2k.tm_min = 0;
+    y2k.tm_sec = 0;
+    y2k.tm_year = 100;
+    y2k.tm_mon = 0;
+    y2k.tm_mday = 1;
+    time_t timer = mktime(&y2k);
+    for (const auto &pair : include_headers) {
+      fs->addFile(StringRef(pair[0]), timer,
+                  llvm::MemoryBuffer::getMemBuffer(
+                      StringRef(pair[1]), StringRef(pair[0]),
+                      /*RequiresNullTerminator*/ true));
+    }
+
+    fuseFS->pushOverlay(fs);
+    fuseFS->pushOverlay(baseFS);
+    CI.getFileManager().setVirtualFileSystem(fuseFS);
+
+    auto DE = CI.getFileManager().getDirectoryRef("/enzymeroot");
+    assert(DE);
+    auto DL = DirectoryLookup(*DE, SrcMgr::C_User,
+                              /*isFramework=*/false);
+    CI.getPreprocessor().getHeaderSearchInfo().AddSearchPath(DL,
+                                                             /*isAngled=*/true);
   }
   ~EnzymePlugin() {}
   void HandleTranslationUnit(ASTContext &context) override {}
@@ -141,10 +178,10 @@ public:
     using namespace clang;
     DeclGroupRef::iterator it;
 
-    Visitor v(CI);
+    // Visitor v(CI);
     // Forcibly require emission of all libdevice
     for (it = dg.begin(); it != dg.end(); ++it) {
-      v.TraverseDecl(*it);
+      // v.TraverseDecl(*it);
       if (auto FD = dyn_cast<FunctionDecl>(*it)) {
         if (!FD->hasAttr<clang::CUDADeviceAttr>())
           continue;
@@ -240,6 +277,11 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
     // if (FD->isLateTemplateParsed()) return;
     auto &AST = S.getASTContext();
     DeclContext *declCtx = FD->getDeclContext();
+    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
+      if (tmpCtx->isRecord()) {
+        declCtx = tmpCtx->getParent();
+      }
+    }
     auto loc = FD->getLocation();
     RecordDecl *RD;
     if (S.getLangOpts().CPlusPlus)
@@ -369,6 +411,11 @@ struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
 
     auto &AST = S.getASTContext();
     DeclContext *declCtx = D->getDeclContext();
+    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
+      if (tmpCtx->isRecord()) {
+        declCtx = tmpCtx->getParent();
+      }
+    }
     auto loc = D->getLocation();
     RecordDecl *RD;
     if (S.getLangOpts().CPlusPlus)
@@ -425,7 +472,6 @@ struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
       return AttributeNotApplied;
     }
     V->setInit(expr);
-    V->dump();
     S.MarkVariableReferenced(loc, V);
     S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
     return AttributeApplied;
@@ -479,6 +525,11 @@ struct EnzymeNoFreeAttrInfo : public ParsedAttrInfo {
 
     auto &AST = S.getASTContext();
     DeclContext *declCtx = D->getDeclContext();
+    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
+      if (tmpCtx->isRecord()) {
+        declCtx = tmpCtx->getParent();
+      }
+    }
     auto loc = D->getLocation();
     RecordDecl *RD;
     if (S.getLangOpts().CPlusPlus)
@@ -534,7 +585,6 @@ struct EnzymeNoFreeAttrInfo : public ParsedAttrInfo {
       return AttributeNotApplied;
     }
     V->setInit(expr);
-    V->dump();
     S.MarkVariableReferenced(loc, V);
     S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
     return AttributeApplied;
@@ -584,6 +634,11 @@ struct EnzymeSparseAccumulateAttrInfo : public ParsedAttrInfo {
 
     auto &AST = S.getASTContext();
     DeclContext *declCtx = D->getDeclContext();
+    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
+      if (tmpCtx->isRecord()) {
+        declCtx = tmpCtx->getParent();
+      }
+    }
     auto loc = D->getLocation();
     RecordDecl *RD;
     if (S.getLangOpts().CPlusPlus)
@@ -631,7 +686,6 @@ struct EnzymeSparseAccumulateAttrInfo : public ParsedAttrInfo {
       return AttributeNotApplied;
     }
     V->setInit(expr);
-    V->dump();
     S.MarkVariableReferenced(loc, V);
     S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
     return AttributeApplied;

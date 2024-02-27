@@ -1,4 +1,5 @@
 #include "Dialect/Ops.h"
+#include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
@@ -21,7 +22,7 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 
-void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
+void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
                       DIFFE_TYPE retType, ReturnType retVal) {
   auto inst = oBB->getTerminator();
 
@@ -33,39 +34,7 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
   nBuilder.setInsertionPointToEnd(nBB);
 
   if (auto binst = dyn_cast<BranchOpInterface>(inst)) {
-    // TODO generalize to cloneWithNewBlockArgs interface
-    SmallVector<Value> newVals;
-
-    SmallVector<int32_t> segSizes;
-    for (size_t i = 0, len = binst.getSuccessorOperands(0)
-                                 .getForwardedOperands()
-                                 .getBeginOperandIndex();
-         i < len; i++)
-      newVals.push_back(gutils->getNewFromOriginal(binst->getOperand(i)));
-    segSizes.push_back(newVals.size());
-    for (size_t i = 0; i < newInst->getNumSuccessors(); i++) {
-      size_t cur = newVals.size();
-      for (auto op : binst.getSuccessorOperands(i).getForwardedOperands()) {
-        newVals.push_back(gutils->getNewFromOriginal(op));
-        if (!gutils->isConstantValue(op)) {
-          newVals.push_back(gutils->invertPointerM(op, nBuilder));
-        }
-      }
-      cur = newVals.size() - cur;
-      segSizes.push_back(cur);
-    }
-
-    SmallVector<NamedAttribute> attrs(newInst->getAttrs());
-    for (auto &attr : attrs) {
-      if (attr.getName() == "operandSegmentSizes")
-        attr.setValue(nBuilder.getDenseI32ArrayAttr(segSizes));
-    }
-
-    nBB->push_back(
-        newInst->create(newInst->getLoc(), newInst->getName(), TypeRange(),
-                        newVals, attrs, OpaqueProperties(nullptr),
-                        newInst->getSuccessors(), newInst->getNumRegions()));
-    gutils->erase(newInst);
+    mlir::enzyme::detail::branchingForwardHandler(inst, nBuilder, gutils);
     return;
   }
 
@@ -77,44 +46,52 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
 
   switch (retVal) {
   case ReturnType::Return: {
-    auto ret = inst->getOperand(0);
+    for (size_t i = 0; i < inst->getNumOperands(); i++) {
+      auto ret = inst->getOperand(i);
 
-    mlir::Value toret;
-    if (retType == DIFFE_TYPE::CONSTANT) {
-      toret = gutils->getNewFromOriginal(ret);
-    } else if (!isa<mlir::FloatType>(ret.getType()) && true /*type analysis*/) {
-      toret = gutils->invertPointerM(ret, nBuilder);
-    } else if (!gutils->isConstantValue(ret)) {
-      toret = gutils->invertPointerM(ret, nBuilder);
-    } else {
-      Type retTy = ret.getType().cast<AutoDiffTypeInterface>().getShadowType();
-      toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(nBuilder,
-                                                                  ret.getLoc());
+      mlir::Value toret;
+      if (retType == DIFFE_TYPE::CONSTANT) {
+        toret = gutils->getNewFromOriginal(ret);
+      } else if (!isa<mlir::FloatType>(ret.getType()) &&
+                 true /*type analysis*/) {
+        toret = gutils->invertPointerM(ret, nBuilder);
+      } else if (!gutils->isConstantValue(ret)) {
+        toret = gutils->invertPointerM(ret, nBuilder);
+      } else {
+        Type retTy =
+            ret.getType().cast<AutoDiffTypeInterface>().getShadowType();
+        toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
+            nBuilder, ret.getLoc());
+      }
+      retargs.push_back(toret);
     }
-    retargs.push_back(toret);
 
     break;
   }
   case ReturnType::TwoReturns: {
     if (retType == DIFFE_TYPE::CONSTANT)
       assert(false && "Invalid return type");
-    auto ret = inst->getOperand(0);
+    for (size_t i = 0; i < inst->getNumOperands(); i++) {
+      auto ret = inst->getOperand(i);
 
-    retargs.push_back(gutils->getNewFromOriginal(ret));
+      retargs.push_back(gutils->getNewFromOriginal(ret));
 
-    mlir::Value toret;
-    if (retType == DIFFE_TYPE::CONSTANT) {
-      toret = gutils->getNewFromOriginal(ret);
-    } else if (!isa<mlir::FloatType>(ret.getType()) && true /*type analysis*/) {
-      toret = gutils->invertPointerM(ret, nBuilder);
-    } else if (!gutils->isConstantValue(ret)) {
-      toret = gutils->invertPointerM(ret, nBuilder);
-    } else {
-      Type retTy = ret.getType().cast<AutoDiffTypeInterface>().getShadowType();
-      toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(nBuilder,
-                                                                  ret.getLoc());
+      mlir::Value toret;
+      if (retType == DIFFE_TYPE::CONSTANT) {
+        toret = gutils->getNewFromOriginal(ret);
+      } else if (!isa<mlir::FloatType>(ret.getType()) &&
+                 true /*type analysis*/) {
+        toret = gutils->invertPointerM(ret, nBuilder);
+      } else if (!gutils->isConstantValue(ret)) {
+        toret = gutils->invertPointerM(ret, nBuilder);
+      } else {
+        Type retTy =
+            ret.getType().cast<AutoDiffTypeInterface>().getShadowType();
+        toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
+            nBuilder, ret.getLoc());
+      }
+      retargs.push_back(toret);
     }
-    retargs.push_back(toret);
     break;
   }
   case ReturnType::Void: {
@@ -149,6 +126,9 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     llvm::errs() << fn << "\n";
     llvm_unreachable("Differentiating empty function");
   }
+  assert(fn.getFunctionBody().front().getNumArguments() == constants.size());
+  assert(fn.getFunctionBody().front().getNumArguments() ==
+         volatile_args.size());
 
   MForwardCacheKey tup = {
       fn, retType, constants,
@@ -203,6 +183,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
                                   unnecessaryInstructions, gutils, TLI);
                                   */
 
+  bool valid = true;
   for (Block &oBB : gutils->oldFunc.getFunctionBody().getBlocks()) {
     // Don't create derivatives for code that results in termination
     if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
@@ -218,14 +199,14 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
       continue;
     }
 
-    auto term = oBB.getTerminator();
-    assert(term);
+    assert(oBB.getTerminator());
 
     auto first = oBB.begin();
     auto last = oBB.empty() ? oBB.end() : std::prev(oBB.end());
     for (auto it = first; it != last; ++it) {
       // TODO: propagate errors.
-      (void)gutils->visitChild(&*it);
+      auto res = gutils->visitChild(&*it);
+      valid &= res.succeeded();
     }
 
     createTerminator(gutils, &oBB, retType, returnValue);
@@ -251,6 +232,9 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
 
   auto nf = gutils->newFunc;
   delete gutils;
+
+  if (!valid)
+    return nullptr;
 
   // if (PostOpt)
   //  PPC.optimizeIntermediate(nf);

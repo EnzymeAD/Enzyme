@@ -24,8 +24,8 @@ module {
 // Make sure the right values are being cached in the primal
 // CHECK:        %[[one:.+]] = arith.constant 1.0
 // CHECK:        scf.for %[[iv:.+]] = %c0 to %c10 step %c1 iter_args(%[[r_it:.+]] = %[[one]])
-// CHECK-NEXT:       "enzyme.push"(%[[xcache:.+]], %[[x]])
 // CHECK-NEXT:       "enzyme.push"(%[[rcache:.+]], %[[r_it]])
+// CHECK-NEXT:       "enzyme.push"(%[[xcache:.+]], %[[x]])
 
 // Ensure the right value is yielded in the adjoint
 // CHECK:        "enzyme.set"(%[[rshadow:.+]], %[[dr]])
@@ -33,10 +33,10 @@ module {
 // CHECK:        scf.for %[[iv:.+]] = %[[lb:.+]] to %[[ub:.+]] step %[[step:.+]] iter_args(%[[dr_it:.+]] = %[[dr]])
 // CHECK-NEXT:       "enzyme.set"(%[[rshadow:.+]], %[[dr_it]])
 // CHECK-NEXT:       %[[dr_it:.+]] = "enzyme.get"(%[[rshadow]])
+// CHECK-NEXT:       %[[r_cached:.+]] = "enzyme.pop"(%[[rcache]])
 // CHECK-NEXT:       %[[x:.+]] = "enzyme.pop"(%[[xcache]])
 // CHECK-NEXT:       %[[dr_next:.+]] = arith.mulf %[[dr_it]], %[[x]]
 // CHECK-NEXT:       "enzyme.set"(%[[rshadow:.+]], %[[dr_next]])
-// CHECK-NEXT:       %[[r_cached:.+]] = "enzyme.pop"(%[[rcache]])
 // CHECK-NEXT:       %[[dx_next:.+]] = arith.mulf %[[dr_it]], %[[r_cached]]
 // CHECK-NEXT:       %[[dx0:.+]] = "enzyme.get"(%[[xshadow:.+]]) :
 // CHECK-NEXT:       %[[dx1:.+]] = arith.addf %[[dx0]], %[[dx_next]]
