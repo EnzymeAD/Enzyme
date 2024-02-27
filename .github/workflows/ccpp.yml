@@ -34,7 +34,7 @@ jobs:
             sudo sed -i 's/add_executable(llvm-omp-device-info IMPORTED)//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
             sudo sed -i 's/llvm-omp-device-info//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
           fi
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: mkdir
       run: rm -rf build && mkdir build
     - name: cmake

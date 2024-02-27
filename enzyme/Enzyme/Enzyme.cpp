@@ -435,6 +435,9 @@ std::optional<StringRef> getMetadataName(llvm::Value *res)
 Optional<StringRef> getMetadataName(llvm::Value *res)
 #endif
 {
+  if (auto S = simplifyLoad(res))
+    return getMetadataName(S);
+
   if (auto av = dyn_cast<MetadataAsValue>(res)) {
     return cast<MDString>(av->getMetadata())->getString();
   } else if ((isa<LoadInst>(res) || isa<CastInst>(res)) &&
@@ -463,12 +466,11 @@ Optional<StringRef> getMetadataName(llvm::Value *res)
     return gv->getName();
   } else if (auto gv = dyn_cast<AllocaInst>(res)) {
     return gv->getName();
-  } else {
-    if (isa<PHINode>(res)) {
-      return recursePhiReads(cast<PHINode>(res));
-    }
-    return {};
+  } else if (isa<PHINode>(res)) {
+    return recursePhiReads(cast<PHINode>(res));
   }
+
+  return {};
 }
 
 static Value *adaptReturnedVector(Value *ret, Value *diffret,
@@ -2110,8 +2112,12 @@ public:
 
       // Move the truncated body into the original function
       F.deleteBody();
+#if LLVM_VERSION_MAJOR >= 16
+      F.splice(F.begin(), TruncatedFunc);
+#else
       F.getBasicBlockList().splice(F.begin(),
                                    TruncatedFunc->getBasicBlockList());
+#endif
       RemapFunction(F, Mapping,
                     RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
       TruncatedFunc->deleteBody();
@@ -3193,6 +3199,7 @@ AnalysisKey EnzymeNewPM::Key;
 #include "PreserveNVVM.h"
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Transforms/IPO/AlwaysInliner.h"
 #if LLVM_VERSION_MAJOR >= 15
 #include "llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h"
 #include "llvm/Transforms/IPO/CalledValuePropagation.h"
@@ -3423,6 +3430,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 #else
     prePass(MPM);
 #endif
+    MPM.addPass(llvm::AlwaysInlinerPass());
     FunctionPassManager OptimizerPM;
     FunctionPassManager OptimizerPM2;
 #if LLVM_VERSION_MAJOR >= 16
