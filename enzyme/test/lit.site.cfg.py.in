@@ -16,6 +16,10 @@ config.llvm_shlib_ext = "@LLVM_SHLIBEXT@"
 
 config.targets_to_build = "@TARGETS_TO_BUILD@"
 
+has_mpfr_h = "@HAS_MPFR_H@"
+mpfr_lib_path = "@MPFR_LIB_PATH@"
+has_mpfr = "yes" if mpfr_lib_path != "MPFR_LIB_PATH-NOTFOUND" and has_mpfr_h == "1" else "no"
+
 ## Check the current platform with regex
 import re
 EAT_ERR_ON_X86 = ' '
@@ -111,6 +115,8 @@ if len("@ENZYME_BINARY_DIR@") == 0:
 
 config.substitutions.append(('%loadClangEnzyme', oldPM if int(config.llvm_ver) < 15 else newPM))
 config.substitutions.append(('%newLoadClangEnzyme', newPM))
+
+config.substitutions.append(('%hasMPFR', has_mpfr))
 
 # Let the main config do the real work.
 cfgfile = "@ENZYME_SOURCE_DIR@/test/lit.cfg.py"

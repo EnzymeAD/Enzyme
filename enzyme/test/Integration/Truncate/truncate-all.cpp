@@ -12,7 +12,7 @@
 // RUN: if [ %llvmver -ge 12 ]; then %clang -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -S -mllvm --enzyme-truncate-all="11-52to8-23" | %lli - | FileCheck --check-prefix TO_28_23 %s; fi
 // TO_28_23: 900000000.000000
 
-// RUN: if [ %llvmver -ge 12 ]; then %clang -DENZYME_TEST_TO_MPFR -O3 %s -o %s.a.out %newLoadClangEnzyme -mllvm --enzyme-truncate-all="11-52to3-7" -lmpfr;  %s.a.out | FileCheck --check-prefix TO_3_7 %s; fi
+// RUN: if [ %llvmver -ge 12 ] && [ %hasMPFR == "yes" ] ; then %clang -DENZYME_TEST_TO_MPFR -O3 %s -o %s.a.out %newLoadClangEnzyme -mllvm --enzyme-truncate-all="11-52to3-7" -lmpfr;  %s.a.out | FileCheck --check-prefix TO_3_7 %s; fi
 // TO_3_7: 897581056.000000
 
 #include <math.h>
