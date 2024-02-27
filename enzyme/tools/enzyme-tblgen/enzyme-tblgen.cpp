@@ -1290,7 +1290,7 @@ static void emitHeaderIncludes(const RecordKeeper &recordKeeper,
 #if LLVM_VERSION_MAJOR >= 12
                                       pattern->getFieldLoc("filename_in"),
 #else
-                                      pattern->getLoc()[1],
+                                      SMLoc::getFromPointer(nullptr),
 #endif
                                       included_file);
       if (!buf)
