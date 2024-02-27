@@ -3937,14 +3937,40 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         hasTape = false;
         // res.first.push_back(StructType::get(todiff->getContext(), {}));
       } else {
-        llvm::errs() << "expected args: [";
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << "Bad function type of custom reverse pass for function "
+           << key.todiff->getName() << " of type "
+           << *key.todiff->getFunctionType() << "\n";
+        ss << "  expected gradient function to have argument types [";
+        bool seen = false;
         for (auto a : res.first) {
-          llvm::errs() << *a << " ";
+          if (seen)
+            ss << ", ";
+          seen = true;
+          ss << *a;
         }
-        llvm::errs() << "]\n";
-        llvm::errs() << *foundcalled << "\n";
-        assert(0 && "bad type for custom gradient");
-        llvm_unreachable("bad type for custom gradient");
+        ss << "]\n";
+        ss << "  Instead found " << foundcalled->getName() << " of type "
+           << *foundcalled->getFunctionType() << "\n";
+        Value *toshow = key.todiff;
+        if (context.req) {
+          toshow = context.req;
+          ss << " at context: " << *context.req;
+        } else {
+          ss << *key.todiff << "\n";
+        }
+        if (CustomErrorHandler) {
+          CustomErrorHandler(ss.str().c_str(), wrap(toshow),
+                             ErrorType::NoDerivative, nullptr, wrap(key.todiff),
+                             wrap(context.ip));
+        } else if (context.req) {
+          EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
+                      ss.str());
+        } else {
+          assert(0 && "bad type for custom gradient");
+          llvm_unreachable("bad type for custom gradient");
+        }
       }
 
       auto st = dyn_cast<StructType>(foundcalled->getReturnType());

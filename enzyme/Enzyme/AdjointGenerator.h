@@ -4821,7 +4821,7 @@ public:
           if (call.getAttributes().hasParamAttr(i, attr)) {
             if (gutils->getWidth() == 1) {
               structAttrs[args.size()].push_back(call.getParamAttr(i, attr));
-            } else if (attr == "enzymejl_returnRoots") {
+            } else if (attr == std::string("enzymejl_returnRoots")) {
               structAttrs[args.size()].push_back(
                   Attribute::get(call.getContext(), "enzymejl_returnRoots_v"));
             }
@@ -5155,7 +5155,7 @@ public:
             if (gutils->getWidth() == 1) {
               structAttrs[pre_args.size()].push_back(
                   call.getParamAttr(i, attr));
-            } else if (attr == "enzymejl_returnRoots") {
+            } else if (attr == std::string("enzymejl_returnRoots")) {
               structAttrs[pre_args.size()].push_back(
                   Attribute::get(call.getContext(), "enzymejl_returnRoots_v"));
             }
