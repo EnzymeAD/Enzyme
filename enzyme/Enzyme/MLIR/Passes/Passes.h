@@ -65,12 +65,15 @@ class MemRefDialect;
 
 namespace func {
 class FuncDialect;
-}
+} // end namespace func
 
+namespace affine {
 class AffineDialect;
+} // end namespace affine
+
 namespace LLVM {
 class LLVMDialect;
-}
+} // end namespace LLVM
 
 #define GEN_PASS_REGISTRATION
 #include "Passes/Passes.h.inc"
