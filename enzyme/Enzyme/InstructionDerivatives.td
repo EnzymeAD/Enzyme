@@ -655,30 +655,30 @@ def ToStruct2 : SubRoutine<(Op (Op $re, $im):$z),
 def : CallPattern<(Op $x, $tbd),
                   ["Faddeeva_erf"],
                   [
-                    (ToStruct2 (CFMul (DiffeRet), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x)))))),
+                    (ToStruct2 (Conj (CFMul (Conj (DiffeRet)), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x))))))),
                     (InactiveArg) // relerr
                   ],
-                  (ForwardFromSummedReverse),
+                  (ToStruct2 (CFMul (Shadow $x), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x)))))),
                   [ReadNone, NoUnwind]
                   >;
 
 def : CallPattern<(Op $x, $tbd),
                   ["Faddeeva_erfi"],
                   [
-                    (ToStruct2 (CFMul (DiffeRet), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFMul $x, $x))))),
+                    (ToStruct2 (Conj (CFMul (Conj (DiffeRet)), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFMul $x, $x)))))),
                     (InactiveArg) // relerr
                   ],
-                  (ForwardFromSummedReverse),
+                  (ToStruct2 (CFMul (Shadow $x), (CFMul (ConstantCFP<"1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFMul $x, $x))))),
                   [ReadNone, NoUnwind]
                   >;
 
 def : CallPattern<(Op $x, $tbd),
                   ["Faddeeva_erfc"],
                   [
-                    (ToStruct2 (CFMul (DiffeRet), (CFMul (ConstantCFP<"-1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x)))))),
+                    (ToStruct2 (Conj (CFMul (Conj (DiffeRet)), (CFMul (ConstantCFP<"-1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x))))))),
                     (InactiveArg) // relerr
                   ],
-                  (ForwardFromSummedReverse),
+                  (ToStruct2 (CFMul (Shadow $x), (CFMul (ConstantCFP<"-1.1283791670955125738961589031215451716881012586580","0"> $x), (CFExp (CFNeg (CFMul $x, $x)))))),
                   [ReadNone, NoUnwind]
                   >;
 
