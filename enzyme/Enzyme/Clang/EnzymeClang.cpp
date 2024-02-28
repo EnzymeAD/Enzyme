@@ -256,7 +256,6 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
 
   AttrHandling handleDeclAttribute(Sema &S, Decl *D,
                                    const ParsedAttr &Attr) const override {
-    auto FD = cast<FunctionDecl>(D);
     if (Attr.getNumArgs() != 1) {
       unsigned ID = S.getDiagnostics().getCustomDiagID(
           DiagnosticsEngine::Error,
@@ -274,92 +273,15 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
       return AttributeNotApplied;
     }
 
-    // if (FD->isLateTemplateParsed()) return;
-    auto &AST = S.getASTContext();
-    DeclContext *declCtx = FD->getDeclContext();
-    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
-      if (tmpCtx->isRecord()) {
-        declCtx = tmpCtx->getParent();
-      }
-    }
-    auto loc = FD->getLocation();
-    RecordDecl *RD;
-    if (S.getLangOpts().CPlusPlus)
-      RD = CXXRecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                                 nullptr); // rId);
-    else
-      RD = RecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                              nullptr); // rId);
-    RD->setAnonymousStructOrUnion(true);
-    RD->setImplicit();
-    RD->startDefinition();
-    auto Tinfo = nullptr;
-    auto Tinfo0 = nullptr;
-    auto FT = AST.getPointerType(FD->getType());
-    auto CharTy = AST.getIntTypeForBitwidth(8, false);
-    auto FD0 = FieldDecl::Create(AST, RD, loc, loc, /*Ud*/ nullptr, FT, Tinfo0,
-                                 /*expr*/ nullptr, /*mutable*/ true,
-                                 /*inclassinit*/ ICIS_NoInit);
-    FD0->setAccess(AS_public);
-    RD->addDecl(FD0);
-    auto FD1 = FieldDecl::Create(
-        AST, RD, loc, loc, /*Ud*/ nullptr, AST.getPointerType(CharTy), Tinfo0,
-        /*expr*/ nullptr, /*mutable*/ true, /*inclassinit*/ ICIS_NoInit);
-    FD1->setAccess(AS_public);
-    RD->addDecl(FD1);
-    RD->completeDefinition();
-    assert(RD->getDefinition());
-    auto &Id = AST.Idents.get("__enzyme_function_like_autoreg_" +
-                              FD->getNameAsString());
-    auto T = AST.getRecordType(RD);
-    auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, T, Tinfo, SC_None);
-    V->setStorageClass(SC_PrivateExtern);
-    V->addAttr(clang::UsedAttr::CreateImplicit(AST));
-    TemplateArgumentListInfo *TemplateArgs = nullptr;
-    auto DR = DeclRefExpr::Create(AST, NestedNameSpecifierLoc(), loc, FD, false,
-                                  loc, FD->getType(), ExprValueKind::VK_LValue,
-                                  FD, TemplateArgs);
-#if LLVM_VERSION_MAJOR >= 13
-    auto rval = ExprValueKind::VK_PRValue;
-#else
-    auto rval = ExprValueKind::VK_RValue;
-#endif
-    StringRef cstr = Literal->getString();
-    Expr *exprs[2] = {
 #if LLVM_VERSION_MAJOR >= 12
-      ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay, DR,
-                               nullptr, rval, FPOptionsOverride()),
-      ImplicitCastExpr::Create(
-          AST, AST.getPointerType(CharTy), CastKind::CK_ArrayToPointerDecay,
-          StringLiteral::Create(
-              AST, cstr, stringkind,
-              /*Pascal*/ false,
-              AST.getStringLiteralArrayType(CharTy, cstr.size()), loc),
-          nullptr, rval, FPOptionsOverride())
+    D->addAttr(AnnotateAttr::Create(
+        S.Context, ("enzyme_function_like=" + Literal->getString()).str(),
+        nullptr, 0, Attr.getRange()));
 #else
-      ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay, DR,
-                               nullptr, rval),
-      ImplicitCastExpr::Create(
-          AST, AST.getPointerType(CharTy), CastKind::CK_ArrayToPointerDecay,
-          StringLiteral::Create(
-              AST, cstr, stringkind,
-              /*Pascal*/ false,
-              AST.getStringLiteralArrayType(CharTy, cstr.size()), loc),
-          nullptr, rval)
+    D->addAttr(AnnotateAttr::Create(
+        S.Context, ("enzyme_function_like=" + Literal->getString()).str(),
+        Attr.getRange()));
 #endif
-    };
-    auto IL = new (AST) InitListExpr(AST, loc, exprs, loc);
-    V->setInit(IL);
-    IL->setType(T);
-    if (IL->isValueDependent()) {
-      unsigned ID = S.getDiagnostics().getCustomDiagID(
-          DiagnosticsEngine::Error, "use of attribute 'enzyme_function_like' "
-                                    "in a templated context not yet supported");
-      S.Diag(Attr.getLoc(), ID);
-      return AttributeNotApplied;
-    }
-    S.MarkVariableReferenced(loc, V);
-    S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
     return AttributeApplied;
   }
 };
@@ -409,71 +331,13 @@ struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
       return AttributeNotApplied;
     }
 
-    auto &AST = S.getASTContext();
-    DeclContext *declCtx = D->getDeclContext();
-    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
-      if (tmpCtx->isRecord()) {
-        declCtx = tmpCtx->getParent();
-      }
-    }
-    auto loc = D->getLocation();
-    RecordDecl *RD;
-    if (S.getLangOpts().CPlusPlus)
-      RD = CXXRecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                                 nullptr); // rId);
-    else
-      RD = RecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                              nullptr); // rId);
-    RD->setAnonymousStructOrUnion(true);
-    RD->setImplicit();
-    RD->startDefinition();
-    auto T = isa<FunctionDecl>(D) ? cast<FunctionDecl>(D)->getType()
-                                  : cast<VarDecl>(D)->getType();
-    auto Name = isa<FunctionDecl>(D) ? cast<FunctionDecl>(D)->getNameAsString()
-                                     : cast<VarDecl>(D)->getNameAsString();
-    auto FT = AST.getPointerType(T);
-    auto subname = isa<FunctionDecl>(D) ? "inactivefn" : "inactive_global";
-    auto &Id = AST.Idents.get(
-        (StringRef("__enzyme_") + subname + "_autoreg_" + Name).str());
-    auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, FT, nullptr, SC_None);
-    V->setStorageClass(SC_PrivateExtern);
-    V->addAttr(clang::UsedAttr::CreateImplicit(AST));
-    TemplateArgumentListInfo *TemplateArgs = nullptr;
-    auto DR = DeclRefExpr::Create(
-        AST, NestedNameSpecifierLoc(), loc, cast<ValueDecl>(D), false, loc, T,
-        ExprValueKind::VK_LValue, cast<NamedDecl>(D), TemplateArgs);
-#if LLVM_VERSION_MAJOR >= 13
-    auto rval = ExprValueKind::VK_PRValue;
-#else
-    auto rval = ExprValueKind::VK_RValue;
-#endif
-    Expr *expr = nullptr;
-    if (isa<FunctionDecl>(D)) {
 #if LLVM_VERSION_MAJOR >= 12
-      expr =
-          ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
-                                   DR, nullptr, rval, FPOptionsOverride());
+    D->addAttr(AnnotateAttr::Create(S.Context, "enzyme_inactive", nullptr, 0,
+                                    Attr.getRange()));
 #else
-      expr = ImplicitCastExpr::Create(
-          AST, FT, CastKind::CK_FunctionToPointerDecay, DR, nullptr, rval);
+    D->addAttr(
+        AnnotateAttr::Create(S.Context, "enzyme_inactive", Attr.getRange()));
 #endif
-    } else {
-      expr =
-          UnaryOperator::Create(AST, DR, UnaryOperatorKind::UO_AddrOf, FT, rval,
-                                clang::ExprObjectKind ::OK_Ordinary, loc,
-                                /*canoverflow*/ false, FPOptionsOverride());
-    }
-
-    if (expr->isValueDependent()) {
-      unsigned ID = S.getDiagnostics().getCustomDiagID(
-          DiagnosticsEngine::Error, "use of attribute 'enzyme_inactive' "
-                                    "in a templated context not yet supported");
-      S.Diag(Attr.getLoc(), ID);
-      return AttributeNotApplied;
-    }
-    V->setInit(expr);
-    S.MarkVariableReferenced(loc, V);
-    S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
     return AttributeApplied;
   }
 };
@@ -522,71 +386,13 @@ struct EnzymeNoFreeAttrInfo : public ParsedAttrInfo {
       S.Diag(Attr.getLoc(), ID);
       return AttributeNotApplied;
     }
-
-    auto &AST = S.getASTContext();
-    DeclContext *declCtx = D->getDeclContext();
-    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
-      if (tmpCtx->isRecord()) {
-        declCtx = tmpCtx->getParent();
-      }
-    }
-    auto loc = D->getLocation();
-    RecordDecl *RD;
-    if (S.getLangOpts().CPlusPlus)
-      RD = CXXRecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                                 nullptr); // rId);
-    else
-      RD = RecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                              nullptr); // rId);
-    RD->setAnonymousStructOrUnion(true);
-    RD->setImplicit();
-    RD->startDefinition();
-    auto T = isa<FunctionDecl>(D) ? cast<FunctionDecl>(D)->getType()
-                                  : cast<VarDecl>(D)->getType();
-    auto Name = isa<FunctionDecl>(D) ? cast<FunctionDecl>(D)->getNameAsString()
-                                     : cast<VarDecl>(D)->getNameAsString();
-    auto FT = AST.getPointerType(T);
-    auto &Id = AST.Idents.get(
-        (StringRef("__enzyme_nofree") + "_autoreg_" + Name).str());
-    auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, FT, nullptr, SC_None);
-    V->setStorageClass(SC_PrivateExtern);
-    V->addAttr(clang::UsedAttr::CreateImplicit(AST));
-    TemplateArgumentListInfo *TemplateArgs = nullptr;
-    auto DR = DeclRefExpr::Create(
-        AST, NestedNameSpecifierLoc(), loc, cast<ValueDecl>(D), false, loc, T,
-        ExprValueKind::VK_LValue, cast<NamedDecl>(D), TemplateArgs);
-#if LLVM_VERSION_MAJOR >= 13
-    auto rval = ExprValueKind::VK_PRValue;
-#else
-    auto rval = ExprValueKind::VK_RValue;
-#endif
-    Expr *expr = nullptr;
-    if (isa<FunctionDecl>(D)) {
 #if LLVM_VERSION_MAJOR >= 12
-      expr =
-          ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
-                                   DR, nullptr, rval, FPOptionsOverride());
+    D->addAttr(AnnotateAttr::Create(S.Context, "enzyme_nofree", nullptr, 0,
+                                    Attr.getRange()));
 #else
-      expr = ImplicitCastExpr::Create(
-          AST, FT, CastKind::CK_FunctionToPointerDecay, DR, nullptr, rval);
+    D->addAttr(
+        AnnotateAttr::Create(S.Context, "enzyme_nofree", Attr.getRange()));
 #endif
-    } else {
-      expr =
-          UnaryOperator::Create(AST, DR, UnaryOperatorKind::UO_AddrOf, FT, rval,
-                                clang::ExprObjectKind ::OK_Ordinary, loc,
-                                /*canoverflow*/ false, FPOptionsOverride());
-    }
-
-    if (expr->isValueDependent()) {
-      unsigned ID = S.getDiagnostics().getCustomDiagID(
-          DiagnosticsEngine::Error, "use of attribute 'enzyme_nofree' "
-                                    "in a templated context not yet supported");
-      S.Diag(Attr.getLoc(), ID);
-      return AttributeNotApplied;
-    }
-    V->setInit(expr);
-    S.MarkVariableReferenced(loc, V);
-    S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
     return AttributeApplied;
   }
 };
@@ -631,65 +437,15 @@ struct EnzymeSparseAccumulateAttrInfo : public ParsedAttrInfo {
       S.Diag(Attr.getLoc(), ID);
       return AttributeNotApplied;
     }
-
-    auto &AST = S.getASTContext();
-    DeclContext *declCtx = D->getDeclContext();
-    for (auto tmpCtx = declCtx; tmpCtx; tmpCtx = tmpCtx->getParent()) {
-      if (tmpCtx->isRecord()) {
-        declCtx = tmpCtx->getParent();
-      }
-    }
-    auto loc = D->getLocation();
-    RecordDecl *RD;
-    if (S.getLangOpts().CPlusPlus)
-      RD = CXXRecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                                 nullptr); // rId);
-    else
-      RD = RecordDecl::Create(AST, StructKind, declCtx, loc, loc,
-                              nullptr); // rId);
-    RD->setAnonymousStructOrUnion(true);
-    RD->setImplicit();
-    RD->startDefinition();
-    auto T = cast<FunctionDecl>(D)->getType();
-    auto Name = cast<FunctionDecl>(D)->getNameAsString();
-    auto FT = AST.getPointerType(T);
-    auto &Id = AST.Idents.get(
-        (StringRef("__enzyme_sparse_accumulate") + "_autoreg_" + Name).str());
-    auto V = VarDecl::Create(AST, declCtx, loc, loc, &Id, FT, nullptr, SC_None);
-    V->setStorageClass(SC_PrivateExtern);
-    V->addAttr(clang::UsedAttr::CreateImplicit(AST));
-    TemplateArgumentListInfo *TemplateArgs = nullptr;
-    auto DR = DeclRefExpr::Create(
-        AST, NestedNameSpecifierLoc(), loc, cast<ValueDecl>(D), false, loc, T,
-        ExprValueKind::VK_LValue, cast<NamedDecl>(D), TemplateArgs);
-#if LLVM_VERSION_MAJOR >= 13
-    auto rval = ExprValueKind::VK_PRValue;
-#else
-    auto rval = ExprValueKind::VK_RValue;
-#endif
-    Expr *expr = nullptr;
 #if LLVM_VERSION_MAJOR >= 12
-    expr =
-        ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
-                                 DR, nullptr, rval, FPOptionsOverride());
+    D->addAttr(AnnotateAttr::Create(S.Context, "enzyme_sparse_accumulate",
+                                    nullptr, 0, Attr.getRange()));
 #else
-    expr = ImplicitCastExpr::Create(
-        AST, FT, CastKind::CK_FunctionToPointerDecay, DR, nullptr, rval);
+    D->addAttr(AnnotateAttr::Create(S.Context, "enzyme_sparse_accumulate",
+                                    Attr.getRange()));
 #endif
-
-    if (expr->isValueDependent()) {
-      unsigned ID = S.getDiagnostics().getCustomDiagID(
-          DiagnosticsEngine::Error,
-          "use of attribute 'enzyme_sparse_accumulate' "
-          "in a templated context not yet supported");
-      S.Diag(Attr.getLoc(), ID);
-      return AttributeNotApplied;
-    }
-    V->setInit(expr);
-    S.MarkVariableReferenced(loc, V);
-    S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
     return AttributeApplied;
-  }
+  };
 };
 
 static ParsedAttrInfoRegistry::Add<EnzymeSparseAccumulateAttrInfo>
