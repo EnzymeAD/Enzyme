@@ -1043,8 +1043,6 @@ void enzyme::runActivityAnnotations(
           {nullptr, ValueOriginSet()}, {nullptr, ValueOriginSet()});
       if (isPure(op)) {
         // A pure operation can only propagate data via its results
-        std::pair<ForwardOriginsLattice, BackwardOriginsLattice> opAttributes(
-            {nullptr, ValueOriginSet()}, {nullptr, ValueOriginSet()});
         for (OpResult result : op->getResults()) {
           joinActiveDataState(result, opAttributes);
         }
