@@ -20,6 +20,9 @@ declare { double, double } @__enzyme_autodiff({ double, double } ({ double, doub
 
 ; CHECK: define internal { { double, double } } @diffetester({ double, double } %in, { double, double } %differeturn)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %[[i16:.+]] = extractvalue { double, double } %differeturn, 0
+; CHECK-NEXT:   %[[i17:.+]] = extractvalue { double, double } %differeturn, 1
+; CHECK-NEXT:   %[[conj:.+]] = {{(fsub fast double \-0.000000e\+00,|fneg fast double)}} %[[i17]]
 ; CHECK-NEXT:   %[[a0:.+]] = extractvalue { double, double } %in, 0
 ; CHECK-NEXT:   %[[a1:.+]] = extractvalue { double, double } %in, 1
 ; CHECK-NEXT:   %[[a3:.+]] = fmul fast double %[[a0]], %[[a0]]
@@ -34,16 +37,15 @@ declare { double, double } @__enzyme_autodiff({ double, double } ({ double, doub
 ; CHECK-NEXT:   %[[i13:.+]] = fmul fast double %[[i9]], %[[i12]]
 ; CHECK-NEXT:   %[[i14:.+]] = fmul fast double 0x3FF20DD750429B6D, %[[i11]]
 ; CHECK-NEXT:   %[[i15:.+]] = fmul fast double 0x3FF20DD750429B6D, %[[i13]]
-; CHECK-NEXT:   %[[i16:.+]] = extractvalue { double, double } %differeturn, 0
-; CHECK-NEXT:   %[[i17:.+]] = extractvalue { double, double } %differeturn, 1
 ; CHECK-NEXT:   %[[i19:.+]] = fmul fast double %[[i16]], %[[i14]]
-; CHECK-NEXT:   %[[i18:.+]] = fmul fast double %[[i17]], %[[i15]]
+; CHECK-NEXT:   %[[i18:.+]] = fmul fast double %[[conj]], %[[i15]]
 ; CHECK-NEXT:   %[[i20:.+]] = fsub fast double %[[i19]], %[[i18]]
 ; CHECK-NEXT:   %[[i22:.+]] = fmul fast double %[[i16]], %[[i15]]
-; CHECK-NEXT:   %[[i21:.+]] = fmul fast double %[[i14]], %[[i17]]
+; CHECK-NEXT:   %[[i21:.+]] = fmul fast double %[[i14]], %[[conj]]
 ; CHECK-NEXT:   %[[i23:.+]] = fadd fast double %[[i22]], %[[i21]]
+; CHECK-NEXT:   %[[conj2:.+]] = {{(fsub fast double \-0.000000e\+00,|fneg fast double)}} %[[i23]]
 ; CHECK-NEXT:   %[[insert5:.+]] = insertvalue { double, double } {{(undef|poison)}}, double %[[i20]], 0
-; CHECK-NEXT:   %[[insert8:.+]] = insertvalue { double, double } %[[insert5]], double %[[i23]], 1
+; CHECK-NEXT:   %[[insert8:.+]] = insertvalue { double, double } %[[insert5]], double %[[conj2]], 1
 ; CHECK-NEXT:   %[[i24:.+]] = insertvalue { { double, double } } undef, { double, double } %[[insert8]], 0
 ; CHECK-NEXT:   ret { { double, double } } %[[i24]]
 ; CHECK-NEXT: }
