@@ -150,10 +150,7 @@ gentbl(
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/Clang/include_utils.td",
-    td_srcs = [
-        "Enzyme/Clang/include_utils.td",
-        "Enzyme/Runtime/MPFR.cpp",
-    ],
+    td_srcs = ["Enzyme/Clang/include_utils.td"],
     deps = [
         ":enzyme-tblgen",
     ],

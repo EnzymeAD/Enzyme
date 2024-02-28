@@ -38,13 +38,8 @@ add_public_tablegen_target(BlasTAIncGen)
 add_public_tablegen_target(BlasDiffUseIncGen)
 
 set(LLVM_TARGET_DEFINITIONS Clang/include_utils.td)
-# Need to explicitly set included files as dependencies
-set(ARG_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/MPFR.cpp" CACHE INTERNAL "deps")
-# Cmake tablegen adds the current cmake dir to the include path and bazel adds
-# the directory that contains the .td file, that's why we need the include here
-enzyme_tablegen(IncludeUtils.inc -gen-header-strings -I${CMAKE_CURRENT_SOURCE_DIR}/Clang/)
+enzyme_tablegen(IncludeUtils.inc -gen-header-strings)
 add_public_tablegen_target(IncludeUtilsIncGen)
-unset(ARG_DEPENDS)
 
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 

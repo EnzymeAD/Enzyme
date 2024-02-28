@@ -16,7 +16,6 @@
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FormatVariadic.h"
-#include "llvm/Support/Path.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/TableGen/Error.h"
@@ -1253,56 +1252,18 @@ void printDiffUse(
 
 static void emitHeaderIncludes(const RecordKeeper &recordKeeper,
                                raw_ostream &os) {
+  const auto &patterns = recordKeeper.getAllDerivedDefinitions("Headers");
   os << "const char* include_headers[][2] = {\n";
   bool seen = false;
-  {
-    const auto &patterns =
-        recordKeeper.getAllDerivedDefinitions("InlineHeader");
-    for (Record *pattern : patterns) {
-      if (seen)
-        os << ",\n";
-      auto filename = pattern->getValueAsString("filename");
-      auto contents = pattern->getValueAsString("contents");
-      os << "{\"" << filename << "\"\n,";
-      os << "R\"(" << contents << ")\"\n";
-      os << "}";
-      seen = true;
-    }
-  }
-  {
-    const auto &patterns = recordKeeper.getAllDerivedDefinitions("FileHeader");
-    for (Record *pattern : patterns) {
-      if (seen)
-        os << ",\n";
-      auto filename_out = pattern->getValueAsString("filename_out");
-      std::string filename_in = pattern->getValueAsString("filename_in").str();
-      std::string included_file;
-#if LLVM_VERSION_MAJOR >= 15
-      auto contents_or_err =
-          llvm::SrcMgr.OpenIncludeFile(filename_in, included_file);
-      if (!contents_or_err)
-        PrintFatalError(pattern->getLoc(),
-                        Twine("Could not read file ") + filename_in);
-      auto &contents = contents_or_err.get();
-#else
-      auto buf =
-          llvm::SrcMgr.AddIncludeFile(filename_in,
-#if LLVM_VERSION_MAJOR >= 12
-                                      pattern->getFieldLoc("filename_in"),
-#else
-                                      SMLoc::getFromPointer(nullptr),
-#endif
-                                      included_file);
-      if (!buf)
-        PrintFatalError(pattern->getLoc(),
-                        Twine("Could not read file ") + filename_in);
-      auto contents = llvm::SrcMgr.getMemoryBuffer(buf);
-#endif
-      os << "{\"" << filename_out << "\"\n,";
-      os << "R\"(" << contents->getBuffer() << ")\"\n";
-      os << "}";
-      seen = true;
-    }
+  for (Record *pattern : patterns) {
+    if (seen)
+      os << ",\n";
+    auto filename = pattern->getValueAsString("filename");
+    auto contents = pattern->getValueAsString("contents");
+    os << "{\"" << filename << "\"\n,";
+    os << "R\"(" << contents << ")\"\n";
+    os << "}";
+    seen = true;
   }
   os << "};\n";
 }
