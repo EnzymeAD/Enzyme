@@ -40,14 +40,6 @@ add_public_tablegen_target(BlasDiffUseIncGen)
 set(LLVM_TARGET_DEFINITIONS Clang/include_utils.td)
 enzyme_tablegen(IncludeUtils.inc -gen-header-strings -I${CMAKE_CURRENT_SOURCE_DIR}/Clang/)
 add_public_tablegen_target(IncludeUtilsIncGen)
-# add_custom_target(RuntimeMPFRcpp
-#     OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/RuntimeMPFR.cpp"
-#     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/MPFR.cpp")
-
-# add_custom_target(RuntimeMPFRcpp DEPENDS Runtime/MPFR.cpp)
-# add_dependencies(IncludeUtilsIncGen RuntimeMPFRcpp)
-#target_sources(IncludeUtilsIncGen INTERFACE Runtime/MPFR.cpp)
-set_property(TARGET IncludeUtilsIncGen APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/MPFR.cpp")
 
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
