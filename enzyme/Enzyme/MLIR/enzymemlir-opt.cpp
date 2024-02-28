@@ -47,8 +47,6 @@ struct PtrElementModel
     : public mlir::LLVM::PointerElementTypeInterface::ExternalModel<
           PtrElementModel<T>, T> {};
 
-void registerActivityAnnotationDebugPass();
-
 int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
 
@@ -71,7 +69,6 @@ int main(int argc, char **argv) {
   registry.insert<mlir::enzyme::EnzymeDialect>();
 
   mlir::registerenzymePasses();
-  registerActivityAnnotationDebugPass();
 
   // Register the standard passes we want.
   mlir::registerCSEPass();

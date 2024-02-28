@@ -1,6 +1,5 @@
 add_mlir_library(MLIREnzymeAnalysis
   ActivityAnalysis.cpp
-  ActivityAnnotation.cpp
   AliasAnalysis.cpp
   DataFlowActivityAnalysis.cpp
 
