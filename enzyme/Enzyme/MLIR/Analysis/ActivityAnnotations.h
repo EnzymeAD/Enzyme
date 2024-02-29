@@ -225,7 +225,7 @@ public:
 };
 
 void runActivityAnnotations(
-    FunctionOpInterface callee,
+    FunctionOpInterface callee, ArrayRef<enzyme::Activity> argActivities = {},
     const ActivityPrinterConfig &config = ActivityPrinterConfig());
 
 } // namespace enzyme

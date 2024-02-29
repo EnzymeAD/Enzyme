@@ -848,10 +848,91 @@ void initializeSparseBackwardActivityAnnotations(FunctionOpInterface func,
     }
   }
 }
+
+/// Once having reached a top-level entry point, go top-down and convert the
+/// relative sources/sinks into concrete active/constant results.
+///
+/// This would ideally be done after lowering to LLVM and during differentiation
+/// because it loses context sensitivity, but this is faster to prototype with.
+void topDownActivityAnalysis(FunctionOpInterface callee,
+                             ArrayRef<enzyme::Activity> argActivities,
+                             ArrayRef<enzyme::Activity> retActivities) {
+  using namespace mlir::enzyme;
+  MLIRContext *ctx = callee.getContext();
+  auto trueAttr = BoolAttr::get(ctx, true);
+  auto falseAttr = BoolAttr::get(ctx, false);
+
+  auto isOriginActive = [&](OriginAttr origin) {
+    if (auto argOriginAttr = dyn_cast<ArgumentOriginAttr>(origin)) {
+      return llvm::is_contained({Activity::enzyme_dup,
+                                 Activity::enzyme_dupnoneed,
+                                 Activity::enzyme_out},
+                                argActivities[argOriginAttr.getArgNumber()]);
+    }
+    auto retOriginAttr = cast<ReturnOriginAttr>(origin);
+    return llvm::is_contained({Activity::enzyme_dup, Activity::enzyme_dupnoneed,
+                               Activity::enzyme_out},
+                              retActivities[retOriginAttr.getReturnNumber()]);
+  };
+  callee.getFunctionBody().walk([&](Operation *op) {
+    if (op->getNumResults() == 0) {
+      // Operations that don't return values are definitionally "constant"
+      op->setAttr("enzyme.icv", trueAttr);
+    } else {
+      // Value activity
+      if (op->hasAttr("enzyme.constantval")) {
+        op->setAttr("enzyme.icv", trueAttr);
+      } else if (op->hasAttr("enzyme.activeval")) {
+        op->setAttr("enzyme.icv", falseAttr);
+      } else {
+        auto valueSource = op->getAttrOfType<ArrayAttr>("enzyme.valsrc");
+        auto valueSink = op->getAttrOfType<ArrayAttr>("enzyme.valsink");
+        if (!(valueSource && valueSink)) {
+          llvm::errs() << "[activity] missing attributes for op: " << *op
+                       << "\n";
+        }
+        assert(valueSource && valueSink && "missing attributes for op");
+        bool activeSource =
+            llvm::any_of(valueSource.getAsRange<OriginAttr>(), isOriginActive);
+        bool activeSink =
+            llvm::any_of(valueSink.getAsRange<OriginAttr>(), isOriginActive);
+        bool activeVal = activeSource && activeSink;
+        op->setAttr("enzyme.icv", BoolAttr::get(ctx, !activeVal));
+      }
+    }
+    op->removeAttr("enzyme.constantval");
+    op->removeAttr("enzyme.activeval");
+    op->removeAttr("enzyme.valsrc");
+    op->removeAttr("enzyme.valsink");
+
+    // Instruction activity
+    if (op->hasAttr("enzyme.constantop")) {
+      op->setAttr("enzyme.ici", trueAttr);
+    } else if (op->hasAttr("enzyme.activeop")) {
+      op->setAttr("enzyme.ici", falseAttr);
+    } else {
+      bool activeSource = llvm::any_of(
+          op->getAttrOfType<ArrayAttr>("enzyme.opsrc").getAsRange<OriginAttr>(),
+          isOriginActive);
+      bool activeSink =
+          llvm::any_of(op->getAttrOfType<ArrayAttr>("enzyme.opsink")
+                           .getAsRange<OriginAttr>(),
+                       isOriginActive);
+      bool activeOp = activeSource && activeSink;
+      op->setAttr("enzyme.ici", BoolAttr::get(ctx, !activeOp));
+    }
+
+    op->removeAttr("enzyme.constantop");
+    op->removeAttr("enzyme.activeop");
+    op->removeAttr("enzyme.opsrc");
+    op->removeAttr("enzyme.opsink");
+  });
+}
 } // namespace
 
 void enzyme::runActivityAnnotations(
-    FunctionOpInterface callee, const ActivityPrinterConfig &activityConfig) {
+    FunctionOpInterface callee, ArrayRef<enzyme::Activity> argActivities,
+    const ActivityPrinterConfig &activityConfig) {
   SymbolTableCollection symbolTable;
   SmallVector<CallableOpInterface> sorted;
   reverseToposortCallgraph(callee, &symbolTable, sorted);
@@ -999,14 +1080,12 @@ void enzyme::runActivityAnnotations(
     auto joinActiveValueState =
         [&](Value value,
             std::pair<ForwardOriginsLattice, BackwardOriginsLattice> &out) {
-          auto *aliasClasses =
-              solver.getOrCreateState<AliasClassLattice>(value);
-          if (aliasClasses->isUndefined()) {
-            // Not a pointer, check the sources and sinks from the sparse state
-            joinActiveDataState(value, out);
-          } else {
-            // Is a pointer, see the origins of whatever it points to
+          if (isa<LLVM::LLVMPointerType, MemRefType>(value.getType())) {
+            auto *aliasClasses =
+                solver.getOrCreateState<AliasClassLattice>(value);
             joinActivePointerState(aliasClasses->getAliasClassesObject(), out);
+          } else {
+            joinActiveDataState(value, out);
           }
         };
 
@@ -1055,13 +1134,15 @@ void enzyme::runActivityAnnotations(
           joinActivePointerState(storedClass->getAliasClassesObject(),
                                  opAttributes);
         } else if (auto callOp = dyn_cast<CallOpInterface>(op)) {
-          // TODO: can we just use the summary?
-          // If a call op receives or returns any active pointers or data,
-          // consider it active.
-          for (Value operand : callOp.getArgOperands())
-            joinActiveValueState(operand, opAttributes);
-          for (OpResult result : callOp->getResults())
-            joinActiveValueState(result, opAttributes);
+          // TODO: tricky, requires some thought
+          auto callable = cast<CallableOpInterface>(callOp.resolveCallable());
+          if (callable->hasAttr(
+                  EnzymeDialect::getDenseActivityAnnotationAttrName())) {
+            for (Value operand : callOp.getArgOperands())
+              joinActiveValueState(operand, opAttributes);
+          }
+          // We need to
+          // determine if the body of the function contains active instructions
         }
 
         // Default: the op is active iff any of its operands or results are
@@ -1104,5 +1185,16 @@ void enzyme::runActivityAnnotations(
         }
       }
     });
+  }
+
+  if (!argActivities.empty() && activityConfig.annotate) {
+    SmallVector<enzyme::Activity> resActivities;
+    for (Type resultType : callee.getResultTypes()) {
+      resActivities.push_back(isa<FloatType, ComplexType>(resultType)
+                                  ? Activity::enzyme_out
+                                  : Activity::enzyme_const);
+    }
+
+    topDownActivityAnalysis(callee, argActivities, resActivities);
   }
 }
