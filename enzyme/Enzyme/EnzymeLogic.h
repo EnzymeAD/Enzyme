@@ -42,6 +42,7 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include "ActivityAnalysis.h"
 #include "FunctionUtils.h"
@@ -287,6 +288,17 @@ getTypeForWidth(llvm::LLVMContext &ctx, unsigned width, bool builtinFloat) {
 }
 
 enum TruncateMode { TruncMemMode, TruncOpMode, TruncOpFullModuleMode };
+[[maybe_unused]] static const char *truncateModeStr(TruncateMode mode) {
+  switch (mode) {
+  case TruncMemMode:
+    return "mem";
+  case TruncOpMode:
+    return "op";
+  case TruncOpFullModuleMode:
+    return "op_full_module";
+  }
+  llvm_unreachable("Invalid truncation mode");
+}
 
 struct FloatRepresentation {
   // |_|__________|_________________|
@@ -334,6 +346,54 @@ struct FloatRepresentation {
     return std::to_string(getTypeWidth()) + "_" +
            std::to_string(significandWidth);
   }
+};
+
+struct FloatTruncation {
+private:
+  FloatRepresentation from, to;
+
+public:
+  FloatTruncation(FloatRepresentation From, FloatRepresentation To)
+      : from(From), to(To) {
+    if (!From.canBeBuiltin())
+      llvm::report_fatal_error("Float truncation `from` type is not builtin.");
+    if (From.exponentWidth < To.exponentWidth)
+      llvm::report_fatal_error("Float truncation `from` type must have "
+                               "a wider exponent than `to`.");
+    if (From.significandWidth < To.significandWidth)
+      llvm::report_fatal_error("Float truncation `from` type must have "
+                               "a wider wsignificand than `to`.");
+    if (From == To)
+      llvm::report_fatal_error(
+          "Float truncation `from` and `to` type must not be the same.");
+  }
+  FloatRepresentation getTo() { return to; }
+  unsigned getFromTypeWidth() { return from.getTypeWidth(); }
+  unsigned getToTypeWidth() { return to.getTypeWidth(); }
+  llvm::Type *getFromType(llvm::LLVMContext &ctx) {
+    return from.getBuiltinType(ctx);
+  }
+  bool isToMPFR() { return !to.canBeBuiltin(); }
+  llvm::Type *getToType(llvm::LLVMContext &ctx) {
+    if (to.canBeBuiltin()) {
+      return to.getBuiltinType(ctx);
+    } else {
+      assert(isToMPFR());
+      // Currently we do not support TruncMemMode for MPFR, and we provide
+      // runtime wrappers around MPFR for each builtin `from` type
+      return from.getBuiltinType(ctx);
+    }
+  }
+  bool operator==(const FloatTruncation &other) const {
+    return from == other.from && to == other.to;
+  }
+  bool operator<(const FloatTruncation &other) const {
+    return std::tuple(from, to) < std::tuple(other.from, other.to);
+  }
+  std::string mangleTruncation() const {
+    return from.to_string() + "to" + to.to_string();
+  }
+  std::string mangleFrom() const { return from.to_string(); }
 };
 
 class EnzymeLogic {
@@ -583,13 +643,13 @@ public:
                               llvm::ArrayRef<BATCH_TYPE> arg_types,
                               BATCH_TYPE ret_type);
 
-  using TruncateCacheKey = std::tuple<llvm::Function *, FloatRepresentation,
-                                      FloatRepresentation, unsigned>;
+  using TruncateCacheKey =
+      std::tuple<llvm::Function *, FloatTruncation, unsigned>;
   std::map<TruncateCacheKey, llvm::Function *> TruncateCachedFunctions;
   llvm::Function *CreateTruncateFunc(RequestContext context,
                                      llvm::Function *tobatch,
-                                     FloatRepresentation from,
-                                     FloatRepresentation to, TruncateMode mode);
+                                     FloatTruncation truncation,
+                                     TruncateMode mode);
   bool CreateTruncateValue(RequestContext context, llvm::Value *addr,
                            FloatRepresentation from, FloatRepresentation to,
                            bool isTruncate);

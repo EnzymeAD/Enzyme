@@ -32,7 +32,13 @@
 #include "AdjointGenerator.h"
 #include "EnzymeLogic.h"
 #include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/Support/ErrorHandling.h"
+#include <cmath>
 
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
@@ -4956,30 +4962,28 @@ Function *EnzymeLogic::CreateForwardDiff(
 }
 
 static Value *floatValTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
-                               FloatRepresentation from,
-                               FloatRepresentation to) {
-  Type *toTy = to.getType(B.getContext());
+                               FloatTruncation truncation) {
+  Type *toTy = truncation.getToType(B.getContext());
   if (auto vty = dyn_cast<VectorType>(v->getType()))
     toTy = VectorType::get(toTy, vty->getElementCount());
   return B.CreateFPTrunc(v, toTy, "enzyme_trunc");
 }
 
 static Value *floatValExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
-                             FloatRepresentation from, FloatRepresentation to) {
-  Type *fromTy = from.getBuiltinType(B.getContext());
+                             FloatTruncation truncation) {
+  Type *fromTy = truncation.getFromType(B.getContext());
   if (auto vty = dyn_cast<VectorType>(v->getType()))
     fromTy = VectorType::get(fromTy, vty->getElementCount());
   return B.CreateFPExt(v, fromTy, "enzyme_exp");
 }
 
 static Value *floatMemTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
-                               FloatRepresentation from,
-                               FloatRepresentation to) {
+                               FloatTruncation truncation) {
   if (isa<VectorType>(v->getType()))
     report_fatal_error("vector operations not allowed in mem trunc mode");
 
-  Type *fromTy = from.getBuiltinType(B.getContext());
-  Type *toTy = to.getType(B.getContext());
+  Type *fromTy = truncation.getFromType(B.getContext());
+  Type *toTy = truncation.getToType(B.getContext());
   if (!tmpBlock)
     tmpBlock = B.CreateAlloca(fromTy);
   B.CreateStore(
@@ -4989,15 +4993,15 @@ static Value *floatMemTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
 }
 
 static Value *floatMemExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
-                             FloatRepresentation from, FloatRepresentation to) {
+                             FloatTruncation truncation) {
   if (isa<VectorType>(v->getType()))
     report_fatal_error("vector operations not allowed in mem trunc mode");
 
-  Type *fromTy = from.getBuiltinType(B.getContext());
+  Type *fromTy = truncation.getFromType(B.getContext());
   if (!tmpBlock)
     tmpBlock = B.CreateAlloca(fromTy);
   auto c0 = Constant::getNullValue(
-      llvm::Type::getIntNTy(B.getContext(), from.getTypeWidth()));
+      llvm::Type::getIntNTy(B.getContext(), truncation.getFromTypeWidth()));
   B.CreateStore(
       c0, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(c0->getType())));
   B.CreateStore(
@@ -5009,8 +5013,7 @@ static Value *floatMemExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
 class TruncateGenerator : public llvm::InstVisitor<TruncateGenerator> {
 private:
   ValueToValueMapTy &originalToNewFn;
-  FloatRepresentation from;
-  FloatRepresentation to;
+  FloatTruncation truncation;
   Type *fromType;
   Type *toType;
   Function *oldFunc;
@@ -5018,23 +5021,37 @@ private:
   AllocaInst *tmpBlock;
   TruncateMode mode;
   EnzymeLogic &Logic;
+  LLVMContext &ctx;
 
 public:
   TruncateGenerator(ValueToValueMapTy &originalToNewFn,
-                    FloatRepresentation from, FloatRepresentation to,
-                    Function *oldFunc, Function *newFunc, TruncateMode mode,
-                    EnzymeLogic &Logic)
-      : originalToNewFn(originalToNewFn), from(from), to(to), oldFunc(oldFunc),
-        newFunc(newFunc), mode(mode), Logic(Logic) {
+                    FloatTruncation truncation, Function *oldFunc,
+                    Function *newFunc, TruncateMode mode, EnzymeLogic &Logic)
+      : originalToNewFn(originalToNewFn), truncation(truncation),
+        oldFunc(oldFunc), newFunc(newFunc), mode(mode), Logic(Logic),
+        ctx(newFunc->getContext()) {
     IRBuilder<> B(&newFunc->getEntryBlock().front());
 
-    fromType = from.getBuiltinType(B.getContext());
-    toType = to.getType(B.getContext());
+    fromType = truncation.getFromType(ctx);
+    toType = truncation.getToType(ctx);
+    if (fromType == toType)
+      assert(truncation.isToMPFR());
 
     if (mode == TruncMemMode)
       tmpBlock = B.CreateAlloca(fromType);
     else
       tmpBlock = nullptr;
+
+    if (truncation.isToMPFR()) {
+      switch (mode) {
+      case TruncMemMode:
+        llvm::report_fatal_error(
+            "truncation to MPFR not supported in memory mode.");
+      case TruncOpMode:
+      case TruncOpFullModuleMode:
+        break;
+      }
+    }
   }
 
   void checkHandled(llvm::Instruction &inst) {
@@ -5065,25 +5082,26 @@ public:
   Value *truncate(IRBuilder<> &B, Value *v) {
     switch (mode) {
     case TruncMemMode:
-      return floatMemTruncate(B, v, tmpBlock, from, to);
+      assert(!truncation.isToMPFR());
+      return floatMemTruncate(B, v, tmpBlock, truncation);
     case TruncOpMode:
     case TruncOpFullModuleMode:
-      return floatValTruncate(B, v, tmpBlock, from, to);
-    default:
-      llvm_unreachable("Unknown trunc mode");
+      if (truncation.isToMPFR())
+        return v;
+      return floatValTruncate(B, v, tmpBlock, truncation);
     }
+    llvm_unreachable("Unknown trunc mode");
   }
 
   Value *expand(IRBuilder<> &B, Value *v) {
     switch (mode) {
     case TruncMemMode:
-      return floatMemExpand(B, v, tmpBlock, from, to);
+      return floatMemExpand(B, v, tmpBlock, truncation);
     case TruncOpMode:
     case TruncOpFullModuleMode:
-      return floatValExpand(B, v, tmpBlock, from, to);
-    default:
-      llvm_unreachable("Unknown trunc mode");
+      return floatValExpand(B, v, tmpBlock, truncation);
     }
+    llvm_unreachable("Unknown trunc mode");
   }
 
   void todo(llvm::Instruction &I) {
@@ -5129,26 +5147,35 @@ public:
   void visitGetElementPtrInst(llvm::GetElementPtrInst &gep) { return; }
   void visitPHINode(llvm::PHINode &phi) { return; }
   void visitCastInst(llvm::CastInst &CI) {
-    Value *newCI = nullptr;
-    auto newI = getNewFromOriginal(&CI);
-    std::string oldName = CI.getName().str();
-    newI->setName("");
-    if (CI.getSrcTy() == getFromType()) {
-      IRBuilder<> B(newI);
-      newCI = B.CreateCast(CI.getOpcode(), getNewFromOriginal(CI.getOperand(0)),
-                           CI.getDestTy(), oldName);
-    }
-    if (CI.getDestTy() == getToType()) {
+    switch (mode) {
+    case TruncMemMode: {
+      Value *newCI = nullptr;
       auto newI = getNewFromOriginal(&CI);
-      IRBuilder<> B(newI);
-      newCI = B.CreateCast(CI.getOpcode(), getNewFromOriginal(CI.getOperand(0)),
-                           CI.getDestTy(), oldName);
+      std::string oldName = CI.getName().str();
+      newI->setName("");
+      if (CI.getSrcTy() == getFromType()) {
+        IRBuilder<> B(newI);
+        newCI =
+            B.CreateCast(CI.getOpcode(), getNewFromOriginal(CI.getOperand(0)),
+                         CI.getDestTy(), oldName);
+      }
+      if (CI.getDestTy() == getToType()) {
+        auto newI = getNewFromOriginal(&CI);
+        IRBuilder<> B(newI);
+        newCI =
+            B.CreateCast(CI.getOpcode(), getNewFromOriginal(CI.getOperand(0)),
+                         CI.getDestTy(), oldName);
+      }
+      if (newCI) {
+        newI->replaceAllUsesWith(newCI);
+        newI->eraseFromParent();
+      }
+      return;
     }
-    if (newCI) {
-      newI->replaceAllUsesWith(newCI);
-      newI->eraseFromParent();
+    case TruncOpMode:
+    case TruncOpFullModuleMode:
+      return;
     }
-    return;
   }
   void visitSelectInst(llvm::SelectInst &SI) {
     switch (mode) {
@@ -5168,16 +5195,61 @@ public:
     case TruncOpMode:
     case TruncOpFullModuleMode:
       return;
-    default:
-      llvm_unreachable("");
     }
+    llvm_unreachable("");
   }
   void visitExtractElementInst(llvm::ExtractElementInst &EEI) { return; }
   void visitInsertElementInst(llvm::InsertElementInst &EEI) { return; }
   void visitShuffleVectorInst(llvm::ShuffleVectorInst &EEI) { return; }
   void visitExtractValueInst(llvm::ExtractValueInst &EEI) { return; }
   void visitInsertValueInst(llvm::InsertValueInst &EEI) { return; }
+  CallInst *createMPFRCall(llvm::IRBuilder<> &B, llvm::Instruction &I,
+                           llvm::Type *RetTy,
+                           SmallVectorImpl<Value *> &ArgsIn) {
+    std::string Name;
+    if (auto BO = dyn_cast<BinaryOperator>(&I)) {
+      Name = "binop_" + std::string(BO->getOpcodeName());
+    } else if (auto II = dyn_cast<IntrinsicInst>(&I)) {
+      auto FOp = II->getCalledFunction();
+      assert(FOp);
+      Name = "intr_" + std::string(FOp->getName());
+      for (auto &C : Name)
+        if (C == '.')
+          C = '_';
+    } else if (auto CI = dyn_cast<CallInst>(&I)) {
+      if (auto F = CI->getCalledFunction())
+        Name = "func_" + std::string(F->getName());
+      else
+        llvm_unreachable(
+            "Unexpected indirect call inst for conversion to MPFR");
+    } else {
+      llvm_unreachable("Unexpected instruction for conversion to MPFR");
+    }
+
+    std::string MangledName =
+        std::string("__enzyme_mpfr_") + truncation.mangleFrom() + "_" + Name;
+    auto F = newFunc->getParent()->getFunction(MangledName);
+    SmallVector<Value *, 4> Args(ArgsIn.begin(), ArgsIn.end());
+    Args.push_back(B.getInt64(truncation.getTo().exponentWidth));
+    Args.push_back(B.getInt64(truncation.getTo().significandWidth));
+    if (!F) {
+      SmallVector<Type *, 4> ArgTypes;
+      for (auto Arg : Args)
+        ArgTypes.push_back(Arg->getType());
+      FunctionType *FnTy =
+          FunctionType::get(RetTy, ArgTypes, /*is_vararg*/ false);
+      F = Function::Create(FnTy, Function::ExternalLinkage, MangledName,
+                           newFunc->getParent());
+    }
+    return cast<CallInst>(B.CreateCall(F, Args));
+  }
   void visitBinaryOperator(llvm::BinaryOperator &BO) {
+    auto oldLHS = BO.getOperand(0);
+    auto oldRHS = BO.getOperand(1);
+
+    if (oldLHS->getType() != getFromType() &&
+        oldRHS->getType() != getFromType())
+      return;
 
     switch (BO.getOpcode()) {
     default:
@@ -5195,60 +5267,25 @@ public:
     case BinaryOperator::And:
     case BinaryOperator::Or:
     case BinaryOperator::Xor:
+      assert(0 && "Invalid binop opcode for float arg");
       return;
     }
 
-    if (to.getBuiltinType(BO.getContext())) {
-      auto newI = getNewFromOriginal(&BO);
-      IRBuilder<> B(newI);
-      auto newLHS = truncate(B, getNewFromOriginal(BO.getOperand(0)));
-      auto newRHS = truncate(B, getNewFromOriginal(BO.getOperand(1)));
-      switch (BO.getOpcode()) {
-      default:
-        break;
-      case BinaryOperator::FMul: {
-        auto nres = cast<BinaryOperator>(B.CreateFMul(newLHS, newRHS));
-        nres->takeName(newI);
-        nres->copyIRFlags(newI);
-        newI->replaceAllUsesWith(expand(B, nres));
-        newI->eraseFromParent();
-      }
-        return;
-      case BinaryOperator::FAdd: {
-        auto nres = cast<BinaryOperator>(B.CreateFAdd(newLHS, newRHS));
-        nres->takeName(newI);
-        nres->copyIRFlags(newI);
-        newI->replaceAllUsesWith(expand(B, nres));
-        newI->eraseFromParent();
-      }
-        return;
-      case BinaryOperator::FSub: {
-        auto nres = cast<BinaryOperator>(B.CreateFSub(newLHS, newRHS));
-        nres->takeName(newI);
-        nres->copyIRFlags(newI);
-        newI->replaceAllUsesWith(expand(B, nres));
-        newI->eraseFromParent();
-      }
-        return;
-      case BinaryOperator::FDiv: {
-        auto nres = cast<BinaryOperator>(B.CreateFDiv(newLHS, newRHS));
-        nres->takeName(newI);
-        nres->copyIRFlags(newI);
-        newI->replaceAllUsesWith(expand(B, nres));
-        newI->eraseFromParent();
-      }
-        return;
-      case BinaryOperator::FRem: {
-        auto nres = cast<BinaryOperator>(B.CreateFRem(newLHS, newRHS));
-        nres->takeName(newI);
-        nres->copyIRFlags(newI);
-        newI->replaceAllUsesWith(expand(B, nres));
-        newI->eraseFromParent();
-      }
-        return;
-      }
+    auto newI = getNewFromOriginal(&BO);
+    IRBuilder<> B(newI);
+    auto newLHS = truncate(B, getNewFromOriginal(oldLHS));
+    auto newRHS = truncate(B, getNewFromOriginal(oldRHS));
+    Instruction *nres = nullptr;
+    if (truncation.isToMPFR()) {
+      SmallVector<Value *, 2> Args({newLHS, newRHS});
+      nres = createMPFRCall(B, BO, truncation.getToType(ctx), Args);
+    } else {
+      nres = cast<Instruction>(B.CreateBinOp(BO.getOpcode(), newLHS, newRHS));
     }
-    todo(BO);
+    nres->takeName(newI);
+    nres->copyIRFlags(newI);
+    newI->replaceAllUsesWith(expand(B, nres));
+    newI->eraseFromParent();
     return;
   }
   void visitMemSetInst(llvm::MemSetInst &MS) { visitMemSetCommon(MS); }
@@ -5271,13 +5308,14 @@ public:
   void visitFenceInst(llvm::FenceInst &FI) { return; }
 
   bool handleIntrinsic(llvm::CallInst &CI, Intrinsic::ID ID) {
+    auto newI = cast<llvm::CallInst>(getNewFromOriginal(&CI));
+    IRBuilder<> B(newI);
+
     SmallVector<Value *, 2> orig_ops(CI.arg_size());
     for (unsigned i = 0; i < CI.arg_size(); ++i)
       orig_ops[i] = CI.getOperand(i);
 
     bool hasFromType = false;
-    auto newI = cast<llvm::CallInst>(getNewFromOriginal(&CI));
-    IRBuilder<> B(newI);
     SmallVector<Value *, 2> new_ops(CI.arg_size());
     for (unsigned i = 0; i < CI.arg_size(); ++i) {
       if (orig_ops[i]->getType() == getFromType()) {
@@ -5296,12 +5334,16 @@ public:
     if (!hasFromType)
       return false;
 
-    // TODO check that the intrinsic is overloaded
-
-    CallInst *intr;
-    Value *nres = intr =
-        createIntrinsicCall(B, ID, retTy, new_ops, &CI, CI.getName());
-    if (CI.getType() == getFromType())
+    Instruction *intr = nullptr;
+    Value *nres = nullptr;
+    if (truncation.isToMPFR()) {
+      nres = intr = createMPFRCall(B, CI, retTy, new_ops);
+    } else {
+      // TODO check that the intrinsic is overloaded
+      nres = intr =
+          createIntrinsicCall(B, ID, retTy, new_ops, &CI, CI.getName());
+    }
+    if (newI->getType() == getFromType())
       nres = expand(B, nres);
     intr->copyIRFlags(newI);
     newI->replaceAllUsesWith(nres);
@@ -5390,7 +5432,7 @@ public:
 
   Value *GetShadow(RequestContext &ctx, Value *v) {
     if (auto F = dyn_cast<Function>(v))
-      return Logic.CreateTruncateFunc(ctx, F, from, to, mode);
+      return Logic.CreateTruncateFunc(ctx, F, truncation, mode);
     llvm::errs() << " unknown get truncated func: " << *v << "\n";
     llvm_unreachable("unknown get truncated func");
     return v;
@@ -5457,10 +5499,11 @@ bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
 
   Value *converted = nullptr;
   if (isTruncate)
-    converted = floatMemExpand(B, B.CreateFPTrunc(v, toTy), nullptr, from, to);
+    converted = floatMemExpand(B, B.CreateFPTrunc(v, toTy), nullptr,
+                               FloatTruncation(from, to));
   else
-    converted =
-        B.CreateFPExt(floatMemTruncate(B, v, nullptr, from, to), fromTy);
+    converted = B.CreateFPExt(
+        floatMemTruncate(B, v, nullptr, FloatTruncation(from, to)), fromTy);
   assert(converted);
 
   context.req->replaceAllUsesWith(converted);
@@ -5471,13 +5514,9 @@ bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
 
 llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
                                                 llvm::Function *totrunc,
-                                                FloatRepresentation from,
-                                                FloatRepresentation to,
+                                                FloatTruncation truncation,
                                                 TruncateMode mode) {
-  if (from == to)
-    return totrunc;
-
-  TruncateCacheKey tup(totrunc, from, to, mode);
+  TruncateCacheKey tup(totrunc, truncation, mode);
   if (TruncateCachedFunctions.find(tup) != TruncateCachedFunctions.end()) {
     return TruncateCachedFunctions.find(tup)->second;
   }
@@ -5492,10 +5531,9 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
   Type *NewTy = totrunc->getReturnType();
 
   FunctionType *FTy = FunctionType::get(NewTy, params, totrunc->isVarArg());
-  std::string truncName = std::string("__enzyme_done_truncate_") +
-                          (mode == TruncMemMode ? "mem" : "op") + "_func_" +
-                          from.to_string() + "_" + to.to_string() + "_" +
-                          totrunc->getName().str();
+  std::string truncName =
+      std::string("__enzyme_done_truncate_") + truncateModeStr(mode) +
+      "_func_" + truncation.mangleTruncation() + "_" + totrunc->getName().str();
   Function *NewF = Function::Create(FTy, totrunc->getLinkage(), truncName,
                                     totrunc->getParent());
 
@@ -5507,34 +5545,6 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
     std::string s;
     llvm::raw_string_ostream ss(s);
     ss << "No truncate mode found for " + totrunc->getName() << "\n";
-    llvm::Value *toshow = totrunc;
-    if (context.req) {
-      toshow = context.req;
-      ss << " at context: " << *context.req;
-    } else {
-      ss << *totrunc << "\n";
-    }
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                         ErrorType::NoDerivative, nullptr, wrap(totrunc),
-                         wrap(context.ip));
-      return NewF;
-    }
-    if (context.req) {
-      EmitFailure("NoTruncate", context.req->getDebugLoc(), context.req,
-                  ss.str());
-      return NewF;
-    }
-    llvm::errs() << "mod: " << *totrunc->getParent() << "\n";
-    llvm::errs() << *totrunc << "\n";
-    llvm_unreachable("attempting to truncate function without definition");
-  }
-
-  // TODO This is overloaded an doesnt do what it should do here
-  if (from < to) {
-    std::string s;
-    llvm::raw_string_ostream ss(s);
-    ss << "Cannot truncate into a large width\n";
     llvm::Value *toshow = totrunc;
     if (context.req) {
       toshow = context.req;
@@ -5579,7 +5589,7 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
-  TruncateGenerator handle(originalToNewFn, from, to, totrunc, NewF, mode,
+  TruncateGenerator handle(originalToNewFn, truncation, totrunc, NewF, mode,
                            *this);
   for (auto &BB : *totrunc)
     for (auto &I : BB)

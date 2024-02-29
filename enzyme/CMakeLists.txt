@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.13)
 project(Enzyme)
 
 include(CMakePackageConfigHelpers)
+include(CheckIncludeFile)
+include(CheckIncludeFileCXX)
 
 set(ENZYME_MAJOR_VERSION 0)
 set(ENZYME_MINOR_VERSION 0)
@@ -264,6 +266,11 @@ string(REPLACE "struct SCEVOperand " "namespace fake {\n  struct SCEVOperand " I
 string(REPLACE "};\n}" "};\n}}" INPUT_TEXT "${INPUT_TEXT}")
 string(REPLACE "const SCEV* S;\n};\n" "const SCEV* S;\n};\n}\n" INPUT_TEXT "${INPUT_TEXT}")
 endif()
+
+find_library(MPFR_LIB_PATH mpfr)
+CHECK_INCLUDE_FILE("mpfr.h" HAS_MPFR_H)
+message("MPFR lib: " ${MPFR_LIB_PATH})
+message("MPFR header: " ${HAS_MPFR_H})
 
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/include/SCEV/ScalarEvolutionExpander.h" "${INPUT_TEXT}")
 
