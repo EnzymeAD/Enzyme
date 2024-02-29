@@ -1,4 +1,4 @@
-// RUN: %eopt --enzyme %s | FileCheck %s
+// RUN: %eopt --enzyme --remove-unnecessary-enzyme-ops -canonicalize %s | FileCheck %s
 
 module {
   func.func @ppow(%x: f64) -> f64 {

@@ -87,10 +87,10 @@ struct ForOpInterfaceReverse
     auto end = gutils->popCache(caches[1], builder);
     auto step = gutils->popCache(caches[2], builder);
 
-    SmallVector<Value> nArgs;
     auto repFor = builder.create<scf::ForOp>(
-        forOp.getLoc(), start, end, step, ArrayRef<Value>()); // TODO
-    repFor.getRegion().begin()->erase();
+        forOp.getLoc(), start, end, step, ArrayRef<Value>());
+    // erase scf yield
+    repFor.getBody()->begin()->erase();
 
     for (auto &&[oldReg, newReg] : llvm::zip(op->getRegions(), repFor->getRegions())) {
 
@@ -99,7 +99,7 @@ struct ForOpInterfaceReverse
             
             auto loc = oBB->rbegin()->getLoc();
 
-            auto idx = repFor.getRegion().begin()->getArgument(0);
+            auto idx = repFor.getInductionVar();
 
             auto lhs = builder.create<arith::AddIOp>(loc, idx, step);
 
@@ -130,8 +130,12 @@ struct ForOpInterfaceReverse
             builder.create<scf::YieldOp>(loc);
         };
 
-        gutils->Logic.differentiate(gutils, oldReg, newReg, buildFuncReturnOp,
-                                    nullptr);
+        for (auto &&[oBB, revBB] : llvm::zip(oldReg, newReg)) {
+            gutils->mapReverseModeBlocks.map(&oBB, &revBB);
+            gutils->Logic.visitChildren(&oBB, &revBB, gutils);
+            Block *newBB = gutils->getNewFromOriginal(&oBB);
+            gutils->Logic.handlePredecessors(&oBB, newBB, &revBB, gutils, buildFuncReturnOp);
+        }
     }
   }
 

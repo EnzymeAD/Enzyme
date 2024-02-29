@@ -83,9 +83,15 @@ struct RemoveUnusedEnzymeOpsPass
     : public enzyme::RemoveUnusedEnzymeOpsPassBase<RemoveUnusedEnzymeOpsPass> {
   void runOnOperation() override {
 
+    SmallVector<enzyme::InitOp, 1> inits;
     getOperation()->walk([&](Operation *op) {
-      DominanceInfo dInfo;
       if (auto initOp = dyn_cast<enzyme::InitOp>(op)) {
+        inits.push_back(initOp);
+      }
+    });
+
+    for (auto initOp : inits) {
+      DominanceInfo dInfo;
         Value v = initOp;
         if (auto type = dyn_cast<enzyme::GradientType>(initOp.getType())) {
           bool replaceable = true;
@@ -120,8 +126,8 @@ struct RemoveUnusedEnzymeOpsPass
             for (Operation *userGet : make_early_inc_range(v.getUsers())) {
               userGet->erase();
             }
-            op->erase();
-            return;
+            initOp->erase();
+            continue;
           }
         } else if (auto type = dyn_cast<enzyme::CacheType>(initOp.getType())) {
           bool replaceable = true;
@@ -177,13 +183,14 @@ struct RemoveUnusedEnzymeOpsPass
             for (Operation *user : make_early_inc_range(v.getUsers())) {
               user->erase();
             }
-            op->erase();
+            initOp->erase();
+            continue;
           }
         }
-      }
-    });
-  };
+    }
+  }
 };
+
 } // end anonymous namespace
 
 namespace mlir {
