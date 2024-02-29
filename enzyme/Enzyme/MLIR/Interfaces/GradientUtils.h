@@ -88,14 +88,14 @@ protected:
   IRMapping differentials;
 
   Block *initializationBlock;
+
 public:
-  
   mlir::Value getDifferential(mlir::Value origv);
 
   void setDiffe(mlir::Value origv, mlir::Value newv, mlir::OpBuilder &builder);
 
   void zeroDiffe(mlir::Value origv, mlir::OpBuilder &builder);
-  
+
   mlir::Value diffe(mlir::Value origv, mlir::OpBuilder &builder);
 
   MDiffeGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
@@ -111,8 +111,8 @@ public:
       : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
                        constantvalues_, activevals_, ActiveReturn,
                        constant_values, origToNew_, origToNewOps_, mode, width,
-                       omp), 
-    initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
+                       omp),
+        initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
 
   // Technically diffe constructor
   static MDiffeGradientUtils *

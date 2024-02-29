@@ -165,7 +165,8 @@ struct GenericOpInterfaceReverse
         StringAttr());
 
     int numInputs = inputs.size();
-    auto buildFuncReturnOp = [&gutils, numInputs](OpBuilder &builder, Block* oBB) {
+    auto buildFuncReturnOp = [&gutils, numInputs](OpBuilder &builder,
+                                                  Block *oBB) {
       auto loc = oBB->rbegin()->getLoc();
       SmallVector<Value> retargs;
       for (auto arg : oBB->getArguments()) {
@@ -196,8 +197,8 @@ struct GenericOpInterfaceReverse
       return std::make_pair(pushCache, popCache);
     };
 
-    gutils->Logic.differentiate(
-        gutils, *linalgOp.getBlock()->getParent(), adjoint.getRegion(), buildFuncReturnOp, hook);
+    gutils->Logic.differentiate(gutils, *linalgOp.getBlock()->getParent(),
+                                adjoint.getRegion(), buildFuncReturnOp, hook);
 
     auto newOpYield = cast<linalg::YieldOp>(
         cast<linalg::GenericOp>(newOp).getBodyRegion().front().getTerminator());

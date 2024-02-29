@@ -40,8 +40,7 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
                           invertedPointers_, constantvalues_, activevals_,
                           ReturnActivity, ArgDiffeTypes_, originalToNewFn_,
                           originalToNewFnOps_, mode_, width, /*omp*/ false),
-      symbolTable(symbolTable_) {
-}
+      symbolTable(symbolTable_) {}
 
 Type mlir::enzyme::MGradientUtilsReverse::getIndexCacheType() {
   Type indexType = getIndexType();
@@ -117,7 +116,7 @@ void mlir::enzyme::MGradientUtilsReverse::addToDiffe(Value oldGradient,
   Value operandGradient = diffe(oldGradient, builder);
   auto iface = cast<AutoDiffTypeInterface>(addedGradient.getType());
   auto added = iface.createAddOp(builder, oldGradient.getLoc(), operandGradient,
-                               addedGradient);
+                                 addedGradient);
   setDiffe(oldGradient, added, builder);
 }
 

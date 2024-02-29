@@ -111,13 +111,15 @@ def Gradient : Enzyme_Type<"Gradient"> {
 
 def SetOp : Enzyme_Op<"set"> {
   let summary = "Store the current value of the gradient";
-  let arguments = (ins AnyType : $gradient, AnyType : $value);
+  let arguments = (ins Arg<AnyType, "the reference to store to",
+                           [MemWrite]>:$gradient, AnyType : $value);
   let results = (outs );
 }
 
 def GetOp : Enzyme_Op<"get"> {
   let summary = "Load current value of gradient";
-  let arguments = (ins AnyType : $gradient);
+  let arguments = (ins Arg<AnyType, "the reference to load from",
+                           [MemRead]>:$gradient);
   let results = (outs AnyType);
 }
 

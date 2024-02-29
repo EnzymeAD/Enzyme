@@ -22,6 +22,7 @@
 #include "mlir/Transforms/DialectConversion.h"
 
 #include "mlir/Rewrite/PatternApplicator.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "mlir/IR/Dominance.h"
 #include "llvm/Support/raw_ostream.h"
@@ -30,10 +31,9 @@ using namespace mlir;
 using namespace enzyme;
 namespace {
 
-
 // Starting at the beginning of blk, is there a path that can execute
-// check before end. 
-bool mayExecuteBefore(Block* blk, Operation* check, Operation *end) {
+// check before end.
+bool mayExecuteBefore(Block *blk, Operation *check, Operation *end) {
   auto reg = blk->getParent();
   assert(reg->isAncestor(end->getParentRegion()));
 
@@ -57,8 +57,8 @@ bool mayExecuteBefore(Block* blk, Operation* check, Operation *end) {
 
       // If we've seen the thing to check with, it may execute before
       if (op.isAncestor(check)) {
-        // The sole exception to this is if they are in the same sub region, which is 
-        // known to execute only once. TODO this later
+        // The sole exception to this is if they are in the same sub region,
+        // which is known to execute only once. TODO this later
         /*
         if (op.isAncestor(end)) {
 
@@ -71,15 +71,16 @@ bool mayExecuteBefore(Block* blk, Operation* check, Operation *end) {
         return true;
       }
 
-      // Otherwise if we've seen the end op, this path is over as the route we found here
-      // didn't first find a check.
+      // Otherwise if we've seen the end op, this path is over as the route we
+      // found here didn't first find a check.
       if (op.isAncestor(end)) {
         seenEnd = true;
         break;
       }
     }
 
-    if (seenEnd) continue;
+    if (seenEnd)
+      continue;
 
     // If we didn't find the end, try all successors
     for (auto succ : cur->getSuccessors()) {
@@ -90,10 +91,10 @@ bool mayExecuteBefore(Block* blk, Operation* check, Operation *end) {
   return false;
 }
 
-bool mayExecuteBetween(Operation *start, Operation* check, Operation *end) {
+bool mayExecuteBetween(Operation *start, Operation *check, Operation *end) {
 
-  for (auto op = start->getNextNode(); op != nullptr; op++) {
-    // This check op has been found after start in its block 
+  for (auto op = start->getNextNode(); op != nullptr; op = op->getNextNode()) {
+    // This check op has been found after start in its block
     if (op->isAncestor(check)) {
       return true;
     }
@@ -102,7 +103,7 @@ bool mayExecuteBetween(Operation *start, Operation* check, Operation *end) {
     }
   }
 
-  Block* blk = start->getBlock();
+  Block *blk = start->getBlock();
 
   auto reg = blk->getParent();
   if (reg->isAncestor(end->getParentRegion())) {
@@ -118,45 +119,46 @@ bool mayExecuteBetween(Operation *start, Operation* check, Operation *end) {
   return mayExecuteBetween(start->getParentOp(), check, end);
 }
 
-// TODO this isn't necessarily correct. This is because there could be a 
-// non dominating use bewteen the dominating one and the op, causing 
+// TODO this isn't necessarily correct. This is because there could be a
+// non dominating use bewteen the dominating one and the op, causing
 // correctness issues when not seen. In interim, be conservative and only
 // succeed if these have the same parent block, and no other ops in path
-template <class T>
+template <class T, class T2 = T>
 T findNearestDominatingOpByUse(Operation *op, Value v) {
   DominanceInfo dInfo;
   PostDominanceInfo pdInfo;
 
   SmallVector<T, 1> options;
+  SmallVector<Operation *, 1> conflicts;
   for (Operation *userSet : v.getUsers()) {
     if (auto setOp = dyn_cast<T>(userSet)) {
       options.push_back(setOp);
+      conflicts.push_back(setOp);
+      continue;
+    }
+    if (auto setOp = dyn_cast<T2>(userSet)) {
+      conflicts.push_back(setOp);
+      continue;
     }
   }
-  if (options.size() == 1 && dInfo.dominates(options[0], op))
-    return options[0];
 
-  llvm::errs() << " scope: " << *op->getParentOp() << "\n";
-    llvm::errs() << "  want to replace " << *op << "\n";
   for (auto opt : options) {
     if (!dInfo.dominates(opt, op))
       continue;
     bool conflict = false;
-    llvm::errs() << " trying: " << *opt << "\n";
-    for (auto opt2 : options) {
-      if (opt == opt2) continue;
-
-      llvm::errs() << " conflict check: " << *opt2 << "\n";
+    for (auto opt2 : conflicts) {
+      if (opt == opt2)
+        continue;
+      if (opt2 == op)
+        continue;
 
       if (!mayExecuteBetween(opt, opt2, op)) {
-        llvm::errs() << " + known good since occurs before store\n";
         continue;
       }
 
       conflict = true;
     }
     if (!conflict) {
-      llvm::errs() << " - replaced with " << *opt << "\n";
       return opt;
     }
   }
@@ -164,78 +166,137 @@ T findNearestDominatingOpByUse(Operation *op, Value v) {
   return nullptr;
 }
 
+struct PopSimplify : public OpRewritePattern<enzyme::PopOp> {
+  using OpRewritePattern<enzyme::PopOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(enzyme::PopOp pop,
+                                PatternRewriter &rewriter) const final {
+
+    auto init = pop.getCache().getDefiningOp<enzyme::InitOp>();
+    if (!init)
+      return failure();
+
+    SmallVector<enzyme::PopOp, 1> pops;
+    SmallVector<enzyme::PushOp, 1> pushes;
+    for (Operation *userSet : init.getResult().getUsers()) {
+      if (auto push = dyn_cast<enzyme::PushOp>(userSet)) {
+        pushes.push_back(push);
+        continue;
+      }
+      if (auto pop = dyn_cast<enzyme::PopOp>(userSet)) {
+        pops.push_back(pop);
+        continue;
+      }
+      return failure();
+    }
+
+    if (auto push = findNearestDominatingOpByUse<enzyme::PushOp, enzyme::PopOp>(
+            pop, init)) {
+      // Do the block check to conservatively avoid multi execute push/pop
+      if (pop->getBlock() == push->getBlock()) {
+        rewriter.replaceOp(pop, push.getValue());
+        rewriter.eraseOp(push);
+        return success();
+      }
+    }
+
+    return failure();
+  }
+};
+
+struct GetSimplify : public OpRewritePattern<enzyme::GetOp> {
+  using OpRewritePattern<enzyme::GetOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(enzyme::GetOp get,
+                                PatternRewriter &rewriter) const final {
+
+    auto init = get.getGradient().getDefiningOp<enzyme::InitOp>();
+    if (!init)
+      return failure();
+
+    for (Operation *userSet : init.getResult().getUsers()) {
+      if (isa<enzyme::GetOp>(userSet))
+        continue;
+      if (isa<enzyme::SetOp>(userSet))
+        continue;
+      return failure();
+    }
+
+    if (auto set = findNearestDominatingOpByUse<enzyme::SetOp>(get, init)) {
+      rewriter.replaceOp(get, set.getValue());
+      return success();
+    }
+    return failure();
+  }
+};
+
+struct SetSimplify : public OpRewritePattern<enzyme::SetOp> {
+  using OpRewritePattern<enzyme::SetOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(enzyme::SetOp get,
+                                PatternRewriter &rewriter) const final {
+
+    auto init = get.getGradient().getDefiningOp<enzyme::InitOp>();
+    if (!init)
+      return failure();
+
+    for (Operation *userSet : init.getResult().getUsers()) {
+      if (isa<enzyme::SetOp>(userSet))
+        continue;
+      return failure();
+    }
+
+    rewriter.eraseOp(get);
+    return success();
+  }
+};
+
+struct PushSimplify : public OpRewritePattern<enzyme::PushOp> {
+  using OpRewritePattern<enzyme::PushOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(enzyme::PushOp get,
+                                PatternRewriter &rewriter) const final {
+
+    auto init = get.getCache().getDefiningOp<enzyme::InitOp>();
+    if (!init)
+      return failure();
+
+    for (Operation *userSet : init.getResult().getUsers()) {
+      if (isa<enzyme::PushOp>(userSet))
+        continue;
+      return failure();
+    }
+
+    rewriter.eraseOp(get);
+    return success();
+  }
+};
+
+struct InitSimplify : public OpRewritePattern<enzyme::InitOp> {
+  using OpRewritePattern<enzyme::InitOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(enzyme::InitOp get,
+                                PatternRewriter &rewriter) const final {
+
+    if (get.use_empty()) {
+      rewriter.eraseOp(get);
+      return success();
+    }
+    return failure();
+  }
+};
+
 struct RemoveUnusedEnzymeOpsPass
     : public enzyme::RemoveUnusedEnzymeOpsPassBase<RemoveUnusedEnzymeOpsPass> {
   void runOnOperation() override {
 
-    SmallVector<enzyme::InitOp, 1> inits;
-    getOperation()->walk([&](Operation *op) {
-      if (auto initOp = dyn_cast<enzyme::InitOp>(op)) {
-        inits.push_back(initOp);
-      }
-    });
+    RewritePatternSet patterns(&getContext());
+    patterns.insert<PopSimplify, GetSimplify, PushSimplify, SetSimplify,
+                    InitSimplify>(&getContext());
 
-    for (auto initOp : inits) {
-      DominanceInfo dInfo;
-        Value v = initOp;
-        if (auto type = dyn_cast<enzyme::GradientType>(initOp.getType())) {
-          bool replaceable = true;
-          for (Operation *userSet : v.getUsers()) {
-            if (isa<enzyme::SetOp>(userSet)) continue;
-            if (isa<enzyme::GetOp>(userSet)) continue;
-            llvm::errs() << " unknown user of grad: " << *userSet << "\n";
-            replaceable = false;
-          }
-          if (replaceable) {
-            // Do replacing
-            bool allDelete = true;
-            for (Operation *userGet : make_early_inc_range(v.getUsers())) {
-              if (auto getOp = dyn_cast<enzyme::GetOp>(userGet)) {
-                if (auto setOp =
-                    findNearestDominatingOpByUse<enzyme::SetOp>(userGet, v)) {
-                  getOp.replaceAllUsesWith(setOp.getValue());
-                  getOp->erase();
-                  continue;
-                }
-                allDelete = false;
-              }
-            }
-            if (allDelete) {
-              for (Operation *userGet : make_early_inc_range(v.getUsers())) {
-                userGet->erase();
-              }
-              initOp->erase();
-            }
-            continue;
-          }
-        } else if (auto type = dyn_cast<enzyme::CacheType>(initOp.getType())) {
-          bool replaceable = true;
-
-          SmallVector<enzyme::PopOp, 1> pops;
-          for (Operation *userSet : v.getUsers()) {
-            if (isa<enzyme::PushOp>(userSet)) continue;
-            if (auto pop = dyn_cast<enzyme::PopOp>(userSet)) {
-              pops.push_back(pop);
-              continue;
-            }
-            llvm::errs() << " unknown user of cache: " << *userSet << "\n";
-            replaceable = false;
-          }
-
-          if (replaceable) 
-          for (auto pop : pops) {
-            if (auto push = findNearestDominatingOpByUse<enzyme::PushOp>(pop, v)) {
-              pop.replaceAllUsesWith(push.getValue());
-              pop->erase();
-              push->erase();
-            }
-          }
-          if (v.use_empty()) {            
-            initOp->erase();
-          }
-          continue;
-        }
-    }
+    GreedyRewriteConfig config;
+    (void)applyPatternsAndFoldGreedily(getOperation(), std::move(patterns),
+                                       config);
   }
 };
 

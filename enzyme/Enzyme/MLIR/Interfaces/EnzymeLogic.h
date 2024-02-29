@@ -124,9 +124,10 @@ public:
   void
   initializeShadowValues(SmallVector<mlir::Block *> &dominatorToposortBlocks,
                          MGradientUtilsReverse *gutils);
-  void handlePredecessors(Block *oBB, Block *newBB, Block *reverseBB,
-                          MGradientUtilsReverse *gutils,
-                          llvm::function_ref<buildReturnFunction> buildReturnOp);
+  void
+  handlePredecessors(Block *oBB, Block *newBB, Block *reverseBB,
+                     MGradientUtilsReverse *gutils,
+                     llvm::function_ref<buildReturnFunction> buildReturnOp);
   void visitChildren(Block *oBB, Block *reverseBB,
                      MGradientUtilsReverse *gutils);
   void visitChild(Operation *op, OpBuilder &builder,

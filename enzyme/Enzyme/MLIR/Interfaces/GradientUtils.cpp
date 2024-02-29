@@ -41,7 +41,8 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
       originalToNewFnOps(originalToNewFnOps_), blocksNotForAnalysis(),
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
           blocksNotForAnalysis, constantvalues_, activevals_, ReturnActivity)),
-      TA(TA_), TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_), RetDiffeTypes(1, ReturnActivity) {
+      TA(TA_), TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_),
+      RetDiffeTypes(1, ReturnActivity) {
 
   /*
   for (BasicBlock &BB : *oldFunc) {
@@ -170,7 +171,8 @@ mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
   llvm_unreachable("could not invert pointer");
 }
 
-mlir::Value mlir::enzyme::MDiffeGradientUtils::getDifferential(mlir::Value oval) {
+mlir::Value
+mlir::enzyme::MDiffeGradientUtils::getDifferential(mlir::Value oval) {
   auto found = differentials.lookupOrNull(oval);
   if (found != nullptr)
     return found;
@@ -179,17 +181,19 @@ mlir::Value mlir::enzyme::MDiffeGradientUtils::getDifferential(mlir::Value oval)
   OpBuilder builder(oval.getContext());
   builder.setInsertionPointToStart(initializationBlock);
 
-  auto shadow = builder.create<enzyme::InitOp>(oval.getLoc(), enzyme::GradientType::get(oval.getContext(), shadowty));
-  auto toset = cast<AutoDiffTypeInterface>(shadowty).createNullValue(builder, oval.getLoc());
+  auto shadow = builder.create<enzyme::InitOp>(
+      oval.getLoc(), enzyme::GradientType::get(oval.getContext(), shadowty));
+  auto toset = cast<AutoDiffTypeInterface>(shadowty).createNullValue(
+      builder, oval.getLoc());
   builder.create<enzyme::SetOp>(oval.getLoc(), shadow, toset);
 
   differentials.map(oval, shadow);
   return shadow;
 }
 
-
-void mlir::enzyme::MDiffeGradientUtils::setDiffe(mlir::Value oval, mlir::Value toset,
-                                            OpBuilder &BuilderM) {
+void mlir::enzyme::MDiffeGradientUtils::setDiffe(mlir::Value oval,
+                                                 mlir::Value toset,
+                                                 OpBuilder &BuilderM) {
   assert(!isConstantValue(oval));
   auto iface = oval.getType().cast<AutoDiffTypeInterface>();
   if (!iface.isMutable()) {
@@ -200,18 +204,20 @@ void mlir::enzyme::MDiffeGradientUtils::setDiffe(mlir::Value oval, mlir::Value t
   }
 }
 
-void mlir::enzyme::MDiffeGradientUtils::zeroDiffe(mlir::Value oval, OpBuilder &BuilderM) {
+void mlir::enzyme::MDiffeGradientUtils::zeroDiffe(mlir::Value oval,
+                                                  OpBuilder &BuilderM) {
   assert(!isConstantValue(oval));
   auto iface = getShadowType(oval.getType()).cast<AutoDiffTypeInterface>();
   assert(!iface.isMutable());
   setDiffe(oval, iface.createNullValue(BuilderM, oval.getLoc()), BuilderM);
 }
 
-
-mlir::Value mlir::enzyme::MDiffeGradientUtils::diffe(mlir::Value oval, OpBuilder &BuilderM) {
+mlir::Value mlir::enzyme::MDiffeGradientUtils::diffe(mlir::Value oval,
+                                                     OpBuilder &BuilderM) {
 
   auto shadow = getDifferential(oval);
-  return BuilderM.create<enzyme::GetOp>(oval.getLoc(), getShadowType(oval.getType()), shadow);
+  return BuilderM.create<enzyme::GetOp>(oval.getLoc(),
+                                        getShadowType(oval.getType()), shadow);
 }
 
 void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
@@ -271,13 +277,15 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
         continue;
       auto i = val.getArgNumber();
       if (mode == DerivativeMode::ForwardMode ||
-        mode == DerivativeMode::ForwardModeSplit || cast<AutoDiffTypeInterface>(val.getType()).isMutable()) {
+          mode == DerivativeMode::ForwardModeSplit ||
+          cast<AutoDiffTypeInterface>(val.getType()).isMutable()) {
         mlir::Value dval;
         if (i == blk->getArguments().size() - 1)
           dval = nblk->addArgument(getShadowType(val.getType()), val.getLoc());
         else
-          dval = nblk->insertArgument(nblk->args_begin() + i + 1,
-                                      getShadowType(val.getType()), val.getLoc());
+          dval =
+              nblk->insertArgument(nblk->args_begin() + i + 1,
+                                   getShadowType(val.getType()), val.getLoc());
 
         invertedPointers.map(val, dval);
       }
@@ -290,15 +298,16 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
 
     OpBuilder BuilderZ(getNewFromOriginal(inst));
     for (auto res : inst->getResults()) {
-      if (isConstantValue(res)) continue;
+      if (isConstantValue(res))
+        continue;
 
       if (!(mode == DerivativeMode::ForwardMode ||
-          mode == DerivativeMode::ForwardModeSplit || cast<AutoDiffTypeInterface>(res.getType()).isMutable()))
-          continue;
-        mlir::Type antiTy = getShadowType(res.getType());
-        auto anti =
-            BuilderZ.create<enzyme::PlaceholderOp>(res.getLoc(), antiTy);
-        invertedPointers.map(res, anti);
+            mode == DerivativeMode::ForwardModeSplit ||
+            cast<AutoDiffTypeInterface>(res.getType()).isMutable()))
+        continue;
+      mlir::Type antiTy = getShadowType(res.getType());
+      auto anti = BuilderZ.create<enzyme::PlaceholderOp>(res.getLoc(), antiTy);
+      invertedPointers.map(res, anti);
     }
   });
 }

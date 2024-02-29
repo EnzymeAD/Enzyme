@@ -24,7 +24,7 @@ using namespace enzyme;
 using llvm::errs;
 namespace {
 
-  struct AddSimplify : public OpRewritePattern<arith::AddFOp> {
+struct AddSimplify : public OpRewritePattern<arith::AddFOp> {
   using OpRewritePattern<arith::AddFOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(arith::AddFOp op,
@@ -44,7 +44,7 @@ namespace {
   }
 };
 
-  struct SubSimplify : public OpRewritePattern<arith::SubFOp> {
+struct SubSimplify : public OpRewritePattern<arith::SubFOp> {
   using OpRewritePattern<arith::SubFOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(arith::SubFOp op,

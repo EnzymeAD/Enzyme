@@ -119,17 +119,18 @@ struct StoreOpInterfaceReverse
 
       if (!iface.isMutable()) {
         if (!gutils->isConstantValue(val)) {
-          Value loadedGradient =
-              builder.create<memref::LoadOp>(storeOp.getLoc(), memrefGradient,
-                                             ArrayRef<Value>(retrievedArguments));
+          Value loadedGradient = builder.create<memref::LoadOp>(
+              storeOp.getLoc(), memrefGradient,
+              ArrayRef<Value>(retrievedArguments));
           gutils->addToDiffe(val, loadedGradient, builder);
         }
 
-        auto zero = cast<AutoDiffTypeInterface>(gutils->getShadowType(val.getType())).createNullValue(builder, op->getLoc());
+        auto zero =
+            cast<AutoDiffTypeInterface>(gutils->getShadowType(val.getType()))
+                .createNullValue(builder, op->getLoc());
 
         builder.create<memref::StoreOp>(storeOp.getLoc(), zero, memrefGradient,
-                                             ArrayRef<Value>(retrievedArguments));
-
+                                        ArrayRef<Value>(retrievedArguments));
       }
     }
   }

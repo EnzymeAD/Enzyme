@@ -113,7 +113,6 @@ class NoopRevAutoDiffInterface
     : public ReverseAutoDiffOpInterface::ExternalModel<
           NoopRevAutoDiffInterface<OpTy>, OpTy> {
 public:
-
   void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
                                 MGradientUtilsReverse *gutils,
                                 SmallVector<Value> caches) const {}
@@ -124,8 +123,7 @@ public:
   }
 
   void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
-  }
+                          MGradientUtilsReverse *gutils) const {}
 };
 
 template <typename OpTy>
@@ -133,7 +131,6 @@ class ReturnRevAutoDiffInterface
     : public ReverseAutoDiffOpInterface::ExternalModel<
           ReturnRevAutoDiffInterface<OpTy>, OpTy> {
 public:
-
   void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
                                 MGradientUtilsReverse *gutils,
                                 SmallVector<Value> caches) const {
@@ -146,8 +143,7 @@ public:
   }
 
   void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {
-  }
+                          MGradientUtilsReverse *gutils) const {}
 };
 
 // Implements the forward autodiff interface for operations which are
@@ -212,7 +208,8 @@ void registerAutoDiffUsingControlFlowInterface(MLIRContext &context) {
 template <typename OpTy>
 void registerAutoDiffUsingBranchInterface(MLIRContext &context) {
   OpTy::template attachInterface<detail::AutoDiffUsingBranch<OpTy>>(context);
-  OpTy::template attachInterface<detail::NoopRevAutoDiffInterface<OpTy>>(context);
+  OpTy::template attachInterface<detail::NoopRevAutoDiffInterface<OpTy>>(
+      context);
 }
 // Registers AutoDiffUsingRegionTerminator for the given op.
 template <typename OpTy>

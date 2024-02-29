@@ -201,9 +201,9 @@ LogicalResult mlir::enzyme::detail::allocationForwardHandler(
   return success();
 }
 
-
-void mlir::enzyme::detail::returnReverseHandler(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) {
+void mlir::enzyme::detail::returnReverseHandler(Operation *op,
+                                                OpBuilder &builder,
+                                                MGradientUtilsReverse *gutils) {
   size_t num_out = 0;
   for (auto act : gutils->RetDiffeTypes) {
     if (act == DIFFE_TYPE::OUT_DIFF)
@@ -216,10 +216,10 @@ void mlir::enzyme::detail::returnReverseHandler(Operation *op, OpBuilder &builde
   for (auto &&[op, act] : llvm::zip(op->getOperands(), gutils->RetDiffeTypes)) {
     if (act == DIFFE_TYPE::OUT_DIFF) {
       if (!gutils->isConstantValue(op)) {
-      auto d_out = args[args.size() - num_out + idx];
-      gutils->addToDiffe(op, d_out, builder);
-    }
-    idx++;
+        auto d_out = args[args.size() - num_out + idx];
+        gutils->addToDiffe(op, d_out, builder);
+      }
+      idx++;
     }
   }
 }

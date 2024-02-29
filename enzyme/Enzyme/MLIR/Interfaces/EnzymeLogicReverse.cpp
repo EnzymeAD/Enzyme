@@ -21,7 +21,7 @@ using namespace mlir;
 using namespace mlir::enzyme;
 
 void handleReturns(Block *oBB, Block *newBB, Block *reverseBB,
-                                 MGradientUtilsReverse *gutils) {
+                   MGradientUtilsReverse *gutils) {
   if (oBB->getNumSuccessors() == 0) {
     Operation *returnStatement = newBB->getTerminator();
     gutils->erase(returnStatement);
@@ -110,7 +110,8 @@ Create reverse mode adjoint for an operation.
 */
 void MEnzymeLogic::visitChild(Operation *op, OpBuilder &builder,
                               MGradientUtilsReverse *gutils) {
-  if ((op->getBlock()->getTerminator() != op) && llvm::all_of(op->getResults(),
+  if ((op->getBlock()->getTerminator() != op) &&
+      llvm::all_of(op->getResults(),
                    [gutils](Value v) { return gutils->isConstantValue(v); }) &&
       gutils->isConstantInstruction(op)) {
     return;
@@ -156,73 +157,80 @@ void MEnzymeLogic::handlePredecessors(
     Location loc = oBB->rbegin()->getLoc();
     // TODO remove dependency on CF dialect
 
-      Value cache = gutils->insertInit(gutils->getIndexCacheType());
+    Value cache = gutils->insertInit(gutils->getIndexCacheType());
 
-      Value flag =
-          revBuilder.create<enzyme::PopOp>(loc, gutils->getIndexType(), cache);
+    Value flag =
+        revBuilder.create<enzyme::PopOp>(loc, gutils->getIndexType(), cache);
 
-      Block* defaultBlock = nullptr;
+    Block *defaultBlock = nullptr;
 
-      SmallVector<Block *> blocks;
-      SmallVector<APInt> indices;
+    SmallVector<Block *> blocks;
+    SmallVector<APInt> indices;
 
-      OpBuilder newBuilder(newBB, newBB->begin());
+    OpBuilder newBuilder(newBB, newBB->begin());
 
-      SmallVector<Value, 1> diffes;
-      for (auto arg : oBB->getArguments()) {
-          if (!gutils->isConstantValue(arg) && !cast<AutoDiffTypeInterface>(arg.getType()).isMutable()) {
-            diffes.push_back(gutils->diffe(arg, revBuilder));
-            gutils->zeroDiffe(arg, revBuilder);
-            continue;
-          }
-          diffes.push_back(nullptr);
+    SmallVector<Value, 1> diffes;
+    for (auto arg : oBB->getArguments()) {
+      if (!gutils->isConstantValue(arg) &&
+          !cast<AutoDiffTypeInterface>(arg.getType()).isMutable()) {
+        diffes.push_back(gutils->diffe(arg, revBuilder));
+        gutils->zeroDiffe(arg, revBuilder);
+        continue;
+      }
+      diffes.push_back(nullptr);
+    }
+
+    for (auto [idx, pred] : llvm::enumerate(oBB->getPredecessors())) {
+      auto reversePred = gutils->mapReverseModeBlocks.lookupOrNull(pred);
+
+      Block *newPred = gutils->getNewFromOriginal(pred);
+
+      OpBuilder predecessorBuilder(newPred->getTerminator());
+
+      Value pred_idx_c =
+          predecessorBuilder.create<arith::ConstantIntOp>(loc, idx - 1, 32);
+      predecessorBuilder.create<enzyme::PushOp>(loc, cache, pred_idx_c);
+
+      if (idx == 0) {
+        defaultBlock = reversePred;
+
+      } else {
+        indices.push_back(APInt(32, idx - 1));
+        blocks.push_back(reversePred);
       }
 
-
-      for (auto [idx, pred] : llvm::enumerate(oBB->getPredecessors())) {
-        auto reversePred = gutils->mapReverseModeBlocks.lookupOrNull(pred);
-    
-        Block *newPred = gutils->getNewFromOriginal(pred);
-
-        OpBuilder predecessorBuilder(newPred->getTerminator());
-
-        Value pred_idx_c =
-            predecessorBuilder.create<arith::ConstantIntOp>(loc, idx - 1, 32);
-        predecessorBuilder.create<enzyme::PushOp>(loc, cache, pred_idx_c);
-
-        if (idx == 0) {
-          defaultBlock = reversePred;
-
-        } else {
-          indices.push_back(APInt(32, idx - 1));
-          blocks.push_back(reversePred);
-        }
-
-        auto term = pred->getTerminator();
-        if (auto iface = dyn_cast<BranchOpInterface>(term)) {
-          for (auto &op : term->getOpOperands())
-            if (auto blk_idx = iface.getSuccessorBlockArgument(op.getOperandNumber()))
-              if ((*blk_idx).getOwner() == oBB) {
+      auto term = pred->getTerminator();
+      if (auto iface = dyn_cast<BranchOpInterface>(term)) {
+        for (auto &op : term->getOpOperands())
+          if (auto blk_idx =
+                  iface.getSuccessorBlockArgument(op.getOperandNumber()))
+            if ((*blk_idx).getOwner() == oBB) {
               auto idx = (*blk_idx).getArgNumber();
               if (diffes[idx]) {
-                
-                Value rev_idx_c = revBuilder.create<arith::ConstantIntOp>(loc, idx - 1, 32);
 
-                auto to_prop = revBuilder.create<arith::SelectOp>(loc, revBuilder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, flag, rev_idx_c),
-                  diffes[idx], cast<AutoDiffTypeInterface>(diffes[idx].getType()).createNullValue(revBuilder, loc));
+                Value rev_idx_c =
+                    revBuilder.create<arith::ConstantIntOp>(loc, idx - 1, 32);
+
+                auto to_prop = revBuilder.create<arith::SelectOp>(
+                    loc,
+                    revBuilder.create<arith::CmpIOp>(
+                        loc, arith::CmpIPredicate::eq, flag, rev_idx_c),
+                    diffes[idx],
+                    cast<AutoDiffTypeInterface>(diffes[idx].getType())
+                        .createNullValue(revBuilder, loc));
 
                 gutils->addToDiffe(op.get(), to_prop, revBuilder);
               }
             }
-        } else {
-          assert(0 && "predecessor did not implement branch op interface");
-        }
+      } else {
+        assert(0 && "predecessor did not implement branch op interface");
       }
+    }
 
-      revBuilder.create<cf::SwitchOp>(
-          loc, flag, defaultBlock, ArrayRef<Value>(), ArrayRef<APInt>(indices),
-          ArrayRef<Block *>(blocks), SmallVector<ValueRange>(indices.size(), ValueRange()));
-
+    revBuilder.create<cf::SwitchOp>(
+        loc, flag, defaultBlock, ArrayRef<Value>(), ArrayRef<APInt>(indices),
+        ArrayRef<Block *>(blocks),
+        SmallVector<ValueRange>(indices.size(), ValueRange()));
   }
 }
 
@@ -265,7 +273,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
   Region &oldRegion = gutils->oldFunc.getFunctionBody();
   Region &newRegion = gutils->newFunc.getFunctionBody();
 
-  auto buildFuncReturnOp = [&](OpBuilder &builder, Block* oBB) {
+  auto buildFuncReturnOp = [&](OpBuilder &builder, Block *oBB) {
     SmallVector<mlir::Value> retargs;
     for (auto [arg, cv] : llvm::zip(oBB->getArguments(), constants)) {
       if (cv == DIFFE_TYPE::OUT_DIFF) {

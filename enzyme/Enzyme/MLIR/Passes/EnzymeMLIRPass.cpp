@@ -130,7 +130,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
     auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
     auto fn = cast<FunctionOpInterface>(symbolOp);
-    
+
     auto mode = DerivativeMode::ReverseModeCombined;
     DIFFE_TYPE retType = mode_from_fn(fn, mode);
 
@@ -138,8 +138,6 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     mlir::Value res = CI.getInputs()[CI.getInputs().size() - 1];
     args.push_back(res);
 
-
-    
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
     bool freeMemory = true;
