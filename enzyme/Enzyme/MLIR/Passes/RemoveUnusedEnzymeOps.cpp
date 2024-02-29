@@ -28,7 +28,6 @@
 
 using namespace mlir;
 using namespace enzyme;
-using llvm::errs;
 namespace {
 
 // TODO: Expand to region branches??
@@ -114,14 +113,15 @@ struct RemoveUnusedEnzymeOpsPass
               if (auto getOp = dyn_cast<enzyme::GetOp>(userGet)) {
                 Operation *closestSetOp =
                     findNearestDominatingOpByUse<enzyme::SetOp>(userGet, v);
-                auto setOp = dyn_cast<enzyme::SetOp>(closestSetOp);
+                auto setOp = cast<enzyme::SetOp>(closestSetOp);
                 getOp.replaceAllUsesWith(setOp.getValue());
               }
             }
-            for (Operation *userGet : v.getUsers()) {
+            for (Operation *userGet : make_early_inc_range(v.getUsers())) {
               userGet->erase();
             }
             op->erase();
+            return;
           }
         } else if (auto type = dyn_cast<enzyme::CacheType>(initOp.getType())) {
           bool replaceable = true;
@@ -174,7 +174,7 @@ struct RemoveUnusedEnzymeOpsPass
                 getOp.replaceAllUsesWith(pushOp.getValue());
               }
             }
-            for (Operation *user : v.getUsers()) {
+            for (Operation *user : make_early_inc_range(v.getUsers())) {
               user->erase();
             }
             op->erase();
@@ -182,6 +182,7 @@ struct RemoveUnusedEnzymeOpsPass
         }
       }
     });
+    llvm::errs() << " post: " << *getOperation() << "\n";
   };
 };
 } // end anonymous namespace

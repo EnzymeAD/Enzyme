@@ -30,6 +30,10 @@ set(LLVM_TARGET_DEFINITIONS MathDerivatives.td)
 enzyme_tablegen(MathDerivatives.inc -gen-mlir-derivatives)
 add_public_tablegen_target(MathDerivativesIncGen)
 
+set(LLVM_TARGET_DEFINITIONS FuncDerivatives.td)
+enzyme_tablegen(FuncDerivatives.inc -gen-mlir-derivatives)
+add_public_tablegen_target(FuncDerivativesIncGen)
+
 add_mlir_library(MLIREnzymeImplementations
   AffineAutoDiffOpInterfaceImpl.cpp
   ArithAutoDiffOpInterfaceImpl.cpp
@@ -37,6 +41,7 @@ add_mlir_library(MLIREnzymeImplementations
   LLVMAutoDiffOpInterfaceImpl.cpp
   NVVMAutoDiffOpInterfaceImpl.cpp
   MemRefAutoDiffOpInterfaceImpl.cpp
+  FuncAutoDiffOpInterfaceImpl.cpp
   LinalgAutoDiffOpInterfaceImpl.cpp
   BuiltinAutoDiffTypeInterfaceImpl.cpp
   SCFAutoDiffOpInterfaceImpl.cpp
@@ -48,6 +53,7 @@ add_mlir_library(MLIREnzymeImplementations
   AffineDerivativesIncGen
   ArithDerivativesIncGen
   LLVMDerivativesIncGen
+  FuncDerivativesIncGen
   NVVMDerivativesIncGen
   SCFDerivativesIncGen
   CFDerivativesIncGen
@@ -56,6 +62,7 @@ add_mlir_library(MLIREnzymeImplementations
 
   LINK_LIBS PUBLIC
   MLIRArithDialect
+  MLIRFuncDialect
   MLIRLLVMDialect
   MLIRMemRefDialect
   MLIREnzymeAutoDiffInterface

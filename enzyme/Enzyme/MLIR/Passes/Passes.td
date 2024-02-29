@@ -141,9 +141,9 @@ def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
   let constructor = "mlir::enzyme::createEnzymeToMemRefPass()";
 }
 
-def ShadowedGradientToCachePass : Pass<"convert-enzyme-shadowed-gradient-to-cache"> {
-  let summary = "Convert Enzyme Shadowed Gradient to Cache Ops";
-  let constructor = "mlir::enzyme::createShadowedGradientToCachePass()";
+def MathematicSimplificationPass : Pass<"enzyme-simplify-math"> {
+  let summary = "Simplify basic mathematical operations";
+  let constructor = "mlir::enzyme::createMathematicSimplificationPass()";
 }
 
 def AddToOpToIndexAndLoadPass : Pass<"add-to-op-to-index-and-load"> {

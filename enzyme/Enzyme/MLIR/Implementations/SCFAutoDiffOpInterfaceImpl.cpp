@@ -40,46 +40,98 @@ struct ForOpInterfaceReverse
                                 SmallVector<Value> caches) const {
     auto forOp = cast<scf::ForOp>(op);
 
-    SmallVector<Value> nArgs;
-    for (Value v : forOp.getResults()) {
-      if (auto iface = dyn_cast<AutoDiffTypeInterface>(v.getType())) {
-        if (gutils->hasInvertPointer(v)) {
-          nArgs.push_back(gutils->invertPointerM(v, builder));
-        } else {
-          nArgs.push_back(iface.createNullValue(builder, v.getLoc()));
+
+    // Begin Perform d(yielded value[i]) += d(result[i]); d(result[i]) = 0
+    SmallVector<Value, 1> resDiffes;
+    for (OpResult v : forOp.getResults()) {
+        if (!gutils->isConstantValue(v)) {
+        auto autoDiffType = cast<AutoDiffTypeInterface>(v.getType());
+        if (autoDiffType.isMutable()) {
+          auto prev = gutils->diffe(v, builder);
+          gutils->zeroDiffe(v, builder);
+          resDiffes.push_back(prev);
+          continue;
         }
-      }
+        }
+        resDiffes.push_back(nullptr);
     }
 
+
+  for (auto &reg : op->getRegions()) {
+    auto termIface = cast<RegionBranchTerminatorOpInterface>(
+            reg.begin()->getTerminator());
+
+
+    SmallVector<RegionSuccessor> successors;
+  termIface.getSuccessorRegions(
+      SmallVector<Attribute>(termIface->getNumOperands(), Attribute()),
+      successors);
+
+      for (auto &successor : successors) {
+        if (!successor.isParent()) continue;
+        OperandRange operandRange =
+            termIface.getSuccessorOperands(successor);
+        assert(operandRange.size() == resDiffes.size());
+        // There is an assumption here that there is only regions that branch to the successor.
+        // Specifically, otherwise we would need to gutils->addToDiffe select (if came from that result)
+        for (auto &&[prev, post] : llvm::zip(operandRange, resDiffes)) {
+            if (!post) continue;
+            if (!gutils->isConstantValue(prev))
+                gutils->addToDiffe(prev, post, builder);
+        }
+      }
+  }
+    // End Perform d(yielded value[i]) += d(result[i]); d(result[i]) = 0
+
+    auto start = gutils->popCache(caches[0], builder);
+    auto end = gutils->popCache(caches[1], builder);
+    auto step = gutils->popCache(caches[2], builder);
+
+    SmallVector<Value> nArgs;
     auto repFor = builder.create<scf::ForOp>(
-        forOp.getLoc(), gutils->popCache(caches[0], builder),
-        gutils->popCache(caches[1], builder),
-        gutils->popCache(caches[2], builder), nArgs); // TODO
+        forOp.getLoc(), start, end, step, ArrayRef<Value>()); // TODO
     repFor.getRegion().begin()->erase();
 
-    auto buildFuncReturnOp = [](OpBuilder &builder, Location loc,
-                                SmallVector<Value> retargs) {
-      builder.create<scf::YieldOp>(loc, retargs);
-      return;
-    };
+    for (auto &&[oldReg, newReg] : llvm::zip(op->getRegions(), repFor->getRegions())) {
 
-    gutils->Logic.differentiate(gutils, forOp.getRegion(), repFor.getRegion(),
-                                /*parentRegion=*/false, buildFuncReturnOp,
-                                nullptr);
+        // This code assumes at most one terminating block for each region (lest the append happen multiple times)
+        auto buildFuncReturnOp = [&](OpBuilder &builder, Block* oBB) {
+            
+            auto loc = oBB->rbegin()->getLoc();
 
-    // Insert the index which is carried by the scf for op.
-    Type indexType = IndexType::get(builder.getContext());
-    repFor.getRegion().insertArgument((unsigned)0, indexType, forOp.getLoc());
+            auto idx = repFor.getRegion().begin()->getArgument(0);
 
-    for (const auto &[iterOperand, adjResult] :
-         llvm::zip(forOp.getInitArgs(), repFor.getResults())) {
-      if (gutils->hasInvertPointer(iterOperand)) {
-        auto autoDiffType = cast<AutoDiffTypeInterface>(iterOperand.getType());
-        Value before = gutils->invertPointerM(iterOperand, builder);
-        Value after = autoDiffType.createAddOp(builder, forOp.getLoc(), before,
-                                               adjResult);
-        gutils->mapInvertPointer(iterOperand, after, builder);
-      }
+            auto lhs = builder.create<arith::AddIOp>(loc, idx, step);
+
+            // This needs to know a condition describing which predecessor this will return to, to select the right value
+            // Here we use the condition i + step >= end   to determine the last iteration
+
+            auto condition = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge, lhs, end);
+
+            for (auto [arg, init_arg] : llvm::zip(oBB->getArguments(), forOp.getInitArgs())) {
+              if (!gutils->isConstantValue(arg) && !cast<AutoDiffTypeInterface>(arg.getType()).isMutable()) {
+                auto diffe = gutils->diffe(arg, builder);
+                gutils->zeroDiffe(arg, builder);
+
+                auto zero = cast<AutoDiffTypeInterface>(diffe.getType()).createNullValue(builder, loc);
+                auto outside = builder.create<arith::SelectOp>(loc, condition, diffe, zero);
+                auto inside = builder.create<arith::SelectOp>(loc, condition, zero, diffe);
+
+                // For each predecessor, if we came from that predecessor += the shadow of the arg [after zero'ing]
+                if (!gutils->isConstantValue(init_arg)) {
+                    gutils->addToDiffe(init_arg, outside, builder);
+                }
+
+                if (!gutils->isConstantValue(arg)) {
+                    gutils->addToDiffe(arg, inside, builder);
+                }
+              }
+            }
+            builder.create<scf::YieldOp>(loc);
+        };
+
+        gutils->Logic.differentiate(gutils, oldReg, newReg, buildFuncReturnOp,
+                                    nullptr);
     }
   }
 

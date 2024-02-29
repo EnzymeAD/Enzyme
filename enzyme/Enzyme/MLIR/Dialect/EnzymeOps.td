@@ -83,12 +83,6 @@ def PopOp : Enzyme_Op<"pop"> {
   let results = (outs AnyType:$output);
 }
 
-def ClearOp : Enzyme_Op<"clear"> {
-  let summary = "Remove top element from ShadowedGradient";
-  let arguments = (ins AnyType : $cache);
-  let results = (outs );
-}
-
 def InitOp : Enzyme_Op<"init"> {
   let summary = "Creat enzyme.gradient and enzyme.cache";
   let arguments = (ins );
@@ -105,36 +99,26 @@ def Cache : Enzyme_Type<"Cache"> {
   let assemblyFormat = "`<` $type `>`";
 }
 
-def SetOp : Enzyme_Op<"set"> {
-  let summary = "Write to gradient";
-  let arguments = (ins AnyType : $gradient, AnyType : $value);
-  let results = (outs );
-}
-
-def GetOp : Enzyme_Op<"get"> {
-  let summary = "Load value of gradient";
-  let arguments = (ins AnyType : $gradient);
-  let results = (outs AnyType);
-}
-
 def Gradient : Enzyme_Type<"Gradient"> {
-  let summary = "Stores gradient if it cant be stroed in a value.";
+  let summary = "Mutable storage for accumulating gradients";
   let description = [{
-    "Cache for reverse pass"
+    Mutable storage for accumulating derivatives of immutable types (e.g. adding all the partial derivatives from users of a float64)
   }];
   let parameters = (ins "Type":$basetype);
   let mnemonic = "Gradient";
   let assemblyFormat = "`<` $basetype `>`";
 }
 
-def ShadowedGradient : Enzyme_Type<"ShadowedGradient"> {
-  let summary = "Stores gradients which need to be initialized with shadow values from the forward pass.";
-  let description = [{
-    "Cache for reverse pass"
-  }];
-  let parameters = (ins "Type":$basetype);
-  let mnemonic = "ShadowedGradient";
-  let assemblyFormat = "`<` $basetype `>`";
+def SetOp : Enzyme_Op<"set"> {
+  let summary = "Store the current value of the gradient";
+  let arguments = (ins AnyType : $gradient, AnyType : $value);
+  let results = (outs );
+}
+
+def GetOp : Enzyme_Op<"get"> {
+  let summary = "Load current value of gradient";
+  let arguments = (ins AnyType : $gradient);
+  let results = (outs AnyType);
 }
 
 def AddToOp : Enzyme_Op<"addTo", [Pure, Terminator, ReturnLike]>,

@@ -52,6 +52,10 @@ void branchingForwardHandler(Operation *op, OpBuilder &builder,
 void regionTerminatorForwardHandler(Operation *op, OpBuilder &builder,
                                     MGradientUtils *gutils);
 
+// Implements reverse-mode differentiation of return operations.
+void returnReverseHandler(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils);
+
 // Implements forward-mode differentiation of read-only (including read-none)
 // operations which do not perform computation
 LogicalResult memoryIdentityForwardHandler(Operation *op, OpBuilder &builder,
@@ -101,6 +105,48 @@ public:
                                          MGradientUtils *gutils) const {
     regionTerminatorForwardHandler(op, builder, gutils);
     return success();
+  }
+};
+
+template <typename OpTy>
+class NoopRevAutoDiffInterface
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          NoopRevAutoDiffInterface<OpTy>, OpTy> {
+public:
+
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                MGradientUtilsReverse *gutils,
+                                SmallVector<Value> caches) const {}
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
+  }
+};
+
+template <typename OpTy>
+class ReturnRevAutoDiffInterface
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          ReturnRevAutoDiffInterface<OpTy>, OpTy> {
+public:
+
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                MGradientUtilsReverse *gutils,
+                                SmallVector<Value> caches) const {
+    returnReverseHandler(op, builder, gutils);
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
   }
 };
 
@@ -166,11 +212,22 @@ void registerAutoDiffUsingControlFlowInterface(MLIRContext &context) {
 template <typename OpTy>
 void registerAutoDiffUsingBranchInterface(MLIRContext &context) {
   OpTy::template attachInterface<detail::AutoDiffUsingBranch<OpTy>>(context);
+  OpTy::template attachInterface<detail::NoopRevAutoDiffInterface<OpTy>>(context);
 }
 // Registers AutoDiffUsingRegionTerminator for the given op.
 template <typename OpTy>
 void registerAutoDiffUsingRegionTerminatorInterface(MLIRContext &context) {
   OpTy::template attachInterface<detail::AutoDiffUsingRegionTerminator<OpTy>>(
+      context);
+  OpTy::template attachInterface<detail::NoopRevAutoDiffInterface<OpTy>>(
+      context);
+}
+// Registers registerAutoDiffUsingReturnInterface for the given op.
+template <typename OpTy>
+void registerAutoDiffUsingReturnInterface(MLIRContext &context) {
+  OpTy::template attachInterface<detail::AutoDiffUsingRegionTerminator<OpTy>>(
+      context);
+  OpTy::template attachInterface<detail::ReturnRevAutoDiffInterface<OpTy>>(
       context);
 }
 // Registers AutoDiffUsingMemoryIdentity for the given op.
@@ -199,6 +256,7 @@ void registerSCFDialectAutoDiffInterface(DialectRegistry &registry);
 void registerCFDialectAutoDiffInterface(DialectRegistry &registry);
 void registerLinalgDialectAutoDiffInterface(DialectRegistry &registry);
 void registerMathDialectAutoDiffInterface(DialectRegistry &registry);
+void registerFuncDialectAutoDiffInterface(DialectRegistry &registry);
 
 void registerCoreDialectAutodiffInterfaces(DialectRegistry &registry);
 

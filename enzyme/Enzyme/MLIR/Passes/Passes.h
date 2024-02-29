@@ -30,7 +30,7 @@ std::unique_ptr<Pass> createPrintAliasAnalysisPass();
 
 std::unique_ptr<Pass> createEnzymeToMemRefPass();
 
-std::unique_ptr<Pass> createShadowedGradientToCachePass();
+std::unique_ptr<Pass> createMathematicSimplificationPass();
 
 std::unique_ptr<Pass> createAddToOpToIndexAndLoadPass();
 

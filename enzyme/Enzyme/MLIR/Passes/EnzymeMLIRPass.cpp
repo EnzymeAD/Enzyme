@@ -31,6 +31,17 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
   void runOnOperation() override;
 
+  static DIFFE_TYPE mode_from_fn(FunctionOpInterface fn, DerivativeMode mode) {
+    DIFFE_TYPE retType = DIFFE_TYPE::CONSTANT;
+    if (fn.getNumResults() != 0) {
+      if (mode == DerivativeMode::ReverseModeCombined)
+        retType = DIFFE_TYPE::OUT_DIFF;
+      else
+        retType = DIFFE_TYPE::DUP_ARG;
+    }
+    return retType;
+  }
+
   template <typename T>
   LogicalResult HandleAutoDiff(SymbolTableCollection &symbolTable, T CI) {
     std::vector<DIFFE_TYPE> constants;
@@ -60,12 +71,11 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
     auto fn = cast<FunctionOpInterface>(symbolOp);
 
-    DIFFE_TYPE retType =
-        fn.getNumResults() == 0 ? DIFFE_TYPE::CONSTANT : DIFFE_TYPE::DUP_ARG;
+    auto mode = DerivativeMode::ForwardMode;
+    DIFFE_TYPE retType = mode_from_fn(fn, mode);
 
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
-    auto mode = DerivativeMode::ForwardMode;
     bool freeMemory = true;
     size_t width = 1;
 
@@ -118,19 +128,20 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
       truei++;
     }
 
+    auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
+    auto fn = cast<FunctionOpInterface>(symbolOp);
+    
+    auto mode = DerivativeMode::ReverseModeCombined;
+    DIFFE_TYPE retType = mode_from_fn(fn, mode);
+
     // Add the return gradient
     mlir::Value res = CI.getInputs()[CI.getInputs().size() - 1];
     args.push_back(res);
 
-    auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
-    auto fn = cast<FunctionOpInterface>(symbolOp);
 
-    DIFFE_TYPE retType =
-        fn.getNumResults() == 0 ? DIFFE_TYPE::CONSTANT : DIFFE_TYPE::DUP_ARG;
-
+    
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
-    auto mode = DerivativeMode::ReverseModeGradient;
     bool freeMemory = true;
     size_t width = 1;
 

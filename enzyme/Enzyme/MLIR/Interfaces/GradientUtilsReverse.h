@@ -34,32 +34,15 @@ public:
                         DerivativeMode mode_, unsigned width,
                         SymbolTableCollection &symbolTable_);
 
-  IRMapping invertedPointersGlobal;
-  IRMapping invertedPointersShadow;
-  IRMapping shadowValues;
-  Block *initializationBlock;
-
   IRMapping mapReverseModeBlocks;
-  DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments;
 
   SymbolTableCollection &symbolTable;
-
-  bool hasInvertPointer(mlir::Value v);
-  mlir::Value invertPointerM(mlir::Value v, OpBuilder &builder);
-  mlir::Value diffe(mlir::Value v, OpBuilder &builder);
 
   void addToDiffe(mlir::Value oldGradient, mlir::Value addedGradient,
                   OpBuilder &builder);
   void mapInvertPointer(mlir::Value v, mlir::Value invertValue,
                         OpBuilder &builder);
 
-  mlir::Value getShadowValue(mlir::Value v);
-  void mapShadowValue(mlir::Value v, mlir::Value invertValue,
-                      OpBuilder &builder);
-
-  void clearValue(mlir::Value v, OpBuilder &builder);
-
-  void setDiffe(mlir::Value val, mlir::Value toset, OpBuilder &BuilderM);
   Type getIndexType();
   Value insertInit(Type t);
 
@@ -75,16 +58,6 @@ public:
   Type getIndexCacheType();
   Value initAndPushCache(Value v, OpBuilder &builder);
 
-  // Gradient
-  Type getGradientType(Value t);
-  Value insertInitGradient(mlir::Value v, OpBuilder &builder);
-
-  // ShadowedGradient
-  Type getShadowedGradientType(Value t);
-  Value insertInitShadowedGradient(mlir::Value v, OpBuilder &builder);
-
-  bool requiresShadow(Type t);
-
   void initInitializationBlock(IRMapping invertedPointers_,
                                ArrayRef<DIFFE_TYPE> argDiffeTypes);
 
@@ -94,8 +67,7 @@ public:
 
   Value popCache(Value cache, OpBuilder &builder);
 
-  void createReverseModeBlocks(Region &oldFunc, Region &newFunc,
-                               bool isParentRegion = false);
+  void createReverseModeBlocks(Region &oldFunc, Region &newFunc);
 
   static MGradientUtilsReverse *
   CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode_, unsigned width,

@@ -26,6 +26,11 @@ class MemoryIdentityOp<string dialect_, string opName_, list<int> ptrargs_, list
 
 class ReadOnlyIdentityOp<string dialect_, string opName_, list<int> ptrargs_> : MemoryIdentityOp<dialect_, opName_, ptrargs_>;
 
+class ReturnOp<string dialect_, string opName_> {
+  string dialect = dialect_;
+  string opName = opName_;
+}
+
 class BranchOp<string dialect_, string opName_> {
   string dialect = dialect_;
   string opName = opName_;
