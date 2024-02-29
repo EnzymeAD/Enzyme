@@ -5467,6 +5467,8 @@ public:
   void visitFPToSIInst(FPToSIInst &I) { return; }
   void visitUIToFPInst(UIToFPInst &I) { return; }
   void visitSIToFPInst(SIToFPInst &I) { return; }
+  void visitAtomicCmpXchgInst(AtomicCmpXchgInst &I) { todo(I); }
+  void visitAtomicRMWInst(AtomicRMWInst &I) { todo(I); }
 };
 
 bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
