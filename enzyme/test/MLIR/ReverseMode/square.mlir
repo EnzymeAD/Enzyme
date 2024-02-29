@@ -1,4 +1,6 @@
 // RUN: %eopt --enzyme %s | FileCheck %s
+// RUN: %eopt --enzyme --remove-unnecessary-enzyme-ops %s | FileCheck %s --check-prefix=REM
+// RUN: %eopt --enzyme --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math --cse %s | FileCheck %s --check-prefix=FIN
 
 module {
   func.func @square(%x: f64) -> f64 {
@@ -54,3 +56,25 @@ module {
 // CHECK-NEXT:    %[[res:.+]] = "enzyme.get"(%[[dx]]) : (!enzyme.Gradient<f64>) -> f64
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
+
+
+// REM:  func.func private @diffesquare(%arg0: f64, %arg1: f64) -> f64 {
+// REM-NEXT:    %[[cst:.+]] = arith.constant 0.000000e+00 : f64
+// REM-NEXT:    %[[cst_0:.+]] = arith.constant 0.000000e+00 : f64
+// REM-NEXT:    %[[pmu:.+]] = arith.mulf %arg0, %arg0 : f64
+// REM-NEXT:    cf.br ^bb1
+// REM-NEXT:  ^bb1:  // pred: ^bb0
+// REM-NEXT:    %[[a1:.+]] = arith.addf %[[cst_0]], %arg1 : f64
+// REM-NEXT:    %[[cst_1:.+]] = arith.constant 0.000000e+00 : f64
+// REM-NEXT:    %[[a2:.+]] = arith.mulf %[[a1]], %arg0 : f64
+// REM-NEXT:    %[[a3:.+]] = arith.addf %[[cst]], %[[a2]] : f64
+// REM-NEXT:    %[[a4:.+]] = arith.mulf %[[a1]], %arg0 : f64
+// REM-NEXT:    %[[a5:.+]] = arith.addf %[[a3]], %[[a4]] : f64
+// REM-NEXT:    return %[[a5]] : f64
+// REM-NEXT:  }
+
+// FIN:  func.func private @diffesquare(%arg0: f64, %arg1: f64) -> f64 {
+// FIN-NEXT:    %0 = arith.mulf %arg1, %arg0 : f64
+// FIN-NEXT:    %1 = arith.addf %0, %0 : f64
+// FIN-NEXT:    return %1 : f64
+// FIN-NEXT:  }

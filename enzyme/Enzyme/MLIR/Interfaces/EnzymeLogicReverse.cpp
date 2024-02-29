@@ -184,12 +184,11 @@ void MEnzymeLogic::handlePredecessors(
     
         Block *newPred = gutils->getNewFromOriginal(pred);
 
-        OpBuilder predecessorBuilder(gutils->oldFunc->getContext());
-        predecessorBuilder.setInsertionPointToStart(newPred);
+        OpBuilder predecessorBuilder(newPred->getTerminator());
 
         Value pred_idx_c =
             predecessorBuilder.create<arith::ConstantIntOp>(loc, idx - 1, 32);
-        newBuilder.create<enzyme::PushOp>(loc, cache, pred_idx_c);
+        predecessorBuilder.create<enzyme::PushOp>(loc, cache, pred_idx_c);
 
         if (idx == 0) {
           defaultBlock = reversePred;
@@ -222,7 +221,7 @@ void MEnzymeLogic::handlePredecessors(
 
       revBuilder.create<cf::SwitchOp>(
           loc, flag, defaultBlock, ArrayRef<Value>(), ArrayRef<APInt>(indices),
-          ArrayRef<Block *>(blocks), ArrayRef<ValueRange>());
+          ArrayRef<Block *>(blocks), SmallVector<ValueRange>(indices.size(), ValueRange()));
 
   }
 }

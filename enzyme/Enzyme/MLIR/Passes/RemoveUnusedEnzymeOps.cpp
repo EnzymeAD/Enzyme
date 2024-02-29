@@ -182,7 +182,6 @@ struct RemoveUnusedEnzymeOpsPass
         }
       }
     });
-    llvm::errs() << " post: " << *getOperation() << "\n";
   };
 };
 } // end anonymous namespace
