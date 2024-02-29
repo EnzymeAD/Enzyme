@@ -97,7 +97,7 @@ bool MEnzymeLogic::visitChildCustom(Operation *op, OpBuilder &builder,
     func::CallOp dCI =
         builder.create<func::CallOp>(op->getLoc(), srDiffe, resultTypes, args);
     for (int i = 0; i < (int)op->getNumOperands(); i++) {
-      gutils->mapInvertPointer(op->getOperand(i), dCI.getResult(i), builder);
+      gutils->setDiffe(op->getOperand(i), dCI.getResult(i), builder);
     }
 
     return true;

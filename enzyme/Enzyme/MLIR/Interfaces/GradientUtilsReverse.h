@@ -40,8 +40,6 @@ public:
 
   void addToDiffe(mlir::Value oldGradient, mlir::Value addedGradient,
                   OpBuilder &builder);
-  void mapInvertPointer(mlir::Value v, mlir::Value invertValue,
-                        OpBuilder &builder);
 
   Type getIndexType();
   Value insertInit(Type t);
@@ -57,11 +55,6 @@ public:
   Type getCacheType(Type t);
   Type getIndexCacheType();
   Value initAndPushCache(Value v, OpBuilder &builder);
-
-  void initInitializationBlock(IRMapping invertedPointers_,
-                               ArrayRef<DIFFE_TYPE> argDiffeTypes);
-
-  bool onlyUsedInParentBlock(Value v);
 
   Operation *cloneWithNewOperands(OpBuilder &B, Operation *op);
 

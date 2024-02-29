@@ -41,14 +41,6 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
                           ReturnActivity, ArgDiffeTypes_, originalToNewFn_,
                           originalToNewFnOps_, mode_, width, /*omp*/ false),
       symbolTable(symbolTable_) {
-
-  initInitializationBlock(invertedPointers_, ArgDiffeTypes_);
-}
-
-// for(auto x : v.getUsers()){x->dump();} DEBUG
-
-bool MGradientUtilsReverse::onlyUsedInParentBlock(Value v) {
-  return !v.isUsedOutsideOfBlock(v.getParentBlock());
 }
 
 Type mlir::enzyme::MGradientUtilsReverse::getIndexCacheType() {
@@ -127,57 +119,6 @@ void mlir::enzyme::MGradientUtilsReverse::addToDiffe(Value oldGradient,
   auto added = iface.createAddOp(builder, oldGradient.getLoc(), operandGradient,
                                addedGradient);
   setDiffe(oldGradient, added, builder);
-}
-
-void mlir::enzyme::MGradientUtilsReverse::mapInvertPointer(
-    mlir::Value v, mlir::Value invertValue, OpBuilder &builder) {
-  assert(0);
-   /*
-  if (!invertedPointersGlobal.contains(v)) {
-    Value g = insertInitGradient(v, builder);
-    invertedPointersGlobal.map(v, g);
-  }
-  Value gradient = invertedPointersGlobal.lookupOrNull(v);
-  builder.create<enzyme::SetOp>(v.getLoc(), gradient, invertValue);
-  */
-}
-
-void MGradientUtilsReverse::initInitializationBlock(
-    IRMapping invertedPointers_, ArrayRef<DIFFE_TYPE> argDiffeTypes) {
-
-  OpBuilder initializationBuilder(
-      &*(this->newFunc.getFunctionBody().begin()),
-      this->newFunc.getFunctionBody().begin()->begin());
-
-  /*
-  for (const auto &[val, diffe_type] : llvm::zip(
-           this->oldFunc.getFunctionBody().getArguments(), argDiffeTypes)) {
-    if (diffe_type != DIFFE_TYPE::OUT_DIFF) {
-      continue;
-    }
-    auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
-    if (!iface) {
-      llvm_unreachable(
-          "Type does not have an associated AutoDiffTypeInterface");
-    }
-    Value zero = iface.createNullValue(initializationBuilder, val.getLoc());
-    mapInvertPointer(val, zero, initializationBuilder);
-  }
-  for (auto const &x : invertedPointers_.getValueMap()) {
-    if (auto iface = dyn_cast<AutoDiffTypeInterface>(x.first.getType())) {
-      if (!iface.isMutable()) {
-        mapShadowValue(x.first, x.second,
-                       initializationBuilder); // This may create an unnecessary
-                                               // ShadowedGradient which could
-                                               // be avoidable TODO
-      } else {
-        mapInvertPointer(x.first, x.second, initializationBuilder);
-      }
-    } else {
-      llvm_unreachable("TODO not implemented");
-    }
-  }
-  */
 }
 
 void MGradientUtilsReverse::createReverseModeBlocks(Region &oldFunc,
