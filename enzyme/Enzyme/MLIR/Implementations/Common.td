@@ -17,14 +17,21 @@ class ControlFlowOp<string dialect_, string opName_, string impl_> {
   string impl = impl_;
 }
 
-class MemoryIdentityOp<string dialect_, string opName_, list<int> ptrargs_, list<int> storedargs_ = []> {
-  string dialect = dialect_;
-  string opName = opName_;
-  list<int> ptrargs = ptrargs_;
-  list<int> storedargs = storedargs_;
+
+def Unimplemented {
+
 }
 
-class ReadOnlyIdentityOp<string dialect_, string opName_, list<int> ptrargs_> : MemoryIdentityOp<dialect_, opName_, ptrargs_>;
+class MemoryIdentityOp<string dialect_, string opName_, list<int> ptrargs_, list<int> storedargs_ = [], dag patternToMatch=(Unimplemented), list<dag> reverse_ = []> {
+  string dialect = dialect_;
+  string opName = opName_;
+  dag PatternToMatch = patternToMatch;
+  list<int> ptrargs = ptrargs_;
+  list<int> storedargs = storedargs_;
+  list<dag> reverse = reverse_;
+}
+
+class ReadOnlyIdentityOp<string dialect_, string opName_, list<int> ptrargs_, dag patternToMatch=(Unimplemented), list<dag> reverse_ = []> : MemoryIdentityOp<dialect_, opName_, ptrargs_, [], patternToMatch, reverse_>;
 
 class ReturnOp<string dialect_, string opName_> {
   string dialect = dialect_;
@@ -93,6 +100,9 @@ class ConstantFP<string val, string dialect_, string op_, string type_=""> : Ope
 }
 
 def ResultTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "op->getResultTypes()">;
+
+def TypeOf : Operation</*primal*/0, /*shadow*/0> {
+}
 
 class ArithInst<string m> : Inst<m, "arith">;
 class MathInst<string m> : Inst<m, "math">;

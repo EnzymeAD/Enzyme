@@ -31,3 +31,9 @@ def : MLIRDerivative<"arith", "DivFOp", (Op $x, $y),
                     ],
                     (CheckedDivF (SubF (SelectIfActive $x, (MulF (Shadow $x), $y), (ConstantFP<"0","arith", "ConstantOp"> $x)), (SelectIfActive $y, (MulF (Shadow $y), $x), (ConstantFP<"0","arith","ConstantOp"> $y))), (MulF $y, $y))
                   >;
+
+def ExtF : ArithInst<"ExtFOp">;
+def TruncF : ArithInst<"TruncFOp">;
+
+def : ReadOnlyIdentityOp<"arith", "TruncFOp", [0], (Op $x), [(ExtF (TypeOf $x), (DiffeRet))]>;
+def : ReadOnlyIdentityOp<"arith", "ExtFOp", [0], (Op $x), [(TruncF (TypeOf $x), (DiffeRet))]>;
