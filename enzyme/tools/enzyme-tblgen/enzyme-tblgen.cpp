@@ -1811,7 +1811,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       if (hasDiffeRet(resultTree)) {
         if (intrinsic == MLIRDerivatives) {
           os << "          dif = gutils->diffe(" << origName << ", builder);\n";
-          os << "          gutils->clearValue(" << origName << ", builder);\n";
+          os << "          gutils->zeroDiffe(" << origName << ", builder);\n";
         } else {
           os << "          dif = diffe(&" << origName << ", Builder2);\n";
           os << "          setDiffe(&" << origName
@@ -2040,6 +2040,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     const auto &brpatterns = recordKeeper.getAllDerivedDefinitions("BranchOp");
 
+    const auto &retpatterns = recordKeeper.getAllDerivedDefinitions("ReturnOp");
+
     const auto &regtpatterns =
         recordKeeper.getAllDerivedDefinitions("RegionTerminatorOp");
 
@@ -2090,6 +2092,12 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  registerAutoDiffUsingRegionTerminatorInterface<" << dialect
+         << "::" << opName << ">(*context);\n";
+    }
+    for (Record *pattern : retpatterns) {
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+      os << "  registerAutoDiffUsingReturnInterface<" << dialect
          << "::" << opName << ">(*context);\n";
     }
     for (Record *pattern : allocpatterns) {

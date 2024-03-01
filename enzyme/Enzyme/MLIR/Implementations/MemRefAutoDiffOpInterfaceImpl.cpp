@@ -41,8 +41,8 @@ struct LoadOpInterfaceReverse
     Value memref = loadOp.getMemref();
 
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())) {
-      if (gutils->hasInvertPointer(loadOp) &&
-          gutils->hasInvertPointer(memref)) {
+      if (!gutils->isConstantValue(loadOp) &&
+          !gutils->isConstantValue(memref)) {
         Value gradient = gutils->invertPointerM(loadOp, builder);
         Value memrefGradient = gutils->invertPointerM(memref, builder);
 
@@ -70,8 +70,8 @@ struct LoadOpInterfaceReverse
     Value memref = loadOp.getMemref();
     ValueRange indices = loadOp.getIndices();
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())) {
-      if (gutils->hasInvertPointer(loadOp) &&
-          gutils->hasInvertPointer(memref)) {
+      if (!gutils->isConstantValue(loadOp) &&
+          !gutils->isConstantValue(memref)) {
         OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
         SmallVector<Value> caches;
         for (Value v : indices) {
@@ -104,28 +104,33 @@ struct StoreOpInterfaceReverse
     Value memref = storeOp.getMemref();
     // ValueRange indices = storeOp.getIndices();
 
-    if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType())) {
-      if (gutils->hasInvertPointer(memref)) {
-        OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+    auto iface = cast<AutoDiffTypeInterface>(val.getType());
 
-        Value memrefGradient = gutils->invertPointerM(memref, builder);
+    if (!gutils->isConstantValue(memref)) {
+      OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
 
-        SmallVector<Value> retrievedArguments;
-        for (Value cache : caches) {
-          Value retrievedValue = gutils->popCache(cache, builder);
-          retrievedArguments.push_back(retrievedValue);
+      Value memrefGradient = gutils->invertPointerM(memref, builder);
+
+      SmallVector<Value> retrievedArguments;
+      for (Value cache : caches) {
+        Value retrievedValue = gutils->popCache(cache, builder);
+        retrievedArguments.push_back(retrievedValue);
+      }
+
+      if (!iface.isMutable()) {
+        if (!gutils->isConstantValue(val)) {
+          Value loadedGradient = builder.create<memref::LoadOp>(
+              storeOp.getLoc(), memrefGradient,
+              ArrayRef<Value>(retrievedArguments));
+          gutils->addToDiffe(val, loadedGradient, builder);
         }
 
-        Value loadedGradient =
-            builder.create<memref::LoadOp>(storeOp.getLoc(), memrefGradient,
-                                           ArrayRef<Value>(retrievedArguments));
-        Value addedGradient = loadedGradient;
-        if (gutils->hasInvertPointer(val)) {
-          Value gradient = gutils->invertPointerM(val, builder);
-          addedGradient = iface.createAddOp(builder, storeOp.getLoc(), gradient,
-                                            loadedGradient);
-        }
-        gutils->mapInvertPointer(val, addedGradient, builder);
+        auto zero =
+            cast<AutoDiffTypeInterface>(gutils->getShadowType(val.getType()))
+                .createNullValue(builder, op->getLoc());
+
+        builder.create<memref::StoreOp>(storeOp.getLoc(), zero, memrefGradient,
+                                        ArrayRef<Value>(retrievedArguments));
       }
     }
   }
@@ -137,7 +142,7 @@ struct StoreOpInterfaceReverse
     ValueRange indices = storeOp.getIndices();
     Value val = storeOp.getValue();
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType())) {
-      if (gutils->hasInvertPointer(memref)) {
+      if (!gutils->isConstantValue(memref)) {
         OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
         SmallVector<Value> caches;
         for (Value v : indices) {
@@ -175,13 +180,13 @@ struct SubViewOpInterfaceReverse
                           MGradientUtilsReverse *gutils) const {
     auto subviewOp = cast<memref::SubViewOp>(op);
     auto newSubviewOp = cast<memref::SubViewOp>(gutils->getNewFromOriginal(op));
-    if (gutils->hasInvertPointer(subviewOp.getSource())) {
+    if (!gutils->isConstantValue(subviewOp.getSource())) {
       Value shadow = builder.create<memref::SubViewOp>(
           op->getLoc(), newSubviewOp.getType(),
           gutils->invertPointerM(subviewOp.getSource(), builder),
           newSubviewOp.getMixedOffsets(), newSubviewOp.getMixedSizes(),
           newSubviewOp.getMixedStrides());
-      gutils->mapShadowValue(subviewOp, shadow, builder);
+      gutils->setDiffe(subviewOp, shadow, builder);
     }
   }
 };
@@ -205,13 +210,13 @@ public:
     return self;
   }
 
-  bool requiresShadow(Type self) const { return true; }
+  bool isMutable(Type self) const { return true; }
 
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
     auto MT = cast<MemRefType>(self);
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(MT.getElementType())) {
-      if (!iface.requiresShadow()) {
+      if (!iface.isMutable()) {
         Value zero = iface.createNullValue(builder, loc);
         builder.create<linalg::FillOp>(loc, zero, val);
       }

@@ -38,6 +38,7 @@ public:
   bool omp;
 
   unsigned width;
+  SmallVector<DIFFE_TYPE, 1> RetDiffeTypes;
   ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
 
   mlir::Value getNewFromOriginal(const mlir::Value originst) const;
@@ -68,16 +69,35 @@ public:
   bool isConstantInstruction(mlir::Operation *v) const;
   bool isConstantValue(mlir::Value v) const;
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &Builder2);
-  void setDiffe(mlir::Value val, mlir::Value toset, OpBuilder &BuilderM);
   void forceAugmentedReturns();
 
   Operation *cloneWithNewOperands(OpBuilder &B, Operation *op);
 
   LogicalResult visitChild(Operation *op);
+
+  void setDiffe(mlir::Value origv, mlir::Value newv, mlir::OpBuilder &builder);
+
+  mlir::Type getShadowType(mlir::Type T) {
+    auto iface = cast<AutoDiffTypeInterface>(T);
+    return iface.getShadowType(width);
+  }
 };
 
 class MDiffeGradientUtils : public MGradientUtils {
+protected:
+  IRMapping differentials;
+
+  Block *initializationBlock;
+
 public:
+  mlir::Value getDifferential(mlir::Value origv);
+
+  void setDiffe(mlir::Value origv, mlir::Value newv, mlir::OpBuilder &builder);
+
+  void zeroDiffe(mlir::Value origv, mlir::OpBuilder &builder);
+
+  mlir::Value diffe(mlir::Value origv, mlir::OpBuilder &builder);
+
   MDiffeGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                       FunctionOpInterface oldFunc_, MTypeAnalysis &TA,
                       MTypeResults TR, IRMapping &invertedPointers_,
@@ -91,7 +111,8 @@ public:
       : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
                        constantvalues_, activevals_, ActiveReturn,
                        constant_values, origToNew_, origToNewOps_, mode, width,
-                       omp) {}
+                       omp),
+        initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
 
   // Technically diffe constructor
   static MDiffeGradientUtils *

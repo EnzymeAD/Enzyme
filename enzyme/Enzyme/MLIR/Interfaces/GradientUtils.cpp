@@ -41,7 +41,8 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
       originalToNewFnOps(originalToNewFnOps_), blocksNotForAnalysis(),
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
           blocksNotForAnalysis, constantvalues_, activevals_, ReturnActivity)),
-      TA(TA_), TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_) {
+      TA(TA_), TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_),
+      RetDiffeTypes(1, ReturnActivity) {
 
   /*
   for (BasicBlock &BB : *oldFunc) {
@@ -170,6 +171,55 @@ mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
   llvm_unreachable("could not invert pointer");
 }
 
+mlir::Value
+mlir::enzyme::MDiffeGradientUtils::getDifferential(mlir::Value oval) {
+  auto found = differentials.lookupOrNull(oval);
+  if (found != nullptr)
+    return found;
+
+  auto shadowty = getShadowType(oval.getType());
+  OpBuilder builder(oval.getContext());
+  builder.setInsertionPointToStart(initializationBlock);
+
+  auto shadow = builder.create<enzyme::InitOp>(
+      oval.getLoc(), enzyme::GradientType::get(oval.getContext(), shadowty));
+  auto toset = cast<AutoDiffTypeInterface>(shadowty).createNullValue(
+      builder, oval.getLoc());
+  builder.create<enzyme::SetOp>(oval.getLoc(), shadow, toset);
+
+  differentials.map(oval, shadow);
+  return shadow;
+}
+
+void mlir::enzyme::MDiffeGradientUtils::setDiffe(mlir::Value oval,
+                                                 mlir::Value toset,
+                                                 OpBuilder &BuilderM) {
+  assert(!isConstantValue(oval));
+  auto iface = oval.getType().cast<AutoDiffTypeInterface>();
+  if (!iface.isMutable()) {
+    auto shadow = getDifferential(oval);
+    BuilderM.create<enzyme::SetOp>(oval.getLoc(), shadow, toset);
+  } else {
+    MGradientUtils::setDiffe(oval, toset, BuilderM);
+  }
+}
+
+void mlir::enzyme::MDiffeGradientUtils::zeroDiffe(mlir::Value oval,
+                                                  OpBuilder &BuilderM) {
+  assert(!isConstantValue(oval));
+  auto iface = getShadowType(oval.getType()).cast<AutoDiffTypeInterface>();
+  assert(!iface.isMutable());
+  setDiffe(oval, iface.createNullValue(BuilderM, oval.getLoc()), BuilderM);
+}
+
+mlir::Value mlir::enzyme::MDiffeGradientUtils::diffe(mlir::Value oval,
+                                                     OpBuilder &BuilderM) {
+
+  auto shadow = getDifferential(oval);
+  return BuilderM.create<enzyme::GetOp>(oval.getLoc(),
+                                        getShadowType(oval.getType()), shadow);
+}
+
 void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
                                             OpBuilder &BuilderM) {
   /*
@@ -226,81 +276,39 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
       if (isConstantValue(val))
         continue;
       auto i = val.getArgNumber();
-      mlir::Value dval;
-      if (i == blk->getArguments().size() - 1)
-        dval = nblk->addArgument(getShadowType(val.getType()), val.getLoc());
-      else
-        dval = nblk->insertArgument(nblk->args_begin() + i + 1,
-                                    getShadowType(val.getType()), val.getLoc());
+      if (mode == DerivativeMode::ForwardMode ||
+          mode == DerivativeMode::ForwardModeSplit ||
+          cast<AutoDiffTypeInterface>(val.getType()).isMutable()) {
+        mlir::Value dval;
+        if (i == blk->getArguments().size() - 1)
+          dval = nblk->addArgument(getShadowType(val.getType()), val.getLoc());
+        else
+          dval =
+              nblk->insertArgument(nblk->args_begin() + i + 1,
+                                   getShadowType(val.getType()), val.getLoc());
 
-      invertedPointers.map(val, dval);
+        invertedPointers.map(val, dval);
+      }
     }
   });
 
   oldFunc.walk([&](Operation *inst) {
     if (inst == oldFunc)
       return;
-    if (mode == DerivativeMode::ForwardMode ||
-        mode == DerivativeMode::ForwardModeSplit) {
-      OpBuilder BuilderZ(getNewFromOriginal(inst));
-      for (auto res : inst->getResults()) {
-        if (!isConstantValue(res)) {
-          mlir::Type antiTy = getShadowType(res.getType());
-          auto anti =
-              BuilderZ.create<enzyme::PlaceholderOp>(res.getLoc(), antiTy);
-          invertedPointers.map(res, anti);
-        }
-      }
-      return;
+
+    OpBuilder BuilderZ(getNewFromOriginal(inst));
+    for (auto res : inst->getResults()) {
+      if (isConstantValue(res))
+        continue;
+
+      if (!(mode == DerivativeMode::ForwardMode ||
+            mode == DerivativeMode::ForwardModeSplit ||
+            cast<AutoDiffTypeInterface>(res.getType()).isMutable()))
+        continue;
+      mlir::Type antiTy = getShadowType(res.getType());
+      auto anti = BuilderZ.create<enzyme::PlaceholderOp>(res.getLoc(), antiTy);
+      invertedPointers.map(res, anti);
     }
-    /*
-
-    if (inst->getType()->isFPOrFPVectorTy())
-      continue; //! op->getType()->isPointerTy() &&
-                //! !op->getType()->isIntegerTy()) {
-
-    if (!TR.query(inst)[{-1}].isPossiblePointer())
-      continue;
-
-    if (isa<LoadInst>(inst)) {
-      IRBuilder<> BuilderZ(inst);
-      getForwardBuilder(BuilderZ);
-      Type *antiTy = getShadowType(inst->getType());
-      PHINode *anti =
-          BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'il_phi");
-      invertedPointers.insert(std::make_pair(
-          (const Value *)inst, InvertedPointerVH(this, anti)));
-      continue;
-    }
-
-    if (!isa<CallInst>(inst)) {
-      continue;
-    }
-
-    if (isa<IntrinsicInst>(inst)) {
-      continue;
-    }
-
-    if (isConstantValue(inst)) {
-      continue;
-    }
-
-    CallInst *op = cast<CallInst>(inst);
-    Function *called = op->getCalledFunction();
-
-    IRBuilder<> BuilderZ(inst);
-    getForwardBuilder(BuilderZ);
-    Type *antiTy = getShadowType(inst->getType());
-
-    PHINode *anti =
-        BuilderZ.CreatePHI(antiTy, 1, op->getName() + "'ip_phi");
-    invertedPointers.insert(
-        std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
-
-    if (called && isAllocationFunction(called->getName(), TLI)) {
-      anti->setName(op->getName() + "'mi");
-    }
-    */
   });
 }
 

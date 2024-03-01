@@ -61,10 +61,10 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
     >,
     InterfaceMethod<
       /*desc=*/[{
-        Returns if the Type needs to be cleared.
+        Returns whether the type is mutable in place or not.
       }],
       /*retTy=*/"bool",
-      /*methodName=*/"requiresShadow",
+      /*methodName=*/"isMutable",
       /*args=*/(ins )
     >
   ];

@@ -15,6 +15,7 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
+#include "Interfaces/GradientUtilsReverse.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -143,8 +144,7 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
         if (contains(storedVals, operand.getOperandNumber())) {
           if (auto iface =
                   dyn_cast<AutoDiffTypeInterface>(operand.get().getType())) {
-            if (!iface.requiresShadow()) {
-              // TODO only do if mutable
+            if (!iface.isMutable()) {
               Type retTy = iface.getShadowType();
               auto toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
                   builder, operand.get().getLoc());
@@ -199,6 +199,29 @@ LogicalResult mlir::enzyme::detail::allocationForwardHandler(
     }
   }
   return success();
+}
+
+void mlir::enzyme::detail::returnReverseHandler(Operation *op,
+                                                OpBuilder &builder,
+                                                MGradientUtilsReverse *gutils) {
+  size_t num_out = 0;
+  for (auto act : gutils->RetDiffeTypes) {
+    if (act == DIFFE_TYPE::OUT_DIFF)
+      num_out++;
+  }
+
+  size_t idx = 0;
+  auto args = gutils->newFunc->getRegions().begin()->begin()->getArguments();
+
+  for (auto &&[op, act] : llvm::zip(op->getOperands(), gutils->RetDiffeTypes)) {
+    if (act == DIFFE_TYPE::OUT_DIFF) {
+      if (!gutils->isConstantValue(op)) {
+        auto d_out = args[args.size() - num_out + idx];
+        gutils->addToDiffe(op, d_out, builder);
+      }
+      idx++;
+    }
+  }
 }
 
 void mlir::enzyme::detail::regionTerminatorForwardHandler(
@@ -401,4 +424,5 @@ void mlir::enzyme::registerCoreDialectAutodiffInterfaces(
   enzyme::registerSCFDialectAutoDiffInterface(registry);
   enzyme::registerCFDialectAutoDiffInterface(registry);
   enzyme::registerLinalgDialectAutoDiffInterface(registry);
+  enzyme::registerFuncDialectAutoDiffInterface(registry);
 }

@@ -44,7 +44,7 @@ public:
     return self;
   }
 
-  bool requiresShadow(Type self) const { return false; }
+  bool isMutable(Type self) const { return false; }
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
     return failure();
@@ -77,7 +77,7 @@ public:
     return self;
   }
 
-  bool requiresShadow(Type self) const { return false; }
+  bool isMutable(Type self) const { return false; }
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
     return failure();
@@ -105,7 +105,7 @@ public:
     return self;
   }
 
-  bool requiresShadow(Type self) const { return false; }
+  bool isMutable(Type self) const { return false; }
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
     return failure();

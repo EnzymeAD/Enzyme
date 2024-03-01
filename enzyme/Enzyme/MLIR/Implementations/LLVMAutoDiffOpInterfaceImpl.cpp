@@ -55,7 +55,7 @@ public:
     return self;
   }
 
-  bool requiresShadow(Type self) const { return true; }
+  bool isMutable(Type self) const { return true; }
 
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {

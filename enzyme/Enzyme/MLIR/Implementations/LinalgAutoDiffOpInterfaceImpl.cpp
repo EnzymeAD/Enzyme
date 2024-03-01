@@ -133,7 +133,7 @@ struct GenericOpInterfaceReverse
         linalgOp.getNumLoops(), utils::IteratorType::parallel};
 
     for (OpOperand &output : linalgOp.getDpsInitsMutable()) {
-      if (!gutils->hasInvertPointer(output.get())) {
+      if (gutils->isConstantValue(output.get())) {
         continue;
       }
       indexingMaps.push_back(linalgOp.getMatchingIndexingMap(&output));
@@ -143,7 +143,7 @@ struct GenericOpInterfaceReverse
     }
 
     for (OpOperand *input : linalgOp.getDpsInputOperands()) {
-      if (!gutils->hasInvertPointer(input->get())) {
+      if (gutils->isConstantValue(input->get())) {
         continue;
       }
       indexingMaps.push_back(linalgOp.getMatchingIndexingMap(input));
@@ -165,8 +165,13 @@ struct GenericOpInterfaceReverse
         StringAttr());
 
     int numInputs = inputs.size();
-    auto buildFuncReturnOp = [numInputs](OpBuilder &builder, Location loc,
-                                         SmallVector<Value> retargs) {
+    auto buildFuncReturnOp = [&gutils, numInputs](OpBuilder &builder,
+                                                  Block *oBB) {
+      auto loc = oBB->rbegin()->getLoc();
+      SmallVector<Value> retargs;
+      for (auto arg : oBB->getArguments()) {
+        retargs.push_back(gutils->invertPointerM(arg, builder));
+      }
       builder.create<enzyme::AddToOp>(
           loc, ValueRange{retargs}.take_front(numInputs));
       return;
@@ -192,9 +197,8 @@ struct GenericOpInterfaceReverse
       return std::make_pair(pushCache, popCache);
     };
 
-    gutils->Logic.differentiate(
-        gutils, *linalgOp.getBlock()->getParent(), adjoint.getRegion(),
-        /*parentRegion=*/false, buildFuncReturnOp, hook);
+    gutils->Logic.differentiate(gutils, *linalgOp.getBlock()->getParent(),
+                                adjoint.getRegion(), buildFuncReturnOp, hook);
 
     auto newOpYield = cast<linalg::YieldOp>(
         cast<linalg::GenericOp>(newOp).getBodyRegion().front().getTerminator());
