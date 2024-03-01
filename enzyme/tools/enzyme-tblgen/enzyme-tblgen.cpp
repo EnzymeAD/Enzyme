@@ -354,7 +354,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         PrintFatalError(pattern->getLoc(),
                         Twine("unknown named operand in typeof") +
                             resultTree->getAsString());
-      os << "->getType()";
+      if (intrinsic == MLIRDerivatives)
+        os << ".getType()";
+      else
+        os << "->getType()";
       return false;
     } else if (opName == "VectorSize" || Def->isSubClassOf("VectorSize")) {
       if (resultRoot->getNumArgs() != 1)
@@ -1268,6 +1271,298 @@ static void emitHeaderIncludes(const RecordKeeper &recordKeeper,
   os << "};\n";
 }
 
+static void emitMLIRReverse(raw_ostream &os, Record *pattern, DagInit *tree,
+                            ActionType intrinsic, StringRef origName,
+                            ListInit *argOps) {
+
+  auto opName = pattern->getValueAsString("opName");
+  auto dialect = pattern->getValueAsString("dialect");
+  os << "struct " << opName << "RevDerivative : \n";
+  os << "			public "
+        "ReverseAutoDiffOpInterface::ExternalModel<"
+     << opName << "RevDerivative, " << dialect << "::" << opName << "> {\n";
+  os << "       SmallVector<bool> cachedArguments(Operation *op,\n";
+  os << "                                 MGradientUtilsReverse *gutils) "
+        "const {\n";
+  os << "         SmallVector<bool> toret(op->getNumOperands(), false);\n";
+  StringMap<std::tuple<std::string, std::string, bool>> varNameToCondition;
+
+  std::function<void(DagInit *, ArrayRef<unsigned>)> insert =
+      [&](DagInit *ptree, ArrayRef<unsigned> prev) {
+        for (auto treeEn : llvm::enumerate(ptree->getArgs())) {
+          auto tree = treeEn.value();
+          auto name = ptree->getArgNameStr(treeEn.index());
+          SmallVector<unsigned, 2> next(prev.begin(), prev.end());
+          next.push_back(treeEn.index());
+          if (auto dg = dyn_cast<DagInit>(tree))
+            insert(dg, next);
+
+          if (name.size()) {
+            varNameToCondition[name] = std::make_tuple(
+                "idx == " + std::to_string(treeEn.index()), "", false);
+          }
+        }
+      };
+
+  insert(tree, {});
+
+  if (tree->getNameStr().size())
+    varNameToCondition[tree->getNameStr()] =
+        std::make_tuple("ILLEGAL", "ILLEGAL", false);
+
+  os << "         for (size_t idx=0; idx<op->getNumOperands(); idx++) {\n";
+  os << "            bool used = false;\n";
+  printDiffUse(os, "          ", argOps, origName, intrinsic, tree,
+               varNameToCondition);
+  os << "            toret[idx] = used;\n";
+  os << "         }\n";
+  os << "         return toret;\n";
+  os << "       }\n";
+
+  os << "       SmallVector<Value> cacheValues(Operation *op,\n";
+  os << "                                 MGradientUtilsReverse *gutils) "
+        "const {\n";
+  os << "          if (gutils->isConstantInstruction(op) || "
+        "gutils->isConstantValue(op->getResult(0))) return {};\n";
+  os << "          auto neededArgs = cachedArguments(op, gutils);\n";
+  os << "          SmallVector<Value> toret;\n";
+  os << "          OpBuilder builder(gutils->getNewFromOriginal(op));\n";
+  os << "          for (auto en : llvm::enumerate(neededArgs))\n";
+  os << "            if (en.value()) {\n";
+  os << "              Value cache = "
+        "gutils->initAndPushCache(gutils->getNewFromOriginal(op->"
+        "getOperand(en.index())), builder);\n";
+  os << "              toret.push_back(cache);\n";
+  os << "            }\n";
+  os << "          return toret;\n";
+  os << "       }\n";
+  os << "\n";
+  os << "  void createShadowValues(Operation *op, OpBuilder &builder,\n";
+  os << "                          MGradientUtilsReverse *gutils) const "
+        "{}\n";
+
+  os << "     void createReverseModeAdjoint(Operation *op0, OpBuilder "
+        "&builder,\n";
+  os << "                            MGradientUtilsReverse *gutils,\n";
+  os << "                            SmallVector<Value> caches) const {\n";
+  os << "    auto op = cast<" << dialect << "::" << opName << ">(op0);\n";
+  os << "        mlir::Value dif = nullptr;\n";
+}
+
+static VariableSetting parseVariables(DagInit *tree, ActionType intrinsic,
+                                      StringRef origName) {
+  VariableSetting nameToOrdinal;
+  std::function<void(DagInit *, ArrayRef<unsigned>)> insert =
+      [&](DagInit *ptree, ArrayRef<unsigned> prev) {
+        unsigned i = 0;
+        for (auto tree : ptree->getArgs()) {
+          SmallVector<unsigned, 2> next(prev.begin(), prev.end());
+          next.push_back(i);
+          if (auto dg = dyn_cast<DagInit>(tree))
+            insert(dg, next);
+
+          if (ptree->getArgNameStr(i).size()) {
+            std::string op;
+            if (intrinsic != MLIRDerivatives)
+              op = (origName + ".getOperand(" + Twine(next[0]) + ")").str();
+            else
+              op = (origName + "->getOperand(" + Twine(next[0]) + ")").str();
+            if (prev.size() > 0) {
+              op = "gutils->extractMeta(Builder2, " + op +
+                   ", ArrayRef<unsigned>({";
+              bool first = true;
+              for (unsigned i = 1; i < next.size(); i++) {
+                if (!first)
+                  op += ", ";
+                op += std::to_string(next[i]);
+              }
+              op += "}))";
+            }
+            nameToOrdinal.insert(ptree->getArgNameStr(i), op, false);
+          }
+          i++;
+        }
+      };
+
+  insert(tree, {});
+
+  if (tree->getNameStr().size())
+    nameToOrdinal.insert(tree->getNameStr(),
+                         (Twine("(&") + origName + ")").str(), false);
+  return nameToOrdinal;
+}
+
+static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
+                              ActionType intrinsic, StringRef origName,
+                              ListInit *argOps) {
+  auto nameToOrdinal = parseVariables(tree, intrinsic, origName);
+
+  bool seen = false;
+  for (auto argOpEn : enumerate(*argOps)) {
+    size_t argIdx = argOpEn.index();
+    if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+      auto opName = resultRoot->getOperator()->getAsString();
+      auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
+      if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
+        if (Def->getValueAsBit("asserting"))
+          os << " assert(gutils->isConstantValue(" << origName << ".getOperand("
+             << argIdx << ")));\n";
+        continue;
+      }
+    }
+
+    os << "        ";
+    if (seen)
+      os << "} else ";
+    seen = true;
+    if (intrinsic == MLIRDerivatives) {
+      os << "if (!dif && !gutils->isConstantValue(" << origName
+         << "->getOperand(" << argIdx << "))) {\n";
+    } else {
+      os << "if (!dif && !gutils->isConstantValue(" << origName
+         << ".getOperand(" << argIdx << "))) {\n";
+    }
+    DagInit *resultTree = cast<DagInit>(argOpEn.value());
+    if (hasDiffeRet(resultTree)) {
+      if (intrinsic == MLIRDerivatives) {
+        os << "          dif = gutils->diffe(" << origName << ", builder);\n";
+        os << "          gutils->zeroDiffe(" << origName << ", builder);\n";
+      } else {
+        os << "          dif = diffe(&" << origName << ", Builder2);\n";
+        os << "          setDiffe(&" << origName
+           << ", "
+              "Constant::getNullValue(gutils->getShadowType("
+           << origName
+           << ".getType())), "
+              "Builder2);\n";
+      }
+    }
+  }
+  if (seen)
+    os << "        }\n";
+
+  if (intrinsic == MLIRDerivatives) {
+    os << "   SmallVector<Value> operands(op->getNumOperands(), nullptr);\n";
+    os << "          auto neededArgs = cachedArguments(op, gutils);\n";
+    os << "          size_t count = 0;\n";
+    os << "          for (auto en : llvm::enumerate(neededArgs))\n";
+    os << "            if (en.value()) {\n";
+    os << "              operands[en.index()] = "
+          "gutils->popCache(caches[count], builder);\n";
+    os << "              count++;\n";
+    os << "            }\n";
+  }
+
+  std::function<void(size_t, ArrayRef<unsigned>, Init *)> revres =
+      [&](size_t argIdx, ArrayRef<unsigned> idx, Init *ival) {
+        if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
+          auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
+          if (Def->isSubClassOf("MultiReturn")) {
+            unsigned i = 0;
+            for (auto r : resultTree->getArgs()) {
+              SmallVector<unsigned, 1> next(idx.begin(), idx.end());
+              next.push_back(i);
+              revres(argIdx, next, r);
+              i++;
+            }
+            return;
+          }
+          if (Def->isSubClassOf("InactiveArgSpec")) {
+            return;
+          }
+          const char *curIndent = "          ";
+          os << curIndent << "{\n";
+          if (intrinsic == MLIRDerivatives)
+            os << curIndent << INDENT << "mlir::Value tmp = ";
+          else
+            os << curIndent << INDENT << "Value *tmp = ";
+          bool vectorValued = handle(
+              Twine(curIndent) + INDENT, "revarg", os, pattern, resultTree,
+              (intrinsic == MLIRDerivatives) ? "builder" : "Builder2",
+              nameToOrdinal, /*lookup*/ true, idx, origName,
+              /*newFromOriginal*/ true, intrinsic);
+          os << ";\n";
+
+          if (intrinsic == MLIRDerivatives) {
+            os << "assert(toadd == nullptr); toadd = tmp;\n";
+          } else {
+            os << curIndent << INDENT
+               << "Value *out = "
+                  "UndefValue::get(gutils->getShadowType("
+               << origName << ".getOperand(" << argIdx << ")->getType()));\n";
+
+            os << curIndent << INDENT
+               << "for(unsigned int idx=0, W=gutils->getWidth(); "
+                  "idx<W; idx++) {\n";
+
+            os << curIndent << INDENT << INDENT
+               << "Value *prev = toadd ? (gutils->getWidth() == "
+                  "1 ? toadd : gutils->extractMeta(Builder2, toadd, idx)) : "
+                  "nullptr;\n";
+            os << curIndent << INDENT << INDENT << "Value *next = tmp;\n";
+            if (vectorValued)
+              os << curIndent << INDENT << INDENT
+                 << "if (gutils->getWidth() > 1) next = "
+                    "gutils->extractMeta(Builder2, next, idx);\n";
+            os << curIndent << INDENT << INDENT
+               << "if (prev) next = Builder2.CreateFAdd(prev, "
+                  "next);\n";
+            os << curIndent << INDENT << INDENT
+               << "out = (gutils->getWidth() > 1) ? "
+                  "Builder2.CreateInsertValue(out, next, idx) : next;\n";
+            os << curIndent << INDENT << "}\n";
+            os << curIndent << INDENT << "toadd = out;\n";
+          }
+          os << curIndent << "}\n";
+
+        } else if (ListInit *lst = dyn_cast<ListInit>(ival)) {
+          unsigned i = 0;
+          for (auto elem : *lst) {
+            SmallVector<unsigned, 1> next(idx.begin(), idx.end());
+            next.push_back(i);
+            revres(argIdx, next, elem);
+            i++;
+          }
+        } else
+          assert(0);
+      };
+
+  for (auto argOpEn : enumerate(*argOps)) {
+    size_t argIdx = argOpEn.index();
+    if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+      auto opName = resultRoot->getOperator()->getAsString();
+      auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
+      if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
+        continue;
+      }
+    }
+
+    const char *curIndent = "        ";
+    if (intrinsic == MLIRDerivatives)
+      os << curIndent << "if (!gutils->isConstantValue(" << origName
+         << "->getOperand(" << argIdx << "))) {\n";
+    else
+      os << curIndent << "if (!gutils->isConstantValue(" << origName
+         << ".getOperand(" << argIdx << "))) {\n";
+    initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(), "local");
+    if (intrinsic == MLIRDerivatives)
+      os << curIndent << INDENT << "mlir::Value toadd = nullptr;\n";
+    else
+      os << curIndent << INDENT << "Value *toadd = nullptr;\n";
+    revres(argIdx, {}, argOpEn.value());
+
+    if (intrinsic == MLIRDerivatives) {
+      os << curIndent << INDENT << "if (toadd) gutils->addToDiffe(" << origName
+         << "->getOperand(" << argIdx << "), toadd, builder);\n";
+    } else {
+      os << curIndent << INDENT << "if (toadd) addToDiffe(" << origName
+         << ".getOperand(" << argIdx << "), toadd";
+      os << ", Builder2, " << origName << ".getOperand(" << argIdx
+         << ")->getType());\n";
+    }
+    os << curIndent << "}\n";
+  }
+}
 static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                             ActionType intrinsic) {
   emitSourceFileHeader("Rewriters", os);
@@ -1467,45 +1762,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     }
     }
 
-    VariableSetting nameToOrdinal;
-
-    std::function<void(DagInit *, ArrayRef<unsigned>)> insert =
-        [&](DagInit *ptree, ArrayRef<unsigned> prev) {
-          unsigned i = 0;
-          for (auto tree : ptree->getArgs()) {
-            SmallVector<unsigned, 2> next(prev.begin(), prev.end());
-            next.push_back(i);
-            if (auto dg = dyn_cast<DagInit>(tree))
-              insert(dg, next);
-
-            if (ptree->getArgNameStr(i).size()) {
-              std::string op;
-              if (intrinsic != MLIRDerivatives)
-                op = (origName + ".getOperand(" + Twine(next[0]) + ")").str();
-              else
-                op = (origName + "->getOperand(" + Twine(next[0]) + ")").str();
-              if (prev.size() > 0) {
-                op = "gutils->extractMeta(Builder2, " + op +
-                     ", ArrayRef<unsigned>({";
-                bool first = true;
-                for (unsigned i = 1; i < next.size(); i++) {
-                  if (!first)
-                    op += ", ";
-                  op += std::to_string(next[i]);
-                }
-                op += "}))";
-              }
-              nameToOrdinal.insert(ptree->getArgNameStr(i), op, false);
-            }
-            i++;
-          }
-        };
-
-    insert(tree, {});
-
-    if (tree->getNameStr().size())
-      nameToOrdinal.insert(tree->getNameStr(),
-                           (Twine("(&") + origName + ")").str(), false);
+    VariableSetting nameToOrdinal = parseVariables(tree, intrinsic, origName);
 
     if (intrinsic != BinopDerivatives && intrinsic != InstDerivatives &&
         intrinsic != MLIRDerivatives) {
@@ -1706,248 +1963,10 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        Value *dif = nullptr;\n";
     } else {
       os << "};\n";
-      auto opName = pattern->getValueAsString("opName");
-      auto dialect = pattern->getValueAsString("dialect");
-      os << "struct " << opName << "RevDerivative : \n";
-      os << "			public "
-            "ReverseAutoDiffOpInterface::ExternalModel<"
-         << opName << "RevDerivative, " << dialect << "::" << opName << "> {\n";
-      os << "       SmallVector<bool> cachedArguments(Operation *op,\n";
-      os << "                                 MGradientUtilsReverse *gutils) "
-            "const {\n";
-      os << "         SmallVector<bool> toret(op->getNumOperands(), false);\n";
-      StringMap<std::tuple<std::string, std::string, bool>> varNameToCondition;
-
-      std::function<void(DagInit *, ArrayRef<unsigned>)> insert =
-          [&](DagInit *ptree, ArrayRef<unsigned> prev) {
-            for (auto treeEn : llvm::enumerate(ptree->getArgs())) {
-              auto tree = treeEn.value();
-              auto name = ptree->getArgNameStr(treeEn.index());
-              SmallVector<unsigned, 2> next(prev.begin(), prev.end());
-              next.push_back(treeEn.index());
-              if (auto dg = dyn_cast<DagInit>(tree))
-                insert(dg, next);
-
-              if (name.size()) {
-                varNameToCondition[name] = std::make_tuple(
-                    "idx == " + std::to_string(treeEn.index()), "", false);
-              }
-            }
-          };
-
-      insert(tree, {});
-
-      if (tree->getNameStr().size())
-        varNameToCondition[tree->getNameStr()] =
-            std::make_tuple("ILLEGAL", "ILLEGAL", false);
-
-      os << "         for (size_t idx=0; idx<op->getNumOperands(); idx++) {\n";
-      os << "            bool used = false;\n";
-      printDiffUse(os, "          ", argOps, origName, intrinsic, tree,
-                   varNameToCondition);
-      os << "            toret[idx] = used;\n";
-      os << "         }\n";
-      os << "         return toret;\n";
-      os << "       }\n";
-
-      os << "       SmallVector<Value> cacheValues(Operation *op,\n";
-      os << "                                 MGradientUtilsReverse *gutils) "
-            "const {\n";
-      os << "          if (gutils->isConstantInstruction(op) || "
-            "gutils->isConstantValue(op->getResult(0))) return {};\n";
-      os << "          auto neededArgs = cachedArguments(op, gutils);\n";
-      os << "          SmallVector<Value> toret;\n";
-      os << "          OpBuilder builder(gutils->getNewFromOriginal(op));\n";
-      os << "          for (auto en : llvm::enumerate(neededArgs))\n";
-      os << "            if (en.value()) {\n";
-      os << "              Value cache = "
-            "gutils->initAndPushCache(gutils->getNewFromOriginal(op->"
-            "getOperand(en.index())), builder);\n";
-      os << "              toret.push_back(cache);\n";
-      os << "            }\n";
-      os << "          return toret;\n";
-      os << "       }\n";
-      os << "\n";
-      os << "  void createShadowValues(Operation *op, OpBuilder &builder,\n";
-      os << "                          MGradientUtilsReverse *gutils) const "
-            "{}\n";
-
-      os << "     void createReverseModeAdjoint(Operation *op0, OpBuilder "
-            "&builder,\n";
-      os << "                            MGradientUtilsReverse *gutils,\n";
-      os << "                            SmallVector<Value> caches) const {\n";
-      os << "    auto op = cast<" << dialect << "::" << opName << ">(op0);\n";
-      os << "        mlir::Value dif = nullptr;\n";
-    }
-    // TODO vector
-
-    bool seen = false;
-    for (auto argOpEn : enumerate(*argOps)) {
-      size_t argIdx = argOpEn.index();
-      if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
-        auto opName = resultRoot->getOperator()->getAsString();
-        auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-        if (opName == "InactiveArgSpec" ||
-            Def->isSubClassOf("InactiveArgSpec")) {
-          if (Def->getValueAsBit("asserting"))
-            os << " assert(gutils->isConstantValue(" << origName
-               << ".getOperand(" << argIdx << ")));\n";
-          continue;
-        }
-      }
-
-      os << "        ";
-      if (seen)
-        os << "} else ";
-      seen = true;
-      if (intrinsic == MLIRDerivatives) {
-        os << "if (!dif && !gutils->isConstantValue(" << origName
-           << "->getOperand(" << argIdx << "))) {\n";
-      } else {
-        os << "if (!dif && !gutils->isConstantValue(" << origName
-           << ".getOperand(" << argIdx << "))) {\n";
-      }
-      DagInit *resultTree = cast<DagInit>(argOpEn.value());
-      if (hasDiffeRet(resultTree)) {
-        if (intrinsic == MLIRDerivatives) {
-          os << "          dif = gutils->diffe(" << origName << ", builder);\n";
-          os << "          gutils->zeroDiffe(" << origName << ", builder);\n";
-        } else {
-          os << "          dif = diffe(&" << origName << ", Builder2);\n";
-          os << "          setDiffe(&" << origName
-             << ", "
-                "Constant::getNullValue(gutils->getShadowType("
-             << origName
-             << ".getType())), "
-                "Builder2);\n";
-        }
-      }
-    }
-    if (seen)
-      os << "        }\n";
-
-    if (intrinsic == MLIRDerivatives) {
-      os << "   SmallVector<Value> operands(op->getNumOperands(), nullptr);\n";
-      os << "          auto neededArgs = cachedArguments(op, gutils);\n";
-      os << "          size_t count = 0;\n";
-      os << "          for (auto en : llvm::enumerate(neededArgs))\n";
-      os << "            if (en.value()) {\n";
-      os << "              operands[en.index()] = "
-            "gutils->popCache(caches[count], builder);\n";
-      os << "              count++;\n";
-      os << "            }\n";
+      emitMLIRReverse(os, pattern, tree, intrinsic, origName, argOps);
     }
 
-    std::function<void(size_t, ArrayRef<unsigned>, Init *)> revres =
-        [&](size_t argIdx, ArrayRef<unsigned> idx, Init *ival) {
-          if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
-            auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
-            if (Def->isSubClassOf("MultiReturn")) {
-              unsigned i = 0;
-              for (auto r : resultTree->getArgs()) {
-                SmallVector<unsigned, 1> next(idx.begin(), idx.end());
-                next.push_back(i);
-                revres(argIdx, next, r);
-                i++;
-              }
-              return;
-            }
-            if (Def->isSubClassOf("InactiveArgSpec")) {
-              return;
-            }
-            const char *curIndent = "          ";
-            os << curIndent << "{\n";
-            if (intrinsic == MLIRDerivatives)
-              os << curIndent << INDENT << "mlir::Value tmp = ";
-            else
-              os << curIndent << INDENT << "Value *tmp = ";
-            bool vectorValued = handle(
-                Twine(curIndent) + INDENT, "revarg", os, pattern, resultTree,
-                (intrinsic == MLIRDerivatives) ? "builder" : "Builder2",
-                nameToOrdinal, /*lookup*/ true, idx, origName,
-                /*newFromOriginal*/ true, intrinsic);
-            os << ";\n";
-
-            if (intrinsic == MLIRDerivatives) {
-              os << "assert(toadd == nullptr); toadd = tmp;\n";
-            } else {
-              os << curIndent << INDENT
-                 << "Value *out = "
-                    "UndefValue::get(gutils->getShadowType("
-                 << origName << ".getOperand(" << argIdx << ")->getType()));\n";
-
-              os << curIndent << INDENT
-                 << "for(unsigned int idx=0, W=gutils->getWidth(); "
-                    "idx<W; idx++) {\n";
-
-              os << curIndent << INDENT << INDENT
-                 << "Value *prev = toadd ? (gutils->getWidth() == "
-                    "1 ? toadd : gutils->extractMeta(Builder2, toadd, idx)) : "
-                    "nullptr;\n";
-              os << curIndent << INDENT << INDENT << "Value *next = tmp;\n";
-              if (vectorValued)
-                os << curIndent << INDENT << INDENT
-                   << "if (gutils->getWidth() > 1) next = "
-                      "gutils->extractMeta(Builder2, next, idx);\n";
-              os << curIndent << INDENT << INDENT
-                 << "if (prev) next = Builder2.CreateFAdd(prev, "
-                    "next);\n";
-              os << curIndent << INDENT << INDENT
-                 << "out = (gutils->getWidth() > 1) ? "
-                    "Builder2.CreateInsertValue(out, next, idx) : next;\n";
-              os << curIndent << INDENT << "}\n";
-              os << curIndent << INDENT << "toadd = out;\n";
-            }
-            os << curIndent << "}\n";
-
-          } else if (ListInit *lst = dyn_cast<ListInit>(ival)) {
-            unsigned i = 0;
-            for (auto elem : *lst) {
-              SmallVector<unsigned, 1> next(idx.begin(), idx.end());
-              next.push_back(i);
-              revres(argIdx, next, elem);
-              i++;
-            }
-          } else
-            assert(0);
-        };
-
-    for (auto argOpEn : enumerate(*argOps)) {
-      size_t argIdx = argOpEn.index();
-      if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
-        auto opName = resultRoot->getOperator()->getAsString();
-        auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-        if (opName == "InactiveArgSpec" ||
-            Def->isSubClassOf("InactiveArgSpec")) {
-          continue;
-        }
-      }
-
-      const char *curIndent = "        ";
-      if (intrinsic == MLIRDerivatives)
-        os << curIndent << "if (!gutils->isConstantValue(" << origName
-           << "->getOperand(" << argIdx << "))) {\n";
-      else
-        os << curIndent << "if (!gutils->isConstantValue(" << origName
-           << ".getOperand(" << argIdx << "))) {\n";
-      initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(), "local");
-      if (intrinsic == MLIRDerivatives)
-        os << curIndent << INDENT << "mlir::Value toadd = nullptr;\n";
-      else
-        os << curIndent << INDENT << "Value *toadd = nullptr;\n";
-      revres(argIdx, {}, argOpEn.value());
-
-      if (intrinsic == MLIRDerivatives) {
-        os << curIndent << INDENT << "if (toadd) gutils->addToDiffe("
-           << origName << "->getOperand(" << argIdx << "), toadd, builder);\n";
-      } else {
-        os << curIndent << INDENT << "if (toadd) addToDiffe(" << origName
-           << ".getOperand(" << argIdx << "), toadd";
-        os << ", Builder2, " << origName << ".getOperand(" << argIdx
-           << ")->getType());\n";
-      }
-      os << curIndent << "}\n";
-    }
+    emitReverseCommon(os, pattern, tree, intrinsic, origName, argOps);
 
     if (intrinsic != MLIRDerivatives) {
       os << "        auto found = gutils->invertedPointers.find(&(" << origName
@@ -2036,6 +2055,18 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       }
       os << "    return true;\n  }\n";
       os << "};\n";
+
+      DagInit *tree = pattern->getValueAsDag("PatternToMatch");
+
+      if (tree->getOperator()->getAsString() != "Unimplemented") {
+        ListInit *argOps = pattern->getValueAsListInit("reverse");
+        auto origName = "op";
+        emitMLIRReverse(os, pattern, tree, intrinsic, origName, argOps);
+        emitReverseCommon(os, pattern, tree, intrinsic, origName, argOps);
+        os << "     return;\n";
+        os << "   }\n";
+        os << " };\n";
+      }
     }
 
     const auto &brpatterns = recordKeeper.getAllDerivedDefinitions("BranchOp");
@@ -2081,6 +2112,11 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       for (auto storedarg : pattern->getValueAsListOfInts("storedargs"))
         os << ", " << storedarg;
       os << ">(*context);\n";
+      DagInit *tree = pattern->getValueAsDag("PatternToMatch");
+      if (tree->getOperator()->getAsString() != "Unimplemented") {
+        os << "  " << dialect << "::" << opName << "::attachInterface<"
+           << opName << "RevDerivative>(*context);\n";
+      }
     }
     for (Record *pattern : brpatterns) {
       auto opName = pattern->getValueAsString("opName");
