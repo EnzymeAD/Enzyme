@@ -91,12 +91,21 @@ struct DifferentiateWrapperPass
       volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
     }
 
-    FunctionOpInterface newFunc = Logic.CreateForwardDiff(
-        fn, retType, constants, TA,
-        /*should return*/ (retType == DIFFE_TYPE::DUP_ARG), mode, freeMemory,
-        width,
-        /*addedType*/ nullptr, type_args, volatile_args,
-        /*augmented*/ nullptr);
+    FunctionOpInterface newFunc;
+    if (mode == DerivativeMode::ForwardMode) {
+      newFunc = Logic.CreateForwardDiff(
+          fn, retType, constants, TA,
+          /*should return*/ (retType == DIFFE_TYPE::DUP_ARG), mode, freeMemory,
+          width,
+          /*addedType*/ nullptr, type_args, volatile_args,
+          /*augmented*/ nullptr);
+    } else {
+      newFunc = Logic.CreateReverseDiff(
+          fn, retType, constants, TA,
+          /*should return*/ false, mode, freeMemory, width,
+          /*addedType*/ nullptr, type_args, volatile_args,
+          /*augmented*/ nullptr);
+    }
     if (!newFunc) {
       signalPassFailure();
       return;

@@ -35,12 +35,11 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     const SmallPtrSetImpl<mlir::Value> &activevals_, DIFFE_TYPE ReturnActivity,
     ArrayRef<DIFFE_TYPE> ArgDiffeTypes_, IRMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
-    DerivativeMode mode_, unsigned width, SymbolTableCollection &symbolTable_)
+    DerivativeMode mode_, unsigned width)
     : MDiffeGradientUtils(Logic, newFunc_, oldFunc_, TA_, /*MTypeResults*/ {},
                           invertedPointers_, constantvalues_, activevals_,
                           ReturnActivity, ArgDiffeTypes_, originalToNewFn_,
-                          originalToNewFnOps_, mode_, width, /*omp*/ false),
-      symbolTable(symbolTable_) {}
+                          originalToNewFnOps_, mode_, width, /*omp*/ false) {}
 
 Type mlir::enzyme::MGradientUtilsReverse::getIndexCacheType() {
   Type indexType = getIndexType();
@@ -135,8 +134,7 @@ MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
     MEnzymeLogic &Logic, DerivativeMode mode_, unsigned width,
     FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo,
     DIFFE_TYPE retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
-    ReturnType returnValue, mlir::Type additionalArg,
-    SymbolTableCollection &symbolTable_) {
+    ReturnType returnValue, mlir::Type additionalArg) {
   std::string prefix;
 
   switch (mode_) {
@@ -168,8 +166,8 @@ MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
       prefix + todiff.getName(), originalToNew, originalToNewOps,
       diffeReturnArg, additionalArg);
 
-  return new MGradientUtilsReverse(
-      Logic, newFunc, todiff, TA, invertedPointers, constant_values,
-      nonconstant_values, retType, constant_args, originalToNew,
-      originalToNewOps, mode_, width, symbolTable_);
+  return new MGradientUtilsReverse(Logic, newFunc, todiff, TA, invertedPointers,
+                                   constant_values, nonconstant_values, retType,
+                                   constant_args, originalToNew,
+                                   originalToNewOps, mode_, width);
 }

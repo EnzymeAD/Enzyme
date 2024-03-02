@@ -35,76 +35,6 @@ void handleReturns(Block *oBB, Block *newBB, Block *reverseBB,
   }
 }
 
-bool MEnzymeLogic::visitChildCustom(Operation *op, OpBuilder &builder,
-                                    MGradientUtilsReverse *gutils) {
-  std::string nameDiffe = "diffe_" + op->getName().getDialectNamespace().str() +
-                          "_" + op->getName().stripDialect().str();
-  std::string nameStore = "store_" + op->getName().getDialectNamespace().str() +
-                          "_" + op->getName().stripDialect().str();
-
-  StringRef srDiffe(nameDiffe);
-  StringRef srStore(nameStore);
-
-  OperationName opNameDiffe(srDiffe, op->getContext());
-  OperationName opNameStore(srStore, op->getContext());
-
-  Operation *symbolDiffe = gutils->symbolTable.lookupNearestSymbolFrom(
-      op, opNameDiffe.getIdentifier());
-  Operation *symbolStore = gutils->symbolTable.lookupNearestSymbolFrom(
-      op, opNameStore.getIdentifier());
-
-  if (symbolDiffe != nullptr) {
-    SmallVector<Value> caches;
-    if (symbolStore != nullptr) {
-      Operation *newOp = gutils->getNewFromOriginal(op);
-
-      func::FuncOp funcStore = cast<func::FuncOp>(symbolStore);
-
-      SmallVector<Type, 2> storeResultTypes;
-      for (auto x : funcStore.getFunctionType().getResults()) {
-        storeResultTypes.push_back(x);
-      }
-
-      SmallVector<Value, 2> storeArgs;
-      for (auto x : newOp->getOperands()) {
-        storeArgs.push_back(x);
-      }
-
-      OpBuilder storeBuilder(newOp);
-      func::CallOp storeCI = storeBuilder.create<func::CallOp>(
-          op->getLoc(), srStore, storeResultTypes, storeArgs);
-      for (auto x : storeCI.getResults()) {
-        caches.push_back(gutils->initAndPushCache(x, storeBuilder));
-      }
-    }
-
-    SmallVector<Value> args;
-    for (Value opResult : op->getResults()) {
-      if (!gutils->isConstantValue(opResult)) {
-        Value invertValue = gutils->invertPointerM(opResult, builder);
-        args.push_back(invertValue);
-      }
-    }
-    for (Value cache : caches) {
-      args.push_back(gutils->popCache(cache, builder));
-    }
-
-    SmallVector<Type, 2> resultTypes;
-    for (auto x : op->getOperands()) {
-      resultTypes.push_back(x.getType());
-    }
-
-    func::CallOp dCI =
-        builder.create<func::CallOp>(op->getLoc(), srDiffe, resultTypes, args);
-    for (int i = 0; i < (int)op->getNumOperands(); i++) {
-      gutils->setDiffe(op->getOperand(i), dCI.getResult(i), builder);
-    }
-
-    return true;
-  }
-  return false;
-}
-
 /*
 Create reverse mode adjoint for an operation.
 */
@@ -139,10 +69,7 @@ void MEnzymeLogic::visitChildren(Block *oBB, Block *reverseBB,
     auto last = oBB->rend();
     for (auto it = first; it != last; ++it) {
       Operation *op = &*it;
-      bool customFound = visitChildCustom(op, revBuilder, gutils);
-      if (!customFound) {
-        visitChild(op, revBuilder, gutils);
-      }
+      visitChild(op, revBuilder, gutils);
     }
   }
 }
@@ -257,8 +184,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     FunctionOpInterface fn, DIFFE_TYPE retType,
     std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed,
     DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
-    MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented,
-    SymbolTableCollection &symbolTable) {
+    MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented) {
 
   if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
@@ -268,7 +194,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
   ReturnType returnValue = ReturnType::Args;
   MGradientUtilsReverse *gutils = MGradientUtilsReverse::CreateFromClone(
       *this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true,
-      constants, returnValue, addedType, symbolTable);
+      constants, returnValue, addedType);
 
   Region &oldRegion = gutils->oldFunc.getFunctionBody();
   Region &newRegion = gutils->newFunc.getFunctionBody();

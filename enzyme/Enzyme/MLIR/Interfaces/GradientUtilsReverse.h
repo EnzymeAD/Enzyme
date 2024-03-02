@@ -31,12 +31,9 @@ public:
                         ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
                         IRMapping &originalToNewFn_,
                         std::map<Operation *, Operation *> &originalToNewFnOps_,
-                        DerivativeMode mode_, unsigned width,
-                        SymbolTableCollection &symbolTable_);
+                        DerivativeMode mode_, unsigned width);
 
   IRMapping mapReverseModeBlocks;
-
-  SymbolTableCollection &symbolTable;
 
   void addToDiffe(mlir::Value oldGradient, mlir::Value addedGradient,
                   OpBuilder &builder);
@@ -67,8 +64,7 @@ public:
                   FunctionOpInterface todiff, MTypeAnalysis &TA,
                   MFnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
                   bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
-                  ReturnType returnValue, mlir::Type additionalArg,
-                  SymbolTableCollection &symbolTable_);
+                  ReturnType returnValue, mlir::Type additionalArg);
 };
 
 } // namespace enzyme

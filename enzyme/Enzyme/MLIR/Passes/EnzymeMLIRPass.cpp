@@ -153,7 +153,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
         fn, retType, constants, TA,
         /*should return*/ false, mode, freeMemory, width,
         /*addedType*/ nullptr, type_args, volatile_args,
-        /*augmented*/ nullptr, symbolTable);
+        /*augmented*/ nullptr);
     if (!newFunc)
       return failure();
 

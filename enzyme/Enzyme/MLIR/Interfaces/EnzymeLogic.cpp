@@ -5,7 +5,6 @@
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "mlir/IR/Matchers.h"
-#include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
 // TODO: this shouldn't depend on specific dialects except Enzyme.
