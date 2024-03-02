@@ -119,8 +119,7 @@ public:
                     std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
                     bool returnUsed, DerivativeMode mode, bool freeMemory,
                     size_t width, mlir::Type addedType, MFnTypeInfo type_args,
-                    std::vector<bool> volatile_args, void *augmented,
-                    SymbolTableCollection &symbolTable);
+                    std::vector<bool> volatile_args, void *augmented);
   void
   initializeShadowValues(SmallVector<mlir::Block *> &dominatorToposortBlocks,
                          MGradientUtilsReverse *gutils);
@@ -132,8 +131,6 @@ public:
                      MGradientUtilsReverse *gutils);
   void visitChild(Operation *op, OpBuilder &builder,
                   MGradientUtilsReverse *gutils);
-  bool visitChildCustom(Operation *op, OpBuilder &builder,
-                        MGradientUtilsReverse *gutils);
   void mapInvertArguments(Block *oBB, Block *reverseBB,
                           MGradientUtilsReverse *gutils);
   SmallVector<mlir::Block *> getDominatorToposort(MGradientUtilsReverse *gutils,
