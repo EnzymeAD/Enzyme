@@ -66,16 +66,21 @@ void enzyme::ForwardActivityAnnotationAnalysis::setToEntryState(
 
 /// True iff all results differentially depend on all operands
 // TODO: differential dependency/activity interface
+// TODO: Select cond is not fully active
 static bool isFullyActive(Operation *op) {
   return isa<LLVM::FMulOp, LLVM::FAddOp, LLVM::FDivOp, LLVM::FSubOp,
              LLVM::FNegOp, LLVM::FAbsOp, LLVM::SqrtOp, LLVM::SinOp, LLVM::CosOp,
-             LLVM::Exp2Op, LLVM::ExpOp, LLVM::InsertValueOp,
-             LLVM::ExtractValueOp, LLVM::BitcastOp>(op);
+             LLVM::Exp2Op, LLVM::ExpOp, LLVM::LogOp, LLVM::InsertValueOp,
+             LLVM::ExtractValueOp, LLVM::BitcastOp, LLVM::SelectOp>(op);
 }
 
 static bool isNoOp(Operation *op) {
   return isa<LLVM::NoAliasScopeDeclOp, LLVM::LifetimeStartOp,
-             LLVM::LifetimeEndOp>(op);
+             LLVM::LifetimeEndOp, LLVM::AssumeOp>(op);
+}
+
+static bool isPossiblyActive(Type type) {
+  return isa<FloatType, ComplexType>(type);
 }
 
 void enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
@@ -139,8 +144,10 @@ void enzyme::ForwardActivityAnnotationAnalysis::processMemoryRead(
   // those origins to the read results.
   for (DistinctAttr srcClass : srcClasses->getAliasClasses()) {
     for (ForwardOriginsLattice *result : results) {
-      propagateIfChanged(result,
-                         result->merge(originsMap->getOrigins(srcClass)));
+      if (isPossiblyActive(result->getPoint().getType())) {
+        propagateIfChanged(result,
+                           result->merge(originsMap->getOrigins(srcClass)));
+      }
     }
   }
 }
@@ -189,6 +196,12 @@ void enzyme::ForwardActivityAnnotationAnalysis::visitExternalCall(
                                          results);
     }
   }
+
+  // In the absence of a summary attribute, assume all results differentially
+  // depend on all operands
+  for (ForwardOriginsLattice *result : results)
+    for (const ForwardOriginsLattice *operand : operands)
+      join(result, *operand);
 }
 
 void enzyme::ForwardActivityAnnotationAnalysis::processCallToSummarizedFunc(
@@ -291,6 +304,12 @@ void enzyme::BackwardActivityAnnotationAnalysis::visitExternalCall(
                                          results);
     }
   }
+
+  // In the absence of a summary attribute, assume all results differentially
+  // depend on all operands
+  for (BackwardOriginsLattice *operand : operands)
+    for (const BackwardOriginsLattice *result : results)
+      meet(operand, *result);
 }
 
 void enzyme::BackwardActivityAnnotationAnalysis::processCallToSummarizedFunc(

@@ -268,6 +268,12 @@ static bool isMustStore(Operation *op, Value pointer) {
   return false; // isa<LLVM::StoreOp>(op);
 }
 
+// TODO: This should be integrated into an interface somewhere
+static bool isNoOp(Operation *op) {
+  return isa<LLVM::NoAliasScopeDeclOp, LLVM::LifetimeStartOp,
+             LLVM::LifetimeEndOp, LLVM::AssumeOp>(op);
+}
+
 void enzyme::PointsToPointerAnalysis::visitOperation(Operation *op,
                                                      const PointsToSets &before,
                                                      PointsToSets *after) {
@@ -277,8 +283,7 @@ void enzyme::PointsToPointerAnalysis::visitOperation(Operation *op,
   // fixpoint and bail.
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
-    if (isa<LLVM::NoAliasScopeDeclOp, LLVM::LifetimeStartOp,
-            LLVM::LifetimeEndOp>(op)) {
+    if (isNoOp(op)) {
       // Treat this as a no-op
       return;
     }
