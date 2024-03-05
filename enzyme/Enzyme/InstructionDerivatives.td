@@ -934,6 +934,13 @@ def : IntrPattern<(Op $x),
                   (ForwardFromSummedReverse)
                  >;
 
+
+def : CallPattern<(Op (Op $x, $y):$z),
+                  ["cmplx_sqrt"],
+                  [(Select (And (FCmpUEQ $x, (ConstantFP<"0"> $x)), (FCmpUEQ $y, (ConstantFP<"0"> $y))), (ConstantCFP<"0", "0"> $z), (Conj (CFDiv (Conj (DiffeRet)), (CFMul (ConstantCFP<"2", "0"> $z), (Call<(SameFunc), [ReadNone,NoUnwind]> $z)))))],
+                  (Select (And (FCmpUEQ $x, (ConstantFP<"0"> $x)), (FCmpUEQ $y, (ConstantFP<"0"> $y))), (ConstantCFP<"0", "0"> $z), (CFDiv (Shadow $z), (CFMul (ConstantCFP<"2", "0"> $z), (Call<(SameFunc), [ReadNone,NoUnwind]> $z))))
+                 >;
+
 def : IntrPattern<(Op $x, $y),
                   [["pow"]],
                   [
