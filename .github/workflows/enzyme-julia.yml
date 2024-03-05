@@ -23,9 +23,9 @@ jobs:
           - '1.8'
         os:
           - ubuntu-latest
-          - macOS-latest
-        arch:
-          - x64
+          - macos-13
+          - macos-14
+          
     timeout-minutes: 60 
     steps:
     - uses: actions/checkout@v4
@@ -37,15 +37,14 @@ jobs:
     - uses: julia-actions/setup-julia@v1
       with:
         version: ${{ matrix.version }}
-        arch: ${{ matrix.arch }}
 
     - name: Build libEnzyme
-      if: ${{ matrix.os != 'macOS-latest'}}
+      if: ${{ matrix.os == 'ubuntu-latest'}}
       run: |
         julia --project=jl/deps -e 'using Pkg; Pkg.instantiate()'
         julia --project=jl/deps jl/deps/build_local.jl ./enzyme
     - name: Build libEnzyme MacOS
-      if: ${{ matrix.os == 'macOS-latest'}}
+      if: ${{ matrix.os == 'macos-13'}}
       run: |
         julia --project=jl/deps -e 'using Pkg; Pkg.instantiate()'
         SDKROOT=`xcrun --show-sdk-path` julia --project=jl/deps jl/deps/build_local.jl ./enzyme
