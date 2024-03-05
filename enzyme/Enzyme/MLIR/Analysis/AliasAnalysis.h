@@ -26,6 +26,8 @@
 #ifndef ENZYME_MLIR_ANALYSIS_DATAFLOW_ALIASANALYSIS_H
 #define ENZYME_MLIR_ANALYSIS_DATAFLOW_ALIASANALYSIS_H
 
+#include "Lattice.h"
+
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
@@ -42,85 +44,7 @@ namespace enzyme {
 /// marked as "unknown", which is a conservative pessimistic state, or as
 /// "undefined", which is a "not-yet-analyzed" initial state. Undefined state is
 /// different from an empty alias set.
-class AliasClassSet {
-public:
-  enum class State {
-    Undefined, ///< Has not been analyzed yet (lattice bottom).
-    Defined,   ///< Has specific alias classes.
-    Unknown    ///< Analyzed and may point to any class (lattice top).
-  };
-
-  AliasClassSet() : state(State::Undefined) {}
-
-  AliasClassSet(DistinctAttr single) : state(State::Defined) {
-    aliasClasses.insert(single);
-  }
-
-  // TODO(zinenko): deprecate this and use a visitor instead.
-  DenseSet<DistinctAttr> &getAliasClasses() {
-    assert(state == State::Defined);
-    return aliasClasses;
-  }
-  const DenseSet<DistinctAttr> &getAliasClasses() const {
-    return const_cast<AliasClassSet *>(this)->getAliasClasses();
-  }
-
-  bool isUnknown() const { return state == State::Unknown; }
-  bool isUndefined() const { return state == State::Undefined; }
-
-  ChangeResult join(const AliasClassSet &other);
-  ChangeResult insert(const DenseSet<DistinctAttr> &classes);
-  ChangeResult markUnknown();
-
-  /// Returns true if this set is in the canonical form, i.e. either the state
-  /// is `State::Defined` or the explicit list of classes is empty, but not
-  /// both.
-  bool isCanonical() const;
-
-  /// Returns an instance of AliasClassSet known not to alias with anything.
-  /// This is different from "undefined" and "unknown". The instance is *not* a
-  /// classical singleton.
-  static const AliasClassSet &getEmpty() {
-    static const AliasClassSet empty(State::Defined);
-    return empty;
-  }
-
-  /// Returns an instance of AliasClassSet in "undefined" state, i.e. without a
-  /// set of alias classes. This is different from empty alias set, which
-  /// indicates that the value is known not to alias with any alias class. The
-  /// instance is *not* a classical singleton, there are other ways of obtaining
-  /// it.
-  static const AliasClassSet &getUndefined() { return undefinedSet; }
-
-  /// Returns an instance of AliasClassSet for the "unknown" class. The instance
-  /// is *not* a classical singleton, there are other ways of obtaining an
-  /// "unknown" alias set.
-  static const AliasClassSet &getUnknown() { return unknownSet; }
-
-  bool operator==(const AliasClassSet &other) const;
-
-  void print(llvm::raw_ostream &os) const;
-
-  ChangeResult
-  foreachClass(function_ref<ChangeResult(DistinctAttr, State)> callback) const;
-
-private:
-  explicit AliasClassSet(State state) : state(state) {}
-
-  ChangeResult updateStateToDefined() {
-    assert(state != State::Unknown && "cannot go back from unknown state");
-    ChangeResult result = state == State::Undefined ? ChangeResult::Change
-                                                    : ChangeResult::NoChange;
-    state = State::Defined;
-    return result;
-  }
-
-  const static AliasClassSet unknownSet;
-  const static AliasClassSet undefinedSet;
-
-  DenseSet<DistinctAttr> aliasClasses;
-  State state;
-};
+using AliasClassSet = SetLattice<DistinctAttr>;
 
 //===----------------------------------------------------------------------===//
 // OriginalClasses
@@ -179,13 +103,11 @@ private:
 // pointers stored/loaded through memory.
 //===----------------------------------------------------------------------===//
 
-class PointsToSets : public dataflow::AbstractDenseLattice {
+class PointsToSets : public MapOfSetsLattice<DistinctAttr, DistinctAttr> {
 public:
-  using AbstractDenseLattice::AbstractDenseLattice;
+  using MapOfSetsLattice::MapOfSetsLattice;
 
   void print(raw_ostream &os) const override;
-
-  ChangeResult join(const AbstractDenseLattice &lattice) override;
 
   /// Mark the pointer stored in `dest` as possibly pointing to any of `values`,
   /// instead of the values it may be currently pointing to.
@@ -214,18 +136,13 @@ public:
 
   /// Mark the entire data structure as "unknown", that is, any pointer may be
   /// containing any other pointer. This is the full pessimistic fixpoint.
-  ChangeResult markAllPointToUnknown();
+  ChangeResult markAllPointToUnknown() { return markAllUnknown(); }
 
   /// Mark all alias classes except the given ones to point to the "unknown"
   /// alias set.
   ChangeResult markAllExceptPointToUnknown(const AliasClassSet &destClasses);
 
-  const AliasClassSet &getPointsTo(DistinctAttr id) const {
-    auto it = pointsTo.find(id);
-    if (it == pointsTo.end())
-      return AliasClassSet::getUndefined();
-    return it->getSecond();
-  }
+  const AliasClassSet &getPointsTo(DistinctAttr id) const { return lookup(id); }
 
 private:
   /// Update all alias classes in `keysToUpdate` to additionally point to alias
@@ -242,24 +159,6 @@ private:
   /// in the lattice, not only the replacements described above.
   ChangeResult update(const AliasClassSet &keysToUpdate,
                       const AliasClassSet &values, bool replace);
-
-  ChangeResult joinPotentiallyMissing(DistinctAttr key,
-                                      const AliasClassSet &value);
-
-  /// Indicates that alias classes not listed as keys in `pointsTo` point to
-  /// unknown alias set (when true) or an empty alias set (when false).
-  // TODO: consider also differentiating between pointing to known-empty vs.
-  // not-yet-computed.
-  // bool otherPointToUnknown = false;
-
-  // missing from map always beings "undefined", "unknown"s are stored
-  // explicitly.
-
-  /// Maps an identifier of an alias set to the set of alias sets its value may
-  /// belong to. When an identifier is not present in this map, it is considered
-  /// to point to either the unknown set or nothing, based on the value of
-  /// `otherPointToUnknown`.
-  DenseMap<DistinctAttr, AliasClassSet> pointsTo;
 };
 
 //===----------------------------------------------------------------------===//
@@ -286,6 +185,11 @@ public:
                              Value capturedValue, Value destinationAddress,
                              bool isMustStore = false);
 
+  void
+  processCallToSummarizedFunc(CallOpInterface call,
+                              DenseMap<DistinctAttr, AliasClassSet> &summary,
+                              PointsToSets *after);
+
 private:
   /// Alias classes originally assigned to known-distinct values, e.g., fresh
   /// allocations, by this analysis. This does NOT necessarily need to be shared
@@ -298,12 +202,9 @@ private:
 // AliasClassLattice
 //===----------------------------------------------------------------------===//
 
-class AliasClassLattice : public dataflow::AbstractSparseLattice {
+class AliasClassLattice : public SparseSetLattice<DistinctAttr> {
 public:
-  using AbstractSparseLattice::AbstractSparseLattice;
-  AliasClassLattice(Value value, AliasClassSet &&classes)
-      : dataflow::AbstractSparseLattice(value),
-        aliasClasses(std::move(classes)) {}
+  using SparseSetLattice::SparseSetLattice;
 
   void print(raw_ostream &os) const override;
 
@@ -311,31 +212,15 @@ public:
 
   ChangeResult join(const AbstractSparseLattice &other) override;
 
-  ChangeResult insert(const DenseSet<DistinctAttr> &classes) {
-    return aliasClasses.insert(classes);
-  }
-
   static AliasClassLattice single(Value point, DistinctAttr value) {
     return AliasClassLattice(point, AliasClassSet(value));
   }
 
-  ChangeResult markUnknown() { return aliasClasses.markUnknown(); }
-
-  // ChangeResult reset() { return aliasClasses.reset(); }
-
-  /// We don't know anything about the aliasing of this value.
-  bool isUnknown() const { return aliasClasses.isUnknown(); }
-
-  bool isUndefined() const { return aliasClasses.isUndefined(); }
-
   const DenseSet<DistinctAttr> &getAliasClasses() const {
-    return aliasClasses.getAliasClasses();
+    return elements.getElements();
   }
 
-  const AliasClassSet &getAliasClassesObject() const { return aliasClasses; }
-
-private:
-  AliasClassSet aliasClasses;
+  const AliasClassSet &getAliasClassesObject() const { return elements; }
 };
 
 //===----------------------------------------------------------------------===//
@@ -346,9 +231,13 @@ private:
 class AliasAnalysis
     : public dataflow::SparseForwardDataFlowAnalysis<AliasClassLattice> {
 public:
-  AliasAnalysis(DataFlowSolver &solver, MLIRContext *ctx)
+  AliasAnalysis(DataFlowSolver &solver, MLIRContext *ctx, bool relative = false)
       : SparseForwardDataFlowAnalysis(solver),
-        entryClass(DistinctAttr::create(StringAttr::get(ctx, "entry"))) {}
+        entryClass(DistinctAttr::create(StringAttr::get(ctx, "entry"))),
+        relative(relative) {
+    if (relative)
+      assert(!solver.getConfig().isInterprocedural());
+  }
 
   void setToEntryState(AliasClassLattice *lattice) override;
 
@@ -365,8 +254,20 @@ private:
                 ArrayRef<const AliasClassLattice *> operands,
                 ArrayRef<AliasClassLattice *> results);
 
+  // Create a pseudo alias class when loading from a function argument where we
+  // don't know what it points to. The pseudo class indicates that it points to
+  // _something_ and is expected to be unified with a concrete alias class when
+  // the function summaries are used at this function's call sites.
+  void createImplicitArgDereference(Operation *op, AliasClassLattice *source,
+                                    DistinctAttr srcClass,
+                                    AliasClassLattice *result);
+
   /// A special alias class to denote unannotated pointer arguments.
   const DistinctAttr entryClass;
+
+  /// If true, the analysis will operate in a relative intraprocedural way
+  /// assuming it is called bottom-up on the function call graph.
+  const bool relative;
 
   /// Alias classes originally assigned to known-distinct values, e.g., fresh
   /// allocations, by this analysis. This does NOT necessarily need to be shared

@@ -26,6 +26,70 @@ include "mlir/Interfaces/FunctionInterfaces.td"
 include "mlir/Interfaces/LoopLikeInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
+class Enzyme_Attr<string name, string attrMnemonic, list<Trait> traits = []>
+    : AttrDef<Enzyme_Dialect, name, traits> {
+  let mnemonic = attrMnemonic;
+}
+
+def PseudoAliasClassAttr : Enzyme_Attr<"PseudoAliasClass", "pseudoclass"> {
+  let summary = "A pseudo alias class represents a memory allocation passed into a function.";
+
+  let parameters = (ins
+    "FlatSymbolRefAttr":$function,
+    "unsigned":$argNumber,
+    "unsigned":$depth
+  );
+
+  let builders = [
+    AttrBuilderWithInferredContext<(ins "FlatSymbolRefAttr":$function,
+                                        "unsigned":$argNumber,
+                                        "unsigned":$depth), [{
+      return $_get(function.getContext(), function, argNumber, depth);
+    }]>
+  ];
+
+  let assemblyFormat = "`<` $function `(` $argNumber `,` $depth `)` `>`";
+}
+
+def OriginAttrInterface : AttrInterface<"OriginAttr"> {
+  let cppNamespace = "::mlir::enzyme";
+}
+
+def ArgumentOriginAttr : Enzyme_Attr<"ArgumentOrigin", "argorigin", [OriginAttrInterface]> {
+  let summary = "An argument origin is a unique way of referring to a function argument.";
+
+  let parameters = (ins
+    "FlatSymbolRefAttr":$function,
+    "unsigned":$argNumber
+  );
+
+  let builders = [
+    AttrBuilderWithInferredContext<(ins "FlatSymbolRefAttr":$function,
+                                        "unsigned":$argNumber), [{
+      return $_get(function.getContext(), function, argNumber);
+    }]>
+  ];
+
+  let assemblyFormat = "`<` $function `(` $argNumber `)` `>`";
+}
+
+def ReturnOriginAttr : Enzyme_Attr<"ReturnOrigin", "retorigin", [OriginAttrInterface]> {
+  let summary = "A return origin is a unique way of referring to a return value.";
+
+  let parameters = (ins
+    "FlatSymbolRefAttr":$function,
+    "unsigned":$returnNumber
+  );
+
+  let builders = [
+    AttrBuilderWithInferredContext<(ins "FlatSymbolRefAttr":$function,
+                                        "unsigned":$returnNumber), [{
+      return $_get(function.getContext(), function, returnNumber);
+    }]>
+  ];
+
+  let assemblyFormat = "`<` $function `(` $returnNumber `)` `>`";
+}
 
 def Activity : I32EnumAttr<"Activity",
     "Possible activity states for variables",

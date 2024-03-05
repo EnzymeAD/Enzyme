@@ -24,6 +24,7 @@
 #include "Dialect/EnzymeOpsTypes.h.inc"
 // #include "Dialect/EnzymeTypes.h.inc"
 
+#include "Dialect/EnzymeAttributeInterfaces.h.inc"
 #include "Dialect/EnzymeEnums.h.inc"
 
 #define GET_ATTRDEF_CLASSES
