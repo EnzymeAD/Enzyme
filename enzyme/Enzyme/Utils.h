@@ -318,11 +318,14 @@ enum class ReturnType {
 
 /// Potential differentiable argument classifications
 enum class DIFFE_TYPE {
-  OUT_DIFF = 0,  // add differential to an output struct
-  DUP_ARG = 1,   // duplicate the argument and store differential inside
-  CONSTANT = 2,  // no differential
+  OUT_DIFF = 0, // add differential to an output struct. Only for scalar values
+                // in ReverseMode variants.
+  DUP_ARG = 1,  // duplicate the argument and store differential inside.
+               // For references, pointers, or integers in ReverseMode variants.
+               // For all types in ForwardMode variants.
+  CONSTANT = 2,  // no differential. Usable everywhere.
   DUP_NONEED = 3 // duplicate this argument and store differential inside, but
-                 // don't need the forward
+                 // don't need the forward. Same as DUP_ARG otherwise.
 };
 
 enum class BATCH_TYPE {
@@ -1155,6 +1158,7 @@ static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op)
     bool b = AttrList.getAttribute("enzyme_allocator")
                  .getValueAsString()
                  .getAsInteger(10, res);
+    (void)b;
     assert(!b);
 #if LLVM_VERSION_MAJOR >= 16
     return std::optional<size_t>(res);
@@ -1169,6 +1173,7 @@ static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op)
       bool b = called->getFnAttribute("enzyme_allocator")
                    .getValueAsString()
                    .getAsInteger(10, res);
+      (void)b;
       assert(!b);
 #if LLVM_VERSION_MAJOR >= 16
       return std::optional<size_t>(res);
@@ -1225,6 +1230,7 @@ static inline std::vector<ssize_t> getDeallocationIndicesFromCall(T *op) {
   for (auto ind : inds) {
     ssize_t Result;
     bool b = ind.getAsInteger(10, Result);
+    (void)b;
     assert(!b);
     vinds.push_back(Result);
   }
@@ -1241,6 +1247,8 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
                             llvm::DebugLoc &&loc, llvm::Instruction *orig);
 
 llvm::Function *GetFunctionFromValue(llvm::Value *fn);
+
+llvm::Value *simplifyLoad(llvm::Value *LI, size_t valSz = 0);
 
 static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
   auto F = getFunctionFromCall(CI);
@@ -1352,10 +1360,11 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
       auto AttrList = Call->getAttributes().getAttributes(
           llvm::AttributeList::FunctionIndex);
       if (AttrList.hasAttribute("enzyme_pointermath")) {
-        size_t res;
+        size_t res = 0;
         bool failed = AttrList.getAttribute("enzyme_pointermath")
                           .getValueAsString()
                           .getAsInteger(10, res);
+        (void)failed;
         assert(!failed);
         V = Call->getArgOperand(res);
         continue;
@@ -1383,10 +1392,11 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
         auto AttrList = fn->getAttributes().getAttributes(
             llvm::AttributeList::FunctionIndex);
         if (AttrList.hasAttribute("enzyme_pointermath")) {
-          size_t res;
+          size_t res = 0;
           bool failed = AttrList.getAttribute("enzyme_pointermath")
                             .getValueAsString()
                             .getAsInteger(10, res);
+          (void)failed;
           assert(!failed);
           V = Call->getArgOperand(res);
           continue;

@@ -6,22 +6,29 @@ define double @f(double %x, double %y, i1 %cond) {
   ret double %res
 }
 
-declare double (double, double, i1)* @__enzyme_truncate_func(...)
+declare double (double, double, i1)* @__enzyme_truncate_mem_func(...)
+declare double (double, double, i1)* @__enzyme_truncate_op_func(...)
 
 define double @tester(double %x, double %y, i1 %cond) {
 entry:
-  %ptr = call double (double, double, i1)* (...) @__enzyme_truncate_func(double (double, double, i1)* @f, i64 64, i64 32)
+  %ptr = call double (double, double, i1)* (...) @__enzyme_truncate_mem_func(double (double, double, i1)* @f, i64 64, i64 32)
+  %res = call double %ptr(double %x, double %y, i1 %cond)
+  ret double %res
+}
+
+define double @tester2(double %x, double %y, i1 %cond) {
+entry:
+  %ptr = call double (double, double, i1)* (...) @__enzyme_truncate_op_func(double (double, double, i1)* @f, i64 64, i64 32)
   %res = call double %ptr(double %x, double %y, i1 %cond)
   ret double %res
 }
 
 ; CHECK: define double @tester(double %x, double %y, i1 %cond) {
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %res = call double @trunc_64_32f(double %x, double %y, i1 %cond)
+; CHECK-NEXT:   %res = call double @__enzyme_done_truncate_mem_func_64_52to32_23_f(double %x, double %y, i1 %cond)
 ; CHECK-NEXT:   ret double %res
-; CHECK-NEXT: }
 
-; CHECK: define internal double @trunc_64_32f(double %x, double %y, i1 %cond) {
+; CHECK: define internal double @__enzyme_done_truncate_mem_func_64_52to32_23_f(double %x, double %y, i1 %cond) {
 ; CHECK-DAG:    %1 = alloca double, align 8
 ; CHECK-DAG:    store double %x, double* %1, align 8
 ; CHECK-DAG:    %2 = bitcast double* %1 to float*
@@ -36,4 +43,7 @@ entry:
 ; CHECK-DAG:    store float %res, float* %7, align 4
 ; CHECK-DAG:    %8 = load double, double* %1, align 8
 ; CHECK-DAG:    ret double %8
-; CHECK-NEXT: }
+
+; CHECK: define internal double @__enzyme_done_truncate_op_func_64_52to32_23_f(double %x, double %y, i1 %cond) {
+; CHECK-DAG:   %res = select i1 %cond, double %x, double %y
+; CHECK-DAG:   ret double %res

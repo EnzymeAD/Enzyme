@@ -156,9 +156,10 @@ class TypeAnalysis;
 /// on a given function
 class TypeResults {
 public:
-  TypeAnalyzer &analyzer;
+  TypeAnalyzer *analyzer;
 
 public:
+  TypeResults(std::nullptr_t);
   TypeResults(TypeAnalyzer &analyzer);
   ConcreteType intType(size_t num, llvm::Value *val, bool errIfNotFound = true,
                        bool pointerIntSame = false) const;
@@ -173,6 +174,16 @@ public:
 
   /// The TypeTree of a particular Value
   TypeTree query(llvm::Value *val) const;
+
+  /// Whether any part of the top level register can contain a float
+  ///   e.g. { i64, float } can contain a  float, but { i64, i8* } would not.
+  //    Of course, here we compute with type analysis rather than llvm type
+  bool anyFloat(llvm::Value *val) const;
+
+  /// Whether any part of the top level register can contain a pointer
+  ///   e.g. { i64, i8* } can contain a pointer, but { i64, float } would not.
+  //    Of course, here we compute with type analysis rather than llvm type
+  bool anyPointer(llvm::Value *val) const;
 
   /// The TypeInfo calling convention
   FnTypeInfo getAnalyzedTypeInfo() const;
@@ -247,6 +258,8 @@ public:
   llvm::ScalarEvolution &SE;
 
   FnTypeInfo getCallInfo(llvm::CallBase &CI, llvm::Function &fn);
+
+  TypeAnalyzer(TypeAnalysis &TA);
 
   TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
                uint8_t direction = BOTH);

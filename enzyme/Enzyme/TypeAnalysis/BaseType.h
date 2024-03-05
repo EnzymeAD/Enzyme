@@ -26,7 +26,6 @@
 #define ENZYME_TYPE_ANALYSIS_BASE_TYPE_H 1
 
 #include "llvm/ADT/StringRef.h"
-#include "llvm/Support/ErrorHandling.h"
 #include <string>
 
 /// Categories of potential types
@@ -57,7 +56,8 @@ static inline std::string to_string(BaseType t) {
   case BaseType::Unknown:
     return "Unknown";
   }
-  llvm_unreachable("unknown inttype");
+  assert(0 && "unknown inttype");
+  return "<Invalid IntType>";
 }
 
 /// Convert string to BaseType
@@ -72,6 +72,7 @@ static inline BaseType parseBaseType(llvm::StringRef str) {
     return BaseType::Anything;
   if (str == "Unknown")
     return BaseType::Unknown;
-  llvm_unreachable("Unknown BaseType string");
+  assert(0 && "Unknown BaseType string");
+  return BaseType::Unknown;
 }
 #endif

@@ -83,7 +83,6 @@ TypeTree parseDIType(DICompositeType &Type, Instruction &I, DataLayout &DL) {
         assert(0 && "There shouldn't be non-constant-size arrays in Rust");
       }
     }
-    return Result;
   } else if (Type.getTag() == dwarf::DW_TAG_structure_type ||
              Type.getTag() == dwarf::DW_TAG_union_type) {
     DINodeArray Elements = Type.getElements();
@@ -108,11 +107,11 @@ TypeTree parseDIType(DICompositeType &Type, Instruction &I, DataLayout &DL) {
         firstSubTT = !firstSubTT;
       }
     }
-    return Result;
   } else {
     assert(0 && "Composite types other than arrays, structs and unions are not "
                 "supported by Rust debug info parser");
   }
+  return Result;
 }
 
 TypeTree parseDIType(DIDerivedType &Type, Instruction &I, DataLayout &DL) {
@@ -134,6 +133,7 @@ TypeTree parseDIType(DIDerivedType &Type, Instruction &I, DataLayout &DL) {
     assert(0 && "Derived types other than pointers and members are not "
                 "supported by Rust debug info parser");
   }
+  return {};
 }
 
 TypeTree parseDIType(DIType &Type, Instruction &I, DataLayout &DL) {
@@ -151,6 +151,7 @@ TypeTree parseDIType(DIType &Type, Instruction &I, DataLayout &DL) {
     assert(0 && "Types other than floating-points, integers, arrays, pointers, "
                 "slices, and structs are not supported by debug info parser");
   }
+  return {};
 }
 
 bool isU8PointerType(DIType &type) {

@@ -11,18 +11,12 @@
 // procedure to the MemRef dialect.
 //===----------------------------------------------------------------------===//
 
-#include "Dialect/Dialect.h"
 #include "Dialect/Ops.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Transforms/DialectConversion.h"
 
-#include "mlir/Rewrite/PatternApplicator.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "Interfaces/AutoDiffTypeInterface.h"
@@ -51,9 +45,6 @@ SmallVector<Value> applyAffineMap(AffineMap aMap, SmallVector<Value> indices,
 struct AddToOpToIndexAndLoadPass
     : public enzyme::AddToOpToIndexAndLoadPassBase<AddToOpToIndexAndLoadPass> {
   void runOnOperation() override {
-    MLIRContext *context = &getContext();
-    ConversionPatternRewriter rewriter(context);
-
     getOperation()->walk([&](Operation *op) {
       auto loc = op->getLoc();
       auto enzymeAdjoint = dyn_cast<enzyme::GenericAdjointOp>(op);
@@ -94,7 +85,7 @@ struct AddToOpToIndexAndLoadPass
         // auto load = cacheBuilder.create<AffineLoadOp>(loc, inputs[i], map[i],
         // indices); auto store = cacheBuilder.create<AffineStoreOp>(loc, load,
         // inputs[i], map[i], indices);
-        ValueRange mapAppliedIndices =
+        SmallVector<Value> mapAppliedIndices =
             applyAffineMap(map[num_ins + i], indices, cacheBuilder, loc);
         auto load = cacheBuilder.create<memref::LoadOp>(loc, outs[i],
                                                         mapAppliedIndices);
@@ -105,7 +96,7 @@ struct AddToOpToIndexAndLoadPass
       }
 
       for (int i = 0; i < retargs.size(); i++) {
-        ValueRange mapAppliedIndices =
+        SmallVector<Value> mapAppliedIndices =
             applyAffineMap(map[num_ins + i], indices, cacheBuilder, loc);
         auto load = cacheBuilder.create<memref::LoadOp>(loc, outs[i],
                                                         mapAppliedIndices);

@@ -61,6 +61,12 @@
 
 #include <math.h>
 
+#if LLVM_VERSION_MAJOR >= 14
+#define getAttribute getAttributeAtIndex
+#define hasAttribute hasAttributeAtIndex
+#define addAttribute addAttributeAtIndex
+#endif
+
 using namespace llvm;
 
 extern "C" {
@@ -157,6 +163,7 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
 
     {"__fd_sincos_1", Intrinsic::not_intrinsic},
     {"sincospi", Intrinsic::not_intrinsic},
+    {"cmplx_inv", Intrinsic::not_intrinsic},
 
     // bessel functions
     {"j0", Intrinsic::not_intrinsic},
@@ -167,6 +174,7 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"yn", Intrinsic::not_intrinsic},
     {"tgamma", Intrinsic::not_intrinsic},
     {"lgamma", Intrinsic::not_intrinsic},
+    {"logabsgamma", Intrinsic::not_intrinsic},
     {"ceil", Intrinsic::ceil},
     {"__nv_ceil", Intrinsic::ceil},
     {"floor", Intrinsic::floor},
@@ -174,6 +182,7 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"trunc", Intrinsic::trunc},
     {"round", Intrinsic::round},
     {"rint", Intrinsic::rint},
+    {"nearbyint", Intrinsic::nearbyint},
     {"remainder", Intrinsic::not_intrinsic},
     {"copysign", Intrinsic::copysign},
     {"nextafter", Intrinsic::not_intrinsic},
@@ -746,6 +755,9 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       delete g2;
 
       int Off = (int)ai.getLimitedValue();
+      if (auto VT = dyn_cast<VectorType>(Val->getType()))
+        if (VT->getElementType()->isIntegerTy(1))
+          Off = i / 8;
 
       getConstantAnalysis(Op, TA, analysis);
       auto mid = analysis[Op];
@@ -1201,18 +1213,57 @@ void TypeAnalyzer::considerTBAA() {
       }
 
       if (CallBase *call = dyn_cast<CallBase>(&I)) {
+#if LLVM_VERSION_MAJOR >= 14
+        size_t num_args = call->arg_size();
+#else
+        size_t num_args = call->getNumArgOperands();
+#endif
+
+        if (call->getAttributes().hasAttribute(AttributeList::ReturnIndex,
+                                               "enzyme_type")) {
+          auto attr = call->getAttributes().getAttribute(
+              AttributeList::ReturnIndex, "enzyme_type");
+          auto TT =
+              TypeTree::parse(attr.getValueAsString(), call->getContext());
+          updateAnalysis(call, TT, call);
+        }
+        for (size_t i = 0; i < num_args; i++) {
+          if (call->getAttributes().hasParamAttr(i, "enzyme_type")) {
+            auto attr = call->getAttributes().getParamAttr(i, "enzyme_type");
+            auto TT =
+                TypeTree::parse(attr.getValueAsString(), call->getContext());
+            updateAnalysis(call->getArgOperand(i), TT, call);
+          }
+        }
+
         Function *F = call->getCalledFunction();
+
+        if (F) {
+          if (F->getAttributes().hasAttribute(AttributeList::ReturnIndex,
+                                              "enzyme_type")) {
+            auto attr = F->getAttributes().getAttribute(
+                AttributeList::ReturnIndex, "enzyme_type");
+            auto TT =
+                TypeTree::parse(attr.getValueAsString(), call->getContext());
+            updateAnalysis(call, TT, call);
+          }
+          size_t f_num_args = F->arg_size();
+          for (size_t i = 0; i < f_num_args; i++) {
+            if (F->getAttributes().hasParamAttr(i, "enzyme_type")) {
+              auto attr = F->getAttributes().getParamAttr(i, "enzyme_type");
+              auto TT =
+                  TypeTree::parse(attr.getValueAsString(), call->getContext());
+              updateAnalysis(call->getArgOperand(i), TT, call);
+            }
+          }
+        }
+
         if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledOperand())) {
           if (castinst->isCast())
             if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
               F = fn;
             }
         }
-#if LLVM_VERSION_MAJOR >= 14
-        size_t num_args = call->arg_size();
-#else
-        size_t num_args = call->getNumArgOperands();
-#endif
         if (F && F->getName().contains("__enzyme_float")) {
           assert(num_args == 1 || num_args == 2);
           assert(call->getArgOperand(0)->getType()->isPointerTy());
@@ -1854,6 +1905,7 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
   MapVector<Value *, APInt> VariableOffsets;
   bool legalOffset =
       collectOffset(&gep, DL, BitWidth, VariableOffsets, constOffset);
+  (void)legalOffset;
   assert(legalOffset);
 
   SmallVector<std::set<int>, 4> idnext;
@@ -2932,7 +2984,32 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           // If ^ against 0b10000000000, the result is a float
           bool validXor = containsOnlyAtMostTopBit(Args[i], FT, dl);
           if (validXor) {
-            ((i == 0) ? RHS : LHS) |= TypeTree(FT).Only(-1, nullptr);
+            bool Legal = true;
+            ((i == 0) ? RHS : LHS)
+                .checkedOrIn(TypeTree(FT).Only(-1, nullptr),
+                             /*pointerintsame*/ false, Legal);
+
+            if (!Legal) {
+              std::string str;
+              raw_string_ostream ss(str);
+              if (!CustomErrorHandler) {
+                llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
+                llvm::errs() << *fntypeinfo.Function << "\n";
+                dump(ss);
+              }
+              ss << "Illegal updateBinop (xor up) Analysis " << *origin << "\n";
+              ss << " (i=" << i << ") " << (i == 0 ? "RHS" : "LHS") << " "
+                 << ((i == 0) ? RHS : LHS).str() << " FT from ret: " << *FT
+                 << "\n";
+              if (CustomErrorHandler) {
+                CustomErrorHandler(str.c_str(), wrap(origin),
+                                   ErrorType::IllegalTypeAnalysis, (void *)this,
+                                   wrap(origin), nullptr);
+              }
+              EmitFailure("IllegalUpdateAnalysis", origin->getDebugLoc(),
+                          origin, ss.str());
+              report_fatal_error("Performed illegal updateAnalysis");
+            }
           }
         }
       break;
@@ -3861,7 +3938,34 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
             .Only(-1, &I),
         &I);
     return;
-
+#if LLVM_VERSION_MAJOR >= 12
+  case Intrinsic::smax:
+  case Intrinsic::smin:
+  case Intrinsic::umax:
+  case Intrinsic::umin:
+    if (direction & UP) {
+      auto returnType = getAnalysis(&I)[{-1}];
+      if (returnType == BaseType::Integer || returnType == BaseType::Pointer) {
+        updateAnalysis(I.getOperand(0), TypeTree(returnType).Only(-1, &I), &I);
+        updateAnalysis(I.getOperand(1), TypeTree(returnType).Only(-1, &I), &I);
+      }
+    }
+    if (direction & DOWN) {
+      auto opType0 = getAnalysis(I.getOperand(0))[{-1}];
+      auto opType1 = getAnalysis(I.getOperand(1))[{-1}];
+      if (opType0 == opType1 &&
+          (opType0 == BaseType::Integer || opType0 == BaseType::Pointer)) {
+        updateAnalysis(&I, TypeTree(opType0).Only(-1, &I), &I);
+      } else if (opType0 == BaseType::Integer &&
+                 opType1 == BaseType::Anything) {
+        updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1, &I), &I);
+      } else if (opType1 == BaseType::Integer &&
+                 opType0 == BaseType::Anything) {
+        updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1, &I), &I);
+      }
+    }
+    return;
+#endif
   case Intrinsic::umul_with_overflow:
   case Intrinsic::smul_with_overflow:
   case Intrinsic::ssub_with_overflow:
@@ -4297,23 +4401,26 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
   }
 
+  if (call.hasFnAttr("enzyme_ta_norecur"))
+    return;
+
   Function *ci = getFunctionFromCall(&call);
 
   if (ci) {
+    if (ci->getAttributes().hasAttribute(AttributeList::FunctionIndex,
+                                         "enzyme_ta_norecur"))
+      return;
+
     StringRef funcName = getFuncNameFromCall(&call);
 
     auto blasMetaData = extractBLAS(funcName);
-#if LLVM_VERSION_MAJOR >= 16
-    if (blasMetaData.has_value()) {
-      BlasInfo blas = blasMetaData.value();
+    if (blasMetaData) {
+      BlasInfo blas = *blasMetaData;
 #include "BlasTA.inc"
     }
-#else
-    if (blasMetaData.hasValue()) {
-      BlasInfo blas = blasMetaData.getValue();
-#include "BlasTA.inc"
-    }
-#endif
+
+    // Manual TT specification is non-interprocedural and already handled once
+    // at the start.
 
     // When compiling Enzyme against standard LLVM, and not Intel's
     // modified version of LLVM, the intrinsic `llvm.intel.subscript` is
@@ -4513,8 +4620,10 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
 
-    if (startsWith(funcName, "_ZNKSt3__112basic_stringIcNS_11char_traitsIcEENS_"
-                             "9allocatorIcEEE13__get_pointer")) {
+    if (startsWith(funcName, "_ZNKSt3__112basic_string") ||
+        startsWith(funcName, "_ZNSt3__112basic_string") ||
+        startsWith(funcName, "_ZNSt3__112__hash_table") ||
+        startsWith(funcName, "_ZNKSt3__115basic_stringbuf")) {
       return;
     }
 
@@ -4943,11 +5052,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
     if (auto opidx = getAllocationIndexFromCall(&call)) {
       auto ptr = TypeTree(BaseType::Pointer);
-#if LLVM_VERSION_MAJOR >= 15
-      unsigned index = (size_t)opidx.value();
-#else
-      unsigned index = (size_t)opidx.getValue();
-#endif
+      unsigned index = (size_t)*opidx;
       if (auto CI = dyn_cast<ConstantInt>(call.getOperand(index))) {
         auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
         auto LoadSize = CI->getZExtValue();
@@ -5231,6 +5336,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     CONSIDER(frexpl)
     CONSIDER2(ldexp, double, double, int)
     CONSIDER2(modf, double, double, double *)
+    CONSIDER(modff)
+    CONSIDER(modfl)
 
     CONSIDER2(remquo, double, double, double, int *)
     CONSIDER(remquof)
@@ -5305,23 +5412,52 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       } else if (T->isVoidTy()) {
       } else if (auto ST = dyn_cast<StructType>(T)) {
         assert(ST->getNumElements() >= 1);
-        for (size_t i = 1; i < ST->getNumElements(); ++i) {
-          assert(ST->getTypeAtIndex((unsigned)0) == ST->getTypeAtIndex(i));
+        TypeTree TT;
+        auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+        for (size_t i = 0; i < ST->getNumElements(); ++i) {
+          auto T = ST->getTypeAtIndex(i);
+          ConcreteType CT(BaseType::Unknown);
+
+          Value *vec[2] = {
+              ConstantInt::get(Type::getInt64Ty(call.getContext()), 0),
+              ConstantInt::get(Type::getInt32Ty(call.getContext()), i)};
+          auto ud = UndefValue::get(PointerType::getUnqual(ST));
+          auto g2 = GetElementPtrInst::Create(ST, ud, vec);
+          APInt ai(DL.getIndexSizeInBits(0), 0);
+          g2->accumulateConstantOffset(DL, ai);
+          delete g2;
+          size_t Offset = ai.getZExtValue();
+
+          size_t nextOffset;
+          if (i + 1 == ST->getNumElements())
+            nextOffset = (DL.getTypeSizeInBits(ST) + 7) / 8;
+          else {
+            Value *vec[2] = {
+                ConstantInt::get(Type::getInt64Ty(call.getContext()), 0),
+                ConstantInt::get(Type::getInt32Ty(call.getContext()), i + 1)};
+            auto ud = UndefValue::get(PointerType::getUnqual(ST));
+            auto g2 = GetElementPtrInst::Create(ST, ud, vec);
+            APInt ai(DL.getIndexSizeInBits(0), 0);
+            g2->accumulateConstantOffset(DL, ai);
+            delete g2;
+            nextOffset = ai.getZExtValue();
+          }
+
+          if (T->isFloatingPointTy()) {
+            CT = T;
+          } else if (T->isIntegerTy()) {
+            CT = BaseType::Integer;
+          }
+          if (CT != BaseType::Unknown) {
+            TypeTree mid = TypeTree(CT).Only(-1, &call);
+            TT |= mid.ShiftIndices(DL, /*init offset*/ 0,
+                                   /*maxSize*/ nextOffset - Offset,
+                                   /*addOffset*/ Offset);
+          }
         }
-        if (ST->getTypeAtIndex((unsigned)0)->isFloatingPointTy())
-          updateAnalysis(
-              &call,
-              TypeTree(ConcreteType(
-                           ST->getTypeAtIndex((unsigned)0)->getScalarType()))
-                  .Only(-1, &call),
-              &call);
-        else if (ST->getTypeAtIndex((unsigned)0)->isIntegerTy()) {
-          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
-                         &call);
-        } else {
-          llvm::errs() << *T << " - " << call << "\n";
-          llvm_unreachable("Unknown type for libm");
-        }
+        auto Size = (DL.getTypeSizeInBits(ST) + 7) / 8;
+        TT.CanonicalizeInPlace(Size, DL);
+        updateAnalysis(&call, TT, &call);
       } else if (auto AT = dyn_cast<ArrayType>(T)) {
         assert(AT->getNumElements() >= 1);
         if (AT->getElementType()->isFloatingPointTy())
@@ -5515,7 +5651,7 @@ bool TypeAnalyzer::mustRemainInteger(Value *val, bool *returned) {
 FnTypeInfo TypeAnalyzer::getCallInfo(CallBase &call, Function &fn) {
   FnTypeInfo typeInfo(&fn);
 
-  int argnum = 0;
+  size_t argnum = 0;
   for (auto &arg : fn.args()) {
     if (argnum >= call.arg_size()) {
       typeInfo.Arguments.insert(
@@ -5665,20 +5801,10 @@ TypeResults TypeAnalysis::analyzeFunction(const FnTypeInfo &fn) {
 
     return TypeResults(analysis);
   }
-#ifdef __clang__
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wnull-dereference"
-#else
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wnull-dereference"
-#endif
+
   if (fn.Function->empty())
-    return TypeResults(*(TypeAnalyzer *)nullptr);
-#ifdef __clang__
-#pragma clang diagnostic pop
-#else
-#pragma GCC diagnostic pop
-#endif
+    return TypeResults(nullptr);
+
   auto res = analyzedFunctions.emplace(fn, new TypeAnalyzer(fn, *this));
   auto &analysis = *res.first->second;
 
@@ -5728,33 +5854,92 @@ TypeResults TypeAnalysis::analyzeFunction(const FnTypeInfo &fn) {
   return TypeResults(analysis);
 }
 
-TypeResults::TypeResults(TypeAnalyzer &analyzer) : analyzer(analyzer) {}
+TypeResults::TypeResults(TypeAnalyzer &analyzer) : analyzer(&analyzer) {}
+TypeResults::TypeResults(std::nullptr_t) : analyzer(nullptr) {}
 
 FnTypeInfo TypeResults::getAnalyzedTypeInfo() const {
-  FnTypeInfo res(analyzer.fntypeinfo.Function);
-  for (auto &arg : analyzer.fntypeinfo.Function->args()) {
+  FnTypeInfo res(analyzer->fntypeinfo.Function);
+  for (auto &arg : analyzer->fntypeinfo.Function->args()) {
     res.Arguments.insert(std::pair<Argument *, TypeTree>(&arg, query(&arg)));
   }
   res.Return = getReturnAnalysis();
-  res.KnownValues = analyzer.fntypeinfo.KnownValues;
+  res.KnownValues = analyzer->fntypeinfo.KnownValues;
   return res;
 }
 
 FnTypeInfo TypeResults::getCallInfo(CallBase &CI, Function &fn) const {
-  return analyzer.getCallInfo(CI, fn);
+  return analyzer->getCallInfo(CI, fn);
 }
 
 TypeTree TypeResults::query(Value *val) const {
+#ifndef NDEBUG
   if (auto inst = dyn_cast<Instruction>(val)) {
-    assert(inst->getParent()->getParent() == analyzer.fntypeinfo.Function);
+    assert(inst->getParent()->getParent() == analyzer->fntypeinfo.Function);
   }
   if (auto arg = dyn_cast<Argument>(val)) {
-    assert(arg->getParent() == analyzer.fntypeinfo.Function);
+    assert(arg->getParent() == analyzer->fntypeinfo.Function);
   }
-  return analyzer.getAnalysis(val);
+#endif
+  return analyzer->getAnalysis(val);
 }
 
-void TypeResults::dump(llvm::raw_ostream &ss) const { analyzer.dump(ss); }
+bool TypeResults::anyFloat(Value *val) const {
+  assert(val);
+  assert(val->getType());
+  auto q = query(val);
+  auto dt = q[{-1}];
+  if (dt != BaseType::Anything && dt != BaseType::Unknown)
+    return dt.isFloat();
+
+  size_t ObjSize = 1;
+  auto &dl = analyzer->fntypeinfo.Function->getParent()->getDataLayout();
+  if (val->getType()->isSized())
+    ObjSize = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
+
+  for (size_t i = 0; i < ObjSize;) {
+    dt = q[{(int)i}];
+    if (dt == BaseType::Integer) {
+      i++;
+      continue;
+    }
+    if (dt == BaseType::Pointer) {
+      i += dl.getPointerSize(0);
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+bool TypeResults::anyPointer(Value *val) const {
+  assert(val);
+  assert(val->getType());
+  auto q = query(val);
+  auto dt = q[{-1}];
+  if (dt != BaseType::Anything && dt != BaseType::Unknown)
+    return dt == BaseType::Pointer;
+
+  size_t ObjSize = 1;
+  auto &dl = analyzer->fntypeinfo.Function->getParent()->getDataLayout();
+  if (val->getType()->isSized())
+    ObjSize = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
+
+  for (size_t i = 0; i < ObjSize;) {
+    dt = q[{(int)i}];
+    if (dt == BaseType::Integer) {
+      i++;
+      continue;
+    }
+    if (auto FT = dt.isFloat()) {
+      i += (dl.getTypeSizeInBits(FT) + 7) / 8;
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+void TypeResults::dump(llvm::raw_ostream &ss) const { analyzer->dump(ss); }
 
 ConcreteType TypeResults::intType(size_t num, Value *val, bool errIfNotFound,
                                   bool pointerIntSame) const {
@@ -5777,7 +5962,7 @@ ConcreteType TypeResults::intType(size_t num, Value *val, bool errIfNotFound,
     if (auto inst = dyn_cast<Instruction>(val)) {
       llvm::errs() << *inst->getParent()->getParent()->getParent() << "\n";
       llvm::errs() << *inst->getParent()->getParent() << "\n";
-      for (auto &pair : analyzer.analysis) {
+      for (auto &pair : analyzer->analysis) {
         llvm::errs() << "val: " << *pair.first << " - " << pair.second.str()
                      << "\n";
       }
@@ -5812,7 +5997,7 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
   assert(val->getType());
   auto q = query(val).Data0();
   if (!(val->getType()->isPointerTy() || q[{}] == BaseType::Pointer)) {
-    llvm::errs() << *analyzer.fntypeinfo.Function << "\n";
+    llvm::errs() << *analyzer->fntypeinfo.Function << "\n";
     dump();
     llvm::errs() << "val: " << *val << "\n";
   }
@@ -5837,7 +6022,7 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
   }
 
   if (errIfNotFound && (!dt.isKnown() || dt == BaseType::Anything)) {
-    auto &res = analyzer;
+    auto &res = *analyzer;
     if (auto inst = dyn_cast<Instruction>(val)) {
       llvm::errs() << *inst->getParent()->getParent()->getParent() << "\n";
       llvm::errs() << *inst->getParent()->getParent() << "\n";
@@ -5862,23 +6047,25 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
     if (auto arg = dyn_cast<Argument>(val)) {
       llvm::errs() << *arg->getParent() << "\n";
       for (auto &pair : res.analysis) {
+#ifndef NDEBUG
         if (auto in = dyn_cast<Instruction>(pair.first))
           assert(in->getParent()->getParent() == arg->getParent());
+#endif
         llvm::errs() << "val: " << *pair.first << " - " << pair.second.str()
                      << " int: " +
                             to_string(res.knownIntegralValues(pair.first))
                      << "\n";
       }
     }
-    llvm::errs() << "fn: " << *analyzer.fntypeinfo.Function << "\n";
+    llvm::errs() << "fn: " << *analyzer->fntypeinfo.Function << "\n";
     dump();
     llvm::errs() << "could not deduce type of integer " << *val
                  << " num:" << num << " q:" << q.str() << " \n";
 
     llvm::DiagnosticLocation loc =
-        analyzer.fntypeinfo.Function->getSubprogram();
+        analyzer->fntypeinfo.Function->getSubprogram();
     Instruction *codeLoc =
-        &*analyzer.fntypeinfo.Function->getEntryBlock().begin();
+        &*analyzer->fntypeinfo.Function->getEntryBlock().begin();
     if (auto inst = dyn_cast<Instruction>(val)) {
       loc = inst->getDebugLoc();
       codeLoc = inst;
@@ -5981,15 +6168,15 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
 }
 
 Function *TypeResults::getFunction() const {
-  return analyzer.fntypeinfo.Function;
+  return analyzer->fntypeinfo.Function;
 }
 
 TypeTree TypeResults::getReturnAnalysis() const {
-  return analyzer.getReturnAnalysis();
+  return analyzer->getReturnAnalysis();
 }
 
 std::set<int64_t> TypeResults::knownIntegralValues(Value *val) const {
-  return analyzer.knownIntegralValues(val);
+  return analyzer->knownIntegralValues(val);
 }
 
 std::set<int64_t> TypeAnalyzer::knownIntegralValues(Value *val) {

@@ -1,10 +1,15 @@
+#include "llvm/ADT/APSInt.h"
+
 #include "CloneFunction.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
 
 Type getShadowType(Type type, unsigned width) {
-  return type.cast<AutoDiffTypeInterface>().getShadowType(width);
+  if (auto iface = type.dyn_cast<AutoDiffTypeInterface>())
+    return iface.getShadowType(width);
+  llvm::errs() << " type does not have autodifftypeinterface: " << type << "\n";
+  exit(1);
 }
 
 mlir::FunctionType getFunctionTypeForClone(
@@ -14,22 +19,26 @@ mlir::FunctionType getFunctionTypeForClone(
   SmallVector<mlir::Type, 4> RetTypes;
   if (returnValue == ReturnType::ArgsWithReturn ||
       returnValue == ReturnType::Return) {
-    assert(FTy.getNumResults() == 1);
-    if (ReturnType != DIFFE_TYPE::CONSTANT &&
-        ReturnType != DIFFE_TYPE::OUT_DIFF) {
-      RetTypes.push_back(getShadowType(FTy.getResult(0), width));
-    } else {
-      RetTypes.push_back(FTy.getResult(0));
+    assert(FTy.getNumResults() >= 1);
+    for (size_t i = 0; i < FTy.getNumResults(); i++) {
+      if (ReturnType != DIFFE_TYPE::CONSTANT &&
+          ReturnType != DIFFE_TYPE::OUT_DIFF) {
+        RetTypes.push_back(getShadowType(FTy.getResult(i), width));
+      } else {
+        RetTypes.push_back(FTy.getResult(i));
+      }
     }
   } else if (returnValue == ReturnType::ArgsWithTwoReturns ||
              returnValue == ReturnType::TwoReturns) {
-    assert(FTy.getNumResults() == 1);
-    RetTypes.push_back(FTy.getResult(0));
-    if (ReturnType != DIFFE_TYPE::CONSTANT &&
-        ReturnType != DIFFE_TYPE::OUT_DIFF) {
-      RetTypes.push_back(getShadowType(FTy.getResult(0), width));
-    } else {
-      RetTypes.push_back(FTy.getResult(0));
+    assert(FTy.getNumResults() >= 1);
+    for (size_t i = 0; i < FTy.getNumResults(); i++) {
+      RetTypes.push_back(FTy.getResult(i));
+      if (ReturnType != DIFFE_TYPE::CONSTANT &&
+          ReturnType != DIFFE_TYPE::OUT_DIFF) {
+        RetTypes.push_back(getShadowType(FTy.getResult(i), width));
+      } else {
+        RetTypes.push_back(FTy.getResult(i));
+      }
     }
   }
 
@@ -200,7 +209,7 @@ FunctionOpInterface CloneFunctionWithReturns(
     SmallPtrSetImpl<mlir::Value> &constants,
     SmallPtrSetImpl<mlir::Value> &nonconstants,
     SmallPtrSetImpl<mlir::Value> &returnvals, ReturnType returnValue,
-    DIFFE_TYPE ReturnType, Twine name, IRMapping &VMap,
+    DIFFE_TYPE DReturnType, Twine name, IRMapping &VMap,
     std::map<Operation *, Operation *> &OpMap, bool diffeReturnArg,
     mlir::Type additionalArg) {
   assert(!F.getFunctionBody().empty());
@@ -208,7 +217,7 @@ FunctionOpInterface CloneFunctionWithReturns(
   // llvm::ValueToValueMapTy VMap;
   auto FTy = getFunctionTypeForClone(
       F.getFunctionType().cast<mlir::FunctionType>(), mode, width,
-      additionalArg, constant_args, diffeReturnArg, returnValue, ReturnType);
+      additionalArg, constant_args, diffeReturnArg, returnValue, DReturnType);
 
   /*
   for (Block &BB : F.getFunctionBody().getBlocks()) {
@@ -235,6 +244,8 @@ FunctionOpInterface CloneFunctionWithReturns(
 
   {
     auto &blk = NewF.getFunctionBody().front();
+    assert(F.getFunctionBody().front().getNumArguments() ==
+           constant_args.size());
     for (ssize_t i = constant_args.size() - 1; i >= 0; i--) {
       mlir::Value oval = F.getFunctionBody().front().getArgument(i);
       if (constant_args[i] == DIFFE_TYPE::CONSTANT)
@@ -259,6 +270,105 @@ FunctionOpInterface CloneFunctionWithReturns(
       auto location = blk.getArgument(blk.getNumArguments() - 1).getLoc();
       auto val = F.getFunctionType().cast<mlir::FunctionType>().getResult(0);
       blk.addArgument(val, location);
+    }
+  }
+
+  std::string ToClone[] = {
+      "bufferization.writable",
+      "mhlo.sharding",
+      "mhlo.layout_mode",
+      "xla_framework.input_mapping",
+      "xla_framework.result_mapping",
+  };
+  size_t newxlacnt = 0;
+  {
+    size_t oldi = 0;
+    size_t newi = 0;
+    while (oldi < F.getNumResults()) {
+      bool primalReturn = returnValue == ReturnType::ArgsWithReturn ||
+                          returnValue == ReturnType::ArgsWithTwoReturns ||
+                          (returnValue == ReturnType::TapeAndReturn &&
+                           DReturnType == DIFFE_TYPE::CONSTANT) ||
+                          returnValue == ReturnType::TapeAndTwoReturns ||
+                          returnValue == ReturnType::TwoReturns ||
+                          (returnValue == ReturnType::Return &&
+                           DReturnType == DIFFE_TYPE::CONSTANT);
+      if (primalReturn) {
+        for (auto attrName : ToClone) {
+          auto attrNameS = StringAttr::get(F->getContext(), attrName);
+          NewF.removeResultAttr(newi, attrNameS);
+          if (auto attr = F.getResultAttr(oldi, attrName)) {
+            if (attrName == "xla_framework.result_mapping") {
+              auto iattr = cast<IntegerAttr>(attr);
+              APSInt nc(iattr.getValue());
+              nc = newxlacnt;
+              attr = IntegerAttr::get(F->getContext(), nc);
+              newxlacnt++;
+            }
+            NewF.setResultAttr(newi, attrNameS, attr);
+          }
+        }
+        newi++;
+      }
+      if (DReturnType == DIFFE_TYPE::DUP_ARG ||
+          DReturnType == DIFFE_TYPE::DUP_NONEED) {
+        for (auto attrName : ToClone) {
+          auto attrNameS = StringAttr::get(F->getContext(), attrName);
+          NewF.removeResultAttr(newi, attrNameS);
+          if (auto attr = F.getResultAttr(oldi, attrName)) {
+            if (attrName == "xla_framework.result_mapping") {
+              auto iattr = cast<IntegerAttr>(attr);
+              APSInt nc(iattr.getValue());
+              nc = newxlacnt;
+              attr = IntegerAttr::get(F->getContext(), nc);
+              newxlacnt++;
+            }
+            NewF.setResultAttr(newi, attrNameS, attr);
+          }
+        }
+        newi++;
+      }
+      oldi++;
+    }
+  }
+  {
+    size_t oldi = 0;
+    size_t newi = 0;
+    while (oldi < F.getNumArguments()) {
+      for (auto attrName : ToClone) {
+        NewF.removeArgAttr(newi, attrName);
+        if (auto attr = F.getArgAttr(oldi, attrName)) {
+          if (attrName == "xla_framework.input_mapping") {
+            auto iattr = cast<IntegerAttr>(attr);
+            APSInt nc(iattr.getValue());
+            nc = newxlacnt;
+            attr = IntegerAttr::get(F->getContext(), nc);
+            newxlacnt++;
+          }
+          NewF.setArgAttr(newi, attrName, attr);
+        }
+      }
+
+      newi++;
+      if (constant_args[oldi] == DIFFE_TYPE::DUP_ARG ||
+          constant_args[oldi] == DIFFE_TYPE::DUP_NONEED) {
+
+        for (auto attrName : ToClone) {
+          NewF.removeArgAttr(newi, attrName);
+          if (auto attr = F.getArgAttr(oldi, attrName)) {
+            if (attrName == "xla_framework.input_mapping") {
+              auto iattr = cast<IntegerAttr>(attr);
+              APSInt nc(iattr.getValue());
+              nc = newxlacnt;
+              attr = IntegerAttr::get(F->getContext(), nc);
+              newxlacnt++;
+            }
+            NewF.setArgAttr(newi, attrName, attr);
+          }
+        }
+        newi++;
+      }
+      oldi++;
     }
   }
 

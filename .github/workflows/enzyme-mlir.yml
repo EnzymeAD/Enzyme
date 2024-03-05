@@ -29,14 +29,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y binutils ninja-build cmake gcc g++ python3 python3-dev
 
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         path: 'Enzyme'
 
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         repository: 'llvm/llvm-project'
-        ref: 'bc82cfb38d83f1afeb2c290aa472c2e2e88919cb'
+        ref: '2c9b6c1b36b8185299de083c3058e0c1e7760442'
         path: 'llvm-project'
 
     - name: Get MLIR commit hash
@@ -46,7 +46,7 @@ jobs:
 
     - name: Cache MLIR
       id: cache-mlir
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: llvm-project/mlir-build
         key: ${{ matrix.llbuild }}-${{ matrix.os }}-mlir-${{ steps.mlir-commit.outputs.sha_short }}

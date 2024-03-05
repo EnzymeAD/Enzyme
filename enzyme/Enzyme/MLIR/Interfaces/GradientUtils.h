@@ -38,6 +38,7 @@ public:
   bool omp;
 
   unsigned width;
+  SmallVector<DIFFE_TYPE, 1> RetDiffeTypes;
   ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
 
   mlir::Value getNewFromOriginal(const mlir::Value originst) const;
@@ -54,36 +55,64 @@ public:
                  std::map<Operation *, Operation *> &originalToNewFnOps_,
                  DerivativeMode mode, unsigned width, bool omp);
   void erase(Operation *op) { op->erase(); }
+  void replaceOrigOpWith(Operation *op, ValueRange vals) {
+    for (auto &&[res, rep] : llvm::zip(op->getResults(), vals)) {
+      originalToNewFn.map(res, rep);
+    }
+    auto newOp = getNewFromOriginal(op);
+    newOp->replaceAllUsesWith(vals);
+    originalToNewFnOps.erase(op);
+  }
   void eraseIfUnused(Operation *op, bool erase = true, bool check = true) {
     // TODO
   }
   bool isConstantInstruction(mlir::Operation *v) const;
   bool isConstantValue(mlir::Value v) const;
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &Builder2);
-  void setDiffe(mlir::Value val, mlir::Value toset, OpBuilder &BuilderM);
   void forceAugmentedReturns();
 
   Operation *cloneWithNewOperands(OpBuilder &B, Operation *op);
 
   LogicalResult visitChild(Operation *op);
+
+  void setDiffe(mlir::Value origv, mlir::Value newv, mlir::OpBuilder &builder);
+
+  mlir::Type getShadowType(mlir::Type T) {
+    auto iface = cast<AutoDiffTypeInterface>(T);
+    return iface.getShadowType(width);
+  }
 };
 
 class MDiffeGradientUtils : public MGradientUtils {
+protected:
+  IRMapping differentials;
+
+  Block *initializationBlock;
+
 public:
+  mlir::Value getDifferential(mlir::Value origv);
+
+  void setDiffe(mlir::Value origv, mlir::Value newv, mlir::OpBuilder &builder);
+
+  void zeroDiffe(mlir::Value origv, mlir::OpBuilder &builder);
+
+  mlir::Value diffe(mlir::Value origv, mlir::OpBuilder &builder);
+
   MDiffeGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                       FunctionOpInterface oldFunc_, MTypeAnalysis &TA,
                       MTypeResults TR, IRMapping &invertedPointers_,
                       const SmallPtrSetImpl<mlir::Value> &constantvalues_,
-                      const SmallPtrSetImpl<mlir::Value> &returnvals_,
+                      const SmallPtrSetImpl<mlir::Value> &activevals_,
                       DIFFE_TYPE ActiveReturn,
                       ArrayRef<DIFFE_TYPE> constant_values,
                       IRMapping &origToNew_,
                       std::map<Operation *, Operation *> &origToNewOps_,
                       DerivativeMode mode, unsigned width, bool omp)
       : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
-                       constantvalues_, returnvals_, ActiveReturn,
+                       constantvalues_, activevals_, ActiveReturn,
                        constant_values, origToNew_, origToNewOps_, mode, width,
-                       omp) {}
+                       omp),
+        initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
 
   // Technically diffe constructor
   static MDiffeGradientUtils *

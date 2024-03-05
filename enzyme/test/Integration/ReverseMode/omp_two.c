@@ -9,10 +9,6 @@
 // RUN: %clang -fopenmp -std=c11 -O2 -fno-vectorize -fno-unroll-loops %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %clang -fopenmp -x ir - -o %s.out && %s.out 
 // RUN: %clang -fopenmp -std=c11 -O3 -fno-vectorize -fno-unroll-loops %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %clang -fopenmp -x ir - -o %s.out && %s.out 
 
-#include <stdio.h>
-#include <math.h>
-#include <assert.h>
-
 #include "../test_utils.h"
 
 void __enzyme_autodiff(void*, ...);

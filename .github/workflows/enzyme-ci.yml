@@ -32,7 +32,7 @@ jobs:
             sudo sed -i 's/add_executable(llvm-omp-device-info IMPORTED)//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
             sudo sed -i 's/llvm-omp-device-info//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
           fi
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: mkdir
       run: rm -rf build && mkdir build
     - name: cmake
@@ -61,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["11", "12", "13", "14", "15"]
+        llvm: ["12", "13", "14", "15", "16"]
         build: ["Release", "Debug"] # "RelWithDebInfo"
   
     timeout-minutes: 30 
@@ -71,7 +71,7 @@ jobs:
           brew update
           brew install llvm@${{ matrix.llvm }} make cmake
           sudo python3 -m pip install --upgrade pip lit requests
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: mkdir
       run: rm -rf build && mkdir build
     - name: cmake
@@ -109,7 +109,7 @@ jobs:
       run: |
           brew install llvm@${{ matrix.llvm }} make cmake gcc
           sudo python3 -m pip install --upgrade pip lit
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: mkdir
       run: rm -rf build && mkdir build
     - name: cmake

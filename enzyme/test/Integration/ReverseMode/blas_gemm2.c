@@ -8,9 +8,6 @@
 // RUN: if [ %llvmver -ge 12 ]; then %clang -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=0 | %lli - ; fi
 // RUN: if [ %llvmver -ge 12 ]; then %clang -O3 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=0 | %lli - ; fi
 
-#include <stdio.h>
-#include <stdint.h>
-#include <stdlib.h>
 #include "../test_utils.h"
 #include "../blas_inline.h"
 

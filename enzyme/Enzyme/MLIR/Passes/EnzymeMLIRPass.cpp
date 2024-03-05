@@ -11,16 +11,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Ops.h"
-#include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/IRMapping.h"
-#include "mlir/Interfaces/ControlFlowInterfaces.h"
-#include "mlir/Interfaces/FunctionInterfaces.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
 #define DEBUG_TYPE "enzyme"
 
@@ -34,8 +31,19 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
   void runOnOperation() override;
 
+  static DIFFE_TYPE mode_from_fn(FunctionOpInterface fn, DerivativeMode mode) {
+    DIFFE_TYPE retType = DIFFE_TYPE::CONSTANT;
+    if (fn.getNumResults() != 0) {
+      if (mode == DerivativeMode::ReverseModeCombined)
+        retType = DIFFE_TYPE::OUT_DIFF;
+      else
+        retType = DIFFE_TYPE::DUP_ARG;
+    }
+    return retType;
+  }
+
   template <typename T>
-  void HandleAutoDiff(SymbolTableCollection &symbolTable, T CI) {
+  LogicalResult HandleAutoDiff(SymbolTableCollection &symbolTable, T CI) {
     std::vector<DIFFE_TYPE> constants;
     SmallVector<mlir::Value, 2> args;
 
@@ -63,12 +71,11 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
     auto fn = cast<FunctionOpInterface>(symbolOp);
 
-    DIFFE_TYPE retType =
-        fn.getNumResults() == 0 ? DIFFE_TYPE::CONSTANT : DIFFE_TYPE::DUP_ARG;
+    auto mode = DerivativeMode::ForwardMode;
+    DIFFE_TYPE retType = mode_from_fn(fn, mode);
 
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
-    auto mode = DerivativeMode::ForwardMode;
     bool freeMemory = true;
     size_t width = 1;
 
@@ -83,16 +90,20 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
         /*should return*/ false, mode, freeMemory, width,
         /*addedType*/ nullptr, type_args, volatile_args,
         /*augmented*/ nullptr);
+    if (!newFunc)
+      return failure();
 
     OpBuilder builder(CI);
     auto dCI = builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
                                             newFunc.getResultTypes(), args);
     CI.replaceAllUsesWith(dCI);
     CI->erase();
+    return success();
   }
 
   template <typename T>
-  void HandleAutoDiffReverse(SymbolTableCollection &symbolTable, T CI) {
+  LogicalResult HandleAutoDiffReverse(SymbolTableCollection &symbolTable,
+                                      T CI) {
     std::vector<DIFFE_TYPE> constants;
     SmallVector<mlir::Value, 2> args;
 
@@ -117,19 +128,18 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
       truei++;
     }
 
+    auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
+    auto fn = cast<FunctionOpInterface>(symbolOp);
+
+    auto mode = DerivativeMode::ReverseModeCombined;
+    DIFFE_TYPE retType = mode_from_fn(fn, mode);
+
     // Add the return gradient
     mlir::Value res = CI.getInputs()[CI.getInputs().size() - 1];
     args.push_back(res);
 
-    auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
-    auto fn = cast<FunctionOpInterface>(symbolOp);
-
-    DIFFE_TYPE retType =
-        fn.getNumResults() == 0 ? DIFFE_TYPE::CONSTANT : DIFFE_TYPE::DUP_ARG;
-
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
-    auto mode = DerivativeMode::ReverseModeGradient;
     bool freeMemory = true;
     size_t width = 1;
 
@@ -143,13 +153,16 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
         fn, retType, constants, TA,
         /*should return*/ false, mode, freeMemory, width,
         /*addedType*/ nullptr, type_args, volatile_args,
-        /*augmented*/ nullptr, symbolTable);
+        /*augmented*/ nullptr);
+    if (!newFunc)
+      return failure();
 
     OpBuilder builder(CI);
     auto dCI = builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
                                             newFunc.getResultTypes(), args);
     CI.replaceAllUsesWith(dCI);
     CI->erase();
+    return success();
   }
 
   void lowerEnzymeCalls(SymbolTableCollection &symbolTable,
@@ -167,7 +180,11 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
       for (auto T : toLower) {
         if (auto F = dyn_cast<enzyme::ForwardDiffOp>(T)) {
-          HandleAutoDiff(symbolTable, F);
+          auto res = HandleAutoDiff(symbolTable, F);
+          if (!res.succeeded()) {
+            signalPassFailure();
+            return;
+          }
         } else {
           llvm_unreachable("Illegal type");
         }
@@ -187,7 +204,11 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
       for (auto T : toLower) {
         if (auto F = dyn_cast<enzyme::AutoDiffOp>(T)) {
-          HandleAutoDiffReverse(symbolTable, F);
+          auto res = HandleAutoDiffReverse(symbolTable, F);
+          if (!res.succeeded()) {
+            signalPassFailure();
+            return;
+          }
         } else {
           llvm_unreachable("Illegal type");
         }
@@ -201,19 +222,14 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 namespace mlir {
 namespace enzyme {
 std::unique_ptr<Pass> createDifferentiatePass() {
-  new DifferentiatePass();
   return std::make_unique<DifferentiatePass>();
 }
 } // namespace enzyme
 } // namespace mlir
 
-#include "mlir/IR/PatternMatch.h"
-#include "mlir/Transforms/DialectConversion.h"
-
 void DifferentiatePass::runOnOperation() {
   SymbolTableCollection symbolTable;
   symbolTable.getSymbolTable(getOperation());
-  ConversionPatternRewriter B(getOperation()->getContext());
   getOperation()->walk(
       [&](FunctionOpInterface op) { lowerEnzymeCalls(symbolTable, op); });
 }

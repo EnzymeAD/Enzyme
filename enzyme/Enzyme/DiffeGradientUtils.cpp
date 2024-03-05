@@ -164,10 +164,12 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
 
 AllocaInst *DiffeGradientUtils::getDifferential(Value *val) {
   assert(val);
+#ifndef NDEBUG
   if (auto arg = dyn_cast<Argument>(val))
     assert(arg->getParent() == oldFunc);
   if (auto inst = dyn_cast<Instruction>(val))
     assert(inst->getParent()->getParent() == oldFunc);
+#endif
   assert(inversionAllocs);
 
   Type *type = getShadowType(val->getType());
@@ -195,10 +197,12 @@ AllocaInst *DiffeGradientUtils::getDifferential(Value *val) {
 }
 
 Value *DiffeGradientUtils::diffe(Value *val, IRBuilder<> &BuilderM) {
+#ifndef NDEBUG
   if (auto arg = dyn_cast<Argument>(val))
     assert(arg->getParent() == oldFunc);
   if (auto inst = dyn_cast<Instruction>(val))
     assert(inst->getParent()->getParent() == oldFunc);
+#endif
 
   if (isConstantValue(val)) {
     llvm::errs() << *newFunc << "\n";
@@ -336,6 +340,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
   llvm::errs() << "} start=" << start << " size=" << size
                << " storeSize=" << storeSize << " val=" << *val << "\n";
   assert(0 && "unhandled accumulate with partial sizes");
+  return {};
 }
 
 SmallVector<SelectInst *, 4>
@@ -345,10 +350,12 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
   assert(mode == DerivativeMode::ReverseModeGradient ||
          mode == DerivativeMode::ReverseModeCombined);
 
+#ifndef NDEBUG
   if (auto arg = dyn_cast<Argument>(val))
     assert(arg->getParent() == oldFunc);
   if (auto inst = dyn_cast<Instruction>(val))
     assert(inst->getParent()->getParent() == oldFunc);
+#endif
 
   SmallVector<SelectInst *, 4> addedSelects;
 
@@ -659,6 +666,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
 
 void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
                                   IRBuilder<> &BuilderM) {
+#ifndef NDEBUG
   if (auto arg = dyn_cast<Argument>(val))
     assert(arg->getParent() == oldFunc);
   if (auto inst = dyn_cast<Instruction>(val))
@@ -668,6 +676,7 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
     llvm::errs() << *val << "\n";
   }
   assert(!isConstantValue(val));
+#endif
   toset = SanitizeDerivatives(val, toset, BuilderM);
   if (mode == DerivativeMode::ForwardMode ||
       mode == DerivativeMode::ForwardModeSplit) {
@@ -928,11 +937,20 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           applyChainRule(PointerType::get(addingType, 1), BuilderM, rule, ptr);
     }
 
-    assert(!mask);
     if (mask) {
-      llvm::errs() << "unhandled masked atomic fadd on llvm version " << *ptr
-                   << " " << *dif << " mask: " << *mask << "\n";
-      llvm_unreachable("unhandled masked atomic fadd");
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "Unimplemented masked atomic fadd for ptr:" << *ptr
+         << " dif:" << *dif << " mask: " << *mask << " orig: " << *orig << "\n";
+      if (CustomErrorHandler) {
+        CustomErrorHandler(ss.str().c_str(), wrap(orig),
+                           ErrorType::NoDerivative, this, nullptr,
+                           wrap(&BuilderM));
+        return;
+      } else {
+        EmitFailure("NoDerivative", orig->getDebugLoc(), orig, ss.str());
+        return;
+      }
     }
 
     /*
@@ -966,14 +984,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           if (alignv) {
             if (start != 0) {
               // todo make better alignment calculation
-#if LLVM_VERSION_MAJOR >= 16
-              assert(alignv.value().value() != 0);
-              if (start % alignv.value().value() != 0)
-#else
-              assert(alignv.getValue().value() != 0);
-              if (start % alignv.getValue().value() != 0)
-#endif
-              {
+              assert((*alignv).value() != 0);
+              if (start % (*alignv).value() != 0) {
                 alignv = Align(1);
               }
             }
@@ -1007,13 +1019,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         if (alignv) {
           if (start != 0) {
             // todo make better alignment calculation
-#if LLVM_VERSION_MAJOR >= 16
-            assert(alignv.value().value() != 0);
-            if (start % alignv.value().value() != 0) {
-#else
-            assert(alignv.getValue().value() != 0);
-            if (start % alignv.getValue().value() != 0) {
-#endif
+            assert((*alignv).value() != 0);
+            if (start % (*alignv).value() != 0) {
               alignv = Align(1);
             }
           }
@@ -1093,11 +1100,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       st->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
 
       if (align) {
-#if LLVM_VERSION_MAJOR >= 16
-        auto alignv = align ? align.value().value() : 0;
-#else
-        auto alignv = align ? align.getValue().value() : 0;
-#endif
+        auto alignv = align ? (*align).value() : 0;
         if (alignv != 0) {
           if (start != 0) {
             // todo make better alignment calculation

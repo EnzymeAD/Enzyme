@@ -43,6 +43,14 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
     >,
     InterfaceMethod<
       /*desc=*/[{
+        Zero the operation in place
+      }],
+      /*retTy=*/"::mlir::LogicalResult",
+      /*methodName=*/"zeroInPlace",
+      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Location":$loc, "::mlir::Value":$val)
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
         Returns the type that can contain the adjoint value for this type. If
         `width` is provided, returns the type that can store `width` instances
         of the adjoint.
@@ -53,10 +61,10 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
     >,
     InterfaceMethod<
       /*desc=*/[{
-        Returns if the Type needs to be cleared.
+        Returns whether the type is mutable in place or not.
       }],
       /*retTy=*/"bool",
-      /*methodName=*/"requiresShadow",
+      /*methodName=*/"isMutable",
       /*args=*/(ins )
     >
   ];

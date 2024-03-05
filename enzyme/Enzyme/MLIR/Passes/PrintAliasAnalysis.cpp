@@ -91,7 +91,7 @@ struct PrintAliasAnalysisPass
             continue;
           // TODO(zinenko): this has been overriding the argument...
           // Use an array attr instead (will break syntactic tests).
-          state->getAliasClassesObject().foreachClass(
+          (void)state->getAliasClassesObject().foreachClass(
               [&](DistinctAttr aliasClass, enzyme::AliasClassSet::State state) {
                 if (state == enzyme::AliasClassSet::State::Undefined)
                   funcOp.setArgAttr(

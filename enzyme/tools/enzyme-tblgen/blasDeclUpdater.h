@@ -195,17 +195,10 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
   os << "  auto name = getFuncName(&F);\n";
   os << "  auto changed = false;\n";
   os << "  auto blasMetaData = extractBLAS(name);\n";
-  os << "  #if LLVM_VERSION_MAJOR >= 16\n";
-  os << "    if (F.empty() && blasMetaData.has_value()) {\n";
-  os << "      attributeBLAS(blasMetaData.value(), &F);\n";
-  os << "      changed = true;\n";
-  os << "    }\n";
-  os << "  #else\n";
-  os << "    if (F.empty() && blasMetaData.hasValue()) {\n";
-  os << "      attributeBLAS(blasMetaData.getValue(), &F);\n";
-  os << "      changed = true;\n";
-  os << "    }\n";
-  os << "  #endif\n";
+  os << "  if (F.empty() && blasMetaData) {\n";
+  os << "    attributeBLAS(*blasMetaData, &F);\n";
+  os << "    changed = true;\n";
+  os << "  }\n";
   {
     const auto &patterns = RK.getAllDerivedDefinitions("CallPattern");
     for (Record *pattern : patterns) {

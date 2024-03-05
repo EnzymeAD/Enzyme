@@ -7,20 +7,16 @@
 // RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme --enzyme-inline=1 -S | %lli - 
 // RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme --enzyme-inline=1 -S | %lli - 
 
-#include <stdio.h>
-#include <math.h>
-#include <assert.h>
-
 #include "../test_utils.h"
 
 double __enzyme_autodiff(void*, ...);
 
 struct {
     int count;
-void* (*allocfn)(size_t);
+void* (*allocfn)(unsigned long);
 } tup = {0, malloc};
 __attribute__((noinline))
-void* metamalloc(size_t size) {
+void* metamalloc(unsigned long size) {
     void* ret = tup.allocfn(size);
     //if (ret != 0)
     //  tup.count++;
@@ -38,7 +34,7 @@ double alldiv(double x) {
 }
 
 
-static void* (*sallocfn)(size_t) = malloc;
+static void* (*sallocfn)(unsigned long) = malloc;
 __attribute__((noinline))
 void* smetamalloc(int size) {
     return sallocfn(size);

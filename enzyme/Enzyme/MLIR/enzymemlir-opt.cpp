@@ -97,12 +97,7 @@ int main(int argc, char **argv) {
   });
 
   // Register the autodiff interface implementations for upstream dialects.
-  enzyme::registerArithDialectAutoDiffInterface(registry);
-  enzyme::registerBuiltinDialectAutoDiffInterface(registry);
-  enzyme::registerLLVMDialectAutoDiffInterface(registry);
-  enzyme::registerMemRefDialectAutoDiffInterface(registry);
-  enzyme::registerSCFDialectAutoDiffInterface(registry);
-  enzyme::registerLinalgDialectAutoDiffInterface(registry);
+  enzyme::registerCoreDialectAutodiffInterfaces(registry);
 
   return mlir::asMainReturnCode(mlir::MlirOptMain(
       argc, argv, "Enzyme modular optimizer driver", registry));

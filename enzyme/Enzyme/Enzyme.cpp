@@ -37,10 +37,9 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
+#include <optional>
 #if LLVM_VERSION_MAJOR <= 16
 #include "llvm/ADT/Optional.h"
-#else
-#include <optional>
 #endif
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
@@ -59,6 +58,7 @@
 
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Transforms/Scalar.h"
 
 #include "llvm/Analysis/BasicAliasAnalysis.h"
@@ -112,6 +112,12 @@ llvm::cl::opt<bool> EnzymeAttributor("enzyme-attributor", cl::init(false),
 
 llvm::cl::opt<bool> EnzymeOMPOpt("enzyme-omp-opt", cl::init(false), cl::Hidden,
                                  cl::desc("Whether to enable openmp opt"));
+
+llvm::cl::opt<std::string> EnzymeTruncateAll(
+    "enzyme-truncate-all", cl::init(""), cl::Hidden,
+    cl::desc(
+        "Truncate all floating point operations. "
+        "E.g. \"64to32\" or \"64to<exponent_width>-<significand_width>\"."));
 
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
@@ -430,6 +436,9 @@ std::optional<StringRef> getMetadataName(llvm::Value *res)
 Optional<StringRef> getMetadataName(llvm::Value *res)
 #endif
 {
+  if (auto S = simplifyLoad(res))
+    return getMetadataName(S);
+
   if (auto av = dyn_cast<MetadataAsValue>(res)) {
     return cast<MDString>(av->getMetadata())->getString();
   } else if ((isa<LoadInst>(res) || isa<CastInst>(res)) &&
@@ -458,12 +467,11 @@ Optional<StringRef> getMetadataName(llvm::Value *res)
     return gv->getName();
   } else if (auto gv = dyn_cast<AllocaInst>(res)) {
     return gv->getName();
-  } else {
-    if (isa<PHINode>(res)) {
-      return recursePhiReads(cast<PHINode>(res));
-    }
-    return {};
+  } else if (isa<PHINode>(res)) {
+    return recursePhiReads(cast<PHINode>(res));
   }
+
+  return {};
 }
 
 static Value *adaptReturnedVector(Value *ret, Value *diffret,
@@ -1314,25 +1322,58 @@ public:
     return type_args;
   }
 
-  bool HandleTruncateFunc(CallInst *CI) {
+  static FloatRepresentation getDefaultFloatRepr(unsigned width) {
+    switch (width) {
+    case 16:
+      return FloatRepresentation(5, 10);
+    case 32:
+      return FloatRepresentation(8, 23);
+    case 64:
+      return FloatRepresentation(11, 52);
+    default:
+      llvm_unreachable("Invalid float width");
+    }
+  };
+
+  bool HandleTruncateFunc(CallInst *CI, TruncateMode mode) {
     IRBuilder<> Builder(CI);
     Function *F = parseFunctionParameter(CI);
     if (!F)
       return false;
-    if (CI->arg_size() != 3) {
+    unsigned ArgSize = CI->arg_size();
+    if (ArgSize != 4 && ArgSize != 3) {
       EmitFailure("TooManyArgs", CI->getDebugLoc(), CI,
                   "Had incorrect number of args to __enzyme_truncate_func", *CI,
-                  " - expected 3");
+                  " - expected 3 or 4");
       return false;
     }
-    auto Cfrom = cast<ConstantInt>(CI->getArgOperand(1));
-    assert(Cfrom);
-    auto Cto = cast<ConstantInt>(CI->getArgOperand(2));
-    assert(Cto);
+    FloatTruncation truncation = [&]() -> FloatTruncation {
+      if (ArgSize == 3) {
+        auto Cfrom = cast<ConstantInt>(CI->getArgOperand(1));
+        assert(Cfrom);
+        auto Cto = cast<ConstantInt>(CI->getArgOperand(2));
+        assert(Cto);
+        return FloatTruncation(
+            getDefaultFloatRepr((unsigned)Cfrom->getValue().getZExtValue()),
+            getDefaultFloatRepr((unsigned)Cto->getValue().getZExtValue()));
+      } else if (ArgSize == 4) {
+        auto Cfrom = cast<ConstantInt>(CI->getArgOperand(1));
+        assert(Cfrom);
+        auto Cto_exponent = cast<ConstantInt>(CI->getArgOperand(2));
+        assert(Cto_exponent);
+        auto Cto_significand = cast<ConstantInt>(CI->getArgOperand(3));
+        assert(Cto_significand);
+        return FloatTruncation(
+            getDefaultFloatRepr((unsigned)Cfrom->getValue().getZExtValue()),
+            FloatRepresentation(
+                (unsigned)Cto_exponent->getValue().getZExtValue(),
+                (unsigned)Cto_significand->getValue().getZExtValue()));
+      }
+      llvm_unreachable("??");
+    }();
+
     RequestContext context(CI, &Builder);
-    llvm::Value *res = Logic.CreateTruncateFunc(
-        context, F, (unsigned)Cfrom->getValue().getZExtValue(),
-        (unsigned)Cto->getValue().getZExtValue());
+    llvm::Value *res = Logic.CreateTruncateFunc(context, F, truncation, mode);
     if (!res)
       return false;
     res = Builder.CreatePointerCast(res, CI->getType());
@@ -1356,8 +1397,10 @@ public:
     auto Addr = CI->getArgOperand(0);
     RequestContext context(CI, &Builder);
     bool res = Logic.CreateTruncateValue(
-        context, Addr, (unsigned)Cfrom->getValue().getZExtValue(),
-        (unsigned)Cto->getValue().getZExtValue(), isTruncate);
+        context, Addr,
+        getDefaultFloatRepr((unsigned)Cfrom->getValue().getZExtValue()),
+        getDefaultFloatRepr((unsigned)Cto->getValue().getZExtValue()),
+        isTruncate);
     if (!res)
       return false;
     return true;
@@ -1887,15 +1930,9 @@ public:
 #endif
     }
 
-#if LLVM_VERSION_MAJOR >= 16
     return HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, args,
-                          byVal, constants, fn, mode, options.value(), sizeOnly,
+                          byVal, constants, fn, mode, *options, sizeOnly,
                           calls);
-#else
-    return HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, args,
-                          byVal, constants, fn, mode, options.getValue(),
-                          sizeOnly, calls);
-#endif
   }
 
   bool HandleProbProg(CallInst *CI, ProbProgMode mode,
@@ -2025,21 +2062,84 @@ public:
 #endif
     }
 
-#if LLVM_VERSION_MAJOR >= 16
-    bool status =
-        HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, dargs, byVal,
-                       constants, newFunc, DerivativeMode::ReverseModeCombined,
-                       opt.value(), false, calls);
-#else
-    bool status =
-        HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, dargs, byVal,
-                       constants, newFunc, DerivativeMode::ReverseModeCombined,
-                       opt.getValue(), false, calls);
-#endif
+    bool status = HandleAutoDiff(
+        CI, CI->getCallingConv(), ret, retElemType, dargs, byVal, constants,
+        newFunc, DerivativeMode::ReverseModeCombined, *opt, false, calls);
 
     delete interface;
 
     return status;
+  }
+
+  bool handleFullModuleTrunc(Function &F) {
+    typedef std::vector<FloatTruncation> TruncationsTy;
+    static TruncationsTy FullModuleTruncs = []() -> TruncationsTy {
+      StringRef ConfigStr(EnzymeTruncateAll);
+      auto Invalid = [=]() {
+        // TODO emit better diagnostic
+        llvm::report_fatal_error("error: invalid format for truncation config");
+      };
+
+      // "64" or "11-52"
+      auto parseFloatRepr = [&]() -> std::optional<FloatRepresentation> {
+        unsigned Tmp = 0;
+        if (ConfigStr.consumeInteger(10, Tmp))
+          return {};
+        if (ConfigStr.consume_front("-")) {
+          unsigned Tmp2 = 0;
+          if (ConfigStr.consumeInteger(10, Tmp2))
+            Invalid();
+          return FloatRepresentation(Tmp, Tmp2);
+        }
+        return getDefaultFloatRepr(Tmp);
+      };
+
+      // Parse "64to32;32to16;5-10to4-9"
+      TruncationsTy Tmp;
+      while (true) {
+        auto From = parseFloatRepr();
+        if (!From && !ConfigStr.empty())
+          Invalid();
+        if (!From)
+          break;
+        if (!ConfigStr.consume_front("to"))
+          Invalid();
+        auto To = parseFloatRepr();
+        if (!To)
+          Invalid();
+        Tmp.push_back({*From, *To});
+        ConfigStr.consume_front(";");
+      }
+      return Tmp;
+    }();
+
+    if (FullModuleTruncs.empty())
+      return false;
+
+    // TODO sort truncations (64to32, then 32to16 will make everything 16)
+    for (auto Truncation : FullModuleTruncs) {
+      IRBuilder<> Builder(F.getContext());
+      RequestContext context(&*F.getEntryBlock().begin(), &Builder);
+      Function *TruncatedFunc = Logic.CreateTruncateFunc(
+          context, &F, Truncation, TruncOpFullModuleMode);
+
+      ValueToValueMapTy Mapping;
+      for (auto &&[Arg, TArg] : llvm::zip(F.args(), TruncatedFunc->args()))
+        Mapping[&TArg] = &Arg;
+
+      // Move the truncated body into the original function
+      F.deleteBody();
+#if LLVM_VERSION_MAJOR >= 16
+      F.splice(F.begin(), TruncatedFunc);
+#else
+      F.getBasicBlockList().splice(F.begin(),
+                                   TruncatedFunc->getBasicBlockList());
+#endif
+      RemapFunction(F, Mapping,
+                    RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
+      TruncatedFunc->deleteBody();
+    }
+    return true;
   }
 
   bool lowerEnzymeCalls(Function &F, std::set<Function *> &done) {
@@ -2049,6 +2149,9 @@ public:
 
     if (F.empty())
       return false;
+
+    if (handleFullModuleTrunc(F))
+      return true;
 
     bool Changed = false;
 
@@ -2110,7 +2213,8 @@ public:
     MapVector<CallInst *, DerivativeMode> toVirtual;
     MapVector<CallInst *, DerivativeMode> toSize;
     SmallVector<CallInst *, 4> toBatch;
-    SmallVector<CallInst *, 4> toTruncateFunc;
+    SmallVector<CallInst *, 4> toTruncateFuncMem;
+    SmallVector<CallInst *, 4> toTruncateFuncOp;
     SmallVector<CallInst *, 4> toTruncateValue;
     SmallVector<CallInst *, 4> toExpandValue;
     MapVector<CallInst *, ProbProgMode> toProbProg;
@@ -2422,7 +2526,8 @@ public:
         bool virtualCall = false;
         bool sizeOnly = false;
         bool batch = false;
-        bool truncateFunc = false;
+        bool truncateFuncOp = false;
+        bool truncateFuncMem = false;
         bool truncateValue = false;
         bool expandValue = false;
         bool probProg = false;
@@ -2454,13 +2559,16 @@ public:
         } else if (Fn->getName().contains("__enzyme_batch")) {
           enableEnzyme = true;
           batch = true;
-        } else if (Fn->getName().contains("__enzyme_truncate_func")) {
+        } else if (Fn->getName().contains("__enzyme_truncate_mem_func")) {
           enableEnzyme = true;
-          truncateFunc = true;
-        } else if (Fn->getName().contains("__enzyme_truncate_value")) {
+          truncateFuncMem = true;
+        } else if (Fn->getName().contains("__enzyme_truncate_op_func")) {
+          enableEnzyme = true;
+          truncateFuncOp = true;
+        } else if (Fn->getName().contains("__enzyme_truncate_mem_value")) {
           enableEnzyme = true;
           truncateValue = true;
-        } else if (Fn->getName().contains("__enzyme_expand_value")) {
+        } else if (Fn->getName().contains("__enzyme_expand_mem_value")) {
           enableEnzyme = true;
           expandValue = true;
         } else if (Fn->getName().contains("__enzyme_likelihood")) {
@@ -2520,8 +2628,10 @@ public:
             toSize[CI] = derivativeMode;
           else if (batch)
             toBatch.push_back(CI);
-          else if (truncateFunc)
-            toTruncateFunc.push_back(CI);
+          else if (truncateFuncOp)
+            toTruncateFuncOp.push_back(CI);
+          else if (truncateFuncMem)
+            toTruncateFuncMem.push_back(CI);
           else if (truncateValue)
             toTruncateValue.push_back(CI);
           else if (expandValue)
@@ -2619,8 +2729,11 @@ public:
     for (auto call : toBatch) {
       HandleBatch(call);
     }
-    for (auto call : toTruncateFunc) {
-      HandleTruncateFunc(call);
+    for (auto call : toTruncateFuncMem) {
+      HandleTruncateFunc(call, TruncMemMode);
+    }
+    for (auto call : toTruncateFuncOp) {
+      HandleTruncateFunc(call, TruncOpMode);
     }
     for (auto call : toTruncateValue) {
       HandleTruncateValue(call, true);
@@ -3103,6 +3216,7 @@ AnalysisKey EnzymeNewPM::Key;
 #include "PreserveNVVM.h"
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Transforms/IPO/AlwaysInliner.h"
 #if LLVM_VERSION_MAJOR >= 15
 #include "llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h"
 #include "llvm/Transforms/IPO/CalledValuePropagation.h"
@@ -3333,6 +3447,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 #else
     prePass(MPM);
 #endif
+    MPM.addPass(llvm::AlwaysInlinerPass());
     FunctionPassManager OptimizerPM;
     FunctionPassManager OptimizerPM2;
 #if LLVM_VERSION_MAJOR >= 16

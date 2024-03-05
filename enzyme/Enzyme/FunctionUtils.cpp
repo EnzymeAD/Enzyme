@@ -754,6 +754,16 @@ void PreProcessCache::AlwaysInline(Function *NewF) {
 
   for (auto CI : ToInline) {
     InlineFunctionInfo IFI;
+#if LLVM_VERSION_MAJOR >= 18
+    auto F = CI->getCalledFunction();
+    if (CI->getParent()->IsNewDbgInfoFormat != F->IsNewDbgInfoFormat) {
+      if (CI->getParent()->IsNewDbgInfoFormat) {
+        F->convertToNewDbgValues();
+      } else {
+        F->convertFromNewDbgValues();
+      }
+    }
+#endif
     InlineFunction(*CI, IFI);
   }
 }
@@ -2170,8 +2180,24 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     VMapO->getMDMap() = VMap.getMDMap();
   }
 
+  for (auto attr : {"enzyme_ta_norecur"})
+    if (F->getAttributes().hasAttribute(AttributeList::FunctionIndex, attr)) {
+      NewF->addAttribute(
+          AttributeList::FunctionIndex,
+          F->getAttributes().getAttribute(AttributeList::FunctionIndex, attr));
+    }
+
+  for (auto attr :
+       {"enzyme_type", "enzymejl_parmtype", "enzymejl_parmtype_ref"})
+    if (F->getAttributes().hasAttribute(AttributeList::ReturnIndex, attr)) {
+      NewF->addAttribute(
+          AttributeList::ReturnIndex,
+          F->getAttributes().getAttribute(AttributeList::ReturnIndex, attr));
+    }
+
   bool hasPtrInput = false;
   unsigned ii = 0, jj = 0;
+
   for (auto i = F->arg_begin(), j = NewF->arg_begin(); i != F->arg_end();) {
     if (F->hasParamAttribute(ii, Attribute::StructRet)) {
       NewF->addParamAttr(jj, Attribute::get(F->getContext(), "enzyme_sret"));
@@ -2194,10 +2220,15 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       // Attribute::ElementType));
 #endif
     }
-    for (auto ty : PrimalParamAttrsToPreserve)
-      if (F->getAttributes().hasParamAttr(ii, ty)) {
-        auto attr = F->getAttributes().getParamAttr(ii, ty);
-        NewF->addParamAttr(jj, attr);
+    for (auto attr :
+         {"enzymejl_parmtype", "enzymejl_parmtype_ref", "enzyme_type"})
+      if (F->getAttributes().hasParamAttr(ii, attr)) {
+        NewF->addParamAttr(jj, F->getAttributes().getParamAttr(ii, attr));
+        for (auto ty : PrimalParamAttrsToPreserve)
+          if (F->getAttributes().hasParamAttr(ii, ty)) {
+            auto attr = F->getAttributes().getParamAttr(ii, ty);
+            NewF->addParamAttr(jj, attr);
+          }
       }
     if (constant_args[ii] == DIFFE_TYPE::CONSTANT) {
       if (!i->hasByValAttr())
@@ -2212,8 +2243,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
                      << " nonconstant arg " << *j << "\n";
     }
 
-    // Always remove nonnull/noundef since the caller may choose to pass undef
-    // as an arg if provably it will not be used in the reverse pass
+    // Always remove nonnull/noundef since the caller may choose to pass
+    // undef as an arg if provably it will not be used in the reverse pass
     if (constant_args[ii] == DIFFE_TYPE::DUP_NONEED ||
         mode == DerivativeMode::ReverseModeGradient) {
       if (F->hasParamAttribute(ii, Attribute::NonNull)) {
@@ -2236,6 +2267,14 @@ Function *PreProcessCache::CloneFunctionWithReturns(
             NewF->addParamAttr(jj + 1, attr);
           }
 
+      for (auto attr :
+           {"enzymejl_parmtype", "enzymejl_parmtype_ref", "enzyme_type"})
+        if (F->getAttributes().hasParamAttr(ii, attr)) {
+          if (width == 1)
+            NewF->addParamAttr(jj + 1,
+                               F->getAttributes().getParamAttr(ii, attr));
+        }
+
       if (F->getAttributes().hasParamAttr(ii, "enzymejl_returnRoots")) {
         if (width == 1) {
           NewF->addParamAttr(jj + 1, F->getAttributes().getParamAttr(
@@ -2247,7 +2286,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
 #if LLVM_VERSION_MAJOR >= 13
         // TODO
         // NewF->addParamAttr(jj + 1,
-        //                   F->getParamAttribute(ii, Attribute::ElementType));
+        //                   F->getParamAttribute(ii,
+        //                   Attribute::ElementType));
 #endif
       }
 
@@ -2266,7 +2306,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
           //     jj + 1,
           //     Attribute::get(F->getContext(),
           //     Attribute::AttrKind::ElementType,
-          //                    F->getParamAttribute(ii, Attribute::StructRet)
+          //                    F->getParamAttribute(ii,
+          //                    Attribute::StructRet)
           //                        .getValueAsType()));
 #endif
         } else {
@@ -2283,7 +2324,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
           //     jj + 1,
           //     Attribute::get(F->getContext(),
           //     Attribute::AttrKind::ElementType,
-          //                    F->getParamAttribute(ii, Attribute::StructRet)
+          //                    F->getParamAttribute(ii,
+          //                    Attribute::StructRet)
           //                        .getValueAsType()));
 #endif
         }
@@ -2495,19 +2537,23 @@ void ReplaceFunctionImplementation(Module &M) {
 }
 
 void PreProcessCache::optimizeIntermediate(Function *F) {
-  PromotePass().run(*F, FAM);
+  PreservedAnalyses PA;
+  PA = PromotePass().run(*F, FAM);
+  FAM.invalidate(*F, PA);
 #if LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
-  GVNPass().run(*F, FAM);
+  PA = GVNPass().run(*F, FAM);
 #else
-  GVN().run(*F, FAM);
+  PA = GVN().run(*F, FAM);
 #endif
+  FAM.invalidate(*F, PA);
 #if LLVM_VERSION_MAJOR >= 16 && !defined(FLANG)
-  SROAPass(llvm::SROAOptions::PreserveCFG).run(*F, FAM);
+  PA = SROAPass(llvm::SROAOptions::PreserveCFG).run(*F, FAM);
 #elif LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
-  SROAPass().run(*F, FAM);
+  PA = SROAPass().run(*F, FAM);
 #else
-  SROA().run(*F, FAM);
+  PA = SROA().run(*F, FAM);
 #endif
+  FAM.invalidate(*F, PA);
 
   if (EnzymeSelectOpt) {
 #if LLVM_VERSION_MAJOR >= 12
@@ -2518,8 +2564,10 @@ void PreProcessCache::optimizeIntermediate(Function *F) {
         /*bool SwitchToLookup=*/false, /*bool CanonicalLoops=*/true,
         /*bool SinkCommon=*/true, /*AssumptionCache *AssumpCache=*/nullptr);
 #endif
-    SimplifyCFGPass(scfgo).run(*F, FAM);
-    CorrelatedValuePropagationPass().run(*F, FAM);
+    PA = SimplifyCFGPass(scfgo).run(*F, FAM);
+    FAM.invalidate(*F, PA);
+    PA = CorrelatedValuePropagationPass().run(*F, FAM);
+    FAM.invalidate(*F, PA);
     SelectOptimization(F);
   }
   // EarlyCSEPass(/*memoryssa*/ true).run(*F, FAM);
@@ -2529,8 +2577,10 @@ void PreProcessCache::optimizeIntermediate(Function *F) {
 
   ReplaceFunctionImplementation(*F->getParent());
 
-  PreservedAnalyses PA;
-  FAM.invalidate(*F, PA);
+  {
+    PreservedAnalyses PA;
+    FAM.invalidate(*F, PA);
+  }
 
 #if LLVM_VERSION_MAJOR < 14
   using OptimizationLevel = llvm::PassBuilder::OptimizationLevel;
@@ -3646,14 +3696,13 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
   }
 
   /*
-  // add (ext (x  == expr )), ( ext (x == expr + 1)) ->  -expr == c2 ) and c1 !=
-  c2  -> false if (cur->getOpcode() == Instruction::Add) for (int j=0; j<2; j++)
-    if (auto c0 = dyn_cast<ZExtInst>(cur->getOperand(j)))
-        if (auto cmp0 = dyn_cast<ICmpInst>(c0->getOperand(0)))
-    if (auto c1 = dyn_cast<CastInst>(cur->getOperand(1-j)))
-        if (auto cmp1 = dyn_cast<ICmpInst>(c0->getOperand(0)))
-            if (cmp0->getPredicate() == ICmpInst::ICMP_EQ &&
-                cmp1->getPredicate() == ICmpInst::ICMP_EQ)
+  // add (ext (x  == expr )), ( ext (x == expr + 1)) ->  -expr == c2 ) and c1
+  != c2  -> false if (cur->getOpcode() == Instruction::Add) for (int j=0; j<2;
+  j++) if (auto c0 = dyn_cast<ZExtInst>(cur->getOperand(j))) if (auto cmp0 =
+  dyn_cast<ICmpInst>(c0->getOperand(0))) if (auto c1 =
+  dyn_cast<CastInst>(cur->getOperand(1-j))) if (auto cmp1 =
+  dyn_cast<ICmpInst>(c0->getOperand(0))) if (cmp0->getPredicate() ==
+  ICmpInst::ICMP_EQ && cmp1->getPredicate() == ICmpInst::ICMP_EQ)
             {
           for (size_t i0 = 0; i0 < 2; i0++)
             for (size_t i1 = 0; i1 < 2; i1++)
@@ -3686,7 +3735,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (auto C = dyn_cast<ConstantFP>(fcmp->getOperand(i))) {
           if (C->isZero()) {
             // (a1*a2*...an) == 0 -> (a1 == 0) || (a2 == 0) || ... (a2 == 0)
-            // (a1*a2*...an) != 0 -> ![ (a1 == 0) || (a2 == 0) || ... (a2 == 0)
+            // (a1*a2*...an) != 0 -> ![ (a1 == 0) || (a2 == 0) || ... (a2 ==
+            // 0)
             // ]
             if (auto P = isProduct(fcmp->getOperand(1 - i))) {
               Value *res = nullptr;
@@ -3877,8 +3927,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       cur->isExact())
     if (auto C2 = dyn_cast<ConstantInt>(cur->getOperand(1)))
       if (auto mul = dyn_cast<BinaryOperator>(cur->getOperand(0))) {
-        //  (lshr exact (mul a, C1), C2), C -> mul a, (lhsr exact C1, C2) if C2
-        //  divides C1
+        //  (lshr exact (mul a, C1), C2), C -> mul a, (lhsr exact C1, C2) if
+        //  C2 divides C1
         if (mul->getOpcode() == Instruction::Mul)
           for (int i0 = 0; i0 < 2; i0++)
             if (auto C1 = dyn_cast<ConstantInt>(mul->getOperand(i0))) {
@@ -3905,7 +3955,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                 return "IMulDivConst";
               }
             }
-        //  (lshr exact (add a, C1), C2), C -> add a, (lhsr exact C1, C2) if C2
+        //  (lshr exact (add a, C1), C2), C -> add a, (lhsr exact C1, C2) if
+        //  C2
         if (mul->getOpcode() == Instruction::Add)
           for (int i0 = 0; i0 < 2; i0++)
             if (auto C1 = dyn_cast<ConstantInt>(mul->getOperand(i0))) {
@@ -4115,8 +4166,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       // (a * b) != (c * b) -> (a != c) && b != 0
       // auto S1 = SE.getSCEV(cur->getOperand(0));
       // auto S2 = SE.getSCEV(cur->getOperand(1));
-      // llvm::errs() <<" attempting push: " << *cur << " S1: " << *S1 << " S2:
-      // " << *S2 << " and " << *cur->getOperand(0) << " " <<
+      // llvm::errs() <<" attempting push: " << *cur << " S1: " << *S1 << "
+      // S2: " << *S2 << " and " << *cur->getOperand(0) << " " <<
       // *cur->getOperand(1) << "\n";
       if (auto mul1 = dyn_cast<Instruction>(cur->getOperand(0)))
         if (auto mul2 = dyn_cast<Instruction>(cur->getOperand(1))) {
@@ -4406,10 +4457,10 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
   for (int j=0; j<2; j++)
   if (auto CI = dyn_cast<ConstantInt>(SI->getOperand(1+j)))
     if (CI->isZero()) {
-            auto tval = (j == 0) ? CI : pushcse(B.CreateMul(SI->getTrueValue(),
-  cur->getOperand(1-i), "tval." + cur->getName(), cur->hasNoUnsignedWrap(),
-                               cur->hasNoSignedWrap()));
-            auto fval = (j == 1) ? CI : pushcse(B.CreateMul(SI->getFalseValue(),
+            auto tval = (j == 0) ? CI :
+  pushcse(B.CreateMul(SI->getTrueValue(), cur->getOperand(1-i), "tval." +
+  cur->getName(), cur->hasNoUnsignedWrap(), cur->hasNoSignedWrap())); auto
+  fval = (j == 1) ? CI : pushcse(B.CreateMul(SI->getFalseValue(),
   cur->getOperand(1-i), "fval." + cur->getName(), cur->hasNoUnsignedWrap(),
                                cur->hasNoSignedWrap()));
 
@@ -4480,9 +4531,10 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
   (and1->getType()->isIntegerTy(1) && and2->getType()->isIntegerTy(1) &&
   and1->getOpcode() == Instruction::And && and2->getOpcode() ==
   Instruction::And) { bool done = false; for (int i1=0; i1<2; i1++) for (int
-  i2=0; i2<2; i2++) if (and1->getOperand(i1) == and2->getOperand(i2)) { auto c1
-  = and1->getOperand(i1); auto x = and1->getOperand(1-i1); x =
-  pushcse(B.CreateZExt(x, inst1->getType()));  auto y = and2->getOperand(1-i2);
+  i2=0; i2<2; i2++) if (and1->getOperand(i1) == and2->getOperand(i2)) { auto
+  c1 = and1->getOperand(i1); auto x = and1->getOperand(1-i1); x =
+  pushcse(B.CreateZExt(x, inst1->getType()));  auto y =
+  and2->getOperand(1-i2);
 
                 y = pushcse(B.CreateZExt(y, inst2->getType()));
 
@@ -5173,8 +5225,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     }
   }
 
-  // fmul a, (sitofp (imul c:const, b)) -> fmul (fmul (a, (sitofp c))), (sitofp
-  // b)
+  // fmul a, (sitofp (imul c:const, b)) -> fmul (fmul (a, (sitofp c))),
+  // (sitofp b)
 
   if (cur->getOpcode() == Instruction::FMul && cur->isFast()) {
     for (int i = 0; i < 2; i++)
@@ -5399,8 +5451,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             }
 
             Value *sel = pushcse(
-                B.CreateSelect(condition, ConstantFP::get(cur->getType(), 0.0),
-                               fmul, "mulcsi." + cur->getName()));
+                B.CreateSelect(condition, ConstantFP::get(cur->getType(),
+      0.0), fmul, "mulcsi." + cur->getName()));
 
             replaceAndErase(cur, sel);
             return "FMulSIToFPProp";
@@ -6261,6 +6313,7 @@ public:
     assert(t != Type::None);
     assert(c.size() != 0);
     assert(c.size() != 1);
+#ifndef NDEBUG
     SmallVector<InnerTy, 1> tmp(c.begin(), c.end());
     for (unsigned i = 0; i < tmp.size(); i++)
       for (unsigned j = 0; j < i; j++)
@@ -6283,6 +6336,7 @@ public:
               if (auto s = dyn_cast<SCEVAddRecExpr>(tmp[j]->node))
                 assert(s->getLoop() != tmp[i]->Loop);
     }
+#endif
   }
 
   bool operator==(const Constraints &rhs) const {
@@ -6527,8 +6581,8 @@ return true;
 
               auto div = ctx.SE.getUDivExpr(MinusX, Y);
               auto div_e = ctx.SE.getUDivExactExpr(MinusX, Y);
-              // in case of inexact division, check that these exactly equal for
-              // replacement
+              // in case of inexact division, check that these exactly equal
+              // for replacement
 
               if (div == div_e) {
                 if (isEqual) {
@@ -6799,8 +6853,8 @@ return true;
     if (rhs->ty == Type::Intersect || rhs->ty == Type::Compare) {
       return rhs->andB(shared_from_this(), ctx);
     }
-    // (m or a or b or d) and (m or a or c or e ...) -> m or a or ( (b or d) and
-    // (c or e))
+    // (m or a or b or d) and (m or a or c or e ...) -> m or a or ( (b or d)
+    // and (c or e))
     if (ty == Type::Union && rhs->ty == Type::Union) {
       if (*this == *rhs->notB(ctx)) {
         return Constraints::none();
@@ -7173,11 +7227,13 @@ getSparseConditions(bool &legal, Value *val,
         }
       }
       if (scope)
-        EmitFailure("NoSparsification", I->getDebugLoc(), I,
-                    "F: ", *I->getParent()->getParent(), "\n",
+        EmitWarning("NoSparsification", *I,
                     " No sparsification: not sparse solvable(icmp): ", *I,
                     " via ", *sub1);
-      legal = false;
+      if (SparseDebug) {
+        llvm::errs() << " getSparse(icmp_dflt, " << *I
+                     << ") = " << *defaultFloat << "\n";
+      }
       return defaultFloat;
     }
 

@@ -28,7 +28,7 @@ platforms = expand_cxxstring_abis(supported_platforms(; experimental=true))
 script = raw"""
 cd Enzyme
 
-if [[ "${bb_full_target}" == x86_64-apple-darwin*llvm_version+15.asserts* ]]; then
+if [[ "${bb_full_target}" == x86_64-apple-darwin*llvm_version+15* ]] || [[ "${bb_full_target}" == x86_64-apple-darwin*llvm_version+16* ]]; then
     # LLVM 15 requires macOS SDK 10.14.
     pushd $WORKSPACE/srcdir/MacOSX10.*.sdk
     rm -rf /opt/${target}/${target}/sys-root/System
@@ -54,11 +54,11 @@ cmake -B build-native -S enzyme -GNinja "${NATIVE_CMAKE_FLAGS[@]}"
 
 # Only build blasheaders and tblgen
 ninja -C build-native -j ${nproc} blasheaders enzyme-tblgen
-
 # 2. Cross-compile
 CMAKE_FLAGS=()
 CMAKE_FLAGS+=(-DENZYME_EXTERNAL_SHARED_LIB=ON)
 CMAKE_FLAGS+=(-DBC_LOAD_HEADER=`pwd`/build-native/BCLoad/gsl/blas_headers.h)
+CMAKE_FLAGS+=(-DEnzyme_TABLEGEN=`pwd`/build-native/tools/enzyme-tblgen/enzyme-tblgen)
 CMAKE_FLAGS+=(-DEnzyme_TABLEGEN_EXE=`pwd`/build-native/tools/enzyme-tblgen/enzyme-tblgen)
 CMAKE_FLAGS+=(-DENZYME_CLANG=OFF)
 # RelWithDebInfo for decent performance, with debugability
@@ -66,7 +66,11 @@ CMAKE_FLAGS+=(-DCMAKE_BUILD_TYPE=RelWithDebInfo)
 # Install things into $prefix
 CMAKE_FLAGS+=(-DCMAKE_INSTALL_PREFIX=${prefix})
 # Explicitly use our cmake toolchain file and tell CMake we're cross-compiling
-CMAKE_FLAGS+=(-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TARGET_TOOLCHAIN})
+if [[ "${target}" == *mingw* && "${bb_full_target}" == *llvm_version+16* ]]; then
+    CMAKE_FLAGS+=(-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TARGET_TOOLCHAIN%.*}_clang.cmake)
+else
+    CMAKE_FLAGS+=(-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TARGET_TOOLCHAIN})
+fi
 CMAKE_FLAGS+=(-DCMAKE_CROSSCOMPILING:BOOL=ON)
 # Tell CMake where LLVM is
 CMAKE_FLAGS+=(-DLLVM_DIR="${prefix}/lib/cmake/llvm")
@@ -74,10 +78,18 @@ CMAKE_FLAGS+=(-DLLVM_DIR="${prefix}/lib/cmake/llvm")
 CMAKE_FLAGS+=(-DLLVM_LINK_LLVM_DYLIB=ON)
 # Build the library
 CMAKE_FLAGS+=(-DBUILD_SHARED_LIBS=ON)
+
+if [[ "${bb_full_target}" == x86_64-apple-darwin*llvm_version+15* ]] || [[ "${bb_full_target}" == x86_64-apple-darwin*llvm_version+16* ]]; then
+if [[ "${target}" == x86_64-apple* ]]; then
+  CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET:STRING=10.14)
+fi
+else
 if [[ "${target}" == x86_64-apple* ]]; then
   CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET:STRING=10.12)
 fi
+fi
 
+echo ${CMAKE_FLAGS[@]}
 cmake -B build -S enzyme -GNinja ${CMAKE_FLAGS[@]}
 
 ninja -C build -j ${nproc} install
@@ -113,11 +125,11 @@ for llvm_version in llvm_versions, llvm_assertions in (false, true)
         # We don't build LLVM 15 for i686-linux-musl.
         filter!(p -> !(arch(p) == "i686" && libc(p) == "musl"), platforms)
     end
-
+    
     for platform in platforms
         augmented_platform = deepcopy(platform)
         augmented_platform[LLVM.platform_name] = LLVM.platform(llvm_version, llvm_assertions)
-        gcc_version = version > v"15" ? v"10" : v"8"
+        gcc_version = llvm_version > v"15" ? v"10" : v"8"
         should_build_platform(triplet(augmented_platform)) || continue
         push!(builds, (;
             dependencies, products,
