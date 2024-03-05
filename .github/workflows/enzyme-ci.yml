@@ -63,7 +63,7 @@ jobs:
       matrix:
         llvm: ["12", "13", "14", "15", "16"]
         build: ["Release", "Debug"] # "RelWithDebInfo"
-        os: [macos-12, macos-14]
+        os: [macos-13, macos-14]
   
     timeout-minutes: 30 
     steps:
@@ -80,16 +80,16 @@ jobs:
       run: cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
     - name: make
       working-directory: build
-      run: make -j 3
+      run: make -j `sysctl -n hw.ncpu`
     - name: make check-typeanalysis
       working-directory: build
-      run: make -j 3 check-typeanalysis
+      run: make -j `sysctl -n hw.ncpu` check-typeanalysis
     - name: make check-activityanalysis
       working-directory: build
-      run: make -j 3 check-activityanalysis
+      run: make -j `sysctl -n hw.ncpu` check-activityanalysis
     - name: make check-enzyme
       working-directory: build
-      run: make -j3 check-enzyme-bench
+      run: make -j `sysctl -n hw.ncpu` check-enzyme-bench
     - name: graph results
       if: github.event_name != 'pull_request' && matrix.build == 'Release'
       run: python3 enzyme/test/upload-results.py build/test/Enzyme/results.json --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
@@ -103,7 +103,7 @@ jobs:
       matrix:
         llvm: ["13"] #, "14"]
         build: ["Release"] # "RelWithDebInfo"
-        os: [macos-12, macos-14]
+        os: [macos-13, macos-14]
 
     timeout-minutes: 30
     steps:
@@ -118,4 +118,4 @@ jobs:
       working-directory: build
       run: |
           cmake ../enzyme -GXcode -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
-          cmake --build . --parallel 3
+          cmake --build . --parallel `sysctl -n hw.ncpu`
