@@ -207,6 +207,24 @@ void enzyme::ForwardActivityAnnotationAnalysis::visitExternalCall(
       join(result, *operand);
 }
 
+/// Visit everything transitively pointed-to by any pointer in start.
+static void traversePointsToSets(const enzyme::AliasClassSet &start,
+                                 const enzyme::PointsToSets &pointsToSets,
+                                 function_ref<void(DistinctAttr)> visit) {
+  using enzyme::AliasClassSet;
+  AliasClassSet current(start);
+  while (!current.isUndefined()) {
+    AliasClassSet next;
+
+    assert(!current.isUnknown() && "Unhandled traversal of unknown");
+    for (DistinctAttr currentClass : current.getElements()) {
+      visit(currentClass);
+      (void)next.join(pointsToSets.getPointsTo(currentClass));
+    }
+    std::swap(current, next);
+  }
+}
+
 void enzyme::ForwardActivityAnnotationAnalysis::processCallToSummarizedFunc(
     CallOpInterface call, ArrayRef<ValueOriginSet> summary,
     ArrayRef<const ForwardOriginsLattice *> operands,
@@ -220,14 +238,25 @@ void enzyme::ForwardActivityAnnotationAnalysis::processCallToSummarizedFunc(
     if (returnOrigin.isUnknown()) {
       (void)callerOrigins.markUnknown();
     } else {
-      (void)returnOrigin.foreachElement(
-          [&](OriginAttr calleeOrigin, ValueOriginSet::State state) {
-            assert(state == ValueOriginSet::State::Defined &&
-                   "undefined and unknown must have been handled above");
-            auto calleeArgOrigin = cast<ArgumentOriginAttr>(calleeOrigin);
-            return callerOrigins.join(
-                operands[calleeArgOrigin.getArgNumber()]->getOriginsObject());
-          });
+      auto *denseOrigins = getOrCreateFor<ForwardOriginsMap>(call, call);
+      auto *pointsTo = getOrCreateFor<PointsToSets>(call, call);
+      (void)returnOrigin.foreachElement([&](OriginAttr calleeOrigin,
+                                            ValueOriginSet::State state) {
+        assert(state == ValueOriginSet::State::Defined &&
+               "undefined and unknown must have been handled above");
+        auto calleeArgOrigin = cast<ArgumentOriginAttr>(calleeOrigin);
+        // If the caller is a pointer, need to join what it points to
+        const ForwardOriginsLattice *operandOrigins =
+            operands[calleeArgOrigin.getArgNumber()];
+        auto *callerAliasClass =
+            getOrCreateFor<AliasClassLattice>(call, operandOrigins->getPoint());
+        traversePointsToSets(callerAliasClass->getAliasClassesObject(),
+                             *pointsTo, [&](DistinctAttr aliasClass) {
+                               (void)callerOrigins.join(
+                                   denseOrigins->getOrigins(aliasClass));
+                             });
+        return callerOrigins.join(operandOrigins->getOriginsObject());
+      });
     }
     propagateIfChanged(result, result->merge(callerOrigins));
   }
@@ -541,24 +570,6 @@ void enzyme::DenseActivityAnnotationAnalysis::visitCallControlFlowTransfer(
         return processCallToSummarizedFunc(call, summary, before, after);
       }
     }
-  }
-}
-
-/// Visit everything transitively pointed-to by any pointer in start.
-static void traversePointsToSets(const enzyme::AliasClassSet &start,
-                                 const enzyme::PointsToSets &pointsToSets,
-                                 function_ref<void(DistinctAttr)> visit) {
-  using enzyme::AliasClassSet;
-  AliasClassSet current(start);
-  while (!current.isUndefined()) {
-    AliasClassSet next;
-
-    assert(!current.isUnknown() && "Unhandled traversal of unknown");
-    for (DistinctAttr currentClass : current.getElements()) {
-      visit(currentClass);
-      (void)next.join(pointsToSets.getPointsTo(currentClass));
-    }
-    std::swap(current, next);
   }
 }
 
