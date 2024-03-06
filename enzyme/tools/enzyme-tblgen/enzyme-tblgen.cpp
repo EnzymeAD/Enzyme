@@ -2050,9 +2050,17 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "  };\n";
       os << "  bool isArgInactive(mlir::Operation*, size_t idx) const {\n";
       for (auto diffarg : diffargs) {
+        if (diffarg == -1) {
+          os << "    return false;\n";
+          break;
+        }
         os << "    if (idx == " << diffarg << ") return false;\n";
       }
       for (auto diffarg : storedargs) {
+        if (diffarg == -1) {
+          os << "    return false;\n";
+          break;
+        }
         os << "    if (idx == " << diffarg << ") return false;\n";
       }
       os << "    return true;\n  }\n";
