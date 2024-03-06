@@ -35,9 +35,9 @@ namespace {
 struct ForOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<ForOpInterfaceReverse,
                                                        scf::ForOp> {
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
-                                MGradientUtilsReverse *gutils,
-                                SmallVector<Value> caches) const {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
     auto forOp = cast<scf::ForOp>(op);
 
     // Begin Perform d(yielded value[i]) += d(result[i]); d(result[i]) = 0
@@ -149,6 +149,7 @@ struct ForOpInterfaceReverse
                                          buildFuncReturnOp);
       }
     }
+    return success();
   }
 
   SmallVector<Value> cacheValues(Operation *op,

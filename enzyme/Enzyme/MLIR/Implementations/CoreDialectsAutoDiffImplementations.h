@@ -113,9 +113,11 @@ class NoopRevAutoDiffInterface
     : public ReverseAutoDiffOpInterface::ExternalModel<
           NoopRevAutoDiffInterface<OpTy>, OpTy> {
 public:
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
-                                MGradientUtilsReverse *gutils,
-                                SmallVector<Value> caches) const {}
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    return success();
+  }
 
   SmallVector<Value> cacheValues(Operation *op,
                                  MGradientUtilsReverse *gutils) const {
@@ -131,10 +133,11 @@ class ReturnRevAutoDiffInterface
     : public ReverseAutoDiffOpInterface::ExternalModel<
           ReturnRevAutoDiffInterface<OpTy>, OpTy> {
 public:
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
-                                MGradientUtilsReverse *gutils,
-                                SmallVector<Value> caches) const {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
     returnReverseHandler(op, builder, gutils);
+    return success();
   }
 
   SmallVector<Value> cacheValues(Operation *op,
@@ -181,9 +184,11 @@ class AutoDiffUsingAllocationRev
     : public ReverseAutoDiffOpInterface::ExternalModel<
           AutoDiffUsingAllocationRev<OpTy>, OpTy> {
 public:
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
-                                MGradientUtilsReverse *gutils,
-                                SmallVector<Value> caches) const {}
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    return success();
+  }
 
   SmallVector<Value> cacheValues(Operation *op,
                                  MGradientUtilsReverse *gutils) const {
