@@ -141,7 +141,8 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
     } else {
       if (gutils->isConstantValue(operand.get())) {
 
-        if (contains(storedVals, operand.getOperandNumber())) {
+        if (contains(storedVals, operand.getOperandNumber()) ||
+            contains(storedVals, -1)) {
           if (auto iface =
                   dyn_cast<AutoDiffTypeInterface>(operand.get().getType())) {
             if (!iface.isMutable()) {
