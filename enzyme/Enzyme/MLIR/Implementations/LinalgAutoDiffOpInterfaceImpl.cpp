@@ -68,9 +68,9 @@ template <typename T_>
 struct GenericOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<
           GenericOpInterfaceReverse<T_>, T_> {
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
-                                MGradientUtilsReverse *gutils,
-                                SmallVector<Value> caches) const {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
     auto linalgOp = cast<linalg::LinalgOp>(op);
     assert(linalgOp.hasPureBufferSemantics() &&
            "Linalg op with tensor semantics not yet supported");
@@ -255,6 +255,7 @@ struct GenericOpInterfaceReverse
         cacheBuilder.getArrayAttr(indexingMapsAttr));
     adjoint->setAttr(adjoint.getIndexingMapsAttrName(),
                      builder.getArrayAttr(indexingMapsAttrAdjoint));
+    return success();
   }
 
   SmallVector<Value> cacheValues(Operation *op,

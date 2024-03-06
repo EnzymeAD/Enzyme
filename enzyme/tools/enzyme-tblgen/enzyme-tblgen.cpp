@@ -1341,7 +1341,7 @@ static void emitMLIRReverse(raw_ostream &os, Record *pattern, DagInit *tree,
   os << "                          MGradientUtilsReverse *gutils) const "
         "{}\n";
 
-  os << "     void createReverseModeAdjoint(Operation *op0, OpBuilder "
+  os << "     LogicalResult createReverseModeAdjoint(Operation *op0, OpBuilder "
         "&builder,\n";
   os << "                            MGradientUtilsReverse *gutils,\n";
   os << "                            SmallVector<Value> caches) const {\n";
@@ -1995,6 +1995,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     if (intrinsic == IntrDerivatives || intrinsic == CallDerivatives)
       os << "    return true;\n  }\n";
+    else if (intrinsic == MLIRDerivatives)
+      os << "    return success();\n  }\n";
     else
       os << "    return;\n  }\n";
     if (intrinsic == MLIRDerivatives)
@@ -2063,7 +2065,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         auto origName = "op";
         emitMLIRReverse(os, pattern, tree, intrinsic, origName, argOps);
         emitReverseCommon(os, pattern, tree, intrinsic, origName, argOps);
-        os << "     return;\n";
+        os << "     return success();\n";
         os << "   }\n";
         os << " };\n";
       }

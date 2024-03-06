@@ -127,18 +127,17 @@ public:
   handlePredecessors(Block *oBB, Block *newBB, Block *reverseBB,
                      MGradientUtilsReverse *gutils,
                      llvm::function_ref<buildReturnFunction> buildReturnOp);
-  void visitChildren(Block *oBB, Block *reverseBB,
-                     MGradientUtilsReverse *gutils);
-  void visitChild(Operation *op, OpBuilder &builder,
-                  MGradientUtilsReverse *gutils);
+  LogicalResult visitChildren(Block *oBB, Block *reverseBB,
+                              MGradientUtilsReverse *gutils);
+  LogicalResult visitChild(Operation *op, OpBuilder &builder,
+                           MGradientUtilsReverse *gutils);
   void mapInvertArguments(Block *oBB, Block *reverseBB,
                           MGradientUtilsReverse *gutils);
-  SmallVector<mlir::Block *> getDominatorToposort(MGradientUtilsReverse *gutils,
-                                                  Region &region);
-  void differentiate(MGradientUtilsReverse *gutils, Region &oldRegion,
-                     Region &newRegion,
-                     llvm::function_ref<buildReturnFunction> buildFuncRetrunOp,
-                     std::function<std::pair<Value, Value>(Type)> cacheCreator);
+  LogicalResult
+  differentiate(MGradientUtilsReverse *gutils, Region &oldRegion,
+                Region &newRegion,
+                llvm::function_ref<buildReturnFunction> buildFuncRetrunOp,
+                std::function<std::pair<Value, Value>(Type)> cacheCreator);
 };
 
 } // Namespace enzyme
