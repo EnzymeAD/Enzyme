@@ -11,7 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Analysis/AliasAnalysis.h"
+#include "Analysis/DataFlowAliasAnalysis.h"
 #include "Dialect/Ops.h"
 #include "Passes/PassDetails.h"
 #include "Passes/Passes.h"

@@ -609,8 +609,11 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         PrintFatalError(pattern->getLoc(),
                         Twine("string 'value' not defined in ") +
                             resultTree->getAsString());
-
+      if (value->getValue().contains(';'))
+        os << "({ ";
       os << value->getValue();
+      if (value->getValue().contains(';'))
+        os << " })";
       return false;
     } else if (opName == "Undef" || Def->isSubClassOf("Undef")) {
       if (resultRoot->getNumArgs() != 1)

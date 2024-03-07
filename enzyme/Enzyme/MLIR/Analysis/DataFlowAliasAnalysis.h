@@ -1,4 +1,4 @@
-//===- AliasAnalysis.h - Declaration of Alias Analysis --------------------===//
+//===- DataflowAliasAnalysis.h - Declaration of Alias Analysis ------------===//
 //
 //                             Enzyme Project
 //
@@ -307,7 +307,7 @@ public:
 
   void print(raw_ostream &os) const override;
 
-  AliasResult alias(const AbstractSparseLattice &other) const;
+  ::mlir::AliasResult alias(const AbstractSparseLattice &other) const;
 
   ChangeResult join(const AbstractSparseLattice &other) override;
 

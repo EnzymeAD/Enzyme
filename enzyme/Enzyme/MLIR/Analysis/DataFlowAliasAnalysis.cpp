@@ -1,4 +1,4 @@
-//===- AliasAnalysis.cpp - Implementation of Alias Analysis ---------------===//
+//===- DataFlowAliasAnalysis.cpp - Implementation of Alias Analysis  ------===//
 //
 //                             Enzyme Project
 //
@@ -23,7 +23,7 @@
 // that the pointers in a program may point to.
 //
 //===----------------------------------------------------------------------===//
-#include "AliasAnalysis.h"
+#include "DataFlowAliasAnalysis.h"
 
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
