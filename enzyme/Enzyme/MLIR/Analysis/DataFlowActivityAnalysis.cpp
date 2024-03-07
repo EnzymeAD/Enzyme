@@ -878,6 +878,9 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
               return ChangeResult::NoChange;
             });
       };
+      if (llvm::isa_and_present<LLVM::PoisonOp>(value.getDefiningOp())) {
+        return false;
+      }
 
       if (isa_and_present<LLVM::PoisonOp, LLVM::ZeroOp, LLVM::AddressOfOp>(
               value.getDefiningOp())) {
