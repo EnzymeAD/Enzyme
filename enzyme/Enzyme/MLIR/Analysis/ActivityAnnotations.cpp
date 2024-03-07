@@ -795,10 +795,6 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::
 
       if (argumentClasses[argNumber].isUndefined()) {
         // Not a pointer, do a sparse update
-        raw_ostream &os = llvm::outs();
-        os << "sparse update dest origins: ";
-        destOrigins.print(os);
-        os << "\n";
         auto *backwardLattice = getOrCreate<BackwardOriginsLattice>(
             call.getArgOperands()[argNumber]);
         if (destOrigins.isUnknown()) {
