@@ -25,7 +25,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "DataFlowActivityAnalysis.h"
-#include "AliasAnalysis.h"
+#include "DataFlowAliasAnalysis.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 
