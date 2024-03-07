@@ -922,6 +922,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       if (isCall || isIntr)
         os << "})";
       os << ")";
+      if (intrinsic == MLIRDerivatives) {
+        auto postop = Def->getValueAsString("postop");
+        os << postop;
+      }
       if (isCall) {
         os << ")";
       }
