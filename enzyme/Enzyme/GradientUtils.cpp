@@ -8224,11 +8224,28 @@ void GradientUtils::forceActiveDetection() {
   }
 }
 
+static SmallPtrSet<Value *, 4> visitedVals;
 bool GradientUtils::isConstantValue(Value *val) const {
   if (auto inst = dyn_cast<Instruction>(val)) {
     (void)inst;
     assert(inst->getParent()->getParent() == oldFunc);
-    return ATA->isConstantValue(TR, val);
+    bool expected = ATA->isConstantValue(TR, val);
+    if (visitedVals.find(val) == visitedVals.end()) {
+      visitedVals.insert(val);
+      bool dataflow = inst->hasMetadata("enzyme_df_const") ||
+                      inst->hasMetadata("enzyme_df_const_val");
+      if (expected == false && dataflow == true) {
+        if (isa<AllocaInst>(inst)) {
+          raw_ostream &os = llvm::errs();
+          os << "[activity] value discrepancy, expected "
+             << (expected ? "constant" : "active") << " but got "
+             << (dataflow ? "constant" : "active") << "(" << oldFunc->getName()
+             << ")\n";
+          os << "[activity] " << *inst << "\n";
+        }
+      }
+    }
+    return expected;
   }
 
   if (auto arg = dyn_cast<Argument>(val)) {
@@ -8274,9 +8291,29 @@ err:;
   exit(1);
 }
 
+static SmallPtrSet<Instruction *, 4> visitedInstrs;
 bool GradientUtils::isConstantInstruction(const Instruction *inst) const {
   assert(inst->getParent()->getParent() == oldFunc);
-  return ATA->isConstantInstruction(TR, const_cast<Instruction *>(inst));
+  bool expected =
+      ATA->isConstantInstruction(TR, const_cast<Instruction *>(inst));
+  bool dataflow = inst->hasMetadata("enzyme_df_const") ||
+                  inst->hasMetadata("enzyme_df_const_inst");
+  if (inst->hasMetadata("enzyme_df_active") ||
+      inst->hasMetadata("enzyme_df_active_inst")) {
+    dataflow = false;
+  }
+  if (visitedInstrs.find(inst) == visitedInstrs.end()) {
+    visitedInstrs.insert(const_cast<Instruction *>(inst));
+    if (expected != dataflow) {
+      if (expected == false && dataflow == true) {
+        llvm::errs() << "[activity] discrepancy for activity results, expected "
+                     << (expected ? "constant" : "active") << " but got "
+                     << (dataflow ? "constant" : "active") << "\n";
+        llvm::errs() << "[activity] " << *inst << "\n";
+      }
+    }
+  }
+  return expected;
 }
 
 bool GradientUtils::getContext(llvm::BasicBlock *BB, LoopContext &lc) {
