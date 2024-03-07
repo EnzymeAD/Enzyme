@@ -749,26 +749,14 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
   }
 
   /// Overwrite activity using metadata
-  if (hasMetadata(I, "enzyme_active") || hasMetadata(I, "enzyme_active_inst")) {
+  if (hasMetadata(I, "enzyme_df_active") ||
+      hasMetadata(I, "enzyme_df_active_inst")) {
     if (EnzymePrintActivity)
       llvm::errs() << "[activity] forced instruction to be active: " << *I
                    << "\n";
     return false;
-  } else if (hasMetadata(I, "enzyme_inactive") ||
-             hasMetadata(I, "enzyme_inactive_inst")) {
-    if (EnzymePrintActivity)
-      llvm::errs() << "[activity] forced value to be constant: " << *I << "\n";
-    return true;
-  }
-
-  /// Overwrite activity using metadata
-  if (hasMetadata(I, "enzyme_active") || hasMetadata(I, "enzyme_active_inst")) {
-    if (EnzymePrintActivity)
-      llvm::errs() << "[activity] forced instruction to be active: " << *I
-                   << "\n";
-    return false;
-  } else if (hasMetadata(I, "enzyme_inactive") ||
-             hasMetadata(I, "enzyme_inactive_inst")) {
+  } else if (hasMetadata(I, "enzyme_df_const") ||
+             hasMetadata(I, "enzyme_df_const_inst")) {
     if (EnzymePrintActivity)
       llvm::errs() << "[activity] forced value to be constant: " << *I << "\n";
     return true;
@@ -1149,14 +1137,14 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
     // Overwrite activity using metadata
     if (auto *I = dyn_cast<Instruction>(Val)) {
-      if (hasMetadata(I, "enzyme_active") ||
-          hasMetadata(I, "enzyme_active_val")) {
+      if (hasMetadata(I, "enzyme_df_active") ||
+          hasMetadata(I, "enzyme_df_active_val")) {
         if (EnzymePrintActivity)
           llvm::errs() << "[activity] forced value to be active: " << *Val
                        << "\n";
         return false;
-      } else if (hasMetadata(I, "enzyme_inactive") ||
-                 hasMetadata(I, "enzyme_inactive_val")) {
+      } else if (hasMetadata(I, "enzyme_df_const") ||
+                 hasMetadata(I, "enzyme_df_const_val")) {
         if (EnzymePrintActivity)
           llvm::errs() << "[activity] forced value to be constant: " << *Val
                        << "\n";

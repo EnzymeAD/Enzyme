@@ -60,14 +60,14 @@ class ActivityToMetadataTranslation : public LLVMTranslationDialectInterface {
 
     // Convert the attributes to the appropriate metadata.
     if (iciAttr.getValue() && icvAttr.getValue()) {
-      annotateActivity("enzyme_inactive", instructions);
+      annotateActivity("enzyme_df_const", instructions);
     } else if (!iciAttr.getValue() && !icvAttr.getValue()) {
-      annotateActivity("enzyme_active", instructions);
+      annotateActivity("enzyme_df_active", instructions);
     } else {
       StringRef instActivity =
-          iciAttr.getValue() ? "enzyme_inactive_inst" : "enzyme_active_inst";
+          iciAttr.getValue() ? "enzyme_df_const_inst" : "enzyme_df_active_inst";
       StringRef valActivity =
-          icvAttr.getValue() ? "enzyme_inactive_val" : "enzyme_active_val";
+          icvAttr.getValue() ? "enzyme_df_const_val" : "enzyme_df_active_val";
       annotateActivity(instActivity, instructions);
       annotateActivity(valActivity, instructions);
     }
