@@ -143,7 +143,9 @@ struct ForOpInterfaceReverse
         gutils->mapReverseModeBlocks.map(&oBB, &revBB);
       }
       for (auto &&[oBB, revBB] : llvm::zip(oldReg, newReg)) {
-        gutils->Logic.visitChildren(&oBB, &revBB, gutils);
+        auto sub = gutils->Logic.visitChildren(&oBB, &revBB, gutils);
+        if (!sub.succeeded())
+          return sub;
         Block *newBB = gutils->getNewFromOriginal(&oBB);
         gutils->Logic.handlePredecessors(&oBB, newBB, &revBB, gutils,
                                          buildFuncReturnOp);
