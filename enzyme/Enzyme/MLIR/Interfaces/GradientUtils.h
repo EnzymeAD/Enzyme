@@ -38,8 +38,8 @@ public:
   bool omp;
 
   unsigned width;
-  SmallVector<DIFFE_TYPE, 1> RetDiffeTypes;
   ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
+  SmallVector<DIFFE_TYPE, 1> RetDiffeTypes;
 
   mlir::Value getNewFromOriginal(const mlir::Value originst) const;
   mlir::Block *getNewFromOriginal(mlir::Block *originst) const;

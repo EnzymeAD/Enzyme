@@ -197,8 +197,11 @@ struct GenericOpInterfaceReverse
       return std::make_pair(pushCache, popCache);
     };
 
-    gutils->Logic.differentiate(gutils, *linalgOp.getBlock()->getParent(),
-                                adjoint.getRegion(), buildFuncReturnOp, hook);
+    auto sub = gutils->Logic.differentiate(
+        gutils, *linalgOp.getBlock()->getParent(), adjoint.getRegion(),
+        buildFuncReturnOp, hook);
+    if (!sub.succeeded())
+      return sub;
 
     auto newOpYield = cast<linalg::YieldOp>(
         cast<linalg::GenericOp>(newOp).getBodyRegion().front().getTerminator());
