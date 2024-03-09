@@ -148,10 +148,13 @@ struct PrintActivityAnalysisPass
         else
           activevals_.insert(arg);
       }
-      auto ReturnActivity = DIFFE_TYPE::CONSTANT;
-      for (auto act : resultActivities)
+      SmallVector<DIFFE_TYPE> ReturnActivity;
+      for (auto act : resultActivities) {
         if (act != enzyme::Activity::enzyme_const)
-          ReturnActivity = DIFFE_TYPE::DUP_ARG;
+          ReturnActivity.push_back(DIFFE_TYPE::DUP_ARG);
+        else
+          ReturnActivity.push_back(DIFFE_TYPE::CONSTANT);
+      }
 
       enzyme::ActivityAnalyzer activityAnalyzer(
           blocksNotForAnalysis, constant_values, activevals_, ReturnActivity);

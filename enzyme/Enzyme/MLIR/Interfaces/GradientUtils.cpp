@@ -32,8 +32,9 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
     FunctionOpInterface oldFunc_, MTypeAnalysis &TA_, MTypeResults TR_,
     IRMapping &invertedPointers_,
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
-    const SmallPtrSetImpl<mlir::Value> &activevals_, DIFFE_TYPE ReturnActivity,
-    ArrayRef<DIFFE_TYPE> ArgDiffeTypes_, IRMapping &originalToNewFn_,
+    const SmallPtrSetImpl<mlir::Value> &activevals_,
+    ArrayRef<DIFFE_TYPE> ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
+    IRMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode, unsigned width, bool omp)
     : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_),
@@ -42,55 +43,7 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
           blocksNotForAnalysis, constantvalues_, activevals_, ReturnActivity)),
       TA(TA_), TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_),
-      RetDiffeTypes(1, ReturnActivity) {
-
-  /*
-  for (BasicBlock &BB : *oldFunc) {
-    for (Instruction &I : BB) {
-      if (auto CI = dyn_cast<CallInst>(&I)) {
-        originalCalls.push_back(CI);
-      }
-    }
-  }
-  */
-
-  /*
-  for (BasicBlock &oBB : *oldFunc) {
-    for (Instruction &oI : oBB) {
-      newToOriginalFn[originalToNewFn[&oI]] = &oI;
-    }
-    newToOriginalFn[originalToNewFn[&oBB]] = &oBB;
-  }
-  for (Argument &oArg : oldFunc->args()) {
-    newToOriginalFn[originalToNewFn[&oArg]] = &oArg;
-  }
-  */
-  /*
-  for (BasicBlock &BB : *newFunc) {
-    originalBlocks.emplace_back(&BB);
-  }
-  tape = nullptr;
-  tapeidx = 0;
-  assert(originalBlocks.size() > 0);
-
-  SmallVector<BasicBlock *, 4> ReturningBlocks;
-  for (BasicBlock &BB : *oldFunc) {
-    if (isa<ReturnInst>(BB.getTerminator()))
-      ReturningBlocks.push_back(&BB);
-  }
-  for (BasicBlock &BB : *oldFunc) {
-    bool legal = true;
-    for (auto BRet : ReturningBlocks) {
-      if (!(BRet == &BB || OrigDT.dominates(&BB, BRet))) {
-        legal = false;
-        break;
-      }
-    }
-    if (legal)
-      BlocksDominatingAllReturns.insert(&BB);
-  }
-  */
-}
+      RetDiffeTypes(ReturnActivity) {}
 
 mlir::Value mlir::enzyme::MGradientUtils::getNewFromOriginal(
     const mlir::Value originst) const {

@@ -24,10 +24,13 @@ using namespace mlir::enzyme;
 
 Type getShadowType(Type type, unsigned width = 1);
 
-mlir::FunctionType getFunctionTypeForClone(
-    mlir::FunctionType FTy, DerivativeMode mode, unsigned width,
-    mlir::Type additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
-    bool diffeReturnArg, ReturnType returnValue, DIFFE_TYPE ReturnType);
+mlir::FunctionType
+getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeMode mode,
+                        unsigned width, mlir::Type additionalArg,
+                        llvm::ArrayRef<bool> returnPrimals,
+                        llvm::ArrayRef<bool> returnShadows,
+                        llvm::ArrayRef<DIFFE_TYPE> ReturnActivity,
+                        llvm::ArrayRef<DIFFE_TYPE> ArgActivity);
 
 void cloneInto(Region *src, Region *dest, Region::iterator destPos,
                IRMapping &mapper, std::map<Operation *, Operation *> &opMap);
@@ -41,10 +44,11 @@ Operation *clone(Operation *src, IRMapping &mapper,
 
 FunctionOpInterface CloneFunctionWithReturns(
     DerivativeMode mode, unsigned width, FunctionOpInterface F,
-    IRMapping &ptrInputs, ArrayRef<DIFFE_TYPE> constant_args,
+    IRMapping &ptrInputs, ArrayRef<DIFFE_TYPE> ArgActivity,
     SmallPtrSetImpl<mlir::Value> &constants,
     SmallPtrSetImpl<mlir::Value> &nonconstants,
-    SmallPtrSetImpl<mlir::Value> &returnvals, ReturnType returnValue,
-    DIFFE_TYPE ReturnType, Twine name, IRMapping &VMap,
-    std::map<Operation *, Operation *> &OpMap, bool diffeReturnArg,
+    SmallPtrSetImpl<mlir::Value> &returnvals,
+    const std::vector<bool> &returnPrimals,
+    const std::vector<bool> &returnShadows, ArrayRef<DIFFE_TYPE> ReturnActivity,
+    Twine name, IRMapping &VMap, std::map<Operation *, Operation *> &OpMap,
     mlir::Type additionalArg);
