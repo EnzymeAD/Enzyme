@@ -22,7 +22,8 @@ using namespace mlir;
 using namespace mlir::enzyme;
 
 void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
-                      DIFFE_TYPE retType, ReturnType retVal) {
+                      const std::vector<bool> &returnPrimals,
+                      const std::vector<bool> &returnShadows) {
   auto inst = oBB->getTerminator();
 
   mlir::Block *nBB = gutils->getNewFromOriginal(inst->getBlock());
@@ -43,66 +44,22 @@ void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
 
   SmallVector<mlir::Value, 2> retargs;
 
-  switch (retVal) {
-  case ReturnType::Return: {
-    for (size_t i = 0; i < inst->getNumOperands(); i++) {
-      auto ret = inst->getOperand(i);
-
-      mlir::Value toret;
-      if (retType == DIFFE_TYPE::CONSTANT) {
-        toret = gutils->getNewFromOriginal(ret);
-      } else if (!isa<mlir::FloatType>(ret.getType()) &&
-                 true /*type analysis*/) {
-        toret = gutils->invertPointerM(ret, nBuilder);
-      } else if (!gutils->isConstantValue(ret)) {
-        toret = gutils->invertPointerM(ret, nBuilder);
-      } else {
-        Type retTy =
-            ret.getType().cast<AutoDiffTypeInterface>().getShadowType();
-        toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
-            nBuilder, ret.getLoc());
-      }
-      retargs.push_back(toret);
-    }
-
-    break;
-  }
-  case ReturnType::TwoReturns: {
-    if (retType == DIFFE_TYPE::CONSTANT)
-      assert(false && "Invalid return type");
-    for (size_t i = 0; i < inst->getNumOperands(); i++) {
-      auto ret = inst->getOperand(i);
-
+  for (auto &&[ret, returnPrimal, returnShadow] :
+       llvm::zip(inst->getOperands(), returnPrimals, returnShadows)) {
+    if (returnPrimal) {
       retargs.push_back(gutils->getNewFromOriginal(ret));
-
-      mlir::Value toret;
-      if (retType == DIFFE_TYPE::CONSTANT) {
-        toret = gutils->getNewFromOriginal(ret);
-      } else if (!isa<mlir::FloatType>(ret.getType()) &&
-                 true /*type analysis*/) {
-        toret = gutils->invertPointerM(ret, nBuilder);
-      } else if (!gutils->isConstantValue(ret)) {
-        toret = gutils->invertPointerM(ret, nBuilder);
+    }
+    if (returnShadow) {
+      if (!gutils->isConstantValue(ret)) {
+        retargs.push_back(gutils->invertPointerM(ret, nBuilder));
       } else {
         Type retTy =
             ret.getType().cast<AutoDiffTypeInterface>().getShadowType();
-        toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
+        auto toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
             nBuilder, ret.getLoc());
+        retargs.push_back(gutils->invertPointerM(toret, nBuilder));
       }
-      retargs.push_back(toret);
     }
-    break;
-  }
-  case ReturnType::Void: {
-    break;
-  }
-  default: {
-    llvm::errs() << "Invalid return type: "
-                 << "for function: \n"
-                 << gutils->newFunc << "\n";
-    assert(false && "Invalid return type for function");
-    return;
-  }
   }
 
   nBB->push_back(
@@ -117,34 +74,35 @@ void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
 //===----------------------------------------------------------------------===//
 
 FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
-    FunctionOpInterface fn, DIFFE_TYPE retType,
-    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed,
-    DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
-    MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented) {
+    FunctionOpInterface fn, std::vector<DIFFE_TYPE> RetActivity,
+    std::vector<DIFFE_TYPE> ArgActivity, MTypeAnalysis &TA,
+    std::vector<bool> returnPrimals, DerivativeMode mode, bool freeMemory,
+    size_t width, mlir::Type addedType, MFnTypeInfo type_args,
+    std::vector<bool> volatile_args, void *augmented) {
   if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
     llvm_unreachable("Differentiating empty function");
   }
-  assert(fn.getFunctionBody().front().getNumArguments() == constants.size());
+  assert(fn.getFunctionBody().front().getNumArguments() == ArgActivity.size());
   assert(fn.getFunctionBody().front().getNumArguments() ==
          volatile_args.size());
 
   MForwardCacheKey tup = {
-      fn, retType, constants,
+      fn, RetActivity, ArgActivity,
       // std::map<Argument *, bool>(_uncacheable_args.begin(),
       //                           _uncacheable_args.end()),
-      returnUsed, mode, static_cast<unsigned>(width), addedType, type_args};
+      returnPrimals, mode, static_cast<unsigned>(width), addedType, type_args};
 
   if (ForwardCachedFunctions.find(tup) != ForwardCachedFunctions.end()) {
     return ForwardCachedFunctions.find(tup)->second;
   }
-  bool retActive = retType != DIFFE_TYPE::CONSTANT;
-  ReturnType returnValue =
-      returnUsed ? (retActive ? ReturnType::TwoReturns : ReturnType::Return)
-                 : (retActive ? ReturnType::Return : ReturnType::Void);
+  std::vector<bool> returnShadows;
+  for (auto act : RetActivity) {
+    returnShadows.push_back(act != DIFFE_TYPE::CONSTANT);
+  }
   auto gutils = MDiffeGradientUtils::CreateFromClone(
-      *this, mode, width, fn, TA, type_args, retType,
-      /*diffeReturnArg*/ false, constants, returnValue, addedType,
+      *this, mode, width, fn, TA, type_args, returnPrimals, returnShadows,
+      RetActivity, ArgActivity, addedType,
       /*omp*/ false);
   ForwardCachedFunctions[tup] = gutils->newFunc;
 
@@ -208,7 +166,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
       valid &= res.succeeded();
     }
 
-    createTerminator(gutils, &oBB, retType, returnValue);
+    createTerminator(gutils, &oBB, returnPrimals, returnShadows);
   }
 
   // if (mode == DerivativeMode::ForwardModeSplit && augmenteddata)

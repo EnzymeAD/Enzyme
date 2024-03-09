@@ -12,73 +12,50 @@ Type getShadowType(Type type, unsigned width) {
   exit(1);
 }
 
-mlir::FunctionType getFunctionTypeForClone(
-    mlir::FunctionType FTy, DerivativeMode mode, unsigned width,
-    mlir::Type additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
-    bool diffeReturnArg, ReturnType returnValue, DIFFE_TYPE ReturnType) {
+mlir::FunctionType
+getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeMode mode,
+                        unsigned width, mlir::Type additionalArg,
+                        const std::vector<bool> &returnPrimals,
+                        const std::vector<bool> &returnShadows,
+                        llvm::ArrayRef<DIFFE_TYPE> ReturnActivity,
+                        llvm::ArrayRef<DIFFE_TYPE> ArgActivity) {
+
   SmallVector<mlir::Type, 4> RetTypes;
-  if (returnValue == ReturnType::ArgsWithReturn ||
-      returnValue == ReturnType::Return) {
-    assert(FTy.getNumResults() >= 1);
-    for (size_t i = 0; i < FTy.getNumResults(); i++) {
-      if (ReturnType != DIFFE_TYPE::CONSTANT &&
-          ReturnType != DIFFE_TYPE::OUT_DIFF) {
-        RetTypes.push_back(getShadowType(FTy.getResult(i), width));
-      } else {
-        RetTypes.push_back(FTy.getResult(i));
-      }
-    }
-  } else if (returnValue == ReturnType::ArgsWithTwoReturns ||
-             returnValue == ReturnType::TwoReturns) {
-    assert(FTy.getNumResults() >= 1);
-    for (size_t i = 0; i < FTy.getNumResults(); i++) {
-      RetTypes.push_back(FTy.getResult(i));
-      if (ReturnType != DIFFE_TYPE::CONSTANT &&
-          ReturnType != DIFFE_TYPE::OUT_DIFF) {
-        RetTypes.push_back(getShadowType(FTy.getResult(i), width));
-      } else {
-        RetTypes.push_back(FTy.getResult(i));
-      }
+
+  for (auto &&[Ty, returnPrimal, returnShadow, activity] : llvm::zip(
+           FTy.getResults(), returnPrimals, returnShadows, ReturnActivity)) {
+    if (returnPrimal)
+      RetTypes.push_back(Ty);
+    if (returnShadow) {
+      assert(activity != DIFFE_TYPE::CONSTANT);
+      assert(activity != DIFFE_TYPE::OUT_DIFF);
+      RetTypes.push_back(getShadowType(Ty, width));
     }
   }
 
   SmallVector<mlir::Type, 4> ArgTypes;
 
-  // The user might be deleting arguments to the function by specifying them in
-  // the VMap.  If so, we need to not add the arguments to the arg ty vector
-  unsigned argno = 0;
-
-  for (auto I : FTy.getInputs()) {
-    ArgTypes.push_back(I);
-    if (constant_args[argno] == DIFFE_TYPE::DUP_ARG ||
-        constant_args[argno] == DIFFE_TYPE::DUP_NONEED) {
-      ArgTypes.push_back(getShadowType(I, width));
-    } else if (constant_args[argno] == DIFFE_TYPE::OUT_DIFF) {
-      RetTypes.push_back(getShadowType(I, width));
+  for (auto &&[ITy, act] : llvm::zip(FTy.getInputs(), ArgActivity)) {
+    ArgTypes.push_back(ITy);
+    if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED) {
+      ArgTypes.push_back(getShadowType(ITy, width));
+    } else if (act == DIFFE_TYPE::OUT_DIFF) {
+      RetTypes.push_back(getShadowType(ITy, width));
     }
-    ++argno;
   }
 
-  // TODO: Expand for multiple returns
-  if (diffeReturnArg) {
-    ArgTypes.push_back(getShadowType(FTy.getResult(0), width));
+  for (auto &&[Ty, activity] : llvm::zip(FTy.getResults(), ReturnActivity)) {
+    if (activity == DIFFE_TYPE::OUT_DIFF) {
+      ArgTypes.push_back(getShadowType(Ty, width));
+    }
   }
+
   if (additionalArg) {
     ArgTypes.push_back(additionalArg);
   }
 
-  OpBuilder builder(FTy.getContext());
-  if (returnValue == ReturnType::TapeAndTwoReturns ||
-      returnValue == ReturnType::TapeAndReturn) {
-    RetTypes.insert(RetTypes.begin(),
-                    LLVM::LLVMPointerType::get(FTy.getContext()));
-  } else if (returnValue == ReturnType::Tape) {
-    for (auto I : FTy.getInputs()) {
-      RetTypes.push_back(I);
-    }
-  }
-
   // Create a new function type...
+  OpBuilder builder(FTy.getContext());
   return builder.getFunctionType(ArgTypes, RetTypes);
 }
 
@@ -205,19 +182,20 @@ void cloneInto(Region *src, Region *dest, Region::iterator destPos,
 
 FunctionOpInterface CloneFunctionWithReturns(
     DerivativeMode mode, unsigned width, FunctionOpInterface F,
-    IRMapping &ptrInputs, ArrayRef<DIFFE_TYPE> constant_args,
+    IRMapping &ptrInputs, ArrayRef<DIFFE_TYPE> ArgActivity,
     SmallPtrSetImpl<mlir::Value> &constants,
     SmallPtrSetImpl<mlir::Value> &nonconstants,
-    SmallPtrSetImpl<mlir::Value> &returnvals, ReturnType returnValue,
-    DIFFE_TYPE DReturnType, Twine name, IRMapping &VMap,
-    std::map<Operation *, Operation *> &OpMap, bool diffeReturnArg,
+    SmallPtrSetImpl<mlir::Value> &returnvals,
+    const std::vector<bool> &returnPrimals,
+    const std::vector<bool> &returnShadows, ArrayRef<DIFFE_TYPE> RetActivity,
+    Twine name, IRMapping &VMap, std::map<Operation *, Operation *> &OpMap,
     mlir::Type additionalArg) {
   assert(!F.getFunctionBody().empty());
   // F = preprocessForClone(F, mode);
   // llvm::ValueToValueMapTy VMap;
   auto FTy = getFunctionTypeForClone(
       F.getFunctionType().cast<mlir::FunctionType>(), mode, width,
-      additionalArg, constant_args, diffeReturnArg, returnValue, DReturnType);
+      additionalArg, returnPrimals, returnShadows, RetActivity, ArgActivity);
 
   /*
   for (Block &BB : F.getFunctionBody().getBlocks()) {
@@ -244,20 +222,19 @@ FunctionOpInterface CloneFunctionWithReturns(
 
   {
     auto &blk = NewF.getFunctionBody().front();
-    assert(F.getFunctionBody().front().getNumArguments() ==
-           constant_args.size());
-    for (ssize_t i = constant_args.size() - 1; i >= 0; i--) {
+    assert(F.getFunctionBody().front().getNumArguments() == ArgActivity.size());
+    for (ssize_t i = ArgActivity.size() - 1; i >= 0; i--) {
       mlir::Value oval = F.getFunctionBody().front().getArgument(i);
-      if (constant_args[i] == DIFFE_TYPE::CONSTANT)
+      if (ArgActivity[i] == DIFFE_TYPE::CONSTANT)
         constants.insert(oval);
-      else if (constant_args[i] == DIFFE_TYPE::OUT_DIFF)
+      else if (ArgActivity[i] == DIFFE_TYPE::OUT_DIFF)
         nonconstants.insert(oval);
-      else if (constant_args[i] == DIFFE_TYPE::DUP_ARG ||
-               constant_args[i] == DIFFE_TYPE::DUP_NONEED) {
+      else if (ArgActivity[i] == DIFFE_TYPE::DUP_ARG ||
+               ArgActivity[i] == DIFFE_TYPE::DUP_NONEED) {
         nonconstants.insert(oval);
         mlir::Value val = blk.getArgument(i);
         mlir::Value dval;
-        if (i == constant_args.size() - 1)
+        if (i == ArgActivity.size() - 1)
           dval = blk.addArgument(val.getType(), val.getLoc());
         else
           dval = blk.insertArgument(blk.args_begin() + i + 1, val.getType(),
@@ -265,11 +242,13 @@ FunctionOpInterface CloneFunctionWithReturns(
         ptrInputs.map(oval, dval);
       }
     }
-    // TODO: Add support for mulitple outputs?
-    if (diffeReturnArg) {
-      auto location = blk.getArgument(blk.getNumArguments() - 1).getLoc();
-      auto val = F.getFunctionType().cast<mlir::FunctionType>().getResult(0);
-      blk.addArgument(val, location);
+    for (auto &&[Ty, activity] :
+         llvm::zip(F.getFunctionType().cast<mlir::FunctionType>().getResults(),
+                   RetActivity)) {
+      if (activity == DIFFE_TYPE::OUT_DIFF) {
+        auto location = blk.getArgument(blk.getNumArguments() - 1).getLoc();
+        blk.addArgument(getShadowType(Ty, width), location);
+      }
     }
   }
 
@@ -285,15 +264,7 @@ FunctionOpInterface CloneFunctionWithReturns(
     size_t oldi = 0;
     size_t newi = 0;
     while (oldi < F.getNumResults()) {
-      bool primalReturn = returnValue == ReturnType::ArgsWithReturn ||
-                          returnValue == ReturnType::ArgsWithTwoReturns ||
-                          (returnValue == ReturnType::TapeAndReturn &&
-                           DReturnType == DIFFE_TYPE::CONSTANT) ||
-                          returnValue == ReturnType::TapeAndTwoReturns ||
-                          returnValue == ReturnType::TwoReturns ||
-                          (returnValue == ReturnType::Return &&
-                           DReturnType == DIFFE_TYPE::CONSTANT);
-      if (primalReturn) {
+      if (returnPrimals[oldi]) {
         for (auto attrName : ToClone) {
           auto attrNameS = StringAttr::get(F->getContext(), attrName);
           NewF.removeResultAttr(newi, attrNameS);
@@ -310,8 +281,7 @@ FunctionOpInterface CloneFunctionWithReturns(
         }
         newi++;
       }
-      if (DReturnType == DIFFE_TYPE::DUP_ARG ||
-          DReturnType == DIFFE_TYPE::DUP_NONEED) {
+      if (returnShadows[oldi]) {
         for (auto attrName : ToClone) {
           auto attrNameS = StringAttr::get(F->getContext(), attrName);
           NewF.removeResultAttr(newi, attrNameS);
@@ -350,8 +320,8 @@ FunctionOpInterface CloneFunctionWithReturns(
       }
 
       newi++;
-      if (constant_args[oldi] == DIFFE_TYPE::DUP_ARG ||
-          constant_args[oldi] == DIFFE_TYPE::DUP_NONEED) {
+      if (ArgActivity[oldi] == DIFFE_TYPE::DUP_ARG ||
+          ArgActivity[oldi] == DIFFE_TYPE::DUP_NONEED) {
 
         for (auto attrName : ToClone) {
           NewF.removeArgAttr(newi, attrName);

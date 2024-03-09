@@ -55,17 +55,11 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
 	   )}]
     >,
     Option<
-      /*C++ variable name=*/"retTy",
-      /*CLI argument=*/"retTy",
-      /*type=*/"DIFFE_TYPE",
-      /*default=*/"DIFFE_TYPE::DUP_ARG",
-      /*description=*/"activity of the return",
-[{::llvm::cl::values(
-	     clEnumValN(DIFFE_TYPE::DUP_ARG, "enzyme_dup", "Duplicated (default)"),
-	     clEnumValN(DIFFE_TYPE::OUT_DIFF, "enzyme_out", "Active"),
-	     clEnumValN(DIFFE_TYPE::CONSTANT, "enzyme_const", "Constant"),
-	     clEnumValN(DIFFE_TYPE::DUP_NONEED, "enzyme_dupnoneed", "Duplicated noneed")
-	   )}]
+      /*C++ variable name=*/"retTys",
+      /*CLI argument=*/"retTys",
+      /*type=*/"std::string",
+      /*default=*/"",
+      /*description=*/"The activity of the returns"
     >,
     Option<
       /*C++ variable name=*/"argTys",

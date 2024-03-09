@@ -178,8 +178,9 @@ LogicalResult MEnzymeLogic::differentiate(
 }
 
 FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
-    FunctionOpInterface fn, DIFFE_TYPE retType,
-    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed,
+    FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
+    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
+    std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
     DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
     MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented) {
 
@@ -188,10 +189,9 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     llvm_unreachable("Differentiating empty function");
   }
 
-  ReturnType returnValue = ReturnType::Args;
   MGradientUtilsReverse *gutils = MGradientUtilsReverse::CreateFromClone(
-      *this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true,
-      constants, returnValue, addedType);
+      *this, mode, width, fn, TA, type_args, returnPrimals, returnShadows,
+      retType, constants, addedType);
 
   Region &oldRegion = gutils->oldFunc.getFunctionBody();
   Region &newRegion = gutils->newFunc.getFunctionBody();

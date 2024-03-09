@@ -47,10 +47,10 @@ class MEnzymeLogic {
 public:
   struct MForwardCacheKey {
     FunctionOpInterface todiff;
-    DIFFE_TYPE retType;
+    const std::vector<DIFFE_TYPE> retType;
     const std::vector<DIFFE_TYPE> constant_args;
     // std::map<llvm::Argument *, bool> uncacheable_args;
-    bool returnUsed;
+    std::vector<bool> returnUsed;
     DerivativeMode mode;
     unsigned width;
     mlir::Type additionalType;
@@ -108,18 +108,19 @@ public:
   std::map<MForwardCacheKey, FunctionOpInterface> ForwardCachedFunctions;
 
   FunctionOpInterface
-  CreateForwardDiff(FunctionOpInterface fn, DIFFE_TYPE retType,
+  CreateForwardDiff(FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
                     std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
-                    bool returnUsed, DerivativeMode mode, bool freeMemory,
-                    size_t width, mlir::Type addedType, MFnTypeInfo type_args,
-                    std::vector<bool> volatile_args, void *augmented);
+                    std::vector<bool> returnPrimals, DerivativeMode mode,
+                    bool freeMemory, size_t width, mlir::Type addedType,
+                    MFnTypeInfo type_args, std::vector<bool> volatile_args,
+                    void *augmented);
 
-  FunctionOpInterface
-  CreateReverseDiff(FunctionOpInterface fn, DIFFE_TYPE retType,
-                    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
-                    bool returnUsed, DerivativeMode mode, bool freeMemory,
-                    size_t width, mlir::Type addedType, MFnTypeInfo type_args,
-                    std::vector<bool> volatile_args, void *augmented);
+  FunctionOpInterface CreateReverseDiff(
+      FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
+      std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
+      std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
+      DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
+      MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented);
   void
   initializeShadowValues(SmallVector<mlir::Block *> &dominatorToposortBlocks,
                          MGradientUtilsReverse *gutils);
