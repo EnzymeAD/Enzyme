@@ -52,8 +52,8 @@ jobs:
     - name: Build
       run: |
           cd enzyme
-          bazel build :EnzymeStatic :enzymemlir-opt
+          bazel build --disk_cache=~/.cache/bazel-disk-cache :EnzymeStatic :enzymemlir-opt
     - name: Test
       run: |
           cd enzyme
-          bazel test --test_output=errors ...
+          bazel test --disk_cache=~/.cache/bazel-disk-cache --test_output=errors ...
