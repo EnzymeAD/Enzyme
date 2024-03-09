@@ -40,6 +40,15 @@ jobs:
         repository: 'llvm/llvm-project'
         path: 'llvm-project'
 
+    - name: Cache Bazel
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/bazel
+        key: ${{ runner.os }}-bazel-${{ hashFiles('.bazelversion', '.bazelrc', 'WORKSPACE', 'WORKSPACE.bazel', 'MODULE.bazel') }}
+        restore-keys: |
+          ${{ runner.os }}-bazel-
+
     - name: Build
       run: |
           cd enzyme
