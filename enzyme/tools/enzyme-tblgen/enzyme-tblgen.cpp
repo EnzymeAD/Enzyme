@@ -609,8 +609,11 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         PrintFatalError(pattern->getLoc(),
                         Twine("string 'value' not defined in ") +
                             resultTree->getAsString());
-
+      if (value->getValue().contains(';'))
+        os << "({ ";
       os << value->getValue();
+      if (value->getValue().contains(';'))
+        os << " })";
       return false;
     } else if (opName == "Undef" || Def->isSubClassOf("Undef")) {
       if (resultRoot->getNumArgs() != 1)
@@ -919,6 +922,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       if (isCall || isIntr)
         os << "})";
       os << ")";
+      if (intrinsic == MLIRDerivatives) {
+        auto postop = Def->getValueAsString("postop");
+        os << postop;
+      }
       if (isCall) {
         os << ")";
       }
@@ -1341,7 +1348,7 @@ static void emitMLIRReverse(raw_ostream &os, Record *pattern, DagInit *tree,
   os << "                          MGradientUtilsReverse *gutils) const "
         "{}\n";
 
-  os << "     void createReverseModeAdjoint(Operation *op0, OpBuilder "
+  os << "     LogicalResult createReverseModeAdjoint(Operation *op0, OpBuilder "
         "&builder,\n";
   os << "                            MGradientUtilsReverse *gutils,\n";
   os << "                            SmallVector<Value> caches) const {\n";
@@ -1995,6 +2002,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     if (intrinsic == IntrDerivatives || intrinsic == CallDerivatives)
       os << "    return true;\n  }\n";
+    else if (intrinsic == MLIRDerivatives)
+      os << "    return success();\n  }\n";
     else
       os << "    return;\n  }\n";
     if (intrinsic == MLIRDerivatives)
@@ -2048,9 +2057,17 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "  };\n";
       os << "  bool isArgInactive(mlir::Operation*, size_t idx) const {\n";
       for (auto diffarg : diffargs) {
+        if (diffarg == -1) {
+          os << "    return false;\n";
+          break;
+        }
         os << "    if (idx == " << diffarg << ") return false;\n";
       }
       for (auto diffarg : storedargs) {
+        if (diffarg == -1) {
+          os << "    return false;\n";
+          break;
+        }
         os << "    if (idx == " << diffarg << ") return false;\n";
       }
       os << "    return true;\n  }\n";
@@ -2063,7 +2080,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         auto origName = "op";
         emitMLIRReverse(os, pattern, tree, intrinsic, origName, argOps);
         emitReverseCommon(os, pattern, tree, intrinsic, origName, argOps);
-        os << "     return;\n";
+        os << "     return success();\n";
         os << "   }\n";
         os << " };\n";
       }

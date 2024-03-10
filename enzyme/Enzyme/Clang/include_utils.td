@@ -36,6 +36,11 @@ namespace enzyme {
     };
     using Reverse = ReverseMode<false>;
     using ReverseWithPrimal = ReverseMode<true>;
+    
+    struct ForwardMode {
+
+    };
+    using Forward = ForwardMode;
 
     template < typename T >
     struct Active{
@@ -49,6 +54,13 @@ namespace enzyme {
       T value;
       T shadow;
       Duplicated(T &&v, T&& s) : value(v), shadow(s) {}
+    };
+
+    template < typename T >
+    struct DuplicatedNoNeed{  
+      T value;
+      T shadow;
+      DuplicatedNoNeed(T &&v, T&& s) : value(v), shadow(s) {}
     };
 
     template < typename T >
@@ -110,11 +122,35 @@ namespace enzyme {
             >::type
         >;
     };
+    
+    template < typename T0, typename ... T >
+    struct autodiff_return<ForwardMode, Const<T0>, T...>
+    {
+        using type = tuple<T0>;
+    };
+    
+    template < typename T0, typename ... T >
+    struct autodiff_return<ForwardMode, Duplicated<T0>, T...>
+    {
+        using type = tuple<T0, T0>;
+    };
+    
+    template < typename T0, typename ... T >
+    struct autodiff_return<ForwardMode, DuplicatedNoNeed<T0>, T...>
+    {
+        using type = tuple<T0>;
+    };
 
     template < typename T >
     __attribute__((always_inline))
     auto expand_args(const enzyme::Duplicated<T> & arg) {
         return enzyme::tuple<int, T, T>{enzyme_dup, arg.value, arg.shadow};
+    }
+
+    template < typename T >
+    __attribute__((always_inline))
+    auto expand_args(const enzyme::DuplicatedNoNeed<T> & arg) {
+        return enzyme::tuple<int, T, T>{enzyme_dupnoneed, arg.value, arg.shadow};
     }
 
     template < typename T >
@@ -132,6 +168,12 @@ namespace enzyme {
     template < typename T >
     __attribute__((always_inline))
     auto primal_args(const enzyme::Duplicated<T> & arg) {
+        return enzyme::tuple<T>{arg.value};
+    }
+
+    template < typename T >
+    __attribute__((always_inline))
+    auto primal_args(const enzyme::DuplicatedNoNeed<T> & arg) {
         return enzyme::tuple<T>{arg.value};
     }
 
@@ -164,11 +206,26 @@ namespace enzyme {
           return tuple{get<1>(t), get<0>(t)};
         }
 
+        template <typename Mode>
+        struct autodiff_apply {};
+
+        template <bool Mode>
+        struct autodiff_apply<ReverseMode<Mode>> {
         template <class return_type, class Tuple, std::size_t... I>
         __attribute__((always_inline))
-        constexpr decltype(auto) rev_apply_impl(void* f, int* ret_attr, Tuple&& t, std::index_sequence<I...>) {
+        static constexpr decltype(auto) impl(void* f, int* ret_attr, Tuple&& t, std::index_sequence<I...>) {
             return push_return_last(__enzyme_autodiff<return_type>(f, ret_attr, enzyme::get<I>(impl::forward<Tuple>(t))...));
         }
+        };
+
+        template <>
+        struct autodiff_apply<ForwardMode> {
+        template <class return_type, class Tuple, std::size_t... I>
+        __attribute__((always_inline))
+        static constexpr return_type impl(void* f, int* ret_attr, Tuple&& t, std::index_sequence<I...>) {
+            return __enzyme_fwddiff<return_type>(f, ret_attr, enzyme::get<I>(impl::forward<Tuple>(t))...);
+        }
+        };
         
         template <typename function, class Tuple, std::size_t... I>
         __attribute__((always_inline))
@@ -176,19 +233,29 @@ namespace enzyme {
             return f(enzyme::get<I>(impl::forward<Tuple>(t))...);
         }
 
-        template < typename T >
+        template < typename Mode, typename T >
         struct default_ret_activity {
           using type = Const<T>;
         };
         
-        template <>
-        struct default_ret_activity<float> {
+        template <bool prim>
+        struct default_ret_activity<ReverseMode<prim>, float> {
           using type = Active<float>;
         };
         
-        template <>
-        struct default_ret_activity<double> {
+        template <bool prim>
+        struct default_ret_activity<ReverseMode<prim>, double> {
           using type = Active<double>;
+        };
+       
+        template<>
+        struct default_ret_activity<ForwardMode, float> {
+          using type = DuplicatedNoNeed<float>;
+        };
+        
+        template<>
+        struct default_ret_activity<ForwardMode, double> {
+          using type = DuplicatedNoNeed<double>;
         };
 
         template < typename T >
@@ -209,6 +276,11 @@ namespace enzyme {
           static constexpr int* value = &enzyme_dup_return;
         };
         
+        template<typename T>
+        struct ret_global<DuplicatedNoNeed<T>> {
+          static constexpr int* value = &enzyme_dup_return;
+        };
+        
         template<typename Mode, typename RetAct>
         struct ret_used;
 
@@ -222,9 +294,20 @@ namespace enzyme {
           static constexpr int* value = &enzyme_noret;
         };
 
+        template<typename T>
+        struct ret_used<ForwardMode, DuplicatedNoNeed<T>> {
+          static constexpr int* value = &enzyme_noret;
+        };
+        template<typename T>
+        struct ret_used<ForwardMode, Const<T>> {
+          static constexpr int* value = &enzyme_primal_return;
+        };
+        template<typename T>
+        struct ret_used<ForwardMode, Duplicated<T>> {
+          static constexpr int* value = &enzyme_primal_return;
+        };
+
     }  // namespace detail 
-
-
 
     template < typename return_type, typename function, typename ... enz_arg_types >
     __attribute__((always_inline))
@@ -238,27 +321,27 @@ namespace enzyme {
         return primal_impl<function>(impl::forward<function>(f), enzyme::tuple_cat(primal_args(args)...));
     }
 
-    template < typename return_type, typename function, typename RetActivity, typename ... enz_arg_types >
+    template < typename return_type, typename DiffMode, typename function, typename RetActivity, typename ... enz_arg_types >
     __attribute__((always_inline))
-    auto rev_autodiff_impl(function && f, enzyme::tuple< enz_arg_types ... > && arg_tup) {
+    auto autodiff_impl(function && f, enzyme::tuple< enz_arg_types ... > && arg_tup) {
       using Tuple = enzyme::tuple< enz_arg_types ... >;
-      return detail::rev_apply_impl<return_type>((void*)f, detail::ret_global<RetActivity>::value, impl::forward<Tuple>(arg_tup), std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{});
+      return detail::autodiff_apply<DiffMode>::template impl<return_type>((void*)f, detail::ret_global<RetActivity>::value, impl::forward<Tuple>(arg_tup), std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{});
     }
     
     template < typename DiffMode, typename RetActivity, typename function, typename ... arg_types>
     __attribute__((always_inline))
     auto autodiff(function && f, arg_types && ... args) {
         using return_type = typename autodiff_return<DiffMode, RetActivity, arg_types...>::type;
-        return rev_autodiff_impl<return_type, function, RetActivity>(impl::forward<function>(f), enzyme::tuple_cat(enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value}, expand_args(args)...));
+        return autodiff_impl<return_type, DiffMode, function, RetActivity>(impl::forward<function>(f), enzyme::tuple_cat(enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value}, expand_args(args)...));
     }
  
     template < typename DiffMode, typename function, typename ... arg_types>
     __attribute__((always_inline))
     auto autodiff(function && f, arg_types && ... args) {
         using primal_return_type = decltype(primal_call<function, arg_types...>(impl::forward<function>(f), impl::forward<arg_types>(args)...));
-        using RetActivity = typename detail::default_ret_activity<primal_return_type>::type;
+        using RetActivity = typename detail::default_ret_activity<DiffMode, primal_return_type>::type;
         using return_type = typename autodiff_return<DiffMode, RetActivity, arg_types...>::type;
-        return rev_autodiff_impl<return_type, function, RetActivity>(impl::forward<function>(f), enzyme::tuple_cat(enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value}, expand_args(args)...));
+        return autodiff_impl<return_type, DiffMode, function, RetActivity>(impl::forward<function>(f), enzyme::tuple_cat(enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value}, expand_args(args)...));
     }
 }
 }]>;

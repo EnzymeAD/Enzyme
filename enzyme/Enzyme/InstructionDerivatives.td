@@ -220,41 +220,41 @@ class GlobalExpr<bit uses_primal, bit uses_shadow, string val> : Operation<uses_
 }
 // Create a bit-mask whose bitwise "and" with a floating-point number gives
 // the largest power of two not larger than that number (in terms of absolute values).
-def MantissaMaskOfReturnForFrexp : GlobalExpr</*primal*/0, /*shadow*/0, "({\n"
-"    auto ty = call.getType();\n"
-"    unsigned low = 0;\n"
-"    unsigned high = 0;\n"
-"    unsigned tsize = 0;\n"
-"    if (ty->isHalfTy()) {\n"
-"      tsize = 16;\n"
-"      high = tsize - 1;\n"
-"      low = high - 5;\n"
-"    } else if (ty->isFloatTy()) {\n"
-"      tsize = 32;\n"
-"      high = tsize - 1;\n"
-"      low = high - 8;\n"
-"    } else if (ty->isDoubleTy()) {\n"
-"      tsize = 64;\n"
-"      high = tsize - 1;\n"
-"      low = high - 11;\n"
-"    } else if (ty->isX86_FP80Ty()) {\n"
-"      tsize = 80;\n"
-"      high = tsize - 1;\n"
-"      low = high - 16;\n"
-       // x86_fp80 has only 15 exponent bits, but we must also
-       // retain the most-significant bit of the mantissa as
-       // there is no implicit leading 1.
-"    } else if (ty->isFP128Ty()) {\n"
-"      tsize = 128;\n"
-"      high = tsize - 1;\n"
-"      low = high - 15;\n"
-"    } else {\n"
-"      llvm_unreachable(\"Unknown type within frexp\");\n"
-"    }\n"
-"    APInt eval = APInt::getBitsSet(tsize, low, high);\n"
-"    auto ity = IntegerType::get(ty->getContext(), tsize);\n"
-"    ConstantInt::get(ity, eval);\n"
-"  })">;
+def MantissaMaskOfReturnForFrexp : GlobalExpr</*primal*/0, /*shadow*/0, [{
+  auto ty = call.getType();
+  unsigned low = 0;
+  unsigned high = 0;
+  unsigned tsize = 0;
+  if (ty->isHalfTy()) {
+    tsize = 16;
+    high = tsize - 1;
+    low = high - 5;
+  } else if (ty->isFloatTy()) {
+    tsize = 32;
+    high = tsize - 1;
+    low = high - 8;
+  } else if (ty->isDoubleTy()) {
+    tsize = 64;
+    high = tsize - 1;
+    low = high - 11;
+  } else if (ty->isX86_FP80Ty()) {
+    tsize = 80;
+    high = tsize - 1;
+    low = high - 16;
+    // x86_fp80 has only 15 exponent bits, but we must also
+    // retain the most-significant bit of the mantissa as
+    // there is no implicit leading
+  } else if (ty->isFP128Ty()) {
+    tsize = 128;
+    high = tsize - 1;
+    low = high - 15;
+  } else {
+    llvm_unreachable("Unknown type within frexp");
+  }
+  APInt eval = APInt::getBitsSet(tsize, low, high);
+  auto ity = IntegerType::get(ty->getContext(), tsize);
+  ConstantInt::get(ity, eval);
+}]>;
 
 class ConstantFP<string val> : Operation</*primal*/0, /*shadow*/0> {
   string value = val;

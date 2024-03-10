@@ -11,7 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Analysis/AliasAnalysis.h"
+#include "Analysis/DataFlowAliasAnalysis.h"
 #include "Dialect/Ops.h"
 #include "Passes/PassDetails.h"
 #include "Passes/Passes.h"
@@ -91,7 +91,7 @@ struct PrintAliasAnalysisPass
             continue;
           // TODO(zinenko): this has been overriding the argument...
           // Use an array attr instead (will break syntactic tests).
-          (void)state->getAliasClassesObject().foreachClass(
+          (void)state->getAliasClassesObject().foreachElement(
               [&](DistinctAttr aliasClass, enzyme::AliasClassSet::State state) {
                 if (state == enzyme::AliasClassSet::State::Undefined)
                   funcOp.setArgAttr(

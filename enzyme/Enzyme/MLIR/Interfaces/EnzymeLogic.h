@@ -47,10 +47,10 @@ class MEnzymeLogic {
 public:
   struct MForwardCacheKey {
     FunctionOpInterface todiff;
-    DIFFE_TYPE retType;
+    const std::vector<DIFFE_TYPE> retType;
     const std::vector<DIFFE_TYPE> constant_args;
     // std::map<llvm::Argument *, bool> uncacheable_args;
-    bool returnUsed;
+    std::vector<bool> returnUsed;
     DerivativeMode mode;
     unsigned width;
     mlir::Type additionalType;
@@ -108,18 +108,19 @@ public:
   std::map<MForwardCacheKey, FunctionOpInterface> ForwardCachedFunctions;
 
   FunctionOpInterface
-  CreateForwardDiff(FunctionOpInterface fn, DIFFE_TYPE retType,
+  CreateForwardDiff(FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
                     std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
-                    bool returnUsed, DerivativeMode mode, bool freeMemory,
-                    size_t width, mlir::Type addedType, MFnTypeInfo type_args,
-                    std::vector<bool> volatile_args, void *augmented);
+                    std::vector<bool> returnPrimals, DerivativeMode mode,
+                    bool freeMemory, size_t width, mlir::Type addedType,
+                    MFnTypeInfo type_args, std::vector<bool> volatile_args,
+                    void *augmented);
 
-  FunctionOpInterface
-  CreateReverseDiff(FunctionOpInterface fn, DIFFE_TYPE retType,
-                    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
-                    bool returnUsed, DerivativeMode mode, bool freeMemory,
-                    size_t width, mlir::Type addedType, MFnTypeInfo type_args,
-                    std::vector<bool> volatile_args, void *augmented);
+  FunctionOpInterface CreateReverseDiff(
+      FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
+      std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
+      std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
+      DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
+      MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented);
   void
   initializeShadowValues(SmallVector<mlir::Block *> &dominatorToposortBlocks,
                          MGradientUtilsReverse *gutils);
@@ -127,18 +128,17 @@ public:
   handlePredecessors(Block *oBB, Block *newBB, Block *reverseBB,
                      MGradientUtilsReverse *gutils,
                      llvm::function_ref<buildReturnFunction> buildReturnOp);
-  void visitChildren(Block *oBB, Block *reverseBB,
-                     MGradientUtilsReverse *gutils);
-  void visitChild(Operation *op, OpBuilder &builder,
-                  MGradientUtilsReverse *gutils);
+  LogicalResult visitChildren(Block *oBB, Block *reverseBB,
+                              MGradientUtilsReverse *gutils);
+  LogicalResult visitChild(Operation *op, OpBuilder &builder,
+                           MGradientUtilsReverse *gutils);
   void mapInvertArguments(Block *oBB, Block *reverseBB,
                           MGradientUtilsReverse *gutils);
-  SmallVector<mlir::Block *> getDominatorToposort(MGradientUtilsReverse *gutils,
-                                                  Region &region);
-  void differentiate(MGradientUtilsReverse *gutils, Region &oldRegion,
-                     Region &newRegion,
-                     llvm::function_ref<buildReturnFunction> buildFuncRetrunOp,
-                     std::function<std::pair<Value, Value>(Type)> cacheCreator);
+  LogicalResult
+  differentiate(MGradientUtilsReverse *gutils, Region &oldRegion,
+                Region &newRegion,
+                llvm::function_ref<buildReturnFunction> buildFuncRetrunOp,
+                std::function<std::pair<Value, Value>(Type)> cacheCreator);
 };
 
 } // Namespace enzyme

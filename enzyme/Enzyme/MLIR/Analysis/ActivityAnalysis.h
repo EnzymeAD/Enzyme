@@ -30,7 +30,7 @@ class ActivityAnalyzer {
 
 public:
   /// Whether the returns of the function being analyzed are active
-  const DIFFE_TYPE ActiveReturns;
+  const llvm::ArrayRef<DIFFE_TYPE> ActiveReturns;
 
 private:
   /// Direction of current analysis
@@ -71,7 +71,7 @@ public:
       // llvm::TargetLibraryInfo &TLI_,
       const llvm::SmallPtrSetImpl<Value> &ConstantValues,
       const llvm::SmallPtrSetImpl<Value> &ActiveValues,
-      DIFFE_TYPE ActiveReturns)
+      llvm::ArrayRef<DIFFE_TYPE> ActiveReturns)
       : notForAnalysis(notForAnalysis_), ActiveReturns(ActiveReturns),
         directions(UP | DOWN),
         ConstantValues(ConstantValues.begin(), ConstantValues.end()),

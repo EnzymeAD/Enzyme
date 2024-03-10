@@ -80,9 +80,10 @@ class GlobalExpr<bit uses_primal, bit uses_shadow, string val> : Operation<uses_
   string value = val;
 }
 
-class Inst<string mnemonic, string dialect_>  : Operation</*primal*/1, /*shadow*/0> {
+class Inst<string mnemonic, string dialect_, string postop_="">  : Operation</*primal*/1, /*shadow*/0> {
   string name = mnemonic;
   string dialect = dialect_;
+  string postop = postop_;
 }
 
 def Op {

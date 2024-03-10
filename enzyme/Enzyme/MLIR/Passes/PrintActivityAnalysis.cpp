@@ -32,6 +32,22 @@ using namespace mlir;
 namespace {
 using llvm::errs;
 
+enzyme::Activity getDefaultActivity(Type argType) {
+  if (argType.isIntOrIndex())
+    return enzyme::Activity::enzyme_const;
+
+  if (isa<FloatType, ComplexType>(argType))
+    return enzyme::Activity::enzyme_out;
+
+  if (auto T = dyn_cast<TensorType>(argType))
+    return getDefaultActivity(T.getElementType());
+
+  if (isa<LLVM::LLVMPointerType, MemRefType>(argType))
+    return enzyme::Activity::enzyme_dup;
+
+  return enzyme::Activity::enzyme_const;
+}
+
 struct PrintActivityAnalysisPass
     : public enzyme::PrintActivityAnalysisPassBase<PrintActivityAnalysisPass> {
 
@@ -43,25 +59,18 @@ struct PrintActivityAnalysisPass
       MutableArrayRef<enzyme::Activity> resActivities) const {
     for (const auto &[idx, argType] :
          llvm::enumerate(callee.getArgumentTypes())) {
-      if (callee.getArgAttr(idx, "enzyme.const") || inactiveArgs ||
-          argType.isIntOrIndex())
+      if (callee.getArgAttr(idx, "enzyme.const") || inactiveArgs)
         argActivities[idx] = enzyme::Activity::enzyme_const;
-      else if (isa<FloatType, ComplexType>(argType))
-        argActivities[idx] = enzyme::Activity::enzyme_out;
-      else if (isa<LLVM::LLVMPointerType, MemRefType>(argType))
-        argActivities[idx] = enzyme::Activity::enzyme_dup;
       else
-        argActivities[idx] = enzyme::Activity::enzyme_const;
+        argActivities[idx] = getDefaultActivity(argType);
     }
 
     for (const auto &[idx, resType] :
          llvm::enumerate(callee.getResultTypes())) {
       if (duplicatedRet)
         resActivities[idx] = (enzyme::Activity::enzyme_dup);
-      else if (isa<FloatType>(resType))
-        resActivities[idx] = (enzyme::Activity::enzyme_out);
       else
-        resActivities[idx] = (enzyme::Activity::enzyme_const);
+        resActivities[idx] = getDefaultActivity(resType);
     }
   }
 
@@ -139,10 +148,13 @@ struct PrintActivityAnalysisPass
         else
           activevals_.insert(arg);
       }
-      auto ReturnActivity = DIFFE_TYPE::CONSTANT;
-      for (auto act : resultActivities)
+      SmallVector<DIFFE_TYPE> ReturnActivity;
+      for (auto act : resultActivities) {
         if (act != enzyme::Activity::enzyme_const)
-          ReturnActivity = DIFFE_TYPE::DUP_ARG;
+          ReturnActivity.push_back(DIFFE_TYPE::DUP_ARG);
+        else
+          ReturnActivity.push_back(DIFFE_TYPE::CONSTANT);
+      }
 
       enzyme::ActivityAnalyzer activityAnalyzer(
           blocksNotForAnalysis, constant_values, activevals_, ReturnActivity);
