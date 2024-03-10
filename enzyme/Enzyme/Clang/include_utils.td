@@ -426,6 +426,7 @@ def : Headers<"/enzymeroot/enzyme/tuple", [{
 //        constexpr support for std::tuple). Owning the implementation lets
 //        us add __host__ __device__ annotations to any part of it
 
+#include <cstddef> // for std::size_t
 #include <utility> // for std::integer_sequence
 
 #include <enzyme/type_traits>
@@ -487,10 +488,10 @@ template <typename Tuple>
 struct tuple_size;
 
 template <typename... T>
-struct tuple_size<tuple<T...>> : std::integral_constant<size_t, sizeof...(T)> {};
+struct tuple_size<tuple<T...>> : std::integral_constant<std::size_t, sizeof...(T)> {};
 
 template <typename Tuple>
-static constexpr size_t tuple_size_v = tuple_size<Tuple>::value;
+static constexpr std::size_t tuple_size_v = tuple_size<Tuple>::value;
 
 template <typename... T>
 __attribute__((always_inline))
@@ -503,7 +504,7 @@ namespace impl {
 template <typename index_seq>
 struct make_tuple_from_fwd_tuple;
 
-template <size_t... indices>
+template <std::size_t... indices>
 struct make_tuple_from_fwd_tuple<std::index_sequence<indices...>> {
   template <typename FWD_TUPLE>
   __attribute__((always_inline))
@@ -518,7 +519,7 @@ struct concat_with_fwd_tuple;
 template < typename Tuple >
 using iseq = std::make_index_sequence<tuple_size_v< enzyme::remove_cvref_t< Tuple > > >;
 
-template <size_t... fwd_indices, size_t... indices>
+template <std::size_t... fwd_indices, std::size_t... indices>
 struct concat_with_fwd_tuple<std::index_sequence<fwd_indices...>, std::index_sequence<indices...>> {
   template <typename FWD_TUPLE, typename TUPLE>
   __attribute__((always_inline))
