@@ -28,6 +28,9 @@ Return __enzyme_fwddiff(T...);
 
 namespace enzyme {
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wmissing-braces"
+
     struct nodiff{};
 
     template<bool ReturnPrimal = false>
@@ -45,7 +48,6 @@ namespace enzyme {
     template < typename T >
     struct Active{
       T value;
-      Active(T &&v) : value(v) {}
       operator T&() { return value; }
     };
 
@@ -53,22 +55,34 @@ namespace enzyme {
     struct Duplicated{  
       T value;
       T shadow;
-      Duplicated(T &&v, T&& s) : value(v), shadow(s) {}
     };
 
     template < typename T >
     struct DuplicatedNoNeed{  
       T value;
       T shadow;
-      DuplicatedNoNeed(T &&v, T&& s) : value(v), shadow(s) {}
     };
 
     template < typename T >
     struct Const{
       T value;
-      Const(T &&v) : value(v) {}
       operator T&() { return value; }
     };
+
+    // CTAD available in C++17 or later
+    #if __cplusplus >= 201703L 
+      template < typename T >
+      Active(T) -> Active<T>;
+
+      template < typename T >
+      Const(T) -> Const<T>;
+
+      template < typename T >
+      Duplicated(T,T) -> Duplicated<T>;
+
+      template < typename T >
+      DuplicatedNoNeed(T,T) -> DuplicatedNoNeed<T>;
+    #endif    
 
     template < typename T >
     struct type_info {
@@ -343,7 +357,9 @@ namespace enzyme {
         using return_type = typename autodiff_return<DiffMode, RetActivity, arg_types...>::type;
         return autodiff_impl<return_type, DiffMode, function, RetActivity>(impl::forward<function>(f), enzyme::tuple_cat(enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value}, expand_args(args)...));
     }
-}
+#pragma clang diagnostic pop
+
+} // namespace enzyme
 }]>;
 
 def : Headers<"/enzymeroot/enzyme/type_traits", [{
@@ -416,6 +432,9 @@ def : Headers<"/enzymeroot/enzyme/tuple", [{
 
 #define _NOEXCEPT noexcept
 namespace enzyme {
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wmissing-braces"
 
 template <int i>
 struct Index {};
@@ -504,7 +523,7 @@ struct concat_with_fwd_tuple<std::index_sequence<fwd_indices...>, std::index_seq
   template <typename FWD_TUPLE, typename TUPLE>
   __attribute__((always_inline))
   static constexpr auto f(FWD_TUPLE&& fwd, TUPLE&& t) {
-    return forward_as_tuple(get<fwd_indices>(impl::forward<FWD_TUPLE>(fwd))..., get<indices>(impl::forward<TUPLE>(t))...);
+    return enzyme::forward_as_tuple(get<fwd_indices>(impl::forward<FWD_TUPLE>(fwd))..., get<indices>(impl::forward<TUPLE>(t))...);
   }
 };
 
@@ -527,6 +546,8 @@ __attribute__((always_inline))
 constexpr auto tuple_cat(Tuples&&... tuples) {
   return impl::tuple_cat(impl::forward<Tuples>(tuples)...);
 }
+
+#pragma clang diagnostic pop
 
 } // namespace enzyme
 #undef _NOEXCEPT
