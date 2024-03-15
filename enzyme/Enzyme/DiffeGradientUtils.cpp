@@ -90,7 +90,8 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   assert(mode == DerivativeMode::ReverseModeGradient ||
          mode == DerivativeMode::ReverseModeCombined ||
          mode == DerivativeMode::ForwardMode ||
-         mode == DerivativeMode::ForwardModeSplit);
+         mode == DerivativeMode::ForwardModeSplit ||
+         mode == DerivativeMode::ForwardModeError);
   ValueToValueMapTy invertedPointers;
   SmallPtrSet<Instruction *, 4> constants;
   SmallPtrSet<Instruction *, 20> nonconstant;
@@ -103,6 +104,7 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   std::string prefix;
 
   switch (mode) {
+  case DerivativeMode::ForwardModeError:
   case DerivativeMode::ForwardMode:
   case DerivativeMode::ForwardModeSplit:
     prefix = "fwddiffe";

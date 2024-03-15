@@ -808,6 +808,7 @@ public:
 
       Value *shadow;
       switch (mode) {
+      case DerivativeMode::ForwardModeError:
       case DerivativeMode::ForwardModeSplit:
       case DerivativeMode::ForwardMode: {
         Value *sretPt = CI->getArgOperand(0);
@@ -1621,6 +1622,7 @@ public:
     Type *tapeType = nullptr;
     const AugmentedReturn *aug;
     switch (mode) {
+    case DerivativeMode::ForwardModeError:
     case DerivativeMode::ForwardMode:
       newFunc = Logic.CreateForwardDiff(
           context, fn, retType, constants, TA,
@@ -2182,6 +2184,7 @@ public:
               Fn->getName().contains("__enzyme_reverse") ||
               Fn->getName().contains("__enzyme_truncate") ||
               Fn->getName().contains("__enzyme_batch") ||
+              Fn->getName().contains("__enzyme_error_estimate") ||
               Fn->getName().contains("__enzyme_trace") ||
               Fn->getName().contains("__enzyme_condition")))
           continue;
@@ -2539,6 +2542,9 @@ public:
         } else if (Fn->getName().contains("__enzyme_fwddiff")) {
           enableEnzyme = true;
           derivativeMode = DerivativeMode::ForwardMode;
+        } else if (Fn->getName().contains("__enzyme_error_estimate")) {
+          enableEnzyme = true;
+          derivativeMode = DerivativeMode::ForwardModeError;
         } else if (Fn->getName().contains("__enzyme_fwdsplit")) {
           enableEnzyme = true;
           derivativeMode = DerivativeMode::ForwardModeSplit;
