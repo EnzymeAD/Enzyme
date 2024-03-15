@@ -8967,7 +8967,16 @@ void GradientUtils::erase(Instruction *I) {
 void GradientUtils::eraseWithPlaceholder(Instruction *I, Instruction *orig,
                                          const Twine &suffix, bool erase) {
   if (!I->getType()->isVoidTy() && !I->getType()->isTokenTy()) {
-    IRBuilder<> BuilderZ(I);
+    auto inspos = I->getIterator();
+    if (I->getParent()->IsNewDbgInfoFormat) {
+      if (!inspos.getHeadBit()) {
+        auto srcmarker = I->getParent()->getMarker(inspos);
+        if (srcmarker && !srcmarker->empty()) {
+          inspos--;
+        }
+      }
+    }
+    IRBuilder<> BuilderZ(I->getParent(), inspos);
     auto pn = BuilderZ.CreatePHI(I->getType(), 1, I->getName() + suffix);
     fictiousPHIs[pn] = orig;
     replaceAWithB(I, pn);
