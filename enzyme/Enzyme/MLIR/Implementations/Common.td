@@ -17,6 +17,16 @@ class ControlFlowOp<string dialect_, string opName_, string impl_> {
   string impl = impl_;
 }
 
+class InactiveArgSpec {
+  bit asserting;
+}
+def InactiveArg : InactiveArgSpec {
+  bit asserting = 0;
+}
+def AssertingInactiveArg : InactiveArgSpec {
+  bit asserting = 1;
+}
+
 
 def Unimplemented {
 

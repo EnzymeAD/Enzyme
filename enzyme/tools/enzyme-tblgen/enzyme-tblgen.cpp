@@ -1411,9 +1411,21 @@ static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
       auto opName = resultRoot->getOperator()->getAsString();
       auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
       if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
-        if (Def->getValueAsBit("asserting"))
-          os << " assert(gutils->isConstantValue(" << origName << ".getOperand("
-             << argIdx << ")));\n";
+        if (Def->getValueAsBit("asserting")) {
+          if (intrinsic == MLIRDerivatives) {
+            os << " if (!gutils->isConstantValue(" << origName
+               << "->getOperand(" << argIdx << "))) {\n";
+            os << "    " << origName
+               << "->emitError() << \"Unimplemented derivative for argument "
+               << argIdx << " in reverse mode for op \" << *" << origName
+               << " << \"\\n\";\n";
+            os << "  return failure();\n";
+            os << "  }\n";
+          } else {
+            os << " assert(gutils->isConstantValue(" << origName
+               << ".getOperand(" << argIdx << ")));\n";
+          }
+        }
         continue;
       }
     }
