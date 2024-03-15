@@ -327,7 +327,7 @@ namespace enzyme {
     __attribute__((always_inline))
     auto primal_impl(function && f, enzyme::tuple< enz_arg_types ... > && arg_tup) {
       using Tuple = enzyme::tuple< enz_arg_types ... >;
-      return detail::primal_apply_impl<return_type>(f, impl::forward<Tuple>(arg_tup), std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{});
+      return detail::primal_apply_impl<return_type>(std::move(f), impl::forward<Tuple>(arg_tup), std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{});
     }
 
     template < typename function, typename ... arg_types>

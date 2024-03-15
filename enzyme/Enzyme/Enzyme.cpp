@@ -553,8 +553,9 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
     }
   }
 
-  if (mode == DerivativeMode::ReverseModePrimal &&
-      DL.getTypeSizeInBits(retType) >= DL.getTypeSizeInBits(diffretType)) {
+  if ((mode == DerivativeMode::ReverseModePrimal &&
+      DL.getTypeSizeInBits(retType) >= DL.getTypeSizeInBits(diffretType)) ||
+      (mode == DerivativeMode::ForwardMode && DL.getTypeSizeInBits(retType) == DL.getTypeSizeInBits(diffretType))) {
     IRBuilder<> EB(CI->getFunction()->getEntryBlock().getFirstNonPHI());
     auto AL = EB.CreateAlloca(retType);
     Builder.CreateStore(diffret, Builder.CreatePointerCast(
@@ -579,9 +580,12 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
     }
   }
 
+  auto diffretsize = DL.getTypeSizeInBits(diffretType);
+  auto retsize = DL.getTypeSizeInBits(retType);
   EmitFailure("IllegalReturnCast", CI->getDebugLoc(), CI,
               "Cannot cast return type of gradient ", *diffretType, *diffret,
-              ", to desired type ", *retType);
+              " of size ", diffretsize, " bits ",
+              ", to desired type ", *retType, " of size ", retsize, " bits");
   return false;
 }
 
