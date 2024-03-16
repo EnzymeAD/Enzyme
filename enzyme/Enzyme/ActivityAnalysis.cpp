@@ -18,7 +18,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file contains the implementation of activity analysis -- an ad-specific
+// This file contains the implementation of Activity Analysis -- an AD-specific
 // analysis that deduces if a given instruction or value can impact the
 // calculation of a derivative. this file consists of two mutually recurive
 // functions that compute this for values and instructions, respectively.
@@ -27,12 +27,12 @@
 #include <cstdint>
 #include <deque>
 
-#include <llvm/config/llvm-config.h>
+#include <llvm/Config/llvm-config.h>
 
+#include "llvm/ADT/ImmutableSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
-#include "llvm/adt/immutableSet.h"
 
 #include "llvm/ADT/STLExtras.h"
 
