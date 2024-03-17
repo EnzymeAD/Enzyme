@@ -8968,6 +8968,7 @@ void GradientUtils::eraseWithPlaceholder(Instruction *I, Instruction *orig,
                                          const Twine &suffix, bool erase) {
   if (!I->getType()->isVoidTy() && !I->getType()->isTokenTy()) {
     auto inspos = I->getIterator();
+#if LLVM_VERSION_MAJOR >= 18
     if (I->getParent()->IsNewDbgInfoFormat) {
       if (!inspos.getHeadBit()) {
         auto srcmarker = I->getParent()->getMarker(inspos);
@@ -8976,6 +8977,7 @@ void GradientUtils::eraseWithPlaceholder(Instruction *I, Instruction *orig,
         }
       }
     }
+#endif
     IRBuilder<> BuilderZ(I->getParent(), inspos);
     auto pn = BuilderZ.CreatePHI(I->getType(), 1, I->getName() + suffix);
     fictiousPHIs[pn] = orig;
