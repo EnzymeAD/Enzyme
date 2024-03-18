@@ -25,7 +25,36 @@
 //===----------------------------------------------------------------------===//
 
 #include "CacheUtility.h"
+
+#include <algorithm>
+#include <deque>
+#include <initializer_list>
+#include <stddef.h>
+#include <string>
+
 #include "FunctionUtils.h"
+#include "SCEV/ScalarEvolution.h"
+#include "SCEV/ScalarEvolutionExpander.h"
+#include "llvm-c/Types.h"
+#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ilist_iterator.h"
+#include "llvm/ADT/iterator.h"
+#include "llvm/ADT/iterator_range.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include "llvm/Config/llvm-config.h"
+#include "llvm/IR/CFG.h"
+#include "llvm/IR/Constant.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DebugLoc.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/User.h"
+#include "llvm/Support/Alignment.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/TypeSize.h"
 
 using namespace llvm;
 

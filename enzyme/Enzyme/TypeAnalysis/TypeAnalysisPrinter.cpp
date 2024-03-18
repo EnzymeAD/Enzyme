@@ -23,6 +23,13 @@
 //
 //===----------------------------------------------------------------------===//
 #include <llvm/Config/llvm-config.h>
+#include <map>
+#include <memory>
+#include <set>
+#include <stdint.h>
+#include <string>
+#include <utility>
+#include <vector>
 
 #if LLVM_VERSION_MAJOR >= 16
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -32,31 +39,29 @@
 #include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
-#include "llvm/ADT/SmallVector.h"
-
-#include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DebugInfoMetadata.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/InstrTypes.h"
-#include "llvm/IR/Instructions.h"
-#include "llvm/IR/MDBuilder.h"
-#include "llvm/IR/Metadata.h"
-
-#include "llvm/Support/Debug.h"
-#include "llvm/Transforms/Scalar.h"
-
-#include "llvm/Analysis/BasicAliasAnalysis.h"
-#include "llvm/Analysis/GlobalsModRef.h"
-#include "llvm/Analysis/ScalarEvolution.h"
-
-#include "llvm/Support/CommandLine.h"
-
 #include "../FunctionUtils.h"
 #include "../Utils.h"
+#include "BaseType.h"
+#include "ConcreteType.h"
 #include "TypeAnalysis.h"
 #include "TypeAnalysisPrinter.h"
+#include "TypeTree.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/ilist_iterator.h"
+#include "llvm/ADT/iterator_range.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/IR/Argument.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Value.h"
+#include "llvm/Pass.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/GenericDomTreeConstruction.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 #ifdef DEBUG_TYPE

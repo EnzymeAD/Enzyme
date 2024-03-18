@@ -22,6 +22,15 @@
 //
 //===----------------------------------------------------------------------===//
 #include "CApi.h"
+
+#include <assert.h>
+#include <cstring>
+#include <functional>
+#include <map>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -34,24 +43,72 @@
 
 #include "DiffeGradientUtils.h"
 #include "EnzymeLogic.h"
+#include "FunctionUtils.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
+#include "TypeAnalysis/BaseType.h"
+#include "TypeAnalysis/ConcreteType.h"
+#include "TypeAnalysis/TypeAnalysis.h"
+#include "TypeAnalysis/TypeTree.h"
+#include "Utils.h"
+#include "llvm-c/Target.h"
+#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/BitmaskEnum.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/Twine.h"
+#include "llvm/ADT/ilist_iterator.h"
+#include "llvm/ADT/ilist_node_options.h"
+#include "llvm/ADT/iterator_range.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/Config/llvm-config.h"
+#include "llvm/IR/Argument.h"
+#include "llvm/IR/Attributes.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constant.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DebugInfoMetadata.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Operator.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Use.h"
+#include "llvm/IR/User.h"
+#include "llvm/IR/Value.h"
+#include "llvm/IR/ValueHandle.h"
+#include "llvm/IR/ValueMap.h"
+#include "llvm/Support/Alignment.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/TypeSize.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
 #if LLVM_VERSION_MAJOR >= 16
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #else
 #include "SCEV/TargetLibraryInfo.h"
 #endif
 #include "TraceInterface.h"
-
-// #include "llvm/ADT/Triple.h"
-#include "llvm/Analysis/CallGraph.h"
-#include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/IR/DIBuilder.h"
-#include "llvm/IR/MDBuilder.h"
-#include "llvm/Transforms/Utils/Cloning.h"
-
 #include "llvm/IR/LegacyPassManager.h"
+#include "llvm/IR/MDBuilder.h"
 #include "llvm/Transforms/IPO/Attributor.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex

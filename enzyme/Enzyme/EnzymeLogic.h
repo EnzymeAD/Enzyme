@@ -31,24 +31,39 @@
 #define ENZYME_LOGIC_H
 
 #include <algorithm>
+#include <assert.h>
+#include <map>
 #include <set>
+#include <string>
+#include <sys/types.h>
+#include <tuple>
 #include <utility>
-
-#include "llvm/IR/Function.h"
-#include "llvm/IR/Module.h"
-#include "llvm/IR/Type.h"
-#include "llvm/Support/CommandLine.h"
-
-#include "llvm/Analysis/AliasAnalysis.h"
-
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/ErrorHandling.h"
+#include <vector>
 
 #include "ActivityAnalysis.h"
 #include "FunctionUtils.h"
+#include "TraceInterface.h"
 #include "TraceUtils.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 #include "Utils.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSet.h"
+#include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Value.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
 
 extern "C" {
 extern llvm::cl::opt<bool> EnzymePrint;

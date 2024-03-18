@@ -27,32 +27,40 @@
 #ifndef ENZYME_ACTIVE_VAR_H
 #define ENZYME_ACTIVE_VAR_H 1
 
+#include <assert.h>
 #include <cstdint>
 #include <deque>
-
 #include <llvm/Config/llvm-config.h>
+#include <map>
+#include <stddef.h>
+#include <utility>
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+
 #undef private
 #else
 #include "SCEV/ScalarEvolution.h"
 #include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
-#include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/Type.h"
-#include "llvm/IR/Value.h"
-
-#include "llvm/Support/CommandLine.h"
-
-#include "llvm/ADT/StringMap.h"
-#include "llvm/IR/InstVisitor.h"
-
 #include "TypeAnalysis/TypeAnalysis.h"
 #include "Utils.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/InstVisitor.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Value.h"
+#include "llvm/Support/CommandLine.h"
 
 extern "C" {
 extern llvm::cl::opt<bool> EnzymePrintActivity;

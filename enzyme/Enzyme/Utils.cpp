@@ -23,7 +23,21 @@
 //
 //===----------------------------------------------------------------------===//
 #include "Utils.h"
+
+#include <tuple>
+
+#include "TypeAnalysis/BaseType.h"
 #include "TypeAnalysis/TypeAnalysis.h"
+#include "TypeAnalysis/TypeTree.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/Analysis/MemoryLocation.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/IR/CallingConv.h"
+#include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/Support/Alignment.h"
 
 #if LLVM_VERSION_MAJOR >= 16
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -33,19 +47,15 @@
 #include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
+#include "LibraryFuncs.h"
 #include "TypeAnalysis/TBAA.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
-#include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
-
-#include "llvm-c/Core.h"
-
-#include "LibraryFuncs.h"
 
 using namespace llvm;
 

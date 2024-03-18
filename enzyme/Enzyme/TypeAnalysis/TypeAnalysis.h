@@ -25,15 +25,41 @@
 #ifndef ENZYME_TYPE_ANALYSIS_H
 #define ENZYME_TYPE_ANALYSIS_H 1
 
+#include <assert.h>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
-
+#include <functional>
 #include <llvm/Config/llvm-config.h>
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
 
+#include "BaseType.h"
+#include "ConcreteType.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
-
+#include "llvm/ADT/StringMapEntry.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/iterator.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/IR/Argument.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Operator.h"
+#include "llvm/IR/PassManager.h"
+#include "llvm/Support/raw_ostream.h"
 
 #if LLVM_VERSION_MAJOR >= 16
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -43,18 +69,16 @@
 #include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
+#include "../Utils.h"
+#include "TypeTree.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/PostDominators.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/ModuleSlotTracker.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
-
-#include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/PostDominators.h"
-#include "llvm/IR/Dominators.h"
-
-#include "../Utils.h"
-#include "TypeTree.h"
 
 extern const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS;
 

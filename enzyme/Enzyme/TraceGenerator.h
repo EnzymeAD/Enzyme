@@ -26,12 +26,17 @@
 #ifndef TraceGenerator_h
 #define TraceGenerator_h
 
-#include "llvm/IR/InstVisitor.h"
-#include "llvm/IR/Instructions.h"
-
 #include "EnzymeLogic.h"
 #include "TraceUtils.h"
 #include "Utils.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/StringSet.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/InstVisitor.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Value.h"
+#include "llvm/IR/ValueHandle.h"
+#include "llvm/IR/ValueMap.h"
 
 class TraceGenerator final : public llvm::InstVisitor<TraceGenerator> {
 private:

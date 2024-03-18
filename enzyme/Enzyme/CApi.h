@@ -24,11 +24,14 @@
 #ifndef ENZYME_CAPI_H
 #define ENZYME_CAPI_H
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "llvm-c/Core.h"
 #include "llvm-c/DataTypes.h"
 // #include "llvm-c/Initialization.h"
 #include "llvm-c/Target.h"
-#include <stddef.h>
+#include "llvm-c/Types.h"
 
 #ifdef __cplusplus
 extern "C" {

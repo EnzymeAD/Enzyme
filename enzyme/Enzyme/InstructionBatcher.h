@@ -28,6 +28,7 @@
 #define INSTRUCTION_BATCHER_H_
 
 #include <llvm/Config/llvm-config.h>
+#include <vector>
 
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
@@ -39,13 +40,15 @@
 #include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
+#include "EnzymeLogic.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
-
-#include "llvm/ADT/SmallPtrSet.h"
-
-#include "EnzymeLogic.h"
+#include "llvm/IR/ValueHandle.h"
+#include "llvm/IR/ValueMap.h"
 
 class InstructionBatcher final : public llvm::InstVisitor<InstructionBatcher> {
 public:

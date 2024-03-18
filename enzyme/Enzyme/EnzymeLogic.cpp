@@ -28,55 +28,80 @@
 //
 //===----------------------------------------------------------------------===//
 #include "EnzymeLogic.h"
+
+#include <stddef.h>
+#include <stdint.h>
+
 #include "ActivityAnalysis.h"
 #include "AdjointGenerator.h"
-#include "EnzymeLogic.h"
+#include "CacheUtility.h"
+#include "DifferentialUseAnalysis.h"
+#include "TraceUtils.h"
+#include "TypeAnalysis/BaseType.h"
+#include "TypeAnalysis/ConcreteType.h"
+#include "TypeAnalysis/TypeTree.h"
+#include "llvm-c/Types.h"
+#include "llvm/ADT/Optional.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Triple.h"
+#include "llvm/ADT/Twine.h"
+#include "llvm/ADT/ilist_iterator.h"
+#include "llvm/ADT/iterator.h"
+#include "llvm/ADT/iterator_range.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/MemoryLocation.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/Config/llvm-config.h"
+#include "llvm/IR/Argument.h"
+#include "llvm/IR/Attributes.h"
+#include "llvm/IR/CFG.h"
+#include "llvm/IR/Constant.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DebugLoc.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicsAMDGPU.h"
+#include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/PassManager.h"
+#include "llvm/IR/Use.h"
+#include "llvm/IR/User.h"
+#include "llvm/IR/ValueHandle.h"
+#include "llvm/IR/ValueMap.h"
+#include "llvm/Support/Alignment.h"
+#include "llvm/Support/AtomicOrdering.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
-#include <cmath>
+#include "llvm/Support/TypeSize.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
 
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+
 #undef private
 #else
 #include "SCEV/ScalarEvolution.h"
-#include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
-#include "llvm/Analysis/DependenceAnalysis.h"
 #include <deque>
-
-#include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/InstIterator.h"
-#include "llvm/IR/Module.h"
-#include "llvm/IR/Type.h"
-#include "llvm/IR/Verifier.h"
-
-#include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/TargetLibraryInfo.h"
-#include "llvm/Analysis/ValueTracking.h"
-
-#include "llvm/Demangle/Demangle.h"
-
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
-#include "llvm/Transforms/Utils/Cloning.h"
-
-#include "llvm/Analysis/BasicAliasAnalysis.h"
-#include "llvm/Analysis/GlobalsModRef.h"
-
-#include "llvm/Support/AMDGPUMetadata.h"
-
-#include "llvm/ADT/StringSet.h"
+#include <functional>
+#include <initializer_list>
+#include <iterator>
+#include <memory>
 
 #include "DiffeGradientUtils.h"
 #include "FunctionUtils.h"
@@ -85,6 +110,21 @@
 #include "LibraryFuncs.h"
 #include "TraceGenerator.h"
 #include "Utils.h"
+#include "llvm/ADT/StringSet.h"
+#include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Demangle/Demangle.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/Support/AMDGPUMetadata.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex

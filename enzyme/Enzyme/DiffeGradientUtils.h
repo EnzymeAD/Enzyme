@@ -28,32 +28,37 @@
 #ifndef ENZYME_DIFFEGRADIENTUTILS_H_
 #define ENZYME_DIFFEGRADIENTUTILS_H_
 
-#include "GradientUtils.h"
-
 #include <llvm/Config/llvm-config.h>
 
+#include "ActivityAnalysis.h"
+#include "EnzymeLogic.h"
+#include "GradientUtils.h"
+#include "TypeAnalysis/TypeAnalysis.h"
+#include "TypeAnalysis/TypeTree.h"
+#include "Utils.h"
+#include "llvm-c/Core.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
-
+#include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/PostDominators.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Dominators.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
-
-#include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/PostDominators.h"
-#include "llvm/Analysis/ValueTracking.h"
-
-#include "ActivityAnalysis.h"
-#include "EnzymeLogic.h"
-#include "Utils.h"
-
-#include "llvm-c/Core.h"
+#include "llvm/IR/ValueHandle.h"
+#include "llvm/IR/ValueMap.h"
+#include "llvm/Support/Alignment.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
 
 #if LLVM_VERSION_MAJOR <= 16
 #include "llvm/ADT/Triple.h"

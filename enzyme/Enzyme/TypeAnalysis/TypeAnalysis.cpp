@@ -22,44 +22,61 @@
 // computing the underlying data type of LLVM values.
 //
 //===----------------------------------------------------------------------===//
+#include <algorithm>
 #include <cstdint>
 #include <deque>
-
+#include <initializer_list>
 #include <llvm/Config/llvm-config.h>
-
-#include "llvm/Demangle/Demangle.h"
-#include "llvm/Demangle/ItaniumDemangle.h"
-
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/InstrTypes.h"
-#include "llvm/IR/Instructions.h"
-#include "llvm/IR/IntrinsicInst.h"
-#include "llvm/IR/ModuleSlotTracker.h"
-#include "llvm/IR/Type.h"
-#include "llvm/IR/Value.h"
-
-#include "llvm/IR/InstIterator.h"
-
-#include "llvm/Support/CommandLine.h"
-#include "llvm/Support/raw_ostream.h"
-
-#include "llvm/ADT/SmallSet.h"
-#include "llvm/ADT/StringMap.h"
-#include "llvm/ADT/StringSet.h"
-
-#include "llvm/IR/InlineAsm.h"
-
-#include "../Utils.h"
-#include "TypeAnalysis.h"
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <tuple>
+#include <vector>
 
 #include "../FunctionUtils.h"
 #include "../LibraryFuncs.h"
-
+#include "../Utils.h"
 #include "RustDebugInfo.h"
 #include "TBAA.h"
-
-#include <math.h>
+#include "TypeAnalysis.h"
+#include "llvm-c/Types.h"
+#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/Optional.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/ilist_iterator.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include "llvm/Demangle/Demangle.h"
+#include "llvm/IR/Attributes.h"
+#include "llvm/IR/Constant.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicsAMDGPU.h"
+#include "llvm/IR/IntrinsicsNVPTX.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/ModuleSlotTracker.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Use.h"
+#include "llvm/IR/User.h"
+#include "llvm/IR/Value.h"
+#include "llvm/Support/Alignment.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/TypeSize.h"
+#include "llvm/Support/raw_ostream.h"
 
 #if LLVM_VERSION_MAJOR >= 14
 #define getAttribute getAttributeAtIndex

@@ -27,30 +27,52 @@
 #ifndef ENZYME_CACHE_UTILITY_H
 #define ENZYME_CACHE_UTILITY_H
 
+#include <assert.h>
 #include <llvm/Config/llvm-config.h>
+#include <map>
+#include <set>
+#include <tuple>
+#include <utility>
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+
 #undef private
 #else
 #include "SCEV/ScalarEvolution.h"
 #include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/Analysis/LoopInfo.h"
-#include "llvm/IR/Instructions.h"
-
-#include "llvm/Analysis/AssumptionCache.h"
-#include "llvm/Analysis/TargetLibraryInfo.h"
-#include "llvm/IR/Dominators.h"
-#include "llvm/Support/CommandLine.h"
-#include "llvm/Transforms/Utils/ValueMapper.h"
-
 #include "FunctionUtils.h"
 #include "MustExitScalarEvolution.h"
+#include "Utils.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Twine.h"
+#include "llvm/Analysis/AssumptionCache.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Value.h"
+#include "llvm/IR/ValueHandle.h"
+#include "llvm/IR/ValueMap.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
 
 extern "C" {
 /// Pack 8 bools together in a single byte

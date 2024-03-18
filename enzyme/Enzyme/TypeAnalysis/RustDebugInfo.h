@@ -27,10 +27,10 @@
 #ifndef ENZYME_RUSTDEBUGINFO_H
 #define ENZYME_RUSTDEBUGINFO_H 1
 
+#include "TypeTree.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
-
-#include "TypeTree.h"
 
 /// Construct the type tree from debug info of an instruction
 TypeTree parseDIType(llvm::DbgDeclareInst &I, llvm::DataLayout &DL);

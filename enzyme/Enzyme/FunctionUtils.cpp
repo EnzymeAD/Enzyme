@@ -24,92 +24,98 @@
 //===----------------------------------------------------------------------===//
 #include "FunctionUtils.h"
 
-#include "DiffeGradientUtils.h"
+#include <array>
+#include <functional>
+#include <initializer_list>
+#include <iterator>
+#include <memory>
+#include <set>
+#include <string>
+#include <sys/types.h>
+#include <tuple>
+#include <vector>
+
+#include "ActivityAnalysis.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
-
-#include "llvm/IR/Attributes.h"
-#include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/DebugInfoMetadata.h"
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Module.h"
-#include "llvm/IR/Type.h"
-#include "llvm/IR/Verifier.h"
-#include "llvm/Passes/PassBuilder.h"
-
+#include "MustExitScalarEvolution.h"
+#include "SCEV/ScalarEvolution.h"
+#include "SCEV/ScalarEvolutionExpander.h"
+#include "TypeAnalysis/TypeAnalysis.h"
+#include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/DenseMapInfo.h"
-#include "llvm/ADT/SetOperations.h"
+#include "llvm/ADT/FloatingPointMode.h"
+#include "llvm/ADT/Optional.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
+#include "llvm/Analysis/CGSCCPassManager.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Analysis/GlobalsModRef.h"
-#include "llvm/Analysis/LazyValueInfo.h"
 #include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/MemoryDependenceAnalysis.h"
-#include "llvm/Analysis/MemorySSA.h"
-#include "llvm/Analysis/OptimizationRemarkEmitter.h"
-#include <set>
+#include "llvm/Analysis/MemoryLocation.h"
+#include "llvm/Analysis/PostDominators.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Config/llvm-config.h"
+#include "llvm/IR/Argument.h"
+#include "llvm/IR/Attributes.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constant.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Operator.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/ValueHandle.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/Pass.h"
+#include "llvm/Passes/OptimizationLevel.h"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Support/Alignment.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/GenericDomTreeConstruction.h"
+#include "llvm/Support/TypeSize.h"
+#include "llvm/Transforms/Utils/LoopSimplify.h"
+#include "llvm/Transforms/Utils/SimplifyCFGOptions.h"
 
 #if LLVM_VERSION_MAJOR < 16
 #include "llvm/Analysis/CFLSteensAliasAnalysis.h"
 #endif
-#include "llvm/Analysis/DependenceAnalysis.h"
-#include "llvm/Analysis/TypeBasedAliasAnalysis.h"
-#include "llvm/CodeGen/UnreachableBlockElim.h"
-
-#include "llvm/Analysis/PhiValues.h"
-#include "llvm/Analysis/ProfileSummaryInfo.h"
-#include "llvm/Analysis/ScalarEvolution.h"
-#include "llvm/Analysis/ScopedNoAliasAA.h"
-#include "llvm/Analysis/TargetTransformInfo.h"
-
-#include "llvm/Transforms/IPO/FunctionAttrs.h"
-#include "llvm/Transforms/Utils/Mem2Reg.h"
-
-#include "llvm/Transforms/Utils.h"
-
-#include "llvm/Transforms/InstCombine/InstCombine.h"
-#include "llvm/Transforms/Scalar/CorrelatedValuePropagation.h"
-#include "llvm/Transforms/Scalar/DCE.h"
-#include "llvm/Transforms/Scalar/DeadStoreElimination.h"
-#include "llvm/Transforms/Scalar/EarlyCSE.h"
-#include "llvm/Transforms/Scalar/GVN.h"
-#include "llvm/Transforms/Scalar/IndVarSimplify.h"
-#include "llvm/Transforms/Scalar/InstSimplifyPass.h"
-#include "llvm/Transforms/Scalar/LoopIdiomRecognize.h"
-#include "llvm/Transforms/Scalar/MemCpyOptimizer.h"
-#include "llvm/Transforms/Scalar/SROA.h"
-#include "llvm/Transforms/Scalar/SimplifyCFG.h"
-#include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/Transforms/Utils/LCSSA.h"
-#include "llvm/Transforms/Utils/LowerInvoke.h"
-
-#include "llvm/Transforms/IPO/FunctionAttrs.h"
-#include "llvm/Transforms/Scalar/DCE.h"
-#include "llvm/Transforms/Scalar/LoopDeletion.h"
-#include "llvm/Transforms/Scalar/LoopRotation.h"
-
-#include "llvm/Transforms/Utils/CodeExtractor.h"
-
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
-#include "llvm/Transforms/Utils/Local.h"
-
-#include "llvm/IR/LegacyPassManager.h"
-#if LLVM_VERSION_MAJOR <= 16
-#include "llvm/Transforms/IPO/PassManagerBuilder.h"
-#endif
-#include "llvm/Analysis/ScalarEvolutionAliasAnalysis.h"
-
-#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
-
 #include <optional>
 
 #include "CacheUtility.h"
+#include "llvm/Analysis/PhiValues.h"
+#include "llvm/Analysis/ScopedNoAliasAA.h"
+#include "llvm/Analysis/TypeBasedAliasAnalysis.h"
+#include "llvm/CodeGen/UnreachableBlockElim.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
+#include "llvm/Transforms/Scalar/CorrelatedValuePropagation.h"
+#include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/Transforms/Scalar/SROA.h"
+#include "llvm/Transforms/Scalar/SimplifyCFG.h"
+#include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/CodeExtractor.h"
+#include "llvm/Transforms/Utils/Local.h"
+#include "llvm/Transforms/Utils/LowerInvoke.h"
+#include "llvm/Transforms/Utils/Mem2Reg.h"
 
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
