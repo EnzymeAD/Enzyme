@@ -12,20 +12,13 @@
 //===----------------------------------------------------------------------===//
 
 #include <assert.h>
-#include <stddef.h>
 #include <functional>
+#include <stddef.h>
 #include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
 
-#include "llvm/Support/CommandLine.h"
-#include "llvm/Support/PrettyStackTrace.h"
-#include "llvm/Support/Signals.h"
-#include "llvm/TableGen/Error.h"
-#include "llvm/TableGen/Main.h"
-#include "llvm/TableGen/Record.h"
-#include "llvm/TableGen/TableGenBackend.h"
 #include "blas-tblgen.h"
 #include "enzyme-tblgen.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -38,8 +31,15 @@
 #include "llvm/ADT/iterator.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/ManagedStatic.h"
+#include "llvm/Support/PrettyStackTrace.h"
+#include "llvm/Support/Signals.h"
+#include "llvm/TableGen/Error.h"
+#include "llvm/TableGen/Main.h"
+#include "llvm/TableGen/Record.h"
+#include "llvm/TableGen/TableGenBackend.h"
 
 using namespace llvm;
 
