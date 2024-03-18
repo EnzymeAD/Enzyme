@@ -76,6 +76,8 @@
 #include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "IncludeUtils.inc"
+
 using namespace clang;
 
 #if LLVM_VERSION_MAJOR >= 18
