@@ -94,6 +94,7 @@
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
 class GradientUtils;
+
 extern llvm::StringMap<std::function<llvm::Value *(
     llvm::IRBuilder<> &, llvm::CallInst *, llvm::ArrayRef<llvm::Value *>,
     GradientUtils *)>>

@@ -30,6 +30,7 @@
 #ifndef ENZYME_LOGIC_H
 #define ENZYME_LOGIC_H
 
+#include <__bit_reference>
 #include <algorithm>
 #include <assert.h>
 #include <map>
