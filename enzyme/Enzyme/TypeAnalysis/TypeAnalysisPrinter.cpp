@@ -35,6 +35,8 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 #else
+#include "SCEV/ScalarEvolution.h"
+#include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
 #include "../FunctionUtils.h"

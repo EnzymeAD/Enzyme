@@ -38,19 +38,15 @@ extern "C" {
 #endif
 
 struct EnzymeOpaqueTypeAnalysis;
-
 typedef struct EnzymeOpaqueTypeAnalysis *EnzymeTypeAnalysisRef;
 
 struct EnzymeOpaqueLogic;
-
 typedef struct EnzymeOpaqueLogic *EnzymeLogicRef;
 
 struct EnzymeOpaqueAugmentedReturn;
-
 typedef struct EnzymeOpaqueAugmentedReturn *EnzymeAugmentedReturnPtr;
 
 struct EnzymeOpaqueTraceInterface;
-
 typedef struct EnzymeOpaqueTraceInterface *EnzymeTraceInterfaceRef;
 
 struct IntList {

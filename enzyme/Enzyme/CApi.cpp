@@ -35,9 +35,10 @@
 #define private public
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
-
 #undef private
 #else
+#include "SCEV/ScalarEvolution.h"
+#include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
 #include "DiffeGradientUtils.h"
@@ -100,6 +101,7 @@
 #if LLVM_VERSION_MAJOR >= 16
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #else
+#include "SCEV/TargetLibraryInfo.h"
 #endif
 #include "TraceInterface.h"
 #include "llvm/IR/DIBuilder.h"
