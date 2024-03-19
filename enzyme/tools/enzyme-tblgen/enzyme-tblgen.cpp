@@ -1868,8 +1868,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
           os << curIndent << INDENT << "Value *dif = diffe(" << origName
              << ".getOperand(" << argIdx << "), Builder2);\n";
           // error from https://dl.acm.org/doi/10.1145/3371128
-          // error(f(x, y)) = max(  ulp(f(x, y)) , abs(  x / f(x, y) * df/dx *
-          // error(x) ) + abs(  y / f(x, y) * df/dy * error(y) ) )
+          // error(f(x, y)) = max(ulp(f(x, y)), abs(x / f(x, y) * df/dx *
+          // error(x)) + abs(y / f(x, y) * df/dy * error(y)))
           os << " if (Mode == DerivativeMode::ForwardModeError) {\n";
           os << "   dif = Builder2.CreateFDiv(Builder2.CreateFMul(dif, "
                 "gutils->getNewFromOriginal("
