@@ -3100,7 +3100,7 @@ if (ty->isHalfTy()) {
   llvm_unreachable("Unknown type within frexp");
 }
 
-llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value res) {
+llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
   // Mask for only the exponent bits
   unsigned low = 0;
   unsigned high = 0;
