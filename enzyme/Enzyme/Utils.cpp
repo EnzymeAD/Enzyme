@@ -3137,10 +3137,16 @@ llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
 
   auto ity = IntegerType::get(ty->getContext(), tsize);
 
-  auto as_int = builder.CreateBitCast(res, ity);
-  auto masked = builder.CreateXor(as_int, ConstantInt::get(ity, eval));
-
   //  auto masked = builder.CreateAnd(as_int, ConstantInt::get(ity, eval));
 
-  return builder.CreateBitCast(masked, ty);
+  auto as_int = builder.CreateBitCast(res, ity);
+  auto masked = builder.CreateXor(as_int, ConstantInt::get(ity, eval));
+  auto as_fp = builder.CreateBitCast(masked, ty);
+
+  auto diff = builder.CreateFSub(res, as_fp);
+  auto zero = llvm::ConstantFP::get(res->getType(), 0.);
+  auto isNeg = builder.CreateFCmpOLT(diff, zero);
+  auto ulp = builder.CreateSelect(isNeg, builder.CreateFNeg(diff), diff);
+
+  return ulp;
 }
