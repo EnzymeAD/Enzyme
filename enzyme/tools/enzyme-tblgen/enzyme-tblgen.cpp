@@ -1972,6 +1972,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
              << "res = Builder2.CreateMaxNum(get1ULP(Builder2, "
                 "gutils->getNewFromOriginal(&"
              << origName << ")), res);\n";
+          os << "}\n";
         }
         os << "        }\n";
       }
