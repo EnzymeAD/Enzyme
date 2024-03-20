@@ -25,29 +25,53 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <assert.h>
+#include <iterator>
+#include <map>
+#include <set>
+#include <stdint.h>
+#include <stdlib.h>
 #include <string>
+#include <sys/types.h>
+#include <utility>
+#include <vector>
 
+#include "CacheUtility.h"
 #include "DiffeGradientUtils.h"
-
+#include "FunctionUtils.h"
+#include "LibraryFuncs.h"
+#include "TypeAnalysis/ConcreteType.h"
+#include "Utils.h"
+#include "llvm-c/Types.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
-
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Triple.h"
+#include "llvm/ADT/Twine.h"
+#include "llvm/Config/llvm-config.h"
+#include "llvm/IR/Argument.h"
 #include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constant.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DebugInfoMetadata.h"
-#include "llvm/IR/Dominators.h"
+#include "llvm/IR/DebugLoc.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
-
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
-
+#include "llvm/Support/AtomicOrdering.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
-
-#include "LibraryFuncs.h"
-#include "Utils.h"
+#include "llvm/Support/TypeSize.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 

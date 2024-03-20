@@ -27,24 +27,29 @@
 
 #include <deque>
 #include <map>
+#include <memory>
 #include <set>
+#include <sys/types.h>
+#include <vector>
 
 #include "DifferentialUseAnalysis.h"
-
-#include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/Instruction.h"
-#include "llvm/IR/IntrinsicsX86.h"
-
+#include "EnzymeLogic.h"
+#include "GradientUtils.h"
+#include "LibraryFuncs.h"
+#include "TypeAnalysis/BaseType.h"
+#include "TypeAnalysis/ConcreteType.h"
+#include "TypeAnalysis/TypeTree.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
-
+#include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicsNVPTX.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/ErrorHandling.h"
-
-#include "DiffeGradientUtils.h"
-#include "GradientUtils.h"
-#include "LibraryFuncs.h"
+#include "llvm/Support/TypeSize.h"
 
 using namespace llvm;
 

@@ -39,7 +39,13 @@
 #include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Dominators.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Value.h"
 
 class MustExitScalarEvolution final : public llvm::ScalarEvolution {
 public:

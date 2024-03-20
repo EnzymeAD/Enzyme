@@ -24,12 +24,23 @@
 // the type tree recursively.
 //
 //===-------------------------------------------------------------------===//
-#include "llvm/IR/DIBuilder.h"
-#include "llvm/IR/DataLayout.h"
-#include "llvm/IR/DebugInfo.h"
-#include "llvm/Support/CommandLine.h"
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string>
 
+#include "BaseType.h"
+#include "ConcreteType.h"
 #include "RustDebugInfo.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/BinaryFormat/Dwarf.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DebugInfoMetadata.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/Type.h"
+#include "llvm/Support/Casting.h"
 
 using namespace llvm;
 

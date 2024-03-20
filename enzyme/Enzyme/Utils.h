@@ -25,48 +25,79 @@
 #ifndef ENZYME_UTILS_H
 #define ENZYME_UTILS_H
 
-#include "llvm/ADT/MapVector.h"
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallPtrSet.h"
+#include <assert.h>
+#include <map>
+#include <set>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string>
+#include <sys/types.h>
+#include <utility>
+#include <vector>
 
+#include "llvm-c/Types.h"
+#include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/Optional.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Twine.h"
+#include "llvm/ADT/ilist_iterator.h"
+#include "llvm/ADT/iterator.h"
+#include "llvm/ADT/iterator_range.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/Config/llvm-config.h"
+#include "llvm/IR/Argument.h"
 #include "llvm/IR/Attributes.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constant.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DebugLoc.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/DiagnosticHandler.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalAlias.h"
+#include "llvm/IR/GlobalObject.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicsAMDGPU.h"
+#include "llvm/IR/IntrinsicsNVPTX.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/IR/Type.h"
-
-#include "llvm/IR/Function.h"
-#include "llvm/IR/IntrinsicInst.h"
-
+#include "llvm/IR/User.h"
+#include "llvm/IR/Value.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/IR/ValueMap.h"
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/raw_ostream.h"
-
 #include "llvm/Support/CommandLine.h"
-
-#include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/StringMap.h"
-
-#include "llvm/IR/Dominators.h"
-#include "llvm/IR/IntrinsicsAMDGPU.h"
-#include "llvm/IR/IntrinsicsNVPTX.h"
-
-#include <map>
-#include <set>
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/TypeSize.h"
+#include "llvm/Support/raw_ostream.h"
 
 #if LLVM_VERSION_MAJOR >= 16
 #include <optional>
 #endif
 
-#include "llvm/IR/DiagnosticInfo.h"
-
-#include "llvm/Analysis/OptimizationRemarkEmitter.h"
-
 #include "TypeAnalysis/ConcreteType.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
+#include "llvm/IR/DiagnosticInfo.h"
 
 namespace llvm {
 class ScalarEvolution;
@@ -755,9 +786,11 @@ static inline V *findInMap(std::map<K, V> &map, K key) {
   return val;
 }
 
-#include "llvm/IR/CFG.h"
 #include <deque>
 #include <functional>
+
+#include "llvm/IR/CFG.h"
+
 /// Call the function f for all instructions that happen after inst
 /// If the function returns true, the iteration will early exit
 static inline void

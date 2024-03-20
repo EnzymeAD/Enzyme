@@ -28,11 +28,17 @@
 #ifndef ENZYME_GUTILS_H_
 #define ENZYME_GUTILS_H_
 
+#include <assert.h>
 #include <functional>
-#include <map>
-#include <string>
-
 #include <llvm/Config/llvm-config.h>
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+#include <sys/types.h>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
@@ -44,33 +50,48 @@
 #include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
-#include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringMap.h"
-
-#include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/DebugInfoMetadata.h"
-#include "llvm/IR/Dominators.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Instructions.h"
-#include "llvm/IR/Type.h"
-#include "llvm/IR/Value.h"
-
-#include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/PostDominators.h"
-#include "llvm/Analysis/ValueTracking.h"
-
-#include "llvm/Support/Casting.h"
-#include "llvm/Support/ErrorHandling.h"
-
 #include "ActivityAnalysis.h"
 #include "CacheUtility.h"
 #include "EnzymeLogic.h"
+#include "TypeAnalysis/TypeAnalysis.h"
 #include "Utils.h"
-
 #include "llvm-c/Core.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/Twine.h"
+#include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/PostDominators.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constant.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DebugInfoMetadata.h"
+#include "llvm/IR/DebugLoc.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Value.h"
+#include "llvm/IR/ValueHandle.h"
+#include "llvm/IR/ValueMap.h"
+#include "llvm/Support/Alignment.h"
+#include "llvm/Support/AtomicOrdering.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
 
 class GradientUtils;
 extern llvm::StringMap<std::function<llvm::Value *(

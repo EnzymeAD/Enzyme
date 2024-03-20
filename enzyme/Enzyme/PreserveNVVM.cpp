@@ -23,28 +23,42 @@
 // intrinsic.
 //
 //===----------------------------------------------------------------------===//
+#include <assert.h>
 #include <llvm/Config/llvm-config.h>
-
-#include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringMap.h"
-
-#include "llvm/ADT/SmallSet.h"
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/GlobalVariable.h"
-#include "llvm/IR/Module.h"
-#include "llvm/Support/raw_ostream.h"
-
-#include "llvm/Pass.h"
-
-#include "llvm/Transforms/Utils.h"
-
-#include <map>
+#include <stdint.h>
+#include <string.h>
 
 #include "PreserveNVVM.h"
 #include "Utils.h"
+#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringMapEntry.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Twine.h"
+#include "llvm/ADT/ilist_iterator.h"
+#include "llvm/ADT/ilist_node_options.h"
+#include "llvm/ADT/iterator.h"
+#include "llvm/ADT/iterator_range.h"
+#include "llvm/IR/Argument.h"
+#include "llvm/IR/Attributes.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constant.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Value.h"
+#include "llvm/Pass.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/GenericDomTreeConstruction.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 #ifdef DEBUG_TYPE
@@ -769,8 +783,11 @@ FunctionPass *createPreserveNVVMPass(bool Begin) {
   return new PreserveNVVM(Begin);
 }
 
-#include <llvm-c/Core.h>
+#include <functional>
+#include <initializer_list>
 #include <llvm-c/Types.h>
+#include <string>
+#include <utility>
 
 #include "llvm/IR/LegacyPassManager.h"
 

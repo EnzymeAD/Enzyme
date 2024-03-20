@@ -14,6 +14,8 @@
 
 #include <llvm/TableGen/Record.h>
 
+#include "llvm/Support/raw_ostream.h"
+
 enum ActionType {
   MLIRDerivatives,
   CallDerivatives,

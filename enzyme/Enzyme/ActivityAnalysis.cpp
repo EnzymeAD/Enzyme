@@ -24,42 +24,62 @@
 // functions that compute this for values and instructions, respectively.
 //
 //===----------------------------------------------------------------------===//
-#include <cstdint>
 #include <deque>
-
+#include <functional>
+#include <initializer_list>
 #include <llvm/Config/llvm-config.h>
+#include <memory>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <vector>
 
-#include "llvm/ADT/ImmutableSet.h"
+#include "ActivityAnalysis.h"
+#include "FunctionUtils.h"
+#include "LibraryFuncs.h"
+#include "TypeAnalysis/BaseType.h"
+#include "TypeAnalysis/ConcreteType.h"
+#include "TypeAnalysis/TypeTree.h"
+#include "Utils.h"
+#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
-
-#include "llvm/ADT/STLExtras.h"
-
+#include "llvm/ADT/ilist_iterator.h"
+#include "llvm/ADT/iterator.h"
+#include "llvm/ADT/iterator_range.h"
+#include "llvm/Analysis/MemoryLocation.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/Demangle/Demangle.h"
+#include "llvm/IR/Argument.h"
+#include "llvm/IR/Attributes.h"
+#include "llvm/IR/Constant.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalAlias.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicsAMDGPU.h"
+#include "llvm/IR/IntrinsicsNVPTX.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
+#include "llvm/IR/Use.h"
+#include "llvm/IR/User.h"
 #include "llvm/IR/Value.h"
-
-#include "llvm/IR/InstIterator.h"
-
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/TypeSize.h"
 #include "llvm/Support/raw_ostream.h"
-
-#include "llvm/IR/InlineAsm.h"
-
-#include "ActivityAnalysis.h"
-#include "Utils.h"
-
-#include "llvm/Demangle/Demangle.h"
-
-#include "FunctionUtils.h"
-#include "LibraryFuncs.h"
-#include "TypeAnalysis/TBAA.h"
-
-#include "llvm/Analysis/ValueTracking.h"
 
 using namespace llvm;
 
@@ -98,10 +118,8 @@ cl::opt<bool> EnzymeEnableRecursiveHypotheses(
     cl::desc("Enable re-evaluation of activity analysis from updated results"));
 }
 
-#include "llvm/IR/InstIterator.h"
 #include <map>
 #include <set>
-#include <unordered_map>
 
 // clang-format off
 static const StringSet<> InactiveGlobals = {

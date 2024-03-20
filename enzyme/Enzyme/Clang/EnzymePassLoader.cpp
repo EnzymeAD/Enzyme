@@ -24,18 +24,18 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Config/llvm-config.h"
+#include "llvm/Pass.h"
 
 #if LLVM_VERSION_MAJOR < 16
 
+#include "../Enzyme.h"
+#include "../PreserveNVVM.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/GVN.h"
-
-#include "../Enzyme.h"
-#include "../PreserveNVVM.h"
 
 extern llvm::cl::opt<bool> EnzymeEnable;
 

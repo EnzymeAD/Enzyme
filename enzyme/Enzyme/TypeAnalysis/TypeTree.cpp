@@ -28,12 +28,8 @@
 // rather than limiting the depth.
 //
 //===----------------------------------------------------------------------===//
-#include "llvm/IR/DataLayout.h"
-#include "llvm/IR/DerivedTypes.h"
-
-#include "llvm/Support/CommandLine.h"
-
 #include "TypeTree.h"
+#include "llvm/Support/CommandLine.h"
 
 using namespace llvm;
 

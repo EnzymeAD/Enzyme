@@ -31,16 +31,40 @@
 #ifndef ENZYME_TYPE_ANALYSIS_TYPE_TREE_H
 #define ENZYME_TYPE_ANALYSIS_TYPE_TREE_H 1
 
-#include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/raw_ostream.h"
+#include <assert.h>
+#include <limits.h>
 #include <map>
+#include <memory>
 #include <set>
+#include <stddef.h>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "../Utils.h"
 #include "BaseType.h"
 #include "ConcreteType.h"
+#include "llvm-c/Types.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/iterator.h"
+#include "llvm/ADT/iterator_range.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Value.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/TypeSize.h"
+#include "llvm/Support/raw_ostream.h"
 
 /// Maximum offset for type trees to keep
 extern "C" {

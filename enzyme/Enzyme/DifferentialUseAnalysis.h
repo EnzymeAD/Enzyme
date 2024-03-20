@@ -27,22 +27,47 @@
 #ifndef ENZYME_DIFFERENTIALUSEANALYSIS_H_
 #define ENZYME_DIFFERENTIALUSEANALYSIS_H_
 
+#include <array>
+#include <assert.h>
 #include <map>
 #include <set>
-
-#include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/Instruction.h"
-
-#include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/ADT/SmallVector.h"
-
-#include "llvm/Support/Casting.h"
-#include "llvm/Support/ErrorHandling.h"
+#include <stddef.h>
+#include <string>
+#include <utility>
 
 #include "DiffeGradientUtils.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
+#include "TypeAnalysis/TypeAnalysis.h"
+#include "Utils.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/iterator.h"
+#include "llvm/ADT/iterator_range.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Config/llvm-config.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/CFG.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Use.h"
+#include "llvm/IR/User.h"
+#include "llvm/IR/Value.h"
+#include "llvm/IR/ValueMap.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
 
 extern "C" {
 extern llvm::cl::opt<bool> EnzymePrintDiffUse;
