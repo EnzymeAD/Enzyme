@@ -303,7 +303,6 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       }
 
       if (retidx_cur.size() == 0) {
-
         os << "dif";
       } else {
         os << "({\n";
@@ -1813,7 +1812,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         os << "      return;\n";
 
       os << "    switch (Mode) {\n";
-
       os << "      case DerivativeMode::ForwardModeError:\n";
       os << "      case DerivativeMode::ForwardModeSplit:\n";
       os << "      case DerivativeMode::ForwardMode:{\n";
@@ -1836,9 +1834,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
            << origName
            << "."
               "getType()));\n";
-        // os << "        if (Mode == DerivativeMode::ForwardModeError)\n"
-        //   << "           res = get1ULP(Builder2,
-        //   gutils->getNewFromOriginal(&" << origName << "))";
+//        os << "        if (Mode == DerivativeMode::ForwardModeError)\n"
+//           << "           res = get1ULP(Builder2, gutils->getNewFromOriginal(&"
+//           << origName << "));";
       }
 
       for (auto argOpEn : enumerate(*argOps)) {

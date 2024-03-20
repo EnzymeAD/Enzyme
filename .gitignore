@@ -2,6 +2,7 @@
 *.swo
 *.out
 build*
+.idea
 .vscode
 enzyme/benchmarks/ReverseMode/*/*.ll
 enzyme/benchmarks/ReverseMode/*/*.bc
