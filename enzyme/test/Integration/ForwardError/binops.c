@@ -19,9 +19,7 @@ double fun(double x1, double x2)
 
 int main()
 {
-    double res[] = {0.0, 3.75, 8.8888888888888893, 15.9375};
-
     double error = __enzyme_error_estimate((void *)fun, 3.0, 0.0, 2.7, 0.0);
     printf("Found floating point error of %f\n", error);
-    APPROX_EQ(error, 432432432, 1e-10);
+    APPROX_EQ(error, 0, 1e-10);
 }
