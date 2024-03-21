@@ -4963,6 +4963,9 @@ Function *EnzymeLogic::CreateForwardDiff(
 
 static Value *floatValTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
                                FloatTruncation truncation) {
+  if (truncation.isToFPRTCall())
+    return v;
+
   Type *toTy = truncation.getToType(B.getContext());
   if (auto vty = dyn_cast<VectorType>(v->getType()))
     toTy = VectorType::get(toTy, vty->getElementCount());
@@ -4971,6 +4974,9 @@ static Value *floatValTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
 
 static Value *floatValExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
                              FloatTruncation truncation) {
+  if (truncation.isToFPRTCall())
+    return v;
+
   Type *fromTy = truncation.getFromType(B.getContext());
   if (auto vty = dyn_cast<VectorType>(v->getType()))
     fromTy = VectorType::get(fromTy, vty->getElementCount());
@@ -4982,14 +4988,8 @@ static Value *floatMemTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
   if (isa<VectorType>(v->getType()))
     report_fatal_error("vector operations not allowed in mem trunc mode");
 
-  Type *fromTy = truncation.getFromType(B.getContext());
   Type *toTy = truncation.getToType(B.getContext());
-  if (!tmpBlock)
-    tmpBlock = B.CreateAlloca(fromTy);
-  B.CreateStore(
-      v, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(v->getType())));
-  return B.CreateLoad(
-      toTy, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(toTy)));
+  return B.CreateBitCast(v, toTy);
 }
 
 static Value *floatMemExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
@@ -4998,16 +4998,7 @@ static Value *floatMemExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
     report_fatal_error("vector operations not allowed in mem trunc mode");
 
   Type *fromTy = truncation.getFromType(B.getContext());
-  if (!tmpBlock)
-    tmpBlock = B.CreateAlloca(fromTy);
-  auto c0 = Constant::getNullValue(
-      llvm::Type::getIntNTy(B.getContext(), truncation.getFromTypeWidth()));
-  B.CreateStore(
-      c0, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(c0->getType())));
-  B.CreateStore(
-      v, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(v->getType())));
-  return B.CreateLoad(
-      fromTy, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(fromTy)));
+  return B.CreateBitCast(v, fromTy);
 }
 
 class TruncateGenerator : public llvm::InstVisitor<TruncateGenerator> {
@@ -5035,23 +5026,19 @@ public:
     fromType = truncation.getFromType(ctx);
     toType = truncation.getToType(ctx);
     if (fromType == toType)
-      assert(truncation.isToMPFR());
+      assert(truncation.isToFPRTCall());
 
     if (mode == TruncMemMode)
       tmpBlock = B.CreateAlloca(fromType);
     else
       tmpBlock = nullptr;
 
-    if (truncation.isToMPFR()) {
-      switch (mode) {
-      case TruncMemMode:
-        llvm::report_fatal_error(
-            "truncation to MPFR not supported in memory mode.");
-      case TruncOpMode:
-      case TruncOpFullModuleMode:
-        break;
-      }
-    }
+    TypeAnalysis typeAnalysis(Logic.PPC.FAM);
+    typeAnalysis.analyzeFunction(oldFunc);
+  }
+
+  Value *fixUpOperand(Use U) {
+
   }
 
   void checkHandled(llvm::Instruction &inst) {
@@ -5082,12 +5069,9 @@ public:
   Value *truncate(IRBuilder<> &B, Value *v) {
     switch (mode) {
     case TruncMemMode:
-      assert(!truncation.isToMPFR());
       return floatMemTruncate(B, v, tmpBlock, truncation);
     case TruncOpMode:
     case TruncOpFullModuleMode:
-      if (truncation.isToMPFR())
-        return v;
       return floatValTruncate(B, v, tmpBlock, truncation);
     }
     llvm_unreachable("Unknown trunc mode");
@@ -5203,7 +5187,7 @@ public:
   void visitShuffleVectorInst(llvm::ShuffleVectorInst &EEI) { return; }
   void visitExtractValueInst(llvm::ExtractValueInst &EEI) { return; }
   void visitInsertValueInst(llvm::InsertValueInst &EEI) { return; }
-  CallInst *createMPFRCall(llvm::IRBuilder<> &B, llvm::Instruction &I,
+  CallInst *createFPRTCall(llvm::IRBuilder<> &B, llvm::Instruction &I,
                            llvm::Type *RetTy,
                            SmallVectorImpl<Value *> &ArgsIn) {
     std::string Name;
@@ -5221,9 +5205,9 @@ public:
         Name = "func_" + std::string(F->getName());
       else
         llvm_unreachable(
-            "Unexpected indirect call inst for conversion to MPFR");
+            "Unexpected indirect call inst for conversion to FPRT");
     } else {
-      llvm_unreachable("Unexpected instruction for conversion to MPFR");
+      llvm_unreachable("Unexpected instruction for conversion to FPRT");
     }
 
     std::string MangledName =
@@ -5232,6 +5216,7 @@ public:
     SmallVector<Value *, 4> Args(ArgsIn.begin(), ArgsIn.end());
     Args.push_back(B.getInt64(truncation.getTo().exponentWidth));
     Args.push_back(B.getInt64(truncation.getTo().significandWidth));
+    Args.push_back(B.getInt64(truncation.getMode()));
     if (!F) {
       SmallVector<Type *, 4> ArgTypes;
       for (auto Arg : Args)
@@ -5276,9 +5261,9 @@ public:
     auto newLHS = truncate(B, getNewFromOriginal(oldLHS));
     auto newRHS = truncate(B, getNewFromOriginal(oldRHS));
     Instruction *nres = nullptr;
-    if (truncation.isToMPFR()) {
+    if (truncation.isToFPRTCall()) {
       SmallVector<Value *, 2> Args({newLHS, newRHS});
-      nres = createMPFRCall(B, BO, truncation.getToType(ctx), Args);
+      nres = createFPRTCall(B, BO, truncation.getToType(ctx), Args);
     } else {
       nres = cast<Instruction>(B.CreateBinOp(BO.getOpcode(), newLHS, newRHS));
     }
@@ -5336,8 +5321,8 @@ public:
 
     Instruction *intr = nullptr;
     Value *nres = nullptr;
-    if (truncation.isToMPFR()) {
-      nres = intr = createMPFRCall(B, CI, retTy, new_ops);
+    if (truncation.isToFPRTCall()) {
+      nres = intr = createFPRTCall(B, CI, retTy, new_ops);
     } else {
       // TODO check that the intrinsic is overloaded
       nres = intr =
@@ -5498,12 +5483,14 @@ bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
   Type *toTy = to.getType(B.getContext());
 
   Value *converted = nullptr;
+  auto truncation = FloatTruncation(from, to, TruncMemMode);
+  // TODO generate runtime call to make new fp value or to get from fp value
   if (isTruncate)
     converted = floatMemExpand(B, B.CreateFPTrunc(v, toTy), nullptr,
-                               FloatTruncation(from, to));
+                               truncation);
   else
     converted = B.CreateFPExt(
-        floatMemTruncate(B, v, nullptr, FloatTruncation(from, to)), fromTy);
+        floatMemTruncate(B, v, nullptr, truncation), fromTy);
   assert(converted);
 
   context.req->replaceAllUsesWith(converted);

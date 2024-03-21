@@ -351,44 +351,47 @@ struct FloatRepresentation {
 struct FloatTruncation {
 private:
   FloatRepresentation from, to;
+  TruncateMode mode;
 
 public:
-  FloatTruncation(FloatRepresentation From, FloatRepresentation To)
-      : from(From), to(To) {
+  FloatTruncation(FloatRepresentation From, FloatRepresentation To,
+                  TruncateMode mode)
+      : from(From), to(To), mode(mode) {
     if (!From.canBeBuiltin())
       llvm::report_fatal_error("Float truncation `from` type is not builtin.");
-    if (From.exponentWidth < To.exponentWidth)
+    if (From.exponentWidth < To.exponentWidth && (mode == TruncOpMode || mode == TruncOpFullModuleMode))
       llvm::report_fatal_error("Float truncation `from` type must have "
                                "a wider exponent than `to`.");
-    if (From.significandWidth < To.significandWidth)
+    if (From.significandWidth < To.significandWidth && (mode == TruncOpMode || mode == TruncOpFullModuleMode))
       llvm::report_fatal_error("Float truncation `from` type must have "
-                               "a wider wsignificand than `to`.");
+                               "a wider significand than `to`.");
     if (From == To)
       llvm::report_fatal_error(
           "Float truncation `from` and `to` type must not be the same.");
   }
+  TruncateMode getMode() { return mode; }
   FloatRepresentation getTo() { return to; }
   unsigned getFromTypeWidth() { return from.getTypeWidth(); }
   unsigned getToTypeWidth() { return to.getTypeWidth(); }
   llvm::Type *getFromType(llvm::LLVMContext &ctx) {
     return from.getBuiltinType(ctx);
   }
-  bool isToMPFR() { return !to.canBeBuiltin(); }
+  bool isToFPRTCall() {
+    // TODO maybe add new mode in which we directly truncate to native fp ops,
+    // for now everything goes through the runtime
+    return true;
+  }
   llvm::Type *getToType(llvm::LLVMContext &ctx) {
-    if (to.canBeBuiltin()) {
-      return to.getBuiltinType(ctx);
-    } else {
-      assert(isToMPFR());
-      // Currently we do not support TruncMemMode for MPFR, and we provide
-      // runtime wrappers around MPFR for each builtin `from` type
-      return from.getBuiltinType(ctx);
-    }
+    return getFromType(ctx);
+  }
+  auto getTuple() const {
+    return std::tuple(from, to, mode);
   }
   bool operator==(const FloatTruncation &other) const {
-    return from == other.from && to == other.to;
+    return getTuple() == other.getTuple();
   }
   bool operator<(const FloatTruncation &other) const {
-    return std::tuple(from, to) < std::tuple(other.from, other.to);
+    return getTuple() < other.getTuple();
   }
   std::string mangleTruncation() const {
     return from.to_string() + "to" + to.to_string();
