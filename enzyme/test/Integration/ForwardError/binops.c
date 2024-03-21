@@ -21,5 +21,5 @@ int main()
 {
     double error = __enzyme_error_estimate((void *)fun, 3.0, 0.0, 2.7, 0.0);
     printf("Found floating point error of %f\n", error);
-    APPROX_EQ(error, 0, 1e-10);
+    APPROX_EQ(error, 101023912, 1e-10);
 }

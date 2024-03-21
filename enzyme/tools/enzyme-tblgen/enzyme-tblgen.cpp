@@ -1834,9 +1834,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
            << origName
            << "."
               "getType()));\n";
-//        os << "        if (Mode == DerivativeMode::ForwardModeError)\n"
-//           << "           res = get1ULP(Builder2, gutils->getNewFromOriginal(&"
-//           << origName << "));";
       }
 
       for (auto argOpEn : enumerate(*argOps)) {
@@ -1970,7 +1967,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
              << "res = Builder2.CreateMaxNum(get1ULP(Builder2, "
                 "gutils->getNewFromOriginal(&"
              << origName << ")), res);\n";
-          os << "}\n";
+          os << curIndent << INDENT << "}\n";
         }
         os << "        }\n";
       }

@@ -3931,6 +3931,7 @@ public:
       return false;
     }
     case DerivativeMode::ForwardModeSplit:
+    case DerivativeMode::ForwardModeError:
     case DerivativeMode::ForwardMode: {
 
       IRBuilder<> Builder2(&I);
