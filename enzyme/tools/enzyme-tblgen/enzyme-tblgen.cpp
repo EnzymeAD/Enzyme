@@ -1928,7 +1928,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                   os << curIndent << INDENT << INDENT
                      << "if (Mode == DerivativeMode::ForwardModeError) {\n";
                   os << curIndent << INDENT << INDENT << INDENT
-                     << "itmp = Builder2.CreateIntrinsic(Intrinsic::abs, "
+                     << "itmp = Builder2.CreateIntrinsic(Intrinsic::fabs, "
                         "ArrayRef<Type*>(itmp->getType()), "
                         "ArrayRef<Value*>(itmp));\n";
                   os << curIndent << INDENT << INDENT << INDENT << "}\n";
