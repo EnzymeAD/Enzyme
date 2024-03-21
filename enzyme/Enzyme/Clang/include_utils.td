@@ -608,7 +608,7 @@ extern "C" {
                              RET, MPFR_GET, ARG1, MPFR_SET_ARG1,               \
                              ROUNDING_MODE)                                    \
   __attribute__((weak))                                                        \
-  RET __enzyme_mpfr_##FROM_TYPE##_##OP_TYPE##_##LLVM_OP_NAME(                  \
+  RET __enzyme_fprt_##FROM_TYPE##_##OP_TYPE##_##LLVM_OP_NAME(                  \
       ARG1 a, int64_t exponent, int64_t significand) {                         \
     mpfr_t ma, mc;                                                             \
     mpfr_init2(ma, significand);                                               \
@@ -625,7 +625,7 @@ extern "C" {
                             RET, MPFR_GET, ARG1, MPFR_SET_ARG1, ARG2,          \
                             MPFR_SET_ARG2, ROUNDING_MODE)                      \
   __attribute__((weak))                                                        \
-  RET __enzyme_mpfr_##FROM_TYPE##_##OP_TYPE##_##LLVM_OP_NAME(                  \
+  RET __enzyme_fprt_##FROM_TYPE##_##OP_TYPE##_##LLVM_OP_NAME(                  \
       ARG1 a, ARG2 b, int64_t exponent, int64_t significand) {                 \
     mpfr_t ma, mb, mc;                                                         \
     mpfr_init2(ma, significand);                                               \
