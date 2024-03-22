@@ -8267,7 +8267,8 @@ void GradientUtils::forceAugmentedReturns() {
         continue;
 
       if (mode == DerivativeMode::ForwardMode ||
-          mode == DerivativeMode::ForwardModeSplit) {
+          mode == DerivativeMode::ForwardModeSplit ||
+          mode == DerivativeMode::ForwardModeError) {
         if (!isConstantValue(inst)) {
           IRBuilder<> BuilderZ(inst);
           getForwardBuilder(BuilderZ);

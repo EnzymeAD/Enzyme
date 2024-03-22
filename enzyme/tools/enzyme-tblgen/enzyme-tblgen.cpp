@@ -30,7 +30,8 @@
 
 using namespace llvm;
 
-static inline bool startsWith(llvm::StringRef string, llvm::StringRef prefix) {
+static inline bool startsWith(llvm::StringRef string, llvm::StringRef prefix)
+{
 #if LLVM_VERSION_MAJOR >= 18
   return string.starts_with(prefix);
 #else
@@ -38,7 +39,8 @@ static inline bool startsWith(llvm::StringRef string, llvm::StringRef prefix) {
 #endif // LLVM_VERSION_MAJOR
 }
 
-static inline bool endsWith(llvm::StringRef string, llvm::StringRef suffix) {
+static inline bool endsWith(llvm::StringRef string, llvm::StringRef suffix)
+{
 #if LLVM_VERSION_MAJOR >= 18
   return string.ends_with(suffix);
 #else
@@ -71,11 +73,14 @@ static cl::opt<ActionType>
 
 void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
                  StringRef FT, StringRef cconv, Init *func,
-                 StringRef origName) {
-  if (DagInit *resultRoot = dyn_cast<DagInit>(func)) {
+                 StringRef origName)
+{
+  if (DagInit *resultRoot = dyn_cast<DagInit>(func))
+  {
     auto opName = resultRoot->getOperator()->getAsString();
     auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-    if (opName == "SameFunc" || Def->isSubClassOf("SameFunc")) {
+    if (opName == "SameFunc" || Def->isSubClassOf("SameFunc"))
+    {
       os << curIndent << "auto " << callval << " = cast<CallInst>(&" << origName
          << ")->getCalledOperand();\n";
       os << curIndent << "auto " << FT << " = cast<CallInst>(&" << origName
@@ -84,7 +89,8 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
          << ")->getCallingConv();\n";
       return;
     }
-    if (opName == "SameTypesFunc" || Def->isSubClassOf("SameTypesFunc")) {
+    if (opName == "SameTypesFunc" || Def->isSubClassOf("SameTypesFunc"))
+    {
       os << curIndent << "auto " << FT << " = cast<CallInst>(&" << origName
          << ")->getFunctionType();\n";
       os << curIndent << "auto " << callval
@@ -96,12 +102,14 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
       return;
     }
     if (opName == "PrependArgTypesFunc" ||
-        Def->isSubClassOf("PrependArgTypesFunc")) {
+        Def->isSubClassOf("PrependArgTypesFunc"))
+    {
       os << curIndent << "auto " << FT << "_old = cast<CallInst>(&" << origName
          << ")->getFunctionType();\n";
       os << curIndent << "SmallVector<llvm::Type*, 1> " << FT << "_args = {";
       bool seen = false;
-      for (auto pre : *Def->getValueAsListInit("pretys")) {
+      for (auto pre : *Def->getValueAsListInit("pretys"))
+      {
         if (seen)
           os << ", ";
         os << "Type::get" << cast<StringInit>(pre)->getValue()
@@ -122,7 +130,8 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
       return;
     }
     if (opName == "ArgAsRetTypesFunc" ||
-        Def->isSubClassOf("ArgAsRetTypesFunc")) {
+        Def->isSubClassOf("ArgAsRetTypesFunc"))
+    {
       os << curIndent << "auto " << FT << "_old = cast<CallInst>(&" << origName
          << ")->getFunctionType();\n";
       os << curIndent << "auto " << FT << " = FunctionType::get(" << FT
@@ -140,11 +149,13 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
   assert(0 && "Unhandled function");
 }
 void getIntrinsic(raw_ostream &os, StringRef intrName, ListInit *typeInit,
-                  const Twine &argStr, StringRef origName) {
+                  const Twine &argStr, StringRef origName)
+{
   os << "Intrinsic::getDeclaration(mod, Intrinsic::" << intrName
      << ", std::vector<Type*>({";
   bool first = true;
-  for (auto intrType : *typeInit) {
+  for (auto intrType : *typeInit)
+  {
     if (!first)
       os << ", ";
     auto arg = cast<IntInit>(intrType)->getValue();
@@ -154,10 +165,12 @@ void getIntrinsic(raw_ostream &os, StringRef intrName, ListInit *typeInit,
   os << "}))";
 }
 
-raw_ostream &operator<<(raw_ostream &os, StringMap<std::string> &C) {
+raw_ostream &operator<<(raw_ostream &os, StringMap<std::string> &C)
+{
   os << "{";
   bool first = true;
-  for (auto &pair : C) {
+  for (auto &pair : C)
+  {
     if (!first)
       os << ", ";
     os << pair.first() << ":" << pair.second;
@@ -167,33 +180,42 @@ raw_ostream &operator<<(raw_ostream &os, StringMap<std::string> &C) {
 }
 
 void initializeNames(const Twine &curIndent, raw_ostream &os, Init *resultTree,
-                     const Twine &prefix) {
-  if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
-    for (size_t i = 0; i < resultRoot->arg_size(); i++) {
+                     const Twine &prefix)
+{
+  if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree))
+  {
+    for (size_t i = 0; i < resultRoot->arg_size(); i++)
+    {
       auto arg = resultRoot->getArg(i);
       auto name = resultRoot->getArgName(i);
-      if (isa<UnsetInit>(arg) && name) {
+      if (isa<UnsetInit>(arg) && name)
+      {
         continue;
       }
-      if (name) {
+      if (name)
+      {
         auto namev = name->getAsUnquotedString();
         os << curIndent << "llvm::Value *" << prefix << "_" + namev
            << " = nullptr;\n";
       }
       initializeNames(curIndent, os, arg, prefix);
     }
-  } else if (ListInit *lst = dyn_cast<ListInit>(resultTree)) {
+  }
+  else if (ListInit *lst = dyn_cast<ListInit>(resultTree))
+  {
     for (auto elem : *lst)
       initializeNames(curIndent, os, elem, prefix);
   }
 }
 
-struct VariableSetting {
+struct VariableSetting
+{
   StringMap<std::string> nameToOrdinal;
   StringMap<bool> isVector;
 
   std::pair<std::string, bool> lookup(StringRef name, Record *pattern,
-                                      Init *resultRoot) {
+                                      Init *resultRoot)
+  {
     auto ord = nameToOrdinal.find(name);
     if (ord == nameToOrdinal.end())
       PrintFatalError(pattern->getLoc(), Twine("unknown named operand '") +
@@ -204,7 +226,8 @@ struct VariableSetting {
     return std::make_pair(ord->getValue(), iv->getValue());
   }
 
-  void insert(StringRef name, StringRef value, bool vec) {
+  void insert(StringRef name, StringRef value, bool vec)
+  {
     nameToOrdinal[name] = value;
     isVector[name] = vec;
   }
@@ -222,32 +245,40 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
                                  DagInit *resultRoot, StringRef builder,
                                  VariableSetting &nameToOrdinal, bool lookup,
                                  ArrayRef<unsigned> retidx, StringRef origName,
-                                 bool newFromOriginal, ActionType intrinsic) {
+                                 bool newFromOriginal, ActionType intrinsic)
+{
   SmallVector<bool, 1> vectorValued;
 
   size_t idx = 0;
   for (auto &&[args, names] :
-       zip(resultRoot->getArgs(), resultRoot->getArgNames())) {
+       zip(resultRoot->getArgs(), resultRoot->getArgNames()))
+  {
     os << curIndent << "auto " << argName << "_" << idx << " = ";
     idx++;
-    if (isa<UnsetInit>(args) && names) {
+    if (isa<UnsetInit>(args) && names)
+    {
       auto [ord, vecValue] =
           nameToOrdinal.lookup(names->getValue(), pattern, resultRoot);
-      if (!vecValue && !startsWith(ord, "local")) {
+      if (!vecValue && !startsWith(ord, "local"))
+      {
         if (lookup && intrinsic != MLIRDerivatives)
           os << "lookup(";
         if (newFromOriginal && (!lookup || intrinsic != MLIRDerivatives))
           os << "gutils->getNewFromOriginal(";
       }
       if (lookup && !vecValue && !startsWith(ord, "local") &&
-          intrinsic == MLIRDerivatives) {
+          intrinsic == MLIRDerivatives)
+      {
         auto start = ord.find('(') + 1;
         auto end = ord.find(')');
         os << "operands[" << ord.substr(start, end - start) << "]";
-      } else {
+      }
+      else
+      {
         os << ord;
       }
-      if (!vecValue && !startsWith(ord, "local")) {
+      if (!vecValue && !startsWith(ord, "local"))
+      {
         if (newFromOriginal && (!lookup || intrinsic != MLIRDerivatives))
           os << ")";
         if (lookup && intrinsic != MLIRDerivatives)
@@ -261,7 +292,8 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
         curIndent, argName + "_" + Twine(idx), os, pattern, args, builder,
         nameToOrdinal, lookup, retidx, origName, newFromOriginal, intrinsic));
     os << ";\n";
-    if (names) {
+    if (names)
+    {
       auto name = names->getAsUnquotedString();
       nameToOrdinal.insert(name, "local_" + name, vectorValued.back());
       os << curIndent << "local_" << name << " = " << argName << "_"
@@ -276,14 +308,18 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
             Record *pattern, Init *resultTree, StringRef builder,
             VariableSetting &nameToOrdinal, bool lookup,
             ArrayRef<unsigned> retidx, StringRef origName, bool newFromOriginal,
-            ActionType intrinsic) {
-  if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
+            ActionType intrinsic)
+{
+  if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree))
+  {
     auto opName = resultRoot->getOperator()->getAsString();
     auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-    if (Def->isSubClassOf("Inst")) {
+    if (Def->isSubClassOf("Inst"))
+    {
       opName = Def->getValueAsString("name");
     }
-    if (opName == "DiffeRetIndex" || Def->isSubClassOf("DiffeRetIndex")) {
+    if (opName == "DiffeRetIndex" || Def->isSubClassOf("DiffeRetIndex"))
+    {
 
       auto indicesP = dyn_cast<ListInit>(Def->getValueInit("indices"));
       if (!indicesP)
@@ -292,24 +328,32 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                             resultTree->getAsString());
       SmallVector<unsigned, 2> retidx_cur;
       if (indicesP->getValues().size() == 1 &&
-          cast<IntInit>(indicesP->getValues()[0])->getValue() == -1) {
+          cast<IntInit>(indicesP->getValues()[0])->getValue() == -1)
+      {
         retidx_cur = SmallVector<unsigned, 2>(retidx.begin(), retidx.end());
-      } else {
-        for (auto res : indicesP->getValues()) {
+      }
+      else
+      {
+        for (auto res : indicesP->getValues())
+        {
           auto val = cast<IntInit>(res)->getValue();
           assert(val >= 0);
           retidx_cur.push_back((unsigned)val);
         }
       }
 
-      if (retidx_cur.size() == 0) {
+      if (retidx_cur.size() == 0)
+      {
         os << "dif";
-      } else {
+      }
+      else
+      {
         os << "({\n";
         os << curIndent << INDENT
            << "Value *out = UndefValue::get(gutils->getShadowType(getSubType("
            << origName << ".getType()";
-        for (auto ind : retidx_cur) {
+        for (auto ind : retidx_cur)
+        {
           os << ", " << ind;
         }
         os << ")));\n";
@@ -321,7 +365,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
            << "Value *prev = (gutils->getWidth() == 1) ? gutils->extractMeta("
            << builder << ", dif, ArrayRef<unsigned>({";
         bool first = true;
-        for (auto ind : retidx_cur) {
+        for (auto ind : retidx_cur)
+        {
           if (!first)
             os << ", ";
           os << ind;
@@ -329,7 +374,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         }
         os << "})) : gutils->extractMeta(" << builder
            << ", dif, ArrayRef<unsigned>({idx";
-        for (auto ind : retidx_cur) {
+        for (auto ind : retidx_cur)
+        {
           os << ", ";
           os << ind;
         }
@@ -341,16 +387,20 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << curIndent << INDENT << "out; })\n";
       }
       return true;
-    } else if (opName == "TypeOf" || Def->isSubClassOf("TypeOf")) {
+    }
+    else if (opName == "TypeOf" || Def->isSubClassOf("TypeOf"))
+    {
       if (resultRoot->getNumArgs() != 1)
         PrintFatalError(pattern->getLoc(), "only single op TypeOf supported");
 
-      if (resultRoot->getArgName(0)) {
+      if (resultRoot->getArgName(0))
+      {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
         auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultRoot);
         assert(!isVec);
         os << ord;
-      } else
+      }
+      else
         PrintFatalError(pattern->getLoc(),
                         Twine("unknown named operand in typeof") +
                             resultTree->getAsString());
@@ -359,19 +409,23 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       else
         os << "->getType()";
       return false;
-    } else if (opName == "VectorSize" || Def->isSubClassOf("VectorSize")) {
+    }
+    else if (opName == "VectorSize" || Def->isSubClassOf("VectorSize"))
+    {
       if (resultRoot->getNumArgs() != 1)
         PrintFatalError(pattern->getLoc(),
                         "only single op VectorSize supported");
 
       os << "cast<VectorType>(";
 
-      if (isa<UnsetInit>(resultRoot->getArg(0)) && resultRoot->getArgName(0)) {
+      if (isa<UnsetInit>(resultRoot->getArg(0)) && resultRoot->getArgName(0))
+      {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
         auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultRoot);
         assert(!isVec);
         os << ord;
-      } else
+      }
+      else
         handle(curIndent + INDENT, argPattern + "_vs", os, pattern,
                resultRoot->getArg(0), builder, nameToOrdinal, lookup, retidx,
                origName, newFromOriginal, intrinsic);
@@ -382,8 +436,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << ".Min";
 #endif
       return false;
-    } else if (opName == "SelectIfActive" ||
-               Def->isSubClassOf("SelectIfActive")) {
+    }
+    else if (opName == "SelectIfActive" ||
+             Def->isSubClassOf("SelectIfActive"))
+    {
       if (resultRoot->getNumArgs() != 3)
         PrintFatalError(pattern->getLoc(),
                         "only three op SelectIfActive supported");
@@ -397,33 +453,39 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       os << curIndent << INDENT << "if (!gutils->isConstantValue(";
 
-      if (isa<UnsetInit>(resultRoot->getArg(0)) && resultRoot->getArgName(0)) {
+      if (isa<UnsetInit>(resultRoot->getArg(0)) && resultRoot->getArgName(0))
+      {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
         auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultRoot);
         assert(!isVec);
         os << ord;
-      } else
+      }
+      else
         assert("Requires name for arg");
 
       os << ")) {\n";
 
-      for (size_t i = 1; i < 3; i++) {
+      for (size_t i = 1; i < 3; i++)
+      {
         os << curIndent << INDENT << INDENT << "imVal = ";
         bool vector;
         if (isa<UnsetInit>(resultRoot->getArg(i)) &&
-            resultRoot->getArgName(i)) {
+            resultRoot->getArgName(i))
+        {
           auto name = resultRoot->getArgName(i)->getAsUnquotedString();
           auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultRoot);
           vector = isVec;
           os << ord;
-        } else
+        }
+        else
           vector = handle(curIndent + INDENT + INDENT,
                           argPattern + "_sia_" + Twine(i), os, pattern,
                           resultRoot->getArg(i), builder, nameToOrdinal, lookup,
                           retidx, origName, newFromOriginal, intrinsic);
         os << ";\n";
 
-        if (!vector && intrinsic != MLIRDerivatives) {
+        if (!vector && intrinsic != MLIRDerivatives)
+        {
           os << curIndent << INDENT << INDENT
              << "llvm::Value* vec_imVal = gutils->getWidth() == 1 ? imVal : "
                 "UndefValue::get(gutils->getShadowType(imVal"
@@ -447,13 +509,16 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << curIndent << INDENT << "imVal;\n";
       os << curIndent << "})";
       return true;
-    } else if (opName == "ConstantFP" || Def->isSubClassOf("ConstantFP")) {
+    }
+    else if (opName == "ConstantFP" || Def->isSubClassOf("ConstantFP"))
+    {
       auto value = dyn_cast<StringInit>(Def->getValueInit("value"));
       if (!value)
         PrintFatalError(pattern->getLoc(), Twine("'value' not defined in ") +
                                                resultTree->getAsString());
 
-      if (intrinsic == MLIRDerivatives) {
+      if (intrinsic == MLIRDerivatives)
+      {
         if (resultRoot->getNumArgs() > 1)
           PrintFatalError(pattern->getLoc(),
                           "only zero or single op constantfp supported");
@@ -462,9 +527,12 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
            << "::" << cast<StringInit>(Def->getValueInit("opName"))->getValue()
            << ">(op.getLoc(), ";
         std::string ord;
-        if (resultRoot->getNumArgs() == 0) {
+        if (resultRoot->getNumArgs() == 0)
+        {
           ord = "op->getResult(0)";
-        } else {
+        }
+        else
+        {
           auto name = resultRoot->getArgName(0)->getAsUnquotedString();
           auto [ord1, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
           assert(!isVec);
@@ -477,40 +545,50 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
           os << "(" << typeCast << ")";
         os << "mlir::enzyme::getConstantAttr(" << ord << ".getType(), ";
         os << "\"" << value->getValue() << "\"))";
-      } else {
+      }
+      else
+      {
         if (resultRoot->getNumArgs() != 1)
           PrintFatalError(pattern->getLoc(),
                           "only single op constantfp supported");
 
         os << "ConstantFP::get(";
-        if (resultRoot->getArgName(0)) {
+        if (resultRoot->getArgName(0))
+        {
           auto name = resultRoot->getArgName(0)->getAsUnquotedString();
           auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
           assert(!isVec);
           os << ord;
-        } else
+        }
+        else
           PrintFatalError(pattern->getLoc(),
                           Twine("unknown named operand in constantfp") +
                               resultTree->getAsString());
         os << "->getType(), \"" << value->getValue() << "\")";
       }
       return false;
-    } else if (opName == "Zero" || Def->isSubClassOf("Zero")) {
+    }
+    else if (opName == "Zero" || Def->isSubClassOf("Zero"))
+    {
       if (resultRoot->getNumArgs() != 1)
         PrintFatalError(pattern->getLoc(), "only single op Zero supported");
       os << "Constant::getNullValue(";
-      if (resultRoot->getArgName(0)) {
+      if (resultRoot->getArgName(0))
+      {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
         auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
         assert(!isVec);
         os << ord;
-      } else
+      }
+      else
         PrintFatalError(pattern->getLoc(),
                         Twine("unknown named operand in constantfp") +
                             resultTree->getAsString());
       os << "->getType())";
       return false;
-    } else if (opName == "ConstantCFP" || Def->isSubClassOf("ConstantCFP")) {
+    }
+    else if (opName == "ConstantCFP" || Def->isSubClassOf("ConstantCFP"))
+    {
       if (resultRoot->getNumArgs() != 1)
         PrintFatalError(pattern->getLoc(),
                         "only single op constantfp supported");
@@ -526,12 +604,14 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                                                resultTree->getAsString());
       os << "({\n";
       os << curIndent << INDENT << "auto ty = ";
-      if (resultRoot->getArgName(0)) {
+      if (resultRoot->getArgName(0))
+      {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
         auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
         assert(!isVec);
         os << ord;
-      } else
+      }
+      else
         PrintFatalError(pattern->getLoc(),
                         Twine("unknown named operand in constantcfp") +
                             resultTree->getAsString());
@@ -556,7 +636,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << curIndent << INDENT << "ret;\n";
       os << curIndent << "})\n";
       return false;
-    } else if (opName == "ConstantInt" || Def->isSubClassOf("ConstantInt")) {
+    }
+    else if (opName == "ConstantInt" || Def->isSubClassOf("ConstantInt"))
+    {
 
       auto valueP = dyn_cast<IntInit>(Def->getValueInit("value"));
       if (!valueP)
@@ -574,23 +656,28 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       os << "ConstantInt::getSigned(";
 
-      if (bitwidth == 0) {
+      if (bitwidth == 0)
+      {
         if (resultRoot->getNumArgs() != 1)
           PrintFatalError(
               pattern->getLoc(),
               "only single op constantint supported with unspecified width");
 
-        if (resultRoot->getArgName(0)) {
+        if (resultRoot->getArgName(0))
+        {
           auto name = resultRoot->getArgName(0)->getAsUnquotedString();
           auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
           assert(!isVec);
           os << ord;
-        } else
+        }
+        else
           PrintFatalError(pattern->getLoc(),
                           Twine("unknown named operand in constantint") +
                               resultTree->getAsString());
         os << "->getType()";
-      } else {
+      }
+      else
+      {
         if (resultRoot->getNumArgs() != 0)
           PrintFatalError(
               pattern->getLoc(),
@@ -600,7 +687,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       }
       os << ", " << value << ")";
       return false;
-    } else if (opName == "GlobalExpr" || Def->isSubClassOf("GlobalExpr")) {
+    }
+    else if (opName == "GlobalExpr" || Def->isSubClassOf("GlobalExpr"))
+    {
       if (resultRoot->getNumArgs() != 0)
         PrintFatalError(pattern->getLoc(), "only zero op globalexpr supported");
 
@@ -615,23 +704,29 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       if (value->getValue().contains(';'))
         os << " })";
       return false;
-    } else if (opName == "Undef" || Def->isSubClassOf("Undef")) {
+    }
+    else if (opName == "Undef" || Def->isSubClassOf("Undef"))
+    {
       if (resultRoot->getNumArgs() != 1)
         PrintFatalError(pattern->getLoc(), "only single op undef supported");
 
       os << "UndefValue::get(";
-      if (resultRoot->getArgName(0)) {
+      if (resultRoot->getArgName(0))
+      {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
         auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
         assert(!isVec);
         os << ord;
-      } else
+      }
+      else
         PrintFatalError(pattern->getLoc(),
                         Twine("unknown named operand in constantfp") +
                             resultTree->getAsString());
       os << "->getType())";
       return false;
-    } else if (opName == "Shadow" || Def->isSubClassOf("Shadow")) {
+    }
+    else if (opName == "Shadow" || Def->isSubClassOf("Shadow"))
+    {
       if (resultRoot->getNumArgs() != 1)
         PrintFatalError(pattern->getLoc(), "only single op shadow supported");
 
@@ -639,12 +734,14 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << "lookup(";
       os << "gutils->invertPointerM(";
 
-      if (resultRoot->getArgName(0)) {
+      if (resultRoot->getArgName(0))
+      {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
         auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
         assert(!isVec);
         os << ord;
-      } else
+      }
+      else
         PrintFatalError(pattern->getLoc(),
                         Twine("unknown named operand in shadow") +
                             resultTree->getAsString());
@@ -652,7 +749,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       if (lookup)
         os << ", " << builder << ")";
       return true;
-    } else if (Def->isSubClassOf("MultiReturn")) {
+    }
+    else if (Def->isSubClassOf("MultiReturn"))
+    {
       os << "({\n";
 
       bool useStruct = Def->getValueAsBit("struct");
@@ -676,7 +775,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
               "std::vector<llvm::Type*>({";
       else
         os << "ArrayType::get(";
-      for (size_t i = 0; i < (useStruct ? vectorValued.size() : 1); i++) {
+      for (size_t i = 0; i < (useStruct ? vectorValued.size() : 1); i++)
+      {
         if (i != 0)
           os << ", ";
         if (!vectorValued[i])
@@ -701,7 +801,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       else
         os << curIndent << INDENT << "{\n";
 
-      for (size_t i = 0; i < vectorValued.size(); i++) {
+      for (size_t i = 0; i < vectorValued.size(); i++)
+      {
         os << curIndent << INDENT << INDENT << "{\n";
         os << curIndent << INDENT << INDENT << INDENT
            << "std::vector<unsigned> idxs;\n";
@@ -725,7 +826,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << curIndent << INDENT << " res;\n";
       os << curIndent << "})";
       return anyVector;
-    } else if (Def->isSubClassOf("SubRoutine")) {
+    }
+    else if (Def->isSubClassOf("SubRoutine"))
+    {
       auto npattern = Def->getValueAsDag("PatternToMatch");
       if (!npattern)
         PrintFatalError(pattern->getLoc(),
@@ -749,7 +852,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       VariableSetting nnameToOrdinal;
 
-      if (npattern->getNumArgs() != resultRoot->getNumArgs()) {
+      if (npattern->getNumArgs() != resultRoot->getNumArgs())
+      {
         PrintFatalError(pattern->getLoc(),
                         Twine("Attempting to call subroutine '") + opName +
                             " with " + Twine(resultRoot->getNumArgs()) +
@@ -759,73 +863,84 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       }
 
       std::function<void(DagInit *, ArrayRef<unsigned>)> insert =
-          [&](DagInit *ptree, ArrayRef<unsigned> prev) {
-            unsigned i = 0;
-            for (auto tree : ptree->getArgs()) {
-              SmallVector<unsigned, 2> next(prev.begin(), prev.end());
-              next.push_back(i);
-              if (auto dg = dyn_cast<DagInit>(tree))
-                insert(dg, next);
+          [&](DagInit *ptree, ArrayRef<unsigned> prev)
+      {
+        unsigned i = 0;
+        for (auto tree : ptree->getArgs())
+        {
+          SmallVector<unsigned, 2> next(prev.begin(), prev.end());
+          next.push_back(i);
+          if (auto dg = dyn_cast<DagInit>(tree))
+            insert(dg, next);
 
-              if (ptree->getArgNameStr(i).size()) {
-                auto op = (argPattern + "_" + Twine(next[0])).str();
-                if (prev.size() > 0) {
-                  os << curIndent << INDENT << "Value* local_"
-                     << ptree->getArgNameStr(i) << " = ";
-                  if (!vectorValued[next[0]]) {
-                    os << "gutils->extractMeta(" << builder << ", " << op
-                       << ", ArrayRef<unsigned>({";
-                    for (unsigned i = 1; i < next.size(); i++) {
-                      if (i != 1)
-                        os << ", ";
-                      os << next[i];
-                    }
-                    os << "}), \"" << ptree->getArgNameStr(i) << "\");\n";
-                  } else {
-                    os << "gutils->getWidth() == 1 ? ";
-
-                    os << "gutils->extractMeta(" << builder << ", " << op
-                       << ", ArrayRef<unsigned>({";
-                    for (unsigned i = 1; i < next.size(); i++) {
-                      if (i != 1)
-                        os << ", ";
-                      os << next[i];
-                    }
-                    os << "}), \"" << ptree->getArgNameStr(i) << "\")";
-
-                    os << " : UndefValue::get(gutils->getShadowType(getSubType("
-                       << op << "->getType(), 0";
-                    for (unsigned i = 1; i < next.size(); i++) {
-                      os << ", ";
-                      os << next[i];
-                    }
-                    os << ")));\n";
-                    os << curIndent << INDENT
-                       << "if (gutils->getWidth() != 1)\n";
-                    os << curIndent << INDENT << INDENT
-                       << "for (size_t i=0; i<gutils->getWidth(); i++)\n";
-                    os << curIndent << INDENT << INDENT << INDENT << "local_"
-                       << ptree->getArgNameStr(i) << " = " << builder
-                       << ".CreateInsertValue(local_" << ptree->getArgNameStr(i)
-                       << ", ";
-
-                    os << "gutils->extractMeta(" << builder << ", " << op
-                       << ", ArrayRef<unsigned>({(unsigned)i";
-                    for (unsigned i = 1; i < next.size(); i++) {
-                      os << ", " << next[i];
-                    }
-                    os << "}), \"" << ptree->getArgNameStr(i)
-                       << ".\"+Twine(i)), "
-                          "ArrayRef<unsigned>({(unsigned)i}));\n";
-                  }
-                  op = ("local_" + ptree->getArgNameStr(i)).str();
+          if (ptree->getArgNameStr(i).size())
+          {
+            auto op = (argPattern + "_" + Twine(next[0])).str();
+            if (prev.size() > 0)
+            {
+              os << curIndent << INDENT << "Value* local_"
+                 << ptree->getArgNameStr(i) << " = ";
+              if (!vectorValued[next[0]])
+              {
+                os << "gutils->extractMeta(" << builder << ", " << op
+                   << ", ArrayRef<unsigned>({";
+                for (unsigned i = 1; i < next.size(); i++)
+                {
+                  if (i != 1)
+                    os << ", ";
+                  os << next[i];
                 }
-                nnameToOrdinal.insert(ptree->getArgNameStr(i), op,
-                                      vectorValued[next[0]]);
+                os << "}), \"" << ptree->getArgNameStr(i) << "\");\n";
               }
-              i++;
+              else
+              {
+                os << "gutils->getWidth() == 1 ? ";
+
+                os << "gutils->extractMeta(" << builder << ", " << op
+                   << ", ArrayRef<unsigned>({";
+                for (unsigned i = 1; i < next.size(); i++)
+                {
+                  if (i != 1)
+                    os << ", ";
+                  os << next[i];
+                }
+                os << "}), \"" << ptree->getArgNameStr(i) << "\")";
+
+                os << " : UndefValue::get(gutils->getShadowType(getSubType("
+                   << op << "->getType(), 0";
+                for (unsigned i = 1; i < next.size(); i++)
+                {
+                  os << ", ";
+                  os << next[i];
+                }
+                os << ")));\n";
+                os << curIndent << INDENT
+                   << "if (gutils->getWidth() != 1)\n";
+                os << curIndent << INDENT << INDENT
+                   << "for (size_t i=0; i<gutils->getWidth(); i++)\n";
+                os << curIndent << INDENT << INDENT << INDENT << "local_"
+                   << ptree->getArgNameStr(i) << " = " << builder
+                   << ".CreateInsertValue(local_" << ptree->getArgNameStr(i)
+                   << ", ";
+
+                os << "gutils->extractMeta(" << builder << ", " << op
+                   << ", ArrayRef<unsigned>({(unsigned)i";
+                for (unsigned i = 1; i < next.size(); i++)
+                {
+                  os << ", " << next[i];
+                }
+                os << "}), \"" << ptree->getArgNameStr(i)
+                   << ".\"+Twine(i)), "
+                      "ArrayRef<unsigned>({(unsigned)i}));\n";
+              }
+              op = ("local_" + ptree->getArgNameStr(i)).str();
             }
-          };
+            nnameToOrdinal.insert(ptree->getArgNameStr(i), op,
+                                  vectorValued[next[0]]);
+          }
+          i++;
+        }
+      };
 
       insert(npattern, {});
 
@@ -843,7 +958,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << ";\n";
       os << curIndent << "})";
       return anyVector;
-    } else if (Def->isSubClassOf("Inst")) {
+    }
+    else if (Def->isSubClassOf("Inst"))
+    {
 
       os << "({\n";
       os << curIndent << INDENT << "// Computing " << opName << "\n";
@@ -857,12 +974,14 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       bool isCall = opName == "Call" || Def->isSubClassOf("Call");
       bool isIntr = opName == "Intrinsic" || Def->isSubClassOf("Intrinsic");
 
-      if (isCall) {
+      if (isCall)
+      {
         getFunction(curIndent + INDENT, os, "callval", "FT", "cconv",
                     Def->getValueInit("func"), origName);
       }
 
-      if (anyVector && intrinsic != MLIRDerivatives) {
+      if (anyVector && intrinsic != MLIRDerivatives)
+      {
         os << curIndent << INDENT << "Value *res = nullptr;\n";
         os << curIndent << INDENT
            << "for(unsigned int idx=0, W=gutils->getWidth(); idx<W; idx++) {\n";
@@ -871,33 +990,48 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << curIndent << INDENT;
       if (anyVector && intrinsic != MLIRDerivatives)
         os << INDENT;
-      if (isCall) {
+      if (isCall)
+      {
         os << "CallInst *V = ";
-      } else if (anyVector && intrinsic != MLIRDerivatives) {
+      }
+      else if (anyVector && intrinsic != MLIRDerivatives)
+      {
         os << "Value *V = ";
       }
 
-      if (isCall) {
+      if (isCall)
+      {
         os << "cast<CallInst>(" << builder
            << ".CreateCall(FT, callval, ArrayRef<Value*>({";
-      } else if (isIntr) {
+      }
+      else if (isIntr)
+      {
         os << builder << ".CreateCall(";
         auto intrName = Def->getValueAsString("name");
         auto intrTypes = Def->getValueAsListInit("types");
         getIntrinsic(os, intrName, intrTypes, argPattern, origName);
         os << ", ArrayRef<Value*>({";
-      } else if (opName == "CheckedMul") {
+      }
+      else if (opName == "CheckedMul")
+      {
         os << "checkedMul(" << builder << ", ";
-      } else if (opName == "CheckedDiv") {
+      }
+      else if (opName == "CheckedDiv")
+      {
         os << "checkedDiv(" << builder << ", ";
-      } else if (intrinsic == MLIRDerivatives) {
+      }
+      else if (intrinsic == MLIRDerivatives)
+      {
         auto dialect = Def->getValueAsString("dialect");
         os << builder << ".create<" << dialect << "::" << opName
            << ">(op.getLoc(), ";
-      } else {
+      }
+      else
+      {
         os << builder << ".Create" << opName << "(";
       }
-      for (size_t i = 0; i < vectorValued.size(); i++) {
+      for (size_t i = 0; i < vectorValued.size(); i++)
+      {
         if (i > 0)
           os << ", ";
         if (vectorValued[i] && intrinsic != MLIRDerivatives)
@@ -907,10 +1041,12 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         else
           os << argPattern << "_" << i << "";
       }
-      if (opName == "ExtractValue" || opName == "InsertValue") {
+      if (opName == "ExtractValue" || opName == "InsertValue")
+      {
         os << ", ArrayRef<unsigned>({";
         bool first = true;
-        for (auto *ind : *cast<ListInit>(Def->getValueAsListInit("indices"))) {
+        for (auto *ind : *cast<ListInit>(Def->getValueAsListInit("indices")))
+        {
           if (!first)
             os << ", ";
           os << "(unsigned)(" << cast<IntInit>(ind)->getValue() << ")";
@@ -921,20 +1057,24 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       if (isCall || isIntr)
         os << "})";
       os << ")";
-      if (intrinsic == MLIRDerivatives) {
+      if (intrinsic == MLIRDerivatives)
+      {
         auto postop = Def->getValueAsString("postop");
         os << postop;
       }
-      if (isCall) {
+      if (isCall)
+      {
         os << ")";
       }
       os << ";\n";
 
-      if (isCall) {
+      if (isCall)
+      {
         os << curIndent << INDENT;
         if (anyVector && intrinsic != MLIRDerivatives)
           os << INDENT;
-        if (intrinsic != MLIRDerivatives) {
+        if (intrinsic != MLIRDerivatives)
+        {
           os << "V->setDebugLoc(gutils->getNewFromOriginal(" << origName
              << ".getDebugLoc()));"
                 "\n";
@@ -943,10 +1083,12 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
             os << INDENT;
           os << "V->setCallingConv(cconv);\n";
           for (auto *attr :
-               *cast<ListInit>(Def->getValueAsListInit("fnattrs"))) {
+               *cast<ListInit>(Def->getValueAsListInit("fnattrs")))
+          {
             auto attrDef = cast<DefInit>(attr)->getDef();
             auto attrName = attrDef->getValueAsString("name");
-            if (attrName == "ReadNone") {
+            if (attrName == "ReadNone")
+            {
               os << "#if LLVM_VERSION_MAJOR >= 16\n";
               os << curIndent << INDENT;
               if (anyVector)
@@ -954,14 +1096,17 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
               os << "V->setOnlyReadsMemory();\n";
               os << "V->setOnlyWritesMemory();\n";
               os << "#elif LLVM_VERSION_MAJOR >= 14\n";
-            } else if (attrName == "ReadOnly") {
+            }
+            else if (attrName == "ReadOnly")
+            {
               os << "#if LLVM_VERSION_MAJOR >= 16\n";
               os << curIndent << INDENT;
               if (anyVector)
                 os << INDENT;
               os << "V->setOnlyReadsMemory();\n";
               os << "#elif LLVM_VERSION_MAJOR >= 14\n";
-            } else
+            }
+            else
               os << "#if LLVM_VERSION_MAJOR >= 14\n";
             os << curIndent << INDENT;
             if (anyVector)
@@ -981,7 +1126,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
           }
         }
       }
-      if (anyVector && intrinsic != MLIRDerivatives) {
+      if (anyVector && intrinsic != MLIRDerivatives)
+      {
         os << curIndent << INDENT << INDENT
            << "if (gutils->getWidth() == 1) res = "
               "V;\n";
@@ -995,7 +1141,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << curIndent << INDENT << INDENT << "}\n";
         os << curIndent << INDENT "}\n";
         os << curIndent << INDENT << "res;\n";
-      } else if (isCall)
+      }
+      else if (isCall)
         os << curIndent << INDENT << "V;\n";
 
       os << curIndent << "})";
@@ -1011,17 +1158,21 @@ void handleUse(
     DagInit *root, DagInit *resultTree, std::string &foundPrimalUse,
     std::string &foundShadowUse, bool &foundDiffRet, std::string precondition,
     DagInit *tree,
-    StringMap<std::tuple<std::string, std::string, bool>> &varNameToCondition) {
+    StringMap<std::tuple<std::string, std::string, bool>> &varNameToCondition)
+{
   auto opName = resultTree->getOperator()->getAsString();
   auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
-  if (opName == "DiffeRetIndex" || Def->isSubClassOf("DiffeRetIndex")) {
+  if (opName == "DiffeRetIndex" || Def->isSubClassOf("DiffeRetIndex"))
+  {
     foundDiffRet = true;
     return;
   }
-  if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
+  if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec"))
+  {
     return;
   }
-  if (!Def->isSubClassOf("Operation")) {
+  if (!Def->isSubClassOf("Operation"))
+  {
     errs() << *resultTree << "\n";
     errs() << opName << " " << *Def << "\n";
   }
@@ -1034,12 +1185,14 @@ void handleUse(
   (void)usesCustom;
   assert(!usesCustom);
 
-  for (auto argEn : llvm::enumerate(resultTree->getArgs())) {
+  for (auto argEn : llvm::enumerate(resultTree->getArgs()))
+  {
     auto name = resultTree->getArgNameStr(argEn.index());
 
     auto arg2 = dyn_cast<DagInit>(argEn.value());
 
-    if (arg2) {
+    if (arg2)
+    {
       // Recursive use of shadow is unhandled
       assert(!usesShadow);
 
@@ -1056,10 +1209,12 @@ void handleUse(
                   name.size() ? foundDiffRet2 : foundDiffRet,
                   usesPrimal ? precondition : "", tree, varNameToCondition);
 
-      if (name.size()) {
+      if (name.size())
+      {
         if (foundPrimalUse2.size() &&
             !(startsWith(foundPrimalUse, foundPrimalUse2) ||
-              endsWith(foundPrimalUse, foundPrimalUse2))) {
+              endsWith(foundPrimalUse, foundPrimalUse2)))
+        {
           if (foundPrimalUse.size() == 0)
             foundPrimalUse = foundPrimalUse2;
           else
@@ -1067,7 +1222,8 @@ void handleUse(
         }
         if (foundShadowUse2.size() &&
             !(startsWith(foundShadowUse, foundShadowUse2) ||
-              endsWith(foundShadowUse, foundShadowUse2))) {
+              endsWith(foundShadowUse, foundShadowUse2)))
+        {
           if (foundShadowUse.size() == 0)
             foundShadowUse = foundShadowUse2;
           else
@@ -1078,12 +1234,16 @@ void handleUse(
         varNameToCondition[name] =
             std::make_tuple(foundPrimalUse2, foundShadowUse2, foundDiffRet2);
       }
-    } else {
+    }
+    else
+    {
       assert(name.size());
 
-      if (name.size()) {
+      if (name.size())
+      {
         auto found = varNameToCondition.find(name);
-        if (found == varNameToCondition.end()) {
+        if (found == varNameToCondition.end())
+        {
           llvm::errs() << "tree scope: " << *tree << "\n";
           llvm::errs() << "root scope: " << *root << "\n";
           llvm::errs() << "could not find var name: " << name << "\n";
@@ -1091,23 +1251,29 @@ void handleUse(
         assert(found != varNameToCondition.end());
       }
 
-      if (precondition.size()) {
+      if (precondition.size())
+      {
         auto [foundPrimalUse2, foundShadowUse2, foundDiffRet2] =
             varNameToCondition[name];
-        if (precondition != "true") {
-          if (foundPrimalUse2.size()) {
+        if (precondition != "true")
+        {
+          if (foundPrimalUse2.size())
+          {
             foundPrimalUse2 =
                 "((" + foundPrimalUse2 + ")&&(" + precondition + ")";
           }
-          if (foundShadowUse2.size()) {
+          if (foundShadowUse2.size())
+          {
             foundShadowUse2 =
                 "((" + foundShadowUse2 + ")&&(" + precondition + ")";
           }
         }
-        if (usesPrimal) {
+        if (usesPrimal)
+        {
           if (foundPrimalUse2.size() &&
               !(startsWith(foundPrimalUse, foundPrimalUse2) ||
-                endsWith(foundPrimalUse, foundPrimalUse2))) {
+                endsWith(foundPrimalUse, foundPrimalUse2)))
+          {
             if (foundPrimalUse.size() == 0)
               foundPrimalUse = foundPrimalUse2;
             else
@@ -1115,7 +1281,8 @@ void handleUse(
           }
           if (foundShadowUse2.size() &&
               !(startsWith(foundShadowUse, foundShadowUse2) ||
-                endsWith(foundShadowUse, foundShadowUse2))) {
+                endsWith(foundShadowUse, foundShadowUse2)))
+          {
             if (foundShadowUse.size() == 0)
               foundShadowUse = foundShadowUse2;
             else
@@ -1123,10 +1290,12 @@ void handleUse(
           }
           foundDiffRet |= foundDiffRet2;
         }
-        if (usesShadow) {
+        if (usesShadow)
+        {
           if (foundPrimalUse2.size() &&
               !(startsWith(foundShadowUse, foundPrimalUse2) ||
-                endsWith(foundShadowUse, foundPrimalUse2))) {
+                endsWith(foundShadowUse, foundPrimalUse2)))
+          {
             if (foundShadowUse.size() == 0)
               foundShadowUse = foundPrimalUse2;
             else
@@ -1143,15 +1312,19 @@ void handleUse(
 void printDiffUse(
     raw_ostream &os, Twine prefix, ListInit *argOps, StringRef origName,
     ActionType intrinsic, DagInit *tree,
-    StringMap<std::tuple<std::string, std::string, bool>> &varNameToCondition) {
+    StringMap<std::tuple<std::string, std::string, bool>> &varNameToCondition)
+{
   os << prefix << "  // Rule " << *tree << "\n";
 
-  for (auto argOpEn : enumerate(*argOps)) {
+  for (auto argOpEn : enumerate(*argOps))
+  {
     size_t argIdx = argOpEn.index();
-    if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+    if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value()))
+    {
       auto opName = resultRoot->getOperator()->getAsString();
       auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-      if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
+      if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec"))
+      {
         continue;
       }
     }
@@ -1163,14 +1336,24 @@ void printDiffUse(
 
     DagInit *resultTree = cast<DagInit>(argOpEn.value());
 
+    if (intrinsic != MLIRDerivatives)
+    {
+      os << prefix << "  if (gutils->mode == DerivativeMode::ForwardModeError) {\n";
+      os << prefix << "    if (!gutils->isConstantValue(const_cast<Value*>(val))) {\n";
+      os << prefix << "      if (EnzymePrintDiffUse) llvm::errs() << \"Need primal of all active operands in error propagation\\n\";\n";
+      os << prefix << "      return true;\n";
+      os << prefix << "    }\n";
+      os << prefix << "  }\n";
+    }
+
     // hasDiffeRet(resultTree)
     handleUse(resultTree, resultTree, foundPrimalUse, foundShadowUse,
               foundDiffRet, /*precondition*/ "true", tree, varNameToCondition);
 
     os << prefix << "  // Arg " << argIdx << " : " << *resultTree << "\n";
 
-    if (foundPrimalUse != "") {
-
+    if (foundPrimalUse != "")
+    {
       if (intrinsic == MLIRDerivatives)
         os << prefix << "  if (!gutils->isConstantValue(" << origName
            << "->getOperand(" << argIdx << "))";
@@ -1179,14 +1362,17 @@ void printDiffUse(
            << "  if (!shadow && !gutils->isConstantValue(const_cast<Value*>("
            << origName << "->getOperand(" << argIdx << ")))";
 
-      if (foundDiffRet) {
+      if (foundDiffRet)
+      {
         if (intrinsic == MLIRDerivatives)
           os << " && !gutils->isConstantValue(" << origName
              << "->getResult(0))";
         else
           os << " && !gutils->isConstantValue(const_cast<Value*>((const Value*)"
              << origName << "))";
-      } else {
+      }
+      else
+      {
         if (intrinsic == MLIRDerivatives)
           os << " && !gutils->isConstantInstruction(" << origName << ")";
         else
@@ -1198,7 +1384,8 @@ void printDiffUse(
       os << prefix << "    if (" << foundPrimalUse << ") {\n";
       if (intrinsic == MLIRDerivatives)
         os << prefix << "      used = true;\n";
-      else {
+      else
+      {
         os << prefix << "      if (EnzymePrintDiffUse)\n";
         os << prefix
            << "         llvm::errs() << \"Need direct primal of \" << *val << ";
@@ -1212,14 +1399,18 @@ void printDiffUse(
       os << prefix << "  }\n";
     }
 
-    if (intrinsic != MLIRDerivatives) {
+    if (intrinsic != MLIRDerivatives)
+    {
       os << prefix << "  if (shadow && !gutils->isConstantValue(" << origName
          << "->getOperand(" << argIdx << "))";
 
-      if (foundDiffRet) {
+      if (foundDiffRet)
+      {
         os << " && !gutils->isConstantValue(const_cast<Value*>((const Value*)"
            << origName << "))";
-      } else {
+      }
+      else
+      {
         os << " && !gutils->isConstantInstruction(const_cast<Instruction*>( "
            << origName << "))";
       }
@@ -1237,7 +1428,8 @@ void printDiffUse(
       os << prefix << "        return true;\n";
       os << prefix << "      }\n";
 
-      if (foundShadowUse != "") {
+      if (foundShadowUse != "")
+      {
         os << prefix << "    if (" << foundShadowUse << ") {\n";
         os << prefix << "      if (EnzymePrintDiffUse)\n";
         os << "           llvm::errs() << \"Need direct shadow of \" << *val "
@@ -1253,18 +1445,21 @@ void printDiffUse(
     }
   }
 
-  if (intrinsic != MLIRDerivatives) {
+  if (intrinsic != MLIRDerivatives)
+  {
     os << prefix << "  return false;\n";
     os << prefix << "}\n";
   }
 }
 
 static void emitHeaderIncludes(const RecordKeeper &recordKeeper,
-                               raw_ostream &os) {
+                               raw_ostream &os)
+{
   const auto &patterns = recordKeeper.getAllDerivedDefinitions("Headers");
   os << "const char* include_headers[][2] = {\n";
   bool seen = false;
-  for (Record *pattern : patterns) {
+  for (Record *pattern : patterns)
+  {
     if (seen)
       os << ",\n";
     auto filename = pattern->getValueAsString("filename");
@@ -1279,7 +1474,8 @@ static void emitHeaderIncludes(const RecordKeeper &recordKeeper,
 
 static void emitMLIRReverse(raw_ostream &os, Record *pattern, DagInit *tree,
                             ActionType intrinsic, StringRef origName,
-                            ListInit *argOps) {
+                            ListInit *argOps)
+{
 
   auto opName = pattern->getValueAsString("opName");
   auto dialect = pattern->getValueAsString("dialect");
@@ -1294,21 +1490,24 @@ static void emitMLIRReverse(raw_ostream &os, Record *pattern, DagInit *tree,
   StringMap<std::tuple<std::string, std::string, bool>> varNameToCondition;
 
   std::function<void(DagInit *, ArrayRef<unsigned>)> insert =
-      [&](DagInit *ptree, ArrayRef<unsigned> prev) {
-        for (auto treeEn : llvm::enumerate(ptree->getArgs())) {
-          auto tree = treeEn.value();
-          auto name = ptree->getArgNameStr(treeEn.index());
-          SmallVector<unsigned, 2> next(prev.begin(), prev.end());
-          next.push_back(treeEn.index());
-          if (auto dg = dyn_cast<DagInit>(tree))
-            insert(dg, next);
+      [&](DagInit *ptree, ArrayRef<unsigned> prev)
+  {
+    for (auto treeEn : llvm::enumerate(ptree->getArgs()))
+    {
+      auto tree = treeEn.value();
+      auto name = ptree->getArgNameStr(treeEn.index());
+      SmallVector<unsigned, 2> next(prev.begin(), prev.end());
+      next.push_back(treeEn.index());
+      if (auto dg = dyn_cast<DagInit>(tree))
+        insert(dg, next);
 
-          if (name.size()) {
-            varNameToCondition[name] = std::make_tuple(
-                "idx == " + std::to_string(treeEn.index()), "", false);
-          }
-        }
-      };
+      if (name.size())
+      {
+        varNameToCondition[name] = std::make_tuple(
+            "idx == " + std::to_string(treeEn.index()), "", false);
+      }
+    }
+  };
 
   insert(tree, {});
 
@@ -1356,39 +1555,45 @@ static void emitMLIRReverse(raw_ostream &os, Record *pattern, DagInit *tree,
 }
 
 static VariableSetting parseVariables(DagInit *tree, ActionType intrinsic,
-                                      StringRef origName) {
+                                      StringRef origName)
+{
   VariableSetting nameToOrdinal;
   std::function<void(DagInit *, ArrayRef<unsigned>)> insert =
-      [&](DagInit *ptree, ArrayRef<unsigned> prev) {
-        unsigned i = 0;
-        for (auto tree : ptree->getArgs()) {
-          SmallVector<unsigned, 2> next(prev.begin(), prev.end());
-          next.push_back(i);
-          if (auto dg = dyn_cast<DagInit>(tree))
-            insert(dg, next);
+      [&](DagInit *ptree, ArrayRef<unsigned> prev)
+  {
+    unsigned i = 0;
+    for (auto tree : ptree->getArgs())
+    {
+      SmallVector<unsigned, 2> next(prev.begin(), prev.end());
+      next.push_back(i);
+      if (auto dg = dyn_cast<DagInit>(tree))
+        insert(dg, next);
 
-          if (ptree->getArgNameStr(i).size()) {
-            std::string op;
-            if (intrinsic != MLIRDerivatives)
-              op = (origName + ".getOperand(" + Twine(next[0]) + ")").str();
-            else
-              op = (origName + "->getOperand(" + Twine(next[0]) + ")").str();
-            if (prev.size() > 0) {
-              op = "gutils->extractMeta(Builder2, " + op +
-                   ", ArrayRef<unsigned>({";
-              bool first = true;
-              for (unsigned i = 1; i < next.size(); i++) {
-                if (!first)
-                  op += ", ";
-                op += std::to_string(next[i]);
-              }
-              op += "}))";
-            }
-            nameToOrdinal.insert(ptree->getArgNameStr(i), op, false);
+      if (ptree->getArgNameStr(i).size())
+      {
+        std::string op;
+        if (intrinsic != MLIRDerivatives)
+          op = (origName + ".getOperand(" + Twine(next[0]) + ")").str();
+        else
+          op = (origName + "->getOperand(" + Twine(next[0]) + ")").str();
+        if (prev.size() > 0)
+        {
+          op = "gutils->extractMeta(Builder2, " + op +
+               ", ArrayRef<unsigned>({";
+          bool first = true;
+          for (unsigned i = 1; i < next.size(); i++)
+          {
+            if (!first)
+              op += ", ";
+            op += std::to_string(next[i]);
           }
-          i++;
+          op += "}))";
         }
-      };
+        nameToOrdinal.insert(ptree->getArgNameStr(i), op, false);
+      }
+      i++;
+    }
+  };
 
   insert(tree, {});
 
@@ -1400,18 +1605,24 @@ static VariableSetting parseVariables(DagInit *tree, ActionType intrinsic,
 
 static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
                               ActionType intrinsic, StringRef origName,
-                              ListInit *argOps) {
+                              ListInit *argOps)
+{
   auto nameToOrdinal = parseVariables(tree, intrinsic, origName);
 
   bool seen = false;
-  for (auto argOpEn : enumerate(*argOps)) {
+  for (auto argOpEn : enumerate(*argOps))
+  {
     size_t argIdx = argOpEn.index();
-    if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+    if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value()))
+    {
       auto opName = resultRoot->getOperator()->getAsString();
       auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-      if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
-        if (Def->getValueAsBit("asserting")) {
-          if (intrinsic == MLIRDerivatives) {
+      if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec"))
+      {
+        if (Def->getValueAsBit("asserting"))
+        {
+          if (intrinsic == MLIRDerivatives)
+          {
             os << " if (!gutils->isConstantValue(" << origName
                << "->getOperand(" << argIdx << "))) {\n";
             os << "    " << origName
@@ -1420,7 +1631,9 @@ static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
                << " << \"\\n\";\n";
             os << "  return failure();\n";
             os << "  }\n";
-          } else {
+          }
+          else
+          {
             os << " assert(gutils->isConstantValue(" << origName
                << ".getOperand(" << argIdx << ")));\n";
           }
@@ -1433,19 +1646,26 @@ static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
     if (seen)
       os << "} else ";
     seen = true;
-    if (intrinsic == MLIRDerivatives) {
+    if (intrinsic == MLIRDerivatives)
+    {
       os << "if (!dif && !gutils->isConstantValue(" << origName
          << "->getOperand(" << argIdx << "))) {\n";
-    } else {
+    }
+    else
+    {
       os << "if (!dif && !gutils->isConstantValue(" << origName
          << ".getOperand(" << argIdx << "))) {\n";
     }
     DagInit *resultTree = cast<DagInit>(argOpEn.value());
-    if (hasDiffeRet(resultTree)) {
-      if (intrinsic == MLIRDerivatives) {
+    if (hasDiffeRet(resultTree))
+    {
+      if (intrinsic == MLIRDerivatives)
+      {
         os << "          dif = gutils->diffe(" << origName << ", builder);\n";
         os << "          gutils->zeroDiffe(" << origName << ", builder);\n";
-      } else {
+      }
+      else
+      {
         os << "          dif = diffe(&" << origName << ", Builder2);\n";
         os << "          setDiffe(&" << origName
            << ", "
@@ -1459,7 +1679,8 @@ static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
   if (seen)
     os << "        }\n";
 
-  if (intrinsic == MLIRDerivatives) {
+  if (intrinsic == MLIRDerivatives)
+  {
     os << "   SmallVector<Value> operands(op->getNumOperands(), nullptr);\n";
     os << "          auto neededArgs = cachedArguments(op, gutils);\n";
     os << "          size_t count = 0;\n";
@@ -1472,84 +1693,99 @@ static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
   }
 
   std::function<void(size_t, ArrayRef<unsigned>, Init *)> revres =
-      [&](size_t argIdx, ArrayRef<unsigned> idx, Init *ival) {
-        if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
-          auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
-          if (Def->isSubClassOf("MultiReturn")) {
-            unsigned i = 0;
-            for (auto r : resultTree->getArgs()) {
-              SmallVector<unsigned, 1> next(idx.begin(), idx.end());
-              next.push_back(i);
-              revres(argIdx, next, r);
-              i++;
-            }
-            return;
-          }
-          if (Def->isSubClassOf("InactiveArgSpec")) {
-            return;
-          }
-          const char *curIndent = "          ";
-          os << curIndent << "{\n";
-          if (intrinsic == MLIRDerivatives)
-            os << curIndent << INDENT << "mlir::Value tmp = ";
-          else
-            os << curIndent << INDENT << "Value *tmp = ";
-          bool vectorValued = handle(
-              Twine(curIndent) + INDENT, "revarg", os, pattern, resultTree,
-              (intrinsic == MLIRDerivatives) ? "builder" : "Builder2",
-              nameToOrdinal, /*lookup*/ true, idx, origName,
-              /*newFromOriginal*/ true, intrinsic);
-          os << ";\n";
+      [&](size_t argIdx, ArrayRef<unsigned> idx, Init *ival)
+  {
+    if (DagInit *resultTree = dyn_cast<DagInit>(ival))
+    {
+      auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
+      if (Def->isSubClassOf("MultiReturn"))
+      {
+        unsigned i = 0;
+        for (auto r : resultTree->getArgs())
+        {
+          SmallVector<unsigned, 1> next(idx.begin(), idx.end());
+          next.push_back(i);
+          revres(argIdx, next, r);
+          i++;
+        }
+        return;
+      }
+      if (Def->isSubClassOf("InactiveArgSpec"))
+      {
+        return;
+      }
+      const char *curIndent = "          ";
+      os << curIndent << "{\n";
+      if (intrinsic == MLIRDerivatives)
+        os << curIndent << INDENT << "mlir::Value tmp = ";
+      else
+        os << curIndent << INDENT << "Value *tmp = ";
+      bool vectorValued = handle(
+          Twine(curIndent) + INDENT, "revarg", os, pattern, resultTree,
+          (intrinsic == MLIRDerivatives) ? "builder" : "Builder2",
+          nameToOrdinal, /*lookup*/ true, idx, origName,
+          /*newFromOriginal*/ true, intrinsic);
+      os << ";\n";
 
-          if (intrinsic == MLIRDerivatives) {
-            os << "assert(toadd == nullptr); toadd = tmp;\n";
-          } else {
-            os << curIndent << INDENT
-               << "Value *out = "
-                  "UndefValue::get(gutils->getShadowType("
-               << origName << ".getOperand(" << argIdx << ")->getType()));\n";
+      if (intrinsic == MLIRDerivatives)
+      {
+        os << "assert(toadd == nullptr); toadd = tmp;\n";
+      }
+      else
+      {
+        os << curIndent << INDENT
+           << "Value *out = "
+              "UndefValue::get(gutils->getShadowType("
+           << origName << ".getOperand(" << argIdx << ")->getType()));\n";
 
-            os << curIndent << INDENT
-               << "for(unsigned int idx=0, W=gutils->getWidth(); "
-                  "idx<W; idx++) {\n";
+        os << curIndent << INDENT
+           << "for(unsigned int idx=0, W=gutils->getWidth(); "
+              "idx<W; idx++) {\n";
 
-            os << curIndent << INDENT << INDENT
-               << "Value *prev = toadd ? (gutils->getWidth() == "
-                  "1 ? toadd : gutils->extractMeta(Builder2, toadd, idx)) : "
-                  "nullptr;\n";
-            os << curIndent << INDENT << INDENT << "Value *next = tmp;\n";
-            if (vectorValued)
-              os << curIndent << INDENT << INDENT
-                 << "if (gutils->getWidth() > 1) next = "
-                    "gutils->extractMeta(Builder2, next, idx);\n";
-            os << curIndent << INDENT << INDENT
-               << "if (prev) next = Builder2.CreateFAdd(prev, "
-                  "next);\n";
-            os << curIndent << INDENT << INDENT
-               << "out = (gutils->getWidth() > 1) ? "
-                  "Builder2.CreateInsertValue(out, next, idx) : next;\n";
-            os << curIndent << INDENT << "}\n";
-            os << curIndent << INDENT << "toadd = out;\n";
-          }
-          os << curIndent << "}\n";
-        } else if (ListInit *lst = dyn_cast<ListInit>(ival)) {
-          unsigned i = 0;
-          for (auto elem : *lst) {
-            SmallVector<unsigned, 1> next(idx.begin(), idx.end());
-            next.push_back(i);
-            revres(argIdx, next, elem);
-            i++;
-          }
-        } else
-          assert(0);
-      };
+        os << curIndent << INDENT << INDENT
+           << "Value *prev = toadd ? (gutils->getWidth() == "
+              "1 ? toadd : gutils->extractMeta(Builder2, toadd, idx)) : "
+              "nullptr;\n";
+        os << curIndent << INDENT << INDENT << "Value *next = tmp;\n";
+        if (vectorValued)
+          os << curIndent << INDENT << INDENT
+             << "if (gutils->getWidth() > 1) next = "
+                "gutils->extractMeta(Builder2, next, idx);\n";
+        os << curIndent << INDENT << INDENT
+           << "if (prev) next = Builder2.CreateFAdd(prev, "
+              "next);\n";
+        os << curIndent << INDENT << INDENT
+           << "out = (gutils->getWidth() > 1) ? "
+              "Builder2.CreateInsertValue(out, next, idx) : next;\n";
+        os << curIndent << INDENT << "}\n";
+        os << curIndent << INDENT << "toadd = out;\n";
+      }
+      os << curIndent << "}\n";
+    }
+    else if (ListInit *lst = dyn_cast<ListInit>(ival))
+    {
+      unsigned i = 0;
+      for (auto elem : *lst)
+      {
+        SmallVector<unsigned, 1> next(idx.begin(), idx.end());
+        next.push_back(i);
+        revres(argIdx, next, elem);
+        i++;
+      }
+    }
+    else
+      assert(0);
+  };
 
-  for (auto argOpEn : enumerate(*argOps)) {
+  for (auto argOpEn : enumerate(*argOps))
+  {
     size_t argIdx = argOpEn.index();
-    if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+    if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value()))
+    {
       auto opName = resultRoot->getOperator()->getAsString();
       auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-      if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
+      if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec"))
+      {
         continue;
       }
     }
@@ -1568,10 +1804,13 @@ static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
       os << curIndent << INDENT << "Value *toadd = nullptr;\n";
     revres(argIdx, {}, argOpEn.value());
 
-    if (intrinsic == MLIRDerivatives) {
+    if (intrinsic == MLIRDerivatives)
+    {
       os << curIndent << INDENT << "if (toadd) gutils->addToDiffe(" << origName
          << "->getOperand(" << argIdx << "), toadd, builder);\n";
-    } else {
+    }
+    else
+    {
       os << curIndent << INDENT << "if (toadd) addToDiffe(" << origName
          << ".getOperand(" << argIdx << "), toadd";
       os << ", Builder2, " << origName << ".getOperand(" << argIdx
@@ -1581,10 +1820,12 @@ static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
   }
 }
 static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
-                            ActionType intrinsic) {
+                            ActionType intrinsic)
+{
   emitSourceFileHeader("Rewriters", os);
   const char *patternNames = "";
-  switch (intrinsic) {
+  switch (intrinsic)
+  {
   case MLIRDerivatives:
     patternNames = "MLIRDerivative";
     break;
@@ -1609,7 +1850,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
   }
   const auto &patterns = recordKeeper.getAllDerivedDefinitions(patternNames);
 
-  for (Record *pattern : patterns) {
+  for (Record *pattern : patterns)
+  {
     DagInit *tree = pattern->getValueAsDag("PatternToMatch");
 
     DagInit *duals = pattern->getValueAsDag("ArgDuals");
@@ -1618,7 +1860,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     // Emit RewritePattern for Pattern.
     ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
 
-    if (tree->getNumArgs() != argOps->size()) {
+    if (tree->getNumArgs() != argOps->size())
+    {
       PrintFatalError(pattern->getLoc(),
                       Twine("Defined rule pattern to have ") +
                           Twine(tree->getNumArgs()) +
@@ -1627,14 +1870,16 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     }
 
     std::string origName;
-    switch (intrinsic) {
+    switch (intrinsic)
+    {
     case GenBlasDerivatives:
     case UpdateBlasDecl:
     case UpdateBlasTA:
     case GenBlasDiffUse:
     case GenHeaderVariables:
       llvm_unreachable("Cannot use blas updaters inside emitDerivatives");
-    case MLIRDerivatives: {
+    case MLIRDerivatives:
+    {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "struct " << opName << "FwdDerivative : \n";
@@ -1646,11 +1891,13 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       origName = "op";
       break;
     }
-    case CallDerivatives: {
+    case CallDerivatives:
+    {
       os << "  if ((";
       bool prev = false;
       for (auto *nameI :
-           *cast<ListInit>(pattern->getValueAsListInit("names"))) {
+           *cast<ListInit>(pattern->getValueAsListInit("names")))
+      {
         if (prev)
           os << " ||\n      ";
         os << "funcName == " << cast<StringInit>(nameI)->getAsString() << "";
@@ -1665,20 +1912,24 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 #endif
       break;
     }
-    case IntrDerivatives: {
+    case IntrDerivatives:
+    {
       bool anyVersion = false;
       for (auto *nameI :
-           *cast<ListInit>(pattern->getValueAsListInit("names"))) {
+           *cast<ListInit>(pattern->getValueAsListInit("names")))
+      {
         auto lst = cast<ListInit>(nameI);
         assert(lst->size() >= 1);
         StringRef name = cast<StringInit>(lst->getValues()[0])->getValue();
-        if (lst->size() >= 2) {
+        if (lst->size() >= 2)
+        {
           auto min = cast<StringInit>(lst->getValues()[1])->getValue();
           int min_int = 100000;
           min.getAsInteger(10, min_int);
           if (min.size() != 0 && LLVM_VERSION_MAJOR < min_int)
             continue;
-          if (lst->size() >= 3) {
+          if (lst->size() >= 3)
+          {
             auto max = cast<StringInit>(lst->getValues()[2])->getValue();
             int max_int = 0;
             max.getAsInteger(10, max_int);
@@ -1700,15 +1951,18 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "    BuilderZ.setFastMathFlags(getFast());\n";
       break;
     }
-    case InstDerivatives: {
+    case InstDerivatives:
+    {
       auto minVer = pattern->getValueAsInt("minVer");
       auto maxVer = pattern->getValueAsInt("maxVer");
       auto name = pattern->getValueAsString("name");
-      if (minVer != 0) {
+      if (minVer != 0)
+      {
         if (LLVM_VERSION_MAJOR < minVer)
           continue;
       }
-      if (maxVer != 0) {
+      if (maxVer != 0)
+      {
         if (LLVM_VERSION_MAJOR > maxVer)
           continue;
       }
@@ -1738,15 +1992,18 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "    BuilderZ.setFastMathFlags(getFast());\n";
       break;
     }
-    case BinopDerivatives: {
+    case BinopDerivatives:
+    {
       auto minVer = pattern->getValueAsInt("minVer");
       auto maxVer = pattern->getValueAsInt("maxVer");
       auto name = pattern->getValueAsString("name");
-      if (minVer != 0) {
+      if (minVer != 0)
+      {
         if (LLVM_VERSION_MAJOR < minVer)
           continue;
       }
-      if (maxVer != 0) {
+      if (maxVer != 0)
+      {
         if (LLVM_VERSION_MAJOR > maxVer)
           continue;
       }
@@ -1782,7 +2039,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     VariableSetting nameToOrdinal = parseVariables(tree, intrinsic, origName);
 
     if (intrinsic != BinopDerivatives && intrinsic != InstDerivatives &&
-        intrinsic != MLIRDerivatives) {
+        intrinsic != MLIRDerivatives)
+    {
       os << "    if (gutils->knownRecomputeHeuristic.find(&" << origName
          << ") !=\n";
       os << "        gutils->knownRecomputeHeuristic.end()) {\n";
@@ -1801,10 +2059,13 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     else
       os << "    gutils->eraseIfUnused(" << origName << ");\n";
 
-    if (intrinsic == MLIRDerivatives) {
+    if (intrinsic == MLIRDerivatives)
+    {
       os << "    if (gutils->isConstantInstruction(op))\n";
       os << "      return success();\n";
-    } else {
+    }
+    else
+    {
       os << "    if (gutils->isConstantInstruction(&" << origName << "))\n";
       if (intrinsic == IntrDerivatives || intrinsic == CallDerivatives)
         os << "      return true;\n";
@@ -1824,11 +2085,15 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
             "ForwardFromSummedReverseInternal" ||
         cast<DefInit>(duals->getOperator())
             ->getDef()
-            ->isSubClassOf("ForwardFromSummedReverseInternal")) {
+            ->isSubClassOf("ForwardFromSummedReverseInternal"))
+    {
 
-      if (intrinsic == MLIRDerivatives) {
+      if (intrinsic == MLIRDerivatives)
+      {
         os << "     mlir::Value res = nullptr;\n";
-      } else {
+      }
+      else
+      {
         os << "        Value *res = "
               "Constant::getNullValue(gutils->getShadowType("
            << origName
@@ -1836,15 +2101,18 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
               "getType()));\n";
       }
 
-      for (auto argOpEn : enumerate(*argOps)) {
+      for (auto argOpEn : enumerate(*argOps))
+      {
         size_t argIdx = argOpEn.index();
 
         const char *curIndent = "        ";
 
-        if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+        if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value()))
+        {
           auto opName = resultRoot->getOperator()->getAsString();
           auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-          if (Def->isSubClassOf("InactiveArgSpec")) {
+          if (Def->isSubClassOf("InactiveArgSpec"))
+          {
             if (Def->getValueAsBit("asserting"))
               os << " assert(gutils->isConstantValue(" << origName
                  << ".getOperand(" << argIdx << ")));\n";
@@ -1852,12 +2120,15 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
           }
         }
 
-        if (intrinsic == MLIRDerivatives) {
+        if (intrinsic == MLIRDerivatives)
+        {
           os << curIndent << "if (!gutils->isConstantValue(" << origName
              << "->getOperand(" << argIdx << "))) {\n";
           os << curIndent << INDENT << "auto dif = gutils->invertPointerM("
              << origName << "->getOperand(" << argIdx << "), builder);\n";
-        } else {
+        }
+        else
+        {
           os << curIndent << "if (!gutils->isConstantValue(" << origName
              << ".getOperand(" << argIdx << "))) {\n";
           os << curIndent << INDENT << "Value *dif = diffe(" << origName
@@ -1865,12 +2136,15 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
           // error from https://dl.acm.org/doi/10.1145/3371128
           // error(f(x, y)) = max(ulp(f(x, y)), abs(x / f(x, y) * df/dx *
           // error(x)) + abs(y / f(x, y) * df/dy * error(y)))
+          // error TODO
+
           os << " if (Mode == DerivativeMode::ForwardModeError) {\n";
           os << "   dif = Builder2.CreateFDiv(Builder2.CreateFMul(dif, "
                 "gutils->getNewFromOriginal("
              << origName << ".getOperand(" << argIdx
              << "))), gutils->getNewFromOriginal(&" << origName << "));\n";
           os << " }\n";
+
           os << curIndent << INDENT
              << "Value *arg_diff_tmp = UndefValue::get(res->getType());\n";
         }
@@ -1878,89 +2152,107 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(),
                         "local");
         std::function<void(ArrayRef<unsigned>, Init *)> fwdres =
-            [&](ArrayRef<unsigned> idx, Init *ival) {
-              if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
-                auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
-                if (Def->isSubClassOf("MultiReturn")) {
-                  unsigned i = 0;
-                  for (auto r : resultTree->getArgs()) {
-                    SmallVector<unsigned, 2> next(idx.begin(), idx.end());
-                    next.push_back(i);
-                    i++;
-                    fwdres(next, r);
-                  }
-                  return;
-                }
-                if (Def->isSubClassOf("InactiveArgSpec")) {
-                  return;
-                }
-                os << curIndent << INDENT << "{\n";
-                if (intrinsic == MLIRDerivatives)
-                  os << curIndent << INDENT << INDENT << "mlir::Value itmp = ";
-                else
-                  os << curIndent << INDENT << INDENT << "Value *itmp = ";
-                ArrayRef<unsigned> retidx{};
-                bool vectorValued = handle(
-                    Twine(curIndent) + INDENT + INDENT, "fwdarg", os, pattern,
-                    resultTree,
-                    (intrinsic == MLIRDerivatives) ? "builder" : "Builder2",
-                    nameToOrdinal, /*lookup*/ false, retidx, origName,
-                    /*newFromOriginal*/ true, intrinsic);
-                os << ";\n";
-                (void)vectorValued;
-                assert(vectorValued);
-                if (intrinsic == MLIRDerivatives) {
-                  os << curIndent << INDENT << INDENT
-                     << "if (!res) res = itmp;\n";
-                  os << curIndent << INDENT << INDENT << "else {\n";
-                  os << curIndent << INDENT << INDENT << INDENT
-                     << "auto operandType = "
-                        "cast<AutoDiffTypeInterface>(res.getType());\n";
-                  os << curIndent << INDENT << INDENT << INDENT
-                     << "res = operandType.createAddOp(builder, op.getLoc(), "
-                        "res, itmp);\n";
-                  os << curIndent << INDENT << INDENT << "}\n";
-                } else {
-                  // Add the sum of the abs of errors due to each argument.
-                  os << curIndent << INDENT << INDENT
-                     << "if (Mode == DerivativeMode::ForwardModeError) {\n";
-                  os << curIndent << INDENT << INDENT << INDENT
-                     << "itmp = Builder2.CreateIntrinsic(Intrinsic::fabs, "
-                        "ArrayRef<Type*>(itmp->getType()), "
-                        "ArrayRef<Value*>(itmp));\n";
-                  os << curIndent << INDENT << INDENT << INDENT << "}\n";
-                  os << curIndent << INDENT << INDENT
-                     << "arg_diff_tmp = GradientUtils::recursiveFAdd(Builder2,";
-                  os << "res, itmp, {";
-                  {
-                    bool seen = false;
-                    for (auto i : idx) {
-                      if (seen)
-                        os << ", ";
-                      os << i;
-                      seen = true;
-                    }
-                  }
+            [&](ArrayRef<unsigned> idx, Init *ival)
+        {
+          if (DagInit *resultTree = dyn_cast<DagInit>(ival))
+          {
+            auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
+            if (Def->isSubClassOf("MultiReturn"))
+            {
+              unsigned i = 0;
+              for (auto r : resultTree->getArgs())
+              {
+                SmallVector<unsigned, 2> next(idx.begin(), idx.end());
+                next.push_back(i);
+                i++;
+                fwdres(next, r);
+              }
+              return;
+            }
+            if (Def->isSubClassOf("InactiveArgSpec"))
+            {
+              return;
+            }
+            os << curIndent << INDENT << "{\n";
+            if (intrinsic == MLIRDerivatives)
+              os << curIndent << INDENT << INDENT << "mlir::Value itmp = ";
+            else
+              os << curIndent << INDENT << INDENT << "Value *itmp = ";
+            ArrayRef<unsigned> retidx{};
+            bool vectorValued = handle(
+                Twine(curIndent) + INDENT + INDENT, "fwdarg", os, pattern,
+                resultTree,
+                (intrinsic == MLIRDerivatives) ? "builder" : "Builder2",
+                nameToOrdinal, /*lookup*/ false, retidx, origName,
+                /*newFromOriginal*/ true, intrinsic);
+            os << ";\n";
+            (void)vectorValued;
+            assert(vectorValued);
+            if (intrinsic == MLIRDerivatives)
+            {
+              os << curIndent << INDENT << INDENT
+                 << "if (!res) res = itmp;\n";
+              os << curIndent << INDENT << INDENT << "else {\n";
+              os << curIndent << INDENT << INDENT << INDENT
+                 << "auto operandType = "
+                    "cast<AutoDiffTypeInterface>(res.getType());\n";
+              os << curIndent << INDENT << INDENT << INDENT
+                 << "res = operandType.createAddOp(builder, op.getLoc(), "
+                    "res, itmp);\n";
+              os << curIndent << INDENT << INDENT << "}\n";
+            }
+            else
+            {
+              // Add the sum of the abs of errors due to each argument.
+              // error TODO
 
-                  os << "}, {}, arg_diff_tmp, gutils->getWidth() != 1);\n";
+              os << curIndent << INDENT << INDENT
+                 << "if (Mode == DerivativeMode::ForwardModeError) {\n";
+              os << curIndent << INDENT << INDENT << INDENT
+                 << "itmp = Builder2.CreateIntrinsic(Intrinsic::fabs, "
+                    "ArrayRef<Type*>(itmp->getType()), "
+                    "ArrayRef<Value*>(itmp));\n";
+              os << curIndent << INDENT << INDENT << INDENT << "}\n";
+
+              os << curIndent << INDENT << INDENT
+                 << "arg_diff_tmp = GradientUtils::recursiveFAdd(Builder2,";
+              os << "res, itmp, {";
+              {
+                bool seen = false;
+                for (auto i : idx)
+                {
+                  if (seen)
+                    os << ", ";
+                  os << i;
+                  seen = true;
                 }
-                os << curIndent << INDENT << "}\n";
-              } else if (ListInit *lst = dyn_cast<ListInit>(ival)) {
-                unsigned i = 0;
-                for (auto r : *lst) {
-                  SmallVector<unsigned, 2> next(idx.begin(), idx.end());
-                  next.push_back(i);
-                  i++;
-                  fwdres(next, r);
-                }
-              } else
-                PrintFatalError(pattern->getLoc(),
-                                Twine("Unknown subinitialization"));
-            };
+              }
+
+              os << "}, {}, arg_diff_tmp, gutils->getWidth() != 1);\n";
+            }
+            os << curIndent << INDENT << "}\n";
+          }
+          else if (ListInit *lst = dyn_cast<ListInit>(ival))
+          {
+            unsigned i = 0;
+            for (auto r : *lst)
+            {
+              SmallVector<unsigned, 2> next(idx.begin(), idx.end());
+              next.push_back(i);
+              i++;
+              fwdres(next, r);
+            }
+          }
+          else
+            PrintFatalError(pattern->getLoc(),
+                            Twine("Unknown subinitialization"));
+        };
         fwdres({}, argOpEn.value());
-        if (intrinsic != MLIRDerivatives) {
+        if (intrinsic != MLIRDerivatives)
+        {
           os << curIndent << INDENT << "res = arg_diff_tmp;\n";
           // Perform the max with 1 ulp
+          // error TODO
           os << curIndent << INDENT
              << "if (Mode == DerivativeMode::ForwardModeError) {\n";
           os << curIndent << INDENT << INDENT
@@ -1971,11 +2263,16 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         }
         os << "        }\n";
       }
-    } else {
+    }
+    else
+    {
 
-      if (intrinsic == MLIRDerivatives) {
+      if (intrinsic == MLIRDerivatives)
+      {
         os << "            mlir::Value res = ";
-      } else {
+      }
+      else
+      {
         os << "            Value *res = ";
       }
       ArrayRef<unsigned> retidx{};
@@ -1989,30 +2286,37 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << ";\n";
     }
     os << "        assert(res);\n";
-    if (intrinsic == MLIRDerivatives) {
+    if (intrinsic == MLIRDerivatives)
+    {
       os << "        gutils->setDiffe(" << origName
          << "->getResult(0), res, builder);\n";
       os << "        return success();\n";
-    } else {
+    }
+    else
+    {
       os << "        setDiffe(&" << origName << ", res, Builder2);\n";
       os << "        break;\n";
     }
     os << "      }\n";
 
-    if (intrinsic != MLIRDerivatives) {
+    if (intrinsic != MLIRDerivatives)
+    {
       os << "      case DerivativeMode::ReverseModeGradient:\n";
       os << "      case DerivativeMode::ReverseModeCombined:{\n";
       os << "        IRBuilder<> Builder2(&" << origName << ");\n";
       os << "        getReverseBuilder(Builder2);\n";
       os << "        Value *dif = nullptr;\n";
-    } else {
+    }
+    else
+    {
       os << "};\n";
       emitMLIRReverse(os, pattern, tree, intrinsic, origName, argOps);
     }
 
     emitReverseCommon(os, pattern, tree, intrinsic, origName, argOps);
 
-    if (intrinsic != MLIRDerivatives) {
+    if (intrinsic != MLIRDerivatives)
+    {
       os << "        auto found = gutils->invertedPointers.find(&(" << origName
          << "));\n";
       os << "        if (found != gutils->invertedPointers.end()) {\n";
@@ -2047,10 +2351,12 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "};\n\n";
   }
 
-  if (intrinsic == MLIRDerivatives) {
+  if (intrinsic == MLIRDerivatives)
+  {
     const auto &actpatterns =
         recordKeeper.getAllDerivedDefinitions("InactiveOp");
-    for (auto &pattern : actpatterns) {
+    for (auto &pattern : actpatterns)
+    {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "struct " << opName << "Activity : \n";
@@ -2067,7 +2373,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     const auto &mempatterns =
         recordKeeper.getAllDerivedDefinitions("MemoryIdentityOp");
 
-    for (auto &pattern : cfpatterns) {
+    for (auto &pattern : cfpatterns)
+    {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       auto impl = pattern->getValueAsString("impl");
@@ -2079,7 +2386,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "};\n";
     }
 
-    for (auto &pattern : mempatterns) {
+    for (auto &pattern : mempatterns)
+    {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       auto diffargs = pattern->getValueAsListOfInts("ptrargs");
@@ -2093,15 +2401,19 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "    return true;\n";
       os << "  };\n";
       os << "  bool isArgInactive(mlir::Operation*, size_t idx) const {\n";
-      for (auto diffarg : diffargs) {
-        if (diffarg == -1) {
+      for (auto diffarg : diffargs)
+      {
+        if (diffarg == -1)
+        {
           os << "    return false;\n";
           break;
         }
         os << "    if (idx == " << diffarg << ") return false;\n";
       }
-      for (auto diffarg : storedargs) {
-        if (diffarg == -1) {
+      for (auto diffarg : storedargs)
+      {
+        if (diffarg == -1)
+        {
           os << "    return false;\n";
           break;
         }
@@ -2112,7 +2424,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
       DagInit *tree = pattern->getValueAsDag("PatternToMatch");
 
-      if (tree->getOperator()->getAsString() != "Unimplemented") {
+      if (tree->getOperator()->getAsString() != "Unimplemented")
+      {
         ListInit *argOps = pattern->getValueAsListInit("reverse");
         auto origName = "op";
         emitMLIRReverse(os, pattern, tree, intrinsic, origName, argOps);
@@ -2134,7 +2447,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         recordKeeper.getAllDerivedDefinitions("AllocationOp");
 
     os << "void registerInterfaces(MLIRContext* context) {\n";
-    for (Record *pattern : patterns) {
+    for (Record *pattern : patterns)
+    {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
@@ -2142,13 +2456,15 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
          << "RevDerivative>(*context);\n";
     }
-    for (Record *pattern : actpatterns) {
+    for (Record *pattern : actpatterns)
+    {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
          << "Activity>(*context);\n";
     }
-    for (Record *pattern : cfpatterns) {
+    for (Record *pattern : cfpatterns)
+    {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
@@ -2156,7 +2472,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "  registerAutoDiffUsingControlFlowInterface<" << dialect
          << "::" << opName << ">(*context);\n";
     }
-    for (Record *pattern : mempatterns) {
+    for (Record *pattern : mempatterns)
+    {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
@@ -2167,30 +2484,35 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         os << ", " << storedarg;
       os << ">(*context);\n";
       DagInit *tree = pattern->getValueAsDag("PatternToMatch");
-      if (tree->getOperator()->getAsString() != "Unimplemented") {
+      if (tree->getOperator()->getAsString() != "Unimplemented")
+      {
         os << "  " << dialect << "::" << opName << "::attachInterface<"
            << opName << "RevDerivative>(*context);\n";
       }
     }
-    for (Record *pattern : brpatterns) {
+    for (Record *pattern : brpatterns)
+    {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  registerAutoDiffUsingBranchInterface<" << dialect
          << "::" << opName << ">(*context);\n";
     }
-    for (Record *pattern : regtpatterns) {
+    for (Record *pattern : regtpatterns)
+    {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  registerAutoDiffUsingRegionTerminatorInterface<" << dialect
          << "::" << opName << ">(*context);\n";
     }
-    for (Record *pattern : retpatterns) {
+    for (Record *pattern : retpatterns)
+    {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  registerAutoDiffUsingReturnInterface<" << dialect
          << "::" << opName << ">(*context);\n";
     }
-    for (Record *pattern : allocpatterns) {
+    for (Record *pattern : allocpatterns)
+    {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  registerAutoDiffUsingAllocationInterface<" << dialect
@@ -2201,9 +2523,11 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 }
 
 void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
-                 ActionType intrinsic) {
+                 ActionType intrinsic)
+{
   const char *patternNames;
-  switch (intrinsic) {
+  switch (intrinsic)
+  {
   case MLIRDerivatives:
   case GenBlasDerivatives:
   case UpdateBlasDecl:
@@ -2226,13 +2550,15 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
   }
   const auto &patterns = recordKeeper.getAllDerivedDefinitions(patternNames);
 
-  for (Record *pattern : patterns) {
+  for (Record *pattern : patterns)
+  {
     DagInit *tree = pattern->getValueAsDag("PatternToMatch");
 
     // Emit RewritePattern for Pattern.
     ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
 
-    if (tree->getNumArgs() != argOps->size()) {
+    if (tree->getNumArgs() != argOps->size())
+    {
       PrintFatalError(pattern->getLoc(),
                       Twine("Defined rule pattern to have ") +
                           Twine(tree->getNumArgs()) +
@@ -2242,7 +2568,8 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     std::string origName;
     std::string prefix;
-    switch (intrinsic) {
+    switch (intrinsic)
+    {
     case MLIRDerivatives:
     case GenBlasDerivatives:
     case UpdateBlasDecl:
@@ -2250,11 +2577,13 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
     case GenBlasDiffUse:
     case GenHeaderVariables:
       llvm_unreachable("Cannot use blas updaters inside emitDerivatives");
-    case CallDerivatives: {
+    case CallDerivatives:
+    {
       os << "  if ((";
       bool prev = false;
       for (auto *nameI :
-           *cast<ListInit>(pattern->getValueAsListInit("names"))) {
+           *cast<ListInit>(pattern->getValueAsListInit("names")))
+      {
         if (prev)
           os << " ||\n      ";
         os << "funcName == " << cast<StringInit>(nameI)->getAsString() << "";
@@ -2269,26 +2598,32 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
       prefix = "  ";
       break;
     }
-    case IntrDerivatives: {
+    case IntrDerivatives:
+    {
       bool anyVersion = false;
       for (auto *nameI :
-           *cast<ListInit>(pattern->getValueAsListInit("names"))) {
+           *cast<ListInit>(pattern->getValueAsListInit("names")))
+      {
         auto lst = cast<ListInit>(nameI);
         assert(lst->size() >= 1);
         StringRef name = cast<StringInit>(lst->getValues()[0])->getValue();
-        if (lst->size() >= 2) {
+        if (lst->size() >= 2)
+        {
           auto min = cast<StringInit>(lst->getValues()[1])->getValue();
           int min_int = 0;
-          if (min.size() != 0 && min.getAsInteger(10, min_int)) {
+          if (min.size() != 0 && min.getAsInteger(10, min_int))
+          {
             PrintFatalError(pattern->getLoc(),
                             "Could not parse min llvm version as int");
           }
           if (min.size() != 0 && LLVM_VERSION_MAJOR < min_int)
             continue;
-          if (lst->size() >= 3) {
+          if (lst->size() >= 3)
+          {
             auto max = cast<StringInit>(lst->getValues()[2])->getValue();
             int max_int = 0;
-            if (max.size() != 0 && max.getAsInteger(10, max_int)) {
+            if (max.size() != 0 && max.getAsInteger(10, max_int))
+            {
               PrintFatalError(pattern->getLoc(),
                               "Could not parse max llvm version as int");
             }
@@ -2306,15 +2641,18 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << prefix << "{\n";
       break;
     }
-    case InstDerivatives: {
+    case InstDerivatives:
+    {
       auto minVer = pattern->getValueAsInt("minVer");
       auto maxVer = pattern->getValueAsInt("maxVer");
       auto name = pattern->getValueAsString("name");
-      if (minVer != 0) {
+      if (minVer != 0)
+      {
         if (LLVM_VERSION_MAJOR < minVer)
           continue;
       }
-      if (maxVer != 0) {
+      if (maxVer != 0)
+      {
         if (LLVM_VERSION_MAJOR > maxVer)
           continue;
       }
@@ -2324,15 +2662,18 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
       prefix = "  ";
       break;
     }
-    case BinopDerivatives: {
+    case BinopDerivatives:
+    {
       auto minVer = pattern->getValueAsInt("minVer");
       auto maxVer = pattern->getValueAsInt("maxVer");
       auto name = pattern->getValueAsString("name");
-      if (minVer != 0) {
+      if (minVer != 0)
+      {
         if (LLVM_VERSION_MAJOR < minVer)
           continue;
       }
-      if (maxVer != 0) {
+      if (maxVer != 0)
+      {
         if (LLVM_VERSION_MAJOR > maxVer)
           continue;
       }
@@ -2349,23 +2690,26 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
     StringMap<std::tuple<StringTy, StringTy, bool>> varNameToCondition;
 
     std::function<void(DagInit *, ArrayRef<unsigned>)> insert =
-        [&](DagInit *ptree, ArrayRef<unsigned> prev) {
-          for (auto treeEn : llvm::enumerate(ptree->getArgs())) {
-            auto tree = treeEn.value();
-            auto name = ptree->getArgNameStr(treeEn.index());
-            SmallVector<unsigned, 2> next(prev.begin(), prev.end());
-            next.push_back(treeEn.index());
-            if (auto dg = dyn_cast<DagInit>(tree))
-              insert(dg, next);
+        [&](DagInit *ptree, ArrayRef<unsigned> prev)
+    {
+      for (auto treeEn : llvm::enumerate(ptree->getArgs()))
+      {
+        auto tree = treeEn.value();
+        auto name = ptree->getArgNameStr(treeEn.index());
+        SmallVector<unsigned, 2> next(prev.begin(), prev.end());
+        next.push_back(treeEn.index());
+        if (auto dg = dyn_cast<DagInit>(tree))
+          insert(dg, next);
 
-            if (name.size()) {
-              auto op = (Twine(origName) + "->getOperand(" + Twine(next[0]) +
-                         ") == val")
-                            .str();
-              varNameToCondition[name] = std::make_tuple(op, "", false);
-            }
-          }
-        };
+        if (name.size())
+        {
+          auto op = (Twine(origName) + "->getOperand(" + Twine(next[0]) +
+                     ") == val")
+                        .str();
+          varNameToCondition[name] = std::make_tuple(op, "", false);
+        }
+      }
+    };
 
     insert(tree, {});
 
@@ -2384,8 +2728,10 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
 
 void emitMLIRDerivatives(RecordKeeper &records, raw_ostream &os);
 
-static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
-  switch (action) {
+static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records)
+{
+  switch (action)
+  {
   case MLIRDerivatives:
   case CallDerivatives:
   case InstDerivatives:
@@ -2415,7 +2761,8 @@ static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
   }
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
   sys::PrintStackTraceOnErrorSignal(argv[0]);
   PrettyStackTraceProgram X(argc, argv);
   cl::ParseCommandLineOptions(argc, argv);

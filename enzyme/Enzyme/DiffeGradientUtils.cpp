@@ -165,6 +165,9 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
 }
 
 AllocaInst *DiffeGradientUtils::getDifferential(Value *val) {
+  assert(mode != DerivativeMode::ForwardMode);
+  assert(mode != DerivativeMode::ForwardModeSplit);
+  assert(mode != DerivativeMode::ForwardModeError);
   assert(val);
 #ifndef NDEBUG
   if (auto arg = dyn_cast<Argument>(val))
@@ -212,7 +215,8 @@ Value *DiffeGradientUtils::diffe(Value *val, IRBuilder<> &BuilderM) {
     assert(0 && "getting diffe of constant value");
   }
   if (mode == DerivativeMode::ForwardMode ||
-      mode == DerivativeMode::ForwardModeSplit)
+      mode == DerivativeMode::ForwardModeSplit ||
+      mode == DerivativeMode::ForwardModeError)
     return invertPointerM(val, BuilderM);
   if (val->getType()->isPointerTy()) {
     llvm::errs() << *newFunc << "\n";
@@ -681,7 +685,8 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
 #endif
   toset = SanitizeDerivatives(val, toset, BuilderM);
   if (mode == DerivativeMode::ForwardMode ||
-      mode == DerivativeMode::ForwardModeSplit) {
+      mode == DerivativeMode::ForwardModeSplit ||
+      mode == DerivativeMode::ForwardModeError) {
     assert(getShadowType(val->getType()) == toset->getType());
     auto found = invertedPointers.find(val);
     assert(found != invertedPointers.end());

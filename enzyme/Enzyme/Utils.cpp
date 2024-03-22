@@ -3073,77 +3073,31 @@ llvm::CallInst *createIntrinsicCall(llvm::IRBuilderBase &B,
   return nres;
 }
 
+/* Bithack to compute 1 ulp as follows:
+double ulp(double res) {
+  double nres = res;
+  (*(uint64_t*)&nres) = 0x1 ^ *(uint64_t*)&nres;
+  return abs(nres - res);
+}
+*/
 llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
   // Mask for only the exponent bits
 
-  unsigned tsize = 0;
   auto ty = res->getType();
-
-  if (ty->isHalfTy()) {
-    tsize = 16;
-  } else if (ty->isFloatTy()) {
-    tsize = 32;
-  } else if (ty->isDoubleTy()) {
-    tsize = 64;
-  } else {
-    assert(0 && "unhandled floating point type");
-  }
-
-  //  unsigned low = 0;
-  //  unsigned high = 0;
-  //
-  //
-  //  if (ty->isHalfTy()) {
-  //    tsize = 16;
-  //    high = tsize - 1;
-  //    low = high - 5;
-  //  } else if (ty->isFloatTy()) {
-  //    tsize = 32;
-  //    high = tsize - 1;
-  //    low = high - 8;
-  //  } else if (ty->isDoubleTy()) {
-  //    tsize = 64;
-  //    high = tsize - 1;
-  //    low = high - 11;
-  //  } else if (ty->isX86_FP80Ty()) {
-  //    tsize = 80;
-  //    high = tsize - 1;
-  //    low = high - 16;
-  //    // x86_fp80 has only 15 exponent bits, but we must also
-  //    // retain the most-significant bit of the mantissa as
-  //    // there is no implicit leading
-  //  } else if (ty->isFP128Ty()) {
-  //    tsize = 128;
-  //    high = tsize - 1;
-  //    low = high - 15;
-  //  } else {
-  //    //    llvm_unreachable("Unknown type within frexp");
-  //    assert(0 && "unhandled floating point type");
-  //  }
-  //
-  //  if (ty->isFloatTy()) {
-  //    // 1 sign bit, 8 exponent bits, 22 mantissa bits
-  //    low = 22;
-  //    high = low + 8;
-  //  } else if (ty->isDoubleTy()) {
-  //    // 1 sign bit, 11 exponent bits, 52 mantissa bits
-  //    low = 52;
-  //    high = low + 11;
-  //  } else {
-  //    assert(0 && "unhandled floating point type");
-  //  }
-
-  APInt eval = APInt::getBitsSet(tsize, 0, 0); // Lowest bit.
+  unsigned tsize = builder.GetInsertBlock()->getParent()->getParent()->getDataLayout().getTypeSizeInBits(ty);
 
   auto ity = IntegerType::get(ty->getContext(), tsize);
 
   //  auto masked = builder.CreateAnd(as_int, ConstantInt::get(ity, eval));
 
   auto as_int = builder.CreateBitCast(res, ity);
-  auto masked = builder.CreateXor(as_int, ConstantInt::get(ity, eval));
+  auto masked = builder.CreateXor(as_int, ConstantInt::get(ity, 1));
   auto neighbor = builder.CreateBitCast(masked, ty);
 
   auto diff = builder.CreateFSub(res, neighbor);
 
-  return diff;
+  auto absres = builder.CreateIntrinsic(Intrinsic::fabs,
+                    ArrayRef<Type*>(diff->getType()), ArrayRef<Value*>(diff));
+
+  return absres;
 }
