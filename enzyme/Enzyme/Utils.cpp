@@ -3084,7 +3084,11 @@ llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
   // Mask for only the exponent bits
 
   auto ty = res->getType();
-  unsigned tsize = builder.GetInsertBlock()->getParent()->getParent()->getDataLayout().getTypeSizeInBits(ty);
+  unsigned tsize = builder.GetInsertBlock()
+                       ->getParent()
+                       ->getParent()
+                       ->getDataLayout()
+                       .getTypeSizeInBits(ty);
 
   auto ity = IntegerType::get(ty->getContext(), tsize);
 
@@ -3097,7 +3101,8 @@ llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
   auto diff = builder.CreateFSub(res, neighbor);
 
   auto absres = builder.CreateIntrinsic(Intrinsic::fabs,
-                    ArrayRef<Type*>(diff->getType()), ArrayRef<Value*>(diff));
+                                        ArrayRef<Type *>(diff->getType()),
+                                        ArrayRef<Value *>(diff));
 
   return absres;
 }
