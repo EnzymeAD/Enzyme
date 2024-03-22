@@ -287,7 +287,11 @@ getTypeForWidth(llvm::LLVMContext &ctx, unsigned width, bool builtinFloat) {
   }
 }
 
-enum TruncateMode { TruncMemMode, TruncOpMode, TruncOpFullModuleMode };
+enum TruncateMode {
+  TruncMemMode = 0b0001,
+  TruncOpMode = 0b0010,
+  TruncOpFullModuleMode = 0b0110,
+};
 [[maybe_unused]] static const char *truncateModeStr(TruncateMode mode) {
   switch (mode) {
   case TruncMemMode:
@@ -376,7 +380,7 @@ public:
   llvm::Type *getFromType(llvm::LLVMContext &ctx) {
     return from.getBuiltinType(ctx);
   }
-  bool isToFPRTCall() {
+  bool isToFPRT() {
     // TODO maybe add new mode in which we directly truncate to native fp ops,
     // for now everything goes through the runtime
     return true;

@@ -29,18 +29,16 @@ entry:
 }
 
 ; CHECK: define internal i1 @__enzyme_done_truncate_mem_func_64_52to32_23_f(double %x, double %y) {
-; CHECK-DAG:   %1 = alloca double, align 8
-; CHECK-DAG:   store double %x, double* %1, align 8
-; CHECK-DAG:   %2 = bitcast double* %1 to float*
-; CHECK-DAG:   %3 = load float, float* %2, align 4
-; CHECK-DAG:   store double %y, double* %1, align 8
-; CHECK-DAG:   %4 = bitcast double* %1 to float*
-; CHECK-DAG:   %5 = load float, float* %4, align 4
-; CHECK-DAG:   %res = fcmp olt float %3, %5
-; CHECK-DAG:   ret i1 %res
+; CHECK-NEXT:   %res = call i1 @__enzyme_fprt_64_52_fcmp_olt(double %x, double %y, i64 8, i64 23, i64 0)
+; CHECK-NEXT:   ret i1 %res
+; CHECK-NEXT: }
 
 ; CHECK: define internal i1 @__enzyme_done_truncate_op_func_64_52to32_23_f(double %x, double %y) {
-; CHECK-DAG:   %enzyme_trunc = fptrunc double %x to float
-; CHECK-DAG:   %enzyme_trunc1 = fptrunc double %y to float
-; CHECK-DAG:   %res = fcmp olt float %enzyme_trunc, %enzyme_trunc1
-; CHECK-DAG:   ret i1 %res
+; CHECK-NEXT:   %res = fcmp olt double %x, %y
+; CHECK-NEXT:   ret i1 %res
+; CHECK-NEXT: }
+
+; CHECK: define internal i1 @__enzyme_done_truncate_op_func_64_52to11_7_f(double %x, double %y) {
+; CHECK-NEXT:   %res = fcmp olt double %x, %y
+; CHECK-NEXT:   ret i1 %res
+; CHECK-NEXT: }

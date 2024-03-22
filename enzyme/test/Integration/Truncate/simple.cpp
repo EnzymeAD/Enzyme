@@ -1,7 +1,8 @@
-// RUN: %clang             -DTRUNC_OP -O0                %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
-// RUN: %clang -DTRUNC_MEM -DTRUNC_OP -O2                %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
-// RUN: %clang             -DTRUNC_OP -O2    -ffast-math %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
-// RUN: %clang                        -O1 -g             %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
+// clang-format off
+// RUN: if [ %llvmver -ge 12 ] && [ %hasMPFR == "yes" ] ; then %clang             -DTRUNC_OP -O0                %s -o %s.a.out %newLoadClangEnzyme -include enzyme/mpfr -lm -lmpfr; %s.a.out ; fi
+// RUN: if [ %llvmver -ge 12 ] && [ %hasMPFR == "yes" ] ; then %clang             -DTRUNC_OP -O2    -ffast-math %s -o %s.a.out %newLoadClangEnzyme -include enzyme/mpfr -lm -lmpfr; %s.a.out ; fi
+// RUN: if [ %llvmver -ge 12 ] && [ %hasMPFR == "yes" ] ; then %clang                        -O1 -g             %s -o %s.a.out %newLoadClangEnzyme -include enzyme/mpfr -lm -lmpfr; %s.a.out ; fi
+// RUN: if [ %llvmver -ge 12 ] && [ %hasMPFR == "yes" ] ; then %clang -DTRUNC_MEM -DTRUNC_OP -O2                %s -o %s.a.out %newLoadClangEnzyme -include enzyme/mpfr -lm -lmpfr; %s.a.out ; fi
 
 #include <math.h>
 
