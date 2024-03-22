@@ -782,6 +782,7 @@ __ENZYME_MPFR_DOUBLE_BINFUNCINTR_DEFAULT_ROUNDING(pow, pow);
 
 __ENZYME_MPFR_SINGOP(func, sqrt, sqrt, 64_52, double, d, double, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
 __ENZYME_MPFR_SINGOP(func, __sqrt_finite, sqrt, 64_52, double, d, double, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
+__ENZYME_MPFR_SINGOP(intr, llvm_sqrt_f64, sqrt, 64_52, double, d, double, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
 __ENZYME_MPFR_SINGOP(intr, fabs, abs, 64_52, double, d, double, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
 __ENZYME_MPFR_SINGOP(intr, llvm_fabs_f64, abs, 64_52, double, d, double, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
 
