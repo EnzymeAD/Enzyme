@@ -5505,9 +5505,9 @@ bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
   auto truncation = FloatTruncation(from, to, TruncMemMode);
   TruncateUtils TU(truncation, B.GetInsertBlock()->getParent()->getParent());
   if (isTruncate)
-    converted = TU.createFPRTGetCall(B, v);
-  else
     converted = TU.createFPRTNewCall(B, v);
+  else
+    converted = TU.createFPRTGetCall(B, v);
   assert(converted);
 
   context.req->replaceAllUsesWith(converted);
