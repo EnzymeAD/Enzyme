@@ -31,6 +31,9 @@
 #include "ActivityAnalysis.h"
 #include "AdjointGenerator.h"
 #include "EnzymeLogic.h"
+#include "TypeAnalysis/TypeAnalysis.h"
+#include "llvm/IR/Constant.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
@@ -4961,64 +4964,152 @@ Function *EnzymeLogic::CreateForwardDiff(
   return nf;
 }
 
-static Value *floatValTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
+static Value *floatValTruncate(IRBuilderBase &B, Value *v,
                                FloatTruncation truncation) {
+  if (truncation.isToFPRT())
+    return v;
+
   Type *toTy = truncation.getToType(B.getContext());
   if (auto vty = dyn_cast<VectorType>(v->getType()))
     toTy = VectorType::get(toTy, vty->getElementCount());
   return B.CreateFPTrunc(v, toTy, "enzyme_trunc");
 }
 
-static Value *floatValExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
+static Value *floatValExpand(IRBuilderBase &B, Value *v,
                              FloatTruncation truncation) {
+  if (truncation.isToFPRT())
+    return v;
+
   Type *fromTy = truncation.getFromType(B.getContext());
   if (auto vty = dyn_cast<VectorType>(v->getType()))
     fromTy = VectorType::get(fromTy, vty->getElementCount());
   return B.CreateFPExt(v, fromTy, "enzyme_exp");
 }
 
-static Value *floatMemTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
+static Value *floatMemTruncate(IRBuilderBase &B, Value *v,
                                FloatTruncation truncation) {
   if (isa<VectorType>(v->getType()))
     report_fatal_error("vector operations not allowed in mem trunc mode");
 
-  Type *fromTy = truncation.getFromType(B.getContext());
   Type *toTy = truncation.getToType(B.getContext());
-  if (!tmpBlock)
-    tmpBlock = B.CreateAlloca(fromTy);
-  B.CreateStore(
-      v, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(v->getType())));
-  return B.CreateLoad(
-      toTy, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(toTy)));
+  return B.CreateBitCast(v, toTy);
 }
 
-static Value *floatMemExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
+static Value *floatMemExpand(IRBuilderBase &B, Value *v,
                              FloatTruncation truncation) {
   if (isa<VectorType>(v->getType()))
     report_fatal_error("vector operations not allowed in mem trunc mode");
 
   Type *fromTy = truncation.getFromType(B.getContext());
-  if (!tmpBlock)
-    tmpBlock = B.CreateAlloca(fromTy);
-  auto c0 = Constant::getNullValue(
-      llvm::Type::getIntNTy(B.getContext(), truncation.getFromTypeWidth()));
-  B.CreateStore(
-      c0, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(c0->getType())));
-  B.CreateStore(
-      v, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(v->getType())));
-  return B.CreateLoad(
-      fromTy, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(fromTy)));
+  return B.CreateBitCast(v, fromTy);
 }
 
-class TruncateGenerator : public llvm::InstVisitor<TruncateGenerator> {
+class TruncateUtils {
+protected:
+  FloatTruncation truncation;
+  llvm::Module *M;
+  Type *fromType;
+  Type *toType;
+  LLVMContext &ctx;
+
+private:
+  std::string getFPRTName(std::string Name) {
+    return std::string("__enzyme_fprt_") + truncation.mangleFrom() + "_" + Name;
+  }
+  Function *getFPRTFunc(std::string Name, SmallVectorImpl<Value *> &Args,
+                        llvm::Type *RetTy) {
+    auto MangledName = getFPRTName(Name);
+    auto F = M->getFunction(MangledName);
+    if (!F) {
+      SmallVector<Type *, 4> ArgTypes;
+      for (auto Arg : Args)
+        ArgTypes.push_back(Arg->getType());
+      FunctionType *FnTy =
+          FunctionType::get(RetTy, ArgTypes, /*is_vararg*/ false);
+      F = Function::Create(FnTy, Function::ExternalLinkage, MangledName, M);
+    }
+    return F;
+  }
+  CallInst *createFPRTGeneric(llvm::IRBuilderBase &B, std::string Name,
+                              SmallVectorImpl<Value *> &ArgsIn,
+                              llvm::Type *RetTy) {
+    SmallVector<Value *, 5> Args(ArgsIn.begin(), ArgsIn.end());
+    Args.push_back(B.getInt64(truncation.getTo().exponentWidth));
+    Args.push_back(B.getInt64(truncation.getTo().significandWidth));
+    Args.push_back(B.getInt64(truncation.getMode()));
+    return cast<CallInst>(B.CreateCall(getFPRTFunc(Name, Args, RetTy), Args));
+  }
+
+public:
+  TruncateUtils(FloatTruncation truncation, Module *M)
+      : truncation(truncation), M(M), ctx(M->getContext()) {
+    fromType = truncation.getFromType(ctx);
+    toType = truncation.getToType(ctx);
+    if (fromType == toType)
+      assert(truncation.isToFPRT());
+  }
+
+  Type *getFromType() { return fromType; }
+
+  Type *getToType() { return toType; }
+
+  CallInst *createFPRTConstCall(llvm::IRBuilderBase &B, Value *V) {
+    assert(V->getType() == getFromType());
+    SmallVector<Value *, 1> Args;
+    Args.push_back(V);
+    return createFPRTGeneric(B, "const", Args, getToType());
+  }
+  CallInst *createFPRTNewCall(llvm::IRBuilderBase &B, Value *V) {
+    assert(V->getType() == getFromType());
+    SmallVector<Value *, 1> Args;
+    Args.push_back(V);
+    return createFPRTGeneric(B, "new", Args, getToType());
+  }
+  CallInst *createFPRTGetCall(llvm::IRBuilderBase &B, Value *V) {
+    SmallVector<Value *, 1> Args;
+    Args.push_back(V);
+    return createFPRTGeneric(B, "get", Args, getToType());
+  }
+  CallInst *createFPRTDeleteCall(llvm::IRBuilderBase &B, Value *V) {
+    SmallVector<Value *, 1> Args;
+    Args.push_back(V);
+    return createFPRTGeneric(B, "delete", Args, B.getVoidTy());
+  }
+  CallInst *createFPRTOpCall(llvm::IRBuilderBase &B, llvm::Instruction &I,
+                             llvm::Type *RetTy,
+                             SmallVectorImpl<Value *> &ArgsIn) {
+    std::string Name;
+    if (auto BO = dyn_cast<BinaryOperator>(&I)) {
+      Name = "binop_" + std::string(BO->getOpcodeName());
+    } else if (auto II = dyn_cast<IntrinsicInst>(&I)) {
+      auto FOp = II->getCalledFunction();
+      assert(FOp);
+      Name = "intr_" + std::string(FOp->getName());
+      for (auto &C : Name)
+        if (C == '.')
+          C = '_';
+    } else if (auto CI = dyn_cast<CallInst>(&I)) {
+      if (auto F = CI->getCalledFunction())
+        Name = "func_" + std::string(F->getName());
+      else
+        llvm_unreachable(
+            "Unexpected indirect call inst for conversion to FPRT");
+    } else if (auto CI = dyn_cast<FCmpInst>(&I)) {
+      Name = "fcmp_" + std::string(CI->getPredicateName(CI->getPredicate()));
+    } else {
+      llvm_unreachable("Unexpected instruction for conversion to FPRT");
+    }
+    return createFPRTGeneric(B, Name, ArgsIn, RetTy);
+  }
+};
+
+class TruncateGenerator : public llvm::InstVisitor<TruncateGenerator>,
+                          public TruncateUtils {
 private:
   ValueToValueMapTy &originalToNewFn;
   FloatTruncation truncation;
-  Type *fromType;
-  Type *toType;
   Function *oldFunc;
   Function *newFunc;
-  AllocaInst *tmpBlock;
   TruncateMode mode;
   EnzymeLogic &Logic;
   LLVMContext &ctx;
@@ -5026,33 +5117,11 @@ private:
 public:
   TruncateGenerator(ValueToValueMapTy &originalToNewFn,
                     FloatTruncation truncation, Function *oldFunc,
-                    Function *newFunc, TruncateMode mode, EnzymeLogic &Logic)
-      : originalToNewFn(originalToNewFn), truncation(truncation),
-        oldFunc(oldFunc), newFunc(newFunc), mode(mode), Logic(Logic),
-        ctx(newFunc->getContext()) {
-    IRBuilder<> B(&newFunc->getEntryBlock().front());
-
-    fromType = truncation.getFromType(ctx);
-    toType = truncation.getToType(ctx);
-    if (fromType == toType)
-      assert(truncation.isToMPFR());
-
-    if (mode == TruncMemMode)
-      tmpBlock = B.CreateAlloca(fromType);
-    else
-      tmpBlock = nullptr;
-
-    if (truncation.isToMPFR()) {
-      switch (mode) {
-      case TruncMemMode:
-        llvm::report_fatal_error(
-            "truncation to MPFR not supported in memory mode.");
-      case TruncOpMode:
-      case TruncOpFullModuleMode:
-        break;
-      }
-    }
-  }
+                    Function *newFunc, EnzymeLogic &Logic)
+      : TruncateUtils(truncation, newFunc->getParent()),
+        originalToNewFn(originalToNewFn), truncation(truncation),
+        oldFunc(oldFunc), newFunc(newFunc), mode(truncation.getMode()),
+        Logic(Logic), ctx(newFunc->getContext()) {}
 
   void checkHandled(llvm::Instruction &inst) {
     // if (all_of(inst.getOperandList(),
@@ -5075,20 +5144,15 @@ public:
     checkHandled(inst);
   }
 
-  Type *getFromType() { return fromType; }
-
-  Type *getToType() { return toType; }
-
   Value *truncate(IRBuilder<> &B, Value *v) {
     switch (mode) {
     case TruncMemMode:
-      assert(!truncation.isToMPFR());
-      return floatMemTruncate(B, v, tmpBlock, truncation);
+      if (isa<ConstantFP>(v))
+        return createFPRTConstCall(B, v);
+      return floatMemTruncate(B, v, truncation);
     case TruncOpMode:
     case TruncOpFullModuleMode:
-      if (truncation.isToMPFR())
-        return v;
-      return floatValTruncate(B, v, tmpBlock, truncation);
+      return floatValTruncate(B, v, truncation);
     }
     llvm_unreachable("Unknown trunc mode");
   }
@@ -5096,10 +5160,10 @@ public:
   Value *expand(IRBuilder<> &B, Value *v) {
     switch (mode) {
     case TruncMemMode:
-      return floatMemExpand(B, v, tmpBlock, truncation);
+      return floatMemExpand(B, v, truncation);
     case TruncOpMode:
     case TruncOpFullModuleMode:
-      return floatValExpand(B, v, tmpBlock, truncation);
+      return floatValExpand(B, v, truncation);
     }
     llvm_unreachable("Unknown trunc mode");
   }
@@ -5122,17 +5186,37 @@ public:
   void visitAllocaInst(llvm::AllocaInst &I) { return; }
   void visitICmpInst(llvm::ICmpInst &I) { return; }
   void visitFCmpInst(llvm::FCmpInst &CI) {
-    auto newI = getNewFromOriginal(&CI);
-    IRBuilder<> B(newI);
-    auto truncLHS = truncate(B, getNewFromOriginal(CI.getOperand(0)));
-    auto truncRHS = truncate(B, getNewFromOriginal(CI.getOperand(1)));
-    auto nres =
-        cast<FCmpInst>(B.CreateFCmp(CI.getPredicate(), truncLHS, truncRHS));
-    nres->takeName(newI);
-    nres->copyIRFlags(newI);
-    newI->replaceAllUsesWith(nres);
-    newI->eraseFromParent();
-    return;
+    switch (mode) {
+    case TruncMemMode: {
+      auto LHS = getNewFromOriginal(CI.getOperand(0));
+      auto RHS = getNewFromOriginal(CI.getOperand(1));
+      if (LHS->getType() != getFromType())
+        return;
+
+      auto newI = getNewFromOriginal(&CI);
+      IRBuilder<> B(newI);
+      auto truncLHS = truncate(B, LHS);
+      auto truncRHS = truncate(B, RHS);
+
+      SmallVector<Value *, 2> Args;
+      Args.push_back(LHS);
+      Args.push_back(RHS);
+      Instruction *nres;
+      if (truncation.isToFPRT())
+        nres = createFPRTOpCall(B, CI, B.getInt1Ty(), Args);
+      else
+        nres =
+            cast<FCmpInst>(B.CreateFCmp(CI.getPredicate(), truncLHS, truncRHS));
+      nres->takeName(newI);
+      nres->copyIRFlags(newI);
+      newI->replaceAllUsesWith(nres);
+      newI->eraseFromParent();
+      return;
+    }
+    case TruncOpMode:
+    case TruncOpFullModuleMode:
+      return;
+    }
   }
   void visitLoadInst(llvm::LoadInst &LI) {
     auto alignment = LI.getAlign();
@@ -5149,27 +5233,8 @@ public:
   void visitCastInst(llvm::CastInst &CI) {
     switch (mode) {
     case TruncMemMode: {
-      Value *newCI = nullptr;
-      auto newI = getNewFromOriginal(&CI);
-      std::string oldName = CI.getName().str();
-      newI->setName("");
-      if (CI.getSrcTy() == getFromType()) {
-        IRBuilder<> B(newI);
-        newCI =
-            B.CreateCast(CI.getOpcode(), getNewFromOriginal(CI.getOperand(0)),
-                         CI.getDestTy(), oldName);
-      }
-      if (CI.getDestTy() == getToType()) {
-        auto newI = getNewFromOriginal(&CI);
-        IRBuilder<> B(newI);
-        newCI =
-            B.CreateCast(CI.getOpcode(), getNewFromOriginal(CI.getOperand(0)),
-                         CI.getDestTy(), oldName);
-      }
-      if (newCI) {
-        newI->replaceAllUsesWith(newCI);
-        newI->eraseFromParent();
-      }
+      if (CI.getSrcTy() == getFromType() || CI.getDestTy() == getFromType())
+        todo(CI);
       return;
     }
     case TruncOpMode:
@@ -5203,46 +5268,6 @@ public:
   void visitShuffleVectorInst(llvm::ShuffleVectorInst &EEI) { return; }
   void visitExtractValueInst(llvm::ExtractValueInst &EEI) { return; }
   void visitInsertValueInst(llvm::InsertValueInst &EEI) { return; }
-  CallInst *createMPFRCall(llvm::IRBuilder<> &B, llvm::Instruction &I,
-                           llvm::Type *RetTy,
-                           SmallVectorImpl<Value *> &ArgsIn) {
-    std::string Name;
-    if (auto BO = dyn_cast<BinaryOperator>(&I)) {
-      Name = "binop_" + std::string(BO->getOpcodeName());
-    } else if (auto II = dyn_cast<IntrinsicInst>(&I)) {
-      auto FOp = II->getCalledFunction();
-      assert(FOp);
-      Name = "intr_" + std::string(FOp->getName());
-      for (auto &C : Name)
-        if (C == '.')
-          C = '_';
-    } else if (auto CI = dyn_cast<CallInst>(&I)) {
-      if (auto F = CI->getCalledFunction())
-        Name = "func_" + std::string(F->getName());
-      else
-        llvm_unreachable(
-            "Unexpected indirect call inst for conversion to MPFR");
-    } else {
-      llvm_unreachable("Unexpected instruction for conversion to MPFR");
-    }
-
-    std::string MangledName =
-        std::string("__enzyme_mpfr_") + truncation.mangleFrom() + "_" + Name;
-    auto F = newFunc->getParent()->getFunction(MangledName);
-    SmallVector<Value *, 4> Args(ArgsIn.begin(), ArgsIn.end());
-    Args.push_back(B.getInt64(truncation.getTo().exponentWidth));
-    Args.push_back(B.getInt64(truncation.getTo().significandWidth));
-    if (!F) {
-      SmallVector<Type *, 4> ArgTypes;
-      for (auto Arg : Args)
-        ArgTypes.push_back(Arg->getType());
-      FunctionType *FnTy =
-          FunctionType::get(RetTy, ArgTypes, /*is_vararg*/ false);
-      F = Function::Create(FnTy, Function::ExternalLinkage, MangledName,
-                           newFunc->getParent());
-    }
-    return cast<CallInst>(B.CreateCall(F, Args));
-  }
   void visitBinaryOperator(llvm::BinaryOperator &BO) {
     auto oldLHS = BO.getOperand(0);
     auto oldRHS = BO.getOperand(1);
@@ -5276,9 +5301,9 @@ public:
     auto newLHS = truncate(B, getNewFromOriginal(oldLHS));
     auto newRHS = truncate(B, getNewFromOriginal(oldRHS));
     Instruction *nres = nullptr;
-    if (truncation.isToMPFR()) {
+    if (truncation.isToFPRT()) {
       SmallVector<Value *, 2> Args({newLHS, newRHS});
-      nres = createMPFRCall(B, BO, truncation.getToType(ctx), Args);
+      nres = createFPRTOpCall(B, BO, truncation.getToType(ctx), Args);
     } else {
       nres = cast<Instruction>(B.CreateBinOp(BO.getOpcode(), newLHS, newRHS));
     }
@@ -5336,8 +5361,8 @@ public:
 
     Instruction *intr = nullptr;
     Value *nres = nullptr;
-    if (truncation.isToMPFR()) {
-      nres = intr = createMPFRCall(B, CI, retTy, new_ops);
+    if (truncation.isToFPRT()) {
+      nres = intr = createFPRTOpCall(B, CI, retTy, new_ops);
     } else {
       // TODO check that the intrinsic is overloaded
       nres = intr =
@@ -5474,36 +5499,15 @@ bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
                                       FloatRepresentation to, bool isTruncate) {
   assert(context.req && context.ip);
 
-  if (from == to) {
-    context.req->replaceAllUsesWith(context.req->getOperand(0));
-    context.req->eraseFromParent();
-    return true;
-  }
-
-  if (from < to) {
-    std::string s;
-    llvm::raw_string_ostream ss(s);
-    ss << "Cannot truncate into a large width\n";
-    if (context.req) {
-      ss << " at context: " << *context.req;
-      EmitFailure("NoTruncate", context.req->getDebugLoc(), context.req,
-                  ss.str());
-      return false;
-    }
-    llvm_unreachable("failed to truncate value");
-  }
-
   IRBuilderBase &B = *context.ip;
-  Type *fromTy = from.getBuiltinType(B.getContext());
-  Type *toTy = to.getType(B.getContext());
 
   Value *converted = nullptr;
+  auto truncation = FloatTruncation(from, to, TruncMemMode);
+  TruncateUtils TU(truncation, B.GetInsertBlock()->getParent()->getParent());
   if (isTruncate)
-    converted = floatMemExpand(B, B.CreateFPTrunc(v, toTy), nullptr,
-                               FloatTruncation(from, to));
+    converted = TU.createFPRTNewCall(B, v);
   else
-    converted = B.CreateFPExt(
-        floatMemTruncate(B, v, nullptr, FloatTruncation(from, to)), fromTy);
+    converted = TU.createFPRTGetCall(B, v);
   assert(converted);
 
   context.req->replaceAllUsesWith(converted);
@@ -5589,8 +5593,7 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
-  TruncateGenerator handle(originalToNewFn, truncation, totrunc, NewF, mode,
-                           *this);
+  TruncateGenerator handle(originalToNewFn, truncation, totrunc, NewF, *this);
   for (auto &BB : *totrunc)
     for (auto &I : BB)
       handle.visit(&I);
