@@ -6000,7 +6000,8 @@ public:
     BuilderZ.setFastMathFlags(getFast());
 
     if (overwritten_args_map.find(&call) == overwritten_args_map.end() &&
-        Mode != DerivativeMode::ForwardMode) {
+        Mode != DerivativeMode::ForwardMode &&
+        Mode != DerivativeMode::ForwardModeError) {
       llvm::errs() << " call: " << call << "\n";
       for (auto &pair : overwritten_args_map) {
         llvm::errs() << " + " << *pair.first << "\n";
@@ -6008,9 +6009,11 @@ public:
     }
 
     assert(overwritten_args_map.find(&call) != overwritten_args_map.end() ||
-           Mode == DerivativeMode::ForwardMode);
+           Mode == DerivativeMode::ForwardMode ||
+           Mode == DerivativeMode::ForwardModeError);
     const std::vector<bool> &overwritten_args =
-        Mode == DerivativeMode::ForwardMode
+        (Mode == DerivativeMode::ForwardMode ||
+         Mode == DerivativeMode::ForwardModeError)
             ? std::vector<bool>()
             : overwritten_args_map.find(&call)->second;
 
