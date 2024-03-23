@@ -811,6 +811,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   switch (mode) {
   case DerivativeMode::ForwardModeSplit:
   case DerivativeMode::ForwardMode:
+  case DerivativeMode::ForwardModeError:
     ptr = invertPointerM(origptr, BuilderM);
     break;
   case DerivativeMode::ReverseModePrimal:
