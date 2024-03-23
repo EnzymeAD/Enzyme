@@ -339,6 +339,7 @@ enum class DerivativeMode {
   ReverseModeGradient = 2,
   ReverseModeCombined = 3,
   ForwardModeSplit = 4,
+  ForwardModeError = 5,
 };
 
 enum class ProbProgMode {
@@ -381,6 +382,8 @@ static inline std::string to_string(DerivativeMode mode) {
   switch (mode) {
   case DerivativeMode::ForwardMode:
     return "ForwardMode";
+  case DerivativeMode::ForwardModeError:
+    return "ForwardModeError";
   case DerivativeMode::ForwardModeSplit:
     return "ForwardModeSplit";
   case DerivativeMode::ReverseModePrimal:
@@ -531,7 +534,8 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
     return integersAreConstant ? DIFFE_TYPE::CONSTANT : DIFFE_TYPE::DUP_ARG;
   } else if (arg->isFPOrFPVectorTy()) {
     return (mode == DerivativeMode::ForwardMode ||
-            mode == DerivativeMode::ForwardModeSplit)
+            mode == DerivativeMode::ForwardModeSplit ||
+            mode == DerivativeMode::ForwardModeError)
                ? DIFFE_TYPE::DUP_ARG
                : DIFFE_TYPE::OUT_DIFF;
   } else {
@@ -541,6 +545,8 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
     return DIFFE_TYPE::CONSTANT;
   }
 }
+
+llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res);
 
 static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode) {
   std::set<llvm::Type *> seen;

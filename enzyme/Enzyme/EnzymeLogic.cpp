@@ -4521,14 +4521,16 @@ Function *EnzymeLogic::CreateForwardDiff(
   assert(retType != DIFFE_TYPE::OUT_DIFF);
 
   assert(mode == DerivativeMode::ForwardMode ||
-         mode == DerivativeMode::ForwardModeSplit);
+         mode == DerivativeMode::ForwardModeSplit ||
+         mode == DerivativeMode::ForwardModeError);
 
   FnTypeInfo oldTypeInfo = preventTypeAnalysisLoops(oldTypeInfo_, todiff);
 
   if (retType != DIFFE_TYPE::CONSTANT)
     assert(!todiff->getReturnType()->isVoidTy());
 
-  if (mode != DerivativeMode::ForwardMode)
+  if (mode != DerivativeMode::ForwardMode &&
+      mode != DerivativeMode::ForwardModeError)
     assert(_overwritten_args.size() == todiff->arg_size());
 
   ForwardCacheKey tup = {todiff,     retType, constant_args, _overwritten_args,

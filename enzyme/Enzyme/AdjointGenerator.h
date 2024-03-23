@@ -377,7 +377,8 @@ public:
     eraseIfUnused(I);
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(I);
       return;
     }
@@ -398,10 +399,13 @@ public:
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
     auto LoadSize = (DL.getTypeSizeInBits(I.getType()) + 1) / 8;
 
-    assert(Mode == DerivativeMode::ForwardMode || gutils->can_modref_map);
     assert(Mode == DerivativeMode::ForwardMode ||
+           Mode == DerivativeMode::ForwardModeError || gutils->can_modref_map);
+    assert(Mode == DerivativeMode::ForwardMode ||
+           Mode == DerivativeMode::ForwardModeError ||
            gutils->can_modref_map->find(&I) != gutils->can_modref_map->end());
-    bool can_modref = Mode == DerivativeMode::ForwardMode
+    bool can_modref = (Mode == DerivativeMode::ForwardMode ||
+                       Mode == DerivativeMode::ForwardModeError)
                           ? false
                           : gutils->can_modref_map->find(&I)->second;
 
@@ -461,6 +465,7 @@ public:
     }
 
     if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError ||
         Mode == DerivativeMode::ForwardModeSplit) {
       if (!constantval) {
         auto found = gutils->invertedPointers.find(&I);
@@ -557,7 +562,8 @@ public:
             break;
           }
           case DerivativeMode::ForwardModeSplit:
-          case DerivativeMode::ForwardMode: {
+          case DerivativeMode::ForwardMode:
+          case DerivativeMode::ForwardModeError: {
             assert(0 && "impossible branch");
             return;
           }
@@ -600,6 +606,7 @@ public:
     // Otherwise caching will be done inside EnzymeLogic.cpp at
     // the end of the function jointly.
     if (Mode != DerivativeMode::ForwardMode &&
+        Mode != DerivativeMode::ForwardModeError &&
         !gutils->knownRecomputeHeuristic.count(&I) && can_modref &&
         !gutils->unnecessaryIntermediates.count(&I)) {
       // we can pre initialize all the knownRecomputeHeuristic values to false
@@ -626,7 +633,8 @@ public:
         assert(inst->getType() == type);
 
         if (Mode == DerivativeMode::ReverseModeGradient ||
-            Mode == DerivativeMode::ForwardModeSplit) {
+            Mode == DerivativeMode::ForwardModeSplit ||
+            Mode == DerivativeMode::ForwardModeError) {
           assert(inst != newi);
         } else {
           assert(inst == newi);
@@ -660,7 +668,8 @@ public:
     if (!gutils->isConstantInstruction(&I)) {
       switch (Mode) {
       case DerivativeMode::ForwardModeSplit:
-      case DerivativeMode::ForwardMode: {
+      case DerivativeMode::ForwardMode:
+      case DerivativeMode::ForwardModeError: {
         assert(0 && "impossible branch");
         return;
       }
@@ -784,6 +793,7 @@ public:
     case AtomicRMWInst::FSub: {
 
       if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError ||
           Mode == DerivativeMode::ForwardModeSplit) {
         auto rule = [&](Value *ptr, Value *dif) -> Value * {
           if (dif == nullptr)
@@ -896,6 +906,7 @@ public:
     }
     if (!gutils->isConstantValue(&I)) {
       if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError ||
           Mode == DerivativeMode::ForwardModeSplit)
         setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
                  BuilderZ);
@@ -1230,6 +1241,7 @@ public:
           break;
         }
         case DerivativeMode::ForwardModeSplit:
+        case DerivativeMode::ForwardModeError:
         case DerivativeMode::ForwardMode: {
           IRBuilder<> Builder2(&I);
           getForwardBuilder(Builder2);
@@ -1283,7 +1295,8 @@ public:
             (Mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
             (Mode == DerivativeMode::ReverseModeCombined &&
              (forwardsShadow || backwardsShadow)) ||
-            Mode == DerivativeMode::ForwardMode) {
+            Mode == DerivativeMode::ForwardMode ||
+            Mode == DerivativeMode::ForwardModeError) {
 
           Value *valueop = nullptr;
 
@@ -1335,7 +1348,8 @@ public:
     eraseIfUnused(gep);
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(gep);
       return;
     }
@@ -1354,7 +1368,8 @@ public:
       return;
     }
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(phi);
       return;
     }
@@ -1471,7 +1486,8 @@ public:
       break;
     }
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(I);
       return;
     }
@@ -1494,7 +1510,8 @@ public:
       return;
     }
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(SI);
       return;
     }
@@ -1618,7 +1635,8 @@ public:
     eraseIfUnused(EEI);
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(EEI);
       return;
     }
@@ -1663,7 +1681,8 @@ public:
 
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(IEI);
       return;
     }
@@ -1728,7 +1747,8 @@ public:
 
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(SVI);
       return;
     }
@@ -1796,7 +1816,8 @@ public:
 
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(EVI);
       return;
     }
@@ -1861,7 +1882,8 @@ public:
       return;
 
     if (Mode == DerivativeMode::ForwardMode ||
-        Mode == DerivativeMode::ForwardModeSplit) {
+        Mode == DerivativeMode::ForwardModeSplit ||
+        Mode == DerivativeMode::ForwardModeError) {
       forwardModeInvertedPointerFallback(IVI);
       return;
     }
@@ -1918,6 +1940,7 @@ public:
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
     case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError:
       assert(0 && "should be handled above");
       return;
     case DerivativeMode::ReverseModeCombined:
@@ -2303,6 +2326,7 @@ public:
       createBinaryOperatorAdjoint(BO);
       break;
     case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError:
     case DerivativeMode::ForwardModeSplit:
       createBinaryOperatorDual(BO);
       break;
@@ -2880,7 +2904,8 @@ public:
       }
     }
 
-    if (Mode == DerivativeMode::ForwardMode) {
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
       Value *op0 = gutils->invertPointerM(orig_op0, BuilderZ);
       Value *op1 = gutils->getNewFromOriginal(MS.getArgOperand(1));
       Value *op2 = gutils->getNewFromOriginal(MS.getArgOperand(2));
@@ -3906,6 +3931,7 @@ public:
       return false;
     }
     case DerivativeMode::ForwardModeSplit:
+    case DerivativeMode::ForwardModeError:
     case DerivativeMode::ForwardMode: {
 
       IRBuilder<> Builder2(&I);
@@ -5974,7 +6000,8 @@ public:
     BuilderZ.setFastMathFlags(getFast());
 
     if (overwritten_args_map.find(&call) == overwritten_args_map.end() &&
-        Mode != DerivativeMode::ForwardMode) {
+        Mode != DerivativeMode::ForwardMode &&
+        Mode != DerivativeMode::ForwardModeError) {
       llvm::errs() << " call: " << call << "\n";
       for (auto &pair : overwritten_args_map) {
         llvm::errs() << " + " << *pair.first << "\n";
@@ -5982,9 +6009,11 @@ public:
     }
 
     assert(overwritten_args_map.find(&call) != overwritten_args_map.end() ||
-           Mode == DerivativeMode::ForwardMode);
+           Mode == DerivativeMode::ForwardMode ||
+           Mode == DerivativeMode::ForwardModeError);
     const std::vector<bool> &overwritten_args =
-        Mode == DerivativeMode::ForwardMode
+        (Mode == DerivativeMode::ForwardMode ||
+         Mode == DerivativeMode::ForwardModeError)
             ? std::vector<bool>()
             : overwritten_args_map.find(&call)->second;
 

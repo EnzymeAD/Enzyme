@@ -843,7 +843,6 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << ";\n";
       os << curIndent << "})";
       return anyVector;
-
     } else if (Def->isSubClassOf("Inst")) {
 
       os << "({\n";
@@ -1164,6 +1163,19 @@ void printDiffUse(
 
     DagInit *resultTree = cast<DagInit>(argOpEn.value());
 
+    if (intrinsic != MLIRDerivatives) {
+      os << prefix
+         << "  if (gutils->mode == DerivativeMode::ForwardModeError) {\n";
+      os << prefix
+         << "    if (!gutils->isConstantValue(const_cast<Value*>(val))) {\n";
+      os << prefix
+         << "      if (EnzymePrintDiffUse) llvm::errs() << \"Need primal of "
+            "all active operands in error propagation\\n\";\n";
+      os << prefix << "      return true;\n";
+      os << prefix << "    }\n";
+      os << prefix << "  }\n";
+    }
+
     // hasDiffeRet(resultTree)
     handleUse(resultTree, resultTree, foundPrimalUse, foundShadowUse,
               foundDiffRet, /*precondition*/ "true", tree, varNameToCondition);
@@ -1171,7 +1183,6 @@ void printDiffUse(
     os << prefix << "  // Arg " << argIdx << " : " << *resultTree << "\n";
 
     if (foundPrimalUse != "") {
-
       if (intrinsic == MLIRDerivatives)
         os << prefix << "  if (!gutils->isConstantValue(" << origName
            << "->getOperand(" << argIdx << "))";
@@ -1533,7 +1544,6 @@ static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
             os << curIndent << INDENT << "toadd = out;\n";
           }
           os << curIndent << "}\n";
-
         } else if (ListInit *lst = dyn_cast<ListInit>(ival)) {
           unsigned i = 0;
           for (auto elem : *lst) {
@@ -1814,6 +1824,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         os << "      return;\n";
 
       os << "    switch (Mode) {\n";
+      os << "      case DerivativeMode::ForwardModeError:\n";
       os << "      case DerivativeMode::ForwardModeSplit:\n";
       os << "      case DerivativeMode::ForwardMode:{\n";
       os << "        IRBuilder<> Builder2(&" << origName << ");\n";
@@ -1863,6 +1874,18 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
              << ".getOperand(" << argIdx << "))) {\n";
           os << curIndent << INDENT << "Value *dif = diffe(" << origName
              << ".getOperand(" << argIdx << "), Builder2);\n";
+          // error from https://dl.acm.org/doi/10.1145/3371128
+          // error(f(x, y)) = max(ulp(f(x, y)), abs(x / f(x, y) * df/dx *
+          // error(x)) + abs(y / f(x, y) * df/dy * error(y)))
+          // error TODO
+
+          os << " if (Mode == DerivativeMode::ForwardModeError) {\n";
+          os << "   dif = Builder2.CreateFDiv(Builder2.CreateFMul(dif, "
+                "gutils->getNewFromOriginal("
+             << origName << ".getOperand(" << argIdx
+             << "))), gutils->getNewFromOriginal(&" << origName << "));\n";
+          os << " }\n";
+
           os << curIndent << INDENT
              << "Value *arg_diff_tmp = UndefValue::get(res->getType());\n";
         }
@@ -1913,6 +1936,17 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                         "res, itmp);\n";
                   os << curIndent << INDENT << INDENT << "}\n";
                 } else {
+                  // Add the sum of the abs of errors due to each argument.
+                  // error TODO
+
+                  os << curIndent << INDENT << INDENT
+                     << "if (Mode == DerivativeMode::ForwardModeError) {\n";
+                  os << curIndent << INDENT << INDENT << INDENT
+                     << "itmp = Builder2.CreateIntrinsic(Intrinsic::fabs, "
+                        "ArrayRef<Type*>(itmp->getType()), "
+                        "ArrayRef<Value*>(itmp));\n";
+                  os << curIndent << INDENT << INDENT << INDENT << "}\n";
+
                   os << curIndent << INDENT << INDENT
                      << "arg_diff_tmp = GradientUtils::recursiveFAdd(Builder2,";
                   os << "res, itmp, {";
@@ -1942,8 +1976,18 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                                 Twine("Unknown subinitialization"));
             };
         fwdres({}, argOpEn.value());
-        if (intrinsic != MLIRDerivatives)
+        if (intrinsic != MLIRDerivatives) {
           os << curIndent << INDENT << "res = arg_diff_tmp;\n";
+          // Perform the max with 1 ulp
+          // error TODO
+          os << curIndent << INDENT
+             << "if (Mode == DerivativeMode::ForwardModeError) {\n";
+          os << curIndent << INDENT << INDENT
+             << "res = Builder2.CreateMaxNum(get1ULP(Builder2, "
+                "gutils->getNewFromOriginal(&"
+             << origName << ")), res);\n";
+          os << curIndent << INDENT << "}\n";
+        }
         os << "        }\n";
       }
     } else {
