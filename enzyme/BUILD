@@ -616,6 +616,7 @@ cc_library(
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ArithUtils",
         "@llvm-project//mlir:AsyncDialect",
+        "@llvm-project//mlir:CallOpInterfaces",
         "@llvm-project//mlir:CastInterfaces",
         "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:ControlFlowInterfaces",
