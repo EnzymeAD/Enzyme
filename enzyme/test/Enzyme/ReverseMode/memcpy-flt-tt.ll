@@ -17,7 +17,7 @@ entry:
 
 declare void @__enzyme_autodiff.f64(...)
 
-; CHECK: define internal {{(dso_local )?}}void @diffememcpy_float(double* nocapture %dst, double* nocapture %"dst'", double* nocapture readonly %src, double* nocapture %"src'", i64 %num) 
+; CHECK: define internal {{(dso_local )?}}void @diffememcpy_float(i8* nocapture %dst, i8* nocapture %"dst'", i8* nocapture readonly %src, i8* nocapture %"src'", i64 %num) 
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double}" %dst, i8* "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double}" %src, i64 %num, i1 false)
 ; CHECK-NEXT:   %2 = udiv i64 %num, 8
