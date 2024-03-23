@@ -11,7 +11,7 @@ declare void @llvm.memcpy.p0i8.p0i8.i64(i8* nocapture writeonly, i8* nocapture r
 
 define dso_local void @dmemcpy_float(i8* %dst, i8* %dstp, i8* %src, i8* %srcp, i64 %n) {
 entry:
-  tail call void (...) @__enzyme_autodiff.f64(void (double*, double*, i64)* nonnull @memcpy_float, metadata !"enzyme_dup", i8* %dst, i8* %dstp, metadata !"enzyme_dup", i8* %src, i8* %srcp, i64 %n)
+  tail call void (...) @__enzyme_autodiff.f64(void (i8*, i8*, i64)* nonnull @memcpy_float, metadata !"enzyme_dup", i8* %dst, i8* %dstp, metadata !"enzyme_dup", i8* %src, i8* %srcp, i64 %n)
   ret void
 }
 
