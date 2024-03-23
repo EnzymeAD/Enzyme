@@ -123,6 +123,7 @@ public:
     std::string prefix;
 
     switch (mode) {
+    case DerivativeMode::ForwardModeError:
     case DerivativeMode::ForwardMode:
     case DerivativeMode::ForwardModeSplit:
       prefix = "fwddiffe";
