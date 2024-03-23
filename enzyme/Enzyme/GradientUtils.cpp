@@ -4609,6 +4609,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   }
 
   switch (mode) {
+  case DerivativeMode::ForwardModeError:
   case DerivativeMode::ForwardMode: {
     Constant *newf = Logic.CreateForwardDiff(
         context, fn, retType, types, TA, false, mode, /*freeMemory*/ true,
@@ -4616,7 +4617,9 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
 
     assert(newf);
 
-    std::string prefix = "_enzyme_forward";
+    std::string prefix = (mode == DerivativeMode::ForwardMode)
+                             ? "_enzyme_forward"
+                             : "_enzyme_forwarderror";
 
     if (width > 1) {
       prefix += std::to_string(width);

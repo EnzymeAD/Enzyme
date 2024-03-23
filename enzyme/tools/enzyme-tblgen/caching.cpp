@@ -406,6 +406,8 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
 << "    case DerivativeMode::ReverseModeGradient:\n"
 << "      getReverseBuilder(Builder2);\n"
 << "      break;\n"
+<< "    case DerivativeMode::ForwardModeError:\n"
+<< "      assert(0 && \"blas forward error rules not enabled\");\n"
 << "    case DerivativeMode::ForwardMode:\n"
 << "    case DerivativeMode::ForwardModeSplit:\n"
 << "      Builder2.SetInsertPoint(BuilderZ.GetInsertBlock(),\n"
