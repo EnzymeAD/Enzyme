@@ -44,25 +44,6 @@ fn rodrigues_rotate_point(rot: &[f64], pt: &[f64], rotated_pt: &mut [f64]) {
     }
 }
 
-//void project(double const* __restrict cam, double const* __restrict X, double* __restrict proj)
-//{
-//    double const* C = &cam[3];
-//    double Xo[3], Xcam[3];
-//
-//    Xo[0] = X[0] - C[0];
-//    Xo[1] = X[1] - C[1];
-//    Xo[2] = X[2] - C[2];
-//
-//    rodrigues_rotate_point(&cam[0], Xo, Xcam);
-//
-//    proj[0] = Xcam[0] / Xcam[2];
-//    proj[1] = Xcam[1] / Xcam[2];
-//
-//    radial_distort(&cam[9], proj);
-//
-//    proj[0] = proj[0] * cam[6] + cam[7];
-//    proj[1] = proj[1] * cam[6] + cam[8];
-//}
 fn project(cam: &[f64;11], X: &[f64;3], proj: &mut [f64;2]) {
     let C = &cam[3..6];
     let mut Xo = [0.; 3];
@@ -82,6 +63,8 @@ fn project(cam: &[f64;11], X: &[f64;3], proj: &mut [f64;2]) {
     proj[0] = proj[0] * cam[6] + cam[7];
     proj[1] = proj[1] * cam[6] + cam[8];
 }
+
+
 
 pub extern "C" fn dcompute_reproj_error(
     cam: *const [f64;11], dcam: *mut [f64;11], 
@@ -132,7 +115,7 @@ pub fn compute_zach_weight_error(w: *const f64, err: *mut f64) {
 // feats: 2*p features (x,y coordinates corresponding to observations)
 // reproj_err: 2*p errors of observations
 // w_err: p weight "error" terms
-fn ba_objective(
+fn rust_ba_objective(
     n: usize,
     m: usize,
     p: usize,
@@ -151,24 +134,11 @@ fn ba_objective(
     assert_eq!(feats.len(), p * 2);
     assert_eq!(reproj_err.len(), p * 2);
     assert_eq!(w_err.len(), p);
-    //for (i = 0; i < p; i++)
-    //{
-    //    int camIdx = obs[i * 2 + 0];
-    //    int ptIdx = obs[i * 2 + 1];
-    //    compute_reproj_error(
-    //        &cams[camIdx * BA_NCAMPARAMS],
-    //        &X[ptIdx * 3],
-    //        &w[i],
-    //        &feats[i * 2],
-    //        &reproj_err[2 * i]
-    //    );
-    //}
 
     for i in 0..p {
         let cam_idx = obs[i * 2 + 0] as usize;
         let pt_idx = obs[i * 2 + 1] as usize;
         let start = cam_idx * BA_NCAMPARAMS;
-        //.try_into().unwrap()
         let cam: &[f64;11] = unsafe { cams[start..].get_unchecked(..11).try_into().unwrap_unchecked() };
         let x: &[f64;3] = unsafe { x[pt_idx * 3..].get_unchecked(..3).try_into().unwrap_unchecked() };
         let w: &[f64;1] = unsafe { w[i..].get_unchecked(..1).try_into().unwrap_unchecked() };
@@ -183,53 +153,24 @@ fn ba_objective(
     }
 }
 
-//void compute_reproj_error_b(const double *cam, double *camb, const double *X,
-//        double *Xb, const double *w, double *wb, const double *feat, double *
-//        err, double *errb) {
-//}
-//void compute_zach_weight_error_b(const double *w, double *wb, double *err,
-//        double *errb) {
-//}
-
-//extern "C" {
-//    void ba_objective(
-//        int n,
-//        int m,
-//        int p,
-//        double const* cams,
-//        double const* X,
-//        double const* w,
-//        int const* obs,
-//        double const* feats,
-//        double* reproj_err,
-//        double* w_err
-//    );
-//
-//    void dcompute_reproj_error(
-//        double const* cam,
-//        double * dcam,
-//        double const* X,
-//        double * dX,
-//        double const* w,
-//        double * wb,
-//        double const* feat,
-//        double *err,
-//        double *derr
-//    );
-//
-//    void dcompute_zach_weight_error(double const* w, double* dw, double* err, double* derr);
-//
-//    void compute_reproj_error_b(
-//        double const* cam,
-//        double * dcam,
-//        double const* X,
-//        double * dX,
-//        double const* w,
-//        double * wb,
-//        double const* feat,
-//        double *err,
-//        double *derr
-//    );
-//
-//    void compute_zach_weight_error_b(double const* w, double* dw, double* err, double* derr);
-//}
+extern "C" fn ba_objective(
+    n: usize,
+    m: usize,
+    p: usize,
+    cams: *const f64,
+    x: *const f64,
+    w: *const f64,
+    obs: *const i32,
+    feats: *const f64,
+    reproj_err: *mut f64,
+    w_err: *mut f64,
+) {
+    let cams = unsafe { std::slice::from_raw_parts(cams, n * 11) };
+    let x = unsafe { std::slice::from_raw_parts(x, m * 3) };
+    let w = unsafe { std::slice::from_raw_parts(w, p) };
+    let obs = unsafe { std::slice::from_raw_parts(obs, p * 2) };
+    let feats = unsafe { std::slice::from_raw_parts(feats, p * 2) };
+    let reproj_err = unsafe { std::slice::from_raw_parts_mut(reproj_err, p * 2) };
+    let w_err = unsafe { std::slice::from_raw_parts_mut(w_err, p) };
+    rust_ba_objective(n, m, p, cams, x, w, obs, feats, reproj_err, w_err);
+}
