@@ -142,6 +142,7 @@ MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
   switch (mode_) {
   case DerivativeMode::ForwardMode:
   case DerivativeMode::ForwardModeSplit:
+  case DerivativeMode::ForwardModeError:
     assert(false);
     break;
   case DerivativeMode::ReverseModeCombined:

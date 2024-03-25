@@ -4609,6 +4609,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   }
 
   switch (mode) {
+  case DerivativeMode::ForwardModeError:
   case DerivativeMode::ForwardMode: {
     Constant *newf = Logic.CreateForwardDiff(
         context, fn, retType, types, TA, false, mode, /*freeMemory*/ true,
@@ -4616,7 +4617,9 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
 
     assert(newf);
 
-    std::string prefix = "_enzyme_forward";
+    std::string prefix = (mode == DerivativeMode::ForwardMode)
+                             ? "_enzyme_forward"
+                             : "_enzyme_forwarderror";
 
     if (width > 1) {
       prefix += std::to_string(width);
@@ -8267,7 +8270,8 @@ void GradientUtils::forceAugmentedReturns() {
         continue;
 
       if (mode == DerivativeMode::ForwardMode ||
-          mode == DerivativeMode::ForwardModeSplit) {
+          mode == DerivativeMode::ForwardModeSplit ||
+          mode == DerivativeMode::ForwardModeError) {
         if (!isConstantValue(inst)) {
           IRBuilder<> BuilderZ(inst);
           getForwardBuilder(BuilderZ);
@@ -9133,7 +9137,38 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
   assert(isAllocationFunction(allocationfn, TLI));
 
   if (allocationfn == "__rust_alloc" || allocationfn == "__rust_alloc_zeroed") {
-    llvm_unreachable("todo - hook in rust allocation fns");
+    Type *VoidTy = Type::getVoidTy(tofree->getContext());
+    Type *IntPtrTy = orig->getType();
+    Type *RustSz = orig->getArgOperand(0)->getType();
+    Type *inTys[3] = {IntPtrTy, RustSz, RustSz};
+
+    auto FT = FunctionType::get(VoidTy, inTys, false);
+    Value *freevalue = builder.GetInsertBlock()
+                           ->getParent()
+                           ->getParent()
+                           ->getOrInsertFunction("__rust_dealloc", FT)
+                           .getCallee();
+    Value *vals[3];
+    vals[0] = builder.CreatePointerCast(tofree, IntPtrTy);
+    // size
+    vals[1] = gutils->lookupM(
+        gutils->getNewFromOriginal(orig->getArgOperand(0)), builder);
+    // alignment
+    vals[2] = gutils->lookupM(
+        gutils->getNewFromOriginal(orig->getArgOperand(1)), builder);
+    CallInst *freecall = cast<CallInst>(
+        CallInst::Create(FT, freevalue, vals, "", builder.GetInsertBlock()));
+    freecall->setDebugLoc(debuglocation);
+    if (isa<CallInst>(tofree) &&
+        cast<CallInst>(tofree)->getAttributes().hasAttribute(
+            AttributeList::ReturnIndex, Attribute::NonNull)) {
+      freecall->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+    }
+    if (Function *F = dyn_cast<Function>(freevalue))
+      freecall->setCallingConv(F->getCallingConv());
+    if (freecall->getParent() == nullptr)
+      builder.Insert(freecall);
+    return freecall;
   }
   if (allocationfn == "julia.gc_alloc_obj" ||
       allocationfn == "jl_gc_alloc_typed" ||

@@ -808,6 +808,7 @@ public:
 
       Value *shadow;
       switch (mode) {
+      case DerivativeMode::ForwardModeError:
       case DerivativeMode::ForwardModeSplit:
       case DerivativeMode::ForwardMode: {
         Value *sretPt = CI->getArgOperand(0);
@@ -1355,7 +1356,8 @@ public:
         assert(Cto);
         return FloatTruncation(
             getDefaultFloatRepr((unsigned)Cfrom->getValue().getZExtValue()),
-            getDefaultFloatRepr((unsigned)Cto->getValue().getZExtValue()));
+            getDefaultFloatRepr((unsigned)Cto->getValue().getZExtValue()),
+            mode);
       } else if (ArgSize == 4) {
         auto Cfrom = cast<ConstantInt>(CI->getArgOperand(1));
         assert(Cfrom);
@@ -1367,7 +1369,8 @@ public:
             getDefaultFloatRepr((unsigned)Cfrom->getValue().getZExtValue()),
             FloatRepresentation(
                 (unsigned)Cto_exponent->getValue().getZExtValue(),
-                (unsigned)Cto_significand->getValue().getZExtValue()));
+                (unsigned)Cto_significand->getValue().getZExtValue()),
+            mode);
       }
       llvm_unreachable("??");
     }();
@@ -1621,6 +1624,7 @@ public:
     Type *tapeType = nullptr;
     const AugmentedReturn *aug;
     switch (mode) {
+    case DerivativeMode::ForwardModeError:
     case DerivativeMode::ForwardMode:
       newFunc = Logic.CreateForwardDiff(
           context, fn, retType, constants, TA,
@@ -2107,7 +2111,7 @@ public:
         auto To = parseFloatRepr();
         if (!To)
           Invalid();
-        Tmp.push_back({*From, *To});
+        Tmp.push_back({*From, *To, TruncOpFullModuleMode});
         ConfigStr.consume_front(";");
       }
       return Tmp;
@@ -2182,6 +2186,7 @@ public:
               Fn->getName().contains("__enzyme_reverse") ||
               Fn->getName().contains("__enzyme_truncate") ||
               Fn->getName().contains("__enzyme_batch") ||
+              Fn->getName().contains("__enzyme_error_estimate") ||
               Fn->getName().contains("__enzyme_trace") ||
               Fn->getName().contains("__enzyme_condition")))
           continue;
@@ -2539,6 +2544,9 @@ public:
         } else if (Fn->getName().contains("__enzyme_fwddiff")) {
           enableEnzyme = true;
           derivativeMode = DerivativeMode::ForwardMode;
+        } else if (Fn->getName().contains("__enzyme_error_estimate")) {
+          enableEnzyme = true;
+          derivativeMode = DerivativeMode::ForwardModeError;
         } else if (Fn->getName().contains("__enzyme_fwdsplit")) {
           enableEnzyme = true;
           derivativeMode = DerivativeMode::ForwardModeSplit;
