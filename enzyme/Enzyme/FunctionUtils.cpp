@@ -7369,22 +7369,51 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
             if (!uncond_br->isConditional())
               if (uncond_br->getSuccessor(0) == br->getSuccessor(1 - bidx)) {
                 auto blk = br->getSuccessor(bidx);
-                bool legal = true;
+                int countSparse = 0;
                 for (auto &I : *blk) {
-                  if (!I.mayWriteToMemory())
-                    continue;
+                  if (auto CI = dyn_cast<CallInst>(&I)) {
+                    if (auto F = CI->getCalledFunction()) {
+                      if (F->hasFnAttribute("enzyme_sparse_accumulate")) {
+                        countSparse++;
+                      }
+                    }
+                  }
+                }
+                if (countSparse == 0)
+                  continue;
+                if (countSparse > 1) {
+                  legalToSparse = false;
+                  EmitFailure(
+                      "NoSparsification", br->getDebugLoc(), br, "F: ", F,
+                      "\nMultiple distinct sparse stores in same block: ",
+                      *blk);
+                  break;
+                }
+
+                for (auto &I : *blk) {
                   if (auto CI = dyn_cast<CallInst>(&I)) {
                     if (auto F = CI->getCalledFunction()) {
                       if (F->hasFnAttribute("enzyme_sparse_accumulate")) {
                         continue;
                       }
                     }
+                    if (isReadOnly(CI))
+                      continue;
                   }
-                  legal = false;
+                  if (!I.mayWriteToMemory())
+                    continue;
+
+                  legalToSparse = false;
+                  EmitFailure(
+                      "NoSparsification", br->getDebugLoc(), br, "F: ", F,
+                      "\nIllegal writing instruction in sparse block: ", I);
                   break;
                 }
-                if (!legal)
-                  continue;
+
+                if (!legalToSparse) {
+                  break;
+                }
+
                 auto L = LI.getLoopFor(blk);
                 if (!L) {
                   legalToSparse = false;
