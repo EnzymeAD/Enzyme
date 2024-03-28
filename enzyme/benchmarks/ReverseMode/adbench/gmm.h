@@ -47,6 +47,11 @@ extern "C" {
         alphasb, const double *means, double *meansb, const double *icf,
         double *icfb, const double *x, Wishart wishart, double *err, double *
         errb);
+    
+    void rust_dgmm_objective(int d, int k, int n, const double *alphas, double *
+            alphasb, const double *means, double *meansb, const double *icf,
+            double *icfb, const double *x, Wishart wishart, double *err, double *
+            errb);
 }
 
 void read_gmm_instance(const string& fn,
@@ -259,6 +264,35 @@ int main(const int argc, const char* argv[]) {
       gettimeofday(&end, NULL);
       json enzyme;
       enzyme["name"] = "Enzyme combined";
+      enzyme["runtime"] = tdiff(&start, &end);
+      for (unsigned i = result.gradient.size() - 5;
+           i < result.gradient.size(); i++) {
+        printf("%f ", result.gradient[i]);
+        enzyme["result"].push_back(result.gradient[i]);
+      }
+      printf("\n");
+      test_suite["tools"].push_back(enzyme);
+    }
+
+    }
+    
+    {
+
+    struct GMMInput input;
+    read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
+        input.alphas, input.means, input.icf, input.x, input.wishart, params.replicate_point);
+
+    int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+
+    struct GMMOutput result = { 0, std::vector<double>(Jcols) };
+
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+      calculate_jacobian<rust_dgmm_objective>(input, result);
+      gettimeofday(&end, NULL);
+      json enzyme;
+      enzyme["name"] = "Rust Enzyme combined";
       enzyme["runtime"] = tdiff(&start, &end);
       for (unsigned i = result.gradient.size() - 5;
            i < result.gradient.size(); i++) {
