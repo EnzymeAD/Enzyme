@@ -6230,13 +6230,15 @@ bool cannotDependOnLoopIV(const SCEV *S, const Loop *L) {
     return !L->contains(I->getParent());
   }
   if (auto addrec = dyn_cast<SCEVAddRecExpr>(S)) {
-    return false;
     if (addrec->getLoop() == L)
       return false;
     for (auto o : addrec->operands())
       if (!cannotDependOnLoopIV(o, L))
         return false;
     return true;
+  }
+  if (auto expr = dyn_cast<SCEVSignExtendExpr>(S)) {
+    return cannotDependOnLoopIV(expr->getOperand(), L);
   }
   llvm::errs() << " cannot tell if depends on loop iv: " << *S << "\n";
   return false;
