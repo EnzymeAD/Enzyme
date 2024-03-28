@@ -49,21 +49,68 @@ config.substitutions.append(('%lli', config.llvm_tools_dir + "/lli" + (" --jit-k
 config.substitutions.append(('%opt', config.llvm_tools_dir + "/opt"))
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
-config.substitutions.append(('%clang', config.llvm_tools_dir + "/clang"))
-config.substitutions.append(('%loadEnzyme', ''
-                                 + (" --enable-new-pm=0" if int(config.llvm_ver) >= 13 else "")
+
+emopt = config.enzyme_obj_root + "/Enzyme/MLIR/enzymemlir-opt"
+if len("@ENZYME_BINARY_DIR@") == 0:
+  emopt = os.path.dirname(os.path.abspath(__file__)) + "/../enzymemlir-opt"
+
+eclang = config.llvm_tools_dir + "/clang"
+if len("@ENZYME_BINARY_DIR@") == 0:
+  eclang = os.path.dirname(os.path.abspath(__file__)) + "/../enzyme-clang"
+  resource = config.llvm_tools_dir + "/../clang/staging"
+  eclang += " -resource-dir " + resource + " "
+  eclang += "-I " + os.path.dirname(os.path.abspath(__file__)) + "/Integration" 
+
+config.substitutions.append(('%eopt', emopt))
+config.substitutions.append(('%llvmver', config.llvm_ver))
+config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
+config.substitutions.append(('%clang', eclang))
+config.substitutions.append(('%O0TBAA', "-O1 -Xclang -disable-llvm-passes"))
+
+oldPM = ((" --enable-new-pm=0" if int(config.llvm_ver) >= 13 else "")
                                  + ' -load=@ENZYME_BINARY_DIR@/Enzyme/LLVMEnzyme-' + config.llvm_ver + config.llvm_shlib_ext 
-                                 + (" --enzyme-attributor=0" if int(config.llvm_ver) >= 13 else "")
-                                 + ' -enzyme-preopt=0'
-                                 ))
+                                 + (" --enzyme-attributor=0" if int(config.llvm_ver) >= 13 else ""))
+newPM = ((" --enable-new-pm=1" if int(config.llvm_ver) in (12,13) else "")
+                                 + ' -load-pass-plugin=@ENZYME_BINARY_DIR@/Enzyme/LLVMEnzyme-' + config.llvm_ver + config.llvm_shlib_ext 
+                                 + ' -load=@ENZYME_BINARY_DIR@/Enzyme/LLVMEnzyme-' + config.llvm_ver + config.llvm_shlib_ext 
+                                 + (" --enzyme-attributor=0" if int(config.llvm_ver) >= 13 else ""))
+if len("@ENZYME_BINARY_DIR@") == 0:
+  oldPM = ((" --enable-new-pm=0" if int(config.llvm_ver) >= 13 else "")
+                                 + (" --enzyme-attributor=0" if int(config.llvm_ver) >= 13 else ""))
+  newPM = ((" --enable-new-pm=1" if int(config.llvm_ver) in (12,13) else "")
+                                 + (" --enzyme-attributor=0" if int(config.llvm_ver) >= 13 else ""))
+
+oldPMOP = oldPM
+newPMOP = newPM
+if int(config.llvm_ver) == 16:
+  newPM += " -opaque-pointers=0"
+  oldPM += " -opaque-pointers=0"
+
+config.substitutions.append(('%loadEnzyme', oldPM if int(config.llvm_ver) < 16 else newPM))
+config.substitutions.append(('%newLoadEnzyme', newPM))
+config.substitutions.append(('%OPloadEnzyme', oldPMOP if int(config.llvm_ver) < 16 else newPMOP))
+config.substitutions.append(('%OPnewLoadEnzyme', newPMOP))
+config.substitutions.append(('%enzyme', ('-enzyme' if int(config.llvm_ver) < 16 else '-passes="enzyme"')))
+config.substitutions.append(('%simplifycfg', ("simplify-cfg" if int(config.llvm_ver) < 11 else "simplifycfg")))
+config.substitutions.append(('%loopmssa', ("loop" if int(config.llvm_ver) < 11 else "loop-mssa")))
+
 config.substitutions.append(('%loadBC', ''
                                  + ' @ENZYME_BINARY_DIR@/BCLoad/BCPass-' + config.llvm_ver + config.llvm_shlib_ext
                                  ))
 config.substitutions.append(('%BClibdir', '@ENZYME_SOURCE_DIR@/bclib/'))
-config.substitutions.append(('%loadClangEnzyme', ''
-                                 + (" -fno-experimental-new-pass-manager" if int(config.llvm_ver) >= 13 else "")
-                                 + ' -Xclang -load -Xclang @ENZYME_BINARY_DIR@/Enzyme/ClangEnzyme-' + config.llvm_ver + config.llvm_shlib_ext
-                                 ))
+
+oldPM = (((" -fno-experimental-new-pass-manager" if int(config.llvm_ver) < 14 else "-flegacy-pass-manager") if int(config.llvm_ver) >= 13 else "")
+          + ' -Xclang -load -Xclang @ENZYME_BINARY_DIR@/Enzyme/ClangEnzyme-' + config.llvm_ver + config.llvm_shlib_ext)
+newPM = ((" -fexperimental-new-pass-manager" if int(config.llvm_ver) < 13 else "")
+          + ' -fpass-plugin=@ENZYME_BINARY_DIR@/Enzyme/ClangEnzyme-' + config.llvm_ver + config.llvm_shlib_ext
+          + ' -Xclang -load -Xclang @ENZYME_BINARY_DIR@/Enzyme/ClangEnzyme-' + config.llvm_ver + config.llvm_shlib_ext)
+
+if len("@ENZYME_BINARY_DIR@") == 0:
+  oldPM = ((" -fno-experimental-new-pass-manager" if int(config.llvm_ver) < 14 else "-flegacy-pass-manager") if int(config.llvm_ver) >= 13 else "")
+  newPM = (" -fexperimental-new-pass-manager" if int(config.llvm_ver) < 13 else "")
+
+config.substitutions.append(('%loadClangEnzyme', oldPM if int(config.llvm_ver) < 15 else newPM))
+config.substitutions.append(('%newLoadClangEnzyme', newPM))
 
 # Let the main config do the real work.
 lit_config.load_config(config, "@ENZYME_SOURCE_DIR@/benchmarks/lit.cfg.py")
