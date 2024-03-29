@@ -2,8 +2,8 @@
 use libm::lgamma;
 
 #[no_mangle]
-pub extern "C" fn rust_dgmm_objective(d: usize, k: usize, n: usize, alphas: *const f64, dalphas: *mut f64, means: *const f64, dmeans: *mut f64, icf: *const f64, dicf: *mut f64, x: *const f64, wishart: *const Wishart, err: *mut f64, derr: *mut f64) {
-    dgmm_objective(d, k, n, alphas, dalphas, means, dmeans, icf, dicf, x, wishart, err, derr);
+pub extern "C" fn rust_dgmm_objective(d: i32, k: i32, n: i32, alphas: *const f64, dalphas: *mut f64, means: *const f64, dmeans: *mut f64, icf: *const f64, dicf: *mut f64, x: *const f64, wishart: *const Wishart, err: *mut f64, derr: *mut f64) {
+    //dgmm_objective(d as usize, k as usize, n as usize, alphas, dalphas, means, dmeans, icf, dicf, x, wishart, err, derr);
 }
 
 #[autodiff(dgmm_objective, Reverse, Const, Const, Const, Duplicated, Duplicated, Duplicated, Const, Const, Duplicated)]
@@ -104,10 +104,10 @@ fn log_gamma_distrib(a: f64, p: f64) -> f64 {
 #[repr(C)]
 pub struct Wishart {
     pub gamma: f64,
-    pub m: usize,
+    pub m: i32,
 }
 fn log_wishart_prior(p: usize, k: usize, wishart: Wishart, sum_qs: &[f64], qdiags: &[f64], icf: &[f64]) -> f64 {
-    let n = p + wishart.m + 1;
+    let n = p + wishart.m as usize + 1;
     let icf_sz = p * (p + 1) / 2;
 
     let c = n as f64 * p as f64 * (wishart.gamma.ln() - 0.5 * 2f64.ln()) - log_gamma_distrib(0.5 * n as f64, p as f64);
