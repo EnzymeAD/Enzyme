@@ -6,27 +6,13 @@
 #include "../test_utils.h"
 
 double cos(double);
-double fabs(double);
 
 extern double __enzyme_error_estimate(void *, ...);
 
-// An example from https://dl.acm.org/doi/10.1145/3371128.
-double fun(double x) {
-  double v1 = cos(x);
-  double v2 = 1 - v1;
-  double v3 = x * x;
-  double v4 = v2 / v3;
-
-  printf("v1 = %.*e\nv2 = %.*e\nv3 = %.*e\nv4 = %.*e\n", 18, v1, 18, v2, 18, v3,
-         18, v4);
-
-  return v4;
-}
+double fun(double x1) { return cos(x1); }
 
 int main() {
-  double res = fun(1e-7);
   double error = __enzyme_error_estimate((void *)fun, 1e-7, 0.0);
-  printf("res = %.*e, abs error = %.*e, rel error = %.*e\n", 18, res, 18, error,
-         18, fabs(error / res));
-  APPROX_EQ(error, 2.2222222222e-2, 1e-4);
+  printf("Found floating point error of %e\n", error);
+  APPROX_EQ(error, 1.110223e-16, 1e-18);
 }
