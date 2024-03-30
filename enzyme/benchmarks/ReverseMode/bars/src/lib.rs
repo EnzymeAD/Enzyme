@@ -1,4 +1,5 @@
 #![feature(autodiff)]
+#![feature(slice_first_last_chunk)]
 #![allow(non_snake_case)]
 
 //#define BA_NCAMPARAMS 11
@@ -8,10 +9,13 @@ fn sqsum(x: &[f64]) -> f64 {
     x.iter().map(|&v| v * v).sum()
 }
 
-fn cross(a: &[f64], b: &[f64], out: &mut [f64]) {
-    out[0] = a[1] * b[2] - a[2] * b[1];
-    out[1] = a[2] * b[0] - a[0] * b[2];
-    out[2] = a[0] * b[1] - a[1] * b[0];
+#[inline]
+fn cross(a: &[f64; 3], b: &[f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
 }
 
 fn radial_distort(rad_params: &[f64], proj: &mut [f64]) {
@@ -21,30 +25,34 @@ fn radial_distort(rad_params: &[f64], proj: &mut [f64]) {
     proj[1] = proj[1] * l;
 }
 
-fn rodrigues_rotate_point(rot: &[f64], pt: &[f64], rotated_pt: &mut [f64]) {
+fn rodrigues_rotate_point(rot: &[f64; 3], pt: &[f64; 3], rotated_pt: &mut [f64; 3]) {
     let sqtheta = sqsum(rot);
     if sqtheta != 0. {
         let theta = sqtheta.sqrt();
         let costheta = theta.cos();
         let sintheta = theta.sin();
         let theta_inverse = 1. / theta;
-        let w = rot.iter().map(|&v| v * theta_inverse).collect::<Vec<_>>();
-        let mut w_cross_pt = [0.; 3];
-        cross(&w, &pt, &mut w_cross_pt);
+        let w = {
+            let mut w = [0.0; 3];
+            w.iter_mut()
+                .zip(rot.iter())
+                .for_each(|(w, v)| *w = v * theta_inverse);
+            w
+        };
+        let w_cross_pt = cross(&w, &pt);
         let tmp = (w[0] * pt[0] + w[1] * pt[1] + w[2] * pt[2]) * (1. - costheta);
         for i in 0..3 {
             rotated_pt[i] = pt[i] * costheta + w_cross_pt[i] * sintheta + w[i] * tmp;
         }
     } else {
-        let mut rot_cross_pt = [0.; 3];
-        cross(&rot, &pt, &mut rot_cross_pt);
+        let rot_cross_pt = cross(&rot, &pt);
         for i in 0..3 {
             rotated_pt[i] = pt[i] + rot_cross_pt[i];
         }
     }
 }
 
-fn project(cam: &[f64;11], X: &[f64;3], proj: &mut [f64;2]) {
+fn project(cam: &[f64; 11], X: &[f64; 3], proj: &mut [f64; 2]) {
     let C = &cam[3..6];
     let mut Xo = [0.; 3];
     let mut Xcam = [0.; 3];
@@ -53,7 +61,7 @@ fn project(cam: &[f64;11], X: &[f64;3], proj: &mut [f64;2]) {
     Xo[1] = X[1] - C[1];
     Xo[2] = X[2] - C[2];
 
-    rodrigues_rotate_point(&cam[0..3], &Xo, &mut Xcam);
+    rodrigues_rotate_point(cam.first_chunk::<3>().unwrap(), &Xo, &mut Xcam);
 
     proj[0] = Xcam[0] / Xcam[2];
     proj[1] = Xcam[1] / Xcam[2];
@@ -64,26 +72,47 @@ fn project(cam: &[f64;11], X: &[f64;3], proj: &mut [f64;2]) {
     proj[1] = proj[1] * cam[6] + cam[8];
 }
 
-
 #[no_mangle]
 pub extern "C" fn dcompute_reproj_error(
-    cam: *const [f64;11], dcam: *mut [f64;11], 
-    x: *const [f64;3], dx: *mut [f64;3], 
-    w: *const [f64;1], wb: *mut [f64;1], 
-    feat: *const [f64;2], 
-    err: *mut [f64;2], derr: *mut [f64;2]) {
-        rust_dcompute_reproj_error(cam, dcam, x, dx, w, wb, feat, err, derr);
+    cam: *const [f64; 11],
+    dcam: *mut [f64; 11],
+    x: *const [f64; 3],
+    dx: *mut [f64; 3],
+    w: *const [f64; 1],
+    wb: *mut [f64; 1],
+    feat: *const [f64; 2],
+    err: *mut [f64; 2],
+    derr: *mut [f64; 2],
+) {
+    rust_dcompute_reproj_error(cam, dcam, x, dx, w, wb, feat, err, derr);
 }
 
 #[no_mangle]
 pub extern "C" fn dcompute_zach_weight_error(
-    w: *const f64, dw: *mut f64, 
-    err: *mut f64, derr: *mut f64) {
-        rust_dcompute_zach_weight_error(w, dw, err, derr);
+    w: *const f64,
+    dw: *mut f64,
+    err: *mut f64,
+    derr: *mut f64,
+) {
+    rust_dcompute_zach_weight_error(w, dw, err, derr);
 }
 
-#[autodiff(rust_dcompute_reproj_error, Reverse, Duplicated, Duplicated, Duplicated, Const, Duplicated)]
-pub fn compute_reproj_error(cam: *const [f64;11], x: *const [f64;3], w: *const [f64;1], feat: *const [f64;2], err: *mut [f64;2]) {
+#[autodiff(
+    rust_dcompute_reproj_error,
+    Reverse,
+    Duplicated,
+    Duplicated,
+    Duplicated,
+    Const,
+    Duplicated
+)]
+pub fn compute_reproj_error(
+    cam: *const [f64; 11],
+    x: *const [f64; 3],
+    w: *const [f64; 1],
+    feat: *const [f64; 2],
+    err: *mut [f64; 2],
+) {
     let cam = unsafe { &*cam };
     let w = unsafe { *(*w).get_unchecked(0) };
     let x = unsafe { &*x };
@@ -140,11 +169,31 @@ fn rust_ba_objective(
         let cam_idx = obs[i * 2 + 0] as usize;
         let pt_idx = obs[i * 2 + 1] as usize;
         let start = cam_idx * BA_NCAMPARAMS;
-        let cam: &[f64;11] = unsafe { cams[start..].get_unchecked(..11).try_into().unwrap_unchecked() };
-        let x: &[f64;3] = unsafe { x[pt_idx * 3..].get_unchecked(..3).try_into().unwrap_unchecked() };
-        let w: &[f64;1] = unsafe { w[i..].get_unchecked(..1).try_into().unwrap_unchecked() };
-        let feat: &[f64;2] = unsafe { feats[i * 2..].get_unchecked(..2).try_into().unwrap_unchecked() };
-        let reproj_err: &mut [f64;2] = unsafe { reproj_err[i * 2..].get_unchecked_mut(..2).try_into().unwrap_unchecked() };
+        let cam: &[f64; 11] = unsafe {
+            cams[start..]
+                .get_unchecked(..11)
+                .try_into()
+                .unwrap_unchecked()
+        };
+        let x: &[f64; 3] = unsafe {
+            x[pt_idx * 3..]
+                .get_unchecked(..3)
+                .try_into()
+                .unwrap_unchecked()
+        };
+        let w: &[f64; 1] = unsafe { w[i..].get_unchecked(..1).try_into().unwrap_unchecked() };
+        let feat: &[f64; 2] = unsafe {
+            feats[i * 2..]
+                .get_unchecked(..2)
+                .try_into()
+                .unwrap_unchecked()
+        };
+        let reproj_err: &mut [f64; 2] = unsafe {
+            reproj_err[i * 2..]
+                .get_unchecked_mut(..2)
+                .try_into()
+                .unwrap_unchecked()
+        };
         compute_reproj_error(cam, x, w, feat, reproj_err);
     }
 
