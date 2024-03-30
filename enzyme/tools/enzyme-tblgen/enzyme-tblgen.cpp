@@ -1824,7 +1824,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         os << "      return;\n";
 
       os << "    switch (Mode) {\n";
-      os << "      case DerivativeMode::ForwardModeError:\n";
       os << "      case DerivativeMode::ForwardModeSplit:\n";
       os << "      case DerivativeMode::ForwardMode:{\n";
       os << "        IRBuilder<> Builder2(&" << origName << ");\n";
@@ -1874,18 +1873,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
              << ".getOperand(" << argIdx << "))) {\n";
           os << curIndent << INDENT << "Value *dif = diffe(" << origName
              << ".getOperand(" << argIdx << "), Builder2);\n";
-          // error from https://dl.acm.org/doi/10.1145/3371128
-          // error(f(x, y)) = max(ulp(f(x, y)), abs(x / f(x, y) * df/dx *
-          // error(x)) + abs(y / f(x, y) * df/dy * error(y)))
-          // error TODO
-
-          os << " if (Mode == DerivativeMode::ForwardModeError) {\n";
-          os << "   dif = Builder2.CreateFDiv(Builder2.CreateFMul(dif, "
-                "gutils->getNewFromOriginal("
-             << origName << ".getOperand(" << argIdx
-             << "))), gutils->getNewFromOriginal(&" << origName << "));\n";
-          os << " }\n";
-
           os << curIndent << INDENT
              << "Value *arg_diff_tmp = UndefValue::get(res->getType());\n";
         }
@@ -1936,17 +1923,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                         "res, itmp);\n";
                   os << curIndent << INDENT << INDENT << "}\n";
                 } else {
-                  // Add the sum of the abs of errors due to each argument.
-                  // error TODO
-
-                  os << curIndent << INDENT << INDENT
-                     << "if (Mode == DerivativeMode::ForwardModeError) {\n";
-                  os << curIndent << INDENT << INDENT << INDENT
-                     << "itmp = Builder2.CreateIntrinsic(Intrinsic::fabs, "
-                        "ArrayRef<Type*>(itmp->getType()), "
-                        "ArrayRef<Value*>(itmp));\n";
-                  os << curIndent << INDENT << INDENT << INDENT << "}\n";
-
                   os << curIndent << INDENT << INDENT
                      << "arg_diff_tmp = GradientUtils::recursiveFAdd(Builder2,";
                   os << "res, itmp, {";
@@ -1978,15 +1954,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         fwdres({}, argOpEn.value());
         if (intrinsic != MLIRDerivatives) {
           os << curIndent << INDENT << "res = arg_diff_tmp;\n";
-          // Perform the max with 1 ulp
-          // error TODO
-          os << curIndent << INDENT
-             << "if (Mode == DerivativeMode::ForwardModeError) {\n";
-          os << curIndent << INDENT << INDENT
-             << "res = Builder2.CreateMaxNum(get1ULP(Builder2, "
-                "gutils->getNewFromOriginal(&"
-             << origName << ")), res);\n";
-          os << curIndent << INDENT << "}\n";
         }
         os << "        }\n";
       }
@@ -2017,6 +1984,130 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        break;\n";
     }
     os << "      }\n";
+
+    // forward error TODO: `ForwardFromSummedReverse` behavior also for custom derivatives.
+    if (intrinsic != MLIRDerivatives) {
+      os << "      case DerivativeMode::ForwardModeError: {\n";
+      os << "        IRBuilder<> Builder2(&" << origName << ");\n";
+      os << "        getForwardBuilder(Builder2);\n";
+      os << "Value *res = "
+         << "Constant::getNullValue(gutils->getShadowType(" << origName
+         << "."
+            "getType()));\n";
+      for (auto argOpEn : enumerate(*argOps)) {
+        size_t argIdx = argOpEn.index();
+
+        const char *curIndent = "        ";
+
+        if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+          auto opName = resultRoot->getOperator()->getAsString();
+          auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
+          if (Def->isSubClassOf("InactiveArgSpec")) {
+            if (Def->getValueAsBit("asserting"))
+              os << " assert(gutils->isConstantValue(" << origName
+                 << ".getOperand(" << argIdx << ")));\n";
+            continue;
+          }
+        }
+
+        os << curIndent << "if (!gutils->isConstantValue(" << origName
+           << ".getOperand(" << argIdx << "))) {\n";
+        os << curIndent << INDENT << "Value *dif = diffe(" << origName
+           << ".getOperand(" << argIdx << "), Builder2);\n";
+        // error from https://dl.acm.org/doi/10.1145/3371128
+        // error(f(x, y)) = max(ulp(f(x, y)), abs(x / f(x, y) * df/dx *
+        // error(x)) + abs(y / f(x, y) * df/dy * error(y)))
+
+        os << "   dif = Builder2.CreateFDiv(Builder2.CreateFMul(dif, "
+              "gutils->getNewFromOriginal("
+           << origName << ".getOperand(" << argIdx
+           << "))), gutils->getNewFromOriginal(&" << origName << "));\n";
+
+        os << curIndent << INDENT
+           << "Value *arg_diff_tmp = UndefValue::get(res->getType());\n";
+
+        initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(),
+                        "local");
+        std::function<void(ArrayRef<unsigned>, Init *)> fwdres =
+            [&](ArrayRef<unsigned> idx, Init *ival) {
+              if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
+                auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
+                if (Def->isSubClassOf("MultiReturn")) {
+                  unsigned i = 0;
+                  for (auto r : resultTree->getArgs()) {
+                    SmallVector<unsigned, 2> next(idx.begin(), idx.end());
+                    next.push_back(i);
+                    i++;
+                    fwdres(next, r);
+                  }
+                  return;
+                }
+                if (Def->isSubClassOf("InactiveArgSpec")) {
+                  return;
+                }
+                os << curIndent << INDENT << "{\n";
+                os << curIndent << INDENT << INDENT << "Value *itmp = ";
+                ArrayRef<unsigned> retidx{};
+                bool vectorValued =
+                    handle(Twine(curIndent) + INDENT + INDENT, "fwdarg", os,
+                           pattern, resultTree, "Builder2", nameToOrdinal,
+                           /*lookup*/ false, retidx, origName,
+                           /*newFromOriginal*/ true, intrinsic);
+                os << ";\n";
+                (void)vectorValued;
+                assert(vectorValued);
+
+                // Add the sum of the abs of errors due to each argument.
+
+                os << curIndent << INDENT << INDENT << INDENT
+                   << "itmp = Builder2.CreateIntrinsic(Intrinsic::fabs, "
+                      "ArrayRef<Type*>(itmp->getType()), "
+                      "ArrayRef<Value*>(itmp));\n";
+
+                os << curIndent << INDENT << INDENT
+                   << "arg_diff_tmp = "
+                      "GradientUtils::recursiveFAdd(Builder2,";
+                os << "res, itmp, {";
+                {
+                  bool seen = false;
+                  for (auto i : idx) {
+                    if (seen)
+                      os << ", ";
+                    os << i;
+                    seen = true;
+                  }
+                }
+
+                os << "}, {}, arg_diff_tmp, gutils->getWidth() != 1);\n";
+                os << curIndent << INDENT << "}\n";
+              } else if (ListInit *lst = dyn_cast<ListInit>(ival)) {
+                unsigned i = 0;
+                for (auto r : *lst) {
+                  SmallVector<unsigned, 2> next(idx.begin(), idx.end());
+                  next.push_back(i);
+                  i++;
+                  fwdres(next, r);
+                }
+              } else
+                PrintFatalError(pattern->getLoc(),
+                                Twine("Unknown subinitialization"));
+            };
+        fwdres({}, argOpEn.value());
+        os << curIndent << INDENT << "res = arg_diff_tmp;\n";
+        // Perform the max with 1 ulp
+        // error TODO
+        os << curIndent << INDENT << INDENT
+           << "res = Builder2.CreateMaxNum(get1ULP(Builder2, "
+              "gutils->getNewFromOriginal(&"
+           << origName << ")), res);\n";
+        os << curIndent << INDENT << "}\n";
+      }
+
+      os << "        assert(res);\n";
+      os << "        setDiffe(&" << origName << ", res, Builder2);\n";
+      os << "        break;\n";
+      os << "      }\n";
+    }
 
     if (intrinsic != MLIRDerivatives) {
       os << "      case DerivativeMode::ReverseModeGradient:\n";
