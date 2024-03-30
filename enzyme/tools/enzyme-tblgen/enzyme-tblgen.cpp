@@ -1985,7 +1985,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     }
     os << "      }\n";
 
-    // forward error TODO: `ForwardFromSummedReverse` behavior also for custom derivatives.
+    // forward error TODO: `ForwardFromSummedReverse` behavior
+    // also for custom derivatives.
     if (intrinsic != MLIRDerivatives) {
       os << "      case DerivativeMode::ForwardModeError: {\n";
       os << "        IRBuilder<> Builder2(&" << origName << ");\n";

@@ -3099,7 +3099,6 @@ llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
   auto absres = builder.CreateIntrinsic(Intrinsic::fabs,
                                         ArrayRef<Type *>(diff->getType()),
                                         ArrayRef<Value *>(diff));
-  
 
   return absres;
 }
