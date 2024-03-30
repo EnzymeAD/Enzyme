@@ -2,7 +2,7 @@
 
 .PHONY: clean
 
-dir=/h/344/drehwald/prog/Enzyme/enzyme
+dir := $(abspath $(lastword $(MAKEFILE_LIST))/../../../..)
 
 clean:
 	rm -f *.ll *.o results.txt results.json
