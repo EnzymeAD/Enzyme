@@ -1990,7 +1990,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "      case DerivativeMode::ForwardModeError: {\n";
       os << "        IRBuilder<> Builder2(&" << origName << ");\n";
       os << "        getForwardBuilder(Builder2);\n";
-      os << "Value *res = "
+      os << "        Value *res = "
          << "Constant::getNullValue(gutils->getShadowType(" << origName
          << "."
             "getType()));\n";
@@ -2018,7 +2018,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         // error(f(x, y)) = max(ulp(f(x, y)), abs(x / f(x, y) * df/dx *
         // error(x)) + abs(y / f(x, y) * df/dy * error(y)))
 
-        os << "   dif = Builder2.CreateFDiv(Builder2.CreateFMul(dif, "
+        os << curIndent << INDENT
+           << "dif = Builder2.CreateFDiv(Builder2.CreateFMul(dif, "
               "gutils->getNewFromOriginal("
            << origName << ".getOperand(" << argIdx
            << "))), gutils->getNewFromOriginal(&" << origName << "));\n";
@@ -2059,7 +2060,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
                 // Add the sum of the abs of errors due to each argument.
 
-                os << curIndent << INDENT << INDENT << INDENT
+                os << curIndent << INDENT << INDENT
                    << "itmp = Builder2.CreateIntrinsic(Intrinsic::fabs, "
                       "ArrayRef<Type*>(itmp->getType()), "
                       "ArrayRef<Value*>(itmp));\n";
@@ -2096,11 +2097,11 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         os << curIndent << INDENT << "res = arg_diff_tmp;\n";
         // Perform the max with 1 ulp
         // error TODO
-        os << curIndent << INDENT << INDENT
+        os << curIndent << INDENT
            << "res = Builder2.CreateMaxNum(get1ULP(Builder2, "
               "gutils->getNewFromOriginal(&"
            << origName << ")), res);\n";
-        os << curIndent << INDENT << "}\n";
+        os << curIndent << "}\n";
       }
 
       os << "        assert(res);\n";
