@@ -1431,6 +1431,15 @@ public:
           if (TR.query(orig_op0)[{-1}] == BaseType::Integer &&
               TR.query(&I)[{-1}] == BaseType::Integer)
             return;
+          if (looseTypeAnalysis) {
+            if (auto ET = I.getSrcTy()->getScalarType())
+              if (ET->isIntOrIntVectorTy()) {
+                EmitWarning("CannotDeduceType", I,
+                            "failed to deduce adding type of cast ", I,
+                            " assumed integral from src");
+                return;
+              }
+          }
           std::string str;
           raw_string_ostream ss(str);
           ss << "Cannot deduce adding type (cast) of " << I;
