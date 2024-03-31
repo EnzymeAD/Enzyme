@@ -5,6 +5,7 @@
 
 #include "../test_utils.h"
 
+double sin(double);
 double cos(double);
 double fabs(double);
 
@@ -16,9 +17,10 @@ double fun(double x) {
   double v2 = 1 - v1;
   double v3 = x * x;
   double v4 = v2 / v3;
+  double v5 = sin(v4);
 
-  printf("v1 = %.*e\nv2 = %.*e\nv3 = %.*e\nv4 = %.*e\n", 18, v1, 18, v2, 18, v3,
-         18, v4);
+  printf("v1 = %18e, v2 = %18e, v3 = %18e, v4 = %18e, v5 = %18e\n", v1, v2, v3,
+         v4, v5);
 
   return v4;
 }
