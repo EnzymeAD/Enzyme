@@ -8,12 +8,17 @@ edition = "2021"
 [lib]
 crate-type = ["lib"]
 
+[features]
+libm = ["dep:libm"]
+
 [profile.release]
 lto = "fat"
 opt-level = 3
+#debug = true
+#strip = "none"
 
 [profile.dev]
 lto = "fat"
 
 [dependencies]
-libm = "0.2.8"
+libm = { version = "0.2.8", optional = true }

@@ -1,6 +1,20 @@
 #![feature(autodiff)]
-use libm::lgamma;
 use std::f64::consts::PI;
+
+#[cfg(feature = "libm")]
+use libm::lgamma;
+
+#[cfg(not(feature = "libm"))]
+mod cmath {
+    extern "C" {
+        pub fn lgamma(x: f64) -> f64;
+    }
+}
+#[cfg(not(feature = "libm"))]
+#[inline]
+fn lgamma(x: f64) -> f64 {
+    unsafe { cmath::lgamma(x) }
+}
 
 #[no_mangle]
 pub extern "C" fn rust_dgmm_objective(d: i32, k: i32, n: i32, alphas: *const f64, dalphas: *mut f64, means: *const f64, dmeans: *mut f64, icf: *const f64, dicf: *mut f64, x: *const f64, wishart: *const Wishart, err: *mut f64, derr: *mut f64) {
