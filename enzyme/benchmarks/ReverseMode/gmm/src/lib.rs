@@ -18,27 +18,50 @@ fn lgamma(x: f64) -> f64 {
 
 #[no_mangle]
 pub extern "C" fn rust_dgmm_objective(d: i32, k: i32, n: i32, alphas: *const f64, dalphas: *mut f64, means: *const f64, dmeans: *mut f64, icf: *const f64, dicf: *mut f64, x: *const f64, wishart: *const Wishart, err: *mut f64, derr: *mut f64) {
-    dgmm_objective(d as usize, k as usize, n as usize, alphas, dalphas, means, dmeans, icf, dicf, x, wishart, err, derr);
-}
-
-#[no_mangle]
-pub extern "C" fn rust_gmm_objective(d: i32, k: i32, n: i32, alphas: *const f64, means: *const f64, icf: *const f64, x: *const f64, wishart: *const Wishart, err: *mut f64) {
-    gmm_objective_c(d as usize, k as usize, n as usize, alphas, means, icf, x, wishart, err);
-}
-
-#[autodiff(dgmm_objective, Reverse, Const, Const, Const, Duplicated, Duplicated, Duplicated, Const, Const, Duplicated)]
-pub fn gmm_objective_c(d: usize, k: usize, n: usize, alphas: *const f64, means: *const f64, icf: *const f64, x: *const f64, wishart: *const Wishart, err: *mut f64) {
+    let k = k as usize;
+    let n = n as usize;
+    let d = d as usize;
     let alphas = unsafe { std::slice::from_raw_parts(alphas, k) };
     let means = unsafe { std::slice::from_raw_parts(means, k * d) };
     let icf = unsafe { std::slice::from_raw_parts(icf, k * d * (d + 1) / 2) };
     let x = unsafe { std::slice::from_raw_parts(x, n * d) };
-    let wishart: Wishart = unsafe { *wishart };
+    //let wishart: Wishart = unsafe { *wishart };
+    let mut my_err = unsafe { *err };
+
+    let mut d_alphas = unsafe { std::slice::from_raw_parts_mut(dalphas, k) };
+    let mut d_means = unsafe { std::slice::from_raw_parts_mut(dmeans, k * d) };
+    let mut d_icf = unsafe { std::slice::from_raw_parts_mut(dicf, k * d * (d + 1) / 2) };
+    let mut my_derr = unsafe { *derr };
+
+    dgmm_objective(d, k, n, alphas, d_alphas, means, d_means, icf, d_icf, x, wishart, &mut my_err, &mut my_derr);
+
+    unsafe { *err = my_err };
+    unsafe { *derr = my_derr };
+}
+
+#[no_mangle]
+pub extern "C" fn rust_gmm_objective(d: i32, k: i32, n: i32, alphas: *const f64, means: *const f64, icf: *const f64, x: *const f64, wishart: *const Wishart, err: *mut f64) {
+    let k = k as usize;
+    let n = n as usize;
+    let d = d as usize;
+    let alphas = unsafe { std::slice::from_raw_parts(alphas, k) };
+    let means = unsafe { std::slice::from_raw_parts(means, k * d) };
+    let icf = unsafe { std::slice::from_raw_parts(icf, k * d * (d + 1) / 2) };
+    let x = unsafe { std::slice::from_raw_parts(x, n * d) };
+    //let wishart: Wishart = unsafe { *wishart };
     let mut my_err = unsafe { *err };
     gmm_objective(d, k, n, alphas, means, icf, x, wishart, &mut my_err);
     unsafe { *err = my_err };
 }
 
-pub fn gmm_objective(d: usize, k: usize, n: usize, alphas: &[f64], means: &[f64], icf: &[f64], x: &[f64], wishart: Wishart, err: &mut f64) {
+//#[autodiff(dgmm_objective, Reverse, Const, Const, Const, Duplicated, Duplicated, Duplicated, Const, Const, Duplicated)]
+//pub fn gmm_objective_c(d: usize, k: usize, n: usize, alphas: *const f64, means: *const f64, icf: *const f64, x: *const f64, wishart: *const Wishart, err: *mut f64) {
+//    gmm_objective(d, k, n, alphas, means, icf, x, wishart, &mut my_err);
+//}
+
+#[autodiff(dgmm_objective, Reverse, Const, Const, Const, Duplicated, Duplicated, Duplicated, Const, Const, Duplicated)]
+pub fn gmm_objective(d: usize, k: usize, n: usize, alphas: &[f64], means: &[f64], icf: &[f64], x: &[f64], wishart: *const Wishart, err: &mut f64) {
+    let wishart: Wishart = unsafe { *wishart };
     let constant = -(n as f64) * d as f64 * 0.5 * (2.0 * PI).ln();
     let icf_sz = d * (d + 1) / 2;
     let mut qdiags = vec![0.; d * k];
@@ -118,7 +141,7 @@ fn log_sum_exp(n: usize, x: &[f64]) -> f64 {
     semx.ln() + mx
 }
 fn log_gamma_distrib(a: f64, p: f64) -> f64 {
-    0.25 * p * (p - 1.) * std::f64::consts::PI.ln() + (1..=p as usize).map(|j| lgamma(a + 0.5 * (1. - j as f64))).sum::<f64>()
+    0.25 * p * (p - 1.) * PI.ln() + (1..=p as usize).map(|j| lgamma(a + 0.5 * (1. - j as f64))).sum::<f64>()
 }
 
 #[derive(Clone, Copy)]
