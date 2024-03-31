@@ -91,6 +91,8 @@ extern llvm::StringMap<
                        llvm::Value *&, llvm::Value *&)>>
     customFwdCallHandlers;
 
+constexpr int IndexMappingError = 0x0000fffd;
+
 extern "C" {
 extern llvm::cl::opt<bool> EnzymeRuntimeActivityCheck;
 extern llvm::cl::opt<bool> EnzymeInactiveDynamic;

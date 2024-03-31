@@ -6215,7 +6215,7 @@ public:
               auto idx = getIndex(&call, CacheType::Shadow, BuilderZ);
               invertedReturn =
                   gutils->cacheForReverse(BuilderZ, placeholder, idx);
-              if (idx == -2) {
+              if (idx == IndexMappingError) {
                 if (placeholder->getType() != invertedReturn->getType())
                   llvm::errs() << " place: " << *placeholder
                                << "  invRet: " << *invertedReturn;

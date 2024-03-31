@@ -243,7 +243,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       continue;
     }
     if (auto AT = dyn_cast<ArrayType>(VT)) {
-      assert(i < AT->getNumElements());
+      assert((size_t)i < AT->getNumElements());
       VT = AT->getElementType();
       continue;
     }
