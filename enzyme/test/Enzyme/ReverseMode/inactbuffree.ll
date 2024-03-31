@@ -34,7 +34,7 @@ entry:
 
 define double @dsquare(double %x) {
 entry:
-  %call = tail call double @__enzyme_autodiff(i8* bitcast (double (double, i64)* @square to i8*), double %x, i64 0)
+  %call = tail call double @__enzyme_autodiff(i8* bitcast (double (double, i64, i64)* @square to i8*), double %x, i64 0)
   ret double %call
 }
 

@@ -4724,6 +4724,10 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       return;
     }
+    if (funcName == "_ZNSt6chrono3_V212steady_clock3nowEv") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
 
     /// MPI
     if (startsWith(funcName, "PMPI_"))

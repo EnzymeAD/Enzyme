@@ -6289,13 +6289,31 @@ public:
 
       // First test if the return is a potential pointer and needed for the
       // reverse pass
-      bool escapingNeededAllocation = EnzymeGlobalActivity;
+      bool escapingNeededAllocation = false;
 
-      if (!escapingNeededAllocation)
-        escapingNeededAllocation =
-            TR.query(&call)[{-1}].isPossiblePointer() &&
-            DifferentialUseAnalysis::is_value_needed_in_reverse<
-                QueryType::Primal>(gutils, &call, Mode, oldUnreachable);
+      if (!isNoCapturedAlloc(&call)) {
+          call.hasFnAttribute("enzyme_no_captured_alloc") && !(called && called->hasFnAttribute("enzyme_no_captured_alloc"))) {
+      escapingNeededAllocation = EnzymeGlobalActivity;
+  
+      std::map<UsageKey, bool> CacheResults;
+      for (auto pair : gutils->knownRecomputeHeuristic) {
+        if (!pair.second ||
+            gutils->unnecessaryIntermediates.count(cast<Instruction>(pair.first))) {
+          CacheResults[UsageKey(pair.first, QueryType::Primal)] = false;
+        }
+      }
+
+      if (!escapingNeededAllocation) {
+          if (TR.query(&call)[{-1}].isPossiblePointer()) {
+              auto found = gutils->knownRecomputeHeuristic.find(&call);
+              if (found != gutils->knownRecomputeHeuristic.end()) {
+                  escapingNeededAllocation = !found->second;
+              } else {
+                escapingNeededAllocation = DifferentialUseAnalysis::is_value_needed_in_reverse<
+                QueryType::Primal>(gutils, &call, DerivativeMode::ReverseModeCombined, CacheResults, oldUnreachable);
+              }
+          }
+      }
 
       // Next test if any allocation could be stored into one of the arguments.
       if (!escapingNeededAllocation)
@@ -6325,6 +6343,7 @@ public:
 
           escapingNeededAllocation = true;
         }
+      }
 
       // If desired this can become even more aggressive by looking through the
       // called function for any allocations.
@@ -6346,6 +6365,15 @@ public:
       if (!noFree && called) {
         noFree |= called->hasFnAttribute(Attribute::NoFree);
       }
+  
+      std::map<UsageKey, bool> CacheResults;
+      for (auto pair : gutils->knownRecomputeHeuristic) {
+        if (!pair.second ||
+            gutils->unnecessaryIntermediates.count(cast<Instruction>(pair.first))) {
+          CacheResults[UsageKey(pair.first, QueryType::Primal)] = false;
+        }
+      }
+
       if (!noFree && !EnzymeGlobalActivity) {
         bool mayActiveFree = false;
 #if LLVM_VERSION_MAJOR >= 14
@@ -6372,8 +6400,18 @@ public:
             mayActiveFree = true;
             break;
           }
+          {
+            auto found = gutils->knownRecomputeHeuristic.find(&obj);
+              if (found != gutils->knownRecomputeHeuristic.end()) {
+                  if (!found->second) {
+                      mayActiveFree = true;
+                      break;
+                  }
+                  continue;
+              }
+          }
           if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-                  QueryType::Primal>(gutils, obj, Mode, oldUnreachable)) {
+                  QueryType::Primal>(gutils, obj, DerivativeMode::ReverseModeCombined, CacheResults, oldUnreachable)) {
             mayActiveFree = true;
             break;
           }

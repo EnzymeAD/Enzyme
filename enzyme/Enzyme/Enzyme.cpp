@@ -327,6 +327,11 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::ReadNone);
 #endif
   }
+  if (F.getName() == "julia.ptls_states") {
+    changed = true;
+    F.addAttribute(AttributeList::FunctionIndex,
+                      Attribute::get(F.getContext(), "enzyme_no_captured_alloc"));
+  }
   return changed;
 }
 

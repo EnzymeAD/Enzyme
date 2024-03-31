@@ -1559,6 +1559,16 @@ static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
   return false;
 }
 
+static inline bool isNoCapturedAlloc(const llvm::CallBase* call) {
+  if (call->getAttributes().hasFnAttribute("enzyme_no_captured_alloc"))
+      return true;
+  if (auto F = getFunctionFromCall(call)) {
+    if (F->hasFnAttribute("enzyme_no_captured_alloc"))
+        return true;
+  }
+  return false;
+}
+
 bool attributeKnownFunctions(llvm::Function &F);
 
 llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero = false);
