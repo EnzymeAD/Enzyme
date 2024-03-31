@@ -50,7 +50,7 @@ extern "C" {
     
     void rust_dgmm_objective(int d, int k, int n, const double *alphas, double *
             alphasb, const double *means, double *meansb, const double *icf,
-            double *icfb, const double *x, Wishart wishart, double *err, double *
+            double *icfb, const double *x, Wishart &wishart, double *err, double *
             errb);
 }
 
@@ -128,10 +128,7 @@ void read_gmm_instance(const string& fn,
     fclose(fid);
 }
 
-typedef void(*deriv_t)(int d, int k, int n, const double *alphas, double *alphasb, const double *means, double *meansb, const double *icf,
-            double *icfb, const double *x, Wishart wishart, double *err, double *errb);
-
-template<deriv_t deriv>
+template<auto  deriv>
 void calculate_jacobian(struct GMMInput &input, struct GMMOutput &result)
 {
     double* alphas_gradient_part = result.gradient.data();
@@ -262,6 +259,7 @@ int main(const int argc, const char* argv[]) {
       gettimeofday(&start, NULL);
       calculate_jacobian<dgmm_objective>(input, result);
       gettimeofday(&end, NULL);
+      printf("Enzyme c++ combined %0.6f\n", tdiff(&start, &end));
       json enzyme;
       enzyme["name"] = "Enzyme combined";
       enzyme["runtime"] = tdiff(&start, &end);
@@ -291,6 +289,7 @@ int main(const int argc, const char* argv[]) {
       gettimeofday(&start, NULL);
       calculate_jacobian<rust_dgmm_objective>(input, result);
       gettimeofday(&end, NULL);
+      printf("Enzyme rust combined %0.6f\n", tdiff(&start, &end));
       json enzyme;
       enzyme["name"] = "Rust Enzyme combined";
       enzyme["runtime"] = tdiff(&start, &end);
