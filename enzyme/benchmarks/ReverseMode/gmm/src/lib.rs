@@ -25,7 +25,7 @@ pub extern "C" fn rust_dgmm_objective(d: i32, k: i32, n: i32, alphas: *const f64
     let means = unsafe { std::slice::from_raw_parts(means, k * d) };
     let icf = unsafe { std::slice::from_raw_parts(icf, k * d * (d + 1) / 2) };
     let x = unsafe { std::slice::from_raw_parts(x, n * d) };
-    //let wishart: Wishart = unsafe { *wishart };
+    let wishart: Wishart = unsafe { *wishart };
     let mut my_err = unsafe { *err };
 
     let mut d_alphas = unsafe { std::slice::from_raw_parts_mut(dalphas, k) };
@@ -33,7 +33,7 @@ pub extern "C" fn rust_dgmm_objective(d: i32, k: i32, n: i32, alphas: *const f64
     let mut d_icf = unsafe { std::slice::from_raw_parts_mut(dicf, k * d * (d + 1) / 2) };
     let mut my_derr = unsafe { *derr };
 
-    dgmm_objective(d, k, n, alphas, d_alphas, means, d_means, icf, d_icf, x, wishart, &mut my_err, &mut my_derr);
+    dgmm_objective(d, k, n, alphas, d_alphas, means, d_means, icf, d_icf, x, wishart.gamma, wishart.m, &mut my_err, &mut my_derr);
 
     unsafe { *err = my_err };
     unsafe { *derr = my_derr };
@@ -48,9 +48,9 @@ pub extern "C" fn rust_gmm_objective(d: i32, k: i32, n: i32, alphas: *const f64,
     let means = unsafe { std::slice::from_raw_parts(means, k * d) };
     let icf = unsafe { std::slice::from_raw_parts(icf, k * d * (d + 1) / 2) };
     let x = unsafe { std::slice::from_raw_parts(x, n * d) };
-    //let wishart: Wishart = unsafe { *wishart };
+    let wishart: Wishart = unsafe { *wishart };
     let mut my_err = unsafe { *err };
-    gmm_objective(d, k, n, alphas, means, icf, x, wishart, &mut my_err);
+    gmm_objective(d, k, n, alphas, means, icf, x, wishart.gamma, wishart.m, &mut my_err);
     unsafe { *err = my_err };
 }
 
@@ -59,9 +59,10 @@ pub extern "C" fn rust_gmm_objective(d: i32, k: i32, n: i32, alphas: *const f64,
 //    gmm_objective(d, k, n, alphas, means, icf, x, wishart, &mut my_err);
 //}
 
-#[autodiff(dgmm_objective, Reverse, Const, Const, Const, Duplicated, Duplicated, Duplicated, Const, Const, Duplicated)]
-pub fn gmm_objective(d: usize, k: usize, n: usize, alphas: &[f64], means: &[f64], icf: &[f64], x: &[f64], wishart: *const Wishart, err: &mut f64) {
-    let wishart: Wishart = unsafe { *wishart };
+#[autodiff(dgmm_objective, Reverse, Const, Const, Const, Duplicated, Duplicated, Duplicated, Const, Const, Const, Duplicated)]
+pub fn gmm_objective(d: usize, k: usize, n: usize, alphas: &[f64], means: &[f64], icf: &[f64], x: &[f64], gamma: f64, m: i32, err: &mut f64) {
+    let wishart: Wishart = Wishart { gamma, m };
+    //let wishart: Wishart = unsafe { *wishart };
     let constant = -(n as f64) * d as f64 * 0.5 * (2.0 * PI).ln();
     let icf_sz = d * (d + 1) / 2;
     let mut qdiags = vec![0.; d * k];
