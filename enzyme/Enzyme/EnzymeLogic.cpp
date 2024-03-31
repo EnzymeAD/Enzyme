@@ -6119,6 +6119,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::basic_ostream<char, std::char_traits<char>>::flush()",
       "std::basic_streambuf<char, std::char_traits<char>>::xsgetn(char*, long)",
 
+      "std::locale::global(std::locale const&)",
       "std::locale::~locale()",
       "std::ios_base::ios_base()",
       "std::basic_ostream<char, std::char_traits<char>>& "
@@ -6180,6 +6181,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__1::basic_streambuf<char, std::__1::char_traits<char>>::sputn",
       "std::basic_ostream<char, std::char_traits<char>>& std::flush",
       "std::basic_ostream<char, std::char_traits<char>>& std::operator<<<std::char_traits<char>>",
+      "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char>>",
+      "std::istream::get",
   };
   // clang-format on
 
@@ -6189,6 +6192,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
                          "strlen",
                          "__cxa_begin_catch",
                          "__cxa_guard_acquire",
+                         "__cxa_guard_release",
                          "__cxa_end_catch",
                          "compress2",
                          "malloc_usable_size",

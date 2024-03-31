@@ -6302,7 +6302,8 @@ public:
           }
         }
 
-        if (!escapingNeededAllocation) {
+        if (!escapingNeededAllocation &&
+            !(EnzymeJuliaAddrLoad && isSpecialPtr(call.getType()))) {
           if (TR.query(&call)[{-1}].isPossiblePointer()) {
             auto found = gutils->knownRecomputeHeuristic.find(&call);
             if (found != gutils->knownRecomputeHeuristic.end()) {
@@ -6334,6 +6335,10 @@ public:
 #endif
           {
             Value *a = call.getOperand(i);
+
+            if (EnzymeJuliaAddrLoad && isSpecialPtr(a->getType()))
+              continue;
+
             auto vd = TR.query(a);
             if (!vd[{-1}].isPossiblePointer())
               continue;
