@@ -1,5 +1,6 @@
 #![feature(autodiff)]
 use libm::lgamma;
+use std::f64::consts::PI;
 
 #[no_mangle]
 pub extern "C" fn rust_dgmm_objective(d: i32, k: i32, n: i32, alphas: *const f64, dalphas: *mut f64, means: *const f64, dmeans: *mut f64, icf: *const f64, dicf: *mut f64, x: *const f64, wishart: *const Wishart, err: *mut f64, derr: *mut f64) {
@@ -23,7 +24,7 @@ pub fn gmm_objective_c(d: usize, k: usize, n: usize, alphas: *const f64, means: 
 }
 
 pub fn gmm_objective(d: usize, k: usize, n: usize, alphas: &[f64], means: &[f64], icf: &[f64], x: &[f64], wishart: Wishart, err: &mut f64) {
-    let constant = -(n as f64) * d as f64 * 0.5 * 2f64.ln();
+    let constant = -(n as f64) * d as f64 * 0.5 * (2.0 * PI).ln();
     let icf_sz = d * (d + 1) / 2;
     let mut qdiags = vec![0.; d * k];
     let mut sum_qs = vec![0.; k];
