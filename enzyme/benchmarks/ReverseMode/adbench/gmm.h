@@ -324,6 +324,12 @@ int main(const int argc, const char* argv[]) {
       auto res = primal<gmm_objective>(input);
       gettimeofday(&end, NULL);
       printf("c++ primal combined t=%0.6f, err=%f\n", tdiff(&start, &end), res);
+      
+      json primal;
+      primal["name"] = "C++ primal";
+      primal["runtime"] = tdiff(&start, &end);
+      primal["result"].push_back(res);
+      test_suite["tools"].push_back(primal);
     }
     {
       struct timeval start, end;
@@ -331,6 +337,11 @@ int main(const int argc, const char* argv[]) {
       auto res = primal<rust_gmm_objective>(input);
       gettimeofday(&end, NULL);
       printf("rust primal combined t=%0.6f, err=%f\n", tdiff(&start, &end), res);
+      json primal;
+      primal["name"] = "Rust primal";
+      primal["runtime"] = tdiff(&start, &end);
+      primal["result"].push_back(res);
+      test_suite["tools"].push_back(primal);
     }
     {
       struct timeval start, end;

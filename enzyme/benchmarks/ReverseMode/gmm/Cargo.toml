@@ -10,9 +10,7 @@ crate-type = ["lib"]
 
 [profile.release]
 lto = "fat"
-debug = true
-strip = "none"
-opt-level = 1
+opt-level = 3
 
 [profile.dev]
 lto = "fat"
