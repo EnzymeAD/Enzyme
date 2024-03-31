@@ -6114,11 +6114,14 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::underflow()",
       "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::_M_sync(char*, unsigned long, unsigned long)",
 
+      "std::istream::ignore()",
+      "std::basic_ifstream<char, std::char_traits<char>>::basic_ifstream(char const*, std::_Ios_Openmode)",
       "std::__basic_file<char>::~__basic_file()",
 
       "std::basic_ostream<char, std::char_traits<char>>::flush()",
       "std::basic_streambuf<char, std::char_traits<char>>::xsgetn(char*, long)",
 
+      "std::locale::locale(char const*)",
       "std::locale::global(std::locale const&)",
       "std::locale::~locale()",
       "std::ios_base::ios_base()",
@@ -6183,6 +6186,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::basic_ostream<char, std::char_traits<char>>& std::operator<<<std::char_traits<char>>",
       "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char>>",
       "std::istream::get",
+      "std::ctype<char>::widen"
   };
   // clang-format on
 
