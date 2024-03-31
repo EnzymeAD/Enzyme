@@ -332,7 +332,9 @@ bool attributeKnownFunctions(llvm::Function &F) {
       F.getName() == "memcmp" ||
       F.getName() == "_ZNSt6chrono3_V212steady_clock3nowEv" ||
       F.getName() == "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_"
-                     "createERmm") {
+                     "createERmm" ||
+      F.getName() ==
+          "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEmmm") {
     changed = true;
     F.addAttribute(
         AttributeList::FunctionIndex,

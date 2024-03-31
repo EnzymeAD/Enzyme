@@ -6075,12 +6075,14 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::basic_filebuf<char, std::char_traits<char>>::basic_filebuf()",
       "std::basic_filebuf<char, std::char_traits<char>>::close()",
 
-      "std::basic_ios<char, std::char_traits<char>>::clear(std::_Ios_Iostate)",
       "std::__detail::_Prime_rehash_policy::_M_need_rehash(unsigned long, unsigned long, unsigned long) const",
 
       "std::basic_streambuf<char, std::char_traits<char> >::xsputn(char const*, long)",
 
       "std::basic_ios<char, std::char_traits<char> >::init(std::basic_streambuf<char, std::char_traits<char> >*)",
+      "std::basic_ios<char, std::char_traits<char>>::clear(std::_Ios_Iostate)",
+      "std::basic_ios<char, std::char_traits<char>>::operator bool() const",
+      "std::basic_ios<wchar_t, std::char_traits<wchar_t>>::imbue(std::locale const&)",
 
       "std::_Hash_bytes(void const*, unsigned long, unsigned long)",
       "unsigned long std::__1::__do_string_hash<char const*>(char const*, char const*)",
@@ -6089,6 +6091,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::allocator<char>::allocator()",
       "std::allocator<char>::~allocator()",
 
+      "std::__cxx11::basic_stringstream<char, std::char_traits<char>, std::allocator<char>>::~basic_stringstream()",
 
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::basic_string(char const*, std::allocator<char> const&)",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::basic_string(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>&&)",
@@ -6175,6 +6178,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::operator=",
       "std::__1::ctype<char>::widen",
       "std::__1::basic_streambuf<char, std::__1::char_traits<char>>::sputn",
+      "std::basic_ostream<char, std::char_traits<char>>& std::flush",
+      "std::basic_ostream<char, std::char_traits<char>>& std::operator<<<std::char_traits<char>>",
   };
   // clang-format on
 
@@ -6183,6 +6188,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
                          "time",
                          "strlen",
                          "__cxa_begin_catch",
+                         "__cxa_guard_acquire",
                          "__cxa_end_catch",
                          "compress2",
                          "malloc_usable_size",
