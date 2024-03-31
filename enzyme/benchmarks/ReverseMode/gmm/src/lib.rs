@@ -3,7 +3,12 @@ use libm::lgamma;
 
 #[no_mangle]
 pub extern "C" fn rust_dgmm_objective(d: i32, k: i32, n: i32, alphas: *const f64, dalphas: *mut f64, means: *const f64, dmeans: *mut f64, icf: *const f64, dicf: *mut f64, x: *const f64, wishart: *const Wishart, err: *mut f64, derr: *mut f64) {
-    //dgmm_objective(d as usize, k as usize, n as usize, alphas, dalphas, means, dmeans, icf, dicf, x, wishart, err, derr);
+    dgmm_objective(d as usize, k as usize, n as usize, alphas, dalphas, means, dmeans, icf, dicf, x, wishart, err, derr);
+}
+
+#[no_mangle]
+pub extern "C" fn rust_gmm_objective(d: i32, k: i32, n: i32, alphas: *const f64, means: *const f64, icf: *const f64, x: *const f64, wishart: *const Wishart, err: *mut f64) {
+    gmm_objective_c(d as usize, k as usize, n as usize, alphas, means, icf, x, wishart, err);
 }
 
 #[autodiff(dgmm_objective, Reverse, Const, Const, Const, Duplicated, Duplicated, Duplicated, Const, Const, Duplicated)]

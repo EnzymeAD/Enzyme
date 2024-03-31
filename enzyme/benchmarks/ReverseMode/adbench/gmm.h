@@ -33,6 +33,17 @@ struct GMMParameters {
 };
 
 extern "C" {
+void gmm_objective(
+    int d,
+    int k,
+    int n,
+    double const* alphas,
+    double const* means,
+    double const* icf,
+    double const* x,
+    Wishart wishart,
+    double* err
+);
     void dgmm_objective(int d, int k, int n, const double *alphas, double *
             alphasb, const double *means, double *meansb, const double *icf,
             double *icfb, const double *x, Wishart wishart, double *err, double *
@@ -52,6 +63,10 @@ extern "C" {
             alphasb, const double *means, double *meansb, const double *icf,
             double *icfb, const double *x, Wishart &wishart, double *err, double *
             errb);
+    
+    void rust_gmm_objective(int d, int k, int n, const double *alphas, 
+            const double *means, const double *icf,
+             const double *x, Wishart &wishart, double *err);
 }
 
 void read_gmm_instance(const string& fn,
@@ -159,6 +174,25 @@ void calculate_jacobian(struct GMMInput &input, struct GMMOutput &result)
         &tmp,
         &errb
     );
+}
+
+template<auto  deriv>
+double primal(struct GMMInput &input)
+{
+    double tmp = 0.0;       // stores fictive result
+                            // (Tapenade doesn't calculate an original function in reverse mode)
+    deriv(
+        input.d,
+        input.k,
+        input.n,
+        input.alphas.data(),
+        input.means.data(),
+        input.icf.data(),
+        input.x.data(),
+        input.wishart,
+        &tmp
+    );
+    return tmp;
 }
 
 int main(const int argc, const char* argv[]) {
@@ -284,6 +318,20 @@ int main(const int argc, const char* argv[]) {
 
     struct GMMOutput result = { 0, std::vector<double>(Jcols) };
 
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+      auto res = primal<gmm_objective>(input);
+      gettimeofday(&end, NULL);
+      printf("c++ primal combined t=%0.6f, err=%f\n", tdiff(&start, &end), res);
+    }
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+      auto res = primal<rust_gmm_objective>(input);
+      gettimeofday(&end, NULL);
+      printf("rust primal combined t=%0.6f, err=%f\n", tdiff(&start, &end), res);
+    }
     {
       struct timeval start, end;
       gettimeofday(&start, NULL);

@@ -9,7 +9,7 @@ clean:
 
 %-unopt.ll: %.cpp src/lib.rs
 	ENZYME_LOOSE_TYPES=1 cargo +enzyme rustc --release --lib --crate-type=staticlib
-	clang++ -pthread $(BENCH) gmm.cpp -I /usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -O2 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -o gmm-unopt.ll -S -emit-llvm
+	clang++ -g $(BENCH) gmm.cpp -I /usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -O1 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -o gmm-unopt.ll -S -emit-llvm
 	#clang++ $(BENCH) $^ -O1 -Xclang -disable-llvm-passes -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
 
 %-raw.ll: %-unopt.ll
@@ -22,9 +22,7 @@ clean:
 	#opt $^ -O2 -o $@ -S
 
 gmm.o: gmm-opt.ll
-	pwd
-	echo clang++ -pthread -O2 $^ -o $@ $(BENCHLINK) -lm $(dir)/benchmarks/ReverseMode/gmm/target/release/libgmmrs.a -L /usr/lib/gcc/x86_64-linux-gnu/11
-	clang++ -pthread -v -O2 $^ -o $@ $(BENCHLINK) -lm $(dir)/benchmarks/ReverseMode/gmm/target/release/libgmmrs.a -L /usr/lib/gcc/x86_64-linux-gnu/11
+	clang++ -g -lpthread -v -O2 $^ -o $@ $(BENCHLINK) -lm $(dir)/benchmarks/ReverseMode/gmm/target/release/libgmmrs.a -L /usr/lib/gcc/x86_64-linux-gnu/11
 
 results.json: gmm.o
 	./$^
