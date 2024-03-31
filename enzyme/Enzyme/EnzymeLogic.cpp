@@ -6178,11 +6178,18 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   };
   // clang-format on
 
-  StringSet<> NoFrees = {
-      "mpfr_greater_p",    "memchr",          "time",      "strlen",
-      "__cxa_begin_catch", "__cxa_end_catch", "compress2", "malloc_usable_size",
-      "MPI_Allreduce",     "lgamma",          "lgamma_r", "__kmpc_global_thread_num"
-  };
+  StringSet<> NoFrees = {"mpfr_greater_p",
+                         "memchr",
+                         "time",
+                         "strlen",
+                         "__cxa_begin_catch",
+                         "__cxa_end_catch",
+                         "compress2",
+                         "malloc_usable_size",
+                         "MPI_Allreduce",
+                         "lgamma",
+                         "lgamma_r",
+                         "__kmpc_global_thread_num"};
 
   if (startsWith(F->getName(), "_ZNSolsE") || NoFrees.count(F->getName()))
     return F;
@@ -6208,6 +6215,12 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   case Intrinsic::memset:
     return F;
   default:;
+  }
+
+  {
+    Intrinsic::ID ID = Intrinsic::not_intrinsic;
+    if (isMemFreeLibMFunction(getFuncName(F), &ID))
+      return F;
   }
 
   if (F->empty()) {

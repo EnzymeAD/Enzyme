@@ -327,15 +327,16 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::ReadNone);
 #endif
   }
-  if (F.getName() == "julia.ptls_states" || F.getName() == "julia.get_pgcstack" ||
-      F.getName() == "lgamma_r" ||
+  if (F.getName() == "julia.ptls_states" ||
+      F.getName() == "julia.get_pgcstack" || F.getName() == "lgamma_r" ||
       F.getName() == "memcmp" ||
       F.getName() == "_ZNSt6chrono3_V212steady_clock3nowEv" ||
       F.getName() == "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_"
                      "createERmm") {
     changed = true;
-    F.addAttribute(AttributeList::FunctionIndex,
-                   Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
   }
   return changed;
 }
