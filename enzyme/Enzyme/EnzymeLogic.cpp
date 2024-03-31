@@ -6178,7 +6178,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   StringSet<> NoFrees = {
       "mpfr_greater_p",    "memchr",          "time",      "strlen",
       "__cxa_begin_catch", "__cxa_end_catch", "compress2", "malloc_usable_size",
-      "MPI_Allreduce",
+      "MPI_Allreduce",     "lgamma",          "lgamma_r",
   };
 
   if (startsWith(F->getName(), "_ZNSolsE") || NoFrees.count(F->getName()))
