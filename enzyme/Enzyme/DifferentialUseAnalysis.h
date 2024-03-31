@@ -118,8 +118,7 @@ inline bool is_value_needed_in_reverse(
         }
       }
     }
-    if (gutils->mode == DerivativeMode::ForwardModeError &&
-        !gutils->isConstantValue(const_cast<Value *>(inst))) {
+    if (gutils->mode == DerivativeMode::ForwardModeError) {
       if (EnzymePrintDiffUse)
         llvm::errs()
             << " Need: " << to_string(VT) << " of " << *inst
