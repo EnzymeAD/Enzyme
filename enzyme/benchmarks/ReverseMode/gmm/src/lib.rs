@@ -78,7 +78,7 @@ pub fn gmm_objective(d: usize, k: usize, n: usize, alphas: &[f64], means: &[f64]
         for ik in 0..k {
             subtract(d, &x[ix as usize * d as usize..], &means[ik as usize * d as usize..], &mut xcentered);
             Qtimesx(d, &qdiags[ik as usize * d as usize..], &icf[ik as usize * icf_sz as usize + d as usize..], &xcentered, &mut qxcentered);
-            main_term[ik as usize] = alphas[ik as usize] + sum_qs[ik as usize] - 0.5 * sqnorm(d, &qxcentered);
+            main_term[ik as usize] = alphas[ik as usize] + sum_qs[ik as usize] - 0.5 * sqnorm(&qxcentered);
         }
 
         slse = slse + log_sum_exp(k, &main_term);
@@ -158,13 +158,13 @@ fn log_wishart_prior(p: usize, k: usize, wishart: Wishart, sum_qs: &[f64], qdiag
     let c = n as f64 * p as f64 * (wishart.gamma.ln() - 0.5 * 2f64.ln()) - log_gamma_distrib(0.5 * n as f64, p as f64);
 
     let out = (0..k).map(|ik| {
-        let frobenius = sqnorm(p, &qdiags[ik * p as usize..]) + sqnorm(icf_sz - p, &icf[ik * icf_sz as usize + p as usize..]);
+        let frobenius = sqnorm(&qdiags[ik * p as usize..][..p]) + sqnorm(&icf[ik * icf_sz as usize + p as usize..][..icf_sz -p]);
         0.5 * wishart.gamma * wishart.gamma * (frobenius) - (wishart.m as f64) * sum_qs[ik as usize]
     }).sum::<f64>();
 
     out - k as f64 * c
 }
 
-fn sqnorm(n: usize, x: &[f64]) -> f64 {
+fn sqnorm(x: &[f64]) -> f64 {
     x.iter().map(|x| x * x).sum()
 }
