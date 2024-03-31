@@ -28,9 +28,9 @@ pub extern "C" fn rust_dgmm_objective(d: i32, k: i32, n: i32, alphas: *const f64
     let wishart: Wishart = unsafe { *wishart };
     let mut my_err = unsafe { *err };
 
-    let mut d_alphas = unsafe { std::slice::from_raw_parts_mut(dalphas, k) };
-    let mut d_means = unsafe { std::slice::from_raw_parts_mut(dmeans, k * d) };
-    let mut d_icf = unsafe { std::slice::from_raw_parts_mut(dicf, k * d * (d + 1) / 2) };
+    let d_alphas = unsafe { std::slice::from_raw_parts_mut(dalphas, k) };
+    let d_means = unsafe { std::slice::from_raw_parts_mut(dmeans, k * d) };
+    let d_icf = unsafe { std::slice::from_raw_parts_mut(dicf, k * d * (d + 1) / 2) };
     let mut my_derr = unsafe { *derr };
 
     dgmm_objective(d, k, n, alphas, d_alphas, means, d_means, icf, d_icf, x, wishart.gamma, wishart.m, &mut my_err, &mut my_derr);
@@ -77,7 +77,7 @@ pub fn gmm_objective(d: usize, k: usize, n: usize, alphas: &[f64], means: &[f64]
     for ix in 0..n {
         for ik in 0..k {
             subtract(d, &x[ix as usize * d as usize..], &means[ik as usize * d as usize..], &mut xcentered);
-            Qtimesx(d, &qdiags[ik as usize * d as usize..], &icf[ik as usize * icf_sz as usize + d as usize..], &xcentered, &mut qxcentered);
+            qtimesx(d, &qdiags[ik as usize * d as usize..], &icf[ik as usize * icf_sz as usize + d as usize..], &xcentered, &mut qxcentered);
             main_term[ik as usize] = alphas[ik as usize] + sum_qs[ik as usize] - 0.5 * sqnorm(&qxcentered);
         }
 
@@ -119,7 +119,7 @@ fn subtract(d: usize, x: &[f64], y: &[f64], out: &mut [f64]) {
     }
 }
 
-fn Qtimesx(d: usize, q_diag: &[f64], ltri: &[f64], x: &[f64], out: &mut [f64]) {
+fn qtimesx(d: usize, q_diag: &[f64], ltri: &[f64], x: &[f64], out: &mut [f64]) {
     assert!(out.len() >= d);
     assert!(q_diag.len() >= d);
     assert!(x.len() >= d);
