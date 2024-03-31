@@ -6292,57 +6292,71 @@ public:
       bool escapingNeededAllocation = false;
 
       if (!isNoCapturedAlloc(&call)) {
-          call.hasFnAttribute("enzyme_no_captured_alloc") && !(called && called->hasFnAttribute("enzyme_no_captured_alloc"))) {
-      escapingNeededAllocation = EnzymeGlobalActivity;
-  
-      std::map<UsageKey, bool> CacheResults;
-      for (auto pair : gutils->knownRecomputeHeuristic) {
-        if (!pair.second ||
-            gutils->unnecessaryIntermediates.count(cast<Instruction>(pair.first))) {
-          CacheResults[UsageKey(pair.first, QueryType::Primal)] = false;
-        }
-      }
+        escapingNeededAllocation = EnzymeGlobalActivity;
 
-      if (!escapingNeededAllocation) {
-          if (TR.query(&call)[{-1}].isPossiblePointer()) {
-              auto found = gutils->knownRecomputeHeuristic.find(&call);
-              if (found != gutils->knownRecomputeHeuristic.end()) {
-                  escapingNeededAllocation = !found->second;
-              } else {
-                escapingNeededAllocation = DifferentialUseAnalysis::is_value_needed_in_reverse<
-                QueryType::Primal>(gutils, &call, DerivativeMode::ReverseModeCombined, CacheResults, oldUnreachable);
-              }
+        std::map<UsageKey, bool> CacheResults;
+        for (auto pair : gutils->knownRecomputeHeuristic) {
+          if (!pair.second || gutils->unnecessaryIntermediates.count(
+                                  cast<Instruction>(pair.first))) {
+            CacheResults[UsageKey(pair.first, QueryType::Primal)] = false;
           }
-      }
-
-      // Next test if any allocation could be stored into one of the arguments.
-      if (!escapingNeededAllocation)
-#if LLVM_VERSION_MAJOR >= 14
-        for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-        for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
-        {
-          Value *a = call.getOperand(i);
-
-          if (!TR.query(a)[{-1}].isPossiblePointer())
-            continue;
-
-          if (isReadOnly(&call, i))
-            continue;
-
-          // An allocation could only be needed in the reverse pass if it
-          // escapes into an argument. However, is the parameter by which it
-          // escapes could capture the pointer, the rest of Enzyme's caching
-          // mechanisms cannot assume that the allocation itself is reloadable,
-          // since it may have been captured and overwritten elsewhere.
-          // TODO: this justification will need revisiting in the future as the
-          // caching algorithm becomes increasingly sophisticated.
-          if (!isNoCapture(&call, i))
-            continue;
-
-          escapingNeededAllocation = true;
         }
+
+        if (!escapingNeededAllocation) {
+          if (TR.query(&call)[{-1}].isPossiblePointer()) {
+            auto found = gutils->knownRecomputeHeuristic.find(&call);
+            if (found != gutils->knownRecomputeHeuristic.end()) {
+              if (!found->second) {
+                CacheResults.erase(UsageKey(&call, QueryType::Primal));
+                escapingNeededAllocation =
+                  DifferentialUseAnalysis::is_value_needed_in_reverse<
+                      QueryType::Primal>(gutils, &call,
+                                         DerivativeMode::ReverseModeGradient,
+                                         CacheResults, oldUnreachable);
+              }
+            } else {
+              escapingNeededAllocation =
+                  DifferentialUseAnalysis::is_value_needed_in_reverse<
+                      QueryType::Primal>(gutils, &call,
+                                         DerivativeMode::ReverseModeGradient,
+                                         CacheResults, oldUnreachable);
+            }
+          }
+        }
+
+        // Next test if any allocation could be stored into one of the
+        // arguments.
+        if (!escapingNeededAllocation)
+#if LLVM_VERSION_MAJOR >= 14
+          for (unsigned i = 0; i < call.arg_size(); ++i)
+#else
+          for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
+#endif
+          {
+            Value *a = call.getOperand(i);
+            auto vd = TR.query(a);
+            if (!vd[{-1}].isPossiblePointer())
+              continue;
+
+            if (!vd[{-1, -1}].isPossiblePointer())
+              continue;
+
+            if (isReadOnly(&call, i))
+              continue;
+
+            // An allocation could only be needed in the reverse pass if it
+            // escapes into an argument. However, is the parameter by which it
+            // escapes could capture the pointer, the rest of Enzyme's caching
+            // mechanisms cannot assume that the allocation itself is
+            // reloadable, since it may have been captured and overwritten
+            // elsewhere.
+            // TODO: this justification will need revisiting in the future as
+            // the caching algorithm becomes increasingly sophisticated.
+            if (!isNoCapture(&call, i))
+              continue;
+
+            escapingNeededAllocation = true;
+          }
       }
 
       // If desired this can become even more aggressive by looking through the
@@ -6365,11 +6379,11 @@ public:
       if (!noFree && called) {
         noFree |= called->hasFnAttribute(Attribute::NoFree);
       }
-  
+
       std::map<UsageKey, bool> CacheResults;
       for (auto pair : gutils->knownRecomputeHeuristic) {
-        if (!pair.second ||
-            gutils->unnecessaryIntermediates.count(cast<Instruction>(pair.first))) {
+        if (!pair.second || gutils->unnecessaryIntermediates.count(
+                                cast<Instruction>(pair.first))) {
           CacheResults[UsageKey(pair.first, QueryType::Primal)] = false;
         }
       }
@@ -6396,22 +6410,56 @@ public:
           auto obj = getBaseObject(a);
           // If not allocation/allocainst, it is possible this aliases
           // a pointer needed in the reverse pass
-          if (!isa<AllocaInst>(obj) && !isAllocationCall(obj, gutils->TLI)) {
+          bool isAllocation = false;
+          for (auto objv = obj;;) {
+            if (isAllocationCall(objv, gutils->TLI)) {
+              isAllocation = true;
+              break;
+            }
+            if (auto objC = dyn_cast<CallBase>(objv))
+              if (auto F = getFunctionFromCall(objC))
+                if (!F->empty()) {
+                  SmallPtrSet<Value *, 1> set;
+                  for (auto &B : *F) {
+                    if (auto RI = dyn_cast<ReturnInst>(B.getTerminator())) {
+                      auto v = getBaseObject(RI->getOperand(0));
+                      if (isa<ConstantPointerNull>(v))
+                        continue;
+                      set.insert(v);
+                    }
+                  }
+                  if (set.size() == 1) {
+                    objv = *set.begin();
+                    continue;
+                  }
+                }
+            break;
+          }
+          if (!isAllocation) {
             mayActiveFree = true;
             break;
           }
           {
-            auto found = gutils->knownRecomputeHeuristic.find(&obj);
-              if (found != gutils->knownRecomputeHeuristic.end()) {
-                  if (!found->second) {
-                      mayActiveFree = true;
-                      break;
-                  }
-                  continue;
+            auto found = gutils->knownRecomputeHeuristic.find(obj);
+            if (found != gutils->knownRecomputeHeuristic.end()) {
+              if (!found->second) {
+                auto CacheResults2(CacheResults);
+                CacheResults2.erase(UsageKey(&call, QueryType::Primal));
+                if (DifferentialUseAnalysis::is_value_needed_in_reverse<
+                  QueryType::Primal>(gutils, obj,
+                                     DerivativeMode::ReverseModeGradient,
+                                     CacheResults, oldUnreachable)) {
+                mayActiveFree = true;
+                break;
+                }
               }
+              continue;
+            }
           }
           if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-                  QueryType::Primal>(gutils, obj, DerivativeMode::ReverseModeCombined, CacheResults, oldUnreachable)) {
+                  QueryType::Primal>(gutils, obj,
+                                     DerivativeMode::ReverseModeGradient,
+                                     CacheResults, oldUnreachable)) {
             mayActiveFree = true;
             break;
           }
