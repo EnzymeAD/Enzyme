@@ -6302,12 +6302,28 @@ public:
 #endif
         {
           Value *a = call.getOperand(i);
-          if (gutils->isConstantValue(a))
-            continue;
+          // if could not be a pointer, it cannot be freed
           if (!TR.query(a)[{-1}].isPossiblePointer())
             continue;
-          mayActiveFree = true;
-          break;
+          // if active value, we need to do memory preservation
+          if (!gutils->isConstantValue(a)) {
+              mayActiveFree = true;
+              break;
+          }
+          // if used in revere (even if just primal), need to do
+          // memory preservation
+          auto obj = getBaseObject(a);
+          // If not allocation/allocainst, it is possible this aliases
+          // a pointer needed in the reverse pass
+          if (!isa<AllocaInst>(obj) && !isAllocationCall(obj, gutils->TLI)) {
+            mayActiveFree = true;
+            break;
+          }
+          if (DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Primal>(
+            gutils, obj, Mode, oldUnreachable)) {
+            mayActiveFree = true;
+            break;
+          }
         }
         if (!mayActiveFree)
           noFree = true;
