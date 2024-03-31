@@ -19,8 +19,9 @@ pub fn gmm_objective_c(d: usize, k: usize, n: usize, alphas: *const f64, means: 
     let icf = unsafe { std::slice::from_raw_parts(icf, k * d * (d + 1) / 2) };
     let x = unsafe { std::slice::from_raw_parts(x, n * d) };
     let wishart: Wishart = unsafe { *wishart };
-    let mut err = unsafe { *err };
-    gmm_objective(d, k, n, alphas, means, icf, x, wishart, &mut err);
+    let mut my_err = unsafe { *err };
+    gmm_objective(d, k, n, alphas, means, icf, x, wishart, &mut my_err);
+    unsafe { *err = my_err };
 }
 
 pub fn gmm_objective(d: usize, k: usize, n: usize, alphas: &[f64], means: &[f64], icf: &[f64], x: &[f64], wishart: Wishart, err: &mut f64) {
