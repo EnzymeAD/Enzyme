@@ -6291,7 +6291,7 @@ public:
       // reverse pass
       bool escapingNeededAllocation = false;
 
-      if (!isNoCapturedAlloc(&call)) {
+      if (!isNoEscapingAllocation(&call)) {
         escapingNeededAllocation = EnzymeGlobalActivity;
 
         std::map<UsageKey, bool> CacheResults;
@@ -6361,6 +6361,41 @@ public:
 
       // If desired this can become even more aggressive by looking through the
       // called function for any allocations.
+      if (auto F = getFunctionFromCall(&call)) {
+        SmallVector<Function*, 1> todo = {F};
+        SmallPtrSet<Function*, 1> done;
+        bool seenAllocation = false;
+        while(todo.size() && !seenAllocation) {
+            auto cur = todo.pop_back_val();
+            if (done.count(cur)) continue;
+            done.insert(cur);
+            // assume empty functions allocate.
+            if (cur->empty()) {
+                // unless they are marked
+                if (isNoEscapingAllocation(cur)) continue;
+                seenAllocation = true;
+                break;
+            }
+            for (auto &BB : *cur)
+                for (auto &I : BB)
+                    if (auto CB = dyn_cast<CallBase>(&I)) {
+                        if (isNoEscapingAllocation(CB)) continue;
+                        if (isAllocationCall(CB, gutils->TLI)) {
+                            seenAllocation = true;
+                            goto finish;
+                        }
+                        if (auto F = getFunctionFromCall(CB)) {
+                            todo.push_back(F);
+                            continue;
+                        }
+                        // Conservatively assume indirect functions allocate.
+                        seenAllocation = true;
+                        goto finish;
+                    }
+finish:;
+        }
+        if (!seenAllocation) escapingNeededAllocation = false;
+      }
       if (escapingNeededAllocation)
         useConstantFallback = false;
     }
@@ -6407,7 +6442,7 @@ public:
           }
           // if used in reverse (even if just primal), need to do
           // memory preservation
-          auto obj = getBaseObject(a);
+          const auto obj = getBaseObject(a);
           // If not allocation/allocainst, it is possible this aliases
           // a pointer needed in the reverse pass
           bool isAllocation = false;
@@ -6444,11 +6479,11 @@ public:
             if (found != gutils->knownRecomputeHeuristic.end()) {
               if (!found->second) {
                 auto CacheResults2(CacheResults);
-                CacheResults2.erase(UsageKey(&call, QueryType::Primal));
+                CacheResults2.erase(UsageKey(obj, QueryType::Primal));
                 if (DifferentialUseAnalysis::is_value_needed_in_reverse<
                   QueryType::Primal>(gutils, obj,
                                      DerivativeMode::ReverseModeGradient,
-                                     CacheResults, oldUnreachable)) {
+                                     CacheResults2, oldUnreachable)) {
                 mayActiveFree = true;
                 break;
                 }
@@ -6456,10 +6491,11 @@ public:
               continue;
             }
           }
+          auto CacheResults2(CacheResults);
           if (DifferentialUseAnalysis::is_value_needed_in_reverse<
                   QueryType::Primal>(gutils, obj,
                                      DerivativeMode::ReverseModeGradient,
-                                     CacheResults, oldUnreachable)) {
+                                     CacheResults2, oldUnreachable)) {
             mayActiveFree = true;
             break;
           }

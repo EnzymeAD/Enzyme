@@ -5998,7 +5998,9 @@ EnzymeLogic::CreateTrace(RequestContext context, llvm::Function *totrace,
 
 llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
                                        llvm::Value *todiff) {
-  if (auto F = dyn_cast<Function>(todiff))
+  if (isa<InlineAsm>(todiff))
+    return todiff;
+  else if (auto F = dyn_cast<Function>(todiff))
     return CreateNoFree(context, F);
   if (auto castinst = dyn_cast<ConstantExpr>(todiff))
     if (castinst->isCast()) {
@@ -6179,7 +6181,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   StringSet<> NoFrees = {
       "mpfr_greater_p",    "memchr",          "time",      "strlen",
       "__cxa_begin_catch", "__cxa_end_catch", "compress2", "malloc_usable_size",
-      "MPI_Allreduce",     "lgamma",          "lgamma_r",
+      "MPI_Allreduce",     "lgamma",          "lgamma_r", "__kmpc_global_thread_num"
   };
 
   if (startsWith(F->getName(), "_ZNSolsE") || NoFrees.count(F->getName()))

@@ -4603,7 +4603,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
     if (funcName == "omp_get_max_threads" || funcName == "omp_get_thread_num" ||
-        funcName == "omp_get_num_threads") {
+        funcName == "omp_get_num_threads" || funcName == "__kmpc_global_thread_num") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }

@@ -73,7 +73,7 @@ entry:
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.body ], [ 0, %entry ]
 ; CHECK-NEXT:   %size.0 = phi i64 [ 1, %entry ], [ %a2, %for.body ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
-; CHECK-NEXT:   %call3 = call i64* @_ZNKSt5arrayIlLm4EEixEm(i64* %v)
+; CHECK-NEXT:   %call3 = call i64* @nofree__ZNKSt5arrayIlLm4EEixEm(i64* %v)
 ; CHECK-NEXT:   %a2 = load i64, i64* %call3, align 8, !tbaa !0
 ; CHECK-NEXT:   %0 = getelementptr inbounds i64, i64* %a2_malloccache, i64 %iv
 ; CHECK-NEXT:   store i64 %a2, i64* %0, align 8, !tbaa !0, !invariant.group 
