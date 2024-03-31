@@ -33,6 +33,7 @@
 #endif
 
 #include "DiffeGradientUtils.h"
+#include "DifferentialUseAnalysis.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
@@ -367,6 +368,19 @@ void EnzymeRegisterFwdCallHandler(char *Name, CustomFunctionForward FwdHandle) {
     uint8_t noMod = FwdHandle(wrap(&B), wrap(CI), &gutils, &normalR, &shadowR);
     normalReturn = unwrap(normalR);
     shadowReturn = unwrap(shadowR);
+    return noMod != 0;
+  };
+}
+
+void EnzymeRegisterDiffUseCallHandler(char *Name,
+                                      CustomFunctionDiffUse Handle) {
+  auto &pair = customDiffUseHandlers[Name];
+  pair = [=](const CallInst *CI, const GradientUtils *gutils, const Value *arg,
+             bool isshadow, DerivativeMode mode, bool &useDefault) -> bool {
+    uint8_t useDefaultC = 0;
+    uint8_t noMod = Handle(wrap(CI), gutils, wrap(arg), isshadow,
+                           (CDerivativeMode)(mode), &useDefaultC);
+    useDefault = useDefaultC != 0;
     return noMod != 0;
   };
 }

@@ -48,6 +48,10 @@
 
 using namespace llvm;
 
+StringMap<std::function<bool(const CallInst *, const GradientUtils *,
+                             const Value *, bool, DerivativeMode, bool &)>>
+    customDiffUseHandlers;
+
 bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     const GradientUtils *gutils, const Value *val, DerivativeMode mode,
     const Instruction *user,
@@ -449,6 +453,23 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     }
 
     auto funcName = getFuncNameFromCall(CI);
+
+    {
+      auto found = customDiffUseHandlers.find(funcName);
+      if (found != customDiffUseHandlers.end()) {
+        bool useDefault = false;
+        bool result = found->second(CI, gutils, val, shadow, mode, useDefault);
+        if (!useDefault) {
+          if (result) {
+            if (EnzymePrintDiffUse)
+              llvm::errs() << " Need: " << to_string(qtype) << " of " << *val
+                           << " from custom diff use handler of " << *CI
+                           << "\n";
+          }
+          return result;
+        }
+      }
+    }
 
     // Don't need shadow inputs for alloc function
     if (shadow && isAllocationFunction(funcName, gutils->TLI))
