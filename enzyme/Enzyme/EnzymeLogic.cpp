@@ -3647,7 +3647,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   if (key.retType != DIFFE_TYPE::CONSTANT)
     assert(!key.todiff->getReturnType()->isVoidTy());
 
-  assert(key.overwritten_args.size() == key.todiff->arg_size());
+  if (!isMemFreeLibMFunction(getFuncName(key.todiff)))
+    assert(key.overwritten_args.size() == key.todiff->arg_size());
 
   Function *prevFunction = nullptr;
   if (ReverseCachedFunctions.find(key) != ReverseCachedFunctions.end()) {
