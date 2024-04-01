@@ -536,6 +536,9 @@ public:
                                   const llvm::Twine &name = "",
                                   bool fallback = true);
 
+  //! Helper routine to get the type of an extraction
+  static llvm::Type *extractMeta(llvm::Type *T, llvm::ArrayRef<unsigned> off);
+
   static llvm::Value *recursiveFAdd(llvm::IRBuilder<> &B, llvm::Value *lhs,
                                     llvm::Value *rhs,
                                     llvm::ArrayRef<unsigned> lhs_off = {},

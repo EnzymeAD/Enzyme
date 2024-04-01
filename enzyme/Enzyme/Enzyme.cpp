@@ -1789,6 +1789,16 @@ public:
           csts.push_back(ConstantFP::get(e, 1.0));
         }
         args.push_back(ConstantStruct::get(ST, csts));
+      } else if (auto AT = dyn_cast<ArrayType>(fn->getReturnType())) {
+        SmallVector<Constant *, 2> csts(
+            AT->getNumElements(), ConstantFP::get(AT->getElementType(), 1.0));
+        args.push_back(ConstantArray::get(AT, csts));
+      } else {
+        auto RT = fn->getReturnType();
+        EmitFailure("EnzymeCallingError", CI->getDebugLoc(), CI,
+                    "Differential return required for call ", *CI,
+                    " but one of type ", *RT, " could not be auto deduced");
+        return false;
       }
     }
 
