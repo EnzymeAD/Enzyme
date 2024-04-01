@@ -67,7 +67,7 @@ fn project(cam: &[f64; 11], X: &[f64; 3], proj: &mut [f64; 2]) {
 }
 
 #[no_mangle]
-pub extern "C" fn dcompute_reproj_error(
+pub extern "C" fn rust_dcompute_reproj_error(
     cam: *const [f64; 11],
     dcam: *mut [f64; 11],
     x: *const [f64; 3],
@@ -78,21 +78,21 @@ pub extern "C" fn dcompute_reproj_error(
     err: *mut [f64; 2],
     derr: *mut [f64; 2],
 ) {
-    rust_dcompute_reproj_error(cam, dcam, x, dx, w, wb, feat, err, derr);
+    dcompute_reproj_error(cam, dcam, x, dx, w, wb, feat, err, derr);
 }
 
 #[no_mangle]
-pub extern "C" fn dcompute_zach_weight_error(
+pub extern "C" fn rust_dcompute_zach_weight_error(
     w: *const f64,
     dw: *mut f64,
     err: *mut f64,
     derr: *mut f64,
 ) {
-    rust_dcompute_zach_weight_error(w, dw, err, derr);
+    dcompute_zach_weight_error(w, dw, err, derr);
 }
 
 #[autodiff(
-    rust_dcompute_reproj_error,
+    dcompute_reproj_error,
     Reverse,
     Duplicated,
     Duplicated,
@@ -118,7 +118,7 @@ pub fn compute_reproj_error(
     err[1] = w * (proj[1] - feat[1]);
 }
 
-#[autodiff(rust_dcompute_zach_weight_error, Reverse, Duplicated, Duplicated)]
+#[autodiff(dcompute_zach_weight_error, Reverse, Duplicated, Duplicated)]
 pub fn compute_zach_weight_error(w: *const f64, err: *mut f64) {
     let w = unsafe { *w };
     let mut err = unsafe { *err };
@@ -198,7 +198,7 @@ fn rust_ba_objective(
 }
 
 #[no_mangle]
-extern "C" fn ba_objective(
+extern "C" fn rust2_ba_objective(
     n: usize,
     m: usize,
     p: usize,
