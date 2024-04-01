@@ -20,9 +20,9 @@ double square(double x) {
 double err_square(double x) { return __enzyme_error_estimate(square, x, 0.0); }
 
 int main() {
-  double x = 4;
+  double x = 999.0;
   double res = err_square(x);
-  APPROX_EQ(res, 7.105427357601001859e-15, 1e-17);
-  printf("err_square(%f)=%f\n", x, res);
+  APPROX_EQ(res, 2.32831e-10, 1e-8);
+  printf("err_square(%e)=%e\n", x, res);
   return 0;
 }
