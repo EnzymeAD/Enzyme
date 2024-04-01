@@ -4907,6 +4907,21 @@ Type *GradientUtils::getShadowType(Type *ty) {
   return getShadowType(ty, width);
 }
 
+Type *GradientUtils::extractMeta(Type *T, ArrayRef<unsigned> off) {
+  for (auto idx : off) {
+    if (auto AT = dyn_cast<ArrayType>(T)) {
+      T = AT->getElementType();
+      continue;
+    }
+    if (auto ST = dyn_cast<StructType>(T)) {
+      T = ST->getElementType(idx);
+      continue;
+    }
+    assert(false && "could not sub index into type");
+  }
+  return T;
+}
+
 Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
                                   unsigned off, const Twine &name) {
   return extractMeta(Builder, Agg, ArrayRef<unsigned>({off}), name);
