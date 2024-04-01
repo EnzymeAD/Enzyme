@@ -6009,30 +6009,56 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
       return castinst->getWithOperands(reps);
     }
 
+  if (auto CI = dyn_cast<CallInst>(todiff)) {
+    if (auto F = CI->getCalledFunction()) {
+      // clang-format off
+      const char* NoFreeDemanglesStartsWith[] = {
+          "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char>>"
+      };
+      // clang-format on
+      std::string demangledName = llvm::demangle(F->getName().str());
+      // replace all '> >' with '>>'
+      size_t start = 0;
+      while ((start = demangledName.find("> >", start)) != std::string::npos) {
+        demangledName.replace(start, 3, ">>");
+      }
+
+      for (auto Name : NoFreeDemanglesStartsWith)
+        if (startsWith(demangledName, Name))
+          return CI;
+    }
+  }
+
   if (context.ip) {
     if (auto LI = dyn_cast<LoadInst>(todiff)) {
       if (auto smpl = simplifyLoad(LI))
         return CreateNoFree(context, smpl);
-      auto res = cast<LoadInst>(context.ip->CreateLoad(
-          LI->getType(), CreateNoFree(context, LI->getPointerOperand())));
+      auto prev = CreateNoFree(context, LI->getPointerOperand());
+      if (prev == LI->getPointerOperand())
+        return todiff;
+      auto res = cast<LoadInst>(context.ip->CreateLoad(LI->getType(), prev));
       res->copyMetadata(*LI);
       return res;
     }
     if (auto CI = dyn_cast<CastInst>(todiff)) {
-      auto res = cast<CastInst>(context.ip->CreateCast(
-          CI->getOpcode(), CreateNoFree(context, CI->getOperand(0)),
-          CI->getType()));
+      auto prev = CreateNoFree(context, CI->getOperand(0));
+      if (prev == CI->getOperand(0))
+        return todiff;
+      auto res = cast<CastInst>(
+          context.ip->CreateCast(CI->getOpcode(), prev, CI->getType()));
       res->copyMetadata(*CI);
       return res;
     }
     if (auto gep = dyn_cast<GetElementPtrInst>(todiff)) {
       if (gep->hasAllConstantIndices() || gep->isInBounds()) {
+        auto prev = CreateNoFree(context, gep->getPointerOperand());
+        if (prev == gep->getPointerOperand())
+          return todiff;
         SmallVector<Value *, 1> idxs;
         for (auto &ind : gep->indices())
           idxs.push_back(ind);
-        auto res = cast<GetElementPtrInst>(context.ip->CreateGEP(
-            gep->getSourceElementType(),
-            CreateNoFree(context, gep->getPointerOperand()), idxs));
+        auto res = cast<GetElementPtrInst>(
+            context.ip->CreateGEP(gep->getSourceElementType(), prev, idxs));
         res->setIsInBounds(gep->isInBounds());
         res->copyMetadata(*gep);
         return res;
@@ -6114,6 +6140,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::basic_ios<char, std::char_traits<char> >::init(std::basic_streambuf<char, std::char_traits<char> >*)",
       "std::basic_ios<char, std::char_traits<char>>::clear(std::_Ios_Iostate)",
       "std::basic_ios<char, std::char_traits<char>>::operator bool() const",
+      "std::basic_ios<char, std::char_traits<char>>::operator!() const",
       "std::basic_ios<wchar_t, std::char_traits<wchar_t>>::imbue(std::locale const&)",
 
       "std::_Hash_bytes(void const*, unsigned long, unsigned long)",
@@ -6220,6 +6247,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>& std::operator<<<wchar_t, std::char_traits<wchar_t>>",
       "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char>>",
       "std::istream::get",
+      "std::istream::operator>>",
       "std::ctype<char>::widen"
   };
   // clang-format on
