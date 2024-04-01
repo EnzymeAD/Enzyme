@@ -506,15 +506,27 @@ LLVMBasicBlockRef EnzymeGradientUtilsAllocationBlock(GradientUtils *gutils) {
   return wrap(gutils->inversionAllocs);
 }
 
-void EnzymeGradientUtilsGetUncacheableArgs(GradientUtils *gutils,
-                                           LLVMValueRef orig, uint8_t *data,
-                                           uint64_t size) {
+uint8_t EnzymeGradientUtilsGetUncacheableArgs(GradientUtils *gutils,
+                                              LLVMValueRef orig, uint8_t *data,
+                                              uint64_t size) {
   if (gutils->mode == DerivativeMode::ForwardMode)
-    return;
+    return 0;
+
+  if (!gutils->overwritten_args_map_ptr)
+    return 0;
 
   CallInst *call = cast<CallInst>(unwrap(orig));
 
+  assert(gutils->overwritten_args_map_ptr);
   auto found = gutils->overwritten_args_map_ptr->find(call);
+  if (found == gutils->overwritten_args_map_ptr->end()) {
+    llvm::errs() << " oldFunc " << *gutils->oldFunc << "\n";
+    for (auto &pair : *gutils->overwritten_args_map_ptr) {
+      llvm::errs() << " + " << *pair.first << "\n";
+    }
+    llvm::errs() << " could not find call orig in overwritten_args_map_ptr "
+                 << *call << "\n";
+  }
   assert(found != gutils->overwritten_args_map_ptr->end());
 
   const std::vector<bool> &overwritten_args = found->second;
@@ -529,6 +541,7 @@ void EnzymeGradientUtilsGetUncacheableArgs(GradientUtils *gutils,
   for (uint64_t i = 0; i < size; i++) {
     data[i] = overwritten_args[i];
   }
+  return 1;
 }
 
 CTypeTreeRef EnzymeGradientUtilsAllocAndGetTypeTree(GradientUtils *gutils,

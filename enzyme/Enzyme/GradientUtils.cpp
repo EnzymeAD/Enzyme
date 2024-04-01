@@ -4341,8 +4341,8 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
   }
 
   if (primalReturnUsedP) {
-    bool subretused =
-        unnecessaryValuesP->find(orig) == unnecessaryValuesP->end();
+    bool subretused = !unnecessaryValuesP || unnecessaryValuesP->find(orig) ==
+                                                 unnecessaryValuesP->end();
     auto found = knownRecomputeHeuristic.find(orig);
     if (found != knownRecomputeHeuristic.end()) {
       if (!found->second) {
