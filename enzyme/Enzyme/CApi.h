@@ -131,6 +131,7 @@ typedef enum {
   DEM_ReverseModeGradient = 2,
   DEM_ReverseModeCombined = 3,
   DEM_ForwardModeSplit = 4,
+  DEM_ForwardModeError = 5
 } CDerivativeMode;
 
 typedef enum {
@@ -187,6 +188,10 @@ void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
 typedef uint8_t (*CustomFunctionForward)(LLVMBuilderRef, LLVMValueRef,
                                          GradientUtils *, LLVMValueRef *,
                                          LLVMValueRef *);
+
+typedef uint8_t (*CustomFunctionDiffUse)(LLVMValueRef, const GradientUtils *,
+                                         LLVMValueRef, uint8_t, CDerivativeMode,
+                                         uint8_t *);
 
 typedef uint8_t (*CustomAugmentedFunctionForward)(LLVMBuilderRef, LLVMValueRef,
                                                   GradientUtils *,

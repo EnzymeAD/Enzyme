@@ -3647,7 +3647,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   if (key.retType != DIFFE_TYPE::CONSTANT)
     assert(!key.todiff->getReturnType()->isVoidTy());
 
-  assert(key.overwritten_args.size() == key.todiff->arg_size());
+  if (!isMemFreeLibMFunction(getFuncName(key.todiff)))
+    assert(key.overwritten_args.size() == key.todiff->arg_size());
 
   Function *prevFunction = nullptr;
   if (ReverseCachedFunctions.find(key) != ReverseCachedFunctions.end()) {
@@ -6178,7 +6179,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   StringSet<> NoFrees = {
       "mpfr_greater_p",    "memchr",          "time",      "strlen",
       "__cxa_begin_catch", "__cxa_end_catch", "compress2", "malloc_usable_size",
-      "MPI_Allreduce",
+      "MPI_Allreduce",     "lgamma",          "lgamma_r",
   };
 
   if (startsWith(F->getName(), "_ZNSolsE") || NoFrees.count(F->getName()))

@@ -1431,6 +1431,15 @@ public:
           if (TR.query(orig_op0)[{-1}] == BaseType::Integer &&
               TR.query(&I)[{-1}] == BaseType::Integer)
             return;
+          if (looseTypeAnalysis) {
+            if (auto ET = I.getSrcTy()->getScalarType())
+              if (ET->isIntOrIntVectorTy()) {
+                EmitWarning("CannotDeduceType", I,
+                            "failed to deduce adding type of cast ", I,
+                            " assumed integral from src");
+                return;
+              }
+          }
           std::string str;
           raw_string_ostream ss(str);
           ss << "Cannot deduce adding type (cast) of " << I;
@@ -4328,19 +4337,25 @@ public:
       }
     }
 
-    if (!subdata) {
-      llvm::errs() << *gutils->oldFunc->getParent() << "\n";
-      llvm::errs() << *gutils->oldFunc << "\n";
-      llvm::errs() << *gutils->newFunc << "\n";
-      llvm::errs() << *called << "\n";
-      llvm_unreachable("no subdata");
+    {
+      Intrinsic::ID ID = Intrinsic::not_intrinsic;
+      if (!subdata && !isMemFreeLibMFunction(getFuncNameFromCall(&call), &ID)) {
+        llvm::errs() << *gutils->oldFunc->getParent() << "\n";
+        llvm::errs() << *gutils->oldFunc << "\n";
+        llvm::errs() << *gutils->newFunc << "\n";
+        llvm::errs() << *called << "\n";
+        llvm_unreachable("no subdata");
+      }
     }
 
-    auto found = subdata->returns.find(AugmentedStruct::DifferentialReturn);
-    assert(found == subdata->returns.end());
-
-    found = subdata->returns.find(AugmentedStruct::Return);
-    assert(found == subdata->returns.end());
+    if (subdata) {
+      auto found = subdata->returns.find(AugmentedStruct::DifferentialReturn);
+      assert(found == subdata->returns.end());
+    }
+    if (subdata) {
+      auto found = subdata->returns.find(AugmentedStruct::Return);
+      assert(found == subdata->returns.end());
+    }
 
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined) {
@@ -4355,8 +4370,8 @@ public:
 
       Function *newcalled = nullptr;
       if (called) {
-        if (subdata->returns.find(AugmentedStruct::Tape) !=
-            subdata->returns.end()) {
+        if (subdata && subdata->returns.find(AugmentedStruct::Tape) !=
+                           subdata->returns.end()) {
           if (Mode == DerivativeMode::ReverseModeGradient) {
             if (tape == nullptr)
               tape = BuilderZ.CreatePHI(subdata->tapeType, 0, "tapeArg");
@@ -4400,8 +4415,8 @@ public:
             TR.analyzer->interprocedural, subdata,
             /*omp*/ true);
 
-        if (subdata->returns.find(AugmentedStruct::Tape) !=
-            subdata->returns.end()) {
+        if (subdata && subdata->returns.find(AugmentedStruct::Tape) !=
+                           subdata->returns.end()) {
           auto tapeArg = newcalled->arg_end();
           tapeArg--;
           LoadInst *tape = nullptr;
@@ -5358,45 +5373,53 @@ public:
                 *subaugmentations, &call, (AugmentedReturn *)subdata);
           }
         }
-        if (!subdata) {
-          llvm::errs() << *gutils->oldFunc->getParent() << "\n";
-          llvm::errs() << *gutils->oldFunc << "\n";
-          llvm::errs() << *gutils->newFunc << "\n";
-          llvm::errs() << *called << "\n";
-        }
-        assert(subdata);
-        fnandtapetype = subdata;
-        newcalled = subdata->fn;
-        FT = cast<Function>(newcalled)->getFunctionType();
-
-        auto found = subdata->returns.find(AugmentedStruct::DifferentialReturn);
-        if (found != subdata->returns.end()) {
-          differetIdx = found->second;
-        } else {
-          assert(!shadowReturnUsed);
+        {
+          Intrinsic::ID ID = Intrinsic::not_intrinsic;
+          if (!subdata &&
+              !isMemFreeLibMFunction(getFuncNameFromCall(&call), &ID)) {
+            llvm::errs() << *gutils->oldFunc->getParent() << "\n";
+            llvm::errs() << *gutils->oldFunc << "\n";
+            llvm::errs() << *gutils->newFunc << "\n";
+            llvm::errs() << *called << "\n";
+            assert(subdata);
+          }
         }
 
-        found = subdata->returns.find(AugmentedStruct::Return);
-        if (found != subdata->returns.end()) {
-          returnIdx = found->second;
-        } else {
-          assert(!subretused);
-        }
+        if (subdata) {
+          fnandtapetype = subdata;
+          newcalled = subdata->fn;
+          FT = cast<Function>(newcalled)->getFunctionType();
 
-        found = subdata->returns.find(AugmentedStruct::Tape);
-        if (found != subdata->returns.end()) {
-          tapeIdx = found->second;
+          auto found =
+              subdata->returns.find(AugmentedStruct::DifferentialReturn);
+          if (found != subdata->returns.end()) {
+            differetIdx = found->second;
+          } else {
+            assert(!shadowReturnUsed);
+          }
+
+          found = subdata->returns.find(AugmentedStruct::Return);
+          if (found != subdata->returns.end()) {
+            returnIdx = found->second;
+          } else {
+            assert(!subretused);
+          }
+
+          found = subdata->returns.find(AugmentedStruct::Tape);
+          if (found != subdata->returns.end()) {
+            tapeIdx = found->second;
+          }
         }
       }
       // sub_index_map = fnandtapetype.tapeIndices;
-
-      assert(newcalled);
-      assert(FT);
 
       // llvm::errs() << "seeing sub_index_map of " << sub_index_map->size()
       // << " in ap " << cast<Function>(called)->getName() << "\n";
       if (Mode == DerivativeMode::ReverseModeCombined ||
           Mode == DerivativeMode::ReverseModePrimal) {
+
+        assert(newcalled);
+        assert(FT);
 
         if (false) {
         badaugmentedfn:;
@@ -5544,17 +5567,19 @@ public:
         } else {
           // assert(!tape);
           // assert(subdata);
-          if (!tape) {
-            assert(tapeIdx);
-            auto tval = *tapeIdx;
-            tape = BuilderZ.CreatePHI(
-                (tapeIdx == -1) ? FT->getReturnType()
-                                : cast<StructType>(FT->getReturnType())
-                                      ->getElementType(tval),
-                1, "tapeArg");
+          if (FT) {
+            if (!tape) {
+              assert(tapeIdx);
+              auto tval = *tapeIdx;
+              tape = BuilderZ.CreatePHI(
+                  (tapeIdx == -1) ? FT->getReturnType()
+                                  : cast<StructType>(FT->getReturnType())
+                                        ->getElementType(tval),
+                  1, "tapeArg");
+            }
+            tape = gutils->cacheForReverse(
+                BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
           }
-          tape = gutils->cacheForReverse(
-              BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
         }
 
         if (subretused) {

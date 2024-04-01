@@ -48,6 +48,11 @@ extern "C" {
 extern llvm::cl::opt<bool> EnzymePrintDiffUse;
 }
 
+extern llvm::StringMap<
+    std::function<bool(const llvm::CallInst *, const GradientUtils *,
+                       const llvm::Value *, bool, DerivativeMode, bool &)>>
+    customDiffUseHandlers;
+
 /// Classification of what type of use is requested
 enum class QueryType {
   // The original value is needed for the derivative
