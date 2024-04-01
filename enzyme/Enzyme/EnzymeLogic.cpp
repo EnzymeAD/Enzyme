@@ -4746,7 +4746,8 @@ Function *EnzymeLogic::CreateForwardDiff(
     std::string s;
     llvm::raw_string_ostream ss(s);
     if (mode == DerivativeMode::ForwardModeError) {
-      ss << "No forward mode error function found for " + todiff->getName() << "\n";
+      ss << "No forward mode error function found for " + todiff->getName()
+         << "\n";
     } else {
       ss << "No forward mode derivative found for " + todiff->getName() << "\n";
     }
