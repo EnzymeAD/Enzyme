@@ -6278,7 +6278,6 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::istream& std::istream::_M_extract",
       "std::ctype<char>::widen",
   };
-  // clang-format on
 
   StringSet<> NoFrees = {"mpfr_greater_p",
                          "memchr",
@@ -6293,7 +6292,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
                          "MPI_Allreduce",
                          "lgamma",
                          "lgamma_r",
-                         "__kmpc_global_thread_num"};
+                         "__kmpc_global_thread_num",
+                         "_Znwm"};
+  // clang-format on
 
   if (startsWith(F->getName(), "_ZNSolsE") || NoFrees.count(F->getName()))
     return F;
