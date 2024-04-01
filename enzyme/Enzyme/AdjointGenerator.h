@@ -6441,6 +6441,9 @@ public:
 #endif
         {
           Value *a = call.getOperand(i);
+
+          if (EnzymeJuliaAddrLoad && isSpecialPtr(a->getType()))
+            continue;
           // if could not be a pointer, it cannot be freed
           if (!TR.query(a)[{-1}].isPossiblePointer())
             continue;
