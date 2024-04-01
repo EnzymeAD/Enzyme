@@ -6190,6 +6190,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::_M_sync(char*, unsigned long, unsigned long)",
       "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::basic_stringbuf(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::_Ios_Openmode)",
 
+      "std::basic_streambuf<char, std::char_traits<char>>::pubsync()",
       "std::basic_ifstream<char, std::char_traits<char>>::close()",
       "std::istream::ignore()",
       "std::basic_ifstream<char, std::char_traits<char>>::basic_ifstream()",
