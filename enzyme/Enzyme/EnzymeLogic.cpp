@@ -6029,6 +6029,11 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
     }
   }
 
+  if (auto GV = dyn_cast<GlobalVariable>(todiff)) {
+    if (GV->getName() == "_ZSt4cerr")
+      return GV;
+  }
+
   if (context.ip) {
     if (auto LI = dyn_cast<LoadInst>(todiff)) {
       if (auto smpl = simplifyLoad(LI))
@@ -6150,6 +6155,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::allocator<char>::allocator()",
       "std::allocator<char>::~allocator()",
 
+      "std::__cxx11::basic_stringstream<char, std::char_traits<char>, std::allocator<char>>::basic_stringstream(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::_Ios_Openmode)"
       "std::__cxx11::basic_stringstream<char, std::char_traits<char>, std::allocator<char>>::~basic_stringstream()",
 
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::basic_string(char const*, std::allocator<char> const&)",
@@ -6178,6 +6184,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::basic_ifstream<char, std::char_traits<char>>::basic_ifstream(char const*, std::_Ios_Openmode)",
       "std::__basic_file<char>::~__basic_file()",
 
+      "std::ostream::flush()",
       "std::basic_ostream<char, std::char_traits<char>>::flush()",
       "std::basic_streambuf<char, std::char_traits<char>>::xsgetn(char*, long)",
 
@@ -6245,8 +6252,10 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::basic_ostream<char, std::char_traits<char>>& std::flush",
       "std::basic_ostream<char, std::char_traits<char>>& std::operator<<<std::char_traits<char>>",
       "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>& std::operator<<<wchar_t, std::char_traits<wchar_t>>",
+      "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>::operator<<",
       "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char>>",
       "std::istream::get",
+      "std::istream::read",
       "std::istream::operator>>",
       "std::ctype<char>::widen"
   };
