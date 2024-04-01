@@ -19,8 +19,8 @@ double fun(double x) {
   double v4 = v2 / v3;
   double v5 = sin(v4);
 
-  printf("v1 = %18e, v2 = %18e, v3 = %18e, v4 = %18e, v5 = %18e\n", v1, v2, v3,
-         v4, v5);
+  printf("v1 = %.18e, v2 = %.18e, v3 = %.18e, v4 = %.18e, v5 = %.18e\n", v1, v2,
+         v3, v4, v5);
 
   return v4;
 }
@@ -28,7 +28,7 @@ double fun(double x) {
 int main() {
   double res = fun(1e-7);
   double error = __enzyme_error_estimate((void *)fun, 1e-7, 0.0);
-  printf("res = %.*e, abs error = %.*e, rel error = %.*e\n", 18, res, 18, error,
-         18, fabs(error / res));
+  printf("res = %.18e, abs error = %.18e, rel error = %.18e\n", res, error,
+         fabs(error / res));
   APPROX_EQ(error, 2.2222222222e-2, 1e-4);
 }
