@@ -6142,6 +6142,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
 
       "std::basic_streambuf<char, std::char_traits<char> >::xsputn(char const*, long)",
 
+      "std::__cxx11::basic_ostringstream<char, std::char_traits<char>, std::allocator<char>>::basic_ostringstream()",
+      "std::__cxx11::basic_ostringstream<char, std::char_traits<char>, std::allocator<char>>::str() const",
+
       "std::basic_ios<char, std::char_traits<char> >::init(std::basic_streambuf<char, std::char_traits<char> >*)",
       "std::basic_ios<char, std::char_traits<char>>::clear(std::_Ios_Iostate)",
       "std::basic_ios<char, std::char_traits<char>>::operator bool() const",
@@ -6155,13 +6158,15 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::allocator<char>::allocator()",
       "std::allocator<char>::~allocator()",
 
+      "std::basic_ifstream<char, std::char_traits<char>>::is_open()",
       "std::basic_ofstream<char, std::char_traits<char>>::is_open()",
+      "std::basic_ofstream<char, std::char_traits<char>>::close()",
+      "std::basic_ofstream<char, std::char_traits<char>>::basic_ofstream(char const*, std::_Ios_Openmode)",
 
       "std::__cxx11::basic_stringstream<char, std::char_traits<char>, std::allocator<char>>::basic_stringstream(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::_Ios_Openmode)",
       "std::__cxx11::basic_stringstream<char, std::char_traits<char>, std::allocator<char>>::~basic_stringstream()",
-
       "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>::put(wchar_t)",
-      
+
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::basic_string(char const*, std::allocator<char> const&)",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::basic_string(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>&&)",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::_M_construct(unsigned long, char)",
@@ -6183,12 +6188,16 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::pbackfail(int)",
       "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::underflow()",
       "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::_M_sync(char*, unsigned long, unsigned long)",
+      "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::basic_stringbuf(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::_Ios_Openmode)",
 
       "std::istream::ignore()",
+      "std::basic_ifstream<char, std::char_traits<char>>::basic_ifstream()",
       "std::basic_ifstream<char, std::char_traits<char>>::basic_ifstream(char const*, std::_Ios_Openmode)",
+      "std::basic_ifstream<char, std::char_traits<char>>::rdbuf() const",
       "std::__basic_file<char>::~__basic_file()",
 
       "std::ostream::flush()",
+      "std::basic_ostream<char, std::char_traits<char>>::basic_ostream(std::basic_streambuf<char, std::char_traits<char>>*)",
       "std::basic_ostream<char, std::char_traits<char>>::flush()",
       "std::basic_streambuf<char, std::char_traits<char>>::xsgetn(char*, long)",
 
@@ -6196,9 +6205,6 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::locale::global(std::locale const&)",
       "std::locale::~locale()",
       "std::ios_base::ios_base()",
-      "std::basic_ostream<char, std::char_traits<char>>& "
-      "std::basic_ostream<char, std::char_traits<char> "
-      ">::_M_insert<double>(double)",
 
       // libc++
       "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::basic_string(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
@@ -6254,15 +6260,19 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__1::ctype<char>::widen",
       "std::__1::basic_streambuf<char, std::__1::char_traits<char>>::sputn",
       "std::basic_ostream<char, std::char_traits<char>>& std::flush",
-      "std::basic_ostream<char, std::char_traits<char>>& std::operator<<<std::char_traits<char>>",
-      "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>& std::operator<<<wchar_t, std::char_traits<wchar_t>>",
-      "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>::operator<<",
+      "std::basic_ostream<char, std::char_traits<char>>& std::operator<<",
+      "std::basic_ostream<char, std::char_traits<char>>& std::basic_ostream<char, std::char_traits<char>>::_M_insert",
       "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char>>",
+      "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>& std::operator<<",
+      "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>::operator<<",
+      "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>& std::basic_ostream<wchar_t, std::char_traits<wchar_t>>::_M_insert",
       "std::istream::get",
       "std::ostream::put",
+      "std::ostream::write",
       "std::istream::read",
       "std::istream::operator>>",
-      "std::ctype<char>::widen"
+      "std::istream& std::istream::_M_extract",
+      "std::ctype<char>::widen",
   };
   // clang-format on
 
