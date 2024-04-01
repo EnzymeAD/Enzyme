@@ -6215,7 +6215,7 @@ public:
               auto idx = getIndex(&call, CacheType::Shadow, BuilderZ);
               invertedReturn =
                   gutils->cacheForReverse(BuilderZ, placeholder, idx);
-              if (idx == -2) {
+              if (idx == IndexMappingError) {
                 if (placeholder->getType() != invertedReturn->getType())
                   llvm::errs() << " place: " << *placeholder
                                << "  invRet: " << *invertedReturn;
@@ -6278,8 +6278,137 @@ public:
                                    newCall))
       return;
 
-    if (gutils->isConstantInstruction(&call) &&
-        (gutils->isConstantValue(&call) || !shadowReturnUsed)) {
+    bool useConstantFallback =
+        gutils->isConstantInstruction(&call) &&
+        (gutils->isConstantValue(&call) || !shadowReturnUsed);
+    if (useConstantFallback && Mode != DerivativeMode::ForwardMode &&
+        Mode != DerivativeMode::ForwardModeError) {
+      // if there is an escaping allocation, which is deduced needed in
+      // reverse pass, we need to do the recursive procedure to perform the
+      // free.
+
+      // First test if the return is a potential pointer and needed for the
+      // reverse pass
+      bool escapingNeededAllocation = false;
+
+      if (!isNoEscapingAllocation(&call)) {
+        escapingNeededAllocation = EnzymeGlobalActivity;
+
+        std::map<UsageKey, bool> CacheResults;
+        for (auto pair : gutils->knownRecomputeHeuristic) {
+          if (!pair.second || gutils->unnecessaryIntermediates.count(
+                                  cast<Instruction>(pair.first))) {
+            CacheResults[UsageKey(pair.first, QueryType::Primal)] = false;
+          }
+        }
+
+        if (!escapingNeededAllocation &&
+            !(EnzymeJuliaAddrLoad && isSpecialPtr(call.getType()))) {
+          if (TR.query(&call)[{-1}].isPossiblePointer()) {
+            auto found = gutils->knownRecomputeHeuristic.find(&call);
+            if (found != gutils->knownRecomputeHeuristic.end()) {
+              if (!found->second) {
+                CacheResults.erase(UsageKey(&call, QueryType::Primal));
+                escapingNeededAllocation =
+                    DifferentialUseAnalysis::is_value_needed_in_reverse<
+                        QueryType::Primal>(gutils, &call,
+                                           DerivativeMode::ReverseModeGradient,
+                                           CacheResults, oldUnreachable);
+              }
+            } else {
+              escapingNeededAllocation =
+                  DifferentialUseAnalysis::is_value_needed_in_reverse<
+                      QueryType::Primal>(gutils, &call,
+                                         DerivativeMode::ReverseModeGradient,
+                                         CacheResults, oldUnreachable);
+            }
+          }
+        }
+
+        // Next test if any allocation could be stored into one of the
+        // arguments.
+        if (!escapingNeededAllocation)
+#if LLVM_VERSION_MAJOR >= 14
+          for (unsigned i = 0; i < call.arg_size(); ++i)
+#else
+          for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
+#endif
+          {
+            Value *a = call.getOperand(i);
+
+            if (EnzymeJuliaAddrLoad && isSpecialPtr(a->getType()))
+              continue;
+
+            auto vd = TR.query(a);
+            if (!vd[{-1}].isPossiblePointer())
+              continue;
+
+            if (!vd[{-1, -1}].isPossiblePointer())
+              continue;
+
+            if (isReadOnly(&call, i))
+              continue;
+
+            // An allocation could only be needed in the reverse pass if it
+            // escapes into an argument. However, is the parameter by which it
+            // escapes could capture the pointer, the rest of Enzyme's caching
+            // mechanisms cannot assume that the allocation itself is
+            // reloadable, since it may have been captured and overwritten
+            // elsewhere.
+            // TODO: this justification will need revisiting in the future as
+            // the caching algorithm becomes increasingly sophisticated.
+            if (!isNoCapture(&call, i))
+              continue;
+
+            escapingNeededAllocation = true;
+          }
+      }
+
+      // If desired this can become even more aggressive by looking through the
+      // called function for any allocations.
+      if (auto F = getFunctionFromCall(&call)) {
+        SmallVector<Function *, 1> todo = {F};
+        SmallPtrSet<Function *, 1> done;
+        bool seenAllocation = false;
+        while (todo.size() && !seenAllocation) {
+          auto cur = todo.pop_back_val();
+          if (done.count(cur))
+            continue;
+          done.insert(cur);
+          // assume empty functions allocate.
+          if (cur->empty()) {
+            // unless they are marked
+            if (isNoEscapingAllocation(cur))
+              continue;
+            seenAllocation = true;
+            break;
+          }
+          for (auto &BB : *cur)
+            for (auto &I : BB)
+              if (auto CB = dyn_cast<CallBase>(&I)) {
+                if (isNoEscapingAllocation(CB))
+                  continue;
+                if (isAllocationCall(CB, gutils->TLI)) {
+                  seenAllocation = true;
+                  goto finish;
+                }
+                if (auto F = getFunctionFromCall(CB)) {
+                  todo.push_back(F);
+                  continue;
+                }
+                // Conservatively assume indirect functions allocate.
+                seenAllocation = true;
+                goto finish;
+              }
+        finish:;
+        }
+        if (!seenAllocation)
+          escapingNeededAllocation = false;
+      }
+      if (escapingNeededAllocation)
+        useConstantFallback = false;
+    }
+    if (useConstantFallback) {
       if (!gutils->isConstantValue(&call)) {
         auto found = gutils->invertedPointers.find(&call);
         if (found != gutils->invertedPointers.end()) {
@@ -6288,11 +6417,21 @@ public:
           gutils->erase(placeholder);
         }
       }
-      bool noFree = Mode == DerivativeMode::ForwardMode;
+      bool noFree = Mode == DerivativeMode::ForwardMode ||
+                    Mode == DerivativeMode::ForwardModeError;
       noFree |= call.hasFnAttr(Attribute::NoFree);
       if (!noFree && called) {
         noFree |= called->hasFnAttribute(Attribute::NoFree);
       }
+
+      std::map<UsageKey, bool> CacheResults;
+      for (auto pair : gutils->knownRecomputeHeuristic) {
+        if (!pair.second || gutils->unnecessaryIntermediates.count(
+                                cast<Instruction>(pair.first))) {
+          CacheResults[UsageKey(pair.first, QueryType::Primal)] = false;
+        }
+      }
+
       if (!noFree && !EnzymeGlobalActivity) {
         bool mayActiveFree = false;
 #if LLVM_VERSION_MAJOR >= 14
@@ -6302,12 +6441,76 @@ public:
 #endif
         {
           Value *a = call.getOperand(i);
-          if (gutils->isConstantValue(a))
+
+          if (EnzymeJuliaAddrLoad && isSpecialPtr(a->getType()))
             continue;
+          // if could not be a pointer, it cannot be freed
           if (!TR.query(a)[{-1}].isPossiblePointer())
             continue;
-          mayActiveFree = true;
-          break;
+          // if active value, we need to do memory preservation
+          if (!gutils->isConstantValue(a)) {
+            mayActiveFree = true;
+            break;
+          }
+          // if used in reverse (even if just primal), need to do
+          // memory preservation
+          const auto obj = getBaseObject(a);
+          // If not allocation/allocainst, it is possible this aliases
+          // a pointer needed in the reverse pass
+          bool isAllocation = false;
+          for (auto objv = obj;;) {
+            if (isAllocationCall(objv, gutils->TLI)) {
+              isAllocation = true;
+              break;
+            }
+            if (auto objC = dyn_cast<CallBase>(objv))
+              if (auto F = getFunctionFromCall(objC))
+                if (!F->empty()) {
+                  SmallPtrSet<Value *, 1> set;
+                  for (auto &B : *F) {
+                    if (auto RI = dyn_cast<ReturnInst>(B.getTerminator())) {
+                      auto v = getBaseObject(RI->getOperand(0));
+                      if (isa<ConstantPointerNull>(v))
+                        continue;
+                      set.insert(v);
+                    }
+                  }
+                  if (set.size() == 1) {
+                    objv = *set.begin();
+                    continue;
+                  }
+                }
+            break;
+          }
+          if (!isAllocation) {
+            mayActiveFree = true;
+            break;
+          }
+          {
+            auto found = gutils->knownRecomputeHeuristic.find(obj);
+            if (found != gutils->knownRecomputeHeuristic.end()) {
+              if (!found->second) {
+                auto CacheResults2(CacheResults);
+                CacheResults2.erase(UsageKey(obj, QueryType::Primal));
+                if (DifferentialUseAnalysis::is_value_needed_in_reverse<
+                        QueryType::Primal>(gutils, obj,
+                                           DerivativeMode::ReverseModeGradient,
+                                           CacheResults2, oldUnreachable)) {
+                  mayActiveFree = true;
+                  break;
+                }
+              }
+              continue;
+            }
+          }
+          auto CacheResults2(CacheResults);
+          if (DifferentialUseAnalysis::is_value_needed_in_reverse<
+                  QueryType::Primal>(gutils, obj,
+                                     DerivativeMode::ReverseModeGradient,
+                                     CacheResults2, oldUnreachable)) {
+            mayActiveFree = true;
+            break;
+          }
         }
         if (!mayActiveFree)
           noFree = true;

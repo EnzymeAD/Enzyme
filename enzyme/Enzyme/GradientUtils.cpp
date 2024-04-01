@@ -2546,7 +2546,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
   }
 
   if (tape) {
-    if (idx == -2) {
+    if (idx == IndexMappingError) {
       assert(malloc);
       return UndefValue::get(malloc->getType());
     }
@@ -9036,7 +9036,7 @@ int GradientUtils::getIndex(
       EmitFailure("GetIndexError", idx.first->getDebugLoc(), idx.first,
                   ss.str());
     }
-    return -2;
+    return IndexMappingError;
   }
   return found->second;
 }

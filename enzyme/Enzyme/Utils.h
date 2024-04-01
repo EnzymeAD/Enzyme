@@ -1559,6 +1559,22 @@ static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
   return false;
 }
 
+static inline bool isNoEscapingAllocation(const llvm::Function *F) {
+  if (F->hasFnAttribute("enzyme_no_escaping_allocation"))
+    return true;
+  return false;
+}
+static inline bool isNoEscapingAllocation(const llvm::CallBase *call) {
+  auto AttrList =
+      call->getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
+  if (AttrList.hasAttribute("enzyme_no_escaping_allocation"))
+    return true;
+  if (auto F = getFunctionFromCall(call)) {
+    return isNoEscapingAllocation(F);
+  }
+  return false;
+}
+
 bool attributeKnownFunctions(llvm::Function &F);
 
 llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero = false);

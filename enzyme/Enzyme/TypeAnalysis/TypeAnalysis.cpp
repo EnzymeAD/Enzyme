@@ -4603,7 +4603,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
     if (funcName == "omp_get_max_threads" || funcName == "omp_get_thread_num" ||
-        funcName == "omp_get_num_threads") {
+        funcName == "omp_get_num_threads" ||
+        funcName == "__kmpc_global_thread_num") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
@@ -4722,6 +4723,10 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     if (funcName == "jl_get_binding_or_error" ||
         funcName == "ijl_get_binding_or_error") {
       updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "_ZNSt6chrono3_V212steady_clock3nowEv") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
 

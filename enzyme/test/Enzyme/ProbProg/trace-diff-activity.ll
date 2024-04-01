@@ -62,7 +62,7 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   call void @__enzyme_insert_function(i8* %trace, i8* bitcast (void (double*, i8*)* @trace_test to i8*))
 ; CHECK-NEXT:   %0 = call double @normal(double 0.000000e+00, double 1.000000e+00)
-; CHECK-NEXT:   %likelihood.mu = call double @normal_logpdf(double 0.000000e+00, double 1.000000e+00, double %0)
+; CHECK-NEXT:   %likelihood.mu = call double @nofree_normal_logpdf(double 0.000000e+00, double 1.000000e+00, double %0)
 ; CHECK-NEXT:   %log_prob_sum = load double, double* %likelihood
 ; CHECK-NEXT:   %1 = fadd double %log_prob_sum, %likelihood.mu
 ; CHECK-NEXT:   store double %1, double* %likelihood
