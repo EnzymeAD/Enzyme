@@ -256,7 +256,8 @@ SmallVector<OperandBundleDef, 2>
 GradientUtils::getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
                                   IRBuilder<> &Builder2, bool lookup,
                                   const ValueToValueMapTy &available) {
-  assert(!(lookup && mode == DerivativeMode::ForwardMode));
+  assert(!(lookup && (mode == DerivativeMode::ForwardMode ||
+                      mode == DerivativeMode::ForwardModeError)));
 
   SmallVector<OperandBundleDef, 2> OrigDefs;
   orig->getOperandBundlesAsDefs(OrigDefs);
@@ -4323,6 +4324,7 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
     subretType = DIFFE_TYPE::CONSTANT;
   } else {
     if (cmode == DerivativeMode::ForwardMode ||
+        cmode == DerivativeMode::ForwardModeError ||
         cmode == DerivativeMode::ForwardModeSplit) {
       subretType = DIFFE_TYPE::DUP_ARG;
       shadowReturnUsed = true;
@@ -4382,6 +4384,7 @@ DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
     if (foreignFunction)
       assert(!argType->isIntOrIntVectorTy());
     if (mode == DerivativeMode::ForwardMode ||
+        mode == DerivativeMode::ForwardModeError ||
         mode == DerivativeMode::ForwardModeSplit)
       return DIFFE_TYPE::DUP_ARG;
     else
@@ -4572,8 +4575,10 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         std::pair<Argument *, std::set<int64_t>>(&a, {}));
     DIFFE_TYPE typ;
     if (a.getType()->isFPOrFPVectorTy()) {
-      typ = mode == DerivativeMode::ForwardMode ? DIFFE_TYPE::DUP_ARG
-                                                : DIFFE_TYPE::OUT_DIFF;
+      typ = (mode == DerivativeMode::ForwardMode ||
+             mode == DerivativeMode::ForwardModeError)
+                ? DIFFE_TYPE::DUP_ARG
+                : DIFFE_TYPE::OUT_DIFF;
     } else if (a.getType()->isIntegerTy() &&
                cast<IntegerType>(a.getType())->getBitWidth() < 16) {
       typ = DIFFE_TYPE::CONSTANT;
@@ -4586,7 +4591,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   }
 
   DIFFE_TYPE retType = fn->getReturnType()->isFPOrFPVectorTy() &&
-                               mode != DerivativeMode::ForwardMode
+                               mode != DerivativeMode::ForwardMode &&
+                               mode != DerivativeMode::ForwardModeError
                            ? DIFFE_TYPE::OUT_DIFF
                            : DIFFE_TYPE::DUP_ARG;
 
@@ -4595,7 +4601,9 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
        cast<IntegerType>(fn->getReturnType())->getBitWidth() < 16))
     retType = DIFFE_TYPE::CONSTANT;
 
-  if (mode != DerivativeMode::ForwardMode && retType == DIFFE_TYPE::DUP_ARG) {
+  if (mode != DerivativeMode::ForwardMode &&
+      mode != DerivativeMode::ForwardModeError &&
+      retType == DIFFE_TYPE::DUP_ARG) {
     if (auto ST = dyn_cast<StructType>(fn->getReturnType())) {
       size_t numflt = 0;
 
@@ -4776,11 +4784,13 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
 
   ptr = invertPointerM(ptr, BuilderM);
   if (!isOriginalBlock(*BuilderM.GetInsertBlock()) &&
-      mode != DerivativeMode::ForwardMode)
+      mode != DerivativeMode::ForwardMode &&
+      mode != DerivativeMode::ForwardModeError)
     ptr = lookupM(ptr, BuilderM);
 
   if (mask && !isOriginalBlock(*BuilderM.GetInsertBlock()) &&
-      mode != DerivativeMode::ForwardMode)
+      mode != DerivativeMode::ForwardMode &&
+      mode != DerivativeMode::ForwardModeError)
     mask = lookupM(mask, BuilderM);
 
   size_t idx = 0;
@@ -5233,6 +5243,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   }
 
   if (mode != DerivativeMode::ForwardMode &&
+      mode != DerivativeMode::ForwardModeError &&
       mode != DerivativeMode::ForwardModeSplit && nullShadow) {
     auto CT = TR.query(oval)[{-1}];
     if (CT.isFloat()) {
@@ -5280,7 +5291,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     if (!hasMetadata(arg, "enzyme_shadow")) {
 
       if ((mode == DerivativeMode::ReverseModeCombined ||
-           mode == DerivativeMode::ForwardMode) &&
+           mode == DerivativeMode::ForwardMode ||
+           mode == DerivativeMode::ForwardModeError) &&
           arg->getType()->getPointerAddressSpace() == 0) {
         auto CT = TR.query(arg)[{-1, -1}];
         // Can only localy replace a global variable if it is
