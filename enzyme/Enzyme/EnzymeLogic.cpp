@@ -6008,6 +6008,38 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
           cast<llvm::Constant>(CreateNoFree(context, castinst->getOperand(0)))};
       return castinst->getWithOperands(reps);
     }
+
+  if (context.ip) {
+    if (auto LI = dyn_cast<LoadInst>(todiff)) {
+      if (auto smpl = simplifyLoad(LI))
+        return CreateNoFree(context, smpl);
+      auto res = cast<LoadInst>(context.ip->CreateLoad(
+          LI->getType(), CreateNoFree(context, LI->getPointerOperand())));
+      res->copyMetadata(*LI);
+      return res;
+    }
+    if (auto CI = dyn_cast<CastInst>(todiff)) {
+      auto res = cast<CastInst>(context.ip->CreateCast(
+          CI->getOpcode(), CreateNoFree(context, CI->getOperand(0)),
+          CI->getType()));
+      res->copyMetadata(*CI);
+      return res;
+    }
+    if (auto gep = dyn_cast<GetElementPtrInst>(todiff)) {
+      if (gep->hasAllConstantIndices() || gep->isInBounds()) {
+        SmallVector<Value *, 1> idxs;
+        for (auto &ind : gep->indices())
+          idxs.push_back(ind);
+        auto res = cast<GetElementPtrInst>(context.ip->CreateGEP(
+            gep->getSourceElementType(),
+            CreateNoFree(context, gep->getPointerOperand()), idxs));
+        res->setIsInBounds(gep->isInBounds());
+        res->copyMetadata(*gep);
+        return res;
+      }
+    }
+  }
+
   if (EnzymeAssumeUnknownNoFree) {
     return todiff;
   }
@@ -6103,6 +6135,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::length() const",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::data() const",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::size() const",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::c_str() const",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::~basic_string()",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::compare(char const*) const",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::compare(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&) const",
@@ -6184,6 +6217,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__1::basic_streambuf<char, std::__1::char_traits<char>>::sputn",
       "std::basic_ostream<char, std::char_traits<char>>& std::flush",
       "std::basic_ostream<char, std::char_traits<char>>& std::operator<<<std::char_traits<char>>",
+      "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>& std::operator<<<wchar_t, std::char_traits<wchar_t>>",
       "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char>>",
       "std::istream::get",
       "std::ctype<char>::widen"
