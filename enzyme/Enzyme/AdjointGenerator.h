@@ -455,7 +455,7 @@ public:
       }
       if (CustomErrorHandler) {
         CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                           &TR.analyzer, nullptr, wrap(&BuilderZ));
+                           TR.analyzer, nullptr, wrap(&BuilderZ));
       } else {
         ss << "\n";
         TR.dump(ss);
@@ -1032,7 +1032,7 @@ public:
       }
       if (CustomErrorHandler) {
         CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                           &TR.analyzer, nullptr, wrap(&BuilderZ));
+                           TR.analyzer, nullptr, wrap(&BuilderZ));
       } else {
         ss << "\n";
         TR.dump(ss);
@@ -1058,7 +1058,7 @@ public:
                << " size: " << storeSize;
             if (CustomErrorHandler) {
               CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                                 &TR.analyzer, nullptr, wrap(&BuilderZ));
+                                 TR.analyzer, nullptr, wrap(&BuilderZ));
             } else {
               EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
             }
@@ -1136,7 +1136,7 @@ public:
            << " size: " << storeSize;
         if (CustomErrorHandler) {
           CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                             &TR.analyzer, nullptr, wrap(&BuilderZ));
+                             TR.analyzer, nullptr, wrap(&BuilderZ));
         } else {
           EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
         }
@@ -1445,7 +1445,7 @@ public:
           ss << "Cannot deduce adding type (cast) of " << I;
           if (CustomErrorHandler) {
             CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoType,
-                               &TR.analyzer, nullptr, wrap(&Builder2));
+                               TR.analyzer, nullptr, wrap(&Builder2));
             return;
           } else {
             ss << "\n";
@@ -2012,7 +2012,7 @@ public:
                  << " size: " << size0 << " TT: " << TT.str();
               if (CustomErrorHandler) {
                 CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
-                                   &TR.analyzer, nullptr, wrap(&Builder2));
+                                   TR.analyzer, nullptr, wrap(&Builder2));
               } else {
                 EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
                             ss.str());
@@ -2097,7 +2097,7 @@ public:
                  << " TT: " << TT.str();
               if (CustomErrorHandler) {
                 CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
-                                   &TR.analyzer, nullptr, wrap(&Builder2));
+                                   TR.analyzer, nullptr, wrap(&Builder2));
               } else {
                 EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
                             ss.str());
@@ -3133,7 +3133,7 @@ public:
       ss << "Cannot deduce type of memset " << MS;
       if (CustomErrorHandler) {
         CustomErrorHandler(str.c_str(), wrap(&MS), ErrorType::NoType,
-                           &TR.analyzer, nullptr, wrap(&BuilderZ));
+                           TR.analyzer, nullptr, wrap(&BuilderZ));
       } else {
         ss << "\n";
         TR.dump(ss);
@@ -3439,7 +3439,7 @@ public:
         ss << "Cannot deduce type of copy " << MTI;
         if (CustomErrorHandler) {
           CustomErrorHandler(str.c_str(), wrap(&MTI), ErrorType::NoType,
-                             &TR.analyzer, nullptr, wrap(&BuilderZ));
+                             TR.analyzer, nullptr, wrap(&BuilderZ));
         } else {
           ss << "\n";
           ss << *gutils->oldFunc << "\n";

@@ -3364,7 +3364,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
          << " sz: " << size << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(str.c_str(), wrap(orig), ErrorType::NoType,
-                           &gutils->TR.analyzer, nullptr, wrap(&Builder));
+                           gutils->TR.analyzer, nullptr, wrap(&Builder));
         continue;
       } else {
         ss << "\n";
