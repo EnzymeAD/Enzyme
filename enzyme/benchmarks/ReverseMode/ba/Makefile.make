@@ -1,23 +1,17 @@
-# RUN: cd %S && LD_LIBRARY_PATH="%bldpath:$LD_LIBRARY_PATH" BENCH="%bench" BENCHLINK="%blink" LOAD="%loadEnzyme" make -B ba-unopt.ll ba-raw.ll results.json -f %s
+# RUN: cd %S && LD_LIBRARY_PATH="%bldpath:$LD_LIBRARY_PATH" BENCH="%bench" BENCHLINK="%blink" LOAD="%newLoadClangEnzyme" make -B ba.o results.json -f %s
 
 .PHONY: clean
+
+dir := $(abspath $(lastword $(MAKEFILE_LIST))/../../../..)
 
 clean:
 	rm -f *.ll *.o results.txt results.json
 
-%-unopt.ll: %.cpp
-	clang++ $(BENCH) $^ -O2 -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -Xclang -new-struct-path-tbaa -o $@ -S -emit-llvm
-	#clang++ $(BENCH) $^ -O1 -Xclang -disable-llvm-passes -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -Xclang -new-struct-path-tbaa -o $@ -S -emit-llvm
+$(dir)/benchmarks/ReverseMode/ba/target/release/libbars.a: src/lib.rs Cargo.toml
+	ENZYME_LOOSE_TYPES=1 cargo +enzyme rustc --release --lib --crate-type=staticlib --features=libm
 
-%-raw.ll: %-unopt.ll
-	opt $^ $(LOAD) -enzyme -o $@ -S
-
-%-opt.ll: %-raw.ll
-	opt $^ -o $@ -S
-	#opt $^ -O2 -o $@ -S
-
-ba.o: ba-opt.ll
-	clang++ -O2 $^ -o $@ $(BENCHLINK)
+ba.o: ba.cpp $(dir)/benchmarks/ReverseMode/ba/target/release/libbars.a
+	clang++ $(LOAD) $(BENCH) ba.cpp -I /usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -O2 -o ba.o -lpthread $(BENCHLINK) -lm $(dir)/benchmarks/ReverseMode/ba/target/release/libbars.a -L /usr/lib/gcc/x86_64-linux-gnu/11
 
 results.json: ba.o
 	./$^
