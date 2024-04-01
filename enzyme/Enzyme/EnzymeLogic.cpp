@@ -6274,6 +6274,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::istream::read",
       "std::istream::operator>>",
       "std::basic_streambuf<char, std::char_traits<char>>::pubsetbuf",
+      "std::basic_streambuf<char, std::char_traits<char>>::sputn",
       "std::istream& std::istream::_M_extract",
       "std::ctype<char>::widen",
   };
