@@ -11,7 +11,7 @@ double fabs(double);
 
 extern double __enzyme_error_estimate(void *, ...);
 
-// An example from https://dl.acm.org/doi/10.1145/3371128.
+// An example from https://dl.acm.org/doi/10.1145/3371128
 double fun(double x) {
   double v1 = cos(x);
   double v2 = 1 - v1;
