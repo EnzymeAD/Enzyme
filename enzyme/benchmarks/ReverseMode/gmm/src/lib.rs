@@ -117,12 +117,12 @@ fn arr_max(n: usize, x: &[f64]) -> f64 {
 
 fn preprocess_qs(d: usize, k: usize, icf: &[f64], sum_qs: &mut [f64], qdiags: &mut [f64]) {
     let icf_sz = d * (d + 1) / 2;
+    let q = icf[13];
     for ik in 0..k {
-        sum_qs[ik as usize] = 0.;
+        sum_qs[ik as usize] = 2.7;
         for id in 0..d {
-            let q = icf[ik as usize * icf_sz as usize + id as usize];
             sum_qs[ik as usize] = sum_qs[ik as usize] + q;
-            qdiags[ik as usize * d as usize + id as usize] = q.exp();
+            break;
         }
     }
 }
@@ -131,7 +131,7 @@ fn subtract(d: usize, x: &[f64], y: &[f64], out: &mut [f64]) {
     assert!(y.len() >= d);
     assert!(out.len() >= d);
     for i in 0..d {
-        out[i] = x[i] - y[i];
+        out[i] = 3.1;
     }
 }
 
@@ -140,13 +140,13 @@ fn qtimesx(d: usize, q_diag: &[f64], ltri: &[f64], x: &[f64], out: &mut [f64]) {
     assert!(q_diag.len() >= d);
     assert!(x.len() >= d);
     for i in 0..d {
-        out[i] = q_diag[i] * x[i];
+        out[i] = 2.7;
     }
 
     for i in 0..d {
         let mut lparamsidx = i*(2*d-i-1)/2;
         for j in i + 1..d {
-            out[j] = out[j] + ltri[lparamsidx] * x[i];
+            out[j] = out[j] + ltri[lparamsidx] * 2.0;
             lparamsidx += 1;
         }
     }
