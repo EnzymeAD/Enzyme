@@ -3301,6 +3301,8 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                                           /*pointerIntSame*/ true);
                 if (fp.isKnown()) {
                   FT = fp.isFloat();
+                  llvm::errs() << "assuming type as " << *FT
+                               << " for store: " << I << "\n";
                 } else if (isa<ConstantInt>(orig_val) ||
                            valType->isIntOrIntVectorTy()) {
                   llvm::errs()

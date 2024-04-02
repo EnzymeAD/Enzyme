@@ -448,7 +448,7 @@ public:
       auto ET = I.getType();
       if (looseTypeAnalysis || true) {
         vd = defaultTypeTreeForLLVM(ET, &I);
-        ss << "\n";
+        ss << ", assumed " << vd.str() << "\n";
         TR.dump(ss);
         EmitWarning("CannotDeduceType", I, ss.str());
         goto known;
@@ -1024,9 +1024,9 @@ public:
       raw_string_ostream ss(str);
       ss << "Cannot deduce type of store " << I;
       if (looseTypeAnalysis || true) {
-        ss << "\n";
-        TR.dump(ss);
         vd = defaultTypeTreeForLLVM(valType, &I);
+        ss << ", assumed " << vd.str() << "\n";
+        TR.dump(ss);
         EmitWarning("CannotDeduceType", I, ss.str());
         goto known;
       }
