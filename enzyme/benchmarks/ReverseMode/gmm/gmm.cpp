@@ -249,7 +249,7 @@ void gmm_objective(
     //storing cmp of alphas
     double lse_alphas = log_sum_exp(k, alphas);
 
-    *err = CONSTANT + slse - n * lse_alphas ;//+ log_wishart_prior(d, k, wishart, &sum_qs[0], &Qdiags[0], icf);
+    *err = CONSTANT + slse - n * lse_alphas ;
 
     free(Qdiags);
     free(sum_qs);
