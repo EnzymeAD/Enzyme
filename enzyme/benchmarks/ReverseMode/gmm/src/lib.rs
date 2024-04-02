@@ -102,7 +102,7 @@ pub fn gmm_objective(d: usize, k: usize, n: usize, alphas: &[f64], means: &[f64]
     };
     //let lwp = log_wishart_prior(d, k, wishart, &sum_qs, &qdiags, icf);
 
-    *err = constant + slse - n as f64 * lse_alphas + lwp;
+    *err = constant + slse - n as f64 * lse_alphas ;//+ lwp;
 }
 
 fn arr_max(n: usize, x: &[f64]) -> f64 {
