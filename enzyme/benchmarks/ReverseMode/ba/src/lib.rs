@@ -121,8 +121,7 @@ pub fn compute_reproj_error(
 #[autodiff(dcompute_zach_weight_error, Reverse, Duplicated, Duplicated)]
 pub fn compute_zach_weight_error(w: *const f64, err: *mut f64) {
     let w = unsafe { *w };
-    let mut err = unsafe { *err };
-    err = 1. - w * w;
+    unsafe { *err = 1. - w * w; }
 }
 
 // n number of cameras
