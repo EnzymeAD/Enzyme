@@ -729,7 +729,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         PrintFatalError(pattern->getLoc(),
                         Twine("unknown named operand in shadow") +
                             resultTree->getAsString());
-      os << ", " << builder << ")";
+      os << ", " << builder << ", /*nullShadow*/true)";
       if (lookup)
         os << ", " << builder << ")";
       return true;
