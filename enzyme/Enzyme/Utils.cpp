@@ -23,6 +23,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "Utils.h"
+#include "GradientUtils.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 
 #if LLVM_VERSION_MAJOR >= 16
@@ -2345,9 +2346,10 @@ findAllUsersOf(Value *AI) {
 // Given a pointer, find all values of size `valSz` which could be loaded from
 // that pointer when indexed at offset. If it is impossible to guarantee that
 // the set contains all such values, set legal to false
-SmallVector<Value *, 1> getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset,
-                                               size_t valSz, bool &legal) {
-  SmallVector<Value *, 1> options;
+SmallVector<std::pair<Value *, size_t>, 1>
+getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset, size_t valSz,
+                       bool &legal) {
+  SmallVector<std::pair<Value *, size_t>, 1> options;
 
   auto todo = findAllUsersOf(ptr0);
   std::set<std::tuple<Instruction *, Value *, size_t>> seen;
@@ -2389,8 +2391,9 @@ SmallVector<Value *, 1> getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset,
         if (offset + valSz <= suboff)
           continue;
 
-        if (valSz == storeSz) {
-          options.push_back(SI->getValueOperand());
+        if (valSz <= storeSz) {
+          assert(offset >= suboff);
+          options.emplace_back(SI->getValueOperand(), offset - suboff);
           continue;
         }
       }
@@ -2410,7 +2413,9 @@ SmallVector<Value *, 1> getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset,
               legal = false;
               return options;
             }
-            for (auto subPtr : subPtrs) {
+            for (auto &&[subPtr, subOff] : subPtrs) {
+              if (subOff != 0)
+                return options;
               for (const auto &pair3 : findAllUsersOf(subPtr)) {
                 todo.emplace_back(pair3);
               }
@@ -2459,11 +2464,11 @@ SmallVector<Value *, 1> getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset,
 }
 
 // Perform mem2reg/sroa to identify the innermost value being represented.
-Value *simplifyLoad(Value *V, size_t valSz) {
+Value *simplifyLoad(Value *V, size_t valSz, size_t preOffset) {
   if (auto LI = dyn_cast<LoadInst>(V)) {
     if (valSz == 0) {
       auto &DL = LI->getParent()->getParent()->getParent()->getDataLayout();
-      valSz = (DL.getTypeStoreSizeInBits(LI->getType()) + 7) / 8;
+      valSz = (DL.getTypeSizeInBits(LI->getType()) + 7) / 8;
     }
 
     Value *ptr = LI->getPointerOperand();
@@ -2476,6 +2481,7 @@ Value *simplifyLoad(Value *V, size_t valSz) {
     if (!AI) {
       return nullptr;
     }
+    offset += preOffset;
 
     bool legal = true;
     auto opts = getAllLoadedValuesFrom(AI, offset, valSz, legal);
@@ -2484,8 +2490,8 @@ Value *simplifyLoad(Value *V, size_t valSz) {
       return nullptr;
     }
     std::set<Value *> res;
-    for (auto opt : opts) {
-      Value *v2 = simplifyLoad(opt, valSz);
+    for (auto &&[opt, startOff] : opts) {
+      Value *v2 = simplifyLoad(opt, valSz, startOff);
       if (v2)
         res.insert(v2);
       else
@@ -2498,19 +2504,43 @@ Value *simplifyLoad(Value *V, size_t valSz) {
     return retval;
   }
   if (auto EVI = dyn_cast<ExtractValueInst>(V)) {
-    bool allZero = true;
-    for (auto idx : EVI->getIndices()) {
-      if (idx != 0)
-        allZero = false;
+    IRBuilder<> B(EVI);
+    auto em =
+        GradientUtils::extractMeta(B, EVI->getAggregateOperand(),
+                                   EVI->getIndices(), "", /*fallback*/ false);
+    if (em != nullptr) {
+      if (auto SL2 = simplifyLoad(em, valSz))
+        em = SL2;
+      return em;
     }
-    if (valSz == 0) {
-      auto &DL = EVI->getParent()->getParent()->getParent()->getDataLayout();
-      valSz = (DL.getTypeStoreSizeInBits(EVI->getType()) + 7) / 8;
-    }
-    if (allZero)
-      if (auto LI = dyn_cast<LoadInst>(EVI->getAggregateOperand())) {
-        return simplifyLoad(LI, valSz);
+    if (auto LI = dyn_cast<LoadInst>(EVI->getAggregateOperand())) {
+      auto offset = preOffset;
+
+      auto &DL = LI->getParent()->getParent()->getParent()->getDataLayout();
+      SmallVector<Value *, 4> vec;
+      vec.push_back(ConstantInt::get(Type::getInt64Ty(EVI->getContext()), 0));
+      for (auto ind : EVI->getIndices()) {
+        vec.push_back(
+            ConstantInt::get(Type::getInt32Ty(EVI->getContext()), ind));
       }
+      auto ud = UndefValue::get(
+          PointerType::getUnqual(EVI->getOperand(0)->getType()));
+      auto g2 =
+          GetElementPtrInst::Create(EVI->getOperand(0)->getType(), ud, vec);
+      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
+      g2->accumulateConstantOffset(DL, ai);
+      // Using destructor rather than eraseFromParent
+      //   as g2 has no parent
+      delete g2;
+
+      offset += (size_t)ai.getLimitedValue();
+
+      if (valSz == 0) {
+        auto &DL = EVI->getParent()->getParent()->getParent()->getDataLayout();
+        valSz = (DL.getTypeSizeInBits(EVI->getType()) + 7) / 8;
+      }
+      return simplifyLoad(LI, valSz, offset);
+    }
   }
   return nullptr;
 }

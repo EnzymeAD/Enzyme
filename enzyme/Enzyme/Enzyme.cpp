@@ -554,8 +554,9 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
   }
 
   if ((mode == DerivativeMode::ReverseModePrimal &&
-      DL.getTypeSizeInBits(retType) >= DL.getTypeSizeInBits(diffretType)) ||
-      (mode == DerivativeMode::ForwardMode && DL.getTypeSizeInBits(retType) == DL.getTypeSizeInBits(diffretType))) {
+       DL.getTypeSizeInBits(retType) >= DL.getTypeSizeInBits(diffretType)) ||
+      (mode == DerivativeMode::ForwardMode &&
+       DL.getTypeSizeInBits(retType) == DL.getTypeSizeInBits(diffretType))) {
     IRBuilder<> EB(CI->getFunction()->getEntryBlock().getFirstNonPHI());
     auto AL = EB.CreateAlloca(retType);
     Builder.CreateStore(diffret, Builder.CreatePointerCast(
@@ -584,8 +585,8 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
   auto retsize = DL.getTypeSizeInBits(retType);
   EmitFailure("IllegalReturnCast", CI->getDebugLoc(), CI,
               "Cannot cast return type of gradient ", *diffretType, *diffret,
-              " of size ", diffretsize, " bits ",
-              ", to desired type ", *retType, " of size ", retsize, " bits");
+              " of size ", diffretsize, " bits ", ", to desired type ",
+              *retType, " of size ", retsize, " bits");
   return false;
 }
 
@@ -1180,10 +1181,14 @@ public:
           if (auto arg = dyn_cast<Instruction>(res)) {
             loc = arg->getDebugLoc();
           }
+          auto S = simplifyLoad(res);
+          if (!S)
+            S = res;
           EmitFailure("IllegalArgCast", loc, CI,
                       "Cannot cast __enzyme_autodiff primal argument ", i,
                       ", found ", *res, ", type ", *res->getType(),
-                      " - to arg ", truei, " ", *PTy);
+                      " (simplified to ", *S, " ) ", " - to arg ", truei, ", ",
+                      *PTy);
           return {};
         }
       }
