@@ -2096,14 +2096,14 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
             };
         fwdres({}, argOpEn.value());
         os << curIndent << INDENT << "res = arg_diff_tmp;\n";
-        // Perform the max with 1 ulp
-        // error TODO
-        os << curIndent << INDENT
-           << "res = Builder2.CreateMaxNum(get1ULP(Builder2, "
-              "gutils->getNewFromOriginal(&"
-           << origName << ")), res);\n";
         os << curIndent << "}\n";
       }
+
+      // Perform the max with 1 ulp
+      // error TODO
+      os << "        res = Builder2.CreateMaxNum(get1ULP(Builder2, "
+            "gutils->getNewFromOriginal(&"
+         << origName << ")), res);\n";
 
       os << "        assert(res);\n";
       os << "        setDiffe(&" << origName << ", res, Builder2);\n";
