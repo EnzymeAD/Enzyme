@@ -86,7 +86,23 @@ pub fn gmm_objective(d: usize, k: usize, n: usize, alphas: &[f64], means: &[f64]
 
     let lse_alphas = log_sum_exp(k, alphas);
 
-    *err = constant + slse - n as f64 * lse_alphas ;
+    let _lwp = {
+        let p = d;
+        let n = p + wishart.m as usize + 1;
+        let icf_sz = p * (p + 1) / 2;
+
+        let c = n as f64 * p as f64 * (wishart.gamma.ln() - 0.5 * 2f64.ln()) - log_gamma_distrib(0.5 * n as f64, p as f64);
+
+        let out = (0..k).map(|ik| {
+            let frobenius = sqnorm(&qdiags[ik * p as usize..][..p]) + sqnorm(&icf[ik * icf_sz as usize + p as usize..][..icf_sz -p]);
+            0.5 * wishart.gamma * wishart.gamma * (frobenius) - (wishart.m as f64) * sum_qs[ik as usize]
+        }).sum::<f64>();
+
+        out - k as f64 * c
+    };
+    //let lwp = log_wishart_prior(d, k, wishart, &sum_qs, &qdiags, icf);
+
+    *err = lse_alphas; // + lwp;
 }
 
 fn arr_max(n: usize, x: &[f64]) -> f64 {

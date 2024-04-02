@@ -229,27 +229,10 @@ void gmm_objective(
 
     preprocess_qs(d, k, icf, &sum_qs[0], &Qdiags[0]);
 
-    double slse = 0.;
-    for (ix = 0; ix < n; ix++)
-    {
-        for (ik = 0; ik < k; ik++)
-        {
-            subtract(d, &x[ix * d], &means[ik * d], &xcentered[0]);
-            Qtimesx(d, &Qdiags[ik * d], &icf[ik * icf_sz + d], &xcentered[0], &Qxcentered[0]);
-            // two caches for qxcentered at idx 0 and at arbitrary index
-            main_term[ik] = alphas[ik] + sum_qs[ik] - 0.5 * sqnorm(d, &Qxcentered[0]);
-        }
-
-        // storing cmp for max of main_term
-        // 2 x (0 and arbitrary) storing sub to exp
-        // storing sum for use in log
-        slse = slse + log_sum_exp(k, &main_term[0]);
-    }
-
     //storing cmp of alphas
     double lse_alphas = log_sum_exp(k, alphas);
 
-    *err = CONSTANT + slse - n * lse_alphas ;
+    *err = lse_alphas ;//+ log_wishart_prior(d, k, wishart, &sum_qs[0], &Qdiags[0], icf);
 
     free(Qdiags);
     free(sum_qs);
