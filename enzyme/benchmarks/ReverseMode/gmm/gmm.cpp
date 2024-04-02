@@ -95,10 +95,11 @@ double log_sum_exp(int n, double const* x)
 
     for (i = 0; i < n; i++)
     {
-        semx = semx + exp(x[i] - mx);
+        semx = semx + x[i];
     }
 
-    return log(semx) + mx;
+    return (semx) + log(mx);
+    //return mx;
 }
 
 

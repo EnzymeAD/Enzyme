@@ -63,7 +63,7 @@ pub extern "C" fn rust_gmm_objective(d: i32, k: i32, n: i32, alphas: *const f64,
 pub fn gmm_objective(d: usize, k: usize, n: usize, alphas: &[f64], means: &[f64], icf: &[f64], x: &[f64], gamma: f64, m: i32, err: &mut f64) {
     let wishart: Wishart = Wishart { gamma, m };
     //let wishart: Wishart = unsafe { *wishart };
-    let constant = -(n as f64) * d as f64 * 0.5 * (2.0 * PI).ln();
+    // let constant = -(n as f64) * d as f64 * 0.5 * (2.0 * PI).ln();
     let icf_sz = d * (d + 1) / 2;
     let mut qdiags = vec![0.; d * k];
     let mut sum_qs = vec![0.; k];
@@ -72,16 +72,14 @@ pub fn gmm_objective(d: usize, k: usize, n: usize, alphas: &[f64], means: &[f64]
     let mut main_term = vec![0.; k];
 
     preprocess_qs(d, k, icf, &mut sum_qs, &mut qdiags);
-
-    let mut slse = 0.;
+   
     for ix in 0..n {
         for ik in 0..k {
             subtract(d, &x[ix as usize * d as usize..], &means[ik as usize * d as usize..], &mut xcentered);
             qtimesx(d, &qdiags[ik as usize * d as usize..], &icf[ik as usize * icf_sz as usize + d as usize..], &xcentered, &mut qxcentered);
-            main_term[ik as usize] = alphas[ik as usize] + sum_qs[ik as usize] - 0.5 * sqnorm(&qxcentered);
+            main_term[ik as usize] = alphas[ik as usize];
         }
 
-        slse = slse + log_sum_exp(k, &main_term);
     }
 
     let lse_alphas = log_sum_exp(k, alphas);
@@ -98,7 +96,7 @@ pub fn gmm_objective(d: usize, k: usize, n: usize, alphas: &[f64], means: &[f64]
             0.5 * wishart.gamma * wishart.gamma * (frobenius) - (wishart.m as f64) * sum_qs[ik as usize]
         }).sum::<f64>();
 
-        out - k as f64 * c
+        k as f64 * c
     };
     //let lwp = log_wishart_prior(d, k, wishart, &sum_qs, &qdiags, icf);
 
@@ -154,8 +152,8 @@ fn qtimesx(d: usize, q_diag: &[f64], ltri: &[f64], x: &[f64], out: &mut [f64]) {
 
 fn log_sum_exp(n: usize, x: &[f64]) -> f64 {
     let mx = arr_max(n, x);
-    let semx: f64 = x.iter().map(|x| (x - mx).exp()).sum();
-    semx.ln() + mx
+    let semx: f64 = x.iter().sum();
+    semx + mx.ln()
 }
 #[inline(always)]
 fn log_gamma_distrib(a: f64, p: f64) -> f64 {
