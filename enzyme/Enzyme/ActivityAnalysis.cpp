@@ -1426,10 +1426,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   //  Consider all types except
   //   * floating point types (since those are assumed not pointers)
   //   * integers that we know are not pointers
-  bool containsPointer = true;
-  if (Val->getType()->isFPOrFPVectorTy())
-    containsPointer = false;
-  if (!TR.intType(1, Val, /*errIfNotFound*/ false).isPossiblePointer())
+  bool containsPointer = TR.anyPointer(Val);
+
+  if (containsPointer && Val->getType()->isFPOrFPVectorTy())
     containsPointer = false;
 
   if (containsPointer && !isValuePotentiallyUsedAsPointer(Val)) {
@@ -1987,7 +1986,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                   if (Seen.count(V))
                     return false;
                   Seen.insert(V);
-                  if (TR.query(V)[{-1}].isPossiblePointer()) {
+                  if (TR.anyPointer(V)) {
                     for (auto UU : V->users()) {
                       auto U = cast<Instruction>(UU);
                       if (U->mayWriteToMemory()) {
@@ -2055,8 +2054,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               if ((I->mayWriteToMemory() &&
                    !Hypothesis->isConstantInstruction(TR, I)) ||
                   (!Hypothesis->DeducingPointers.count(I) &&
-                   !Hypothesis->isConstantValue(TR, I) &&
-                   TR.query(I)[{-1}].isPossiblePointer())) {
+                   !Hypothesis->isConstantValue(TR, I) && TR.anyPointer(I))) {
                 if (EnzymePrintActivity)
                   llvm::errs() << "potential active store via pointer in "
                                   "unknown inst: "
@@ -2700,7 +2698,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         continue;
       if (UA == UseActivity::OnlyNonPointerStores ||
           UA == UseActivity::AllStores) {
-        if (!TR.query(LI)[{-1}].isPossiblePointer())
+        if (!TR.anyPointer(LI))
           continue;
       }
     }
