@@ -86,7 +86,23 @@ pub fn gmm_objective(d: usize, k: usize, n: usize, alphas: &[f64], means: &[f64]
 
     let lse_alphas = log_sum_exp(k, alphas);
 
-    *err = constant + slse - n as f64 * lse_alphas + log_wishart_prior(d, k, wishart, &sum_qs, &qdiags, icf);
+    let lwp = {
+        let p = d;
+        let n = p + wishart.m as usize + 1;
+        let icf_sz = p * (p + 1) / 2;
+
+        let c = n as f64 * p as f64 * (wishart.gamma.ln() - 0.5 * 2f64.ln());// - log_gamma_distrib(0.5 * n as f64, p as f64);
+
+        let out = (0..k).map(|ik| {
+            let frobenius = sqnorm(&qdiags[ik * p as usize..][..p]) + sqnorm(&icf[ik * icf_sz as usize + p as usize..][..icf_sz -p]);
+            0.5 * wishart.gamma * wishart.gamma * (frobenius) - (wishart.m as f64) * sum_qs[ik as usize]
+        }).sum::<f64>();
+
+        out - k as f64 * c
+    };
+    //let lwp = log_wishart_prior(d, k, wishart, &sum_qs, &qdiags, icf);
+
+    *err = constant + slse - n as f64 * lse_alphas + lwp;
 }
 
 fn arr_max(n: usize, x: &[f64]) -> f64 {
@@ -141,6 +157,7 @@ fn log_sum_exp(n: usize, x: &[f64]) -> f64 {
     let semx: f64 = x.iter().map(|x| (x - mx).exp()).sum();
     semx.ln() + mx
 }
+#[inline(always)]
 fn log_gamma_distrib(a: f64, p: f64) -> f64 {
     0.25 * p * (p - 1.) * PI.ln() + (1..=p as usize).map(|j| lgamma(a + 0.5 * (1. - j as f64))).sum::<f64>()
 }
@@ -151,6 +168,7 @@ pub struct Wishart {
     pub gamma: f64,
     pub m: i32,
 }
+#[cfg(we_inlined_it)]
 fn log_wishart_prior(p: usize, k: usize, wishart: Wishart, sum_qs: &[f64], qdiags: &[f64], icf: &[f64]) -> f64 {
     let n = p + wishart.m as usize + 1;
     let icf_sz = p * (p + 1) / 2;
