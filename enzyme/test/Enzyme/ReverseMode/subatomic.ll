@@ -28,6 +28,6 @@ declare double @_Z17__enzyme_autodiffPviRdS0_(i8*)
 ; CHECK: define internal void @diffe_Z3fooRd(double %differeturn)
 ; CHECK-NEXT: invert:
 ; CHECK-NEXT:   %ap = alloca i32, align 8
-; CHECK-NEXT:   %a5 = call i32 @_ZN9__gnu_cxxL18__exchange_and_addEPVii(i32* %ap, i32 -1)
+; CHECK-NEXT:   %a5 = call i32 @nofree__ZN9__gnu_cxxL18__exchange_and_addEPVii(i32* %ap, i32 -1)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

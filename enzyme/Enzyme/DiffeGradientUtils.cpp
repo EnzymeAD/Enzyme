@@ -244,7 +244,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       continue;
     }
     if (auto AT = dyn_cast<ArrayType>(VT)) {
-      assert(i < AT->getNumElements());
+      assert((size_t)i < AT->getNumElements());
       VT = AT->getElementType();
       continue;
     }
@@ -497,7 +497,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       ss << "}\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
-                           &TR.analyzer, nullptr, wrap(&BuilderM));
+                           TR.analyzer, nullptr, wrap(&BuilderM));
         return addedSelects;
       } else {
         TR.dump(ss);
@@ -535,7 +535,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
          << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
-                           &TR.analyzer, nullptr, wrap(&BuilderM));
+                           TR.analyzer, nullptr, wrap(&BuilderM));
         return addedSelects;
       } else {
         DebugLoc loc;

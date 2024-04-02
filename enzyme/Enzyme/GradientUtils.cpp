@@ -2547,7 +2547,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
   }
 
   if (tape) {
-    if (idx == -2) {
+    if (idx == IndexMappingError) {
       assert(malloc);
       return UndefValue::get(malloc->getType());
     }
@@ -3302,6 +3302,8 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                                           /*pointerIntSame*/ true);
                 if (fp.isKnown()) {
                   FT = fp.isFloat();
+                  llvm::errs() << "assuming type as " << *FT
+                               << " for store: " << I << "\n";
                 } else if (isa<ConstantInt>(orig_val) ||
                            valType->isIntOrIntVectorTy()) {
                   llvm::errs()
@@ -4343,8 +4345,8 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
   }
 
   if (primalReturnUsedP) {
-    bool subretused =
-        unnecessaryValuesP->find(orig) == unnecessaryValuesP->end();
+    bool subretused = !unnecessaryValuesP || unnecessaryValuesP->find(orig) ==
+                                                 unnecessaryValuesP->end();
     auto found = knownRecomputeHeuristic.find(orig);
     if (found != knownRecomputeHeuristic.end()) {
       if (!found->second) {
@@ -4915,6 +4917,21 @@ Type *GradientUtils::getShadowType(Type *ty, unsigned width) {
 
 Type *GradientUtils::getShadowType(Type *ty) {
   return getShadowType(ty, width);
+}
+
+Type *GradientUtils::extractMeta(Type *T, ArrayRef<unsigned> off) {
+  for (auto idx : off) {
+    if (auto AT = dyn_cast<ArrayType>(T)) {
+      T = AT->getElementType();
+      continue;
+    }
+    if (auto ST = dyn_cast<StructType>(T)) {
+      T = ST->getElementType(idx);
+      continue;
+    }
+    assert(false && "could not sub index into type");
+  }
+  return T;
 }
 
 Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
@@ -9048,7 +9065,7 @@ int GradientUtils::getIndex(
       EmitFailure("GetIndexError", idx.first->getDebugLoc(), idx.first,
                   ss.str());
     }
-    return -2;
+    return IndexMappingError;
   }
   return found->second;
 }

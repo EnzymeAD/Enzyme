@@ -91,6 +91,8 @@ extern llvm::StringMap<
                        llvm::Value *&, llvm::Value *&)>>
     customFwdCallHandlers;
 
+constexpr int IndexMappingError = 0x0000fffd;
+
 extern "C" {
 extern llvm::cl::opt<bool> EnzymeRuntimeActivityCheck;
 extern llvm::cl::opt<bool> EnzymeInactiveDynamic;
@@ -535,6 +537,9 @@ public:
                                   llvm::ArrayRef<unsigned> off,
                                   const llvm::Twine &name = "",
                                   bool fallback = true);
+
+  //! Helper routine to get the type of an extraction
+  static llvm::Type *extractMeta(llvm::Type *T, llvm::ArrayRef<unsigned> off);
 
   static llvm::Value *recursiveFAdd(llvm::IRBuilder<> &B, llvm::Value *lhs,
                                     llvm::Value *rhs,

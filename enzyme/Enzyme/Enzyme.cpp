@@ -327,6 +327,19 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::ReadNone);
 #endif
   }
+  if (F.getName() == "julia.ptls_states" ||
+      F.getName() == "julia.get_pgcstack" || F.getName() == "lgamma_r" ||
+      F.getName() == "memcmp" ||
+      F.getName() == "_ZNSt6chrono3_V212steady_clock3nowEv" ||
+      F.getName() == "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_"
+                     "createERmm" ||
+      F.getName() ==
+          "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEmmm") {
+    changed = true;
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
   return changed;
 }
 
@@ -553,8 +566,10 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
     }
   }
 
-  if (mode == DerivativeMode::ReverseModePrimal &&
-      DL.getTypeSizeInBits(retType) >= DL.getTypeSizeInBits(diffretType)) {
+  if ((mode == DerivativeMode::ReverseModePrimal &&
+       DL.getTypeSizeInBits(retType) >= DL.getTypeSizeInBits(diffretType)) ||
+      (mode == DerivativeMode::ForwardMode &&
+       DL.getTypeSizeInBits(retType) == DL.getTypeSizeInBits(diffretType))) {
     IRBuilder<> EB(CI->getFunction()->getEntryBlock().getFirstNonPHI());
     auto AL = EB.CreateAlloca(retType);
     Builder.CreateStore(diffret, Builder.CreatePointerCast(
@@ -579,9 +594,12 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
     }
   }
 
+  auto diffretsize = DL.getTypeSizeInBits(diffretType);
+  auto retsize = DL.getTypeSizeInBits(retType);
   EmitFailure("IllegalReturnCast", CI->getDebugLoc(), CI,
               "Cannot cast return type of gradient ", *diffretType, *diffret,
-              ", to desired type ", *retType);
+              " of size ", diffretsize, " bits ", ", to desired type ",
+              *retType, " of size ", retsize, " bits");
   return false;
 }
 
@@ -1177,10 +1195,14 @@ public:
           if (auto arg = dyn_cast<Instruction>(res)) {
             loc = arg->getDebugLoc();
           }
+          auto S = simplifyLoad(res);
+          if (!S)
+            S = res;
           EmitFailure("IllegalArgCast", loc, CI,
                       "Cannot cast __enzyme_autodiff primal argument ", i,
                       ", found ", *res, ", type ", *res->getType(),
-                      " - to arg ", truei, " ", *PTy);
+                      " (simplified to ", *S, " ) ", " - to arg ", truei, ", ",
+                      *PTy);
           return {};
         }
       }
@@ -1789,6 +1811,16 @@ public:
           csts.push_back(ConstantFP::get(e, 1.0));
         }
         args.push_back(ConstantStruct::get(ST, csts));
+      } else if (auto AT = dyn_cast<ArrayType>(fn->getReturnType())) {
+        SmallVector<Constant *, 2> csts(
+            AT->getNumElements(), ConstantFP::get(AT->getElementType(), 1.0));
+        args.push_back(ConstantArray::get(AT, csts));
+      } else {
+        auto RT = fn->getReturnType();
+        EmitFailure("EnzymeCallingError", CI->getDebugLoc(), CI,
+                    "Differential return required for call ", *CI,
+                    " but one of type ", *RT, " could not be auto deduced");
+        return false;
       }
     }
 

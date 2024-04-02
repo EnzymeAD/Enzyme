@@ -3366,7 +3366,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
          << " sz: " << size << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(str.c_str(), wrap(orig), ErrorType::NoType,
-                           &gutils->TR.analyzer, nullptr, wrap(&Builder));
+                           gutils->TR.analyzer, nullptr, wrap(&Builder));
         continue;
       } else {
         ss << "\n";
@@ -6006,7 +6006,9 @@ EnzymeLogic::CreateTrace(RequestContext context, llvm::Function *totrace,
 
 llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
                                        llvm::Value *todiff) {
-  if (auto F = dyn_cast<Function>(todiff))
+  if (isa<InlineAsm>(todiff))
+    return todiff;
+  else if (auto F = dyn_cast<Function>(todiff))
     return CreateNoFree(context, F);
   if (auto castinst = dyn_cast<ConstantExpr>(todiff))
     if (castinst->isCast()) {
@@ -6014,6 +6016,87 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
           cast<llvm::Constant>(CreateNoFree(context, castinst->getOperand(0)))};
       return castinst->getWithOperands(reps);
     }
+
+  // Alloca/allocations are unsafe here since one could store freeing functions
+  // into them. For now we will be unsafe regarding indirect function call
+  // frees.
+  if (isa<AllocaInst>(todiff))
+    return todiff;
+
+  std::string demangledCall;
+  if (auto CI = dyn_cast<CallInst>(todiff)) {
+    TargetLibraryInfo &TLI =
+        PPC.FAM.getResult<TargetLibraryAnalysis>(*CI->getParent()->getParent());
+    if (isAllocationFunction(getFuncNameFromCall(CI), TLI))
+      return CI;
+    if (auto F = CI->getCalledFunction()) {
+
+      // clang-format off
+      const char* NoFreeDemanglesStartsWith[] = {
+          "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char>>",
+          "std::basic_ostream<char, std::char_traits<char>>::operator<<",
+          "std::ostream::operator<<",
+          "std::ostream& std::ostream::_M_insert",
+      };
+      // clang-format on
+
+      demangledCall = llvm::demangle(F->getName().str());
+      // replace all '> >' with '>>'
+      size_t start = 0;
+      while ((start = demangledCall.find("> >", start)) != std::string::npos) {
+        demangledCall.replace(start, 3, ">>");
+      }
+
+      for (auto Name : NoFreeDemanglesStartsWith)
+        if (startsWith(demangledCall, Name))
+          return CI;
+    }
+  }
+
+  if (auto GV = dyn_cast<GlobalVariable>(todiff)) {
+    if (GV->getName() == "_ZSt4cerr")
+      return GV;
+    if (GV->getName() == "_ZSt4cout")
+      return GV;
+  }
+
+  if (context.ip) {
+    if (auto LI = dyn_cast<LoadInst>(todiff)) {
+      if (auto smpl = simplifyLoad(LI))
+        return CreateNoFree(context, smpl);
+      auto prev = CreateNoFree(context, LI->getPointerOperand());
+      if (prev == LI->getPointerOperand())
+        return todiff;
+      auto res = cast<LoadInst>(context.ip->CreateLoad(LI->getType(), prev));
+      res->copyMetadata(*LI);
+      return res;
+    }
+    if (auto CI = dyn_cast<CastInst>(todiff)) {
+      auto prev = CreateNoFree(context, CI->getOperand(0));
+      if (prev == CI->getOperand(0))
+        return todiff;
+      auto res = cast<CastInst>(
+          context.ip->CreateCast(CI->getOpcode(), prev, CI->getType()));
+      res->copyMetadata(*CI);
+      return res;
+    }
+    if (auto gep = dyn_cast<GetElementPtrInst>(todiff)) {
+      if (gep->hasAllConstantIndices() || gep->isInBounds()) {
+        auto prev = CreateNoFree(context, gep->getPointerOperand());
+        if (prev == gep->getPointerOperand())
+          return todiff;
+        SmallVector<Value *, 1> idxs;
+        for (auto &ind : gep->indices())
+          idxs.push_back(ind);
+        auto res = cast<GetElementPtrInst>(
+            context.ip->CreateGEP(gep->getSourceElementType(), prev, idxs));
+        res->setIsInBounds(gep->isInBounds());
+        res->copyMetadata(*gep);
+        return res;
+      }
+    }
+  }
+
   if (EnzymeAssumeUnknownNoFree) {
     return todiff;
   }
@@ -6022,6 +6105,9 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
   llvm::raw_string_ostream ss(s);
   ss << "No create nofree of unknown value\n";
   ss << *todiff << "\n";
+  if (demangledCall.size()) {
+    ss << " demangled (" << demangledCall << ")\n";
+  }
   if (context.req) {
     ss << " at context: " << *context.req;
   }
@@ -6074,19 +6160,30 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
 
   // clang-format off
   StringSet<> NoFreeDemangles = {
+      "std::basic_ostream<char, std::char_traits<char>>::basic_ostream(std::basic_streambuf<char, std::char_traits<char>>*)",
+      "std::basic_ostream<char, std::char_traits<char>>::flush()",
       "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char> >(std::basic_ostream<char, std::char_traits<char> >&)",
       "std::basic_ostream<char, std::char_traits<char>>::put(char)",
+      "std::basic_ostream<char, std::char_traits<char>>::~basic_ostream()",
 
-      "std::basic_filebuf<char, std::char_traits<char>>::open(char const*, std::_Ios_Openmode)",
       "std::basic_filebuf<char, std::char_traits<char>>::basic_filebuf()",
+      "std::basic_filebuf<char, std::char_traits<char>>::open(char const*, std::_Ios_Openmode)",
       "std::basic_filebuf<char, std::char_traits<char>>::close()",
+      "std::basic_filebuf<char, std::char_traits<char>>::~basic_filebuf()",
 
-      "std::basic_ios<char, std::char_traits<char>>::clear(std::_Ios_Iostate)",
       "std::__detail::_Prime_rehash_policy::_M_need_rehash(unsigned long, unsigned long, unsigned long) const",
 
       "std::basic_streambuf<char, std::char_traits<char> >::xsputn(char const*, long)",
 
+      "std::__cxx11::basic_ostringstream<char, std::char_traits<char>, std::allocator<char>>::basic_ostringstream()",
+      "std::__cxx11::basic_ostringstream<char, std::char_traits<char>, std::allocator<char>>::str() const",
+      "std::__cxx11::basic_ostringstream<char, std::char_traits<char>, std::allocator<char>>::~basic_ostringstream()",
+
       "std::basic_ios<char, std::char_traits<char> >::init(std::basic_streambuf<char, std::char_traits<char> >*)",
+      "std::basic_ios<char, std::char_traits<char>>::clear(std::_Ios_Iostate)",
+      "std::basic_ios<char, std::char_traits<char>>::operator bool() const",
+      "std::basic_ios<char, std::char_traits<char>>::operator!() const",
+      "std::basic_ios<wchar_t, std::char_traits<wchar_t>>::imbue(std::locale const&)",
 
       "std::_Hash_bytes(void const*, unsigned long, unsigned long)",
       "unsigned long std::__1::__do_string_hash<char const*>(char const*, char const*)",
@@ -6095,6 +6192,16 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::allocator<char>::allocator()",
       "std::allocator<char>::~allocator()",
 
+      "std::basic_ifstream<char, std::char_traits<char>>::is_open()",
+      
+      "std::basic_ofstream<char, std::char_traits<char>>::basic_ofstream(char const*, std::_Ios_Openmode)",
+      "std::basic_ofstream<char, std::char_traits<char>>::is_open()",
+      "std::basic_ofstream<char, std::char_traits<char>>::close()",
+      "std::basic_ofstream<char, std::char_traits<char>>::~basic_ofstream()",
+
+      "std::__cxx11::basic_stringstream<char, std::char_traits<char>, std::allocator<char>>::basic_stringstream(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::_Ios_Openmode)",
+      "std::__cxx11::basic_stringstream<char, std::char_traits<char>, std::allocator<char>>::~basic_stringstream()",
+      "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>::put(wchar_t)",
 
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::basic_string(char const*, std::allocator<char> const&)",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::basic_string(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>&&)",
@@ -6106,6 +6213,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::length() const",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::data() const",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::size() const",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::c_str() const",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::~basic_string()",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::compare(char const*) const",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::compare(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&) const",
@@ -6116,17 +6224,26 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::pbackfail(int)",
       "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::underflow()",
       "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::_M_sync(char*, unsigned long, unsigned long)",
+      "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::basic_stringbuf(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::_Ios_Openmode)",
 
+      "std::basic_streambuf<char, std::char_traits<char>>::pubsync()",
+      "std::basic_ifstream<char, std::char_traits<char>>::close()",
+      "std::istream::ignore()",
+      "std::basic_ifstream<char, std::char_traits<char>>::basic_ifstream()",
+      "std::basic_ifstream<char, std::char_traits<char>>::basic_ifstream(char const*, std::_Ios_Openmode)",
+      "std::basic_ifstream<char, std::char_traits<char>>::~basic_ifstream()",
+      "std::basic_ifstream<char, std::char_traits<char>>::rdbuf() const",
+      "std::__basic_file<char>::is_open() const",
       "std::__basic_file<char>::~__basic_file()",
 
-      "std::basic_ostream<char, std::char_traits<char>>::flush()",
+      "std::ostream::flush()",
       "std::basic_streambuf<char, std::char_traits<char>>::xsgetn(char*, long)",
 
+      "std::locale::locale(char const*)",
+      "std::locale::global(std::locale const&)",
       "std::locale::~locale()",
       "std::ios_base::ios_base()",
-      "std::basic_ostream<char, std::char_traits<char>>& "
-      "std::basic_ostream<char, std::char_traits<char> "
-      ">::_M_insert<double>(double)",
+      "std::ios_base::~ios_base()",
 
       // libc++
       "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::basic_string(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
@@ -6181,14 +6298,40 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::operator=",
       "std::__1::ctype<char>::widen",
       "std::__1::basic_streambuf<char, std::__1::char_traits<char>>::sputn",
+      "std::basic_ostream<char, std::char_traits<char>>& std::flush",
+      "std::basic_ostream<char, std::char_traits<char>>& std::operator<<",
+      "std::basic_ostream<char, std::char_traits<char>>& std::basic_ostream<char, std::char_traits<char>>::_M_insert",
+      "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char>>",
+      "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>& std::operator<<",
+      "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>::operator<<",
+      "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>& std::basic_ostream<wchar_t, std::char_traits<wchar_t>>::_M_insert",
+      "std::istream::get",
+      "std::ostream::put",
+      "std::ostream::write",
+      "std::ostream& std::ostream::_M_insert",
+      "std::istream::read",
+      "std::istream::operator>>",
+      "std::basic_streambuf<char, std::char_traits<char>>::pubsetbuf",
+      "std::basic_streambuf<char, std::char_traits<char>>::sputn",
+      "std::istream& std::istream::_M_extract",
+      "std::ctype<char>::widen",
   };
-  // clang-format on
 
-  StringSet<> NoFrees = {
-      "mpfr_greater_p",    "memchr",          "time",      "strlen",
-      "__cxa_begin_catch", "__cxa_end_catch", "compress2", "malloc_usable_size",
-      "MPI_Allreduce",     "lgamma",          "lgamma_r",
-  };
+  StringSet<> NoFrees = {"mpfr_greater_p",
+                         "memchr",
+                         "time",
+                         "strlen",
+                         "__cxa_begin_catch",
+                         "__cxa_guard_acquire",
+                         "__cxa_guard_release",
+                         "__cxa_end_catch",
+                         "compress2",
+                         "malloc_usable_size",
+                         "MPI_Allreduce",
+                         "lgamma",
+                         "lgamma_r",
+                         "__kmpc_global_thread_num"};
+  // clang-format on
 
   if (startsWith(F->getName(), "_ZNSolsE") || NoFrees.count(F->getName()))
     return F;
@@ -6214,6 +6357,12 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   case Intrinsic::memset:
     return F;
   default:;
+  }
+
+  {
+    Intrinsic::ID ID = Intrinsic::not_intrinsic;
+    if (isMemFreeLibMFunction(getFuncName(F), &ID))
+      return F;
   }
 
   if (F->empty()) {

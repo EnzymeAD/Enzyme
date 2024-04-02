@@ -13,7 +13,7 @@ entry:
   ret void
 }
 
-declare noalias i64* @getsize() #4
+declare noalias i64* @getsize() "enzyme_no_escaping_allocation" "enzyme_inactive"
 
 ; Function Attrs: argmemonly nounwind
 declare void @llvm.memset.p0i8.i64(i8* nocapture writeonly, i8, i64, i1) #1

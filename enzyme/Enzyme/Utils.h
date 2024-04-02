@@ -1254,7 +1254,8 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
 
 llvm::Function *GetFunctionFromValue(llvm::Value *fn);
 
-llvm::Value *simplifyLoad(llvm::Value *LI, size_t valSz = 0);
+llvm::Value *simplifyLoad(llvm::Value *LI, size_t valSz = 0,
+                          size_t preOffset = 0);
 
 static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
   auto F = getFunctionFromCall(CI);
@@ -1555,6 +1556,22 @@ static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
         return true;
     // if (F->getAttributes().hasParamAttribute(idx, "enzyme_NoCapture"))
     //   return true;
+  }
+  return false;
+}
+
+static inline bool isNoEscapingAllocation(const llvm::Function *F) {
+  if (F->hasFnAttribute("enzyme_no_escaping_allocation"))
+    return true;
+  return false;
+}
+static inline bool isNoEscapingAllocation(const llvm::CallBase *call) {
+  auto AttrList =
+      call->getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
+  if (AttrList.hasAttribute("enzyme_no_escaping_allocation"))
+    return true;
+  if (auto F = getFunctionFromCall(call)) {
+    return isNoEscapingAllocation(F);
   }
   return false;
 }
