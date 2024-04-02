@@ -135,7 +135,7 @@ double log_wishart_prior(
     int n = p + wishart.m + 1;
     int icf_sz = p * (p + 1) / 2;
 
-    double C = n * p * (log(wishart.gamma) - 0.5 * log(2));// - log_gamma_distrib(0.5 * n, p);
+    double C = n * p * (log(wishart.gamma) - 0.5 * log(2)) - log_gamma_distrib(0.5 * n, p);
 
     double out = 0;
     for (ik = 0; ik < k; ik++)
