@@ -13,7 +13,8 @@ libm = ["dep:libm"]
 
 [profile.release]
 lto = "fat"
-opt-level = 3
+opt-level = 2
+# opt-level = 3
 #debug = true
 #strip = "none"
 
