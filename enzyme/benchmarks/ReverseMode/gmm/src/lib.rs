@@ -54,6 +54,7 @@ pub extern "C" fn rust_gmm_objective(d: i32, k: i32, n: i32, alphas: *const f64,
     unsafe { *err = my_err };
 }
 
+
 //#[autodiff(dgmm_objective, Reverse, Const, Const, Const, Duplicated, Duplicated, Duplicated, Const, Const, Duplicated)]
 //pub fn gmm_objective_c(d: usize, k: usize, n: usize, alphas: *const f64, means: *const f64, icf: *const f64, x: *const f64, wishart: *const Wishart, err: *mut f64) {
 //    gmm_objective(d, k, n, alphas, means, icf, x, wishart, &mut my_err);
@@ -74,7 +75,7 @@ pub fn gmm_objective(d: usize, k: usize, n: usize, alphas: &[f64], means: &[f64]
     preprocess_qs(d, k, icf, &mut sum_qs, &mut qdiags);
    
     for ix in 0..n {
-        for ik in 0..k {
+        for ik in 2..5 {
             subtract(d, &x[ix as usize * d as usize..], &means[ik as usize * d as usize..], &mut xcentered);
             qtimesx(d, &qdiags[ik as usize * d as usize..], &icf[ik as usize * icf_sz as usize + d as usize..], &xcentered, &mut qxcentered);
             main_term[ik as usize] = alphas[ik as usize];
@@ -105,13 +106,14 @@ pub fn gmm_objective(d: usize, k: usize, n: usize, alphas: &[f64], means: &[f64]
 
 fn arr_max(n: usize, x: &[f64]) -> f64 {
     let mut max = f64::NEG_INFINITY;
-    for i in 0..n {
+    for i in 2..5 {
         if max < x[i] {
             max = x[i];
         }
     }
     max
 }
+
 
 fn preprocess_qs(d: usize, k: usize, icf: &[f64], sum_qs: &mut [f64], qdiags: &mut [f64]) {
     let icf_sz = d * (d + 1) / 2;
