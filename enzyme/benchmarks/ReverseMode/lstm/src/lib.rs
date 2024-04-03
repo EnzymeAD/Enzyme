@@ -90,7 +90,7 @@ fn lstm_predict(
         i += 2 * b;
     }
 
-    let xp = &s[i..];
+    let xp = &s[i-2*b..];
 
     for i in 0..b {
         x2[i] = xp[i] * w2[b + i] + w2[2 * b + i];
