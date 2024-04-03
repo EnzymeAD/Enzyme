@@ -2265,12 +2265,19 @@ public:
         if (!CI)
           continue;
 
-        Function *Fn = CI->getCalledFunction();
+        Function *Fn = nullptr;
 
-        if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand())) {
-          if (castinst->isCast())
-            if (auto fn = dyn_cast<Function>(castinst->getOperand(0)))
-              Fn = fn;
+        Value *FnOp = CI->getCalledOperand();
+        while (true) {
+          if (Fn = dyn_cast<Function>(FnOp))
+            break;
+          if (auto castinst = dyn_cast<ConstantExpr>(FnOp)) {
+            if (castinst->isCast()) {
+              FnOp = castinst->getOperand(0);
+              continue;
+            }
+          }
+          break;
         }
 
         if (!Fn)

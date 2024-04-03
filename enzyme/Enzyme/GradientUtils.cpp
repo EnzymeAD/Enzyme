@@ -8214,7 +8214,6 @@ void GradientUtils::forceActiveDetection() {
     for (Instruction &I : BB) {
       bool const_inst = ATA->isConstantInstruction(TR, &I);
       bool const_value = ATA->isConstantValue(TR, &I);
-
       if (EnzymePrintActivity)
         llvm::errs() << I << " cv=" << const_value << " ci=" << const_inst
                      << "\n";
