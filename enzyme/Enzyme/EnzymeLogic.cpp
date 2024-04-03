@@ -4530,6 +4530,9 @@ Function *EnzymeLogic::CreateForwardDiff(
   if (retType != DIFFE_TYPE::CONSTANT)
     assert(!todiff->getReturnType()->isVoidTy());
 
+  if (returnUsed)
+    assert(!todiff->getReturnType()->isVoidTy());
+
   if (mode != DerivativeMode::ForwardMode &&
       mode != DerivativeMode::ForwardModeError)
     assert(_overwritten_args.size() == todiff->arg_size());
