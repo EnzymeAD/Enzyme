@@ -342,7 +342,6 @@ int main(int argc, char** argv) {
     printf("usage %s n [must be power of 2]\n", argv[0]);
     return 1;
   }
-  N = 2;
   double inp = -2.1;
 
   for(unsigned iters=max(1, N>>5); iters <= N; iters*=2) {
