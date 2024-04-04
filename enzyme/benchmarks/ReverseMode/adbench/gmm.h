@@ -58,7 +58,19 @@ void gmm_objective(
         alphasb, const double *means, double *meansb, const double *icf,
         double *icfb, const double *x, Wishart wishart, double *err, double *
         errb);
-    
+
+    void rust_unsafe_dgmm_objective(int d, int k, int n, const double *alphas,
+                                    double *alphasb, const double *means,
+                                    double *meansb, const double *icf,
+                                    double *icfb, const double *x,
+                                    Wishart &wishart, double *err,
+                                    double *errb);
+
+    void rust_unsafe_gmm_objective(int d, int k, int n, const double *alphas,
+                                   const double *means, const double *icf,
+                                   const double *x, Wishart &wishart,
+                                   double *err);
+
     void rust_dgmm_objective(int d, int k, int n, const double *alphas, double *
             alphasb, const double *means, double *meansb, const double *icf,
             double *icfb, const double *x, Wishart &wishart, double *err, double *
@@ -203,10 +215,11 @@ int main(const int argc, const char* argv[]) {
 
     std::vector<std::string> paths;// = { "1k/gmm_d10_K100.txt" };
 
-    getTests(paths, "data/1k", "1k/");
-    getTests(paths, "data/2.5k", "2.5k/");
-    getTests(paths, "data/10k", "10k/");
-    
+    // getTests(paths, "data/1k", "1k/");
+    // getTests(paths, "data/2.5k", "2.5k/");
+    // getTests(paths, "data/10k", "10k/");
+    paths.push_back("1k/gmm_d2_K5.txt");
+
     std::ofstream jsonfile("results.json", std::ofstream::trunc);
     json test_results;
 
@@ -256,26 +269,27 @@ int main(const int argc, const char* argv[]) {
 
     struct GMMOutput result = { 0, std::vector<double>(Jcols) };
 
-    try {
-      struct timeval start, end;
-      gettimeofday(&start, NULL);
-      calculate_jacobian<adept_dgmm_objective>(input, result);
-      gettimeofday(&end, NULL);
-      printf("Adept combined %0.6f\n", tdiff(&start, &end));
-      json adept;
-      adept["name"] = "Adept combined";
-      adept["runtime"] = tdiff(&start, &end);
-      for (unsigned i = result.gradient.size() - 5;
-           i < result.gradient.size(); i++) {
-        printf("%f ", result.gradient[i]);
-        adept["result"].push_back(result.gradient[i]);
+    if (0) {
+      try {
+        struct timeval start, end;
+        gettimeofday(&start, NULL);
+        calculate_jacobian<adept_dgmm_objective>(input, result);
+        gettimeofday(&end, NULL);
+        printf("Adept combined %0.6f\n", tdiff(&start, &end));
+        json adept;
+        adept["name"] = "Adept combined";
+        adept["runtime"] = tdiff(&start, &end);
+        for (unsigned i = result.gradient.size() - 5;
+             i < result.gradient.size(); i++) {
+          printf("%f ", result.gradient[i]);
+          adept["result"].push_back(result.gradient[i]);
+        }
+        printf("\n");
+        test_suite["tools"].push_back(adept);
+      } catch (std::bad_alloc) {
+        printf("Adept combined 88888888 ooms\n");
       }
-      printf("\n");
-      test_suite["tools"].push_back(adept);
-    } catch(std::bad_alloc) {
-       printf("Adept combined 88888888 ooms\n");
     }
-
     }
 
     {
@@ -334,6 +348,49 @@ int main(const int argc, const char* argv[]) {
     {
       struct timeval start, end;
       gettimeofday(&start, NULL);
+      auto res = primal<rust_unsafe_gmm_objective>(input);
+      gettimeofday(&end, NULL);
+      printf("rust unsafe primal combined t=%0.6f, err=%f\n",
+             tdiff(&start, &end), res);
+      json primal;
+      primal["name"] = "Rust unsafe primal";
+      primal["runtime"] = tdiff(&start, &end);
+      primal["result"].push_back(res);
+      test_suite["tools"].push_back(primal);
+    }
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+      calculate_jacobian<rust_unsafe_dgmm_objective>(input, result);
+      gettimeofday(&end, NULL);
+      printf("Enzyme unsafe rust combined %0.6f\n", tdiff(&start, &end));
+      json enzyme;
+      enzyme["name"] = "Rust unsafe Enzyme combined";
+      enzyme["runtime"] = tdiff(&start, &end);
+      for (unsigned i = result.gradient.size() - 5; i < result.gradient.size();
+           i++) {
+        printf("%f ", result.gradient[i]);
+        enzyme["result"].push_back(result.gradient[i]);
+      }
+      printf("\n");
+      test_suite["tools"].push_back(enzyme);
+    }
+    }
+
+    {
+
+    struct GMMInput input;
+    read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
+                      input.alphas, input.means, input.icf, input.x,
+                      input.wishart, params.replicate_point);
+
+    int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+
+    struct GMMOutput result = {0, std::vector<double>(Jcols)};
+
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
       auto res = primal<rust_gmm_objective>(input);
       gettimeofday(&end, NULL);
       printf("rust primal combined t=%0.6f, err=%f\n", tdiff(&start, &end), res);
@@ -360,7 +417,6 @@ int main(const int argc, const char* argv[]) {
       printf("\n");
       test_suite["tools"].push_back(enzyme);
     }
-
     }
     test_suite["llvm-version"] = __clang_version__;
     test_suite["mode"] = "ReverseMode";
