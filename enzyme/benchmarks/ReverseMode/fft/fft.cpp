@@ -45,7 +45,7 @@ static double rust_unsafe_foobar_and_gradient(unsigned len) {
   double *dinp = new double[2 * len];
   for (int i = 0; i < 2 * len; i++)
     dinp[i] = 1.0;
-  rust_unsafe_dfoobar(len * 2, inp, dinp);
+  rust_unsafe_dfoobar(len, inp, dinp);
   double res = dinp[0];
   delete[] dinp;
   delete[] inp;
@@ -57,7 +57,7 @@ static double rust_foobar_and_gradient(unsigned len) {
     for(int i=0; i<2*len; i++) inp[i] = 2.0;
     double *dinp = new double[2*len];
     for(int i=0; i<2*len; i++) dinp[i] = 1.0;
-    rust_dfoobar(len*2, inp, dinp);
+    rust_dfoobar(len, inp, dinp);
     double res = dinp[0];
     delete[] dinp;
     delete[] inp;
@@ -351,6 +351,6 @@ int main(int argc, char** argv) {
     tapenade_sincos(inp, iters);
     enzyme_sincos(inp, iters);
     enzyme_rust_sincos(inp, iters);
-    // enzyme_unsafe_rust_sincos(inp, iters);
+    enzyme_unsafe_rust_sincos(inp, iters);
   }
 }
