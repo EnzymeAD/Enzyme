@@ -1,5 +1,5 @@
 #![feature(autodiff)]
-use gmmrs::{Wishart, dgmm_objective};
+use gmmrs::{Wishart, r#unsafe::dgmm_objective};
 
 fn main() {
     let d = 2;
@@ -20,5 +20,5 @@ fn main() {
     let mut d_err2 = &mut d_err;
     let wishart2 = &wishart;
     // pass as raw ptr:
-    dgmm_objective(d, k, n, alphas.as_ptr(), d_alphas.as_mut_ptr(), means.as_ptr(), d_means.as_mut_ptr(), icf.as_ptr(), d_icf.as_mut_ptr(), x.as_ptr(), wishart2 as *const Wishart, err2 as *mut f64, d_err2 as *mut f64);
+    unsafe {dgmm_objective(d, k, n, alphas.as_ptr(), d_alphas.as_mut_ptr(), means.as_ptr(), d_means.as_mut_ptr(), icf.as_ptr(), d_icf.as_mut_ptr(), x.as_ptr(), wishart2 as *const Wishart, err2 as *mut f64, d_err2 as *mut f64);}
 }
