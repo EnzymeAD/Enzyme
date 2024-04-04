@@ -11,7 +11,7 @@ $(dir)/benchmarks/ReverseMode/lstm/target/release/liblstm.a: src/lib.rs Cargo.to
 	cargo +enzyme rustc --release --lib --crate-type=staticlib 
 
 %-unopt.ll: %.cpp
-	clang++ $(BENCH) $^ -O2 --gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/11 -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
+	clang++ $(BENCH) $^ -pthread -O2 -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
 
 %-raw.ll: %-unopt.ll
 	@echo $(LOAD)
@@ -22,7 +22,7 @@ $(dir)/benchmarks/ReverseMode/lstm/target/release/liblstm.a: src/lib.rs Cargo.to
 	#opt $^ -O2 -o $@ -S
 
 lstm.o: lstm-opt.ll $(dir)/benchmarks/ReverseMode/lstm/target/release/liblstm.a
-	clang++ --gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/11 -O2 $^ -o $@ $(BENCHLINK) -lm $(dir)/benchmarks/ReverseMode/lstm/target/release/liblstm.a
+	clang++ -pthread -O2 $^ -o $@ $(BENCHLINK) -lm $(dir)/benchmarks/ReverseMode/lstm/target/release/liblstm.a
 
 results.json: lstm.o
 	./$^
