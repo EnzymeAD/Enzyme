@@ -15,11 +15,11 @@ use std::f64::consts::PI;
 //    j += m;
 //  }
 //}
-unsafe fn bitreversal_perm(data: *mut f64, n: usize) {
+unsafe fn bitreversal_perm(data: *mut f64, len: usize) {
     //let len = data.len() / 2;
     let mut j = 1;
 
-    for i in (1..2*n).step_by(2) {
+    for i in (1..2*len).step_by(2) {
     //let mut i = 1;
     //while i < 2*len {
         if j > i {
@@ -29,7 +29,7 @@ unsafe fn bitreversal_perm(data: *mut f64, n: usize) {
             //data.swap(j, i);
         }
 
-        let mut m = n;
+        let mut m = len;
         while m >= 2 && j > m {
             j -= m;
             m >>= 1;
@@ -104,8 +104,8 @@ unsafe fn ifft(data: *mut f64, n: usize) {
 
 #[autodiff(unsafe_dfoobar, Reverse, Const, Duplicated)]
 pub unsafe fn unsafe_foobar(n: usize, data: *mut f64) {
-    fft(data, n / 2);
-    ifft(data, n / 2);
+    fft(data, n );
+    ifft(data, n );
 }
 
 #[no_mangle]
