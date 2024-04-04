@@ -8,7 +8,7 @@ clean:
 	rm -f *.ll *.o results.json
 
 $(dir)/benchmarks/ReverseMode/lstm/target/release/liblstm.a: src/lib.rs Cargo.toml
-	cargo +enzyme rustc --release --lib --crate-type=staticlib 
+	ENZYME_LOOSE_TYPES=1 cargo +enzyme rustc --release --lib --crate-type=staticlib 
 
 %-unopt.ll: %.cpp
 	clang++ $(BENCH) $^ -pthread -O2 -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
