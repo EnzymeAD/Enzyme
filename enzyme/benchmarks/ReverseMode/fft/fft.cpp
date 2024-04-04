@@ -33,6 +33,21 @@ extern "C" {
   int enzyme_dupnoneed;
 }
 
+extern "C" void rust_dfoobar(int n, double* data, double* ddata);
+extern "C" void rust_foobar(int n, double* data);
+
+static double rust_foobar_and_gradient(unsigned len) {
+    double *inp = new double[2*len];
+    for(int i=0; i<2*len; i++) inp[i] = 2.0;
+    double *dinp = new double[2*len];
+    for(int i=0; i<2*len; i++) dinp[i] = 1.0;
+    rust_dfoobar(len*2, inp, dinp);
+    double res = dinp[0];
+    delete[] dinp;
+    delete[] inp;
+    return res;
+}
+
 static double foobar_and_gradient(unsigned len) {
     double *inp = new double[2*len];
     for(int i=0; i<2*len; i++) inp[i] = 2.0;
@@ -202,6 +217,46 @@ static void enzyme_sincos(double inp, unsigned len) {
   }
 }
 
+static void enzyme_rust_sincos(double inp, unsigned len) {
+
+  {
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+
+  double *x = new double[2*len];
+  for(int i=0; i<2*len; i++) x[i] = 2.0;
+  rust_foobar(len, x);
+  double res = x[0];
+
+  gettimeofday(&end, NULL);
+  printf("Enzyme (Rust) real %0.6f res=%f\n", tdiff(&start, &end), res);
+  delete[] x;
+  }
+
+  {
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+
+  double *x = new double[2*len];
+  for(int i=0; i<2*len; i++) x[i] = 2.0;
+  rust_foobar(len, x);
+  double res = x[0];
+
+  gettimeofday(&end, NULL);
+  printf("Enzyme (Rust) forward %0.6f res=%f\n", tdiff(&start, &end), res);
+  delete[] x;
+  }
+
+  {
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+
+  double res2 = rust_foobar_and_gradient(len);
+
+  gettimeofday(&end, NULL);
+  printf("Enzyme (Rust) combined %0.6f res'=%f\n", tdiff(&start, &end), res2);
+  }
+}
 
 /* Function to check if x is power of 2*/
 bool isPowerOfTwo (int x)
@@ -233,5 +288,6 @@ int main(int argc, char** argv) {
     adept_sincos(inp, iters);
     tapenade_sincos(inp, iters);
     enzyme_sincos(inp, iters);
+    enzyme_rust_sincos(inp, iters);
   }
 }
