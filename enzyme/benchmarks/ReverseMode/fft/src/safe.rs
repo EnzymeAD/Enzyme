@@ -59,8 +59,8 @@ fn radix2(data: &mut [f64], i_sign: f64, n: usize) {
     }
 }
 
-fn rescale(data: &mut [f64], scale: f64) {
-    let scale = 1. / scale;
+fn rescale(data: &mut [f64], scale: usize) {
+    let scale = 1. / scale as f64;
     for elm in data {
         *elm *= scale;
     }
@@ -74,7 +74,7 @@ fn fft(data: &mut [f64]) {
 fn ifft(data: &mut [f64]) {
     bitreversal_perm(data);
     radix2(data, -1.0, data.len() / 2);
-    rescale(data, data.len() as f64 / 2.);
+    rescale(data, data.len() / 2);
 }
 
 #[autodiff(dfoobar, Reverse, Duplicated)]
@@ -88,8 +88,8 @@ pub extern "C" fn rust_dfoobar(n: usize, data: *mut f64, ddata: *mut f64) {
     
     let (data, ddata) = unsafe {
         (
-            slice::from_raw_parts_mut(data, n),
-            slice::from_raw_parts_mut(ddata, n)
+            slice::from_raw_parts_mut(data, n * 2),
+            slice::from_raw_parts_mut(ddata, n * 2)
         )
     };
 
@@ -98,7 +98,6 @@ pub extern "C" fn rust_dfoobar(n: usize, data: *mut f64, ddata: *mut f64) {
 
 #[no_mangle]
 pub extern "C" fn rust_foobar(n: usize, data: *mut f64) {
-    let data = unsafe { slice::from_raw_parts_mut(data, n) };
-
+    let data = unsafe { slice::from_raw_parts_mut(data, n * 2) };
     foobar(data);
 }

@@ -104,8 +104,8 @@ unsafe fn ifft(data: *mut f64, n: usize) {
 
 #[autodiff(unsafe_dfoobar, Reverse, Const, Duplicated)]
 pub unsafe fn unsafe_foobar(n: usize, data: *mut f64) {
-    fft(data, n);
-    ifft(data, n);
+    fft(data, n / 2);
+    ifft(data, n / 2);
 }
 
 #[no_mangle]
