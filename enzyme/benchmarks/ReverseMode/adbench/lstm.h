@@ -34,51 +34,33 @@ struct LSTMOutput {
 };
 
 extern "C" {
-    void rust_dlstm_objective(
-        int l,
-        int c,
-        int b,
-        double const* main_params,
-        double* dmain_params,
-        double const* extra_params,
-        double* dextra_params,
-        double* state,
-        double const* sequence,
-        double* loss,
-        double* dloss
-    );
+void rust_unsafe_dlstm_objective(int l, int c, int b, double const *main_params,
+                                 double *dmain_params,
+                                 double const *extra_params,
+                                 double *dextra_params, double *state,
+                                 double const *sequence, double *loss,
+                                 double *dloss);
 
-    void dlstm_objective(
-        int l,
-        int c,
-        int b,
-        double const* main_params,
-        double* dmain_params,
-        double const* extra_params,
-        double* dextra_params,
-        double* state,
-        double const* sequence,
-        double* loss,
-        double* dloss
-    );
+void rust_safe_dlstm_objective(int l, int c, int b, double const *main_params,
+                               double *dmain_params, double const *extra_params,
+                               double *dextra_params, double *state,
+                               double const *sequence, double *loss,
+                               double *dloss);
 
-    void lstm_objective_b(int l, int c, int b, const double *main_params, double *
-        main_paramsb, const double *extra_params, double *extra_paramsb,
-        double *state, const double *sequence, double *loss, double *lossb);
+void dlstm_objective(int l, int c, int b, double const *main_params,
+                     double *dmain_params, double const *extra_params,
+                     double *dextra_params, double *state,
+                     double const *sequence, double *loss, double *dloss);
 
-    void adept_dlstm_objective(
-        int l,
-        int c,
-        int b,
-        double const* main_params,
-        double* dmain_params,
-        double const* extra_params,
-        double* dextra_params,
-        double* state,
-        double const* sequence,
-        double* loss,
-        double* dloss
-    );
+void lstm_objective_b(int l, int c, int b, const double *main_params,
+                      double *main_paramsb, const double *extra_params,
+                      double *extra_paramsb, double *state,
+                      const double *sequence, double *loss, double *lossb);
+
+void adept_dlstm_objective(int l, int c, int b, double const *main_params,
+                           double *dmain_params, double const *extra_params,
+                           double *dextra_params, double *state,
+                           double const *sequence, double *loss, double *dloss);
 }
 
 void read_lstm_instance(const string& fn,
@@ -322,14 +304,14 @@ int main(const int argc, const char* argv[]) {
     {
       struct timeval start, end;
       gettimeofday(&start, NULL);
-      calculate_jacobian<rust_dlstm_objective>(input, result);
+      calculate_jacobian<rust_safe_dlstm_objective>(input, result);
       gettimeofday(&end, NULL);
-      printf("Enzyme (Rust) combined %0.6f\n", tdiff(&start, &end));
+      printf("Enzyme (safe Rust) combined %0.6f\n", tdiff(&start, &end));
       json enzyme;
-       enzyme["name"] = "Enzyme (Rust) combined";
-       enzyme["runtime"] = tdiff(&start, &end);
-       for (unsigned i = result.gradient.size() - 5;
-            i < result.gradient.size(); i++) {
+      enzyme["name"] = "Enzyme (safe Rust) combined";
+      enzyme["runtime"] = tdiff(&start, &end);
+      for (unsigned i = result.gradient.size() - 5; i < result.gradient.size();
+           i++) {
          printf("%f ", result.gradient[i]);
          enzyme["result"].push_back(result.gradient[i]);
        }
@@ -338,6 +320,40 @@ int main(const int argc, const char* argv[]) {
        printf("\n");
     }
 
+    }
+
+    {
+
+    struct LSTMInput input = {};
+
+    // Read instance
+    read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+                       input.main_params, input.extra_params, input.state,
+                       input.sequence);
+
+    std::vector<double> state = std::vector<double>(input.state.size());
+
+    int Jcols = 8 * input.l * input.b + 3 * input.b;
+    struct LSTMOutput result = {0, std::vector<double>(Jcols)};
+
+    {
+       struct timeval start, end;
+       gettimeofday(&start, NULL);
+       calculate_jacobian<rust_unsafe_dlstm_objective>(input, result);
+       gettimeofday(&end, NULL);
+       printf("Enzyme (unsafe Rust) combined %0.6f\n", tdiff(&start, &end));
+       json enzyme;
+       enzyme["name"] = "Enzyme (unsafe Rust) combined";
+       enzyme["runtime"] = tdiff(&start, &end);
+       for (unsigned i = result.gradient.size() - 5; i < result.gradient.size();
+            i++) {
+         printf("%f ", result.gradient[i]);
+         enzyme["result"].push_back(result.gradient[i]);
+       }
+       test_suite["tools"].push_back(enzyme);
+
+       printf("\n");
+    }
     }
 
     test_suite["llvm-version"] = __clang_version__;
