@@ -2269,7 +2269,7 @@ public:
 
         Value *FnOp = CI->getCalledOperand();
         while (true) {
-          if (Fn = dyn_cast<Function>(FnOp))
+          if ((Fn = dyn_cast<Function>(FnOp)))
             break;
           if (auto castinst = dyn_cast<ConstantExpr>(FnOp)) {
             if (castinst->isCast()) {
