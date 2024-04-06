@@ -41,6 +41,14 @@ void rust_unsafe_dlstm_objective(int l, int c, int b, double const *main_params,
                                  double const *sequence, double *loss,
                                  double *dloss);
 
+void rust_unsafe_lstm_objective(int l, int c, int b, double const *main_params,
+                                double const *extra_params, double *state,
+                                double const *sequence, double *loss);
+
+void rust_safe_lstm_objective(int l, int c, int b, double const *main_params,
+                              double const *extra_params, double *state,
+                              double const *sequence, double *loss);
+
 void rust_safe_dlstm_objective(int l, int c, int b, double const *main_params,
                                double *dmain_params, double const *extra_params,
                                double *dextra_params, double *state,
@@ -171,6 +179,28 @@ void calculate_jacobian(struct LSTMInput &input, struct LSTMOutput &result)
             &lossb
         );
     }
+}
+
+double calculate_unsafe_primal(struct LSTMInput &input) {
+    double loss = 0.0;
+    for (int i = 0; i < 100; i++) {
+        rust_unsafe_lstm_objective(
+            input.l, input.c, input.b, input.main_params.data(),
+            input.extra_params.data(), input.state.data(),
+            input.sequence.data(), &loss);
+    }
+    return loss;
+}
+
+double calculate_safe_primal(struct LSTMInput &input) {
+    double loss = 0.0;
+    for (int i = 0; i < 100; i++) {
+        rust_safe_lstm_objective(input.l, input.c, input.b,
+                                 input.main_params.data(),
+                                 input.extra_params.data(), input.state.data(),
+                                 input.sequence.data(), &loss);
+    }
+    return loss;
 }
 
 int main(const int argc, const char* argv[]) {
@@ -344,6 +374,72 @@ int main(const int argc, const char* argv[]) {
        printf("Enzyme (unsafe Rust) combined %0.6f\n", tdiff(&start, &end));
        json enzyme;
        enzyme["name"] = "Enzyme (unsafe Rust) combined";
+       enzyme["runtime"] = tdiff(&start, &end);
+       for (unsigned i = result.gradient.size() - 5; i < result.gradient.size();
+            i++) {
+         printf("%f ", result.gradient[i]);
+         enzyme["result"].push_back(result.gradient[i]);
+       }
+       test_suite["tools"].push_back(enzyme);
+
+       printf("\n");
+    }
+    }
+    {
+
+    struct LSTMInput input = {};
+
+    // Read instance
+    read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+                       input.main_params, input.extra_params, input.state,
+                       input.sequence);
+
+    std::vector<double> state = std::vector<double>(input.state.size());
+
+    int Jcols = 8 * input.l * input.b + 3 * input.b;
+    struct LSTMOutput result = {0, std::vector<double>(Jcols)};
+
+    {
+       struct timeval start, end;
+       gettimeofday(&start, NULL);
+       calculate_unsafe_primal(input);
+       gettimeofday(&end, NULL);
+       printf("Enzyme (unsafe Rust) primal %0.6f\n", tdiff(&start, &end));
+       json enzyme;
+       enzyme["name"] = "Enzyme (unsafe Rust) primal";
+       enzyme["runtime"] = tdiff(&start, &end);
+       for (unsigned i = result.gradient.size() - 5; i < result.gradient.size();
+            i++) {
+         printf("%f ", result.gradient[i]);
+         enzyme["result"].push_back(result.gradient[i]);
+       }
+       test_suite["tools"].push_back(enzyme);
+
+       printf("\n");
+    }
+    }
+    {
+
+    struct LSTMInput input = {};
+
+    // Read instance
+    read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+                       input.main_params, input.extra_params, input.state,
+                       input.sequence);
+
+    std::vector<double> state = std::vector<double>(input.state.size());
+
+    int Jcols = 8 * input.l * input.b + 3 * input.b;
+    struct LSTMOutput result = {0, std::vector<double>(Jcols)};
+
+    {
+       struct timeval start, end;
+       gettimeofday(&start, NULL);
+       calculate_safe_primal(input);
+       gettimeofday(&end, NULL);
+       printf("Enzyme (safe Rust) primal %0.6f\n", tdiff(&start, &end));
+       json enzyme;
+       enzyme["name"] = "Enzyme (safe Rust) primal";
        enzyme["runtime"] = tdiff(&start, &end);
        for (unsigned i = result.gradient.size() - 5; i < result.gradient.size();
             i++) {

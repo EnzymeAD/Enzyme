@@ -1,4 +1,3 @@
-//#![feature(autodiff)]
 use std::f64::consts::PI;
 use crate::Wishart;
 
@@ -55,17 +54,12 @@ pub extern "C" fn rust_gmm_objective(d: i32, k: i32, n: i32, alphas: *const f64,
     unsafe { *err = my_err };
 }
 
-//#[autodiff(dgmm_objective, Reverse, Const, Const, Const, Duplicated, Duplicated, Duplicated, Const, Const, Duplicated)]
-//pub fn gmm_objective_c(d: usize, k: usize, n: usize, alphas: *const f64, means: *const f64, icf: *const f64, x: *const f64, wishart: *const Wishart, err: *mut f64) {
-//    gmm_objective(d, k, n, alphas, means, icf, x, wishart, &mut my_err);
-//}
-
 #[autodiff(dgmm_objective, Reverse, Const, Const, Const, Duplicated, Duplicated, Duplicated, Const, Const, Const, Duplicated)]
 pub fn gmm_objective(d: usize, k: usize, n: usize, alphas: &[f64], means: &[f64], icf: &[f64], x: &[f64], gamma: f64, m: i32, err: &mut f64) {
     let wishart: Wishart = Wishart { gamma, m };
-    //let wishart: Wishart = unsafe { *wishart };
     let constant = -(n as f64) * d as f64 * 0.5 * (2.0 * PI).ln();
     let icf_sz = d * (d + 1) / 2;
+
     let mut qdiags = vec![0.; d * k];
     let mut sum_qs = vec![0.; k];
     let mut xcentered = vec![0.; d];
