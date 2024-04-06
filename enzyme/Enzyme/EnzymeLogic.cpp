@@ -940,6 +940,7 @@ void calculateUnusedValuesInFunction(
             }
 
             if (mode == DerivativeMode::ForwardMode ||
+                mode == DerivativeMode::ForwardModeError ||
                 mode == DerivativeMode::ForwardModeSplit ||
                 ((mode == DerivativeMode::ReverseModePrimal ||
                   mode == DerivativeMode::ReverseModeCombined) &&
@@ -1019,7 +1020,8 @@ void calculateUnusedValuesInFunction(
         }
         if ((mode == DerivativeMode::ReverseModePrimal ||
              mode == DerivativeMode::ReverseModeCombined ||
-             mode == DerivativeMode::ForwardMode) &&
+             mode == DerivativeMode::ForwardMode ||
+             mode == DerivativeMode::ForwardModeError) &&
             mayWriteToMemory) {
           return UseReq::Need;
         }
@@ -4557,7 +4559,8 @@ Function *EnzymeLogic::CreateForwardDiff(
     }
   }
 
-  if (auto md = hasMetadata(todiff, (mode == DerivativeMode::ForwardMode)
+  if (auto md = hasMetadata(todiff, (mode == DerivativeMode::ForwardMode ||
+                                     mode == DerivativeMode::ForwardModeError)
                                         ? "enzyme_derivative"
                                         : "enzyme_splitderivative")) {
     if (!isa<MDTuple>(md)) {
@@ -4745,7 +4748,12 @@ Function *EnzymeLogic::CreateForwardDiff(
   if (todiff->empty()) {
     std::string s;
     llvm::raw_string_ostream ss(s);
-    ss << "No forward mode derivative found for " + todiff->getName() << "\n";
+    if (mode == DerivativeMode::ForwardModeError) {
+      ss << "No forward mode error function found for " + todiff->getName()
+         << "\n";
+    } else {
+      ss << "No forward mode derivative found for " + todiff->getName() << "\n";
+    }
     llvm::Value *toshow = todiff;
     if (context.req) {
       toshow = context.req;

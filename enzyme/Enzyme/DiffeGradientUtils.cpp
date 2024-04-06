@@ -67,6 +67,7 @@ DiffeGradientUtils::DiffeGradientUtils(
     return;
   assert(reverseBlocks.size() == 0);
   if (mode == DerivativeMode::ForwardMode ||
+      mode == DerivativeMode::ForwardModeError ||
       mode == DerivativeMode::ForwardModeSplit) {
     return;
   }

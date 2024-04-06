@@ -3111,8 +3111,6 @@ double ulp(double res) {
 }
 */
 llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
-  // Mask for only the exponent bits
-
   auto ty = res->getType();
   unsigned tsize = builder.GetInsertBlock()
                        ->getParent()
@@ -3121,8 +3119,6 @@ llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
                        .getTypeSizeInBits(ty);
 
   auto ity = IntegerType::get(ty->getContext(), tsize);
-
-  //  auto masked = builder.CreateAnd(as_int, ConstantInt::get(ity, eval));
 
   auto as_int = builder.CreateBitCast(res, ity);
   auto masked = builder.CreateXor(as_int, ConstantInt::get(ity, 1));

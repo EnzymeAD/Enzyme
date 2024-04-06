@@ -1042,7 +1042,8 @@ public:
     known:;
     }
 
-    if (Mode == DerivativeMode::ForwardMode) {
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
 
       auto dt = vd[{-1}];
       // Only need the full type in forward mode, if storing a constant
@@ -3342,7 +3343,8 @@ public:
       return;
     }
 
-    if (Mode == DerivativeMode::ForwardMode &&
+    if ((Mode == DerivativeMode::ForwardMode ||
+         Mode == DerivativeMode::ForwardModeError) &&
         gutils->isConstantValue(orig_dst)) {
       eraseIfUnused(MTI);
       return;
@@ -3353,7 +3355,8 @@ public:
     vd |= TR.query(orig_src).Data0().ShiftIndices(DL, 0, size, 0);
 
     bool errorIfNoType = true;
-    if (Mode == DerivativeMode::ForwardMode &&
+    if ((Mode == DerivativeMode::ForwardMode ||
+         Mode == DerivativeMode::ForwardModeError) &&
         (!gutils->isConstantValue(orig_src) && !EnzymeRuntimeActivityCheck)) {
       errorIfNoType = false;
     }
@@ -3491,7 +3494,8 @@ public:
              (dt != BaseType::Anything && dt.isKnown())))
           Legal = false;
         if (!Legal) {
-          if (Mode == DerivativeMode::ForwardMode) {
+          if (Mode == DerivativeMode::ForwardMode ||
+              Mode == DerivativeMode::ForwardModeError) {
             // if both are floats (of any type), forward mode is the same.
             //   + [potentially zero if const, otherwise copy]
             // if both are int/pointer (of any type), also the same
@@ -3618,7 +3622,8 @@ public:
         call->setTailCallKind(MTI.getTailCallKind());
       };
 
-      if (Mode == DerivativeMode::ForwardMode)
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError)
         applyChainRule(BuilderZ, fwd_rule, shadow_dst, shadow_src);
       else
         applyChainRule(BuilderZ, rev_rule, shadow_dst, shadow_src);
@@ -3678,6 +3683,7 @@ public:
     // handling the intrinsic here.
     if (isIntelSubscriptIntrinsic(II)) {
       if (Mode == DerivativeMode::ForwardModeSplit ||
+          Mode == DerivativeMode::ForwardModeError ||
           Mode == DerivativeMode::ForwardMode) {
         forwardModeInvertedPointerFallback(II);
       }
@@ -4767,6 +4773,7 @@ public:
     }
 
     if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError ||
         Mode == DerivativeMode::ForwardModeSplit) {
       IRBuilder<> Builder2(&call);
       getForwardBuilder(Builder2);
@@ -6053,7 +6060,8 @@ public:
     DIFFE_TYPE subretType = gutils->getReturnDiffeType(
         &call, &subretused, &shadowReturnUsed, smode);
 
-    if (Mode == DerivativeMode::ForwardMode) {
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
       auto found = customFwdCallHandlers.find(funcName);
       if (found != customFwdCallHandlers.end()) {
         Value *invertedReturn = nullptr;
@@ -6536,7 +6544,8 @@ public:
       // may load overwritten data)
       //    Store and reload it
       if (Mode != DerivativeMode::ReverseModeCombined &&
-          Mode != DerivativeMode::ForwardMode && subretused &&
+          Mode != DerivativeMode::ForwardMode &&
+          Mode != DerivativeMode::ForwardModeError && subretused &&
           (call.mayWriteToMemory() ||
            !gutils->legalRecompute(&call, ValueToValueMapTy(), nullptr))) {
         if (!gutils->unnecessaryIntermediates.count(&call)) {
