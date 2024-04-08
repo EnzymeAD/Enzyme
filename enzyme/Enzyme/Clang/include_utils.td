@@ -705,9 +705,7 @@ extern "C" {
 #define __ENZYME_MPFR_ATTRIBUTES __attribute__((weak))
 #define __ENZYME_MPFR_DEFAULT_ROUNDING_MODE GMP_RNDN
 
-bool __enzyme_fprt_is_mem_mode(int64_t mode) {
-  return mode & 0b0001;
-}
+bool __enzyme_fprt_is_mem_mode(int64_t mode) { return mode & 0b0001; }
 bool __enzyme_fprt_is_op_mode(int64_t mode) { return mode & 0b0010; }
 
 typedef struct {
@@ -729,7 +727,7 @@ double __enzyme_fprt_64_52_get(double _a, int64_t exponent, int64_t significand,
 __ENZYME_MPFR_ATTRIBUTES
 double __enzyme_fprt_64_52_new(double _a, int64_t exponent, int64_t significand,
                                int64_t mode) {
-  __enzyme_fp *a = (__enzyme_fp *) malloc(sizeof(__enzyme_fp));
+  __enzyme_fp *a = (__enzyme_fp *)malloc(sizeof(__enzyme_fp));
   mpfr_init2(a->fp, significand);
   mpfr_set_d(a->fp, _a, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
   return __enzyme_fprt_ptr_to_double(a);
@@ -739,7 +737,7 @@ __ENZYME_MPFR_ATTRIBUTES
 __enzyme_fp *__enzyme_fprt_64_52_new_intermediate(int64_t exponent,
                                                   int64_t significand,
                                                   int64_t mode) {
-  __enzyme_fp *a = (__enzyme_fp *) malloc(sizeof(__enzyme_fp));
+  __enzyme_fp *a = (__enzyme_fp *)malloc(sizeof(__enzyme_fp));
   mpfr_init2(a->fp, significand);
   return a;
 }
@@ -875,11 +873,26 @@ __ENZYME_MPFR_DOUBLE_BINOP_DEFAULT_ROUNDING(fdiv, div);
 
 __ENZYME_MPFR_DOUBLE_BINFUNCINTR_DEFAULT_ROUNDING(pow, pow);
 
-__ENZYME_MPFR_SINGOP(func, sqrt, sqrt, 64_52, double, d, double, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
-__ENZYME_MPFR_SINGOP(func, __sqrt_finite, sqrt, 64_52, double, d, double, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
-__ENZYME_MPFR_SINGOP(intr, llvm_sqrt_f64, sqrt, 64_52, double, d, double, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
-__ENZYME_MPFR_SINGOP(intr, fabs, abs, 64_52, double, d, double, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
-__ENZYME_MPFR_SINGOP(intr, llvm_fabs_f64, abs, 64_52, double, d, double, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
+#define __ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(TYPE, LLVM_NAME, MPFR_NAME) \
+  __ENZYME_MPFR_SINGOP(TYPE, LLVM_NAME, MPFR_NAME, 64_52, double, d, double, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE) \
+  __ENZYME_MPFR_SINGOP(TYPE, LLVM_NAME, MPFR_NAME, 32_23, float, d, float, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)
+
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, sqrt, sqrt);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, __sqrt_finite, sqrt);
+
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, atan, atan);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, acos, acos);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, asin, asin);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, tan, tan);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, cos, cos);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, sin, sin);
+
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, exp, exp);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, log, log);
+
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(intr, llvm_sqrt_f64, sqrt);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(intr, fabs, abs);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(intr, llvm_fabs_f64, abs);
 
 __ENZYME_MPFR_FMULADD(64_52, double, d, f64, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
 // clang-format on
