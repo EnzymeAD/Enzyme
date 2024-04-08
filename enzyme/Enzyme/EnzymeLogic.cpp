@@ -5347,6 +5347,9 @@ public:
   void visitFenceInst(llvm::FenceInst &FI) { return; }
 
   bool handleIntrinsic(llvm::CallInst &CI, Intrinsic::ID ID) {
+    if (isDbgInfoIntrinsic(ID))
+      return true;
+
     auto newI = cast<llvm::CallInst>(getNewFromOriginal(&CI));
     IRBuilder<> B(newI);
 
@@ -5555,7 +5558,8 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
   Function *NewF = Function::Create(FTy, totrunc->getLinkage(), truncName,
                                     totrunc->getParent());
 
-  NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
+  if (mode != TruncOpFullModuleMode)
+    NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
   TruncateCachedFunctions[tup] = NewF;
 
