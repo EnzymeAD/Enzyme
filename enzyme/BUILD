@@ -1,3 +1,4 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 load("@llvm-project//llvm:tblgen.bzl", "gentbl")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 
@@ -216,16 +217,26 @@ cc_library(
     alwayslink = 1,
 )
 
+# Modified from llvm_driver_cc_binary since that can't be used
+# outside of llvm tree
+expand_template(
+    name = "_gen_enzyme-clang",
+    out = "enzyme-clang-driver.cpp",
+    substitutions = {"@TOOL_NAME@": "clang"},
+    template = "@llvm-project//llvm:cmake/modules/llvm-driver-template.cpp.in",
+)
 cc_binary(
     name = "enzyme-clang",
-    srcs = [],
+    srcs = ["enzyme-clang-driver.cpp"],
     copts = [
         "-Wno-implicit-fallthrough",
         "-Wno-error=frame-larger-than=",
+        "-Denzyme_clang_main=clang_main",
     ],
     deps = [
         ":EnzymeStatic",
         "@llvm-project//clang:clang-driver",
+        "@llvm-project//llvm:Support",
     ],
 )
 
