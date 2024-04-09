@@ -775,6 +775,35 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
     }                                                                          \
   }
 
+// TODO this is a bit sketchy if the user cast their float to int before calling
+// this. We need to detect these patterns
+#define __ENZYME_MPFR_BIN_INT(OP_TYPE, LLVM_OP_NAME, MPFR_FUNC_NAME,           \
+                              FROM_TYPE, RET, MPFR_GET, ARG1, MPFR_SET_ARG1,   \
+                              ARG2, ROUNDING_MODE)                             \
+  __ENZYME_MPFR_ATTRIBUTES                                                     \
+  RET __enzyme_fprt_##FROM_TYPE##_##OP_TYPE##_##LLVM_OP_NAME(                  \
+      ARG1 a, ARG2 b, int64_t exponent, int64_t significand, int64_t mode) {   \
+    if (__enzyme_fprt_is_op_mode(mode)) {                                      \
+      mpfr_t ma, mc;                                                           \
+      mpfr_init2(ma, significand);                                             \
+      mpfr_init2(mc, significand);                                             \
+      mpfr_set_##MPFR_SET_ARG1(ma, a, ROUNDING_MODE);                          \
+      mpfr_##MPFR_FUNC_NAME(mc, ma, b, ROUNDING_MODE);                         \
+      RET c = mpfr_get_##MPFR_GET(mc, ROUNDING_MODE);                          \
+      mpfr_clear(ma);                                                          \
+      mpfr_clear(mc);                                                          \
+      return c;                                                                \
+    } else if (__enzyme_fprt_is_mem_mode(mode)) {                              \
+      __enzyme_fp *ma = __enzyme_fprt_double_to_ptr(a);                        \
+      __enzyme_fp *mc =                                                        \
+          __enzyme_fprt_64_52_new_intermediate(exponent, significand, mode);   \
+      mpfr_##MPFR_FUNC_NAME(mc->fp, ma->fp, b, ROUNDING_MODE);                 \
+      return __enzyme_fprt_ptr_to_double(mc);                                  \
+    } else {                                                                   \
+      abort();                                                                 \
+    }                                                                          \
+  }
+
 #define __ENZYME_MPFR_BIN(OP_TYPE, LLVM_OP_NAME, MPFR_FUNC_NAME, FROM_TYPE,    \
                           RET, MPFR_GET, ARG1, MPFR_SET_ARG1, ARG2,            \
                           MPFR_SET_ARG2, ROUNDING_MODE)                        \
@@ -787,7 +816,7 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
       mpfr_init2(mb, significand);                                             \
       mpfr_init2(mc, significand);                                             \
       mpfr_set_##MPFR_SET_ARG1(ma, a, ROUNDING_MODE);                          \
-      mpfr_set_##MPFR_SET_ARG1(mb, b, ROUNDING_MODE);                          \
+      mpfr_set_##MPFR_SET_ARG2(mb, b, ROUNDING_MODE);                          \
       mpfr_##MPFR_FUNC_NAME(mc, ma, mb, ROUNDING_MODE);                        \
       RET c = mpfr_get_##MPFR_GET(mc, ROUNDING_MODE);                          \
       mpfr_clear(ma);                                                          \
@@ -806,10 +835,10 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
     }                                                                          \
   }
 
-#define __ENZYME_MPFR_FMULADD(FROM_TYPE, TYPE, MPFR_TYPE, LLVM_TYPE,           \
-                              ROUNDING_MODE)                                   \
+#define __ENZYME_MPFR_FMULADD(LLVM_OP_NAME, FROM_TYPE, TYPE, MPFR_TYPE,        \
+                              LLVM_TYPE, ROUNDING_MODE)                        \
   __ENZYME_MPFR_ATTRIBUTES                                                     \
-  TYPE __enzyme_fprt_##FROM_TYPE##_intr_llvm_fmuladd_##LLVM_TYPE(              \
+  TYPE __enzyme_fprt_##FROM_TYPE##_intr_##LLVM_OP_NAME##_##LLVM_TYPE(          \
       TYPE a, TYPE b, TYPE c, int64_t exponent, int64_t significand,           \
       int64_t mode) {                                                          \
     if (__enzyme_fprt_is_op_mode(mode)) {                                      \
@@ -854,6 +883,8 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
                                          ROUNDING_MODE)                        \
   __ENZYME_MPFR_BIN(intr, LLVM_OP_NAME, MPFR_FUNC_NAME, 64_52, double, d,      \
                     double, d, double, d, ROUNDING_MODE)                       \
+  __ENZYME_MPFR_BIN(intr, llvm_##LLVM_OP_NAME##_f64, MPFR_FUNC_NAME, 64_52,    \
+                    double, d, double, d, double, d, ROUNDING_MODE)            \
   __ENZYME_MPFR_BIN(func, LLVM_OP_NAME, MPFR_FUNC_NAME, 64_52, double, d,      \
                     double, d, double, d, ROUNDING_MODE)
 #define __ENZYME_MPFR_DOUBLE_BINOP_DEFAULT_ROUNDING(LLVM_OP_NAME,              \
@@ -865,36 +896,91 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
   __ENZYME_MPFR_DOUBLE_BINFUNCINTR(LLVM_OP_NAME, MPFR_FUNC_NAME,               \
                                    __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)
 
+#define __ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(LLVM_NAME, MPFR_NAME)                \
+  __ENZYME_MPFR_SINGOP(intr, LLVM_NAME, MPFR_NAME, 64_52, double, d, double,   \
+                       d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)                 \
+  __ENZYME_MPFR_SINGOP(intr, llvm_##LLVM_NAME##_f64, MPFR_NAME, 64_52, double, \
+                       d, double, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)      \
+  __ENZYME_MPFR_SINGOP(func, LLVM_NAME, MPFR_NAME, 64_52, double, d, double,   \
+                       d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)                 \
+  __ENZYME_MPFR_SINGOP(TYPE, LLVM_NAME, MPFR_NAME, 32_23, float, d, float, d,  \
+                       __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)                    \
+  __ENZYME_MPFR_SINGOP(intr, LLVM_NAME, MPFR_NAME, 32_23, float, d, float, d,  \
+                       __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)                    \
+  __ENZYME_MPFR_SINGOP(intr, llvm_##LLVM_NAME##_f32, MPFR_NAME, 32_23, float,  \
+                       d, float, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)       \
+  __ENZYME_MPFR_SINGOP(func, LLVM_NAME, MPFR_NAME, 32_23, float, d, float, d,  \
+                       __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)
+
 // clang-format off
+
+// Binary operations
 __ENZYME_MPFR_DOUBLE_BINOP_DEFAULT_ROUNDING(fmul, mul);
 __ENZYME_MPFR_DOUBLE_BINOP_DEFAULT_ROUNDING(fadd, add);
 __ENZYME_MPFR_DOUBLE_BINOP_DEFAULT_ROUNDING(fsub, sub);
 __ENZYME_MPFR_DOUBLE_BINOP_DEFAULT_ROUNDING(fdiv, div);
+__ENZYME_MPFR_DOUBLE_BINOP_DEFAULT_ROUNDING(frem, remainder);
 
 __ENZYME_MPFR_DOUBLE_BINFUNCINTR_DEFAULT_ROUNDING(pow, pow);
+__ENZYME_MPFR_DOUBLE_BINFUNCINTR_DEFAULT_ROUNDING(copysign, copysign);
+__ENZYME_MPFR_DOUBLE_BINFUNCINTR_DEFAULT_ROUNDING(fdim, dim);
+__ENZYME_MPFR_DOUBLE_BINFUNCINTR_DEFAULT_ROUNDING(remainder, remainder);
+__ENZYME_MPFR_DOUBLE_BINFUNCINTR_DEFAULT_ROUNDING(atan2, atan2);
+__ENZYME_MPFR_DOUBLE_BINFUNCINTR_DEFAULT_ROUNDING(hypot, hypot);
+__ENZYME_MPFR_DOUBLE_BINFUNCINTR_DEFAULT_ROUNDING(fmod, fmod);
+__ENZYME_MPFR_DOUBLE_BINFUNCINTR_DEFAULT_ROUNDING(maxnum, max);
+__ENZYME_MPFR_DOUBLE_BINFUNCINTR_DEFAULT_ROUNDING(minnum, min);
 
-#define __ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(TYPE, LLVM_NAME, MPFR_NAME) \
-  __ENZYME_MPFR_SINGOP(TYPE, LLVM_NAME, MPFR_NAME, 64_52, double, d, double, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE) \
-  __ENZYME_MPFR_SINGOP(TYPE, LLVM_NAME, MPFR_NAME, 32_23, float, d, float, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)
+__ENZYME_MPFR_BIN_INT(intr, llvm_powi_f64_i32, pow_si, 64_52, double, d, double, d, int32_t, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
 
-__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, sqrt, sqrt);
-__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, __sqrt_finite, sqrt);
+// Unary operations
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(sqrt, sqrt);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(__sqrt_finite, sqrt);
 
-__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, atan, atan);
-__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, acos, acos);
-__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, asin, asin);
-__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, tan, tan);
-__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, cos, cos);
-__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, sin, sin);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(atanh, atanh);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(acosh, acosh);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(asinh, asinh);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(atan, atan);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(acos, acos);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(asin, asin);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(tanh, tanh);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(cosh, cosh);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(sinh, sinh);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(tan, tan);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(cos, cos);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(sin, sin);
 
-__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, exp, exp);
-__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(func, log, log);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(exp, exp);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(exp2, exp2);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(expm1, expm1);
 
-__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(intr, llvm_sqrt_f64, sqrt);
-__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(intr, fabs, abs);
-__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(intr, llvm_fabs_f64, abs);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(log, log);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(log2, log2);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(log10, log10);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(log1p, log1p);
 
-__ENZYME_MPFR_FMULADD(64_52, double, d, f64, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(fabs, abs);
+
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(trunc, abs);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(round, abs);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(floor, abs);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(ceil, abs);
+
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(erf, erf);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(erfc, erfc);
+
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(cbrt, cbrt);
+
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(tgamma, gamma);
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(lgamma, lngamma);
+
+// TODO This is not accurate (I think we cast int to double)
+__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(nearbyint, rint);
+
+// Ternary operation
+__ENZYME_MPFR_FMULADD(llvm_fmuladd, 64_52, double, d, f64, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
+__ENZYME_MPFR_FMULADD(llvm_fma, 64_52, double, d, f64, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
+
 // clang-format on
 
 #ifdef __cplusplus
