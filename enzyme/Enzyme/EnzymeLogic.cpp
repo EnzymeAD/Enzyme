@@ -5027,9 +5027,40 @@ protected:
   LLVMContext &ctx;
 
 private:
+  std::string getOriginalFPRTName(std::string Name) {
+    return std::string("__enzyme_fprt_original_") + truncation.mangleFrom() +
+           "_" + Name;
+  }
   std::string getFPRTName(std::string Name) {
     return std::string("__enzyme_fprt_") + truncation.mangleFrom() + "_" + Name;
   }
+
+  void createOriginalFPRTFunc(Instruction &I, std::string Name,
+                              SmallVectorImpl<Value *> &Args,
+                              llvm::Type *RetTy) {
+    auto MangledName = getOriginalFPRTName(Name);
+    auto F = M->getFunction(MangledName);
+    if (!F) {
+      SmallVector<Type *, 4> ArgTypes;
+      for (auto Arg : Args)
+        ArgTypes.push_back(Arg->getType());
+      FunctionType *FnTy =
+          FunctionType::get(RetTy, ArgTypes, /*is_vararg*/ false);
+      F = Function::Create(FnTy, Function::ExternalLinkage, MangledName, M);
+    }
+    llvm::dbgs() << "F " << *F << "\n";
+    if (F->isDeclaration()) {
+      llvm::dbgs() << "DECL " << *F << "\n";
+      BasicBlock *Entry = BasicBlock::Create(F->getContext(), "entry", F);
+      auto ClonedI = I.clone();
+      for (unsigned It = 0; It < I.getNumOperands(); It++)
+        ClonedI->setOperand(It, F->getArg(It));
+      auto Return = ReturnInst::Create(F->getContext(), ClonedI, Entry);
+      ClonedI->insertBefore(Return);
+      llvm::dbgs() << "DECL " << *F << "\n";
+    }
+  }
+
   Function *getFPRTFunc(std::string Name, SmallVectorImpl<Value *> &Args,
                         llvm::Type *RetTy) {
     auto MangledName = getFPRTName(Name);
@@ -5044,14 +5075,16 @@ private:
     }
     return F;
   }
+
   CallInst *createFPRTGeneric(llvm::IRBuilderBase &B, std::string Name,
-                              SmallVectorImpl<Value *> &ArgsIn,
+                              const SmallVectorImpl<Value *> &ArgsIn,
                               llvm::Type *RetTy) {
     SmallVector<Value *, 5> Args(ArgsIn.begin(), ArgsIn.end());
     Args.push_back(B.getInt64(truncation.getTo().exponentWidth));
     Args.push_back(B.getInt64(truncation.getTo().significandWidth));
     Args.push_back(B.getInt64(truncation.getMode()));
-    return cast<CallInst>(B.CreateCall(getFPRTFunc(Name, Args, RetTy), Args));
+    auto FprtFunc = getFPRTFunc(Name, Args, RetTy);
+    return cast<CallInst>(B.CreateCall(FprtFunc, Args));
   }
 
 public:
@@ -5113,6 +5146,7 @@ public:
     } else {
       llvm_unreachable("Unexpected instruction for conversion to FPRT");
     }
+    createOriginalFPRTFunc(I, Name, ArgsIn, RetTy);
     return createFPRTGeneric(B, Name, ArgsIn, RetTy);
   }
 };
