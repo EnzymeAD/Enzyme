@@ -114,6 +114,14 @@ double __enzyme_fprt_64_52_new(double _a, int64_t exponent, int64_t significand,
 }
 
 __ENZYME_MPFR_ATTRIBUTES
+double __enzyme_fprt_64_52_const(double _a, int64_t exponent, int64_t significand,
+                                 int64_t mode) {
+  // TODO This should really be called only once for an appearance in the code,
+  // currently it is called every time a flop uses a constant.
+  return __enzyme_fprt_64_52_new(_a, exponent, significand, mode);
+}
+
+__ENZYME_MPFR_ATTRIBUTES
 __enzyme_fp *__enzyme_fprt_64_52_new_intermediate(int64_t exponent,
                                                   int64_t significand,
                                                   int64_t mode) {

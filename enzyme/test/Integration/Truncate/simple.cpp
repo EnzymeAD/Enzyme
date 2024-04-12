@@ -69,7 +69,7 @@ int main() {
         double truth = simple_cmp(a, b);
         a = __enzyme_truncate_mem_value(a, FROM, TO);
         b = __enzyme_truncate_mem_value(b, FROM, TO);
-        double trunc = __enzyme_expand_mem_value(__enzyme_truncate_mem_func(simple_add, FROM, TO)(a, b), FROM, TO);
+        double trunc = __enzyme_expand_mem_value(__enzyme_truncate_mem_func(simple_cmp, FROM, TO)(a, b), FROM, TO);
         APPROX_EQ(trunc, truth, 1e-5);
     }
     {

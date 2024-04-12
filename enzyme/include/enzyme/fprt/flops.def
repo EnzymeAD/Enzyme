@@ -1,4 +1,5 @@
 
+#include "llvm/IR/InstrTypes.h"
 #define __ENZYME_MPFR_DOUBLE_BINOP(LLVM_OP_NAME, MPFR_FUNC_NAME,               \
                                    ROUNDING_MODE)                              \
   __ENZYME_MPFR_BIN(binop, LLVM_OP_NAME, MPFR_FUNC_NAME, 64_52, double, d,     \
@@ -105,3 +106,44 @@ __ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(nearbyint, rint);
 // Ternary operation
 __ENZYME_MPFR_FMULADD(llvm_fmuladd, 64_52, double, d, f64, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
 __ENZYME_MPFR_FMULADD(llvm_fma, 64_52, double, d, f64, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
+
+#define __ENZYME_MPFR_FCMP(NAME, CMP)
+
+// Comparisons
+__ENZYME_MPFR_FCMP(fcmp_oeq, == 0);
+__ENZYME_MPFR_FCMP(fcmp_ueq, == 0);
+
+__ENZYME_MPFR_FCMP(fcmp_ogt, > 0);
+__ENZYME_MPFR_FCMP(fcmp_ugt, > 0);
+
+__ENZYME_MPFR_FCMP(fcmp_oge, >= 0);
+__ENZYME_MPFR_FCMP(fcmp_uge, >= 0);
+
+__ENZYME_MPFR_FCMP(fcmp_olt, < 0);
+__ENZYME_MPFR_FCMP(fcmp_ult, < 0);
+
+__ENZYME_MPFR_FCMP(fcmp_ole, <= 0);
+__ENZYME_MPFR_FCMP(fcmp_ule, <= 0);
+
+__ENZYME_MPFR_FCMP(fcmp_one, != 0);
+__ENZYME_MPFR_FCMP(fcmp_une, != 0);
+
+// TODO special handling needed
+// __ENZYME_MPFR_FCMP(fcmp_ord, );
+// __ENZYME_MPFR_FCMP(fcmp_uno, );
+
+// Reference:
+//   FCMP_OEQ = 1,   ///< 0 0 0 1    True if ordered and equal
+//   FCMP_OGT = 2,   ///< 0 0 1 0    True if ordered and greater than
+//   FCMP_OGE = 3,   ///< 0 0 1 1    True if ordered and greater than or equal
+//   FCMP_OLT = 4,   ///< 0 1 0 0    True if ordered and less than
+//   FCMP_OLE = 5,   ///< 0 1 0 1    True if ordered and less than or equal
+//   FCMP_ONE = 6,   ///< 0 1 1 0    True if ordered and operands are unequal
+//   FCMP_ORD = 7,   ///< 0 1 1 1    True if ordered (no nans)
+//   FCMP_UNO = 8,   ///< 1 0 0 0    True if unordered: isnan(X) | isnan(Y)
+//   FCMP_UEQ = 9,   ///< 1 0 0 1    True if unordered or equal
+//   FCMP_UGT = 10,  ///< 1 0 1 0    True if unordered or greater than
+//   FCMP_UGE = 11,  ///< 1 0 1 1    True if unordered, greater than, or equal
+//   FCMP_ULT = 12,  ///< 1 1 0 0    True if unordered or less than
+//   FCMP_ULE = 13,  ///< 1 1 0 1    True if unordered, less than, or equal
+//   FCMP_UNE = 14,  ///< 1 1 1 0    True if unordered or not equal
