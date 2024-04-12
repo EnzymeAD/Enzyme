@@ -5048,16 +5048,13 @@ private:
           FunctionType::get(RetTy, ArgTypes, /*is_vararg*/ false);
       F = Function::Create(FnTy, Function::ExternalLinkage, MangledName, M);
     }
-    llvm::dbgs() << "F " << *F << "\n";
     if (F->isDeclaration()) {
-      llvm::dbgs() << "DECL " << *F << "\n";
       BasicBlock *Entry = BasicBlock::Create(F->getContext(), "entry", F);
       auto ClonedI = I.clone();
       for (unsigned It = 0; It < I.getNumOperands(); It++)
         ClonedI->setOperand(It, F->getArg(It));
       auto Return = ReturnInst::Create(F->getContext(), ClonedI, Entry);
       ClonedI->insertBefore(Return);
-      llvm::dbgs() << "DECL " << *F << "\n";
     }
   }
 
