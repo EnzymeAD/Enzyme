@@ -5032,7 +5032,7 @@ private:
            "_" + Name;
   }
   std::string getFPRTName(std::string Name) {
-    return std::string("__enzyme_fprt_") + truncation.mangleFrom() + "_" + Name;
+    return std::string(EnzymeFPRTPrefix) + truncation.mangleFrom() + "_" + Name;
   }
 
   void createOriginalFPRTFunc(Instruction &I, std::string Name,

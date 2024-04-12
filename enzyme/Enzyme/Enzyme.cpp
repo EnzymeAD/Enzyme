@@ -2108,7 +2108,7 @@ public:
   }
 
   bool handleFullModuleTrunc(Function &F) {
-    if (F.getName().startswith("__enzyme_fprt_"))
+    if (F.getName().startswith(EnzymeFPRTPrefix))
       return false;
     typedef std::vector<FloatTruncation> TruncationsTy;
     static TruncationsTy FullModuleTruncs = []() -> TruncationsTy {
