@@ -63,20 +63,25 @@ extern "C" {
 //
 // TODO maybe take debug info as parameter - then we can emit warnings or tie
 // operations to source location
+//
+// TODO we need to provide f32 versions, and also instrument the
+// truncation/expansion between f32/f64/etc
 
 #define __ENZYME_MPFR_ATTRIBUTES __attribute__((weak))
 #define __ENZYME_MPFR_ORIGINAL_ATTRIBUTES __attribute__((weak))
 #define __ENZYME_MPFR_DEFAULT_ROUNDING_MODE GMP_RNDN
 
-bool __enzyme_fprt_is_mem_mode(int64_t mode) { return mode & 0b0001; }
-bool __enzyme_fprt_is_op_mode(int64_t mode) { return mode & 0b0010; }
+static bool __enzyme_fprt_is_mem_mode(int64_t mode) { return mode & 0b0001; }
+static bool __enzyme_fprt_is_op_mode(int64_t mode) { return mode & 0b0010; }
 
 typedef struct {
   mpfr_t fp;
 } __enzyme_fp;
 
-double __enzyme_fprt_ptr_to_double(__enzyme_fp *p) { return *((double *)(&p)); }
-__enzyme_fp *__enzyme_fprt_double_to_ptr(double d) {
+static double __enzyme_fprt_ptr_to_double(__enzyme_fp *p) {
+  return *((double *)(&p));
+}
+static __enzyme_fp *__enzyme_fprt_double_to_ptr(double d) {
   return *((__enzyme_fp **)(&d));
 }
 
