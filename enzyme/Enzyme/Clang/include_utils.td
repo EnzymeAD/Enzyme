@@ -886,7 +886,9 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
   __ENZYME_MPFR_BIN(intr, llvm_##LLVM_OP_NAME##_f64, MPFR_FUNC_NAME, 64_52,    \
                     double, d, double, d, double, d, ROUNDING_MODE)            \
   __ENZYME_MPFR_BIN(func, LLVM_OP_NAME, MPFR_FUNC_NAME, 64_52, double, d,      \
-                    double, d, double, d, ROUNDING_MODE)
+                    double, d, double, d, ROUNDING_MODE)                       \
+  __ENZYME_MPFR_BIN(func, __##LLVM_OP_NAME##_finite, MPFR_FUNC_NAME, 64_52,    \
+                    double, d, double, d, double, d, ROUNDING_MODE)
 #define __ENZYME_MPFR_DOUBLE_BINOP_DEFAULT_ROUNDING(LLVM_OP_NAME,              \
                                                     MPFR_FUNC_NAME)            \
   __ENZYME_MPFR_DOUBLE_BINOP(LLVM_OP_NAME, MPFR_FUNC_NAME,                     \
@@ -903,6 +905,8 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
                        d, double, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)      \
   __ENZYME_MPFR_SINGOP(func, LLVM_NAME, MPFR_NAME, 64_52, double, d, double,   \
                        d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)                 \
+  __ENZYME_MPFR_SINGOP(func, __##LLVM_NAME##_finite, MPFR_NAME, 64_52, double, \
+                       d, double, d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)      \
   __ENZYME_MPFR_SINGOP(TYPE, LLVM_NAME, MPFR_NAME, 32_23, float, d, float, d,  \
                        __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)                    \
   __ENZYME_MPFR_SINGOP(intr, LLVM_NAME, MPFR_NAME, 32_23, float, d, float, d,  \
@@ -935,7 +939,6 @@ __ENZYME_MPFR_BIN_INT(intr, llvm_powi_f64_i32, pow_si, 64_52, double, d, double,
 
 // Unary operations
 __ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(sqrt, sqrt);
-__ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(__sqrt_finite, sqrt);
 
 __ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(atanh, atanh);
 __ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(acosh, acosh);
