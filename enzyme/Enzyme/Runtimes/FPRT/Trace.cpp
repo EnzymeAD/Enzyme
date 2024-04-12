@@ -20,6 +20,9 @@
 //
 // This file contains infrastructure for flop tracing
 //
+// It is implemented as a .cpp file and not as a header becaues we want to use
+// C++ features and still be able to use it in C code.
+//
 //===----------------------------------------------------------------------===//
 
 #include <list>
