@@ -5035,6 +5035,8 @@ private:
     return std::string(EnzymeFPRTPrefix) + truncation.mangleFrom() + "_" + Name;
   }
 
+  // Creates a function which contains the original floating point operation.
+  // The user can use this to compare results against.
   void createOriginalFPRTFunc(Instruction &I, std::string Name,
                               SmallVectorImpl<Value *> &Args,
                               llvm::Type *RetTy) {
@@ -5051,7 +5053,7 @@ private:
     if (F->isDeclaration()) {
       BasicBlock *Entry = BasicBlock::Create(F->getContext(), "entry", F);
       auto ClonedI = I.clone();
-      for (unsigned It = 0; It < I.getNumOperands(); It++)
+      for (unsigned It = 0; It < Args.size(); It++)
         ClonedI->setOperand(It, F->getArg(It));
       auto Return = ReturnInst::Create(F->getContext(), ClonedI, Entry);
       ClonedI->insertBefore(Return);
