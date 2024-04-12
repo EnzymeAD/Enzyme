@@ -65,7 +65,7 @@ extern "C" {
 // operations to source location
 
 #define __ENZYME_MPFR_ATTRIBUTES __attribute__((weak))
-#define __ENZYME_MPFR_ORIGINAL_ATTRIBUTES
+#define __ENZYME_MPFR_ORIGINAL_ATTRIBUTES __attribute__((weak))
 #define __ENZYME_MPFR_DEFAULT_ROUNDING_MODE GMP_RNDN
 
 bool __enzyme_fprt_is_mem_mode(int64_t mode) { return mode & 0b0001; }

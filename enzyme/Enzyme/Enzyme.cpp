@@ -2978,26 +2978,6 @@ public:
       changed |= lowerEnzymeCalls(F, done);
     }
 
-    // Populate undefined fprt original functions.
-    for (Function &F : M) {
-      if (F.getName().startswith(EnzymeFPRTOriginalPrefix)) {
-        // Other modules may have also defined the function so we must
-        // internalize
-        F.setLinkage(GlobalValue::InternalLinkage);
-        if (F.empty()) {
-          // If we did not define it in this module it meant that we did not
-          // encounter the specific type of flop. (but the fprt runtime headers
-          // tried to use the function) We must provide some def so as not
-          // to get a linking error. We only allow the _original_ function to be
-          // used in the runtime call of that function which we did not generate
-          // a call to for this module. Thus we can just put in an unreachable
-          // as it will never be executed
-          auto Entry = BasicBlock::Create(F.getContext(), "entry", &F);
-          new UnreachableInst(Entry->getContext(), Entry);
-        }
-      }
-    }
-
     for (Function &F : M) {
       if (F.empty())
         continue;
