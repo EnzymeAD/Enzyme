@@ -703,6 +703,7 @@ extern "C" {
 // operations to source location
 
 #define __ENZYME_MPFR_ATTRIBUTES __attribute__((weak))
+#define __ENZYME_MPFR_ORIGINAL_ATTRIBUTES
 #define __ENZYME_MPFR_DEFAULT_ROUNDING_MODE GMP_RNDN
 
 bool __enzyme_fprt_is_mem_mode(int64_t mode) { return mode & 0b0001; }
@@ -916,6 +917,7 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
   __ENZYME_MPFR_SINGOP(func, LLVM_NAME, MPFR_NAME, 32_23, float, d, float, d,  \
                        __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)
 
+__ENZYME_MPFR_ORIGINAL_ATTRIBUTES
 bool __enzyme_fprt_original_64_52_intr_llvm_is_fpclass_f64(double a,
                                                            int32_t tests);
 __ENZYME_MPFR_ATTRIBUTES bool

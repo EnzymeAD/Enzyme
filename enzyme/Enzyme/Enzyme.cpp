@@ -2979,6 +2979,23 @@ public:
     }
 
     for (Function &F : M) {
+      if (F.getName().startswith(EnzymeFPRTOriginalPrefix)) {
+        // Other modules may have also defined the function so we must
+        // internalize
+        F.setLinkage(GlobalValue::InternalLinkage);
+        if (F.empty()) {
+          // If we did not define it in this module then we must provide some
+          // def so as not to get a linking error (if we did not define it it
+          // will not be used)
+          auto Entry = BasicBlock::Create(F.getContext(), "entry", &F);
+          auto Unr = new UnreachableInst(Entry->getContext(), Entry);
+          auto Ret = ReturnInst::Create(Entry->getContext());
+          Ret->insertAfter(Unr);
+        }
+      }
+    }
+
+    for (Function &F : M) {
       if (F.empty())
         continue;
 

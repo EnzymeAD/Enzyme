@@ -5028,7 +5028,7 @@ protected:
 
 private:
   std::string getOriginalFPRTName(std::string Name) {
-    return std::string("__enzyme_fprt_original_") + truncation.mangleFrom() +
+    return std::string(EnzymeFPRTOriginalPrefix) + truncation.mangleFrom() +
            "_" + Name;
   }
   std::string getFPRTName(std::string Name) {
