@@ -1,9 +1,9 @@
 
-#include "llvm/IR/InstrTypes.h"
 #define __ENZYME_MPFR_DOUBLE_BINOP(LLVM_OP_NAME, MPFR_FUNC_NAME,               \
                                    ROUNDING_MODE)                              \
   __ENZYME_MPFR_BIN(binop, LLVM_OP_NAME, MPFR_FUNC_NAME, 64_52, double, d,     \
                     double, d, double, d, ROUNDING_MODE)
+
 #define __ENZYME_MPFR_DOUBLE_BINFUNCINTR(LLVM_OP_NAME, MPFR_FUNC_NAME,         \
                                          ROUNDING_MODE)                        \
   __ENZYME_MPFR_BIN(intr, LLVM_OP_NAME, MPFR_FUNC_NAME, 64_52, double, d,      \
@@ -14,10 +14,12 @@
                     double, d, double, d, ROUNDING_MODE)                       \
   __ENZYME_MPFR_BIN(func, __##LLVM_OP_NAME##_finite, MPFR_FUNC_NAME, 64_52,    \
                     double, d, double, d, double, d, ROUNDING_MODE)
+
 #define __ENZYME_MPFR_DOUBLE_BINOP_DEFAULT_ROUNDING(LLVM_OP_NAME,              \
                                                     MPFR_FUNC_NAME)            \
   __ENZYME_MPFR_DOUBLE_BINOP(LLVM_OP_NAME, MPFR_FUNC_NAME,                     \
                              __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)
+
 #define __ENZYME_MPFR_DOUBLE_BINFUNCINTR_DEFAULT_ROUNDING(LLVM_OP_NAME,        \
                                                           MPFR_FUNC_NAME)      \
   __ENZYME_MPFR_DOUBLE_BINFUNCINTR(LLVM_OP_NAME, MPFR_FUNC_NAME,               \
@@ -41,6 +43,12 @@
   __ENZYME_MPFR_SINGOP(func, LLVM_NAME, MPFR_NAME, 32_23, float, d, float, d,  \
                        __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)
 
+#define __ENZYME_MPFR_FCMP(NAME, ORDERED, CMP)                                 \
+  __ENZYME_MPFR_FCMP_IMPL(NAME, ORDERED, CMP, 64_52, double, d,                \
+                          __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)                 \
+  __ENZYME_MPFR_FCMP_IMPL(NAME, ORDERED, CMP, 32_23, double, d,                \
+                          __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)
+
 // Binary operations
 __ENZYME_MPFR_DOUBLE_BINOP_DEFAULT_ROUNDING(fmul, mul);
 __ENZYME_MPFR_DOUBLE_BINOP_DEFAULT_ROUNDING(fadd, add);
@@ -58,7 +66,8 @@ __ENZYME_MPFR_DOUBLE_BINFUNCINTR_DEFAULT_ROUNDING(fmod, fmod);
 __ENZYME_MPFR_DOUBLE_BINFUNCINTR_DEFAULT_ROUNDING(maxnum, max);
 __ENZYME_MPFR_DOUBLE_BINFUNCINTR_DEFAULT_ROUNDING(minnum, min);
 
-__ENZYME_MPFR_BIN_INT(intr, llvm_powi_f64_i32, pow_si, 64_52, double, d, double, d, int32_t, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
+__ENZYME_MPFR_BIN_INT(intr, llvm_powi_f64_i32, pow_si, 64_52, double, d, double,
+                      d, int32_t, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
 
 // Unary operations
 __ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(sqrt, sqrt);
@@ -104,29 +113,29 @@ __ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(lgamma, lngamma);
 __ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(nearbyint, rint);
 
 // Ternary operation
-__ENZYME_MPFR_FMULADD(llvm_fmuladd, 64_52, double, d, f64, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
-__ENZYME_MPFR_FMULADD(llvm_fma, 64_52, double, d, f64, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
-
-#define __ENZYME_MPFR_FCMP(NAME, CMP)
+__ENZYME_MPFR_FMULADD(llvm_fmuladd, 64_52, double, d, f64,
+                      __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
+__ENZYME_MPFR_FMULADD(llvm_fma, 64_52, double, d, f64,
+                      __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
 
 // Comparisons
-__ENZYME_MPFR_FCMP(fcmp_oeq, == 0);
-__ENZYME_MPFR_FCMP(fcmp_ueq, == 0);
+__ENZYME_MPFR_FCMP(oeq, 1, == 0);
+__ENZYME_MPFR_FCMP(ueq, 0, == 0);
 
-__ENZYME_MPFR_FCMP(fcmp_ogt, > 0);
-__ENZYME_MPFR_FCMP(fcmp_ugt, > 0);
+__ENZYME_MPFR_FCMP(ogt, 1, > 0);
+__ENZYME_MPFR_FCMP(ugt, 0, > 0);
 
-__ENZYME_MPFR_FCMP(fcmp_oge, >= 0);
-__ENZYME_MPFR_FCMP(fcmp_uge, >= 0);
+__ENZYME_MPFR_FCMP(oge, 1, >= 0);
+__ENZYME_MPFR_FCMP(uge, 0, >= 0);
 
-__ENZYME_MPFR_FCMP(fcmp_olt, < 0);
-__ENZYME_MPFR_FCMP(fcmp_ult, < 0);
+__ENZYME_MPFR_FCMP(olt, 1, < 0);
+__ENZYME_MPFR_FCMP(ult, 0, < 0);
 
-__ENZYME_MPFR_FCMP(fcmp_ole, <= 0);
-__ENZYME_MPFR_FCMP(fcmp_ule, <= 0);
+__ENZYME_MPFR_FCMP(ole, 1, <= 0);
+__ENZYME_MPFR_FCMP(ule, 0, <= 0);
 
-__ENZYME_MPFR_FCMP(fcmp_one, != 0);
-__ENZYME_MPFR_FCMP(fcmp_une, != 0);
+__ENZYME_MPFR_FCMP(one, 1, != 0);
+__ENZYME_MPFR_FCMP(une, 0, != 0);
 
 // TODO special handling needed
 // __ENZYME_MPFR_FCMP(fcmp_ord, );

@@ -114,8 +114,8 @@ double __enzyme_fprt_64_52_new(double _a, int64_t exponent, int64_t significand,
 }
 
 __ENZYME_MPFR_ATTRIBUTES
-double __enzyme_fprt_64_52_const(double _a, int64_t exponent, int64_t significand,
-                                 int64_t mode) {
+double __enzyme_fprt_64_52_const(double _a, int64_t exponent,
+                                 int64_t significand, int64_t mode) {
   // TODO This should really be called only once for an appearance in the code,
   // currently it is called every time a flop uses a constant.
   return __enzyme_fprt_64_52_new(_a, exponent, significand, mode);
@@ -156,7 +156,7 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
       __enzyme_fp *ma = __enzyme_fprt_double_to_ptr(a);                        \
       __enzyme_fp *mc =                                                        \
           __enzyme_fprt_64_52_new_intermediate(exponent, significand, mode);   \
-      mpfr_##MPFR_FUNC_NAME(mc->v, ma->v, ROUNDING_MODE);                    \
+      mpfr_##MPFR_FUNC_NAME(mc->v, ma->v, ROUNDING_MODE);                      \
       return __enzyme_fprt_ptr_to_double(mc);                                  \
     } else {                                                                   \
       abort();                                                                 \
@@ -185,7 +185,7 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
       __enzyme_fp *ma = __enzyme_fprt_double_to_ptr(a);                        \
       __enzyme_fp *mc =                                                        \
           __enzyme_fprt_64_52_new_intermediate(exponent, significand, mode);   \
-      mpfr_##MPFR_FUNC_NAME(mc->v, ma->v, b, ROUNDING_MODE);                 \
+      mpfr_##MPFR_FUNC_NAME(mc->v, ma->v, b, ROUNDING_MODE);                   \
       return __enzyme_fprt_ptr_to_double(mc);                                  \
     } else {                                                                   \
       abort();                                                                 \
@@ -216,7 +216,7 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
       __enzyme_fp *mb = __enzyme_fprt_double_to_ptr(b);                        \
       __enzyme_fp *mc =                                                        \
           __enzyme_fprt_64_52_new_intermediate(exponent, significand, mode);   \
-      mpfr_##MPFR_FUNC_NAME(mc->v, ma->v, mb->v, ROUNDING_MODE);            \
+      mpfr_##MPFR_FUNC_NAME(mc->v, ma->v, mb->v, ROUNDING_MODE);               \
       return __enzyme_fprt_ptr_to_double(mc);                                  \
     } else {                                                                   \
       abort();                                                                 \
@@ -258,6 +258,32 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
       double madd = __enzyme_fprt_##FROM_TYPE##_binop_fadd(                    \
           mmul, __enzyme_fprt_ptr_to_double(mc), exponent, significand, mode); \
       return madd;                                                             \
+    } else {                                                                   \
+      abort();                                                                 \
+    }                                                                          \
+  }
+
+// TODO This does not currently make distinctions between ordered/unordered.
+#define __ENZYME_MPFR_FCMP_IMPL(NAME, ORDERED, CMP, FROM_TYPE, TYPE, MPFR_GET, \
+                                ROUNDING_MODE)                                 \
+  __ENZYME_MPFR_ATTRIBUTES                                                     \
+  bool __enzyme_fprt_##FROM_TYPE##_fcmp_##NAME(                                \
+      TYPE a, TYPE b, int64_t exponent, int64_t significand, int64_t mode) {   \
+    if (__enzyme_fprt_is_op_mode(mode)) {                                      \
+      mpfr_t ma, mb;                                                           \
+      mpfr_init2(ma, significand);                                             \
+      mpfr_init2(mb, significand);                                             \
+      mpfr_set_##MPFR_GET(ma, a, ROUNDING_MODE);                               \
+      mpfr_set_##MPFR_GET(mb, b, ROUNDING_MODE);                               \
+      int ret = mpfr_cmp(ma, mb);                                              \
+      mpfr_clear(ma);                                                          \
+      mpfr_clear(mb);                                                          \
+      return ret CMP;                                                          \
+    } else if (__enzyme_fprt_is_mem_mode(mode)) {                              \
+      __enzyme_fp *ma = __enzyme_fprt_double_to_ptr(a);                        \
+      __enzyme_fp *mb = __enzyme_fprt_double_to_ptr(b);                        \
+      int ret = mpfr_cmp(ma->v, mb->v);                                        \
+      return ret CMP;                                                          \
     } else {                                                                   \
       abort();                                                                 \
     }                                                                          \
