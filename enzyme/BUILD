@@ -143,20 +143,6 @@ gentbl(
     ],
 )
 
-gentbl(
-    name = "include-utils",
-    tbl_outs = [(
-        "-gen-header-strings",
-        "IncludeUtils.inc",
-    )],
-    tblgen = ":enzyme-tblgen",
-    td_file = "Enzyme/Clang/include_utils.td",
-    td_srcs = ["Enzyme/Clang/include_utils.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
-)
-
 cc_library(
     name = "EnzymeStatic",
     srcs = glob(
@@ -170,7 +156,7 @@ cc_library(
     hdrs = glob([
         "Enzyme/*.h",
         "Enzyme/TypeAnalysis/*.h",
-    ]),
+    ]) + ["bundled_includes.h"],
     copts = [
         "-DENZYME_RUNPASS=1",
         "-DENZYME_VERSION_MAJOR=0",
@@ -182,7 +168,7 @@ cc_library(
     data = ["@llvm-project//clang:builtin_headers_gen"],
     visibility = ["//visibility:public"],
     deps = [
-        "include-utils",
+        "bundled-includes",
         ":binop-derivatives",
         ":blas-attributor",
         ":blas-derivatives",
@@ -240,6 +226,12 @@ cc_binary(
     ],
 )
 
+genrule(
+    name = "bundled-includes",
+    srcs = glob(["include/**"]) + ["scripts/bundle-includes.sh"],
+    outs = ["bundled_includes.h"],
+    cmd = "scripts/bundle-includes.sh ./include $@",
+)
 genrule(
     name = "gen_enzyme-clang++",
     srcs = [":enzyme-clang"],

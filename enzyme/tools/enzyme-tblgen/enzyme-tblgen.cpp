@@ -15,9 +15,12 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Signals.h"
+#include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/TableGen/Error.h"
 #include "llvm/TableGen/Main.h"
 #include "llvm/TableGen/Record.h"
@@ -65,9 +68,7 @@ static cl::opt<ActionType>
            cl::values(clEnumValN(MLIRDerivatives, "gen-mlir-derivatives",
                                  "Generate MLIR derivative")),
            cl::values(clEnumValN(CallDerivatives, "gen-call-derivatives",
-                                 "Generate call derivative")),
-           cl::values(clEnumValN(GenHeaderVariables, "gen-header-strings",
-                                 "Generate header strings")));
+                                 "Generate call derivative")));
 
 void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
                  StringRef FT, StringRef cconv, Init *func,
@@ -1355,24 +1356,6 @@ void printDiffUse(
   }
 }
 
-static void emitHeaderIncludes(const RecordKeeper &recordKeeper,
-                               raw_ostream &os) {
-  const auto &patterns = recordKeeper.getAllDerivedDefinitions("Headers");
-  os << "const char* include_headers[][2] = {\n";
-  bool seen = false;
-  for (Record *pattern : patterns) {
-    if (seen)
-      os << ",\n";
-    auto filename = pattern->getValueAsString("filename");
-    auto contents = pattern->getValueAsString("contents");
-    os << "{\"" << filename << "\"\n,";
-    os << "R\"(" << contents << ")\"\n";
-    os << "}";
-    seen = true;
-  }
-  os << "};\n";
-}
-
 static void emitMLIRReverse(raw_ostream &os, Record *pattern, DagInit *tree,
                             ActionType intrinsic, StringRef origName,
                             ListInit *argOps) {
@@ -2596,9 +2579,6 @@ static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
     return false;
   case UpdateBlasTA:
     emitBlasTAUpdater(records, os);
-    return false;
-  case GenHeaderVariables:
-    emitHeaderIncludes(records, os);
     return false;
 
   default:
