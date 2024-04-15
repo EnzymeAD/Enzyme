@@ -3151,7 +3151,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           };
           applyChainRule(Builder2, rule, tofree);
         }
-      } else if (Mode == DerivativeMode::ForwardMode) {
+      } else if (Mode == DerivativeMode::ForwardMode ||
+                 Mode == DerivativeMode::ForwardModeError) {
         IRBuilder<> Builder2(&call);
         getForwardBuilder(Builder2);
 
@@ -3195,7 +3196,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     }
 
     // Cache and rematerialization irrelevant for forward mode.
-    if (Mode == DerivativeMode::ForwardMode) {
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
       eraseIfUnused(call);
       return true;
     }
@@ -3964,7 +3966,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     assert(gutils->invertedPointers.find(&call) ==
            gutils->invertedPointers.end());
 
-    if (Mode == DerivativeMode::ForwardMode) {
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
       if (!gutils->isConstantValue(call.getArgOperand(0))) {
         IRBuilder<> Builder2(&call);
         getForwardBuilder(Builder2);
