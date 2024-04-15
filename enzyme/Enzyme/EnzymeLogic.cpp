@@ -5027,9 +5027,39 @@ protected:
   LLVMContext &ctx;
 
 private:
-  std::string getFPRTName(std::string Name) {
-    return std::string("__enzyme_fprt_") + truncation.mangleFrom() + "_" + Name;
+  std::string getOriginalFPRTName(std::string Name) {
+    return std::string(EnzymeFPRTOriginalPrefix) + truncation.mangleFrom() +
+           "_" + Name;
   }
+  std::string getFPRTName(std::string Name) {
+    return std::string(EnzymeFPRTPrefix) + truncation.mangleFrom() + "_" + Name;
+  }
+
+  // Creates a function which contains the original floating point operation.
+  // The user can use this to compare results against.
+  void createOriginalFPRTFunc(Instruction &I, std::string Name,
+                              SmallVectorImpl<Value *> &Args,
+                              llvm::Type *RetTy) {
+    auto MangledName = getOriginalFPRTName(Name);
+    auto F = M->getFunction(MangledName);
+    if (!F) {
+      SmallVector<Type *, 4> ArgTypes;
+      for (auto Arg : Args)
+        ArgTypes.push_back(Arg->getType());
+      FunctionType *FnTy =
+          FunctionType::get(RetTy, ArgTypes, /*is_vararg*/ false);
+      F = Function::Create(FnTy, Function::ExternalLinkage, MangledName, M);
+    }
+    if (F->isDeclaration()) {
+      BasicBlock *Entry = BasicBlock::Create(F->getContext(), "entry", F);
+      auto ClonedI = I.clone();
+      for (unsigned It = 0; It < Args.size(); It++)
+        ClonedI->setOperand(It, F->getArg(It));
+      auto Return = ReturnInst::Create(F->getContext(), ClonedI, Entry);
+      ClonedI->insertBefore(Return);
+    }
+  }
+
   Function *getFPRTFunc(std::string Name, SmallVectorImpl<Value *> &Args,
                         llvm::Type *RetTy) {
     auto MangledName = getFPRTName(Name);
@@ -5044,14 +5074,16 @@ private:
     }
     return F;
   }
+
   CallInst *createFPRTGeneric(llvm::IRBuilderBase &B, std::string Name,
-                              SmallVectorImpl<Value *> &ArgsIn,
+                              const SmallVectorImpl<Value *> &ArgsIn,
                               llvm::Type *RetTy) {
     SmallVector<Value *, 5> Args(ArgsIn.begin(), ArgsIn.end());
     Args.push_back(B.getInt64(truncation.getTo().exponentWidth));
     Args.push_back(B.getInt64(truncation.getTo().significandWidth));
     Args.push_back(B.getInt64(truncation.getMode()));
-    return cast<CallInst>(B.CreateCall(getFPRTFunc(Name, Args, RetTy), Args));
+    auto FprtFunc = getFPRTFunc(Name, Args, RetTy);
+    return cast<CallInst>(B.CreateCall(FprtFunc, Args));
   }
 
 public:
@@ -5113,6 +5145,7 @@ public:
     } else {
       llvm_unreachable("Unexpected instruction for conversion to FPRT");
     }
+    createOriginalFPRTFunc(I, Name, ArgsIn, RetTy);
     return createFPRTGeneric(B, Name, ArgsIn, RetTy);
   }
 };
@@ -5347,6 +5380,9 @@ public:
   void visitFenceInst(llvm::FenceInst &FI) { return; }
 
   bool handleIntrinsic(llvm::CallInst &CI, Intrinsic::ID ID) {
+    if (isDbgInfoIntrinsic(ID))
+      return true;
+
     auto newI = cast<llvm::CallInst>(getNewFromOriginal(&CI));
     IRBuilder<> B(newI);
 
@@ -5555,7 +5591,8 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
   Function *NewF = Function::Create(FTy, totrunc->getLinkage(), truncName,
                                     totrunc->getParent());
 
-  NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
+  if (mode != TruncOpFullModuleMode)
+    NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
   TruncateCachedFunctions[tup] = NewF;
 
