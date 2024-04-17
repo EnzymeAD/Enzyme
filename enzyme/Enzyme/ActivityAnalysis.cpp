@@ -211,7 +211,6 @@ const StringSet<> KnownInactiveFunctions = {
     "snprintf",
     "sprintf",
     "printf",
-    "fprintf",
     "putchar",
     "fprintf",
     "vprintf",
