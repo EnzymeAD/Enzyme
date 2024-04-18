@@ -5171,10 +5171,16 @@ public:
         Logic(Logic), ctx(newFunc->getContext()) {}
 
   void checkHandled(llvm::Instruction &inst) {
+    // TODO
     // if (all_of(inst.getOperandList(),
     //            [&](Use *use) { return use->get()->getType() == fromType; }))
     //   todo(inst);
   }
+
+  // TODO
+  void handleTrunc();
+  void hendleIntToFloat();
+  void handleFloatToInt();
 
   void visitInstruction(llvm::Instruction &inst) {
     using namespace llvm;

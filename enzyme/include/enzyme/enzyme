@@ -1,0 +1,5 @@
+#ifdef __cplusplus
+#include "enzyme/utils"
+#else
+#warning "Enzyme wrapper templates only available in C++"
+#endif
