@@ -5278,12 +5278,13 @@ public:
           cast<Function>(called)->getFunctionType()->getNumParams())
 #endif
       {
+        llvm::errs() << *gutils->oldFunc->getParent() << "\n";
         llvm::errs() << *gutils->oldFunc << "\n";
         llvm::errs() << call << "\n";
-        assert(0 && "number of arg operands != function parameters");
+        llvm::errs() << " number of arg operands != function parameters\n";
+        EmitFailure("MismatchArgs", call.getDebugLoc(), &call,
+                    "Number of arg operands != function parameters\n", call);
       }
-      assert(argsInverted.size() ==
-             cast<Function>(called)->getFunctionType()->getNumParams());
     }
 
     Value *tape = nullptr;
