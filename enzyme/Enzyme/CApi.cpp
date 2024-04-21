@@ -509,7 +509,8 @@ LLVMBasicBlockRef EnzymeGradientUtilsAllocationBlock(GradientUtils *gutils) {
 uint8_t EnzymeGradientUtilsGetUncacheableArgs(GradientUtils *gutils,
                                               LLVMValueRef orig, uint8_t *data,
                                               uint64_t size) {
-  if (gutils->mode == DerivativeMode::ForwardMode)
+  if (gutils->mode == DerivativeMode::ForwardMode ||
+      gutils->mode == DerivativeMode::ForwardModeError)
     return 0;
 
   if (!gutils->overwritten_args_map_ptr)

@@ -147,7 +147,8 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
               (mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
               (mode == DerivativeMode::ReverseModeCombined &&
                (forwardsShadow || backwardsShadow)) ||
-              mode == DerivativeMode::ForwardMode))
+              mode == DerivativeMode::ForwardMode ||
+              mode == DerivativeMode::ForwardModeError))
           return false;
       } else {
         // Likewise, if not rematerializing in reverse pass, you
@@ -162,7 +163,8 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
                 (mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
                 (mode == DerivativeMode::ReverseModeCombined &&
                  (forwardsShadow || backwardsShadow)) ||
-                mode == DerivativeMode::ForwardMode))
+                mode == DerivativeMode::ForwardMode ||
+                mode == DerivativeMode::ForwardModeError))
             return false;
         }
       }
@@ -477,7 +479,9 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
     // Even though inactive, keep the shadow pointer around in forward mode
     // to perform the same memory free behavior on the shadow.
-    if (shadow && mode == DerivativeMode::ForwardMode &&
+    if (shadow &&
+        (mode == DerivativeMode::ForwardMode ||
+         mode == DerivativeMode::ForwardModeError) &&
         isDeallocationFunction(funcName, gutils->TLI)) {
       if (EnzymePrintDiffUse)
         llvm::errs() << " Need: shadow of " << *val
@@ -682,6 +686,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     // shadow of the operand.
     if (mode == DerivativeMode::ForwardMode ||
         mode == DerivativeMode::ForwardModeSplit ||
+        mode == DerivativeMode::ForwardModeError ||
         (!isa<ExtractValueInst>(user) && !isa<ExtractElementInst>(user) &&
          !isa<InsertValueInst>(user) && !isa<InsertElementInst>(user) &&
          !isPointerArithmeticInst(user, /*includephi*/ false,

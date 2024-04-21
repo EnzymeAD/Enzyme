@@ -568,7 +568,8 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
 
   if ((mode == DerivativeMode::ReverseModePrimal &&
        DL.getTypeSizeInBits(retType) >= DL.getTypeSizeInBits(diffretType)) ||
-      (mode == DerivativeMode::ForwardMode &&
+      ((mode == DerivativeMode::ForwardMode ||
+        mode == DerivativeMode::ForwardModeError) &&
        DL.getTypeSizeInBits(retType) == DL.getTypeSizeInBits(diffretType))) {
     IRBuilder<> EB(CI->getFunction()->getEntryBlock().getFirstNonPHI());
     auto AL = EB.CreateAlloca(retType);
