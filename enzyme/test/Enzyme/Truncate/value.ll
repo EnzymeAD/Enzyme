@@ -18,10 +18,10 @@ entry:
 
 ; CHECK: define double @expand_tester(double %a, double* %c) {
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call double @__enzyme_fprt_64_52_get(double %a, i64 8, i64 23, i64 1)
+; CHECK-NEXT:   %0 = call double @__enzyme_fprt_64_52_get(double %a, i64 8, i64 23, i64 1, {{.*}}i8{{.*}})
 ; CHECK-NEXT:   ret double %0
 
 ; CHECK: define double @truncate_tester(double %a) {
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call double @__enzyme_fprt_64_52_new(double %a, i64 8, i64 23, i64 1)
+; CHECK-NEXT:   %0 = call double @__enzyme_fprt_64_52_new(double %a, i64 8, i64 23, i64 1, {{.*}}i8{{.*}})
 ; CHECK-NEXT:   ret double %0
