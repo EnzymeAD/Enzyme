@@ -16,12 +16,29 @@
 // RUN: if [ %llvmver -ge 12 ] && [ %hasMPFR == "yes" ] ; then %clang -include enzyme/fprt/mpfr.h -O3 %s -o %s.a.out %newLoadClangEnzyme -mllvm --enzyme-truncate-all="11-52to3-7" -lmpfr -lm &&  %s.a.out | FileCheck --check-prefix TO_3_7 %s; fi
 // TO_3_7: 897581056.000000
 
+// RUN: if [ %llvmver -ge 12 ] && [ %hasMPFR == "yes" ] ; then %clang -g -include enzyme/fprt/mpfr-test.h -O3 %s -o %s.a.out %newLoadClangEnzyme -mllvm --enzyme-truncate-all="11-52to3-7" -lmpfr -lm &&  %s.a.out | FileCheck --check-prefix CHECK-LOCS %s; fi
+// CHECK-LOCS:      0x[[op1:[0-9a-f]*]], {{.*}}truncate-all.cpp:[[op1loc:.*]]
+// CHECK-LOCS-NEXT: 0x[[op2:[0-9a-f]*]], {{.*}}truncate-all.cpp:[[op2loc:.*]]
+// CHECK-LOCS-NEXT: 0x[[op3:[0-9a-f]*]], {{.*}}truncate-all.cpp:[[op3loc:.*]]
+// CHECK-LOCS-NEXT: 0x[[op4:[0-9a-f]*]], {{.*}}truncate-all.cpp:[[op4loc:.*]]
+// CHECK-LOCS-NEXT: 0x[[op5:[0-9a-f]*]], {{.*}}truncate-all.cpp:[[op5loc:.*]]
+// CHECK-LOCS-NEXT: 0x[[op6:[0-9a-f]*]], {{.*}}truncate-all.cpp:[[op6loc:.*]]
+// CHECK-LOCS-NEXT: 0x[[op7:[0-9a-f]*]], {{.*}}truncate-all.cpp:[[op7loc:.*]]
+// CHECK-LOCS-NEXT: 0x[[op1]], {{.*}}truncate-all.cpp:[[op1loc]]
+// CHECK-LOCS-NEXT: 0x[[op2]], {{.*}}truncate-all.cpp:[[op2loc]]
+// CHECK-LOCS-NEXT: 0x[[op3]], {{.*}}truncate-all.cpp:[[op3loc]]
+// CHECK-LOCS-NEXT: 0x[[op4]], {{.*}}truncate-all.cpp:[[op4loc]]
+// CHECK-LOCS-NEXT: 0x[[op5]], {{.*}}truncate-all.cpp:[[op5loc]]
+// CHECK-LOCS-NEXT: 0x[[op6]], {{.*}}truncate-all.cpp:[[op6loc]]
+// CHECK-LOCS-NEXT: 0x[[op7]], {{.*}}truncate-all.cpp:[[op7loc]]
+
+
 #include <math.h>
 
 
 #include "../test_utils.h"
 
-#define N 10
+#define N 6
 
 #define floatty double
 
