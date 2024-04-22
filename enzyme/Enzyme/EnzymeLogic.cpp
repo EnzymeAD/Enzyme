@@ -42,6 +42,9 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <cmath>
+#include <llvm-c/Core.h>
+#include <llvm/Transforms/Instrumentation.h>
+#include <tuple>
 
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
@@ -5025,6 +5028,8 @@ protected:
   Type *fromType;
   Type *toType;
   LLVMContext &ctx;
+  EnzymeLogic &Logic;
+  Value *NullPtr;
 
 private:
   std::string getOriginalFPRTName(std::string Name) {
@@ -5077,22 +5082,24 @@ private:
 
   CallInst *createFPRTGeneric(llvm::IRBuilderBase &B, std::string Name,
                               const SmallVectorImpl<Value *> &ArgsIn,
-                              llvm::Type *RetTy) {
+                              llvm::Type *RetTy, Value *LocStr) {
     SmallVector<Value *, 5> Args(ArgsIn.begin(), ArgsIn.end());
     Args.push_back(B.getInt64(truncation.getTo().exponentWidth));
     Args.push_back(B.getInt64(truncation.getTo().significandWidth));
     Args.push_back(B.getInt64(truncation.getMode()));
+    Args.push_back(LocStr);
     auto FprtFunc = getFPRTFunc(Name, Args, RetTy);
     return cast<CallInst>(B.CreateCall(FprtFunc, Args));
   }
 
 public:
-  TruncateUtils(FloatTruncation truncation, Module *M)
-      : truncation(truncation), M(M), ctx(M->getContext()) {
+  TruncateUtils(FloatTruncation truncation, Module *M, EnzymeLogic &Logic)
+      : truncation(truncation), M(M), ctx(M->getContext()), Logic(Logic) {
     fromType = truncation.getFromType(ctx);
     toType = truncation.getToType(ctx);
     if (fromType == toType)
       assert(truncation.isToFPRT());
+    NullPtr = ConstantPointerNull::get(PointerType::get(ctx, 0));
   }
 
   Type *getFromType() { return fromType; }
@@ -5103,23 +5110,51 @@ public:
     assert(V->getType() == getFromType());
     SmallVector<Value *, 1> Args;
     Args.push_back(V);
-    return createFPRTGeneric(B, "const", Args, getToType());
+    return createFPRTGeneric(B, "const", Args, getToType(), NullPtr);
   }
   CallInst *createFPRTNewCall(llvm::IRBuilderBase &B, Value *V) {
     assert(V->getType() == getFromType());
     SmallVector<Value *, 1> Args;
     Args.push_back(V);
-    return createFPRTGeneric(B, "new", Args, getToType());
+    return createFPRTGeneric(B, "new", Args, getToType(), NullPtr);
   }
   CallInst *createFPRTGetCall(llvm::IRBuilderBase &B, Value *V) {
     SmallVector<Value *, 1> Args;
     Args.push_back(V);
-    return createFPRTGeneric(B, "get", Args, getToType());
+    return createFPRTGeneric(B, "get", Args, getToType(), NullPtr);
   }
   CallInst *createFPRTDeleteCall(llvm::IRBuilderBase &B, Value *V) {
     SmallVector<Value *, 1> Args;
     Args.push_back(V);
-    return createFPRTGeneric(B, "delete", Args, B.getVoidTy());
+    return createFPRTGeneric(B, "delete", Args, B.getVoidTy(), NullPtr);
+  }
+  // This will result in a unique string for each location, which means the
+  // runtime can check whether two operations are the same with a simple pointer
+  // comparison. However, we need LTO for this to be the case across different
+  // compilation units.
+  GlobalValue *getUniquedLocStr(Instruction &I) {
+    auto M = I.getParent()->getParent()->getParent();
+    std::string FileName = M->getName().str();
+
+    unsigned LineNo = 0;
+    unsigned ColNo = 0;
+    if (I.getDebugLoc().get()) {
+      LineNo = I.getDebugLoc().getLine();
+      ColNo = I.getDebugLoc().getCol();
+    }
+
+    auto Key = std::make_tuple(FileName, LineNo, ColNo);
+    auto It = Logic.UniqDebugLocStrs.find(Key);
+
+    if (It != Logic.UniqDebugLocStrs.end())
+      return It->second;
+
+    std::string LocStr =
+        FileName + ":" + std::to_string(LineNo) + ":" + std::to_string(ColNo);
+    auto GV = createPrivateGlobalForString(*M, LocStr, true);
+    Logic.UniqDebugLocStrs[Key] = GV;
+
+    return GV;
   }
   CallInst *createFPRTOpCall(llvm::IRBuilderBase &B, llvm::Instruction &I,
                              llvm::Type *RetTy,
@@ -5146,7 +5181,7 @@ public:
       llvm_unreachable("Unexpected instruction for conversion to FPRT");
     }
     createOriginalFPRTFunc(I, Name, ArgsIn, RetTy);
-    return createFPRTGeneric(B, Name, ArgsIn, RetTy);
+    return createFPRTGeneric(B, Name, ArgsIn, RetTy, getUniquedLocStr(I));
   }
 };
 
@@ -5165,7 +5200,7 @@ public:
   TruncateGenerator(ValueToValueMapTy &originalToNewFn,
                     FloatTruncation truncation, Function *oldFunc,
                     Function *newFunc, EnzymeLogic &Logic)
-      : TruncateUtils(truncation, newFunc->getParent()),
+      : TruncateUtils(truncation, newFunc->getParent(), Logic),
         originalToNewFn(originalToNewFn), truncation(truncation),
         oldFunc(oldFunc), newFunc(newFunc), mode(truncation.getMode()),
         Logic(Logic), ctx(newFunc->getContext()) {}
@@ -5559,7 +5594,8 @@ bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
 
   Value *converted = nullptr;
   auto truncation = FloatTruncation(from, to, TruncMemMode);
-  TruncateUtils TU(truncation, B.GetInsertBlock()->getParent()->getParent());
+  TruncateUtils TU(truncation, B.GetInsertBlock()->getParent()->getParent(),
+                   *this);
   if (isTruncate)
     converted = TU.createFPRTNewCall(B, v);
   else
