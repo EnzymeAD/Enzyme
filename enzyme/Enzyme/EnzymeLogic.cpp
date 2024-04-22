@@ -5099,7 +5099,7 @@ public:
     toType = truncation.getToType(ctx);
     if (fromType == toType)
       assert(truncation.isToFPRT());
-    NullPtr = ConstantPointerNull::get(PointerType::get(ctx, 0));
+    NullPtr = ConstantPointerNull::get(getDefaultAnonymousTapeType(ctx));
   }
 
   Type *getFromType() { return fromType; }
