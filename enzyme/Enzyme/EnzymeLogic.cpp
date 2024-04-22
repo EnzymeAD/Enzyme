@@ -5134,13 +5134,16 @@ public:
   // compilation units.
   GlobalValue *getUniquedLocStr(Instruction &I) {
     auto M = I.getParent()->getParent()->getParent();
-    std::string FileName = M->getName().str();
 
+    std::string FileName = "unknown";
     unsigned LineNo = 0;
     unsigned ColNo = 0;
-    if (I.getDebugLoc().get()) {
-      LineNo = I.getDebugLoc().getLine();
-      ColNo = I.getDebugLoc().getCol();
+
+    DILocation *DL = I.getDebugLoc();
+    if (DL) {
+      FileName = DL->getFilename();
+      LineNo = DL->getLine();
+      ColNo = DL->getColumn();
     }
 
     auto Key = std::make_tuple(FileName, LineNo, ColNo);
