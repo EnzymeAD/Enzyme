@@ -5087,7 +5087,12 @@ private:
     Args.push_back(B.getInt64(truncation.getTo().exponentWidth));
     Args.push_back(B.getInt64(truncation.getTo().significandWidth));
     Args.push_back(B.getInt64(truncation.getMode()));
+#if LLVM_VERSION_MAJOR <= 14
+    Args.push_back(B.CreateBitCast(LocStr, NullPtr->getType()));
+#else
     Args.push_back(LocStr);
+#endif
+
     auto FprtFunc = getFPRTFunc(Name, Args, RetTy);
     return cast<CallInst>(B.CreateCall(FprtFunc, Args));
   }
