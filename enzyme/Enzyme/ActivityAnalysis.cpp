@@ -106,6 +106,7 @@ cl::opt<bool> EnzymeEnableRecursiveHypotheses(
 // clang-format off
 static const StringSet<> InactiveGlobals = {
     "small_typeof",
+    "jl_small_typeof",
     "ompi_request_null",
     "ompi_mpi_double",
     "ompi_mpi_comm_world",
