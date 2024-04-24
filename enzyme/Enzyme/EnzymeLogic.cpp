@@ -5214,6 +5214,10 @@ public:
         Logic(Logic), ctx(newFunc->getContext()) {}
 
   void todo(llvm::Instruction &I) {
+    if (all_of(I.operands(),
+               [&](Use &U) { return U.get()->getType() != fromType; }))
+      return;
+
     switch (mode) {
     case TruncMemMode:
       EmitFailure("FPEscaping", I.getDebugLoc(), &I, "FP value escapes!");
