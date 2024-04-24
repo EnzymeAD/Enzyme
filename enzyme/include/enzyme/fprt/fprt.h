@@ -14,6 +14,10 @@ double __enzyme_fprt_64_52_new(double _a, int64_t exponent, int64_t significand,
                                int64_t mode, char *loc);
 void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
                                 int64_t mode, char *loc);
+double __enzyme_truncate_mem_value_d(double, int, int);
+float __enzyme_truncate_mem_value_f(float, int, int);
+double __enzyme_expand_mem_value_d(double, int, int);
+float __enzyme_expand_mem_value_f(float, int, int);
 
 // For internal use
 struct __enzyme_fp;

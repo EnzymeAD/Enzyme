@@ -5185,6 +5185,8 @@ public:
             "Unexpected indirect call inst for conversion to FPRT");
     } else if (auto CI = dyn_cast<FCmpInst>(&I)) {
       Name = "fcmp_" + std::string(CI->getPredicateName(CI->getPredicate()));
+    } else if (auto UO = dyn_cast<UnaryOperator>(&I)) {
+      Name = "unaryop_" + std::string(UO->getOpcodeName());
     } else {
       llvm_unreachable("Unexpected instruction for conversion to FPRT");
     }
@@ -5220,6 +5222,7 @@ public:
 
     switch (mode) {
     case TruncMemMode:
+      llvm::errs() << I << "\n";
       EmitFailure("FPEscaping", I.getDebugLoc(), &I, "FP value escapes!");
       break;
     case TruncOpMode:
@@ -5268,6 +5271,28 @@ public:
       return floatValExpand(B, v, truncation);
     }
     llvm_unreachable("Unknown trunc mode");
+  }
+
+  void visitUnaryOperator(UnaryOperator &I) {
+    switch (I.getOpcode()) {
+    case UnaryOperator::FNeg: {
+      if (I.getOperand(0)->getType() != getFromType())
+        return;
+
+      auto newI = getNewFromOriginal(&I);
+      IRBuilder<> B(newI);
+      SmallVector<Value *, 2> Args = {newI->getOperand(0)};
+      auto nres = createFPRTOpCall(B, I, newI->getType(), Args);
+      nres->takeName(newI);
+      nres->copyIRFlags(newI);
+      newI->replaceAllUsesWith(nres);
+      newI->eraseFromParent();
+      return;
+    }
+    default:
+      todo(I);
+      return;
+    }
   }
 
   void visitAllocaInst(llvm::AllocaInst &I) { return; }
