@@ -28,6 +28,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include "fprt.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -68,19 +70,9 @@ extern "C" {
 #define __ENZYME_MPFR_ORIGINAL_ATTRIBUTES __attribute__((weak))
 #define __ENZYME_MPFR_DEFAULT_ROUNDING_MODE GMP_RNDN
 
-static bool __enzyme_fprt_is_mem_mode(int64_t mode) { return mode & 0b0001; }
-static bool __enzyme_fprt_is_op_mode(int64_t mode) { return mode & 0b0010; }
-
-typedef struct {
+typedef struct __enzyme_fp {
   mpfr_t v;
 } __enzyme_fp;
-
-static double __enzyme_fprt_ptr_to_double(__enzyme_fp *p) {
-  return *((double *)(&p));
-}
-static __enzyme_fp *__enzyme_fprt_double_to_ptr(double d) {
-  return *((__enzyme_fp **)(&d));
-}
 
 __ENZYME_MPFR_ATTRIBUTES
 double __enzyme_fprt_64_52_get(double _a, int64_t exponent, int64_t significand,
@@ -282,9 +274,11 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
 __ENZYME_MPFR_ORIGINAL_ATTRIBUTES
 bool __enzyme_fprt_original_64_52_intr_llvm_is_fpclass_f64(double a,
                                                            int32_t tests);
-__ENZYME_MPFR_ATTRIBUTES bool
-__enzyme_fprt_64_52_intr_llvm_is_fpclass_f64(double a, int32_t tests) {
-  return __enzyme_fprt_original_64_52_intr_llvm_is_fpclass_f64(a, tests);
+__ENZYME_MPFR_ATTRIBUTES bool __enzyme_fprt_64_52_intr_llvm_is_fpclass_f64(
+    double a, int32_t tests, int64_t exponent, int64_t significand,
+    int64_t mode, char *loc) {
+  return __enzyme_fprt_original_64_52_intr_llvm_is_fpclass_f64(
+      __enzyme_fprt_64_52_get(a, exponent, significand, mode, loc), tests);
 }
 
 #include "flops.def"
