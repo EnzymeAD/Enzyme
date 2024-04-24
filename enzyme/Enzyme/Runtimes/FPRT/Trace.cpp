@@ -29,6 +29,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include "enzyme/fprt/fprt.h"
+
 #define __ENZYME_MPFR_ATTRIBUTES
 #define __ENZYME_MPFR_ORIGINAL_ATTRIBUTES
 
@@ -54,17 +56,25 @@ static __enzyme_fp *__enzyme_fprt_double_to_ptr(double d) {
 
 __ENZYME_MPFR_ATTRIBUTES
 double __enzyme_fprt_64_52_get(double _a, int64_t exponent, int64_t significand,
-                               int64_t mode) {
+                               int64_t mode, char *loc) {
   __enzyme_fp *a = __enzyme_fprt_double_to_ptr(_a);
   return a->v;
 }
 
 __ENZYME_MPFR_ATTRIBUTES
 double __enzyme_fprt_64_52_new(double _a, int64_t exponent, int64_t significand,
-                               int64_t mode) {
+                               int64_t mode, char *loc) {
   FPs.push_back({_a});
   __enzyme_fp *a = &FPs.back();
   return __enzyme_fprt_ptr_to_double(a);
+}
+
+__ENZYME_MPFR_ATTRIBUTES
+double __enzyme_fprt_64_52_const(double _a, int64_t exponent,
+                                 int64_t significand, int64_t mode, char *loc) {
+  // TODO This should really be called only once for an appearance in the code,
+  // currently it is called every time a flop uses a constant.
+  return __enzyme_fprt_64_52_new(_a, exponent, significand, mode, loc);
 }
 
 __ENZYME_MPFR_ATTRIBUTES
@@ -78,7 +88,7 @@ __enzyme_fp *__enzyme_fprt_64_52_new_intermediate(int64_t exponent,
 
 __ENZYME_MPFR_ATTRIBUTES
 void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
-                                int64_t mode) {
+                                int64_t mode, char *loc) {
   // TODO
 }
 
@@ -147,9 +157,11 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
 __ENZYME_MPFR_ORIGINAL_ATTRIBUTES
 bool __enzyme_fprt_original_64_52_intr_llvm_is_fpclass_f64(double a,
                                                            int32_t tests);
-__ENZYME_MPFR_ATTRIBUTES bool
-__enzyme_fprt_64_52_intr_llvm_is_fpclass_f64(double a, int32_t tests) {
-  return __enzyme_fprt_original_64_52_intr_llvm_is_fpclass_f64(a, tests);
+__ENZYME_MPFR_ATTRIBUTES bool __enzyme_fprt_64_52_intr_llvm_is_fpclass_f64(
+    double a, int32_t tests, int64_t exponent, int64_t significand,
+    int64_t mode, char *loc) {
+  return __enzyme_fprt_original_64_52_intr_llvm_is_fpclass_f64(
+      __enzyme_fprt_64_52_get(a, exponent, significand, mode, loc), tests);
 }
 
 #include "enzyme/fprt/flops.def"
