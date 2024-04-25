@@ -5252,8 +5252,8 @@ public:
       auto truncRHS = truncate(B, RHS);
 
       SmallVector<Value *, 2> Args;
-      Args.push_back(LHS);
-      Args.push_back(RHS);
+      Args.push_back(truncLHS);
+      Args.push_back(truncRHS);
       Instruction *nres;
       if (truncation.isToFPRT())
         nres = createFPRTOpCall(B, CI, B.getInt1Ty(), Args);
