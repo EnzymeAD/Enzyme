@@ -5510,13 +5510,22 @@ public:
   }
 
   void visitReturnInst(llvm::ReturnInst &I) {
-    auto newI = cast<llvm::ReturnInst>(getNewFromOriginal(&I));
-    if (newI->getNumOperands() == 0)
+    switch (mode) {
+    case TruncMemMode: {
+      auto newI = cast<llvm::ReturnInst>(getNewFromOriginal(&I));
+      if (newI->getNumOperands() == 0)
+        return;
+      IRBuilder<> B(newI);
+      if (isa<ConstantFP>(newI->getOperand(0)))
+        newI->setOperand(0, createFPRTConstCall(B, newI->getReturnValue()));
       return;
-    IRBuilder<> B(newI);
-    if (isa<ConstantFP>(newI->getOperand(0)))
-      newI->setOperand(0, createFPRTConstCall(B, newI->getReturnValue()));
-    return;
+    }
+    case TruncOpMode:
+    case TruncOpFullModuleMode:
+      break;
+    default:
+      llvm_unreachable("Unknown trunc mode");
+    }
   }
 
   void visitBranchInst(llvm::BranchInst &I) { return; }
@@ -5646,16 +5655,26 @@ public:
     return;
   }
   void visitPHINode(llvm::PHINode &PN) {
-    if (PN.getType() != getFromType())
-      return;
-    auto NewPN = cast<llvm::PHINode>(getNewFromOriginal(&PN));
-    IRBuilder<> B(
-        NewPN->getParent()->getParent()->getEntryBlock().getFirstNonPHI());
-    for (unsigned It = 0; It < NewPN->getNumIncomingValues(); It++) {
-      if (isa<ConstantFP>(NewPN->getIncomingValue(It))) {
-        NewPN->setOperand(It,
-                          createFPRTConstCall(B, NewPN->getIncomingValue(It)));
+    switch (mode) {
+    case TruncMemMode: {
+      if (PN.getType() != getFromType())
+        return;
+      auto NewPN = cast<llvm::PHINode>(getNewFromOriginal(&PN));
+      IRBuilder<> B(
+          NewPN->getParent()->getParent()->getEntryBlock().getFirstNonPHI());
+      for (unsigned It = 0; It < NewPN->getNumIncomingValues(); It++) {
+        if (isa<ConstantFP>(NewPN->getIncomingValue(It))) {
+          NewPN->setOperand(
+              It, createFPRTConstCall(B, NewPN->getIncomingValue(It)));
+        }
       }
+      break;
+    }
+    case TruncOpMode:
+    case TruncOpFullModuleMode:
+      break;
+    default:
+      llvm_unreachable("Unknown trunc mode");
     }
   }
 };
