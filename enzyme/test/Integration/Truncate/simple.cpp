@@ -30,6 +30,14 @@ double intrinsics(double a, double b) {
 double constt(double a, double b) {
     return 2;
 }
+double phinode(double a, double b, int n) {
+    double sum = 0;
+    for (int i = 0; i < n; i++) {
+        sum += (exp(a + b) - exp(a)) / b;
+        b /= 10;
+    }
+    return sum;
+}
 double compute(double *A, double *B, double *C, int n) {
   for (int i = 0; i < n; i++) {
     C[i] = A[i] * 2 + B[i] * sqrt(A[i]);
@@ -41,10 +49,8 @@ typedef double (*fty)(double *, double *, double *, int);
 
 typedef double (*fty2)(double, double);
 
-extern fty __enzyme_truncate_mem_func_2(...);
-extern fty2 __enzyme_truncate_mem_func(...);
-extern fty __enzyme_truncate_op_func_2(...);
-extern fty2 __enzyme_truncate_op_func(...);
+template <typename fty> fty *__enzyme_truncate_mem_func(fty *, int, int);
+template <typename fty> fty *__enzyme_truncate_op_func(fty *, int, int);
 extern double __enzyme_truncate_mem_value(...);
 extern double __enzyme_expand_mem_value(...);
 
@@ -101,6 +107,15 @@ int main() {
         double trunc = __enzyme_expand_mem_value(__enzyme_truncate_mem_func(constt, FROM, TO)(a, b), FROM, TO);
         APPROX_EQ(trunc, truth, 1e-5);
     }
+    {
+        double a = 2;
+        double b = 3;
+        double truth = phinode(a, b, 10);
+        a = __enzyme_truncate_mem_value(a, FROM, TO);
+        b = __enzyme_truncate_mem_value(b, FROM, TO);
+        double trunc = __enzyme_expand_mem_value(__enzyme_truncate_mem_func(phinode, FROM, TO)(a, b, 10), FROM, TO);
+        APPROX_EQ(trunc, truth, 20.0);
+    }
     #endif
 
     #ifdef TRUNC_OP
@@ -123,7 +138,7 @@ int main() {
         //     B[i] = __enzyme_truncate_mem_value(B[i], 64, 32);
         // }
 
-        __enzyme_truncate_op_func_2(compute, 64, 32)(A, B, C, N);
+        __enzyme_truncate_op_func(compute, 64, 32)(A, B, C, N);
 
         // for (int i = 0; i < N; i++) {
         //     C[i] = __enzyme_expand_mem_value(C[i], 64, 32);

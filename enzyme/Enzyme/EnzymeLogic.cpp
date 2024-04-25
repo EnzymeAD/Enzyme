@@ -1751,13 +1751,10 @@ void clearFunctionAttributes(Function *f) {
   }
   Attribute::AttrKind attrs[] = {
 #if LLVM_VERSION_MAJOR >= 17
-    Attribute::NoFPClass,
+      Attribute::NoFPClass,
 #endif
-    Attribute::NoUndef,
-    Attribute::NonNull,
-    Attribute::ZExt,
-    Attribute::NoAlias
-  };
+      Attribute::NoUndef, Attribute::NonNull, Attribute::ZExt,
+      Attribute::NoAlias};
   for (auto attr : attrs) {
 #if LLVM_VERSION_MAJOR >= 14
     if (f->hasRetAttribute(attr)) {
@@ -2640,12 +2637,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   llvm::Attribute::AttrKind attrs[] = {
 #if LLVM_VERSION_MAJOR >= 17
-    llvm::Attribute::NoFPClass,
+      llvm::Attribute::NoFPClass,
 #endif
-    llvm::Attribute::NoAlias,
-    llvm::Attribute::NoUndef,
-    llvm::Attribute::NonNull,
-    llvm::Attribute::ZExt,
+      llvm::Attribute::NoAlias,   llvm::Attribute::NoUndef,
+      llvm::Attribute::NonNull,   llvm::Attribute::ZExt,
   };
   for (auto attr : attrs) {
 #if LLVM_VERSION_MAJOR >= 14
@@ -5629,13 +5624,39 @@ public:
         auto val = GetShadow(ctx, getNewFromOriginal(CI.getCalledOperand()));
         newCall->setCalledOperand(val);
       } else {
-        EmitWarning("FPNoFollow", CI,
-                    "Will not follow FP through this function call as the "
-                    "definition is not available",
-                    CI);
+        switch (mode) {
+        case TruncMemMode:
+          EmitWarning("FPNoFollow", CI,
+                      "Will not follow FP through this function call as the "
+                      "definition is not available.",
+                      CI);
+          break;
+        case TruncOpMode:
+        case TruncOpFullModuleMode:
+          EmitWarning("FPNoFollow", CI,
+                      "Will not truncate flops in this function call as the "
+                      "definition is not available.",
+                      CI);
+          break;
+        default:
+          llvm_unreachable("Unknown trunc mode");
+        }
       }
     }
     return;
+  }
+  void visitPHINode(llvm::PHINode &PN) {
+    if (PN.getType() != getFromType())
+      return;
+    auto NewPN = cast<llvm::PHINode>(getNewFromOriginal(&PN));
+    IRBuilder<> B(
+        NewPN->getParent()->getParent()->getEntryBlock().getFirstNonPHI());
+    for (unsigned It = 0; It < NewPN->getNumIncomingValues(); It++) {
+      if (isa<ConstantFP>(NewPN->getIncomingValue(It))) {
+        NewPN->setOperand(It,
+                          createFPRTConstCall(B, NewPN->getIncomingValue(It)));
+      }
+    }
   }
 };
 
