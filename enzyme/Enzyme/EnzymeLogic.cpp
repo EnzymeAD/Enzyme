@@ -5439,6 +5439,8 @@ public:
 
   void visitReturnInst(llvm::ReturnInst &I) {
     auto newI = cast<llvm::ReturnInst>(getNewFromOriginal(&I));
+    if (newI->getNumOperands() == 0)
+      return;
     IRBuilder<> B(newI);
     if (isa<ConstantFP>(newI->getOperand(0)))
       newI->setOperand(0, createFPRTConstCall(B, newI->getReturnValue()));
