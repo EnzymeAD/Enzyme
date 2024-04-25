@@ -5217,7 +5217,8 @@ public:
 
   void todo(llvm::Instruction &I) {
     if (all_of(I.operands(),
-               [&](Use &U) { return U.get()->getType() != fromType; }))
+               [&](Use &U) { return U.get()->getType() != fromType; }) &&
+        I.getType() != fromType)
       return;
 
     switch (mode) {
@@ -5342,7 +5343,6 @@ public:
   }
   // TODO Is there a possibility we GEP a const and get a FP value?
   void visitGetElementPtrInst(llvm::GetElementPtrInst &gep) { return; }
-  void visitPHINode(llvm::PHINode &phi) { return; }
   void visitCastInst(llvm::CastInst &CI) {
     // TODO Try to follow fps through trunc/exts
     switch (mode) {
@@ -5624,8 +5624,16 @@ public:
 
     if (mode != TruncOpFullModuleMode) {
       RequestContext ctx(&CI, &BuilderZ);
-      auto val = GetShadow(ctx, getNewFromOriginal(CI.getCalledOperand()));
-      newCall->setCalledOperand(val);
+      Function *Func = CI.getCalledFunction();
+      if (Func && !Func->empty()) {
+        auto val = GetShadow(ctx, getNewFromOriginal(CI.getCalledOperand()));
+        newCall->setCalledOperand(val);
+      } else {
+        EmitWarning("FPNoFollow", CI,
+                    "Will not follow FP through this function call as the "
+                    "definition is not available",
+                    CI);
+      }
     }
     return;
   }
