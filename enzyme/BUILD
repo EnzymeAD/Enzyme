@@ -40,9 +40,6 @@ gentbl(
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
     td_srcs = ["Enzyme/BlasDerivatives.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -54,9 +51,6 @@ gentbl(
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
     td_srcs = ["Enzyme/BlasDerivatives.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -68,9 +62,6 @@ gentbl(
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
     td_srcs = ["Enzyme/BlasDerivatives.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -82,9 +73,6 @@ gentbl(
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
     td_srcs = ["Enzyme/BlasDerivatives.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -96,9 +84,6 @@ gentbl(
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
     td_srcs = ["Enzyme/BlasDerivatives.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -110,9 +95,6 @@ gentbl(
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
     td_srcs = ["Enzyme/BlasDerivatives.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -124,9 +106,6 @@ gentbl(
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
     td_srcs = ["Enzyme/BlasDerivatives.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -138,9 +117,6 @@ gentbl(
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
     td_srcs = ["Enzyme/BlasDerivatives.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 cc_library(
@@ -426,9 +402,6 @@ gentbl(
         "Enzyme/MLIR/Implementations/AffineDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
     ],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -442,9 +415,6 @@ gentbl(
     td_srcs = [
         "Enzyme/MLIR/Implementations/ArithDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
-    ],
-    deps = [
-        ":enzyme-tblgen",
     ],
 )
 
@@ -460,9 +430,6 @@ gentbl(
         "Enzyme/MLIR/Implementations/LLVMDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
     ],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -476,9 +443,6 @@ gentbl(
     td_srcs = [
         "Enzyme/MLIR/Implementations/NVVMDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
-    ],
-    deps = [
-        ":enzyme-tblgen",
     ],
 )
 
@@ -494,9 +458,6 @@ gentbl(
         "Enzyme/MLIR/Implementations/SCFDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
     ],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -510,9 +471,6 @@ gentbl(
     td_srcs = [
         "Enzyme/MLIR/Implementations/CFDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
-    ],
-    deps = [
-        ":enzyme-tblgen",
     ],
 )
 
@@ -528,9 +486,6 @@ gentbl(
         "Enzyme/MLIR/Implementations/MemRefDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
     ],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -545,9 +500,6 @@ gentbl(
         "Enzyme/MLIR/Implementations/MathDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
     ],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -561,9 +513,6 @@ gentbl(
     td_srcs = [
         "Enzyme/MLIR/Implementations/FuncDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
-    ],
-    deps = [
-        ":enzyme-tblgen",
     ],
 )
 
