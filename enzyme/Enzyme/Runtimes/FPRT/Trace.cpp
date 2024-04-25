@@ -37,7 +37,9 @@
 #define __ENZYME_MPFR_ATTRIBUTES __attribute__((weak))
 #define __ENZYME_MPFR_ORIGINAL_ATTRIBUTES __attribute__((weak))
 
-#define VERBOSE 1
+#ifndef ENZYME_FPRT_TRACE_PRINT
+#define ENZYME_FPRT_TRACE_PRINT 1
+#endif
 
 extern "C" {
 typedef struct __enzyme_fp {
@@ -64,24 +66,31 @@ static void __enzyme_fprt_trace_flop_in(std::vector<T> inputs,
   std::cerr << ")";
 }
 
+static const char *getloc(const char *loc) {
+  if (!loc)
+    return "unknown";
+  return loc;
+}
+
 template <typename T>
-static void __enzyme_fprt_trace_flop(std::vector<T> inputs, const char *name) {
-  if (!VERBOSE)
+static void __enzyme_fprt_trace_flop(std::vector<T> inputs, const char *name,
+                                     const char *loc) {
+  if (!ENZYME_FPRT_TRACE_PRINT)
     return;
   __enzyme_fprt_trace_flop_in(inputs, name);
-  std::cerr << std::endl;
+  std::cerr << " at " << getloc(loc) << std::endl;
 }
 
 template <typename T>
 static void __enzyme_fprt_trace_flop(std::vector<T> inputs, T output,
-                                     const char *name) {
-  if (!VERBOSE)
+                                     const char *name, const char *loc) {
+  if (!ENZYME_FPRT_TRACE_PRINT)
     return;
   __enzyme_fprt_trace_flop_in(inputs, name);
   std::cerr << " -> ";
   __enzyme_fp *fp = __enzyme_fprt_double_to_ptr(output);
   print_enzyme_fp(std::cerr, fp);
-  std::cerr << std::endl;
+  std::cerr << " at " << getloc(loc) << std::endl;
 }
 
 // TODO ultimately we probably want a linked list of arrays or something like
@@ -94,7 +103,7 @@ __ENZYME_MPFR_ATTRIBUTES
 double __enzyme_fprt_64_52_get(double _a, int64_t exponent, int64_t significand,
                                int64_t mode, const char *loc) {
   __enzyme_fp *a = __enzyme_fprt_double_to_ptr(_a);
-  __enzyme_fprt_trace_flop<double>({_a}, "get");
+  __enzyme_fprt_trace_flop<double>({_a}, "get", loc);
   return a->v;
 }
 
@@ -104,7 +113,7 @@ double __enzyme_fprt_64_52_new(double _a, int64_t exponent, int64_t significand,
   FPs.push_back({_a});
   __enzyme_fp *a = &FPs.back();
   auto ret = __enzyme_fprt_ptr_to_double(a);
-  __enzyme_fprt_trace_flop({}, ret, "new");
+  __enzyme_fprt_trace_flop({}, ret, "new", loc);
   return ret;
 }
 
@@ -115,7 +124,7 @@ double __enzyme_fprt_64_52_const(double _a, int64_t exponent,
   // TODO This should really be called only once for an appearance in the code,
   // currently it is called every time a flop uses a constant.
   auto ret = __enzyme_fprt_64_52_new(_a, exponent, significand, mode, loc);
-  __enzyme_fprt_trace_flop({}, ret, "const");
+  __enzyme_fprt_trace_flop({}, ret, "const", loc);
   return ret;
 }
 
@@ -133,7 +142,7 @@ __ENZYME_MPFR_ATTRIBUTES
 void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
                                 int64_t mode, const char *loc) {
   // TODO
-  __enzyme_fprt_trace_flop<double>({a}, "delete");
+  __enzyme_fprt_trace_flop<double>({a}, "delete", loc);
 }
 
 __ENZYME_MPFR_ATTRIBUTES
@@ -154,7 +163,7 @@ void __enzyme_fprt_delete_all() { FPs.clear(); }
         exponent, significand, mode, loc);                                     \
     intermediate->v = res;                                                     \
     double ret = __enzyme_fprt_ptr_to_double(intermediate);                    \
-    __enzyme_fprt_trace_flop({a}, ret, #LLVM_OP_NAME);                         \
+    __enzyme_fprt_trace_flop({a}, ret, #LLVM_OP_NAME, loc);                    \
     return ret;                                                                \
   }
 
@@ -176,7 +185,7 @@ void __enzyme_fprt_delete_all() { FPs.clear(); }
         exponent, significand, mode, loc);                                     \
     intermediate->v = res;                                                     \
     double ret = __enzyme_fprt_ptr_to_double(intermediate);                    \
-    __enzyme_fprt_trace_flop({a}, ret, #LLVM_OP_NAME);                         \
+    __enzyme_fprt_trace_flop({a}, ret, #LLVM_OP_NAME, loc);                    \
     return ret;                                                                \
   }
 
@@ -196,7 +205,7 @@ void __enzyme_fprt_delete_all() { FPs.clear(); }
         exponent, significand, mode, loc);                                     \
     intermediate->v = res;                                                     \
     double ret = __enzyme_fprt_ptr_to_double(intermediate);                    \
-    __enzyme_fprt_trace_flop({a, b}, ret, #LLVM_OP_NAME);                      \
+    __enzyme_fprt_trace_flop({a, b}, ret, #LLVM_OP_NAME, loc);                 \
     return ret;                                                                \
   }
 
@@ -218,7 +227,7 @@ void __enzyme_fprt_delete_all() { FPs.clear(); }
         exponent, significand, mode, loc);                                     \
     intermediate->v = res;                                                     \
     double ret = __enzyme_fprt_ptr_to_double(intermediate);                    \
-    __enzyme_fprt_trace_flop({a, b, c}, res, #LLVM_OP_NAME);                   \
+    __enzyme_fprt_trace_flop({a, b, c}, res, #LLVM_OP_NAME, loc);              \
     return ret;                                                                \
   }
 
@@ -232,7 +241,7 @@ void __enzyme_fprt_delete_all() { FPs.clear(); }
       const char *loc) {                                                       \
     bool res = __enzyme_fprt_original_##FROM_TYPE##_fcmp_##NAME(               \
         __enzyme_fprt_double_to_ptr(a)->v, __enzyme_fprt_double_to_ptr(b)->v); \
-    __enzyme_fprt_trace_flop<TYPE>({a, b}, "fcmp_" #NAME);                     \
+    __enzyme_fprt_trace_flop<TYPE>({a, b}, "fcmp_" #NAME, loc);                \
     return res;                                                                \
   }
 
@@ -242,7 +251,7 @@ bool __enzyme_fprt_original_64_52_intr_llvm_is_fpclass_f64(double a,
 __ENZYME_MPFR_ATTRIBUTES bool __enzyme_fprt_64_52_intr_llvm_is_fpclass_f64(
     double a, int32_t tests, int64_t exponent, int64_t significand,
     int64_t mode, const char *loc) {
-  __enzyme_fprt_trace_flop<double>({a}, "llvm_is_fpclass_f64");
+  __enzyme_fprt_trace_flop<double>({a}, "llvm_is_fpclass_f64", loc);
   return __enzyme_fprt_original_64_52_intr_llvm_is_fpclass_f64(
       __enzyme_fprt_double_to_ptr(a)->v, tests);
 }
