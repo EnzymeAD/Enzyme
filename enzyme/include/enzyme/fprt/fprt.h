@@ -9,11 +9,11 @@ extern "C" {
 
 // User-facing API
 double __enzyme_fprt_64_52_get(double _a, int64_t exponent, int64_t significand,
-                               int64_t mode, char *loc);
+                               int64_t mode, const char *loc);
 double __enzyme_fprt_64_52_new(double _a, int64_t exponent, int64_t significand,
-                               int64_t mode, char *loc);
+                               int64_t mode, const char *loc);
 void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
-                                int64_t mode, char *loc);
+                                int64_t mode, const char *loc);
 double __enzyme_truncate_mem_value_d(double, int, int);
 float __enzyme_truncate_mem_value_f(float, int, int);
 double __enzyme_expand_mem_value_d(double, int, int);
@@ -21,20 +21,26 @@ float __enzyme_expand_mem_value_f(float, int, int);
 
 // For internal use
 struct __enzyme_fp;
-
-static bool __enzyme_fprt_is_mem_mode(int64_t mode) { return mode & 0b0001; }
-static bool __enzyme_fprt_is_op_mode(int64_t mode) { return mode & 0b0010; }
-static double __enzyme_fprt_ptr_to_double(__enzyme_fp *p) {
-  return *((double *)(&p));
-}
-static __enzyme_fp *__enzyme_fprt_double_to_ptr(double d) {
-  return *((__enzyme_fp **)(&d));
-}
 __enzyme_fp *__enzyme_fprt_64_52_new_intermediate(int64_t exponent,
                                                   int64_t significand,
-                                                  int64_t mode, char *loc);
+                                                  int64_t mode,
+                                                  const char *loc);
 double __enzyme_fprt_64_52_const(double _a, int64_t exponent,
-                                 int64_t significand, int64_t mode, char *loc);
+                                 int64_t significand, int64_t mode,
+                                 const char *loc);
+
+[[maybe_unused]] static bool __enzyme_fprt_is_mem_mode(int64_t mode) {
+  return mode & 0b0001;
+}
+[[maybe_unused]] static bool __enzyme_fprt_is_op_mode(int64_t mode) {
+  return mode & 0b0010;
+}
+[[maybe_unused]] static double __enzyme_fprt_ptr_to_double(__enzyme_fp *p) {
+  return *((double *)(&p));
+}
+[[maybe_unused]] static __enzyme_fp *__enzyme_fprt_double_to_ptr(double d) {
+  return *((__enzyme_fp **)(&d));
+}
 
 #ifdef __cplusplus
 }
