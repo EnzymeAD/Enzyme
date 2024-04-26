@@ -1,21 +1,31 @@
 #pragma once
 
+__attribute__((weak))
 extern int enzyme_dup;
+__attribute__((weak))
 extern int enzyme_dupnoneed;
+__attribute__((weak))
 extern int enzyme_out;
+__attribute__((weak))
 extern int enzyme_const;
 
+__attribute__((weak))
 extern int enzyme_const_return;
+__attribute__((weak))
 extern int enzyme_active_return;
+__attribute__((weak))
 extern int enzyme_dup_return;
 
+__attribute__((weak))
 extern int enzyme_primal_return;
+__attribute__((weak))
 extern int enzyme_noret;
 
 template<typename Return, typename... T>
 Return __enzyme_autodiff(T...);
 
 template<typename Return, typename... T>
+__attribute__((weak))
 Return __enzyme_fwddiff(T...);
 
 #include <enzyme/tuple>

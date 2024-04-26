@@ -25,6 +25,7 @@
 //===----------------------------------------------------------------------===//
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/GlobalValue.h>
+#include <llvm/IR/GlobalVariable.h>
 
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
@@ -630,7 +631,11 @@ public:
                   *ofn);
       return nullptr;
     }
-    if (cast<Function>(fn)->empty()) {
+    Function *f = cast<Function>(fn);
+    if (f->empty() && f->hasExternalWeakLinkage() &&
+        f->getName().contains("__enzyme_fprt_original_"))
+      return nullptr;
+    if (f->empty()) {
       EmitFailure("EmptyFunctionToDifferentiate", CI->getDebugLoc(), CI,
                   "failed to find fn to differentiate", *CI, " - found - ",
                   *fn);
@@ -2971,12 +2976,23 @@ public:
     }
 #endif
 
+    {
     std::set<Function *> done;
     for (Function &F : M) {
       if (F.empty())
         continue;
 
       changed |= lowerEnzymeCalls(F, done);
+    }
+    }
+    {
+    std::set<Function *> done;
+    for (Function &F : M) {
+      if (F.empty())
+        continue;
+
+      changed |= lowerEnzymeCalls(F, done);
+    }
     }
 
     for (Function &F : M) {
