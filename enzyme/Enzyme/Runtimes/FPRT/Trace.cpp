@@ -27,11 +27,13 @@
 
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <list>
 #include <llvm/Support/ErrorHandling.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <vector>
 
 #include <enzyme/enzyme>
 #include <enzyme/fprt/fprt.h>
@@ -68,6 +70,8 @@ private:
 #endif
 
 public:
+  size_t id;
+
   double getDerivative(unsigned no) const { return derivatives[no]; }
   void setDerivative(unsigned no, double d) { derivatives[no] = d; }
 
@@ -261,39 +265,48 @@ __enzyme_fprt_trace_flop(std::array<T, NumInputs> _inputs, T output_val,
 
 // TODO ultimately we probably want a linked list of arrays or something like
 // that for this (std::list probably is that but we may want our own impl)
-static std::list<__enzyme_fp> FPs;
+struct {
+  std::list<__enzyme_fp> all;
+  std::list<__enzyme_fp *> outputs;
+  std::list<__enzyme_fp *> inputs;
+  void clear() {
+    all.clear();
+    outputs.clear();
+    inputs.clear();
+  }
+} FPs;
 
 extern "C" {
 
-__ENZYME_MPFR_ATTRIBUTES
 __enzyme_fp *__enzyme_fprt_64_52_new_intermediate(int64_t exponent,
                                                   int64_t significand,
                                                   int64_t mode,
                                                   const char *loc) {
-  FPs.push_back({});
-  __enzyme_fp *a = &FPs.back();
+  size_t id = FPs.all.size();
+  FPs.all.push_back({});
+  __enzyme_fp *a = &FPs.all.back();
+  a->id = id;
   return a;
 }
 
-__ENZYME_MPFR_ATTRIBUTES
 double __enzyme_fprt_64_52_get(double _a, int64_t exponent, int64_t significand,
                                int64_t mode, const char *loc) {
   __enzyme_fp *a = __enzyme_fprt_double_to_ptr(_a);
+  FPs.outputs.push_back(a);
   __enzyme_fprt_trace_no_res_flop<double, 1>({_a}, "get", loc);
   return a->getResult();
 }
 
-__ENZYME_MPFR_ATTRIBUTES
 double __enzyme_fprt_64_52_new(double _a, int64_t exponent, int64_t significand,
                                int64_t mode, const char *loc) {
   __enzyme_fp *a =
       __enzyme_fprt_64_52_new_intermediate(exponent, significand, mode, loc);
+  FPs.inputs.push_back(a);
   __enzyme_fprt_trace_flop<double, 0>({}, _a, a, nullptr, "new", loc);
   auto ret = __enzyme_fprt_ptr_to_double(a);
   return ret;
 }
 
-__ENZYME_MPFR_ATTRIBUTES
 double __enzyme_fprt_64_52_const(double _a, int64_t exponent,
                                  int64_t significand, int64_t mode,
                                  const char *loc) {
@@ -306,15 +319,50 @@ double __enzyme_fprt_64_52_const(double _a, int64_t exponent,
   return ret;
 }
 
-__ENZYME_MPFR_ATTRIBUTES
 void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
                                 int64_t mode, const char *loc) {
   // TODO
   __enzyme_fprt_trace_no_res_flop<double, 1>({a}, "delete", loc);
 }
 
-__ENZYME_MPFR_ATTRIBUTES
-void __enzyme_fprt_delete_all() { FPs.clear(); }
+// Below sensitivity computation is taken frmo ADAPT
+static double __enzyme_estimate_truncation_error(double a) {
+  return abs(a - (float)a);
+}
+
+void __enzyme_fprt_delete_all() {
+  size_t size = FPs.all.size();
+  size_t i = 0;
+  for (auto it = FPs.all.begin(); it != FPs.all.end(); i++, it++) {
+    // Zero out all errors
+    // TODO is it faster to calloc each time or should we pre-allocate and
+    // memset?
+    double *errors = (double *)std::calloc(size, sizeof(*errors));
+    // Introduce truncation error into the current op
+    // TODO we can probably re-run the original operation in the truncated
+    // precision thus get the real error and not an estimation
+    errors[i] = __enzyme_estimate_truncation_error(it->getResult());
+
+    size_t j = i;
+    for (auto jt = it; jt != FPs.all.end(); j++, jt++)
+      for (unsigned char k = 0; k < jt->getInputNum(); k++)
+        errors[j] += abs(jt->getDerivative(k) * errors[jt->getInput(k)->id]);
+
+#if ENZYME_FPRT_TRACE_PRINT
+    std::cerr << "For instance ";
+    print_enzyme_fp_value(std::cerr, &*it);
+    std::cerr << " when truncated from double to float:" << std::endl;
+
+    for (__enzyme_fp *output : FPs.outputs) {
+      std::cerr << "    wrt output ";
+      print_enzyme_fp_value(std::cerr, output);
+      std::cerr << " at " << output->getLoc()
+                << ", sensitivity = " << errors[output->id] << std::endl;
+    }
+#endif
+  }
+  FPs.clear();
+}
 
 #define __ENZYME_MPFR_SINGOP(OP_TYPE, LLVM_OP_NAME, MPFR_FUNC_NAME, FROM_TYPE, \
                              RET, MPFR_GET, ARG1, MPFR_SET_ARG1,               \
