@@ -71,22 +71,22 @@ extern "C" {
 #define __ENZYME_MPFR_DEFAULT_ROUNDING_MODE GMP_RNDN
 
 typedef struct __enzyme_fp {
-  mpfr_t v;
+  mpfr_t result;
 } __enzyme_fp;
 
 __ENZYME_MPFR_ATTRIBUTES
 double __enzyme_fprt_64_52_get(double _a, int64_t exponent, int64_t significand,
                                int64_t mode, const char *loc) {
   __enzyme_fp *a = __enzyme_fprt_double_to_ptr(_a);
-  return mpfr_get_d(a->v, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
+  return mpfr_get_d(a->result, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
 }
 
 __ENZYME_MPFR_ATTRIBUTES
 double __enzyme_fprt_64_52_new(double _a, int64_t exponent, int64_t significand,
                                int64_t mode, const char *loc) {
   __enzyme_fp *a = (__enzyme_fp *)malloc(sizeof(__enzyme_fp));
-  mpfr_init2(a->v, significand);
-  mpfr_set_d(a->v, _a, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
+  mpfr_init2(a->result, significand);
+  mpfr_set_d(a->result, _a, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
   return __enzyme_fprt_ptr_to_double(a);
 }
 
@@ -105,7 +105,7 @@ __enzyme_fp *__enzyme_fprt_64_52_new_intermediate(int64_t exponent,
                                                   int64_t mode,
                                                   const char *loc) {
   __enzyme_fp *a = (__enzyme_fp *)malloc(sizeof(__enzyme_fp));
-  mpfr_init2(a->v, significand);
+  mpfr_init2(a->result, significand);
   return a;
 }
 
@@ -136,7 +136,7 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
       __enzyme_fp *ma = __enzyme_fprt_double_to_ptr(a);                        \
       __enzyme_fp *mc = __enzyme_fprt_64_52_new_intermediate(                  \
           exponent, significand, mode, loc);                                   \
-      mpfr_##MPFR_FUNC_NAME(mc->v, ma->v, ROUNDING_MODE);                      \
+      mpfr_##MPFR_FUNC_NAME(mc->result, ma->result, ROUNDING_MODE);            \
       return __enzyme_fprt_ptr_to_double(mc);                                  \
     } else {                                                                   \
       abort();                                                                 \
@@ -166,7 +166,7 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
       __enzyme_fp *ma = __enzyme_fprt_double_to_ptr(a);                        \
       __enzyme_fp *mc = __enzyme_fprt_64_52_new_intermediate(                  \
           exponent, significand, mode, loc);                                   \
-      mpfr_##MPFR_FUNC_NAME(mc->v, ma->v, b, ROUNDING_MODE);                   \
+      mpfr_##MPFR_FUNC_NAME(mc->result, ma->result, b, ROUNDING_MODE);         \
       return __enzyme_fprt_ptr_to_double(mc);                                  \
     } else {                                                                   \
       abort();                                                                 \
@@ -198,7 +198,8 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
       __enzyme_fp *mb = __enzyme_fprt_double_to_ptr(b);                        \
       __enzyme_fp *mc = __enzyme_fprt_64_52_new_intermediate(                  \
           exponent, significand, mode, loc);                                   \
-      mpfr_##MPFR_FUNC_NAME(mc->v, ma->v, mb->v, ROUNDING_MODE);               \
+      mpfr_##MPFR_FUNC_NAME(mc->result, ma->result, mb->result,                \
+                            ROUNDING_MODE);                                    \
       return __enzyme_fprt_ptr_to_double(mc);                                  \
     } else {                                                                   \
       abort();                                                                 \
@@ -266,7 +267,7 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
     } else if (__enzyme_fprt_is_mem_mode(mode)) {                              \
       __enzyme_fp *ma = __enzyme_fprt_double_to_ptr(a);                        \
       __enzyme_fp *mb = __enzyme_fprt_double_to_ptr(b);                        \
-      int ret = mpfr_cmp(ma->v, mb->v);                                        \
+      int ret = mpfr_cmp(ma->result, mb->result);                              \
       return ret CMP;                                                          \
     } else {                                                                   \
       abort();                                                                 \
