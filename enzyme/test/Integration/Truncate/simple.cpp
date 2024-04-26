@@ -30,6 +30,9 @@ double intrinsics(double a, double b) {
 double constt(double a, double b) {
     return 2;
 }
+void const_store(double *a) {
+    *a = 2.0;
+}
 double phinode(double a, double b, int n) {
     double sum = 0;
     for (int i = 0; i < n; i++) {
@@ -115,6 +118,14 @@ int main() {
         b = __enzyme_truncate_mem_value(b, FROM, TO);
         double trunc = __enzyme_expand_mem_value(__enzyme_truncate_mem_func(phinode, FROM, TO)(a, b, 10), FROM, TO);
         APPROX_EQ(trunc, truth, 20.0);
+    }
+    {
+        double truth = 0;
+        const_store(&truth);
+        double a = 0;
+        __enzyme_truncate_mem_func(const_store, FROM, TO)(&a);
+        a = __enzyme_expand_mem_value(a, FROM, TO);
+        APPROX_EQ(a, truth, 1e-5);
     }
     #endif
 

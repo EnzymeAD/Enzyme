@@ -5190,6 +5190,13 @@ public:
   }
 };
 
+// TODO we need to handle cases where constant aggregates are used and they
+// contain constant fp's in them.
+//
+// e.g. store {0 : i64, 1.0: f64} %ptr
+//
+// Currently in mem mode the float will remain unconverted and we will likely
+// crash somewhere.
 class TruncateGenerator : public llvm::InstVisitor<TruncateGenerator>,
                           public TruncateUtils {
 private:
@@ -5541,6 +5548,23 @@ public:
                         llvm::Value *orig_val, llvm::MaybeAlign prevalign,
                         bool isVolatile, llvm::AtomicOrdering ordering,
                         llvm::SyncScope::ID syncScope, llvm::Value *mask) {
+    switch (mode) {
+    case TruncMemMode: {
+      if (orig_val->getType() != getFromType())
+        return;
+      if (!isa<ConstantFP>(orig_val))
+        return;
+      auto newI = getNewFromOriginal(&I);
+      IRBuilder<> B(newI);
+      newI->setOperand(0, createFPRTConstCall(B, getNewFromOriginal(orig_val)));
+      return;
+    }
+    case TruncOpMode:
+    case TruncOpFullModuleMode:
+      break;
+    default:
+      llvm_unreachable("Unknown trunc mode");
+    }
     return;
   }
 
