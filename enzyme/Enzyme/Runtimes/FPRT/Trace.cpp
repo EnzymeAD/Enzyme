@@ -41,14 +41,27 @@
 #define ENZYME_FPRT_TRACE_PRINT 1
 #endif
 
+static constexpr unsigned fp_max_inputs = 3;
+
 extern "C" {
 typedef struct __enzyme_fp {
-  double v;
+private:
+  __enzyme_fp *inputs[fp_max_inputs];
+  unsigned char input_num;
+  double result;
+
+public:
+  __enzyme_fp *getInput(unsigned no) { return inputs[no]; }
+  void setInput(unsigned no, __enzyme_fp *i) { inputs[no] = i; }
+  void setInputNum(unsigned char i) { input_num = i; }
+  unsigned getInputNum() { return input_num; }
+  void setResult(double r) { result = r; }
+  double getResult() { return result; }
 } __enzyme_fp;
 }
 
 static void print_enzyme_fp(std::ostream &out, __enzyme_fp *fp) {
-  out << "[" << fp << ":" << fp->v << "]";
+  out << "[" << fp << ":" << fp->getResult() << "]";
 }
 
 template <typename T>
@@ -84,6 +97,10 @@ static void __enzyme_fprt_trace_flop(std::vector<T> inputs, const char *name,
 template <typename T>
 static void __enzyme_fprt_trace_flop(std::vector<T> inputs, T output,
                                      const char *name, const char *loc) {
+  for (unsigned i = 0; i < inputs.size(); i++) {
+    __enzyme_fp *fp = __enzyme_fprt_double_to_ptr(inputs[i]);
+    output->inputs[i] = fp;
+  }
   if (!ENZYME_FPRT_TRACE_PRINT)
     return;
   __enzyme_fprt_trace_flop_in(inputs, name);
@@ -104,7 +121,7 @@ double __enzyme_fprt_64_52_get(double _a, int64_t exponent, int64_t significand,
                                int64_t mode, const char *loc) {
   __enzyme_fp *a = __enzyme_fprt_double_to_ptr(_a);
   __enzyme_fprt_trace_flop<double>({_a}, "get", loc);
-  return a->v;
+  return a->getResult();
 }
 
 __ENZYME_MPFR_ATTRIBUTES
