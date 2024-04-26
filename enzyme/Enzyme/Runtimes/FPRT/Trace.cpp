@@ -25,6 +25,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -33,7 +34,6 @@
 #include <llvm/Support/ErrorHandling.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <vector>
 
 #include <enzyme/enzyme>
 #include <enzyme/fprt/fprt.h>
@@ -269,6 +269,7 @@ struct {
   std::list<__enzyme_fp> all;
   std::list<__enzyme_fp *> outputs;
   std::list<__enzyme_fp *> inputs;
+  std::list<__enzyme_fp *> consts;
   void clear() {
     all.clear();
     outputs.clear();
@@ -314,6 +315,7 @@ double __enzyme_fprt_64_52_const(double _a, int64_t exponent,
   // currently it is called every time a flop uses a constant.
   __enzyme_fp *a =
       __enzyme_fprt_64_52_new_intermediate(exponent, significand, mode, loc);
+  FPs.consts.push_back(a);
   __enzyme_fprt_trace_flop<double, 0>({}, _a, a, nullptr, "const", loc);
   auto ret = __enzyme_fprt_ptr_to_double(a);
   return ret;
@@ -334,6 +336,15 @@ void __enzyme_fprt_delete_all() {
   size_t size = FPs.all.size();
   size_t i = 0;
   for (auto it = FPs.all.begin(); it != FPs.all.end(); i++, it++) {
+    // Do not truncate inputs
+    if (std::find(FPs.inputs.begin(), FPs.inputs.end(), &*it) !=
+            FPs.inputs.end())
+      continue;
+    // Or consts
+    if (std::find(FPs.consts.begin(), FPs.consts.end(), &*it) !=
+            FPs.consts.end())
+      continue;
+
     // Zero out all errors
     // TODO is it faster to calloc each time or should we pre-allocate and
     // memset?
