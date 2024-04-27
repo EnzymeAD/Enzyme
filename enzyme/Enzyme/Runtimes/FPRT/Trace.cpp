@@ -436,27 +436,27 @@ void __enzyme_fprt_delete_all() {
     return ret;                                                                \
   }
 
-#define __ENZYME_MPFR_FMULADD(LLVM_OP_NAME, FROM_TYPE, TYPE, MPFR_TYPE,        \
-                              LLVM_TYPE, ROUNDING_MODE)                        \
-  __ENZYME_MPFR_ORIGINAL_ATTRIBUTES                                            \
-  TYPE __enzyme_fprt_original_##FROM_TYPE##_##OP_TYPE##_##LLVM_OP_NAME(        \
-      TYPE a, TYPE b, TYPE c);                                                 \
-  __ENZYME_MPFR_ATTRIBUTES                                                     \
-  TYPE __enzyme_fprt_##FROM_TYPE##_intr_##LLVM_OP_NAME##_##LLVM_TYPE(          \
-      TYPE a, TYPE b, TYPE c, int64_t exponent, int64_t significand,           \
-      int64_t mode, const char *loc) {                                         \
-    auto originalfn =                                                          \
-        __enzyme_fprt_original_##FROM_TYPE##_##OP_TYPE##_##LLVM_OP_NAME;       \
-    TYPE res = originalfn(__enzyme_fprt_double_to_ptr(a)->getResult(),         \
-                          __enzyme_fprt_double_to_ptr(b)->getResult(),         \
-                          __enzyme_fprt_double_to_ptr(c)->getResult());        \
-    __enzyme_fp *intermediate = __enzyme_fprt_64_52_new_intermediate(          \
-        exponent, significand, mode, loc);                                     \
-    intermediate->setResult(res);                                              \
-    double ret = __enzyme_fprt_ptr_to_double(intermediate);                    \
-    __enzyme_fprt_trace_flop<TYPE, 3>({a, b, c}, res, intermediate,            \
-                                      (void *)originalfn, #LLVM_OP_NAME, loc); \
-    return ret;                                                                \
+#define __ENZYME_MPFR_FMULADD(LLVM_OP_NAME, FROM_TYPE, TYPE, MPFR_TYPE,         \
+                              LLVM_TYPE, ROUNDING_MODE)                         \
+  __ENZYME_MPFR_ORIGINAL_ATTRIBUTES                                             \
+  TYPE __enzyme_fprt_original_##FROM_TYPE##_intr_##LLVM_OP_NAME##_##LLVM_TYPE(  \
+      TYPE a, TYPE b, TYPE c);                                                  \
+  __ENZYME_MPFR_ATTRIBUTES                                                      \
+  TYPE __enzyme_fprt_##FROM_TYPE##_intr_##LLVM_OP_NAME##_##LLVM_TYPE(           \
+      TYPE a, TYPE b, TYPE c, int64_t exponent, int64_t significand,            \
+      int64_t mode, const char *loc) {                                          \
+    auto originalfn =                                                           \
+        __enzyme_fprt_original_##FROM_TYPE##_intr_##LLVM_OP_NAME##_##LLVM_TYPE; \
+    TYPE res = originalfn(__enzyme_fprt_double_to_ptr(a)->getResult(),          \
+                          __enzyme_fprt_double_to_ptr(b)->getResult(),          \
+                          __enzyme_fprt_double_to_ptr(c)->getResult());         \
+    __enzyme_fp *intermediate = __enzyme_fprt_64_52_new_intermediate(           \
+        exponent, significand, mode, loc);                                      \
+    intermediate->setResult(res);                                               \
+    double ret = __enzyme_fprt_ptr_to_double(intermediate);                     \
+    __enzyme_fprt_trace_flop<TYPE, 3>({a, b, c}, res, intermediate,             \
+                                      (void *)originalfn, #LLVM_OP_NAME, loc);  \
+    return ret;                                                                 \
   }
 
 #define __ENZYME_MPFR_FCMP_IMPL(NAME, ORDERED, CMP, FROM_TYPE, TYPE, MPFR_GET, \
