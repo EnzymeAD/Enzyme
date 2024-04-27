@@ -49,14 +49,6 @@ static constexpr unsigned fp_max_inputs = 3;
 static constexpr std::array<const char *, 3> arg_names = {"x", "y", "z"};
 static_assert(arg_names.size() == fp_max_inputs);
 
-// TODO remove this - we shuold always provide a non-null loc in the
-// instrumentation
-static const char *getloc(const char *loc) {
-  if (!loc)
-    return "unknown";
-  return loc;
-}
-
 extern "C" {
 typedef struct __enzyme_fp {
 private:
@@ -85,7 +77,7 @@ public:
   void setResult(double r) { result = r; }
 
   const char *getLoc() const { return loc; }
-  void setLoc(const char *l) { loc = getloc(l); }
+  void setLoc(const char *l) { loc = l; }
 
 #if ENZYME_FPRT_TRACE_PRINT
   const char *getName() const { return name; }
@@ -144,7 +136,7 @@ static void __enzyme_fprt_trace_no_res_flop(std::array<T, NumInputs> inputs,
 #if ENZYME_FPRT_TRACE_PRINT
   fp.setName(name);
   print_enzyme_fp_function(std::cerr, &fp);
-  std::cerr << " at " << getloc(loc) << std::endl;
+  std::cerr << " at " << loc << std::endl;
 #endif
 }
 
@@ -338,11 +330,11 @@ void __enzyme_fprt_delete_all() {
   for (auto it = FPs.all.begin(); it != FPs.all.end(); i++, it++) {
     // Do not truncate inputs
     if (std::find(FPs.inputs.begin(), FPs.inputs.end(), &*it) !=
-            FPs.inputs.end())
+        FPs.inputs.end())
       continue;
     // Or consts
     if (std::find(FPs.consts.begin(), FPs.consts.end(), &*it) !=
-            FPs.consts.end())
+        FPs.consts.end())
       continue;
 
     // Zero out all errors

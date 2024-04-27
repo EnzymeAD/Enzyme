@@ -45,8 +45,7 @@ typedef struct __enzyme_fp {
 __ENZYME_MPFR_ATTRIBUTES
 double __enzyme_fprt_64_52_get(double _a, int64_t exponent, int64_t significand,
                                int64_t mode, const char *loc) {
-  if (loc)
-    printf("%p, %s\n", loc, loc);
+  printf("%p, %s\n", loc, loc);
   __enzyme_fp *a = __enzyme_fprt_double_to_ptr(_a);
   return mpfr_get_d(a->result, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
 }
@@ -54,8 +53,7 @@ double __enzyme_fprt_64_52_get(double _a, int64_t exponent, int64_t significand,
 __ENZYME_MPFR_ATTRIBUTES
 double __enzyme_fprt_64_52_new(double _a, int64_t exponent, int64_t significand,
                                int64_t mode, const char *loc) {
-  if (loc)
-    printf("%p, %s\n", loc, loc);
+  printf("%p, %s\n", loc, loc);
   __enzyme_fp *a = (__enzyme_fp *)malloc(sizeof(__enzyme_fp));
   mpfr_init2(a->result, significand);
   mpfr_set_d(a->result, _a, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
@@ -66,8 +64,7 @@ __ENZYME_MPFR_ATTRIBUTES
 double __enzyme_fprt_64_52_const(double _a, int64_t exponent,
                                  int64_t significand, int64_t mode,
                                  const char *loc) {
-  if (loc)
-    printf("%p, %s\n", loc, loc);
+  printf("%p, %s\n", loc, loc);
   // TODO This should really be called only once for an appearance in the code,
   // currently it is called every time a flop uses a constant.
   return __enzyme_fprt_64_52_new(_a, exponent, significand, mode, loc);
@@ -78,8 +75,7 @@ __enzyme_fp *__enzyme_fprt_64_52_new_intermediate(int64_t exponent,
                                                   int64_t significand,
                                                   int64_t mode,
                                                   const char *loc) {
-  if (loc)
-    printf("%p, %s\n", loc, loc);
+  printf("%p, %s\n", loc, loc);
   __enzyme_fp *a = (__enzyme_fp *)malloc(sizeof(__enzyme_fp));
   mpfr_init2(a->result, significand);
   return a;
@@ -88,8 +84,7 @@ __enzyme_fp *__enzyme_fprt_64_52_new_intermediate(int64_t exponent,
 __ENZYME_MPFR_ATTRIBUTES
 void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
                                 int64_t mode, const char *loc) {
-  if (loc)
-    printf("%p, %s\n", loc, loc);
+  printf("%p, %s\n", loc, loc);
   free(__enzyme_fprt_double_to_ptr(a));
 }
 
@@ -100,8 +95,7 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
   RET __enzyme_fprt_##FROM_TYPE##_##OP_TYPE##_##LLVM_OP_NAME(                  \
       ARG1 a, int64_t exponent, int64_t significand, int64_t mode,             \
       const char *loc) {                                                       \
-    if (loc)                                                                   \
-      printf("%p, %s, %s\n", loc, #LLVM_OP_NAME, loc);                         \
+    printf("%p, %s, %s\n", loc, #LLVM_OP_NAME, loc);                           \
     if (__enzyme_fprt_is_op_mode(mode)) {                                      \
       mpfr_t ma, mc;                                                           \
       mpfr_init2(ma, significand);                                             \
@@ -132,8 +126,7 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
   RET __enzyme_fprt_##FROM_TYPE##_##OP_TYPE##_##LLVM_OP_NAME(                  \
       ARG1 a, ARG2 b, int64_t exponent, int64_t significand, int64_t mode,     \
       const char *loc) {                                                       \
-    if (loc)                                                                   \
-      printf("%p, %s, %s\n", loc, #LLVM_OP_NAME, loc);                         \
+    printf("%p, %s, %s\n", loc, #LLVM_OP_NAME, loc);                           \
     if (__enzyme_fprt_is_op_mode(mode)) {                                      \
       mpfr_t ma, mc;                                                           \
       mpfr_init2(ma, significand);                                             \
@@ -162,8 +155,7 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
   RET __enzyme_fprt_##FROM_TYPE##_##OP_TYPE##_##LLVM_OP_NAME(                  \
       ARG1 a, ARG2 b, int64_t exponent, int64_t significand, int64_t mode,     \
       const char *loc) {                                                       \
-    if (loc)                                                                   \
-      printf("%p, %s, %s\n", loc, #LLVM_OP_NAME, loc);                         \
+    printf("%p, %s, %s\n", loc, #LLVM_OP_NAME, loc);                           \
     if (__enzyme_fprt_is_op_mode(mode)) {                                      \
       mpfr_t ma, mb, mc;                                                       \
       mpfr_init2(ma, significand);                                             \
@@ -196,8 +188,7 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
   TYPE __enzyme_fprt_##FROM_TYPE##_intr_##LLVM_OP_NAME##_##LLVM_TYPE(          \
       TYPE a, TYPE b, TYPE c, int64_t exponent, int64_t significand,           \
       int64_t mode, const char *loc) {                                         \
-    if (loc)                                                                   \
-      printf("%p, %s, %s\n", loc, #LLVM_OP_NAME, loc);                         \
+    printf("%p, %s, %s\n", loc, #LLVM_OP_NAME, loc);                           \
     if (__enzyme_fprt_is_op_mode(mode)) {                                      \
       mpfr_t ma, mb, mc, mmul, madd;                                           \
       mpfr_init2(ma, significand);                                             \
@@ -240,8 +231,7 @@ void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
   bool __enzyme_fprt_##FROM_TYPE##_fcmp_##NAME(                                \
       TYPE a, TYPE b, int64_t exponent, int64_t significand, int64_t mode,     \
       const char *loc) {                                                       \
-    if (loc)                                                                   \
-      printf("%p, %s, %s\n", loc, "fcmp" #NAME, loc);                          \
+    printf("%p, %s, %s\n", loc, "fcmp" #NAME, loc);                            \
     if (__enzyme_fprt_is_op_mode(mode)) {                                      \
       mpfr_t ma, mb;                                                           \
       mpfr_init2(ma, significand);                                             \

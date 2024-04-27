@@ -5025,7 +5025,7 @@ protected:
   Type *toType;
   LLVMContext &ctx;
   EnzymeLogic &Logic;
-  Value *NullPtr;
+  Value *UnknownLoc;
 
 private:
   std::string getOriginalFPRTName(std::string Name) {
@@ -5113,7 +5113,8 @@ public:
     toType = truncation.getToType(ctx);
     if (fromType == toType)
       assert(truncation.isToFPRT());
-    NullPtr = ConstantPointerNull::get(getDefaultAnonymousTapeType(ctx));
+
+    UnknownLoc = getUniquedLocStr(nullptr);
   }
 
   Type *getFromType() { return fromType; }
@@ -5124,40 +5125,40 @@ public:
     assert(V->getType() == getFromType());
     SmallVector<Value *, 1> Args;
     Args.push_back(V);
-    return createFPRTGeneric(B, "const", Args, getToType(), NullPtr);
+    return createFPRTGeneric(B, "const", Args, getToType(), UnknownLoc);
   }
   CallInst *createFPRTNewCall(llvm::IRBuilderBase &B, Value *V) {
     assert(V->getType() == getFromType());
     SmallVector<Value *, 1> Args;
     Args.push_back(V);
-    return createFPRTGeneric(B, "new", Args, getToType(), NullPtr);
+    return createFPRTGeneric(B, "new", Args, getToType(), UnknownLoc);
   }
   CallInst *createFPRTGetCall(llvm::IRBuilderBase &B, Value *V) {
     SmallVector<Value *, 1> Args;
     Args.push_back(V);
-    return createFPRTGeneric(B, "get", Args, getToType(), NullPtr);
+    return createFPRTGeneric(B, "get", Args, getToType(), UnknownLoc);
   }
   CallInst *createFPRTDeleteCall(llvm::IRBuilderBase &B, Value *V) {
     SmallVector<Value *, 1> Args;
     Args.push_back(V);
-    return createFPRTGeneric(B, "delete", Args, B.getVoidTy(), NullPtr);
+    return createFPRTGeneric(B, "delete", Args, B.getVoidTy(), UnknownLoc);
   }
   // This will result in a unique string for each location, which means the
   // runtime can check whether two operations are the same with a simple pointer
   // comparison. However, we need LTO for this to be the case across different
   // compilation units.
-  GlobalValue *getUniquedLocStr(Instruction &I) {
-    auto M = I.getParent()->getParent()->getParent();
-
+  GlobalValue *getUniquedLocStr(Instruction *I) {
     std::string FileName = "unknown";
     unsigned LineNo = 0;
     unsigned ColNo = 0;
 
-    DILocation *DL = I.getDebugLoc();
-    if (DL) {
-      FileName = DL->getFilename();
-      LineNo = DL->getLine();
-      ColNo = DL->getColumn();
+    if (I) {
+      DILocation *DL = I->getDebugLoc();
+      if (DL) {
+        FileName = DL->getFilename();
+        LineNo = DL->getLine();
+        ColNo = DL->getColumn();
+      }
     }
 
     auto Key = std::make_tuple(FileName, LineNo, ColNo);
@@ -5200,7 +5201,7 @@ public:
       llvm_unreachable("Unexpected instruction for conversion to FPRT");
     }
     createOriginalFPRTFunc(I, Name, ArgsIn, RetTy);
-    return createFPRTGeneric(B, Name, ArgsIn, RetTy, getUniquedLocStr(I));
+    return createFPRTGeneric(B, Name, ArgsIn, RetTy, getUniquedLocStr(&I));
   }
 };
 
