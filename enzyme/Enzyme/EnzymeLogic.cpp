@@ -5048,7 +5048,7 @@ private:
         ArgTypes.push_back(Arg->getType());
       FunctionType *FnTy =
           FunctionType::get(RetTy, ArgTypes, /*is_vararg*/ false);
-      F = Function::Create(FnTy, Function::ExternalLinkage, MangledName, M);
+      F = Function::Create(FnTy, Function::WeakODRLinkage, MangledName, M);
     }
     if (F->isDeclaration()) {
       BasicBlock *Entry = BasicBlock::Create(F->getContext(), "entry", F);
@@ -5057,6 +5057,7 @@ private:
         ClonedI->setOperand(It, F->getArg(It));
       auto Return = ReturnInst::Create(F->getContext(), ClonedI, Entry);
       ClonedI->insertBefore(Return);
+      F->setLinkage(GlobalValue::WeakODRLinkage);
     }
   }
 
