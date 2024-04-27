@@ -5379,6 +5379,7 @@ public:
         nres->copyIRFlags(newI);
         newI->replaceUsesWithIf(nres,
                                 [&](Use &U) { return U.getUser() != nres; });
+        originalToNewFn[const_cast<const Value *>(cast<Value>(&CI))] = nres;
       }
       return;
     }

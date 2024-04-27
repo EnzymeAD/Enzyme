@@ -47,6 +47,10 @@ double compute(double *A, double *B, double *C, int n) {
   }
   return C[0];
 }
+double intcast(int a) {
+    double d = (double) a;
+    return d / 3.14;
+}
 
 typedef double (*fty)(double *, double *, double *, int);
 
@@ -126,6 +130,9 @@ int main() {
         __enzyme_truncate_mem_func(const_store, FROM, TO)(&a);
         a = __enzyme_expand_mem_value(a, FROM, TO);
         APPROX_EQ(a, truth, 1e-5);
+    }
+    {
+        __enzyme_truncate_mem_func(intcast, FROM, TO)(64);
     }
     #endif
 
