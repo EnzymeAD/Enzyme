@@ -43,6 +43,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include <cmath>
 #include <llvm-c/Core.h>
+#include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/Transforms/Instrumentation.h>
 #include <tuple>
 
@@ -5058,6 +5059,8 @@ private:
       auto Return = ReturnInst::Create(F->getContext(), ClonedI, Entry);
       ClonedI->insertBefore(Return);
       F->setLinkage(GlobalValue::WeakODRLinkage);
+      // Clear invalidated debug metadata now that we defined the function
+      F->clearMetadata();
     }
   }
 
@@ -5090,17 +5093,15 @@ private:
 #endif
 
     auto FprtFunc = getFPRTFunc(Name, Args, RetTy);
-    auto *CI = cast<CallInst>(B.CreateCall(FprtFunc, Args));
-
     // Explicitly assign a dbg location if it didn't exist, as the FPRT
     // functions are inlineable and the backend fails if the callsite does not
     // have dbg metadata
-    Function *ContainingF = CI->getFunction();
-    if (!CI->getMetadata(LLVMContext::MD_dbg))
-      CI->setMetadata(
-          LLVMContext::MD_dbg,
-          DILocation::get(ContainingF->getContext(), 0, 0,
-                          ContainingF->getMetadata(LLVMContext::MD_dbg)));
+    // TODO consider using InstrumentationIRBuilder
+    Function *ContainingF = B.GetInsertBlock()->getParent();
+    if (!B.getCurrentDebugLocation())
+      B.SetCurrentDebugLocation(DILocation::get(ContainingF->getContext(), 0, 0,
+                                                ContainingF->getSubprogram()));
+    auto *CI = cast<CallInst>(B.CreateCall(FprtFunc, Args));
 
     return CI;
   }
