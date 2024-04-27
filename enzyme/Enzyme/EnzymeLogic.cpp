@@ -5089,7 +5089,19 @@ private:
 #endif
 
     auto FprtFunc = getFPRTFunc(Name, Args, RetTy);
-    return cast<CallInst>(B.CreateCall(FprtFunc, Args));
+    auto *CI = cast<CallInst>(B.CreateCall(FprtFunc, Args));
+
+    // Explicitly assign a dbg location if it didn't exist, as the FPRT
+    // functions are inlineable and the backend fails if the callsite does not
+    // have dbg metadata
+    Function *ContainingF = CI->getFunction();
+    if (!CI->getMetadata(LLVMContext::MD_dbg))
+      CI->setMetadata(
+          LLVMContext::MD_dbg,
+          DILocation::get(ContainingF->getContext(), 0, 0,
+                          ContainingF->getMetadata(LLVMContext::MD_dbg)));
+
+    return CI;
   }
 
 public:
@@ -5202,8 +5214,6 @@ class TruncateGenerator : public llvm::InstVisitor<TruncateGenerator>,
 private:
   ValueToValueMapTy &originalToNewFn;
   FloatTruncation truncation;
-  Function *oldFunc;
-  Function *newFunc;
   TruncateMode mode;
   EnzymeLogic &Logic;
   LLVMContext &ctx;
@@ -5214,8 +5224,7 @@ public:
                     Function *newFunc, EnzymeLogic &Logic)
       : TruncateUtils(truncation, newFunc->getParent(), Logic),
         originalToNewFn(originalToNewFn), truncation(truncation),
-        oldFunc(oldFunc), newFunc(newFunc), mode(truncation.getMode()),
-        Logic(Logic), ctx(newFunc->getContext()) {}
+        mode(truncation.getMode()), Logic(Logic), ctx(newFunc->getContext()) {}
 
   void todo(llvm::Instruction &I) {
     if (all_of(I.operands(),
