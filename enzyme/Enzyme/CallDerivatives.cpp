@@ -298,7 +298,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         CreateDealloc(Builder2, helper);
       }
-      if (Mode == DerivativeMode::ForwardMode) {
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError) {
         IRBuilder<> Builder2(&call);
         getForwardBuilder(Builder2);
 
@@ -453,7 +454,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         vec.push_back(endBlock);
       }
       Builder2.SetInsertPoint(endBlock);
-    } else if (Mode == DerivativeMode::ForwardMode) {
+    } else if (Mode == DerivativeMode::ForwardMode ||
+               Mode == DerivativeMode::ForwardModeError) {
       IRBuilder<> Builder2(&call);
       getForwardBuilder(Builder2);
 
@@ -625,14 +627,15 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (shouldFree()) {
         CreateDealloc(Builder2, d_reqp);
       }
-    } else if (Mode == DerivativeMode::ForwardMode) {
+    } else if (Mode == DerivativeMode::ForwardMode ||
+               Mode == DerivativeMode::ForwardModeError) {
       IRBuilder<> Builder2(&call);
 
       assert(!gutils->isConstantValue(call.getOperand(1)));
 
       Value *count = gutils->getNewFromOriginal(call.getOperand(0));
-      Value *array_of_requests = gutils->invertPointerM(
-          gutils->getNewFromOriginal(call.getOperand(1)), Builder2);
+      Value *array_of_requests =
+          gutils->invertPointerM(call.getOperand(1), Builder2);
       if (array_of_requests->getType()->isIntegerTy()) {
         array_of_requests = Builder2.CreateIntToPtr(
             array_of_requests,
@@ -648,7 +651,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           &call,
           {ValueType::None, ValueType::None, ValueType::None, ValueType::None,
            ValueType::None, ValueType::None, ValueType::Shadow},
-          Builder2, /*lookup*/ true);
+          Builder2, /*lookup*/ false);
 
       auto callval = call.getCalledOperand();
 
@@ -664,8 +667,10 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       funcName == "PMPI_Send" || funcName == "PMPI_Ssend") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
-        Mode == DerivativeMode::ForwardMode) {
-      bool forwardMode = Mode == DerivativeMode::ForwardMode;
+        Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
+      bool forwardMode = Mode == DerivativeMode::ForwardMode ||
+                         Mode == DerivativeMode::ForwardModeError;
 
       IRBuilder<> Builder2 =
           forwardMode ? IRBuilder<>(&call) : IRBuilder<>(call.getParent());
@@ -807,7 +812,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   if (funcName == "MPI_Recv" || funcName == "PMPI_Recv") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined) {
-      bool forwardMode = Mode == DerivativeMode::ForwardMode;
+      bool forwardMode = Mode == DerivativeMode::ForwardMode ||
+                         Mode == DerivativeMode::ForwardModeError;
 
       IRBuilder<> Builder2 =
           forwardMode ? IRBuilder<>(&call) : IRBuilder<>(call.getParent());
@@ -912,8 +918,10 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   if (funcName == "MPI_Bcast") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
-        Mode == DerivativeMode::ForwardMode) {
-      bool forwardMode = Mode == DerivativeMode::ForwardMode;
+        Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
+      bool forwardMode = Mode == DerivativeMode::ForwardMode ||
+                         Mode == DerivativeMode::ForwardModeError;
 
       IRBuilder<> Builder2 =
           forwardMode ? IRBuilder<>(&call) : IRBuilder<>(call.getParent());
@@ -1112,10 +1120,12 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   if (funcName == "MPI_Reduce" || funcName == "PMPI_Reduce") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
-        Mode == DerivativeMode::ForwardMode) {
+        Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
       // TODO insert a check for sum
 
-      bool forwardMode = Mode == DerivativeMode::ForwardMode;
+      bool forwardMode = Mode == DerivativeMode::ForwardMode ||
+                         Mode == DerivativeMode::ForwardModeError;
 
       IRBuilder<> Builder2 =
           forwardMode ? IRBuilder<>(&call) : IRBuilder<>(call.getParent());
@@ -1360,10 +1370,12 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   if (funcName == "MPI_Allreduce") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
-        Mode == DerivativeMode::ForwardMode) {
+        Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
       // TODO insert a check for sum
 
-      bool forwardMode = Mode == DerivativeMode::ForwardMode;
+      bool forwardMode = Mode == DerivativeMode::ForwardMode ||
+                         Mode == DerivativeMode::ForwardModeError;
 
       IRBuilder<> Builder2 =
           forwardMode ? IRBuilder<>(&call) : IRBuilder<>(call.getParent());
@@ -1545,8 +1557,10 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   if (funcName == "MPI_Gather") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
-        Mode == DerivativeMode::ForwardMode) {
-      bool forwardMode = Mode == DerivativeMode::ForwardMode;
+        Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
+      bool forwardMode = Mode == DerivativeMode::ForwardMode ||
+                         Mode == DerivativeMode::ForwardModeError;
 
       IRBuilder<> Builder2 =
           forwardMode ? IRBuilder<>(&call) : IRBuilder<>(call.getParent());
@@ -1747,8 +1761,10 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   if (funcName == "MPI_Scatter") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
-        Mode == DerivativeMode::ForwardMode) {
-      bool forwardMode = Mode == DerivativeMode::ForwardMode;
+        Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
+      bool forwardMode = Mode == DerivativeMode::ForwardMode ||
+                         Mode == DerivativeMode::ForwardModeError;
 
       IRBuilder<> Builder2 =
           forwardMode ? IRBuilder<>(&call) : IRBuilder<>(call.getParent());
@@ -1984,8 +2000,10 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   if (funcName == "MPI_Allgather") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
-        Mode == DerivativeMode::ForwardMode) {
-      bool forwardMode = Mode == DerivativeMode::ForwardMode;
+        Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
+      bool forwardMode = Mode == DerivativeMode::ForwardMode ||
+                         Mode == DerivativeMode::ForwardModeError;
 
       IRBuilder<> Builder2 =
           forwardMode ? IRBuilder<>(&call) : IRBuilder<>(call.getParent());
@@ -2541,7 +2559,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           Value *shadow = placeholder;
           if (lrc || Mode == DerivativeMode::ReverseModePrimal ||
               Mode == DerivativeMode::ReverseModeCombined ||
-              Mode == DerivativeMode::ForwardMode) {
+              Mode == DerivativeMode::ForwardMode ||
+              Mode == DerivativeMode::ForwardModeError) {
             if (gutils->isConstantValue(call.getArgOperand(0)))
               shadow = gutils->getNewFromOriginal(&call);
             else {
@@ -2588,7 +2607,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         }
       }
 
-      if (Mode == DerivativeMode::ForwardMode) {
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError) {
         eraseIfUnused(call);
         assert(gutils->isConstantInstruction(&call));
         return true;
@@ -2638,6 +2658,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         }
 
         if (Mode == DerivativeMode::ForwardMode ||
+            Mode == DerivativeMode::ForwardModeError ||
             (Mode == DerivativeMode::ReverseModeCombined &&
              (forwardsShadow || backwardsShadow)) ||
             (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
@@ -2673,7 +2694,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             if (!pair.second.stores.count(&call))
               continue;
             bool primalNeededInReverse =
-                Mode == DerivativeMode::ForwardMode
+                Mode == DerivativeMode::ForwardMode ||
+                        Mode == DerivativeMode::ForwardModeError
                     ? false
                     : DifferentialUseAnalysis::is_value_needed_in_reverse<
                           QueryType::Primal>(gutils, pair.first, Mode, Seen,
@@ -2775,7 +2797,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
   }
 
   if (funcName == "realloc") {
-    if (Mode == DerivativeMode::ForwardMode) {
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
       if (!gutils->isConstantValue(&call)) {
         IRBuilder<> Builder2(&call);
         getForwardBuilder(Builder2);
@@ -3207,7 +3230,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       if (!pair.second)
         Seen[UsageKey(pair.first, QueryType::Primal)] = false;
     bool primalNeededInReverse =
-        Mode == DerivativeMode::ForwardMode
+        Mode == DerivativeMode::ForwardMode ||
+                Mode == DerivativeMode::ForwardModeError
             ? false
             : DifferentialUseAnalysis::is_value_needed_in_reverse<
                   QueryType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
@@ -3719,7 +3743,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
       if (Mode == DerivativeMode::ReverseModePrimal ||
           Mode == DerivativeMode::ReverseModeCombined ||
-          Mode == DerivativeMode::ForwardMode) {
+          Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError) {
         Value *ptrshadow =
             gutils->invertPointerM(call.getArgOperand(0), BuilderZ);
         SmallVector<Value *, 1> args;
@@ -3817,7 +3842,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             },
             ptrshadow);
 
-        if (Mode != DerivativeMode::ForwardMode)
+        if (Mode != DerivativeMode::ForwardMode &&
+            Mode != DerivativeMode::ForwardModeError)
           val = gutils->cacheForReverse(
               BuilderZ, val, getIndex(&call, CacheType::Tape, BuilderZ));
       } else if (Mode == DerivativeMode::ReverseModeGradient) {
