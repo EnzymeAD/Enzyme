@@ -634,8 +634,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       assert(!gutils->isConstantValue(call.getOperand(1)));
 
       Value *count = gutils->getNewFromOriginal(call.getOperand(0));
-      Value *array_of_requests = gutils->invertPointerM(
-          gutils->getNewFromOriginal(call.getOperand(1)), Builder2);
+      Value *array_of_requests =
+          gutils->invertPointerM(call.getOperand(1), Builder2);
       if (array_of_requests->getType()->isIntegerTy()) {
         array_of_requests = Builder2.CreateIntToPtr(
             array_of_requests,
@@ -651,7 +651,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           &call,
           {ValueType::None, ValueType::None, ValueType::None, ValueType::None,
            ValueType::None, ValueType::None, ValueType::Shadow},
-          Builder2, /*lookup*/ true);
+          Builder2, /*lookup*/ false);
 
       auto callval = call.getCalledOperand();
 
