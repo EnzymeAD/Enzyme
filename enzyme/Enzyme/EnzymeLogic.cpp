@@ -5391,6 +5391,8 @@ public:
   void visitSelectInst(llvm::SelectInst &SI) {
     switch (mode) {
     case TruncMemMode: {
+      if (SI.getType() != getFromType())
+        return;
       auto newI = getNewFromOriginal(&SI);
       IRBuilder<> B(newI);
       auto newT = truncate(B, getNewFromOriginal(SI.getTrueValue()));
@@ -5532,6 +5534,8 @@ public:
   void visitReturnInst(llvm::ReturnInst &I) {
     switch (mode) {
     case TruncMemMode: {
+      if (I.getReturnValue()->getType() != getFromType())
+        return;
       auto newI = cast<llvm::ReturnInst>(getNewFromOriginal(&I));
       if (newI->getNumOperands() == 0)
         return;
