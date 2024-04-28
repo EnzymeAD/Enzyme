@@ -5213,31 +5213,37 @@ public:
         oldFunc(oldFunc), newFunc(newFunc), mode(truncation.getMode()),
         Logic(Logic), ctx(newFunc->getContext()) {}
 
-  void checkHandled(llvm::Instruction &inst) {
-    // TODO
-    // if (all_of(inst.getOperandList(),
-    //            [&](Use *use) { return use->get()->getType() == fromType; }))
-    //   todo(inst);
+  void todo(llvm::Instruction &I) {
+    if (all_of(I.operands(),
+               [&](Use &U) { return U.get()->getType() != fromType; }))
+      return;
+
+    switch (mode) {
+    case TruncMemMode:
+      EmitFailure("FPEscaping", I.getDebugLoc(), &I, "FP value escapes!");
+      break;
+    case TruncOpMode:
+    case TruncOpFullModuleMode:
+      EmitWarning(
+          "UnhandledTrunc", I,
+          "Operation not handled - it will be executed in the original way.",
+          I);
+      break;
+    default:
+      llvm_unreachable("Unknown trunc mode");
+    }
   }
 
-  // TODO
-  void handleTrunc();
-  void hendleIntToFloat();
-  void handleFloatToInt();
-
-  void visitInstruction(llvm::Instruction &inst) {
+  void visitInstruction(llvm::Instruction &I) {
     using namespace llvm;
 
-    // TODO explicitly handle all instructions rather than using the catch all
-    // below
-
-    switch (inst.getOpcode()) {
+    switch (I.getOpcode()) {
       // #include "InstructionDerivatives.inc"
     default:
       break;
     }
 
-    checkHandled(inst);
+    todo(I);
   }
 
   Value *truncate(IRBuilder<> &B, Value *v) {
@@ -5262,21 +5268,6 @@ public:
       return floatValExpand(B, v, truncation);
     }
     llvm_unreachable("Unknown trunc mode");
-  }
-
-  void todo(llvm::Instruction &I) {
-    std::string s;
-    llvm::raw_string_ostream ss(s);
-    ss << "cannot handle unknown instruction\n" << I;
-    if (CustomErrorHandler) {
-      IRBuilder<> Builder2(getNewFromOriginal(&I));
-      CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoTruncate,
-                         this, nullptr, wrap(&Builder2));
-      return;
-    } else {
-      EmitFailure("NoTruncate", I.getDebugLoc(), &I, ss.str());
-      return;
-    }
   }
 
   void visitAllocaInst(llvm::AllocaInst &I) { return; }
@@ -5327,10 +5318,28 @@ public:
   void visitGetElementPtrInst(llvm::GetElementPtrInst &gep) { return; }
   void visitPHINode(llvm::PHINode &phi) { return; }
   void visitCastInst(llvm::CastInst &CI) {
+    // TODO Try to follow fps through trunc/exts
     switch (mode) {
     case TruncMemMode: {
-      if (CI.getSrcTy() == getFromType() || CI.getDestTy() == getFromType())
-        todo(CI);
+      auto newI = getNewFromOriginal(&CI);
+      auto newSrc = newI->getOperand(0);
+      if (CI.getSrcTy() == getFromType()) {
+        IRBuilder<> B(newI);
+        if (isa<Constant>(newSrc))
+          return;
+        newI->setOperand(0, createFPRTGetCall(B, newSrc));
+        EmitWarning("FPNoFollow", CI, "Will not follow FP through this cast.",
+                    CI);
+      } else if (CI.getDestTy() == getFromType()) {
+        IRBuilder<> B(newI->getNextNode());
+        EmitWarning("FPNoFollow", CI, "Will not follow FP through this cast.",
+                    CI);
+        auto nres = createFPRTNewCall(B, newI);
+        nres->takeName(newI);
+        nres->copyIRFlags(newI);
+        newI->replaceUsesWithIf(nres,
+                                [&](Use &U) { return U.getUser() != nres; });
+      }
       return;
     }
     case TruncOpMode:
@@ -5585,12 +5594,6 @@ public:
     }
     return;
   }
-  void visitFPTruncInst(FPTruncInst &I) { return; }
-  void visitFPExtInst(FPExtInst &I) { return; }
-  void visitFPToUIInst(FPToUIInst &I) { return; }
-  void visitFPToSIInst(FPToSIInst &I) { return; }
-  void visitUIToFPInst(UIToFPInst &I) { return; }
-  void visitSIToFPInst(SIToFPInst &I) { return; }
 };
 
 bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
