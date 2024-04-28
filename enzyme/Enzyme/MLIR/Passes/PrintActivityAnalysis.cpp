@@ -37,7 +37,7 @@ enzyme::Activity getDefaultActivity(Type argType) {
     return enzyme::Activity::enzyme_const;
 
   if (isa<FloatType, ComplexType>(argType))
-    return enzyme::Activity::enzyme_out;
+    return enzyme::Activity::enzyme_active;
 
   if (auto T = dyn_cast<TensorType>(argType))
     return getDefaultActivity(T.getElementType());
@@ -104,7 +104,7 @@ struct PrintActivityAnalysisPass
         argActivities[paramIdx] =
             llvm::TypeSwitch<Type, enzyme::Activity>(paramType)
                 .Case<FloatType, ComplexType>(
-                    [](auto type) { return enzyme::Activity::enzyme_out; })
+                    [](auto type) { return enzyme::Activity::enzyme_active; })
                 .Case<LLVM::LLVMPointerType, MemRefType>([&](auto type) {
                   // Skip the shadow
                   argIdx++;
@@ -121,7 +121,7 @@ struct PrintActivityAnalysisPass
       resultActivities[resIdx] =
           llvm::TypeSwitch<Type, enzyme::Activity>(resType)
               .Case<FloatType, ComplexType>(
-                  [](auto type) { return enzyme::Activity::enzyme_out; })
+                  [](auto type) { return enzyme::Activity::enzyme_active; })
               .Default(
                   [](Type type) { return enzyme::Activity::enzyme_const; });
     }
