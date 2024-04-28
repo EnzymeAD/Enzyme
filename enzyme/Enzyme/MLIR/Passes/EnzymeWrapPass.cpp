@@ -39,7 +39,7 @@ std::vector<DIFFE_TYPE> parseActivityString(StringRef inp) {
       ArgActivity.push_back(DIFFE_TYPE::CONSTANT);
     else if (str == "enzyme_dupnoneed")
       ArgActivity.push_back(DIFFE_TYPE::DUP_NONEED);
-    else if (str == "enzyme_out")
+    else if (str == "enzyme_active")
       ArgActivity.push_back(DIFFE_TYPE::OUT_DIFF);
     else {
       llvm::errs() << "unknown activity to parse, found: '" << str << "'\n";
