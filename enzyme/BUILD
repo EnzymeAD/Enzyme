@@ -144,7 +144,7 @@ cc_library(
     data = ["@llvm-project//clang:builtin_headers_gen"],
     visibility = ["//visibility:public"],
     deps = [
-        "bundled-includes",
+        ":bundled-includes",
         ":binop-derivatives",
         ":blas-attributor",
         ":blas-derivatives",
@@ -206,7 +206,7 @@ genrule(
     name = "bundled-includes",
     srcs = glob(["include/**"]) + ["scripts/bundle-includes.sh"],
     outs = ["bundled_includes.h"],
-    cmd = "scripts/bundle-includes.sh ./include $@",
+    cmd = "$(location :scripts/bundle-includes.sh) ./include $@",
 )
 genrule(
     name = "gen_enzyme-clang++",
