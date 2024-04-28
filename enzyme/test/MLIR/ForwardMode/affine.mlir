@@ -10,7 +10,7 @@ module {
     return %r : f64
   }
   func.func @dloop(%x : f64, %dx : f64) -> f64 {
-    %r = enzyme.fwddiff @loop(%x, %dx) { activity=[#enzyme<activity enzyme_dup>] } : (f64, f64) -> (f64)
+    %r = enzyme.fwddiff @loop(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64) -> (f64)
     return %r : f64
   }
   // CHECK: @fwddiffeloop
@@ -38,7 +38,7 @@ module {
     return %res : f64
   }
   func.func @dif_then_else(%x : f64, %dx : f64, %c : i1) -> f64 {
-    %r = enzyme.fwddiff @if_then_else(%x, %dx, %c) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>] } : (f64, f64, i1) -> (f64)
+    %r = enzyme.fwddiff @if_then_else(%x, %dx, %c) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64, i1) -> (f64)
     return %r : f64
   }
   // CHECK: @fwddiffeif_then_else
@@ -74,7 +74,7 @@ module {
     return %res : f64
   }
   func.func @dif_then(%x : f64, %dx : f64, %c : i1) -> f64 {
-    %r = enzyme.fwddiff @if_then(%x, %dx, %c) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>] } : (f64, f64, i1) -> (f64)
+    %r = enzyme.fwddiff @if_then(%x, %dx, %c) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64, i1) -> (f64)
     return %r : f64
   }
   // CHECK: @fwddiffeif_then

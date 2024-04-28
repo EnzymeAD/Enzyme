@@ -62,28 +62,29 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
       auto mop = activityAttr[truei];
       auto iattr = cast<mlir::enzyme::ActivityAttr>(mop);
       DIFFE_TYPE ty;
-        switch (val) {
-        case 0:
-          ty = DIFFE_TYPE::OUT_DIFF;
-          break;
-        case 1:
-          ty = DIFFE_TYPE::DUP_ARG;
-          break;
-        case 2:
-          ty = DIFFE_TYPE::CONSTANT;
-          break;
-        case 3:
-          ty = DIFFE_TYPE::DUP_NONEED;
-          break;
-        case 4:
-          ty = DIFFE_TYPE::OUT_DIFF;
-          assert(0 && "unsupported arg activenoneed");
-          break;
-        case 5:
-          ty = DIFFE_TYPE::CONSTANT;
-          assert(0 && "unsupported arg constnoneed");
-          break;
-        }
+
+      switch (iattr.getValue()) {
+      case mlir::enzyme::Activity::enzyme_active:
+        ty = DIFFE_TYPE::OUT_DIFF;
+        break;
+      case mlir::enzyme::Activity::enzyme_dup:
+        ty = DIFFE_TYPE::DUP_ARG;
+        break;
+      case mlir::enzyme::Activity::enzyme_const:
+        ty = DIFFE_TYPE::CONSTANT;
+        break;
+      case mlir::enzyme::Activity::enzyme_dupnoneed:
+        ty = DIFFE_TYPE::DUP_NONEED;
+        break;
+      case mlir::enzyme::Activity::enzyme_activenoneed:
+        ty = DIFFE_TYPE::OUT_DIFF;
+        assert(0 && "unsupported arg activenoneed");
+        break;
+      case mlir::enzyme::Activity::enzyme_constnoneed:
+        ty = DIFFE_TYPE::CONSTANT;
+        assert(0 && "unsupported arg constnoneed");
+        break;
+      }
 
       constants.push_back(ty);
       args.push_back(res);
@@ -109,24 +110,24 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
       DIFFE_TYPE ty;
       bool primalNeeded = true;
       switch (val) {
-      case 0:
+      case mlir::enzyme::Activity::enzyme_active:
         ty = DIFFE_TYPE::OUT_DIFF;
         break;
-      case 1:
+      case mlir::enzyme::Activity::enzyme_dup:
         ty = DIFFE_TYPE::DUP_ARG;
         break;
-      case 2:
+      case mlir::enzyme::Activity::enzyme_const:
         ty = DIFFE_TYPE::CONSTANT;
         break;
-      case 3:
+      case mlir::enzyme::Activity::enzyme_dupnoneed:
         ty = DIFFE_TYPE::DUP_NONEED;
         primalNeeded = false;
         break;
-      case 4:
+      case mlir::enzyme::Activity::enzyme_activenoneed:
         ty = DIFFE_TYPE::OUT_DIFF;
         primalNeeded = false;
         break;
-      case 5:
+      case mlir::enzyme::Activity::enzyme_constnoneed:
         ty = DIFFE_TYPE::CONSTANT;
         primalNeeded = false;
         break;
@@ -177,28 +178,28 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
         auto val = iattr.getValue();
         DIFFE_TYPE ty;
         switch (val) {
-        case 0:
+        case mlir::enzyme::Activity::enzyme_active:
           ty = DIFFE_TYPE::OUT_DIFF;
           break;
-        case 1:
+        case mlir::enzyme::Activity::enzyme_dup:
           ty = DIFFE_TYPE::DUP_ARG;
           break;
-        case 2:
+        case mlir::enzyme::Activity::enzyme_const:
           ty = DIFFE_TYPE::CONSTANT;
           break;
-        case 3:
+        case mlir::enzyme::Activity::enzyme_dupnoneed:
           ty = DIFFE_TYPE::DUP_NONEED;
           break;
-        case 4:
+        case mlir::enzyme::Activity::enzyme_activenoneed:
           ty = DIFFE_TYPE::OUT_DIFF;
           assert(0 && "unsupported arg activenoneed");
           break;
-        case 5:
+        case mlir::enzyme::Activity::enzyme_constnoneed:
           ty = DIFFE_TYPE::CONSTANT;
           assert(0 && "unsupported arg constnoneed");
           break;
         }
-        argActivities.push_back(ty);
+        arg_activities.push_back(ty);
         args.push_back(res);
         if (ty == DIFFE_TYPE::DUP_ARG || ty == DIFFE_TYPE::DUP_NONEED) {
           res = CI.getInputs()[call_idx];
@@ -223,24 +224,24 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
       DIFFE_TYPE ty;
       bool primalNeeded = true;
       switch (val) {
-      case 0:
+      case mlir::enzyme::Activity::enzyme_active:
         ty = DIFFE_TYPE::OUT_DIFF;
         break;
-      case 1:
+      case mlir::enzyme::Activity::enzyme_dup:
         ty = DIFFE_TYPE::DUP_ARG;
         break;
-      case 2:
+      case mlir::enzyme::Activity::enzyme_const:
         ty = DIFFE_TYPE::CONSTANT;
         break;
-      case 3:
+      case mlir::enzyme::Activity::enzyme_dupnoneed:
         ty = DIFFE_TYPE::DUP_NONEED;
         primalNeeded = false;
         break;
-      case 4:
+      case mlir::enzyme::Activity::enzyme_activenoneed:
         ty = DIFFE_TYPE::OUT_DIFF;
         primalNeeded = false;
         break;
-      case 5:
+      case mlir::enzyme::Activity::enzyme_constnoneed:
         ty = DIFFE_TYPE::CONSTANT;
         primalNeeded = false;
         break;
@@ -248,7 +249,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
       retType.push_back(ty);
       returnPrimals.push_back(primalNeeded);
       returnShadows.push_back(false);
-      if (act == DIFFE_TYPE::OUT_DIFF) {
+      if (ty == DIFFE_TYPE::OUT_DIFF) {
         mlir::Value res = CI.getInputs()[call_idx];
         ++call_idx;
         args.push_back(res);
