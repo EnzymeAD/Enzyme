@@ -2,9 +2,11 @@
 
 set -e
 
-INPUT_DIR=$1
+INPUT_DIR=$(dirname $1)/..
 OUTPUT_FILE=$2
 
+echo $INPUT_FILE
+echo $OUTPUT_FILE
 mkdir -p "$(dirname "$OUTPUT_FILE")"
 
 echo > "$OUTPUT_FILE"
