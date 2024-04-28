@@ -875,7 +875,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
     }
 
     // from julia code
-    if (GV->getName() == "small_typeof") {
+    if (GV->getName() == "small_typeof" || GV->getName() == "jl_small_typeof") {
       TypeTree T;
       T.insert({-1}, BaseType::Pointer);
       T.insert({-1, -1}, BaseType::Pointer);
@@ -1804,7 +1804,7 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
   }
   if (auto GV = dyn_cast<GlobalVariable>(gep.getPointerOperand())) {
     // from julia code, do not propagate int to operands
-    if (GV->getName() == "small_typeof") {
+    if (GV->getName() == "small_typeof" || GV->getName() == "jl_small_typeof") {
       TypeTree T;
       T.insert({-1}, BaseType::Pointer);
       T.insert({-1, -1}, BaseType::Pointer);
