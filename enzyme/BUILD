@@ -206,8 +206,10 @@ genrule(
     name = "bundled-includes",
     srcs = glob(["include/**"]) + ["scripts/bundle-includes.sh"],
     outs = ["bundled_includes.h"],
-    cmd = "$(location :scripts/bundle-includes.sh) ./include $@",
+    cmd = "$(location :scripts/bundle-includes.sh) $(location :include/enzyme/enzyme) $@"
 )
+
+
 genrule(
     name = "gen_enzyme-clang++",
     srcs = [":enzyme-clang"],

@@ -310,7 +310,7 @@ set(bundled_includes "${CMAKE_CURRENT_BINARY_DIR}/Enzyme/Clang/bundled_includes.
 list(APPEND ENZYME_INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/bundle-includes.sh)
 add_custom_command(OUTPUT ${bundled_includes}
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/bundle-includes.sh
-  ${CMAKE_CURRENT_SOURCE_DIR}/include/
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/enzyme/enzyme
   ${bundled_includes}
   DEPENDS ${ENZYME_INCLUDES}
   COMMENT "Bundling includes"
