@@ -125,6 +125,14 @@ llvm::cl::opt<std::string> EnzymeTruncateAll(
 #endif
 bool attributeKnownFunctions(llvm::Function &F) {
   bool changed = false;
+  if (F.getName() == "fprintf") {
+    for (auto &arg : F.args()) {
+      if (arg.getType()->isPointerTy()) {
+        arg.addAttr(Attribute::NoCapture);
+        changed = true;
+      }
+    }
+  }
   if (F.getName().contains("__enzyme_float") ||
       F.getName().contains("__enzyme_double") ||
       F.getName().contains("__enzyme_integer") ||
@@ -334,7 +342,8 @@ bool attributeKnownFunctions(llvm::Function &F) {
       F.getName() == "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_"
                      "createERmm" ||
       F.getName() ==
-          "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEmmm") {
+          "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEmmm" ||
+      F.getName() == "fprintf") {
     changed = true;
     F.addAttribute(
         AttributeList::FunctionIndex,
