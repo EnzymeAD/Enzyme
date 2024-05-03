@@ -11,6 +11,12 @@ double fabs(double);
 
 extern double __enzyme_error_estimate(void *, ...);
 
+void enzymeLogError(double err, const char *opcodeName,
+                    const char *intrinsicName) {
+  printf("Error = %e, Op = %s, Intrinsic = %s\n", err, opcodeName,
+         intrinsicName);
+}
+
 // An example from https://dl.acm.org/doi/10.1145/3371128
 double fun(double x) {
   double v1 = cos(x);
