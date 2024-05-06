@@ -2174,6 +2174,12 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        Function *logFunc = " << origName
          << ".getModule()->getFunction(\"enzymeLogError\");\n";
       os << "        if (logFunc) {\n"
+         << "            std::string moduleName = " << origName
+         << ".getModule()->getName().str();\n"
+         << "            std::string functionName = " << origName
+         << ".getParent()->getParent()->getName().str();\n"
+         << "            std::string blockName = " << origName
+         << ".getParent()->getName().str();\n"
          << "            Value *origValue = "
             "Builder2.CreateFPExt(gutils->getNewFromOriginal(&"
          << origName << "), Type::getDoubleTy(" << origName
@@ -2183,22 +2189,28 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << origName << ".getContext()));\n"
          << "            std::string opcodeName = " << origName
          << ".getOpcodeName();\n"
-         << "            std::string calleeName = \"\";\n"
-
+         << "            std::string calleeName = \"<N/A>\";\n"
          << "            if (auto CI = dyn_cast<CallInst>(&" << origName
          << ")) {\n"
          << "                if (Function *fn = CI->getCalledFunction()) {\n"
          << "                    calleeName = fn->getName();\n"
          << "                } else {\n"
-         << "                    calleeName = \"Unknown\";\n"
+         << "                    calleeName = \"<Unknown>\";\n"
          << "                }\n"
          << "            }\n"
+         << "            Value *moduleNameValue = "
+            "Builder2.CreateGlobalStringPtr(moduleName);\n"
+         << "            Value *functionNameValue = "
+            "Builder2.CreateGlobalStringPtr(functionName);\n"
+         << "            Value *blockNameValue = "
+            "Builder2.CreateGlobalStringPtr(blockName);\n"
          << "            Value *opcodeNameValue = "
             "Builder2.CreateGlobalStringPtr(opcodeName);\n"
          << "            Value *calleeNameValue = "
             "Builder2.CreateGlobalStringPtr(calleeName);\n"
          << "            Builder2.CreateCall(logFunc, {origValue, errValue, "
-            "opcodeNameValue, calleeNameValue});\n"
+            "opcodeNameValue, calleeNameValue, moduleNameValue, "
+            "functionNameValue, blockNameValue});\n"
          << "        }\n";
 
       os << "        setDiffe(&" << origName << ", res, Builder2);\n";
