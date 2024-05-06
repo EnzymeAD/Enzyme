@@ -51,6 +51,27 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 list(APPEND ENZYME_SRC SCEV/ScalarEvolutionExpander.cpp)
 list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
 
+# set(ENZYME_LINK_TARGETS)
+set(ENZYME_ENABLE_HERBIE 0 CACHE BOOL "Enable Herbie")
+
+if(ENZYME_ENABLE_HERBIE)
+  include(ExternalProject)
+    ExternalProject_Add(herbie
+        GIT_REPOSITORY https://github.com/herbie-fp/herbie
+        GIT_TAG 66dd3019bfbd508bcd397fbe22c1b4b9078c3dee
+        CONFIGURE_COMMAND ""
+        BUILD_COMMAND make minimal-distribution
+        BUILD_IN_SOURCE true
+        INSTALL_COMMAND make install
+        INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
+    )
+    list(APPEND ENZYME_SRC Herbie.cpp)
+    list(APPEND ENZYME_SRC herbie)
+    add_compile_definitions(ENZYME_ENABLE_HERBIE=1)
+    include_directories(${CMAKE_CURRENT_BINARY_DIR}/herbie/install/include)
+endif()
+
+
 # on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
 if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
     add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
@@ -72,6 +93,7 @@ if (${Clang_FOUND})
         intrinsics_gen
 	LINK_COMPONENTS
 	LLVM
+    ${ENZYME_LINK_TARGETS}
     )
 target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
 endif()
