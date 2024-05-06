@@ -1,4 +1,6 @@
 #![feature(autodiff)]
+#![feature(slice_first_last_chunk)]
+#![feature(slice_as_chunks)]
 #![feature(iter_next_chunk)]
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
@@ -83,35 +85,6 @@ fn brusselator_2d_loop(d_u: &mut [f64], d_v: &mut [f64], u: &[f64], v: &[f64], p
     }
 }
 
-//__attribute__((noinline))
-//void brusselator_2d_loop(double* __restrict du, double* __restrict dv, const double* __restrict u, const double* __restrict v, const double* __restrict p, double t) {
-//  double A = p[0];
-//  double B = p[1];
-//  double alpha = p[2];
-//  double dx = (double)1/(N-1);
-//
-//  alpha = alpha/(dx*dx);
-//
-//  for(int i=0; i<N; i++) {
-//    for(int j=0; j<N; j++) {
-//
-//      double x = RANGE(xmin, xmax, i, N);
-//      double y = RANGE(ymin, ymax, j, N);
-//
-//      unsigned ip1 = (i == N-1) ? i : (i+1);
-//      unsigned im1 = (i == 0) ? i : (i-1);
-//      unsigned jp1 = (j == N-1) ? j : (j+1);
-//      unsigned jm1 = (j == 0) ? j : (j-1);
-//
-//      double u2v = GET(u, i, j) * GET(u, i, j) * GET(v, i, j);
-//      GETnb(du, i, j) = alpha*( GET(u, im1, j) + GET(u, ip1, j) + GET(u, i, jp1) + GET(u, i, jm1) - 4 * GET(u, i, j))
-//                      + B + u2v - (A + 1)*GET(u, i, j) + brusselator_f(x, y, t);
-//      GETnb(dv, i, j) = alpha*( GET(v, im1, j) + GET(v, ip1, j) + GET(v, i, jp1) + GET(v, i, jm1) - 4 * GET(v, i, j))
-//                      + A * GET(u, i, j) - u2v;
-//    }
-//  }
-//}
-
 type state_type = [f64; 2 * N * N];
 
 fn lorenz(x: &state_type, dxdt: &mut state_type, t: f64) {
@@ -132,16 +105,15 @@ pub extern "C" fn rust_dbrusselator_2d_loop(p: *const f64, x: *const state_type,
     let mut dx2 = [0.; N * N];
     let (mut dadj1, mut dadj2) = adjoint.split_at_mut(N * N);
 
-    let (tmp1, tmp2) = x.split_at(N * N);
-    let x1: [f64; N * N] = tmp1.try_into().unwrap();
-    let x2: [f64; N * N] = tmp2.try_into().unwrap();
+    // https://discord.com/channels/273534239310479360/273541522815713281/1236945105601040446
+    let ([x1, x2], []): (&[[f64; N*N]], &[f64])= x.as_chunks() else { unreachable!() };
     
     let mut null1 = [0.; 2 * N * N];
     let mut null2 = [0.; 2 * N * N];
     dbrusselator_2d_loop(&mut null1, &mut dadj1,
                          &mut null2, &mut dadj2,
-                         &x1, &mut dx1, 
-                         &x2, &mut dx2,
+                         x1, &mut dx1, 
+                         x2, &mut dx2,
                          &p, &mut dp, t);
     dx1[0]
 }
@@ -154,13 +126,12 @@ fn foobar(p: &[f64;3], x: state_type, mut adjoint: state_type, t: f64) -> f64 {
     let (mut dadj1, mut dadj2) = adjoint.split_at_mut(N * N);
     let mut null1 = [0.; 2 * N * N];
     let mut null2 = [0.; 2 * N * N];
-    let (tmp1, tmp2) = x.split_at(N * N);
-    let x1: [f64; N * N] = tmp1.try_into().unwrap();
-    let x2: [f64; N * N] = tmp2.try_into().unwrap();
+    // https://discord.com/channels/273534239310479360/273541522815713281/1236945105601040446
+    let ([x1, x2], []): (&[[f64; N*N]], &[f64])= x.as_chunks() else { unreachable!() };
     dbrusselator_2d_loop(&mut null1, &mut dadj1,
                          &mut null2, &mut dadj2,
-                         &x1, &mut dx1, 
-                         &x2, &mut dx2,
+                         x1, &mut dx1, 
+                         x2, &mut dx2,
                          &p, &mut dp, t);
     dx1[0]
 }
