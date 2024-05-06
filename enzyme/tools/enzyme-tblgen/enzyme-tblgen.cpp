@@ -2174,27 +2174,31 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        Function *logFunc = " << origName
          << ".getModule()->getFunction(\"enzymeLogError\");\n";
       os << "        if (logFunc) {\n"
-         << "            Value *err = Builder2.CreateFPExt(res, "
+         << "            Value *origValue = "
+            "Builder2.CreateFPExt(gutils->getNewFromOriginal(&"
+         << origName << "), Type::getDoubleTy(" << origName
+         << ".getContext()));\n"
+         << "            Value *errValue = Builder2.CreateFPExt(res, "
             "Type::getDoubleTy("
          << origName << ".getContext()));\n"
          << "            std::string opcodeName = " << origName
          << ".getOpcodeName();\n"
-         << "            std::string intrinsicName = \"\";\n"
-         << "            if (auto CI = dyn_cast<CallInst>(&" << origName << ")) {\n"
-         << "                if (Function *fn = "
-            "CI->getCalledFunction()) {\n"
-         << "                    if (fn->isIntrinsic()) {\n"
-         << "                        intrinsicName = "
-            "llvm::Intrinsic::getName(fn->getIntrinsicID());\n"
-         << "                    }\n"
+         << "            std::string calleeName = \"\";\n"
+
+         << "            if (auto CI = dyn_cast<CallInst>(&" << origName
+         << ")) {\n"
+         << "                if (Function *fn = CI->getCalledFunction()) {\n"
+         << "                    calleeName = fn->getName();\n"
+         << "                } else {\n"
+         << "                    calleeName = \"Unknown\";\n"
          << "                }\n"
          << "            }\n"
          << "            Value *opcodeNameValue = "
             "Builder2.CreateGlobalStringPtr(opcodeName);\n"
-         << "            Value *intrinsicNameValue = "
-            "Builder2.CreateGlobalStringPtr(intrinsicName.c_str());\n"
-         << "            Builder2.CreateCall(logFunc, {err, "
-            "opcodeNameValue, intrinsicNameValue});\n"
+         << "            Value *calleeNameValue = "
+            "Builder2.CreateGlobalStringPtr(calleeName);\n"
+         << "            Builder2.CreateCall(logFunc, {origValue, errValue, "
+            "opcodeNameValue, calleeNameValue});\n"
          << "        }\n";
 
       os << "        setDiffe(&" << origName << ", res, Builder2);\n";
