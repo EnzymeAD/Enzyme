@@ -368,6 +368,106 @@ bool preserveNVVM(bool Begin, Function &F) {
       "__enzyme_register_derivative";
   constexpr static const char splitderivative_handler_name[] =
       "__enzyme_register_splitderivative";
+
+  if (Begin)
+    if (GlobalVariable *GA =
+            F.getParent()->getGlobalVariable("llvm.global.annotations")) {
+      if (GA->hasInitializer()) {
+        auto AOp = GA->getInitializer();
+        // all metadata are stored in an array of struct of metadata
+        if (ConstantArray *CA = dyn_cast<ConstantArray>(AOp)) {
+          // so iterate over the operands
+          SmallVector<Constant *, 1> replacements;
+          for (Value *CAOp : CA->operands()) {
+            // get the struct, which holds a pointer to the annotated function
+            // as first field, and the annotation as second field
+            if (ConstantStruct *CS = dyn_cast<ConstantStruct>(CAOp)) {
+              if (CS->getNumOperands() >= 2) {
+                // the second field is a pointer to a global constant Array that
+                // holds the string
+                if (GlobalVariable *GAnn = dyn_cast<GlobalVariable>(
+                        CS->getOperand(1)->getOperand(0))) {
+                  if (ConstantDataArray *A =
+                          dyn_cast<ConstantDataArray>(GAnn->getOperand(0))) {
+                    // we have the annotation! Check it's an epona annotation
+                    // and process
+                    StringRef AS = A->getAsCString();
+
+                    Constant *Val =
+                        cast<Constant>(CS->getOperand(0)->getOperand(0));
+                    while (auto CE = dyn_cast<ConstantExpr>(Val))
+                      Val = CE->getOperand(0);
+
+                    Function *Func = dyn_cast<Function>(Val);
+                    GlobalVariable *Glob = dyn_cast<GlobalVariable>(Val);
+
+                    if (AS == "enzyme_inactive" && Func && Func == &F) {
+                      Func->addAttribute(AttributeList::FunctionIndex,
+                                         Attribute::get(Func->getContext(),
+                                                        "enzyme_inactive"));
+                      changed = true;
+                      changed |= preserveLinkage(Begin, F);
+                      replacements.push_back(
+                          Constant::getNullValue(CAOp->getType()));
+                      continue;
+                    }
+
+                    if (AS == "enzyme_inactive" && Glob) {
+                      Glob->setMetadata("enzyme_inactive",
+                                        MDNode::get(Glob->getContext(), {}));
+                      changed = true;
+                      replacements.push_back(
+                          Constant::getNullValue(CAOp->getType()));
+                      continue;
+                    }
+
+                    if (AS == "enzyme_nofree" && Func && Func == &F) {
+                      Func->addAttribute(AttributeList::FunctionIndex,
+                                         Attribute::get(Func->getContext(),
+                                                        Attribute::NoFree));
+                      changed = true;
+                      changed |= preserveLinkage(Begin, F);
+                      replacements.push_back(
+                          Constant::getNullValue(CAOp->getType()));
+                      continue;
+                    }
+
+                    if (startsWith(AS, "enzyme_function_like") && Func &&
+                        Func == &F) {
+                      auto val = AS.substr(1 + AS.find('='));
+                      Func->addAttribute(AttributeList::FunctionIndex,
+                                         Attribute::get(Func->getContext(),
+                                                        "enzyme_math", val));
+                      changed = true;
+                      changed |= preserveLinkage(Begin, F);
+                      replacements.push_back(
+                          Constant::getNullValue(CAOp->getType()));
+                      continue;
+                    }
+
+                    if (AS == "enzyme_sparse_accumulate" && Func &&
+                        Func == &F) {
+                      Func->addAttribute(
+                          AttributeList::FunctionIndex,
+                          Attribute::get(Func->getContext(),
+                                         "enzyme_sparse_accumulate"));
+                      changed = true;
+                      changed |= preserveLinkage(Begin, F);
+                      replacements.push_back(
+                          Constant::getNullValue(CAOp->getType()));
+                      continue;
+                    }
+                  }
+                }
+              }
+            }
+            replacements.push_back(cast<Constant>(CAOp));
+          }
+          GA->setInitializer(ConstantArray::get(CA->getType(), replacements));
+        }
+      }
+    }
+
   for (GlobalVariable &g : F.getParent()->globals()) {
     if (g.getName().contains(gradient_handler_name) ||
         g.getName().contains(derivative_handler_name) ||
