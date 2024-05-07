@@ -2182,42 +2182,42 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << ".getParent()->getName().str();\n"
          << "            int funcIdx = -1, blockIdx = -1, instIdx = -1;\n"
          << "            auto funcIt = std::find_if(" << origName
-         << ".getModule()->functions().begin(), " << origName
-         << ".getModule()->functions().end(),\n"
+         << ".getModule()->begin(), " << origName
+         << ".getModule()->end(),\n"
             "              [&](const auto& func) { return &func == "
          << origName
          << ".getFunction(); });\n"
             "            if (funcIt != "
          << origName
-         << ".getModule()->functions().end()) {\n"
+         << ".getModule()->end()) {\n"
             "              funcIdx = "
             "std::distance("
-         << origName << ".getModule()->functions().begin(), funcIt);\n"
+         << origName << ".getModule()->begin(), funcIt);\n"
          << "            }\n"
          << "            auto blockIt = std::find_if(" << origName
-         << ".getFunction()->getBasicBlockList().begin(), " << origName
-         << ".getFunction()->getBasicBlockList().end(),\n"
+         << ".getFunction()->begin(), " << origName
+         << ".getFunction()->end(),\n"
             "              [&](const auto& block) { return &block == "
          << origName
          << ".getParent(); });\n"
             "            if (blockIt != "
          << origName
-         << ".getFunction()->getBasicBlockList().end()) {\n"
+         << ".getFunction()->end()) {\n"
             "              blockIdx = std::distance("
          << origName
-         << ".getFunction()->getBasicBlockList().begin(), blockIt);\n"
+         << ".getFunction()->begin(), blockIt);\n"
          << "            }\n"
          << "            auto instIt = std::find_if(" << origName
-         << ".getParent()->getInstList().begin(), " << origName
-         << ".getParent()->getInstList().end(),\n"
-            "              [&](const auto& inst) { return &inst == &"
+         << ".getParent()->begin(), " << origName
+         << ".getParent()->end(),\n"
+            "              [&](const auto& curr) { return &curr == &"
          << origName
          << "; });\n"
             "            if (instIt != "
          << origName
-         << ".getParent()->getInstList().end()) {\n"
+         << ".getParent()->end()) {\n"
             "              instIdx = std::distance("
-         << origName << ".getParent()->getInstList().begin(), instIt);\n"
+         << origName << ".getParent()->begin(), instIt);\n"
          << "            }\n"
          << "            Value *origValue = "
             "Builder2.CreateFPExt(gutils->getNewFromOriginal(&"
