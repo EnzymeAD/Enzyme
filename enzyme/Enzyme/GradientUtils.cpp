@@ -834,10 +834,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           if (orig && knownRecomputeHeuristic.find(orig) !=
                           knownRecomputeHeuristic.end()) {
             if (!knownRecomputeHeuristic[orig]) {
-              if (!legalRecompute(orig, available, &BuilderM))
-                return nullptr;
-
-              assert(isa<LoadInst>(orig) == isa<LoadInst>(val));
+              return nullptr;
             }
           }
         }
