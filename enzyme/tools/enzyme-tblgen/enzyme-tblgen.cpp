@@ -2170,7 +2170,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
       os << "        assert(res);\n";
 
-      // Call logging function
+      // Insert logging function call (optional)
       os << "        Function *logFunc = " << origName
          << ".getModule()->getFunction(\"enzymeLogError\");\n";
       os << "        if (logFunc) {\n"
