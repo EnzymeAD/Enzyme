@@ -2177,7 +2177,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << "            std::string moduleName = " << origName
          << ".getModule()->getName().str();\n"
          << "            std::string functionName = " << origName
-         << ".getParent()->getParent()->getName().str();\n"
+         << ".getFunction()->getName().str();\n"
          << "            std::string blockName = " << origName
          << ".getParent()->getName().str();\n"
          << "            Value *origValue = "
