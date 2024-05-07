@@ -2214,8 +2214,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << "            std::string calleeName = \"<N/A>\";\n"
          << "            if (auto CI = dyn_cast<CallInst>(&" << origName
          << ")) {\n"
-         << "                if (Function *fn = CI->getCalledFunction()) "
-            "{\n"
+         << "                if (Function *fn = CI->getCalledFunction()) {\n"
          << "                    calleeName = fn->getName();\n"
          << "                } else {\n"
          << "                    calleeName = \"<Unknown>\";\n"
