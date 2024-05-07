@@ -70,13 +70,13 @@ jobs:
       run: |
           brew update
           brew install llvm@${{ matrix.llvm }} make cmake
-          sudo python3 -m pip install --upgrade pip lit requests
+          sudo python3 -m pip install --upgrade --break-system-packages --user pip lit requests
     - uses: actions/checkout@v4
     - name: mkdir
       run: rm -rf build && mkdir build
     - name: cmake
       working-directory: build
-      run: cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
+      run: cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=/Users/runner/Library/Python/3.12/bin/lit -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
     - name: make
       working-directory: build
       run: make -j 3
@@ -108,12 +108,12 @@ jobs:
     - name: add llvm
       run: |
           brew install llvm@${{ matrix.llvm }} make cmake gcc
-          sudo python3 -m pip install --upgrade pip lit
+          sudo python3 -m pip install --upgrade --break-system-packages --user pip lit
     - uses: actions/checkout@v4
     - name: mkdir
       run: rm -rf build && mkdir build
     - name: cmake
       working-directory: build
       run: |
-          cmake ../enzyme -GXcode -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
+          cmake ../enzyme -GXcode -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=/Users/runner/Library/Python/3.12/bin/lit -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
           cmake --build . --parallel 3
