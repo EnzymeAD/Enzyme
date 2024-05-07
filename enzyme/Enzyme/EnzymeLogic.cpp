@@ -3330,8 +3330,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     auto PNtype = PNtypeT[{-1}];
 
     // TODO remove explicit type check and only use PNtype
-    if (PNtype == BaseType::Anything || PNtype == BaseType::Pointer ||
-        PNtype == BaseType::Integer || orig->getType()->isPointerTy())
+    if (!gutils->TR.anyFloat(orig, /*anythingIsFloat*/ false) ||
+        orig->getType()->isPointerTy())
       continue;
 
     Type *PNfloatType = PNtype.isFloat();
