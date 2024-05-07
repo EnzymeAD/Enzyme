@@ -1263,13 +1263,15 @@ LLVMValueRef EnzymeComputeByteOffsetOfGEP(LLVMBuilderRef B_r, LLVMValueRef V_r,
   IRBuilder<> &B = *unwrap(B_r);
   auto T = cast<IntegerType>(unwrap(T_r));
   auto width = T->getBitWidth();
-  auto gep = cast<GetElementPtrInst>(unwrap(V_r));
+  auto uw = unwrap(V_r);
+  GEPOperator *gep = isa<GetElementPtrInst>(uw)
+                         ? cast<GEPOperator>(cast<GetElementPtrInst>(uw))
+                         : cast<GEPOperator>(cast<ConstantExpr>(uw));
   auto &DL = B.GetInsertBlock()->getParent()->getParent()->getDataLayout();
 
   MapVector<Value *, APInt> VariableOffsets;
   APInt Offset(width, 0);
-  bool success =
-      collectOffset(cast<GEPOperator>(gep), DL, width, VariableOffsets, Offset);
+  bool success = collectOffset(gep, DL, width, VariableOffsets, Offset);
   (void)success;
   assert(success);
   Value *start = ConstantInt::get(T, Offset);
