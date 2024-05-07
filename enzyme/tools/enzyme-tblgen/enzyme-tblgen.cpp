@@ -2175,11 +2175,33 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << ".getModule()->getFunction(\"enzymeLogError\");\n";
       os << "        if (logFunc) {\n"
          << "            std::string moduleName = " << origName
-         << ".getModule()->getName().str();\n"
+         << ".getModule()->getModuleIdentifier() ;\n"
          << "            std::string functionName = " << origName
          << ".getFunction()->getName().str();\n"
          << "            std::string blockName = " << origName
          << ".getParent()->getName().str();\n"
+         << "            size_t funcIdx = 0, blockIdx = 0, instIdx = 0;\n"
+         << "            for (auto &func : " << origName
+         << ".getModule()->functions()) {\n"
+         << "                if (&func == " << origName << ".getFunction()) {\n"
+         << "                    break;\n"
+         << "                }\n"
+         << "                ++funcIdx;\n"
+         << "            }\n"
+         << "            for (auto &block : " << origName
+         << ".getFunction()->getBasicBlockList()) {\n"
+         << "                if (&block == " << origName << ".getParent()) {\n"
+         << "                    break;\n"
+         << "                }\n"
+         << "                ++blockIdx;\n"
+         << "            }\n"
+         << "            for (auto &inst : " << origName
+         << ".getParent()->getInstList()) {\n"
+         << "                if (&inst == &" << origName << ") {\n"
+         << "                    break;\n"
+         << "                }\n"
+         << "                ++instIdx;\n"
+         << "            }\n"
          << "            Value *origValue = "
             "Builder2.CreateFPExt(gutils->getNewFromOriginal(&"
          << origName << "), Type::getDoubleTy(" << origName
@@ -2192,7 +2214,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << "            std::string calleeName = \"<N/A>\";\n"
          << "            if (auto CI = dyn_cast<CallInst>(&" << origName
          << ")) {\n"
-         << "                if (Function *fn = CI->getCalledFunction()) {\n"
+         << "                if (Function *fn = CI->getCalledFunction()) "
+            "{\n"
          << "                    calleeName = fn->getName();\n"
          << "                } else {\n"
          << "                    calleeName = \"<Unknown>\";\n"
@@ -2201,15 +2224,18 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << "            Value *moduleNameValue = "
             "Builder2.CreateGlobalStringPtr(moduleName);\n"
          << "            Value *functionNameValue = "
-            "Builder2.CreateGlobalStringPtr(functionName);\n"
+            "Builder2.CreateGlobalStringPtr(functionName + \" (\" +"
+            "std::to_string(funcIdx) + \")\");\n"
          << "            Value *blockNameValue = "
-            "Builder2.CreateGlobalStringPtr(blockName);\n"
+            "Builder2.CreateGlobalStringPtr(blockName + \" (\" +"
+            "std::to_string(blockIdx) + \")\");\n"
          << "            Value *opcodeNameValue = "
-            "Builder2.CreateGlobalStringPtr(opcodeName);\n"
+            "Builder2.CreateGlobalStringPtr(opcodeName + \" (\" "
+            "+std::to_string(instIdx) + \")\");\n"
          << "            Value *calleeNameValue = "
             "Builder2.CreateGlobalStringPtr(calleeName);\n"
-         << "            Builder2.CreateCall(logFunc, {origValue, errValue, "
-            "opcodeNameValue, calleeNameValue, moduleNameValue, "
+         << "            Builder2.CreateCall(logFunc, {origValue, "
+            "errValue, opcodeNameValue, calleeNameValue, moduleNameValue, "
             "functionNameValue, blockNameValue});\n"
          << "        }\n";
 
