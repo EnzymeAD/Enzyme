@@ -2204,8 +2204,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << origName
          << ".getFunction()->end()) {\n"
             "              blockIdx = std::distance("
-         << origName
-         << ".getFunction()->begin(), blockIt);\n"
+         << origName << ".getFunction()->begin(), blockIt);\n"
          << "            }\n"
          << "            auto instIt = std::find_if(" << origName
          << ".getParent()->begin(), " << origName
