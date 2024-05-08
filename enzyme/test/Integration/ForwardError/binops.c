@@ -11,9 +11,12 @@ double fabs(double);
 
 extern double __enzyme_error_estimate(void *, ...);
 
+int errorLogCount = 0;
+
 void enzymeLogError(double res, double err, const char *opcodeName,
                     const char *calleeName, const char *moduleName,
                     const char *functionName, const char *blockName) {
+  ++errorLogCount;
   printf("Res = %e, Error = %e, Op = %s, Callee = %s, Module = %s, Function = "
          "%s, BasicBlock = %s\n",
          res, err, opcodeName, calleeName, moduleName, functionName, blockName);
@@ -25,7 +28,7 @@ double fun(double x) {
   double v2 = 1 - v1;
   double v3 = x * x;
   double v4 = v2 / v3;
-  double v5 = sin(v4);
+  double v5 = sin(v4); // Inactive -- logger is not invoked.
 
   printf("v1 = %.18e, v2 = %.18e, v3 = %.18e, v4 = %.18e, v5 = %.18e\n", v1, v2,
          v3, v4, v5);
@@ -39,4 +42,5 @@ int main() {
   printf("res = %.18e, abs error = %.18e, rel error = %.18e\n", res, error,
          fabs(error / res));
   APPROX_EQ(error, 2.2222222222e-2, 1e-4);
+  assert(4 == errorLogCount);
 }
