@@ -2474,6 +2474,127 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
 
+    /*
+     * int gsl_sf_legendre_array_e(const gsl_sf_legendre_t norm,
+                                   const size_t lmax,
+                                   const double x,
+                                   const double csphase,
+                                   double result_array[]);
+    */
+    // d L(n, x) / dx = L(n,x) * x * (n-1) + 1
+    if (funcName == "gsl_sf_legendre_array_e") {
+      if (gutils->isConstantValue(call.getArgOperand(4))) {
+        eraseIfUnused(call);
+        return true;
+      }
+      if (Mode == DerivativeMode::ReverseModePrimal) {
+        eraseIfUnused(call);
+        return true;
+      }
+      if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+        ValueType BundleTypes[5] = {ValueType::None, ValueType::None,
+                                    ValueType::None, ValueType::None,
+                                    ValueType::Shadow};
+        auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
+                                               /*lookup*/ true);
+
+        Type *types[6] = {
+            call.getOperand(0)->getType(), call.getOperand(1)->getType(),
+            call.getOperand(2)->getType(), call.getOperand(3)->getType(),
+            call.getOperand(4)->getType(), call.getOperand(4)->getType(),
+        };
+        FunctionType *FT = FunctionType::get(call.getType(), types, false);
+        auto F = called->getParent()->getOrInsertFunction(
+            "gsl_sf_legendre_deriv_array_e", FT);
+
+        IRBuilder<> invAllocs(gutils->inversionAllocs);
+        llvm::Value *args[6] = {
+            gutils->lookupM(gutils->getNewFromOriginal(call.getOperand(0)),
+                            Builder2),
+            gutils->lookupM(gutils->getNewFromOriginal(call.getOperand(1)),
+                            Builder2),
+            gutils->lookupM(gutils->getNewFromOriginal(call.getOperand(2)),
+                            Builder2),
+            gutils->lookupM(gutils->getNewFromOriginal(call.getOperand(3)),
+                            Builder2),
+            nullptr,
+            nullptr};
+
+        auto tmp = invAllocs.CreateAlloca(types[2], args[1]);
+        auto dtmp = invAllocs.CreateAlloca(types[2], args[1]);
+
+        args[4] = Builder2.CreateBitCast(tmp, types[4]);
+        args[5] = Builder2.CreateBitCast(dtmp, types[5]);
+
+        Builder2.CreateCall(F, args, Defs);
+
+        BasicBlock *currentBlock = Builder2.GetInsertBlock();
+
+        BasicBlock *loopBlock = gutils->addReverseBlock(
+            currentBlock, currentBlock->getName() + "_loop");
+        BasicBlock *endBlock =
+            gutils->addReverseBlock(loopBlock, currentBlock->getName() + "_end",
+                                    /*fork*/ true, /*push*/ false);
+
+        Builder2.CreateCondBr(
+            Builder2.CreateICmpEQ(args[1], Constant::getNullValue(types[1])),
+            endBlock, loopBlock);
+        Builder2.SetInsertPoint(loopBlock);
+
+        auto idx = Builder2.CreatePHI(types[1], 2);
+        idx->addIncoming(ConstantInt::get(types[1], 0, false), currentBlock);
+
+        auto acc_idx = Builder2.CreatePHI(types[2], 2);
+
+        Value *inc = Builder2.CreateAdd(
+            idx, ConstantInt::get(types[1], 1, false), "", true, true);
+        idx->addIncoming(inc, loopBlock);
+        acc_idx->addIncoming(Constant::getNullValue(types[2]), currentBlock);
+
+        Value *idxs[] = {idx};
+        Value *dtmp_idx = Builder2.CreateInBoundsGEP(types[2], dtmp, idxs);
+        Value *d_req = Builder2.CreateInBoundsGEP(
+            types[2],
+            Builder2.CreatePointerCast(
+                gutils->invertPointerM(call.getOperand(4), Builder2),
+                PointerType::getUnqual(types[2])),
+            idxs);
+
+        auto acc = Builder2.CreateFAdd(
+            acc_idx,
+            Builder2.CreateFMul(Builder2.CreateLoad(types[2], dtmp_idx),
+                                Builder2.CreateLoad(types[2], d_req)));
+        Builder2.CreateStore(Constant::getNullValue(types[2]), d_req);
+
+        acc_idx->addIncoming(acc, loopBlock);
+
+        Builder2.CreateCondBr(Builder2.CreateICmpEQ(inc, args[1]), endBlock,
+                              loopBlock);
+
+        Builder2.SetInsertPoint(endBlock);
+        {
+          auto found = gutils->reverseBlockToPrimal.find(endBlock);
+          assert(found != gutils->reverseBlockToPrimal.end());
+          SmallVector<BasicBlock *, 4> &vec =
+              gutils->reverseBlocks[found->second];
+          assert(vec.size());
+          vec.push_back(endBlock);
+        }
+
+        auto fin_idx = Builder2.CreatePHI(types[2], 2);
+        fin_idx->addIncoming(Constant::getNullValue(types[2]), currentBlock);
+        fin_idx->addIncoming(acc, loopBlock);
+
+        ((DiffeGradientUtils *)gutils)
+            ->addToDiffe(call.getOperand(2), fin_idx, Builder2, types[2]);
+
+        return true;
+      }
+    }
+
     // Functions that only modify pointers and don't allocate memory,
     // needs to be run on shadow in primal
     if (funcName == "_ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_"
