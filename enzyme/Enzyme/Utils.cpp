@@ -2658,13 +2658,17 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
   const char *cuCFloatType[] = {"S", "D"}; // c, z
   const char *cuFFloatType[] = {"s", "d"}; // c, z
   const char *cuCPrefixes[] = {"cublas"};
+  const char *cuSuffixes[] = {"", "_v2", "_64", "_v2_64"};
   for (auto t : llvm::enumerate(cuCFloatType)) {
     for (auto f : extractable) {
       for (auto p : cuCPrefixes) {
-        if (in == (Twine(p) + t.value() + f).str()) {
-          return BlasInfo{
-              t.value(), p, "", f, false,
-          };
+        for (auto s : cuSuffixes) {
+          if (in == (Twine(p) + t.value() + f + s).str()) {
+            bool is64 = llvm::StringRef(s).contains("64");
+            return BlasInfo{
+                t.value(), p, s, f, is64,
+            };
+          }
         }
       }
     }

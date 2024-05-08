@@ -38,8 +38,15 @@ void ow_dgemv(cublasHandle_t *handle, cublasOperation_t trans, int M, int N,
 
 double my_ddot(cublasHandle_t *handle, int N, double *__restrict__ X, int incx,
                double *__restrict__ Y, int incy) {
+  double res = cublasDdot(handle, N, X, incx, Y, incy);
+  inDerivative = true;
+  return res;
+}
+
+double my_ddot2(cublasHandle_t *handle, int N, double *__restrict__ X, int incx,
+                double *__restrict__ Y, int incy) {
   double res = 0.0;
-  cublasDdot(handle, N, X, incx, Y, incy, &res);
+  cublasDdot_v2(handle, N, X, incx, Y, incy, &res);
   inDerivative = true;
   return res;
 }
@@ -78,19 +85,69 @@ static void dotTests() {
                     enzyme_const, incB);
   foundCalls = calls;
 
+  init();
+
+  my_ddot(handle, N, A, incA, B, incB);
+
+  inDerivative = true;
+
+  cublasDaxpy(handle, N, 1.0, B, incB, dA, incA);
+  cublasDaxpy(handle, N, 1.0, A, incA, dB, incB);
+
+  checkTest(Test);
+
+  // Check memory of primal of expected derivative
+  checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+  // Check memory of primal of our derivative (if equal above, it
+  // should be the same).
+  checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+}
+
+static void dot2Tests() {
+
+  std::string Test = "DOTv2 active both ";
+  cublasHandle_t *handle = DEFAULT_CUBLAS_HANDLE;
+  BlasInfo inputs[6] = {
+      /*A*/ BlasInfo(A, N, incA),
+      /*B*/ BlasInfo(B, N, incB),
+      /*C*/ BlasInfo(C, M, incC), BlasInfo(), BlasInfo(), BlasInfo(),
+  };
+  init();
+  // cublasHandle_t handle;
+  my_ddot2(handle, N, A, incA, B, incB);
+  {
+    auto primal_stack_ret = (double *)calls[0].pout_arg1;
+    inputs[3] = BlasInfo(primal_stack_ret, 1, 1);
+  }
+
+  // Check memory of primal on own.
+  checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+  init();
+  __enzyme_autodiff((void *)my_ddot2, enzyme_const, handle, enzyme_const, N,
+                    enzyme_dup, A, dA, enzyme_const, incA, enzyme_dup, B, dB,
+                    enzyme_const, incB);
+  {
+    auto primal_stack_ret = (double *)calls[0].pout_arg1;
+    inputs[3] = BlasInfo(primal_stack_ret, 1, 1);
+  }
+  foundCalls = calls;
+
   auto stack_ret = (double*)foundCalls[1].pin_arg2;
   inputs[4] = BlasInfo(stack_ret, 1, 1);
 
   init();
 
-  my_ddot(handle, N, A, incA, B, incB);
+  my_ddot2(handle, N, A, incA, B, incB);
 
   calls[0].pout_arg1 = (double*)foundCalls[0].pout_arg1;
 
   inDerivative = true;
 
-  cublasDaxpy(handle, N, stack_ret, B, incB, dA, incA);
-  cublasDaxpy(handle, N, stack_ret, A, incA, dB, incB);
+  cublasDaxpy_v2(handle, N, stack_ret, B, incB, dA, incA);
+  cublasDaxpy_v2(handle, N, stack_ret, A, incA, dB, incB);
+  cudaMemset(stack_ret, 0, sizeof(double));
 
   checkTest(Test);
 
@@ -355,4 +412,6 @@ int main() {
   gemvTests();
 
   dotTests();
+
+  dot2Tests();
 }

@@ -227,12 +227,14 @@ enum class CallType {
   LASCL,
   COPY,
   LACPY,
+  MEMSET
 };
 
 enum class ABIType {
   FORTRAN,
   CBLAS,
-  CUBLAS
+  CUBLAS,
+  CUBLASv2,
 };
 
 struct BlasCall {
@@ -294,6 +296,9 @@ void printty(ABIType v) {
   case ABIType::CUBLAS:
     printf("CUBLAS");
     return;
+  case ABIType::CUBLASv2:
+    printf("CUBLASv2");
+    return;
   }
 }
 
@@ -332,6 +337,9 @@ void printty(CallType v) {
     return;
   case CallType::LASCL:
     printf("LASCL");
+    return;
+  case CallType::MEMSET:
+    printf("MEMSET");
     return;
   default:
     printf("UNKNOWN CALL (%d)", (int)v);
@@ -476,6 +484,17 @@ void printty(double v) {
 
 void printcall(BlasCall rcall) {
   switch (rcall.type) {
+  case CallType::MEMSET:
+    printf("MEMSET(abi=");
+    printty(rcall.abi);
+    printf(", dst=");
+    printty(rcall.pout_arg1);
+    printf(", val=");
+    printty(rcall.iarg1);
+    printf(", size=");
+    printty(rcall.iarg2);
+    printf(")");
+    return;
   case CallType::LACPY:
     printf("LACPY(abi=");
     printty(rcall.abi);
@@ -535,7 +554,7 @@ void printcall(BlasCall rcall) {
     printty(rcall.handle);
     printf(", N=");
     printty(rcall.iarg1);
-    if (rcall.abi != ABIType::CUBLAS) {
+    if (rcall.abi != ABIType::CUBLASv2) {
       printf(", alpha=");
       printty(rcall.farg1);
     } else {
@@ -567,10 +586,11 @@ void printcall(BlasCall rcall) {
     printty(rcall.pin_arg2);
     printf(", incy=");
     printty(rcall.iarg5);
-    if (rcall.abi == ABIType::CUBLAS)
-    printf(", result=");
-    printty(rcall.pout_arg1);
-    printf(")");
+    if (rcall.abi == ABIType::CUBLASv2) {
+      printf(", result=");
+      printty(rcall.pout_arg1);
+      printf(")");
+    }
     return;
   case CallType::GEMV:
     printf("GEMV(abi=");
@@ -932,50 +952,103 @@ __attribute__((noinline)) cublasStatus_t cublasDlacpy(cublasHandle_t *handle, ch
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
 
-__attribute__((noinline)) cublasStatus_t cublasDdot(cublasHandle_t *handle,
-                                                     int N, double *X, int incx,
-                                                     double *Y, int incy,
-                                                     double *result) {
-  BlasCall call = {ABIType::CUBLAS,handle,inDerivative,
-                     CallType::DOT,
-                     result,
-                     X,
-                     Y,
-                     UNUSED_DOUBLE,
-                     UNUSED_DOUBLE,
-                                 CUBLAS_LAYOUT,
-                     UNUSED_TRANS,
-                     UNUSED_TRANS,
-                     N,
-                     UNUSED_INT,
-                     UNUSED_INT,
-                     incx,
-                     incy,
-                     UNUSED_INT};
+__attribute__((noinline)) double cublasDdot(cublasHandle_t *handle, int N,
+                                            double *X, int incx, double *Y,
+                                            int incy) {
+  BlasCall call = {ABIType::CUBLAS,
+                   handle,
+                   inDerivative,
+                   CallType::DOT,
+                   UNUSED_POINTER,
+                   X,
+                   Y,
+                   UNUSED_DOUBLE,
+                   UNUSED_DOUBLE,
+                   CUBLAS_LAYOUT,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   N,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   incx,
+                   incy,
+                   UNUSED_INT};
+  calls.push_back(call);
+  return 3.15 + N;
+}
+
+__attribute__((noinline)) cublasStatus_t
+cublasDdot_v2(cublasHandle_t *handle, int N, double *X, int incx, double *Y,
+              int incy, double *result) {
+  BlasCall call = {ABIType::CUBLASv2,
+                   handle,
+                   inDerivative,
+                   CallType::DOT,
+                   result,
+                   X,
+                   Y,
+                   UNUSED_DOUBLE,
+                   UNUSED_DOUBLE,
+                   CUBLAS_LAYOUT,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   N,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   incx,
+                   incy,
+                   UNUSED_INT};
   *result = 3.15 + N;
   calls.push_back(call);
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
+__attribute__((noinline)) cublasStatus_t cublasDaxpy_v2(cublasHandle_t *handle,
+                                                        int N, double *alpha,
+                                                        double *X, int incx,
+                                                        double *Y, int incy) {
+  BlasCall call = {ABIType::CUBLASv2,
+                   handle,
+                   inDerivative,
+                   CallType::AXPY,
+                   Y,
+                   X,
+                   alpha,
+                   UNUSED_DOUBLE,
+                   UNUSED_DOUBLE,
+                   CUBLAS_LAYOUT,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   N,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   incx,
+                   incy,
+                   UNUSED_INT};
+  calls.push_back(call);
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
 __attribute__((noinline)) cublasStatus_t cublasDaxpy(cublasHandle_t *handle,
-                                                      int N, double *alpha,
-                                                      double *X, int incx,
-                                                      double *Y, int incy) {
-  BlasCall call = {ABIType::CUBLAS,handle,inDerivative,
-                     CallType::AXPY,
-                     Y,
-                     X,
-                     alpha,
-                     UNUSED_DOUBLE,
-                     UNUSED_DOUBLE,
-                     CUBLAS_LAYOUT,
-                     UNUSED_TRANS,
-                     UNUSED_TRANS,
-                     N,
-                     UNUSED_INT,
-                     UNUSED_INT,
-                     incx,
-                     incy,
-                     UNUSED_INT};
+                                                     int N, double alpha,
+                                                     double *X, int incx,
+                                                     double *Y, int incy) {
+  BlasCall call = {ABIType::CUBLAS,
+                   handle,
+                   inDerivative,
+                   CallType::AXPY,
+                   Y,
+                   X,
+                   UNUSED_POINTER,
+                   alpha,
+                   UNUSED_DOUBLE,
+                   CUBLAS_LAYOUT,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   N,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   incx,
+                   incy,
+                   UNUSED_INT};
   calls.push_back(call);
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
@@ -1038,6 +1111,15 @@ __attribute__((noinline)) cublasStatus_t cublasDcopy(cublasHandle_t *handle,
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
 
+__attribute__((noinline)) cublasStatus_t cudaMemset(void *dst, int value,
+                                                    size_t size) {
+  calls.push_back((BlasCall){
+      ABIType::CUBLAS, UNUSED_HANDLE, inDerivative, CallType::MEMSET, dst,
+      UNUSED_POINTER, UNUSED_POINTER, UNUSED_DOUBLE, UNUSED_DOUBLE,
+      CUBLAS_LAYOUT, UNUSED_TRANS, UNUSED_TRANS, value, (int)size, UNUSED_INT,
+      UNUSED_INT, UNUSED_INT, UNUSED_INT});
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
 }
 
 enum class ValueType { Matrix, Vector };
@@ -1092,7 +1174,12 @@ BlasInfo pointer_to_index(void *v, BlasInfo inputs[6]) {
   for (int i = 3; i < 6; i++)
     if (inputs[i].ptr == v)
       return inputs[i];
+  if (v == UNUSED_POINTER) {
+    auto bi = BlasInfo();
+    bi.ptr = v;
+  }
   printty(v);
+  fflush(0);
   assert(0 && " illegal pointer to invert");
 }
 
@@ -1230,7 +1317,7 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     checkVector(X, "X", /*len=*/N, /*inc=*/incX, test, rcall, trace);
     checkVector(Y, "Y", /*len=*/N, /*inc=*/incY, test, rcall, trace);
 
-    if (rcall.abi == ABIType::CUBLAS) {
+    if (rcall.abi == ABIType::CUBLASv2) {
       auto cualpha = pointer_to_index(rcall.pin_arg2, inputs);
       checkVector(cualpha, "alpha", /*len=*/1, /*inc=*/1, test, rcall, trace);
     }
@@ -1246,6 +1333,11 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
 
     checkVector(X, "X", /*len=*/N, /*inc=*/incX, test, rcall, trace);
     checkVector(Y, "Y", /*len=*/N, /*inc=*/incY, test, rcall, trace);
+
+    if (rcall.abi == ABIType::CUBLASv2) {
+      auto curesult = pointer_to_index(rcall.pout_arg1, inputs);
+      checkVector(curesult, "result", /*len=*/1, /*inc=*/1, test, rcall, trace);
+    }
     return;
   }
   case CallType::GEMV: {
@@ -1367,6 +1459,14 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     checkVector(Y, "Y", /*len=*/N, /*inc=*/incY, test, rcall, trace);
     checkMatrix(A, "A", layout, /*rows=*/M, /*cols=*/N, /*ld=*/incA, test,
                 rcall, trace);
+    return;
+  }
+  case CallType::MEMSET: {
+    auto Y = pointer_to_index(rcall.pout_arg1, inputs);
+    auto val = rcall.iarg1;
+    auto size = rcall.iarg2;
+    checkVector(Y, "Y", /*len=*/size / sizeof(double), /*inc=*/1, test, rcall,
+                trace);
     return;
   }
   case CallType::COPY: {
