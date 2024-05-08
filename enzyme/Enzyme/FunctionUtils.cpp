@@ -1340,6 +1340,7 @@ void setFullWillReturn(Function *NewF) {
   }
 }
 
+#if LLVM_VERSION_MAJOR >= 12
 void SplitPHIs(llvm::Function &F) {
   SmallVector<PHINode *, 1> todo;
   for (auto &BB : F) {
@@ -1376,17 +1377,19 @@ void SplitPHIs(llvm::Function &F) {
       }
       replacements.push_back(nPhi);
     }
-    size_t idx = 0;
     for (auto &U : make_early_inc_range(cur->uses())) {
-#if LLVM_VERSION_MAJOR >= 12
-      U.set(replacements[idx]);
-#else
-      U->set(replacements[idx]);
-#endif
-      idx++;
+      auto user = cast<ExtractValueInst>(U.getUser());
+      Value *rep = replacements[user->getIndices()[0]];
+      IRBuilder<> B(user);
+      if (user->getIndices().size() > 1)
+        rep = B.CreateExtractValue(rep, user->getIndices().slice(1));
+      assert(rep->getType() == user->getType());
+      user->replaceAllUsesWith(rep);
+      user->eraseFromParent();
     }
   }
 }
+#endif
 
 Function *PreProcessCache::preprocessForClone(Function *F,
                                               DerivativeMode mode) {
@@ -1863,7 +1866,9 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   }
 
   {
+#if LLVM_VERSION_MAJOR >= 12
     SplitPHIs(*NewF);
+#endif
     PreservedAnalyses PA;
     PA.preserve<AssumptionAnalysis>();
     PA.preserve<TargetLibraryAnalysis>();
