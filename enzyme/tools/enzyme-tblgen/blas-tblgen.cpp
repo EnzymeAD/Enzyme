@@ -270,6 +270,8 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
   os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
   os << "  const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
         "\"cublas\";\n";
+  os << "const bool cublasv2 = blas.prefix == "
+        "\"cublas\" && StringRef(blas.suffix).contains(\"v2\");\n";
   os << "  Value *cacheval = nullptr;\n\n";
   // lv 2 or 3 functions have an extra arg under the cblas_ abi
   os << "  const int offset = (";
@@ -328,7 +330,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
     os << "\n";
   }
   if (get_blas_ret_ty(pattern.getName()) == "fpType") {
-    os << "  if (cublas) {\n"
+    os << "  if (cublasv2) {\n"
        << "    const int pos_ret = " << nameVec.size() << ";\n"
        << "    const auto orig_ret = call.getArgOperand(pos_ret);\n"
        << "    auto arg_ret = gutils->getNewFromOriginal(orig_ret);\n"
@@ -1475,7 +1477,8 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
      << "    }\n\n";
 
   if (hasDiffeRetVal) {
-    os << "    Value *dif = cublas ? gutils->invertPointerM(call.getArgOperand("
+    os << "    Value *dif = cublasv2 ? "
+          "gutils->invertPointerM(call.getArgOperand("
        << typeMap.size() << " + offset), Builder2) : diffe(&call, Builder2);\n";
   }
 
@@ -1554,7 +1557,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
 
   if (hasDiffeRetVal) {
     os << ((first) ? "" : ", ") << "Value *dif) {\n"
-       << "        if (byRef && !cublas) {\n"
+       << "        if (byRef && !cublasv2) {\n"
        << "          Builder2.CreateStore(dif, alloc);\n"
        << "          dif = alloc;\n"
        << "        }\n";
@@ -1608,7 +1611,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
         std::string dfnc_ret_ty = get_blas_ret_ty(dfnc_name);
 
         os << "    llvm::FunctionType *FT" << dfnc_name << ";\n";
-        os << "    if (cublas) {\n"
+        os << "    if (cublasv2) {\n"
            << "      FT" << dfnc_name
            << " = FunctionType::get(cublas_retty, tys, false);\n"
            << "    } else {\n"
@@ -1694,7 +1697,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
               // returns, so assume it's the last step of the sequence
               // and update the diffe accordingly
               assert(i == ruleDag->getNumArgs() - 1);
-              os << "    if (cublas) assert(false && "
+              os << "    if (cublasv2) assert(false && "
                     "\"cublas not implemented\");\n";
               emit_fret_call(dfnc_name, argName, name, "Builder2", os);
             } else {
@@ -1746,7 +1749,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     }
   }
   if (hasDiffeRetVal) {
-    os << "    if (cublas)\n";
+    os << "    if (cublasv2)\n";
     os << "      Builder2.CreateStore(Constant::getNullValue(fpType), dif);\n";
   }
 
@@ -1766,7 +1769,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   }
   if (hasDiffeRetVal) {
     os << ((first) ? "" : ", ") << "dif);\n";
-    os << "  if (!cublas)\n"
+    os << "  if (!cublasv2)\n"
        << "    setDiffe(\n"
        << "      &call,\n"
        << "      "

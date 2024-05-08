@@ -6,6 +6,8 @@ void emit_BLASTypes(raw_ostream &os) {
   os << "const bool cblas = blas.prefix == \"cblas_\";\n";
   os << "const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
         "\"cublas\";\n";
+  os << "const bool cublasv2 = blas.prefix == "
+        "\"cublas\" && StringRef(blas.suffix).contains(\"v2\");\n";
 
   os << "TypeTree ttFloat;\n"
      << "llvm::Type *floatType; \n"
@@ -25,7 +27,8 @@ void emit_BLASTypes(raw_ostream &os) {
 
   os << "TypeTree ttFloatRet;\n"
      << "ttFloatRet.insert({-1},floatType);\n"
-     << "TypeTree ttCuBlasRet;\n";
+     << "TypeTree ttCuBlasRet;\n"
+     << "ttCuBlasRet.insert({-1},BaseType::Integer);\n";
 
   os << "TypeTree ttInt;\n"
      << "if (byRef) {\n"
@@ -146,18 +149,20 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
       break;
     }
   }
-  os << "  if (cublas) {\n"
-     << "    updateAnalysis(&call, ttCuBlasRet, &call);\n"
-     << "  }\n";
   if (has_active_return(name)) {
     // under cublas, these functions have an extra return ptr argument
     size_t ptrRetArg = argTypeMap.size();
-    os << "  if (cublas) {\n"
+    os << "  if (cublasv2) {\n"
        << "    updateAnalysis(call.getArgOperand(" << ptrRetArg
        << " + offset), ttPtr, &call);\n"
+       << "    updateAnalysis(&call, ttCuBlasRet, &call);\n"
        << "  } else {\n"
        << "    assert(call.getType()->isFloatingPointTy());\n"
        << "    updateAnalysis(&call, ttFloatRet, &call);\n"
+       << "  }\n";
+  } else {
+    os << "  if (cublas) {\n"
+       << "    updateAnalysis(&call, ttCuBlasRet, &call);\n"
        << "  }\n";
   }
 
