@@ -2510,7 +2510,6 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         auto F = called->getParent()->getOrInsertFunction(
             "gsl_sf_legendre_deriv_array_e", FT);
 
-        IRBuilder<> invAllocs(gutils->inversionAllocs);
         llvm::Value *args[6] = {
             gutils->lookupM(gutils->getNewFromOriginal(call.getOperand(0)),
                             Builder2),
@@ -2523,13 +2522,24 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             nullptr,
             nullptr};
 
-        auto tmp = invAllocs.CreateAlloca(types[2], args[1]);
-        auto dtmp = invAllocs.CreateAlloca(types[2], args[1]);
+#if LLVM_VERSION_MAJOR >= 13
+        Type *stackTys[] = {getInt8PtrTy(Builder2.getContext())};
+#else
+        ArrayRef<Type *> stackTys = {};
+#endif
+        auto stack = Builder2.CreateIntrinsic(Intrinsic::stacksave,
+                                              ArrayRef<Type *>(stackTys),
+                                              ArrayRef<Value *>());
+        auto tmp = Builder2.CreateAlloca(types[2], args[1]);
+        auto dtmp = Builder2.CreateAlloca(types[2], args[1]);
+        Builder2.CreateLifetimeStart(tmp);
+        Builder2.CreateLifetimeStart(dtmp);
 
         args[4] = Builder2.CreateBitCast(tmp, types[4]);
         args[5] = Builder2.CreateBitCast(dtmp, types[5]);
 
         Builder2.CreateCall(F, args, Defs);
+        Builder2.CreateLifetimeEnd(tmp);
 
         BasicBlock *currentBlock = Builder2.GetInsertBlock();
 
@@ -2587,6 +2597,12 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         auto fin_idx = Builder2.CreatePHI(types[2], 2);
         fin_idx->addIncoming(Constant::getNullValue(types[2]), currentBlock);
         fin_idx->addIncoming(acc, loopBlock);
+
+        Builder2.CreateLifetimeEnd(dtmp);
+
+        Builder2.CreateIntrinsic(Intrinsic::stackrestore,
+                                 ArrayRef<Type *>(stackTys),
+                                 ArrayRef<Value *>(stack));
 
         ((DiffeGradientUtils *)gutils)
             ->addToDiffe(call.getOperand(2), fin_idx, Builder2, types[2]);

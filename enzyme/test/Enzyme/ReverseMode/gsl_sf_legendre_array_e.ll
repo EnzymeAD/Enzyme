@@ -25,10 +25,17 @@ declare double @__enzyme_autodiff(...)
 
 ; CHECK: define internal { double } @diffetester(i32 %a0, i32 %a1, double %x, double %a3, double* %a4, double* %"a4'") 
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[i0:.+]] = alloca double, i32 %a1
-; CHECK-NEXT:   %[[i1:.+]] = alloca double, i32 %a1
 ; CHECK-NEXT:   %c = call i32 @gsl_sf_legendre_array_e(i32 %a0, i32 %a1, double %x, double %a3, double* %a4)
+; CHECK-NEXT:   %[[l0:.+]] = call i8* @llvm.stacksave
+; CHECK-NEXT:   %[[i0:.+]] = alloca double, i32 %a1, align 8
+; CHECK-NEXT:   %[[i1:.+]] = alloca double, i32 %a1, align 8
+; CHECK-NEXT:   %[[l3:.+]] = bitcast double* %[[i0]] to i8*
+; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 -1, i8* %[[l3]])
+; CHECK-NEXT:   %[[l4:.+]] = bitcast double* %[[i1]] to i8*
+; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 -1, i8* %[[l4]])
 ; CHECK-NEXT:   %[[i2:.+]] = call i32 @gsl_sf_legendre_deriv_array_e(i32 %a0, i32 %a1, double %x, double %a3, double* %[[i0]], double* %[[i1]])
+; CHECK-NEXT:   %[[l6:.+]] = bitcast double* %[[i0]] to i8*
+; CHECK-NEXT:   call void @llvm.lifetime.end.p0i8(i64 -1, i8* %[[l6]])
 ; CHECK-NEXT:   %[[i3:.+]] = icmp eq i32 %a1, 0
 ; CHECK-NEXT:   br i1 %[[i3]], label %invertentry_end, label %invertentry_loop
 
@@ -48,6 +55,9 @@ declare double @__enzyme_autodiff(...)
 
 ; CHECK: invertentry_end:
 ; CHECK-NEXT:   %[[res:.+]] = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %[[p12]], %invertentry_loop ]
+; CHECK-NEXT:   %[[l19:.+]] = bitcast double* %[[i1]] to i8*
+; CHECK-NEXT:   call void @llvm.lifetime.end.p0i8(i64 -1, i8* %[[l19]])
+; CHECK-NEXT:   call void @llvm.stackrestore
 ; CHECK-NEXT:   %[[i11:.+]] = insertvalue { double } {{(undef|poison)}}, double %[[res]], 0
 ; CHECK-NEXT:   ret { double } %[[i11]]
 ; CHECK-NEXT: }
