@@ -1340,6 +1340,54 @@ void setFullWillReturn(Function *NewF) {
   }
 }
 
+void SplitPHIs(llvm::Function &F) {
+  SmallVector<PHINode *, 1> todo;
+  for (auto &BB : F) {
+    for (auto &I : BB) {
+      if (!isa<PHINode>(&I))
+        break;
+      if (!isa<StructType>(I.getType()))
+        continue;
+      bool justExtract = true;
+      for (auto U : I.users()) {
+        if (!isa<ExtractValueInst>(U)) {
+          justExtract = false;
+          break;
+        }
+      }
+      if (!justExtract)
+        continue;
+      todo.push_back(cast<PHINode>(&I));
+    }
+  }
+  while (todo.size()) {
+    auto cur = todo.pop_back_val();
+    IRBuilder<> B(cur);
+    auto ST = dyn_cast<StructType>(cur->getType());
+    SmallVector<PHINode *, 1> replacements;
+    for (size_t i = 0, e = ST->getNumElements(); i < e; i++) {
+      auto nPhi =
+          B.CreatePHI(ST->getElementType(i), cur->getNumIncomingValues(),
+                      cur->getName() + ".extract." + std::to_string(i));
+      for (auto &&[blk, val] :
+           llvm::zip(cur->blocks(), cur->incoming_values())) {
+        IRBuilder B2(blk->getTerminator());
+        nPhi->addIncoming(GradientUtils::extractMeta(B2, val, i), blk);
+      }
+      replacements.push_back(nPhi);
+    }
+    size_t idx = 0;
+    for (auto &U : make_early_inc_range(cur->uses())) {
+#if LLVM_VERSION_MAJOR >= 12
+      U.set(replacements[idx]);
+#else
+      U->set(replacements[idx]);
+#endif
+      idx++;
+    }
+  }
+}
+
 Function *PreProcessCache::preprocessForClone(Function *F,
                                               DerivativeMode mode) {
 
@@ -1812,6 +1860,21 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       auto PA = SimplifyCFGPass(scfgo).run(*NewF, FAM);
       FAM.invalidate(*NewF, PA);
     }
+  }
+
+  {
+    SplitPHIs(*NewF);
+    PreservedAnalyses PA;
+    PA.preserve<AssumptionAnalysis>();
+    PA.preserve<TargetLibraryAnalysis>();
+    PA.preserve<LoopAnalysis>();
+    PA.preserve<DominatorTreeAnalysis>();
+    PA.preserve<PostDominatorTreeAnalysis>();
+    PA.preserve<TypeBasedAA>();
+    PA.preserve<BasicAA>();
+    PA.preserve<ScopedNoAliasAA>();
+    PA.preserve<ScalarEvolutionAnalysis>();
+    PA.preserve<PhiValuesAnalysis>();
   }
 
   if (mode != DerivativeMode::ForwardMode)
