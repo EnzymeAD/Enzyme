@@ -43,6 +43,7 @@
 #include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/SetOperations.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
@@ -1340,6 +1341,78 @@ void setFullWillReturn(Function *NewF) {
   }
 }
 
+#if LLVM_VERSION_MAJOR >= 12
+void SplitPHIs(llvm::Function &F) {
+  SetVector<Instruction *> todo;
+  for (auto &BB : F) {
+    for (auto &I : BB) {
+      if (isa<PHINode>(&I)) {
+        todo.insert(&I);
+      } else if (isa<SelectInst>(&I)) {
+        todo.insert(&I);
+      }
+    }
+  }
+  while (todo.size()) {
+    auto cur = todo.pop_back_val();
+    IRBuilder<> B(cur);
+    auto ST = dyn_cast<StructType>(cur->getType());
+    if (!ST)
+      continue;
+    bool justExtract = true;
+    for (auto U : cur->users()) {
+      if (!isa<ExtractValueInst>(U)) {
+        justExtract = false;
+        break;
+      }
+      if (cast<ExtractValueInst>(U)->getIndices().size() == 0) {
+        justExtract = false;
+        break;
+      }
+    }
+    if (!justExtract)
+      continue;
+
+    SmallVector<Value *, 1> replacements;
+    for (size_t i = 0, e = ST->getNumElements(); i < e; i++) {
+      if (auto cur2 = dyn_cast<PHINode>(cur)) {
+        auto nPhi =
+            B.CreatePHI(ST->getElementType(i), cur2->getNumIncomingValues(),
+                        cur->getName() + ".extract." + std::to_string(i));
+        for (auto &&[blk, val] :
+             llvm::zip(cur2->blocks(), cur2->incoming_values())) {
+          IRBuilder B2(blk->getTerminator());
+          nPhi->addIncoming(GradientUtils::extractMeta(B2, val, i), blk);
+        }
+        replacements.push_back(nPhi);
+        todo.insert(nPhi);
+      } else {
+        auto cur3 = cast<SelectInst>(cur);
+        auto rep = B.CreateSelect(
+            cur3->getCondition(),
+            GradientUtils::extractMeta(B, cur3->getTrueValue(), i),
+            GradientUtils::extractMeta(B, cur3->getFalseValue(), i),
+            cur->getName() + ".extract." + std::to_string(i));
+        replacements.push_back(rep);
+        if (auto sel = dyn_cast<SelectInst>(rep))
+          todo.insert(sel);
+      }
+    }
+    for (auto &U : make_early_inc_range(cur->uses())) {
+      auto user = cast<ExtractValueInst>(U.getUser());
+      Value *rep = replacements[user->getIndices()[0]];
+      IRBuilder<> B(user);
+      if (user->getIndices().size() > 1)
+        rep = B.CreateExtractValue(rep, user->getIndices().slice(1));
+      assert(rep->getType() == user->getType());
+      user->replaceAllUsesWith(rep);
+      user->eraseFromParent();
+    }
+    cur->eraseFromParent();
+  }
+}
+#endif
+
 Function *PreProcessCache::preprocessForClone(Function *F,
                                               DerivativeMode mode) {
 
@@ -1812,6 +1885,23 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       auto PA = SimplifyCFGPass(scfgo).run(*NewF, FAM);
       FAM.invalidate(*NewF, PA);
     }
+  }
+
+  {
+#if LLVM_VERSION_MAJOR >= 12
+    SplitPHIs(*NewF);
+#endif
+    PreservedAnalyses PA;
+    PA.preserve<AssumptionAnalysis>();
+    PA.preserve<TargetLibraryAnalysis>();
+    PA.preserve<LoopAnalysis>();
+    PA.preserve<DominatorTreeAnalysis>();
+    PA.preserve<PostDominatorTreeAnalysis>();
+    PA.preserve<TypeBasedAA>();
+    PA.preserve<BasicAA>();
+    PA.preserve<ScopedNoAliasAA>();
+    PA.preserve<ScalarEvolutionAnalysis>();
+    PA.preserve<PhiValuesAnalysis>();
   }
 
   if (mode != DerivativeMode::ForwardMode)
