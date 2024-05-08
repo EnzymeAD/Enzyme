@@ -1749,8 +1749,19 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     }
   }
   if (hasDiffeRetVal) {
-    os << "    if (cublasv2)\n";
-    os << "      Builder2.CreateStore(Constant::getNullValue(fpType), dif);\n";
+    os << "    if (cublasv2) {\n";
+    os << "      auto mod = gutils->oldFunc->getParent();\n";
+    os << "      auto DL = mod->getDataLayout();\n";
+    os << "      Value* inps[] = { gutils->lookupM(dif, Builder2), "
+          "Constant::getNullValue(Type::getInt32Ty(dif->getContext())), "
+          "ConstantInt::get(Type::getInt64Ty(dif->getContext()), "
+          "DL.getTypeSizeInBits(fpType) / 8) };\n";
+    os << "      Type *tys[] = { inps[0]->getType(), inps[1]->getType(), "
+          "inps[2]->getType() };\n";
+    os << "      Builder2.CreateCall(mod->getOrInsertFunction(\"cudaMemset\", "
+          "FunctionType::get(Type::getVoidTy(dif->getContext()), tys)), "
+          "inps);\n";
+    os << "   }\n";
   }
 
   os << "    },\n"

@@ -227,6 +227,7 @@ enum class CallType {
   LASCL,
   COPY,
   LACPY,
+  MEMSET
 };
 
 enum class ABIType {
@@ -336,6 +337,9 @@ void printty(CallType v) {
     return;
   case CallType::LASCL:
     printf("LASCL");
+    return;
+  case CallType::MEMSET:
+    printf("MEMSET");
     return;
   default:
     printf("UNKNOWN CALL (%d)", (int)v);
@@ -480,6 +484,17 @@ void printty(double v) {
 
 void printcall(BlasCall rcall) {
   switch (rcall.type) {
+  case CallType::MEMSET:
+    printf("MEMSET(abi=");
+    printty(rcall.abi);
+    printf(", dst=");
+    printty(rcall.pout_arg1);
+    printf(", val=");
+    printty(rcall.iarg1);
+    printf(", size=");
+    printty(rcall.iarg2);
+    printf(")");
+    return;
   case CallType::LACPY:
     printf("LACPY(abi=");
     printty(rcall.abi);
@@ -1096,6 +1111,15 @@ __attribute__((noinline)) cublasStatus_t cublasDcopy(cublasHandle_t *handle,
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
 
+__attribute__((noinline)) cublasStatus_t cudaMemset(void *dst, int value,
+                                                    size_t size) {
+  calls.push_back((BlasCall){
+      ABIType::CUBLAS, UNUSED_HANDLE, inDerivative, CallType::MEMSET, dst,
+      UNUSED_POINTER, UNUSED_POINTER, UNUSED_DOUBLE, UNUSED_DOUBLE,
+      CUBLAS_LAYOUT, UNUSED_TRANS, UNUSED_TRANS, value, (int)size, UNUSED_INT,
+      UNUSED_INT, UNUSED_INT, UNUSED_INT});
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
 }
 
 enum class ValueType { Matrix, Vector };
@@ -1435,6 +1459,14 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     checkVector(Y, "Y", /*len=*/N, /*inc=*/incY, test, rcall, trace);
     checkMatrix(A, "A", layout, /*rows=*/M, /*cols=*/N, /*ld=*/incA, test,
                 rcall, trace);
+    return;
+  }
+  case CallType::MEMSET: {
+    auto Y = pointer_to_index(rcall.pout_arg1, inputs);
+    auto val = rcall.iarg1;
+    auto size = rcall.iarg2;
+    checkVector(Y, "Y", /*len=*/size / sizeof(double), /*inc=*/1, test, rcall,
+                trace);
     return;
   }
   case CallType::COPY: {

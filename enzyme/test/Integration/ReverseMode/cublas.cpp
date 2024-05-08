@@ -147,6 +147,7 @@ static void dot2Tests() {
 
   cublasDaxpy_v2(handle, N, stack_ret, B, incB, dA, incA);
   cublasDaxpy_v2(handle, N, stack_ret, A, incA, dB, incB);
+  cudaMemset(stack_ret, 0, sizeof(double));
 
   checkTest(Test);
 
