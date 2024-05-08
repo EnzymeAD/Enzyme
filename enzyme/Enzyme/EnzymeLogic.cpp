@@ -6377,7 +6377,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
                          "MPI_Allreduce",
                          "lgamma",
                          "lgamma_r",
-                         "__kmpc_global_thread_num"};
+                         "__kmpc_global_thread_num",
+                         "nlopt_force_stop"
+  };
   // clang-format on
 
   if (startsWith(F->getName(), "_ZNSolsE") || NoFrees.count(F->getName()))
