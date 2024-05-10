@@ -20,8 +20,9 @@ void runViaHerbie(const std::string &cmd) {
   input << cmd;
   input.close();
 
-  const char *Program = HERBIE_BINARY;
-  llvm::StringRef Args[] = {"shell"};
+  std::string Program = HERBIE_BINARY;
+
+  llvm::StringRef Args[] = {"", "shell"};
   llvm::ArrayRef<llvm::Optional<llvm::StringRef>> Redirects = {
       llvm::StringRef(tmpin),  // stdin
       llvm::StringRef(tmpout), // stdout
@@ -30,6 +31,8 @@ void runViaHerbie(const std::string &cmd) {
 
   std::string ErrMsg;
   bool ExecutionFailed = false;
+
+  llvm::errs() << "Executing: " << Program << "\n";
 
   llvm::sys::ExecuteAndWait(Program, Args, /*Env=*/llvm::None,
                             /*Redirects=*/Redirects,
