@@ -1472,7 +1472,7 @@ static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
   return false;
 }
 
-static inline bool isReadOnly(const llvm::CallInst *call, ssize_t arg = -1) {
+static inline bool isReadOnly(const llvm::CallBase *call, ssize_t arg = -1) {
   if (call->onlyReadsMemory())
     return true;
   if (arg != -1 && call->onlyReadsMemory(arg))
@@ -1506,7 +1506,7 @@ static inline bool isWriteOnly(const llvm::Function *F, ssize_t arg = -1) {
   return false;
 }
 
-static inline bool isWriteOnly(const llvm::CallInst *call, ssize_t arg = -1) {
+static inline bool isWriteOnly(const llvm::CallBase *call, ssize_t arg = -1) {
 #if LLVM_VERSION_MAJOR >= 14
   if (call->onlyWritesMemory())
     return true;
@@ -1534,7 +1534,7 @@ static inline bool isWriteOnly(const llvm::CallInst *call, ssize_t arg = -1) {
   return false;
 }
 
-static inline bool isReadNone(const llvm::CallInst *call, ssize_t arg = -1) {
+static inline bool isReadNone(const llvm::CallBase *call, ssize_t arg = -1) {
   return isReadOnly(call, arg) && isWriteOnly(call, arg);
 }
 
@@ -1542,7 +1542,7 @@ static inline bool isReadNone(const llvm::Function *F, ssize_t arg = -1) {
   return isReadOnly(F, arg) && isWriteOnly(F, arg);
 }
 
-static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
+static inline bool isNoCapture(const llvm::CallBase *call, size_t idx) {
   if (call->doesNotCapture(idx))
     return true;
 
