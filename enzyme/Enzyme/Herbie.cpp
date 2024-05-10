@@ -1,26 +1,52 @@
+#include "Herbie.h"
+#include <fstream>
+#include <llvm/ADT/ArrayRef.h>
+#include <llvm/ADT/StringRef.h>
+#include <llvm/Support/Program.h>
+#include <string>
 
+void runViaHerbie(const std::string &cmd) {
+  std::string tmpin = "/tmp/herbie_input";
+  std::string tmpout = "/tmp/herbie_output";
 
-void runViaHerbie(std::string cmd) {
+  std::ofstream input(tmpin);
+  if (!input) {
+    llvm::errs() << "Failed to open input file.\n";
+    return;
+  }
+  input << cmd;
+  input.close();
 
-    auto Program = "/path/to/herbie";
-    // stdin for reading from, and stdout for writing from
-    // todo write input to tmpin
-    
-    StringRef Args[] = {"shell", tmpin, tmpout};
+  const char *Program = HERBIE_BINARY;
+  llvm::StringRef Args[] = {"shell"};
+  llvm::ArrayRef<llvm::Optional<llvm::StringRef>> Redirects = {
+      llvm::StringRef(tmpin),  // stdin
+      llvm::StringRef(tmpout), // stdout
+      llvm::StringRef(tmpout)  // stderr
+  };
 
-    std::string ErrMsg;
-    bool ExecutionFailed = false;
-    llvm::sys::ExecuteAndWait(Program, Args, /*Env*/std::nullopt,
-	{},
-/*SecondsToWait*/0,
-/*MemoryLimit */0, &ErrMsg,
-&ExecutionFailed = nullptr);
+  std::string ErrMsg;
+  bool ExecutionFailed = false;
 
+  llvm::sys::ExecuteAndWait(Program, Args, /*Env=*/llvm::None,
+                            /*Redirects=*/Redirects,
+                            /*SecondsToWait=*/0, /*MemoryLimit=*/0, &ErrMsg,
+                            &ExecutionFailed);
 
-    // parse output from tmpout
+  if (ExecutionFailed) {
+    llvm::errs() << "Execution failed: " << ErrMsg << "\n";
+    return;
+  }
 
+  std::ifstream output(tmpout);
+  if (!output) {
+    llvm::errs() << "Failed to open output file.\n";
+    return;
+  }
 
-    return result;
-
-
+  std::string line;
+  while (std::getline(output, line)) {
+    llvm::errs() << line << "\n";
+  }
+  output.close();
 }

@@ -68,7 +68,8 @@ if(ENZYME_ENABLE_HERBIE)
     list(APPEND ENZYME_SRC Herbie.cpp)
     list(APPEND ENZYME_SRC herbie)
     add_compile_definitions(ENZYME_ENABLE_HERBIE=1)
-    include_directories(${CMAKE_CURRENT_BINARY_DIR}/herbie/install/include)
+    set_source_files_properties(Herbie.cpp PROPERTIES COMPILE_DEFINITIONS -DHERBIE_BINARY="${CMAKE_CURRENT_BINARY_DIR}/herbie/install/bin/herbie")
+    # include_directories(${CMAKE_CURRENT_BINARY_DIR}/herbie/install/include)
 endif()
 
 
