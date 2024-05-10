@@ -5922,7 +5922,7 @@ bool TypeResults::anyFloat(Value *val, bool anythingIsFloat) const {
   if (dt != BaseType::Anything && dt != BaseType::Unknown)
     return dt.isFloat();
 
-  if (val->getType()->isTokenTy())
+  if (val->getType()->isTokenTy() || val->getType()->isVoidTy())
     return false;
   auto &dl = analyzer->fntypeinfo.Function->getParent()->getDataLayout();
   SmallSet<size_t, 8> offs;
@@ -5958,7 +5958,7 @@ bool TypeResults::anyPointer(Value *val) const {
   auto dt = q[{-1}];
   if (dt != BaseType::Anything && dt != BaseType::Unknown)
     return dt == BaseType::Pointer;
-  if (val->getType()->isTokenTy())
+  if (val->getType()->isTokenTy() || val->getType()->isVoidTy())
     return false;
 
   auto &dl = analyzer->fntypeinfo.Function->getParent()->getDataLayout();
