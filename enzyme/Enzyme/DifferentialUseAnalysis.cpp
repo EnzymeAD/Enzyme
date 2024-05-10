@@ -1081,7 +1081,10 @@ bool DifferentialUseAnalysis::callShouldNotUseDerivative(
           seenAllocation = true;
           break;
         }
-        for (auto &BB : *cur)
+        auto UR = getGuaranteedUnreachable(cur);
+        for (auto &BB : *cur) {
+          if (UR.count(&BB))
+            continue;
           for (auto &I : BB)
             if (auto CB = dyn_cast<CallBase>(&I)) {
               if (isNoEscapingAllocation(CB))
@@ -1098,6 +1101,7 @@ bool DifferentialUseAnalysis::callShouldNotUseDerivative(
               seenAllocation = true;
               goto finish;
             }
+        }
       finish:;
       }
       if (!seenAllocation)

@@ -6287,7 +6287,17 @@ public:
                                    newCall))
       return;
 
-    bool useConstantFallback = DifferentialUseAnalysis::callShouldNotUseDerivative(gutils, call);
+    bool useConstantFallback =
+        DifferentialUseAnalysis::callShouldNotUseDerivative(gutils, call);
+    if (!useConstantFallback) {
+      if (gutils->isConstantInstruction(&call) &&
+          gutils->isConstantValue(&call)) {
+        EmitWarning("ConstnatFallback", call,
+                    "Call was deduced inactive but still doing differential "
+                    "rewrite as it may escape an allocation",
+                    call);
+      }
+    }
     if (useConstantFallback) {
       if (!gutils->isConstantValue(&call)) {
         auto found = gutils->invertedPointers.find(&call);

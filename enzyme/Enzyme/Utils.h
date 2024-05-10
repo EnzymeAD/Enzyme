@@ -1563,6 +1563,60 @@ static inline bool isNoCapture(const llvm::CallBase *call, size_t idx) {
 static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   if (F->hasFnAttribute("enzyme_no_escaping_allocation"))
     return true;
+  using namespace llvm;
+  switch (F->getIntrinsicID()) {
+  case Intrinsic::memset:
+  case Intrinsic::memcpy:
+  case Intrinsic::memmove:
+#if LLVM_VERSION_MAJOR >= 12
+  case Intrinsic::experimental_noalias_scope_decl:
+#endif
+  case Intrinsic::objectsize:
+  case Intrinsic::floor:
+  case Intrinsic::ceil:
+  case Intrinsic::trunc:
+  case Intrinsic::rint:
+  case Intrinsic::lrint:
+  case Intrinsic::llrint:
+  case Intrinsic::nearbyint:
+  case Intrinsic::round:
+  case Intrinsic::roundeven:
+  case Intrinsic::lround:
+  case Intrinsic::llround:
+  case Intrinsic::nvvm_barrier0:
+  case Intrinsic::nvvm_barrier0_popc:
+  case Intrinsic::nvvm_barrier0_and:
+  case Intrinsic::nvvm_barrier0_or:
+  case Intrinsic::nvvm_membar_cta:
+  case Intrinsic::nvvm_membar_gl:
+  case Intrinsic::nvvm_membar_sys:
+  case Intrinsic::amdgcn_s_barrier:
+  case Intrinsic::assume:
+  case Intrinsic::lifetime_start:
+  case Intrinsic::lifetime_end:
+#if LLVM_VERSION_MAJOR <= 16
+  case Intrinsic::dbg_addr:
+#endif
+
+  case Intrinsic::dbg_declare:
+  case Intrinsic::dbg_value:
+  case Intrinsic::dbg_label:
+  case Intrinsic::invariant_start:
+  case Intrinsic::invariant_end:
+  case Intrinsic::var_annotation:
+  case Intrinsic::ptr_annotation:
+  case Intrinsic::annotation:
+  case Intrinsic::codeview_annotation:
+  case Intrinsic::expect:
+  case Intrinsic::type_test:
+  case Intrinsic::donothing:
+  case Intrinsic::prefetch:
+  case Intrinsic::trap:
+  case Intrinsic::is_constant:
+    return true;
+  default:
+    break;
+  }
   return false;
 }
 static inline bool isNoEscapingAllocation(const llvm::CallBase *call) {
