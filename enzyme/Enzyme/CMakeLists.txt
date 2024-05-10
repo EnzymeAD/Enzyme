@@ -60,15 +60,15 @@ if(ENZYME_ENABLE_HERBIE)
         GIT_REPOSITORY https://github.com/herbie-fp/herbie
         GIT_TAG 66dd3019bfbd508bcd397fbe22c1b4b9078c3dee
         CONFIGURE_COMMAND ""
-        BUILD_COMMAND make egg-herbie && make minimal-distribution
+        BUILD_COMMAND make egg-herbie && raco exe -o herbie --orig-exe --embed-dlls --vv src/herbie.rkt
         BUILD_IN_SOURCE true
         INSTALL_COMMAND COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
-            COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie-compiled ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie ${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie
     )
     list(APPEND ENZYME_SRC Herbie.cpp)
     list(APPEND ENZYME_SRC herbie)
     add_compile_definitions(ENZYME_ENABLE_HERBIE=1)
-    set_source_files_properties(Herbie.cpp PROPERTIES COMPILE_DEFINITIONS -DHERBIE_BINARY="${CMAKE_CURRENT_BINARY_DIR}/herbie/install/bin/herbie")
+    set_source_files_properties(Herbie.cpp PROPERTIES COMPILE_DEFINITIONS -DHERBIE_BINARY="${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie")
     # include_directories(${CMAKE_CURRENT_BINARY_DIR}/herbie/install/include)
 endif()
 
