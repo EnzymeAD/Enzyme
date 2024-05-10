@@ -60,10 +60,10 @@ if(ENZYME_ENABLE_HERBIE)
         GIT_REPOSITORY https://github.com/herbie-fp/herbie
         GIT_TAG 66dd3019bfbd508bcd397fbe22c1b4b9078c3dee
         CONFIGURE_COMMAND ""
-        BUILD_COMMAND make minimal-distribution
+        BUILD_COMMAND make install && make minimal-distribution
         BUILD_IN_SOURCE true
-        INSTALL_COMMAND make install
-        INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
+        INSTALL_COMMAND COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
+            COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie-compiled ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
     )
     list(APPEND ENZYME_SRC Herbie.cpp)
     list(APPEND ENZYME_SRC herbie)
