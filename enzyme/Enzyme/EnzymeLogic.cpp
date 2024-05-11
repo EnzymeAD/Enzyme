@@ -2678,9 +2678,23 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   SmallVector<Type *, 4> MallocTypes;
 
+  bool nonRecursiveUse = false;
+
   for (auto a : gutils->getTapeValues()) {
     MallocTypes.push_back(a->getType());
+    if (auto ei = dyn_cast<ExtractValueInst>(a)) {
+      auto tidx = returnMapping.find(AugmentedStruct::Tape)->second;
+      if (ei->getIndices().size() == 1 && ei->getIndices()[0] == (unsigned)tidx)
+        if (auto cb = dyn_cast<CallBase>(ei->getOperand(0)))
+          if (gutils->newFunc == cb->getCalledFunction())
+            continue;
+    }
+    nonRecursiveUse = true;
   }
+  if (MallocTypes.size() == 0)
+    nonRecursiveUse = true;
+  if (!nonRecursiveUse)
+    MallocTypes.clear();
 
   Type *tapeType = StructType::get(nf->getContext(), MallocTypes);
 
@@ -2930,6 +2944,17 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       }
       ++i;
     }
+  } else if (!nonRecursiveUse) {
+    for (auto v : gutils->getTapeValues()) {
+      if (isa<UndefValue>(v))
+        continue;
+      auto EV = cast<ExtractValueInst>(v);
+      auto EV2 = cast<ExtractValueInst>(VMap[v]);
+      assert(EV->use_empty());
+      EV->eraseFromParent();
+      assert(EV2->use_empty());
+      EV2->eraseFromParent();
+    }
   }
 
   for (BasicBlock &BB : *nf) {
@@ -3047,11 +3072,12 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     }
   }
   for (auto user : fnusers) {
-    if (removeStruct) {
+    if (removeStruct || !nonRecursiveUse) {
       IRBuilder<> B(user);
       SmallVector<Value *, 4> args(user->arg_begin(), user->arg_end());
       auto rep = B.CreateCall(NewF, args);
-      rep->takeName(user);
+      if (!rep->getType()->isVoidTy())
+        rep->takeName(user);
       rep->copyIRFlags(user);
       rep->setAttributes(user->getAttributes());
       rep->setCallingConv(user->getCallingConv());
@@ -3083,7 +3109,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     PPC.ReplaceReallocs(NewF, /*mem2reg*/ true);
 
   AugmentedCachedFunctions.find(tup)->second.fn = NewF;
-  if (recursive || (omp && !noTape))
+  if ((recursive && nonRecursiveUse) || (omp && !noTape))
     AugmentedCachedFunctions.find(tup)->second.tapeType = tapeType;
   AugmentedCachedFunctions.find(tup)->second.isComplete = true;
 
