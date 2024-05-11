@@ -88,6 +88,13 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
     // sorry. will fix later. effectively, skip arg 0 for for lv23,
     // because we have the cblas layout in the .td declaration
     size_t i = (lv23 ? j - 1 : j);
+    if (pattern.getArgNames().size() <= j) {
+      PrintFatalError(pattern.getLoc(),
+                      Twine("Too few argnames for pattern '") + name +
+                          "' found " +
+                          std::to_string(pattern.getArgNames().size()) +
+                          " expected " + std::to_string(argTypeMap.size()));
+    }
     os << "  // " << currentType << " " << pattern.getArgNames()[j] << "\n";
     switch (currentType) {
     case ArgType::len:
