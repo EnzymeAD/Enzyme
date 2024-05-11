@@ -344,7 +344,8 @@ bool attributeKnownFunctions(llvm::Function &F) {
       F.getName() ==
           "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEmmm" ||
       F.getName() == "fprintf" || F.getName() == "fwrite" ||
-      F.getName() == "strtol" || F.getName() == "getenv") {
+      F.getName() == "strtol" || F.getName() == "getenv" ||
+      F.getName() == "memchr") {
     changed = true;
     F.addAttribute(
         AttributeList::FunctionIndex,

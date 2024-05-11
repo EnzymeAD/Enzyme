@@ -44,7 +44,8 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
         "llvm::Attribute::MustProgress);\n"
      << "#endif\n"
      << "  F->addFnAttr(llvm::Attribute::NoFree);\n"
-     << "  F->addFnAttr(llvm::Attribute::NoSync);\n";
+     << "  F->addFnAttr(llvm::Attribute::NoSync);\n"
+     << "  F->addFnAttr(\"enzyme_no_escaping_allocation\");\n";
 
   auto argTypeMap = pattern.getArgTypeMap();
   DenseSet<size_t> mutableArgs = pattern.getMutableArgs();

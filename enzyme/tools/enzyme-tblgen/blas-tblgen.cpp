@@ -465,7 +465,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
       return;
     }
   }
-  PrintFatalError("Blas function without vector or matrix?");
+  PrintFatalError(pattern.getLoc(), "Blas function without vector or matrix?");
 }
 
 void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
@@ -1045,9 +1045,12 @@ void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
     // nothing to prepare
   } else if (Def->isSubClassOf("DiffeRetIndex")) {
     // nothing to prepare
+  } else if (Def->getName() == "inactive") {
   } else if (Def->isSubClassOf("Inst")) {
-    PrintFatalError("Unhandled Inst Rule!");
-    // TODO:
+    std::string str;
+    llvm::raw_string_ostream os(str);
+    os << "Unhandled Inst Rule: " << *Def;
+    PrintFatalError(Def->getLoc(), os.str());
     return;
   } else if (Def->isSubClassOf("Seq")) {
     // handle seq rules
@@ -1076,7 +1079,7 @@ void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
     // nothing to prepare
     assert(ruleDag->getNumArgs() == 6);
   } else {
-    PrintFatalError("Unhandled deriv Rule!");
+    PrintFatalError(Def->getLoc(), "Unhandled deriv Rule!");
   }
 }
 
@@ -1148,7 +1151,7 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
     }
 
     errs() << Def->getName() << "\n";
-    PrintFatalError("Dag/Def that isn't a DiffeRet!!");
+    PrintFatalError(Def->getLoc(), "Dag/Def that isn't a DiffeRet!!");
   } else if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
     auto Def = DefArg->getDef();
     if (Def->isSubClassOf("DiffeRetIndex")) {
@@ -1166,7 +1169,7 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
       if (argPosition == (size_t)(-1)) {
         errs() << "couldn't find name: " << name << " ap=" << argPosition
                << "\n";
-        PrintFatalError("arg not in inverted nameMap!");
+        PrintFatalError(Def->getLoc(), "arg not in inverted nameMap!");
       }
       auto ty = rule.argTypesFull.lookup(argPosition);
       auto incName = rule.nameVec[argPosition + 1];
@@ -1188,7 +1191,7 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
       if (argPosition == (size_t)(-1)) {
         errs() << "couldn't find name: " << name << " ap=" << argPosition
                << "\n";
-        PrintFatalError("arg not in inverted nameMap!");
+        PrintFatalError(Def->getLoc(), "arg not in inverted nameMap!");
       }
       auto ty = rule.argTypesFull.lookup(argPosition);
       auto incName = rule.nameVec[argPosition + 1];
@@ -1221,7 +1224,7 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
         //} else if (val == "C") {
       } else {
         errs() << "unknown char: " << val << "\n";
-        PrintFatalError("unknown char");
+        PrintFatalError(Def->getLoc(), "unknown char");
       }
     } else if (Def->isSubClassOf("Alloca")) {
       auto val = Def->getValueAsInt("value");
@@ -1242,18 +1245,18 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
          << "\"))}";
     } else {
       errs() << Def->getName() << "\n";
-      PrintFatalError("Def that isn't a DiffeRet!");
+      PrintFatalError(Def->getLoc(), "Def that isn't a DiffeRet!");
     }
   } else {
     auto name = ruleDag->getArgNameStr(pos);
     if (name == "") {
-      PrintFatalError("arg has no name!" + std::to_string(pos));
+      PrintFatalError(rule.getLoc(), "arg has no name!" + std::to_string(pos));
       assert(name != "");
     }
     // get the position of the argument in the primary blas call
     if (nameMap.count(name) != 1) {
       errs() << "couldn't find name: " << name << "\n";
-      PrintFatalError("arg not in nameMap!");
+      PrintFatalError(rule.getLoc(), "arg not in nameMap!");
     }
     assert(nameMap.count(name) == 1);
     auto argPosition = nameMap.lookup(name);

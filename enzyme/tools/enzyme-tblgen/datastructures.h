@@ -42,17 +42,16 @@ using namespace llvm;
 const char *TyToString(ArgType ty);
 bool isVecLikeArg(ArgType ty);
 
-bool isArgUsed(StringRef toFind, const DagInit *toSearch,
-               llvm::ArrayRef<std::string> nameVec,
-               const llvm::DenseMap<size_t, ArgType> &argTypesFull);
-
 // Whether the blas function returns an active value
 bool has_active_return(StringRef str);
+
+class TGPattern;
 
 /// Subset of the general pattern info,
 /// but only the part that affects the specific argument being active.
 class Rule {
 private:
+  TGPattern *pattern;
   DagInit *rewriteRule;
   // which argument from the primary function do we handle here?
   size_t activeArg;
@@ -64,8 +63,8 @@ private:
 public:
   SmallVector<std::string, 1> nameVec;
   DenseMap<size_t, ArgType> argTypesFull;
-  Rule(ArrayRef<std::string> nameVec, DagInit *dag, size_t activeArgIdx,
-       const StringMap<size_t> &patternArgs,
+  Rule(TGPattern *pattern, ArrayRef<std::string> nameVec, DagInit *dag,
+       size_t activeArgIdx, const StringMap<size_t> &patternArgs,
        const DenseMap<size_t, ArgType> &patternTypes,
        const DenseSet<size_t> &patternMutables);
   bool isBLASLevel2or3() const;
@@ -74,6 +73,8 @@ public:
   const StringMap<size_t> &getArgNameMap() const;
   const DenseMap<size_t, ArgType> &getArgTypeMap() const;
   std::string to_string() const;
+  TGPattern *getPattern() const;
+  ArrayRef<SMLoc> getLoc() const;
 };
 
 void fillActiveArgSet(const Record *pattern,
@@ -93,6 +94,7 @@ void fillArgUserMap(ArrayRef<Rule> rules, ArrayRef<std::string> nameVec,
 /// A single Blas function, including replacement rules. E.g. scal, axpy, ...
 class TGPattern {
 private:
+  Record *record;
   std::string blasName;
   bool BLASLevel2or3;
 
@@ -132,6 +134,7 @@ public:
   const DenseSet<size_t> &getMutableArgs() const;
   ArrayRef<size_t> getActiveArgs() const;
   ArrayRef<Rule> getRules() const;
+  ArrayRef<SMLoc> getLoc() const;
 };
 
 #endif

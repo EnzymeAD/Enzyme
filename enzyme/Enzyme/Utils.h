@@ -1613,10 +1613,31 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   case Intrinsic::prefetch:
   case Intrinsic::trap:
   case Intrinsic::is_constant:
+#if LLVM_VERSION_MAJOR >= 12
+  case Intrinsic::smax:
+  case Intrinsic::smin:
+  case Intrinsic::umax:
+  case Intrinsic::umin:
+#endif
+  case Intrinsic::ctlz:
+  case Intrinsic::cttz:
+  case Intrinsic::sadd_with_overflow:
+  case Intrinsic::ssub_with_overflow:
+#if LLVM_VERSION_MAJOR >= 12
+  case Intrinsic::abs:
+#endif
+  case Intrinsic::sqrt:
+  case Intrinsic::exp:
+  case Intrinsic::cos:
+  case Intrinsic::sin:
+  case Intrinsic::copysign:
+  case Intrinsic::fabs:
     return true;
   default:
     break;
   }
+  // if (F->empty())
+  //  llvm::errs() << "  may escape:" << F->getName() << "\n";
   return false;
 }
 static inline bool isNoEscapingAllocation(const llvm::CallBase *call) {
@@ -1625,7 +1646,11 @@ static inline bool isNoEscapingAllocation(const llvm::CallBase *call) {
   if (AttrList.hasAttribute("enzyme_no_escaping_allocation"))
     return true;
   if (auto F = getFunctionFromCall(call)) {
-    return isNoEscapingAllocation(F);
+    auto res = isNoEscapingAllocation(F);
+    // if (!res && F->empty()) {
+    //    llvm::errs() << "  may escape:" << *call << "\n";
+    //}
+    return res;
   }
   return false;
 }
