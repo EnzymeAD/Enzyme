@@ -2169,6 +2169,91 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << origName << ")), res);\n";
 
       os << "        assert(res);\n";
+
+      // Insert logging function call (optional)
+      os << "        Function *logFunc = " << origName
+         << ".getModule()->getFunction(\"enzymeLogError\");\n";
+      os << "        if (logFunc) {\n"
+         << "            std::string moduleName = " << origName
+         << ".getModule()->getModuleIdentifier() ;\n"
+         << "            std::string functionName = " << origName
+         << ".getFunction()->getName().str();\n"
+         << "            std::string blockName = " << origName
+         << ".getParent()->getName().str();\n"
+         << "            int funcIdx = -1, blockIdx = -1, instIdx = -1;\n"
+         << "            auto funcIt = std::find_if(" << origName
+         << ".getModule()->begin(), " << origName
+         << ".getModule()->end(),\n"
+            "              [&](const auto& func) { return &func == "
+         << origName
+         << ".getFunction(); });\n"
+            "            if (funcIt != "
+         << origName
+         << ".getModule()->end()) {\n"
+            "              funcIdx = "
+            "std::distance("
+         << origName << ".getModule()->begin(), funcIt);\n"
+         << "            }\n"
+         << "            auto blockIt = std::find_if(" << origName
+         << ".getFunction()->begin(), " << origName
+         << ".getFunction()->end(),\n"
+            "              [&](const auto& block) { return &block == "
+         << origName
+         << ".getParent(); });\n"
+            "            if (blockIt != "
+         << origName
+         << ".getFunction()->end()) {\n"
+            "              blockIdx = std::distance("
+         << origName << ".getFunction()->begin(), blockIt);\n"
+         << "            }\n"
+         << "            auto instIt = std::find_if(" << origName
+         << ".getParent()->begin(), " << origName
+         << ".getParent()->end(),\n"
+            "              [&](const auto& curr) { return &curr == &"
+         << origName
+         << "; });\n"
+            "            if (instIt != "
+         << origName
+         << ".getParent()->end()) {\n"
+            "              instIdx = std::distance("
+         << origName << ".getParent()->begin(), instIt);\n"
+         << "            }\n"
+         << "            Value *origValue = "
+            "Builder2.CreateFPExt(gutils->getNewFromOriginal(&"
+         << origName << "), Type::getDoubleTy(" << origName
+         << ".getContext()));\n"
+         << "            Value *errValue = Builder2.CreateFPExt(res, "
+            "Type::getDoubleTy("
+         << origName << ".getContext()));\n"
+         << "            std::string opcodeName = " << origName
+         << ".getOpcodeName();\n"
+         << "            std::string calleeName = \"<N/A>\";\n"
+         << "            if (auto CI = dyn_cast<CallInst>(&" << origName
+         << ")) {\n"
+         << "                if (Function *fn = CI->getCalledFunction()) {\n"
+         << "                    calleeName = fn->getName();\n"
+         << "                } else {\n"
+         << "                    calleeName = \"<Unknown>\";\n"
+         << "                }\n"
+         << "            }\n"
+         << "            Value *moduleNameValue = "
+            "Builder2.CreateGlobalStringPtr(moduleName);\n"
+         << "            Value *functionNameValue = "
+            "Builder2.CreateGlobalStringPtr(functionName + \" (\" +"
+            "std::to_string(funcIdx) + \")\");\n"
+         << "            Value *blockNameValue = "
+            "Builder2.CreateGlobalStringPtr(blockName + \" (\" +"
+            "std::to_string(blockIdx) + \")\");\n"
+         << "            Value *opcodeNameValue = "
+            "Builder2.CreateGlobalStringPtr(opcodeName + \" (\" "
+            "+std::to_string(instIdx) + \")\");\n"
+         << "            Value *calleeNameValue = "
+            "Builder2.CreateGlobalStringPtr(calleeName);\n"
+         << "            Builder2.CreateCall(logFunc, {origValue, "
+            "errValue, opcodeNameValue, calleeNameValue, moduleNameValue, "
+            "functionNameValue, blockNameValue});\n"
+         << "        }\n";
+
       os << "        setDiffe(&" << origName << ", res, Builder2);\n";
       os << "        break;\n";
       os << "      }\n";
