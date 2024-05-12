@@ -267,6 +267,8 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
 
   os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == "
         "\"cublas_\";\n";
+  os << "const bool byRefFloat = byRef || blas.prefix == \"cublas\";\n";
+  os << "(void)byRefFloat;\n";
   os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
   os << "  const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
         "\"cublas\";\n";
@@ -355,7 +357,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
     auto ty = argTypeMap.lookup(actArgs[i]);
     os << "    if (";
     if (ty == ArgType::fp)
-      os << "byRef && ";
+      os << "byRefFloat && ";
     os << "active_" << name << ") {\n"
        << "      auto shadow_" << name << " = gutils->invertPointerM(orig_"
        << name << ", BuilderZ);\n"
@@ -385,7 +387,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
       auto ty = argTypeMap.lookup(actArgs[i]);
       os << "    if (";
       if (ty == ArgType::fp)
-        os << "byRef && ";
+        os << "byRefFloat && ";
       os << "active_" << name << ") {\n"
          << "      rt_inactive_" << name << " = BuilderZ.CreateOr(rt_inactive_"
          << name << ", rt_inactive_out, \"rt.inactive.\" \"" << name << "\");\n"
@@ -406,7 +408,8 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
     }
   }
   if (!hasFP)
-    os << "  Type* blasFPType = byRef ? (Type*)PointerType::getUnqual(fpType) "
+    os << "  Type* blasFPType = byRefFloat ? "
+          "(Type*)PointerType::getUnqual(fpType) "
           ": (Type*)fpType;\n";
 
   bool hasChar = false;
@@ -609,8 +612,7 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
      << "      if (Mode != DerivativeMode::ForwardModeSplit)\n"
      << "        cacheval = lookup(cacheval, Builder2);\n"
      << "    }\n"
-     << "\n"
-     << "    if (byRef) {\n";
+     << "\n";
 
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
@@ -618,16 +620,21 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
     // this branch used "true_" << name everywhere instead of "arg_" << name
     // before. probably randomly, but check to make sure
     if (ty == ArgType::len || ty == ArgType::vincInc || ty == ArgType::mldLD) {
+      os << "    if (byRef) {\n";
       extract_scalar(name, "intType", os);
+      os << "    }\n";
     } else if (ty == ArgType::fp) {
+      os << "    if (byRefFloat) {\n";
       extract_scalar(name, "fpType", os);
+      os << "    }\n";
     } else if (ty == ArgType::trans) {
       // we are in the byRef branch and trans only exist in lv23.
       // So just unconditionally asume that no layout exist and use i-1
+      os << "    if (byRef) {\n";
       extract_scalar(name, "charType", os);
+      os << "    }\n";
     }
   }
-  os << "    }\n";
 
   std::string input_var = "";
   size_t actVar = 0;
@@ -1207,8 +1214,8 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
     } else if (Def->isSubClassOf("Constant")) {
       auto val = Def->getValueAsString("value");
       os << "{to_blas_fp_callconv(Builder2, ConstantFP::get(fpType, " << val
-         << "), byRef, blasFPType, allocationBuilder, \"constant.fp." << val
-         << "\")}";
+         << "), byRefFloat, blasFPType, allocationBuilder, \"constant.fp."
+         << val << "\")}";
     } else if (Def->isSubClassOf("Char")) {
       auto val = Def->getValueAsString("value");
       if (val == "N") {
@@ -1382,7 +1389,7 @@ void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
        << bb << ".CreateCall(derivcall_" << dfnc_name << ", " << argName
        << ", Defs));\n";
   }
-  os << "        if (byRef) {\n"
+  os << "        if (byRefFloat) {\n"
      << "          ((DiffeGradientUtils *)gutils)"
      << "->addToInvertedPtrDiffe(&call, nullptr, fpType, 0, "
      << "(called->getParent()->getDataLayout().getTypeSizeInBits(fpType)/8), "
@@ -1401,7 +1408,7 @@ void emit_runtime_condition(DagInit *ruleDag, StringRef name, StringRef tab,
                             StringRef B, bool isFP, raw_ostream &os) {
   os << tab << "BasicBlock *nextBlock_" << name << " = nullptr;\n"
      << tab << "if (EnzymeRuntimeActivityCheck && cacheMode"
-     << (isFP ? " && byRef" : "") << ") {\n"
+     << (isFP ? " && byRefFloat" : "") << ") {\n"
      << tab << "  BasicBlock *current = Builder2.GetInsertBlock();\n"
      << tab << "  auto activeBlock = gutils->addReverseBlock(current,"
      << "bb_name + \"." << name << ".active\");\n"
@@ -1415,7 +1422,8 @@ void emit_runtime_condition(DagInit *ruleDag, StringRef name, StringRef tab,
 
 void emit_runtime_continue(DagInit *ruleDag, StringRef name, StringRef tab,
                            StringRef B, bool isFP, raw_ostream &os) {
-  os << tab << "if (nextBlock_" << name << (isFP ? " && byRef" : "") << ") {\n"
+  os << tab << "if (nextBlock_" << name << (isFP ? " && byRefFloat" : "")
+     << ") {\n"
      << tab << "  " << B << ".CreateBr(nextBlock_" << name << ");\n"
      << tab << "  " << B << ".SetInsertPoint(nextBlock_" << name << ");\n"
      << tab << "}\n";

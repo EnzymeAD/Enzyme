@@ -25,14 +25,14 @@ void my_dgemv(cublasHandle_t *handle, cublasOperation_t trans, int M, int N,
               double alpha, double *__restrict__ A, int lda,
               double *__restrict__ X, int incx, double beta,
               double *__restrict__ Y, int incy) {
-  cublasDgemv(handle, trans, M, N, alpha, A, lda, X, incx, beta, Y, incy);
+  cublasDgemv(handle, trans, M, N, &alpha, A, lda, X, incx, &beta, Y, incy);
   inDerivative = true;
 }
 
 void ow_dgemv(cublasHandle_t *handle, cublasOperation_t trans, int M, int N,
               double alpha, double *A, int lda, double *X, int incx,
               double beta, double *Y, int incy) {
-  cublasDgemv(handle, trans, M, N, alpha, A, lda, X, incx, beta, Y, incy);
+  cublasDgemv(handle, trans, M, N, &alpha, A, lda, X, incx, &beta, Y, incy);
   inDerivative = true;
 }
 
@@ -55,8 +55,8 @@ void my_dgemm(cublasHandle_t *handle, cublasOperation_t transA,
               cublasOperation_t transB, int M, int N, int K, double alpha,
               double *__restrict__ A, int lda, double *__restrict__ B, int ldb,
               double beta, double *__restrict__ C, int ldc) {
-  cublasDgemm(handle, transA, transB, M, N, K, alpha, A, lda, B, ldb, beta, C,
-               ldc);
+  cublasDgemm(handle, transA, transB, M, N, K, &alpha, A, lda, B, ldb, &beta, C,
+              ldc);
   inDerivative = true;
 }
 
@@ -212,10 +212,10 @@ static void gemvTests() {
 
       inDerivative = true;
       // dC = alpha * X * transpose(Y) + A
-      cublasDger(handle, M, N, alpha, trans ? B : dC, trans ? incB : incC,
-                  trans ? dC : B, trans ? incC : incB, dA, lda);
+      cublasDger(handle, M, N, &alpha, trans ? B : dC, trans ? incB : incC,
+                 trans ? dC : B, trans ? incC : incB, dA, lda);
       // dY = beta * dY
-      cublasDscal(handle, trans ? N : M, beta, dC, incC);
+      cublasDscal(handle, trans ? N : M, &beta, dC, incC);
 
       checkTest(Test);
 
@@ -241,15 +241,16 @@ static void gemvTests() {
 
       inDerivative = true;
       // dC = alpha * X * transpose(Y) + A
-      cublasDger(handle, M, N, alpha, trans ? B : dC, trans ? incB : incC,
-                  trans ? dC : B, trans ? incC : incB, dA, lda);
+      cublasDger(handle, M, N, &alpha, trans ? B : dC, trans ? incB : incC,
+                 trans ? dC : B, trans ? incC : incB, dA, lda);
 
       // dB = alpha * trans(A) * dC + dB
-      cublasDgemv(handle, transpose(transA), M, N, alpha, A, lda, dC, incC,
-                   1.0, dB, incB);
+      double c1 = 1.0;
+      cublasDgemv(handle, transpose(transA), M, N, &alpha, A, lda, dC, incC,
+                  &c1, dB, incB);
 
       // dY = beta * dY
-      cublasDscal(handle, trans ? N : M, beta, dC, incC);
+      cublasDscal(handle, trans ? N : M, &beta, dC, incC);
 
       checkTest(Test);
 
@@ -391,7 +392,9 @@ static void gemmTests() {
             transB_bool ? A : dC, transB_bool ? lda : incC, 1.0, dB, incB);
 
         // TODO we are currently faking support here, this needs to be actually implemented
-        cublasDlascl(handle, (cublasOperation_t)'G', 0, 0, 1.0, beta, M, N, dC, incC, 0);
+        double c10 = 1.0;
+        cublasDlascl(handle, (cublasOperation_t)'G', 0, 0, &c10, &beta, M, N,
+                     dC, incC, 0);
 
         checkTest(Test);
 
