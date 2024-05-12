@@ -3,6 +3,9 @@
 void emit_BLASTypes(raw_ostream &os) {
   os << "const bool byRef = blas.prefix == \"\" || blas.prefix == "
         "\"cublas_\";\n";
+  os << "const bool byRefFloat = byRef || blas.prefix == "
+        "\"cublas\";\n";
+  os << "(void)byRefFloat;\n";
   os << "const bool cblas = blas.prefix == \"cblas_\";\n";
   os << "const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
         "\"cublas\";\n";
@@ -18,7 +21,7 @@ void emit_BLASTypes(raw_ostream &os) {
      << "} else {\n"
      << "  llvm_unreachable(\"unknown float type of blas\");\n"
      << "}\n"
-     << "if (byRef) {\n"
+     << "if (byRefFloat) {\n"
      << "  ttFloat.insert({-1},BaseType::Pointer);\n"
      << "  ttFloat.insert({-1,0},floatType);\n"
      << "} else { \n"

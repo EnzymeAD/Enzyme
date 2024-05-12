@@ -19,6 +19,8 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
 
   os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == "
         "\"cublas_\";\n";
+  os << "const bool byRefFloat = byRef || blas.prefix == \"cublas\";\n";
+  os << "(void)byRefFloat;\n";
   if (lv23)
     os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
   os << "  const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
@@ -77,7 +79,7 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
 
     // We need the shadow of the value we're updating
     if (typeMap[argPos] == ArgType::fp) {
-      os << "    if (shadow && byRef && active_" << argname
+      os << "    if (shadow && byRefFloat && active_" << argname
          << ") return true;\n";
     } else if (typeMap[argPos] == ArgType::vincData ||
                typeMap[argPos] == ArgType::mldData) {

@@ -931,14 +931,12 @@ __attribute__((noinline)) void dlacpy(char *uplo_p, int *M_p, int *N_p, double *
 
 __attribute__((noinline)) cublasStatus_t
 cublasDlascl(cublasHandle_t *handle, cublasOperation_t type, int KL, int KU,
-              double cfrom, double cto, int M, int N, double *A, int lda, int info) {
-  calls.push_back((BlasCall){ABIType::CUBLAS,handle,
-                                inDerivative, CallType::LASCL,
-                                A, UNUSED_POINTER, UNUSED_POINTER,
-                                cfrom, cto,
-                                 CUBLAS_LAYOUT,
-                                 (char)type, UNUSED_TRANS,
-                                 M, N, UNUSED_INT, lda, KL, KU});
+             double *cfrom, double *cto, int M, int N, double *A, int lda,
+             int info) {
+  calls.push_back((BlasCall){ABIType::CUBLAS, handle, inDerivative,
+                             CallType::LASCL, A, UNUSED_POINTER, UNUSED_POINTER,
+                             *cfrom, *cto, CUBLAS_LAYOUT, (char)type,
+                             UNUSED_TRANS, M, N, UNUSED_INT, lda, KL, KU});
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
 __attribute__((noinline)) cublasStatus_t cublasDlacpy(cublasHandle_t *handle, char uplo, int M,
@@ -1054,47 +1052,57 @@ __attribute__((noinline)) cublasStatus_t cublasDaxpy(cublasHandle_t *handle,
 }
 __attribute__((noinline)) cublasStatus_t
 cublasDgemv(cublasHandle_t *handle, cublasOperation_t trans, int M, int N,
-             double alpha, double *A, int lda, double *X, int incx, double beta,
-             double *Y, int incy) {
-  BlasCall call = {ABIType::CUBLAS,handle,
-      inDerivative, CallType::GEMV, Y, A, X,          alpha, beta, CUBLAS_LAYOUT,
-      (char)trans,        UNUSED_TRANS,   M, N, UNUSED_INT, lda,   incx, incy};
+            double *alpha, double *A, int lda, double *X, int incx,
+            double *beta, double *Y, int incy) {
+  BlasCall call = {ABIType::CUBLAS,
+                   handle,
+                   inDerivative,
+                   CallType::GEMV,
+                   Y,
+                   A,
+                   X,
+                   *alpha,
+                   *beta,
+                   CUBLAS_LAYOUT,
+                   (char)trans,
+                   UNUSED_TRANS,
+                   M,
+                   N,
+                   UNUSED_INT,
+                   lda,
+                   incx,
+                   incy};
   calls.push_back(call);
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
 __attribute__((noinline)) cublasStatus_t
 cublasDgemm(cublasHandle_t *handle, cublasOperation_t transA,
-             cublasOperation_t transB, int M, int N, int K, double alpha,
-             double *A, int lda, double *B, int ldb, double beta, double *C,
-             int ldc) {
-  calls.push_back((BlasCall){ABIType::CUBLAS,handle,inDerivative, CallType::GEMM, C, A, B, alpha,
-                                 beta, 
-                                 CUBLAS_LAYOUT,
-                                 (char)transA, (char)transB, M, N, K, lda,
-                                 ldb, ldc});
+            cublasOperation_t transB, int M, int N, int K, double *alpha,
+            double *A, int lda, double *B, int ldb, double *beta, double *C,
+            int ldc) {
+  calls.push_back((BlasCall){ABIType::CUBLAS, handle, inDerivative,
+                             CallType::GEMM, C, A, B, *alpha, *beta,
+                             CUBLAS_LAYOUT, (char)transA, (char)transB, M, N, K,
+                             lda, ldb, ldc});
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
 __attribute__((noinline)) cublasStatus_t
-cublasDscal(cublasHandle_t *handle, int N, double alpha, double *X, int incX) {
+cublasDscal(cublasHandle_t *handle, int N, double *alpha, double *X, int incX) {
   calls.push_back((BlasCall){
-      ABIType::CUBLAS,handle,inDerivative, CallType::SCAL, X, UNUSED_POINTER, UNUSED_POINTER, alpha,
-      UNUSED_DOUBLE, 
-     CUBLAS_LAYOUT,
-      UNUSED_TRANS, UNUSED_TRANS, N, UNUSED_INT,
-      UNUSED_INT, incX, UNUSED_INT, UNUSED_INT});
+      ABIType::CUBLAS, handle, inDerivative, CallType::SCAL, X, UNUSED_POINTER,
+      UNUSED_POINTER, *alpha, UNUSED_DOUBLE, CUBLAS_LAYOUT, UNUSED_TRANS,
+      UNUSED_TRANS, N, UNUSED_INT, UNUSED_INT, incX, UNUSED_INT, UNUSED_INT});
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
 
 // A = alpha * X * transpose(Y) + A
 __attribute__((noinline)) cublasStatus_t
-cublasDger(cublasHandle_t *handle, int M, int N, double alpha, double *X,
-            int incX, double *Y, int incY, double *A, int lda) {
-  calls.push_back((BlasCall){ABIType::CUBLAS,handle,inDerivative, CallType::GER, A, X, Y, alpha,
-                                 UNUSED_DOUBLE, 
-                                 CUBLAS_LAYOUT,
-                                 UNUSED_TRANS,
-                                 UNUSED_TRANS, M, N, UNUSED_INT, incX, incY,
-                                 lda});
+cublasDger(cublasHandle_t *handle, int M, int N, double *alpha, double *X,
+           int incX, double *Y, int incY, double *A, int lda) {
+  calls.push_back((BlasCall){ABIType::CUBLAS, handle, inDerivative,
+                             CallType::GER, A, X, Y, *alpha, UNUSED_DOUBLE,
+                             CUBLAS_LAYOUT, UNUSED_TRANS, UNUSED_TRANS, M, N,
+                             UNUSED_INT, incX, incY, lda});
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
 
