@@ -21,6 +21,13 @@ int enzyme_out;
 int enzyme_const;
 template <typename... T> void __enzyme_autodiff(void *, T...);
 
+double my_dscal_v2(cublasHandle_t *handle, int N, double *__restrict__ X, int incx,
+               double *__restrict__ Y, int incy) {
+  double res = cublasDscal(handle, N, X, incx, Y, incy);
+  inDerivative = true;
+  return res;
+}
+
 void my_dgemv(cublasHandle_t *handle, cublasOperation_t trans, int M, int N,
               double alpha, double *__restrict__ A, int lda,
               double *__restrict__ X, int incx, double beta,
