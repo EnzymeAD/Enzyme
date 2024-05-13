@@ -327,6 +327,11 @@ struct CacheAnalysis {
         if (!inst2->mayWriteToMemory())
           return false;
 
+#if LLVM_VERSION_MAJOR >= 12
+        if (isa<FenceInst>(inst2))
+          return false;
+#endif
+
         if (unnecessaryBlocks.count(inst2->getParent())) {
           return false;
         }
@@ -351,6 +356,11 @@ struct CacheAnalysis {
                 [&](Instruction *mid) {
                   if (!mid->mayWriteToMemory())
                     return false;
+
+#if LLVM_VERSION_MAJOR >= 12
+                  if (isa<FenceInst>(mid))
+                    return false;
+#endif
 
                   if (unnecessaryBlocks.count(mid->getParent())) {
                     return false;
