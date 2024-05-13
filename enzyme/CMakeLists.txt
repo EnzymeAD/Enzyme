@@ -47,11 +47,15 @@ message( LLVM_SHLIBEXT = ${LLVM_SHLIBEXT} )
 
 set(LLVM_MAIN_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 
-get_filename_component(LLVM_ABSOLUTE_DIR
-    "${LLVM_DIR}"
-    REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
+option(ENZYME_REWRITE_ABSOLUTE_LLVM "Rewrite LLVM path to be absolute" ON)
 
-set(LLVM_DIR "${LLVM_ABSOLUTE_DIR}" CACHE FILEPATH "b" FORCE)
+if (ENZYME_REWRITE_ABSOLUTE_LLVM)
+    get_filename_component(LLVM_ABSOLUTE_DIR
+        "${LLVM_DIR}"
+        REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
+
+    set(LLVM_DIR "${LLVM_ABSOLUTE_DIR}" CACHE FILEPATH "b" FORCE)
+endif()
 
 if (EXISTS "${LLVM_DIR}/lib/cmake/llvm/LLVMConfig.cmake")
   set(LLVM_DIR "${LLVM_DIR}/lib/cmake/llvm")
