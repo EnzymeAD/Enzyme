@@ -1335,18 +1335,23 @@ static inline bool isPointerArithmeticInst(const llvm::Value *V,
   return false;
 }
 
-static inline llvm::Value *getBaseObject(llvm::Value *V) {
+static inline llvm::Value *getBaseObject(llvm::Value *V,
+                                         bool offsetAllowed = true) {
   while (true) {
     if (auto CI = llvm::dyn_cast<llvm::CastInst>(V)) {
       V = CI->getOperand(0);
       continue;
     } else if (auto CI = llvm::dyn_cast<llvm::GetElementPtrInst>(V)) {
-      V = CI->getOperand(0);
-      continue;
+      if (offsetAllowed || CI->hasAllZeroIndices()) {
+        V = CI->getOperand(0);
+        continue;
+      }
     } else if (auto II = llvm::dyn_cast<llvm::IntrinsicInst>(V);
                II && isIntelSubscriptIntrinsic(*II)) {
-      V = II->getOperand(3);
-      continue;
+      if (offsetAllowed) {
+        V = II->getOperand(3);
+        continue;
+      }
     } else if (auto CI = llvm::dyn_cast<llvm::PHINode>(V)) {
       if (CI->getNumIncomingValues() == 1) {
         V = CI->getOperand(0);
@@ -1366,7 +1371,7 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
       auto funcName = getFuncNameFromCall(Call);
       auto AttrList = Call->getAttributes().getAttributes(
           llvm::AttributeList::FunctionIndex);
-      if (AttrList.hasAttribute("enzyme_pointermath")) {
+      if (AttrList.hasAttribute("enzyme_pointermath") && offsetAllowed) {
         size_t res = 0;
         bool failed = AttrList.getAttribute("enzyme_pointermath")
                           .getValueAsString()
@@ -1398,7 +1403,7 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
       if (auto fn = getFunctionFromCall(Call)) {
         auto AttrList = fn->getAttributes().getAttributes(
             llvm::AttributeList::FunctionIndex);
-        if (AttrList.hasAttribute("enzyme_pointermath")) {
+        if (AttrList.hasAttribute("enzyme_pointermath") && offsetAllowed) {
           size_t res = 0;
           bool failed = AttrList.getAttribute("enzyme_pointermath")
                             .getValueAsString()
@@ -1428,24 +1433,27 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
       // because it should be in sync with CaptureTracking. Not using it may
       // cause weird miscompilations where 2 aliasing pointers are assumed to
       // noalias.
-      if (auto *RP = llvm::getArgumentAliasingToReturnedPointer(Call, false)) {
-        V = RP;
-        continue;
-      }
+      if (offsetAllowed)
+        if (auto *RP =
+                llvm::getArgumentAliasingToReturnedPointer(Call, false)) {
+          V = RP;
+          continue;
+        }
     }
 
-    if (auto I = llvm::dyn_cast<llvm::Instruction>(V)) {
+    if (offsetAllowed)
+      if (auto I = llvm::dyn_cast<llvm::Instruction>(V)) {
 #if LLVM_VERSION_MAJOR >= 12
-      auto V2 = llvm::getUnderlyingObject(I, 100);
+        auto V2 = llvm::getUnderlyingObject(I, 100);
 #else
-      auto V2 = llvm::GetUnderlyingObject(
-          I, I->getParent()->getParent()->getParent()->getDataLayout(), 100);
+        auto V2 = llvm::GetUnderlyingObject(
+            I, I->getParent()->getParent()->getParent()->getDataLayout(), 100);
 #endif
-      if (V2 != V) {
-        V = V2;
-        break;
+        if (V2 != V) {
+          V = V2;
+          break;
+        }
       }
-    }
     break;
   }
   return V;
@@ -1556,6 +1564,26 @@ static inline bool isNoCapture(const llvm::CallBase *call, size_t idx) {
         return true;
     // if (F->getAttributes().hasParamAttribute(idx, "enzyme_NoCapture"))
     //   return true;
+  }
+  return false;
+}
+
+static inline bool isNoAlias(const llvm::CallBase *call) {
+  if (call->returnDoesNotAlias())
+    return true;
+
+  if (auto F = getFunctionFromCall(call)) {
+    if (F->returnDoesNotAlias())
+      return true;
+  }
+  return false;
+}
+
+static inline bool isNoAlias(const llvm::Value *val) {
+  if (auto CB = llvm::dyn_cast<llvm::CallBase>(val))
+    return isNoAlias(CB);
+  if (auto arg = llvm::dyn_cast<llvm::Argument>(val)) {
+    arg->hasNoAliasAttr();
   }
   return false;
 }
