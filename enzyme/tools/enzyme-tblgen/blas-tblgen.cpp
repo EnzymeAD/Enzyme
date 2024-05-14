@@ -237,8 +237,15 @@ void emit_free_and_ending(const TGPattern &pattern, raw_ostream &os) {
 
   os << "    }\n"
      << "  }\n"
-     << "                                                                   \n"
-     << "  if (gutils->knownRecomputeHeuristic.find(&call) !=\n"
+     << "                                                                   \n";
+
+  os << "  if (cublas && Mode == DerivativeMode::ReverseModeGradient && "
+        "call.getType()->isIntegerTy()) {        \n"
+     << "     gutils->replaceAWithB(gutils->getNewFromOriginal(&call), "
+        "Constant::getNullValue(call.getType()));\n"
+     << "  }\n";
+
+  os << "  if (gutils->knownRecomputeHeuristic.find(&call) !=\n"
      << "    gutils->knownRecomputeHeuristic.end()) {\n"
      << "    if (!gutils->knownRecomputeHeuristic[&call]) {\n"
      << "     auto cv = gutils->cacheForReverse(BuilderZ, newCall,\n"
