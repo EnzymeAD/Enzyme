@@ -36,9 +36,17 @@
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Metadata.h"
 
+#include "llvm/IR/LegacyPassManager.h"
+
 #include "llvm/Support/Debug.h"
 
 #include "llvm/Analysis/TargetLibraryInfo.h"
+
+#include "llvm-c/Core.h"
+#include "llvm-c/DataTypes.h"
+
+#include "llvm-c/ExternC.h"
+#include "llvm-c/Types.h"
 
 #include "JLInstSimplify.h"
 #include "Utils.h"
@@ -56,6 +64,22 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
 
   for (auto &BB : F)
     for (auto &I : BB) {
+      if (auto FI = dyn_cast<FreezeInst>(&I)) {
+        if (FI->hasOneUse()) {
+          bool allBranch = true;
+          for (auto user : FI->users()) {
+            if (!isa<BranchInst>(user)) {
+              allBranch = false;
+              break;
+            }
+          }
+          if (allBranch) {
+            FI->replaceAllUsesWith(FI->getOperand(0));
+            changed = true;
+            continue;
+          }
+        }
+      }
       if (auto cmp = dyn_cast<ICmpInst>(&I)) {
         if (cmp->use_empty())
           continue;
@@ -154,8 +178,10 @@ public:
 
 } // namespace
 
-extern "C" FunctionPass *createJLInstSimplifyPass() {
-  return new JLInstSimplify();
+FunctionPass *createJLInstSimplifyPass() { return new JLInstSimplify(); }
+
+extern "C" void LLVMAddJLInstSimplifyPass(LLVMPassManagerRef PM) {
+  unwrap(PM)->add(createJLInstSimplifyPass());
 }
 
 char JLInstSimplify::ID = 0;

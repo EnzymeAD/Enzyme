@@ -1444,16 +1444,16 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
     if (offsetAllowed)
       if (auto I = llvm::dyn_cast<llvm::Instruction>(V)) {
 #if LLVM_VERSION_MAJOR >= 12
-      auto V2 = llvm::getUnderlyingObject(I, 100);
+        auto V2 = llvm::getUnderlyingObject(I, 100);
 #else
-      auto V2 = llvm::GetUnderlyingObject(
-          I, I->getParent()->getParent()->getParent()->getDataLayout(), 100);
+        auto V2 = llvm::GetUnderlyingObject(
+            I, I->getParent()->getParent()->getParent()->getDataLayout(), 100);
 #endif
-      if (V2 != V) {
-        V = V2;
-        break;
+        if (V2 != V) {
+          V = V2;
+          break;
+        }
       }
-    }
     break;
   }
   return V;
