@@ -1095,6 +1095,15 @@ cublasDscal(cublasHandle_t *handle, int N, double *alpha, double *X, int incX) {
   return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
 }
 
+__attribute__((noinline)) cublasStatus_t
+cublasDscal_v2(cublasHandle_t *handle, int N, double *alpha, double *X, int incX) {
+  calls.push_back((BlasCall){
+      ABIType::CUBLASv2, handle, inDerivative, CallType::SCAL, X, UNUSED_POINTER,
+      UNUSED_POINTER, *alpha, UNUSED_DOUBLE, CUBLAS_LAYOUT, UNUSED_TRANS,
+      UNUSED_TRANS, N, UNUSED_INT, UNUSED_INT, incX, UNUSED_INT, UNUSED_INT});
+  return cublasStatus_t::CUBLAS_STATUS_SUCCESS;
+}
+
 // A = alpha * X * transpose(Y) + A
 __attribute__((noinline)) cublasStatus_t
 cublasDger(cublasHandle_t *handle, int M, int N, double *alpha, double *X,

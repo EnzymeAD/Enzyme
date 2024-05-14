@@ -2043,6 +2043,12 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     if (funcName == "jl_array_copy" || funcName == "ijl_array_copy")
       return false;
 
+    if (funcName == "jl_new_array" || funcName == "ijl_new_array")
+      return false;
+
+    if (funcName == "julia.safepoint")
+      return false;
+
     if (funcName == "jl_idtable_rehash" || funcName == "ijl_idtable_rehash")
       return false;
 
