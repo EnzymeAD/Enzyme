@@ -21,9 +21,9 @@ int enzyme_out;
 int enzyme_const;
 template <typename... T> void __enzyme_autodiff(void *, T...);
 
-void my_dscal_v2(cublasHandle_t *handle, int N, double *__restrict__ alpha,
+void my_dscal_v2(cublasHandle_t *handle, int N, double alpha,
                  double *__restrict__ X, int incx) {
-  cublasDscal_v2(handle, N, alpha, X, incx);
+  cublasDscal_v2(handle, N, &alpha, X, incx);
   inDerivative = true;
 }
 
@@ -72,32 +72,37 @@ static void scal2Tests() {
   cublasHandle_t *handle = DEFAULT_CUBLAS_HANDLE;
   BlasInfo inputs[6] = {
       /*A*/ BlasInfo(A, N, incA),
-      /*B*/ BlasInfo(B, 1, 0),
+      BlasInfo(),
       BlasInfo(),
       BlasInfo(),
       BlasInfo(),
       BlasInfo(),
   };
   init();
+
+  double alpha = 3.14;
   // cublasHandle_t handle;
-  my_dscal_v2(handle, N, B, A, incA);
+  my_dscal_v2(handle, N, alpha, A, incA);
 
   // Check memory of primal on own.
   checkMemoryTrace(inputs, "Primal " + Test, calls);
 
   init();
   __enzyme_autodiff((void *)my_dscal_v2, enzyme_const, handle, enzyme_const, N,
-                    enzyme_dup, B, dB, enzyme_dup, A, dA, enzyme_const, incA);
+                    enzyme_out, alpha, enzyme_dup, A, dA, enzyme_const, incA);
   foundCalls = calls;
 
   init();
 
-  my_dscal_v2(handle, N, B, A, incA);
+  my_dscal_v2(handle, N, alpha, A, incA);
 
   inDerivative = true;
 
-  cublasDaxpy(handle, N, 1.0, B, incB, dA, incA);
-  cublasDaxpy(handle, N, 1.0, A, incA, dB, incB);
+  double *dalpha = (double *)foundCalls[1].pout_arg1;
+  inputs[3] = BlasInfo(dalpha, 1, 1);
+
+  cublasDdot_v2(handle, N, A, incA, dA, incA, dalpha);
+  cublasDscal_v2(handle, N, &alpha, dA, incA);
 
   checkTest(Test);
 
