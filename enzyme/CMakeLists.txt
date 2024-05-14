@@ -52,6 +52,7 @@ get_filename_component(LLVM_ABSOLUTE_DIR
     REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
 
 if (NOT EXISTS "${LLVM_DIR}")
+  message("Looking for LLVM_DIR at ${LLVM_DIR}")
   message(SEND_ERROR "The given LLVM_DIR does not exist. Typo?")
 endif()
 
