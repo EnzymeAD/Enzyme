@@ -55,6 +55,9 @@ set(LLVM_DIR "${LLVM_ABSOLUTE_DIR}" CACHE FILEPATH "b" FORCE)
 
 if (EXISTS "${LLVM_DIR}/lib/cmake/llvm/LLVMConfig.cmake")
   set(LLVM_DIR "${LLVM_DIR}/lib/cmake/llvm")
+else()
+  message("LLVM Config: ${LLVM_DIR}/lib/cmake/llvm/LLVMConfig.cmake")
+  message(FATAL_ERROR "LLVM Config not found")
 endif()
 
 message("LLVM ABS DIR " ${LLVM_DIR})
