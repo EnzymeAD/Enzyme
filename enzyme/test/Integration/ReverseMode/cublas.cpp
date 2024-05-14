@@ -21,11 +21,10 @@ int enzyme_out;
 int enzyme_const;
 template <typename... T> void __enzyme_autodiff(void *, T...);
 
-double my_dscal_v2(cublasHandle_t *handle, int N, double *__restrict__ X, int incx,
-               double *__restrict__ Y, int incy) {
-  double res = cublasDscal(handle, N, X, incx, Y, incy);
+void my_dscal_v2(cublasHandle_t *handle, int N, double *__restrict__ alpha,
+                 double *__restrict__ X, int incx) {
+  cublasDscal_v2(handle, N, alpha, X, incx);
   inDerivative = true;
-  return res;
 }
 
 void my_dgemv(cublasHandle_t *handle, cublasOperation_t trans, int M, int N,
@@ -65,6 +64,49 @@ void my_dgemm(cublasHandle_t *handle, cublasOperation_t transA,
   cublasDgemm(handle, transA, transB, M, N, K, &alpha, A, lda, B, ldb, &beta, C,
               ldc);
   inDerivative = true;
+}
+
+static void scal2Tests() {
+
+  std::string Test = "SCAL2 active both ";
+  cublasHandle_t *handle = DEFAULT_CUBLAS_HANDLE;
+  BlasInfo inputs[6] = {
+      /*A*/ BlasInfo(A, N, incA),
+      /*B*/ BlasInfo(B, 1, 0),
+      BlasInfo(),
+      BlasInfo(),
+      BlasInfo(),
+      BlasInfo(),
+  };
+  init();
+  // cublasHandle_t handle;
+  my_dscal_v2(handle, N, B, A, incA);
+
+  // Check memory of primal on own.
+  checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+  init();
+  __enzyme_autodiff((void *)my_dscal_v2, enzyme_const, handle, enzyme_const, N,
+                    enzyme_dup, B, dB, enzyme_dup, A, dA, enzyme_const, incA);
+  foundCalls = calls;
+
+  init();
+
+  my_dscal_v2(handle, N, B, A, incA);
+
+  inDerivative = true;
+
+  cublasDaxpy(handle, N, 1.0, B, incB, dA, incA);
+  cublasDaxpy(handle, N, 1.0, A, incA, dB, incB);
+
+  checkTest(Test);
+
+  // Check memory of primal of expected derivative
+  checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+  // Check memory of primal of our derivative (if equal above, it
+  // should be the same).
+  checkMemoryTrace(inputs, "Found " + Test, foundCalls);
 }
 
 static void dotTests() {
@@ -424,4 +466,6 @@ int main() {
   dotTests();
 
   dot2Tests();
+
+  scal2Tests();
 }
