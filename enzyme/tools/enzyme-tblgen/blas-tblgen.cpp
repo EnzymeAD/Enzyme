@@ -1314,7 +1314,7 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
 
 // fill the result string and return the number of added args
 void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
-                   raw_ostream &os, int subRule, StringRef func) {
+                   raw_ostream &os, int subRule, StringRef func, ArgType ty) {
 
   const auto nameMap = rule.getArgNameMap();
 
@@ -1353,6 +1353,10 @@ void rev_call_args(StringRef argName, Rule &rule, size_t actArg,
     os << "           " << argName
        << ".push_back(ConstantInt::get(intType, 1));\n";
   os << "        }\n";
+  if (ty == ArgType::fp) {
+    os << "           if (cublasv2) " << argName
+       << ".push_back(Builder2.CreateAlloca(fpType));\n";
+  }
 }
 
 void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
@@ -1373,7 +1377,8 @@ void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
        << ") tys.push_back(arg->getType());\n";
     std::string dfnc_ret_ty = get_blas_ret_ty(dfnc_name);
     os << "    llvm::FunctionType *FT" << dfnc_name << " = FunctionType::get("
-       << dfnc_ret_ty << ", tys, false);\n";
+       << "cublasv2 ? Type::getVoidTy(fpType->getContext()) : " << dfnc_ret_ty
+       << ", tys, false);\n";
     os << "    auto derivcall_" << dfnc_name
        << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
        << "  blas.prefix + blas.floatType + \"" << dfnc_name
@@ -1389,14 +1394,17 @@ void emit_fret_call(StringRef dfnc_name, StringRef argName, StringRef name,
        << bb << ".CreateCall(derivcall_" << dfnc_name << ", " << argName
        << ", Defs));\n";
   }
+  os << "        Value *dres = cubcall;\n";
+  os << "         if (cublasv2) dres = " << bb << ".CreateLoad(fpType, "
+     << argName << "[" << argName << ".size()-1]);\n";
   os << "        if (byRefFloat) {\n"
      << "          ((DiffeGradientUtils *)gutils)"
      << "->addToInvertedPtrDiffe(&call, nullptr, fpType, 0, "
      << "(called->getParent()->getDataLayout().getTypeSizeInBits(fpType)/8), "
         "orig_"
-     << name << ", cubcall, " << bb << ");\n"
+     << name << ", dres, " << bb << ");\n"
      << "        } else {\n"
-     << "          addToDiffe(orig_" << name << ", cubcall, " << bb
+     << "          addToDiffe(orig_" << name << ", dres, " << bb
      << ", fpType);\n"
      << "        }\n";
   os << "}\n";
@@ -1604,7 +1612,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       emit_runtime_condition(ruleDag, name, "        ", "Builder2",
                              (ty == ArgType::fp), os);
       const auto dfnc_name = Def->getValueAsString("s");
-      rev_call_args("args1", rule, actArg, os, -1, dfnc_name);
+      rev_call_args("args1", rule, actArg, os, -1, dfnc_name, ty);
       os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
 
@@ -1612,10 +1620,11 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
         // extra handling, since we will update only a fp scalar as part of the
         // return struct it's presumably done by setting it to the value
         // returned by this call
-        os << "      if (!cublas) {\n";
+        os << "      if (!cublas || cublasv2) {\n";
         emit_fret_call(dfnc_name, "ArrayRef<Value *>(args1)", name, "Builder2",
                        os);
         os << "      } else {\n";
+        os << "         assert(\"unsupported cublas\");\n";
       } else {
         os << "    SmallVector<Type*, 1> tys; for (auto arg : args1) "
               "tys.push_back(arg->getType());\n";
@@ -1654,7 +1663,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       os << "      // DiagUpdateSPMV\n";
       emit_if_rule_condition(ruleDag, name, "      ", os);
       emit_runtime_condition(ruleDag, name, "        ", "Builder2", true, os);
-      rev_call_args("args1", rule, actArg, os, -1, "");
+      rev_call_args("args1", rule, actArg, os, -1, "", ty);
       os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
       // Now that we have the defs, we can create the call
@@ -1670,7 +1679,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       os << "      // FrobInnerProd\n";
       emit_if_rule_condition(ruleDag, name, "      ", os);
       emit_runtime_condition(ruleDag, name, "        ", "Builder2", true, os);
-      rev_call_args("args1", rule, actArg, os, -1, "");
+      rev_call_args("args1", rule, actArg, os, -1, "", ty);
       os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
          << valueTypes << "}, Builder2, /* lookup */ true);\n";
       // Now that we have the defs, we can create the call
@@ -1701,7 +1710,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
           if (sub_Def->isSubClassOf("b")) {
             const auto dfnc_name = sub_Def->getValueAsString("s");
             std::string argName = "args" + std::to_string(i);
-            rev_call_args(argName, rule, actArg, os, i, dfnc_name);
+            rev_call_args(argName, rule, actArg, os, i, dfnc_name, ty);
             os << "    //handling nested blas: " << std::to_string(i) << "\n";
             // emit_deriv_blas_call(sub_Dag, patternMap, handled, os);
             if (get_blas_ret_ty(dfnc_name) == "fpType") {
@@ -1734,13 +1743,13 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
             os << "    //handled nested blas: " << std::to_string(i) << "\n";
           } else if (sub_Def->isSubClassOf("FrobInnerProd")) {
             std::string argName = "args" + std::to_string(i);
-            rev_call_args(argName, rule, actArg, os, i, "");
+            rev_call_args(argName, rule, actArg, os, i, "", ty);
             assert(sub_Dag->getNumArgs() == 4);
             assert(ty == ArgType::fp);
             emit_fret_call("inner_prod", argName, name, "Builder2", os);
           } else if (sub_Def->isSubClassOf("DiagUpdateSPMV")) {
             std::string argName = "args" + std::to_string(i);
-            rev_call_args(argName, rule, actArg, os, i, "");
+            rev_call_args(argName, rule, actArg, os, i, "", ty);
             assert(sub_Dag->getNumArgs() == 6);
             assert(ty == ArgType::ap);
             os << "callSPMVDiagUpdate(Builder2, *gutils->oldFunc->getParent(), "

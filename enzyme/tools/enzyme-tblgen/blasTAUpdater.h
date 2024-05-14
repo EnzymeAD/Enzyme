@@ -136,11 +136,11 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
       break;
     case ArgType::mldData:
       os << "  updateAnalysis(call.getArgOperand(" << i
-         << (lv23 ? " + offset" : "") << "), ttPtr, &call);\n";
+         << " + offset), ttPtr, &call);\n";
       break;
     case ArgType::fp:
       os << "  updateAnalysis(call.getArgOperand(" << i
-         << (lv23 ? " + offset" : "") << "), ttFloat, &call);\n";
+         << " + offset), ttFloat, &call);\n";
       break;
     case ArgType::ap:
       // TODO
@@ -151,7 +151,7 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
     case ArgType::uplo:
     case ArgType::trans:
       os << "  updateAnalysis(call.getArgOperand(" << i
-         << (lv23 ? " + offset" : "") << "), ttChar, &call);\n";
+         << " + offset), ttChar, &call);\n";
       break;
     case ArgType::diag:
     case ArgType::side:
