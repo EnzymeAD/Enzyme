@@ -3273,6 +3273,9 @@ AnalysisKey EnzymeNewPM::Key;
 
 #include "ActivityAnalysisPrinter.h"
 #include "PreserveNVVM.h"
+#ifdef ENZYME_ENABLE_HERBIE
+#include "Herbie.h"
+#endif
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
@@ -3812,6 +3815,10 @@ void registerEnzyme(llvm::PassBuilder &PB) {
          llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
         if (Name == "enzyme") {
           MPM.addPass(EnzymeNewPM());
+          return true;
+        }
+        if (Name == "fp-opt") {
+          MPM.addPass(FPOptNewPM());
           return true;
         }
         if (Name == "preserve-nvvm") {
