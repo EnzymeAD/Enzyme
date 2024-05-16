@@ -433,6 +433,7 @@ SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg) const {
   if (related.size() == 3) {
     auto argTy = argTypes.lookup(related[0]);
     assert(argTy == ArgType::trans || argTy == ArgType::diag);
+    (void)argTy;
   }
 
   return related;
