@@ -113,8 +113,9 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
             for (int i = 0; i < 2; i++) {
               Value *start = (i == 0) ? lhsv : rhsv;
               Instruction *starti = dyn_cast<Instruction>(start);
+              if (!isa<Argument>(starti))
+                continue;
               if (!starti) {
-                assert(isa<Argument>(starti));
                 starti = &cast<Argument>(starti)
                               ->getParent()
                               ->getEntryBlock()
