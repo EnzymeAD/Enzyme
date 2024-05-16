@@ -77,24 +77,91 @@ void runViaHerbie(const std::string &cmd) {
   output.close();
 }
 
+std::string getHerbieOperator(const Instruction &I) {
+  switch (I.getOpcode()) {
+  case Instruction::FAdd:
+    return "+";
+  case Instruction::FSub:
+    return "-";
+  case Instruction::FMul:
+    return "*";
+  case Instruction::FDiv:
+    return "/";
+  default:
+    return "UnknownOp";
+  }
+}
+
 // Run (our choice of) floating point optimizations on function `F`.
 // Return whether or not we change the function.
-bool fpOptimize(llvm::Function &F) {
+bool fpOptimize(Function &F) {
   bool changed = false;
+  std::string herbieInput;
+  std::map<Value *, std::string> valueToSymbolMap;
+  std::map<std::string, Value *> symbolToValueMap;
+  std::set<std::string> arguments;
+  int symbolCounter = 0;
+
+  auto getNextSymbol = [&symbolCounter]() -> std::string {
+    return "v" + std::to_string(symbolCounter++);
+  };
+
   // 1) Identify subgraphs of the computation which can be entirely represented
   // in herbie-style arithmetic
-
-  llvm::errs() << "Optimizing function " << F.getName().str() << "\n";
-
   // 2) Make the herbie FP-style expression by
   // converting  llvm instructions into herbie string (FPNode ....)
+  for (auto &BB : F) {
+    for (auto &I : BB) {
+      if (auto *op = dyn_cast<BinaryOperator>(&I)) {
+        if (op->getType()->isFloatingPointTy()) {
+          std::string lhs =
+              valueToSymbolMap.count(op->getOperand(0))
+                  ? valueToSymbolMap[op->getOperand(0)]
+                  : (valueToSymbolMap[op->getOperand(0)] = getNextSymbol());
+          std::string rhs =
+              valueToSymbolMap.count(op->getOperand(1))
+                  ? valueToSymbolMap[op->getOperand(1)]
+                  : (valueToSymbolMap[op->getOperand(1)] = getNextSymbol());
+
+          arguments.insert(lhs);
+          arguments.insert(rhs);
+
+          std::string symbol = getNextSymbol();
+          valueToSymbolMap[&I] = symbol;
+          symbolToValueMap[symbol] = &I;
+
+          std::string herbieNode = "(";
+          herbieNode += getHerbieOperator(I);
+          herbieNode += " ";
+          herbieNode += lhs;
+          herbieNode += " ";
+          herbieNode += rhs;
+          herbieNode += ")";
+          herbieInput += herbieNode;
+        }
+      }
+    }
+  }
+
+  if (herbieInput.empty()) {
+    return changed;
+  }
+
+  std::string argumentsStr = "(";
+  for (const auto &arg : arguments) {
+    argumentsStr += arg + " ";
+  }
+  argumentsStr.pop_back();
+  argumentsStr += ")";
+
+  herbieInput = "(FPCore " + argumentsStr + " " + herbieInput + ")";
+
+  llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
 
   // 3) run fancy opts
-
-  // runViaHerbie()
+  runViaHerbie(herbieInput);
 
   // 4) parse the output string solution from herbieland
-
   // 5) convert into a solution in llvm vals/instructions
   return changed;
 }
