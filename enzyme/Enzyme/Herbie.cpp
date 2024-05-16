@@ -21,6 +21,7 @@
 
 #include <fstream>
 #include <map>
+#include <sstream>
 #include <string>
 
 #include "Herbie.h"
@@ -36,6 +37,7 @@ void runViaHerbie(const std::string &cmd) {
   std::string tmpin = "/tmp/herbie_input";
   std::string tmpout = "/tmp/herbie_output";
 
+  std::remove(tmpout.c_str());
   std::ofstream input(tmpin);
   if (!input) {
     llvm::errs() << "Failed to open input file.\n";
@@ -45,21 +47,14 @@ void runViaHerbie(const std::string &cmd) {
   input.close();
 
   std::string Program = HERBIE_BINARY;
-
-  llvm::StringRef Args[] = {"", "shell"};
-  llvm::ArrayRef<llvm::Optional<llvm::StringRef>> Redirects = {
-      llvm::StringRef(tmpin),  // stdin
-      llvm::StringRef(tmpout), // stdout
-      llvm::StringRef(tmpout)  // stderr
-  };
-
+  llvm::StringRef Args[] = {Program, "improve", tmpin, tmpout};
   std::string ErrMsg;
   bool ExecutionFailed = false;
 
   llvm::errs() << "Executing: " << Program << "\n";
 
   llvm::sys::ExecuteAndWait(Program, Args, /*Env=*/llvm::None,
-                            /*Redirects=*/Redirects,
+                            /*Redirects=*/llvm::None,
                             /*SecondsToWait=*/0, /*MemoryLimit=*/0, &ErrMsg,
                             &ExecutionFailed);
 
@@ -75,6 +70,7 @@ void runViaHerbie(const std::string &cmd) {
   }
 
   std::string line;
+  llvm::errs() << "Herbie output:\n";
   while (std::getline(output, line)) {
     llvm::errs() << line << "\n";
   }
