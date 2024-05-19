@@ -184,6 +184,10 @@ public:
       llvm::IRBuilder<> &Builder2, bool lookup,
       const llvm::ValueToValueMapTy &available = llvm::ValueToValueMapTy());
 
+  bool usedInRooting(const llvm::CallBase *orig,
+                     llvm::ArrayRef<ValueType> types, const llvm::Value *val,
+                     bool shadow) const;
+
   llvm::Value *getNewIfOriginal(llvm::Value *originst) const;
 
   llvm::Value *tid;
