@@ -4020,8 +4020,10 @@ public:
         } else {
           EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
         }
-        setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
-                 Builder2);
+        if (!gutils->isConstantValue(&I))
+          setDiffe(&I,
+                   Constant::getNullValue(gutils->getShadowType(I.getType())),
+                   Builder2);
         return false;
       }
       return false;
