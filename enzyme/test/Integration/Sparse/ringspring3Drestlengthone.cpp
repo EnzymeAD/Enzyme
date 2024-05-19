@@ -59,7 +59,7 @@ template<typename T>
 __attribute__((noinline))
 std::vector<Triple<T>> hess_f(size_t N, T* input) {
     std::vector<Triple<T>> triplets;
-    // input = __enzyme_todense((void*)mod_load, (void*)never_store, input, N);
+    input = __enzyme_todense((void*)mod_load, (void*)never_store, input, N);
     __builtin_assume(N > 0);
     for (size_t i=0; i<N; i++) {
         __builtin_assume(i < 100000000);
