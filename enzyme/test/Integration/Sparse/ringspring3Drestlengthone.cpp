@@ -21,7 +21,7 @@ __attribute__((always_inline))
 static double f(size_t N, T* __restrict__ pos) {
     double e = 0.;
     __builtin_assume(N != 0);
-    for (size_t j = 0; j < N/3; j ++) {
+    for (size_t j = 0; j < N; j ++) {
         size_t i = 3 * j;
         T vx = pos[i];
         T vy = pos[i + 1];
