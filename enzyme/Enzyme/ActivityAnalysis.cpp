@@ -732,7 +732,8 @@ bool isPossibleFloat(const TypeResults &TR, Value *I, const DataLayout &DL) {
 bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
                                              Instruction *I) {
 
-  TimeTraceScope timeScope("isConstantInstruction", I->getParent()->getParent()->getName());
+  TimeTraceScope timeScope("isConstantInstruction",
+                           I->getParent()->getParent()->getName());
 
   // This analysis may only be called by instructions corresponding to
   // the function analyzed by TypeInfo
