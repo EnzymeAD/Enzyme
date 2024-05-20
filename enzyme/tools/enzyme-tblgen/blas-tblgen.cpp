@@ -926,7 +926,7 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
       os << "        Value *args1_cblas[" << numArgs + 1 << "] = "
          << " {arg_layout, " << dcallArgs << "};\n";
       os << "        auto Defs_cblas = gutils->getInvertedBundles(\n"
-         << "          &call, {ValueType::Both, " << valueTypes
+         << "          &call, {ValueType::Primal, " << valueTypes
          << "}, Builder2, /* lookup */ false);\n";
     }
     os << "        Value *args1[" << numArgs << "] = {" << dcallArgs << "};\n";
