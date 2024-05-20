@@ -307,68 +307,15 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
   globalsToErase.push_back(&g);
 }
 
-bool preserveNVVM(bool Begin, Function &F) {
+bool preserveNVVM(bool Begin, Module &M) {
   bool changed = false;
-
-  if (Begin) {
-    changed |= attributeKnownFunctions(F);
-  }
-
-  StringMap<std::pair<std::string, std::string>> Implements;
-  for (std::string T : {"", "f"}) {
-    // sincos, sinpi, cospi, sincospi, cyl_bessel_i1
-    for (std::string name :
-         {"sin",        "cos",     "tan",       "log2",   "exp",    "exp2",
-          "exp10",      "cosh",    "sinh",      "tanh",   "atan2",  "atan",
-          "asin",       "acos",    "log",       "log10",  "log1p",  "acosh",
-          "asinh",      "atanh",   "expm1",     "hypot",  "rhypot", "norm3d",
-          "rnorm3d",    "norm4d",  "rnorm4d",   "norm",   "rnorm",  "cbrt",
-          "rcbrt",      "j0",      "j1",        "y0",     "y1",     "yn",
-          "jn",         "erf",     "erfinv",    "erfc",   "erfcx",  "erfcinv",
-          "normcdfinv", "normcdf", "lgamma",    "ldexp",  "scalbn", "frexp",
-          "modf",       "fmod",    "remainder", "remquo", "powi",   "tgamma",
-          "round",      "fdim",    "ilogb",     "logb",   "isinf",  "pow",
-          "sqrt",       "finite",  "fabs",      "fmax"}) {
-      std::string nvname = "__nv_" + name;
-      std::string llname = "llvm." + name + ".";
-      std::string mathname = name;
-
-      if (T == "f") {
-        mathname += "f";
-        nvname += "f";
-        llname += "f32";
-      } else {
-        llname += "f64";
-      }
-
-      Implements[nvname] = std::make_pair(mathname, llname);
-    }
-  }
-  auto found = Implements.find(F.getName());
-  if (found != Implements.end()) {
-    changed = true;
-    if (Begin) {
-      F.removeFnAttr(Attribute::AlwaysInline);
-      F.addFnAttr(Attribute::NoInline);
-      // As a side effect, enforces arguments
-      // cannot be erased.
-      F.setLinkage(Function::LinkageTypes::ExternalLinkage);
-      F.addFnAttr("implements", found->second.second);
-      F.addFnAttr("implements2", found->second.first);
-      F.addFnAttr("enzyme_math", found->second.first);
-    } else {
-      F.addFnAttr(Attribute::AlwaysInline);
-      F.removeFnAttr(Attribute::NoInline);
-      F.setLinkage(Function::LinkageTypes::InternalLinkage);
-    }
-  }
   constexpr static const char gradient_handler_name[] =
       "__enzyme_register_gradient";
   constexpr static const char derivative_handler_name[] =
       "__enzyme_register_derivative";
   constexpr static const char splitderivative_handler_name[] =
       "__enzyme_register_splitderivative";
-  for (GlobalVariable &g : F.getParent()->globals()) {
+  for (GlobalVariable &g : M.globals()) {
     if (g.getName().contains(gradient_handler_name) ||
         g.getName().contains(derivative_handler_name) ||
         g.getName().contains(splitderivative_handler_name) ||
@@ -390,16 +337,13 @@ bool preserveNVVM(bool Begin, Function &F) {
           }
           break;
         }
-        if (V == &F) {
-          changed |= preserveLinkage(Begin, F);
-          break;
-        }
+        if (auto F = dyn_cast<Function>(V))
+          changed |= preserveLinkage(Begin, *F);
       }
     }
   }
-  auto &M = *F.getParent();
   SmallVector<GlobalVariable *, 1> toErase;
-  for (GlobalVariable &g : F.getParent()->globals()) {
+  for (GlobalVariable &g : M.globals()) {
     if (g.getName().contains(gradient_handler_name)) {
       handleCustomDerivative<gradient_handler_name,
                              DerivativeMode::ReverseModeGradient, 3>(M, g,
@@ -456,8 +400,6 @@ bool preserveNVVM(bool Begin, Function &F) {
           }
           break;
         }
-        if (V != &F)
-          continue;
         if (auto F = cast<Function>(V)) {
           F->addAttribute(AttributeList::FunctionIndex,
                           Attribute::get(g.getContext(), "enzyme_inactive"));
@@ -486,8 +428,6 @@ bool preserveNVVM(bool Begin, Function &F) {
           }
           break;
         }
-        if (V != &F)
-          continue;
         if (auto F = cast<Function>(V)) {
           F->addAttribute(
               AttributeList::FunctionIndex,
@@ -517,8 +457,6 @@ bool preserveNVVM(bool Begin, Function &F) {
           }
           break;
         }
-        if (V != &F)
-          continue;
         if (auto F = cast<Function>(V)) {
           F->addAttribute(AttributeList::FunctionIndex,
                           Attribute::get(g.getContext(), Attribute::NoFree));
@@ -549,8 +487,6 @@ bool preserveNVVM(bool Begin, Function &F) {
         while (auto CE = dyn_cast<ConstantExpr>(V)) {
           V = CE->getOperand(0);
         }
-        if (V != &F)
-          continue;
         while (auto CE = dyn_cast<ConstantExpr>(name)) {
           name = CE->getOperand(0);
         }
@@ -685,7 +621,7 @@ bool preserveNVVM(bool Begin, Function &F) {
 
   for (auto G : toErase) {
     for (auto name : {"llvm.used", "llvm.compiler.used"}) {
-      if (auto V = F.getParent()->getGlobalVariable(name)) {
+      if (auto V = M.getGlobalVariable(name)) {
         auto C = cast<ConstantArray>(V->getInitializer());
         SmallVector<Constant *, 1> toKeep;
         bool found = false;
@@ -728,45 +664,119 @@ bool preserveNVVM(bool Begin, Function &F) {
     G->eraseFromParent();
   }
 
-  if (!Begin && F.hasFnAttribute("prev_fixup")) {
-    changed = true;
-    F.removeFnAttr("prev_fixup");
-    if (F.hasFnAttribute("prev_always_inline")) {
-      F.addFnAttr(Attribute::AlwaysInline);
-      F.removeFnAttr("prev_always_inline");
+  StringMap<std::pair<std::string, std::string>> Implements;
+  for (std::string T : {"", "f"}) {
+    // sincos, sinpi, cospi, sincospi, cyl_bessel_i1
+    for (std::string name :
+         {"sin",        "cos",     "tan",       "log2",   "exp",    "exp2",
+          "exp10",      "cosh",    "sinh",      "tanh",   "atan2",  "atan",
+          "asin",       "acos",    "log",       "log10",  "log1p",  "acosh",
+          "asinh",      "atanh",   "expm1",     "hypot",  "rhypot", "norm3d",
+          "rnorm3d",    "norm4d",  "rnorm4d",   "norm",   "rnorm",  "cbrt",
+          "rcbrt",      "j0",      "j1",        "y0",     "y1",     "yn",
+          "jn",         "erf",     "erfinv",    "erfc",   "erfcx",  "erfcinv",
+          "normcdfinv", "normcdf", "lgamma",    "ldexp",  "scalbn", "frexp",
+          "modf",       "fmod",    "remainder", "remquo", "powi",   "tgamma",
+          "round",      "fdim",    "ilogb",     "logb",   "isinf",  "pow",
+          "sqrt",       "finite",  "fabs",      "fmax"}) {
+      std::string nvname = "__nv_" + name;
+      std::string llname = "llvm." + name + ".";
+      std::string mathname = name;
+
+      if (T == "f") {
+        mathname += "f";
+        nvname += "f";
+        llname += "f32";
+      } else {
+        llname += "f64";
+      }
+
+      Implements[nvname] = std::make_pair(mathname, llname);
     }
-    if (F.hasFnAttribute("prev_no_inline")) {
-      F.removeFnAttr("prev_no_inline");
-    } else {
-      F.removeFnAttr(Attribute::NoInline);
+  }
+  for (auto &F : M) {
+    if (Begin) {
+      changed |= attributeKnownFunctions(F);
     }
-    int64_t val;
-    F.getFnAttribute("prev_linkage").getValueAsString().getAsInteger(10, val);
-    F.setLinkage((Function::LinkageTypes)val);
+    auto found = Implements.find(F.getName());
+    if (found != Implements.end()) {
+      changed = true;
+      if (Begin) {
+        F.removeFnAttr(Attribute::AlwaysInline);
+        F.addFnAttr(Attribute::NoInline);
+        // As a side effect, enforces arguments
+        // cannot be erased.
+        F.setLinkage(Function::LinkageTypes::ExternalLinkage);
+        F.addFnAttr("implements", found->second.second);
+        F.addFnAttr("implements2", found->second.first);
+        F.addFnAttr("enzyme_math", found->second.first);
+      } else {
+        F.addFnAttr(Attribute::AlwaysInline);
+        F.removeFnAttr(Attribute::NoInline);
+        F.setLinkage(Function::LinkageTypes::InternalLinkage);
+      }
+    }
+    if (!Begin && F.hasFnAttribute("prev_fixup")) {
+      changed = true;
+      F.removeFnAttr("prev_fixup");
+      if (F.hasFnAttribute("prev_always_inline")) {
+        F.addFnAttr(Attribute::AlwaysInline);
+        F.removeFnAttr("prev_always_inline");
+      }
+      if (F.hasFnAttribute("prev_no_inline")) {
+        F.removeFnAttr("prev_no_inline");
+      } else {
+        F.removeFnAttr(Attribute::NoInline);
+      }
+      int64_t val;
+      F.getFnAttribute("prev_linkage").getValueAsString().getAsInteger(10, val);
+      F.setLinkage((Function::LinkageTypes)val);
+    }
   }
   return changed;
 }
 
 namespace {
 
-class PreserveNVVM final : public FunctionPass {
+class PreserveNVVM final : public ModulePass {
 public:
   static char ID;
   bool Begin;
-  PreserveNVVM(bool Begin = true) : FunctionPass(ID), Begin(Begin) {}
+  PreserveNVVM(bool Begin = true) : ModulePass(ID), Begin(Begin) {}
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {}
-  bool runOnFunction(Function &F) override { return preserveNVVM(Begin, F); }
+  bool runOnModule(Module &M) override { return preserveNVVM(Begin, M); }
+};
+
+class PreserveNVVMFn final : public FunctionPass {
+public:
+  static char ID;
+  bool Begin;
+  PreserveNVVMFn(bool Begin = true) : FunctionPass(ID), Begin(Begin) {}
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {}
+  bool runOnFunction(Function &F) override {
+    return preserveNVVM(Begin, *F.getParent());
+  }
 };
 
 } // namespace
 
 char PreserveNVVM::ID = 0;
 
+char PreserveNVVMFn::ID = 0;
+
 static RegisterPass<PreserveNVVM> X("preserve-nvvm", "Preserve NVVM Pass");
 
-FunctionPass *createPreserveNVVMPass(bool Begin) {
+static RegisterPass<PreserveNVVMFn> XFn("preserve-nvvm-fn",
+                                        "Preserve NVVM Pass");
+
+ModulePass *createPreserveNVVMPass(bool Begin) {
   return new PreserveNVVM(Begin);
+}
+
+FunctionPass *createPreserveNVVMFnPass(bool Begin) {
+  return new PreserveNVVMFn(Begin);
 }
 
 #include <llvm-c/Core.h>
@@ -780,9 +790,7 @@ extern "C" void AddPreserveNVVMPass(LLVMPassManagerRef PM, uint8_t Begin) {
 
 PreserveNVVMNewPM::Result
 PreserveNVVMNewPM::run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
-  bool changed = false;
-  for (auto &F : M)
-    changed |= preserveNVVM(Begin, F);
+  bool changed = preserveNVVM(Begin, M);
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 llvm::AnalysisKey PreserveNVVMNewPM::Key;
