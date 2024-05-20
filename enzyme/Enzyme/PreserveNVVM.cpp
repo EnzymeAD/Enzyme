@@ -311,8 +311,6 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
 
 bool preserveNVVM(bool Begin, Module &M) {
 
-  TimeTraceScope timeScope("test", M.getName());
-
   bool changed = false;
   constexpr static const char gradient_handler_name[] =
       "__enzyme_register_gradient";

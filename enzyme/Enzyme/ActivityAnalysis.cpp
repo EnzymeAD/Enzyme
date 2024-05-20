@@ -732,7 +732,7 @@ bool isPossibleFloat(const TypeResults &TR, Value *I, const DataLayout &DL) {
 bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
                                              Instruction *I) {
 
-  TimeTraceScope timeScope("is constant instruction");
+  TimeTraceScope timeScope("isConstantInstruction", I->getParent()->getParent()->getName());
 
   // This analysis may only be called by instructions corresponding to
   // the function analyzed by TypeInfo
@@ -1048,6 +1048,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   // This analysis may only be called by instructions corresponding to
   // the function analyzed by TypeInfo -- however if the Value
   // was created outside a function (e.g. global, constant), that is allowed
+  TimeTraceScope timeScope("isConstantValue");
+
   assert(Val);
   if (auto I = dyn_cast<Instruction>(Val)) {
     if (TR.getFunction() != I->getParent()->getParent()) {
