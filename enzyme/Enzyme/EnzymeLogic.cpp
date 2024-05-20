@@ -78,6 +78,7 @@
 #include "llvm/Analysis/GlobalsModRef.h"
 
 #include "llvm/Support/AMDGPUMetadata.h"
+#include "llvm/Support/TimeProfiler.h"
 
 #include "llvm/ADT/StringSet.h"
 
@@ -1976,6 +1977,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     bool shadowReturnUsed, const FnTypeInfo &oldTypeInfo_,
     const std::vector<bool> _overwritten_args, bool forceAnonymousTape,
     unsigned width, bool AtomicAdd, bool omp) {
+
+  TimeTraceScope timeScope("CreateAugmentedPrimal", todiff->getName());
+
   if (returnUsed)
     assert(!todiff->getReturnType()->isEmptyTy() &&
            !todiff->getReturnType()->isVoidTy());
@@ -3677,6 +3681,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     RequestContext context, const ReverseCacheKey &&key, TypeAnalysis &TA,
     const AugmentedReturn *augmenteddata, bool omp) {
 
+  TimeTraceScope timeScope("CreatePrimalAndGradient", key.todiff->getName());
+
   assert(key.mode == DerivativeMode::ReverseModeCombined ||
          key.mode == DerivativeMode::ReverseModeGradient);
 
@@ -4557,6 +4563,9 @@ Function *EnzymeLogic::CreateForwardDiff(
     llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
     const std::vector<bool> _overwritten_args,
     const AugmentedReturn *augmenteddata, bool omp) {
+
+  TimeTraceScope timeScope("CreateForwardDiff", todiff->getName());
+
   assert(retType != DIFFE_TYPE::OUT_DIFF);
 
   assert(mode == DerivativeMode::ForwardMode ||

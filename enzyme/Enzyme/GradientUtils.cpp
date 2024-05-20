@@ -8242,6 +8242,9 @@ void GradientUtils::eraseFictiousPHIs() {
 }
 
 void GradientUtils::forceActiveDetection() {
+
+  TimeTraceScope timeScope("Activity Analysis", oldFunc->getName());
+
   for (auto &Arg : oldFunc->args()) {
     ATA->isConstantValue(TR, &Arg);
   }
