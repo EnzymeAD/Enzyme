@@ -920,8 +920,8 @@ public:
         setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
                  BuilderZ);
     }
-    gutils->replaceAWithB(gutils->getNewFromOriginal(&I),
-                          UndefValue::get(I.getType()));
+    gutils->getNewFromOriginal(&I)->replaceAllUsesWith(
+        UndefValue::get(I.getType()));
     eraseIfUnused(I, /*erase*/ true, /*check*/ false);
     return;
   }
