@@ -702,18 +702,12 @@ bool preserveNVVM(bool Begin, Module &M) {
     if (found != Implements.end()) {
       changed = true;
       if (Begin) {
-        F.removeFnAttr(Attribute::AlwaysInline);
-        F.addFnAttr(Attribute::NoInline);
         // As a side effect, enforces arguments
         // cannot be erased.
-        F.setLinkage(Function::LinkageTypes::ExternalLinkage);
         F.addFnAttr("implements", found->second.second);
         F.addFnAttr("implements2", found->second.first);
         F.addFnAttr("enzyme_math", found->second.first);
-      } else {
-        F.addFnAttr(Attribute::AlwaysInline);
-        F.removeFnAttr(Attribute::NoInline);
-        F.setLinkage(Function::LinkageTypes::InternalLinkage);
+        changed |= preserveLinkage(Begin, F);
       }
     }
     if (!Begin && F.hasFnAttribute("prev_fixup")) {
