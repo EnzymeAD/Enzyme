@@ -326,8 +326,6 @@ public:
 
     std::string s;
     llvm::raw_string_ostream ss(s);
-    ss << *gutils->oldFunc << "\n";
-    ss << *gutils->newFunc << "\n";
     ss << "in Mode: " << to_string(Mode) << "\n";
     ss << "cannot handle unknown instruction\n" << inst;
     if (CustomErrorHandler) {
@@ -335,11 +333,21 @@ public:
       getForwardBuilder(Builder2);
       CustomErrorHandler(ss.str().c_str(), wrap(&inst), ErrorType::NoDerivative,
                          gutils, nullptr, wrap(&Builder2));
-      return;
     } else {
       EmitFailure("NoDerivative", inst.getDebugLoc(), &inst, ss.str());
-      return;
     }
+    if (!gutils->isConstantValue(&inst)) {
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError ||
+          Mode == DerivativeMode::ForwardModeSplit)
+        setDiffe(&inst, Constant::getNullValue(gutils->getShadowType(inst.getType())),
+                 BuilderZ);
+    }
+    if (!inst.getType()->isVoidTy())
+    gutils->replaceAWithB(gutils->getNewFromOriginal(&inst),
+                          UndefValue::get(inst.getType()));
+    eraseIfUnused(inst, /*erase*/ true, /*check*/ false);
+    return;
   }
 
   // Common function for falling back to the implementation
