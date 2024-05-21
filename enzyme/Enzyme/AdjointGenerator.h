@@ -344,11 +344,14 @@ public:
                  Constant::getNullValue(gutils->getShadowType(inst.getType())),
                  Builder2);
     }
+#if LLVM_VERSION_MAJOR >= 12
     if (!inst.getType()->isVoidTy()) {
       for (auto &U :
-           make_early_inc_range(gutils->getNewFromOriginal(&inst)->uses()))
+           make_early_inc_range(gutils->getNewFromOriginal(&inst)->uses())) {
         U.set(UndefValue::get(inst.getType()));
+      }
     }
+#endif
     eraseIfUnused(inst, /*erase*/ true, /*check*/ false);
     return;
   }
@@ -922,11 +925,14 @@ public:
         setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
                  BuilderZ);
     }
+#if LLVM_VERSION_MAJOR >= 12
     if (!I.getType()->isVoidTy()) {
       for (auto &U :
-           make_early_inc_range(gutils->getNewFromOriginal(&I)->uses()))
+           make_early_inc_range(gutils->getNewFromOriginal(&I)->uses())) {
         U.set(UndefValue::get(I.getType()));
+      }
     }
+#endif
     eraseIfUnused(I, /*erase*/ true, /*check*/ false);
     return;
   }
