@@ -345,8 +345,8 @@ public:
                  Builder2);
     }
     if (!inst.getType()->isVoidTy())
-      gutils->replaceAWithB(gutils->getNewFromOriginal(&inst),
-                            UndefValue::get(inst.getType()));
+      gutils->getNewFromOriginal(&inst)->replaceAllUsesWith(
+          UndefValue::get(inst.getType()));
     eraseIfUnused(inst, /*erase*/ true, /*check*/ false);
     return;
   }
