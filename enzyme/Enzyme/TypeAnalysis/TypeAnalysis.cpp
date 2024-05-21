@@ -42,8 +42,8 @@
 #include "llvm/IR/InstIterator.h"
 
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/TimeProfiler.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringMap.h"
