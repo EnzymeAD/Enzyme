@@ -328,9 +328,9 @@ public:
     llvm::raw_string_ostream ss(s);
     ss << "in Mode: " << to_string(Mode) << "\n";
     ss << "cannot handle unknown instruction\n" << inst;
+    IRBuilder<> Builder2(&inst);
+    getForwardBuilder(Builder2);
     if (CustomErrorHandler) {
-      IRBuilder<> Builder2(&inst);
-      getForwardBuilder(Builder2);
       CustomErrorHandler(ss.str().c_str(), wrap(&inst), ErrorType::NoDerivative,
                          gutils, nullptr, wrap(&Builder2));
     } else {
@@ -340,12 +340,13 @@ public:
       if (Mode == DerivativeMode::ForwardMode ||
           Mode == DerivativeMode::ForwardModeError ||
           Mode == DerivativeMode::ForwardModeSplit)
-        setDiffe(&inst, Constant::getNullValue(gutils->getShadowType(inst.getType())),
-                 BuilderZ);
+        setDiffe(&inst,
+                 Constant::getNullValue(gutils->getShadowType(inst.getType())),
+                 Builder2);
     }
     if (!inst.getType()->isVoidTy())
-    gutils->replaceAWithB(gutils->getNewFromOriginal(&inst),
-                          UndefValue::get(inst.getType()));
+      gutils->replaceAWithB(gutils->getNewFromOriginal(&inst),
+                            UndefValue::get(inst.getType()));
     eraseIfUnused(inst, /*erase*/ true, /*check*/ false);
     return;
   }
