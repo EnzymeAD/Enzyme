@@ -345,7 +345,8 @@ public:
                  Builder2);
     }
     if (!inst.getType()->isVoidTy()) {
-      for (auto &U : gutils->getNewFromOriginal(&inst)->uses())
+      for (auto &U :
+           make_early_inc_range(gutils->getNewFromOriginal(&inst)->uses()))
         U.set(UndefValue::get(inst.getType()));
     }
     eraseIfUnused(inst, /*erase*/ true, /*check*/ false);
@@ -922,7 +923,8 @@ public:
                  BuilderZ);
     }
     if (!I.getType()->isVoidTy()) {
-      for (auto &U : gutils->getNewFromOriginal(&I)->uses())
+      for (auto &U :
+           make_early_inc_range(gutils->getNewFromOriginal(&I)->uses()))
         U.set(UndefValue::get(I.getType()));
     }
     eraseIfUnused(I, /*erase*/ true, /*check*/ false);
