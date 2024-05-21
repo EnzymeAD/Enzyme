@@ -58,6 +58,77 @@ using namespace llvm;
 #define DEBUG_TYPE "jl-inst-simplify"
 namespace {
 
+bool notCapturedBefore(llvm::Value *V, Instruction *inst) {
+  Instruction *VI = dyn_cast<Instruction>(V);
+  if (!VI)
+    VI = &*inst->getParent()->getParent()->getEntryBlock().begin();
+  else
+    VI = VI->getNextNode();
+  SmallPtrSet<BasicBlock *, 1> regionBetween;
+  {
+    SmallVector<BasicBlock *, 1> todo;
+    todo.push_back(VI->getParent());
+    while (todo.size()) {
+      auto cur = todo.pop_back_val();
+      if (regionBetween.count(cur))
+        continue;
+      regionBetween.insert(cur);
+      if (cur == inst->getParent())
+        continue;
+      for (auto BB : successors(cur))
+        todo.push_back(BB);
+    }
+  }
+  SmallVector<Value *, 1> todo = {V};
+  SmallPtrSet<Value *, 1> seen;
+  while (todo.size()) {
+    auto cur = todo.pop_back_val();
+    if (seen.count(cur))
+      continue;
+    for (auto U : cur->users()) {
+      auto UI = dyn_cast<Instruction>(U);
+      if (!regionBetween.count(UI->getParent()))
+        continue;
+      if (UI->getParent() == VI->getParent()) {
+        if (UI->comesBefore(VI))
+          continue;
+      }
+      if (UI->getParent() == inst->getParent())
+        if (inst->comesBefore(UI))
+          continue;
+
+      if (auto CI = dyn_cast<CallBase>(UI)) {
+        auto fname = getFuncNameFromCall(CI);
+        if (fname == "julia.pointer_from_objref")
+          continue;
+#if LLVM_VERSION_MAJOR >= 14
+        for (size_t i = 0, size = CI->arg_size(); i < size; i++)
+#else
+        for (size_t i = 0, size = CI->getNumArgOperands(); i < size; i++)
+#endif
+        {
+          if (cur == CI->getArgOperand(i)) {
+            if (isNoCapture(CI, i))
+              continue;
+            return false;
+          }
+        }
+        return true;
+      }
+
+      if (isa<CmpInst>(UI)) {
+        continue;
+      }
+      if (isa<CastInst, GetElementPtrInst, LoadInst, PHINode>(UI)) {
+        todo.push_back(UI);
+        continue;
+      }
+      return false;
+    }
+  }
+  return true;
+}
+
 bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
                     llvm::AAResults &AA, llvm::LoopInfo &LI) {
   bool changed = false;
@@ -107,8 +178,10 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
               getBaseObject(llhs->getOperand(0), /*offsetAllowed*/ false);
           auto rhsv =
               getBaseObject(lrhs->getOperand(0), /*offsetAllowed*/ false);
-          if ((isNoAlias(lhsv) && (isNoAlias(rhsv) || isa<Argument>(rhsv))) ||
-              (isNoAlias(rhsv) && isa<Argument>(lhsv))) {
+          if ((isNoAlias(lhsv) && (isNoAlias(rhsv) || isa<Argument>(rhsv) ||
+                                   notCapturedBefore(lhsv, cmp))) ||
+              (isNoAlias(rhsv) &&
+               (isa<Argument>(lhsv) || notCapturedBefore(rhsv, cmp)))) {
             bool legal = false;
             for (int i = 0; i < 2; i++) {
               Value *start = (i == 0) ? lhsv : rhsv;

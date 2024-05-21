@@ -437,6 +437,13 @@ void EnzymeGradientUtilsSetDebugLocFromOriginal(GradientUtils *gutils,
           cast<Instruction>(unwrap(orig))->getDebugLoc()));
 }
 
+LLVMValueRef EnzymeInsertValue(LLVMBuilderRef B, LLVMValueRef val,
+                               LLVMValueRef val2, unsigned *sz, int64_t length,
+                               const char *name) {
+  return wrap(unwrap(B)->CreateInsertValue(
+      unwrap(val), unwrap(val2), ArrayRef<unsigned>(sz, sz + length), name));
+}
+
 LLVMValueRef EnzymeGradientUtilsLookup(GradientUtils *gutils, LLVMValueRef val,
                                        LLVMBuilderRef B) {
   return wrap(gutils->lookupM(unwrap(val), *unwrap(B)));
