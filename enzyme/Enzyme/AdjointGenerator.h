@@ -344,9 +344,10 @@ public:
                  Constant::getNullValue(gutils->getShadowType(inst.getType())),
                  Builder2);
     }
-    if (!inst.getType()->isVoidTy())
-      gutils->getNewFromOriginal(&inst)->replaceAllUsesWith(
-          UndefValue::get(inst.getType()));
+    if (!inst.getType()->isVoidTy()) {
+      for (auto &U : gutils->getNewFromOriginal(&inst)->uses())
+        U.set(UndefValue::get(inst.getType()));
+    }
     eraseIfUnused(inst, /*erase*/ true, /*check*/ false);
     return;
   }
@@ -920,8 +921,10 @@ public:
         setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
                  BuilderZ);
     }
-    gutils->getNewFromOriginal(&I)->replaceAllUsesWith(
-        UndefValue::get(I.getType()));
+    if (!I.getType()->isVoidTy()) {
+      for (auto &U : gutils->getNewFromOriginal(&I)->uses())
+        U.set(UndefValue::get(I.getType()));
+    }
     eraseIfUnused(I, /*erase*/ true, /*check*/ false);
     return;
   }
