@@ -526,6 +526,11 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     if (!shadow) {
 
       // Only need the primal request.
+      if (funcName == "cuStreamSynchronize")
+        if (val != CI->getArgOperand(0))
+          return false;
+
+      // Only need the primal request.
       if (funcName == "MPI_Wait" || funcName == "PMPI_Wait")
         if (val != CI->getArgOperand(0))
           return false;
