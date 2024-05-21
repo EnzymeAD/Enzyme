@@ -74,13 +74,13 @@ bool isVecLikeArg(ArgType ty) {
   return false;
 }
 
-bool isArgUsed(StringRef toFind, const DagInit *toSearch,
+bool isArgUsed(Rule *rule, StringRef toFind, const DagInit *toSearch,
                ArrayRef<std::string> nameVec,
                const DenseMap<size_t, ArgType> &argTypesFull) {
   for (size_t i = 0; i < toSearch->getNumArgs(); i++) {
     if (DagInit *arg = dyn_cast<DagInit>(toSearch->getArg(i))) {
       // os << " Recursing. Magic!\n";
-      if (isArgUsed(toFind, arg, nameVec, argTypesFull))
+      if (isArgUsed(rule, toFind, arg, nameVec, argTypesFull))
         return true;
     } else {
       auto name = toSearch->getArgNameStr(i);
@@ -111,9 +111,10 @@ bool isArgUsed(StringRef toFind, const DagInit *toSearch,
             }
           }
           if (argPosition == (size_t)(-1)) {
-            errs() << "couldn't find name: " << name << " ap=" << argPosition
-                   << "\n";
-            PrintFatalError("arg not in inverted nameMap!");
+            PrintFatalError(rule->getLoc(),
+                            Twine("arg '") + name +
+                                "' (pos=" + std::to_string(argPosition) +
+                                ") not in inverted nameMap isArgUsed(1)!");
           }
           auto ty = argTypesFull.lookup(argPosition);
           if (ty == ArgType::vincData ||
@@ -136,9 +137,10 @@ bool isArgUsed(StringRef toFind, const DagInit *toSearch,
           }
         }
         if (argPosition == (size_t)(-1)) {
-          errs() << "couldn't find name: " << name << " ap=" << argPosition
-                 << "\n";
-          PrintFatalError("arg not in inverted nameMap!");
+          PrintFatalError(rule->getLoc(),
+                          Twine("arg '") + name +
+                              "' (pos=" + std::to_string(argPosition) +
+                              ") not in inverted nameMap isArgUsed(2)!");
         }
         auto ty = argTypesFull.lookup(argPosition);
         if (ty == ArgType::vincData || ty == ArgType::mldData) {
@@ -152,23 +154,31 @@ bool isArgUsed(StringRef toFind, const DagInit *toSearch,
   return false;
 }
 
-Rule::Rule(ArrayRef<std::string> nameVec, DagInit *dag, size_t activeArgIdx,
-           const StringMap<size_t> &patternArgs,
+Rule::Rule(TGPattern *pattern, ArrayRef<std::string> nameVec, DagInit *dag,
+           size_t activeArgIdx, const StringMap<size_t> &patternArgs,
            const DenseMap<size_t, ArgType> &patternTypes,
            const DenseSet<size_t> &patternMutables)
-    : rewriteRule(dag), activeArg(activeArgIdx),
+    : pattern(pattern), rewriteRule(dag), activeArg(activeArgIdx),
       nameVec(nameVec.begin(), nameVec.end()) {
   // For each arg found in the dag:
   //        1) copy patternArgs to ruleArgs if arg shows up in this rule
   for (auto argName : patternArgs.keys()) {
     assert(patternArgs.count(argName) == 1);
     size_t argPos = patternArgs.lookup(argName);
-    argTypesFull.insert(*patternTypes.find(argPos));
+    auto found = patternTypes.find(argPos);
+    if (found == patternTypes.end()) {
+      PrintFatalError(getLoc(), Twine("Could not successfully find argName '") +
+                                    argName + " (index " +
+                                    std::to_string(argPos) +
+                                    ") in patternTypes");
+    }
+    argTypesFull.insert(*found);
   }
   for (auto argName : patternArgs.keys()) {
     assert(patternArgs.count(argName) == 1);
     size_t argPos = patternArgs.lookup(argName);
-    bool argUsedInRule = isArgUsed(argName, rewriteRule, nameVec, argTypesFull);
+    bool argUsedInRule =
+        isArgUsed(this, argName, rewriteRule, nameVec, argTypesFull);
     if (argUsedInRule) {
       argNameToPos.insert(std::pair<std::string, size_t>(argName, argPos));
       //        2) look up and copy the corresponding argType
@@ -192,6 +202,10 @@ Rule::Rule(ArrayRef<std::string> nameVec, DagInit *dag, size_t activeArgIdx,
   }
   assert(argTypes.size() == argNameToPos.size());
 }
+
+TGPattern *Rule::getPattern() const { return pattern; }
+
+ArrayRef<SMLoc> Rule::getLoc() const { return getPattern()->getLoc(); }
 
 bool Rule::isBLASLevel2or3() const { return BLASLevel2or3; }
 
@@ -346,7 +360,8 @@ void fillRelatedLenghts(
         assert(argTypes.lookup(lengths[0]) == ArgType::len);
         assert(argTypes.lookup(lengths[1]) == ArgType::len);
       } else {
-        assert(argTypes.lookup(lengths[0]) == ArgType::trans);
+        assert(argTypes.lookup(lengths[0]) == ArgType::trans ||
+               argTypes.lookup(lengths[0]) == ArgType::diag);
         assert(argTypes.lookup(lengths[1]) == ArgType::len);
         assert(argTypes.lookup(lengths[2]) == ArgType::len);
       }
@@ -375,7 +390,10 @@ void fillArgUserMap(ArrayRef<Rule> rules, ArrayRef<std::string> nameVec,
   }
 }
 
-TGPattern::TGPattern(Record *r) : blasName(r->getNameInitAsString()) {
+ArrayRef<SMLoc> TGPattern::getLoc() const { return record->getLoc(); }
+
+TGPattern::TGPattern(Record *r)
+    : record(r), blasName(r->getNameInitAsString()) {
   fillArgs(r, args, argNameToPos);
   fillArgTypes(r, argTypes);
   fillRelatedLenghts(r, argNameToPos, argTypes, relatedLengths);
@@ -395,8 +413,8 @@ TGPattern::TGPattern(Record *r) : blasName(r->getNameInitAsString()) {
     for (auto &&derivOp : enumerate(*derivOps)) {
       DagInit *derivRule = cast<DagInit>(derivOp.value());
       size_t actIdx = posActArgs[derivOp.index()];
-      rules.push_back(
-          Rule(args, derivRule, actIdx, argNameToPos, argTypes, mutables));
+      rules.push_back(Rule(this, args, derivRule, actIdx, argNameToPos,
+                           argTypes, mutables));
     }
   }
 
@@ -413,7 +431,9 @@ SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg) const {
   auto related = relatedLengths.lookup(arg);
 
   if (related.size() == 3) {
-    assert(argTypes.lookup(related[0]) == ArgType::trans);
+    auto argTy = argTypes.lookup(related[0]);
+    assert(argTy == ArgType::trans || argTy == ArgType::diag);
+    (void)argTy;
   }
 
   return related;

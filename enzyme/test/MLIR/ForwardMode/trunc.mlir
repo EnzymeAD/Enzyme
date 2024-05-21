@@ -6,7 +6,7 @@ module {
     return %y : f32
   }
   func.func @dsq(%x : f64, %dx : f64) -> f32 {
-    %r = enzyme.fwddiff @f(%x, %dx) { activity=[#enzyme<activity enzyme_dup>] } : (f64, f64) -> (f32)
+    %r = enzyme.fwddiff @f(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64) -> (f32)
     return %r : f32
   }
 }

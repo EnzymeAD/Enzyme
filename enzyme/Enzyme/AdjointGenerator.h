@@ -326,20 +326,29 @@ public:
 
     std::string s;
     llvm::raw_string_ostream ss(s);
-    ss << *gutils->oldFunc << "\n";
-    ss << *gutils->newFunc << "\n";
     ss << "in Mode: " << to_string(Mode) << "\n";
     ss << "cannot handle unknown instruction\n" << inst;
+    IRBuilder<> Builder2(&inst);
+    getForwardBuilder(Builder2);
     if (CustomErrorHandler) {
-      IRBuilder<> Builder2(&inst);
-      getForwardBuilder(Builder2);
       CustomErrorHandler(ss.str().c_str(), wrap(&inst), ErrorType::NoDerivative,
                          gutils, nullptr, wrap(&Builder2));
-      return;
     } else {
       EmitFailure("NoDerivative", inst.getDebugLoc(), &inst, ss.str());
-      return;
     }
+    if (!gutils->isConstantValue(&inst)) {
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError ||
+          Mode == DerivativeMode::ForwardModeSplit)
+        setDiffe(&inst,
+                 Constant::getNullValue(gutils->getShadowType(inst.getType())),
+                 Builder2);
+    }
+    if (!inst.getType()->isVoidTy())
+      gutils->replaceAWithB(gutils->getNewFromOriginal(&inst),
+                            UndefValue::get(inst.getType()));
+    eraseIfUnused(inst, /*erase*/ true, /*check*/ false);
+    return;
   }
 
   // Common function for falling back to the implementation
@@ -448,14 +457,14 @@ public:
       auto ET = I.getType();
       if (looseTypeAnalysis || true) {
         vd = defaultTypeTreeForLLVM(ET, &I);
-        ss << "\n";
+        ss << ", assumed " << vd.str() << "\n";
         TR.dump(ss);
         EmitWarning("CannotDeduceType", I, ss.str());
         goto known;
       }
       if (CustomErrorHandler) {
         CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                           &TR.analyzer, nullptr, wrap(&BuilderZ));
+                           TR.analyzer, nullptr, wrap(&BuilderZ));
       } else {
         ss << "\n";
         TR.dump(ss);
@@ -1024,15 +1033,15 @@ public:
       raw_string_ostream ss(str);
       ss << "Cannot deduce type of store " << I;
       if (looseTypeAnalysis || true) {
-        ss << "\n";
-        TR.dump(ss);
         vd = defaultTypeTreeForLLVM(valType, &I);
+        ss << ", assumed " << vd.str() << "\n";
+        TR.dump(ss);
         EmitWarning("CannotDeduceType", I, ss.str());
         goto known;
       }
       if (CustomErrorHandler) {
         CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                           &TR.analyzer, nullptr, wrap(&BuilderZ));
+                           TR.analyzer, nullptr, wrap(&BuilderZ));
       } else {
         ss << "\n";
         TR.dump(ss);
@@ -1042,7 +1051,8 @@ public:
     known:;
     }
 
-    if (Mode == DerivativeMode::ForwardMode) {
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
 
       auto dt = vd[{-1}];
       // Only need the full type in forward mode, if storing a constant
@@ -1058,7 +1068,7 @@ public:
                << " size: " << storeSize;
             if (CustomErrorHandler) {
               CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                                 &TR.analyzer, nullptr, wrap(&BuilderZ));
+                                 TR.analyzer, nullptr, wrap(&BuilderZ));
             } else {
               EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
             }
@@ -1136,7 +1146,7 @@ public:
            << " size: " << storeSize;
         if (CustomErrorHandler) {
           CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                             &TR.analyzer, nullptr, wrap(&BuilderZ));
+                             TR.analyzer, nullptr, wrap(&BuilderZ));
         } else {
           EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
         }
@@ -1445,7 +1455,7 @@ public:
           ss << "Cannot deduce adding type (cast) of " << I;
           if (CustomErrorHandler) {
             CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoType,
-                               &TR.analyzer, nullptr, wrap(&Builder2));
+                               TR.analyzer, nullptr, wrap(&Builder2));
             return;
           } else {
             ss << "\n";
@@ -2012,7 +2022,7 @@ public:
                  << " size: " << size0 << " TT: " << TT.str();
               if (CustomErrorHandler) {
                 CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
-                                   &TR.analyzer, nullptr, wrap(&Builder2));
+                                   TR.analyzer, nullptr, wrap(&Builder2));
               } else {
                 EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
                             ss.str());
@@ -2097,7 +2107,7 @@ public:
                  << " TT: " << TT.str();
               if (CustomErrorHandler) {
                 CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
-                                   &TR.analyzer, nullptr, wrap(&Builder2));
+                                   TR.analyzer, nullptr, wrap(&Builder2));
               } else {
                 EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
                             ss.str());
@@ -3133,7 +3143,7 @@ public:
       ss << "Cannot deduce type of memset " << MS;
       if (CustomErrorHandler) {
         CustomErrorHandler(str.c_str(), wrap(&MS), ErrorType::NoType,
-                           &TR.analyzer, nullptr, wrap(&BuilderZ));
+                           TR.analyzer, nullptr, wrap(&BuilderZ));
       } else {
         ss << "\n";
         TR.dump(ss);
@@ -3261,7 +3271,7 @@ public:
           if (start != 0) {
             Value *idxs[] = {
                 ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
-            op0 = BuilderZ.CreateInBoundsGEP(Type::getInt8Ty(op0->getContext()),
+            op0 = Builder2.CreateInBoundsGEP(Type::getInt8Ty(op0->getContext()),
                                              op0, idxs);
           }
           SmallVector<Value *, 4> args = {op0, op1l, length};
@@ -3342,7 +3352,8 @@ public:
       return;
     }
 
-    if (Mode == DerivativeMode::ForwardMode &&
+    if ((Mode == DerivativeMode::ForwardMode ||
+         Mode == DerivativeMode::ForwardModeError) &&
         gutils->isConstantValue(orig_dst)) {
       eraseIfUnused(MTI);
       return;
@@ -3353,7 +3364,8 @@ public:
     vd |= TR.query(orig_src).Data0().ShiftIndices(DL, 0, size, 0);
 
     bool errorIfNoType = true;
-    if (Mode == DerivativeMode::ForwardMode &&
+    if ((Mode == DerivativeMode::ForwardMode ||
+         Mode == DerivativeMode::ForwardModeError) &&
         (!gutils->isConstantValue(orig_src) && !EnzymeRuntimeActivityCheck)) {
       errorIfNoType = false;
     }
@@ -3439,7 +3451,7 @@ public:
         ss << "Cannot deduce type of copy " << MTI;
         if (CustomErrorHandler) {
           CustomErrorHandler(str.c_str(), wrap(&MTI), ErrorType::NoType,
-                             &TR.analyzer, nullptr, wrap(&BuilderZ));
+                             TR.analyzer, nullptr, wrap(&BuilderZ));
         } else {
           ss << "\n";
           ss << *gutils->oldFunc << "\n";
@@ -3491,7 +3503,8 @@ public:
              (dt != BaseType::Anything && dt.isKnown())))
           Legal = false;
         if (!Legal) {
-          if (Mode == DerivativeMode::ForwardMode) {
+          if (Mode == DerivativeMode::ForwardMode ||
+              Mode == DerivativeMode::ForwardModeError) {
             // if both are floats (of any type), forward mode is the same.
             //   + [potentially zero if const, otherwise copy]
             // if both are int/pointer (of any type), also the same
@@ -3618,7 +3631,8 @@ public:
         call->setTailCallKind(MTI.getTailCallKind());
       };
 
-      if (Mode == DerivativeMode::ForwardMode)
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError)
         applyChainRule(BuilderZ, fwd_rule, shadow_dst, shadow_src);
       else
         applyChainRule(BuilderZ, rev_rule, shadow_dst, shadow_src);
@@ -3678,6 +3692,7 @@ public:
     // handling the intrinsic here.
     if (isIntelSubscriptIntrinsic(II)) {
       if (Mode == DerivativeMode::ForwardModeSplit ||
+          Mode == DerivativeMode::ForwardModeError ||
           Mode == DerivativeMode::ForwardMode) {
         forwardModeInvertedPointerFallback(II);
       }
@@ -4014,8 +4029,10 @@ public:
         } else {
           EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
         }
-        setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
-                 Builder2);
+        if (!gutils->isConstantValue(&I))
+          setDiffe(&I,
+                   Constant::getNullValue(gutils->getShadowType(I.getType())),
+                   Builder2);
         return false;
       }
       return false;
@@ -4767,6 +4784,7 @@ public:
     }
 
     if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError ||
         Mode == DerivativeMode::ForwardModeSplit) {
       IRBuilder<> Builder2(&call);
       getForwardBuilder(Builder2);
@@ -5271,12 +5289,13 @@ public:
           cast<Function>(called)->getFunctionType()->getNumParams())
 #endif
       {
+        llvm::errs() << *gutils->oldFunc->getParent() << "\n";
         llvm::errs() << *gutils->oldFunc << "\n";
         llvm::errs() << call << "\n";
-        assert(0 && "number of arg operands != function parameters");
+        llvm::errs() << " number of arg operands != function parameters\n";
+        EmitFailure("MismatchArgs", call.getDebugLoc(), &call,
+                    "Number of arg operands != function parameters\n", call);
       }
-      assert(argsInverted.size() ==
-             cast<Function>(called)->getFunctionType()->getNumParams());
     }
 
     Value *tape = nullptr;
@@ -6053,7 +6072,8 @@ public:
     DIFFE_TYPE subretType = gutils->getReturnDiffeType(
         &call, &subretused, &shadowReturnUsed, smode);
 
-    if (Mode == DerivativeMode::ForwardMode) {
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
       auto found = customFwdCallHandlers.find(funcName);
       if (found != customFwdCallHandlers.end()) {
         Value *invertedReturn = nullptr;
@@ -6279,134 +6299,15 @@ public:
       return;
 
     bool useConstantFallback =
-        gutils->isConstantInstruction(&call) &&
-        (gutils->isConstantValue(&call) || !shadowReturnUsed);
-    if (useConstantFallback && Mode != DerivativeMode::ForwardMode &&
-        Mode != DerivativeMode::ForwardModeError) {
-      // if there is an escaping allocation, which is deduced needed in
-      // reverse pass, we need to do the recursive procedure to perform the
-      // free.
-
-      // First test if the return is a potential pointer and needed for the
-      // reverse pass
-      bool escapingNeededAllocation = false;
-
-      if (!isNoEscapingAllocation(&call)) {
-        escapingNeededAllocation = EnzymeGlobalActivity;
-
-        std::map<UsageKey, bool> CacheResults;
-        for (auto pair : gutils->knownRecomputeHeuristic) {
-          if (!pair.second || gutils->unnecessaryIntermediates.count(
-                                  cast<Instruction>(pair.first))) {
-            CacheResults[UsageKey(pair.first, QueryType::Primal)] = false;
-          }
-        }
-
-        if (!escapingNeededAllocation &&
-            !(EnzymeJuliaAddrLoad && isSpecialPtr(call.getType()))) {
-          if (TR.query(&call)[{-1}].isPossiblePointer()) {
-            auto found = gutils->knownRecomputeHeuristic.find(&call);
-            if (found != gutils->knownRecomputeHeuristic.end()) {
-              if (!found->second) {
-                CacheResults.erase(UsageKey(&call, QueryType::Primal));
-                escapingNeededAllocation =
-                    DifferentialUseAnalysis::is_value_needed_in_reverse<
-                        QueryType::Primal>(gutils, &call,
-                                           DerivativeMode::ReverseModeGradient,
-                                           CacheResults, oldUnreachable);
-              }
-            } else {
-              escapingNeededAllocation =
-                  DifferentialUseAnalysis::is_value_needed_in_reverse<
-                      QueryType::Primal>(gutils, &call,
-                                         DerivativeMode::ReverseModeGradient,
-                                         CacheResults, oldUnreachable);
-            }
-          }
-        }
-
-        // Next test if any allocation could be stored into one of the
-        // arguments.
-        if (!escapingNeededAllocation)
-#if LLVM_VERSION_MAJOR >= 14
-          for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-          for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
-          {
-            Value *a = call.getOperand(i);
-
-            if (EnzymeJuliaAddrLoad && isSpecialPtr(a->getType()))
-              continue;
-
-            auto vd = TR.query(a);
-            if (!vd[{-1}].isPossiblePointer())
-              continue;
-
-            if (!vd[{-1, -1}].isPossiblePointer())
-              continue;
-
-            if (isReadOnly(&call, i))
-              continue;
-
-            // An allocation could only be needed in the reverse pass if it
-            // escapes into an argument. However, is the parameter by which it
-            // escapes could capture the pointer, the rest of Enzyme's caching
-            // mechanisms cannot assume that the allocation itself is
-            // reloadable, since it may have been captured and overwritten
-            // elsewhere.
-            // TODO: this justification will need revisiting in the future as
-            // the caching algorithm becomes increasingly sophisticated.
-            if (!isNoCapture(&call, i))
-              continue;
-
-            escapingNeededAllocation = true;
-          }
+        DifferentialUseAnalysis::callShouldNotUseDerivative(gutils, call);
+    if (!useConstantFallback) {
+      if (gutils->isConstantInstruction(&call) &&
+          gutils->isConstantValue(&call)) {
+        EmitWarning("ConstnatFallback", call,
+                    "Call was deduced inactive but still doing differential "
+                    "rewrite as it may escape an allocation",
+                    call);
       }
-
-      // If desired this can become even more aggressive by looking through the
-      // called function for any allocations.
-      if (auto F = getFunctionFromCall(&call)) {
-        SmallVector<Function *, 1> todo = {F};
-        SmallPtrSet<Function *, 1> done;
-        bool seenAllocation = false;
-        while (todo.size() && !seenAllocation) {
-          auto cur = todo.pop_back_val();
-          if (done.count(cur))
-            continue;
-          done.insert(cur);
-          // assume empty functions allocate.
-          if (cur->empty()) {
-            // unless they are marked
-            if (isNoEscapingAllocation(cur))
-              continue;
-            seenAllocation = true;
-            break;
-          }
-          for (auto &BB : *cur)
-            for (auto &I : BB)
-              if (auto CB = dyn_cast<CallBase>(&I)) {
-                if (isNoEscapingAllocation(CB))
-                  continue;
-                if (isAllocationCall(CB, gutils->TLI)) {
-                  seenAllocation = true;
-                  goto finish;
-                }
-                if (auto F = getFunctionFromCall(CB)) {
-                  todo.push_back(F);
-                  continue;
-                }
-                // Conservatively assume indirect functions allocate.
-                seenAllocation = true;
-                goto finish;
-              }
-        finish:;
-        }
-        if (!seenAllocation)
-          escapingNeededAllocation = false;
-      }
-      if (escapingNeededAllocation)
-        useConstantFallback = false;
     }
     if (useConstantFallback) {
       if (!gutils->isConstantValue(&call)) {
@@ -6536,7 +6437,8 @@ public:
       // may load overwritten data)
       //    Store and reload it
       if (Mode != DerivativeMode::ReverseModeCombined &&
-          Mode != DerivativeMode::ForwardMode && subretused &&
+          Mode != DerivativeMode::ForwardMode &&
+          Mode != DerivativeMode::ForwardModeError && subretused &&
           (call.mayWriteToMemory() ||
            !gutils->legalRecompute(&call, ValueToValueMapTy(), nullptr))) {
         if (!gutils->unnecessaryIntermediates.count(&call)) {

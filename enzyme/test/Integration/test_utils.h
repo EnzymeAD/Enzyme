@@ -53,3 +53,12 @@ static inline bool approx_fp_equality_double(double f1, double f2, double thresh
         abort();                                                        \
       }                                                                 \
     };
+
+#define TEST_EQ(LHS, RHS)                                    \
+    {                                                                \
+      if ((LHS) != (RHS)) {\
+        fprintf(stderr, "Assertion Failed: [%s = %d] != [%s = %d] at %s:%d (%s)\n", #LHS, (int)(LHS), #RHS, (int)(RHS), \
+                __FILE__, __LINE__, __PRETTY_FUNCTION__);               \
+        abort();                                                        \
+      }                                                                 \
+    };

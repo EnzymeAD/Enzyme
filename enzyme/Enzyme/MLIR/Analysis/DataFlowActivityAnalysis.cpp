@@ -1070,7 +1070,7 @@ void enzyme::runDataFlowActivityAnalysis(
        llvm::zip(callee.getArguments(), argumentActivity)) {
     // enzyme_dup, dupnoneed are initialized within the dense forward/backward
     // analyses, enzyme_const is the default.
-    if (activity == enzyme::Activity::enzyme_out) {
+    if (activity == enzyme::Activity::enzyme_active) {
       auto *argLattice = solver.getOrCreateState<ForwardValueActivity>(arg);
       (void)argLattice->join(ValueActivity::getActiveVal());
     }

@@ -198,6 +198,12 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
 
   auto buildFuncReturnOp = [&](OpBuilder &builder, Block *oBB) {
     SmallVector<mlir::Value> retargs;
+    for (auto [arg, returnPrimal] :
+         llvm::zip(oBB->getTerminator()->getOperands(), returnPrimals)) {
+      if (returnPrimal) {
+        retargs.push_back(gutils->getNewFromOriginal(arg));
+      }
+    }
     for (auto [arg, cv] : llvm::zip(oBB->getArguments(), constants)) {
       if (cv == DIFFE_TYPE::OUT_DIFF) {
         retargs.push_back(gutils->diffe(arg, builder));

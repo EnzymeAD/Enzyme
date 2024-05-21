@@ -125,6 +125,14 @@ llvm::cl::opt<std::string> EnzymeTruncateAll(
 #endif
 bool attributeKnownFunctions(llvm::Function &F) {
   bool changed = false;
+  if (F.getName() == "fprintf") {
+    for (auto &arg : F.args()) {
+      if (arg.getType()->isPointerTy()) {
+        arg.addAttr(Attribute::NoCapture);
+        changed = true;
+      }
+    }
+  }
   if (F.getName().contains("__enzyme_float") ||
       F.getName().contains("__enzyme_double") ||
       F.getName().contains("__enzyme_integer") ||
@@ -327,19 +335,47 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::ReadNone);
 #endif
   }
-  if (F.getName() == "julia.ptls_states" ||
-      F.getName() == "julia.get_pgcstack" || F.getName() == "lgamma_r" ||
-      F.getName() == "memcmp" ||
-      F.getName() == "_ZNSt6chrono3_V212steady_clock3nowEv" ||
-      F.getName() == "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_"
-                     "createERmm" ||
-      F.getName() ==
-          "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEmmm") {
-    changed = true;
-    F.addAttribute(
-        AttributeList::FunctionIndex,
-        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
-  }
+  auto name = F.getName();
+
+  const char *NonEscapingFns[] = {
+      "julia.ptls_states",
+      "julia.get_pgcstack",
+      "lgamma_r",
+      "memcmp",
+      "_ZNSt6chrono3_V212steady_clock3nowEv",
+      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_"
+      "createERmm",
+      "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEmmm",
+      "fprintf",
+      "fwrite",
+      "strtol",
+      "getenv",
+      "memchr",
+      "cublasSetMathMode",
+      "cublasSetStream_v2",
+      "cuMemPoolTrimTo",
+      "cuDeviceGetMemPool",
+      "cuStreamSynchronize",
+      "cuStreamDestroy",
+      "cuStreamQuery",
+      "cuCtxGetCurrent",
+      "cuDeviceGet",
+      "cuDeviceGetName",
+      "cuDriverGetVersion",
+      "cudaRuntimeGetVersion",
+      "cuDeviceGetCount",
+      "cuMemPoolGetAttribute",
+      "cuMemGetInfo_v2",
+      "cuDeviceGetAttribute",
+      "cuDevicePrimaryCtxRetain",
+  };
+  for (auto fname : NonEscapingFns)
+    if (name == fname) {
+      changed = true;
+      F.addAttribute(
+          AttributeList::FunctionIndex,
+          Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+    }
   return changed;
 }
 
@@ -566,8 +602,11 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
     }
   }
 
-  if (mode == DerivativeMode::ReverseModePrimal &&
-      DL.getTypeSizeInBits(retType) >= DL.getTypeSizeInBits(diffretType)) {
+  if ((mode == DerivativeMode::ReverseModePrimal &&
+       DL.getTypeSizeInBits(retType) >= DL.getTypeSizeInBits(diffretType)) ||
+      ((mode == DerivativeMode::ForwardMode ||
+        mode == DerivativeMode::ForwardModeError) &&
+       DL.getTypeSizeInBits(retType) == DL.getTypeSizeInBits(diffretType))) {
     IRBuilder<> EB(CI->getFunction()->getEntryBlock().getFirstNonPHI());
     auto AL = EB.CreateAlloca(retType);
     Builder.CreateStore(diffret, Builder.CreatePointerCast(
@@ -592,9 +631,12 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
     }
   }
 
+  auto diffretsize = DL.getTypeSizeInBits(diffretType);
+  auto retsize = DL.getTypeSizeInBits(retType);
   EmitFailure("IllegalReturnCast", CI->getDebugLoc(), CI,
               "Cannot cast return type of gradient ", *diffretType, *diffret,
-              ", to desired type ", *retType);
+              " of size ", diffretsize, " bits ", ", to desired type ",
+              *retType, " of size ", retsize, " bits");
   return false;
 }
 
@@ -1190,10 +1232,14 @@ public:
           if (auto arg = dyn_cast<Instruction>(res)) {
             loc = arg->getDebugLoc();
           }
+          auto S = simplifyLoad(res);
+          if (!S)
+            S = res;
           EmitFailure("IllegalArgCast", loc, CI,
                       "Cannot cast __enzyme_autodiff primal argument ", i,
                       ", found ", *res, ", type ", *res->getType(),
-                      " - to arg ", truei, " ", *PTy);
+                      " (simplified to ", *S, " ) ", " - to arg ", truei, ", ",
+                      *PTy);
           return {};
         }
       }
@@ -1802,6 +1848,16 @@ public:
           csts.push_back(ConstantFP::get(e, 1.0));
         }
         args.push_back(ConstantStruct::get(ST, csts));
+      } else if (auto AT = dyn_cast<ArrayType>(fn->getReturnType())) {
+        SmallVector<Constant *, 2> csts(
+            AT->getNumElements(), ConstantFP::get(AT->getElementType(), 1.0));
+        args.push_back(ConstantArray::get(AT, csts));
+      } else {
+        auto RT = fn->getReturnType();
+        EmitFailure("EnzymeCallingError", CI->getDebugLoc(), CI,
+                    "Differential return required for call ", *CI,
+                    " but one of type ", *RT, " could not be auto deduced");
+        return false;
       }
     }
 
@@ -2089,6 +2145,8 @@ public:
   }
 
   bool handleFullModuleTrunc(Function &F) {
+    if (startsWith(F.getName(), EnzymeFPRTPrefix))
+      return false;
     typedef std::vector<FloatTruncation> TruncationsTy;
     static TruncationsTy FullModuleTruncs = []() -> TruncationsTy {
       StringRef ConfigStr(EnzymeTruncateAll);
@@ -2246,12 +2304,19 @@ public:
         if (!CI)
           continue;
 
-        Function *Fn = CI->getCalledFunction();
+        Function *Fn = nullptr;
 
-        if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand())) {
-          if (castinst->isCast())
-            if (auto fn = dyn_cast<Function>(castinst->getOperand(0)))
-              Fn = fn;
+        Value *FnOp = CI->getCalledOperand();
+        while (true) {
+          if ((Fn = dyn_cast<Function>(FnOp)))
+            break;
+          if (auto castinst = dyn_cast<ConstantExpr>(FnOp)) {
+            if (castinst->isCast()) {
+              FnOp = castinst->getOperand(0);
+              continue;
+            }
+          }
+          break;
         }
 
         if (!Fn)
@@ -3234,6 +3299,7 @@ public:
 AnalysisKey EnzymeNewPM::Key;
 
 #include "ActivityAnalysisPrinter.h"
+#include "JLInstSimplify.h"
 #include "PreserveNVVM.h"
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
 #include "llvm/Passes/PassBuilder.h"
@@ -3791,6 +3857,10 @@ void registerEnzyme(llvm::PassBuilder &PB) {
          llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
         if (Name == "print-activity-analysis") {
           FPM.addPass(ActivityAnalysisPrinterNewPM());
+          return true;
+        }
+        if (Name == "jl-inst-simplify") {
+          FPM.addPass(JLInstSimplifyNewPM());
           return true;
         }
         return false;

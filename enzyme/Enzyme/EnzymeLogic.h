@@ -55,6 +55,9 @@ extern llvm::cl::opt<bool> EnzymePrint;
 extern llvm::cl::opt<bool> EnzymeJuliaAddrLoad;
 }
 
+constexpr char EnzymeFPRTPrefix[] = "__enzyme_fprt_";
+constexpr char EnzymeFPRTOriginalPrefix[] = "__enzyme_fprt_original_";
+
 enum class AugmentedStruct { Tape, Return, DifferentialReturn };
 
 static inline std::string str(AugmentedStruct c) {

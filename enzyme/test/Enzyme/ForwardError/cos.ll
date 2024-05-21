@@ -24,9 +24,6 @@ declare double @llvm.sin.f64(double)
 declare double @__enzyme_error_estimate(double (double)*, ...)
 
 
-; [1 + mantissa] * 2^-5
-; zero out mantissa, or in the last bit
-
 ; CHECK: define internal double @fwddiffetester(double %x, double %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[i0:.+]] = tail call fast double @llvm.cos.f64(double %x)

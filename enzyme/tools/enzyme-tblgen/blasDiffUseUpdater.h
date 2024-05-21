@@ -19,6 +19,8 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
 
   os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == "
         "\"cublas_\";\n";
+  os << "const bool byRefFloat = byRef || blas.prefix == \"cublas\";\n";
+  os << "(void)byRefFloat;\n";
   if (lv23)
     os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
   os << "  const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
@@ -72,12 +74,21 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
   for (size_t argPos = (lv23 ? 1 : 0); argPos < typeMap.size(); argPos++) {
     auto users = argUsers.lookup(argPos);
     auto argname = nameVec[argPos];
+    os << "  {\n";
 
-    os << "  if (val == arg_" << argname << ") {\n";
+    os << "  SmallVector<ValueType, 1> valTys = {"
+       << ValueType_helper(pattern, argPos) << "}\n;";
+    if (lv23) {
+      // add extra cblas_arg for the !byRef case
+      os << " valTys.insert(valTys.begin(), ValueType::Primal);\n";
+    }
+
+    os << "  if (val == arg_" << argname
+       << " || gutils->usedInRooting(CI, valTys, val, shadow)) {\n";
 
     // We need the shadow of the value we're updating
     if (typeMap[argPos] == ArgType::fp) {
-      os << "    if (shadow && byRef && active_" << argname
+      os << "    if (shadow && byRefFloat && active_" << argname
          << ") return true;\n";
     } else if (typeMap[argPos] == ArgType::vincData ||
                typeMap[argPos] == ArgType::mldData) {
@@ -119,6 +130,7 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
           "DerivativeMode::ReverseModeGradient)) ? !cache_"
        << argname << " : true ))\n"
        << "      return true;\n";
+    os << "  }\n";
     os << "  }\n";
   }
 

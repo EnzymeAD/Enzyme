@@ -327,6 +327,11 @@ struct CacheAnalysis {
         if (!inst2->mayWriteToMemory())
           return false;
 
+#if LLVM_VERSION_MAJOR >= 12
+        if (isa<FenceInst>(inst2))
+          return false;
+#endif
+
         if (unnecessaryBlocks.count(inst2->getParent())) {
           return false;
         }
@@ -351,6 +356,11 @@ struct CacheAnalysis {
                 [&](Instruction *mid) {
                   if (!mid->mayWriteToMemory())
                     return false;
+
+#if LLVM_VERSION_MAJOR >= 12
+                  if (isa<FenceInst>(mid))
+                    return false;
+#endif
 
                   if (unnecessaryBlocks.count(mid->getParent())) {
                     return false;
@@ -940,6 +950,7 @@ void calculateUnusedValuesInFunction(
             }
 
             if (mode == DerivativeMode::ForwardMode ||
+                mode == DerivativeMode::ForwardModeError ||
                 mode == DerivativeMode::ForwardModeSplit ||
                 ((mode == DerivativeMode::ReverseModePrimal ||
                   mode == DerivativeMode::ReverseModeCombined) &&
@@ -1019,7 +1030,8 @@ void calculateUnusedValuesInFunction(
         }
         if ((mode == DerivativeMode::ReverseModePrimal ||
              mode == DerivativeMode::ReverseModeCombined ||
-             mode == DerivativeMode::ForwardMode) &&
+             mode == DerivativeMode::ForwardMode ||
+             mode == DerivativeMode::ForwardModeError) &&
             mayWriteToMemory) {
           return UseReq::Need;
         }
@@ -2676,9 +2688,23 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   SmallVector<Type *, 4> MallocTypes;
 
+  bool nonRecursiveUse = false;
+
   for (auto a : gutils->getTapeValues()) {
     MallocTypes.push_back(a->getType());
+    if (auto ei = dyn_cast<ExtractValueInst>(a)) {
+      auto tidx = returnMapping.find(AugmentedStruct::Tape)->second;
+      if (ei->getIndices().size() == 1 && ei->getIndices()[0] == (unsigned)tidx)
+        if (auto cb = dyn_cast<CallBase>(ei->getOperand(0)))
+          if (gutils->newFunc == cb->getCalledFunction())
+            continue;
+    }
+    nonRecursiveUse = true;
   }
+  if (MallocTypes.size() == 0)
+    nonRecursiveUse = true;
+  if (!nonRecursiveUse)
+    MallocTypes.clear();
 
   Type *tapeType = StructType::get(nf->getContext(), MallocTypes);
 
@@ -2928,6 +2954,17 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       }
       ++i;
     }
+  } else if (!nonRecursiveUse) {
+    for (auto v : gutils->getTapeValues()) {
+      if (isa<UndefValue>(v))
+        continue;
+      auto EV = cast<ExtractValueInst>(v);
+      auto EV2 = cast<ExtractValueInst>(VMap[v]);
+      assert(EV->use_empty());
+      EV->eraseFromParent();
+      assert(EV2->use_empty());
+      EV2->eraseFromParent();
+    }
   }
 
   for (BasicBlock &BB : *nf) {
@@ -3045,11 +3082,12 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     }
   }
   for (auto user : fnusers) {
-    if (removeStruct) {
+    if (removeStruct || !nonRecursiveUse) {
       IRBuilder<> B(user);
       SmallVector<Value *, 4> args(user->arg_begin(), user->arg_end());
       auto rep = B.CreateCall(NewF, args);
-      rep->takeName(user);
+      if (!rep->getType()->isVoidTy())
+        rep->takeName(user);
       rep->copyIRFlags(user);
       rep->setAttributes(user->getAttributes());
       rep->setCallingConv(user->getCallingConv());
@@ -3081,7 +3119,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     PPC.ReplaceReallocs(NewF, /*mem2reg*/ true);
 
   AugmentedCachedFunctions.find(tup)->second.fn = NewF;
-  if (recursive || (omp && !noTape))
+  if ((recursive && nonRecursiveUse) || (omp && !noTape))
     AugmentedCachedFunctions.find(tup)->second.tapeType = tapeType;
   AugmentedCachedFunctions.find(tup)->second.isComplete = true;
 
@@ -3328,8 +3366,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     auto PNtype = PNtypeT[{-1}];
 
     // TODO remove explicit type check and only use PNtype
-    if (PNtype == BaseType::Anything || PNtype == BaseType::Pointer ||
-        PNtype == BaseType::Integer || orig->getType()->isPointerTy())
+    if (!gutils->TR.anyFloat(orig, /*anythingIsFloat*/ false) ||
+        orig->getType()->isPointerTy())
       continue;
 
     Type *PNfloatType = PNtype.isFloat();
@@ -3364,7 +3402,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
          << " sz: " << size << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(str.c_str(), wrap(orig), ErrorType::NoType,
-                           &gutils->TR.analyzer, nullptr, wrap(&Builder));
+                           gutils->TR.analyzer, nullptr, wrap(&Builder));
         continue;
       } else {
         ss << "\n";
@@ -4530,6 +4568,9 @@ Function *EnzymeLogic::CreateForwardDiff(
   if (retType != DIFFE_TYPE::CONSTANT)
     assert(!todiff->getReturnType()->isVoidTy());
 
+  if (returnUsed)
+    assert(!todiff->getReturnType()->isVoidTy());
+
   if (mode != DerivativeMode::ForwardMode &&
       mode != DerivativeMode::ForwardModeError)
     assert(_overwritten_args.size() == todiff->arg_size());
@@ -4554,7 +4595,8 @@ Function *EnzymeLogic::CreateForwardDiff(
     }
   }
 
-  if (auto md = hasMetadata(todiff, (mode == DerivativeMode::ForwardMode)
+  if (auto md = hasMetadata(todiff, (mode == DerivativeMode::ForwardMode ||
+                                     mode == DerivativeMode::ForwardModeError)
                                         ? "enzyme_derivative"
                                         : "enzyme_splitderivative")) {
     if (!isa<MDTuple>(md)) {
@@ -4742,7 +4784,12 @@ Function *EnzymeLogic::CreateForwardDiff(
   if (todiff->empty()) {
     std::string s;
     llvm::raw_string_ostream ss(s);
-    ss << "No forward mode derivative found for " + todiff->getName() << "\n";
+    if (mode == DerivativeMode::ForwardModeError) {
+      ss << "No forward mode error function found for " + todiff->getName()
+         << "\n";
+    } else {
+      ss << "No forward mode derivative found for " + todiff->getName() << "\n";
+    }
     llvm::Value *toshow = todiff;
     if (context.req) {
       toshow = context.req;
@@ -5016,9 +5063,39 @@ protected:
   LLVMContext &ctx;
 
 private:
-  std::string getFPRTName(std::string Name) {
-    return std::string("__enzyme_fprt_") + truncation.mangleFrom() + "_" + Name;
+  std::string getOriginalFPRTName(std::string Name) {
+    return std::string(EnzymeFPRTOriginalPrefix) + truncation.mangleFrom() +
+           "_" + Name;
   }
+  std::string getFPRTName(std::string Name) {
+    return std::string(EnzymeFPRTPrefix) + truncation.mangleFrom() + "_" + Name;
+  }
+
+  // Creates a function which contains the original floating point operation.
+  // The user can use this to compare results against.
+  void createOriginalFPRTFunc(Instruction &I, std::string Name,
+                              SmallVectorImpl<Value *> &Args,
+                              llvm::Type *RetTy) {
+    auto MangledName = getOriginalFPRTName(Name);
+    auto F = M->getFunction(MangledName);
+    if (!F) {
+      SmallVector<Type *, 4> ArgTypes;
+      for (auto Arg : Args)
+        ArgTypes.push_back(Arg->getType());
+      FunctionType *FnTy =
+          FunctionType::get(RetTy, ArgTypes, /*is_vararg*/ false);
+      F = Function::Create(FnTy, Function::ExternalLinkage, MangledName, M);
+    }
+    if (F->isDeclaration()) {
+      BasicBlock *Entry = BasicBlock::Create(F->getContext(), "entry", F);
+      auto ClonedI = I.clone();
+      for (unsigned It = 0; It < Args.size(); It++)
+        ClonedI->setOperand(It, F->getArg(It));
+      auto Return = ReturnInst::Create(F->getContext(), ClonedI, Entry);
+      ClonedI->insertBefore(Return);
+    }
+  }
+
   Function *getFPRTFunc(std::string Name, SmallVectorImpl<Value *> &Args,
                         llvm::Type *RetTy) {
     auto MangledName = getFPRTName(Name);
@@ -5033,14 +5110,16 @@ private:
     }
     return F;
   }
+
   CallInst *createFPRTGeneric(llvm::IRBuilderBase &B, std::string Name,
-                              SmallVectorImpl<Value *> &ArgsIn,
+                              const SmallVectorImpl<Value *> &ArgsIn,
                               llvm::Type *RetTy) {
     SmallVector<Value *, 5> Args(ArgsIn.begin(), ArgsIn.end());
     Args.push_back(B.getInt64(truncation.getTo().exponentWidth));
     Args.push_back(B.getInt64(truncation.getTo().significandWidth));
     Args.push_back(B.getInt64(truncation.getMode()));
-    return cast<CallInst>(B.CreateCall(getFPRTFunc(Name, Args, RetTy), Args));
+    auto FprtFunc = getFPRTFunc(Name, Args, RetTy);
+    return cast<CallInst>(B.CreateCall(FprtFunc, Args));
   }
 
 public:
@@ -5102,6 +5181,7 @@ public:
     } else {
       llvm_unreachable("Unexpected instruction for conversion to FPRT");
     }
+    createOriginalFPRTFunc(I, Name, ArgsIn, RetTy);
     return createFPRTGeneric(B, Name, ArgsIn, RetTy);
   }
 };
@@ -5127,10 +5207,16 @@ public:
         Logic(Logic), ctx(newFunc->getContext()) {}
 
   void checkHandled(llvm::Instruction &inst) {
+    // TODO
     // if (all_of(inst.getOperandList(),
     //            [&](Use *use) { return use->get()->getType() == fromType; }))
     //   todo(inst);
   }
+
+  // TODO
+  void handleTrunc();
+  void hendleIntToFloat();
+  void handleFloatToInt();
 
   void visitInstruction(llvm::Instruction &inst) {
     using namespace llvm;
@@ -5336,6 +5422,9 @@ public:
   void visitFenceInst(llvm::FenceInst &FI) { return; }
 
   bool handleIntrinsic(llvm::CallInst &CI, Intrinsic::ID ID) {
+    if (isDbgInfoIntrinsic(ID))
+      return true;
+
     auto newI = cast<llvm::CallInst>(getNewFromOriginal(&CI));
     IRBuilder<> B(newI);
 
@@ -5544,7 +5633,8 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
   Function *NewF = Function::Create(FTy, totrunc->getLinkage(), truncName,
                                     totrunc->getParent());
 
-  NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
+  if (mode != TruncOpFullModuleMode)
+    NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
   TruncateCachedFunctions[tup] = NewF;
 
@@ -6310,6 +6400,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   };
 
   StringSet<> NoFrees = {"mpfr_greater_p",
+                        "fprintf",
                          "memchr",
                          "time",
                          "strlen",
@@ -6322,7 +6413,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
                          "MPI_Allreduce",
                          "lgamma",
                          "lgamma_r",
-                         "__kmpc_global_thread_num"};
+                         "__kmpc_global_thread_num",
+                         "nlopt_force_stop"
+  };
   // clang-format on
 
   if (startsWith(F->getName(), "_ZNSolsE") || NoFrees.count(F->getName()))

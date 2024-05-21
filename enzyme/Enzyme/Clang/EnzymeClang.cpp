@@ -37,7 +37,7 @@
 
 #include "../Utils.h"
 
-#include "IncludeUtils.inc"
+#include "bundled_includes.h"
 
 using namespace clang;
 

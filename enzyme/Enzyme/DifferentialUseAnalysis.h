@@ -538,6 +538,11 @@ forEachDifferentialUser(llvm::function_ref<void(llvm::Value *)> f,
     }
   }
 }
+
+//! Return whether or not this is a constant and should use reverse pass
+bool callShouldNotUseDerivative(const GradientUtils *gutils,
+                                llvm::CallBase &orig);
+
 }; // namespace DifferentialUseAnalysis
 
 #endif

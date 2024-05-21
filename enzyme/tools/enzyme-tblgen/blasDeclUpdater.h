@@ -23,6 +23,8 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   os << "    return;\n";
   os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == "
         "\"cublas_\";\n";
+  os << "const bool byRefFloat = byRef || blas.prefix == \"cublas\";\n";
+  os << "(void)byRefFloat;\n";
   if (lv23)
     os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
   os << "  const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
@@ -44,7 +46,8 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
         "llvm::Attribute::MustProgress);\n"
      << "#endif\n"
      << "  F->addFnAttr(llvm::Attribute::NoFree);\n"
-     << "  F->addFnAttr(llvm::Attribute::NoSync);\n";
+     << "  F->addFnAttr(llvm::Attribute::NoSync);\n"
+     << "  F->addFnAttr(\"enzyme_no_escaping_allocation\");\n";
 
   auto argTypeMap = pattern.getArgTypeMap();
   DenseSet<size_t> mutableArgs = pattern.getMutableArgs();
@@ -103,8 +106,6 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
     }
   }
 
-  os << "  if (byRef) {\n";
-
   for (size_t argPos = 0; argPos < numArgs; argPos++) {
     const auto typeOfArg = argTypeMap.lookup(argPos);
     size_t i = (lv23 ? argPos - 1 : argPos);
@@ -112,17 +113,19 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
     if (is_char_arg(typeOfArg) || typeOfArg == ArgType::len ||
         typeOfArg == ArgType::vincInc || typeOfArg == ArgType::fp ||
         typeOfArg == ArgType::mldLD) {
+      os << "  if (" << (typeOfArg == ArgType::fp ? "byRefFloat" : "byRef")
+         << ") {\n";
       os << "      F->removeParamAttr(" << i << " + offset"
          << ", llvm::Attribute::ReadNone);\n"
          << "      F->addParamAttr(" << i << " + offset"
          << ", llvm::Attribute::ReadOnly);\n"
          << "      F->addParamAttr(" << i << " + offset"
          << ", llvm::Attribute::NoCapture);\n";
+      os << "  }\n";
     }
   }
 
-  os << "  }\n"
-     << "  // Julia declares double* pointers as Int64,\n"
+  os << "  // Julia declares double* pointers as Int64,\n"
      << "  //  so LLVM won't let us add these Attributes.\n"
      << "  if (!julia_decl) {\n";
   for (size_t argPos = 0; argPos < numArgs; argPos++) {

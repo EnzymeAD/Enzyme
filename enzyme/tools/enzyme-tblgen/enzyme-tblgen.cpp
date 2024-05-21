@@ -15,9 +15,12 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Signals.h"
+#include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/TableGen/Error.h"
 #include "llvm/TableGen/Main.h"
 #include "llvm/TableGen/Record.h"
@@ -65,9 +68,7 @@ static cl::opt<ActionType>
            cl::values(clEnumValN(MLIRDerivatives, "gen-mlir-derivatives",
                                  "Generate MLIR derivative")),
            cl::values(clEnumValN(CallDerivatives, "gen-call-derivatives",
-                                 "Generate call derivative")),
-           cl::values(clEnumValN(GenHeaderVariables, "gen-header-strings",
-                                 "Generate header strings")));
+                                 "Generate call derivative")));
 
 void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
                  StringRef FT, StringRef cconv, Init *func,
@@ -191,9 +192,10 @@ void initializeNames(const Twine &curIndent, raw_ostream &os, Init *resultTree,
 struct VariableSetting {
   StringMap<std::string> nameToOrdinal;
   StringMap<bool> isVector;
+  StringMap<std::vector<int>> extractions;
 
-  std::pair<std::string, bool> lookup(StringRef name, Record *pattern,
-                                      Init *resultRoot) {
+  std::tuple<std::string, bool, std::vector<int>>
+  lookup(StringRef name, Record *pattern, Init *resultRoot) {
     auto ord = nameToOrdinal.find(name);
     if (ord == nameToOrdinal.end())
       PrintFatalError(pattern->getLoc(), Twine("unknown named operand '") +
@@ -201,12 +203,16 @@ struct VariableSetting {
                                              resultRoot->getAsString());
     auto iv = isVector.find(name);
     assert(iv != isVector.end());
-    return std::make_pair(ord->getValue(), iv->getValue());
+
+    auto ext = extractions.find(name);
+    assert(ext != extractions.end());
+    return std::make_tuple(ord->getValue(), iv->getValue(), ext->getValue());
   }
 
-  void insert(StringRef name, StringRef value, bool vec) {
+  void insert(StringRef name, StringRef value, bool vec, std::vector<int> ext) {
     nameToOrdinal[name] = value;
     isVector[name] = vec;
+    extractions[name] = ext;
   }
 };
 
@@ -231,11 +237,17 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
     os << curIndent << "auto " << argName << "_" << idx << " = ";
     idx++;
     if (isa<UnsetInit>(args) && names) {
-      auto [ord, vecValue] =
+      auto [ord, vecValue, ext] =
           nameToOrdinal.lookup(names->getValue(), pattern, resultRoot);
       if (!vecValue && !startsWith(ord, "local")) {
+
+        if (ext.size()) {
+          os << "gutils->extractMeta(" << builder << ", ";
+        }
+
         if (lookup && intrinsic != MLIRDerivatives)
           os << "lookup(";
+
         if (newFromOriginal && (!lookup || intrinsic != MLIRDerivatives))
           os << "gutils->getNewFromOriginal(";
       }
@@ -250,8 +262,19 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
       if (!vecValue && !startsWith(ord, "local")) {
         if (newFromOriginal && (!lookup || intrinsic != MLIRDerivatives))
           os << ")";
+
         if (lookup && intrinsic != MLIRDerivatives)
           os << ", " << builder << ")";
+
+        if (ext.size()) {
+          os << ", ArrayRef<unsigned>({";
+          for (unsigned i = 0; i < ext.size(); i++) {
+            if (i != 0)
+              os << ", ";
+            os << std::to_string(ext[i]);
+          }
+          os << "}))";
+        }
       }
       os << ";\n";
       vectorValued.push_back(vecValue);
@@ -263,7 +286,7 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
     os << ";\n";
     if (names) {
       auto name = names->getAsUnquotedString();
-      nameToOrdinal.insert(name, "local_" + name, vectorValued.back());
+      nameToOrdinal.insert(name, "local_" + name, vectorValued.back(), {});
       os << curIndent << "local_" << name << " = " << argName << "_"
          << (idx - 1) << ";\n";
     }
@@ -347,8 +370,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       if (resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultRoot);
+        auto [ord, isVec, ext] =
+            nameToOrdinal.lookup(name, pattern, resultRoot);
         assert(!isVec);
+        assert(ext.size() == 0);
         os << ord;
       } else
         PrintFatalError(pattern->getLoc(),
@@ -368,8 +393,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       if (isa<UnsetInit>(resultRoot->getArg(0)) && resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultRoot);
+        auto [ord, isVec, ext] =
+            nameToOrdinal.lookup(name, pattern, resultRoot);
         assert(!isVec);
+        assert(!ext.size());
         os << ord;
       } else
         handle(curIndent + INDENT, argPattern + "_vs", os, pattern,
@@ -399,8 +426,11 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       if (isa<UnsetInit>(resultRoot->getArg(0)) && resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultRoot);
+        auto [ord, isVec, ext] =
+            nameToOrdinal.lookup(name, pattern, resultRoot);
         assert(!isVec);
+        // This assumes that activity of inner extractions are the same as
+        // outer. assert(!ext.size());
         os << ord;
       } else
         assert("Requires name for arg");
@@ -413,8 +443,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         if (isa<UnsetInit>(resultRoot->getArg(i)) &&
             resultRoot->getArgName(i)) {
           auto name = resultRoot->getArgName(i)->getAsUnquotedString();
-          auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultRoot);
+          auto [ord, isVec, ext] =
+              nameToOrdinal.lookup(name, pattern, resultRoot);
           vector = isVec;
+          assert(!ext.size());
           os << ord;
         } else
           vector = handle(curIndent + INDENT + INDENT,
@@ -466,8 +498,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
           ord = "op->getResult(0)";
         } else {
           auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-          auto [ord1, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
+          auto [ord1, isVec, ext] =
+              nameToOrdinal.lookup(name, pattern, resultTree);
           assert(!isVec);
+          assert(!ext.size());
           ord = ord1;
         }
         os << ord << ".getType(), ";
@@ -485,30 +519,57 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << "ConstantFP::get(";
         if (resultRoot->getArgName(0)) {
           auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-          auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
+          auto [ord, isVec, ext] =
+              nameToOrdinal.lookup(name, pattern, resultTree);
           assert(!isVec);
-          os << ord;
+          if (ext.size())
+            os << "gutils->extractMeta(";
+          os << ord << "->getType()";
+          if (ext.size()) {
+            os << ", ArrayRef<unsigned>({";
+            for (unsigned i = 0; i < ext.size(); i++) {
+              if (i != 0)
+                os << ", ";
+              os << std::to_string(ext[i]);
+            }
+            os << "}))";
+          }
         } else
           PrintFatalError(pattern->getLoc(),
                           Twine("unknown named operand in constantfp") +
                               resultTree->getAsString());
-        os << "->getType(), \"" << value->getValue() << "\")";
+        os << ", \"" << value->getValue() << "\")";
       }
       return false;
     } else if (opName == "Zero" || Def->isSubClassOf("Zero")) {
       if (resultRoot->getNumArgs() != 1)
         PrintFatalError(pattern->getLoc(), "only single op Zero supported");
       os << "Constant::getNullValue(";
+      std::vector<int> exto;
       if (resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
+        auto [ord, isVec, ext] =
+            nameToOrdinal.lookup(name, pattern, resultTree);
         assert(!isVec);
+        exto = std::move(ext);
+        if (exto.size())
+          os << "gutils->extractMeta(";
         os << ord;
       } else
         PrintFatalError(pattern->getLoc(),
                         Twine("unknown named operand in constantfp") +
                             resultTree->getAsString());
-      os << "->getType())";
+      os << "->getType()";
+      if (exto.size()) {
+        os << ", ArrayRef<unsigned>({";
+        for (unsigned i = 0; i < exto.size(); i++) {
+          if (i != 0)
+            os << ", ";
+          os << std::to_string(exto[i]);
+        }
+        os << "}))";
+      }
+      os << ")";
       return false;
     } else if (opName == "ConstantCFP" || Def->isSubClassOf("ConstantCFP")) {
       if (resultRoot->getNumArgs() != 1)
@@ -528,8 +589,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << curIndent << INDENT << "auto ty = ";
       if (resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
+        auto [ord, isVec, ext] =
+            nameToOrdinal.lookup(name, pattern, resultTree);
         assert(!isVec);
+        assert(!ext.size());
         os << ord;
       } else
         PrintFatalError(pattern->getLoc(),
@@ -582,8 +645,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
         if (resultRoot->getArgName(0)) {
           auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-          auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
+          auto [ord, isVec, ext] =
+              nameToOrdinal.lookup(name, pattern, resultTree);
           assert(!isVec);
+          assert(!ext.size());
           os << ord;
         } else
           PrintFatalError(pattern->getLoc(),
@@ -622,8 +687,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << "UndefValue::get(";
       if (resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
+        auto [ord, isVec, ext] =
+            nameToOrdinal.lookup(name, pattern, resultTree);
         assert(!isVec);
+        assert(!ext.size());
         os << ord;
       } else
         PrintFatalError(pattern->getLoc(),
@@ -641,14 +708,32 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       if (resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec] = nameToOrdinal.lookup(name, pattern, resultTree);
+        auto [ord, isVec, ext] =
+            nameToOrdinal.lookup(name, pattern, resultTree);
         assert(!isVec);
+
+        if (ext.size())
+          os << "gutils->extractMeta(" << builder << ",";
         os << ord;
+
+        if (ext.size()) {
+          os << ", ArrayRef<unsigned>({";
+          for (unsigned i = 0; i < ext.size(); i++) {
+            if (i != 0)
+              os << ", ";
+            os << std::to_string(ext[i]);
+          }
+          os << "}))";
+        }
+
       } else
         PrintFatalError(pattern->getLoc(),
                         Twine("unknown named operand in shadow") +
                             resultTree->getAsString());
-      os << ", " << builder << ")";
+      os << ", " << builder;
+      if (intrinsic != MLIRDerivatives)
+        os << ", /*nullShadow*/true";
+      os << ")";
       if (lookup)
         os << ", " << builder << ")";
       return true;
@@ -821,7 +906,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                   op = ("local_" + ptree->getArgNameStr(i)).str();
                 }
                 nnameToOrdinal.insert(ptree->getArgNameStr(i), op,
-                                      vectorValued[next[0]]);
+                                      vectorValued[next[0]], {});
               }
               i++;
             }
@@ -1271,24 +1356,6 @@ void printDiffUse(
   }
 }
 
-static void emitHeaderIncludes(const RecordKeeper &recordKeeper,
-                               raw_ostream &os) {
-  const auto &patterns = recordKeeper.getAllDerivedDefinitions("Headers");
-  os << "const char* include_headers[][2] = {\n";
-  bool seen = false;
-  for (Record *pattern : patterns) {
-    if (seen)
-      os << ",\n";
-    auto filename = pattern->getValueAsString("filename");
-    auto contents = pattern->getValueAsString("contents");
-    os << "{\"" << filename << "\"\n,";
-    os << "R\"(" << contents << ")\"\n";
-    os << "}";
-    seen = true;
-  }
-  os << "};\n";
-}
-
 static void emitMLIRReverse(raw_ostream &os, Record *pattern, DagInit *tree,
                             ActionType intrinsic, StringRef origName,
                             ListInit *argOps) {
@@ -1385,18 +1452,14 @@ static VariableSetting parseVariables(DagInit *tree, ActionType intrinsic,
               op = (origName + ".getOperand(" + Twine(next[0]) + ")").str();
             else
               op = (origName + "->getOperand(" + Twine(next[0]) + ")").str();
+            std::vector<int> extractions;
             if (prev.size() > 0) {
-              op = "gutils->extractMeta(Builder2, " + op +
-                   ", ArrayRef<unsigned>({";
-              bool first = true;
               for (unsigned i = 1; i < next.size(); i++) {
-                if (!first)
-                  op += ", ";
-                op += std::to_string(next[i]);
+                extractions.push_back(next[i]);
               }
-              op += "}))";
             }
-            nameToOrdinal.insert(ptree->getArgNameStr(i), op, false);
+            nameToOrdinal.insert(ptree->getArgNameStr(i), op, false,
+                                 extractions);
           }
           i++;
         }
@@ -1406,7 +1469,7 @@ static VariableSetting parseVariables(DagInit *tree, ActionType intrinsic,
 
   if (tree->getNameStr().size())
     nameToOrdinal.insert(tree->getNameStr(),
-                         (Twine("(&") + origName + ")").str(), false);
+                         (Twine("(&") + origName + ")").str(), false, {});
   return nameToOrdinal;
 }
 
@@ -1824,7 +1887,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         os << "      return;\n";
 
       os << "    switch (Mode) {\n";
-      os << "      case DerivativeMode::ForwardModeError:\n";
       os << "      case DerivativeMode::ForwardModeSplit:\n";
       os << "      case DerivativeMode::ForwardMode:{\n";
       os << "        IRBuilder<> Builder2(&" << origName << ");\n";
@@ -1874,18 +1936,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
              << ".getOperand(" << argIdx << "))) {\n";
           os << curIndent << INDENT << "Value *dif = diffe(" << origName
              << ".getOperand(" << argIdx << "), Builder2);\n";
-          // error from https://dl.acm.org/doi/10.1145/3371128
-          // error(f(x, y)) = max(ulp(f(x, y)), abs(x / f(x, y) * df/dx *
-          // error(x)) + abs(y / f(x, y) * df/dy * error(y)))
-          // error TODO
-
-          os << " if (Mode == DerivativeMode::ForwardModeError) {\n";
-          os << "   dif = Builder2.CreateFDiv(Builder2.CreateFMul(dif, "
-                "gutils->getNewFromOriginal("
-             << origName << ".getOperand(" << argIdx
-             << "))), gutils->getNewFromOriginal(&" << origName << "));\n";
-          os << " }\n";
-
           os << curIndent << INDENT
              << "Value *arg_diff_tmp = UndefValue::get(res->getType());\n";
         }
@@ -1936,17 +1986,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                         "res, itmp);\n";
                   os << curIndent << INDENT << INDENT << "}\n";
                 } else {
-                  // Add the sum of the abs of errors due to each argument.
-                  // error TODO
-
-                  os << curIndent << INDENT << INDENT
-                     << "if (Mode == DerivativeMode::ForwardModeError) {\n";
-                  os << curIndent << INDENT << INDENT << INDENT
-                     << "itmp = Builder2.CreateIntrinsic(Intrinsic::fabs, "
-                        "ArrayRef<Type*>(itmp->getType()), "
-                        "ArrayRef<Value*>(itmp));\n";
-                  os << curIndent << INDENT << INDENT << INDENT << "}\n";
-
                   os << curIndent << INDENT << INDENT
                      << "arg_diff_tmp = GradientUtils::recursiveFAdd(Builder2,";
                   os << "res, itmp, {";
@@ -1978,15 +2017,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         fwdres({}, argOpEn.value());
         if (intrinsic != MLIRDerivatives) {
           os << curIndent << INDENT << "res = arg_diff_tmp;\n";
-          // Perform the max with 1 ulp
-          // error TODO
-          os << curIndent << INDENT
-             << "if (Mode == DerivativeMode::ForwardModeError) {\n";
-          os << curIndent << INDENT << INDENT
-             << "res = Builder2.CreateMaxNum(get1ULP(Builder2, "
-                "gutils->getNewFromOriginal(&"
-             << origName << ")), res);\n";
-          os << curIndent << INDENT << "}\n";
         }
         os << "        }\n";
       }
@@ -2017,6 +2047,217 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        break;\n";
     }
     os << "      }\n";
+
+    // forward error TODO: `ForwardFromSummedReverse` behavior
+    // also for custom derivatives.
+    if (intrinsic != MLIRDerivatives) {
+      os << "      case DerivativeMode::ForwardModeError: {\n";
+      os << "        IRBuilder<> Builder2(&" << origName << ");\n";
+      os << "        getForwardBuilder(Builder2);\n";
+      os << "        Value *res = "
+         << "Constant::getNullValue(gutils->getShadowType(" << origName
+         << "."
+            "getType()));\n";
+      for (auto argOpEn : enumerate(*argOps)) {
+        size_t argIdx = argOpEn.index();
+
+        const char *curIndent = "        ";
+
+        if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+          auto opName = resultRoot->getOperator()->getAsString();
+          auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
+          if (Def->isSubClassOf("InactiveArgSpec")) {
+            if (Def->getValueAsBit("asserting"))
+              os << " assert(gutils->isConstantValue(" << origName
+                 << ".getOperand(" << argIdx << ")));\n";
+            continue;
+          }
+        }
+
+        os << curIndent << "if (!gutils->isConstantValue(" << origName
+           << ".getOperand(" << argIdx << "))) {\n";
+        os << curIndent << INDENT << "Value *dif = diffe(" << origName
+           << ".getOperand(" << argIdx << "), Builder2);\n";
+        // error from https://dl.acm.org/doi/10.1145/3371128
+        // error(f(x, y)) = max(ulp(f(x, y)), abs(x / f(x, y) * df/dx *
+        // error(x)) + abs(y / f(x, y) * df/dy * error(y)))
+
+        os << curIndent << INDENT
+           << "dif = Builder2.CreateFDiv(Builder2.CreateFMul(dif, "
+              "gutils->getNewFromOriginal("
+           << origName << ".getOperand(" << argIdx
+           << "))), gutils->getNewFromOriginal(&" << origName << "));\n";
+
+        os << curIndent << INDENT
+           << "Value *arg_diff_tmp = UndefValue::get(res->getType());\n";
+
+        initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(),
+                        "local");
+        std::function<void(ArrayRef<unsigned>, Init *)> fwdres =
+            [&](ArrayRef<unsigned> idx, Init *ival) {
+              if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
+                auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
+                if (Def->isSubClassOf("MultiReturn")) {
+                  unsigned i = 0;
+                  for (auto r : resultTree->getArgs()) {
+                    SmallVector<unsigned, 2> next(idx.begin(), idx.end());
+                    next.push_back(i);
+                    i++;
+                    fwdres(next, r);
+                  }
+                  return;
+                }
+                if (Def->isSubClassOf("InactiveArgSpec")) {
+                  return;
+                }
+                os << curIndent << INDENT << "{\n";
+                os << curIndent << INDENT << INDENT << "Value *itmp = ";
+                ArrayRef<unsigned> retidx{};
+                bool vectorValued =
+                    handle(Twine(curIndent) + INDENT + INDENT, "fwdarg", os,
+                           pattern, resultTree, "Builder2", nameToOrdinal,
+                           /*lookup*/ false, retidx, origName,
+                           /*newFromOriginal*/ true, intrinsic);
+                os << ";\n";
+                (void)vectorValued;
+                assert(vectorValued);
+
+                // Add the sum of the abs of errors due to each argument.
+
+                os << curIndent << INDENT << INDENT
+                   << "itmp = Builder2.CreateIntrinsic(Intrinsic::fabs, "
+                      "ArrayRef<Type*>(itmp->getType()), "
+                      "ArrayRef<Value*>(itmp));\n";
+
+                os << curIndent << INDENT << INDENT
+                   << "arg_diff_tmp = "
+                      "GradientUtils::recursiveFAdd(Builder2,";
+                os << "res, itmp, {";
+                {
+                  bool seen = false;
+                  for (auto i : idx) {
+                    if (seen)
+                      os << ", ";
+                    os << i;
+                    seen = true;
+                  }
+                }
+
+                os << "}, {}, arg_diff_tmp, gutils->getWidth() != 1);\n";
+                os << curIndent << INDENT << "}\n";
+              } else if (ListInit *lst = dyn_cast<ListInit>(ival)) {
+                unsigned i = 0;
+                for (auto r : *lst) {
+                  SmallVector<unsigned, 2> next(idx.begin(), idx.end());
+                  next.push_back(i);
+                  i++;
+                  fwdres(next, r);
+                }
+              } else
+                PrintFatalError(pattern->getLoc(),
+                                Twine("Unknown subinitialization"));
+            };
+        fwdres({}, argOpEn.value());
+        os << curIndent << INDENT << "res = arg_diff_tmp;\n";
+        os << curIndent << "}\n";
+      }
+
+      // Perform the max with 1 ulp
+      // error TODO
+      os << "        res = Builder2.CreateMaxNum(get1ULP(Builder2, "
+            "gutils->getNewFromOriginal(&"
+         << origName << ")), res);\n";
+
+      os << "        assert(res);\n";
+
+      // Insert logging function call (optional)
+      os << "        Function *logFunc = " << origName
+         << ".getModule()->getFunction(\"enzymeLogError\");\n";
+      os << "        if (logFunc) {\n"
+         << "            std::string moduleName = " << origName
+         << ".getModule()->getModuleIdentifier() ;\n"
+         << "            std::string functionName = " << origName
+         << ".getFunction()->getName().str();\n"
+         << "            std::string blockName = " << origName
+         << ".getParent()->getName().str();\n"
+         << "            int funcIdx = -1, blockIdx = -1, instIdx = -1;\n"
+         << "            auto funcIt = std::find_if(" << origName
+         << ".getModule()->begin(), " << origName
+         << ".getModule()->end(),\n"
+            "              [&](const auto& func) { return &func == "
+         << origName
+         << ".getFunction(); });\n"
+            "            if (funcIt != "
+         << origName
+         << ".getModule()->end()) {\n"
+            "              funcIdx = "
+            "std::distance("
+         << origName << ".getModule()->begin(), funcIt);\n"
+         << "            }\n"
+         << "            auto blockIt = std::find_if(" << origName
+         << ".getFunction()->begin(), " << origName
+         << ".getFunction()->end(),\n"
+            "              [&](const auto& block) { return &block == "
+         << origName
+         << ".getParent(); });\n"
+            "            if (blockIt != "
+         << origName
+         << ".getFunction()->end()) {\n"
+            "              blockIdx = std::distance("
+         << origName << ".getFunction()->begin(), blockIt);\n"
+         << "            }\n"
+         << "            auto instIt = std::find_if(" << origName
+         << ".getParent()->begin(), " << origName
+         << ".getParent()->end(),\n"
+            "              [&](const auto& curr) { return &curr == &"
+         << origName
+         << "; });\n"
+            "            if (instIt != "
+         << origName
+         << ".getParent()->end()) {\n"
+            "              instIdx = std::distance("
+         << origName << ".getParent()->begin(), instIt);\n"
+         << "            }\n"
+         << "            Value *origValue = "
+            "Builder2.CreateFPExt(gutils->getNewFromOriginal(&"
+         << origName << "), Type::getDoubleTy(" << origName
+         << ".getContext()));\n"
+         << "            Value *errValue = Builder2.CreateFPExt(res, "
+            "Type::getDoubleTy("
+         << origName << ".getContext()));\n"
+         << "            std::string opcodeName = " << origName
+         << ".getOpcodeName();\n"
+         << "            std::string calleeName = \"<N/A>\";\n"
+         << "            if (auto CI = dyn_cast<CallInst>(&" << origName
+         << ")) {\n"
+         << "                if (Function *fn = CI->getCalledFunction()) {\n"
+         << "                    calleeName = fn->getName();\n"
+         << "                } else {\n"
+         << "                    calleeName = \"<Unknown>\";\n"
+         << "                }\n"
+         << "            }\n"
+         << "            Value *moduleNameValue = "
+            "Builder2.CreateGlobalStringPtr(moduleName);\n"
+         << "            Value *functionNameValue = "
+            "Builder2.CreateGlobalStringPtr(functionName + \" (\" +"
+            "std::to_string(funcIdx) + \")\");\n"
+         << "            Value *blockNameValue = "
+            "Builder2.CreateGlobalStringPtr(blockName + \" (\" +"
+            "std::to_string(blockIdx) + \")\");\n"
+         << "            Value *opcodeNameValue = "
+            "Builder2.CreateGlobalStringPtr(opcodeName + \" (\" "
+            "+std::to_string(instIdx) + \")\");\n"
+         << "            Value *calleeNameValue = "
+            "Builder2.CreateGlobalStringPtr(calleeName);\n"
+         << "            Builder2.CreateCall(logFunc, {origValue, "
+            "errValue, opcodeNameValue, calleeNameValue, moduleNameValue, "
+            "functionNameValue, blockNameValue});\n"
+         << "        }\n";
+
+      os << "        setDiffe(&" << origName << ", res, Builder2);\n";
+      os << "        break;\n";
+      os << "      }\n";
+    }
 
     if (intrinsic != MLIRDerivatives) {
       os << "      case DerivativeMode::ReverseModeGradient:\n";
@@ -2423,9 +2664,6 @@ static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
     return false;
   case UpdateBlasTA:
     emitBlasTAUpdater(records, os);
-    return false;
-  case GenHeaderVariables:
-    emitHeaderIncludes(records, os);
     return false;
 
   default:

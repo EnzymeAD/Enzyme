@@ -37,10 +37,6 @@ add_public_tablegen_target(BlasDeclarationsIncGen)
 add_public_tablegen_target(BlasTAIncGen)
 add_public_tablegen_target(BlasDiffUseIncGen)
 
-set(LLVM_TARGET_DEFINITIONS Clang/include_utils.td)
-enzyme_tablegen(IncludeUtils.inc -gen-header-strings)
-add_public_tablegen_target(IncludeUtilsIncGen)
-
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 set(LLVM_LINK_COMPONENTS Demangle)
@@ -78,7 +74,6 @@ if (${Clang_FOUND})
 	LLVM
     )
 target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
-add_dependencies(ClangEnzyme-${LLVM_VERSION_MAJOR} IncludeUtilsIncGen)
 endif()
         add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
@@ -112,7 +107,6 @@ if (${Clang_FOUND})
         clang
     )
 target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
-add_dependencies(ClangEnzyme-${LLVM_VERSION_MAJOR} IncludeUtilsIncGen)
 endif()
     add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymePassLoader.cpp

@@ -184,6 +184,10 @@ public:
       llvm::IRBuilder<> &Builder2, bool lookup,
       const llvm::ValueToValueMapTy &available = llvm::ValueToValueMapTy());
 
+  bool usedInRooting(const llvm::CallBase *orig,
+                     llvm::ArrayRef<ValueType> types, const llvm::Value *val,
+                     bool shadow) const;
+
   llvm::Value *getNewIfOriginal(llvm::Value *originst) const;
 
   llvm::Value *tid;
@@ -537,6 +541,9 @@ public:
                                   llvm::ArrayRef<unsigned> off,
                                   const llvm::Twine &name = "",
                                   bool fallback = true);
+
+  //! Helper routine to get the type of an extraction
+  static llvm::Type *extractMeta(llvm::Type *T, llvm::ArrayRef<unsigned> off);
 
   static llvm::Value *recursiveFAdd(llvm::IRBuilder<> &B, llvm::Value *lhs,
                                     llvm::Value *rhs,

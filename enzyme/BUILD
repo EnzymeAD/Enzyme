@@ -1,3 +1,4 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 load("@llvm-project//llvm:tblgen.bzl", "gentbl")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 
@@ -39,9 +40,6 @@ gentbl(
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
     td_srcs = ["Enzyme/BlasDerivatives.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -53,9 +51,6 @@ gentbl(
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
     td_srcs = ["Enzyme/BlasDerivatives.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -67,9 +62,6 @@ gentbl(
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
     td_srcs = ["Enzyme/BlasDerivatives.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -81,9 +73,6 @@ gentbl(
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
     td_srcs = ["Enzyme/BlasDerivatives.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -95,9 +84,6 @@ gentbl(
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
     td_srcs = ["Enzyme/BlasDerivatives.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -109,9 +95,6 @@ gentbl(
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
     td_srcs = ["Enzyme/BlasDerivatives.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -123,9 +106,6 @@ gentbl(
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
     td_srcs = ["Enzyme/BlasDerivatives.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -137,23 +117,6 @@ gentbl(
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
     td_srcs = ["Enzyme/BlasDerivatives.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
-)
-
-gentbl(
-    name = "include-utils",
-    tbl_outs = [(
-        "-gen-header-strings",
-        "IncludeUtils.inc",
-    )],
-    tblgen = ":enzyme-tblgen",
-    td_file = "Enzyme/Clang/include_utils.td",
-    td_srcs = ["Enzyme/Clang/include_utils.td"],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 cc_library(
@@ -169,7 +132,7 @@ cc_library(
     hdrs = glob([
         "Enzyme/*.h",
         "Enzyme/TypeAnalysis/*.h",
-    ]),
+    ]) + ["bundled_includes.h"],
     copts = [
         "-DENZYME_RUNPASS=1",
         "-DENZYME_VERSION_MAJOR=0",
@@ -181,7 +144,7 @@ cc_library(
     data = ["@llvm-project//clang:builtin_headers_gen"],
     visibility = ["//visibility:public"],
     deps = [
-        "include-utils",
+        ":bundled-includes",
         ":binop-derivatives",
         ":blas-attributor",
         ":blas-derivatives",
@@ -216,18 +179,36 @@ cc_library(
     alwayslink = 1,
 )
 
+# Modified from llvm_driver_cc_binary since that can't be used
+# outside of llvm tree
+expand_template(
+    name = "_gen_enzyme-clang",
+    out = "enzyme-clang-driver.cpp",
+    substitutions = {"@TOOL_NAME@": "clang"},
+    template = "@llvm-project//llvm:cmake/modules/llvm-driver-template.cpp.in",
+)
 cc_binary(
     name = "enzyme-clang",
-    srcs = [],
+    srcs = ["enzyme-clang-driver.cpp"],
     copts = [
         "-Wno-implicit-fallthrough",
         "-Wno-error=frame-larger-than=",
+        "-Denzyme_clang_main=clang_main",
     ],
     deps = [
         ":EnzymeStatic",
         "@llvm-project//clang:clang-driver",
+        "@llvm-project//llvm:Support",
     ],
 )
+
+genrule(
+    name = "bundled-includes",
+    srcs = glob(["include/**"]) + ["scripts/bundle-includes.sh"],
+    outs = ["bundled_includes.h"],
+    cmd = "$(location :scripts/bundle-includes.sh) $(location :include/enzyme/enzyme) $@"
+)
+
 
 genrule(
     name = "gen_enzyme-clang++",
@@ -423,9 +404,6 @@ gentbl(
         "Enzyme/MLIR/Implementations/AffineDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
     ],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -439,9 +417,6 @@ gentbl(
     td_srcs = [
         "Enzyme/MLIR/Implementations/ArithDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
-    ],
-    deps = [
-        ":enzyme-tblgen",
     ],
 )
 
@@ -457,9 +432,6 @@ gentbl(
         "Enzyme/MLIR/Implementations/LLVMDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
     ],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -473,9 +445,6 @@ gentbl(
     td_srcs = [
         "Enzyme/MLIR/Implementations/NVVMDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
-    ],
-    deps = [
-        ":enzyme-tblgen",
     ],
 )
 
@@ -491,9 +460,6 @@ gentbl(
         "Enzyme/MLIR/Implementations/SCFDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
     ],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -507,9 +473,6 @@ gentbl(
     td_srcs = [
         "Enzyme/MLIR/Implementations/CFDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
-    ],
-    deps = [
-        ":enzyme-tblgen",
     ],
 )
 
@@ -525,9 +488,6 @@ gentbl(
         "Enzyme/MLIR/Implementations/MemRefDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
     ],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -542,9 +502,6 @@ gentbl(
         "Enzyme/MLIR/Implementations/MathDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
     ],
-    deps = [
-        ":enzyme-tblgen",
-    ],
 )
 
 gentbl(
@@ -558,9 +515,6 @@ gentbl(
     td_srcs = [
         "Enzyme/MLIR/Implementations/FuncDerivatives.td",
         "Enzyme/MLIR/Implementations/Common.td",
-    ],
-    deps = [
-        ":enzyme-tblgen",
     ],
 )
 

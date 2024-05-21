@@ -3,9 +3,14 @@
 void emit_BLASTypes(raw_ostream &os) {
   os << "const bool byRef = blas.prefix == \"\" || blas.prefix == "
         "\"cublas_\";\n";
+  os << "const bool byRefFloat = byRef || blas.prefix == "
+        "\"cublas\";\n";
+  os << "(void)byRefFloat;\n";
   os << "const bool cblas = blas.prefix == \"cblas_\";\n";
   os << "const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
         "\"cublas\";\n";
+  os << "const bool cublasv2 = blas.prefix == "
+        "\"cublas\" && StringRef(blas.suffix).contains(\"v2\");\n";
 
   os << "TypeTree ttFloat;\n"
      << "llvm::Type *floatType; \n"
@@ -16,7 +21,7 @@ void emit_BLASTypes(raw_ostream &os) {
      << "} else {\n"
      << "  llvm_unreachable(\"unknown float type of blas\");\n"
      << "}\n"
-     << "if (byRef) {\n"
+     << "if (byRefFloat) {\n"
      << "  ttFloat.insert({-1},BaseType::Pointer);\n"
      << "  ttFloat.insert({-1,0},floatType);\n"
      << "} else { \n"
@@ -25,7 +30,8 @@ void emit_BLASTypes(raw_ostream &os) {
 
   os << "TypeTree ttFloatRet;\n"
      << "ttFloatRet.insert({-1},floatType);\n"
-     << "TypeTree ttCuBlasRet;\n";
+     << "TypeTree ttCuBlasRet;\n"
+     << "ttCuBlasRet.insert({-1},BaseType::Integer);\n";
 
   os << "TypeTree ttInt;\n"
      << "if (byRef) {\n"
@@ -85,6 +91,13 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
     // sorry. will fix later. effectively, skip arg 0 for for lv23,
     // because we have the cblas layout in the .td declaration
     size_t i = (lv23 ? j - 1 : j);
+    if (pattern.getArgNames().size() <= j) {
+      PrintFatalError(pattern.getLoc(),
+                      Twine("Too few argnames for pattern '") + name +
+                          "' found " +
+                          std::to_string(pattern.getArgNames().size()) +
+                          " expected " + std::to_string(argTypeMap.size()));
+    }
     os << "  // " << currentType << " " << pattern.getArgNames()[j] << "\n";
     switch (currentType) {
     case ArgType::len:
@@ -123,11 +136,11 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
       break;
     case ArgType::mldData:
       os << "  updateAnalysis(call.getArgOperand(" << i
-         << (lv23 ? " + offset" : "") << "), ttPtr, &call);\n";
+         << " + offset), ttPtr, &call);\n";
       break;
     case ArgType::fp:
       os << "  updateAnalysis(call.getArgOperand(" << i
-         << (lv23 ? " + offset" : "") << "), ttFloat, &call);\n";
+         << " + offset), ttFloat, &call);\n";
       break;
     case ArgType::ap:
       // TODO
@@ -138,7 +151,7 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
     case ArgType::uplo:
     case ArgType::trans:
       os << "  updateAnalysis(call.getArgOperand(" << i
-         << (lv23 ? " + offset" : "") << "), ttChar, &call);\n";
+         << " + offset), ttChar, &call);\n";
       break;
     case ArgType::diag:
     case ArgType::side:
@@ -146,18 +159,20 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
       break;
     }
   }
-  os << "  if (cublas) {\n"
-     << "    updateAnalysis(&call, ttCuBlasRet, &call);\n"
-     << "  }\n";
   if (has_active_return(name)) {
     // under cublas, these functions have an extra return ptr argument
     size_t ptrRetArg = argTypeMap.size();
-    os << "  if (cublas) {\n"
+    os << "  if (cublasv2) {\n"
        << "    updateAnalysis(call.getArgOperand(" << ptrRetArg
        << " + offset), ttPtr, &call);\n"
+       << "    updateAnalysis(&call, ttCuBlasRet, &call);\n"
        << "  } else {\n"
        << "    assert(call.getType()->isFloatingPointTy());\n"
        << "    updateAnalysis(&call, ttFloatRet, &call);\n"
+       << "  }\n";
+  } else {
+    os << "  if (cublas) {\n"
+       << "    updateAnalysis(&call, ttCuBlasRet, &call);\n"
        << "  }\n";
   }
 
