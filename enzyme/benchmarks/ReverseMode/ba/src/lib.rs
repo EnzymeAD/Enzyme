@@ -32,7 +32,10 @@ fn rodrigues_rotate_point(rot: &[f64; 3], pt: &[f64; 3], rotated_pt: &mut [f64; 
         let costheta = theta.cos();
         let sintheta = theta.sin();
         let theta_inverse = 1. / theta;
-        let w = rot.map(|v| v * theta_inverse);
+        let mut w = [0.; 3];
+        for i in 0..3 {
+            w[i] = rot[i] * theta_inverse;
+        }
         let w_cross_pt = cross(&w, &pt);
         let tmp = (w[0] * pt[0] + w[1] * pt[1] + w[2] * pt[2]) * (1. - costheta);
         for i in 0..3 {
