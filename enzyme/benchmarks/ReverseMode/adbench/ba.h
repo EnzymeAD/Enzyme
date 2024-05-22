@@ -155,33 +155,35 @@ extern "C" {
 
     void dcompute_zach_weight_error(double const* w, double* dw, double* err, double* derr);
 
-    void compute_reproj_error_b(
-        double const* cam,
-        double * dcam,
-        double const* X,
-        double * dX,
-        double const* w,
-        double * wb,
-        double const* feat,
-        double *err,
-        double *derr
-    );
+    // void compute_reproj_error_b(
+    //     double const* cam,
+    //     double * dcam,
+    //     double const* X,
+    //     double * dX,
+    //     double const* w,
+    //     double * wb,
+    //     double const* feat,
+    //     double *err,
+    //     double *derr
+    //);
 
-    void compute_zach_weight_error_b(double const* w, double* dw, double* err, double* derr);
+    // void compute_zach_weight_error_b(double const* w, double* dw, double*
+    // err, double* derr);
 
-    void adept_compute_reproj_error(
-        double const* cam,
-        double * dcam,
-        double const* X,
-        double * dX,
-        double const* w,
-        double * wb,
-        double const* feat,
-        double *err,
-        double *derr
-    );
+    // void adept_compute_reproj_error(
+    //     double const* cam,
+    //     double * dcam,
+    //     double const* X,
+    //     double * dX,
+    //     double const* w,
+    //     double * wb,
+    //     double const* feat,
+    //     double *err,
+    //     double *derr
+    //);
 
-    void adept_compute_zach_weight_error(double const* w, double* dw, double* err, double* derr);
+    // void adept_compute_zach_weight_error(double const* w, double* dw, double*
+    // err, double* derr);
 
     void rust_dcompute_reproj_error(
         double const* cam,
