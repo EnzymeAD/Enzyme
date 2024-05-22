@@ -62,30 +62,28 @@ void rodrigues_rotate_point(double const* __restrict rot, double const* __restri
         sintheta = sin(theta);
         theta_inverse = 1.0 / theta;
 
-        for (i = 0; i < 3; i++)
-        {
-            w[i] = rot[i] * theta_inverse;
+        for (i = 0; i < 3; i++) {
+          w[i] = rot[i] * theta_inverse;
         }
 
         cross(w, pt, w_cross_pt);
 
-        tmp = (w[0] * pt[0] + w[1] * pt[1] + w[2] * pt[2]) *
-            (1. - costheta);
+        tmp = (w[0] * pt[0] + w[1] * pt[1] + w[2] * pt[2]) * (1. - costheta);
 
-        for (i = 0; i < 3; i++)
-        {
-            rotatedPt[i] = pt[i] * costheta + w_cross_pt[i] * sintheta + w[i] * tmp;
+        for (i = 0; i < 3; i++) {
+          rotatedPt[i] =
+              pt[i] * costheta + w_cross_pt[i] * sintheta + w[i] * tmp;
         }
     }
     else
     {
-        double rot_cross_pt[3];
-        cross(rot, pt, rot_cross_pt);
+        // double rot_cross_pt[3];
+        // cross(rot, pt, rot_cross_pt);
 
-        for (i = 0; i < 3; i++)
-        {
-            rotatedPt[i] = pt[i] + rot_cross_pt[i];
-        }
+        // for (i = 0; i < 3; i++)
+        //{
+        //     rotatedPt[i] = pt[i] + rot_cross_pt[i];
+        // }
     }
 }
 

@@ -32,17 +32,21 @@ fn rodrigues_rotate_point(rot: &[f64; 3], pt: &[f64; 3], rotated_pt: &mut [f64; 
         let costheta = theta.cos();
         let sintheta = theta.sin();
         let theta_inverse = 1. / theta;
-        let w = rot.map(|v| v * theta_inverse);
+        let mut w = [0.; 3];
+        for i in 0..3 {
+            w[i] = rot[i] * theta_inverse;
+        }
+        //let w = rot.map(|v| v * theta_inverse);
         let w_cross_pt = cross(&w, &pt);
         let tmp = (w[0] * pt[0] + w[1] * pt[1] + w[2] * pt[2]) * (1. - costheta);
         for i in 0..3 {
             rotated_pt[i] = pt[i] * costheta + w_cross_pt[i] * sintheta + w[i] * tmp;
         }
     } else {
-        let rot_cross_pt = cross(&rot, &pt);
-        for i in 0..3 {
-            rotated_pt[i] = pt[i] + rot_cross_pt[i];
-        }
+        //let rot_cross_pt = cross(rot, &pt);
+        //for i in 0..3 {
+        //    rotated_pt[i] = pt[i] + rot_cross_pt[i];
+        //}
     }
 }
 
@@ -55,7 +59,9 @@ fn project(cam: &[f64; 11], X: &[f64; 3], proj: &mut [f64; 2]) {
     Xo[1] = X[1] - C[1];
     Xo[2] = X[2] - C[2];
 
-    rodrigues_rotate_point(cam.first_chunk::<3>().unwrap(), &Xo, &mut Xcam);
+    let sub = [cam[0], cam[1], cam[2]];
+    rodrigues_rotate_point(&sub, &Xo, &mut Xcam);
+    //rodrigues_rotate_point(cam.first_chunk::<3>().unwrap(), &Xo, &mut Xcam);
 
     proj[0] = Xcam[0] / Xcam[2];
     proj[1] = Xcam[1] / Xcam[2];
@@ -65,6 +71,25 @@ fn project(cam: &[f64; 11], X: &[f64; 3], proj: &mut [f64; 2]) {
     proj[0] = proj[0] * cam[6] + cam[7];
     proj[1] = proj[1] * cam[6] + cam[8];
 }
+//void project(double const* __restrict cam, double const* __restrict X, double* __restrict proj)
+//{
+//    double const* C = &cam[3];
+//    double Xo[3], Xcam[3];
+//
+//    Xo[0] = X[0] - C[0];
+//    Xo[1] = X[1] - C[1];
+//    Xo[2] = X[2] - C[2];
+//
+//    rodrigues_rotate_point(&cam[0], Xo, Xcam);
+//
+//    proj[0] = Xcam[0] / Xcam[2];
+//    proj[1] = Xcam[1] / Xcam[2];
+//
+//    radial_distort(&cam[9], proj);
+//
+//    proj[0] = proj[0] * cam[6] + cam[7];
+//    proj[1] = proj[1] * cam[6] + cam[8];
+//}
 
 #[no_mangle]
 pub extern "C" fn rust_dcompute_reproj_error(
@@ -111,7 +136,7 @@ pub fn compute_reproj_error(
     let w = unsafe { *(*w).get_unchecked(0) };
     let x = unsafe { &*x };
     let feat = unsafe { &*feat };
-    let mut err = unsafe { &mut *err };
+    let err = unsafe { &mut *err };
     let mut proj = [0.; 2];
     project(cam, x, &mut proj);
     err[0] = w * (proj[0] - feat[0]);
