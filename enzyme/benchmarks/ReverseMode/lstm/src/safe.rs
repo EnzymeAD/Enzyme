@@ -26,10 +26,15 @@ fn lstm_model(
     input: &[f64],
 ) {
     let mut gates = vec![0.0; 4 * hsize];
-	let (a,b) = gates.split_at_mut(2*hsize);
-    let ((forget, ingate), (outgate, change)) = (
-        a.split_at_mut(hsize), b.split_at_mut(hsize));
+    let gates = &mut gates[..4 * hsize];
+    let (a, b) = gates.split_at_mut(2 * hsize);
+    let ((forget, ingate), (outgate, change)) = (a.split_at_mut(hsize), b.split_at_mut(hsize));
 
+    assert_eq!(weight.len(), 4 * hsize);
+    assert_eq!(bias.len(), 4 * hsize);
+    assert_eq!(hidden.len(), hsize);
+    assert!(cell.len() >= hsize);
+    assert!(input.len() >= hsize);
     // caching input
     for i in 0..hsize {
         forget[i] = sigmoid(input[i] * weight[i] + bias[i]);
@@ -63,23 +68,23 @@ fn lstm_predict(
     }
 
     let mut i = 0;
-    while i <= 2*l*b - 1 {
+    while i <= 2 * l * b - 1 {
         // make borrow-checker happy with non-overlapping mutable references
         let (xp, s1, s2) = if i == 0 {
             let (s1, s2) = s.split_at_mut(b);
             (x2.as_mut(), s1, s2)
         } else {
-            let tmp = &mut s[i-2*b..];
-            let (a, d) = tmp.split_at_mut(2*b);
+            let tmp = &mut s[i - 2 * b..];
+            let (a, d) = tmp.split_at_mut(2 * b);
             let (d, c) = d.split_at_mut(b);
 
-            (a,d,c)
+            (a, d, c)
         };
 
         lstm_model(
             b,
-            &w[i * 4..],
-            &w[(i + b) * 4..],
+            &w[i * 4..(i + b) * 4],
+            &w[(i + b) * 4..(i + 2 * b) * 4],
             s1,
             s2,
             xp,
@@ -88,7 +93,7 @@ fn lstm_predict(
         i += 2 * b;
     }
 
-    let xp = &s[i-2*b..];
+    let xp = &s[i - 2 * b..];
 
     for i in 0..b {
         x2[i] = xp[i] * w2[b + i] + w2[2 * b + i];
@@ -96,8 +101,19 @@ fn lstm_predict(
 }
 
 // LSTM objective (loss function)
-#[autodiff(d_lstm_objective, Reverse, Const, Const, Const, Duplicated, Duplicated, Const, Const, Duplicated)]
-pub (crate) fn lstm_objective(
+#[autodiff(
+    d_lstm_objective,
+    Reverse,
+    Const,
+    Const,
+    Const,
+    Duplicated,
+    Duplicated,
+    Const,
+    Const,
+    Duplicated
+)]
+pub(crate) fn lstm_objective(
     l: usize,
     c: usize,
     b: usize,
@@ -112,14 +128,15 @@ pub (crate) fn lstm_objective(
 
     let mut input = &sequence[..b];
     let mut ypred = vec![0.0; b];
+    let ypred = &mut ypred[..b];
     let mut ynorm = vec![0.0; b];
-    let mut lse;
+    let ynorm = &mut ynorm[..b];
 
     assert!(b > 0);
 
     for t in (0..=(c - 1) * b - 1).step_by(b) {
-        lstm_predict(l, b, main_params, extra_params, state, input, &mut ypred);
-        lse = logsumexp(&ypred);
+        lstm_predict(l, b, main_params, extra_params, state, input, ypred);
+        let lse = logsumexp(&ypred);
         for i in 0..b {
             ynorm[i] = ypred[i] - lse;
         }
@@ -137,31 +154,77 @@ pub (crate) fn lstm_objective(
 }
 
 #[no_mangle]
-pub extern "C" fn rust_lstm_objective(l: usize, c: usize, b: usize, main_params: *const f64, extra_params: *const f64, state: *mut f64, sequence: *const f64, loss: *mut f64) {
-    let (main_params, extra_params, state, sequence) = unsafe {(
-        slice::from_raw_parts(main_params, 2*l*4*b),
-        slice::from_raw_parts(extra_params, 3*b),
-        slice::from_raw_parts_mut(state, 2*l*b),
-        slice::from_raw_parts(sequence, c*b)
-    )};
+pub extern "C" fn rust_lstm_objective(
+    l: usize,
+    c: usize,
+    b: usize,
+    main_params: *const f64,
+    extra_params: *const f64,
+    state: *mut f64,
+    sequence: *const f64,
+    loss: *mut f64,
+) {
+    let (main_params, extra_params, state, sequence) = unsafe {
+        (
+            slice::from_raw_parts(main_params, 2 * l * 4 * b),
+            slice::from_raw_parts(extra_params, 3 * b),
+            slice::from_raw_parts_mut(state, 2 * l * b),
+            slice::from_raw_parts(sequence, c * b),
+        )
+    };
 
     unsafe {
-        lstm_objective(l,c,b,main_params,extra_params,state,sequence, &mut *loss);
+        lstm_objective(
+            l,
+            c,
+            b,
+            main_params,
+            extra_params,
+            state,
+            sequence,
+            &mut *loss,
+        );
     }
 }
 
 #[no_mangle]
-pub extern "C" fn rust_dlstm_objective(l: usize, c: usize, b: usize, main_params: *const f64, d_main_params: *mut f64, extra_params: *const f64, d_extra_params: *mut f64, state: *mut f64, sequence: *const f64, res: *mut f64, d_res: *mut f64) {
-    let (main_params, d_main_params, extra_params, d_extra_params, state, sequence) = unsafe {(
-        slice::from_raw_parts(main_params, 2*l*4*b),
-        slice::from_raw_parts_mut(d_main_params, 2*l*4*b),
-        slice::from_raw_parts(extra_params, 3*b),
-        slice::from_raw_parts_mut(d_extra_params, 3*b),
-        slice::from_raw_parts_mut(state, 2*l*b),
-        slice::from_raw_parts(sequence, c*b)
-    )};
+pub extern "C" fn rust_dlstm_objective(
+    l: usize,
+    c: usize,
+    b: usize,
+    main_params: *const f64,
+    d_main_params: *mut f64,
+    extra_params: *const f64,
+    d_extra_params: *mut f64,
+    state: *mut f64,
+    sequence: *const f64,
+    res: *mut f64,
+    d_res: *mut f64,
+) {
+    let (main_params, d_main_params, extra_params, d_extra_params, state, sequence) = unsafe {
+        (
+            slice::from_raw_parts(main_params, 2 * l * 4 * b),
+            slice::from_raw_parts_mut(d_main_params, 2 * l * 4 * b),
+            slice::from_raw_parts(extra_params, 3 * b),
+            slice::from_raw_parts_mut(d_extra_params, 3 * b),
+            slice::from_raw_parts_mut(state, 2 * l * b),
+            slice::from_raw_parts(sequence, c * b),
+        )
+    };
 
     unsafe {
-        d_lstm_objective(l,c,b,main_params,d_main_params, extra_params,d_extra_params, state,sequence, &mut *res, &mut *d_res);
+        d_lstm_objective(
+            l,
+            c,
+            b,
+            main_params,
+            d_main_params,
+            extra_params,
+            d_extra_params,
+            state,
+            sequence,
+            &mut *res,
+            &mut *d_res,
+        );
     }
 }
