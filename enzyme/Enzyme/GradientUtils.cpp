@@ -8981,7 +8981,7 @@ void GradientUtils::replaceAWithB(Value *A, Value *B, bool storeInCache) {
   // Check that the replacement doesn't already exist in the mapping
   // thereby resulting in a conflict.
 #ifndef NDEBUG
-  {
+  if (!isa<UndefValue>(B)) {
     auto found = newToOriginalFn.find(A);
     if (found != newToOriginalFn.end()) {
       auto foundB = newToOriginalFn.find(B);

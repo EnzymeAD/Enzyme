@@ -344,9 +344,14 @@ public:
                  Constant::getNullValue(gutils->getShadowType(inst.getType())),
                  Builder2);
     }
-    if (!inst.getType()->isVoidTy())
-      gutils->getNewFromOriginal(&inst)->replaceAllUsesWith(
-          UndefValue::get(inst.getType()));
+#if LLVM_VERSION_MAJOR >= 12
+    if (!inst.getType()->isVoidTy()) {
+      for (auto &U :
+           make_early_inc_range(gutils->getNewFromOriginal(&inst)->uses())) {
+        U.set(UndefValue::get(inst.getType()));
+      }
+    }
+#endif
     eraseIfUnused(inst, /*erase*/ true, /*check*/ false);
     return;
   }
@@ -458,7 +463,6 @@ public:
       if (looseTypeAnalysis || true) {
         vd = defaultTypeTreeForLLVM(ET, &I);
         ss << ", assumed " << vd.str() << "\n";
-        TR.dump(ss);
         EmitWarning("CannotDeduceType", I, ss.str());
         goto known;
       }
@@ -920,8 +924,14 @@ public:
         setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
                  BuilderZ);
     }
-    gutils->replaceAWithB(gutils->getNewFromOriginal(&I),
-                          UndefValue::get(I.getType()));
+#if LLVM_VERSION_MAJOR >= 12
+    if (!I.getType()->isVoidTy()) {
+      for (auto &U :
+           make_early_inc_range(gutils->getNewFromOriginal(&I)->uses())) {
+        U.set(UndefValue::get(I.getType()));
+      }
+    }
+#endif
     eraseIfUnused(I, /*erase*/ true, /*check*/ false);
     return;
   }
@@ -1035,7 +1045,6 @@ public:
       if (looseTypeAnalysis || true) {
         vd = defaultTypeTreeForLLVM(valType, &I);
         ss << ", assumed " << vd.str() << "\n";
-        TR.dump(ss);
         EmitWarning("CannotDeduceType", I, ss.str());
         goto known;
       }

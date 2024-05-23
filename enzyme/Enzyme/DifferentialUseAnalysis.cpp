@@ -525,6 +525,15 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
     if (!shadow) {
 
+      // Need the primal request in reverse.
+      if (funcName == "cuStreamSynchronize")
+        if (val == CI->getArgOperand(0)) {
+          if (EnzymePrintDiffUse)
+            llvm::errs() << " Need: primal(" << to_string(qtype) << ") of "
+                         << *val << " in reverse for cuda sync " << *CI << "\n";
+          return true;
+        }
+
       // Only need the primal request.
       if (funcName == "MPI_Wait" || funcName == "PMPI_Wait")
         if (val != CI->getArgOperand(0))
