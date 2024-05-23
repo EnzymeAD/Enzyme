@@ -174,6 +174,13 @@ pub fn gmm_objective(
     let constant = -(n as f64) * d as f64 * 0.5 * (2.0 * PI).ln();
     let icf_sz = d * (d + 1) / 2;
 
+    // Let the compiler know sizes so it can eliminate bounds checks
+    assert_eq!(qdiags.len(), d * k);
+    assert_eq!(sum_qs.len(), k);
+    assert_eq!(xcentered.len(), d);
+    assert_eq!(qxcentered.len(), d);
+    assert_eq!(main_term.len(), k);
+
     preprocess_qs(d, k, icf, sum_qs, qdiags);
 
     let mut slse = 0.;
