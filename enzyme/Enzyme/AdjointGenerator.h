@@ -1046,7 +1046,6 @@ public:
       if (looseTypeAnalysis || true) {
         vd = defaultTypeTreeForLLVM(valType, &I);
         ss << ", assumed " << vd.str() << "\n";
-        TR.dump(ss);
         EmitWarning("CannotDeduceType", I, ss.str());
         goto known;
       }
