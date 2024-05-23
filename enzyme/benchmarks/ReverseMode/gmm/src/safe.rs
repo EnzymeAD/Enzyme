@@ -48,6 +48,8 @@ pub extern "C" fn rust_dgmm_objective(
     let mut my_derr = unsafe { *derr };
     let (mut qdiags, mut sum_qs, mut xcentered, mut qxcentered, mut main_term) =
         get_workspace(d, k);
+    let (mut bqdiags, mut bsum_qs, mut bxcentered, mut bqxcentered, mut bmain_term) =
+        get_workspace(d, k);
 
     dgmm_objective(
         d,
@@ -65,10 +67,15 @@ pub extern "C" fn rust_dgmm_objective(
         &mut my_err,
         &mut my_derr,
         &mut qdiags,
+        &mut bqdiags,
         &mut sum_qs,
+        &mut bsum_qs,
         &mut xcentered,
+        &mut bxcentered,
         &mut qxcentered,
+        &mut bqxcentered,
         &mut main_term,
+        &mut bmain_term,
     );
 
     unsafe { *err = my_err };
@@ -140,11 +147,11 @@ fn get_workspace(d: usize, k: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>,
     Const,
     Const,
     Duplicated,
-    Const,
-    Const,
-    Const,
-    Const,
-    Const
+    Duplicated,
+    Duplicated,
+    Duplicated,
+    Duplicated,
+    Duplicated
 )]
 pub fn gmm_objective(
     d: usize,
