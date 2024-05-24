@@ -39,11 +39,38 @@ namespace enzyme {
     };
     using Forward = ForwardMode;
 
+    /**
+     * @brief Shadow member type for @ref Duplicated and @ref DuplicatedNoNeed
+     *
+     * Since @ref Duplicated and @ref DuplicatedNoNeed can already only have
+     * refrence or pointer template parameters, the only requirement for the
+     * shadow member is to be:
+     * 1. A pointer or an lvalue reference (no need in rvalue shadows)
+     * 2. Have a non-const pointed to or referenced type (since the function is
+     *    going to mutate the shadow and store a derivative value in it)
+     *
+     * We do preserve `volatile` just in case though (do we need to?)
+     */
+    template < typename T > using ShadowType =
+        std::conditional_t<
+            // T will be either a reference or a pointer!
+            // Remove qualifiers from referenced/pointed to type
+            std::is_pointer_v<T>,
+            /* pointer   */ std::add_pointer_t         < std::remove_const_t<std::remove_pointer_t  <T>> >,
+            /* reference */ std::add_lvalue_reference_t< std::remove_const_t<std::remove_reference_t<T>> >
+        >;
+    static_assert( std::is_same_v<ShadowType<int&>,       int&> );
+    static_assert( std::is_same_v<ShadowType<const int&>, int&> );
+    static_assert( std::is_same_v<ShadowType<int&&>,      int&> );
+    static_assert( std::is_same_v<ShadowType<const int&&>,int&> );
+    static_assert( std::is_same_v<ShadowType<int*>,       int*> );
+    static_assert( std::is_same_v<ShadowType<const int*>, int*> );
+
     template < typename T >
     struct Active{
       T value;
       Active(const T& v) : value(v) {};
-      Active(T&& v) : value(v) {};
+      Active(T&& v) : value(std::move(v)) {};
       Active(const Active<T>&) = default;
       Active(Active<T>&&) = default;
       operator T&() { return value; }
@@ -51,20 +78,32 @@ namespace enzyme {
 
     template < typename T >
     struct Duplicated{
+      static_assert(
+        std::is_reference_v<T> || std::is_pointer_v<T>,
+        "Duplicated argument makes sense only if its type is pointer or reference"
+      );
+
       T value;
-      T shadow;
-      Duplicated(const T& v, const T& s) : value(v), shadow(s) {};
-      Duplicated(T&& v, T&& s) : value(v), shadow(s) {};
+      ShadowType<T> shadow;
+
+      Duplicated(T v, ShadowType<T> s) : value(v), shadow(s) {};
+
       Duplicated(const Duplicated<T>&) = default;
       Duplicated(Duplicated<T>&&) = default;
     };
 
     template < typename T >
     struct DuplicatedNoNeed{
+      static_assert(
+        std::is_reference_v<T> || std::is_pointer_v<T>,
+        "DuplicatedNoNeed argument makes sense only if its type is pointer or reference"
+      );
+
       T value;
-      T shadow;
-      DuplicatedNoNeed(const T& v, const T& s) : value(v), shadow(s) {};
-      DuplicatedNoNeed(T&& v, T&& s) : value(v), shadow(s) {};
+      ShadowType<T> shadow;
+
+      DuplicatedNoNeed(T v, ShadowType<T> s) : value(v), shadow(s) {};
+
       DuplicatedNoNeed(const DuplicatedNoNeed<T>&) = default;
       DuplicatedNoNeed(DuplicatedNoNeed<T>&&) = default;
     };
@@ -73,7 +112,7 @@ namespace enzyme {
     struct Const{
       T value;
       Const(const T& v) : value(v) {};
-      Const(T&& v) : value(v) {};
+      Const(T&& v) : value(std::move(v)) {};
       Const(const Const<T>&) = default;
       Const(Const<T>&&) = default;
       operator T&() { return value; }
@@ -88,10 +127,10 @@ namespace enzyme {
       Const(T) -> Const<T>;
 
       template < typename T >
-      Duplicated(T,T) -> Duplicated<T>;
+      Duplicated(T,ShadowType<T>) -> Duplicated<T>;
 
       template < typename T >
-      DuplicatedNoNeed(T,T) -> DuplicatedNoNeed<T>;
+      DuplicatedNoNeed(T,ShadowType<T>) -> DuplicatedNoNeed<T>;
     #endif
 
     template < typename T >
@@ -165,16 +204,42 @@ namespace enzyme {
         using type = tuple<T0>;
     };
 
-    template < typename T >
+    template < typename T, std::enable_if_t<std::is_reference_v<T>, int> = 0 >
     __attribute__((always_inline))
     auto expand_args(const enzyme::Duplicated<T> & arg) {
-        return enzyme::tuple<int, T, T>{enzyme_dup, arg.value, arg.shadow};
+        // References are passed to autodiff as pointers
+        using B/*ase*/   = std::remove_reference_t<T>;
+        using A/*rg*/    = std::add_pointer_t<B>;
+        using S/*hadow*/ = std::add_pointer_t< std::remove_const_t<B> >;
+        return enzyme::tuple<int, A, S>{enzyme_dup, &arg.value, &arg.shadow};
     }
 
-    template < typename T >
+    template < typename T, std::enable_if_t<std::is_pointer_v<T>, int> = 0 >
+    __attribute__((always_inline))
+    auto expand_args(const enzyme::Duplicated<T> & arg) {
+        // Pointers are passed as-is, but shadow's `const` is stripped
+        using B/*ase*/   = std::remove_pointer_t<T>;
+        using S/*hadow*/ = std::add_pointer_t< std::remove_const_t<B> >;
+        return enzyme::tuple<int, T, S>{enzyme_dup, arg.value, arg.shadow};
+    }
+
+    template < typename T, std::enable_if_t<std::is_reference_v<T>, int> = 0 >
     __attribute__((always_inline))
     auto expand_args(const enzyme::DuplicatedNoNeed<T> & arg) {
-        return enzyme::tuple<int, T, T>{enzyme_dupnoneed, arg.value, arg.shadow};
+        // References are passed to autodiff as pointers
+        using B/*ase*/   = std::remove_reference_t<T>;
+        using A/*rg*/    = std::add_pointer_t<B>;
+        using S/*hadow*/ = std::add_pointer_t< std::remove_const_t<B> >;
+        return enzyme::tuple<int, A, S>{enzyme_dupnoneed, &arg.value, &arg.shadow};
+    }
+
+    template < typename T, std::enable_if_t<std::is_pointer_v<T>, int> = 0 >
+    __attribute__((always_inline))
+    auto expand_args(const enzyme::DuplicatedNoNeed<T> & arg) {
+        // Pointers are passed as-is, but shadow's `const` is stripped
+        using B/*ase*/   = std::remove_pointer_t<T>;
+        using S/*hadow*/ = std::add_pointer_t< std::remove_const_t<B> >;
+        return enzyme::tuple<int, T, S>{enzyme_dupnoneed, arg.value, arg.shadow};
     }
 
     template < typename T >
@@ -215,25 +280,25 @@ namespace enzyme {
 
     template < typename T >
     __attribute__((always_inline))
-    auto primal_args_nt(const enzyme::Duplicated<T> & arg) {
+    decltype(auto) primal_args_nt(const enzyme::Duplicated<T> & arg) {
         return arg.value;
     }
 
     template < typename T >
     __attribute__((always_inline))
-    auto primal_args_nt(const enzyme::DuplicatedNoNeed<T> & arg) {
+    decltype(auto) primal_args_nt(const enzyme::DuplicatedNoNeed<T> & arg) {
         return arg.value;
     }
 
     template < typename T >
     __attribute__((always_inline))
-    auto primal_args_nt(const enzyme::Active<T> & arg) {
+    decltype(auto) primal_args_nt(const enzyme::Active<T> & arg) {
         return arg.value;
     }
 
     template < typename T >
     __attribute__((always_inline))
-    auto primal_args_nt(const enzyme::Const<T> & arg) {
+    decltype(auto) primal_args_nt(const enzyme::Const<T> & arg) {
         return arg.value;
     }
 
