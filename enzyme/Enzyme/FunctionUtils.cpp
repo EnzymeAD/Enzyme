@@ -69,6 +69,8 @@
 #include "llvm/Analysis/ScopedNoAliasAA.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 
+#include "llvm/Support/TimeProfiler.h"
+
 #include "llvm/Transforms/IPO/FunctionAttrs.h"
 #include "llvm/Transforms/Utils/Mem2Reg.h"
 
@@ -1415,6 +1417,8 @@ void SplitPHIs(llvm::Function &F) {
 
 Function *PreProcessCache::preprocessForClone(Function *F,
                                               DerivativeMode mode) {
+
+  TimeTraceScope timeScope("preprocessForClone", F->getName());
 
   if (mode == DerivativeMode::ReverseModeGradient)
     mode = DerivativeMode::ReverseModePrimal;

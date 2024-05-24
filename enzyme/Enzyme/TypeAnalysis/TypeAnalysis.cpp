@@ -42,6 +42,7 @@
 #include "llvm/IR/InstIterator.h"
 
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/TimeProfiler.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "llvm/ADT/SmallSet.h"
@@ -1538,6 +1539,9 @@ void TypeAnalyzer::runPHIHypotheses() {
 }
 
 void TypeAnalyzer::run() {
+
+  TimeTraceScope timeScope("Type Analysis", fntypeinfo.Function->getName());
+
   // This function runs a full round of type analysis.
   // This works by doing two stages of analysis,
   // with a "deduced integer types for unused" values
