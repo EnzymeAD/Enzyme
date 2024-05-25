@@ -151,23 +151,44 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
           }
         }
       }
+      if (I.use_empty())
+        continue;
+
+      bool legal = false;
+      ICmpInst::Predicate pred;
       if (auto cmp = dyn_cast<ICmpInst>(&I)) {
-        if (cmp->use_empty())
-          continue;
-        auto lhs = getBaseObject(cmp->getOperand(0), /*offsetAllowed*/ false);
-        auto rhs = getBaseObject(cmp->getOperand(1), /*offsetAllowed*/ false);
+        pred = cmp->getPredicate();
+        legal = true;
+      } else if (auto CI = dyn_cast<CallBase>(&I)) {
+        if (getFuncNameFromCall(CI) == "jl_mightalias") {
+#if LLVM_VERSION_MAJOR >= 14
+          size_t numargs = CI->arg_size();
+#else
+          size_t numargs = CI->getNumArgOperands();
+#endif
+          if (numargs == 2 && isa<PointerType>(I.getOperand(0)->getType()) &&
+              isa<PointerType>(I.getOperand(0)->getType())) {
+            legal = true;
+            pred = ICmpInst::Predicate::ICMP_EQ;
+          }
+        }
+      }
+
+      if (legal) {
+        auto lhs = getBaseObject(I.getOperand(0), /*offsetAllowed*/ false);
+        auto rhs = getBaseObject(I.getOperand(1), /*offsetAllowed*/ false);
         if (lhs == rhs) {
-          cmp->replaceAllUsesWith(cmp->isTrueWhenEqual()
-                                      ? ConstantInt::getTrue(F.getContext())
-                                      : ConstantInt::getFalse(F.getContext()));
+          I.replaceAllUsesWith(ICmpInst::isTrueWhenEqual(pred)
+                                   ? ConstantInt::get(I.getType(), 1)
+                                   : ConstantInt::get(I.getType(), 0));
           changed = true;
           continue;
         }
         if ((isNoAlias(lhs) && (isNoAlias(rhs) || isa<Argument>(rhs))) ||
             (isNoAlias(rhs) && isa<Argument>(lhs))) {
-          cmp->replaceAllUsesWith(cmp->isTrueWhenEqual()
-                                      ? ConstantInt::getFalse(F.getContext())
-                                      : ConstantInt::getTrue(F.getContext()));
+          I.replaceAllUsesWith(ICmpInst::isTrueWhenEqual(pred)
+                                   ? ConstantInt::get(I.getType(), 0)
+                                   : ConstantInt::get(I.getType(), 1));
           changed = true;
           continue;
         }
@@ -179,9 +200,9 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
           auto rhsv =
               getBaseObject(lrhs->getOperand(0), /*offsetAllowed*/ false);
           if ((isNoAlias(lhsv) && (isNoAlias(rhsv) || isa<Argument>(rhsv) ||
-                                   notCapturedBefore(lhsv, cmp))) ||
+                                   notCapturedBefore(lhsv, &I))) ||
               (isNoAlias(rhsv) &&
-               (isa<Argument>(lhsv) || notCapturedBefore(rhsv, cmp)))) {
+               (isa<Argument>(lhsv) || notCapturedBefore(rhsv, &I)))) {
             bool legal = false;
             for (int i = 0; i < 2; i++) {
               Value *start = (i == 0) ? lhsv : rhsv;
@@ -197,7 +218,7 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
 
               bool overwritten = false;
               allInstructionsBetween(
-                  LI, starti, cmp, [&](Instruction *I) -> bool {
+                  LI, starti, &I, [&](Instruction *I) -> bool {
                     if (!I->mayWriteToMemory())
                       return /*earlyBreak*/ false;
 
@@ -217,10 +238,9 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
             }
 
             if (legal && lhsv != rhsv) {
-              cmp->replaceAllUsesWith(
-                  cmp->isTrueWhenEqual()
-                      ? ConstantInt::getFalse(F.getContext())
-                      : ConstantInt::getTrue(F.getContext()));
+              I.replaceAllUsesWith(ICmpInst::isTrueWhenEqual(pred)
+                                       ? ConstantInt::get(I.getType(), 0)
+                                       : ConstantInt::get(I.getType(), 1));
               changed = true;
               continue;
             }
