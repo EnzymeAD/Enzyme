@@ -124,12 +124,19 @@ class InsertValue<list<int> indices_> : Inst<"InsertValue"> {
 
 class MultiReturn : Operation</*primal*/1,/*shadow*/0> {
   bit struct;
+  bit useRetType;
+}
+def RetMultiReturnRet : MultiReturn {
+  bit struct = 0;
+  bit useRetType = 1;
 }
 def StructRet : MultiReturn {
   bit struct = 1;
+  bit useRetType = 0;
 }
 def ArrayRet : MultiReturn {
   bit struct = 0;
+  bit useRetType = 0;
 }
 
 def CFAdd : SubRoutine<(Op (Op $re1, $im1):$z1, (Op $re2, $im2):$z2),
@@ -650,7 +657,7 @@ def : CallPattern<(Op $x),
                   >;
 
 def ToStruct2 : SubRoutine<(Op (Op $re, $im):$z),
-                    (StructRet $re, $im)
+                    (RetMultiReturnRet $re, $im)
                   >;
 def : CallPattern<(Op $x, $tbd),
                   ["Faddeeva_erf"],

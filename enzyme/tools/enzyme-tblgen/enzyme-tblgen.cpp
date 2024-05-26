@@ -741,6 +741,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << "({\n";
 
       bool useStruct = Def->getValueAsBit("struct");
+      bool useRetType = Def->getValueAsBit("useRetType");
 
       SmallVector<bool, 1> vectorValued = prepareArgs(
           curIndent + INDENT, os, argPattern, pattern, resultRoot, builder,
@@ -756,25 +757,29 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       if (anyVector)
         os << "gutils->getShadowType(";
 
-      if (useStruct)
-        os << "StructType::get(gutils->newFunc->getContext(), "
-              "std::vector<llvm::Type*>({";
-      else
-        os << "ArrayType::get(";
-      for (size_t i = 0; i < (useStruct ? vectorValued.size() : 1); i++) {
-        if (i != 0)
-          os << ", ";
-        if (!vectorValued[i])
-          os << argPattern << "_" << i << "->getType()";
+      if (useRetType) {
+        os << (origName == "<ILLEGAL>" ? "call" : origName) << ".getType()";
+      } else {
+        if (useStruct)
+          os << "StructType::get(gutils->newFunc->getContext(), "
+                "std::vector<llvm::Type*>({";
         else
-          os << "(gutils->getWidth() == 1) ? " << argPattern << "_" << i
-             << "->getType() : getSubType(" << argPattern << "_" << i
-             << "->getType(), -1)";
+          os << "ArrayType::get(";
+        for (size_t i = 0; i < (useStruct ? vectorValued.size() : 1); i++) {
+          if (i != 0)
+            os << ", ";
+          if (!vectorValued[i])
+            os << argPattern << "_" << i << "->getType()";
+          else
+            os << "(gutils->getWidth() == 1) ? " << argPattern << "_" << i
+               << "->getType() : getSubType(" << argPattern << "_" << i
+               << "->getType(), -1)";
+        }
+        if (useStruct)
+          os << "}))";
+        else
+          os << ", " << vectorValued.size() << ")";
       }
-      if (useStruct)
-        os << "}))";
-      else
-        os << ", " << vectorValued.size() << ")";
 
       if (anyVector)
         os << ")";
