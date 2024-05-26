@@ -3142,3 +3142,7 @@ llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
 
   return absres;
 }
+
+void dumpValue(llvm::Value *val) { llvm::errs() << *val << "\n"; }
+
+void dumpType(llvm::Type *ty) { llvm::errs() << *ty << "\n"; }
