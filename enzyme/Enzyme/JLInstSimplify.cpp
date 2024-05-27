@@ -178,23 +178,26 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
         auto lhs = getBaseObject(I.getOperand(0), /*offsetAllowed*/ false);
         auto rhs = getBaseObject(I.getOperand(1), /*offsetAllowed*/ false);
         if (lhs == rhs) {
-          I.replaceAllUsesWith(ICmpInst::isTrueWhenEqual(pred)
-                                   ? ConstantInt::get(I.getType(), 1)
-                                   : ConstantInt::get(I.getType(), 0));
+          auto repval = ICmpInst::isTrueWhenEqual(pred)
+                            ? ConstantInt::get(I.getType(), 1)
+                            : ConstantInt::get(I.getType(), 0);
+          I.replaceAllUsesWith(repval);
           changed = true;
           continue;
         }
         if ((isNoAlias(lhs) && (isNoAlias(rhs) || isa<Argument>(rhs))) ||
             (isNoAlias(rhs) && isa<Argument>(lhs))) {
-          I.replaceAllUsesWith(ICmpInst::isTrueWhenEqual(pred)
-                                   ? ConstantInt::get(I.getType(), 0)
-                                   : ConstantInt::get(I.getType(), 1));
+          auto repval = ICmpInst::isTrueWhenEqual(pred)
+                            ? ConstantInt::get(I.getType(), 0)
+                            : ConstantInt::get(I.getType(), 1);
+          I.replaceAllUsesWith(repval);
           changed = true;
           continue;
         }
         auto llhs = dyn_cast<LoadInst>(lhs);
         auto lrhs = dyn_cast<LoadInst>(rhs);
-        if (llhs && lrhs) {
+        if (llhs && lrhs && isa<PointerType>(llhs->getType()) &&
+            isa<PointerType>(lrhs->getType())) {
           auto lhsv =
               getBaseObject(llhs->getOperand(0), /*offsetAllowed*/ false);
           auto rhsv =
@@ -238,9 +241,10 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
             }
 
             if (legal && lhsv != rhsv) {
-              I.replaceAllUsesWith(ICmpInst::isTrueWhenEqual(pred)
-                                       ? ConstantInt::get(I.getType(), 0)
-                                       : ConstantInt::get(I.getType(), 1));
+              auto repval = ICmpInst::isTrueWhenEqual(pred)
+                                ? ConstantInt::get(I.getType(), 0)
+                                : ConstantInt::get(I.getType(), 1);
+              I.replaceAllUsesWith(repval);
               changed = true;
               continue;
             }
