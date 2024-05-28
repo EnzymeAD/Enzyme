@@ -6449,6 +6449,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   case Intrinsic::memcpy:
   case Intrinsic::memmove:
   case Intrinsic::memset:
+  case Intrinsic::cttz:
+  case Intrinsic::ctlz:
     return F;
   default:;
   }
