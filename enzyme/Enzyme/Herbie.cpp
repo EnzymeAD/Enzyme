@@ -110,19 +110,12 @@ void runViaHerbie(const std::string &cmd) {
   llvm::errs() << "Herbie output:\n" << content << "\n";
 
   std::string token;
-  std::regex fpcoreRegex(
-      "\\(FPCore\\s+(\\([^\\)]+\\))((?:\\s*:[^\\s]+\\s+[^:]+"
-      ")+)\\s+\\((.+)\\)\\)"); // TODO: Fix property parentheses
+  std::regex fpcoreRegex(":alt\\s*\\(\\)\\s*(.*)\\s*\\)");
   std::smatch matches;
   std::string args, properties, optimizedExpr;
 
   if (std::regex_search(content, matches, fpcoreRegex)) {
-    args = matches[1].str();
-    properties = matches[2].str();
-    optimizedExpr = matches[3].str();
-
-    llvm::errs() << "Args: " << args << "\n";
-    llvm::errs() << "Properties: " << properties << "\n";
+    optimizedExpr = matches[1].str();
     llvm::errs() << "Optimized expression: " << optimizedExpr
                  << "\n"; // TODO: Constant?
   } else {
