@@ -19,6 +19,7 @@
 
 #include "llvm/Transforms/Utils.h"
 
+#include <chrono>
 #include <fstream>
 #include <map>
 #include <regex>
@@ -171,8 +172,12 @@ Value *getLastFPInst(BasicBlock &BB,
 }
 
 bool improveViaHerbie(std::string &expr) {
-  std::string tmpin = "/tmp/herbie_input";
-  std::string tmpout = "/tmp/herbie_output";
+  auto now = std::chrono::high_resolution_clock::now().time_since_epoch();
+  auto millis =
+      std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+
+  std::string tmpin = "/tmp/herbie_input_" + std::to_string(millis);
+  std::string tmpout = "/tmp/herbie_output_" + std::to_string(millis);
 
   std::remove(tmpout.c_str());
   std::ofstream input(tmpin);
@@ -199,6 +204,7 @@ bool improveViaHerbie(std::string &expr) {
     llvm::errs() << "Execution failed: " << ErrMsg << "\n";
     return false;
   }
+  std::remove(tmpin.c_str());
 
   std::ifstream output(tmpout);
   if (!output) {
@@ -208,6 +214,7 @@ bool improveViaHerbie(std::string &expr) {
   std::string content((std::istreambuf_iterator<char>(output)),
                       std::istreambuf_iterator<char>());
   output.close();
+  std::remove(tmpout.c_str());
 
   llvm::errs() << "Herbie output:\n" << content << "\n";
 
@@ -361,6 +368,13 @@ bool fpOptimize(Function &F) {
       llvm::errs() << "Replacing: " << *oldRootValue << " with "
                    << *newRootValue << "\n";
       oldRootValue->replaceAllUsesWith(newRootValue);
+
+      auto &eraseList = herbieExprToInstMap[blockToHerbieExprMap[&BB]];
+      for (auto it = eraseList.rbegin(); it != eraseList.rend(); ++it) {
+        llvm::errs() << "Removing: " << **it << "\n";
+        (*it)->eraseFromParent();
+      }
+
       changed = true;
     }
   }
