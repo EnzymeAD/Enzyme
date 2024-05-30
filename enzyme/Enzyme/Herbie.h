@@ -3,8 +3,6 @@
 
 #include <string>
 
-void runViaHerbie(const std::string &cmd);
-
 #include "llvm/IR/PassManager.h"
 #include "llvm/Passes/PassPlugin.h"
 

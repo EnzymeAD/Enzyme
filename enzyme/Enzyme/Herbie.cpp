@@ -44,7 +44,9 @@ public:
   FPNode(const std::string &op) : op(op) {}
 
   FPNode(const std::string &op, const std::string &symbol)
-      : op(op), symbol(symbol) {}
+      : op(op), symbol(symbol) {
+    // llvm::errs() << "Creating FPNode: " << op << " " << symbol << "\n";
+  }
 
   void addChild(FPNode *child) { children.push_back(child); }
 
@@ -68,7 +70,107 @@ public:
   }
 };
 
-void runViaHerbie(const std::string &cmd) {
+FPNode *parseHerbieExpr(const std::string &expr) {
+  // llvm::errs() << "Parsing: " << expr << "\n";
+  auto trimmedExpr = expr;
+  trimmedExpr.erase(0, trimmedExpr.find_first_not_of(" "));
+  trimmedExpr.erase(trimmedExpr.find_last_not_of(" ") + 1);
+
+  // Base case
+  if (trimmedExpr.front() != '(') {
+    // llvm::errs() << "Base case: " << trimmedExpr << "\n";
+    return new FPNode("__arg", trimmedExpr);
+  }
+
+  assert(trimmedExpr.front() == '(' && trimmedExpr.back() == ')');
+  trimmedExpr = trimmedExpr.substr(1, trimmedExpr.size() - 2);
+
+  // Get the operator
+  auto endOp = trimmedExpr.find(' ');
+  std::string op = trimmedExpr.substr(0, endOp);
+
+  // TODO: Simply remove the type for now
+  size_t pos = op.find('.');
+  if (pos != std::string::npos) {
+    op = op.substr(0, pos);
+  }
+
+  FPNode *node = new FPNode(op);
+
+  int depth = 0;
+  auto start = trimmedExpr.find_first_not_of(" ", endOp);
+  std::string::size_type curr;
+  for (curr = start; curr < trimmedExpr.size(); ++curr) {
+    // llvm::errs() << "Curr: " << trimmedExpr[curr] << "\n";
+    if (trimmedExpr[curr] == '(')
+      depth++;
+    if (trimmedExpr[curr] == ')')
+      depth--;
+    if (depth == 0 && trimmedExpr[curr] == ' ') {
+      // llvm::errs() << "Adding child for " << trimmedExpr << ": "
+      //              << trimmedExpr.substr(start, curr - start) << "\n";
+      node->addChild(parseHerbieExpr(trimmedExpr.substr(start, curr - start)));
+      start = curr + 1;
+    }
+  }
+  if (start < curr) {
+    node->addChild(parseHerbieExpr(trimmedExpr.substr(start, curr - start)));
+  }
+
+  return node;
+}
+
+Value *herbieExprToValue(FPNode *node, Instruction *insertBefore,
+                         IRBuilder<> &builder,
+                         std::map<std::string, Value *> &symbolToValueMap) {
+  assert(node);
+
+  if (node->op == "__arg") {
+    llvm::errs() << "Returning: " << node->symbol << "\n";
+    return symbolToValueMap[node->symbol];
+  }
+
+  std::vector<Value *> operands;
+  for (FPNode *child : node->children) {
+    operands.push_back(
+        herbieExprToValue(child, insertBefore, builder, symbolToValueMap));
+  }
+
+  Value *val = nullptr;
+  builder.SetInsertPoint(insertBefore);
+
+  std::string &op = node->op;
+
+  if (op == "+") {
+    assert(operands[0]);
+    assert(operands[1]);
+    val = builder.CreateFAdd(operands[0], operands[1], "faddtmp");
+  } else if (op == "-") {
+    val = builder.CreateFSub(operands[0], operands[1], "fsubtmp");
+  } else if (op == "*") {
+    val = builder.CreateFMul(operands[0], operands[1], "fmultmp");
+  } else if (op == "/") {
+    val = builder.CreateFDiv(operands[0], operands[1], "fdivtmp");
+  } else {
+    llvm::errs() << "Unknown operator: " << node->op << "\n";
+  }
+
+  return val;
+}
+
+Value *getLastFPInst(BasicBlock &BB,
+                     std::map<Value *, std::string> &valueToSymbolMap) {
+  Value *lastFPInst = nullptr;
+  for (auto I = BB.rbegin(); I != BB.rend(); ++I) {
+    if (valueToSymbolMap.count(&*I)) {
+      lastFPInst = &*I;
+      break;
+    }
+  }
+  return lastFPInst;
+}
+
+bool improveViaHerbie(std::string &expr) {
   std::string tmpin = "/tmp/herbie_input";
   std::string tmpout = "/tmp/herbie_output";
 
@@ -76,9 +178,9 @@ void runViaHerbie(const std::string &cmd) {
   std::ofstream input(tmpin);
   if (!input) {
     llvm::errs() << "Failed to open input file.\n";
-    return;
+    return 1;
   }
-  input << cmd;
+  input << expr;
   input.close();
 
   std::string Program = HERBIE_BINARY;
@@ -95,13 +197,13 @@ void runViaHerbie(const std::string &cmd) {
 
   if (ExecutionFailed) {
     llvm::errs() << "Execution failed: " << ErrMsg << "\n";
-    return;
+    return false;
   }
 
   std::ifstream output(tmpout);
   if (!output) {
     llvm::errs() << "Failed to open output file.\n";
-    return;
+    return false;
   }
   std::string content((std::istreambuf_iterator<char>(output)),
                       std::istreambuf_iterator<char>());
@@ -112,14 +214,15 @@ void runViaHerbie(const std::string &cmd) {
   std::string token;
   std::regex fpcoreRegex(":alt\\s*\\(\\)\\s*(.*)\\s*\\)");
   std::smatch matches;
-  std::string args, properties, optimizedExpr;
+  std::string optimizedExpr;
 
   if (std::regex_search(content, matches, fpcoreRegex)) {
-    optimizedExpr = matches[1].str();
-    llvm::errs() << "Optimized expression: " << optimizedExpr
-                 << "\n"; // TODO: Constant?
+    llvm::errs() << "Optimized expression: " << optimizedExpr << "\n";
+    expr = matches[1].str();
+    return true;
   } else {
     llvm::errs() << "Failed to parse Herbie output!\n";
+    return false;
   }
 }
 
@@ -136,18 +239,6 @@ std::string getHerbieOperator(const Instruction &I) {
   default:
     return "UnknownOp";
   }
-}
-
-unsigned getLLVMOpcode(const std::string &herbieOp) {
-  if (herbieOp == "+.f64")
-    return Instruction::FAdd;
-  if (herbieOp == "-.f64")
-    return Instruction::FSub;
-  if (herbieOp == "*.f64")
-    return Instruction::FMul;
-  if (herbieOp == "/.f64")
-    return Instruction::FDiv;
-  return Instruction::UserOp1;
 }
 
 // Run (our choice of) floating point optimizations on function `F`.
@@ -203,6 +294,7 @@ bool fpOptimize(Function &F) {
           node->symbol = symbol;
           valueToSymbolMap[&I] = symbol;
           symbolToNodeMap[symbol] = node;
+          symbolToValueMap[symbol] = &I;
         }
       }
     }
@@ -212,13 +304,7 @@ bool fpOptimize(Function &F) {
     // Get last instruction in the basic block which is FP instruction
     // Get the largest Herbie expression (i.e., Herbie expression of the last
     // instruction in BB) of BB using valueToSymbolMap and toFullExpression
-    Value *lastFPInst = nullptr;
-    for (auto I = BB.rbegin(); I != BB.rend(); ++I) {
-      if (valueToSymbolMap.count(&*I)) {
-        lastFPInst = &*I;
-        break;
-      }
-    }
+    Value *lastFPInst = getLastFPInst(BB, valueToSymbolMap);
     if (lastFPInst) {
       std::string bbHerbieExpr =
           symbolToNodeMap[valueToSymbolMap[lastFPInst]]->toFullExpression(
@@ -243,58 +329,43 @@ bool fpOptimize(Function &F) {
       argumentsStr.pop_back();
       argumentsStr += ")";
 
-      std::string herbieInput =
+      std::string herbieExpr =
           "(FPCore " + argumentsStr + " " + blockToHerbieExprMap[&BB] + ")";
-      llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
+      llvm::errs() << "Herbie input:\n" << herbieExpr << "\n";
 
       // 3) run fancy opts
-      runViaHerbie(herbieInput);
+      if (!improveViaHerbie(herbieExpr)) {
+        llvm::errs() << "Failed to optimize " << blockToHerbieExprMap[&BB]
+                     << " using Herbie!\n";
+        return changed;
+      } else {
+        llvm::errs() << "Optimized: " << blockToHerbieExprMap[&BB] << " -> "
+                     << herbieExpr << "\n";
+      }
+
+      // 4) parse the output string solution from herbieland
+      // 5) convert into a solution in llvm vals/instructions
+      llvm::errs() << "Parsing Herbie Expr: " << herbieExpr << "\n";
+      FPNode *parsedNode = parseHerbieExpr(herbieExpr);
+      llvm::errs() << "Parsed Herbie Expr: "
+                   << parsedNode->toFullExpression(symbolToNodeMap) << "\n";
+
+      Instruction *insertBefore = BB.getTerminator();
+      IRBuilder<> builder(&BB);
+      builder.SetInsertPoint(insertBefore);
+
+      // Convert the parsed expression to LLVM values/instructions
+      Value *newRootValue = herbieExprToValue(parsedNode, insertBefore, builder,
+                                              symbolToValueMap);
+      Value *oldRootValue = getLastFPInst(BB, valueToSymbolMap);
+      llvm::errs() << "Replacing: " << *oldRootValue << " with "
+                   << *newRootValue << "\n";
+      oldRootValue->replaceAllUsesWith(newRootValue);
+      changed = true;
     }
   }
 
-  // llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
-
-  // // 3) run fancy opts
-  // runViaHerbie(herbieInput);
-
-  // // 4) parse the output string solution from herbieland
-  // // 5) convert into a solution in llvm vals/instructions
-
   // // Extract the Herbie operator and operands
-
-  // std::istringstream exprStream(optimizedExpr);
-  // std::string herbieOp, op1, op2;
-  // exprStream >> herbieOp >> op1 >> op2;
-
-  // llvm::errs() << "Op: " << herbieOp << ", op1: " << op1 << ", op2: " <<
-  // op2
-  //              << "\n";
-
-  // // Find the corresponding LLVM values
-  // Value *val1 = symbolToValueMap[op1];
-  // Value *val2 = symbolToValueMap[op2];
-  // assert(val1 && val2);
-
-  // // Map Herbie operator back to LLVM opcode
-  // unsigned llvmOpcode = getLLVMOpcode(herbieOp);
-  // Instruction *newOp = nullptr;
-
-  // switch (llvmOpcode) {
-  // case Instruction::FAdd:
-  //   newOp = BinaryOperator::CreateFAdd(val1, val2, "opt");
-  //   break;
-  // case Instruction::FSub:
-  //   newOp = BinaryOperator::CreateFSub(val1, val2, "opt");
-  //   break;
-  // case Instruction::FMul:
-  //   newOp = BinaryOperator::CreateFMul(val1, val2, "opt");
-  //   break;
-  // case Instruction::FDiv:
-  //   newOp = BinaryOperator::CreateFDiv(val1, val2, "opt");
-  //   break;
-  // default:
-  //   llvm::errs() << "Unknown operator: " << herbieOp << "\n";
-  // }
 
   // if (newOp) {
   //   llvm::errs() << "Optimized: " << *val1 << " " << herbieOp << " " <<
