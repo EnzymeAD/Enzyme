@@ -5,10 +5,13 @@
 define double @tester(double %x, double %y) {
 entry:
   %0 = fadd fast double %x, %y
-  ret double %0
+  %1 = fadd fast double %0, %x
+  ret double %1
 }
 
 ; CHECK: define double @tester(double %x, double %y)
 ; CHECK: entry:
-; CHECK-NEXT:   %[[i0:.+]] = fadd fast double %x, %y
-; CHECK-NEXT:   ret double %[[i0]]
+; CHECK-NEXT:   %[[i0:.+]] = fmul fast double %x, 2.000000e+00
+; CHECK-NEXT:   %[[i1:.+]] = fadd fast double %y, %[[i0]]
+; CHECK-NEXT:   ret double %[[i1]]
+
