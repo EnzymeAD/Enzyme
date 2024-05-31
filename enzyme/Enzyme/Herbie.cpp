@@ -72,15 +72,23 @@ public:
 };
 
 FPNode *parseHerbieExpr(const std::string &expr) {
-  // llvm::errs() << "Parsing: " << expr << "\n";
+  llvm::errs() << "Parsing: " << expr << "\n";
   auto trimmedExpr = expr;
   trimmedExpr.erase(0, trimmedExpr.find_first_not_of(" "));
   trimmedExpr.erase(trimmedExpr.find_last_not_of(" ") + 1);
 
-  // Base case
-  if (trimmedExpr.front() != '(') {
+  // Arguments
+  if (trimmedExpr.front() != '(' && trimmedExpr.front() != '#') {
     // llvm::errs() << "Base case: " << trimmedExpr << "\n";
     return new FPNode("__arg", trimmedExpr);
+  }
+
+  // Constants
+  std::regex constantPattern("^#s\\(literal\\s+([\\d\\.]+)\\s+\\w+\\)$");
+  std::smatch matches;
+  if (std::regex_match(trimmedExpr, matches, constantPattern)) {
+    llvm::errs() << "Found __const " << matches[1].str() << "\n";
+    return new FPNode("__const", matches[1].str());
   }
 
   assert(trimmedExpr.front() == '(' && trimmedExpr.back() == ')');
@@ -129,6 +137,12 @@ Value *herbieExprToValue(FPNode *node, Instruction *insertBefore,
   if (node->op == "__arg") {
     llvm::errs() << "Returning: " << node->symbol << "\n";
     return symbolToValueMap[node->symbol];
+  }
+
+  if (node->op == "__const") {
+    llvm::errs() << "Returning constant: " << node->symbol << "\n";
+    double constantValue = std::stod(node->symbol);
+    return ConstantFP::get(builder.getDoubleTy(), constantValue);
   }
 
   std::vector<Value *> operands;
@@ -359,6 +373,7 @@ bool fpOptimize(Function &F) {
 
       Instruction *insertBefore = BB.getTerminator();
       IRBuilder<> builder(&BB);
+      builder.setFastMathFlags(getFast());
       builder.SetInsertPoint(insertBefore);
 
       // Convert the parsed expression to LLVM values/instructions
