@@ -394,31 +394,6 @@ bool fpOptimize(Function &F) {
     }
   }
 
-  // // Extract the Herbie operator and operands
-
-  // if (newOp) {
-  //   llvm::errs() << "Optimized: " << *val1 << " " << herbieOp << " " <<
-  //   *val2
-  //                << " -> " << *newOp << "\n";
-  //   herbieExprToOptInstsMap[optimizedExpr].push_back(newOp);
-  //   changed = true;
-  // }
-
-  // for (auto &instMapPair : instToHerbieExprMap) {
-  //   auto inst = instMapPair.first;
-  //   auto herbieExpr = instMapPair.second;
-  //   llvm::errs() << "Checking Inst: " << *inst
-  //                << ", Herbie expr: " << herbieExpr << "\n";
-  //   if (0 != herbieExprToOptInstsMap.count(herbieExpr)) {
-  //     llvm::errs() << "Replacing: " << *inst << " with "
-  //                  << *herbieExprToOptInstsMap[herbieExpr] << "\n";
-  //     auto *optInst = herbieExprToOptInstsMap[herbieExpr];
-  //     inst->replaceAllUsesWith(optInst);
-  //     inst->getParent()->getInstList().insert(inst->getIterator(),
-  //     optInst); inst->eraseFromParent();
-  //   }
-  // }
-
   return changed;
 }
 
