@@ -77,6 +77,41 @@ bool isVecLikeArg(ArgType ty) {
 bool isArgUsed(Rule *rule, StringRef toFind, const DagInit *toSearch,
                ArrayRef<std::string> nameVec,
                const DenseMap<size_t, ArgType> &argTypesFull) {
+  auto Def = cast<DefInit>(toSearch->getOperator())->getDef();
+
+  // shadow is unrelated, ignore it
+  // However, consider the extra added inc.
+  if (Def->getName() == "Shadow" || Def->isSubClassOf("Shadow")) {
+    if (toSearch->getNumArgs() != 1)
+      PrintFatalError(rule->getLoc(), "only single op shadow supported");
+    if (!toSearch->getArgName(0)) 
+      PrintFatalError(rule->getLoc(), "only shadow of arg name is supported");
+
+    auto name = toSearch->getArgName(0)->getAsUnquotedString();
+
+    size_t argPosition = (size_t)(-1);
+    for (size_t i = 0; i < nameVec.size(); i++) {
+      if (nameVec[i] == name) {
+        argPosition = i;
+        break;
+      }
+    }
+    if (argPosition == (size_t)(-1)) {
+      PrintFatalError(rule->getLoc(),
+                      Twine("arg '") + name +
+                          "' (pos=" + std::to_string(argPosition) +
+                          ") not in inverted nameMap isArgUsed(1)!");
+    }
+    auto ty = argTypesFull.lookup(argPosition);
+    if (ty == ArgType::vincData || ty == ArgType::mldData) {
+      auto incName = nameVec[argPosition + 1];
+      if (incName == toFind)
+        return true;
+    }
+
+    return false;
+  }
+
   for (size_t i = 0; i < toSearch->getNumArgs(); i++) {
     if (DagInit *arg = dyn_cast<DagInit>(toSearch->getArg(i))) {
       // os << " Recursing. Magic!\n";
@@ -85,10 +120,10 @@ bool isArgUsed(Rule *rule, StringRef toFind, const DagInit *toSearch,
     } else {
       auto name = toSearch->getArgNameStr(i);
       if (name == "") {
-        // handle input<"x">, adj<"x">, transpose<"transa"> and similar
+        // handle input<"x">, transpose<"transa"> and similar
         // we look up the trans arg inside of transpose<"transX">,
         // because it's based on the same trans arg.
-        // we ignore adj<"x"> because the shadow of x is not based on x
+        // we ignore input<"x"> because the cache of x is not based on x
         auto opName = toSearch->getArg(i)->getAsString();
         auto Def = cast<DefInit>(toSearch->getArg(i))->getDef();
         if (opName == "transpose" || Def->isSubClassOf("transpose")) {
@@ -96,9 +131,8 @@ bool isArgUsed(Rule *rule, StringRef toFind, const DagInit *toSearch,
           if (toFind == transName) {
             return true;
           }
-        } else if (opName == "adj" || Def->isSubClassOf("adj") ||
-                   opName == "input" || Def->isSubClassOf("input")) {
-          // shadow is unrelated, ignore it
+        } else if (opName == "input" || Def->isSubClassOf("input")) {
+          // cache is unrelated, ignore it
           // However, consider the extra added inc.
 
           auto name = Def->getValueAsString("name");
@@ -117,9 +151,7 @@ bool isArgUsed(Rule *rule, StringRef toFind, const DagInit *toSearch,
                                 ") not in inverted nameMap isArgUsed(1)!");
           }
           auto ty = argTypesFull.lookup(argPosition);
-          if (ty == ArgType::vincData ||
-              ((opName == "adj" || Def->isSubClassOf("adj")) &&
-               ty == ArgType::mldData)) {
+          if (ty == ArgType::vincData) {
             auto incName = nameVec[argPosition + 1];
             if (incName == toFind)
               return true;

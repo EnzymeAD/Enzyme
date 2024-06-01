@@ -57,24 +57,22 @@ bool hasDiffeRet(Init *resultTree) {
   return false;
 }
 
-bool hasAdjoint(Init *resultTree, StringRef argName) {
+bool hasAdjoint(TGPattern &pattern, Init *resultTree, StringRef argName) {
   if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
     auto opName = resultRoot->getOperator()->getAsString();
     auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-    if (Def->isSubClassOf("adj")) {
-      auto name = Def->getValueAsString("name");
+    if (opName == "Shadow" || Def->isSubClassOf("Shadow")) {
+      if (resultRoot->getNumArgs() != 1)
+        PrintFatalError(pattern.getLoc(), "only single op shadow supported");
+      if (!resultRoot->getArgName(0)) 
+        PrintFatalError(pattern.getLoc(), "only shadow of arg name is supported");
+
+      auto name = resultRoot->getArgName(0)->getAsUnquotedString();
       return name == argName;
     }
     for (auto arg : resultRoot->getArgs()) {
-      if (hasAdjoint(arg, argName))
+      if (hasAdjoint(pattern, arg, argName))
         return true;
-    }
-  }
-  if (DefInit *DefArg = dyn_cast<DefInit>(resultTree)) {
-    auto Def = DefArg->getDef();
-    if (Def->isSubClassOf("adj")) {
-      auto name = Def->getValueAsString("name");
-      return name == argName;
     }
   }
   return false;
@@ -124,16 +122,16 @@ void emit_handleBLAS(ArrayRef<TGPattern> blasPatterns, raw_ostream &os) {
      << "    }                                                              \n";
   bool first = true;
   for (auto &&pattern : blasPatterns) {
-    bool hasNonInactive = false;
+    bool hasActive = false;
     for (Rule rule : pattern.getRules()) {
       const auto ruleDag = rule.getRuleDag();
       const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
-      if (Def->isSubClassOf("MagicInst") && Def->getName() == "inactive")
+      if (Def->getName() == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec"))
         continue;
-      hasNonInactive = true;
+      hasActive = true;
       break;
     }
-    if (!hasNonInactive)
+    if (!hasActive)
       continue;
     auto name = pattern.getName();
     os << "    " << ((first) ? "" : "} else ") << " if (blas.function == \""
@@ -1063,13 +1061,12 @@ void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
   const auto opName = ruleDag->getOperator()->getAsString();
   const auto nameMap = rule.getArgNameMap();
   const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
-  if (Def->isSubClassOf("b")) {
+  if (Def->isSubClassOf("BlasCall")) {
     // emit_deriv_blas_call(ruleDag, patternMap, handled, os);
-  } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "noop") {
+  } else if (Def->isSubClassOf("InactiveArgSpec") || Def->getName() == "InactiveArgSpec") {
     // nothing to prepare
   } else if (Def->isSubClassOf("DiffeRetIndex")) {
     // nothing to prepare
-  } else if (Def->getName() == "inactive") {
   } else if (Def->isSubClassOf("Inst")) {
     std::string str;
     llvm::raw_string_ostream os(str);
@@ -1083,7 +1080,7 @@ void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
       DagInit *sub_Dag = cast<DagInit>(subArg);
       if (auto sub_def = dyn_cast<DefInit>(sub_Dag->getOperator())) {
         const auto sub_Def = sub_def->getDef();
-        if (sub_Def->isSubClassOf("b")) {
+        if (sub_Def->isSubClassOf("BlasCall")) {
           os << "    //handling nested blas: " << std::to_string(i) << "\n";
           // emit_deriv_blas_call(sub_Dag, patternMap, handled, os);
           os << "    //handled nested blas: " << std::to_string(i) << "\n";
@@ -1172,16 +1169,13 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
            << ", cache_" << matName << ", byRef, cublas)}";
         return;
       }
-    }
+    } else if (Def->getName() == "Shadow" || Def->isSubClassOf("Shadow")) {
+      if (Dag->getNumArgs() != 1)
+        PrintFatalError(rule.getLoc(), "only single op shadow supported");
+      if (!Dag->getArgName(0)) 
+        PrintFatalError(rule.getLoc(), "only shadow of arg name is supported");
 
-    errs() << Def->getName() << "\n";
-    PrintFatalError(Def->getLoc(), "Dag/Def that isn't a DiffeRet!!");
-  } else if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
-    auto Def = DefArg->getDef();
-    if (Def->isSubClassOf("DiffeRetIndex")) {
-      os << "{dif}";
-    } else if (Def->isSubClassOf("adj")) {
-      auto name = Def->getValueAsString("name");
+      auto name = Dag->getArgName(0)->getAsUnquotedString();
       os << "{d_" << name;
       size_t argPosition = (size_t)(-1);
       for (size_t i = 0; i < rule.nameVec.size(); i++) {
@@ -1202,6 +1196,15 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
       else
         assert(ty == ArgType::fp || ty == ArgType::ap);
       os << "}";
+      return;
+    }
+
+    errs() << Def->getName() << "\n";
+    PrintFatalError(Def->getLoc(), "Dag/Def that isn't a DiffeRet!!");
+  } else if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
+    auto Def = DefArg->getDef();
+    if (Def->isSubClassOf("DiffeRetIndex")) {
+      os << "{dif}";
     } else if (Def->isSubClassOf("input")) {
       auto name = Def->getValueAsString("name");
       os << "{input_" << name;
@@ -1269,7 +1272,7 @@ void rev_call_arg(DagInit *ruleDag, Rule &rule, size_t actArg, size_t pos,
          << "\"))}";
     } else {
       errs() << Def->getName() << "\n";
-      PrintFatalError(Def->getLoc(), "Def that isn't a DiffeRet!");
+      PrintFatalError(Def->getLoc(), "Unknown Def");
     }
   } else {
     auto name = ruleDag->getArgNameStr(pos);
@@ -1454,18 +1457,23 @@ void emit_runtime_continue(DagInit *ruleDag, StringRef name, StringRef tab,
      << tab << "}\n";
 }
 
-void if_rule_condition_inner(DagInit *ruleDag, StringRef name, StringRef tab,
+void if_rule_condition_inner(Rule &rule, DagInit *ruleDag, StringRef name, StringRef tab,
                              raw_ostream &os, llvm::StringSet<> &seen) {
+  auto opName = ruleDag->getOperator()->getAsString();
+  auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
+  if (opName == "Shadow" || Def->isSubClassOf("Shadow")) {
+    if (ruleDag->getNumArgs() != 1)
+      PrintFatalError(rule.getLoc(), "only single op shadow supported");
+    if (!ruleDag->getArgName(0)) 
+      PrintFatalError(rule.getLoc(), "only shadow of arg name is supported");
+
+    auto name = ruleDag->getArgName(0)->getAsUnquotedString();
+    seen.insert(name);
+  }
   for (size_t pos = 0; pos < ruleDag->getNumArgs();) {
     Init *arg = ruleDag->getArg(pos);
-    if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
-      auto Def = DefArg->getDef();
-      if (Def->isSubClassOf("adj")) {
-        auto name = Def->getValueAsString("name");
-        seen.insert(name);
-      }
-    } else if (auto sub_Dag = dyn_cast<DagInit>(arg)) {
-      if_rule_condition_inner(sub_Dag, name, tab, os, seen);
+    if (auto sub_Dag = dyn_cast<DagInit>(arg)) {
+      if_rule_condition_inner(rule, sub_Dag, name, tab, os, seen);
     }
     pos++;
   }
@@ -1473,11 +1481,11 @@ void if_rule_condition_inner(DagInit *ruleDag, StringRef name, StringRef tab,
 
 // primal arguments are always available,
 // shadow arguments (d_<X>) might not, so check if they are active
-void emit_if_rule_condition(DagInit *ruleDag, StringRef name, StringRef tab,
+void emit_if_rule_condition(Rule &rule, DagInit *ruleDag, StringRef name, StringRef tab,
                             raw_ostream &os) {
   llvm::StringSet<> seen = llvm::StringSet<>();
 
-  if_rule_condition_inner(ruleDag, name, tab, os, seen);
+  if_rule_condition_inner(rule, ruleDag, name, tab, os, seen);
 
   // this will only run once, at the end of the outermost call
   os << tab << "if (active_" << name;
@@ -1624,8 +1632,8 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
          << "        addToDiffe(arg_" << name << ", toadd, Builder2, "
          << ", type_" << name << ");\n"
          << "      }\n";
-    } else if (Def->isSubClassOf("b")) {
-      emit_if_rule_condition(ruleDag, name, "      ", os);
+    } else if (Def->isSubClassOf("BlasCall")) {
+      emit_if_rule_condition(rule, ruleDag, name, "      ", os);
       emit_runtime_condition(ruleDag, name, "        ", "Builder2",
                              (ty == ArgType::fp), os);
       const auto dfnc_name = Def->getValueAsString("s");
@@ -1673,12 +1681,24 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       emit_runtime_continue(ruleDag, name, "        ", "Builder2",
                             (ty == ArgType::fp), os);
       os << "      }\n";
-    } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "noop") {
-    } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "inactive") {
-      os << "      assert(!active_" << name << ");\n";
+    } else if (Def->getName() == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
+      if (Def->getValueAsBit("asserting")) {
+        os << "      if (!active_" << name << ") {\n";
+        os << "            std::string s;\n";
+        os << "            llvm::raw_string_ostream ss(s);\n";
+        os << "            ss << \"in Mode: \" << to_string(Mode) << \"\\n\";\n";
+        os << "            ss << \"cannot handle blas argument " << name << " within " << pattern.getName() << " of \" << call;\n";
+        os << "            if (CustomErrorHandler) {\n";
+        os << "              CustomErrorHandler(ss.str().c_str(), wrap(&call), ErrorType::NoDerivative,\n";
+        os << "                                 gutils, nullptr, wrap(&Builder2));\n";
+        os << "            } else {\n";
+        os << "              EmitFailure(\"NoDerivative\", call.getDebugLoc(), &call, ss.str());\n";
+        os << "            }\n";
+        os << "      }\n";
+      }
     } else if (Def->isSubClassOf("DiagUpdateSPMV")) {
       os << "      // DiagUpdateSPMV\n";
-      emit_if_rule_condition(ruleDag, name, "      ", os);
+      emit_if_rule_condition(rule, ruleDag, name, "      ", os);
       emit_runtime_condition(ruleDag, name, "        ", "Builder2", true, os);
       rev_call_args("args1", rule, actArg, os, -1, "", ty);
       os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
@@ -1694,7 +1714,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     } else if (Def->isSubClassOf("FrobInnerProd")) {
       assert(ty == ArgType::fp);
       os << "      // FrobInnerProd\n";
-      emit_if_rule_condition(ruleDag, name, "      ", os);
+      emit_if_rule_condition(rule, ruleDag, name, "      ", os);
       emit_runtime_condition(ruleDag, name, "        ", "Builder2", true, os);
       rev_call_args("args1", rule, actArg, os, -1, "", ty);
       os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
@@ -1709,7 +1729,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
       // (Currently) we only need advanced rules for differentiating
       // wrt. scalar or ap. Make this more generic once we have more testcases.
       assert(ty == ArgType::fp || ty == ArgType::ap);
-      emit_if_rule_condition(ruleDag, name, "      ", os);
+      emit_if_rule_condition(rule, ruleDag, name, "      ", os);
       emit_runtime_condition(ruleDag, name, "        ", "Builder2", true, os);
 
       // We might need to create a tmp vec or matrix
@@ -1724,7 +1744,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
         DagInit *sub_Dag = cast<DagInit>(subArg);
         if (auto sub_def = dyn_cast<DefInit>(sub_Dag->getOperator())) {
           const auto sub_Def = sub_def->getDef();
-          if (sub_Def->isSubClassOf("b")) {
+          if (sub_Def->isSubClassOf("BlasCall")) {
             const auto dfnc_name = sub_Def->getValueAsString("s");
             std::string argName = "args" + std::to_string(i);
             rev_call_args(argName, rule, actArg, os, i, dfnc_name, ty);
@@ -1865,16 +1885,16 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
      << "};\n";
 
   for (auto &&newPattern : newBlasPatterns) {
-    bool hasNonInactive = false;
+    bool hasActive = false;
     for (Rule rule : newPattern.getRules()) {
       const auto ruleDag = rule.getRuleDag();
       const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
-      if (Def->isSubClassOf("MagicInst") && Def->getName() == "inactive")
+      if (Def->getName() == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec"))
         continue;
-      hasNonInactive = true;
+      hasActive = true;
       break;
     }
-    if (!hasNonInactive)
+    if (!hasActive)
       continue;
 
     emit_beginning(newPattern, os);
