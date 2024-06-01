@@ -41,11 +41,12 @@ def cblas_side    : blas_modes<["CblasLeft","CblasRight"]>;
 
 
 class CallBlasPattern<dag patternToMatch, list<string> mutables, list<BLASType> paramTypes, 
-                      list<dag> resultOps> {
+                      list<dag> resultOps, dag forwardOps = (AssertingInactiveArg)> {
   dag PatternToMatch = patternToMatch;
   list<BLASType> inputTypes = paramTypes;
   list<dag> ArgDerivatives = resultOps;
   list<string> mutable = mutables;
+  dag ArgDuals = forwardOps;
 }
 
 
