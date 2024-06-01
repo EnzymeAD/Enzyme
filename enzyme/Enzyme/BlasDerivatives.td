@@ -54,6 +54,10 @@ class MagicInst : Inst<"blas">;
 def Rows : MagicInst; // given a transpose, normal rows, normal cols get the true rows, aka normal rows if N else normal cols
 def Concat : MagicInst;
 
+class Add<string _tmp=""> {
+  string unused = _tmp;
+}
+
 // if !cache_A, then just use $lda.
 // if cache_A, then check $transa.
 // if $transa = 'N', then use $m.
@@ -85,7 +89,7 @@ class transpose<string _name> {
   string name = _name;
 }
 
-class Seq<list<string> _args> {
+class Seq<list<string> _args = []> {
   list<string> args = _args;
 }
 
@@ -103,6 +107,8 @@ class DiagUpdateSPMV<string _tmp> {
 
 // General note: If return is scalar, return it. If return is vec, update it.
 
+// x *= alpha
+// FWD: x2 = x * alpha, -> fwd is dx2 = dx * alpha + x * dalpha
 // Lv 1 \wo rotations
 def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
                   ["x"],[len, fp, vinc<["n"]>],
@@ -110,7 +116,8 @@ def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
                   // dot must proceed scal, because scal modifies (Shadow $x)
                   (BlasCall<"dot"> $n, $x, (Shadow $x)),
                   (BlasCall<"scal"> $n, $alpha, (Shadow $x))
-                  ]
+                  ],
+                  (Seq<> (BlasCall<"scal"> $n, $alpha, (Shadow $x)), (BlasCall<"axpy"> $n, (Shadow $alpha), $x, (Shadow $x)))
                   >;
 
 // def lacpy : CallBlasPattern<(Op $layout, $m, $n, $A, $lda, $B, $ldb),
@@ -130,21 +137,26 @@ def lascl : CallBlasPattern<(Op $layout, $type, $kl, $ku, $cfrom, $cto, $m, $n, 
                   ]
                   >;
 
+// y = alpha * x + y
+// FWD: dy = alpha * dx + dalpha * x + dy
 def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   ["y"],[len, fp, vinc<["n"]>, vinc<["n"]>],
                   [
                   (BlasCall<"dot"> $n, (Shadow $y), $x),
                   (BlasCall<"axpy"> $n, $alpha, (Shadow $y), (Shadow $x)),
                   (InactiveArg) // y = alpha*x + y, so nothing to do here
-                  ]
+                  ],
+                  (Seq<> (BlasCall<"axpy"> $n, $alpha, (Shadow $x), (Shadow $y)), (BlasCall<"axpy"> $n, (Shadow $alpha), $x, (Shadow $y)))
                   >;
 
+// x * y
 def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   [],[len, vinc<["n"]>, vinc<["n"]>],
                   [
                   (BlasCall<"axpy"> $n, DiffeRet, $y, (Shadow $x)),
                   (BlasCall<"axpy"> $n, DiffeRet, $x, (Shadow $y)),
-                  ]
+                  ],
+                  (Add<> (BlasCall<"dot"> $n, (Shadow $x), $y), (BlasCall<"dot"> $n, $x, (Shadow $y)))
                   >;
 
 // def nrm2 : CallBlasPattern<(Op $n, $x, $incx),
@@ -178,6 +190,7 @@ def copy : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 // Lv 2
 
 // y = alpha Ax + beta y
+// FWD: dy = dalpha Ax + alpha dA x + alpha A dx + dbeta y + beta dy
 // currently assumes for vector dimensions that transa = 'N' and gets dimensions wrong otherwise
 def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $incx, $beta, $y, $incy),
                   ["y"], [cblas_layout, trans,  len, len,  fp,   mld<["m", "n"]>,      vinc<["transa", "n", "m"]>,      fp,    vinc<["transa", "m", "n"]>],
@@ -195,7 +208,14 @@ def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $
                   /* x      */  (BlasCall<"gemv"> $layout, transpose<"transa">, $m, $n, $alpha, $A, (ld $A, Char<"N">, $lda, $m, $m), (Shadow $y), Constant<"1.0">, (Shadow $x)),
                   /* beta   */  (BlasCall<"dot"> (Rows $transa, $m, $n), (Shadow $y), input<"y">),
                   /* y      */  (BlasCall<"scal"> (Rows $transa, $m, $n), $beta, (Shadow $y))
-                  ]
+                  ],
+                  (Seq<>
+                    (BlasCall<"scal"> (Rows $transa, $m, $n), $beta, (Shadow $y)),
+                    (BlasCall<"axpy"> (Rows $transa, $m, $n), (Shadow $beta), $y, (Shadow $y)),
+                    (BlasCall<"gemv"> $layout, $transa, $m, $n, $alpha, $A, $lda, (Shadow $x), Constant<"1">, (Shadow $y)),
+                    (BlasCall<"gemv"> $layout, $transa, $m, $n, $alpha, (Shadow $A), $lda, $x, Constant<"1">, (Shadow $y)),
+                    (BlasCall<"gemv"> $layout, $transa, $m, $n, (Shadow $alpha), $A, $lda, $x, Constant<"1">, (Shadow $y))
+                  )
                   >;
 
 // x = Ax
@@ -224,6 +244,8 @@ def ger : CallBlasPattern<(Op $layout, $m, $n, $alpha, $x, $incx, $y, $incy, $A,
 //   ld_A = arg_lda;
 // }
 
+// C := alpha*op( A )*op( B ) + beta*C
+// FWD: dC = dalpha A B + alpha dA B + alpha A dB + dbeta C + beta dC 
 def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),
                   ["C"],
                   [cblas_layout, trans, trans, len, len, len, fp, mld<["transa", "m", "k"]>, mld<["transb", "k", "n"]>, fp, mld<["m", "n"]>],
@@ -251,7 +273,14 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                                                   Constant<"1.0">, (Shadow $B)),
                   /* beta  */ (FrobInnerProd<""> $m, $n, (Shadow $C), input<"C">),
                   /* C     */ (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, (Shadow $C), Alloca<1>)
-                  ]
+                  ],
+                  (Seq<>
+                    (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, (Shadow $C), Alloca<1>),
+                    (BlasCall<"axpy"> (AssertingInactiveArg), (Shadow $beta), $C, (Shadow $C)),
+                    (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, $alpha, $A, $lda, (Shadow $B), (Shadow $C)),
+                    (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, $alpha, (Shadow $A), $B, $ldb, (Shadow $C)),
+                    (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, (Shadow $alpha), $A, $lda, $B, $ldb, (Shadow $C))
+                  )
                   >;
 
 def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda, $beta, $C, $ldc),
