@@ -54,6 +54,12 @@ class MagicInst : Inst<"blas">;
 def Rows : MagicInst; // given a transpose, normal rows, normal cols get the true rows, aka normal rows if N else normal cols
 def Concat : MagicInst;
 
+def Mul : MagicInst;
+
+def uplo_to_side : MagicInst;
+
+def Lookup : MagicInst;
+
 class Add<string _tmp=""> {
   string unused = _tmp;
 }
@@ -91,6 +97,10 @@ class transpose<string _name> {
 
 class Seq<list<string> _args = []> {
   list<string> args = _args;
+
+}
+class For<string idx_> {
+  string idx = idx_;
 }
 
 class use<string _name> {
@@ -283,6 +293,18 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   )
                   >;
 
+
+def symm: CallBlasPattern<(Op $layout, $side, $uplo, $m, $n, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),
+                          ["C"],
+                          [cblas_layout, side, uplo, len, len, fp, mld<["side", "m", "n"]>, mld<["m", "n"]>, fp, mld<["m", "n"]>],
+                   [
+                        /*alpha*/ (AssertingInactiveArg),
+                        /*A*/ (AssertingInactiveArg),
+                        /*B*/ (AssertingInactiveArg),
+                        /*beta*/ (AssertingInactiveArg),
+                        /*C*/ (AssertingInactiveArg),
+                   ]>;
+
 def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda, $beta, $C, $ldc),
                   ["C"],
                   [cblas_layout, uplo, trans, len, len, fp, mld<["trans", "n", "k"]>, fp, mld<["n", "n"]>],
@@ -291,17 +313,26 @@ def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda,
                   /* alpha */ (AssertingInactiveArg), /*(Seq<["AB", "product", "m", "n"]> 
                       (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, Constant<"1.0">, $A, (ld $A, $transa, $lda, $k, $m), $B, (ld $B, $transb, $ldb, $k, $n), Constant<"0.0">, use<"AB">, $m),// TODO: check if last arg should be $m or $n
                       (FrobInnerProd<""> $m, $n, (Shadow $C), use<"AB">)),*/
-                  /* A     */ (AssertingInactiveArg), /*(BlasCall<"gemm"> $layout, (Rows $transa, 
-                                                    (Concat $transa, transpose<"transb">, $m, $k), 
-                                                    (Concat $transb, $transa, $k, $m)),
-                                                  $n, $alpha, 
-                                                  (Rows $transa, 
-                                                    (Concat (Shadow $C), $B, (ld $B, $transb, $ldb, $n, $k)), 
-                                                    (Concat $B, (ld $B, $transb, $ldb, $n, $k), (Shadow $C))),
-                                                  Constant<"1.0">, (Shadow $A)),*/
-
-                  /* beta  */ (AssertingInactiveArg), //(FrobInnerProd<""> $m, $n, (Shadow $C), input<"C">),
-                  /* C     */ (AssertingInactiveArg), //(BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, (Shadow $C), Alloca<1>)
+                  /* A     */
+                  (Seq<[]>
+                    (BlasCall<"symm">
+                        $layout,
+                        (uplo_to_side $uplo),
+                        (Rows $trans,
+                            (Concat $n, $k),
+                            (Concat $k, $n)),
+                        $alpha,
+                        (Shadow $C),
+                        $A, (ld $A, $trans, $lda, $n, $k),
+                        Constant<"1">,
+                        (Shadow $A)
+                    ),
+                    (For<"i"> $n,
+                        (BlasCall<"axpy"> $k, (Mul $alpha, (Lookup (Shadow $C), $i, $i)), (Lookup (Concat $A, (ld $A, $trans, $lda, $n, $k)), $i), Constant<"1">, (Shadow $A))
+                    )
+                  ),
+                  /* beta  */ (AssertingInactiveArg),
+                  /* C     */ (BlasCall<"lascl"> $layout, $uplo, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $n, $n, (Shadow $C), Alloca<1>)
                   ]
                   >;
 
@@ -359,16 +390,6 @@ def spr2 : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $x, $incx, $y, $incy,
 //                   []
 //                   >;
 // 
-// def trmv : CallBlasPattern<(Op $layout, $uplo, $transa, $diag, $n, $v, $ld, $x, $incx),
-//                   [cblas_layout, uplo, trans, diag, len, vld, vinc],
-//                   []
-//                   >;
-// 
-// def trsv : CallBlasPattern<(Op $layout, $uplo, $transa, $diag, $n, $v, $ld, $x, $incx),
-//                   [cblas_layout, uplo, trans, diag, len, vld, vinc],
-//                   []
-//                   >;
-// 
 // def tbmv : CallBlasPattern<(Op $layout, $uplo, $transa, $diag, $n, $k, $v, $ld, $x, $incx),
 //                   [cblas_layout, uplo, trans, diag, len, bw, vld, vinc],
 //                   []
@@ -380,17 +401,6 @@ def spr2 : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $x, $incx, $y, $incy,
 //                   >;
 // 
 // // Lv 3
-// def : CallBlasPattern<(Op $layout, $transa, $transb, $l, $n, $m, $alpha, $a, $lda, $b, $ldb, $beta, $c, $ldc),
-//                   ["gemm"],
-//                   [cblas_layout, trans, trans, len, len, len, fp, vld, vld, fp, vld],
-//                   []
-//                   >;
-// 
-// def : CallBlasPattern<(Op $layout, $side, $uplo, $m, $n, $alpha, $a, $lda, $b, $ldb, $beta, $c, $ldc),
-//                   ["symm"],
-//                   [cblas_layout, side, uplo, len, len, fp, vld, vld, fp, vld],
-//                   []
-//                   >;
 // 
 // def : CallBlasPattern<(Op $layout, $side, $uplo, $transa, $diag, $m, $n, $alpha, $a, $lda, $b, $ldb),
 //                   ["trmm"],

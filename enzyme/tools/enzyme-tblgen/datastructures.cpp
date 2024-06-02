@@ -161,18 +161,15 @@ bool isArgUsed(Rule *rule, StringRef toFind, const DagInit *toSearch,
         if (name == toFind) {
           return true;
         }
-        size_t argPosition = (size_t)(-1);
+        ssize_t argPosition = -1;
         for (size_t i = 0; i < nameVec.size(); i++) {
           if (nameVec[i] == name) {
             argPosition = i;
             break;
           }
         }
-        if (argPosition == (size_t)(-1)) {
-          PrintFatalError(rule->getLoc(),
-                          Twine("arg '") + name +
-                              "' (pos=" + std::to_string(argPosition) +
-                              ") not in inverted nameMap isArgUsed(2)!");
+        if (argPosition == -1) {
+          return false;
         }
         auto ty = argTypesFull.lookup(argPosition);
         if (ty == ArgType::vincData || ty == ArgType::mldData) {
@@ -393,7 +390,8 @@ void fillRelatedLenghts(
         assert(argTypes.lookup(lengths[1]) == ArgType::len);
       } else {
         assert(argTypes.lookup(lengths[0]) == ArgType::trans ||
-               argTypes.lookup(lengths[0]) == ArgType::diag);
+               argTypes.lookup(lengths[0]) == ArgType::diag ||
+               argTypes.lookup(lengths[0]) == ArgType::side);
         assert(argTypes.lookup(lengths[1]) == ArgType::len);
         assert(argTypes.lookup(lengths[2]) == ArgType::len);
       }

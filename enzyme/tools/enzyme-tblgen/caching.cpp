@@ -34,12 +34,6 @@ os << "  bool need_" << name << " = false;\n";
       bool first = true;
       for (size_t user: users) {
         auto userName = nameVec[user];
-        if (name == userName) {
-          llvm::errs() << pattern.getName() << "\n";
-          llvm::errs() << "user: " << userName << "\n";
-          PrintFatalError("scalar user is the same as the scalar itself");
-          assert(false);
-        }
         os << (first ? "" : " || ")
 << "active_" << userName;
         first = false;
@@ -105,7 +99,10 @@ void emit_input_caching(const TGPattern &pattern, raw_ostream &os) {
   auto rules = pattern.getRules();
   const auto nameVec = pattern.getArgNames();
   const auto activeArgs = pattern.getActiveArgs();
-  assert(rules.size() == activeArgs.size());
+  if (rules.size() != activeArgs.size()) {
+    llvm::errs() << " rules.size() = " << rules.size() << "   activeArgs.size()=" << activeArgs.size() << "\n";
+    PrintFatalError(pattern.getLoc(), "Wrong number of rules per number of input arguments");
+  }
   for (size_t i = 0; i < rules.size(); i++) {
     auto rule = rules[i];
     const auto activeArg = activeArgs[i];

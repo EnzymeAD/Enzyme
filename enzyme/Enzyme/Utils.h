@@ -1811,7 +1811,7 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, const llvm::Twine &name = "");
 
-llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::IntegerType *intType,
+llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
                          llvm::Value *V, bool byRef);
 
 // julia_decl null means not julia decl, otherwise it is the integer type needed
@@ -1859,6 +1859,13 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                        bool cublas, llvm::IntegerType *IT,
                        llvm::IRBuilder<> &entryBuilder,
                        const llvm::Twine &name);
+// first one assume V is an Integer
+llvm::Value *uplo_to_side(llvm::IRBuilder<> &B, llvm::Value *V, bool cublas);
+// secon one assume V is an Integer or a ptr to an int (depends on byRef)
+llvm::Value *uplo_to_side(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
+                          bool cublas, llvm::IntegerType *IT,
+                          llvm::IRBuilder<> &entryBuilder,
+                          const llvm::Twine &name);
 llvm::SmallVector<llvm::Value *, 1>
 get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,
              llvm::ArrayRef<llvm::Value *> row,
