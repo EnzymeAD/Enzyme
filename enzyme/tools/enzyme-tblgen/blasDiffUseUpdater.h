@@ -93,27 +93,29 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
     } else if (typeMap[argPos] == ArgType::vincData ||
                typeMap[argPos] == ArgType::mldData) {
       for (auto derivOp : pattern.getRules()) {
-        if (hasAdjoint(derivOp.getRuleDag(), argname)) {
+        if (hasAdjoint(pattern, derivOp.getRuleDag(), argname)) {
           os << "    if (shadow && active_"
              << nameVec[derivOp.getHandledArgIdx()] << ") return true;\n";
         } else {
-          bool isNoop = false;
+          bool isActive = true;
           if (DagInit *resultRoot = dyn_cast<DagInit>(derivOp.getRuleDag())) {
             auto opName = resultRoot->getOperator()->getAsString();
             auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-            if (Def->getName() == "noop" || Def->getName() == "inactive") {
-              isNoop = true;
+            if (Def->getName() == "InactiveArgSpec" ||
+                Def->isSubClassOf("InactiveArgSpec")) {
+              isActive = false;
             }
           }
           if (DefInit *DefArg = dyn_cast<DefInit>(derivOp.getRuleDag())) {
             auto Def = DefArg->getDef();
-            if (Def->getName() == "noop" || Def->getName() == "inactive") {
-              isNoop = true;
+            if (Def->getName() == "InactiveArgSpec" ||
+                Def->isSubClassOf("InactiveArgSpec")) {
+              isActive = false;
             }
           }
           // updates to a vector/matrix must definitionally use the shadow of
           // the input, unless a noop-update
-          if (!isNoop) {
+          if (isActive) {
             if (derivOp.getHandledArgIdx() == argPos) {
               llvm::errs() << " fnname: " << name << " argPos: " << argPos
                            << " argname: " << argname

@@ -54,7 +54,7 @@ entry:
 ; CHECK-NEXT:   %byref.constant.fp.1.0 = alloca double
 ; CHECK-NEXT:   %byref.constant.fp.0.0 = alloca double
 ; CHECK-NEXT:   %byref.transpose.transb = alloca i8
-; CHECK-NEXT:   %byref.constant.fp.1.09 = alloca double, align 8
+; CHECK-NEXT:   %[[fp109:.+]] = alloca double, align 8
 ; CHECK-NEXT:   %byref.transpose.transa = alloca i8
 ; CHECK-NEXT:   %[[byref_fp_1_017:.+]] = alloca double, align 8
 ; CHECK-NEXT:   %byref.constant.char.G = alloca i8, align 1
@@ -237,8 +237,8 @@ entry:
 ; CHECK-NEXT:   %[[r73:.+]] = select i1 %[[r71]], i8* %ldc_p, i8* %ldb_p
 ; CHECK-NEXT:   %[[r74:.+]] = select i1 %[[r71]], i8* %B, i8* %"C'"
 ; CHECK-NEXT:   %[[r75:.+]] = select i1 %[[r71]], i8* %ldb_p, i8* %ldc_p
-; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.09, align 8
-; CHECK-NEXT:   %fpcast.constant.fp.1.010 = bitcast double* %byref.constant.fp.1.09 to i8*
+; CHECK-NEXT:   store double 1.000000e+00, double* %[[fp109]], align 8
+; CHECK-NEXT:   %fpcast.constant.fp.1.010 = bitcast double* %[[fp109]] to i8*
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %[[r65]], i8* %[[r66]], i8* %[[r67]], i8* %[[r68]], i8* %n_p, i8* %alpha, i8* %[[r72]], i8* %[[r73]], i8* %[[r74]], i8* %[[r75]], i8* %fpcast.constant.fp.1.010, i8* %"A'", i8* %lda_p, i64 1, i64 1)
 ; CHECK-NEXT:   br label %invertentry.A.done
 
