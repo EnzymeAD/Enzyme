@@ -117,7 +117,7 @@ def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
                   (BlasCall<"dot"> $n, $x, (Shadow $x)),
                   (BlasCall<"scal"> $n, $alpha, (Shadow $x))
                   ],
-                  (Seq<> (BlasCall<"scal"> $n, $alpha, (Shadow $x)), (BlasCall<"axpy"> $n, (Shadow $alpha), $x, (Shadow $x)))
+                  (Seq<[]> (BlasCall<"scal"> $n, $alpha, (Shadow $x)), (BlasCall<"axpy"> $n, (Shadow $alpha), $x, (Shadow $x)))
                   >;
 
 // def lacpy : CallBlasPattern<(Op $layout, $m, $n, $A, $lda, $B, $ldb),
@@ -146,7 +146,7 @@ def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   (BlasCall<"axpy"> $n, $alpha, (Shadow $y), (Shadow $x)),
                   (InactiveArg) // y = alpha*x + y, so nothing to do here
                   ],
-                  (Seq<> (BlasCall<"axpy"> $n, $alpha, (Shadow $x), (Shadow $y)), (BlasCall<"axpy"> $n, (Shadow $alpha), $x, (Shadow $y)))
+                  (Seq<[]> (BlasCall<"axpy"> $n, $alpha, (Shadow $x), (Shadow $y)), (BlasCall<"axpy"> $n, (Shadow $alpha), $x, (Shadow $y)))
                   >;
 
 // x * y
@@ -156,7 +156,7 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   (BlasCall<"axpy"> $n, DiffeRet, $y, (Shadow $x)),
                   (BlasCall<"axpy"> $n, DiffeRet, $x, (Shadow $y)),
                   ],
-                  (Add<> (BlasCall<"dot"> $n, (Shadow $x), $y), (BlasCall<"dot"> $n, $x, (Shadow $y)))
+                  (Add<""> (BlasCall<"dot"> $n, (Shadow $x), $y), (BlasCall<"dot"> $n, $x, (Shadow $y)))
                   >;
 
 // def nrm2 : CallBlasPattern<(Op $n, $x, $incx),
@@ -209,7 +209,7 @@ def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $
                   /* beta   */  (BlasCall<"dot"> (Rows $transa, $m, $n), (Shadow $y), input<"y">),
                   /* y      */  (BlasCall<"scal"> (Rows $transa, $m, $n), $beta, (Shadow $y))
                   ],
-                  (Seq<>
+                  (Seq<[]>
                     (BlasCall<"scal"> (Rows $transa, $m, $n), $beta, (Shadow $y)),
                     (BlasCall<"axpy"> (Rows $transa, $m, $n), (Shadow $beta), $y, (Shadow $y)),
                     (BlasCall<"gemv"> $layout, $transa, $m, $n, $alpha,                   $A, (ld $A, Char<"N">, $lda, $m, $m),  (Shadow $x), Constant<"1">, (Shadow $y)),
@@ -274,7 +274,7 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   /* beta  */ (FrobInnerProd<""> $m, $n, (Shadow $C), input<"C">),
                   /* C     */ (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, (Shadow $C), Alloca<1>)
                   ],
-                  (Seq<>
+                  (Seq<[]>
                     (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, (Shadow $C), Alloca<1>),
                     (BlasCall<"axpy"> (AssertingInactiveArg), (Shadow $beta), $C, (Shadow $C)),
                     (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, $alpha, $A, (ld $A, $transa, $lda, $k, $m),          (Shadow $B),                        (Shadow $C)),

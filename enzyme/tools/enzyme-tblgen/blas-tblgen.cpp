@@ -1240,6 +1240,8 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
     return;
   }
   if (Def->isSubClassOf("BlasCall")) {
+    if (forward)
+      emit_if_rule_condition(pattern, ruleDag, "", "      ", os);
     const auto dfnc_name = Def->getValueAsString("s");
     auto ty =
         get_blas_ret_ty(dfnc_name) == "fpType" ? ArgType::fp : ArgType::len;
@@ -1285,11 +1287,15 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
       emit_runtime_continue(ruleDag, argName, "        ", "Builder2",
                             (ty == ArgType::fp), os);
     os << "        }\n";
+    if (forward)
+      os << "        }\n";
     return;
   }
   if (Def->isSubClassOf("DiagUpdateSPMV")) {
     assert(ruleDag->getNumArgs() == 6);
     auto ty = ArgType::ap;
+    if (forward)
+      emit_if_rule_condition(pattern, ruleDag, "", "      ", os);
     os << "        {\n";
     os << "      // DiagUpdateSPMV\n";
     if (!forward && !runtimeChecked)
@@ -1311,10 +1317,14 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
     if (!forward && !runtimeChecked)
       emit_runtime_continue(ruleDag, argName, "        ", "Builder2", true, os);
     os << "        }\n";
+    if (forward)
+      os << "        }\n";
     return;
   }
   if (Def->isSubClassOf("FrobInnerProd")) {
     assert(ruleDag->getNumArgs() == 4);
+    if (forward)
+      emit_if_rule_condition(pattern, ruleDag, "", "      ", os);
     auto ty = ArgType::fp;
     os << "        {\n";
     os << "      // FrobInnerProd\n";
@@ -1344,6 +1354,8 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
       emit_runtime_continue(ruleDag, argName, "        ", "Builder2", true, os);
 
     os << "        }\n";
+    if (forward)
+      os << "        }\n";
     return;
   }
 
@@ -1384,17 +1396,16 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
     for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
       Init *subArg = ruleDag->getArg(i);
       DagInit *sub_Dag = cast<DagInit>(subArg);
-      emit_if_rule_condition(pattern, sub_Dag, "", "      ", os);
       os << "      Value *sub_" << i << " = nullptr;\n";
       auto resultVarName2 = llvm::Twine("sub_") + std::to_string(i);
       emit_dag(forward, resultVarName2, sub_Dag,
                argName + "_" + std::to_string(i), os, argName, actArg, pattern,
                /*runtimeChecked*/ false);
-      os << "       if(" << resultVarName << ") " << resultVarName
-         << " = Builder2.CreateFAdd(" << resultVarName << ", sub_" << i
-         << ");\n";
-      os << "       else " << resultVarName << " = sub_" << i << ";\n";
-      os << "       }\n";
+      os << "       if(sub_" << i << " && " << resultVarName << ") "
+         << resultVarName << " = Builder2.CreateFAdd(" << resultVarName
+         << ", sub_" << i << ");\n";
+      os << "       else if(sub_" << i << ") " << resultVarName << " = sub_"
+         << i << ";\n";
     }
     os << "         if (!" << resultVarName << ") " << resultVarName
        << " = ConstantFP::get(fpType, 0.0);\n";
@@ -1454,6 +1465,12 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
       const auto name = nameVec[inputType.first];
       os << "    Value *d_" << name
          << " = Constant::getNullValue(gutils->getShadowType(fpType));\n";
+      os << "    if (Mode == DerivativeMode::ForwardMode || Mode == "
+            "DerivativeMode::ForwardModeSplit) {\n";
+      os << "      d_" << name << " = active_" << name << "\n"
+         << "     ? gutils->invertPointerM(orig_" << name << ", Builder2)\n"
+         << "     : nullptr;\n";
+      os << "    }\n";
     }
   }
 
@@ -1472,6 +1489,8 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
   emit_dag(/*forward*/ true, "dres", pattern.getDuals(), "args", os, "",
            /*actArg*/ -1, pattern, /*runtimeChecked*/ false);
 
+  os << "      if (!dres && !call.getType()->isVoidTy()) dres = "
+        "Constant::getNullValue(call.getType());\n";
   os << "      return dres;\n"
      << "    },\n"
      << "    ";
@@ -1482,7 +1501,8 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
     first = false;
   }
   os << ");\n";
-  os << "    setDiffe(&call, dres, Builder2);\n";
+  os << "    if (!gutils->isConstantValue(&call))\n";
+  os << "      setDiffe(&call, dres, Builder2);\n";
   os << "  }\n";
 }
 
