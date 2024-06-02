@@ -212,9 +212,9 @@ def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $
                   (Seq<>
                     (BlasCall<"scal"> (Rows $transa, $m, $n), $beta, (Shadow $y)),
                     (BlasCall<"axpy"> (Rows $transa, $m, $n), (Shadow $beta), $y, (Shadow $y)),
-                    (BlasCall<"gemv"> $layout, $transa, $m, $n, $alpha, $A, $lda, (Shadow $x), Constant<"1">, (Shadow $y)),
-                    (BlasCall<"gemv"> $layout, $transa, $m, $n, $alpha, (Shadow $A), $lda, $x, Constant<"1">, (Shadow $y)),
-                    (BlasCall<"gemv"> $layout, $transa, $m, $n, (Shadow $alpha), $A, $lda, $x, Constant<"1">, (Shadow $y))
+                    (BlasCall<"gemv"> $layout, $transa, $m, $n, $alpha,                   $A, (ld $A, Char<"N">, $lda, $m, $m),  (Shadow $x), Constant<"1">, (Shadow $y)),
+                    (BlasCall<"gemv"> $layout, $transa, $m, $n, $alpha,          (Shadow $A), (ld $A, Char<"N">, $lda, $m, $m),           $x, Constant<"1">, (Shadow $y)),
+                    (BlasCall<"gemv"> $layout, $transa, $m, $n, (Shadow $alpha),          $A, (ld $A, Char<"N">, $lda, $m, $m),           $x, Constant<"1">, (Shadow $y))
                   )
                   >;
 
@@ -277,9 +277,9 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   (Seq<>
                     (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, (Shadow $C), Alloca<1>),
                     (BlasCall<"axpy"> (AssertingInactiveArg), (Shadow $beta), $C, (Shadow $C)),
-                    (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, $alpha, $A, $lda, (Shadow $B), (Shadow $C)),
-                    (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, $alpha, (Shadow $A), $B, $ldb, (Shadow $C)),
-                    (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, (Shadow $alpha), $A, $lda, $B, $ldb, (Shadow $C))
+                    (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, $alpha, $A, (ld $A, $transa, $lda, $k, $m),          (Shadow $B),                        (Shadow $C)),
+                    (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, $alpha, (Shadow $A),                                 $B, (ld $B, $transb, $ldb, $n, $k), (Shadow $C)),
+                    (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, (Shadow $alpha), $A, (ld $A, $transa, $lda, $k, $m), $B, (ld $B, $transb, $ldb, $n, $k), (Shadow $C))
                   )
                   >;
 
