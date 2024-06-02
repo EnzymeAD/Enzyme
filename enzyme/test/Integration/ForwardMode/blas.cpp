@@ -237,12 +237,13 @@ static void gemvTests() {
         foundCalls = calls;
         init();
 
-        cblas_dscal(trans ? N : M, beta, dC, incC);
-
-        cblas_dgemv(layout, (char)transA, M, N, alpha, dA, lda, B, incB, 1.0, dC, incC);
+        cblas_dgemv(layout, (char)transA, M, N, alpha, dA, lda, B, incB, beta,
+                    dC, incC);
 
         my_dgemv(layout, (char)transA, M, N, alpha, A, lda, B, incB, beta, C,
                  incC);
+
+        // cblas_dscal(trans ? N : M, beta, dC, incC);
 
         checkTest(Test);
 
@@ -264,11 +265,43 @@ static void gemvTests() {
         foundCalls = calls;
         init();
 
-        cblas_dscal(trans ? N : M, beta, dC, incC);
-
-        cblas_dgemv(layout, (char)transA, M, N, alpha, A, lda, dB, incB, 1.0, dC, incC);
+        cblas_dgemv(layout, (char)transA, M, N, alpha, A, lda, dB, incB, beta,
+                    dC, incC);
 
         cblas_dgemv(layout, (char)transA, M, N, alpha, dA, lda, B, incB, 1.0, dC, incC);
+
+        // cblas_dscal(trans ? N : M, beta, dC, incC);
+
+        my_dgemv(layout, (char)transA, M, N, alpha, A, lda, B, incB, beta, C,
+                 incC);
+
+        // NOT ACTIVE: cblas_dgemv(layout, trans, M, N, dalpha, A, lda, B,
+        // incB, 1.0, C, incC);
+
+        checkTest(Test);
+
+        // Check memory of primal of expected derivative
+        checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+        // Check memory of primal of our derivative (if equal above, it
+        // should be the same).
+        checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+
+        Test = "GEMV active B, C ";
+
+        init();
+        __enzyme_fwddiff<void>(
+            (void *)my_dgemv, enzyme_const, layout, enzyme_const, transA,
+            enzyme_const, M, enzyme_const, N, enzyme_const, alpha, enzyme_const,
+            A, enzyme_const, lda, enzyme_dup, B, dB, enzyme_const, incB,
+            enzyme_const, beta, enzyme_dup, C, dC, enzyme_const, incC);
+        foundCalls = calls;
+        init();
+
+        cblas_dgemv(layout, (char)transA, M, N, alpha, A, lda, dB, incB, beta,
+                    dC, incC);
+
+        // cblas_dscal(trans ? N : M, beta, dC, incC);
 
         my_dgemv(layout, (char)transA, M, N, alpha, A, lda, B, incB, beta, C,
                  incC);
@@ -302,7 +335,7 @@ static void gemmTests() {
 
           bool transA_bool = !is_normal(transA);
           bool transB_bool = !is_normal(transB);
-          std::string Test = "GEMM";
+          std::string Test = "GEMM Active A, B, C";
           BlasInfo inputs[6] = {/*A*/ BlasInfo(A, layout, transA_bool ? K : M,
                                                transA_bool ? M : K, lda),
                                 /*B*/
@@ -347,16 +380,80 @@ static void gemmTests() {
           foundCalls = calls;
           init();
 
-          cblas_dlascl(layout, 'G', 0, 0, 1.0, beta, M, N, dC, incC, 0);
-
           my_dgemm(layout, (char)transA, (char)transB, M, N, K, alpha, A, lda,
-                   dB, incB, 1.0, dC, incC);
+                   dB, incB, beta, dC, incC);
 
           my_dgemm(layout, (char)transA, (char)transB, M, N, K, alpha, dA, lda,
                    B, incB, 1.0, dC, incC);
 
           // NOT ACTIVE: my_dgemm(layout, (char)transA, (char)transB, M, N, K,
           // dalpha, A, lda, B, incB, 1.0, C, incC);
+
+          // cblas_dlascl(layout, 'G', 0, 0, 1.0, beta, M, N, dC, incC, 0);
+
+          my_dgemm(layout, (char)transA, (char)transB, M, N, K, alpha, A, lda,
+                   B, incB, beta, C, incC);
+
+          checkTest(Test);
+
+          // Check memory of primal of expected derivative
+          checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+          // Check memory of primal of our derivative (if equal above, it
+          // should be the same).
+          checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+
+          Test = "GEMM Active A, C";
+
+          init();
+          __enzyme_fwddiff<void>(
+              (void *)my_dgemm, enzyme_const, layout, enzyme_const, transA,
+              enzyme_const, transB, enzyme_const, M, enzyme_const, N,
+              enzyme_const, K, enzyme_const, alpha, enzyme_dup, A, dA,
+              enzyme_const, lda, enzyme_const, B, enzyme_const, incB,
+              enzyme_const, beta, enzyme_dup, C, dC, enzyme_const, incC);
+          foundCalls = calls;
+          init();
+
+          my_dgemm(layout, (char)transA, (char)transB, M, N, K, alpha, dA, lda,
+                   B, incB, beta, dC, incC);
+
+          // NOT ACTIVE: my_dgemm(layout, (char)transA, (char)transB, M, N, K,
+          // dalpha, A, lda, B, incB, 1.0, C, incC);
+
+          // cblas_dlascl(layout, 'G', 0, 0, 1.0, beta, M, N, dC, incC, 0);
+
+          my_dgemm(layout, (char)transA, (char)transB, M, N, K, alpha, A, lda,
+                   B, incB, beta, C, incC);
+
+          checkTest(Test);
+
+          // Check memory of primal of expected derivative
+          checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+          // Check memory of primal of our derivative (if equal above, it
+          // should be the same).
+          checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+
+          Test = "GEMM Active B, C";
+
+          init();
+          __enzyme_fwddiff<void>(
+              (void *)my_dgemm, enzyme_const, layout, enzyme_const, transA,
+              enzyme_const, transB, enzyme_const, M, enzyme_const, N,
+              enzyme_const, K, enzyme_const, alpha, enzyme_const, A,
+              enzyme_const, lda, enzyme_dup, B, dB, enzyme_const, incB,
+              enzyme_const, beta, enzyme_dup, C, dC, enzyme_const, incC);
+          foundCalls = calls;
+          init();
+
+          my_dgemm(layout, (char)transA, (char)transB, M, N, K, alpha, A, lda,
+                   dB, incB, beta, dC, incC);
+
+          // NOT ACTIVE: my_dgemm(layout, (char)transA, (char)transB, M, N, K,
+          // dalpha, A, lda, B, incB, 1.0, C, incC);
+
+          // cblas_dlascl(layout, 'G', 0, 0, 1.0, beta, M, N, dC, incC, 0);
 
           my_dgemm(layout, (char)transA, (char)transB, M, N, K, alpha, A, lda,
                    B, incB, beta, C, incC);
