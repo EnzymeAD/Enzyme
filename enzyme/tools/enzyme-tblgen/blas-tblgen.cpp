@@ -942,6 +942,24 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
             "allocationBuilder, \"mul\" ) } ; vals; })";
       return;
     }
+    if (Def->getName() == "FirstUse" || Def->isSubClassOf("FirstUse")) {
+      os << "({";
+      for (size_t i = 0; i < Dag->getNumArgs(); i++) {
+        os << "SmallVector<Value*, 1> farg_" << i << ";\n";
+        os << " for (auto tmp : ";
+        rev_call_arg(forward, Dag, pattern, actArg, i, os, vars);
+        os << " ) farg_" << i << ".push_back(tmp);\n";
+      }
+      os << "SmallVector<Value*, 1> vals;\n";
+      os << "for (auto i=0; i<farg_0.size(); i++) \n";
+      os << "  vals.push_back(CreateSelect(Builder2, first_use_"
+         << Def->getValueAsString("var") << ", farg_0[i], farg_1[i]));\n";
+      os << "first_use_" << Def->getValueAsString("var")
+         << " = Builder2.getFalse();\n";
+
+      os << " vals; })";
+      return;
+    }
     if (Def->getName() == "Lookup") {
       os << "({";
       for (size_t i = 0; i < Dag->getNumArgs(); i++) {
@@ -967,6 +985,8 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       return;
     }
 
+    errs() << *Dag << "\n";
+    errs() << *Def << "\n";
     errs() << Def->getName() << "\n";
     PrintFatalError(Def->getLoc(), "Dag/Def that isn't a DiffeRet!!");
   } else if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
@@ -1432,6 +1452,10 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
     // We might need to create a tmp vec or matrix
     emit_tmp_creation(Def, os, "Builder2");
 
+    for (auto var : Def->getValueAsListOfStrings("vars")) {
+      os << "     Value *first_use_" << var << " = Builder2.getTrue();\n";
+    }
+
     // handle seq rules
     for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
       Init *subArg = ruleDag->getArg(i);
@@ -1445,6 +1469,19 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
 
     if (!forward && !runtimeChecked)
       emit_runtime_continue(ruleDag, argName, "        ", "Builder2", true, os);
+    os << "        }\n";
+    return;
+  }
+  if (Def->getName() == "FirstUse" || Def->isSubClassOf("FirstUse")) {
+    os << "        {\n";
+    os << "      // FirstUse\n";
+    os << "          auto CI = cast<ConstantInt>(first_use_"
+       << Def->getValueAsString("var") << ");\n";
+    os << "        if (CI->isOne()) {\n";
+    emit_dag(forward, resultVarName, cast<DagInit>(ruleDag->getArg(0)),
+             argName + "_" + std::to_string(0), os, argName, actArg, pattern,
+             runtimeChecked, vars);
+    os << "        }\n";
     os << "        }\n";
     return;
   }
