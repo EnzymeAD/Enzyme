@@ -86,10 +86,11 @@ static void dotTests() {
     foundCalls = calls;
     init();
 
-    // my_ddot(N, A, incA, B, incB);
 
     cblas_ddot(N, dA, incA, B, incB);
     cblas_ddot(N, A, incA, dB, incB);
+    
+    my_ddot(N, A, incA, B, incB);
 
     checkTest(Test);
 
@@ -120,9 +121,9 @@ static void dotTests() {
     foundCalls = calls;
     init();
 
-    // my_ddot(N, A, incA, B, incB);
-
     cblas_ddot(N, dA, incA, B, incB);
+    
+    my_ddot(N, A, incA, B, incB);
 
     checkTest(Test);
 
@@ -153,9 +154,10 @@ static void dotTests() {
     foundCalls = calls;
     init();
 
-    // my_ddot(N, A, incA, B, incB);
 
     cblas_ddot(N, A, incA, dB, incB);
+    
+    my_ddot(N, A, incA, B, incB);
 
     checkTest(Test);
 
@@ -186,7 +188,7 @@ static void dotTests() {
     foundCalls = calls;
     init();
 
-    // my_ddot(N, A, incA, B, incB);
+    my_ddot(N, A, incA, B, incB);
 
     checkTest(Test);
 
@@ -251,12 +253,12 @@ static void gemvTests() {
         foundCalls = calls;
         init();
 
-        my_dgemv(layout, (char)transA, M, N, alpha, A, lda, B, incB, beta, C,
-                 incC);
-
         cblas_dscal(trans ? N : M, beta, dC, incC);
 
         cblas_dgemv(layout, trans, M, N, alpha, dA, lda, B, incB, 1.0, C, incC);
+
+        my_dgemv(layout, (char)transA, M, N, alpha, A, lda, B, incB, beta, C,
+                 incC);
 
         checkTest(Test);
 
@@ -278,14 +280,14 @@ static void gemvTests() {
         foundCalls = calls;
         init();
 
-        my_dgemv(layout, (char)transA, M, N, alpha, A, lda, B, incB, beta, C,
-                 incC);
-
         cblas_dscal(trans ? N : M, beta, dC, incC);
 
         cblas_dgemv(layout, trans, M, N, alpha, A, lda, dB, incB, 1.0, C, incC);
 
         cblas_dgemv(layout, trans, M, N, alpha, dA, lda, B, incB, 1.0, C, incC);
+
+        my_dgemv(layout, (char)transA, M, N, alpha, A, lda, B, incB, beta, C,
+                 incC);
 
         // NOT ACTIVE: cblas_dgemv(layout, trans, M, N, dalpha, A, lda, B,
         // incB, 1.0, C, incC);
