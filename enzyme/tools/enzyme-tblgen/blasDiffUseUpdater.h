@@ -101,13 +101,15 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
           if (DagInit *resultRoot = dyn_cast<DagInit>(derivOp.getRuleDag())) {
             auto opName = resultRoot->getOperator()->getAsString();
             auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
-            if (Def->getName() == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
+            if (Def->getName() == "InactiveArgSpec" ||
+                Def->isSubClassOf("InactiveArgSpec")) {
               isActive = false;
             }
           }
           if (DefInit *DefArg = dyn_cast<DefInit>(derivOp.getRuleDag())) {
             auto Def = DefArg->getDef();
-            if (Def->getName() == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
+            if (Def->getName() == "InactiveArgSpec" ||
+                Def->isSubClassOf("InactiveArgSpec")) {
               isActive = false;
             }
           }

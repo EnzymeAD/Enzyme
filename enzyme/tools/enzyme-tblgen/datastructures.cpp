@@ -84,7 +84,7 @@ bool isArgUsed(Rule *rule, StringRef toFind, const DagInit *toSearch,
   if (Def->getName() == "Shadow" || Def->isSubClassOf("Shadow")) {
     if (toSearch->getNumArgs() != 1)
       PrintFatalError(rule->getLoc(), "only single op shadow supported");
-    if (!toSearch->getArgName(0)) 
+    if (!toSearch->getArgName(0))
       PrintFatalError(rule->getLoc(), "only shadow of arg name is supported");
 
     auto name = toSearch->getArgName(0)->getAsUnquotedString();
@@ -495,7 +495,6 @@ ArrayRef<size_t> TGPattern::getActiveArgs() const { return posActArgs; }
 
 ArrayRef<Rule> TGPattern::getRules() const { return rules; }
 
-
 ArgType TGPattern::getTypeOfArg(StringRef argName) const {
   assert(argNameToPos.count(argName) == 1);
   size_t argPos = argNameToPos.lookup(argName);
@@ -503,12 +502,11 @@ ArgType TGPattern::getTypeOfArg(StringRef argName) const {
   if (found == argTypes.end()) {
     PrintFatalError(getLoc(), Twine("Could not successfully find argName '") +
                                   argName + " (index " +
-                                  std::to_string(argPos) +
-                                  ") in patternTypes");
+                                  std::to_string(argPos) + ") in patternTypes");
   }
   return found->second;
 }
 
-DagInit* TGPattern::getDuals() const {
+DagInit *TGPattern::getDuals() const {
   return record->getValueAsDag("ArgDuals");
 }

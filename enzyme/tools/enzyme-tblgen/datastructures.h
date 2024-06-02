@@ -136,7 +136,7 @@ public:
   ArrayRef<Rule> getRules() const;
   ArrayRef<SMLoc> getLoc() const;
   ArgType getTypeOfArg(StringRef name) const;
-  DagInit* getDuals() const;
+  DagInit *getDuals() const;
 };
 
 #endif
