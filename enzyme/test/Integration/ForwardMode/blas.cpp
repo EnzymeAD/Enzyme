@@ -1,33 +1,18 @@
-// This should work on LLVM 7, 8, 9, however in CI the version of clang
-// installed on Ubuntu 18.04 cannot load a clang plugin properly without
-// segfaulting on exit. This is fine on Ubuntu 20.04 or later LLVM versions...
-// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o -
-// %loadClangEnzyme -mllvm -enzyme-lapack-copy=1 | %lli - RUN: %clang++
-// -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm
-// -enzyme-lapack-copy=1  | %lli - RUN: %clang++ -fno-exceptions -std=c++11 -O3
-// %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-lapack-copy=1 | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o -
-// %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -S |
-// %lli - RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o -
-// %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -S |
-// %lli - RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o -
-// %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1  -S |
-// %lli -
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s
-// -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s
-// -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s
-// -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s
-// -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli - ;
-// fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s
-// -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli - ;
-// fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s
-// -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli - ;
-// fi
+// This should work on LLVM 7, 8, 9, however in CI the version of clang installed on Ubuntu 18.04 cannot load
+// a clang plugin properly without segfaulting on exit. This is fine on Ubuntu 20.04 or later LLVM versions...
+// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1 | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1  | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-lapack-copy=1 | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -S | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -S | %lli -
+// RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1  -S | %lli -
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli - ; fi
+// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-inline=1 -S | %lli - ; fi
+
 
 #include "../blasinfra.h"
 #include "../test_utils.h"
@@ -65,7 +50,6 @@ void ow_dgemm(char layout, char transA, char transB, int M, int N, int K,
 }
 
 static void dotTests() {
-
   {
     std::string Test = "DOT active both ";
     BlasInfo inputs[6] = {
@@ -255,7 +239,7 @@ static void gemvTests() {
 
         cblas_dscal(trans ? N : M, beta, dC, incC);
 
-        cblas_dgemv(layout, trans, M, N, alpha, dA, lda, B, incB, 1.0, C, incC);
+        cblas_dgemv(layout, (char)transA, M, N, alpha, dA, lda, B, incB, 1.0, dC, incC);
 
         my_dgemv(layout, (char)transA, M, N, alpha, A, lda, B, incB, beta, C,
                  incC);
@@ -282,9 +266,9 @@ static void gemvTests() {
 
         cblas_dscal(trans ? N : M, beta, dC, incC);
 
-        cblas_dgemv(layout, trans, M, N, alpha, A, lda, dB, incB, 1.0, C, incC);
+        cblas_dgemv(layout, (char)transA, M, N, alpha, A, lda, dB, incB, 1.0, dC, incC);
 
-        cblas_dgemv(layout, trans, M, N, alpha, dA, lda, B, incB, 1.0, C, incC);
+        cblas_dgemv(layout, (char)transA, M, N, alpha, dA, lda, B, incB, 1.0, dC, incC);
 
         my_dgemv(layout, (char)transA, M, N, alpha, A, lda, B, incB, beta, C,
                  incC);
@@ -363,19 +347,19 @@ static void gemmTests() {
           foundCalls = calls;
           init();
 
-          my_dgemm(layout, (char)transA, (char)transB, M, N, K, alpha, A, lda,
-                   B, incB, beta, C, incC);
-
           cblas_dlascl(layout, 'G', 0, 0, 1.0, beta, M, N, dC, incC, 0);
 
           my_dgemm(layout, (char)transA, (char)transB, M, N, K, alpha, A, lda,
-                   dB, incB, 1.0, C, incC);
+                   dB, incB, 1.0, dC, incC);
 
           my_dgemm(layout, (char)transA, (char)transB, M, N, K, alpha, dA, lda,
-                   B, incB, 1.0, C, incC);
+                   B, incB, 1.0, dC, incC);
 
           // NOT ACTIVE: my_dgemm(layout, (char)transA, (char)transB, M, N, K,
           // dalpha, A, lda, B, incB, 1.0, C, incC);
+
+          my_dgemm(layout, (char)transA, (char)transB, M, N, K, alpha, A, lda,
+                   B, incB, beta, C, incC);
 
           checkTest(Test);
 
