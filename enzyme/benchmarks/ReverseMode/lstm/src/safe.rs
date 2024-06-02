@@ -6,6 +6,7 @@ fn sigmoid(x: f64) -> f64 {
 }
 
 // log(sum(exp(x), 2))
+#[inline]
 fn logsumexp(vect: &[f64]) -> f64 {
     let mut sum = 0.0;
     for &val in vect {
@@ -136,18 +137,17 @@ pub(crate) fn lstm_objective(
     loss: &mut f64,
 ) {
     let mut total = 0.0;
-    let mut count = 0;
 
     let mut input = &sequence[..b];
     let mut ypred = vec![0.0; b];
-    let ypred = &mut ypred[..b];
     let mut ynorm = vec![0.0; b];
-    let ynorm = &mut ynorm[..b];
 
     assert!(b > 0);
 
-    for t in (0..=(c - 1) * b - 1).step_by(b) {
-        lstm_predict(l, b, main_params, extra_params, state, input, ypred);
+    let limit = (c - 1) * b;
+    for j in 0..(c - 1) {
+        let t = j * b;
+        lstm_predict(l, b, main_params, extra_params, state, input, &mut ypred);
         let lse = logsumexp(&ypred);
         for i in 0..b {
             ynorm[i] = ypred[i] - lse;
@@ -158,9 +158,9 @@ pub(crate) fn lstm_objective(
             total += ygold[i] * ynorm[i];
         }
 
-        count += b;
         input = ygold;
     }
+    let count = (c - 1) * b;
 
     *loss = -total / count as f64;
 }
