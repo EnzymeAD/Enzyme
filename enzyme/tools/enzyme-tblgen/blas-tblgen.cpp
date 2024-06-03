@@ -673,7 +673,7 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
       std::vector<StringRef> activeUsersOfInput;
       for (auto pair : llvm::enumerate(activeArgs)) {
         auto inps = get_input_mat(rules[pair.index()].getRuleDag());
-        if (inps.find(name) = inps.end())
+        if (inps.find(name) != inps.end())
           activeUsersOfInput.push_back(nameVec[pair.value()]);
       }
       extract_input_mat(name, activeUsersOfInput, os);
