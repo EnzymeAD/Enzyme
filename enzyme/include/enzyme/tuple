@@ -123,7 +123,7 @@ static constexpr auto tuple_cat(Tuple&& ret) {
 template <typename FWD_TUPLE, typename first, typename... rest>
 __attribute__((always_inline))
 static constexpr auto tuple_cat(FWD_TUPLE&& fwd, first&& t, rest&&... ts) {
-  return impl::tuple_cat(concat_with_fwd_tuple< iseq<FWD_TUPLE>, iseq<first> >::f(impl::forward<FWD_TUPLE>(fwd), impl::forward<first>(t)), impl::forward<rest>(ts)...);
+  return tuple_cat(concat_with_fwd_tuple< iseq<FWD_TUPLE>, iseq<first> >::f(impl::forward<FWD_TUPLE>(fwd), impl::forward<first>(t)), impl::forward<rest>(ts)...);
 }
 
 }  // namespace impl
