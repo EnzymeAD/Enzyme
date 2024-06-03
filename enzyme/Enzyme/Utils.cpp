@@ -2643,7 +2643,7 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
   const char *extractable[] = {"dot",  "scal", "axpy", "gemv",
-                               "gemm", "spmv", "syrk"};
+                               "gemm", "spmv", "syrk", "nrm2"};
   const char *floatType[] = {"s", "d"}; // c, z
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
   const char *suffixes[] = {"", "_", "64_", "_64_"};
@@ -2942,55 +2942,6 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
 
   return to_blas_callconv(B, V, byRef, cublas, julia_decl, entryBuilder,
                           "transpose." + name);
-}
-
-llvm::Value *trans_to_side(IRBuilder<> &B, llvm::Value *V, bool cublas) {
-  llvm::Type *T = V->getType();
-  if (cublas) {
-    assert(0 && "cublas unknown");
-  }
-
-  auto isn = B.CreateICmpEQ(V, ConstantInt::get(T, 'N'));
-  auto sel1 =
-      B.CreateSelect(isn, ConstantInt::get(T, 'L'), ConstantInt::get(T, 'l'));
-
-  auto isN = B.CreateICmpEQ(V, ConstantInt::get(T, 't'));
-  auto sel2 = B.CreateSelect(isN, ConstantInt::get(T, 'r'), sel1);
-
-  auto ist = B.CreateICmpEQ(V, ConstantInt::get(T, 'T'));
-  auto sel3 = B.CreateSelect(ist, ConstantInt::get(T, 'R'), sel2);
-
-  return sel3;
-}
-
-llvm::Value *trans_to_side(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
-                           bool cublas, llvm::IntegerType *julia_decl,
-                           llvm::IRBuilder<> &entryBuilder,
-                           const llvm::Twine &name) {
-
-  if (!byRef) {
-    // Explicitly support 'N' always, since we use in the rule infra
-    if (auto CI = dyn_cast<ConstantInt>(V)) {
-      if (CI->getValue() == 'N')
-        return ConstantInt::get(CI->getType(), 'L');
-      if (CI->getValue() == 'n')
-        return ConstantInt::get(CI->getType(), 'l');
-      if (CI->getValue() == 'T')
-        return ConstantInt::get(CI->getType(), 'R');
-      if (CI->getValue() == 't')
-        return ConstantInt::get(CI->getType(), 'r');
-    }
-  }
-
-  if (byRef) {
-    auto charType = IntegerType::get(V->getContext(), 8);
-    V = B.CreateLoad(charType, V, "ld." + name);
-  }
-
-  V = trans_to_side(B, V, cublas);
-
-  return to_blas_callconv(B, V, byRef, cublas, julia_decl, entryBuilder,
-                          "trans_to_side." + name);
 }
 
 llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
