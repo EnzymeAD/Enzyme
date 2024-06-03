@@ -58,6 +58,8 @@ class Binop<string _s, list<string> _tys> {
   string s = _s;
   list<string> tys = _tys;
 }
+def BAnd : Binop<"And", ["intType", "intType"]>;
+def Not : Binop<"Not", ["intType", "intType"]>;
 def Sub : Binop<"Sub", ["intType", "intType"]>;
 def Add : Binop<"Add", ["intType", "intType"]>;
 def Mul : Binop<"Mul", ["intType", "intType"]>;
@@ -79,6 +81,12 @@ def trans_to_side : IntMatchers<
     ["'l'", "'L'", "'U'", "'u'"]
     >;
 
+def side_to_trans : IntMatchers<
+    "charType", "charType",
+    ["'l'", "'L'", "'U'", "'u'"],
+    ["'n'", "'N'", "'T'", "'t'"]
+    >;
+
 def is_upper : IntMatchers<
     "charType", "Builder2.getInt1Ty()",
     ["'u'", "'U'", "'L'", "'l'"],
@@ -89,6 +97,12 @@ def is_diag_int : IntMatchers<
     "charType", "intType",
     ["'d'", "'D'", "'U'", "'u'"],
     ["1", "1", "0", "0"]
+    >;
+
+def is_left : IntMatchers<
+    "charType", "Builder2.getInt1Ty()",
+    ["'l'", "'L'", "'R'", "'r'"],
+    ["true", "true", "false", "false"]
     >;
 
 def Lookup : MagicInst;
@@ -281,6 +295,7 @@ def trmv : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $A, $lda, $x, 
                   [
                   /* A      */  (For<"i", 1> (ISelect (is_upper $uplo), $n, (Sub $n, (is_diag_int $diag))),
                     (BlasCall<"axpy"> 
+                    $layout,
                     (ISelect (is_upper $uplo), 
                         (Sub $i, (is_diag_int $diag)),
                         (Add (Sub (Sub $n, (is_diag_int $diag)), $i), ConstantInt<1>)
@@ -349,6 +364,43 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   )
                   >;
 
+//   B := alpha*op( A )*B,   or   B := alpha*B*op( A ),
+def trmm : CallBlasPattern<(Op $layout, $side, $uplo, $transa, $diag, $m, $n, $alpha, $A, $lda, $B, $ldb),
+                  ["B"],
+                  [cblas_layout, side, uplo, trans, diag, len, len, fp, mld<["side", "m", "n"]>, mld<["m","n"]>],
+                  [
+                    /*alpha*/ (AssertingInactiveArg),
+                    /* A      */  (For<"i", 1> (Sub (ISelect (is_left $side), $m, $n), (ISelect (is_upper $uplo), ConstantInt<0>, (is_diag_int $diag))),
+                    (BlasCall<"gemv"> 
+                    (side_to_trans $side),
+                    (ISelect (is_left $side),
+                        (Concat 
+                            (ISelect (is_upper $uplo),
+                                     (Sub $i, (is_diag_int $diag)),
+                                     (Sub $m, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>))),
+                          $n),
+                        (Concat $m,
+                            (ISelect (is_upper $uplo),
+                                     (Sub $i, (is_diag_int $diag)),
+                                     (Sub $n, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>)))
+                        )
+                    ),
+                    $alpha,
+                    (Lookup (Rows $transa, (Shadow $B), input<"B">),
+                        (ISelect (BAnd (is_left $side), (Not (is_upper $uplo))), (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>), ConstantInt<0>),
+                        (ISelect (BAnd (Not (is_left $side)), (Not (is_upper $uplo))), (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>), ConstantInt<0>)),
+                    (Lookup (Rows $transa, input<"B">, (Shadow $B)),
+                        (ISelect (is_left $side), (Sub $i, ConstantInt<1>), ConstantInt<0>),
+                        (ISelect (is_left $side), ConstantInt<0>, (Sub $i, ConstantInt<1>))),
+                    Constant<"1">,
+                    (Lookup (Shadow $A),
+                        (ISelect (is_upper $uplo), ConstantInt<0>, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>)),
+                        (Sub $i, ConstantInt<1>))
+                    )
+                    ),
+                    /* B   */ (BlasCall<"trmm"> $layout, $side, transpose<"transa">, $diag, $m, $n, $alpha, $A, (ld $A, $side, $lda, $m, $n), (Shadow $B))
+                  ]
+                  >;
 
 def symm: CallBlasPattern<(Op $layout, $side, $uplo, $m, $n, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),
                           ["C"],
@@ -459,11 +511,6 @@ def spr2 : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $x, $incx, $y, $incy,
 // 
 // // Lv 3
 // 
-// def : CallBlasPattern<(Op $layout, $side, $uplo, $transa, $diag, $m, $n, $alpha, $a, $lda, $b, $ldb),
-//                   ["trmm"],
-//                   [cblas_layout, side, uplo, trans, diag, len, len, fp, vld, vld],
-//                   []
-//                   >;
 // 
 // def : CallBlasPattern<(Op $layout, $side, $uplo, $transa, $diag, $m, $n, $alpha, $a, $lda, $b, $ldb),
 //                   ["trsm"],

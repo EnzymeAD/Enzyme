@@ -238,7 +238,7 @@ ArrayRef<SMLoc> Rule::getLoc() const { return getPattern()->getLoc(); }
 
 bool Rule::isBLASLevel2or3() const { return BLASLevel2or3; }
 
-DagInit *Rule::getRuleDag() { return rewriteRule; }
+DagInit *Rule::getRuleDag() const { return rewriteRule; }
 
 size_t Rule::getHandledArgIdx() const { return activeArg; }
 
@@ -462,7 +462,8 @@ SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg) const {
 
   if (related.size() == 3) {
     auto argTy = argTypes.lookup(related[0]);
-    assert(argTy == ArgType::trans || argTy == ArgType::diag);
+    assert(argTy == ArgType::trans || argTy == ArgType::diag ||
+           argTy == ArgType::side);
     (void)argTy;
   }
 

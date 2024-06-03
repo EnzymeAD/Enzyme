@@ -569,8 +569,17 @@ void extract_scalar(StringRef name, StringRef elemTy, raw_ostream &os) {
      << "\n";
 }
 
-void extract_input_mat(StringRef name, StringRef actName, raw_ostream &os) {
-  os << "    if (active_" << actName << ") {\n"
+void extract_input_mat(StringRef name, const std::vector<StringRef> &actName,
+                       raw_ostream &os) {
+  if (actName.size() == 0)
+    return;
+  os << "    if (";
+  for (size_t i = 0; i < actName.size(); i++) {
+    if (i != 0)
+      os << " || ";
+    os << "active_" << actName[i];
+  }
+  os << ") {\n"
      << "      input_" << name << " = (cacheTypes.size() == 1)\n"
      << "                  ? cacheval\n"
      << "                  : Builder2.CreateExtractValue(cacheval, "
@@ -653,30 +662,21 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
     }
   }
 
-  std::string input_var = "";
-  size_t actVar = 0;
-  for (size_t a = 0; a < activeArgs.size(); a++) {
-    auto rule = rules[a];
-    const DagInit *ruleDag = rule.getRuleDag();
-    std::string tmp = get_input_mat(ruleDag);
-    if (tmp != "") {
-      input_var = tmp;
-      actVar = activeArgs[a];
-      break;
-    }
-  }
-
   for (size_t j = 0; j < activeArgs.size(); j++) {
     size_t i = activeArgs[j];
     auto ty = typeMap.lookup(i);
     if (ty != ArgType::mldData && ty != ArgType::ap)
       continue;
     auto name = nameVec[i];
-    auto rule = rules[j];
-    auto input_mat_name = nameVec[actVar];
-    if (name == input_var) {
+    {
       // we not only use arg_<X>, but also input_<X>
-      extract_input_mat(name, input_mat_name, os);
+      std::vector<StringRef> activeUsersOfInput;
+      for (auto pair : llvm::enumerate(activeArgs)) {
+        auto inps = get_input_mat(rules[pair.index()].getRuleDag());
+        if (inps.find(name) = inps.end())
+          activeUsersOfInput.push_back(nameVec[pair.value()]);
+      }
+      extract_input_mat(name, activeUsersOfInput, os);
     }
     extract_mat_or_vec(name, os);
     // TODO: corresponding LD should become matrix width?
@@ -687,12 +687,15 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
     if (typeMap.lookup(i) != ArgType::vincData)
       continue;
     auto name = nameVec[i];
-    auto rule = rules[j];
-    auto input_vec_name = nameVec[actVar];
-    if (name == input_var) {
-      os << "    //handling input\n";
+    {
       // we not only use arg_<X>, but also input_<X>
-      extract_input_mat(name, input_vec_name, os);
+      std::vector<StringRef> activeUsersOfInput;
+      for (auto pair : llvm::enumerate(activeArgs)) {
+        auto inps = get_input_mat(rules[pair.index()].getRuleDag());
+        if (inps.find(name) != inps.end())
+          activeUsersOfInput.push_back(nameVec[pair.value()]);
+      }
+      extract_input_mat(name, activeUsersOfInput, os);
     }
     extract_mat_or_vec(name, os);
 
@@ -950,7 +953,9 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
         rev_call_arg(forward, Dag, pattern, i, os, vars);
         os << " ) marg_" << i << ".push_back(tmp);\n";
       }
-      os << "SmallVector<Value*, 1> vals = { to_blas_callconv(Builder2, ";
+      os << "SmallVector<Value*, 1> vals;\n";
+      os << "for(size_t i=0; i<marg_" << (Dag->getNumArgs() - 1)
+         << ".size(); i++) vals.push_back(to_blas_callconv(Builder2, ";
       auto op = Def->getValueAsString("s");
       if (op == "Select")
         os << " CreateSelect(Builder2, ";
@@ -961,12 +966,12 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       for (size_t i = 0; i < Dag->getNumArgs(); i++) {
         if (i != 0)
           os << ", ";
-        os << "load_if_ref(Builder2, " << tys[i] << ", *(marg_" << i
-           << ".begin()), byRef)";
+        os << "load_if_ref(Builder2, " << tys[i] << ", marg_" << i << "[marg_"
+           << i << ".size() == 1 ? 0 : i], byRef)";
       }
       os << "), byRef, cublas, nullptr, "
             "allocationBuilder, \""
-         << Def->getValueAsString("s") << "\" ) } ; vals; })";
+         << Def->getValueAsString("s") << "\" ));\n vals; })";
       return;
     }
     if (Def->getName() == "FirstUse" || Def->isSubClassOf("FirstUse")) {

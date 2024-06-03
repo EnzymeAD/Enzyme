@@ -1,4 +1,3 @@
-
 #ifndef ENZYME_TBLGEN_DATASTRUCT_H
 #define ENZYME_TBLGEN_DATASTRUCT_H 1
 
@@ -68,7 +67,7 @@ public:
        const DenseMap<size_t, ArgType> &patternTypes,
        const DenseSet<size_t> &patternMutables);
   bool isBLASLevel2or3() const;
-  DagInit *getRuleDag();
+  DagInit *getRuleDag() const;
   size_t getHandledArgIdx() const;
   const StringMap<size_t> &getArgNameMap() const;
   const DenseMap<size_t, ArgType> &getArgTypeMap() const;
