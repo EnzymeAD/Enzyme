@@ -56,7 +56,7 @@ def Concat : MagicInst;
 
 def Mul : MagicInst;
 
-def uplo_to_side : MagicInst;
+def trans_to_side : MagicInst;
 
 def Lookup : MagicInst;
 
@@ -184,7 +184,11 @@ def copy : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   [
                   (InactiveArg),// copy moves x into y, so x is never modified.
                   (BlasCall<"axpy"> $n, Constant<"1.0">, (Shadow $y), (Shadow $x))
-                  ]
+                  ],
+                  (Seq<[], ["beta1"]>
+                    (BlasCall<"copy"> (FirstUse<"beta1"> $n, $n), (Shadow $x), (Shadow $y)),
+                    (FirstUse<"beta1"> (BlasCall<"scal"> $n, Constant<"0">, (Shadow $y)))
+                  )
                   >;
 
 // def swap : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
@@ -321,7 +325,8 @@ def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda,
                   (Seq<[], []>
                     (BlasCall<"symm">
                         $layout,
-                        (uplo_to_side $uplo),
+                        (trans_to_side $uplo),
+                        $uplo,
                         (Rows $trans,
                             (Concat $n, $k),
                             (Concat $k, $n)),
@@ -332,7 +337,7 @@ def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda,
                         (Shadow $A)
                     ),
                     (For<"i"> $n,
-                        (BlasCall<"axpy"> $k, (Mul $alpha, (Lookup (Shadow $C), $i, $i)), (Lookup (Concat $A, (ld $A, $trans, $lda, $n, $k)), $i), Constant<"1">, (Shadow $A))
+                        (BlasCall<"axpy"> $k, (Mul $alpha, (Lookup (Shadow $C), $i, $i)), (Lookup (Concat $A, (ld $A, $trans, $lda, $n, $k)), $i), ConstantInt<1>, (Lookup (Shadow $A), $i), ConstantInt<1>)
                     )
                   ),
                   /* beta  */ (AssertingInactiveArg),
