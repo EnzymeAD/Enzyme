@@ -1860,12 +1860,12 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                        llvm::IRBuilder<> &entryBuilder,
                        const llvm::Twine &name);
 // first one assume V is an Integer
-llvm::Value *uplo_to_side(llvm::IRBuilder<> &B, llvm::Value *V, bool cublas);
+llvm::Value *trans_to_side(llvm::IRBuilder<> &B, llvm::Value *V, bool cublas);
 // secon one assume V is an Integer or a ptr to an int (depends on byRef)
-llvm::Value *uplo_to_side(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
-                          bool cublas, llvm::IntegerType *IT,
-                          llvm::IRBuilder<> &entryBuilder,
-                          const llvm::Twine &name);
+llvm::Value *trans_to_side(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
+                           bool cublas, llvm::IntegerType *IT,
+                           llvm::IRBuilder<> &entryBuilder,
+                           const llvm::Twine &name);
 llvm::SmallVector<llvm::Value *, 1>
 get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,
              llvm::ArrayRef<llvm::Value *> row,

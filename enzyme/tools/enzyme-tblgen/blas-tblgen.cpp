@@ -799,8 +799,7 @@ void emit_runtime_continue(DagInit *ruleDag, StringRef name, StringRef tab,
 // The map offsetToBaseNames takes vinc, ld, and maps them to
 // the arg name of the original vector/matrix
 void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
-                  size_t actArg, size_t pos, raw_ostream &os,
-                  const StringMap<Twine> &vars) {
+                  size_t pos, raw_ostream &os, const StringMap<Twine> &vars) {
   const auto nameMap = pattern.getArgNameMap();
   const auto typeMap = pattern.getArgTypeMap();
   auto arg = ruleDag->getArg(pos);
@@ -812,7 +811,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
         os << "({";
         for (size_t i = Dag->getNumArgs() - 1;; i--) {
           os << "auto brow_" << i << " = ";
-          rev_call_arg(forward, Dag, pattern, actArg, i, os, vars);
+          rev_call_arg(forward, Dag, pattern, i, os, vars);
           os << "; ";
           if (i == 0)
             break;
@@ -829,7 +828,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
         os << "({";
         for (size_t i = 0; i < Dag->getNumArgs(); i++) {
           os << "auto concat_" << i << " = ";
-          rev_call_arg(forward, Dag, pattern, actArg, i, os, vars);
+          rev_call_arg(forward, Dag, pattern, i, os, vars);
           os << "; ";
         }
         os << "concat_values<";
@@ -856,7 +855,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
         const auto dim2Name = Dag->getArgNameStr(4);
         const auto matName = Dag->getArgNameStr(0);
         os << "{get_cached_mat_width(Builder2, ";
-        rev_call_arg(forward, Dag, pattern, actArg, 1, os, vars);
+        rev_call_arg(forward, Dag, pattern, 1, os, vars);
         os << ", arg_" << ldName << ", arg_" << dim1Name << ", arg_" << dim2Name
            << ", cache_" << matName << ", byRef, cublas)}";
         return;
@@ -914,15 +913,15 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       }
       return;
     }
-    if (Def->getName() == "uplo_to_side") {
+    if (Def->getName() == "trans_to_side") {
       if (Dag->getNumArgs() != 1)
         PrintFatalError(pattern.getLoc(),
-                        "only single op uplo_to_side supported");
+                        "only single op trans_to_side supported");
       if (!Dag->getArgName(0))
         PrintFatalError(pattern.getLoc(),
-                        "only uplo_to_side of arg name is supported");
+                        "only trans_to_side of arg name is supported");
       auto name = Dag->getArgName(0)->getAsUnquotedString();
-      os << "{uplo_to_side(Builder2, arg_" << name
+      os << "{trans_to_side(Builder2, arg_" << name
          << ", byRef, cublas, charType, allocationBuilder, \"" << name
          << "\")}";
       return;
@@ -932,7 +931,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       for (size_t i = 0; i < Dag->getNumArgs(); i++) {
         os << "SmallVector<Value*, 1> marg_" << i << ";\n";
         os << " for (auto tmp : ";
-        rev_call_arg(forward, Dag, pattern, actArg, i, os, vars);
+        rev_call_arg(forward, Dag, pattern, i, os, vars);
         os << " ) marg_" << i << ".push_back(tmp);\n";
       }
       os << "SmallVector<Value*, 1> vals = { to_blas_callconv(Builder2, "
@@ -947,11 +946,11 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       for (size_t i = 0; i < Dag->getNumArgs(); i++) {
         os << "SmallVector<Value*, 1> farg_" << i << ";\n";
         os << " for (auto tmp : ";
-        rev_call_arg(forward, Dag, pattern, actArg, i, os, vars);
+        rev_call_arg(forward, Dag, pattern, i, os, vars);
         os << " ) farg_" << i << ".push_back(tmp);\n";
       }
       os << "SmallVector<Value*, 1> vals;\n";
-      os << "for (auto i=0; i<farg_0.size(); i++) \n";
+      os << "for (size_t i=0; i<farg_0.size(); i++) \n";
       os << "  vals.push_back(CreateSelect(Builder2, first_use_"
          << Def->getValueAsString("var") << ", farg_0[i], farg_1[i]));\n";
       os << "first_use_" << Def->getValueAsString("var")
@@ -965,7 +964,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       for (size_t i = 0; i < Dag->getNumArgs(); i++) {
         os << "SmallVector<Value*, 1> larg_" << i << ";\n";
         os << " for (auto tmp : ";
-        rev_call_arg(forward, Dag, pattern, actArg, i, os, vars);
+        rev_call_arg(forward, Dag, pattern, i, os, vars);
         os << " ) larg_" << i << ".push_back(tmp);\n";
       }
       os << " Value *ptr = larg_0[0];\n";
@@ -973,6 +972,19 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       os << "    if (ptr->getType()->isIntegerTy()) ptr = "
             "Builder2.CreateIntToPtr(ptr, PointerType::getUnqual(fpType));\n";
 
+      os << "#if LLVM_VERSION_MAJOR < 17\n";
+      os << "#if LLVM_VERSION_MAJOR >= 15\n";
+      os << "  if (ptr->getContext().supportsTypedPointers()) {\n";
+      os << "#endif\n";
+      os << "    if (fpType != ptr->getType()->getPointerElementType()) {\n";
+      os << "      ptr = Builder2.CreatePointerCast(ptr, "
+            "PointerType::get(fpType, "
+            "cast<PointerType>(ptr->getType())->getAddressSpace()));\n";
+      os << "    }\n";
+      os << "#if LLVM_VERSION_MAJOR >= 15\n";
+      os << "  }\n";
+      os << "#endif\n";
+      os << "#endif\n";
       os << " Value* offset = Builder2.CreateMul(load_if_ref(Builder2, "
             "intType, larg_1[0], byRef), load_if_ref(Builder2, intType, "
             "larg_0[1], byRef));\n";
@@ -1098,23 +1110,15 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
     case ArgType::vincData:
     case ArgType::mldData: {
       os << "{";
-      if (argPosition == actArg && !forward) {
-        os << "d_" << name;
-      } else {
-        os << "arg_" << name;
-      }
+      os << "arg_" << name;
       if (ty == ArgType::vincData) {
         auto incName = pattern.getArgNames()[argPosition + 1];
         os << ", (cache_" << name << " ? const_one : arg_" << incName << ")";
       }
       if (ty == ArgType::mldData) {
         auto ldName = pattern.getArgNames()[argPosition + 1];
-        if (argPosition == actArg) {
-          os << ", true_" << ldName;
-        } else {
-          // if this matrix got cached, we need more complex logic
-          // to determine the next arg. Assume users do this manually
-        }
+        // if this matrix got cached, we need more complex logic
+        // to determine the next arg. Assume users do this manually
       }
 
       os << "}";
@@ -1130,8 +1134,8 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
 
 // fill the result string and return the number of added args
 void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
-                   DagInit *ruleDag, size_t actArg, raw_ostream &os,
-                   StringRef func, ArgType ty, const StringMap<Twine> &vars) {
+                   DagInit *ruleDag, raw_ostream &os, StringRef func,
+                   ArgType ty, const StringMap<Twine> &vars) {
   const auto nameMap = pattern.getArgNameMap();
   size_t numArgs = ruleDag->getNumArgs();
 
@@ -1148,7 +1152,7 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
 
   for (size_t pos = fncHasLayout ? 1 : 0; pos < numArgs; pos++) {
     os << "        for (auto item : ";
-    rev_call_arg(forward, ruleDag, pattern, actArg, pos, os, vars);
+    rev_call_arg(forward, ruleDag, pattern, pos, os, vars);
     os << ") " << argName << ".push_back(item);\n";
   }
   os << "        if (byRef) {\n";
@@ -1330,8 +1334,8 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
       emit_runtime_condition(ruleDag, argName, "        ", "Builder2",
                              (ty == ArgType::fp), os);
     os << "      // BlasCall " << dfnc_name << "\n";
-    rev_call_args(forward, argPrefix, pattern, ruleDag, actArg, os, dfnc_name,
-                  ty, vars);
+    rev_call_args(forward, argPrefix, pattern, ruleDag, os, dfnc_name, ty,
+                  vars);
     os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
        << ValueType_helper(pattern, actArg) << "}, Builder2, /* lookup */ "
        << (!forward) << ");\n";
@@ -1381,8 +1385,7 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
     if (!forward && !runtimeChecked)
       emit_runtime_condition(ruleDag, argName, "        ", "Builder2", true,
                              os);
-    rev_call_args(forward, argPrefix, pattern, ruleDag, actArg, os, "", ty,
-                  vars);
+    rev_call_args(forward, argPrefix, pattern, ruleDag, os, "", ty, vars);
 
     os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
        << ValueType_helper(pattern, actArg) << "}, Builder2, /* lookup */ "
@@ -1412,8 +1415,7 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
     if (!forward && !runtimeChecked)
       emit_runtime_condition(ruleDag, argName, "        ", "Builder2", true,
                              os);
-    rev_call_args(forward, argPrefix, pattern, ruleDag, actArg, os, "", ty,
-                  vars);
+    rev_call_args(forward, argPrefix, pattern, ruleDag, os, "", ty, vars);
 
     os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
        << ValueType_helper(pattern, actArg) << "}, Builder2, /* lookup */ "
@@ -1520,16 +1522,16 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
 
     os << "      Value* lim_ar[] = ";
 
-    rev_call_arg(forward, ruleDag, pattern, actArg, 0, os, vars);
+    rev_call_arg(forward, ruleDag, pattern, 0, os, vars);
     os << ";\n";
 
     os << "      Value *lim = lim_ar[0];\n";
-    os << "      if (byRef) lim = Builder2.CreateLoad(intType, lim);\n";
+    os << "      lim = load_if_ref(Builder2, intType, lim, byRef);\n";
 
     os << "      BasicBlock *current = Builder2.GetInsertBlock();\n"
        << "      auto loopBlock = gutils->addReverseBlock(current,"
        << "current->getName() + \"_loop\");\n"
-       << "      auto endBlock = gutils->addReverseBlock(current,"
+       << "      auto endBlock = gutils->addReverseBlock(loopBlock,"
        << "current->getName() + \"_end\", /*fork*/true, /*push*/false);\n";
     os << "      Builder2.CreateCondBr(Builder2.CreateICmpEQ(lim, "
           "ConstantInt::get(lim->getType(), 0)), endBlock, loopBlock);\n";

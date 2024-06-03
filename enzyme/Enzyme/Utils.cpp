@@ -2642,7 +2642,8 @@ std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
-  const char *extractable[] = {"dot", "scal", "axpy", "gemv", "gemm", "spmv"};
+  const char *extractable[] = {"dot",  "scal", "axpy", "gemv",
+                               "gemm", "spmv", "syrk"};
   const char *floatType[] = {"s", "d"}; // c, z
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
   const char *suffixes[] = {"", "_", "64_", "_64_"};
@@ -2943,7 +2944,7 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                           "transpose." + name);
 }
 
-llvm::Value *uplo_to_side(IRBuilder<> &B, llvm::Value *V, bool cublas) {
+llvm::Value *trans_to_side(IRBuilder<> &B, llvm::Value *V, bool cublas) {
   llvm::Type *T = V->getType();
   if (cublas) {
     assert(0 && "cublas unknown");
@@ -2962,10 +2963,10 @@ llvm::Value *uplo_to_side(IRBuilder<> &B, llvm::Value *V, bool cublas) {
   return sel3;
 }
 
-llvm::Value *uplo_to_side(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
-                          bool cublas, llvm::IntegerType *julia_decl,
-                          llvm::IRBuilder<> &entryBuilder,
-                          const llvm::Twine &name) {
+llvm::Value *trans_to_side(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
+                           bool cublas, llvm::IntegerType *julia_decl,
+                           llvm::IRBuilder<> &entryBuilder,
+                           const llvm::Twine &name) {
 
   if (!byRef) {
     // Explicitly support 'N' always, since we use in the rule infra
@@ -2986,10 +2987,10 @@ llvm::Value *uplo_to_side(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
     V = B.CreateLoad(charType, V, "ld." + name);
   }
 
-  V = uplo_to_side(B, V, cublas);
+  V = trans_to_side(B, V, cublas);
 
   return to_blas_callconv(B, V, byRef, cublas, julia_decl, entryBuilder,
-                          "uplo_to_side." + name);
+                          "trans_to_side." + name);
 }
 
 llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
