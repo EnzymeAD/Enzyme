@@ -96,13 +96,16 @@ fn lorenz(x: &state_type, dxdt: &mut state_type, t: f64) {
 }
 
 #[no_mangle]
-pub extern "C" fn rust_dbrusselator_2d_loop(p: *const f64, x: *const state_type, adjoint: *mut state_type, t: f64) -> f64 {
+pub extern "C" fn rust_dbrusselator_2d_loop(p: *const f64, dp: *mut f64, x: *const state_type, dx: *mut state_type, adjoint: *mut state_type, t: f64) -> f64 {
     let x = unsafe { *x };
     let mut adjoint = unsafe { *adjoint };
     let p: [f64;3] = unsafe { *p.cast::<[f64;3]>().as_ref().unwrap() };
-    let mut dp = [0.; 3];
-    let mut dx1 = [0.; N * N];
-    let mut dx2 = [0.; N * N];
+    let mut dp: [f64;3] = unsafe { dp.cast::<[f64;3]>().as_mut().unwrap() };
+
+    let (mut dx1, mut dx2) = dx.split_at_mut(N * N);
+    //let mut dp = [0.; 3];
+    //let mut dx1 = [0.; N * N];
+    //let mut dx2 = [0.; N * N];
     let (mut dadj1, mut dadj2) = adjoint.split_at_mut(N * N);
 
     // https://discord.com/channels/273534239310479360/273541522815713281/1236945105601040446
@@ -116,6 +119,12 @@ pub extern "C" fn rust_dbrusselator_2d_loop(p: *const f64, x: *const state_type,
                          x2, &mut dx2,
                          &p, &mut dp, t);
     dx1[0]
+    //brusselator_2d_loop_b(nullptr, dadjoint_inp.data(),
+    //                      nullptr, dadjoint_inp.data() + N * N,
+    //                      x.data(), dx.data(),
+    //                      x.data() + N * N, dx.data() + N * N,
+    //                      p, dp,
+    //                      t);
 }
 
 

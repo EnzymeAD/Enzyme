@@ -5,9 +5,10 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[dependencies]
+
 [lib]
 crate-type = ["lib"]
-
 
 [profile.release]
 lto = "fat"
@@ -17,5 +18,3 @@ opt-level = 3
 
 [profile.dev]
 lto = "fat"
-
-[dependencies]
