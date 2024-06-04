@@ -776,9 +776,9 @@ void printcall(BlasCall rcall) {
     printf(", uplo=");
     printty(rcall.uplo);
     printf(", transA=");
-    printty(rcall.targ1;
+    printty(rcall.targ1);
     printf(", diag=");
-    printty(rcall.diag;
+    printty(rcall.diag);
     printf(", M=");
     printty(rcall.iarg1);
     printf(", N=");
@@ -805,7 +805,7 @@ void printcall(BlasCall rcall) {
     printf(", uplo=");
     printty(rcall.uplo);
     printf(", trans=");
-    printty(rcall.targ1;
+    printty(rcall.targ1);
     printf(", N=");
     printty(rcall.iarg1);
     printf(", K=");
@@ -1076,7 +1076,7 @@ __attribute__((noinline)) void cblas_dlacpy(char layout, char uplo, int M,
                              ldb, UNUSED_INT,
                    UNUSED_TRANS,
                    UNUSED_TRANS,
-                   UNUSED_TRANS};
+                   UNUSED_TRANS});
 }
 
 __attribute__((noinline)) void dlacpy(char *uplo_p, int *M_p, int *N_p, double *A,
@@ -1348,7 +1348,7 @@ __attribute__((noinline)) void cblas_dtrmv(char layout, char uplo, char trans,
                                             char diag, int N, double* A, int lda,
                                             double* X, int incx) {
   BlasCall call = {ABIType::CBLAS,UNUSED_HANDLE,
-      inDerivative, CallType::TRMV, A, UNUSED_POINTER, UNUSED_POINTER,   UNUSED_DOUBLE, UNUSED_DOUBLE, layout,
+      inDerivative, CallType::TRMV, X, A, UNUSED_POINTER,   UNUSED_DOUBLE, UNUSED_DOUBLE, layout,
       trans,        UNUSED_TRANS,   N, UNUSED_INT, UNUSED_INT, lda,   incx, UNUSED_INT,
                    UNUSED_TRANS,
                    uplo,
@@ -1356,125 +1356,45 @@ __attribute__((noinline)) void cblas_dtrmv(char layout, char uplo, char trans,
   calls.push_back(call);
 }
 
-  case CallType::TRMV:
-    printf("TRMV(abi=");
-    printty(rcall.abi);
-    printf(", handle=");
-    printty(rcall.handle);
-    printf(", layout=");
-    printty(rcall.layout);
-    printf(", uplo=");
-    printty(rcall.uplo);
-    printf(", trans=");
-    printty(rcall.targ1);
-    printf(", diag=");
-    printty(rcall.diag);
-    printf(", N=");
-    printty(rcall.iarg1);
-    printf(", A=");
-    printty(rcall.pin_arg1);
-    printf(", lda=");
-    printty(rcall.iarg4);
-    printf(", X=");
-    printty(rcall.pin_arg2);
-    printf(", incx=");
-    printty(rcall.iarg5);
-    printf(")");
-    return;
-  case CallType::TRMM:
-    printf("TRMM(abi=");
-    printty(rcall.abi);
-    printf(", handle=");
-    printty(rcall.handle);
-    printf(", layout=");
-    printty(rcall.layout);
-    printf(", side=");
-    printty(rcall.side);
-    printf(", uplo=");
-    printty(rcall.uplo);
-    printf(", transA=");
-    printty(rcall.targ1;
-    printf(", diag=");
-    printty(rcall.diag;
-    printf(", M=");
-    printty(rcall.iarg1);
-    printf(", N=");
-    printty(rcall.iarg2);
-    printf(", alpha=");
-    printty(rcall.farg1);
-    printf(", A=");
-    printty(rcall.pin_arg1);
-    printf(", lda=");
-    printty(rcall.iarg4);
-    printf(", B=");
-    printty(rcall.pout_arg1);
-    printf(", ldb=");
-    printty(rcall.iarg5);
-    printf(")");
-    return;
-  case CallType::SYRK:
-    printf("SYRK(abi=");
-    printty(rcall.abi);
-    printf(", handle=");
-    printty(rcall.handle);
-    printf(", layout=");
-    printty(rcall.layout);
-    printf(", uplo=");
-    printty(rcall.uplo);
-    printf(", trans=");
-    printty(rcall.targ1;
-    printf(", N=");
-    printty(rcall.iarg1);
-    printf(", K=");
-    printty(rcall.iarg2);
-    printf(", alpha=");
-    printty(rcall.farg1);
-    printf(", A=");
-    printty(rcall.pin_arg1);
-    printf(", lda=");
-    printty(rcall.iarg4);
-    printf(", beta=");
-    printty(rcall.farg2);
-    printf(", C=");
-    printty(rcall.pout_arg1);
-    printf(", ldc=");
-    printty(rcall.iarg5);
-    printf(")");
-    return;
-  case CallType::SYMM:
-    printf("SYMM(abi=");
-    printty(rcall.abi);
-    printf(", handle=");
-    printty(rcall.handle);
-    printf(", layout=");
-    printty(rcall.layout);
-    printf(", side=");
-    printty(rcall.side);
-    printf(", uplo=");
-    printty(rcall.uplo);
-    printf(", M=");
-    printty(rcall.iarg1);
-    printf(", N=");
-    printty(rcall.iarg2);
-    printf(", alpha=");
-    printty(rcall.farg1);
-    printf(", A=");
-    printty(rcall.pin_arg1);
-    printf(", lda=");
-    printty(rcall.iarg4);
-    printf(", B=");
-    printty(rcall.pin_arg2);
-    printf(", ldb=");
-    printty(rcall.iarg5);
-    printf(", C=");
-    printty(rcall.pout_arg1);
-    printf(", ldc=");
-    printty(rcall.iarg6);
-    printf(")");
-    return;
-
+//     B := alpha*op( A )*B,   or   B := alpha*B*op( A ),
+__attribute__((noinline)) void cblas_dtrmm(char layout, char side, char uplo, char trans,
+                                            char diag, int M, int N, double alpha, double* A, int lda,
+                                            double* B, int ldb) {
+  BlasCall call = {ABIType::CBLAS,UNUSED_HANDLE,
+      inDerivative, CallType::TRMM, B, A, UNUSED_POINTER,   UNUSED_DOUBLE, UNUSED_DOUBLE, layout,
+      trans,        UNUSED_TRANS,   M, N, UNUSED_INT, lda,   ldb, UNUSED_INT,
+                   side,
+                   uplo,
+                   diag};
+  calls.push_back(call);
 }
-
+  
+//     C := alpha*A*A**T + beta*C, OR  C := alpha*A**T*A + beta*C
+__attribute__((noinline)) void cblas_dsyrk(char layout, char uplo, char trans,
+                                           int N, int K, double alpha, double* A, int lda,
+                                           double beta, double* C, int ldc) {
+  BlasCall call = {ABIType::CBLAS,UNUSED_HANDLE,
+      inDerivative, CallType::SYRK, C, A, UNUSED_POINTER,   alpha, beta, layout,
+      trans,        UNUSED_TRANS,   N, K, UNUSED_INT, lda,   ldc, UNUSED_INT,
+                   UNUSED_TRANS,
+                   uplo,
+                   UNUSED_TRANS};
+  calls.push_back(call);
+}
+  
+//     C := alpha*A*B + beta*C,  OR   C := alpha*B*A + beta*C
+__attribute__((noinline)) void cblas_dsymm(char layout, char side, char uplo,
+                                           int M, int N, double alpha, double* A, int lda,
+                                           double* B, int ldb, double beta, double* C, int ldc) {
+  BlasCall call = {ABIType::CBLAS,UNUSED_HANDLE,
+      inDerivative, CallType::SYMM, C, A, B,   alpha, beta, layout,
+      UNUSED_TRANS,        UNUSED_TRANS,   M, N, UNUSED_INT, lda,   ldb, ldc,
+                   side,
+                   uplo,
+                   UNUSED_TRANS};
+  calls.push_back(call);
+}
+ 
 enum class ValueType { Matrix, Vector };
 struct BlasInfo {
   void *ptr;
@@ -1847,6 +1767,132 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
                 trace);
     checkMatrix(B, "B", layout, /*rows=*/M, /*cols=*/N, /*ld=*/ldb, test, rcall,
                 trace);
+    return;
+  }
+  case CallType::TRMV: {
+    // x := A*x,   or   x := A'*x,
+    auto X = pointer_to_index(rcall.pout_arg1, inputs);
+    auto A = pointer_to_index(rcall.pin_arg1, inputs);
+    
+    auto layout = rcall.layout;
+    auto trans_char = rcall.targ1;
+    auto trans = !is_normal(trans_char);
+    
+    auto diag_char = rcall.diag;
+    
+    auto uplo_char = rcall.uplo;
+
+    auto N = rcall.iarg1;
+    
+    auto lda = rcall.iarg4;
+    auto incX = rcall.iarg5;
+
+    // A is an n-by-n matrix
+    checkMatrix(A, "A", layout, /*rows=*/N, /*cols=*/N, /*ld=*/lda, test, rcall,
+                trace);
+
+    checkVector(X, "X", /*len=*/N, /*inc=*/incX, test, rcall, trace);
+
+    assert(diag_char == 'N' || diag_char == 'n' || diag_char == 'U' || diag_char == 'u');
+    assert(uplo_char == 'U' || uplo_char == 'u' || uplo_char == 'L' || uplo_char == 'l');
+    return;
+  }
+  case CallType::TRMM: {
+    // B := alpha*op( A )*B,   or   B := alpha*B*op( A ),
+    auto B = pointer_to_index(rcall.pout_arg1, inputs);
+    auto A = pointer_to_index(rcall.pin_arg1, inputs);
+
+    auto lda = rcall.iarg4;
+    auto ldb = rcall.iarg5;
+    auto layout = rcall.layout;
+    auto M = rcall.iarg1;
+    auto N = rcall.iarg2;
+    auto alpha = rcall.farg1;
+    
+    auto transA_char = rcall.targ1;
+    auto transA = !is_normal(transA_char);
+
+    auto diag_char = rcall.diag;
+    auto uplo_char = rcall.uplo;
+    auto side_char = rcall.side;
+    auto left = side_char == 'L' || side_char == 'l';
+
+    checkMatrix(B, "B", layout, /*rows=*/M,
+                /*cols=*/N, /*ld=*/ldb, test, rcall, trace);
+
+    checkMatrix(A, "A", layout, /*rows=*/left ? M : N,
+                /*cols=*/left ? M : N, /*ld=*/lda, test, rcall, trace);
+    return;
+  }
+  case CallType::SYRK: {
+    // C := alpha*A*A**T + beta*C,  or C := alpha*A**T*A + beta*C
+    auto C = pointer_to_index(rcall.pout_arg1, inputs);
+    auto A = pointer_to_index(rcall.pin_arg1, inputs);
+
+    auto lda = rcall.iarg4;
+    auto ldc = rcall.iarg5;
+    
+    auto alpha = rcall.farg1;
+    auto beta = rcall.farg2;
+    
+    printf("SYRK(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", layout=");
+    printty(rcall.layout);
+    printf(", uplo=");
+    printty(rcall.uplo);
+    printf(")");
+    return;
+
+    auto layout = rcall.layout;
+    auto N = rcall.iarg1;
+    auto K = rcall.iarg2;
+    
+    auto trans_char = rcall.targ1;
+    auto trans = !is_normal(trans_char);
+
+    auto uplo_char = rcall.uplo;
+
+    checkMatrix(C, "C", layout, /*rows=*/N,
+                /*cols=*/N, /*ld=*/ldc, test, rcall, trace);
+
+    checkMatrix(A, "A", layout, /*rows=*/(!trans) ? N : K,
+                /*cols=*/(!trans) ? K : N, /*ld=*/lda, test, rcall, trace);
+    return;
+  }
+  case CallType::SYMM: {
+    // C := alpha*A*B + beta*C,  or C := alpha*B*A + beta*C,
+    auto C = pointer_to_index(rcall.pout_arg1, inputs);
+    auto A = pointer_to_index(rcall.pin_arg1, inputs);
+    auto B = pointer_to_index(rcall.pin_arg2, inputs);
+
+    auto lda = rcall.iarg4;
+    auto ldb = rcall.iarg5;
+    auto ldc = rcall.iarg6;
+    
+
+    auto layout = rcall.layout;
+    auto M = rcall.iarg1;
+    auto N = rcall.iarg2;
+    auto alpha = rcall.farg1;
+    
+    auto transA_char = rcall.targ1;
+    auto transA = !is_normal(transA_char);
+
+    auto uplo_char = rcall.uplo;
+    auto side_char = rcall.side;
+    auto left = side_char == 'L' || side_char == 'l';
+
+    checkMatrix(C, "C", layout, /*rows=*/M,
+                /*cols=*/N, /*ld=*/ldb, test, rcall, trace);
+
+    checkMatrix(B, "B", layout, /*rows=*/M,
+                /*cols=*/N, /*ld=*/ldb, test, rcall, trace);
+
+    checkMatrix(A, "A", layout, /*rows=*/left ? M : N,
+                /*cols=*/left ? M : N, /*ld=*/lda, test, rcall, trace);
     return;
   }
   default:
