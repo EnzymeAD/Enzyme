@@ -111,6 +111,9 @@ bool isArgUsed(Rule *rule, StringRef toFind, const DagInit *toSearch,
 
     return false;
   }
+  if (Def->getName() == "ShadowNoInc" || Def->isSubClassOf("ShadowNoInc")) {
+    return false;
+  }
 
   for (size_t i = 0; i < toSearch->getNumArgs(); i++) {
     if (DagInit *arg = dyn_cast<DagInit>(toSearch->getArg(i))) {

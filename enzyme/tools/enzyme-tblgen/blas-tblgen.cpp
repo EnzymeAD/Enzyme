@@ -809,6 +809,18 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
   if (auto Dag = dyn_cast<DagInit>(arg)) {
     auto Def = cast<DefInit>(Dag->getOperator())->getDef();
 
+    if (Def->getName() == "ShadowNoInc" || Def->isSubClassOf("ShadowNoInc")) {
+      if (Dag->getNumArgs() != 1)
+        PrintFatalError(pattern.getLoc(), "only single op shadow supported");
+      if (!Dag->getArgName(0))
+        PrintFatalError(pattern.getLoc(),
+                        "only shadow of arg name is supported");
+
+      auto name = Dag->getArgName(0)->getAsUnquotedString();
+      os << "{d_" << name;
+      os << "}";
+      return;
+    }
     if (Def->isSubClassOf("MagicInst")) {
       if (Def->getName() == "Rows") {
         os << "({";
@@ -893,7 +905,6 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       os << "}";
       return;
     }
-
     if (Def->getName() == "InactiveArgSpec" ||
         Def->isSubClassOf("InactiveArgSpec")) {
       if (Def->getValueAsBit("asserting")) {
@@ -992,6 +1003,17 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       os << " vals; })";
       return;
     }
+    if (Def->getName() == "First") {
+      os << "({";
+      for (size_t i = 0; i < Dag->getNumArgs(); i++) {
+        os << "SmallVector<Value*, 1> sarg;\n";
+        os << " for (auto tmp : ";
+        rev_call_arg(forward, Dag, pattern, 0, os, vars);
+        os << " ) { sarg.push_back(tmp); break; }\n";
+      }
+      os << " sarg; })";
+      return;
+    }
     if (Def->getName() == "Lookup" || Def->getName() == "LoadLookup") {
       os << "({";
       for (size_t i = 0; i < Dag->getNumArgs(); i++) {
@@ -1000,7 +1022,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
         rev_call_arg(forward, Dag, pattern, i, os, vars);
         os << " ) larg_" << i << ".push_back(tmp);\n";
       }
-      os << " Value *ptr = larg_0[0];\n";
+      os << " Value *ptr = larg_1[0];\n";
 
       os << "    if (ptr->getType()->isIntegerTy()) ptr = "
             "Builder2.CreateIntToPtr(ptr, PointerType::getUnqual(fpType));\n";
@@ -1018,16 +1040,20 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       os << "  }\n";
       os << "#endif\n";
       os << "#endif\n";
+      os << " Value* is_row_maj = Builder2.CreateICmpEQ(larg_0[0], ConstantInt::get(larg_0[0]->getType(), 101));\n";
+      os << " Value *ld_lookup = load_if_ref(Builder2, intType, larg_1[1], byRef);\n";
       os << " Value* offset = Builder2.CreateMul(load_if_ref(Builder2, "
-            "intType, larg_1[0], byRef), load_if_ref(Builder2, intType, "
-            "larg_0[1], byRef));\n";
-      if (Dag->getNumArgs() == 3)
-        os << " offset = Builder2.CreateAdd(offset, load_if_ref(Builder2, "
-              "intType, larg_2[0], byRef));\n";
+            "intType, larg_2[0], byRef), CreateSelect(Builder2, is_row_maj, ld_lookup, ConstantInt::get(intType, 1)));\n";
+      if (Dag->getNumArgs() == 4)
+        os << " offset = Builder2.CreateAdd(offset, Builder2.CreateMul(load_if_ref(Builder2, "
+              "intType, larg_3[0], byRef), CreateSelect(Builder2, is_row_maj, ConstantInt::get(intType, 1), ld_lookup)));\n";
       os << "  ptr = Builder2.CreateGEP(fpType, ptr, offset);\n";
-      if (Def->getName() == "LoadLookup")
+      if (Def->getName() == "LoadLookup") {
         os << "  if (!byRefFloat) ptr = Builder2.CreateLoad(fpType, ptr);\n";
-      os << "  SmallVector<Value*, 1> vals = { ptr };\n";
+        os << "  SmallVector<Value*, 1> vals = { ptr };\n";
+      } else {
+        os << "  SmallVector<Value*, 1> vals = { ptr, larg_1[1] };\n";
+      }
       os << "vals; })";
       return;
     }
@@ -1286,7 +1312,7 @@ void if_rule_condition_inner(const TGPattern &pattern, DagInit *ruleDag,
                              llvm::StringSet<> &seen) {
   auto opName = ruleDag->getOperator()->getAsString();
   auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
-  if (opName == "Shadow" || Def->isSubClassOf("Shadow")) {
+  if (opName == "Shadow" || Def->isSubClassOf("Shadow") || opName == "ShadowNoInc" || Def->isSubClassOf("ShadowNoInc")) {
     if (ruleDag->getNumArgs() != 1)
       PrintFatalError(pattern.getLoc(), "only single op shadow supported");
     if (!ruleDag->getArgName(0))
@@ -1576,7 +1602,7 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
     os << "      phi_" << idx
        << "->addIncoming(ConstantInt::get(lim->getType(), 0), current);\n";
     os << "      auto phi_" << idx
-       << "_inc = Builder2.CreateAdd(lim, "
+       << "_inc = Builder2.CreateAdd(phi_" << idx <<", "
           "ConstantInt::get(lim->getType(), 1), \"\", true, true);\n";
     os << "      auto phi_b_" << idx << " = to_blas_callconv(Builder2, phi_"
        << idx;

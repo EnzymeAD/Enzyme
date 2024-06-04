@@ -54,6 +54,8 @@ class MagicInst : Inst<"blas">;
 def Rows : MagicInst; // given a transpose, normal rows, normal cols get the true rows, aka normal rows if N else normal cols
 def Concat : MagicInst;
 
+def ShadowNoInc : MagicInst;
+
 class Binop<string _s, list<string> _tys> {
   string s = _s;
   list<string> tys = _tys;
@@ -95,7 +97,7 @@ def is_upper : IntMatchers<
 
 def is_diag_int : IntMatchers<
     "charType", "intType",
-    ["'d'", "'D'", "'U'", "'u'"],
+    ["'u'", "'U'", "'N'", "'n'"],
     ["1", "1", "0", "0"]
     >;
 
@@ -105,6 +107,7 @@ def is_left : IntMatchers<
     ["true", "true", "false", "false"]
     >;
 
+def First : MagicInst;
 def Lookup : MagicInst;
 def LoadLookup : MagicInst;
 
@@ -300,9 +303,9 @@ def trmv : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $A, $lda, $x, 
                         (Sub $i, (is_diag_int $diag)),
                         (Add (Sub (Sub $n, (is_diag_int $diag)), $i), ConstantInt<1>)
                     ),
-                    (LoadLookup (Rows $trans, $x, (Shadow $x)), (Sub $i, ConstantInt<1>)),
-                    (Lookup (Rows $trans, (Shadow $x), $x), (ISelect (is_upper $uplo), ConstantInt<0>, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>))),
-                    (Lookup (Shadow $A), (ISelect (is_upper $uplo), ConstantInt<0>, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>)), $i)
+                    (LoadLookup $layout, (Rows $trans, $x, (Shadow $x)), (Sub $i, ConstantInt<1>)),
+                    (Lookup $layout, (Rows $trans, (Shadow $x), $x), (ISelect (is_upper $uplo), ConstantInt<0>, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>))),
+                    (Lookup $layout, (Shadow $A), (ISelect (is_upper $uplo), ConstantInt<0>, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>)), $i)
                   )
                   ),
                   /* x      */  (BlasCall<"trmv"> $layout, $uplo, transpose<"trans">, $diag, $n, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $x))
@@ -371,7 +374,8 @@ def trmm : CallBlasPattern<(Op $layout, $side, $uplo, $transa, $diag, $m, $n, $a
                   [
                     /*alpha*/ (AssertingInactiveArg),
                     /* A      */  (For<"i", 1> (Sub (ISelect (is_left $side), $m, $n), (ISelect (is_upper $uplo), ConstantInt<0>, (is_diag_int $diag))),
-                    (BlasCall<"gemv"> 
+                    (BlasCall<"gemv">
+                    $layout,
                     (side_to_trans $side),
                     (ISelect (is_left $side),
                         (Concat 
@@ -386,19 +390,20 @@ def trmm : CallBlasPattern<(Op $layout, $side, $uplo, $transa, $diag, $m, $n, $a
                         )
                     ),
                     $alpha,
-                    (Lookup (Rows $transa, (Shadow $B), input<"B">),
+                    (Lookup $layout, (Rows $transa, (Shadow $B), (Concat input<"B">, $m)),
                         (ISelect (BAnd (is_left $side), (Not (is_upper $uplo))), (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>), ConstantInt<0>),
                         (ISelect (BAnd (Not (is_left $side)), (Not (is_upper $uplo))), (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>), ConstantInt<0>)),
-                    (Lookup (Rows $transa, input<"B">, (Shadow $B)),
+                    (Lookup $layout, (Rows $transa, (Concat input<"B">, $m), (Shadow $B)),
                         (ISelect (is_left $side), (Sub $i, ConstantInt<1>), ConstantInt<0>),
                         (ISelect (is_left $side), ConstantInt<0>, (Sub $i, ConstantInt<1>))),
                     Constant<"1">,
-                    (Lookup (Shadow $A),
+                    (First (Lookup $layout, (Shadow $A),
                         (ISelect (is_upper $uplo), ConstantInt<0>, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>)),
-                        (Sub $i, ConstantInt<1>))
+                        (Sub $i, ConstantInt<1>))),
+                    ConstantInt<1>
                     )
                     ),
-                    /* B   */ (BlasCall<"trmm"> $layout, $side, transpose<"transa">, $diag, $m, $n, $alpha, $A, (ld $A, $side, $lda, $m, $n), (Shadow $B))
+                    /* B   */ (BlasCall<"trmm"> $layout, $side, $uplo, transpose<"transa">, $diag, $m, $n, $alpha, $A, (ld $A, $side, $lda, $m, $n), (Shadow $B))
                   ]
                   >;
 
@@ -437,7 +442,7 @@ def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda,
                         (Shadow $A)
                     ),
                     (For<"i", 0> $n,
-                        (BlasCall<"axpy"> $k, (BFMul $alpha, (Lookup (Shadow $C), $i, $i)), (Lookup (Concat $A, (ld $A, $trans, $lda, $n, $k)), $i), ConstantInt<1>, (Lookup (Shadow $A), $i), ConstantInt<1>)
+                        (BlasCall<"axpy"> $k, (BFMul $alpha, (Lookup $layout, (Shadow $C), $i, $i)), (Lookup $layout, (Concat $A, (ld $A, $trans, $lda, $n, $k)), $i), ConstantInt<1>, (Lookup $layout, (Shadow $A), $i), ConstantInt<1>)
                     )
                   ),
                   /* beta  */ (AssertingInactiveArg),

@@ -420,7 +420,7 @@ void printty(char v) {
     return;
   }
   if (v == CblasColMajor) {
-    printf("RowMajor (%d)", v);
+    printf("ColMajor (%d)", v);
     return;
   }
   if (v == UNUSED_TRANS) {
@@ -1580,7 +1580,7 @@ __attribute__((noinline)) void cblas_dtrmm(char layout, char side, char uplo,
                    B,
                    A,
                    UNUSED_POINTER,
-                   UNUSED_DOUBLE,
+                   alpha,
                    UNUSED_DOUBLE,
                    layout,
                    trans,
@@ -1590,6 +1590,7 @@ __attribute__((noinline)) void cblas_dtrmm(char layout, char side, char uplo,
                    UNUSED_INT,
                    lda,
                    ldb,
+                   UNUSED_INT,
                    UNUSED_INT,
                    side,
                    uplo,
@@ -1619,6 +1620,7 @@ __attribute__((noinline)) void cblas_dsyrk(char layout, char uplo, char trans,
                    UNUSED_INT,
                    lda,
                    ldc,
+                   UNUSED_INT,
                    UNUSED_INT,
                    UNUSED_TRANS,
                    uplo,
@@ -1650,6 +1652,7 @@ __attribute__((noinline)) void cblas_dsymm(char layout, char side, char uplo,
                    lda,
                    ldb,
                    ldc,
+                   UNUSED_INT,
                    side,
                    uplo,
                    UNUSED_TRANS};
@@ -1668,6 +1671,8 @@ struct BlasInfo {
   int mat_rows;
   int mat_cols;
   int mat_ld;
+  int row_offset;
+  int col_offset;
   BlasInfo(void *v_ptr, int length, int increment) {
     ptr = v_ptr;
     ty = ValueType::Vector;
@@ -1678,7 +1683,7 @@ struct BlasInfo {
     mat_cols = -1;
     mat_ld = -1;
   }
-  BlasInfo(void *v_ptr, char layout, int rows, int cols, int ld) {
+  BlasInfo(void *v_ptr, char layout, int rows, int cols, int ld, int _row_offset=0, int _col_offset=0) {
     ptr = v_ptr;
     ty = ValueType::Matrix;
     vec_length = -1;
@@ -1687,6 +1692,8 @@ struct BlasInfo {
     mat_rows = rows;
     mat_cols = cols;
     mat_ld = ld;
+    row_offset = _row_offset;
+    col_offset = _col_offset;
   }
   BlasInfo() {
     ptr = (void *)(-1);
@@ -1700,6 +1707,8 @@ struct BlasInfo {
   }
 };
 
+constexpr int MIN_SIZE = 20;
+
 BlasInfo pointer_to_index(void *v, BlasInfo inputs[6]) {
   if (v == A || v == dA)
     return inputs[0];
@@ -1710,11 +1719,67 @@ BlasInfo pointer_to_index(void *v, BlasInfo inputs[6]) {
   for (int i = 3; i < 6; i++)
     if (inputs[i].ptr == v)
       return inputs[i];
+
+  for (int i = 3; i < 6; i++) {
+    if (inputs[i].ptr == UNUSED_POINTER)
+        continue;
+    if (v >= inputs[i].ptr && v < &((double*)inputs[i].ptr)[inputs[i].mat_ld * MIN_SIZE + MIN_SIZE]) {
+      auto res = inputs[i];
+      auto off = ((size_t)v - (size_t)inputs[i].ptr) / sizeof(double);
+      auto off1 = off / inputs[i].mat_ld;
+      off %= inputs[i].mat_ld;
+      auto off2 = off;
+      if (inputs[i].mat_layout == CblasRowMajor) {
+        res.row_offset = off1;
+        res.col_offset = off2;
+      } else {
+        res.row_offset = off2;
+        res.col_offset = off1;
+      }
+      if (res.row_offset >= inputs[i].mat_rows) continue;
+      if (res.col_offset >= inputs[i].mat_cols) continue;
+      return res;
+    }
+  }
+
+  void* ptrs[3][2] = {
+    {A, dA},
+    {B, dB},
+    {C, dB}
+  };
+
+  for (int i = 0; i < 3; i++) {
+    for (auto ptr : ptrs[i]) {
+    if (v >= ptr && v < &((double*)ptr)[inputs[i].mat_ld * MIN_SIZE + MIN_SIZE]) {
+      auto res = inputs[i];
+      auto off = ((size_t)v - (size_t)ptr) / sizeof(double);
+      auto off1 = off / inputs[i].mat_ld;
+      off %= inputs[i].mat_ld;
+      auto off2 = off;
+      if (inputs[i].mat_layout == CblasRowMajor) {
+        res.row_offset = off1;
+        res.col_offset = off2;
+      } else {
+        res.row_offset = off2;
+        res.col_offset = off1;
+      }
+      if (res.row_offset >= inputs[i].mat_rows) continue;
+      if (res.col_offset >= inputs[i].mat_cols) continue;
+      return res;
+    }
+    }
+  }
   if (v == UNUSED_POINTER) {
     auto bi = BlasInfo();
     bi.ptr = v;
   }
+  for (int i = 0; i < 6; i++) {
+    printf("BlasInfo[%d] = ", i);
+    printty(inputs[i].ptr);
+    printf("\n");
+  }
   printty(v);
+  printf("\n");
   fflush(0);
   assert(0 && " illegal pointer to invert");
 }
@@ -1732,43 +1797,59 @@ void checkDiag(char diag_char,
   }
 }
 
+
 void checkVector(BlasInfo info, std::string vecname, int length, int increment,
                  std::string test, BlasCall rcall,
                  const vector<BlasCall> &trace) {
-  if (info.ty != ValueType::Vector) {
+  
+  int vlength = info.vec_length;
+  int vinc = info.vec_increment;
+  if (info.ty == ValueType::Matrix && info.mat_rows <= MIN_SIZE && info.mat_cols <= MIN_SIZE) {
+      if (increment == info.mat_ld) {
+      vinc = info.mat_ld;
+      vlength = info.mat_layout != CblasRowMajor ? (info.mat_cols - info.col_offset) : (info.mat_rows - info.row_offset) ;
+      } else {
+      vinc = 1;
+      vlength = info.mat_layout == CblasRowMajor ? (info.mat_cols - info.col_offset) : (info.mat_rows - info.row_offset) ;
+      }
+  } else if (info.ty != ValueType::Vector) {
     printf("Error in test %s, invalid memory\n", test.c_str());
     printTrace(trace);
     printcall(rcall);
     printf(" Input %s is not a vector\n", vecname.c_str());
     exit(1);
   }
-  if (info.vec_length != length) {
+
+  if (vlength != length) {
+    if (vlength > MIN_SIZE || length > MIN_SIZE || length > vlength) {
     printf("Error in test %s, invalid memory\n", test.c_str());
     printTrace(trace);
     printcall(rcall);
     printf(" Input %s (", vecname.c_str());
     printty(info.ptr);
     printf(") length must be ");
-    printty(info.vec_length);
+    printty(vlength);
     printf(" found ");
     printty(length);
     printf("\n");
     exit(1);
+    }
   }
-  if (info.vec_increment != increment) {
+  if (vinc != increment) {
     printf("Error in test %s, invalid memory\n", test.c_str());
     printTrace(trace);
     printcall(rcall);
     printf(" Input %s (", vecname.c_str());
     printty(info.ptr);
     printf(") increment must be ");
-    printty(info.vec_increment);
+    printty(vinc);
     printf(" found ");
     printty(increment);
     printf("\n");
     exit(1);
   }
 }
+
 
 void checkMatrix(BlasInfo info, std::string matname, char layout, int rows,
                  int cols, int ld, std::string test, BlasCall rcall,
@@ -1791,27 +1872,39 @@ void checkMatrix(BlasInfo info, std::string matname, char layout, int rows,
     printf("\n");
     exit(1);
   }
-  if (info.mat_rows != rows) {
+  auto mat_rows = info.mat_rows;
+  auto mat_cols = info.mat_cols;
+  if (info.row_offset != 0) {
+    mat_rows -= info.row_offset;
+  }
+  if (info.col_offset != 0) {
+    mat_cols -= info.col_offset;
+  }
+  if (mat_rows != rows) {
+    if (mat_rows > MIN_SIZE || rows > MIN_SIZE || rows > mat_rows || mat_rows < 0 || rows < 0) {
     printf("Error in test %s, invalid memory\n", test.c_str());
     printTrace(trace);
     printcall(rcall);
     printf(" Input %s rows must be ", matname.c_str());
-    printty(info.mat_rows);
+    printty(mat_rows);
     printf(" found ");
     printty(rows);
     printf("\n");
     exit(1);
+    }
   }
-  if (info.mat_cols != cols) {
+  if (mat_cols != cols) {
+    if (mat_cols > MIN_SIZE || cols > MIN_SIZE || cols > mat_cols || mat_cols < 0 || cols < 0) {
     printf("Error in test %s, invalid memory\n", test.c_str());
     printTrace(trace);
     printcall(rcall);
     printf(" Input %s cols must be ", matname.c_str());
-    printty(info.mat_cols);
+    printty(mat_cols);
     printf(" found ");
     printty(cols);
     printf("\n");
     exit(1);
+    }
   }
   if (info.mat_ld != ld) {
     printf("Error in test %s, invalid memory\n", test.c_str());
@@ -2209,4 +2302,5 @@ void checkTest(std::string name) {
   for (size_t i = 0; i < calls.size(); i++) {
     check_equiv(name, i, foundCalls[i], calls[i]);
   }
+  printf("Test %s passed\n", name.c_str());
 }

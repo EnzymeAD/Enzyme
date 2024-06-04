@@ -56,16 +56,16 @@ void my_dtrmv(char layout, char uplo, char trans,
 
 void my_dtrmm(char layout, char side, char uplo,
                                            char trans, char diag, int M, int N,
-                                           double alpha, double *A, int lda,
-                                           double *B, int ldb) {
+                                           double alpha, double * __restrict__ A, int lda,
+                                           double *__restrict B, int ldb) {
     cblas_dtrmm(layout, side, uplo, trans, diag, M, N, alpha, A, lda, B, ldb);
     inDerivative = true;
 }
 
 void my_dsyrk(char layout, char uplo, char trans,
                                            int N, int K, double alpha,
-                                           double *A, int lda, double beta,
-                                           double *C, int ldc) {
+                                           double *__restrict__ A, int lda, double beta,
+                                           double *__restrict__ C, int ldc) {
 
     cblas_dsyrk(layout, uplo, trans, N, K, alpha, A, lda, beta,
                                            C, ldc);
@@ -530,6 +530,8 @@ static void trmvTests() {
     assert(calls[0].iarg4 == lda);
     assert(calls[0].iarg5 == incB);
     assert(calls[0].iarg6 == UNUSED_INT);
+    assert(calls[0].uplo == uplo);
+    assert(calls[0].diag == diag);
 
     // Check memory of primal on own.
     checkMemoryTrace(inputs, "Primal " + Test, calls);
@@ -603,8 +605,195 @@ static void trmvTests() {
   }
 }
 
+static void trmmTests() {
+  // N means normal matrix, T means transposed
+  for (char layout : { CblasColMajor, CblasRowMajor }) {
+  
+  for (auto side : {'L', 'l', 'R', 'r'})
+  
+  for (auto uplo : {'U', 'u', 'L', 'l'})
+  
+  for (auto diag : {'U', 'u', 'N', 'n'})
+  
+  for (auto transA : {CBLAS_TRANSPOSE::CblasNoTrans, CBLAS_TRANSPOSE::CblasTrans})
+
+  {
+      // todo in fortran blas consider 'N', 'n', 'T', 't'}
+  
+    int N = 7;
+    int M = 13;
+    {
+
+        bool trans = !is_normal(transA);
+        std::string Test = "TRMM active A, B ";
+    BlasInfo inputs[6] = {
+        /*A*/ BlasInfo(A, layout, (side == 'L' || side == 'l') ? M : N, (side == 'L' || side == 'l') ? M : N, lda),
+        /*B*/ BlasInfo(B, layout, M, N, incB),
+		BlasInfo(),
+		BlasInfo(),
+		BlasInfo(),
+		BlasInfo()
+    };
+    init();
+
+    my_dtrmm(layout, side, uplo, (char)transA, diag, M, N, alpha, A, lda, B, incB);
+
+    assert(calls.size() == 1);
+    assert(calls[0].inDerivative == false);
+    assert(calls[0].type == CallType::TRMM);
+    assert(calls[0].pout_arg1 == B);
+    assert(calls[0].pin_arg1 == A);
+    assert(calls[0].pin_arg2 == UNUSED_POINTER);
+    assert(calls[0].farg1 == alpha);
+    assert(calls[0].farg2 == UNUSED_DOUBLE);
+    assert(calls[0].layout == layout);
+    assert(calls[0].targ1 == (char)transA);
+    assert(calls[0].targ2 == UNUSED_TRANS);
+    assert(calls[0].iarg1 == M);
+    assert(calls[0].iarg2 == N);
+    assert(calls[0].iarg3 == UNUSED_INT);
+    assert(calls[0].iarg4 == lda);
+    assert(calls[0].iarg5 == incB);
+    assert(calls[0].iarg6 == UNUSED_INT);
+    assert(calls[0].side == side);
+    assert(calls[0].uplo == uplo);
+    assert(calls[0].diag == diag);
+
+    // Check memory of primal on own.
+    checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+    init();
+    __enzyme_autodiff((void*) my_dtrmm,
+                            enzyme_const, layout,
+                            enzyme_const, side,
+                            enzyme_const, uplo,
+                            enzyme_const, transA,
+                            enzyme_const, diag,
+                            enzyme_const, M,
+                            enzyme_const, N,
+                            enzyme_const, alpha,
+                            enzyme_dup, A, dA,
+                            enzyme_const, lda,
+                            enzyme_dup, B, dB,
+                            enzyme_const, incB);
+        foundCalls = calls;
+        init();
+
+
+        double* cacheB = (double*)foundCalls[0].pout_arg1;
+			
+		cblas_dlacpy(layout, '\0', M, N,
+                B,
+                incB, cacheB, M);
+		inputs[4] = BlasInfo(cacheB, layout, M, N, M);
+        my_dtrmm(layout, side, uplo, (char)transA, diag, M, N, alpha, A, lda, B, incB);
+
+        assert(foundCalls.size() >= 2);
+        assert(foundCalls[0].type == CallType::LACPY);
+        inDerivative = true;
+
+        auto d = (diag == 'n' || diag == 'N') ? 0 : 1;
+
+    #define B0(r,c) cacheB[(r-1)*(layout == CblasRowMajor ? M : 1) + (c-1)*(layout == CblasRowMajor ? 1 : M) ]
+    #define Ba(r,c) dB[(r-1)*(layout == CblasRowMajor ? incB : 1)  + (c-1)*(layout == CblasRowMajor ? 1 : incB) ]
+    #define Aa(r,c) dA[(r-1)*(layout == CblasRowMajor ? lda : 1)  + (c-1)*(layout == CblasRowMajor ? 1 : lda) ]
+
+    auto ldb = incB;
+
+    char toTrans;
+    if (side == 'l')
+        toTrans = 'n';
+    else if (side == 'L')
+        toTrans = 'N';
+    else if (side == 'r')
+        toTrans = 't';
+    else if (uplo == 'R')
+        toTrans = 'T';
+
+    printf("upper= %c diag=%c d=%d\n", uplo, diag, d);
+    if (side == 'l' || side == 'L') {
+      if (is_normal(transA)) {
+        // BLAS operation
+        // B = alpha*A*B0
+        // RMD operation
+        // Aa += alpha*Ba*B0'
+        if(uplo == 'u' || uplo == 'U') {
+          // A is upper triangular
+          for (int i=1; i<=M; i++)
+            cblas_dgemv(layout, toTrans,i-d,N, alpha,dB,incB,&B0(i, 1),M,1.0,&Aa(1, i),1);
+        } else {
+          // A is lower triangular
+          for (int i=1; i<=M-d; i++)
+            cblas_dgemv(layout, toTrans,M-i+1-d,N,alpha,&Ba(i+d,1),ldb,&B0(i,1),M,1.0, &Aa(i+d,i),1);
+        }
+      } else {
+        // BLAS operation
+        // B = alpha*A'*B0
+        // RMD operation
+        // Aa += alpha*B*Ba'
+        if(uplo == 'u' || uplo == 'U') {
+          // A is upper triangular
+          for (int i=1; i<=M; i++)
+            cblas_dgemv(layout, toTrans,i-d,N, alpha,&B0(1,1),M,&Ba(i,1),ldb,1.0,&Aa(1,i),1);
+        } else {
+          // A is lower triangular
+          for (int i=1; i<=M-d; i++)
+            cblas_dgemv(layout, toTrans,M-i+1-d,N,alpha,&B0(i+d,1),M,&Ba(i,1),ldb,1.0, &Aa(i+d,i),1);
+        }
+      }
+    } else {
+      if (is_normal(transA)) {
+        // BLAS operation
+        // B = alpha*B0*A
+        // RMD operation
+        // Aa += alpha*B0'*Ba
+        if(uplo == 'u' || uplo == 'U') {
+          // A is upper triangular
+          for (int i=1; i<=N; i++)
+            cblas_dgemv(layout, toTrans,M,i-d,alpha,&B0(1,1),M,&Ba(1,i),1, 1.0,&Aa(1,i),1);
+        } else {
+          // A is lower triangular
+          for (int i=1; i<=N-d; i++)
+            cblas_dgemv(layout, toTrans,M,N-i+1-d,alpha,&B0(1,i+d),M,&Ba(1,i),1, 1.0, &
+                Aa(i+d,i),1);
+        }
+      } else {
+        // BLAS operation
+        // B = alpha*B0*A'
+        // RMD operation
+        // Aa += alpha*Ba'*B0
+        if(uplo == 'u' || uplo == 'U') {
+          // A is upper triangular
+          for (int i=1; i<=N; i++)
+            cblas_dgemv(layout, toTrans,M,i-d,alpha,&Ba(1,1),ldb,&B0(1,i),1, 1.0,&Aa(1,i),1);
+        } else {
+          // A is lower triangular
+          for (int i=1; i<=N-d; i++)
+            cblas_dgemv(layout, toTrans,M,N-i+1-d,alpha,&Ba(1,i+d),ldb,&B0(1,i),1, 1.0, &Aa(i+d,i),1);
+        }
+      }
+    }
+
+        cblas_dtrmm(layout, side, uplo, (char)transpose(transA), diag, M, N, alpha, A, lda, dB, incB);
+
+		checkTest(Test);
+    
+        // Check memory of primal of expected derivative
+        checkMemoryTrace(inputs, "Expected " + Test, calls);
+        
+        // Check memory of primal of our derivative (if equal above, it
+        // should be the same).
+        checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+        
+    }
+
+
+  }
+  }
+}
 int main() {
    
+    /*
   dotTests();
 
   gemvTests();
@@ -612,4 +801,7 @@ int main() {
   gemmTests();
 
   trmvTests();
+  */
+  
+  trmmTests();
 }
