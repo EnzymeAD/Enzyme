@@ -1115,6 +1115,7 @@ __attribute__((noinline)) void cblas_dger(char layout, int M, int N,
                              UNUSED_TRANS});
 }
 
+bool REALCOPY = false;
 __attribute__((noinline)) void cblas_dcopy(int N, double *X, int incX,
                                            double *Y, int incY) {
 
@@ -1139,6 +1140,11 @@ __attribute__((noinline)) void cblas_dcopy(int N, double *X, int incX,
                              UNUSED_TRANS,
                              UNUSED_TRANS,
                              UNUSED_TRANS});
+  if (REALCOPY) {
+      for (int i=0; i<N; i++) {
+        Y[i*incY] = X[i*incX];
+      }
+    }
 }
 
 __attribute__((noinline)) void cblas_dlacpy(char layout, char uplo, int M,
@@ -1667,13 +1673,14 @@ struct BlasInfo {
   ValueType ty;
   int vec_length;
   int vec_increment;
+  int vec_offset;
   char mat_layout;
   int mat_rows;
   int mat_cols;
   int mat_ld;
   int row_offset;
   int col_offset;
-  BlasInfo(void *v_ptr, int length, int increment) {
+  BlasInfo(void *v_ptr, int length, int increment, int _vec_offset = 0) {
     ptr = v_ptr;
     ty = ValueType::Vector;
     vec_length = length;
@@ -1682,6 +1689,9 @@ struct BlasInfo {
     mat_rows = -1;
     mat_cols = -1;
     mat_ld = -1;
+    vec_offset = _vec_offset;
+    row_offset = -1;
+    col_offset = -1;
   }
   BlasInfo(void *v_ptr, char layout, int rows, int cols, int ld, int _row_offset=0, int _col_offset=0) {
     ptr = v_ptr;
@@ -1692,6 +1702,7 @@ struct BlasInfo {
     mat_rows = rows;
     mat_cols = cols;
     mat_ld = ld;
+    vec_offset = -1;
     row_offset = _row_offset;
     col_offset = _col_offset;
   }
@@ -1704,6 +1715,9 @@ struct BlasInfo {
     mat_rows = -1;
     mat_cols = -1;
     mat_ld = -1;
+    vec_offset = -1;
+    row_offset = -1;
+    col_offset = -1;
   }
 };
 
@@ -1723,7 +1737,7 @@ BlasInfo pointer_to_index(void *v, BlasInfo inputs[6]) {
   for (int i = 3; i < 6; i++) {
     if (inputs[i].ptr == UNUSED_POINTER)
         continue;
-    if (v >= inputs[i].ptr && v < &((double*)inputs[i].ptr)[inputs[i].mat_ld * MIN_SIZE + MIN_SIZE]) {
+    if (inputs[i].ty == ValueType::Matrix && v >= inputs[i].ptr && v < &((double*)inputs[i].ptr)[inputs[i].mat_ld * MIN_SIZE + MIN_SIZE]) {
       auto res = inputs[i];
       auto off = ((size_t)v - (size_t)inputs[i].ptr) / sizeof(double);
       auto off1 = off / inputs[i].mat_ld;
@@ -1740,6 +1754,15 @@ BlasInfo pointer_to_index(void *v, BlasInfo inputs[6]) {
       if (res.col_offset >= inputs[i].mat_cols) continue;
       return res;
     }
+    if (inputs[i].ty == ValueType::Vector && v >= inputs[i].ptr && v < &((double*)inputs[i].ptr)[inputs[i].vec_increment * MIN_SIZE]) {
+      auto res = inputs[i];
+      auto off = ((size_t)v - (size_t)inputs[i].ptr) / sizeof(double);
+      off /= inputs[i].vec_increment;
+      off %= inputs[i].mat_ld;
+      res.vec_offset = off;
+      if (res.vec_offset >= inputs[i].vec_length) continue;
+      return res;
+    }
   }
 
   void* ptrs[3][2] = {
@@ -1750,7 +1773,7 @@ BlasInfo pointer_to_index(void *v, BlasInfo inputs[6]) {
 
   for (int i = 0; i < 3; i++) {
     for (auto ptr : ptrs[i]) {
-    if (v >= ptr && v < &((double*)ptr)[inputs[i].mat_ld * MIN_SIZE + MIN_SIZE]) {
+    if (inputs[i].ty == ValueType::Matrix && v >= ptr && v < &((double*)ptr)[inputs[i].mat_ld * MIN_SIZE + MIN_SIZE]) {
       auto res = inputs[i];
       auto off = ((size_t)v - (size_t)ptr) / sizeof(double);
       auto off1 = off / inputs[i].mat_ld;
@@ -1765,6 +1788,15 @@ BlasInfo pointer_to_index(void *v, BlasInfo inputs[6]) {
       }
       if (res.row_offset >= inputs[i].mat_rows) continue;
       if (res.col_offset >= inputs[i].mat_cols) continue;
+      return res;
+    }
+    if (inputs[i].ty == ValueType::Vector && v >= ptr && v < &((double*)ptr)[inputs[i].vec_increment * MIN_SIZE]) {
+      auto res = inputs[i];
+      auto off = ((size_t)v - (size_t)ptr) / sizeof(double);
+      off /= inputs[i].vec_increment;
+      off %= inputs[i].mat_ld;
+      res.vec_offset = off;
+      if (res.vec_offset >= inputs[i].vec_length) continue;
       return res;
     }
     }
@@ -1802,7 +1834,7 @@ void checkVector(BlasInfo info, std::string vecname, int length, int increment,
                  std::string test, BlasCall rcall,
                  const vector<BlasCall> &trace) {
   
-  int vlength = info.vec_length;
+  int vlength = info.vec_length - info.vec_offset;
   int vinc = info.vec_increment;
   if (info.ty == ValueType::Matrix && info.mat_rows <= MIN_SIZE && info.mat_cols <= MIN_SIZE) {
       if (increment == info.mat_ld) {
@@ -1819,6 +1851,7 @@ void checkVector(BlasInfo info, std::string vecname, int length, int increment,
     printf(" Input %s is not a vector\n", vecname.c_str());
     exit(1);
   }
+  
 
   if (vlength != length) {
     if (vlength > MIN_SIZE || length > MIN_SIZE || length > vlength) {
@@ -1828,9 +1861,9 @@ void checkVector(BlasInfo info, std::string vecname, int length, int increment,
     printf(" Input %s (", vecname.c_str());
     printty(info.ptr);
     printf(") length must be ");
-    printty(vlength);
-    printf(" found ");
     printty(length);
+    printf(" found ");
+    printty(vlength);
     printf("\n");
     exit(1);
     }

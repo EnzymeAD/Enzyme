@@ -48,8 +48,8 @@ void ow_dgemm(char layout, char transA, char transB, int M, int N, int K, double
 }
 
 void my_dtrmv(char layout, char uplo, char trans,
-               char diag, int N, double *A, int lda,
-               double *X, int incx) {
+               char diag, int N, double * __restrict__ A, int lda,
+               double *__restrict__ X, int incx) {
     cblas_dtrmv(layout, uplo, trans, diag, N, A, lda, X, incx);
     inDerivative = true;
 }
@@ -484,8 +484,13 @@ static void gemmTests() {
 }
 
 static void trmvTests() {
+  REALCOPY = true;
   // N means normal matrix, T means transposed
-  for (char layout : { CblasRowMajor, CblasColMajor }) {
+  int N = 7;
+  double* B = (double*)malloc(sizeof(double*)*incB*N);
+  double* dB = (double*)malloc(sizeof(double*)*incB*N);
+  // TODO row major
+  for (char layout : { CblasColMajor, /*CblasRowMajor */}) {
   
   for (auto uplo : {'U', 'u', 'L', 'l'})
   
@@ -496,21 +501,28 @@ static void trmvTests() {
   {
       // todo in fortran blas consider 'N', 'n', 'T', 't'}
   
-    int N = 7;
     {
 
         bool trans = !is_normal(transA);
         std::string Test = "TRMV active A, C ";
     BlasInfo inputs[6] = {
         /*A*/ BlasInfo(A, layout, N, N, lda),
-        /*B*/ BlasInfo(B, N, incB),
+        /*B*/ /*BlasInfo(B, N, incB),*/BlasInfo(),
 		BlasInfo(),
 		BlasInfo(),
-		BlasInfo(),
-		BlasInfo()
+        BlasInfo(B, N, incB),
+        BlasInfo(dB, N, incB)
     };
     init();
 
+  for (int i=0; i<N*incB; i++) {
+        B[i] = i *1e-4;
+        dB[i] = -i *1e-4;
+    }
+  for (size_t i=0; i<N; i++) {
+    B[incB*i] = 7 + i;
+    dB[incB*i] = 300 + i;
+  }
     my_dtrmv(layout, uplo, (char)transA, diag, N, A, lda, B, incB);
 
     assert(calls.size() == 1);
@@ -537,6 +549,14 @@ static void trmvTests() {
     checkMemoryTrace(inputs, "Primal " + Test, calls);
 
     init();
+  for (int i=0; i<N*incB; i++) {
+        B[i] = i *1e-4;
+        dB[i] = -i *1e-4;
+    }
+  for (size_t i=0; i<N; i++) {
+    B[incB*i] = 7 + i;
+    dB[incB*i] = 300 + i;
+  }
     __enzyme_autodiff((void*) my_dtrmv,
                             enzyme_const, layout,
                             enzyme_const, uplo,
@@ -550,26 +570,39 @@ static void trmvTests() {
         foundCalls = calls;
         init();
 
-        my_dtrmv(layout, uplo, (char)transA, diag, N, A, lda, B, incB);
-
+  for (int i=0; i<N*incB; i++) {
+        B[i] = i *1e-4;
+        dB[i] = -i *1e-4;
+    }
+  for (size_t i=0; i<N; i++) {
+    B[incB*i] = 7 + i;
+    dB[incB*i] = 300 + i;
+  }
         assert(foundCalls.size() >= 2);
         assert(foundCalls[0].type == CallType::COPY);
+        double* cacheB = (double*)foundCalls[0].pout_arg1;
+			
+        cblas_dcopy(N, B, incB, cacheB, 1);
+		inputs[3] = BlasInfo(cacheB, N, 1);
+        auto B0 = cacheB;
+
+        my_dtrmv(layout, uplo, (char)transA, diag, N, A, lda, B, incB);
+
         inDerivative = true;
 
         auto d = (diag == 'n' || diag == 'N') ? 0 : 1;
 
-        double* B0 = (double*)foundCalls[0].pout_arg1;
-			
-        cblas_dcopy(N, B, incB, B0, 1);
+        #define Aa(r,c) dA[(r-1)*(layout == CblasRowMajor ? lda : 1)  + (c-1)*(layout == CblasRowMajor ? 1 : lda) ]
 
         if (is_normal(transA)) {
           if (uplo == 'u' || uplo == 'U') {
-            for (int i=1; i<=N; i++)
-              cblas_daxpy(i-d, B0[(i-1)*incB], dB, incB, &dA[0*N+(i-1)], 1);
+            for (int i=1; i<=N; i++) {
+              cblas_daxpy(i-d, B0[i-1], dB, incB, &Aa(1, i), 1);
+            }
           } else {
             // A is lower triangular
             for (int i=1; i<=N-d; i++)
-              cblas_daxpy(N-i+1-d, B0[(i-1)*incB], &dB[(i+d-1)*incB], incB, &dA[(i+d-1)*N+(i-1)], 1);
+              cblas_daxpy(N-i+1-d, B0[i-1], &dB[(i+d-1)*incB], incB, &Aa(i+d,i), 1);
           }
         } else {
           // BLAS operation
@@ -579,15 +612,15 @@ static void trmvTests() {
           if( uplo == 'u' || uplo == 'U') {
             // A is upper triangular
             for (int i=1; i<=N; i++)
-              cblas_daxpy(i-d, dB[(i-1)*incB], B0, 1, &dA[0*N + (i-1)], 1);
+              cblas_daxpy(i-d, dB[(i-1)*incB], B0, 1, &Aa(1, i), 1);
           } else {
             // A is lower triangular
             for (int i=1; i<=N-d; i++)
-              cblas_daxpy(N-i+1-d, dB[(i-1)*incB], &B0[(i+d-1)*incB], 1, &dA[(i+d-1)*N+(i-1)], 1);
+              cblas_daxpy(N-i+1-d, dB[(i-1)*incB], &B0[i+d-1], 1, &Aa(i+d,i), 1);
           }
         }
 
-        cblas_dtrmv(layout, uplo, (char)transpose(transA), diag, N, A, lda, B, incB);
+        cblas_dtrmv(layout, uplo, (char)transpose(transA), diag, N, A, lda, dB, incB);
 
 		checkTest(Test);
     
@@ -603,6 +636,7 @@ static void trmvTests() {
 
   }
   }
+  REALCOPY = false;
 }
 
 static void trmmTests() {
@@ -791,9 +825,8 @@ static void trmmTests() {
   }
   }
 }
-int main() {
-   
-    /*
+
+int main() { 
   dotTests();
 
   gemvTests();
@@ -801,7 +834,6 @@ int main() {
   gemmTests();
 
   trmvTests();
-  */
   
   trmmTests();
 }

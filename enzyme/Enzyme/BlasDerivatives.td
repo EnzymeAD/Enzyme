@@ -299,14 +299,14 @@ def trmv : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $A, $lda, $x, 
                   [
                   /* A      */  (For<"i", 1> (ISelect (is_upper $uplo), $n, (Sub $n, (is_diag_int $diag))),
                     (BlasCall<"axpy"> 
-                    $layout,
                     (ISelect (is_upper $uplo), 
                         (Sub $i, (is_diag_int $diag)),
                         (Add (Sub (Sub $n, (is_diag_int $diag)), $i), ConstantInt<1>)
                     ),
-                    (LoadLookup $layout, (Rows $trans, $x, (Shadow $x)), (Sub $i, ConstantInt<1>)),
-                    (Lookup $layout, (Rows $trans, (Shadow $x), $x), (ISelect (is_upper $uplo), ConstantInt<0>, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>))),
-                    (Lookup $layout, (Shadow $A), (ISelect (is_upper $uplo), ConstantInt<0>, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>)), $i)
+                    (LoadLookup $layout, (Rows $trans, input<"x">, (Shadow $x)), (Sub $i, ConstantInt<1>)),
+                    (Lookup $layout, (Rows $trans, (Shadow $x), input<"x">), (ISelect (is_upper $uplo), ConstantInt<0>, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>))),
+                    (First (Lookup $layout, (Shadow $A), (ISelect (is_upper $uplo), ConstantInt<0>, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>)), (Sub $i, ConstantInt<1>))),
+                    ConstantInt<1>
                   )
                   ),
                   /* x      */  (BlasCall<"trmv"> $layout, $uplo, transpose<"trans">, $diag, $n, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $x))

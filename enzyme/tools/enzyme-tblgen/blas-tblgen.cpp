@@ -1054,13 +1054,17 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       os << "  }\n";
       os << "#endif\n";
       os << "#endif\n";
-      os << " Value* is_row_maj = Builder2.CreateICmpEQ(larg_0[0], ConstantInt::get(larg_0[0]->getType(), 101));\n";
       os << " Value *ld_lookup = load_if_ref(Builder2, intType, larg_1[1], byRef);\n";
-      os << " Value* offset = Builder2.CreateMul(load_if_ref(Builder2, "
+      if (Dag->getNumArgs() == 4) {
+        os << " Value* is_row_maj = Builder2.CreateICmpEQ(larg_0[0], ConstantInt::get(larg_0[0]->getType(), 101));\n";
+        os << " Value* offset = Builder2.CreateMul(load_if_ref(Builder2, "
             "intType, larg_2[0], byRef), CreateSelect(Builder2, is_row_maj, ld_lookup, ConstantInt::get(intType, 1)));\n";
-      if (Dag->getNumArgs() == 4)
         os << " offset = Builder2.CreateAdd(offset, Builder2.CreateMul(load_if_ref(Builder2, "
               "intType, larg_3[0], byRef), CreateSelect(Builder2, is_row_maj, ConstantInt::get(intType, 1), ld_lookup)));\n";
+      } else {
+        os << " Value* offset = Builder2.CreateMul(load_if_ref(Builder2, "
+            "intType, larg_2[0], byRef), ld_lookup);\n";
+      }
       os << "  ptr = Builder2.CreateGEP(fpType, ptr, offset);\n";
       if (Def->getName() == "LoadLookup") {
         os << "  if (!byRefFloat) ptr = Builder2.CreateLoad(fpType, ptr);\n";
