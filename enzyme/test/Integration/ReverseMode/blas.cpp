@@ -543,18 +543,22 @@ static void trmvTests() {
                             enzyme_const, N,
                             enzyme_dup, A, dA,
                             enzyme_const, lda,
-                            enzyme_const, B,
+                            enzyme_dup, B, dB,
                             enzyme_const, incB);
         foundCalls = calls;
         init();
 
         my_dtrmv(layout, uplo, (char)transA, diag, N, A, lda, B, incB);
 
+        assert(foundCalls.size() >= 2);
+        assert(foundCalls[0].type == CallType::COPY);
         inDerivative = true;
 
         auto d = (diag == 'n' || diag == 'N') ? 0 : 1;
 
-        double* B0 =(double*)0xdeadbeef;
+        double* B0 = (double*)foundCalls[0].pout_arg1;
+			
+        cblas_dcopy(N, B, incB, B0, 1);
 
         if (is_normal(transA)) {
           if (uplo == 'u' || uplo == 'U') {
@@ -573,11 +577,11 @@ static void trmvTests() {
           if( uplo == 'u' || uplo == 'U') {
             // A is upper triangular
             for (int i=1; i<=N; i++)
-              cblas_daxpy(i-d, dB[(i-1)*incB], B0, incB, &dA[0*N + (i-1)], 1);
+              cblas_daxpy(i-d, dB[(i-1)*incB], B0, 1, &dA[0*N + (i-1)], 1);
           } else {
             // A is lower triangular
             for (int i=1; i<=N-d; i++)
-              cblas_daxpy(N-i+1-d, dB[(i-1)*incB], &B0[(i+d-1)*incB], incB, &dA[(i+d-1)*N+(i-1)], 1);
+              cblas_daxpy(N-i+1-d, dB[(i-1)*incB], &B0[(i+d-1)*incB], 1, &dA[(i+d-1)*N+(i-1)], 1);
           }
         }
 

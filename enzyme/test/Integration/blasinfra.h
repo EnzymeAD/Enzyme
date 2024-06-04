@@ -1561,6 +1561,7 @@ __attribute__((noinline)) void cblas_dtrmv(char layout, char uplo, char trans,
                    lda,
                    incx,
                    UNUSED_INT,
+                   UNUSED_INT,
                    UNUSED_TRANS,
                    uplo,
                    diag};
