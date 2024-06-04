@@ -2958,8 +2958,6 @@ llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
 
 SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
                                            ArrayRef<llvm::Value *> transA,
-                                           ArrayRef<llvm::Value *> row,
-                                           ArrayRef<llvm::Value *> col,
                                            bool byRef, bool cublas) {
   assert(transA.size() == 1);
   auto trans = transA[0];
@@ -2983,10 +2981,18 @@ SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
     // TODO: verify
     cond = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 0));
   }
+  return {cond};
+}
+SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
+                                           ArrayRef<llvm::Value *> transA,
+                                           ArrayRef<llvm::Value *> row,
+                                           ArrayRef<llvm::Value *> col,
+                                           bool byRef, bool cublas) { 
+  auto conds = get_blas_row(B, transA, byRef, cublas);
   assert(row.size() == col.size());
   SmallVector<Value *, 1> toreturn;
   for (size_t i = 0; i < row.size(); i++) {
-    toreturn.push_back(B.CreateSelect(cond, row[i], col[i]));
+    toreturn.push_back(B.CreateSelect(conds[0], row[i], col[i]));
   }
   return toreturn;
 }

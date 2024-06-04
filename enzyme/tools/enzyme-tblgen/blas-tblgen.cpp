@@ -822,7 +822,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       return;
     }
     if (Def->isSubClassOf("MagicInst")) {
-      if (Def->getName() == "Rows") {
+      if (Def->getName() == "Rows" || Def->isSubClassOf("Rows")) {
         os << "({";
         for (size_t i = Dag->getNumArgs() - 1;; i--) {
           os << "auto brow_" << i << " = ";
@@ -831,12 +831,17 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
           if (i == 0)
             break;
         }
+        if (Dag->getNumArgs() == 1)
+            os << "SmallVector<Value*, 1> vals = {to_blas_callconv(Builder2, ";
         os << "get_blas_row(Builder2, ";
         for (size_t i = 0; i < Dag->getNumArgs(); i++) {
           os << "brow_" << i;
           os << ", ";
         }
-        os << "byRef, cublas);})";
+        os << "byRef, cublas)";
+        if (Dag->getNumArgs() == 1)
+            os << "[0], byRef, cublas, nullptr, allocationBuilder, \"\")}; vals";
+        os << ";})";
         return;
       }
       if (Def->getName() == "Concat") {
@@ -957,6 +962,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       return;
     }
     if (Def->isSubClassOf("Binop")) {
+      auto op = Def->getValueAsString("s");
       os << "({";
       for (size_t i = 0; i < Dag->getNumArgs(); i++) {
         os << "SmallVector<Value*, 1> marg_" << i << ";\n";
@@ -966,8 +972,8 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       }
       os << "SmallVector<Value*, 1> vals;\n";
       os << "for(size_t i=0; i<marg_" << (Dag->getNumArgs() - 1)
-         << ".size(); i++) vals.push_back(to_blas_callconv(Builder2, ";
-      auto op = Def->getValueAsString("s");
+         << ".size(); i++) vals.push_back(";
+      if (op != "Select") os << "to_blas_callconv(Builder2, ";
       if (op == "Select")
         os << " CreateSelect(Builder2, ";
       else
@@ -977,12 +983,20 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       for (size_t i = 0; i < Dag->getNumArgs(); i++) {
         if (i != 0)
           os << ", ";
+        if (op != "Select" || i == 0)
         os << "load_if_ref(Builder2, " << tys[i] << ", marg_" << i << "[marg_"
            << i << ".size() == 1 ? 0 : i], byRef)";
+        else
+        os << "marg_" << i << "[marg_"
+           << i << ".size() == 1 ? 0 : i]";
       }
+      if (op != "Select")
       os << "), byRef, cublas, nullptr, "
             "allocationBuilder, \""
-         << Def->getValueAsString("s") << "\" ));\n vals; })";
+         << Def->getValueAsString("s") << "\" )";
+      else
+          os << ")";
+      os << ");\n vals; })";
       return;
     }
     if (Def->getName() == "FirstUse" || Def->isSubClassOf("FirstUse")) {
@@ -1169,6 +1183,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
     case ArgType::side:
     case ArgType::vincInc:
     case ArgType::vincData:
+    case ArgType::mldLD:
     case ArgType::mldData: {
       os << "{";
       os << "arg_" << name;

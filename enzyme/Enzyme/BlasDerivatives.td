@@ -60,6 +60,7 @@ class Binop<string _s, list<string> _tys> {
   string s = _s;
   list<string> tys = _tys;
 }
+def BXor : Binop<"Xor", ["intType", "intType"]>;
 def BAnd : Binop<"And", ["intType", "intType"]>;
 def Not : Binop<"Not", ["intType", "intType"]>;
 def Sub : Binop<"Sub", ["intType", "intType"]>;
@@ -85,7 +86,7 @@ def trans_to_side : IntMatchers<
 
 def side_to_trans : IntMatchers<
     "charType", "charType",
-    ["'l'", "'L'", "'U'", "'u'"],
+    ["'l'", "'L'", "'R'", "'r'"],
     ["'n'", "'N'", "'T'", "'t'"]
     >;
 
@@ -390,12 +391,13 @@ def trmm : CallBlasPattern<(Op $layout, $side, $uplo, $transa, $diag, $m, $n, $a
                         )
                     ),
                     $alpha,
-                    (Lookup $layout, (Rows $transa, (Shadow $B), (Concat input<"B">, $m)),
+                    (Lookup $layout, (ISelect (BXor (is_left $side), (Not (Rows $transa))), (Shadow $B), (Concat input<"B">, $m)),
                         (ISelect (BAnd (is_left $side), (Not (is_upper $uplo))), (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>), ConstantInt<0>),
                         (ISelect (BAnd (Not (is_left $side)), (Not (is_upper $uplo))), (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>), ConstantInt<0>)),
-                    (Lookup $layout, (Rows $transa, (Concat input<"B">, $m), (Shadow $B)),
+                    (First (Lookup $layout, (ISelect (BXor (is_left $side), (Not (Rows $transa))), (Concat input<"B">, $m), (Shadow $B)),
                         (ISelect (is_left $side), (Sub $i, ConstantInt<1>), ConstantInt<0>),
-                        (ISelect (is_left $side), ConstantInt<0>, (Sub $i, ConstantInt<1>))),
+                        (ISelect (is_left $side), ConstantInt<0>, (Sub $i, ConstantInt<1>)))),
+                    (ISelect (is_left $side), (ISelect (BXor (is_left $side), (Not (Rows $transa))), $m, $ldb), ConstantInt<1>),
                     Constant<"1">,
                     (First (Lookup $layout, (Shadow $A),
                         (ISelect (is_upper $uplo), ConstantInt<0>, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>)),
