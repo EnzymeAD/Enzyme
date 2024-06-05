@@ -93,7 +93,7 @@ bool is_normal(char c) {
   case (char)CBLAS_TRANSPOSE::CblasTrans:
     return false;
   default:
-    printf("Illegal isnormal of '%c'\n", c);
+    printf("Illegal isnormal of '%c' %d\n", c, c);
     exit(1);
   }
 }
@@ -912,6 +912,9 @@ void check_equiv(std::string scope, int i, BlasCall expected, BlasCall real) {
   MAKEASSERT(iarg5);
   MAKEASSERT(iarg6);
   MAKEASSERT(iarg7);
+  MAKEASSERT(side);
+  MAKEASSERT(uplo);
+  MAKEASSERT(diag);
 }
 
 vector<BlasCall> calls;
@@ -1971,7 +1974,8 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     auto lda = rcall.iarg4;
 
     // = 'G': A is a full matrix.
-    assert(type == 'G');
+    assert(type == 'G' || type == 'L' || type == 'l' || type == 'U' ||
+           type == 'u');
 
     // A is an m-by-n matrix
     checkMatrix(A, "A", layout, /*rows=*/M, /*cols=*/N, /*ld=*/lda, test, rcall,
@@ -2238,17 +2242,6 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     auto alpha = rcall.farg1;
     auto beta = rcall.farg2;
 
-    printf("SYRK(abi=");
-    printty(rcall.abi);
-    printf(", handle=");
-    printty(rcall.handle);
-    printf(", layout=");
-    printty(rcall.layout);
-    printf(", uplo=");
-    printty(rcall.uplo);
-    printf(")");
-    return;
-
     auto layout = rcall.layout;
     auto N = rcall.iarg1;
     auto K = rcall.iarg2;
@@ -2279,9 +2272,6 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     auto M = rcall.iarg1;
     auto N = rcall.iarg2;
     auto alpha = rcall.farg1;
-
-    auto transA_char = rcall.targ1;
-    auto transA = !is_normal(transA_char);
 
     auto uplo_char = rcall.uplo;
     auto side_char = rcall.side;

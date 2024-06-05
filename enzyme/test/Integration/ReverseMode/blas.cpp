@@ -1,11 +1,11 @@
 // This should work on LLVM 7, 8, 9, however in CI the version of clang installed on Ubuntu 18.04 cannot load
 // a clang plugin properly without segfaulting on exit. This is fine on Ubuntu 20.04 or later LLVM versions...
-// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1 | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1  | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-lapack-copy=1 | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -S | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -S | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1  -S | %lli -
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1 | %lli -; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1  | %lli -; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-lapack-copy=1 | %lli -; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -S | %lli -; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -S | %lli -; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1  -S | %lli -; fi
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
@@ -826,6 +826,149 @@ static void trmmTests() {
   }
 }
 
+static void syrkTests() {
+  int N = 13;
+  int K = 7;
+  double *C = (double *)malloc(sizeof(double *) * incC * N * N);
+  double *dC = (double *)malloc(sizeof(double *) * incC * N * N);
+  // N means normal matrix, T means transposed
+  // TODO: row major is presently an exepcted failure. We should re-enable.
+  for (char layout : {CblasColMajor, /*CblasRowMajor*/}) {
+
+    for (auto transA :
+         {CBLAS_TRANSPOSE::CblasNoTrans, CBLAS_TRANSPOSE::CblasTrans})
+
+      for (auto uplo : {'U', 'u', 'L', 'l'})
+
+      {
+
+        {
+
+          bool trans = !is_normal(transA);
+          std::string Test = "SYRK active C, B ";
+          BlasInfo inputs[6] = {
+              /*A*/ BlasInfo(A, layout, trans ? K : N, trans ? N : K, lda),
+              /*B*/ BlasInfo(),
+              /*C*/ BlasInfo(),
+              BlasInfo(),
+              /*C*/ BlasInfo(C, layout, N, N, incC),
+              /*C*/ BlasInfo(dC, layout, N, N, incC),
+          };
+          init();
+
+          for (int i = 0; i < N * N * incC; i++) {
+            C[i] = i * 1e-4;
+            dC[i] = -i * 1e-4;
+          }
+          for (size_t i = 0; i < N * N; i++) {
+            C[incC * i] = 7 + i;
+            dC[incC * i] = 300 + i;
+          }
+          my_dsyrk(layout, uplo, (char)transA, N, K, alpha, A, lda, beta, C,
+                   incC);
+
+          assert(calls.size() == 1);
+          assert(calls[0].inDerivative == false);
+          assert(calls[0].type == CallType::SYRK);
+          assert(calls[0].pout_arg1 == C);
+          assert(calls[0].pin_arg1 == A);
+          assert(calls[0].pin_arg2 == UNUSED_POINTER);
+          assert(calls[0].farg1 == alpha);
+          assert(calls[0].farg2 == beta);
+          assert(calls[0].layout == layout);
+          assert(calls[0].targ1 == (char)transA);
+          assert(calls[0].targ2 == UNUSED_TRANS);
+          assert(calls[0].iarg1 == N);
+          assert(calls[0].iarg2 == K);
+          assert(calls[0].iarg3 == UNUSED_INT);
+          assert(calls[0].iarg4 == lda);
+          assert(calls[0].iarg5 == incC);
+          assert(calls[0].iarg6 == UNUSED_INT);
+          assert(calls[0].side == UNUSED_TRANS);
+          assert(calls[0].uplo == uplo);
+          assert(calls[0].diag == UNUSED_TRANS);
+
+          // Check memory of primal on own.
+          checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+          init();
+          for (int i = 0; i < N * N * incC; i++) {
+            C[i] = i * 1e-4;
+            dC[i] = -i * 1e-4;
+          }
+          for (size_t i = 0; i < N * N; i++) {
+            C[incC * i] = 7 + i;
+            dC[incC * i] = 300 + i;
+          }
+          __enzyme_autodiff(
+              (void *)my_dsyrk, enzyme_const, layout, enzyme_const, uplo,
+              enzyme_const, transA, enzyme_const, N, enzyme_const, K,
+              enzyme_const, alpha, enzyme_dup, A, dA, enzyme_const, lda,
+              enzyme_const, beta, enzyme_dup, C, dC, enzyme_const, incC);
+          foundCalls = calls;
+          init();
+
+          for (int i = 0; i < N * N * incC; i++) {
+            C[i] = i * 1e-4;
+            dC[i] = -i * 1e-4;
+          }
+          for (size_t i = 0; i < N * N; i++) {
+            C[incC * i] = 7 + i;
+            dC[incC * i] = 300 + i;
+          }
+
+          my_dsyrk(layout, uplo, (char)transA, N, K, alpha, A, lda, beta, C,
+                   incC);
+
+          inDerivative = true;
+
+#define Av(r, c)                                                               \
+  A[(r - 1) * (layout == CblasRowMajor ? lda : 1) +                            \
+    (c - 1) * (layout == CblasRowMajor ? 1 : lda)]
+#define Aa(r, c)                                                               \
+  dA[(r - 1) * (layout == CblasRowMajor ? lda : 1) +                           \
+     (c - 1) * (layout == CblasRowMajor ? 1 : lda)]
+
+#define Ca(r, c)                                                               \
+  dC[(r - 1) * (layout == CblasRowMajor ? incC : 1) +                          \
+     (c - 1) * (layout == CblasRowMajor ? 1 : incC)]
+
+          if (is_normal(transA)) {
+            // BLAS operation
+            //   C = alpha*A*A' + beta*C
+            // RMD op
+            //   Aa += alpha*(Ca+diag(Ca))*A
+            cblas_dsymm(layout, 'l', uplo, N, K, alpha, dC, incC, A, lda, 1.0,
+                        dA, lda);
+            for (int i = 1; i <= N; i++)
+              cblas_daxpy(K, alpha * Ca(i, i), &Av(i, 1), lda, &Aa(i, 1), lda);
+          } else {
+            // BLAS operation
+            //   C = alpha*A'*A + beta*C
+            // RMD operation
+            //   Aa += alpha*A*(Ca+diag(Ca))
+            cblas_dsymm(layout, 'r', uplo, K, N, alpha, dC, incC, A, lda, 1.0,
+                        dA, lda);
+            for (int i = 1; i <= N; i++)
+              cblas_daxpy(K, alpha * Ca(i, i), &Av(1, i), 1, &Aa(1, i), 1);
+          }
+          cblas_dlascl(layout, uplo, 0, 0, 1.0, beta, N, N, dC, incC, 0);
+
+          checkTest(Test);
+
+          // Check memory of primal of expected derivative
+          checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+          // Check memory of primal of our derivative (if equal above, it
+          // should be the same).
+          checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+        }
+      }
+  }
+  free(C);
+  free(dC);
+}
+
 int main() { 
   dotTests();
 
@@ -836,4 +979,6 @@ int main() {
   trmvTests();
   
   trmmTests();
+
+  syrkTests();
 }

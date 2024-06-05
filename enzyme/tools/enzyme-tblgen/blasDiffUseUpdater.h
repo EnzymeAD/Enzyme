@@ -96,7 +96,7 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
         if (hasAdjoint(pattern, derivOp.getRuleDag(), argname)) {
           os << "    if (shadow && active_"
              << nameVec[derivOp.getHandledArgIdx()] << ") return true;\n";
-        } 
+        }
       }
     }
 

@@ -537,11 +537,17 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
     os << "  Value *valueN = nullptr;\n"
        << "  Value *valueT = nullptr;\n"
        << "  Value *valueG = nullptr;\n"
+       << "  Value *valuer = nullptr;\n"
+       << "  Value *valuel = nullptr;\n"
        << "  if (cublas) {\n"
        << "    valueN = ConstantInt::get(cublasEnumType, "
           "cublasOperation_t::CUBLAS_OP_N);\n"
        << "    valueT = ConstantInt::get(cublasEnumType, "
           "cublasOperation_t::CUBLAS_OP_T);\n"
+       << "    valuel = ConstantInt::get(cublasEnumType, "
+          "cublasSideMode_t::CUBLAS_SIDE_LEFT);\n"
+       << "    valuer = ConstantInt::get(cublasEnumType, "
+          "cublasSideMode_t::CUBLAS_SIDE_RIGHT);\n"
        << "    // TODO lascl not available in cublas, nor op G\n"
        << "    valueG = ConstantInt::get(cublasEnumType, "
           "'G');\n"
@@ -549,6 +555,8 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
        << "    valueN = ConstantInt::get(charType, 'N');\n"
        << "    valueT = ConstantInt::get(charType, 'T');\n"
        << "    valueG = ConstantInt::get(charType, 'G');\n"
+       << "    valuer = ConstantInt::get(charType, 'r');\n"
+       << "    valuel = ConstantInt::get(charType, 'l');\n"
        << "  }\n\n";
   }
 }
@@ -832,7 +840,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
             break;
         }
         if (Dag->getNumArgs() == 1)
-            os << "SmallVector<Value*, 1> vals = {to_blas_callconv(Builder2, ";
+          os << "SmallVector<Value*, 1> vals = {to_blas_callconv(Builder2, ";
         os << "get_blas_row(Builder2, ";
         for (size_t i = 0; i < Dag->getNumArgs(); i++) {
           os << "brow_" << i;
@@ -840,7 +848,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
         }
         os << "byRef, cublas)";
         if (Dag->getNumArgs() == 1)
-            os << "[0], byRef, cublas, nullptr, allocationBuilder, \"\")}; vals";
+          os << "[0], byRef, cublas, nullptr, allocationBuilder, \"\")}; vals";
         os << ";})";
         return;
       }
@@ -973,7 +981,8 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       os << "SmallVector<Value*, 1> vals;\n";
       os << "for(size_t i=0; i<marg_" << (Dag->getNumArgs() - 1)
          << ".size(); i++) vals.push_back(";
-      if (op != "Select") os << "to_blas_callconv(Builder2, ";
+      if (op != "Select")
+        os << "to_blas_callconv(Builder2, ";
       if (op == "Select")
         os << " CreateSelect(Builder2, ";
       else
@@ -984,18 +993,17 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
         if (i != 0)
           os << ", ";
         if (op != "Select" || i == 0)
-        os << "load_if_ref(Builder2, " << tys[i] << ", marg_" << i << "[marg_"
-           << i << ".size() == 1 ? 0 : i], byRef)";
+          os << "load_if_ref(Builder2, " << tys[i] << ", marg_" << i << "[marg_"
+             << i << ".size() == 1 ? 0 : i], byRef)";
         else
-        os << "marg_" << i << "[marg_"
-           << i << ".size() == 1 ? 0 : i]";
+          os << "marg_" << i << "[marg_" << i << ".size() == 1 ? 0 : i]";
       }
       if (op != "Select")
-      os << "), byRef, cublas, nullptr, "
-            "allocationBuilder, \""
-         << Def->getValueAsString("s") << "\" )";
+        os << "), byRef, cublas, nullptr, "
+              "allocationBuilder, \""
+           << Def->getValueAsString("s") << "\" )";
       else
-          os << ")";
+        os << ")";
       os << ");\n vals; })";
       return;
     }
@@ -1054,16 +1062,23 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       os << "  }\n";
       os << "#endif\n";
       os << "#endif\n";
-      os << " Value *ld_lookup = load_if_ref(Builder2, intType, larg_1[1], byRef);\n";
+      os << " Value *ld_lookup = load_if_ref(Builder2, intType, larg_1[1], "
+            "byRef);\n";
       if (Dag->getNumArgs() == 4) {
-        os << " Value* is_row_maj = Builder2.CreateICmpEQ(larg_0[0], ConstantInt::get(larg_0[0]->getType(), 101));\n";
+        os << " Value *layoutptr = load_if_ref(Builder2, charType, larg_0[0], "
+              "byRef);\n";
+        os << " Value* is_row_maj = Builder2.CreateICmpEQ(layoutptr, "
+              "ConstantInt::get(layoutptr->getType(), 101));\n";
         os << " Value* offset = Builder2.CreateMul(load_if_ref(Builder2, "
-            "intType, larg_2[0], byRef), CreateSelect(Builder2, is_row_maj, ld_lookup, ConstantInt::get(intType, 1)));\n";
-        os << " offset = Builder2.CreateAdd(offset, Builder2.CreateMul(load_if_ref(Builder2, "
-              "intType, larg_3[0], byRef), CreateSelect(Builder2, is_row_maj, ConstantInt::get(intType, 1), ld_lookup)));\n";
+              "intType, larg_2[0], byRef), CreateSelect(Builder2, is_row_maj, "
+              "ld_lookup, ConstantInt::get(intType, 1)));\n";
+        os << " offset = Builder2.CreateAdd(offset, "
+              "Builder2.CreateMul(load_if_ref(Builder2, "
+              "intType, larg_3[0], byRef), CreateSelect(Builder2, is_row_maj, "
+              "ConstantInt::get(intType, 1), ld_lookup)));\n";
       } else {
         os << " Value* offset = Builder2.CreateMul(load_if_ref(Builder2, "
-            "intType, larg_2[0], byRef), ld_lookup);\n";
+              "intType, larg_2[0], byRef), ld_lookup);\n";
       }
       os << "  ptr = Builder2.CreateGEP(fpType, ptr, offset);\n";
       if (Def->getName() == "LoadLookup") {
@@ -1126,6 +1141,12 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       } else if (val == "G") {
         os << "{to_blas_callconv(Builder2, valueG, byRef, cublas, nullptr, "
               "allocationBuilder, \"constant.char.G\")}";
+      } else if (val == "r") {
+        os << "{to_blas_callconv(Builder2, valuer, byRef, cublas, nullptr, "
+              "allocationBuilder, \"constant.char.r\")}";
+      } else if (val == "l") {
+        os << "{to_blas_callconv(Builder2, valuel, byRef, cublas, nullptr, "
+              "allocationBuilder, \"constant.char.l\")}";
         // C is not supported yet
         //} else if (val == "C") {
       } else {
@@ -1331,7 +1352,8 @@ void if_rule_condition_inner(const TGPattern &pattern, DagInit *ruleDag,
                              llvm::StringSet<> &seen) {
   auto opName = ruleDag->getOperator()->getAsString();
   auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
-  if (opName == "Shadow" || Def->isSubClassOf("Shadow") || opName == "ShadowNoInc" || Def->isSubClassOf("ShadowNoInc")) {
+  if (opName == "Shadow" || Def->isSubClassOf("Shadow") ||
+      opName == "ShadowNoInc" || Def->isSubClassOf("ShadowNoInc")) {
     if (ruleDag->getNumArgs() != 1)
       PrintFatalError(pattern.getLoc(), "only single op shadow supported");
     if (!ruleDag->getArgName(0))
@@ -1620,8 +1642,8 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
        << " = Builder2.CreatePHI(lim->getType(), 2);\n";
     os << "      phi_" << idx
        << "->addIncoming(ConstantInt::get(lim->getType(), 0), current);\n";
-    os << "      auto phi_" << idx
-       << "_inc = Builder2.CreateAdd(phi_" << idx <<", "
+    os << "      auto phi_" << idx << "_inc = Builder2.CreateAdd(phi_" << idx
+       << ", "
           "ConstantInt::get(lim->getType(), 1), \"\", true, true);\n";
     os << "      auto phi_b_" << idx << " = to_blas_callconv(Builder2, phi_"
        << idx;
@@ -1992,6 +2014,10 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
      << "  CUBLAS_OP_N = 0,\n"
      << "  CUBLAS_OP_T = 1,\n"
      << "  CUBLAS_OP_C = 2,\n"
+     << "};\n";
+  os << "enum cublasSideMode_t {\n"
+     << "  CUBLAS_SIDE_LEFT = 0,\n"
+     << "  CUBLAS_SIDE_RIGHT = 1,\n"
      << "};\n";
 
   for (auto &&newPattern : newBlasPatterns) {

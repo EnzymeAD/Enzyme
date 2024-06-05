@@ -432,7 +432,7 @@ def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda,
                   (Seq<[], []>
                     (BlasCall<"symm">
                         $layout,
-                        (trans_to_side $trans),
+                        (Rows $trans, Char<"l">, Char<"r">),
                         $uplo,
                         (Rows $trans,
                             (Concat $n, $k),
@@ -444,7 +444,26 @@ def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda,
                         (Shadow $A)
                     ),
                     (For<"i", 0> $n,
-                        (BlasCall<"axpy"> $k, (BFMul $alpha, (Lookup $layout, (Shadow $C), $i, $i)), (Lookup $layout, (Concat $A, (ld $A, $trans, $lda, $n, $k)), $i), ConstantInt<1>, (Lookup $layout, (Shadow $A), $i), ConstantInt<1>)
+                        (BlasCall<"axpy">
+                            $k,
+                            (BFMul $alpha, (LoadLookup $layout, (Shadow $C), $i, $i)),
+                            (First
+                                (Lookup $layout,
+                                    (Concat $A, (ld $A, $trans, $lda, $n, $k)),
+                                    (Rows $trans, $i, ConstantInt<0>),
+                                    (Rows $trans, ConstantInt<0>, $i)
+                                )
+                            ),
+                            (Rows $trans, (ld $A, $trans, $lda, $n, $k), ConstantInt<1>),
+                            (First
+                                (Lookup $layout,
+                                    (Shadow $A),
+                                    (Rows $trans, $i, ConstantInt<0>),
+                                    (Rows $trans, ConstantInt<0>, $i)
+                                )
+                            ),
+                            (Rows $trans, $lda, ConstantInt<1>)
+                          )
                     )
                   ),
                   /* beta  */ (AssertingInactiveArg),

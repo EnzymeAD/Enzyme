@@ -2642,9 +2642,8 @@ std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
-  const char *extractable[] = {"dot",  "scal", "axpy", "gemv",
-                               "gemm", "spmv", "syrk", "nrm2",
-                                "trmm", "trmv", "symm"};
+  const char *extractable[] = {"dot",  "scal", "axpy", "gemv", "gemm", "spmv",
+                               "syrk", "nrm2", "trmm", "trmv", "symm"};
   const char *floatType[] = {"s", "d"}; // c, z
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
   const char *suffixes[] = {"", "_", "64_", "_64_"};
@@ -2987,7 +2986,7 @@ SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
                                            ArrayRef<llvm::Value *> transA,
                                            ArrayRef<llvm::Value *> row,
                                            ArrayRef<llvm::Value *> col,
-                                           bool byRef, bool cublas) { 
+                                           bool byRef, bool cublas) {
   auto conds = get_blas_row(B, transA, byRef, cublas);
   assert(row.size() == col.size());
   SmallVector<Value *, 1> toreturn;

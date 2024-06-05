@@ -3197,7 +3197,7 @@ public:
       pair.second->eraseFromParent();
     Logic.clear();
 
-    if (changed && Logic.PostOpt && false) {
+    if (changed && Logic.PostOpt) {
       TimeTraceScope timeScope("Enzyme PostOpt", M.getName());
 
       PassBuilder PB;
