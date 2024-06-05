@@ -1155,7 +1155,8 @@ public:
                     differet = Builder.CreateLoad(ST1, AI);
                   }
 
-            if (differet->getType() != fn->getReturnType()) {
+            if (differet->getType() !=
+                GradientUtils::getShadowType(fn->getReturnType(), width)) {
               EmitFailure("BadDiffRet", CI->getDebugLoc(), CI,
                           "Bad DiffRet type ", *differet, " expected ",
                           *fn->getReturnType());

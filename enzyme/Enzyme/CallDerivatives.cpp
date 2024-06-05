@@ -3211,6 +3211,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 #endif
 #endif
                 auto rule = [&](Value *anti) {
+                  bb.SetInsertPoint(cast<Instruction>(anti));
                   Value *replacement = bb.CreateAlloca(elTy, Size, name);
                   if (name.size() == 0)
                     replacement->takeName(anti);
@@ -3262,13 +3263,14 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                             "enzyme_backstack",
                             MDNode::get(replacement->getContext(), {}));
                   }
+                  gutils->replaceAWithB(cast<Instruction>(anti), replacement);
+                  bb.SetInsertPoint(cast<Instruction>(anti)->getNextNode());
+                  gutils->erase(cast<Instruction>(anti));
                   return replacement;
                 };
 
                 auto replacement =
                     applyChainRule(call.getType(), bb, rule, anti);
-                gutils->replaceAWithB(cast<Instruction>(anti), replacement);
-                gutils->erase(cast<Instruction>(anti));
                 anti = replacement;
               }
             }
