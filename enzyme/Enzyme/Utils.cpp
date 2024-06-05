@@ -301,6 +301,10 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
     res = unwrap(CustomAllocator(wrap(&Builder), wrap(T), wrap(Count),
                                  wrap(Align), isDefault,
                                  ZeroMem ? &wzeromem : nullptr));
+    if (isa<UndefValue>(res))
+      return res;
+    if (isa<Constant>(res))
+      return res;
     if (auto I = dyn_cast<Instruction>(res))
       I->setName(Name);
 
