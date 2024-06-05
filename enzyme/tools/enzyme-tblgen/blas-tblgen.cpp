@@ -537,11 +537,17 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
     os << "  Value *valueN = nullptr;\n"
        << "  Value *valueT = nullptr;\n"
        << "  Value *valueG = nullptr;\n"
+       << "  Value *valuer = nullptr;\n"
+       << "  Value *valuel = nullptr;\n"
        << "  if (cublas) {\n"
        << "    valueN = ConstantInt::get(cublasEnumType, "
           "cublasOperation_t::CUBLAS_OP_N);\n"
        << "    valueT = ConstantInt::get(cublasEnumType, "
           "cublasOperation_t::CUBLAS_OP_T);\n"
+       << "    valuel = ConstantInt::get(cublasEnumType, "
+          "cublasSideMode_t::CUBLAS_SIDE_LEFT);\n"
+       << "    valuer = ConstantInt::get(cublasEnumType, "
+          "cublasSideMode_t::CUBLAS_SIDE_RIGHT);\n"
        << "    // TODO lascl not available in cublas, nor op G\n"
        << "    valueG = ConstantInt::get(cublasEnumType, "
           "'G');\n"
@@ -549,6 +555,8 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
        << "    valueN = ConstantInt::get(charType, 'N');\n"
        << "    valueT = ConstantInt::get(charType, 'T');\n"
        << "    valueG = ConstantInt::get(charType, 'G');\n"
+       << "    valuer = ConstantInt::get(charType, 'r');\n"
+       << "    valuel = ConstantInt::get(charType, 'l');\n"
        << "  }\n\n";
   }
 }
@@ -569,8 +577,17 @@ void extract_scalar(StringRef name, StringRef elemTy, raw_ostream &os) {
      << "\n";
 }
 
-void extract_input_mat(StringRef name, StringRef actName, raw_ostream &os) {
-  os << "    if (active_" << actName << ") {\n"
+void extract_input_mat(StringRef name, const std::vector<StringRef> &actName,
+                       raw_ostream &os) {
+  if (actName.size() == 0)
+    return;
+  os << "    if (";
+  for (size_t i = 0; i < actName.size(); i++) {
+    if (i != 0)
+      os << " || ";
+    os << "active_" << actName[i];
+  }
+  os << ") {\n"
      << "      input_" << name << " = (cacheTypes.size() == 1)\n"
      << "                  ? cacheval\n"
      << "                  : Builder2.CreateExtractValue(cacheval, "
@@ -653,30 +670,21 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
     }
   }
 
-  std::string input_var = "";
-  size_t actVar = 0;
-  for (size_t a = 0; a < activeArgs.size(); a++) {
-    auto rule = rules[a];
-    const DagInit *ruleDag = rule.getRuleDag();
-    std::string tmp = get_input_mat(ruleDag);
-    if (tmp != "") {
-      input_var = tmp;
-      actVar = activeArgs[a];
-      break;
-    }
-  }
-
   for (size_t j = 0; j < activeArgs.size(); j++) {
     size_t i = activeArgs[j];
     auto ty = typeMap.lookup(i);
     if (ty != ArgType::mldData && ty != ArgType::ap)
       continue;
     auto name = nameVec[i];
-    auto rule = rules[j];
-    auto input_mat_name = nameVec[actVar];
-    if (name == input_var) {
+    {
       // we not only use arg_<X>, but also input_<X>
-      extract_input_mat(name, input_mat_name, os);
+      std::vector<StringRef> activeUsersOfInput;
+      for (auto pair : llvm::enumerate(activeArgs)) {
+        auto inps = get_input_mat(rules[pair.index()].getRuleDag());
+        if (inps.find(name) != inps.end())
+          activeUsersOfInput.push_back(nameVec[pair.value()]);
+      }
+      extract_input_mat(name, activeUsersOfInput, os);
     }
     extract_mat_or_vec(name, os);
     // TODO: corresponding LD should become matrix width?
@@ -687,12 +695,15 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
     if (typeMap.lookup(i) != ArgType::vincData)
       continue;
     auto name = nameVec[i];
-    auto rule = rules[j];
-    auto input_vec_name = nameVec[actVar];
-    if (name == input_var) {
-      os << "    //handling input\n";
+    {
       // we not only use arg_<X>, but also input_<X>
-      extract_input_mat(name, input_vec_name, os);
+      std::vector<StringRef> activeUsersOfInput;
+      for (auto pair : llvm::enumerate(activeArgs)) {
+        auto inps = get_input_mat(rules[pair.index()].getRuleDag());
+        if (inps.find(name) != inps.end())
+          activeUsersOfInput.push_back(nameVec[pair.value()]);
+      }
+      extract_input_mat(name, activeUsersOfInput, os);
     }
     extract_mat_or_vec(name, os);
 
@@ -806,8 +817,20 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
   if (auto Dag = dyn_cast<DagInit>(arg)) {
     auto Def = cast<DefInit>(Dag->getOperator())->getDef();
 
+    if (Def->getName() == "ShadowNoInc" || Def->isSubClassOf("ShadowNoInc")) {
+      if (Dag->getNumArgs() != 1)
+        PrintFatalError(pattern.getLoc(), "only single op shadow supported");
+      if (!Dag->getArgName(0))
+        PrintFatalError(pattern.getLoc(),
+                        "only shadow of arg name is supported");
+
+      auto name = Dag->getArgName(0)->getAsUnquotedString();
+      os << "{d_" << name;
+      os << "}";
+      return;
+    }
     if (Def->isSubClassOf("MagicInst")) {
-      if (Def->getName() == "Rows") {
+      if (Def->getName() == "Rows" || Def->isSubClassOf("Rows")) {
         os << "({";
         for (size_t i = Dag->getNumArgs() - 1;; i--) {
           os << "auto brow_" << i << " = ";
@@ -816,12 +839,17 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
           if (i == 0)
             break;
         }
+        if (Dag->getNumArgs() == 1)
+          os << "SmallVector<Value*, 1> vals = {to_blas_callconv(Builder2, ";
         os << "get_blas_row(Builder2, ";
         for (size_t i = 0; i < Dag->getNumArgs(); i++) {
           os << "brow_" << i;
           os << ", ";
         }
-        os << "byRef, cublas);})";
+        os << "byRef, cublas)";
+        if (Dag->getNumArgs() == 1)
+          os << "[0], byRef, cublas, nullptr, allocationBuilder, \"\")}; vals";
+        os << ";})";
         return;
       }
       if (Def->getName() == "Concat") {
@@ -890,7 +918,6 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       os << "}";
       return;
     }
-
     if (Def->getName() == "InactiveArgSpec" ||
         Def->isSubClassOf("InactiveArgSpec")) {
       if (Def->getValueAsBit("asserting")) {
@@ -913,20 +940,37 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       }
       return;
     }
-    if (Def->getName() == "trans_to_side") {
+    if (Def->isSubClassOf("IntMatchers")) {
       if (Dag->getNumArgs() != 1)
         PrintFatalError(pattern.getLoc(),
-                        "only single op trans_to_side supported");
+                        "only single op IntMatchers supported");
       if (!Dag->getArgName(0))
         PrintFatalError(pattern.getLoc(),
-                        "only trans_to_side of arg name is supported");
+                        "only IntMatchers of arg name is supported");
       auto name = Dag->getArgName(0)->getAsUnquotedString();
-      os << "{trans_to_side(Builder2, arg_" << name
-         << ", byRef, cublas, charType, allocationBuilder, \"" << name
-         << "\")}";
+      const auto before = Def->getValueAsListOfStrings("before");
+      const auto after = Def->getValueAsListOfStrings("after");
+      auto inty = Def->getValueAsString("inty");
+      auto outty = Def->getValueAsString("outty");
+      os << "({";
+      os << "    auto V = arg_" << name << ";\n";
+      os << "    if (byRef) V = Builder2.CreateLoad(" << inty << ", V, \"ld."
+         << name << "\");\n";
+      os << "    Value *res = ConstantInt::get(" << outty << ", " << after[0]
+         << ");\n";
+      for (size_t i = 1; i < before.size(); i++) {
+        os << "    res = CreateSelect(Builder2, Builder2.CreateICmpEQ(V, "
+              "ConstantInt::get(V->getType(), "
+           << before[i] << ")), ConstantInt::get(res->getType(), " << after[i]
+           << "), res);\n";
+      }
+      os << "SmallVector<Value *, 1>vs = { to_blas_callconv(Builder2, res, "
+            "byRef, cublas, nullptr, allocationBuilder, \""
+         << Def->getName() << "." << name << "\") }; vs; })";
       return;
     }
-    if (Def->getName() == "Mul") {
+    if (Def->isSubClassOf("Binop")) {
+      auto op = Def->getValueAsString("s");
       os << "({";
       for (size_t i = 0; i < Dag->getNumArgs(); i++) {
         os << "SmallVector<Value*, 1> marg_" << i << ";\n";
@@ -934,11 +978,33 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
         rev_call_arg(forward, Dag, pattern, i, os, vars);
         os << " ) marg_" << i << ".push_back(tmp);\n";
       }
-      os << "SmallVector<Value*, 1> vals = { to_blas_callconv(Builder2, "
-            "Builder2.CreateFMul(load_if_ref(Builder2, fpType, "
-            "*(marg_0.begin()), byRef), load_if_ref(Builder2, fpType, "
-            "*(marg_1.begin()), byRef)), byRef, cublas, nullptr, "
-            "allocationBuilder, \"mul\" ) } ; vals; })";
+      os << "SmallVector<Value*, 1> vals;\n";
+      os << "for(size_t i=0; i<marg_" << (Dag->getNumArgs() - 1)
+         << ".size(); i++) vals.push_back(";
+      if (op != "Select")
+        os << "to_blas_callconv(Builder2, ";
+      if (op == "Select")
+        os << " CreateSelect(Builder2, ";
+      else
+        os << "Builder2.Create" << op << "(";
+
+      const auto tys = Def->getValueAsListOfStrings("tys");
+      for (size_t i = 0; i < Dag->getNumArgs(); i++) {
+        if (i != 0)
+          os << ", ";
+        if (op != "Select" || i == 0)
+          os << "load_if_ref(Builder2, " << tys[i] << ", marg_" << i << "[marg_"
+             << i << ".size() == 1 ? 0 : i], byRef)";
+        else
+          os << "marg_" << i << "[marg_" << i << ".size() == 1 ? 0 : i]";
+      }
+      if (op != "Select")
+        os << "), byRef, cublas, nullptr, "
+              "allocationBuilder, \""
+           << Def->getValueAsString("s") << "\" )";
+      else
+        os << ")";
+      os << ");\n vals; })";
       return;
     }
     if (Def->getName() == "FirstUse" || Def->isSubClassOf("FirstUse")) {
@@ -959,7 +1025,18 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       os << " vals; })";
       return;
     }
-    if (Def->getName() == "Lookup") {
+    if (Def->getName() == "First") {
+      os << "({";
+      for (size_t i = 0; i < Dag->getNumArgs(); i++) {
+        os << "SmallVector<Value*, 1> sarg;\n";
+        os << " for (auto tmp : ";
+        rev_call_arg(forward, Dag, pattern, 0, os, vars);
+        os << " ) { sarg.push_back(tmp); break; }\n";
+      }
+      os << " sarg; })";
+      return;
+    }
+    if (Def->getName() == "Lookup" || Def->getName() == "LoadLookup") {
       os << "({";
       for (size_t i = 0; i < Dag->getNumArgs(); i++) {
         os << "SmallVector<Value*, 1> larg_" << i << ";\n";
@@ -967,7 +1044,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
         rev_call_arg(forward, Dag, pattern, i, os, vars);
         os << " ) larg_" << i << ".push_back(tmp);\n";
       }
-      os << " Value *ptr = larg_0[0];\n";
+      os << " Value *ptr = larg_1[0];\n";
 
       os << "    if (ptr->getType()->isIntegerTy()) ptr = "
             "Builder2.CreateIntToPtr(ptr, PointerType::getUnqual(fpType));\n";
@@ -985,14 +1062,31 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       os << "  }\n";
       os << "#endif\n";
       os << "#endif\n";
-      os << " Value* offset = Builder2.CreateMul(load_if_ref(Builder2, "
-            "intType, larg_1[0], byRef), load_if_ref(Builder2, intType, "
-            "larg_0[1], byRef));\n";
-      if (Dag->getNumArgs() == 3)
-        os << " offset = Builder2.CreateAdd(offset, load_if_ref(Builder2, "
-              "intType, larg_2[0], byRef));\n";
+      os << " Value *ld_lookup = load_if_ref(Builder2, intType, larg_1[1], "
+            "byRef);\n";
+      if (Dag->getNumArgs() == 4) {
+        os << " Value *layoutptr = load_if_ref(Builder2, charType, larg_0[0], "
+              "byRef);\n";
+        os << " Value* is_row_maj = Builder2.CreateICmpEQ(layoutptr, "
+              "ConstantInt::get(layoutptr->getType(), 101));\n";
+        os << " Value* offset = Builder2.CreateMul(load_if_ref(Builder2, "
+              "intType, larg_2[0], byRef), CreateSelect(Builder2, is_row_maj, "
+              "ld_lookup, ConstantInt::get(intType, 1)));\n";
+        os << " offset = Builder2.CreateAdd(offset, "
+              "Builder2.CreateMul(load_if_ref(Builder2, "
+              "intType, larg_3[0], byRef), CreateSelect(Builder2, is_row_maj, "
+              "ConstantInt::get(intType, 1), ld_lookup)));\n";
+      } else {
+        os << " Value* offset = Builder2.CreateMul(load_if_ref(Builder2, "
+              "intType, larg_2[0], byRef), ld_lookup);\n";
+      }
       os << "  ptr = Builder2.CreateGEP(fpType, ptr, offset);\n";
-      os << "  SmallVector<Value*, 1> vals = { ptr };\n";
+      if (Def->getName() == "LoadLookup") {
+        os << "  if (!byRefFloat) ptr = Builder2.CreateLoad(fpType, ptr);\n";
+        os << "  SmallVector<Value*, 1> vals = { ptr };\n";
+      } else {
+        os << "  SmallVector<Value*, 1> vals = { ptr, larg_1[1] };\n";
+      }
       os << "vals; })";
       return;
     }
@@ -1047,6 +1141,12 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       } else if (val == "G") {
         os << "{to_blas_callconv(Builder2, valueG, byRef, cublas, nullptr, "
               "allocationBuilder, \"constant.char.G\")}";
+      } else if (val == "r") {
+        os << "{to_blas_callconv(Builder2, valuer, byRef, cublas, nullptr, "
+              "allocationBuilder, \"constant.char.r\")}";
+      } else if (val == "l") {
+        os << "{to_blas_callconv(Builder2, valuel, byRef, cublas, nullptr, "
+              "allocationBuilder, \"constant.char.l\")}";
         // C is not supported yet
         //} else if (val == "C") {
       } else {
@@ -1108,6 +1208,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
     case ArgType::side:
     case ArgType::vincInc:
     case ArgType::vincData:
+    case ArgType::mldLD:
     case ArgType::mldData: {
       os << "{";
       os << "arg_" << name;
@@ -1251,7 +1352,8 @@ void if_rule_condition_inner(const TGPattern &pattern, DagInit *ruleDag,
                              llvm::StringSet<> &seen) {
   auto opName = ruleDag->getOperator()->getAsString();
   auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
-  if (opName == "Shadow" || Def->isSubClassOf("Shadow")) {
+  if (opName == "Shadow" || Def->isSubClassOf("Shadow") ||
+      opName == "ShadowNoInc" || Def->isSubClassOf("ShadowNoInc")) {
     if (ruleDag->getNumArgs() != 1)
       PrintFatalError(pattern.getLoc(), "only single op shadow supported");
     if (!ruleDag->getArgName(0))
@@ -1488,11 +1590,11 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
     return;
   }
 
-  if (Def->isSubClassOf("Add")) {
+  if (Def->isSubClassOf("FAdd")) {
     assert(forward);
 
     os << "        {\n";
-    os << "      // Add\n";
+    os << "      // FAdd\n";
 
     for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
       Init *subArg = ruleDag->getArg(i);
@@ -1513,19 +1615,19 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
     os << "        }\n";
     return;
   }
-  if (Def->isSubClassOf("For")) {
+  if (Def->isSubClassOf("For") || Def->getName() == "For") {
     assert(!forward);
     const auto idx = Def->getValueAsString("idx");
 
     os << "        {\n";
     os << "      // For\n";
 
-    os << "      Value* lim_ar[] = ";
+    os << "      auto lim_ar = ";
 
     rev_call_arg(forward, ruleDag, pattern, 0, os, vars);
     os << ";\n";
 
-    os << "      Value *lim = lim_ar[0];\n";
+    os << "      Value *lim = (*lim_ar.begin());\n";
     os << "      lim = load_if_ref(Builder2, intType, lim, byRef);\n";
 
     os << "      BasicBlock *current = Builder2.GetInsertBlock();\n"
@@ -1540,8 +1642,14 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
        << " = Builder2.CreatePHI(lim->getType(), 2);\n";
     os << "      phi_" << idx
        << "->addIncoming(ConstantInt::get(lim->getType(), 0), current);\n";
+    os << "      auto phi_" << idx << "_inc = Builder2.CreateAdd(phi_" << idx
+       << ", "
+          "ConstantInt::get(lim->getType(), 1), \"\", true, true);\n";
     os << "      auto phi_b_" << idx << " = to_blas_callconv(Builder2, phi_"
-       << idx << ", byRef, cublas, intType, allocationBuilder, \"for." << idx
+       << idx;
+    if (Def->getValueAsBit("offset"))
+      os << "_inc";
+    os << ", byRef, cublas, intType, allocationBuilder, \"for." << idx
        << "\");\n";
 
     os << "      Value *for_res = nullptr;\n";
@@ -1552,11 +1660,10 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
              /*runtimeChecked*/ false, vars);
     vars.erase(idx);
 
-    os << "      auto inc = Builder2.CreateAdd(lim, "
-          "ConstantInt::get(lim->getType(), 1), \"\", true, true);\n";
-    os << "      phi_" << idx
-       << "->addIncoming(inc, Builder2.GetInsertBlock());\n";
-    os << "      Builder2.CreateCondBr(Builder2.CreateICmpEQ(lim, inc), "
+    os << "      phi_" << idx << "->addIncoming(phi_" << idx
+       << "_inc, Builder2.GetInsertBlock());\n";
+    os << "      Builder2.CreateCondBr(Builder2.CreateICmpEQ(lim, phi_" << idx
+       << "_inc), "
           "endBlock, loopBlock);\n";
 
     os << "      Builder2.SetInsertPoint(endBlock);\n";
@@ -1668,54 +1775,7 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
 }
 
 void emit_deriv_rule(const StringMap<TGPattern> &patternMap, Rule &rule,
-                     StringSet<> &handled, raw_ostream &os) {
-  const auto ruleDag = rule.getRuleDag();
-  const auto opName = ruleDag->getOperator()->getAsString();
-  const auto nameMap = rule.getArgNameMap();
-  const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
-  if (Def->isSubClassOf("BlasCall")) {
-    // emit_deriv_blas_call(ruleDag, patternMap, handled, os);
-  } else if (Def->isSubClassOf("InactiveArgSpec") ||
-             Def->getName() == "InactiveArgSpec") {
-    // nothing to prepare
-  } else if (Def->isSubClassOf("DiffeRetIndex")) {
-    // nothing to prepare
-  } else if (Def->isSubClassOf("Inst")) {
-    std::string str;
-    llvm::raw_string_ostream os(str);
-    os << "Unhandled Inst Rule: " << *Def;
-    PrintFatalError(Def->getLoc(), os.str());
-    return;
-  } else if (Def->isSubClassOf("Seq")) {
-    // handle seq rules
-    for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
-      Init *subArg = ruleDag->getArg(i);
-      DagInit *sub_Dag = cast<DagInit>(subArg);
-      if (auto sub_def = dyn_cast<DefInit>(sub_Dag->getOperator())) {
-        const auto sub_Def = sub_def->getDef();
-        if (sub_Def->isSubClassOf("BlasCall")) {
-          os << "    //handling nested blas: " << std::to_string(i) << "\n";
-          // emit_deriv_blas_call(sub_Dag, patternMap, handled, os);
-          os << "    //handled nested blas: " << std::to_string(i) << "\n";
-        } else if (sub_Def->isSubClassOf("FrobInnerProd")) {
-          // nothing to prepare
-          assert(sub_Dag->getNumArgs() == 4);
-        } else if (sub_Def->isSubClassOf("DiagUpdateSPMV")) {
-          // nothing to prepare
-          assert(sub_Dag->getNumArgs() == 6);
-        }
-      }
-    }
-  } else if (Def->isSubClassOf("FrobInnerProd")) {
-    // nothing to prepare
-    assert(ruleDag->getNumArgs() == 4);
-  } else if (Def->isSubClassOf("DiagUpdateSPMV")) {
-    // nothing to prepare
-    assert(ruleDag->getNumArgs() == 6);
-  } else {
-    PrintFatalError(Def->getLoc(), "Unhandled deriv Rule!");
-  }
-}
+                     StringSet<> &handled, raw_ostream &os) {}
 
 void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
                             TGPattern &pattern, raw_ostream &os) {
@@ -1954,6 +2014,10 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
      << "  CUBLAS_OP_N = 0,\n"
      << "  CUBLAS_OP_T = 1,\n"
      << "  CUBLAS_OP_C = 2,\n"
+     << "};\n";
+  os << "enum cublasSideMode_t {\n"
+     << "  CUBLAS_SIDE_LEFT = 0,\n"
+     << "  CUBLAS_SIDE_RIGHT = 1,\n"
      << "};\n";
 
   for (auto &&newPattern : newBlasPatterns) {

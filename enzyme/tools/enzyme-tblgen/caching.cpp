@@ -59,38 +59,23 @@ os << "  bool need_" << name << " = false;\n";
 
 // TODO: maybe update to return set<StringRef>,
 // for the case of multiple inputs
-std::string get_input_mat(const DagInit *ruleDag) {
-  std::string toCache = "";
-  const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
-  if (Def->isSubClassOf("Seq")) {
-    // handle seq rules
+void get_input_mat(const DagInit *ruleDag, StringSet<> &inputs) {
     for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
       Init *subArg = ruleDag->getArg(i);
-      DagInit *sub_Dag = cast<DagInit>(subArg);
-      for (size_t j = 0; j < sub_Dag->getNumArgs(); j++) {
-        Init *subArg = sub_Dag->getArg(j);
-        if (DefInit *def = dyn_cast<DefInit>(subArg)) {
+      if (DagInit *sub_Dag = dyn_cast<DagInit>(subArg))
+          get_input_mat(sub_Dag, inputs);
+      else if (DefInit* def = dyn_cast<DefInit>(subArg)) {
           const auto Def = def->getDef();
-          if (Def->isSubClassOf("input")) {
-            toCache = Def->getValueAsString("name");
-            break;
-          }
-        }
-      }
-    }
-  } else {
-    for (size_t j = 0; j < ruleDag->getNumArgs(); j++) {
-      Init *subArg = ruleDag->getArg(j);
-      if (DefInit *def = dyn_cast<DefInit>(subArg)) {
-        const auto Def = def->getDef();
         if (Def->isSubClassOf("input")) {
-          toCache = Def->getValueAsString("name");
-          break;
+          inputs.insert(Def->getValueAsString("name"));
         }
       }
     }
-  }
-  return toCache;
+}
+StringSet<> get_input_mat(const DagInit *ruleDag) {
+    StringSet<> inputs;
+    get_input_mat(ruleDag, inputs);
+    return inputs;
 }
 
 void emit_input_caching(const TGPattern &pattern, raw_ostream &os) {
@@ -109,13 +94,12 @@ void emit_input_caching(const TGPattern &pattern, raw_ostream &os) {
     const auto name = nameVec[activeArg];
     const DagInit *ruleDag = rule.getRuleDag();
     // will update it directly in the next PR for nested rules
-    std::string toCache = get_input_mat(ruleDag);
-    if (toCache != "") {
+    for (auto &toCache : get_input_mat(ruleDag)) {
       os << "  // we cache the following matrix,\n"
-         << "  // since one rule uses input<" << toCache << ">\n"
+         << "  // since one rule uses input<" << toCache.getKey() << ">\n"
          << "  if (active_" << name << ") {\n"
-         << "    need_" << toCache << " = true;\n"
-         << "    cache_" << toCache << " = true;\n"
+         << "    need_" << toCache.getKey() << " = true;\n"
+         << "    cache_" << toCache.getKey() << " = true;\n"
          << "  }\n";
     }
 
@@ -388,11 +372,14 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
      
     }
 
-    const DagInit *ruleDag = rule.getRuleDag();
-    std::string toCache = get_input_mat(ruleDag);
-    if (toCache != "") {
-      os << "  Value *input_" << toCache << " = nullptr;\n"
-         << "  Value *free_input_" << toCache << " = nullptr;\n";
+    bool seen = false;
+    for (auto rule2 : rules) {
+        auto inps = get_input_mat(rule2.getRuleDag());
+        seen |= inps.find(name) != inps.end();
+    }
+    if (seen) {
+      os << "  Value *input_" << name << " = nullptr;\n"
+         << "  Value *free_input_" << name << " = nullptr;\n";
     }
   }
 

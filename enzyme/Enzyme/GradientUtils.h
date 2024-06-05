@@ -566,13 +566,17 @@ public:
           assert(llvm::cast<llvm::ArrayType>(vals[i]->getType())
                      ->getNumElements() == width);
 
-      llvm::Type *wrappedType = llvm::ArrayType::get(diffType, width);
-      llvm::Value *res = llvm::UndefValue::get(wrappedType);
+      llvm::Type *wrappedType = diffType->isVoidTy()
+                                    ? nullptr
+                                    : llvm::ArrayType::get(diffType, width);
+      llvm::Value *res =
+          diffType->isVoidTy() ? nullptr : llvm::UndefValue::get(wrappedType);
       for (unsigned int i = 0; i < getWidth(); ++i) {
         auto tup = std::tuple<Args...>{
             (args ? extractMeta(Builder, args, i) : nullptr)...};
         auto diff = std::apply(rule, std::move(tup));
-        res = Builder.CreateInsertValue(res, diff, {i});
+        if (!diffType->isVoidTy())
+          res = Builder.CreateInsertValue(res, diff, {i});
       }
       return res;
     } else {

@@ -111,6 +111,9 @@ bool isArgUsed(Rule *rule, StringRef toFind, const DagInit *toSearch,
 
     return false;
   }
+  if (Def->getName() == "ShadowNoInc" || Def->isSubClassOf("ShadowNoInc")) {
+    return false;
+  }
 
   for (size_t i = 0; i < toSearch->getNumArgs(); i++) {
     if (DagInit *arg = dyn_cast<DagInit>(toSearch->getArg(i))) {
@@ -238,7 +241,7 @@ ArrayRef<SMLoc> Rule::getLoc() const { return getPattern()->getLoc(); }
 
 bool Rule::isBLASLevel2or3() const { return BLASLevel2or3; }
 
-DagInit *Rule::getRuleDag() { return rewriteRule; }
+DagInit *Rule::getRuleDag() const { return rewriteRule; }
 
 size_t Rule::getHandledArgIdx() const { return activeArg; }
 
@@ -462,7 +465,8 @@ SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg) const {
 
   if (related.size() == 3) {
     auto argTy = argTypes.lookup(related[0]);
-    assert(argTy == ArgType::trans || argTy == ArgType::diag);
+    assert(argTy == ArgType::trans || argTy == ArgType::diag ||
+           argTy == ArgType::side);
     (void)argTy;
   }
 
