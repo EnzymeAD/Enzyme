@@ -40,38 +40,97 @@ class FPNode {
 public:
   std::string op;
   std::string symbol;
-  std::vector<FPNode *> children;
+  SmallVector<FPNode *, 1> operands;
 
-  FPNode(const std::string &op) : op(op) {}
+  FPNode(const std::string &op) : op(op), symbol() {}
 
-  FPNode(const std::string &op, const std::string &symbol)
-      : op(op), symbol(symbol) {
-    // llvm::errs() << "Creating FPNode: " << op << " " << symbol << "\n";
-  }
+  void addOperand(FPNode *operand) { operands.push_back(operand); }
 
-  void addChild(FPNode *child) { children.push_back(child); }
+  bool hasSymbol() const { return !symbol.empty(); }
 
-  std::string
-  toFullExpression(std::map<std::string, FPNode *> &symbolToNodeMap) {
-    if (!children.empty()) {
-      std::string expr = "(" + op;
-      for (FPNode *child : children) {
-        if (symbolToNodeMap.count(child->symbol)) {
-          expr += " " + symbolToNodeMap[child->symbol]->toFullExpression(
-                            symbolToNodeMap);
-        } else {
-          expr += " " + child->symbol;
-        }
-      }
-      expr += ")";
-      return expr;
-    } else {
-      return symbol;
+  virtual std::string
+  toFullExpression(std::map<Value *, FPNode *> &valueToNodeMap) {
+    assert(!operands.empty() && "FPNode has no operands!");
+    std::string expr = "(" + op;
+    for (auto operand : operands) {
+      expr += " " + operand->toFullExpression(valueToNodeMap);
     }
+    expr += ")";
+    return expr;
   }
+
+  virtual Value *getValue(Instruction *insertBefore, IRBuilder<> &builder) {
+    std::vector<Value *> operandValues;
+    for (auto operand : operands) {
+      operandValues.push_back(operand->getValue(insertBefore, builder));
+    }
+
+    Value *val = nullptr;
+    builder.SetInsertPoint(insertBefore);
+
+    if (op == "+") {
+      val = builder.CreateFAdd(operandValues[0], operandValues[1]);
+    } else if (op == "-") {
+      val = builder.CreateFSub(operandValues[0], operandValues[1]);
+    } else if (op == "*") {
+      val = builder.CreateFMul(operandValues[0], operandValues[1]);
+    } else if (op == "/") {
+      val = builder.CreateFDiv(operandValues[0], operandValues[1]);
+    } else {
+      llvm::errs() << "Unknown operator: " << op << "\n";
+    }
+
+    return val;
+  }
+  virtual bool isExpression() const { return true; }
 };
 
-FPNode *parseHerbieExpr(const std::string &expr) {
+// Represents a true LLVM Value
+class FPLLValue : public FPNode {
+  Value *value;
+
+public:
+  FPLLValue(Value *value) : FPNode("__arg"), value(value) {}
+
+  virtual std::string
+  toFullExpression(std::map<Value *, FPNode *> &valueToNodeMap) override {
+    assert(hasSymbol() && "FPLLValue has no symbol!");
+    return symbol;
+  }
+
+  virtual Value *getValue(Instruction *insertBefore,
+                          IRBuilder<> &builder) override {
+    return value;
+  }
+
+  bool isExpression() const override { return false; }
+};
+
+class FPConst : public FPNode {
+  std::string value;
+
+public:
+  FPConst(std::string value) : FPNode("__const"), value(value) {}
+
+  virtual std::string
+  toFullExpression(std::map<Value *, FPNode *> &valueToNodeMap) override {
+    return value;
+  }
+
+  virtual Value *getValue(Instruction *insertBefore,
+                          IRBuilder<> &builder) override {
+    llvm::errs() << "Returning constant: " << value << "\n";
+    double constantValue = std::stod(value);
+    // TODO eventually have this be typed
+    return ConstantFP::get(builder.getDoubleTy(), constantValue);
+  }
+
+  bool isExpression() const override { return false; }
+};
+
+FPNode *parseHerbieExpr(const std::string &expr,
+                        std::map<Value *, FPNode *> &valueToNodeMap,
+                        std::map<std::string, Value *> &symbolToValueMap) {
   llvm::errs() << "Parsing: " << expr << "\n";
   auto trimmedExpr = expr;
   trimmedExpr.erase(0, trimmedExpr.find_first_not_of(" "));
@@ -80,7 +139,7 @@ FPNode *parseHerbieExpr(const std::string &expr) {
   // Arguments
   if (trimmedExpr.front() != '(' && trimmedExpr.front() != '#') {
     // llvm::errs() << "Base case: " << trimmedExpr << "\n";
-    return new FPNode("__arg", trimmedExpr);
+    return valueToNodeMap[symbolToValueMap[trimmedExpr]];
   }
 
   // Constants
@@ -88,7 +147,7 @@ FPNode *parseHerbieExpr(const std::string &expr) {
   std::smatch matches;
   if (std::regex_match(trimmedExpr, matches, constantPattern)) {
     llvm::errs() << "Found __const " << matches[1].str() << "\n";
-    return new FPNode("__const", matches[1].str());
+    return new FPConst(matches[1].str());
   }
 
   assert(trimmedExpr.front() == '(' && trimmedExpr.back() == ')');
@@ -118,71 +177,17 @@ FPNode *parseHerbieExpr(const std::string &expr) {
     if (depth == 0 && trimmedExpr[curr] == ' ') {
       // llvm::errs() << "Adding child for " << trimmedExpr << ": "
       //              << trimmedExpr.substr(start, curr - start) << "\n";
-      node->addChild(parseHerbieExpr(trimmedExpr.substr(start, curr - start)));
+      node->addOperand(parseHerbieExpr(trimmedExpr.substr(start, curr - start),
+                                       valueToNodeMap, symbolToValueMap));
       start = curr + 1;
     }
   }
   if (start < curr) {
-    node->addChild(parseHerbieExpr(trimmedExpr.substr(start, curr - start)));
+    node->addOperand(parseHerbieExpr(trimmedExpr.substr(start, curr - start),
+                                     valueToNodeMap, symbolToValueMap));
   }
 
   return node;
-}
-
-Value *herbieExprToValue(FPNode *node, Instruction *insertBefore,
-                         IRBuilder<> &builder,
-                         std::map<std::string, Value *> &symbolToValueMap) {
-  assert(node);
-
-  if (node->op == "__arg") {
-    llvm::errs() << "Returning: " << node->symbol << "\n";
-    return symbolToValueMap[node->symbol];
-  }
-
-  if (node->op == "__const") {
-    llvm::errs() << "Returning constant: " << node->symbol << "\n";
-    double constantValue = std::stod(node->symbol);
-    return ConstantFP::get(builder.getDoubleTy(), constantValue);
-  }
-
-  std::vector<Value *> operands;
-  for (FPNode *child : node->children) {
-    operands.push_back(
-        herbieExprToValue(child, insertBefore, builder, symbolToValueMap));
-  }
-
-  Value *val = nullptr;
-  builder.SetInsertPoint(insertBefore);
-
-  std::string &op = node->op;
-
-  if (op == "+") {
-    assert(operands[0]);
-    assert(operands[1]);
-    val = builder.CreateFAdd(operands[0], operands[1], "faddtmp");
-  } else if (op == "-") {
-    val = builder.CreateFSub(operands[0], operands[1], "fsubtmp");
-  } else if (op == "*") {
-    val = builder.CreateFMul(operands[0], operands[1], "fmultmp");
-  } else if (op == "/") {
-    val = builder.CreateFDiv(operands[0], operands[1], "fdivtmp");
-  } else {
-    llvm::errs() << "Unknown operator: " << node->op << "\n";
-  }
-
-  return val;
-}
-
-Value *getLastFPInst(BasicBlock &BB,
-                     std::map<Value *, std::string> &valueToSymbolMap) {
-  Value *lastFPInst = nullptr;
-  for (auto I = BB.rbegin(); I != BB.rend(); ++I) {
-    if (valueToSymbolMap.count(&*I)) {
-      lastFPInst = &*I;
-      break;
-    }
-  }
-  return lastFPInst;
 }
 
 bool improveViaHerbie(std::string &expr) {
@@ -262,14 +267,58 @@ std::string getHerbieOperator(const Instruction &I) {
   }
 }
 
+bool herbiable(const Value &I) {
+  if (!isa<Instruction>(&I))
+    return false;
+
+  const Instruction *inst = dyn_cast<Instruction>(&I);
+
+  switch (inst->getOpcode()) {
+  case Instruction::FAdd:
+  case Instruction::FSub:
+  case Instruction::FMul:
+  case Instruction::FDiv:
+    return I.getType()->isFloatTy() || I.getType()->isDoubleTy();
+  case Instruction::Call: {
+    const CallInst *CI = dyn_cast<CallInst>(&I);
+    if (CI && CI->getCalledFunction()) {
+      StringRef funcName = CI->getCalledFunction()->getName();
+      return funcName.startswith("llvm.sin") ||
+             funcName.startswith("llvm.cos") ||
+             funcName.startswith("llvm.tan") ||
+             funcName.startswith("llvm.exp") ||
+             funcName.startswith("llvm.log") ||
+             funcName.startswith("llvm.sqrt") ||
+             funcName.startswith("llvm.pow") ||
+             funcName.startswith("llvm.asin") ||
+             funcName.startswith("llvm.acos") ||
+             funcName.startswith("llvm.atan") ||
+             funcName.startswith("llvm.fma") ||
+             funcName.startswith("llvm.fabs");
+    }
+    return false;
+  }
+  default:
+    return false;
+  }
+}
+
+struct HerbieComponents {
+  SetVector<Value *> inputs;
+  SetVector<Value *> outputs;
+  SetVector<Instruction *> operations;
+
+  HerbieComponents(SetVector<Value *> inputs, SetVector<Value *> outputs,
+                   SetVector<Instruction *> operations)
+      : inputs(std::move(inputs)), outputs(std::move(outputs)),
+        operations(std::move(operations)) {}
+};
+
 // Run (our choice of) floating point optimizations on function `F`.
 // Return whether or not we change the function.
 bool fpOptimize(Function &F) {
   bool changed = false;
   std::string herbieInput;
-  std::map<Value *, std::string> valueToSymbolMap;
-  std::map<std::string, Value *> symbolToValueMap;
-  std::map<std::string, FPNode *> symbolToNodeMap;
 
   std::map<BasicBlock *, std::string>
       blockToHerbieExprMap; // BB to be optimized --> Herbie expressions
@@ -280,114 +329,236 @@ bool fpOptimize(Function &F) {
   int symbolCounter = 0;
 
   auto getNextSymbol = [&symbolCounter]() -> std::string {
-    return "__v" + std::to_string(symbolCounter++);
+    return "v" + std::to_string(symbolCounter++);
   };
+
+  // Extract change:
+
+  // E1) create map<Value, FPNode> for all instructions I, map[I] = FPLLValue(I)
+  // E2) for all instructions, if herbiable(I), map[I] = FPNode(operation(I),
+  // map[operands(I)])
+  // E3) floodfill for all starting locations I to find all distinct graphs /
+  // outputs.
+
+  /*
+  B1:
+    x = sin(arg)
+
+  B2:
+    y = 1 - x * x
+
+
+  -> result y = cos(arg)^2
+
+B1:
+  nothing
+
+B2:
+  costmp = cos(arg)
+  y = costmp * costmp
+
+  */
+
+  std::map<Value *, FPNode *> valueToNodeMap;
+  std::map<std::string, Value *> symbolToValueMap;
+
+  for (auto &arg : F.args()) {
+    valueToNodeMap[&arg] = new FPLLValue(&arg);
+  }
+
+  for (auto &BB : F) {
+    for (auto &I : BB) {
+      valueToNodeMap[&I] = new FPLLValue(&I);
+    }
+  }
+
+  for (auto &BB : F) {
+    for (auto &I : BB) {
+      if (herbiable(I)) {
+        auto node = new FPNode(getHerbieOperator(I));
+        for (unsigned i = 0; i < I.getNumOperands(); ++i) {
+          Value *operand = I.getOperand(i);
+          node->addOperand(valueToNodeMap[operand]);
+        }
+        valueToNodeMap[&I] = node;
+      }
+    }
+  }
+
+  for (auto &[value, node] : valueToNodeMap) {
+    llvm::errs() << "Value: " << *value
+                 << " isExpression: " << valueToNodeMap[value]->isExpression()
+                 << "\n";
+  }
+
+  SmallSet<Value *, 1> component_seen;
+  SmallVector<HerbieComponents, 1> connected_components;
+  for (auto &BB : F) {
+    for (auto &I : BB) {
+      // Not a herbiable instruction, doesn't make sense to create graph node
+      // out of.
+      if (!herbiable(I)) {
+        llvm::errs() << "Skipping non-herbiable instruction: " << I << "\n";
+        continue;
+      }
+
+      // Instruction is already in a set
+      if (component_seen.contains(&I)) {
+        llvm::errs() << "Skipping already seen instruction: " << I << "\n";
+        continue;
+      }
+
+      llvm::errs() << "Starting floodfill from: " << I << "\n";
+
+      SmallVector<Value *, 1> todo;
+      SetVector<Value *> input_seen;
+      SetVector<Value *> output_seen;
+      SetVector<Instruction *> operation_seen;
+      todo.push_back(&I);
+      while (!todo.empty()) {
+        auto cur = todo.pop_back_val();
+        auto node = valueToNodeMap[cur];
+        assert(node && "Node not found in valueToNodeMap");
+
+        // We now can assume that this is a herbiable expression
+        // Since we can only herbify instructions, let's assert that
+        assert(isa<Instruction>(cur));
+        auto I2 = cast<Instruction>(cur);
+
+        // Don't repeat any instructions we've already seen (to avoid loops for
+        // phi nodes)
+        if (operation_seen.contains(I2)) {
+          llvm::errs() << "Skipping already seen instruction: " << *I2 << "\n";
+          continue;
+        }
+
+        // Assume that a herbiable expression can only be in one connected
+        // component.
+        assert(!component_seen.contains(cur));
+
+        llvm::errs() << "Insert to operation_seen and component_seen: " << *I2
+                     << "\n";
+        operation_seen.insert(I2);
+        component_seen.insert(cur);
+
+        for (auto &operand : I2->operands()) {
+          if (!herbiable(*operand)) {
+            llvm::errs() << "Non-herbiable input found: " << *operand << "\n";
+            input_seen.insert(operand);
+          } else {
+            llvm::errs() << "Adding operand to todo list: " << *operand << "\n";
+            todo.push_back(operand);
+          }
+        }
+
+        for (auto U : I2->users()) {
+          if (auto I3 = dyn_cast<Instruction>(U)) {
+            if (!herbiable(*I3)) {
+              llvm::errs() << "Output instruction found: " << *I2 << "\n";
+              output_seen.insert(I2);
+            } else {
+              llvm::errs() << "Adding user to todo list: " << *I3 << "\n";
+              todo.push_back(I3);
+            }
+          }
+        }
+      }
+
+      llvm::errs() << "Finished floodfill\n\n";
+
+      // Don't bother with graphs without any herbiable operations
+      if (!operation_seen.empty()) {
+        llvm::errs() << "Found connected component with "
+                     << operation_seen.size() << " operations and "
+                     << input_seen.size() << " inputs and "
+                     << output_seen.size() << " outputs\n";
+
+        llvm::errs() << "Inputs:\n";
+        for (auto &input : input_seen) {
+          llvm::errs() << *input << "\n";
+        }
+
+        llvm::errs() << "Outputs:\n";
+        for (auto &output : output_seen) {
+          llvm::errs() << *output << "\n";
+        }
+
+        llvm::errs() << "Operations:\n";
+        for (auto &operation : operation_seen) {
+          llvm::errs() << *operation << "\n";
+        }
+
+        connected_components.emplace_back(std::move(input_seen),
+                                          std::move(output_seen),
+                                          std::move(operation_seen));
+      }
+    }
+  }
 
   // 1) Identify subgraphs of the computation which can be entirely represented
   // in herbie-style arithmetic
   // 2) Make the herbie FP-style expression by
-  // converting  llvm instructions into herbie string (FPNode ....)
-  for (auto &BB : F) {
-    for (auto &I : BB) {
-      if (auto *op = dyn_cast<BinaryOperator>(&I)) { // TODO: Other operators?
-        if (op->getType()->isFloatingPointTy()) {
-          FPNode *node = new FPNode(getHerbieOperator(I));
-          for (unsigned i = 0; i < op->getNumOperands(); ++i) {
-            Value *operand = op->getOperand(i);
-            std::string operandSymbol =
-                valueToSymbolMap.count(operand)
-                    ? valueToSymbolMap[operand]
-                    : (valueToSymbolMap[operand] = getNextSymbol());
-            symbolToValueMap[operandSymbol] = operand;
-
-            FPNode *childNode = symbolToNodeMap.count(operandSymbol)
-                                    ? symbolToNodeMap[operandSymbol]
-                                    : (symbolToNodeMap[operandSymbol] =
-                                           new FPNode("__arg", operandSymbol));
-            node->addChild(childNode);
-
-            if (childNode->op == "__arg") {
-              arguments.insert(operandSymbol);
-            }
-          }
-
-          std::string symbol = getNextSymbol();
-          node->symbol = symbol;
-          valueToSymbolMap[&I] = symbol;
-          symbolToNodeMap[symbol] = node;
-          symbolToValueMap[symbol] = &I;
-        }
-      }
-    }
+  // converting llvm instructions into herbie string (FPNode ....)
+  if (connected_components.empty()) {
+    llvm::errs() << "No herbiable connected components found\n";
+    return false;
   }
 
-  for (auto &BB : F) {
-    // Get last instruction in the basic block which is FP instruction
-    // Get the largest Herbie expression (i.e., Herbie expression of the last
-    // instruction in BB) of BB using valueToSymbolMap and toFullExpression
-    Value *lastFPInst = getLastFPInst(BB, valueToSymbolMap);
-    if (lastFPInst) {
-      std::string bbHerbieExpr =
-          symbolToNodeMap[valueToSymbolMap[lastFPInst]]->toFullExpression(
-              symbolToNodeMap);
-      blockToHerbieExprMap[&BB] = bbHerbieExpr;
-      for (auto &I : BB) {
-        // Map all FP instructions to the largest herbie expression of BB.
-        if (valueToSymbolMap.count(&I)) {
-          herbieExprToInstMap[bbHerbieExpr].push_back(&I);
-        }
-      }
+  for (auto &component : connected_components) {
+    std::string argumentsStr = "(";
+    for (const auto &input : component.inputs) {
+      auto node = valueToNodeMap[input];
+      argumentsStr +=
+          node->hasSymbol() ? node->symbol : (node->symbol = getNextSymbol());
+      symbolToValueMap[node->symbol] = input;
+      llvm::errs() << "assigning symbol: " << node->symbol << " to " << *input
+                   << "\n";
+      argumentsStr += " ";
     }
-  }
+    argumentsStr.pop_back();
+    argumentsStr += ")";
 
-  for (auto &BB : F) {
-    if (blockToHerbieExprMap.count(&BB)) {
-      // TODO: Assume same arguments for all basic blocks
-      std::string argumentsStr = "(";
-      for (const auto &arg : arguments) {
-        argumentsStr += arg + " ";
-      }
-      argumentsStr.pop_back();
-      argumentsStr += ")";
-
+    for (const auto &output : component.outputs) {
       std::string herbieExpr =
-          "(FPCore " + argumentsStr + " " + blockToHerbieExprMap[&BB] + ")";
+          "(FPCore " + argumentsStr + " " +
+          valueToNodeMap[output]->toFullExpression(valueToNodeMap) + ")";
       llvm::errs() << "Herbie input:\n" << herbieExpr << "\n";
 
       // 3) run fancy opts
       if (!improveViaHerbie(herbieExpr)) {
-        llvm::errs() << "Failed to optimize " << blockToHerbieExprMap[&BB]
+        llvm::errs() << "Failed to optimize " << herbieExpr
                      << " using Herbie!\n";
-        return changed;
+        continue;
       } else {
-        llvm::errs() << "Optimized: " << blockToHerbieExprMap[&BB] << " -> "
-                     << herbieExpr << "\n";
+        llvm::errs() << "Optimized: " << herbieExpr << "\n";
       }
 
       // 4) parse the output string solution from herbieland
       // 5) convert into a solution in llvm vals/instructions
       llvm::errs() << "Parsing Herbie Expr: " << herbieExpr << "\n";
-      FPNode *parsedNode = parseHerbieExpr(herbieExpr);
+      FPNode *parsedNode =
+          parseHerbieExpr(herbieExpr, valueToNodeMap, symbolToValueMap);
       llvm::errs() << "Parsed Herbie Expr: "
-                   << parsedNode->toFullExpression(symbolToNodeMap) << "\n";
+                   << parsedNode->toFullExpression(valueToNodeMap) << "\n";
 
-      Instruction *insertBefore = BB.getTerminator();
-      IRBuilder<> builder(&BB);
+      Instruction *insertBefore = component.operations.back();
+      IRBuilder<> builder(insertBefore);
+      // TODO ponder fast math
       builder.setFastMathFlags(getFast());
       builder.SetInsertPoint(insertBefore);
 
       // Convert the parsed expression to LLVM values/instructions
-      Value *newRootValue = herbieExprToValue(parsedNode, insertBefore, builder,
-                                              symbolToValueMap);
-      Value *oldRootValue = getLastFPInst(BB, valueToSymbolMap);
-      llvm::errs() << "Replacing: " << *oldRootValue << " with "
-                   << *newRootValue << "\n";
-      oldRootValue->replaceAllUsesWith(newRootValue);
+      Value *newRootValue = parsedNode->getValue(insertBefore, builder);
+      llvm::errs() << "Replacing: " << *output << " with " << *newRootValue
+                   << "\n";
+      output->replaceAllUsesWith(newRootValue);
 
-      auto &eraseList = herbieExprToInstMap[blockToHerbieExprMap[&BB]];
-      for (auto it = eraseList.rbegin(); it != eraseList.rend(); ++it) {
-        llvm::errs() << "Removing: " << **it << "\n";
-        (*it)->eraseFromParent();
+      for (auto I = component.operations.rbegin();
+           I != component.operations.rend(); ++I) {
+        if ((*I)->use_empty()) {
+          llvm::errs() << "Removing: " << **I << "\n";
+          (*I)->eraseFromParent();
+        }
       }
 
       changed = true;
