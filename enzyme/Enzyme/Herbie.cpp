@@ -268,19 +268,18 @@ std::string getHerbieOperator(const Instruction &I) {
 }
 
 bool herbiable(const Value &I) {
-  if (!isa<Instruction>(&I))
-    return false;
-
   const Instruction *inst = dyn_cast<Instruction>(&I);
+  if (!inst)
+    return false;
 
   switch (inst->getOpcode()) {
   case Instruction::FAdd:
   case Instruction::FSub:
   case Instruction::FMul:
   case Instruction::FDiv:
-    return I.getType()->isFloatTy() || I.getType()->isDoubleTy();
+    return inst->getType()->isFloatTy() || inst->getType()->isDoubleTy();
   case Instruction::Call: {
-    const CallInst *CI = dyn_cast<CallInst>(&I);
+    const CallInst *CI = dyn_cast<CallInst>(inst);
     if (CI && CI->getCalledFunction() &&
         (CI->getType()->isFloatTy() || CI->getType()->isDoubleTy())) {
       StringRef funcName = CI->getCalledFunction()->getName();
