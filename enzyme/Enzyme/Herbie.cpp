@@ -318,16 +318,8 @@ struct HerbieComponents {
 // Return whether or not we change the function.
 bool fpOptimize(Function &F) {
   bool changed = false;
-  std::string herbieInput;
 
-  std::map<BasicBlock *, std::string>
-      blockToHerbieExprMap; // BB to be optimized --> Herbie expressions
-  std::map<std::string, std::vector<Instruction *>>
-      herbieExprToInstMap; // Herbie expressions --> original instructions
-
-  std::set<std::string> arguments; // TODO: for different basic blocks
   int symbolCounter = 0;
-
   auto getNextSymbol = [&symbolCounter]() -> std::string {
     return "v" + std::to_string(symbolCounter++);
   };
