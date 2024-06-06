@@ -281,7 +281,8 @@ bool herbiable(const Value &I) {
     return I.getType()->isFloatTy() || I.getType()->isDoubleTy();
   case Instruction::Call: {
     const CallInst *CI = dyn_cast<CallInst>(&I);
-    if (CI && CI->getCalledFunction()) {
+    if (CI && CI->getCalledFunction() &&
+        (CI->getType()->isFloatTy() || CI->getType()->isDoubleTy())) {
       StringRef funcName = CI->getCalledFunction()->getName();
       return funcName.startswith("llvm.sin") ||
              funcName.startswith("llvm.cos") ||
@@ -545,6 +546,7 @@ B2:
                    << "\n";
       output->replaceAllUsesWith(newRootValue);
 
+      // TODO: better cleanup
       for (auto I = component.operations.rbegin();
            I != component.operations.rend(); ++I) {
         if ((*I)->use_empty()) {
