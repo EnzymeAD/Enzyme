@@ -16,7 +16,6 @@ declare double @llvm.cos.f64(double)
 ; Function Attrs: nounwind readnone speculatable
 declare double @llvm.sin.f64(double)
 
-
 ; CHECK: define double @tester(double %x)
 ; CHECK: entry:
 ; CHECK-NEXT:   %[[i0:.+]] = call fast double @llvm.sin.f64(double %x)

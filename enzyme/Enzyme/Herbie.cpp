@@ -234,7 +234,8 @@ bool improveViaHerbie(std::string &expr) {
   input.close();
 
   std::string Program = HERBIE_BINARY;
-  llvm::StringRef Args[] = {Program, "improve", tmpin, tmpout};
+  llvm::StringRef Args[] = {Program,     "improve", "--seed",
+                            "239778888", tmpin,     tmpout};
   std::string ErrMsg;
   bool ExecutionFailed = false;
 
