@@ -81,6 +81,10 @@ public:
       val = builder.CreateUnaryIntrinsic(Intrinsic::sin, operandValues[0]);
     } else if (op == "cos") {
       val = builder.CreateUnaryIntrinsic(Intrinsic::cos, operandValues[0]);
+#if LLVM_VERSION_MAJOR >= 16 // TODO: Double check version
+    } else if (op == "tan") {
+      val = builder.CreateUnaryIntrinsic(Intrinsic::tan, operandValues[0]);
+#endif
     } else if (op == "exp") {
       val = builder.CreateUnaryIntrinsic(Intrinsic::exp, operandValues[0]);
     } else if (op == "log") {
