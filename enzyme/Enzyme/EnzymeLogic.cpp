@@ -3023,8 +3023,11 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         if (auto ggep = dyn_cast<GetElementPtrInst>(gep)) {
           ggep->setIsInBounds(true);
         }
-        if (!(isa<ConstantExpr>(shadowRV) || isa<ConstantData>(shadowRV))) {
-          shadowRV = VMap[shadowRV];
+        if (!(isa<ConstantExpr>(shadowRV) || isa<ConstantData>(shadowRV) ||
+              isa<ConstantAggregate>(shadowRV))) {
+          auto found = VMap.find(shadowRV);
+          assert(found != VMap.end());
+          shadowRV = found->second;
         }
         if (EnzymeFixupReturn)
           shadowRV = unwrap(EnzymeFixupReturn(wrap(&ib), wrap(shadowRV)));
