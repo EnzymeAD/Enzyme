@@ -49,7 +49,7 @@ public:
   bool hasSymbol() const { return !symbol.empty(); }
 
   virtual std::string
-  toFullExpression(std::map<Value *, FPNode *> &valueToNodeMap) {
+  toFullExpression(std::unordered_map<Value *, FPNode *> &valueToNodeMap) {
     assert(!operands.empty() && "FPNode has no operands!");
     std::string expr = "(" + op;
     for (auto operand : operands) {
@@ -68,6 +68,7 @@ public:
     Value *val = nullptr;
     builder.SetInsertPoint(insertBefore);
 
+    llvm::errs() << "Generating new instruction for op: " << op << "\n";
     if (op == "+") {
       val = builder.CreateFAdd(operandValues[0], operandValues[1]);
     } else if (op == "-") {
@@ -76,12 +77,32 @@ public:
       val = builder.CreateFMul(operandValues[0], operandValues[1]);
     } else if (op == "/") {
       val = builder.CreateFDiv(operandValues[0], operandValues[1]);
+    } else if (op == "sin") {
+      val = builder.CreateUnaryIntrinsic(Intrinsic::sin, operandValues[0]);
+    } else if (op == "cos") {
+      val = builder.CreateUnaryIntrinsic(Intrinsic::cos, operandValues[0]);
+    } else if (op == "exp") {
+      val = builder.CreateUnaryIntrinsic(Intrinsic::exp, operandValues[0]);
+    } else if (op == "log") {
+      val = builder.CreateUnaryIntrinsic(Intrinsic::log, operandValues[0]);
+    } else if (op == "sqrt") {
+      val = builder.CreateUnaryIntrinsic(Intrinsic::sqrt, operandValues[0]);
+    } else if (op == "pow") {
+      val = builder.CreateBinaryIntrinsic(Intrinsic::pow, operandValues[0],
+                                          operandValues[1]);
+    } else if (op == "fma") {
+      val = builder.CreateIntrinsic(
+          Intrinsic::fma, {operandValues[0]->getType()},
+          {operandValues[0], operandValues[1], operandValues[2]});
+    } else if (op == "fabs") {
+      val = builder.CreateUnaryIntrinsic(Intrinsic::fabs, operandValues[0]);
     } else {
-      llvm::errs() << "Unknown operator: " << op << "\n";
+      assert(0 && "FPNode.getValue: Unknown operator");
     }
 
     return val;
   }
+
   virtual bool isExpression() const { return true; }
 };
 
@@ -92,8 +113,8 @@ class FPLLValue : public FPNode {
 public:
   FPLLValue(Value *value) : FPNode("__arg"), value(value) {}
 
-  virtual std::string
-  toFullExpression(std::map<Value *, FPNode *> &valueToNodeMap) override {
+  virtual std::string toFullExpression(
+      std::unordered_map<Value *, FPNode *> &valueToNodeMap) override {
     assert(hasSymbol() && "FPLLValue has no symbol!");
     return symbol;
   }
@@ -112,8 +133,8 @@ class FPConst : public FPNode {
 public:
   FPConst(std::string value) : FPNode("__const"), value(value) {}
 
-  virtual std::string
-  toFullExpression(std::map<Value *, FPNode *> &valueToNodeMap) override {
+  virtual std::string toFullExpression(
+      std::unordered_map<Value *, FPNode *> &valueToNodeMap) override {
     return value;
   }
 
@@ -128,9 +149,10 @@ public:
   bool isExpression() const override { return false; }
 };
 
-FPNode *parseHerbieExpr(const std::string &expr,
-                        std::map<Value *, FPNode *> &valueToNodeMap,
-                        std::map<std::string, Value *> &symbolToValueMap) {
+FPNode *
+parseHerbieExpr(const std::string &expr,
+                std::unordered_map<Value *, FPNode *> &valueToNodeMap,
+                std::unordered_map<std::string, Value *> &symbolToValueMap) {
   llvm::errs() << "Parsing: " << expr << "\n";
   auto trimmedExpr = expr;
   trimmedExpr.erase(0, trimmedExpr.find_first_not_of(" "));
@@ -262,24 +284,37 @@ std::string getHerbieOperator(const Instruction &I) {
     return "*";
   case Instruction::FDiv:
     return "/";
+  case Instruction::Call: {
+    const CallInst *CI = dyn_cast<CallInst>(&I);
+    assert(CI && CI->getCalledFunction() &&
+           "getHerbieOperator: Call without a function");
+
+    std::string funcName = CI->getCalledFunction()->getName().str();
+    std::regex regex("llvm\\.(\\w+)\\.?.*");
+    std::smatch matches;
+    if (std::regex_search(funcName, matches, regex) && matches.size() > 1) {
+      return matches[1].str();
+    }
+    assert(0 && "getHerbieOperator: Unknown callee");
+  }
   default:
-    return "UnknownOp";
+    assert(0 && "getHerbieOperator: Unknown operator");
   }
 }
 
-bool herbiable(const Value &I) {
-  const Instruction *inst = dyn_cast<Instruction>(&I);
-  if (!inst)
+bool herbiable(const Value &Val) {
+  const Instruction *I = dyn_cast<Instruction>(&Val);
+  if (!I)
     return false;
 
-  switch (inst->getOpcode()) {
+  switch (I->getOpcode()) {
   case Instruction::FAdd:
   case Instruction::FSub:
   case Instruction::FMul:
   case Instruction::FDiv:
-    return inst->getType()->isFloatTy() || inst->getType()->isDoubleTy();
+    return I->getType()->isFloatTy() || I->getType()->isDoubleTy();
   case Instruction::Call: {
-    const CallInst *CI = dyn_cast<CallInst>(inst);
+    const CallInst *CI = dyn_cast<CallInst>(I);
     if (CI && CI->getCalledFunction() &&
         (CI->getType()->isFloatTy() || CI->getType()->isDoubleTy())) {
       StringRef funcName = CI->getCalledFunction()->getName();
@@ -290,9 +325,6 @@ bool herbiable(const Value &I) {
              funcName.startswith("llvm.log") ||
              funcName.startswith("llvm.sqrt") ||
              funcName.startswith("llvm.pow") ||
-             funcName.startswith("llvm.asin") ||
-             funcName.startswith("llvm.acos") ||
-             funcName.startswith("llvm.atan") ||
              funcName.startswith("llvm.fma") ||
              funcName.startswith("llvm.fabs");
     }
@@ -351,8 +383,8 @@ B2:
 
   */
 
-  std::map<Value *, FPNode *> valueToNodeMap;
-  std::map<std::string, Value *> symbolToValueMap;
+  std::unordered_map<Value *, FPNode *> valueToNodeMap;
+  std::unordered_map<std::string, Value *> symbolToValueMap;
 
   for (auto &arg : F.args()) {
     valueToNodeMap[&arg] = new FPLLValue(&arg);
@@ -367,9 +399,28 @@ B2:
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (herbiable(I)) {
+        llvm::errs() << "Herbie Operator: " << getHerbieOperator(I) << "\n";
         auto node = new FPNode(getHerbieOperator(I));
-        for (unsigned i = 0; i < I.getNumOperands(); ++i) {
-          Value *operand = I.getOperand(i);
+
+        auto operands =
+            isa<CallInst>(I) ? cast<CallInst>(I).args() : I.operands();
+        for (auto &operand : operands) {
+          if (!valueToNodeMap.count(operand)) {
+            if (auto C = dyn_cast<ConstantFP>(operand)) {
+              llvm::SmallVector<char, 10> value;
+              C->getValueAPF().toString(value);
+              std::string valueStr(value.begin(), value.end());
+              valueToNodeMap[operand] = new FPConst(valueStr);
+              llvm::errs() << "Registered FPNode for constant: " << valueStr
+                           << "\n";
+            } else if (auto GV = dyn_cast<GlobalVariable>(operand)) {
+              valueToNodeMap[operand] = new FPLLValue(GV);
+              llvm::errs() << "Registered FPNode for global variable: " << *GV
+                           << "\n";
+            } else {
+              assert(0 && "Unknown operand");
+            }
+          }
           node->addOperand(valueToNodeMap[operand]);
         }
         valueToNodeMap[&I] = node;
@@ -433,7 +484,10 @@ B2:
         operation_seen.insert(I2);
         component_seen.insert(cur);
 
-        for (auto &operand : I2->operands()) {
+        auto operands =
+            isa<CallInst>(I2) ? cast<CallInst>(I2)->args() : I2->operands();
+
+        for (auto &operand : operands) {
           if (!herbiable(*operand)) {
             llvm::errs() << "Non-herbiable input found: " << *operand << "\n";
             input_seen.insert(operand);
@@ -500,6 +554,10 @@ B2:
     std::string argumentsStr = "(";
     for (const auto &input : component.inputs) {
       auto node = valueToNodeMap[input];
+      if (node->op == "__const") {
+        // Constants don't need a symbol
+        continue;
+      }
       argumentsStr +=
           node->hasSymbol() ? node->symbol : (node->symbol = getNextSymbol());
       symbolToValueMap[node->symbol] = input;
@@ -541,6 +599,7 @@ B2:
 
       // Convert the parsed expression to LLVM values/instructions
       Value *newRootValue = parsedNode->getValue(insertBefore, builder);
+      assert(newRootValue && "Failed to get value from parsed node");
       llvm::errs() << "Replacing: " << *output << " with " << *newRootValue
                    << "\n";
       output->replaceAllUsesWith(newRootValue);
