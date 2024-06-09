@@ -43,6 +43,7 @@ public:
   SmallVector<FPNode *, 1> operands;
 
   FPNode(const std::string &op) : op(op), symbol() {}
+  virtual ~FPNode() = default;
 
   void addOperand(FPNode *operand) { operands.push_back(operand); }
 
@@ -620,6 +621,10 @@ B2:
 
       changed = true;
     }
+  }
+
+  for (auto &[_, node] : valueToNodeMap) {
+    delete node;
   }
 
   return changed;
