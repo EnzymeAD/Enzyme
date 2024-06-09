@@ -25,7 +25,6 @@
 #include <regex>
 #include <sstream>
 #include <string>
-#include <vector> // TODO: SmallVector??
 
 #include "Herbie.h"
 #include "Utils.h"
@@ -61,7 +60,7 @@ public:
   }
 
   virtual Value *getValue(Instruction *insertBefore, IRBuilder<> &builder) {
-    std::vector<Value *> operandValues;
+    SmallVector<Value *, 1> operandValues;
     for (auto operand : operands) {
       operandValues.push_back(operand->getValue(insertBefore, builder));
     }
