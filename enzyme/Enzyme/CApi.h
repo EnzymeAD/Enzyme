@@ -208,8 +208,7 @@ LLVMValueRef EnzymeCreateForwardDiff(
     size_t constant_args_size, EnzymeTypeAnalysisRef TA, uint8_t returnValue,
     CDerivativeMode mode, uint8_t freeMemory, unsigned width,
     LLVMTypeRef additionalArg, CFnTypeInfo typeInfo, uint8_t *_overwritten_args,
-    size_t overwritten_args_size, EnzymeAugmentedReturnPtr augmented
-);
+    size_t overwritten_args_size, EnzymeAugmentedReturnPtr augmented);
 
 #ifdef __cplusplus
 }
