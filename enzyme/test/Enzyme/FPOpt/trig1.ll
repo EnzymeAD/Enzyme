@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -fp-opt -enzyme-preopt=false -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="fp-opt" -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -fp-opt -O3 -enzyme-preopt=false -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="fp-opt,default<O3>" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline nounwind readnone uwtable
 define double @tester(double %x) {
@@ -18,6 +18,6 @@ declare double @llvm.sin.f64(double)
 
 ; CHECK: define double @tester(double %x)
 ; CHECK: entry:
-; CHECK-NEXT:   %[[i0:.+]] = call fast double @llvm.sin.f64(double %x)
-; CHECK-NEXT:   %[[i1:.+]] = call fast double @llvm.pow.f64(double %[[i0]], double 2.000000e+00)
+; CHECK-NEXT:   %[[i0:.+]] = tail call fast double @llvm.sin.f64(double %x)
+; CHECK-NEXT:   %[[i1:.+]] = fmul fast double %[[i0]], %[[i0]]
 ; CHECK-NEXT:   ret double %[[i1]]

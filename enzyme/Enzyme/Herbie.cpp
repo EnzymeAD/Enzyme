@@ -610,13 +610,13 @@ B2:
       output->replaceAllUsesWith(newRootValue);
 
       // TODO: better cleanup
-      for (auto I = component.operations.rbegin();
-           I != component.operations.rend(); ++I) {
-        if ((*I)->use_empty()) {
-          llvm::errs() << "Removing: " << **I << "\n";
-          (*I)->eraseFromParent();
-        }
-      }
+      // for (auto I = component.operations.rbegin();
+      //      I != component.operations.rend(); ++I) {
+      //   if ((*I)->use_empty()) {
+      //     llvm::errs() << "Removing: " << **I << "\n";
+      //     (*I)->eraseFromParent();
+      //   }
+      // }
 
       changed = true;
     }
