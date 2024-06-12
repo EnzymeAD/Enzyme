@@ -3,6 +3,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include <llvm/ADT/StringRef.h>
@@ -19,7 +20,6 @@
 
 #include "llvm/Transforms/Utils.h"
 
-#include <chrono>
 #include <fstream>
 #include <map>
 #include <regex>
@@ -217,15 +217,21 @@ parseHerbieExpr(const std::string &expr,
 }
 
 bool improveViaHerbie(std::string &expr) {
-  auto now = std::chrono::high_resolution_clock::now().time_since_epoch();
-  auto millis =
-      std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+  SmallString<32> tmpin, tmpout;
 
-  std::string tmpin = "/tmp/herbie_input_" + std::to_string(millis);
-  std::string tmpout = "/tmp/herbie_output_" + std::to_string(millis);
+  if (llvm::sys::fs::createUniqueFile("herbie_input_%%%%%%%%%%%%%%%%", tmpin,
+                                      llvm::sys::fs::perms::owner_all)) {
+    llvm::errs() << "Failed to create a unique input file.\n";
+    return false;
+  }
 
-  std::remove(tmpout.c_str());
-  std::ofstream input(tmpin);
+  if (llvm::sys::fs::createUniqueFile("herbie_output_%%%%%%%%%%%%%%%%", tmpout,
+                                      llvm::sys::fs::perms::owner_all)) {
+    llvm::errs() << "Failed to create a unique output file.\n";
+    return false;
+  }
+
+  std::ofstream input(tmpin.c_str());
   if (!input) {
     llvm::errs() << "Failed to open input file.\n";
     return 1;
@@ -246,13 +252,13 @@ bool improveViaHerbie(std::string &expr) {
                             /*SecondsToWait=*/0, /*MemoryLimit=*/0, &ErrMsg,
                             &ExecutionFailed);
 
+  std::remove(tmpin.c_str());
   if (ExecutionFailed) {
     llvm::errs() << "Execution failed: " << ErrMsg << "\n";
     return false;
   }
-  std::remove(tmpin.c_str());
 
-  std::ifstream output(tmpout);
+  std::ifstream output(tmpout.c_str());
   if (!output) {
     llvm::errs() << "Failed to open output file.\n";
     return false;
