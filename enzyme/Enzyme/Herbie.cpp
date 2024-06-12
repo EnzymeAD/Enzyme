@@ -169,7 +169,7 @@ parseHerbieExpr(const std::string &expr,
   }
 
   // Constants
-  std::regex constantPattern("^#s\\(literal\\s+([\\d\\.]+)\\s+\\w+\\)$");
+  std::regex constantPattern("^#s\\(literal\\s+([-+]?[\\d\\.]+)\\s+\\w+\\)$");
   std::smatch matches;
   if (std::regex_match(trimmedExpr, matches, constantPattern)) {
     llvm::errs() << "Found __const " << matches[1].str() << "\n";
