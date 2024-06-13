@@ -4272,7 +4272,6 @@ GradientUtils *GradientUtils::CreateFromClone(
   // We don't need to differentially return something that we know is not a
   // pointer (or somehow needed for shadow analysis)
   if (shadowReturnUsed) {
-    assert(retType == DIFFE_TYPE::DUP_ARG || retType == DIFFE_TYPE::DUP_NONEED);
     assert(!todiff->getReturnType()->isEmptyTy());
     assert(!todiff->getReturnType()->isVoidTy());
     returnMapping[AugmentedStruct::DifferentialReturn] = returnCount + 1;
