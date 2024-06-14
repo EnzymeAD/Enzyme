@@ -346,6 +346,66 @@ bool herbiable(const Value &Val) {
   }
 }
 
+// Value *getOperandFromStore(Instruction *I) {
+//   if (auto *LI = dyn_cast<LoadInst>(I)) {
+//     auto *Ptr = LI->getPointerOperand();
+//     if (auto *AI = dyn_cast<AllocaInst>(Ptr)) {
+//       StoreInst *lastStore = nullptr;
+//       for (auto BI = I->getReverseIterator(); BI != I->getParent()->rend();
+//            ++BI) {
+//         if (auto *SI = dyn_cast<StoreInst>(&*BI)) {
+//           if (SI->getPointerOperand() == Ptr) {
+//             lastStore = SI;
+//             break;
+//           }
+//         }
+//       }
+
+//       if (!lastStore) { // TODO: ??
+//         llvm::errs() << "Failed to find last store for inst: " << I << "\n";
+//         return nullptr;
+//       }
+
+//       auto *Val = lastStore->getValueOperand();
+//       llvm::errs() << "Store: Recovered " << I << " as " << *Val
+//                    << " in valueToNodeMap\n";
+//       valueToNodeMap[&I] = valueToNodeMap[Val];
+//     }
+//   }
+//   llvm::errs() << "Skipping unrecoverable load: " << I << "\n";
+//   return nullptr;
+// }
+
+// Value *getOperandFromStore(Instruction *I) {
+//   if (auto *LI = dyn_cast<LoadInst>(I)) {
+//     auto *Ptr = LI->getPointerOperand();
+//     if (auto *AI = dyn_cast<AllocaInst>(Ptr)) {
+//       StoreInst *lastStore = nullptr;
+//       for (auto BI = I->getReverseIterator(); BI != I->getParent()->rend();
+//            ++BI) {
+//         if (auto *SI = dyn_cast<StoreInst>(&*BI)) {
+//           if (SI->getPointerOperand() == Ptr) {
+//             lastStore = SI;
+//             break;
+//           }
+//         }
+//       }
+
+//       if (!lastStore) { // TODO: ??
+//         llvm::errs() << "Failed to find last store for inst: " << I << "\n";
+//         return nullptr;
+//       }
+
+//       auto *Val = lastStore->getValueOperand();
+//       llvm::errs() << "Store: Recovered " << I << " as " << *Val
+//                    << " in valueToNodeMap\n";
+//       valueToNodeMap[&I] = valueToNodeMap[Val];
+//     }
+//   }
+//   llvm::errs() << "Skipping unrecoverable load: " << I << "\n";
+//   return nullptr;
+// }
+
 struct HerbieComponents {
   SetVector<Value *> inputs;
   SetVector<Value *> outputs;
@@ -409,40 +469,41 @@ B2:
 
   for (auto &BB : F) {
     for (auto &I : BB) {
-      if (herbiable(I)) {
-        llvm::errs() << "Herbie Operator: " << getHerbieOperator(I) << "\n";
-        auto node = new FPNode(getHerbieOperator(I));
-
-        auto operands =
-            isa<CallInst>(I) ? cast<CallInst>(I).args() : I.operands();
-        for (auto &operand : operands) {
-          if (!valueToNodeMap.count(operand)) {
-            if (auto C = dyn_cast<ConstantFP>(operand)) {
-              llvm::SmallVector<char, 10> value;
-              C->getValueAPF().toString(value);
-              std::string valueStr(value.begin(), value.end());
-              valueToNodeMap[operand] = new FPConst(valueStr);
-              llvm::errs() << "Registered FPNode for constant: " << valueStr
-                           << "\n";
-            } else if (auto GV = dyn_cast<GlobalVariable>(operand)) {
-              valueToNodeMap[operand] = new FPLLValue(GV);
-              llvm::errs() << "Registered FPNode for global variable: " << *GV
-                           << "\n";
-            } else {
-              assert(0 && "Unknown operand");
-            }
-          }
-          node->addOperand(valueToNodeMap[operand]);
-        }
-        valueToNodeMap[&I] = node;
+      if (!herbiable(I)) {
+        llvm::errs() << "Skipping non-herbiable instruction: " << I << "\n";
+        continue;
       }
+
+      llvm::errs() << "Herbie Operator: " << getHerbieOperator(I) << "\n";
+      auto node = new FPNode(getHerbieOperator(I));
+
+      auto operands =
+          isa<CallInst>(I) ? cast<CallInst>(I).args() : I.operands();
+      for (auto &operand : operands) {
+        if (!valueToNodeMap.count(operand)) {
+          if (auto C = dyn_cast<ConstantFP>(operand)) {
+            SmallString<10> value;
+            C->getValueAPF().toString(value);
+            valueToNodeMap[operand] = new FPConst(value.c_str());
+            llvm::errs() << "Registered FPNode for constant: " << value << "\n";
+          } else if (auto GV = dyn_cast<GlobalVariable>(operand)) {
+            valueToNodeMap[operand] = new FPLLValue(GV);
+            llvm::errs() << "Registered FPNode for global variable: " << *GV
+                         << "\n";
+          } else {
+            assert(0 && "Unknown operand");
+          }
+        }
+        node->addOperand(valueToNodeMap[operand]);
+      }
+      valueToNodeMap[&I] = node;
     }
   }
 
   for (auto &[value, node] : valueToNodeMap) {
     llvm::errs() << "Value: " << *value
-                 << " isExpression: " << valueToNodeMap[value]->isExpression()
-                 << "\n";
+                 << " isExpression: " << node->isExpression()
+                 << " Node: " << node << "\n";
   }
 
   SmallSet<Value *, 1> component_seen;
@@ -499,6 +560,7 @@ B2:
             isa<CallInst>(I2) ? cast<CallInst>(I2)->args() : I2->operands();
 
         for (auto &operand : operands) {
+          // if (!herbiable(*operand) && !isa<LoadInst>(operand)) {
           if (!herbiable(*operand)) {
             llvm::errs() << "Non-herbiable input found: " << *operand << "\n";
             input_seen.insert(operand);
@@ -545,6 +607,11 @@ B2:
           llvm::errs() << *operation << "\n";
         }
 
+        if (operation_seen.size() == 1) {
+          llvm::errs() << "Skipping trivial connected component\n";
+          continue;
+        }
+
         connected_components.emplace_back(std::move(input_seen),
                                           std::move(output_seen),
                                           std::move(operation_seen));
@@ -563,6 +630,7 @@ B2:
 
   for (auto &component : connected_components) {
     std::string argumentsStr = "(";
+    assert(component.inputs.size() > 0 && "No inputs found for component");
     for (const auto &input : component.inputs) {
       auto node = valueToNodeMap[input];
       if (node->op == "__const") {
@@ -579,6 +647,7 @@ B2:
     argumentsStr.pop_back();
     argumentsStr += ")";
 
+    assert(component.outputs.size() > 0 && "No outputs found for component");
     for (const auto &output : component.outputs) {
       std::string herbieExpr =
           "(FPCore " + argumentsStr + " " +
