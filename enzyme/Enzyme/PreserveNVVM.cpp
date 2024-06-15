@@ -668,6 +668,7 @@ bool preserveNVVM(bool Begin, Module &M) {
 
   StringMap<std::pair<std::string, std::string>> Implements;
   for (std::string T : {"", "f"}) {
+    // CUDA
     // sincos, sinpi, cospi, sincospi, cyl_bessel_i1
     for (std::string name :
          {"sin",        "cos",     "tan",       "log2",   "exp",    "exp2",
@@ -690,6 +691,52 @@ bool preserveNVVM(bool Begin, Module &M) {
         nvname += "f";
         llname += "f32";
       } else {
+        llname += "f64";
+      }
+
+      Implements[nvname] = std::make_pair(mathname, llname);
+    }
+    // ROCM
+    // sincos, sinpi, cospi, sincospi, cyl_bessel_i1
+    for (std::string name : {"acos",         "acosh",        "asin",
+                             "asinh",        "atan2",        "atan",
+                             "atanh",        "cbrt",         "ceil",
+                             "copysign",     "cos",          "native_cos",
+                             "cosh",         "cospi",        "i0",
+                             "i1",           "erfc",         "erfcinv",
+                             "erfcx",        "erf",          "erfinv",
+                             "exp10",        "native_exp10", "exp2",
+                             "exp",          "native_exp",   "expm1",
+                             "fabs",         "fdim",         "floor",
+                             "fma",          "fmax",         "fmin",
+                             "fmod",         "frexp",        "hypot",
+                             "ilogb",        "isfinite",     "isinf",
+                             "isnan",        "j0",           "j1",
+                             "ldexp",        "lgamma",       "log10",
+                             "native_log10", "log1p",        "log2",
+                             "log2",         "logb",         "log",
+                             "native_log",   "modf",         "nearbyint",
+                             "nextafter",    "len3",         "len4",
+                             "ncdf",         "ncdfinv",      "pow",
+                             "pown",         "rcbrt",        "remainder",
+                             "remquo",       "rhypot",       "rint",
+                             "rlen3",        "rlen4",        "round",
+                             "rsqrt",        "scalb",        "scalbn",
+                             "signbit",      "sincos",       "sincospi",
+                             "sin",          "native_sin",   "sinh",
+                             "sinpi",        "sqrt",         "native_sqrt",
+                             "tan",          "tanh",         "tgamma",
+                             "trunc",        "y0",           "y1"}) {
+      std::string nvname = "__ocml_" + name + "_";
+      std::string llname = "llvm." + name + ".";
+      std::string mathname = name;
+
+      if (T == "f") {
+        mathname += "f";
+        nvname += "f32";
+        llname += "f32";
+      } else {
+        nvname += "f32";
         llname += "f64";
       }
 
