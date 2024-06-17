@@ -346,66 +346,6 @@ bool herbiable(const Value &Val) {
   }
 }
 
-// Value *getOperandFromStore(Instruction *I) {
-//   if (auto *LI = dyn_cast<LoadInst>(I)) {
-//     auto *Ptr = LI->getPointerOperand();
-//     if (auto *AI = dyn_cast<AllocaInst>(Ptr)) {
-//       StoreInst *lastStore = nullptr;
-//       for (auto BI = I->getReverseIterator(); BI != I->getParent()->rend();
-//            ++BI) {
-//         if (auto *SI = dyn_cast<StoreInst>(&*BI)) {
-//           if (SI->getPointerOperand() == Ptr) {
-//             lastStore = SI;
-//             break;
-//           }
-//         }
-//       }
-
-//       if (!lastStore) { // TODO: ??
-//         llvm::errs() << "Failed to find last store for inst: " << I << "\n";
-//         return nullptr;
-//       }
-
-//       auto *Val = lastStore->getValueOperand();
-//       llvm::errs() << "Store: Recovered " << I << " as " << *Val
-//                    << " in valueToNodeMap\n";
-//       valueToNodeMap[&I] = valueToNodeMap[Val];
-//     }
-//   }
-//   llvm::errs() << "Skipping unrecoverable load: " << I << "\n";
-//   return nullptr;
-// }
-
-// Value *getOperandFromStore(Instruction *I) {
-//   if (auto *LI = dyn_cast<LoadInst>(I)) {
-//     auto *Ptr = LI->getPointerOperand();
-//     if (auto *AI = dyn_cast<AllocaInst>(Ptr)) {
-//       StoreInst *lastStore = nullptr;
-//       for (auto BI = I->getReverseIterator(); BI != I->getParent()->rend();
-//            ++BI) {
-//         if (auto *SI = dyn_cast<StoreInst>(&*BI)) {
-//           if (SI->getPointerOperand() == Ptr) {
-//             lastStore = SI;
-//             break;
-//           }
-//         }
-//       }
-
-//       if (!lastStore) { // TODO: ??
-//         llvm::errs() << "Failed to find last store for inst: " << I << "\n";
-//         return nullptr;
-//       }
-
-//       auto *Val = lastStore->getValueOperand();
-//       llvm::errs() << "Store: Recovered " << I << " as " << *Val
-//                    << " in valueToNodeMap\n";
-//       valueToNodeMap[&I] = valueToNodeMap[Val];
-//     }
-//   }
-//   llvm::errs() << "Skipping unrecoverable load: " << I << "\n";
-//   return nullptr;
-// }
-
 struct HerbieComponents {
   SetVector<Value *> inputs;
   SetVector<Value *> outputs;
@@ -560,7 +500,6 @@ B2:
             isa<CallInst>(I2) ? cast<CallInst>(I2)->args() : I2->operands();
 
         for (auto &operand : operands) {
-          // if (!herbiable(*operand) && !isa<LoadInst>(operand)) {
           if (!herbiable(*operand)) {
             llvm::errs() << "Non-herbiable input found: " << *operand << "\n";
             input_seen.insert(operand);
@@ -684,21 +623,22 @@ B2:
                    << "\n";
       output->replaceAllUsesWith(newRootValue);
 
-      // TODO: better cleanup
-      // for (auto I = component.operations.rbegin();
-      //      I != component.operations.rend(); ++I) {
-      //   if ((*I)->use_empty()) {
-      //     llvm::errs() << "Removing: " << **I << "\n";
-      //     (*I)->eraseFromParent();
-      //   }
-      // }
-
       changed = true;
     }
   }
 
   for (auto &[_, node] : valueToNodeMap) {
     delete node;
+  }
+
+  for (auto &component : connected_components) {
+    for (auto *I : component.operations) {
+      llvm::errs() << "Erasing: " << *I << "\n";
+      if (!I->use_empty()) {
+        I->replaceAllUsesWith(UndefValue::get(I->getType()));
+      }
+      I->eraseFromParent();
+    }
   }
 
   return changed;
