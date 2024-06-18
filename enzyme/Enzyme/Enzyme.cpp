@@ -335,20 +335,47 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::ReadNone);
 #endif
   }
-  if (F.getName() == "julia.ptls_states" ||
-      F.getName() == "julia.get_pgcstack" || F.getName() == "lgamma_r" ||
-      F.getName() == "memcmp" ||
-      F.getName() == "_ZNSt6chrono3_V212steady_clock3nowEv" ||
-      F.getName() == "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_"
-                     "createERmm" ||
-      F.getName() ==
-          "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEmmm" ||
-      F.getName() == "fprintf") {
-    changed = true;
-    F.addAttribute(
-        AttributeList::FunctionIndex,
-        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
-  }
+  auto name = F.getName();
+
+  const char *NonEscapingFns[] = {
+      "julia.ptls_states",
+      "julia.get_pgcstack",
+      "lgamma_r",
+      "memcmp",
+      "_ZNSt6chrono3_V212steady_clock3nowEv",
+      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_"
+      "createERmm",
+      "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEmmm",
+      "fprintf",
+      "fwrite",
+      "strtol",
+      "getenv",
+      "memchr",
+      "cublasSetMathMode",
+      "cublasSetStream_v2",
+      "cuMemPoolTrimTo",
+      "cuDeviceGetMemPool",
+      "cuStreamSynchronize",
+      "cuStreamDestroy",
+      "cuStreamQuery",
+      "cuCtxGetCurrent",
+      "cuDeviceGet",
+      "cuDeviceGetName",
+      "cuDriverGetVersion",
+      "cudaRuntimeGetVersion",
+      "cuDeviceGetCount",
+      "cuMemPoolGetAttribute",
+      "cuMemGetInfo_v2",
+      "cuDeviceGetAttribute",
+      "cuDevicePrimaryCtxRetain",
+  };
+  for (auto fname : NonEscapingFns)
+    if (name == fname) {
+      changed = true;
+      F.addAttribute(
+          AttributeList::FunctionIndex,
+          Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+    }
   return changed;
 }
 
@@ -1128,7 +1155,8 @@ public:
                     differet = Builder.CreateLoad(ST1, AI);
                   }
 
-            if (differet->getType() != fn->getReturnType()) {
+            if (differet->getType() !=
+                GradientUtils::getShadowType(fn->getReturnType(), width)) {
               EmitFailure("BadDiffRet", CI->getDebugLoc(), CI,
                           "Bad DiffRet type ", *differet, " expected ",
                           *fn->getReturnType());
@@ -2118,7 +2146,7 @@ public:
   }
 
   bool handleFullModuleTrunc(Function &F) {
-    if (F.getName().startswith(EnzymeFPRTPrefix))
+    if (startsWith(F.getName(), EnzymeFPRTPrefix))
       return false;
     typedef std::vector<FloatTruncation> TruncationsTy;
     static TruncationsTy FullModuleTruncs = []() -> TruncationsTy {
@@ -3171,6 +3199,8 @@ public:
     Logic.clear();
 
     if (changed && Logic.PostOpt) {
+      TimeTraceScope timeScope("Enzyme PostOpt", M.getName());
+
       PassBuilder PB;
       LoopAnalysisManager LAM;
       FunctionAnalysisManager FAM;
@@ -3272,6 +3302,7 @@ public:
 AnalysisKey EnzymeNewPM::Key;
 
 #include "ActivityAnalysisPrinter.h"
+#include "JLInstSimplify.h"
 #include "PreserveNVVM.h"
 #ifdef ENZYME_ENABLE_HERBIE
 #include "Herbie.h"
@@ -3836,6 +3867,10 @@ void registerEnzyme(llvm::PassBuilder &PB) {
          llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
         if (Name == "print-activity-analysis") {
           FPM.addPass(ActivityAnalysisPrinterNewPM());
+          return true;
+        }
+        if (Name == "jl-inst-simplify") {
+          FPM.addPass(JLInstSimplifyNewPM());
           return true;
         }
         return false;

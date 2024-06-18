@@ -1,4 +1,4 @@
-//===- PreserveNVVM.h - Mark NVVM attributes for preservation.  -------===//
+//=- JLInstSimplify.h - Additional instsimplifyrules for julia programs =//
 //
 //                             Enzyme Project
 //
@@ -17,36 +17,27 @@
 // }
 //
 //===----------------------------------------------------------------------===//
-//
-// This file contains createPreserveNVVM, a transformation pass that marks
-// calls to __nv_* functions, marking them as noinline as implementing the llvm
-// intrinsic.
-//
-//===----------------------------------------------------------------------===//
+#include <llvm/Config/llvm-config.h>
 
 #include "llvm/IR/PassManager.h"
 #include "llvm/Passes/PassPlugin.h"
 
 namespace llvm {
-class ModulePass;
+class FunctionPass;
 }
 
-llvm::ModulePass *createPreserveNVVMPass(bool Begin);
-llvm::FunctionPass *createPreserveNVVMFnPass(bool Begin);
-
-class PreserveNVVMNewPM final
-    : public llvm::AnalysisInfoMixin<PreserveNVVMNewPM> {
-  friend struct llvm::AnalysisInfoMixin<PreserveNVVMNewPM>;
+class JLInstSimplifyNewPM final
+    : public llvm::AnalysisInfoMixin<JLInstSimplifyNewPM> {
+  friend struct llvm::AnalysisInfoMixin<JLInstSimplifyNewPM>;
 
 private:
-  bool Begin;
   static llvm::AnalysisKey Key;
 
 public:
   using Result = llvm::PreservedAnalyses;
-  PreserveNVVMNewPM(bool Begin) : Begin(Begin) {}
+  JLInstSimplifyNewPM() {}
 
-  Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
+  Result run(llvm::Function &M, llvm::FunctionAnalysisManager &MAM);
 
   static bool isRequired() { return true; }
 };

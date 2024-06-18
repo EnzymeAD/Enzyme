@@ -11,7 +11,7 @@ repo = "https://github.com/EnzymeAD/Enzyme.git"
 auto_version = "%ENZYME_VERSION%"
 version = VersionNumber(split(auto_version, "/")[end])
 
-llvm_versions = [v"11.0.1", v"12.0.1", v"13.0.1", v"14.0.2", v"15.0.7", v"16.0.6"]
+llvm_versions = [v"11.0.1", v"12.0.1", v"13.0.1", v"14.0.2", v"15.0.7", v"16.0.6", v"17.0.6"]
 
 # Collection of sources required to build attr
 sources = [
@@ -49,6 +49,10 @@ NATIVE_CMAKE_FLAGS+=(-DCMAKE_INSTALL_PREFIX=${host_prefix})
 # Tell CMake where LLVM is
 NATIVE_CMAKE_FLAGS+=(-DLLVM_DIR="${host_prefix}/lib/cmake/llvm")
 NATIVE_CMAKE_FLAGS+=(-DBC_LOAD_FLAGS="-target ${target} --sysroot=/opt/${target}/${target}/sys-root --gcc-toolchain=/opt/${target}")
+if [[ "${target}" == *mingw* ]]; then
+    NATIVE_CMAKE_FLAGS+=(-DCMAKE_CPP_FLAGS=-pthread)
+    NATIVE_CMAKE_FLAGS+=(-DCMAKE_C_FLAGS=-pthread)
+fi
 
 cmake -B build-native -S enzyme -GNinja "${NATIVE_CMAKE_FLAGS[@]}"
 
@@ -87,6 +91,12 @@ else
 if [[ "${target}" == x86_64-apple* ]]; then
   CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET:STRING=10.12)
 fi
+fi
+if [[ "${target}" == *mingw* ]]; then
+    CMAKE_FLAGS+=(-DCMAKE_CPP_FLAGS=-pthread)
+    CMAKE_FLAGS+=(-DCMAKE_C_FLAGS=-pthread)
+    CMAKE_FLAGS+=(-DCMAKE_SHARED_LINKER_FLAGS=-pthread)
+    CMAKE_FLAGS+=(-DCMAKE_EXE_LINKER_FLAGS=-pthread)
 fi
 
 echo ${CMAKE_FLAGS[@]}

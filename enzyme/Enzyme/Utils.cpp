@@ -301,6 +301,10 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
     res = unwrap(CustomAllocator(wrap(&Builder), wrap(T), wrap(Count),
                                  wrap(Align), isDefault,
                                  ZeroMem ? &wzeromem : nullptr));
+    if (isa<UndefValue>(res))
+      return res;
+    if (isa<Constant>(res))
+      return res;
     if (auto I = dyn_cast<Instruction>(res))
       I->setName(Name);
 
@@ -2043,6 +2047,12 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     if (funcName == "jl_array_copy" || funcName == "ijl_array_copy")
       return false;
 
+    if (funcName == "jl_new_array" || funcName == "ijl_new_array")
+      return false;
+
+    if (funcName == "julia.safepoint")
+      return false;
+
     if (funcName == "jl_idtable_rehash" || funcName == "ijl_idtable_rehash")
       return false;
 
@@ -2636,7 +2646,8 @@ std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
-  const char *extractable[] = {"dot", "scal", "axpy", "gemv", "gemm", "spmv"};
+  const char *extractable[] = {"dot",  "scal", "axpy", "gemv", "gemm", "spmv",
+                               "syrk", "nrm2", "trmm", "trmv", "symm"};
   const char *floatType[] = {"s", "d"}; // c, z
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
   const char *suffixes[] = {"", "_", "64_", "_64_"};
@@ -2658,13 +2669,17 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
   const char *cuCFloatType[] = {"S", "D"}; // c, z
   const char *cuFFloatType[] = {"s", "d"}; // c, z
   const char *cuCPrefixes[] = {"cublas"};
+  const char *cuSuffixes[] = {"", "_v2", "_64", "_v2_64"};
   for (auto t : llvm::enumerate(cuCFloatType)) {
     for (auto f : extractable) {
       for (auto p : cuCPrefixes) {
-        if (in == (Twine(p) + t.value() + f).str()) {
-          return BlasInfo{
-              t.value(), p, "", f, false,
-          };
+        for (auto s : cuSuffixes) {
+          if (in == (Twine(p) + t.value() + f + s).str()) {
+            bool is64 = llvm::StringRef(s).contains("64");
+            return BlasInfo{
+                t.value(), p, s, f, is64,
+            };
+          }
         }
       }
     }
@@ -2933,7 +2948,7 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
                           "transpose." + name);
 }
 
-llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::IntegerType *intType,
+llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
                          llvm::Value *V, bool byRef) {
   if (!byRef)
     return V;
@@ -2946,8 +2961,6 @@ llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::IntegerType *intType,
 
 SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
                                            ArrayRef<llvm::Value *> transA,
-                                           ArrayRef<llvm::Value *> row,
-                                           ArrayRef<llvm::Value *> col,
                                            bool byRef, bool cublas) {
   assert(transA.size() == 1);
   auto trans = transA[0];
@@ -2971,10 +2984,18 @@ SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
     // TODO: verify
     cond = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 0));
   }
+  return {cond};
+}
+SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
+                                           ArrayRef<llvm::Value *> transA,
+                                           ArrayRef<llvm::Value *> row,
+                                           ArrayRef<llvm::Value *> col,
+                                           bool byRef, bool cublas) {
+  auto conds = get_blas_row(B, transA, byRef, cublas);
   assert(row.size() == col.size());
   SmallVector<Value *, 1> toreturn;
   for (size_t i = 0; i < row.size(); i++) {
-    toreturn.push_back(B.CreateSelect(cond, row[i], col[i]));
+    toreturn.push_back(B.CreateSelect(conds[0], row[i], col[i]));
   }
   return toreturn;
 }
@@ -3132,3 +3153,9 @@ llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
 
   return absres;
 }
+
+void dumpModule(llvm::Module *mod) { llvm::errs() << *mod << "\n"; }
+
+void dumpValue(llvm::Value *val) { llvm::errs() << *val << "\n"; }
+
+void dumpType(llvm::Type *ty) { llvm::errs() << *ty << "\n"; }

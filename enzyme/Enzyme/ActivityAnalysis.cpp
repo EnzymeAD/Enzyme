@@ -46,6 +46,7 @@
 
 #include "llvm/IR/InstIterator.h"
 
+#include "llvm/Support/TimeProfiler.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "llvm/IR/InlineAsm.h"
@@ -209,6 +210,9 @@ const StringSet<> KnownInactiveFunctions = {
     "__cxa_guard_acquire",
     "__cxa_guard_release",
     "__cxa_guard_abort",
+    "getenv",
+    "strtol",
+    "fwrite",
     "snprintf",
     "sprintf",
     "printf",
@@ -727,6 +731,10 @@ bool isPossibleFloat(const TypeResults &TR, Value *I, const DataLayout &DL) {
 /// do not propagate adjoints themselves
 bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
                                              Instruction *I) {
+
+  TimeTraceScope timeScope("isConstantInstruction",
+                           I->getParent()->getParent()->getName());
+
   // This analysis may only be called by instructions corresponding to
   // the function analyzed by TypeInfo
   assert(I);
@@ -1041,6 +1049,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   // This analysis may only be called by instructions corresponding to
   // the function analyzed by TypeInfo -- however if the Value
   // was created outside a function (e.g. global, constant), that is allowed
+  TimeTraceScope timeScope("isConstantValue");
+
   assert(Val);
   if (auto I = dyn_cast<Instruction>(Val)) {
     if (TR.getFunction() != I->getParent()->getParent()) {

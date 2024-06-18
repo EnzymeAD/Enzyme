@@ -437,6 +437,13 @@ void EnzymeGradientUtilsSetDebugLocFromOriginal(GradientUtils *gutils,
           cast<Instruction>(unwrap(orig))->getDebugLoc()));
 }
 
+LLVMValueRef EnzymeInsertValue(LLVMBuilderRef B, LLVMValueRef val,
+                               LLVMValueRef val2, unsigned *sz, int64_t length,
+                               const char *name) {
+  return wrap(unwrap(B)->CreateInsertValue(
+      unwrap(val), unwrap(val2), ArrayRef<unsigned>(sz, sz + length), name));
+}
+
 LLVMValueRef EnzymeGradientUtilsLookup(GradientUtils *gutils, LLVMValueRef val,
                                        LLVMBuilderRef B) {
   return wrap(gutils->lookupM(unwrap(val), *unwrap(B)));
@@ -1263,13 +1270,15 @@ LLVMValueRef EnzymeComputeByteOffsetOfGEP(LLVMBuilderRef B_r, LLVMValueRef V_r,
   IRBuilder<> &B = *unwrap(B_r);
   auto T = cast<IntegerType>(unwrap(T_r));
   auto width = T->getBitWidth();
-  auto gep = cast<GetElementPtrInst>(unwrap(V_r));
+  auto uw = unwrap(V_r);
+  GEPOperator *gep = isa<GetElementPtrInst>(uw)
+                         ? cast<GEPOperator>(cast<GetElementPtrInst>(uw))
+                         : cast<GEPOperator>(cast<ConstantExpr>(uw));
   auto &DL = B.GetInsertBlock()->getParent()->getParent()->getDataLayout();
 
   MapVector<Value *, APInt> VariableOffsets;
   APInt Offset(width, 0);
-  bool success =
-      collectOffset(cast<GEPOperator>(gep), DL, width, VariableOffsets, Offset);
+  bool success = collectOffset(gep, DL, width, VariableOffsets, Offset);
   (void)success;
   assert(success);
   Value *start = ConstantInt::get(T, Offset);

@@ -326,20 +326,34 @@ public:
 
     std::string s;
     llvm::raw_string_ostream ss(s);
-    ss << *gutils->oldFunc << "\n";
-    ss << *gutils->newFunc << "\n";
     ss << "in Mode: " << to_string(Mode) << "\n";
     ss << "cannot handle unknown instruction\n" << inst;
+    IRBuilder<> Builder2(&inst);
+    getForwardBuilder(Builder2);
     if (CustomErrorHandler) {
-      IRBuilder<> Builder2(&inst);
-      getForwardBuilder(Builder2);
       CustomErrorHandler(ss.str().c_str(), wrap(&inst), ErrorType::NoDerivative,
                          gutils, nullptr, wrap(&Builder2));
-      return;
     } else {
       EmitFailure("NoDerivative", inst.getDebugLoc(), &inst, ss.str());
-      return;
     }
+    if (!gutils->isConstantValue(&inst)) {
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError ||
+          Mode == DerivativeMode::ForwardModeSplit)
+        setDiffe(&inst,
+                 Constant::getNullValue(gutils->getShadowType(inst.getType())),
+                 Builder2);
+    }
+#if LLVM_VERSION_MAJOR >= 12
+    if (!inst.getType()->isVoidTy()) {
+      for (auto &U :
+           make_early_inc_range(gutils->getNewFromOriginal(&inst)->uses())) {
+        U.set(UndefValue::get(inst.getType()));
+      }
+    }
+#endif
+    eraseIfUnused(inst, /*erase*/ true, /*check*/ false);
+    return;
   }
 
   // Common function for falling back to the implementation
@@ -449,7 +463,6 @@ public:
       if (looseTypeAnalysis || true) {
         vd = defaultTypeTreeForLLVM(ET, &I);
         ss << ", assumed " << vd.str() << "\n";
-        TR.dump(ss);
         EmitWarning("CannotDeduceType", I, ss.str());
         goto known;
       }
@@ -911,8 +924,14 @@ public:
         setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
                  BuilderZ);
     }
-    gutils->replaceAWithB(gutils->getNewFromOriginal(&I),
-                          UndefValue::get(I.getType()));
+#if LLVM_VERSION_MAJOR >= 12
+    if (!I.getType()->isVoidTy()) {
+      for (auto &U :
+           make_early_inc_range(gutils->getNewFromOriginal(&I)->uses())) {
+        U.set(UndefValue::get(I.getType()));
+      }
+    }
+#endif
     eraseIfUnused(I, /*erase*/ true, /*check*/ false);
     return;
   }
@@ -1026,7 +1045,6 @@ public:
       if (looseTypeAnalysis || true) {
         vd = defaultTypeTreeForLLVM(valType, &I);
         ss << ", assumed " << vd.str() << "\n";
-        TR.dump(ss);
         EmitWarning("CannotDeduceType", I, ss.str());
         goto known;
       }
@@ -3262,7 +3280,7 @@ public:
           if (start != 0) {
             Value *idxs[] = {
                 ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
-            op0 = BuilderZ.CreateInBoundsGEP(Type::getInt8Ty(op0->getContext()),
+            op0 = Builder2.CreateInBoundsGEP(Type::getInt8Ty(op0->getContext()),
                                              op0, idxs);
           }
           SmallVector<Value *, 4> args = {op0, op1l, length};
@@ -4020,8 +4038,10 @@ public:
         } else {
           EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
         }
-        setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
-                 Builder2);
+        if (!gutils->isConstantValue(&I))
+          setDiffe(&I,
+                   Constant::getNullValue(gutils->getShadowType(I.getType())),
+                   Builder2);
         return false;
       }
       return false;
@@ -6288,134 +6308,15 @@ public:
       return;
 
     bool useConstantFallback =
-        gutils->isConstantInstruction(&call) &&
-        (gutils->isConstantValue(&call) || !shadowReturnUsed);
-    if (useConstantFallback && Mode != DerivativeMode::ForwardMode &&
-        Mode != DerivativeMode::ForwardModeError) {
-      // if there is an escaping allocation, which is deduced needed in
-      // reverse pass, we need to do the recursive procedure to perform the
-      // free.
-
-      // First test if the return is a potential pointer and needed for the
-      // reverse pass
-      bool escapingNeededAllocation = false;
-
-      if (!isNoEscapingAllocation(&call)) {
-        escapingNeededAllocation = EnzymeGlobalActivity;
-
-        std::map<UsageKey, bool> CacheResults;
-        for (auto pair : gutils->knownRecomputeHeuristic) {
-          if (!pair.second || gutils->unnecessaryIntermediates.count(
-                                  cast<Instruction>(pair.first))) {
-            CacheResults[UsageKey(pair.first, QueryType::Primal)] = false;
-          }
-        }
-
-        if (!escapingNeededAllocation &&
-            !(EnzymeJuliaAddrLoad && isSpecialPtr(call.getType()))) {
-          if (TR.query(&call)[{-1}].isPossiblePointer()) {
-            auto found = gutils->knownRecomputeHeuristic.find(&call);
-            if (found != gutils->knownRecomputeHeuristic.end()) {
-              if (!found->second) {
-                CacheResults.erase(UsageKey(&call, QueryType::Primal));
-                escapingNeededAllocation =
-                    DifferentialUseAnalysis::is_value_needed_in_reverse<
-                        QueryType::Primal>(gutils, &call,
-                                           DerivativeMode::ReverseModeGradient,
-                                           CacheResults, oldUnreachable);
-              }
-            } else {
-              escapingNeededAllocation =
-                  DifferentialUseAnalysis::is_value_needed_in_reverse<
-                      QueryType::Primal>(gutils, &call,
-                                         DerivativeMode::ReverseModeGradient,
-                                         CacheResults, oldUnreachable);
-            }
-          }
-        }
-
-        // Next test if any allocation could be stored into one of the
-        // arguments.
-        if (!escapingNeededAllocation)
-#if LLVM_VERSION_MAJOR >= 14
-          for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-          for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
-          {
-            Value *a = call.getOperand(i);
-
-            if (EnzymeJuliaAddrLoad && isSpecialPtr(a->getType()))
-              continue;
-
-            auto vd = TR.query(a);
-            if (!vd[{-1}].isPossiblePointer())
-              continue;
-
-            if (!vd[{-1, -1}].isPossiblePointer())
-              continue;
-
-            if (isReadOnly(&call, i))
-              continue;
-
-            // An allocation could only be needed in the reverse pass if it
-            // escapes into an argument. However, is the parameter by which it
-            // escapes could capture the pointer, the rest of Enzyme's caching
-            // mechanisms cannot assume that the allocation itself is
-            // reloadable, since it may have been captured and overwritten
-            // elsewhere.
-            // TODO: this justification will need revisiting in the future as
-            // the caching algorithm becomes increasingly sophisticated.
-            if (!isNoCapture(&call, i))
-              continue;
-
-            escapingNeededAllocation = true;
-          }
+        DifferentialUseAnalysis::callShouldNotUseDerivative(gutils, call);
+    if (!useConstantFallback) {
+      if (gutils->isConstantInstruction(&call) &&
+          gutils->isConstantValue(&call)) {
+        EmitWarning("ConstnatFallback", call,
+                    "Call was deduced inactive but still doing differential "
+                    "rewrite as it may escape an allocation",
+                    call);
       }
-
-      // If desired this can become even more aggressive by looking through the
-      // called function for any allocations.
-      if (auto F = getFunctionFromCall(&call)) {
-        SmallVector<Function *, 1> todo = {F};
-        SmallPtrSet<Function *, 1> done;
-        bool seenAllocation = false;
-        while (todo.size() && !seenAllocation) {
-          auto cur = todo.pop_back_val();
-          if (done.count(cur))
-            continue;
-          done.insert(cur);
-          // assume empty functions allocate.
-          if (cur->empty()) {
-            // unless they are marked
-            if (isNoEscapingAllocation(cur))
-              continue;
-            seenAllocation = true;
-            break;
-          }
-          for (auto &BB : *cur)
-            for (auto &I : BB)
-              if (auto CB = dyn_cast<CallBase>(&I)) {
-                if (isNoEscapingAllocation(CB))
-                  continue;
-                if (isAllocationCall(CB, gutils->TLI)) {
-                  seenAllocation = true;
-                  goto finish;
-                }
-                if (auto F = getFunctionFromCall(CB)) {
-                  todo.push_back(F);
-                  continue;
-                }
-                // Conservatively assume indirect functions allocate.
-                seenAllocation = true;
-                goto finish;
-              }
-        finish:;
-        }
-        if (!seenAllocation)
-          escapingNeededAllocation = false;
-      }
-      if (escapingNeededAllocation)
-        useConstantFallback = false;
     }
     if (useConstantFallback) {
       if (!gutils->isConstantValue(&call)) {

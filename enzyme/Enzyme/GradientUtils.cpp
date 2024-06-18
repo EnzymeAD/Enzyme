@@ -190,7 +190,8 @@ GradientUtils::GradientUtils(
                     Logic.PPC, Logic.PPC.getAAResultsFromFunction(oldFunc_),
                     notForAnalysis, TLI_, constantvalues_, activevals_,
                     ReturnActivity)),
-      overwritten_args_map_ptr(nullptr), tid(nullptr), numThreads(nullptr),
+      overwritten_args_map_ptr(nullptr), unnecessaryValuesP(nullptr),
+      tid(nullptr), numThreads(nullptr),
       OrigAA(oldFunc_->empty() ? ((AAResults *)nullptr)
                                : &Logic.PPC.getAAResultsFromFunction(oldFunc_)),
       TA(TA_), TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_) {
@@ -252,6 +253,46 @@ GradientUtils::GradientUtils(
   }
 }
 
+// Whether a particular value is neded in rooting the reverse pass
+bool GradientUtils::usedInRooting(const llvm::CallBase *orig,
+                                  ArrayRef<ValueType> types,
+                                  const llvm::Value *val, bool shadow) const {
+  SmallVector<OperandBundleDef, 2> OrigDefs;
+  orig->getOperandBundlesAsDefs(OrigDefs);
+  SmallVector<OperandBundleDef, 2> Defs;
+  for (auto bund : OrigDefs) {
+    // Only handle jl_roots tag (for now).
+    if (bund.getTag() != "jl_roots") {
+      errs() << "unsupported tag " << bund.getTag() << " for " << *orig << "\n";
+      llvm_unreachable("unsupported tag");
+    }
+
+    // In the future we can reduce the number of roots
+    // we preserve by identifying which operands they
+    // correspond to. For now, fall back and preserve all
+    // primals and shadows
+    // assert(bund.inputs().size() == types.size());
+    for (auto inp : bund.inputs()) {
+      if (inp != val)
+        continue;
+      bool anyPrimal = false;
+      bool anyShadow = false;
+      for (auto ty : types) {
+        if (ty == ValueType::Primal || ty == ValueType::Both)
+          anyPrimal = true;
+        if (ty == ValueType::Shadow || ty == ValueType::Both)
+          anyShadow = true;
+      }
+
+      if (anyPrimal && !shadow)
+        return true;
+      if (anyShadow && shadow)
+        return true;
+    }
+  }
+  return false;
+}
+
 SmallVector<OperandBundleDef, 2>
 GradientUtils::getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
                                   IRBuilder<> &Builder2, bool lookup,
@@ -262,14 +303,6 @@ GradientUtils::getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
   SmallVector<OperandBundleDef, 2> OrigDefs;
   orig->getOperandBundlesAsDefs(OrigDefs);
   SmallVector<OperandBundleDef, 2> Defs;
-  bool anyPrimal = false;
-  bool anyShadow = false;
-  for (auto ty : types) {
-    if (ty == ValueType::Primal || ty == ValueType::Both)
-      anyPrimal = true;
-    if (ty == ValueType::Shadow || ty == ValueType::Both)
-      anyShadow = true;
-  }
   for (auto bund : OrigDefs) {
     // Only handle jl_roots tag (for now).
     if (bund.getTag() != "jl_roots") {
@@ -283,6 +316,15 @@ GradientUtils::getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
     // primals and shadows
     // assert(bund.inputs().size() == types.size());
     for (auto inp : bund.inputs()) {
+      bool anyPrimal = false;
+      bool anyShadow = false;
+      for (auto ty : types) {
+        if (ty == ValueType::Primal || ty == ValueType::Both)
+          anyPrimal = true;
+        if (ty == ValueType::Shadow || ty == ValueType::Both)
+          anyShadow = true;
+      }
+
       if (anyPrimal) {
         Value *newv = getNewFromOriginal(inp);
         if (lookup)
@@ -834,10 +876,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           if (orig && knownRecomputeHeuristic.find(orig) !=
                           knownRecomputeHeuristic.end()) {
             if (!knownRecomputeHeuristic[orig]) {
-              if (!legalRecompute(orig, available, &BuilderM))
-                return nullptr;
-
-              assert(isa<LoadInst>(orig) == isa<LoadInst>(val));
+              return nullptr;
             }
           }
         }
@@ -4233,7 +4272,6 @@ GradientUtils *GradientUtils::CreateFromClone(
   // We don't need to differentially return something that we know is not a
   // pointer (or somehow needed for shadow analysis)
   if (shadowReturnUsed) {
-    assert(retType == DIFFE_TYPE::DUP_ARG || retType == DIFFE_TYPE::DUP_NONEED);
     assert(!todiff->getReturnType()->isEmptyTy());
     assert(!todiff->getReturnType()->isVoidTy());
     returnMapping[AugmentedStruct::DifferentialReturn] = returnCount + 1;
@@ -5563,20 +5601,18 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(inversionAllocs);
     if (arg->getOpcode() == Instruction::Add) {
       if (isa<ConstantInt>(arg->getOperand(0))) {
-        auto rule = [&bb, &arg](Value *ip) {
+        auto rule = [&arg](Value *ip) {
           Constant *invops[2] = {arg->getOperand(0), cast<Constant>(ip)};
           return arg->getWithOperands(invops);
         };
-
         auto ip = invertPointerM(arg->getOperand(1), bb, nullShadow);
         return applyChainRule(arg->getType(), bb, rule, ip);
       }
       if (isa<ConstantInt>(arg->getOperand(1))) {
-        auto rule = [&bb, &arg](Value *ip) {
+        auto rule = [&arg](Value *ip) {
           Constant *invops[2] = {cast<Constant>(ip), arg->getOperand(1)};
           return arg->getWithOperands(invops);
         };
-
         auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
         return applyChainRule(arg->getType(), bb, rule, ip);
       }
@@ -8206,6 +8242,9 @@ void GradientUtils::eraseFictiousPHIs() {
 }
 
 void GradientUtils::forceActiveDetection() {
+
+  TimeTraceScope timeScope("Activity Analysis", oldFunc->getName());
+
   for (auto &Arg : oldFunc->args()) {
     ATA->isConstantValue(TR, &Arg);
   }
@@ -8942,7 +8981,7 @@ void GradientUtils::replaceAWithB(Value *A, Value *B, bool storeInCache) {
   // Check that the replacement doesn't already exist in the mapping
   // thereby resulting in a conflict.
 #ifndef NDEBUG
-  {
+  if (!isa<UndefValue>(B)) {
     auto found = newToOriginalFn.find(A);
     if (found != newToOriginalFn.end()) {
       auto foundB = newToOriginalFn.find(B);

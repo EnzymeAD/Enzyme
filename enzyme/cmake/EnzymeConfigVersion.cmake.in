@@ -1,5 +1,25 @@
 set(PACKAGE_VERSION "@ENZYME_VERSION@")
 
+get_property(languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+
+if("C" IN_LIST languages)
+    if ("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
+        message("project languages: ${languages}")
+        message(WARNING "C compiler ID equals ${CMAKE_C_COMPILER_ID}\n"
+        "C compiler: ${CMAKE_C_COMPILER}\n"
+        "Using Enzyme without an LLVM based C compiler.")
+    endif()
+endif()
+
+if("CXX" IN_LIST languages)
+    if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+        message("project languages: ${languages}")
+        message(WARNING "C++ compiler equals ${CMAKE_CXX_COMPILER_ID}\n"
+        "C++ compiler: ${CMAKE_CXX_COMPILER}\n"
+        "Using Enzyme without an LLVM based C++ compiler.")
+    endif()
+endif()
+
 # Check whether the requested PACKAGE_FIND_VERSION is compatible
 if("${PACKAGE_VERSION}" VERSION_LESS "${PACKAGE_FIND_VERSION}")
   set(PACKAGE_VERSION_COMPATIBLE FALSE)
