@@ -2176,11 +2176,11 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        assert(res);\n";
 
       // Insert logging function call (optional)
-      os << "        Function *logFunc = " << origName
-         << ".getModule()->getFunction(\"enzymeLogError\");\n";
+      os << "        Function *logFunc = getLogFunction(" << origName
+         << ".getModule());\n";
       os << "        if (logFunc) {\n"
          << "            std::string moduleName = " << origName
-         << ".getModule()->getModuleIdentifier() ;\n"
+         << ".getModule()->getModuleIdentifier();\n"
          << "            std::string functionName = " << origName
          << ".getFunction()->getName().str();\n"
          << "            std::string blockName = " << origName
@@ -2257,7 +2257,10 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << "            Builder2.CreateCall(logFunc, {origValue, "
             "errValue, opcodeNameValue, calleeNameValue, moduleNameValue, "
             "functionNameValue, blockNameValue});\n"
-         << "        }\n";
+         << "        } else {\n"
+         << "            llvm::errs() << \"ForwardModeError: No log function identified in \" << "
+         << origName << ".getModule()->getModuleIdentifier() << \"\\n\";\n"
+         << "        }";
 
       os << "        setDiffe(&" << origName << ", res, Builder2);\n";
       os << "        break;\n";

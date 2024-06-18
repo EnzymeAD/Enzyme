@@ -3154,6 +3154,16 @@ llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
   return absres;
 }
 
+llvm::Function *getLogFunction(llvm::Module *M) {
+  for (llvm::Function &F : *M) {
+    std::string demangledName = llvm::demangle(F.getName().str());
+    if (startsWith(demangledName, "enzymeLogError")) {
+      return &F;
+    }
+  }
+  return nullptr; // Return nullptr if no matching function is found
+}
+
 void dumpModule(llvm::Module *mod) { llvm::errs() << *mod << "\n"; }
 
 void dumpValue(llvm::Value *val) { llvm::errs() << *val << "\n"; }
