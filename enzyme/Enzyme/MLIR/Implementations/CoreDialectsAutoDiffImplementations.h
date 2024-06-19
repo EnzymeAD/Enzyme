@@ -254,6 +254,7 @@ void registerBuiltinDialectAutoDiffInterface(DialectRegistry &registry);
 void registerLLVMDialectAutoDiffInterface(DialectRegistry &registry);
 void registerNVVMDialectAutoDiffInterface(DialectRegistry &registry);
 void registerMemRefDialectAutoDiffInterface(DialectRegistry &registry);
+void registerComplexDialectAutoDiffInterface(DialectRegistry &registry);
 void registerSCFDialectAutoDiffInterface(DialectRegistry &registry);
 void registerCFDialectAutoDiffInterface(DialectRegistry &registry);
 void registerLinalgDialectAutoDiffInterface(DialectRegistry &registry);

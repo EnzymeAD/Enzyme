@@ -38,6 +38,10 @@ public:
                     Value b) const {
     return builder.create<arith::AddFOp>(loc, a, b);
   }
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    return a;
+  }
 
   Type getShadowType(Type self, unsigned width) const {
     assert(width == 1 && "unsupported width != 1");
@@ -72,6 +76,15 @@ public:
     return builder.create<arith::AddFOp>(loc, a, b);
   }
 
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    auto tenType = self.cast<TensorType>();
+    auto ET = tenType.getElementType();
+    auto iface = cast<AutoDiffTypeInterface>(ET);
+    auto added = iface.createConjOp(builder, loc, a);
+    return added;
+  }
+
   Type getShadowType(Type self, unsigned width) const {
     assert(width == 1 && "unsupported width != 1");
     return self;
@@ -98,6 +111,11 @@ public:
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
                     Value b) const {
     return builder.create<arith::AddIOp>(loc, a, b);
+  }
+
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    return a;
   }
 
   Type getShadowType(Type self, unsigned width) const {
