@@ -421,6 +421,20 @@ gentbl(
 )
 
 gentbl(
+    name = "complex-derivatives",
+    tbl_outs = [(
+        "-gen-mlir-derivatives",
+        "Enzyme/MLIR/Implementations/ComplexDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/ComplexDerivatives.td",
+    td_srcs = [
+        "Enzyme/MLIR/Implementations/ComplexDerivatives.td",
+        "Enzyme/MLIR/Implementations/Common.td",
+    ],
+)
+
+gentbl(
     name = "llvm-derivatives",
     tbl_outs = [(
         "-gen-mlir-derivatives",
@@ -573,6 +587,7 @@ cc_library(
         "@llvm-project//mlir:BytecodeOpInterface",
         "@llvm-project//mlir:CallOpInterfaces",
         "@llvm-project//mlir:CastInterfaces",
+        "@llvm-project//mlir:ComplexDialect",
         "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:ControlFlowInterfaces",
         "@llvm-project//mlir:ConversionPasses",
@@ -613,6 +628,7 @@ cc_binary(
         "@llvm-project//mlir:AllPassesAndDialects",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:AsyncDialect",
+        "@llvm-project//mlir:ComplexDialect",
         "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:ConversionPasses",
         "@llvm-project//mlir:DLTIDialect",
