@@ -15,7 +15,8 @@ int errorLogCount = 0;
 
 void enzymeLogError(double res, double err, const char *opcodeName,
                     const char *calleeName, const char *moduleName,
-                    const char *functionName, const char *blockName) {
+                    const char *functionName, const char *blockName,
+                    int numOperands, double *operands) {
   ++errorLogCount;
   printf("Res = %e, Error = %e, Op = %s, Callee = %s, Module = %s, Function = "
          "%s, BasicBlock = %s\n",
