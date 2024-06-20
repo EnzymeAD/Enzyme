@@ -566,6 +566,7 @@ cc_library(
         ":affine-derivatives",
         ":arith-derivatives",
         ":cf-derivatives",
+        ":complex-derivatives",
         ":llvm-derivatives",
         ":func-derivatives",
         ":math-derivatives",
