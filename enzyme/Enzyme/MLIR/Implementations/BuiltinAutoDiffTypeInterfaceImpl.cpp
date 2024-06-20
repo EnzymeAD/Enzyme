@@ -14,6 +14,7 @@
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -140,6 +141,40 @@ public:
     return failure();
   }
 };
+
+class ComplexTypeInterface
+    : public AutoDiffTypeInterface::ExternalModel<ComplexTypeInterface,
+                                                  ComplexType> {
+public:
+  Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
+    auto fltType = self.cast<ComplexType>().getElementType().cast<FloatType>();
+    mlir::Attribute attrs[2] = {
+        builder.getFloatAttr(fltType, APFloat(fltType.getFloatSemantics(), 0)),
+        builder.getFloatAttr(fltType, APFloat(fltType.getFloatSemantics(), 0))};
+    return builder.create<complex::ConstantOp>(loc, self,
+                                               builder.getArrayAttr(attrs));
+  }
+
+  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
+                    Value b) const {
+    return builder.create<complex::AddOp>(loc, a, b)->getResult(0);
+  }
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    return builder.create<complex::ConjOp>(loc, a)->getResult(0);
+  }
+
+  Type getShadowType(Type self, unsigned width) const {
+    assert(width == 1 && "unsupported width != 1");
+    return self;
+  }
+
+  bool isMutable(Type self) const { return false; }
+  LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
+                            Value val) const {
+    return failure();
+  }
+};
 } // namespace
 
 void mlir::enzyme::registerBuiltinDialectAutoDiffInterface(
@@ -153,5 +188,6 @@ void mlir::enzyme::registerBuiltinDialectAutoDiffInterface(
     IndexType::attachInterface<IntegerTypeInterface<IndexType>>(*context);
     UnrankedTensorType::attachInterface<TensorTypeInterface>(*context);
     RankedTensorType::attachInterface<TensorTypeInterface>(*context);
+    ComplexType::attachInterface<ComplexTypeInterface>(*context);
   });
 }
