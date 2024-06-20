@@ -100,9 +100,9 @@ public:
 
 DataManager *logger = nullptr;
 
-void initializeDataManager() { logger = new DataManager(); }
+void initializeLogger() { logger = new DataManager(); }
 
-void destroyDataManager() {
+void destroyLogger() {
   delete logger;
   logger = nullptr;
 }
@@ -111,8 +111,8 @@ void enzymeLogError(double res, double err, const char *opcodeName,
                     const char *calleeName, const char *moduleName,
                     const char *functionName, unsigned blockIdx,
                     unsigned instIdx, unsigned numOperands, double *operands) {
-  logger->logExecution(moduleName, functionName, blockIdx, instIdx, res,
-                            err, operands, numOperands);
+  logger->logExecution(moduleName, functionName, blockIdx, instIdx, res, err,
+                       operands, numOperands);
 }
 
 // An example from https://dl.acm.org/doi/10.1145/3371128
@@ -128,7 +128,7 @@ double fun(double x) {
 }
 
 int main() {
-  initializeDataManager();
+  initializeLogger();
   double res = fun(1e-7);
   __enzyme_error_estimate((void *)fun, 2e-7, 0.0);
   __enzyme_error_estimate((void *)fun, 7e-7, 0.0);
@@ -137,5 +137,5 @@ int main() {
          fabs(error / res));
   APPROX_EQ(error, 2.2222222222e-2, 1e-4);
   logger->printData();
-  destroyDataManager();
+  destroyLogger();
 }
