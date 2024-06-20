@@ -62,13 +62,21 @@ public:
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
     auto tenType = self.cast<TensorType>();
     auto ET = tenType.getElementType();
-    size_t num = 1;
-    for (auto sz : tenType.getShape())
-      num *= sz;
-    APFloat apvalue(ET.cast<FloatType>().getFloatSemantics(), 0);
-    SmallVector<APFloat> supportedValues(num, apvalue);
-    auto attr = DenseElementsAttr::get(tenType, supportedValues);
-    return builder.create<arith::ConstantOp>(loc, tenType, attr);
+
+    if (auto F = dyn_cast<FloatType>(ET)) {
+      APFloat apvalue(F.getFloatSemantics(), 0);
+      auto attr = DenseElementsAttr::get(tenType, apvalue);
+      return builder.create<arith::ConstantOp>(loc, tenType, attr);
+    }
+    if (auto G = dyn_cast<ComplexType>(ET)) {
+      if (auto F = dyn_cast<FloatType>(G.getElementType())) {
+        APFloat apvalue(F.getFloatSemantics(), 0);
+        std::complex c(apvalue, apvalue);
+        auto attr = DenseElementsAttr::get(tenType, c);
+        return builder.create<arith::ConstantOp>(loc, tenType, attr);
+      }
+    }
+    assert(0);
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
