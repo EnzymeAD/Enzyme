@@ -10,15 +10,14 @@ extern double __enzyme_error_estimate(void *, ...);
 
 int errorLogCount = 0;
 
-void enzymeLogError(double res, double err, const char *opcodeName,
-                    const char *calleeName, const char *moduleName,
-                    const char *functionName, const char *blockName,
-                    int numOperands, double *operands) {
+void enzymeLogError(double res, double err, const char *opcodeName, const char *calleeName, const char *moduleName,
+                    const char *functionName, unsigned blockIdx,
+                    unsigned instIdx, unsigned numOperands, double *operands) {
   ++errorLogCount;
   printf("Res = %e, Error = %e, Op = %s, Callee = %s, Module = %s, Function = "
-         "%s, BasicBlock = %s, numOperands = %d\n",
-         res, err, opcodeName, calleeName, moduleName, functionName, blockName,
-         numOperands);
+         "%s, BlockIdx = %u, InstIdx = %u\n",
+         res, err, opcodeName, calleeName, moduleName, functionName, blockIdx,
+         instIdx);
   for (int i = 0; i < numOperands; ++i) {
     printf("Operand[%d] = %e\n", i, operands[i]);
   }

@@ -2183,22 +2183,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << ".getModule()->getModuleIdentifier();\n"
          << "            std::string functionName = " << origName
          << ".getFunction()->getName().str();\n"
-         << "            std::string blockName = " << origName
-         << ".getParent()->getName().str();\n"
-         << "            int funcIdx = -1, blockIdx = -1, instIdx = -1;\n"
-         << "            auto funcIt = std::find_if(" << origName
-         << ".getModule()->begin(), " << origName
-         << ".getModule()->end(),\n"
-            "              [&](const auto& func) { return &func == "
-         << origName
-         << ".getFunction(); });\n"
-            "            if (funcIt != "
-         << origName
-         << ".getModule()->end()) {\n"
-            "              funcIdx = "
-            "std::distance("
-         << origName << ".getModule()->begin(), funcIt);\n"
-         << "            }\n"
+         << "            int blockIdx = -1, instIdx = -1;\n"
          << "            auto blockIt = std::find_if(" << origName
          << ".getFunction()->begin(), " << origName
          << ".getFunction()->end(),\n"
@@ -2244,21 +2229,20 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << "            Value *moduleNameValue = "
             "Builder2.CreateGlobalStringPtr(moduleName);\n"
          << "            Value *functionNameValue = "
-            "Builder2.CreateGlobalStringPtr(functionName + \" (\" +"
-            "std::to_string(funcIdx) + \")\");\n"
-         << "            Value *blockNameValue = "
-            "Builder2.CreateGlobalStringPtr(blockName + \" (\" +"
-            "std::to_string(blockIdx) + \")\");\n"
+            "Builder2.CreateGlobalStringPtr(functionName);\n"
+         << "            Value *blockIdxValue = ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), blockIdx);\n"
+         << "            Value *instIdxValue = ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), instIdx);\n"
          << "            Value *opcodeNameValue = "
-            "Builder2.CreateGlobalStringPtr(opcodeName + \" (\" "
-            "+std::to_string(instIdx) + \")\");\n"
+            "Builder2.CreateGlobalStringPtr(opcodeName);\n"
          << "            Value *calleeNameValue = "
             "Builder2.CreateGlobalStringPtr(calleeName);\n"
          << "            unsigned numOperands = isa<CallInst>(" << origName
          << ") ? cast<CallInst>(" << origName << ").arg_size() : " << origName
          << ".getNumOperands();\n"
          << "            Value* numOperandsValue = "
-            "llvm::ConstantInt::get(Type::getInt32Ty("
+            "ConstantInt::get(Type::getInt32Ty("
          << origName << ".getContext()), numOperands);\n"
          << "            auto operands = isa<CallInst>(" << origName
          << ") ? cast<CallInst>(" << origName << ").args() : " << origName
@@ -2288,7 +2272,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << origName << ".getContext()), 0)});\n"
          << "            Builder2.CreateCall(logFunc, {origValue, "
             "errValue, opcodeNameValue, calleeNameValue, moduleNameValue, "
-            "functionNameValue, blockNameValue, numOperandsValue, "
+            "functionNameValue, blockIdxValue, instIdxValue, numOperandsValue, "
             "operandPtrValue});\n"
          << "        } else {\n"
          << "            llvm::errs() << \"ForwardModeError: No log function "

@@ -15,12 +15,16 @@ int errorLogCount = 0;
 
 void enzymeLogError(double res, double err, const char *opcodeName,
                     const char *calleeName, const char *moduleName,
-                    const char *functionName, const char *blockName,
-                    int numOperands, double *operands) {
+                    const char *functionName, unsigned blockIdx,
+                    unsigned instIdx, unsigned numOperands, double *operands) {
   ++errorLogCount;
   printf("Res = %e, Error = %e, Op = %s, Callee = %s, Module = %s, Function = "
-         "%s, BasicBlock = %s\n",
-         res, err, opcodeName, calleeName, moduleName, functionName, blockName);
+         "%s, BlockIdx = %u, InstIdx = %u\n",
+         res, err, opcodeName, calleeName, moduleName, functionName, blockIdx,
+         instIdx);
+  for (int i = 0; i < numOperands; ++i) {
+    printf("Operand[%d] = %e\n", i, operands[i]);
+  }
 }
 
 // An example from https://dl.acm.org/doi/10.1145/3371128
