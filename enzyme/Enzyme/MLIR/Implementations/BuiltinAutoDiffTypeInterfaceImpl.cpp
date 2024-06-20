@@ -73,7 +73,10 @@ public:
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
                     Value b) const {
-    return builder.create<arith::AddFOp>(loc, a, b);
+    auto tenType = self.cast<TensorType>();
+    auto ET = tenType.getElementType();
+    auto iface = cast<AutoDiffTypeInterface>(ET);
+    return iface.createAddOp(builder, loc, a, b);
   }
 
   Value createConjOp(Type self, OpBuilder &builder, Location loc,
