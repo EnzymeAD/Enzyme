@@ -965,7 +965,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
            << "), res);\n";
       }
       os << "SmallVector<Value *, 1>vs = { to_blas_callconv(Builder2, res, "
-            "byRef, cublas, nullptr, allocationBuilder, \""
+            "byRef, cublas, julia_decl_type, allocationBuilder, \""
          << Def->getName() << "." << name << "\") }; vs; })";
       return;
     }
@@ -999,7 +999,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
           os << "marg_" << i << "[marg_" << i << ".size() == 1 ? 0 : i]";
       }
       if (op != "Select")
-        os << "), byRef, cublas, nullptr, "
+        os << "), byRef, cublas, julia_decl_type, "
               "allocationBuilder, \""
            << Def->getValueAsString("s") << "\" )";
       else
@@ -1260,8 +1260,12 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
   int n = 0;
   if (func == "gemv" || func == "lascl")
     n = 1;
-  if (func == "gemm")
+  if (func == "gemm" || func == "syrk")
     n = 2;
+  if (func == "trmv")
+    n = 3;
+  if (func == "trmm")
+    n = 4;
   for (int i = 0; i < n; i++)
     os << "           " << argName
        << ".push_back(ConstantInt::get(intType, 1));\n";
