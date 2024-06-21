@@ -14,6 +14,8 @@ include "mlir/Pass/PassBase.td"
 def DifferentiatePass : Pass<"enzyme"> {
   let summary = "Differentiate Passes";
   let dependentDialects = [
+    "arith::ArithDialect",
+    "complex::ComplexDialect",
     "cf::ControlFlowDialect"
   ];
   let constructor = "mlir::enzyme::createDifferentiatePass()";
@@ -22,6 +24,8 @@ def DifferentiatePass : Pass<"enzyme"> {
 def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
   let summary = "Add wrapper function to be differentiated";
   let dependentDialects = [
+    "arith::ArithDialect",
+    "complex::ComplexDialect",
     "cf::ControlFlowDialect",
     "enzyme::EnzymeDialect"
   ];
