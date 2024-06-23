@@ -3144,18 +3144,18 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                   if (EnzymeShadowAllocRewrite)
                     EnzymeShadowAllocRewrite(wrap(anti), gutils);
                 }
-                if (Mode == DerivativeMode::ReverseModeCombined ||
-                    (Mode == DerivativeMode::ReverseModePrimal &&
-                     forwardsShadow) ||
-                    (Mode == DerivativeMode::ReverseModeGradient &&
-                     backwardsShadow) ||
-                    (Mode == DerivativeMode::ForwardModeSplit &&
-                     backwardsShadow)) {
-                  if (!inLoop) {
-                    zeroKnownAllocation(bb, anti, args, funcName, gutils->TLI,
-                                        &call);
-                    zeroed = true;
-                  }
+              }
+              if (Mode == DerivativeMode::ReverseModeCombined ||
+                  (Mode == DerivativeMode::ReverseModePrimal &&
+                   forwardsShadow) ||
+                  (Mode == DerivativeMode::ReverseModeGradient &&
+                   backwardsShadow) ||
+                  (Mode == DerivativeMode::ForwardModeSplit &&
+                   backwardsShadow)) {
+                if (!inLoop) {
+                  zeroKnownAllocation(bb, anti, args, funcName, gutils->TLI,
+                                      &call);
+                  zeroed = true;
                 }
               }
               return anti;
