@@ -370,6 +370,8 @@ private:
 public:
   unsigned getWidth() { return width; }
 
+  bool shadowReturnUsed;
+
   llvm::ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
 
 public:
@@ -379,7 +381,7 @@ public:
                 llvm::ValueToValueMapTy &invertedPointers_,
                 const llvm::SmallPtrSetImpl<llvm::Value *> &constantvalues_,
                 const llvm::SmallPtrSetImpl<llvm::Value *> &activevals_,
-                DIFFE_TYPE ReturnActivity,
+                DIFFE_TYPE ReturnActivity, bool shadowReturnUsed,
                 llvm::ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
                 llvm::ValueMap<const llvm::Value *, AssertingReplacingVH>
                     &originalToNewFn_,
