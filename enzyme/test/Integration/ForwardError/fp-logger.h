@@ -1,8 +1,9 @@
 #include <cassert>
 #include <fstream>
 #include <iostream>
-#include <map>
+#include <limits>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct InstructionIdentifier {
@@ -11,22 +12,24 @@ struct InstructionIdentifier {
   unsigned blockIdx;
   unsigned instIdx;
 
-  bool operator<(const InstructionIdentifier &other) const {
-    if (moduleName < other.moduleName)
-      return true;
-    if (moduleName > other.moduleName)
-      return false;
-    if (functionName < other.functionName)
-      return true;
-    if (functionName > other.functionName)
-      return false;
-    if (blockIdx < other.blockIdx)
-      return true;
-    if (blockIdx > other.blockIdx)
-      return false;
-    return instIdx < other.instIdx;
+  bool operator==(const InstructionIdentifier &other) const {
+    return moduleName == other.moduleName &&
+           functionName == other.functionName && blockIdx == other.blockIdx &&
+           instIdx == other.instIdx;
   }
 };
+
+namespace std {
+template <> struct hash<InstructionIdentifier> {
+  std::size_t operator()(const InstructionIdentifier &id) const noexcept {
+    std::size_t h1 = std::hash<std::string>{}(id.moduleName);
+    std::size_t h2 = std::hash<std::string>{}(id.functionName);
+    std::size_t h3 = std::hash<unsigned>{}(id.blockIdx);
+    std::size_t h4 = std::hash<unsigned>{}(id.instIdx);
+    return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3);
+  }
+};
+} // namespace std
 
 class InstructionInfo {
 public:
@@ -58,14 +61,15 @@ public:
 
 class DataManager {
 private:
-  std::map<InstructionIdentifier, InstructionInfo> instructionData;
+  std::unordered_map<InstructionIdentifier, InstructionInfo> instructionData;
 
 public:
   void update(const std::string &moduleName, const std::string &functionName,
               unsigned blockIdx, unsigned instIdx, double res, double err,
               const double *operands, unsigned numOperands) {
     InstructionIdentifier id = {moduleName, functionName, blockIdx, instIdx};
-    instructionData[id].update(res, err, operands, numOperands);
+    auto &info = instructionData.emplace(id, InstructionInfo()).first->second;
+    info.update(res, err, operands, numOperands);
   }
 
   void print() {
