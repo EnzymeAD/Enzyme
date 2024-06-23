@@ -43,37 +43,67 @@ namespace enzyme {
     struct Active{
       T value;
       Active(const T& v) : value(v) {};
-      Active(T&& v) : value(v) {};
+      Active(T&& v) : value(std::move(v)) {};
       Active(const Active<T>&) = default;
       Active(Active<T>&&) = default;
       operator T&() { return value; }
     };
 
+    namespace detail {
+
+        /**
+         * @brief Helper base for all `Duplicated`-type arguments
+         *
+         * Due to essentially the same implementation, it prevents code
+         * duplication
+         */
+        template < typename T >
+        struct DupArg {
+            // Argument as regular value. Also works for pointer types
+            T value;
+            T shadow;
+            DupArg(const T& v, const T& s) : value(v), shadow(s) {};
+            DupArg(T&& v, T&& s) : value(v), shadow(s) {};
+            DupArg(const DupArg<T>&) = default;
+            DupArg(DupArg<T>&&) = default;
+
+            __attribute__((always_inline))
+            T valueExp() const { return this->value; }
+            __attribute__((always_inline))
+            T shadowExp() const { return this->shadow; }
+        };
+
+        template < typename T >
+        struct DupArg<T&> {
+            T& value;
+            T& shadow;
+            DupArg(T& v, T& s) : value(v), shadow(s) {}
+            DupArg(const DupArg<T&>&) = default;
+            DupArg(DupArg<T&>&&) = default;
+
+            __attribute__((always_inline))
+            const T* valueExp() const { return &this->value; }
+            __attribute__((always_inline))
+            const T* shadowExp() const { return &this->shadow; }
+        };
+
+    } // <-- namespace detail
+
     template < typename T >
-    struct Duplicated{
-      T value;
-      T shadow;
-      Duplicated(const T& v, const T& s) : value(v), shadow(s) {};
-      Duplicated(T&& v, T&& s) : value(v), shadow(s) {};
-      Duplicated(const Duplicated<T>&) = default;
-      Duplicated(Duplicated<T>&&) = default;
+    struct Duplicated : public detail::DupArg<T> {
+      using detail::DupArg<T>::DupArg;
     };
 
     template < typename T >
-    struct DuplicatedNoNeed{
-      T value;
-      T shadow;
-      DuplicatedNoNeed(const T& v, const T& s) : value(v), shadow(s) {};
-      DuplicatedNoNeed(T&& v, T&& s) : value(v), shadow(s) {};
-      DuplicatedNoNeed(const DuplicatedNoNeed<T>&) = default;
-      DuplicatedNoNeed(DuplicatedNoNeed<T>&&) = default;
+    struct DuplicatedNoNeed : public detail::DupArg<T> {
+      using detail::DupArg<T>::DupArg;
     };
 
     template < typename T >
     struct Const{
       T value;
       Const(const T& v) : value(v) {};
-      Const(T&& v) : value(v) {};
+      Const(T&& v) : value(std::move(v)) {};
       Const(const Const<T>&) = default;
       Const(Const<T>&&) = default;
       operator T&() { return value; }
@@ -168,13 +198,17 @@ namespace enzyme {
     template < typename T >
     __attribute__((always_inline))
     auto expand_args(const enzyme::Duplicated<T> & arg) {
-        return enzyme::tuple<int, T, T>{enzyme_dup, arg.value, arg.shadow};
+        // `valueExp()`/`shadowExp()` must initialize either a value
+        // or a pointer. This means we can use `std::tuple` argument deduction
+        return enzyme::tuple{enzyme_dup, arg.valueExp(), arg.shadowExp()};
     }
 
     template < typename T >
     __attribute__((always_inline))
     auto expand_args(const enzyme::DuplicatedNoNeed<T> & arg) {
-        return enzyme::tuple<int, T, T>{enzyme_dupnoneed, arg.value, arg.shadow};
+        // `valueExp()`/`shadowExp()` must initialize either a value
+        // or a pointer. This means we can use `std::tuple` argument deduction
+        return enzyme::tuple{enzyme_dupnoneed, arg.valueExp(), arg.shadowExp()};
     }
 
     template < typename T >
@@ -213,29 +247,8 @@ namespace enzyme {
         return enzyme::tuple<T>{arg.value};
     }
 
-    template < typename T >
-    __attribute__((always_inline))
-    auto primal_args_nt(const enzyme::Duplicated<T> & arg) {
-        return arg.value;
-    }
-
-    template < typename T >
-    __attribute__((always_inline))
-    auto primal_args_nt(const enzyme::DuplicatedNoNeed<T> & arg) {
-        return arg.value;
-    }
-
-    template < typename T >
-    __attribute__((always_inline))
-    auto primal_args_nt(const enzyme::Active<T> & arg) {
-        return arg.value;
-    }
-
-    template < typename T >
-    __attribute__((always_inline))
-    auto primal_args_nt(const enzyme::Const<T> & arg) {
-        return arg.value;
-    }
+    template < template <typename> class Template, typename Arg >
+    Arg arg_type(const Template<Arg>&);
 
     namespace detail {
         template < typename RetType, typename ... T >
@@ -376,6 +389,35 @@ namespace enzyme {
           static constexpr int* value = &enzyme_primal_return;
         };
 
+        /// @brief Check if a type is an instance of enzyme::Duplicated
+        template <typename T>
+        struct is_duplicated {
+          using DupType = void;
+          static constexpr bool value = false;
+        };
+
+        template <typename T>
+        struct is_duplicated<enzyme::Duplicated<T>> {
+          using DupType = T;
+          static constexpr bool value = true;
+        };
+
+        template <typename T, typename... Args>
+        struct verify_dup_args {
+          static constexpr bool value = true;
+        };
+
+        template <typename... Args>
+        struct verify_dup_args<enzyme::Reverse, Args...> {
+          static constexpr bool value = (
+            (
+              !is_duplicated<Args>::value
+              || std::is_reference_v<typename is_duplicated<Args>::DupType>
+              || std::is_pointer_v<typename is_duplicated<Args>::DupType>
+            ) && ...
+          );
+        };
+
     }  // namespace detail
 
     template < typename return_type, typename function, typename ... enz_arg_types >
@@ -409,8 +451,13 @@ namespace enzyme {
     template < typename DiffMode, typename RetActivity, typename function, typename ... arg_types>
     __attribute__((always_inline))
     auto autodiff(function && f, arg_types && ... args) {
-        using primal_return_type = decltype(f(primal_args_nt(args)...));
-        using functy = typename detail::function_type<primal_return_type, decltype(primal_args_nt(args))...>::type;
+        static_assert(
+            detail::verify_dup_args<DiffMode, arg_types...>::value,
+            "Non-reference/pointer Duplicated/DuplicatedNoNeed args don't make "
+            "sense for Reverse mode AD"
+        );
+        using primal_return_type = decltype(f(arg_type(args)...));
+        using functy = typename detail::function_type<primal_return_type, decltype(arg_type(args))...>::type;
         using return_type = typename autodiff_return<DiffMode, RetActivity, arg_types...>::type;
         return autodiff_impl<return_type, DiffMode, function, functy, RetActivity>(impl::forward<function>(f), enzyme::tuple_cat(enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value}, expand_args(args)...));
     }
@@ -418,8 +465,13 @@ namespace enzyme {
     template < typename DiffMode, typename function, typename ... arg_types>
     __attribute__((always_inline))
     auto autodiff(function && f, arg_types && ... args) {
-        using primal_return_type = decltype(f(primal_args_nt(args)...));
-        using functy = typename detail::function_type<primal_return_type, decltype(primal_args_nt(args))...>::type;
+        static_assert(
+            detail::verify_dup_args<DiffMode, arg_types...>::value,
+            "Non-reference/pointer Duplicated/DuplicatedNoNeed args don't make "
+            "sense for Reverse mode AD"
+        );
+        using primal_return_type = decltype(f(arg_type(args)...));
+        using functy = typename detail::function_type<primal_return_type, decltype(arg_type(args))...>::type;
         using RetActivity = typename detail::default_ret_activity<DiffMode, primal_return_type>::type;
         using return_type = typename autodiff_return<DiffMode, RetActivity, arg_types...>::type;
         return autodiff_impl<return_type, DiffMode, function, functy, RetActivity>(impl::forward<function>(f), enzyme::tuple_cat(enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value}, expand_args(args)...));
