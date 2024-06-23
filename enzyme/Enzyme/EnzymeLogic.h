@@ -121,6 +121,8 @@ public:
 
   const std::vector<DIFFE_TYPE> constant_args;
 
+  bool shadowReturnUsed;
+
   bool isComplete;
 
   AugmentedReturn(
@@ -129,11 +131,11 @@ public:
       std::map<AugmentedStruct, int> returns,
       std::map<llvm::CallInst *, const std::vector<bool>> overwritten_args_map,
       std::map<llvm::Instruction *, bool> can_modref_map,
-      const std::vector<DIFFE_TYPE> &constant_args)
+      const std::vector<DIFFE_TYPE> &constant_args, bool shadowReturnUsed)
       : fn(fn), tapeType(tapeType), tapeIndices(tapeIndices), returns(returns),
         overwritten_args_map(overwritten_args_map),
         can_modref_map(can_modref_map), constant_args(constant_args),
-        isComplete(false) {}
+        shadowReturnUsed(shadowReturnUsed), isComplete(false) {}
 };
 
 ///  \p todiff is the function to differentiate
