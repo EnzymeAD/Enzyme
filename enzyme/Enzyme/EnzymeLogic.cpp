@@ -4135,7 +4135,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
       *this, key.mode, key.width, key.todiff, TLI, TA, oldTypeInfo, key.retType,
-      diffeReturnArg, key.constant_args, retVal, key.additionalType, omp);
+      key.shadowReturnUsed, diffeReturnArg, key.constant_args, retVal,
+      key.additionalType, omp);
 
   gutils->AtomicAdd = key.AtomicAdd;
   gutils->FreeMemory = key.freeMemory;
@@ -4787,8 +4788,9 @@ Function *EnzymeLogic::CreateForwardDiff(
   bool diffeReturnArg = false;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, mode, width, todiff, TLI, TA, oldTypeInfo, retType, diffeReturnArg,
-      constant_args, retVal, additionalArg, omp);
+      *this, mode, width, todiff, TLI, TA, oldTypeInfo, retType,
+      /*shadowReturn*/ retActive, diffeReturnArg, constant_args, retVal,
+      additionalArg, omp);
 
   insert_or_assign2<ForwardCacheKey, Function *>(ForwardCachedFunctions, tup,
                                                  gutils->newFunc);

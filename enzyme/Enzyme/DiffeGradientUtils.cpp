@@ -57,12 +57,13 @@ DiffeGradientUtils::DiffeGradientUtils(
     ValueToValueMapTy &invertedPointers_,
     const SmallPtrSetImpl<Value *> &constantvalues_,
     const SmallPtrSetImpl<Value *> &returnvals_, DIFFE_TYPE ActiveReturn,
-    ArrayRef<DIFFE_TYPE> constant_values,
+    bool shadowReturnUsed, ArrayRef<DIFFE_TYPE> constant_values,
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &origToNew_,
     DerivativeMode mode, unsigned width, bool omp)
     : GradientUtils(Logic, newFunc_, oldFunc_, TLI, TA, TR, invertedPointers_,
-                    constantvalues_, returnvals_, ActiveReturn, constant_values,
-                    origToNew_, mode, width, omp) {
+                    constantvalues_, returnvals_, ActiveReturn,
+                    shadowReturnUsed, constant_values, origToNew_, mode, width,
+                    omp) {
   if (oldFunc_->empty())
     return;
   assert(reverseBlocks.size() == 0);
@@ -85,8 +86,9 @@ DiffeGradientUtils::DiffeGradientUtils(
 DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
     EnzymeLogic &Logic, DerivativeMode mode, unsigned width, Function *todiff,
     TargetLibraryInfo &TLI, TypeAnalysis &TA, FnTypeInfo &oldTypeInfo,
-    DIFFE_TYPE retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
-    ReturnType returnValue, Type *additionalArg, bool omp) {
+    DIFFE_TYPE retType, bool shadowReturn, bool diffeReturnArg,
+    ArrayRef<DIFFE_TYPE> constant_args, ReturnType returnValue,
+    Type *additionalArg, bool omp) {
   Function *oldFunc = todiff;
   assert(mode == DerivativeMode::ReverseModeGradient ||
          mode == DerivativeMode::ReverseModeCombined ||
@@ -157,10 +159,10 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   if (!oldFunc->empty())
     assert(TR.getFunction() == oldFunc);
 
-  auto res = new DiffeGradientUtils(Logic, newFunc, oldFunc, TLI, TA, TR,
-                                    invertedPointers, constant_values,
-                                    nonconstant_values, retType, constant_args,
-                                    originalToNew, mode, width, omp);
+  auto res = new DiffeGradientUtils(
+      Logic, newFunc, oldFunc, TLI, TA, TR, invertedPointers, constant_values,
+      nonconstant_values, retType, shadowReturn, constant_args, originalToNew,
+      mode, width, omp);
 
   return res;
 }

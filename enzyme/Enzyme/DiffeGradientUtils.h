@@ -66,7 +66,8 @@ class DiffeGradientUtils final : public GradientUtils {
       llvm::ValueToValueMapTy &invertedPointers_,
       const llvm::SmallPtrSetImpl<llvm::Value *> &constantvalues_,
       const llvm::SmallPtrSetImpl<llvm::Value *> &returnvals_,
-      DIFFE_TYPE ActiveReturn, llvm::ArrayRef<DIFFE_TYPE> constant_values,
+      DIFFE_TYPE ActiveReturn, bool shadowReturnUsed,
+      llvm::ArrayRef<DIFFE_TYPE> constant_values,
       llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &origToNew_,
       DerivativeMode mode, unsigned width, bool omp);
 
@@ -79,7 +80,8 @@ public:
   CreateFromClone(EnzymeLogic &Logic, DerivativeMode mode, unsigned width,
                   llvm::Function *todiff, llvm::TargetLibraryInfo &TLI,
                   TypeAnalysis &TA, FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
-                  bool diffeReturnArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
+                  bool shadowReturnArg, bool diffeReturnArg,
+                  llvm::ArrayRef<DIFFE_TYPE> constant_args,
                   ReturnType returnValue, llvm::Type *additionalArg, bool omp);
 
   llvm::AllocaInst *getDifferential(llvm::Value *val);
