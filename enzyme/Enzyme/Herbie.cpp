@@ -144,9 +144,23 @@ public:
 
   virtual Value *getValue(Instruction *insertBefore,
                           IRBuilder<> &builder) override {
-    llvm::errs() << "Returning constant: " << value << "\n";
     double constantValue = std::stod(value);
+    size_t div = value.find('/');
+
+    if (div != std::string::npos) {
+      std::string numerator = value.substr(0, div);
+      std::string denominator = value.substr(div + 1);
+      double num = std::stod(numerator);
+      double denom = std::stod(denominator); // Assumes proper division
+
+      constantValue = num / denom;
+    } else {
+      constantValue = std::stod(value);
+    }
+
     // TODO eventually have this be typed
+    llvm::errs() << "Returning " << value << " as constant: " << constantValue
+                 << "\n";
     return ConstantFP::get(builder.getDoubleTy(), constantValue);
   }
 
@@ -169,14 +183,16 @@ parseHerbieExpr(const std::string &expr,
   }
 
   // Constants
-  std::regex constantPattern("^#s\\(literal\\s+([-+]?[\\d\\.]+)\\s+\\w+\\)$");
+  std::regex constantPattern(
+      "^#s\\(literal\\s+([-+]?\\d+(/\\d+)?)\\s+\\w+\\)$");
   std::smatch matches;
   if (std::regex_match(trimmedExpr, matches, constantPattern)) {
     llvm::errs() << "Found __const " << matches[1].str() << "\n";
     return new FPConst(matches[1].str());
   }
 
-  assert(trimmedExpr.front() == '(' && trimmedExpr.back() == ')');
+  assert(trimmedExpr.front() == '(' && trimmedExpr.back() == ')' &&
+         "Failed to parse Herbie expression");
   trimmedExpr = trimmedExpr.substr(1, trimmedExpr.size() - 2);
 
   // Get the operator
