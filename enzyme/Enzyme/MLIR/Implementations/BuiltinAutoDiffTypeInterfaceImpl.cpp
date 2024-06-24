@@ -78,6 +78,7 @@ public:
       }
     }
     assert(0);
+    return nullptr;
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
