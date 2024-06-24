@@ -648,8 +648,12 @@ B2:
 
     assert(component.outputs.size() > 0 && "No outputs found for component");
     for (const auto &output : component.outputs) {
+      // TODO: Herbie properties
+      std::string properties =
+          ":precision binary64 :herbie-conversions ([binary64 binary32])";
+
       std::string herbieExpr =
-          "(FPCore " + argumentsStr + " " +
+          "(FPCore " + argumentsStr + " " + properties + " " +
           valueToNodeMap[output]->toFullExpression(valueToNodeMap) + ")";
       llvm::errs() << "Herbie input:\n" << herbieExpr << "\n";
 
