@@ -19,6 +19,7 @@
 #include "llvm/Pass.h"
 
 #include "llvm/Transforms/Utils.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 #include <fstream>
 #include <map>
@@ -59,17 +60,42 @@ public:
     return expr;
   }
 
-  virtual Value *getValue(Instruction *insertBefore, IRBuilder<> &builder) {
-    SmallVector<Value *, 1> operandValues;
-    for (auto operand : operands) {
-      operandValues.push_back(operand->getValue(insertBefore, builder));
+  virtual Value *getValue(IRBuilder<> &builder) {
+    llvm::errs() << "Generating new instruction for op: " << op << "\n";
+
+    if (op == "if") {
+      Value *condValue = operands[0]->getValue(builder);
+      auto IP = builder.GetInsertPoint();
+
+      Instruction *Then, *Else;
+      SplitBlockAndInsertIfThenElse(condValue, &*IP, &Then, &Else);
+
+      Then->getParent()->setName("herbie-then");
+      builder.SetInsertPoint(Then);
+      Value *ThenVal = operands[1]->getValue(builder);
+
+      Else->getParent()->setName("herbie-else");
+      builder.SetInsertPoint(Else);
+      Value *ElseVal = operands[2]->getValue(builder);
+
+      builder.SetInsertPoint(&*IP);
+      auto Phi = builder.CreatePHI(ThenVal->getType(), 2);
+      Phi->addIncoming(ThenVal, Then->getParent());
+      Phi->addIncoming(ElseVal, Else->getParent());
+
+      return Phi;
+    }
+
+    SmallVector<Value *, 2> operandValues;
+    for (auto *operand : operands) {
+      operandValues.push_back(operand->getValue(builder));
     }
 
     Value *val = nullptr;
-    builder.SetInsertPoint(insertBefore);
 
-    llvm::errs() << "Generating new instruction for op: " << op << "\n";
-    if (op == "+") {
+    if (op == "neg") {
+      val = builder.CreateFNeg(operandValues[0]);
+    } else if (op == "+") {
       val = builder.CreateFAdd(operandValues[0], operandValues[1]);
     } else if (op == "-") {
       val = builder.CreateFSub(operandValues[0], operandValues[1]);
@@ -100,6 +126,28 @@ public:
           {operandValues[0], operandValues[1], operandValues[2]});
     } else if (op == "fabs") {
       val = builder.CreateUnaryIntrinsic(Intrinsic::fabs, operandValues[0]);
+    } else if (op == "==") {
+      val = builder.CreateFCmpOEQ(operandValues[0], operandValues[1]);
+    } else if (op == "!=") {
+      val = builder.CreateFCmpONE(operandValues[0], operandValues[1]);
+    } else if (op == "<") {
+      val = builder.CreateFCmpOLT(operandValues[0], operandValues[1]);
+    } else if (op == ">") {
+      val = builder.CreateFCmpOGT(operandValues[0], operandValues[1]);
+    } else if (op == "<=") {
+      val = builder.CreateFCmpOLE(operandValues[0], operandValues[1]);
+    } else if (op == ">=") {
+      val = builder.CreateFCmpOGE(operandValues[0], operandValues[1]);
+    } else if (op == "and") {
+      val = builder.CreateAnd(operandValues[0], operandValues[1]);
+    } else if (op == "or") {
+      val = builder.CreateOr(operandValues[0], operandValues[1]);
+    } else if (op == "not") {
+      val = builder.CreateNot(operandValues[0]);
+    } else if (op == "TRUE") {
+      val = ConstantInt::getTrue(builder.getContext());
+    } else if (op == "FALSE") {
+      val = ConstantInt::getFalse(builder.getContext());
     } else {
       assert(0 && "FPNode.getValue: Unknown operator");
     }
@@ -123,10 +171,7 @@ public:
     return symbol;
   }
 
-  virtual Value *getValue(Instruction *insertBefore,
-                          IRBuilder<> &builder) override {
-    return value;
-  }
+  virtual Value *getValue(IRBuilder<> &builder) override { return value; }
 
   bool isExpression() const override { return false; }
 };
@@ -142,8 +187,7 @@ public:
     return value;
   }
 
-  virtual Value *getValue(Instruction *insertBefore,
-                          IRBuilder<> &builder) override {
+  virtual Value *getValue(IRBuilder<> &builder) override {
     double constantValue = std::stod(value);
     size_t div = value.find('/');
 
