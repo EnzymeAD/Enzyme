@@ -3848,10 +3848,12 @@ void registerEnzyme(llvm::PassBuilder &PB) {
           MPM.addPass(EnzymeNewPM());
           return true;
         }
+#ifdef ENZYME_ENABLE_HERBIE
         if (Name == "fp-opt") {
           MPM.addPass(FPOptNewPM());
           return true;
         }
+#endif
         if (Name == "preserve-nvvm") {
           MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
           return true;
