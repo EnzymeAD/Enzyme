@@ -674,18 +674,17 @@ B2:
       llvm::errs() << "Parsed Herbie Expr: "
                    << parsedNode->toFullExpression(valueToNodeMap) << "\n";
 
-      Instruction *insertBefore = component.operations.back();
+      Instruction *insertBefore = dyn_cast<Instruction>(output);
       IRBuilder<> builder(insertBefore);
       // TODO ponder fast math
       builder.setFastMathFlags(getFast());
-      builder.SetInsertPoint(insertBefore);
 
       // Convert the parsed expression to LLVM values/instructions
-      Value *newRootValue = parsedNode->getValue(insertBefore, builder);
-      assert(newRootValue && "Failed to get value from parsed node");
-      llvm::errs() << "Replacing: " << *output << " with " << *newRootValue
+      Value *newOutputValue = parsedNode->getValue(builder);
+      assert(newOutputValue && "Failed to get value from parsed node");
+      llvm::errs() << "Replacing: " << *output << " with " << *newOutputValue
                    << "\n";
-      output->replaceAllUsesWith(newRootValue);
+      output->replaceAllUsesWith(newOutputValue);
 
       changed = true;
     }
@@ -704,6 +703,10 @@ B2:
       I->eraseFromParent();
     }
   }
+
+  llvm::errs() << "Finished fpOptimize\n";
+  // Print the function to see the changes
+  F.print(llvm::errs());
 
   return changed;
 }
