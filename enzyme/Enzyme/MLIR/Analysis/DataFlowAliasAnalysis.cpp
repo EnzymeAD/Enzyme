@@ -812,7 +812,7 @@ void populateConservativeCallEffects(
   for (auto it = rng.begin(); it != rng.end(); it++) {
     auto argument = *it;
     auto argOp = it.getBase();
-    assert(argOp.get() == argument);
+    assert(argOp->get() == argument);
     if (!isPointerLike(argument.getType()))
       continue;
 

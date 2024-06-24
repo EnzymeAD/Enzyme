@@ -72,7 +72,7 @@ public:
     if (auto G = dyn_cast<ComplexType>(ET)) {
       if (auto F = dyn_cast<FloatType>(G.getElementType())) {
         APFloat apvalue(F.getFloatSemantics(), 0);
-        std::complex c(apvalue, apvalue);
+        std::complex<APFloat> c(apvalue, apvalue);
         auto attr = DenseElementsAttr::get(tenType, c);
         return builder.create<arith::ConstantOp>(loc, tenType, attr);
       }
