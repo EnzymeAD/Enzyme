@@ -36,6 +36,15 @@ using namespace llvm;
 #endif
 #define DEBUG_TYPE "fp-opt"
 
+extern "C" {
+llvm::cl::opt<bool>
+    EnzymePrintFPOpt("enzyme-print-fpopt", cl::init(false), cl::Hidden,
+                     cl::desc("Enable Enzyme to print FPOpt info"));
+llvm::cl::opt<bool>
+    EnzymePrintHerbie("enzyme-print-herbie", cl::init(false), cl::Hidden,
+                      cl::desc("Enable Enzyme to print Herbie expressions"));
+}
+
 class FPNode {
 public:
   std::string op;
@@ -61,7 +70,8 @@ public:
   }
 
   virtual Value *getValue(IRBuilder<> &builder) {
-    llvm::errs() << "Generating new instruction for op: " << op << "\n";
+    if (EnzymePrintFPOpt)
+      llvm::errs() << "Generating new instruction for op: " << op << "\n";
 
     if (op == "if") {
       Value *condValue = operands[0]->getValue(builder);
@@ -203,8 +213,9 @@ public:
     }
 
     // TODO eventually have this be typed
-    llvm::errs() << "Returning " << value << " as constant: " << constantValue
-                 << "\n";
+    if (EnzymePrintFPOpt)
+      llvm::errs() << "Returning " << value << " as constant: " << constantValue
+                   << "\n";
     return ConstantFP::get(builder.getDoubleTy(), constantValue);
   }
 
@@ -215,14 +226,14 @@ FPNode *
 parseHerbieExpr(const std::string &expr,
                 std::unordered_map<Value *, FPNode *> &valueToNodeMap,
                 std::unordered_map<std::string, Value *> &symbolToValueMap) {
-  llvm::errs() << "Parsing: " << expr << "\n";
+  if (EnzymePrintFPOpt)
+    llvm::errs() << "Parsing: " << expr << "\n";
   auto trimmedExpr = expr;
   trimmedExpr.erase(0, trimmedExpr.find_first_not_of(" "));
   trimmedExpr.erase(trimmedExpr.find_last_not_of(" ") + 1);
 
   // Arguments
   if (trimmedExpr.front() != '(' && trimmedExpr.front() != '#') {
-    // llvm::errs() << "Base case: " << trimmedExpr << "\n";
     return valueToNodeMap[symbolToValueMap[trimmedExpr]];
   }
 
@@ -231,7 +242,8 @@ parseHerbieExpr(const std::string &expr,
       "^#s\\(literal\\s+([-+]?\\d+(/\\d+)?)\\s+\\w+\\)$");
   std::smatch matches;
   if (std::regex_match(trimmedExpr, matches, constantPattern)) {
-    llvm::errs() << "Found __const " << matches[1].str() << "\n";
+    if (EnzymePrintFPOpt)
+      llvm::errs() << "Found __const " << matches[1].str() << "\n";
     return new FPConst(matches[1].str());
   }
 
@@ -255,14 +267,11 @@ parseHerbieExpr(const std::string &expr,
   auto start = trimmedExpr.find_first_not_of(" ", endOp);
   std::string::size_type curr;
   for (curr = start; curr < trimmedExpr.size(); ++curr) {
-    // llvm::errs() << "Curr: " << trimmedExpr[curr] << "\n";
     if (trimmedExpr[curr] == '(')
       depth++;
     if (trimmedExpr[curr] == ')')
       depth--;
     if (depth == 0 && trimmedExpr[curr] == ' ') {
-      // llvm::errs() << "Adding child for " << trimmedExpr << ": "
-      //              << trimmedExpr.substr(start, curr - start) << "\n";
       node->addOperand(parseHerbieExpr(trimmedExpr.substr(start, curr - start),
                                        valueToNodeMap, symbolToValueMap));
       start = curr + 1;
@@ -305,7 +314,8 @@ bool improveViaHerbie(std::string &expr) {
   std::string ErrMsg;
   bool ExecutionFailed = false;
 
-  llvm::errs() << "Executing: " << Program << "\n";
+  if (EnzymePrintFPOpt)
+    llvm::errs() << "Executing: " << Program << "\n";
 
   llvm::sys::ExecuteAndWait(Program, Args, /*Env=*/llvm::None,
                             /*Redirects=*/llvm::None,
@@ -328,15 +338,11 @@ bool improveViaHerbie(std::string &expr) {
   output.close();
   std::remove(tmpout.c_str());
 
-  llvm::errs() << "Herbie output:\n" << content << "\n";
-
   std::string token;
   std::regex fpcoreRegex(":alt\\s*\\(\\)\\s*(.*)\\s*\\)");
   std::smatch matches;
-  std::string optimizedExpr;
 
   if (std::regex_search(content, matches, fpcoreRegex)) {
-    llvm::errs() << "Optimized expression: " << optimizedExpr << "\n";
     expr = matches[1].str();
     return true;
   } else {
@@ -470,11 +476,11 @@ B2:
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (!herbiable(I)) {
-        llvm::errs() << "Skipping non-herbiable instruction: " << I << "\n";
+        if (EnzymePrintFPOpt)
+          llvm::errs() << "Skipping non-herbiable instruction: " << I << "\n";
         continue;
       }
 
-      llvm::errs() << "Herbie Operator: " << getHerbieOperator(I) << "\n";
       auto node = new FPNode(getHerbieOperator(I));
 
       auto operands =
@@ -485,11 +491,14 @@ B2:
             SmallString<10> value;
             C->getValueAPF().toString(value);
             valueToNodeMap[operand] = new FPConst(value.c_str());
-            llvm::errs() << "Registered FPNode for constant: " << value << "\n";
+            if (EnzymePrintFPOpt)
+              llvm::errs() << "Registered FPNode for constant: " << value
+                           << "\n";
           } else if (auto GV = dyn_cast<GlobalVariable>(operand)) {
             valueToNodeMap[operand] = new FPLLValue(GV);
-            llvm::errs() << "Registered FPNode for global variable: " << *GV
-                         << "\n";
+            if (EnzymePrintFPOpt)
+              llvm::errs() << "Registered FPNode for global variable: " << *GV
+                           << "\n";
           } else {
             assert(0 && "Unknown operand");
           }
@@ -500,11 +509,12 @@ B2:
     }
   }
 
-  for (auto &[value, node] : valueToNodeMap) {
-    llvm::errs() << "Value: " << *value
-                 << " isExpression: " << node->isExpression()
-                 << " Node: " << node << "\n";
-  }
+  if (EnzymePrintFPOpt)
+    for (auto &[value, node] : valueToNodeMap) {
+      llvm::errs() << "Value: " << *value
+                   << " isExpression: " << node->isExpression()
+                   << " Node: " << node << "\n";
+    }
 
   SmallSet<Value *, 1> component_seen;
   SmallVector<HerbieComponents, 1> connected_components;
@@ -513,17 +523,20 @@ B2:
       // Not a herbiable instruction, doesn't make sense to create graph node
       // out of.
       if (!herbiable(I)) {
-        llvm::errs() << "Skipping non-herbiable instruction: " << I << "\n";
+        if (EnzymePrintFPOpt)
+          llvm::errs() << "Skipping non-herbiable instruction: " << I << "\n";
         continue;
       }
 
       // Instruction is already in a set
       if (component_seen.contains(&I)) {
-        llvm::errs() << "Skipping already seen instruction: " << I << "\n";
+        if (EnzymePrintFPOpt)
+          llvm::errs() << "Skipping already seen instruction: " << I << "\n";
         continue;
       }
 
-      llvm::errs() << "Starting floodfill from: " << I << "\n";
+      if (EnzymePrintFPOpt)
+        llvm::errs() << "Starting floodfill from: " << I << "\n";
 
       SmallVector<Value *, 1> todo;
       SetVector<Value *> input_seen;
@@ -543,7 +556,9 @@ B2:
         // Don't repeat any instructions we've already seen (to avoid loops for
         // phi nodes)
         if (operation_seen.contains(I2)) {
-          llvm::errs() << "Skipping already seen instruction: " << *I2 << "\n";
+          if (EnzymePrintFPOpt)
+            llvm::errs() << "Skipping already seen instruction: " << *I2
+                         << "\n";
           continue;
         }
 
@@ -551,8 +566,9 @@ B2:
         // component.
         assert(!component_seen.contains(cur));
 
-        llvm::errs() << "Insert to operation_seen and component_seen: " << *I2
-                     << "\n";
+        if (EnzymePrintFPOpt)
+          llvm::errs() << "Insert to operation_seen and component_seen: " << *I2
+                       << "\n";
         operation_seen.insert(I2);
         component_seen.insert(cur);
 
@@ -561,10 +577,13 @@ B2:
 
         for (auto &operand : operands) {
           if (!herbiable(*operand)) {
-            llvm::errs() << "Non-herbiable input found: " << *operand << "\n";
+            if (EnzymePrintFPOpt)
+              llvm::errs() << "Non-herbiable input found: " << *operand << "\n";
             input_seen.insert(operand);
           } else {
-            llvm::errs() << "Adding operand to todo list: " << *operand << "\n";
+            if (EnzymePrintFPOpt)
+              llvm::errs() << "Adding operand to todo list: " << *operand
+                           << "\n";
             todo.push_back(operand);
           }
         }
@@ -572,42 +591,50 @@ B2:
         for (auto U : I2->users()) {
           if (auto I3 = dyn_cast<Instruction>(U)) {
             if (!herbiable(*I3)) {
-              llvm::errs() << "Output instruction found: " << *I2 << "\n";
+              if (EnzymePrintFPOpt)
+                llvm::errs() << "Output instruction found: " << *I2 << "\n";
               output_seen.insert(I2);
             } else {
-              llvm::errs() << "Adding user to todo list: " << *I3 << "\n";
+              if (EnzymePrintFPOpt)
+                llvm::errs() << "Adding user to todo list: " << *I3 << "\n";
               todo.push_back(I3);
             }
           }
         }
       }
 
-      llvm::errs() << "Finished floodfill\n\n";
+      if (EnzymePrintFPOpt)
+        llvm::errs() << "Finished floodfill\n\n";
 
       // Don't bother with graphs without any herbiable operations
       if (!operation_seen.empty()) {
-        llvm::errs() << "Found connected component with "
-                     << operation_seen.size() << " operations and "
-                     << input_seen.size() << " inputs and "
-                     << output_seen.size() << " outputs\n";
+        if (EnzymePrintFPOpt) {
+          llvm::errs() << "Found connected component with "
+                       << operation_seen.size() << " operations and "
+                       << input_seen.size() << " inputs and "
+                       << output_seen.size() << " outputs\n";
 
-        llvm::errs() << "Inputs:\n";
-        for (auto &input : input_seen) {
-          llvm::errs() << *input << "\n";
+          llvm::errs() << "Inputs:\n";
+
+          for (auto &input : input_seen) {
+            llvm::errs() << *input << "\n";
+          }
+
+          llvm::errs() << "Outputs:\n";
+          for (auto &output : output_seen) {
+            llvm::errs() << *output << "\n";
+          }
+
+          llvm::errs() << "Operations:\n";
+          for (auto &operation : operation_seen) {
+            llvm::errs() << *operation << "\n";
+          }
         }
 
-        llvm::errs() << "Outputs:\n";
-        for (auto &output : output_seen) {
-          llvm::errs() << *output << "\n";
-        }
-
-        llvm::errs() << "Operations:\n";
-        for (auto &operation : operation_seen) {
-          llvm::errs() << *operation << "\n";
-        }
-
+        // TODO: Further check
         if (operation_seen.size() == 1) {
-          llvm::errs() << "Skipping trivial connected component\n";
+          if (EnzymePrintFPOpt)
+            llvm::errs() << "Skipping trivial connected component\n";
           continue;
         }
 
@@ -623,7 +650,8 @@ B2:
   // 2) Make the herbie FP-style expression by
   // converting llvm instructions into herbie string (FPNode ....)
   if (connected_components.empty()) {
-    llvm::errs() << "No herbiable connected components found\n";
+    if (EnzymePrintFPOpt)
+      llvm::errs() << "No herbiable connected components found\n";
     return false;
   }
 
@@ -639,8 +667,9 @@ B2:
       argumentsStr +=
           node->hasSymbol() ? node->symbol : (node->symbol = getNextSymbol());
       symbolToValueMap[node->symbol] = input;
-      llvm::errs() << "assigning symbol: " << node->symbol << " to " << *input
-                   << "\n";
+      if (EnzymePrintFPOpt)
+        llvm::errs() << "assigning symbol: " << node->symbol << " to " << *input
+                     << "\n";
       argumentsStr += " ";
     }
     argumentsStr.pop_back();
@@ -655,7 +684,8 @@ B2:
       std::string herbieExpr =
           "(FPCore " + argumentsStr + " " + properties + " " +
           valueToNodeMap[output]->toFullExpression(valueToNodeMap) + ")";
-      llvm::errs() << "Herbie input:\n" << herbieExpr << "\n";
+      if (EnzymePrintHerbie)
+        llvm::errs() << "Herbie input:\n" << herbieExpr << "\n";
 
       // 3) run fancy opts
       if (!improveViaHerbie(herbieExpr)) {
@@ -663,16 +693,19 @@ B2:
                      << " using Herbie!\n";
         continue;
       } else {
-        llvm::errs() << "Optimized: " << herbieExpr << "\n";
+        if (EnzymePrintHerbie)
+          llvm::errs() << "Herbie output: " << herbieExpr << "\n";
       }
 
       // 4) parse the output string solution from herbieland
       // 5) convert into a solution in llvm vals/instructions
-      llvm::errs() << "Parsing Herbie Expr: " << herbieExpr << "\n";
+      if (EnzymePrintFPOpt)
+        llvm::errs() << "Parsing Herbie Expr: " << herbieExpr << "\n";
       FPNode *parsedNode =
           parseHerbieExpr(herbieExpr, valueToNodeMap, symbolToValueMap);
-      llvm::errs() << "Parsed Herbie Expr: "
-                   << parsedNode->toFullExpression(valueToNodeMap) << "\n";
+      if (EnzymePrintFPOpt)
+        llvm::errs() << "Parsed Herbie Expr: "
+                     << parsedNode->toFullExpression(valueToNodeMap) << "\n";
 
       Instruction *insertBefore = dyn_cast<Instruction>(output);
       IRBuilder<> builder(insertBefore);
@@ -682,8 +715,9 @@ B2:
       // Convert the parsed expression to LLVM values/instructions
       Value *newOutputValue = parsedNode->getValue(builder);
       assert(newOutputValue && "Failed to get value from parsed node");
-      llvm::errs() << "Replacing: " << *output << " with " << *newOutputValue
-                   << "\n";
+      if (EnzymePrintFPOpt)
+        llvm::errs() << "Replacing: " << *output << " with " << *newOutputValue
+                     << "\n";
       output->replaceAllUsesWith(newOutputValue);
 
       changed = true;
@@ -696,7 +730,8 @@ B2:
 
   for (auto &component : connected_components) {
     for (auto *I : component.operations) {
-      llvm::errs() << "Erasing: " << *I << "\n";
+      if (EnzymePrintFPOpt)
+        llvm::errs() << "Erasing: " << *I << "\n";
       if (!I->use_empty()) {
         I->replaceAllUsesWith(UndefValue::get(I->getType()));
       }
@@ -704,9 +739,11 @@ B2:
     }
   }
 
-  llvm::errs() << "Finished fpOptimize\n";
-  // Print the function to see the changes
-  F.print(llvm::errs());
+  if (EnzymePrintFPOpt) {
+    llvm::errs() << "Finished fpOptimize\n";
+    // Print the function to see the changes
+    F.print(llvm::errs());
+  }
 
   return changed;
 }

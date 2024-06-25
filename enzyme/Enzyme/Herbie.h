@@ -6,8 +6,15 @@
 #include "llvm/IR/PassManager.h"
 #include "llvm/Passes/PassPlugin.h"
 
+#include "llvm/Support/CommandLine.h"
+
 namespace llvm {
 class FunctionPass;
+}
+
+extern "C" {
+extern llvm::cl::opt<bool> EnzymePrintFPOpt;
+extern llvm::cl::opt<bool> EnzymePrintHerbie;
 }
 
 llvm::FunctionPass *createFPOptPass();
