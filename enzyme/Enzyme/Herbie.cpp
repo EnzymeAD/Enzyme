@@ -285,7 +285,7 @@ parseHerbieExpr(const std::string &expr,
   return node;
 }
 
-bool improveViaHerbie(std::string &expr) {
+bool improveViaHerbie(const std::string &inputExpr, std::string &outputExpr) {
   SmallString<32> tmpin, tmpout;
 
   if (llvm::sys::fs::createUniqueFile("herbie_input_%%%%%%%%%%%%%%%%", tmpin,
@@ -305,7 +305,7 @@ bool improveViaHerbie(std::string &expr) {
     llvm::errs() << "Failed to open input file.\n";
     return 1;
   }
-  input << expr;
+  input << inputExpr;
   input.close();
 
   std::string Program = HERBIE_BINARY;
@@ -343,10 +343,10 @@ bool improveViaHerbie(std::string &expr) {
   std::smatch matches;
 
   if (std::regex_search(content, matches, fpcoreRegex)) {
-    expr = matches[1].str();
-    return true;
+    outputExpr = matches[1].str();
+    return outputExpr != "#f"; // Herbie failure
   } else {
-    llvm::errs() << "Failed to parse Herbie output!\n";
+    llvm::errs() << "Failed to extract Herbie output expression!\n";
     return false;
   }
 }
@@ -681,30 +681,31 @@ B2:
       std::string properties =
           ":precision binary64 :herbie-conversions ([binary64 binary32])";
 
-      std::string herbieExpr =
+      std::string herbieInputExpr =
           "(FPCore " + argumentsStr + " " + properties + " " +
           valueToNodeMap[output]->toFullExpression(valueToNodeMap) + ")";
       if (EnzymePrintHerbie)
-        llvm::errs() << "Herbie input:\n" << herbieExpr << "\n";
+        llvm::errs() << "Herbie input:\n" << herbieInputExpr << "\n";
 
       // 3) run fancy opts
-      if (!improveViaHerbie(herbieExpr)) {
-        llvm::errs() << "Failed to optimize " << herbieExpr
+      std::string herbieOutputExpr;
+      if (!improveViaHerbie(herbieInputExpr, herbieOutputExpr)) {
+        llvm::errs() << "Failed to optimize " << herbieInputExpr
                      << " using Herbie!\n";
         continue;
       } else {
         if (EnzymePrintHerbie)
-          llvm::errs() << "Herbie output: " << herbieExpr << "\n";
+          llvm::errs() << "Herbie output: " << herbieOutputExpr << "\n";
       }
 
       // 4) parse the output string solution from herbieland
       // 5) convert into a solution in llvm vals/instructions
       if (EnzymePrintFPOpt)
-        llvm::errs() << "Parsing Herbie Expr: " << herbieExpr << "\n";
+        llvm::errs() << "Parsing Herbie output: " << herbieOutputExpr << "\n";
       FPNode *parsedNode =
-          parseHerbieExpr(herbieExpr, valueToNodeMap, symbolToValueMap);
+          parseHerbieExpr(herbieOutputExpr, valueToNodeMap, symbolToValueMap);
       if (EnzymePrintFPOpt)
-        llvm::errs() << "Parsed Herbie Expr: "
+        llvm::errs() << "Parsed Herbie output: "
                      << parsedNode->toFullExpression(valueToNodeMap) << "\n";
 
       Instruction *insertBefore = dyn_cast<Instruction>(output);
