@@ -42,12 +42,15 @@ using namespace llvm;
 #define DEBUG_TYPE "fp-opt"
 
 extern "C" {
-llvm::cl::opt<bool>
-    EnzymePrintFPOpt("enzyme-print-fpopt", cl::init(false), cl::Hidden,
-                     cl::desc("Enable Enzyme to print FPOpt info"));
-llvm::cl::opt<bool>
+cl::opt<bool> EnzymePrintFPOpt("enzyme-print-fpopt", cl::init(false),
+                               cl::Hidden,
+                               cl::desc("Enable Enzyme to print FPOpt info"));
+cl::opt<bool>
     EnzymePrintHerbie("enzyme-print-herbie", cl::init(false), cl::Hidden,
                       cl::desc("Enable Enzyme to print Herbie expressions"));
+static cl::opt<std::string>
+    ErrorLogPath("error-log-path", cl::init(""), cl::Hidden,
+                 cl::desc("Which error log to use in fp-opt pass"));
 }
 
 class FPNode {
@@ -56,7 +59,7 @@ public:
   std::string symbol;
   SmallVector<FPNode *, 1> operands;
 
-  FPNode(const std::string &op) : op(op), symbol() {}
+  FPNode(const std::string &op) : op(op) {}
   virtual ~FPNode() = default;
 
   void addOperand(FPNode *operand) { operands.push_back(operand); }
@@ -72,6 +75,16 @@ public:
     }
     expr += ")";
     return expr;
+  }
+
+  virtual void updateBounds(double lower, double upper) {
+    assert(0 && "Trying to update bounds of a non-input node!");
+  }
+  virtual double getLowerBound() const {
+    assert(0 && "Trying to get lower bound of a non-input node!");
+  }
+  virtual double getUpperBound() const {
+    assert(0 && "Trying to get upper bound of a non-input node!");
   }
 
   virtual Value *getValue(IRBuilder<> &builder) {
@@ -181,6 +194,8 @@ public:
 // Represents a true LLVM Value
 class FPLLValue : public FPNode {
   Value *value;
+  double lb = std::numeric_limits<double>::infinity();
+  double ub = -std::numeric_limits<double>::infinity();
 
 public:
   FPLLValue(Value *value) : FPNode("__arg"), value(value) {}
@@ -190,6 +205,16 @@ public:
     assert(hasSymbol() && "FPLLValue has no symbol!");
     return symbol;
   }
+
+  virtual void updateBounds(double lower, double upper) override {
+    lb = std::min(lb, lower);
+    ub = std::max(ub, upper);
+    llvm::errs() << "Updated bounds for " << *value << ": [" << lb << ", " << ub
+                 << "]\n";
+  }
+
+  virtual double getLowerBound() const override { return lb; }
+  virtual double getUpperBound() const override { return ub; }
 
   virtual Value *getValue(IRBuilder<> &builder) override { return value; }
 
@@ -448,27 +473,112 @@ bool herbiable(const Value &Val) {
   }
 }
 
-std::string getExprArgs(const std::string &expr) {
+void getUniqueArgs(const std::string &expr, SmallSet<std::string, 1> &args) {
   // TODO: Update it if we use let expr in the future
-  SmallSet<std::string, 1> args;
   std::regex argPattern("v\\d+");
 
   std::sregex_iterator begin(expr.begin(), expr.end(), argPattern);
   std::sregex_iterator end;
 
-  // Insert each match into the set to ensure uniqueness
   while (begin != end) {
     args.insert(begin->str());
     ++begin;
   }
-
-  return "(" +
-         std::accumulate(args.begin(), args.end(), std::string(),
-                         [](const std::string &a, const std::string &b) {
-                           return a + " " + b;
-                         }) +
-         ")";
 }
+
+struct ErrorLogData {
+  double minRes;
+  double maxRes;
+  double minError;
+  double maxError;
+  long executions;
+  SmallVector<double, 2> lower; // Known bounds of operands
+  SmallVector<double, 2> upper;
+};
+
+bool extractErrorLogData(const std::string &filePath,
+                         const std::string &functionName, size_t blockIdx,
+                         size_t instIdx, ErrorLogData &data) {
+  std::ifstream file(filePath);
+  if (!file.is_open()) {
+    llvm::errs() << "Failed to open error log: " << filePath << "\n";
+    return false;
+  }
+
+  std::regex linePattern(
+      "Function: " +
+      std::regex_replace(functionName, std::regex(R"(\W)"), R"(\$&)") +
+      ", BlockIdx: " + std::to_string(blockIdx) +
+      ", InstIdx: " + std::to_string(instIdx));
+  std::string line;
+
+  while (getline(file, line)) {
+    if (std::regex_search(line, linePattern)) {
+      if (getline(file, line)) {
+        std::regex statsPattern(
+            R"(Min Res: ([\d\.eE+-]+), Max Res: ([\d\.eE+-]+), Min Error: ([\d\.eE+-]+), Max Error: ([\d\.eE+-]+), Executions: (\d+))");
+        std::smatch statsMatch;
+        if (std::regex_search(line, statsMatch, statsPattern)) {
+          data.minRes = std::stod(statsMatch[1]);
+          data.maxRes = std::stod(statsMatch[2]);
+          data.minError = std::stod(statsMatch[3]);
+          data.maxError = std::stod(statsMatch[4]);
+          data.executions = std::stol(statsMatch[5]);
+        }
+
+        // Read lines for operand ranges
+        std::regex rangePattern(R"(\[([\d\.eE+-]+),\s*([\d\.eE+-]+)\])");
+        while (getline(file, line) && line.substr(0, 7) == "Operand") {
+          std::smatch rangeMatch;
+          if (std::regex_search(line, rangeMatch, rangePattern)) {
+            data.lower.push_back(std::stod(rangeMatch[1]));
+            data.upper.push_back(std::stod(rangeMatch[2]));
+          } else {
+            return false;
+          }
+        }
+        return true;
+      }
+    }
+  }
+
+  llvm::errs() << "Failed to get error log data for: " << "Function: "
+               << functionName << ", BlockIdx: " << blockIdx
+               << ", InstIdx: " << instIdx << "\n";
+  return false;
+}
+
+bool isLogged(const std::string &filePath, const std::string &functionName) {
+  std::ifstream file(filePath);
+  if (!file.is_open()) {
+    assert(0 && "Failed to open error log");
+  }
+
+  std::string pattern = "Function: " + functionName + ",";
+  std::regex functionRegex(pattern);
+
+  std::string line;
+  while (std::getline(file, line)) {
+    if (std::regex_search(line, functionRegex)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// std::string getPrecondition(
+//     const SmallSet<std::string, 1> &args,
+//     const std::unordered_map<Value *, FPNode *> &valueToNodeMap,
+//     const std::unordered_map<std::string, Value *> &symbolToValueMap) {
+//   std::string precondition = "(and";
+
+//   for (const auto &arg : args) {
+//     auto node = valueToNodeMap.at(symbolToValueMap.at(arg));
+//   }
+
+//   return precondition + ")";
+// }
 
 struct HerbieComponents {
   SetVector<Value *> inputs;
@@ -484,6 +594,18 @@ struct HerbieComponents {
 // Run (our choice of) floating point optimizations on function `F`.
 // Return whether or not we change the function.
 bool fpOptimize(Function &F) {
+  std::string functionName = F.getName().str();
+
+  // TODO: Finer control
+  if (!ErrorLogPath.empty()) {
+    if (!isLogged(ErrorLogPath, functionName)) {
+      if (EnzymePrintFPOpt)
+        llvm::errs() << "Skipping function: " << F.getName()
+                     << " since it is not logged\n";
+      return false;
+    }
+  }
+
   bool changed = false;
 
   int symbolCounter = 0;
@@ -564,13 +686,6 @@ B2:
     }
   }
 
-  if (EnzymePrintFPOpt)
-    for (auto &[value, node] : valueToNodeMap) {
-      llvm::errs() << "Value: " << *value
-                   << " isExpression: " << node->isExpression()
-                   << " Node: " << node << "\n";
-    }
-
   SmallSet<Value *, 1> component_seen;
   SmallVector<HerbieComponents, 1> connected_components;
   for (auto &BB : F) {
@@ -627,14 +742,46 @@ B2:
         operation_seen.insert(I2);
         component_seen.insert(cur);
 
+        ErrorLogData errorLogData;
+        if (!ErrorLogPath.empty()) {
+          auto blockIt = std::find_if(
+              I2->getFunction()->begin(), I2->getFunction()->end(),
+              [&](const auto &block) { return &block == I2->getParent(); });
+          assert(blockIt != I2->getFunction()->end() && "Block not found");
+          size_t blockIdx = std::distance(I2->getFunction()->begin(), blockIt);
+          auto instIt =
+              std::find_if(I2->getParent()->begin(), I2->getParent()->end(),
+                           [&](const auto &curr) { return &curr == I2; });
+          assert(instIt != I2->getParent()->end() && "Instruction not found");
+          size_t instIdx = std::distance(I2->getParent()->begin(), instIt);
+          assert(extractErrorLogData(ErrorLogPath, functionName, blockIdx,
+                                     instIdx, errorLogData) &&
+                 "Failed to extract error log data");
+        }
+
         auto operands =
             isa<CallInst>(I2) ? cast<CallInst>(I2)->args() : I2->operands();
 
-        for (auto &operand : operands) {
+        for (auto &operand_ : enumerate(operands)) {
+          auto &operand = operand_.value();
+          auto i = operand_.index();
           if (!herbiable(*operand)) {
             if (EnzymePrintFPOpt)
               llvm::errs() << "Non-herbiable input found: " << *operand << "\n";
             input_seen.insert(operand);
+
+            // look up error log to get bounds of the operand of I2
+            if (!ErrorLogPath.empty()) {
+              valueToNodeMap[operand]->updateBounds(errorLogData.lower[i],
+                                                    errorLogData.upper[i]);
+              llvm::errs() << "Bounds of " << *operand
+                           << " are: " << errorLogData.lower[i] << " and "
+                           << errorLogData.upper[i] << "\n";
+              llvm::errs() << "Node bounds of " << *operand << " are: "
+                           << valueToNodeMap[operand]->getLowerBound()
+                           << " and "
+                           << valueToNodeMap[operand]->getUpperBound() << "\n";
+            }
           } else {
             if (EnzymePrintFPOpt)
               llvm::errs() << "Adding operand to todo list: " << *operand
@@ -730,14 +877,28 @@ B2:
     assert(component.outputs.size() > 0 && "No outputs found for component");
     for (const auto &output : component.outputs) {
       // TODO: Herbie properties
+      std::string expr =
+          valueToNodeMap[output]->toFullExpression(valueToNodeMap);
+      SmallSet<std::string, 1> args;
+      getUniqueArgs(expr, args);
+
       std::string properties =
           ":precision binary64 :herbie-conversions ([binary64 binary32])";
 
-      std::string expr =
-          valueToNodeMap[output]->toFullExpression(valueToNodeMap);
+      // TODO
+      // if (!ErrorLogPath.empty()) {
+      //   std::string precondition = getPrecondition(args);
+      // }
+
+      std::string argStr;
+      for (const auto &arg : args) {
+        if (!argStr.empty())
+          argStr += " ";
+        argStr += arg;
+      }
 
       std::string herbieInput =
-          "(FPCore " + getExprArgs(expr) + " " + properties + " " + expr + ")";
+          "(FPCore (" + argStr + ") " + properties + " " + expr + ")";
       if (EnzymePrintHerbie)
         llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
 
