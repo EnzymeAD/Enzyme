@@ -789,7 +789,8 @@ void emit_runtime_condition(DagInit *ruleDag, StringRef name, StringRef tab,
      << tab << "  auto activeBlock = gutils->addReverseBlock(current,"
      << "bb_name + \"." << name << ".active\");\n"
      << tab << "  nextBlock_" << name << " = gutils->addReverseBlock("
-     << "activeBlock, bb_name + \"." << name << ".done\");\n"
+     << "activeBlock, bb_name + \"." << name
+     << ".done\", /*fork*/true, /*push*/false);\n"
      << tab << "  " << B << ".CreateCondBr(rt_inactive_" << name
      << ", nextBlock_" << name << ", activeBlock);\n"
      << tab << "  " << B << ".SetInsertPoint(activeBlock);\n"
@@ -802,6 +803,15 @@ void emit_runtime_continue(DagInit *ruleDag, StringRef name, StringRef tab,
      << ") {\n"
      << tab << "  " << B << ".CreateBr(nextBlock_" << name << ");\n"
      << tab << "  " << B << ".SetInsertPoint(nextBlock_" << name << ");\n"
+     << "      {\n"
+     << "        auto found = gutils->reverseBlockToPrimal.find(nextBlock_"
+     << name << ");\n"
+     << "        assert(found != gutils->reverseBlockToPrimal.end());\n"
+     << "        SmallVector<BasicBlock *, 4> &vec =\n"
+     << "          gutils->reverseBlocks[found->second];\n"
+     << "        assert(vec.size());\n"
+     << "        vec.push_back(nextBlock_" << name << ");\n"
+     << "      }\n"
      << tab << "}\n";
 }
 
