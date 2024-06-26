@@ -521,21 +521,13 @@ B2:
   std::unordered_map<Value *, FPNode *> valueToNodeMap;
   std::unordered_map<std::string, Value *> symbolToValueMap;
 
-  for (auto &arg : F.args()) {
-    valueToNodeMap[&arg] = new FPLLValue(&arg);
-  }
-
-  for (auto &BB : F) {
-    for (auto &I : BB) {
-      valueToNodeMap[&I] = new FPLLValue(&I);
-    }
-  }
-
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (!herbiable(I)) {
+        valueToNodeMap[&I] = new FPLLValue(&I);
         if (EnzymePrintFPOpt)
-          llvm::errs() << "Skipping non-herbiable instruction: " << I << "\n";
+          llvm::errs() << "Registered FPLLValue for non-herbiable instruction: "
+                       << I << "\n";
         continue;
       }
 
@@ -545,7 +537,12 @@ B2:
           isa<CallInst>(I) ? cast<CallInst>(I).args() : I.operands();
       for (auto &operand : operands) {
         if (!valueToNodeMap.count(operand)) {
-          if (auto C = dyn_cast<ConstantFP>(operand)) {
+          if (auto Arg = dyn_cast<Argument>(operand)) {
+            valueToNodeMap[operand] = new FPLLValue(Arg);
+            if (EnzymePrintFPOpt)
+              llvm::errs() << "Registered FPNode for argument: " << *Arg
+                           << "\n";
+          } else if (auto C = dyn_cast<ConstantFP>(operand)) {
             SmallString<10> value;
             C->getValueAPF().toString(value);
             valueToNodeMap[operand] = new FPConst(value.c_str());
