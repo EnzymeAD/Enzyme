@@ -21,7 +21,11 @@
 #include "llvm/Transforms/Utils.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
+#include <cerrno>
+#include <cmath>
+#include <cstring>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <numeric>
 #include <regex>
@@ -195,6 +199,22 @@ public:
 class FPConst : public FPNode {
   std::string value;
 
+  double stringToDouble(const std::string &str) {
+    char *end;
+    errno = 0;
+    double result = std::strtod(str.c_str(), &end);
+
+    if (errno == ERANGE) {
+      if (result == HUGE_VAL) {
+        result = std::numeric_limits<double>::infinity();
+      } else if (result == -HUGE_VAL) {
+        result = -std::numeric_limits<double>::infinity();
+      }
+    }
+
+    return result;
+  }
+
 public:
   FPConst(std::string value) : FPNode("__const"), value(value) {}
 
@@ -210,18 +230,18 @@ public:
       return ConstantFP::getInfinity(builder.getDoubleTy(), true);
     }
 
-    double constantValue = std::stod(value);
+    double constantValue;
     size_t div = value.find('/');
 
     if (div != std::string::npos) {
       std::string numerator = value.substr(0, div);
       std::string denominator = value.substr(div + 1);
-      double num = std::stod(numerator);
-      double denom = std::stod(denominator); // Assumes proper division
+      double num = stringToDouble(numerator);
+      double denom = stringToDouble(denominator);
 
       constantValue = num / denom;
     } else {
-      constantValue = std::stod(value);
+      constantValue = stringToDouble(value);
     }
 
     // TODO eventually have this be typed
