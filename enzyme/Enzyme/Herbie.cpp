@@ -128,6 +128,10 @@ public:
       val = builder.CreateUnaryIntrinsic(Intrinsic::log, operandValues[0]);
     } else if (op == "sqrt") {
       val = builder.CreateUnaryIntrinsic(Intrinsic::sqrt, operandValues[0]);
+    } else if (op == "cbrt") {
+      val = builder.CreateBinaryIntrinsic(
+          Intrinsic::pow, operandValues[0],
+          ConstantFP::get(operandValues[0]->getType(), 1.0 / 3.0));
     } else if (op == "pow") {
       val = builder.CreateBinaryIntrinsic(Intrinsic::pow, operandValues[0],
                                           operandValues[1]);
@@ -160,7 +164,8 @@ public:
     } else if (op == "FALSE") {
       val = ConstantInt::getFalse(builder.getContext());
     } else {
-      assert(0 && "FPNode.getValue: Unknown operator");
+      llvm::errs() << "Unknown operator: " << op << "\n";
+      assert(0 && "Failed to generate optimized IR");
     }
 
     return val;
