@@ -41,6 +41,10 @@ namespace enzyme {
 
     template < typename T >
     struct Active{
+      static_assert(
+        !std::is_reference_v<T> && !std::is_pointer_v<T>,
+        "Reference/pointer active arguments don't make sense for AD!"
+      );
       T value;
       Active(const T& v) : value(v) {};
       Active(T&& v) : value(std::move(v)) {};
@@ -66,25 +70,15 @@ namespace enzyme {
             DupArg(T&& v, T&& s) : value(v), shadow(s) {};
             DupArg(const DupArg<T>&) = default;
             DupArg(DupArg<T>&&) = default;
-
-            __attribute__((always_inline))
-            T valueExp() const { return this->value; }
-            __attribute__((always_inline))
-            T shadowExp() const { return this->shadow; }
         };
 
         template < typename T >
         struct DupArg<T&> {
-            T& value;
-            T& shadow;
-            DupArg(T& v, T& s) : value(v), shadow(s) {}
+            T* value;
+            T* shadow;
+            DupArg(T& v, T& s) : value(&v), shadow(&s) {}
             DupArg(const DupArg<T&>&) = default;
             DupArg(DupArg<T&>&&) = default;
-
-            __attribute__((always_inline))
-            const T* valueExp() const { return &this->value; }
-            __attribute__((always_inline))
-            const T* shadowExp() const { return &this->shadow; }
         };
 
     } // <-- namespace detail
@@ -109,6 +103,15 @@ namespace enzyme {
       operator T&() { return value; }
     };
 
+    template < typename T >
+    struct Const<T&>{
+        T* value;
+        Const(T& v) : value(&v) {}
+        Const(const Const<T&>&) = default;
+        Const(Const<T&>&&) = default;
+        operator T&() { return *value; }
+    };
+
     // CTAD available in C++17 or later
     #if __cplusplus >= 201703L
       template < typename T >
@@ -126,13 +129,29 @@ namespace enzyme {
 
     template < typename T >
     struct type_info {
-      static constexpr bool is_active = false;
+      static constexpr bool is_active     = false;
+      static constexpr bool is_duplicated = false;
       using type = nodiff;
     };
 
     template < typename T >
     struct type_info < Active<T> >{
-        static constexpr bool is_active = true;
+        static constexpr bool is_active     = true;
+        static constexpr bool is_duplicated = false;
+        using type = T;
+    };
+
+    template < typename T >
+    struct type_info < Duplicated<T> >{
+        static constexpr bool is_active     = false;
+        static constexpr bool is_duplicated = true;
+        using type = T;
+    };
+
+    template < typename T >
+    struct type_info < DuplicatedNoNeed<T> >{
+        static constexpr bool is_active     = false;
+        static constexpr bool is_duplicated = true;
         using type = T;
     };
 
@@ -198,17 +217,13 @@ namespace enzyme {
     template < typename T >
     __attribute__((always_inline))
     auto expand_args(const enzyme::Duplicated<T> & arg) {
-        // `valueExp()`/`shadowExp()` must initialize either a value
-        // or a pointer. This means we can use `std::tuple` argument deduction
-        return enzyme::tuple{enzyme_dup, arg.valueExp(), arg.shadowExp()};
+        return enzyme::tuple{enzyme_dup, arg.value, arg.shadow};
     }
 
     template < typename T >
     __attribute__((always_inline))
     auto expand_args(const enzyme::DuplicatedNoNeed<T> & arg) {
-        // `valueExp()`/`shadowExp()` must initialize either a value
-        // or a pointer. This means we can use `std::tuple` argument deduction
-        return enzyme::tuple{enzyme_dupnoneed, arg.valueExp(), arg.shadowExp()};
+        return enzyme::tuple{enzyme_dupnoneed, arg.value, arg.shadow};
     }
 
     template < typename T >
@@ -220,7 +235,7 @@ namespace enzyme {
     template < typename T >
     __attribute__((always_inline))
     auto expand_args(const enzyme::Const<T> & arg) {
-        return enzyme::tuple<int, T>{enzyme_const, arg.value};
+        return enzyme::tuple{enzyme_const, arg.value};
     }
 
     template < typename T >
@@ -389,19 +404,6 @@ namespace enzyme {
           static constexpr int* value = &enzyme_primal_return;
         };
 
-        /// @brief Check if a type is an instance of enzyme::Duplicated
-        template <typename T>
-        struct is_duplicated {
-          using DupType = void;
-          static constexpr bool value = false;
-        };
-
-        template <typename T>
-        struct is_duplicated<enzyme::Duplicated<T>> {
-          using DupType = T;
-          static constexpr bool value = true;
-        };
-
         template <typename T, typename... Args>
         struct verify_dup_args {
           static constexpr bool value = true;
@@ -411,9 +413,9 @@ namespace enzyme {
         struct verify_dup_args<enzyme::Reverse, Args...> {
           static constexpr bool value = (
             (
-              !is_duplicated<Args>::value
-              || std::is_reference_v<typename is_duplicated<Args>::DupType>
-              || std::is_pointer_v<typename is_duplicated<Args>::DupType>
+              !type_info<Args>::is_duplicated
+              || std::is_reference_v<typename type_info<Args>::type>
+              || std::is_pointer_v<typename type_info<Args>::type>
             ) && ...
           );
         };

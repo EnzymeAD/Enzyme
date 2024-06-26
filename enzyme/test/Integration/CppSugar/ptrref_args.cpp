@@ -15,10 +15,10 @@ float f(float x)        { return  x *  x; }
 float g(const float& x) { return  x *  x; }
 float h(const float* x) { return *x * *x; }
 
-int main() {
-    const float x      = 10;
-    const float etalon = 2 * x;
+static const float x      = 10;
+static const float etalon = 2 * x;
 
+void test_active() {
     {   // Ok, reverse mode + active
         const float dfdx = enzyme::get<0>(
             enzyme::get<0>(
@@ -29,35 +29,9 @@ int main() {
         );
         APPROX_EQ(dfdx, etalon, 1e-10);
     }
-#if 0
-    {
-        /*
-         * This will not work in the C++ interface because it is also not allowed
-         * with the C-style __enzyme_autodiff call
-         */
-        const float dfdx = enzyme::get<0>(
-            enzyme::get<0>(
-                enzyme::autodiff<enzyme::Reverse>(
-                    g, enzyme::Active<const float&>{ x }
-                )
-            )
-        );
-        APPROX_EQ(dfdx, etalon, 1e-10);
-    }
-#endif
-#if 0
-    {
-        /*
-         * Error: non-reference duplicated arguments don't make sense in reverse
-         * mode
-         */
-        float dfdx = 0;
-        enzyme::autodiff<enzyme::Reverse>(
-            f, enzyme::Duplicated<float>{ x, dfdx }
-        );
-        APPROX_EQ(dfdx, etalon, 1e-10);
-    }
-#endif
+}
+
+void test_duplicated() {
     {   // Ok, reverse mode + reference arg
         float dfdx = 0;
         enzyme::autodiff<enzyme::Reverse>(
@@ -117,5 +91,73 @@ int main() {
         APPROX_EQ(dfdx, etalon, 1e-10);
     }
 #endif
+}
+
+float f2(float x, float y)        { return x * y; }
+float g2(float x, const float& y) { return x * y; }
+float h2(float x, float& y)       { return x * (y++); }
+float j2(float x, const float* y) { return x * (*y); }
+
+static const float y       = 5;
+static const float etalon2 = 5;
+
+void test_const() {
+    {
+        // OK: By-value const for by-value arg
+        const auto dfdx = enzyme::get<0>(
+            enzyme::get<0>(
+                enzyme::autodiff<enzyme::Reverse>(
+                    f2, enzyme::Active{ x }, enzyme::Const<float>{ y }
+                )
+            )
+        );
+        APPROX_EQ(dfdx, etalon2, 1e-10);
+    }
+    {
+        // OK: By-const-ref const for by-const-ref arg
+        const auto dfdx = enzyme::get<0>(
+            enzyme::get<0>(
+                enzyme::autodiff<enzyme::Reverse>(
+                    g2, enzyme::Active{ x }, enzyme::Const<const float&>{ y }
+                )
+            )
+        );
+        APPROX_EQ(dfdx, etalon2, 1e-10);
+    }
+    {
+        // OK: By-non-const-ref Const for by-non-const-ref arg
+        // fun fact: putting `const T*` instead of `T*` in `enzyme/utils:108`
+        // not only is semantically incorrect, but also makes the compiler
+        // crash on this example!
+        float y2 = y;
+        const auto dfdx = enzyme::get<0>(
+            enzyme::get<0>(
+                enzyme::autodiff<enzyme::Reverse>(
+                    h2, enzyme::Active{ x }, enzyme::Const<float&>{ y2 }
+                )
+            )
+        );
+        APPROX_EQ(dfdx, etalon2, 1e-10);
+        APPROX_EQ(y2, y + 1, 1e-10);
+    }
+    {
+        // OK: By-pointer Const for by-pointer arg
+        // I feel like testing with non-const pointer too would be excessive
+        const auto dfdx = enzyme::get<0>(
+            enzyme::get<0>(
+                enzyme::autodiff<enzyme::Reverse>(
+                    j2, enzyme::Active{ x }, enzyme::Const<const float*>{ &y }
+                )
+            )
+        );
+        APPROX_EQ(dfdx, etalon2, 1e-10);
+    }
+}
+
+int main() {
+    test_active();
+    test_duplicated();
+    test_const();
+
     return 0;
 }
