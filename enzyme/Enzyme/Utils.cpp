@@ -3159,3 +3159,5 @@ void dumpModule(llvm::Module *mod) { llvm::errs() << *mod << "\n"; }
 void dumpValue(llvm::Value *val) { llvm::errs() << *val << "\n"; }
 
 void dumpType(llvm::Type *ty) { llvm::errs() << *ty << "\n"; }
+
+void dumpTypeResults(TypeResults &TR) { TR.dump(); }
