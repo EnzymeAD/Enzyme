@@ -105,10 +105,12 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   std::string prefix;
 
   switch (mode) {
-  case DerivativeMode::ForwardModeError:
   case DerivativeMode::ForwardMode:
   case DerivativeMode::ForwardModeSplit:
     prefix = "fwddiffe";
+    break;
+  case DerivativeMode::ForwardModeError:
+    prefix = "fwderr";
     break;
   case DerivativeMode::ReverseModeCombined:
   case DerivativeMode::ReverseModeGradient:
