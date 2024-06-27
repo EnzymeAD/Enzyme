@@ -7,8 +7,8 @@
 // RUN: if [ %llvmver -ge 12 ]; then %clang++ -stdlib=libc++ -std=c++17 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
 // RUN: if [ %llvmver -ge 12 ]; then %clang++ -stdlib=libc++ -std=c++17 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
 
-#include <vector>
 #include "../test_utils.h"
+#include <vector>
 
 #include <enzyme/enzyme>
 
