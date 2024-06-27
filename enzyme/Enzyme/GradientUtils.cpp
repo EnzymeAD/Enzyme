@@ -5481,9 +5481,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               Constant::getNullValue(elemTy), arg->getName() + "_shadow", arg,
               arg->getThreadLocalMode(), arg->getType()->getAddressSpace(),
               arg->isExternallyInitialized());
-          arg->setMetadata("enzyme_shadow",
-                           MDTuple::get(shadow->getContext(),
-                                        {ConstantAsMetadata::get(shadow)}));
           shadow->setAlignment(arg->getAlign());
           shadow->setUnnamedAddr(arg->getUnnamedAddr());
 
@@ -5491,6 +5488,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         };
 
         Value *shadow = applyChainRule(oval->getType(), BuilderM, rule);
+        arg->setMetadata(
+            "enzyme_shadow",
+            MDTuple::get(shadow->getContext(),
+                         {ConstantAsMetadata::get(cast<Constant>(shadow))}));
+        if (getWidth() != 1) {
+          BuilderM.Insert(InsertValueInst::Create(shadow, arg, {0}), "tmp");
+        }
 
         if (arg->hasInitializer()) {
           applyChainRule(
