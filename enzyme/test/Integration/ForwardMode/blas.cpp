@@ -16,6 +16,7 @@
 
 #include "../blasinfra.h"
 #include "../test_utils.h"
+extern "C" double sqrt(double);
 
 int enzyme_dup;
 int enzyme_out;
@@ -31,6 +32,11 @@ void my_dgemv(char layout, char trans, int M, int N, double alpha,
 double my_ddot(int N, double *__restrict__ X, int incx, double *__restrict__ Y,
                int incy) {
   double res = cblas_ddot(N, X, incx, Y, incy);
+  return res;
+}
+
+double my_dnrm2(int N, double *__restrict__ X, int incx) {
+  double res = cblas_dnrm2(N, X, incx);
   return res;
 }
 
@@ -173,6 +179,77 @@ static void dotTests() {
     init();
 
     my_ddot(N, A, incA, B, incB);
+
+    checkTest(Test);
+
+    // Check memory of primal of expected derivative
+    checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+    // Check memory of primal of our derivative (if equal above, it
+    // should be the same).
+    checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+    APPROX_EQ(dres, 0.0, 1e-10);
+  }
+}
+
+static void nrm2Tests() {
+  {
+    std::string Test = "NRM2 active";
+    BlasInfo inputs[6] = {
+        /*A*/ BlasInfo(A, N, incA),
+        /*B*/ BlasInfo(B, N, incB),
+        /*C*/ BlasInfo(C, M, incC), BlasInfo(), BlasInfo(), BlasInfo(),
+    };
+    init();
+    my_dnrm2(N, A, incA);
+
+    // Check memory of primal on own.
+    checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+    init();
+    double ADres =
+        __enzyme_fwddiff<double>((void *)my_dnrm2, enzyme_const, N, enzyme_dup,
+                                 A, dA, enzyme_const, incA);
+    foundCalls = calls;
+    init();
+
+    double dres = cblas_ddot(N, A, incA, dA, incA);
+    double nres = my_dnrm2(N, A, incA);
+    double trueRes = sqrt(dres) / nres;
+    my_dnrm2(N, A, incA);
+
+    checkTest(Test);
+
+    // Check memory of primal of expected derivative
+    checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+    // Check memory of primal of our derivative (if equal above, it
+    // should be the same).
+    checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+
+    APPROX_EQ(ADres, trueRes, 1e-10);
+  }
+  {
+    std::string Test = "NRM2 const";
+    BlasInfo inputs[6] = {
+        /*A*/ BlasInfo(A, N, incA),
+        /*B*/ BlasInfo(B, N, incB),
+        /*C*/ BlasInfo(C, M, incC), BlasInfo(), BlasInfo(), BlasInfo(),
+    };
+    init();
+    my_dnrm2(N, A, incA);
+    my_ddot(N, A, incA, B, incB);
+
+    // Check memory of primal on own.
+    checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+    init();
+    double dres = __enzyme_fwddiff<double>((void *)my_dnrm2, enzyme_const, N,
+                                           enzyme_const, A, enzyme_const, incA);
+    foundCalls = calls;
+    init();
+
+    my_dnrm2(N, A, incA);
 
     checkTest(Test);
 
@@ -473,8 +550,9 @@ static void gemmTests() {
 }
 
 int main() {
-
   dotTests();
+
+  nrm2Tests();
 
   gemvTests();
 
