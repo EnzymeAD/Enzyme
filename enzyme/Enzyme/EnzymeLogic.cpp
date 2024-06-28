@@ -1777,7 +1777,7 @@ void clearFunctionAttributes(Function *f) {
     }
 #endif
   }
-  for (auto attr : {"enzyme_inactive"}) {
+  for (auto attr : {"enzyme_inactive", "enzyme_type"}) {
 #if LLVM_VERSION_MAJOR >= 14
     if (f->getAttributes().hasRetAttr(attr)) {
       f->removeRetAttr(attr);
@@ -2670,7 +2670,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     }
 #endif
   }
-  for (auto attr : {"enzyme_inactive"}) {
+  for (auto attr : {"enzyme_inactive", "enzyme_type"}) {
 #if LLVM_VERSION_MAJOR >= 14
     if (gutils->newFunc->getAttributes().hasRetAttr(attr)) {
       gutils->newFunc->removeRetAttr(attr);
