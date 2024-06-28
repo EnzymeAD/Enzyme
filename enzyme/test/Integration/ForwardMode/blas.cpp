@@ -16,6 +16,7 @@
 
 #include "../blasinfra.h"
 #include "../test_utils.h"
+extern "C" double sqrt(double);
 
 int enzyme_dup;
 int enzyme_out;

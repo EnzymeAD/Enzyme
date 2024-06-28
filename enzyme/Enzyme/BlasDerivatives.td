@@ -264,11 +264,10 @@ def copy : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 //                   ]
 //                   >;
 
-// def asum : CallBlasPattern<(Op $n, $x, $incx),
-//                   [],[len, vinc],
-//                   [(BlasCall<"axpy"> DiffeRet, sign(<input<"x">), $y)]
-//                   >;
-// 
+def asum : CallBlasPattern<(Op $n, $x, $incx),
+                  [],[len, vinc],
+                  [(AssertingInactiveArg)]
+                  >;
 
 // Lv 2
 
