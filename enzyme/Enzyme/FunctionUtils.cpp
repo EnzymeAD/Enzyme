@@ -1461,6 +1461,14 @@ Function *PreProcessCache::preprocessForClone(Function *F,
                       Returns, "", nullptr);
 #endif
   }
+  for (auto pair& : VMap) {
+     if (auto before = dyn_cast<Instruction>(pair.first)) {
+       auto after = cast<Instruction>(pair.first);
+       after->setMetadata("enzyme_preprocess_origin",
+                       MDTuple::get(after->getContext(),
+                                    {ValueAsMetadata::get(before)}));
+     }
+  }
   CloneOrigin[NewF] = F;
   NewF->setAttributes(F->getAttributes());
   if (EnzymeNoAlias)
