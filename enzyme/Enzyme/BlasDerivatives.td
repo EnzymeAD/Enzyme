@@ -71,6 +71,14 @@ def BFDiv : Binop<"FDiv", ["fpType", "fpType"]>;
 def FSelect : Binop<"Select", ["Builder2.getInt1Ty()", "fpType", "fpType"]>;
 def ISelect : Binop<"Select", ["Builder2.getInt1Ty()", "intType", "intType"]>;
 
+class BIntrinsic<string name_, list<string> _tys, list<int> types_ = [0]>  {
+  string s = name_;
+  list<string> tys = _tys;
+  list<int> types = types_;
+}
+
+def BSqrt : BIntrinsic<"sqrt", ["fpType"]>;
+
 class IntMatchers<string _inty, string _outty, list<string> _before, list<string> _after> {
   string inty = _inty;
   string outty = _outty;
@@ -227,12 +235,13 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   (FAdd<""> (BlasCall<"dot"> $n, (Shadow $x), $y), (BlasCall<"dot"> $n, $x, (Shadow $y)))
                   >;
 
-//def nrm2 : CallBlasPattern<(Op $n, $x, $incx),
-//                  [],[len, vinc<["n"]>],
-//                  [
-//                  (AssertingInactiveArg) # (BlasCall<"axpy"> $n, (BFDiv DiffeRet, (BlasCall<"nrm2"> $n, $x)), $x, (Shadow $x))
-//                  ]
-//                  >;
+def nrm2 : CallBlasPattern<(Op $n, $x, $incx),
+                  [],[len, vinc<["n"]>],
+                  [
+                  (BlasCall<"axpy"> $n, (BFDiv DiffeRet, (BlasCall<"nrm2"> $n, $x)), $x, (Shadow $x))
+                  ],
+		              (BFDiv (BSqrt (BlasCall<"dot"> $n, $x, (Shadow $x))), (BlasCall<"nrm2"> $n, $x))
+                  >;
 
 
 def copy : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),

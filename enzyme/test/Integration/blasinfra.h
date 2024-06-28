@@ -232,7 +232,8 @@ enum class CallType {
   TRMV,
   TRMM,
   SYRK,
-  SYMM
+  SYMM,
+  NRM2
 };
 
 enum class ABIType {
@@ -363,6 +364,9 @@ void printty(CallType v) {
     return;
   case CallType::SYMM:
     printf("SYMM");
+    return;
+  case CallType::NRM2:
+    printf("NRM2");
     return;
   default:
     printf("UNKNOWN CALL (%d)", (int)v);
@@ -609,6 +613,23 @@ void printcall(BlasCall rcall) {
     printty(rcall.pin_arg2);
     printf(", incy=");
     printty(rcall.iarg5);
+    if (rcall.abi == ABIType::CUBLASv2) {
+      printf(", result=");
+      printty(rcall.pout_arg1);
+      printf(")");
+    }
+    return;
+  case CallType::NRM2:
+    printf("NRM2(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", N=");
+    printty(rcall.iarg1);
+    printf(", X=");
+    printty(rcall.pin_arg1);
+    printf(", incx=");
+    printty(rcall.iarg4);
     if (rcall.abi == ABIType::CUBLASv2) {
       printf(", result=");
       printty(rcall.pout_arg1);
@@ -977,6 +998,32 @@ __attribute__((noinline)) double cblas_ddot(int N, double *X, int incx,
                    UNUSED_TRANS};
   calls.push_back(call);
   return 3.15 + N;
+}
+
+__attribute__((noinline)) double cblas_dnrm2(int N, double *X, int incx) {
+  BlasCall call = {ABIType::CBLAS,
+                   UNUSED_HANDLE,
+                   inDerivative,
+                   CallType::NRM2,
+                   UNUSED_POINTER,
+                   X,
+                   UNUSED_POINTER,
+                   UNUSED_DOUBLE,
+                   UNUSED_DOUBLE,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   N,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   incx,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS};
+  calls.push_back(call);
+  return 2.15 + N;
 }
 
 // Y += alpha * X
@@ -2012,6 +2059,20 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
 
     checkVector(X, "X", /*len=*/N, /*inc=*/incX, test, rcall, trace);
     checkVector(Y, "Y", /*len=*/N, /*inc=*/incY, test, rcall, trace);
+
+    if (rcall.abi == ABIType::CUBLASv2) {
+      auto curesult = pointer_to_index(rcall.pout_arg1, inputs);
+      checkVector(curesult, "result", /*len=*/1, /*inc=*/1, test, rcall, trace);
+    }
+    return;
+  }
+  case CallType::NRM2: {
+    auto X = pointer_to_index(rcall.pin_arg1, inputs);
+
+    auto N = rcall.iarg1;
+    auto incX = rcall.iarg4;
+
+    checkVector(X, "X", /*len=*/N, /*inc=*/incX, test, rcall, trace);
 
     if (rcall.abi == ABIType::CUBLASv2) {
       auto curesult = pointer_to_index(rcall.pout_arg1, inputs);

@@ -37,6 +37,12 @@ double my_ddot(int N, double* __restrict__ X, int incx, double* __restrict__ Y, 
     return res;
 }
 
+double my_dnrm2(int N, double *__restrict__ X, int incx) {
+  double res = cblas_dnrm2(N, X, incx);
+  inDerivative = true;
+  return res;
+}
+
 void my_dgemm(char layout, char transA, char transB, int M, int N, int K, double alpha, double* __restrict__ A, int lda, double* __restrict__ B, int ldb, double beta, double* __restrict__ C, int ldc) {
     cblas_dgemm(layout, transA, transB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
     inDerivative = true;
@@ -114,6 +120,43 @@ static void dotTests() {
         // Check memory of primal of our derivative (if equal above, it
         // should be the same).
         checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+}
+
+static void nrm2Tests() {
+
+  std::string Test = "DNRM2 active both ";
+  BlasInfo inputs[6] = {
+      /*A*/ BlasInfo(A, N, incA),
+      /*B*/ BlasInfo(B, N, incB),
+      /*C*/ BlasInfo(C, M, incC), BlasInfo(), BlasInfo(), BlasInfo(),
+  };
+  init();
+  my_dnrm2(N, A, incA);
+
+  // Check memory of primal on own.
+  checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+  init();
+  __enzyme_autodiff((void *)my_dnrm2, enzyme_const, N, enzyme_dup, A, dA,
+                    enzyme_const, incA);
+  foundCalls = calls;
+  init();
+
+  my_dnrm2(N, A, incA);
+
+  inDerivative = true;
+
+  double tmp = cblas_dnrm2(N, A, incA);
+  cblas_daxpy(N, 1.0 / tmp, A, incA, dA, incA);
+
+  checkTest(Test);
+
+  // Check memory of primal of expected derivative
+  checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+  // Check memory of primal of our derivative (if equal above, it
+  // should be the same).
+  checkMemoryTrace(inputs, "Found " + Test, foundCalls);
 }
 
 static void gemvTests() {
@@ -971,6 +1014,8 @@ static void syrkTests() {
 
 int main() { 
   dotTests();
+
+  nrm2Tests();
 
   gemvTests();
 
