@@ -265,7 +265,7 @@ def copy : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 //                   >;
 
 def asum : CallBlasPattern<(Op $n, $x, $incx),
-                  [],[len, vinc],
+                  [],[len, vinc<["n"]>],
                   [(AssertingInactiveArg)]
                   >;
 
