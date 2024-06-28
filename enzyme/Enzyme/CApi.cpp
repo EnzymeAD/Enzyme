@@ -1375,6 +1375,7 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
             V = IV;
           }
           VMap[&I] = V;
+          continue;
         }
       }
     }
@@ -1436,6 +1437,7 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
               vals.push_back(
                   GradientUtils::extractMeta(B, CI->getArgOperand(j), i));
             }
+            continue;
           }
         }
       }
