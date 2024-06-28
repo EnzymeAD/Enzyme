@@ -1303,6 +1303,184 @@ static size_t num_rooting(llvm::Type *T, llvm::Function *F) {
 
 extern "C" {
 
+void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
+  auto F = cast<Function>(unwrap(F_C));
+  if (F->empty())
+    return;
+  auto RT = F->getReturnType();
+  auto FT = F->getFunctionType();
+  auto Attrs = F->getAttributes();
+
+  AttributeList NewAttrs;
+  SmallVector<Type *, 1> types;
+  bool legal = true;
+  for (auto pair : llvm::enumerate(FT->params())) {
+    auto T = pair.value();
+    if (auto AT = dyn_cast<ArrayType>(T)) {
+      if (auto PT = dyn_cast<PointerType>(AT->getElementType())) {
+        auto AS = PT->getAddressSpace();
+        if (AS == 11 || AS == 12 || AS == 13) {
+          legal = false;
+          for (unsigned i = 0; i < AT->getNumElements(); i++) {
+            types.push_back(PT);
+          }
+          continue;
+        }
+      }
+    }
+    auto i = pair.index();
+    for (auto attr : Attrs.getAttributes(AttributeList::FirstArgIndex + i))
+      NewAttrs = NewAttrs.addAttribute(
+          F->getContext(), AttributeList::FirstArgIndex + types.size(), attr);
+    types.push_back(T);
+  }
+  if (legal)
+    return;
+
+  for (auto attr : Attrs.getAttributes(AttributeList::FunctionIndex))
+    NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                     AttributeList::FunctionIndex, attr);
+
+  for (auto attr : Attrs.getAttributes(AttributeList::ReturnIndex))
+    NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                     AttributeList::ReturnIndex, attr);
+
+  FunctionType *FTy =
+      FunctionType::get(FT->getReturnType(), types, FT->isVarArg());
+
+  // Create the new function
+  Function *NewF = Function::Create(FTy, F->getLinkage(), F->getAddressSpace(),
+                                    F->getName(), F->getParent());
+
+  ValueToValueMapTy VMap;
+  // Loop over the arguments, copying the names of the mapped arguments over...
+  Function::arg_iterator DestI = NewF->arg_begin();
+
+  // To handle the deleted args, it needs to be replaced by a non-arg operand.
+  // This map contains the temporary phi nodes corresponding
+  SmallVector<Instruction *, 1> toInsert;
+  for (Argument &I : F->args()) {
+    auto T = I.getType();
+    if (auto AT = dyn_cast<ArrayType>(T)) {
+      if (auto PT = dyn_cast<PointerType>(AT->getElementType())) {
+        auto AS = PT->getAddressSpace();
+        if (AS == 11 || AS == 12 || AS == 13) {
+          Value *V = UndefValue::get(T);
+          for (unsigned i = 0; i < AT->getNumElements(); i++) {
+            DestI->setName(I.getName() + "." +
+                           std::to_string(i)); // Copy the name over...
+            unsigned idx[1] = {i};
+            auto IV = InsertValueInst::Create(V, (llvm::Value *)&*DestI++, idx);
+            toInsert.push_back(IV);
+            V = IV;
+          }
+          VMap[&I] = V;
+        }
+      }
+    }
+    DestI->setName(I.getName()); // Copy the name over...
+    VMap[&I] = &*DestI++;        // Add mapping to VMap
+  }
+
+  SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
+#if LLVM_VERSION_MAJOR >= 13
+  CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
+                    Returns, "", nullptr);
+#else
+  CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
+                    nullptr);
+#endif
+
+  {
+    IRBuilder<> EB(&*NewF->getEntryBlock().begin());
+    for (auto I : toInsert)
+      EB.Insert(I);
+  }
+
+  SmallVector<CallInst *, 1> callers;
+  for (auto U : F->users()) {
+    auto CI = dyn_cast<CallInst>(U);
+    assert(CI);
+    assert(CI->getCalledFunction() == F);
+    callers.push_back(CI);
+  }
+
+  for (auto CI : callers) {
+    auto Attrs = CI->getAttributes();
+    AttributeList NewAttrs;
+    IRBuilder<> B(CI);
+    size_t nexti = 0;
+
+    for (auto attr : Attrs.getAttributes(AttributeList::FunctionIndex))
+      NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                       AttributeList::FunctionIndex, attr);
+
+    for (auto attr : Attrs.getAttributes(AttributeList::ReturnIndex))
+      NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                       AttributeList::ReturnIndex, attr);
+
+    SmallVector<Value *, 1> vals;
+#if LLVM_VERSION_MAJOR >= 14
+    for (size_t j = 0, end = CI->arg_size(); j < end; j++)
+#else
+    for (size_t j = 0, end = CI->getNumArgOperands(); j < end; j++)
+#endif
+    {
+
+      auto T = CI->getArgOperand(j)->getType();
+      if (auto AT = dyn_cast<ArrayType>(T)) {
+        if (auto PT = dyn_cast<PointerType>(AT->getElementType())) {
+          auto AS = PT->getAddressSpace();
+          if (AS == 11 || AS == 12 || AS == 13) {
+            for (unsigned i = 0; i < AT->getNumElements(); i++) {
+              vals.push_back(
+                  GradientUtils::extractMeta(B, CI->getArgOperand(j), i));
+            }
+          }
+        }
+      }
+
+      for (auto attr : Attrs.getAttributes(AttributeList::FirstArgIndex + j))
+        NewAttrs = NewAttrs.addAttribute(
+            F->getContext(), AttributeList::FirstArgIndex + vals.size(), attr);
+      vals.push_back(CI->getArgOperand(j));
+      nexti++;
+    }
+
+    SmallVector<OperandBundleDef, 1> Bundles;
+    for (unsigned I = 0, E = CI->getNumOperandBundles(); I != E; ++I)
+      Bundles.emplace_back(CI->getOperandBundleAt(I));
+    auto NC = B.CreateCall(NewF, vals, Bundles);
+    NC->setAttributes(NewAttrs);
+
+    SmallVector<std::pair<unsigned, MDNode *>, 4> TheMDs;
+    CI->getAllMetadataOtherThanDebugLoc(TheMDs);
+    SmallVector<unsigned, 1> toCopy;
+    for (auto pair : TheMDs)
+      toCopy.push_back(pair.first);
+    if (!toCopy.empty())
+      NC->copyMetadata(*CI, toCopy);
+    NC->setDebugLoc(CI->getDebugLoc());
+
+    if (!RT->isVoidTy()) {
+      NC->takeName(CI);
+      CI->replaceAllUsesWith(NC);
+    }
+
+    NC->setCallingConv(CI->getCallingConv());
+    CI->eraseFromParent();
+  }
+  NewF->setAttributes(NewAttrs);
+  SmallVector<std::pair<unsigned, MDNode *>, 1> MD;
+  F->getAllMetadata(MD);
+  for (auto pair : MD)
+    if (pair.first != LLVMContext::MD_dbg)
+      NewF->addMetadata(pair.first, *pair.second);
+  NewF->takeName(F);
+  NewF->setCallingConv(F->getCallingConv());
+  F->eraseFromParent();
+}
+
 void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   auto F = cast<Function>(unwrap(F_C));
   if (F->empty())
