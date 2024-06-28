@@ -18,7 +18,7 @@ entry:
   ret { [3 x [2 x double]] } %0
 }
 
-; CHECK: define internal "enzyme_type"="{[-1]:Float@double}" { [3 x [2 x double]] } @diffe3julia_getindex_3292_inner([2 x double] "enzyme_type"="{[-1]:Float@double}" %a0, i64 signext "enzyme_type"="{[-1]:Integer}" %a1, [3 x double] %differeturn, i8* %tapeArg)
+; CHECK: define internal { [3 x [2 x double]] } @diffe3julia_getindex_3292_inner([2 x double] "enzyme_type"="{[-1]:Float@double}" %a0, i64 signext "enzyme_type"="{[-1]:Integer}" %a1, [3 x double] %differeturn, i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %"a0'de" = alloca [3 x [2 x double]], align 8
