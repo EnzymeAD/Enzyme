@@ -21,6 +21,13 @@ def DifferentiatePass : Pass<"enzyme"> {
   let constructor = "mlir::enzyme::createDifferentiatePass()";
 }
 
+def BatchPass : Pass<"enzyme-batch"> {
+  let summary = "Batch Passes";
+  let dependentDialects = [
+  ];
+  let constructor = "mlir::enzyme::createBatchPass()";
+}
+
 def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
   let summary = "Add wrapper function to be differentiated";
   let dependentDialects = [
