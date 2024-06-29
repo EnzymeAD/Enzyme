@@ -1741,7 +1741,7 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
     os << ") subdenomar.push_back(item);\n";
     os << "           assert(subdenomar.size() == 1);\n";
     os << "           subdenom = subdenomar[0];\n";
-    os << "           assert(subnom);\n";
+    os << "           assert(subnum);\n";
     os << "           assert(subdenom);\n";
     os << resultVarName << " = Builder2.CreateFDiv(subnum, subdenom);\n";
     os << "         } else " << resultVarName
