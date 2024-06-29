@@ -1410,7 +1410,6 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
     auto Attrs = CI->getAttributes();
     AttributeList NewAttrs;
     IRBuilder<> B(CI);
-    size_t nexti = 0;
 
     for (auto attr : Attrs.getAttributes(AttributeList::FunctionIndex))
       NewAttrs = NewAttrs.addAttribute(F->getContext(),
@@ -1446,7 +1445,6 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
         NewAttrs = NewAttrs.addAttribute(
             F->getContext(), AttributeList::FirstArgIndex + vals.size(), attr);
       vals.push_back(CI->getArgOperand(j));
-      nexti++;
     }
 
     SmallVector<OperandBundleDef, 1> Bundles;
