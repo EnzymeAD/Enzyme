@@ -1739,7 +1739,10 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
 
     rev_call_arg(forward, ruleDag, pattern, 1, os, vars);
     os << ") subdenomar.push_back(item);\n";
+    os << "           assert(subdenomar.size() == 1);\n";
     os << "           subdenom = subdenomar[0];\n";
+    os << "           assert(subnom);\n";
+    os << "           assert(subdenom);\n";
     os << resultVarName << " = Builder2.CreateFDiv(subnum, subdenom);\n";
     os << "         } else " << resultVarName
        << " = ConstantFP::get(fpType, 0.0);\n";
