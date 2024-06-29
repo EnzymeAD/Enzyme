@@ -1105,7 +1105,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
          << "    }\n\n";
       os << "    auto cubcall = cast<CallInst>(Builder2.CreateCall(derivcall_"
          << dfnc_name << ", marg, Defs));\n";
-      os << "         ArrayRef<Value*>(cublasv2 ? "
+      os << "         SmallVector<Value*, 1>(1, cublasv2 ? "
          << " (Value*)Builder2.CreateLoad(fpType, marg[marg.size()-1]) : "
             "(Value*)cubcall);\n";
       os << " })\n";
@@ -1739,7 +1739,10 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
 
     rev_call_arg(forward, ruleDag, pattern, 1, os, vars);
     os << ") subdenomar.push_back(item);\n";
+    os << "           assert(subdenomar.size() == 1);\n";
     os << "           subdenom = subdenomar[0];\n";
+    os << "           assert(subnum);\n";
+    os << "           assert(subdenom);\n";
     os << resultVarName << " = Builder2.CreateFDiv(subnum, subdenom);\n";
     os << "         } else " << resultVarName
        << " = ConstantFP::get(fpType, 0.0);\n";
