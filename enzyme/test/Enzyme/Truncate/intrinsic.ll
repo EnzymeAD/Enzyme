@@ -42,28 +42,28 @@ entry:
 }
 
 ; CHECK: define internal double @__enzyme_done_truncate_mem_func_64_52to32_23_f(double %x, double %y) {
-; CHECK-DAG:   %1 = call double @__enzyme_fprt_64_52_func_pow(double %x, double %y, i64 8, i64 23, i64 1)
-; CHECK-DAG:   %2 = call double @__enzyme_fprt_64_52_intr_llvm_pow_f64(double %x, double %y, i64 8, i64 23, i64 1)
-; CHECK-DAG:   %3 = call double @__enzyme_fprt_64_52_intr_llvm_powi_f64_i16(double %x, i16 2, i64 8, i64 23, i64 1)
-; CHECK-DAG:   %res = call double @__enzyme_fprt_64_52_binop_fadd(double %2, double %3, i64 8, i64 23, i64 1)
+; CHECK-DAG:   %1 = call double @__enzyme_fprt_64_52_func_pow(double %x, double %y, i64 8, i64 23, i64 1, {{.*}}i8{{.*}})
+; CHECK-DAG:   %2 = call double @__enzyme_fprt_64_52_intr_llvm_pow_f64(double %x, double %y, i64 8, i64 23, i64 1, {{.*}}i8{{.*}})
+; CHECK-DAG:   %3 = call double @__enzyme_fprt_64_52_intr_llvm_powi_f64_i16(double %x, i16 2, i64 8, i64 23, i64 1, {{.*}}i8{{.*}})
+; CHECK-DAG:   %res = call double @__enzyme_fprt_64_52_binop_fadd(double %2, double %3, i64 8, i64 23, i64 1, {{.*}}i8{{.*}})
 ; CHECK-DAG:   call void @llvm.nvvm.barrier0()
 ; CHECK-DAG:   ret double %res
 ; CHECK-DAG: }
 
 ; CHECK: define internal double @__enzyme_done_truncate_op_func_64_52to32_23_f(double %x, double %y) {
-; CHECK-DAG:   %1 = call double @__enzyme_fprt_64_52_func_pow(double %x, double %y, i64 8, i64 23, i64 2)
-; CHECK-DAG:   %2 = call double @__enzyme_fprt_64_52_intr_llvm_pow_f64(double %x, double %y, i64 8, i64 23, i64 2)
-; CHECK-DAG:   %3 = call double @__enzyme_fprt_64_52_intr_llvm_powi_f64_i16(double %x, i16 2, i64 8, i64 23, i64 2)
-; CHECK-DAG:   %res = call double @__enzyme_fprt_64_52_binop_fadd(double %2, double %3, i64 8, i64 23, i64 2)
+; CHECK-DAG:   %1 = call double @__enzyme_fprt_64_52_func_pow(double %x, double %y, i64 8, i64 23, i64 2, {{.*}}i8{{.*}})
+; CHECK-DAG:   %2 = call double @__enzyme_fprt_64_52_intr_llvm_pow_f64(double %x, double %y, i64 8, i64 23, i64 2, {{.*}}i8{{.*}})
+; CHECK-DAG:   %3 = call double @__enzyme_fprt_64_52_intr_llvm_powi_f64_i16(double %x, i16 2, i64 8, i64 23, i64 2, {{.*}}i8{{.*}})
+; CHECK-DAG:   %res = call double @__enzyme_fprt_64_52_binop_fadd(double %2, double %3, i64 8, i64 23, i64 2, {{.*}}i8{{.*}})
 ; CHECK-DAG:   call void @llvm.nvvm.barrier0()
 ; CHECK-DAG:   ret double %res
 ; CHECK-DAG: }
 
 ; CHECK: define internal double @__enzyme_done_truncate_op_func_64_52to11_7_f(double %x, double %y) {
-; CHECK-DAG:   %1 = call double @__enzyme_fprt_64_52_func_pow(double %x, double %y, i64 3, i64 7, i64 2)
-; CHECK-DAG:   %2 = call double @__enzyme_fprt_64_52_intr_llvm_pow_f64(double %x, double %y, i64 3, i64 7, i64 2)
-; CHECK-DAG:   %3 = call double @__enzyme_fprt_64_52_intr_llvm_powi_f64_i16(double %x, i16 2, i64 3, i64 7, i64 2)
-; CHECK-DAG:   %res = call double @__enzyme_fprt_64_52_binop_fadd(double %2, double %3, i64 3, i64 7, i64 2)
+; CHECK-DAG:   %1 = call double @__enzyme_fprt_64_52_func_pow(double %x, double %y, i64 3, i64 7, i64 2, {{.*}}i8{{.*}})
+; CHECK-DAG:   %2 = call double @__enzyme_fprt_64_52_intr_llvm_pow_f64(double %x, double %y, i64 3, i64 7, i64 2, {{.*}}i8{{.*}})
+; CHECK-DAG:   %3 = call double @__enzyme_fprt_64_52_intr_llvm_powi_f64_i16(double %x, i16 2, i64 3, i64 7, i64 2, {{.*}}i8{{.*}})
+; CHECK-DAG:   %res = call double @__enzyme_fprt_64_52_binop_fadd(double %2, double %3, i64 3, i64 7, i64 2, {{.*}}i8{{.*}})
 ; CHECK-DAG:   call void @llvm.nvvm.barrier0()
 ; CHECK-DAG:   ret double %res
 ; CHECK-DAG: }
