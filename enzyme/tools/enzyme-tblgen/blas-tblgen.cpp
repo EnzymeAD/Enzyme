@@ -1105,7 +1105,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
          << "    }\n\n";
       os << "    auto cubcall = cast<CallInst>(Builder2.CreateCall(derivcall_"
          << dfnc_name << ", marg, Defs));\n";
-      os << "         ArrayRef<Value*>(cublasv2 ? "
+      os << "         SmallVector<Value*, 1>(1, cublasv2 ? "
          << " (Value*)Builder2.CreateLoad(fpType, marg[marg.size()-1]) : "
             "(Value*)cubcall);\n";
       os << " })\n";
