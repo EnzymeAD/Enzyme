@@ -86,22 +86,10 @@ class IntMatchers<string _inty, string _outty, list<string> _before, list<string
   list<string> after = _after;
 }
 
-def trans_to_side : IntMatchers<
-    "charType", "charType",
-    ["'n'", "'N'", "'T'", "'t'"],
-    ["'l'", "'L'", "'U'", "'u'"]
-    >;
-
 def side_to_trans : IntMatchers<
     "charType", "charType",
     ["'l'", "'L'", "'R'", "'r'"],
     ["'n'", "'N'", "'T'", "'t'"]
-    >;
-
-def is_upper : IntMatchers<
-    "charType", "Builder2.getInt1Ty()",
-    ["'u'", "'U'", "'L'", "'l'"],
-    ["true", "true", "false", "false"]
     >;
 
 def is_diag_int : IntMatchers<
@@ -110,11 +98,8 @@ def is_diag_int : IntMatchers<
     ["1", "1", "0", "0"]
     >;
 
-def is_left : IntMatchers<
-    "charType", "Builder2.getInt1Ty()",
-    ["'l'", "'L'", "'R'", "'r'"],
-    ["true", "true", "false", "false"]
-    >;
+def is_left : MagicInst;
+def is_lower : MagicInst;
 
 def First : MagicInst;
 def Lookup : MagicInst;
@@ -312,15 +297,15 @@ def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $
 def trmv : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $A, $lda, $x, $incx),
                   ["x"], [cblas_layout, uplo, trans,  diag, len,  mld<["uplo", "n", "n"]>, vinc<["n"]>],
                   [
-                  /* A      */  (For<"i", 1> (ISelect (is_upper $uplo), $n, (Sub $n, (is_diag_int $diag))),
+                  /* A      */  (For<"i", 1> (ISelect (is_lower $uplo), (Sub $n, (is_diag_int $diag)), $n),
                     (BlasCall<"axpy"> 
-                    (ISelect (is_upper $uplo), 
-                        (Sub $i, (is_diag_int $diag)),
+                    (ISelect (is_lower $uplo), 
                         (Add (Sub (Sub $n, (is_diag_int $diag)), $i), ConstantInt<1>)
+                        (Sub $i, (is_diag_int $diag))
                     ),
                     (LoadLookup $layout, (Rows $trans, input<"x">, (Shadow $x)), (Sub $i, ConstantInt<1>)),
-                    (Lookup $layout, (Rows $trans, (Shadow $x), input<"x">), (ISelect (is_upper $uplo), ConstantInt<0>, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>))),
-                    (First (Lookup $layout, (Shadow $A), (ISelect (is_upper $uplo), ConstantInt<0>, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>)), (Sub $i, ConstantInt<1>))),
+                    (Lookup $layout, (Rows $trans, (Shadow $x), input<"x">), (ISelect (is_lower $uplo), (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>), ConstantInt<0>)),
+                    (First (Lookup $layout, (Shadow $A), (ISelect (is_lower $uplo), (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>), ConstantInt<0>), (Sub $i, ConstantInt<1>))),
                     ConstantInt<1>
                   )
                   ),
@@ -389,33 +374,33 @@ def trmm : CallBlasPattern<(Op $layout, $side, $uplo, $transa, $diag, $m, $n, $a
                   [cblas_layout, side, uplo, trans, diag, len, len, fp, mld<["side", "m", "n"]>, mld<["m","n"]>],
                   [
                     /*alpha*/ (AssertingInactiveArg),
-                    /* A      */  (For<"i", 1> (Sub (ISelect (is_left $side), $m, $n), (ISelect (is_upper $uplo), ConstantInt<0>, (is_diag_int $diag))),
+                    /* A      */  (For<"i", 1> (Sub (ISelect (is_left $side), $m, $n), (ISelect (is_lower $uplo), (is_diag_int $diag), ConstantInt<0>)),
                     (BlasCall<"gemv">
                     $layout,
                     (side_to_trans $side),
                     (ISelect (is_left $side),
                         (Concat 
-                            (ISelect (is_upper $uplo),
-                                     (Sub $i, (is_diag_int $diag)),
-                                     (Sub $m, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>))),
+                            (ISelect (is_lower $uplo),
+                                     (Sub $m, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>)),
+                                     (Sub $i, (is_diag_int $diag))),
                           $n),
                         (Concat $m,
-                            (ISelect (is_upper $uplo),
-                                     (Sub $i, (is_diag_int $diag)),
-                                     (Sub $n, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>)))
+                            (ISelect (is_lower $uplo),
+                                     (Sub $n, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>)),
+                                     (Sub $i, (is_diag_int $diag)))
                         )
                     ),
                     $alpha,
                     (Lookup $layout, (ISelect (BXor (is_left $side), (Not (Rows $transa))), (Shadow $B), (Concat input<"B">, $m)),
-                        (ISelect (BAnd (is_left $side), (Not (is_upper $uplo))), (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>), ConstantInt<0>),
-                        (ISelect (BAnd (Not (is_left $side)), (Not (is_upper $uplo))), (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>), ConstantInt<0>)),
+                        (ISelect (BAnd (is_left $side), (is_lower $uplo)), (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>), ConstantInt<0>),
+                        (ISelect (BAnd (Not (is_left $side)), (is_lower $uplo)), (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>), ConstantInt<0>)),
                     (First (Lookup $layout, (ISelect (BXor (is_left $side), (Not (Rows $transa))), (Concat input<"B">, $m), (Shadow $B)),
                         (ISelect (is_left $side), (Sub $i, ConstantInt<1>), ConstantInt<0>),
                         (ISelect (is_left $side), ConstantInt<0>, (Sub $i, ConstantInt<1>)))),
                     (ISelect (is_left $side), (ISelect (BXor (is_left $side), (Not (Rows $transa))), $m, $ldb), ConstantInt<1>),
                     Constant<"1">,
                     (First (Lookup $layout, (Shadow $A),
-                        (ISelect (is_upper $uplo), ConstantInt<0>, (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>)),
+                        (ISelect (is_lower $uplo), (Sub (Add $i, (is_diag_int $diag)), ConstantInt<1>), ConstantInt<0>),
                         (Sub $i, ConstantInt<1>))),
                     ConstantInt<1>
                     )

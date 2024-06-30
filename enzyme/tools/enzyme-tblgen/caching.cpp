@@ -192,8 +192,9 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
 << "      Value *arg_malloc_size;\n";
 
     if (dimensions.size() == 3) {
-      os 
-<< "      malloc_size = select_vec_dims(BuilderZ, arg_" << nameVec[dimensions[0]] << ", arg_" << nameVec[dimensions[1]] << ", arg_" << nameVec[dimensions[2]] << ", byRef, cublas);\n";
+os
+<< "      auto norm = is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n";
+<< "      malloc_size = CreateSelect(BuilderZ, norm, arg_" << nameVec[dimensions[1]] << ", arg_" << nameVec[dimension[2]] << ");\n";
     } else {
       os 
 << "      malloc_size = arg_" << nameVec[dimensions[0]] << ";\n";
