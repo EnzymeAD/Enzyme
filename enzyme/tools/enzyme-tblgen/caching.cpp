@@ -201,7 +201,10 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
     os
 << "      arg_malloc_size = malloc_size;\n"
 << "      malloc_size = load_if_ref(BuilderZ, intType, malloc_size, byRef);\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << vecName << "\");\n"
+<< "      Instruction *SubZero = nullptr;\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << vecName << "\", /*caller*/nullptr";
+    if (pattern.getName() == "potrf") os << ", &SubZero";
+    os << ");\n"
 << "      ValueType valueTypes[] = {" << valueTypes << "};\n"
 << "      valueTypes[" << argIdx << "] = ValueType::Primal;\n"
 << "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
@@ -249,11 +252,26 @@ os << "      if (cublas) {\n"
 << "      auto charTy = IntegerType::get(intType->getContext(), 8);\n"
 << "      Value *M, *N;\n";
 
+    std::string uplostr = "        Value *uplo = llvm::ConstantInt::get(charTy, 0);\n" // garbage data, just should not match U or L
+                          "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, cublas, nullptr, allocationBuilder, \"copy.garbage\");\n";
     if (dimensions.size() == 3) {
+        auto startty = pattern.getTypeOfArg(nameVec[dimensions[0]]); 
+        if (startty == ArgType::trans) {
       os 
 << "      Value *normal = is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n"
 << "      M = BuilderZ.CreateSelect(normal, " << dim1 << ", " << dim2 << ");\n"
 << "      N = BuilderZ.CreateSelect(normal, " << dim2 << ", " << dim1 << ");\n";
+        } else if (startty == ArgType::uplo) {
+os << "      M = " << dim1 << ";\n"
+<< "      N = " << dim2 << ";\n";
+uplostr = "arg_" + nameVec[dimensions[0]];
+        } else if (startty == ArgType::side) {
+<< "      Value *normal = is_left(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n"
+<< "      M = BuilderZ.CreateSelect(normal, " << dim1 << ", " << dim2 << ");\n"
+<< "      N = BuilderZ.CreateSelect(normal, " << dim2 << ", " << dim1 << ");\n";
+        } else {
+            assert(0 &&" unknown startty");
+        }
     } else {
       os 
 << "      M = " << dim1 << ";\n"
@@ -272,8 +290,7 @@ os << "      if (cublas) {\n"
 os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
 os << "      if (EnzymeLapackCopy) {\n"
-<< "        Value *uplo = llvm::ConstantInt::get(charTy, 0);\n" // garbage data, just should not match U or L
-<< "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, cublas, nullptr, allocationBuilder, \"copy.garbage\");\n"
+<< uplostr
 << "        SmallVector<Value *, 7> args = {uplo, M, N, arg_" << matName << ", arg_" << ldName << ", malins, M};\n"
 << "        if (!byRef) {\n"
 << "           args.insert(args.begin(), arg_layout); valueTypes.insert(valueTypes.begin(), ValueType::Primal); }\n"

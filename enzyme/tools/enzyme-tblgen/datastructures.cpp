@@ -393,7 +393,7 @@ void fillRelatedLenghts(
         assert(argTypes.lookup(lengths[1]) == ArgType::len);
       } else {
         assert(argTypes.lookup(lengths[0]) == ArgType::trans ||
-               argTypes.lookup(lengths[0]) == ArgType::diag ||
+               argTypes.lookup(lengths[0]) == ArgType::uplo ||
                argTypes.lookup(lengths[0]) == ArgType::side);
         assert(argTypes.lookup(lengths[1]) == ArgType::len);
         assert(argTypes.lookup(lengths[2]) == ArgType::len);
@@ -465,9 +465,10 @@ SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg) const {
 
   if (related.size() == 3) {
     auto argTy = argTypes.lookup(related[0]);
-    assert(argTy == ArgType::trans || argTy == ArgType::diag ||
+    assert(argTy == ArgType::trans || argTy == ArgType::uplo ||
            argTy == ArgType::side);
-    (void)argTy;
+    if (argTy == ArgType::uplo)
+        related.erase(related.begin());
   }
 
   return related;

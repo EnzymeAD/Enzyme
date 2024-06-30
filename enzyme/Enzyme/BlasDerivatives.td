@@ -141,6 +141,12 @@ class input<string _name> {
   string name = _name;
 }
 
+// only applicable to triangular matricies, like a regular use of $A
+// except that the non-set terms are assured to be set to 0
+class zero_cached<string _name> {
+  string name = _name;
+}
+
 class Constant<string _value> {
   string value = _value;
 }
@@ -304,7 +310,7 @@ def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $
 // x = Ax
 // currently assumes for vector dimensions that transa = 'N' and gets dimensions wrong otherwise
 def trmv : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $A, $lda, $x, $incx),
-                  ["x"], [cblas_layout, uplo, trans,  diag, len,  mld<["diag", "n", "n"]>, vinc<["n"]>],
+                  ["x"], [cblas_layout, uplo, trans,  diag, len,  mld<["uplo", "n", "n"]>, vinc<["n"]>],
                   [
                   /* A      */  (For<"i", 1> (ISelect (is_upper $uplo), $n, (Sub $n, (is_diag_int $diag))),
                     (BlasCall<"axpy"> 
@@ -597,12 +603,52 @@ def uplo_to_side : IntMatchers<
     ["'l'", "'L'", "'U'", "'u'"],
     ["'L'", "'L'", "'R'", "'R'"]
     >;
+def uplo_to_rside : IntMatchers<
+    "charType", "charType",
+    ["'l'", "'L'", "'U'", "'u'"],
+    ["'R'", "'R'", "'L'", "'L'"]
+    >;
+
 
 def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                   ["A"],
-                  [cblas_layout, uplo, len, mld<["n", "n"]>, len],
+                  [cblas_layout, uplo, len, mld<["uplo", "n", "n"]>, len],
                   [
-                    /* A     */ (BlasCall<"trsm"> (AssertingInactiveArg), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A)),
+                    /* A     */ 
+                  (Seq<["tri", "triangular", "n"], [], 0>
+                      (BlasCall<"lascl"> $layout, (flip_uplo $uplo), ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $n, $n, use<"tri">, Alloca<1>),
+                      (BlasCall<"lacpy"> $layout, (flip_uplo $uplo), $n, $n, (Shadow $A), use<"tri">, $n),
+                      
+                      (BlasCall<"trmm"> $layout, Char<"T">, $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, use<"tri">, $n),
+
+                      (Seq<["tmp", "vector", "n"], [], 1>
+                        
+                        // Zero out flipped side again
+                        (BlasCall<"copy"> $n, use<"tri">, (Add $n, ConstantInt<1>), use<"tmp">, ConstantInt<1>),
+
+                        (BlasCall<"lascl"> $layout, (flip_uplo $uplo), ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $n, $n, use<"tri">, $n, Alloca<1>),
+                        (BlasCall<"copy"> $n, use<"tmp">, ConstantInt<1>, use<"tri">, (Add $n, ConstantInt<1>))
+                      ),
+                      
+                      (BlasCall<"trsm"> $layout, (uplo_to_rside $uplo), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, use<"tri">, $n),
+
+                      (BlasCall<"scal"> $n, Constant<"2">, (First (Shadow $A)), (Add $lda, ConstantInt<1>)),
+                      
+                      (BlasCall<"syr2k"> $layout,
+                                          $uplo,
+                                          (uplo_to_trans $uplo),
+                                          $n, $n, Constant<"1.0">,
+                                          $A,
+                                          $n,
+                                          use<"tri">,
+                                          $n,
+                                          Constant<"1.0">,
+                                          (Shadow $A)
+                                          ),
+                      
+                      (BlasCall<"scal"> $n, Constant<"0.5">, (First (Shadow $A)), (Add $lda, ConstantInt<1>))
+
+                  )
                   ],
                   (Seq<["tri", "triangular", "n"], [], 0>
                       (BlasCall<"lacpy"> $layout, (flip_uplo $uplo), $n, $n, (Shadow $A), use<"tri">, $n),
