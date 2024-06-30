@@ -751,21 +751,34 @@ static void potrfTests() {
           init();
 
           my_potrf(layout, uplo, N, A, lda);
+
+          assert(foundCalls.size() >= 2);
+          assert(foundCalls[1].type == CallType::LACPY);
+          double* tri = (double*)foundCalls[1].pout_arg1;
+		  inputs[3] = BlasInfo(tri, layout, N, N, N);
+          cblas_dlacpy(layout, flip_uplo(uplo), N, N, dA, lda, tri, N);
+
+          cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, dA, lda, 0);
+          cblas_dcopy(N, tri, lda+1, dA, lda+1);
           
           cblas_dtrsm(layout, 'L', uplo, uplo_to_normal(uplo), 'N', N, N, 1.0, A, lda, dA, lda);
           cblas_dtrsm(layout, 'R', uplo, uplo_to_trans(uplo), 'N', N, N, 1.0, A, lda, dA, lda);
           cblas_dscal(N, 0.5, dA, lda+1);
         
-          assert(foundCalls.size() >= 5);
-          assert(foundCalls[4].type == CallType::COPY);
-          double* tmp = (double*)foundCalls[4].pout_arg1;
-		  inputs[3] = BlasInfo(tmp, N, 1);
+          assert(foundCalls.size() >= 9);
+          assert(foundCalls[7].type == CallType::COPY);
+          double* tmp = (double*)foundCalls[7].pout_arg1;
+		  inputs[4] = BlasInfo(tmp, N, 1);
 
           cblas_dcopy(N, dA, lda+1, tmp, 1);
           cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, dA, lda, 0);
           cblas_dcopy(N, tmp, 1, dA, lda+1);
-          cblas_dtrsm(layout, uplo_to_side(uplo), uplo, 'N', 'N', N, N, 1.0, A, lda, dA, lda);
-          
+          cblas_dtrmm(layout, uplo_to_side(uplo), uplo, 'N', 'N', N, N, 1.0, A, lda, dA, lda);
+         
+          cblas_dcopy(N, dA, lda+1, tmp, 1);
+          cblas_dlacpy(layout, flip_uplo(uplo), N, N, tri, N, dA, lda);
+          cblas_dcopy(N, tmp, 1, dA, lda+1);
+
           checkTest(Test);
 
           SkipVecIncCheck = true;

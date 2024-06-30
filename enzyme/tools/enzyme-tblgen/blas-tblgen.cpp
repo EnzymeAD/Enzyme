@@ -1457,13 +1457,7 @@ void emit_tmp_creation(Record *Def, raw_ostream &os, StringRef builder) {
     //  Size has to be (at least)
     //  ( ( n*( n + 1 ) )/2 )
     os << "    Value *size_" << vecName << " = " << builder
-       << ".CreateMul(len, " << builder
-       << ".CreateAdd(len, "
-          "ConstantInt::get(intType, 1)), \"square_mat_size_"
-       << vecName << "\");\n"
-       << "    size_" << vecName << " = " << builder << ".CreateUDiv(size_"
-       << vecName << ", ConstantInt::get(intType, 2), \"size_" << vecName
-       << "\");\n";
+       << ".CreateMul(len, len);\n";
   }
   const auto matName = args[0];
   const auto allocName = "mat_" + matName;
