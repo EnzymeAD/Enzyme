@@ -793,7 +793,7 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
               cast<PointerType>(blasalpha->getType())->getAddressSpace()));
       alpha = B1.CreateLoad(fpTy, VP);
     }
-    Value *is_l = is_lower(B1, blasuplo, byRef);
+    Value *is_l = is_lower(B1, blasuplo, byRef, /*cublas*/ false);
     B1.CreateCondBr(B1.CreateICmpEQ(n, ConstantInt::get(IT, 0)), end, init);
 
     IRBuilder<> B2(init);
@@ -2796,32 +2796,32 @@ llvm::Value *to_blas_fp_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
   return allocV;
 }
 
-Value *is_lower(IRBuilder<> &B, Value *uplo, bool byRef, bool cublas) { 
+Value *is_lower(IRBuilder<> &B, Value *uplo, bool byRef, bool cublas) {
   if (cublas) {
     Value *isNormal = nullptr;
-    isNormal = B.CreateICmpEQ(trans, ConstantInt::get(uplo->getType(), /*cublasSideMode_t::CUBLAS_SIDE_LEFT*/0));
+    isNormal = B.CreateICmpEQ(
+        uplo, ConstantInt::get(uplo->getType(),
+                               /*cublasFillMode_t::CUBLAS_FILL_MODE_LOWER*/ 0));
     return isNormal;
   }
-  if (auto CI = dyn_cast<ConstantInt>(trans)) {
+  if (auto CI = dyn_cast<ConstantInt>(uplo)) {
     if (CI->getValue() == 'L' || CI->getValue() == 'l')
-      return ConstantInt::getTrue(
-          B.getContext());
+      return ConstantInt::getTrue(B.getContext());
     if (CI->getValue() == 'U' || CI->getValue() == 'u')
-      return ConstantInt::getFalse(
-          B.getContext());
+      return ConstantInt::getFalse(B.getContext());
   }
   if (byRef) {
     // can't inspect opaque ptr, so assume 8 (Julia)
-    IntegerType *charTy = IntegerType::get(trans->getContext(), 8);
-    trans = B.CreateLoad(charTy, trans, "loaded.trans");
+    IntegerType *charTy = IntegerType::get(uplo->getContext(), 8);
+    uplo = B.CreateLoad(charTy, uplo, "loaded.trans");
 
-    auto isL = B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'L'));
-    auto isl = B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'l'));
+    auto isL = B.CreateICmpEQ(uplo, ConstantInt::get(charTy, 'L'));
+    auto isl = B.CreateICmpEQ(uplo, ConstantInt::get(charTy, 'l'));
     // fortran blas
     return B.CreateOr(isl, isL);
   } else {
     // we can inspect scalars
-    return B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 122));
+    return B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 122));
   }
 }
 
@@ -2829,7 +2829,9 @@ llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef,
                        bool cublas) {
   if (cublas) {
     Value *isNormal = nullptr;
-    isNormal = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), /*cublasOperation_t::CUBLAS_OP_N*/0));
+    isNormal = B.CreateICmpEQ(
+        trans, ConstantInt::get(trans->getType(),
+                                /*cublasOperation_t::CUBLAS_OP_N*/ 0));
     return isNormal;
   }
   // Explicitly support 'N' always, since we use in the rule infra
@@ -2854,10 +2856,12 @@ llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef,
 }
 
 llvm::Value *is_left(IRBuilder<> &B, llvm::Value *side, bool byRef,
-                       bool cublas) {
+                     bool cublas) {
   if (cublas) {
     Value *isNormal = nullptr;
-    isNormal = B.CreateICmpEQ(side, ConstantInt::get(side->getType(), cublasSideMode_t::CUBLAS_SIDE_LEFT));
+    isNormal = B.CreateICmpEQ(
+        side, ConstantInt::get(side->getType(),
+                               /*cublasSideMode_t::CUBLAS_SIDE_LEFT*/ 0));
     return isNormal;
   }
   // Explicitly support 'L'/'R' always, since we use in the rule infra

@@ -1849,8 +1849,9 @@ static inline llvm::SmallVector<llvm::Value *, 1> concat_values(T &&...t) {
 llvm::Value *is_normal(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef,
                        bool cublas);
 llvm::Value *is_left(llvm::IRBuilder<> &B, llvm::Value *side, bool byRef,
-                       bool cublas);
-llvm::Value *is_lower(llvm::IRBuilder<> &B, llvm::Value *uplo, bool byRef, bool cublas);
+                     bool cublas);
+llvm::Value *is_lower(llvm::IRBuilder<> &B, llvm::Value *uplo, bool byRef,
+                      bool cublas);
 
 // first one assume V is an Integer
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool cublas);

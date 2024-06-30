@@ -192,9 +192,11 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
 << "      Value *arg_malloc_size;\n";
 
     if (dimensions.size() == 3) {
+        auto startty = pattern.getTypeOfArg(nameVec[dimensions[0]]); 
+        assert(startty == ArgType::trans);
 os
-<< "      auto norm = is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n";
-<< "      malloc_size = CreateSelect(BuilderZ, norm, arg_" << nameVec[dimensions[1]] << ", arg_" << nameVec[dimension[2]] << ");\n";
+<< "      auto norm = is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n"
+<< "      malloc_size = CreateSelect(BuilderZ, norm, arg_" << nameVec[dimensions[1]] << ", arg_" << nameVec[dimensions[2]] << ");\n";
     } else {
       os 
 << "      malloc_size = arg_" << nameVec[dimensions[0]] << ";\n";
@@ -267,6 +269,7 @@ os << "      M = " << dim1 << ";\n"
 << "      N = " << dim2 << ";\n";
 uplostr = "arg_" + nameVec[dimensions[0]];
         } else if (startty == ArgType::side) {
+os
 << "      Value *normal = is_left(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n"
 << "      M = BuilderZ.CreateSelect(normal, " << dim1 << ", " << dim2 << ");\n"
 << "      N = BuilderZ.CreateSelect(normal, " << dim2 << ", " << dim1 << ");\n";

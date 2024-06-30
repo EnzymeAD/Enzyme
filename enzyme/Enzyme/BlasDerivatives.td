@@ -300,7 +300,7 @@ def trmv : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $A, $lda, $x, 
                   /* A      */  (For<"i", 1> (ISelect (is_lower $uplo), (Sub $n, (is_diag_int $diag)), $n),
                     (BlasCall<"axpy"> 
                     (ISelect (is_lower $uplo), 
-                        (Add (Sub (Sub $n, (is_diag_int $diag)), $i), ConstantInt<1>)
+                        (Add (Sub (Sub $n, (is_diag_int $diag)), $i), ConstantInt<1>),
                         (Sub $i, (is_diag_int $diag))
                     ),
                     (LoadLookup $layout, (Rows $trans, input<"x">, (Shadow $x)), (Sub $i, ConstantInt<1>)),

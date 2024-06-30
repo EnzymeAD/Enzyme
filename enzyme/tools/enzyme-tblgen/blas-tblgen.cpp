@@ -930,14 +930,18 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
         if (Dag->getNumArgs() != 1)
           PrintFatalError(pattern.getLoc(), "only 1-arg ld operands supported");
         const auto sideName = Dag->getArgNameStr(0);
-        os << "{to_blas_callconv(Builder2, is_left(Builder2, arg_" << sideName << ", side, byRef, cublas), byRef, cublas, julia_decl_type, allocationBuilder, \"isleft\")}";
+        os << "{to_blas_callconv(Builder2, is_left(Builder2, arg_" << sideName
+           << ", byRef, cublas), byRef, cublas, julia_decl_type, "
+              "allocationBuilder, \"isleft\")}";
         return;
       }
       if (Def->getName() == "is_lower") {
         if (Dag->getNumArgs() != 1)
           PrintFatalError(pattern.getLoc(), "only 1-arg ld operands supported");
         const auto uploName = Dag->getArgNameStr(0);
-        os << "{to_blas_callconv(Builder2, is_lower(Builder2, arg_" << uploName << ", side, byRef, cublas), byRef, cublas, julia_decl_type, allocationBuilder, \"isleft\")}";
+        os << "{to_blas_callconv(Builder2, is_lower(Builder2, arg_" << uploName
+           << ", byRef, cublas), byRef, cublas, julia_decl_type, "
+              "allocationBuilder, \"isleft\")}";
         return;
       }
     } else if (Def->getName() == "Shadow" || Def->isSubClassOf("Shadow")) {

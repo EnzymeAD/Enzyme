@@ -468,7 +468,7 @@ SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg) const {
     assert(argTy == ArgType::trans || argTy == ArgType::uplo ||
            argTy == ArgType::side);
     if (argTy == ArgType::uplo)
-        related.erase(related.begin());
+      related.erase(related.begin());
   }
 
   return related;
