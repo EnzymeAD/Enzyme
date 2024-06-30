@@ -453,7 +453,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
   for (auto name : enumerate(nameVec)) {
     assert(argTypeMap.count(name.index()) == 1);
     auto ty = argTypeMap.lookup(name.index());
-    if (ty == ArgType::trans) {
+    if (ty == ArgType::trans || ty == ArgType::side || ty == ArgType::uplo) {
       os << "  Type *cublasEnumType = nullptr;\n";
       os << "  if (cublas) cublasEnumType = type_" << name.value() << ";\n";
       break;
@@ -533,7 +533,7 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
   for (auto name : enumerate(nameVec)) {
     assert(argTypeMap.count(name.index()) == 1);
     auto ty = argTypeMap.lookup(name.index());
-    if (ty == ArgType::trans) {
+    if (ty == ArgType::trans || ty == ArgType::side || ty == ArgType::uplo) {
       hasTrans = true;
       break;
     }
@@ -544,6 +544,8 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
        << "  Value *valueG = nullptr;\n"
        << "  Value *valuer = nullptr;\n"
        << "  Value *valuel = nullptr;\n"
+       << "  Value *valueR = nullptr;\n"
+       << "  Value *valueL = nullptr;\n"
        << "  if (cublas) {\n"
        << "    valueN = ConstantInt::get(cublasEnumType, "
           "cublasOperation_t::CUBLAS_OP_N);\n"
@@ -552,6 +554,10 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
        << "    valuel = ConstantInt::get(cublasEnumType, "
           "cublasSideMode_t::CUBLAS_SIDE_LEFT);\n"
        << "    valuer = ConstantInt::get(cublasEnumType, "
+          "cublasSideMode_t::CUBLAS_SIDE_RIGHT);\n"
+       << "    valueL = ConstantInt::get(cublasEnumType, "
+          "cublasSideMode_t::CUBLAS_SIDE_LEFT);\n"
+       << "    valueR = ConstantInt::get(cublasEnumType, "
           "cublasSideMode_t::CUBLAS_SIDE_RIGHT);\n"
        << "    // TODO lascl not available in cublas, nor op G\n"
        << "    valueG = ConstantInt::get(cublasEnumType, "
@@ -562,6 +568,8 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
        << "    valueG = ConstantInt::get(charType, 'G');\n"
        << "    valuer = ConstantInt::get(charType, 'r');\n"
        << "    valuel = ConstantInt::get(charType, 'l');\n"
+       << "    valueR = ConstantInt::get(charType, 'R');\n"
+       << "    valueL = ConstantInt::get(charType, 'L');\n"
        << "  }\n\n";
   }
 }
@@ -1254,10 +1262,16 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       } else if (val == "l") {
         os << "{to_blas_callconv(Builder2, valuel, byRef, cublas, nullptr, "
               "allocationBuilder, \"constant.char.l\")}";
+      } else if (val == "R") {
+        os << "{to_blas_callconv(Builder2, valueR, byRef, cublas, nullptr, "
+              "allocationBuilder, \"constant.char.R\")}";
+      } else if (val == "L") {
+        os << "{to_blas_callconv(Builder2, valueL, byRef, cublas, nullptr, "
+              "allocationBuilder, \"constant.char.L\")}";
         // C is not supported yet
         //} else if (val == "C") {
       } else {
-        errs() << "unknown char: " << val << "\n";
+        errs() << "unknown char: '" << val << "'\n";
         PrintFatalError(Def->getLoc(), "unknown char");
       }
     } else if (Def->isSubClassOf("Alloca")) {
@@ -1403,7 +1417,7 @@ void emit_tmp_creation(Record *Def, raw_ostream &os, StringRef builder) {
   assert(args.size() >= 2);
   auto action = args[1];
   assert(action == "product" || action == "is_normal" ||
-         action == "triangular");
+         action == "triangular" || action == "vector");
   if (action == "product") {
     const auto matName = args[0];
     const auto dim1 = "arg_" + args[2];
@@ -1427,6 +1441,13 @@ void emit_tmp_creation(Record *Def, raw_ostream &os, StringRef builder) {
     os << "    Value *size_" << vecName << " = " << builder
        << ".CreateSelect(is_normal(" << builder << ", " << trans
        << ", byRef, cublas), len1, len2);\n";
+  } else if (action == "vector") {
+    assert(args.size() == 3);
+    const auto vecName = args[0];
+    const auto dim1 = "arg_" + args[2];
+    os << "    Value *len1 = load_if_ref(" << builder << ", intType," << dim1
+       << ", byRef);\n";
+    os << "    Value *size_" << vecName << " = len1;\n";
   } else if (action == "triangular") {
     assert(args.size() == 3);
     const auto vecName = args[0];
@@ -1916,6 +1937,15 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
     }
   }
 
+  auto duals = pattern.getDuals();
+  const auto Def = cast<DefInit>(duals->getOperator())->getDef();
+
+  if (Def->isSubClassOf("Seq")) {
+    if (!Def->getValueAsBit("start")) {
+      os << "Builder2.SetInsertPoint(gutils->getNewFromOriginal(&call)->getNextNode());\n";
+    }
+  }
+
   os << "    Value *dres = applyChainRule(\n"
      << "        call.getType(), Builder2,\n"
      << "        [&](";
@@ -1929,7 +1959,7 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
      << "      Value *dres = nullptr;\n";
 
   StringMap<Twine> vars;
-  emit_dag(/*forward*/ true, "dres", pattern.getDuals(), "args", os, "",
+  emit_dag(/*forward*/ true, "dres", duals, "args", os, "",
            /*actArg*/ -1, pattern, /*runtimeChecked*/ false, vars);
 
   os << "      if (!dres && !call.getType()->isVoidTy()) dres = "
