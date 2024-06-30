@@ -428,6 +428,18 @@ def symm: CallBlasPattern<(Op $layout, $side, $uplo, $m, $n, $alpha, $A, $lda, $
                         /*C*/ (AssertingInactiveArg),
                    ]>;
 
+def syr2k : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),
+                  ["C"],
+                  [cblas_layout, uplo, trans, len, len, fp, mld<["trans", "n", "k"]>, mld<["trans", "n", "k"]>, fp, mld<["n", "n"]>],
+                  [
+                        /*alpha*/ (AssertingInactiveArg),
+                        /*A*/ (AssertingInactiveArg),
+                        /*B*/ (AssertingInactiveArg),
+                        /*beta*/ (AssertingInactiveArg),
+                        /*C*/ (AssertingInactiveArg),
+                  ]
+                  >;
+
 def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda, $beta, $C, $ldc),
                   ["C"],
                   [cblas_layout, uplo, trans, len, len, fp, mld<["trans", "n", "k"]>, fp, mld<["n", "n"]>],
@@ -476,7 +488,13 @@ def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda,
                   ),
                   /* beta  */ (AssertingInactiveArg),
                   /* C     */ (BlasCall<"lascl"> $layout, $uplo, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $n, $n, (Shadow $C), Alloca<1>)
-                  ]
+                  ],
+                  (Seq<[], ["beta1"]>
+                    (BlasCall<"axpy"> (AssertingInactiveArg), (Shadow $beta), $C, (Shadow $C)),
+                    (BlasCall<"syr2k"> $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda, (Shadow $A), (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $C)),
+                    (BlasCall<"syrk"> $layout, $uplo, $trans, $n, $k, (Shadow $alpha), $A, $lda, (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $C)),
+                    (FirstUse<"beta1"> (BlasCall<"lascl"> $layout, $uplo, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $n, $k, (Shadow $C), Alloca<1>))
+                  )
                   >;
 
 def spmv : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $ap, $x, $incx, $beta, $y, $incy),
@@ -551,16 +569,3 @@ def spr2 : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $x, $incx, $y, $incy,
 //                   [cblas_layout, side, uplo, trans, diag, len, len, fp, vld, vld],
 //                   []
 //                   >;
-// 
-// def : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $a, $lda, $beta, $c, $ldc),
-//                   ["syrk"],
-//                   [cblas_layout, uplo, trans, len, len, fp, vld, fp, vld],
-//                   []
-//                   >;
-// 
-// def : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $a, $lda, $b, $ldb, $beta, $c, $ldc),
-//                   ["syr2k"],
-//                   [cblas_layout, uplo, trans, len, len, fp, vld, vld, fp, vld],
-//                   []
-//                   >;
-// 
