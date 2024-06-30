@@ -232,6 +232,7 @@ enum class CallType {
   TRMV,
   TRMM,
   SYRK,
+  SYR2K,
   SYMM,
   NRM2
 };
@@ -361,6 +362,9 @@ void printty(CallType v) {
     return;
   case CallType::SYRK:
     printf("SYRK");
+    return;
+  case CallType::SYR2K:
+    printf("SYR2K");
     return;
   case CallType::SYMM:
     printf("SYMM");
@@ -838,6 +842,39 @@ void printcall(BlasCall rcall) {
     printty(rcall.pin_arg1);
     printf(", lda=");
     printty(rcall.iarg4);
+    printf(", beta=");
+    printty(rcall.farg2);
+    printf(", C=");
+    printty(rcall.pout_arg1);
+    printf(", ldc=");
+    printty(rcall.iarg5);
+    printf(")");
+    return;
+  case CallType::SYR2K:
+    printf("SYR2K(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", layout=");
+    printty(rcall.layout);
+    printf(", uplo=");
+    printty(rcall.uplo);
+    printf(", trans=");
+    printty(rcall.targ1);
+    printf(", N=");
+    printty(rcall.iarg1);
+    printf(", K=");
+    printty(rcall.iarg2);
+    printf(", alpha=");
+    printty(rcall.farg1);
+    printf(", A=");
+    printty(rcall.pin_arg1);
+    printf(", lda=");
+    printty(rcall.iarg4);
+    printf(", B=");
+    printty(rcall.pin_arg2);
+    printf(", ldb=");
+    printty(rcall.iarg6);
     printf(", beta=");
     printty(rcall.farg2);
     printf(", C=");
@@ -1654,6 +1691,37 @@ __attribute__((noinline)) void cblas_dtrmm(char layout, char side, char uplo,
   calls.push_back(call);
 }
 
+//    C := alpha*A*B**T + alpha*B*A**T + beta*C     OR    C := alpha*A**T*B + alpha*B**T*A + beta*C
+__attribute__((noinline)) void cblas_dsyr2k(char layout, char uplo, char trans,
+                                           int N, int K, double alpha,
+                                           double *A, int lda, double *B, int ldb,
+                                           double beta,
+                                           double *C, int ldc) {
+  BlasCall call = {ABIType::CBLAS,
+                   UNUSED_HANDLE,
+                   inDerivative,
+                   CallType::SYR2K,
+                   C,
+                   A,
+                   B,
+                   alpha,
+                   beta,
+                   layout,
+                   trans,
+                   UNUSED_TRANS,
+                   N,
+                   K,
+                   UNUSED_INT,
+                   lda,
+                   ldc,
+                   ldb,
+                   UNUSED_INT,
+                   UNUSED_TRANS,
+                   uplo,
+                   UNUSED_TRANS};
+  calls.push_back(call);
+}
+
 //     C := alpha*A*A**T + beta*C, OR  C := alpha*A**T*A + beta*C
 __attribute__((noinline)) void cblas_dsyrk(char layout, char uplo, char trans,
                                            int N, int K, double alpha,
@@ -2290,6 +2358,38 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
 
     checkMatrix(A, "A", layout, /*rows=*/left ? M : N,
                 /*cols=*/left ? M : N, /*ld=*/lda, test, rcall, trace);
+    return;
+  }
+  case CallType::SYR2K: {
+    // C := alpha*A*B**T + alpha*B*A**T + beta*C or C := alpha*A**T*B + alpha*B**T*A + beta*C
+    auto C = pointer_to_index(rcall.pout_arg1, inputs);
+    auto A = pointer_to_index(rcall.pin_arg1, inputs);
+    auto B = pointer_to_index(rcall.pin_arg2, inputs);
+
+    auto lda = rcall.iarg4;
+    auto ldc = rcall.iarg5;
+    auto ldb = rcall.iarg6;
+
+    auto alpha = rcall.farg1;
+    auto beta = rcall.farg2;
+
+    auto layout = rcall.layout;
+    auto N = rcall.iarg1;
+    auto K = rcall.iarg2;
+
+    auto trans_char = rcall.targ1;
+    auto trans = !is_normal(trans_char);
+
+    auto uplo_char = rcall.uplo;
+
+    checkMatrix(C, "C", layout, /*rows=*/N,
+                /*cols=*/N, /*ld=*/ldc, test, rcall, trace);
+
+    checkMatrix(A, "A", layout, /*rows=*/(!trans) ? N : K,
+                /*cols=*/(!trans) ? K : N, /*ld=*/lda, test, rcall, trace);
+
+    checkMatrix(B, "B", layout, /*rows=*/(!trans) ? N : K,
+                /*cols=*/(!trans) ? K : N, /*ld=*/ldb, test, rcall, trace);
     return;
   }
   case CallType::SYRK: {

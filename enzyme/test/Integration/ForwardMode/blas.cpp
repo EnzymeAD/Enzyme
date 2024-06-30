@@ -55,6 +55,15 @@ void ow_dgemm(char layout, char transA, char transB, int M, int N, int K,
               ldc);
 }
 
+void my_dsyrk(char layout, char uplo, char trans,
+                                           int N, int K, double alpha,
+                                           double *__restrict__ A, int lda, double beta,
+                                           double *__restrict__ C, int ldc) {
+
+    cblas_dsyrk(layout, uplo, trans, N, K, alpha, A, lda, beta,
+                                           C, ldc);
+}
+
 static void dotTests() {
   {
     std::string Test = "DOT active both ";
@@ -549,6 +558,141 @@ static void gemmTests() {
   }
 }
 
+static void syrkTests() {
+  // N means normal matrix, T means transposed
+  // TODO: row major is presently an exepcted failure. We should re-enable.
+  for (char layout : {CblasColMajor, CblasRowMajor}) {
+
+    for (auto transA :
+         {CBLAS_TRANSPOSE::CblasNoTrans, CBLAS_TRANSPOSE::CblasTrans})
+
+      for (auto uplo : {'U', 'u', 'L', 'l'})
+
+      {
+
+          bool trans = !is_normal(transA);
+          BlasInfo inputs[6] = {
+              /*A*/ BlasInfo(A, layout, trans ? K : N, trans ? N : K, lda),
+              /*B*/ BlasInfo(),
+              /*C*/ BlasInfo(C, layout, N, N, incC),
+              BlasInfo(),
+              BlasInfo(),
+              BlasInfo(),
+          };
+        {
+
+          std::string Test = "SYRK active C, A ";
+          init();
+
+          my_dsyrk(layout, uplo, (char)transA, N, K, alpha, A, lda, beta, C,
+                   incC);
+
+          assert(calls.size() == 1);
+          assert(calls[0].inDerivative == false);
+          assert(calls[0].type == CallType::SYRK);
+          assert(calls[0].pout_arg1 == C);
+          assert(calls[0].pin_arg1 == A);
+          assert(calls[0].pin_arg2 == UNUSED_POINTER);
+          assert(calls[0].farg1 == alpha);
+          assert(calls[0].farg2 == beta);
+          assert(calls[0].layout == layout);
+          assert(calls[0].targ1 == (char)transA);
+          assert(calls[0].targ2 == UNUSED_TRANS);
+          assert(calls[0].iarg1 == N);
+          assert(calls[0].iarg2 == K);
+          assert(calls[0].iarg3 == UNUSED_INT);
+          assert(calls[0].iarg4 == lda);
+          assert(calls[0].iarg5 == incC);
+          assert(calls[0].iarg6 == UNUSED_INT);
+          assert(calls[0].side == UNUSED_TRANS);
+          assert(calls[0].uplo == uplo);
+          assert(calls[0].diag == UNUSED_TRANS);
+
+          // Check memory of primal on own.
+          checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+          init();
+          __enzyme_fwddiff<void>(
+              (void *)my_dsyrk, enzyme_const, layout, enzyme_const, uplo,
+              enzyme_const, transA, enzyme_const, N, enzyme_const, K,
+              enzyme_const, alpha, enzyme_dup, A, dA, enzyme_const, lda,
+              enzyme_const, beta, enzyme_dup, C, dC, enzyme_const, incC);
+          foundCalls = calls;
+          init();
+
+          cblas_dsyr2k(layout, uplo, (char)transA, N, K, alpha, A, lda, dA, lda, beta, dC, incC);
+          my_dsyrk(layout, uplo, (char)transA, N, K, alpha, A, lda, beta, C,
+                   incC);
+
+          checkTest(Test);
+
+          // Check memory of primal of expected derivative
+          checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+          // Check memory of primal of our derivative (if equal above, it
+          // should be the same).
+          checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+        }
+
+        {
+
+          std::string Test = "SYRK active C ";
+
+          init();
+          __enzyme_fwddiff<void>(
+              (void *)my_dsyrk, enzyme_const, layout, enzyme_const, uplo,
+              enzyme_const, transA, enzyme_const, N, enzyme_const, K,
+              enzyme_const, alpha, enzyme_const, A, enzyme_const, lda,
+              enzyme_const, beta, enzyme_dup, C, dC, enzyme_const, incC);
+          foundCalls = calls;
+          init();
+
+          cblas_dlascl(layout, uplo, 0, 0, 1.0, beta, N, N, dC, incC, 0);
+          my_dsyrk(layout, uplo, (char)transA, N, K, alpha, A, lda, beta, C,
+                   incC);
+
+          checkTest(Test);
+
+          // Check memory of primal of expected derivative
+          checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+          // Check memory of primal of our derivative (if equal above, it
+          // should be the same).
+          checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+        }
+
+        {
+
+          std::string Test = "SYRK active C, alpha ";
+
+          init();
+          double dalpha = 46.1345;
+          __enzyme_fwddiff<void>(
+              (void *)my_dsyrk, enzyme_const, layout, enzyme_const, uplo,
+              enzyme_const, transA, enzyme_const, N, enzyme_const, K,
+              enzyme_dup, alpha, dalpha, enzyme_dup, A, dA, enzyme_const, lda,
+              enzyme_const, beta, enzyme_dup, C, dC, enzyme_const, incC);
+          foundCalls = calls;
+          init();
+
+          cblas_dsyr2k(layout, uplo, (char)transA, N, K, alpha, A, lda, dA, lda, beta, dC, incC);
+          cblas_dsyrk(layout, uplo, (char)transA, N, K, dalpha, A, lda, 1.0, dC, incC);
+          my_dsyrk(layout, uplo, (char)transA, N, K, alpha, A, lda, beta, C,
+                   incC);
+
+          checkTest(Test);
+
+          // Check memory of primal of expected derivative
+          checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+          // Check memory of primal of our derivative (if equal above, it
+          // should be the same).
+          checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+        }
+      }
+  }
+}
+
 int main() {
   dotTests();
 
@@ -557,4 +701,6 @@ int main() {
   gemvTests();
 
   gemmTests();
+  
+  syrkTests();
 }

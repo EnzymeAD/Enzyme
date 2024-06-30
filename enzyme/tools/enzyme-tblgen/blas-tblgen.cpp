@@ -1364,7 +1364,7 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
   int n = 0;
   if (func == "gemv" || func == "lascl")
     n = 1;
-  if (func == "gemm" || func == "syrk")
+  if (func == "gemm" || func == "syrk" || func == "syr2k")
     n = 2;
   if (func == "trmv")
     n = 3;
