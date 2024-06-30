@@ -30,17 +30,21 @@ getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeMode mode,
                         llvm::ArrayRef<bool> returnPrimals,
                         llvm::ArrayRef<bool> returnShadows,
                         llvm::ArrayRef<DIFFE_TYPE> ReturnActivity,
-                        llvm::ArrayRef<DIFFE_TYPE> ArgActivity);
+                        llvm::ArrayRef<DIFFE_TYPE> ArgActivity,
+                        llvm::ArrayRef<int64_t> batchSizes = {});
 
 void cloneInto(Region *src, Region *dest, Region::iterator destPos,
-               IRMapping &mapper, std::map<Operation *, Operation *> &opMap);
+               IRMapping &mapper, std::map<Operation *, Operation *> &opMap,
+               llvm::ArrayRef<int64_t> batchSizes);
 
 void cloneInto(Region *src, Region *dest, IRMapping &mapper,
-               std::map<mlir::Operation *, mlir::Operation *> &opMap);
+               std::map<mlir::Operation *, mlir::Operation *> &opMap,
+               llvm::ArrayRef<int64_t> batchSizes);
 
 Operation *clone(Operation *src, IRMapping &mapper,
                  Operation::CloneOptions options,
-                 std::map<Operation *, Operation *> &opMap);
+                 std::map<Operation *, Operation *> &opMap,
+                 llvm::ArrayRef<int64_t> batchSizes);
 
 FunctionOpInterface CloneFunctionWithReturns(
     DerivativeMode mode, unsigned width, FunctionOpInterface F,
@@ -51,4 +55,4 @@ FunctionOpInterface CloneFunctionWithReturns(
     const std::vector<bool> &returnPrimals,
     const std::vector<bool> &returnShadows, ArrayRef<DIFFE_TYPE> ReturnActivity,
     Twine name, IRMapping &VMap, std::map<Operation *, Operation *> &OpMap,
-    mlir::Type additionalArg);
+    mlir::Type additionalArg, llvm::ArrayRef<int64_t> batchSizes = {});

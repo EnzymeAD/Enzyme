@@ -73,6 +73,17 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
   }];
 }
 
+def BatchOp : Enzyme_Op<"batch",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Perform reverse mode AD on a funcop";
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, DenseI64ArrayAttr:$batch_shape);
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
 def PushOp : Enzyme_Op<"push"> {
   let summary = "Push value to cache or ShadowedGradient";
   let arguments = (ins AnyType : $cache, AnyType : $value);
