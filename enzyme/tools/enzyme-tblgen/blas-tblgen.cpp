@@ -1379,13 +1379,13 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
   }
   os << "        if (byRef) {\n";
   int n = 0;
-  if (func == "gemv" || func == "lascl")
+  if (func == "gemv" || func == "lascl" || func == "potrs")
     n = 1;
   if (func == "gemm" || func == "syrk" || func == "syr2k")
     n = 2;
   if (func == "trmv")
     n = 3;
-  if (func == "trmm")
+  if (func == "trmm" || func == "trsm")
     n = 4;
   for (int i = 0; i < n; i++)
     os << "           " << argName

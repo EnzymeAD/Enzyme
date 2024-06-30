@@ -566,6 +566,7 @@ def spr2 : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $x, $incx, $y, $incy,
 // 
 // 
 
+//  Solve op( A )*X = alpha*B,   or   X*op( A ) = alpha*B,
 def trsm: CallBlasPattern<(Op $layout, $side, $uplo, $transa, $diag, $m, $n, $alpha, $A, $lda, $B, $ldb),
                   ["B"],
                   [cblas_layout, side, uplo, trans, diag, len, len, fp, mld<["side", "m", "n"]>, mld<["m","n"]>],
@@ -579,7 +580,7 @@ def trsm: CallBlasPattern<(Op $layout, $side, $uplo, $transa, $diag, $m, $n, $al
 def uplo_to_normal : IntMatchers<
     "charType", "charType",
     ["'l'", "'L'", "'U'", "'u'"],
-    ["'n'", "'N'", "'T'", "'n'"]
+    ["'n'", "'N'", "'T'", "'t'"]
     >;
 def uplo_to_trans : IntMatchers<
     "charType", "charType",
@@ -604,8 +605,8 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                     /* A     */ (BlasCall<"trsm"> (AssertingInactiveArg), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A)),
                   ],
                   (Seq<[], [], false>
-                    (BlasCall<"trsm"> Char<"L">, $uplo, (uplo_to_normal $uplo), Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A)),
-                    (BlasCall<"trsm"> Char<"R">, $uplo, (uplo_to_trans $uplo), Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A)),
+                    (BlasCall<"trsm"> $layout, Char<"L">, $uplo, (uplo_to_normal $uplo), Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A)),
+                    (BlasCall<"trsm"> $layout, Char<"R">, $uplo, (uplo_to_trans $uplo), Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A)),
                     (BlasCall<"scal"> $n, Constant<"0.5">, (First (Shadow $A)), (Add $lda, ConstantInt<1>)),
 
                     (Seq<["tmp", "vector", "n"], [], true>
@@ -615,6 +616,6 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                         (BlasCall<"copy"> $n, use<"tmp">, ConstantInt<1>, (First (Shadow $A)), (Add $lda, ConstantInt<1>))
 
                     ),
-                    (BlasCall<"trsm"> (uplo_to_side $uplo), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A))
+                    (BlasCall<"trsm"> $layout, (uplo_to_side $uplo), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A))
                   )
                   >;

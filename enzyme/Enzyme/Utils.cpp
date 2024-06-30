@@ -2654,8 +2654,10 @@ std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
-  const char *extractable[] = {"dot",  "scal", "axpy", "gemv", "gemm", "spmv",
-                               "syrk", "nrm2", "trmm", "trmv", "symm"};
+  const char *extractable[] = {"dot",   "scal",  "axpy",  "gemv",  "gemm",
+                               "spmv",  "syrk",  "nrm2",  "trmm",  "trmv",
+                               "symm",  "potrf", "copy",  "spmv",  "syr2k",
+                               "potrs", "getrf", "getrs", "trtrs", "getri"};
   const char *floatType[] = {"s", "d"}; // c, z
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
   const char *suffixes[] = {"", "_", "64_", "_64_"};
