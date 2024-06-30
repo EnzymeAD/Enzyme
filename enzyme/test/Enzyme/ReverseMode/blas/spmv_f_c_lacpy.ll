@@ -92,10 +92,8 @@ entry:
 
 ; CHECK-NEXT:   %[[i6:.+]] = bitcast i8* %n_p to i64*
 ; CHECK-NEXT:   %[[i7:.+]] = load i64, i64* %[[i6]]
-; CHECK-NEXT:   %[[i8:.+]] = add i64 %[[i7]], 1
-; CHECK-NEXT:   %square_mat_size_y0 = mul i64 %[[i7]], %[[i8]]
-; CHECK-NEXT:   %size_y0 = udiv i64 %square_mat_size_y0, 2
-; CHECK-NEXT:   %mallocsize4 = mul nuw nsw i64 %size_y0, 8
+; CHECK-NEXT:   %[[i8:.+]] = mul i64 %[[i7]], %[[i7]]
+; CHECK-NEXT:   %mallocsize4 = mul nuw nsw i64 %[[i8]], 8
 ; CHECK-NEXT:   %malloccall5 = tail call noalias nonnull i8* @malloc(i64 %mallocsize4)
 ; CHECK-NEXT:   %[[mat_y0:.+]] = bitcast i8* %malloccall5 to double*
 ; CHECK-NEXT:   %[[i9:.+]] = bitcast double* %[[mat_y0]] to i8*

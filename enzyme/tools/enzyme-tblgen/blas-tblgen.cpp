@@ -1936,7 +1936,8 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
 
   if (Def->isSubClassOf("Seq")) {
     if (!Def->getValueAsBit("start")) {
-      os << "Builder2.SetInsertPoint(gutils->getNewFromOriginal(&call)->getNextNode());\n";
+      os << "Builder2.SetInsertPoint(gutils->getNewFromOriginal(&call)->"
+            "getNextNode());\n";
     }
   }
 

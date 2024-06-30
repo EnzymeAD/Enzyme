@@ -2658,7 +2658,7 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
                                "spmv",  "syrk",  "nrm2",  "trmm",  "trmv",
                                "symm",  "potrf", "copy",  "spmv",  "syr2k",
                                "potrs", "getrf", "getrs", "trtrs", "getri"};
-  const char *floatType[] = {"s", "d"}; // c, z
+  const char *floatType[] = {"s", "d", "c", "z"};
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
   const char *suffixes[] = {"", "_", "64_", "_64_"};
   for (auto t : floatType) {
@@ -2676,8 +2676,8 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
     }
   }
   // c interface to cublas
-  const char *cuCFloatType[] = {"S", "D"}; // c, z
-  const char *cuFFloatType[] = {"s", "d"}; // c, z
+  const char *cuCFloatType[] = {"S", "D", "C", "Z"};
+  const char *cuFFloatType[] = {"s", "d", "c", "z"};
   const char *cuCPrefixes[] = {"cublas"};
   const char *cuSuffixes[] = {"", "_v2", "_64", "_v2_64"};
   for (auto t : llvm::enumerate(cuCFloatType)) {
