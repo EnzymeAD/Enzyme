@@ -211,7 +211,7 @@ os
 << "      ValueType valueTypes[] = {" << valueTypes << "};\n"
 << "      valueTypes[" << argIdx << "] = ValueType::Primal;\n"
 << "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
-    for (auto len_pos : pattern.getRelatedLengthArgs(argIdx) ) {
+    for (auto len_pos : pattern.getRelatedLengthArgs(argIdx, /*hideuplo*/true) ) {
 os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
 os << "      if (cublas) {\n"
@@ -293,7 +293,7 @@ os
 << "      SmallVector<ValueType, 7> valueTypes = {" << valueTypes << "};\n"
 <<"       valueTypes[" << argIdx << "] = ValueType::Primal;\n"
 << "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
-    for (auto len_pos : dimensions ) {
+    for (auto len_pos : pattern.getRelatedLengthArgs(argIdx, /*hideuplo*/true); ) {
 os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
 os << "      if (EnzymeLapackCopy) {\n"

@@ -123,7 +123,7 @@ private:
 
 public:
   TGPattern(Record *r);
-  SmallVector<size_t, 3> getRelatedLengthArgs(size_t arg) const;
+  SmallVector<size_t, 3> getRelatedLengthArgs(size_t arg, bool hideuplo) const;
   bool isBLASLevel2or3() const;
   const DenseMap<size_t, DenseSet<size_t>> &getArgUsers() const;
   StringRef getName() const;
