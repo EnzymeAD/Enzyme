@@ -2179,34 +2179,41 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        Function *logFunc = getLogFunction(" << origName
          << ".getModule());\n";
       os << "        if (logFunc) {\n"
-         << "            std::string moduleName = " << origName
-         << ".getModule()->getModuleIdentifier();\n"
-         << "            std::string functionName = " << origName
-         << ".getFunction()->getName().str();\n"
+         << "            assert(" << origName
+         << ".hasMetadata(\"enzyme_preprocess_origin\"));\n"
+         << "            auto *CMD = cast<ConstantAsMetadata>(" << origName
+         << ".getMetadata(\"enzyme_preprocess_origin\")->getOperand(0));\n"
+         << "            uintptr_t ptrValue = "
+            "cast<ConstantInt>(CMD->getValue())->getZExtValue();\n"
+         << "            auto *preprocessOrigInst = "
+            "reinterpret_cast<Instruction "
+            "*>(ptrValue);\n"
+         << "            std::string moduleName = "
+            "preprocessOrigInst->getModule()->getModuleIdentifier();\n"
+         << "            std::string functionName = "
+            "preprocessOrigInst->getFunction()->getName().str();\n"
          << "            int blockIdx = -1, instIdx = -1;\n"
-         << "            auto blockIt = std::find_if(" << origName
-         << ".getFunction()->begin(), " << origName
-         << ".getFunction()->end(),\n"
+         << "            auto blockIt = "
+            "std::find_if(preprocessOrigInst->getFunction()->begin(), "
+            "preprocessOrigInst->getFunction()->end(),\n"
             "              [&](const auto& block) { return &block == "
-         << origName
-         << ".getParent(); });\n"
+            "preprocessOrigInst->getParent(); });\n"
             "            if (blockIt != "
-         << origName
-         << ".getFunction()->end()) {\n"
-            "              blockIdx = std::distance("
-         << origName << ".getFunction()->begin(), blockIt);\n"
+            "preprocessOrigInst->getFunction()->end()) {\n"
+            "              blockIdx = "
+            "std::distance(preprocessOrigInst->getFunction()->begin(), "
+            "blockIt);\n"
          << "            }\n"
-         << "            auto instIt = std::find_if(" << origName
-         << ".getParent()->begin(), " << origName
-         << ".getParent()->end(),\n"
-            "              [&](const auto& curr) { return &curr == &"
-         << origName
-         << "; });\n"
-            "            if (instIt != "
-         << origName
-         << ".getParent()->end()) {\n"
-            "              instIdx = std::distance("
-         << origName << ".getParent()->begin(), instIt);\n"
+         << "            auto instIt = "
+            "std::find_if(preprocessOrigInst->getParent()->begin(), "
+            "preprocessOrigInst->getParent()->end(),\n"
+            "              [&](const auto& curr) { return &curr == "
+            "preprocessOrigInst; "
+            "});\n"
+            "            if (instIt != preprocessOrigInst->getParent()->end()) "
+            "{\n"
+            "              instIdx = "
+            "std::distance(preprocessOrigInst->getParent()->begin(), instIt);\n"
          << "            }\n"
          << "            Value *origValue = "
             "Builder2.CreateFPExt(gutils->getNewFromOriginal(&"
