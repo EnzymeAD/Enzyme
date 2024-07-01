@@ -1863,7 +1863,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       FAM.invalidate(*NewF, PA);
     }
 
-    if (mode != DerivativeMode::ForwardMode)
+    if (mode != DerivativeMode::ForwardMode &&
+        mode != DerivativeMode::ForwardModeError)
       ReplaceReallocs(NewF);
 
     {
@@ -1908,7 +1909,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     PA.preserve<PhiValuesAnalysis>();
   }
 
-  if (mode != DerivativeMode::ForwardMode)
+  if (mode != DerivativeMode::ForwardMode &&
+      mode != DerivativeMode::ForwardModeError)
     ReplaceReallocs(NewF);
 
   if (mode == DerivativeMode::ReverseModePrimal ||
