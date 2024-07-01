@@ -1111,12 +1111,22 @@ static void potrfTests() {
 #define triv(r, c)                                                               \
   tri[(r) * (layout == CblasRowMajor ? N : 1) +                            \
     (c) * (layout == CblasRowMajor ? 1 : N)]
+
+        int upperinc = (&triv(0, 1) - &triv(0,0));
+        int lowerinc = (&triv(1, 0) - &triv(0,0));
+        if (layout == CblasColMajor) {
+            assert(upperinc == N);
+            assert(lowerinc == 1);
+        } else {
+            assert(upperinc == 1);
+            assert(lowerinc == N);
+        }
         for (int i=0; i<N-1; i++) {
             cblas_daxpy(N-i-1, 1.0,
                         &triv(i, i+1),
-                        (&triv(0, 1) - &triv(0,0)),
+                        upperinc,
                         &triv(i+1, i),
-                        (&triv(1, 0) - &triv(0,0))
+                        lowerinc
                         );
         }
         
