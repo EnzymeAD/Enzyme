@@ -267,7 +267,7 @@ os << "      if (cublas) {\n"
         } else if (startty == ArgType::uplo) {
 os << "      M = " << dim1 << ";\n"
 << "      N = " << dim2 << ";\n";
-uplostr = "arg_" + nameVec[dimensions[0]];
+uplostr = "Value *uplo = arg_" + nameVec[dimensions[0]];
         } else if (startty == ArgType::side) {
 os
 << "      Value *normal = is_left(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n"
@@ -285,8 +285,11 @@ os
     os
 << "      auto *len1 = load_if_ref(BuilderZ, intType, M, byRef);\n"
 << "      auto *len2 = load_if_ref(BuilderZ, intType, N, byRef);\n"
-<< "      auto *matSize = BuilderZ.CreateMul(len1, len2);\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, matSize, \"cache." << matName << "\");\n"
+<< "      auto *matSize = BuilderZ.CreateMul(len1, len2);\n";
+<< "      Instruction *SubZero = nullptr;\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, matSize, \"cache." << vecName << "\", /*caller*/nullptr";
+    if (pattern.getName() == "potrf") os << ", &SubZero";
+    os << ");\n"
 << "      SmallVector<ValueType, 7> valueTypes = {" << valueTypes << "};\n"
 <<"       valueTypes[" << argIdx << "] = ValueType::Primal;\n"
 << "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
