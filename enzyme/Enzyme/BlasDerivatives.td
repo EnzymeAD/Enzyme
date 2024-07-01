@@ -601,10 +601,10 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                   [
                     /* A     */ 
                   (Seq<["tri", "triangular", "n"], [], 0>
-                      (BlasCall<"lascl"> $layout, (flip_uplo $uplo), ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $n, $n, use<"tri">, Alloca<1>),
-                      (BlasCall<"lacpy"> $layout, (flip_uplo $uplo), $n, $n, (Shadow $A), use<"tri">, $n),
+                      (BlasCall<"lascl"> $layout, (flip_uplo $uplo), ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $n, $n, use<"tri">, $n, Alloca<1>),
+                      (BlasCall<"lacpy"> $layout, $uplo, $n, $n, (Shadow $A), use<"tri">, $n),
                       
-                      (BlasCall<"trmm"> $layout, Char<"T">, $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, use<"tri">, $n),
+                      (BlasCall<"trmm"> $layout, (uplo_to_side $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, $n, use<"tri">, $n),
 
                       (Seq<["tmp", "vector", "n"], [], 1>
                         
@@ -615,7 +615,7 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                         (BlasCall<"copy"> $n, use<"tmp">, ConstantInt<1>, use<"tri">, (Add $n, ConstantInt<1>))
                       ),
                       
-                      (BlasCall<"trsm"> $layout, (uplo_to_rside $uplo), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, use<"tri">, $n),
+                      (BlasCall<"trsm"> $layout, (uplo_to_rside $uplo), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, $n, use<"tri">, $n),
 
                       (BlasCall<"scal"> $n, Constant<"2">, (First (Shadow $A)), (Add $lda, ConstantInt<1>)),
                       

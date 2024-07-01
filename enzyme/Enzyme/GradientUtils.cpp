@@ -8226,7 +8226,6 @@ void GradientUtils::eraseFictiousPHIs() {
   for (auto pair : phis) {
     auto pp = pair.first;
     if (pp->getNumUses() != 0) {
-      assert(0);
       if (CustomErrorHandler) {
         std::string str;
         raw_string_ostream ss(str);

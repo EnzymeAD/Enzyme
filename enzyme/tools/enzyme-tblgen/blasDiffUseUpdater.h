@@ -57,7 +57,7 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
        << ");\n";
     os << "  const bool overwritten_" << name;
 
-    if (pattern.getMutableArgs().count(i))
+    if (pattern.getMutableArgs().count(argPos))
       os << " = (cacheMode ? true : false);\n\n";
     else
     os

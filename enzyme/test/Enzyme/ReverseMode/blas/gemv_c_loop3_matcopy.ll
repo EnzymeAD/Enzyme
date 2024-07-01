@@ -62,11 +62,10 @@ entry:
 ; CHECK-NEXT:   br i1 %7, label %__enzyme_memcpy_double_mat_32.exit, label %init.idx.i
 
 ; CHECK: __enzyme_memcpy_double_mat_32.exit:               ; preds = %entry, %init.end.i
-; CHECK-NEXT:   %8 = select i1 true, i32 %N, i32 %N
-; CHECK-NEXT:   %mallocsize22 = mul nuw nsw i32 %8, 8
+; CHECK-NEXT:   %mallocsize22 = mul nuw nsw i32 %N, 8
 ; CHECK-NEXT:   %malloccall23 = tail call noalias nonnull i8* @malloc(i32 %mallocsize22)
 ; CHECK-NEXT:   %cache.x24 = bitcast i8* %malloccall23 to double*
-; CHECK-NEXT:   call void @cblas_dcopy(i32 %8, double* %x0, i32 1, double* %cache.x24, i32 1)
+; CHECK-NEXT:   call void @cblas_dcopy(i32 %N, double* %x0, i32 1, double* %cache.x24, i32 1)
 ; CHECK-NEXT:   tail call void @cblas_dgemv(i32 noundef 101, i32 noundef 111, i32 noundef %N, i32 noundef %N, double noundef 1.000000e-03, double* noundef %K, i32 noundef %N, double* noundef %x0, i32 noundef 1, double noundef 1.000000e+00, double* noundef %v0, i32 noundef 1)
 ; CHECK-NEXT:   %[[i11:.+]] = mul i32 %N, %N
 ; CHECK-NEXT:   %mallocsize11 = mul nuw nsw i32 %[[i11]], 8
@@ -100,11 +99,10 @@ entry:
 ; CHECK-NEXT:   br i1 %[[i18:.+]], label %__enzyme_memcpy_double_mat_32.exit38, label %init.idx.i29
 
 ; CHECK: __enzyme_memcpy_double_mat_32.exit38:             ; preds = %__enzyme_memcpy_double_mat_32.exit, %init.end.i37
-; CHECK-NEXT:   %[[i19:.+]] = select i1 true, i32 %N, i32 %N
-; CHECK-NEXT:   %mallocsize14 = mul nuw nsw i32 %[[i19]], 8
+; CHECK-NEXT:   %mallocsize14 = mul nuw nsw i32 %N, 8
 ; CHECK-NEXT:   %malloccall15 = tail call noalias nonnull i8* @malloc(i32 %mallocsize14)
 ; CHECK-NEXT:   %cache.x16 = bitcast i8* %malloccall15 to double*
-; CHECK-NEXT:   call void @cblas_dcopy(i32 %[[i19]], double* %x0, i32 1, double* %cache.x16, i32 1)
+; CHECK-NEXT:   call void @cblas_dcopy(i32 %N, double* %x0, i32 1, double* %cache.x16, i32 1)
 ; CHECK-NEXT:   tail call void @cblas_dgemv(i32 noundef 101, i32 noundef 111, i32 noundef %N, i32 noundef %N, double noundef 1.000000e-03, double* noundef %K, i32 noundef %N, double* noundef %x0, i32 noundef 1, double noundef 1.000000e+00, double* noundef %v0, i32 noundef 1)
 ; CHECK-NEXT:   %[[i22:.+]] = mul i32 %N, %N
 ; CHECK-NEXT:   %mallocsize3 = mul nuw nsw i32 %[[i22]], 8
@@ -138,11 +136,10 @@ entry:
 ; CHECK-NEXT:   br i1 %[[i29]], label %__enzyme_memcpy_double_mat_32.exit50, label %init.idx.i41
 
 ; CHECK: __enzyme_memcpy_double_mat_32.exit50:             ; preds = %__enzyme_memcpy_double_mat_32.exit38, %init.end.i49
-; CHECK-NEXT:   %[[i30:.+]] = select i1 true, i32 %N, i32 %N
-; CHECK-NEXT:   %mallocsize6 = mul nuw nsw i32 %[[i30]], 8
+; CHECK-NEXT:   %mallocsize6 = mul nuw nsw i32 %N, 8
 ; CHECK-NEXT:   %malloccall7 = tail call noalias nonnull i8* @malloc(i32 %mallocsize6)
 ; CHECK-NEXT:   %cache.x8 = bitcast i8* %malloccall7 to double*
-; CHECK-NEXT:   call void @cblas_dcopy(i32 %[[i30]], double* %x0, i32 1, double* %cache.x8, i32 1)
+; CHECK-NEXT:   call void @cblas_dcopy(i32 %N, double* %x0, i32 1, double* %cache.x8, i32 1)
 ; CHECK-NEXT:   tail call void @cblas_dgemv(i32 noundef 101, i32 noundef 111, i32 noundef %N, i32 noundef %N, double noundef 1.000000e-03, double* noundef %K, i32 noundef %N, double* noundef %x0, i32 noundef 1, double noundef 1.000000e+00, double* noundef %v0, i32 noundef 1)
 ; CHECK-NEXT:   %[[i33:.+]] = mul i32 %N, %N
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i32 %[[i33]], 8
@@ -176,11 +173,10 @@ entry:
 ; CHECK-NEXT:   br i1 %[[i40]], label %__enzyme_memcpy_double_mat_32.exit62, label %init.idx.i53
 
 ; CHECK: __enzyme_memcpy_double_mat_32.exit62:             ; preds = %__enzyme_memcpy_double_mat_32.exit50, %init.end.i61
-; CHECK-NEXT:   %[[i41:.+]] = select i1 true, i32 %N, i32 %N
-; CHECK-NEXT:   %mallocsize1 = mul nuw nsw i32 %[[i41]], 8
+; CHECK-NEXT:   %mallocsize1 = mul nuw nsw i32 %N, 8
 ; CHECK-NEXT:   %malloccall2 = tail call noalias nonnull i8* @malloc(i32 %mallocsize1)
 ; CHECK-NEXT:   %cache.x = bitcast i8* %malloccall2 to double*
-; CHECK-NEXT:   call void @cblas_dcopy(i32 %[[i41]], double* %x0, i32 1, double* %cache.x, i32 1)
+; CHECK-NEXT:   call void @cblas_dcopy(i32 %N, double* %x0, i32 1, double* %cache.x, i32 1)
 ; CHECK-NEXT:   tail call void @cblas_dgemv(i32 noundef 101, i32 noundef 111, i32 noundef %N, i32 noundef %N, double noundef 1.000000e-03, double* noundef %K, i32 noundef %N, double* noundef %x0, i32 noundef 1, double noundef 1.000000e+00, double* noundef %v0, i32 noundef 1)
 ; CHECK-NEXT:   tail call void @cblas_dgemv(i32 noundef 101, i32 noundef 111, i32 noundef %N, i32 noundef %N, double noundef 1.000000e-03, double* noundef %K, i32 noundef %N, double* noundef %x0, i32 noundef 1, double noundef 1.000000e+00, double* noundef %v0, i32 noundef 1)
 ; CHECK-NEXT:   br label %invertentry

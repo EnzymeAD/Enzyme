@@ -454,7 +454,8 @@ TGPattern::TGPattern(Record *r)
   fillArgUserMap(rules, args, posActArgs, argUsers);
 }
 
-SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg, bool hideuplo) const {
+SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg,
+                                                       bool hideuplo) const {
   // other args are unrelated to length args
   assert(argTypes.lookup(arg) == ArgType::vincData ||
          argTypes.lookup(arg) == ArgType::mldData ||

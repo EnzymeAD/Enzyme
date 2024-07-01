@@ -1076,29 +1076,30 @@ static void potrfTests() {
         inputs[3] = BlasInfo(cacheA, layout, N, N, N);
 
         assert(foundCalls.size() >= 2);
-        // assert(foundCalls[0].type == CallType::LACPY);
-        inDerivative = true;
+        assert(foundCalls[0].type == CallType::LACPY);
 
         my_potrf(layout, uplo, N, A, lda);
 
+        inDerivative = true;
+
         assert(foundCalls.size() >= 3);
-        // assert(foundCalls[2].type == CallType::LASCL);
+        assert(foundCalls[2].type == CallType::LASCL);
         double *tri = (double *)foundCalls[2].pout_arg1;
         inputs[4] = BlasInfo(tri, layout, N, N, N);
         cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, tri, N, 0);
 
         cblas_dlacpy(layout, uplo, N, N, dA, lda, tri, N);
 
-        cblas_dtrmm(layout, uplo_to_side(uplo), uplo, uplo_to_normal(uplo), 'N',
-                    N, N, 1.0, cacheA, N, tri, N);
+        cblas_dtrmm(layout, uplo_to_side(uplo), uplo, 'T', 'N', N, N, 1.0,
+                    cacheA, N, tri, N);
 
         assert(foundCalls.size() >= 9);
-        // assert(foundCalls[5].type == CallType::COPY);
+        assert(foundCalls[5].type == CallType::COPY);
         double *tmp = (double *)foundCalls[5].pout_arg1;
         inputs[5] = BlasInfo(tmp, N, 1);
 
         cblas_dcopy(N, tri, N + 1, tmp, 1);
-        cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, dA, lda, 0);
+        cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, tri, N, 0);
         cblas_dcopy(N, tmp, 1, tri, N + 1);
 
         cblas_dtrsm(layout, uplo_to_side(uplo), uplo, 'N', 'N', N, N, 1.0,
