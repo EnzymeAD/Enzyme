@@ -98,11 +98,11 @@ public:
       Instruction *Then, *Else;
       SplitBlockAndInsertIfThenElse(condValue, &*IP, &Then, &Else);
 
-      Then->getParent()->setName("herbie-then");
+      Then->getParent()->setName("herbie.then");
       builder.SetInsertPoint(Then);
       Value *ThenVal = operands[1]->getValue(builder);
 
-      Else->getParent()->setName("herbie-else");
+      Else->getParent()->setName("herbie.else");
       builder.SetInsertPoint(Else);
       Value *ElseVal = operands[2]->getValue(builder);
 
@@ -414,6 +414,8 @@ bool improveViaHerbie(const std::string &inputExpr, std::string &outputExpr) {
 
 std::string getHerbieOperator(const Instruction &I) {
   switch (I.getOpcode()) {
+  case Instruction::FNeg:
+    return "neg";
   case Instruction::FAdd:
     return "+";
   case Instruction::FSub:
@@ -446,6 +448,7 @@ bool herbiable(const Value &Val) {
     return false;
 
   switch (I->getOpcode()) {
+  case Instruction::FNeg:
   case Instruction::FAdd:
   case Instruction::FSub:
   case Instruction::FMul:
@@ -505,11 +508,9 @@ bool extractErrorLogData(const std::string &filePath,
     return false;
   }
 
-  std::regex linePattern(
-      "Function: " +
-      std::regex_replace(functionName, std::regex(R"(\W)"), R"(\$&)") +
-      ", BlockIdx: " + std::to_string(blockIdx) +
-      ", InstIdx: " + std::to_string(instIdx));
+  std::regex linePattern("Function: " + functionName +
+                         ", BlockIdx: " + std::to_string(blockIdx) +
+                         ", InstIdx: " + std::to_string(instIdx));
   std::string line;
 
   while (getline(file, line)) {
