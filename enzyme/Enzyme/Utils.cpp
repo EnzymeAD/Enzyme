@@ -456,6 +456,14 @@ EnzymeFailure::EnzymeFailure(const llvm::Twine &RemarkName,
 
 /// Convert a floating type to a string
 static inline std::string tofltstr(Type *T) {
+  if (auto VT = dyn_cast<VectorType>(T)) {
+#if LLVM_VERSION_MAJOR >= 12
+    auto len = VT->getElementCount().getFixedValue();
+#else
+    auto len = VT->getNumElements();
+#endif
+    return "vec" + std::to_string(len) + tofltstr(VT->getElementType());
+  }
   switch (T->getTypeID()) {
   case Type::HalfTyID:
     return "half";
@@ -1127,7 +1135,7 @@ Function *getOrInsertMemcpyStrided(Module &M, Type *elementType, PointerType *T,
 Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
                                IntegerType *IT, unsigned dstalign,
                                unsigned srcalign) {
-  assert(elementType->isFloatingPointTy());
+  assert(elementType->isFPOrFPVectorTy());
 #if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
   if (Mod.getContext().supportsTypedPointers()) {
