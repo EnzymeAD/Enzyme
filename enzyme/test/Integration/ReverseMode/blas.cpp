@@ -1071,33 +1071,25 @@ static void potrfTests() {
         foundCalls = calls;
         init();
 
-        double *cacheA = (double *)foundCalls[0].pout_arg1;
-
-        cblas_dlacpy(layout, uplo, N, N, A, lda, cacheA, N);
-        inputs[3] = BlasInfo(cacheA, layout, N, N, N);
-
-        assert(foundCalls.size() >= 2);
-        assert(foundCalls[0].type == CallType::LACPY);
-
         my_potrf(layout, uplo, N, A, lda);
 
         inDerivative = true;
 
-        assert(foundCalls.size() >= 3);
-        assert(foundCalls[2].type == CallType::LASCL);
-        double *tri = (double *)foundCalls[2].pout_arg1;
-        inputs[4] = BlasInfo(tri, layout, N, N, N);
+        assert(foundCalls.size() >= 2);
+        assert(foundCalls[1].type == CallType::LASCL);
+        double *tri = (double *)foundCalls[1].pout_arg1;
+        inputs[3] = BlasInfo(tri, layout, N, N, N);
         cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, tri, N, 0);
 
         cblas_dlacpy(layout, uplo, N, N, dA, lda, tri, N);
 
         cblas_dtrmm(layout, uplo_to_side(uplo), uplo, 'T', 'N', N, N, 1.0,
-                    cacheA, N, tri, N);
+                    A, lda, tri, N);
 
-        assert(foundCalls.size() >= 9);
-        assert(foundCalls[5].type == CallType::COPY);
-        double *tmp = (double *)foundCalls[5].pout_arg1;
-        inputs[5] = BlasInfo(tmp, N, 1);
+        assert(foundCalls.size() >= 5);
+        assert(foundCalls[4].type == CallType::COPY);
+        double *tmp = (double *)foundCalls[4].pout_arg1;
+        inputs[4] = BlasInfo(tmp, N, 1);
 
         cblas_dcopy(N, tri, N + 1, tmp, 1);
         cblas_dscal(N, 0.5, tmp, 1);
@@ -1105,9 +1097,9 @@ static void potrfTests() {
         cblas_dcopy(N, tmp, 1, tri, N + 1);
 
         cblas_dtrsm(layout, uplo_to_rside(uplo), uplo, 'N', 'N', N, N, 1.0,
-                    cacheA, N, tri, N);
+                    A, lda, tri, N);
         cblas_dtrsm(layout, uplo_to_side(uplo), uplo, 'T', 'N', N, N, 1.0,
-                    cacheA, N, tri, N);
+                    A, lda, tri, N);
 #define triv(r, c)                                                               \
   tri[(r) * (layout == CblasRowMajor ? N : 1) +                            \
     (c) * (layout == CblasRowMajor ? 1 : N)]
