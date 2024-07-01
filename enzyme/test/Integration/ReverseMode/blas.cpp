@@ -78,6 +78,12 @@ void my_dsyrk(char layout, char uplo, char trans,
     inDerivative = true;
 }
 
+void my_potrf(char layout, char uplo, int N, double *__restrict__ A, int lda) {
+  int info;
+  cblas_dpotrf(layout, uplo, N, A, lda, &info);
+  inDerivative = true;
+}
+
 static void dotTests() {
 
     std::string Test = "DOT active both ";
@@ -1012,7 +1018,114 @@ static void syrkTests() {
   free(dC);
 }
 
-int main() { 
+static void potrfTests() {
+  // N means normal matrix, T means transposed
+  for (char layout : {CblasColMajor, CblasRowMajor}) {
+    for (auto uplo : {'U', 'u', 'L', 'l'})
+
+    {
+      BlasInfo inputs[6] = {
+          /*A*/ BlasInfo(A, layout, N, N, lda),
+          /*B*/ BlasInfo(),
+          /*C*/ BlasInfo(),
+          BlasInfo(),
+          BlasInfo(),
+          BlasInfo(),
+      };
+      {
+
+        std::string Test = "POTRF active A ";
+        init();
+
+        my_potrf(layout, uplo, N, A, lda);
+
+        assert(calls.size() == 1);
+        assert(calls[0].inDerivative == false);
+        assert(calls[0].type == CallType::POTRF);
+        assert(calls[0].pout_arg1 == A);
+        assert(calls[0].pin_arg1 == UNUSED_POINTER);
+        assert(calls[0].pin_arg2 == UNUSED_POINTER);
+        assert(calls[0].farg1 == UNUSED_DOUBLE);
+        assert(calls[0].farg2 == UNUSED_DOUBLE);
+        assert(calls[0].layout == layout);
+        assert(calls[0].targ1 == UNUSED_TRANS);
+        assert(calls[0].targ2 == UNUSED_TRANS);
+        assert(calls[0].iarg1 == N);
+        assert(calls[0].iarg2 == UNUSED_INT);
+        assert(calls[0].iarg3 == UNUSED_INT);
+        assert(calls[0].iarg4 == lda);
+        assert(calls[0].iarg5 == UNUSED_INT);
+        assert(calls[0].iarg6 == UNUSED_INT);
+        assert(calls[0].side == UNUSED_TRANS);
+        assert(calls[0].uplo == uplo);
+        assert(calls[0].diag == UNUSED_TRANS);
+
+        // Check memory of primal on own.
+        checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+        init();
+        __enzyme_autodiff((void *)my_potrf, enzyme_const, layout, enzyme_const,
+                          uplo, enzyme_const, N, enzyme_dup, A, dA,
+                          enzyme_const, lda);
+        foundCalls = calls;
+        init();
+
+        double *cacheA = (double *)foundCalls[0].pout_arg1;
+
+        cblas_dlacpy(layout, uplo, N, N, A, lda, cacheA, N);
+        inputs[3] = BlasInfo(cacheA, layout, N, N, N);
+
+        assert(foundCalls.size() >= 2);
+        // assert(foundCalls[0].type == CallType::LACPY);
+        inDerivative = true;
+
+        my_potrf(layout, uplo, N, A, lda);
+
+        assert(foundCalls.size() >= 3);
+        // assert(foundCalls[2].type == CallType::LASCL);
+        double *tri = (double *)foundCalls[2].pout_arg1;
+        inputs[4] = BlasInfo(tri, layout, N, N, N);
+        cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, tri, N, 0);
+
+        cblas_dlacpy(layout, uplo, N, N, dA, lda, tri, N);
+
+        cblas_dtrmm(layout, uplo_to_side(uplo), uplo, uplo_to_normal(uplo), 'N',
+                    N, N, 1.0, cacheA, N, tri, N);
+
+        assert(foundCalls.size() >= 9);
+        // assert(foundCalls[5].type == CallType::COPY);
+        double *tmp = (double *)foundCalls[5].pout_arg1;
+        inputs[5] = BlasInfo(tmp, N, 1);
+
+        cblas_dcopy(N, tri, N + 1, tmp, 1);
+        cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, dA, lda, 0);
+        cblas_dcopy(N, tmp, 1, tri, N + 1);
+
+        cblas_dtrsm(layout, uplo_to_side(uplo), uplo, 'N', 'N', N, N, 1.0,
+                    cacheA, N, tri, N);
+
+        cblas_dscal(N, 2, dA, lda + 1);
+        cblas_dsyr2k(layout, uplo, uplo_to_trans(uplo), N, N, 1.0, cacheA, N,
+                     tri, N, 1.0, dA, lda);
+        cblas_dscal(N, 0.5, dA, lda + 1);
+
+        checkTest(Test);
+
+        SkipVecIncCheck = true;
+        // Check memory of primal of expected derivative
+        checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+        // Check memory of primal of our derivative (if equal above, it
+        // should be the same).
+        checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+        SkipVecIncCheck = false;
+      }
+    }
+  }
+}
+
+int main() {
+  /*
   dotTests();
 
   nrm2Tests();
@@ -1022,8 +1135,10 @@ int main() {
   gemmTests();
 
   trmvTests();
-  
+
   trmmTests();
 
   syrkTests();
+  */
+  potrfTests();
 }

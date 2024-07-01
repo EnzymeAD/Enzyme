@@ -2815,13 +2815,18 @@ Value *is_lower(IRBuilder<> &B, Value *uplo, bool byRef, bool cublas) {
     IntegerType *charTy = IntegerType::get(uplo->getContext(), 8);
     uplo = B.CreateLoad(charTy, uplo, "loaded.trans");
 
-    auto isL = B.CreateICmpEQ(uplo, ConstantInt::get(charTy, 'L'));
-    auto isl = B.CreateICmpEQ(uplo, ConstantInt::get(charTy, 'l'));
+    auto isL = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'L'));
+    auto isl = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'l'));
     // fortran blas
     return B.CreateOr(isl, isL);
   } else {
     // we can inspect scalars
-    return B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 122));
+    auto capi = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 122));
+    // TODO we really should just return capi, but for sake of consistency,
+    // we will accept either here.
+    auto isL = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'L'));
+    auto isl = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'l'));
+    return B.CreateOr(capi, B.CreateOr(isl, isL));
   }
 }
 
@@ -2845,13 +2850,19 @@ llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef,
     IntegerType *charTy = IntegerType::get(trans->getContext(), 8);
     trans = B.CreateLoad(charTy, trans, "loaded.trans");
 
-    auto isN = B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'N'));
-    auto isn = B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'n'));
+    auto isN = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N'));
+    auto isn = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'));
     // fortran blas
     return B.CreateOr(isn, isN);
   } else {
+    // TODO we really should just return capi, but for sake of consistency,
+    // we will accept either here.
     // we can inspect scalars
-    return B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 111));
+    auto capi = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 111));
+    auto isN = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N'));
+    auto isn = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'));
+    // fortran blas
+    return B.CreateOr(capi, B.CreateOr(isn, isN));
   }
 }
 
@@ -2876,13 +2887,19 @@ llvm::Value *is_left(IRBuilder<> &B, llvm::Value *side, bool byRef,
     IntegerType *charTy = IntegerType::get(side->getContext(), 8);
     side = B.CreateLoad(charTy, side, "loaded.side");
 
-    auto isL = B.CreateICmpEQ(side, ConstantInt::get(charTy, 'L'));
-    auto isl = B.CreateICmpEQ(side, ConstantInt::get(charTy, 'l'));
+    auto isL = B.CreateICmpEQ(side, ConstantInt::get(side->getType(), 'L'));
+    auto isl = B.CreateICmpEQ(side, ConstantInt::get(side->getType(), 'l'));
     // fortran blas
     return B.CreateOr(isl, isL);
   } else {
+    // TODO we really should just return capi, but for sake of consistency,
+    // we will accept either here.
     // we can inspect scalars
-    return B.CreateICmpEQ(side, ConstantInt::get(side->getType(), 141));
+    auto capi = B.CreateICmpEQ(side, ConstantInt::get(side->getType(), 141));
+    auto isL = B.CreateICmpEQ(side, ConstantInt::get(side->getType(), 'L'));
+    auto isl = B.CreateICmpEQ(side, ConstantInt::get(side->getType(), 'l'));
+    // fortran blas
+    return B.CreateOr(capi, B.CreateOr(isl, isL));
   }
 }
 

@@ -796,7 +796,6 @@ static void potrfTests() {
 }
 
 int main() {
-    /*
   dotTests();
 
   nrm2Tests();
@@ -806,6 +805,6 @@ int main() {
   gemmTests();
   
   syrkTests();
- */ 
+
   potrfTests();
 }
