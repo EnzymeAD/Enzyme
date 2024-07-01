@@ -1019,6 +1019,7 @@ static void syrkTests() {
 }
 
 static void potrfTests() {
+  int N = 17;
   // N means normal matrix, T means transposed
   for (char layout : {CblasColMajor, CblasRowMajor}) {
     for (auto uplo : {'U', 'u', 'L', 'l'})
@@ -1102,7 +1103,7 @@ static void potrfTests() {
         cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, tri, N, 0);
         cblas_dcopy(N, tmp, 1, tri, N + 1);
 
-        cblas_dtrsm(layout, uplo_to_side(uplo), uplo, 'N', 'N', N, N, 1.0,
+        cblas_dtrsm(layout, uplo_to_rside(uplo), uplo, 'N', 'N', N, N, 1.0,
                     cacheA, N, tri, N);
 
         cblas_dscal(N, 2, dA, lda + 1);

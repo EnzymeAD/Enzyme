@@ -210,6 +210,22 @@ char uplo_to_side(char c) {
   }
 }
 
+char uplo_to_rside(char c) {
+  switch (c) {
+  case 'l':
+    return 'R';
+  case 'L':
+    return 'R';
+  case 'U':
+    return 'L';
+  case 'u':
+    return 'L';
+  default:
+    printf("Illegal uplo_to_side of '%c'\n", c);
+    exit(1);
+  }
+}
+
 cublasOperation_t transpose(cublasOperation_t v) {
   switch (v) {
   case cublasOperation_t::CUBLAS_OP_N:
