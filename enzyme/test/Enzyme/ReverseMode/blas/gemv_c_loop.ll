@@ -56,17 +56,16 @@ entry:
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
 ; CHECK-NEXT:   %cache.A = bitcast i8* %malloccall to double*
 ; CHECK-NEXT:   call void @cblas_dlacpy(i32 101, i8 0, i32 %N, i32 %N, double* %K, i32 %N, double* %cache.A, i32 %N)
-; CHECK-NEXT:   %1 = select i1 true, i32 %N, i32 %N
-; CHECK-NEXT:   %mallocsize1 = mul nuw nsw i32 %1, 8
+; CHECK-NEXT:   %mallocsize1 = mul nuw nsw i32 %N, 8
 ; CHECK-NEXT:   %malloccall2 = tail call noalias nonnull i8* @malloc(i32 %mallocsize1)
-; CHECK-NEXT:   %2 = load i8**, i8*** %malloccall2_cache, align 8, !dereferenceable !6, !invariant.group !2
-; CHECK-NEXT:   %3 = getelementptr inbounds i8*, i8** %2, i64 %iv
-; CHECK-NEXT:   store i8* %malloccall2, i8** %3, align 8, !invariant.group !7
-; CHECK-NEXT:   %4 = load i8**, i8*** %malloccall_cache, align 8, !dereferenceable !6, !invariant.group !5
-; CHECK-NEXT:   %5 = getelementptr inbounds i8*, i8** %4, i64 %iv
-; CHECK-NEXT:   store i8* %malloccall, i8** %5, align 8, !invariant.group !8
+; CHECK-NEXT:   %[[i2:.+]] = load i8**, i8*** %malloccall2_cache, align 8, !dereferenceable !6, !invariant.group !2
+; CHECK-NEXT:   %[[i3:.+]] = getelementptr inbounds i8*, i8** %[[i2]], i64 %iv
+; CHECK-NEXT:   store i8* %malloccall2, i8** %[[i3]], align 8, !invariant.group !7
+; CHECK-NEXT:   %[[i4:.+]] = load i8**, i8*** %malloccall_cache, align 8, !dereferenceable !6, !invariant.group !5
+; CHECK-NEXT:   %[[i5:.+]] = getelementptr inbounds i8*, i8** %[[i4]], i64 %iv
+; CHECK-NEXT:   store i8* %malloccall, i8** %[[i5]], align 8, !invariant.group !8
 ; CHECK-NEXT:   %cache.x = bitcast i8* %malloccall2 to double*
-; CHECK-NEXT:   call void @cblas_dcopy(i32 %1, double* %x0, i32 1, double* %cache.x, i32 1)
+; CHECK-NEXT:   call void @cblas_dcopy(i32 %N, double* %x0, i32 1, double* %cache.x, i32 1)
 ; CHECK-NEXT:   tail call void @cblas_dgemv(i32 noundef 101, i32 noundef 111, i32 noundef %N, i32 noundef %N, double noundef 1.000000e-03, double* noundef %K, i32 noundef %N, double* noundef %x0, i32 noundef 1, double noundef 1.000000e+00, double* noundef %v0, i32 noundef 1)
 ; CHECK-NEXT:   %exitcond.not = icmp eq i64 %iv.next, 5000
 ; CHECK-NEXT:   br i1 %exitcond.not, label %for.cond.cleanup, label %for.body

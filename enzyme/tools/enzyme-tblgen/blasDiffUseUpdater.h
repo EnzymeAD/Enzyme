@@ -55,8 +55,13 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
        << ";\n";
     os << "  auto arg_" << name << " = CI->getArgOperand(pos_" << name
        << ");\n";
-    os << "  const bool overwritten_" << name
-       << " = (cacheMode ? (overwritten_args_ptr ? (*overwritten_args_ptr)[pos_"
+    os << "  const bool overwritten_" << name;
+
+    // if (pattern.getMutableArgs().count(argPos))
+    //  os << " = (cacheMode ? true : false);\n\n";
+    // else
+    os << " = (cacheMode ? (overwritten_args_ptr ? "
+          "(*overwritten_args_ptr)[pos_"
        << name << "] : true ) : false);\n\n";
   }
 

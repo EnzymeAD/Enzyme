@@ -659,8 +659,10 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                            llvm::ArrayRef<llvm::Value *> args,
                            llvm::Type *copy_retty,
                            llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
-  auto copy_name =
-      std::string(blas.prefix) + blas.floatType + "copy" + blas.suffix;
+  const bool cublasv2 =
+      blas.prefix == "cublas" && StringRef(blas.suffix).contains("v2");
+  auto copy_name = std::string(blas.prefix) + blas.floatType + "copy" +
+                   (cublasv2 ? "" : blas.suffix);
 
   SmallVector<Type *, 1> tys;
   for (auto arg : args)
@@ -793,9 +795,7 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
               cast<PointerType>(blasalpha->getType())->getAddressSpace()));
       alpha = B1.CreateLoad(fpTy, VP);
     }
-    Value *is_u = is_uper(B1, blasuplo, byRef);
-    // Value *k = B1.CreateSelect(is_u, ConstantInt::get(IT, 0),
-    //                           ConstantInt::get(IT, 1), "k");
+    Value *is_l = is_lower(B1, blasuplo, byRef, /*cublas*/ false);
     B1.CreateCondBr(B1.CreateICmpEQ(n, ConstantInt::get(IT, 0)), end, init);
 
     IRBuilder<> B2(init);
@@ -811,7 +811,7 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
         blasdAP,
         PointerType::get(
             fpTy, cast<PointerType>(blasdAP->getType())->getAddressSpace()));
-    B2.CreateCondBr(is_u, uper_code, lower_code);
+    B2.CreateCondBr(is_l, lower_code, uper_code);
 
     IRBuilder<> B3(uper_code);
     B3.setFastMathFlags(getFast());
@@ -2654,9 +2654,11 @@ std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
-  const char *extractable[] = {"dot",  "scal", "axpy", "gemv", "gemm", "spmv",
-                               "syrk", "nrm2", "trmm", "trmv", "symm"};
-  const char *floatType[] = {"s", "d"}; // c, z
+  const char *extractable[] = {"dot",   "scal",  "axpy",  "gemv",  "gemm",
+                               "spmv",  "syrk",  "nrm2",  "trmm",  "trmv",
+                               "symm",  "potrf", "copy",  "spmv",  "syr2k",
+                               "potrs", "getrf", "getrs", "trtrs", "getri"};
+  const char *floatType[] = {"s", "d", "c", "z"};
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
   const char *suffixes[] = {"", "_", "64_", "_64_"};
   for (auto t : floatType) {
@@ -2674,8 +2676,8 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
     }
   }
   // c interface to cublas
-  const char *cuCFloatType[] = {"S", "D"}; // c, z
-  const char *cuFFloatType[] = {"s", "d"}; // c, z
+  const char *cuCFloatType[] = {"S", "D", "C", "Z"};
+  const char *cuFFloatType[] = {"s", "d", "c", "z"};
   const char *cuCPrefixes[] = {"cublas"};
   const char *cuSuffixes[] = {"", "_v2", "_64", "_v2_64"};
   for (auto t : llvm::enumerate(cuCFloatType)) {
@@ -2737,13 +2739,13 @@ llvm::FastMathFlags getFast() {
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, const Twine &name) {
+  if (!cache_arg)
+    return;
   if (!arg->getType()->isPointerTy()) {
     assert(arg->getType() == ty);
     cacheValues.push_back(arg);
     return;
   }
-  if (!cache_arg)
-    return;
 #if LLVM_VERSION_MAJOR < 17
   auto PT = cast<PointerType>(arg->getType());
 #if LLVM_VERSION_MAJOR <= 14
@@ -2796,38 +2798,47 @@ llvm::Value *to_blas_fp_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
   return allocV;
 }
 
-llvm::Value *select_vec_dims(IRBuilder<> &B, llvm::Value *trans,
-                             llvm::Value *dim1, llvm::Value *dim2, bool byRef,
-                             bool cublas) {
-  auto norm = is_normal(B, trans, byRef, cublas);
-  Value *width = B.CreateSelect(norm, dim1, dim2);
-
-  return width;
-}
-
-Value *is_uper(IRBuilder<> &B, Value *trans, bool byRef) {
-  IntegerType *charTy;
+Value *is_lower(IRBuilder<> &B, Value *uplo, bool byRef, bool cublas) {
+  if (cublas) {
+    Value *isNormal = nullptr;
+    isNormal = B.CreateICmpEQ(
+        uplo, ConstantInt::get(uplo->getType(),
+                               /*cublasFillMode_t::CUBLAS_FILL_MODE_LOWER*/ 0));
+    return isNormal;
+  }
+  if (auto CI = dyn_cast<ConstantInt>(uplo)) {
+    if (CI->getValue() == 'L' || CI->getValue() == 'l')
+      return ConstantInt::getTrue(B.getContext());
+    if (CI->getValue() == 'U' || CI->getValue() == 'u')
+      return ConstantInt::getFalse(B.getContext());
+  }
   if (byRef) {
     // can't inspect opaque ptr, so assume 8 (Julia)
-    charTy = IntegerType::get(trans->getContext(), 8);
-    trans = B.CreateLoad(charTy, trans, "loaded.trans");
+    IntegerType *charTy = IntegerType::get(uplo->getContext(), 8);
+    uplo = B.CreateLoad(charTy, uplo, "loaded.trans");
+
+    auto isL = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'L'));
+    auto isl = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'l'));
+    // fortran blas
+    return B.CreateOr(isl, isL);
   } else {
     // we can inspect scalars
-    unsigned int len = trans->getType()->getScalarSizeInBits();
-    charTy = IntegerType::get(trans->getContext(), len);
+    auto capi = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 122));
+    // TODO we really should just return capi, but for sake of consistency,
+    // we will accept either here.
+    auto isL = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'L'));
+    auto isl = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'l'));
+    return B.CreateOr(capi, B.CreateOr(isl, isL));
   }
-
-  Value *isUper =
-      B.CreateOr(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'u')),
-                 B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'U')));
-  return isUper;
 }
 
 llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef,
                        bool cublas) {
   if (cublas) {
     Value *isNormal = nullptr;
-    isNormal = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 0));
+    isNormal = B.CreateICmpEQ(
+        trans, ConstantInt::get(trans->getType(),
+                                /*cublasOperation_t::CUBLAS_OP_N*/ 0));
     return isNormal;
   }
   // Explicitly support 'N' always, since we use in the rule infra
@@ -2841,13 +2852,56 @@ llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef,
     IntegerType *charTy = IntegerType::get(trans->getContext(), 8);
     trans = B.CreateLoad(charTy, trans, "loaded.trans");
 
-    auto isN = B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'N'));
-    auto isn = B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'n'));
+    auto isN = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N'));
+    auto isn = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'));
     // fortran blas
     return B.CreateOr(isn, isN);
   } else {
+    // TODO we really should just return capi, but for sake of consistency,
+    // we will accept either here.
     // we can inspect scalars
-    return B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 111));
+    auto capi = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 111));
+    auto isN = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N'));
+    auto isn = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'));
+    // fortran blas
+    return B.CreateOr(capi, B.CreateOr(isn, isN));
+  }
+}
+
+llvm::Value *is_left(IRBuilder<> &B, llvm::Value *side, bool byRef,
+                     bool cublas) {
+  if (cublas) {
+    Value *isNormal = nullptr;
+    isNormal = B.CreateICmpEQ(
+        side, ConstantInt::get(side->getType(),
+                               /*cublasSideMode_t::CUBLAS_SIDE_LEFT*/ 0));
+    return isNormal;
+  }
+  // Explicitly support 'L'/'R' always, since we use in the rule infra
+  if (auto CI = dyn_cast<ConstantInt>(side)) {
+    if (CI->getValue() == 'L' || CI->getValue() == 'l')
+      return ConstantInt::getTrue(B.getContext());
+    if (CI->getValue() == 'R' || CI->getValue() == 'r')
+      return ConstantInt::getFalse(B.getContext());
+  }
+  if (byRef) {
+    // can't inspect opaque ptr, so assume 8 (Julia)
+    IntegerType *charTy = IntegerType::get(side->getContext(), 8);
+    side = B.CreateLoad(charTy, side, "loaded.side");
+
+    auto isL = B.CreateICmpEQ(side, ConstantInt::get(side->getType(), 'L'));
+    auto isl = B.CreateICmpEQ(side, ConstantInt::get(side->getType(), 'l'));
+    // fortran blas
+    return B.CreateOr(isl, isL);
+  } else {
+    // TODO we really should just return capi, but for sake of consistency,
+    // we will accept either here.
+    // we can inspect scalars
+    auto capi = B.CreateICmpEQ(side, ConstantInt::get(side->getType(), 141));
+    auto isL = B.CreateICmpEQ(side, ConstantInt::get(side->getType(), 'L'));
+    auto isl = B.CreateICmpEQ(side, ConstantInt::get(side->getType(), 'l'));
+    // fortran blas
+    return B.CreateOr(capi, B.CreateOr(isl, isL));
   }
 }
 

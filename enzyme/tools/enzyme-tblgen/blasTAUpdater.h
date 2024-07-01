@@ -14,9 +14,11 @@ void emit_BLASTypes(raw_ostream &os) {
 
   os << "TypeTree ttFloat;\n"
      << "llvm::Type *floatType; \n"
-     << "if (blas.floatType == \"s\" || blas.floatType == \"S\") {\n"
+     << "if (blas.floatType == \"s\" || blas.floatType == \"S\" || "
+        "blas.floatType == \"c\" || blas.floatType == \"C\") {\n"
      << "  floatType = Type::getFloatTy(call.getContext());\n"
-     << "} else if (blas.floatType == \"d\" || blas.floatType == \"D\"){\n"
+     << "} else if (blas.floatType == \"d\" || blas.floatType == \"D\" || "
+        "blas.floatType == \"z\" || blas.floatType == \"Z\") {\n"
      << "  floatType = Type::getDoubleTy(call.getContext());\n"
      << "} else {\n"
      << "  llvm_unreachable(\"unknown float type of blas\");\n"

@@ -192,8 +192,11 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
 << "      Value *arg_malloc_size;\n";
 
     if (dimensions.size() == 3) {
-      os 
-<< "      malloc_size = select_vec_dims(BuilderZ, arg_" << nameVec[dimensions[0]] << ", arg_" << nameVec[dimensions[1]] << ", arg_" << nameVec[dimensions[2]] << ", byRef, cublas);\n";
+        auto startty = pattern.getTypeOfArg(nameVec[dimensions[0]]); 
+        assert(startty == ArgType::trans);
+os
+<< "      auto norm = is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n"
+<< "      malloc_size = CreateSelect(BuilderZ, norm, arg_" << nameVec[dimensions[1]] << ", arg_" << nameVec[dimensions[2]] << ");\n";
     } else {
       os 
 << "      malloc_size = arg_" << nameVec[dimensions[0]] << ";\n";
@@ -201,11 +204,14 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
     os
 << "      arg_malloc_size = malloc_size;\n"
 << "      malloc_size = load_if_ref(BuilderZ, intType, malloc_size, byRef);\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << vecName << "\");\n"
+<< "      Instruction *SubZero = nullptr;\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << vecName << "\", /*caller*/nullptr";
+    if (pattern.getName() == "potrf") os << ", &SubZero";
+    os << ");\n"
 << "      ValueType valueTypes[] = {" << valueTypes << "};\n"
 << "      valueTypes[" << argIdx << "] = ValueType::Primal;\n"
 << "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
-    for (auto len_pos : pattern.getRelatedLengthArgs(argIdx) ) {
+    for (auto len_pos : pattern.getRelatedLengthArgs(argIdx, /*hideuplo*/true) ) {
 os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
 os << "      if (cublas) {\n"
@@ -249,11 +255,27 @@ os << "      if (cublas) {\n"
 << "      auto charTy = IntegerType::get(intType->getContext(), 8);\n"
 << "      Value *M, *N;\n";
 
+    std::string uplostr = "        Value *uplo = llvm::ConstantInt::get(charTy, 0);\n" // garbage data, just should not match U or L
+                          "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, cublas, nullptr, allocationBuilder, \"copy.garbage\");\n";
     if (dimensions.size() == 3) {
+        auto startty = pattern.getTypeOfArg(nameVec[dimensions[0]]); 
+        if (startty == ArgType::trans) {
       os 
 << "      Value *normal = is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n"
 << "      M = BuilderZ.CreateSelect(normal, " << dim1 << ", " << dim2 << ");\n"
 << "      N = BuilderZ.CreateSelect(normal, " << dim2 << ", " << dim1 << ");\n";
+        } else if (startty == ArgType::uplo) {
+os << "      M = " << dim1 << ";\n"
+<< "      N = " << dim2 << ";\n";
+uplostr = "        Value *uplo = arg_" + nameVec[dimensions[0]] + ";\n";
+        } else if (startty == ArgType::side) {
+os
+<< "      Value *normal = is_left(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n"
+<< "      M = BuilderZ.CreateSelect(normal, " << dim1 << ", " << dim2 << ");\n"
+<< "      N = BuilderZ.CreateSelect(normal, " << dim2 << ", " << dim1 << ");\n";
+        } else {
+            assert(0 &&" unknown startty");
+        }
     } else {
       os 
 << "      M = " << dim1 << ";\n"
@@ -264,16 +286,18 @@ os << "      if (cublas) {\n"
 << "      auto *len1 = load_if_ref(BuilderZ, intType, M, byRef);\n"
 << "      auto *len2 = load_if_ref(BuilderZ, intType, N, byRef);\n"
 << "      auto *matSize = BuilderZ.CreateMul(len1, len2);\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, matSize, \"cache." << matName << "\");\n"
+<< "      Instruction *SubZero = nullptr;\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, matSize, \"cache." << matName << "\", /*caller*/nullptr";
+    if (pattern.getName() == "potrf") os << ", &SubZero";
+    os << ");\n"
 << "      SmallVector<ValueType, 7> valueTypes = {" << valueTypes << "};\n"
 <<"       valueTypes[" << argIdx << "] = ValueType::Primal;\n"
 << "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
-    for (auto len_pos : dimensions ) {
+    for (auto len_pos : pattern.getRelatedLengthArgs(argIdx, /*hideuplo*/true) ) {
 os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
 os << "      if (EnzymeLapackCopy) {\n"
-<< "        Value *uplo = llvm::ConstantInt::get(charTy, 0);\n" // garbage data, just should not match U or L
-<< "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, cublas, nullptr, allocationBuilder, \"copy.garbage\");\n"
+<< uplostr
 << "        SmallVector<Value *, 7> args = {uplo, M, N, arg_" << matName << ", arg_" << ldName << ", malins, M};\n"
 << "        if (!byRef) {\n"
 << "           args.insert(args.begin(), arg_layout); valueTypes.insert(valueTypes.begin(), ValueType::Primal); }\n"
