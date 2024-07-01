@@ -610,29 +610,50 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                         
                         // Zero out flipped side again
                         (BlasCall<"copy"> $n, use<"tri">, (Add $n, ConstantInt<1>), use<"tmp">, ConstantInt<1>),
+                        (BlasCall<"scal"> $n, Constant<"0.5">, use<"tmp">, ConstantInt<1>),
 
                         (BlasCall<"lascl"> $layout, (flip_uplo $uplo), ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $n, $n, use<"tri">, $n, Alloca<1>),
                         (BlasCall<"copy"> $n, use<"tmp">, ConstantInt<1>, use<"tri">, (Add $n, ConstantInt<1>))
                       ),
                       
                       (BlasCall<"trsm"> $layout, (uplo_to_rside $uplo), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, $n, use<"tri">, $n),
-
-                      (BlasCall<"scal"> $n, Constant<"2">, (First (Shadow $A)), (Add $lda, ConstantInt<1>)),
                       
-                      (BlasCall<"syr2k"> $layout,
-                                          $uplo,
-                                          (uplo_to_trans $uplo),
-                                          $n, $n, Constant<"1.0">,
-                                          $A,
-                                          $n,
-                                          use<"tri">,
-                                          $n,
-                                          Constant<"1.0">,
-                                          (Shadow $A)
-                                          ),
-                      
-                      (BlasCall<"scal"> $n, Constant<"0.5">, (First (Shadow $A)), (Add $lda, ConstantInt<1>))
-
+                      (BlasCall<"trsm"> $layout, (uplo_to_side $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, $n, use<"tri">, $n),
+                      (For<"i", 0> (Sub $n, ConstantInt<1>),
+                        (BlasCall<"axpy">
+                            (Sub (Sub $n, ConstantInt<1>), $i),
+                            Constant<"1.0">,
+                            (First
+                                (Lookup $layout,
+                                    (Concat use<"tri">, $n),
+                                    $i,
+                                    (Add $i, ConstantInt<1>)
+                                )
+                            ),
+                            (First
+                                (Lookup $layout,
+                                    (Concat ConstantInt<0>, $n),
+                                    ConstantInt<0>,
+                                    ConstantInt<1>
+                                )
+                            ),
+                            (First
+                                (Lookup $layout,
+                                    (Concat use<"tri">, $n),
+                                    (Add $i, ConstantInt<1>),
+                                    $i
+                                )
+                            ),
+                            (First
+                                (Lookup $layout,
+                                    (Concat ConstantInt<0>, $n),
+                                    ConstantInt<1>,
+                                    ConstantInt<0>
+                                )
+                            )
+                        )
+                     ),
+                     (BlasCall<"lacpy"> $layout, $uplo, $n, $n, use<"tri">, $n, (Shadow $A))
                   )
                   ],
                   (Seq<["tri", "triangular", "n"], [], 0>

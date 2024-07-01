@@ -1100,16 +1100,27 @@ static void potrfTests() {
         inputs[5] = BlasInfo(tmp, N, 1);
 
         cblas_dcopy(N, tri, N + 1, tmp, 1);
+        cblas_dscal(N, 0.5, tmp, 1);
         cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, tri, N, 0);
         cblas_dcopy(N, tmp, 1, tri, N + 1);
 
         cblas_dtrsm(layout, uplo_to_rside(uplo), uplo, 'N', 'N', N, N, 1.0,
                     cacheA, N, tri, N);
-
-        cblas_dscal(N, 2, dA, lda + 1);
-        cblas_dsyr2k(layout, uplo, uplo_to_trans(uplo), N, N, 1.0, cacheA, N,
-                     tri, N, 1.0, dA, lda);
-        cblas_dscal(N, 0.5, dA, lda + 1);
+        cblas_dtrsm(layout, uplo_to_side(uplo), uplo, 'T', 'N', N, N, 1.0,
+                    cacheA, N, tri, N);
+#define triv(r, c)                                                               \
+  tri[(r) * (layout == CblasRowMajor ? N : 1) +                            \
+    (c) * (layout == CblasRowMajor ? 1 : N)]
+        for (int i=0; i<N-1; i++) {
+            cblas_daxpy(N-i-1, 1.0,
+                        &triv(i, i+1),
+                        (&triv(0, 1) - &triv(0,0)),
+                        &triv(i+1, i),
+                        (&triv(1, 0) - &triv(0,0))
+                        );
+        }
+        
+        cblas_dlacpy(layout, uplo, N, N, tri, N, dA, lda);
 
         checkTest(Test);
 
