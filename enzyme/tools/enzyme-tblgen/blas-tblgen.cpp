@@ -1196,6 +1196,14 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       os << " Value *ld_lookup = load_if_ref(Builder2, intType, larg_1[1], "
             "byRef);\n";
 
+      auto SDI = dyn_cast<DagInit>(Dag->getArg(1));
+      auto SDI2 =
+          SDI ? dyn_cast<DefInit>(SDI->getOperator())->getDef() : nullptr;
+      auto SDI3 = (SDI2 && SDI2->getName() == "Concat")
+                      ? dyn_cast<DefInit>(SDI->getArg(0))
+                      : nullptr;
+      bool constint = SDI3 && SDI3->getDef()->isSubClassOf("ConstantInt");
+
       if (Dag->getNumArgs() == 4) {
         os << " Value *layoutptr = cblas ? load_if_ref(Builder2, charType, "
               "larg_0[0], "
@@ -1210,38 +1218,35 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
               "Builder2.CreateMul(load_if_ref(Builder2, "
               "intType, larg_3[0], byRef), CreateSelect(Builder2, is_row_maj, "
               "ConstantInt::get(intType, 1), ld_lookup)));\n";
-        os << "if (isa<ConstantInt>(ptr) && "
-              "cast<ConstantInt>(ptr)->isZero())\n";
-        os << "  ptr = to_blas_callconv(Builder2, offset, byRef, cublas, "
-              "nullptr, "
-              "allocationBuilder, \"offset\");\n";
-        os << " else {\n";
+        if (constint)
+          os << "  ptr = to_blas_callconv(Builder2, offset, byRef, cublas, "
+                "nullptr, "
+                "allocationBuilder, \"offset\");\n";
       }
 
-      os << "    if (ptr->getType()->isIntegerTy()) ptr = "
-            "Builder2.CreateIntToPtr(ptr, PointerType::getUnqual(fpType));\n";
+      if (!constint) {
+        os << "    if (ptr->getType()->isIntegerTy()) ptr = "
+              "Builder2.CreateIntToPtr(ptr, PointerType::getUnqual(fpType));\n";
 
-      os << "#if LLVM_VERSION_MAJOR < 17\n";
-      os << "#if LLVM_VERSION_MAJOR >= 15\n";
-      os << "  if (ptr->getContext().supportsTypedPointers()) {\n";
-      os << "#endif\n";
-      os << "    if (fpType != ptr->getType()->getPointerElementType()) {\n";
-      os << "      ptr = Builder2.CreatePointerCast(ptr, "
-            "PointerType::get(fpType, "
-            "cast<PointerType>(ptr->getType())->getAddressSpace()));\n";
-      os << "    }\n";
-      os << "#if LLVM_VERSION_MAJOR >= 15\n";
-      os << "  }\n";
-      os << "#endif\n";
-      os << "#endif\n";
-      if (Dag->getNumArgs() == 4) {
-      } else {
-        os << " Value* offset = Builder2.CreateMul(load_if_ref(Builder2, "
-              "intType, larg_2[0], byRef), ld_lookup);\n";
-      }
-      os << "  ptr = Builder2.CreateGEP(fpType, ptr, offset);\n";
-      if (Dag->getNumArgs() == 4) {
-        os << " }\n";
+        os << "#if LLVM_VERSION_MAJOR < 17\n";
+        os << "#if LLVM_VERSION_MAJOR >= 15\n";
+        os << "  if (ptr->getContext().supportsTypedPointers()) {\n";
+        os << "#endif\n";
+        os << "    if (fpType != ptr->getType()->getPointerElementType()) {\n";
+        os << "      ptr = Builder2.CreatePointerCast(ptr, "
+              "PointerType::get(fpType, "
+              "cast<PointerType>(ptr->getType())->getAddressSpace()));\n";
+        os << "    }\n";
+        os << "#if LLVM_VERSION_MAJOR >= 15\n";
+        os << "  }\n";
+        os << "#endif\n";
+        os << "#endif\n";
+        if (Dag->getNumArgs() == 4) {
+        } else {
+          os << " Value* offset = Builder2.CreateMul(load_if_ref(Builder2, "
+                "intType, larg_2[0], byRef), ld_lookup);\n";
+        }
+        os << "  ptr = Builder2.CreateGEP(fpType, ptr, offset);\n";
       }
       if (Def->getName() == "LoadLookup") {
         os << "  if (!byRefFloat) ptr = Builder2.CreateLoad(fpType, ptr);\n";
