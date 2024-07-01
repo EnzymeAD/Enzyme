@@ -333,13 +333,16 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
     os << "// Next ones shall only be called in the cblas case,\n"
        << "// they have incorrect meaning otherwise\n"
        << "  const int pos_" << name << " = 0;\n"
-       << "  const auto orig_" << name << " = call.getArgOperand(pos_" << name
-       << ");\n"
-       << "  auto arg_" << name << " = gutils->getNewFromOriginal(orig_" << name
-       << ");\n"
-       << "  const auto type_" << name << " = arg_" << name << "->getType();\n"
+       << "  Value *const orig_" << name << " = cblas ? call.getArgOperand(pos_"
+       << name << ") : nullptr;\n"
+       << "  Value * arg_" << name
+       << " = cblas ? gutils->getNewFromOriginal(orig_" << name
+       << ") : nullptr;\n"
+       << "  const auto type_" << name << " = cblas ? arg_" << name
+       << "->getType() : nullptr;\n"
        << "  const bool overwritten_" << name
-       << " = (cacheMode ? overwritten_args[pos_" << name << "] : false);\n\n";
+       << " = ((cacheMode && cblas) ? overwritten_args[pos_" << name
+       << "] : false);\n\n";
   }
 
   auto actArgs = pattern.getActiveArgs();
@@ -1194,10 +1197,12 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
             "byRef);\n";
 
       if (Dag->getNumArgs() == 4) {
-        os << " Value *layoutptr = load_if_ref(Builder2, charType, larg_0[0], "
-              "byRef);\n";
-        os << " Value* is_row_maj = Builder2.CreateICmpEQ(layoutptr, "
-              "ConstantInt::get(layoutptr->getType(), 101));\n";
+        os << " Value *layoutptr = cblas ? load_if_ref(Builder2, charType, "
+              "larg_0[0], "
+              "byRef) : nullptr;\n";
+        os << " Value* is_row_maj = cblas ? Builder2.CreateICmpEQ(layoutptr, "
+              "ConstantInt::get(layoutptr->getType(), 101)) : "
+              "Builder2.getFalse();\n";
         os << " Value* offset = Builder2.CreateMul(load_if_ref(Builder2, "
               "intType, larg_2[0], byRef), CreateSelect(Builder2, is_row_maj, "
               "ld_lookup, ConstantInt::get(intType, 1)));\n";
