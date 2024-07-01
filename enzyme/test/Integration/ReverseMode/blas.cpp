@@ -1138,7 +1138,6 @@ static void potrfTests() {
 }
 
 int main() {
-  /*
   dotTests();
 
   nrm2Tests();
@@ -1152,6 +1151,6 @@ int main() {
   trmmTests();
 
   syrkTests();
-  */
+  
   potrfTests();
 }
