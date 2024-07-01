@@ -3209,9 +3209,16 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
   case ReturnType::Return: {
     auto ret = inst->getOperand(0);
 
+    Type *rt = ret->getType();
+    while (auto AT = dyn_cast<ArrayType>(rt))
+      rt = AT->getElementType();
+    bool floatLike = rt->isFPOrFPVectorTy();
+
+    if (auto AT = dyn_cast<ArrayType>(ret->getType()))
+      floatLike |= AT->getElementType()->isFPOrFPVectorTy();
     if (retType == DIFFE_TYPE::CONSTANT) {
       toret = gutils->getNewFromOriginal(ret);
-    } else if (!ret->getType()->isFPOrFPVectorTy() &&
+    } else if (!floatLike &&
                TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
       toret = invertedPtr ? invertedPtr : gutils->invertPointerM(ret, nBuilder);
     } else if (!gutils->isConstantValue(ret)) {
