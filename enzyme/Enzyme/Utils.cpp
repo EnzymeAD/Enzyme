@@ -2737,13 +2737,13 @@ llvm::FastMathFlags getFast() {
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, const Twine &name) {
+  if (!cache_arg)
+    return;
   if (!arg->getType()->isPointerTy()) {
     assert(arg->getType() == ty);
     cacheValues.push_back(arg);
     return;
   }
-  if (!cache_arg)
-    return;
 #if LLVM_VERSION_MAJOR < 17
   auto PT = cast<PointerType>(arg->getType());
 #if LLVM_VERSION_MAJOR <= 14
