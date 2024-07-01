@@ -181,7 +181,7 @@ class DiagUpdateSPMV<string _tmp> {
 def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
                   ["x"],[len, fp, vinc<["n"]>],
                   [
-                  // dot must proceed scal, because scal modifies (Shadow $x)
+                  // dot must preceed scal, because scal modifies (Shadow $x)
                   (BlasCall<"dot"> $n, $x, (Shadow $x)),
                   (BlasCall<"scal"> $n, $alpha, (Shadow $x))
                   ],

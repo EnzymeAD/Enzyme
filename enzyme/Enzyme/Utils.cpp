@@ -659,8 +659,10 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                            llvm::ArrayRef<llvm::Value *> args,
                            llvm::Type *copy_retty,
                            llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
-  auto copy_name =
-      std::string(blas.prefix) + blas.floatType + "copy" + blas.suffix;
+  const bool cublasv2 =
+      blas.prefix == "cublas" && StringRef(blas.suffix).contains("v2");
+  auto copy_name = std::string(blas.prefix) + blas.floatType + "copy" +
+                   (cublasv2 ? "" : blas.suffix);
 
   SmallVector<Type *, 1> tys;
   for (auto arg : args)
