@@ -3554,8 +3554,10 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     OptimizerPM.addPass(llvm::SROA());
 #endif
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizerPM)));
+#ifdef ENZYME_ENABLE_HERBIE
     if (EnzymeEnableFPOpt)
       MPM.addPass(FPOptNewPM());
+#endif
     MPM.addPass(EnzymeNewPM(/*PostOpt=*/true));
     MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false));
 #if LLVM_VERSION_MAJOR >= 16
