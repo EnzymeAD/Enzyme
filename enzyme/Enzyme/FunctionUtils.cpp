@@ -1464,6 +1464,9 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   if (mode == DerivativeMode::ForwardModeError) {
     for (const auto &pair : VMap) {
       if (auto *before = dyn_cast<Instruction>(pair.first)) {
+        if (!before->getType()->isFloatingPointTy()) {
+          continue;
+        }
         auto *after = cast<Instruction>(pair.second);
         after->setMetadata(
             "enzyme_preprocess_origin",
