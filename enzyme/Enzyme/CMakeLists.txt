@@ -44,12 +44,32 @@ set(LLVM_LINK_COMPONENTS Demangle)
 file(GLOB ENZYME_SRC CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     "*.cpp"
 )
-list(REMOVE_ITEM ENZYME_SRC "eopt.cpp")
+list(REMOVE_ITEM ENZYME_SRC "eopt.cpp" "Herbie.cpp")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 list(APPEND ENZYME_SRC SCEV/ScalarEvolutionExpander.cpp)
 list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
+
+# set(ENZYME_LINK_TARGETS)
+set(ENZYME_ENABLE_HERBIE 0 CACHE BOOL "Enable Herbie")
+
+if(ENZYME_ENABLE_HERBIE)
+  include(ExternalProject)
+    ExternalProject_Add(herbie
+        GIT_REPOSITORY https://github.com/herbie-fp/herbie
+        GIT_TAG 66dd3019bfbd508bcd397fbe22c1b4b9078c3dee
+        CONFIGURE_COMMAND ""
+        BUILD_COMMAND make egg-herbie && raco exe -o herbie --orig-exe --embed-dlls --vv src/herbie.rkt
+        BUILD_IN_SOURCE true
+        INSTALL_COMMAND COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie ${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie
+    )
+    list(APPEND ENZYME_SRC Herbie.cpp)
+    add_compile_definitions(ENZYME_ENABLE_HERBIE=1)
+    set_source_files_properties(Herbie.cpp PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie")
+endif()
+
 
 # on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
 if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
@@ -72,6 +92,7 @@ if (${Clang_FOUND})
         intrinsics_gen
 	LINK_COMPONENTS
 	LLVM
+    ${ENZYME_LINK_TARGETS}
     )
 target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
 endif()

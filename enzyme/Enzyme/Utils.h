@@ -55,6 +55,8 @@
 #include "llvm/IR/IntrinsicsAMDGPU.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
 
+#include "llvm/Demangle/Demangle.h"
+
 #include <map>
 #include <set>
 
@@ -547,6 +549,7 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
 }
 
 llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res);
+llvm::Function *getLogFunction(llvm::Module *M);
 
 static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode) {
   std::set<llvm::Type *> seen;

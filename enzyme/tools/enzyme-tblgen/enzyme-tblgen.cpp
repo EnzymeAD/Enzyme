@@ -2226,52 +2226,44 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        assert(res);\n";
 
       // Insert logging function call (optional)
-      os << "        Function *logFunc = " << origName
-         << ".getModule()->getFunction(\"enzymeLogError\");\n";
+      os << "        Function *logFunc = getLogFunction(" << origName
+         << ".getModule());\n";
       os << "        if (logFunc) {\n"
-         << "            std::string moduleName = " << origName
-         << ".getModule()->getModuleIdentifier() ;\n"
-         << "            std::string functionName = " << origName
-         << ".getFunction()->getName().str();\n"
-         << "            std::string blockName = " << origName
-         << ".getParent()->getName().str();\n"
-         << "            int funcIdx = -1, blockIdx = -1, instIdx = -1;\n"
-         << "            auto funcIt = std::find_if(" << origName
-         << ".getModule()->begin(), " << origName
-         << ".getModule()->end(),\n"
-            "              [&](const auto& func) { return &func == "
-         << origName
-         << ".getFunction(); });\n"
-            "            if (funcIt != "
-         << origName
-         << ".getModule()->end()) {\n"
-            "              funcIdx = "
-            "std::distance("
-         << origName << ".getModule()->begin(), funcIt);\n"
-         << "            }\n"
-         << "            auto blockIt = std::find_if(" << origName
-         << ".getFunction()->begin(), " << origName
-         << ".getFunction()->end(),\n"
+         << "            assert(" << origName
+         << ".hasMetadata(\"enzyme_preprocess_origin\"));\n"
+         << "            auto *CMD = cast<ConstantAsMetadata>(" << origName
+         << ".getMetadata(\"enzyme_preprocess_origin\")->getOperand(0));\n"
+         << "            uintptr_t ptrValue = "
+            "cast<ConstantInt>(CMD->getValue())->getZExtValue();\n"
+         << "            auto *preprocessOrigInst = "
+            "reinterpret_cast<Instruction "
+            "*>(ptrValue);\n"
+         << "            std::string moduleName = "
+            "preprocessOrigInst->getModule()->getModuleIdentifier();\n"
+         << "            std::string functionName = "
+            "preprocessOrigInst->getFunction()->getName().str();\n"
+         << "            int blockIdx = -1, instIdx = -1;\n"
+         << "            auto blockIt = "
+            "std::find_if(preprocessOrigInst->getFunction()->begin(), "
+            "preprocessOrigInst->getFunction()->end(),\n"
             "              [&](const auto& block) { return &block == "
-         << origName
-         << ".getParent(); });\n"
+            "preprocessOrigInst->getParent(); });\n"
             "            if (blockIt != "
-         << origName
-         << ".getFunction()->end()) {\n"
-            "              blockIdx = std::distance("
-         << origName << ".getFunction()->begin(), blockIt);\n"
+            "preprocessOrigInst->getFunction()->end()) {\n"
+            "              blockIdx = "
+            "std::distance(preprocessOrigInst->getFunction()->begin(), "
+            "blockIt);\n"
          << "            }\n"
-         << "            auto instIt = std::find_if(" << origName
-         << ".getParent()->begin(), " << origName
-         << ".getParent()->end(),\n"
-            "              [&](const auto& curr) { return &curr == &"
-         << origName
-         << "; });\n"
-            "            if (instIt != "
-         << origName
-         << ".getParent()->end()) {\n"
-            "              instIdx = std::distance("
-         << origName << ".getParent()->begin(), instIt);\n"
+         << "            auto instIt = "
+            "std::find_if(preprocessOrigInst->getParent()->begin(), "
+            "preprocessOrigInst->getParent()->end(),\n"
+            "              [&](const auto& curr) { return &curr == "
+            "preprocessOrigInst; "
+            "});\n"
+            "            if (instIt != preprocessOrigInst->getParent()->end()) "
+            "{\n"
+            "              instIdx = "
+            "std::distance(preprocessOrigInst->getParent()->begin(), instIt);\n"
          << "            }\n"
          << "            Value *origValue = "
             "Builder2.CreateFPExt(gutils->getNewFromOriginal(&"
@@ -2294,20 +2286,62 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << "            Value *moduleNameValue = "
             "Builder2.CreateGlobalStringPtr(moduleName);\n"
          << "            Value *functionNameValue = "
-            "Builder2.CreateGlobalStringPtr(functionName + \" (\" +"
-            "std::to_string(funcIdx) + \")\");\n"
-         << "            Value *blockNameValue = "
-            "Builder2.CreateGlobalStringPtr(blockName + \" (\" +"
-            "std::to_string(blockIdx) + \")\");\n"
+            "Builder2.CreateGlobalStringPtr(functionName);\n"
+         << "            Value *blockIdxValue = "
+            "ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), blockIdx);\n"
+         << "            Value *instIdxValue = "
+            "ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), instIdx);\n"
          << "            Value *opcodeNameValue = "
-            "Builder2.CreateGlobalStringPtr(opcodeName + \" (\" "
-            "+std::to_string(instIdx) + \")\");\n"
+            "Builder2.CreateGlobalStringPtr(opcodeName);\n"
          << "            Value *calleeNameValue = "
             "Builder2.CreateGlobalStringPtr(calleeName);\n"
-         << "            Builder2.CreateCall(logFunc, {origValue, "
+         << "            unsigned numOperands = isa<CallInst>(" << origName
+         << ") ? cast<CallInst>(" << origName << ").arg_size() : " << origName
+         << ".getNumOperands();\n"
+         << "            Value *numOperandsValue = "
+            "ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), numOperands);\n"
+         << "            auto operands = isa<CallInst>(" << origName
+         << ") ? cast<CallInst>(" << origName << ").args() : " << origName
+         << ".operands();\n"
+         << "            ArrayType *operandArrayType = "
+            "ArrayType::get(Type::getDoubleTy("
+         << origName << ".getContext()), numOperands);\n"
+         << "            Value *operandArrayValue = "
+            "IRBuilder<>(gutils->inversionAllocs).CreateAlloca("
+            "operandArrayType);\n"
+         << "            for (auto operand : enumerate(operands)) {\n"
+         << "                Value *operandValue = "
+            "Builder2.CreateFPExt(gutils->getNewFromOriginal(operand.value()), "
+            "Type::getDoubleTy("
+         << origName << ".getContext()));\n"
+         << "                Value *ptr = "
+            "Builder2.CreateGEP(operandArrayType, operandArrayValue, "
+            "{llvm::ConstantInt::get(Type::getInt32Ty("
+         << origName
+         << ".getContext()), 0), llvm::ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), operand.index())});\n"
+         << "                Builder2.CreateStore(operandValue, ptr);\n"
+         << "            }\n"
+         << "            Value *operandPtrValue = "
+            "Builder2.CreateGEP(operandArrayType, operandArrayValue, "
+            "{ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), 0), ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), 0)});\n"
+         << "            CallInst *logCallInst = Builder2.CreateCall(logFunc, "
+            "{origValue, "
             "errValue, opcodeNameValue, calleeNameValue, moduleNameValue, "
-            "functionNameValue, blockNameValue});\n"
-         << "        }\n";
+            "functionNameValue, blockIdxValue, instIdxValue, numOperandsValue, "
+            "operandPtrValue});\n"
+         << "            logCallInst->setDebugLoc(gutils->getNewFromOriginal("
+         << origName << ".getDebugLoc()));\n"
+         << "        } else {\n"
+         << "            llvm::errs() << \"ForwardModeError: No log function "
+            "identified in \" << "
+         << origName << ".getModule()->getModuleIdentifier() << \"\\n\";\n"
+         << "        }";
 
       os << "        setDiffe(&" << origName << ", res, Builder2);\n";
       os << "        break;\n";

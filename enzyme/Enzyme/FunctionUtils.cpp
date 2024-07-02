@@ -1461,6 +1461,22 @@ Function *PreProcessCache::preprocessForClone(Function *F,
                       Returns, "", nullptr);
 #endif
   }
+  if (mode == DerivativeMode::ForwardModeError) {
+    for (const auto &pair : VMap) {
+      if (auto *before = dyn_cast<Instruction>(pair.first)) {
+        if (!before->getType()->isFloatingPointTy()) {
+          continue;
+        }
+        auto *after = cast<Instruction>(pair.second);
+        after->setMetadata(
+            "enzyme_preprocess_origin",
+            MDTuple::get(after->getContext(),
+                         {ConstantAsMetadata::get(ConstantInt::get(
+                             Type::getInt64Ty(after->getContext()),
+                             reinterpret_cast<std::uintptr_t>(before)))}));
+      }
+    }
+  }
   CloneOrigin[NewF] = F;
   NewF->setAttributes(F->getAttributes());
   if (EnzymeNoAlias)
@@ -1863,7 +1879,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       FAM.invalidate(*NewF, PA);
     }
 
-    if (mode != DerivativeMode::ForwardMode)
+    if (mode != DerivativeMode::ForwardMode &&
+        mode != DerivativeMode::ForwardModeError)
       ReplaceReallocs(NewF);
 
     {
@@ -1908,7 +1925,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     PA.preserve<PhiValuesAnalysis>();
   }
 
-  if (mode != DerivativeMode::ForwardMode)
+  if (mode != DerivativeMode::ForwardMode &&
+      mode != DerivativeMode::ForwardModeError)
     ReplaceReallocs(NewF);
 
   if (mode == DerivativeMode::ReverseModePrimal ||
