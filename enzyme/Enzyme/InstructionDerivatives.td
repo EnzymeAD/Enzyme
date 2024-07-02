@@ -535,6 +535,19 @@ def : CallPattern<(Op $x),
                   [ReadNone, NoUnwind]
                   >;
 
+def : CallPattern<(Op $x, $y),
+                  ["xlogy_jl"],
+                  [
+                    (FMul (Intrinsic<"log"> $y), (DiffeRet)),
+                    (Select (FCmpOEQ $x, (ConstantFP<"0"> $x)),
+                        (ConstantFP<"0"> $x),
+                        (FMul (FDiv $x, $y), (DiffeRet))
+                    )
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
 def : CallPattern<(Op $x),
                   ["logabsgamma"],
                   [
