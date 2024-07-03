@@ -240,41 +240,59 @@ double stringToDouble(const std::string &str) {
 }
 
 class FPConst : public FPNode {
-  std::string value;
+  std::string strValue;
+  double loggedValue = std::numeric_limits<double>::quiet_NaN();
 
 public:
-  FPConst(std::string value) : FPNode("__const"), value(value) {}
+  FPConst(std::string strValue) : FPNode("__const"), strValue(strValue) {}
 
   virtual std::string toFullExpression(
       std::unordered_map<Value *, FPNode *> &valueToNodeMap) override {
-    return value;
+    return strValue;
+  }
+
+  void updateBounds(double lower, double upper) override {
+    assert(lower == upper && "logged bounds for constant are not the same");
+    loggedValue = lower;
+    llvm::errs() << "Updated bounds for " << strValue << ": [" << lower << ", "
+                 << upper << "]\n";
+  }
+
+  double getLowerBound() const override {
+    assert(!std::isnan(loggedValue));
+    return loggedValue;
+  }
+
+  double getUpperBound() const override {
+    assert(!std::isnan(loggedValue));
+    return loggedValue;
   }
 
   virtual Value *getValue(IRBuilder<> &builder) override {
-    if (value == "+inf.0") {
+    if (strValue == "+inf.0") {
       return ConstantFP::getInfinity(builder.getDoubleTy(), false);
-    } else if (value == "-inf.0") {
+    } else if (strValue == "-inf.0") {
       return ConstantFP::getInfinity(builder.getDoubleTy(), true);
     }
 
     double constantValue;
-    size_t div = value.find('/');
+    size_t div = strValue.find('/');
 
     if (div != std::string::npos) {
-      std::string numerator = value.substr(0, div);
-      std::string denominator = value.substr(div + 1);
+      std::string numerator = strValue.substr(0, div);
+      std::string denominator = strValue.substr(div + 1);
       double num = stringToDouble(numerator);
       double denom = stringToDouble(denominator);
 
       constantValue = num / denom;
     } else {
-      constantValue = stringToDouble(value);
+      constantValue = stringToDouble(strValue);
     }
 
     // TODO eventually have this be typed
     if (EnzymePrintFPOpt)
-      llvm::errs() << "Returning " << value << " as constant: " << constantValue
-                   << "\n";
+      llvm::errs() << "Returning " << strValue
+                   << " as constant: " << constantValue << "\n";
     return ConstantFP::get(builder.getDoubleTy(), constantValue);
   }
 
@@ -757,9 +775,10 @@ B2:
                            [&](const auto &curr) { return &curr == I2; });
           assert(instIt != I2->getParent()->end() && "Instruction not found");
           size_t instIdx = std::distance(I2->getParent()->begin(), instIt);
-          assert(extractErrorLogData(ErrorLogPath, functionName, blockIdx,
-                                     instIdx, errorLogData) &&
-                 "Failed to extract error log data");
+          if (!extractErrorLogData(ErrorLogPath, functionName, blockIdx,
+                                   instIdx, errorLogData)) {
+            assert(0 && "Failed to extract error log data");
+          }
         }
 
         auto operands =
@@ -775,8 +794,8 @@ B2:
 
             // look up error log to get bounds of the operand of I2
             if (!ErrorLogPath.empty()) {
-              valueToNodeMap[operand]->updateBounds(errorLogData.lower[i],
-                                                    errorLogData.upper[i]);
+              auto *node = valueToNodeMap[operand];
+              node->updateBounds(errorLogData.lower[i], errorLogData.upper[i]);
               llvm::errs() << "Bounds of " << *operand
                            << " are: " << errorLogData.lower[i] << " and "
                            << errorLogData.upper[i] << "\n";
