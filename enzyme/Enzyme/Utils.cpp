@@ -43,6 +43,7 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
+#include "llvm/IR/Verifier.h"
 
 #include "llvm-c/Core.h"
 
@@ -761,7 +762,7 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType, BlasInfo blas
 
   Value *N_minus_1 = EB.CreateSub(Narg, one);
 
-  EB.CreateCondBr(EB.CreateICmpSLE(N_minus_1, zero), loop, end);
+  EB.CreateCondBr(EB.CreateICmpSLE(N_minus_1, zero), end, loop);
 
   IRBuilder<> LB(loop);
 
@@ -773,37 +774,30 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType, BlasInfo blas
   Value* copyArgs[] = {
     to_blas_callconv(LB, LB.CreateSub(N_minus_1, i), byRef, cublas, nullptr, EB),
     to_blas_callconv(LB,
-    lookup_with_layout(LB, fpType, layout, Aarg, N,
-        CreateSelect(LB, islower, i_plus_one, i),
-        CreateSelect(LB, islower, i, i_plus_one)
+    lookup_with_layout(LB, fpType, layoutarg, Aarg, Narg,
+        CreateSelect(LB, islowerarg, i_plus_one, i),
+        CreateSelect(LB, islowerarg, i, i_plus_one)
       )
     , byRef, cublas, nullptr, EB),
     to_blas_callconv(LB,
-    lookup_with_layout(LB, fpType, layout, nullptr, N,
-        CreateSelect(LB, islower, one, zero),
-        CreateSelect(LB, islower, zero, one)
+    lookup_with_layout(LB, fpType, layoutarg, nullptr, Narg,
+        CreateSelect(LB, islowerarg, one, zero),
+        CreateSelect(LB, islowerarg, zero, one)
       )
     , byRef, cublas, nullptr, EB),
     to_blas_callconv(LB,
-    lookup_with_layout(LB, fpType, layout, Aarg, N,
-        CreateSelect(LB, islower, i, i_plus_one),
-        CreateSelect(LB, islower, i_plus_one, i)
+    lookup_with_layout(LB, fpType, layoutarg, Aarg, Narg,
+        CreateSelect(LB, islowerarg, i, i_plus_one),
+        CreateSelect(LB, islowerarg, i_plus_one, i)
       )
     , byRef, cublas, nullptr, EB),
     to_blas_callconv(LB,
-    lookup_with_layout(LB, fpType, layout, nullptr, N,
-        CreateSelect(LB, islower, zero, one),
-        CreateSelect(LB, islower, one, zero)
+    lookup_with_layout(LB, fpType, layoutarg, nullptr, Narg,
+        CreateSelect(LB, islowerarg, zero, one),
+        CreateSelect(LB, islowerarg, one, zero)
       )
     , byRef, cublas, nullptr, EB)
   };
-
-  LB.CreateCondBr(B.CreateICmpEQ(i_plus_one, N_minus_1), end, loop);
-
-  {
-    IRBuilder<> B(end);
-    B.CreateRetVoid();
-  }
 
   Type* copyTys[] = {
     copyArgs[0]->getType(),
@@ -821,6 +815,19 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType, BlasInfo blas
   auto copyfn = M.getOrInsertFunction(copy_name, FT);
   Function *copyF = cast<Function>(copyfn.getCallee());
   attributeKnownFunctions(*copyF);
+  LB.CreateCall(copyF, copyArgs);
+  LB.CreateCondBr(LB.CreateICmpEQ(i_plus_one, N_minus_1), end, loop);
+
+  {
+    IRBuilder<> B(end);
+    B.CreateRetVoid();
+  }
+
+
+  if (llvm::verifyFunction(*F, &llvm::errs())) {
+    llvm::errs() << *F << "\n";
+    report_fatal_error("helper function failed verification");
+  }
 }
 
 void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,

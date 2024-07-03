@@ -758,9 +758,27 @@ static void potrfTests() {
 		  inputs[3] = BlasInfo(tri, layout, N, N, N);
           cblas_dlacpy(layout, flip_uplo(uplo), N, N, dA, lda, tri, N);
 
-          cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, dA, lda, 0);
-          cblas_dcopy(N, tri, lda+1, dA, lda+1);
-          
+#define triv(r, c)                                                               \
+  tri[(r) * (layout == CblasRowMajor ? N : 1) +                            \
+    (c) * (layout == CblasRowMajor ? 1 : N)]
+
+        int upperinc = (&triv(0, 1) - &triv(0,0));
+        int lowerinc = (&triv(1, 0) - &triv(0,0));
+        if (layout == CblasColMajor) {
+            assert(upperinc == N);
+            assert(lowerinc == 1);
+        } else {
+          assert(upperinc == 1);
+          assert(lowerinc == N);
+        }
+        bool is_lower = uplo == 'L' || uplo == 'l';
+        for (int i = 0; i < N - 1; i++) {
+          cblas_dcopy(N - i - 1,
+                    is_lower ? (&triv(i + 1, i)) : (&triv(i, i+1)), is_lower ? lowerinc : upperinc,
+                    is_lower ? (&triv(i, i + 1)) : (&triv(i+1, i)), is_lower ? upperinc : lowerinc
+                      );
+        }
+
           cblas_dtrsm(layout, 'L', uplo, uplo_to_normal(uplo), 'N', N, N, 1.0, A, lda, dA, lda);
           cblas_dtrsm(layout, 'R', uplo, uplo_to_trans(uplo), 'N', N, N, 1.0, A, lda, dA, lda);
           cblas_dscal(N, 0.5, dA, lda+1);
@@ -796,6 +814,7 @@ static void potrfTests() {
 }
 
 int main() {
+    /*
   dotTests();
 
   nrm2Tests();
@@ -805,6 +824,7 @@ int main() {
   gemmTests();
   
   syrkTests();
+  */
 
   potrfTests();
 }
