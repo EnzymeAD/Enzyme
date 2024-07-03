@@ -776,8 +776,6 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
 
   Value *N_minus_1 = EB.CreateSub(Narg, one);
 
-  EB.CreateCondBr(EB.CreateICmpSLE(N_minus_1, zero), end, loop);
-
   IRBuilder<> LB(loop);
 
   auto i = LB.CreatePHI(intType, 2);
@@ -788,24 +786,18 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
   Value *copyArgs[] = {
       to_blas_callconv(LB, LB.CreateSub(N_minus_1, i), byRef, cublas, nullptr,
                        EB),
-      to_blas_callconv(
-          LB,
-          lookup_with_layout(LB, fpType, layoutarg, Aarg, Narg,
-                             CreateSelect(LB, islowerarg, i_plus_one, i),
-                             CreateSelect(LB, islowerarg, i, i_plus_one)),
-          byRef, cublas, nullptr, EB),
+      lookup_with_layout(LB, fpType, layoutarg, Aarg, Narg,
+                         CreateSelect(LB, islowerarg, i_plus_one, i),
+                         CreateSelect(LB, islowerarg, i, i_plus_one)),
       to_blas_callconv(
           LB,
           lookup_with_layout(LB, fpType, layoutarg, nullptr, Narg,
                              CreateSelect(LB, islowerarg, one, zero),
                              CreateSelect(LB, islowerarg, zero, one)),
           byRef, cublas, nullptr, EB),
-      to_blas_callconv(
-          LB,
-          lookup_with_layout(LB, fpType, layoutarg, Aarg, Narg,
-                             CreateSelect(LB, islowerarg, i, i_plus_one),
-                             CreateSelect(LB, islowerarg, i_plus_one, i)),
-          byRef, cublas, nullptr, EB),
+      lookup_with_layout(LB, fpType, layoutarg, Aarg, Narg,
+                         CreateSelect(LB, islowerarg, i, i_plus_one),
+                         CreateSelect(LB, islowerarg, i_plus_one, i)),
       to_blas_callconv(
           LB,
           lookup_with_layout(LB, fpType, layoutarg, nullptr, Narg,
@@ -828,6 +820,7 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
   LB.CreateCall(copyF, copyArgs);
   LB.CreateCondBr(LB.CreateICmpEQ(i_plus_one, N_minus_1), end, loop);
 
+  EB.CreateCondBr(EB.CreateICmpSLE(N_minus_1, zero), end, loop);
   {
     IRBuilder<> B(end);
     B.CreateRetVoid();

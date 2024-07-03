@@ -1227,6 +1227,9 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
         os << " ptr = nullptr;\n";
       os << " ptr = lookup_with_layout(Builder2, fpType, layoutptr, ptr, "
             "ld_lookup, row, col);\n";
+      if (constint)
+        os << " ptr = to_blas_callconv(Builder2, ptr, byRef, cublas, nullptr, "
+              "allocationBuilder, \"offset\");\n";
       if (Def->getName() == "LoadLookup") {
         os << "  if (!byRefFloat) ptr = Builder2.CreateLoad(fpType, ptr);\n";
         os << "  SmallVector<Value*, 1> vals = { ptr };\n";
