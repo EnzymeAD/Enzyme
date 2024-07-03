@@ -6,15 +6,15 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
-#include <llvm/ADT/StringRef.h>
+#include "llvm/ADT/StringRef.h"
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Module.h"
 
+#include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
-#include <llvm/Support/Program.h>
 
 #include "llvm/Pass.h"
 
@@ -223,24 +223,24 @@ public:
   bool isExpression() const override { return false; }
 };
 
+double stringToDouble(const std::string &str) {
+  char *end;
+  errno = 0;
+  double result = std::strtod(str.c_str(), &end);
+
+  if (errno == ERANGE) {
+    if (result == HUGE_VAL) {
+      result = std::numeric_limits<double>::infinity();
+    } else if (result == -HUGE_VAL) {
+      result = -std::numeric_limits<double>::infinity();
+    }
+  }
+
+  return result; // Denormalized values are fine
+}
+
 class FPConst : public FPNode {
   std::string value;
-
-  double stringToDouble(const std::string &str) {
-    char *end;
-    errno = 0;
-    double result = std::strtod(str.c_str(), &end);
-
-    if (errno == ERANGE) {
-      if (result == HUGE_VAL) {
-        result = std::numeric_limits<double>::infinity();
-      } else if (result == -HUGE_VAL) {
-        result = -std::numeric_limits<double>::infinity();
-      }
-    }
-
-    return result;
-  }
 
 public:
   FPConst(std::string value) : FPNode("__const"), value(value) {}
@@ -522,10 +522,10 @@ bool extractErrorLogData(const std::string &filePath,
             R"(Min Res: ([\d\.eE+-]+), Max Res: ([\d\.eE+-]+), Min Error: ([\d\.eE+-]+), Max Error: ([\d\.eE+-]+), Executions: (\d+))");
         std::smatch statsMatch;
         if (std::regex_search(line, statsMatch, statsPattern)) {
-          data.minRes = std::stod(statsMatch[1]);
-          data.maxRes = std::stod(statsMatch[2]);
-          data.minError = std::stod(statsMatch[3]);
-          data.maxError = std::stod(statsMatch[4]);
+          data.minRes = stringToDouble(statsMatch[1]);
+          data.maxRes = stringToDouble(statsMatch[2]);
+          data.minError = stringToDouble(statsMatch[3]);
+          data.maxError = stringToDouble(statsMatch[4]);
           data.executions = std::stol(statsMatch[5]);
         }
 
@@ -534,8 +534,8 @@ bool extractErrorLogData(const std::string &filePath,
         while (getline(file, line) && line.substr(0, 7) == "Operand") {
           std::smatch rangeMatch;
           if (std::regex_search(line, rangeMatch, rangePattern)) {
-            data.lower.push_back(std::stod(rangeMatch[1]));
-            data.upper.push_back(std::stod(rangeMatch[2]));
+            data.lower.push_back(stringToDouble(rangeMatch[1]));
+            data.upper.push_back(stringToDouble(rangeMatch[2]));
           } else {
             return false;
           }
