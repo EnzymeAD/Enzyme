@@ -1160,7 +1160,7 @@ static void potrfTests() {
         assert(inputs[5].ty == ValueType::Matrix);
         cblas_dlacpy(layout, uplo, N, N, A, lda, cacheA, N);
         cblas_dscal(1, 0.0, A, lda);
-        
+
         inDerivative = true;
         cblas_dscal(1, 0.0, dA, lda);
 

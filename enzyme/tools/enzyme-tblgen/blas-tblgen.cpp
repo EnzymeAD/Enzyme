@@ -1209,23 +1209,24 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       bool constint = SDI3 && SDI3->getDef()->isSubClassOf("ConstantInt");
 
       if (Dag->getNumArgs() == 4) {
-      os << " Value *layoutptr = cblas ? load_if_ref(Builder2, charType, "
-            "larg_0[0], "
-            "byRef) : nullptr;\n";
+        os << " Value *layoutptr = cblas ? load_if_ref(Builder2, charType, "
+              "larg_0[0], "
+              "byRef) : nullptr;\n";
       } else {
-      os << " Value *layoutptr = nullptr;\n";
+        os << " Value *layoutptr = nullptr;\n";
       }
       os << " Value *row = load_if_ref(Builder2, "
-              "intType, larg_2[0], byRef);\n";
+            "intType, larg_2[0], byRef);\n";
       if (Dag->getNumArgs() == 4) {
         os << " Value *col = load_if_ref(Builder2, "
-                "intType, larg_3[0], byRef);\n";
+              "intType, larg_3[0], byRef);\n";
       } else {
         os << " Value *col = nullptr;\n";
       }
       if (constint)
         os << " ptr = nullptr;\n";
-      os << " ptr = lookup_with_layout(Builder2, fpType, layoutptr, ptr, ld_lookup, row, col);\n";
+      os << " ptr = lookup_with_layout(Builder2, fpType, layoutptr, ptr, "
+            "ld_lookup, row, col);\n";
       if (Def->getName() == "LoadLookup") {
         os << "  if (!byRefFloat) ptr = Builder2.CreateLoad(fpType, ptr);\n";
         os << "  SmallVector<Value*, 1> vals = { ptr };\n";
@@ -1737,28 +1738,31 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
     os << "        }\n";
     return;
   }
- if (Def->isSubClassOf("CopyLowerToUpper")) {
-        if (ruleDag->getNumArgs() != 4)
-          PrintFatalError(pattern.getLoc(), "only 4-arg copy lower to upper operands supported");
+  if (Def->isSubClassOf("CopyLowerToUpper")) {
+    if (ruleDag->getNumArgs() != 4)
+      PrintFatalError(pattern.getLoc(),
+                      "only 4-arg copy lower to upper operands supported");
 
     os << "        {\n";
     os << "        // LowerToUpper\n";
     // handle seq rules
     for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
-    os << "        Value *arg_" << i << "[] = ";
-        rev_call_arg(forward, ruleDag, pattern, i, os, vars);
-        os << ";\n";
+      os << "        Value *arg_" << i << "[] = ";
+      rev_call_arg(forward, ruleDag, pattern, i, os, vars);
+      os << ";\n";
     }
 
     os << " copy_lower_to_upper(Builder2, fpType, blas, byRef, \n";
-    os << "                     arg_0[0] ? load_if_ref(Builder2, charType, arg_0[0], byRef) : nullptr,\n";
+    os << "                     arg_0[0] ? load_if_ref(Builder2, charType, "
+          "arg_0[0], byRef) : nullptr,\n";
     os << "                     is_lower(Builder2, arg_1[0], byRef, cublas),\n";
     os << "                     arg_2[0],\n";
-    os << "                     load_if_ref(Builder2, intType, arg_3[0], byRef));\n";
+    os << "                     load_if_ref(Builder2, intType, arg_3[0], "
+          "byRef));\n";
 
-        os << "        }\n";
-        return;
-      }
+    os << "        }\n";
+    return;
+  }
   if (Def->getName() == "FirstUse" || Def->isSubClassOf("FirstUse")) {
     os << "        {\n";
     os << "      // FirstUse\n";

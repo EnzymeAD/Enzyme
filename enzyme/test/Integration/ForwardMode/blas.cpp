@@ -1,11 +1,11 @@
 // This should work on LLVM 7, 8, 9, however in CI the version of clang installed on Ubuntu 18.04 cannot load
 // a clang plugin properly without segfaulting on exit. This is fine on Ubuntu 20.04 or later LLVM versions...
-// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1 | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1  | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-lapack-copy=1 | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -S | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -S | %lli -
-// RUN: %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1  -S | %lli -
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1 | %lli -; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1  | %lli -; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-lapack-copy=1 | %lli -; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -S | %lli -; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -S | %lli -; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1  -S | %lli -; fi
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
@@ -758,35 +758,36 @@ static void potrfTests() {
 		  inputs[3] = BlasInfo(tri, layout, N, N, N);
           cblas_dlacpy(layout, flip_uplo(uplo), N, N, dA, lda, tri, N);
 
-#define triv(r, c)                                                               \
-  tri[(r) * (layout == CblasRowMajor ? N : 1) +                            \
-    (c) * (layout == CblasRowMajor ? 1 : N)]
+#define triv(r, c)                                                             \
+  tri[(r) * (layout == CblasRowMajor ? N : 1) +                                \
+      (c) * (layout == CblasRowMajor ? 1 : N)]
 
-        int upperinc = (&triv(0, 1) - &triv(0,0));
-        int lowerinc = (&triv(1, 0) - &triv(0,0));
-        if (layout == CblasColMajor) {
+          int upperinc = (&triv(0, 1) - &triv(0, 0));
+          int lowerinc = (&triv(1, 0) - &triv(0, 0));
+          if (layout == CblasColMajor) {
             assert(upperinc == N);
             assert(lowerinc == 1);
-        } else {
-          assert(upperinc == 1);
-          assert(lowerinc == N);
-        }
-        bool is_lower = uplo == 'L' || uplo == 'l';
-        for (int i = 0; i < N - 1; i++) {
-          cblas_dcopy(N - i - 1,
-                    is_lower ? (&triv(i + 1, i)) : (&triv(i, i+1)), is_lower ? lowerinc : upperinc,
-                    is_lower ? (&triv(i, i + 1)) : (&triv(i+1, i)), is_lower ? upperinc : lowerinc
-                      );
-        }
+          } else {
+            assert(upperinc == 1);
+            assert(lowerinc == N);
+          }
+          bool is_lower = uplo == 'L' || uplo == 'l';
+          for (int i = 0; i < N - 1; i++) {
+            cblas_dcopy(N - i - 1,
+                        is_lower ? (&triv(i + 1, i)) : (&triv(i, i + 1)),
+                        is_lower ? lowerinc : upperinc,
+                        is_lower ? (&triv(i, i + 1)) : (&triv(i + 1, i)),
+                        is_lower ? upperinc : lowerinc);
+          }
 
           cblas_dtrsm(layout, 'L', uplo, uplo_to_normal(uplo), 'N', N, N, 1.0, A, lda, dA, lda);
           cblas_dtrsm(layout, 'R', uplo, uplo_to_trans(uplo), 'N', N, N, 1.0, A, lda, dA, lda);
           cblas_dscal(N, 0.5, dA, lda+1);
         
           assert(foundCalls.size() >= 9);
-          assert(foundCalls[7].type == CallType::COPY);
-          double* tmp = (double*)foundCalls[7].pout_arg1;
-		  inputs[4] = BlasInfo(tmp, N, 1);
+          assert(foundCalls[21].type == CallType::COPY);
+          double *tmp = (double *)foundCalls[21].pout_arg1;
+          inputs[4] = BlasInfo(tmp, N, 1);
 
           cblas_dcopy(N, dA, lda+1, tmp, 1);
           cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, dA, lda, 0);
@@ -814,7 +815,6 @@ static void potrfTests() {
 }
 
 int main() {
-    /*
   dotTests();
 
   nrm2Tests();
@@ -824,7 +824,6 @@ int main() {
   gemmTests();
   
   syrkTests();
-  */
 
   potrfTests();
 }

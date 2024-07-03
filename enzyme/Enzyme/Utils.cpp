@@ -656,14 +656,21 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
   return F;
 }
 
-
-Value * lookup_with_layout(IRBuilder<> &B, Type* fpType, Value *layout, Value* const base, Value *lda, Value* row, Value *col) {
+Value *lookup_with_layout(IRBuilder<> &B, Type *fpType, Value *layout,
+                          Value *const base, Value *lda, Value *row,
+                          Value *col) {
   Type *intType = row->getType();
-  Value* is_row_maj = layout ? B.CreateICmpEQ(layout, ConstantInt::get(layout->getType(), 101)) : B.getFalse();
-  Value* offset = nullptr;
+  Value *is_row_maj =
+      layout ? B.CreateICmpEQ(layout, ConstantInt::get(layout->getType(), 101))
+             : B.getFalse();
+  Value *offset = nullptr;
   if (col) {
-    offset = B.CreateMul(row, CreateSelect(B, is_row_maj, lda, ConstantInt::get(intType, 1)));
-    offset = B.CreateAdd(offset, B.CreateMul(col, CreateSelect(B, is_row_maj, ConstantInt::get(intType, 1), lda)));
+    offset = B.CreateMul(
+        row, CreateSelect(B, is_row_maj, lda, ConstantInt::get(intType, 1)));
+    offset = B.CreateAdd(
+        offset,
+        B.CreateMul(col, CreateSelect(B, is_row_maj,
+                                      ConstantInt::get(intType, 1), lda)));
   } else {
     offset = B.CreateMul(row, lda);
   }
@@ -671,14 +678,18 @@ Value * lookup_with_layout(IRBuilder<> &B, Type* fpType, Value *layout, Value* c
     return offset;
 
   Value *ptr = base;
-  if (base->getType()->isIntegerTy()) ptr = B.CreateIntToPtr(ptr, PointerType::getUnqual(fpType));
+  if (base->getType()->isIntegerTy())
+    ptr = B.CreateIntToPtr(ptr, PointerType::getUnqual(fpType));
 
 #if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
   if (ptr->getContext().supportsTypedPointers()) {
 #endif
     if (fpType != ptr->getType()->getPointerElementType()) {
-      ptr = B.CreatePointerCast(ptr, PointerType::get(fpType, cast<PointerType>(ptr->getType())->getAddressSpace()));
+      ptr = B.CreatePointerCast(
+          ptr,
+          PointerType::get(
+              fpType, cast<PointerType>(ptr->getType())->getAddressSpace()));
     }
 #if LLVM_VERSION_MAJOR >= 15
   }
@@ -694,8 +705,9 @@ Value * lookup_with_layout(IRBuilder<> &B, Type* fpType, Value *layout, Value* c
   return ptr;
 }
 
-void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType, BlasInfo blas, bool byRef,
-                         llvm::Value *layout, llvm::Value *islower, llvm::Value *A, llvm::Value *N) {
+void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
+                         BlasInfo blas, bool byRef, llvm::Value *layout,
+                         llvm::Value *islower, llvm::Value *A, llvm::Value *N) {
 
   const bool cublasv2 =
       blas.prefix == "cublas" && StringRef(blas.suffix).contains("v2");
@@ -705,23 +717,25 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType, BlasInfo blas
 
   llvm::Type *intType = N->getType();
   // add spmv diag update call if not already present
-  auto fnc_name = "__enzyme_copy_lower_to_upper" + blas.floatType + blas.prefix + blas.suffix;
+  auto fnc_name = "__enzyme_copy_lower_to_upper" + blas.floatType +
+                  blas.prefix + blas.suffix;
 
-  SmallVector<Type*, 1> tys = {islower->getType(), A->getType(), N->getType()};
-  if (layout) tys.insert(tys.begin(), layout->getType());
-  auto ltuFT = FunctionType::get(
-      B.getVoidTy(), tys, false);
+  SmallVector<Type *, 1> tys = {islower->getType(), A->getType(), N->getType()};
+  if (layout)
+    tys.insert(tys.begin(), layout->getType());
+  auto ltuFT = FunctionType::get(B.getVoidTy(), tys, false);
 
   Function *F =
       cast<Function>(M.getOrInsertFunction(fnc_name, ltuFT).getCallee());
 
-  SmallVector<Value*, 1> args = { islower, A, N };
-  if (layout) args.insert(args.begin(), layout);
+  SmallVector<Value *, 1> args = {islower, A, N};
+  if (layout)
+    args.insert(args.begin(), layout);
   B.CreateCall(F, args);
 
   if (!F->empty()) {
     return;
-  }  
+  }
 
   // now add the implementation for the call
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
@@ -771,41 +785,37 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType, BlasInfo blas
   auto i_plus_one = LB.CreateAdd(i, one, "", true, true);
   i->addIncoming(i_plus_one, loop);
 
-  Value* copyArgs[] = {
-    to_blas_callconv(LB, LB.CreateSub(N_minus_1, i), byRef, cublas, nullptr, EB),
-    to_blas_callconv(LB,
-    lookup_with_layout(LB, fpType, layoutarg, Aarg, Narg,
-        CreateSelect(LB, islowerarg, i_plus_one, i),
-        CreateSelect(LB, islowerarg, i, i_plus_one)
-      )
-    , byRef, cublas, nullptr, EB),
-    to_blas_callconv(LB,
-    lookup_with_layout(LB, fpType, layoutarg, nullptr, Narg,
-        CreateSelect(LB, islowerarg, one, zero),
-        CreateSelect(LB, islowerarg, zero, one)
-      )
-    , byRef, cublas, nullptr, EB),
-    to_blas_callconv(LB,
-    lookup_with_layout(LB, fpType, layoutarg, Aarg, Narg,
-        CreateSelect(LB, islowerarg, i, i_plus_one),
-        CreateSelect(LB, islowerarg, i_plus_one, i)
-      )
-    , byRef, cublas, nullptr, EB),
-    to_blas_callconv(LB,
-    lookup_with_layout(LB, fpType, layoutarg, nullptr, Narg,
-        CreateSelect(LB, islowerarg, zero, one),
-        CreateSelect(LB, islowerarg, one, zero)
-      )
-    , byRef, cublas, nullptr, EB)
-  };
+  Value *copyArgs[] = {
+      to_blas_callconv(LB, LB.CreateSub(N_minus_1, i), byRef, cublas, nullptr,
+                       EB),
+      to_blas_callconv(
+          LB,
+          lookup_with_layout(LB, fpType, layoutarg, Aarg, Narg,
+                             CreateSelect(LB, islowerarg, i_plus_one, i),
+                             CreateSelect(LB, islowerarg, i, i_plus_one)),
+          byRef, cublas, nullptr, EB),
+      to_blas_callconv(
+          LB,
+          lookup_with_layout(LB, fpType, layoutarg, nullptr, Narg,
+                             CreateSelect(LB, islowerarg, one, zero),
+                             CreateSelect(LB, islowerarg, zero, one)),
+          byRef, cublas, nullptr, EB),
+      to_blas_callconv(
+          LB,
+          lookup_with_layout(LB, fpType, layoutarg, Aarg, Narg,
+                             CreateSelect(LB, islowerarg, i, i_plus_one),
+                             CreateSelect(LB, islowerarg, i_plus_one, i)),
+          byRef, cublas, nullptr, EB),
+      to_blas_callconv(
+          LB,
+          lookup_with_layout(LB, fpType, layoutarg, nullptr, Narg,
+                             CreateSelect(LB, islowerarg, zero, one),
+                             CreateSelect(LB, islowerarg, one, zero)),
+          byRef, cublas, nullptr, EB)};
 
-  Type* copyTys[] = {
-    copyArgs[0]->getType(),
-    copyArgs[1]->getType(),
-    copyArgs[2]->getType(),
-    copyArgs[3]->getType(),
-    copyArgs[4]->getType()
-  };
+  Type *copyTys[] = {copyArgs[0]->getType(), copyArgs[1]->getType(),
+                     copyArgs[2]->getType(), copyArgs[3]->getType(),
+                     copyArgs[4]->getType()};
 
   FunctionType *FT = FunctionType::get(B.getVoidTy(), copyTys, false);
 
@@ -822,7 +832,6 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType, BlasInfo blas
     IRBuilder<> B(end);
     B.CreateRetVoid();
   }
-
 
   if (llvm::verifyFunction(*F, &llvm::errs())) {
     llvm::errs() << *F << "\n";
