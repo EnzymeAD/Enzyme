@@ -803,7 +803,8 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
           lookup_with_layout(LB, fpType, layoutarg, nullptr, Narg,
                              CreateSelect(LB, islowerarg, zero, one),
                              CreateSelect(LB, islowerarg, one, zero)),
-          byRef, cublas, nullptr, EB)};
+          byRef, cublas, nullptr, EB)
+    };
 
   Type *copyTys[] = {copyArgs[0]->getType(), copyArgs[1]->getType(),
                      copyArgs[2]->getType(), copyArgs[3]->getType(),
