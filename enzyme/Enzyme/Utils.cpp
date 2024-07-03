@@ -798,6 +798,13 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType, BlasInfo blas
     , byRef, cublas, nullptr, EB)
   };
 
+  LB.CreateCondBr(B.CreateICmpEQ(i_plus_one, N_minus_1), end, loop);
+
+  {
+    IRBuilder<> B(end);
+    B.CreateRetVoid();
+  }
+
   Type* copyTys[] = {
     copyArgs[0]->getType(),
     copyArgs[1]->getType(),
