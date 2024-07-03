@@ -1208,50 +1208,20 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
                       : nullptr;
       bool constint = SDI3 && SDI3->getDef()->isSubClassOf("ConstantInt");
 
+      os << " Value *layoutptr = cblas ? load_if_ref(Builder2, charType, "
+            "larg_0[0], "
+            "byRef) : nullptr;\n";
+      os << " Value *row = load_if_ref(Builder2, "
+              "intType, larg_2[0], byRef);\n";
       if (Dag->getNumArgs() == 4) {
-        os << " Value *layoutptr = cblas ? load_if_ref(Builder2, charType, "
-              "larg_0[0], "
-              "byRef) : nullptr;\n";
-        os << " Value* is_row_maj = cblas ? Builder2.CreateICmpEQ(layoutptr, "
-              "ConstantInt::get(layoutptr->getType(), 101)) : "
-              "Builder2.getFalse();\n";
-        os << " Value* offset = Builder2.CreateMul(load_if_ref(Builder2, "
-              "intType, larg_2[0], byRef), CreateSelect(Builder2, is_row_maj, "
-              "ld_lookup, ConstantInt::get(intType, 1)));\n";
-        os << " offset = Builder2.CreateAdd(offset, "
-              "Builder2.CreateMul(load_if_ref(Builder2, "
-              "intType, larg_3[0], byRef), CreateSelect(Builder2, is_row_maj, "
-              "ConstantInt::get(intType, 1), ld_lookup)));\n";
-        if (constint)
-          os << "  ptr = to_blas_callconv(Builder2, offset, byRef, cublas, "
-                "nullptr, "
-                "allocationBuilder, \"offset\");\n";
+        os << " Value *col = load_if_ref(Builder2, "
+                "intType, larg_3[0], byRef);\n";
+      } else {
+        os << " Value *col = ConstantInt::get(intType, 0);\n";
       }
-
-      if (!constint) {
-        os << "    if (ptr->getType()->isIntegerTy()) ptr = "
-              "Builder2.CreateIntToPtr(ptr, PointerType::getUnqual(fpType));\n";
-
-        os << "#if LLVM_VERSION_MAJOR < 17\n";
-        os << "#if LLVM_VERSION_MAJOR >= 15\n";
-        os << "  if (ptr->getContext().supportsTypedPointers()) {\n";
-        os << "#endif\n";
-        os << "    if (fpType != ptr->getType()->getPointerElementType()) {\n";
-        os << "      ptr = Builder2.CreatePointerCast(ptr, "
-              "PointerType::get(fpType, "
-              "cast<PointerType>(ptr->getType())->getAddressSpace()));\n";
-        os << "    }\n";
-        os << "#if LLVM_VERSION_MAJOR >= 15\n";
-        os << "  }\n";
-        os << "#endif\n";
-        os << "#endif\n";
-        if (Dag->getNumArgs() == 4) {
-        } else {
-          os << " Value* offset = Builder2.CreateMul(load_if_ref(Builder2, "
-                "intType, larg_2[0], byRef), ld_lookup);\n";
-        }
-        os << "  ptr = Builder2.CreateGEP(fpType, ptr, offset);\n";
-      }
+      if (constint)
+        os << " ptr = nullptr;\n";
+      os << " ptr = lookup_with_layout(Builder2, fpType, layoutptr, ptr, ld_lookup, row, col);\n";
       if (Def->getName() == "LoadLookup") {
         os << "  if (!byRefFloat) ptr = Builder2.CreateLoad(fpType, ptr);\n";
         os << "  SmallVector<Value*, 1> vals = { ptr };\n";
@@ -1771,12 +1741,16 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
     os << "        // LowerToUpper\n";
     // handle seq rules
     for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
-    os << "        auto arg_" << i << " = ";
+    os << "        Value *arg_" << i << "[] = ";
         rev_call_arg(forward, ruleDag, pattern, i, os, vars);
         os << ";\n";
     }
 
-    os << " copy_lower_to_upper(Builder2, fpType, blasInfo, arg_0[0], arg_1[0], arg_2[0], load_if_ref(Builder2, arg_3[0], intType, byRef));\n";
+    os << " copy_lower_to_upper(Builder2, fpType, blas, byRef, \n";
+    os << "                     arg_0[0] ? load_if_ref(Builder2, charType, arg_0[0], byRef) : nullptr,\n";
+    os << "                     is_lower(Builder2, arg_1[0], byRef, cublas),\n";
+    os << "                     arg_2[0],\n";
+    os << "                     load_if_ref(Builder2, intType, arg_3[0], byRef));\n";
 
         os << "        }\n";
         return;
