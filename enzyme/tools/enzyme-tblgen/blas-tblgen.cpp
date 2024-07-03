@@ -1763,6 +1763,24 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
     os << "        }\n";
     return;
   }
+ if (Def->isSubClassOf("CopyLowerToUpper")) {
+        if (ruleDag->getNumArgs() != 4)
+          PrintFatalError(pattern.getLoc(), "only 4-arg copy lower to upper operands supported");
+
+    os << "        {\n";
+    os << "        // LowerToUpper\n";
+    // handle seq rules
+    for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
+    os << "        auto arg_" << i << " = ";
+        rev_call_arg(forward, ruleDag, pattern, i, os, vars);
+        os << ";\n";
+    }
+
+    os << " copy_lower_to_upper(Builder2, fpType, blasInfo, arg_0[0], arg_1[0], arg_2[0], load_if_ref(Builder2, arg_3[0], intType, byRef));\n";
+
+        os << "        }\n";
+        return;
+      }
   if (Def->getName() == "FirstUse" || Def->isSubClassOf("FirstUse")) {
     os << "        {\n";
     os << "      // FirstUse\n";

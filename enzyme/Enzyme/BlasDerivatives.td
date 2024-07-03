@@ -152,6 +152,10 @@ class Seq<list<string> _args = [], list<string> _vars = [], bit _start = 1> {
   bit start = _start;
 }
 
+class CopyLowerToUpper<string _tmp> {
+  string unused = _tmp;
+}
+
 class For<string idx_, bit offset_> {
   string idx = idx_;
   bit offset = offset_;
@@ -658,11 +662,9 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                   ],
                   (Seq<["tri", "triangular", "n"], [], 0>
                       (BlasCall<"lacpy"> $layout, (flip_uplo $uplo), $n, $n, (Shadow $A), use<"tri">, $n),
-
-                      // Zero the strictly other side of shadow [and not diagonal]. We need to save the diagonal and restore since otherwise it's overwritten
-                      (BlasCall<"lascl"> $layout, (flip_uplo $uplo), ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $n, $n, (Shadow $A), Alloca<1>),
-                      (BlasCall<"copy"> $n, use<"tri">, (Add $lda, ConstantInt<1>), (First (Shadow $A)), (Add $lda, ConstantInt<1>)),
-
+                      
+                      (CopyLowerToUpper<""> $layout, (is_lower $uplo), use<"tri">, $n),
+                      
                       // Actual Math
                       (BlasCall<"trsm"> $layout, Char<"L">, $uplo, (uplo_to_normal $uplo), Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A)),
                       (BlasCall<"trsm"> $layout, Char<"R">, $uplo, (uplo_to_trans $uplo), Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A)),

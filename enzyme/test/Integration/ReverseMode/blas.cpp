@@ -86,8 +86,8 @@ void my_potrf(char layout, char uplo, int N, double *__restrict__ A, int lda) {
 void ow_potrf(char layout, char uplo, int N, double *__restrict__ A, int lda) {
   int info;
   cblas_dpotrf(layout, uplo, N, A, lda, &info);
-  inDerivative = true;
   cblas_dscal(1, 0.0, A, lda);
+  inDerivative = true;
 }
 
 static void dotTests() {
@@ -1159,9 +1159,9 @@ static void potrfTests() {
         inputs[5] = BlasInfo(cacheA, layout, N, N);
         cblas_dlacpy(layout, uplo, N, N, A, lda, cacheA, N);
         cblas_dscal(1, 0.0, A, lda);
-        cblas_dscal(1, 0.0, dA, lda);
-
+        
         inDerivative = true;
+        cblas_dscal(1, 0.0, dA, lda);
 
         assert(foundCalls.size() >= 2);
         assert(foundCalls[4].type == CallType::LASCL);
