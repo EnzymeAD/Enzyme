@@ -663,7 +663,7 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                   (Seq<["tri", "triangular", "n"], [], 0>
                       (BlasCall<"lacpy"> $layout, (flip_uplo $uplo), $n, $n, (Shadow $A), use<"tri">, $n),
                       
-                      (CopyLowerToUpper<""> $layout, (is_lower $uplo), use<"tri">, $n),
+                      (CopyLowerToUpper<""> $layout, $uplo, use<"tri">, $n),
                       
                       // Actual Math
                       (BlasCall<"trsm"> $layout, Char<"L">, $uplo, (uplo_to_normal $uplo), Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A)),
