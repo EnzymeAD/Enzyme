@@ -1156,7 +1156,8 @@ static void potrfTests() {
 
         cblas_dpotrf(layout, uplo, N, A, lda, nullptr);
         double *cacheA = (double *)foundCalls[1].pout_arg1;
-        inputs[5] = BlasInfo(cacheA, layout, N, N);
+        inputs[5] = BlasInfo(cacheA, (char)layout, N, N, N);
+        assert(inputs[5].ty == ValueType::Matrix);
         cblas_dlacpy(layout, uplo, N, N, A, lda, cacheA, N);
         cblas_dscal(1, 0.0, A, lda);
         
@@ -1166,7 +1167,7 @@ static void potrfTests() {
         assert(foundCalls.size() >= 2);
         assert(foundCalls[4].type == CallType::LASCL);
         double *tri = (double *)foundCalls[4].pout_arg1;
-        inputs[3] = BlasInfo(tri, layout, N, N, N);
+        inputs[3] = BlasInfo(tri, (char)layout, N, N, N);
         cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, tri, N, 0);
 
         cblas_dlacpy(layout, uplo, N, N, dA, lda, tri, N);
