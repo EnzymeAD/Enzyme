@@ -1208,16 +1208,20 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
                       : nullptr;
       bool constint = SDI3 && SDI3->getDef()->isSubClassOf("ConstantInt");
 
+      if (Dag->getNumArgs() == 4) {
       os << " Value *layoutptr = cblas ? load_if_ref(Builder2, charType, "
             "larg_0[0], "
             "byRef) : nullptr;\n";
+      } else {
+      os << " Value *layoutptr = nullptr;\n";
+      }
       os << " Value *row = load_if_ref(Builder2, "
               "intType, larg_2[0], byRef);\n";
       if (Dag->getNumArgs() == 4) {
         os << " Value *col = load_if_ref(Builder2, "
                 "intType, larg_3[0], byRef);\n";
       } else {
-        os << " Value *col = ConstantInt::get(intType, 0);\n";
+        os << " Value *col = nullptr;\n";
       }
       if (constint)
         os << " ptr = nullptr;\n";

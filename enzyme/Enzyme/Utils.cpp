@@ -659,8 +659,13 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
 Value * lookup_with_layout(IRBuilder<> &B, Type* fpType, Value *layout, Value* const base, Value *lda, Value* row, Value *col) {
   Type *intType = row->getType();
   Value* is_row_maj = layout ? B.CreateICmpEQ(layout, ConstantInt::get(layout->getType(), 101)) : B.getFalse();
-  Value* offset = B.CreateMul(row, CreateSelect(B, is_row_maj, lda, ConstantInt::get(intType, 1)));
-  offset = B.CreateAdd(offset, B.CreateMul(col, CreateSelect(B, is_row_maj, ConstantInt::get(intType, 1), lda)));
+  Value* offset = nullptr;
+  if (col) {
+    offset = B.CreateMul(row, CreateSelect(B, is_row_maj, lda, ConstantInt::get(intType, 1)));
+    offset = B.CreateAdd(offset, B.CreateMul(col, CreateSelect(B, is_row_maj, ConstantInt::get(intType, 1), lda)));
+  } else {
+    offset = B.CreateMul(row, lda);
+  }
   if (!base)
     return offset;
 
