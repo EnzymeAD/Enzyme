@@ -598,18 +598,23 @@ bool isLogged(const std::string &filePath, const std::string &functionName) {
   return false;
 }
 
-// std::string getPrecondition(
-//     const SmallSet<std::string, 1> &args,
-//     const std::unordered_map<Value *, FPNode *> &valueToNodeMap,
-//     const std::unordered_map<std::string, Value *> &symbolToValueMap) {
-//   std::string precondition = "(and";
+std::string getPrecondition(
+    const SmallSet<std::string, 1> &args,
+    const std::unordered_map<Value *, FPNode *> &valueToNodeMap,
+    const std::unordered_map<std::string, Value *> &symbolToValueMap) {
+  std::string preconditions;
 
-//   for (const auto &arg : args) {
-//     auto node = valueToNodeMap.at(symbolToValueMap.at(arg));
-//   }
+  for (const auto &arg : args) {
+    const auto *node = valueToNodeMap.at(symbolToValueMap.at(arg));
+    int lower = node->getLowerBound();
+    int upper = node->getUpperBound();
 
-//   return precondition + ")";
-// }
+    preconditions += " (<= " + std::to_string(lower) + " " + arg + " " +
+                     std::to_string(upper) + ")";
+  }
+
+  return "(and" + preconditions + ")";
+}
 
 struct HerbieComponents {
   SetVector<Value *> inputs;
@@ -924,10 +929,11 @@ B2:
       std::string properties =
           ":precision binary64 :herbie-conversions ([binary64 binary32])";
 
-      // TODO
-      // if (!ErrorLogPath.empty()) {
-      //   std::string precondition = getPrecondition(args);
-      // }
+      if (!ErrorLogPath.empty()) {
+        std::string precondition =
+            getPrecondition(args, valueToNodeMap, symbolToValueMap);
+        properties += " :pre " + precondition;
+      }
 
       std::string argStr;
       for (const auto &arg : args) {
