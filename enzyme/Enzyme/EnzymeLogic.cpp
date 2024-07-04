@@ -6442,7 +6442,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
                          "lgamma_r",
                          "__kmpc_global_thread_num",
                          "nlopt_force_stop",
-                         "cudaRuntimeGetVersion"
+                         "cudaRuntimeGetVersion",
+                         "__catalyst_inactive_callback"
   };
   // clang-format on
 
