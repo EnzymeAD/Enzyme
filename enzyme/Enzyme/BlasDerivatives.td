@@ -622,7 +622,8 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                       
                       (BlasCall<"trsm"> $layout, (uplo_to_rside $uplo), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"tri">, $n),
                       
-                      (BlasCall<"trsm"> $layout, (uplo_to_side $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"tri">, $n),
+                      (BlasCall<"trsm"> $layout, (uplo_to_side $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"tri">, $n) ,
+
                       (For<"i", 0> (Sub $n, ConstantInt<1>),
                         (BlasCall<"axpy">
                             (Sub (Sub $n, ConstantInt<1>), $i),
@@ -630,29 +631,29 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                             (First
                                 (Lookup $layout,
                                     (Concat use<"tri">, $n),
-                                    $i,
-                                    (Add $i, ConstantInt<1>)
+                                    (ISelect (is_lower $uplo), $i, (Add $i, ConstantInt<1>)),
+                                    (ISelect (is_lower $uplo), (Add $i, ConstantInt<1>), $i)
                                 )
                             ),
                             (First
                                 (Lookup $layout,
                                     (Concat ConstantInt<0>, $n),
-                                    ConstantInt<0>,
-                                    ConstantInt<1>
+                                    (ISelect (is_lower $uplo), ConstantInt<0>, ConstantInt<1>),
+                                    (ISelect (is_lower $uplo), ConstantInt<1>, ConstantInt<0>)
                                 )
                             ),
                             (First
                                 (Lookup $layout,
                                     (Concat use<"tri">, $n),
-                                    (Add $i, ConstantInt<1>),
-                                    $i
+                                    (ISelect (is_lower $uplo), (Add $i, ConstantInt<1>), $i),
+                                    (ISelect (is_lower $uplo), $i, (Add $i, ConstantInt<1>))
                                 )
                             ),
                             (First
                                 (Lookup $layout,
                                     (Concat ConstantInt<0>, $n),
-                                    ConstantInt<1>,
-                                    ConstantInt<0>
+                                    (ISelect (is_lower $uplo), ConstantInt<1>, ConstantInt<0>),
+                                    (ISelect (is_lower $uplo), ConstantInt<0>, ConstantInt<1>)
                                 )
                             )
                         )
