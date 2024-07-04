@@ -630,6 +630,10 @@ struct HerbieComponents {
 // Run (our choice of) floating point optimizations on function `F`.
 // Return whether or not we change the function.
 bool fpOptimize(Function &F) {
+  if (F.isDeclaration()) {
+    return false;
+  }
+
   std::string functionName = F.getName().str();
 
   // TODO: Finer control
