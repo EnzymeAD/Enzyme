@@ -300,9 +300,9 @@ public:
     }
 
     // TODO eventually have this be typed
-    if (EnzymePrintFPOpt)
-      llvm::errs() << "Returning " << strValue
-                   << " as constant: " << constantValue << "\n";
+    // if (EnzymePrintFPOpt)
+    //   llvm::errs() << "Returning " << strValue
+    //                << " as constant: " << constantValue << "\n";
     return ConstantFP::get(builder.getDoubleTy(), constantValue);
   }
 
@@ -620,6 +620,7 @@ struct HerbieComponents {
   SetVector<Value *> inputs;
   SetVector<Value *> outputs;
   SetVector<Instruction *> operations;
+  size_t outputs_rewritten = 0;
 
   HerbieComponents(SetVector<Value *> inputs, SetVector<Value *> outputs,
                    SetVector<Instruction *> operations)
@@ -956,10 +957,11 @@ B2:
       if (!improveViaHerbie(herbieInput, herbieOutput)) {
         llvm::errs() << "Failed to optimize an expression using Herbie!\n";
         continue;
-      } else {
-        if (EnzymePrintHerbie)
-          llvm::errs() << "Herbie output: " << herbieOutput << "\n";
       }
+
+      component.outputs_rewritten++;
+      if (EnzymePrintHerbie)
+        llvm::errs() << "Herbie output: " << herbieOutput << "\n";
 
       // 4) parse the output string solution from herbieland
       // 5) convert into a solution in llvm vals/instructions
@@ -993,6 +995,12 @@ B2:
   }
 
   for (auto &component : connected_components) {
+    if (component.outputs_rewritten != component.outputs.size()) {
+      if (EnzymePrintFPOpt)
+        llvm::errs() << "rewrote " << component.outputs_rewritten << " of "
+                     << component.outputs.size() << " outputs\n";
+      continue; // Original intermediate operations cannot be erased safely
+    }
     for (auto *I : component.operations) {
       if (EnzymePrintFPOpt)
         llvm::errs() << "Erasing: " << *I << "\n";
