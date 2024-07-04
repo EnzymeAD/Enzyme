@@ -1119,9 +1119,13 @@ static void potrfTests() {
           assert(upperinc == 1);
           assert(lowerinc == N);
         }
+        bool is_lower = uplo == 'L' || uplo == 'l';
         for (int i = 0; i < N - 1; i++) {
-          cblas_daxpy(N - i - 1, 1.0, &triv(i, i + 1), upperinc,
-                      &triv(i + 1, i), lowerinc);
+          cblas_daxpy(N - i - 1, 1.0,
+                      is_lower ? &triv(i, i + 1) : &triv(i + 1, i),
+                      is_lower ? upperinc : lowerinc,
+                      is_lower ? &triv(i + 1, i) : &triv(i, i + 1),
+                      is_lower ? lowerinc : upperinc);
         }
 
         cblas_dlacpy(layout, uplo, N, N, tri, N, dA, lda);
@@ -1202,15 +1206,15 @@ static void potrfTests() {
           assert(upperinc == 1);
           assert(lowerinc == N);
         }
-        for (int i=0; i<N-1; i++) {
-            cblas_daxpy(N-i-1, 1.0,
-                        &triv(i, i+1),
-                        upperinc,
-                        &triv(i+1, i),
-                        lowerinc
-                        );
+        bool is_lower = uplo == 'L' || uplo == 'l';
+        for (int i = 0; i < N - 1; i++) {
+          cblas_daxpy(N - i - 1, 1.0,
+                      is_lower ? &triv(i, i + 1) : &triv(i + 1, i),
+                      is_lower ? upperinc : lowerinc,
+                      is_lower ? &triv(i + 1, i) : &triv(i, i + 1),
+                      is_lower ? lowerinc : upperinc);
         }
-        
+
         cblas_dlacpy(layout, uplo, N, N, tri, N, dA, lda);
 
         checkTest(Test);

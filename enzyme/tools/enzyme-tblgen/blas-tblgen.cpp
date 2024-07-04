@@ -1760,8 +1760,11 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
           "arg_0[0], byRef) : nullptr,\n";
     os << "                     is_lower(Builder2, arg_1[0], byRef, cublas),\n";
     os << "                     arg_2[0],\n";
+    os << "                     load_if_ref(Builder2, intType, arg_2[1], "
+          "byRef),\n";
     os << "                     load_if_ref(Builder2, intType, arg_3[0], "
-          "byRef));\n";
+          "byRef)\n";
+    os << "                     );\n";
 
     os << "        }\n";
     return;

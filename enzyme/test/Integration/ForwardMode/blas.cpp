@@ -66,7 +66,7 @@ void my_dsyrk(char layout, char uplo, char trans,
 
 void my_potrf(char layout, char uplo, int N, double *__restrict__ A, int lda) {
     int info;
-    cblas_dpotrf(layout, uplo, N, A, lda, &info);
+    cblas_dpotrf(layout, uplo, N, A, lda, nullptr); //&info);
 }
 
 static void dotTests() {
@@ -758,25 +758,25 @@ static void potrfTests() {
 		  inputs[3] = BlasInfo(tri, layout, N, N, N);
           cblas_dlacpy(layout, flip_uplo(uplo), N, N, dA, lda, tri, N);
 
-#define triv(r, c)                                                             \
-  tri[(r) * (layout == CblasRowMajor ? N : 1) +                                \
-      (c) * (layout == CblasRowMajor ? 1 : N)]
+#define dAv(r, c)                                                              \
+  dA[(r) * (layout == CblasRowMajor ? lda : 1) +                               \
+     (c) * (layout == CblasRowMajor ? 1 : lda)]
 
-          int upperinc = (&triv(0, 1) - &triv(0, 0));
-          int lowerinc = (&triv(1, 0) - &triv(0, 0));
+          int upperinc = (&dAv(0, 1) - &dAv(0, 0));
+          int lowerinc = (&dAv(1, 0) - &dAv(0, 0));
           if (layout == CblasColMajor) {
-            assert(upperinc == N);
+            assert(upperinc == lda);
             assert(lowerinc == 1);
           } else {
             assert(upperinc == 1);
-            assert(lowerinc == N);
+            assert(lowerinc == lda);
           }
           bool is_lower = uplo == 'L' || uplo == 'l';
           for (int i = 0; i < N - 1; i++) {
             cblas_dcopy(N - i - 1,
-                        is_lower ? (&triv(i + 1, i)) : (&triv(i, i + 1)),
+                        is_lower ? (&dAv(i + 1, i)) : (&dAv(i, i + 1)),
                         is_lower ? lowerinc : upperinc,
-                        is_lower ? (&triv(i, i + 1)) : (&triv(i + 1, i)),
+                        is_lower ? (&dAv(i, i + 1)) : (&dAv(i + 1, i)),
                         is_lower ? upperinc : lowerinc);
           }
 

@@ -707,7 +707,8 @@ Value *lookup_with_layout(IRBuilder<> &B, Type *fpType, Value *layout,
 
 void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
                          BlasInfo blas, bool byRef, llvm::Value *layout,
-                         llvm::Value *islower, llvm::Value *A, llvm::Value *N) {
+                         llvm::Value *islower, llvm::Value *A, llvm::Value *lda,
+                         llvm::Value *N) {
 
   const bool cublasv2 =
       blas.prefix == "cublas" && StringRef(blas.suffix).contains("v2");
@@ -720,7 +721,8 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
   auto fnc_name = "__enzyme_copy_lower_to_upper" + blas.floatType +
                   blas.prefix + blas.suffix;
 
-  SmallVector<Type *, 1> tys = {islower->getType(), A->getType(), N->getType()};
+  SmallVector<Type *, 1> tys = {islower->getType(), A->getType(),
+                                lda->getType(), N->getType()};
   if (layout)
     tys.insert(tys.begin(), layout->getType());
   auto ltuFT = FunctionType::get(B.getVoidTy(), tys, false);
@@ -728,7 +730,7 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
   Function *F =
       cast<Function>(M.getOrInsertFunction(fnc_name, ltuFT).getCallee());
 
-  SmallVector<Value *, 1> args = {islower, A, N};
+  SmallVector<Value *, 1> args = {islower, A, lda, N};
   if (layout)
     args.insert(args.begin(), layout);
   B.CreateCall(F, args);
@@ -766,6 +768,9 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
   auto Aarg = arg;
   Aarg->setName("A");
   arg++;
+  auto ldaarg = arg;
+  ldaarg->setName("lda");
+  arg++;
   auto Narg = arg;
   Narg->setName("N");
 
@@ -786,25 +791,24 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
   Value *copyArgs[] = {
       to_blas_callconv(LB, LB.CreateSub(N_minus_1, i), byRef, cublas, nullptr,
                        EB),
-      lookup_with_layout(LB, fpType, layoutarg, Aarg, Narg,
+      lookup_with_layout(LB, fpType, layoutarg, Aarg, ldaarg,
                          CreateSelect(LB, islowerarg, i_plus_one, i),
                          CreateSelect(LB, islowerarg, i, i_plus_one)),
       to_blas_callconv(
           LB,
-          lookup_with_layout(LB, fpType, layoutarg, nullptr, Narg,
+          lookup_with_layout(LB, fpType, layoutarg, nullptr, ldaarg,
                              CreateSelect(LB, islowerarg, one, zero),
                              CreateSelect(LB, islowerarg, zero, one)),
           byRef, cublas, nullptr, EB),
-      lookup_with_layout(LB, fpType, layoutarg, Aarg, Narg,
+      lookup_with_layout(LB, fpType, layoutarg, Aarg, ldaarg,
                          CreateSelect(LB, islowerarg, i, i_plus_one),
                          CreateSelect(LB, islowerarg, i_plus_one, i)),
       to_blas_callconv(
           LB,
-          lookup_with_layout(LB, fpType, layoutarg, nullptr, Narg,
+          lookup_with_layout(LB, fpType, layoutarg, nullptr, ldaarg,
                              CreateSelect(LB, islowerarg, zero, one),
                              CreateSelect(LB, islowerarg, one, zero)),
-          byRef, cublas, nullptr, EB)
-    };
+          byRef, cublas, nullptr, EB)};
 
   Type *copyTys[] = {copyArgs[0]->getType(), copyArgs[1]->getType(),
                      copyArgs[2]->getType(), copyArgs[3]->getType(),

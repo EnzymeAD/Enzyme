@@ -1816,7 +1816,8 @@ llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
 
 void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
                          BlasInfo blas, bool byRef, llvm::Value *layout,
-                         llvm::Value *uplo, llvm::Value *A, llvm::Value *N);
+                         llvm::Value *uplo, llvm::Value *A, llvm::Value *lda,
+                         llvm::Value *N);
 
 // julia_decl null means not julia decl, otherwise it is the integer type needed
 // to cast to
