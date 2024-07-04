@@ -83,6 +83,12 @@ void my_potrf(char layout, char uplo, int N, double *__restrict__ A, int lda) {
   cblas_dpotrf(layout, uplo, N, A, lda, &info);
   inDerivative = true;
 }
+void ow_potrf(char layout, char uplo, int N, double *__restrict__ A, int lda) {
+  int info;
+  cblas_dpotrf(layout, uplo, N, A, lda, &info);
+  cblas_dscal(1, 0.0, A, lda);
+  inDerivative = true;
+}
 
 static void dotTests() {
 
@@ -1110,18 +1116,105 @@ static void potrfTests() {
             assert(upperinc == N);
             assert(lowerinc == 1);
         } else {
-            assert(upperinc == 1);
-            assert(lowerinc == N);
+          assert(upperinc == 1);
+          assert(lowerinc == N);
         }
-        for (int i=0; i<N-1; i++) {
-            cblas_daxpy(N-i-1, 1.0,
-                        &triv(i, i+1),
-                        upperinc,
-                        &triv(i+1, i),
-                        lowerinc
-                        );
+        bool is_lower = uplo == 'L' || uplo == 'l';
+        for (int i = 0; i < N - 1; i++) {
+          cblas_daxpy(N - i - 1, 1.0,
+                      is_lower ? &triv(i, i + 1) : &triv(i + 1, i),
+                      is_lower ? upperinc : lowerinc,
+                      is_lower ? &triv(i + 1, i) : &triv(i, i + 1),
+                      is_lower ? lowerinc : upperinc);
         }
-        
+
+        cblas_dlacpy(layout, uplo, N, N, tri, N, dA, lda);
+
+        checkTest(Test);
+
+        SkipVecIncCheck = true;
+        // Check memory of primal of expected derivative
+        checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+        // Check memory of primal of our derivative (if equal above, it
+        // should be the same).
+        checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+        SkipVecIncCheck = false;
+      }
+      {
+
+        std::string Test = "POTRF overwrite A ";
+        init();
+
+        ow_potrf(layout, uplo, N, A, lda);
+
+        // Check memory of primal on own.
+        checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+        init();
+        __enzyme_autodiff((void *)ow_potrf, enzyme_const, layout, enzyme_const,
+                          uplo, enzyme_const, N, enzyme_dup, A, dA,
+                          enzyme_const, lda);
+        foundCalls = calls;
+        init();
+
+        cblas_dpotrf(layout, uplo, N, A, lda, nullptr);
+        double *cacheA = (double *)foundCalls[1].pout_arg1;
+        inputs[5] = BlasInfo(cacheA, (char)layout, N, N, N);
+        assert(inputs[5].ty == ValueType::Matrix);
+        cblas_dlacpy(layout, uplo, N, N, A, lda, cacheA, N);
+        cblas_dscal(1, 0.0, A, lda);
+
+        inDerivative = true;
+        cblas_dscal(1, 0.0, dA, lda);
+
+        assert(foundCalls.size() >= 2);
+        assert(foundCalls[4].type == CallType::LASCL);
+        double *tri = (double *)foundCalls[4].pout_arg1;
+        inputs[3] = BlasInfo(tri, (char)layout, N, N, N);
+        cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, tri, N, 0);
+
+        cblas_dlacpy(layout, uplo, N, N, dA, lda, tri, N);
+
+        cblas_dtrmm(layout, uplo_to_side(uplo), uplo, 'T', 'N', N, N, 1.0,
+                    cacheA, N, tri, N);
+
+        assert(foundCalls.size() >= 5);
+        assert(foundCalls[7].type == CallType::COPY);
+        double *tmp = (double *)foundCalls[7].pout_arg1;
+        inputs[4] = BlasInfo(tmp, N, 1);
+
+        cblas_dcopy(N, tri, N + 1, tmp, 1);
+        cblas_dscal(N, 0.5, tmp, 1);
+        cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, tri, N, 0);
+        cblas_dcopy(N, tmp, 1, tri, N + 1);
+
+        cblas_dtrsm(layout, uplo_to_rside(uplo), uplo, 'N', 'N', N, N, 1.0,
+                    cacheA, N, tri, N);
+        cblas_dtrsm(layout, uplo_to_side(uplo), uplo, 'T', 'N', N, N, 1.0,
+                    cacheA, N, tri, N);
+#define triv(r, c)                                                             \
+  tri[(r) * (layout == CblasRowMajor ? N : 1) +                                \
+      (c) * (layout == CblasRowMajor ? 1 : N)]
+
+        int upperinc = (&triv(0, 1) - &triv(0, 0));
+        int lowerinc = (&triv(1, 0) - &triv(0, 0));
+        if (layout == CblasColMajor) {
+          assert(upperinc == N);
+          assert(lowerinc == 1);
+        } else {
+          assert(upperinc == 1);
+          assert(lowerinc == N);
+        }
+        bool is_lower = uplo == 'L' || uplo == 'l';
+        for (int i = 0; i < N - 1; i++) {
+          cblas_daxpy(N - i - 1, 1.0,
+                      is_lower ? &triv(i, i + 1) : &triv(i + 1, i),
+                      is_lower ? upperinc : lowerinc,
+                      is_lower ? &triv(i + 1, i) : &triv(i, i + 1),
+                      is_lower ? lowerinc : upperinc);
+        }
+
         cblas_dlacpy(layout, uplo, N, N, tri, N, dA, lda);
 
         checkTest(Test);

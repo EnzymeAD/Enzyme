@@ -152,6 +152,10 @@ class Seq<list<string> _args = [], list<string> _vars = [], bit _start = 1> {
   bit start = _start;
 }
 
+class CopyLowerToUpper<string _tmp> {
+  string unused = _tmp;
+}
+
 class For<string idx_, bit offset_> {
   string idx = idx_;
   bit offset = offset_;
@@ -618,7 +622,8 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                       
                       (BlasCall<"trsm"> $layout, (uplo_to_rside $uplo), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"tri">, $n),
                       
-                      (BlasCall<"trsm"> $layout, (uplo_to_side $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"tri">, $n),
+                      (BlasCall<"trsm"> $layout, (uplo_to_side $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"tri">, $n) ,
+
                       (For<"i", 0> (Sub $n, ConstantInt<1>),
                         (BlasCall<"axpy">
                             (Sub (Sub $n, ConstantInt<1>), $i),
@@ -626,29 +631,29 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                             (First
                                 (Lookup $layout,
                                     (Concat use<"tri">, $n),
-                                    $i,
-                                    (Add $i, ConstantInt<1>)
+                                    (ISelect (is_lower $uplo), $i, (Add $i, ConstantInt<1>)),
+                                    (ISelect (is_lower $uplo), (Add $i, ConstantInt<1>), $i)
                                 )
                             ),
                             (First
                                 (Lookup $layout,
                                     (Concat ConstantInt<0>, $n),
-                                    ConstantInt<0>,
-                                    ConstantInt<1>
+                                    (ISelect (is_lower $uplo), ConstantInt<0>, ConstantInt<1>),
+                                    (ISelect (is_lower $uplo), ConstantInt<1>, ConstantInt<0>)
                                 )
                             ),
                             (First
                                 (Lookup $layout,
                                     (Concat use<"tri">, $n),
-                                    (Add $i, ConstantInt<1>),
-                                    $i
+                                    (ISelect (is_lower $uplo), (Add $i, ConstantInt<1>), $i),
+                                    (ISelect (is_lower $uplo), $i, (Add $i, ConstantInt<1>))
                                 )
                             ),
                             (First
                                 (Lookup $layout,
                                     (Concat ConstantInt<0>, $n),
-                                    ConstantInt<1>,
-                                    ConstantInt<0>
+                                    (ISelect (is_lower $uplo), ConstantInt<1>, ConstantInt<0>),
+                                    (ISelect (is_lower $uplo), ConstantInt<0>, ConstantInt<1>)
                                 )
                             )
                         )
@@ -658,17 +663,15 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                   ],
                   (Seq<["tri", "triangular", "n"], [], 0>
                       (BlasCall<"lacpy"> $layout, (flip_uplo $uplo), $n, $n, (Shadow $A), use<"tri">, $n),
-
-                      // Zero the strictly other side of shadow [and not diagonal]. We need to save the diagonal and restore since otherwise it's overwritten
-                      (BlasCall<"lascl"> $layout, (flip_uplo $uplo), ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $n, $n, (Shadow $A), Alloca<1>),
-                      (BlasCall<"copy"> $n, use<"tri">, (Add $lda, ConstantInt<1>), (First (Shadow $A)), (Add $lda, ConstantInt<1>)),
-
+                      
+                      (CopyLowerToUpper<""> $layout, $uplo, (Shadow $A), $n),
+                      
                       // Actual Math
                       (BlasCall<"trsm"> $layout, Char<"L">, $uplo, (uplo_to_normal $uplo), Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A)),
                       (BlasCall<"trsm"> $layout, Char<"R">, $uplo, (uplo_to_trans $uplo), Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A)),
                       (BlasCall<"scal"> $n, Constant<"0.5">, (First (Shadow $A)), (Add $lda, ConstantInt<1>)),
 
-                    (Seq<["tmp", "vector", "n"], [], 1>
+                     (Seq<["tmp", "vector", "n"], [], 1>
 
                         // Zero out flipped side again
                         (BlasCall<"copy"> $n, (First (Shadow $A)), (Add $lda, ConstantInt<1>), use<"tmp">, ConstantInt<1>),
@@ -677,11 +680,10 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                         (BlasCall<"copy"> $n, use<"tmp">, ConstantInt<1>, (First (Shadow $A)), (Add $lda, ConstantInt<1>)),
 
                         // More math
-                        (BlasCall<"trmm"> $layout, (uplo_to_side $uplo), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A)),
-                        
+                        (BlasCall<"trmm"> $layout, (uplo_to_side $uplo), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A)),    
                         // Restore the flipped side, but saving our computed diagonal
                         (BlasCall<"copy"> $n, (First (Shadow $A)), (Add $lda, ConstantInt<1>), use<"tmp">, ConstantInt<1>),
-                      (BlasCall<"lacpy"> $layout, (flip_uplo $uplo), $n, $n, use<"tri">, $n, (Shadow $A)),
+                        (BlasCall<"lacpy"> $layout, (flip_uplo $uplo), $n, $n, use<"tri">, $n, (Shadow $A)),
                         (BlasCall<"copy"> $n, use<"tmp">, ConstantInt<1>, (First (Shadow $A)), (Add $lda, ConstantInt<1>))
                     )
                   )

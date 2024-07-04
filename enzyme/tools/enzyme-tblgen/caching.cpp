@@ -331,7 +331,9 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
 << "  if ((Mode == DerivativeMode::ReverseModeCombined ||\n"
 << "       Mode == DerivativeMode::ReverseModePrimal) && cachetype) {\n"
 << "    SmallVector<Value *, 2> cacheValues;\n";
- 
+if (pattern.getName() == "potrf") {
+os << "BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call)->getNextNode());\n";
+}
   os << "    if (byRef) {\n";
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);

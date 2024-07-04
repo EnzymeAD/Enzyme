@@ -1814,6 +1814,11 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
 llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
                          llvm::Value *V, bool byRef);
 
+void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
+                         BlasInfo blas, bool byRef, llvm::Value *layout,
+                         llvm::Value *uplo, llvm::Value *A, llvm::Value *lda,
+                         llvm::Value *N);
+
 // julia_decl null means not julia decl, otherwise it is the integer type needed
 // to cast to
 llvm::Value *to_blas_callconv(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
@@ -1852,6 +1857,11 @@ llvm::Value *is_left(llvm::IRBuilder<> &B, llvm::Value *side, bool byRef,
                      bool cublas);
 llvm::Value *is_lower(llvm::IRBuilder<> &B, llvm::Value *uplo, bool byRef,
                       bool cublas);
+
+llvm::Value *lookup_with_layout(llvm::IRBuilder<> &B, llvm::Type *fpType,
+                                llvm::Value *layout, llvm::Value *base,
+                                llvm::Value *lda, llvm::Value *row,
+                                llvm::Value *col);
 
 // first one assume V is an Integer
 llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool cublas);
