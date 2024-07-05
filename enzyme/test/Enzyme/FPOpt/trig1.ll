@@ -19,5 +19,5 @@ declare double @llvm.sin.f64(double)
 ; CHECK: define double @tester(double %x)
 ; CHECK: entry:
 ; CHECK-NEXT:   %[[i0:.+]] = call fast double @llvm.sin.f64(double %x)
-; CHECK-NEXT:   %[[i1:.+]] = call fast double @llvm.pow.f64(double %0, double 2.000000e+00)
+; CHECK-NEXT:   %[[i1:.+]] = call fast double @llvm.pow.f64(double %[[i0]], double 2.000000e+00)
 ; CHECK-NEXT:   ret double %[[i1]]

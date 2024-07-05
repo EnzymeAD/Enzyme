@@ -103,15 +103,22 @@ public:
       Then->getParent()->setName("herbie.then");
       builder.SetInsertPoint(Then);
       Value *ThenVal = operands[1]->getValue(builder);
+      if (Instruction *I = dyn_cast<Instruction>(ThenVal)) {
+        I->setName("herbie.then_val");
+      }
 
       Else->getParent()->setName("herbie.else");
       builder.SetInsertPoint(Else);
       Value *ElseVal = operands[2]->getValue(builder);
+      if (Instruction *I = dyn_cast<Instruction>(ElseVal)) {
+        I->setName("herbie.else_val");
+      }
 
       builder.SetInsertPoint(&*IP);
       auto Phi = builder.CreatePHI(ThenVal->getType(), 2);
       Phi->addIncoming(ThenVal, Then->getParent());
       Phi->addIncoming(ElseVal, Else->getParent());
+      Phi->setName("herbie.merge");
 
       return Phi;
     }
@@ -124,60 +131,88 @@ public:
     Value *val = nullptr;
 
     if (op == "neg") {
-      val = builder.CreateFNeg(operandValues[0]);
+      val = builder.CreateFNeg(operandValues[0], "herbie.neg");
     } else if (op == "+") {
-      val = builder.CreateFAdd(operandValues[0], operandValues[1]);
+      val =
+          builder.CreateFAdd(operandValues[0], operandValues[1], "herbie.add");
     } else if (op == "-") {
-      val = builder.CreateFSub(operandValues[0], operandValues[1]);
+      val =
+          builder.CreateFSub(operandValues[0], operandValues[1], "herbie.sub");
     } else if (op == "*") {
-      val = builder.CreateFMul(operandValues[0], operandValues[1]);
+      val =
+          builder.CreateFMul(operandValues[0], operandValues[1], "herbie.mul");
     } else if (op == "/") {
-      val = builder.CreateFDiv(operandValues[0], operandValues[1]);
+      val =
+          builder.CreateFDiv(operandValues[0], operandValues[1], "herbie.div");
     } else if (op == "sin") {
-      val = builder.CreateUnaryIntrinsic(Intrinsic::sin, operandValues[0]);
+      val = builder.CreateUnaryIntrinsic(Intrinsic::sin, operandValues[0],
+                                         nullptr, "herbie.sin");
     } else if (op == "cos") {
-      val = builder.CreateUnaryIntrinsic(Intrinsic::cos, operandValues[0]);
-#if LLVM_VERSION_MAJOR >= 16 // TODO: Double check version
+      val = builder.CreateUnaryIntrinsic(Intrinsic::cos, operandValues[0],
+                                         nullptr, "herbie.cos");
     } else if (op == "tan") {
-      val = builder.CreateUnaryIntrinsic(Intrinsic::tan, operandValues[0]);
+#if LLVM_VERSION_MAJOR >= 16 // TODO: Double check version
+      val = builder.CreateUnaryIntrinsic(Intrinsic::tan, operandValues[0],
+                                         "herbie.tan");
+#else
+      // Lower versions do not have tan intrinsic
+      val = builder.CreateFDiv(
+          builder.CreateUnaryIntrinsic(Intrinsic::sin, operandValues[0]),
+          builder.CreateUnaryIntrinsic(Intrinsic::cos, operandValues[0]),
+          "herbie.tan");
 #endif
     } else if (op == "exp") {
-      val = builder.CreateUnaryIntrinsic(Intrinsic::exp, operandValues[0]);
+      val = builder.CreateUnaryIntrinsic(Intrinsic::exp, operandValues[0],
+                                         nullptr, "herbie.exp");
     } else if (op == "log") {
-      val = builder.CreateUnaryIntrinsic(Intrinsic::log, operandValues[0]);
+      val = builder.CreateUnaryIntrinsic(Intrinsic::log, operandValues[0],
+                                         nullptr, "herbie.log");
     } else if (op == "sqrt") {
-      val = builder.CreateUnaryIntrinsic(Intrinsic::sqrt, operandValues[0]);
+      val = builder.CreateUnaryIntrinsic(Intrinsic::sqrt, operandValues[0],
+                                         nullptr, "herbie.sqrt");
     } else if (op == "cbrt") {
       val = builder.CreateBinaryIntrinsic(
           Intrinsic::pow, operandValues[0],
-          ConstantFP::get(operandValues[0]->getType(), 1.0 / 3.0));
+          ConstantFP::get(operandValues[0]->getType(), 1.0 / 3.0), nullptr,
+          "herbie.cbrt");
     } else if (op == "pow") {
       val = builder.CreateBinaryIntrinsic(Intrinsic::pow, operandValues[0],
-                                          operandValues[1]);
+                                          operandValues[1], nullptr,
+                                          "herbie.pow");
     } else if (op == "fma") {
       val = builder.CreateIntrinsic(
           Intrinsic::fma, {operandValues[0]->getType()},
-          {operandValues[0], operandValues[1], operandValues[2]});
+          {operandValues[0], operandValues[1], operandValues[2]}, nullptr,
+          "herbie.fma");
     } else if (op == "fabs") {
-      val = builder.CreateUnaryIntrinsic(Intrinsic::fabs, operandValues[0]);
+      val = builder.CreateUnaryIntrinsic(Intrinsic::fabs, operandValues[0],
+                                         nullptr, "herbie.fabs");
     } else if (op == "==") {
-      val = builder.CreateFCmpOEQ(operandValues[0], operandValues[1]);
+      val = builder.CreateFCmpOEQ(operandValues[0], operandValues[1],
+                                  "herbie.if.eq");
     } else if (op == "!=") {
-      val = builder.CreateFCmpONE(operandValues[0], operandValues[1]);
+      val = builder.CreateFCmpONE(operandValues[0], operandValues[1],
+                                  "herbie.if.ne");
     } else if (op == "<") {
-      val = builder.CreateFCmpOLT(operandValues[0], operandValues[1]);
+      val = builder.CreateFCmpOLT(operandValues[0], operandValues[1],
+                                  "herbie.if.lt");
     } else if (op == ">") {
-      val = builder.CreateFCmpOGT(operandValues[0], operandValues[1]);
+      val = builder.CreateFCmpOGT(operandValues[0], operandValues[1],
+                                  "herbie.if.gt");
     } else if (op == "<=") {
-      val = builder.CreateFCmpOLE(operandValues[0], operandValues[1]);
+      val = builder.CreateFCmpOLE(operandValues[0], operandValues[1],
+                                  "herbie.if.le");
     } else if (op == ">=") {
-      val = builder.CreateFCmpOGE(operandValues[0], operandValues[1]);
+      val = builder.CreateFCmpOGE(operandValues[0], operandValues[1],
+                                  "herbie.if.ge");
     } else if (op == "and") {
-      val = builder.CreateAnd(operandValues[0], operandValues[1]);
+      val = builder.CreateAnd(operandValues[0], operandValues[1],
+                              "herbie.if.and");
     } else if (op == "or") {
-      val = builder.CreateOr(operandValues[0], operandValues[1]);
+      val =
+          builder.CreateOr(operandValues[0], operandValues[1], "herbie.if.or");
     } else if (op == "not") {
-      val = builder.CreateNot(operandValues[0]);
+      val = builder.CreateNot(operandValues[0], "herbie.if.not");
     } else if (op == "TRUE") {
       val = ConstantInt::getTrue(builder.getContext());
     } else if (op == "FALSE") {
@@ -401,8 +436,8 @@ bool improveViaHerbie(const std::string &inputExpr, std::string &outputExpr) {
   input.close();
 
   std::string Program = HERBIE_BINARY;
-  llvm::StringRef Args[] = {Program,     "improve", "--seed",
-                            "239778888", tmpin,     tmpout};
+  llvm::StringRef Args[] = {Program,     "improve", "--seed", "239778888",
+                            "--timeout", "60",      tmpin,    tmpout};
   std::string ErrMsg;
   bool ExecutionFailed = false;
 
@@ -574,9 +609,10 @@ bool extractErrorLogData(const std::string &filePath,
     }
   }
 
-  llvm::errs() << "Failed to get error log data for: " << "Function: "
-               << functionName << ", BlockIdx: " << blockIdx
-               << ", InstIdx: " << instIdx << "\n";
+  if (EnzymePrintFPOpt)
+    llvm::errs() << "Failed to get error log data for: " << "Function: "
+                 << functionName << ", BlockIdx: " << blockIdx
+                 << ", InstIdx: " << instIdx << "\n";
   return false;
 }
 
@@ -684,6 +720,8 @@ B2:
 
   std::unordered_map<Value *, FPNode *> valueToNodeMap;
   std::unordered_map<std::string, Value *> symbolToValueMap;
+
+  llvm::errs() << "FPOpt: Starting Floodfill for " << F.getName() << "\n";
 
   for (auto &BB : F) {
     for (auto &I : BB) {
@@ -859,13 +897,10 @@ B2:
         }
       }
 
-      if (EnzymePrintFPOpt)
-        llvm::errs() << "Finished floodfill\n\n";
-
       // Don't bother with graphs without any herbiable operations
       if (!operation_seen.empty()) {
         if (EnzymePrintFPOpt) {
-          llvm::errs() << "Found connected component with "
+          llvm::errs() << "Found a connected component with "
                        << operation_seen.size() << " operations and "
                        << input_seen.size() << " inputs and "
                        << output_seen.size() << " outputs\n";
@@ -900,6 +935,9 @@ B2:
       }
     }
   }
+
+  llvm::errs() << "FPOpt: Found " << connected_components.size()
+               << " connected components in " << F.getName() << "\n";
 
   // 1) Identify subgraphs of the computation which can be entirely represented
   // in herbie-style arithmetic
@@ -960,7 +998,8 @@ B2:
       // 3) run fancy opts
       std::string herbieOutput;
       if (!improveViaHerbie(herbieInput, herbieOutput)) {
-        llvm::errs() << "Failed to optimize an expression using Herbie!\n";
+        if (EnzymePrintHerbie)
+          llvm::errs() << "Failed to optimize an expression using Herbie!\n";
         continue;
       }
 
@@ -995,6 +1034,8 @@ B2:
     }
   }
 
+  llvm::errs() << "FPOpt: Finished optimizing " << F.getName() << "\n";
+
   for (auto &[_, node] : valueToNodeMap) {
     delete node;
   }
@@ -1015,6 +1056,8 @@ B2:
       I->eraseFromParent();
     }
   }
+
+  llvm::errs() << "FPOpt: Finished cleaning up " << F.getName() << "\n";
 
   // if (EnzymePrintFPOpt) {
   //   llvm::errs() << "Finished fpOptimize\n";
