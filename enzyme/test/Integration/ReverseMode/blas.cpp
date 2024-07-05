@@ -1355,6 +1355,8 @@ static void potrsTests() {
 
         cblas_dpotrs(layout, uplo, N, Nrhs, A, lda, dB, incB, nullptr);
 
+        checkTest(Test);
+
         SkipVecIncCheck = true;
         // Check memory of primal of expected derivative
         checkMemoryTrace(inputs, "Expected " + Test, calls);
@@ -1382,6 +1384,7 @@ static void potrsTests() {
 
         cblas_dpotrs(layout, uplo, N, Nrhs, A, lda, dB, incB, nullptr);
 
+        checkTest(Test);
         // Check memory of primal of expected derivative
         checkMemoryTrace(inputs, "Expected " + Test, calls);
 

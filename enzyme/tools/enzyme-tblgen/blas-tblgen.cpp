@@ -1414,7 +1414,7 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
   }
   os << "        if (byRef) {\n";
   int n = 0;
-  if (func == "gemv" || func == "lascl" || func == "potrs")
+  if (func == "gemv" || func == "lascl" || func == "potrs" || func == "potrf")
     n = 1;
   if (func == "gemm" || func == "syrk" || func == "syr2k")
     n = 2;
@@ -1750,8 +1750,14 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
     os << "        // LowerToUpper\n";
     // handle seq rules
     for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
-      os << "        Value *arg_" << i << "[] = ";
+      if (i != 2)
+        os << "        Value *arg_" << i << "[] = ";
+      else
+        os << "        SmallVector<Value*, 2> arg_" << i
+           << ";\n  for (auto v : ";
       rev_call_arg(forward, ruleDag, pattern, i, os, vars);
+      if (i == 2)
+        os << ") arg_" << i << ".push_back(v)";
       os << ";\n";
     }
 

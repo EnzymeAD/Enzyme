@@ -702,7 +702,7 @@ def potrs: CallBlasPattern<(Op $layout, $uplo, $n, $nrhs, $A, $lda, $B, $ldb, $i
                       
                       (BlasCall<"trmm"> $layout, (uplo_to_side $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"tri">, $n),
 
-                      (CopyLowerToUpper<""> $layout, $uplo, (Shadow $A), $n),
+                      (CopyLowerToUpper<""> $layout, $uplo, (Concat use<"tri">, $n), $n),
 
                       (BlasCall<"potrs"> $layout, $uplo, $n, $n, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"tri">, $n, Alloca<1>),
 
@@ -733,7 +733,7 @@ def potrs: CallBlasPattern<(Op $layout, $uplo, $n, $nrhs, $A, $lda, $B, $ldb, $i
                             ),
                             (First
                                 (Lookup $layout,
-                                    (Shadow $A),
+                                    (Concat ConstantInt<0>, $lda),
                                     (ISelect (is_lower $uplo), ConstantInt<1>, ConstantInt<0>),
                                     (ISelect (is_lower $uplo), ConstantInt<0>, ConstantInt<1>)
                                 )
