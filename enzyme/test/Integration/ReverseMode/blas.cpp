@@ -1248,7 +1248,7 @@ static void potrsTests() {
     {
       BlasInfo inputs[6] = {
           /*A*/ BlasInfo(A, layout, N, N, lda),
-          /*B*/ BlasInfo(B, layout, N, Nrhs, ldb),
+          /*B*/ BlasInfo(B, layout, N, Nrhs, incB),
           /*C*/ BlasInfo(),
           BlasInfo(),
           BlasInfo(),
@@ -1259,7 +1259,7 @@ static void potrsTests() {
         std::string Test = "POTRS active A, B";
         init();
 
-        my_potrs(layout, uplo, N, Nrhs, A, lda, B, ldb);
+        my_potrs(layout, uplo, N, Nrhs, A, lda, B, incB);
 
         assert(calls.size() == 1);
         assert(calls[0].inDerivative == false);
@@ -1276,7 +1276,7 @@ static void potrsTests() {
         assert(calls[0].iarg2 == Nrhs);
         assert(calls[0].iarg3 == UNUSED_INT);
         assert(calls[0].iarg4 == lda);
-        assert(calls[0].iarg5 == ldb);
+        assert(calls[0].iarg5 == incB);
         assert(calls[0].iarg6 == UNUSED_INT);
         assert(calls[0].side == UNUSED_TRANS);
         assert(calls[0].uplo == uplo);
@@ -1288,11 +1288,11 @@ static void potrsTests() {
         init();
         __enzyme_autodiff((void *)my_potrs, enzyme_const, layout, enzyme_const,
                           uplo, enzyme_const, N, enzyme_const, Nrhs, enzyme_dup, A, dA,
-                          enzyme_const, lda, enzyme_dup, B, dB, enzyme_const, ldb);
+                          enzyme_const, lda, enzyme_dup, B, dB, enzyme_const, incB);
         foundCalls = calls;
         init();
 
-        my_potrs(layout, uplo, N, Nrhs, A, lda, B, ldb);
+        my_potrs(layout, uplo, N, Nrhs, A, lda, B, incB);
 
         inDerivative = true;
 
@@ -1307,24 +1307,11 @@ static void potrsTests() {
         cblas_dtrmm(layout, uplo_to_side(uplo), uplo, 'T', 'N', N, N, 1.0,
                     A, lda, tri, N);
 
-        assert(foundCalls.size() >= 5);
-        assert(foundCalls[4].type == CallType::COPY);
-        double *tmp = (double *)foundCalls[4].pout_arg1;
-        inputs[4] = BlasInfo(tmp, N, 1);
-
-        cblas_dcopy(N, tri, N + 1, tmp, 1);
-        cblas_dscal(N, 0.5, tmp, 1);
-        cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, tri, N, 0);
-        cblas_dcopy(N, tmp, 1, tri, N + 1);
-
-        cblas_dtrsm(layout, uplo_to_rside(uplo), uplo, 'N', 'N', N, N, 1.0,
-                    A, lda, tri, N);
-        cblas_dtrsm(layout, uplo_to_side(uplo), uplo, 'T', 'N', N, N, 1.0,
-                    A, lda, tri, N);
 #define triv(r, c)                                                               \
   tri[(r) * (layout == CblasRowMajor ? N : 1) +                            \
     (c) * (layout == CblasRowMajor ? 1 : N)]
 
+        bool is_lower = uplo == 'L' || uplo == 'l';
         int upperinc = (&triv(0, 1) - &triv(0,0));
         int lowerinc = (&triv(1, 0) - &triv(0,0));
         if (layout == CblasColMajor) {
@@ -1334,18 +1321,39 @@ static void potrsTests() {
           assert(upperinc == 1);
           assert(lowerinc == N);
         }
-        bool is_lower = uplo == 'L' || uplo == 'l';
-        for (int i = 0; i < N - 1; i++) {
-          cblas_daxpy(N - i - 1, 1.0,
-                      is_lower ? &triv(i, i + 1) : &triv(i + 1, i),
-                      is_lower ? upperinc : lowerinc,
-                      is_lower ? &triv(i + 1, i) : &triv(i, i + 1),
-                      is_lower ? lowerinc : upperinc);
+          for (int i = 0; i < N - 1; i++) {
+            cblas_dcopy(N - i - 1,
+                        is_lower ? (&triv(i + 1, i)) : (&triv(i, i + 1)),
+                        is_lower ? lowerinc : upperinc,
+                        is_lower ? (&triv(i, i + 1)) : (&triv(i + 1, i)),
+                        is_lower ? upperinc : lowerinc);
+          }
+
+        cblas_dpotrs(layout, uplo, N, N, A, lda, tri, N, nullptr);
+
+#define Av(r, c)                                                               \
+  dA[(r) * (layout == CblasRowMajor ? lda : 1) +                            \
+    (c) * (layout == CblasRowMajor ? 1 : lda)]
+        
+        int Aupperinc = (&Av(0, 1) - &Av(0,0));
+        int Alowerinc = (&Av(1, 0) - &Av(0,0));
+        if (layout == CblasColMajor) {
+            assert(Aupperinc == lda);
+            assert(Alowerinc == 1);
+        } else {
+          assert(Aupperinc == 1);
+          assert(Alowerinc == lda);
         }
 
-        cblas_dlacpy(layout, uplo, N, N, tri, N, dA, lda);
+        for (int i = 0; i < N - 1; i++) {
+          cblas_daxpy(N - i - 1, 1.0,
+                        is_lower ? (&triv(i + 1, i)) : (&triv(i, i + 1)),
+                        is_lower ? lowerinc : upperinc,
+                        is_lower ? (&Av(i + 1, i)) : (&Av(i, i + 1)),
+                        is_lower ? Alowerinc : Aupperinc);
+        }
 
-        checkTest(Test);
+        cblas_dpotrs(layout, uplo, N, Nrhs, A, lda, dB, incB, nullptr);
 
         SkipVecIncCheck = true;
         // Check memory of primal of expected derivative
@@ -1355,6 +1363,31 @@ static void potrsTests() {
         // should be the same).
         checkMemoryTrace(inputs, "Found " + Test, foundCalls);
         SkipVecIncCheck = false;
+      }
+      {
+
+        std::string Test = "POTRS active B";
+
+        init();
+        __enzyme_autodiff((void *)my_potrs, enzyme_const, layout, enzyme_const,
+                          uplo, enzyme_const, N, enzyme_const, Nrhs, enzyme_const, A,
+                          enzyme_const, lda, enzyme_dup, B, dB, enzyme_const, incB);
+        foundCalls = calls;
+        init();
+
+        my_potrs(layout, uplo, N, Nrhs, A, lda, B, incB);
+
+        inDerivative = true;
+
+
+        cblas_dpotrs(layout, uplo, N, Nrhs, A, lda, dB, incB, nullptr);
+
+        // Check memory of primal of expected derivative
+        checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+        // Check memory of primal of our derivative (if equal above, it
+        // should be the same).
+        checkMemoryTrace(inputs, "Found " + Test, foundCalls);
       }
     }
   }
@@ -1376,4 +1409,6 @@ int main() {
   syrkTests();
   
   potrfTests();
+  
+  potrsTests();
 }

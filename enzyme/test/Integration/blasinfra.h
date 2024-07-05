@@ -2665,7 +2665,7 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     auto ldb = rcall.iarg5;
     auto layout = rcall.layout;
     auto N = rcall.iarg1;
-    auto Nrhs = rcall.iarg1;
+    auto Nrhs = rcall.iarg2;
 
     auto uplo_char = rcall.uplo;
 
