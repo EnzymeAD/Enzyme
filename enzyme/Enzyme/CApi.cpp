@@ -1322,9 +1322,6 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
       if (attr.isStringAttribute() &&
           attr.getKindAsString() == "enzyme_sret_v") {
         sretv = true;
-        NewAttrs = NewAttrs.addAttribute(
-            F->getContext(), AttributeList::FirstArgIndex + types.size(),
-            Attribute::get(F->getContext(), "enzyme_sret"));
       } else {
         NewAttrs = NewAttrs.addAttribute(
             F->getContext(), AttributeList::FirstArgIndex + types.size(), attr);
@@ -1335,6 +1332,11 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
         auto AS = PT->getAddressSpace();
         if (AS == 11 || AS == 12 || AS == 13 || sretv) {
           for (unsigned i = 0; i < AT->getNumElements(); i++) {
+            if (sretv) {
+              NewAttrs = NewAttrs.addAttribute(
+                  F->getContext(), AttributeList::FirstArgIndex + types.size(),
+                  Attribute::get(F->getContext(), "enzyme_sret"));
+            }
             types.push_back(PT);
           }
           changed.insert(i);
