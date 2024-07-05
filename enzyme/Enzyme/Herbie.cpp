@@ -211,8 +211,9 @@ public:
   virtual void updateBounds(double lower, double upper) override {
     lb = std::min(lb, lower);
     ub = std::max(ub, upper);
-    llvm::errs() << "Updated bounds for " << *value << ": [" << lb << ", " << ub
-                 << "]\n";
+    if (EnzymePrintFPOpt)
+      llvm::errs() << "Updated bounds for " << *value << ": [" << lb << ", "
+                   << ub << "]\n";
   }
 
   virtual double getLowerBound() const override { return lb; }
@@ -816,20 +817,24 @@ B2:
               if (logFound) {
                 node->updateBounds(errorLogData.lower[i],
                                    errorLogData.upper[i]);
-                llvm::errs() << "Bounds of " << *operand
-                             << " are: " << errorLogData.lower[i] << " and "
-                             << errorLogData.upper[i] << "\n";
+                if (EnzymePrintFPOpt)
+                  llvm::errs() << "Bounds of " << *operand
+                               << " are: " << errorLogData.lower[i] << " and "
+                               << errorLogData.upper[i] << "\n";
               } else { // Unknown bounds
                 node->updateBounds(-std::numeric_limits<double>::infinity(),
                                    std::numeric_limits<double>::infinity());
-                llvm::errs() << "Bounds of " << *operand
-                             << " are not found in the log\n";
+                if (EnzymePrintFPOpt)
+                  llvm::errs() << "Bounds of " << *operand
+                               << " are not found in the log\n";
               }
 
-              llvm::errs() << "Node bounds of " << *operand << " are: "
-                           << valueToNodeMap[operand]->getLowerBound()
-                           << " and "
-                           << valueToNodeMap[operand]->getUpperBound() << "\n";
+              if (EnzymePrintFPOpt)
+                llvm::errs()
+                    << "Node bounds of " << *operand
+                    << " are: " << valueToNodeMap[operand]->getLowerBound()
+                    << " and " << valueToNodeMap[operand]->getUpperBound()
+                    << "\n";
             }
           } else {
             if (EnzymePrintFPOpt)
@@ -1011,11 +1016,11 @@ B2:
     }
   }
 
-  if (EnzymePrintFPOpt) {
-    llvm::errs() << "Finished fpOptimize\n";
-    // Print the function to see the changes
-    F.print(llvm::errs());
-  }
+  // if (EnzymePrintFPOpt) {
+  //   llvm::errs() << "Finished fpOptimize\n";
+  //   // Print the function to see the changes
+  //   F.print(llvm::errs());
+  // }
 
   return changed;
 }
