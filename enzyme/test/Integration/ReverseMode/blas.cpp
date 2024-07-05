@@ -90,6 +90,12 @@ void ow_potrf(char layout, char uplo, int N, double *__restrict__ A, int lda) {
   inDerivative = true;
 }
 
+void my_potrs(char layout, char uplo, int N, int Nrhs, double *__restrict__ A, int lda, double *__restrict__ B, int ldb) {
+  int info;
+  cblas_dpotrs(layout, uplo, N, Nrhs, A, lda, B, ldb, &info);
+  inDerivative = true;
+}
+
 static void dotTests() {
 
     std::string Test = "DOT active both ";
@@ -1202,6 +1208,128 @@ static void potrfTests() {
         if (layout == CblasColMajor) {
           assert(upperinc == N);
           assert(lowerinc == 1);
+        } else {
+          assert(upperinc == 1);
+          assert(lowerinc == N);
+        }
+        bool is_lower = uplo == 'L' || uplo == 'l';
+        for (int i = 0; i < N - 1; i++) {
+          cblas_daxpy(N - i - 1, 1.0,
+                      is_lower ? &triv(i, i + 1) : &triv(i + 1, i),
+                      is_lower ? upperinc : lowerinc,
+                      is_lower ? &triv(i + 1, i) : &triv(i, i + 1),
+                      is_lower ? lowerinc : upperinc);
+        }
+
+        cblas_dlacpy(layout, uplo, N, N, tri, N, dA, lda);
+
+        checkTest(Test);
+
+        SkipVecIncCheck = true;
+        // Check memory of primal of expected derivative
+        checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+        // Check memory of primal of our derivative (if equal above, it
+        // should be the same).
+        checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+        SkipVecIncCheck = false;
+      }
+    }
+  }
+}
+
+static void potrsTests() {
+  int N = 17;
+  int Nrhs = M;
+  // N means normal matrix, T means transposed
+  for (char layout : {CblasColMajor, CblasRowMajor}) {
+    for (auto uplo : {'U', 'u', 'L', 'l'})
+
+    {
+      BlasInfo inputs[6] = {
+          /*A*/ BlasInfo(A, layout, N, N, lda),
+          /*B*/ BlasInfo(B, layout, N, Nrhs, ldb),
+          /*C*/ BlasInfo(),
+          BlasInfo(),
+          BlasInfo(),
+          BlasInfo(),
+      };
+      {
+
+        std::string Test = "POTRS active A, B";
+        init();
+
+        my_potrs(layout, uplo, N, Nrhs, A, lda, B, ldb);
+
+        assert(calls.size() == 1);
+        assert(calls[0].inDerivative == false);
+        assert(calls[0].type == CallType::POTRS);
+        assert(calls[0].pout_arg1 == B);
+        assert(calls[0].pin_arg1 == A);
+        assert(calls[0].pin_arg2 == UNUSED_POINTER);
+        assert(calls[0].farg1 == UNUSED_DOUBLE);
+        assert(calls[0].farg2 == UNUSED_DOUBLE);
+        assert(calls[0].layout == layout);
+        assert(calls[0].targ1 == UNUSED_TRANS);
+        assert(calls[0].targ2 == UNUSED_TRANS);
+        assert(calls[0].iarg1 == N);
+        assert(calls[0].iarg2 == Nrhs);
+        assert(calls[0].iarg3 == UNUSED_INT);
+        assert(calls[0].iarg4 == lda);
+        assert(calls[0].iarg5 == ldb);
+        assert(calls[0].iarg6 == UNUSED_INT);
+        assert(calls[0].side == UNUSED_TRANS);
+        assert(calls[0].uplo == uplo);
+        assert(calls[0].diag == UNUSED_TRANS);
+
+        // Check memory of primal on own.
+        checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+        init();
+        __enzyme_autodiff((void *)my_potrs, enzyme_const, layout, enzyme_const,
+                          uplo, enzyme_const, N, enzyme_const, Nrhs, enzyme_dup, A, dA,
+                          enzyme_const, lda, enzyme_dup, B, dB, enzyme_const, ldb);
+        foundCalls = calls;
+        init();
+
+        my_potrs(layout, uplo, N, Nrhs, A, lda, B, ldb);
+
+        inDerivative = true;
+
+        assert(foundCalls.size() >= 2);
+        assert(foundCalls[1].type == CallType::LASCL);
+        double *tri = (double *)foundCalls[1].pout_arg1;
+        inputs[3] = BlasInfo(tri, layout, N, N, N);
+        cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, tri, N, 0);
+
+        cblas_dlacpy(layout, uplo, N, N, dA, lda, tri, N);
+
+        cblas_dtrmm(layout, uplo_to_side(uplo), uplo, 'T', 'N', N, N, 1.0,
+                    A, lda, tri, N);
+
+        assert(foundCalls.size() >= 5);
+        assert(foundCalls[4].type == CallType::COPY);
+        double *tmp = (double *)foundCalls[4].pout_arg1;
+        inputs[4] = BlasInfo(tmp, N, 1);
+
+        cblas_dcopy(N, tri, N + 1, tmp, 1);
+        cblas_dscal(N, 0.5, tmp, 1);
+        cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, tri, N, 0);
+        cblas_dcopy(N, tmp, 1, tri, N + 1);
+
+        cblas_dtrsm(layout, uplo_to_rside(uplo), uplo, 'N', 'N', N, N, 1.0,
+                    A, lda, tri, N);
+        cblas_dtrsm(layout, uplo_to_side(uplo), uplo, 'T', 'N', N, N, 1.0,
+                    A, lda, tri, N);
+#define triv(r, c)                                                               \
+  tri[(r) * (layout == CblasRowMajor ? N : 1) +                            \
+    (c) * (layout == CblasRowMajor ? 1 : N)]
+
+        int upperinc = (&triv(0, 1) - &triv(0,0));
+        int lowerinc = (&triv(1, 0) - &triv(0,0));
+        if (layout == CblasColMajor) {
+            assert(upperinc == N);
+            assert(lowerinc == 1);
         } else {
           assert(upperinc == 1);
           assert(lowerinc == N);

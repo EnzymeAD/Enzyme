@@ -316,6 +316,7 @@ enum class CallType {
   SYMM,
   NRM2,
   POTRF,
+  POTRS,
   TRSM,
 };
 
@@ -444,6 +445,9 @@ void printty(CallType v) {
     return;
   case CallType::POTRF:
     printf("POTRF");
+    return;
+  case CallType::POTRS:
+    printf("POTRS");
     return;
   case CallType::TRSM:
     printf("TRSM");
@@ -955,6 +959,29 @@ void printcall(BlasCall rcall) {
     printty(rcall.pout_arg1);
     printf(", lda=");
     printty(rcall.iarg4);
+    printf(")");
+    return;
+  case CallType::POTRS:
+    printf("POTRS(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", layout=");
+    printty(rcall.layout);
+    printf(", uplo=");
+    printty(rcall.uplo);
+    printf(", N=");
+    printty(rcall.iarg1);
+    printf(", Nrhs=");
+    printty(rcall.iarg2);
+    printf(", A=");
+    printty(rcall.pin_arg1);
+    printf(", lda=");
+    printty(rcall.iarg4);
+    printf(", B=");
+    printty(rcall.pout_arg1);
+    printf(", ldb=");
+    printty(rcall.iarg5);
     printf(")");
     return;
   case CallType::SYRK:
@@ -1857,6 +1884,37 @@ __attribute__((noinline)) void cblas_dpotrf(char layout, char uplo,
   calls.push_back(call);
 }
 
+//  The factorization has the form
+//    A = U**T * U,  if UPLO = 'U', or
+//    A = L  * L**T,  if UPLO = 'L',
+__attribute__((noinline)) void cblas_dpotrs(char layout, char uplo,
+                                            int N, int Nrhs, double *A, int lda,
+                                            double *B, int ldb, int* info) {
+  BlasCall call = {ABIType::CBLAS,
+                   UNUSED_HANDLE,
+                   inDerivative,
+                   CallType::POTRS,
+                   B,
+                   A,
+                   UNUSED_POINTER,
+                   UNUSED_DOUBLE,
+                   UNUSED_DOUBLE,
+                   layout,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   N,
+                   Nrhs,
+                   UNUSED_INT,
+                   lda,
+                   ldb,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   UNUSED_TRANS,
+                   uplo,
+                   UNUSED_TRANS};
+  calls.push_back(call);
+}
+
 // Solve op( A )*X = alpha*B,   or   X*op( A ) = alpha*B
 __attribute__((noinline)) void cblas_dtrsm(char layout, char side, char uplo,
                                            char trans, char diag, int M, int N,
@@ -2597,6 +2655,25 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
 
     checkMatrix(A, "A", layout, /*rows=*/N,
                 /*cols=*/N, /*ld=*/lda, test, rcall, trace);
+    return;
+  }
+  case CallType::POTRS: {
+    auto B = pointer_to_index(rcall.pout_arg1, inputs);
+    auto A = pointer_to_index(rcall.pin_arg1, inputs);
+
+    auto lda = rcall.iarg4;
+    auto ldb = rcall.iarg5;
+    auto layout = rcall.layout;
+    auto N = rcall.iarg1;
+    auto Nrhs = rcall.iarg1;
+
+    auto uplo_char = rcall.uplo;
+
+    checkMatrix(A, "A", layout, /*rows=*/N,
+                /*cols=*/N, /*ld=*/lda, test, rcall, trace);
+
+    checkMatrix(B, "B", layout, /*rows=*/N,
+                /*cols=*/Nrhs, /*ld=*/ldb, test, rcall, trace);
     return;
   }
   case CallType::SYR2K: {

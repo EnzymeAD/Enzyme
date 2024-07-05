@@ -604,7 +604,7 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                   [cblas_layout, uplo, len, mld<["uplo", "n", "n"]>, len],
                   [
                     /* A     */ 
-                  (Seq<["tri", "triangular", "n"], [], 0>
+                  (Seq<["tri", "triangular", "n"], [], 1>
                       (BlasCall<"lascl"> $layout, (flip_uplo $uplo), ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $n, $n, use<"tri">, $n, Alloca<1>),
                       (BlasCall<"lacpy"> $layout, $uplo, $n, $n, (Shadow $A), use<"tri">, $n),
                       
@@ -687,4 +687,60 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                         (BlasCall<"copy"> $n, use<"tmp">, ConstantInt<1>, (First (Shadow $A)), (Add $lda, ConstantInt<1>))
                     )
                   )
+                  >;
+
+
+def potrs: CallBlasPattern<(Op $layout, $uplo, $n, $nrhs, $A, $lda, $B, $ldb, $info),
+                  ["B"],
+                  [cblas_layout, uplo, len, len, mld<["uplo", "n", "n"]>, mld<["n", "nrhs"]>, len],
+                  [
+                    (Seq<["tri", "triangular", "n"], [], 1>
+
+                      (BlasCall<"lascl"> $layout, (flip_uplo $uplo), ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $n, $n, use<"tri">, $n, Alloca<1>),
+
+                      (BlasCall<"lacpy"> $layout, $uplo, $n, $n, (Shadow $A), use<"tri">, $n),
+                      
+                      (BlasCall<"trmm"> $layout, (uplo_to_side $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"tri">, $n),
+
+                      (CopyLowerToUpper<""> $layout, $uplo, (Shadow $A), $n),
+
+                      (BlasCall<"potrs"> $layout, $uplo, $n, $n, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"tri">, $n, Alloca<1>),
+
+                      (For<"i", 0> (Sub $n, ConstantInt<1>),
+                        (BlasCall<"axpy">
+                            (Sub (Sub $n, ConstantInt<1>), $i),
+                            Constant<"1.0">,
+                            (First
+                                (Lookup $layout,
+                                    (Concat use<"tri">, $n),
+                                    (ISelect (is_lower $uplo), (Add $i, ConstantInt<1>), $i),
+                                    (ISelect (is_lower $uplo), $i, (Add $i, ConstantInt<1>))
+                                )
+                            ),
+                            (First
+                                (Lookup $layout,
+                                    (Concat ConstantInt<0>, $n),
+                                    (ISelect (is_lower $uplo), ConstantInt<1>, ConstantInt<0>),
+                                    (ISelect (is_lower $uplo), ConstantInt<0>, ConstantInt<1>)
+                                )
+                            ),
+                            (First
+                                (Lookup $layout,
+                                    (Shadow $A),
+                                    (ISelect (is_lower $uplo), (Add $i, ConstantInt<1>), $i),
+                                    (ISelect (is_lower $uplo), $i, (Add $i, ConstantInt<1>))
+                                )
+                            ),
+                            (First
+                                (Lookup $layout,
+                                    (Shadow $A),
+                                    (ISelect (is_lower $uplo), ConstantInt<1>, ConstantInt<0>),
+                                    (ISelect (is_lower $uplo), ConstantInt<0>, ConstantInt<1>)
+                                )
+                            )
+                        )
+                     )
+                    ),
+                    (BlasCall<"potrs"> $layout, $uplo, $n, $nrhs, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $B), Alloca<1>)
+                  ]
                   >;
