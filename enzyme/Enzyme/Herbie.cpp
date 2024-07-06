@@ -653,8 +653,8 @@ std::string getPrecondition(
 
   for (const auto &arg : args) {
     const auto *node = valueToNodeMap.at(symbolToValueMap.at(arg));
-    int lower = node->getLowerBound();
-    int upper = node->getUpperBound();
+    double lower = node->getLowerBound();
+    double upper = node->getUpperBound();
 
     preconditions += " (<= " + std::to_string(lower) + " " + arg + " " +
                      std::to_string(upper) + ")";
