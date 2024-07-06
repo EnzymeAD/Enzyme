@@ -2344,8 +2344,11 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     auto lda = rcall.iarg4;
 
     // = 'G': A is a full matrix.
-    assert(type == 'G' || type == 'L' || type == 'l' || type == 'U' ||
-           type == 'u');
+    if (rcall.abi == ABIType::CUBLAS || rcall.abi == ABIType::CUBLASv2)
+        assert(type == (char)2);
+    else
+        assert(type == 'G' || type == 'L' || type == 'l' || type == 'U' ||
+               type == 'u');
 
     // A is an m-by-n matrix
     checkMatrix(A, "A", layout, /*rows=*/M, /*cols=*/N, /*ld=*/lda, test, rcall,

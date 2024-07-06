@@ -1292,20 +1292,20 @@ static void potrsTests() {
         foundCalls = calls;
         init();
 
+        assert(foundCalls[0].type == CallType::LACPY);
+        double *inpB = (double *)foundCalls[0].pout_arg1;
+        inputs[3] = BlasInfo(inpB, layout, N, Nrhs, N);
+        cblas_dlacpy(layout, '\0', N, Nrhs, B, incB, inpB, N);
+
         my_potrs(layout, uplo, N, Nrhs, A, lda, B, incB);
 
         inDerivative = true;
 
-        assert(foundCalls.size() >= 2);
-        assert(foundCalls[1].type == CallType::LASCL);
-        double *tri = (double *)foundCalls[1].pout_arg1;
-        inputs[3] = BlasInfo(tri, layout, N, N, N);
-        cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, tri, N, 0);
-
-        cblas_dlacpy(layout, uplo, N, N, dA, lda, tri, N);
-
-        cblas_dtrmm(layout, uplo_to_side(uplo), uplo, 'T', 'N', N, N, 1.0,
-                    A, lda, tri, N);
+        assert(foundCalls[2].type == CallType::SYR2K);
+        double *tri = (double *)foundCalls[2].pout_arg1;
+        inputs[4] = BlasInfo(tri, layout, N, N, N);
+        cblas_dsyr2k(layout, 'U', 'N', N, Nrhs, 1.0, inpB, N, dB, incB, 0.0,
+                     tri, N);
 
 #define triv(r, c)                                                               \
   tri[(r) * (layout == CblasRowMajor ? N : 1) +                            \
@@ -1322,14 +1322,14 @@ static void potrsTests() {
           assert(lowerinc == N);
         }
           for (int i = 0; i < N - 1; i++) {
-            cblas_dcopy(N - i - 1,
-                        is_lower ? (&triv(i + 1, i)) : (&triv(i, i + 1)),
-                        is_lower ? lowerinc : upperinc,
-                        is_lower ? (&triv(i, i + 1)) : (&triv(i + 1, i)),
-                        is_lower ? upperinc : lowerinc);
+            cblas_dcopy(N - i - 1, &triv(i, i + 1), upperinc, &triv(i + 1, i),
+                        lowerinc);
           }
 
-        cblas_dpotrs(layout, uplo, N, N, A, lda, tri, N, nullptr);
+          cblas_dtrsm(layout, uplo_to_rside(uplo), uplo, 'T', 'N', N, N, 1.0, A,
+                      lda, tri, N);
+
+          cblas_dpotrs(layout, uplo, N, N, A, lda, tri, N, nullptr);
 
 #define Av(r, c)                                                               \
   dA[(r) * (layout == CblasRowMajor ? lda : 1) +                            \
@@ -1345,12 +1345,9 @@ static void potrsTests() {
           assert(Alowerinc == lda);
         }
 
-        for (int i = 0; i < N - 1; i++) {
-          cblas_daxpy(N - i - 1, 1.0,
-                        is_lower ? (&triv(i + 1, i)) : (&triv(i, i + 1)),
-                        is_lower ? lowerinc : upperinc,
-                        is_lower ? (&Av(i + 1, i)) : (&Av(i, i + 1)),
-                        is_lower ? Alowerinc : Aupperinc);
+        for (int i = 0; i < N; i++) {
+          cblas_daxpy(N - i, -1.0, &triv(i, i), is_lower ? lowerinc : upperinc,
+                      &Av(i, i), is_lower ? Alowerinc : Aupperinc);
         }
 
         cblas_dpotrs(layout, uplo, N, Nrhs, A, lda, dB, incB, nullptr);
