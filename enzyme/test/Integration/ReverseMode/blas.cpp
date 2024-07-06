@@ -1328,8 +1328,13 @@ static void potrsTests() {
 
           cblas_dtrsm(layout, uplo_to_rside(uplo), uplo, 'T', 'N', N, N, 1.0, A,
                       lda, tri, N);
+          
+          cblas_dtrsm(layout, uplo_to_side(uplo), uplo, 'N', 'N', N, N, 1.0, A,
+                      lda, tri, N);
+          
+          cblas_dtrsm(layout, uplo_to_side(uplo), uplo, 'T', 'N', N, N, 1.0, A,
+                      lda, tri, N);
 
-          cblas_dpotrs(layout, uplo, N, N, A, lda, tri, N, nullptr);
 
 #define Av(r, c)                                                               \
   dA[(r) * (layout == CblasRowMajor ? lda : 1) +                            \
