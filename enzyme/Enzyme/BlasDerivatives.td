@@ -514,10 +514,10 @@ def spmv : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $ap, $x, $incx, $beta
 // d(A^T) −= dB B2^T
 def trtrs : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $nrhs, $a, $lda, $b, $ldb, $info),
                   ["b"],
-                  [cblas_layout, uplo, trans, diag, len, len, mld<["n", "n"]>, vinc<["n"]>, len],
+                  [cblas_layout, uplo, trans, diag, len, len, mld<["uplo", "n", "n"]>, vinc<["n"]>, len],
                   [
                   /* a     */ (AssertingInactiveArg),
-                  /* b     */ (AssertingInactiveArg),
+                  /* b     */ (BlasCall<"trtrs"> $layout, $uplo, $diag, $n, $nrhs, $a, $lda, (Shadow $b), Alloca<1>),
                   ]
                   >;
 
@@ -604,8 +604,7 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                   [cblas_layout, uplo, len, mld<["uplo", "n", "n"]>, len],
                   [
                     /* A     */ 
-                  (Seq<["tri", "triangular", "n"], [], 1>
-                      (BlasCall<"lascl"> $layout, (flip_uplo $uplo), ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $n, $n, use<"tri">, $n, Alloca<1>),
+                  (Seq<["tri", "zerotriangular", "n"], [], 1>
                       (BlasCall<"lacpy"> $layout, $uplo, $n, $n, (Shadow $A), use<"tri">, $n),
                       
                       (BlasCall<"trmm"> $layout, (uplo_to_side $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"tri">, $n),

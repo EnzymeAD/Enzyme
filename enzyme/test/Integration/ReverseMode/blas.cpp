@@ -1088,10 +1088,9 @@ static void potrfTests() {
         inDerivative = true;
 
         assert(foundCalls.size() >= 2);
-        assert(foundCalls[1].type == CallType::LASCL);
+        assert(foundCalls[1].type == CallType::LACPY);
         double *tri = (double *)foundCalls[1].pout_arg1;
         inputs[3] = BlasInfo(tri, layout, N, N, N);
-        cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, tri, N, 0);
 
         cblas_dlacpy(layout, uplo, N, N, dA, lda, tri, N);
 
@@ -1099,8 +1098,8 @@ static void potrfTests() {
                     A, lda, tri, N);
 
         assert(foundCalls.size() >= 5);
-        assert(foundCalls[4].type == CallType::COPY);
-        double *tmp = (double *)foundCalls[4].pout_arg1;
+        assert(foundCalls[3].type == CallType::COPY);
+        double *tmp = (double *)foundCalls[3].pout_arg1;
         inputs[4] = BlasInfo(tmp, N, 1);
 
         cblas_dcopy(N, tri, N + 1, tmp, 1);
@@ -1175,10 +1174,9 @@ static void potrfTests() {
         cblas_dscal(1, 0.0, dA, lda);
 
         assert(foundCalls.size() >= 2);
-        assert(foundCalls[4].type == CallType::LASCL);
+        assert(foundCalls[4].type == CallType::LACPY);
         double *tri = (double *)foundCalls[4].pout_arg1;
         inputs[3] = BlasInfo(tri, (char)layout, N, N, N);
-        cblas_dlascl(layout, flip_uplo(uplo), 0, 0, 1.0, 0.0, N, N, tri, N, 0);
 
         cblas_dlacpy(layout, uplo, N, N, dA, lda, tri, N);
 
@@ -1186,8 +1184,8 @@ static void potrfTests() {
                     cacheA, N, tri, N);
 
         assert(foundCalls.size() >= 5);
-        assert(foundCalls[7].type == CallType::COPY);
-        double *tmp = (double *)foundCalls[7].pout_arg1;
+        assert(foundCalls[6].type == CallType::COPY);
+        double *tmp = (double *)foundCalls[6].pout_arg1;
         inputs[4] = BlasInfo(tmp, N, 1);
 
         cblas_dcopy(N, tri, N + 1, tmp, 1);

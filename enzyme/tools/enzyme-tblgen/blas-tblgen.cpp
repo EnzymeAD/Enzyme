@@ -1458,7 +1458,8 @@ void emit_tmp_creation(Record *Def, raw_ostream &os, StringRef builder) {
   assert(args.size() >= 2);
   auto action = args[1];
   assert(action == "product" || action == "is_normal" ||
-         action == "triangular" || action == "vector");
+         action == "triangular" || action == "vector" ||
+         action == "zerotriangular");
   if (action == "product") {
     const auto matName = args[0];
     const auto dim1 = "arg_" + args[2];
@@ -1489,7 +1490,7 @@ void emit_tmp_creation(Record *Def, raw_ostream &os, StringRef builder) {
     os << "    Value *len1 = load_if_ref(" << builder << ", intType," << dim1
        << ", byRef);\n";
     os << "    Value *size_" << vecName << " = len1;\n";
-  } else if (action == "triangular") {
+  } else if (action == "triangular" || action == "zerotriangular") {
     assert(args.size() == 3);
     const auto vecName = args[0];
     const auto dim1 = "arg_" + args[2];
@@ -1502,8 +1503,13 @@ void emit_tmp_creation(Record *Def, raw_ostream &os, StringRef builder) {
   }
   const auto matName = args[0];
   const auto allocName = "mat_" + matName;
+  if (action == "zerotriangular")
+    os << "    Instruction * zero = nullptr;\n";
   os << "    Value * true_" << allocName << " = CreateAllocation(" << builder
-     << ", fpType, size_" << matName << ", \"" << allocName << "\");\n"
+     << ", fpType, size_" << matName << ", \"" << allocName << "\", nullptr";
+  if (action == "zerotriangular")
+    os << ", &zero";
+  os << ");\n"
      << "    Value * " << allocName << " = true_" << allocName << ";\n"
      << "    if (type_vec_like->isIntegerTy()) {\n"
      << "      " << allocName << " = " << builder << ".CreatePtrToInt("
