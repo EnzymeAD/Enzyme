@@ -560,6 +560,7 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
        << "  Value *valuel = nullptr;\n"
        << "  Value *valueR = nullptr;\n"
        << "  Value *valueL = nullptr;\n"
+       << "  Value *valueU = nullptr;\n"
        << "  if (cublas) {\n"
        << "    valueN = ConstantInt::get(cublasEnumType, "
           "cublasOperation_t::CUBLAS_OP_N);\n"
@@ -573,9 +574,10 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
           "cublasSideMode_t::CUBLAS_SIDE_LEFT);\n"
        << "    valueR = ConstantInt::get(cublasEnumType, "
           "cublasSideMode_t::CUBLAS_SIDE_RIGHT);\n"
-       << "    // TODO lascl not available in cublas, nor op G\n"
+       << "    valueU = ConstantInt::get(cublasEnumType, "
+          "cublasFillMode_t::CUBLAS_FILL_MODE_UPPER);\n"
        << "    valueG = ConstantInt::get(cublasEnumType, "
-          "'G');\n"
+          "cublasFillMode_t::CUBLAS_FILL_MODE_FULL);\n"
        << "  } else {\n"
        << "    valueN = ConstantInt::get(charType, 'N');\n"
        << "    valueT = ConstantInt::get(charType, 'T');\n"
@@ -584,6 +586,7 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
        << "    valuel = ConstantInt::get(charType, 'l');\n"
        << "    valueR = ConstantInt::get(charType, 'R');\n"
        << "    valueL = ConstantInt::get(charType, 'L');\n"
+       << "    valueU = ConstantInt::get(charType, 'U');\n"
        << "  }\n\n";
   }
 }
@@ -1302,6 +1305,9 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       } else if (val == "L") {
         os << "{to_blas_callconv(Builder2, valueL, byRef, cublas, nullptr, "
               "allocationBuilder, \"constant.char.L\")}";
+      } else if (val == "U") {
+        os << "{to_blas_callconv(Builder2, valueU, byRef, cublas, nullptr, "
+              "allocationBuilder, \"constant.char.U\")}";
         // C is not supported yet
         //} else if (val == "C") {
       } else {
@@ -1414,7 +1420,7 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
   }
   os << "        if (byRef) {\n";
   int n = 0;
-  if (func == "gemv" || func == "lascl" || func == "potrs")
+  if (func == "gemv" || func == "lascl" || func == "potrs" || func == "potrf")
     n = 1;
   if (func == "gemm" || func == "syrk" || func == "syr2k")
     n = 2;
@@ -1750,8 +1756,14 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
     os << "        // LowerToUpper\n";
     // handle seq rules
     for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
-      os << "        Value *arg_" << i << "[] = ";
+      if (i != 2)
+        os << "        Value *arg_" << i << "[] = ";
+      else
+        os << "        SmallVector<Value*, 2> arg_" << i
+           << ";\n  for (auto v : ";
       rev_call_arg(forward, ruleDag, pattern, i, os, vars);
+      if (i == 2)
+        os << ") arg_" << i << ".push_back(v)";
       os << ";\n";
     }
 
@@ -2306,6 +2318,11 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   os << "enum cublasSideMode_t {\n"
      << "  CUBLAS_SIDE_LEFT = 0,\n"
      << "  CUBLAS_SIDE_RIGHT = 1,\n"
+     << "};\n";
+  os << "enum cublasFillMode_t {\n"
+     << "  CUBLAS_FILL_MODE_LOWER = 0,\n"
+     << "  CUBLAS_FILL_MODE_UPPER = 1,\n"
+     << "  CUBLAS_FILL_MODE_FULL = 2,\n"
      << "};\n";
 
   for (auto &&newPattern : newBlasPatterns) {
