@@ -181,7 +181,7 @@ public:
                                           "herbie.pow");
     } else if (op == "fma") {
       val = builder.CreateIntrinsic(
-          Intrinsic::fma, {operandValues[0]->getType()},
+          Intrinsic::fmuladd, {operandValues[0]->getType()},
           {operandValues[0], operandValues[1], operandValues[2]}, nullptr,
           "herbie.fma");
     } else if (op == "fabs") {
@@ -499,6 +499,8 @@ std::string getHerbieOperator(const Instruction &I) {
     std::regex regex("llvm\\.(\\w+)\\.?.*");
     std::smatch matches;
     if (std::regex_search(funcName, matches, regex) && matches.size() > 1) {
+      if (matches[1].str() == "fmuladd")
+        return "fma";
       return matches[1].str();
     }
     assert(0 && "getHerbieOperator: Unknown callee");
@@ -533,6 +535,7 @@ bool herbiable(const Value &Val) {
              funcName.startswith("llvm.sqrt") ||
              funcName.startswith("llvm.pow") ||
              funcName.startswith("llvm.fma") ||
+             funcName.startswith("llvm.fmuladd") ||
              funcName.startswith("llvm.fabs");
     }
     return false;
@@ -1043,7 +1046,8 @@ B2:
   for (auto &component : connected_components) {
     if (component.outputs_rewritten != component.outputs.size()) {
       if (EnzymePrintFPOpt)
-        llvm::errs() << "rewrote " << component.outputs_rewritten << " of "
+        llvm::errs() << "Skip erasing a connect component: only rewrote "
+                     << component.outputs_rewritten << " of "
                      << component.outputs.size() << " outputs\n";
       continue; // Original intermediate operations cannot be erased safely
     }
