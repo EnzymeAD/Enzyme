@@ -187,6 +187,13 @@ public:
     } else if (op == "fabs") {
       val = builder.CreateUnaryIntrinsic(Intrinsic::fabs, operandValues[0],
                                          nullptr, "herbie.fabs");
+    } else if (op == "hypot") {
+      val = builder.CreateUnaryIntrinsic(
+          Intrinsic::sqrt,
+          builder.CreateFAdd(
+              builder.CreateFMul(operandValues[0], operandValues[0]),
+              builder.CreateFMul(operandValues[1], operandValues[1])),
+          nullptr, "herbie.hypot");
     } else if (op == "==") {
       val = builder.CreateFCmpOEQ(operandValues[0], operandValues[1],
                                   "herbie.if.eq");
