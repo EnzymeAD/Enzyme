@@ -1,3 +1,6 @@
+// RUN: %clang++ -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %fpopt -enzyme-print-herbie -enzyme-print-fpopt -S | %lli -
+// RUN: %clang++ -O1 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %fpopt -enzyme-print-herbie -enzyme-print-fpopt -S | %lli -
+// RUN: %clang++ -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %fpopt -enzyme-print-herbie -enzyme-print-fpopt -S | %lli -
 // RUN: %clang++ -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %fpopt -enzyme-print-herbie -enzyme-print-fpopt -S | %lli -
 
 #include <cmath>
@@ -25,7 +28,7 @@ int main() {
   // x^2 - 5x + 6 = 0 --> x1 = 2 (computed), x2 = 3
   double res2 = fun(1, -5, 6);
   printf("res2 = %.18e\n", res2);
-  APPROX_EQ(res2, 3.0, 1e-4);
+  APPROX_EQ(res2, 2.0, 1e-4);
 
   return 0;
 }
