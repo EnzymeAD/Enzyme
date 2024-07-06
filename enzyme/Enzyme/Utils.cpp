@@ -727,14 +727,14 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
     tys.insert(tys.begin(), layout->getType());
   auto ltuFT = FunctionType::get(B.getVoidTy(), tys, false);
 
-  Function *F =
-      cast<Function>(M.getOrInsertFunction(fnc_name, ltuFT).getCallee());
+  auto F0 = M.getOrInsertFunction(fnc_name, ltuFT);
 
   SmallVector<Value *, 1> args = {islower, A, lda, N};
   if (layout)
     args.insert(args.begin(), layout);
-  B.CreateCall(F, args);
-
+  auto C = B.CreateCall(F0, args);
+  auto F = getFunctionFromCall(C);
+  assert(F);
   if (!F->empty()) {
     return;
   }
@@ -820,9 +820,9 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
                    (cublasv2 ? "" : blas.suffix);
 
   auto copyfn = M.getOrInsertFunction(copy_name, FT);
-  Function *copyF = cast<Function>(copyfn.getCallee());
-  attributeKnownFunctions(*copyF);
-  LB.CreateCall(copyF, copyArgs);
+  if (Function *copyF = dyn_cast<Function>(copyfn.getCallee()))
+    attributeKnownFunctions(*copyF);
+  LB.CreateCall(copyfn, copyArgs);
   LB.CreateCondBr(LB.CreateICmpEQ(i_plus_one, N_minus_1), end, loop);
 
   EB.CreateCondBr(EB.CreateICmpSLE(N_minus_1, zero), end, loop);
