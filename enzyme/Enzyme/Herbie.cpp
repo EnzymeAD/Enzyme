@@ -164,9 +164,19 @@ public:
     } else if (op == "exp") {
       val = builder.CreateUnaryIntrinsic(Intrinsic::exp, operandValues[0],
                                          nullptr, "herbie.exp");
+    } else if (op == "expm1") {
+      val = builder.CreateFSub(
+          builder.CreateUnaryIntrinsic(Intrinsic::exp, operandValues[0]),
+          ConstantFP::get(operandValues[0]->getType(), 1.0), "herbie.expm1");
     } else if (op == "log") {
       val = builder.CreateUnaryIntrinsic(Intrinsic::log, operandValues[0],
                                          nullptr, "herbie.log");
+    } else if (op == "log1p") {
+      val = builder.CreateUnaryIntrinsic(
+          Intrinsic::log,
+          builder.CreateFAdd(ConstantFP::get(operandValues[0]->getType(), 1.0),
+                             operandValues[0]),
+          nullptr, "herbie.log1p");
     } else if (op == "sqrt") {
       val = builder.CreateUnaryIntrinsic(Intrinsic::sqrt, operandValues[0],
                                          nullptr, "herbie.sqrt");
@@ -656,11 +666,24 @@ std::string getPrecondition(
     double lower = node->getLowerBound();
     double upper = node->getUpperBound();
 
+    if (std::isinf(lower) && std::isinf(upper))
+      continue;
+
+    if (std::isinf(lower)) {
+      preconditions += " (<= " + arg + " " + std::to_string(upper) + ")";
+      continue;
+    }
+
+    if (std::isinf(upper)) {
+      preconditions += " (>= " + arg + " " + std::to_string(lower) + ")";
+      continue;
+    }
+
     preconditions += " (<= " + std::to_string(lower) + " " + arg + " " +
                      std::to_string(upper) + ")";
   }
 
-  return "(and" + preconditions + ")";
+  return preconditions.empty() ? "TRUE" : "(and" + preconditions + ")";
 }
 
 struct HerbieComponents {
@@ -1070,11 +1093,11 @@ B2:
 
   llvm::errs() << "FPOpt: Finished cleaning up " << F.getName() << "\n";
 
-  // if (EnzymePrintFPOpt) {
-  //   llvm::errs() << "Finished fpOptimize\n";
-  //   // Print the function to see the changes
-  //   F.print(llvm::errs());
-  // }
+  if (EnzymePrintFPOpt) {
+    llvm::errs() << "Finished fpOptimize\n";
+    // Print the function to see the changes
+    F.print(llvm::errs());
+  }
 
   return changed;
 }
