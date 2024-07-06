@@ -1,0 +1,31 @@
+// RUN: %clang++ -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %fpopt -enzyme-print-herbie -enzyme-print-fpopt -S | %lli -
+
+#include <cmath>
+#include <iostream>
+#include <map>
+#include <string>
+#include <vector>
+
+#include "../test_utils.h"
+
+double fun(double a, double b, double c) {
+  double discriminant = b * b - 4 * a * c;
+  double sqrt_discriminant = sqrt(discriminant);
+  double numerator = -b - sqrt_discriminant;
+  double result = numerator / (2 * a);
+  return result;
+}
+
+int main() {
+  // x^2 - 3x + 2 = 0 --> x1 = 1 (computed), x2 = 2
+  double res1 = fun(1, -3, 2);
+  printf("res1 = %.18e\n", res1);
+  APPROX_EQ(res1, 1.0, 1e-4);
+
+  // x^2 - 5x + 6 = 0 --> x1 = 2 (computed), x2 = 3
+  double res2 = fun(1, -5, 6);
+  printf("res2 = %.18e\n", res2);
+  APPROX_EQ(res2, 3.0, 1e-4);
+
+  return 0;
+}
