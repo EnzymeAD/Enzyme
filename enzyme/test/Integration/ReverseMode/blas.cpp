@@ -1397,7 +1397,6 @@ static void potrsTests() {
 }
 
 int main() {
-    /*
   dotTests();
 
   nrm2Tests();
@@ -1411,9 +1410,8 @@ int main() {
   trmmTests();
 
   syrkTests();
-  */
   
   potrfTests();
   
-  //potrsTests();
+  potrsTests();
 }

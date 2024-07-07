@@ -1504,13 +1504,51 @@ void emit_tmp_creation(Record *Def, raw_ostream &os, StringRef builder) {
   const auto matName = args[0];
   const auto allocName = "mat_" + matName;
   if (action == "zerotriangular")
-    os << "    Instruction * zero = nullptr;\n";
+    os << "    CallInst * malloccall = nullptr;\n";
   os << "    Value * true_" << allocName << " = CreateAllocation(" << builder
-     << ", fpType, size_" << matName << ", \"" << allocName << "\", nullptr";
+     << ", fpType, size_" << matName << ", \"" << allocName << "\"";
   if (action == "zerotriangular")
-    os << ", &zero";
-  os << ");\n"
-     << "    Value * " << allocName << " = true_" << allocName << ";\n"
+    os << ", &malloccall";
+  os << ");\n";
+  if (action == "zerotriangular") {
+    os << "    {\n";
+    os << "    auto &M = *" << builder
+       << ".GetInsertBlock()->getParent()->getParent();\n";
+    os << "    auto AlignI = M.getDataLayout().getTypeAllocSizeInBits(fpType) "
+          "/ 8;\n";
+    os << "    auto Align = ConstantInt::get(intType, AlignI);\n";
+    os << "    auto PT = cast<PointerType>(malloccall->getType());\n";
+    os << "    Value *tozero = malloccall;\n";
+    os << "\n";
+    os << "    bool needsCast = false;\n";
+    os << "#if LLVM_VERSION_MAJOR < 17\n";
+    os << "#if LLVM_VERSION_MAJOR >= 15\n";
+    os << "    if (PT->getContext().supportsTypedPointers()) {\n";
+    os << "#endif\n";
+    os << "      needsCast = !PT->getPointerElementType()->isIntegerTy(8);\n";
+    os << "#if LLVM_VERSION_MAJOR >= 15\n";
+    os << "    }\n";
+    os << "#endif\n";
+    os << "#endif\n";
+    os << "    if (needsCast)\n";
+    os << "      tozero = " << builder << ".CreatePointerCast(\n";
+    os << "          tozero, "
+          "PointerType::get(Type::getInt8Ty(PT->getContext()),\n";
+    os << "                                   PT->getAddressSpace()));\n";
+    os << "    Value *args[] = {\n";
+    os << "        tozero, "
+          "ConstantInt::get(Type::getInt8Ty(malloccall->getContext()), 0),\n";
+    os << "        " << builder << ".CreateMul(Align, size_" << args[0]
+       << ", \"\", true, true),\n";
+    os << "        ConstantInt::getFalse(malloccall->getContext())};\n";
+    os << "    Type *tys[] = {args[0]->getType(), args[2]->getType()};\n";
+    os << "\n";
+    os << "    " << builder << ".CreateCall(\n";
+    os << "        Intrinsic::getDeclaration(&M, Intrinsic::memset, tys), "
+          "args);\n";
+    os << "    }\n";
+  }
+  os << "    Value * " << allocName << " = true_" << allocName << ";\n"
      << "    if (type_vec_like->isIntegerTy()) {\n"
      << "      " << allocName << " = " << builder << ".CreatePtrToInt("
      << allocName << ", type_vec_like);\n"
