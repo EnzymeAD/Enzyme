@@ -8349,6 +8349,11 @@ void GradientUtils::forceAugmentedReturns() {
         if (!isConstantValue(inst)) {
           IRBuilder<> BuilderZ(inst);
           getForwardBuilder(BuilderZ);
+#if LLVM_VERSION_MAJOR >= 18
+          auto It = BuilderZ.GetInsertPoint();
+          It.setHeadBit(true);
+          BuilderZ.SetInsertPoint(It);
+#endif
           Type *antiTy = getShadowType(inst->getType());
           PHINode *anti =
               BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'dual_phi");
@@ -8368,6 +8373,11 @@ void GradientUtils::forceAugmentedReturns() {
       if (isa<LoadInst>(inst)) {
         IRBuilder<> BuilderZ(inst);
         getForwardBuilder(BuilderZ);
+#if LLVM_VERSION_MAJOR >= 18
+        auto It = BuilderZ.GetInsertPoint();
+        It.setHeadBit(true);
+        BuilderZ.SetInsertPoint(It);
+#endif
         Type *antiTy = getShadowType(inst->getType());
         PHINode *anti =
             BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'il_phi");
@@ -8406,6 +8416,11 @@ void GradientUtils::forceAugmentedReturns() {
 
       IRBuilder<> BuilderZ(inst);
       getForwardBuilder(BuilderZ);
+#if LLVM_VERSION_MAJOR >= 18
+      auto It = BuilderZ.GetInsertPoint();
+      It.setHeadBit(true);
+      BuilderZ.SetInsertPoint(It);
+#endif
 
       // Shadow allocations must strictly preceede the primal, lest Julia have
       // GC issues. Consider the following: %r = gc_alloc() init %r
@@ -8420,8 +8435,14 @@ void GradientUtils::forceAugmentedReturns() {
       // inside %dr would hit garbage and segfault. However, by having the %dr
       // first, then it will be zero'd before the %r allocation, preventing the
       // issue.
-      if (isAllocationCall(inst, TLI))
+      if (isAllocationCall(inst, TLI)) {
         BuilderZ.SetInsertPoint(getNewFromOriginal(inst));
+#if LLVM_VERSION_MAJOR >= 18
+        auto It = BuilderZ.GetInsertPoint();
+        It.setHeadBit(true);
+        BuilderZ.SetInsertPoint(It);
+#endif
+      }
       Type *antiTy = getShadowType(inst->getType());
 
       PHINode *anti = BuilderZ.CreatePHI(antiTy, 1, op->getName() + "'ip_phi");
@@ -9051,7 +9072,7 @@ void GradientUtils::eraseWithPlaceholder(Instruction *I, Instruction *orig,
       if (!inspos.getHeadBit()) {
         auto srcmarker = I->getParent()->getMarker(inspos);
         if (srcmarker && !srcmarker->empty()) {
-          inspos--;
+          inspos.setHeadBit(true);
         }
       }
     }

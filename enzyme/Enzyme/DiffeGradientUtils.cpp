@@ -473,8 +473,14 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     old = BuilderM.CreateLoad(getShadowType(val->getType()), ptr);
   }
   if (dif->getType() != old->getType()) {
-    llvm::errs() << " val: " << *val << " dif: " << *dif << " old: " << *old
-                 << "\n";
+    if (auto inst = dyn_cast<Instruction>(val)) {
+      EmitFailure("IllegalAddingType", inst->getDebugLoc(), inst, "val ", *val,
+                  " dif ", *dif, " old ", *old);
+      return addedSelects;
+    }
+    llvm::errs() << " IllegalAddingType val: " << *val << " dif: " << *dif
+                 << " old: " << *old << "\n";
+    llvm_unreachable("IllegalAddingType");
   }
 
   assert(dif->getType() == old->getType());

@@ -4399,8 +4399,14 @@ public:
         if (subdata && subdata->returns.find(AugmentedStruct::Tape) !=
                            subdata->returns.end()) {
           if (Mode == DerivativeMode::ReverseModeGradient) {
-            if (tape == nullptr)
+            if (tape == nullptr) {
+#if LLVM_VERSION_MAJOR >= 18
+              auto It = BuilderZ.GetInsertPoint();
+              It.setHeadBit(true);
+              BuilderZ.SetInsertPoint(It);
+#endif
               tape = BuilderZ.CreatePHI(subdata->tapeType, 0, "tapeArg");
+            }
             tape = gutils->cacheForReverse(
                 BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
           }
@@ -4949,7 +4955,11 @@ public:
 
         auto idx = *tapeIdx;
         FunctionType *FT = subdata->fn->getFunctionType();
-
+#if LLVM_VERSION_MAJOR >= 18
+        auto It = BuilderZ.GetInsertPoint();
+        It.setHeadBit(true);
+        BuilderZ.SetInsertPoint(It);
+#endif
         tape = BuilderZ.CreatePHI(
             (tapeIdx == -1)
                 ? FT->getReturnType()
@@ -5599,6 +5609,11 @@ public:
             if (!tape) {
               assert(tapeIdx);
               auto tval = *tapeIdx;
+#if LLVM_VERSION_MAJOR >= 18
+              auto It = BuilderZ.GetInsertPoint();
+              It.setHeadBit(true);
+              BuilderZ.SetInsertPoint(It);
+#endif
               tape = BuilderZ.CreatePHI(
                   (tapeIdx == -1) ? FT->getReturnType()
                                   : cast<StructType>(FT->getReturnType())
@@ -5614,12 +5629,22 @@ public:
           if (DifferentialUseAnalysis::is_value_needed_in_reverse<
                   QueryType::Primal>(gutils, &call, Mode, oldUnreachable) &&
               !gutils->unnecessaryIntermediates.count(&call)) {
+#if LLVM_VERSION_MAJOR >= 18
+            auto It = BuilderZ.GetInsertPoint();
+            It.setHeadBit(true);
+            BuilderZ.SetInsertPoint(It);
+#endif
             cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
                                               call.getName() + "_tmpcacheB");
             cachereplace = gutils->cacheForReverse(
                 BuilderZ, cachereplace,
                 getIndex(&call, CacheType::Self, BuilderZ));
           } else {
+#if LLVM_VERSION_MAJOR >= 18
+            auto It = BuilderZ.GetInsertPoint();
+            It.setHeadBit(true);
+            BuilderZ.SetInsertPoint(It);
+#endif
             auto pn = BuilderZ.CreatePHI(
                 call.getType(), 1, (call.getName() + "_replacementE").str());
             gutils->fictiousPHIs[pn] = &call;
@@ -5719,12 +5744,22 @@ public:
                 QueryType::Primal>(gutils, &call, Mode, oldUnreachable) &&
             !gutils->unnecessaryIntermediates.count(&call)) {
           assert(!replaceFunction);
+#if LLVM_VERSION_MAJOR >= 18
+          auto It = BuilderZ.GetInsertPoint();
+          It.setHeadBit(true);
+          BuilderZ.SetInsertPoint(It);
+#endif
           cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
                                             call.getName() + "_cachereplace2");
           cachereplace = gutils->cacheForReverse(
               BuilderZ, cachereplace,
               getIndex(&call, CacheType::Self, BuilderZ));
         } else {
+#if LLVM_VERSION_MAJOR >= 18
+          auto It = BuilderZ.GetInsertPoint();
+          It.setHeadBit(true);
+          BuilderZ.SetInsertPoint(It);
+#endif
           auto pn = BuilderZ.CreatePHI(call.getType(), 1,
                                        call.getName() + "_replacementC");
           gutils->fictiousPHIs[pn] = &call;
@@ -6205,6 +6240,11 @@ public:
             // EnzymeLogic.
             tapeType = (llvm::Type *)fd->second;
 
+#if LLVM_VERSION_MAJOR >= 18
+            auto It = BuilderZ.GetInsertPoint();
+            It.setHeadBit(true);
+            BuilderZ.SetInsertPoint(It);
+#endif
             tape = BuilderZ.CreatePHI(tapeType, 0);
             tape = gutils->cacheForReverse(
                 BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ),
