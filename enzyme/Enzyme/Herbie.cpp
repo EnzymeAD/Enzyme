@@ -513,6 +513,11 @@ std::string getHerbieOperator(const Instruction &I) {
            "getHerbieOperator: Call without a function");
 
     std::string funcName = CI->getCalledFunction()->getName().str();
+
+    // Special cases
+    if (startsWith(funcName, "cbrt"))
+      return "cbrt";
+
     std::regex regex("llvm\\.(\\w+)\\.?.*");
     std::smatch matches;
     if (std::regex_search(funcName, matches, regex) && matches.size() > 1) {
@@ -549,7 +554,7 @@ bool herbiable(const Value &Val) {
              funcName.startswith("llvm.tan") ||
              funcName.startswith("llvm.exp") ||
              funcName.startswith("llvm.log") ||
-             funcName.startswith("llvm.sqrt") ||
+             funcName.startswith("llvm.sqrt") || funcName.startswith("cbrt") ||
              funcName.startswith("llvm.pow") ||
              funcName.startswith("llvm.fma") ||
              funcName.startswith("llvm.fmuladd") ||
