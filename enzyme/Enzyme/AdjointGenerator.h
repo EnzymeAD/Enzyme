@@ -330,12 +330,7 @@ public:
     ss << "cannot handle unknown instruction\n" << inst;
     IRBuilder<> Builder2(&inst);
     getForwardBuilder(Builder2);
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(&inst), ErrorType::NoDerivative,
-                         gutils, nullptr, wrap(&Builder2));
-    } else {
-      EmitFailure("NoDerivative", inst.getDebugLoc(), &inst, ss.str());
-    }
+    EmitNoDerivativeError(ss.str(), inst, gutils, Builder2);
     if (!gutils->isConstantValue(&inst)) {
       if (Mode == DerivativeMode::ForwardMode ||
           Mode == DerivativeMode::ForwardModeError ||
@@ -911,12 +906,7 @@ public:
     llvm::raw_string_ostream ss(s);
     ss << *I.getParent()->getParent() << "\n" << I << "\n";
     ss << " Active atomic inst not yet handled";
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoDerivative,
-                         gutils, nullptr, wrap(&BuilderZ));
-    } else {
-      EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-    }
+    EmitNoDerivativeError(ss.str(), I, gutils, BuilderZ);
     if (!gutils->isConstantValue(&I)) {
       if (Mode == DerivativeMode::ForwardMode ||
           Mode == DerivativeMode::ForwardModeError ||
@@ -1489,15 +1479,7 @@ public:
             llvm::raw_string_ostream ss(s);
             ss << *I.getParent()->getParent() << "\n";
             ss << "cannot handle above cast " << I << "\n";
-            if (CustomErrorHandler) {
-              CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                                 ErrorType::NoDerivative, gutils, nullptr,
-                                 wrap(&Builder2));
-            } else {
-              ss << "\n";
-              TR.dump(ss);
-              EmitFailure("CannotHandleCast", I.getDebugLoc(), &I, ss.str());
-            }
+            EmitNoDerivativeError(ss.str(), I, gutils, Builder2);
             return (llvm::Value *)UndefValue::get(op0->getType());
           }
         };
@@ -2622,12 +2604,7 @@ public:
              << " type: " << TR.query(&I).str() << "\n";
         }
       ss << "cannot handle unknown binary operator: " << BO << "\n";
-      if (CustomErrorHandler) {
-        CustomErrorHandler(ss.str().c_str(), wrap(&BO), ErrorType::NoDerivative,
-                           gutils, nullptr, wrap(&Builder2));
-      } else {
-        EmitFailure("NoDerivative", BO.getDebugLoc(), &BO, ss.str());
-      }
+      EmitNoDerivativeError(ss.str(), BO, gutils, Builder2);
     }
 
   done:;
@@ -2863,18 +2840,11 @@ public:
              << " type: " << TR.query(&I).str() << "\n";
         }
       ss << "cannot handle unknown binary operator: " << BO << "\n";
-      if (CustomErrorHandler) {
-        auto rval = unwrap(CustomErrorHandler(ss.str().c_str(), wrap(&BO),
-                                              ErrorType::NoDerivative, gutils,
-                                              nullptr, wrap(&Builder2)));
-        if (!rval)
-          rval = Constant::getNullValue(gutils->getShadowType(BO.getType()));
-        if (!gutils->isConstantValue(&BO))
-          setDiffe(&BO, rval, Builder2);
-      } else {
-        EmitFailure("NoDerivative", BO.getDebugLoc(), &BO, ss.str());
-        return;
-      }
+      auto rval = EmitNoDerivativeError(ss.str(), BO, gutils, Builder2);
+      if (!rval)
+        rval = Constant::getNullValue(gutils->getShadowType(BO.getType()));
+      if (!gutils->isConstantValue(&BO))
+        setDiffe(&BO, rval, Builder2);
       break;
     }
   }
@@ -2924,12 +2894,7 @@ public:
       ss << "couldn't handle non constant inst in memset to "
             "propagate differential to\n"
          << MS;
-      if (CustomErrorHandler) {
-        CustomErrorHandler(ss.str().c_str(), wrap(&MS), ErrorType::NoDerivative,
-                           gutils, nullptr, wrap(&BuilderZ));
-      } else {
-        EmitFailure("NoDerivative", MS.getDebugLoc(), &MS, ss.str());
-      }
+      EmitNoDerivativeError(ss.str(), MS, gutils, BuilderZ);
     }
 
     if (Mode == DerivativeMode::ForwardMode ||
@@ -3810,17 +3775,10 @@ public:
         ss << *gutils->oldFunc << "\n";
         ss << *gutils->newFunc << "\n";
         ss << "cannot handle (augmented) unknown intrinsic\n" << I;
-        if (CustomErrorHandler) {
-          IRBuilder<> BuilderZ(&I);
-          getForwardBuilder(BuilderZ);
-          CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, gutils, nullptr,
-                             wrap(&BuilderZ));
-          return false;
-        } else {
-          EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-          return false;
-        }
+        IRBuilder<> BuilderZ(&I);
+        getForwardBuilder(BuilderZ);
+        EmitNoDerivativeError(ss.str(), I, gutils, BuilderZ);
+        return false;
       }
       return false;
     }
@@ -3951,15 +3909,8 @@ public:
           ss << "cannot handle (reverse) unknown intrinsic\n"
              << Intrinsic::getName(ID) << "\n"
              << I;
-        if (CustomErrorHandler) {
-          CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, gutils, nullptr,
-                             wrap(&Builder2));
-          return false;
-        } else {
-          EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-          return false;
-        }
+        EmitNoDerivativeError(ss.str(), I, gutils, Builder2);
+        return false;
       }
       return false;
     }
@@ -4031,13 +3982,7 @@ public:
           ss << "cannot handle (forward) unknown intrinsic\n"
              << Intrinsic::getName(ID) << "\n"
              << I;
-        if (CustomErrorHandler) {
-          CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, gutils, nullptr,
-                             wrap(&Builder2));
-        } else {
-          EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-        }
+        EmitNoDerivativeError(ss.str(), I, gutils, Builder2);
         if (!gutils->isConstantValue(&I))
           setDiffe(&I,
                    Constant::getNullValue(gutils->getShadowType(I.getType())),
@@ -5353,14 +5298,7 @@ public:
           raw_string_ostream ss(str);
           ss << "cannot find shadow for " << *callval
              << " for use as function in " << call;
-          if (CustomErrorHandler) {
-            CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                               ErrorType::NoDerivative, gutils, nullptr,
-                               wrap(&BuilderZ));
-          } else {
-            EmitFailure("NoDerivative", call.getDebugLoc(), &call, ss.str());
-            return;
-          }
+          EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
         }
         newcalled = gutils->invertPointerM(callval, BuilderZ);
 
@@ -5829,20 +5767,12 @@ public:
         ss << "in Mode: " << to_string(Mode) << "\n";
         ss << " orig: " << call << " callval: " << *callval << "\n";
         ss << " constant function being called, but active call instruction\n";
-        if (CustomErrorHandler) {
-          auto val = unwrap(CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                                               ErrorType::NoDerivative, gutils,
-                                               nullptr, wrap(&Builder2)));
-          if (val)
-            newcalled = val;
-          else
-            newcalled =
-                UndefValue::get(gutils->getShadowType(callval->getType()));
-        } else {
-          EmitFailure("NoDerivative", call.getDebugLoc(), &call, ss.str());
+        auto val = EmitNoDerivativeError(ss.str(), call, gutils, Builder2);
+        if (val)
+          newcalled = val;
+        else
           newcalled =
-              UndefValue::get(gutils->getShadowType(callval->getType()));
-        }
+                UndefValue::get(gutils->getShadowType(callval->getType()));
       } else {
         newcalled = lookup(gutils->invertPointerM(callval, Builder2), Builder2);
       }

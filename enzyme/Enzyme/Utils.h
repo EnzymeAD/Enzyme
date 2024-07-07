@@ -201,6 +201,9 @@ static inline llvm::Function *isCalledFunction(llvm::Value *val) {
   return nullptr;
 }
 
+class GradientUtils;
+llvm::Value *EmitNoDerivativeError(const std::string &,  llvm::Instruction& inst, GradientUtils *gutils, llvm::IRBuilder<>& B);
+
 /// Get LLVM fast math flags
 llvm::FastMathFlags getFast();
 

@@ -3398,6 +3398,20 @@ llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
   return absres;
 }
 
+llvm::Value *EmitNoDerivativeError(const std::string & message, llvm::Instruction& inst, GradientUtils *gutils, llvm::IRBuilder<>& Builder2) {
+  if (CustomErrorHandler) {
+    return unwrap(CustomErrorHandler(message.c_str(), wrap(&inst), ErrorType::NoDerivative,
+                       gutils, nullptr, wrap(&Builder2)));
+  } else {
+    if (StringRef(message).contains("cannot handle above cast")) {
+      gutils->TR.dump();
+    }
+    EmitFailure("NoDerivative", inst.getDebugLoc(), &inst, message);
+    return nullptr;
+  }
+}
+
+
 void dumpModule(llvm::Module *mod) { llvm::errs() << *mod << "\n"; }
 
 void dumpValue(llvm::Value *val) { llvm::errs() << *val << "\n"; }
