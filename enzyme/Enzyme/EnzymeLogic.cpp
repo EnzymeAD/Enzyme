@@ -2001,28 +2001,12 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     ss << " overwritten_args.size() [" << _overwritten_args.size()
        << "] != todiff->arg_size()\n";
     ss << "todiff: " << *todiff << "\n";
-    llvm::Value *toshow = todiff;
     if (context.req) {
-      toshow = context.req;
       ss << " at context: " << *context.req;
     } else {
       ss << *todiff << "\n";
     }
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                         ErrorType::NoDerivative, nullptr, wrap(todiff),
-                         wrap(context.ip));
-      auto newFunc = todiff;
-      std::map<AugmentedStruct, int> returnMapping;
-      return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-                 AugmentedCachedFunctions, tup,
-                 AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
-                                 constant_args, shadowReturnUsed))
-          ->second;
-    }
-    if (context.req) {
-      EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
-                  ss.str());
+    if (EmitNoDerivativeError(ss.str(), todiff, context)) {
       auto newFunc = todiff;
       std::map<AugmentedStruct, int> returnMapping;
       return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
@@ -2375,9 +2359,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         ss << "(" << demangledName << ")";
     }
     ss << "\n";
-    llvm::Value *toshow = todiff;
     if (context.req) {
-      toshow = context.req;
       ss << " at context: " << *context.req;
     } else {
       ss << *todiff << "\n";
@@ -2385,21 +2367,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     (IRBuilder<>(gutils->inversionAllocs)).CreateUnreachable();
     DeleteDeadBlock(gutils->inversionAllocs);
     clearFunctionAttributes(gutils->newFunc);
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                         ErrorType::NoDerivative, nullptr, wrap(todiff),
-                         wrap(context.ip));
-      auto newFunc = gutils->newFunc;
-      delete gutils;
-      return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-                 AugmentedCachedFunctions, tup,
-                 AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
-                                 constant_args, shadowReturnUsed))
-          ->second;
-    }
-    if (context.req) {
-      EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
-                  ss.str());
+    if (EmitNoDerivativeError(ss.str(), todiff, context)) {
       auto newFunc = gutils->newFunc;
       delete gutils;
       return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
@@ -3420,16 +3388,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
       raw_string_ostream ss(str);
       ss << "Cannot deduce type of phi " << *orig << PNtypeT.str()
          << " sz: " << size << "\n";
-      if (CustomErrorHandler) {
-        CustomErrorHandler(str.c_str(), wrap(orig), ErrorType::NoType,
-                           gutils->TR.analyzer, nullptr, wrap(&Builder));
-        continue;
-      } else {
-        ss << "\n";
-        gutils->TR.dump(ss);
-        EmitFailure("CannotDeduceType", orig->getDebugLoc(), orig, ss.str());
-        continue;
-      }
+      EmitNoTypeError(ss.str(), *orig, gutils, Builder);
+      continue;
     }
 
     auto prediff = gutils->diffe(orig, Builder);
@@ -4023,21 +3983,12 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         ss << "]\n";
         ss << "  Instead found " << foundcalled->getName() << " of type "
            << *foundcalled->getFunctionType() << "\n";
-        Value *toshow = key.todiff;
         if (context.req) {
-          toshow = context.req;
           ss << " at context: " << *context.req;
         } else {
           ss << *key.todiff << "\n";
         }
-        if (CustomErrorHandler) {
-          CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                             ErrorType::NoDerivative, nullptr, wrap(key.todiff),
-                             wrap(context.ip));
-        } else if (context.req) {
-          EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
-                      ss.str());
-        } else {
+        if (!EmitNoDerivativeError(ss.str(), key.todiff, context)) {
           assert(0 && "bad type for custom gradient");
           llvm_unreachable("bad type for custom gradient");
         }
@@ -4160,9 +4111,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     std::string s;
     llvm::raw_string_ostream ss(s);
     ss << "No reverse pass found for " + key.todiff->getName() << "\n";
-    llvm::Value *toshow = key.todiff;
     if (context.req) {
-      toshow = context.req;
       ss << " at context: " << *context.req;
     } else {
       ss << *key.todiff << "\n";
@@ -4170,17 +4119,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     BasicBlock *entry = &gutils->newFunc->getEntryBlock();
     cleanupInversionAllocs(gutils, entry);
     clearFunctionAttributes(gutils->newFunc);
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                         ErrorType::NoDerivative, nullptr, wrap(key.todiff),
-                         wrap(context.ip));
-      auto newFunc = gutils->newFunc;
-      delete gutils;
-      return newFunc;
-    }
-    if (context.req) {
-      EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
-                  ss.str());
+    if (EmitNoDerivativeError(ss.str(), key.todiff, context)) {
       auto newFunc = gutils->newFunc;
       delete gutils;
       return newFunc;
@@ -4817,9 +4756,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     } else {
       ss << "No forward mode derivative found for " + todiff->getName() << "\n";
     }
-    llvm::Value *toshow = todiff;
     if (context.req) {
-      toshow = context.req;
       ss << " at context: " << *context.req;
     } else {
       ss << *todiff << "\n";
@@ -4827,23 +4764,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     BasicBlock *entry = &gutils->newFunc->getEntryBlock();
     cleanupInversionAllocs(gutils, entry);
     clearFunctionAttributes(gutils->newFunc);
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                         ErrorType::NoDerivative, nullptr, wrap(todiff),
-                         wrap(context.ip));
-      auto newFunc = gutils->newFunc;
-      delete gutils;
-      return newFunc;
-    }
-    if (context.req) {
-      EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
-                  ss.str());
-
-      if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
-        llvm::errs() << *gutils->oldFunc << "\n";
-        llvm::errs() << *gutils->newFunc << "\n";
-        report_fatal_error("function failed verification (r6)");
-      }
+    if (EmitNoDerivativeError(ss.str(), todiff, context)) {
       auto newFunc = gutils->newFunc;
       delete gutils;
       return newFunc;
@@ -6232,20 +6153,7 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
     }
     ss << " within func " << fname << " (" << demangledName << ")\n";
   }
-  if (CustomErrorHandler) {
-    CustomErrorHandler(ss.str().c_str(), wrap(context.req),
-                       ErrorType::NoDerivative, nullptr, wrap(todiff),
-                       wrap(context.ip));
-    return todiff;
-  }
-
-  if (context.req) {
-    EmitFailure("IllegalNoFree", context.req->getDebugLoc(), context.req, s);
-    return todiff;
-  }
-  if (auto arg = dyn_cast<Instruction>(todiff)) {
-    auto loc = arg->getDebugLoc();
-    EmitFailure("IllegalNoFree", loc, arg, s);
+  if (EmitNoDerivativeError(ss.str(), todiff, context)) {
     return todiff;
   }
 
@@ -6507,14 +6415,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
     } else {
       ss << *F << "\n";
     }
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(context.req),
-                         ErrorType::NoDerivative, nullptr, wrap(F),
-                         wrap(context.ip));
-      return F;
-    }
-    if (context.req) {
-      EmitFailure("IllegalNoFree", context.req->getDebugLoc(), context.req, s);
+    if (EmitNoDerivativeError(ss.str(), F, context)) {
       return F;
     }
     llvm::errs() << " unhandled, create no free of empty function: " << *F

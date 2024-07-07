@@ -202,7 +202,15 @@ static inline llvm::Function *isCalledFunction(llvm::Value *val) {
 }
 
 class GradientUtils;
-llvm::Value *EmitNoDerivativeError(const std::string &,  llvm::Instruction& inst, GradientUtils *gutils, llvm::IRBuilder<>& B);
+struct RequestContext;
+llvm::Value *EmitNoDerivativeError(const std::string &message,
+                                   llvm::Instruction &inst,
+                                   GradientUtils *gutils, llvm::IRBuilder<> &B);
+bool EmitNoDerivativeError(const std::string &message, llvm::Value *todiff,
+                           RequestContext &ctx);
+
+void EmitNoTypeError(const std::string &, llvm::Instruction &inst,
+                     GradientUtils *gutils, llvm::IRBuilder<> &B);
 
 /// Get LLVM fast math flags
 llvm::FastMathFlags getFast();
