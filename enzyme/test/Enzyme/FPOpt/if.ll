@@ -19,6 +19,9 @@ entry:
 ; Function Attrs: nounwind readnone speculatable
 declare double @llvm.sqrt.f64(double)
 
+; Function Attrs: nounwind readnone speculatable
+declare double @llvm.fmuladd.f64(double, double, double)
+
 ; CHECK: define double @tester(double %a, double %b, double %c)
 ; CHECK: entry:
 ; CHECK-NEXT:   %[[i0:.+]] = fcmp fast ole double %b, -6.800000e+00
@@ -41,7 +44,7 @@ declare double @llvm.sqrt.f64(double)
 ; CHECK: [[i12]]:
 ; CHECK-NEXT:   %[[i14:.+]] = fmul fast double %c, -4.000000e+00
 ; CHECK-NEXT:   %[[i15:.+]] = fmul fast double %b, %b
-; CHECK-NEXT:   %[[i16:.+]] = call fast double @llvm.fma.f64(double %a, double %[[i14]], double %[[i15]])
+; CHECK-NEXT:   %[[i16:.+]] = call fast double @llvm.fmuladd.f64(double %a, double %[[i14]], double %[[i15]])
 ; CHECK-NEXT:   %[[i17:.+]] = call fast double @llvm.sqrt.f64(double %[[i16]])
 ; CHECK-NEXT:   %[[i18:.+]] = fadd fast double %b, %[[i17]]
 ; CHECK-NEXT:   %[[i19:.+]] = fneg fast double %a
