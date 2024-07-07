@@ -8,6 +8,8 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 
+#include "llvm/Analysis/TargetTransformInfo.h"
+
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
@@ -705,11 +707,7 @@ struct HerbieComponents {
 
 // Run (our choice of) floating point optimizations on function `F`.
 // Return whether or not we change the function.
-bool fpOptimize(Function &F) {
-  if (F.isDeclaration()) {
-    return false;
-  }
-
+bool fpOptimize(Function &F, const TargetTransformInfo &TTI) {
   std::string functionName = F.getName().str();
 
   // TODO: Finer control
@@ -764,12 +762,22 @@ B2:
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (!herbiable(I)) {
+        auto Cost =
+            TTI.getInstructionCost(&I, TargetTransformInfo::TCK_SizeAndLatency);
+        llvm::errs() << "Cost of non-herbiable instruction " << I
+                     << " is: " << Cost << "\n";
+
         valueToNodeMap[&I] = new FPLLValue(&I);
         if (EnzymePrintFPOpt)
           llvm::errs() << "Registered FPLLValue for non-herbiable instruction: "
                        << I << "\n";
         continue;
       }
+
+      auto Cost =
+          TTI.getInstructionCost(&I, TargetTransformInfo::TCK_SizeAndLatency);
+      llvm::errs() << "Cost of herbiable instruction " << I << " is: " << Cost
+                   << "\n";
 
       auto node = new FPNode(getHerbieOperator(I));
 
@@ -1114,8 +1122,14 @@ public:
   static char ID;
   FPOpt() : FunctionPass(ID) {}
 
-  void getAnalysisUsage(AnalysisUsage &AU) const override {}
-  bool runOnFunction(Function &F) override { return fpOptimize(F); }
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<TargetTransformInfoWrapperPass>();
+    FunctionPass::getAnalysisUsage(AU);
+  }
+  bool runOnFunction(Function &F) override {
+    auto &TTI = getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
+    return fpOptimize(F, TTI);
+  }
 };
 
 } // namespace
@@ -1139,8 +1153,15 @@ extern "C" void AddFPOptPass(LLVMPassManagerRef PM) {
 FPOptNewPM::Result FPOptNewPM::run(llvm::Module &M,
                                    llvm::ModuleAnalysisManager &MAM) {
   bool changed = false;
-  for (auto &F : M)
-    changed |= fpOptimize(F);
+  FunctionAnalysisManager &FAM =
+      MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+  for (auto &F : M) {
+    if (!F.isDeclaration()) {
+      const auto &TTI = FAM.getResult<TargetIRAnalysis>(F);
+      changed |= fpOptimize(F, TTI);
+    }
+  }
+
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 llvm::AnalysisKey FPOptNewPM::Key;
