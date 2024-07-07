@@ -903,7 +903,8 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
         }
         os << "byRef, cublas)";
         if (Dag->getNumArgs() == 1)
-          os << "[0], byRef, cublas, nullptr, allocationBuilder, \"\")}; vals";
+          os << "[0], byRef, cublas, julia_decl_type, allocationBuilder, "
+                "\"\")}; vals";
         os << ";})";
         return;
       }
@@ -1322,7 +1323,8 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
     } else if (Def->isSubClassOf("ConstantInt")) {
       auto val = Def->getValueAsInt("value");
       os << "{to_blas_callconv(Builder2, ConstantInt::get(intType, " << val
-         << "), byRef, cublas, intType, allocationBuilder, \"constant.int."
+         << "), byRef, cublas, julia_decl_type, allocationBuilder, "
+            "\"constant.int."
          << val << "\")}";
     } else if (Def->isSubClassOf("transpose")) {
       auto name = Def->getValueAsString("name");
@@ -1964,7 +1966,7 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
        << idx;
     if (Def->getValueAsBit("offset"))
       os << "_inc";
-    os << ", byRef, cublas, intType, allocationBuilder, \"for." << idx
+    os << ", byRef, cublas, julia_decl_type, allocationBuilder, \"for." << idx
        << "\");\n";
 
     os << "      Value *for_res = nullptr;\n";
@@ -2030,7 +2032,7 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
   // just make this const one available now to have less variable name repition
   os << "Value * const_one = to_blas_callconv(Builder2, "
         "ConstantInt::get(intType, 1), "
-     << "byRef, cublas, intType, allocationBuilder, \"int.one\");\n";
+     << "byRef, cublas, julia_decl_type, allocationBuilder, \"int.one\");\n";
 
   const auto nameVec = pattern.getArgNames();
   const auto inputTypes = pattern.getArgTypeMap();
@@ -2238,7 +2240,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   // just make this const one available now to have less variable name repition
   os << "Value * const_one = to_blas_callconv(Builder2, "
         "ConstantInt::get(intType, 1), "
-     << "byRef, cublas, intType, allocationBuilder, \"int.one\");\n";
+     << "byRef, cublas, julia_decl_type, allocationBuilder, \"int.one\");\n";
 
   os << "      auto bb_name = Builder2.GetInsertBlock()->getName();\n";
   for (size_t i = 0; i < activeArgs.size(); i++) {

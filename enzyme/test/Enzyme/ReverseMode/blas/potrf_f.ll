@@ -13,7 +13,7 @@
 ; integer 	LDC
 ; )
 
-declare void @dpotrf_64_(i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture, i64)
+declare void @dpotrf_64_(i8* nocapture readonly, i64* nocapture readonly, i8* nocapture readonly, i64* nocapture readonly, i8* nocapture, i64)
 
 define void @f(i8* %A) {
 entry:
@@ -21,13 +21,11 @@ entry:
   %info_p = bitcast i64* %info to i8*
   %uplo = alloca i8, align 1
   %n = alloca i64, align 16
-  %n_p = bitcast i64* %n to i8*
   %lda = alloca i64, align 16
-  %lda_p = bitcast i64* %lda to i8*
   store i8 85, i8* %uplo, align 1
   store i64 4, i64* %n, align 16
   store i64 4, i64* %lda, align 16
-  call void @dpotrf_64_(i8* %uplo, i8* %n_p, i8* %A, i8* %lda_p, i8* %info_p, i64 1) 
+  call void @dpotrf_64_(i8* %uplo, i64* %n, i8* %A, i64* %lda, i8* %info_p, i64 1) 
   ret void
 }
 
@@ -41,7 +39,7 @@ entry:
 
 ; CHECK: define internal void @diffef(i8* %A, i8* %"A'")
 ; CHECK: entry:
-; CHECK:   call void @dpotrf_64_(i8* %uplo, i8* %n_p, i8* %A, i8* %lda_p, i8* %info_p, i64 1) 
+; CHECK:   call void @dpotrf_64_(i8* %uplo, i64* %n, i8* %A, i64* %lda, i8* %info_p, i64 1) 
 
 ; CHECK: invertentry:
 ; CHECK:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
