@@ -193,6 +193,7 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
 
     if (dimensions.size() == 3) {
         auto startty = pattern.getTypeOfArg(nameVec[dimensions[0]]); 
+        (void)startty;
         assert(startty == ArgType::trans);
 os
 << "      auto norm = is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n"
