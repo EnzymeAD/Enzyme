@@ -549,7 +549,7 @@ def trtrs : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $nrhs, $A, $l
 
                       (BlasCall<"lacpy"> $layout, $uplo, $n, $n, use<"tri">, $n, (Shadow $A))
                       ),
-                  /* b     */ (BlasCall<"trtrs"> $layout, (flip_uplo $uplo), $trans, $diag, $n, $nrhs, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $B), Alloca<1>),
+                  /* b     */ (BlasCall<"trtrs"> $layout, $uplo, transpose<"trans">, $diag, $n, $nrhs, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $B), Alloca<1>),
                   ]
                   >;
 
