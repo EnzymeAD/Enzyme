@@ -555,6 +555,7 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
   if (hasTrans) {
     os << "  Value *valueN = nullptr;\n"
        << "  Value *valueT = nullptr;\n"
+       << "  Value *valueC = nullptr;\n"
        << "  Value *valueG = nullptr;\n"
        << "  Value *valuer = nullptr;\n"
        << "  Value *valuel = nullptr;\n"
@@ -566,6 +567,8 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
           "cublasOperation_t::CUBLAS_OP_N);\n"
        << "    valueT = ConstantInt::get(cublasEnumType, "
           "cublasOperation_t::CUBLAS_OP_T);\n"
+       << "    valueC = ConstantInt::get(cublasEnumType, "
+          "cublasOperation_t::CUBLAS_OP_C);\n"
        << "    valuel = ConstantInt::get(cublasEnumType, "
           "cublasSideMode_t::CUBLAS_SIDE_LEFT);\n"
        << "    valuer = ConstantInt::get(cublasEnumType, "
@@ -581,6 +584,7 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
        << "  } else {\n"
        << "    valueN = ConstantInt::get(charType, 'N');\n"
        << "    valueT = ConstantInt::get(charType, 'T');\n"
+       << "    valueC = ConstantInt::get(charType, 'C');\n"
        << "    valueG = ConstantInt::get(charType, 'G');\n"
        << "    valuer = ConstantInt::get(charType, 'r');\n"
        << "    valuel = ConstantInt::get(charType, 'l');\n"
@@ -1312,6 +1316,11 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       } else if (val == "U") {
         os << "{to_blas_callconv(Builder2, valueU, byRef, cublas, nullptr, "
               "allocationBuilder, \"constant.char.U\")}";
+      } else if (val == "C") {
+        os << "{to_blas_callconv(Builder2, (blas.floatType == \"z\" || "
+              "blas.floatType == \"c\") ? valueC : valueT, byRef, cublas, "
+              "nullptr, "
+              "allocationBuilder, \"constant.char.C\")}";
         // C is not supported yet
         //} else if (val == "C") {
       } else {
@@ -2110,17 +2119,16 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
      << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
      << "      Mode == DerivativeMode::ReverseModeGradient) {\n";
 
-  if (pattern.getName() != "trtrs")
-    os << "    if (blas.floatType == \"c\" || blas.floatType == \"C\" || "
-          "blas.floatType == \"z\" || blas.floatType == \"Z\") {\n"
-       << "      std::string s;\n"
-       << "      llvm::raw_string_ostream ss(s);\n"
-       << "      ss << \"" << pattern.getName() << "\" << \"\\n\";\n"
-       << "      ss << \"Complex inputs not yet supported in reverse mode for "
-          "BLAS calls\" << "
-          "\"\\n\";\n"
-       << "      EmitNoDerivativeError(ss.str(), call, gutils, Builder2);\n"
-       << "    }\n";
+  os << "    if (blas.floatType == \"c\" || blas.floatType == \"C\" || "
+        "blas.floatType == \"z\" || blas.floatType == \"Z\") {\n"
+     << "      std::string s;\n"
+     << "      llvm::raw_string_ostream ss(s);\n"
+     << "      ss << \"" << pattern.getName() << "\" << \"\\n\";\n"
+     << "      ss << \"Complex inputs not yet supported in reverse mode for "
+        "BLAS calls\" << "
+        "\"\\n\";\n"
+     << "      EmitNoDerivativeError(ss.str(), call, gutils, Builder2);\n"
+     << "    }\n";
 
   os << "    Value *alloc = nullptr;\n"
      << "    if (byRef && !cublas) {\n"

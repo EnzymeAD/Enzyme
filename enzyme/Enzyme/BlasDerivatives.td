@@ -528,7 +528,7 @@ def trtrs : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $nrhs, $A, $l
                       (BlasCall<"gemm">
                         $layout,
                         Char<"N">,
-                        Char<"T">,
+                        Char<"C">,
                         $n,
                         $n,
                         $nrhs,
