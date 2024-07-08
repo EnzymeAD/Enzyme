@@ -3014,6 +3014,40 @@ Value *is_lower(IRBuilder<> &B, Value *uplo, bool byRef, bool cublas) {
   }
 }
 
+Value *is_nonunit(IRBuilder<> &B, Value *uplo, bool byRef, bool cublas) {
+  if (cublas) {
+    Value *isNormal = nullptr;
+    isNormal =
+        B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(),
+                                              /*CUBLAS_DIAG_NON_UNIT*/ 0));
+    return isNormal;
+  }
+  if (auto CI = dyn_cast<ConstantInt>(uplo)) {
+    if (CI->getValue() == 'N' || CI->getValue() == 'n')
+      return ConstantInt::getTrue(B.getContext());
+    if (CI->getValue() == 'U' || CI->getValue() == 'u')
+      return ConstantInt::getFalse(B.getContext());
+  }
+  if (byRef) {
+    // can't inspect opaque ptr, so assume 8 (Julia)
+    IntegerType *charTy = IntegerType::get(uplo->getContext(), 8);
+    uplo = B.CreateLoad(charTy, uplo, "loaded.nonunit");
+
+    auto isL = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'N'));
+    auto isl = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'n'));
+    // fortran blas
+    return B.CreateOr(isl, isL);
+  } else {
+    // we can inspect scalars
+    auto capi = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 131));
+    // TODO we really should just return capi, but for sake of consistency,
+    // we will accept either here.
+    auto isL = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'N'));
+    auto isl = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'n'));
+    return B.CreateOr(capi, B.CreateOr(isl, isL));
+  }
+}
+
 llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef,
                        bool cublas) {
   if (cublas) {

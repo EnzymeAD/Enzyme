@@ -96,6 +96,21 @@ void my_potrs(char layout, char uplo, int N, int Nrhs, double *__restrict__ A, i
   inDerivative = true;
 }
 
+void my_trtrs(char layout, char uplo, char trans, char diag, int N, int Nrhs,
+              double *__restrict__ A, int lda, double *__restrict__ B,
+              int ldb) {
+  int info;
+  cblas_dtrtrs(layout, uplo, trans, diag, N, Nrhs, A, lda, B, ldb, &info);
+  inDerivative = true;
+}
+void ow_trtrs(char layout, char uplo, char trans, char diag, int N, int Nrhs,
+              double *A, int lda, double *B, int ldb) {
+  int info;
+  cblas_dtrtrs(layout, uplo, trans, diag, N, Nrhs, A, lda, B, ldb, &info);
+  cblas_dscal(1, 0.0, A, lda);
+  inDerivative = true;
+}
+
 static void dotTests() {
 
     std::string Test = "DOT active both ";
@@ -1396,6 +1411,219 @@ static void potrsTests() {
   }
 }
 
+static void trtrsTests() {
+  int N = 17;
+  int Nrhs = M;
+  // N means normal matrix, T means transposed
+  for (char layout : {CblasColMajor, CblasRowMajor}) {
+    for (auto uplo : {'U', 'u', 'L', 'l'})
+      for (auto diag : {'U', 'u', 'N', 'n'})
+        for (auto transA :
+             {CBLAS_TRANSPOSE::CblasNoTrans, CBLAS_TRANSPOSE::CblasTrans}) {
+          BlasInfo inputs[6] = {
+              /*A*/ BlasInfo(A, layout, N, N, lda),
+              /*B*/ BlasInfo(B, layout, N, Nrhs, incB),
+              /*C*/ BlasInfo(),
+              BlasInfo(),
+              BlasInfo(),
+              BlasInfo(),
+          };
+          {
+
+            std::string Test = "TRTRS active A, B";
+            init();
+
+            my_trtrs(layout, uplo, (char)transA, diag, N, Nrhs, A, lda, B,
+                     incB);
+
+            assert(calls.size() == 1);
+            assert(calls[0].inDerivative == false);
+            assert(calls[0].type == CallType::TRTRS);
+            assert(calls[0].pout_arg1 == B);
+            assert(calls[0].pin_arg1 == A);
+            assert(calls[0].pin_arg2 == UNUSED_POINTER);
+            assert(calls[0].farg1 == UNUSED_DOUBLE);
+            assert(calls[0].farg2 == UNUSED_DOUBLE);
+            assert(calls[0].layout == layout);
+            assert(calls[0].targ1 == (char)transA);
+            assert(calls[0].targ2 == UNUSED_TRANS);
+            assert(calls[0].iarg1 == N);
+            assert(calls[0].iarg2 == Nrhs);
+            assert(calls[0].iarg3 == UNUSED_INT);
+            assert(calls[0].iarg4 == lda);
+            assert(calls[0].iarg5 == incB);
+            assert(calls[0].iarg6 == UNUSED_INT);
+            assert(calls[0].side == UNUSED_TRANS);
+            assert(calls[0].uplo == uplo);
+            assert(calls[0].diag == diag);
+
+            // Check memory of primal on own.
+            checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+            init();
+            __enzyme_autodiff((void *)my_trtrs, enzyme_const, layout,
+                              enzyme_const, uplo, enzyme_const, (char)transA,
+                              enzyme_const, diag, enzyme_const, N, enzyme_const,
+                              Nrhs, enzyme_dup, A, dA, enzyme_const, lda,
+                              enzyme_dup, B, dB, enzyme_const, incB);
+            foundCalls = calls;
+            init();
+
+            my_trtrs(layout, uplo, (char)transA, diag, N, Nrhs, A, lda, B,
+                     incB);
+
+            inDerivative = true;
+
+            cblas_dtrtrs(layout, uplo, (char)transpose(transA), diag, N, Nrhs,
+                         A, lda, dB, incB, nullptr);
+
+            assert(foundCalls[2].type == CallType::LACPY);
+            double *tri = (double *)foundCalls[2].pout_arg1;
+            inputs[3] = BlasInfo(tri, layout, N, N, N);
+
+            cblas_dlacpy(layout, uplo, N, N, dA, lda, tri, N);
+
+            cblas_dgemm(
+                layout, 'N', 'T', N, N, Nrhs, -1.0, is_normal(transA) ? dB : B,
+                is_normal(transA) ? incB : incB, is_normal(transA) ? B : dB,
+                is_normal(transA) ? incB : incB, 1.0, tri, N);
+
+            cblas_dcopy((diag == 'U' || diag == 'u') ? N : 0, dA, lda + 1, tri,
+                        N + 1);
+
+            cblas_dlacpy(layout, uplo, N, N, tri, N, dA, lda);
+
+            checkTest(Test);
+
+            SkipVecIncCheck = true;
+            // Check memory of primal of expected derivative
+            checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+            // Check memory of primal of our derivative (if equal above, it
+            // should be the same).
+            checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+            SkipVecIncCheck = false;
+          }
+          {
+
+            std::string Test = "TRTRS active B";
+
+            init();
+            __enzyme_autodiff((void *)my_trtrs, enzyme_const, layout,
+                              enzyme_const, uplo, enzyme_const, (char)transA,
+                              enzyme_const, diag, enzyme_const, N, enzyme_const,
+                              Nrhs, enzyme_const, A, enzyme_const, lda,
+                              enzyme_dup, B, dB, enzyme_const, incB);
+            foundCalls = calls;
+            init();
+
+            my_trtrs(layout, uplo, (char)transA, diag, N, Nrhs, A, lda, B,
+                     incB);
+
+            inDerivative = true;
+
+            cblas_dtrtrs(layout, uplo, (char)transpose(transA), diag, N, Nrhs,
+                         A, lda, dB, incB, nullptr);
+
+            // Check memory of primal of expected derivative
+            checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+            // Check memory of primal of our derivative (if equal above, it
+            // should be the same).
+            checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+          }
+          {
+
+            std::string Test = "TRTRS active A";
+
+            init();
+            __enzyme_autodiff((void *)my_trtrs, enzyme_const, layout,
+                              enzyme_const, uplo, enzyme_const, (char)transA,
+                              enzyme_const, diag, enzyme_const, N, enzyme_const,
+                              Nrhs, enzyme_dup, A, dA, enzyme_const, lda,
+                              enzyme_const, B, enzyme_const, incB);
+            foundCalls = calls;
+            init();
+
+            my_trtrs(layout, uplo, (char)transA, diag, N, Nrhs, A, lda, B,
+                     incB);
+
+            inDerivative = true;
+
+            // Check memory of primal of expected derivative
+            checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+            // Check memory of primal of our derivative (if equal above, it
+            // should be the same).
+            checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+          }
+          {
+
+            std::string Test = "TRTRS OW active A, B";
+
+            init();
+            __enzyme_autodiff((void *)ow_trtrs, enzyme_const, layout,
+                              enzyme_const, uplo, enzyme_const, (char)transA,
+                              enzyme_const, diag, enzyme_const, N, enzyme_const,
+                              Nrhs, enzyme_dup, A, dA, enzyme_const, lda,
+                              enzyme_dup, B, dB, enzyme_const, incB);
+            foundCalls = calls;
+            init();
+
+            cblas_dtrtrs(layout, uplo, (char)transA, diag, N, Nrhs, A, lda, B,
+                         incB, nullptr);
+            assert(foundCalls[1].type == CallType::LACPY);
+            double *cacheA = (double *)foundCalls[1].pout_arg1;
+            inputs[4] = BlasInfo(cacheA, (char)layout, N, N, N);
+            assert(inputs[4].ty == ValueType::Matrix);
+            cblas_dlacpy(layout, uplo, N, N, A, lda, cacheA, N);
+
+            assert(foundCalls[2].type == CallType::LACPY);
+            double *cacheB = (double *)foundCalls[2].pout_arg1;
+            inputs[5] = BlasInfo(cacheB, (char)layout, N, Nrhs, N);
+            assert(inputs[5].ty == ValueType::Matrix);
+            cblas_dlacpy(layout, '\0', N, Nrhs, B, incB, cacheB, N);
+            cblas_dscal(1, 0.0, A, lda);
+
+            inDerivative = true;
+
+            cblas_dscal(1, 0.0, dA, lda);
+
+            cblas_dtrtrs(layout, uplo, (char)transpose(transA), diag, N, Nrhs,
+                         cacheA, N, dB, incB, nullptr);
+
+            assert(foundCalls[6].type == CallType::LACPY);
+            double *tri = (double *)foundCalls[6].pout_arg1;
+            inputs[3] = BlasInfo(tri, layout, N, N, N);
+
+            cblas_dlacpy(layout, uplo, N, N, dA, lda, tri, N);
+
+            cblas_dgemm(layout, 'N', 'T', N, N, Nrhs, -1.0,
+                        is_normal(transA) ? dB : cacheB,
+                        is_normal(transA) ? incB : N,
+                        is_normal(transA) ? cacheB : dB,
+                        is_normal(transA) ? N : incB, 1.0, tri, N);
+
+            cblas_dcopy((diag == 'U' || diag == 'u') ? N : 0, dA, lda + 1, tri,
+                        N + 1);
+
+            cblas_dlacpy(layout, uplo, N, N, tri, N, dA, lda);
+
+            checkTest(Test);
+
+            SkipVecIncCheck = true;
+            // Check memory of primal of expected derivative
+            checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+            // Check memory of primal of our derivative (if equal above, it
+            // should be the same).
+            checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+            SkipVecIncCheck = false;
+          }
+        }
+  }
+}
+
 int main() {
   dotTests();
 
@@ -1410,8 +1638,10 @@ int main() {
   trmmTests();
 
   syrkTests();
-  
+
   potrfTests();
-  
+
   potrsTests();
+
+  trtrsTests();
 }
