@@ -694,16 +694,42 @@ std::string getPrecondition(
   return preconditions.empty() ? "TRUE" : "(and" + preconditions + ")";
 }
 
-struct HerbieComponents {
+struct HerbieComponent {
   SetVector<Value *> inputs;
   SetVector<Value *> outputs;
   SetVector<Instruction *> operations;
   size_t outputs_rewritten = 0;
 
-  HerbieComponents(SetVector<Value *> inputs, SetVector<Value *> outputs,
-                   SetVector<Instruction *> operations)
+  HerbieComponent(SetVector<Value *> inputs, SetVector<Value *> outputs,
+                  SetVector<Instruction *> operations)
       : inputs(std::move(inputs)), outputs(std::move(outputs)),
         operations(std::move(operations)) {}
+};
+
+class HerbieRewrite {
+public:
+  HerbieComponent &component;
+  Value *oldOutput;
+  Value *newOutput;
+  InstructionCost oldCost;
+  InstructionCost newCost;
+  double oldError;
+  double newError;
+
+  HerbieRewrite(HerbieComponent &component, Value *oldOutput, Value *newOutput,
+                InstructionCost oldCost, InstructionCost newCost,
+                double oldError, double newError)
+      : component(component), oldOutput(oldOutput), newOutput(newOutput),
+        oldCost(oldCost), newCost(newCost), oldError(oldError),
+        newError(newError) {}
+
+  void apply() {
+    if (EnzymePrintFPOpt)
+      llvm::errs() << "Applying Herbie rewrite: " << *oldOutput << " -> "
+                   << *newOutput << "\n";
+
+    oldOutput->replaceAllUsesWith(newOutput);
+  }
 };
 
 // Sum up the cost of `output` and its FP operands recursively up to `inputs`
@@ -843,7 +869,7 @@ B2:
   }
 
   SmallSet<Value *, 1> component_seen;
-  SmallVector<HerbieComponents, 1> connected_components;
+  SmallVector<HerbieComponent, 1> connected_components;
   for (auto &BB : F) {
     for (auto &I : BB) {
       // Not a herbiable instruction, doesn't make sense to create graph node
@@ -1025,6 +1051,8 @@ B2:
     return false;
   }
 
+  SmallVector<HerbieRewrite, 1> rewrites;
+
   for (auto &component : connected_components) {
     assert(component.inputs.size() > 0 && "No inputs found for component");
     for (const auto &input : component.inputs) {
@@ -1079,7 +1107,6 @@ B2:
         continue;
       }
 
-      component.outputs_rewritten++;
       if (EnzymePrintHerbie)
         llvm::errs() << "Herbie output: " << herbieOutput << "\n";
 
@@ -1105,14 +1132,21 @@ B2:
       InstructionCost newCost =
           getValueTreeCost(newOutputValue, component.inputs, TTI);
       llvm::errs() << "Cost of the new expression is: " << newCost << "\n";
-      assert(newOutputValue && "Failed to get value from parsed node");
-      if (EnzymePrintFPOpt)
-        llvm::errs() << "Replacing: " << *output << " with " << *newOutputValue
-                     << "\n";
-      output->replaceAllUsesWith(newOutputValue);
 
-      changed = true;
+      rewrites.emplace_back(component, output, newOutputValue, oldCost, newCost,
+                            0, 0);
+
+      assert(newOutputValue && "Failed to get value from parsed node");
     }
+  }
+
+  // Perform rewrites
+  for (auto &rewrite : rewrites) {
+    // TODO: Solver
+    rewrite.apply();
+    rewrite.component.outputs_rewritten++;
+
+    changed = true;
   }
 
   llvm::errs() << "FPOpt: Finished optimizing " << F.getName() << "\n";
