@@ -2108,20 +2108,21 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
 
   os << "  /* rev-rewrite */                                 \n"
      << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
-     << "      Mode == DerivativeMode::ReverseModeGradient) {\n"
-     << "    if (blas.floatType == \"c\" || blas.floatType == \"C\" || "
-        "blas.floatType == \"z\" || blas.floatType == \"Z\") {\n"
-     << "      std::string s;\n"
-     << "      llvm::raw_string_ostream ss(s);\n"
-     << "      ss << \"" << pattern.getName() << "\" << \"\\n\";\n"
-     << "      ss << call.getDebugLoc() << \"\\n\";\n"
-     << "      ss << \"Complex inputs not yet supported in reverse mode for "
-        "BLAS calls\" << "
-        "\"\\n\";\n"
-     << "      EmitNoDerivativeError(ss.str(), call, gutils, Builder2);\n"
-     << "    }\n"
+     << "      Mode == DerivativeMode::ReverseModeGradient) {\n";
 
-     << "    Value *alloc = nullptr;\n"
+  if (pattern.getName() != "trtrs")
+    os << "    if (blas.floatType == \"c\" || blas.floatType == \"C\" || "
+          "blas.floatType == \"z\" || blas.floatType == \"Z\") {\n"
+       << "      std::string s;\n"
+       << "      llvm::raw_string_ostream ss(s);\n"
+       << "      ss << \"" << pattern.getName() << "\" << \"\\n\";\n"
+       << "      ss << \"Complex inputs not yet supported in reverse mode for "
+          "BLAS calls\" << "
+          "\"\\n\";\n"
+       << "      EmitNoDerivativeError(ss.str(), call, gutils, Builder2);\n"
+       << "    }\n";
+
+  os << "    Value *alloc = nullptr;\n"
      << "    if (byRef && !cublas) {\n"
      << "      alloc = allocationBuilder.CreateAlloca(fpType, nullptr, "
         "\"ret\");\n"
