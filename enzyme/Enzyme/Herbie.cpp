@@ -15,6 +15,7 @@
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Module.h"
 
+#include "llvm/Support/InstructionCost.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -705,6 +706,44 @@ struct HerbieComponents {
         operations(std::move(operations)) {}
 };
 
+// Sum up the cost of `output` and its FP operands recursively up to `inputs`
+// (exclusive).
+InstructionCost getValueTreeCost(Value *output,
+                                 const SetVector<Value *> &inputs,
+                                 const TargetTransformInfo &TTI) {
+  SmallPtrSet<Value *, 8> seen;
+  SetVector<Value *> todo;
+  InstructionCost cost = 0;
+
+  todo.insert(output);
+  while (!todo.empty()) {
+    auto cur = todo.pop_back_val();
+    if (!seen.insert(cur).second)
+      continue;
+
+    if (inputs.contains(cur))
+      continue;
+
+    if (auto *I = dyn_cast<Instruction>(cur)) {
+      llvm::errs() << "Cost of " << *I << " is: "
+                   << TTI.getInstructionCost(
+                          I, TargetTransformInfo::TCK_SizeAndLatency)
+                   << "\n";
+
+      // Only add the cost of the instruction if it is not an input
+      cost += TTI.getInstructionCost(dyn_cast<Instruction>(cur),
+                                     TargetTransformInfo::TCK_SizeAndLatency);
+      auto operands =
+          isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
+      for (auto &operand : operands) {
+        todo.insert(operand);
+      }
+    }
+  }
+
+  return cost;
+}
+
 // Run (our choice of) floating point optimizations on function `F`.
 // Return whether or not we change the function.
 bool fpOptimize(Function &F, const TargetTransformInfo &TTI) {
@@ -762,22 +801,12 @@ B2:
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (!herbiable(I)) {
-        auto Cost =
-            TTI.getInstructionCost(&I, TargetTransformInfo::TCK_SizeAndLatency);
-        llvm::errs() << "Cost of non-herbiable instruction " << I
-                     << " is: " << Cost << "\n";
-
         valueToNodeMap[&I] = new FPLLValue(&I);
         if (EnzymePrintFPOpt)
           llvm::errs() << "Registered FPLLValue for non-herbiable instruction: "
                        << I << "\n";
         continue;
       }
-
-      auto Cost =
-          TTI.getInstructionCost(&I, TargetTransformInfo::TCK_SizeAndLatency);
-      llvm::errs() << "Cost of herbiable instruction " << I << " is: " << Cost
-                   << "\n";
 
       auto node = new FPNode(getHerbieOperator(I));
 
@@ -1070,6 +1099,11 @@ B2:
 
       // Convert the parsed expression to LLVM values/instructions
       Value *newOutputValue = parsedNode->getValue(builder);
+      InstructionCost oldCost = getValueTreeCost(output, component.inputs, TTI);
+      llvm::errs() << "Cost of the original expression is: " << oldCost << "\n";
+      InstructionCost newCost =
+          getValueTreeCost(newOutputValue, component.inputs, TTI);
+      llvm::errs() << "Cost of the new expression is: " << newCost << "\n";
       assert(newOutputValue && "Failed to get value from parsed node");
       if (EnzymePrintFPOpt)
         llvm::errs() << "Replacing: " << *output << " with " << *newOutputValue
