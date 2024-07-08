@@ -1474,8 +1474,8 @@ static void trtrsTests() {
 
             inDerivative = true;
 
-            cblas_dtrtrs(layout, uplo, (char)transA, diag, N, Nrhs, A, lda, dB,
-                         incB, nullptr);
+            cblas_dtrtrs(layout, flip_uplo(uplo), (char)transA, diag, N, Nrhs,
+                         A, lda, dB, incB, nullptr);
 
             assert(foundCalls[2].type == CallType::LACPY);
             double *tri = (double *)foundCalls[2].pout_arg1;
@@ -1522,8 +1522,8 @@ static void trtrsTests() {
 
             inDerivative = true;
 
-            cblas_dtrtrs(layout, uplo, (char)transA, diag, N, Nrhs, A, lda, dB,
-                         incB, nullptr);
+            cblas_dtrtrs(layout, flip_uplo(uplo), (char)transA, diag, N, Nrhs,
+                         A, lda, dB, incB, nullptr);
 
             // Check memory of primal of expected derivative
             checkMemoryTrace(inputs, "Expected " + Test, calls);
@@ -1589,8 +1589,8 @@ static void trtrsTests() {
 
             cblas_dscal(1, 0.0, dA, lda);
 
-            cblas_dtrtrs(layout, uplo, (char)transA, diag, N, Nrhs, cacheA, N,
-                         dB, incB, nullptr);
+            cblas_dtrtrs(layout, flip_uplo(uplo), (char)transA, diag, N, Nrhs,
+                         cacheA, N, dB, incB, nullptr);
 
             assert(foundCalls[6].type == CallType::LACPY);
             double *tri = (double *)foundCalls[6].pout_arg1;

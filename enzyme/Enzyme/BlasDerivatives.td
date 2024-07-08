@@ -510,6 +510,11 @@ def spmv : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $ap, $x, $incx, $beta
                   ]
                   >;
 
+def flip_uplo : IntMatchers<
+    "charType", "charType",
+    ["'l'", "'L'", "'U'", "'u'"],
+    ["'u'", "'U'", "'L'", "'l'"]
+    >;
 // B2 = inv(A^T) B
 // dB = inv(A^T) dB2
 // d(A^T) −= dB B2^T
@@ -544,7 +549,7 @@ def trtrs : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $nrhs, $A, $l
 
                       (BlasCall<"lacpy"> $layout, $uplo, $n, $n, use<"tri">, $n, (Shadow $A))
                       ),
-                  /* b     */ (BlasCall<"trtrs"> $layout, $uplo, $trans, $diag, $n, $nrhs, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $B), Alloca<1>),
+                  /* b     */ (BlasCall<"trtrs"> $layout, (flip_uplo $uplo), $trans, $diag, $n, $nrhs, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $B), Alloca<1>),
                   ]
                   >;
 
@@ -608,11 +613,6 @@ def uplo_to_trans : IntMatchers<
     "charType", "charType",
     ["'l'", "'L'", "'U'", "'u'"],
     ["'t'", "'T'", "'N'", "'n'"]
-    >;
-def flip_uplo : IntMatchers<
-    "charType", "charType",
-    ["'l'", "'L'", "'U'", "'u'"],
-    ["'u'", "'U'", "'L'", "'l'"]
     >;
 def uplo_to_side : IntMatchers<
     "charType", "charType",
