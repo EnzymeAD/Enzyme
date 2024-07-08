@@ -3231,10 +3231,13 @@ llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
   if (!byRef)
     return V;
 
-  auto VP = B.CreatePointerCast(
-      V, PointerType::get(intType,
-                          cast<PointerType>(V->getType())->getAddressSpace()));
-  return B.CreateLoad(intType, VP);
+  if (V->getType()->isIntegerTy())
+    V = B.CreateIntToPtr(V, PointerType::getUnqual(intType));
+  else
+    V = B.CreatePointerCast(
+        V, PointerType::get(
+               intType, cast<PointerType>(V->getType())->getAddressSpace()));
+  return B.CreateLoad(intType, V);
 }
 
 SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
