@@ -1574,15 +1574,15 @@ static void trtrsTests() {
                          incB, nullptr);
             assert(foundCalls[1].type == CallType::LACPY);
             double *cacheA = (double *)foundCalls[1].pout_arg1;
-            inputs[6] = BlasInfo(cacheA, (char)layout, N, N, N);
-            assert(inputs[6].ty == ValueType::Matrix);
-            cblas_dlacpy(layout, uplo, N, Nrhs, B, incB, cacheA, N);
+            inputs[4] = BlasInfo(cacheA, (char)layout, N, N, N);
+            assert(inputs[4].ty == ValueType::Matrix);
+            cblas_dlacpy(layout, uplo, N, N, A, lda, cacheA, N);
 
             assert(foundCalls[2].type == CallType::LACPY);
-            double *cacheB = (double *)foundCalls[1].pout_arg1;
+            double *cacheB = (double *)foundCalls[2].pout_arg1;
             inputs[5] = BlasInfo(cacheB, (char)layout, N, Nrhs, N);
             assert(inputs[5].ty == ValueType::Matrix);
-            cblas_dlacpy(layout, 'G', N, Nrhs, B, incB, cacheB, N);
+            cblas_dlacpy(layout, '\0', N, Nrhs, B, incB, cacheB, N);
             cblas_dscal(1, 0.0, A, lda);
 
             inDerivative = true;
@@ -1592,8 +1592,8 @@ static void trtrsTests() {
             cblas_dtrtrs(layout, uplo, (char)transA, diag, N, Nrhs, cacheA, N,
                          dB, incB, nullptr);
 
-            assert(foundCalls[2].type == CallType::LACPY);
-            double *tri = (double *)foundCalls[2].pout_arg1;
+            assert(foundCalls[6].type == CallType::LACPY);
+            double *tri = (double *)foundCalls[6].pout_arg1;
             inputs[3] = BlasInfo(tri, layout, N, N, N);
 
             cblas_dlacpy(layout, uplo, N, N, dA, lda, tri, N);
@@ -1601,7 +1601,7 @@ static void trtrsTests() {
             cblas_dgemm(layout, 'N', 'T', N, N, Nrhs, -1.0,
                         is_normal(transA) ? dB : cacheB,
                         is_normal(transA) ? incB : N,
-                        is_normal(transA) ? B : dB,
+                        is_normal(transA) ? cacheB : dB,
                         is_normal(transA) ? N : incB, 1.0, tri, N);
 
             cblas_dcopy((diag == 'U' || diag == 'u') ? N : 0, dA, lda + 1, tri,
@@ -1625,24 +1625,23 @@ static void trtrsTests() {
 }
 
 int main() {
-  /*
-dotTests();
+  dotTests();
 
-nrm2Tests();
+  nrm2Tests();
 
-gemvTests();
+  gemvTests();
 
-gemmTests();
+  gemmTests();
 
-trmvTests();
+  trmvTests();
 
-trmmTests();
+  trmmTests();
 
-syrkTests();
+  syrkTests();
 
-potrfTests();
+  potrfTests();
 
-potrsTests();
-*/
+  potrsTests();
+
   trtrsTests();
 }
