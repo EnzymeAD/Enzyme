@@ -1455,7 +1455,6 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   Value *Free = call->getCalledOperand();
   AttributeList FreeAttributes = call->getAttributes();
   CallingConv::ID CallingConvention = call->getCallingConv();
-  DebugLoc DebugLoc = call->getDebugLoc();
 
   std::string name = "__enzyme_checked_free_" + std::to_string(width);
 
@@ -1501,7 +1500,6 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   CallInst *CI = Free0Builder.CreateCall(FreeTy, Free, {first_shadow});
   CI->setAttributes(FreeAttributes);
   CI->setCallingConv(CallingConvention);
-  CI->setDebugLoc(DebugLoc);
 
   if (width > 1) {
     Value *checkResult = nullptr;
@@ -1522,7 +1520,6 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
         CallInst *CI = Free1Builder.CreateCall(FreeTy, Free, {nextShadow});
         CI->setAttributes(FreeAttributes);
         CI->setCallingConv(CallingConvention);
-        CI->setDebugLoc(DebugLoc);
       }
     }
     Free0Builder.CreateCondBr(checkResult, free1, end);
