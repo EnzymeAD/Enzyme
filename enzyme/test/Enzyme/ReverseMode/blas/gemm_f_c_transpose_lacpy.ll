@@ -135,7 +135,7 @@ entry:
 ; CHECK-NEXT:   store i64 1, i64* %byref.int.one
 ; CHECK-NEXT:   %ld.transb = load i8, i8* %transb
 ; CHECK-DAG:   %[[i34:.+]] = icmp eq i8 %ld.transb, 110
-; CHECK-DAG:   %[[i35:.+]] = select i1 %[[i34]], i8 116, i8 0
+; CHECK-DAG:   %[[i35:.+]] = select i1 %[[i34]], i8 116, i8 78
 ; CHECK-DAG:   %[[i36:.+]] = icmp eq i8 %ld.transb, 78
 ; CHECK-DAG:   %[[i37:.+]] = select i1 %[[i36]], i8 84, i8 %[[i35]]
 ; CHECK-DAG:   %[[i38:.+]] = icmp eq i8 %ld.transb, 116
@@ -174,7 +174,7 @@ entry:
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %[[a41]], i8* %[[a42]], i8* %[[a43]], i8* %[[a44]], i8* %n_p, i8* %alpha_p, i8* %[[a56]], i8* %[[a57]], i8* %[[a58]], i8* %[[a59]], i8* %fpcast.constant.fp.1.0, i8* %"A'", i8* %lda_p, i64 1, i64 1)
 ; CHECK-NEXT:   %ld.transa = load i8, i8* %transa
 ; CHECK-DAG:   %[[i26:.+]] = icmp eq i8 %ld.transa, 110
-; CHECK-DAG:   %[[i27:.+]] = select i1 %[[i26]], i8 116, i8 0
+; CHECK-DAG:   %[[i27:.+]] = select i1 %[[i26]], i8 116, i8 78
 ; CHECK-DAG:   %[[i28:.+]] = icmp eq i8 %ld.transa, 78
 ; CHECK-DAG:   %[[i29:.+]] = select i1 %[[i28]], i8 84, i8 %[[i27]]
 ; CHECK-DAG:   %[[i30:.+]] = icmp eq i8 %ld.transa, 116
