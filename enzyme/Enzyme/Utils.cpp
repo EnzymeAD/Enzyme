@@ -3154,9 +3154,10 @@ llvm::Value *transpose(std::string floatType, IRBuilder<> &B, llvm::Value *V,
       auto isT = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'C'));
       return B.CreateSelect(isT, ConstantInt::get(V->getType(), 'N'), sel3);
     } else {
+      // the base case here of 'C' or 'c' becomes simply 'N'
       auto isn = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'n'));
       auto sel1 = B.CreateSelect(isn, ConstantInt::get(V->getType(), 't'),
-                                 ConstantInt::get(V->getType(), 0));
+                                 ConstantInt::get(V->getType(), 'N'));
 
       auto isN = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'N'));
       auto sel2 =
