@@ -20,7 +20,6 @@ namespace mlir {
 
 class OpBuilder;
 class Operation;
-struct LogicalResult;
 
 namespace enzyme {
 
