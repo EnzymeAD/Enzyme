@@ -725,14 +725,15 @@ InstructionCost getValueTreeCost(Value *output,
       continue;
 
     if (auto *I = dyn_cast<Instruction>(cur)) {
-      llvm::errs() << "Cost of " << *I << " is: "
-                   << TTI.getInstructionCost(
-                          I, TargetTransformInfo::TCK_SizeAndLatency)
-                   << "\n";
+      auto instCost =
+          TTI.getInstructionCost(I, TargetTransformInfo::TCK_SizeAndLatency);
+
+      if (EnzymePrintFPOpt)
+        llvm::errs() << "Cost of " << *I << " is: " << instCost << "\n";
 
       // Only add the cost of the instruction if it is not an input
-      cost += TTI.getInstructionCost(dyn_cast<Instruction>(cur),
-                                     TargetTransformInfo::TCK_SizeAndLatency);
+      cost += instCost;
+
       auto operands =
           isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
       for (auto &operand : operands) {
