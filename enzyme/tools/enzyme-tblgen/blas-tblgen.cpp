@@ -1333,7 +1333,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       auto name = Def->getValueAsString("name");
       os << "{(arg_transposed_" << name << " = arg_transposed_" << name
          << " ? arg_transposed_" << name << " : "
-         << "transpose(Builder2, arg_" << name
+         << "transpose(blas.floatType, Builder2, arg_" << name
          << ", byRef, cublas, charType, allocationBuilder, \"" << name
          << "\"))}";
     } else {

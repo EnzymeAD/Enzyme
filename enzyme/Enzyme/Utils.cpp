@@ -3127,7 +3127,8 @@ llvm::Value *is_left(IRBuilder<> &B, llvm::Value *side, bool byRef,
 // However, if we ask openBlas c ABI,
 // it is one of the following 32 bit integers values:
 // enum CBLAS_TRANSPOSE {CblasNoTrans=111, CblasTrans=112, CblasConjTrans=113};
-llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
+llvm::Value *transpose(std::string floatType, IRBuilder<> &B, llvm::Value *V,
+                       bool cublas) {
   llvm::Type *T = V->getType();
   if (cublas) {
     auto isT1 = B.CreateICmpEQ(V, ConstantInt::get(T, 1));
@@ -3137,18 +3138,37 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
                                          ConstantInt::get(V->getType(), 1),
                                          ConstantInt::get(V->getType(), 42)));
   } else if (T->isIntegerTy(8)) {
-    auto isn = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'n'));
-    auto sel1 = B.CreateSelect(isn, ConstantInt::get(V->getType(), 't'),
-                               ConstantInt::get(V->getType(), 0));
+    if (floatType == "z" || floatType == "c") {
+      auto isn = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'n'));
+      auto sel1 = B.CreateSelect(isn, ConstantInt::get(V->getType(), 'c'),
+                                 ConstantInt::get(V->getType(), 0));
 
-    auto isN = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'N'));
-    auto sel2 = B.CreateSelect(isN, ConstantInt::get(V->getType(), 'T'), sel1);
+      auto isN = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'N'));
+      auto sel2 =
+          B.CreateSelect(isN, ConstantInt::get(V->getType(), 'C'), sel1);
 
-    auto ist = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 't'));
-    auto sel3 = B.CreateSelect(ist, ConstantInt::get(V->getType(), 'n'), sel2);
+      auto ist = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'c'));
+      auto sel3 =
+          B.CreateSelect(ist, ConstantInt::get(V->getType(), 'n'), sel2);
 
-    auto isT = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'T'));
-    return B.CreateSelect(isT, ConstantInt::get(V->getType(), 'N'), sel3);
+      auto isT = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'C'));
+      return B.CreateSelect(isT, ConstantInt::get(V->getType(), 'N'), sel3);
+    } else {
+      auto isn = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'n'));
+      auto sel1 = B.CreateSelect(isn, ConstantInt::get(V->getType(), 't'),
+                                 ConstantInt::get(V->getType(), 0));
+
+      auto isN = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'N'));
+      auto sel2 =
+          B.CreateSelect(isN, ConstantInt::get(V->getType(), 'T'), sel1);
+
+      auto ist = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 't'));
+      auto sel3 =
+          B.CreateSelect(ist, ConstantInt::get(V->getType(), 'n'), sel2);
+
+      auto isT = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'T'));
+      return B.CreateSelect(isT, ConstantInt::get(V->getType(), 'N'), sel3);
+    }
 
   } else if (T->isIntegerTy(32)) {
     auto is111 = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 111));
@@ -3193,18 +3213,26 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
   return width;
 }
 
-llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
-                       bool cublas, llvm::IntegerType *julia_decl,
+llvm::Value *transpose(std::string floatType, llvm::IRBuilder<> &B,
+                       llvm::Value *V, bool byRef, bool cublas,
+                       llvm::IntegerType *julia_decl,
                        llvm::IRBuilder<> &entryBuilder,
                        const llvm::Twine &name) {
 
   if (!byRef) {
     // Explicitly support 'N' always, since we use in the rule infra
     if (auto CI = dyn_cast<ConstantInt>(V)) {
-      if (CI->getValue() == 'N')
-        return ConstantInt::get(CI->getType(), 'T');
-      if (CI->getValue() == 'n')
-        return ConstantInt::get(CI->getType(), 't');
+      if (floatType == "c" || floatType == "z") {
+        if (CI->getValue() == 'N')
+          return ConstantInt::get(CI->getType(), 'C');
+        if (CI->getValue() == 'c')
+          return ConstantInt::get(CI->getType(), 'c');
+      } else {
+        if (CI->getValue() == 'N')
+          return ConstantInt::get(CI->getType(), 'T');
+        if (CI->getValue() == 'n')
+          return ConstantInt::get(CI->getType(), 't');
+      }
     }
 
     // cblas
@@ -3220,7 +3248,7 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
     V = B.CreateLoad(charType, V, "ld." + name);
   }
 
-  V = transpose(B, V, cublas);
+  V = transpose(floatType, B, V, cublas);
 
   return to_blas_callconv(B, V, byRef, cublas, julia_decl, entryBuilder,
                           "transpose." + name);
