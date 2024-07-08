@@ -2506,16 +2506,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             nullptr,
             nullptr};
 
-#if LLVM_VERSION_MAJOR >= 13
-        Type *stackTys[] = {getInt8PtrTy(Builder2.getContext())};
-#else
-        ArrayRef<Type *> stackTys = {};
-#endif
-        auto stack = Builder2.CreateIntrinsic(Intrinsic::stacksave,
-                                              ArrayRef<Type *>(stackTys),
-                                              ArrayRef<Value *>());
-        auto tmp = Builder2.CreateAlloca(types[2], args[1]);
-        auto dtmp = Builder2.CreateAlloca(types[2], args[1]);
+        Value *tmp = CreateAllocation(Builder2, types[2], args[1]);
+        Value *dtmp = CreateAllocation(Builder2, types[2], args[1]);
         Builder2.CreateLifetimeStart(tmp);
         Builder2.CreateLifetimeStart(dtmp);
 
@@ -2524,6 +2516,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
         Builder2.CreateCall(F, args, Defs);
         Builder2.CreateLifetimeEnd(tmp);
+        CreateDealloc(Builder2, tmp);
 
         BasicBlock *currentBlock = Builder2.GetInsertBlock();
 
@@ -2583,10 +2576,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         fin_idx->addIncoming(acc, loopBlock);
 
         Builder2.CreateLifetimeEnd(dtmp);
-
-        Builder2.CreateIntrinsic(Intrinsic::stackrestore,
-                                 ArrayRef<Type *>(stackTys),
-                                 ArrayRef<Value *>(stack));
+        CreateDealloc(Builder2, dtmp);
 
         ((DiffeGradientUtils *)gutils)
             ->addToDiffe(call.getOperand(2), fin_idx, Builder2, types[2]);
