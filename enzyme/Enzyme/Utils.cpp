@@ -624,6 +624,7 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
                    end, body);
   }
 
+  auto elSize = (M.getDataLayout().getTypeSizeInBits(elementType) + 7) / 8;
   {
     IRBuilder<> B(body);
     B.setFastMathFlags(getFast());
@@ -633,6 +634,41 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
     LoadInst *dstl = B.CreateLoad(elementType, dsti, "dst.i.l");
     StoreInst *dsts = B.CreateStore(Constant::getNullValue(elementType), dsti);
+
+    if (dstalign) {
+      // If the element size is already aligned to current alignment, do nothing
+      // e.g. elsize = double = 8, dstalign = 2
+      if (elSize % dstalign == 0) {
+
+      } else if (dstalign % elSize == 0) {
+        // Otherwise if the dst alignment is a multiple of the element size,
+        // use the element size as the new alignment. e.g. elsize = double = 8
+        // and alignment = 16
+        dstalign = elSize;
+      } else {
+        // else alignment only applies for first element, and we lose after all
+        // other iterattions, assume nothing
+        dstalign = 1;
+      }
+    }
+
+    if (srcalign) {
+      // If the element size is already aligned to current alignment, do nothing
+      // e.g. elsize = double = 8, dstalign = 2
+      if (elSize % srcalign == 0) {
+
+      } else if (srcalign % elSize == 0) {
+        // Otherwise if the dst alignment is a multiple of the element size,
+        // use the element size as the new alignment. e.g. elsize = double = 8
+        // and alignment = 16
+        srcalign = elSize;
+      } else {
+        // else alignment only applies for first element, and we lose after all
+        // other iterattions, assume nothing
+        srcalign = 1;
+      }
+    }
+
     if (dstalign) {
       dstl->setAlignment(Align(dstalign));
       dsts->setAlignment(Align(dstalign));
