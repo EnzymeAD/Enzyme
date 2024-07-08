@@ -539,12 +539,12 @@ def trtrs : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $nrhs, $A, $l
 
                       (BlasCall<"copy"> 
                           (ISelect (is_nonunit $diag), ConstantInt<0>, $n),
-                          (Shadow $A), (Add $lda, ConstantInt<1>),
+                          (First (Shadow $A)), (Add $lda, ConstantInt<1>),
                           use<"tri">, (Add $n, ConstantInt<1>)),
 
                       (BlasCall<"lacpy"> $layout, $uplo, $n, $n, use<"tri">, $n, (Shadow $A))
                       ),
-                  /* b     */ (BlasCall<"trtrs"> $layout, $uplo, $diag, $n, $nrhs, $A, $lda, (Shadow $B), Alloca<1>),
+                  /* b     */ (BlasCall<"trtrs"> $layout, $uplo, $trans, $diag, $n, $nrhs, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $B), Alloca<1>),
                   ]
                   >;
 

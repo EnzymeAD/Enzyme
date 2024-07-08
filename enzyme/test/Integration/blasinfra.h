@@ -2708,7 +2708,7 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
                 /*cols=*/left ? M : N, /*ld=*/lda, test, rcall, trace);
     return;
   }
-  case CallType::TRSM: {
+  case CallType::TRTRS: {
     // Solve [replacing B with X]
     // op( A )*X = alpha*B,   or   X*op( A ) = alpha*B
     auto B = pointer_to_index(rcall.pout_arg1, inputs);

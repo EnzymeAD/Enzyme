@@ -1429,7 +1429,7 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
     n = 1;
   if (func == "gemm" || func == "syrk" || func == "syr2k")
     n = 2;
-  if (func == "trmv")
+  if (func == "trmv" || func == "trtrs")
     n = 3;
   if (func == "trmm" || func == "trsm")
     n = 4;
