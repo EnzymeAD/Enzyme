@@ -250,7 +250,7 @@ entry:
 ; CHECK-NEXT:   store i64 1, i64* %byref.int.one
 ; CHECK-NEXT:   %ld.transa = load i8, i8* %byref.transa
 ; CHECK-DAG:    %[[r0:.+]] = icmp eq i8 %ld.transa, 110
-; CHECK-DAG:    %[[r1:.+]] = select i1 %[[r0]], i8 116, i8 0
+; CHECK-DAG:    %[[r1:.+]] = select i1 %[[r0]], i8 116, i8 78
 ; CHECK-DAG:    %[[r2:.+]] = icmp eq i8 %ld.transa, 78
 ; CHECK-DAG:    %[[r3:.+]] = select i1 %[[r2]], i8 84, i8 %[[r1]]
 ; CHECK-DAG:    %[[r4:.+]] = icmp eq i8 %ld.transa, 116

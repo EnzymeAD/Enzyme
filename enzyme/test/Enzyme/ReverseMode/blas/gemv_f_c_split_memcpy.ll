@@ -193,7 +193,7 @@ entry:
 ; CHECK-NEXT:   call void @dger_64_(i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %[[r27]], i8* %[[r31]], i8* %[[r35]], i64* %[[r39]], i8* %"A'", i8* %lda_p)
 ; CHECK-NEXT:   %ld.transa = load i8, i8* %malloccall
 ; CHECK-DAG:    %[[r0:.+]] = icmp eq i8 %ld.transa, 110
-; CHECK-DAG:    %[[r1:.+]] = select i1 %[[r0]], i8 116, i8 0
+; CHECK-DAG:    %[[r1:.+]] = select i1 %[[r0]], i8 116, i8 78
 ; CHECK-DAG:    %[[r2:.+]] = icmp eq i8 %ld.transa, 78
 ; CHECK-DAG:    %[[r3:.+]] = select i1 %[[r2]], i8 84, i8 %[[r1]]
 ; CHECK-DAG:    %[[r4:.+]] = icmp eq i8 %ld.transa, 116

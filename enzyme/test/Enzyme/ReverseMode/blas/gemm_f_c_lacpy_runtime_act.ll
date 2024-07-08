@@ -212,7 +212,7 @@ entry:
 ; CHECK: invertentry.A.active:                             ; preds = %invertentry.alpha.done
 ; CHECK-NEXT:   %ld.transb = load i8, i8* %transb
 ; CHECK-DAG:    %[[i33:.+]] = icmp eq i8 %ld.transb, 110
-; CHECK-DAG:    %[[i34:.+]] = select i1 %[[i33]], i8 116, i8 0
+; CHECK-DAG:    %[[i34:.+]] = select i1 %[[i33]], i8 116, i8 78
 ; CHECK-DAG:    %[[i35:.+]] = icmp eq i8 %ld.transb, 78
 ; CHECK-DAG:    %[[i36:.+]] = select i1 %[[i35]], i8 84, i8 %[[i34]]
 ; CHECK-DAG:    %[[i37:.+]] = icmp eq i8 %ld.transb, 116
@@ -247,7 +247,7 @@ entry:
 ; CHECK: invertentry.B.active:                             ; preds = %invertentry.A.done
 ; CHECK-NEXT:   %ld.transa = load i8, i8* %transa
 ; CHECK-DAG:    %[[i25:.+]] = icmp eq i8 %ld.transa, 110
-; CHECK-DAG:    %[[i26:.+]] = select i1 %[[i25]], i8 116, i8 0
+; CHECK-DAG:    %[[i26:.+]] = select i1 %[[i25]], i8 116, i8 78
 ; CHECK-DAG:    %[[i27:.+]] = icmp eq i8 %ld.transa, 78
 ; CHECK-DAG:    %[[i28:.+]] = select i1 %[[i27]], i8 84, i8 %[[i26]]
 ; CHECK-DAG:    %[[i29:.+]] = icmp eq i8 %ld.transa, 116

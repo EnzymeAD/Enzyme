@@ -1877,11 +1877,12 @@ llvm::Value *lookup_with_layout(llvm::IRBuilder<> &B, llvm::Type *fpType,
                                 llvm::Value *col);
 
 // first one assume V is an Integer
-llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool cublas);
+llvm::Value *transpose(std::string floatType, llvm::IRBuilder<> &B,
+                       llvm::Value *V, bool cublas);
 // secon one assume V is an Integer or a ptr to an int (depends on byRef)
-llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
-                       bool cublas, llvm::IntegerType *IT,
-                       llvm::IRBuilder<> &entryBuilder,
+llvm::Value *transpose(std::string floatType, llvm::IRBuilder<> &B,
+                       llvm::Value *V, bool byRef, bool cublas,
+                       llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder,
                        const llvm::Twine &name);
 llvm::SmallVector<llvm::Value *, 1>
 get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,
