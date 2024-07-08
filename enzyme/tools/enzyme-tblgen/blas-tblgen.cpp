@@ -903,7 +903,8 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
         }
         os << "byRef, cublas)";
         if (Dag->getNumArgs() == 1)
-          os << "[0], byRef, cublas, nullptr, allocationBuilder, \"\")}; vals";
+          os << "[0], byRef, cublas, julia_decl_type, allocationBuilder, "
+                "\"\")}; vals";
         os << ";})";
         return;
       }
@@ -1315,7 +1316,8 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
     } else if (Def->isSubClassOf("ConstantInt")) {
       auto val = Def->getValueAsInt("value");
       os << "{to_blas_callconv(Builder2, ConstantInt::get(intType, " << val
-         << "), byRef, cublas, intType, allocationBuilder, \"constant.int."
+         << "), byRef, cublas, julia_decl_type, allocationBuilder, "
+            "\"constant.int."
          << val << "\")}";
     } else if (Def->isSubClassOf("transpose")) {
       auto name = Def->getValueAsString("name");
@@ -1497,13 +1499,51 @@ void emit_tmp_creation(Record *Def, raw_ostream &os, StringRef builder) {
   const auto matName = args[0];
   const auto allocName = "mat_" + matName;
   if (action == "zerotriangular")
-    os << "    Instruction * zero = nullptr;\n";
+    os << "    CallInst * malloccall = nullptr;\n";
   os << "    Value * true_" << allocName << " = CreateAllocation(" << builder
-     << ", fpType, size_" << matName << ", \"" << allocName << "\", nullptr";
+     << ", fpType, size_" << matName << ", \"" << allocName << "\"";
   if (action == "zerotriangular")
-    os << ", &zero";
-  os << ");\n"
-     << "    Value * " << allocName << " = true_" << allocName << ";\n"
+    os << ", &malloccall";
+  os << ");\n";
+  if (action == "zerotriangular") {
+    os << "    {\n";
+    os << "    auto &M = *" << builder
+       << ".GetInsertBlock()->getParent()->getParent();\n";
+    os << "    auto AlignI = M.getDataLayout().getTypeAllocSizeInBits(fpType) "
+          "/ 8;\n";
+    os << "    auto Align = ConstantInt::get(intType, AlignI);\n";
+    os << "    auto PT = cast<PointerType>(malloccall->getType());\n";
+    os << "    Value *tozero = malloccall;\n";
+    os << "\n";
+    os << "    bool needsCast = false;\n";
+    os << "#if LLVM_VERSION_MAJOR < 17\n";
+    os << "#if LLVM_VERSION_MAJOR >= 15\n";
+    os << "    if (PT->getContext().supportsTypedPointers()) {\n";
+    os << "#endif\n";
+    os << "      needsCast = !PT->getPointerElementType()->isIntegerTy(8);\n";
+    os << "#if LLVM_VERSION_MAJOR >= 15\n";
+    os << "    }\n";
+    os << "#endif\n";
+    os << "#endif\n";
+    os << "    if (needsCast)\n";
+    os << "      tozero = " << builder << ".CreatePointerCast(\n";
+    os << "          tozero, "
+          "PointerType::get(Type::getInt8Ty(PT->getContext()),\n";
+    os << "                                   PT->getAddressSpace()));\n";
+    os << "    Value *args[] = {\n";
+    os << "        tozero, "
+          "ConstantInt::get(Type::getInt8Ty(malloccall->getContext()), 0),\n";
+    os << "        " << builder << ".CreateMul(Align, size_" << args[0]
+       << ", \"\", true, true),\n";
+    os << "        ConstantInt::getFalse(malloccall->getContext())};\n";
+    os << "    Type *tys[] = {args[0]->getType(), args[2]->getType()};\n";
+    os << "\n";
+    os << "    " << builder << ".CreateCall(\n";
+    os << "        Intrinsic::getDeclaration(&M, Intrinsic::memset, tys), "
+          "args);\n";
+    os << "    }\n";
+  }
+  os << "    Value * " << allocName << " = true_" << allocName << ";\n"
      << "    if (type_vec_like->isIntegerTy()) {\n"
      << "      " << allocName << " = " << builder << ".CreatePtrToInt("
      << allocName << ", type_vec_like);\n"
@@ -1912,7 +1952,7 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
        << idx;
     if (Def->getValueAsBit("offset"))
       os << "_inc";
-    os << ", byRef, cublas, intType, allocationBuilder, \"for." << idx
+    os << ", byRef, cublas, julia_decl_type, allocationBuilder, \"for." << idx
        << "\");\n";
 
     os << "      Value *for_res = nullptr;\n";
@@ -1968,7 +2008,7 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
   // just make this const one available now to have less variable name repition
   os << "Value * const_one = to_blas_callconv(Builder2, "
         "ConstantInt::get(intType, 1), "
-     << "byRef, cublas, intType, allocationBuilder, \"int.one\");\n";
+     << "byRef, cublas, julia_decl_type, allocationBuilder, \"int.one\");\n";
 
   const auto nameVec = pattern.getArgNames();
   const auto inputTypes = pattern.getArgTypeMap();
@@ -2169,7 +2209,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   // just make this const one available now to have less variable name repition
   os << "Value * const_one = to_blas_callconv(Builder2, "
         "ConstantInt::get(intType, 1), "
-     << "byRef, cublas, intType, allocationBuilder, \"int.one\");\n";
+     << "byRef, cublas, julia_decl_type, allocationBuilder, \"int.one\");\n";
 
   os << "      auto bb_name = Builder2.GetInsertBlock()->getName();\n";
   for (size_t i = 0; i < activeArgs.size(); i++) {

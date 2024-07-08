@@ -132,7 +132,6 @@ entry:
 ; CHECK-NEXT:   %[[matC0:.+]] = bitcast double* %cache.C to i8*
 ; CHECK-NEXT:   %[[matC:.+]] = bitcast double* %cache.C to i8*
 ; CHECK-NEXT:   store i64 1, i64* %byref.int.one
-; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
 ; CHECK-NEXT:   br i1 %rt.inactive.alpha, label %invertentry.alpha.done, label %invertentry.alpha.active
 
 ; CHECK: invertentry.alpha.active:                         ; preds = %invertentry
@@ -346,12 +345,10 @@ entry:
 ; CHECK: invertentry.C.active:                             ; preds = %invertentry.beta.done
 ; CHECK-NEXT:   store i8 71, i8* %byref.constant.char.G
 ; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.0
-; CHECK-NEXT:   %intcast.constant.int.0 = bitcast i64* %byref.constant.int.0 to i8*
 ; CHECK-NEXT:   store i64 0, i64* %[[byref_int_019]]
-; CHECK-NEXT:   %[[intcast_020:.+]] = bitcast i64* %[[byref_int_019]] to i8*
 ; CHECK-NEXT:   store double 1.000000e+00, double* %[[byref_fp_021]]
 ; CHECK-NEXT:   %[[fpcast_1_022:.+]] = bitcast double* %[[byref_fp_021]] to i8*
-; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i8* %intcast.constant.int.0, i8* %[[intcast_020]], i8* %[[fpcast_1_022]], i8* %beta, i8* %m_p, i8* %n_p, i8* %"C'", i8* %ldc_p, i64* %[[tmp]], i64 1)
+; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i64* %byref.constant.int.0, i64* %[[byref_int_019]], i8* %[[fpcast_1_022]], i8* %beta, i8* %m_p, i8* %n_p, i8* %"C'", i8* %ldc_p, i64* %[[tmp]], i64 1)
 ; CHECK-NEXT:   br label %invertentry.C.done
 
 ; CHECK: invertentry.C.done:                               ; preds = %invertentry.C.active, %invertentry.beta.done

@@ -3242,7 +3242,11 @@ SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
   assert(row.size() == col.size());
   SmallVector<Value *, 1> toreturn;
   for (size_t i = 0; i < row.size(); i++) {
-    toreturn.push_back(B.CreateSelect(conds[0], row[i], col[i]));
+    auto lhs = row[i];
+    auto rhs = col[i];
+    if (lhs->getType() != rhs->getType())
+      rhs = B.CreatePointerCast(rhs, lhs->getType());
+    toreturn.push_back(B.CreateSelect(conds[0], lhs, rhs));
   }
   return toreturn;
 }
