@@ -1000,15 +1000,8 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
               "\"\\n\";\n";
         os << "            ss << \"cannot handle blas argument within "
            << pattern.getName() << " of \" << call;\n";
-        os << "            if (CustomErrorHandler) {\n";
-        os << "              CustomErrorHandler(ss.str().c_str(), wrap(&call), "
-              "ErrorType::NoDerivative,\n";
-        os << "                                 gutils, nullptr, "
-              "wrap(&Builder2));\n";
-        os << "            } else {\n";
-        os << "              EmitFailure(\"NoDerivative\", call.getDebugLoc(), "
-              "&call, ss.str());\n";
-        os << "            }\n";
+        os << "            EmitNoDerivativeError(ss.str(), call, gutils, "
+              "Builder2);\n";
         os << "            ArrayRef<Value*>(); })";
       }
       return;
@@ -1586,15 +1579,8 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
       os << "            ss << \"in Mode: \" << to_string(Mode) << \"\\n\";\n";
       os << "            ss << \"cannot handle blas argument " << argName
          << " within " << pattern.getName() << " of \" << call;\n";
-      os << "            if (CustomErrorHandler) {\n";
-      os << "              CustomErrorHandler(ss.str().c_str(), wrap(&call), "
-            "ErrorType::NoDerivative,\n";
-      os << "                                 gutils, nullptr, "
-            "wrap(&Builder2));\n";
-      os << "            } else {\n";
-      os << "              EmitFailure(\"NoDerivative\", call.getDebugLoc(), "
-            "&call, ss.str());\n";
-      os << "            }\n";
+      os << "            EmitNoDerivativeError(ss.str(), call, gutils, "
+            "Builder2);\n";
     }
     return;
   }
@@ -1975,18 +1961,8 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
      << "    ss << call.getDebugLoc() << \"\\n\";\n"
      << "    ss << \"Runtime Activity not supported for BLAS calls\" << "
         "\"\\n\";\n"
-     << "    if (CustomErrorHandler) {\n"
-     << "      IRBuilder<> Builder2(&call);\n"
-     << "      getForwardBuilder(BuilderZ);\n"
-     << "      CustomErrorHandler(ss.str().c_str(), wrap(&call), "
-        "ErrorType::NoDerivative,\n"
-     << "                         gutils, nullptr, wrap(&BuilderZ));\n"
-     << "      return false;\n"
-     << "    } else {\n"
-     << "      EmitFailure(\"Unsupported Mode\", call.getDebugLoc(), &call, "
-        "ss.str());\n"
-     << "      return false;\n"
-     << "    }\n"
+     << "    EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);\n"
+     << "    return false;\n"
      << "  }\n";
 
   // just make this const one available now to have less variable name repition
@@ -2092,14 +2068,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
      << "      ss << \"Complex inputs not yet supported in reverse mode for "
         "BLAS calls\" << "
         "\"\\n\";\n"
-     << "      if (CustomErrorHandler) {\n"
-     << "        CustomErrorHandler(ss.str().c_str(), wrap(&call), "
-        "ErrorType::NoDerivative,\n"
-     << "                         gutils, nullptr, wrap(&Builder2));\n"
-     << "      } else {\n"
-     << "        EmitFailure(\"Unsupported Mode\", call.getDebugLoc(), &call, "
-        "ss.str());\n"
-     << "      }\n"
+     << "      EmitNoDerivativeError(ss.str(), call, gutils, Builder2);\n"
      << "    }\n"
 
      << "    Value *alloc = nullptr;\n"

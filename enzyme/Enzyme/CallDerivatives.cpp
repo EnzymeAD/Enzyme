@@ -1164,18 +1164,10 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!isSum) {
         std::string s;
         llvm::raw_string_ostream ss(s);
-        ss << *gutils->oldFunc << "\n";
-        ss << *gutils->newFunc << "\n";
         ss << " call: " << call << "\n";
         ss << " unhandled mpi_reduce op: " << *orig_op << "\n";
-        if (CustomErrorHandler) {
-          CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                             ErrorType::NoDerivative, gutils, nullptr,
-                             wrap(&BuilderZ));
-        } else {
-          EmitFailure("NoDerivative", call.getDebugLoc(), &call, ss.str());
-          return;
-        }
+        EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
+        return;
       }
 
       Value *shadow_recvbuf = gutils->invertPointerM(orig_recvbuf, Builder2);
@@ -1413,18 +1405,10 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!isSum) {
         std::string s;
         llvm::raw_string_ostream ss(s);
-        ss << *gutils->oldFunc << "\n";
-        ss << *gutils->newFunc << "\n";
         ss << " call: " << call << "\n";
         ss << " unhandled mpi_allreduce op: " << *orig_op << "\n";
-        if (CustomErrorHandler) {
-          CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                             ErrorType::NoDerivative, gutils, nullptr,
-                             wrap(&BuilderZ));
-        } else {
-          EmitFailure("NoDerivative", call.getDebugLoc(), &call, ss.str());
-          return;
-        }
+        EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
+        return;
       }
 
       Value *shadow_recvbuf = gutils->invertPointerM(orig_recvbuf, Builder2);

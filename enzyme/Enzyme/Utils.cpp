@@ -92,6 +92,9 @@ llvm::cl::opt<bool>
 llvm::cl::opt<bool> EnzymeMemmoveWarning(
     "enzyme-memmove-warning", cl::init(true), cl::Hidden,
     cl::desc("Warn if using memmove implementation as a fallback for memmove"));
+llvm::cl::opt<bool> EnzymeRuntimeError(
+    "enzyme-runtime-error", cl::init(false), cl::Hidden,
+    cl::desc("Emit Runtime errors instead of compile time ones"));
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
@@ -3396,6 +3399,105 @@ llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
                                         ArrayRef<Value *>(diff));
 
   return absres;
+}
+
+llvm::Value *EmitNoDerivativeError(const std::string &message,
+                                   llvm::Instruction &inst,
+                                   GradientUtils *gutils,
+                                   llvm::IRBuilder<> &Builder2) {
+  if (CustomErrorHandler) {
+    return unwrap(CustomErrorHandler(message.c_str(), wrap(&inst),
+                                     ErrorType::NoDerivative, gutils, nullptr,
+                                     wrap(&Builder2)));
+  } else if (EnzymeRuntimeError) {
+    auto &M = *inst.getParent()->getParent()->getParent();
+    FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
+                                         {getInt8PtrTy(M.getContext())}, false);
+    auto msg = getString(M, message);
+    auto PutsF = M.getOrInsertFunction("puts", FT);
+    Builder2.CreateCall(PutsF, msg);
+
+    FunctionType *FT2 =
+        FunctionType::get(Type::getVoidTy(M.getContext()),
+                          {Type::getInt32Ty(M.getContext())}, false);
+
+    auto ExitF = M.getOrInsertFunction("exit", FT2);
+    Builder2.CreateCall(ExitF,
+                        ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
+    return nullptr;
+  } else {
+    if (StringRef(message).contains("cannot handle above cast")) {
+      gutils->TR.dump();
+    }
+    EmitFailure("NoDerivative", inst.getDebugLoc(), &inst, message);
+    return nullptr;
+  }
+}
+
+bool EmitNoDerivativeError(const std::string &message, Value *todiff,
+                           RequestContext &context) {
+  Value *toshow = todiff;
+  if (context.req) {
+    toshow = context.req;
+  }
+  if (CustomErrorHandler) {
+    CustomErrorHandler(message.c_str(), wrap(toshow), ErrorType::NoDerivative,
+                       nullptr, wrap(todiff), wrap(context.ip));
+    return true;
+  } else if (context.ip && EnzymeRuntimeError) {
+    auto &M = *context.ip->GetInsertBlock()->getParent()->getParent();
+    FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
+                                         {getInt8PtrTy(M.getContext())}, false);
+    auto msg = getString(M, message);
+    auto PutsF = M.getOrInsertFunction("puts", FT);
+    context.ip->CreateCall(PutsF, msg);
+
+    FunctionType *FT2 =
+        FunctionType::get(Type::getVoidTy(M.getContext()),
+                          {Type::getInt32Ty(M.getContext())}, false);
+
+    auto ExitF = M.getOrInsertFunction("exit", FT2);
+    context.ip->CreateCall(
+        ExitF, ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
+  } else if (context.req) {
+    EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
+                message);
+    return true;
+  } else if (auto arg = dyn_cast<Instruction>(todiff)) {
+    auto loc = arg->getDebugLoc();
+    EmitFailure("NoDerivative", loc, arg, message);
+    return todiff;
+  }
+  return false;
+}
+
+void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
+                     GradientUtils *gutils, llvm::IRBuilder<> &Builder2) {
+  if (CustomErrorHandler) {
+    CustomErrorHandler(message.c_str(), wrap(&inst), ErrorType::NoType,
+                       gutils->TR.analyzer, nullptr, wrap(&Builder2));
+  } else if (EnzymeRuntimeError) {
+    auto &M = *inst.getParent()->getParent()->getParent();
+    FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
+                                         {getInt8PtrTy(M.getContext())}, false);
+    auto msg = getString(M, message);
+    auto PutsF = M.getOrInsertFunction("puts", FT);
+    Builder2.CreateCall(PutsF, msg);
+
+    FunctionType *FT2 =
+        FunctionType::get(Type::getVoidTy(M.getContext()),
+                          {Type::getInt32Ty(M.getContext())}, false);
+
+    auto ExitF = M.getOrInsertFunction("exit", FT2);
+    Builder2.CreateCall(ExitF,
+                        ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
+  } else {
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << message << "\n";
+    gutils->TR.dump(ss);
+    EmitFailure("CannotDeduceType", inst.getDebugLoc(), &inst, ss.str());
+  }
 }
 
 void dumpModule(llvm::Module *mod) { llvm::errs() << *mod << "\n"; }
