@@ -738,10 +738,10 @@ InstructionCost getValueTreeCost(Value *output,
                                  const SetVector<Value *> &inputs,
                                  const TargetTransformInfo &TTI) {
   SmallPtrSet<Value *, 8> seen;
-  SetVector<Value *> todo;
+  SmallVector<Value *> todo;
   InstructionCost cost = 0;
 
-  todo.insert(output);
+  todo.push_back(output);
   while (!todo.empty()) {
     auto cur = todo.pop_back_val();
     if (!seen.insert(cur).second)
@@ -763,7 +763,7 @@ InstructionCost getValueTreeCost(Value *output,
       auto operands =
           isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
       for (auto &operand : operands) {
-        todo.insert(operand);
+        todo.push_back(operand);
       }
     }
   }
@@ -1177,7 +1177,6 @@ B2:
 
   if (EnzymePrintFPOpt) {
     llvm::errs() << "Finished fpOptimize\n";
-    // Print the function to see the changes
     F.print(llvm::errs());
   }
 
