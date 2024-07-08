@@ -100,6 +100,7 @@ def is_diag_int : IntMatchers<
 
 def is_left : MagicInst;
 def is_lower : MagicInst;
+def is_nonunit : MagicInst;
 
 def First : MagicInst;
 def Lookup : MagicInst;
@@ -512,12 +513,38 @@ def spmv : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $ap, $x, $incx, $beta
 // B2 = inv(A^T) B
 // dB = inv(A^T) dB2
 // d(A^T) −= dB B2^T
-def trtrs : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $nrhs, $a, $lda, $b, $ldb, $info),
-                  ["b"],
-                  [cblas_layout, uplo, trans, diag, len, len, mld<["uplo", "n", "n"]>, vinc<["n"]>, len],
+def trtrs : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $nrhs, $A, $lda, $B, $ldb, $info),
+                  ["B"],
+                  [cblas_layout, uplo, trans, diag, len, len, mld<["uplo", "n", "n"]>, mld<["n", "nrhs"]>, len],
                   [
-                  /* a     */ (AssertingInactiveArg),
-                  /* b     */ (BlasCall<"trtrs"> $layout, $uplo, $diag, $n, $nrhs, $a, $lda, (Shadow $b), Alloca<1>),
+                  /* a     */ 
+                    (Seq<["tri", "triangular", "n"], [], 1>
+                      (BlasCall<"lacpy"> $layout, $uplo, $n, $n, (Shadow $A), use<"tri">, $n),
+                      (BlasCall<"gemm">
+                        $layout,
+                        Char<"N">,
+                        Char<"T">,
+                        $n,
+                        $n,
+                        $nrhs,
+                        Constant<"-1">,
+                        (Rows $trans,
+                          (Shadow $B),
+                          (Concat $B, (ld $B, Char<"N">, $ldb, $n, $nrhs))),
+                        (Rows $trans,
+                          (Concat $B, (ld $B, Char<"N">, $ldb, $n, $nrhs)),
+                          (Shadow $B)),
+                        Constant<"1">,
+                        use<"tri">, $n),
+
+                      (BlasCall<"copy"> 
+                          (ISelect (is_nonunit $diag), ConstantInt<0>, $n),
+                          (Shadow $A), (Add $lda, ConstantInt<1>),
+                          use<"tri">, (Add $n, ConstantInt<1>)),
+
+                      (BlasCall<"lacpy"> $layout, $uplo, $n, $n, use<"tri">, $n, (Shadow $A))
+                      ),
+                  /* b     */ (BlasCall<"trtrs"> $layout, $uplo, $diag, $n, $nrhs, $A, $lda, (Shadow $B), Alloca<1>),
                   ]
                   >;
 

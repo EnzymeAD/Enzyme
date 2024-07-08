@@ -962,6 +962,15 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
               "allocationBuilder, \"isleft\")}";
         return;
       }
+      if (Def->getName() == "is_nonunit") {
+        if (Dag->getNumArgs() != 1)
+          PrintFatalError(pattern.getLoc(), "only 1-arg ld operands supported");
+        const auto uploName = Dag->getArgNameStr(0);
+        os << "{to_blas_callconv(Builder2, is_nonunit(Builder2, arg_" << uploName
+           << ", byRef, cublas), byRef, cublas, julia_decl_type, "
+              "allocationBuilder, \"isnonunit\")}";
+        return;
+      }
     } else if (Def->getName() == "Shadow" || Def->isSubClassOf("Shadow")) {
       if (Dag->getNumArgs() != 1)
         PrintFatalError(pattern.getLoc(), "only single op shadow supported");
@@ -2212,7 +2221,9 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
      << "byRef, cublas, julia_decl_type, allocationBuilder, \"int.one\");\n";
 
   os << "      auto bb_name = Builder2.GetInsertBlock()->getName();\n";
-  for (size_t i = 0; i < activeArgs.size(); i++) {
+  for (size_t iteri = 0; iteri < activeArgs.size(); iteri++) {
+    // trtrs does in reversed arg order.
+    size_t i = (pattern.getName() != "trtrs") ? iteri : (activeArgs.size()-1-iteri);
     auto rule = rules[i];
     const size_t actArg = activeArgs[i];
     const auto ruleDag = rule.getRuleDag();

@@ -1868,6 +1868,8 @@ llvm::Value *is_left(llvm::IRBuilder<> &B, llvm::Value *side, bool byRef,
                      bool cublas);
 llvm::Value *is_lower(llvm::IRBuilder<> &B, llvm::Value *uplo, bool byRef,
                       bool cublas);
+llvm::Value *is_nonunit(llvm::IRBuilder<> &B, llvm::Value *uplo, bool byRef,
+                      bool cublas);
 
 llvm::Value *lookup_with_layout(llvm::IRBuilder<> &B, llvm::Type *fpType,
                                 llvm::Value *layout, llvm::Value *base,
