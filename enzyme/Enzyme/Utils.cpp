@@ -3020,9 +3020,9 @@ Value *is_lower(IRBuilder<> &B, Value *uplo, bool byRef, bool cublas) {
 Value *is_nonunit(IRBuilder<> &B, Value *uplo, bool byRef, bool cublas) {
   if (cublas) {
     Value *isNormal = nullptr;
-    isNormal = B.CreateICmpEQ(
-        uplo, ConstantInt::get(uplo->getType(),
-                               /*CUBLAS_DIAG_NON_UNIT*/ 0));
+    isNormal =
+        B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(),
+                                              /*CUBLAS_DIAG_NON_UNIT*/ 0));
     return isNormal;
   }
   if (auto CI = dyn_cast<ConstantInt>(uplo)) {

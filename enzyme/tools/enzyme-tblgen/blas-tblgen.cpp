@@ -966,7 +966,8 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
         if (Dag->getNumArgs() != 1)
           PrintFatalError(pattern.getLoc(), "only 1-arg ld operands supported");
         const auto uploName = Dag->getArgNameStr(0);
-        os << "{to_blas_callconv(Builder2, is_nonunit(Builder2, arg_" << uploName
+        os << "{to_blas_callconv(Builder2, is_nonunit(Builder2, arg_"
+           << uploName
            << ", byRef, cublas), byRef, cublas, julia_decl_type, "
               "allocationBuilder, \"isnonunit\")}";
         return;
@@ -2223,7 +2224,8 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
   os << "      auto bb_name = Builder2.GetInsertBlock()->getName();\n";
   for (size_t iteri = 0; iteri < activeArgs.size(); iteri++) {
     // trtrs does in reversed arg order.
-    size_t i = (pattern.getName() != "trtrs") ? iteri : (activeArgs.size()-1-iteri);
+    size_t i = (pattern.getName() != "trtrs") ? iteri
+                                              : (activeArgs.size() - 1 - iteri);
     auto rule = rules[i];
     const size_t actArg = activeArgs[i];
     const auto ruleDag = rule.getRuleDag();

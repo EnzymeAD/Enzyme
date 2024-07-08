@@ -1976,12 +1976,11 @@ __attribute__((noinline)) void cblas_dtrsm(char layout, char side, char uplo,
   calls.push_back(call);
 }
 
-
 // Solve    A * X = B  or  A**T * X = B,
-__attribute__((noinline)) void cblas_dtrtrs(char layout, char uplo,
-                                           char trans, char diag, int N, int Nrhs,
-                                           double *A, int lda,
-                                           double *B, int ldb, int* info) {
+__attribute__((noinline)) void cblas_dtrtrs(char layout, char uplo, char trans,
+                                            char diag, int N, int Nrhs,
+                                            double *A, int lda, double *B,
+                                            int ldb, int *info) {
   BlasCall call = {ABIType::CBLAS,
                    UNUSED_HANDLE,
                    inDerivative,
