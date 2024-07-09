@@ -512,7 +512,6 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
         return addedSelects;
       } else {
         TR.dump(ss);
-        DebugLoc loc;
         llvm::errs() << ss.str() << "\n";
         llvm_unreachable("Cannot deduce adding type");
         return addedSelects;
