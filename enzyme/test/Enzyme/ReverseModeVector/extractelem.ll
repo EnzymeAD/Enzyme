@@ -32,6 +32,6 @@ entry:
 ; CHECK-NEXT:   %[[i7:.+]] = fadd fast double %[[i6]], %[[i4]]
 ; CHECK-NEXT:   store double %[[i7]], double* %[[i5]]
 ; CHECK-NEXT:   %[[i8:.+]] = load [2 x <3 x double>], [2 x <3 x double>]* %"x'de"
-; CHECK-NEXT:   %[[i9:.+]] = insertvalue { [2 x <3 x double>] } undef, [2 x <3 x double>] %[[i8]], 0
+; CHECK-NEXT:   %[[i9:.+]] = insertvalue { [2 x <3 x double>] } {{(undef|poison)}}, [2 x <3 x double>] %[[i8]], 0
 ; CHECK-NEXT:   ret { [2 x <3 x double>] } %[[i9]]
 ; CHECK-NEXT: }

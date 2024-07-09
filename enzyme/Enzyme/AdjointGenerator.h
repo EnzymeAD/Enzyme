@@ -1790,8 +1790,6 @@ public:
       for (size_t idx : SVI.getShuffleMask()) {
         auto opnum = (idx < l1) ? 0 : 1;
         auto opidx = (idx < l1) ? idx : (idx - l1);
-        Value *sv[] = {
-            ConstantInt::get(Type::getInt32Ty(SVI.getContext()), opidx)};
 
         if (!gutils->isConstantValue(SVI.getOperand(opnum))) {
           size_t size = 1;
@@ -1801,10 +1799,25 @@ public:
                         .getTypeSizeInBits(SVI.getOperand(opnum)->getType()) +
                     7) /
                    8;
-          Value *toadd = Builder2.CreateExtractElement(loaded, instidx);
-          ((DiffeGradientUtils *)gutils)
-              ->addToDiffe(SVI.getOperand(opnum), toadd, Builder2,
-                           TR.addingType(size, SVI.getOperand(opnum)), sv);
+          if (gutils->getWidth() == 1) {
+            Value *sv[] = {
+                ConstantInt::get(Type::getInt32Ty(SVI.getContext()), opidx)};
+            Value *toadd = Builder2.CreateExtractElement(loaded, instidx);
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(SVI.getOperand(opnum), toadd, Builder2,
+                             TR.addingType(size, SVI.getOperand(opnum)), sv);
+          } else {
+            for (size_t i = 0; i < gutils->getWidth(); i++) {
+              Value *sv[] = {
+                  ConstantInt::get(Type::getInt32Ty(SVI.getContext()), i),
+                  ConstantInt::get(Type::getInt32Ty(SVI.getContext()), opidx)};
+              Value *toadd = Builder2.CreateExtractElement(
+                  GradientUtils::extractMeta(Builder2, loaded, i), instidx);
+              ((DiffeGradientUtils *)gutils)
+                  ->addToDiffe(SVI.getOperand(opnum), toadd, Builder2,
+                               TR.addingType(size, SVI.getOperand(opnum)), sv);
+            }
+          }
         }
         ++instidx;
       }
