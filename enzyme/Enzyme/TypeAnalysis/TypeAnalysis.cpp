@@ -1007,6 +1007,9 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
     if (CE->isCast() && isa<ConstantInt>(CE->getOperand(0))) {
       return;
     }
+    if (CE->getOpcode() == Instruction::GetElementPtr &&
+        isa<ConstantPointerNull>(CE->getOperand(0)))
+      return;
   }
 
   if (auto I = dyn_cast<Instruction>(Val)) {
