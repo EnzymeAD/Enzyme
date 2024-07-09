@@ -1627,7 +1627,6 @@ public:
       Value *orig_vec = EEI.getVectorOperand();
 
       if (!gutils->isConstantValue(orig_vec)) {
-        Value *sv[] = {gutils->getNewFromOriginal(EEI.getIndexOperand())};
 
         size_t size = 1;
         if (EEI.getType()->isSized())
@@ -1636,9 +1635,21 @@ public:
                    EEI.getType()) +
                7) /
               8;
-        ((DiffeGradientUtils *)gutils)
-            ->addToDiffe(orig_vec, diffe(&EEI, Builder2), Builder2,
-                         TR.addingType(size, &EEI), sv);
+        auto diff = diffe(&EEI, Builder2);
+        if (gutils->getWidth() == 1) {
+          Value *sv[] = {gutils->getNewFromOriginal(EEI.getIndexOperand())};
+          ((DiffeGradientUtils *)gutils)
+              ->addToDiffe(orig_vec, diff, Builder2,
+                           TR.addingType(size, &EEI), sv);
+        } else {
+            for (size_t i=0; i<gutils->getWidth(); i++) {
+              Value *sv[] = {nullptr, gutils->getNewFromOriginal(EEI.getIndexOperand())};
+              sv[0] = ConstantInt::get(sv[1]->getType(), i);
+              ((DiffeGradientUtils *)gutils)
+                  ->addToDiffe(orig_vec, gutils->extractMeta(Builder2, diff, i), Builder2,
+                               TR.addingType(size, &EEI), sv);
+            }
+        }
       }
       setDiffe(&EEI,
                Constant::getNullValue(gutils->getShadowType(EEI.getType())),
