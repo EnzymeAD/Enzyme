@@ -3562,6 +3562,7 @@ bool EmitNoDerivativeError(const std::string &message, Value *todiff,
     auto ExitF = M.getOrInsertFunction("exit", FT2);
     context.ip->CreateCall(
         ExitF, ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
+    return true;
   } else if (context.req) {
     EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
                 message);
@@ -3569,7 +3570,7 @@ bool EmitNoDerivativeError(const std::string &message, Value *todiff,
   } else if (auto arg = dyn_cast<Instruction>(todiff)) {
     auto loc = arg->getDebugLoc();
     EmitFailure("NoDerivative", loc, arg, message);
-    return todiff;
+    return true;
   }
   return false;
 }

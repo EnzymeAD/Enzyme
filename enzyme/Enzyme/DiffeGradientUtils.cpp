@@ -503,19 +503,18 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       for (auto idx : idxs)
         ss << *idx << ",";
       ss << "}\n";
-      if (CustomErrorHandler) {
+      if (auto inst = dyn_cast<Instruction>(val)) {
+        EmitNoTypeError(ss.str(), *inst, this, BuilderM);
+        return addedSelects;
+      } else if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
                            TR.analyzer, nullptr, wrap(&BuilderM));
         return addedSelects;
       } else {
         TR.dump(ss);
         DebugLoc loc;
-        if (auto inst = dyn_cast<Instruction>(val))
-          EmitFailure("CannotDeduceType", inst->getDebugLoc(), inst, ss.str());
-        else {
-          llvm::errs() << ss.str() << "\n";
-          llvm_unreachable("Cannot deduce adding type");
-        }
+        llvm::errs() << ss.str() << "\n";
+        llvm_unreachable("Cannot deduce adding type");
         return addedSelects;
       }
     }
